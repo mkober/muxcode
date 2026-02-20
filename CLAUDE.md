@@ -86,7 +86,7 @@ The Go module at `tools/muxcoder-agent-bus/` has **no external dependencies** (s
 
 ### Delegation model
 
-The **edit** agent is the user-facing orchestrator. It **never** runs build, test, deploy, or git commands directly. It delegates via the message bus. All other agents execute autonomously and reply.
+The **edit** agent is the user-facing orchestrator. It **never** runs build, test, deploy, or git commands directly — including read-only git commands like `git status`, `git log`, and `git diff`. **All** git operations must be delegated to the commit agent via the message bus. It delegates via the message bus. All other agents execute autonomously and reply.
 
 ### Bus protocol
 
