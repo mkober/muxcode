@@ -1,0 +1,42 @@
+# muxcoder configuration
+# Source this file from: ~/.config/muxcoder/config
+# Or set MUXCODER_CONFIG to point to a custom location.
+
+# Directories to scan for git projects (comma-separated)
+# MUXCODER_PROJECTS_DIR="$HOME/Projects,$HOME/Work"
+
+# Max depth for project discovery
+# MUXCODER_SCAN_DEPTH=3
+
+# Windows to create (space-separated)
+# MUXCODER_WINDOWS="edit build test review deploy run commit analyze status"
+
+# Window-to-role mapping (space-separated key=value pairs)
+# MUXCODER_ROLE_MAP="run=runner commit=git analyze=analyst"
+
+# Windows with left pane + agent in pane 1 (space-separated)
+# MUXCODER_SPLIT_LEFT="edit analyze commit"
+
+# Command to run in each new pane (e.g. activate a virtualenv)
+# MUXCODER_SHELL_INIT=""
+
+# Editor for the edit window
+# MUXCODER_EDITOR="nvim"
+
+# AI CLI command
+# MUXCODER_AGENT_CLI="claude"
+
+# Build command patterns for hook detection (pipe-separated)
+# MUXCODER_BUILD_PATTERNS="./build.sh|pnpm*build|go*build|make|cargo*build|cdk*synth|tsc"
+
+# Test command patterns for hook detection (pipe-separated)
+# MUXCODER_TEST_PATTERNS="./test.sh|jest|pnpm*test|pytest|go*test|go*vet|cargo*test|vitest"
+
+# File routing rules for analyze hook (space-separated pattern=target)
+# MUXCODER_ROUTE_RULES="test|spec=test cdk|stack|construct|terraform|pulumi=deploy .ts|.js|.py|.go|.rs=build"
+
+# Skip patterns for nvim diff preview (space-separated substrings)
+# MUXCODER_PREVIEW_SKIP="/.claude/settings.json /.claude/CLAUDE.md /.muxcoder/"
+
+# Extra agent roles beyond the defaults (comma-separated)
+# MUXCODER_ROLES=""
