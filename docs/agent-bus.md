@@ -1,11 +1,11 @@
-# muxcoder-agent-bus — CLI Reference
+# muxcode-agent-bus — CLI Reference
 
-Single Go binary for inter-agent communication in muxcoder sessions. Manages message routing, persistent memory, inbox notifications, and the dashboard TUI.
+Single Go binary for inter-agent communication in muxcode sessions. Manages message routing, persistent memory, inbox notifications, and the dashboard TUI.
 
 ## Module Location
 
 ```
-tools/muxcoder-agent-bus/
+tools/muxcode-agent-bus/
 ```
 
 ## Build Instructions
@@ -15,26 +15,26 @@ From the repo root:
 make build
 ```
 
-The binary is built to `bin/muxcoder-agent-bus` and installed to `~/.local/bin/muxcoder-agent-bus`.
+The binary is built to `bin/muxcode-agent-bus` and installed to `~/.local/bin/muxcode-agent-bus`.
 
 ## CLI Reference
 
-### `muxcoder-agent-bus init`
+### `muxcode-agent-bus init`
 
 Initialize the message bus directory structure for a session.
 
 ```bash
-muxcoder-agent-bus init [--memory-dir PATH]
+muxcode-agent-bus init [--memory-dir PATH]
 ```
 
-Creates the ephemeral bus directory at `/tmp/muxcoder-bus-{SESSION}/` with `inbox/`, `lock/`, and `log.jsonl`. Optionally initializes the persistent memory directory.
+Creates the ephemeral bus directory at `/tmp/muxcode-bus-{SESSION}/` with `inbox/`, `lock/`, and `log.jsonl`. Optionally initializes the persistent memory directory.
 
-### `muxcoder-agent-bus send`
+### `muxcode-agent-bus send`
 
 Send a message to another agent's inbox.
 
 ```bash
-muxcoder-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify]
+muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify]
 ```
 
 - `<to>` — target agent role (edit, build, test, review, deploy, run, commit, analyze)
@@ -48,16 +48,16 @@ Auto-detects sender from `AGENT_ROLE` env var or tmux window name.
 
 **Example:**
 ```
-$ muxcoder-agent-bus send build build "Run ./build.sh and report results"
+$ muxcode-agent-bus send build build "Run ./build.sh and report results"
 Sent: edit → build [request:build] Run ./build.sh and report results
 ```
 
-### `muxcoder-agent-bus inbox`
+### `muxcode-agent-bus inbox`
 
 Read messages from an agent's inbox.
 
 ```bash
-muxcoder-agent-bus inbox [--peek] [--raw] [--role ROLE]
+muxcode-agent-bus inbox [--peek] [--raw] [--role ROLE]
 ```
 
 - Default mode: consume messages and format as actionable prompts with reply commands
@@ -67,7 +67,7 @@ muxcoder-agent-bus inbox [--peek] [--raw] [--role ROLE]
 
 **Example:**
 ```
-$ muxcoder-agent-bus inbox
+$ muxcode-agent-bus inbox
 You have new messages! Check below and reply to any that need action.
 
 ---
@@ -76,19 +76,19 @@ Action: build
 Message: Run ./build.sh and report results
 ID: 1708300000-edit-a1b2c3d4
 
-→ Reply: muxcoder-agent-bus send edit build "<your reply>" --type response --reply-to 1708300000-edit-a1b2c3d4
+→ Reply: muxcode-agent-bus send edit build "<your reply>" --type response --reply-to 1708300000-edit-a1b2c3d4
 ---
 ```
 
-### `muxcoder-agent-bus memory`
+### `muxcode-agent-bus memory`
 
 Read and write persistent per-project memory.
 
 ```bash
-muxcoder-agent-bus memory read [role|shared]
-muxcoder-agent-bus memory write "<section>" "<text>"
-muxcoder-agent-bus memory write-shared "<section>" "<text>"
-muxcoder-agent-bus memory context
+muxcode-agent-bus memory read [role|shared]
+muxcode-agent-bus memory write "<section>" "<text>"
+muxcode-agent-bus memory write-shared "<section>" "<text>"
+muxcode-agent-bus memory context
 ```
 
 - `read` — read a specific role's memory or shared memory
@@ -96,14 +96,14 @@ muxcoder-agent-bus memory context
 - `write-shared` — append to the shared memory file
 - `context` — output both shared memory and own role's memory
 
-Memory is stored in `.muxcoder/memory/` relative to the project directory.
+Memory is stored in `.muxcode/memory/` relative to the project directory.
 
-### `muxcoder-agent-bus watch`
+### `muxcode-agent-bus watch`
 
 Run the unified bus watcher daemon.
 
 ```bash
-muxcoder-agent-bus watch [session] [--poll N] [--debounce N]
+muxcode-agent-bus watch [session] [--poll N] [--debounce N]
 ```
 
 - Polls agent inboxes (except edit) and notifies agents via `tmux send-keys` when new messages arrive
@@ -115,7 +115,7 @@ Runs in the `analyze` window left pane.
 
 #### Trigger file format
 
-The trigger file (`/tmp/muxcoder-analyze-{SESSION}.trigger`) is written by `muxcoder-analyze-hook.sh` with one line per file edit:
+The trigger file (`/tmp/muxcode-analyze-{SESSION}.trigger`) is written by `muxcode-analyze-hook.sh` with one line per file edit:
 
 ```
 <unix-timestamp> <filepath>
@@ -127,56 +127,56 @@ When the watcher detects a change in the trigger file, it starts debouncing. Aft
 2. Sends an aggregate `analyze` event to the analyst agent with all edited files
 3. Truncates the trigger file
 
-Per-file routing to specific agents (test/deploy/build) is handled earlier by `muxcoder-analyze-hook.sh` at edit time — the watcher only handles the aggregate analyst notification.
+Per-file routing to specific agents (test/deploy/build) is handled earlier by `muxcode-analyze-hook.sh` at edit time — the watcher only handles the aggregate analyst notification.
 
-### `muxcoder-agent-bus dashboard`
+### `muxcode-agent-bus dashboard`
 
 Launch the Dracula-themed terminal dashboard TUI.
 
 ```bash
-muxcoder-agent-bus dashboard [--refresh N]
+muxcode-agent-bus dashboard [--refresh N]
 ```
 
 - Displays agent window statuses (active/ready/idle/error)
 - Shows per-agent cost and token usage
 - Shows inbox counts and lock status
 - Shows recent log entries and inter-agent messages
-- Monitors Claude Code teams and tasks (these are Claude Code's built-in Task tool sub-agents, not muxcoder's own bus coordination)
+- Monitors Claude Code teams and tasks (these are Claude Code's built-in Task tool sub-agents, not muxcode's own bus coordination)
 - `--refresh N` — refresh interval in seconds (default: 5)
 - Dynamically reads windows from the tmux session
 
 Runs in the `status` window (F9). Press `q` to quit, `r` to refresh.
 
-### `muxcoder-agent-bus cleanup`
+### `muxcode-agent-bus cleanup`
 
 Remove the ephemeral bus directory and trigger files.
 
 ```bash
-muxcoder-agent-bus cleanup [session]
+muxcode-agent-bus cleanup [session]
 ```
 
-Removes `/tmp/muxcoder-bus-{SESSION}/` and `/tmp/muxcoder-analyze-{SESSION}.trigger`. Called automatically by the tmux session-closed hook.
+Removes `/tmp/muxcode-bus-{SESSION}/` and `/tmp/muxcode-analyze-{SESSION}.trigger`. Called automatically by the tmux session-closed hook.
 
-### `muxcoder-agent-bus notify`
+### `muxcode-agent-bus notify`
 
 Send a tmux notification to an agent's pane.
 
 ```bash
-muxcoder-agent-bus notify <role>
+muxcode-agent-bus notify <role>
 ```
 
-Sends `tmux send-keys` to the target agent's pane. The notification includes a preview: `[from -> action] payload -> Run: muxcoder-agent-bus inbox`. Pane targeting uses the consolidated logic from `bus.PaneTarget()` — split-left windows target pane 1, others target pane 0.
+Sends `tmux send-keys` to the target agent's pane. The notification includes a preview: `[from -> action] payload -> Run: muxcode-agent-bus inbox`. Pane targeting uses the consolidated logic from `bus.PaneTarget()` — split-left windows target pane 1, others target pane 0.
 
-**Note:** `muxcoder-agent-bus send` calls `notify` automatically. Use `--no-notify` to suppress.
+**Note:** `muxcode-agent-bus send` calls `notify` automatically. Use `--no-notify` to suppress.
 
-### `muxcoder-agent-bus lock` / `unlock` / `is-locked`
+### `muxcode-agent-bus lock` / `unlock` / `is-locked`
 
 Manage agent busy indicators.
 
 ```bash
-muxcoder-agent-bus lock [role]
-muxcoder-agent-bus unlock [role]
-muxcoder-agent-bus is-locked [role]
+muxcode-agent-bus lock [role]
+muxcode-agent-bus unlock [role]
+muxcode-agent-bus is-locked [role]
 ```
 
 - `lock` — create the lock file for the specified role (defaults to own role)
@@ -189,9 +189,9 @@ muxcoder-agent-bus is-locked [role]
 |----------|-------------|
 | `BUS_SESSION` | Session name for the bus directory |
 | `AGENT_ROLE` | Current agent's role name (auto-detected from tmux window if unset) |
-| `BUS_MEMORY_DIR` | Path to persistent memory directory (defaults to `.muxcoder/memory/`) |
-| `MUXCODER_ROLES` | Comma-separated extra roles to add to the known roles list |
-| `MUXCODER_SPLIT_LEFT` | Space-separated windows with agent in pane 1 (defaults: edit analyze commit) |
+| `BUS_MEMORY_DIR` | Path to persistent memory directory (defaults to `.muxcode/memory/`) |
+| `MUXCODE_ROLES` | Comma-separated extra roles to add to the known roles list |
+| `MUXCODE_SPLIT_LEFT` | Space-separated windows with agent in pane 1 (defaults: edit analyze commit) |
 
 ## Message Format
 
@@ -227,7 +227,7 @@ Messages from `build`, `test`, or `review` to any non-edit agent are automatical
 
 ### Build-Test-Review Chain
 
-Driven by `muxcoder-bash-hook.sh`, not by agent LLMs:
+Driven by `muxcode-bash-hook.sh`, not by agent LLMs:
 
 1. **Build succeeds** -> hook sends `request:test` to the test agent
 2. **Test succeeds** -> hook sends `request:review` to the review agent
@@ -239,12 +239,12 @@ Pane targeting is consolidated in `bus/config.go`:
 
 - **Split-left windows** (default: edit, analyze, commit): agent runs in pane 1
 - **All other windows**: agent runs in pane 0
-- Override via `MUXCODER_SPLIT_LEFT` env var
+- Override via `MUXCODE_SPLIT_LEFT` env var
 
 ## Architecture
 
 ```
-tools/muxcoder-agent-bus/
+tools/muxcode-agent-bus/
 ├── bus/               # Core library
 │   ├── config.go      # Session/role/path/pane configuration
 │   ├── message.go     # Message struct and JSONL encoding

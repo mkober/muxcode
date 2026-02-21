@@ -1,6 +1,6 @@
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
-CONFIGDIR ?= $(HOME)/.config/muxcoder
+CONFIGDIR ?= $(HOME)/.config/muxcode
 
 .PHONY: build test install clean
 
@@ -22,14 +22,14 @@ test:
 
 install: build
 	install -d $(BINDIR) $(CONFIGDIR)/agents
-	install -m 755 bin/muxcoder-agent-bus $(BINDIR)/muxcoder-agent-bus
-	install -m 755 muxcoder.sh $(BINDIR)/muxcoder
-	@for f in scripts/muxcoder-*.sh; do \
+	install -m 755 bin/muxcode-agent-bus $(BINDIR)/muxcode-agent-bus
+	install -m 755 muxcode.sh $(BINDIR)/muxcode
+	@for f in scripts/muxcode-*.sh; do \
 		[ -f "$$f" ] && install -m 755 "$$f" $(BINDIR)/ ; \
 	done; true
 	cp -n agents/*.md $(CONFIGDIR)/agents/ 2>/dev/null || true
 	cp -n config/* $(CONFIGDIR)/ 2>/dev/null || true
-	cp -n muxcoder.conf.example $(CONFIGDIR)/config 2>/dev/null || true
+	cp -n muxcode.conf.example $(CONFIGDIR)/config 2>/dev/null || true
 
 clean:
 	rm -rf bin/

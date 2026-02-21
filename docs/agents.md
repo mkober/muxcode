@@ -2,26 +2,26 @@
 
 ## Overview
 
-Each muxcoder window runs an AI agent with a specific role. Agent behavior is defined by markdown files that serve as system prompts.
+Each muxcode window runs an AI agent with a specific role. Agent behavior is defined by markdown files that serve as system prompts.
 
 ## Agent File Resolution
 
-When `muxcoder-agent.sh` launches an agent, it searches for the agent definition in this order:
+When `muxcode-agent.sh` launches an agent, it searches for the agent definition in this order:
 
 1. `.claude/agents/<name>.md` — project-local (highest priority)
-2. `~/.config/muxcoder/agents/<name>.md` — user global
-3. `<install-dir>/agents/<name>.md` — muxcoder defaults
+2. `~/.config/muxcode/agents/<name>.md` — user global
+3. `<install-dir>/agents/<name>.md` — muxcode defaults
 
 If no agent file is found, a built-in inline prompt is used as fallback.
 
 ### How agent files are loaded
 
-The `launch_agent_from_file` function in `muxcoder-agent.sh` handles agent file loading:
+The `launch_agent_from_file` function in `muxcode-agent.sh` handles agent file loading:
 
 - **Project-local files** (`.claude/agents/<name>.md`): launched natively via `claude --agent <name>` — Claude Code resolves the file automatically.
-- **External files** (`~/.config/muxcoder/agents/` or install dir): the file is read, YAML frontmatter is stripped with `awk`, and the `description` field is extracted. The prompt body and metadata are passed to Claude Code via `--agents <JSON>` (requires `jq`).
+- **External files** (`~/.config/muxcode/agents/` or install dir): the file is read, YAML frontmatter is stripped with `awk`, and the `description` field is extracted. The prompt body and metadata are passed to Claude Code via `--agents <JSON>` (requires `jq`).
 
-The three-tier search (project-local → user config → install default) runs in `muxcoder-agent.sh` after resolving the agent filename via `agent_name()`.
+The three-tier search (project-local → user config → install default) runs in `muxcode-agent.sh` after resolving the agent filename via `agent_name()`.
 
 ## Built-in Roles
 
@@ -43,9 +43,9 @@ The three-tier search (project-local → user config → install default) runs i
 The edit agent is the primary user-facing agent. It **never** runs build, test, deploy, or commit commands directly. Instead, it delegates via the message bus:
 
 ```bash
-muxcoder-agent-bus send build build "Run ./build.sh and report results"
-muxcoder-agent-bus send test test "Run tests and report results"
-muxcoder-agent-bus send review review "Review the latest changes"
+muxcode-agent-bus send build build "Run ./build.sh and report results"
+muxcode-agent-bus send test test "Run tests and report results"
+muxcode-agent-bus send review review "Review the latest changes"
 ```
 
 ### Autonomous Specialists (build, test, review, analyst)
@@ -53,9 +53,9 @@ muxcoder-agent-bus send review review "Review the latest changes"
 These agents operate autonomously — they receive requests, execute unconditionally, and reply. They never ask for permission before acting.
 
 **Sequence:**
-1. Read inbox: `muxcoder-agent-bus inbox`
+1. Read inbox: `muxcode-agent-bus inbox`
 2. Execute their command
-3. Reply to requester: `muxcoder-agent-bus send <from> <action> "<result>" --type response --reply-to <id>`
+3. Reply to requester: `muxcode-agent-bus send <from> <action> "<result>" --type response --reply-to <id>`
 
 ### Tool Specialists (deploy, runner, git)
 
@@ -67,19 +67,19 @@ All agents share the same bus protocol:
 
 ```bash
 # Check inbox
-muxcoder-agent-bus inbox
+muxcode-agent-bus inbox
 
 # Send a message
-muxcoder-agent-bus send <to> <action> "<message>"
+muxcode-agent-bus send <to> <action> "<message>"
 
 # Reply to a request
-muxcoder-agent-bus send <from> <action> "<result>" --type response --reply-to <id>
+muxcode-agent-bus send <from> <action> "<result>" --type response --reply-to <id>
 
 # Read memory
-muxcoder-agent-bus memory context
+muxcode-agent-bus memory context
 
 # Save learnings
-muxcoder-agent-bus memory write "<section>" "<text>"
+muxcode-agent-bus memory write "<section>" "<text>"
 ```
 
 ## Customization
@@ -90,7 +90,7 @@ Create a custom agent file in your project:
 
 ```bash
 mkdir -p .claude/agents
-cp ~/.config/muxcoder/agents/code-builder.md .claude/agents/code-builder.md
+cp ~/.config/muxcode/agents/code-builder.md .claude/agents/code-builder.md
 # Edit to add project-specific instructions
 ```
 
@@ -98,29 +98,29 @@ cp ~/.config/muxcoder/agents/code-builder.md .claude/agents/code-builder.md
 
 1. Add the window to your config:
    ```bash
-   MUXCODER_WINDOWS="edit build test review deploy run commit analyze docs status"
+   MUXCODE_WINDOWS="edit build test review deploy run commit analyze docs status"
    ```
 
 2. Add a role mapping if window name differs from role:
    ```bash
-   MUXCODER_ROLE_MAP="run=runner commit=git analyze=analyst docs=documentor"
+   MUXCODE_ROLE_MAP="run=runner commit=git analyze=analyst docs=documentor"
    ```
 
 3. Add the role to known roles:
    ```bash
-   MUXCODER_ROLES="documentor"
+   MUXCODE_ROLES="documentor"
    ```
 
 4. Create an agent definition:
    ```bash
-   # ~/.config/muxcoder/agents/repo-documentor.md
+   # ~/.config/muxcode/agents/repo-documentor.md
    ```
 
-5. Add a case to `agent_name()` in `scripts/muxcoder-agent.sh` to map the role to its agent filename. Optionally add a case to `allowed_tools()` to scope the agent's Bash permissions.
+5. Add a case to `agent_name()` in `scripts/muxcode-agent.sh` to map the role to its agent filename. Optionally add a case to `allowed_tools()` to scope the agent's Bash permissions.
 
 ### Agent Permissions
 
-Agents have scoped Bash permissions for autonomous operation. The default permissions per role are defined in `muxcoder-agent.sh`:
+Agents have scoped Bash permissions for autonomous operation. The default permissions per role are defined in `muxcode-agent.sh`:
 
 - **build**: `./build.sh`, `make`, `go build`, `pnpm build`, `cargo build`
 - **test**: `./test.sh`, `go test`, `jest`, `pytest`, `cargo test`
@@ -130,18 +130,18 @@ Agents have scoped Bash permissions for autonomous operation. The default permis
 - **runner**: unrestricted (no `--allowedTools` filter)
 - **analyst**: bus commands + Read, Glob, Grep (no shell commands)
 
-All agents have access to `muxcoder-agent-bus` commands.
+All agents have access to `muxcode-agent-bus` commands.
 
 ## Memory
 
-Per-project memory is stored in `.muxcoder/memory/`:
+Per-project memory is stored in `.muxcode/memory/`:
 
 ```
-.muxcoder/memory/
+.muxcode/memory/
 ├── shared.md     # Cross-agent learnings
 ├── edit.md       # Edit agent learnings
 ├── build.md      # Build agent learnings
 └── ...
 ```
 
-Agents read memory with `muxcoder-agent-bus memory context` and write with `muxcoder-agent-bus memory write "<section>" "<text>"`.
+Agents read memory with `muxcode-agent-bus memory context` and write with `muxcode-agent-bus memory write "<section>" "<text>"`.

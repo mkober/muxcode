@@ -2,7 +2,7 @@
 
 ## Overview
 
-Muxcoder uses Claude Code's hook system to integrate the AI agent with tmux and neovim. Hooks are shell scripts that run before or after tool execution, receiving the tool event as JSON on stdin.
+Muxcode uses Claude Code's hook system to integrate the AI agent with tmux and neovim. Hooks are shell scripts that run before or after tool execution, receiving the tool event as JSON on stdin.
 
 All hooks are **async** — they do not block the AI agent from continuing.
 
@@ -16,21 +16,21 @@ Hooks are configured in `.claude/settings.json` in your project:
     "PreToolUse": [
       {
         "matcher": "Write|Edit|NotebookEdit",
-        "hooks": [{"type": "command", "command": "muxcoder-preview-hook.sh", "async": true}]
+        "hooks": [{"type": "command", "command": "muxcode-preview-hook.sh", "async": true}]
       },
       {
         "matcher": "Read|Bash|Grep|Glob",
-        "hooks": [{"type": "command", "command": "muxcoder-diff-cleanup.sh", "async": true}]
+        "hooks": [{"type": "command", "command": "muxcode-diff-cleanup.sh", "async": true}]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|NotebookEdit",
-        "hooks": [{"type": "command", "command": "muxcoder-analyze-hook.sh", "async": true}]
+        "hooks": [{"type": "command", "command": "muxcode-analyze-hook.sh", "async": true}]
       },
       {
         "matcher": "Bash",
-        "hooks": [{"type": "command", "command": "muxcoder-bash-hook.sh", "async": true}]
+        "hooks": [{"type": "command", "command": "muxcode-bash-hook.sh", "async": true}]
       }
     ]
   }
@@ -39,12 +39,12 @@ Hooks are configured in `.claude/settings.json` in your project:
 
 You can copy a pre-configured template:
 ```bash
-cp ~/.config/muxcoder/settings.json .claude/settings.json
+cp ~/.config/muxcode/settings.json .claude/settings.json
 ```
 
 ## Hook Descriptions
 
-### muxcoder-preview-hook.sh
+### muxcode-preview-hook.sh
 
 **Phase:** PreToolUse
 **Trigger:** Write, Edit, NotebookEdit
@@ -59,9 +59,9 @@ Opens the target file in nvim and shows a diff preview of the proposed change be
 4. Sets syntax highlighting to match the file type
 
 **Customization:**
-- `MUXCODER_PREVIEW_SKIP` — space-separated substrings of file paths to skip (default: `/.claude/settings.json /.claude/CLAUDE.md /.muxcoder/`)
+- `MUXCODE_PREVIEW_SKIP` — space-separated substrings of file paths to skip (default: `/.claude/settings.json /.claude/CLAUDE.md /.muxcode/`)
 
-### muxcoder-diff-cleanup.sh
+### muxcode-diff-cleanup.sh
 
 **Phase:** PreToolUse
 **Trigger:** Read, Bash, Grep, Glob
@@ -69,7 +69,7 @@ Opens the target file in nvim and shows a diff preview of the proposed change be
 
 Lightweight cleanup hook. If a diff preview is still open from a previously rejected edit, this closes it before the next tool runs.
 
-### muxcoder-analyze-hook.sh
+### muxcode-analyze-hook.sh
 
 **Phase:** PostToolUse
 **Trigger:** Write, Edit, NotebookEdit
@@ -82,14 +82,14 @@ Signals that a file was edited. Performs three tasks:
 
 **NotebookEdit:** For `NotebookEdit` tool events, `file_path` is extracted from `tool_input.notebook_path`. The diff preview opens the `.ipynb` file at the raw JSON level.
 
-**File routing rules** (configurable via `MUXCODER_ROUTE_RULES`):
+**File routing rules** (configurable via `MUXCODE_ROUTE_RULES`):
 - Test/spec files -> test agent
 - Infrastructure files (cdk, terraform, pulumi, stack, construct) -> deploy agent
 - Source files (.ts, .js, .py, .go, .rs) -> build agent
 
 **Matching mechanics:** Rules are evaluated in order (first match wins). Each rule's pattern is `|`-separated substrings matched case-sensitively against the full file path. Files matching no rule skip routing silently.
 
-### muxcoder-bash-hook.sh
+### muxcode-bash-hook.sh
 
 **Phase:** PostToolUse
 **Trigger:** Bash
@@ -105,8 +105,8 @@ Any failure   → notify edit agent
 Also sends events to the analyst for analysis.
 
 **Customization:**
-- `MUXCODER_BUILD_PATTERNS` — pipe-separated patterns for build command detection
-- `MUXCODER_TEST_PATTERNS` — pipe-separated patterns for test command detection
+- `MUXCODE_BUILD_PATTERNS` — pipe-separated patterns for build command detection
+- `MUXCODE_TEST_PATTERNS` — pipe-separated patterns for test command detection
 
 **JSON parsing:** Uses `jq` by default with a `python3` fallback. If neither `jq` nor `python3` is available, the `command` and `exit_code` fields will be empty and the hook exits silently — the build-test-review chain will not trigger. The preview hook uses `python3` specifically for generating proposed file content; without it, no split diff appears in nvim.
 
@@ -138,7 +138,7 @@ PostToolUse hooks receive both `tool_input` and `tool_response`.
 The chain is **hook-driven**, ensuring deterministic behavior:
 
 1. Build agent runs `./build.sh` (or configured build command)
-2. `muxcoder-bash-hook.sh` detects build command completed
+2. `muxcode-bash-hook.sh` detects build command completed
 3. If exit code 0: hook sends `request:test` to test agent
 4. Test agent runs tests
 5. Hook detects test command completed
@@ -151,7 +151,7 @@ On failure at any step, the hook notifies edit directly with the error details.
 
 ## Creating Custom Hooks
 
-You can add project-specific hooks alongside the muxcoder hooks in `.claude/settings.json`. Hooks are additive — multiple hooks can match the same tool.
+You can add project-specific hooks alongside the muxcode hooks in `.claude/settings.json`. Hooks are additive — multiple hooks can match the same tool.
 
 Example: add a linting hook that runs after file edits:
 

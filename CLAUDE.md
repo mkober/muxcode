@@ -1,4 +1,4 @@
-# Muxcoder
+# Muxcode
 
 Multi-agent coding environment built on tmux, Neovim, and Claude Code. Each agent runs in its own tmux window, coordinated through a file-based message bus.
 
@@ -16,22 +16,22 @@ Multi-agent coding environment built on tmux, Neovim, and Claude Code. Each agen
 ## Directory structure
 
 ```
-muxcoder.sh                    # Main launcher — creates tmux session & windows
+muxcode.sh                    # Main launcher — creates tmux session & windows
 scripts/
-├── muxcoder-agent.sh          # Agent launcher — file resolution, permissions, auto-accept
-├── muxcoder-preview-hook.sh   # PreToolUse — diff preview in nvim (edit window only)
-├── muxcoder-diff-cleanup.sh   # PreToolUse — close stale diff previews
-├── muxcoder-analyze-hook.sh   # PostToolUse — route file events, trigger watcher
-├── muxcoder-bash-hook.sh      # PostToolUse — build-test-review chain
-├── muxcoder-git-status.sh     # Git status poller for commit window left pane
-└── muxcoder-test-wrapper.sh   # Test runner wrapper
+├── muxcode-agent.sh          # Agent launcher — file resolution, permissions, auto-accept
+├── muxcode-preview-hook.sh   # PreToolUse — diff preview in nvim (edit window only)
+├── muxcode-diff-cleanup.sh   # PreToolUse — close stale diff previews
+├── muxcode-analyze-hook.sh   # PostToolUse — route file events, trigger watcher
+├── muxcode-bash-hook.sh      # PostToolUse — build-test-review chain
+├── muxcode-git-status.sh     # Git status poller for commit window left pane
+└── muxcode-test-wrapper.sh   # Test runner wrapper
 agents/                        # Default agent definition files (.md)
 config/
 ├── settings.json              # Claude Code hooks template
 ├── tmux.conf                  # Tmux keybinding snippet
 └── nvim.lua                   # Reference nvim snippet (not auto-loaded)
 docs/                          # Documentation
-tools/muxcoder-agent-bus/      # Go module — the bus binary
+tools/muxcode-agent-bus/      # Go module — the bus binary
 ├── bus/                       # Core library (config, message, inbox, lock, memory, notify)
 ├── cmd/                       # Subcommand handlers (send, inbox, watch, dashboard, etc.)
 ├── watcher/                   # Inbox poller + trigger file monitor
@@ -45,12 +45,12 @@ tools/muxcoder-agent-bus/      # Go module — the bus binary
 |---------|-------------|
 | `./build.sh` | Runs `make install` — builds Go binary, installs scripts/agents/configs |
 | `./test.sh` | Runs `go vet ./...` and `go test -v ./...` in the bus module |
-| `make build` | Builds Go binary to `bin/muxcoder-agent-bus` |
-| `make install` | Build + install binary to `~/.local/bin/`, scripts, agents, configs to `~/.config/muxcoder/` |
+| `make build` | Builds Go binary to `bin/muxcode-agent-bus` |
+| `make install` | Build + install binary to `~/.local/bin/`, scripts, agents, configs to `~/.config/muxcode/` |
 | `make clean` | Remove `bin/` directory |
 | `./install.sh` | First-time setup — checks prereqs, builds, configures tmux and Claude Code hooks |
 
-The Go module at `tools/muxcoder-agent-bus/` has **no external dependencies** (stdlib only). `go.mod` declares `go 1.22` with no `require` block.
+The Go module at `tools/muxcode-agent-bus/` has **no external dependencies** (stdlib only). `go.mod` declares `go 1.22` with no `require` block.
 
 ## Code conventions
 
@@ -59,11 +59,11 @@ The Go module at `tools/muxcoder-agent-bus/` has **no external dependencies** (s
 - PascalCase for exported identifiers, camelCase for unexported
 - Stdlib only — no third-party imports
 - Tests in `*_test.go` files, same package (not `_test` suffix)
-- Bus directory path hardcoded to `/tmp/muxcoder-bus-{session}/` in `bus/config.go`
+- Bus directory path hardcoded to `/tmp/muxcode-bus-{session}/` in `bus/config.go`
 
 ### Bash (launcher & hooks)
 
-- `set -euo pipefail` for launcher scripts (`muxcoder.sh`, `build.sh`, `test.sh`, `install.sh`)
+- `set -euo pipefail` for launcher scripts (`muxcode.sh`, `build.sh`, `test.sh`, `install.sh`)
 - Hooks do NOT use `set -e` — they exit gracefully on errors
 - 2-space indentation
 - `snake_case` for functions, `UPPER_CASE` for environment variables
@@ -73,7 +73,7 @@ The Go module at `tools/muxcoder-agent-bus/` has **no external dependencies** (s
 
 - YAML frontmatter with `description:` field (extracted by `launch_agent_from_file`)
 - kebab-case filenames (e.g. `code-editor.md`, `git-manager.md`)
-- Role-to-filename mapping in `agent_name()` function of `scripts/muxcoder-agent.sh`
+- Role-to-filename mapping in `agent_name()` function of `scripts/muxcode-agent.sh`
 
 ### Documentation
 
@@ -90,7 +90,7 @@ The **edit** agent is the user-facing orchestrator. It **never** runs build, tes
 
 ### Bus protocol
 
-- Messages are JSONL stored at `/tmp/muxcoder-bus-{session}/inbox/{role}.jsonl`
+- Messages are JSONL stored at `/tmp/muxcode-bus-{session}/inbox/{role}.jsonl`
 - Three message types: `request`, `response`, `event`
 - Auto-CC: messages from build/test/review to non-edit agents are copied to the edit inbox
 - Build-test-review chain is **hook-driven** (bash exit codes), not LLM-driven
@@ -99,26 +99,26 @@ The **edit** agent is the user-facing orchestrator. It **never** runs build, tes
 
 Four hooks configured in `.claude/settings.json`:
 
-1. `muxcoder-preview-hook.sh` — PreToolUse on Write/Edit/NotebookEdit (edit window only)
-2. `muxcoder-diff-cleanup.sh` — PreToolUse on Read/Bash/Grep/Glob (edit window only)
-3. `muxcoder-analyze-hook.sh` — PostToolUse on Write/Edit/NotebookEdit (all windows)
-4. `muxcoder-bash-hook.sh` — PostToolUse on Bash (all windows)
+1. `muxcode-preview-hook.sh` — PreToolUse on Write/Edit/NotebookEdit (edit window only)
+2. `muxcode-diff-cleanup.sh` — PreToolUse on Read/Bash/Grep/Glob (edit window only)
+3. `muxcode-analyze-hook.sh` — PostToolUse on Write/Edit/NotebookEdit (all windows)
+4. `muxcode-bash-hook.sh` — PostToolUse on Bash (all windows)
 
 ### Lock mechanism
 
-Agents indicate busy state via lock files at `/tmp/muxcoder-bus-{session}/lock/{role}.lock`. The dashboard TUI reads these. Commands: `lock`, `unlock`, `is-locked`.
+Agents indicate busy state via lock files at `/tmp/muxcode-bus-{session}/lock/{role}.lock`. The dashboard TUI reads these. Commands: `lock`, `unlock`, `is-locked`.
 
 ### Watcher debounce
 
-The bus watcher (`muxcoder-agent-bus watch`) uses a two-phase debounce: detect trigger file change, then wait for stability (default 8 seconds). Burst edits are coalesced into a single aggregate analyze event sent to the analyst.
+The bus watcher (`muxcode-agent-bus watch`) uses a two-phase debounce: detect trigger file change, then wait for stability (default 8 seconds). Burst edits are coalesced into a single aggregate analyze event sent to the analyst.
 
 ## Working on each area
 
 ### Go bus code
 
 - Packages: `bus/` (core), `cmd/` (subcommands), `watcher/` (monitor), `tui/` (dashboard)
-- Build: `cd tools/muxcoder-agent-bus && go build .`
-- Test: `cd tools/muxcoder-agent-bus && go test ./...`
+- Build: `cd tools/muxcode-agent-bus && go build .`
+- Test: `cd tools/muxcode-agent-bus && go test ./...`
 - Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`
 - Pane targeting logic in `bus/config.go` — `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`
 
@@ -126,21 +126,21 @@ The bus watcher (`muxcoder-agent-bus watch`) uses a two-phase debounce: detect t
 
 - Hooks consume JSON from stdin via `cat` — parse with `jq` or `python3`
 - Preview hook detects edit window via `tmux display-message -p '#W'` — exits immediately if not `edit`
-- Analyze hook writes trigger file at `/tmp/muxcoder-analyze-{session}.trigger` — format: `<timestamp> <filepath>` per line
-- `auto_accept_bypass` in `muxcoder-agent.sh` polls tmux pane for "Yes, I accept" prompt — timeout controlled by `MUXCODER_ACCEPT_TIMEOUT` (default 30s)
+- Analyze hook writes trigger file at `/tmp/muxcode-analyze-{session}.trigger` — format: `<timestamp> <filepath>` per line
+- `auto_accept_bypass` in `muxcode-agent.sh` polls tmux pane for "Yes, I accept" prompt — timeout controlled by `MUXCODE_ACCEPT_TIMEOUT` (default 30s)
 
 ### Agent definitions
 
-- Override by placing files in `.claude/agents/` (project) or `~/.config/muxcoder/agents/` (global)
+- Override by placing files in `.claude/agents/` (project) or `~/.config/muxcode/agents/` (global)
 - Frontmatter extraction by `launch_agent_from_file` — uses `awk` to strip `---` delimiters, `jq` to build `--agents` JSON
 - Project-local agent files use `--agent <name>` natively; external files are read, stripped, and passed via `--agents` JSON
 - `agent_name()` maps roles to filenames; `allowed_tools()` maps roles to `--allowedTools` flags
 
 ### Configuration
 
-- Shell-sourceable config files — resolution order: `$MUXCODER_CONFIG` > `.muxcoder/config` > `~/.config/muxcoder/config` > defaults
+- Shell-sourceable config files — resolution order: `$MUXCODE_CONFIG` > `.muxcode/config` > `~/.config/muxcode/config` > defaults
 - Variables set in higher-priority configs completely replace lower-priority values (bash source semantics)
-- `MUXCODER_SPLIT_LEFT` is read by both `muxcoder.sh` (window layout) and the bus binary (pane targeting in `bus/config.go`)
+- `MUXCODE_SPLIT_LEFT` is read by both `muxcode.sh` (window layout) and the bus binary (pane targeting in `bus/config.go`)
 
 ### Documentation
 

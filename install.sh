@@ -16,7 +16,7 @@ warn()  { echo -e "${YELLOW}!${NC} $*"; }
 fail()  { echo -e "${RED}✗${NC} $*"; exit 1; }
 
 echo ""
-echo -e "${GREEN}muxcoder${NC} — multi-agent coding environment"
+echo -e "${GREEN}muxcode${NC} — multi-agent coding environment"
 echo ""
 
 # --- Check prerequisites ---
@@ -59,23 +59,23 @@ ok "Binary, scripts, agents, and configs installed"
 
 # --- Configure tmux ---
 TMUX_CONF="$HOME/.tmux.conf"
-TMUX_SOURCE_LINE="source-file ~/.config/muxcoder/tmux.conf"
+TMUX_SOURCE_LINE="source-file ~/.config/muxcode/tmux.conf"
 
 info "Configuring tmux..."
 if [ -f "$TMUX_CONF" ]; then
-  if grep -qF "muxcoder/tmux.conf" "$TMUX_CONF"; then
+  if grep -qF "muxcode/tmux.conf" "$TMUX_CONF"; then
     ok "tmux already configured"
   else
     tmpfile=$(mktemp)
     if grep -q "tpm/tpm" "$TMUX_CONF"; then
       # Insert before TPM plugin init
-      awk -v line="$TMUX_SOURCE_LINE" '/tpm\/tpm/ { if (done == 0) { print "# Muxcoder: multi-agent coding environment"; print line; print ""; done=1 } } { print }' "$TMUX_CONF" > "$tmpfile"
+      awk -v line="$TMUX_SOURCE_LINE" '/tpm\/tpm/ { if (done == 0) { print "# Muxcode: multi-agent coding environment"; print line; print ""; done=1 } } { print }' "$TMUX_CONF" > "$tmpfile"
     else
       cp "$TMUX_CONF" "$tmpfile"
-      printf '\n# Muxcoder: multi-agent coding environment\n%s\n' "$TMUX_SOURCE_LINE" >> "$tmpfile"
+      printf '\n# Muxcode: multi-agent coding environment\n%s\n' "$TMUX_SOURCE_LINE" >> "$tmpfile"
     fi
     mv "$tmpfile" "$TMUX_CONF"
-    ok "Added muxcoder source to ~/.tmux.conf"
+    ok "Added muxcode source to ~/.tmux.conf"
   fi
 else
   warn "No ~/.tmux.conf found — add manually: $TMUX_SOURCE_LINE"
@@ -86,25 +86,25 @@ NVIM_SITE_PLUGIN="$HOME/.local/share/nvim/site/plugin"
 
 info "Installing Neovim start screen..."
 mkdir -p "$NVIM_SITE_PLUGIN"
-cp "$REPO_DIR/config/muxcoder-startscreen.lua" "$NVIM_SITE_PLUGIN/muxcoder-startscreen.lua"
-ok "Neovim start screen installed (only activates inside muxcoder)"
+cp "$REPO_DIR/config/muxcode-startscreen.lua" "$NVIM_SITE_PLUGIN/muxcode-startscreen.lua"
+ok "Neovim start screen installed (only activates inside muxcode)"
 
 # --- Configure Claude Code hooks ---
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
-MUXCODER_SETTINGS="$HOME/.config/muxcoder/settings.json"
+MUXCODE_SETTINGS="$HOME/.config/muxcode/settings.json"
 
 info "Configuring Claude Code hooks..."
-if [ ! -f "$MUXCODER_SETTINGS" ]; then
-  warn "Muxcoder settings not found at $MUXCODER_SETTINGS"
+if [ ! -f "$MUXCODE_SETTINGS" ]; then
+  warn "Muxcode settings not found at $MUXCODE_SETTINGS"
 elif [ ! -f "$CLAUDE_SETTINGS" ]; then
   mkdir -p "$HOME/.claude"
-  cp "$MUXCODER_SETTINGS" "$CLAUDE_SETTINGS"
-  ok "Created ~/.claude/settings.json with muxcoder hooks"
-elif grep -qF "muxcoder-preview-hook.sh" "$CLAUDE_SETTINGS"; then
+  cp "$MUXCODE_SETTINGS" "$CLAUDE_SETTINGS"
+  ok "Created ~/.claude/settings.json with muxcode hooks"
+elif grep -qF "muxcode-preview-hook.sh" "$CLAUDE_SETTINGS"; then
   ok "Claude Code hooks already configured"
 else
-  cp "$CLAUDE_SETTINGS" "${CLAUDE_SETTINGS}.pre-muxcoder"
-  jq --slurpfile mc "$MUXCODER_SETTINGS" '
+  cp "$CLAUDE_SETTINGS" "${CLAUDE_SETTINGS}.pre-muxcode"
+  jq --slurpfile mc "$MUXCODE_SETTINGS" '
     def add_hook($phase; $matcher; $hook):
       if (.hooks[$phase] // [] | map(select(.matcher == $matcher)) | length) > 0 then
         .hooks[$phase] |= map(
@@ -128,7 +128,7 @@ else
     ) |
     .permissions.allow = (.permissions.allow + ($mc[0].permissions.allow // []) | unique)
   ' "$CLAUDE_SETTINGS" > "${CLAUDE_SETTINGS}.tmp" && mv "${CLAUDE_SETTINGS}.tmp" "$CLAUDE_SETTINGS"
-  ok "Merged muxcoder hooks into ~/.claude/settings.json (backup: settings.json.pre-muxcoder)"
+  ok "Merged muxcode hooks into ~/.claude/settings.json (backup: settings.json.pre-muxcode)"
 fi
 
 # --- Done ---
@@ -139,9 +139,9 @@ echo "Next steps:"
 echo ""
 echo "  1. Edit your config (optional):"
 echo ""
-echo "     \$EDITOR ~/.config/muxcoder/config"
+echo "     \$EDITOR ~/.config/muxcode/config"
 echo ""
 echo "  2. Launch a session:"
 echo ""
-echo "     muxcoder"
+echo "     muxcode"
 echo ""

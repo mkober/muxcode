@@ -2,7 +2,7 @@
 
 ## Overview
 
-Muxcoder creates a tmux session with multiple windows, each running an independent AI agent process. Agents communicate through a file-based message bus and are coordinated by hook scripts that respond to tool execution events.
+Muxcode creates a tmux session with multiple windows, each running an independent AI agent process. Agents communicate through a file-based message bus and are coordinated by hook scripts that respond to tool execution events.
 
 ## System Design
 
@@ -16,7 +16,7 @@ Muxcoder creates a tmux session with multiple windows, each running an independe
 │  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └─────────┘ │
 │       │           │           │           │                     │
 │  ─────┼───────────┼───────────┼───────────┼─────────────────── │
-│       │     Message Bus (/tmp/muxcoder-bus-{session}/)          │
+│       │     Message Bus (/tmp/muxcode-bus-{session}/)          │
 │       │     ├── inbox/{role}.jsonl                               │
 │       │     ├── lock/{role}.lock                                │
 │       │     └── log.jsonl                                       │
@@ -28,7 +28,7 @@ Muxcoder creates a tmux session with multiple windows, each running an independe
 │  └─────────┘ └─────────┘ └─────────┘ └─────────┘              │
 └─────────────────────────────────────────────────────────────────┘
 
-Persistent:  .muxcoder/memory/{role}.md
+Persistent:  .muxcode/memory/{role}.md
 ```
 
 ## Data Flow
@@ -37,13 +37,13 @@ Persistent:  .muxcoder/memory/{role}.md
 
 ```
 1. User types in edit window
-2. Edit agent sends: muxcoder-agent-bus send build build "Run ./build.sh"
-3. Bus writes to /tmp/muxcoder-bus-{s}/inbox/build.jsonl
+2. Edit agent sends: muxcode-agent-bus send build build "Run ./build.sh"
+3. Bus writes to /tmp/muxcode-bus-{s}/inbox/build.jsonl
 4. Bus sends tmux notification to build agent pane
 5. Build agent reads inbox, runs ./build.sh
-6. Build agent replies: muxcoder-agent-bus send edit result "Build succeeded"
-7. PostToolUse hook (muxcoder-bash-hook.sh) detects build success
-8. Hook automatically sends: muxcoder-agent-bus send test test "Run tests"
+6. Build agent replies: muxcode-agent-bus send edit result "Build succeeded"
+7. PostToolUse hook (muxcode-bash-hook.sh) detects build success
+8. Hook automatically sends: muxcode-agent-bus send test test "Run tests"
 9. Test agent reads inbox, runs tests
 10. Hook detects test success, sends request to review
 11. Review agent reviews diff, replies to edit
@@ -53,7 +53,7 @@ Persistent:  .muxcoder/memory/{role}.md
 
 ```
 1. Agent writes/edits a file (Write/Edit tool)
-2. PostToolUse hook (muxcoder-analyze-hook.sh) fires
+2. PostToolUse hook (muxcode-analyze-hook.sh) fires
 3. Hook appends file path to trigger file
 4. Hook routes event to relevant agent (test/deploy/build) based on file type
 5. In edit window: hook cleans up nvim diff preview, reloads file
@@ -74,13 +74,13 @@ This means rapid consecutive edits (e.g. Claude writing multiple files) are coal
 
 ```
 1. Agent proposes an edit (Write/Edit tool)
-2. PreToolUse hook (muxcoder-preview-hook.sh) fires
+2. PreToolUse hook (muxcode-preview-hook.sh) fires
 3. Hook opens the file in nvim at the target line
 4. Hook creates temp file with proposed change
 5. Hook opens diff split in nvim (original below, proposed above)
 6. User reviews in nvim, accepts or rejects in Claude Code
 7a. Accept → PostToolUse hook cleans diff, reloads file at changed line
-7b. Reject → Next tool's PreToolUse hook (muxcoder-diff-cleanup.sh) cleans diff
+7b. Reject → Next tool's PreToolUse hook (muxcode-diff-cleanup.sh) cleans diff
 ```
 
 ## Bus Protocol
@@ -97,32 +97,32 @@ Messages from build, test, and review agents to any non-edit agent are automatic
 
 ### Notification Flow
 
-1. `muxcoder-agent-bus send` delivers message to inbox file
+1. `muxcode-agent-bus send` delivers message to inbox file
 2. `send` calls `notify` to alert the recipient via `tmux send-keys`
 3. If auto-CC fires, `send` also notifies edit
 4. The watcher provides fallback notifications for all roles except edit
 
 ### Lock mechanism
 
-Agents indicate busy state via lock files at `/tmp/muxcoder-bus-{session}/lock/{role}.lock`. The dashboard TUI reads lock status for display. Commands:
+Agents indicate busy state via lock files at `/tmp/muxcode-bus-{session}/lock/{role}.lock`. The dashboard TUI reads lock status for display. Commands:
 
-- `muxcoder-agent-bus lock [role]` — create the lock file
-- `muxcoder-agent-bus unlock [role]` — remove the lock file
-- `muxcoder-agent-bus is-locked [role]` — check status (exit 0 if locked, 1 if not)
+- `muxcode-agent-bus lock [role]` — create the lock file
+- `muxcode-agent-bus unlock [role]` — remove the lock file
+- `muxcode-agent-bus is-locked [role]` — check status (exit 0 if locked, 1 if not)
 
 ## Memory System
 
-Per-project persistent memory stored in `.muxcoder/memory/`:
+Per-project persistent memory stored in `.muxcode/memory/`:
 
 ```
-.muxcoder/memory/
+.muxcode/memory/
 ├── shared.md      # Cross-agent shared learnings
 ├── edit.md        # Edit agent learnings
 ├── build.md       # Build agent learnings
 └── ...            # Per-role files
 ```
 
-Memory is project-scoped — each project has its own memory directory, created when `muxcoder-agent-bus init` runs.
+Memory is project-scoped — each project has its own memory directory, created when `muxcode-agent-bus init` runs.
 
 ## Hook Architecture
 
@@ -130,10 +130,10 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 
 | Hook | Phase | Trigger | Purpose |
 |------|-------|---------|---------|
-| `muxcoder-preview-hook.sh` | PreToolUse | Write/Edit | Show diff preview in nvim |
-| `muxcoder-diff-cleanup.sh` | PreToolUse | Read/Bash/etc | Clean stale diff preview |
-| `muxcoder-analyze-hook.sh` | PostToolUse | Write/Edit | Route file events, trigger watcher |
-| `muxcoder-bash-hook.sh` | PostToolUse | Bash | Drive build-test-review chain |
+| `muxcode-preview-hook.sh` | PreToolUse | Write/Edit | Show diff preview in nvim |
+| `muxcode-diff-cleanup.sh` | PreToolUse | Read/Bash/etc | Clean stale diff preview |
+| `muxcode-analyze-hook.sh` | PostToolUse | Write/Edit | Route file events, trigger watcher |
+| `muxcode-bash-hook.sh` | PostToolUse | Bash | Drive build-test-review chain |
 
 ### Hook Chain Guarantee
 
@@ -174,7 +174,7 @@ The build-test-review chain is **deterministic** — driven by bash hooks detect
 
 ## See also
 
-- [Agent Bus](agent-bus.md) — CLI reference for `muxcoder-agent-bus`
+- [Agent Bus](agent-bus.md) — CLI reference for `muxcode-agent-bus`
 - [Agents](agents.md) — Role descriptions and customization
 - [Hooks](hooks.md) — Hook system and customization
 - [Configuration](configuration.md) — Config file and env var reference

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "muxcoder-preview-hook.sh",
+            "command": "muxcode-preview-hook.sh",
             "async": true
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "muxcoder-diff-cleanup.sh",
+            "command": "muxcode-diff-cleanup.sh",
             "async": true
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "muxcoder-analyze-hook.sh",
+            "command": "muxcode-analyze-hook.sh",
             "async": true
           }
         ]
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "muxcoder-bash-hook.sh",
+            "command": "muxcode-bash-hook.sh",
             "async": true
           }
         ]
@@ -47,8 +47,8 @@
   },
   "permissions": {
     "allow": [
-      "Bash(muxcoder-agent-bus *)",
-      "Bash(./bin/muxcoder-agent-bus *)"
+      "Bash(muxcode-agent-bus *)",
+      "Bash(./bin/muxcode-agent-bus *)"
     ]
   }
 }

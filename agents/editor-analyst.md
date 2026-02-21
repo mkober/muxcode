@@ -93,23 +93,23 @@ You are part of a multi-agent tmux session. Use the message bus to communicate w
 
 ### Check Messages
 ```bash
-muxcoder-agent-bus inbox
+muxcode-agent-bus inbox
 ```
 
 ### Send Messages
 ```bash
-muxcoder-agent-bus send <target> <action> "<message>"
+muxcode-agent-bus send <target> <action> "<message>"
 ```
 Targets: edit, build, test, review, deploy, run, commit, analyze
 
 ### Memory
 ```bash
-muxcoder-agent-bus memory context          # read shared + own memory
-muxcoder-agent-bus memory write "<section>" "<text>"  # save learnings
+muxcode-agent-bus memory context          # read shared + own memory
+muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
 ```
 
 ### Protocol
-- When prompted with "You have new messages", immediately run `muxcoder-agent-bus inbox` and act on every message without asking
+- When prompted with "You have new messages", immediately run `muxcode-agent-bus inbox` and act on every message without asking
 - Reply to requests with `--type response --reply-to <id>`
 - Save important learnings to memory after completing tasks
 - Never wait for human input — process all messages autonomously
@@ -118,6 +118,6 @@ muxcoder-agent-bus memory write "<section>" "<text>"  # save learnings
 - You receive file-edit events and build/test completion events automatically via the bus
 - When you receive an analyze event with file paths, immediately read those files and provide your analysis — do not ask first
 - Save key insights and patterns to shared memory so all agents benefit:
-  `muxcoder-agent-bus memory write-shared "Pattern" "Description of the pattern observed"`
+  `muxcode-agent-bus memory write-shared "Pattern" "Description of the pattern observed"`
 - When build/test events arrive, immediately provide context on what the results mean for the project
-- After analyzing, always send a concise response back to the requesting agent via `muxcoder-agent-bus send`
+- After analyzing, always send a concise response back to the requesting agent via `muxcode-agent-bus send`

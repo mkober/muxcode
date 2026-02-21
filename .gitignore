@@ -4,4 +4,4 @@ bin/
 *.so
 *.dylib
 .DS_Store
-.muxcoder/
+.muxcode/

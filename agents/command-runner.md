@@ -52,19 +52,19 @@ You are part of a multi-agent tmux session. Use the message bus to communicate w
 
 ### Check Messages
 ```bash
-muxcoder-agent-bus inbox
+muxcode-agent-bus inbox
 ```
 
 ### Send Messages
 ```bash
-muxcoder-agent-bus send <target> <action> "<message>"
+muxcode-agent-bus send <target> <action> "<message>"
 ```
 Targets: edit, build, test, review, deploy, run, commit, analyze
 
 ### Memory
 ```bash
-muxcoder-agent-bus memory context          # read shared + own memory
-muxcoder-agent-bus memory write "<section>" "<text>"  # save learnings
+muxcode-agent-bus memory context          # read shared + own memory
+muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
 ```
 
 ### Protocol

@@ -31,19 +31,19 @@ You are part of a multi-agent tmux session. Use the message bus to communicate w
 
 ### Check Messages
 ```bash
-muxcoder-agent-bus inbox
+muxcode-agent-bus inbox
 ```
 
 ### Send Messages
 ```bash
-muxcoder-agent-bus send <target> <action> "<message>"
+muxcode-agent-bus send <target> <action> "<message>"
 ```
 Targets: edit, build, test, review, deploy, run, commit, analyze
 
 ### Memory
 ```bash
-muxcoder-agent-bus memory context          # read shared + own memory
-muxcoder-agent-bus memory write "<section>" "<text>"  # save learnings
+muxcode-agent-bus memory context          # read shared + own memory
+muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
 ```
 
 ### Protocol
@@ -54,11 +54,11 @@ muxcoder-agent-bus memory write "<section>" "<text>"  # save learnings
 ### Delegation — IMPORTANT
 **Never run build, test, deploy, or commit commands directly.** You have dedicated agents in separate tmux windows for these tasks. Always delegate via the message bus:
 
-- **Build**: `muxcoder-agent-bus send build build "Run ./build.sh and report results"`
-- **Test**: `muxcoder-agent-bus send test test "Run tests and report results"`
-- **Review**: `muxcoder-agent-bus send review review "Review the latest changes on this branch"`
-- **Deploy**: `muxcoder-agent-bus send deploy deploy "Run deployment diff and report changes"`
-- **Commit**: `muxcoder-agent-bus send commit commit "Stage and commit the current changes"`
+- **Build**: `muxcode-agent-bus send build build "Run ./build.sh and report results"`
+- **Test**: `muxcode-agent-bus send test test "Run tests and report results"`
+- **Review**: `muxcode-agent-bus send review review "Review the latest changes on this branch"`
+- **Deploy**: `muxcode-agent-bus send deploy deploy "Run deployment diff and report changes"`
+- **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes"`
 
 When the user asks you to build, test, review, deploy, or commit — send the request to the appropriate agent. Do not run build scripts, test runners, deployment tools, or `git commit` yourself.
 
@@ -66,7 +66,7 @@ After delegating, tell the user which agent you sent the request to. When you re
 
 ### Orchestration Role
 As the edit agent, you are the primary orchestrator. After making code changes:
-1. Delegate a build: `muxcoder-agent-bus send build build "Run ./build.sh and report results"`
-2. After build succeeds, delegate tests: `muxcoder-agent-bus send test test "Run tests and report results"`
-3. For significant changes, request review: `muxcoder-agent-bus send review review "Review the latest changes on this branch"`
-4. When ready to commit: `muxcoder-agent-bus send commit commit "Stage and commit the current changes"`
+1. Delegate a build: `muxcode-agent-bus send build build "Run ./build.sh and report results"`
+2. After build succeeds, delegate tests: `muxcode-agent-bus send test test "Run tests and report results"`
+3. For significant changes, request review: `muxcode-agent-bus send review review "Review the latest changes on this branch"`
+4. When ready to commit: `muxcode-agent-bus send commit commit "Stage and commit the current changes"`

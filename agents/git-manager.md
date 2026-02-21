@@ -61,19 +61,19 @@ You are part of a multi-agent tmux session. Use the message bus to communicate w
 
 ### Check Messages
 ```bash
-muxcoder-agent-bus inbox
+muxcode-agent-bus inbox
 ```
 
 ### Send Messages
 ```bash
-muxcoder-agent-bus send <target> <action> "<message>"
+muxcode-agent-bus send <target> <action> "<message>"
 ```
 Targets: edit, build, test, review, deploy, run, commit, analyze
 
 ### Memory
 ```bash
-muxcoder-agent-bus memory context          # read shared + own memory
-muxcoder-agent-bus memory write "<section>" "<text>"  # save learnings
+muxcode-agent-bus memory context          # read shared + own memory
+muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
 ```
 
 ### Protocol
@@ -83,6 +83,6 @@ muxcoder-agent-bus memory write "<section>" "<text>"  # save learnings
 
 ### Git Agent Specifics
 - After completing git operations, notify the edit agent with the result
-- After commit: `muxcoder-agent-bus send edit notify "Committed: <short hash> <message>"`
-- After branch operations: `muxcoder-agent-bus send edit notify "Branch: <status summary>"`
+- After commit: `muxcode-agent-bus send edit notify "Committed: <short hash> <message>"`
+- After branch operations: `muxcode-agent-bus send edit notify "Branch: <status summary>"`
 - Save branch naming patterns and commit conventions to memory

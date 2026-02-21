@@ -1,4 +1,4 @@
-# muxcoder
+# muxcode
 
 A multi-agent coding environment built on tmux, neovim, and Claude Code. Each agent runs in its own tmux window with dedicated responsibilities — editing, building, testing, reviewing, deploying, and more — coordinated through a file-based message bus.
 
@@ -18,8 +18,8 @@ A multi-agent coding environment built on tmux, neovim, and Claude Code. Each ag
 │                      │ term | agent │                       │
 │                      └──────────────┘                       │
 │                                                             │
-│  Message Bus: /tmp/muxcoder-bus-{session}/                  │
-│  Memory:      .muxcoder/memory/                             │
+│  Message Bus: /tmp/muxcode-bus-{session}/                  │
+│  Memory:      .muxcode/memory/                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -37,12 +37,12 @@ A multi-agent coding environment built on tmux, neovim, and Claude Code. Each ag
 ### Install
 
 ```bash
-git clone https://github.com/mkober/muxcoder.git
-cd muxcoder
+git clone https://github.com/mkober/muxcode.git
+cd muxcode
 ./install.sh
 ```
 
-The installer checks prerequisites, builds the Go binary, and installs everything to `~/.local/bin/` and `~/.config/muxcoder/`. It will guide you through the remaining setup steps.
+The installer checks prerequisites, builds the Go binary, and installs everything to `~/.local/bin/` and `~/.config/muxcode/`. It will guide you through the remaining setup steps.
 
 For subsequent builds after pulling updates:
 
@@ -55,39 +55,39 @@ For subsequent builds after pulling updates:
 1. Add the tmux snippet to your `.tmux.conf`:
 
 ```tmux
-source-file ~/.config/muxcoder/tmux.conf
+source-file ~/.config/muxcode/tmux.conf
 ```
 
 2. Copy the Claude Code hooks to your project:
 
 ```bash
-cp ~/.config/muxcoder/settings.json .claude/settings.json
+cp ~/.config/muxcode/settings.json .claude/settings.json
 ```
 
 3. (Optional) Edit your config:
 
 ```bash
-$EDITOR ~/.config/muxcoder/config
+$EDITOR ~/.config/muxcode/config
 ```
 
 ### Launch
 
 ```bash
 # Interactive project picker
-muxcoder
+muxcode
 
 # Direct path
-muxcoder ~/Projects/my-app
+muxcode ~/Projects/my-app
 
 # Custom session name
-muxcoder ~/Projects/my-app my-session
+muxcode ~/Projects/my-app my-session
 ```
 
 ## How It Works
 
 ### Windows
 
-Each muxcoder session creates 9 tmux windows:
+Each muxcode session creates 9 tmux windows:
 
 | Window | Role | Description |
 |--------|------|-------------|
@@ -121,22 +121,22 @@ edit → build (request)
 
 ### Message Bus
 
-Agents communicate via a file-based JSONL message bus managed by `muxcoder-agent-bus`:
+Agents communicate via a file-based JSONL message bus managed by `muxcode-agent-bus`:
 
 ```bash
-muxcoder-agent-bus init              # Initialize bus directories
-muxcoder-agent-bus send <to> <action> "<msg>"  # Send a message
-muxcoder-agent-bus inbox             # Read your messages
-muxcoder-agent-bus memory context    # Read shared + own memory
-muxcoder-agent-bus dashboard         # Launch status TUI
-muxcoder-agent-bus watch [session]   # Run the bus watcher daemon
-muxcoder-agent-bus notify <role>     # Send tmux notification to agent
-muxcoder-agent-bus lock [role]       # Mark agent as busy
-muxcoder-agent-bus unlock [role]     # Mark agent as available
-muxcoder-agent-bus cleanup [session] # Remove ephemeral bus directory
+muxcode-agent-bus init              # Initialize bus directories
+muxcode-agent-bus send <to> <action> "<msg>"  # Send a message
+muxcode-agent-bus inbox             # Read your messages
+muxcode-agent-bus memory context    # Read shared + own memory
+muxcode-agent-bus dashboard         # Launch status TUI
+muxcode-agent-bus watch [session]   # Run the bus watcher daemon
+muxcode-agent-bus notify <role>     # Send tmux notification to agent
+muxcode-agent-bus lock [role]       # Mark agent as busy
+muxcode-agent-bus unlock [role]     # Mark agent as available
+muxcode-agent-bus cleanup [session] # Remove ephemeral bus directory
 ```
 
-Bus directory: `/tmp/muxcoder-bus-{session}/`
+Bus directory: `/tmp/muxcode-bus-{session}/`
 
 ### Hooks
 
@@ -144,18 +144,18 @@ Four Claude Code hooks drive the integration:
 
 | Hook | Phase | Trigger | Action |
 |------|-------|---------|--------|
-| `muxcoder-preview-hook.sh` | PreToolUse | Write/Edit | Diff preview in nvim |
-| `muxcoder-diff-cleanup.sh` | PreToolUse | Read/Bash/etc | Clean stale diff |
-| `muxcoder-analyze-hook.sh` | PostToolUse | Write/Edit | Route file events |
-| `muxcoder-bash-hook.sh` | PostToolUse | Bash | Build/test chain |
+| `muxcode-preview-hook.sh` | PreToolUse | Write/Edit | Diff preview in nvim |
+| `muxcode-diff-cleanup.sh` | PreToolUse | Read/Bash/etc | Clean stale diff |
+| `muxcode-analyze-hook.sh` | PostToolUse | Write/Edit | Route file events |
+| `muxcode-bash-hook.sh` | PostToolUse | Bash | Build/test chain |
 
 ## Configuration
 
 Shell-sourceable config. Resolution order:
 
-1. `$MUXCODER_CONFIG` (explicit path)
-2. `./.muxcoder/config` (project-local)
-3. `~/.config/muxcoder/config` (user global)
+1. `$MUXCODE_CONFIG` (explicit path)
+2. `./.muxcode/config` (project-local)
+3. `~/.config/muxcode/config` (user global)
 4. Built-in defaults
 
 See [docs/configuration.md](docs/configuration.md) for the full reference.
@@ -164,31 +164,31 @@ See [docs/configuration.md](docs/configuration.md) for the full reference.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `MUXCODER_PROJECTS_DIR` | `$HOME` | Dirs to scan for projects |
-| `MUXCODER_WINDOWS` | `edit build test review deploy run commit analyze status` | Windows to create |
-| `MUXCODER_EDITOR` | `nvim` | Editor for edit window |
-| `MUXCODER_AGENT_CLI` | `claude` | AI CLI command |
-| `MUXCODER_BUILD_PATTERNS` | `./build.sh\|pnpm*build\|go*build\|make\|cargo*build` | Hook detection |
-| `MUXCODER_TEST_PATTERNS` | `./test.sh\|jest\|pnpm*test\|pytest\|go*test\|cargo*test` | Hook detection |
-| `MUXCODER_SCAN_DEPTH` | `3` | Max depth for project discovery |
-| `MUXCODER_SHELL_INIT` | (empty) | Command to run in each new tmux pane |
+| `MUXCODE_PROJECTS_DIR` | `$HOME` | Dirs to scan for projects |
+| `MUXCODE_WINDOWS` | `edit build test review deploy run commit analyze status` | Windows to create |
+| `MUXCODE_EDITOR` | `nvim` | Editor for edit window |
+| `MUXCODE_AGENT_CLI` | `claude` | AI CLI command |
+| `MUXCODE_BUILD_PATTERNS` | `./build.sh\|pnpm*build\|go*build\|make\|cargo*build` | Hook detection |
+| `MUXCODE_TEST_PATTERNS` | `./test.sh\|jest\|pnpm*test\|pytest\|go*test\|cargo*test` | Hook detection |
+| `MUXCODE_SCAN_DEPTH` | `3` | Max depth for project discovery |
+| `MUXCODE_SHELL_INIT` | (empty) | Command to run in each new tmux pane |
 
 ## Customization
 
 ### Custom Agent Definitions
 
-Place custom agent files in `.claude/agents/` in your project or `~/.config/muxcoder/agents/` for global overrides. See [docs/agents.md](docs/agents.md).
+Place custom agent files in `.claude/agents/` in your project or `~/.config/muxcode/agents/` for global overrides. See [docs/agents.md](docs/agents.md).
 
 ### Adding New Roles
 
-1. Add the role to `MUXCODER_WINDOWS` and `MUXCODER_ROLES`
+1. Add the role to `MUXCODE_WINDOWS` and `MUXCODE_ROLES`
 2. Create an agent definition file
-3. Map the window to a role in `MUXCODER_ROLE_MAP` if they differ
+3. Map the window to a role in `MUXCODE_ROLE_MAP` if they differ
 
 ## Documentation
 
 - [Architecture](docs/architecture.md) — System design and data flow
-- [Agent Bus](docs/agent-bus.md) — CLI reference for `muxcoder-agent-bus`
+- [Agent Bus](docs/agent-bus.md) — CLI reference for `muxcode-agent-bus`
 - [Agents](docs/agents.md) — Role descriptions and customization
 - [Hooks](docs/hooks.md) — Hook system and customization
 - [Configuration](docs/configuration.md) — Config file and env var reference
@@ -197,12 +197,12 @@ Place custom agent files in `.claude/agents/` in your project or `~/.config/muxc
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Agent never starts / hangs at launch | Bypass permissions prompt not accepted | Check `MUXCODER_ACCEPT_TIMEOUT` (default 30s); ensure tmux pane is visible |
+| Agent never starts / hangs at launch | Bypass permissions prompt not accepted | Check `MUXCODE_ACCEPT_TIMEOUT` (default 30s); ensure tmux pane is visible |
 | Build-test-review chain doesn't fire | `jq` and `python3` both missing | Install `jq` — hooks need it to parse JSON from stdin |
 | No diff preview in nvim | `python3` not available | Preview hook uses `python3` to generate proposed content; install it |
-| Messages not delivered | Bus directory missing or stale | Run `muxcoder-agent-bus init` or restart the session |
+| Messages not delivered | Bus directory missing or stale | Run `muxcode-agent-bus init` or restart the session |
 | Watcher floods analyst with events | Debounce too short for large edits | Increase `--debounce` (default 8s) in the watcher command |
-| Agent has wrong permissions | Role not mapped in `allowed_tools()` | Add a case to `allowed_tools()` in `scripts/muxcoder-agent.sh` |
+| Agent has wrong permissions | Role not mapped in `allowed_tools()` | Add a case to `allowed_tools()` in `scripts/muxcode-agent.sh` |
 
 ## License
 

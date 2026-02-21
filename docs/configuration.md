@@ -2,11 +2,11 @@
 
 ## Config File
 
-Muxcoder uses a shell-sourceable config file. Resolution order:
+Muxcode uses a shell-sourceable config file. Resolution order:
 
-1. `$MUXCODER_CONFIG` — explicit path (set this env var to use a custom location)
-2. `./.muxcoder/config` — project-local config
-3. `~/.config/muxcoder/config` — user global config
+1. `$MUXCODE_CONFIG` — explicit path (set this env var to use a custom location)
+2. `./.muxcode/config` — project-local config
+3. `~/.config/muxcode/config` — user global config
 4. Built-in defaults
 
 Variables set in a higher-priority config completely replace lower-priority values (bash source semantics). To extend rather than replace a value, use the `${VAR:-default}` pattern in your config file.
@@ -14,10 +14,10 @@ Variables set in a higher-priority config completely replace lower-priority valu
 The config file is a plain bash script that sets environment variables:
 
 ```bash
-# ~/.config/muxcoder/config
-MUXCODER_PROJECTS_DIR="$HOME/Projects,$HOME/Work"
-MUXCODER_EDITOR="nvim"
-MUXCODER_SHELL_INIT="source ~/.venv/bin/activate"
+# ~/.config/muxcode/config
+MUXCODE_PROJECTS_DIR="$HOME/Projects,$HOME/Work"
+MUXCODE_EDITOR="nvim"
+MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 ```
 
 ## Environment Variables
@@ -26,29 +26,29 @@ MUXCODER_SHELL_INIT="source ~/.venv/bin/activate"
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MUXCODER_PROJECTS_DIR` | `$HOME` | Directories to scan for git projects (comma-separated) |
-| `MUXCODER_SCAN_DEPTH` | `3` | Max depth for project discovery via `find` |
-| `MUXCODER_EDITOR` | `nvim` | Editor command for the edit window |
-| `MUXCODER_AGENT_CLI` | `claude` | AI CLI command to run agents |
-| `MUXCODER_SHELL_INIT` | (empty) | Command to run in each new tmux pane (e.g. activate a virtualenv) |
-| `MUXCODER_ACCEPT_TIMEOUT` | `30` | Seconds to wait for the bypass permissions prompt before giving up |
+| `MUXCODE_PROJECTS_DIR` | `$HOME` | Directories to scan for git projects (comma-separated) |
+| `MUXCODE_SCAN_DEPTH` | `3` | Max depth for project discovery via `find` |
+| `MUXCODE_EDITOR` | `nvim` | Editor command for the edit window |
+| `MUXCODE_AGENT_CLI` | `claude` | AI CLI command to run agents |
+| `MUXCODE_SHELL_INIT` | (empty) | Command to run in each new tmux pane (e.g. activate a virtualenv) |
+| `MUXCODE_ACCEPT_TIMEOUT` | `30` | Seconds to wait for the bypass permissions prompt before giving up |
 
 ### Window Layout
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MUXCODER_WINDOWS` | `edit build test review deploy run commit analyze status` | Space-separated list of windows to create |
-| `MUXCODER_ROLE_MAP` | `run=runner commit=git analyze=analyst` | Space-separated `window=role` mappings for windows whose role differs from name |
-| `MUXCODER_SPLIT_LEFT` | `edit analyze commit` | Space-separated windows that have a left pane (tool) + right pane (agent) |
+| `MUXCODE_WINDOWS` | `edit build test review deploy run commit analyze status` | Space-separated list of windows to create |
+| `MUXCODE_ROLE_MAP` | `run=runner commit=git analyze=analyst` | Space-separated `window=role` mappings for windows whose role differs from name |
+| `MUXCODE_SPLIT_LEFT` | `edit analyze commit` | Space-separated windows that have a left pane (tool) + right pane (agent) |
 
 ### Hook Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MUXCODER_BUILD_PATTERNS` | `./build.sh\|pnpm*build\|go*build\|make\|cargo*build\|cdk*synth\|tsc` | Pipe-separated patterns for build command detection |
-| `MUXCODER_TEST_PATTERNS` | `./test.sh\|jest\|pnpm*test\|pytest\|go*test\|go*vet\|cargo*test\|vitest` | Pipe-separated patterns for test command detection |
-| `MUXCODER_ROUTE_RULES` | `test\|spec=test cdk\|stack\|construct\|terraform\|pulumi=deploy .ts\|.js\|.py\|.go\|.rs=build` | Space-separated `pattern=target` rules for file-change routing |
-| `MUXCODER_PREVIEW_SKIP` | `/.claude/settings.json /.claude/CLAUDE.md /.muxcoder/` | Space-separated substrings — skip diff preview for matching files |
+| `MUXCODE_BUILD_PATTERNS` | `./build.sh\|pnpm*build\|go*build\|make\|cargo*build\|cdk*synth\|tsc` | Pipe-separated patterns for build command detection |
+| `MUXCODE_TEST_PATTERNS` | `./test.sh\|jest\|pnpm*test\|pytest\|go*test\|go*vet\|cargo*test\|vitest` | Pipe-separated patterns for test command detection |
+| `MUXCODE_ROUTE_RULES` | `test\|spec=test cdk\|stack\|construct\|terraform\|pulumi=deploy .ts\|.js\|.py\|.go\|.rs=build` | Space-separated `pattern=target` rules for file-change routing |
+| `MUXCODE_PREVIEW_SKIP` | `/.claude/settings.json /.claude/CLAUDE.md /.muxcode/` | Space-separated substrings — skip diff preview for matching files |
 
 ### Agent Bus
 
@@ -56,37 +56,37 @@ MUXCODER_SHELL_INIT="source ~/.venv/bin/activate"
 |----------|---------|-------------|
 | `BUS_SESSION` | (auto-detected) | Session name for the bus directory |
 | `AGENT_ROLE` | (auto-detected) | Current agent's role name |
-| `BUS_MEMORY_DIR` | `.muxcoder/memory/` | Path to persistent memory directory |
-| `MUXCODER_ROLES` | (empty) | Comma-separated extra roles to add to the known roles list |
-| `MUXCODER_SPLIT_LEFT` | `edit analyze commit` | See Window Layout above — also read by the bus binary for pane targeting |
+| `BUS_MEMORY_DIR` | `.muxcode/memory/` | Path to persistent memory directory |
+| `MUXCODE_ROLES` | (empty) | Comma-separated extra roles to add to the known roles list |
+| `MUXCODE_SPLIT_LEFT` | `edit analyze commit` | See Window Layout above — also read by the bus binary for pane targeting |
 
 ## Directory Structure
 
 ### Ephemeral (per-session)
 
 ```
-/tmp/muxcoder-bus-{session}/
+/tmp/muxcode-bus-{session}/
 ├── inbox/{role}.jsonl     # Per-agent message queues
 ├── lock/{role}.lock       # Busy indicators
 └── log.jsonl              # Activity log
 ```
 
-Created by `muxcoder-agent-bus init`, cleaned up by the tmux session-closed hook.
+Created by `muxcode-agent-bus init`, cleaned up by the tmux session-closed hook.
 
 ### Persistent (per-project)
 
 ```
-.muxcoder/memory/
+.muxcode/memory/
 ├── shared.md              # Cross-agent shared learnings
 └── {role}.md              # Per-agent learnings
 ```
 
-Created on first `muxcoder-agent-bus init` in the project directory.
+Created on first `muxcode-agent-bus init` in the project directory.
 
 ### User Config
 
 ```
-~/.config/muxcoder/
+~/.config/muxcode/
 ├── config                 # User global config
 ├── settings.json          # Claude Code hooks template
 ├── tmux.conf              # Tmux snippet to source
@@ -99,13 +99,13 @@ Created on first `muxcoder-agent-bus init` in the project directory.
 
 ## Per-Project Config
 
-Create a `.muxcoder/config` file in your project root for project-specific settings:
+Create a `.muxcode/config` file in your project root for project-specific settings:
 
 ```bash
-# .muxcoder/config
-MUXCODER_SHELL_INIT="source .venv/bin/activate"
-MUXCODER_BUILD_PATTERNS="./build.sh|make"
-MUXCODER_TEST_PATTERNS="./test.sh|go test"
+# .muxcode/config
+MUXCODE_SHELL_INIT="source .venv/bin/activate"
+MUXCODE_BUILD_PATTERNS="./build.sh|make"
+MUXCODE_TEST_PATTERNS="./test.sh|go test"
 ```
 
 ## Example Configurations
@@ -113,29 +113,29 @@ MUXCODER_TEST_PATTERNS="./test.sh|go test"
 ### Python Project
 
 ```bash
-MUXCODER_SHELL_INIT="source .venv/bin/activate"
-MUXCODER_BUILD_PATTERNS="./build.sh|pip install|python setup.py"
-MUXCODER_TEST_PATTERNS="pytest|python -m pytest"
-MUXCODER_ROUTE_RULES="test=test .py=build"
+MUXCODE_SHELL_INIT="source .venv/bin/activate"
+MUXCODE_BUILD_PATTERNS="./build.sh|pip install|python setup.py"
+MUXCODE_TEST_PATTERNS="pytest|python -m pytest"
+MUXCODE_ROUTE_RULES="test=test .py=build"
 ```
 
 ### Rust Project
 
 ```bash
-MUXCODER_BUILD_PATTERNS="cargo build|cargo check"
-MUXCODER_TEST_PATTERNS="cargo test|cargo bench"
-MUXCODER_ROUTE_RULES="test=test .rs=build Cargo.toml=build"
+MUXCODE_BUILD_PATTERNS="cargo build|cargo check"
+MUXCODE_TEST_PATTERNS="cargo test|cargo bench"
+MUXCODE_ROUTE_RULES="test=test .rs=build Cargo.toml=build"
 ```
 
 ### Minimal Setup (No Deploy/Run)
 
 ```bash
-MUXCODER_WINDOWS="edit build test review commit analyze status"
+MUXCODE_WINDOWS="edit build test review commit analyze status"
 ```
 
 ### Custom Window Names
 
 ```bash
-MUXCODER_WINDOWS="code compile verify review ship exec git watch dash"
-MUXCODER_ROLE_MAP="code=edit compile=build verify=test ship=deploy exec=runner git=git watch=analyst dash=status"
+MUXCODE_WINDOWS="code compile verify review ship exec git watch dash"
+MUXCODE_ROLE_MAP="code=edit compile=build verify=test ship=deploy exec=runner git=git watch=analyst dash=status"
 ```

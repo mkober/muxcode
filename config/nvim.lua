@@ -1,4 +1,4 @@
--- muxcoder nvim configuration snippet
+-- muxcode nvim configuration snippet
 -- Add relevant parts to your nvim config (init.lua or lazy.nvim plugin spec)
 
 -- Vim-tmux-navigator plugin (for lazy.nvim)
