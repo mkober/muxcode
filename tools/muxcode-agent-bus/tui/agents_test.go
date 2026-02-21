@@ -148,9 +148,9 @@ func TestPaneTarget(t *testing.T) {
 		{"edit", "mysess:edit.1"},
 		{"analyze", "mysess:analyze.1"},
 		{"commit", "mysess:commit.1"},
-		{"build", "mysess:build.0"},
-		{"test", "mysess:test.0"},
-		{"deploy", "mysess:deploy.0"},
+		{"build", "mysess:build.1"},
+		{"test", "mysess:test.1"},
+		{"deploy", "mysess:deploy.1"},
 	}
 	for _, tt := range tests {
 		got := PaneTarget("mysess", tt.window)
