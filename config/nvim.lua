@@ -20,6 +20,13 @@
 --   end,
 -- })
 
+-- Open all folds by default
+-- Prevents code blocks from being folded when files open in the diff preview.
+-- Set foldlevelstart high so no folds are closed on BufRead.
+-- Add this to your init.lua:
+--
+-- vim.opt.foldlevelstart = 99
+
 -- Optional: jk to exit insert mode and save
 -- Convenient for quick edits when reviewing agent-proposed changes
 --
