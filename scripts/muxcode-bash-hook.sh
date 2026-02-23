@@ -28,6 +28,7 @@ EVENT="$(cat)"
 # Extract command and exit code using jq (with python3 fallback)
 if command -v jq &>/dev/null; then
   COMMAND=$(printf '%s' "$EVENT" | jq -r '.tool_input.command // empty' 2>/dev/null)
+  DESCRIPTION=$(printf '%s' "$EVENT" | jq -r '.tool_input.description // empty' 2>/dev/null)
   EXIT_CODE=$(printf '%s' "$EVENT" | jq -r '
     (.tool_response // .tool_result // {}) as $r |
     if (.exit_code // $r.exit_code // "") != "" then (.exit_code // $r.exit_code)
@@ -42,6 +43,13 @@ import json, sys
 try:
     d = json.load(sys.stdin)
     print(d.get('tool_input', {}).get('command', ''))
+except: pass
+" 2>/dev/null)
+  DESCRIPTION=$(printf '%s' "$EVENT" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get('tool_input', {}).get('description', ''))
 except: pass
 " 2>/dev/null)
   EXIT_CODE=$(printf '%s' "$EVENT" | python3 -c "
@@ -107,15 +115,53 @@ if [ "$is_build" -eq 1 ]; then
   HISTORY_FILE="/tmp/muxcode-bus-${SESSION}/build-history.jsonl"
   BUILD_TS=$(date +%s)
   BUILD_OUTCOME=$(chain_outcome)
-  if command -v jq &>/dev/null; then
-    jq -nc --arg ts "$BUILD_TS" --arg cmd "$COMMAND" --arg ec "${EXIT_CODE:-0}" --arg outcome "$BUILD_OUTCOME" \
-      '{ts:($ts|tonumber),command:$cmd,exit_code:$ec,outcome:$outcome}' \
-      >> "$HISTORY_FILE" 2>/dev/null || true
-  else
-    printf '{"ts":%s,"command":"%s","exit_code":"%s","outcome":"%s"}\n' \
-      "$BUILD_TS" "$(printf '%s' "$COMMAND" | sed 's/"/\\"/g')" "${EXIT_CODE:-0}" "$BUILD_OUTCOME" \
-      >> "$HISTORY_FILE" 2>/dev/null || true
+
+  # Capture short change summary from git
+  BUILD_CHANGES=""
+  if command -v git &>/dev/null && git rev-parse --is-inside-work-tree &>/dev/null; then
+    CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null | head -10)
+    if [ -z "$CHANGED_FILES" ]; then
+      # Check staged files if no unstaged diff
+      CHANGED_FILES=$(git diff --name-only --cached HEAD 2>/dev/null | head -10)
+    fi
+    if [ -n "$CHANGED_FILES" ]; then
+      FILE_COUNT=$(printf '%s\n' "$CHANGED_FILES" | wc -l | tr -d ' ')
+      # Use basenames for brevity, show up to 3
+      SHORT_NAMES=$(printf '%s\n' "$CHANGED_FILES" | while read -r f; do basename "$f"; done | head -3 | paste -sd ', ' -)
+      if [ "$FILE_COUNT" -gt 3 ]; then
+        REMAINING=$(( FILE_COUNT - 3 ))
+        BUILD_CHANGES="${FILE_COUNT} files: ${SHORT_NAMES}, +${REMAINING} more"
+      else
+        BUILD_CHANGES="${FILE_COUNT} files: ${SHORT_NAMES}"
+      fi
+    fi
   fi
+
+  # Append + rotate under flock to prevent concurrent hook races
+  # flock is optional — not available on stock macOS
+  (
+    command -v flock &>/dev/null && flock -n 9
+    if command -v jq &>/dev/null; then
+      jq -nc --arg ts "$BUILD_TS" --arg cmd "$COMMAND" --arg desc "${DESCRIPTION:-}" --arg ec "${EXIT_CODE:-0}" --arg outcome "$BUILD_OUTCOME" --arg changes "$BUILD_CHANGES" \
+        '{ts:($ts|tonumber),command:$cmd,description:$desc,exit_code:$ec,outcome:$outcome,changes:$changes}' \
+        >> "$HISTORY_FILE" 2>/dev/null || true
+    else
+      python3 -c '
+import json, sys
+entry = {"ts": int(sys.argv[1]), "command": sys.argv[2], "description": sys.argv[3], "exit_code": sys.argv[4], "outcome": sys.argv[5], "changes": sys.argv[6]}
+print(json.dumps(entry, ensure_ascii=False))
+' "$BUILD_TS" "$COMMAND" "${DESCRIPTION:-}" "${EXIT_CODE:-0}" "$BUILD_OUTCOME" "$BUILD_CHANGES" \
+        >> "$HISTORY_FILE" 2>/dev/null || true
+    fi
+
+    # Rotate history: keep last 100 entries
+    MAX_HISTORY=100
+    LINE_COUNT=$(wc -l < "$HISTORY_FILE" 2>/dev/null || echo 0)
+    if [ "$LINE_COUNT" -gt "$MAX_HISTORY" ]; then
+      tail -n "$MAX_HISTORY" "$HISTORY_FILE" > "${HISTORY_FILE}.tmp" 2>/dev/null \
+        && mv "${HISTORY_FILE}.tmp" "$HISTORY_FILE" 2>/dev/null || true
+    fi
+  ) 9>"${HISTORY_FILE}.lock"
 
   muxcode-agent-bus chain build "$(chain_outcome)" \
     --exit-code "${EXIT_CODE:-}" --command "$COMMAND" 2>/dev/null || true

@@ -20,18 +20,18 @@ YELLOW='\033[38;5;228m'
 DIM='\033[2m'
 RESET='\033[0m'
 
-# Format epoch timestamp to HH:MM:SS
+# Format epoch timestamp to "Mon DD HH:MM:SS"
 format_ts() {
   local ts="$1"
   # macOS: date -r <epoch>
-  if date -r "$ts" '+%H:%M:%S' 2>/dev/null; then
+  if date -r "$ts" '+%b %d %H:%M:%S' 2>/dev/null; then
     return
   fi
   # Linux: date -d @<epoch>
-  if date -d "@$ts" '+%H:%M:%S' 2>/dev/null; then
+  if date -d "@$ts" '+%b %d %H:%M:%S' 2>/dev/null; then
     return
   fi
-  echo "??:??:??"
+  echo "??? ?? ??:??:??"
 }
 
 while true; do
@@ -60,29 +60,47 @@ while true; do
 
     # Recent builds (last 15)
     BUF+="  ${CYAN}recent builds${RESET}\n"
+    ENTRY_OFFSET=$(( TOTAL > 15 ? TOTAL - 15 : 0 ))
     ENTRIES=$(jq -s '.[-15:][] | @json' "$HISTORY_FILE" 2>/dev/null)
+    BUILD_NUM=$ENTRY_OFFSET
     if [ -n "$ENTRIES" ]; then
       while IFS= read -r entry; do
         entry="${entry%\"}"
         entry="${entry#\"}"
+        BUILD_NUM=$(( BUILD_NUM + 1 ))
         # Unescape the JSON string
         raw=$(printf '%s' "$entry" | jq -r '.' 2>/dev/null) || continue
         ts=$(printf '%s' "$raw" | jq -r '.ts // empty' 2>/dev/null)
         cmd=$(printf '%s' "$raw" | jq -r '.command // empty' 2>/dev/null)
+        desc=$(printf '%s' "$raw" | jq -r '.description // empty' 2>/dev/null)
         ec=$(printf '%s' "$raw" | jq -r '.exit_code // empty' 2>/dev/null)
+        outcome=$(printf '%s' "$raw" | jq -r '.outcome // empty' 2>/dev/null)
+        changes=$(printf '%s' "$raw" | jq -r '.changes // empty' 2>/dev/null)
 
         [ -z "$ts" ] && continue
         TIME=$(format_ts "$ts")
 
         # Truncate long commands
-        if [ ${#cmd} -gt 30 ]; then
-          cmd="${cmd:0:27}..."
+        if [ ${#cmd} -gt 35 ]; then
+          cmd="${cmd:0:32}..."
         fi
 
+        # Build number prefix
+        NUM_LABEL=$(printf '#%-3s' "$BUILD_NUM")
+
         if [ "$ec" = "0" ]; then
-          BUF+="    ${DIM}${TIME}${RESET}  ${GREEN}OK${RESET}    ${cmd}  ${DIM}(${ec})${RESET}\n"
+          BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}OK${RESET}    ${cmd}\n"
         else
-          BUF+="    ${DIM}${TIME}${RESET}  ${RED}FAIL${RESET}  ${cmd}  ${DIM}(${ec})${RESET}\n"
+          BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${RED}FAIL${RESET}  ${cmd}  ${DIM}exit ${ec}${RESET}\n"
+        fi
+
+        # Show changes summary (preferred) or description on second line
+        DETAIL="${changes:-$desc}"
+        if [ -n "$DETAIL" ]; then
+          if [ ${#DETAIL} -gt 44 ]; then
+            DETAIL="${DETAIL:0:41}..."
+          fi
+          BUF+="         ${DIM}↳ ${DETAIL}${RESET}\n"
         fi
       done <<< "$ENTRIES"
     fi
@@ -101,10 +119,10 @@ while true; do
 
   else
     # python3 fallback
-    PARSED=$(python3 -c "
+    PARSED=$(python3 -c '
 import json, sys
 entries = []
-with open('$HISTORY_FILE') as f:
+with open(sys.argv[1]) as f:
     for line in f:
         line = line.strip()
         if line:
@@ -113,24 +131,31 @@ with open('$HISTORY_FILE') as f:
             except:
                 pass
 total = len(entries)
-passed = sum(1 for e in entries if str(e.get('exit_code', '1')) == '0')
+passed = sum(1 for e in entries if str(e.get("exit_code", "1")) == "0")
 failed = total - passed
-print(f'TOTAL={total}')
-print(f'PASS={passed}')
-print(f'FAIL={failed}')
+print(f"TOTAL={total}")
+print(f"PASS={passed}")
+print(f"FAIL={failed}")
+offset = max(0, total - 15)
 recent = entries[-15:]
-for e in recent:
-    ts = e.get('ts', 0)
-    cmd = e.get('command', '')
-    ec = str(e.get('exit_code', '?'))
-    if len(cmd) > 30:
-        cmd = cmd[:27] + '...'
-    status = 'OK' if ec == '0' else 'FAIL'
-    print(f'ENTRY={ts}|{status}|{cmd}|{ec}')
-if entries and str(entries[-1].get('exit_code', '0')) != '0':
-    print(f'LASTFAIL_CMD={entries[-1].get(\"command\", \"\")}')
-    print(f'LASTFAIL_EC={entries[-1].get(\"exit_code\", \"?\")}')
-" 2>/dev/null)
+for i, e in enumerate(recent):
+    ts = e.get("ts", 0)
+    cmd = e.get("command", "")
+    changes = e.get("changes", "")
+    desc = e.get("description", "")
+    detail = changes if changes else desc
+    ec = str(e.get("exit_code", "?"))
+    num = offset + i + 1
+    if len(cmd) > 35:
+        cmd = cmd[:32] + "..."
+    if len(detail) > 44:
+        detail = detail[:41] + "..."
+    status = "OK" if ec == "0" else "FAIL"
+    print(f"ENTRY={ts}\t{status}\t{cmd}\t{ec}\t{num}\t{detail}")
+if entries and str(entries[-1].get("exit_code", "0")) != "0":
+    print(f"LASTFAIL_CMD={entries[-1].get('command', '')}")
+    print(f"LASTFAIL_EC={entries[-1].get('exit_code', '?')}")
+' "$HISTORY_FILE" 2>/dev/null)
 
     TOTAL=0; PASS=0; FAIL=0
     while IFS= read -r line; do
@@ -149,12 +174,16 @@ if entries and str(entries[-1].get('exit_code', '0')) != '0':
       case "$line" in
         ENTRY=*)
           line="${line#ENTRY=}"
-          IFS='|' read -r ts status cmd ec <<< "$line"
+          IFS=$'\t' read -r ts status cmd ec num desc <<< "$line"
           TIME=$(format_ts "$ts")
+          NUM_LABEL=$(printf '#%-3s' "$num")
           if [ "$status" = "OK" ]; then
-            BUF+="    ${DIM}${TIME}${RESET}  ${GREEN}OK${RESET}    ${cmd}  ${DIM}(${ec})${RESET}\n"
+            BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}OK${RESET}    ${cmd}\n"
           else
-            BUF+="    ${DIM}${TIME}${RESET}  ${RED}FAIL${RESET}  ${cmd}  ${DIM}(${ec})${RESET}\n"
+            BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${RED}FAIL${RESET}  ${cmd}  ${DIM}exit ${ec}${RESET}\n"
+          fi
+          if [ -n "$desc" ]; then
+            BUF+="         ${DIM}↳ ${desc}${RESET}\n"
           fi
           ;;
       esac
