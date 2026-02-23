@@ -82,7 +82,8 @@ FIRST_CMD=$(printf '%s' "$COMMAND" | sed 's/^cd [^;&|]* *[;&|]* *//' | sed 's/^[
 # Configurable patterns
 BUILD_PATTERNS="${MUXCODE_BUILD_PATTERNS:-./build.sh|pnpm*build|go*build|make|cargo*build|cdk*synth|tsc}"
 TEST_PATTERNS="${MUXCODE_TEST_PATTERNS:-./test.sh|jest|pnpm*test|pytest|go*test|go*vet|cargo*test|vitest}"
-DEPLOY_PATTERNS="${MUXCODE_DEPLOY_PATTERNS:-cdk*diff|cdk*deploy|cdk*destroy|cdk*synth*--all|terraform*plan|terraform*apply}"
+DEPLOY_PATTERNS="${MUXCODE_DEPLOY_PATTERNS:-cdk*diff|cdk*deploy|cdk*destroy|cdk*synth*--all|terraform*plan|terraform*apply|terraform*destroy|pulumi*up|pulumi*destroy|pulumi*preview|sam*deploy|sam*package|cloudformation*deploy|cloudformation*create-stack|cloudformation*update-stack}"
+DEPLOY_APPLY_PATTERNS="${MUXCODE_DEPLOY_APPLY_PATTERNS:-cdk*deploy|cdk*destroy|terraform*apply|terraform*destroy|pulumi*up|pulumi*destroy|sam*deploy|cloudformation*deploy|cloudformation*create-stack|cloudformation*update-stack}"
 GIT_PATTERNS="${MUXCODE_GIT_PATTERNS:-git*commit|git*push|git*merge|git*rebase|git*tag|git*cherry-pick|gh*pr*create|gh*pr*merge|gh*pr*close|gh*release*create}"
 
 # Detect build commands
@@ -111,6 +112,17 @@ for pat in "${DPATS[@]}"; do
     $pat*|bash*${pat##*/}*|sh*${pat##*/}*) is_deploy=1; break ;;
   esac
 done
+
+# Detect deploy-apply commands (subset of deploy that triggers verify chain)
+is_deploy_apply=0
+if [ "$is_deploy" -eq 1 ]; then
+  IFS='|' read -ra DAPATS <<< "$DEPLOY_APPLY_PATTERNS"
+  for pat in "${DAPATS[@]}"; do
+    case "$FIRST_CMD" in
+      $pat*|bash*${pat##*/}*|sh*${pat##*/}*) is_deploy_apply=1; break ;;
+    esac
+  done
+fi
 
 # Detect git commands
 is_git=0
@@ -450,6 +462,9 @@ print(json.dumps(entry, ensure_ascii=False))
     fi
   ) 9>"${DEPLOY_HISTORY_FILE}.lock"
 
-  muxcode-agent-bus chain deploy "$(chain_outcome)" \
-    --exit-code "${EXIT_CODE:-}" --command "$COMMAND" 2>/dev/null || true
+  # Only trigger verify chain for actual deployments (not diff/plan)
+  if [ "$is_deploy_apply" -eq 1 ]; then
+    muxcode-agent-bus chain deploy "$(chain_outcome)" \
+      --exit-code "${EXIT_CODE:-}" --command "$COMMAND" 2>/dev/null || true
+  fi
 fi

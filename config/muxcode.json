@@ -86,6 +86,7 @@
         "Bash(jq *)", "Bash(yq *)", "Bash(docker *)",
         "Bash(pnpm install*)", "Bash(npm install*)", "Bash(pip install*)",
         "Bash(cfn-lint*)", "Bash(tflint*)", "Bash(checkov*)",
+        "Bash(curl*)", "Bash(wget*)",
         "Write", "Edit"
       ],
       "cd_prefix": true
@@ -189,7 +190,28 @@
         "type": "event"
       },
       "notify_analyst": true
+    },
+    "deploy": {
+      "on_success": {
+        "send_to": "deploy",
+        "action": "verify",
+        "message": "Deployment succeeded (${command}) — verify deployed resources and report results to edit",
+        "type": "request"
+      },
+      "on_failure": {
+        "send_to": "edit",
+        "action": "notify",
+        "message": "Deployment FAILED (exit ${exit_code}): ${command} — check deploy window",
+        "type": "event"
+      },
+      "on_unknown": {
+        "send_to": "edit",
+        "action": "notify",
+        "message": "Deployment completed (exit code unknown): ${command}",
+        "type": "event"
+      },
+      "notify_analyst": true
     }
   },
-  "auto_cc": ["build", "test", "review"]
+  "auto_cc": ["build", "test", "review", "deploy"]
 }

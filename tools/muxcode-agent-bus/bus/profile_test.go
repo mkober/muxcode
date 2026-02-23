@@ -401,13 +401,32 @@ func TestResolveChain_TestFailure(t *testing.T) {
 	}
 }
 
-func TestResolveChain_NoChain(t *testing.T) {
+func TestResolveChain_DeploySuccess(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
 	action := ResolveChain("deploy", "success")
+	if action == nil {
+		t.Fatal("expected chain action for deploy success")
+	}
+	if action.SendTo != "deploy" {
+		t.Errorf("send_to = %q, want deploy", action.SendTo)
+	}
+	if action.Action != "verify" {
+		t.Errorf("action = %q, want verify", action.Action)
+	}
+	if action.Type != "request" {
+		t.Errorf("type = %q, want request", action.Type)
+	}
+}
+
+func TestResolveChain_NoChain(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	action := ResolveChain("nonexistent", "success")
 	if action != nil {
-		t.Errorf("expected nil for deploy success, got %+v", action)
+		t.Errorf("expected nil for nonexistent success, got %+v", action)
 	}
 }
 
@@ -421,8 +440,8 @@ func TestChainNotifyAnalyst(t *testing.T) {
 	if !ChainNotifyAnalyst("test") {
 		t.Error("expected notify_analyst=true for test")
 	}
-	if ChainNotifyAnalyst("deploy") {
-		t.Error("expected notify_analyst=false for deploy (no chain)")
+	if !ChainNotifyAnalyst("deploy") {
+		t.Error("expected notify_analyst=true for deploy")
 	}
 }
 

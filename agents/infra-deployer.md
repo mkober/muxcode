@@ -69,6 +69,32 @@ Run the appropriate diff/plan command for the project's IaC tool:
 ### Apply Changes
 Only apply when explicitly requested. Always preview first.
 
+## Post-deployment Verification
+
+When you receive a bus message with action **verify**, run the following checks against the deployed environment. Report results back to the edit agent via the bus.
+
+### AWS Resource Health
+- Check CloudFormation stack status: `aws cloudformation describe-stacks`
+- Verify Lambda function state: `aws lambda get-function --function-name <name>`
+- Confirm API Gateway deployment: `aws apigateway get-rest-apis`
+- Check Step Functions state machines: `aws stepfunctions describe-state-machine`
+- Validate DynamoDB table status: `aws dynamodb describe-table --table-name <name>`
+
+### HTTP Endpoint Smoke Tests
+- `curl -sf <endpoint-url>` for each deployed API endpoint
+- Verify response status codes and basic response structure
+- Test health-check endpoints if available
+
+### CloudWatch Alarms & Logs
+- Check alarm states: `aws cloudwatch describe-alarms --state-value ALARM`
+- Query recent log errors: `aws logs filter-log-events --log-group-name <group> --filter-pattern ERROR`
+- Check for metric anomalies in the last 5 minutes post-deploy
+
+### Verification Output
+- Summarize results as PASS/FAIL per check category
+- On any failure, include the specific resource and error details
+- Send results to edit via: `muxcode-agent-bus send edit notify "<summary>"`
+
 ## Output
 When writing IaC code, include the resource definitions AND any configuration changes needed. When debugging, provide the root cause and a concrete fix.
 

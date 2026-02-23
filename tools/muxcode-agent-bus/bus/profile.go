@@ -397,6 +397,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(jq *)", "Bash(yq *)", "Bash(docker *)",
 					"Bash(pnpm install*)", "Bash(npm install*)", "Bash(pip install*)",
 					"Bash(cfn-lint*)", "Bash(tflint*)", "Bash(checkov*)",
+					"Bash(curl*)", "Bash(wget*)",
 					"Write", "Edit",
 				},
 			},
@@ -488,6 +489,27 @@ func DefaultConfig() *MuxcodeConfig {
 			},
 		},
 		EventChains: map[string]EventChain{
+			"deploy": {
+				OnSuccess: &ChainAction{
+					SendTo:  "deploy",
+					Action:  "verify",
+					Message: "Deployment succeeded (${command}) — verify deployed resources and report results to edit",
+					Type:    "request",
+				},
+				OnFailure: &ChainAction{
+					SendTo:  "edit",
+					Action:  "notify",
+					Message: "Deployment FAILED (exit ${exit_code}): ${command} — check deploy window",
+					Type:    "event",
+				},
+				OnUnknown: &ChainAction{
+					SendTo:  "edit",
+					Action:  "notify",
+					Message: "Deployment completed (exit code unknown): ${command}",
+					Type:    "event",
+				},
+				NotifyAnalyst: true,
+			},
 			"build": {
 				OnSuccess: &ChainAction{
 					SendTo:  "test",
@@ -531,7 +553,7 @@ func DefaultConfig() *MuxcodeConfig {
 				NotifyAnalyst: true,
 			},
 		},
-		AutoCC: []string{"build", "test", "review"},
+		AutoCC: []string{"build", "test", "review", "deploy"},
 		SendPolicy: map[string]SendPolicy{
 			"build": {Deny: []string{"test"}},
 			"test":  {Deny: []string{"review"}},
