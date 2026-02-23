@@ -153,13 +153,14 @@ The build-test-review chain is **deterministic** — driven by bash hooks detect
 └────────────────────┴────────────────────┘
 ```
 
-### Split-Left Windows (edit, analyze, commit)
+### Split-Left Windows (edit, build, test, review, deploy, analyze, commit, watch)
 ```
 ┌────────────────────┬────────────────────┐
 │                    │                    │
 │   Tool             │   AI Agent         │
 │   (nvim/watcher/   │   (pane 1)         │
-│    git-status)     │                    │
+│    git-status/     │                    │
+│    watch-log)      │                    │
 │   (pane 0)         │                    │
 └────────────────────┴────────────────────┘
 ```

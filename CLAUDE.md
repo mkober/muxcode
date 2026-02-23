@@ -24,6 +24,7 @@ scripts/
 ├── muxcode-analyze-hook.sh   # PostToolUse — route file events, trigger watcher
 ├── muxcode-bash-hook.sh      # PostToolUse — build-test-review chain
 ├── muxcode-git-status.sh     # Git status poller for commit window left pane
+├── muxcode-watch-log.sh      # Watch history poller for watch window left pane
 └── muxcode-test-wrapper.sh   # Test runner wrapper
 agents/                        # Default agent definition files (.md)
 config/
