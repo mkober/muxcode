@@ -28,7 +28,7 @@ type Dashboard struct {
 func NewDashboard(session string, refresh int) *Dashboard {
 	windows := sessionWindows(session)
 	if len(windows) == 0 {
-		// Fallback: use all known roles except status
+		// Fallback: use all known roles except console
 		windows = make([]string, len(bus.KnownRoles))
 		copy(windows, bus.KnownRoles)
 	}
@@ -42,7 +42,7 @@ func NewDashboard(session string, refresh int) *Dashboard {
 }
 
 // sessionWindows queries tmux for the list of windows in the session,
-// excluding the "status" window (which runs the dashboard itself).
+// excluding the "console" window (which runs the dashboard itself).
 func sessionWindows(session string) []string {
 	out, err := exec.Command("tmux", "list-windows", "-t", session, "-F", "#W").Output()
 	if err != nil {
@@ -51,7 +51,7 @@ func sessionWindows(session string) []string {
 	var windows []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		w := strings.TrimSpace(line)
-		if w != "" && w != "status" {
+		if w != "" && w != "console" {
 			windows = append(windows, w)
 		}
 	}
@@ -176,7 +176,7 @@ func (d *Dashboard) render() string {
 	// ── Header ──
 	title := "AGENT DASHBOARD"
 	right := fmt.Sprintf("Session: %s   \u21bb %ds", d.session, d.refresh)
-	gap := inner - len(title) - len(right) - 4
+	gap := inner - len(title) - len([]rune(right)) - 4 // len([]rune) for right — contains multi-byte ↻
 	if gap < 1 {
 		gap = 1
 	}
@@ -313,7 +313,7 @@ func (d *Dashboard) render() string {
 
 	// ── MESSAGE BUS section ──
 	b.WriteString(d.sectionHeader("MESSAGE BUS", inner))
-	busLines := RenderBus(d.session)
+	busLines := RenderBus(d.session, inner)
 	for _, line := range busLines {
 		b.WriteString(d.boxLine(line, inner))
 	}
@@ -400,15 +400,15 @@ func (d *Dashboard) sectionHeader(title string, inner int) string {
 		border, RST)
 }
 
-// boxLine wraps a content line inside ║...║, padding to inner width.
+// boxLine wraps a content line inside ║...║, padding or truncating to inner width.
 func (d *Dashboard) boxLine(content string, inner int) string {
 	border := Purple + Bold
-	plain := StripAnsi(content)
-	plen := len([]rune(plain))
-	padN := inner - plen
-	if padN < 0 {
-		padN = 0
+	plen := VisibleWidth(content)
+	if plen > inner {
+		content = TruncateAnsi(content, inner)
+		plen = inner
 	}
+	padN := inner - plen
 	return fmt.Sprintf("%s\u2551%s%s%s%s\u2551%s\n",
 		border, RST,
 		content,

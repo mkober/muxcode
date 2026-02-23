@@ -48,7 +48,9 @@
   "permissions": {
     "allow": [
       "Bash(muxcode-agent-bus *)",
-      "Bash(./bin/muxcode-agent-bus *)"
+      "Bash(./bin/muxcode-agent-bus *)",
+      "Bash(printf * | muxcode-agent-bus *)",
+      "Bash(printf * | ./bin/muxcode-agent-bus *)"
     ]
   }
 }

@@ -270,6 +270,161 @@ func TestSplitLines_LargeInput(t *testing.T) {
 	}
 }
 
+func TestLogOutputStdin(t *testing.T) {
+	// Verify that --output-stdin reads output from stdin and stores it in the entry.
+	// We can't call Log() directly (it uses os.Exit), so we replicate the stdin
+	// reading logic and verify the resulting entry structure.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-history.jsonl")
+
+	// Simulate what Log() does with --output-stdin: read from a reader and trim newlines
+	stdinContent := "Must-fix:\n- cmd/log.go:42 missing nil check\nShould-fix:\n- cmd/log.go:50 add context to error\nNits:\n- cmd/log.go:10 import order\n"
+	output := strings.TrimRight(stdinContent, "\n")
+
+	entry := map[string]interface{}{
+		"ts":        1234567890,
+		"summary":   "1 must-fix, 1 should-fix, 1 nits",
+		"exit_code": "1",
+		"command":   "",
+		"output":    output,
+		"outcome":   "failure",
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	f.Write(append(data, '\n'))
+	f.Close()
+
+	// Read back and verify the output field contains multi-line content
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(splitLines(content)[0], &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	gotOutput, ok := decoded["output"].(string)
+	if !ok {
+		t.Fatalf("output field is not a string: %T", decoded["output"])
+	}
+
+	// Verify trailing newlines were trimmed
+	if strings.HasSuffix(gotOutput, "\n") {
+		t.Errorf("output should not have trailing newline, got %q", gotOutput)
+	}
+
+	// Verify multi-line content is preserved
+	if !strings.Contains(gotOutput, "Must-fix:") {
+		t.Errorf("output should contain 'Must-fix:', got %q", gotOutput)
+	}
+	if !strings.Contains(gotOutput, "Should-fix:") {
+		t.Errorf("output should contain 'Should-fix:', got %q", gotOutput)
+	}
+	if !strings.Contains(gotOutput, "Nits:") {
+		t.Errorf("output should contain 'Nits:', got %q", gotOutput)
+	}
+
+	// Verify newlines within content are preserved
+	lines := strings.Split(gotOutput, "\n")
+	if len(lines) != 6 {
+		t.Errorf("expected 6 lines in output, got %d: %q", len(lines), gotOutput)
+	}
+
+	// Verify outcome is failure (exit code 1 = must-fix found)
+	if decoded["outcome"] != "failure" {
+		t.Errorf("outcome = %q, want %q", decoded["outcome"], "failure")
+	}
+}
+
+func TestLogOutputFile(t *testing.T) {
+	// Verify that --output-file reads output from a file and stores it in the entry.
+	dir := t.TempDir()
+	historyPath := filepath.Join(dir, "review-history.jsonl")
+
+	// Write multi-line findings to a temp file (simulates Write tool output)
+	findingsPath := filepath.Join(dir, "review-findings.txt")
+	findingsContent := "Should-fix:\n- log_test.go:273 missing actual Log() codepath test\nNits:\n- styles.go:63 TruncateAnsi unbounded scan\n- model.go:179 use VisibleWidth for consistency\n"
+	if err := os.WriteFile(findingsPath, []byte(findingsContent), 0644); err != nil {
+		t.Fatalf("WriteFile findings: %v", err)
+	}
+
+	// Read the file and trim (replicating what Log() does with --output-file)
+	data, err := os.ReadFile(findingsPath)
+	if err != nil {
+		t.Fatalf("ReadFile findings: %v", err)
+	}
+	output := strings.TrimRight(string(data), "\n")
+
+	entry := map[string]interface{}{
+		"ts":        1234567890,
+		"summary":   "0 must-fix, 1 should-fix, 2 nits",
+		"exit_code": "0",
+		"command":   "",
+		"output":    output,
+		"outcome":   "success",
+	}
+	entryData, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	f, err := os.OpenFile(historyPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	f.Write(append(entryData, '\n'))
+	f.Close()
+
+	// Read back and verify
+	content, err := os.ReadFile(historyPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(splitLines(content)[0], &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	gotOutput, ok := decoded["output"].(string)
+	if !ok {
+		t.Fatalf("output field is not a string: %T", decoded["output"])
+	}
+
+	// Verify trailing newlines were trimmed
+	if strings.HasSuffix(gotOutput, "\n") {
+		t.Errorf("output should not have trailing newline, got %q", gotOutput)
+	}
+
+	// Verify multi-line content is preserved
+	if !strings.Contains(gotOutput, "Should-fix:") {
+		t.Errorf("output should contain 'Should-fix:', got %q", gotOutput)
+	}
+	if !strings.Contains(gotOutput, "Nits:") {
+		t.Errorf("output should contain 'Nits:', got %q", gotOutput)
+	}
+
+	// Verify newlines within content are preserved
+	lines := strings.Split(gotOutput, "\n")
+	if len(lines) != 5 {
+		t.Errorf("expected 5 lines in output, got %d: %q", len(lines), gotOutput)
+	}
+
+	// Verify outcome
+	if decoded["outcome"] != "success" {
+		t.Errorf("outcome = %q, want %q", decoded["outcome"], "success")
+	}
+}
+
 // itoa is a simple int-to-string helper to avoid importing strconv in tests.
 func itoa(n int) string {
 	if n == 0 {

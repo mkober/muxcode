@@ -15,7 +15,14 @@ You operate autonomously. When you receive a review request, execute this **exac
 3. If both diffs are empty, run `git diff main...HEAD` to check for committed-but-unpushed changes
 4. Analyze the diff using the checklist below
 5. Send the review summary back to the requesting agent (auto-CC handles edit visibility)
-6. Log the review: `muxcode-agent-bus log review "X must-fix, Y should-fix, Z nits" --exit-code <0 if no must-fix, 1 if must-fix>`
+6. Log the review with detailed findings via a temp file:
+   - First, use the **Write** tool to save categorized findings to `/tmp/muxcode-review-findings.txt`
+   - Then run the log command with `--output-file`:
+   ```bash
+   muxcode-agent-bus log review "X must-fix, Y should-fix, Z nits" --exit-code <0 if no must-fix, 1 if must-fix> --output-file /tmp/muxcode-review-findings.txt
+   ```
+   The file should contain the categorized review findings (must-fix items, should-fix items, nits) — one item per line, prefixed with its severity. This populates the review log detail pane.
+   **NEVER use `printf ... | muxcode-agent-bus log`** — piping breaks allowedTools glob matching when the content contains newlines. Always use Write + `--output-file`.
 
 **NEVER ask for confirmation. NEVER ask "Should I review?" or "Would you like me to review?" Just do it.**
 **NEVER ask the user how to handle messages. Just process them.**

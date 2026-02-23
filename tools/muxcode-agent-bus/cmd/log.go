@@ -3,7 +3,9 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -11,13 +13,22 @@ import (
 )
 
 // Log handles the "muxcode-agent-bus log" subcommand.
-// Usage: muxcode-agent-bus log <role> "<summary>" [--exit-code N] [--command CMD] [--output TEXT]
+// Usage: muxcode-agent-bus log <role> "<summary>" [--exit-code N] [--command CMD] [--output TEXT] [--output-stdin] [--output-file PATH]
+//
+// Output sources (mutually exclusive):
+//   --output TEXT        inline output string
+//   --output-stdin       read output from stdin (for piping)
+//   --output-file PATH   read output from a file (preferred for multi-line content)
+//
+// --output-file is the preferred method for multi-line output because it avoids
+// piping through printf, which breaks allowedTools glob patterns when the LLM
+// embeds literal newlines in the command string.
 //
 // Appends a timestamped JSON entry to <bus-dir>/<role>-history.jsonl.
 // Rotates to keep the last 100 entries.
 func Log(args []string) {
 	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus log <role> \"<summary>\" [--exit-code N] [--command CMD] [--output TEXT]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus log <role> \"<summary>\" [--exit-code N] [--command CMD] [--output TEXT] [--output-stdin] [--output-file PATH]\n")
 		os.Exit(1)
 	}
 
@@ -28,6 +39,8 @@ func Log(args []string) {
 	exitCode := "0"
 	command := ""
 	output := ""
+	outputStdin := false
+	outputFile := ""
 
 	for i := 0; i < len(remaining); i++ {
 		switch remaining[i] {
@@ -52,10 +65,55 @@ func Log(args []string) {
 			}
 			i++
 			output = remaining[i]
+		case "--output-stdin":
+			outputStdin = true
+		case "--output-file":
+			if i+1 >= len(remaining) {
+				fmt.Fprintf(os.Stderr, "Error: --output-file requires a path\n")
+				os.Exit(1)
+			}
+			i++
+			outputFile = remaining[i]
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", remaining[i])
 			os.Exit(1)
 		}
+	}
+
+	// Validate mutual exclusivity of output sources
+	outputSources := 0
+	if output != "" {
+		outputSources++
+	}
+	if outputStdin {
+		outputSources++
+	}
+	if outputFile != "" {
+		outputSources++
+	}
+	if outputSources > 1 {
+		fmt.Fprintf(os.Stderr, "Error: --output, --output-stdin, and --output-file are mutually exclusive\n")
+		os.Exit(1)
+	}
+
+	// Read output from stdin if --output-stdin is set
+	if outputStdin {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)
+			os.Exit(1)
+		}
+		output = strings.TrimRight(string(data), "\n")
+	}
+
+	// Read output from file if --output-file is set
+	if outputFile != "" {
+		data, err := os.ReadFile(outputFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading output file %s: %v\n", outputFile, err)
+			os.Exit(1)
+		}
+		output = strings.TrimRight(string(data), "\n")
 	}
 
 	// Derive outcome from exit code

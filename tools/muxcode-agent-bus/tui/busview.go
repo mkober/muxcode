@@ -21,7 +21,8 @@ type logEntry struct {
 }
 
 // RenderBus returns lines of ANSI-colored text showing bus state.
-func RenderBus(session string) []string {
+// inner is the usable width between box borders.
+func RenderBus(session string, inner int) []string {
 	busDir := bus.BusDir(session)
 	if _, err := os.Stat(busDir); os.IsNotExist(err) {
 		return []string{
@@ -31,8 +32,8 @@ func RenderBus(session string) []string {
 
 	var lines []string
 
-	// Inbox counts per role
-	inboxLine := "  "
+	// Build individual inbox entries, then wrap into lines that fit.
+	var entries []string
 	for _, role := range bus.KnownRoles {
 		count := bus.InboxCount(session, role)
 		locked := ""
@@ -44,9 +45,32 @@ func RenderBus(session string) []string {
 		if count > 0 {
 			color = Yellow
 		}
-		inboxLine += fmt.Sprintf("%s%s:%d%s%s ", color, role, count, locked, RST)
+		entries = append(entries, fmt.Sprintf("%s%s:%d%s%s", color, role, count, locked, RST))
 	}
-	lines = append(lines, inboxLine)
+
+	// Wrap entries into lines that fit within inner width.
+	// inner-2 leaves a 2-char right margin so text doesn't butt against the ║ border.
+	currentLine := "  "
+	currentVis := 2 // left indent matching inner-2 right margin
+	for i, entry := range entries {
+		entryVis := VisibleWidth(entry)
+		sep := " "
+		if i == 0 {
+			sep = ""
+		}
+		needed := len(sep) + entryVis
+		if currentVis+needed > inner-2 && currentVis > 2 {
+			lines = append(lines, currentLine)
+			currentLine = "  " + entry
+			currentVis = 2 + entryVis
+		} else {
+			currentLine += sep + entry
+			currentVis += needed
+		}
+	}
+	if currentVis > 2 {
+		lines = append(lines, currentLine)
+	}
 
 	// Last 3 log entries
 	logPath := bus.LogPath(session)

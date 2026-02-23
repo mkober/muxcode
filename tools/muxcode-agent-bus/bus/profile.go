@@ -325,6 +325,7 @@ func DefaultConfig() *MuxcodeConfig {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: true,
 				Tools: []string{
+					"Write",
 					"Bash(git diff*)", "Bash(git log*)", "Bash(git status*)",
 					"Bash(git show*)", "Bash(git blame*)", "Bash(git branch*)",
 					"Bash(git rev-parse*)", "Bash(git rev-list*)",

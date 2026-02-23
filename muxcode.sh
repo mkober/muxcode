@@ -9,7 +9,7 @@
 # The edit window gets a vertical split: editor (left) + agent (right).
 # Split-left windows get: tool (left) + agent (right).
 # Other agent windows split: terminal (left) + agent (right).
-# The status window runs the agent dashboard TUI.
+# The console window runs the agent dashboard TUI (left) + bash shell (right).
 
 set -euo pipefail
 
@@ -33,7 +33,7 @@ load_config
 # Configuration with defaults
 PROJECTS_DIR="${MUXCODE_PROJECTS_DIR:-$HOME}"
 SCAN_DEPTH="${MUXCODE_SCAN_DEPTH:-3}"
-WINDOWS="${MUXCODE_WINDOWS:-edit build test review deploy run commit analyze status}"
+WINDOWS="${MUXCODE_WINDOWS:-edit build test review deploy run commit analyze console}"
 ROLE_MAP="${MUXCODE_ROLE_MAP:-run=runner commit=git analyze=analyst}"
 SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-edit build test review analyze commit}"
 SHELL_INIT="${MUXCODE_SHELL_INIT:-}"
@@ -185,11 +185,14 @@ fi
 for WIN in "${WIN_ARRAY[@]:1}"; do
   ROLE="$(agent_role "$WIN")"
 
-  if [ "$WIN" = "status" ]; then
-    # Status window: dashboard TUI
+  if [ "$WIN" = "console" ]; then
+    # Console window: dashboard TUI (left) + bash shell (right)
     tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN"
     tmux send-keys -t "$SESSION:$WIN" "muxcode-agent-bus dashboard" Enter
+    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
+    send_init "$SESSION:$WIN.1"
+    tmux select-pane -t "$SESSION:$WIN.0"
   elif [ "$WIN" = "edit" ]; then
     # Edit window (if not first): editor + agent
     tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
