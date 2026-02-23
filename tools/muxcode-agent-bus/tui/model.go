@@ -175,8 +175,8 @@ func (d *Dashboard) render() string {
 
 	// ── Header ──
 	title := "AGENT DASHBOARD"
-	right := fmt.Sprintf("Session: %s   \u21bb %ds", d.session, d.refresh)
-	gap := inner - len(title) - len([]rune(right)) - 4 // len([]rune) for right — contains multi-byte ↻
+	right := fmt.Sprintf("Session: %s   %ds", d.session, d.refresh)
+	gap := inner - len(title) - len(right) - 4
 	if gap < 1 {
 		gap = 1
 	}
@@ -208,7 +208,7 @@ func (d *Dashboard) render() string {
 		// Check if window exists
 		windowExists := d.windowExists(win)
 		if !windowExists {
-			line := fmt.Sprintf("  %s\u25cb %s  --          \u2014       \u2014     window not found%s",
+			line := fmt.Sprintf("  %so %s  --          -       -     window not found%s",
 				Dim, Pad(win, 8), RST)
 			b.WriteString(d.boxLine(line, inner))
 			continue
@@ -227,7 +227,7 @@ func (d *Dashboard) render() string {
 
 		// Extract cost
 		agentCost := ExtractCost(fullOutput)
-		costDisplay := "\u2014"
+		costDisplay := "-"
 		if agentCost != "" {
 			costVal, err := strconv.ParseFloat(agentCost, 64)
 			if err == nil {
@@ -238,15 +238,15 @@ func (d *Dashboard) render() string {
 
 		// Extract tokens
 		agentTokens := ExtractTokens(fullOutput)
-		tokensDisplay := "\u2014"
+		tokensDisplay := "-"
 		if agentTokens != "" {
 			tokensDisplay = agentTokens
 			sessionTokens += TokensToRaw(agentTokens)
 		}
 
-		bullet := "\u25cf" // ●
+		bullet := "*"
 		if status.Status == "IDLE" {
-			bullet = "\u25cb" // ○
+			bullet = "o"
 		}
 
 		winPad := Pad(win, 8)

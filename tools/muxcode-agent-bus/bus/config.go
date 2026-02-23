@@ -24,6 +24,7 @@ var splitLeftWindows = map[string]bool{
 	"build":   true,
 	"test":    true,
 	"review":  true,
+	"deploy":  true,
 	"analyze": true,
 	"commit":  true,
 }

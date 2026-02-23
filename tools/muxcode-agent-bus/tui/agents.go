@@ -55,8 +55,8 @@ func DetectStatus(window, output, prevHash string) (AgentStatus, string) {
 		Window:      window,
 		Status:      "IDLE",
 		StatusColor: Dim,
-		Cost:        "\u2014",
-		Tokens:      "\u2014",
+		Cost:        "-",
+		Tokens:      "-",
 	}
 
 	h := fmt.Sprintf("%x", md5.Sum([]byte(output)))

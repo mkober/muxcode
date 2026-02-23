@@ -36,13 +36,11 @@ muxcode-agent-bus inbox
 
 ### Send Messages
 ```bash
-# Short (single-line) messages — pass as argument:
-muxcode-agent-bus send <target> <action> "<message>"
-
-# Long (multi-line) messages — pipe via printf to avoid allowedTools glob issues:
-printf 'line1\nline2\nline3' | muxcode-agent-bus send <target> <action> --stdin
+muxcode-agent-bus send <target> <action> "<short single-line message>"
 ```
 Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research
+
+**CRITICAL: All `send` messages MUST be short, single-line strings with NO newlines.** The `Bash(muxcode-agent-bus *)` permission glob does NOT match newlines — any multi-line command will trigger a permission prompt and block the agent.
 
 ### Memory
 ```bash
@@ -56,15 +54,16 @@ muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
 - Save important learnings to memory after completing tasks
 
 ### Delegation — IMPORTANT
-**Never run build, test, deploy, or commit commands directly.** You have dedicated agents in separate tmux windows for these tasks. Always delegate via the message bus:
+**Never run build, test, deploy, git, or GitHub CLI commands directly.** You have dedicated agents in separate tmux windows for these tasks. Always delegate via the message bus:
 
 - **Build**: `muxcode-agent-bus send build build "Run ./build.sh and report results"`
 - **Test**: `muxcode-agent-bus send test test "Run tests and report results"`
 - **Review**: `muxcode-agent-bus send review review "Review the latest changes on this branch"`
 - **Deploy**: `muxcode-agent-bus send deploy deploy "Run deployment diff and report changes"`
 - **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes"`
+- **PR/Release**: `muxcode-agent-bus send commit commit "Create a PR for the current branch"` (all `gh` commands go to commit agent)
 
-When the user asks you to build, test, review, deploy, or commit — send the request to the appropriate agent. Do not run build scripts, test runners, deployment tools, or `git commit` yourself.
+When the user asks you to build, test, review, deploy, commit, create a PR, or run any `gh` command — send the request to the appropriate agent. Do not run build scripts, test runners, deployment tools, `git commit`, or `gh pr create` yourself.
 
 After delegating, tell the user which agent you sent the request to. When you receive the result back (via inbox), relay it to the user.
 

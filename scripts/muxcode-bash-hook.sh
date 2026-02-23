@@ -1,11 +1,12 @@
 #!/bin/bash
 # muxcode-bash-hook.sh — PostToolUse hook for Bash commands
 #
-# Detects build, test, and git commands:
-#   build success -> trigger test agent
-#   test success  -> trigger review agent
-#   any failure   -> notify edit agent
-#   git commands  -> log to commit history (no chain trigger)
+# Detects build, test, deploy, and git commands:
+#   build success  -> trigger test agent
+#   test success   -> trigger review agent
+#   deploy commands -> log to deploy history + trigger chain
+#   any failure    -> notify edit agent
+#   git commands   -> log to commit history (no chain trigger)
 # Also sends events to the analyst. Configured in settings.json as an async hook.
 #
 # Receives tool event JSON on stdin.
@@ -81,7 +82,8 @@ FIRST_CMD=$(printf '%s' "$COMMAND" | sed 's/^cd [^;&|]* *[;&|]* *//' | sed 's/^[
 # Configurable patterns
 BUILD_PATTERNS="${MUXCODE_BUILD_PATTERNS:-./build.sh|pnpm*build|go*build|make|cargo*build|cdk*synth|tsc}"
 TEST_PATTERNS="${MUXCODE_TEST_PATTERNS:-./test.sh|jest|pnpm*test|pytest|go*test|go*vet|cargo*test|vitest}"
-GIT_PATTERNS="${MUXCODE_GIT_PATTERNS:-git*commit|git*push|git*merge|git*rebase|git*tag|git*cherry-pick}"
+DEPLOY_PATTERNS="${MUXCODE_DEPLOY_PATTERNS:-cdk*diff|cdk*deploy|cdk*destroy|cdk*synth*--all|terraform*plan|terraform*apply}"
+GIT_PATTERNS="${MUXCODE_GIT_PATTERNS:-git*commit|git*push|git*merge|git*rebase|git*tag|git*cherry-pick|gh*pr*create|gh*pr*merge|gh*pr*close|gh*release*create}"
 
 # Detect build commands
 is_build=0
@@ -98,6 +100,15 @@ IFS='|' read -ra TPATS <<< "$TEST_PATTERNS"
 for pat in "${TPATS[@]}"; do
   case "$FIRST_CMD" in
     $pat*|bash*${pat##*/}*|sh*${pat##*/}*|npx*${pat##*/}*) is_test=1; break ;;
+  esac
+done
+
+# Detect deploy commands
+is_deploy=0
+IFS='|' read -ra DPATS <<< "$DEPLOY_PATTERNS"
+for pat in "${DPATS[@]}"; do
+  case "$FIRST_CMD" in
+    $pat*|bash*${pat##*/}*|sh*${pat##*/}*) is_deploy=1; break ;;
   esac
 done
 
@@ -333,6 +344,18 @@ except: pass
     if [ -z "$GIT_SUMMARY" ]; then
       GIT_SUMMARY="push"
     fi
+  elif [[ "$FIRST_CMD" == gh*pr*create* ]]; then
+    # Extract PR URL from gh pr create output
+    GIT_SUMMARY=$(printf '%s' "$GIT_OUTPUT" | grep -oE 'https://github\.com/[^ ]+/pull/[0-9]+' | head -1 2>/dev/null || true)
+    if [ -z "$GIT_SUMMARY" ]; then
+      GIT_SUMMARY="pr create"
+    fi
+  elif [[ "$FIRST_CMD" == gh*pr*merge* ]]; then
+    GIT_SUMMARY="pr merge"
+  elif [[ "$FIRST_CMD" == gh*pr*close* ]]; then
+    GIT_SUMMARY="pr close"
+  elif [[ "$FIRST_CMD" == gh*release*create* ]]; then
+    GIT_SUMMARY="release create"
   fi
 
   # Append + rotate under flock to prevent concurrent hook races
@@ -361,4 +384,72 @@ print(json.dumps(entry, ensure_ascii=False))
   ) 9>"${GIT_HISTORY_FILE}.lock"
 
   # No chain trigger — git commands don't start a build->test->review chain
+fi
+
+if [ "$is_deploy" -eq 1 ]; then
+  # Append to deploy history for left-pane display
+  DEPLOY_HISTORY_FILE="/tmp/muxcode-bus-${SESSION}/deploy-history.jsonl"
+  DEPLOY_TS=$(date +%s)
+  DEPLOY_OUTCOME=$(chain_outcome)
+
+  # Capture deploy output from tool response
+  DEPLOY_OUTPUT=""
+  if command -v jq &>/dev/null; then
+    DEPLOY_OUTPUT=$(printf '%s' "$EVENT" | jq -r '
+      (.tool_response // .tool_result // {}) as $r |
+      if ($r | type) == "string" then $r
+      elif ($r.stdout // "") != "" then $r.stdout
+      elif ($r.content // "") != "" then $r.content
+      else ""
+      end
+    ' 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tail -15)
+  else
+    DEPLOY_OUTPUT=$(printf '%s' "$EVENT" | python3 -c "
+import json, sys, re
+try:
+    d = json.load(sys.stdin)
+    r = d.get('tool_response', d.get('tool_result', {}))
+    out = ''
+    if isinstance(r, str): out = r
+    elif isinstance(r, dict): out = r.get('stdout', r.get('content', ''))
+    out = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', out)
+    lines = out.strip().split('\n')
+    print('\n'.join(lines[-15:]))
+except: pass
+" 2>/dev/null)
+  fi
+  # Truncate to max 1000 chars
+  if [ ${#DEPLOY_OUTPUT} -gt 1000 ]; then
+    DEPLOY_OUTPUT="${DEPLOY_OUTPUT:0:997}..."
+  fi
+  # Replace HOME with ~ for readability
+  DEPLOY_OUTPUT="${DEPLOY_OUTPUT//$HOME/\~}"
+
+  # Append + rotate under flock to prevent concurrent hook races
+  (
+    command -v flock &>/dev/null && flock -n 9
+    if command -v jq &>/dev/null; then
+      jq -nc --arg ts "$DEPLOY_TS" --arg cmd "$COMMAND" --arg desc "${DESCRIPTION:-}" --arg ec "${EXIT_CODE:-0}" --arg outcome "$DEPLOY_OUTCOME" --arg output "$DEPLOY_OUTPUT" \
+        '{ts:($ts|tonumber),command:$cmd,description:$desc,exit_code:$ec,outcome:$outcome,output:$output}' \
+        >> "$DEPLOY_HISTORY_FILE" 2>/dev/null || true
+    else
+      python3 -c '
+import json, sys
+entry = {"ts": int(sys.argv[1]), "command": sys.argv[2], "description": sys.argv[3], "exit_code": sys.argv[4], "outcome": sys.argv[5], "output": sys.argv[6]}
+print(json.dumps(entry, ensure_ascii=False))
+' "$DEPLOY_TS" "$COMMAND" "${DESCRIPTION:-}" "${EXIT_CODE:-0}" "$DEPLOY_OUTCOME" "$DEPLOY_OUTPUT" \
+        >> "$DEPLOY_HISTORY_FILE" 2>/dev/null || true
+    fi
+
+    # Rotate history: keep last 100 entries
+    MAX_HISTORY=100
+    LINE_COUNT=$(wc -l < "$DEPLOY_HISTORY_FILE" 2>/dev/null || echo 0)
+    if [ "$LINE_COUNT" -gt "$MAX_HISTORY" ]; then
+      tail -n "$MAX_HISTORY" "$DEPLOY_HISTORY_FILE" > "${DEPLOY_HISTORY_FILE}.tmp" 2>/dev/null \
+        && mv "${DEPLOY_HISTORY_FILE}.tmp" "$DEPLOY_HISTORY_FILE" 2>/dev/null || true
+    fi
+  ) 9>"${DEPLOY_HISTORY_FILE}.lock"
+
+  muxcode-agent-bus chain deploy "$(chain_outcome)" \
+    --exit-code "${EXIT_CODE:-}" --command "$COMMAND" 2>/dev/null || true
 fi

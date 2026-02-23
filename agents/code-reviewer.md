@@ -87,15 +87,11 @@ muxcode-agent-bus inbox
 
 ### Send Messages
 ```bash
-# Short (single-line) messages — pass as argument:
-muxcode-agent-bus send <target> <action> "<message>"
-
-# Long (multi-line) messages — pipe via printf to avoid allowedTools glob issues:
-printf 'line1\nline2\nline3' | muxcode-agent-bus send <target> <action> --stdin
+muxcode-agent-bus send <target> <action> "<short single-line message>"
 ```
 Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research
 
-**IMPORTANT: For multi-line messages (like review summaries), always pipe through printf with `--stdin`. Never embed literal newlines in the command string — the `*` glob in allowedTools does not match newlines.**
+**CRITICAL: All `send` messages MUST be short, single-line strings with NO newlines.** The `Bash(muxcode-agent-bus *)` permission glob does NOT match newlines — any multi-line command will trigger a permission prompt and block the agent. Put all detailed findings in the Write + log file (step 6), not in the send message.
 
 ### Memory
 ```bash
@@ -115,9 +111,10 @@ muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
 
 ### Review Agent Specifics
 - When you receive a review request, run the review immediately — do not ask for confirmation
-- After completing a review, always reply to the **requesting agent** (check the `from` field) with the summary:
-  `muxcode-agent-bus send <requester> review-complete "Review: X must-fix, Y should-fix, Z nits — <details>" --type response --reply-to <id>`
+- After completing a review, always reply to the **requesting agent** (check the `from` field) with a **short single-line summary only**:
+  `muxcode-agent-bus send <requester> review-complete "Review: X must-fix, Y should-fix, Z nits — LGTM" --type response --reply-to <id>`
+  **NEVER put detailed findings in the send command.** Detailed findings go ONLY in the Write + log file (step 6 above). The send message is just the counts and a one-phrase verdict (e.g. "LGTM", "one blocking issue in auth.go", "clean refactor").
 - Do NOT send a separate notify to edit — the bus auto-CC's your response to edit's inbox when the requester is another agent
 - If the requester IS edit, your reply goes directly to edit — no extra message needed either way
-- If must-fix issues found, include the most critical one in the reply
+- If must-fix issues found, mention the most critical file/issue in the one-phrase verdict
 - Save recurring code quality patterns to shared memory

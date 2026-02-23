@@ -27,9 +27,18 @@ import (
 // Appends a timestamped JSON entry to <bus-dir>/<role>-history.jsonl.
 // Rotates to keep the last 100 entries.
 func Log(args []string) {
-	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus log <role> \"<summary>\" [--exit-code N] [--command CMD] [--output TEXT] [--output-stdin] [--output-file PATH]\n")
+	if err := runLog(args, os.Stdin); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// runLog is the testable core of Log. It performs all log operations,
+// reading stdin from the provided reader, and returns an error instead
+// of calling os.Exit.
+func runLog(args []string, stdin io.Reader) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: muxcode-agent-bus log <role> \"<summary>\" [--exit-code N] [--command CMD] [--output TEXT] [--output-stdin] [--output-file PATH]")
 	}
 
 	role := args[0]
@@ -46,22 +55,19 @@ func Log(args []string) {
 		switch remaining[i] {
 		case "--exit-code":
 			if i+1 >= len(remaining) {
-				fmt.Fprintf(os.Stderr, "Error: --exit-code requires a value\n")
-				os.Exit(1)
+				return fmt.Errorf("--exit-code requires a value")
 			}
 			i++
 			exitCode = remaining[i]
 		case "--command":
 			if i+1 >= len(remaining) {
-				fmt.Fprintf(os.Stderr, "Error: --command requires a value\n")
-				os.Exit(1)
+				return fmt.Errorf("--command requires a value")
 			}
 			i++
 			command = remaining[i]
 		case "--output":
 			if i+1 >= len(remaining) {
-				fmt.Fprintf(os.Stderr, "Error: --output requires a value\n")
-				os.Exit(1)
+				return fmt.Errorf("--output requires a value")
 			}
 			i++
 			output = remaining[i]
@@ -69,14 +75,12 @@ func Log(args []string) {
 			outputStdin = true
 		case "--output-file":
 			if i+1 >= len(remaining) {
-				fmt.Fprintf(os.Stderr, "Error: --output-file requires a path\n")
-				os.Exit(1)
+				return fmt.Errorf("--output-file requires a path")
 			}
 			i++
 			outputFile = remaining[i]
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", remaining[i])
-			os.Exit(1)
+			return fmt.Errorf("unknown flag: %s", remaining[i])
 		}
 	}
 
@@ -92,16 +96,14 @@ func Log(args []string) {
 		outputSources++
 	}
 	if outputSources > 1 {
-		fmt.Fprintf(os.Stderr, "Error: --output, --output-stdin, and --output-file are mutually exclusive\n")
-		os.Exit(1)
+		return fmt.Errorf("--output, --output-stdin, and --output-file are mutually exclusive")
 	}
 
 	// Read output from stdin if --output-stdin is set
 	if outputStdin {
-		data, err := io.ReadAll(os.Stdin)
+		data, err := io.ReadAll(stdin)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("reading stdin: %v", err)
 		}
 		output = strings.TrimRight(string(data), "\n")
 	}
@@ -110,8 +112,7 @@ func Log(args []string) {
 	if outputFile != "" {
 		data, err := os.ReadFile(outputFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading output file %s: %v\n", outputFile, err)
-			os.Exit(1)
+			return fmt.Errorf("reading output file %s: %v", outputFile, err)
 		}
 		output = strings.TrimRight(string(data), "\n")
 	}
@@ -136,22 +137,19 @@ func Log(args []string) {
 
 	data, err := json.Marshal(entry)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("encoding JSON: %v", err)
 	}
 
 	// Ensure bus directory exists
 	busDir := bus.BusDir(session)
 	if err := os.MkdirAll(busDir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating bus directory: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("creating bus directory: %v", err)
 	}
 
 	// Open file for append (create if needed), write entry
 	f, err := os.OpenFile(historyPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening history file: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("opening history file: %v", err)
 	}
 
 	// File-level locking for safety (non-blocking, best-effort)
@@ -160,8 +158,7 @@ func Log(args []string) {
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		f.Close()
-		fmt.Fprintf(os.Stderr, "Error writing history entry: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("writing history entry: %v", err)
 	}
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	f.Close()
@@ -170,6 +167,7 @@ func Log(args []string) {
 	rotateHistory(historyPath, 100)
 
 	fmt.Printf("Logged %s: %s (%s)\n", role, summary, outcome)
+	return nil
 }
 
 // rotateHistory truncates a JSONL file to keep only the last maxEntries lines.

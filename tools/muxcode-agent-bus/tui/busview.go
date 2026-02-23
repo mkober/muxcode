@@ -84,7 +84,7 @@ func RenderBus(session string, inner int) []string {
 				continue
 			}
 			ts := time.Unix(entry.TS, 0).Format("15:04:05")
-			formatted := fmt.Sprintf("  %s %s\u2192%s %s:%s", ts, entry.From, entry.To, entry.Type, entry.Action)
+			formatted := fmt.Sprintf("  %s %s->%s %s:%s", ts, entry.From, entry.To, entry.Type, entry.Action)
 			lines = append(lines, fmt.Sprintf("  %s%s%s", Comment, formatted, RST))
 		}
 	} else {

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mkober/muxcode/tools/muxcode-agent-bus/bus"
 )
 
 func TestSplitLines_Basic(t *testing.T) {
@@ -271,38 +273,22 @@ func TestSplitLines_LargeInput(t *testing.T) {
 }
 
 func TestLogOutputStdin(t *testing.T) {
-	// Verify that --output-stdin reads output from stdin and stores it in the entry.
-	// We can't call Log() directly (it uses os.Exit), so we replicate the stdin
-	// reading logic and verify the resulting entry structure.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "review-history.jsonl")
+	// Exercise the actual runLog() codepath with --output-stdin.
+	session := "test-log-stdin"
+	t.Setenv("BUS_SESSION", session)
+	defer os.RemoveAll(bus.BusDir(session))
 
-	// Simulate what Log() does with --output-stdin: read from a reader and trim newlines
 	stdinContent := "Must-fix:\n- cmd/log.go:42 missing nil check\nShould-fix:\n- cmd/log.go:50 add context to error\nNits:\n- cmd/log.go:10 import order\n"
-	output := strings.TrimRight(stdinContent, "\n")
+	stdin := strings.NewReader(stdinContent)
 
-	entry := map[string]interface{}{
-		"ts":        1234567890,
-		"summary":   "1 must-fix, 1 should-fix, 1 nits",
-		"exit_code": "1",
-		"command":   "",
-		"output":    output,
-		"outcome":   "failure",
-	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
+	args := []string{"review", "1 must-fix, 1 should-fix, 1 nits", "--exit-code", "1", "--output-stdin"}
+	if err := runLog(args, stdin); err != nil {
+		t.Fatalf("runLog: %v", err)
 	}
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		t.Fatalf("OpenFile: %v", err)
-	}
-	f.Write(append(data, '\n'))
-	f.Close()
-
-	// Read back and verify the output field contains multi-line content
-	content, err := os.ReadFile(path)
+	// Read back the history entry written by runLog
+	historyPath := bus.HistoryPath(session, "review")
+	content, err := os.ReadFile(historyPath)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
@@ -346,45 +332,26 @@ func TestLogOutputStdin(t *testing.T) {
 }
 
 func TestLogOutputFile(t *testing.T) {
-	// Verify that --output-file reads output from a file and stores it in the entry.
-	dir := t.TempDir()
-	historyPath := filepath.Join(dir, "review-history.jsonl")
+	// Exercise the actual runLog() codepath with --output-file.
+	session := "test-log-file"
+	t.Setenv("BUS_SESSION", session)
+	defer os.RemoveAll(bus.BusDir(session))
 
 	// Write multi-line findings to a temp file (simulates Write tool output)
+	dir := t.TempDir()
 	findingsPath := filepath.Join(dir, "review-findings.txt")
 	findingsContent := "Should-fix:\n- log_test.go:273 missing actual Log() codepath test\nNits:\n- styles.go:63 TruncateAnsi unbounded scan\n- model.go:179 use VisibleWidth for consistency\n"
 	if err := os.WriteFile(findingsPath, []byte(findingsContent), 0644); err != nil {
 		t.Fatalf("WriteFile findings: %v", err)
 	}
 
-	// Read the file and trim (replicating what Log() does with --output-file)
-	data, err := os.ReadFile(findingsPath)
-	if err != nil {
-		t.Fatalf("ReadFile findings: %v", err)
-	}
-	output := strings.TrimRight(string(data), "\n")
-
-	entry := map[string]interface{}{
-		"ts":        1234567890,
-		"summary":   "0 must-fix, 1 should-fix, 2 nits",
-		"exit_code": "0",
-		"command":   "",
-		"output":    output,
-		"outcome":   "success",
-	}
-	entryData, err := json.Marshal(entry)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
+	args := []string{"review", "0 must-fix, 1 should-fix, 2 nits", "--exit-code", "0", "--output-file", findingsPath}
+	if err := runLog(args, strings.NewReader("")); err != nil {
+		t.Fatalf("runLog: %v", err)
 	}
 
-	f, err := os.OpenFile(historyPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		t.Fatalf("OpenFile: %v", err)
-	}
-	f.Write(append(entryData, '\n'))
-	f.Close()
-
-	// Read back and verify
+	// Read back the history entry written by runLog
+	historyPath := bus.HistoryPath(session, "review")
 	content, err := os.ReadFile(historyPath)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
@@ -422,6 +389,35 @@ func TestLogOutputFile(t *testing.T) {
 	// Verify outcome
 	if decoded["outcome"] != "success" {
 		t.Errorf("outcome = %q, want %q", decoded["outcome"], "success")
+	}
+}
+
+func TestRunLogErrors(t *testing.T) {
+	// Exercise runLog error paths directly.
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"too few args", []string{"review"}, "usage:"},
+		{"missing exit-code value", []string{"review", "summary", "--exit-code"}, "--exit-code requires a value"},
+		{"missing output value", []string{"review", "summary", "--output"}, "--output requires a value"},
+		{"missing command value", []string{"review", "summary", "--command"}, "--command requires a value"},
+		{"missing output-file path", []string{"review", "summary", "--output-file"}, "--output-file requires a path"},
+		{"unknown flag", []string{"review", "summary", "--bogus"}, "unknown flag: --bogus"},
+		{"mutually exclusive", []string{"review", "summary", "--output", "x", "--output-stdin"}, "mutually exclusive"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := runLog(tt.args, nil)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tt.want)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tt.want)
+			}
+		})
 	}
 }
 

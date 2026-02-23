@@ -98,15 +98,11 @@ muxcode-agent-bus inbox
 
 ### Send Messages
 ```bash
-# Short (single-line) messages — pass as argument:
-muxcode-agent-bus send <target> <action> "<message>"
-
-# Long (multi-line) messages — pipe via printf to avoid allowedTools glob issues:
-printf 'line1\nline2\nline3' | muxcode-agent-bus send <target> <action> --stdin
+muxcode-agent-bus send <target> <action> "<short single-line message>"
 ```
 Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research
 
-**IMPORTANT: For multi-line messages (like analysis summaries), always pipe through printf with `--stdin`. Never embed literal newlines in the command string — the `*` glob in allowedTools does not match newlines.**
+**CRITICAL: All `send` messages MUST be short, single-line strings with NO newlines.** The `Bash(muxcode-agent-bus *)` permission glob does NOT match newlines — any multi-line command will trigger a permission prompt and block the agent.
 
 ### Memory
 ```bash
