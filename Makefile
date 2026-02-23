@@ -1,6 +1,7 @@
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 CONFIGDIR ?= $(HOME)/.config/muxcode
+NVIM_PLUGIN_DIR ?= $(HOME)/.local/share/nvim/site/plugin
 
 .PHONY: build test install clean
 
@@ -30,6 +31,10 @@ install: build
 	cp -n agents/*.md $(CONFIGDIR)/agents/ 2>/dev/null || true
 	cp -n config/* $(CONFIGDIR)/ 2>/dev/null || true
 	cp -n muxcode.conf.example $(CONFIGDIR)/config 2>/dev/null || true
+	# Always overwrite: startscreen is a system file, not user-customizable
+	install -d $(NVIM_PLUGIN_DIR)
+	install -m 644 config/muxcode-startscreen.lua $(NVIM_PLUGIN_DIR)/muxcode-startscreen.lua
 
 clean:
 	rm -rf bin/
+	rm -f $(NVIM_PLUGIN_DIR)/muxcode-startscreen.lua
