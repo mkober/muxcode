@@ -32,37 +32,80 @@ allowed_tools() {
   local cdbus='Bash(cd * && muxcode-agent-bus *)'
   # Read-only tools all agents need for context and memory access
   local readonly_tools='Read Glob Grep'
+  # Common shell commands all agents may need
+  local common='Bash(ls*) Bash(cat*) Bash(which*) Bash(command -v*) Bash(pwd*) Bash(wc*) Bash(head*) Bash(tail*)'
   case "$1" in
     build)
-      echo "$bus" "$buspath" "$cdbus" $readonly_tools \
+      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
         'Bash(./build.sh*)' 'Bash(make*)' \
-        'Bash(pnpm run build*)' 'Bash(go build*)' 'Bash(cargo build*)' \
+        'Bash(pnpm run build*)' 'Bash(pnpm build*)' 'Bash(npm run build*)' \
+        'Bash(npx *)' 'Bash(go build*)' 'Bash(cargo build*)' \
         'Bash(cd * && ./build.sh*)' 'Bash(cd * && make*)' \
-        'Bash(cd * && pnpm run build*)' 'Bash(cd * && go build*)' 'Bash(cd * && cargo build*)'
+        'Bash(cd * && pnpm run build*)' 'Bash(cd * && pnpm build*)' \
+        'Bash(cd * && npm run build*)' 'Bash(cd * && npx *)' \
+        'Bash(cd * && go build*)' 'Bash(cd * && cargo build*)'
       ;;
     test)
-      echo "$bus" "$buspath" "$cdbus" $readonly_tools \
+      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
         'Bash(./test.sh*)' 'Bash(./scripts/muxcode-test-wrapper.sh*)' \
+        'Bash(./scripts/test-and-notify.sh*)' \
         'Bash(go test*)' 'Bash(go vet*)' \
-        'Bash(jest*)' 'Bash(npx jest*)' 'Bash(pnpm test*)' 'Bash(pnpm run test*)' \
-        'Bash(pytest*)' 'Bash(cargo test*)' \
+        'Bash(jest*)' 'Bash(npx jest*)' 'Bash(npx vitest*)' \
+        'Bash(pnpm test*)' 'Bash(pnpm run test*)' \
+        'Bash(npm test*)' 'Bash(npm run test*)' \
+        'Bash(pytest*)' 'Bash(python -m pytest*)' 'Bash(cargo test*)' \
+        'Bash(cd * && ./test.sh*)' 'Bash(cd * && ./scripts/test-and-notify.sh*)' \
         'Bash(cd * && go test*)' 'Bash(cd * && go vet*)' \
-        'Bash(cd * && jest*)' 'Bash(cd * && npx jest*)' 'Bash(cd * && pnpm test*)' \
-        'Bash(cd * && pnpm run test*)' 'Bash(cd * && pytest*)' 'Bash(cd * && cargo test*)'
+        'Bash(cd * && jest*)' 'Bash(cd * && npx jest*)' 'Bash(cd * && npx vitest*)' \
+        'Bash(cd * && pnpm test*)' 'Bash(cd * && pnpm run test*)' \
+        'Bash(cd * && npm test*)' 'Bash(cd * && npm run test*)' \
+        'Bash(cd * && pytest*)' 'Bash(cd * && python -m pytest*)' \
+        'Bash(cd * && cargo test*)'
       ;;
     review)
-      echo "$bus" "$buspath" "$cdbus" $readonly_tools \
+      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
         'Bash(git diff*)' 'Bash(git log*)' 'Bash(git status*)' 'Bash(git show*)' \
+        'Bash(git blame*)' 'Bash(git branch*)' \
         'Bash(cd * && git diff*)' 'Bash(cd * && git log*)' \
-        'Bash(cd * && git status*)' 'Bash(cd * && git show*)'
+        'Bash(cd * && git status*)' 'Bash(cd * && git show*)' \
+        'Bash(cd * && git blame*)' 'Bash(cd * && git branch*)'
       ;;
     git)
-      echo "$bus" "$buspath" "$cdbus" $readonly_tools \
+      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
         'Bash(git *)' 'Bash(gh *)' \
         'Bash(cd * && git *)' 'Bash(cd * && gh *)'
       ;;
+    deploy)
+      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
+        'Bash(cdk *)' 'Bash(npx cdk *)' \
+        'Bash(terraform *)' 'Bash(pulumi *)' \
+        'Bash(aws *)' 'Bash(sam *)' \
+        'Bash(./build.sh*)' 'Bash(make*)' \
+        'Bash(cd * && cdk *)' 'Bash(cd * && npx cdk *)' \
+        'Bash(cd * && terraform *)' 'Bash(cd * && pulumi *)' \
+        'Bash(cd * && aws *)' 'Bash(cd * && sam *)' \
+        'Bash(cd * && ./build.sh*)' 'Bash(cd * && make*)'
+      ;;
+    runner)
+      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
+        'Bash(curl*)' 'Bash(wget*)' \
+        'Bash(aws *)' 'Bash(gcloud *)' 'Bash(az *)' \
+        'Bash(docker *)' 'Bash(docker-compose *)' \
+        'Bash(jq*)' 'Bash(yq*)' \
+        'Bash(python*)' 'Bash(node*)' 'Bash(bash*)' \
+        'Bash(cd * && curl*)' 'Bash(cd * && wget*)' \
+        'Bash(cd * && aws *)' 'Bash(cd * && gcloud *)' 'Bash(cd * && az *)' \
+        'Bash(cd * && docker *)' 'Bash(cd * && docker-compose *)' \
+        'Bash(cd * && jq*)' 'Bash(cd * && yq*)' \
+        'Bash(cd * && python*)' 'Bash(cd * && node*)' 'Bash(cd * && bash*)'
+      ;;
     analyst)
-      echo "$bus" "$buspath" "$cdbus" $readonly_tools
+      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
+        'Bash(git diff*)' 'Bash(git log*)' 'Bash(git show*)' \
+        'Bash(git blame*)' 'Bash(git status*)' \
+        'Bash(cd * && git diff*)' 'Bash(cd * && git log*)' \
+        'Bash(cd * && git show*)' 'Bash(cd * && git blame*)' \
+        'Bash(cd * && git status*)'
       ;;
   esac
 }
@@ -79,41 +122,6 @@ build_flags() {
 
 AGENT="$(agent_name "$ROLE")"
 FLAGS="$(build_flags "$ROLE")"
-
-# Sub-agents run autonomously — skip interactive permission prompts.
-# The edit agent keeps normal permissions since it's user-facing.
-if [ "$ROLE" != "edit" ]; then
-  FLAGS="--dangerously-skip-permissions $FLAGS"
-fi
-
-# Auto-accept the bypass-permissions confirmation prompt.
-# Claude Code shows an interactive select ("Yes, I accept") when launched
-# with --dangerously-skip-permissions. This polls the tmux pane for the
-# prompt text and sends the keystrokes to accept it automatically.
-auto_accept_bypass() {
-  local pane="${TMUX_PANE:-}"
-  [ -z "$pane" ] && return
-  local max_wait="${MUXCODE_ACCEPT_TIMEOUT:-30}"
-  # Poll rapidly (0.2s) — the prompt can disappear within a second if a
-  # stale keystroke reaches it before we do.
-  local intervals=$(( max_wait * 5 ))
-  for ((i=0; i<intervals; i++)); do
-    local content
-    content="$(tmux capture-pane -t "$pane" -p 2>/dev/null)"
-    if echo "$content" | grep -q "Yes, I accept"; then
-      # Already exited? Don't send keys to a bare shell.
-      echo "$content" | grep -q "Resume this session" && return 1
-      sleep 0.3
-      # Send Down and Enter as SEPARATE calls so the TUI has time to
-      # process the cursor move before receiving the confirmation.
-      tmux send-keys -t "$pane" Down
-      sleep 0.3
-      tmux send-keys -t "$pane" Enter
-      return 0
-    fi
-    sleep 0.2
-  done
-}
 
 # Launch agent from a .md file outside the project by reading its content
 # and passing it via --agents JSON + --agent <name>.
@@ -135,18 +143,6 @@ launch_agent_from_file() {
 
 # Clear terminal so Claude Code starts with a clean screen
 clear
-
-# Drain any stale keystrokes from stdin (e.g. the Enter that launched this
-# script via tmux send-keys) so they don't accidentally confirm the bypass
-# permissions prompt before the auto-accept watcher can select "Yes".
-read -r -t 0.5 -n 10000 _ 2>/dev/null || true
-
-# Start the auto-accept watcher in the background for non-edit agents.
-# The background process polls the pane and accepts the bypass prompt
-# once it appears. It must be started before exec replaces this shell.
-if [ "$ROLE" != "edit" ]; then
-  auto_accept_bypass &
-fi
 
 # Search for agent file in priority order
 if [ -n "$AGENT" ]; then

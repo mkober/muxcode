@@ -197,7 +197,6 @@ Place custom agent files in `.claude/agents/` in your project or `~/.config/muxc
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Agent never starts / hangs at launch | Bypass permissions prompt not accepted | Check `MUXCODE_ACCEPT_TIMEOUT` (default 30s); ensure tmux pane is visible |
 | Build-test-review chain doesn't fire | `jq` and `python3` both missing | Install `jq` — hooks need it to parse JSON from stdin |
 | No diff preview in nvim | `python3` not available | Preview hook uses `python3` to generate proposed content; install it |
 | Messages not delivered | Bus directory missing or stale | Run `muxcode-agent-bus init` or restart the session |

@@ -127,7 +127,6 @@ The bus watcher (`muxcode-agent-bus watch`) uses a two-phase debounce: detect tr
 - Hooks consume JSON from stdin via `cat` — parse with `jq` or `python3`
 - Preview hook detects edit window via `tmux display-message -p '#W'` — exits immediately if not `edit`
 - Analyze hook writes trigger file at `/tmp/muxcode-analyze-{session}.trigger` — format: `<timestamp> <filepath>` per line
-- `auto_accept_bypass` in `muxcode-agent.sh` polls tmux pane for "Yes, I accept" prompt — timeout controlled by `MUXCODE_ACCEPT_TIMEOUT` (default 30s)
 
 ### Agent definitions
 

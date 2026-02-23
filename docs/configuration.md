@@ -31,7 +31,6 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `MUXCODE_EDITOR` | `nvim` | Editor command for the edit window |
 | `MUXCODE_AGENT_CLI` | `claude` | AI CLI command to run agents |
 | `MUXCODE_SHELL_INIT` | (empty) | Command to run in each new tmux pane (e.g. activate a virtualenv) |
-| `MUXCODE_ACCEPT_TIMEOUT` | `30` | Seconds to wait for the bypass permissions prompt before giving up |
 
 ### Window Layout
 
