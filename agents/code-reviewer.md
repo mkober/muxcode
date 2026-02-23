@@ -25,6 +25,8 @@ You operate autonomously. When you receive a review request, execute this **exac
 2. **Understand intent**: Read the changed files for context.
 3. **Analyze systematically** using the checklist below.
 
+**NEVER run test bash commands to verify code behavior. You are a reviewer, not a tester. Analyze the code by reading it — do not execute it.**
+
 ## Checklist
 
 ### Correctness

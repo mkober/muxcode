@@ -116,6 +116,39 @@ if [ "$is_build" -eq 1 ]; then
   BUILD_TS=$(date +%s)
   BUILD_OUTCOME=$(chain_outcome)
 
+  # Capture build output from tool response
+  BUILD_OUTPUT=""
+  if command -v jq &>/dev/null; then
+    BUILD_OUTPUT=$(printf '%s' "$EVENT" | jq -r '
+      (.tool_response // .tool_result // {}) as $r |
+      if ($r | type) == "string" then $r
+      elif ($r.stdout // "") != "" then $r.stdout
+      elif ($r.content // "") != "" then $r.content
+      else ""
+      end
+    ' 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tail -15)
+  else
+    BUILD_OUTPUT=$(printf '%s' "$EVENT" | python3 -c "
+import json, sys, re
+try:
+    d = json.load(sys.stdin)
+    r = d.get('tool_response', d.get('tool_result', {}))
+    out = ''
+    if isinstance(r, str): out = r
+    elif isinstance(r, dict): out = r.get('stdout', r.get('content', ''))
+    out = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', out)
+    lines = out.strip().split('\n')
+    print('\n'.join(lines[-15:]))
+except: pass
+" 2>/dev/null)
+  fi
+  # Truncate to max 1000 chars
+  if [ ${#BUILD_OUTPUT} -gt 1000 ]; then
+    BUILD_OUTPUT="${BUILD_OUTPUT:0:997}..."
+  fi
+  # Replace HOME with ~ for readability
+  BUILD_OUTPUT="${BUILD_OUTPUT//$HOME/\~}"
+
   # Capture short change summary from git
   BUILD_CHANGES=""
   if command -v git &>/dev/null && git rev-parse --is-inside-work-tree &>/dev/null; then
@@ -142,15 +175,15 @@ if [ "$is_build" -eq 1 ]; then
   (
     command -v flock &>/dev/null && flock -n 9
     if command -v jq &>/dev/null; then
-      jq -nc --arg ts "$BUILD_TS" --arg cmd "$COMMAND" --arg desc "${DESCRIPTION:-}" --arg ec "${EXIT_CODE:-0}" --arg outcome "$BUILD_OUTCOME" --arg changes "$BUILD_CHANGES" \
-        '{ts:($ts|tonumber),command:$cmd,description:$desc,exit_code:$ec,outcome:$outcome,changes:$changes}' \
+      jq -nc --arg ts "$BUILD_TS" --arg cmd "$COMMAND" --arg desc "${DESCRIPTION:-}" --arg ec "${EXIT_CODE:-0}" --arg outcome "$BUILD_OUTCOME" --arg changes "$BUILD_CHANGES" --arg output "$BUILD_OUTPUT" \
+        '{ts:($ts|tonumber),command:$cmd,description:$desc,exit_code:$ec,outcome:$outcome,changes:$changes,output:$output}' \
         >> "$HISTORY_FILE" 2>/dev/null || true
     else
       python3 -c '
 import json, sys
-entry = {"ts": int(sys.argv[1]), "command": sys.argv[2], "description": sys.argv[3], "exit_code": sys.argv[4], "outcome": sys.argv[5], "changes": sys.argv[6]}
+entry = {"ts": int(sys.argv[1]), "command": sys.argv[2], "description": sys.argv[3], "exit_code": sys.argv[4], "outcome": sys.argv[5], "changes": sys.argv[6], "output": sys.argv[7]}
 print(json.dumps(entry, ensure_ascii=False))
-' "$BUILD_TS" "$COMMAND" "${DESCRIPTION:-}" "${EXIT_CODE:-0}" "$BUILD_OUTCOME" "$BUILD_CHANGES" \
+' "$BUILD_TS" "$COMMAND" "${DESCRIPTION:-}" "${EXIT_CODE:-0}" "$BUILD_OUTCOME" "$BUILD_CHANGES" "$BUILD_OUTPUT" \
         >> "$HISTORY_FILE" 2>/dev/null || true
     fi
 

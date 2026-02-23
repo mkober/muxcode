@@ -33,7 +33,7 @@ load_config
 # Configuration with defaults
 PROJECTS_DIR="${MUXCODE_PROJECTS_DIR:-$HOME}"
 SCAN_DEPTH="${MUXCODE_SCAN_DEPTH:-3}"
-WINDOWS="${MUXCODE_WINDOWS:-edit build test review deploy run commit analyze docs research status}"
+WINDOWS="${MUXCODE_WINDOWS:-edit build test review deploy run commit analyze status}"
 ROLE_MAP="${MUXCODE_ROLE_MAP:-run=runner commit=git analyze=analyst docs=docs research=research}"
 SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-edit build analyze commit}"
 SHELL_INIT="${MUXCODE_SHELL_INIT:-}"

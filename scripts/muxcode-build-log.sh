@@ -106,11 +106,39 @@ while true; do
     fi
     BUF+="\n"
 
-    # Last failure detail (if most recent build failed)
+    # Last build summary (output from most recent build)
     LAST_EC=$(jq -s '.[-1].exit_code // "0"' "$HISTORY_FILE" 2>/dev/null)
-    # Normalize: could be string or number
     LAST_EC=$(printf '%s' "$LAST_EC" | tr -d '"')
-    if [ "$LAST_EC" != "0" ]; then
+    LAST_OUTPUT=$(jq -s -r '.[-1].output // ""' "$HISTORY_FILE" 2>/dev/null)
+
+    if [ -n "$LAST_OUTPUT" ]; then
+      if [ "$LAST_EC" = "0" ]; then
+        BUF+="  ${GREEN}⏺ Build completed successfully:${RESET}\n\n"
+      else
+        BUF+="  ${RED}⏺ Build failed:${RESET}\n\n"
+      fi
+      FIRST_LINE=1
+      while IFS= read -r oline; do
+        oline=$(printf '%s' "$oline" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/^[[:space:]]*//')
+        [ -z "$oline" ] && continue
+        if [ ${#oline} -gt 60 ]; then
+          oline="${oline:0:57}..."
+        fi
+        if [ "$FIRST_LINE" -eq 1 ]; then
+          BUF+="  ${CYAN}${oline}${RESET}\n"
+          FIRST_LINE=0
+        else
+          BUF+="    ${DIM}- ${oline}${RESET}\n"
+        fi
+      done <<< "$LAST_OUTPUT"
+      if [ "$LAST_EC" = "0" ]; then
+        BUF+="    ${DIM}- No errors or warnings${RESET}\n"
+      fi
+      BUF+="\n"
+    fi
+
+    # Last failure detail (if most recent build failed and no output captured)
+    if [ "$LAST_EC" != "0" ] && [ -z "$LAST_OUTPUT" ]; then
       LAST_CMD=$(jq -s -r '.[-1].command // ""' "$HISTORY_FILE" 2>/dev/null)
       BUF+="  ${RED}last failure${RESET}\n"
       BUF+="    ${DIM}cmd${RESET}   ${LAST_CMD}\n"
@@ -152,9 +180,21 @@ for i, e in enumerate(recent):
         detail = detail[:41] + "..."
     status = "OK" if ec == "0" else "FAIL"
     print(f"ENTRY={ts}\t{status}\t{cmd}\t{ec}\t{num}\t{detail}")
-if entries and str(entries[-1].get("exit_code", "0")) != "0":
-    print(f"LASTFAIL_CMD={entries[-1].get('command', '')}")
-    print(f"LASTFAIL_EC={entries[-1].get('exit_code', '?')}")
+last = entries[-1] if entries else {}
+last_ec = str(last.get("exit_code", "0"))
+last_output = last.get("output", "")
+if last_output:
+    import re
+    print(f"LAST_EC={last_ec}")
+    for ol in last_output.strip().split("\n"):
+        ol = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", ol).strip()
+        if ol:
+            if len(ol) > 60:
+                ol = ol[:57] + "..."
+            print(f"LAST_OUTPUT_LINE={ol}")
+if entries and last_ec != "0" and not last_output:
+    print(f"LASTFAIL_CMD={last.get('command', '')}")
+    print(f"LASTFAIL_EC={last_ec}")
 ' "$HISTORY_FILE" 2>/dev/null)
 
     TOTAL=0; PASS=0; FAIL=0
@@ -190,6 +230,40 @@ if entries and str(entries[-1].get("exit_code", "0")) != "0":
     done <<< "$PARSED"
     BUF+="\n"
 
+    # Last build summary
+    PY_LAST_EC=""
+    HAS_OUTPUT=0
+    PY_FIRST_LINE=1
+    while IFS= read -r line; do
+      case "$line" in
+        LAST_EC=*) PY_LAST_EC="${line#LAST_EC=}" ;;
+        LAST_OUTPUT_LINE=*)
+          if [ "$HAS_OUTPUT" -eq 0 ]; then
+            HAS_OUTPUT=1
+            if [ "$PY_LAST_EC" = "0" ]; then
+              BUF+="  ${GREEN}⏺ Build completed successfully:${RESET}\n\n"
+            else
+              BUF+="  ${RED}⏺ Build failed:${RESET}\n\n"
+            fi
+          fi
+          OL="${line#LAST_OUTPUT_LINE=}"
+          if [ "$PY_FIRST_LINE" -eq 1 ]; then
+            BUF+="  ${CYAN}${OL}${RESET}\n"
+            PY_FIRST_LINE=0
+          else
+            BUF+="    ${DIM}- ${OL}${RESET}\n"
+          fi
+          ;;
+      esac
+    done <<< "$PARSED"
+    if [ "$HAS_OUTPUT" -eq 1 ] && [ "$PY_LAST_EC" = "0" ]; then
+      BUF+="    ${DIM}- No errors or warnings${RESET}\n"
+    fi
+    if [ "$HAS_OUTPUT" -eq 1 ]; then
+      BUF+="\n"
+    fi
+
+    # Last failure detail (fallback when no output captured)
     LASTFAIL_CMD=""
     LASTFAIL_EC=""
     while IFS= read -r line; do
