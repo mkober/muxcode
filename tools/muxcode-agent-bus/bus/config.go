@@ -12,7 +12,7 @@ import (
 var KnownRoles = []string{
 	"edit", "build", "test", "review",
 	"deploy", "run", "commit", "analyze",
-	"docs", "research",
+	"docs", "research", "watch", "pr-fix",
 }
 
 // splitLeftWindows lists windows that have a dedicated tool in the left pane.
@@ -27,6 +27,7 @@ var splitLeftWindows = map[string]bool{
 	"deploy":  true,
 	"analyze": true,
 	"commit":  true,
+	"watch":   true,
 }
 
 func init() {

@@ -455,6 +455,36 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(pip show*)", "Bash(npm info*)", "Bash(pnpm info*)",
 				},
 			},
+			"watch": {
+				Include:  []string{"bus", "readonly", "common"},
+				CdPrefix: true,
+				Tools: []string{
+					"Bash(tail *)", "Bash(journalctl *)",
+					"Bash(aws logs*)", "Bash(aws cloudwatch*)",
+					"Bash(gcloud logging*)", "Bash(az monitor*)",
+					"Bash(kubectl logs*)", "Bash(kubectl get events*)",
+					"Bash(docker logs*)", "Bash(docker-compose logs*)",
+					"Bash(stern *)",
+					"Bash(jq*)", "Bash(yq*)",
+					"Bash(python3*)", "Bash(node*)",
+					"Bash(curl *)", "Bash(ssh *)",
+					"Bash(zcat *)", "Bash(gunzip *)", "Bash(lnav *)",
+				},
+			},
+			"pr-fix": {
+				Include:  []string{"bus", "readonly", "common"},
+				CdPrefix: true,
+				Tools: []string{
+					"Write", "Edit",
+					"Bash(gh pr view*)", "Bash(gh pr checks*)", "Bash(gh pr diff*)",
+					"Bash(gh pr review*)", "Bash(gh api *)",
+					"Bash(gh pr list*)", "Bash(gh pr status*)",
+					"Bash(git diff*)", "Bash(git log*)", "Bash(git status*)",
+					"Bash(git show*)", "Bash(git blame*)",
+					"Bash(git rev-parse*)", "Bash(git branch*)",
+					"Bash(jq *)", "Bash(jq*)",
+				},
+			},
 		},
 		EventChains: map[string]EventChain{
 			"build": {

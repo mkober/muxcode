@@ -12,7 +12,7 @@ func TestDefaultConfig_HasAllRoles(t *testing.T) {
 	cfg := DefaultConfig()
 
 	// All known roles should have a tool profile
-	want := []string{"build", "test", "review", "git", "deploy", "runner", "analyst", "edit", "docs", "research"}
+	want := []string{"build", "test", "review", "git", "deploy", "runner", "analyst", "edit", "docs", "research", "watch", "pr-fix"}
 	for _, role := range want {
 		if _, ok := cfg.ToolProfiles[role]; !ok {
 			t.Errorf("DefaultConfig missing tool profile for role %q", role)
@@ -95,6 +95,80 @@ func TestResolveTools_Git(t *testing.T) {
 	// Should have cd-prefix variants (CdPrefix: true)
 	assertContains(t, tools, "Bash(cd * && git *)")
 	assertContains(t, tools, "Bash(cd * && gh *)")
+}
+
+func TestResolveTools_Watch(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	tools := ResolveTools("watch")
+	if len(tools) == 0 {
+		t.Fatal("ResolveTools(watch) returned empty list")
+	}
+
+	// Should include log-watching tools
+	assertContains(t, tools, "Bash(tail *)")
+	assertContains(t, tools, "Bash(aws logs*)")
+	assertContains(t, tools, "Bash(kubectl logs*)")
+	assertContains(t, tools, "Bash(docker logs*)")
+	assertContains(t, tools, "Bash(stern *)")
+	assertContains(t, tools, "Bash(journalctl *)")
+	// Should include shared readonly tools
+	assertContains(t, tools, "Read")
+	assertContains(t, tools, "Glob")
+	assertContains(t, tools, "Grep")
+	// Should include shared bus tools
+	assertContains(t, tools, "Bash(muxcode-agent-bus *)")
+	// Should NOT include Write/Edit (read-only agent)
+	assertNotContains(t, tools, "Write")
+	assertNotContains(t, tools, "Edit")
+	// Should NOT include git commands
+	assertNotContains(t, tools, "Bash(git *)")
+	// Should have cd-prefix variants (CdPrefix: true)
+	assertContains(t, tools, "Bash(cd * && tail *)")
+	assertContains(t, tools, "Bash(cd * && aws logs*)")
+	assertContains(t, tools, "Bash(cd * && kubectl logs*)")
+}
+
+func TestResolveTools_PrFix(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	tools := ResolveTools("pr-fix")
+	if len(tools) == 0 {
+		t.Fatal("ResolveTools(pr-fix) returned empty list")
+	}
+
+	// Should include Write and Edit for code fixes
+	assertContains(t, tools, "Write")
+	assertContains(t, tools, "Edit")
+	// Should include scoped gh pr commands
+	assertContains(t, tools, "Bash(gh pr view*)")
+	assertContains(t, tools, "Bash(gh pr checks*)")
+	assertContains(t, tools, "Bash(gh pr diff*)")
+	assertContains(t, tools, "Bash(gh api *)")
+	// Should include read-only git commands
+	assertContains(t, tools, "Bash(git diff*)")
+	assertContains(t, tools, "Bash(git log*)")
+	assertContains(t, tools, "Bash(git status*)")
+	assertContains(t, tools, "Bash(git show*)")
+	assertContains(t, tools, "Bash(git blame*)")
+	// Should include shared readonly tools
+	assertContains(t, tools, "Read")
+	assertContains(t, tools, "Glob")
+	assertContains(t, tools, "Grep")
+	// Should include shared bus tools
+	assertContains(t, tools, "Bash(muxcode-agent-bus *)")
+	// Should NOT include broad gh or git patterns
+	assertNotContains(t, tools, "Bash(gh *)")
+	assertNotContains(t, tools, "Bash(git *)")
+	// Should NOT include git commit/add (commit agent's job)
+	assertNotContains(t, tools, "Bash(git commit*)")
+	assertNotContains(t, tools, "Bash(git add*)")
+	assertNotContains(t, tools, "Bash(git push*)")
+	// Should have cd-prefix variants (CdPrefix: true)
+	assertContains(t, tools, "Bash(cd * && gh pr view*)")
+	assertContains(t, tools, "Bash(cd * && git diff*)")
 }
 
 func TestResolveTools_NoCdPrefix(t *testing.T) {
@@ -188,9 +262,9 @@ func TestLoadConfig_FallbackToDefault(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 
-	// Should have all default profiles (10 roles: build, test, review, git, deploy, runner, analyst, edit, docs, research)
-	if len(cfg.ToolProfiles) < 10 {
-		t.Errorf("expected at least 10 tool profiles, got %d", len(cfg.ToolProfiles))
+	// Should have all default profiles (12 roles: build, test, review, git, deploy, runner, analyst, edit, docs, research, watch, pr-fix)
+	if len(cfg.ToolProfiles) < 12 {
+		t.Errorf("expected at least 12 tool profiles, got %d", len(cfg.ToolProfiles))
 	}
 }
 

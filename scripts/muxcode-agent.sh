@@ -24,6 +24,8 @@ agent_name() {
     analyst) echo "editor-analyst" ;;
     docs)    echo "doc-writer" ;;
     research) echo "code-researcher" ;;
+    watch)    echo "log-watcher" ;;
+    pr-fix)   echo "pr-fixer" ;;
   esac
 }
 
@@ -120,6 +122,12 @@ case "$ROLE" in
     ;;
   research)
     PROMPT="You are the research agent. Search the web, read documentation, explore codebases, and answer technical questions. Provide concise findings with sources. Summarize APIs, libraries, and patterns."
+    ;;
+  watch)
+    PROMPT="You are the watch agent. Monitor logs from local files, CloudWatch, Kubernetes, and Docker. Tail logs, detect errors, summarize patterns. Report findings to the edit agent via the bus."
+    ;;
+  pr-fix)
+    PROMPT="You are the pr-fix agent. Read GitHub PR reviews and CI check failures, then make targeted code fixes. Use gh pr view, gh pr checks, gh api to read feedback. Fix issues with Write/Edit. Never commit, push, dismiss reviews, or close/merge PRs. Report results to the edit agent via the bus."
     ;;
   *)
     PROMPT="You are a general-purpose coding assistant."

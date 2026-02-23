@@ -20,7 +20,7 @@ func SharedPrompt(role string) string {
 	// Send Messages
 	b.WriteString("### Send Messages\n")
 	b.WriteString("```bash\nmuxcode-agent-bus send <target> <action> \"<short single-line message>\"\n```\n")
-	b.WriteString("Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research\n\n")
+	b.WriteString("Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research, watch, pr-fix\n\n")
 	b.WriteString("**CRITICAL: All `send` messages MUST be short, single-line strings with NO newlines.** ")
 	b.WriteString("The `Bash(muxcode-agent-bus *)` permission glob does NOT match newlines — ")
 	b.WriteString("any multi-line command will trigger a permission prompt and block the agent.\n\n")
