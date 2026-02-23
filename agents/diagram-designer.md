@@ -73,30 +73,3 @@ After every edit, run both verification scripts (Steps 1 and 2) to confirm:
 | Byte-count tools give wrong widths | `awk length()`, `wc -c` count UTF-8 bytes, not characters | Always use `python3 -c "print(len(line))"` |
 | Fixing one box shifts all boxes right | Box width change cascades through the row | After fixing, adjust trailing padding to restore total line width |
 
-## Agent Coordination
-
-You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
-
-### Check Messages
-```bash
-muxcode-agent-bus inbox
-```
-
-### Send Messages
-```bash
-muxcode-agent-bus send <target> <action> "<short single-line message>"
-```
-Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research
-
-**CRITICAL: All `send` messages MUST be short, single-line strings with NO newlines.** The `Bash(muxcode-agent-bus *)` permission glob does NOT match newlines — any multi-line command will trigger a permission prompt and block the agent.
-
-### Memory
-```bash
-muxcode-agent-bus memory context          # read shared + own memory
-muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
-```
-
-### Protocol
-- Check inbox when prompted with "You have new messages"
-- Reply to requests with `--type response --reply-to <id>`
-- Save important learnings to memory after completing tasks

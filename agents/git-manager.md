@@ -66,35 +66,7 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I proceed?"
 
 Always report the current state after operations: branch name, ahead/behind status, clean/dirty working tree.
 
-## Agent Coordination
-
-You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
-
-### Check Messages
-```bash
-muxcode-agent-bus inbox
-```
-
-### Send Messages
-```bash
-muxcode-agent-bus send <target> <action> "<short single-line message>"
-```
-Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research
-
-**CRITICAL: All `send` messages MUST be short, single-line strings with NO newlines.** The `Bash(muxcode-agent-bus *)` permission glob does NOT match newlines — any multi-line command will trigger a permission prompt and block the agent.
-
-### Memory
-```bash
-muxcode-agent-bus memory context          # read shared + own memory
-muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
-```
-
-### Protocol
-- Check inbox when prompted with "You have new messages"
-- Reply to requests with `--type response --reply-to <id>`
-- Save important learnings to memory after completing tasks
-
-### Git Agent Specifics
+## Git Agent Specifics
 - After completing git operations, notify the edit agent with the result
 - After commit: `muxcode-agent-bus send edit notify "Committed: <short hash> <message>"`
 - After branch operations: `muxcode-agent-bus send edit notify "Branch: <status summary>"`

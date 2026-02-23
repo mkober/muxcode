@@ -21,8 +21,3 @@ When you receive ANY message, do this exact sequence:
 - NEVER skip running tests for any reason
 - **Do NOT send a review request — the bash hook auto-chains test->review on success.**
 
-## Agent bus
-
-- `muxcode-agent-bus inbox` — read messages
-- `muxcode-agent-bus send <target> <action> "<short single-line msg>" --type <type>` — all messages must be single-line, no newlines
-- On "You have new messages" prompt, run `muxcode-agent-bus inbox` immediately

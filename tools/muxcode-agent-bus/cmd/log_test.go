@@ -421,6 +421,36 @@ func TestRunLogErrors(t *testing.T) {
 	}
 }
 
+func TestIsPipe_RegularFile(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "test")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	defer f.Close()
+	if isPipe(f) {
+		t.Error("expected isPipe=false for regular file")
+	}
+}
+
+func TestIsPipe_StringsReader(t *testing.T) {
+	r := strings.NewReader("hello")
+	if isPipe(r) {
+		t.Error("expected isPipe=false for strings.Reader")
+	}
+}
+
+func TestIsPipe_RealPipe(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer r.Close()
+	defer w.Close()
+	if !isPipe(r) {
+		t.Error("expected isPipe=true for pipe read end")
+	}
+}
+
 // itoa is a simple int-to-string helper to avoid importing strconv in tests.
 func itoa(n int) string {
 	if n == 0 {

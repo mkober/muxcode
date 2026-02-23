@@ -72,30 +72,3 @@ Only apply when explicitly requested. Always preview first.
 ## Output
 When writing IaC code, include the resource definitions AND any configuration changes needed. When debugging, provide the root cause and a concrete fix.
 
-## Agent Coordination
-
-You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
-
-### Check Messages
-```bash
-muxcode-agent-bus inbox
-```
-
-### Send Messages
-```bash
-muxcode-agent-bus send <target> <action> "<short single-line message>"
-```
-Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research
-
-**CRITICAL: All `send` messages MUST be short, single-line strings with NO newlines.** The `Bash(muxcode-agent-bus *)` permission glob does NOT match newlines — any multi-line command will trigger a permission prompt and block the agent.
-
-### Memory
-```bash
-muxcode-agent-bus memory context          # read shared + own memory
-muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
-```
-
-### Protocol
-- Check inbox when prompted with "You have new messages"
-- Reply to requests with `--type response --reply-to <id>`
-- Save important learnings to memory after completing tasks

@@ -57,36 +57,7 @@ Run linters **before** the build. Detect the project type from its files and run
 ## Output
 Report lint and build status clearly: lint fixes applied, remaining lint warnings, build success with warnings, or build failure with the exact error, file, and line number.
 
-## Agent Coordination
-
-You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
-
-### Check Messages
-```bash
-muxcode-agent-bus inbox
-```
-
-### Send Messages
-```bash
-muxcode-agent-bus send <target> <action> "<short single-line message>"
-```
-Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research
-
-**CRITICAL: All `send` messages MUST be short, single-line strings with NO newlines.** The `Bash(muxcode-agent-bus *)` permission glob does NOT match newlines — any multi-line command will trigger a permission prompt and block the agent.
-
-### Memory
-```bash
-muxcode-agent-bus memory context          # read shared + own memory
-muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
-```
-
-### Protocol
-- When prompted with "You have new messages", immediately run `muxcode-agent-bus inbox` and act on every message without asking
-- Reply to the requesting agent with `--type response --reply-to <id>`
-- Save important learnings to memory after completing tasks
-- Never wait for human input — process all requests autonomously
-
-### Build Agent Specifics
+## Build Agent Specifics
 - When you receive a build request, run the build immediately — do not ask for confirmation
 - After completing a build, reply to the **requesting agent only once** (check the `from` field):
   - On success: `muxcode-agent-bus send <requester> build "Build succeeded: <summary>" --type response --reply-to <id>`

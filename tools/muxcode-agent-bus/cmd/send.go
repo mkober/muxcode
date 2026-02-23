@@ -66,6 +66,11 @@ func Send(args []string) {
 		os.Exit(1)
 	}
 
+	// Validate payload content
+	for _, w := range validatePayload(payload) {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+
 	// Validate target role
 	if !bus.IsKnownRole(to) {
 		fmt.Fprintf(os.Stderr, "Error: unknown role '%s'. Known roles: %s\n", to, strings.Join(bus.KnownRoles, ", "))
@@ -74,6 +79,12 @@ func Send(args []string) {
 
 	session := bus.BusSession()
 	from := bus.BusRole()
+
+	// Check send policy (hard error)
+	if deny := bus.CheckSendPolicy(from, to); deny != "" {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", deny)
+		os.Exit(1)
+	}
 
 	msg := bus.NewMessage(from, to, msgType, action, payload, replyTo)
 	if err := bus.Send(session, msg); err != nil {
@@ -92,4 +103,16 @@ func Send(args []string) {
 	}
 
 	fmt.Printf("Sent %s:%s to %s\n", msgType, action, to)
+}
+
+// validatePayload returns warning strings for payload issues.
+func validatePayload(payload string) []string {
+	var warnings []string
+	if strings.Contains(payload, "\n") {
+		warnings = append(warnings, "payload contains newlines — this may break allowedTools glob matching")
+	}
+	if len(payload) > 500 {
+		warnings = append(warnings, fmt.Sprintf("payload is %d chars (>500) — consider using shorter messages", len(payload)))
+	}
+	return warnings
 }

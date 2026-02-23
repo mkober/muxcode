@@ -44,6 +44,17 @@ build_flags() {
 AGENT="$(agent_name "$ROLE")"
 build_flags "$ROLE"
 
+# Build --append-system-prompt flag from shared prompt template.
+# Uses muxcode-agent-bus prompt <role> to generate the common coordination section.
+SHARED_PROMPT_FLAGS=()
+build_shared_prompt() {
+  local prompt
+  prompt="$(muxcode-agent-bus prompt "$1" 2>/dev/null)" || return
+  [ -z "$prompt" ] && return
+  SHARED_PROMPT_FLAGS=(--append-system-prompt "$prompt")
+}
+build_shared_prompt "$ROLE"
+
 # Launch agent from a .md file outside the project by reading its content
 # and passing it via --agents JSON + --agent <name>.
 launch_agent_from_file() {
@@ -70,11 +81,11 @@ if [ -n "$AGENT" ]; then
   INSTALL_DIR="${SCRIPT_DIR%/scripts}"
 
   if [ -f ".claude/agents/${AGENT}.md" ]; then
-    exec $AGENT_CLI --agent "$AGENT" "${TOOL_FLAGS[@]}"
+    exec $AGENT_CLI --agent "$AGENT" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
   elif [ -f "$HOME/.config/muxcode/agents/${AGENT}.md" ]; then
-    launch_agent_from_file "$AGENT" "$HOME/.config/muxcode/agents/${AGENT}.md" "${TOOL_FLAGS[@]}"
+    launch_agent_from_file "$AGENT" "$HOME/.config/muxcode/agents/${AGENT}.md" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
   elif [ -f "$INSTALL_DIR/agents/${AGENT}.md" ]; then
-    launch_agent_from_file "$AGENT" "$INSTALL_DIR/agents/${AGENT}.md" "${TOOL_FLAGS[@]}"
+    launch_agent_from_file "$AGENT" "$INSTALL_DIR/agents/${AGENT}.md" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
   fi
 fi
 
@@ -115,4 +126,4 @@ case "$ROLE" in
     ;;
 esac
 
-exec $AGENT_CLI --append-system-prompt "$PROMPT" "${TOOL_FLAGS[@]}"
+exec $AGENT_CLI --append-system-prompt "$PROMPT" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"

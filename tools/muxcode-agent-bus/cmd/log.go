@@ -84,6 +84,11 @@ func runLog(args []string, stdin io.Reader) error {
 		}
 	}
 
+	// Warn if stdin is a pipe but neither --output-stdin nor --output-file is set
+	if !outputStdin && outputFile == "" && output == "" && isPipe(stdin) {
+		fmt.Fprintf(os.Stderr, "Warning: stdin is a pipe but neither --output-stdin nor --output-file was specified — piped data will be ignored\n")
+	}
+
 	// Validate mutual exclusivity of output sources
 	outputSources := 0
 	if output != "" {
@@ -191,6 +196,19 @@ func rotateHistory(path string, maxEntries int) {
 	}
 
 	_ = os.WriteFile(path, out, 0644)
+}
+
+// isPipe returns true if the reader is backed by a pipe (named pipe or FIFO).
+func isPipe(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeNamedPipe != 0
 }
 
 // splitLines splits data into non-empty lines.

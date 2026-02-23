@@ -25,35 +25,7 @@ Detect and follow the conventions already used in the project. Common patterns:
 - Preserve existing tests — add new ones for new behavior
 - Flag any breaking changes to the caller before making them
 
-## Agent Coordination
-
-You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
-
-### Check Messages
-```bash
-muxcode-agent-bus inbox
-```
-
-### Send Messages
-```bash
-muxcode-agent-bus send <target> <action> "<short single-line message>"
-```
-Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research
-
-**CRITICAL: All `send` messages MUST be short, single-line strings with NO newlines.** The `Bash(muxcode-agent-bus *)` permission glob does NOT match newlines — any multi-line command will trigger a permission prompt and block the agent.
-
-### Memory
-```bash
-muxcode-agent-bus memory context          # read shared + own memory
-muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
-```
-
-### Protocol
-- Check inbox when prompted with "You have new messages"
-- Reply to requests with `--type response --reply-to <id>`
-- Save important learnings to memory after completing tasks
-
-### Delegation — IMPORTANT
+## Delegation — IMPORTANT
 **Never run build, test, deploy, git, or GitHub CLI commands directly.** You have dedicated agents in separate tmux windows for these tasks. Always delegate via the message bus:
 
 - **Build**: `muxcode-agent-bus send build build "Run ./build.sh and report results"`
@@ -67,7 +39,7 @@ When the user asks you to build, test, review, deploy, commit, create a PR, or r
 
 After delegating, tell the user which agent you sent the request to. When you receive the result back (via inbox), relay it to the user.
 
-### Orchestration Role
+## Orchestration Role
 As the edit agent, you are the primary orchestrator. After making code changes:
 1. Delegate a build: `muxcode-agent-bus send build build "Run ./build.sh and report results"`
 2. After build succeeds, delegate tests: `muxcode-agent-bus send test test "Run tests and report results"`

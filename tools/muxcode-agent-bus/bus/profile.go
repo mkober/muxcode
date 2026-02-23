@@ -8,12 +8,18 @@ import (
 	"strings"
 )
 
-// MuxcodeConfig holds tool profiles, event chains, and auto-CC config.
+// MuxcodeConfig holds tool profiles, event chains, auto-CC, and send policy config.
 type MuxcodeConfig struct {
-	SharedTools  map[string][]string    `json:"shared_tools"`
-	ToolProfiles map[string]ToolProfile `json:"tool_profiles"`
-	EventChains  map[string]EventChain  `json:"event_chains"`
-	AutoCC       []string               `json:"auto_cc"`
+	SharedTools  map[string][]string     `json:"shared_tools"`
+	ToolProfiles map[string]ToolProfile  `json:"tool_profiles"`
+	EventChains  map[string]EventChain   `json:"event_chains"`
+	AutoCC       []string                `json:"auto_cc"`
+	SendPolicy   map[string]SendPolicy   `json:"send_policy,omitempty"`
+}
+
+// SendPolicy defines send restrictions for a role.
+type SendPolicy struct {
+	Deny []string `json:"deny"`
 }
 
 // ToolProfile defines allowed tools for a role.
@@ -110,6 +116,7 @@ func mergeConfigs(base, override *MuxcodeConfig) *MuxcodeConfig {
 		SharedTools:  make(map[string][]string),
 		ToolProfiles: make(map[string]ToolProfile),
 		EventChains:  make(map[string]EventChain),
+		SendPolicy:   make(map[string]SendPolicy),
 	}
 
 	// Copy base shared tools
@@ -144,6 +151,15 @@ func mergeConfigs(base, override *MuxcodeConfig) *MuxcodeConfig {
 		result.AutoCC = override.AutoCC
 	} else {
 		result.AutoCC = base.AutoCC
+	}
+
+	// Copy base send policies
+	for k, v := range base.SendPolicy {
+		result.SendPolicy[k] = v
+	}
+	// Override send policies (entire policy replaced per role)
+	for k, v := range override.SendPolicy {
+		result.SendPolicy[k] = v
 	}
 
 	return result
@@ -246,6 +262,25 @@ func ExpandMessage(template, exitCode, command string) string {
 // autoCCCache is the cached auto-CC role set.
 var autoCCCache map[string]bool
 
+// CheckSendPolicy returns an error message if the send is denied by policy,
+// or "" if the send is allowed.
+func CheckSendPolicy(from, to string) string {
+	cfg := Config()
+	if cfg.SendPolicy == nil {
+		return ""
+	}
+	policy, ok := cfg.SendPolicy[from]
+	if !ok {
+		return ""
+	}
+	for _, denied := range policy.Deny {
+		if denied == to {
+			return fmt.Sprintf("send policy denies %s → %s (hook-driven chain handles this)", from, to)
+		}
+	}
+	return ""
+}
+
 // GetAutoCC returns the set of roles whose messages are auto-CC'd to edit.
 func GetAutoCC() map[string]bool {
 	if autoCCCache != nil {
@@ -332,11 +367,21 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(git shortlog*)", "Bash(git stash list*)", "Bash(git remote*)",
 				},
 			},
-			"git": {
+			"edit": {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: false,
 				Tools: []string{
-					"Bash",
+					"Write", "Edit",
+					"Bash(tree *)", "Bash(python3*)", "Bash(jq*)",
+				},
+			},
+			"git": {
+				Include:  []string{"bus", "readonly", "common"},
+				CdPrefix: true,
+				Tools: []string{
+					"Write", "Edit",
+					"Bash(git *)", "Bash(gh *)",
+					"Bash(ssh-keyscan *)", "Bash(ssh-add *)",
 				},
 			},
 			"deploy": {
@@ -456,5 +501,9 @@ func DefaultConfig() *MuxcodeConfig {
 			},
 		},
 		AutoCC: []string{"build", "test", "review"},
+		SendPolicy: map[string]SendPolicy{
+			"build": {Deny: []string{"test"}},
+			"test":  {Deny: []string{"review"}},
+		},
 	}
 }

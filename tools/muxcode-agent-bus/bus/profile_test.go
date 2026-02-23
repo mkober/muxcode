@@ -11,17 +11,12 @@ import (
 func TestDefaultConfig_HasAllRoles(t *testing.T) {
 	cfg := DefaultConfig()
 
-	// All known roles except edit should have a tool profile
-	want := []string{"build", "test", "review", "git", "deploy", "runner", "analyst"}
+	// All known roles should have a tool profile
+	want := []string{"build", "test", "review", "git", "deploy", "runner", "analyst", "edit", "docs", "research"}
 	for _, role := range want {
 		if _, ok := cfg.ToolProfiles[role]; !ok {
 			t.Errorf("DefaultConfig missing tool profile for role %q", role)
 		}
-	}
-
-	// edit should NOT have a tool profile (it's the orchestrator)
-	if _, ok := cfg.ToolProfiles["edit"]; ok {
-		t.Error("DefaultConfig should not have a tool profile for edit")
 	}
 }
 
@@ -49,6 +44,57 @@ func TestResolveTools_Build(t *testing.T) {
 	assertContains(t, tools, "Bash(cd * && ./build.sh*)")
 	assertContains(t, tools, "Bash(cd * && make*)")
 	assertContains(t, tools, "Bash(cd * && go build*)")
+}
+
+func TestResolveTools_Edit(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	tools := ResolveTools("edit")
+	if len(tools) == 0 {
+		t.Fatal("ResolveTools(edit) returned empty list")
+	}
+
+	// Should include shared readonly tools
+	assertContains(t, tools, "Read")
+	assertContains(t, tools, "Glob")
+	assertContains(t, tools, "Grep")
+	// Should include Write and Edit
+	assertContains(t, tools, "Write")
+	assertContains(t, tools, "Edit")
+	// Should NOT include any git/gh commands (all delegated to commit agent)
+	assertNotContains(t, tools, "Bash(git diff*)")
+	assertNotContains(t, tools, "Bash(git log*)")
+	assertNotContains(t, tools, "Bash(git status*)")
+	assertNotContains(t, tools, "Bash(gh *)")
+	// Should NOT include build/test/deploy commands
+	assertNotContains(t, tools, "Bash(./build.sh*)")
+	assertNotContains(t, tools, "Bash(go test*)")
+	assertNotContains(t, tools, "Bash(cdk *)")
+	// Should NOT have cd-prefix variants (CdPrefix: false)
+	assertNotContains(t, tools, "Bash(cd * && tree *)")
+}
+
+func TestResolveTools_Git(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	tools := ResolveTools("git")
+	if len(tools) == 0 {
+		t.Fatal("ResolveTools(git) returned empty list")
+	}
+
+	// Should include broad git/gh patterns
+	assertContains(t, tools, "Bash(git *)")
+	assertContains(t, tools, "Bash(gh *)")
+	// Should include Write and Edit for conflict resolution
+	assertContains(t, tools, "Write")
+	assertContains(t, tools, "Edit")
+	// Should NOT have bare Bash (unrestricted)
+	assertNotContains(t, tools, "Bash")
+	// Should have cd-prefix variants (CdPrefix: true)
+	assertContains(t, tools, "Bash(cd * && git *)")
+	assertContains(t, tools, "Bash(cd * && gh *)")
 }
 
 func TestResolveTools_NoCdPrefix(t *testing.T) {
@@ -142,9 +188,9 @@ func TestLoadConfig_FallbackToDefault(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 
-	// Should have all default profiles
-	if len(cfg.ToolProfiles) < 7 {
-		t.Errorf("expected at least 7 tool profiles, got %d", len(cfg.ToolProfiles))
+	// Should have all default profiles (10 roles: build, test, review, git, deploy, runner, analyst, edit, docs, research)
+	if len(cfg.ToolProfiles) < 10 {
+		t.Errorf("expected at least 10 tool profiles, got %d", len(cfg.ToolProfiles))
 	}
 }
 
@@ -375,6 +421,53 @@ func TestGetAutoCC_Custom(t *testing.T) {
 	}
 	if cc["review"] {
 		t.Error("review should not be in custom auto_cc")
+	}
+}
+
+func TestCheckSendPolicy_Denied(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	msg := CheckSendPolicy("build", "test")
+	if msg == "" {
+		t.Error("expected deny message for build → test, got empty")
+	}
+
+	msg = CheckSendPolicy("test", "review")
+	if msg == "" {
+		t.Error("expected deny message for test → review, got empty")
+	}
+}
+
+func TestCheckSendPolicy_Allowed(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	msg := CheckSendPolicy("build", "edit")
+	if msg != "" {
+		t.Errorf("expected empty for build → edit, got %q", msg)
+	}
+
+	msg = CheckSendPolicy("test", "edit")
+	if msg != "" {
+		t.Errorf("expected empty for test → edit, got %q", msg)
+	}
+
+	msg = CheckSendPolicy("edit", "build")
+	if msg != "" {
+		t.Errorf("expected empty for edit → build, got %q", msg)
+	}
+}
+
+func TestCheckSendPolicy_NilPolicy(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.SendPolicy = nil
+	SetConfig(cfg)
+	defer SetConfig(nil)
+
+	msg := CheckSendPolicy("build", "test")
+	if msg != "" {
+		t.Errorf("expected empty for nil policy, got %q", msg)
 	}
 }
 

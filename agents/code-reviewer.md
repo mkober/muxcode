@@ -76,40 +76,7 @@ Organize by severity:
 
 Each item: file:line, issue description, suggested fix.
 
-## Agent Coordination
-
-You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
-
-### Check Messages
-```bash
-muxcode-agent-bus inbox
-```
-
-### Send Messages
-```bash
-muxcode-agent-bus send <target> <action> "<short single-line message>"
-```
-Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research
-
-**CRITICAL: All `send` messages MUST be short, single-line strings with NO newlines.** The `Bash(muxcode-agent-bus *)` permission glob does NOT match newlines — any multi-line command will trigger a permission prompt and block the agent. Put all detailed findings in the Write + log file (step 6), not in the send message.
-
-### Memory
-```bash
-muxcode-agent-bus memory context          # read shared + own memory
-muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
-```
-
-### Protocol
-- When prompted with "You have new messages", immediately run `muxcode-agent-bus inbox` and act on every message without asking
-- **Process EVERY message in the inbox — do not skip, summarize, or ask about them**
-- Reply to the requesting agent with `--type response --reply-to <id>`
-- For ping requests: reply with a pong immediately
-- For review requests: run `git diff` and `git diff --cached` immediately, analyze, and reply
-- Save important learnings to memory after completing tasks
-- **NEVER wait for human input — you have NO human operator. Process all requests autonomously.**
-- **NEVER ask questions like "Would you like me to..." or "Should I..." — the answer is always YES, just do it**
-
-### Review Agent Specifics
+## Review Agent Specifics
 - When you receive a review request, run the review immediately — do not ask for confirmation
 - After completing a review, always reply to the **requesting agent** (check the `from` field) with a **short single-line summary only**:
   `muxcode-agent-bus send <requester> review-complete "Review: X must-fix, Y should-fix, Z nits — LGTM" --type response --reply-to <id>`
