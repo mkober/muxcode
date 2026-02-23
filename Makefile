@@ -32,6 +32,8 @@ install: build
 		[ -f "$$f" ] && install -m 755 "$$f" $(BINDIR)/ ; \
 	done; true
 	@cp -n agents/*.md $(CONFIGDIR)/agents/ 2>/dev/null || true
+	@install -d $(CONFIGDIR)/skills
+	@cp -n skills/*.md $(CONFIGDIR)/skills/ 2>/dev/null || true
 	@cp -n config/* $(CONFIGDIR)/ 2>/dev/null || true
 	@cp -n muxcode.conf.example $(CONFIGDIR)/config 2>/dev/null || true
 	@install -d $(NVIM_PLUGIN_DIR)

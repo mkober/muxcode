@@ -151,6 +151,25 @@ func HistoryPath(session, role string) string {
 	return filepath.Join(BusDir(session), role+"-history.jsonl")
 }
 
+// SkillsDir returns the project-local skills directory path.
+// Uses BUS_SKILLS_DIR env if set, otherwise defaults to ".muxcode/skills".
+func SkillsDir() string {
+	if v := os.Getenv("BUS_SKILLS_DIR"); v != "" {
+		return v
+	}
+	return filepath.Join(".muxcode", "skills")
+}
+
+// UserSkillsDir returns the user-level skills directory path.
+// Uses MUXCODE_CONFIG_DIR env if set, otherwise defaults to "~/.config/muxcode/skills".
+func UserSkillsDir() string {
+	if v := os.Getenv("MUXCODE_CONFIG_DIR"); v != "" {
+		return filepath.Join(v, "skills")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "muxcode", "skills")
+}
+
 // TriggerFile returns the analyze trigger file path for a session.
 // Uses /tmp directly for compatibility with bash hooks.
 func TriggerFile(session string) string {

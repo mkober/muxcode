@@ -27,6 +27,7 @@ scripts/
 ├── muxcode-watch-log.sh      # Watch history poller for watch window left pane
 └── muxcode-test-wrapper.sh   # Test runner wrapper
 agents/                        # Default agent definition files (.md)
+skills/                        # Default skill definition files (.md)
 config/
 ├── settings.json              # Claude Code hooks template
 ├── tmux.conf                  # Tmux keybinding snippet
@@ -141,6 +142,16 @@ The bus watcher (`muxcode-agent-bus watch`) uses a two-phase debounce: detect tr
 - Shell-sourceable config files — resolution order: `$MUXCODE_CONFIG` > `.muxcode/config` > `~/.config/muxcode/config` > defaults
 - Variables set in higher-priority configs completely replace lower-priority values (bash source semantics)
 - `MUXCODE_SPLIT_LEFT` is read by both `muxcode.sh` (window layout) and the bus binary (pane targeting in `bus/config.go`)
+
+### Skill definitions
+
+- Markdown files with YAML frontmatter (`name`, `description`, `roles`, `tags`)
+- Three-tier resolution: `.muxcode/skills/` (project) > `~/.config/muxcode/skills/` (user) > `skills/` (defaults)
+- Project-local skills shadow user-level skills by name
+- Empty `roles: []` means the skill applies to all roles
+- kebab-case filenames (e.g. `go-testing.md`, `code-review-checklist.md`)
+- CLI: `muxcode-agent-bus skill list|load|search|create|prompt`
+- Skills are auto-injected into agent prompts at launch via `skill prompt <role>`
 
 ### Documentation
 

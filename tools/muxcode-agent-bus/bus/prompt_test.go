@@ -19,6 +19,8 @@ func TestSharedPrompt_ContainsRequiredSections(t *testing.T) {
 		"muxcode-agent-bus send",
 		"### Memory",
 		"muxcode-agent-bus memory context",
+		"### Skills",
+		"muxcode-agent-bus skill",
 		"### Protocol",
 		"--type response --reply-to",
 	}

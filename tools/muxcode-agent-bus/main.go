@@ -25,6 +25,7 @@ Commands:
   chain       Execute an event chain action
   log         Append an entry to a role's history log
   prompt      Output shared agent coordination prompt for a role
+  skill       Manage reusable instruction skills/plugins
 `
 
 func main() {
@@ -67,6 +68,8 @@ func main() {
 		cmd.Log(args)
 	case "prompt":
 		cmd.Prompt(args)
+	case "skill":
+		cmd.Skill(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

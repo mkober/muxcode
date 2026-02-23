@@ -30,6 +30,13 @@ func SharedPrompt(role string) string {
 	b.WriteString("```bash\nmuxcode-agent-bus memory context          # read shared + own memory\n")
 	b.WriteString("muxcode-agent-bus memory write \"<section>\" \"<text>\"  # save learnings\n```\n\n")
 
+	// Skills
+	b.WriteString("### Skills\n")
+	b.WriteString("```bash\nmuxcode-agent-bus skill list --role <role>\n")
+	b.WriteString("muxcode-agent-bus skill search <query>\n")
+	b.WriteString("muxcode-agent-bus skill load <name>\n")
+	b.WriteString("muxcode-agent-bus skill create <name> <desc> [--roles r1,r2] [--tags t1,t2] <body>\n```\n\n")
+
 	// Protocol
 	b.WriteString("### Protocol\n")
 	b.WriteString("- When prompted with \"You have new messages\", immediately run `muxcode-agent-bus inbox` and act on every message without asking\n")

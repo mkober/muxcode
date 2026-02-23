@@ -46,14 +46,16 @@ build_flags() {
 AGENT="$(agent_name "$ROLE")"
 build_flags "$ROLE"
 
-# Build --append-system-prompt flag from shared prompt template.
-# Uses muxcode-agent-bus prompt <role> to generate the common coordination section.
+# Build --append-system-prompt flag from shared prompt template + skills.
+# Uses muxcode-agent-bus prompt <role> for coordination and skill prompt <role> for skills.
 SHARED_PROMPT_FLAGS=()
 build_shared_prompt() {
-  local prompt
-  prompt="$(muxcode-agent-bus prompt "$1" 2>/dev/null)" || return
-  [ -z "$prompt" ] && return
-  SHARED_PROMPT_FLAGS=(--append-system-prompt "$prompt")
+  local prompt skills combined
+  prompt="$(muxcode-agent-bus prompt "$1" 2>/dev/null)" || prompt=""
+  skills="$(muxcode-agent-bus skill prompt "$1" 2>/dev/null)" || skills=""
+  combined="${prompt}${skills:+$'\n'$skills}"
+  [ -z "$combined" ] && return
+  SHARED_PROMPT_FLAGS=(--append-system-prompt "$combined")
 }
 build_shared_prompt "$ROLE"
 
