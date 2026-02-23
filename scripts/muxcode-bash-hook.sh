@@ -103,7 +103,21 @@ chain_outcome() {
 }
 
 if [ "$is_build" -eq 1 ]; then
-  muxcode-agent-bus chain build "$(chain_outcome build)" \
+  # Append to build history for left-pane display
+  HISTORY_FILE="/tmp/muxcode-bus-${SESSION}/build-history.jsonl"
+  BUILD_TS=$(date +%s)
+  BUILD_OUTCOME=$(chain_outcome)
+  if command -v jq &>/dev/null; then
+    jq -nc --arg ts "$BUILD_TS" --arg cmd "$COMMAND" --arg ec "${EXIT_CODE:-0}" --arg outcome "$BUILD_OUTCOME" \
+      '{ts:($ts|tonumber),command:$cmd,exit_code:$ec,outcome:$outcome}' \
+      >> "$HISTORY_FILE" 2>/dev/null || true
+  else
+    printf '{"ts":%s,"command":"%s","exit_code":"%s","outcome":"%s"}\n' \
+      "$BUILD_TS" "$(printf '%s' "$COMMAND" | sed 's/"/\\"/g')" "${EXIT_CODE:-0}" "$BUILD_OUTCOME" \
+      >> "$HISTORY_FILE" 2>/dev/null || true
+  fi
+
+  muxcode-agent-bus chain build "$(chain_outcome)" \
     --exit-code "${EXIT_CODE:-}" --command "$COMMAND" 2>/dev/null || true
 fi
 

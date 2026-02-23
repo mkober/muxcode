@@ -35,7 +35,7 @@ PROJECTS_DIR="${MUXCODE_PROJECTS_DIR:-$HOME}"
 SCAN_DEPTH="${MUXCODE_SCAN_DEPTH:-3}"
 WINDOWS="${MUXCODE_WINDOWS:-edit build test review deploy run commit analyze docs research status}"
 ROLE_MAP="${MUXCODE_ROLE_MAP:-run=runner commit=git analyze=analyst docs=docs research=research}"
-SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-edit analyze commit}"
+SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-edit build analyze commit}"
 SHELL_INIT="${MUXCODE_SHELL_INIT:-}"
 EDITOR="${MUXCODE_EDITOR:-nvim}"
 AGENT_CLI="${MUXCODE_AGENT_CLI:-claude}"
@@ -199,6 +199,17 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
     send_init "$SESSION:$WIN.1"
     tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER edit" Enter
     tmux select-pane -t "$SESSION:$WIN.0"
+  elif [ "$WIN" = "build" ] && is_split_left "$WIN"; then
+    # Build window: build log poller (left) + agent (right)
+    tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
+    send_init "$SESSION:$WIN"
+    if command -v muxcode-build-log.sh &>/dev/null; then
+      tmux send-keys -t "$SESSION:$WIN" "muxcode-build-log.sh" Enter
+    fi
+    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
+    send_init "$SESSION:$WIN.1"
+    tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
+    tmux select-pane -t "$SESSION:$WIN.1"
   elif [ "$WIN" = "commit" ] && is_split_left "$WIN"; then
     # Commit window: git status poller (left) + agent (right)
     tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"

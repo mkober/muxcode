@@ -21,6 +21,7 @@ var KnownRoles = []string{
 // Override via MUXCODE_SPLIT_LEFT env var (space-separated).
 var splitLeftWindows = map[string]bool{
 	"edit":    true,
+	"build":   true,
 	"analyze": true,
 	"commit":  true,
 }
@@ -129,6 +130,11 @@ func MemoryPath(role string) string {
 		return filepath.Join(MemoryDir(), "shared.md")
 	}
 	return filepath.Join(MemoryDir(), role+".md")
+}
+
+// BuildHistoryPath returns the build history JSONL file path for a session.
+func BuildHistoryPath(session string) string {
+	return filepath.Join(BusDir(session), "build-history.jsonl")
 }
 
 // TriggerFile returns the analyze trigger file path for a session.
