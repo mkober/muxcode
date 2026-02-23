@@ -24,5 +24,6 @@ When you receive ANY message, do this exact sequence:
 ## Agent bus
 
 - `muxcode-agent-bus inbox` — read messages
-- `muxcode-agent-bus send <target> <action> "<msg>" --type <type>` — send messages
+- `muxcode-agent-bus send <target> <action> "<msg>" --type <type>` — send short messages
+- `printf 'msg' | muxcode-agent-bus send <target> <action> --stdin --type <type>` — send long/multi-line messages
 - On "You have new messages" prompt, run `muxcode-agent-bus inbox` immediately

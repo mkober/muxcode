@@ -3,13 +3,22 @@
     "bus": [
       "Bash(muxcode-agent-bus *)",
       "Bash(./bin/muxcode-agent-bus *)",
-      "Bash(cd * && muxcode-agent-bus *)"
+      "Bash(cd * && muxcode-agent-bus *)",
+      "Bash(printf * | muxcode-agent-bus *)",
+      "Bash(echo * | muxcode-agent-bus *)",
+      "Bash(printf *)"
     ],
     "readonly": ["Read", "Glob", "Grep"],
     "common": [
       "Bash(ls*)", "Bash(cat*)", "Bash(which*)",
       "Bash(command -v*)", "Bash(pwd*)", "Bash(wc*)",
-      "Bash(head*)", "Bash(tail*)"
+      "Bash(head*)", "Bash(tail*)",
+      "Bash(file *)", "Bash(stat *)", "Bash(dirname *)", "Bash(basename *)",
+      "Bash(realpath *)", "Bash(date *)", "Bash(sort *)", "Bash(uniq *)",
+      "Bash(tr *)", "Bash(cut *)", "Bash(diff *)", "Bash(test *)",
+      "Bash([ *)", "Bash(true*)", "Bash(env *)", "Bash(xargs *)",
+      "Bash(sed *)", "Bash(awk *)", "Bash(grep *)", "Bash(find *)",
+      "Bash(tee *)"
     ]
   },
   "tool_profiles": {
@@ -18,7 +27,17 @@
       "tools": [
         "Bash(./build.sh*)", "Bash(make*)",
         "Bash(pnpm run build*)", "Bash(pnpm build*)", "Bash(npm run build*)",
-        "Bash(npx *)", "Bash(go build*)", "Bash(cargo build*)"
+        "Bash(npx *)", "Bash(go build*)", "Bash(cargo build*)",
+        "Bash(gofmt*)", "Bash(go vet*)",
+        "Bash(npx eslint*)", "Bash(npx prettier*)",
+        "Bash(ruff*)", "Bash(black*)",
+        "Bash(cargo clippy*)",
+        "Bash(go mod *)", "Bash(go generate*)", "Bash(golangci-lint*)",
+        "Bash(cargo fmt*)", "Bash(tsc *)",
+        "Bash(pnpm install*)", "Bash(pnpm add*)",
+        "Bash(npm install*)", "Bash(pip install*)", "Bash(pip *)",
+        "Bash(mkdir *)", "Bash(rm *)", "Bash(cp *)", "Bash(chmod *)",
+        "Bash(tar *)", "Bash(zip *)"
       ],
       "cd_prefix": true
     },
@@ -31,7 +50,10 @@
         "Bash(jest*)", "Bash(npx jest*)", "Bash(npx vitest*)",
         "Bash(pnpm test*)", "Bash(pnpm run test*)",
         "Bash(npm test*)", "Bash(npm run test*)",
-        "Bash(pytest*)", "Bash(python -m pytest*)", "Bash(cargo test*)"
+        "Bash(pytest*)", "Bash(python -m pytest*)", "Bash(cargo test*)",
+        "Bash(go tool cover*)", "Bash(go mod *)",
+        "Bash(npx c8*)", "Bash(nyc *)", "Bash(coverage*)",
+        "Bash(python -m coverage*)", "Bash(tox *)"
       ],
       "cd_prefix": true
     },
@@ -39,7 +61,9 @@
       "include": ["bus", "readonly", "common"],
       "tools": [
         "Bash(git diff*)", "Bash(git log*)", "Bash(git status*)",
-        "Bash(git show*)", "Bash(git blame*)", "Bash(git branch*)"
+        "Bash(git show*)", "Bash(git blame*)", "Bash(git branch*)",
+        "Bash(git rev-parse*)", "Bash(git rev-list*)",
+        "Bash(git shortlog*)", "Bash(git stash list*)", "Bash(git remote*)"
       ],
       "cd_prefix": true
     },
@@ -56,7 +80,12 @@
         "Bash(cdk *)", "Bash(npx cdk *)",
         "Bash(terraform *)", "Bash(pulumi *)",
         "Bash(aws *)", "Bash(sam *)",
-        "Bash(./build.sh*)", "Bash(make*)"
+        "Bash(./build.sh*)", "Bash(make*)",
+        "Bash(git diff*)", "Bash(git log*)", "Bash(git status*)",
+        "Bash(jq *)", "Bash(yq *)", "Bash(docker *)",
+        "Bash(pnpm install*)", "Bash(npm install*)", "Bash(pip install*)",
+        "Bash(cfn-lint*)", "Bash(tflint*)", "Bash(checkov*)",
+        "Write", "Edit"
       ],
       "cd_prefix": true
     },
@@ -67,7 +96,18 @@
         "Bash(aws *)", "Bash(gcloud *)", "Bash(az *)",
         "Bash(docker *)", "Bash(docker-compose *)",
         "Bash(jq*)", "Bash(yq*)",
-        "Bash(python*)", "Bash(node*)", "Bash(bash*)"
+        "Bash(python*)", "Bash(node*)", "Bash(bash*)",
+        "Bash(ssh *)", "Bash(scp *)", "Bash(rsync *)",
+        "Bash(nc *)", "Bash(dig *)", "Bash(nslookup *)",
+        "Bash(ping *)", "Bash(telnet *)", "Bash(openssl *)",
+        "Bash(kubectl *)", "Bash(helm *)",
+        "Bash(psql *)", "Bash(mysql *)", "Bash(redis-cli *)",
+        "Bash(mongosh *)", "Bash(sqlite3 *)",
+        "Bash(gh *)", "Bash(brew *)", "Bash(pip *)",
+        "Bash(go run *)", "Bash(cargo run *)", "Bash(make *)",
+        "Bash(mkdir *)", "Bash(rm *)", "Bash(chmod *)",
+        "Bash(tar *)", "Bash(unzip *)", "Bash(gzip *)", "Bash(base64 *)",
+        "Bash(export *)"
       ],
       "cd_prefix": true
     },
@@ -75,7 +115,33 @@
       "include": ["bus", "readonly", "common"],
       "tools": [
         "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)",
-        "Bash(git blame*)", "Bash(git status*)"
+        "Bash(git blame*)", "Bash(git status*)",
+        "Bash(git rev-parse*)", "Bash(git shortlog*)", "Bash(git stash list*)",
+        "Bash(python3*)", "Bash(jq*)"
+      ],
+      "cd_prefix": true
+    },
+    "docs": {
+      "include": ["bus", "readonly", "common"],
+      "tools": [
+        "Write", "Edit",
+        "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)",
+        "Bash(git status*)", "Bash(git blame*)",
+        "Bash(tree *)", "Bash(python3*)",
+        "Bash(npx typedoc*)", "Bash(godoc*)", "Bash(pydoc*)"
+      ],
+      "cd_prefix": true
+    },
+    "research": {
+      "include": ["bus", "readonly", "common"],
+      "tools": [
+        "WebSearch", "WebFetch",
+        "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)",
+        "Bash(git status*)", "Bash(git blame*)",
+        "Bash(python3*)", "Bash(node*)", "Bash(jq*)",
+        "Bash(curl *)", "Bash(gh *)", "Bash(tree *)",
+        "Bash(go doc *)", "Bash(go list *)",
+        "Bash(pip show*)", "Bash(npm info*)", "Bash(pnpm info*)"
       ],
       "cd_prefix": true
     }

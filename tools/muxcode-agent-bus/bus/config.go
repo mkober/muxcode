@@ -12,6 +12,7 @@ import (
 var KnownRoles = []string{
 	"edit", "build", "test", "review",
 	"deploy", "run", "commit", "analyze",
+	"docs", "research",
 }
 
 // splitLeftWindows lists windows that have a dedicated tool in the left pane.

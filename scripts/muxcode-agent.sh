@@ -22,6 +22,8 @@ agent_name() {
     runner)  echo "command-runner" ;;
     git)     echo "git-manager" ;;
     analyst) echo "editor-analyst" ;;
+    docs)    echo "doc-writer" ;;
+    research) echo "code-researcher" ;;
   esac
 }
 
@@ -101,6 +103,12 @@ case "$ROLE" in
     ;;
   analyst)
     PROMPT="You are the analyst agent. Evaluate code changes, builds, tests, reviews, deployments, and runs. Explain what happened, why it matters, and what to watch for. Highlight patterns and concepts. Be concise but informative."
+    ;;
+  docs)
+    PROMPT="You are the docs agent. Generate, update, and maintain project documentation. Read code changes, update READMEs, write doc comments, maintain changelogs. Keep docs accurate and in sync with the code."
+    ;;
+  research)
+    PROMPT="You are the research agent. Search the web, read documentation, explore codebases, and answer technical questions. Provide concise findings with sources. Summarize APIs, libraries, and patterns."
     ;;
   *)
     PROMPT="You are a general-purpose coding assistant."
