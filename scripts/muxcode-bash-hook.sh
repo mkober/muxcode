@@ -91,29 +91,24 @@ for pat in "${TPATS[@]}"; do
   esac
 done
 
-# Route events and drive the build->test->review chain
-if [ "$is_build" -eq 1 ]; then
+# Route events via config-driven event chains
+chain_outcome() {
+  local type="$1"
   if [ -z "$EXIT_CODE" ]; then
-    muxcode-agent-bus send analyze notify "Build completed (exit code unknown): $COMMAND" --type event --no-notify
+    echo "unknown"
   elif [ "$EXIT_CODE" = "0" ]; then
-    muxcode-agent-bus send analyze notify "Build succeeded: $COMMAND" --type event --no-notify
-    muxcode-agent-bus send test test "Build succeeded — run tests and report results" --type request
+    echo "success"
   else
-    muxcode-agent-bus send analyze notify "Build FAILED (exit $EXIT_CODE): $COMMAND" --type event --no-notify
-    muxcode-agent-bus send edit notify \
-      "Build FAILED (exit $EXIT_CODE): $COMMAND — check build window" --type event
+    echo "failure"
   fi
+}
+
+if [ "$is_build" -eq 1 ]; then
+  muxcode-agent-bus chain build "$(chain_outcome build)" \
+    --exit-code "${EXIT_CODE:-}" --command "$COMMAND" 2>/dev/null || true
 fi
 
 if [ "$is_test" -eq 1 ]; then
-  if [ -z "$EXIT_CODE" ]; then
-    muxcode-agent-bus send analyze notify "Tests completed (exit code unknown): $COMMAND" --type event --no-notify
-  elif [ "$EXIT_CODE" = "0" ]; then
-    muxcode-agent-bus send analyze notify "Tests passed: $COMMAND" --type event --no-notify
-    muxcode-agent-bus send review review "Tests passed — review the changes and report results to edit" --type request
-  else
-    muxcode-agent-bus send analyze notify "Tests FAILED (exit $EXIT_CODE): $COMMAND" --type event --no-notify
-    muxcode-agent-bus send edit notify \
-      "Tests FAILED (exit $EXIT_CODE): $COMMAND — check test window" --type event
-  fi
+  muxcode-agent-bus chain test "$(chain_outcome test)" \
+    --exit-code "${EXIT_CODE:-}" --command "$COMMAND" 2>/dev/null || true
 fi

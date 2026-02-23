@@ -8,16 +8,9 @@ import (
 	"path/filepath"
 )
 
-// ccRoles are roles whose outbound messages are automatically copied to edit.
-var ccRoles = map[string]bool{
-	"build":  true,
-	"test":   true,
-	"review": true,
-}
-
 // IsAutoCCRole returns true if messages from this role are auto-CC'd to edit.
 func IsAutoCCRole(role string) bool {
-	return ccRoles[role]
+	return GetAutoCC()[role]
 }
 
 // Send appends a message to the recipient's inbox and the session log.
@@ -40,8 +33,8 @@ func Send(session string, m Message) error {
 		return err
 	}
 
-	// Auto-CC to edit: copy messages from build/test/review when not already going to edit
-	if ccRoles[m.From] && m.To != "edit" {
+	// Auto-CC to edit: copy messages from auto-CC roles when not already going to edit
+	if IsAutoCCRole(m.From) && m.To != "edit" {
 		if err := appendToFile(InboxPath(session, "edit"), line); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: auto-CC to edit failed: %v\n", err)
 		}

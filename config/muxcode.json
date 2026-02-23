@@ -1,0 +1,128 @@
+{
+  "shared_tools": {
+    "bus": [
+      "Bash(muxcode-agent-bus *)",
+      "Bash(./bin/muxcode-agent-bus *)",
+      "Bash(cd * && muxcode-agent-bus *)"
+    ],
+    "readonly": ["Read", "Glob", "Grep"],
+    "common": [
+      "Bash(ls*)", "Bash(cat*)", "Bash(which*)",
+      "Bash(command -v*)", "Bash(pwd*)", "Bash(wc*)",
+      "Bash(head*)", "Bash(tail*)"
+    ]
+  },
+  "tool_profiles": {
+    "build": {
+      "include": ["bus", "readonly", "common"],
+      "tools": [
+        "Bash(./build.sh*)", "Bash(make*)",
+        "Bash(pnpm run build*)", "Bash(pnpm build*)", "Bash(npm run build*)",
+        "Bash(npx *)", "Bash(go build*)", "Bash(cargo build*)"
+      ],
+      "cd_prefix": true
+    },
+    "test": {
+      "include": ["bus", "readonly", "common"],
+      "tools": [
+        "Bash(./test.sh*)", "Bash(./scripts/muxcode-test-wrapper.sh*)",
+        "Bash(./scripts/test-and-notify.sh*)",
+        "Bash(go test*)", "Bash(go vet*)",
+        "Bash(jest*)", "Bash(npx jest*)", "Bash(npx vitest*)",
+        "Bash(pnpm test*)", "Bash(pnpm run test*)",
+        "Bash(npm test*)", "Bash(npm run test*)",
+        "Bash(pytest*)", "Bash(python -m pytest*)", "Bash(cargo test*)"
+      ],
+      "cd_prefix": true
+    },
+    "review": {
+      "include": ["bus", "readonly", "common"],
+      "tools": [
+        "Bash(git diff*)", "Bash(git log*)", "Bash(git status*)",
+        "Bash(git show*)", "Bash(git blame*)", "Bash(git branch*)"
+      ],
+      "cd_prefix": true
+    },
+    "git": {
+      "include": ["bus", "readonly", "common"],
+      "tools": [
+        "Bash(git *)", "Bash(gh *)"
+      ],
+      "cd_prefix": true
+    },
+    "deploy": {
+      "include": ["bus", "readonly", "common"],
+      "tools": [
+        "Bash(cdk *)", "Bash(npx cdk *)",
+        "Bash(terraform *)", "Bash(pulumi *)",
+        "Bash(aws *)", "Bash(sam *)",
+        "Bash(./build.sh*)", "Bash(make*)"
+      ],
+      "cd_prefix": true
+    },
+    "runner": {
+      "include": ["bus", "readonly", "common"],
+      "tools": [
+        "Bash(curl*)", "Bash(wget*)",
+        "Bash(aws *)", "Bash(gcloud *)", "Bash(az *)",
+        "Bash(docker *)", "Bash(docker-compose *)",
+        "Bash(jq*)", "Bash(yq*)",
+        "Bash(python*)", "Bash(node*)", "Bash(bash*)"
+      ],
+      "cd_prefix": true
+    },
+    "analyst": {
+      "include": ["bus", "readonly", "common"],
+      "tools": [
+        "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)",
+        "Bash(git blame*)", "Bash(git status*)"
+      ],
+      "cd_prefix": true
+    }
+  },
+  "event_chains": {
+    "build": {
+      "on_success": {
+        "send_to": "test",
+        "action": "test",
+        "message": "Build succeeded — run tests and report results",
+        "type": "request"
+      },
+      "on_failure": {
+        "send_to": "edit",
+        "action": "notify",
+        "message": "Build FAILED (exit ${exit_code}): ${command} — check build window",
+        "type": "event"
+      },
+      "on_unknown": {
+        "send_to": "analyze",
+        "action": "notify",
+        "message": "Build completed (exit code unknown): ${command}",
+        "type": "event"
+      },
+      "notify_analyst": true
+    },
+    "test": {
+      "on_success": {
+        "send_to": "review",
+        "action": "review",
+        "message": "Tests passed — review the changes and report results to edit",
+        "type": "request"
+      },
+      "on_failure": {
+        "send_to": "edit",
+        "action": "notify",
+        "message": "Tests FAILED (exit ${exit_code}): ${command} — check test window",
+        "type": "event"
+      },
+      "on_unknown": {
+        "send_to": "analyze",
+        "action": "notify",
+        "message": "Tests completed (exit code unknown): ${command}",
+        "type": "event"
+      },
+      "notify_analyst": true
+    }
+  },
+  "auto_cc": ["build", "test", "review"]
+}

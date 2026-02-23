@@ -25,95 +25,11 @@ agent_name() {
   esac
 }
 
-# Allowed Bash tools per role (scoped permissions for autonomous operation)
-allowed_tools() {
-  local bus='Bash(muxcode-agent-bus *)' buspath='Bash(./bin/muxcode-agent-bus *)'
-  # cd-prefixed variants (Claude Code agents often prefix commands with cd)
-  local cdbus='Bash(cd * && muxcode-agent-bus *)'
-  # Read-only tools all agents need for context and memory access
-  local readonly_tools='Read Glob Grep'
-  # Common shell commands all agents may need
-  local common='Bash(ls*) Bash(cat*) Bash(which*) Bash(command -v*) Bash(pwd*) Bash(wc*) Bash(head*) Bash(tail*)'
-  case "$1" in
-    build)
-      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
-        'Bash(./build.sh*)' 'Bash(make*)' \
-        'Bash(pnpm run build*)' 'Bash(pnpm build*)' 'Bash(npm run build*)' \
-        'Bash(npx *)' 'Bash(go build*)' 'Bash(cargo build*)' \
-        'Bash(cd * && ./build.sh*)' 'Bash(cd * && make*)' \
-        'Bash(cd * && pnpm run build*)' 'Bash(cd * && pnpm build*)' \
-        'Bash(cd * && npm run build*)' 'Bash(cd * && npx *)' \
-        'Bash(cd * && go build*)' 'Bash(cd * && cargo build*)'
-      ;;
-    test)
-      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
-        'Bash(./test.sh*)' 'Bash(./scripts/muxcode-test-wrapper.sh*)' \
-        'Bash(./scripts/test-and-notify.sh*)' \
-        'Bash(go test*)' 'Bash(go vet*)' \
-        'Bash(jest*)' 'Bash(npx jest*)' 'Bash(npx vitest*)' \
-        'Bash(pnpm test*)' 'Bash(pnpm run test*)' \
-        'Bash(npm test*)' 'Bash(npm run test*)' \
-        'Bash(pytest*)' 'Bash(python -m pytest*)' 'Bash(cargo test*)' \
-        'Bash(cd * && ./test.sh*)' 'Bash(cd * && ./scripts/test-and-notify.sh*)' \
-        'Bash(cd * && go test*)' 'Bash(cd * && go vet*)' \
-        'Bash(cd * && jest*)' 'Bash(cd * && npx jest*)' 'Bash(cd * && npx vitest*)' \
-        'Bash(cd * && pnpm test*)' 'Bash(cd * && pnpm run test*)' \
-        'Bash(cd * && npm test*)' 'Bash(cd * && npm run test*)' \
-        'Bash(cd * && pytest*)' 'Bash(cd * && python -m pytest*)' \
-        'Bash(cd * && cargo test*)'
-      ;;
-    review)
-      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
-        'Bash(git diff*)' 'Bash(git log*)' 'Bash(git status*)' 'Bash(git show*)' \
-        'Bash(git blame*)' 'Bash(git branch*)' \
-        'Bash(cd * && git diff*)' 'Bash(cd * && git log*)' \
-        'Bash(cd * && git status*)' 'Bash(cd * && git show*)' \
-        'Bash(cd * && git blame*)' 'Bash(cd * && git branch*)'
-      ;;
-    git)
-      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
-        'Bash(git *)' 'Bash(gh *)' \
-        'Bash(cd * && git *)' 'Bash(cd * && gh *)'
-      ;;
-    deploy)
-      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
-        'Bash(cdk *)' 'Bash(npx cdk *)' \
-        'Bash(terraform *)' 'Bash(pulumi *)' \
-        'Bash(aws *)' 'Bash(sam *)' \
-        'Bash(./build.sh*)' 'Bash(make*)' \
-        'Bash(cd * && cdk *)' 'Bash(cd * && npx cdk *)' \
-        'Bash(cd * && terraform *)' 'Bash(cd * && pulumi *)' \
-        'Bash(cd * && aws *)' 'Bash(cd * && sam *)' \
-        'Bash(cd * && ./build.sh*)' 'Bash(cd * && make*)'
-      ;;
-    runner)
-      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
-        'Bash(curl*)' 'Bash(wget*)' \
-        'Bash(aws *)' 'Bash(gcloud *)' 'Bash(az *)' \
-        'Bash(docker *)' 'Bash(docker-compose *)' \
-        'Bash(jq*)' 'Bash(yq*)' \
-        'Bash(python*)' 'Bash(node*)' 'Bash(bash*)' \
-        'Bash(cd * && curl*)' 'Bash(cd * && wget*)' \
-        'Bash(cd * && aws *)' 'Bash(cd * && gcloud *)' 'Bash(cd * && az *)' \
-        'Bash(cd * && docker *)' 'Bash(cd * && docker-compose *)' \
-        'Bash(cd * && jq*)' 'Bash(cd * && yq*)' \
-        'Bash(cd * && python*)' 'Bash(cd * && node*)' 'Bash(cd * && bash*)'
-      ;;
-    analyst)
-      echo "$bus" "$buspath" "$cdbus" $readonly_tools $common \
-        'Bash(git diff*)' 'Bash(git log*)' 'Bash(git show*)' \
-        'Bash(git blame*)' 'Bash(git status*)' \
-        'Bash(cd * && git diff*)' 'Bash(cd * && git log*)' \
-        'Bash(cd * && git show*)' 'Bash(cd * && git blame*)' \
-        'Bash(cd * && git status*)'
-      ;;
-  esac
-}
-
-# Build --allowedTools flags from the role's tool list
+# Build --allowedTools flags from config-driven tool profiles.
+# Uses muxcode-agent-bus tools <role> to resolve the tool list.
 build_flags() {
   local tools
-  tools="$(allowed_tools "$1")"
+  tools="$(muxcode-agent-bus tools "$1" 2>/dev/null)" || return
   [ -z "$tools" ] && return
   for tool in $tools; do
     printf -- '--allowedTools %s ' "$tool"

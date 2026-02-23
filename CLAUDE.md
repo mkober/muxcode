@@ -146,3 +146,4 @@ The bus watcher (`muxcode-agent-bus watch`) uses a two-phase debounce: detect tr
 - Cross-link between docs using relative paths (e.g. `[Architecture](docs/architecture.md)`)
 - When updating docs, augment existing content — don't rewrite or reorganize
 - Keep tables and code blocks as the primary format
+- **Always save implementation plans to `docs/`** — use `docs/plan-<feature-name>.md` naming convention so plans are tracked in the repo alongside the code they describe

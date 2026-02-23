@@ -21,6 +21,8 @@ Commands:
   lock        Set agent lock (busy indicator)
   unlock      Remove agent lock
   is-locked   Check if agent is locked
+  tools       List allowed tools for a role
+  chain       Execute an event chain action
 `
 
 func main() {
@@ -55,6 +57,10 @@ func main() {
 		cmd.Unlock(args)
 	case "is-locked":
 		cmd.IsLocked(args)
+	case "tools":
+		cmd.Tools(args)
+	case "chain":
+		cmd.Chain(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)
