@@ -39,6 +39,6 @@ func Tools(args []string) {
 		}
 		fmt.Println(string(data))
 	} else {
-		fmt.Println(strings.Join(tools, " "))
+		fmt.Println(strings.Join(tools, "\n"))
 	}
 }

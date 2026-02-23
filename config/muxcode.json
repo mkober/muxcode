@@ -46,9 +46,9 @@
     "git": {
       "include": ["bus", "readonly", "common"],
       "tools": [
-        "Bash(git *)", "Bash(gh *)"
+        "Bash"
       ],
-      "cd_prefix": true
+      "cd_prefix": false
     },
     "deploy": {
       "include": ["bus", "readonly", "common"],

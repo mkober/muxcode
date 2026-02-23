@@ -27,17 +27,20 @@ agent_name() {
 
 # Build --allowedTools flags from config-driven tool profiles.
 # Uses muxcode-agent-bus tools <role> to resolve the tool list.
+# Populates the TOOL_FLAGS array (patterns may contain spaces).
+TOOL_FLAGS=()
 build_flags() {
   local tools
   tools="$(muxcode-agent-bus tools "$1" 2>/dev/null)" || return
   [ -z "$tools" ] && return
-  for tool in $tools; do
-    printf -- '--allowedTools %s ' "$tool"
-  done
+  while IFS= read -r tool; do
+    [ -z "$tool" ] && continue
+    TOOL_FLAGS+=(--allowedTools "$tool")
+  done <<< "$tools"
 }
 
 AGENT="$(agent_name "$ROLE")"
-FLAGS="$(build_flags "$ROLE")"
+build_flags "$ROLE"
 
 # Launch agent from a .md file outside the project by reading its content
 # and passing it via --agents JSON + --agent <name>.
@@ -53,8 +56,7 @@ launch_agent_from_file() {
   local agents_json
   agents_json="$(jq -n --arg n "$name" --arg d "$desc" --arg p "$prompt" \
     '{($n): {description: $d, prompt: $p}}')"
-  # shellcheck disable=SC2086
-  exec $AGENT_CLI --agent "$name" --agents "$agents_json" $@
+  exec $AGENT_CLI --agent "$name" --agents "$agents_json" "$@"
 }
 
 # Clear terminal so Claude Code starts with a clean screen
@@ -66,12 +68,11 @@ if [ -n "$AGENT" ]; then
   INSTALL_DIR="${SCRIPT_DIR%/scripts}"
 
   if [ -f ".claude/agents/${AGENT}.md" ]; then
-    # shellcheck disable=SC2086
-    exec $AGENT_CLI --agent "$AGENT" $FLAGS
+    exec $AGENT_CLI --agent "$AGENT" "${TOOL_FLAGS[@]}"
   elif [ -f "$HOME/.config/muxcode/agents/${AGENT}.md" ]; then
-    launch_agent_from_file "$AGENT" "$HOME/.config/muxcode/agents/${AGENT}.md" $FLAGS
+    launch_agent_from_file "$AGENT" "$HOME/.config/muxcode/agents/${AGENT}.md" "${TOOL_FLAGS[@]}"
   elif [ -f "$INSTALL_DIR/agents/${AGENT}.md" ]; then
-    launch_agent_from_file "$AGENT" "$INSTALL_DIR/agents/${AGENT}.md" $FLAGS
+    launch_agent_from_file "$AGENT" "$INSTALL_DIR/agents/${AGENT}.md" "${TOOL_FLAGS[@]}"
   fi
 fi
 
@@ -106,5 +107,4 @@ case "$ROLE" in
     ;;
 esac
 
-# shellcheck disable=SC2086
-exec $AGENT_CLI --append-system-prompt "$PROMPT" $FLAGS
+exec $AGENT_CLI --append-system-prompt "$PROMPT" "${TOOL_FLAGS[@]}"

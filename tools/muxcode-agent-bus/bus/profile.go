@@ -309,9 +309,9 @@ func DefaultConfig() *MuxcodeConfig {
 			},
 			"git": {
 				Include:  []string{"bus", "readonly", "common"},
-				CdPrefix: true,
+				CdPrefix: false,
 				Tools: []string{
-					"Bash(git *)", "Bash(gh *)",
+					"Bash",
 				},
 			},
 			"deploy": {
