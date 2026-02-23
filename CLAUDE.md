@@ -22,7 +22,7 @@ scripts/
 ├── muxcode-preview-hook.sh   # PreToolUse — diff preview in nvim (edit window only)
 ├── muxcode-diff-cleanup.sh   # PreToolUse — close stale diff previews
 ├── muxcode-analyze-hook.sh   # PostToolUse — route file events, trigger watcher
-├── muxcode-bash-hook.sh      # PostToolUse — build-test-review chain
+├── muxcode-bash-hook.sh      # PostToolUse — build-test-review chain + deploy-verify chain
 ├── muxcode-git-status.sh     # Git status poller for commit window left pane
 ├── muxcode-watch-log.sh      # Watch history poller for watch window left pane
 └── muxcode-test-wrapper.sh   # Test runner wrapper
@@ -94,8 +94,8 @@ The **edit** agent is the user-facing orchestrator. It **never** runs build, tes
 
 - Messages are JSONL stored at `/tmp/muxcode-bus-{session}/inbox/{role}.jsonl`
 - Three message types: `request`, `response`, `event`
-- Auto-CC: messages from build/test/review to non-edit agents are copied to the edit inbox
-- Build-test-review chain is **hook-driven** (bash exit codes), not LLM-driven
+- Auto-CC: messages from build/test/review/deploy to non-edit agents are copied to the edit inbox
+- Build-test-review and deploy-verify chains are **hook-driven** (bash exit codes), not LLM-driven
 
 ### Hook chain
 

@@ -49,6 +49,19 @@ Persistent:  .muxcode/memory/{role}.md
 11. Review agent reviews diff, replies to edit
 ```
 
+### Deploy-Initiated Verification
+
+```
+1. Deploy agent runs `cdk deploy` (or terraform apply, pulumi up, etc.)
+2. PostToolUse hook (muxcode-bash-hook.sh) detects deploy-apply command success
+3. Hook sends: muxcode-agent-bus chain deploy success
+4. Chain self-loops: sends verify request back to deploy agent
+5. Deploy agent runs verification checks (AWS health, HTTP smoke, CloudWatch)
+6. Deploy agent reports results to edit
+```
+
+Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logged to deploy history but do **not** trigger the verify chain.
+
 ### File Edit Event Flow
 
 ```
@@ -93,7 +106,7 @@ This means rapid consecutive edits (e.g. Claude writing multiple files) are coal
 
 ### Auto-CC
 
-Messages from build, test, and review agents to any non-edit agent are automatically copied to the edit inbox. This gives the orchestrator visibility without explicit routing.
+Messages from build, test, review, and deploy agents to any non-edit agent are automatically copied to the edit inbox. This gives the orchestrator visibility without explicit routing.
 
 ### Notification Flow
 
@@ -135,11 +148,11 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 | `muxcode-preview-hook.sh` | PreToolUse | Write/Edit | Show diff preview in nvim |
 | `muxcode-diff-cleanup.sh` | PreToolUse | Read/Bash/etc | Clean stale diff preview |
 | `muxcode-analyze-hook.sh` | PostToolUse | Write/Edit | Route file events, trigger watcher |
-| `muxcode-bash-hook.sh` | PostToolUse | Bash | Drive build-test-review chain |
+| `muxcode-bash-hook.sh` | PostToolUse | Bash | Drive build-test-review and deploy-verify chains |
 
 ### Hook Chain Guarantee
 
-The build-test-review chain is **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. This ensures the chain fires reliably regardless of how the agent phrases its output.
+The build-test-review and deploy-verify chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. This ensures the chains fire reliably regardless of how the agent phrases its output.
 
 ## Window Layout
 

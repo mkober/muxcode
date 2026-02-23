@@ -94,19 +94,28 @@ Signals that a file was edited. Performs three tasks:
 **Phase:** PostToolUse
 **Trigger:** Bash
 
-Detects build and test commands and drives the build-test-review chain:
+Detects build, test, and deploy commands and drives event chains:
 
 ```
-Build success → trigger test agent
-Test success  → trigger review agent
-Any failure   → notify edit agent
+Build success        → trigger test agent
+Test success         → trigger review agent
+Deploy-apply success → trigger verify (self-loop to deploy agent)
+Any failure          → notify edit agent
 ```
+
+Deploy commands are split into two categories:
+- **Deploy patterns** (`MUXCODE_DEPLOY_PATTERNS`): all deploy commands — logged to deploy history
+- **Deploy-apply patterns** (`MUXCODE_DEPLOY_APPLY_PATTERNS`): mutation-only commands (deploy, destroy, apply) — trigger the verify chain
+
+Preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) match deploy patterns for history logging but do **not** trigger verification.
 
 Also sends events to the analyst for analysis.
 
 **Customization:**
 - `MUXCODE_BUILD_PATTERNS` — pipe-separated patterns for build command detection
 - `MUXCODE_TEST_PATTERNS` — pipe-separated patterns for test command detection
+- `MUXCODE_DEPLOY_PATTERNS` — pipe-separated patterns for deploy command detection (all deploy commands)
+- `MUXCODE_DEPLOY_APPLY_PATTERNS` — pipe-separated patterns for deploy-apply commands that trigger the verify chain
 
 **JSON parsing:** Uses `jq` by default with a `python3` fallback. If neither `jq` nor `python3` is available, the `command` and `exit_code` fields will be empty and the hook exits silently — the build-test-review chain will not trigger. The preview hook uses `python3` specifically for generating proposed file content; without it, no split diff appears in nvim.
 
@@ -148,6 +157,18 @@ The chain is **hook-driven**, ensuring deterministic behavior:
 On failure at any step, the hook notifies edit directly with the error details.
 
 **Key property:** Agents are NOT responsible for chaining. They only run their command and reply. The hook guarantees the chain fires deterministically based on exit codes.
+
+## Deploy-Verify Chain
+
+When a deploy-apply command succeeds, the hook triggers a verification self-loop:
+
+1. Deploy agent runs `cdk deploy` (or `terraform apply`, `pulumi up`, etc.)
+2. `muxcode-bash-hook.sh` detects deploy-apply command completed
+3. If exit code 0: hook sends `request:verify` back to deploy agent
+4. Deploy agent runs verification checks (AWS resource health, HTTP smoke tests, CloudWatch alarms/logs)
+5. Deploy agent reports PASS/FAIL results to edit
+
+Preview commands (`cdk diff`, `terraform plan`) are logged to deploy history but do **not** trigger the verify chain. See [Deploy verify plan](plan-deploy-verify.md) for full details.
 
 ## Creating Custom Hooks
 

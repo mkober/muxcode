@@ -46,6 +46,8 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 |----------|---------|-------------|
 | `MUXCODE_BUILD_PATTERNS` | `./build.sh\|pnpm*build\|go*build\|make\|cargo*build\|cdk*synth\|tsc` | Pipe-separated patterns for build command detection |
 | `MUXCODE_TEST_PATTERNS` | `./test.sh\|jest\|pnpm*test\|pytest\|go*test\|go*vet\|cargo*test\|vitest` | Pipe-separated patterns for test command detection |
+| `MUXCODE_DEPLOY_PATTERNS` | `cdk*diff\|cdk*deploy\|cdk*destroy\|...` | Pipe-separated patterns for deploy command detection (all deploy commands, logged to history) |
+| `MUXCODE_DEPLOY_APPLY_PATTERNS` | `cdk*deploy\|cdk*destroy\|terraform*apply\|...` | Pipe-separated patterns for deploy-apply commands (mutation-only, triggers verify chain) |
 | `MUXCODE_ROUTE_RULES` | `test\|spec=test cdk\|stack\|construct\|terraform\|pulumi=deploy .ts\|.js\|.py\|.go\|.rs=build` | Space-separated `pattern=target` rules for file-change routing |
 | `MUXCODE_PREVIEW_SKIP` | `/.claude/settings.json /.claude/CLAUDE.md /.muxcode/` | Space-separated substrings — skip diff preview for matching files |
 

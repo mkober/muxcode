@@ -160,7 +160,7 @@ Agents have scoped Bash permissions for autonomous operation. The default permis
 - **test**: `./test.sh`, `go test`, `jest`, `pytest`, `cargo test`
 - **review**: `git diff`, `git log`, `git status`, `git show` (read-only git)
 - **git**: `git *`, `gh *` (all git and GitHub CLI subcommands)
-- **deploy**: unrestricted (no `--allowedTools` filter)
+- **deploy**: `cdk`, `terraform`, `pulumi`, `aws`, `sam`, `curl`, `wget`, `./build.sh`, `make`, read-only git, `Write`, `Edit`
 - **runner**: unrestricted (no `--allowedTools` filter)
 - **analyst**: bus commands + Read, Glob, Grep (no shell commands)
 - **watch**: `tail`, `journalctl`, `aws logs`, `kubectl logs`, `docker logs`, `stern`, `ssh`, `lnav` (read-only log tools)
