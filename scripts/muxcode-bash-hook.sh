@@ -201,6 +201,69 @@ print(json.dumps(entry, ensure_ascii=False))
 fi
 
 if [ "$is_test" -eq 1 ]; then
-  muxcode-agent-bus chain test "$(chain_outcome test)" \
+  # Append to test history for left-pane display
+  TEST_HISTORY_FILE="/tmp/muxcode-bus-${SESSION}/test-history.jsonl"
+  TEST_TS=$(date +%s)
+  TEST_OUTCOME=$(chain_outcome)
+
+  # Capture test output from tool response
+  TEST_OUTPUT=""
+  if command -v jq &>/dev/null; then
+    TEST_OUTPUT=$(printf '%s' "$EVENT" | jq -r '
+      (.tool_response // .tool_result // {}) as $r |
+      if ($r | type) == "string" then $r
+      elif ($r.stdout // "") != "" then $r.stdout
+      elif ($r.content // "") != "" then $r.content
+      else ""
+      end
+    ' 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tail -15)
+  else
+    TEST_OUTPUT=$(printf '%s' "$EVENT" | python3 -c "
+import json, sys, re
+try:
+    d = json.load(sys.stdin)
+    r = d.get('tool_response', d.get('tool_result', {}))
+    out = ''
+    if isinstance(r, str): out = r
+    elif isinstance(r, dict): out = r.get('stdout', r.get('content', ''))
+    out = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', out)
+    lines = out.strip().split('\n')
+    print('\n'.join(lines[-15:]))
+except: pass
+" 2>/dev/null)
+  fi
+  # Truncate to max 1000 chars
+  if [ ${#TEST_OUTPUT} -gt 1000 ]; then
+    TEST_OUTPUT="${TEST_OUTPUT:0:997}..."
+  fi
+  # Replace HOME with ~ for readability
+  TEST_OUTPUT="${TEST_OUTPUT//$HOME/\~}"
+
+  # Append + rotate under flock to prevent concurrent hook races
+  (
+    command -v flock &>/dev/null && flock -n 9
+    if command -v jq &>/dev/null; then
+      jq -nc --arg ts "$TEST_TS" --arg cmd "$COMMAND" --arg desc "${DESCRIPTION:-}" --arg ec "${EXIT_CODE:-0}" --arg outcome "$TEST_OUTCOME" --arg output "$TEST_OUTPUT" \
+        '{ts:($ts|tonumber),command:$cmd,description:$desc,exit_code:$ec,outcome:$outcome,output:$output}' \
+        >> "$TEST_HISTORY_FILE" 2>/dev/null || true
+    else
+      python3 -c '
+import json, sys
+entry = {"ts": int(sys.argv[1]), "command": sys.argv[2], "description": sys.argv[3], "exit_code": sys.argv[4], "outcome": sys.argv[5], "output": sys.argv[6]}
+print(json.dumps(entry, ensure_ascii=False))
+' "$TEST_TS" "$COMMAND" "${DESCRIPTION:-}" "${EXIT_CODE:-0}" "$TEST_OUTCOME" "$TEST_OUTPUT" \
+        >> "$TEST_HISTORY_FILE" 2>/dev/null || true
+    fi
+
+    # Rotate history: keep last 100 entries
+    MAX_HISTORY=100
+    LINE_COUNT=$(wc -l < "$TEST_HISTORY_FILE" 2>/dev/null || echo 0)
+    if [ "$LINE_COUNT" -gt "$MAX_HISTORY" ]; then
+      tail -n "$MAX_HISTORY" "$TEST_HISTORY_FILE" > "${TEST_HISTORY_FILE}.tmp" 2>/dev/null \
+        && mv "${TEST_HISTORY_FILE}.tmp" "$TEST_HISTORY_FILE" 2>/dev/null || true
+    fi
+  ) 9>"${TEST_HISTORY_FILE}.lock"
+
+  muxcode-agent-bus chain test "$(chain_outcome)" \
     --exit-code "${EXIT_CODE:-}" --command "$COMMAND" 2>/dev/null || true
 fi

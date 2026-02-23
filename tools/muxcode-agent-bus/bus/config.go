@@ -22,6 +22,8 @@ var KnownRoles = []string{
 var splitLeftWindows = map[string]bool{
 	"edit":    true,
 	"build":   true,
+	"test":    true,
+	"review":  true,
 	"analyze": true,
 	"commit":  true,
 }
@@ -135,6 +137,16 @@ func MemoryPath(role string) string {
 // BuildHistoryPath returns the build history JSONL file path for a session.
 func BuildHistoryPath(session string) string {
 	return filepath.Join(BusDir(session), "build-history.jsonl")
+}
+
+// TestHistoryPath returns the test history JSONL file path for a session.
+func TestHistoryPath(session string) string {
+	return filepath.Join(BusDir(session), "test-history.jsonl")
+}
+
+// HistoryPath returns the history JSONL file path for any role in a session.
+func HistoryPath(session, role string) string {
+	return filepath.Join(BusDir(session), role+"-history.jsonl")
 }
 
 // TriggerFile returns the analyze trigger file path for a session.

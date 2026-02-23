@@ -23,6 +23,7 @@ Commands:
   is-locked   Check if agent is locked
   tools       List allowed tools for a role
   chain       Execute an event chain action
+  log         Append an entry to a role's history log
 `
 
 func main() {
@@ -61,6 +62,8 @@ func main() {
 		cmd.Tools(args)
 	case "chain":
 		cmd.Chain(args)
+	case "log":
+		cmd.Log(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

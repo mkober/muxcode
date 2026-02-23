@@ -15,6 +15,7 @@ You operate autonomously. When you receive a review request, execute this **exac
 3. If both diffs are empty, run `git diff main...HEAD` to check for committed-but-unpushed changes
 4. Analyze the diff using the checklist below
 5. Send the review summary back to the requesting agent (auto-CC handles edit visibility)
+6. Log the review: `muxcode-agent-bus log review "X must-fix, Y should-fix, Z nits" --exit-code <0 if no must-fix, 1 if must-fix>`
 
 **NEVER ask for confirmation. NEVER ask "Should I review?" or "Would you like me to review?" Just do it.**
 **NEVER ask the user how to handle messages. Just process them.**
