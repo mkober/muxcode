@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -11,16 +10,9 @@ import (
 
 // Send handles the "muxcode-agent-bus send" subcommand.
 // Usage: muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify]
-//
-//	muxcode-agent-bus send <to> <action> --stdin [--type TYPE] [--reply-to ID] [--no-notify]
-//
-// When --stdin is used, the payload is read from stdin instead of a positional argument.
-// This avoids multi-line command strings that break allowedTools glob patterns.
-// Example: printf 'line1\nline2' | muxcode-agent-bus send test review-complete --stdin --type response
 func Send(args []string) {
 	if len(args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus send <to> <action> \"<payload>\" [--type TYPE] [--reply-to ID] [--no-notify]\n")
-		fmt.Fprintf(os.Stderr, "       muxcode-agent-bus send <to> <action> --stdin [--type TYPE] [--reply-to ID] [--no-notify]\n")
 		os.Exit(1)
 	}
 
@@ -32,14 +24,11 @@ func Send(args []string) {
 	msgType := "request"
 	replyTo := ""
 	noNotify := false
-	useStdin := false
 	payloadSet := false
 
 	remaining := args[2:]
 	for i := 0; i < len(remaining); i++ {
 		switch remaining[i] {
-		case "--stdin":
-			useStdin = true
 		case "--type":
 			if i+1 >= len(remaining) {
 				fmt.Fprintf(os.Stderr, "Error: --type requires a value\n")
@@ -72,20 +61,8 @@ func Send(args []string) {
 		}
 	}
 
-	// Read payload from stdin if --stdin is set
-	if useStdin && payloadSet {
-		fmt.Fprintf(os.Stderr, "Error: --stdin and a positional payload are mutually exclusive\n")
-		os.Exit(1)
-	}
-	if useStdin {
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)
-			os.Exit(1)
-		}
-		payload = strings.TrimRight(string(data), "\n")
-	} else if !payloadSet {
-		fmt.Fprintf(os.Stderr, "Error: payload is required (provide as argument or use --stdin)\n")
+	if !payloadSet {
+		fmt.Fprintf(os.Stderr, "Error: payload is required\n")
 		os.Exit(1)
 	}
 
