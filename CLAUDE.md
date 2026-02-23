@@ -152,6 +152,7 @@ The bus watcher (`muxcode-agent-bus watch`) uses a two-phase debounce: detect tr
 - kebab-case filenames (e.g. `go-testing.md`, `code-review-checklist.md`)
 - CLI: `muxcode-agent-bus skill list|load|search|create|prompt`
 - Skills are auto-injected into agent prompts at launch via `skill prompt <role>`
+- See [Skills plan](docs/plan-skills-plugin.md) for full architecture and API reference
 
 ### Documentation
 
