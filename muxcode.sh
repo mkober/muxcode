@@ -168,7 +168,20 @@ send_init() {
 
 # --- Create session with first window ---
 FIRST_WIN="${WIN_ARRAY[0]}"
-tmux new-session -d -s "$SESSION" -n "$FIRST_WIN" -c "$PROJECT_DIR"
+
+# When launching from inside tmux, capture client dimensions so the detached
+# session starts at the correct size.  Without this, `new-session -d` uses a
+# small default geometry and Neovim's start screen renders off-center.
+NEW_SESSION_SIZE=""
+if [ -n "${TMUX:-}" ]; then
+  _client_w="$(tmux display-message -p '#{client_width}')"
+  _client_h="$(tmux display-message -p '#{client_height}')"
+  if [ -n "$_client_w" ] && [ -n "$_client_h" ]; then
+    NEW_SESSION_SIZE="-x $_client_w -y $_client_h"
+  fi
+fi
+
+tmux new-session -d -s "$SESSION" -n "$FIRST_WIN" -c "$PROJECT_DIR" $NEW_SESSION_SIZE
 tmux set-environment -t "$SESSION" BUS_SESSION "$SESSION"
 tmux set-environment -t "$SESSION" MUXCODE 1
 

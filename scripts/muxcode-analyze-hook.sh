@@ -38,7 +38,7 @@ if [ "$WINDOW_NAME" = "edit" ] && [ -f "$TEMP_FILE" ]; then
   ESCAPED_PATH="${FILE_PATH// /\\ }"
   tmux send-keys -t "$SESSION:edit.0" Escape Escape
   sleep 0.1
-  tmux send-keys -t "$SESSION:edit.0" ":diffoff! | only | e! +$LINE $ESCAPED_PATH" Enter
+  tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | diffoff! | only | e! +$LINE $ESCAPED_PATH" Enter
   rm -f "$TEMP_FILE"
 fi
 

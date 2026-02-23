@@ -26,7 +26,7 @@ TEMP_FILE="/tmp/muxcode-preview-${SESSION}.tmp"
 if [ -f "$TEMP_FILE" ]; then
   tmux send-keys -t "$SESSION:edit.0" Escape Escape
   sleep 0.1
-  tmux send-keys -t "$SESSION:edit.0" ":diffoff! | only" Enter
+  tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | diffoff! | only" Enter
   sleep 0.2
   rm -f "$TEMP_FILE"
 fi
@@ -66,6 +66,6 @@ if old and fp:
 
   if [ -f "$TEMP_FILE" ]; then
     sleep 0.1
-    tmux send-keys -t "$SESSION:edit.0" ":let g:_pft=&ft | diffthis | new | setlocal buftype=nofile bufhidden=wipe | let &l:ft=g:_pft | silent read $TEMP_FILE | 1delete _ | diffthis" Enter
+    tmux send-keys -t "$SESSION:edit.0" ":let g:_mux_buf=bufnr() | let g:_pft=&ft | diffthis | new | setlocal buftype=nofile bufhidden=wipe | let &l:ft=g:_pft | silent read $TEMP_FILE | 1delete _ | diffthis | wincmd p" Enter
   fi
 fi
