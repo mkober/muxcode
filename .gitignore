@@ -5,3 +5,4 @@ bin/
 *.dylib
 .DS_Store
 .muxcode/
+.muxcoder/
