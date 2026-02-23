@@ -100,10 +100,8 @@ elif [ ! -f "$CLAUDE_SETTINGS" ]; then
   mkdir -p "$HOME/.claude"
   cp "$MUXCODE_SETTINGS" "$CLAUDE_SETTINGS"
   ok "Created ~/.claude/settings.json with muxcode hooks"
-elif grep -qF "muxcode-preview-hook.sh" "$CLAUDE_SETTINGS"; then
-  ok "Claude Code hooks already configured"
 else
-  cp "$CLAUDE_SETTINGS" "${CLAUDE_SETTINGS}.pre-muxcode"
+  # Always merge — add_hook is idempotent (skips existing commands)
   jq --slurpfile mc "$MUXCODE_SETTINGS" '
     def add_hook($phase; $matcher; $hook):
       if (.hooks[$phase] // [] | map(select(.matcher == $matcher)) | length) > 0 then
@@ -127,8 +125,16 @@ else
       .; add_hook("PostToolUse"; $x.m; $x.h)
     ) |
     .permissions.allow = (.permissions.allow + ($mc[0].permissions.allow // []) | unique)
-  ' "$CLAUDE_SETTINGS" > "${CLAUDE_SETTINGS}.tmp" && mv "${CLAUDE_SETTINGS}.tmp" "$CLAUDE_SETTINGS"
-  ok "Merged muxcode hooks into ~/.claude/settings.json (backup: settings.json.pre-muxcode)"
+  ' "$CLAUDE_SETTINGS" > "${CLAUDE_SETTINGS}.tmp"
+
+  if ! diff -q "${CLAUDE_SETTINGS}.tmp" "$CLAUDE_SETTINGS" >/dev/null 2>&1; then
+    cp "$CLAUDE_SETTINGS" "${CLAUDE_SETTINGS}.pre-muxcode"
+    mv "${CLAUDE_SETTINGS}.tmp" "$CLAUDE_SETTINGS"
+    ok "Updated ~/.claude/settings.json (backup: settings.json.pre-muxcode)"
+  else
+    rm -f "${CLAUDE_SETTINGS}.tmp"
+    ok "Claude Code hooks already up-to-date"
+  fi
 fi
 
 # --- Done ---
