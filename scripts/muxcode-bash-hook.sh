@@ -93,7 +93,6 @@ done
 
 # Route events via config-driven event chains
 chain_outcome() {
-  local type="$1"
   if [ -z "$EXIT_CODE" ]; then
     echo "unknown"
   elif [ "$EXIT_CODE" = "0" ]; then

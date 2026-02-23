@@ -112,6 +112,9 @@ func TestExpandCdPrefix(t *testing.T) {
 		// Already-prefixed tools return empty
 		{"Bash(cd * && git *)", ""},
 		{"Bash(cd /tmp && ls)", ""},
+		// Malformed patterns return empty (no panic)
+		{"Bash(missing paren", ""},
+		{"Bash(", ""},
 	}
 	for _, tt := range tests {
 		got := expandCdPrefix(tt.input)

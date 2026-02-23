@@ -65,7 +65,7 @@ func Chain(args []string) {
 	if dryRun {
 		fmt.Printf("chain: %s %s -> send %s:%s to %s: %s\n",
 			eventType, outcome, action.Type, action.Action, action.SendTo, message)
-		if bus.ChainNotifyAnalyst(eventType) {
+		if bus.ChainNotifyAnalyst(eventType) && action.SendTo != "analyze" {
 			fmt.Printf("chain: notify analyst: %s %s: %s\n", eventType, outcome, command)
 		}
 		return
@@ -88,8 +88,8 @@ func Chain(args []string) {
 
 	fmt.Printf("Sent %s:%s to %s\n", action.Type, action.Action, action.SendTo)
 
-	// Notify analyst if configured
-	if bus.ChainNotifyAnalyst(eventType) {
+	// Notify analyst if configured — skip when chain action already targets analyze
+	if bus.ChainNotifyAnalyst(eventType) && action.SendTo != "analyze" {
 		var analystMsg string
 		switch outcome {
 		case "success":

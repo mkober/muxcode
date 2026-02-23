@@ -2,6 +2,7 @@ package bus
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +57,7 @@ func Config() *MuxcodeConfig {
 // SetConfig overrides the config singleton (for tests).
 func SetConfig(cfg *MuxcodeConfig) {
 	configSingleton = cfg
+	autoCCCache = nil
 }
 
 // LoadConfig resolves config from project > user > defaults.
@@ -69,10 +71,11 @@ func LoadConfig() (*MuxcodeConfig, error) {
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {
-			continue
+			continue // file doesn't exist — expected
 		}
 		var cfg MuxcodeConfig
 		if err := json.Unmarshal(data, &cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to parse %s: %v\n", p, err)
 			continue
 		}
 		if loaded == nil {
@@ -191,9 +194,9 @@ func resolveProfile(cfg *MuxcodeConfig, profile ToolProfile) []string {
 }
 
 // expandCdPrefix generates a "Bash(cd * && ...)" variant of a Bash tool pattern.
-// Returns "" for non-Bash tools and already-prefixed tools.
+// Returns "" for non-Bash tools, already-prefixed tools, and malformed patterns.
 func expandCdPrefix(tool string) string {
-	if !strings.HasPrefix(tool, "Bash(") {
+	if !strings.HasPrefix(tool, "Bash(") || !strings.HasSuffix(tool, ")") {
 		return ""
 	}
 	// Extract inner command: "Bash(git *)" -> "git *"
@@ -240,13 +243,20 @@ func ExpandMessage(template, exitCode, command string) string {
 	return s
 }
 
+// autoCCCache is the cached auto-CC role set.
+var autoCCCache map[string]bool
+
 // GetAutoCC returns the set of roles whose messages are auto-CC'd to edit.
 func GetAutoCC() map[string]bool {
+	if autoCCCache != nil {
+		return autoCCCache
+	}
 	cfg := Config()
 	m := make(map[string]bool, len(cfg.AutoCC))
 	for _, role := range cfg.AutoCC {
 		m[role] = true
 	}
+	autoCCCache = m
 	return m
 }
 
