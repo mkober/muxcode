@@ -1,10 +1,11 @@
 #!/bin/bash
 # muxcode-bash-hook.sh — PostToolUse hook for Bash commands
 #
-# Detects build and test commands and drives the build->test->review chain:
+# Detects build, test, and git commands:
 #   build success -> trigger test agent
 #   test success  -> trigger review agent
 #   any failure   -> notify edit agent
+#   git commands  -> log to commit history (no chain trigger)
 # Also sends events to the analyst. Configured in settings.json as an async hook.
 #
 # Receives tool event JSON on stdin.
@@ -80,6 +81,7 @@ FIRST_CMD=$(printf '%s' "$COMMAND" | sed 's/^cd [^;&|]* *[;&|]* *//' | sed 's/^[
 # Configurable patterns
 BUILD_PATTERNS="${MUXCODE_BUILD_PATTERNS:-./build.sh|pnpm*build|go*build|make|cargo*build|cdk*synth|tsc}"
 TEST_PATTERNS="${MUXCODE_TEST_PATTERNS:-./test.sh|jest|pnpm*test|pytest|go*test|go*vet|cargo*test|vitest}"
+GIT_PATTERNS="${MUXCODE_GIT_PATTERNS:-git*commit|git*push|git*merge|git*rebase|git*tag|git*cherry-pick}"
 
 # Detect build commands
 is_build=0
@@ -96,6 +98,15 @@ IFS='|' read -ra TPATS <<< "$TEST_PATTERNS"
 for pat in "${TPATS[@]}"; do
   case "$FIRST_CMD" in
     $pat*|bash*${pat##*/}*|sh*${pat##*/}*|npx*${pat##*/}*) is_test=1; break ;;
+  esac
+done
+
+# Detect git commands
+is_git=0
+IFS='|' read -ra GPATS <<< "$GIT_PATTERNS"
+for pat in "${GPATS[@]}"; do
+  case "$FIRST_CMD" in
+    $pat*) is_git=1; break ;;
   esac
 done
 
@@ -266,4 +277,88 @@ print(json.dumps(entry, ensure_ascii=False))
 
   muxcode-agent-bus chain test "$(chain_outcome)" \
     --exit-code "${EXIT_CODE:-}" --command "$COMMAND" 2>/dev/null || true
+fi
+
+if [ "$is_git" -eq 1 ]; then
+  # Append to commit history for left-pane display
+  GIT_HISTORY_FILE="/tmp/muxcode-bus-${SESSION}/commit-history.jsonl"
+  GIT_TS=$(date +%s)
+  GIT_OUTCOME=$(chain_outcome)
+
+  # Capture git output from tool response
+  GIT_OUTPUT=""
+  if command -v jq &>/dev/null; then
+    GIT_OUTPUT=$(printf '%s' "$EVENT" | jq -r '
+      (.tool_response // .tool_result // {}) as $r |
+      if ($r | type) == "string" then $r
+      elif ($r.stdout // "") != "" then $r.stdout
+      elif ($r.content // "") != "" then $r.content
+      else ""
+      end
+    ' 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tail -15)
+  else
+    GIT_OUTPUT=$(printf '%s' "$EVENT" | python3 -c "
+import json, sys, re
+try:
+    d = json.load(sys.stdin)
+    r = d.get('tool_response', d.get('tool_result', {}))
+    out = ''
+    if isinstance(r, str): out = r
+    elif isinstance(r, dict): out = r.get('stdout', r.get('content', ''))
+    out = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', out)
+    lines = out.strip().split('\n')
+    print('\n'.join(lines[-15:]))
+except: pass
+" 2>/dev/null)
+  fi
+  # Truncate to max 1000 chars
+  if [ ${#GIT_OUTPUT} -gt 1000 ]; then
+    GIT_OUTPUT="${GIT_OUTPUT:0:997}..."
+  fi
+  # Replace HOME with ~ for readability
+  GIT_OUTPUT="${GIT_OUTPUT//$HOME/\~}"
+
+  # Extract short commit info (hash + message) from output when available
+  GIT_SUMMARY=""
+  if [[ "$FIRST_CMD" == git*commit* ]]; then
+    # Try to extract "[branch hash] message" pattern from git commit output
+    GIT_SUMMARY=$(printf '%s' "$GIT_OUTPUT" | grep -oE '\[[^ ]+ [a-f0-9]+\] .+' | head -1 2>/dev/null || true)
+    if [ -z "$GIT_SUMMARY" ]; then
+      # Fallback: extract short hash from first line mentioning a hash
+      GIT_SUMMARY=$(printf '%s' "$GIT_OUTPUT" | grep -oE '[a-f0-9]{7,}' | head -1 2>/dev/null || true)
+    fi
+  elif [[ "$FIRST_CMD" == git*push* ]]; then
+    # Extract remote and branch from push output
+    GIT_SUMMARY=$(printf '%s' "$GIT_OUTPUT" | grep -oE '[a-z]+/[^ ]+\.\.[a-f0-9]+' | head -1 2>/dev/null || true)
+    if [ -z "$GIT_SUMMARY" ]; then
+      GIT_SUMMARY="push"
+    fi
+  fi
+
+  # Append + rotate under flock to prevent concurrent hook races
+  (
+    command -v flock &>/dev/null && flock -n 9
+    if command -v jq &>/dev/null; then
+      jq -nc --arg ts "$GIT_TS" --arg cmd "$COMMAND" --arg desc "${DESCRIPTION:-}" --arg ec "${EXIT_CODE:-0}" --arg outcome "$GIT_OUTCOME" --arg summary "$GIT_SUMMARY" --arg output "$GIT_OUTPUT" \
+        '{ts:($ts|tonumber),command:$cmd,description:$desc,exit_code:$ec,outcome:$outcome,summary:$summary,output:$output}' \
+        >> "$GIT_HISTORY_FILE" 2>/dev/null || true
+    else
+      python3 -c '
+import json, sys
+entry = {"ts": int(sys.argv[1]), "command": sys.argv[2], "description": sys.argv[3], "exit_code": sys.argv[4], "outcome": sys.argv[5], "summary": sys.argv[6], "output": sys.argv[7]}
+print(json.dumps(entry, ensure_ascii=False))
+' "$GIT_TS" "$COMMAND" "${DESCRIPTION:-}" "${EXIT_CODE:-0}" "$GIT_OUTCOME" "$GIT_SUMMARY" "$GIT_OUTPUT" \
+        >> "$GIT_HISTORY_FILE" 2>/dev/null || true
+    fi
+
+    # Rotate history: keep last 100 entries
+    MAX_HISTORY=100
+    LINE_COUNT=$(wc -l < "$GIT_HISTORY_FILE" 2>/dev/null || echo 0)
+    if [ "$LINE_COUNT" -gt "$MAX_HISTORY" ]; then
+      tail -n "$MAX_HISTORY" "$GIT_HISTORY_FILE" > "${GIT_HISTORY_FILE}.tmp" 2>/dev/null \
+        && mv "${GIT_HISTORY_FILE}.tmp" "$GIT_HISTORY_FILE" 2>/dev/null || true
+    fi
+  ) 9>"${GIT_HISTORY_FILE}.lock"
+
+  # No chain trigger — git commands don't start a build->test->review chain
 fi

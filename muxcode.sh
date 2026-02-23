@@ -236,10 +236,12 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
     tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
     tmux select-pane -t "$SESSION:$WIN.1"
   elif [ "$WIN" = "commit" ] && is_split_left "$WIN"; then
-    # Commit window: git status poller (left) + agent (right)
+    # Commit window: commit log poller (left) + agent (right)
     tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN"
-    if command -v muxcode-git-status.sh &>/dev/null; then
+    if command -v muxcode-commit-log.sh &>/dev/null; then
+      tmux send-keys -t "$SESSION:$WIN" "muxcode-commit-log.sh" Enter
+    elif command -v muxcode-git-status.sh &>/dev/null; then
       tmux send-keys -t "$SESSION:$WIN" "muxcode-git-status.sh" Enter
     fi
     tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"

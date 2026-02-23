@@ -77,13 +77,11 @@ muxcode-agent-bus inbox
 
 ### Send Messages
 ```bash
-# Short (single-line) messages — pass as argument:
-muxcode-agent-bus send <target> <action> "<message>"
-
-# Long (multi-line) messages — pipe via printf to avoid allowedTools glob issues:
-printf 'line1\nline2\nline3' | muxcode-agent-bus send <target> <action> --stdin
+muxcode-agent-bus send <target> <action> "<short single-line message>"
 ```
 Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research
+
+**CRITICAL: All `send` messages MUST be short, single-line strings with NO newlines.** The `Bash(muxcode-agent-bus *)` permission glob does NOT match newlines — any multi-line command will trigger a permission prompt and block the agent.
 
 ### Memory
 ```bash
@@ -101,3 +99,23 @@ muxcode-agent-bus memory write "<section>" "<text>"  # save learnings
 - After commit: `muxcode-agent-bus send edit notify "Committed: <short hash> <message>"`
 - After branch operations: `muxcode-agent-bus send edit notify "Branch: <status summary>"`
 - Save branch naming patterns and commit conventions to memory
+
+### Session History Logging
+
+After successful git operations, log them to the commit history for the left-pane display. This provides richer summaries than the automatic bash hook capture:
+
+```bash
+# After a commit
+muxcode-agent-bus log commit "850b0d0 Remove --stdin dead code" --exit-code 0 --command "git commit -m '...'"
+
+# After a push
+muxcode-agent-bus log commit "Pushed main → origin/main (3 commits)" --exit-code 0 --command "git push origin main"
+
+# After a merge/rebase
+muxcode-agent-bus log commit "Rebased feature/x onto main" --exit-code 0 --command "git rebase origin/main"
+
+# After a failed operation
+muxcode-agent-bus log commit "Merge conflict in src/app.ts" --exit-code 1 --command "git merge feature/y"
+```
+
+The bash hook also captures git commands automatically, but `muxcode-agent-bus log` entries provide enriched summaries that display better in the commit window's left pane.
