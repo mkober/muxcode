@@ -170,6 +170,7 @@ send_init() {
 FIRST_WIN="${WIN_ARRAY[0]}"
 tmux new-session -d -s "$SESSION" -n "$FIRST_WIN" -c "$PROJECT_DIR"
 tmux set-environment -t "$SESSION" BUS_SESSION "$SESSION"
+tmux set-environment -t "$SESSION" MUXCODE 1
 
 if [ "$FIRST_WIN" = "edit" ]; then
   send_init "$SESSION:$FIRST_WIN"
