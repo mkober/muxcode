@@ -389,6 +389,7 @@ func DefaultConfig() *MuxcodeConfig {
 				CdPrefix: true,
 				Tools: []string{
 					"Bash(cdk *)", "Bash(npx cdk *)",
+					"Bash(envName=* cdk *)", "Bash(envName=* npx cdk *)",
 					"Bash(terraform *)", "Bash(pulumi *)",
 					"Bash(aws *)", "Bash(sam *)",
 					"Bash(./build.sh*)", "Bash(make*)",
