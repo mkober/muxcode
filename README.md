@@ -4,22 +4,22 @@ A multi-agent coding environment built on tmux, neovim, and Claude Code. Each ag
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  F1 edit  F2 build  F3 test  F4 review  F5 deploy  F6 run  │
-│  F7 commit  F8 analyze  F9 status                          │
+│  F1 edit  F2 build  F3 test  F4 review  F5 deploy  F6 run   │
+│  F7 commit  F8 analyze  F9 status                           │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │ edit         │    │ build        │    │ test         │  │
-│  │ nvim | agent │──→ │ term | agent │──→ │ term | agent │  │
-│  └──────────────┘    └──────────────┘    └──────────────┘  │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
+│  │ edit         │    │ build        │    │ test         │   │
+│  │ nvim | agent │──→ │ term | agent │──→ │ term | agent │   │
+│  └──────────────┘    └──────────────┘    └──────────────┘   │
 │         │                                       │           │
 │         │            ┌──────────────┐           │           │
 │         └───────────→│ review       │←──────────┘           │
 │                      │ term | agent │                       │
 │                      └──────────────┘                       │
 │                                                             │
-│  Message Bus: /tmp/muxcode-bus-{session}/                  │
-│  Memory:      .muxcode/memory/                             │
+│  Message Bus: /tmp/muxcode-bus-{session}/                   │
+│  Memory:      .muxcode/memory/                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 

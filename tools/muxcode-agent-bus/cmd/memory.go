@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/mkober/muxcode/tools/muxcode-agent-bus/bus"
 )
@@ -10,7 +12,7 @@ import (
 // Memory handles the "muxcode-agent-bus memory" subcommand.
 func Memory(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory <read|write|write-shared|context> [args...]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory <read|write|write-shared|context|search|list> [args...]\n")
 		os.Exit(1)
 	}
 
@@ -26,9 +28,13 @@ func Memory(args []string) {
 		memoryWriteShared(subArgs)
 	case "context":
 		memoryContext()
+	case "search":
+		memorySearch(subArgs)
+	case "list":
+		memoryList(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown memory subcommand: %s\n", subcmd)
-		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory <read|write|write-shared|context> [args...]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory <read|write|write-shared|context|search|list> [args...]\n")
 		os.Exit(1)
 	}
 }
@@ -89,5 +95,94 @@ func memoryContext() {
 	}
 	if content != "" {
 		fmt.Print(content)
+	}
+}
+
+func memorySearch(args []string) {
+	// Collect positional words as the query, parse --role and --limit flags
+	var queryParts []string
+	roleFilter := ""
+	limit := 0
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--role":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "Error: --role requires a value\n")
+				os.Exit(1)
+			}
+			i++
+			roleFilter = args[i]
+		case "--limit":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "Error: --limit requires a value\n")
+				os.Exit(1)
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: --limit must be a number\n")
+				os.Exit(1)
+			}
+			limit = n
+		default:
+			queryParts = append(queryParts, args[i])
+		}
+	}
+
+	query := strings.Join(queryParts, " ")
+	if query == "" {
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory search <query> [--role ROLE] [--limit N]\n")
+		os.Exit(1)
+	}
+
+	results, err := bus.SearchMemory(query, roleFilter, limit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error searching memory: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(results) > 0 {
+		fmt.Print(bus.FormatSearchResults(results))
+	}
+}
+
+func memoryList(args []string) {
+	roleFilter := ""
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--role":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "Error: --role requires a value\n")
+				os.Exit(1)
+			}
+			i++
+			roleFilter = args[i]
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", args[i])
+			fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory list [--role ROLE]\n")
+			os.Exit(1)
+		}
+	}
+
+	entries, err := bus.AllMemoryEntries()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing memory: %v\n", err)
+		os.Exit(1)
+	}
+
+	if roleFilter != "" {
+		var filtered []bus.MemoryEntry
+		for _, e := range entries {
+			if e.Role == roleFilter {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
+
+	if len(entries) > 0 {
+		fmt.Print(bus.FormatMemoryList(entries))
 	}
 }

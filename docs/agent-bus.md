@@ -82,21 +82,41 @@ ID: 1708300000-edit-a1b2c3d4
 
 ### `muxcode-agent-bus memory`
 
-Read and write persistent per-project memory.
+Read, write, search, and list persistent per-project memory.
 
 ```bash
 muxcode-agent-bus memory read [role|shared]
 muxcode-agent-bus memory write "<section>" "<text>"
 muxcode-agent-bus memory write-shared "<section>" "<text>"
 muxcode-agent-bus memory context
+muxcode-agent-bus memory search <query> [--role ROLE] [--limit N]
+muxcode-agent-bus memory list [--role ROLE]
 ```
 
 - `read` — read a specific role's memory or shared memory
 - `write` — append to own role's memory file
 - `write-shared` — append to the shared memory file
 - `context` — output both shared memory and own role's memory
+- `search` — keyword search across all memory entries with relevance scoring (header matches weighted 2x). Supports `--role` to filter by role and `--limit` to cap results. Query terms are matched case-insensitively via substring matching. Silent output on no results.
+- `list` — show a columnar inventory of all memory sections across all roles. Supports `--role` to filter by role.
 
 Memory is stored in `.muxcode/memory/` relative to the project directory.
+
+**Search examples:**
+```bash
+$ muxcode-agent-bus memory search "pnpm build"
+--- [build] Build Config (2026-02-21 14:27) score:4.0 ---
+use pnpm for all builds
+
+$ muxcode-agent-bus memory search "permission" --role shared
+--- [shared] Agent Permissions (2026-02-21 14:30) score:2.0 ---
+edit agent must never run build commands directly
+
+$ muxcode-agent-bus memory list
+shared     Agent Permissions                    2026-02-21 14:27
+edit       delegation rules                     2026-02-20 17:30
+build      Build Config                         2026-02-21 14:27
+```
 
 ### `muxcode-agent-bus watch`
 
@@ -250,7 +270,7 @@ tools/muxcode-agent-bus/
 │   ├── message.go     # Message struct and JSONL encoding
 │   ├── inbox.go       # Read/write/consume inbox files
 │   ├── lock.go        # Lock file management
-│   ├── memory.go      # Persistent memory read/write
+│   ├── memory.go      # Persistent memory read/write/search/list
 │   ├── notify.go      # Tmux send-keys notification
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization

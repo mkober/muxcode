@@ -32,7 +32,7 @@ config/
 └── nvim.lua                   # Reference nvim snippet (not auto-loaded)
 docs/                          # Documentation
 tools/muxcode-agent-bus/      # Go module — the bus binary
-├── bus/                       # Core library (config, message, inbox, lock, memory, notify)
+├── bus/                       # Core library (config, message, inbox, lock, memory, search, notify)
 ├── cmd/                       # Subcommand handlers (send, inbox, watch, dashboard, etc.)
 ├── watcher/                   # Inbox poller + trigger file monitor
 ├── tui/                       # Dracula-themed dashboard TUI

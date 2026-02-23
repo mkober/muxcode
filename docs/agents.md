@@ -80,6 +80,12 @@ muxcode-agent-bus memory context
 
 # Save learnings
 muxcode-agent-bus memory write "<section>" "<text>"
+
+# Search memory
+muxcode-agent-bus memory search "<query>" [--role ROLE] [--limit N]
+
+# List all memory sections
+muxcode-agent-bus memory list [--role ROLE]
 ```
 
 ## Customization
@@ -144,4 +150,4 @@ Per-project memory is stored in `.muxcode/memory/`:
 └── ...
 ```
 
-Agents read memory with `muxcode-agent-bus memory context` and write with `muxcode-agent-bus memory write "<section>" "<text>"`.
+Agents read memory with `muxcode-agent-bus memory context` and write with `muxcode-agent-bus memory write "<section>" "<text>"`. To find specific learnings, use `muxcode-agent-bus memory search "<query>"` (keyword search with relevance scoring) or `muxcode-agent-bus memory list` to see all sections.

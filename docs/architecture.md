@@ -8,24 +8,24 @@ Muxcode creates a tmux session with multiple windows, each running an independen
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        tmux session                             │
+│                          tmux session                           │
 │                                                                 │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ │
-│  │  edit    │ │  build  │ │  test   │ │ review  │ │  ...    │ │
-│  │ nvim|cli │ │term|cli │ │term|cli │ │term|cli │ │         │ │
-│  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └─────────┘ │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐    │
+│  │  edit   │ │  build  │ │  test   │ │ review  │ │  ...    │    │
+│  │nvim|cli │ │term|cli │ │term|cli │ │term|cli │ │         │    │
+│  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └─────────┘    │
 │       │           │           │           │                     │
-│  ─────┼───────────┼───────────┼───────────┼─────────────────── │
-│       │     Message Bus (/tmp/muxcode-bus-{session}/)          │
-│       │     ├── inbox/{role}.jsonl                               │
+│  ─────┼───────────┼───────────┼───────────┼──────────────────── │
+│       │     Message Bus (/tmp/muxcode-bus-{session}/)           │
+│       │     ├── inbox/{role}.jsonl                              │
 │       │     ├── lock/{role}.lock                                │
 │       │     └── log.jsonl                                       │
-│  ─────┼───────────┼───────────┼───────────┼─────────────────── │
+│  ─────┼───────────┼───────────┼───────────┼──────────────────── │
 │       │           │           │           │                     │
-│  ┌────┴────┐ ┌────┴────┐ ┌────┴────┐ ┌────┴────┐              │
-│  │ Hooks   │ │ Hooks   │ │ Hooks   │ │ Hooks   │              │
-│  │Pre/Post │ │Pre/Post │ │Pre/Post │ │Pre/Post │              │
-│  └─────────┘ └─────────┘ └─────────┘ └─────────┘              │
+│  ┌────┴────┐ ┌────┴────┐ ┌────┴────┐ ┌────┴────┐                │
+│  │ Hooks   │ │ Hooks   │ │ Hooks   │ │ Hooks   │                │
+│  │Pre/Post │ │Pre/Post │ │Pre/Post │ │Pre/Post │                │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘                │
 └─────────────────────────────────────────────────────────────────┘
 
 Persistent:  .muxcode/memory/{role}.md
@@ -123,6 +123,8 @@ Per-project persistent memory stored in `.muxcode/memory/`:
 ```
 
 Memory is project-scoped — each project has its own memory directory, created when `muxcode-agent-bus init` runs.
+
+Agents can search memory with `muxcode-agent-bus memory search "<query>"` (keyword matching with 2x header boost scoring) and list all sections with `muxcode-agent-bus memory list`. Both support `--role` filtering.
 
 ## Hook Architecture
 
