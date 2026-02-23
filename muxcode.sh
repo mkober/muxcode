@@ -9,7 +9,7 @@
 # The edit window gets a vertical split: editor (left) + agent (right).
 # Split-left windows get: tool (left) + agent (right).
 # Other agent windows split: terminal (left) + agent (right).
-# The console window runs the agent dashboard TUI (left) + bash shell (right).
+# The console window runs the agent dashboard TUI (left, 80%) + bash shell (right, 20%).
 
 set -euo pipefail
 
@@ -199,11 +199,11 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
   ROLE="$(agent_role "$WIN")"
 
   if [ "$WIN" = "console" ]; then
-    # Console window: dashboard TUI (left) + bash shell (right)
+    # Console window: dashboard TUI (left, 80%) + bash shell (right, 20%)
     tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN"
     tmux send-keys -t "$SESSION:$WIN" "muxcode-agent-bus dashboard" Enter
-    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
+    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR" -l 20%
     send_init "$SESSION:$WIN.1"
     tmux select-pane -t "$SESSION:$WIN.0"
   elif [ "$WIN" = "edit" ]; then

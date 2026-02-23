@@ -60,7 +60,8 @@ func sessionWindows(session string) []string {
 
 // Run starts the main render loop.
 func (d *Dashboard) Run() error {
-	// Hide cursor
+	// Clear screen and hide cursor
+	fmt.Print("\033[2J\033[H")
 	fmt.Print("\033[?25l")
 
 	// Set up signal handler for clean exit
