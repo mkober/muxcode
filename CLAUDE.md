@@ -191,6 +191,17 @@ The watcher monitors agent context size and staleness, sending `compact-recommen
 - Core code: `bus/compact.go` (`CompactAlert`, `CompactThresholds`, `CheckCompaction()`, `CheckRoleCompaction()`, `FormatCompactAlert()`, `FilterNewCompactAlerts()`)
 - Watcher code: `watcher/watcher.go` (`checkCompaction()`, `lastCompactCheck` field)
 
+### Session re-init (stale data purge)
+
+When a MUXcode session restarts with the same name, `Init()` detects the existing bus directory and purges stale data to prevent false watcher alerts (loop-detected, compact-recommended) from the previous session.
+
+- **Detection**: `os.Stat(busDir)` — if the directory exists, `reInit` flag is set
+- **Truncated files** (path preserved for writers): inboxes, `log.jsonl`, `cron.jsonl`, `proc.jsonl`, `spawn.jsonl`, `{role}-history.jsonl`, `cron-history.jsonl`
+- **Removed files** (recreated on demand): session meta (`session/*.json`), lock files (`lock/*.lock`), proc logs (`proc/*.log`), orphaned spawn inboxes (`inbox/spawn-*.jsonl`), trigger file
+- **Preserved**: memory files (`.muxcode/memory/`) — persistent learnings survive re-init
+- **Watcher grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (30s) and compaction checks (120s) skip the first interval
+- Core code: `bus/setup.go` (`Init()`, `resetFile()`, `purgeStaleFiles()`), `watcher/watcher.go` (`New()`)
+
 ### Agent spawn
 
 Agents can programmatically create temporary agent sessions for one-off tasks via `muxcode-agent-bus spawn`. The spawned agent runs in its own tmux window, receives its task via the bus inbox, and results are collected from the session log.
@@ -225,6 +236,7 @@ Agents can programmatically create temporary agent sessions for one-off tasks vi
 - Process management in `bus/proc.go` — `StartProc()`, `CheckProcAlive()`, `RefreshProcStatus()`, `StopProc()`, `CleanFinished()`
 - Agent spawn in `bus/spawn.go` — `StartSpawn()`, `StopSpawn()`, `RefreshSpawnStatus()`, `GetSpawnResult()`, `CleanFinishedSpawns()`
 - Compaction monitoring in `bus/compact.go` — `CheckCompaction()`, `CheckRoleCompaction()`, `FormatCompactAlert()`, `FilterNewCompactAlerts()`
+- Session re-init in `bus/setup.go` — `Init()`, `resetFile()`, `purgeStaleFiles()`
 
 ### Bash scripts
 
