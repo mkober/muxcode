@@ -145,10 +145,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Detect screen capture device index for ffmpeg avfoundation
-# On macOS, "1" is typically the main screen (0 is camera)
+# Detect screen capture device index for ffmpeg avfoundation.
+# Device indices vary by machine — find "Capture screen" in the device list.
 if [[ "$(uname)" == "Darwin" ]]; then
-  CAPTURE_DEVICE="1"
+  CAPTURE_DEVICE="$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 \
+    | grep -i 'Capture screen' | head -1 | sed 's/.*\[\([0-9]*\)\].*/\1/')"
+  if [[ -z "$CAPTURE_DEVICE" ]]; then
+    echo "Error: No screen capture device found in avfoundation." >&2
+    echo "Available devices:" >&2
+    ffmpeg -f avfoundation -list_devices true -i "" 2>&1 | grep '^\[AVFoundation' >&2
+    exit 1
+  fi
+  echo "  Screen capture device: ${CAPTURE_DEVICE}"
 else
   echo "Warning: Auto-recording requires macOS with avfoundation." >&2
   echo "Use a screen recorder manually, then convert with:" >&2
