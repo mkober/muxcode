@@ -21,7 +21,7 @@ You work in neovim with an AI editing agent alongside you in the edit window. Wh
 
 The edit window is where you spend most of your time — neovim on the left, the edit agent on the right. Unlike the other agents, it doesn't run builds or tests or git commands directly. It helps you write code and dispatches work to the right specialist when you're ready. More copilot than autonomous assistant.
 
-Everything runs locally inside that tmux session. The agents coordinate through plain text files in `/tmp/` — no servers, no databases, no containers. The only external call is to the LLM powering each agent.
+Everything runs locally inside that tmux session. The agents coordinate through plain text files in `/tmp/` — no servers, no databases, no containers. Each agent is a [Claude Code](https://claude.ai/code) session — that's the only external dependency. Alternative AI providers and local models are on the roadmap, but today MUXcode is built on Claude Code.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
