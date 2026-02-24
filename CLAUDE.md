@@ -128,6 +128,18 @@ The bus supports interval-based scheduled tasks via `muxcode-agent-bus cron`. Cr
 - Core code: `bus/cron.go` (structs, parsing, CRUD, execution, formatting), `cmd/cron.go` (CLI)
 - Known TODO: read-modify-write race on `cron.jsonl` between watcher and CLI (no file locking, matches existing bus patterns)
 
+### Session inspection
+
+Agents can programmatically query each other's state and message history via CLI:
+
+- `muxcode-agent-bus status` — all-agents overview (role, busy/idle, inbox count, last activity)
+- `muxcode-agent-bus status --json` — JSON output for programmatic use
+- `muxcode-agent-bus history <role>` — recent messages to/from a role (from `log.jsonl`)
+- `muxcode-agent-bus history <role> --limit N` — limit to last N messages (default: 20)
+- `muxcode-agent-bus history <role> --context` — markdown block for prompt injection
+- Core code: `bus/inspect.go` (AgentStatus struct, GetAgentStatus, GetAllAgentStatus, ReadLogHistory, ExtractContext, formatting), `cmd/status.go`, `cmd/history.go`
+- Data sources: `log.jsonl` (message log), lock files (busy state), inbox files (pending messages)
+
 ## Working on each area
 
 ### Go bus code
@@ -137,6 +149,7 @@ The bus supports interval-based scheduled tasks via `muxcode-agent-bus cron`. Cr
 - Test: `cd tools/muxcode-agent-bus && go test ./...`
 - Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`
 - Pane targeting logic in `bus/config.go` — `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`
+- Session inspection in `bus/inspect.go` — `GetAgentStatus()`, `GetAllAgentStatus()`, `ReadLogHistory()`, `ExtractContext()`
 
 ### Bash scripts
 

@@ -257,6 +257,61 @@ $ muxcode-agent-bus cron history --limit 10
 | `cron.jsonl` | `/tmp/muxcode-bus-{SESSION}/cron.jsonl` | Cron entry definitions |
 | `cron-history.jsonl` | `/tmp/muxcode-bus-{SESSION}/cron-history.jsonl` | Execution history log |
 
+### `muxcode-agent-bus status`
+
+Show all agents' current state overview.
+
+```bash
+muxcode-agent-bus status [--json]
+```
+
+- Default: human-readable table with role, state, inbox count, and last activity
+- `--json` — output as JSON array for programmatic use
+- STATE: `busy` (lock file exists) or `idle`
+- LAST ACTIVITY: timestamp + direction arrow (← received, → sent) + peer:action from log.jsonl
+- Roles with no activity show `—`
+
+**Example:**
+```
+$ muxcode-agent-bus status
+ROLE         STATE  INBOX  LAST ACTIVITY
+edit         idle   0      14:32 ← build:response
+build        busy   1      14:31 ← edit:compile
+test         idle   0      14:30 ← build:test
+review       idle   0      —
+```
+
+### `muxcode-agent-bus history`
+
+Show recent messages to/from an agent.
+
+```bash
+muxcode-agent-bus history <role> [--limit N] [--context]
+```
+
+- `<role>` — show messages involving this role (from `log.jsonl`)
+- `--limit N` — show last N messages (default: 20)
+- `--context` — output as a markdown block for prompt injection
+
+**Default output:**
+```
+$ muxcode-agent-bus history build
+--- Message history for build (last 20) ---
+14:30  edit → build  [request:build] Run ./build.sh and report results
+14:31  build → test  [request:test] Build succeeded — run tests
+14:31  build → edit  [response:build] Build succeeded: Go binary built
+```
+
+**Context output (`--context`):**
+```
+$ muxcode-agent-bus history build --context
+## Recent activity for build
+
+- 14:30 [request from edit] Run ./build.sh and report results
+- 14:31 [response to edit] Build succeeded: Go binary built
+- 14:31 [request to test] Build succeeded — run tests
+```
+
 ### `muxcode-agent-bus lock` / `unlock` / `is-locked`
 
 Manage agent busy indicators.
@@ -341,6 +396,7 @@ tools/muxcode-agent-bus/
 │   ├── memory.go      # Persistent memory read/write/search/list
 │   ├── notify.go      # Tmux send-keys notification
 │   ├── cron.go        # Cron scheduling (structs, parsing, CRUD, execution)
+│   ├── inspect.go     # Session inspection (agent status, history, context)
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization
 ├── cmd/               # Subcommand handlers

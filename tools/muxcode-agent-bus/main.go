@@ -28,6 +28,8 @@ Commands:
   skill       Manage reusable instruction skills/plugins
   session     Session compaction and context management
   cron        Manage scheduled tasks (add, list, remove, enable, disable, history)
+  status      Show all agents' current state (busy/idle/inbox/last-activity)
+  history     Show recent messages to/from an agent
 `
 
 func main() {
@@ -76,6 +78,10 @@ func main() {
 		cmd.Session(args)
 	case "cron":
 		cmd.Cron(args)
+	case "status":
+		cmd.Status(args)
+	case "history":
+		cmd.History(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

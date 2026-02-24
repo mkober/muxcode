@@ -62,17 +62,17 @@ Feature suggestions for making muxcode agents and the agent-bus more dynamic and
 - Add tool groups: `group:git-readonly`, `group:build`, `group:test`, `group:cloud` — referenced by name in agent configs
 - Move `allowed_tools()` out of bash and into the Go binary: `muxcode-agent-bus tools <role>` outputs the flags — easier to maintain and test
 
-## 6. Inter-agent session inspection
+## 6. Inter-agent session inspection ✅ (partial)
 
 **OpenClaw**: `sessions_list`, `sessions_send`, `sessions_history`, `sessions_spawn` tools let agents discover and communicate across sessions.
 
 **Muxcode today**: Bus messages are fire-and-forget. No way to inspect another agent's conversation or spawn sub-tasks.
 
 **Suggestions**:
-- `muxcode-agent-bus history <role>` — show recent messages to/from a specific agent
-- `muxcode-agent-bus status` — show all agents' current state (busy/idle/last-message)
-- `muxcode-agent-bus spawn <role> "<task>"` — create a temporary agent session for a one-off task, collect result, tear down
-- Agent-to-agent context sharing: an agent can request another agent's last N messages for context
+- ✅ `muxcode-agent-bus history <role>` — show recent messages to/from a specific agent
+- ✅ `muxcode-agent-bus status` — show all agents' current state (busy/idle/last-message)
+- `muxcode-agent-bus spawn <role> "<task>"` — create a temporary agent session for a one-off task, collect result, tear down *(deferred to follow-up)*
+- ✅ Agent-to-agent context sharing: an agent can request another agent's last N messages for context (`history --context`)
 
 ## 7. Loop detection / guardrails
 
