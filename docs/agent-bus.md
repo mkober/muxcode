@@ -34,7 +34,7 @@ Creates the ephemeral bus directory at `/tmp/muxcode-bus-{SESSION}/` with `inbox
 Send a message to another agent's inbox.
 
 ```bash
-muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify]
+muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force]
 ```
 
 - `<to>` — target agent role (edit, build, test, review, deploy, run, commit, analyze)
@@ -43,6 +43,9 @@ muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [
 - `--type TYPE` — message type: `request` (default), `response`, or `event`
 - `--reply-to ID` — ID of the message being replied to
 - `--no-notify` — skip tmux notification to the target agent
+- `--force` — bypass pre-commit safeguard (only relevant when sending commit actions to the commit agent)
+
+**Pre-commit safeguard:** When sending a commit action (`commit`, `stage`, `push`, `merge`, `rebase`, `tag`) to the commit agent, the bus checks that all other agents (excluding edit, commit, watch) have empty inboxes, are not busy, and have no running background processes. If any agent has pending work, the send is blocked with an error. Use `--force` to bypass.
 
 Auto-detects sender from `AGENT_ROLE` env var or tmux window name.
 
@@ -365,6 +368,65 @@ $ muxcode-agent-bus guard --threshold 5 --window 600
 
 **Watcher integration:** The bus watcher checks for loops every 30 seconds. When a loop is detected, it sends a `loop-detected` event to the edit agent and notifies via tmux. Alerts are deduplicated within a 5-minute cooldown to prevent spamming.
 
+### `muxcode-agent-bus proc`
+
+Manage background processes — launch, track, and auto-notify on completion.
+
+```bash
+muxcode-agent-bus proc start "<command>" [--dir DIR]
+muxcode-agent-bus proc list [--all]
+muxcode-agent-bus proc status <id>
+muxcode-agent-bus proc log <id> [--tail N]
+muxcode-agent-bus proc stop <id>
+muxcode-agent-bus proc clean
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+|------------|-------------|
+| `start` | Launch a background process and track it |
+| `list` | Show running processes (use `--all` to include finished) |
+| `status` | Detailed status for a single process |
+| `log` | Read process output log (use `--tail N` for last N lines) |
+| `stop` | Send SIGTERM to a running process |
+| `clean` | Remove finished entries and their log files |
+
+**Examples:**
+```bash
+# Start a long-running build in the background
+$ muxcode-agent-bus proc start "./build.sh"
+Started process: 1740000000-proc-a1b2c3d4
+  PID: 12345  Owner: build
+  Command: ./build.sh
+  Log: /tmp/muxcode-bus-mysession/proc/1740000000-proc-a1b2c3d4.log
+
+# Check running processes
+$ muxcode-agent-bus proc list
+ID                                   PID      STATUS     OWNER      STARTED    COMMAND
+----------------------------------------------------------------------------------------------------
+1740000000-proc-a1b2c3d4             12345    running    build      14:00:00   ./build.sh
+
+# View process log
+$ muxcode-agent-bus proc log 1740000000-proc-a1b2c3d4 --tail 20
+
+# Stop a process
+$ muxcode-agent-bus proc stop 1740000000-proc-a1b2c3d4
+
+# Clean up finished processes
+$ muxcode-agent-bus proc clean
+Cleaned 2 finished process(es).
+```
+
+**Watcher integration:** The bus watcher checks running processes on each poll cycle (2s). When a process completes, it sends a `proc-complete` event to the owner agent with the command, status, and exit code. The owner is notified via tmux.
+
+**Data files:**
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `proc.jsonl` | `/tmp/muxcode-bus-{SESSION}/proc.jsonl` | Process entry definitions |
+| `{id}.log` | `/tmp/muxcode-bus-{SESSION}/proc/{id}.log` | Per-process stdout/stderr output |
+
 ### `muxcode-agent-bus lock` / `unlock` / `is-locked`
 
 Manage agent busy indicators.
@@ -451,6 +513,7 @@ tools/muxcode-agent-bus/
 │   ├── cron.go        # Cron scheduling (structs, parsing, CRUD, execution)
 │   ├── inspect.go     # Session inspection (agent status, history, context)
 │   ├── guard.go       # Loop detection (command retries, message ping-pong)
+│   ├── proc.go        # Background process management (start, track, notify)
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization
 ├── cmd/               # Subcommand handlers

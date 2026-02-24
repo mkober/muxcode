@@ -128,6 +128,22 @@ The bus supports interval-based scheduled tasks via `muxcode-agent-bus cron`. Cr
 - Core code: `bus/cron.go` (structs, parsing, CRUD, execution, formatting), `cmd/cron.go` (CLI)
 - Known TODO: read-modify-write race on `cron.jsonl` between watcher and CLI (no file locking, matches existing bus patterns)
 
+### Process management (background tasks)
+
+Agents can launch, track, and auto-notify on background processes via `muxcode-agent-bus proc`. Useful for long-running builds, deploys, or watch-mode test runners.
+
+- `muxcode-agent-bus proc start "<command>" [--dir DIR]` — launch a background process, returns immediately
+- `muxcode-agent-bus proc list [--all]` — show running processes (use `--all` to include finished)
+- `muxcode-agent-bus proc status <id>` — detailed status for a single process
+- `muxcode-agent-bus proc log <id> [--tail N]` — read process output log
+- `muxcode-agent-bus proc stop <id>` — send SIGTERM to a running process
+- `muxcode-agent-bus proc clean` — remove finished entries and their log files
+- Watcher integration: `checkProcs()` runs each poll cycle, sends `proc-complete` events to the owner agent on completion
+- Exit code capture: commands are wrapped in a subshell with an `EXIT_CODE:$?` sentinel appended to the log file
+- Process detachment: `SysProcAttr{Setpgid: true}` detaches processes from the bus binary
+- JSONL storage: `proc.jsonl` (entries), `proc/{id}.log` (per-process output)
+- Core code: `bus/proc.go` (ProcEntry, CRUD, StartProc, CheckProcAlive, RefreshProcStatus, StopProc, CleanFinished, formatting), `cmd/proc.go` (CLI)
+
 ### Session inspection
 
 Agents can programmatically query each other's state and message history via CLI:
@@ -153,6 +169,17 @@ The bus detects repetitive agent patterns and auto-escalates to the edit agent v
 - Core code: `bus/guard.go` (HistoryEntry, LoopAlert, ReadHistory, DetectCommandLoop, DetectMessageLoop, CheckLoops, CheckAllLoops, formatting), `cmd/guard.go` (CLI)
 - Default thresholds: 3 for command loops, 4 for message loops; default window: 300s (5 minutes)
 
+### Pre-commit safeguard
+
+The `send` command blocks commit delegation when agents have pending work, preventing incomplete commits.
+
+- **Trigger**: `muxcode-agent-bus send commit commit "..."` (and other commit actions: stage, push, merge, rebase, tag)
+- **Excluded roles**: edit (sender), commit (target), watch (passive watcher)
+- **Checked conditions** for all other agents: pending inbox messages, busy (locked), running background procs
+- **Bypass**: `--force` flag on the send command skips the check
+- **Read-only git ops not blocked**: status, log, diff, pr-read actions pass through without the check
+- Core code: `bus/inspect.go` (`PreCommitCheck`), `cmd/send.go` (`isCommitAction`, `--force` flag)
+
 ## Working on each area
 
 ### Go bus code
@@ -160,10 +187,11 @@ The bus detects repetitive agent patterns and auto-escalates to the edit agent v
 - Packages: `bus/` (core), `cmd/` (subcommands), `watcher/` (monitor), `tui/` (dashboard)
 - Build: `cd tools/muxcode-agent-bus && go build .`
 - Test: `cd tools/muxcode-agent-bus && go test ./...`
-- Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`
+- Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`, `ProcDir()`, `ProcPath()`, `ProcLogPath()`
 - Pane targeting logic in `bus/config.go` — `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`
-- Session inspection in `bus/inspect.go` — `GetAgentStatus()`, `GetAllAgentStatus()`, `ReadLogHistory()`, `ExtractContext()`
+- Session inspection in `bus/inspect.go` — `GetAgentStatus()`, `GetAllAgentStatus()`, `ReadLogHistory()`, `ExtractContext()`, `PreCommitCheck()`
 - Loop detection in `bus/guard.go` — `ReadHistory()`, `DetectCommandLoop()`, `DetectMessageLoop()`, `CheckLoops()`, `CheckAllLoops()`
+- Process management in `bus/proc.go` — `StartProc()`, `CheckProcAlive()`, `RefreshProcStatus()`, `StopProc()`, `CleanFinished()`
 
 ### Bash scripts
 

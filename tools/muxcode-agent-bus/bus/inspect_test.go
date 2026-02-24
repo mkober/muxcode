@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGetAgentStatus_Idle(t *testing.T) {
@@ -299,5 +300,154 @@ func TestFormatStatusJSON(t *testing.T) {
 	}
 	if !parsed[1].Locked {
 		t.Error("second entry should be locked")
+	}
+}
+
+func TestPreCommitCheck_Clean(t *testing.T) {
+	session := testSession(t)
+
+	// All agents idle, no messages — should pass
+	if err := PreCommitCheck(session); err != nil {
+		t.Errorf("expected nil error for clean state, got: %v", err)
+	}
+}
+
+func TestPreCommitCheck_PendingInbox(t *testing.T) {
+	session := testSession(t)
+
+	// Send a message to the build agent's inbox (leave it unread)
+	msg := NewMessage("edit", "build", "request", "build", "build it", "")
+	if err := Send(session, msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	err := PreCommitCheck(session)
+	if err == nil {
+		t.Fatal("expected error for pending inbox, got nil")
+	}
+	if !strings.Contains(err.Error(), "build: 1 pending message(s)") {
+		t.Errorf("error should mention build pending message, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cannot commit") {
+		t.Errorf("error should contain 'cannot commit', got: %v", err)
+	}
+}
+
+func TestPreCommitCheck_BusyAgent(t *testing.T) {
+	session := testSession(t)
+
+	// Lock the test agent
+	if err := Lock(session, "test"); err != nil {
+		t.Fatalf("Lock: %v", err)
+	}
+
+	err := PreCommitCheck(session)
+	if err == nil {
+		t.Fatal("expected error for busy agent, got nil")
+	}
+	if !strings.Contains(err.Error(), "test: busy") {
+		t.Errorf("error should mention test busy, got: %v", err)
+	}
+}
+
+func TestPreCommitCheck_RunningProc(t *testing.T) {
+	session := testSession(t)
+
+	// Write a running proc entry owned by build
+	entries := []ProcEntry{
+		{
+			ID:        "proc-1",
+			PID:       99999,
+			Command:   "./build.sh",
+			Owner:     "build",
+			Status:    "running",
+			StartedAt: time.Now().Unix(),
+		},
+	}
+	if err := WriteProcEntries(session, entries); err != nil {
+		t.Fatalf("WriteProcEntries: %v", err)
+	}
+
+	err := PreCommitCheck(session)
+	if err == nil {
+		t.Fatal("expected error for running proc, got nil")
+	}
+	if !strings.Contains(err.Error(), "build: background process running (./build.sh)") {
+		t.Errorf("error should mention running proc, got: %v", err)
+	}
+}
+
+func TestPreCommitCheck_ExcludesEditCommitWatch(t *testing.T) {
+	session := testSession(t)
+
+	// Lock excluded roles — should still pass
+	for _, role := range []string{"edit", "commit", "watch"} {
+		if err := Lock(session, role); err != nil {
+			t.Fatalf("Lock %s: %v", role, err)
+		}
+	}
+
+	// Send messages to excluded roles
+	for _, role := range []string{"edit", "commit", "watch"} {
+		msg := NewMessage("test", role, "request", "info", "test msg", "")
+		if err := Send(session, msg); err != nil {
+			t.Fatalf("Send to %s: %v", role, err)
+		}
+	}
+
+	if err := PreCommitCheck(session); err != nil {
+		t.Errorf("expected nil error when only excluded roles have issues, got: %v", err)
+	}
+}
+
+func TestPreCommitCheck_MultipleIssues(t *testing.T) {
+	session := testSession(t)
+
+	// Pending inbox on build
+	msg := NewMessage("edit", "build", "request", "build", "build it", "")
+	if err := Send(session, msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	// Busy review agent
+	if err := Lock(session, "review"); err != nil {
+		t.Fatalf("Lock: %v", err)
+	}
+
+	err := PreCommitCheck(session)
+	if err == nil {
+		t.Fatal("expected error for multiple issues, got nil")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "build") {
+		t.Errorf("error should mention build, got: %v", err)
+	}
+	if !strings.Contains(errStr, "review: busy") {
+		t.Errorf("error should mention review busy, got: %v", err)
+	}
+}
+
+func TestPreCommitCheck_FinishedProcsIgnored(t *testing.T) {
+	session := testSession(t)
+
+	// Write a finished proc entry — should not block
+	entries := []ProcEntry{
+		{
+			ID:         "proc-done",
+			PID:        12345,
+			Command:    "./build.sh",
+			Owner:      "build",
+			Status:     "exited",
+			ExitCode:   0,
+			StartedAt:  time.Now().Unix() - 60,
+			FinishedAt: time.Now().Unix(),
+		},
+	}
+	if err := WriteProcEntries(session, entries); err != nil {
+		t.Fatalf("WriteProcEntries: %v", err)
+	}
+
+	if err := PreCommitCheck(session); err != nil {
+		t.Errorf("expected nil error when only finished procs exist, got: %v", err)
 	}
 }

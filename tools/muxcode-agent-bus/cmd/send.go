@@ -9,10 +9,10 @@ import (
 )
 
 // Send handles the "muxcode-agent-bus send" subcommand.
-// Usage: muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify]
+// Usage: muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force]
 func Send(args []string) {
 	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus send <to> <action> \"<payload>\" [--type TYPE] [--reply-to ID] [--no-notify]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus send <to> <action> \"<payload>\" [--type TYPE] [--reply-to ID] [--no-notify] [--force]\n")
 		os.Exit(1)
 	}
 
@@ -24,6 +24,7 @@ func Send(args []string) {
 	msgType := "request"
 	replyTo := ""
 	noNotify := false
+	force := false
 	payloadSet := false
 
 	remaining := args[2:]
@@ -45,6 +46,8 @@ func Send(args []string) {
 			replyTo = remaining[i]
 		case "--no-notify":
 			noNotify = true
+		case "--force":
+			force = true
 		default:
 			if strings.HasPrefix(remaining[i], "--") {
 				fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", remaining[i])
@@ -86,6 +89,14 @@ func Send(args []string) {
 		os.Exit(1)
 	}
 
+	// Pre-commit safeguard: block sends to commit agent unless all agents are idle
+	if to == "commit" && isCommitAction(action) && !force {
+		if err := bus.PreCommitCheck(session); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			os.Exit(1)
+		}
+	}
+
 	msg := bus.NewMessage(from, to, msgType, action, payload, replyTo)
 	if err := bus.Send(session, msg); err != nil {
 		fmt.Fprintf(os.Stderr, "Error sending message: %v\n", err)
@@ -103,6 +114,16 @@ func Send(args []string) {
 	}
 
 	fmt.Printf("Sent %s:%s to %s\n", msgType, action, to)
+}
+
+// isCommitAction returns true for actions that trigger actual git commits.
+// Read-only operations (status, log, diff, pr-read) are not blocked.
+func isCommitAction(action string) bool {
+	switch action {
+	case "commit", "stage", "push", "merge", "rebase", "tag":
+		return true
+	}
+	return false
 }
 
 // validatePayload returns warning strings for payload issues.

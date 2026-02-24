@@ -137,6 +137,58 @@ func FormatStatusJSON(statuses []AgentStatus) (string, error) {
 	return string(data), nil
 }
 
+// preCommitExcludedRoles are skipped during pre-commit checks.
+// edit: the sender, always busy during its turn.
+// commit: the target, about to receive the commit message.
+// watch: passive watcher, not a task-producing agent.
+var preCommitExcludedRoles = map[string]bool{
+	"edit":   true,
+	"commit": true,
+	"watch":  true,
+}
+
+// PreCommitCheck verifies that all agents are idle with empty inboxes
+// before allowing a commit. Returns nil if safe to proceed, or an error
+// describing which agents have pending work.
+//
+// Excluded roles: edit (sender), commit (target), watch (passive).
+func PreCommitCheck(session string) error {
+	statuses := GetAllAgentStatus(session)
+
+	// Check for running background procs
+	procs, _ := ReadProcEntries(session)
+	runningProcs := make(map[string]string) // owner -> command
+	for _, p := range procs {
+		if p.Status == "running" {
+			runningProcs[p.Owner] = p.Command
+		}
+	}
+
+	var issues []string
+	for _, s := range statuses {
+		if preCommitExcludedRoles[s.Role] {
+			continue
+		}
+
+		if s.InboxCount > 0 {
+			issues = append(issues, fmt.Sprintf("  %s: %d pending message(s)", s.Role, s.InboxCount))
+		}
+		if s.Locked {
+			issues = append(issues, fmt.Sprintf("  %s: busy", s.Role))
+		}
+		if cmd, ok := runningProcs[s.Role]; ok {
+			issues = append(issues, fmt.Sprintf("  %s: background process running (%s)", s.Role, cmd))
+		}
+	}
+
+	if len(issues) > 0 {
+		return fmt.Errorf("cannot commit — agents have pending work:\n%s\nRun 'muxcode-agent-bus status' to check, or use --force to bypass",
+			strings.Join(issues, "\n"))
+	}
+
+	return nil
+}
+
 // readLogForRole reads the session log and returns the last `limit` messages
 // involving the specified role (as sender or receiver).
 func readLogForRole(session, role string, limit int) []Message {
