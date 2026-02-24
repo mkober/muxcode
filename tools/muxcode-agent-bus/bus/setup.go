@@ -37,6 +37,14 @@ func Init(session, memoryDir string) error {
 		return err
 	}
 
+	// Create proc directory and touch proc.jsonl
+	if err := os.MkdirAll(ProcDir(session), 0755); err != nil {
+		return err
+	}
+	if err := touchFile(ProcPath(session)); err != nil {
+		return err
+	}
+
 	// Create memory directory and shared.md if not exists
 	if memoryDir == "" {
 		memoryDir = MemoryDir()

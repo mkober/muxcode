@@ -31,6 +31,8 @@ Commands:
   status      Show all agents' current state (busy/idle/inbox/last-activity)
   history     Show recent messages to/from an agent
   guard       Check for agent loop patterns (command retries, message ping-pong)
+  proc        Manage background processes (start, list, status, log, stop, clean)
+  demo        Run scripted demo scenarios (run, list)
 `
 
 func main() {
@@ -85,6 +87,10 @@ func main() {
 		cmd.History(args)
 	case "guard":
 		cmd.Guard(args)
+	case "proc":
+		cmd.Proc(args)
+	case "demo":
+		cmd.Demo(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

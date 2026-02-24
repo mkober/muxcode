@@ -11,6 +11,8 @@
 
 A multi-agent coding environment built on tmux — where you stay in the loop.
 
+![MUXcode demo](assets/demo.gif)
+
 ## What is MUXcode?
 
 MUXcode is a tmux session. Everything — your editor, the AI agents, the message bus, the dashboard — lives inside tmux windows. You launch it, and a session spins up with nine windows, each bound to a function key. F1 is your edit window. F2 is build. F3 is test. You get the idea.

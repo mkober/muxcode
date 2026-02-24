@@ -52,6 +52,7 @@ func (w *Watcher) Run() error {
 		w.checkInboxes()
 		w.checkTrigger()
 		w.checkCron()
+		w.checkProcs()
 		w.checkLoops()
 		time.Sleep(w.pollInterval)
 	}
@@ -263,6 +264,45 @@ func (w *Watcher) checkCron() {
 		// Force cron reload on next cycle so updated last_run_ts values are picked up
 		w.lastCronLoad = 0
 	}
+}
+
+// checkProcs polls running background processes and notifies owners on completion.
+func (w *Watcher) checkProcs() {
+	completed, err := bus.RefreshProcStatus(w.session)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  [proc] failed to refresh proc status: %v\n", err)
+		return
+	}
+
+	if len(completed) == 0 {
+		return
+	}
+
+	for _, entry := range completed {
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Process completed: %s (status: %s, exit: %d)\n",
+			ts, entry.ID, entry.Status, entry.ExitCode)
+
+		payload := fmt.Sprintf("Background process completed: %s\n  Command: %s\n  Status: %s  Exit code: %d\n  Log: %s",
+			entry.ID, entry.Command, entry.Status, entry.ExitCode, entry.LogFile)
+
+		msg := bus.NewMessage("proc", entry.Owner, "event", "proc-complete", payload, "")
+		if err := bus.Send(w.session, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "  [proc] failed to send completion event to %s: %v\n", entry.Owner, err)
+			continue
+		}
+
+		if err := bus.Notify(w.session, entry.Owner); err != nil {
+			fmt.Fprintf(os.Stderr, "  [proc] failed to notify %s: %v\n", entry.Owner, err)
+		}
+
+		// Mark as notified
+		_ = bus.UpdateProcEntry(w.session, entry.ID, func(e *bus.ProcEntry) {
+			e.Notified = true
+		})
+	}
+
+	w.refreshInboxSizes()
 }
 
 // checkLoops runs loop detection every 30 seconds and sends alerts to the edit agent.

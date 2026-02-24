@@ -223,6 +223,19 @@ The `send` command blocks commit delegation when agents have pending work, preve
 - Skills are auto-injected into agent prompts at launch via `skill prompt <role>`
 - See [Skills requirements](docs/requirements/skills-plugin.md) for feature requirements
 
+### Demo mode
+
+- Go subcommand: `muxcode-agent-bus demo run [SCENARIO] [--speed FACTOR] [--dry-run] [--no-switch]`
+- GIF capture: `scripts/muxcode-demo.sh [--speed FACTOR] [--output FILE]`
+- Core code: `bus/demo.go` (DemoStep, DemoScenario, RunDemo, BuiltinScenarios, ScaleDelay), `cmd/demo.go` (CLI)
+- Built-in scenario `build-test-review`: 20 steps, ~20s at 1.0x — edit→build→test→review→commit cycle
+- Messages use `From: "demo"` so agents see them but they're identifiable as demo traffic
+- `--dry-run` prints steps without executing (no tmux needed) — used in tests
+- `--no-switch` skips tmux window switching (headless mode)
+- `--speed` multiplier: 2.0 = fast (GIF recording), 0.5 = slow (live talks)
+- GIF target: <5 MB, 12 fps, 1280px wide; requires `ffmpeg` + `gifski` (Homebrew)
+- Output goes to `assets/demo.gif`, embedded in README
+
 ### Documentation
 
 - Cross-link between docs using relative paths (e.g. `[Architecture](docs/architecture.md)`)

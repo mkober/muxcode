@@ -180,6 +180,21 @@ func CronHistoryPath(session string) string {
 	return filepath.Join(BusDir(session), "cron-history.jsonl")
 }
 
+// ProcDir returns the process log directory path for a session.
+func ProcDir(session string) string {
+	return filepath.Join(BusDir(session), "proc")
+}
+
+// ProcPath returns the process entries JSONL file path for a session.
+func ProcPath(session string) string {
+	return filepath.Join(BusDir(session), "proc.jsonl")
+}
+
+// ProcLogPath returns the log file path for a specific process in a session.
+func ProcLogPath(session, id string) string {
+	return filepath.Join(ProcDir(session), id+".log")
+}
+
 // TriggerFile returns the analyze trigger file path for a session.
 // Uses /tmp directly for compatibility with bash hooks.
 func TriggerFile(session string) string {

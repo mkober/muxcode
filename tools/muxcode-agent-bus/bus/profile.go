@@ -553,7 +553,7 @@ func DefaultConfig() *MuxcodeConfig {
 				NotifyAnalyst: true,
 			},
 		},
-		AutoCC: []string{"build", "test", "review", "deploy"},
+		AutoCC: []string{"build", "test", "review", "deploy", "analyze"},
 		SendPolicy: map[string]SendPolicy{
 			"build": {Deny: []string{"test"}},
 			"test":  {Deny: []string{"review"}},
