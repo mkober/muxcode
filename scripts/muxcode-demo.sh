@@ -126,12 +126,17 @@ fi
 # --- Recording mode ---
 
 SESSION_NAME="$(tmux display-message -p '#S')"
-RECORDING="${TMPDIR}/muxcode-demo-$$.mp4"
+RECORDING="${TMPDIR}/muxcode-demo-$$.mkv"
 
 cleanup() {
   # Kill recording process if still running
   if [[ -n "${RECORD_PID:-}" ]] && kill -0 "$RECORD_PID" 2>/dev/null; then
     kill -INT "$RECORD_PID" 2>/dev/null || true
+    sleep 1
+    # Force kill if still running
+    if kill -0 "$RECORD_PID" 2>/dev/null; then
+      kill -9 "$RECORD_PID" 2>/dev/null || true
+    fi
     wait "$RECORD_PID" 2>/dev/null || true
   fi
   # Clean up temp files
@@ -159,9 +164,11 @@ echo "  (Recording to: $RECORDING)"
 
 # Use ffmpeg avfoundation to capture the screen.
 # -f avfoundation -i "DEVICE:none" captures video only (no audio).
-# Runs in background, stopped via SIGINT for clean file finalization.
-ffmpeg -f avfoundation -framerate 30 -i "${CAPTURE_DEVICE}:none" \
-  -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+# MKV container is used because it doesn't require finalization — the file
+# is valid even if ffmpeg is interrupted (unlike MP4 which needs a moov atom).
+ffmpeg -f avfoundation -framerate 30 -capture_cursor 1 \
+  -i "${CAPTURE_DEVICE}:none" \
+  -c:v libx264 -preset ultrafast -crf 18 \
   -y -loglevel warning \
   "$RECORDING" &
 RECORD_PID=$!
@@ -177,11 +184,15 @@ sleep 2
 
 echo "Stopping recording..."
 kill -INT "$RECORD_PID" 2>/dev/null || true
+# Wait for ffmpeg to finalize (MKV is tolerant but clean exit is better)
+for i in $(seq 1 10); do
+  if ! kill -0 "$RECORD_PID" 2>/dev/null; then
+    break
+  fi
+  sleep 0.5
+done
 wait "$RECORD_PID" 2>/dev/null || true
 unset RECORD_PID
-
-# Give ffmpeg a moment to finalize the file
-sleep 1
 
 # Verify recording was created
 if [[ ! -f "$RECORDING" ]]; then
