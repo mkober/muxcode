@@ -21,6 +21,8 @@ type Watcher struct {
 	pendingSince    int64
 	cronEntries     []bus.CronEntry
 	lastCronLoad    int64
+	lastLoopCheck   int64
+	lastAlertKey    map[string]int64
 }
 
 // New creates a new Watcher for the given session.
@@ -31,6 +33,7 @@ func New(session string, pollSecs, debounceSecs int) *Watcher {
 		debounceSecs: debounceSecs,
 		triggerFile:  bus.TriggerFile(session),
 		inboxSizes:   make(map[string]int64),
+		lastAlertKey: make(map[string]int64),
 	}
 }
 
@@ -49,6 +52,7 @@ func (w *Watcher) Run() error {
 		w.checkInboxes()
 		w.checkTrigger()
 		w.checkCron()
+		w.checkLoops()
 		time.Sleep(w.pollInterval)
 	}
 }
@@ -259,4 +263,41 @@ func (w *Watcher) checkCron() {
 		// Force cron reload on next cycle so updated last_run_ts values are picked up
 		w.lastCronLoad = 0
 	}
+}
+
+// checkLoops runs loop detection every 30 seconds and sends alerts to the edit agent.
+// Deduplicates alerts within a 5-minute cooldown to avoid spamming.
+func (w *Watcher) checkLoops() {
+	now := time.Now().Unix()
+	if now-w.lastLoopCheck < 30 {
+		return
+	}
+	w.lastLoopCheck = now
+
+	alerts := bus.CheckAllLoops(w.session)
+	if len(alerts) == 0 {
+		return
+	}
+
+	// Filter out alerts that were already sent within the cooldown window
+	fresh := bus.FilterNewAlerts(alerts, w.lastAlertKey, 300)
+	if len(fresh) == 0 {
+		return
+	}
+
+	for _, alert := range fresh {
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Loop detected: %s (%s)\n", ts, alert.Role, alert.Type)
+
+		msg := bus.NewMessage("watcher", "edit", "event", "loop-detected", alert.Message, "")
+		if err := bus.Send(w.session, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "  [guard] failed to send loop alert: %v\n", err)
+			continue
+		}
+		if err := bus.Notify(w.session, "edit"); err != nil {
+			fmt.Fprintf(os.Stderr, "  [guard] failed to notify edit: %v\n", err)
+		}
+	}
+
+	w.refreshInboxSizes()
 }

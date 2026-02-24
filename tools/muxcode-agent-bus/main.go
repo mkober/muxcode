@@ -30,6 +30,7 @@ Commands:
   cron        Manage scheduled tasks (add, list, remove, enable, disable, history)
   status      Show all agents' current state (busy/idle/inbox/last-activity)
   history     Show recent messages to/from an agent
+  guard       Check for agent loop patterns (command retries, message ping-pong)
 `
 
 func main() {
@@ -82,6 +83,8 @@ func main() {
 		cmd.Status(args)
 	case "history":
 		cmd.History(args)
+	case "guard":
+		cmd.Guard(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

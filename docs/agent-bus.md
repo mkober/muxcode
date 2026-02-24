@@ -312,6 +312,59 @@ $ muxcode-agent-bus history build --context
 - 14:31 [request to test] Build succeeded — run tests
 ```
 
+### `muxcode-agent-bus guard`
+
+Check for agent loop patterns — command retries and message ping-pong.
+
+```bash
+muxcode-agent-bus guard [role] [--json] [--threshold N] [--window N]
+```
+
+- No role: check all known roles
+- `role`: check only that role
+- `--json` — output as JSON array
+- `--threshold N` — override repeat threshold (default 3 for commands, 4 for messages)
+- `--window N` — override time window in seconds (default 300)
+- Exit code 0: no loops detected
+- Exit code 1: loops detected (useful for scripting)
+
+**Detection targets:**
+
+| Type | Source | Default threshold | Description |
+|------|--------|-------------------|-------------|
+| Command loop | `{role}-history.jsonl` | 3 | Same command fails N+ times consecutively within the time window |
+| Message loop | `log.jsonl` | 4 | Same `(from, to, action)` tuple or ping-pong pattern repeats N+ times |
+
+Command normalization strips `cd ... &&` prefixes, env var assignments, `bash -c`, trailing `2>&1`, and collapses whitespace to prevent false negatives.
+
+**Examples:**
+```bash
+# Check all agents
+$ muxcode-agent-bus guard
+⚠ LOOP DETECTED: build
+  Type: command
+  Command: go build ./... (failed 3x in 2m)
+  Action: Check build window — agent may be stuck
+
+# Check a specific agent as JSON
+$ muxcode-agent-bus guard build --json
+[
+  {
+    "role": "build",
+    "type": "command",
+    "count": 3,
+    "command": "go build ./...",
+    "window_s": 120,
+    "message": "go build ./... failed 3x in 2m"
+  }
+]
+
+# Custom thresholds
+$ muxcode-agent-bus guard --threshold 5 --window 600
+```
+
+**Watcher integration:** The bus watcher checks for loops every 30 seconds. When a loop is detected, it sends a `loop-detected` event to the edit agent and notifies via tmux. Alerts are deduplicated within a 5-minute cooldown to prevent spamming.
+
 ### `muxcode-agent-bus lock` / `unlock` / `is-locked`
 
 Manage agent busy indicators.
@@ -397,6 +450,7 @@ tools/muxcode-agent-bus/
 │   ├── notify.go      # Tmux send-keys notification
 │   ├── cron.go        # Cron scheduling (structs, parsing, CRUD, execution)
 │   ├── inspect.go     # Session inspection (agent status, history, context)
+│   ├── guard.go       # Loop detection (command retries, message ping-pong)
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization
 ├── cmd/               # Subcommand handlers

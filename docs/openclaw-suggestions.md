@@ -74,17 +74,18 @@ Feature suggestions for making muxcode agents and the agent-bus more dynamic and
 - `muxcode-agent-bus spawn <role> "<task>"` — create a temporary agent session for a one-off task, collect result, tear down *(deferred to follow-up)*
 - ✅ Agent-to-agent context sharing: an agent can request another agent's last N messages for context (`history --context`)
 
-## 7. Loop detection / guardrails
+## 7. Loop detection / guardrails ✅
 
 **OpenClaw**: Built-in loop detection that catches repetitive no-progress tool-call patterns.
 
-**Muxcode today**: No guardrails. An agent can spin in circles forever.
+**Muxcode today**: ~~No guardrails. An agent can spin in circles forever.~~ Implemented via `muxcode-agent-bus guard`.
 
-**Suggestions**:
-- Track tool calls per agent in the bus — if the same tool+args pattern repeats N times, emit a warning event
-- Add `muxcode-agent-bus guard <role>` that monitors an agent's inbox for circular patterns
-- Auto-escalate to edit agent: "build agent appears stuck in a loop — last 3 attempts identical"
-- Configurable thresholds in the bus config
+**Implemented**:
+- ✅ `muxcode-agent-bus guard [role] [--json] [--threshold N] [--window N]` — on-demand loop check
+- ✅ Command loop detection: same command failing N+ times in a time window (from `{role}-history.jsonl`)
+- ✅ Message loop detection: repeated or ping-pong messages between agents (from `log.jsonl`)
+- ✅ Auto-escalate to edit agent via watcher integration (checks every 30s, deduplicates within 5m cooldown)
+- ✅ Configurable thresholds and time windows via CLI flags
 
 ## 8. Dynamic system prompt composition
 

@@ -140,6 +140,19 @@ Agents can programmatically query each other's state and message history via CLI
 - Core code: `bus/inspect.go` (AgentStatus struct, GetAgentStatus, GetAllAgentStatus, ReadLogHistory, ExtractContext, formatting), `cmd/status.go`, `cmd/history.go`
 - Data sources: `log.jsonl` (message log), lock files (busy state), inbox files (pending messages)
 
+### Loop detection / guardrails
+
+The bus detects repetitive agent patterns and auto-escalates to the edit agent via `muxcode-agent-bus guard`.
+
+- **Command loops**: same command failing N+ times consecutively (from `{role}-history.jsonl`)
+- **Message loops**: repeated `(from, to, action)` tuples or ping-pong patterns (from `log.jsonl`)
+- CLI: `muxcode-agent-bus guard [role] [--json] [--threshold N] [--window N]`
+- Watcher integration: `checkLoops()` runs every 30s, sends `loop-detected` events to edit
+- Dedup: alerts suppressed within 5-minute cooldown per `(role, type, command/peer)` key
+- Command normalization: strips `cd ... &&`, env vars, `bash -c`, `2>&1`, collapses whitespace
+- Core code: `bus/guard.go` (HistoryEntry, LoopAlert, ReadHistory, DetectCommandLoop, DetectMessageLoop, CheckLoops, CheckAllLoops, formatting), `cmd/guard.go` (CLI)
+- Default thresholds: 3 for command loops, 4 for message loops; default window: 300s (5 minutes)
+
 ## Working on each area
 
 ### Go bus code
@@ -150,6 +163,7 @@ Agents can programmatically query each other's state and message history via CLI
 - Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`
 - Pane targeting logic in `bus/config.go` — `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`
 - Session inspection in `bus/inspect.go` — `GetAgentStatus()`, `GetAllAgentStatus()`, `ReadLogHistory()`, `ExtractContext()`
+- Loop detection in `bus/guard.go` — `ReadHistory()`, `DetectCommandLoop()`, `DetectMessageLoop()`, `CheckLoops()`, `CheckAllLoops()`
 
 ### Bash scripts
 
