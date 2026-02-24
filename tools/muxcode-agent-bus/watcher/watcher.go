@@ -28,13 +28,16 @@ type Watcher struct {
 
 // New creates a new Watcher for the given session.
 func New(session string, pollSecs, debounceSecs int) *Watcher {
+	now := time.Now().Unix()
 	return &Watcher{
-		session:      session,
-		pollInterval: time.Duration(pollSecs) * time.Second,
-		debounceSecs: debounceSecs,
-		triggerFile:  bus.TriggerFile(session),
-		inboxSizes:   make(map[string]int64),
-		lastAlertKey: make(map[string]int64),
+		session:          session,
+		pollInterval:     time.Duration(pollSecs) * time.Second,
+		debounceSecs:     debounceSecs,
+		triggerFile:      bus.TriggerFile(session),
+		inboxSizes:       make(map[string]int64),
+		lastAlertKey:     make(map[string]int64),
+		lastLoopCheck:    now, // skip first interval — avoids stale alerts on startup
+		lastCompactCheck: now, // skip first interval — avoids stale alerts on startup
 	}
 }
 
