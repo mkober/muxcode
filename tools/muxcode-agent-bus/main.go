@@ -27,6 +27,7 @@ Commands:
   prompt      Output shared agent coordination prompt for a role
   skill       Manage reusable instruction skills/plugins
   session     Session compaction and context management
+  cron        Manage scheduled tasks (add, list, remove, enable, disable, history)
 `
 
 func main() {
@@ -73,6 +74,8 @@ func main() {
 		cmd.Skill(args)
 	case "session":
 		cmd.Session(args)
+	case "cron":
+		cmd.Cron(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

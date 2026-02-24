@@ -12,7 +12,7 @@ import (
 var KnownRoles = []string{
 	"edit", "build", "test", "review",
 	"deploy", "run", "commit", "analyze",
-	"docs", "research", "watch", "pr-fix",
+	"docs", "research", "watch", "pr-read",
 }
 
 // splitLeftWindows lists windows that have a dedicated tool in the left pane.
@@ -168,6 +168,16 @@ func UserSkillsDir() string {
 	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "muxcode", "skills")
+}
+
+// CronPath returns the cron entries JSONL file path for a session.
+func CronPath(session string) string {
+	return filepath.Join(BusDir(session), "cron.jsonl")
+}
+
+// CronHistoryPath returns the cron execution history JSONL file path for a session.
+func CronHistoryPath(session string) string {
+	return filepath.Join(BusDir(session), "cron-history.jsonl")
 }
 
 // TriggerFile returns the analyze trigger file path for a session.

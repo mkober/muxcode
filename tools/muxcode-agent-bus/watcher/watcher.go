@@ -19,6 +19,8 @@ type Watcher struct {
 	inboxSizes      map[string]int64
 	lastTriggerSize int64
 	pendingSince    int64
+	cronEntries     []bus.CronEntry
+	lastCronLoad    int64
 }
 
 // New creates a new Watcher for the given session.
@@ -46,6 +48,7 @@ func (w *Watcher) Run() error {
 	for {
 		w.checkInboxes()
 		w.checkTrigger()
+		w.checkCron()
 		time.Sleep(w.pollInterval)
 	}
 }
@@ -188,4 +191,72 @@ func (w *Watcher) routeTrigger() {
 	// Refresh inbox sizes so checkInboxes doesn't re-notify for the
 	// message we just sent (prevents double notification).
 	w.refreshInboxSizes()
+}
+
+// loadCron reloads cron entries from disk at most once per 10 seconds.
+func (w *Watcher) loadCron() {
+	now := time.Now().Unix()
+	if now-w.lastCronLoad < 10 {
+		return
+	}
+	entries, err := bus.ReadCronEntries(w.session)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  [cron] failed to read cron entries: %v\n", err)
+		return
+	}
+	w.cronEntries = entries
+	w.lastCronLoad = now
+}
+
+// checkCron iterates cached cron entries, fires due ones, and updates state.
+func (w *Watcher) checkCron() {
+	w.loadCron()
+
+	now := time.Now().Unix()
+	fired := false
+	for _, entry := range w.cronEntries {
+		if !bus.CronDue(entry, now) {
+			continue
+		}
+
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Cron firing: %s → %s:%s\n", ts, entry.ID, entry.Target, entry.Action)
+
+		msgID, err := bus.ExecuteCron(w.session, entry)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  [cron] failed to execute %s: %v\n", entry.ID, err)
+			continue
+		}
+
+		fired = true
+
+		// Update last run timestamp
+		if err := bus.UpdateLastRun(w.session, entry.ID, now); err != nil {
+			fmt.Fprintf(os.Stderr, "  [cron] failed to update last_run for %s: %v\n", entry.ID, err)
+		}
+
+		// Append history
+		histEntry := bus.CronHistoryEntry{
+			CronID:    entry.ID,
+			TS:        now,
+			MessageID: msgID,
+			Target:    entry.Target,
+			Action:    entry.Action,
+		}
+		if err := bus.AppendCronHistory(w.session, histEntry); err != nil {
+			fmt.Fprintf(os.Stderr, "  [cron] failed to append history for %s: %v\n", entry.ID, err)
+		}
+
+		// Notify target agent
+		if err := bus.Notify(w.session, entry.Target); err != nil {
+			fmt.Fprintf(os.Stderr, "  [cron] failed to notify %s: %v\n", entry.Target, err)
+		}
+	}
+
+	if fired {
+		// Refresh inbox sizes after cron messages to prevent double notification
+		w.refreshInboxSizes()
+		// Force cron reload on next cycle so updated last_run_ts values are picked up
+		w.lastCronLoad = 0
+	}
 }

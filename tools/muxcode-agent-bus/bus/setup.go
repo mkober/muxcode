@@ -32,6 +32,11 @@ func Init(session, memoryDir string) error {
 		return err
 	}
 
+	// Touch cron file
+	if err := touchFile(CronPath(session)); err != nil {
+		return err
+	}
+
 	// Create memory directory and shared.md if not exists
 	if memoryDir == "" {
 		memoryDir = MemoryDir()
