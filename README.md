@@ -1,4 +1,4 @@
-# muxcode
+# MUXcode
 
 ```
 ███╗   ███╗██╗   ██╗██╗  ██╗   ██████╗ ██████╗ ██████╗ ███████╗
@@ -11,9 +11,9 @@
 
 A multi-agent coding environment built on tmux — where you stay in the loop.
 
-## What is muxcode?
+## What is MUXcode?
 
-Muxcode is a tmux session. Everything — your editor, the AI agents, the message bus, the dashboard — lives inside tmux windows. You launch it, and a session spins up with nine windows, each bound to a function key. F1 is your edit window. F2 is build. F3 is test. You get the idea.
+MUXcode is a tmux session. Everything — your editor, the AI agents, the message bus, the dashboard — lives inside tmux windows. You launch it, and a session spins up with nine windows, each bound to a function key. F1 is your edit window. F2 is build. F3 is test. You get the idea.
 
 You work in neovim with an AI editing agent alongside you in the edit window. When you need a build, tests, a code review, or a commit, you tell the edit agent and it delegates to a specialist in another window. Each step of the workflow has its own agent, and they work in parallel while you keep editing. Press a function key to watch any agent work, or stay in your editor and let results flow back. Nothing happens unless you ask for it.
 
@@ -61,7 +61,7 @@ A live dashboard (F9) shows which agents are busy, idle, or waiting on messages,
 
 ## Agents
 
-Muxcode ships with these default agents:
+MUXcode ships with these default agents:
 
 | Window | Agent | What it does |
 |--------|-------|-------------|
@@ -93,13 +93,15 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 
 See the [Architecture](docs/architecture.md) and [Agent Bus](docs/agent-bus.md) docs for the full details.
 
-## How muxcode compares to autonomous AI coding tools
+## How MUXcode compares to autonomous AI coding tools
 
-Tools like Devin, OpenHands, and SWE-agent push toward fully autonomous software engineering — give the AI a task, let it plan and execute end-to-end with minimal human input. Muxcode shares some of the same building blocks but takes a different approach to how humans and AI agents collaborate.
+Tools like [OpenClaw](https://github.com/openclaw/openclaw), Devin, OpenHands, and SWE-agent push toward fully autonomous software engineering — give the AI a task, let it plan and execute end-to-end with minimal human input. MUXcode shares some of the same building blocks but takes a different approach to how humans and AI agents collaborate.
+
+OpenClaw is a good point of comparison because it's also open-source and runs locally. It's a long-running Node.js service that acts as a message router between chat platforms (WhatsApp, Telegram, Discord) and an AI agent that can browse the web, read and write files, and run shell commands autonomously. It can manage Claude Code sessions, run tests, capture errors via Sentry, and open PRs on GitHub — all without you in the loop. MUXcode solves many of the same problems but keeps you in your terminal, in your editor, making the decisions.
 
 ### What they have in common
 
-Both muxcode and autonomous AI tools solve the same coordination problems:
+Both MUXcode and autonomous AI tools solve the same coordination problems:
 
 - **Persistent memory** — Context that survives across sessions, searchable and shared between agents
 - **Skills and plugins** — Reusable instruction sets that shape agent behavior for specific tasks or domains
@@ -108,9 +110,9 @@ Both muxcode and autonomous AI tools solve the same coordination problems:
 - **Background process tracking** — Launching, monitoring, and reacting to long-running tasks
 - **Loop detection** — Guardrails that catch agents stuck in repetitive failure patterns
 
-### Where muxcode differs
+### Where MUXcode differs
 
-**Human-in-the-loop, not fully autonomous.** Muxcode keeps you as the orchestrator. The edit agent delegates on your behalf — you see every step, you decide what happens next. Autonomous tools aim to minimize human involvement, handling planning, execution, and error recovery on their own.
+**Human-in-the-loop, not fully autonomous.** MUXcode keeps you as the orchestrator. The edit agent delegates on your behalf — you see every step, you decide what happens next. Autonomous tools aim to minimize human involvement, handling planning, execution, and error recovery on their own.
 
 **Local-first, no infrastructure.** The message bus is JSONL files in `/tmp/`. The memory system is markdown files in your project directory. There's no database, no HTTP server, no container runtime. Autonomous tools typically require a runtime environment — SQLite, vector databases, sandboxed execution containers.
 
@@ -122,7 +124,7 @@ Both muxcode and autonomous AI tools solve the same coordination problems:
 
 **Zero external dependencies.** The bus binary is stdlib-only Go — it compiles in seconds with no dependency management. The hooks are bash scripts that use `jq` and standard Unix tools. Autonomous tools typically have significant dependency trees (Python packages, Node modules, system libraries).
 
-The tradeoff is clear: autonomous tools can handle more without you, but muxcode gives you visibility and control at every step. If you want to understand what's happening in your codebase — not just get a result — muxcode is designed for that workflow.
+The tradeoff is clear: autonomous tools can handle more without you, but MUXcode gives you visibility and control at every step. If you want to understand what's happening in your codebase — not just get a result — MUXcode is designed for that workflow.
 
 ## Quick start
 
@@ -166,7 +168,7 @@ muxcode ~/Projects/my-app my-session
 
 ## Configuration
 
-Muxcode uses a shell-sourceable config file. Resolution order:
+MUXcode uses a shell-sourceable config file. Resolution order:
 
 1. `$MUXCODE_CONFIG` (explicit path)
 2. `.muxcode/config` (project-local)

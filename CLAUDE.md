@@ -1,4 +1,4 @@
-# Muxcode
+# MUXcode
 
 Multi-agent coding environment built on tmux, Neovim, and Claude Code. Each agent runs in its own tmux window, coordinated through a file-based message bus.
 
