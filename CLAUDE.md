@@ -233,7 +233,8 @@ The `send` command blocks commit delegation when agents have pending work, preve
 - `--dry-run` prints steps without executing (no tmux needed) — used in tests
 - `--no-switch` skips tmux window switching (headless mode)
 - `--speed` multiplier: 2.0 = fast (GIF recording), 0.5 = slow (live talks)
-- GIF target: <5 MB, 12 fps, 1280px wide; requires `ffmpeg` + `gifski` (Homebrew)
+- GIF target: <5 MB, 12 fps, 960px wide; requires `ffmpeg` + `gifski` (Homebrew)
+- GIF capture auto-detects screen device via `ffmpeg -f avfoundation` (device index varies per machine)
 - Output goes to `assets/demo.gif`, embedded in README
 
 ### Documentation

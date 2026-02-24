@@ -427,6 +427,80 @@ Cleaned 2 finished process(es).
 | `proc.jsonl` | `/tmp/muxcode-bus-{SESSION}/proc.jsonl` | Process entry definitions |
 | `{id}.log` | `/tmp/muxcode-bus-{SESSION}/proc/{id}.log` | Per-process stdout/stderr output |
 
+### `muxcode-agent-bus demo`
+
+Run scripted demo scenarios — sends real bus messages, switches tmux windows, and toggles lock states with configurable timing.
+
+```bash
+muxcode-agent-bus demo run [SCENARIO] [--speed FACTOR] [--dry-run] [--no-switch]
+muxcode-agent-bus demo list
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+|------------|-------------|
+| `run` | Execute a demo scenario |
+| `list` | Show available scenarios with step counts and timing |
+
+**Flags for `run`:**
+
+| Flag | Description |
+|------|-------------|
+| `SCENARIO` | Scenario name (default: `build-test-review`) |
+| `--speed FACTOR` | Delay multiplier: `2.0` = fast (GIF), `0.5` = slow (live talk). Default: `1.0` |
+| `--dry-run` | Print steps without executing (no tmux needed) |
+| `--no-switch` | Skip tmux window switching (headless mode) |
+
+**Built-in scenario: `build-test-review`**
+
+20-step cycle demonstrating the full delegation workflow: edit → build → test → review → commit → edit. Duration: ~20s at 1.0x, ~10s at 2.0x. All messages use `From: "demo"` so agents can identify demo traffic.
+
+| Step | Window | Action | Description |
+|------|--------|--------|-------------|
+| 1 | edit | select-window | Show edit window |
+| 2 | — | send → build | Delegate build |
+| 3 | build | select-window | Switch to build window |
+| 4-5 | — | lock/unlock build | Build agent busy → complete |
+| 6 | — | send → test | Hook chain fires |
+| 7 | test | select-window | Switch to test window |
+| 8-9 | — | lock/unlock test | Test agent busy → pass |
+| 10 | — | send → review | Hook chain fires |
+| 11 | review | select-window | Switch to review window |
+| 12-13 | — | lock/unlock review | Review agent busy → complete |
+| 14 | edit | select-window | Results arrive at edit |
+| 15-16 | — | send → edit, commit | Results + delegate commit |
+| 17 | commit | select-window | Switch to commit window |
+| 18-19 | — | lock/unlock commit | Git manager busy → complete |
+| 20 | edit | select-window | Return to edit |
+
+**Examples:**
+```bash
+# List available scenarios
+$ muxcode-agent-bus demo list
+Available demo scenarios:
+
+  build-test-review          Full build-test-review-commit cycle across agent windows
+                             20 steps, ~20s at 1.0x speed
+
+# Dry-run (no tmux needed)
+$ muxcode-agent-bus demo run --dry-run
+
+# Live demo at 2x speed (for GIF recording)
+$ muxcode-agent-bus demo run --speed 2.0
+
+# Slow demo for live presentation
+$ muxcode-agent-bus demo run --speed 0.5
+```
+
+**GIF capture:** Use `scripts/muxcode-demo.sh` to record the screen during a demo run and convert to GIF:
+
+```bash
+scripts/muxcode-demo.sh --speed 2.0 --output assets/demo.gif
+```
+
+Requires `ffmpeg` and `gifski` (`brew install ffmpeg gifski`). Auto-detects the screen capture device via avfoundation.
+
 ### `muxcode-agent-bus lock` / `unlock` / `is-locked`
 
 Manage agent busy indicators.
@@ -514,6 +588,7 @@ tools/muxcode-agent-bus/
 │   ├── inspect.go     # Session inspection (agent status, history, context)
 │   ├── guard.go       # Loop detection (command retries, message ping-pong)
 │   ├── proc.go        # Background process management (start, track, notify)
+│   ├── demo.go        # Demo scenarios (step engine, built-in scenarios)
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization
 ├── cmd/               # Subcommand handlers
