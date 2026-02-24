@@ -13,11 +13,11 @@ A multi-agent coding environment where you stay in the loop.
 
 ## What is muxcode?
 
-Most development workflows follow a pattern: write code, build it, run tests, review the diff, commit. Each step is a context switch — a different command, a different mental mode. Muxcode turns each of those steps into a dedicated AI agent running in its own tmux window, all working in parallel while you stay focused in your editor.
+You work in neovim with an AI editing agent alongside you. When you need a build, tests, a code review, or a commit, you tell the edit agent and it delegates to a specialist running in another tmux window. Each step of the workflow has its own agent, and they work in parallel while you keep editing. Nothing happens unless you ask for it.
 
-You write code in neovim. When you're ready, you tell the edit agent what you need — "build this," "run the tests," "commit these changes" — and it delegates to the right specialist. The build agent compiles your code. The test agent runs your suite. The review agent reads your diff and flags issues. The commit agent handles git. You can switch to any window and watch an agent work in real time, or stay in your editor and let the results flow back to you.
+The edit window is where you spend most of your time — neovim on the left, the edit agent on the right. Unlike the other agents, it doesn't run builds or tests or git commands directly. It helps you write code and dispatches work to the right specialist when you're ready. More copilot than autonomous assistant.
 
-Coordination happens through a file-based message bus — JSONL files in `/tmp/`, no cloud services, no databases, no Docker containers. The bus binary is written in Go with zero external dependencies. Everything runs locally on your machine, and the only external API call is to the LLM powering each agent.
+Everything runs locally. The agents coordinate through plain text files in `/tmp/` — no servers, no databases, no containers. The only external call is to the LLM powering each agent.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
