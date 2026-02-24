@@ -32,6 +32,7 @@ Commands:
   history     Show recent messages to/from an agent
   guard       Check for agent loop patterns (command retries, message ping-pong)
   proc        Manage background processes (start, list, status, log, stop, clean)
+  spawn       Manage spawned agent sessions (start, list, status, result, stop, clean)
   demo        Run scripted demo scenarios (run, list)
 `
 
@@ -89,6 +90,8 @@ func main() {
 		cmd.Guard(args)
 	case "proc":
 		cmd.Proc(args)
+	case "spawn":
+		cmd.Spawn(args)
 	case "demo":
 		cmd.Demo(args)
 	default:

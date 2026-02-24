@@ -175,7 +175,7 @@ The `send` command blocks commit delegation when agents have pending work, preve
 
 - **Trigger**: `muxcode-agent-bus send commit commit "..."` (and other commit actions: stage, push, merge, rebase, tag)
 - **Excluded roles**: edit (sender), commit (target), watch (passive watcher)
-- **Checked conditions** for all other agents: pending inbox messages, busy (locked), running background procs
+- **Checked conditions** for all other agents: pending inbox messages, busy (locked), running background procs, running spawns
 - **Bypass**: `--force` flag on the send command skips the check
 - **Read-only git ops not blocked**: status, log, diff, pr-read actions pass through without the check
 - Core code: `bus/inspect.go` (`PreCommitCheck`), `cmd/send.go` (`isCommitAction`, `--force` flag)
@@ -191,6 +191,26 @@ The watcher monitors agent context size and staleness, sending `compact-recommen
 - Core code: `bus/compact.go` (`CompactAlert`, `CompactThresholds`, `CheckCompaction()`, `CheckRoleCompaction()`, `FormatCompactAlert()`, `FilterNewCompactAlerts()`)
 - Watcher code: `watcher/watcher.go` (`checkCompaction()`, `lastCompactCheck` field)
 
+### Agent spawn
+
+Agents can programmatically create temporary agent sessions for one-off tasks via `muxcode-agent-bus spawn`. The spawned agent runs in its own tmux window, receives its task via the bus inbox, and results are collected from the session log.
+
+- `muxcode-agent-bus spawn start <role> "<task>"` — create window, seed inbox, launch agent, track
+- `muxcode-agent-bus spawn list [--all]` — show running spawns (use `--all` for completed too)
+- `muxcode-agent-bus spawn status <id>` — detailed status for a spawn entry
+- `muxcode-agent-bus spawn result <id>` — get last message sent by the spawn agent
+- `muxcode-agent-bus spawn stop <id>` — kill tmux window, mark stopped, notify owner
+- `muxcode-agent-bus spawn clean` — remove finished entries and their inbox files
+- **Launch mechanism**: `AGENT_ROLE=spawn-{id} muxcode-agent.sh <base-role>` — base role determines agent definition/tools, AGENT_ROLE determines bus identity
+- **Task seeding**: task message pre-seeded in spawn's inbox before launch, agent notified after 2s delay
+- **Result collection**: `GetSpawnResult()` reads `log.jsonl` for the last message FROM the spawn role
+- **Completion detection**: watcher's `checkSpawns()` checks if tmux window still exists; if gone, marks completed and sends `spawn-complete` event to owner
+- **Pre-commit safeguard**: running spawns block commits (same as running procs)
+- **Role validation**: `IsSpawnRole()` + `IsKnownRole()` accepts `spawn-` prefixed roles dynamically
+- JSONL storage: `spawn.jsonl` (entries)
+- Core code: `bus/spawn.go` (SpawnEntry, CRUD, StartSpawn, StopSpawn, RefreshSpawnStatus, GetSpawnResult, CleanFinishedSpawns, formatting, findAgentLauncher), `cmd/spawn.go` (CLI)
+- Watcher code: `watcher/watcher.go` (`checkSpawns()`)
+
 ## Working on each area
 
 ### Go bus code
@@ -198,11 +218,12 @@ The watcher monitors agent context size and staleness, sending `compact-recommen
 - Packages: `bus/` (core), `cmd/` (subcommands), `watcher/` (monitor), `tui/` (dashboard)
 - Build: `cd tools/muxcode-agent-bus && go build .`
 - Test: `cd tools/muxcode-agent-bus && go test ./...`
-- Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`, `ProcDir()`, `ProcPath()`, `ProcLogPath()`
+- Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`, `ProcDir()`, `ProcPath()`, `ProcLogPath()`, `SpawnPath()`
 - Pane targeting logic in `bus/config.go` — `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`
 - Session inspection in `bus/inspect.go` — `GetAgentStatus()`, `GetAllAgentStatus()`, `ReadLogHistory()`, `ExtractContext()`, `PreCommitCheck()`
 - Loop detection in `bus/guard.go` — `ReadHistory()`, `DetectCommandLoop()`, `DetectMessageLoop()`, `CheckLoops()`, `CheckAllLoops()`
 - Process management in `bus/proc.go` — `StartProc()`, `CheckProcAlive()`, `RefreshProcStatus()`, `StopProc()`, `CleanFinished()`
+- Agent spawn in `bus/spawn.go` — `StartSpawn()`, `StopSpawn()`, `RefreshSpawnStatus()`, `GetSpawnResult()`, `CleanFinishedSpawns()`
 - Compaction monitoring in `bus/compact.go` — `CheckCompaction()`, `CheckRoleCompaction()`, `FormatCompactAlert()`, `FilterNewCompactAlerts()`
 
 ### Bash scripts

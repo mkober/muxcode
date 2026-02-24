@@ -54,6 +54,7 @@ func (w *Watcher) Run() error {
 		w.checkTrigger()
 		w.checkCron()
 		w.checkProcs()
+		w.checkSpawns()
 		w.checkLoops()
 		w.checkCompaction()
 		time.Sleep(w.pollInterval)
@@ -300,6 +301,54 @@ func (w *Watcher) checkProcs() {
 
 		// Mark as notified
 		_ = bus.UpdateProcEntry(w.session, entry.ID, func(e *bus.ProcEntry) {
+			e.Notified = true
+		})
+	}
+
+	w.refreshInboxSizes()
+}
+
+// checkSpawns polls running spawned agents and notifies owners on completion.
+func (w *Watcher) checkSpawns() {
+	completed, err := bus.RefreshSpawnStatus(w.session)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  [spawn] failed to refresh spawn status: %v\n", err)
+		return
+	}
+
+	if len(completed) == 0 {
+		return
+	}
+
+	for _, entry := range completed {
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Spawn completed: %s (role: %s, window: %s)\n",
+			ts, entry.ID, entry.Role, entry.Window)
+
+		// Try to extract the last result message from the spawn
+		resultInfo := "No result message found."
+		if result, ok := bus.GetSpawnResult(w.session, entry.SpawnRole); ok {
+			resultInfo = result.Payload
+			if len(resultInfo) > 200 {
+				resultInfo = resultInfo[:200] + "..."
+			}
+		}
+
+		payload := fmt.Sprintf("Spawned agent completed: %s\n  Role: %s  Spawn Role: %s\n  Task: %s\n  Result: %s",
+			entry.ID, entry.Role, entry.SpawnRole, entry.Task, resultInfo)
+
+		msg := bus.NewMessage("spawn", entry.Owner, "event", "spawn-complete", payload, "")
+		if err := bus.Send(w.session, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "  [spawn] failed to send completion event to %s: %v\n", entry.Owner, err)
+			continue
+		}
+
+		if err := bus.Notify(w.session, entry.Owner); err != nil {
+			fmt.Fprintf(os.Stderr, "  [spawn] failed to notify %s: %v\n", entry.Owner, err)
+		}
+
+		// Mark as notified
+		_ = bus.UpdateSpawnEntry(w.session, entry.ID, func(e *bus.SpawnEntry) {
 			e.Notified = true
 		})
 	}

@@ -45,6 +45,11 @@ func Init(session, memoryDir string) error {
 		return err
 	}
 
+	// Touch spawn.jsonl
+	if err := touchFile(SpawnPath(session)); err != nil {
+		return err
+	}
+
 	// Create memory directory and shared.md if not exists
 	if memoryDir == "" {
 		memoryDir = MemoryDir()

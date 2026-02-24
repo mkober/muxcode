@@ -438,6 +438,75 @@ Cleaned 2 finished process(es).
 | `proc.jsonl` | `/tmp/muxcode-bus-{SESSION}/proc.jsonl` | Process entry definitions |
 | `{id}.log` | `/tmp/muxcode-bus-{SESSION}/proc/{id}.log` | Per-process stdout/stderr output |
 
+### `muxcode-agent-bus spawn`
+
+Manage spawned agent sessions — create temporary agents for one-off tasks, collect results, and tear down.
+
+```bash
+muxcode-agent-bus spawn start <role> "<task>"
+muxcode-agent-bus spawn list [--all]
+muxcode-agent-bus spawn status <id>
+muxcode-agent-bus spawn result <id>
+muxcode-agent-bus spawn stop <id>
+muxcode-agent-bus spawn clean
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+|------------|-------------|
+| `start` | Create tmux window, seed inbox with task, launch agent, track |
+| `list` | Show running spawns (use `--all` to include completed/stopped) |
+| `status` | Detailed status for a single spawn |
+| `result` | Get the last message sent by the spawned agent |
+| `stop` | Kill the tmux window and mark spawn as stopped |
+| `clean` | Remove finished entries and their inbox files |
+
+**How it works:**
+
+1. `spawn start research "What does bus/guard.go do?"` generates a unique spawn ID (e.g. `spawn-a1b2c3d4`)
+2. Creates a tmux window named `spawn-a1b2c3d4`, splits horizontally (agent in pane 1)
+3. Pre-seeds the spawn's inbox with the task message
+4. Launches `AGENT_ROLE=spawn-a1b2c3d4 muxcode-agent.sh research` — the base role (`research`) determines agent definition, tools, and prompts; the `AGENT_ROLE` env var (`spawn-a1b2c3d4`) determines the bus communication channel
+5. After 2s delay, notifies the spawn agent to read its inbox
+6. When the agent finishes and exits (tmux window closes), the watcher detects it and sends a `spawn-complete` event to the owner
+
+**Examples:**
+```bash
+# Spawn a research agent
+$ muxcode-agent-bus spawn start research "What does bus/guard.go do?"
+Started spawn: 1771900000-spawn-a1b2c3d4
+  Role: research  Spawn Role: spawn-a1b2c3d4  Owner: edit
+  Window: spawn-a1b2c3d4
+  Task: What does bus/guard.go do?
+
+# Check running spawns
+$ muxcode-agent-bus spawn list
+ID                                   ROLE         SPAWN-ROLE   STATUS     OWNER      TASK
+--------------------------------------------------------------------------------------------------------------
+1771900000-spawn-a1b2c3d4            research     spawn-a1b2c  running    edit       What does bus/guard.go do?
+
+# Get the result after completion
+$ muxcode-agent-bus spawn result 1771900000-spawn-a1b2c3d4
+
+# Stop a running spawn
+$ muxcode-agent-bus spawn stop 1771900000-spawn-a1b2c3d4
+
+# Clean up finished spawns
+$ muxcode-agent-bus spawn clean
+Cleaned 1 finished spawn(s).
+```
+
+**Watcher integration:** The bus watcher checks spawned agent windows on each poll cycle (2s). When a spawn's tmux window no longer exists, it marks the spawn as `completed`, extracts the last result message from `log.jsonl`, and sends a `spawn-complete` event to the owner agent with the result summary.
+
+**Pre-commit safeguard:** Running spawns block commits, same as running background processes. Use `--force` on the send command to bypass.
+
+**Data files:**
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `spawn.jsonl` | `/tmp/muxcode-bus-{SESSION}/spawn.jsonl` | Spawn entry definitions |
+
 ### `muxcode-agent-bus demo`
 
 Run scripted demo scenarios — sends real bus messages, switches tmux windows, and toggles lock states with configurable timing.
@@ -600,6 +669,7 @@ tools/muxcode-agent-bus/
 │   ├── guard.go       # Loop detection (command retries, message ping-pong)
 │   ├── compact.go     # Context compaction monitoring (size + staleness checks)
 │   ├── proc.go        # Background process management (start, track, notify)
+│   ├── spawn.go       # Spawned agent sessions (create, track, collect results)
 │   ├── demo.go        # Demo scenarios (step engine, built-in scenarios)
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization

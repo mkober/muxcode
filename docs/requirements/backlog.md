@@ -17,6 +17,7 @@
 | Deploy verification | Post-deploy health checks triggered automatically after successful deployments | [deploy-verify.md](./deploy-verify.md) |
 | Demo mode | Scripted demo scenarios with bus messages, window switching, and GIF capture | |
 | Auto session compaction | Watcher-triggered compaction alerts when agent context approaches limits | |
+| Agent spawn | Create temporary agent sessions for one-off tasks, collect result, tear down | |
 
 ## Planned
 
@@ -25,7 +26,6 @@
 | Semantic memory search | Vector embeddings for memory search (currently keyword-only) | Low |
 | Daily memory rotation | Rolling window of daily memory files with automatic archival | Low |
 | Webhook endpoint | HTTP listener converting POST requests to bus messages | Low |
-| Agent spawn | Create temporary agent sessions for one-off tasks, collect result, tear down | Medium |
 | Context directory | Per-agent `context.d/` directory for drop-in context files | Low |
 | Project-aware context | Auto-detect project type and inject relevant conventions | Low |
 | Event subscription | Subscribe agents to event patterns beyond build/test/deploy | Low |

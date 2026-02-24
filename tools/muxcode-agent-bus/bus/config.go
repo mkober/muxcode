@@ -195,14 +195,27 @@ func ProcLogPath(session, id string) string {
 	return filepath.Join(ProcDir(session), id+".log")
 }
 
+// SpawnPath returns the spawn entries JSONL file path for a session.
+func SpawnPath(session string) string {
+	return filepath.Join(BusDir(session), "spawn.jsonl")
+}
+
 // TriggerFile returns the analyze trigger file path for a session.
 // Uses /tmp directly for compatibility with bash hooks.
 func TriggerFile(session string) string {
 	return "/tmp/muxcode-analyze-" + session + ".trigger"
 }
 
-// IsKnownRole checks if a role is in the known roles list.
+// IsSpawnRole returns true if the role is a spawn-prefixed role (e.g. "spawn-a1b2c3d4").
+func IsSpawnRole(role string) bool {
+	return strings.HasPrefix(role, "spawn-")
+}
+
+// IsKnownRole checks if a role is in the known roles list or is a spawn role.
 func IsKnownRole(role string) bool {
+	if IsSpawnRole(role) {
+		return true
+	}
 	for _, r := range KnownRoles {
 		if r == role {
 			return true

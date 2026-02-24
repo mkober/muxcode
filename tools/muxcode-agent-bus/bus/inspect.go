@@ -164,6 +164,15 @@ func PreCommitCheck(session string) error {
 		}
 	}
 
+	// Check for running spawns
+	spawns, _ := ReadSpawnEntries(session)
+	var runningSpawns []SpawnEntry
+	for _, s := range spawns {
+		if s.Status == "running" {
+			runningSpawns = append(runningSpawns, s)
+		}
+	}
+
 	var issues []string
 	for _, s := range statuses {
 		if preCommitExcludedRoles[s.Role] {
@@ -179,6 +188,15 @@ func PreCommitCheck(session string) error {
 		if cmd, ok := runningProcs[s.Role]; ok {
 			issues = append(issues, fmt.Sprintf("  %s: background process running (%s)", s.Role, cmd))
 		}
+	}
+
+	// Running spawns block commits regardless of owner
+	for _, sp := range runningSpawns {
+		task := sp.Task
+		if len(task) > 60 {
+			task = task[:57] + "..."
+		}
+		issues = append(issues, fmt.Sprintf("  %s: spawned agent running (%s: %s)", sp.Owner, sp.SpawnRole, task))
 	}
 
 	if len(issues) > 0 {
