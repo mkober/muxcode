@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+// Pre-compiled regexes for command normalization (avoid recompiling on every call).
+var (
+	cmdNormCdRe    = regexp.MustCompile(`^cd\s+\S+\s*&&\s*`)
+	cmdNormEnvRe   = regexp.MustCompile(`^([A-Z_][A-Z0-9_]*=[^\s]*\s+)+`)
+	cmdNormBashRe  = regexp.MustCompile(`^bash\s+-c\s+`)
+	cmdNormSpaceRe = regexp.MustCompile(`\s+`)
+)
+
 // HistoryEntry represents a single entry from a role's history JSONL file.
 type HistoryEntry struct {
 	TS       int64  `json:"ts"`
@@ -71,23 +79,19 @@ func normalizeCommand(cmd string) string {
 	}
 
 	// Strip "cd ... &&" prefix
-	cdRe := regexp.MustCompile(`^cd\s+\S+\s*&&\s*`)
-	cmd = cdRe.ReplaceAllString(cmd, "")
+	cmd = cmdNormCdRe.ReplaceAllString(cmd, "")
 
 	// Strip env var prefixes (FOO=bar)
-	envRe := regexp.MustCompile(`^([A-Z_][A-Z0-9_]*=[^\s]*\s+)+`)
-	cmd = envRe.ReplaceAllString(cmd, "")
+	cmd = cmdNormEnvRe.ReplaceAllString(cmd, "")
 
 	// Strip leading "bash -c "
-	bashRe := regexp.MustCompile(`^bash\s+-c\s+`)
-	cmd = bashRe.ReplaceAllString(cmd, "")
+	cmd = cmdNormBashRe.ReplaceAllString(cmd, "")
 
 	// Strip trailing 2>&1
 	cmd = strings.TrimSuffix(strings.TrimSpace(cmd), "2>&1")
 
 	// Collapse whitespace
-	wsRe := regexp.MustCompile(`\s+`)
-	cmd = wsRe.ReplaceAllString(strings.TrimSpace(cmd), " ")
+	cmd = cmdNormSpaceRe.ReplaceAllString(strings.TrimSpace(cmd), " ")
 
 	return cmd
 }
