@@ -125,33 +125,27 @@ fi
 
 # --- Recording mode ---
 
-# Get tmux window geometry for recording region
-# On macOS, screencapture needs pixel coordinates
 SESSION_NAME="$(tmux display-message -p '#S')"
+RECORDING="${TMPDIR}/muxcode-demo-$$.mp4"
 
 cleanup() {
   # Kill recording process if still running
   if [[ -n "${RECORD_PID:-}" ]] && kill -0 "$RECORD_PID" 2>/dev/null; then
-    kill "$RECORD_PID" 2>/dev/null || true
+    kill -INT "$RECORD_PID" 2>/dev/null || true
     wait "$RECORD_PID" 2>/dev/null || true
   fi
-  # Clean up temp recording file
+  # Clean up temp files
   rm -f "$RECORDING"
+  rm -rf "${TMPDIR}/muxcode-demo-frames-$$"
 }
 trap cleanup EXIT
 
-echo "Starting screen recording..."
-echo "  (Recording to: $RECORDING)"
-
-# Use macOS screencapture for screen recording.
-# -v = video mode, records until interrupted.
-# Note: For headless/CI environments, consider using ffmpeg with x11grab instead.
+# Detect screen capture device index for ffmpeg avfoundation
+# On macOS, "1" is typically the main screen (0 is camera)
 if [[ "$(uname)" == "Darwin" ]]; then
-  screencapture -v "$RECORDING" &
-  RECORD_PID=$!
+  CAPTURE_DEVICE="1"
 else
-  # Linux fallback using ffmpeg (requires X11 or Wayland capture)
-  echo "Warning: Auto-recording not supported on this platform." >&2
+  echo "Warning: Auto-recording requires macOS with avfoundation." >&2
   echo "Use a screen recorder manually, then convert with:" >&2
   echo "  gifski --fps $FPS --width $WIDTH -o $OUTPUT <recording.mov>" >&2
   echo "" >&2
@@ -160,19 +154,34 @@ else
   exit 0
 fi
 
-# Brief pause to let recording stabilize
-sleep 1
+echo "Starting screen recording via ffmpeg..."
+echo "  (Recording to: $RECORDING)"
+
+# Use ffmpeg avfoundation to capture the screen.
+# -f avfoundation -i "DEVICE:none" captures video only (no audio).
+# Runs in background, stopped via SIGINT for clean file finalization.
+ffmpeg -f avfoundation -framerate 30 -i "${CAPTURE_DEVICE}:none" \
+  -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+  -y -loglevel warning \
+  "$RECORDING" &
+RECORD_PID=$!
+
+# Let recording stabilize
+sleep 2
 
 echo "Running demo..."
 muxcode-agent-bus demo run "$SCENARIO" --speed "$SPEED"
 
 # Brief pause after demo completes
-sleep 1
+sleep 2
 
 echo "Stopping recording..."
-kill "$RECORD_PID" 2>/dev/null || true
+kill -INT "$RECORD_PID" 2>/dev/null || true
 wait "$RECORD_PID" 2>/dev/null || true
 unset RECORD_PID
+
+# Give ffmpeg a moment to finalize the file
+sleep 1
 
 # Verify recording was created
 if [[ ! -f "$RECORDING" ]]; then
