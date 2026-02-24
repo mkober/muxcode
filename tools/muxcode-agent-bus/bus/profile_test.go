@@ -12,7 +12,7 @@ func TestDefaultConfig_HasAllRoles(t *testing.T) {
 	cfg := DefaultConfig()
 
 	// All known roles should have a tool profile
-	want := []string{"build", "test", "review", "git", "deploy", "runner", "analyst", "edit", "docs", "research", "watch", "pr-fix"}
+	want := []string{"build", "test", "review", "git", "deploy", "runner", "analyst", "edit", "docs", "research", "watch", "pr-read"}
 	for _, role := range want {
 		if _, ok := cfg.ToolProfiles[role]; !ok {
 			t.Errorf("DefaultConfig missing tool profile for role %q", role)
@@ -130,18 +130,18 @@ func TestResolveTools_Watch(t *testing.T) {
 	assertContains(t, tools, "Bash(cd * && kubectl logs*)")
 }
 
-func TestResolveTools_PrFix(t *testing.T) {
+func TestResolveTools_PrRead(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
-	tools := ResolveTools("pr-fix")
+	tools := ResolveTools("pr-read")
 	if len(tools) == 0 {
-		t.Fatal("ResolveTools(pr-fix) returned empty list")
+		t.Fatal("ResolveTools(pr-read) returned empty list")
 	}
 
-	// Should include Write and Edit for code fixes
-	assertContains(t, tools, "Write")
-	assertContains(t, tools, "Edit")
+	// Should NOT include Write or Edit — pr-read is read-only
+	assertNotContains(t, tools, "Write")
+	assertNotContains(t, tools, "Edit")
 	// Should include scoped gh pr commands
 	assertContains(t, tools, "Bash(gh pr view*)")
 	assertContains(t, tools, "Bash(gh pr checks*)")
@@ -262,7 +262,7 @@ func TestLoadConfig_FallbackToDefault(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 
-	// Should have all default profiles (12 roles: build, test, review, git, deploy, runner, analyst, edit, docs, research, watch, pr-fix)
+	// Should have all default profiles (12 roles: build, test, review, git, deploy, runner, analyst, edit, docs, research, watch, pr-read)
 	if len(cfg.ToolProfiles) < 12 {
 		t.Errorf("expected at least 12 tool profiles, got %d", len(cfg.ToolProfiles))
 	}

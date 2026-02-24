@@ -25,7 +25,7 @@ FILE_PATH=$(echo "$EVENT_JSON" | jq -r '.tool_input.file_path // .tool_input.not
 echo "$(date +%s) $FILE_PATH" >> "/tmp/muxcode-analyze-${SESSION}.trigger"
 
 # Clean up nvim diff preview, reload file, and jump to the change
-WINDOW_NAME="$(tmux display-message -p '#W' 2>/dev/null)"
+WINDOW_NAME="$(tmux display-message -t "${TMUX_PANE:-}" -p '#W' 2>/dev/null)"
 TEMP_FILE="/tmp/muxcode-preview-${SESSION}.tmp"
 if [ "$WINDOW_NAME" = "edit" ] && [ -f "$TEMP_FILE" ]; then
   LINE=1
@@ -46,7 +46,7 @@ fi
 BUS_DIR="/tmp/muxcode-bus-${SESSION}"
 if [ -d "$BUS_DIR" ]; then
   export BUS_SESSION="$SESSION"
-  export AGENT_ROLE="$(tmux display-message -p '#W' 2>/dev/null || echo 'edit')"
+  export AGENT_ROLE="$(tmux display-message -t "${TMUX_PANE:-}" -p '#W' 2>/dev/null || echo 'edit')"
 
   # Configurable routing rules
   ROUTE_RULES="${MUXCODE_ROUTE_RULES:-test|spec=test cdk|stack|construct|terraform|pulumi=deploy .ts|.js|.py|.go|.rs=build}"

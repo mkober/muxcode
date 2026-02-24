@@ -38,7 +38,7 @@ The three-tier search (project-local → user config → install default) runs i
 | watch | log-watcher.md | watch | Monitor logs (local, CloudWatch, k8s, Docker) |
 | docs | doc-writer.md | docs | Generate and maintain documentation |
 | research | code-researcher.md | research | Search web, explore codebases, answer questions |
-| pr-fix | pr-fixer.md | *(windowless)* | Fix code from PR review feedback and CI failures |
+| pr-read | pr-reader.md | commit *(via git-manager)* | Analyze PR review feedback and report suggested fixes |
 
 ## Agent Categories
 
@@ -61,24 +61,21 @@ These agents operate autonomously — they receive requests, execute uncondition
 2. Execute their command
 3. Reply to requester: `muxcode-agent-bus send <from> <action> "<result>" --type response --reply-to <id>`
 
-### On-Demand Specialists (pr-fix)
+### PR Reading (via commit agent)
 
-Windowless agents that are not in the default `MUXCODE_WINDOWS` list. They run on-demand in a separate terminal or can be added to the session config.
+PR review analysis runs in the **commit window** via the git-manager agent. The edit agent delegates with action `pr-read`:
 
 **Invoke from the edit agent:**
 ```bash
-muxcode-agent-bus send pr-fix pr-fix "Read reviews on the current PR and fix all actionable comments"
+muxcode-agent-bus send commit pr-read "Read PR reviews and CI failures on the current branch and report suggested fixes"
 ```
 
-**Run standalone:**
+The git-manager reads reviews, CI checks, and inline comments, categorizes them (must-fix / should-fix / informational), and reports a structured summary back to edit.
+
+**Standalone use** (outside a session):
 ```bash
 export BUS_SESSION="your-session"
-muxcode-agent.sh pr-fix
-```
-
-**Or add to your windows config for a persistent window:**
-```bash
-MUXCODE_WINDOWS="edit build test review deploy run commit analyze watch pr-fix"
+muxcode-agent.sh pr-read
 ```
 
 ### Observers (watch)
@@ -164,7 +161,7 @@ Agents have scoped Bash permissions for autonomous operation. The default permis
 - **runner**: unrestricted (no `--allowedTools` filter)
 - **analyst**: bus commands + Read, Glob, Grep (no shell commands)
 - **watch**: `tail`, `journalctl`, `aws logs`, `kubectl logs`, `docker logs`, `stern`, `ssh`, `lnav` (read-only log tools)
-- **pr-fix**: `Write`, `Edit`, `gh pr view/checks/diff/review/list/status`, `gh api`, `git diff/log/status/show/blame/rev-parse/branch`, `jq` (scoped gh + read-only git)
+- **pr-read**: `gh pr view/checks/diff/review/list/status`, `gh api`, `git diff/log/status/show/blame/rev-parse/branch`, `jq` (read-only: scoped gh + git, no Write/Edit)
 
 All agents have access to `muxcode-agent-bus` commands.
 

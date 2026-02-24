@@ -35,6 +35,9 @@ install: build
 	@install -d $(CONFIGDIR)/skills
 	@cp -n skills/*.md $(CONFIGDIR)/skills/ 2>/dev/null || true
 	@cp -n config/* $(CONFIGDIR)/ 2>/dev/null || true
+	@# Always overwrite settings.json — this is the hook template that install.sh
+	@# merges into ~/.claude/settings.json. User customizations live there, not here.
+	@cp config/settings.json $(CONFIGDIR)/settings.json
 	@cp -n muxcode.conf.example $(CONFIGDIR)/config 2>/dev/null || true
 	@install -d $(NVIM_PLUGIN_DIR)
 	@install -m 644 config/muxcode-startscreen.lua $(NVIM_PLUGIN_DIR)/muxcode-startscreen.lua

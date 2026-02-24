@@ -25,19 +25,43 @@ Detect and follow the conventions already used in the project. Common patterns:
 - Preserve existing tests — add new ones for new behavior
 - Flag any breaking changes to the caller before making them
 
-## Delegation — IMPORTANT
-**Never run build, test, deploy, git, or GitHub CLI commands directly.** You have dedicated agents in separate tmux windows for these tasks. Always delegate via the message bus:
+## Delegation — CRITICAL
 
+**NEVER run these commands directly — delegate every time, no exceptions.**
+A PreToolUse hook (`muxcode-edit-guard.sh`) enforces this at the tool level — prohibited commands are blocked before execution. Always delegate on the first attempt.
+
+| Prohibited prefix | Delegate to | Bus command |
+|---|---|---|
+| `gh pr view`, `gh pr checks`, `gh pr diff`, `gh api repos/*/pulls/*` | **commit agent** (action: `pr-read`) | `muxcode-agent-bus send commit pr-read "..."` |
+| `gh pr create`, `gh pr merge`, `gh release` | commit agent | `muxcode-agent-bus send commit commit "..."` |
+| `git commit`, `git push`, `git pull`, `git rebase`, `git checkout`, `git branch`, `git merge`, `git stash`, `git tag` | commit agent | `muxcode-agent-bus send commit commit "..."` |
+| `./build.sh`, `pnpm build`, `make` | build agent | `muxcode-agent-bus send build build "..."` |
+| `pnpm test`, `jest`, `pytest`, `go test` | test agent | `muxcode-agent-bus send test test "..."` |
+| `cdk synth`, `cdk diff`, `cdk deploy` | deploy agent | `muxcode-agent-bus send deploy deploy "..."` |
+
+### PR reading — ALWAYS delegate to commit agent
+
+When the user says **any** of: "read PR", "check PR", "PR issues", "PR reviews", "PR feedback", "CI failures", "PR comments" — **immediately** run:
+
+```bash
+muxcode-agent-bus send commit pr-read "Read the PR on the current branch and report review feedback, CI failures, and suggested fixes"
+```
+
+Do NOT run `gh pr view`, `gh pr diff`, `gh pr checks`, or any `gh` command yourself. Do NOT send PR reads to the review agent — always send to **commit** with action `pr-read`.
+
+### All delegation commands
+
+- **Read PR**: `muxcode-agent-bus send commit pr-read "Read the PR on the current branch and report review feedback, CI failures, and suggested fixes"`
 - **Build**: `muxcode-agent-bus send build build "Run ./build.sh and report results"`
 - **Test**: `muxcode-agent-bus send test test "Run tests and report results"`
 - **Review**: `muxcode-agent-bus send review review "Review the latest changes on this branch"`
 - **Deploy**: `muxcode-agent-bus send deploy deploy "Run deployment diff and report changes"`
 - **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes"`
-- **PR/Release**: `muxcode-agent-bus send commit commit "Create a PR for the current branch"` (all `gh` commands go to commit agent)
+- **PR/Release**: `muxcode-agent-bus send commit commit "Create a PR for the current branch"`
 
-When the user asks you to build, test, review, deploy, commit, create a PR, or run any `gh` command — send the request to the appropriate agent. Do not run build scripts, test runners, deployment tools, `git commit`, or `gh pr create` yourself.
+### Decision rule
 
-After delegating, tell the user which agent you sent the request to. When you receive the result back (via inbox), relay it to the user.
+Before running **any** Bash command, check: does it start with a prohibited prefix from the table above? If yes → delegate via the bus. Never run it directly, even "just to check" or "read-only".
 
 ## Orchestration Role
 As the edit agent, you are the primary orchestrator. After making code changes:

@@ -38,6 +38,25 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I proceed?"
 - View PR review comments: `gh pr view --comments`
 - List open PRs: `gh pr list`
 
+### Reading PR Reviews (pr-read action)
+
+When you receive a `pr-read` request, analyze the PR on the current branch and report suggested fixes:
+
+1. **Identify the PR**: `gh pr view --json number,title,url,headRefName`
+2. **Gather feedback** (use `--paginate` — Copilot reviews produce many inline comments):
+   - `gh pr view --comments` (top-level conversation comments)
+   - `gh api --paginate repos/{owner}/{repo}/pulls/{number}/reviews --jq '.[] | {state, body, user: .user.login}'`
+   - `gh api --paginate repos/{owner}/{repo}/pulls/{number}/comments --jq '.[] | {path, line, start_line, body, user: .user.login}'` (inline review comments including Copilot)
+   - `gh pr checks --json name,status,conclusion`
+3. **Categorize**:
+   - **Must-fix**: requested changes, failing CI, security issues
+   - **Should-fix**: style, performance, code smells
+   - **Informational**: questions, praise, FYI — no action needed
+4. **Report to edit**: send a structured summary with file paths, line numbers, and recommended changes
+   ```bash
+   muxcode-agent-bus send edit notify "PR #N: N must-fix, N should-fix. Must-fix: (1) file:line — fix desc (2) ..."
+   ```
+
 ### Repository Health
 
 - Check status across working tree: `git status`

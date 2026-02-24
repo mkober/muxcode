@@ -6,7 +6,7 @@
 # Only activates in the edit window (pane 0 = editor).
 
 SESSION=$(tmux display-message -p '#S' 2>/dev/null) || exit 0
-WINDOW_NAME=$(tmux display-message -p '#W' 2>/dev/null) || exit 0
+WINDOW_NAME=$(tmux display-message -t "${TMUX_PANE:-}" -p '#W' 2>/dev/null) || exit 0
 [ "$WINDOW_NAME" = "edit" ] || exit 0
 
 EVENT_JSON=$(cat)
@@ -43,10 +43,10 @@ fi
 # Escape spaces for nvim command-line
 ESCAPED_PATH="${FILE_PATH// /\\ }"
 
-# Open file at the changed line
+# Open file at the changed line (zR opens all folds)
 tmux send-keys -t "$SESSION:edit.0" Escape Escape
 sleep 0.1
-tmux send-keys -t "$SESSION:edit.0" ":e! +$LINE $ESCAPED_PATH" Enter
+tmux send-keys -t "$SESSION:edit.0" ":e! +$LINE $ESCAPED_PATH | normal! zR" Enter
 
 # For Edit tool: create temp file with proposed change and open diff
 if [ -n "$OLD_STRING" ] && [ -f "$FILE_PATH" ]; then
@@ -66,6 +66,6 @@ if old and fp:
 
   if [ -f "$TEMP_FILE" ]; then
     sleep 0.1
-    tmux send-keys -t "$SESSION:edit.0" ":let g:_mux_buf=bufnr() | let g:_pft=&ft | diffthis | new | setlocal buftype=nofile bufhidden=wipe | let &l:ft=g:_pft | silent read $TEMP_FILE | 1delete _ | diffthis | wincmd p" Enter
+    tmux send-keys -t "$SESSION:edit.0" ":let g:_mux_buf=bufnr() | let g:_pft=&ft | diffthis | new | setlocal buftype=nofile bufhidden=wipe | let &l:ft=g:_pft | silent read $TEMP_FILE | 1delete _ | diffthis | normal! zR | wincmd p | normal! zR" Enter
   fi
 fi
