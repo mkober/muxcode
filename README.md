@@ -134,10 +134,12 @@ The tradeoff is clear: autonomous tools can handle more without you, but MUXcode
 
 - tmux >= 3.0
 - Go >= 1.22
-- [Claude Code](https://claude.ai/code) CLI (`claude`)
+- [Claude Code](https://claude.ai/code) CLI (`claude`) — currently the only supported AI provider
 - jq
 - Neovim
 - fzf (optional, for interactive project picker)
+
+> **Note:** MUXcode currently requires Claude Code as the AI backend. Support for alternative providers (OpenAI, local models via Ollama/LM Studio, etc.) is on the roadmap.
 
 ### Install
 
