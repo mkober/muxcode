@@ -221,11 +221,11 @@ The `send` command blocks commit delegation when agents have pending work, preve
 - kebab-case filenames (e.g. `go-testing.md`, `code-review-checklist.md`)
 - CLI: `muxcode-agent-bus skill list|load|search|create|prompt`
 - Skills are auto-injected into agent prompts at launch via `skill prompt <role>`
-- See [Skills plan](docs/plan-skills-plugin.md) for full architecture and API reference
+- See [Skills requirements](docs/requirements/skills-plugin.md) for feature requirements
 
 ### Documentation
 
 - Cross-link between docs using relative paths (e.g. `[Architecture](docs/architecture.md)`)
 - When updating docs, augment existing content — don't rewrite or reorganize
 - Keep tables and code blocks as the primary format
-- **Always save implementation plans to `docs/`** — use `docs/plan-<feature-name>.md` naming convention so plans are tracked in the repo alongside the code they describe
+- Feature requirements live in `docs/requirements/` — see [backlog](docs/requirements/backlog.md) for the full list
