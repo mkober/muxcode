@@ -180,6 +180,17 @@ The `send` command blocks commit delegation when agents have pending work, preve
 - **Read-only git ops not blocked**: status, log, diff, pr-read actions pass through without the check
 - Core code: `bus/inspect.go` (`PreCommitCheck`), `cmd/send.go` (`isCommitAction`, `--force` flag)
 
+### Auto session compaction
+
+The watcher monitors agent context size and staleness, sending `compact-recommended` events when compaction is advisable.
+
+- **Metrics tracked per role**: memory file size, history file size, log file size
+- **Threshold logic** — both conditions must be met: total tracked size > 512 KB AND time since last compact > 2 hours
+- **Watcher integration**: `checkCompaction()` runs every 120 seconds, alerts deduped with 10-minute cooldown via `lastAlertKey` map
+- **Alert target**: sent to the role itself (the agent should compact its own context)
+- Core code: `bus/compact.go` (`CompactAlert`, `CompactThresholds`, `CheckCompaction()`, `CheckRoleCompaction()`, `FormatCompactAlert()`, `FilterNewCompactAlerts()`)
+- Watcher code: `watcher/watcher.go` (`checkCompaction()`, `lastCompactCheck` field)
+
 ## Working on each area
 
 ### Go bus code
@@ -192,6 +203,7 @@ The `send` command blocks commit delegation when agents have pending work, preve
 - Session inspection in `bus/inspect.go` — `GetAgentStatus()`, `GetAllAgentStatus()`, `ReadLogHistory()`, `ExtractContext()`, `PreCommitCheck()`
 - Loop detection in `bus/guard.go` — `ReadHistory()`, `DetectCommandLoop()`, `DetectMessageLoop()`, `CheckLoops()`, `CheckAllLoops()`
 - Process management in `bus/proc.go` — `StartProc()`, `CheckProcAlive()`, `RefreshProcStatus()`, `StopProc()`, `CleanFinished()`
+- Compaction monitoring in `bus/compact.go` — `CheckCompaction()`, `CheckRoleCompaction()`, `FormatCompactAlert()`, `FilterNewCompactAlerts()`
 
 ### Bash scripts
 

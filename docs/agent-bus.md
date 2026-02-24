@@ -368,6 +368,17 @@ $ muxcode-agent-bus guard --threshold 5 --window 600
 
 **Watcher integration:** The bus watcher checks for loops every 30 seconds. When a loop is detected, it sends a `loop-detected` event to the edit agent and notifies via tmux. Alerts are deduplicated within a 5-minute cooldown to prevent spamming.
 
+#### Watcher event: `compact-recommended`
+
+The watcher monitors agent context size (memory + history + log files) and staleness (time since last compaction) every 120 seconds. When **both** conditions are met — total tracked size > 512 KB **and** time since last compact > 2 hours — the watcher sends a `compact-recommended` event to the role itself with an actionable message:
+
+```
+Context approaching limits for edit (total: 620 KB, memory: 180 KB, history: 340 KB, log: 100 KB).
+Last compact: 2h 30m ago. Run: muxcode-agent-bus session compact "<summary>"
+```
+
+Alerts are deduplicated within a 10-minute cooldown per role. The agent receiving the alert should run `muxcode-agent-bus session compact "<summary>"` to save its context and reset the staleness timer.
+
 ### `muxcode-agent-bus proc`
 
 Manage background processes — launch, track, and auto-notify on completion.
@@ -587,6 +598,7 @@ tools/muxcode-agent-bus/
 │   ├── cron.go        # Cron scheduling (structs, parsing, CRUD, execution)
 │   ├── inspect.go     # Session inspection (agent status, history, context)
 │   ├── guard.go       # Loop detection (command retries, message ping-pong)
+│   ├── compact.go     # Context compaction monitoring (size + staleness checks)
 │   ├── proc.go        # Background process management (start, track, notify)
 │   ├── demo.go        # Demo scenarios (step engine, built-in scenarios)
 │   ├── cleanup.go     # Session cleanup

@@ -16,6 +16,7 @@
 | Process management | Background process lifecycle tracking with auto-notification on completion | |
 | Deploy verification | Post-deploy health checks triggered automatically after successful deployments | [deploy-verify.md](./deploy-verify.md) |
 | Demo mode | Scripted demo scenarios with bus messages, window switching, and GIF capture | |
+| Auto session compaction | Watcher-triggered compaction alerts when agent context approaches limits | |
 
 ## Planned
 
@@ -23,7 +24,6 @@
 |---------|-------------|----------|
 | Semantic memory search | Vector embeddings for memory search (currently keyword-only) | Low |
 | Daily memory rotation | Rolling window of daily memory files with automatic archival | Low |
-| Auto session compaction | Watcher-triggered compaction when agent context approaches limits | Medium |
 | Webhook endpoint | HTTP listener converting POST requests to bus messages | Low |
 | Agent spawn | Create temporary agent sessions for one-off tasks, collect result, tear down | Medium |
 | Context directory | Per-agent `context.d/` directory for drop-in context files | Low |

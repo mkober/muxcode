@@ -22,6 +22,7 @@ type Watcher struct {
 	cronEntries     []bus.CronEntry
 	lastCronLoad    int64
 	lastLoopCheck   int64
+	lastCompactCheck int64
 	lastAlertKey    map[string]int64
 }
 
@@ -54,6 +55,7 @@ func (w *Watcher) Run() error {
 		w.checkCron()
 		w.checkProcs()
 		w.checkLoops()
+		w.checkCompaction()
 		time.Sleep(w.pollInterval)
 	}
 }
@@ -340,4 +342,55 @@ func (w *Watcher) checkLoops() {
 	}
 
 	w.refreshInboxSizes()
+}
+
+// checkCompaction runs compaction checks every 120 seconds and sends recommendations
+// to the role itself. Deduplicates alerts within a 10-minute cooldown.
+func (w *Watcher) checkCompaction() {
+	now := time.Now().Unix()
+	if now-w.lastCompactCheck < 120 {
+		return
+	}
+	w.lastCompactCheck = now
+
+	th := bus.DefaultCompactThresholds()
+	alerts := bus.CheckCompaction(w.session, th)
+	if len(alerts) == 0 {
+		return
+	}
+
+	// Filter out alerts that were already sent within the cooldown window (600s = 10 min)
+	fresh := bus.FilterNewCompactAlerts(alerts, w.lastAlertKey, 600)
+	if len(fresh) == 0 {
+		return
+	}
+
+	for _, alert := range fresh {
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Compact recommended: %s (total: %s)\n", ts, alert.Role, formatWatcherBytes(alert.TotalBytes))
+
+		msg := bus.NewMessage("watcher", alert.Role, "event", "compact-recommended", alert.Message, "")
+		if err := bus.Send(w.session, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "  [compact] failed to send compact alert to %s: %v\n", alert.Role, err)
+			continue
+		}
+		if err := bus.Notify(w.session, alert.Role); err != nil {
+			fmt.Fprintf(os.Stderr, "  [compact] failed to notify %s: %v\n", alert.Role, err)
+		}
+	}
+
+	w.refreshInboxSizes()
+}
+
+// formatWatcherBytes is a simple bytes formatter for watcher log lines.
+func formatWatcherBytes(b int64) string {
+	if b < 1024 {
+		return fmt.Sprintf("%d B", b)
+	}
+	kb := float64(b) / 1024
+	if kb < 1024 {
+		return fmt.Sprintf("%.0f KB", kb)
+	}
+	mb := kb / 1024
+	return fmt.Sprintf("%.1f MB", mb)
 }
