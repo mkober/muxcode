@@ -19,7 +19,9 @@ Muxcode creates a tmux session with multiple windows, each running an independen
 │       │     Message Bus (/tmp/muxcode-bus-{session}/)           │
 │       │     ├── inbox/{role}.jsonl                              │
 │       │     ├── lock/{role}.lock                                │
-│       │     └── log.jsonl                                       │
+│       │     ├── log.jsonl                                       │
+│       │     ├── proc.jsonl                                      │
+│       │     └── spawn.jsonl                                     │
 │  ─────┼───────────┼───────────┼───────────┼──────────────────── │
 │       │           │           │           │                     │
 │  ┌────┴────┐ ┌────┴────┐ ┌────┴────┐ ┌────┴────┐                │
@@ -72,6 +74,21 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
 5. In edit window: hook cleans up nvim diff preview, reloads file
 6. Bus watcher (in analyze window) detects trigger file changes
 7. After debounce, watcher sends aggregate analyze event to analyst
+```
+
+### Agent Spawn Flow
+
+```
+1. Agent runs: muxcode-agent-bus spawn start research "What does guard.go do?"
+2. Bus generates spawn role (spawn-a1b2c3d4), creates tmux window
+3. Task message pre-seeded in spawn's inbox
+4. Launches: AGENT_ROLE=spawn-a1b2c3d4 muxcode-agent.sh research
+5. After 2s delay, bus notifies spawn agent to read inbox
+6. Spawn agent works on task, sends messages back to owner via bus
+7. Spawn agent completes, exits (tmux window closes)
+8. Watcher detects window death via checkSpawns()
+9. Watcher sends spawn-complete event to owner with last result
+10. Owner retrieves result: muxcode-agent-bus spawn result <id>
 ```
 
 ### Watcher debounce

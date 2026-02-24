@@ -69,7 +69,12 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 /tmp/muxcode-bus-{session}/
 ├── inbox/{role}.jsonl     # Per-agent message queues
 ├── lock/{role}.lock       # Busy indicators
-└── log.jsonl              # Activity log
+├── log.jsonl              # Activity log
+├── proc.jsonl             # Background process entries
+├── proc/{id}.log          # Per-process output logs
+├── spawn.jsonl            # Spawned agent entries
+├── cron.jsonl             # Scheduled task entries
+└── cron-history.jsonl     # Cron execution history
 ```
 
 Created by `muxcode-agent-bus init`, cleaned up by the tmux session-closed hook.

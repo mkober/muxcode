@@ -86,6 +86,31 @@ The watch agent monitors logs from various sources — local files, CloudWatch, 
 
 These agents receive requests and execute, but may require more context or confirmation depending on the operation.
 
+### Spawned Agents (temporary)
+
+Any agent can create a temporary spawned agent for one-off tasks. The spawn inherits the base role's agent definition, tool permissions, and prompts but runs with a unique bus identity (`spawn-{id}`).
+
+```bash
+# Spawn a research agent for a one-off task
+muxcode-agent-bus spawn start research "What does bus/guard.go do?"
+
+# Check status
+muxcode-agent-bus spawn list
+
+# Get the result after completion
+muxcode-agent-bus spawn result <id>
+
+# Clean up
+muxcode-agent-bus spawn clean
+```
+
+Spawned agents:
+- Run in their own tmux window (named `spawn-{id}`)
+- Receive their task via the bus inbox (pre-seeded before launch)
+- Send results back to the owner via normal bus messages
+- Are tracked in `spawn.jsonl` and monitored by the watcher
+- Block commits while running (same as background processes)
+
 ## Message Bus Protocol
 
 All agents share the same bus protocol:
