@@ -15,6 +15,7 @@
 | Dynamic prompts | Go-based system prompt composition with role-specific sections | |
 | Process management | Background process lifecycle tracking with auto-notification on completion | |
 | Deploy verification | Post-deploy health checks triggered automatically after successful deployments | [deploy-verify.md](./deploy-verify.md) |
+| Demo mode | Scripted demo scenarios with bus messages, window switching, and GIF capture | |
 
 ## Planned
 
