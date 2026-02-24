@@ -189,6 +189,74 @@ Sends `tmux send-keys` to the target agent's pane. The notification includes a p
 
 **Note:** `muxcode-agent-bus send` calls `notify` automatically. Use `--no-notify` to suppress.
 
+### `muxcode-agent-bus cron`
+
+Manage scheduled tasks that fire bus messages on a cadence.
+
+```bash
+muxcode-agent-bus cron add <schedule> <target> <action> <message>
+muxcode-agent-bus cron list [--all]
+muxcode-agent-bus cron remove <id>
+muxcode-agent-bus cron enable <id>
+muxcode-agent-bus cron disable <id>
+muxcode-agent-bus cron history [--id CRON_ID] [--limit N]
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+|------------|-------------|
+| `add` | Create a new scheduled task |
+| `list` | Show enabled entries (use `--all` to include disabled) |
+| `remove` | Delete an entry by ID |
+| `enable` | Enable a disabled entry |
+| `disable` | Disable an entry without removing it |
+| `history` | Show execution history (optionally filtered by `--id` and `--limit`) |
+
+**Schedule formats:**
+
+| Format | Interval |
+|--------|----------|
+| `@every 30s` | 30 seconds |
+| `@every 5m` | 5 minutes |
+| `@every 1h` | 1 hour |
+| `@every 2h30m` | 2 hours 30 minutes |
+| `@half-hourly` | 30 minutes |
+| `@hourly` | 1 hour |
+| `@daily` | 24 hours |
+
+Minimum interval is 30 seconds. Schedules are case-insensitive.
+
+**Examples:**
+```bash
+# Schedule a git status check every 5 minutes
+$ muxcode-agent-bus cron add "@every 5m" commit status "Run git status and report"
+Added cron entry: 1771897000-cron-a1b2c3d4
+  Schedule: @every 5m  Target: commit  Action: status
+  Message: Run git status and report
+
+# Schedule hourly test runs
+$ muxcode-agent-bus cron add "@hourly" test test "Run tests and report results"
+
+# List all enabled entries
+$ muxcode-agent-bus cron list
+
+# Disable an entry
+$ muxcode-agent-bus cron disable 1771897000-cron-a1b2c3d4
+
+# View execution history
+$ muxcode-agent-bus cron history --limit 10
+```
+
+**Watcher integration:** The bus watcher (`muxcode-agent-bus watch`) checks for due cron entries on each poll cycle. It reloads the cron file from disk at most every 10 seconds to avoid excessive filesystem reads. When a cron entry fires, the watcher sends a bus message to the target agent, updates `last_run_ts`, appends to execution history, and notifies the target via tmux.
+
+**Data files:**
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `cron.jsonl` | `/tmp/muxcode-bus-{SESSION}/cron.jsonl` | Cron entry definitions |
+| `cron-history.jsonl` | `/tmp/muxcode-bus-{SESSION}/cron-history.jsonl` | Execution history log |
+
 ### `muxcode-agent-bus lock` / `unlock` / `is-locked`
 
 Manage agent busy indicators.
@@ -272,6 +340,7 @@ tools/muxcode-agent-bus/
 │   ├── lock.go        # Lock file management
 │   ├── memory.go      # Persistent memory read/write/search/list
 │   ├── notify.go      # Tmux send-keys notification
+│   ├── cron.go        # Cron scheduling (structs, parsing, CRUD, execution)
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization
 ├── cmd/               # Subcommand handlers

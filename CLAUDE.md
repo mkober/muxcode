@@ -21,6 +21,7 @@ scripts/
 ├── muxcode-agent.sh          # Agent launcher — file resolution, permissions, auto-accept
 ├── muxcode-preview-hook.sh   # PreToolUse — diff preview in nvim (edit window only)
 ├── muxcode-diff-cleanup.sh   # PreToolUse — close stale diff previews
+├── muxcode-edit-guard.sh     # PreToolUse — blocks prohibited commands in edit window (sync)
 ├── muxcode-analyze-hook.sh   # PostToolUse — route file events, trigger watcher
 ├── muxcode-bash-hook.sh      # PostToolUse — build-test-review chain + deploy-verify chain
 ├── muxcode-git-status.sh     # Git status poller for commit window left pane
@@ -34,7 +35,7 @@ config/
 └── nvim.lua                   # Reference nvim snippet (not auto-loaded)
 docs/                          # Documentation
 tools/muxcode-agent-bus/      # Go module — the bus binary
-├── bus/                       # Core library (config, message, inbox, lock, memory, search, notify)
+├── bus/                       # Core library (config, message, inbox, lock, memory, search, notify, cron)
 ├── cmd/                       # Subcommand handlers (send, inbox, watch, dashboard, etc.)
 ├── watcher/                   # Inbox poller + trigger file monitor
 ├── tui/                       # Dracula-themed dashboard TUI
@@ -99,12 +100,13 @@ The **edit** agent is the user-facing orchestrator. It **never** runs build, tes
 
 ### Hook chain
 
-Four hooks configured in `.claude/settings.json`:
+Five hooks configured in `.claude/settings.json`:
 
-1. `muxcode-preview-hook.sh` — PreToolUse on Write/Edit/NotebookEdit (edit window only)
-2. `muxcode-diff-cleanup.sh` — PreToolUse on Read/Bash/Grep/Glob (edit window only)
-3. `muxcode-analyze-hook.sh` — PostToolUse on Write/Edit/NotebookEdit (all windows)
-4. `muxcode-bash-hook.sh` — PostToolUse on Bash (all windows)
+1. `muxcode-edit-guard.sh` — PreToolUse on Bash, **sync** (edit window only) — blocks prohibited commands and returns delegation instructions
+2. `muxcode-preview-hook.sh` — PreToolUse on Write/Edit/NotebookEdit, async (edit window only)
+3. `muxcode-diff-cleanup.sh` — PreToolUse on Read/Bash/Grep/Glob, async (edit window only)
+4. `muxcode-analyze-hook.sh` — PostToolUse on Write/Edit/NotebookEdit, async (all windows)
+5. `muxcode-bash-hook.sh` — PostToolUse on Bash, async (all windows)
 
 ### Lock mechanism
 
@@ -114,6 +116,18 @@ Agents indicate busy state via lock files at `/tmp/muxcode-bus-{session}/lock/{r
 
 The bus watcher (`muxcode-agent-bus watch`) uses a two-phase debounce: detect trigger file change, then wait for stability (default 8 seconds). Burst edits are coalesced into a single aggregate analyze event sent to the analyst.
 
+### Cron scheduling
+
+The bus supports interval-based scheduled tasks via `muxcode-agent-bus cron`. Cron entries are JSONL-persisted at `/tmp/muxcode-bus-{session}/cron.jsonl` with execution history at `cron-history.jsonl`.
+
+- Schedule formats: `@every 30s`, `@every 5m`, `@hourly`, `@daily`, `@half-hourly`
+- Minimum interval: 30s (enforced by `ParseSchedule`)
+- Watcher integration: `checkCron()` runs each poll cycle, `loadCron()` reloads from disk at most every 10s
+- Fire-and-forget: no overlap prevention, target agent queues messages in inbox
+- CLI: `muxcode-agent-bus cron add|list|remove|enable|disable|history`
+- Core code: `bus/cron.go` (structs, parsing, CRUD, execution, formatting), `cmd/cron.go` (CLI)
+- Known TODO: read-modify-write race on `cron.jsonl` between watcher and CLI (no file locking, matches existing bus patterns)
+
 ## Working on each area
 
 ### Go bus code
@@ -121,7 +135,7 @@ The bus watcher (`muxcode-agent-bus watch`) uses a two-phase debounce: detect tr
 - Packages: `bus/` (core), `cmd/` (subcommands), `watcher/` (monitor), `tui/` (dashboard)
 - Build: `cd tools/muxcode-agent-bus && go build .`
 - Test: `cd tools/muxcode-agent-bus && go test ./...`
-- Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`
+- Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`
 - Pane targeting logic in `bus/config.go` — `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`
 
 ### Bash scripts
