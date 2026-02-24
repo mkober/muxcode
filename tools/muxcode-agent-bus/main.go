@@ -26,6 +26,7 @@ Commands:
   log         Append an entry to a role's history log
   prompt      Output shared agent coordination prompt for a role
   skill       Manage reusable instruction skills/plugins
+  session     Session compaction and context management
 `
 
 func main() {
@@ -70,6 +71,8 @@ func main() {
 		cmd.Prompt(args)
 	case "skill":
 		cmd.Skill(args)
+	case "session":
+		cmd.Session(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

@@ -20,7 +20,7 @@ func SharedPrompt(role string) string {
 	// Send Messages
 	b.WriteString("### Send Messages\n")
 	b.WriteString("```bash\nmuxcode-agent-bus send <target> <action> \"<short single-line message>\"\n```\n")
-	b.WriteString("Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research, watch, pr-fix\n\n")
+	b.WriteString("Targets: edit, build, test, review, deploy, run, commit, analyze, docs, research, watch, pr-read\n\n")
 	b.WriteString("**CRITICAL: All `send` messages MUST be short, single-line strings with NO newlines.** ")
 	b.WriteString("The `Bash(muxcode-agent-bus *)` permission glob does NOT match newlines — ")
 	b.WriteString("any multi-line command will trigger a permission prompt and block the agent.\n\n")
@@ -36,6 +36,13 @@ func SharedPrompt(role string) string {
 	b.WriteString("muxcode-agent-bus skill search <query>\n")
 	b.WriteString("muxcode-agent-bus skill load <name>\n")
 	b.WriteString("muxcode-agent-bus skill create <name> <desc> [--roles r1,r2] [--tags t1,t2] <body>\n```\n\n")
+
+	// Session Management
+	b.WriteString("### Session Management\n")
+	b.WriteString("```bash\nmuxcode-agent-bus session status           # check session uptime and compact count\n")
+	b.WriteString("muxcode-agent-bus session compact \"<summary>\"  # save session summary to memory\n```\n\n")
+	b.WriteString("**When to compact**: After completing a major task or when your session has been running for a long time. ")
+	b.WriteString("Summaries are automatically restored on restart.\n\n")
 
 	// Protocol
 	b.WriteString("### Protocol\n")

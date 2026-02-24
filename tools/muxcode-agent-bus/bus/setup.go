@@ -16,6 +16,9 @@ func Init(session, memoryDir string) error {
 	if err := os.MkdirAll(filepath.Join(busDir, "lock"), 0755); err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Join(busDir, "session"), 0755); err != nil {
+		return err
+	}
 
 	// Touch inbox files for all known roles
 	for _, role := range KnownRoles {

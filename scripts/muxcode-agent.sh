@@ -25,7 +25,7 @@ agent_name() {
     docs)    echo "doc-writer" ;;
     research) echo "code-researcher" ;;
     watch)    echo "log-watcher" ;;
-    pr-fix)   echo "pr-fixer" ;;
+    pr-read)  echo "pr-reader" ;;
   esac
 }
 
@@ -50,10 +50,11 @@ build_flags "$ROLE"
 # Uses muxcode-agent-bus prompt <role> for coordination and skill prompt <role> for skills.
 SHARED_PROMPT_FLAGS=()
 build_shared_prompt() {
-  local prompt skills combined
+  local prompt skills resume combined
   prompt="$(muxcode-agent-bus prompt "$1" 2>/dev/null)" || prompt=""
   skills="$(muxcode-agent-bus skill prompt "$1" 2>/dev/null)" || skills=""
-  combined="${prompt}${skills:+$'\n'$skills}"
+  resume="$(muxcode-agent-bus session resume "$1" 2>/dev/null)" || resume=""
+  combined="${prompt}${skills:+$'\n'$skills}${resume:+$'\n'$resume}"
   [ -z "$combined" ] && return
   SHARED_PROMPT_FLAGS=(--append-system-prompt "$combined")
 }
@@ -128,8 +129,8 @@ case "$ROLE" in
   watch)
     PROMPT="You are the watch agent. Monitor logs from local files, CloudWatch, Kubernetes, and Docker. Tail logs, detect errors, summarize patterns. Report findings to the edit agent via the bus."
     ;;
-  pr-fix)
-    PROMPT="You are the pr-fix agent. Read GitHub PR reviews and CI check failures, then make targeted code fixes. Use gh pr view, gh pr checks, gh api to read feedback. Fix issues with Write/Edit. Never commit, push, dismiss reviews, or close/merge PRs. Report results to the edit agent via the bus."
+  pr-read)
+    PROMPT="You are the pr-read agent. Read GitHub PR reviews and CI check failures, then report suggested fixes to the edit agent. Use gh pr view, gh pr checks, gh api to read feedback. Never modify files directly — report suggestions only. The edit agent will prompt the user before making changes."
     ;;
   *)
     PROMPT="You are a general-purpose coding assistant."
