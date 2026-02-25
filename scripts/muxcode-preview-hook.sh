@@ -43,10 +43,10 @@ fi
 # Escape spaces for nvim command-line
 ESCAPED_PATH="${FILE_PATH// /\\ }"
 
-# Open file at the changed line (zR opens all folds)
+# Open file at the changed line (foldlevel=99 keeps all folds open persistently)
 tmux send-keys -t "$SESSION:edit.0" Escape Escape
 sleep 0.1
-tmux send-keys -t "$SESSION:edit.0" ":e! +$LINE $ESCAPED_PATH | normal! zR" Enter
+tmux send-keys -t "$SESSION:edit.0" ":e! +$LINE $ESCAPED_PATH | setlocal foldlevel=99" Enter
 
 # For Edit tool: create temp file with proposed change and open diff
 if [ -n "$OLD_STRING" ] && [ -f "$FILE_PATH" ]; then
@@ -66,6 +66,6 @@ if old and fp:
 
   if [ -f "$TEMP_FILE" ]; then
     sleep 0.1
-    tmux send-keys -t "$SESSION:edit.0" ":let g:_mux_buf=bufnr() | let g:_pft=&ft | diffthis | new | setlocal buftype=nofile bufhidden=wipe | let &l:ft=g:_pft | silent read $TEMP_FILE | 1delete _ | diffthis | normal! zR | wincmd p | normal! zR" Enter
+    tmux send-keys -t "$SESSION:edit.0" ":let g:_mux_buf=bufnr() | let g:_pft=&ft | diffthis | new | setlocal buftype=nofile bufhidden=wipe | let &l:ft=g:_pft | silent read $TEMP_FILE | 1delete _ | diffthis | setlocal foldlevel=99 | wincmd p | setlocal foldlevel=99" Enter
   fi
 fi

@@ -89,7 +89,9 @@ The Go module at `tools/muxcode-agent-bus/` has **no external dependencies** (st
 
 ### Delegation model
 
-The **edit** agent is the user-facing orchestrator. It **never** runs build, test, deploy, or git commands directly — including read-only git commands like `git status`, `git log`, and `git diff`. **All** git operations must be delegated to the commit agent via the message bus. It delegates via the message bus. All other agents execute autonomously and reply.
+The **edit** agent is the user-facing orchestrator. It **never** runs build, test, deploy, log tailing, or git commands directly — including read-only git commands like `git status`, `git log`, and `git diff`. **All** git operations must be delegated to the commit agent via the message bus. Log tailing commands (`aws logs`, `tail -f`, `kubectl logs`, `docker logs`, `stern`) must be delegated to the **watch** agent. It delegates via the message bus. All other agents execute autonomously and reply.
+
+Git commits, pushes, and PR creation are **user-initiated only** — never auto-triggered after review or test success. The automated chain stops at review.
 
 ### Bus protocol
 

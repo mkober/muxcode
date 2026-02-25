@@ -398,6 +398,73 @@ print(json.dumps(entry, ensure_ascii=False))
   # No chain trigger — git commands don't start a build->test->review chain
 fi
 
+# Runner window: log ALL commands to runner-history.jsonl
+if [ "$AGENT_ROLE" = "run" ] && [ "$is_build" -eq 0 ] && [ "$is_test" -eq 0 ] && [ "$is_deploy" -eq 0 ] && [ "$is_git" -eq 0 ]; then
+  RUNNER_HISTORY_FILE="/tmp/muxcode-bus-${SESSION}/run-history.jsonl"
+  RUNNER_TS=$(date +%s)
+  RUNNER_OUTCOME=$(chain_outcome)
+
+  # Capture runner output from tool response
+  RUNNER_OUTPUT=""
+  if command -v jq &>/dev/null; then
+    RUNNER_OUTPUT=$(printf '%s' "$EVENT" | jq -r '
+      (.tool_response // .tool_result // {}) as $r |
+      if ($r | type) == "string" then $r
+      elif ($r.stdout // "") != "" then $r.stdout
+      elif ($r.content // "") != "" then $r.content
+      else ""
+      end
+    ' 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tail -15)
+  else
+    RUNNER_OUTPUT=$(printf '%s' "$EVENT" | python3 -c "
+import json, sys, re
+try:
+    d = json.load(sys.stdin)
+    r = d.get('tool_response', d.get('tool_result', {}))
+    out = ''
+    if isinstance(r, str): out = r
+    elif isinstance(r, dict): out = r.get('stdout', r.get('content', ''))
+    out = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', out)
+    lines = out.strip().split('\n')
+    print('\n'.join(lines[-15:]))
+except: pass
+" 2>/dev/null)
+  fi
+  # Truncate to max 1000 chars
+  if [ ${#RUNNER_OUTPUT} -gt 1000 ]; then
+    RUNNER_OUTPUT="${RUNNER_OUTPUT:0:997}..."
+  fi
+  # Replace HOME with ~ for readability
+  RUNNER_OUTPUT="${RUNNER_OUTPUT//$HOME/\~}"
+
+  # Append + rotate under flock
+  (
+    command -v flock &>/dev/null && flock -n 9
+    if command -v jq &>/dev/null; then
+      jq -nc --arg ts "$RUNNER_TS" --arg cmd "$COMMAND" --arg desc "${DESCRIPTION:-}" --arg ec "${EXIT_CODE:-0}" --arg outcome "$RUNNER_OUTCOME" --arg output "$RUNNER_OUTPUT" \
+        '{ts:($ts|tonumber),command:$cmd,description:$desc,exit_code:$ec,outcome:$outcome,output:$output}' \
+        >> "$RUNNER_HISTORY_FILE" 2>/dev/null || true
+    else
+      python3 -c '
+import json, sys
+entry = {"ts": int(sys.argv[1]), "command": sys.argv[2], "description": sys.argv[3], "exit_code": sys.argv[4], "outcome": sys.argv[5], "output": sys.argv[6]}
+print(json.dumps(entry, ensure_ascii=False))
+' "$RUNNER_TS" "$COMMAND" "${DESCRIPTION:-}" "${EXIT_CODE:-0}" "$RUNNER_OUTCOME" "$RUNNER_OUTPUT" \
+        >> "$RUNNER_HISTORY_FILE" 2>/dev/null || true
+    fi
+
+    # Rotate history: keep last 100 entries
+    MAX_HISTORY=100
+    LINE_COUNT=$(wc -l < "$RUNNER_HISTORY_FILE" 2>/dev/null || echo 0)
+    if [ "$LINE_COUNT" -gt "$MAX_HISTORY" ]; then
+      tail -n "$MAX_HISTORY" "$RUNNER_HISTORY_FILE" > "${RUNNER_HISTORY_FILE}.tmp" 2>/dev/null \
+        && mv "${RUNNER_HISTORY_FILE}.tmp" "$RUNNER_HISTORY_FILE" 2>/dev/null || true
+    fi
+  ) 9>"${RUNNER_HISTORY_FILE}.lock"
+
+  # No chain trigger — runner commands don't start a chain
+fi
+
 if [ "$is_deploy" -eq 1 ]; then
   # Append to deploy history for left-pane display
   DEPLOY_HISTORY_FILE="/tmp/muxcode-bus-${SESSION}/deploy-history.jsonl"
