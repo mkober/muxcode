@@ -373,8 +373,10 @@ func (w *Watcher) checkLoops() {
 		return
 	}
 
-	// Filter out alerts that were already sent within the cooldown window
-	fresh := bus.FilterNewAlerts(alerts, w.lastAlertKey, 300)
+	// Filter out alerts that were already sent within the cooldown window.
+	// Cooldown (600s) must exceed detection window (300s) to prevent
+	// loop-detected events from sustaining their own detection window.
+	fresh := bus.FilterNewAlerts(alerts, w.lastAlertKey, 600)
 	if len(fresh) == 0 {
 		return
 	}

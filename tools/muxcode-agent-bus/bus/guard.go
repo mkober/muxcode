@@ -164,13 +164,17 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 	// Responses and events repeat naturally across chain cycles and are not loops.
 	// Watcher-originated messages are system-generated traffic (file-change events,
 	// loop alerts, compaction alerts) — they repeat during active editing and are
-	// not agent-to-agent loops.
+	// not agent-to-agent loops. System actions (loop-detected, compact-recommended)
+	// are infrastructure traffic that should never trigger loop detection.
 	var recent []Message
 	for _, m := range messages {
 		if m.Type != "request" {
 			continue
 		}
 		if m.From == "watcher" {
+			continue
+		}
+		if isSystemAction(m.Action) {
 			continue
 		}
 		if windowSecs <= 0 || (now-m.TS) <= windowSecs {
@@ -324,6 +328,17 @@ func FormatAlertsJSON(alerts []LoopAlert) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// isSystemAction returns true for watcher infrastructure actions that should
+// be excluded from message loop detection. These repeat naturally and are not
+// indicative of agent-to-agent loops.
+func isSystemAction(action string) bool {
+	switch action {
+	case "loop-detected", "compact-recommended", "proc-complete", "spawn-complete":
+		return true
+	}
+	return false
 }
 
 // formatDuration converts seconds to a human-readable duration string.

@@ -549,6 +549,69 @@ func TestFormatDuration(t *testing.T) {
 	}
 }
 
+func TestDetectMessageLoop_SystemActionsIgnored(t *testing.T) {
+	// System actions (loop-detected, compact-recommended, proc-complete, spawn-complete)
+	// should be excluded from loop detection even when they repeat frequently.
+	// This prevents loop-detected alerts from sustaining their own detection window.
+	now := time.Now().Unix()
+	messages := []Message{
+		{TS: now - 120, From: "watcher", To: "edit", Action: "loop-detected", Type: "request"},
+		{TS: now - 90, From: "watcher", To: "edit", Action: "loop-detected", Type: "request"},
+		{TS: now - 60, From: "watcher", To: "edit", Action: "loop-detected", Type: "request"},
+		{TS: now - 30, From: "watcher", To: "edit", Action: "loop-detected", Type: "request"},
+		{TS: now, From: "watcher", To: "edit", Action: "loop-detected", Type: "request"},
+	}
+
+	alert := DetectMessageLoop(messages, "edit", 4, 300)
+	if alert != nil {
+		t.Errorf("expected no alert for system action loop-detected, got %+v", alert)
+	}
+
+	// Also test compact-recommended
+	compactMsgs := []Message{
+		{TS: now - 120, From: "watcher", To: "build", Action: "compact-recommended", Type: "request"},
+		{TS: now - 90, From: "watcher", To: "build", Action: "compact-recommended", Type: "request"},
+		{TS: now - 60, From: "watcher", To: "build", Action: "compact-recommended", Type: "request"},
+		{TS: now - 30, From: "watcher", To: "build", Action: "compact-recommended", Type: "request"},
+		{TS: now, From: "watcher", To: "build", Action: "compact-recommended", Type: "request"},
+	}
+
+	alert = DetectMessageLoop(compactMsgs, "build", 4, 300)
+	if alert != nil {
+		t.Errorf("expected no alert for system action compact-recommended, got %+v", alert)
+	}
+
+	// proc-complete and spawn-complete
+	procMsgs := []Message{
+		{TS: now - 120, From: "proc", To: "edit", Action: "proc-complete", Type: "request"},
+		{TS: now - 90, From: "proc", To: "edit", Action: "proc-complete", Type: "request"},
+		{TS: now - 60, From: "proc", To: "edit", Action: "proc-complete", Type: "request"},
+		{TS: now - 30, From: "proc", To: "edit", Action: "proc-complete", Type: "request"},
+		{TS: now, From: "proc", To: "edit", Action: "proc-complete", Type: "request"},
+	}
+
+	alert = DetectMessageLoop(procMsgs, "edit", 4, 300)
+	if alert != nil {
+		t.Errorf("expected no alert for system action proc-complete, got %+v", alert)
+	}
+}
+
+func TestIsSystemAction(t *testing.T) {
+	systemActions := []string{"loop-detected", "compact-recommended", "proc-complete", "spawn-complete"}
+	for _, action := range systemActions {
+		if !isSystemAction(action) {
+			t.Errorf("isSystemAction(%q) = false, want true", action)
+		}
+	}
+
+	nonSystemActions := []string{"build", "test", "review", "deploy", "analyze", "commit", ""}
+	for _, action := range nonSystemActions {
+		if isSystemAction(action) {
+			t.Errorf("isSystemAction(%q) = true, want false", action)
+		}
+	}
+}
+
 func TestReadHistory_RealHistoryFile(t *testing.T) {
 	// Test with the actual format written by cmd/log.go
 	session := testSession(t)

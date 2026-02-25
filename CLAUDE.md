@@ -167,7 +167,8 @@ The bus detects repetitive agent patterns and auto-escalates to the edit agent v
 - **Message loops**: repeated `(from, to, action)` tuples or ping-pong patterns (from `log.jsonl`)
 - CLI: `muxcode-agent-bus guard [role] [--json] [--threshold N] [--window N]`
 - Watcher integration: `checkLoops()` runs every 30s, sends `loop-detected` events to edit
-- Dedup: alerts suppressed within 5-minute cooldown per `(role, type, command/peer)` key
+- Dedup: alerts suppressed within 10-minute cooldown per `(role, type, command/peer)` key (exceeds 5-minute detection window to prevent self-sustaining alerts)
+- System action exclusion: `loop-detected`, `compact-recommended`, `proc-complete`, `spawn-complete` actions are filtered from message loop detection (`isSystemAction()`) — these repeat naturally as infrastructure traffic
 - Command normalization: strips `cd ... &&`, env vars, `bash -c`, `2>&1`, collapses whitespace
 - Core code: `bus/guard.go` (HistoryEntry, LoopAlert, ReadHistory, DetectCommandLoop, DetectMessageLoop, CheckLoops, CheckAllLoops, formatting), `cmd/guard.go` (CLI)
 - Default thresholds: 3 for command loops, 4 for message loops; default window: 300s (5 minutes)
