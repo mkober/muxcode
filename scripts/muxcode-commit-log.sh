@@ -100,7 +100,18 @@ while true; do
   # Last commit
   LAST=$(git log -1 --format='%h %s' 2>/dev/null)
   if [ -n "$LAST" ]; then
-    BUF+="  ${DIM}last commit  ${LAST}${RESET}\n"
+    BUF+="  ${CYAN}last commit${RESET}  ${LAST}\n"
+    LAST_FILES=$(git diff-tree --no-commit-id --name-status -r HEAD 2>/dev/null)
+    if [ -n "$LAST_FILES" ]; then
+      while IFS=$'\t' read -r status file; do
+        case "$status" in
+          A*) BUF+="    ${GREEN}${status}${RESET}  ${file}\n" ;;
+          D*) BUF+="    ${RED}${status}${RESET}  ${file}\n" ;;
+          *)  BUF+="    ${YELLOW}${status}${RESET}  ${file}\n" ;;
+        esac
+      done <<< "$LAST_FILES"
+    fi
+    BUF+="\n"
   fi
 
   # ── Commit history section ──────────────────────────────────

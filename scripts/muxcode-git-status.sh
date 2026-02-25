@@ -13,6 +13,8 @@ PURPLE='\033[38;5;141m'
 CYAN='\033[38;5;117m'
 GREEN='\033[38;5;80m'
 PINK='\033[38;5;212m'
+RED='\033[38;5;203m'
+YELLOW='\033[38;5;228m'
 DIM='\033[2m'
 RESET='\033[0m'
 
@@ -77,7 +79,18 @@ while true; do
   # Last commit
   LAST=$(git log -1 --format='%h %s' 2>/dev/null)
   if [ -n "$LAST" ]; then
-    BUF+="  ${DIM}last commit  ${LAST}${RESET}\n"
+    BUF+="  ${CYAN}last commit${RESET}  ${LAST}\n"
+    LAST_FILES=$(git diff-tree --no-commit-id --name-status -r HEAD 2>/dev/null)
+    if [ -n "$LAST_FILES" ]; then
+      while IFS=$'\t' read -r status file; do
+        case "$status" in
+          A*) BUF+="    ${GREEN}${status}${RESET}  ${file}\n" ;;
+          D*) BUF+="    ${RED}${status}${RESET}  ${file}\n" ;;
+          *)  BUF+="    ${YELLOW}${status}${RESET}  ${file}\n" ;;
+        esac
+      done <<< "$LAST_FILES"
+    fi
+    BUF+="\n"
   fi
 
   printf '\033[2J\033[H'
