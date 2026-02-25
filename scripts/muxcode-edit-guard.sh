@@ -57,6 +57,10 @@ case "$CMD" in
   cdk\ *|npx\ cdk\ *|envName=*cdk\ *|envName=*npx\ cdk\ *|terraform\ *|pulumi\ *|sam\ *)
     block "BLOCKED: Deploy commands are prohibited in the edit window. Delegate to the deploy agent. Run: muxcode-agent-bus send deploy deploy \"<describe the deploy operation>\""
     ;;
+  # Log tailing commands → watch agent
+  aws\ logs*|tail\ -f*|tail\ -F*|kubectl\ logs*|docker\ logs*|docker-compose\ logs*|stern\ *)
+    block "BLOCKED: Log tailing commands are prohibited in the edit window. Delegate to the watch agent. Run: muxcode-agent-bus send watch watch \"<describe what logs to tail>\""
+    ;;
 esac
 
 # All checks passed — allow the command

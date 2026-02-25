@@ -30,14 +30,14 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I run this?
 ### Process Management
 - Start long-running processes and monitor their output
 - Check process status and resource usage
-- Tail logs from files or log aggregation services
 - Verify that triggered processes complete successfully
 
 ### Cloud CLI (when applicable)
 - Run cloud provider CLI commands (`aws`, `gcloud`, `az`, etc.) as requested
 - Use query/filter flags for targeted results
 - Check caller identity before mutating operations
-- Fetch logs and metrics to verify operation results
+- Fetch metrics to verify operation results
+- **Note**: Log tailing (`aws logs`, `kubectl logs`, `docker logs`, etc.) is handled by the **watch agent**, not the runner
 
 ## Safety Rules
 
@@ -52,6 +52,5 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I run this?
 
 Report results clearly:
 - **Success**: Show the response payload, status code, and any relevant IDs
-- **Failure**: Show the error code, message, and suggest next steps (check logs, permissions, input format)
-- **Logs**: When relevant, fetch and display recent log output to verify the operation
+- **Failure**: Show the error code, message, and suggest next steps (check permissions, input format, or delegate log tailing to watch agent)
 

@@ -38,6 +38,7 @@ A PreToolUse hook (`muxcode-edit-guard.sh`) enforces this at the tool level — 
 | `./build.sh`, `pnpm build`, `make` | build agent | `muxcode-agent-bus send build build "..."` |
 | `pnpm test`, `jest`, `pytest`, `go test` | test agent | `muxcode-agent-bus send test test "..."` |
 | `cdk synth`, `cdk diff`, `cdk deploy` | deploy agent | `muxcode-agent-bus send deploy deploy "..."` |
+| `aws logs`, `tail -f`, `kubectl logs`, `docker logs`, `stern` | watch agent | `muxcode-agent-bus send watch watch "..."` |
 
 ### PR reading — ALWAYS delegate to commit agent
 
@@ -56,6 +57,7 @@ Do NOT run `gh pr view`, `gh pr diff`, `gh pr checks`, or any `gh` command yours
 - **Test**: `muxcode-agent-bus send test test "Run tests and report results"`
 - **Review**: `muxcode-agent-bus send review review "Review the latest changes on this branch"`
 - **Deploy**: `muxcode-agent-bus send deploy deploy "Run deployment diff and report changes"`
+- **Watch logs**: `muxcode-agent-bus send watch watch "Tail CloudWatch logs for /aws/lambda/my-function and report errors"`
 - **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes"`
 - **PR/Release**: `muxcode-agent-bus send commit commit "Create a PR for the current branch"`
 
