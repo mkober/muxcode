@@ -228,6 +228,27 @@ func TestDetectMessageLoop_ChainTrafficIgnored(t *testing.T) {
 	}
 }
 
+func TestDetectMessageLoop_WatcherTrafficIgnored(t *testing.T) {
+	// Watcher-originated messages repeat during active editing (file-change events,
+	// loop alerts, compaction alerts). These should NOT trigger loop detection.
+	now := time.Now().Unix()
+	messages := []Message{
+		{TS: now - 120, From: "watcher", To: "analyze", Action: "analyze", Type: "request"},
+		{TS: now - 90, From: "watcher", To: "analyze", Action: "analyze", Type: "request"},
+		{TS: now - 60, From: "watcher", To: "analyze", Action: "analyze", Type: "request"},
+		{TS: now - 30, From: "watcher", To: "analyze", Action: "analyze", Type: "request"},
+		{TS: now, From: "watcher", To: "analyze", Action: "analyze", Type: "request"},
+	}
+
+	// Neither analyze nor watcher should trigger a loop alert
+	for _, role := range []string{"analyze", "watcher"} {
+		alert := DetectMessageLoop(messages, role, 4, 300)
+		if alert != nil {
+			t.Errorf("role %q: unexpected alert for watcher traffic: %s", role, alert.Message)
+		}
+	}
+}
+
 func TestDetectMessageLoop_NoLoop(t *testing.T) {
 	now := time.Now().Unix()
 	messages := []Message{

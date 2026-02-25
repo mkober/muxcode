@@ -18,6 +18,13 @@
 | Demo mode | Scripted demo scenarios with bus messages, window switching, and GIF capture | |
 | Auto session compaction | Watcher-triggered compaction alerts when agent context approaches limits | |
 | Agent spawn | Create temporary agent sessions for one-off tasks, collect result, tear down | |
+| Session re-init purge | Stale data cleanup on session restart — preserves memory, purges ephemeral files | |
+| Runner execution history | Left-pane poller for run window showing command history, exit codes, and output | |
+| Preview fold fix | Persistent `foldlevel=99` in nvim diff previews replacing one-shot `zR` | |
+| User-initiated git ops | Chain stops at review — commits, pushes, and PRs require explicit user action | |
+| Log tailing delegation | Route `aws logs`, `tail -f`, `kubectl logs`, etc. to the watch agent via edit guard | |
+| Review agent permissions | Process substitution (`diff <(...)`), `python3`, `jq` added to review tool profile | |
+| Git manager HEREDOC | Commit agent uses HEREDOC for commit messages instead of temp files | |
 
 ## Planned
 

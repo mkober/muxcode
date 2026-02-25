@@ -162,9 +162,15 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 
 	// Filter to request messages within the time window.
 	// Responses and events repeat naturally across chain cycles and are not loops.
+	// Watcher-originated messages are system-generated traffic (file-change events,
+	// loop alerts, compaction alerts) — they repeat during active editing and are
+	// not agent-to-agent loops.
 	var recent []Message
 	for _, m := range messages {
 		if m.Type != "request" {
+			continue
+		}
+		if m.From == "watcher" {
 			continue
 		}
 		if windowSecs <= 0 || (now-m.TS) <= windowSecs {
