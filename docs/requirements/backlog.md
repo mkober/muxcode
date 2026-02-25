@@ -25,6 +25,7 @@
 | Log tailing delegation | Route `aws logs`, `tail -f`, `kubectl logs`, etc. to the watch agent via edit guard | |
 | Review agent permissions | Process substitution (`diff <(...)`), `python3`, `jq` added to review tool profile | |
 | Git manager HEREDOC | Commit agent uses HEREDOC for commit messages instead of temp files | |
+| Analyze findings log | Left-pane poller for analyze window — filters `log.jsonl` for analyst responses, shows findings count, recent entries, and full latest payload. Watcher moved to background process at session init. | |
 
 ## Planned
 
