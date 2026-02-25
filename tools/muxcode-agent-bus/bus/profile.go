@@ -365,6 +365,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(git show*)", "Bash(git blame*)", "Bash(git branch*)",
 					"Bash(git rev-parse*)", "Bash(git rev-list*)",
 					"Bash(git shortlog*)", "Bash(git stash list*)", "Bash(git remote*)",
+					"Bash(diff <(*)", "Bash(python3*)", "Bash(jq*)",
 				},
 			},
 			"edit": {

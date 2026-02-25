@@ -28,6 +28,17 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I proceed?"
 
 - Stage specific files (prefer explicit file names over `git add .`)
 - Write clear commit messages: imperative mood, focused on "why"
+- **Always use HEREDOC for commit messages** — never write temp files:
+  ```bash
+  git commit -m "$(cat <<'EOF'
+  Subject line here
+
+  Body here.
+
+  Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+  EOF
+  )"
+  ```
 - Amend last commit only when explicitly asked
 - Interactive log analysis to understand change history
 
