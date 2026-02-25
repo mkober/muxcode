@@ -298,8 +298,11 @@ func (w *Watcher) checkProcs() {
 			continue
 		}
 
-		if err := bus.Notify(w.session, entry.Owner); err != nil {
-			fmt.Fprintf(os.Stderr, "  [proc] failed to notify %s: %v\n", entry.Owner, err)
+		// Skip Notify for edit — tmux send-keys disrupts Claude Code input buffer
+		if entry.Owner != "edit" {
+			if err := bus.Notify(w.session, entry.Owner); err != nil {
+				fmt.Fprintf(os.Stderr, "  [proc] failed to notify %s: %v\n", entry.Owner, err)
+			}
 		}
 
 		// Mark as notified
@@ -346,8 +349,11 @@ func (w *Watcher) checkSpawns() {
 			continue
 		}
 
-		if err := bus.Notify(w.session, entry.Owner); err != nil {
-			fmt.Fprintf(os.Stderr, "  [spawn] failed to notify %s: %v\n", entry.Owner, err)
+		// Skip Notify for edit — tmux send-keys disrupts Claude Code input buffer
+		if entry.Owner != "edit" {
+			if err := bus.Notify(w.session, entry.Owner); err != nil {
+				fmt.Fprintf(os.Stderr, "  [spawn] failed to notify %s: %v\n", entry.Owner, err)
+			}
 		}
 
 		// Mark as notified
@@ -390,9 +396,9 @@ func (w *Watcher) checkLoops() {
 			fmt.Fprintf(os.Stderr, "  [guard] failed to send loop alert: %v\n", err)
 			continue
 		}
-		if err := bus.Notify(w.session, "edit"); err != nil {
-			fmt.Fprintf(os.Stderr, "  [guard] failed to notify edit: %v\n", err)
-		}
+		// Skip Notify for edit — same pattern as checkInboxes(). Edit reads
+		// its inbox frequently; injecting tmux send-keys while Claude Code
+		// is mid-turn causes text to get stuck in the input buffer.
 	}
 
 	w.refreshInboxSizes()
@@ -428,8 +434,11 @@ func (w *Watcher) checkCompaction() {
 			fmt.Fprintf(os.Stderr, "  [compact] failed to send compact alert to %s: %v\n", alert.Role, err)
 			continue
 		}
-		if err := bus.Notify(w.session, alert.Role); err != nil {
-			fmt.Fprintf(os.Stderr, "  [compact] failed to notify %s: %v\n", alert.Role, err)
+		// Skip Notify for edit — tmux send-keys disrupts Claude Code input buffer
+		if alert.Role != "edit" {
+			if err := bus.Notify(w.session, alert.Role); err != nil {
+				fmt.Fprintf(os.Stderr, "  [compact] failed to notify %s: %v\n", alert.Role, err)
+			}
 		}
 	}
 
