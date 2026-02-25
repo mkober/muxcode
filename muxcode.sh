@@ -158,6 +158,9 @@ tmux set-hook -gu session-created 2>/dev/null || true
 export BUS_SESSION="$SESSION"
 (cd "$PROJECT_DIR" && muxcode-agent-bus init)
 
+# --- Start bus watcher in background (loop detection, compaction alerts) ---
+muxcode-agent-bus watch "$SESSION" &>/dev/null &
+
 # --- Helper: send shell init to a pane ---
 send_init() {
   local target="$1"
@@ -295,10 +298,12 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
     tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
     tmux select-pane -t "$SESSION:$WIN.1"
   elif [ "$WIN" = "analyze" ] && is_split_left "$WIN"; then
-    # Analyze window: bus watcher (left) + analyst agent (right)
+    # Analyze window: findings log (left) + analyst agent (right)
     tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN"
-    tmux send-keys -t "$SESSION:$WIN" "muxcode-agent-bus watch $SESSION" Enter
+    if command -v muxcode-analyze-log.sh &>/dev/null; then
+      tmux send-keys -t "$SESSION:$WIN" "muxcode-analyze-log.sh" Enter
+    fi
     tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR" -l 75%
     send_init "$SESSION:$WIN.1"
     tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
