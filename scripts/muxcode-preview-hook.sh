@@ -66,6 +66,6 @@ if old and fp:
 
   if [ -f "$TEMP_FILE" ]; then
     sleep 0.1
-    tmux send-keys -t "$SESSION:edit.0" ":let g:_mux_buf=bufnr() | let g:_pft=&ft | diffthis | new | setlocal buftype=nofile bufhidden=wipe | let &l:ft=g:_pft | silent read $TEMP_FILE | 1delete _ | diffthis | setlocal foldlevel=99 | wincmd p | setlocal foldlevel=99" Enter
+    tmux send-keys -t "$SESSION:edit.0" ":let g:_mux_buf=bufnr() | let g:_pft=&ft | diffthis | new | setlocal buftype=nofile bufhidden=wipe number | let &l:ft=g:_pft | silent read $TEMP_FILE | 1delete _ | diffthis | setlocal foldlevel=99 | wincmd p | setlocal foldlevel=99" Enter
   fi
 fi
