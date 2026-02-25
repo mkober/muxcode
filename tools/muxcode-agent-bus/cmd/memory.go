@@ -27,7 +27,7 @@ func Memory(args []string) {
 	case "write-shared":
 		memoryWriteShared(subArgs)
 	case "context":
-		memoryContext()
+		memoryContext(subArgs)
 	case "search":
 		memorySearch(subArgs)
 	case "list":
@@ -86,9 +86,28 @@ func memoryWriteShared(args []string) {
 	}
 }
 
-func memoryContext() {
+func memoryContext(args []string) {
 	role := bus.BusRole()
-	content, err := bus.ReadContext(role)
+	days := bus.DefaultRotationConfig().ContextDays
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--days":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "Error: --days requires a value\n")
+				os.Exit(1)
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: --days must be a number\n")
+				os.Exit(1)
+			}
+			days = n
+		}
+	}
+
+	content, err := bus.ReadContextWithDays(role, days)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading context: %v\n", err)
 		os.Exit(1)
@@ -99,10 +118,11 @@ func memoryContext() {
 }
 
 func memorySearch(args []string) {
-	// Collect positional words as the query, parse --role and --limit flags
+	// Collect positional words as the query, parse --role, --limit, --mode flags
 	var queryParts []string
 	roleFilter := ""
 	limit := 0
+	mode := bus.SearchModeBM25 // default to BM25
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -125,6 +145,21 @@ func memorySearch(args []string) {
 				os.Exit(1)
 			}
 			limit = n
+		case "--mode":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "Error: --mode requires a value (keyword|bm25)\n")
+				os.Exit(1)
+			}
+			i++
+			switch args[i] {
+			case "keyword":
+				mode = bus.SearchModeKeyword
+			case "bm25":
+				mode = bus.SearchModeBM25
+			default:
+				fmt.Fprintf(os.Stderr, "Error: --mode must be 'keyword' or 'bm25'\n")
+				os.Exit(1)
+			}
 		default:
 			queryParts = append(queryParts, args[i])
 		}
@@ -132,11 +167,16 @@ func memorySearch(args []string) {
 
 	query := strings.Join(queryParts, " ")
 	if query == "" {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory search <query> [--role ROLE] [--limit N]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory search <query> [--role ROLE] [--limit N] [--mode keyword|bm25]\n")
 		os.Exit(1)
 	}
 
-	results, err := bus.SearchMemory(query, roleFilter, limit)
+	results, err := bus.SearchMemoryWithOptions(bus.SearchOptions{
+		Query:      query,
+		RoleFilter: roleFilter,
+		Limit:      limit,
+		Mode:       mode,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error searching memory: %v\n", err)
 		os.Exit(1)

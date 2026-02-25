@@ -136,6 +136,16 @@ func MemoryPath(role string) string {
 	return filepath.Join(MemoryDir(), role+".md")
 }
 
+// MemoryArchiveDir returns the archive directory for a role's memory files.
+func MemoryArchiveDir(role string) string {
+	return filepath.Join(MemoryDir(), role)
+}
+
+// MemoryArchivePath returns the archive file path for a role on a given date.
+func MemoryArchivePath(role, date string) string {
+	return filepath.Join(MemoryArchiveDir(role), date+".md")
+}
+
 // BuildHistoryPath returns the build history JSONL file path for a session.
 func BuildHistoryPath(session string) string {
 	return filepath.Join(BusDir(session), "build-history.jsonl")

@@ -36,10 +36,19 @@ func ReadMemory(role string) (string, error) {
 }
 
 // AppendMemory appends a formatted section to a role's memory file.
+// On the first write of each day, the previous day's file is archived.
 func AppendMemory(section, content, role string) error {
 	memPath := MemoryPath(role)
 	if err := os.MkdirAll(filepath.Dir(memPath), 0755); err != nil {
 		return err
+	}
+
+	// Lazy daily rotation: archive yesterday's file before writing
+	if NeedsRotation(role) {
+		if err := RotateMemory(role, DefaultRotationConfig()); err != nil {
+			// Log but don't block the write
+			fmt.Fprintf(os.Stderr, "warning: memory rotation failed for %s: %v\n", role, err)
+		}
 	}
 
 	ts := time.Now().Format("2006-01-02 15:04")
@@ -55,13 +64,20 @@ func AppendMemory(section, content, role string) error {
 }
 
 // ReadContext reads shared memory and the role's own memory, concatenated.
+// Includes recent archives (ContextDays from DefaultRotationConfig).
 func ReadContext(role string) (string, error) {
-	shared, err := ReadMemory("shared")
+	return ReadContextWithDays(role, DefaultRotationConfig().ContextDays)
+}
+
+// ReadContextWithDays reads shared memory and the role's own memory with
+// the specified number of days of archive history.
+func ReadContextWithDays(role string, days int) (string, error) {
+	shared, err := ReadMemoryWithHistory("shared", days)
 	if err != nil {
 		return "", err
 	}
 
-	own, err := ReadMemory(role)
+	own, err := ReadMemoryWithHistory(role, days)
 	if err != nil {
 		return "", err
 	}
@@ -143,48 +159,16 @@ func ParseMemoryEntries(content, role string) []MemoryEntry {
 	return entries
 }
 
-// ListMemoryFiles scans the memory directory for .md files and returns role names.
-// Returns an empty slice (not an error) if the directory does not exist.
+// ListMemoryFiles scans the memory directory for .md files and archive directories,
+// returning role names. Returns an empty slice (not an error) if the directory does not exist.
 func ListMemoryFiles() ([]string, error) {
-	dir := MemoryDir()
-	dirEntries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	var roles []string
-	for _, de := range dirEntries {
-		if de.IsDir() {
-			continue
-		}
-		name := de.Name()
-		if strings.HasSuffix(name, ".md") {
-			roles = append(roles, strings.TrimSuffix(name, ".md"))
-		}
-	}
-	return roles, nil
+	return ListMemoryRoles()
 }
 
-// AllMemoryEntries reads all memory files and returns their parsed entries.
+// AllMemoryEntries reads all memory files (active + archives) and returns
+// their parsed entries.
 func AllMemoryEntries() ([]MemoryEntry, error) {
-	roles, err := ListMemoryFiles()
-	if err != nil {
-		return nil, err
-	}
-
-	var all []MemoryEntry
-	for _, role := range roles {
-		content, err := ReadMemory(role)
-		if err != nil {
-			return nil, err
-		}
-		entries := ParseMemoryEntries(content, role)
-		all = append(all, entries...)
-	}
-	return all, nil
+	return AllMemoryEntriesWithArchives()
 }
 
 // SearchMemory searches all memory entries for the given query terms.

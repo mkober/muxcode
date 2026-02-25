@@ -49,8 +49,8 @@ func CheckCompaction(session string, th CompactThresholds) []CompactAlert {
 // CheckRoleCompaction checks a single role for compaction recommendation.
 // Returns nil if compaction is not recommended (below thresholds or recently compacted).
 func CheckRoleCompaction(session, role string, th CompactThresholds) *CompactAlert {
-	// Measure file sizes
-	memoryBytes := fileSize(MemoryPath(role))
+	// Measure file sizes (active + archives)
+	memoryBytes := fileSize(MemoryPath(role)) + ArchiveTotalSize(role)
 	historyBytes := fileSize(HistoryPath(session, role))
 	logBytes := fileSize(LogPath(session))
 	totalBytes := memoryBytes + historyBytes + logBytes

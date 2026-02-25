@@ -98,22 +98,48 @@ func SessionUptime(meta *SessionMeta) time.Duration {
 	return time.Since(time.Unix(meta.StartTS, 0))
 }
 
-// ResumeContext reads the role's memory, filters to "Session Summary" entries,
-// takes the last 3, and formats them as a markdown prompt block.
+// ResumeContext reads the role's memory (active + recent archives), filters
+// to "Session Summary" entries, takes the last 3, and formats them as a
+// markdown prompt block. Falls back to archives if no summaries in active file.
 func ResumeContext(role string) (string, error) {
+	// Try active file first
 	content, err := ReadMemory(role)
 	if err != nil {
 		return "", err
 	}
-	if content == "" {
-		return "", nil
+
+	var summaries []MemoryEntry
+	if content != "" {
+		entries := ParseMemoryEntries(content, role)
+		for _, e := range entries {
+			if e.Section == "Session Summary" {
+				summaries = append(summaries, e)
+			}
+		}
 	}
 
-	entries := ParseMemoryEntries(content, role)
-	var summaries []MemoryEntry
-	for _, e := range entries {
-		if e.Section == "Session Summary" {
-			summaries = append(summaries, e)
+	// If no summaries in active file, scan recent archives
+	if len(summaries) == 0 {
+		dates, err := ListArchiveDates(role)
+		if err != nil {
+			return "", err
+		}
+		// Check most recent 3 archives
+		start := len(dates) - 3
+		if start < 0 {
+			start = 0
+		}
+		for _, date := range dates[start:] {
+			archiveContent, err := os.ReadFile(MemoryArchivePath(role, date))
+			if err != nil {
+				continue
+			}
+			entries := ParseMemoryEntries(string(archiveContent), role)
+			for _, e := range entries {
+				if e.Section == "Session Summary" {
+					summaries = append(summaries, e)
+				}
+			}
 		}
 	}
 

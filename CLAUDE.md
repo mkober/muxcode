@@ -205,6 +205,36 @@ When a MUXcode session restarts with the same name, `Init()` detects the existin
 - **Watcher grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (30s) and compaction checks (120s) skip the first interval
 - Core code: `bus/setup.go` (`Init()`, `resetFile()`, `purgeStaleFiles()`), `watcher/watcher.go` (`New()`)
 
+### BM25 memory search
+
+Memory search uses Okapi BM25 ranking by default, replacing the legacy substring-counting scorer. BM25 provides IDF weighting (rare terms score higher), length normalization, and header 2x boosting.
+
+- **Tokenizer**: lowercase, split on non-alphanumeric, filter ~50 stop words, min 2 chars
+- **Stemmer**: simple suffix stripper (~30 lines) — strips `-ing`, `-ed`, `-ly`, `-tion`, `-ment`, `-ness`, `-er`, `-est`, `-s`; words under 4 chars pass through
+- **BM25 formula**: standard Okapi BM25 — `IDF × (tf × (k1+1)) / (tf + k1 × (1 - b + b × docLen/avgDocLen))` with k1=1.2, b=0.75
+- **Phrase matching**: quoted substrings (e.g. `"cdk diff"`) get a 2x bonus when found as exact token sequences
+- **On-the-fly**: no index cache — corpus is small (<1 MB typically), BM25 over a few hundred entries takes microseconds
+- **Backward compat**: `SearchMemory()` unchanged (keyword mode), `SearchMemoryWithOptions()` dispatches by mode
+- CLI: `muxcode-agent-bus memory search "query" [--mode keyword|bm25] [--role ROLE] [--limit N]` — default mode is `bm25`
+- Core code: `bus/search.go` (tokenize, stem, buildCorpus, bm25Score, parseQuery, phraseBonus, SearchMemoryBM25, SearchMemoryWithOptions)
+
+### Daily memory rotation
+
+Memory files (`.muxcode/memory/{role}.md`) are rotated daily to prevent unbounded growth. Rotation is lazy — triggered on first `AppendMemory()` write each day.
+
+- **Trigger**: `NeedsRotation(role)` checks if active file mtime is before today; if true, `RotateMemory()` runs before write
+- **Archive layout**: `{role}.md` (active, today) + `{role}/YYYY-MM-DD.md` (archives)
+- **Atomic move**: `os.Rename()` on POSIX; if archive for that date already exists, content is appended
+- **Retention**: configurable via `RotationConfig.RetentionDays` (default: 30) — `PurgeOldArchives()` removes expired files
+- **Context window**: `ReadContext()` includes active + last N days of archives (default: 7, configurable via `--days` flag)
+- **Search coverage**: `AllMemoryEntries()` delegates to `AllMemoryEntriesWithArchives()` — BM25 and keyword search cover full history
+- **List coverage**: `ListMemoryFiles()` delegates to `ListMemoryRoles()` — includes roles with archive-only data (no active file)
+- **Compaction**: `CheckRoleCompaction()` includes archive total size in memory bytes calculation
+- **Session resume fallback**: `ResumeContext()` scans most recent 3 archive files if no session summaries in active file
+- CLI: `muxcode-agent-bus memory context [--days N]` — override context window (default: 7)
+- Core code: `bus/rotation.go` (RotationConfig, NeedsRotation, RotateMemory, PurgeOldArchives, ReadMemoryWithHistory, ListArchiveDates, AllMemoryEntriesWithArchives, ArchiveTotalSize, ListMemoryRoles)
+- Path helpers: `bus/config.go` (`MemoryArchiveDir()`, `MemoryArchivePath()`)
+
 ### Agent spawn
 
 Agents can programmatically create temporary agent sessions for one-off tasks via `muxcode-agent-bus spawn`. The spawned agent runs in its own tmux window, receives its task via the bus inbox, and results are collected from the session log.
@@ -249,13 +279,15 @@ The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rathe
 - Packages: `bus/` (core), `cmd/` (subcommands), `watcher/` (monitor), `tui/` (dashboard)
 - Build: `cd tools/muxcode-agent-bus && go build .`
 - Test: `cd tools/muxcode-agent-bus && go test ./...`
-- Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`, `ProcDir()`, `ProcPath()`, `ProcLogPath()`, `SpawnPath()`
+- Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`, `ProcDir()`, `ProcPath()`, `ProcLogPath()`, `SpawnPath()`, `MemoryArchiveDir()`, `MemoryArchivePath()`
 - Pane targeting logic in `bus/config.go` — `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`
 - Session inspection in `bus/inspect.go` — `GetAgentStatus()`, `GetAllAgentStatus()`, `ReadLogHistory()`, `ExtractContext()`, `PreCommitCheck()`
 - Loop detection in `bus/guard.go` — `ReadHistory()`, `DetectCommandLoop()`, `DetectMessageLoop()`, `CheckLoops()`, `CheckAllLoops()`
 - Process management in `bus/proc.go` — `StartProc()`, `CheckProcAlive()`, `RefreshProcStatus()`, `StopProc()`, `CleanFinished()`
 - Agent spawn in `bus/spawn.go` — `StartSpawn()`, `StopSpawn()`, `RefreshSpawnStatus()`, `GetSpawnResult()`, `CleanFinishedSpawns()`
 - Compaction monitoring in `bus/compact.go` — `CheckCompaction()`, `CheckRoleCompaction()`, `FormatCompactAlert()`, `FilterNewCompactAlerts()`
+- BM25 search in `bus/search.go` — `tokenize()`, `stem()`, `buildCorpus()`, `bm25Score()`, `parseQuery()`, `phraseBonus()`, `SearchMemoryBM25()`, `SearchMemoryWithOptions()`
+- Memory rotation in `bus/rotation.go` — `NeedsRotation()`, `RotateMemory()`, `PurgeOldArchives()`, `ReadMemoryWithHistory()`, `ListArchiveDates()`, `AllMemoryEntriesWithArchives()`, `ArchiveTotalSize()`, `ListMemoryRoles()`
 - Session re-init in `bus/setup.go` — `Init()`, `resetFile()`, `purgeStaleFiles()`
 - Tool profiles in `bus/profile.go` — `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`
 

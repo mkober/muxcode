@@ -26,13 +26,14 @@
 | Review agent permissions | Process substitution (`diff <(...)`), `python3`, `jq` added to review tool profile | |
 | Git manager HEREDOC | Commit agent uses HEREDOC for commit messages instead of temp files | |
 | Analyze findings log | Left-pane poller for analyze window — filters `log.jsonl` for analyst responses, shows findings count, recent entries, and full latest payload. Watcher moved to background process at session init. | |
+| BM25 memory search | Okapi BM25 ranking with IDF weighting, length normalization, stemming, stop words, and quoted phrase matching — replaces keyword counting as default search mode | |
+| Daily memory rotation | Lazy daily rotation on first write — archives previous day's file to `{role}/YYYY-MM-DD.md`, configurable 30-day retention, 7-day context window, search covers archives | |
 
 ## Planned
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
-| Semantic memory search | Vector embeddings for memory search (currently keyword-only) | Low |
-| Daily memory rotation | Rolling window of daily memory files with automatic archival | Low |
+| Loop-detected self-loop | Watcher loop-detected alerts to edit create new log entries that sustain the detection window — need to exclude `loop-detected` events from loop detection or use a self-referential dedup key | Medium |
 | Webhook endpoint | HTTP listener converting POST requests to bus messages | Low |
 | Context directory | Per-agent `context.d/` directory for drop-in context files | Low |
 | Project-aware context | Auto-detect project type and inject relevant conventions | Low |
