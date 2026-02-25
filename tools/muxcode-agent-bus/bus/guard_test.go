@@ -180,11 +180,12 @@ func TestDetectMessageLoop_Repeated(t *testing.T) {
 
 func TestDetectMessageLoop_PingPong(t *testing.T) {
 	now := time.Now().Unix()
+	// True ping-pong: agents sending requests back and forth
 	messages := []Message{
 		{TS: now - 60, From: "build", To: "test", Action: "test", Type: "request"},
-		{TS: now - 45, From: "test", To: "build", Action: "test", Type: "response"},
+		{TS: now - 45, From: "test", To: "build", Action: "test", Type: "request"},
 		{TS: now - 30, From: "build", To: "test", Action: "test", Type: "request"},
-		{TS: now, From: "test", To: "build", Action: "test", Type: "response"},
+		{TS: now, From: "test", To: "build", Action: "test", Type: "request"},
 	}
 
 	alert := DetectMessageLoop(messages, "build", 4, 300)
@@ -193,6 +194,37 @@ func TestDetectMessageLoop_PingPong(t *testing.T) {
 	}
 	if alert.Count < 4 {
 		t.Errorf("count = %d, want >= 4", alert.Count)
+	}
+}
+
+func TestDetectMessageLoop_ChainTrafficIgnored(t *testing.T) {
+	// Simulate two build→test→review chain cycles within the window.
+	// These are response/event messages that should NOT trigger loop detection.
+	now := time.Now().Unix()
+	messages := []Message{
+		// Cycle 1
+		{TS: now - 120, From: "build", To: "test", Action: "test", Type: "request"},
+		{TS: now - 110, From: "test", To: "review", Action: "review", Type: "request"},
+		{TS: now - 100, From: "review", To: "test", Action: "review-complete", Type: "response"},
+		{TS: now - 95, From: "review", To: "edit", Action: "review-complete", Type: "response"},
+		{TS: now - 90, From: "test", To: "analyze", Action: "notify", Type: "event"},
+		{TS: now - 85, From: "watcher", To: "analyze", Action: "analyze", Type: "event"},
+		// Cycle 2
+		{TS: now - 60, From: "build", To: "test", Action: "test", Type: "request"},
+		{TS: now - 50, From: "test", To: "review", Action: "review", Type: "request"},
+		{TS: now - 40, From: "review", To: "test", Action: "review-complete", Type: "response"},
+		{TS: now - 35, From: "review", To: "edit", Action: "review-complete", Type: "response"},
+		{TS: now - 30, From: "test", To: "analyze", Action: "notify", Type: "event"},
+		{TS: now - 25, From: "watcher", To: "analyze", Action: "analyze", Type: "event"},
+	}
+
+	// None of these roles should trigger a loop alert — the responses and
+	// events are expected chain traffic, not actual loops.
+	for _, role := range []string{"test", "review", "analyze", "edit", "watcher"} {
+		alert := DetectMessageLoop(messages, role, 4, 300)
+		if alert != nil {
+			t.Errorf("role %q: unexpected alert for chain traffic: %s", role, alert.Message)
+		}
 	}
 }
 

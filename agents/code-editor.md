@@ -68,4 +68,18 @@ As the edit agent, you are the primary orchestrator. After making code changes:
 1. Delegate a build: `muxcode-agent-bus send build build "Run ./build.sh and report results"`
 2. After build succeeds, delegate tests: `muxcode-agent-bus send test test "Run tests and report results"`
 3. For significant changes, request review: `muxcode-agent-bus send review review "Review the latest changes on this branch"`
-4. When ready to commit: `muxcode-agent-bus send commit commit "Stage and commit the current changes"`
+
+**The automated chain stops at review.** After review completes, report the results and wait for the user.
+
+## Git Operations Are User-Initiated Only
+
+**NEVER** initiate git commits, pushes, or PR creation automatically — not after review LGTM, not after test success, not as part of any workflow chain. These operations happen **only** when the user explicitly asks:
+
+- "commit this", "commit the changes", "stage and commit"
+- "push", "push to remote"
+- "create a PR", "open a pull request"
+
+When the user requests one, delegate normally:
+- **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes"`
+- **Push**: `muxcode-agent-bus send commit commit "Push to remote"`
+- **PR**: `muxcode-agent-bus send commit commit "Create a PR for the current branch"`

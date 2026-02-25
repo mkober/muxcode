@@ -150,6 +150,8 @@ func DetectCommandLoop(entries []HistoryEntry, threshold int, windowSecs int64) 
 
 // DetectMessageLoop checks log messages for repetitive patterns involving a role.
 // Detects both repeated identical messages and ping-pong patterns.
+// Only counts "request" type messages — "response" and "event" types are expected
+// to repeat across chain cycles (build→test→review) and are not loops.
 // Returns an alert if any pattern repeats >= threshold times within windowSecs.
 func DetectMessageLoop(messages []Message, role string, threshold int, windowSecs int64) *LoopAlert {
 	if len(messages) == 0 || threshold < 1 {
@@ -158,9 +160,13 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 
 	now := messages[len(messages)-1].TS
 
-	// Filter to messages within the time window
+	// Filter to request messages within the time window.
+	// Responses and events repeat naturally across chain cycles and are not loops.
 	var recent []Message
 	for _, m := range messages {
+		if m.Type != "request" {
+			continue
+		}
 		if windowSecs <= 0 || (now-m.TS) <= windowSecs {
 			recent = append(recent, m)
 		}
