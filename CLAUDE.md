@@ -239,6 +239,7 @@ Agents can programmatically create temporary agent sessions for one-off tasks vi
 - Agent spawn in `bus/spawn.go` — `StartSpawn()`, `StopSpawn()`, `RefreshSpawnStatus()`, `GetSpawnResult()`, `CleanFinishedSpawns()`
 - Compaction monitoring in `bus/compact.go` — `CheckCompaction()`, `CheckRoleCompaction()`, `FormatCompactAlert()`, `FilterNewCompactAlerts()`
 - Session re-init in `bus/setup.go` — `Init()`, `resetFile()`, `purgeStaleFiles()`
+- Tool profiles in `bus/profile.go` — `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`
 
 ### Bash scripts
 
@@ -252,6 +253,18 @@ Agents can programmatically create temporary agent sessions for one-off tasks vi
 - Frontmatter extraction by `launch_agent_from_file` — uses `awk` to strip `---` delimiters, `jq` to build `--agents` JSON
 - Project-local agent files use `--agent <name>` natively; external files are read, stripped, and passed via `--agents` JSON
 - `agent_name()` maps roles to filenames; `allowed_tools()` maps roles to `--allowedTools` flags
+
+### Tool profiles
+
+- Defined in `bus/profile.go` — `MuxcodeConfig.ToolProfiles` map keyed by role name
+- Each profile has `Include` (shared tool groups), `CdPrefix` (auto-generate `cd * &&` variants), and `Tools` (role-specific patterns)
+- Shared tool groups: `bus` (agent-bus CLI), `readonly` (Read/Glob/Grep), `common` (ls, cat, diff, sed, awk, etc.)
+- CLI: `muxcode-agent-bus tools <role>` — resolves includes, applies CdPrefix, outputs one pattern per line
+- Patterns use Claude Code `--allowedTools` glob syntax: `Bash(git diff*)`, `Bash(diff <(*)`, etc.
+- **Process substitution**: `Bash(diff *)` does NOT match `diff <(...)` — Claude Code treats `<()` as a special construct requiring explicit `Bash(diff <(*)`
+- Review agent: read-only git commands + `Write` (for review notes) + `Bash(diff <(*))` + `Bash(python3*)` + `Bash(jq*)`
+- Edit agent: no build/test/deploy/git commands — delegation only
+- Git agent: full `Bash(git *)` + `Bash(gh *)` access
 
 ### Configuration
 
