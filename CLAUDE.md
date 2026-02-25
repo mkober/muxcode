@@ -24,6 +24,7 @@ scripts/
 ├── muxcode-edit-guard.sh     # PreToolUse — blocks prohibited commands in edit window (sync)
 ├── muxcode-analyze-hook.sh   # PostToolUse — route file events, trigger watcher
 ├── muxcode-bash-hook.sh      # PostToolUse — build-test-review chain + deploy-verify chain
+├── muxcode-analyze-log.sh    # Analyst findings poller for analyze window left pane
 ├── muxcode-git-status.sh     # Git status poller for commit window left pane
 ├── muxcode-watch-log.sh      # Watch history poller for watch window left pane
 └── muxcode-test-wrapper.sh   # Test runner wrapper
@@ -116,7 +117,7 @@ Agents indicate busy state via lock files at `/tmp/muxcode-bus-{session}/lock/{r
 
 ### Watcher debounce
 
-The bus watcher (`muxcode-agent-bus watch`) uses a two-phase debounce: detect trigger file change, then wait for stability (default 8 seconds). Burst edits are coalesced into a single aggregate analyze event sent to the analyst.
+The bus watcher (`muxcode-agent-bus watch`) runs as a background process launched at session init in `muxcode.sh` (not in any tmux pane). It uses a two-phase debounce: detect trigger file change, then wait for stability (default 8 seconds). Burst edits are coalesced into a single aggregate analyze event sent to the analyst.
 
 ### Cron scheduling
 
@@ -223,6 +224,23 @@ Agents can programmatically create temporary agent sessions for one-off tasks vi
 - JSONL storage: `spawn.jsonl` (entries)
 - Core code: `bus/spawn.go` (SpawnEntry, CRUD, StartSpawn, StopSpawn, RefreshSpawnStatus, GetSpawnResult, CleanFinishedSpawns, formatting, findAgentLauncher), `cmd/spawn.go` (CLI)
 - Watcher code: `watcher/watcher.go` (`checkSpawns()`)
+
+### Left-pane pollers
+
+Each split-left window runs a poller script in the left pane that displays role-specific history. Pollers share a common pattern: `set -uo pipefail`, Dracula color scheme, `jq` primary with `python3` fallback, 5-second poll interval, clear-and-redraw via `\033[2J\033[H`.
+
+| Window | Script | Data source |
+|--------|--------|-------------|
+| build | `muxcode-build-log.sh` | `build-history.jsonl` |
+| test | `muxcode-test-log.sh` | `test-history.jsonl` |
+| review | `muxcode-review-log.sh` | `review-history.jsonl` |
+| deploy | `muxcode-deploy-log.sh` | `deploy-history.jsonl` |
+| run | `muxcode-runner-log.sh` | `run-history.jsonl` |
+| watch | `muxcode-watch-log.sh` | `watch-history.jsonl` |
+| commit | `muxcode-commit-log.sh` / `muxcode-git-status.sh` | `commit-history.jsonl` / git |
+| analyze | `muxcode-analyze-log.sh` | `log.jsonl` (filtered: `from=analyze`, `type=response`) |
+
+The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rather than a dedicated history file, filtering for analyst response messages. It displays: findings count, last 15 entries with timestamp/action/target/truncated payload, and the full payload of the latest finding.
 
 ## Working on each area
 
