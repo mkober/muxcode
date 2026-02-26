@@ -12,18 +12,22 @@ import (
 
 // Watcher monitors agent inboxes and a trigger file for file-edit events.
 type Watcher struct {
-	session         string
-	pollInterval    time.Duration
-	debounceSecs    int
-	triggerFile     string
-	inboxSizes      map[string]int64
-	lastTriggerSize int64
-	pendingSince    int64
-	cronEntries     []bus.CronEntry
-	lastCronLoad    int64
-	lastLoopCheck   int64
+	session          string
+	pollInterval     time.Duration
+	debounceSecs     int
+	triggerFile      string
+	inboxSizes       map[string]int64
+	lastTriggerSize  int64
+	pendingSince     int64
+	cronEntries      []bus.CronEntry
+	lastCronLoad     int64
+	lastLoopCheck    int64
 	lastCompactCheck int64
-	lastAlertKey    map[string]int64
+	lastAlertKey     map[string]int64
+	hasRunningProcs  bool
+	hasRunningSpawns bool
+	lastProcSize     int64
+	lastSpawnSize    int64
 }
 
 // New creates a new Watcher for the given session.
@@ -205,11 +209,21 @@ func (w *Watcher) routeTrigger() {
 }
 
 // loadCron reloads cron entries from disk at most once per 10 seconds.
+// Skips loading if the cron file is empty or missing.
 func (w *Watcher) loadCron() {
 	now := time.Now().Unix()
 	if now-w.lastCronLoad < 10 {
 		return
 	}
+
+	// Skip if cron file is empty or missing
+	info, err := os.Stat(bus.CronPath(w.session))
+	if err != nil || info.Size() == 0 {
+		w.cronEntries = nil
+		w.lastCronLoad = now
+		return
+	}
+
 	entries, err := bus.ReadCronEntries(w.session)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  [cron] failed to read cron entries: %v\n", err)
@@ -273,12 +287,39 @@ func (w *Watcher) checkCron() {
 }
 
 // checkProcs polls running background processes and notifies owners on completion.
+// Skips entirely if proc file is empty/missing and no running procs are tracked.
 func (w *Watcher) checkProcs() {
+	// Skip if proc file is empty/missing and no running procs cached
+	info, err := os.Stat(bus.ProcPath(w.session))
+	currentSize := int64(0)
+	if err == nil {
+		currentSize = info.Size()
+	}
+	if currentSize == 0 && !w.hasRunningProcs {
+		return
+	}
+	// Reset running flag if file size changed (new proc may have been added)
+	if currentSize != w.lastProcSize {
+		w.hasRunningProcs = true
+		w.lastProcSize = currentSize
+	}
+
 	completed, err := bus.RefreshProcStatus(w.session)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  [proc] failed to refresh proc status: %v\n", err)
 		return
 	}
+
+	// Update running state: check if any procs are still running
+	entries, _ := bus.ReadProcEntries(w.session)
+	hasRunning := false
+	for _, e := range entries {
+		if e.Status == "running" {
+			hasRunning = true
+			break
+		}
+	}
+	w.hasRunningProcs = hasRunning
 
 	if len(completed) == 0 {
 		return
@@ -315,12 +356,39 @@ func (w *Watcher) checkProcs() {
 }
 
 // checkSpawns polls running spawned agents and notifies owners on completion.
+// Skips entirely if spawn file is empty/missing and no running spawns are tracked.
 func (w *Watcher) checkSpawns() {
+	// Skip if spawn file is empty/missing and no running spawns cached
+	info, err := os.Stat(bus.SpawnPath(w.session))
+	currentSize := int64(0)
+	if err == nil {
+		currentSize = info.Size()
+	}
+	if currentSize == 0 && !w.hasRunningSpawns {
+		return
+	}
+	// Reset running flag if file size changed (new spawn may have been added)
+	if currentSize != w.lastSpawnSize {
+		w.hasRunningSpawns = true
+		w.lastSpawnSize = currentSize
+	}
+
 	completed, err := bus.RefreshSpawnStatus(w.session)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  [spawn] failed to refresh spawn status: %v\n", err)
 		return
 	}
+
+	// Update running state: check if any spawns are still running
+	entries, _ := bus.ReadSpawnEntries(w.session)
+	hasRunning := false
+	for _, e := range entries {
+		if e.Status == "running" {
+			hasRunning = true
+			break
+		}
+	}
+	w.hasRunningSpawns = hasRunning
 
 	if len(completed) == 0 {
 		return
@@ -365,11 +433,11 @@ func (w *Watcher) checkSpawns() {
 	w.refreshInboxSizes()
 }
 
-// checkLoops runs loop detection every 30 seconds and sends alerts to the edit agent.
-// Deduplicates alerts within a 5-minute cooldown to avoid spamming.
+// checkLoops runs loop detection every 60 seconds and sends alerts to the edit agent.
+// Deduplicates alerts within a 10-minute cooldown to avoid spamming.
 func (w *Watcher) checkLoops() {
 	now := time.Now().Unix()
-	if now-w.lastLoopCheck < 30 {
+	if now-w.lastLoopCheck < 60 {
 		return
 	}
 	w.lastLoopCheck = now

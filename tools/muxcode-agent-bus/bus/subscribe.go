@@ -189,7 +189,7 @@ func FireSubscriptions(session, from, event, outcome, exitCode, command string) 
 	for _, s := range matched {
 		payload := ExpandSubscriptionMessage(s.Message, event, outcome, exitCode, command)
 		msg := NewMessage(from, s.Notify, "event", s.Action, payload, "")
-		if err := Send(session, msg); err != nil {
+		if err := SendNoCC(session, msg); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: subscription %s notify failed: %v\n", s.ID, err)
 			continue
 		}

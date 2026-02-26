@@ -153,6 +153,66 @@ func TestHasMessages(t *testing.T) {
 	}
 }
 
+func TestSendNoCC_SkipsAutoCC(t *testing.T) {
+	session := testSession(t)
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	// build is an auto-CC role — SendNoCC should NOT copy to edit
+	msg := NewMessage("build", "test", "event", "build-complete", "done", "")
+	if err := SendNoCC(session, msg); err != nil {
+		t.Fatalf("SendNoCC: %v", err)
+	}
+
+	// test should have the message
+	msgs, err := Receive(session, "test")
+	if err != nil {
+		t.Fatalf("Receive test: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("test inbox: got %d messages, want 1", len(msgs))
+	}
+
+	// edit should NOT have the message (no auto-CC)
+	editMsgs, err := Receive(session, "edit")
+	if err != nil {
+		t.Fatalf("Receive edit: %v", err)
+	}
+	if len(editMsgs) != 0 {
+		t.Errorf("edit inbox should be empty with SendNoCC, got %d messages", len(editMsgs))
+	}
+}
+
+func TestSend_StillCCs(t *testing.T) {
+	session := testSession(t)
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	// build is an auto-CC role — Send should copy to edit
+	msg := NewMessage("build", "test", "event", "build-complete", "done", "")
+	if err := Send(session, msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	// test should have the message
+	msgs, err := Receive(session, "test")
+	if err != nil {
+		t.Fatalf("Receive test: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("test inbox: got %d messages, want 1", len(msgs))
+	}
+
+	// edit should also have the message (auto-CC)
+	editMsgs, err := Receive(session, "edit")
+	if err != nil {
+		t.Fatalf("Receive edit: %v", err)
+	}
+	if len(editMsgs) != 1 {
+		t.Errorf("edit inbox should have 1 auto-CC message, got %d", len(editMsgs))
+	}
+}
+
 func TestInboxCount(t *testing.T) {
 	session := testSession(t)
 

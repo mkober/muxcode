@@ -16,6 +16,18 @@ func IsAutoCCRole(role string) bool {
 // Send appends a message to the recipient's inbox and the session log.
 // Messages from build, test, and review are automatically CC'd to edit.
 func Send(session string, m Message) error {
+	return sendMessage(session, m, true)
+}
+
+// SendNoCC appends a message to the recipient's inbox and the session log
+// without auto-CC to edit. Use for chain intermediate messages, analyst
+// notifications, and subscription fan-out where CC would be redundant.
+func SendNoCC(session string, m Message) error {
+	return sendMessage(session, m, false)
+}
+
+// sendMessage is the shared implementation for Send and SendNoCC.
+func sendMessage(session string, m Message, autoCC bool) error {
 	data, err := EncodeMessage(m)
 	if err != nil {
 		return err
@@ -34,7 +46,7 @@ func Send(session string, m Message) error {
 	}
 
 	// Auto-CC to edit: copy messages from auto-CC roles when not already going to edit
-	if IsAutoCCRole(m.From) && m.To != "edit" {
+	if autoCC && IsAutoCCRole(m.From) && m.To != "edit" {
 		if err := appendToFile(InboxPath(session, "edit"), line); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: auto-CC to edit failed: %v\n", err)
 		}

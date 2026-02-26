@@ -321,7 +321,7 @@ func TestMergeConfigs(t *testing.T) {
 			"test":  {Tools: []string{"Bash(jest*)"}},
 		},
 		EventChains: map[string]EventChain{
-			"build": {NotifyAnalyst: true},
+			"build": {NotifyAnalystOn: []string{"failure"}},
 		},
 		AutoCC: []string{"build"},
 	}
@@ -355,8 +355,9 @@ func TestMergeConfigs(t *testing.T) {
 	}
 
 	// Build chain preserved from base
-	if !result.EventChains["build"].NotifyAnalyst {
-		t.Error("build chain not preserved from base")
+	buildChain := result.EventChains["build"]
+	if len(buildChain.NotifyAnalystOn) == 0 || buildChain.NotifyAnalystOn[0] != "failure" {
+		t.Errorf("build chain not preserved from base: NotifyAnalystOn=%v", buildChain.NotifyAnalystOn)
 	}
 
 	// AutoCC overridden
@@ -430,18 +431,84 @@ func TestResolveChain_NoChain(t *testing.T) {
 	}
 }
 
-func TestChainNotifyAnalyst(t *testing.T) {
+func TestChainNotifyAnalyst_LegacyFallback(t *testing.T) {
+	// Legacy config using NotifyAnalyst bool (no NotifyAnalystOn)
+	cfg := &MuxcodeConfig{
+		EventChains: map[string]EventChain{
+			"build": {NotifyAnalyst: true},
+			"test":  {NotifyAnalyst: false},
+		},
+	}
+	SetConfig(cfg)
+	defer SetConfig(nil)
+
+	// Legacy ChainNotifyAnalyst still works
+	if !ChainNotifyAnalyst("build") {
+		t.Error("expected ChainNotifyAnalyst=true for build with legacy bool")
+	}
+	if ChainNotifyAnalyst("test") {
+		t.Error("expected ChainNotifyAnalyst=false for test with legacy bool")
+	}
+
+	// ChainShouldNotifyAnalyst falls back to bool when NotifyAnalystOn is empty
+	if !ChainShouldNotifyAnalyst("build", "success") {
+		t.Error("expected legacy fallback true for build success")
+	}
+	if !ChainShouldNotifyAnalyst("build", "failure") {
+		t.Error("expected legacy fallback true for build failure")
+	}
+	if ChainShouldNotifyAnalyst("test", "success") {
+		t.Error("expected legacy fallback false for test success")
+	}
+}
+
+func TestChainShouldNotifyAnalyst_FailureOnly(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
-	if !ChainNotifyAnalyst("build") {
-		t.Error("expected notify_analyst=true for build")
+	// build and test: only failure and unknown trigger analyst
+	if ChainShouldNotifyAnalyst("build", "success") {
+		t.Error("build success should NOT notify analyst")
 	}
-	if !ChainNotifyAnalyst("test") {
-		t.Error("expected notify_analyst=true for test")
+	if !ChainShouldNotifyAnalyst("build", "failure") {
+		t.Error("build failure should notify analyst")
 	}
-	if !ChainNotifyAnalyst("deploy") {
-		t.Error("expected notify_analyst=true for deploy")
+	if !ChainShouldNotifyAnalyst("build", "unknown") {
+		t.Error("build unknown should notify analyst")
+	}
+	if ChainShouldNotifyAnalyst("test", "success") {
+		t.Error("test success should NOT notify analyst")
+	}
+	if !ChainShouldNotifyAnalyst("test", "failure") {
+		t.Error("test failure should notify analyst")
+	}
+	if !ChainShouldNotifyAnalyst("test", "unknown") {
+		t.Error("test unknown should notify analyst")
+	}
+}
+
+func TestChainShouldNotifyAnalyst_Wildcard(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	// deploy uses "*" — all outcomes trigger analyst
+	if !ChainShouldNotifyAnalyst("deploy", "success") {
+		t.Error("deploy success should notify analyst (wildcard)")
+	}
+	if !ChainShouldNotifyAnalyst("deploy", "failure") {
+		t.Error("deploy failure should notify analyst (wildcard)")
+	}
+	if !ChainShouldNotifyAnalyst("deploy", "unknown") {
+		t.Error("deploy unknown should notify analyst (wildcard)")
+	}
+}
+
+func TestChainShouldNotifyAnalyst_NoChain(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	if ChainShouldNotifyAnalyst("nonexistent", "success") {
+		t.Error("expected false for nonexistent event type")
 	}
 }
 

@@ -65,7 +65,7 @@ func Chain(args []string) {
 	if dryRun {
 		fmt.Printf("chain: %s %s -> send %s:%s to %s: %s\n",
 			eventType, outcome, action.Type, action.Action, action.SendTo, message)
-		if bus.ChainNotifyAnalyst(eventType) && action.SendTo != "analyze" {
+		if bus.ChainShouldNotifyAnalyst(eventType, outcome) && action.SendTo != "analyze" {
 			fmt.Printf("chain: notify analyst: %s %s: %s\n", eventType, outcome, command)
 		}
 		// Show subscription fan-out in dry-run
@@ -81,25 +81,21 @@ func Chain(args []string) {
 		return
 	}
 
-	// Send the chain message
+	// Send the chain message (no auto-CC — chain intermediates are redundant for edit)
 	msg := bus.NewMessage(from, action.SendTo, action.Type, action.Action, message, "")
-	if err := bus.Send(session, msg); err != nil {
+	if err := bus.SendNoCC(session, msg); err != nil {
 		fmt.Fprintf(os.Stderr, "Error sending chain message: %v\n", err)
 		os.Exit(1)
 	}
 
 	if !noNotify {
 		_ = bus.Notify(session, action.SendTo)
-		// Auto-CC notification for edit
-		if bus.IsAutoCCRole(from) && action.SendTo != "edit" {
-			_ = bus.Notify(session, "edit")
-		}
 	}
 
 	fmt.Printf("Sent %s:%s to %s\n", action.Type, action.Action, action.SendTo)
 
-	// Notify analyst if configured — skip when chain action already targets analyze
-	if bus.ChainNotifyAnalyst(eventType) && action.SendTo != "analyze" {
+	// Notify analyst if configured (outcome-conditional) — skip when chain action already targets analyze
+	if bus.ChainShouldNotifyAnalyst(eventType, outcome) && action.SendTo != "analyze" {
 		var analystMsg string
 		switch outcome {
 		case "success":
@@ -111,7 +107,7 @@ func Chain(args []string) {
 		}
 		if analystMsg != "" {
 			aMsg := bus.NewMessage(from, "analyze", "event", "notify", analystMsg, "")
-			if err := bus.Send(session, aMsg); err != nil {
+			if err := bus.SendNoCC(session, aMsg); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: analyst notification failed: %v\n", err)
 			}
 			// No tmux notify for analyst events (--no-notify equivalent)

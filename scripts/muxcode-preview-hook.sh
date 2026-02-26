@@ -21,12 +21,17 @@ for pat in $SKIP_PATTERNS; do
 done
 
 TEMP_FILE="/tmp/muxcode-preview-${SESSION}.tmp"
+PANE="$SESSION:edit.0"
+
+# Dismiss any pending "Press ENTER" prompt and ensure normal mode
+tmux send-keys -t "$PANE" Enter 2>/dev/null
+sleep 0.05
+tmux send-keys -t "$PANE" Escape Escape
+sleep 0.05
 
 # Clean up any stale diff from a previous rejected edit
 if [ -f "$TEMP_FILE" ]; then
-  tmux send-keys -t "$SESSION:edit.0" Escape Escape
-  sleep 0.1
-  tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only" Enter
+  tmux send-keys -t "$PANE" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | set number" Enter
   sleep 0.2
   rm -f "$TEMP_FILE"
 fi
@@ -43,10 +48,8 @@ fi
 # Escape spaces for nvim command-line
 ESCAPED_PATH="${FILE_PATH// /\\ }"
 
-# Open file at the changed line (foldlevel=99 keeps all folds open persistently)
-tmux send-keys -t "$SESSION:edit.0" Escape Escape
-sleep 0.1
-tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! e! +$LINE $ESCAPED_PATH' | setlocal foldlevel=99" Enter
+# Open file at the changed line (foldlevel=99 keeps all folds open, nohlsearch clears stale matches)
+tmux send-keys -t "$PANE" ":sil! exe 'e! +$LINE $ESCAPED_PATH' | setlocal foldlevel=99 | set number | nohlsearch | let @/=''" Enter
 
 # For Edit tool: create temp file with proposed change and open diff
 if [ -n "$OLD_STRING" ] && [ -f "$FILE_PATH" ]; then
@@ -65,7 +68,12 @@ if old and fp:
 " "$TEMP_FILE" 2>/dev/null
 
   if [ -f "$TEMP_FILE" ]; then
-    sleep 0.1
-    tmux send-keys -t "$SESSION:edit.0" ":let g:_mux_buf=bufnr() | let g:_pft=&ft | diffthis | new | setlocal buftype=nofile bufhidden=wipe number | let &l:ft=g:_pft | silent read $TEMP_FILE | 1delete _ | diffthis | setlocal foldlevel=99 | norm! zR | noautocmd wincmd p | setlocal foldlevel=99 | norm! zR" Enter
+    sleep 0.2
+    # Dismiss any prompt from file-open autocmds before sending diff command
+    tmux send-keys -t "$PANE" Enter 2>/dev/null
+    sleep 0.05
+    tmux send-keys -t "$PANE" Escape Escape
+    sleep 0.05
+    tmux send-keys -t "$PANE" ":let g:_mux_buf=bufnr() | let g:_pft=&ft | diffthis | new | setlocal buftype=nofile bufhidden=wipe number | let &l:ft=g:_pft | silent read $TEMP_FILE | 1delete _ | diffthis | setlocal foldlevel=99 | norm! zR | noautocmd wincmd p | setlocal foldlevel=99 | norm! zR" Enter
   fi
 fi

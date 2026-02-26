@@ -98,7 +98,7 @@ Git commits, pushes, and PR creation are **user-initiated only** — never auto-
 
 - Messages are JSONL stored at `/tmp/muxcode-bus-{session}/inbox/{role}.jsonl`
 - Three message types: `request`, `response`, `event`
-- Auto-CC: messages from build/test/review/deploy to non-edit agents are copied to the edit inbox
+- Auto-CC: messages from build/test/review/deploy to non-edit agents are copied to the edit inbox via `Send()`; chain and subscription messages use `SendNoCC()` to avoid redundant CC
 - Build-test-review and deploy-verify chains are **hook-driven** (bash exit codes), not LLM-driven
 
 ### Hook chain
@@ -118,6 +118,8 @@ Agents indicate busy state via lock files at `/tmp/muxcode-bus-{session}/lock/{r
 ### Watcher debounce
 
 The bus watcher (`muxcode-agent-bus watch`) runs as a background process launched at session init in `muxcode.sh` (not in any tmux pane). It uses a two-phase debounce: detect trigger file change, then wait for stability (default 8 seconds). Burst edits are coalesced into a single aggregate analyze event sent to the analyst.
+
+**Efficiency optimizations**: Loop detection interval is 60s (not 30s). Cron/proc/spawn file loading skips entirely when files are empty or missing. Proc and spawn checks cache a `hasRunning` flag — when no running entries exist and the file hasn't grown, the check returns immediately without parsing.
 
 ### Cron scheduling
 
@@ -166,7 +168,7 @@ The bus detects repetitive agent patterns and auto-escalates to the edit agent v
 - **Command loops**: same command failing N+ times consecutively (from `{role}-history.jsonl`)
 - **Message loops**: repeated `(from, to, action)` tuples or ping-pong patterns (from `log.jsonl`)
 - CLI: `muxcode-agent-bus guard [role] [--json] [--threshold N] [--window N]`
-- Watcher integration: `checkLoops()` runs every 30s, sends `loop-detected` events to edit
+- Watcher integration: `checkLoops()` runs every 60s, sends `loop-detected` events to edit
 - Dedup: alerts suppressed within 10-minute cooldown per `(role, type, command/peer)` key (exceeds 5-minute detection window to prevent self-sustaining alerts)
 - System action exclusion: `loop-detected`, `compact-recommended`, `proc-complete`, `spawn-complete` actions are filtered from message loop detection (`isSystemAction()`) — these repeat naturally as infrastructure traffic
 - Command normalization: strips `cd ... &&`, env vars, `bash -c`, `2>&1`, collapses whitespace
@@ -203,7 +205,7 @@ When a MUXcode session restarts with the same name, `Init()` detects the existin
 - **Truncated files** (path preserved for writers): inboxes, `log.jsonl`, `cron.jsonl`, `proc.jsonl`, `spawn.jsonl`, `subscriptions.jsonl`, `{role}-history.jsonl`, `cron-history.jsonl`
 - **Removed files** (recreated on demand): session meta (`session/*.json`), lock files (`lock/*.lock`), proc logs (`proc/*.log`), orphaned spawn inboxes (`inbox/spawn-*.jsonl`), trigger file
 - **Preserved**: memory files (`.muxcode/memory/`) — persistent learnings survive re-init
-- **Watcher grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (30s) and compaction checks (120s) skip the first interval
+- **Watcher grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (60s) and compaction checks (120s) skip the first interval
 - Core code: `bus/setup.go` (`Init()`, `resetFile()`, `purgeStaleFiles()`), `watcher/watcher.go` (`New()`)
 
 ### BM25 memory search
@@ -307,7 +309,7 @@ JSONL-persisted subscription table enabling agents to subscribe to event pattern
 
 - **Subscription model**: event (`build`, `test`, `deploy`, or `*`), outcome (`success`, `failure`, or `*`), notify role, action name, message template
 - **Pattern matching**: both event and outcome must match (wildcard `*` matches anything); disabled subscriptions skipped
-- **Fan-out**: `FireSubscriptions()` runs after primary chain action in `cmd/chain.go` — reads, matches, expands templates, sends via `bus.Send()`
+- **Fan-out**: `FireSubscriptions()` runs after primary chain action in `cmd/chain.go` — reads, matches, expands templates, sends via `bus.SendNoCC()` (no auto-CC to edit)
 - **Message templates**: `${event}`, `${outcome}`, `${exit_code}`, `${command}` — default: `"${event} ${outcome}: ${command}"`
 - **Fire count**: incremented per subscription on each fan-out, persisted to JSONL
 - **Dry-run support**: `chain --dry-run` shows which subscriptions would fire
@@ -352,7 +354,7 @@ The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rathe
 - BM25 search in `bus/search.go` — `tokenize()`, `stem()`, `buildCorpus()`, `bm25Score()`, `parseQuery()`, `phraseBonus()`, `SearchMemoryBM25()`, `SearchMemoryWithOptions()`
 - Memory rotation in `bus/rotation.go` — `NeedsRotation()`, `RotateMemory()`, `PurgeOldArchives()`, `ReadMemoryWithHistory()`, `ListArchiveDates()`, `AllMemoryEntriesWithArchives()`, `ArchiveTotalSize()`, `ListMemoryRoles()`
 - Session re-init in `bus/setup.go` — `Init()`, `resetFile()`, `purgeStaleFiles()`
-- Tool profiles in `bus/profile.go` — `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`
+- Tool profiles in `bus/profile.go` — `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`, `ChainShouldNotifyAnalyst()` (outcome-conditional analyst notification via `NotifyAnalystOn` field)
 - Context directory in `bus/context.go` — `ReadContextFiles()`, `ReadAllContextFiles()`, `ContextFilesForRole()`, `AllContextFilesForRole()`, `FormatContextPrompt()`, `FormatContextList()`
 - Project detection in `bus/detect.go` — `DetectProject()`, `AutoContextFiles()`, `conventionText()`, `FormatDetectOutput()`, `extractGoMod()`, `extractPackageJSON()`, `extractCdkJSON()`, `extractPHP()`
 - Event subscription in `bus/subscribe.go` — `ReadSubscriptions()`, `WriteSubscriptions()`, `AddSubscription()`, `RemoveSubscription()`, `SetSubscriptionEnabled()`, `MatchSubscriptions()`, `FireSubscriptions()`, `ExpandSubscriptionMessage()`, `FormatSubscriptionList()`

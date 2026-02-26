@@ -31,10 +31,11 @@ type ToolProfile struct {
 
 // EventChain defines actions triggered by command outcomes.
 type EventChain struct {
-	OnSuccess     *ChainAction `json:"on_success,omitempty"`
-	OnFailure     *ChainAction `json:"on_failure,omitempty"`
-	OnUnknown     *ChainAction `json:"on_unknown,omitempty"`
-	NotifyAnalyst bool         `json:"notify_analyst"`
+	OnSuccess       *ChainAction `json:"on_success,omitempty"`
+	OnFailure       *ChainAction `json:"on_failure,omitempty"`
+	OnUnknown       *ChainAction `json:"on_unknown,omitempty"`
+	NotifyAnalyst   bool         `json:"notify_analyst"`
+	NotifyAnalystOn []string     `json:"notify_analyst_on,omitempty"`
 }
 
 // ChainAction is a single action in an event chain.
@@ -242,12 +243,38 @@ func ResolveChain(eventType, outcome string) *ChainAction {
 }
 
 // ChainNotifyAnalyst returns whether the chain should notify the analyst.
+// Deprecated: Use ChainShouldNotifyAnalyst for outcome-conditional checks.
 func ChainNotifyAnalyst(eventType string) bool {
 	cfg := Config()
 	chain, ok := cfg.EventChains[eventType]
 	if !ok {
 		return false
 	}
+	return chain.NotifyAnalyst
+}
+
+// ChainShouldNotifyAnalyst returns whether the chain should notify the analyst
+// for the given outcome. If NotifyAnalystOn is set, the outcome must match an
+// entry (or "*" wildcard). If NotifyAnalystOn is empty, falls back to the
+// boolean NotifyAnalyst field for backward compatibility.
+func ChainShouldNotifyAnalyst(eventType, outcome string) bool {
+	cfg := Config()
+	chain, ok := cfg.EventChains[eventType]
+	if !ok {
+		return false
+	}
+
+	// New field takes precedence
+	if len(chain.NotifyAnalystOn) > 0 {
+		for _, o := range chain.NotifyAnalystOn {
+			if o == "*" || o == outcome {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Legacy fallback
 	return chain.NotifyAnalyst
 }
 
@@ -509,7 +536,7 @@ func DefaultConfig() *MuxcodeConfig {
 					Message: "Deployment completed (exit code unknown): ${command}",
 					Type:    "event",
 				},
-				NotifyAnalyst: true,
+				NotifyAnalystOn: []string{"*"},
 			},
 			"build": {
 				OnSuccess: &ChainAction{
@@ -530,7 +557,7 @@ func DefaultConfig() *MuxcodeConfig {
 					Message: "Build completed (exit code unknown): ${command}",
 					Type:    "event",
 				},
-				NotifyAnalyst: true,
+				NotifyAnalystOn: []string{"failure", "unknown"},
 			},
 			"test": {
 				OnSuccess: &ChainAction{
@@ -551,7 +578,7 @@ func DefaultConfig() *MuxcodeConfig {
 					Message: "Tests completed (exit code unknown): ${command}",
 					Type:    "event",
 				},
-				NotifyAnalyst: true,
+				NotifyAnalystOn: []string{"failure", "unknown"},
 			},
 		},
 		AutoCC: []string{"build", "test", "review", "deploy", "analyze"},

@@ -11,7 +11,12 @@ WINDOW_NAME=$(tmux display-message -t "${TMUX_PANE:-}" -p '#W' 2>/dev/null) || e
 TEMP_FILE="/tmp/muxcode-preview-${SESSION}.tmp"
 [ -f "$TEMP_FILE" ] || exit 0
 
-tmux send-keys -t "$SESSION:edit.0" Escape Escape
-sleep 0.1
-tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only" Enter
+PANE="$SESSION:edit.0"
+
+# Dismiss any pending "Press ENTER" prompt and ensure normal mode
+tmux send-keys -t "$PANE" Enter 2>/dev/null
+sleep 0.05
+tmux send-keys -t "$PANE" Escape Escape
+sleep 0.05
+tmux send-keys -t "$PANE" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | set number" Enter
 rm -f "$TEMP_FILE"
