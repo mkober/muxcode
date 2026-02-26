@@ -102,25 +102,7 @@ local function open_start()
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_set_current_buf(buf)
 
-  local width  = vim.api.nvim_win_get_width(0)
-  local height = vim.api.nvim_win_get_height(0)
-
-  -- First pass: render content into these tables.
-  -- top_pad is computed from #content_lines after the render loop, so adding
-  -- or removing sections here never requires a manual line-count update.
-  local content_lines = {}
-  local content_hls   = {}  -- { line_idx(0-based in content), group, col_start, col_end }
-
-  local function push(line, hl_group)
-    table.insert(content_lines, line)
-    if hl_group then
-      table.insert(content_hls, { #content_lines - 1, hl_group, 0, -1 })
-    end
-  end
-
-  local function blank() table.insert(content_lines, "") end
-
-  -- ── Collect runtime data ──────────────────────────────────────────────────
+  -- ── Collect runtime data (once) ──────────────────────────────────────────
 
   local session    = get_session()
   local branch     = get_branch()
@@ -137,151 +119,181 @@ local function open_start()
     { key = "q", desc = "quit",     cmd = ":qa<CR>" },
   }
 
-  -- ── ASCII logo ────────────────────────────────────────────────────────────
+  -- ── Render (called on initial open and VimResized) ──────────────────────
 
-  local max_art_w = 0
-  for _, l in ipairs(M.header) do
-    local w = vim.fn.strdisplaywidth(l)
-    if w > max_art_w then max_art_w = w end
-  end
-  local art_pad = string.rep(" ", math.max(0, math.floor((width - max_art_w) / 2)))
+  local function render()
+    if not vim.api.nvim_buf_is_valid(buf) then return end
 
-  for _, l in ipairs(M.header) do
-    if vim.fn.strdisplaywidth(l) == 0 then
+    local width  = vim.api.nvim_win_get_width(0)
+    local height = vim.api.nvim_win_get_height(0)
+
+    -- First pass: render content into these tables.
+    -- top_pad is computed from #content_lines after the render loop, so adding
+    -- or removing sections here never requires a manual line-count update.
+    local content_lines = {}
+    local content_hls   = {}  -- { line_idx(0-based in content), group, col_start, col_end }
+
+    local function push(line, hl_group)
+      table.insert(content_lines, line)
+      if hl_group then
+        table.insert(content_hls, { #content_lines - 1, hl_group, 0, -1 })
+      end
+    end
+
+    local function blank() table.insert(content_lines, "") end
+
+    -- ── ASCII logo ──────────────────────────────────────────────────────────
+
+    local max_art_w = 0
+    for _, l in ipairs(M.header) do
+      local w = vim.fn.strdisplaywidth(l)
+      if w > max_art_w then max_art_w = w end
+    end
+    local art_pad = string.rep(" ", math.max(0, math.floor((width - max_art_w) / 2)))
+
+    for _, l in ipairs(M.header) do
+      if vim.fn.strdisplaywidth(l) == 0 then
+        blank()
+      elseif l:find("[█╗╔╚╝║═]") then
+        push(art_pad .. l, "MuxcodeHeader")
+      else
+        push(center(l, width), "MuxcodeSubtitle")
+      end
+    end
+
+    -- ── Subtitle ────────────────────────────────────────────────────────────
+
+    push(center("multi-agent coding environment", width), "MuxcodeSubtitle")
+
+    -- ── Session / branch info ───────────────────────────────────────────────
+
+    do
+      local info = "session: " .. session
+        .. (branch and ("  │  branch: " .. branch) or "")
+      push(center(info, width), "MuxcodeInfo")
+    end
+
+    -- ── Divider helper ──────────────────────────────────────────────────────
+
+    local div_w = math.min(60, width - 8)
+
+    local function divider()
       blank()
-    elseif l:find("[█╗╔╚╝║═]") then
-      push(art_pad .. l, "MuxcodeHeader")
-    else
-      push(center(l, width), "MuxcodeSubtitle")
-    end
-  end
-
-  -- ── Subtitle ─────────────────────────────────────────────────────────────
-
-  push(center("multi-agent coding environment", width), "MuxcodeSubtitle")
-
-  -- ── Session / branch info ─────────────────────────────────────────────────
-
-  do
-    local info = "session: " .. session
-      .. (branch and ("  │  branch: " .. branch) or "")
-    push(center(info, width), "MuxcodeInfo")
-  end
-
-  -- ── Divider helper ────────────────────────────────────────────────────────
-
-  local div_w = math.min(60, width - 8)
-
-  local function divider()
-    blank()
-    push(center(string.rep("┄", div_w), width), "MuxcodeDivider")
-  end
-
-  -- ── Agents ───────────────────────────────────────────────────────────────
-
-  divider()
-  blank()
-  push(center("AGENTS", width), "MuxcodeSection")
-
-  do
-    -- Build inner string and record per-icon byte offsets for colored dots.
-    local parts     = {}
-    local icon_meta = {}  -- { inner_byte_start, icon_byte_len, busy }
-    local cursor    = 0
-
-    for i, a in ipairs(agents) do
-      local icon  = a.busy and "●" or "○"  -- each is 3 UTF-8 bytes
-      local label = " " .. a.role
-      table.insert(icon_meta, { cursor, #icon, a.busy })
-      table.insert(parts, icon .. label)
-      cursor = cursor + #icon + #label
-      if i < #agents then cursor = cursor + 3 end  -- "   " separator
+      push(center(string.rep("┄", div_w), width), "MuxcodeDivider")
     end
 
-    local inner    = table.concat(parts, "   ")
-    local row, pad = center(inner, width)
-    local row_idx  = #content_lines  -- 0-based index of the line about to be pushed
+    -- ── Agents ──────────────────────────────────────────────────────────────
 
-    push(row)
-
-    -- Per-icon highlights (green = idle, orange = busy)
-    for _, m in ipairs(icon_meta) do
-      local s  = pad + m[1]
-      local e  = s + m[2]
-      local hl = m[3] and "MuxcodeAgentBusy" or "MuxcodeAgentIdle"
-      table.insert(content_hls, { row_idx, hl, s, e })
-    end
-  end
-
-  -- ── Shortcuts ─────────────────────────────────────────────────────────────
-
-  divider()
-  blank()
-
-  do
-    local parts    = {}
-    local key_meta = {}  -- { inner_byte_start, bracket_end, part_end }
-    local cursor   = 0
-
-    for i, s in ipairs(shortcuts) do
-      local bracket = "[" .. s.key .. "] "
-      local part    = bracket .. s.desc
-      table.insert(key_meta, { cursor, cursor + #bracket, cursor + #part })
-      table.insert(parts, part)
-      cursor = cursor + #part
-      if i < #shortcuts then cursor = cursor + 3 end
-    end
-
-    local inner    = table.concat(parts, "   ")
-    local row, pad = center(inner, width)
-    local row_idx  = #content_lines
-
-    push(row)
-
-    for i, m in ipairs(key_meta) do
-      -- "[X] " in purple, description in green
-      table.insert(content_hls, { row_idx, "MuxcodeKey",      pad + m[1], pad + m[2] })
-      table.insert(content_hls, { row_idx, "MuxcodeShortcut", pad + m[2], pad + m[3] })
-
-      -- Bind key in this buffer
-      local sc  = shortcuts[i]
-      local cmd = (telescope or not sc.fallback) and sc.cmd or sc.fallback
-      vim.keymap.set("n", sc.key, function()
-        vim.api.nvim_buf_delete(buf, { force = true })
-        local k = vim.api.nvim_replace_termcodes(cmd, true, false, true)
-        vim.api.nvim_feedkeys(k, "n", false)
-      end, { buffer = buf, nowait = true, silent = true })
-    end
-  end
-
-  -- ── Recent files ──────────────────────────────────────────────────────────
-
-  if has_recent then
     divider()
     blank()
-    push(center("RECENT", width), "MuxcodeSection")
-    -- Align bullet items to the left edge of the divider block
-    local file_pad = string.rep(" ", math.max(0, math.floor((width - div_w) / 2)) + 2)
-    for _, f in ipairs(recent) do
-      push(file_pad .. "• " .. f, "MuxcodeFile")
+    push(center("AGENTS", width), "MuxcodeSection")
+
+    do
+      -- Build inner string and record per-icon byte offsets for colored dots.
+      local parts     = {}
+      local icon_meta = {}  -- { inner_byte_start, icon_byte_len, busy }
+      local cursor    = 0
+
+      for i, a in ipairs(agents) do
+        local icon  = a.busy and "●" or "○"  -- each is 3 UTF-8 bytes
+        local label = " " .. a.role
+        table.insert(icon_meta, { cursor, #icon, a.busy })
+        table.insert(parts, icon .. label)
+        cursor = cursor + #icon + #label
+        if i < #agents then cursor = cursor + 3 end  -- "   " separator
+      end
+
+      local inner    = table.concat(parts, "   ")
+      local row, pad = center(inner, width)
+      local row_idx  = #content_lines  -- 0-based index of the line about to be pushed
+
+      push(row)
+
+      -- Per-icon highlights (green = idle, orange = busy)
+      for _, m in ipairs(icon_meta) do
+        local s  = pad + m[1]
+        local e  = s + m[2]
+        local hl = m[3] and "MuxcodeAgentBusy" or "MuxcodeAgentIdle"
+        table.insert(content_hls, { row_idx, hl, s, e })
+      end
     end
+
+    -- ── Shortcuts ───────────────────────────────────────────────────────────
+
+    divider()
+    blank()
+
+    do
+      local parts    = {}
+      local key_meta = {}  -- { inner_byte_start, bracket_end, part_end }
+      local cursor   = 0
+
+      for i, s in ipairs(shortcuts) do
+        local bracket = "[" .. s.key .. "] "
+        local part    = bracket .. s.desc
+        table.insert(key_meta, { cursor, cursor + #bracket, cursor + #part })
+        table.insert(parts, part)
+        cursor = cursor + #part
+        if i < #shortcuts then cursor = cursor + 3 end
+      end
+
+      local inner    = table.concat(parts, "   ")
+      local row, pad = center(inner, width)
+      local row_idx  = #content_lines
+
+      push(row)
+
+      for _, m in ipairs(key_meta) do
+        -- "[X] " in purple, description in green
+        table.insert(content_hls, { row_idx, "MuxcodeKey",      pad + m[1], pad + m[2] })
+        table.insert(content_hls, { row_idx, "MuxcodeShortcut", pad + m[2], pad + m[3] })
+      end
+    end
+
+    -- ── Recent files ────────────────────────────────────────────────────────
+
+    if has_recent then
+      divider()
+      blank()
+      push(center("RECENT", width), "MuxcodeSection")
+      -- Align bullet items to the left edge of the divider block
+      local file_pad = string.rep(" ", math.max(0, math.floor((width - div_w) / 2)) + 2)
+      for _, f in ipairs(recent) do
+        push(file_pad .. "• " .. f, "MuxcodeFile")
+      end
+    end
+
+    -- ── Second pass: assemble final buffer with padding ─────────────────────
+    -- min(1) guarantees at least one blank row above content so it never presses
+    -- hard against the top edge; on very short terminals the bottom is clipped
+    -- rather than pushing content upward.
+    local top_pad = math.max(1, math.floor((height - #content_lines) / 2))
+    local lines   = {}
+    for _ = 1, top_pad do table.insert(lines, "") end
+    for _, l in ipairs(content_lines) do table.insert(lines, l) end
+    for _ = 1, math.max(0, height - #lines) do table.insert(lines, "") end
+
+    -- ── Commit buffer contents ──────────────────────────────────────────────
+
+    vim.bo[buf].modifiable = true
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
+    -- Clear previous highlights before applying new ones
+    vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+
+    -- Apply highlights; offset content-relative indices by top_pad
+    for _, h in ipairs(content_hls) do
+      vim.api.nvim_buf_add_highlight(buf, ns, h[2], h[1] + top_pad, h[3], h[4])
+    end
+
+    vim.bo[buf].modifiable = false
   end
 
-  -- ── Second pass: assemble final buffer with padding ───────────────────────
-  -- min(1) guarantees at least one blank row above content so it never presses
-  -- hard against the top edge; on very short terminals the bottom is clipped
-  -- rather than pushing content upward.
-  local top_pad = math.max(1, math.floor((height - #content_lines) / 2))
-  local lines   = {}
-  for _ = 1, top_pad do table.insert(lines, "") end
-  for _, l in ipairs(content_lines) do table.insert(lines, l) end
-  for _ = 1, math.max(0, height - #lines) do table.insert(lines, "") end
+  -- ── Initial render ────────────────────────────────────────────────────────
 
-  -- ── Commit buffer contents ────────────────────────────────────────────────
+  render()
 
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-
-  -- ── Highlight groups (Dracula palette) ───────────────────────────────────
+  -- ── Highlight groups (Dracula palette) ────────────────────────────────────
 
   local function def(name, opts)
     opts.default = true
@@ -299,14 +311,19 @@ local function open_start()
   def("MuxcodeShortcut",  { fg = "#9ece6a"                })
   def("MuxcodeFile",      { fg = "#8be9fd"                })
 
-  -- Apply highlights; offset content-relative indices by top_pad
-  for _, h in ipairs(content_hls) do
-    vim.api.nvim_buf_add_highlight(buf, ns, h[2], h[1] + top_pad, h[3], h[4])
+  -- ── Keymaps (bound once, independent of dimensions) ───────────────────────
+
+  for _, sc in ipairs(shortcuts) do
+    local cmd = (telescope or not sc.fallback) and sc.cmd or sc.fallback
+    vim.keymap.set("n", sc.key, function()
+      vim.api.nvim_buf_delete(buf, { force = true })
+      local k = vim.api.nvim_replace_termcodes(cmd, true, false, true)
+      vim.api.nvim_feedkeys(k, "n", false)
+    end, { buffer = buf, nowait = true, silent = true })
   end
 
   -- ── Buffer & window settings ──────────────────────────────────────────────
 
-  vim.bo[buf].modifiable = false
   vim.bo[buf].bufhidden  = "wipe"
   vim.bo[buf].buftype    = "nofile"
   vim.bo[buf].swapfile   = false
@@ -322,11 +339,24 @@ local function open_start()
   vim.wo[win].colorcolumn    = ""
   vim.wo[win].list           = false
 
+  -- ── Re-center on terminal resize ──────────────────────────────────────────
+
+  local resize_group = vim.api.nvim_create_augroup("MuxcodeResize", { clear = true })
+  vim.api.nvim_create_autocmd("VimResized", {
+    group = resize_group,
+    callback = function()
+      if vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_get_current_buf() == buf then
+        render()
+      end
+    end,
+  })
+
   -- Auto-wipe when the user opens a file or switches buffer
   vim.api.nvim_create_autocmd("BufLeave", {
     buffer = buf,
     once   = true,
     callback = function()
+      pcall(vim.api.nvim_del_augroup_by_name, "MuxcodeResize")
       if vim.api.nvim_buf_is_valid(buf) then
         vim.api.nvim_buf_delete(buf, { force = true })
       end
