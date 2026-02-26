@@ -154,6 +154,9 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 # --- Clear stale session-created hook from any running tmux server ---
 tmux set-hook -gu session-created 2>/dev/null || true
 
+# --- Clean up stale preview temp files from previous sessions ---
+rm -f "/tmp/muxcode-preview-${SESSION}.tmp"
+
 # --- Initialize agent bus ---
 export BUS_SESSION="$SESSION"
 (cd "$PROJECT_DIR" && muxcode-agent-bus init)
