@@ -235,6 +235,11 @@ func WebhookPidPath(session string) string {
 	return filepath.Join(BusDir(session), "webhook.pid")
 }
 
+// SubscriptionPath returns the subscriptions JSONL file path for a session.
+func SubscriptionPath(session string) string {
+	return filepath.Join(BusDir(session), "subscriptions.jsonl")
+}
+
 // TriggerFile returns the analyze trigger file path for a session.
 // Uses /tmp directly for compatibility with bash hooks.
 func TriggerFile(session string) string {

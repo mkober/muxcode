@@ -36,6 +36,7 @@ Commands:
   spawn       Manage spawned agent sessions (start, list, status, result, stop, clean)
   demo        Run scripted demo scenarios (run, list)
   webhook     Manage webhook HTTP endpoint (start, stop, status)
+  subscribe   Manage event subscriptions (add, list, remove, enable, disable)
 `
 
 func main() {
@@ -100,6 +101,8 @@ func main() {
 		cmd.Demo(args)
 	case "webhook":
 		cmd.Webhook(args)
+	case "subscribe":
+		cmd.Subscribe(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

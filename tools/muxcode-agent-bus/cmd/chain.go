@@ -68,6 +68,16 @@ func Chain(args []string) {
 		if bus.ChainNotifyAnalyst(eventType) && action.SendTo != "analyze" {
 			fmt.Printf("chain: notify analyst: %s %s: %s\n", eventType, outcome, command)
 		}
+		// Show subscription fan-out in dry-run
+		subs, _ := bus.ReadSubscriptions(session)
+		matched := bus.MatchSubscriptions(subs, eventType, outcome)
+		if len(matched) > 0 {
+			fmt.Printf("chain: %d subscription(s) would fire:\n", len(matched))
+			for _, s := range matched {
+				payload := bus.ExpandSubscriptionMessage(s.Message, eventType, outcome, exitCode, command)
+				fmt.Printf("  -> %s:%s to %s: %s\n", "event", s.Action, s.Notify, payload)
+			}
+		}
 		return
 	}
 
@@ -105,6 +115,17 @@ func Chain(args []string) {
 				fmt.Fprintf(os.Stderr, "warning: analyst notification failed: %v\n", err)
 			}
 			// No tmux notify for analyst events (--no-notify equivalent)
+		}
+	}
+
+	// Fire event subscriptions (fan-out beyond primary chain target)
+	if !noNotify {
+		fired, err := bus.FireSubscriptions(session, from, eventType, outcome, exitCode, command)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: subscription fan-out error: %v\n", err)
+		}
+		if fired > 0 {
+			fmt.Printf("Notified %d subscriber(s)\n", fired)
 		}
 	}
 }

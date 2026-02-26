@@ -301,6 +301,22 @@ Auto-detects project type from indicator files in the working directory and inje
 - CLI: `muxcode-agent-bus context detect [DIR]` — standalone detection output
 - Core code: `bus/detect.go` (ProjectType, DetectProject, AutoContextFiles, conventionText, FormatDetectOutput, extractGoMod, extractPackageJSON, extractCdkJSON, extractPHP)
 
+### Event subscription
+
+JSONL-persisted subscription table enabling agents to subscribe to event patterns beyond the hardcoded build→test→review chain. Subscriptions fan out after chain execution, sending additional messages to subscribers.
+
+- **Subscription model**: event (`build`, `test`, `deploy`, or `*`), outcome (`success`, `failure`, or `*`), notify role, action name, message template
+- **Pattern matching**: both event and outcome must match (wildcard `*` matches anything); disabled subscriptions skipped
+- **Fan-out**: `FireSubscriptions()` runs after primary chain action in `cmd/chain.go` — reads, matches, expands templates, sends via `bus.Send()`
+- **Message templates**: `${event}`, `${outcome}`, `${exit_code}`, `${command}` — default: `"${event} ${outcome}: ${command}"`
+- **Fire count**: incremented per subscription on each fan-out, persisted to JSONL
+- **Dry-run support**: `chain --dry-run` shows which subscriptions would fire
+- **No-notify respect**: `chain --no-notify` skips subscription fan-out
+- CLI: `muxcode-agent-bus subscribe add|list|remove|enable|disable`
+- Storage: `subscriptions.jsonl` in bus directory, truncated on session re-init
+- Core code: `bus/subscribe.go` (Subscription, ReadSubscriptions, WriteSubscriptions, AddSubscription, RemoveSubscription, SetSubscriptionEnabled, MatchSubscriptions, FireSubscriptions, ExpandSubscriptionMessage, FormatSubscriptionList), `cmd/subscribe.go` (CLI)
+- Path helper: `bus/config.go` (`SubscriptionPath()`)
+
 ### Left-pane pollers
 
 Each split-left window runs a poller script in the left pane that displays role-specific history. Pollers share a common pattern: `set -uo pipefail`, Dracula color scheme, `jq` primary with `python3` fallback, 5-second poll interval, clear-and-redraw via `\033[2J\033[H`.
@@ -339,6 +355,7 @@ The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rathe
 - Tool profiles in `bus/profile.go` — `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`
 - Context directory in `bus/context.go` — `ReadContextFiles()`, `ReadAllContextFiles()`, `ContextFilesForRole()`, `AllContextFilesForRole()`, `FormatContextPrompt()`, `FormatContextList()`
 - Project detection in `bus/detect.go` — `DetectProject()`, `AutoContextFiles()`, `conventionText()`, `FormatDetectOutput()`, `extractGoMod()`, `extractPackageJSON()`, `extractCdkJSON()`, `extractPHP()`
+- Event subscription in `bus/subscribe.go` — `ReadSubscriptions()`, `WriteSubscriptions()`, `AddSubscription()`, `RemoveSubscription()`, `SetSubscriptionEnabled()`, `MatchSubscriptions()`, `FireSubscriptions()`, `ExpandSubscriptionMessage()`, `FormatSubscriptionList()`
 
 ### Bash scripts
 

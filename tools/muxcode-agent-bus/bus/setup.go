@@ -60,6 +60,11 @@ func Init(session, memoryDir string) error {
 		return err
 	}
 
+	// Create (or truncate) subscriptions.jsonl
+	if err := resetFile(SubscriptionPath(session), reInit); err != nil {
+		return err
+	}
+
 	// On re-init, also purge history files and session meta
 	if reInit {
 		if err := purgeStaleFiles(session); err != nil {
