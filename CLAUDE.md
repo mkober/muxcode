@@ -200,7 +200,7 @@ The watcher monitors agent context size and staleness, sending `compact-recommen
 When a MUXcode session restarts with the same name, `Init()` detects the existing bus directory and purges stale data to prevent false watcher alerts (loop-detected, compact-recommended) from the previous session.
 
 - **Detection**: `os.Stat(busDir)` — if the directory exists, `reInit` flag is set
-- **Truncated files** (path preserved for writers): inboxes, `log.jsonl`, `cron.jsonl`, `proc.jsonl`, `spawn.jsonl`, `{role}-history.jsonl`, `cron-history.jsonl`
+- **Truncated files** (path preserved for writers): inboxes, `log.jsonl`, `cron.jsonl`, `proc.jsonl`, `spawn.jsonl`, `subscriptions.jsonl`, `{role}-history.jsonl`, `cron-history.jsonl`
 - **Removed files** (recreated on demand): session meta (`session/*.json`), lock files (`lock/*.lock`), proc logs (`proc/*.log`), orphaned spawn inboxes (`inbox/spawn-*.jsonl`), trigger file
 - **Preserved**: memory files (`.muxcode/memory/`) — persistent learnings survive re-init
 - **Watcher grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (30s) and compaction checks (120s) skip the first interval
@@ -341,7 +341,7 @@ The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rathe
 - Packages: `bus/` (core), `cmd/` (subcommands), `watcher/` (monitor), `tui/` (dashboard)
 - Build: `cd tools/muxcode-agent-bus && go build .`
 - Test: `cd tools/muxcode-agent-bus && go test ./...`
-- Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`, `ProcDir()`, `ProcPath()`, `ProcLogPath()`, `SpawnPath()`, `WebhookPidPath()`, `MemoryArchiveDir()`, `MemoryArchivePath()`
+- Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`, `ProcDir()`, `ProcPath()`, `ProcLogPath()`, `SpawnPath()`, `WebhookPidPath()`, `SubscriptionPath()`, `MemoryArchiveDir()`, `MemoryArchivePath()`
 - Pane targeting logic in `bus/config.go` — `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`
 - Session inspection in `bus/inspect.go` — `GetAgentStatus()`, `GetAllAgentStatus()`, `ReadLogHistory()`, `ExtractContext()`, `PreCommitCheck()`
 - Loop detection in `bus/guard.go` — `ReadHistory()`, `DetectCommandLoop()`, `DetectMessageLoop()`, `CheckLoops()`, `CheckAllLoops()`

@@ -32,7 +32,6 @@
 | Webhook endpoint | HTTP listener converting POST requests to bus messages — `POST /send` with role validation, bearer token auth, PID management; `GET /health`; detached background process via CLI | |
 | Context directory | Per-agent `context.d/` drop-in context files — `shared/` for all roles, `<role>/` for role-specific; project shadows user by filename; injected into prompt between skills and session resume | |
 | Project-aware context | Auto-detect project type (17 types via indicator files/globs) and inject convention snippets into all agent prompts — metadata extraction from go.mod, package.json, cdk.json, composer.json; manual context.d files shadow auto-detected; `--no-auto` opt-out on list/prompt | |
-
 | Event subscription | JSONL-persisted subscription table for event fan-out — agents subscribe to event+outcome patterns (`build/success`, `*/failure`, `*/*`), chain fires subscriptions after primary action, message template expansion with `${event}`, `${outcome}`, `${exit_code}`, `${command}` | |
 
 ## Planned
