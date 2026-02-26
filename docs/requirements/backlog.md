@@ -29,12 +29,12 @@
 | BM25 memory search | Okapi BM25 ranking with IDF weighting, length normalization, stemming, stop words, and quoted phrase matching — replaces keyword counting as default search mode | |
 | Daily memory rotation | Lazy daily rotation on first write — archives previous day's file to `{role}/YYYY-MM-DD.md`, configurable 30-day retention, 7-day context window, search covers archives | |
 | Loop-detected self-loop fix | System action exclusion (`isSystemAction()`) filters infrastructure actions from message loop detection; dedup cooldown increased from 300s to 600s to exceed detection window | |
+| Webhook endpoint | HTTP listener converting POST requests to bus messages — `POST /send` with role validation, bearer token auth, PID management; `GET /health`; detached background process via CLI | |
 
 ## Planned
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
-| Webhook endpoint | HTTP listener converting POST requests to bus messages | Low |
 | Context directory | Per-agent `context.d/` directory for drop-in context files | Low |
 | Project-aware context | Auto-detect project type and inject relevant conventions | Low |
 | Event subscription | Subscribe agents to event patterns beyond build/test/deploy | Low |

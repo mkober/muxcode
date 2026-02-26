@@ -256,6 +256,23 @@ Agents can programmatically create temporary agent sessions for one-off tasks vi
 - Core code: `bus/spawn.go` (SpawnEntry, CRUD, StartSpawn, StopSpawn, RefreshSpawnStatus, GetSpawnResult, CleanFinishedSpawns, formatting, findAgentLauncher), `cmd/spawn.go` (CLI)
 - Watcher code: `watcher/watcher.go` (`checkSpawns()`)
 
+### Webhook endpoint
+
+External tools (CI/CD, GitHub webhooks, monitoring) can inject messages into the bus over HTTP via `muxcode-agent-bus webhook`.
+
+- `muxcode-agent-bus webhook start [--port PORT] [--host HOST] [--token TOKEN]` — launch HTTP server as detached background process
+- `muxcode-agent-bus webhook stop` — send SIGTERM and remove PID file
+- `muxcode-agent-bus webhook status` — check if running, show port/PID
+- **Endpoints**: `POST /send` (convert JSON to bus message), `GET /health` (session info + uptime)
+- **POST /send body**: `{"to": "build", "action": "build", "payload": "Run tests", "type": "request", "reply_to": ""}` — `to`, `action`, `payload` required; `type` defaults to `"request"`
+- **Security**: binds to `127.0.0.1` only by default; optional bearer token auth via `--token` flag
+- **Message identity**: all webhook-originated messages use `From: "webhook"`
+- **Validation**: target role checked via `IsKnownRole()`, send policy via `CheckSendPolicy()`
+- **PID tracking**: PID file at `/tmp/muxcode-bus-{session}/webhook.pid` — format `port:pid`; cleaned on re-init
+- **Pre-commit exclusion**: webhook role excluded from pre-commit checks (passive bridge)
+- Internal `serve` subcommand runs HTTP server in foreground (used by `start` to spawn the process)
+- Core code: `bus/webhook.go` (WebhookConfig, ServeWebhook, handlers, PID helpers), `cmd/webhook.go` (CLI)
+
 ### Left-pane pollers
 
 Each split-left window runs a poller script in the left pane that displays role-specific history. Pollers share a common pattern: `set -uo pipefail`, Dracula color scheme, `jq` primary with `python3` fallback, 5-second poll interval, clear-and-redraw via `\033[2J\033[H`.

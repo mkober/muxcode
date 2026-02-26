@@ -165,5 +165,8 @@ func purgeStaleFiles(session string) error {
 	// Remove trigger file
 	_ = os.Remove(TriggerFile(session))
 
+	// Remove webhook PID file
+	_ = os.Remove(WebhookPidPath(session))
+
 	return nil
 }

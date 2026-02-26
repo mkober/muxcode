@@ -141,10 +141,12 @@ func FormatStatusJSON(statuses []AgentStatus) (string, error) {
 // edit: the sender, always busy during its turn.
 // commit: the target, about to receive the commit message.
 // watch: passive watcher, not a task-producing agent.
+// webhook: passive HTTP bridge, not a working agent.
 var preCommitExcludedRoles = map[string]bool{
-	"edit":   true,
-	"commit": true,
-	"watch":  true,
+	"edit":    true,
+	"commit":  true,
+	"watch":   true,
+	"webhook": true,
 }
 
 // PreCommitCheck verifies that all agents are idle with empty inboxes

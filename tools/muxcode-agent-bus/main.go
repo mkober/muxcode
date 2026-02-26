@@ -34,6 +34,7 @@ Commands:
   proc        Manage background processes (start, list, status, log, stop, clean)
   spawn       Manage spawned agent sessions (start, list, status, result, stop, clean)
   demo        Run scripted demo scenarios (run, list)
+  webhook     Manage webhook HTTP endpoint (start, stop, status)
 `
 
 func main() {
@@ -94,6 +95,8 @@ func main() {
 		cmd.Spawn(args)
 	case "demo":
 		cmd.Demo(args)
+	case "webhook":
+		cmd.Webhook(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

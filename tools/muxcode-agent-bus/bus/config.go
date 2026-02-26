@@ -13,6 +13,7 @@ var KnownRoles = []string{
 	"edit", "build", "test", "review",
 	"deploy", "run", "commit", "analyze",
 	"docs", "research", "watch", "pr-read",
+	"webhook",
 }
 
 // splitLeftWindows lists windows that have a dedicated tool in the left pane.
@@ -208,6 +209,11 @@ func ProcLogPath(session, id string) string {
 // SpawnPath returns the spawn entries JSONL file path for a session.
 func SpawnPath(session string) string {
 	return filepath.Join(BusDir(session), "spawn.jsonl")
+}
+
+// WebhookPidPath returns the webhook PID file path for a session.
+func WebhookPidPath(session string) string {
+	return filepath.Join(BusDir(session), "webhook.pid")
 }
 
 // TriggerFile returns the analyze trigger file path for a session.
