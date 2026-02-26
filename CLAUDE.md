@@ -363,6 +363,8 @@ The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rathe
 
 - Hooks consume JSON from stdin via `cat` — parse with `jq` or `python3`
 - Preview hook detects edit window via `tmux display-message -p '#W'` — exits immediately if not `edit`
+- **Vim `sil!` in pipe chains**: `sil!` only suppresses the immediately following command, NOT the full `|` pipe chain — every command in a chain needs its own `sil!` prefix (e.g. `sil! cmd1 | sil! cmd2 | sil! cmd3`). Without this, errors like E35 cause "Press ENTER" prompts that break subsequent commands.
+- **Diff preview jump-to-line**: must be sent as a separate `tmux send-keys` after 150ms sleep — the diff needs to be fully rendered with scrollbind active before jumping. Uses `norm! {LINE}Gzz` (normal mode go-to-line + center) rather than ex-command `:N`, because `norm!` properly triggers scrollbind sync between both diff panes.
 - Analyze hook writes trigger file at `/tmp/muxcode-analyze-{session}.trigger` — format: `<timestamp> <filepath>` per line
 
 ### Agent definitions
