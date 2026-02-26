@@ -31,7 +31,7 @@ sleep 0.05
 
 # Clean up any stale diff from a previous rejected edit
 if [ -f "$TEMP_FILE" ]; then
-  tmux send-keys -t "$PANE" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | set number" Enter
+  tmux send-keys -t "$PANE" ":sil! exe 'b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | sil! set number" Enter
   sleep 0.2
   rm -f "$TEMP_FILE"
 fi
@@ -49,7 +49,8 @@ fi
 ESCAPED_PATH="${FILE_PATH// /\\ }"
 
 # Open file at the changed line (foldlevel=99 keeps all folds open, nohlsearch clears stale matches)
-tmux send-keys -t "$PANE" ":sil! exe 'e! +$LINE $ESCAPED_PATH' | setlocal foldlevel=99 | set number | nohlsearch | let @/=''" Enter
+# Each command needs sil! — the modifier only applies to the immediately following command, not the full | chain
+tmux send-keys -t "$PANE" ":sil! exe 'e! +$LINE $ESCAPED_PATH' | sil! setlocal foldlevel=99 | sil! set number | sil! nohlsearch | sil! let @/=''" Enter
 
 # For Edit tool: create temp file with proposed change and open diff
 if [ -n "$OLD_STRING" ] && [ -f "$FILE_PATH" ]; then
@@ -74,6 +75,9 @@ if old and fp:
     sleep 0.05
     tmux send-keys -t "$PANE" Escape Escape
     sleep 0.05
-    tmux send-keys -t "$PANE" ":let g:_mux_buf=bufnr() | let g:_pft=&ft | diffthis | new | setlocal buftype=nofile bufhidden=wipe number | let &l:ft=g:_pft | silent read $TEMP_FILE | 1delete _ | diffthis | setlocal foldlevel=99 | norm! zR | noautocmd wincmd p | setlocal foldlevel=99 | norm! zR" Enter
+    tmux send-keys -t "$PANE" ":sil! let g:_mux_buf=bufnr() | sil! let g:_pft=&ft | sil! diffthis | sil! new | sil! setlocal buftype=nofile bufhidden=wipe number | sil! let &l:ft=g:_pft | sil! read $TEMP_FILE | sil! 1delete _ | sil! diffthis | sil! setlocal foldlevel=99 | sil! norm! zR | sil! noautocmd wincmd p | sil! setlocal foldlevel=99 | sil! norm! zR" Enter
+    # Jump to changed line after diff is fully rendered — separate command so scrollbind is active
+    sleep 0.15
+    tmux send-keys -t "$PANE" ":sil! exe 'norm! ${LINE}Gzz'" Enter
   fi
 fi

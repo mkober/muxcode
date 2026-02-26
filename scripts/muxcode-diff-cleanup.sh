@@ -18,5 +18,5 @@ tmux send-keys -t "$PANE" Enter 2>/dev/null
 sleep 0.05
 tmux send-keys -t "$PANE" Escape Escape
 sleep 0.05
-tmux send-keys -t "$PANE" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | set number" Enter
+tmux send-keys -t "$PANE" ":sil! exe 'b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | sil! set number" Enter
 rm -f "$TEMP_FILE"
