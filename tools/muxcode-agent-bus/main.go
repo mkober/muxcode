@@ -26,6 +26,7 @@ Commands:
   log         Append an entry to a role's history log
   prompt      Output shared agent coordination prompt for a role
   skill       Manage reusable instruction skills/plugins
+  context     Manage per-agent drop-in context files
   session     Session compaction and context management
   cron        Manage scheduled tasks (add, list, remove, enable, disable, history)
   status      Show all agents' current state (busy/idle/inbox/last-activity)
@@ -79,6 +80,8 @@ func main() {
 		cmd.Prompt(args)
 	case "skill":
 		cmd.Skill(args)
+	case "context":
+		cmd.Context(args)
 	case "session":
 		cmd.Session(args)
 	case "cron":

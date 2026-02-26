@@ -708,6 +708,92 @@ Webhook server stopped
 |------|----------|---------|
 | `webhook.pid` | `/tmp/muxcode-bus-{SESSION}/webhook.pid` | PID file (`port:pid` format) |
 
+### `muxcode-agent-bus context`
+
+Manage per-agent drop-in context files — a lightweight, file-based way to inject project-specific knowledge into agent prompts without the frontmatter/roles/tags overhead of skills.
+
+```bash
+muxcode-agent-bus context list [--role ROLE]
+muxcode-agent-bus context prompt <role>
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+|------------|-------------|
+| `list` | Show all context files with source (project/user), filterable by `--role` |
+| `prompt` | Output formatted context for prompt injection (used by `muxcode-agent.sh`) |
+
+**Directory layout:**
+
+```
+.muxcode/context.d/              # Project-local (highest priority)
+  shared/                        # Applied to all roles
+    conventions.md
+    architecture.md
+  edit/                          # Role-specific
+    refactoring-guide.md
+  build/
+    troubleshooting.md
+
+~/.config/muxcode/context.d/     # User-level (lower priority)
+  shared/
+    my-patterns.md
+```
+
+- `shared/` files injected into every role's prompt
+- `<role>/` files injected only for that role
+- Project files shadow user files by filename (same key = role + name)
+- Only `.md` files read; subdirectories within role dirs and other extensions ignored
+- No `create`/`load`/`search` — users create files directly with their editor
+
+**Prompt injection order:**
+
+```
+Agent definition → Shared prompt → Skills → Project Context → Session Resume
+```
+
+**Output format (prompt):**
+
+```markdown
+## Project Context
+
+### conventions
+Use 2-space indentation
+
+### architecture
+Event-driven microservices
+```
+
+**Examples:**
+
+```bash
+# Create context files
+$ mkdir -p .muxcode/context.d/shared .muxcode/context.d/edit
+$ echo "Use 2-space indentation" > .muxcode/context.d/shared/conventions.md
+$ echo "Prefer minimal diffs" > .muxcode/context.d/edit/patterns.md
+
+# List all context files
+$ muxcode-agent-bus context list
+conventions              shared           project
+patterns                 edit             project
+
+# List files for a specific role
+$ muxcode-agent-bus context list --role edit
+conventions              shared           project
+patterns                 edit             project
+
+# Generate prompt for a role
+$ muxcode-agent-bus context prompt edit
+## Project Context
+
+### conventions
+Use 2-space indentation
+
+### patterns
+Prefer minimal diffs
+```
+
 ### `muxcode-agent-bus lock` / `unlock` / `is-locked`
 
 Manage agent busy indicators.
@@ -799,6 +885,7 @@ tools/muxcode-agent-bus/
 │   ├── spawn.go       # Spawned agent sessions (create, track, collect results)
 │   ├── webhook.go     # Webhook HTTP endpoint (server, handlers, PID management)
 │   ├── demo.go        # Demo scenarios (step engine, built-in scenarios)
+│   ├── context.go     # Context directory (drop-in context files per role)
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization
 ├── cmd/               # Subcommand handlers

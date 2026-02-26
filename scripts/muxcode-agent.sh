@@ -50,11 +50,12 @@ build_flags "$ROLE"
 # Uses muxcode-agent-bus prompt <role> for coordination and skill prompt <role> for skills.
 SHARED_PROMPT_FLAGS=()
 build_shared_prompt() {
-  local prompt skills resume combined
+  local prompt skills context resume combined
   prompt="$(muxcode-agent-bus prompt "$1" 2>/dev/null)" || prompt=""
   skills="$(muxcode-agent-bus skill prompt "$1" 2>/dev/null)" || skills=""
+  context="$(muxcode-agent-bus context prompt "$1" 2>/dev/null)" || context=""
   resume="$(muxcode-agent-bus session resume "$1" 2>/dev/null)" || resume=""
-  combined="${prompt}${skills:+$'\n'$skills}${resume:+$'\n'$resume}"
+  combined="${prompt}${skills:+$'\n'$skills}${context:+$'\n'$context}${resume:+$'\n'$resume}"
   [ -z "$combined" ] && return
   SHARED_PROMPT_FLAGS=(--append-system-prompt "$combined")
 }

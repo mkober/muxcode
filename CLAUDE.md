@@ -273,6 +273,20 @@ External tools (CI/CD, GitHub webhooks, monitoring) can inject messages into the
 - Internal `serve` subcommand runs HTTP server in foreground (used by `start` to spawn the process)
 - Core code: `bus/webhook.go` (WebhookConfig, ServeWebhook, handlers, PID helpers), `cmd/webhook.go` (CLI)
 
+### Context directory
+
+Users can drop plain markdown files into a `context.d/` directory structure and have them automatically injected into agent system prompts — a lightweight, file-based alternative to skills that requires no frontmatter.
+
+- **Directory layout**: `context.d/shared/*.md` (all roles) + `context.d/<role>/*.md` (role-specific)
+- **Resolution order**: `.muxcode/context.d/` (project, highest priority) > `~/.config/muxcode/context.d/` (user)
+- **Shadowing**: project files shadow user files by `(role, name)` key
+- **File filtering**: only `.md` files read; nested subdirectories within role dirs and other extensions ignored
+- **Prompt injection**: between skills and session resume — `Agent definition → Shared prompt → Skills → Project Context → Session Resume`
+- CLI: `muxcode-agent-bus context list [--role ROLE]`, `muxcode-agent-bus context prompt <role>`
+- Agent script: `build_shared_prompt()` in `muxcode-agent.sh` calls `context prompt <role>` between skills and resume
+- Core code: `bus/context.go` (ContextFile, ReadContextFiles, ContextFilesForRole, FormatContextPrompt, FormatContextList), `cmd/context.go` (CLI)
+- Path helpers: `bus/config.go` (`ContextDir()`, `UserContextDir()`)
+
 ### Left-pane pollers
 
 Each split-left window runs a poller script in the left pane that displays role-specific history. Pollers share a common pattern: `set -uo pipefail`, Dracula color scheme, `jq` primary with `python3` fallback, 5-second poll interval, clear-and-redraw via `\033[2J\033[H`.
@@ -309,6 +323,7 @@ The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rathe
 - Memory rotation in `bus/rotation.go` — `NeedsRotation()`, `RotateMemory()`, `PurgeOldArchives()`, `ReadMemoryWithHistory()`, `ListArchiveDates()`, `AllMemoryEntriesWithArchives()`, `ArchiveTotalSize()`, `ListMemoryRoles()`
 - Session re-init in `bus/setup.go` — `Init()`, `resetFile()`, `purgeStaleFiles()`
 - Tool profiles in `bus/profile.go` — `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`
+- Context directory in `bus/context.go` — `ReadContextFiles()`, `ContextFilesForRole()`, `FormatContextPrompt()`, `FormatContextList()`
 
 ### Bash scripts
 

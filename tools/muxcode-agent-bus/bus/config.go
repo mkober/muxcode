@@ -181,6 +181,25 @@ func UserSkillsDir() string {
 	return filepath.Join(home, ".config", "muxcode", "skills")
 }
 
+// ContextDir returns the project-local context directory path.
+// Uses BUS_CONTEXT_DIR env if set, otherwise defaults to ".muxcode/context.d".
+func ContextDir() string {
+	if v := os.Getenv("BUS_CONTEXT_DIR"); v != "" {
+		return v
+	}
+	return filepath.Join(".muxcode", "context.d")
+}
+
+// UserContextDir returns the user-level context directory path.
+// Uses MUXCODE_CONFIG_DIR env if set, otherwise defaults to "~/.config/muxcode/context.d".
+func UserContextDir() string {
+	if v := os.Getenv("MUXCODE_CONFIG_DIR"); v != "" {
+		return filepath.Join(v, "context.d")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "muxcode", "context.d")
+}
+
 // CronPath returns the cron entries JSONL file path for a session.
 func CronPath(session string) string {
 	return filepath.Join(BusDir(session), "cron.jsonl")
