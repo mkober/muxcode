@@ -26,7 +26,7 @@ TEMP_FILE="/tmp/muxcode-preview-${SESSION}.tmp"
 if [ -f "$TEMP_FILE" ]; then
   tmux send-keys -t "$SESSION:edit.0" Escape Escape
   sleep 0.1
-  tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | set number" Enter
+  tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only" Enter
   sleep 0.2
   rm -f "$TEMP_FILE"
 fi
@@ -46,7 +46,7 @@ ESCAPED_PATH="${FILE_PATH// /\\ }"
 # Open file at the changed line (foldlevel=99 keeps all folds open persistently)
 tmux send-keys -t "$SESSION:edit.0" Escape Escape
 sleep 0.1
-tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! e! +$LINE $ESCAPED_PATH' | setlocal foldlevel=99 | set number" Enter
+tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! e! +$LINE $ESCAPED_PATH' | setlocal foldlevel=99" Enter
 
 # For Edit tool: create temp file with proposed change and open diff
 if [ -n "$OLD_STRING" ] && [ -f "$FILE_PATH" ]; then

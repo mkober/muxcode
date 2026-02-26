@@ -21,8 +21,8 @@
 -- })
 
 -- Show line numbers
--- Required for diff previews and cleanup to display numbers consistently.
--- Add this to your init.lua:
+-- Recommended — hooks rely on your nvim config for line numbers.
+-- Add this to your init.lua if not already set:
 --
 -- vim.opt.number = true
 
