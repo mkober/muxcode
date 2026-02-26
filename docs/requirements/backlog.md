@@ -33,13 +33,17 @@
 | Context directory | Per-agent `context.d/` drop-in context files — `shared/` for all roles, `<role>/` for role-specific; project shadows user by filename; injected into prompt between skills and session resume | |
 | Project-aware context | Auto-detect project type (17 types via indicator files/globs) and inject convention snippets into all agent prompts — metadata extraction from go.mod, package.json, cdk.json, composer.json; manual context.d files shadow auto-detected; `--no-auto` opt-out on list/prompt | |
 | Event subscription | JSONL-persisted subscription table for event fan-out — agents subscribe to event+outcome patterns (`build/success`, `*/failure`, `*/*`), chain fires subscriptions after primary action, message template expansion with `${event}`, `${outcome}`, `${exit_code}`, `${command}` | |
+| Token usage reduction | `SendNoCC()` skips auto-CC on chain/subscription messages, `ChainShouldNotifyAnalyst()` with `NotifyAnalystOn` field for outcome-conditional analyst notifications (build/test: failure+unknown only), watcher efficiency: loop interval 30→60s, lazy cron/proc/spawn loading, running-state cache | [token-reduction.md](./token-reduction.md) |
+| Vim diff preview fix | `sil!` prefix on every command in vim pipe chains (only suppresses next command, not full chain) — fixes E35 errors and "Press ENTER" prompts. Separate `tmux send-keys` with 150ms delay for jump-to-line after diff setup so scrollbind is active | |
 
 ## Planned
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
+| On-demand agent spawning | Convert runner, watch, and analyst from always-on to deferred launch on first message — tmux windows still created for left-pane pollers, agent process starts only when a bus message targets the role | Medium |
 
 ## Sources
 
 - [OpenClaw](https://openclaw.ai/) — architecture inspiration for many features
 - [OpenClaw Architecture Overview](https://ppaolo.substack.com/p/openclaw-system-architecture-overview)
+
