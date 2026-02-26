@@ -20,6 +20,12 @@
 --   end,
 -- })
 
+-- Show line numbers
+-- Required for diff previews and cleanup to display numbers consistently.
+-- Add this to your init.lua:
+--
+-- vim.opt.number = true
+
 -- Open all folds by default
 -- Prevents code blocks from being folded when files open in the diff preview.
 -- Set foldlevelstart high so no folds are closed on BufRead.
