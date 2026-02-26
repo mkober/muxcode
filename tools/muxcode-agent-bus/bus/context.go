@@ -17,6 +17,12 @@ type ContextFile struct {
 	Path    string // full filesystem path
 }
 
+// contextFileKey is a dedup key for context files by (role, name).
+type contextFileKey struct {
+	role string
+	name string
+}
+
 // contextDir pairs a directory path with its source label.
 type contextDir struct {
 	Path   string
@@ -35,11 +41,7 @@ func contextDirs() []contextDir {
 // Higher-priority directories shadow lower-priority ones by (role, name) key.
 // Only .md files are read; subdirectories within role dirs and other extensions are ignored.
 func ReadContextFiles() ([]ContextFile, error) {
-	type fileKey struct {
-		role string
-		name string
-	}
-	seen := map[fileKey]bool{}
+	seen := map[contextFileKey]bool{}
 	var files []ContextFile
 
 	for _, dir := range contextDirs() {
@@ -69,7 +71,7 @@ func ReadContextFiles() ([]ContextFile, error) {
 					continue
 				}
 				name := strings.TrimSuffix(re.Name(), ".md")
-				key := fileKey{role: roleName, name: name}
+				key := contextFileKey{role: roleName, name: name}
 				if seen[key] {
 					continue // shadowed by higher-priority dir
 				}
@@ -112,6 +114,63 @@ func ReadContextFiles() ([]ContextFile, error) {
 // This includes all "shared" files plus files in the role-specific directory.
 func ContextFilesForRole(role string) ([]ContextFile, error) {
 	all, err := ReadContextFiles()
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []ContextFile
+	for _, f := range all {
+		if f.Role == "shared" || f.Role == role {
+			filtered = append(filtered, f)
+		}
+	}
+	return filtered, nil
+}
+
+// ReadAllContextFiles returns manual context files merged with auto-detected project
+// context. Manual files (project/user) shadow auto-detected entries by (role, name) key.
+// Priority order: project > user > auto.
+func ReadAllContextFiles() ([]ContextFile, error) {
+	manual, err := ReadContextFiles()
+	if err != nil {
+		return nil, err
+	}
+
+	// Build seen map from manual files
+	seen := map[contextFileKey]bool{}
+	for _, f := range manual {
+		seen[contextFileKey{role: f.Role, name: f.Name}] = true
+	}
+
+	// Get auto-detected entries, skip those shadowed by manual
+	cwd, err := os.Getwd()
+	if err != nil {
+		return manual, nil // can't detect, return manual only
+	}
+	auto := AutoContextFiles(cwd)
+
+	var merged []ContextFile
+	merged = append(merged, manual...)
+	for _, f := range auto {
+		key := contextFileKey{role: f.Role, name: f.Name}
+		if !seen[key] {
+			merged = append(merged, f)
+		}
+	}
+
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].Role != merged[j].Role {
+			return merged[i].Role < merged[j].Role
+		}
+		return merged[i].Name < merged[j].Name
+	})
+	return merged, nil
+}
+
+// AllContextFilesForRole returns manual + auto-detected context files for a role.
+// Includes "shared" files and role-specific files.
+func AllContextFilesForRole(role string) ([]ContextFile, error) {
+	all, err := ReadAllContextFiles()
 	if err != nil {
 		return nil, err
 	}

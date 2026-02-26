@@ -304,3 +304,177 @@ func TestUserContextDir_EnvOverride(t *testing.T) {
 		t.Errorf("expected /custom/config/context.d, got %s", got)
 	}
 }
+
+// --- Auto-detection integration tests ---
+
+func TestReadAllContextFiles_ManualShadowsAuto(t *testing.T) {
+	tmpDir, cleanup := setupContextDirs(t)
+	defer cleanup()
+
+	// Create a Go project indicator in the working directory
+	origDir, _ := os.Getwd()
+	projDir := t.TempDir()
+	writeIndicatorFile(t, projDir, "go.mod", "module example.com/test\n\ngo 1.22\n")
+	os.Chdir(projDir)
+	defer os.Chdir(origDir)
+
+	// Create a manual "go" context file that should shadow auto-detected
+	projectDir := filepath.Join(tmpDir, "project", "context.d")
+	writeContextFile(t, projectDir, "shared", "go", "Custom Go conventions")
+
+	files, err := ReadAllContextFiles()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Find the go entry
+	var goFile ContextFile
+	found := false
+	for _, f := range files {
+		if f.Name == "go" && f.Role == "shared" {
+			goFile = f
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected to find 'go' context file")
+	}
+	if goFile.Source != "project" {
+		t.Errorf("expected source 'project' (manual shadows auto), got '%s'", goFile.Source)
+	}
+	if goFile.Body != "Custom Go conventions" {
+		t.Errorf("expected manual content, got '%s'", goFile.Body)
+	}
+}
+
+func TestReadAllContextFiles_AutoAppearsWhenNoManual(t *testing.T) {
+	_, cleanup := setupContextDirs(t)
+	defer cleanup()
+
+	// Create a Go project indicator in the working directory
+	origDir, _ := os.Getwd()
+	projDir := t.TempDir()
+	writeIndicatorFile(t, projDir, "go.mod", "module example.com/test\n\ngo 1.22\n")
+	os.Chdir(projDir)
+	defer os.Chdir(origDir)
+
+	files, err := ReadAllContextFiles()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(files) == 0 {
+		t.Fatal("expected auto-detected files, got 0")
+	}
+
+	var goFile ContextFile
+	found := false
+	for _, f := range files {
+		if f.Name == "go" {
+			goFile = f
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected auto-detected 'go' context file")
+	}
+	if goFile.Source != "auto" {
+		t.Errorf("expected source 'auto', got '%s'", goFile.Source)
+	}
+	if !strings.Contains(goFile.Body, "Go Project") {
+		t.Error("expected Go convention text in body")
+	}
+}
+
+func TestReadAllContextFiles_MixedManualAndAuto(t *testing.T) {
+	tmpDir, cleanup := setupContextDirs(t)
+	defer cleanup()
+
+	// Create Go + Make project indicators
+	origDir, _ := os.Getwd()
+	projDir := t.TempDir()
+	writeIndicatorFile(t, projDir, "go.mod", "module example.com/test\n\ngo 1.22\n")
+	writeIndicatorFile(t, projDir, "Makefile", "build:\n\tgo build\n")
+	os.Chdir(projDir)
+	defer os.Chdir(origDir)
+
+	// Create a manual "go" file only — make should come from auto
+	projectDir := filepath.Join(tmpDir, "project", "context.d")
+	writeContextFile(t, projectDir, "shared", "go", "Custom Go")
+
+	files, err := ReadAllContextFiles()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var goSource, makeSource string
+	for _, f := range files {
+		if f.Name == "go" && f.Role == "shared" {
+			goSource = f.Source
+		}
+		if f.Name == "make" && f.Role == "shared" {
+			makeSource = f.Source
+		}
+	}
+	if goSource != "project" {
+		t.Errorf("expected go source 'project', got '%s'", goSource)
+	}
+	if makeSource != "auto" {
+		t.Errorf("expected make source 'auto', got '%s'", makeSource)
+	}
+}
+
+func TestAllContextFilesForRole_WithAuto(t *testing.T) {
+	tmpDir, cleanup := setupContextDirs(t)
+	defer cleanup()
+
+	// Create Go project indicator
+	origDir, _ := os.Getwd()
+	projDir := t.TempDir()
+	writeIndicatorFile(t, projDir, "go.mod", "module example.com/test\n\ngo 1.22\n")
+	os.Chdir(projDir)
+	defer os.Chdir(origDir)
+
+	// Add an edit-specific manual file
+	projectDir := filepath.Join(tmpDir, "project", "context.d")
+	writeContextFile(t, projectDir, "edit", "patterns", "Minimal diffs")
+
+	// edit role should get: shared/go (auto) + edit/patterns (manual)
+	editFiles, err := AllContextFilesForRole("edit")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasGo := false
+	hasPatterns := false
+	for _, f := range editFiles {
+		if f.Name == "go" && f.Role == "shared" && f.Source == "auto" {
+			hasGo = true
+		}
+		if f.Name == "patterns" && f.Role == "edit" && f.Source == "project" {
+			hasPatterns = true
+		}
+	}
+	if !hasGo {
+		t.Error("expected auto-detected 'go' in edit role files")
+	}
+	if !hasPatterns {
+		t.Error("expected manual 'patterns' in edit role files")
+	}
+
+	// build role should get: shared/go (auto) only
+	buildFiles, err := AllContextFilesForRole("build")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(buildFiles) == 0 {
+		t.Fatal("expected at least 1 file for build role")
+	}
+	for _, f := range buildFiles {
+		if f.Role == "edit" {
+			t.Error("build role should not get edit-specific files")
+		}
+	}
+}

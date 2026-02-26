@@ -31,12 +31,12 @@
 | Loop-detected self-loop fix | System action exclusion (`isSystemAction()`) filters infrastructure actions from message loop detection; dedup cooldown increased from 300s to 600s to exceed detection window | |
 | Webhook endpoint | HTTP listener converting POST requests to bus messages — `POST /send` with role validation, bearer token auth, PID management; `GET /health`; detached background process via CLI | |
 | Context directory | Per-agent `context.d/` drop-in context files — `shared/` for all roles, `<role>/` for role-specific; project shadows user by filename; injected into prompt between skills and session resume | |
+| Project-aware context | Auto-detect project type (17 types via indicator files/globs) and inject convention snippets into all agent prompts — metadata extraction from go.mod, package.json, cdk.json, composer.json; manual context.d files shadow auto-detected; `--no-auto` opt-out on list/prompt | |
 
 ## Planned
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
-| Project-aware context | Auto-detect project type and inject relevant conventions | Low |
 | Event subscription | Subscribe agents to event patterns beyond build/test/deploy | Low |
 
 ## Sources

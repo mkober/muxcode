@@ -282,10 +282,24 @@ Users can drop plain markdown files into a `context.d/` directory structure and 
 - **Shadowing**: project files shadow user files by `(role, name)` key
 - **File filtering**: only `.md` files read; nested subdirectories within role dirs and other extensions ignored
 - **Prompt injection**: between skills and session resume — `Agent definition → Shared prompt → Skills → Project Context → Session Resume`
-- CLI: `muxcode-agent-bus context list [--role ROLE]`, `muxcode-agent-bus context prompt <role>`
+- CLI: `muxcode-agent-bus context list [--role ROLE] [--no-auto]`, `muxcode-agent-bus context prompt <role> [--no-auto]`, `muxcode-agent-bus context detect`
 - Agent script: `build_shared_prompt()` in `muxcode-agent.sh` calls `context prompt <role>` between skills and resume
-- Core code: `bus/context.go` (ContextFile, ReadContextFiles, ContextFilesForRole, FormatContextPrompt, FormatContextList), `cmd/context.go` (CLI)
+- Core code: `bus/context.go` (ContextFile, ReadContextFiles, ReadAllContextFiles, ContextFilesForRole, AllContextFilesForRole, FormatContextPrompt, FormatContextList), `cmd/context.go` (CLI)
 - Path helpers: `bus/config.go` (`ContextDir()`, `UserContextDir()`)
+
+### Project-aware context detection
+
+Auto-detects project type from indicator files in the working directory and injects convention snippets (build/test commands, naming conventions) into agent prompts. Manual `context.d/` files shadow auto-detected entries.
+
+- **Detection**: scans cwd for 17 project types via indicator files and glob patterns
+- **Types**: go, nodejs, typescript, python, rust, cdk, java-maven, java-gradle, ruby, docker, terraform, make, cpp, csharp, gdscript, php, swift
+- **Metadata extraction**: go.mod (module, go version), package.json (name, scripts), cdk.json (app command), composer.json (name)
+- **Convention snippets**: ~200 bytes each — build, test, lint commands and naming conventions per type
+- **Priority**: `auto < user < project` — manual `context.d/` files shadow auto-detected by `(role, name)` key
+- **Auto entries**: Source=`"auto"`, Role=`"shared"`, Name=type name (e.g., `"go"`)
+- **Default behavior**: auto-detection ON in `list` and `prompt` — use `--no-auto` to exclude
+- CLI: `muxcode-agent-bus context detect [DIR]` — standalone detection output
+- Core code: `bus/detect.go` (ProjectType, DetectProject, AutoContextFiles, conventionText, FormatDetectOutput, extractGoMod, extractPackageJSON, extractCdkJSON, extractPHP)
 
 ### Left-pane pollers
 
@@ -323,7 +337,8 @@ The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rathe
 - Memory rotation in `bus/rotation.go` — `NeedsRotation()`, `RotateMemory()`, `PurgeOldArchives()`, `ReadMemoryWithHistory()`, `ListArchiveDates()`, `AllMemoryEntriesWithArchives()`, `ArchiveTotalSize()`, `ListMemoryRoles()`
 - Session re-init in `bus/setup.go` — `Init()`, `resetFile()`, `purgeStaleFiles()`
 - Tool profiles in `bus/profile.go` — `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`
-- Context directory in `bus/context.go` — `ReadContextFiles()`, `ContextFilesForRole()`, `FormatContextPrompt()`, `FormatContextList()`
+- Context directory in `bus/context.go` — `ReadContextFiles()`, `ReadAllContextFiles()`, `ContextFilesForRole()`, `AllContextFilesForRole()`, `FormatContextPrompt()`, `FormatContextList()`
+- Project detection in `bus/detect.go` — `DetectProject()`, `AutoContextFiles()`, `conventionText()`, `FormatDetectOutput()`, `extractGoMod()`, `extractPackageJSON()`, `extractCdkJSON()`, `extractPHP()`
 
 ### Bash scripts
 
