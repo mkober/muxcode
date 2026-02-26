@@ -297,12 +297,13 @@ The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rathe
 - Packages: `bus/` (core), `cmd/` (subcommands), `watcher/` (monitor), `tui/` (dashboard)
 - Build: `cd tools/muxcode-agent-bus && go build .`
 - Test: `cd tools/muxcode-agent-bus && go test ./...`
-- Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`, `ProcDir()`, `ProcPath()`, `ProcLogPath()`, `SpawnPath()`, `MemoryArchiveDir()`, `MemoryArchivePath()`
+- Bus directory path is in `bus/config.go` — `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `CronPath()`, `CronHistoryPath()`, `ProcDir()`, `ProcPath()`, `ProcLogPath()`, `SpawnPath()`, `WebhookPidPath()`, `MemoryArchiveDir()`, `MemoryArchivePath()`
 - Pane targeting logic in `bus/config.go` — `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`
 - Session inspection in `bus/inspect.go` — `GetAgentStatus()`, `GetAllAgentStatus()`, `ReadLogHistory()`, `ExtractContext()`, `PreCommitCheck()`
 - Loop detection in `bus/guard.go` — `ReadHistory()`, `DetectCommandLoop()`, `DetectMessageLoop()`, `CheckLoops()`, `CheckAllLoops()`
 - Process management in `bus/proc.go` — `StartProc()`, `CheckProcAlive()`, `RefreshProcStatus()`, `StopProc()`, `CleanFinished()`
 - Agent spawn in `bus/spawn.go` — `StartSpawn()`, `StopSpawn()`, `RefreshSpawnStatus()`, `GetSpawnResult()`, `CleanFinishedSpawns()`
+- Webhook endpoint in `bus/webhook.go` — `ServeWebhook()`, `WriteWebhookPid()`, `ReadWebhookPid()`, `IsWebhookRunning()`, `StopWebhookProcess()`, `WebhookStatus()`
 - Compaction monitoring in `bus/compact.go` — `CheckCompaction()`, `CheckRoleCompaction()`, `FormatCompactAlert()`, `FilterNewCompactAlerts()`
 - BM25 search in `bus/search.go` — `tokenize()`, `stem()`, `buildCorpus()`, `bm25Score()`, `parseQuery()`, `phraseBonus()`, `SearchMemoryBM25()`, `SearchMemoryWithOptions()`
 - Memory rotation in `bus/rotation.go` — `NeedsRotation()`, `RotateMemory()`, `PurgeOldArchives()`, `ReadMemoryWithHistory()`, `ListArchiveDates()`, `AllMemoryEntriesWithArchives()`, `ArchiveTotalSize()`, `ListMemoryRoles()`

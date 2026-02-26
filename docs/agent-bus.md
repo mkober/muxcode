@@ -581,6 +581,133 @@ scripts/muxcode-demo.sh --speed 2.0 --output assets/demo.gif
 
 Requires `ffmpeg` and `gifski` (`brew install ffmpeg gifski`). Auto-detects the screen capture device via avfoundation.
 
+### `muxcode-agent-bus webhook`
+
+Manage the webhook HTTP endpoint — an HTTP-to-bus bridge for external tools (CI/CD, GitHub webhooks, monitoring, custom scripts).
+
+```bash
+muxcode-agent-bus webhook start [--port PORT] [--host HOST] [--token TOKEN]
+muxcode-agent-bus webhook stop
+muxcode-agent-bus webhook status
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+|------------|-------------|
+| `start` | Launch HTTP server as a detached background process |
+| `stop` | Send SIGTERM to the running server and remove PID file |
+| `status` | Check if the server is running, show port and PID |
+
+**Flags for `start`:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--port PORT` | `9090` | TCP port to listen on |
+| `--host HOST` | `127.0.0.1` | Bind address (localhost only by default) |
+| `--token TOKEN` | *(none)* | Bearer token for auth (no auth when omitted) |
+
+**HTTP endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/send` | Convert JSON request body to a bus message |
+| `GET` | `/health` | Health check with session name and uptime |
+
+**POST /send request body:**
+
+```json
+{
+  "to": "build",
+  "action": "build",
+  "payload": "Run ./build.sh and report results",
+  "type": "request",
+  "reply_to": ""
+}
+```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `to` | yes | — | Target agent role (validated via `IsKnownRole()`) |
+| `action` | yes | — | Message action name |
+| `payload` | yes | — | Message content |
+| `type` | no | `"request"` | Message type: `request`, `response`, or `event` |
+| `reply_to` | no | `""` | ID of the message being replied to |
+
+**Response format:**
+
+Success (200):
+```json
+{"ok": true, "id": "1740000000-webhook-a1b2c3d4"}
+```
+
+Error (4xx/5xx):
+```json
+{"ok": false, "error": "unknown role 'foo'"}
+```
+
+**GET /health response:**
+
+```json
+{"ok": true, "session": "muxcode", "uptime_seconds": 3600}
+```
+
+**Security:**
+
+- Binds to `127.0.0.1` only by default — not accessible from external networks
+- Optional bearer token auth via `--token` flag
+- When a token is set, all requests require `Authorization: Bearer <token>` header
+- Request body limited to 64 KB via `http.MaxBytesReader`
+- Target role validation reuses existing `bus.IsKnownRole()`
+- Send policy enforcement reuses existing `bus.CheckSendPolicy()`
+
+**Message identity:** All webhook-originated messages use `From: "webhook"`. The `webhook` role is excluded from pre-commit checks (passive bridge, not a working agent).
+
+**PID tracking:** PID file at `/tmp/muxcode-bus-{SESSION}/webhook.pid` with format `port:pid`. Read by `stop` and `status`. Removed on graceful shutdown, `stop`, and session re-init.
+
+**Startup verification:** The `start` command polls `/health` up to 3 seconds after launching the background process to confirm the server is listening before reporting success.
+
+**Examples:**
+
+```bash
+# Start webhook with default settings
+$ muxcode-agent-bus webhook start
+Webhook server started on 127.0.0.1:9090 (PID 54854)
+
+# Start with auth token
+$ muxcode-agent-bus webhook start --port 8080 --token mysecret
+
+# Health check
+$ curl http://127.0.0.1:9090/health
+{"ok":true,"session":"muxcode","uptime_seconds":13}
+
+# Send a message
+$ curl -X POST http://127.0.0.1:9090/send \
+  -H "Content-Type: application/json" \
+  -d '{"to":"edit","action":"webhook-test","payload":"Hello from webhook"}'
+{"ok":true,"id":"1740000000-webhook-a1b2c3d4"}
+
+# Send with auth token
+$ curl -X POST http://127.0.0.1:8080/send \
+  -H "Authorization: Bearer mysecret" \
+  -H "Content-Type: application/json" \
+  -d '{"to":"build","action":"build","payload":"CI triggered build"}'
+
+# Check status
+$ muxcode-agent-bus webhook status
+Webhook: running on 127.0.0.1:9090 (PID 54854)
+
+# Stop
+$ muxcode-agent-bus webhook stop
+Webhook server stopped
+```
+
+**Data files:**
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `webhook.pid` | `/tmp/muxcode-bus-{SESSION}/webhook.pid` | PID file (`port:pid` format) |
+
 ### `muxcode-agent-bus lock` / `unlock` / `is-locked`
 
 Manage agent busy indicators.
@@ -670,6 +797,7 @@ tools/muxcode-agent-bus/
 │   ├── compact.go     # Context compaction monitoring (size + staleness checks)
 │   ├── proc.go        # Background process management (start, track, notify)
 │   ├── spawn.go       # Spawned agent sessions (create, track, collect results)
+│   ├── webhook.go     # Webhook HTTP endpoint (server, handlers, PID management)
 │   ├── demo.go        # Demo scenarios (step engine, built-in scenarios)
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization
