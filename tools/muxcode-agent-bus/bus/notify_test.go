@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestIsHarnessActive_LivePID(t *testing.T) {
@@ -151,12 +152,17 @@ func TestAlreadyNotified_DifferentSize(t *testing.T) {
 	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
 	markNotified(session, role)
 
+	// Backdate marker beyond the cooldown window so the size change is detected
+	markerPath := notifiedSizePath(session, role)
+	past := time.Now().Add(-3 * time.Second)
+	os.Chtimes(markerPath, past, past)
+
 	// Add a second message — inbox grew
 	f, _ := os.OpenFile(InboxPath(session, role), os.O_APPEND|os.O_WRONLY, 0644)
 	f.Write([]byte(`{"from":"build"}` + "\n"))
 	f.Close()
 
-	// Inbox changed — should NOT be considered already notified
+	// Inbox changed and cooldown expired — should NOT be considered already notified
 	if alreadyNotified(session, role) {
 		t.Error("alreadyNotified should return false when inbox grew since last notification")
 	}
@@ -201,5 +207,56 @@ func TestMarkNotified_WritesSize(t *testing.T) {
 	expected := fmt.Sprintf("%d", len(data))
 	if string(markerData) != expected {
 		t.Errorf("marker size = %q, want %q", string(markerData), expected)
+	}
+}
+
+func TestAlreadyNotified_Cooldown(t *testing.T) {
+	session := "test-dedup-cooldown"
+	role := "build"
+
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	defer os.RemoveAll(busDir)
+
+	// Write initial message and mark notified
+	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
+	markNotified(session, role)
+
+	// Grow the inbox — size now differs from marker
+	f, _ := os.OpenFile(InboxPath(session, role), os.O_APPEND|os.O_WRONLY, 0644)
+	f.Write([]byte(`{"from":"build"}` + "\n"))
+	f.Close()
+
+	// Marker was just written (within cooldown) — should still be suppressed
+	if !alreadyNotified(session, role) {
+		t.Error("alreadyNotified should return true within cooldown window even when inbox size differs")
+	}
+}
+
+func TestAlreadyNotified_CooldownExpired(t *testing.T) {
+	session := "test-dedup-cooldown-exp"
+	role := "test"
+
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	defer os.RemoveAll(busDir)
+
+	// Write initial message and mark notified
+	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
+	markNotified(session, role)
+
+	// Backdate the marker file mtime to exceed the cooldown
+	markerPath := notifiedSizePath(session, role)
+	past := time.Now().Add(-3 * time.Second)
+	os.Chtimes(markerPath, past, past)
+
+	// Grow the inbox
+	f, _ := os.OpenFile(InboxPath(session, role), os.O_APPEND|os.O_WRONLY, 0644)
+	f.Write([]byte(`{"from":"review"}` + "\n"))
+	f.Close()
+
+	// Cooldown expired and size differs — should allow notification
+	if alreadyNotified(session, role) {
+		t.Error("alreadyNotified should return false when cooldown has expired and inbox size differs")
 	}
 }

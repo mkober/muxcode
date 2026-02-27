@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -39,7 +40,32 @@ func notifiedSizePath(session, role string) string {
 	return filepath.Join(BusDir(session), "notified-"+role+".size")
 }
 
-// alreadyNotified returns true if the inbox size matches the last notified size.
+// notifyCooldown is the minimum interval between notifications for the same role.
+// Even if the inbox size changes, a notification within this window is suppressed.
+// This is a defense-in-depth against rapid-fire duplicates if file locking fails.
+const notifyCooldown = 2 * time.Second
+
+// lockNotify acquires a per-role file lock for notification deduplication.
+// Returns an unlock function. If lock acquisition fails, returns a no-op
+// (graceful degradation — old behavior without locking).
+func lockNotify(session, role string) func() {
+	lockPath := filepath.Join(BusDir(session), "lock", "notify-"+role+".lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return func() {}
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return func() {}
+	}
+	return func() {
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}
+}
+
+// alreadyNotified returns true if the inbox size matches the last notified size,
+// or if the marker was written within the cooldown window (defense-in-depth).
 // This prevents duplicate tmux send-keys when Notify is called from multiple
 // sources (cmd/send.go, watcher, subscriptions) for the same unread messages.
 func alreadyNotified(session, role string) bool {
@@ -61,7 +87,19 @@ func alreadyNotified(session, role string) bool {
 	if err != nil {
 		return false
 	}
-	return currentSize == lastSize
+	if currentSize == lastSize {
+		return true
+	}
+
+	// Defense-in-depth: if the marker was written recently (within cooldown),
+	// suppress even though the size differs. This catches TOCTOU races where
+	// two callers both pass the size check before either writes the marker.
+	markerPath := notifiedSizePath(session, role)
+	markerInfo, err := os.Stat(markerPath)
+	if err != nil {
+		return false
+	}
+	return time.Since(markerInfo.ModTime()) < notifyCooldown
 }
 
 // markNotified records the current inbox size as the last notified size.
@@ -84,6 +122,13 @@ func Notify(session, role string) error {
 	if IsHarnessActive(session, role) {
 		return nil
 	}
+
+	// Acquire per-role lock to make the check+mark+send sequence atomic
+	// across concurrent callers (cmd/send.go and watcher checkInboxes).
+	// Graceful degradation: if locking fails, the cooldown in alreadyNotified
+	// still prevents most duplicates.
+	unlock := lockNotify(session, role)
+	defer unlock()
 
 	// Skip if inbox hasn't changed since last notification
 	if alreadyNotified(session, role) {
