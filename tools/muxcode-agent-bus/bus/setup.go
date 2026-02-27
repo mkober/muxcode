@@ -173,6 +173,20 @@ func purgeStaleFiles(session string) error {
 	// Remove webhook PID file
 	_ = os.Remove(WebhookPidPath(session))
 
+	// Remove harness marker PID files (harness-*.pid) and notify dedup markers (notified-*.size)
+	entries, err = os.ReadDir(busDir)
+	if err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if strings.HasPrefix(name, "harness-") && strings.HasSuffix(name, ".pid") {
+				_ = os.Remove(filepath.Join(busDir, name))
+			}
+			if strings.HasPrefix(name, "notified-") && strings.HasSuffix(name, ".size") {
+				_ = os.Remove(filepath.Join(busDir, name))
+			}
+		}
+	}
+
 	// Remove Ollama health state file
 	_ = os.Remove(OllamaHealthPath(session))
 

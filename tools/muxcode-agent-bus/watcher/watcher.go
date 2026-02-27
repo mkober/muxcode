@@ -129,7 +129,9 @@ func (w *Watcher) checkInboxes() {
 			// Skip edit — cmd/send.go notifies on direct sends, and
 			// auto-CC messages are seen on next inbox read. Notifying
 			// here causes duplicates.
-			if role != "edit" {
+			// Skip harness panes — they poll inbox directly; tmux
+			// send-keys floods the pane with duplicate text.
+			if role != "edit" && !bus.IsHarnessActive(w.session, role) {
 				ts := time.Now().Format("15:04:05")
 				fmt.Printf("  %s  New message(s) for %s — notifying\n", ts, role)
 				_ = bus.Notify(w.session, role)
@@ -296,9 +298,11 @@ func (w *Watcher) checkCron() {
 			fmt.Fprintf(os.Stderr, "  [cron] failed to append history for %s: %v\n", entry.ID, err)
 		}
 
-		// Notify target agent
-		if err := bus.Notify(w.session, entry.Target); err != nil {
-			fmt.Fprintf(os.Stderr, "  [cron] failed to notify %s: %v\n", entry.Target, err)
+		// Notify target agent (skip harness panes — they poll directly)
+		if !bus.IsHarnessActive(w.session, entry.Target) {
+			if err := bus.Notify(w.session, entry.Target); err != nil {
+				fmt.Fprintf(os.Stderr, "  [cron] failed to notify %s: %v\n", entry.Target, err)
+			}
 		}
 	}
 
@@ -364,7 +368,8 @@ func (w *Watcher) checkProcs() {
 		}
 
 		// Skip Notify for edit — tmux send-keys disrupts Claude Code input buffer
-		if entry.Owner != "edit" {
+		// Skip harness panes — they poll inbox directly
+		if entry.Owner != "edit" && !bus.IsHarnessActive(w.session, entry.Owner) {
 			if err := bus.Notify(w.session, entry.Owner); err != nil {
 				fmt.Fprintf(os.Stderr, "  [proc] failed to notify %s: %v\n", entry.Owner, err)
 			}
@@ -442,7 +447,8 @@ func (w *Watcher) checkSpawns() {
 		}
 
 		// Skip Notify for edit — tmux send-keys disrupts Claude Code input buffer
-		if entry.Owner != "edit" {
+		// Skip harness panes — they poll inbox directly
+		if entry.Owner != "edit" && !bus.IsHarnessActive(w.session, entry.Owner) {
 			if err := bus.Notify(w.session, entry.Owner); err != nil {
 				fmt.Fprintf(os.Stderr, "  [spawn] failed to notify %s: %v\n", entry.Owner, err)
 			}
@@ -527,7 +533,8 @@ func (w *Watcher) checkCompaction() {
 			continue
 		}
 		// Skip Notify for edit — tmux send-keys disrupts Claude Code input buffer
-		if alert.Role != "edit" {
+		// Skip harness panes — they poll inbox directly
+		if alert.Role != "edit" && !bus.IsHarnessActive(w.session, alert.Role) {
 			if err := bus.Notify(w.session, alert.Role); err != nil {
 				fmt.Fprintf(os.Stderr, "  [compact] failed to notify %s: %v\n", alert.Role, err)
 			}

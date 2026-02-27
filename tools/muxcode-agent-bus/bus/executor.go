@@ -63,7 +63,13 @@ func (e *ToolExecutor) executeBash(ctx context.Context, argsJSON json.RawMessage
 		Command string `json:"command"`
 	}
 	if err := json.Unmarshal(argsJSON, &args); err != nil {
-		return fmt.Sprintf("Error: invalid arguments: %v", err)
+		// Fallback: small LLMs sometimes send arguments as a plain string
+		var cmdStr string
+		if err2 := json.Unmarshal(argsJSON, &cmdStr); err2 == nil && cmdStr != "" {
+			args.Command = unwrapCommand(cmdStr)
+		} else {
+			return fmt.Sprintf("Error: invalid arguments: %v", err)
+		}
 	}
 	if args.Command == "" {
 		return "Error: command is required"
@@ -99,13 +105,66 @@ func (e *ToolExecutor) executeBash(ctx context.Context, argsJSON json.RawMessage
 	return result
 }
 
+// unwrapCommand handles double-encoded JSON from small LLMs.
+// When a model sends arguments as a JSON string (e.g. "{\"command\":\"ls\"}")
+// instead of a JSON object, the string fallback captures the whole JSON.
+// This function detects that case and extracts the "command" field.
+func unwrapCommand(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if !strings.HasPrefix(trimmed, "{") {
+		return s
+	}
+	var inner struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal([]byte(trimmed), &inner) == nil && inner.Command != "" {
+		return inner.Command
+	}
+	return s
+}
+
+// unwrapPath handles double-encoded JSON for path-based tool arguments.
+func unwrapPath(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if !strings.HasPrefix(trimmed, "{") {
+		return s
+	}
+	var inner struct {
+		Path string `json:"path"`
+	}
+	if json.Unmarshal([]byte(trimmed), &inner) == nil && inner.Path != "" {
+		return inner.Path
+	}
+	return s
+}
+
+// unwrapPattern handles double-encoded JSON for pattern-based tool arguments.
+func unwrapPattern(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if !strings.HasPrefix(trimmed, "{") {
+		return s
+	}
+	var inner struct {
+		Pattern string `json:"pattern"`
+	}
+	if json.Unmarshal([]byte(trimmed), &inner) == nil && inner.Pattern != "" {
+		return inner.Pattern
+	}
+	return s
+}
+
 // executeRead reads a file and returns its contents.
 func (e *ToolExecutor) executeRead(argsJSON json.RawMessage) string {
 	var args struct {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(argsJSON, &args); err != nil {
-		return fmt.Sprintf("Error: invalid arguments: %v", err)
+		var pathStr string
+		if err2 := json.Unmarshal(argsJSON, &pathStr); err2 == nil && pathStr != "" {
+			args.Path = unwrapPath(pathStr)
+		} else {
+			return fmt.Sprintf("Error: invalid arguments: %v", err)
+		}
 	}
 	if args.Path == "" {
 		return "Error: path is required"
@@ -134,7 +193,12 @@ func (e *ToolExecutor) executeGlob(argsJSON json.RawMessage) string {
 		Pattern string `json:"pattern"`
 	}
 	if err := json.Unmarshal(argsJSON, &args); err != nil {
-		return fmt.Sprintf("Error: invalid arguments: %v", err)
+		var patStr string
+		if err2 := json.Unmarshal(argsJSON, &patStr); err2 == nil && patStr != "" {
+			args.Pattern = unwrapPattern(patStr)
+		} else {
+			return fmt.Sprintf("Error: invalid arguments: %v", err)
+		}
 	}
 	if args.Pattern == "" {
 		return "Error: pattern is required"
@@ -168,7 +232,12 @@ func (e *ToolExecutor) executeGrep(ctx context.Context, argsJSON json.RawMessage
 		Path    string `json:"path"`
 	}
 	if err := json.Unmarshal(argsJSON, &args); err != nil {
-		return fmt.Sprintf("Error: invalid arguments: %v", err)
+		var patStr string
+		if err2 := json.Unmarshal(argsJSON, &patStr); err2 == nil && patStr != "" {
+			args.Pattern = unwrapPattern(patStr)
+		} else {
+			return fmt.Sprintf("Error: invalid arguments: %v", err)
+		}
 	}
 	if args.Pattern == "" {
 		return "Error: pattern is required"

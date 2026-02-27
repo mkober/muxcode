@@ -55,6 +55,94 @@ func TestRoleExamples_Build(t *testing.T) {
 	}
 }
 
+func TestRoleExamples_Build_FullSequence(t *testing.T) {
+	result := RoleExamples("build")
+	if result == "" {
+		t.Fatal("build role should have examples")
+	}
+
+	// Step 1: detect project type
+	if !strings.Contains(result, "go.mod") {
+		t.Error("should contain go.mod detection")
+	}
+	if !strings.Contains(result, "package.json") {
+		t.Error("should contain package.json detection")
+	}
+
+	// Step 2: lint (multi-language)
+	if !strings.Contains(result, "gofmt") {
+		t.Error("should contain gofmt lint example")
+	}
+	if !strings.Contains(result, "go vet") {
+		t.Error("should contain go vet lint example")
+	}
+	if !strings.Contains(result, "npm run lint") {
+		t.Error("should contain npm lint example")
+	}
+	if !strings.Contains(result, "cargo clippy") {
+		t.Error("should contain cargo clippy example")
+	}
+
+	// Step 3: build with fallbacks
+	if !strings.Contains(result, "./build.sh") {
+		t.Error("should contain build.sh command")
+	}
+	if !strings.Contains(result, "make build") {
+		t.Error("should contain make build fallback")
+	}
+
+	// Step 4: auto-reply summary (not bus send)
+	if !strings.Contains(result, "sent automatically") {
+		t.Error("should explain auto-reply mechanism")
+	}
+	if strings.Contains(result, "--type response") {
+		t.Error("should NOT contain --type response (harness handles reply)")
+	}
+	if strings.Contains(result, "--reply-to") {
+		t.Error("should NOT contain --reply-to (harness handles reply)")
+	}
+
+	// Chaining warning
+	if !strings.Contains(result, "Do NOT send to test") {
+		t.Error("should warn not to send to test agent")
+	}
+}
+
+func TestLocalLLMInstructions_BuildOverride(t *testing.T) {
+	result := LocalLLMInstructions("build")
+
+	// Should still have generic rules
+	if !strings.Contains(result, "How You Work") {
+		t.Error("should contain generic LLM instructions")
+	}
+	if !strings.Contains(result, "NEVER run") {
+		t.Error("should contain inbox warning")
+	}
+
+	// Should have build-specific override
+	if !strings.Contains(result, "Build Agent Override") {
+		t.Error("should contain build agent override section")
+	}
+	if !strings.Contains(result, "skip that step entirely") {
+		t.Error("should tell LLM to skip inbox step")
+	}
+	if !strings.Contains(result, "Start directly with the build sequence") {
+		t.Error("should tell LLM to start with the build sequence")
+	}
+	if !strings.Contains(result, "do NOT call muxcode-agent-bus send to reply") {
+		t.Error("should tell LLM not to send reply via bus")
+	}
+}
+
+func TestLocalLLMInstructions_NonBuildNoOverride(t *testing.T) {
+	for _, role := range []string{"commit", "test", "deploy", "review", "edit"} {
+		result := LocalLLMInstructions(role)
+		if strings.Contains(result, "Build Agent Override") {
+			t.Errorf("role %q should NOT contain build override", role)
+		}
+	}
+}
+
 func TestRoleExamples_Test(t *testing.T) {
 	result := RoleExamples("test")
 	if result == "" {

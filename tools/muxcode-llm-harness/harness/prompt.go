@@ -34,7 +34,7 @@ func BuildSystemPrompt(role string, agentDef, skills, contextPrompt string) stri
 // LocalLLMInstructions generates the core behavioral instructions for small LLMs.
 // This is the key differentiator — tells the LLM NOT to check inbox.
 func LocalLLMInstructions(role string) string {
-	return `## How You Work
+	base := `## How You Work
 
 You are an autonomous agent. Tasks are delivered in the user message below.
 Your inbox has already been read — do NOT run ` + "`muxcode-agent-bus inbox`" + `.
@@ -46,10 +46,9 @@ Your inbox has already been read — do NOT run ` + "`muxcode-agent-bus inbox`" 
 4. After completing, provide a short summary of what you did
 
 ### Sending Results
-When you need to send a message to another agent:
-` + "```" + `
-muxcode-agent-bus send <target> <action> "<short single-line result>"
-` + "```" + `
+Your final text response is automatically sent to the requesting agent as the reply.
+Do NOT use ` + "`muxcode-agent-bus send`" + ` to reply — just provide a concise summary as your last text output.
+Only use ` + "`muxcode-agent-bus send`" + ` when you need to notify a DIFFERENT agent than the requester.
 
 ### Saving Learnings
 ` + "```" + `
@@ -60,7 +59,22 @@ muxcode-agent-bus memory write "<section>" "<text>"
 - NEVER run ` + "`muxcode-agent-bus inbox`" + ` — messages are already delivered
 - NEVER send messages to yourself (` + role + `)
 - Keep tool calls focused — complete the task, then stop
-- If a command fails, try a different approach (do not repeat the same command)`
+- If a command fails, try a different approach (do not repeat the same command)
+- After executing commands, provide a short factual summary of what happened — do NOT narrate what you plan to do next`
+
+	// Role-specific overrides
+	switch role {
+	case "build":
+		base += `
+
+### Build Agent Override
+The agent definition mentions "Run muxcode-agent-bus inbox" as step 1 — skip that step entirely.
+Your task has already been delivered above. Start directly with the build sequence.
+Follow the build sequence in the examples below: detect project → lint → build → summarize.
+Your final text response IS the reply — do NOT call muxcode-agent-bus send to reply.`
+	}
+
+	return base
 }
 
 // RoleExamples returns concrete tool call examples for a given role.
@@ -101,16 +115,49 @@ git log --oneline -10
 ` + "```"
 
 	case "build":
-		return `### Build Examples
-When asked to build:
+		return `### Build Sequence
+
+Follow these 4 steps in order for every build request.
+
+**Step 1 — Detect project type**
 ` + "```" + `bash
-./build.sh
+ls go.mod package.json Cargo.toml Makefile 2>/dev/null
 ` + "```" + `
 
-When asked to build with make:
+**Step 2 — Lint (failures here do NOT block the build)**
+Choose the linter for the detected project type:
 ` + "```" + `bash
-make build
-` + "```"
+# Go
+gofmt -l . 2>&1
+go vet ./... 2>&1
+
+# Node (package.json)
+npm run lint 2>&1
+
+# Rust (Cargo.toml)
+cargo clippy 2>&1
+` + "```" + `
+If no linter is available, skip this step. Report lint warnings in your reply but continue to step 3.
+
+**Step 3 — Build**
+` + "```" + `bash
+./build.sh 2>&1
+` + "```" + `
+If ` + "`./build.sh`" + ` does not exist, try these fallbacks in order:
+` + "```" + `bash
+make build 2>&1
+go build ./... 2>&1
+npm run build 2>&1
+cargo build 2>&1
+` + "```" + `
+
+**Step 4 — Provide your result summary**
+Your text response is sent automatically — do NOT call ` + "`muxcode-agent-bus send`" + ` to reply.
+Just write a concise summary as your final text output:
+- On success: ` + "`Build succeeded: <what was built>`" + `
+- On failure: ` + "`Build FAILED: <error summary>`" + `
+
+**Important**: Do NOT send to test — hooks handle chaining automatically.`
 
 	case "test":
 		return `### Test Examples

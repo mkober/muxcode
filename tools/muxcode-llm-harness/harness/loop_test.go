@@ -268,6 +268,170 @@ func TestRun_ContextCancellation(t *testing.T) {
 	}
 }
 
+func TestRun_HarnessMarkerLifecycle(t *testing.T) {
+	// Verify harness writes marker on startup and removes it on exit
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tags" {
+			w.Write([]byte(`{"models":[{"name":"test-model"}]}`))
+			return
+		}
+	}))
+	defer server.Close()
+
+	busDir := t.TempDir()
+	cfg := Config{
+		Role:        "build",
+		Session:     "test-marker",
+		OllamaURL:   server.URL,
+		OllamaModel: "test-model",
+		MaxTurns:    10,
+		BusDir:      busDir,
+		BusBin:      "echo",
+	}
+
+	// Create inbox dir
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+
+	markerPath := filepath.Join(busDir, "harness-build.pid")
+
+	// Run with short timeout so it starts, writes marker, then exits
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	// Use a goroutine so we can check the marker while Run is active
+	markerSeen := false
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, cfg)
+	}()
+
+	// Poll for marker creation
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(markerPath); err == nil {
+			markerSeen = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Wait for Run to finish
+	<-done
+
+	if !markerSeen {
+		t.Error("harness marker was never created during Run")
+	}
+
+	// After Run returns, marker should be cleaned up via defer
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Error("harness marker should be removed after Run exits")
+	}
+}
+
+func TestLooksLikeNarration(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"empty", "", false},
+		{"clean success", "Build succeeded: compiled muxcode-agent-bus binary", false},
+		{"clean failure", "Build FAILED: missing dependency in bus/agent.go", false},
+		{"lets narration", "Let's try running ./build.sh directly and capture its output.", true},
+		{"let me narration", "Let me execute the build command now.", true},
+		{"i will narration", "I will now run the build script.", true},
+		{"ill narration", "I'll run ./build.sh to build the project.", true},
+		{"code block narration", "Here's the command:\n```bash\n./build.sh 2>&1\n```\nThis will build the project.", true},
+		{"code block with succeeded", "Build succeeded:\n```\nok muxcode-agent-bus\n```", false},
+		{"code block with failed", "Build failed:\n```\nerror in main.go\n```", false},
+		{"now i need to", "Now I need to run the build command.", true},
+		{"going to", "I'm going to execute the build.", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := looksLikeNarration(tt.input)
+			if got != tt.expected {
+				t.Errorf("looksLikeNarration(%q) = %v, want %v", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestProcessBatch_NarrationRecovery(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+
+		switch callCount {
+		case 1:
+			// First call: tool call to run a command
+			resp := ChatResponse{
+				Choices: []ChatChoice{
+					{
+						Message: ChatMessage{
+							Role: "assistant",
+							ToolCalls: []ToolCall{
+								{
+									ID:   "call_1",
+									Type: "function",
+									Function: FunctionCall{
+										Name:      "bash",
+										Arguments: json.RawMessage(`{"command":"echo build ok"}`),
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			json.NewEncoder(w).Encode(resp)
+		case 2:
+			// Second call: narration response (the bug)
+			resp := ChatResponse{
+				Choices: []ChatChoice{
+					{Message: ChatMessage{Role: "assistant", Content: "Let's try running the build again."}},
+				},
+			}
+			json.NewEncoder(w).Encode(resp)
+		case 3:
+			// Third call: summarization recovery (no tools passed)
+			resp := ChatResponse{
+				Choices: []ChatChoice{
+					{Message: ChatMessage{Role: "assistant", Content: "Build succeeded: compiled successfully"}},
+				},
+			}
+			json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	cfg := Config{
+		Role:     "build",
+		Session:  "test",
+		BusDir:   dir,
+		MaxTurns: 10,
+	}
+
+	ollama := NewOllamaClient(server.URL, "test-model")
+	executor := NewExecutor([]string{"Bash(echo *)"})
+	tools := BuildToolDefs([]string{"Bash(echo *)"})
+	filter := NewFilter("build")
+	bus := &BusClient{BusDir: dir, Role: "build", BinPath: "echo"}
+
+	msgs := []Message{
+		{ID: "1", From: "edit", To: "build", Action: "build", Payload: "Run build"},
+	}
+
+	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs)
+
+	// Should have 3 calls: tool call, narration, then summarization recovery
+	if callCount != 3 {
+		t.Errorf("expected 3 Ollama calls (tool + narration + recovery), got %d", callCount)
+	}
+}
+
 func TestFormatTask_Integration(t *testing.T) {
 	msgs := []Message{
 		{

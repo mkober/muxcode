@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -42,9 +44,32 @@ type agentState struct {
 // before writing a sentinel file for the watcher to detect.
 const ollamaFailSentinelThreshold = 3
 
+// runStty runs stty with the given arguments, explicitly passing os.Stdin
+// so stty can see the controlling terminal. Go's exec.Command defaults
+// nil Stdin to /dev/null, which causes stty to silently fail.
+func runStty(args ...string) error {
+	cmd := exec.Command("stty", args...)
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
+}
+
+// suppressAgentEcho disables terminal echo and drains stdin to prevent tmux
+// send-keys notifications from displaying in the agent output.
+func suppressAgentEcho() func() {
+	_ = runStty("-echo")
+	go io.Copy(io.Discard, os.Stdin)
+	return func() {
+		_ = runStty("echo")
+	}
+}
+
 // AgentLoop runs the main agent loop: polls inbox, calls Ollama, executes tools,
 // sends responses back via the bus. Blocks until context is cancelled.
 func AgentLoop(ctx context.Context, cfg AgentConfig) error {
+	// Suppress tmux send-keys echo
+	restoreEcho := suppressAgentEcho()
+	defer restoreEcho()
+
 	client := NewOllamaClient(cfg.Ollama)
 	executor := NewToolExecutor(cfg.Role)
 	tools := BuildToolDefs(cfg.Role)
@@ -322,7 +347,13 @@ func logBashToHistory(cfg AgentConfig, tc ToolCall, result string) {
 	var args struct {
 		Command string `json:"command"`
 	}
-	_ = json.Unmarshal(tc.Function.Arguments, &args)
+	if err := json.Unmarshal(tc.Function.Arguments, &args); err != nil {
+		// Fallback: small LLMs sometimes send arguments as a plain string
+		var cmdStr string
+		if json.Unmarshal(tc.Function.Arguments, &cmdStr) == nil {
+			args.Command = cmdStr
+		}
+	}
 
 	// Determine outcome and exit code from result
 	outcome := "success"

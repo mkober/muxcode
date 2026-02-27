@@ -102,7 +102,7 @@ Test: `cd tools/muxcode-agent-bus && go test ./...`
 
 | File | Key exports |
 |------|-------------|
-| `bus/config.go` | `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`, path helpers for cron/proc/spawn/webhook/memory |
+| `bus/config.go` | `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`, `HarnessMarkerPath()`, path helpers for cron/proc/spawn/webhook/memory |
 | `bus/message.go` | Message struct, JSONL encoding |
 | `bus/inbox.go` | Read/write/consume inbox, `Send()`, `SendNoCC()` |
 | `bus/setup.go` | `Init()`, session re-init purge (`resetFile()`, `purgeStaleFiles()`) |

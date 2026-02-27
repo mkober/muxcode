@@ -164,13 +164,16 @@ func (b *BusClient) LogHistory(command, output, exitCode, outcome string) error 
 	return err
 }
 
-// run executes a bus CLI command and returns stdout.
+// run executes a bus CLI command and returns stdout only.
+// Stderr is forwarded to the harness's own stderr so bus warnings/errors
+// appear in the log without contaminating parsed command output.
 func (b *BusClient) run(args ...string) (string, error) {
 	cmd := exec.Command(b.BinPath, args...)
 	cmd.Env = append(os.Environ(),
 		"BUS_SESSION="+b.Session,
 		"AGENT_ROLE="+b.Role,
 	)
-	out, err := cmd.CombinedOutput()
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
 	return string(out), err
 }

@@ -57,6 +57,142 @@ func TestExecuteBash_EmptyCommand(t *testing.T) {
 	}
 }
 
+func TestExecuteBash_StringFallback(t *testing.T) {
+	e := &Executor{Patterns: []string{"Bash(echo *)"}}
+
+	// Small LLMs sometimes send arguments as a plain string instead of {"command":"..."}
+	call := ToolCall{
+		Function: FunctionCall{
+			Name:      "bash",
+			Arguments: json.RawMessage(`"echo hello"`),
+		},
+	}
+
+	result := e.Execute(context.Background(), call)
+	if !strings.Contains(result, "hello") {
+		t.Errorf("result = %q, want 'hello'", result)
+	}
+}
+
+func TestExecuteRead_StringFallback(t *testing.T) {
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "test.txt")
+	os.WriteFile(testFile, []byte("fallback content"), 0644)
+
+	e := &Executor{Patterns: []string{"Read"}}
+
+	call := ToolCall{
+		Function: FunctionCall{
+			Name:      "read_file",
+			Arguments: json.RawMessage(`"` + testFile + `"`),
+		},
+	}
+
+	result := e.Execute(context.Background(), call)
+	if result != "fallback content" {
+		t.Errorf("result = %q, want 'fallback content'", result)
+	}
+}
+
+func TestExecuteGlob_StringFallback(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0644)
+
+	e := &Executor{Patterns: []string{"Glob"}}
+
+	call := ToolCall{
+		Function: FunctionCall{
+			Name:      "glob",
+			Arguments: json.RawMessage(`"` + dir + `/*.txt"`),
+		},
+	}
+
+	result := e.Execute(context.Background(), call)
+	if !strings.Contains(result, "a.txt") {
+		t.Errorf("result = %q, want 'a.txt'", result)
+	}
+}
+
+func TestExecuteGrep_StringFallback(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello world"), 0644)
+
+	e := &Executor{Patterns: []string{"Grep"}, WorkDir: dir}
+
+	call := ToolCall{
+		Function: FunctionCall{
+			Name:      "grep",
+			Arguments: json.RawMessage(`"hello"`),
+		},
+	}
+
+	result := e.Execute(context.Background(), call)
+	if !strings.Contains(result, "hello world") {
+		t.Errorf("result = %q, want 'hello world'", result)
+	}
+}
+
+func TestExecuteBash_DoubleEncodedJSON(t *testing.T) {
+	e := &Executor{Patterns: []string{"Bash(echo *)"}}
+
+	// Small LLMs sometimes double-encode: arguments is a JSON string containing JSON
+	call := ToolCall{
+		Function: FunctionCall{
+			Name:      "bash",
+			Arguments: json.RawMessage(`"{\"command\":\"echo hello\"}"`),
+		},
+	}
+
+	result := e.Execute(context.Background(), call)
+	if !strings.Contains(result, "hello") {
+		t.Errorf("result = %q, want 'hello' (double-encoded should be unwrapped)", result)
+	}
+}
+
+func TestUnwrapCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain command", "echo hello", "echo hello"},
+		{"JSON object", `{"command":"ls -la"}`, "ls -la"},
+		{"JSON no command", `{"foo":"bar"}`, `{"foo":"bar"}`},
+		{"empty command", `{"command":""}`, `{"command":""}`},
+		{"not JSON", "not json {", "not json {"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := unwrapCommand(tt.in)
+			if got != tt.want {
+				t.Errorf("unwrapCommand(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnwrapPath(t *testing.T) {
+	got := unwrapPath(`{"path":"/tmp/test.txt"}`)
+	if got != "/tmp/test.txt" {
+		t.Errorf("unwrapPath = %q, want /tmp/test.txt", got)
+	}
+	got = unwrapPath("/tmp/test.txt")
+	if got != "/tmp/test.txt" {
+		t.Errorf("unwrapPath plain = %q", got)
+	}
+}
+
+func TestUnwrapPattern(t *testing.T) {
+	got := unwrapPattern(`{"pattern":"*.go"}`)
+	if got != "*.go" {
+		t.Errorf("unwrapPattern = %q, want *.go", got)
+	}
+	got = unwrapPattern("*.go")
+	if got != "*.go" {
+		t.Errorf("unwrapPattern plain = %q", got)
+	}
+}
+
 func TestExecuteBash_InvalidJSON(t *testing.T) {
 	e := &Executor{Patterns: []string{"Bash(*)"}}
 

@@ -40,3 +40,16 @@
 
 # Extra agent roles beyond the defaults (comma-separated)
 # MUXCODE_ROLES=""
+
+# --- Local LLM (Ollama) ---
+# Route a role to the local LLM harness instead of Claude Code
+# MUXCODE_BUILD_CLI=local
+
+# Ollama model for local agents (default: qwen2.5-coder:7b)
+# MUXCODE_OLLAMA_MODEL="qwen2.5-coder:7b"
+
+# Per-role model override (takes precedence over MUXCODE_OLLAMA_MODEL)
+# MUXCODE_BUILD_MODEL="qwen2.5-coder:7b"
+
+# Ollama API URL (default: http://localhost:11434)
+# MUXCODE_OLLAMA_URL="http://localhost:11434"

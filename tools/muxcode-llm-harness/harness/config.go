@@ -27,8 +27,10 @@ func DefaultConfig() Config {
 		MaxTurns:    10,
 	}
 
-	// Session detection
+	// Session detection — matches bus.BusSession() resolution order
 	if v := os.Getenv("MUXCODE_SESSION"); v != "" {
+		cfg.Session = v
+	} else if v := os.Getenv("BUS_SESSION"); v != "" {
 		cfg.Session = v
 	} else if v := os.Getenv("SESSION"); v != "" {
 		cfg.Session = v

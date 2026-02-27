@@ -245,6 +245,11 @@ func OllamaHealthPath(session string) string {
 	return filepath.Join(BusDir(session), "ollama-health.json")
 }
 
+// HarnessMarkerPath returns the harness PID marker file path for a role in a session.
+func HarnessMarkerPath(session, role string) string {
+	return filepath.Join(BusDir(session), "harness-"+role+".pid")
+}
+
 // TriggerFile returns the analyze trigger file path for a session.
 // Uses /tmp directly for compatibility with bash hooks.
 func TriggerFile(session string) string {
