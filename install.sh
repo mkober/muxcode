@@ -42,6 +42,29 @@ else
   ok "All required tools found"
 fi
 
+# --- Check optional: Ollama (for local LLM agent) ---
+if command -v ollama >/dev/null 2>&1; then
+  ok "ollama found (local LLM agent available)"
+  if ollama list >/dev/null 2>&1; then
+    OLLAMA_MODEL="${MUXCODE_OLLAMA_MODEL:-qwen2.5:7b}"
+    if ollama list | grep -q "${OLLAMA_MODEL%%:*}"; then
+      ok "Model $OLLAMA_MODEL available"
+    else
+      info "Pulling default model $OLLAMA_MODEL for local LLM agent..."
+      if ollama pull "$OLLAMA_MODEL"; then
+        ok "Model $OLLAMA_MODEL pulled"
+      else
+        warn "Failed to pull $OLLAMA_MODEL — local agent will auto-pull on first run"
+      fi
+    fi
+  else
+    warn "Ollama not running — start with: ollama serve"
+    warn "Model will be auto-pulled on first local agent run"
+  fi
+else
+  info "ollama not found (optional — install for local LLM agent: brew install ollama)"
+fi
+
 # --- Ensure ~/.local/bin exists and is in PATH ---
 info "Checking ~/.local/bin..."
 mkdir -p "$HOME/.local/bin"

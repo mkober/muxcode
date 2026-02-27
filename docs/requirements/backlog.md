@@ -35,6 +35,8 @@
 | Event subscription | JSONL-persisted subscription table for event fan-out — agents subscribe to event+outcome patterns (`build/success`, `*/failure`, `*/*`), chain fires subscriptions after primary action, message template expansion with `${event}`, `${outcome}`, `${exit_code}`, `${command}` | |
 | Token usage reduction | `SendNoCC()` skips auto-CC on chain/subscription messages, `ChainShouldNotifyAnalyst()` with `NotifyAnalystOn` field for outcome-conditional analyst notifications (build/test: failure+unknown only), watcher efficiency: loop interval 30→60s, lazy cron/proc/spawn loading, running-state cache | [token-reduction.md](./token-reduction.md) |
 | Vim diff preview fix | `sil!` prefix on every command in vim pipe chains (only suppresses next command, not full chain) — fixes E35 errors and "Press ENTER" prompts. Separate `tmux send-keys` with 150ms delay for jump-to-line after diff setup so scrollbind is active | |
+| Local LLM agent | Per-role Ollama integration — Go agentic loop (`muxcode-agent-bus agent run`) with OpenAI-compatible API, tool execution (bash/read/glob/grep/write/edit), allowedTools enforcement, per-role config via `MUXCODE_{ROLE}_CLI=local`, fallback to Claude Code if Ollama unreachable | [local-llm-agent.md](./local-llm-agent.md) |
+| Ollama health monitoring | Watcher-integrated inference probes (30s interval) detect stuck Ollama instances — `ollama-down` alert at 60s, auto-restart at 90s (cap 3), agent relaunch, recovery detection; agent-side failure sentinels track consecutive `ChatComplete` errors | |
 
 ## Planned
 

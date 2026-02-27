@@ -21,7 +21,10 @@ Muxcode creates a tmux session with multiple windows, each running an independen
 │       │     ├── lock/{role}.lock                                │
 │       │     ├── log.jsonl                                       │
 │       │     ├── proc.jsonl                                      │
-│       │     └── spawn.jsonl                                     │
+│       │     ├── spawn.jsonl                                     │
+│       │     ├── cron.jsonl                                      │
+│       │     ├── subscriptions.jsonl                              │
+│       │     └── webhook.pid                                     │
 │  ─────┼───────────┼───────────┼───────────┼──────────────────── │
 │       │           │           │           │                     │
 │  ┌────┴────┐ ┌────┴────┐ ┌────┴────┐ ┌────┴────┐                │
@@ -154,18 +157,21 @@ Per-project persistent memory stored in `.muxcode/memory/`:
 
 Memory is project-scoped — each project has its own memory directory, created when `muxcode-agent-bus init` runs.
 
-Agents can search memory with `muxcode-agent-bus memory search "<query>"` (keyword matching with 2x header boost scoring) and list all sections with `muxcode-agent-bus memory list`. Both support `--role` filtering.
+Agents can search memory with `muxcode-agent-bus memory search "<query>"` (BM25 ranking by default with IDF weighting, length normalization, and 2x header boost; keyword mode also available via `--mode keyword`). List all sections with `muxcode-agent-bus memory list`. Both support `--role` filtering.
+
+Memory files rotate daily — on first write each day, the previous day's file is archived to `{role}/YYYY-MM-DD.md`. Archives are retained for 30 days. Context includes the active file plus the last 7 days of archives by default (`--days N` to override).
 
 ## Hook Architecture
 
 Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They run asynchronously and receive tool event JSON on stdin.
 
-| Hook | Phase | Trigger | Purpose |
-|------|-------|---------|---------|
-| `muxcode-preview-hook.sh` | PreToolUse | Write/Edit | Show diff preview in nvim |
-| `muxcode-diff-cleanup.sh` | PreToolUse | Read/Bash/etc | Clean stale diff preview |
-| `muxcode-analyze-hook.sh` | PostToolUse | Write/Edit | Route file events, trigger watcher |
-| `muxcode-bash-hook.sh` | PostToolUse | Bash | Drive build-test-review and deploy-verify chains |
+| Hook | Phase | Trigger | Mode | Purpose |
+|------|-------|---------|------|---------|
+| `muxcode-edit-guard.sh` | PreToolUse | Bash | sync | Block prohibited commands in edit window |
+| `muxcode-preview-hook.sh` | PreToolUse | Write/Edit | async | Show diff preview in nvim |
+| `muxcode-diff-cleanup.sh` | PreToolUse | Read/Bash/etc | async | Clean stale diff preview |
+| `muxcode-analyze-hook.sh` | PostToolUse | Write/Edit | async | Route file events, trigger watcher |
+| `muxcode-bash-hook.sh` | PostToolUse | Bash | async | Drive build-test-review and deploy-verify chains + subscription fan-out |
 
 ### Hook Chain Guarantee
 
@@ -204,6 +210,61 @@ The build-test-review and deploy-verify chains are **deterministic** — driven 
 │                                         │
 └─────────────────────────────────────────┘
 ```
+
+### Local LLM Agent Flow
+
+```
+1. muxcode-agent.sh checks MUXCODE_{ROLE}_CLI for role
+2. If "local", checks Ollama health (GET /api/tags)
+3a. Ollama reachable: exec muxcode-agent-bus agent run <role>
+3b. Ollama unreachable: fall through to Claude Code
+4. Agent loop: poll inbox → build conversation → call Ollama API → execute tools → send response
+5. Tool execution enforces allowedTools from tool profile
+6. Bash commands logged directly to {role}-history.jsonl (replaces PostToolUse hooks)
+7. Conversation state reset between inbox checks (prevents unbounded context)
+```
+
+### Event Subscription Fan-out
+
+```
+1. Build/test/deploy command completes
+2. muxcode-bash-hook.sh detects exit code
+3. Hook sends: muxcode-agent-bus chain <event> <outcome>
+4. Chain fires primary action (e.g. build success → test)
+5. Chain fires subscriptions: read subscriptions.jsonl, match event+outcome
+6. Matching subscribers receive messages via SendNoCC() (no auto-CC to edit)
+```
+
+## Left-pane pollers
+
+Each split-left window runs a poller script in the left pane that displays role-specific history.
+
+| Window | Script | Data source |
+|--------|--------|-------------|
+| build | `muxcode-build-log.sh` | `build-history.jsonl` |
+| test | `muxcode-test-log.sh` | `test-history.jsonl` |
+| review | `muxcode-review-log.sh` | `review-history.jsonl` |
+| deploy | `muxcode-deploy-log.sh` | `deploy-history.jsonl` |
+| run | `muxcode-runner-log.sh` | `run-history.jsonl` |
+| watch | `muxcode-watch-log.sh` | `watch-history.jsonl` |
+| commit | `muxcode-commit-log.sh` / `muxcode-git-status.sh` | `commit-history.jsonl` / git |
+| analyze | `muxcode-analyze-log.sh` | `log.jsonl` (filtered: `from=analyze`, `type=response`) |
+
+Pollers share a common pattern: `set -uo pipefail`, Dracula color scheme, `jq` primary with `python3` fallback, 5-second poll interval, clear-and-redraw via `\033[2J\033[H`.
+
+The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rather than a dedicated history file, filtering for analyst response messages. It displays: findings count, last 15 entries with timestamp/action/target/truncated payload, and the full payload of the latest finding.
+
+## Session re-init
+
+When a MUXcode session restarts with the same name, `Init()` in `bus/setup.go` detects the existing bus directory and purges stale data to prevent false watcher alerts (loop-detected, compact-recommended) from the previous session.
+
+- **Detection**: `os.Stat(busDir)` — if the directory exists, `reInit` flag is set
+- **Truncated files** (path preserved for writers): inboxes, `log.jsonl`, `cron.jsonl`, `proc.jsonl`, `spawn.jsonl`, `subscriptions.jsonl`, `{role}-history.jsonl`, `cron-history.jsonl`
+- **Removed files** (recreated on demand): session meta (`session/*.json`), lock files (`lock/*.lock`), proc logs (`proc/*.log`), orphaned spawn inboxes (`inbox/spawn-*.jsonl`), trigger file
+- **Preserved**: memory files (`.muxcode/memory/`) — persistent learnings survive re-init
+- **Watcher grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (60s) and compaction checks (120s) skip the first interval
+
+Core code: `bus/setup.go` (`Init()`, `resetFile()`, `purgeStaleFiles()`), `watcher/watcher.go` (`New()`)
 
 ## See also
 

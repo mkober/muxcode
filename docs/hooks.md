@@ -15,6 +15,10 @@ Hooks are configured in `.claude/settings.json` in your project:
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "muxcode-edit-guard.sh"}]
+      },
+      {
         "matcher": "Write|Edit|NotebookEdit",
         "hooks": [{"type": "command", "command": "muxcode-preview-hook.sh", "async": true}]
       },
@@ -43,6 +47,24 @@ cp ~/.config/muxcode/settings.json .claude/settings.json
 ```
 
 ## Hook Descriptions
+
+### muxcode-edit-guard.sh
+
+**Phase:** PreToolUse
+**Trigger:** Bash
+**Mode:** sync (blocks tool execution)
+**Window:** edit only
+
+Blocks prohibited commands in the edit window (build, test, deploy, git commands) and returns delegation instructions. This is the only **sync** hook — it runs before the tool executes and can reject the command.
+
+**What it blocks:**
+- Build commands: `./build.sh`, `make`, `go build`, `pnpm build`, `cargo build`
+- Test commands: `./test.sh`, `go test`, `jest`, `pytest`
+- Deploy commands: `cdk`, `terraform`, `pulumi`
+- Git commands: all `git` subcommands
+- Log tailing: `tail -f`, `aws logs`, `kubectl logs`, `docker logs`
+
+When a command is blocked, the hook returns a rejection with instructions to delegate via the message bus instead.
 
 ### muxcode-preview-hook.sh
 
@@ -109,7 +131,9 @@ Deploy commands are split into two categories:
 
 Preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) match deploy patterns for history logging but do **not** trigger verification.
 
-Also sends events to the analyst for analysis.
+Also sends events to the analyst for analysis (conditional on outcome — build/test only notify analyst on failure or unknown exit codes, deploy notifies on all outcomes).
+
+After the primary chain action, the hook fires event subscriptions — matching `subscriptions.jsonl` entries by event+outcome pattern and sending fan-out messages via `SendNoCC()` (no auto-CC to edit). Use `muxcode-agent-bus subscribe add` to configure.
 
 **Customization:**
 - `MUXCODE_BUILD_PATTERNS` — pipe-separated patterns for build command detection

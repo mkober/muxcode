@@ -335,7 +335,8 @@ func FormatAlertsJSON(alerts []LoopAlert) (string, error) {
 // indicative of agent-to-agent loops.
 func isSystemAction(action string) bool {
 	switch action {
-	case "loop-detected", "compact-recommended", "proc-complete", "spawn-complete":
+	case "loop-detected", "compact-recommended", "proc-complete", "spawn-complete",
+		"ollama-down", "ollama-recovered", "ollama-restarting":
 		return true
 	}
 	return false

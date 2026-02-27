@@ -9,7 +9,80 @@
 # Falls back to inline system prompts if no agent file found.
 
 ROLE="${1:-general}"
+
+# --- Load configuration (same resolution order as muxcode.sh) ---
+load_config() {
+  local config_file=""
+  if [ -n "${MUXCODE_CONFIG:-}" ] && [ -f "$MUXCODE_CONFIG" ]; then
+    config_file="$MUXCODE_CONFIG"
+  elif [ -f "./.muxcode/config" ]; then
+    config_file="./.muxcode/config"
+  elif [ -f "$HOME/.config/muxcode/config" ]; then
+    config_file="$HOME/.config/muxcode/config"
+  fi
+  [ -n "$config_file" ] && source "$config_file"
+}
+
+load_config
+
 AGENT_CLI="${MUXCODE_AGENT_CLI:-claude}"
+
+# Check for per-role local LLM override (e.g. MUXCODE_GIT_CLI=local for commit agent)
+# Maps role -> env var name: commit->GIT, build->BUILD, test->TEST, etc.
+role_cli_var() {
+  case "$1" in
+    commit|git) echo "MUXCODE_GIT_CLI" ;;
+    build)      echo "MUXCODE_BUILD_CLI" ;;
+    test)       echo "MUXCODE_TEST_CLI" ;;
+    review)     echo "MUXCODE_REVIEW_CLI" ;;
+    deploy)     echo "MUXCODE_DEPLOY_CLI" ;;
+    edit)       echo "MUXCODE_EDIT_CLI" ;;
+    analyze|analyst) echo "MUXCODE_ANALYZE_CLI" ;;
+    *)          echo "MUXCODE_${1^^}_CLI" ;;
+  esac
+}
+
+ROLE_CLI_VAR="$(role_cli_var "$ROLE")"
+ROLE_CLI="${!ROLE_CLI_VAR:-}"
+
+# If per-role CLI is "local", route to the local LLM agent
+if [ "$ROLE_CLI" = "local" ]; then
+  OLLAMA_URL="${MUXCODE_OLLAMA_URL:-http://localhost:11434}"
+  if curl -s --max-time 2 "${OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
+    HARNESS_ARGS=(run "$ROLE")
+    # Per-role model: MUXCODE_{ROLE}_MODEL (e.g. MUXCODE_GIT_MODEL=llama3.1:8b)
+    # Resolution: per-role env → MUXCODE_OLLAMA_MODEL → default (qwen2.5:7b)
+    role_model_var() {
+      case "$1" in
+        commit|git) echo "MUXCODE_GIT_MODEL" ;;
+        build)      echo "MUXCODE_BUILD_MODEL" ;;
+        test)       echo "MUXCODE_TEST_MODEL" ;;
+        review)     echo "MUXCODE_REVIEW_MODEL" ;;
+        deploy)     echo "MUXCODE_DEPLOY_MODEL" ;;
+        edit)       echo "MUXCODE_EDIT_MODEL" ;;
+        analyze|analyst) echo "MUXCODE_ANALYZE_MODEL" ;;
+        *)          echo "MUXCODE_${1^^}_MODEL" ;;
+      esac
+    }
+    ROLE_MODEL_VAR="$(role_model_var "$ROLE")"
+    ROLE_MODEL="${!ROLE_MODEL_VAR:-}"
+    if [ -n "$ROLE_MODEL" ]; then
+      HARNESS_ARGS+=(--model "$ROLE_MODEL")
+    elif [ -n "${MUXCODE_OLLAMA_MODEL:-}" ]; then
+      HARNESS_ARGS+=(--model "$MUXCODE_OLLAMA_MODEL")
+    fi
+    [ "$OLLAMA_URL" != "http://localhost:11434" ] && HARNESS_ARGS+=(--url "$OLLAMA_URL")
+    clear
+    # Prefer harness binary; fall back to bus agent subcommand
+    if command -v muxcode-llm-harness >/dev/null 2>&1; then
+      exec muxcode-llm-harness "${HARNESS_ARGS[@]}"
+    else
+      exec muxcode-agent-bus agent "${HARNESS_ARGS[@]}"
+    fi
+  else
+    echo "Ollama not running at $OLLAMA_URL, falling back to Claude Code" >&2
+  fi
+fi
 
 # Map role names to agent filenames (without .md)
 agent_name() {
@@ -19,9 +92,9 @@ agent_name() {
     test)    echo "test-runner" ;;
     review)  echo "code-reviewer" ;;
     deploy)  echo "infra-deployer" ;;
-    runner)  echo "command-runner" ;;
-    git)     echo "git-manager" ;;
-    analyst) echo "editor-analyst" ;;
+    runner|run) echo "command-runner" ;;
+    git|commit) echo "git-manager" ;;
+    analyst|analyze) echo "editor-analyst" ;;
     docs)    echo "doc-writer" ;;
     research) echo "code-researcher" ;;
     watch)    echo "log-watcher" ;;
@@ -112,13 +185,13 @@ case "$ROLE" in
   deploy)
     PROMPT="You are the deploy agent. Focus on infrastructure as code and deployments. Write, review, and debug infrastructure definitions. Run deployment diffs. Check security and compliance."
     ;;
-  runner)
+  runner|run)
     PROMPT="You are the runner agent. Focus on executing commands and processes. Confirm target environment before running. Show command and parse responses. Report errors clearly."
     ;;
-  git)
+  git|commit)
     PROMPT="You are the git agent. Focus on git operations: branches, commits, rebasing, PRs. Run git status, git diff, gh pr commands. Keep the repo clean."
     ;;
-  analyst)
+  analyst|analyze)
     PROMPT="You are the analyst agent. Evaluate code changes, builds, tests, reviews, deployments, and runs. Explain what happened, why it matters, and what to watch for. Highlight patterns and concepts. Be concise but informative."
     ;;
   docs)

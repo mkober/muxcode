@@ -37,6 +37,7 @@ Commands:
   demo        Run scripted demo scenarios (run, list)
   webhook     Manage webhook HTTP endpoint (start, stop, status)
   subscribe   Manage event subscriptions (add, list, remove, enable, disable)
+  agent       Run local LLM agent loop (run)
 `
 
 func main() {
@@ -103,6 +104,8 @@ func main() {
 		cmd.Webhook(args)
 	case "subscribe":
 		cmd.Subscribe(args)
+	case "agent":
+		cmd.Agent(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

@@ -173,5 +173,11 @@ func purgeStaleFiles(session string) error {
 	// Remove webhook PID file
 	_ = os.Remove(WebhookPidPath(session))
 
+	// Remove Ollama health state file
+	_ = os.Remove(OllamaHealthPath(session))
+
+	// Remove Ollama failure sentinels (lock/*.ollama-fail)
+	// Already handled by the lock dir cleanup above, but explicit for clarity
+
 	return nil
 }

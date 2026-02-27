@@ -366,7 +366,7 @@ $ muxcode-agent-bus guard build --json
 $ muxcode-agent-bus guard --threshold 5 --window 600
 ```
 
-**Watcher integration:** The bus watcher checks for loops every 30 seconds. When a loop is detected, it sends a `loop-detected` event to the edit agent and notifies via tmux. Alerts are deduplicated within a 5-minute cooldown to prevent spamming.
+**Watcher integration:** The bus watcher checks for loops every 60 seconds. When a loop is detected, it sends a `loop-detected` event to the edit agent and notifies via tmux. Alerts are deduplicated within a 10-minute cooldown (exceeds the 5-minute detection window to prevent self-sustaining alerts). System actions (`loop-detected`, `compact-recommended`, `proc-complete`, `spawn-complete`) are excluded from message loop detection.
 
 #### Watcher event: `compact-recommended`
 
@@ -713,16 +713,22 @@ Webhook server stopped
 Manage per-agent drop-in context files — a lightweight, file-based way to inject project-specific knowledge into agent prompts without the frontmatter/roles/tags overhead of skills.
 
 ```bash
-muxcode-agent-bus context list [--role ROLE]
-muxcode-agent-bus context prompt <role>
+muxcode-agent-bus context list [--role ROLE] [--no-auto]
+muxcode-agent-bus context prompt <role> [--no-auto]
+muxcode-agent-bus context detect [DIR]
 ```
 
 **Subcommands:**
 
 | Subcommand | Description |
 |------------|-------------|
-| `list` | Show all context files with source (project/user), filterable by `--role` |
+| `list` | Show all context files with source (project/user/auto), filterable by `--role` |
 | `prompt` | Output formatted context for prompt injection (used by `muxcode-agent.sh`) |
+| `detect` | Auto-detect project type from indicator files and show convention snippets |
+
+- `--no-auto` — exclude auto-detected project context (only show manual `context.d/` files)
+
+**Auto-detection:** Scans the working directory for 17 project types (go, nodejs, typescript, python, rust, cdk, java-maven, java-gradle, ruby, docker, terraform, make, cpp, csharp, gdscript, php, swift) via indicator files and glob patterns. Detected types inject convention snippets (~200 bytes each) covering build, test, and lint commands. Manual `context.d/` files shadow auto-detected entries by `(role, name)` key.
 
 **Directory layout:**
 
@@ -794,6 +800,155 @@ Use 2-space indentation
 Prefer minimal diffs
 ```
 
+### `muxcode-agent-bus agent`
+
+Run a local LLM agentic loop for a role via Ollama, replacing Claude Code for that role.
+
+```bash
+muxcode-agent-bus agent run <role> [--model MODEL] [--url URL]
+```
+
+- `<role>` — agent role to run (e.g. `git`, `build`, `runner`)
+- `--model MODEL` — Ollama model name (default: `MUXCODE_OLLAMA_MODEL` or `qwen2.5-coder:7b`)
+- `--url URL` — Ollama base URL (default: `MUXCODE_OLLAMA_URL` or `http://localhost:11434`)
+
+**Agentic loop:**
+
+1. Builds system prompt from agent definition + shared prompt + skills + context.d + session resume
+2. Builds tool definitions from the role's tool profile (allowedTools enforcement)
+3. Polls inbox every 3 seconds for new messages
+4. Sends conversation to Ollama's OpenAI-compatible API (`POST /v1/chat/completions`) with tool definitions
+5. Executes tool calls (bash, read_file, glob, grep, write_file, edit_file) — max 20 turns per inbox batch
+6. Sends final response back via bus, logs bash commands to `{role}-history.jsonl`
+
+**Tool execution details:**
+
+| Tool | Ollama function | Notes |
+|------|----------------|-------|
+| `bash` | `bash` | 60s timeout, 10K char output truncation, allowedTools enforced |
+| `read_file` | `read_file` | Returns file content |
+| `glob` | `glob` | `filepath.Glob` matching |
+| `grep` | `grep` | Shells out to `grep -rn --exclude-dir` |
+| `write_file` | `write_file` | Full file write |
+| `edit_file` | `edit_file` | String replacement in file |
+
+**Auto-pull:** If the model is not found locally, runs `ollama pull` automatically before starting.
+
+**Examples:**
+```bash
+# Run the git manager via local LLM
+$ muxcode-agent-bus agent run git
+
+# Use a specific model
+$ muxcode-agent-bus agent run git --model codellama:13b
+
+# Custom Ollama URL
+$ muxcode-agent-bus agent run build --url http://192.168.1.100:11434
+```
+
+### `muxcode-agent-bus subscribe`
+
+Manage event subscriptions for fan-out after chain execution.
+
+```bash
+muxcode-agent-bus subscribe add <event> <outcome> <notify-role> <action> [message-template]
+muxcode-agent-bus subscribe list [--all]
+muxcode-agent-bus subscribe remove <id>
+muxcode-agent-bus subscribe enable <id>
+muxcode-agent-bus subscribe disable <id>
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+|------------|-------------|
+| `add` | Create a new subscription |
+| `list` | Show enabled subscriptions (use `--all` to include disabled) |
+| `remove` | Delete a subscription by ID |
+| `enable` | Enable a disabled subscription |
+| `disable` | Disable a subscription without removing it |
+
+- `<event>` — event to match: `build`, `test`, `deploy`, or `*` (wildcard)
+- `<outcome>` — outcome to match: `success`, `failure`, or `*` (wildcard)
+- `<notify-role>` — role to notify when matched
+- `<action>` — action name for the sent message
+- `[message-template]` — optional template with `${event}`, `${outcome}`, `${exit_code}`, `${command}` (default: `"${event} ${outcome}: ${command}"`)
+
+**Examples:**
+```bash
+# Notify watch agent on any build failure
+$ muxcode-agent-bus subscribe add build failure watch alert "Build failed: ${command}"
+
+# Notify analyst on all events
+$ muxcode-agent-bus subscribe add "*" "*" analyze observe
+
+# List subscriptions
+$ muxcode-agent-bus subscribe list
+```
+
+**Data files:**
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `subscriptions.jsonl` | `/tmp/muxcode-bus-{SESSION}/subscriptions.jsonl` | Subscription definitions |
+
+### `muxcode-agent-bus session`
+
+Manage session context — save summaries for context preservation across restarts.
+
+```bash
+muxcode-agent-bus session status
+muxcode-agent-bus session compact "<summary>"
+```
+
+- `status` — show session uptime and compact count
+- `compact "<summary>"` — save session summary to memory for restoration on restart
+
+### `muxcode-agent-bus skill`
+
+Manage skill definitions — file-based plugins for reusable instruction sets.
+
+```bash
+muxcode-agent-bus skill list [--role ROLE]
+muxcode-agent-bus skill load <name>
+muxcode-agent-bus skill search <query>
+muxcode-agent-bus skill create <name> <desc> [--roles r1,r2] [--tags t1,t2] <body>
+muxcode-agent-bus skill prompt <role>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `list` | Show available skills, filterable by `--role` |
+| `load` | Load a skill by name (output its content) |
+| `search` | Search skills by keyword |
+| `create` | Create a new skill definition file |
+| `prompt` | Output all skills for a role (used by agent launcher for prompt injection) |
+
+**Resolution order:** `.muxcode/skills/` (project) > `~/.config/muxcode/skills/` (user) > `skills/` (defaults). Project skills shadow user skills by name.
+
+### `muxcode-agent-bus tools`
+
+Resolve and display the tool profile for a role.
+
+```bash
+muxcode-agent-bus tools <role>
+```
+
+Outputs one `--allowedTools` pattern per line. Resolves shared includes (`bus`, `readonly`, `common`), applies `CdPrefix` variants, and appends role-specific patterns from `bus/profile.go`.
+
+**Examples:**
+```bash
+# Show git agent's tool permissions
+$ muxcode-agent-bus tools git
+Bash(muxcode-agent-bus *)
+Bash(git *)
+Bash(gh *)
+Read
+Glob
+Grep
+...
+```
+
 ### `muxcode-agent-bus lock` / `unlock` / `is-locked`
 
 Manage agent busy indicators.
@@ -848,7 +1003,7 @@ Messages are stored as JSONL in per-agent inbox files.
 
 ### Auto-CC to Edit
 
-Messages from `build`, `test`, or `review` to any non-edit agent are automatically copied to the edit inbox, giving the orchestrator visibility into all workflow events.
+Messages from `build`, `test`, or `review` to any non-edit agent are automatically copied to the edit inbox via `Send()`, giving the orchestrator visibility into all workflow events. Chain-triggered messages and subscription fan-out use `SendNoCC()` to avoid redundant CC copies (the edit agent already receives chain results directly).
 
 ### Build-Test-Review Chain
 
@@ -857,6 +1012,7 @@ Driven by `muxcode-bash-hook.sh`, not by agent LLMs:
 1. **Build succeeds** -> hook sends `request:test` to the test agent
 2. **Test succeeds** -> hook sends `request:review` to the review agent
 3. **Any failure** -> hook sends `event:notify` directly to edit
+4. After primary chain action, subscription fan-out fires for matching event+outcome patterns
 
 ## Pane Targeting
 
@@ -886,8 +1042,17 @@ tools/muxcode-agent-bus/
 │   ├── webhook.go     # Webhook HTTP endpoint (server, handlers, PID management)
 │   ├── demo.go        # Demo scenarios (step engine, built-in scenarios)
 │   ├── context.go     # Context directory (drop-in context files per role)
+│   ├── detect.go      # Project-aware context detection (17 project types)
+│   ├── search.go      # BM25 memory search (tokenize, stem, rank)
+│   ├── rotation.go    # Daily memory rotation (archive, retention, context window)
+│   ├── profile.go     # Tool profiles (per-role permissions, shared groups)
+│   ├── subscribe.go   # Event subscriptions (fan-out after chain execution)
+│   ├── ollama.go      # Ollama HTTP client (ChatComplete, CheckHealth)
+│   ├── tools.go       # Tool definitions for local LLM (BuildToolDefs, IsToolAllowed)
+│   ├── executor.go    # Tool executor for local LLM (bash, read, glob, grep, write, edit)
+│   ├── agent.go       # Local LLM agentic loop (inbox poll, tool-call loop, history)
 │   ├── cleanup.go     # Session cleanup
-│   └── setup.go       # Bus directory initialization
+│   └── setup.go       # Bus directory initialization and re-init purge
 ├── cmd/               # Subcommand handlers
 ├── watcher/           # Inbox poller + trigger file monitor
 ├── tui/               # Dracula-themed dashboard TUI

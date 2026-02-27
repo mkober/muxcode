@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")/tools/muxcode-agent-bus"
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "=== go vet ==="
-go vet ./...
-
-echo "=== go test ==="
-go test -v ./...
+for moddir in "$REPO_DIR"/tools/*/; do
+  [ -f "$moddir/go.mod" ] || continue
+  name="$(basename "$moddir")"
+  echo "=== $name: go vet ==="
+  (cd "$moddir" && go vet ./...)
+  echo "=== $name: go test ==="
+  (cd "$moddir" && go test -v ./...)
+done

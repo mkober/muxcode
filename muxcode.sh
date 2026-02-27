@@ -164,6 +164,46 @@ export BUS_SESSION="$SESSION"
 # --- Start bus watcher in background (loop detection, compaction alerts) ---
 muxcode-agent-bus watch "$SESSION" &>/dev/null &
 
+# --- Ensure Ollama is running if any role uses local LLM ---
+ensure_ollama() {
+  local url="${MUXCODE_OLLAMA_URL:-http://localhost:11434}"
+  # Check if any role is configured for local LLM
+  local needs_ollama=false
+  for var in $(compgen -v | grep -E '^MUXCODE_.*_CLI$'); do
+    if [ "${!var}" = "local" ]; then
+      needs_ollama=true
+      break
+    fi
+  done
+  $needs_ollama || return 0
+
+  # Already running?
+  if curl -s --max-time 2 "${url}/api/tags" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Start Ollama in background
+  if command -v ollama &>/dev/null; then
+    echo "  Starting Ollama..."
+    ollama serve &>/dev/null &
+    # Wait up to 10s for it to become ready
+    local i=0
+    while [ $i -lt 20 ]; do
+      if curl -s --max-time 1 "${url}/api/tags" >/dev/null 2>&1; then
+        echo "  Ollama ready"
+        return 0
+      fi
+      sleep 0.5
+      i=$((i + 1))
+    done
+    echo "  Warning: Ollama did not become ready in 10s (agents will fall back to Claude Code)" >&2
+  else
+    echo "  Warning: Ollama not installed but MUXCODE_*_CLI=local is set (agents will fall back to Claude Code)" >&2
+  fi
+}
+
+ensure_ollama
+
 # --- Helper: send shell init to a pane ---
 send_init() {
   local target="$1"

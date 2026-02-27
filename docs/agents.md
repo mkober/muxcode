@@ -111,6 +111,47 @@ Spawned agents:
 - Are tracked in `spawn.jsonl` and monitored by the watcher
 - Block commits while running (same as background processes)
 
+## Local LLM Agent (Ollama)
+
+Any agent role can optionally run via a local LLM (Ollama) instead of Claude Code, reducing API costs for roles that primarily execute structured commands (e.g. git operations).
+
+### Configuration
+
+Set per-role CLI override in `.muxcode/config`:
+
+```bash
+MUXCODE_GIT_CLI=local              # commit agent uses local LLM
+MUXCODE_OLLAMA_MODEL=qwen2.5-coder:7b  # model (default)
+MUXCODE_OLLAMA_URL=http://localhost:11434  # Ollama URL (default)
+```
+
+The variable format is `MUXCODE_{ROLE}_CLI=local` where `{ROLE}` is the uppercase role name (e.g. `GIT` for the git/commit agent, `BUILD` for the build agent).
+
+### How it works
+
+1. `muxcode-agent.sh` checks `MUXCODE_{ROLE}_CLI` for the role
+2. If `"local"`, verifies Ollama is reachable (`GET /api/tags`)
+3. If reachable: runs `muxcode-agent-bus agent run <role>` instead of Claude Code
+4. If unreachable: falls back to Claude Code with a warning
+
+### Differences from Claude Code agents
+
+| Aspect | Claude Code | Local LLM (Ollama) |
+|--------|------------|-------------------|
+| System prompt | Claude Code built-in + agent file | Same assembly: agent def + shared + skills + context.d + resume |
+| Tool enforcement | `--allowedTools` flag | `IsToolAllowed()` in Go, same patterns |
+| Hook chains | PostToolUse hooks fire automatically | Bash commands logged directly to `{role}-history.jsonl` |
+| Conversation state | Managed by Claude Code | Reset between inbox checks (prevents unbounded context) |
+| Cost | Anthropic API usage | Free (local compute) |
+
+### CLI
+
+```bash
+muxcode-agent-bus agent run <role> [--model MODEL] [--url URL]
+```
+
+See [Agent Bus CLI](agent-bus.md#muxcode-agent-bus-agent) for full reference.
+
 ## Message Bus Protocol
 
 All agents share the same bus protocol:
@@ -203,3 +244,58 @@ Per-project memory is stored in `.muxcode/memory/`:
 ```
 
 Agents read memory with `muxcode-agent-bus memory context` and write with `muxcode-agent-bus memory write "<section>" "<text>"`. To find specific learnings, use `muxcode-agent-bus memory search "<query>"` (keyword search with relevance scoring) or `muxcode-agent-bus memory list` to see all sections.
+
+## Tool profiles
+
+Per-role tool permissions defined in `bus/profile.go`. Each profile specifies which `--allowedTools` patterns the agent receives.
+
+| Component | Description |
+|-----------|-------------|
+| `Include` | Shared tool groups to inherit (`bus`, `readonly`, `common`) |
+| `CdPrefix` | Auto-generate `cd <dir> &&` variants of commands |
+| `Tools` | Role-specific `--allowedTools` patterns |
+
+Shared groups:
+
+- `bus` — `Bash(muxcode-agent-bus *)` and bus CLI commands
+- `readonly` — `Read`, `Glob`, `Grep`
+- `common` — `ls`, `cat`, `diff`, `sed`, `awk`, etc.
+
+CLI: `muxcode-agent-bus tools <role>` — resolves includes, applies CdPrefix, outputs one pattern per line. Patterns use Claude Code `--allowedTools` glob syntax (e.g. `Bash(git diff*)`).
+
+**Process substitution**: `Bash(diff *)` does NOT match `diff <(...)` — Claude Code treats `<()` as a special construct requiring explicit `Bash(diff <(*)`.
+
+## Ollama health monitoring
+
+Watcher-integrated health monitoring detects stuck Ollama instances (process alive but inference hanging) and auto-restarts both Ollama and affected agents.
+
+- **Inference probe**: `CheckOllamaInference()` sends minimal chat completion (`max_tokens:1`) with 10s timeout — distinguishes "process alive but stuck" from "healthy" (unlike `/api/tags` which only checks process liveness)
+- **Role discovery**: `LocalLLMRoles()` scans `MUXCODE_*_CLI=local` env vars to find which roles use Ollama
+- **Agent failure tracking**: `agentState.consecutiveFailures` counter — after 3 consecutive `ChatComplete` failures, writes sentinel file at `lock/{role}.ollama-fail`; cleared on success
+- **Detection timeline**: 30s first probe failure → 60s `ollama-down` alert to edit → 90s restart attempted → ~105s agents relaunched → ~135s recovery confirmed
+- **Restart mechanism**: `RestartOllama()` kills via `pkill -f "ollama serve"`, starts detached, polls `/api/tags` for readiness (500ms intervals, 15s timeout)
+- **Agent restart**: `RestartLocalAgent()` sends `C-c` via tmux, waits 500ms, relaunches `muxcode-agent.sh {role}`
+- **Restart cap**: max 3 automatic restarts per session — after cap, periodic alerts only (manual intervention required)
+- **Alert dedup**: `ollama-down`, `ollama-recovered`, `ollama-restarting` events deduped via `lastAlertKey` with 600s cooldown
+- **System action exclusion**: registered in `isSystemAction()` to prevent false loop detection
+- **Re-init cleanup**: `ollama-health.json` and `lock/*.ollama-fail` sentinels purged on session restart
+
+Core code: `bus/health.go`, `bus/health_test.go`. Watcher code: `watcher/watcher.go` (`checkOllama()`).
+
+## Local LLM harness
+
+Standalone binary (`muxcode-llm-harness`) that replaces `muxcode-agent-bus agent run` for local LLM roles. Solves the inbox-loop problem where small LLMs repeatedly call `muxcode-agent-bus inbox` instead of executing tasks.
+
+| Feature | Description |
+|---------|-------------|
+| Tool call filtering | Blocks inbox commands, self-sends, and repetitive commands before they reach the executor |
+| Structured task format | Inbox messages pre-consumed and formatted as structured markdown tasks |
+| Corrective feedback | Blocked tool calls receive explanatory messages |
+| Loop prevention | Command hash tracking, blocks same command after 3 repetitions |
+| Role examples | `RoleExamples()` provides concrete tool call examples per role |
+
+CLI: `muxcode-llm-harness run <role> [--model MODEL] [--url URL] [--max-turns N]`
+
+Separate Go module at `tools/muxcode-llm-harness/` — stdlib only, no external deps. The launcher (`muxcode-agent.sh`) prefers the harness binary when available, falls back to `muxcode-agent-bus agent run`.
+
+Core code: `harness/` package — `config.go`, `ollama.go`, `bus.go`, `tools.go`, `executor.go`, `filter.go`, `prompt.go`, `loop.go`, `message.go`.

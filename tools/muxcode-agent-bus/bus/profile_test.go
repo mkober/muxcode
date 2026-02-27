@@ -194,6 +194,65 @@ func TestResolveTools_NoCdPrefix(t *testing.T) {
 	assertNotContains(t, tools, "Bash(cd * && echo *)")
 }
 
+func TestResolveTools_RoleAliases(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	// commit → git
+	commitTools := ResolveTools("commit")
+	gitTools := ResolveTools("git")
+	if len(commitTools) == 0 {
+		t.Fatal("ResolveTools(commit) returned empty — alias not resolved")
+	}
+	if !reflect.DeepEqual(commitTools, gitTools) {
+		t.Errorf("commit tools != git tools: %d vs %d", len(commitTools), len(gitTools))
+	}
+
+	// analyze → analyst
+	analyzeTools := ResolveTools("analyze")
+	analystTools := ResolveTools("analyst")
+	if len(analyzeTools) == 0 {
+		t.Fatal("ResolveTools(analyze) returned empty — alias not resolved")
+	}
+	if !reflect.DeepEqual(analyzeTools, analystTools) {
+		t.Errorf("analyze tools != analyst tools: %d vs %d", len(analyzeTools), len(analystTools))
+	}
+
+	// run → runner
+	runTools := ResolveTools("run")
+	runnerTools := ResolveTools("runner")
+	if len(runTools) == 0 {
+		t.Fatal("ResolveTools(run) returned empty — alias not resolved")
+	}
+	if !reflect.DeepEqual(runTools, runnerTools) {
+		t.Errorf("run tools != runner tools: %d vs %d", len(runTools), len(runnerTools))
+	}
+}
+
+func TestResolveRoleAlias(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"commit", "git"},
+		{"analyze", "analyst"},
+		{"run", "runner"},
+		// Canonical names pass through unchanged
+		{"git", "git"},
+		{"analyst", "analyst"},
+		{"runner", "runner"},
+		{"build", "build"},
+		{"edit", "edit"},
+		{"nonexistent", "nonexistent"},
+	}
+	for _, tt := range tests {
+		got := resolveRoleAlias(tt.input)
+		if got != tt.want {
+			t.Errorf("resolveRoleAlias(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestResolveTools_UnknownRole(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)

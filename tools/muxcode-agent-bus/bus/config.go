@@ -240,6 +240,11 @@ func SubscriptionPath(session string) string {
 	return filepath.Join(BusDir(session), "subscriptions.jsonl")
 }
 
+// OllamaHealthPath returns the Ollama health state file path for a session.
+func OllamaHealthPath(session string) string {
+	return filepath.Join(BusDir(session), "ollama-health.json")
+}
+
 // TriggerFile returns the analyze trigger file path for a session.
 // Uses /tmp directly for compatibility with bash hooks.
 func TriggerFile(session string) string {

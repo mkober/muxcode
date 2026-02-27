@@ -166,10 +166,25 @@ func mergeConfigs(base, override *MuxcodeConfig) *MuxcodeConfig {
 	return result
 }
 
+// resolveRoleAlias maps window-name roles to their canonical tool profile names.
+// Window names (commit, analyze, run) differ from profile keys (git, analyst, runner).
+func resolveRoleAlias(role string) string {
+	switch role {
+	case "commit":
+		return "git"
+	case "analyze":
+		return "analyst"
+	case "run":
+		return "runner"
+	default:
+		return role
+	}
+}
+
 // ResolveTools expands a role's tool profile into a flat tool list.
 func ResolveTools(role string) []string {
 	cfg := Config()
-	profile, ok := cfg.ToolProfiles[role]
+	profile, ok := cfg.ToolProfiles[resolveRoleAlias(role)]
 	if !ok {
 		return nil
 	}

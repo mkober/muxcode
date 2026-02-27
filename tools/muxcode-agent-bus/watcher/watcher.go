@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -28,11 +29,26 @@ type Watcher struct {
 	hasRunningSpawns bool
 	lastProcSize     int64
 	lastSpawnSize    int64
+	// Ollama health monitoring
+	ollamaRoles     []string // populated once in New()
+	lastOllamaCheck int64    // 30s interval
+	ollamaFailCount int      // consecutive probe failures
+	ollamaWasDown   bool     // for recovery detection
+	ollamaRestarts  int      // cap at 3 to prevent restart loops
+	ollamaURL       string   // Ollama base URL
+	ollamaModel     string   // Ollama model name
 }
 
 // New creates a new Watcher for the given session.
 func New(session string, pollSecs, debounceSecs int) *Watcher {
 	now := time.Now().Unix()
+
+	// Discover which roles use local LLM
+	ollamaRoles := bus.LocalLLMRoles()
+
+	// Read Ollama config for health probes
+	ollamaCfg := bus.DefaultOllamaConfig()
+
 	return &Watcher{
 		session:          session,
 		pollInterval:     time.Duration(pollSecs) * time.Second,
@@ -42,6 +58,10 @@ func New(session string, pollSecs, debounceSecs int) *Watcher {
 		lastAlertKey:     make(map[string]int64),
 		lastLoopCheck:    now, // skip first interval — avoids stale alerts on startup
 		lastCompactCheck: now, // skip first interval — avoids stale alerts on startup
+		lastOllamaCheck:  now, // skip first interval
+		ollamaRoles:      ollamaRoles,
+		ollamaURL:        ollamaCfg.BaseURL,
+		ollamaModel:      ollamaCfg.Model,
 	}
 }
 
@@ -54,6 +74,9 @@ func (w *Watcher) Run() error {
 	fmt.Printf("  Bus: %s\n", busDir)
 	fmt.Printf("  Trigger: %s\n", w.triggerFile)
 	fmt.Printf("  Poll: %ds  Debounce: %ds\n", int(w.pollInterval.Seconds()), w.debounceSecs)
+	if len(w.ollamaRoles) > 0 {
+		fmt.Printf("  Ollama monitoring: %s (roles: %s)\n", w.ollamaURL, strings.Join(w.ollamaRoles, ", "))
+	}
 	fmt.Println()
 
 	for {
@@ -64,6 +87,7 @@ func (w *Watcher) Run() error {
 		w.checkSpawns()
 		w.checkLoops()
 		w.checkCompaction()
+		w.checkOllama()
 		time.Sleep(w.pollInterval)
 	}
 }
@@ -511,6 +535,131 @@ func (w *Watcher) checkCompaction() {
 	}
 
 	w.refreshInboxSizes()
+}
+
+// checkOllama runs Ollama health probes every 30 seconds for roles using local LLM.
+// Detection timeline: 30s first probe, 60s alert, 90s restart attempt.
+// Caps automatic restarts at 3 to prevent restart loops.
+func (w *Watcher) checkOllama() {
+	if len(w.ollamaRoles) == 0 {
+		return
+	}
+
+	now := time.Now().Unix()
+	if now-w.lastOllamaCheck < 30 {
+		return
+	}
+	w.lastOllamaCheck = now
+
+	// Run inference probe
+	err := bus.CheckOllamaInference(w.ollamaURL, w.ollamaModel, bus.OllamaProbeTimeout)
+
+	// Also check for agent failure sentinels
+	hasSentinels := bus.HasOllamaFailSentinel(w.session)
+
+	ts := time.Now().Format("15:04:05")
+
+	if err == nil && !hasSentinels {
+		// Healthy
+		if w.ollamaWasDown {
+			// Recovery detected
+			fmt.Printf("  %s  Ollama recovered — inference probe healthy\n", ts)
+			w.ollamaWasDown = false
+			w.ollamaFailCount = 0
+
+			alert := bus.FormatOllamaAlert("recovered", w.ollamaRoles, "Ollama is responsive again")
+			msg := bus.NewMessage("watcher", "edit", "event", "ollama-recovered", alert, "")
+			if sendErr := bus.Send(w.session, msg); sendErr != nil {
+				fmt.Fprintf(os.Stderr, "  [ollama] failed to send recovery alert: %v\n", sendErr)
+			}
+			w.refreshInboxSizes()
+		}
+		return
+	}
+
+	// Unhealthy
+	w.ollamaFailCount++
+	errMsg := ""
+	if err != nil {
+		errMsg = err.Error()
+	}
+	if hasSentinels {
+		if errMsg != "" {
+			errMsg += "; agent failure sentinels detected"
+		} else {
+			errMsg = "agent failure sentinels detected"
+		}
+	}
+
+	fmt.Printf("  %s  Ollama probe failure #%d: %s\n", ts, w.ollamaFailCount, errMsg)
+
+	// Second consecutive failure (60s) — send ollama-down alert
+	if w.ollamaFailCount == 2 && !w.ollamaWasDown {
+		w.ollamaWasDown = true
+
+		// Dedup via lastAlertKey with 600s cooldown
+		alertKey := bus.OllamaHealthAlertKey("down")
+		if lastTS, ok := w.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
+			w.lastAlertKey[alertKey] = now
+			alert := bus.FormatOllamaAlert("down", w.ollamaRoles, errMsg)
+			msg := bus.NewMessage("watcher", "edit", "event", "ollama-down", alert, "")
+			if sendErr := bus.Send(w.session, msg); sendErr != nil {
+				fmt.Fprintf(os.Stderr, "  [ollama] failed to send down alert: %v\n", sendErr)
+			}
+			w.refreshInboxSizes()
+		}
+	}
+
+	// Third consecutive failure (90s) — attempt restart
+	if w.ollamaFailCount == 3 {
+		if w.ollamaRestarts >= 3 {
+			// Cap reached — periodic alerts only
+			alertKey := bus.OllamaHealthAlertKey("down")
+			if lastTS, ok := w.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
+				w.lastAlertKey[alertKey] = now
+				alert := bus.FormatOllamaAlert("down", w.ollamaRoles,
+					fmt.Sprintf("Restart cap (3) reached. %s. Manual intervention required.", errMsg))
+				msg := bus.NewMessage("watcher", "edit", "event", "ollama-down", alert, "")
+				_ = bus.Send(w.session, msg)
+				w.refreshInboxSizes()
+			}
+			return
+		}
+
+		fmt.Printf("  %s  Attempting Ollama restart (#%d)...\n", ts, w.ollamaRestarts+1)
+		w.ollamaRestarts++
+
+		// Send restarting alert
+		alert := bus.FormatOllamaAlert("restarting", w.ollamaRoles,
+			fmt.Sprintf("Attempt %d/3 — killing and restarting ollama serve", w.ollamaRestarts))
+		msg := bus.NewMessage("watcher", "edit", "event", "ollama-restarting", alert, "")
+		_ = bus.Send(w.session, msg)
+		w.refreshInboxSizes()
+
+		// Attempt restart with 30s timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		restartErr := bus.RestartOllama(ctx, w.ollamaURL)
+		cancel()
+
+		if restartErr != nil {
+			fmt.Fprintf(os.Stderr, "  [ollama] restart failed: %v\n", restartErr)
+			return
+		}
+
+		fmt.Printf("  %s  Ollama restarted successfully, relaunching agents...\n", ts)
+
+		// Relaunch affected agents
+		for _, role := range w.ollamaRoles {
+			if restartErr := bus.RestartLocalAgent(w.session, role); restartErr != nil {
+				fmt.Fprintf(os.Stderr, "  [ollama] failed to restart agent %s: %v\n", role, restartErr)
+			} else {
+				fmt.Printf("  %s  Relaunched agent: %s\n", ts, role)
+			}
+		}
+
+		// Reset fail count to let the next probe cycle detect recovery
+		w.ollamaFailCount = 0
+	}
 }
 
 // formatWatcherBytes is a simple bytes formatter for watcher log lines.

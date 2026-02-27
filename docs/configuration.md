@@ -61,6 +61,14 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `MUXCODE_ROLES` | (empty) | Comma-separated extra roles to add to the known roles list |
 | `MUXCODE_SPLIT_LEFT` | `edit build test review deploy analyze commit watch` | See Window Layout above — also read by the bus binary for pane targeting |
 
+### Local LLM (Ollama)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_{ROLE}_CLI` | (unset) | Set to `local` to run a role via Ollama instead of Claude Code (e.g. `MUXCODE_GIT_CLI=local`) |
+| `MUXCODE_OLLAMA_MODEL` | `qwen2.5-coder:7b` | Default Ollama model for local LLM agents |
+| `MUXCODE_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
+
 ## Directory Structure
 
 ### Ephemeral (per-session)
@@ -74,7 +82,9 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 ├── proc/{id}.log          # Per-process output logs
 ├── spawn.jsonl            # Spawned agent entries
 ├── cron.jsonl             # Scheduled task entries
-└── cron-history.jsonl     # Cron execution history
+├── cron-history.jsonl     # Cron execution history
+├── subscriptions.jsonl    # Event subscription definitions
+└── webhook.pid            # Webhook server PID file (port:pid)
 ```
 
 Created by `muxcode-agent-bus init`, cleaned up by the tmux session-closed hook.
@@ -83,8 +93,10 @@ Created by `muxcode-agent-bus init`, cleaned up by the tmux session-closed hook.
 
 ```
 .muxcode/memory/
-├── shared.md              # Cross-agent shared learnings
-└── {role}.md              # Per-agent learnings
+├── shared.md              # Cross-agent shared learnings (active, today)
+├── {role}.md              # Per-agent learnings (active, today)
+└── {role}/                # Daily archives (lazy rotation)
+    └── YYYY-MM-DD.md      # Archived memory for that date (30-day retention)
 ```
 
 Created on first `muxcode-agent-bus init` in the project directory.
@@ -97,10 +109,15 @@ Created on first `muxcode-agent-bus init` in the project directory.
 ├── settings.json          # Claude Code hooks template
 ├── tmux.conf              # Tmux snippet to source
 ├── nvim.lua               # Reference nvim snippet (not auto-loaded — copy relevant sections to your nvim config manually)
-└── agents/                # User global agent definitions
-    ├── code-editor.md
-    ├── code-builder.md
-    └── ...
+├── agents/                # User global agent definitions
+│   ├── code-editor.md
+│   ├── code-builder.md
+│   └── ...
+├── skills/                # User global skill definitions
+│   └── ...
+└── context.d/             # User global context files
+    ├── shared/            # Applied to all roles
+    └── {role}/            # Role-specific context
 ```
 
 ## Per-Project Config
