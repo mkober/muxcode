@@ -931,6 +931,15 @@ muxcode-agent-bus skill prompt <role>
 
 **Resolution order:** `.muxcode/skills/` (project) > `~/.config/muxcode/skills/` (user) > `skills/` (defaults). Project skills shadow user skills by name.
 
+#### Built-in skills
+
+| Skill | Roles | Description |
+|-------|-------|-------------|
+| `git-commit-conventions` | commit, edit | Commit message format and git workflow conventions |
+| `go-testing` | test, build | Go testing patterns and conventions |
+| `code-review-checklist` | review | Code review quality checklist |
+| `jira-pr-comment` | git | Post a comment on a Jira issue when a PR is created. Extracts the Jira key from the branch name (e.g. `DATA-456-*`, `PBP1-4365-*`) and posts PR link + diff stats via the Atlassian REST API. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` env vars — skips silently if missing. |
+
 ### `muxcode-agent-bus tools`
 
 Resolve and display the tool profile for a role.

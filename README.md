@@ -109,6 +109,7 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 - **Session compaction** — Agents can snapshot their context to memory, enabling long-running sessions without losing history.
 - **Session inspection** — Query any agent's status, message history, or busy state programmatically from the CLI.
 - **Pre-commit safeguards** — Commit delegation is blocked when other agents have pending work, preventing incomplete commits.
+- **Jira integration** — The `jira-pr-comment` skill automatically posts a comment on the corresponding Jira issue when a PR is created, linking the PR with diff stats. Triggered by the git-manager agent when the branch name starts with a Jira key (e.g. `DATA-456-add-validation`).
 
 See the [Architecture](docs/architecture.md) and [Agent Bus](docs/agent-bus.md) docs for the full details.
 

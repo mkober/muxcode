@@ -69,6 +69,14 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `MUXCODE_OLLAMA_MODEL` | `qwen2.5-coder:7b` | Default Ollama model for local LLM agents |
 | `MUXCODE_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
 
+### Integrations
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JIRA_BASE_URL` | (unset) | Atlassian instance URL (e.g. `https://your-org.atlassian.net`). Required for the `jira-pr-comment` skill. |
+| `JIRA_USER_EMAIL` | (unset) | Atlassian account email for API authentication |
+| `JIRA_API_TOKEN` | (unset) | Atlassian API token ([create one here](https://id.atlassian.com/manage-profile/security/api-tokens)) |
+
 ## Directory Structure
 
 ### Ephemeral (per-session)
