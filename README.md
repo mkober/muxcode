@@ -249,6 +249,58 @@ For smaller models that struggle with structured tool calling, the standalone `m
 
 See [Agents](docs/agents.md#local-llm-agent-ollama) for the full reference.
 
+## Skills
+
+Skills are reusable instruction sets defined as markdown files with YAML frontmatter. They auto-inject into agent prompts based on role, giving agents domain-specific knowledge without editing agent definitions.
+
+### Built-in skills
+
+| Skill | Roles | Description |
+|-------|-------|-------------|
+| `git-commit-conventions` | commit, edit | Commit message format and git workflow conventions |
+| `go-testing` | test, build | Go testing patterns and conventions |
+| `code-review-checklist` | review | Code review quality checklist |
+| `jira-pr-comment` | git | Post PR details as a comment on the corresponding Jira issue |
+
+### Resolution order
+
+1. `.muxcode/skills/` — project-local (highest priority, shadows by name)
+2. `~/.config/muxcode/skills/` — user global
+3. `skills/` — installed defaults
+
+### Creating skills
+
+```bash
+muxcode-agent-bus skill create my-skill "Description" --roles build,test --tags ci,workflow "Skill body here"
+```
+
+Or drop a markdown file in `.muxcode/skills/`:
+
+```markdown
+---
+name: my-skill
+description: What the skill does
+roles: [build, test]
+tags: [ci, workflow]
+---
+
+Instructions for the agent...
+```
+
+### Jira integration
+
+The `jira-pr-comment` skill enables the git-manager agent to post a comment on a Jira issue when a PR is created. It extracts the Jira key from the branch name (e.g. `DATA-456-add-validation` → `DATA-456`) and posts the PR link with diff stats via the Atlassian REST API.
+
+Add to `.muxcode/config` or `~/.config/muxcode/config`:
+
+```bash
+JIRA_BASE_URL="https://your-org.atlassian.net"
+JIRA_USER_EMAIL="you@example.com"
+JIRA_API_TOKEN="your-atlassian-api-token"
+```
+
+If the env vars are missing or the branch name doesn't start with a Jira key, the skill skips silently.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md) — System design, data flow, and hook chains
