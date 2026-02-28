@@ -23,11 +23,11 @@ If any are missing, skip the Jira comment silently — do not treat it as an err
 
 1. **Check env vars** — if `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, or `JIRA_API_TOKEN` is empty or unset, skip silently.
 
-2. **Extract Jira key from branch name** — get the current branch name and match the leading Jira key pattern (`PROJ-123`). The key is one or more uppercase letters, a hyphen, then one or more digits at the start of the branch name. Example: `DATA-456-add-validation` yields `DATA-456`. If no match, skip silently.
+2. **Extract Jira key from branch name** — get the current branch name and match the leading Jira key pattern (`PROJ-123`). The key starts with an uppercase letter followed by uppercase letters or digits, a hyphen, then one or more digits. Examples: `DATA-456-add-validation` yields `DATA-456`, `PBP1-4365-fix-bug` yields `PBP1-4365`. If no match, skip silently.
 
    ```bash
    branch=$(git rev-parse --abbrev-ref HEAD)
-   jira_key=$(echo "$branch" | grep -oE '^[A-Z]+-[0-9]+')
+   jira_key=$(echo "$branch" | grep -oE '^[A-Z][A-Z0-9]*-[0-9]+')
    ```
 
 3. **Gather PR metadata** — use `gh pr view` on the current branch:
