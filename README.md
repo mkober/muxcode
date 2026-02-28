@@ -65,20 +65,28 @@ A live dashboard (F9) shows which agents are busy, idle, or waiting on messages,
 
 MUXcode ships with these default agents:
 
-| Window | Agent | What it does |
-|--------|-------|-------------|
-| edit | Code editor | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
-| build | Code builder | Compiles and packages your project |
-| test | Test runner | Runs your test suite and reports results |
-| review | Code reviewer | Reviews diffs for bugs, style issues, and improvements |
-| deploy | Infra deployer | Runs infrastructure deployments and diffs |
-| run | Command runner | Executes ad-hoc commands |
-| watch | Log watcher | Monitors logs — local files, CloudWatch, Kubernetes, Docker |
-| commit | Git manager | Handles all git operations — commits, branches, rebases, pushes |
-| analyze | Editor analyst | Watches file changes and provides codebase analysis |
-| status | Dashboard | Live TUI showing agent status (not an AI agent) |
+| Window | Agent | Default model | Local LLM | What it does |
+|--------|-------|---------------|-----------|-------------|
+| edit | Code editor | Claude Code | `MUXCODE_EDIT_CLI=local` | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
+| build | Code builder | Claude Code | `MUXCODE_BUILD_CLI=local` | Compiles and packages your project |
+| test | Test runner | Claude Code | `MUXCODE_TEST_CLI=local` | Runs your test suite and reports results |
+| review | Code reviewer | Claude Code | `MUXCODE_REVIEW_CLI=local` | Reviews diffs for bugs, style issues, and improvements |
+| deploy | Infra deployer | Claude Code | `MUXCODE_DEPLOY_CLI=local` | Runs infrastructure deployments and diffs |
+| run | Command runner | Claude Code | `MUXCODE_RUN_CLI=local` | Executes ad-hoc commands |
+| watch | Log watcher | Claude Code | `MUXCODE_WATCH_CLI=local` | Monitors logs — local files, CloudWatch, Kubernetes, Docker |
+| commit | Git manager | Claude Code | `MUXCODE_GIT_CLI=local` | Handles all git operations — commits, branches, rebases, pushes |
+| analyze | Editor analyst | Claude Code | `MUXCODE_ANALYZE_CLI=local` | Watches file changes and provides codebase analysis |
+| status | Dashboard | — | — | Live TUI showing agent status (not an AI agent) |
 
-Additional roles available via spawned agents or custom windows: **docs** (documentation writer), **research** (web search and codebase exploration), **pr-read** (PR review analysis, runs in the commit window).
+Additional roles available via spawned agents or custom windows:
+
+| Role | Default model | Local LLM | What it does |
+|------|---------------|-----------|-------------|
+| docs | Claude Code | `MUXCODE_DOCS_CLI=local` | Documentation writer |
+| research | Claude Code | `MUXCODE_RESEARCH_CLI=local` | Web search and codebase exploration |
+| pr-read | Claude Code | *(uses commit window)* | PR review analysis, runs in the commit window |
+
+All agents default to Claude Code. Any role can be switched to a local LLM via [Ollama](https://ollama.com/) by setting its override variable to `local` in `.muxcode/config`. Per-role model selection is also supported via `MUXCODE_{ROLE}_MODEL` (falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, the agent falls back to Claude Code automatically.
 
 Each agent has constrained tool permissions — the build agent can run builds but can't edit files, the commit agent can run git but can't deploy infrastructure. This separation prevents agents from stepping on each other.
 
