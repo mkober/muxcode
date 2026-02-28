@@ -68,8 +68,8 @@ MUXcode ships with these default agents:
 | Window | Agent | Default model | Local LLM | What it does |
 |--------|-------|---------------|-----------|-------------|
 | edit | Code editor | Claude Code | `MUXCODE_EDIT_CLI=local` | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
-| build | Code builder | Claude Code | `MUXCODE_BUILD_CLI=local` | Compiles and packages your project |
-| test | Test runner | Claude Code | `MUXCODE_TEST_CLI=local` | Runs your test suite and reports results |
+| build | Code builder | Local LLM (Ollama) | `MUXCODE_BUILD_CLI` | Compiles and packages your project |
+| test | Test runner | Local LLM (Ollama) | `MUXCODE_TEST_CLI` | Runs your test suite and reports results |
 | review | Code reviewer | Claude Code | `MUXCODE_REVIEW_CLI=local` | Reviews diffs for bugs, style issues, and improvements |
 | deploy | Infra deployer | Claude Code | `MUXCODE_DEPLOY_CLI=local` | Runs infrastructure deployments and diffs |
 | run | Command runner | Claude Code | `MUXCODE_RUN_CLI=local` | Executes ad-hoc commands |
@@ -86,7 +86,7 @@ Additional roles available via spawned agents or custom windows:
 | research | Claude Code | `MUXCODE_RESEARCH_CLI=local` | Web search and codebase exploration |
 | pr-read | Claude Code | *(uses commit window)* | PR review analysis, runs in the commit window |
 
-All agents default to Claude Code. Any role can be switched to a local LLM via [Ollama](https://ollama.com/) by setting its override variable to `local` in `.muxcode/config`. Per-role model selection is also supported via `MUXCODE_{ROLE}_MODEL` (falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, the agent falls back to Claude Code automatically.
+Most agents default to Claude Code. Build and test default to a local LLM via [Ollama](https://ollama.com/) since they primarily execute structured commands where a small model is sufficient. Any role can be switched between Claude Code and a local LLM by setting its override variable in `.muxcode/config` (e.g. `MUXCODE_GIT_CLI=local`). Per-role model selection is also supported via `MUXCODE_{ROLE}_MODEL` (falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
 
 Each agent has constrained tool permissions — the build agent can run builds but can't edit files, the commit agent can run git but can't deploy infrastructure. This separation prevents agents from stepping on each other.
 
@@ -225,6 +225,18 @@ Any agent role can run via a local LLM (Ollama) instead of Claude Code. This is 
 | `MUXCODE_{ROLE}_CLI` | (unset) | Set to `local` to use Ollama (e.g. `MUXCODE_GIT_CLI=local`) |
 | `MUXCODE_OLLAMA_MODEL` | `qwen2.5-coder:7b` | Ollama model name |
 | `MUXCODE_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
+
+### Recommended models
+
+| Model | Size | Best for | Notes |
+|-------|------|----------|-------|
+| `qwen2.5-coder:7b` | 4.7 GB | Build, test, git, general agent tasks | Default model — strong code understanding at low resource cost |
+| `qwen2.5-coder:14b` | 9.0 GB | Review, analysis, docs | Better reasoning for tasks that need more nuance |
+| `deepseek-coder-v2:16b` | 8.9 GB | Review, analysis, complex code tasks | Strong at code review and multi-file reasoning |
+| `codellama:7b` | 3.8 GB | Build, test, git | Lightweight alternative to Qwen for structured commands |
+| `llama3.1:8b` | 4.7 GB | General-purpose agent tasks | Good all-rounder when code specialization isn't critical |
+
+For most setups, `qwen2.5-coder:7b` is sufficient for command-execution roles (build, test, git, watch). Upgrade to a 14b+ model for roles that reason about code (review, analyze, docs).
 
 ### Health monitoring
 
