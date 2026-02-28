@@ -9,13 +9,13 @@
 # MUXCODE_SCAN_DEPTH=3
 
 # Windows to create (space-separated)
-# MUXCODE_WINDOWS="edit build test review deploy run commit analyze status"
+# MUXCODE_WINDOWS="edit api build test review deploy run watch commit analyze"
 
 # Window-to-role mapping (space-separated key=value pairs)
 # MUXCODE_ROLE_MAP="run=runner commit=git analyze=analyst"
 
 # Windows with left pane + agent in pane 1 (space-separated)
-# MUXCODE_SPLIT_LEFT="edit analyze commit"
+# MUXCODE_SPLIT_LEFT="edit api build test review deploy run analyze commit watch"
 
 # Command to run in each new pane (e.g. activate a virtualenv)
 # MUXCODE_SHELL_INIT=""

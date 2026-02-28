@@ -531,6 +531,20 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(jq *)", "Bash(jq*)",
 				},
 			},
+			"api": {
+				Include:  []string{"bus", "readonly", "common"},
+				CdPrefix: true,
+				Tools: []string{
+					"Bash(curl*)", "Bash(wget*)", "Bash(http*)",
+					"Bash(jq*)", "Bash(python*)", "Bash(node*)",
+					"Bash(openssl*)", "Bash(base64*)",
+					"Bash(dig*)", "Bash(nslookup*)",
+					"Bash(echo *)",
+					"Bash(RESP=*)", "Bash(BODY=*)", "Bash(STATUS=*)", "Bash(DURATION=*)",
+					"Bash(mkdir *)", "Bash(rm *)",
+					"Write", "Edit",
+				},
+			},
 		},
 		EventChains: map[string]EventChain{
 			"deploy": {

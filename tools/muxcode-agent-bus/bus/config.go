@@ -9,12 +9,11 @@ import (
 
 // KnownRoles lists all valid agent roles.
 // Extended at runtime via MUXCODE_ROLES env var (comma-separated).
-// TODO: temporary test change — remove this comment
 var KnownRoles = []string{
 	"edit", "build", "test", "review",
 	"deploy", "run", "commit", "analyze",
 	"docs", "research", "watch", "pr-read",
-	"webhook",
+	"webhook", "api",
 }
 
 // splitLeftWindows lists windows that have a dedicated tool in the left pane.
@@ -30,6 +29,7 @@ var splitLeftWindows = map[string]bool{
 	"analyze": true,
 	"commit":  true,
 	"watch":   true,
+	"api":     true,
 }
 
 func init() {

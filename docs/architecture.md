@@ -205,7 +205,7 @@ The build-test-review and deploy-verify chains are **deterministic** — driven 
 └────────────────────┴────────────────────┘
 ```
 
-### Split-Left Windows (edit, build, test, review, deploy, analyze, commit, watch)
+### Split-Left Windows (edit, build, test, review, deploy, analyze, commit, watch, api)
 ```
 ┌────────────────────┬────────────────────┐
 │                    │                    │
@@ -265,6 +265,7 @@ Each split-left window runs a poller script in the left pane that displays role-
 | watch | `muxcode-watch-log.sh` | `watch-history.jsonl` |
 | commit | `muxcode-commit-log.sh` / `muxcode-git-status.sh` | `commit-history.jsonl` / git |
 | analyze | `muxcode-analyze-log.sh` | `log.jsonl` (filtered: `from=analyze`, `type=response`) |
+| api | `muxcode-api-log.sh` | `.muxcode/api/history.jsonl` |
 
 Pollers share a common pattern: `set -uo pipefail`, Dracula color scheme, `jq` primary with `python3` fallback, 5-second poll interval, clear-and-redraw via `\033[2J\033[H`.
 

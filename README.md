@@ -15,7 +15,7 @@ A multi-agent coding environment built on tmux — where you stay in the loop.
 
 ## What is MUXcode?
 
-MUXcode is a tmux session. Everything — your editor, the AI agents, the message bus, the dashboard — lives inside tmux windows. You launch it, and a session spins up with nine windows, each bound to a function key. F1 is your edit window. F2 is build. F3 is test. You get the idea.
+MUXcode is a tmux session. Everything — your editor, the AI agents, the message bus, the dashboard — lives inside tmux windows. You launch it, and a session spins up with ten windows, each bound to a function key. F1 is your edit window. F2 is build. F3 is test. You get the idea.
 
 You work in neovim with an AI editing agent alongside you in the edit window. When you need a build, tests, a code review, or a commit, you tell the edit agent and it delegates to a specialist in another window. Each step of the workflow has its own agent, and they work in parallel while you keep editing. Press a function key to watch any agent work, or stay in your editor and let results flow back. Nothing happens unless you ask for it.
 
@@ -26,7 +26,7 @@ Everything runs locally inside that tmux session. The agents coordinate through 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  F1 edit  F2 build  F3 test  F4 review  F5 deploy  F6 run  │
-│  F7 commit  F8 analyze  F9 status                           │
+│  F7 commit  F8 analyze  F9 api  F10 status                   │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
@@ -76,6 +76,7 @@ MUXcode ships with these default agents:
 | watch | Log watcher | Claude Code | `MUXCODE_WATCH_CLI=local` | Monitors logs — local files, CloudWatch, Kubernetes, Docker |
 | commit | Git manager | Claude Code | `MUXCODE_GIT_CLI=local` | Handles all git operations — commits, branches, rebases, pushes |
 | analyze | Editor analyst | Claude Code | `MUXCODE_ANALYZE_CLI=local` | Watches file changes and provides codebase analysis |
+| api | API tester | Claude Code | `MUXCODE_API_CLI=local` | Manages API collections, executes requests, tracks history |
 | status | Dashboard | — | — | Live TUI showing agent status (not an AI agent) |
 
 Additional roles available via spawned agents or custom windows:

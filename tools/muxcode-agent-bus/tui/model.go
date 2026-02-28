@@ -28,7 +28,7 @@ type Dashboard struct {
 func NewDashboard(session string, refresh int) *Dashboard {
 	windows := sessionWindows(session)
 	if len(windows) == 0 {
-		// Fallback: use all known roles except console
+		// Fallback: use all known roles
 		windows = make([]string, len(bus.KnownRoles))
 		copy(windows, bus.KnownRoles)
 	}
@@ -41,8 +41,9 @@ func NewDashboard(session string, refresh int) *Dashboard {
 	}
 }
 
-// sessionWindows queries tmux for the list of windows in the session,
-// excluding the "console" window (which runs the dashboard itself).
+// sessionWindows queries tmux for the list of windows in the session.
+// All windows are included — the dashboard excludes itself by not being
+// in the window list (it runs in a standalone terminal or tmux popup).
 func sessionWindows(session string) []string {
 	out, err := exec.Command("tmux", "list-windows", "-t", session, "-F", "#W").Output()
 	if err != nil {
@@ -51,7 +52,7 @@ func sessionWindows(session string) []string {
 	var windows []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		w := strings.TrimSpace(line)
-		if w != "" && w != "console" {
+		if w != "" {
 			windows = append(windows, w)
 		}
 	}

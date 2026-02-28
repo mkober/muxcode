@@ -37,7 +37,7 @@ Send a message to another agent's inbox.
 muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait]
 ```
 
-- `<to>` — target agent role (edit, build, test, review, deploy, run, commit, analyze)
+- `<to>` — target agent role (edit, build, test, review, deploy, run, commit, analyze, api)
 - `<action>` — action name (build, test, review, deploy, run, commit, analyze, notify, etc.)
 - `<payload>` — message content (quoted string)
 - `--type TYPE` — message type: `request` (default), `response`, or `event`
@@ -977,6 +977,58 @@ muxcode-agent-bus is-locked [role]
 - `unlock` — remove the lock file
 - `is-locked` — check lock status (exits 0 if locked, 1 if not)
 
+### `muxcode-agent-bus api`
+
+Manage API collections, environments, and request history. Data is stored in `.muxcode/api/` as JSON files.
+
+#### Data files
+
+| Path | Format | Description |
+|------|--------|-------------|
+| `.muxcode/api/environments/<name>.json` | JSON | Environment config (base URL, headers, variables) |
+| `.muxcode/api/collections/<name>.json` | JSON | Request collection (name, description, requests) |
+| `.muxcode/api/history.jsonl` | JSONL | Append-only log of executed requests |
+
+#### Environment management
+
+```bash
+muxcode-agent-bus api env list
+muxcode-agent-bus api env get <name>
+muxcode-agent-bus api env create <name> --base-url <url>
+muxcode-agent-bus api env set <name> <key> <value>
+muxcode-agent-bus api env delete <name>
+```
+
+#### Collection management
+
+```bash
+muxcode-agent-bus api collection list
+muxcode-agent-bus api collection get <name>
+muxcode-agent-bus api collection create <name> [--description desc] [--base-url url]
+muxcode-agent-bus api collection delete <name>
+muxcode-agent-bus api collection add-request <collection> <name> --method GET --path /endpoint [--header key:value] [--body json] [--query key=value]
+muxcode-agent-bus api collection remove-request <collection> <name>
+```
+
+#### History
+
+```bash
+muxcode-agent-bus api history [--collection name] [--limit N]
+```
+
+#### Import
+
+```bash
+muxcode-agent-bus api import <source-dir>
+```
+
+Copies environments and collections from a source directory into `.muxcode/api/`. Existing files are not overwritten. Example:
+
+```bash
+# Import the bundled httpbin example
+muxcode-agent-bus api import examples/api
+```
+
 ## Environment Variables
 
 | Variable | Description |
@@ -985,7 +1037,7 @@ muxcode-agent-bus is-locked [role]
 | `AGENT_ROLE` | Current agent's role name (auto-detected from tmux window if unset) |
 | `BUS_MEMORY_DIR` | Path to persistent memory directory (defaults to `.muxcode/memory/`) |
 | `MUXCODE_ROLES` | Comma-separated extra roles to add to the known roles list |
-| `MUXCODE_SPLIT_LEFT` | Space-separated windows with agent in pane 1 (defaults: edit analyze commit) |
+| `MUXCODE_SPLIT_LEFT` | Space-separated windows with agent in pane 1 (defaults: edit api build test review deploy run analyze commit watch) |
 
 ## Message Format
 
@@ -1032,7 +1084,7 @@ Driven by `muxcode-bash-hook.sh`, not by agent LLMs:
 
 Pane targeting is consolidated in `bus/config.go`:
 
-- **Split-left windows** (default: edit, analyze, commit): agent runs in pane 1
+- **Split-left windows** (default: edit, api, build, test, review, deploy, run, analyze, commit, watch): agent runs in pane 1
 - **All other windows**: agent runs in pane 0
 - Override via `MUXCODE_SPLIT_LEFT` env var
 
@@ -1065,6 +1117,7 @@ tools/muxcode-agent-bus/
 │   ├── tools.go       # Tool definitions for local LLM (BuildToolDefs, IsToolAllowed)
 │   ├── executor.go    # Tool executor for local LLM (bash, read, glob, grep, write, edit)
 │   ├── agent.go       # Local LLM agentic loop (inbox poll, tool-call loop, history)
+│   ├── api.go         # API testing (environments, collections, history, import)
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization and re-init purge
 ├── cmd/               # Subcommand handlers

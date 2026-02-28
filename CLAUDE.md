@@ -114,6 +114,7 @@ Test: `cd tools/muxcode-agent-bus && go test ./...`
 | `bus/profile.go` | `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`, `ChainShouldNotifyAnalyst()` (`NotifyAnalystOn` field) |
 | `bus/search.go` | BM25: `tokenize()`, `stem()`, `buildCorpus()`, `bm25Score()`, `SearchMemoryBM25()`, `SearchMemoryWithOptions()` |
 | `bus/rotation.go` | `NeedsRotation()`, `RotateMemory()`, `PurgeOldArchives()`, `ReadMemoryWithHistory()`, `AllMemoryEntriesWithArchives()`, `ListMemoryRoles()` |
+| `bus/api.go` | API testing: `Environment`, `Collection`, `Request`, `ApiHistoryEntry` structs, CRUD, `ImportApiDir()`, formatters |
 | `bus/cron.go` | Cron scheduling: structs, parsing, CRUD, execution, formatting |
 | `bus/proc.go` | `StartProc()`, `CheckProcAlive()`, `RefreshProcStatus()`, `StopProc()`, `CleanFinished()` |
 | `bus/spawn.go` | `StartSpawn()`, `StopSpawn()`, `RefreshSpawnStatus()`, `GetSpawnResult()`, `CleanFinishedSpawns()` |

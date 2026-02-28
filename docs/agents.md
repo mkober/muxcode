@@ -39,6 +39,7 @@ The three-tier search (project-local → user config → install default) runs i
 | docs | doc-writer.md | docs | Generate and maintain documentation |
 | research | code-researcher.md | research | Search web, explore codebases, answer questions |
 | pr-read | pr-reader.md | commit *(via git-manager)* | Analyze PR review feedback and report suggested fixes |
+| api | api-tester.md | api | Manage API collections, execute requests, track history |
 
 ## Agent Categories
 
@@ -195,7 +196,7 @@ cp ~/.config/muxcode/agents/code-builder.md .claude/agents/code-builder.md
 
 1. Add the window to your config:
    ```bash
-   MUXCODE_WINDOWS="edit build test review deploy run commit analyze docs status"
+   MUXCODE_WINDOWS="edit build test review deploy run commit analyze api docs status"
    ```
 
 2. Add a role mapping if window name differs from role:
@@ -228,6 +229,7 @@ Agents have scoped Bash permissions for autonomous operation. The default permis
 - **analyst**: bus commands + Read, Glob, Grep (no shell commands)
 - **watch**: `tail`, `journalctl`, `aws logs`, `kubectl logs`, `docker logs`, `stern`, `ssh`, `lnav` (read-only log tools)
 - **pr-read**: `gh pr view/checks/diff/review/list/status`, `gh api`, `git diff/log/status/show/blame/rev-parse/branch`, `jq` (read-only: scoped gh + git, no Write/Edit)
+- **api**: `curl`, `wget`, `http`, `jq`, `python`, `node`, `openssl`, `base64`, `dig`, `nslookup`, `Write`, `Edit`
 
 All agents have access to `muxcode-agent-bus` commands.
 

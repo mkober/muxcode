@@ -1,0 +1,53 @@
+{
+  "name": "httpbin-basics",
+  "description": "Basic HTTP method tests against httpbin.org",
+  "base_url": "https://httpbin.org",
+  "requests": [
+    {
+      "name": "get-test",
+      "method": "GET",
+      "path": "/get",
+      "headers": {},
+      "query": {
+        "source": "muxcode"
+      }
+    },
+    {
+      "name": "post-json",
+      "method": "POST",
+      "path": "/post",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": "{\"message\": \"hello from muxcode\"}"
+    },
+    {
+      "name": "status-codes",
+      "method": "GET",
+      "path": "/status/200",
+      "headers": {}
+    },
+    {
+      "name": "headers-echo",
+      "method": "GET",
+      "path": "/headers",
+      "headers": {
+        "X-Custom-Header": "muxcode-test"
+      }
+    },
+    {
+      "name": "basic-auth",
+      "method": "GET",
+      "path": "/basic-auth/{{test_user}}/{{test_pass}}",
+      "headers": {}
+    },
+    {
+      "name": "delay",
+      "method": "GET",
+      "path": "/delay/1",
+      "headers": {}
+    }
+  ],
+  "created_at": 0,
+  "updated_at": 0
+}

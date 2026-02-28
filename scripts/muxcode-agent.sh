@@ -99,6 +99,7 @@ agent_name() {
     research) echo "code-researcher" ;;
     watch)    echo "log-watcher" ;;
     pr-read)  echo "pr-reader" ;;
+    api)      echo "api-tester" ;;
   esac
 }
 
@@ -205,6 +206,9 @@ case "$ROLE" in
     ;;
   pr-read)
     PROMPT="You are the pr-read agent. Read GitHub PR reviews and CI check failures, then report suggested fixes to the edit agent. Use gh pr view, gh pr checks, gh api to read feedback. Never modify files directly — report suggestions only. The edit agent will prompt the user before making changes."
+    ;;
+  api)
+    PROMPT="You are the API testing agent. Manage API collections and environments using muxcode-agent-bus api subcommands. Execute requests via curl with jq formatting. Support variable substitution from environments. Log requests to history. Report results (status, timing, response) to the edit agent."
     ;;
   *)
     PROMPT="You are a general-purpose coding assistant."

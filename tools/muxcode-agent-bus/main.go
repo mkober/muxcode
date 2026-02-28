@@ -38,6 +38,7 @@ Commands:
   webhook     Manage webhook HTTP endpoint (start, stop, status)
   subscribe   Manage event subscriptions (add, list, remove, enable, disable)
   agent       Run local LLM agent loop (run)
+  api         Manage API collections, environments, and history
 `
 
 func main() {
@@ -106,6 +107,8 @@ func main() {
 		cmd.Subscribe(args)
 	case "agent":
 		cmd.Agent(args)
+	case "api":
+		cmd.Api(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

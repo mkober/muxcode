@@ -1,0 +1,11 @@
+{
+  "name": "httpbin",
+  "base_url": "https://httpbin.org",
+  "headers": {},
+  "variables": {
+    "test_user": "muxcode-demo",
+    "test_pass": "demo123"
+  },
+  "created_at": 0,
+  "updated_at": 0
+}

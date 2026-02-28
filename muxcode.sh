@@ -9,7 +9,6 @@
 # The edit window gets a vertical split: editor (left) + agent (right).
 # Split-left windows get: tool (left) + agent (right).
 # Other agent windows split: terminal (left) + agent (right).
-# The console window runs the agent dashboard TUI (left, 50%) + bash shell (right, 50%).
 
 set -euo pipefail
 
@@ -33,9 +32,9 @@ load_config
 # Configuration with defaults
 PROJECTS_DIR="${MUXCODE_PROJECTS_DIR:-$HOME}"
 SCAN_DEPTH="${MUXCODE_SCAN_DEPTH:-3}"
-WINDOWS="${MUXCODE_WINDOWS:-edit build test review deploy run watch commit analyze console}"
+WINDOWS="${MUXCODE_WINDOWS:-edit api build test review deploy run watch commit analyze}"
 ROLE_MAP="${MUXCODE_ROLE_MAP:-run=runner commit=git analyze=analyst}"
-SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-edit build test review deploy run analyze commit watch}"
+SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-edit api build test review deploy run analyze commit watch}"
 SHELL_INIT="${MUXCODE_SHELL_INIT:-}"
 EDITOR="${MUXCODE_EDITOR:-nvim}"
 AGENT_CLI="${MUXCODE_AGENT_CLI:-claude}"
@@ -249,15 +248,7 @@ fi
 for WIN in "${WIN_ARRAY[@]:1}"; do
   ROLE="$(agent_role "$WIN")"
 
-  if [ "$WIN" = "console" ]; then
-    # Console window: dashboard TUI (left, 80%) + bash shell (right, 20%)
-    tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN"
-    tmux send-keys -t "$SESSION:$WIN" "muxcode-agent-bus dashboard" Enter
-    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR" -l 50%
-    send_init "$SESSION:$WIN.1"
-    tmux select-pane -t "$SESSION:$WIN.0"
-  elif [ "$WIN" = "edit" ]; then
+  if [ "$WIN" = "edit" ]; then
     # Edit window (if not first): editor + agent
     tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN"
@@ -353,6 +344,17 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
       tmux send-keys -t "$SESSION:$WIN" "muxcode-analyze-log.sh" Enter
     fi
     tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR" -l 75%
+    send_init "$SESSION:$WIN.1"
+    tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
+    tmux select-pane -t "$SESSION:$WIN.1"
+  elif [ "$WIN" = "api" ] && is_split_left "$WIN"; then
+    # API window: api history log (left) + agent (right)
+    tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
+    send_init "$SESSION:$WIN"
+    if command -v muxcode-api-log.sh &>/dev/null; then
+      tmux send-keys -t "$SESSION:$WIN" "muxcode-api-log.sh" Enter
+    fi
+    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN.1"
     tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
     tmux select-pane -t "$SESSION:$WIN.1"
