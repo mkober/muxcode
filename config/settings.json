@@ -58,6 +58,10 @@
     "allow": [
       "Bash(muxcode-agent-bus *)",
       "Bash(./bin/muxcode-agent-bus *)",
+      "Bash(cat /tmp/muxcode-*)",
+      "Bash(cat /private/tmp/muxcode-*)",
+      "Read(/tmp/muxcode-*)",
+      "Read(/private/tmp/muxcode-*)",
       "Write(/tmp/muxcode-*)",
       "Write(/private/tmp/muxcode-*)"
     ]
