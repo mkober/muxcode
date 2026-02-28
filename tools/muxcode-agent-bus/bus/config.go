@@ -235,6 +235,11 @@ func WebhookPidPath(session string) string {
 	return filepath.Join(BusDir(session), "webhook.pid")
 }
 
+// WatcherPidPath returns the path to the watcher PID file.
+func WatcherPidPath(session string) string {
+	return filepath.Join(BusDir(session), "watcher.pid")
+}
+
 // SubscriptionPath returns the subscriptions JSONL file path for a session.
 func SubscriptionPath(session string) string {
 	return filepath.Join(BusDir(session), "subscriptions.jsonl")

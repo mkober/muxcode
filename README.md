@@ -21,7 +21,7 @@ You work in neovim with an AI editing agent alongside you in the edit window. Wh
 
 The edit window is where you spend most of your time — neovim on the left, the edit agent on the right. Unlike the other agents, it doesn't run builds or tests or git commands directly. It helps you write code and dispatches work to the right specialist when you're ready. More copilot than autonomous assistant.
 
-Everything runs locally inside that tmux session. The agents coordinate through plain text files in `/tmp/` — no servers, no databases, no containers. Each agent is a [Claude Code](https://claude.ai/code) session — that's the only external dependency. Alternative AI providers and local models are on the roadmap, but today MUXcode is built on Claude Code.
+Everything runs locally inside that tmux session. The agents coordinate through plain text files in `/tmp/` — no servers, no databases, no containers. Most agents run as [Claude Code](https://claude.ai/code) sessions, but any role can be switched to a local LLM via [Ollama](https://ollama.com/) — useful for roles that primarily execute structured commands (git operations, builds, log monitoring) where a small model is sufficient and API costs add up.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -73,9 +73,12 @@ MUXcode ships with these default agents:
 | review | Code reviewer | Reviews diffs for bugs, style issues, and improvements |
 | deploy | Infra deployer | Runs infrastructure deployments and diffs |
 | run | Command runner | Executes ad-hoc commands |
+| watch | Log watcher | Monitors logs — local files, CloudWatch, Kubernetes, Docker |
 | commit | Git manager | Handles all git operations — commits, branches, rebases, pushes |
 | analyze | Editor analyst | Watches file changes and provides codebase analysis |
 | status | Dashboard | Live TUI showing agent status (not an AI agent) |
+
+Additional roles available via spawned agents or custom windows: **docs** (documentation writer), **research** (web search and codebase exploration), **pr-read** (PR review analysis, runs in the commit window).
 
 Each agent has constrained tool permissions — the build agent can run builds but can't edit files, the commit agent can run git but can't deploy infrastructure. This separation prevents agents from stepping on each other.
 
@@ -83,9 +86,15 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 
 ## Key features
 
+- **Local LLM support** — Any agent role can run via Ollama instead of Claude Code. Reduces API costs for structured-command roles (git, build, watch). Includes health monitoring with automatic Ollama restart on inference failure.
+- **Inline response delivery** — The `--wait` flag on send commands polls for responses and prints them to stdout as part of the same Bash tool result — no manual inbox checking needed.
 - **Skills and plugins** — Reusable instruction sets that auto-inject into agent prompts based on role. Create project-specific or global skills in markdown.
-- **Persistent memory with search** — Agents read and write to shared memory. Context survives across sessions and is searchable.
+- **Drop-in context files** — Per-role context injection via `context.d/` directories. Auto-detects 17 project types (Go, Node.js, Python, Rust, CDK, etc.) and injects relevant conventions.
+- **Persistent memory with search** — Agents read and write to shared memory with daily rotation. Context survives across sessions and is searchable via BM25 ranking.
 - **Event-driven automation chains** — Build-test-review and deploy-verify chains fire automatically via hook exit codes.
+- **Event subscriptions** — Fan-out after chain execution. Subscribe any agent to build/test/deploy events with outcome filtering.
+- **Spawned agents** — Create temporary agents for one-off tasks in their own tmux window. Results are collected automatically when the spawn completes.
+- **Webhook HTTP endpoint** — HTTP-to-bus bridge for external tools (CI/CD, GitHub webhooks, monitoring). Optional bearer token auth.
 - **Cron scheduling** — Run recurring tasks on intervals (`@every 5m`, `@hourly`, `@daily`). Managed by the bus watcher.
 - **Background process tracking** — Launch long-running processes, track their status, and get notified on completion.
 - **Loop detection guardrails** — The bus detects when agents get stuck in repetitive patterns and escalates to the edit agent.
@@ -116,7 +125,7 @@ Both MUXcode and autonomous AI tools solve the same coordination problems:
 
 **Human-in-the-loop, not fully autonomous.** MUXcode keeps you as the orchestrator. The edit agent delegates on your behalf — you see every step, you decide what happens next. Autonomous tools aim to minimize human involvement, handling planning, execution, and error recovery on their own.
 
-**Local-first, no infrastructure.** The message bus is JSONL files in `/tmp/`. The memory system is markdown files in your project directory. There's no database, no HTTP server, no container runtime. Autonomous tools typically require a runtime environment — SQLite, vector databases, sandboxed execution containers.
+**Local-first, minimal infrastructure.** The message bus is JSONL files in `/tmp/`. The memory system is markdown files in your project directory. There's no database, no container runtime. An optional webhook HTTP endpoint bridges external tools (CI/CD, GitHub) to the bus, but it's a single lightweight server — not a required runtime. Autonomous tools typically require a runtime environment — SQLite, vector databases, sandboxed execution containers.
 
 **Tmux-native, editor-centric.** You work in your actual editor alongside the agents. Press F2 to watch the build agent work. Press F7 to see the commit agent run git commands. There's no web UI, no chat interface separate from your terminal. Autonomous tools typically abstract the execution environment behind an API or web interface.
 
@@ -134,12 +143,11 @@ The tradeoff is clear: autonomous tools can handle more without you, but MUXcode
 
 - tmux >= 3.0
 - Go >= 1.22
-- [Claude Code](https://claude.ai/code) CLI (`claude`) — currently the only supported AI provider
+- [Claude Code](https://claude.ai/code) CLI (`claude`)
 - jq
 - Neovim
 - fzf (optional, for interactive project picker)
-
-> **Note:** MUXcode currently requires Claude Code as the AI backend. Support for alternative providers (OpenAI, local models via Ollama/LM Studio, etc.) is on the roadmap.
+- [Ollama](https://ollama.com/) (optional, for local LLM agents)
 
 ### Install
 
@@ -180,6 +188,45 @@ MUXcode uses a shell-sourceable config file. Resolution order:
 4. Built-in defaults
 
 See [Configuration](docs/configuration.md) for the full variable reference.
+
+## Local LLM agents
+
+Any agent role can run via a local LLM (Ollama) instead of Claude Code. This is useful for roles that primarily execute structured commands — git operations, builds, log monitoring — where a small model is sufficient and API costs add up.
+
+### Setup
+
+1. Install and start Ollama:
+   ```bash
+   brew install ollama
+   ollama serve
+   ollama pull qwen2.5-coder:7b
+   ```
+
+2. Set per-role overrides in `.muxcode/config`:
+   ```bash
+   MUXCODE_GIT_CLI=local       # commit agent uses local LLM
+   MUXCODE_BUILD_CLI=local     # build agent uses local LLM
+   ```
+
+3. Launch MUXcode normally — configured roles run via Ollama, others use Claude Code. If Ollama is unreachable at launch, the agent falls back to Claude Code automatically.
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_{ROLE}_CLI` | (unset) | Set to `local` to use Ollama (e.g. `MUXCODE_GIT_CLI=local`) |
+| `MUXCODE_OLLAMA_MODEL` | `qwen2.5-coder:7b` | Ollama model name |
+| `MUXCODE_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
+
+### Health monitoring
+
+The bus watcher monitors Ollama inference health (not just process liveness) and auto-restarts both Ollama and affected agents when inference hangs. Up to 3 automatic restarts per session, then periodic alerts for manual intervention.
+
+### LLM harness
+
+For smaller models that struggle with structured tool calling, the standalone `muxcode-llm-harness` binary provides guardrails: tool call filtering, loop prevention, structured task formatting, and corrective feedback. The launcher prefers the harness when available.
+
+See [Agents](docs/agents.md#local-llm-agent-ollama) for the full reference.
 
 ## Documentation
 

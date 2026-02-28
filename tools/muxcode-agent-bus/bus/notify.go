@@ -117,7 +117,15 @@ func markNotified(session, role string) {
 // Peeks at the inbox to include a summary of the latest message.
 // Skips notification for panes running a local LLM harness (they poll directly).
 // Deduplicates: skips if the inbox hasn't changed since the last notification.
+// Edit always uses passive display-message (status bar) — never send-keys.
 func Notify(session, role string) error {
+	// Edit always uses passive display-message — send-keys would inject
+	// text into the Claude Code prompt, conflicting with user input and
+	// causing conversation loops.
+	if role == "edit" {
+		return notifyEdit(session)
+	}
+
 	// Skip tmux send-keys for harness panes — the harness polls inbox directly
 	if IsHarnessActive(session, role) {
 		return nil
@@ -154,22 +162,56 @@ func Notify(session, role string) error {
 
 	msg := notifyText(session, role)
 
-	// Send the message text
+	// Send the message text literally, then Enter as a named key.
+	// Must use two send-keys calls because -l treats ALL args as literal
+	// (so "Enter" would be sent as the string "Enter", not the key).
+	// The named key Enter sends CR (0x0D) which Claude Code's raw terminal
+	// input handler recognizes as submit. A literal \n (0x0A) via -l does
+	// NOT trigger submission — it's interpreted as a line feed, not Enter.
+	// The dedup logic (file locking + cooldown) prevents concurrent callers
+	// from interleaving between the two calls.
 	cmd := exec.Command("tmux", "send-keys", "-t", pane, "-l", msg)
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "  [notify] send-keys to %s failed: %v\n", pane, err)
+		fmt.Fprintf(os.Stderr, "  [notify] send-keys text to %s failed: %v\n", pane, err)
+		return err
+	}
+	enter := exec.Command("tmux", "send-keys", "-t", pane, "Enter")
+	if err := enter.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter to %s failed: %v\n", pane, err)
 		return err
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	return nil
+}
 
-	// Send Enter to execute
-	cmd = exec.Command("tmux", "send-keys", "-t", pane, "Enter")
+// notifyEdit sends a passive notification for the edit role.
+// Always uses display-message (tmux status bar) — never send-keys.
+// Injecting text into the edit pane via send-keys causes problems:
+//   - Conflicts with user input if they're typing
+//   - Pollutes the conversation history with duplicate content
+//   - Can trigger loops when Claude misinterprets injected text as tasks
+//
+// Best-effort: errors are logged but not returned, since the message is
+// already in the inbox and will be seen on the next inbox read.
+func notifyEdit(session string) error {
+	unlock := lockNotify(session, "edit")
+	defer unlock()
+
+	if alreadyNotified(session, "edit") {
+		return nil
+	}
+
+	markNotified(session, "edit")
+
+	// Passive: display-message shows in the tmux status bar.
+	// -d 5000 keeps it visible for 5 seconds (default is often too brief).
+	// This does NOT inject text into the pane — safe at all times.
+	msg := notifyText(session, "edit")
+	cmd := exec.Command("tmux", "display-message", "-t", session, "-d", "5000",
+		fmt.Sprintf("\U0001f4ec %s", msg))
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "  [notify] send Enter to %s failed: %v\n", pane, err)
-		return err
+		fmt.Fprintf(os.Stderr, "  [notify] display-message for edit failed: %v\n", err)
 	}
-
 	return nil
 }
 

@@ -91,6 +91,8 @@ Both Go modules have **no external dependencies** (stdlib only).
 - **User-initiated commits**: git commits, pushes, and PR creation are never auto-triggered. The automated chain stops at review.
 - **Pre-commit safeguard**: commit delegation blocked when any agent has pending inbox, is busy, or has running procs/spawns. Bypass with `--force`.
 - **Auto-CC**: messages from build/test/review/deploy to non-edit agents are copied to edit inbox. Chain/subscription messages use `SendNoCC()` to avoid redundant CC.
+- **Edit notifications**: edit uses passive `display-message` (tmux status bar flash) — never `send-keys`. Injecting text into the edit pane conflicts with user input and causes conversation loops. See `notifyEdit()` in `bus/notify.go`.
+- **Edit inbox polling**: use `--wait` flag on send commands (`muxcode-agent-bus send <to> <action> "<msg>" --wait`) to poll the sender's inbox every 2 seconds until a response arrives (timeout: `MUXCODE_INBOX_POLL_TIMEOUT`, default 120s). The response is printed to stdout as part of the Bash tool result — no manual "check inbox" needed.
 - **System actions**: `loop-detected`, `compact-recommended`, `proc-complete`, `spawn-complete`, `ollama-down`, `ollama-recovered`, `ollama-restarting` are excluded from message loop detection (`isSystemAction()`).
 
 ## Code reference

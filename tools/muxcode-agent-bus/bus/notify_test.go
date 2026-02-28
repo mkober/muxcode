@@ -102,6 +102,73 @@ func TestIsHarnessActive_InvalidContent(t *testing.T) {
 	}
 }
 
+func TestNotify_EditUsesDisplayMessage(t *testing.T) {
+	// Notify(edit) uses display-message (status bar) instead of send-keys.
+	// Best-effort: returns nil even when tmux session doesn't exist.
+	err := Notify("nonexistent-session-xyz", "edit")
+	if err != nil {
+		t.Errorf("Notify(edit) should return nil (best-effort), got %v", err)
+	}
+}
+
+func TestNotifyEdit_Dedup(t *testing.T) {
+	session := "test-edit-dedup"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
+	defer os.RemoveAll(busDir)
+
+	// Write a message to the edit inbox
+	os.WriteFile(InboxPath(session, "edit"), []byte(`{"from":"build"}`+"\n"), 0644)
+
+	// First call should proceed (mark notified)
+	err := notifyEdit(session)
+	if err != nil {
+		t.Errorf("first notifyEdit should return nil, got %v", err)
+	}
+
+	// Second call with same inbox size should be deduplicated
+	err = notifyEdit(session)
+	if err != nil {
+		t.Errorf("second notifyEdit should return nil (deduped), got %v", err)
+	}
+
+	// Verify marker was written
+	markerData, err := os.ReadFile(notifiedSizePath(session, "edit"))
+	if err != nil {
+		t.Fatalf("notifyEdit should create marker file: %v", err)
+	}
+	if string(markerData) == "" {
+		t.Error("marker file should contain inbox size")
+	}
+}
+
+func TestNotifyEdit_AlwaysUsesDisplayMessage(t *testing.T) {
+	session := "test-edit-display"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
+	defer os.RemoveAll(busDir)
+
+	// Write a response message to edit's inbox — should still use
+	// display-message (not send-keys), since edit never uses send-keys.
+	msg := NewMessage("build", "edit", "response", "build", "Build succeeded", "req-123")
+	data, _ := EncodeMessage(msg)
+	os.WriteFile(InboxPath(session, "edit"), append(data, '\n'), 0644)
+
+	// notifyEdit uses display-message (best-effort, returns nil on
+	// non-existent tmux session since errors are logged but not returned)
+	err := notifyEdit(session)
+	if err != nil {
+		t.Errorf("notifyEdit should return nil, got %v", err)
+	}
+
+	// Verify marker was written (proves we got past dedup check)
+	if _, err := os.Stat(notifiedSizePath(session, "edit")); os.IsNotExist(err) {
+		t.Error("notifyEdit should have written notified marker")
+	}
+}
+
 func TestAlreadyNotified_NoMarker(t *testing.T) {
 	session := "test-dedup-nomarker"
 	role := "build"

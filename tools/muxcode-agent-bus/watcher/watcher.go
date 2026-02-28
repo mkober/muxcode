@@ -5,7 +5,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode-agent-bus/bus"
@@ -65,9 +68,46 @@ func New(session string, pollSecs, debounceSecs int) *Watcher {
 	}
 }
 
+// acquireWatcherLock ensures only one watcher runs per session.
+// Uses flock on a lock file for race-free single-instance enforcement.
+// Returns an unlock function, or an error if another watcher is already running.
+func acquireWatcherLock(session string) (func(), error) {
+	lockPath := filepath.Join(bus.BusDir(session), "lock", "watcher.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open watcher lock: %w", err)
+	}
+
+	// Non-blocking exclusive lock — fails immediately if another watcher holds it
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("another watcher is already running for session %s", session)
+	}
+
+	// Write our PID for diagnostics (the flock is the real guard, not the PID)
+	_ = f.Truncate(0)
+	_, _ = f.Seek(0, 0)
+	_, _ = f.WriteString(strconv.Itoa(os.Getpid()))
+
+	return func() {
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
+}
+
 // Run starts the main watcher loop. It never returns under normal operation.
+// Acquires a per-session flock to prevent duplicate watcher processes — stale
+// watchers from previous session starts cause duplicate tmux notifications.
 func (w *Watcher) Run() error {
 	busDir := bus.BusDir(w.session)
+
+	// Single-instance enforcement: exit immediately if another watcher is running
+	unlock, err := acquireWatcherLock(w.session)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  %s\n", err)
+		return err
+	}
+	defer unlock()
 
 	fmt.Println("  Agent Bus Watcher")
 	fmt.Printf("  Session: %s\n", w.session)
@@ -126,16 +166,13 @@ func (w *Watcher) checkInboxes() {
 		prev := w.inboxSizes[role]
 
 		if size > prev && size > 0 {
-			// Skip edit — cmd/send.go notifies on direct sends, and
-			// auto-CC messages are seen on next inbox read. Notifying
-			// here causes duplicates.
-			// Skip harness panes — they poll inbox directly; tmux
-			// send-keys floods the pane with duplicate text.
-			if role != "edit" && !bus.IsHarnessActive(w.session, role) {
-				ts := time.Now().Format("15:04:05")
-				fmt.Printf("  %s  New message(s) for %s — notifying\n", ts, role)
-				_ = bus.Notify(w.session, role)
-			}
+			// Notify handles per-role logic: display-message for edit
+			// (non-intrusive status bar flash), skip for harness panes,
+			// send-keys for all others. Dedup is handled inside Notify
+			// via file locking + cooldown.
+			ts := time.Now().Format("15:04:05")
+			fmt.Printf("  %s  New message(s) for %s — notifying\n", ts, role)
+			_ = bus.Notify(w.session, role)
 		}
 
 		w.inboxSizes[role] = size

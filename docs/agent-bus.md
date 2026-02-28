@@ -34,7 +34,7 @@ Creates the ephemeral bus directory at `/tmp/muxcode-bus-{SESSION}/` with `inbox
 Send a message to another agent's inbox.
 
 ```bash
-muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force]
+muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait]
 ```
 
 - `<to>` — target agent role (edit, build, test, review, deploy, run, commit, analyze)
@@ -44,6 +44,7 @@ muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [
 - `--reply-to ID` — ID of the message being replied to
 - `--no-notify` — skip tmux notification to the target agent
 - `--force` — bypass pre-commit safeguard (only relevant when sending commit actions to the commit agent)
+- `--wait` — after sending, poll the sender's inbox every 2s until a response arrives or timeout. Timeout controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default 120s). The response is printed to stdout inline.
 
 **Pre-commit safeguard:** When sending a commit action (`commit`, `stage`, `push`, `merge`, `rebase`, `tag`) to the commit agent, the bus checks that all other agents (excluding edit, commit, watch) have empty inboxes, are not busy, and have no running background processes. If any agent has pending work, the send is blocked with an error. Use `--force` to bypass.
 
@@ -51,8 +52,12 @@ Auto-detects sender from `AGENT_ROLE` env var or tmux window name.
 
 **Example:**
 ```
-$ muxcode-agent-bus send build build "Run ./build.sh and report results"
-Sent: edit → build [request:build] Run ./build.sh and report results
+$ muxcode-agent-bus send build build "Run ./build.sh and report results" --wait
+Sent request:build to build
+
+--- Message from build at 14:32:05 ---
+Type: response  Action: build
+Content: Build succeeded. 0 errors, 0 warnings.
 ```
 
 ### `muxcode-agent-bus inbox`

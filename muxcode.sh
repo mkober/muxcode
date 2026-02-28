@@ -162,6 +162,11 @@ export BUS_SESSION="$SESSION"
 (cd "$PROJECT_DIR" && muxcode-agent-bus init)
 
 # --- Start bus watcher in background (loop detection, compaction alerts) ---
+# Kill any stale watcher processes from previous sessions with the same name.
+# Watchers are background processes detached from tmux — tmux kill-session
+# does not stop them, so they accumulate and cause duplicate notifications.
+pkill -f "muxcode-agent-bus watch $SESSION" 2>/dev/null || true
+sleep 0.1  # let old processes exit before starting the new one
 muxcode-agent-bus watch "$SESSION" &>/dev/null &
 
 # --- Ensure Ollama is running if any role uses local LLM ---

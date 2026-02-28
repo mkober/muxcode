@@ -3,16 +3,18 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode-agent-bus/bus"
 )
 
 // Send handles the "muxcode-agent-bus send" subcommand.
-// Usage: muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force]
+// Usage: muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait]
 func Send(args []string) {
 	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus send <to> <action> \"<payload>\" [--type TYPE] [--reply-to ID] [--no-notify] [--force]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus send <to> <action> \"<payload>\" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait]\n")
 		os.Exit(1)
 	}
 
@@ -25,6 +27,7 @@ func Send(args []string) {
 	replyTo := ""
 	noNotify := false
 	force := false
+	wait := false
 	payloadSet := false
 
 	remaining := args[2:]
@@ -48,6 +51,8 @@ func Send(args []string) {
 			noNotify = true
 		case "--force":
 			force = true
+		case "--wait":
+			wait = true
 		default:
 			if strings.HasPrefix(remaining[i], "--") {
 				fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", remaining[i])
@@ -114,6 +119,49 @@ func Send(args []string) {
 	}
 
 	fmt.Printf("Sent %s:%s to %s\n", msgType, action, to)
+
+	// --wait: poll own inbox until a response arrives or timeout
+	if wait {
+		waitForResponse(session, from)
+	}
+}
+
+// waitForResponse polls the sender's inbox until messages arrive or timeout.
+// Timeout is controlled by MUXCODE_INBOX_POLL_TIMEOUT (default 120s).
+func waitForResponse(session, role string) {
+	timeout := 120
+	if v := os.Getenv("MUXCODE_INBOX_POLL_TIMEOUT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			timeout = n
+		}
+	}
+
+	const pollInterval = 2 // seconds
+	for elapsed := 0; elapsed < timeout; elapsed += pollInterval {
+		time.Sleep(time.Duration(pollInterval) * time.Second)
+
+		if !bus.HasMessages(session, role) {
+			continue
+		}
+
+		msgs, err := bus.Receive(session, role)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading inbox: %v\n", err)
+			return
+		}
+		if len(msgs) == 0 {
+			continue
+		}
+
+		fmt.Println()
+		for _, m := range msgs {
+			fmt.Print(bus.FormatMessage(m))
+			fmt.Println()
+		}
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "\nNo response within %ds — check: muxcode-agent-bus inbox --peek\n", timeout)
 }
 
 // isCommitAction returns true for actions that trigger actual git commits.
