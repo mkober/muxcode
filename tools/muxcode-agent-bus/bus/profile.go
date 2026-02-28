@@ -425,6 +425,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Write", "Edit",
 					"Bash(git *)", "Bash(gh *)",
 					"Bash(ssh-keyscan *)", "Bash(ssh-add *)",
+					"Bash(curl*)",
 				},
 			},
 			"deploy": {
@@ -578,7 +579,7 @@ func DefaultConfig() *MuxcodeConfig {
 				OnSuccess: &ChainAction{
 					SendTo:  "review",
 					Action:  "review",
-					Message: "Tests passed — review the changes and report results to edit",
+					Message: "Tests passed — review working tree and staged changes, then report results to edit",
 					Type:    "request",
 				},
 				OnFailure: &ChainAction{
