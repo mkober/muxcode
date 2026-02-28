@@ -102,9 +102,36 @@ type ToolCall struct {
 }
 
 // FunctionCall holds the function name and arguments for a tool call.
+// Arguments is stored as json.RawMessage for flexible deserialization,
+// but Ollama's API expects arguments as a JSON string when sent back
+// in conversation history — see MarshalJSON.
 type FunctionCall struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+}
+
+// MarshalJSON implements custom marshaling for FunctionCall.
+// Ollama's OpenAI-compatible API expects tool_calls.function.arguments
+// to be a JSON-encoded string (e.g. "{\"command\":\"ls\"}"), but we
+// store arguments as json.RawMessage (raw object). This converts the
+// raw object to a string on serialization so Ollama can unmarshal it.
+func (f FunctionCall) MarshalJSON() ([]byte, error) {
+	// If arguments is already a JSON string, marshal as-is
+	if len(f.Arguments) > 0 && f.Arguments[0] == '"' {
+		type plain struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		return json.Marshal(plain{Name: f.Name, Arguments: f.Arguments})
+	}
+	// Convert raw JSON object/array to a JSON-encoded string
+	return json.Marshal(struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	}{
+		Name:      f.Name,
+		Arguments: string(f.Arguments),
+	})
 }
 
 // ToolDef defines a tool available to the model.

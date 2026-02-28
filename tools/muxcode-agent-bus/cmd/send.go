@@ -120,15 +120,16 @@ func Send(args []string) {
 
 	fmt.Printf("Sent %s:%s to %s\n", msgType, action, to)
 
-	// --wait: poll own inbox until a response arrives or timeout
+	// --wait: poll own inbox until a response from the target arrives or timeout
 	if wait {
-		waitForResponse(session, from)
+		waitForResponse(session, from, to)
 	}
 }
 
-// waitForResponse polls the sender's inbox until messages arrive or timeout.
+// waitForResponse polls the sender's inbox for messages specifically from
+// the target agent. Messages from other agents are left in the inbox.
 // Timeout is controlled by MUXCODE_INBOX_POLL_TIMEOUT (default 120s).
-func waitForResponse(session, role string) {
+func waitForResponse(session, role, target string) {
 	timeout := 120
 	if v := os.Getenv("MUXCODE_INBOX_POLL_TIMEOUT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -144,7 +145,7 @@ func waitForResponse(session, role string) {
 			continue
 		}
 
-		msgs, err := bus.Receive(session, role)
+		msgs, err := bus.ReceiveFrom(session, role, target)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading inbox: %v\n", err)
 			return
@@ -161,7 +162,7 @@ func waitForResponse(session, role string) {
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "\nNo response within %ds — check: muxcode-agent-bus inbox --peek\n", timeout)
+	fmt.Fprintf(os.Stderr, "\nNo response from %s within %ds — check: muxcode-agent-bus inbox --peek\n", target, timeout)
 }
 
 // isCommitAction returns true for actions that trigger actual git commits.

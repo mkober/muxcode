@@ -192,6 +192,17 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 		}
 
 		choice := resp.Choices[0]
+
+		// Fallback: extract tool calls from text when model doesn't use structured API
+		if len(choice.Message.ToolCalls) == 0 && choice.Message.Content != "" {
+			extracted := ExtractToolCalls(choice.Message.Content, toolNames(tools))
+			if len(extracted) > 0 {
+				fmt.Fprintf(os.Stderr, "[harness] Extracted %d tool call(s) from text response\n", len(extracted))
+				choice.Message.ToolCalls = extracted
+				choice.Message.Content = ""
+			}
+		}
+
 		conversation = append(conversation, choice.Message)
 
 		// If no tool calls, we have our final response

@@ -89,6 +89,66 @@ func Receive(session, role string) ([]Message, error) {
 	return msgs, err
 }
 
+// ReceiveFrom reads and consumes only messages from a specific sender,
+// leaving messages from other senders in the inbox.
+func ReceiveFrom(session, role, fromRole string) ([]Message, error) {
+	inbox := InboxPath(session, role)
+	consuming := inbox + ".consuming"
+
+	// Atomic rename: move inbox to consuming file
+	if err := os.Rename(inbox, consuming); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	// Touch new empty inbox (new messages can arrive while we filter)
+	if err := touchFile(inbox); err != nil {
+		_ = err
+	}
+
+	// Read all messages from consuming file
+	all, err := readMessages(consuming)
+	_ = os.Remove(consuming)
+	if err != nil {
+		return nil, err
+	}
+
+	// Split into matched (from target) and unmatched (from others)
+	var matched, rest []Message
+	for _, m := range all {
+		if m.From == fromRole {
+			matched = append(matched, m)
+		} else {
+			rest = append(rest, m)
+		}
+	}
+
+	// Write unmatched messages back to inbox (prepend before any new arrivals)
+	if len(rest) > 0 {
+		var buf []byte
+		for _, m := range rest {
+			data, encErr := EncodeMessage(m)
+			if encErr != nil {
+				continue
+			}
+			buf = append(buf, data...)
+			buf = append(buf, '\n')
+		}
+		// Read any new messages that arrived since the rename
+		newData, _ := os.ReadFile(inbox)
+		// Prepend rest + append new arrivals
+		combined := append(buf, newData...)
+		if writeErr := os.WriteFile(inbox, combined, 0644); writeErr != nil {
+			// Best effort: try appending instead
+			_ = appendToFile(inbox, buf)
+		}
+	}
+
+	return matched, nil
+}
+
 // Peek reads messages from a role's inbox without consuming them.
 func Peek(session, role string) ([]Message, error) {
 	return readMessages(InboxPath(session, role))

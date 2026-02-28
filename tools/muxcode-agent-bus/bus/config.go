@@ -9,6 +9,7 @@ import (
 
 // KnownRoles lists all valid agent roles.
 // Extended at runtime via MUXCODE_ROLES env var (comma-separated).
+// TODO: temporary test change — remove this comment
 var KnownRoles = []string{
 	"edit", "build", "test", "review",
 	"deploy", "run", "commit", "analyze",

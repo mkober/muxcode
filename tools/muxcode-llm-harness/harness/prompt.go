@@ -72,6 +72,16 @@ The agent definition mentions "Run muxcode-agent-bus inbox" as step 1 — skip t
 Your task has already been delivered above. Start directly with the build sequence.
 Follow the build sequence in the examples below: detect project → lint → build → summarize.
 Your final text response IS the reply — do NOT call muxcode-agent-bus send to reply.`
+
+	case "review":
+		base += `
+
+### Review Agent Override
+The agent definition mentions "Run muxcode-agent-bus inbox" as step 1 — skip that step entirely.
+Your task has already been delivered above. Start directly with the review sequence.
+Follow the review sequence in the examples below: get diff → analyze → log findings → summarize.
+Your final text response IS the reply — do NOT call muxcode-agent-bus send to reply.
+Do NOT send a separate notify to edit — the bus auto-CC handles that.`
 	}
 
 	return base
@@ -165,6 +175,49 @@ When asked to run tests:
 ` + "```" + `bash
 ./test.sh
 ` + "```"
+
+	case "review":
+		return `### Review Sequence
+
+Follow these steps in order for every review request.
+
+**Step 1 — Get the diff**
+` + "```" + `bash
+git diff 2>&1
+git diff --cached 2>&1
+` + "```" + `
+If both diffs are empty, fall back to committed-but-unpushed changes:
+` + "```" + `bash
+git diff main...HEAD 2>&1
+` + "```" + `
+If still empty, report "No changes to review" and stop.
+
+**Step 2 — Read changed files for context**
+Use the Read tool on files with significant changes to understand intent.
+
+**Step 3 — Analyze using the checklist**
+Evaluate: correctness, security, performance, maintainability, tests.
+Categorize each finding as must-fix, should-fix, or nit.
+
+**Step 4 — Log detailed findings**
+Write categorized findings to a temp file, then log:
+` + "```" + `bash
+cat > /tmp/muxcode-review-findings.txt << 'FINDINGS'
+must-fix: file:line — description
+should-fix: file:line — description
+nit: file:line — description
+FINDINGS
+muxcode-agent-bus log review "X must-fix, Y should-fix, Z nits" --exit-code 0 --output-file /tmp/muxcode-review-findings.txt
+` + "```" + `
+Use ` + "`--exit-code 1`" + ` if there are any must-fix items.
+
+**Step 5 — Provide your result summary**
+Your text response is sent automatically — do NOT call ` + "`muxcode-agent-bus send`" + ` to reply.
+Just write a concise one-line summary as your final text output:
+- Clean: ` + "`Review: 0 must-fix, 1 should-fix, 2 nits — LGTM`" + `
+- Issues: ` + "`Review: 1 must-fix, 2 should-fix, 0 nits — race condition in auth.go`" + `
+
+**Important**: Do NOT send a separate notify to edit — the bus auto-CC handles that.`
 
 	case "deploy":
 		return `### Deploy Examples
