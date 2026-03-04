@@ -133,13 +133,18 @@ Messages from build, test, review, and deploy agents to any non-edit agent are a
 ### Notification Flow
 
 1. `muxcode-agent-bus send` delivers message to inbox file
-2. `send` calls `notify` to alert the recipient via `tmux send-keys`
+2. `send` calls `Notify()` to alert the recipient (dual-path):
+   - **Harness panes**: skipped — they poll inbox directly
+   - **Idle agents** (at `❯` prompt, including edit): `send-keys` "You have new messages" + Enter to wake them up
+   - **Active agents** (including edit): `display-message` (passive status bar flash)
 3. If auto-CC fires, `send` also notifies edit
-4. The watcher provides fallback notifications for all roles except edit
+4. The watcher provides fallback notifications for all roles
+
+Never use `send-keys` on **active** agents — it disrupts Claude Code's input buffer, interrupts in-progress tool execution, and causes agents to stall at "Interrupted" prompts. Idle agents at the `❯` prompt are safe to wake via `send-keys` because no tool execution is in progress. `IsAgentIdle()` detects idle state via `tmux capture-pane -S -5` (exact match on the `❯` character).
 
 ### Edit inbox polling (`--wait`)
 
-The edit agent cannot receive tmux `send-keys` notifications (they would inject text into the user's input and cause conversation loops). Instead, the `--wait` flag on `send` provides inline response delivery:
+The `--wait` flag on `send` provides inline response delivery for agents that need synchronous request/response patterns:
 
 1. Edit agent runs: `muxcode-agent-bus send build build "Run ./build.sh" --wait`
 2. Bus delivers the message and notifies the recipient
@@ -147,7 +152,7 @@ The edit agent cannot receive tmux `send-keys` notifications (they would inject 
 4. When a response arrives, `--wait` consumes it and prints it to stdout
 5. The response appears as part of the Bash tool result — no separate inbox check needed
 
-Timeout is controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default: 120 seconds). If no response arrives before timeout, `--wait` exits with a timeout message.
+Timeout is controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default: 600 seconds). If no response arrives before timeout, `--wait` exits with a timeout message.
 
 **Why not PostToolUse hooks?** Hook stdout is never seen by Claude Code — hooks are fire-and-forget side effects. A previous approach using a PostToolUse inbox-polling hook consumed the inbox but the output went nowhere. The `--wait` flag solves this by keeping the poll inside the original Bash tool invocation, so the response is part of the same tool result stream.
 

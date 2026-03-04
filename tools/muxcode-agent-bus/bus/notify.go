@@ -66,8 +66,8 @@ func lockNotify(session, role string) func() {
 
 // alreadyNotified returns true if the inbox size matches the last notified size,
 // or if the marker was written within the cooldown window (defense-in-depth).
-// This prevents duplicate tmux send-keys when Notify is called from multiple
-// sources (cmd/send.go, watcher, subscriptions) for the same unread messages.
+// This prevents duplicate tmux display-message when Notify is called from
+// multiple sources (cmd/send.go, watcher, subscriptions) for the same unread messages.
 func alreadyNotified(session, role string) bool {
 	inboxPath := InboxPath(session, role)
 	info, err := os.Stat(inboxPath)
@@ -112,105 +112,146 @@ func markNotified(session, role string) {
 	_ = os.WriteFile(notifiedSizePath(session, role), []byte(strconv.FormatInt(info.Size(), 10)), 0644)
 }
 
-// Notify sends a tmux notification to an agent's pane.
-// Uses consolidated PaneTarget from config.go for pane targeting.
-// Peeks at the inbox to include a summary of the latest message.
-// Skips notification for panes running a local LLM harness (they poll directly).
-// Deduplicates: skips if the inbox hasn't changed since the last notification.
-// Edit always uses passive display-message (status bar) — never send-keys.
-func Notify(session, role string) error {
-	// Edit always uses passive display-message — send-keys would inject
-	// text into the Claude Code prompt, conflicting with user input and
-	// causing conversation loops.
-	if role == "edit" {
-		return notifyEdit(session)
-	}
+// idlePromptChar is the Unicode prompt character (❯) used by Claude Code
+// when idle and waiting for input. Used to detect whether an agent pane is
+// at the idle prompt vs actively executing.
+const idlePromptChar = "\u276f"
 
-	// Skip tmux send-keys for harness panes — the harness polls inbox directly
-	if IsHarnessActive(session, role) {
+// IsAgentIdle returns true if the agent's tmux pane is sitting at the idle
+// prompt (❯). It captures the last 8 lines of the pane and checks whether
+// ANY line is an exact match for the idle prompt character.
+//
+// Claude Code renders decorative UI elements (borders, "? for shortcuts")
+// below the ❯ prompt, so the last non-empty line is often NOT the prompt.
+// Scanning all captured lines avoids false negatives from this footer.
+//
+// Returns false on any error (no tmux, session doesn't exist, etc.) — safe
+// to call unconditionally.
+func IsAgentIdle(session, role string) bool {
+	target := PaneTarget(session, role)
+	cmd := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-S", "-8")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(string(out), "\n")
+	// Scan all lines — the ❯ prompt may not be the last non-empty line
+	// due to Claude Code's decorative footer (borders, help text).
+	// When the agent is active, ❯ only appears as part of a longer line
+	// (e.g. "❯ You have new messages") which won't match the exact check.
+	for _, line := range lines {
+		if strings.TrimSpace(line) == idlePromptChar {
+			return true
+		}
+	}
+	return false
+}
+
+// notifySendKeys injects "You have new messages" + Enter into the agent's
+// tmux pane via send-keys. This wakes up idle Claude Code agents that are
+// sitting at the ❯ prompt. The shared agent prompt instructs them to run
+// `muxcode-agent-bus inbox` when they see this text.
+//
+// Text and Enter are sent as separate tmux send-keys calls with a brief
+// delay between them. Claude Code's TUI can drop the Enter key when it
+// arrives in the same pty write as the preceding text characters.
+//
+// ONLY safe when the agent is confirmed idle (at ❯). Active agents must
+// use display-message instead — send-keys to an active pane disrupts
+// tool execution, pollutes conversation history, and causes stalls.
+func notifySendKeys(session, role string) error {
+	target := PaneTarget(session, role)
+
+	// Step 1: send the text
+	cmd := exec.Command("tmux", "send-keys", "-t", target, "You have new messages")
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s failed: %v\n", role, err)
 		return nil
 	}
 
-	// Acquire per-role lock to make the check+mark+send sequence atomic
-	// across concurrent callers (cmd/send.go and watcher checkInboxes).
-	// Graceful degradation: if locking fails, the cooldown in alreadyNotified
-	// still prevents most duplicates.
+	// Brief delay so Claude Code's TUI processes the text before Enter
+	time.Sleep(100 * time.Millisecond)
+
+	// Step 2: send Enter separately
+	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s failed: %v\n", role, err)
+	}
+	return nil
+}
+
+// notifyIdleSendKeys wraps notifySendKeys with the same deduplication logic
+// used by notifyDisplayMessage (file lock + inbox size + cooldown).
+func notifyIdleSendKeys(session, role string) error {
 	unlock := lockNotify(session, role)
 	defer unlock()
 
-	// Skip if inbox hasn't changed since last notification
 	if alreadyNotified(session, role) {
 		return nil
 	}
 
-	// Mark notified BEFORE tmux commands to close the race window.
-	// The watcher polls every 2s; the tmux send-keys sequence takes ~200ms.
-	// Without this, a concurrent caller can see the old size and fire a duplicate.
-	// Trade-off: if tmux fails after marking, the notification is "lost" until
-	// the next inbox change — acceptable since a failed tmux usually means the
-	// pane is gone.
 	markNotified(session, role)
-
-	pane := PaneTarget(session, role)
-
-	// Verify the pane exists before sending
-	check := exec.Command("tmux", "has-session", "-t", session)
-	if err := check.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "  [notify] session %q not found: %v\n", session, err)
-		return err
-	}
-
-	msg := notifyText(session, role)
-
-	// Send the message text literally, then Enter as a named key.
-	// Must use two send-keys calls because -l treats ALL args as literal
-	// (so "Enter" would be sent as the string "Enter", not the key).
-	// The named key Enter sends CR (0x0D) which Claude Code's raw terminal
-	// input handler recognizes as submit. A literal \n (0x0A) via -l does
-	// NOT trigger submission — it's interpreted as a line feed, not Enter.
-	// The dedup logic (file locking + cooldown) prevents concurrent callers
-	// from interleaving between the two calls.
-	cmd := exec.Command("tmux", "send-keys", "-t", pane, "-l", msg)
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "  [notify] send-keys text to %s failed: %v\n", pane, err)
-		return err
-	}
-	enter := exec.Command("tmux", "send-keys", "-t", pane, "Enter")
-	if err := enter.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter to %s failed: %v\n", pane, err)
-		return err
-	}
-
-	return nil
+	return notifySendKeys(session, role)
 }
 
-// notifyEdit sends a passive notification for the edit role.
-// Always uses display-message (tmux status bar) — never send-keys.
-// Injecting text into the edit pane via send-keys causes problems:
-//   - Conflicts with user input if they're typing
-//   - Pollutes the conversation history with duplicate content
-//   - Can trigger loops when Claude misinterprets injected text as tasks
+// Notify sends a tmux notification to an agent's pane.
 //
-// Best-effort: errors are logged but not returned, since the message is
-// already in the inbox and will be seen on the next inbox read.
-func notifyEdit(session string) error {
-	unlock := lockNotify(session, "edit")
-	defer unlock()
-
-	if alreadyNotified(session, "edit") {
+// Dual-path strategy:
+//   - Harness panes: skipped entirely (they poll inbox directly)
+//   - Edit role: always uses display-message (user types there, send-keys would disrupt)
+//   - Idle agents (at ❯ prompt): uses send-keys to wake them up. The shared
+//     agent prompt instructs them to run `muxcode-agent-bus inbox` on seeing
+//     "You have new messages".
+//   - Active agents: uses display-message (passive status bar flash) to avoid
+//     disrupting in-progress tool execution
+//
+// Deduplicates: skips if the inbox hasn't changed since the last notification.
+func Notify(session, role string) error {
+	// Skip harness panes — the harness polls inbox directly
+	if IsHarnessActive(session, role) {
 		return nil
 	}
 
-	markNotified(session, "edit")
+	// All roles (including edit): wake idle agents via send-keys,
+	// fall back to display-message for active agents.
+	// Edit was previously excluded (display-message only) because the user
+	// types there. But when Claude Code is idle at ❯, send-keys is safe
+	// and necessary — display-message is only visible to the human and
+	// Claude Code never sees it, so responses go unnoticed after --wait
+	// times out.
+	if IsAgentIdle(session, role) {
+		return notifyIdleSendKeys(session, role)
+	}
+	return notifyDisplayMessage(session, role)
+}
+
+// notifyDisplayMessage sends a passive notification via tmux display-message
+// (status bar flash). Used for:
+//   - Edit role (always — user types there, send-keys would disrupt)
+//   - Active agents (not at idle prompt — send-keys would interrupt tool execution)
+//
+// Best-effort: errors are logged but not returned, since the message is
+// already in the inbox and will be seen on the next inbox read.
+func notifyDisplayMessage(session, role string) error {
+	unlock := lockNotify(session, role)
+	defer unlock()
+
+	if alreadyNotified(session, role) {
+		return nil
+	}
+
+	markNotified(session, role)
 
 	// Passive: display-message shows in the tmux status bar.
 	// -d 5000 keeps it visible for 5 seconds (default is often too brief).
+	// Target the window (session:role) so the message appears on the correct pane.
 	// This does NOT inject text into the pane — safe at all times.
-	msg := notifyText(session, "edit")
-	cmd := exec.Command("tmux", "display-message", "-t", session, "-d", "5000",
-		fmt.Sprintf("\U0001f4ec %s", msg))
+	msg := notifyText(session, role)
+	target := fmt.Sprintf("%s:%s", session, role)
+	cmd := exec.Command("tmux", "display-message", "-t", target, "-d", "5000",
+		fmt.Sprintf("\U0001f4ec [%s] %s", role, msg))
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "  [notify] display-message for edit failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  [notify] display-message for %s failed: %v\n", role, err)
 	}
 	return nil
 }

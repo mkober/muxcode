@@ -44,7 +44,7 @@ muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [
 - `--reply-to ID` — ID of the message being replied to
 - `--no-notify` — skip tmux notification to the target agent
 - `--force` — bypass pre-commit safeguard (only relevant when sending commit actions to the commit agent)
-- `--wait` — after sending, poll the sender's inbox every 2s until a response arrives or timeout. Timeout controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default 120s). The response is printed to stdout inline.
+- `--wait` — after sending, poll the sender's inbox every 2s until a response arrives or timeout. Timeout controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default 600s). The response is printed to stdout inline.
 
 **Pre-commit safeguard:** When sending a commit action (`commit`, `stage`, `push`, `merge`, `rebase`, `tag`) to the commit agent, the bus checks that all other agents (excluding edit, commit, watch) have empty inboxes, are not busy, and have no running background processes. If any agent has pending work, the send is blocked with an error. Use `--force` to bypass.
 
@@ -134,7 +134,7 @@ Run the unified bus watcher daemon.
 muxcode-agent-bus watch [session] [--poll N] [--debounce N]
 ```
 
-- Polls agent inboxes (except edit) and notifies agents via `tmux send-keys` when new messages arrive
+- Polls agent inboxes and notifies agents via `tmux display-message` (passive status bar flash) when new messages arrive
 - Monitors the analyze trigger file and routes file-edit events to relevant agents based on file patterns
 - `--poll N` — inbox polling interval in seconds (default: 2)
 - `--debounce N` — trigger file debounce interval in seconds (default: 8)
@@ -193,7 +193,7 @@ Send a tmux notification to an agent's pane.
 muxcode-agent-bus notify <role>
 ```
 
-Sends `tmux send-keys` to the target agent's pane. The notification includes a preview: `[from -> action] payload -> Run: muxcode-agent-bus inbox`. Pane targeting uses the consolidated logic from `bus.PaneTarget()` — split-left windows target pane 1, others target pane 0.
+Sends a passive `tmux display-message` to the target agent's window (status bar flash). The notification includes a preview: `[role] [from -> action] payload -> Run: muxcode-agent-bus inbox`. Harness panes are skipped (they poll inbox directly).
 
 **Note:** `muxcode-agent-bus send` calls `notify` automatically. Use `--no-notify` to suppress.
 
@@ -1098,7 +1098,7 @@ tools/muxcode-agent-bus/
 │   ├── inbox.go       # Read/write/consume inbox files
 │   ├── lock.go        # Lock file management
 │   ├── memory.go      # Persistent memory read/write/search/list
-│   ├── notify.go      # Tmux send-keys notification
+│   ├── notify.go      # Tmux display-message notification
 │   ├── cron.go        # Cron scheduling (structs, parsing, CRUD, execution)
 │   ├── inspect.go     # Session inspection (agent status, history, context)
 │   ├── guard.go       # Loop detection (command retries, message ping-pong)

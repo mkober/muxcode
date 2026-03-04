@@ -47,6 +47,7 @@ func SharedPrompt(role string) string {
 	// Protocol
 	b.WriteString("### Protocol\n")
 	b.WriteString("- When prompted with \"You have new messages\", immediately run `muxcode-agent-bus inbox` and act on every message without asking\n")
+	b.WriteString("- After completing each task, run `muxcode-agent-bus inbox --peek` to check for new messages before going idle\n")
 	b.WriteString("- Reply to requests with `--type response --reply-to <id>`\n")
 	b.WriteString("- Save important learnings to memory after completing tasks\n")
 	b.WriteString("- Never wait for human input — process all requests autonomously\n\n")

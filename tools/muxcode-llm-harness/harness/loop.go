@@ -205,8 +205,19 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 
 		conversation = append(conversation, choice.Message)
 
-		// If no tool calls, we have our final response
+		// If no tool calls, check for hallucination on first turn
 		if len(choice.Message.ToolCalls) == 0 {
+			if turn == 0 && !toolsExecuted && len(tools) > 0 {
+				// First response with no tool calls and tools are available —
+				// the LLM is likely hallucinating results instead of executing.
+				// Inject a corrective message and retry.
+				fmt.Fprintf(os.Stderr, "[harness] No tool calls on first turn — forcing tool use\n")
+				conversation = append(conversation, ChatMessage{
+					Role:    "user",
+					Content: "You did NOT execute any commands. You MUST use the bash tool to run the actual commands before responding. Do NOT describe results from memory — call the bash tool now to execute the task.",
+				})
+				continue
+			}
 			finalResponse = choice.Message.Content
 			break
 		}

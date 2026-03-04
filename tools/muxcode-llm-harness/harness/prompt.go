@@ -73,6 +73,16 @@ Your task has already been delivered above. Start directly with the build sequen
 Follow the build sequence in the examples below: detect project → lint → build → summarize.
 Your final text response IS the reply — do NOT call muxcode-agent-bus send to reply.`
 
+	case "test":
+		base += `
+
+### Test Agent Override
+The agent definition mentions "Run muxcode-agent-bus inbox" as step 1 — skip that step entirely.
+Your task has already been delivered above. Start directly with the test sequence.
+Follow the test sequence in the examples below: detect test runner → run tests → summarize.
+Your final text response IS the reply — do NOT call muxcode-agent-bus send to reply.
+You MUST call the bash tool to run the actual test commands. NEVER generate test results from memory — always execute the real commands and report their actual output.`
+
 	case "review":
 		base += `
 
@@ -170,11 +180,45 @@ Just write a concise summary as your final text output:
 **Important**: Do NOT send to test — hooks handle chaining automatically.`
 
 	case "test":
-		return `### Test Examples
-When asked to run tests:
+		return `### Test Sequence
+
+Follow these 3 steps in order for every test request.
+
+**Step 1 — Detect test runner**
 ` + "```" + `bash
-./test.sh
-` + "```"
+ls ./scripts/test-and-notify.sh ./test.sh Makefile go.mod package.json Cargo.toml 2>/dev/null
+` + "```" + `
+
+**Step 2 — Run the tests**
+Use the first runner that exists, in this order:
+` + "```" + `bash
+# Option A: project test-and-notify script
+./scripts/test-and-notify.sh 2>&1
+
+# Option B: project test script
+./test.sh 2>&1
+
+# Option C: Go project
+go vet ./... 2>&1 && go test -v ./... 2>&1
+
+# Option D: Node project (package.json)
+npm test 2>&1
+
+# Option E: Rust project (Cargo.toml)
+cargo test 2>&1
+
+# Option F: Makefile
+make test 2>&1
+` + "```" + `
+
+**Step 3 — Provide your result summary**
+Your text response is sent automatically — do NOT call ` + "`muxcode-agent-bus send`" + ` to reply.
+Just write a concise summary as your final text output:
+- On success: ` + "`Tests passed: X tests, 0 failures`" + `
+- On failure: ` + "`Tests FAILED: X passed, Y failed — <error summary>`" + `
+
+**Important**: You MUST use the bash tool to run the actual test commands. NEVER fabricate test results.
+Do NOT send to review — hooks handle chaining automatically.`
 
 	case "review":
 		return `### Review Sequence

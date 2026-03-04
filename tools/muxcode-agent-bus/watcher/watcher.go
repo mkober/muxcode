@@ -166,10 +166,10 @@ func (w *Watcher) checkInboxes() {
 		prev := w.inboxSizes[role]
 
 		if size > prev && size > 0 {
-			// Notify handles per-role logic: display-message for edit
-			// (non-intrusive status bar flash), skip for harness panes,
-			// send-keys for all others. Dedup is handled inside Notify
-			// via file locking + cooldown.
+			// Notify handles per-role logic: display-message for all
+			// Claude Code panes (non-intrusive status bar flash), skip
+			// for harness panes. Dedup is handled inside Notify via
+			// file locking + cooldown.
 			ts := time.Now().Format("15:04:05")
 			fmt.Printf("  %s  New message(s) for %s — notifying\n", ts, role)
 			_ = bus.Notify(w.session, role)
@@ -335,11 +335,9 @@ func (w *Watcher) checkCron() {
 			fmt.Fprintf(os.Stderr, "  [cron] failed to append history for %s: %v\n", entry.ID, err)
 		}
 
-		// Notify target agent (skip harness panes — they poll directly)
-		if !bus.IsHarnessActive(w.session, entry.Target) {
-			if err := bus.Notify(w.session, entry.Target); err != nil {
-				fmt.Fprintf(os.Stderr, "  [cron] failed to notify %s: %v\n", entry.Target, err)
-			}
+		// Notify target agent (harness panes are skipped inside Notify)
+		if err := bus.Notify(w.session, entry.Target); err != nil {
+			fmt.Fprintf(os.Stderr, "  [cron] failed to notify %s: %v\n", entry.Target, err)
 		}
 	}
 
@@ -404,12 +402,10 @@ func (w *Watcher) checkProcs() {
 			continue
 		}
 
-		// Skip Notify for edit — tmux send-keys disrupts Claude Code input buffer
-		// Skip harness panes — they poll inbox directly
-		if entry.Owner != "edit" && !bus.IsHarnessActive(w.session, entry.Owner) {
-			if err := bus.Notify(w.session, entry.Owner); err != nil {
-				fmt.Fprintf(os.Stderr, "  [proc] failed to notify %s: %v\n", entry.Owner, err)
-			}
+		// Notify uses display-message for all Claude Code panes (safe, non-intrusive).
+		// Harness panes are skipped inside Notify() — they poll inbox directly.
+		if err := bus.Notify(w.session, entry.Owner); err != nil {
+			fmt.Fprintf(os.Stderr, "  [proc] failed to notify %s: %v\n", entry.Owner, err)
 		}
 
 		// Mark as notified
@@ -483,12 +479,10 @@ func (w *Watcher) checkSpawns() {
 			continue
 		}
 
-		// Skip Notify for edit — tmux send-keys disrupts Claude Code input buffer
-		// Skip harness panes — they poll inbox directly
-		if entry.Owner != "edit" && !bus.IsHarnessActive(w.session, entry.Owner) {
-			if err := bus.Notify(w.session, entry.Owner); err != nil {
-				fmt.Fprintf(os.Stderr, "  [spawn] failed to notify %s: %v\n", entry.Owner, err)
-			}
+		// Notify uses display-message for all Claude Code panes (safe, non-intrusive).
+		// Harness panes are skipped inside Notify() — they poll inbox directly.
+		if err := bus.Notify(w.session, entry.Owner); err != nil {
+			fmt.Fprintf(os.Stderr, "  [spawn] failed to notify %s: %v\n", entry.Owner, err)
 		}
 
 		// Mark as notified
@@ -531,9 +525,10 @@ func (w *Watcher) checkLoops() {
 			fmt.Fprintf(os.Stderr, "  [guard] failed to send loop alert: %v\n", err)
 			continue
 		}
-		// Skip Notify for edit — same pattern as checkInboxes(). Edit reads
-		// its inbox frequently; injecting tmux send-keys while Claude Code
-		// is mid-turn causes text to get stuck in the input buffer.
+		// Notify edit via display-message (passive status bar flash)
+		if err := bus.Notify(w.session, "edit"); err != nil {
+			fmt.Fprintf(os.Stderr, "  [guard] failed to notify edit: %v\n", err)
+		}
 	}
 
 	w.refreshInboxSizes()
@@ -569,12 +564,10 @@ func (w *Watcher) checkCompaction() {
 			fmt.Fprintf(os.Stderr, "  [compact] failed to send compact alert to %s: %v\n", alert.Role, err)
 			continue
 		}
-		// Skip Notify for edit — tmux send-keys disrupts Claude Code input buffer
-		// Skip harness panes — they poll inbox directly
-		if alert.Role != "edit" && !bus.IsHarnessActive(w.session, alert.Role) {
-			if err := bus.Notify(w.session, alert.Role); err != nil {
-				fmt.Fprintf(os.Stderr, "  [compact] failed to notify %s: %v\n", alert.Role, err)
-			}
+		// Notify uses display-message for all Claude Code panes (safe, non-intrusive).
+		// Harness panes are skipped inside Notify() — they poll inbox directly.
+		if err := bus.Notify(w.session, alert.Role); err != nil {
+			fmt.Fprintf(os.Stderr, "  [compact] failed to notify %s: %v\n", alert.Role, err)
 		}
 	}
 

@@ -37,6 +37,7 @@
 | Vim diff preview fix | `sil!` prefix on every command in vim pipe chains (only suppresses next command, not full chain) — fixes E35 errors and "Press ENTER" prompts. Separate `tmux send-keys` with 150ms delay for jump-to-line after diff setup so scrollbind is active | |
 | Local LLM agent | Per-role Ollama integration — Go agentic loop (`muxcode-agent-bus agent run`) with OpenAI-compatible API, tool execution (bash/read/glob/grep/write/edit), allowedTools enforcement, per-role config via `MUXCODE_{ROLE}_CLI=local`, fallback to Claude Code if Ollama unreachable | [local-llm-agent.md](./local-llm-agent.md) |
 | Ollama health monitoring | Watcher-integrated inference probes (30s interval) detect stuck Ollama instances — `ollama-down` alert at 60s, auto-restart at 90s (cap 3), agent relaunch, recovery detection; agent-side failure sentinels track consecutive `ChatComplete` errors | |
+| Jira description read+update | General-purpose GET+PUT skill for git-manager — read current description with context fields, update with ADF content, explicit-key + branch-name extraction | [jira-update-description.md](./jira-update-description.md) |
 
 ## Planned
 

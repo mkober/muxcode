@@ -68,6 +68,7 @@ Both Go modules have **no external dependencies** (stdlib only).
 - **Vim `sil!` in pipe chains**: `sil!` only suppresses the immediately following command, NOT the full `|` pipe chain — every command needs its own `sil!` prefix (e.g. `sil! cmd1 | sil! cmd2 | sil! cmd3`). Without this, errors like E35 cause "Press ENTER" prompts that break subsequent commands.
 - **Diff preview jump-to-line**: must be sent as a separate `tmux send-keys` after 150ms sleep — the diff needs scrollbind fully active before jumping. Uses `norm! {LINE}Gzz` (not `:N`) because `norm!` properly triggers scrollbind sync between both diff panes.
 - **Process substitution in tool profiles**: `Bash(diff *)` does NOT match `diff <(...)` — Claude Code treats `<()` as a special construct requiring explicit `Bash(diff <(*)`.
+- **tmux send-keys text + Enter**: must be sent as two separate `tmux send-keys` calls with a brief delay (100ms). Claude Code's TUI can drop the Enter key when it arrives in the same pty write as the preceding text characters — the agent ends up with text in the input buffer but never submits it.
 
 ### Agent definitions
 
@@ -86,13 +87,13 @@ Both Go modules have **no external dependencies** (stdlib only).
 
 ## Key constraints
 
-- **Edit agent delegation**: never runs build, test, deploy, log tailing, or git commands (including read-only like `git status`). All delegated via message bus. See [Architecture](docs/architecture.md).
+- **Edit agent delegation**: never runs build, test, deploy, API requests, log tailing, or git commands (including read-only like `git status`). All delegated via message bus. API testing requests go to the `api` agent (role `api`, window `api`). See [Architecture](docs/architecture.md).
 - **Hook-driven chains**: build→test→review and deploy→verify chains are deterministic (bash exit codes), not LLM-driven. See [Hooks](docs/hooks.md).
 - **User-initiated commits**: git commits, pushes, and PR creation are never auto-triggered. The automated chain stops at review.
 - **Pre-commit safeguard**: commit delegation blocked when any agent has pending inbox, is busy, or has running procs/spawns. Bypass with `--force`.
 - **Auto-CC**: messages from build/test/review/deploy to non-edit agents are copied to edit inbox. Chain/subscription messages use `SendNoCC()` to avoid redundant CC.
-- **Edit notifications**: edit uses passive `display-message` (tmux status bar flash) — never `send-keys`. Injecting text into the edit pane conflicts with user input and causes conversation loops. See `notifyEdit()` in `bus/notify.go`.
-- **Edit inbox polling**: use `--wait` flag on send commands (`muxcode-agent-bus send <to> <action> "<msg>" --wait`) to poll the sender's inbox every 2 seconds until a response arrives (timeout: `MUXCODE_INBOX_POLL_TIMEOUT`, default 120s). The response is printed to stdout as part of the Bash tool result — no manual "check inbox" needed.
+- **Agent notifications**: dual-path strategy in `Notify()` (`bus/notify.go`). Active agents (including edit) use passive `display-message` (tmux status bar flash) — never `send-keys` to active panes, as it disrupts input buffers, interrupts tool execution, and stalls agents. All idle agents (at `❯` prompt), including edit, receive `send-keys` wake-up ("You have new messages" + Enter) to trigger inbox processing. `IsAgentIdle()` detects idle state via `tmux capture-pane -S -8` (exact match on `❯`). Harness panes are skipped (they poll inbox directly).
+- **Edit inbox polling**: use `--wait` flag on send commands (`muxcode-agent-bus send <to> <action> "<msg>" --wait`) to poll the sender's inbox every 2 seconds until a response arrives (timeout: `MUXCODE_INBOX_POLL_TIMEOUT`, default 600s). The response is printed to stdout as part of the Bash tool result — no manual "check inbox" needed.
 - **System actions**: `loop-detected`, `compact-recommended`, `proc-complete`, `spawn-complete`, `ollama-down`, `ollama-recovered`, `ollama-restarting` are excluded from message loop detection (`isSystemAction()`).
 
 ## Code reference

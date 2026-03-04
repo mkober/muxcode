@@ -38,7 +38,14 @@ role_cli_var() {
     deploy)     echo "MUXCODE_DEPLOY_CLI" ;;
     edit)       echo "MUXCODE_EDIT_CLI" ;;
     analyze|analyst) echo "MUXCODE_ANALYZE_CLI" ;;
-    *)          echo "MUXCODE_${1^^}_CLI" ;;
+    docs)       echo "MUXCODE_DOCS_CLI" ;;
+    research)   echo "MUXCODE_RESEARCH_CLI" ;;
+    watch)      echo "MUXCODE_WATCH_CLI" ;;
+    pr-read)    echo "MUXCODE_PR_READ_CLI" ;;
+    runner|run) echo "MUXCODE_RUN_CLI" ;;
+    api)        echo "MUXCODE_API_CLI" ;;
+    webhook)    echo "MUXCODE_WEBHOOK_CLI" ;;
+    *)          echo "MUXCODE_$(echo "$1" | tr '[:lower:]' '[:upper:]')_CLI" ;;
   esac
 }
 
@@ -61,7 +68,14 @@ if [ "$ROLE_CLI" = "local" ]; then
         deploy)     echo "MUXCODE_DEPLOY_MODEL" ;;
         edit)       echo "MUXCODE_EDIT_MODEL" ;;
         analyze|analyst) echo "MUXCODE_ANALYZE_MODEL" ;;
-        *)          echo "MUXCODE_${1^^}_MODEL" ;;
+        docs)       echo "MUXCODE_DOCS_MODEL" ;;
+        research)   echo "MUXCODE_RESEARCH_MODEL" ;;
+        watch)      echo "MUXCODE_WATCH_MODEL" ;;
+        pr-read)    echo "MUXCODE_PR_READ_MODEL" ;;
+        runner|run) echo "MUXCODE_RUN_MODEL" ;;
+        api)        echo "MUXCODE_API_MODEL" ;;
+        webhook)    echo "MUXCODE_WEBHOOK_MODEL" ;;
+        *)          echo "MUXCODE_$(echo "$1" | tr '[:lower:]' '[:upper:]')_MODEL" ;;
       esac
     }
     ROLE_MODEL_VAR="$(role_model_var "$ROLE")"

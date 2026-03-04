@@ -102,17 +102,17 @@ func TestIsHarnessActive_InvalidContent(t *testing.T) {
 	}
 }
 
-func TestNotify_EditUsesDisplayMessage(t *testing.T) {
-	// Notify(edit) uses display-message (status bar) instead of send-keys.
-	// Best-effort: returns nil even when tmux session doesn't exist.
+func TestNotify_EditBestEffort(t *testing.T) {
+	// Notify(edit) with no tmux session → IsAgentIdle returns false →
+	// falls back to display-message (best-effort, returns nil).
 	err := Notify("nonexistent-session-xyz", "edit")
 	if err != nil {
 		t.Errorf("Notify(edit) should return nil (best-effort), got %v", err)
 	}
 }
 
-func TestNotifyEdit_Dedup(t *testing.T) {
-	session := "test-edit-dedup"
+func TestNotifyDisplayMessage_Dedup(t *testing.T) {
+	session := "test-dm-dedup"
 	busDir := BusDir(session)
 	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
 	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
@@ -122,50 +122,101 @@ func TestNotifyEdit_Dedup(t *testing.T) {
 	os.WriteFile(InboxPath(session, "edit"), []byte(`{"from":"build"}`+"\n"), 0644)
 
 	// First call should proceed (mark notified)
-	err := notifyEdit(session)
+	err := notifyDisplayMessage(session, "edit")
 	if err != nil {
-		t.Errorf("first notifyEdit should return nil, got %v", err)
+		t.Errorf("first notifyDisplayMessage should return nil, got %v", err)
 	}
 
 	// Second call with same inbox size should be deduplicated
-	err = notifyEdit(session)
+	err = notifyDisplayMessage(session, "edit")
 	if err != nil {
-		t.Errorf("second notifyEdit should return nil (deduped), got %v", err)
+		t.Errorf("second notifyDisplayMessage should return nil (deduped), got %v", err)
 	}
 
 	// Verify marker was written
 	markerData, err := os.ReadFile(notifiedSizePath(session, "edit"))
 	if err != nil {
-		t.Fatalf("notifyEdit should create marker file: %v", err)
+		t.Fatalf("notifyDisplayMessage should create marker file: %v", err)
 	}
 	if string(markerData) == "" {
 		t.Error("marker file should contain inbox size")
 	}
 }
 
-func TestNotifyEdit_AlwaysUsesDisplayMessage(t *testing.T) {
-	session := "test-edit-display"
+func TestNotifyDisplayMessage_AlwaysUsesDisplayMessage(t *testing.T) {
+	session := "test-dm-display"
 	busDir := BusDir(session)
 	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
 	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
 	defer os.RemoveAll(busDir)
 
-	// Write a response message to edit's inbox — should still use
-	// display-message (not send-keys), since edit never uses send-keys.
+	// Write a response message to edit's inbox — with no tmux session,
+	// IsAgentIdle returns false so it falls back to display-message.
 	msg := NewMessage("build", "edit", "response", "build", "Build succeeded", "req-123")
 	data, _ := EncodeMessage(msg)
 	os.WriteFile(InboxPath(session, "edit"), append(data, '\n'), 0644)
 
-	// notifyEdit uses display-message (best-effort, returns nil on
+	// notifyDisplayMessage uses display-message (best-effort, returns nil on
 	// non-existent tmux session since errors are logged but not returned)
-	err := notifyEdit(session)
+	err := notifyDisplayMessage(session, "edit")
 	if err != nil {
-		t.Errorf("notifyEdit should return nil, got %v", err)
+		t.Errorf("notifyDisplayMessage should return nil, got %v", err)
 	}
 
 	// Verify marker was written (proves we got past dedup check)
 	if _, err := os.Stat(notifiedSizePath(session, "edit")); os.IsNotExist(err) {
-		t.Error("notifyEdit should have written notified marker")
+		t.Error("notifyDisplayMessage should have written notified marker")
+	}
+}
+
+func TestNotify_NonEditUsesDisplayMessage(t *testing.T) {
+	session := "test-nonedit-dm"
+	role := "api"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
+	defer os.RemoveAll(busDir)
+
+	// Write a message to the api inbox
+	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
+
+	// Notify for a non-edit role should go through display-message path
+	// (best-effort, returns nil even on non-existent tmux session)
+	err := Notify(session, role)
+	if err != nil {
+		t.Errorf("Notify(%s) should return nil (best-effort), got %v", role, err)
+	}
+
+	// Verify marker was written (proves it went through notifyDisplayMessage)
+	if _, err := os.Stat(notifiedSizePath(session, role)); os.IsNotExist(err) {
+		t.Errorf("Notify(%s) should have written notified marker via display-message path", role)
+	}
+}
+
+func TestNotify_HarnessSkipped(t *testing.T) {
+	session := "test-harness-skip"
+	role := "review"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
+	defer os.RemoveAll(busDir)
+
+	// Write a harness marker with our own PID (guaranteed alive)
+	markerPath := HarnessMarkerPath(session, role)
+	os.WriteFile(markerPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+
+	// Write a message to the inbox
+	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
+
+	// Notify should skip (harness is active) — no marker written
+	err := Notify(session, role)
+	if err != nil {
+		t.Errorf("Notify(harness) should return nil, got %v", err)
+	}
+
+	// Verify NO notified marker was written (proves harness was skipped)
+	if _, err := os.Stat(notifiedSizePath(session, role)); !os.IsNotExist(err) {
+		t.Error("Notify should NOT write notified marker when harness is active")
 	}
 }
 
@@ -297,6 +348,94 @@ func TestAlreadyNotified_Cooldown(t *testing.T) {
 	// Marker was just written (within cooldown) — should still be suppressed
 	if !alreadyNotified(session, role) {
 		t.Error("alreadyNotified should return true within cooldown window even when inbox size differs")
+	}
+}
+
+func TestIsAgentIdle_NoTmux(t *testing.T) {
+	// When the session doesn't exist, IsAgentIdle should return false (safe fallback).
+	// This ensures no panic or error when called outside a tmux session.
+	if IsAgentIdle("nonexistent-session-xyz", "build") {
+		t.Error("IsAgentIdle should return false when tmux session doesn't exist")
+	}
+}
+
+func TestIdlePromptChar(t *testing.T) {
+	// Verify the constant matches the expected Unicode character ❯
+	if idlePromptChar != "❯" {
+		t.Errorf("idlePromptChar = %q, want %q", idlePromptChar, "❯")
+	}
+}
+
+func TestNotify_NonIdleFallsBackToDisplayMessage(t *testing.T) {
+	// A non-edit role with no tmux session → IsAgentIdle returns false →
+	// falls back to display-message path (best-effort, returns nil).
+	session := "test-nonidle-fallback"
+	role := "build"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
+	defer os.RemoveAll(busDir)
+
+	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
+
+	err := Notify(session, role)
+	if err != nil {
+		t.Errorf("Notify(%s) should return nil (best-effort), got %v", role, err)
+	}
+
+	// Verify marker was written (proves it went through notifyDisplayMessage)
+	if _, err := os.Stat(notifiedSizePath(session, role)); os.IsNotExist(err) {
+		t.Errorf("Notify(%s) should have written notified marker via display-message fallback", role)
+	}
+}
+
+func TestNotify_EditFallsBackToDisplayMessage(t *testing.T) {
+	// Edit role with no tmux session → IsAgentIdle returns false →
+	// falls back to display-message path (same as all other roles).
+	session := "test-edit-dm-fallback"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
+	defer os.RemoveAll(busDir)
+
+	os.WriteFile(InboxPath(session, "edit"), []byte(`{"from":"build"}`+"\n"), 0644)
+
+	err := Notify(session, "edit")
+	if err != nil {
+		t.Errorf("Notify(edit) should return nil (best-effort), got %v", err)
+	}
+
+	// Verify marker was written (proves it went through notifyDisplayMessage)
+	if _, err := os.Stat(notifiedSizePath(session, "edit")); os.IsNotExist(err) {
+		t.Error("Notify(edit) should have written notified marker via display-message fallback")
+	}
+}
+
+func TestNotifyIdleSendKeys_Dedup(t *testing.T) {
+	session := "test-idle-sendkeys-dedup"
+	role := "review"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
+	defer os.RemoveAll(busDir)
+
+	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
+
+	// First call should proceed (mark notified)
+	err := notifyIdleSendKeys(session, role)
+	if err != nil {
+		t.Errorf("first notifyIdleSendKeys should return nil, got %v", err)
+	}
+
+	// Verify marker was written
+	if _, err := os.Stat(notifiedSizePath(session, role)); os.IsNotExist(err) {
+		t.Error("notifyIdleSendKeys should have written notified marker")
+	}
+
+	// Second call with same inbox size should be deduplicated
+	err = notifyIdleSendKeys(session, role)
+	if err != nil {
+		t.Errorf("second notifyIdleSendKeys should return nil (deduped), got %v", err)
 	}
 }
 

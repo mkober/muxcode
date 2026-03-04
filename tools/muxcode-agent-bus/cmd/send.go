@@ -130,7 +130,7 @@ func Send(args []string) {
 // the target agent. Messages from other agents are left in the inbox.
 // Timeout is controlled by MUXCODE_INBOX_POLL_TIMEOUT (default 120s).
 func waitForResponse(session, role, target string) {
-	timeout := 120
+	timeout := 600
 	if v := os.Getenv("MUXCODE_INBOX_POLL_TIMEOUT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			timeout = n
