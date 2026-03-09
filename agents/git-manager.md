@@ -28,6 +28,7 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I proceed?"
 
 - Stage specific files (prefer explicit file names over `git add .`)
 - Write clear commit messages: imperative mood, focused on "why"
+- **Jira key prefix**: extract the Jira key from the branch name and prepend it to the commit subject. Use `git rev-parse --abbrev-ref HEAD | grep -oE '^[A-Z][A-Z0-9]*-[0-9]+'` to extract the key. If present, prefix the subject: `PBP1-456 Add validation logic`. If no key is found, commit without a prefix.
 - **Always use HEREDOC for commit messages** — never write temp files:
   ```bash
   git commit -m "$(cat <<'EOF'
