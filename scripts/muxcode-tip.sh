@@ -9,10 +9,16 @@ tips=(
   "Prefix+z ≡ Zoom Pane"
   "Prefix+[ ≡ Scroll Mode"
   "Prefix+d ≡ Detach"
-  "Send → Delegate To Agents"
-  "Memory → Persistent Context"
-  "Spawn → Temporary Agents"
-  "Cron → Scheduled Tasks"
+  "Ctrl+h/j/k/l ≡ Switch Panes"
+  "Prefix+c ≡ New Window"
+  "Prefix+n/p ≡ Next/Prev Window"
+  "Prefix+w ≡ Window List"
+  "Prefix+s ≡ Session List"
+  "Prefix+x ≡ Close Pane"
+  "Prefix+% ≡ Split Horizontal"
+  "Prefix+\" ≡ Split Vertical"
+  "Prefix+: ≡ Command Prompt"
+  "Prefix+? ≡ List All Keybindings"
 )
 
 idx=$(( $(date +%s) / 600 % ${#tips[@]} ))
