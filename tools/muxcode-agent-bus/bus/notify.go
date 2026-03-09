@@ -207,6 +207,10 @@ func notifyIdleSendKeys(session, role string) error {
 //
 // Deduplicates: skips if the inbox hasn't changed since the last notification.
 func Notify(session, role string) error {
+	// Hosted roles (docs, research, pr-read) resolve to their host agent.
+	// The message is already in the host's inbox; notify the host's pane.
+	role = WindowForRole(role)
+
 	// Skip harness panes — the harness polls inbox directly
 	if IsHarnessActive(session, role) {
 		return nil
@@ -247,7 +251,7 @@ func notifyDisplayMessage(session, role string) error {
 	// Target the window (session:role) so the message appears on the correct pane.
 	// This does NOT inject text into the pane — safe at all times.
 	msg := notifyText(session, role)
-	target := fmt.Sprintf("%s:%s", session, role)
+	target := fmt.Sprintf("%s:%s", session, WindowForRole(role))
 	cmd := exec.Command("tmux", "display-message", "-t", target, "-d", "5000",
 		fmt.Sprintf("\U0001f4ec [%s] %s", role, msg))
 	if err := cmd.Run(); err != nil {

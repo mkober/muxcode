@@ -113,7 +113,7 @@ func Send(args []string) {
 		// Also notify edit when auto-CC fires (message from build/test/review
 		// to a non-edit target). The watcher skips edit to prevent duplicates,
 		// so cmd/send.go is responsible for all edit notifications.
-		if bus.IsAutoCCRole(from) && to != "edit" {
+		if bus.IsAutoCCRole(from) && to != "edit" && bus.WindowForRole(to) != "edit" {
 			_ = bus.Notify(session, "edit")
 		}
 	}
@@ -128,6 +128,8 @@ func Send(args []string) {
 
 // waitForResponse polls the sender's inbox for messages specifically from
 // the target agent. Messages from other agents are left in the inbox.
+// For hosted roles (docs→edit, research→edit, pr-read→commit), also accepts
+// responses from the host agent since it processes the request.
 // Timeout is controlled by MUXCODE_INBOX_POLL_TIMEOUT (default 120s).
 func waitForResponse(session, role, target string) {
 	timeout := 600
@@ -135,6 +137,12 @@ func waitForResponse(session, role, target string) {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			timeout = n
 		}
+	}
+
+	// For hosted roles, also accept responses from the host agent
+	host := bus.WindowForRole(target)
+	acceptFrom := func(from string) bool {
+		return from == target || from == host
 	}
 
 	const pollInterval = 2 // seconds
@@ -145,7 +153,7 @@ func waitForResponse(session, role, target string) {
 			continue
 		}
 
-		msgs, err := bus.ReceiveFrom(session, role, target)
+		msgs, err := bus.ReceiveFromFunc(session, role, acceptFrom)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading inbox: %v\n", err)
 			return

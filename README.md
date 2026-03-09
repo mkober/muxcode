@@ -78,14 +78,14 @@ MUXcode ships with these default agents:
 | commit (F9) | Git manager | Claude Code | `MUXCODE_GIT_CLI=local` | Handles all git operations — commits, branches, rebases, pushes |
 | analyze (F10) | Editor analyst | Claude Code | `MUXCODE_ANALYZE_CLI=local` | Watches file changes and provides codebase analysis |
 
-Additional roles available via spawned agents or custom windows:
+Additional roles that share a host agent's window (messages are routed to the host's inbox):
 
-| Role | Default model | Local LLM | What it does |
-|------|---------------|-----------|-------------|
-| docs | Claude Code | `MUXCODE_DOCS_CLI=local` | Documentation writer |
-| research | Claude Code | `MUXCODE_RESEARCH_CLI=local` | Web search and codebase exploration |
-| pr-read | Claude Code | *(uses commit window)* | PR review analysis, runs in the commit window |
-| status | — | — | Live TUI dashboard (`muxcode-agent-bus tui`) — add `status` to `MUXCODE_WINDOWS` to include |
+| Role | Host window | What it does |
+|------|-------------|-------------|
+| docs | edit | Documentation writer — handled by the edit agent |
+| research | edit | Web search and codebase exploration — handled by the edit agent |
+| pr-read | commit | PR review analysis — handled by the commit agent |
+| status | — | Live TUI dashboard (`muxcode-agent-bus tui`) — add `status` to `MUXCODE_WINDOWS` to include |
 
 Most agents default to Claude Code. Build and test default to a local LLM via [Ollama](https://ollama.com/) since they primarily execute structured commands where a small model is sufficient. Any role can be switched between Claude Code and a local LLM by setting its override variable in `.muxcode/config` (e.g. `MUXCODE_GIT_CLI=local`). Per-role model selection is also supported via `MUXCODE_{ROLE}_MODEL` (falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
 

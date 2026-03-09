@@ -34,19 +34,23 @@ func sendMessage(session string, m Message, autoCC bool) error {
 	}
 	line := append(data[:len(data):len(data)], '\n')
 
+	// Resolve hosted roles: deliver to the host agent's inbox.
+	// The message retains the original To field so the host knows the context.
+	inboxRole := WindowForRole(m.To)
+
 	// Ensure inbox directory exists
-	inboxDir := filepath.Dir(InboxPath(session, m.To))
+	inboxDir := filepath.Dir(InboxPath(session, inboxRole))
 	if err := os.MkdirAll(inboxDir, 0755); err != nil {
 		return err
 	}
 
-	// Append to recipient inbox
-	if err := appendToFile(InboxPath(session, m.To), line); err != nil {
+	// Append to recipient inbox (host inbox for hosted roles)
+	if err := appendToFile(InboxPath(session, inboxRole), line); err != nil {
 		return err
 	}
 
 	// Auto-CC to edit: copy messages from auto-CC roles when not already going to edit
-	if autoCC && IsAutoCCRole(m.From) && m.To != "edit" {
+	if autoCC && IsAutoCCRole(m.From) && m.To != "edit" && inboxRole != "edit" {
 		if err := appendToFile(InboxPath(session, "edit"), line); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: auto-CC to edit failed: %v\n", err)
 		}
@@ -142,6 +146,59 @@ func ReceiveFrom(session, role, fromRole string) ([]Message, error) {
 		combined := append(buf, newData...)
 		if writeErr := os.WriteFile(inbox, combined, 0644); writeErr != nil {
 			// Best effort: try appending instead
+			_ = appendToFile(inbox, buf)
+		}
+	}
+
+	return matched, nil
+}
+
+// ReceiveFromFunc reads and consumes only messages where matchFn(m.From)
+// returns true, leaving other messages in the inbox. Used by --wait to
+// accept responses from both a hosted role and its host agent.
+func ReceiveFromFunc(session, role string, matchFn func(string) bool) ([]Message, error) {
+	inbox := InboxPath(session, role)
+	consuming := inbox + ".consuming"
+
+	if err := os.Rename(inbox, consuming); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if err := touchFile(inbox); err != nil {
+		_ = err
+	}
+
+	all, err := readMessages(consuming)
+	_ = os.Remove(consuming)
+	if err != nil {
+		return nil, err
+	}
+
+	var matched, rest []Message
+	for _, m := range all {
+		if matchFn(m.From) {
+			matched = append(matched, m)
+		} else {
+			rest = append(rest, m)
+		}
+	}
+
+	if len(rest) > 0 {
+		var buf []byte
+		for _, m := range rest {
+			data, encErr := EncodeMessage(m)
+			if encErr != nil {
+				continue
+			}
+			buf = append(buf, data...)
+			buf = append(buf, '\n')
+		}
+		newData, _ := os.ReadFile(inbox)
+		combined := append(buf, newData...)
+		if writeErr := os.WriteFile(inbox, combined, 0644); writeErr != nil {
 			_ = appendToFile(inbox, buf)
 		}
 	}

@@ -461,6 +461,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(psql *)", "Bash(mysql *)", "Bash(redis-cli *)",
 					"Bash(mongosh *)", "Bash(sqlite3 *)",
 					"Bash(gh *)", "Bash(brew *)", "Bash(pip *)",
+					"Bash(pnpm *)", "Bash(npm *)", "Bash(npx *)", "Bash(yarn *)",
 					"Bash(go run *)", "Bash(cargo run *)", "Bash(make *)",
 					"Bash(mkdir *)", "Bash(rm *)", "Bash(chmod *)",
 					"Bash(tar *)", "Bash(unzip *)", "Bash(gzip *)", "Bash(base64 *)",

@@ -64,8 +64,10 @@ func AgentPane(window string) string {
 	return "1"
 }
 
-// PaneTarget returns the tmux pane target string for a window's agent.
-func PaneTarget(session, window string) string {
+// PaneTarget returns the tmux pane target string for a role's agent.
+// Hosted roles resolve to their host window (e.g. "docs" → "edit").
+func PaneTarget(session, role string) string {
+	window := WindowForRole(role)
 	return session + ":" + window + "." + AgentPane(window)
 }
 
@@ -260,6 +262,30 @@ func HarnessMarkerPath(session, role string) string {
 // Uses /tmp directly for compatibility with bash hooks.
 func TriggerFile(session string) string {
 	return "/tmp/muxcode-analyze-" + session + ".trigger"
+}
+
+// hostedRoles maps roles that share another agent's window and inbox.
+// Messages sent to a hosted role are delivered to the host's inbox.
+// The host agent sees the original "To" field to distinguish the request context.
+var hostedRoles = map[string]string{
+	"docs":     "edit",
+	"research": "edit",
+	"pr-read":  "commit",
+}
+
+// WindowForRole returns the tmux window name where a role runs.
+// Hosted roles return their host window; all others return themselves.
+func WindowForRole(role string) string {
+	if host, ok := hostedRoles[role]; ok {
+		return host
+	}
+	return role
+}
+
+// IsHostedRole returns true if the role runs inside another agent's window.
+func IsHostedRole(role string) bool {
+	_, ok := hostedRoles[role]
+	return ok
 }
 
 // IsSpawnRole returns true if the role is a spawn-prefixed role (e.g. "spawn-a1b2c3d4").
