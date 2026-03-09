@@ -467,6 +467,12 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(tar *)", "Bash(unzip *)", "Bash(gzip *)", "Bash(base64 *)",
 					"Bash(export *)", "Bash(eval *)", "Bash(eval \"$(*))",
 				"Bash(source *)",
+				"Bash(grep *)", "Bash(head *)", "Bash(tail *)", "Bash(cat *)",
+				"Bash(wc *)", "Bash(sort *)", "Bash(cut *)", "Bash(awk *)", "Bash(sed *)",
+				"Bash(sleep *)", "Bash(echo *)", "Bash(printf *)", "Bash(date *)",
+				"Bash(find *)", "Bash(ls *)", "Bash(diff *)", "Bash(env *)",
+				"Bash(touch *)", "Bash(cp *)", "Bash(mv *)",
+				"Read(/tmp/*)", "Read(/private/tmp/*)",
 				},
 			},
 			"analyst": {
