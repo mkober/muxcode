@@ -15,7 +15,7 @@ A multi-agent coding environment built on tmux — where you stay in the loop.
 
 ## What is MUXcode?
 
-MUXcode is a tmux session. Everything — your editor, the AI agents, the message bus, the dashboard — lives inside tmux windows. You launch it, and a session spins up with ten windows, each bound to a function key. F1 is your edit window. F2 is build. F3 is test. You get the idea.
+MUXcode is a tmux session. Everything — your editor, the AI agents, the message bus, the dashboard — lives inside tmux windows. You launch it, and a session spins up with ten windows, each bound to a function key. F1 is your edit window. F3 is build. F4 is test. You get the idea.
 
 You work in neovim with an AI editing agent alongside you in the edit window. When you need a build, tests, a code review, or a commit, you tell the edit agent and it delegates to a specialist in another window. Each step of the workflow has its own agent, and they work in parallel while you keep editing. Press a function key to watch any agent work, or stay in your editor and let results flow back. Nothing happens unless you ask for it.
 
@@ -25,8 +25,8 @@ Everything runs locally inside that tmux session. The agents coordinate through 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  F1 edit  F2 build  F3 test  F4 review  F5 deploy  F6 run  │
-│  F7 commit  F8 analyze  F9 api  F10 status                   │
+│  F1 edit  F2 api  F3 build  F4 test  F5 review  F6 deploy    │
+│  F7 run  F8 watch  F9 commit  F10 analyze                    │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
@@ -46,7 +46,7 @@ Everything runs locally inside that tmux session. The agents coordinate through 
 
 ## How it works
 
-You launch `muxcode`, pick a project (or pass a path directly), and a tmux session spins up with nine windows — one per agent. The edit window opens neovim on the left and the edit agent on the right. Every other window has a terminal pane alongside its specialist agent.
+You launch `muxcode`, pick a project (or pass a path directly), and a tmux session spins up with ten windows — one per agent. The edit window opens neovim on the left and the edit agent on the right. Every other window has a terminal pane alongside its specialist agent.
 
 A typical workflow looks like this:
 
@@ -59,25 +59,24 @@ A typical workflow looks like this:
 
 The entire build-test-review chain is **hook-driven** — bash scripts check exit codes and fire the next step. No tokens are spent on routing decisions, and the chain runs at the speed of your tools, not your LLM.
 
-A live dashboard (F9) shows which agents are busy, idle, or waiting on messages, so you always know what's happening across the session.
+The `muxcode-agent-bus tui` command launches a live dashboard showing which agents are busy, idle, or waiting on messages, so you always know what's happening across the session. You can add a dashboard window by including `status` in your `MUXCODE_WINDOWS` list.
 
 ## Agents
 
 MUXcode ships with these default agents:
 
-| Window | Agent | Default model | Local LLM | What it does |
-|--------|-------|---------------|-----------|-------------|
-| edit | Code editor | Claude Code | `MUXCODE_EDIT_CLI=local` | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
-| build | Code builder | Local LLM (Ollama) | `MUXCODE_BUILD_CLI` | Compiles and packages your project |
-| test | Test runner | Local LLM (Ollama) | `MUXCODE_TEST_CLI` | Runs your test suite and reports results |
-| review | Code reviewer | Claude Code | `MUXCODE_REVIEW_CLI=local` | Reviews diffs for bugs, style issues, and improvements |
-| deploy | Infra deployer | Claude Code | `MUXCODE_DEPLOY_CLI=local` | Runs infrastructure deployments and diffs |
-| run | Command runner | Claude Code | `MUXCODE_RUN_CLI=local` | Executes ad-hoc commands |
-| watch | Log watcher | Claude Code | `MUXCODE_WATCH_CLI=local` | Monitors logs — local files, CloudWatch, Kubernetes, Docker |
-| commit | Git manager | Claude Code | `MUXCODE_GIT_CLI=local` | Handles all git operations — commits, branches, rebases, pushes |
-| analyze | Editor analyst | Claude Code | `MUXCODE_ANALYZE_CLI=local` | Watches file changes and provides codebase analysis |
-| api | API tester | Claude Code | `MUXCODE_API_CLI=local` | Manages API collections, executes requests, tracks history |
-| status | Dashboard | — | — | Live TUI showing agent status (not an AI agent) |
+| Window (F-key) | Agent | Default model | Local LLM | What it does |
+|----------------|-------|---------------|-----------|-------------|
+| edit (F1) | Code editor | Claude Code | `MUXCODE_EDIT_CLI=local` | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
+| api (F2) | API tester | Claude Code | `MUXCODE_API_CLI=local` | Manages API collections, executes requests, tracks history |
+| build (F3) | Code builder | Local LLM (Ollama) | `MUXCODE_BUILD_CLI` | Compiles and packages your project |
+| test (F4) | Test runner | Local LLM (Ollama) | `MUXCODE_TEST_CLI` | Runs your test suite and reports results |
+| review (F5) | Code reviewer | Claude Code | `MUXCODE_REVIEW_CLI=local` | Reviews diffs for bugs, style issues, and improvements |
+| deploy (F6) | Infra deployer | Claude Code | `MUXCODE_DEPLOY_CLI=local` | Runs infrastructure deployments and diffs |
+| run (F7) | Command runner | Claude Code | `MUXCODE_RUN_CLI=local` | Executes ad-hoc commands |
+| watch (F8) | Log watcher | Claude Code | `MUXCODE_WATCH_CLI=local` | Monitors logs — local files, CloudWatch, Kubernetes, Docker |
+| commit (F9) | Git manager | Claude Code | `MUXCODE_GIT_CLI=local` | Handles all git operations — commits, branches, rebases, pushes |
+| analyze (F10) | Editor analyst | Claude Code | `MUXCODE_ANALYZE_CLI=local` | Watches file changes and provides codebase analysis |
 
 Additional roles available via spawned agents or custom windows:
 
@@ -86,6 +85,7 @@ Additional roles available via spawned agents or custom windows:
 | docs | Claude Code | `MUXCODE_DOCS_CLI=local` | Documentation writer |
 | research | Claude Code | `MUXCODE_RESEARCH_CLI=local` | Web search and codebase exploration |
 | pr-read | Claude Code | *(uses commit window)* | PR review analysis, runs in the commit window |
+| status | — | — | Live TUI dashboard (`muxcode-agent-bus tui`) — add `status` to `MUXCODE_WINDOWS` to include |
 
 Most agents default to Claude Code. Build and test default to a local LLM via [Ollama](https://ollama.com/) since they primarily execute structured commands where a small model is sufficient. Any role can be switched between Claude Code and a local LLM by setting its override variable in `.muxcode/config` (e.g. `MUXCODE_GIT_CLI=local`). Per-role model selection is also supported via `MUXCODE_{ROLE}_MODEL` (falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
 
@@ -110,7 +110,7 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 - **Session compaction** — Agents can snapshot their context to memory, enabling long-running sessions without losing history.
 - **Session inspection** — Query any agent's status, message history, or busy state programmatically from the CLI.
 - **Pre-commit safeguards** — Commit delegation is blocked when other agents have pending work, preventing incomplete commits.
-- **Jira integration** — The `jira-pr-comment` skill automatically posts a comment on the corresponding Jira issue when a PR is created, linking the PR with diff stats. Triggered by the git-manager agent when the branch name starts with a Jira key (e.g. `DATA-456-add-validation`).
+- **Jira integration** — The `jira-pr-comment` skill posts a comment on the Jira issue when a PR is created, and `jira-update-description` reads/updates issue descriptions via the Atlassian REST API. Both extract the Jira key from the branch name (e.g. `DATA-456-add-validation`).
 
 See the [Architecture](docs/architecture.md) and [Agent Bus](docs/agent-bus.md) docs for the full details.
 
@@ -137,7 +137,7 @@ Both MUXcode and autonomous AI tools solve the same coordination problems:
 
 **Local-first, minimal infrastructure.** The message bus is JSONL files in `/tmp/`. The memory system is markdown files in your project directory. There's no database, no container runtime. An optional webhook HTTP endpoint bridges external tools (CI/CD, GitHub) to the bus, but it's a single lightweight server — not a required runtime. Autonomous tools typically require a runtime environment — SQLite, vector databases, sandboxed execution containers.
 
-**Tmux-native, editor-centric.** You work in your actual editor alongside the agents. Press F2 to watch the build agent work. Press F7 to see the commit agent run git commands. There's no web UI, no chat interface separate from your terminal. Autonomous tools typically abstract the execution environment behind an API or web interface.
+**Tmux-native, editor-centric.** You work in your actual editor alongside the agents. Press F3 to watch the build agent work. Press F9 to see the commit agent run git commands. There's no web UI, no chat interface separate from your terminal. Autonomous tools typically abstract the execution environment behind an API or web interface.
 
 **Hook-driven orchestration, not LLM-driven.** The build-test-review chain fires via bash exit codes — deterministic, fast, zero token cost for routing. Autonomous tools typically use the LLM itself to decide what to do next, which is more flexible but slower and more expensive.
 
@@ -262,6 +262,7 @@ Skills are reusable instruction sets defined as markdown files with YAML frontma
 | `go-testing` | test, build | Go testing patterns and conventions |
 | `code-review-checklist` | review | Code review quality checklist |
 | `jira-pr-comment` | git | Post PR details as a comment on the corresponding Jira issue |
+| `jira-update-description` | git, edit | Read and update a Jira issue description with ADF content |
 
 ### Resolution order
 
@@ -290,7 +291,10 @@ Instructions for the agent...
 
 ### Jira integration
 
-The `jira-pr-comment` skill enables the git-manager agent to post a comment on a Jira issue when a PR is created. It extracts the Jira key from the branch name (e.g. `DATA-456-add-validation` → `DATA-456`) and posts the PR link with diff stats via the Atlassian REST API.
+Two skills integrate with Jira via the Atlassian REST API. Both extract the Jira key from the branch name (e.g. `DATA-456-add-validation` → `DATA-456`):
+
+- **`jira-pr-comment`** — The git-manager agent posts a comment on the Jira issue when a PR is created, including the PR link with diff stats.
+- **`jira-update-description`** — Reads and updates Jira issue descriptions using Atlassian Document Format (ADF). Available to the git and edit roles.
 
 Add to `.muxcode/config` or `~/.config/muxcode/config`:
 
