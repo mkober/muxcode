@@ -165,8 +165,10 @@ export BUS_SESSION="$SESSION"
 # Watchers are background processes detached from tmux — tmux kill-session
 # does not stop them, so they accumulate and cause duplicate notifications.
 pkill -f "muxcode-agent-bus watch $SESSION" 2>/dev/null || true
+pkill -f "muxcode-watcher-monitor.sh $SESSION" 2>/dev/null || true
 sleep 0.1  # let old processes exit before starting the new one
 muxcode-agent-bus watch "$SESSION" &>/dev/null &
+muxcode-watcher-monitor.sh "$SESSION" &>/dev/null &
 
 # --- Ensure Ollama is running if any role uses local LLM ---
 ensure_ollama() {
@@ -383,6 +385,18 @@ tmux select-pane -t "$SESSION:edit.1" 2>/dev/null || true
 
 echo "  Session '$SESSION' ready"
 echo ""
+
+# --- Add menu hint and hamburger icon to status bar ---
+# Prepend a tooltip-style hint before the existing status-right content
+_sr="$(tmux show-options -gv status-right 2>/dev/null)"
+# Replace thin left arrows (U+E0B3) with filled (U+E0B2) for date/time separators
+_sr="$(echo "$_sr" | sed $'s/\xee\x82\xb3/\xee\x82\xb2/g')"
+# Rotating tips via shell command — tmux re-evaluates #() on each status refresh
+tmux set-option -t "$SESSION" status-right "#[fg=#6272a4,italics]#(muxcode-tip.sh)  #[default]${_sr}"
+# Replace the Dracula session icon (❐) with hamburger (☰) in status-left
+_sl="$(tmux show-options -gv status-left 2>/dev/null)"
+_sl_with_icon="$(echo "$_sl" | sed 's/❐/☰/')"
+tmux set-option -t "$SESSION" status-left "$_sl_with_icon"
 
 # --- Register cleanup hook for bus directory ---
 tmux set-hook -t "$SESSION" session-closed \
