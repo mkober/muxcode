@@ -465,7 +465,8 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(go run *)", "Bash(cargo run *)", "Bash(make *)",
 					"Bash(mkdir *)", "Bash(rm *)", "Bash(chmod *)",
 					"Bash(tar *)", "Bash(unzip *)", "Bash(gzip *)", "Bash(base64 *)",
-					"Bash(export *)",
+					"Bash(export *)", "Bash(eval *)", "Bash(eval \"$(*))",
+				"Bash(source *)",
 				},
 			},
 			"analyst": {
