@@ -27,7 +27,7 @@ echo "$(date +%s) $FILE_PATH" >> "/tmp/muxcode-analyze-${SESSION}.trigger"
 # Clean up nvim diff preview, reload file, and jump to the change
 WINDOW_NAME="$(tmux display-message -t "${TMUX_PANE:-}" -p '#W' 2>/dev/null)"
 TEMP_FILE="/tmp/muxcode-preview-${SESSION}.tmp"
-if [ "$WINDOW_NAME" = "edit" ] && [ -f "$TEMP_FILE" ]; then
+if [ "$WINDOW_NAME" = "edit" ]; then
   LINE=1
   NEEDLE=$(echo "$EVENT_JSON" | jq -r '.tool_input.new_string // empty' 2>/dev/null \
     | sed '/^[[:space:]]*$/d' | head -1)
@@ -38,8 +38,14 @@ if [ "$WINDOW_NAME" = "edit" ] && [ -f "$TEMP_FILE" ]; then
   ESCAPED_PATH="${FILE_PATH// /\\ }"
   tmux send-keys -t "$SESSION:edit.0" Escape Escape
   sleep 0.1
-  tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | diffoff! | only | e! +$LINE $ESCAPED_PATH" Enter
-  rm -f "$TEMP_FILE"
+  if [ -f "$TEMP_FILE" ]; then
+    # Close diff preview and reload file
+    tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | diffoff! | only | e! +$LINE $ESCAPED_PATH" Enter
+    rm -f "$TEMP_FILE"
+  else
+    # No diff preview (Write tool) — reload to trigger filetype detection
+    tmux send-keys -t "$SESSION:edit.0" ":sil! e! +$LINE $ESCAPED_PATH | sil! filetype detect" Enter
+  fi
 fi
 
 # Route file-change events through the agent bus
