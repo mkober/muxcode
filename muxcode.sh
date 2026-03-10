@@ -394,9 +394,9 @@ _sr="$(echo "$_sr" | sed $'s/\xee\x82\xb3//g; s/\xee\x82\xb2//g')"
 # Strip the green arrow color block and the green music segment (unused)
 _sr="$(echo "$_sr" | sed 's/#\[fg=#00ff00, bg=#282a36\] //')"
 _sr="$(echo "$_sr" | sed 's|#\[fg=#282a36, bg=#00ff00\] #(~/dotfiles/tmux_scripts/music.sh) ||')"
-# Restyle date/time: tab-color bg for date, green bg with dark text for time
-_sr="$(echo "$_sr" | sed 's/#\[fg=#6272a4, bg=#282a36\]/#[fg=#f8f8f2, bg=#44475a]/')"
-_sr="$(echo "$_sr" | sed 's/#\[fg=#50fa7b\]/#[fg=#f8f8f2, bg=#6272a4]/')"
+# Restyle date/time: tab-color bg for date, comment-color bg for time, with powerline arrows
+_sr="$(echo "$_sr" | sed $'s/#\\[fg=#6272a4, bg=#282a36\\]/#[fg=#44475a, bg=#282a36]\xee\x82\xb2#[fg=#f8f8f2, bg=#44475a]/')"
+_sr="$(echo "$_sr" | sed $'s/#\\[fg=#50fa7b\\]/#[fg=#6272a4, bg=#44475a]\xee\x82\xb2#[fg=#f8f8f2, bg=#6272a4]/')"
 # Add padding around date and time text
 _sr="$(echo "$_sr" | sed "s/%b/ %b/; s/'%y/'%y /; s/%H:%M/ %H:%M:%S /")"
 # Rotating tips via shell command — tmux re-evaluates #() on each status refresh
