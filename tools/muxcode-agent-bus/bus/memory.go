@@ -15,6 +15,7 @@ type MemoryEntry struct {
 	Section   string // from "## Title" line
 	Timestamp string // from "_YYYY-MM-DD HH:MM_" line
 	Content   string // body text after timestamp
+	Source    string // "project" or "global"
 }
 
 // SearchResult pairs a memory entry with its relevance score.
@@ -63,35 +64,108 @@ func AppendMemory(section, content, role string) error {
 	return err
 }
 
+// ReadGlobalMemory reads the global memory file for a role.
+func ReadGlobalMemory(role string) (string, error) {
+	data, err := os.ReadFile(GlobalMemoryPath(role))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return string(data), nil
+}
+
+// AppendGlobalMemory appends a formatted section to a role's global memory file.
+func AppendGlobalMemory(section, content, role string) error {
+	memPath := GlobalMemoryPath(role)
+	if err := os.MkdirAll(filepath.Dir(memPath), 0755); err != nil {
+		return err
+	}
+
+	// Lazy daily rotation for global memory
+	if needsRotationAt(memPath) {
+		if err := rotateMemoryAt(memPath, GlobalMemoryArchiveDir(role), DefaultRotationConfig()); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: global memory rotation failed for %s: %v\n", role, err)
+		}
+	}
+
+	ts := time.Now().Format("2006-01-02 15:04")
+	entry := fmt.Sprintf("\n## %s\n_%s_\n\n%s\n", section, ts, content)
+
+	f, err := os.OpenFile(memPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write([]byte(entry))
+	return err
+}
+
 // ReadContext reads shared memory and the role's own memory, concatenated.
 // Includes recent archives (ContextDays from DefaultRotationConfig).
+// Includes global memory.
 func ReadContext(role string) (string, error) {
-	return ReadContextWithDays(role, DefaultRotationConfig().ContextDays)
+	return ReadContextFull(role, DefaultRotationConfig().ContextDays, true)
 }
 
 // ReadContextWithDays reads shared memory and the role's own memory with
 // the specified number of days of archive history.
+// Includes global memory.
 func ReadContextWithDays(role string, days int) (string, error) {
+	return ReadContextFull(role, days, true)
+}
+
+// ReadContextFull reads global + project memory for a role.
+// If includeGlobal is true, global memory is prepended.
+func ReadContextFull(role string, days int, includeGlobal bool) (string, error) {
+	result := ""
+
+	// Global memory (appears first)
+	if includeGlobal {
+		globalShared, err := readMemoryWithHistoryAt(GlobalMemoryDir(), "shared", days)
+		if err != nil {
+			return "", err
+		}
+		globalOwn, err := readMemoryWithHistoryAt(GlobalMemoryDir(), role, days)
+		if err != nil {
+			return "", err
+		}
+		globalContent := ""
+		if globalShared != "" {
+			globalContent += globalShared
+		}
+		if globalOwn != "" {
+			if globalContent != "" {
+				globalContent += "\n"
+			}
+			globalContent += globalOwn
+		}
+		if globalContent != "" {
+			result += "# Global Memory\n\n" + globalContent + "\n\n"
+		}
+	}
+
+	// Project memory (existing behavior)
 	shared, err := ReadMemoryWithHistory("shared", days)
 	if err != nil {
 		return "", err
 	}
-
 	own, err := ReadMemoryWithHistory(role, days)
 	if err != nil {
 		return "", err
 	}
 
-	result := ""
 	if shared != "" {
 		result += "# Shared Memory\n\n" + shared + "\n"
 	}
 	if own != "" {
-		if result != "" {
+		if shared != "" {
 			result += "\n"
 		}
 		result += fmt.Sprintf("# %s Memory\n\n", role) + own + "\n"
 	}
+
 	return result, nil
 }
 
@@ -228,8 +302,12 @@ func FormatSearchResults(results []SearchResult) string {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "--- [%s] %s (%s) score:%.1f ---\n",
-			r.Entry.Role, r.Entry.Section, r.Entry.Timestamp, r.Score)
+		source := r.Entry.Source
+		if source == "" {
+			source = "project"
+		}
+		fmt.Fprintf(&b, "--- [%s:%s] %s (%s) score:%.1f ---\n",
+			source, r.Entry.Role, r.Entry.Section, r.Entry.Timestamp, r.Score)
 		b.WriteString(r.Entry.Content)
 		b.WriteString("\n")
 	}
@@ -240,7 +318,11 @@ func FormatSearchResults(results []SearchResult) string {
 func FormatMemoryList(entries []MemoryEntry) string {
 	var b strings.Builder
 	for _, e := range entries {
-		fmt.Fprintf(&b, "%-10s %-36s %s\n", e.Role, e.Section, e.Timestamp)
+		source := e.Source
+		if source == "" {
+			source = "project"
+		}
+		fmt.Fprintf(&b, "%-8s %-10s %-36s %s\n", source, e.Role, e.Section, e.Timestamp)
 	}
 	return b.String()
 }

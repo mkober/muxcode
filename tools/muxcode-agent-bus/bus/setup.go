@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,6 +85,13 @@ func Init(session, memoryDir string) error {
 		if err := touchFile(sharedPath); err != nil {
 			return err
 		}
+	}
+
+	// Create global memory directory if it doesn't exist
+	globalMemDir := GlobalMemoryDir()
+	if err := os.MkdirAll(globalMemDir, 0755); err != nil {
+		// Non-fatal: global memory is optional
+		fmt.Fprintf(os.Stderr, "warning: could not create global memory dir: %v\n", err)
 	}
 
 	return nil

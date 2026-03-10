@@ -150,6 +150,30 @@ func MemoryArchivePath(role, date string) string {
 	return filepath.Join(MemoryArchiveDir(role), date+".md")
 }
 
+// GlobalMemoryDir returns the user-level global memory directory path.
+func GlobalMemoryDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "muxcode", "memory")
+}
+
+// GlobalMemoryPath returns the global memory file path for a role.
+func GlobalMemoryPath(role string) string {
+	if role == "shared" {
+		return filepath.Join(GlobalMemoryDir(), "shared.md")
+	}
+	return filepath.Join(GlobalMemoryDir(), role+".md")
+}
+
+// GlobalMemoryArchiveDir returns the global archive directory for a role.
+func GlobalMemoryArchiveDir(role string) string {
+	return filepath.Join(GlobalMemoryDir(), role)
+}
+
+// GlobalMemoryArchivePath returns the global archive file path for a role on a date.
+func GlobalMemoryArchivePath(role, date string) string {
+	return filepath.Join(GlobalMemoryArchiveDir(role), date+".md")
+}
+
 // BuildHistoryPath returns the build history JSONL file path for a session.
 func BuildHistoryPath(session string) string {
 	return filepath.Join(BusDir(session), "build-history.jsonl")

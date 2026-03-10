@@ -22,10 +22,9 @@ func DefaultRotationConfig() RotationConfig {
 	}
 }
 
-// NeedsRotation returns true if the active memory file for a role was last
-// modified before today (UTC). Returns false if the file doesn't exist.
-func NeedsRotation(role string) bool {
-	info, err := os.Stat(MemoryPath(role))
+// needsRotationAt checks if a specific memory file needs rotation.
+func needsRotationAt(memPath string) bool {
+	info, err := os.Stat(memPath)
 	if err != nil {
 		return false
 	}
@@ -34,26 +33,22 @@ func NeedsRotation(role string) bool {
 	return modDate != today
 }
 
-// RotateMemory archives the active memory file to the per-role archive directory,
-// using the file's modification date as the archive date. Also purges old archives.
-func RotateMemory(role string, cfg RotationConfig) error {
-	memPath := MemoryPath(role)
+// rotateMemoryAt archives a memory file to the given archive directory.
+func rotateMemoryAt(memPath, archiveDir string, cfg RotationConfig) error {
 	info, err := os.Stat(memPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // nothing to rotate
+			return nil
 		}
 		return err
 	}
 
-	// Use modification date for the archive filename
 	archiveDate := info.ModTime().Format("2006-01-02")
-	archiveDir := MemoryArchiveDir(role)
 	if err := os.MkdirAll(archiveDir, 0755); err != nil {
 		return err
 	}
 
-	archivePath := MemoryArchivePath(role, archiveDate)
+	archivePath := filepath.Join(archiveDir, archiveDate+".md")
 
 	// If an archive already exists for this date, append to it
 	if _, err := os.Stat(archivePath); err == nil {
@@ -69,37 +64,110 @@ func RotateMemory(role string, cfg RotationConfig) error {
 		if err := os.WriteFile(archivePath, []byte(combined), 0644); err != nil {
 			return err
 		}
-		// Remove the active file
 		return os.Remove(memPath)
 	}
 
-	// Atomic rename on POSIX
 	if err := os.Rename(memPath, archivePath); err != nil {
 		return err
 	}
 
-	// Purge old archives
-	return PurgeOldArchives(role, cfg)
+	return purgeOldArchivesAt(archiveDir, cfg)
 }
 
-// PurgeOldArchives removes archive files older than RetentionDays.
-func PurgeOldArchives(role string, cfg RotationConfig) error {
-	dates, err := ListArchiveDates(role)
+// purgeOldArchivesAt removes archive files older than RetentionDays from a directory.
+func purgeOldArchivesAt(archiveDir string, cfg RotationConfig) error {
+	dirEntries, err := os.ReadDir(archiveDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
 
 	cutoff := time.Now().AddDate(0, 0, -cfg.RetentionDays).Format("2006-01-02")
 
-	for _, date := range dates {
-		if date < cutoff {
-			path := MemoryArchivePath(role, date)
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				return err
+	for _, de := range dirEntries {
+		if de.IsDir() {
+			continue
+		}
+		name := de.Name()
+		if strings.HasSuffix(name, ".md") {
+			date := strings.TrimSuffix(name, ".md")
+			if _, err := time.Parse("2006-01-02", date); err == nil {
+				if date < cutoff {
+					_ = os.Remove(filepath.Join(archiveDir, name))
+				}
 			}
 		}
 	}
 	return nil
+}
+
+// readMemoryWithHistoryAt reads active + archive history from a specific memory directory.
+func readMemoryWithHistoryAt(memDir, role string, days int) (string, error) {
+	var parts []string
+
+	// Determine paths
+	var memPath string
+	if role == "shared" {
+		memPath = filepath.Join(memDir, "shared.md")
+	} else {
+		memPath = filepath.Join(memDir, role+".md")
+	}
+	archiveDir := filepath.Join(memDir, role)
+
+	// Read archives within the window
+	dirEntries, err := os.ReadDir(archiveDir)
+	if err == nil {
+		cutoff := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+		var dates []string
+		for _, de := range dirEntries {
+			if de.IsDir() || !strings.HasSuffix(de.Name(), ".md") {
+				continue
+			}
+			date := strings.TrimSuffix(de.Name(), ".md")
+			if _, parseErr := time.Parse("2006-01-02", date); parseErr == nil {
+				if date >= cutoff {
+					dates = append(dates, date)
+				}
+			}
+		}
+		sort.Strings(dates)
+		for _, date := range dates {
+			content, readErr := os.ReadFile(filepath.Join(archiveDir, date+".md"))
+			if readErr != nil {
+				continue
+			}
+			if len(content) > 0 {
+				parts = append(parts, string(content))
+			}
+		}
+	}
+
+	// Read active file
+	data, err := os.ReadFile(memPath)
+	if err == nil && len(data) > 0 {
+		parts = append(parts, string(data))
+	}
+
+	return strings.Join(parts, "\n"), nil
+}
+
+// NeedsRotation returns true if the active memory file for a role was last
+// modified before today (UTC). Returns false if the file doesn't exist.
+func NeedsRotation(role string) bool {
+	return needsRotationAt(MemoryPath(role))
+}
+
+// RotateMemory archives the active memory file to the per-role archive directory,
+// using the file's modification date as the archive date. Also purges old archives.
+func RotateMemory(role string, cfg RotationConfig) error {
+	return rotateMemoryAt(MemoryPath(role), MemoryArchiveDir(role), cfg)
+}
+
+// PurgeOldArchives removes archive files older than RetentionDays.
+func PurgeOldArchives(role string, cfg RotationConfig) error {
+	return purgeOldArchivesAt(MemoryArchiveDir(role), cfg)
 }
 
 // ReadMemoryWithHistory reads the active memory file plus the last N days
@@ -171,23 +239,17 @@ func ListArchiveDates(role string) ([]string, error) {
 	return dates, nil
 }
 
-// AllMemoryEntriesWithArchives reads all memory files (active + archives)
-// and returns their parsed entries.
-func AllMemoryEntriesWithArchives() ([]MemoryEntry, error) {
-	dir := MemoryDir()
+// allMemoryEntriesFromDir reads all memory files (active + archives) from a directory
+// and tags them with the given source.
+func allMemoryEntriesFromDir(dir, source string) []MemoryEntry {
 	dirEntries, err := os.ReadDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
+		return nil
 	}
 
 	var all []MemoryEntry
-
 	for _, de := range dirEntries {
 		if de.IsDir() {
-			// This is an archive directory — read all archive files
 			role := de.Name()
 			archiveDir := filepath.Join(dir, role)
 			archiveEntries, err := os.ReadDir(archiveDir)
@@ -203,6 +265,9 @@ func AllMemoryEntriesWithArchives() ([]MemoryEntry, error) {
 					continue
 				}
 				entries := ParseMemoryEntries(string(content), role)
+				for i := range entries {
+					entries[i].Source = source
+				}
 				all = append(all, entries...)
 			}
 			continue
@@ -218,8 +283,27 @@ func AllMemoryEntriesWithArchives() ([]MemoryEntry, error) {
 			continue
 		}
 		entries := ParseMemoryEntries(string(content), role)
+		for i := range entries {
+			entries[i].Source = source
+		}
 		all = append(all, entries...)
 	}
+
+	return all
+}
+
+// AllMemoryEntriesWithArchives reads all memory files (active + archives)
+// from both global and project memory, and returns their parsed entries.
+func AllMemoryEntriesWithArchives() ([]MemoryEntry, error) {
+	var all []MemoryEntry
+
+	// Global memory
+	globalEntries := allMemoryEntriesFromDir(GlobalMemoryDir(), "global")
+	all = append(all, globalEntries...)
+
+	// Project memory
+	projectEntries := allMemoryEntriesFromDir(MemoryDir(), "project")
+	all = append(all, projectEntries...)
 
 	return all, nil
 }

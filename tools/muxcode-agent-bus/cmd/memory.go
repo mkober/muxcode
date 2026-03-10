@@ -12,7 +12,7 @@ import (
 // Memory handles the "muxcode-agent-bus memory" subcommand.
 func Memory(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory <read|write|write-shared|context|search|list> [args...]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory <read|write|write-shared|write-global|context|search|list> [args...]\n")
 		os.Exit(1)
 	}
 
@@ -26,6 +26,8 @@ func Memory(args []string) {
 		memoryWrite(subArgs)
 	case "write-shared":
 		memoryWriteShared(subArgs)
+	case "write-global":
+		memoryWriteGlobal(subArgs)
 	case "context":
 		memoryContext(subArgs)
 	case "search":
@@ -34,7 +36,7 @@ func Memory(args []string) {
 		memoryList(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown memory subcommand: %s\n", subcmd)
-		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory <read|write|write-shared|context|search|list> [args...]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory <read|write|write-shared|write-global|context|search|list> [args...]\n")
 		os.Exit(1)
 	}
 }
@@ -86,9 +88,28 @@ func memoryWriteShared(args []string) {
 	}
 }
 
+func memoryWriteGlobal(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus memory write-global \"<section>\" \"<text>\"\n")
+		os.Exit(1)
+	}
+	section := args[0]
+	text := args[1]
+	role := bus.BusRole()
+	// Default to shared if role is unknown
+	if role == "unknown" {
+		role = "shared"
+	}
+	if err := bus.AppendGlobalMemory(section, text, role); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing global memory: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func memoryContext(args []string) {
 	role := bus.BusRole()
 	days := bus.DefaultRotationConfig().ContextDays
+	includeGlobal := true
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -104,10 +125,12 @@ func memoryContext(args []string) {
 				os.Exit(1)
 			}
 			days = n
+		case "--no-global":
+			includeGlobal = false
 		}
 	}
 
-	content, err := bus.ReadContextWithDays(role, days)
+	content, err := bus.ReadContextFull(role, days, includeGlobal)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading context: %v\n", err)
 		os.Exit(1)
