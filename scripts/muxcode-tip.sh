@@ -22,4 +22,4 @@ tips=(
 )
 
 idx=$(( $(date +%s) / 600 % ${#tips[@]} ))
-echo "Mux Tip: ${tips[$idx]}"
+echo "${tips[$idx]}"
