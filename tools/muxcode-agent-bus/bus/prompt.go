@@ -43,11 +43,13 @@ func SharedPrompt(role string) string {
 	b.WriteString("muxcode-agent-bus session compact \"<summary>\"  # save session summary to memory\n```\n\n")
 	b.WriteString("**When to compact**: After completing a major task or when your session has been running for a long time. ")
 	b.WriteString("Summaries are automatically restored on restart.\n\n")
-	b.WriteString("**Combined compact**: Always do both steps together:\n")
+	b.WriteString("**Combined compact**: When the user says \"compact\", when you receive a `compact-recommended` alert, ")
+	b.WriteString("or whenever you decide to compact, always do both steps together:\n")
 	b.WriteString("1. Save context to memory: `muxcode-agent-bus session compact \"<summary of key work, decisions, and state>\"`\n")
 	b.WriteString("2. Compress conversation: run `/compact` to reduce the Claude Code context window\n\n")
 	b.WriteString("This preserves learnings across sessions (step 1) and keeps the current session lean (step 2). ")
-	b.WriteString("When you receive a `compact-recommended` alert, do both steps.\n\n")
+	b.WriteString("**Important**: The built-in `/compact` only compresses the conversation — it does NOT save to memory. ")
+	b.WriteString("Always run step 1 first.\n\n")
 
 	// Protocol
 	b.WriteString("### Protocol\n")

@@ -39,6 +39,8 @@ install: build
 	@# Always overwrite settings.json — this is the hook template that install.sh
 	@# merges into ~/.claude/settings.json. User customizations live there, not here.
 	@cp config/settings.json $(CONFIGDIR)/settings.json
+	@install -d $(HOME)/.claude/commands
+	@cp -n config/commands/*.md $(HOME)/.claude/commands/ 2>/dev/null || true
 	@cp -n muxcode.conf.example $(CONFIGDIR)/config 2>/dev/null || true
 	@install -d $(NVIM_PLUGIN_DIR)
 	@install -m 644 config/muxcode-startscreen.lua $(NVIM_PLUGIN_DIR)/muxcode-startscreen.lua
