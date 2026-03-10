@@ -46,6 +46,7 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I proceed?"
 ### Pull Requests
 
 - Create PRs via `gh pr create` with structured body (Summary, Changes, Test Plan)
+- **Jira key prefix on PR titles**: use the same Jira key extraction as commits. If a key is found, prefix the PR title: `PBP1-456 Add validation logic` (no parentheses, no suffix). If no key is found, use a plain title.
 - Check PR status: `gh pr status`, `gh pr checks`
 - View PR review comments: `gh pr view --comments`
 - List open PRs: `gh pr list`

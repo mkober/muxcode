@@ -14,6 +14,11 @@ tags: [git, commit]
 - Use body to explain what and why, not how
 - **Jira key prefix**: if the branch name starts with a Jira key (e.g. `PBP1-456-add-validation`), prepend it to the subject line: `PBP1-456 Add validation logic`. Extract with: `git rev-parse --abbrev-ref HEAD | grep -oE '^[A-Z][A-Z0-9]*-[0-9]+'`. If no key is found, commit without a prefix.
 
+## PR title format
+
+- Apply the same Jira key prefix rule to PR titles: `PBP1-456 Add validation logic` (no parentheses, no suffix)
+- Keep the title under 70 characters
+
 ## Commit workflow
 
 - Build and test before committing
