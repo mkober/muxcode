@@ -418,6 +418,34 @@ tmux set-hook -t "$SESSION" session-closed \
   done
 ) &
 
+# --- Auto-accept workspace trust prompts ---
+# Claude Code shows "Yes, I trust this folder" in new workspaces.
+# Poll agent panes for the prompt and accept the default selection.
+# Runs 6 checks over ~15 seconds to catch slow-starting agents.
+(
+  accepted=""
+  for attempt in 1 2 3 4 5 6; do
+    sleep 3
+    all_done=true
+    for WIN in "${WIN_ARRAY[@]}"; do
+      # Skip already-accepted panes
+      echo "$accepted" | grep -qw "$WIN" && continue
+      pane="$SESSION:$WIN.1"
+      content="$(tmux capture-pane -t "$pane" -p 2>/dev/null)" || continue
+      if echo "$content" | grep -q "trust this folder"; then
+        tmux send-keys -t "$pane" Enter 2>/dev/null
+        accepted="$accepted $WIN"
+      elif echo "$content" | grep -qE '(❯|λ|\$)'; then
+        # Agent already past the prompt (trusted workspace)
+        accepted="$accepted $WIN"
+      else
+        all_done=false
+      fi
+    done
+    $all_done && break
+  done
+) &
+
 # Switch to new session (works inside tmux) or attach from outside
 if [ -n "${TMUX:-}" ]; then
   tmux switch-client -t "$SESSION"
