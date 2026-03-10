@@ -389,8 +389,16 @@ echo ""
 # --- Add menu hint and hamburger icon to status bar ---
 # Prepend a tooltip-style hint before the existing status-right content
 _sr="$(tmux show-options -gv status-right 2>/dev/null)"
-# Replace thin left arrows (U+E0B3) with filled (U+E0B2) for date/time separators
-_sr="$(echo "$_sr" | sed $'s/\xee\x82\xb3/\xee\x82\xb2/g')"
+# Remove all powerline arrows (thin U+E0B3 and filled U+E0B2)
+_sr="$(echo "$_sr" | sed $'s/\xee\x82\xb3//g; s/\xee\x82\xb2//g')"
+# Strip the green arrow color block and the green music segment (unused)
+_sr="$(echo "$_sr" | sed 's/#\[fg=#00ff00, bg=#282a36\] //')"
+_sr="$(echo "$_sr" | sed 's|#\[fg=#282a36, bg=#00ff00\] #(~/dotfiles/tmux_scripts/music.sh) ||')"
+# Restyle date/time: tab-color bg for date, green bg with dark text for time
+_sr="$(echo "$_sr" | sed 's/#\[fg=#6272a4, bg=#282a36\]/#[fg=#f8f8f2, bg=#44475a]/')"
+_sr="$(echo "$_sr" | sed 's/#\[fg=#50fa7b\]/#[fg=#f8f8f2, bg=#6272a4]/')"
+# Add padding around date and time text
+_sr="$(echo "$_sr" | sed "s/%b/ %b/; s/'%y/'%y /; s/%H:%M/ %H:%M:%S /")"
 # Rotating tips via shell command — tmux re-evaluates #() on each status refresh
 tmux set-option -t "$SESSION" status-right "#[fg=#6272a4,italics]#(muxcode-tip.sh)  #[default]${_sr}"
 # Replace the Dracula session icon (❐) with hamburger (☰) in status-left
