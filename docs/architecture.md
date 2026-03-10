@@ -33,7 +33,8 @@ Muxcode creates a tmux session with multiple windows, each running an independen
 │  └─────────┘ └─────────┘ └─────────┘ └─────────┘                │
 └─────────────────────────────────────────────────────────────────┘
 
-Persistent:  .muxcode/memory/{role}.md
+Persistent:  .muxcode/memory/{role}.md      (project)
+             ~/.config/muxcode/memory/     (global / cross-session)
 ```
 
 ## Data Flow
@@ -166,21 +167,27 @@ Agents indicate busy state via lock files at `/tmp/muxcode-bus-{session}/lock/{r
 
 ## Memory System
 
-Per-project persistent memory stored in `.muxcode/memory/`:
+Memory has two layers:
 
 ```
-.muxcode/memory/
-├── shared.md      # Cross-agent shared learnings
-├── edit.md        # Edit agent learnings
-├── build.md       # Build agent learnings
-└── ...            # Per-role files
+~/.config/muxcode/memory/            # Global (cross-session, all projects)
+├── shared.md                        # Universal shared learnings
+├── {role}.md                        # Universal per-role learnings
+└── {role}/                          # Daily archives
+    └── YYYY-MM-DD.md
+
+.muxcode/memory/                     # Project-level (per-project)
+├── shared.md                        # Cross-agent shared learnings
+├── edit.md                          # Edit agent learnings
+├── build.md                         # Build agent learnings
+└── ...                              # Per-role files
 ```
 
-Memory is project-scoped — each project has its own memory directory, created when `muxcode-agent-bus init` runs.
+When agents read context (`muxcode-agent-bus memory context`), global memory is prepended before project memory. Project-specific learnings can override or refine global patterns. Use `--no-global` to skip global memory.
 
-Agents can search memory with `muxcode-agent-bus memory search "<query>"` (BM25 ranking by default with IDF weighting, length normalization, and 2x header boost; keyword mode also available via `--mode keyword`). List all sections with `muxcode-agent-bus memory list`. Both support `--role` filtering.
+Agents can search memory with `muxcode-agent-bus memory search "<query>"` (BM25 ranking by default with IDF weighting, length normalization, and 2x header boost; keyword mode also available via `--mode keyword`). List all sections with `muxcode-agent-bus memory list`. Both support `--role` filtering and `--scope project|global|all`.
 
-Memory files rotate daily — on first write each day, the previous day's file is archived to `{role}/YYYY-MM-DD.md`. Archives are retained for 30 days. Context includes the active file plus the last 7 days of archives by default (`--days N` to override).
+Memory files rotate daily — on first write each day, the previous day's file is archived to `{role}/YYYY-MM-DD.md`. Archives are retained for 30 days. Context includes the active file plus the last 7 days of archives by default (`--days N` to override). Both global and project memory rotate independently.
 
 ## Hook Architecture
 
@@ -282,8 +289,8 @@ When a MUXcode session restarts with the same name, `Init()` in `bus/setup.go` d
 
 - **Detection**: `os.Stat(busDir)` — if the directory exists, `reInit` flag is set
 - **Truncated files** (path preserved for writers): inboxes, `log.jsonl`, `cron.jsonl`, `proc.jsonl`, `spawn.jsonl`, `subscriptions.jsonl`, `{role}-history.jsonl`, `cron-history.jsonl`
-- **Removed files** (recreated on demand): session meta (`session/*.json`), lock files (`lock/*.lock`), proc logs (`proc/*.log`), orphaned spawn inboxes (`inbox/spawn-*.jsonl`), trigger file
-- **Preserved**: memory files (`.muxcode/memory/`) — persistent learnings survive re-init
+- **Removed files** (recreated on demand): session meta (`session/*.json`), lock files (`lock/*.lock`, `lock/*.stopped`), proc logs (`proc/*.log`), orphaned spawn inboxes (`inbox/spawn-*.jsonl`), trigger file
+- **Preserved**: memory files (`.muxcode/memory/`, `~/.config/muxcode/memory/`) — persistent learnings survive re-init
 - **Watcher grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (60s) and compaction checks (120s) skip the first interval
 
 Core code: `bus/setup.go` (`Init()`, `resetFile()`, `purgeStaleFiles()`), `watcher/watcher.go` (`New()`)

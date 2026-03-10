@@ -96,19 +96,25 @@ Read, write, search, and list persistent per-project memory.
 muxcode-agent-bus memory read [role|shared]
 muxcode-agent-bus memory write "<section>" "<text>"
 muxcode-agent-bus memory write-shared "<section>" "<text>"
-muxcode-agent-bus memory context
-muxcode-agent-bus memory search <query> [--role ROLE] [--limit N]
-muxcode-agent-bus memory list [--role ROLE]
+muxcode-agent-bus memory write-global "<section>" "<text>"
+muxcode-agent-bus memory read-global [role]
+muxcode-agent-bus memory context [--no-global]
+muxcode-agent-bus memory context-global [--days N]
+muxcode-agent-bus memory search <query> [--role ROLE] [--limit N] [--scope project|global|all]
+muxcode-agent-bus memory list [--role ROLE] [--scope project|global|all]
 ```
 
 - `read` — read a specific role's memory or shared memory
 - `write` — append to own role's memory file
 - `write-shared` — append to the shared memory file
-- `context` — output both shared memory and own role's memory
-- `search` — keyword search across all memory entries with relevance scoring (header matches weighted 2x). Supports `--role` to filter by role and `--limit` to cap results. Query terms are matched case-insensitively via substring matching. Silent output on no results.
-- `list` — show a columnar inventory of all memory sections across all roles. Supports `--role` to filter by role.
+- `write-global` — append to the global (cross-session) memory file at `~/.config/muxcode/memory/`
+- `read-global` — read global memory (shared or role-specific)
+- `context` — output global + shared + role memory. Use `--no-global` to skip global memory section
+- `context-global` — output only global memory (shared + role)
+- `search` — keyword search across all memory entries with relevance scoring (header matches weighted 2x). Supports `--role` to filter by role, `--limit` to cap results, and `--scope` to filter by source (`project`, `global`, or `all`; default: `all`). Query terms are matched case-insensitively via substring matching. Silent output on no results.
+- `list` — show a columnar inventory of all memory sections across all roles. Supports `--role` to filter by role and `--scope` to filter by source.
 
-Memory is stored in `.muxcode/memory/` relative to the project directory.
+Project memory is stored in `.muxcode/memory/` relative to the project directory. Global (cross-session) memory is stored in `~/.config/muxcode/memory/` and persists across all projects.
 
 **Search examples:**
 ```bash
@@ -896,6 +902,29 @@ $ muxcode-agent-bus subscribe list
 | File | Location | Purpose |
 |------|----------|---------|
 | `subscriptions.jsonl` | `/tmp/muxcode-bus-{SESSION}/subscriptions.jsonl` | Subscription definitions |
+
+### `muxcode-agent-bus agent-health`
+
+Manage agent liveness monitoring — stop/start auto-restart, check agent status.
+
+```bash
+muxcode-agent-bus agent-health --check <role>
+muxcode-agent-bus agent-health --stop <role>
+muxcode-agent-bus agent-health --start <role>
+```
+
+- `--check <role>` — report agent status: `alive`, `dead`, `stopped`, or `excluded`
+- `--stop <role>` — write a stopped marker, suppressing auto-restart for that role
+- `--start <role>` — remove the stopped marker, re-enabling auto-restart
+
+The watcher probes agent panes every 30 seconds. Three consecutive failures trigger auto-restart (capped at 3 per role per session). Excluded roles: `edit`, `webhook`, `spawn-*`.
+
+**Data files:**
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `{role}.stopped` | `/tmp/muxcode-bus-{session}/lock/` | Marker suppressing auto-restart |
+| `watcher.keepalive` | `/tmp/muxcode-bus-{session}/` | Unix timestamp updated each watcher poll loop |
 
 ### `muxcode-agent-bus session`
 

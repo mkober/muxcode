@@ -235,17 +235,25 @@ All agents have access to `muxcode-agent-bus` commands.
 
 ## Memory
 
-Per-project memory is stored in `.muxcode/memory/`:
+Memory has two layers — project-level and global (cross-session):
 
 ```
-.muxcode/memory/
-├── shared.md     # Cross-agent learnings
-├── edit.md       # Edit agent learnings
-├── build.md      # Build agent learnings
+.muxcode/memory/                     # Project-level (per-project)
+├── shared.md                        # Cross-agent learnings
+├── edit.md                          # Edit agent learnings
+├── build.md                         # Build agent learnings
 └── ...
+
+~/.config/muxcode/memory/            # Global (cross-session, all projects)
+├── shared.md                        # Universal shared learnings
+├── {role}.md                        # Universal per-role learnings
+└── {role}/                          # Daily archives
+    └── YYYY-MM-DD.md
 ```
 
-Agents read memory with `muxcode-agent-bus memory context` and write with `muxcode-agent-bus memory write "<section>" "<text>"`. To find specific learnings, use `muxcode-agent-bus memory search "<query>"` (keyword search with relevance scoring) or `muxcode-agent-bus memory list` to see all sections.
+Agents read memory with `muxcode-agent-bus memory context` (includes both global and project memory) and write with `muxcode-agent-bus memory write "<section>" "<text>"` (project) or `muxcode-agent-bus memory write-global "<section>" "<text>"` (global). Use `--no-global` on context to skip global memory. To find specific learnings, use `muxcode-agent-bus memory search "<query>"` (BM25 search with `--scope project|global|all`) or `muxcode-agent-bus memory list` to see all sections.
+
+Global memory stores universal patterns (conventions, tool quirks, workflow preferences) that apply across all projects. Project memory stores project-specific learnings (build commands, architecture decisions, test patterns).
 
 ## Tool profiles
 
@@ -266,6 +274,29 @@ Shared groups:
 CLI: `muxcode-agent-bus tools <role>` — resolves includes, applies CdPrefix, outputs one pattern per line. Patterns use Claude Code `--allowedTools` glob syntax (e.g. `Bash(git diff*)`).
 
 **Process substitution**: `Bash(diff *)` does NOT match `diff <(...)` — Claude Code treats `<()` as a special construct requiring explicit `Bash(diff <(*)`.
+
+## Agent health monitoring
+
+Watcher-integrated liveness detection for agent processes. The watcher probes agent tmux panes every 30 seconds and applies a 3-strike escalation:
+
+| Strike | Elapsed | Action |
+|--------|---------|--------|
+| 1 | 30s | Log failure, increment counter |
+| 2 | 60s | Send `agent-down` event to edit |
+| 3 | 90s | Restart agent, send `agent-restarting` event |
+
+- **Detection heuristic**: captures last 5 lines of agent pane — checks for harness PID, `❯` idle prompt, bare shell prompt (`$`/`%` at end of last line), or startup text
+- **Excluded roles**: `edit` (user session), `webhook` (PID-managed), `spawn-*` (own lifecycle)
+- **Intentional stop**: `muxcode-agent-bus agent-health --stop <role>` writes a `{role}.stopped` marker, suppressing auto-restart. `--start` removes it.
+- **Restart cap**: max 3 per role per session — after cap, alerts only (no more restarts)
+- **Recovery detection**: when a previously-down agent passes a probe, sends `agent-recovered` event
+- **System action exclusion**: `agent-down`, `agent-restarting`, `agent-recovered` registered in `isSystemAction()`
+
+### Watcher self-monitoring
+
+The watcher writes a Unix timestamp to `watcher.keepalive` at the top of each poll loop. A companion script (`muxcode-watcher-monitor.sh`) checks the keepalive every 15 seconds — if stale (>30s), it kills and relaunches the watcher.
+
+Core code: `bus/agent_health.go`, `bus/watcher_health.go`. Watcher code: `watcher/watcher.go` (`checkAgentHealth()`, `touchKeepalive()`). Monitor: `scripts/muxcode-watcher-monitor.sh`.
 
 ## Ollama health monitoring
 

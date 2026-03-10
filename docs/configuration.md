@@ -85,6 +85,7 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 /tmp/muxcode-bus-{session}/
 ├── inbox/{role}.jsonl     # Per-agent message queues
 ├── lock/{role}.lock       # Busy indicators
+├── lock/{role}.stopped    # Agent health: auto-restart suppression marker
 ├── log.jsonl              # Activity log
 ├── proc.jsonl             # Background process entries
 ├── proc/{id}.log          # Per-process output logs
@@ -92,7 +93,8 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 ├── cron.jsonl             # Scheduled task entries
 ├── cron-history.jsonl     # Cron execution history
 ├── subscriptions.jsonl    # Event subscription definitions
-└── webhook.pid            # Webhook server PID file (port:pid)
+├── webhook.pid            # Webhook server PID file (port:pid)
+└── watcher.keepalive      # Unix timestamp updated each watcher poll loop
 ```
 
 Created by `muxcode-agent-bus init`, cleaned up by the tmux session-closed hook.
@@ -123,6 +125,11 @@ Created on first `muxcode-agent-bus init` in the project directory.
 │   └── ...
 ├── skills/                # User global skill definitions
 │   └── ...
+├── memory/                # Global (cross-session) memory
+│   ├── shared.md          # Universal shared learnings
+│   ├── {role}.md          # Universal per-role learnings
+│   └── {role}/            # Daily archives (same rotation as project)
+│       └── YYYY-MM-DD.md
 └── context.d/             # User global context files
     ├── shared/            # Applied to all roles
     └── {role}/            # Role-specific context

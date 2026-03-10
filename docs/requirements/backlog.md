@@ -38,6 +38,8 @@
 | Local LLM agent | Per-role Ollama integration — Go agentic loop (`muxcode-agent-bus agent run`) with OpenAI-compatible API, tool execution (bash/read/glob/grep/write/edit), allowedTools enforcement, per-role config via `MUXCODE_{ROLE}_CLI=local`, fallback to Claude Code if Ollama unreachable | [local-llm-agent.md](./local-llm-agent.md) |
 | Ollama health monitoring | Watcher-integrated inference probes (30s interval) detect stuck Ollama instances — `ollama-down` alert at 60s, auto-restart at 90s (cap 3), agent relaunch, recovery detection; agent-side failure sentinels track consecutive `ChatComplete` errors | |
 | Jira description read+update | General-purpose GET+PUT skill for git-manager — read current description with context fields, update with ADF content, explicit-key + branch-name extraction | [jira-update-description.md](./jira-update-description.md) |
+| Agent health monitoring | Watcher detects dead agents (3-strike restart) + watcher self-monitoring via keepalive file + monitor script — `agent-health` CLI for stop/start/check | [agent-health-monitoring.md](./agent-health-monitoring.md) |
+| Cross-session memory | Global memory at `~/.config/muxcode/memory/` persisting across projects — `write-global`, `--no-global`, `--scope` flags, global context in prompts, BM25 search across both layers | [cross-session-memory.md](./cross-session-memory.md) |
 
 ## Planned
 
@@ -45,7 +47,6 @@
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
-| [Agent health monitoring](./agent-health-monitoring.md) | Watcher detects dead agents (3-strike restart) + watcher self-monitoring via keepalive file + monitor script — code complete, pending build/test/docs | High |
 | Structured agent metrics | Track per-agent metrics (messages sent/received, tool calls, errors, avg response time) in `metrics.jsonl` — dashboard TUI shows metrics panel | Medium |
 | Message delivery receipts | Agents ACK message consumption — sender knows message was read vs. sitting unprocessed, enables "read but no response" alerts | Low |
 | Bus audit trail | Append-only audit log separate from `log.jsonl` capturing all bus operations (send, consume, lock, unlock, cron fire, proc start/stop) with caller identity — post-session debugging | Low |
@@ -73,7 +74,6 @@
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
-| [Cross-session memory](./cross-session-memory.md) | Global memory persisting across projects — patterns, preferences, tool quirks — separate from per-project `.muxcode/memory/`, stored in `~/.config/muxcode/memory/` | High |
 | Memory tagging & expiry | Tag memory entries with categories (bug-fix, convention, workaround) and optional TTL — auto-expire stale workarounds, improves signal-to-noise in memory search | Medium |
 | Agent handoff protocol | Structured handoff when one agent needs another to continue its work — includes context bundle (relevant files, conversation excerpt, constraints), not just "send a message" | Medium |
 | Semantic memory search | Augment BM25 with embeddings (local via Ollama embedding models) for semantic similarity — falls back to BM25 when Ollama unavailable | Low |
