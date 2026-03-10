@@ -73,7 +73,7 @@
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
-| Cross-session memory | Global memory persisting across projects — patterns, preferences, tool quirks — separate from per-project `.muxcode/memory/`, stored in `~/.config/muxcode/memory/` | High |
+| [Cross-session memory](./cross-session-memory.md) | Global memory persisting across projects — patterns, preferences, tool quirks — separate from per-project `.muxcode/memory/`, stored in `~/.config/muxcode/memory/` | High |
 | Memory tagging & expiry | Tag memory entries with categories (bug-fix, convention, workaround) and optional TTL — auto-expire stale workarounds, improves signal-to-noise in memory search | Medium |
 | Agent handoff protocol | Structured handoff when one agent needs another to continue its work — includes context bundle (relevant files, conversation excerpt, constraints), not just "send a message" | Medium |
 | Semantic memory search | Augment BM25 with embeddings (local via Ollama embedding models) for semantic similarity — falls back to BM25 when Ollama unavailable | Low |
