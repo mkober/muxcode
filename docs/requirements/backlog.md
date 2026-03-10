@@ -45,7 +45,7 @@
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
-| Agent health monitoring | Watcher detects dead agents (3-strike restart) + watcher self-monitoring via keepalive file + monitor script | High |
+| [Agent health monitoring](./agent-health-monitoring.md) | Watcher detects dead agents (3-strike restart) + watcher self-monitoring via keepalive file + monitor script — code complete, pending build/test/docs | High |
 | Structured agent metrics | Track per-agent metrics (messages sent/received, tool calls, errors, avg response time) in `metrics.jsonl` — dashboard TUI shows metrics panel | Medium |
 | Message delivery receipts | Agents ACK message consumption — sender knows message was read vs. sitting unprocessed, enables "read but no response" alerts | Low |
 | Bus audit trail | Append-only audit log separate from `log.jsonl` capturing all bus operations (send, consume, lock, unlock, cron fire, proc start/stop) with caller identity — post-session debugging | Low |
