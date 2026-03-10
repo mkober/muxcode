@@ -39,6 +39,7 @@ Commands:
   subscribe   Manage event subscriptions (add, list, remove, enable, disable)
   agent       Run local LLM agent loop (run)
   api         Manage API collections, environments, and history
+  agent-health  Manage agent health monitoring (stop, start, check)
 `
 
 func main() {
@@ -109,6 +110,8 @@ func main() {
 		cmd.Agent(args)
 	case "api":
 		cmd.Api(args)
+	case "agent-health":
+		cmd.AgentHealth(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

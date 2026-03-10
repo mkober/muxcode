@@ -40,6 +40,11 @@ type Watcher struct {
 	ollamaRestarts  int      // cap at 3 to prevent restart loops
 	ollamaURL       string   // Ollama base URL
 	ollamaModel     string   // Ollama model name
+	// Agent health monitoring
+	lastAgentHealthCheck int64            // 30s interval
+	agentFailCounts      map[string]int   // consecutive failures per role
+	agentRestarts        map[string]int   // restart count per role (cap at 3)
+	agentWasDown         map[string]bool  // for recovery detection
 }
 
 // New creates a new Watcher for the given session.
@@ -53,18 +58,22 @@ func New(session string, pollSecs, debounceSecs int) *Watcher {
 	ollamaCfg := bus.DefaultOllamaConfig()
 
 	return &Watcher{
-		session:          session,
-		pollInterval:     time.Duration(pollSecs) * time.Second,
-		debounceSecs:     debounceSecs,
-		triggerFile:      bus.TriggerFile(session),
-		inboxSizes:       make(map[string]int64),
-		lastAlertKey:     make(map[string]int64),
-		lastLoopCheck:    now, // skip first interval — avoids stale alerts on startup
-		lastCompactCheck: now, // skip first interval — avoids stale alerts on startup
-		lastOllamaCheck:  now, // skip first interval
-		ollamaRoles:      ollamaRoles,
-		ollamaURL:        ollamaCfg.BaseURL,
-		ollamaModel:      ollamaCfg.Model,
+		session:              session,
+		pollInterval:         time.Duration(pollSecs) * time.Second,
+		debounceSecs:         debounceSecs,
+		triggerFile:          bus.TriggerFile(session),
+		inboxSizes:           make(map[string]int64),
+		lastAlertKey:         make(map[string]int64),
+		lastLoopCheck:        now, // skip first interval — avoids stale alerts on startup
+		lastCompactCheck:     now, // skip first interval — avoids stale alerts on startup
+		lastOllamaCheck:      now, // skip first interval
+		ollamaRoles:          ollamaRoles,
+		ollamaURL:            ollamaCfg.BaseURL,
+		ollamaModel:          ollamaCfg.Model,
+		lastAgentHealthCheck: now, // skip first interval
+		agentFailCounts:      make(map[string]int),
+		agentRestarts:        make(map[string]int),
+		agentWasDown:         make(map[string]bool),
 	}
 }
 
@@ -120,6 +129,7 @@ func (w *Watcher) Run() error {
 	fmt.Println()
 
 	for {
+		w.touchKeepalive()
 		w.checkInboxes()
 		w.checkTrigger()
 		w.checkCron()
@@ -128,6 +138,7 @@ func (w *Watcher) Run() error {
 		w.checkLoops()
 		w.checkCompaction()
 		w.checkOllama()
+		w.checkAgentHealth()
 		time.Sleep(w.pollInterval)
 	}
 }
@@ -696,6 +707,115 @@ func (w *Watcher) checkOllama() {
 
 		// Reset fail count to let the next probe cycle detect recovery
 		w.ollamaFailCount = 0
+	}
+}
+
+// touchKeepalive writes the current timestamp to the watcher keepalive file.
+// Called at the top of each poll loop iteration so the watcher monitor can
+// detect if the watcher process has died or become stuck.
+func (w *Watcher) touchKeepalive() {
+	bus.TouchKeepalive(w.session)
+}
+
+// checkAgentHealth probes agent liveness every 30 seconds using a 3-strike
+// escalation pattern: log → alert edit → restart (capped at 3 restarts).
+// Excludes edit and webhook roles. Respects intentional stop markers.
+func (w *Watcher) checkAgentHealth() {
+	now := time.Now().Unix()
+	if now-w.lastAgentHealthCheck < 30 {
+		return
+	}
+	w.lastAgentHealthCheck = now
+
+	ts := time.Now().Format("15:04:05")
+
+	for _, role := range bus.KnownRoles {
+		// Skip excluded roles and spawn roles
+		if bus.IsAgentHealthExcluded(role) || bus.IsSpawnRole(role) {
+			continue
+		}
+
+		// Skip intentionally stopped agents
+		if bus.IsAgentStopped(w.session, role) {
+			continue
+		}
+
+		alive := bus.IsAgentAlive(w.session, role)
+
+		if alive {
+			// Recovery detection
+			if w.agentWasDown[role] {
+				fmt.Printf("  %s  Agent %s recovered\n", ts, role)
+				w.agentWasDown[role] = false
+				w.agentFailCounts[role] = 0
+
+				alert := bus.FormatAgentHealthAlert("recovered", role, "Agent is responsive again")
+				msg := bus.NewMessage("watcher", "edit", "event", "agent-recovered", alert, "")
+				_ = bus.Send(w.session, msg)
+				w.refreshInboxSizes()
+			}
+			continue
+		}
+
+		// Agent appears dead — increment fail count
+		w.agentFailCounts[role]++
+		count := w.agentFailCounts[role]
+
+		fmt.Printf("  %s  Agent %s health check failure #%d\n", ts, role, count)
+
+		// Strike 2 (60s) — alert edit
+		if count == 2 {
+			w.agentWasDown[role] = true
+
+			alertKey := bus.AgentHealthAlertKey(role, "down")
+			if lastTS, ok := w.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
+				w.lastAlertKey[alertKey] = now
+				alert := bus.FormatAgentHealthAlert("down", role, "Agent pane shows bare shell prompt")
+				msg := bus.NewMessage("watcher", "edit", "event", "agent-down", alert, "")
+				if err := bus.Send(w.session, msg); err != nil {
+					fmt.Fprintf(os.Stderr, "  [agent-health] failed to send down alert for %s: %v\n", role, err)
+				}
+				w.refreshInboxSizes()
+			}
+		}
+
+		// Strike 3 (90s) — attempt restart
+		if count == 3 {
+			if w.agentRestarts[role] >= 3 {
+				// Cap reached — alert-only mode
+				alertKey := bus.AgentHealthAlertKey(role, "down")
+				if lastTS, ok := w.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
+					w.lastAlertKey[alertKey] = now
+					alert := bus.FormatAgentHealthAlert("down", role,
+						fmt.Sprintf("Restart cap (3) reached. Manual intervention required."))
+					msg := bus.NewMessage("watcher", "edit", "event", "agent-down", alert, "")
+					_ = bus.Send(w.session, msg)
+					w.refreshInboxSizes()
+				}
+				continue
+			}
+
+			w.agentRestarts[role]++
+			attempt := w.agentRestarts[role]
+			fmt.Printf("  %s  Restarting agent %s (attempt %d/3)...\n", ts, role, attempt)
+
+			// Send restarting alert
+			alert := bus.FormatAgentHealthAlert("restarting", role,
+				fmt.Sprintf("Attempt %d/3 — relaunching agent", attempt))
+			msg := bus.NewMessage("watcher", "edit", "event", "agent-restarting", alert, "")
+			_ = bus.Send(w.session, msg)
+			w.refreshInboxSizes()
+
+			// Attempt restart
+			if err := bus.RestartLocalAgent(w.session, role); err != nil {
+				fmt.Fprintf(os.Stderr, "  [agent-health] failed to restart %s: %v\n", role, err)
+			} else {
+				fmt.Printf("  %s  Agent %s restarted successfully\n", ts, role)
+			}
+
+			// Reset fail count to let next probe detect recovery
+			w.agentFailCounts[role] = 0
+		}
 	}
 }
 
