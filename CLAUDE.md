@@ -87,7 +87,7 @@ Both Go modules have **no external dependencies** (stdlib only).
 
 ## Key constraints
 
-- **Edit agent delegation**: never runs build, test, deploy, API requests, log tailing, or git commands (including read-only like `git status`). All delegated via message bus. API testing requests go to the `api` agent (role `api`, window `api`). See [Architecture](docs/architecture.md).
+- **Edit agent delegation**: never runs build, test, deploy, API requests, log tailing, git commands (including read-only like `git status`), or GitHub CLI commands (`gh`). All delegated via message bus. API testing requests go to the `api` agent (role `api`, window `api`). PR review reads (Copilot comments, CI failures) go to the **commit** agent with action `pr-read` — never to the review agent. See [Architecture](docs/architecture.md).
 - **Hook-driven chains**: build→test→review and deploy→verify chains are deterministic (bash exit codes), not LLM-driven. See [Hooks](docs/hooks.md).
 - **User-initiated commits**: git commits, pushes, and PR creation are never auto-triggered. The automated chain stops at review.
 - **Pre-commit safeguard**: commit delegation blocked when any agent has pending inbox, is busy, or has running procs/spawns. Bypass with `--force`.
