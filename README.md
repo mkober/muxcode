@@ -188,6 +188,10 @@ muxcode ~/Projects/my-app
 muxcode ~/Projects/my-app my-session
 ```
 
+### Workspace trust
+
+When Claude Code opens a new workspace for the first time, it shows a "Yes, I trust this folder" safety prompt in every agent window. MUXcode automatically accepts this prompt on your behalf — a background process polls each agent pane after launch and presses Enter on any window showing the trust dialog. This runs over ~18 seconds to catch slow-starting agents, and skips panes that are already past the prompt.
+
 ## Configuration
 
 MUXcode uses a shell-sourceable config file. Resolution order:

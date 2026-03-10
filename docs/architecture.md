@@ -283,6 +283,21 @@ Pollers share a common pattern: `set -uo pipefail`, Dracula color scheme, `jq` p
 
 The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rather than a dedicated history file, filtering for analyst response messages. It displays: findings count, last 15 entries with timestamp/action/target/truncated payload, and the full payload of the latest finding.
 
+## Workspace trust auto-accept
+
+When launching a session in a new workspace, Claude Code shows a "Yes, I trust this folder" safety prompt in each agent window. The launcher handles this automatically via a background process that runs after all windows are created:
+
+1. Polls each agent pane every 3 seconds (6 attempts, ~18 seconds total)
+2. Captures pane content with `tmux capture-pane -p`
+3. If the pane contains "trust this folder", sends Enter to accept the default selection
+4. Tracks already-accepted panes to avoid double-sending
+5. Detects panes that are already past the prompt (agent prompt visible) and skips them
+6. Exits early once all panes are handled
+
+This avoids the need to manually accept the trust dialog in each of the 10+ agent windows. For already-trusted workspaces, the prompts never appear and the background process exits quickly after detecting active agent prompts.
+
+Core code: `muxcode.sh` (auto-accept block near end of file)
+
 ## Session re-init
 
 When a MUXcode session restarts with the same name, `Init()` in `bus/setup.go` detects the existing bus directory and purges stale data to prevent false watcher alerts (loop-detected, compact-recommended) from the previous session.
