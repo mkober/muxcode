@@ -43,6 +43,7 @@ tools/muxcode-llm-harness/    # Go module — standalone local LLM harness
 | `make install` | Build + install binary to `~/.local/bin/`, scripts, agents, configs to `~/.config/muxcode/` |
 | `make clean` | Remove `bin/` directory |
 | `./install.sh` | First-time setup — checks prereqs, builds, configures tmux and Claude Code hooks |
+| `bash scripts/test-diff-split.sh` | Integration test for nvim diff split preview (requires running muxcode session) |
 
 Both Go modules have **no external dependencies** (stdlib only).
 

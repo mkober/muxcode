@@ -29,11 +29,19 @@ sleep 0.05
 tmux send-keys -t "$PANE" Escape Escape
 sleep 0.05
 
-# Clean up any stale diff from a previous rejected edit
+# Clean up any stale diff from a previous rejected edit.
+# Skip if the temp file was created recently (< 3s) — that means a concurrent
+# hook invocation (global + project settings both fire the same hook).
 if [ -f "$TEMP_FILE" ]; then
-  tmux send-keys -t "$PANE" ":sil! exe 'b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | sil! set number" Enter
-  sleep 0.2
-  rm -f "$TEMP_FILE"
+  file_age=$(( $(date +%s) - $(stat -f %m "$TEMP_FILE" 2>/dev/null || echo 0) ))
+  if [ "$file_age" -gt 2 ]; then
+    tmux send-keys -t "$PANE" ":sil! exe 'b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | sil! set number" Enter
+    sleep 0.2
+    rm -f "$TEMP_FILE"
+  else
+    # Recent temp file from concurrent invocation — skip this instance
+    exit 0
+  fi
 fi
 
 # Find the line of old_string (the code about to be changed)

@@ -345,7 +345,7 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
     if command -v muxcode-analyze-log.sh &>/dev/null; then
       tmux send-keys -t "$SESSION:$WIN" "muxcode-analyze-log.sh" Enter
     fi
-    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR" -l 75%
+    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN.1"
     tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
     tmux select-pane -t "$SESSION:$WIN.1"
@@ -418,14 +418,16 @@ tmux set-hook -t "$SESSION" session-closed \
   done
 ) &
 
-# --- Auto-accept workspace trust prompts ---
-# Claude Code shows "Yes, I trust this folder" in new workspaces.
-# Poll agent panes for the prompt and accept the default selection.
-# Runs 6 checks over ~15 seconds to catch slow-starting agents.
+# --- Auto-accept startup prompts ---
+# Claude Code may show two prompts on launch:
+#   1. "Yes, I trust this folder" — workspace trust (new workspaces)
+#   2. "Bypass Permissions mode" — dangerous-skip-permissions warning (non-edit agents)
+# Poll agent panes and dismiss each prompt as it appears.
+# When an agent reaches the ❯ idle prompt, send its startup message and
+# wake-up immediately — no separate wake-up loop needed.
 (
   accepted=""
-  for attempt in 1 2 3 4 5 6; do
-    sleep 3
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
     all_done=true
     for WIN in "${WIN_ARRAY[@]}"; do
       # Skip already-accepted panes
@@ -433,45 +435,32 @@ tmux set-hook -t "$SESSION" session-closed \
       pane="$SESSION:$WIN.1"
       content="$(tmux capture-pane -t "$pane" -p 2>/dev/null)" || continue
       if echo "$content" | grep -q "trust this folder"; then
+        # Trust prompt — default selection is already correct, just confirm
+        tmux send-keys -t "$pane" Enter 2>/dev/null
+        all_done=false  # bypass prompt may follow
+      elif echo "$content" | grep -q "Bypass Permissions"; then
+        # Bypass permissions prompt — move to "Yes, I accept" and confirm
+        tmux send-keys -t "$pane" Down 2>/dev/null
+        sleep 0.2
         tmux send-keys -t "$pane" Enter 2>/dev/null
         accepted="$accepted $WIN"
-      elif echo "$content" | grep -qE '(❯|λ|\$)'; then
-        # Agent already past the prompt (trusted workspace)
+      elif echo "$content" | grep -q '❯'; then
+        # Agent at Claude Code idle prompt — past all startup prompts.
+        # Send startup message + wake-up inline for edit only.
+        # Watch/analyze don't need startup messages — the watcher delivers
+        # inbox items naturally, and unsolicited responses CC noise to edit.
         accepted="$accepted $WIN"
+        if [ "$WIN" = "edit" ]; then
+          muxcode-agent-bus send edit notify \
+            "Session started — review last saved context from memory to restore session state." \
+            --type event 2>/dev/null
+        fi
       else
         all_done=false
       fi
     done
     $all_done && break
-  done
-
-  # --- Send startup messages to passive agents ---
-  # The analyze agent needs an initial prompt to begin autonomous operation.
-  # Wait briefly for agents to fully initialize after trust prompts, then
-  # send a startup event so the agent's first action is checking its inbox.
-  sleep 2
-  for WIN in "${WIN_ARRAY[@]}"; do
-    local_role="${WIN}"
-    case "$local_role" in
-      analyze)
-        muxcode-agent-bus send analyze notify \
-          "Session started — you are now active. Monitor your inbox for file-change events and analyze code changes as they arrive." \
-          --type event --no-notify 2>/dev/null
-        ;;
-      watch)
-        muxcode-agent-bus send watch notify \
-          "Session started — you are now active. Check shared memory for any log sources to monitor. If none found, wait for monitoring requests." \
-          --type event --no-notify 2>/dev/null
-        ;;
-    esac
-    # Wake the agent after the message is in the inbox
-    if [ "$local_role" = "analyze" ] || [ "$local_role" = "watch" ]; then
-      sleep 0.5
-      pane="$SESSION:$WIN.1"
-      if tmux capture-pane -t "$pane" -p 2>/dev/null | grep -qE '(❯|λ|\$)'; then
-        tmux send-keys -t "$pane" "You have new messages" Enter 2>/dev/null
-      fi
-    fi
+    sleep 2
   done
 ) &
 

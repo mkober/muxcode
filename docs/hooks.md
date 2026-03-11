@@ -75,10 +75,17 @@ When a command is blocked, the hook returns a rejection with instructions to del
 Opens the target file in nvim and shows a diff preview of the proposed change before the user accepts or rejects it.
 
 **What it does:**
-1. Opens the file at the line about to be changed
-2. Creates a temp file with the proposed version
-3. Opens a horizontal diff split (original below, proposed above)
-4. Sets syntax highlighting to match the file type
+1. Dismisses any pending "Press ENTER" prompt and ensures normal mode
+2. Cleans stale diff from a previously rejected edit (skips if temp file < 3s old — concurrent invocation guard)
+3. Opens the file at the line about to be changed (folds open, search highlight cleared)
+4. For Edit tool: generates a temp file with the proposed change via `python3` (required — no diff without it)
+5. Opens a horizontal diff split with `scrollbind` (original below, proposed above), syntax matching the file type
+6. Jumps to the changed line after a 150ms delay — sent as a separate `tmux send-keys` so scrollbind is fully active before the jump
+
+**Implementation details:**
+- Each nvim command in a `|` pipe chain needs its own `sil!` prefix — the modifier only suppresses the immediately following command, not the full chain. Without this, errors like E35 cause "Press ENTER" prompts that break subsequent commands.
+- The jump-to-line uses `norm! {LINE}Gzz` (not `:N`) because `norm!` properly triggers scrollbind sync between both diff panes.
+- Concurrent invocations (from global + project `.claude/settings.json` both firing the hook) are handled via temp file age detection — if the temp file is < 3 seconds old, the second invocation exits immediately.
 
 **Customization:**
 - `MUXCODE_PREVIEW_SKIP` — space-separated substrings of file paths to skip (default: `/.claude/settings.json /.claude/CLAUDE.md /.muxcode/`)
@@ -99,8 +106,8 @@ Lightweight cleanup hook. If a diff preview is still open from a previously reje
 Signals that a file was edited. Performs three tasks:
 
 1. **Trigger file**: Appends the edited file path to the trigger file for the bus watcher
-2. **Event routing**: Sends file-change events to appropriate agents based on file type
-3. **Diff cleanup**: In the edit window, closes the diff preview and reloads the file at the changed line
+2. **Event routing**: Sends file-change events to appropriate agents based on file type (uses `--no-notify` — no status bar flash for file-change events)
+3. **Diff cleanup**: In the edit window, waits ~1s for the async preview hook to finish, then closes the diff preview and reloads the file at the changed line. The delay prevents the cleanup from racing ahead of the preview setup.
 
 **NotebookEdit:** For `NotebookEdit` tool events, `file_path` is extracted from `tool_input.notebook_path`. The diff preview opens the `.ipynb` file at the raw JSON level.
 
@@ -193,6 +200,24 @@ When a deploy-apply command succeeds, the hook triggers a verification self-loop
 5. Deploy agent reports PASS/FAIL results to edit
 
 Preview commands (`cdk diff`, `terraform plan`) are logged to deploy history but do **not** trigger the verify chain. See [Deploy verify plan](plan-deploy-verify.md) for full details.
+
+## Testing
+
+The diff preview integration can be tested with `scripts/test-diff-split.sh`:
+
+```bash
+bash scripts/test-diff-split.sh
+```
+
+**Requirements:** Running muxcode session with nvim in `edit.0`.
+
+**Phases:**
+1. **Setup** — creates a test file, verifies nvim opens it
+2. **PreToolUse (Edit)** — simulates preview hook, verifies diff split (2 windows, diffmode on)
+3. **PostToolUse (accepted)** — simulates analyze hook, verifies cleanup (1 window, temp file removed)
+4. **Stale cleanup** — simulates rejected edit, ages the temp file, verifies stale diff is cleaned on next preview
+5. **Skip patterns** — verifies `MUXCODE_PREVIEW_SKIP` skips matching files
+6. **Write tool** — verifies Write tool opens file without diff split (no `old_string`)
 
 ## Creating Custom Hooks
 

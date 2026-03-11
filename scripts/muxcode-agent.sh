@@ -166,6 +166,13 @@ launch_agent_from_file() {
   exec $AGENT_CLI --agent "$name" --agents "$agents_json" "$@"
 }
 
+# Permission mode: edit agent prompts (user toggles with Shift+Tab),
+# all other agents auto-accept so they run autonomously.
+PERM_FLAGS=()
+if [ "$ROLE" != "edit" ]; then
+  PERM_FLAGS=(--dangerously-skip-permissions)
+fi
+
 # Clear terminal so Claude Code starts with a clean screen
 clear
 
@@ -175,11 +182,11 @@ if [ -n "$AGENT" ]; then
   INSTALL_DIR="${SCRIPT_DIR%/scripts}"
 
   if [ -f ".claude/agents/${AGENT}.md" ]; then
-    exec $AGENT_CLI --agent "$AGENT" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
+    exec $AGENT_CLI --agent "$AGENT" "${PERM_FLAGS[@]}" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
   elif [ -f "$HOME/.config/muxcode/agents/${AGENT}.md" ]; then
-    launch_agent_from_file "$AGENT" "$HOME/.config/muxcode/agents/${AGENT}.md" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
+    launch_agent_from_file "$AGENT" "$HOME/.config/muxcode/agents/${AGENT}.md" "${PERM_FLAGS[@]}" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
   elif [ -f "$INSTALL_DIR/agents/${AGENT}.md" ]; then
-    launch_agent_from_file "$AGENT" "$INSTALL_DIR/agents/${AGENT}.md" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
+    launch_agent_from_file "$AGENT" "$INSTALL_DIR/agents/${AGENT}.md" "${PERM_FLAGS[@]}" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
   fi
 fi
 
@@ -229,4 +236,4 @@ case "$ROLE" in
     ;;
 esac
 
-exec $AGENT_CLI --append-system-prompt "$PROMPT" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
+exec $AGENT_CLI --append-system-prompt "$PROMPT" "${PERM_FLAGS[@]}" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"

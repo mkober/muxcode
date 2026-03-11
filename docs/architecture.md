@@ -111,13 +111,20 @@ This means rapid consecutive edits (e.g. Claude writing multiple files) are coal
 ```
 1. Agent proposes an edit (Write/Edit tool)
 2. PreToolUse hook (muxcode-preview-hook.sh) fires
-3. Hook opens the file in nvim at the target line
-4. Hook creates temp file with proposed change
-5. Hook opens diff split in nvim (original below, proposed above)
-6. User reviews in nvim, accepts or rejects in Claude Code
-7a. Accept → PostToolUse hook cleans diff, reloads file at changed line
-7b. Reject → Next tool's PreToolUse hook (muxcode-diff-cleanup.sh) cleans diff
+3. Hook dismisses any pending prompt, cleans stale diff from prior rejected edit
+4. Hook opens the file in nvim at the target line (folds open, search cleared)
+5. For Edit tool: python3 generates temp file with proposed change
+6. Hook opens diff split with scrollbind (original below, proposed above)
+7. After 150ms: separate send-keys jumps to changed line (scrollbind must be active first)
+8. User reviews in nvim, accepts or rejects in Claude Code
+9a. Accept → PostToolUse hook waits ~1s for preview to finish, cleans diff, reloads file
+9b. Reject → Next tool's PreToolUse hook (muxcode-diff-cleanup.sh) cleans diff
 ```
+
+**Key constraints:**
+- Every nvim command in a `|` pipe chain needs its own `sil!` prefix
+- Jump-to-line must be a separate `tmux send-keys` after 150ms so scrollbind is active
+- Concurrent hook invocations (global + project settings) guarded by temp file age (< 3s → skip)
 
 ## Bus Protocol
 
@@ -141,7 +148,7 @@ Messages from build, test, review, and deploy agents to any non-edit agent are a
 3. If auto-CC fires, `send` also notifies edit
 4. The watcher provides fallback notifications for all roles
 
-Never use `send-keys` on **active** agents — it disrupts Claude Code's input buffer, interrupts in-progress tool execution, and causes agents to stall at "Interrupted" prompts. Idle agents at the `❯` prompt are safe to wake via `send-keys` because no tool execution is in progress. `IsAgentIdle()` detects idle state via `tmux capture-pane -S -5` (exact match on the `❯` character).
+Never use `send-keys` on **active** agents — it disrupts Claude Code's input buffer, interrupts in-progress tool execution, and causes agents to stall at "Interrupted" prompts. Idle agents at the `❯` prompt are safe to wake via `send-keys` because no tool execution is in progress. `IsAgentIdle()` detects idle state via `tmux capture-pane -S -8` (scans all captured lines for exact match on the `❯` character — scans all lines because Claude Code renders a decorative footer below the prompt).
 
 ### Edit inbox polling (`--wait`)
 
@@ -283,18 +290,22 @@ Pollers share a common pattern: `set -uo pipefail`, Dracula color scheme, `jq` p
 
 The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rather than a dedicated history file, filtering for analyst response messages. It displays: findings count, last 15 entries with timestamp/action/target/truncated payload, and the full payload of the latest finding.
 
-## Workspace trust auto-accept
+## Startup prompt handling
 
-When launching a session in a new workspace, Claude Code shows a "Yes, I trust this folder" safety prompt in each agent window. The launcher handles this automatically via a background process that runs after all windows are created:
+When launching a session, Claude Code may show two sequential prompts per agent window:
+1. **Workspace trust** — "Yes, I trust this folder" (new workspaces)
+2. **Bypass permissions** — "Bypass Permissions mode" warning (non-edit agents using `--dangerously-skip-permissions`)
 
-1. Polls each agent pane every 3 seconds (6 attempts, ~18 seconds total)
+The launcher handles both automatically via a single background loop that runs after all windows are created:
+
+1. Polls each agent pane every 2 seconds (10 attempts, ~20 seconds max)
 2. Captures pane content with `tmux capture-pane -p`
-3. If the pane contains "trust this folder", sends Enter to accept the default selection
-4. Tracks already-accepted panes to avoid double-sending
-5. Detects panes that are already past the prompt (agent prompt visible) and skips them
-6. Exits early once all panes are handled
-
-This avoids the need to manually accept the trust dialog in each of the 10+ agent windows. For already-trusted workspaces, the prompts never appear and the background process exits quickly after detecting active agent prompts.
+3. If "trust this folder" detected: sends Enter to accept (marks as not-done — bypass prompt may follow)
+4. If "Bypass Permissions" detected: sends Down + Enter to select "Yes, I accept"
+5. If `❯` idle prompt detected: agent is past all prompts — marks as accepted
+6. **Edit agent startup**: when the edit agent reaches `❯`, sends a startup event (`Session started — review last saved context from memory`) via `muxcode-agent-bus send` with normal notification (the bus `Notify()` handles wake-up via `notifyIdleSendKeys()` with dedup)
+7. Watch/analyze agents do **not** get startup messages — the watcher delivers inbox items naturally, and unsolicited responses would CC noise to edit
+8. Exits early once all panes are handled
 
 Core code: `muxcode.sh` (auto-accept block near end of file)
 

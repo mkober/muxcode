@@ -414,7 +414,6 @@ func DefaultConfig() *MuxcodeConfig {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: false,
 				Tools: []string{
-					"Write", "Edit",
 					"Bash(tree *)", "Bash(python3*)", "Bash(jq*)",
 				},
 			},

@@ -5,7 +5,7 @@
 # to appropriate agents based on file type. Cleans up nvim diff preview
 # after an accepted edit.
 #
-# Receives tool event JSON on stdin.
+# Receives tool event JSON on stdin via hook system.
 
 # Must be inside a tmux session
 SESSION=$(tmux display-message -p '#S' 2>/dev/null) || exit 0
@@ -36,11 +36,15 @@ if [ "$WINDOW_NAME" = "edit" ]; then
     [ -n "$MATCH" ] && LINE="$MATCH"
   fi
   ESCAPED_PATH="${FILE_PATH// /\\ }"
+  # Wait for async PreToolUse preview hook to finish setting up the diff.
+  # The preview hook takes ~0.5-0.8s (sleeps + nvim commands). Without this
+  # delay, the cleanup races ahead and the diff commands arrive after cleanup.
+  sleep 1
   tmux send-keys -t "$SESSION:edit.0" Escape Escape
   sleep 0.1
   if [ -f "$TEMP_FILE" ]; then
     # Close diff preview and reload file
-    tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | sil! e! +$LINE $ESCAPED_PATH" Enter
+    tmux send-keys -t "$SESSION:edit.0" ":sil! exe 'b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | sil! e! +$LINE $ESCAPED_PATH | sil! set number | sil! setlocal foldlevel=99" Enter
     rm -f "$TEMP_FILE"
   else
     # No diff preview (Write tool) — reload to trigger filetype detection

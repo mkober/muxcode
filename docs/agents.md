@@ -23,6 +23,19 @@ The `launch_agent_from_file` function in `muxcode-agent.sh` handles agent file l
 
 The three-tier search (project-local → user config → install default) runs in `muxcode-agent.sh` after resolving the agent filename via `agent_name()`.
 
+### Shared prompt assembly
+
+Every agent (regardless of source) receives a dynamically assembled `--append-system-prompt` containing:
+
+1. **Coordinator prompt** — role-specific coordination instructions (`muxcode-agent-bus prompt <role>`)
+2. **Skills** — matching skill definitions for the role (`muxcode-agent-bus skill prompt <role>`)
+3. **Context files** — from `context.d/shared/` + `context.d/<role>/` (`muxcode-agent-bus context prompt <role>`)
+4. **Session resume** — previous session summaries from memory (`muxcode-agent-bus session resume <role>`)
+
+### Permission mode
+
+The edit agent runs without `--dangerously-skip-permissions` — users accept/reject each tool call (toggleable with Shift+Tab). All other agents run with `--dangerously-skip-permissions` for autonomous operation.
+
 ## Built-in Roles
 
 | Role | Agent File | Window | Description |
@@ -122,11 +135,14 @@ Set per-role CLI override in `.muxcode/config`:
 
 ```bash
 MUXCODE_GIT_CLI=local              # commit agent uses local LLM
-MUXCODE_OLLAMA_MODEL=qwen2.5-coder:7b  # model (default)
+MUXCODE_OLLAMA_MODEL=qwen2.5-coder:7b  # global default model
+MUXCODE_GIT_MODEL=llama3.1:8b      # per-role model override
 MUXCODE_OLLAMA_URL=http://localhost:11434  # Ollama URL (default)
 ```
 
 The variable format is `MUXCODE_{ROLE}_CLI=local` where `{ROLE}` is the uppercase role name (e.g. `GIT` for the git/commit agent, `BUILD` for the build agent).
+
+**Per-role model selection:** Each role can use a different model via `MUXCODE_{ROLE}_MODEL`. Resolution order: per-role env var → `MUXCODE_OLLAMA_MODEL` → default (`qwen2.5:7b`).
 
 ### How it works
 
@@ -214,16 +230,17 @@ cp ~/.config/muxcode/agents/code-builder.md .claude/agents/code-builder.md
    # ~/.config/muxcode/agents/repo-documentor.md
    ```
 
-5. Add a case to `agent_name()` in `scripts/muxcode-agent.sh` to map the role to its agent filename. Optionally add a case to `allowed_tools()` to scope the agent's Bash permissions.
+5. Add a case to `agent_name()` in `scripts/muxcode-agent.sh` to map the role to its agent filename. Optionally add a tool profile entry in `bus/profile.go` to scope the agent's permissions.
 
 ### Agent Permissions
 
-Agents have scoped Bash permissions for autonomous operation. The default permissions per role are defined in `muxcode-agent.sh`:
+Agents have scoped permissions via tool profiles (`bus/profile.go`). The `--allowedTools` flags are resolved dynamically by `muxcode-agent-bus tools <role>` and passed to Claude Code at launch. Default permissions per role:
 
+- **edit**: `Read`, `Glob`, `Grep`, `tree`, `python3`, `jq` (read-only — deliberately **no** `Write` or `Edit` tools, enforcing delegation via the bus)
 - **build**: `./build.sh`, `make`, `go build`, `pnpm build`, `cargo build`
 - **test**: `./test.sh`, `go test`, `jest`, `pytest`, `cargo test`
-- **review**: `git diff`, `git log`, `git status`, `git show` (read-only git)
-- **git**: `git *`, `gh *` (all git and GitHub CLI subcommands)
+- **review**: `git diff`, `git log`, `git status`, `git show` (read-only git), `Write`
+- **git**: `git *`, `gh *` (all git and GitHub CLI subcommands), `Write`, `Edit`
 - **deploy**: `cdk`, `terraform`, `pulumi`, `aws`, `sam`, `curl`, `wget`, `./build.sh`, `make`, read-only git, `Write`, `Edit`
 - **runner**: unrestricted (no `--allowedTools` filter)
 - **analyst**: bus commands + Read, Glob, Grep (no shell commands)
@@ -231,7 +248,7 @@ Agents have scoped Bash permissions for autonomous operation. The default permis
 - **pr-read**: `gh pr view/checks/diff/review/list/status`, `gh api`, `git diff/log/status/show/blame/rev-parse/branch`, `jq` (read-only: scoped gh + git, no Write/Edit)
 - **api**: `curl`, `wget`, `http`, `jq`, `python`, `node`, `openssl`, `base64`, `dig`, `nslookup`, `Write`, `Edit`
 
-All agents have access to `muxcode-agent-bus` commands.
+All agents have access to `muxcode-agent-bus` commands. The edit agent's lack of `Write`/`Edit` tools is enforced at the tool profile level — Claude Code will not auto-approve file modifications, ensuring all code changes go through the user's accept/reject flow.
 
 ## Memory
 
