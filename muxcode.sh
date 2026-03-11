@@ -444,6 +444,35 @@ tmux set-hook -t "$SESSION" session-closed \
     done
     $all_done && break
   done
+
+  # --- Send startup messages to passive agents ---
+  # The analyze agent needs an initial prompt to begin autonomous operation.
+  # Wait briefly for agents to fully initialize after trust prompts, then
+  # send a startup event so the agent's first action is checking its inbox.
+  sleep 2
+  for WIN in "${WIN_ARRAY[@]}"; do
+    local_role="${WIN}"
+    case "$local_role" in
+      analyze)
+        muxcode-agent-bus send analyze notify \
+          "Session started — you are now active. Monitor your inbox for file-change events and analyze code changes as they arrive." \
+          --type event --no-notify 2>/dev/null
+        ;;
+      watch)
+        muxcode-agent-bus send watch notify \
+          "Session started — you are now active. Check shared memory for any log sources to monitor. If none found, wait for monitoring requests." \
+          --type event --no-notify 2>/dev/null
+        ;;
+    esac
+    # Wake the agent after the message is in the inbox
+    if [ "$local_role" = "analyze" ] || [ "$local_role" = "watch" ]; then
+      sleep 0.5
+      pane="$SESSION:$WIN.1"
+      if tmux capture-pane -t "$pane" -p 2>/dev/null | grep -qE '(❯|λ|\$)'; then
+        tmux send-keys -t "$pane" "You have new messages" Enter 2>/dev/null
+      fi
+    fi
+  done
 ) &
 
 # Switch to new session (works inside tmux) or attach from outside

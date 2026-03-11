@@ -53,7 +53,7 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I proceed?"
 
 ### Reading PR Reviews (pr-read action)
 
-When you receive a `pr-read` request, analyze the PR on the current branch and report suggested fixes:
+When you receive a `pr-read` request, analyze the PR on the current branch and report suggested fixes. **This is a read-only operation — never modify, write, or edit any files. Only read and report.**
 
 1. **Identify the PR**: `gh pr view --json number,title,url,headRefName`
 2. **Gather feedback** (use `--paginate` — Copilot reviews produce many inline comments):
@@ -65,10 +65,16 @@ When you receive a `pr-read` request, analyze the PR on the current branch and r
    - **Must-fix**: requested changes, failing CI, security issues
    - **Should-fix**: style, performance, code smells
    - **Informational**: questions, praise, FYI — no action needed
-4. **Report to edit**: send a structured summary with file paths, line numbers, and recommended changes
+4. **Report to edit** — do NOT attempt to fix anything yourself. Send a structured summary with file paths, line numbers, and recommended changes so the edit agent can make the fixes:
    ```bash
    muxcode-agent-bus send edit notify "PR #N: N must-fix, N should-fix. Must-fix: (1) file:line — fix desc (2) ..."
    ```
+
+**pr-read safety rules:**
+- **Never use Write or Edit tools** — you are reporting only, not fixing
+- **Never commit, push, or modify the working tree** during a pr-read
+- **Never dismiss or resolve review comments**
+- The edit agent is responsible for all code changes — relay the information and let it act
 
 ### Repository Health
 

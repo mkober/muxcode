@@ -40,7 +40,7 @@ if [ "$WINDOW_NAME" = "edit" ]; then
   sleep 0.1
   if [ -f "$TEMP_FILE" ]; then
     # Close diff preview and reload file
-    tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | diffoff! | only | e! +$LINE $ESCAPED_PATH" Enter
+    tmux send-keys -t "$SESSION:edit.0" ":exe 'sil! b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | sil! e! +$LINE $ESCAPED_PATH" Enter
     rm -f "$TEMP_FILE"
   else
     # No diff preview (Write tool) — reload to trigger filetype detection
