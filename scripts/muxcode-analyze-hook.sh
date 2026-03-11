@@ -44,11 +44,13 @@ if [ "$WINDOW_NAME" = "edit" ]; then
   sleep 0.1
   if [ -f "$TEMP_FILE" ]; then
     # Close diff preview and reload file
-    tmux send-keys -t "$SESSION:edit.0" ":sil! exe 'b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | sil! e! +$LINE $ESCAPED_PATH | sil! set number | sil! setlocal foldlevel=99" Enter
+    # shortmess+=AF suppresses swap attention (A) and file-info warnings (F)
+    tmux send-keys -t "$SESSION:edit.0" ":sil! set shortmess+=AF | sil! exe 'b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | sil! exe 'e! +$LINE $ESCAPED_PATH' | sil! set number | sil! setlocal foldlevel=99" Enter
     rm -f "$TEMP_FILE"
   else
-    # No diff preview (Write tool) — reload to trigger filetype detection
-    tmux send-keys -t "$SESSION:edit.0" ":sil! e! +$LINE $ESCAPED_PATH | sil! filetype detect" Enter
+    # No diff preview (Write tool) — open file to show the new/updated content
+    # shortmess+=AF suppresses swap attention (A) and file-info like "[New File]" / W13 (F)
+    tmux send-keys -t "$SESSION:edit.0" ":sil! set shortmess+=AF | sil! exe 'e! +$LINE $ESCAPED_PATH' | sil! setlocal foldlevel=99 | sil! set number | sil! filetype detect" Enter
   fi
 fi
 

@@ -162,6 +162,11 @@ func IsAgentIdle(session, role string) bool {
 func notifySendKeys(session, role string) error {
 	target := PaneTarget(session, role)
 
+	// Step 0: clear any residual input so the text starts at column 0
+	// (prevents extra left-padding from stale whitespace in the TUI)
+	clr := exec.Command("tmux", "send-keys", "-t", target, "C-u")
+	_ = clr.Run()
+
 	// Step 1: send the text
 	cmd := exec.Command("tmux", "send-keys", "-t", target, "You have new messages")
 	if err := cmd.Run(); err != nil {

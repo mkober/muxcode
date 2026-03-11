@@ -53,12 +53,16 @@ if [ -n "$NEEDLE" ] && [ -f "$FILE_PATH" ]; then
   [ -n "$MATCH" ] && LINE="$MATCH"
 fi
 
+# Skip preview for new files — opening a nonexistent path in vim then having
+# the Write tool create it triggers W13 "File has been created after editing started" dialog
+[ ! -f "$FILE_PATH" ] && exit 0
+
 # Escape spaces for nvim command-line
 ESCAPED_PATH="${FILE_PATH// /\\ }"
 
 # Open file at the changed line (foldlevel=99 keeps all folds open, nohlsearch clears stale matches)
 # Each command needs sil! — the modifier only applies to the immediately following command, not the full | chain
-tmux send-keys -t "$PANE" ":sil! exe 'e! +$LINE $ESCAPED_PATH' | sil! setlocal foldlevel=99 | sil! set number | sil! nohlsearch | sil! let @/=''" Enter
+tmux send-keys -t "$PANE" ":sil! set shortmess+=A | sil! exe 'e! +$LINE $ESCAPED_PATH' | sil! setlocal foldlevel=99 | sil! set number | sil! nohlsearch | sil! let @/=''" Enter
 
 # For Edit tool: create temp file with proposed change and open diff
 if [ -n "$OLD_STRING" ] && [ -f "$FILE_PATH" ]; then

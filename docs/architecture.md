@@ -298,12 +298,12 @@ When launching a session, Claude Code may show two sequential prompts per agent 
 
 The launcher handles both automatically via a single background loop that runs after all windows are created:
 
-1. Polls each agent pane every 2 seconds (10 attempts, ~20 seconds max)
+1. Polls each agent pane every 2 seconds (30 attempts, ~60 seconds max)
 2. Captures pane content with `tmux capture-pane -p`
 3. If "trust this folder" detected: sends Enter to accept (marks as not-done — bypass prompt may follow)
 4. If "Bypass Permissions" detected: sends Down + Enter to select "Yes, I accept"
 5. If `❯` idle prompt detected: agent is past all prompts — marks as accepted
-6. **Edit agent startup**: when the edit agent reaches `❯`, sends a startup event (`Session started — review last saved context from memory`) via `muxcode-agent-bus send` with normal notification (the bus `Notify()` handles wake-up via `notifyIdleSendKeys()` with dedup)
+6. **Edit agent startup**: when the edit agent reaches `❯`, waits 1s for the TUI to fully initialize, re-verifies `❯` is still showing, then sends a startup event (`Session started — review last saved context from memory`) via `muxcode-agent-bus send` with `AGENT_ROLE=edit` (the bus `Notify()` handles wake-up via `notifyIdleSendKeys()` with dedup)
 7. Watch/analyze agents do **not** get startup messages — the watcher delivers inbox items naturally, and unsolicited responses would CC noise to edit
 8. Exits early once all panes are handled
 

@@ -427,7 +427,8 @@ tmux set-hook -t "$SESSION" session-closed \
 # wake-up immediately — no separate wake-up loop needed.
 (
   accepted=""
-  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  edit_notified=""
+  for attempt in $(seq 1 30); do
     all_done=true
     for WIN in "${WIN_ARRAY[@]}"; do
       # Skip already-accepted panes
@@ -446,14 +447,22 @@ tmux set-hook -t "$SESSION" session-closed \
         accepted="$accepted $WIN"
       elif echo "$content" | grep -q '❯'; then
         # Agent at Claude Code idle prompt — past all startup prompts.
-        # Send startup message + wake-up inline for edit only.
+        accepted="$accepted $WIN"
+        # Send startup context to edit only, once. Wait 1s after first ❯
+        # detection so the TUI is fully ready for input (the prompt character
+        # can render before the input handler is active).
         # Watch/analyze don't need startup messages — the watcher delivers
         # inbox items naturally, and unsolicited responses CC noise to edit.
-        accepted="$accepted $WIN"
-        if [ "$WIN" = "edit" ]; then
-          muxcode-agent-bus send edit notify \
-            "Session started — review last saved context from memory to restore session state." \
-            --type event 2>/dev/null
+        if [ "$WIN" = "edit" ] && [ -z "$edit_notified" ]; then
+          sleep 1
+          # Re-verify the agent is still idle after the delay
+          content2="$(tmux capture-pane -t "$pane" -p 2>/dev/null)" || continue
+          if echo "$content2" | grep -q '❯'; then
+            AGENT_ROLE=edit muxcode-agent-bus send edit notify \
+              "Session started — review last saved context from memory to restore session state." \
+              --type event 2>/dev/null
+            edit_notified=1
+          fi
         fi
       else
         all_done=false
