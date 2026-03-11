@@ -5,7 +5,7 @@
 # proposed change, so you can review full context before accepting.
 # Only activates in the edit window (pane 0 = editor).
 
-SESSION=$(tmux display-message -p '#S' 2>/dev/null) || exit 0
+SESSION="${BUS_SESSION:-$(tmux display-message -p '#S' 2>/dev/null)}" || exit 0
 WINDOW_NAME=$(tmux display-message -t "${TMUX_PANE:-}" -p '#W' 2>/dev/null) || exit 0
 [ "$WINDOW_NAME" = "edit" ] || exit 0
 

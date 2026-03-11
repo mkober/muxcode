@@ -4,7 +4,7 @@
 # Runs as a PreToolUse hook on Read/Bash/Grep/Glob. If a diff preview
 # is still open from a rejected edit, this cleans it up immediately.
 
-SESSION=$(tmux display-message -p '#S' 2>/dev/null) || exit 0
+SESSION="${BUS_SESSION:-$(tmux display-message -p '#S' 2>/dev/null)}" || exit 0
 WINDOW_NAME=$(tmux display-message -t "${TMUX_PANE:-}" -p '#W' 2>/dev/null) || exit 0
 [ "$WINDOW_NAME" = "edit" ] || exit 0
 

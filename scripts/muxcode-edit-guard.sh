@@ -9,7 +9,7 @@
 # Runs synchronously (not async) so it can return a block decision
 # before the command is executed.
 
-SESSION=$(tmux display-message -p '#S' 2>/dev/null) || exit 0
+SESSION="${BUS_SESSION:-$(tmux display-message -p '#S' 2>/dev/null)}" || exit 0
 WINDOW_NAME=$(tmux display-message -t "${TMUX_PANE:-}" -p '#W' 2>/dev/null) || exit 0
 [ "$WINDOW_NAME" = "edit" ] || exit 0
 

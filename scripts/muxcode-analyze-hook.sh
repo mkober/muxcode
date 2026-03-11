@@ -8,7 +8,7 @@
 # Receives tool event JSON on stdin via hook system.
 
 # Must be inside a tmux session
-SESSION=$(tmux display-message -p '#S' 2>/dev/null) || exit 0
+SESSION="${BUS_SESSION:-$(tmux display-message -p '#S' 2>/dev/null)}" || exit 0
 
 # Read the full event JSON once
 EVENT_JSON=$(cat)
