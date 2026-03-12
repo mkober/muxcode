@@ -149,7 +149,7 @@ trap cleanup EXIT
 # Device indices vary by machine — find "Capture screen" in the device list.
 if [[ "$(uname)" == "Darwin" ]]; then
   CAPTURE_DEVICE="$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 \
-    | grep -i 'Capture screen' | head -1 | sed 's/.*\[\([0-9]*\)\].*/\1/')"
+    | grep -i 'Capture screen' | head -1 | sed 's/.*\[\([0-9]*\)\].*/\1/' || true)"
   if [[ -z "$CAPTURE_DEVICE" ]]; then
     echo "Error: No screen capture device found in avfoundation." >&2
     echo "Available devices:" >&2
