@@ -15,18 +15,18 @@ A multi-agent coding environment built on tmux — where you stay in the loop.
 
 ## What is MUXcode?
 
-MUXcode is a tmux session. Everything — your editor, the AI agents, the message bus, the dashboard — lives inside tmux windows. You launch it, and a session spins up with ten windows, each bound to a function key. F1 is your edit window. F3 is build. F4 is test. You get the idea.
+MUXcode is a tmux-native multi-agent development environment. Ten specialist AI agents — editor, builder, tester, reviewer, deployer, git manager, and more — each run in their own tmux window, coordinated through a file-based message bus. You work in neovim alongside an editing agent, and every other part of the development lifecycle has its own dedicated agent a function key away.
 
-You work in neovim with an AI editing agent alongside you in the edit window. When you need a build, tests, a code review, or a commit, you tell the edit agent and it delegates to a specialist in another window. Each step of the workflow has its own agent, and they work in parallel while you keep editing. Press a function key to watch any agent work, or stay in your editor and let results flow back. Nothing happens unless you ask for it.
+You stay in control. The edit agent is your primary interface — it helps you write code and delegates to specialists when you're ready. Ask for a build, and the build agent runs it. Tests fire automatically on success. Review follows tests. Results flow back while you keep editing. The entire chain is hook-driven — bash scripts checking exit codes, not LLM routing decisions — so it's deterministic, fast, and costs zero tokens.
 
-The edit window is where you spend most of your time — neovim on the left, the edit agent on the right. Unlike the other agents, it doesn't run builds or tests or git commands directly. It helps you write code and dispatches work to the right specialist when you're ready. More copilot than autonomous assistant.
+Everything runs locally. Agents coordinate through JSONL files in `/tmp/`. Memory persists across sessions as markdown files. The bus binary is stdlib-only Go — no external dependencies, no containers, no databases. Most agents run as [Claude Code](https://claude.ai/code) sessions, but any role can run via a local LLM through [Ollama](https://ollama.com/) — reducing API costs for structured-command roles like git, build, and log monitoring. If Ollama goes down, agents fall back to Claude Code automatically, and the bus watcher handles restart and recovery.
 
-Everything runs locally inside that tmux session. The agents coordinate through plain text files in `/tmp/` — no servers, no databases, no containers. Most agents run as [Claude Code](https://claude.ai/code) sessions, but any role can be switched to a local LLM via [Ollama](https://ollama.com/) — useful for roles that primarily execute structured commands (git operations, builds, log monitoring) where a small model is sufficient and API costs add up.
+Each agent has scoped tool permissions — the build agent can't edit files, the commit agent can't deploy infrastructure, the edit agent can't run builds or git commands. This separation prevents agents from stepping on each other and keeps the human in the loop for every code change.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  F1 edit  F2 api  F3 build  F4 test  F5 review  F6 deploy    │
-│  F7 run  F8 watch  F9 commit  F10 analyze                    │
+│  F1 edit  F2 api  F3 build  F4 test  F5 review  F6 deploy   │
+│  F7 run  F8 watch  F9 commit  F10 analyze                   │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
@@ -65,27 +65,27 @@ The `muxcode-agent-bus tui` command launches a live dashboard showing which agen
 
 MUXcode ships with these default agents:
 
-| Window (F-key) | Agent | Default model | Local LLM | What it does |
-|----------------|-------|---------------|-----------|-------------|
-| edit (F1) | Code editor | Claude Code | `MUXCODE_EDIT_CLI=local` | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
-| api (F2) | API tester | Claude Code | `MUXCODE_API_CLI=local` | Manages API collections, executes requests, tracks history |
-| build (F3) | Code builder | Local LLM (Ollama) | `MUXCODE_BUILD_CLI` | Compiles and packages your project |
-| test (F4) | Test runner | Local LLM (Ollama) | `MUXCODE_TEST_CLI` | Runs your test suite and reports results |
-| review (F5) | Code reviewer | Claude Code | `MUXCODE_REVIEW_CLI=local` | Reviews diffs for bugs, style issues, and improvements |
-| deploy (F6) | Infra deployer | Claude Code | `MUXCODE_DEPLOY_CLI=local` | Runs infrastructure deployments and diffs |
-| run (F7) | Command runner | Claude Code | `MUXCODE_RUN_CLI=local` | Executes ad-hoc commands |
-| watch (F8) | Log watcher | Claude Code | `MUXCODE_WATCH_CLI=local` | Monitors logs — local files, CloudWatch, Kubernetes, Docker |
-| commit (F9) | Git manager | Claude Code | `MUXCODE_GIT_CLI=local` | Handles all git operations — commits, branches, rebases, pushes |
-| analyze (F10) | Editor analyst | Claude Code | `MUXCODE_ANALYZE_CLI=local` | Watches file changes and provides codebase analysis |
+| Window (F-key) | Agent          | Default model      | Local LLM                   | What it does                                                                            |
+| -------------- | -------------- | ------------------ | --------------------------- | --------------------------------------------------------------------------------------- |
+| edit (F1)      | Code editor    | Claude Code        | `MUXCODE_EDIT_CLI=local`    | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
+| api (F2)       | API tester     | Claude Code        | `MUXCODE_API_CLI=local`     | Manages API collections, executes requests, tracks history                              |
+| build (F3)     | Code builder   | Local LLM (Ollama) | `MUXCODE_BUILD_CLI`         | Compiles and packages your project                                                      |
+| test (F4)      | Test runner    | Local LLM (Ollama) | `MUXCODE_TEST_CLI`          | Runs your test suite and reports results                                                |
+| review (F5)    | Code reviewer  | Claude Code        | `MUXCODE_REVIEW_CLI=local`  | Reviews diffs for bugs, style issues, and improvements                                  |
+| deploy (F6)    | Infra deployer | Claude Code        | `MUXCODE_DEPLOY_CLI=local`  | Runs infrastructure deployments and diffs                                               |
+| run (F7)       | Command runner | Claude Code        | `MUXCODE_RUN_CLI=local`     | Executes ad-hoc commands                                                                |
+| watch (F8)     | Log watcher    | Claude Code        | `MUXCODE_WATCH_CLI=local`   | Monitors logs — local files, CloudWatch, Kubernetes, Docker                             |
+| commit (F9)    | Git manager    | Claude Code        | `MUXCODE_GIT_CLI=local`     | Handles all git operations — commits, branches, rebases, pushes                         |
+| analyze (F10)  | Editor analyst | Claude Code        | `MUXCODE_ANALYZE_CLI=local` | Watches file changes and provides codebase analysis                                     |
 
 Additional roles that share a host agent's window (messages are routed to the host's inbox):
 
-| Role | Host window | What it does |
-|------|-------------|-------------|
-| docs | edit | Documentation writer — handled by the edit agent |
-| research | edit | Web search and codebase exploration — handled by the edit agent |
-| pr-read | commit | PR review analysis — handled by the commit agent |
-| status | — | Live TUI dashboard (`muxcode-agent-bus tui`) — add `status` to `MUXCODE_WINDOWS` to include |
+| Role     | Host window | What it does                                                                                |
+| -------- | ----------- | ------------------------------------------------------------------------------------------- |
+| docs     | edit        | Documentation writer — handled by the edit agent                                            |
+| research | edit        | Web search and codebase exploration — handled by the edit agent                             |
+| pr-read  | commit      | PR review analysis — handled by the commit agent                                            |
+| status   | —           | Live TUI dashboard (`muxcode-agent-bus tui`) — add `status` to `MUXCODE_WINDOWS` to include |
 
 Most agents default to Claude Code. Build and test default to a local LLM via [Ollama](https://ollama.com/) since they primarily execute structured commands where a small model is sufficient. Any role can be switched between Claude Code and a local LLM by setting its override variable in `.muxcode/config` (e.g. `MUXCODE_GIT_CLI=local`). Per-role model selection is also supported via `MUXCODE_{ROLE}_MODEL` (falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
 
@@ -95,22 +95,45 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 
 ## Key features
 
-- **Local LLM support** — Any agent role can run via Ollama instead of Claude Code. Reduces API costs for structured-command roles (git, build, watch). Includes health monitoring with automatic Ollama restart on inference failure.
-- **Inline response delivery** — The `--wait` flag on send commands polls for responses and prints them to stdout as part of the same Bash tool result — no manual inbox checking needed.
-- **Skills and plugins** — Reusable instruction sets that auto-inject into agent prompts based on role. Create project-specific or global skills in markdown.
-- **Drop-in context files** — Per-role context injection via `context.d/` directories. Auto-detects 17 project types (Go, Node.js, Python, Rust, CDK, etc.) and injects relevant conventions.
-- **Persistent memory with search** — Agents read and write to shared memory with daily rotation. Context survives across sessions and is searchable via BM25 ranking.
-- **Event-driven automation chains** — Build-test-review and deploy-verify chains fire automatically via hook exit codes.
-- **Event subscriptions** — Fan-out after chain execution. Subscribe any agent to build/test/deploy events with outcome filtering.
-- **Spawned agents** — Create temporary agents for one-off tasks in their own tmux window. Results are collected automatically when the spawn completes.
-- **Webhook HTTP endpoint** — HTTP-to-bus bridge for external tools (CI/CD, GitHub webhooks, monitoring). Optional bearer token auth.
-- **Cron scheduling** — Run recurring tasks on intervals (`@every 5m`, `@hourly`, `@daily`). Managed by the bus watcher.
-- **Background process tracking** — Launch long-running processes, track their status, and get notified on completion.
-- **Loop detection guardrails** — The bus detects when agents get stuck in repetitive patterns and escalates to the edit agent.
-- **Session compaction** — Agents can snapshot their context to memory, enabling long-running sessions without losing history.
-- **Session inspection** — Query any agent's status, message history, or busy state programmatically from the CLI.
-- **Pre-commit safeguards** — Commit delegation is blocked when other agents have pending work, preventing incomplete commits.
-- **Jira integration** — The `jira-pr-comment` skill posts a comment on the Jira issue when a PR is created, and `jira-update-description` reads/updates issue descriptions via the Atlassian REST API. Both extract the Jira key from the branch name (e.g. `DATA-456-add-validation`).
+### Agent orchestration
+- **10 specialist agents** — Edit, build, test, review, deploy, run, commit, analyze, watch, and API — each with scoped tool permissions and its own tmux window
+- **Hook-driven automation chains** — Build→test→review and deploy→verify chains fire via bash exit codes. Deterministic, fast, zero token cost for routing
+- **Event subscriptions** — Fan-out after chain execution. Subscribe any agent to build/test/deploy events with outcome filtering
+- **Spawned agents** — Create temporary agents for one-off tasks in their own tmux window. Results collected automatically on completion
+- **Pre-commit safeguards** — Commit delegation blocked when other agents have pending work, preventing incomplete commits
+
+### Local LLM & cost control
+- **Ollama integration** — Any agent role can run via a local LLM instead of Claude Code. Per-role model selection via `MUXCODE_{ROLE}_MODEL`
+- **Ollama health monitoring** — Watcher detects stuck inference (not just process liveness), auto-restarts Ollama and affected agents with 3-strike escalation
+- **LLM harness** — Standalone binary with guardrails for smaller models: tool call filtering, loop prevention, structured task formatting, corrective feedback
+- **Agent health monitoring** — Watcher probes agent tmux panes every 30s, auto-restarts dead agents after 3-strike escalation (log → alert → restart)
+
+### Memory & context
+- **Persistent memory** — Two-layer system: project-level (`.muxcode/memory/`) and global (`~/.config/muxcode/memory/`). Daily rotation with 30-day archive retention
+- **BM25 search** — Search memory across projects and sessions with IDF weighting, stemming, stop words, and quoted phrase matching
+- **Drop-in context files** — Per-role context injection via `context.d/` directories. Auto-detects 17 project types (Go, Node.js, Python, Rust, CDK, etc.)
+- **Skills and plugins** — Reusable instruction sets in markdown that auto-inject into agent prompts based on role
+- **Session compaction** — Agents snapshot context to memory for long-running sessions. Watcher triggers compaction alerts when context approaches limits
+
+### Developer experience
+- **Inline diff preview** — Every Write/Edit tool call opens a scrollbound diff split in neovim before you accept or reject
+- **Inline response delivery** — The `--wait` flag on send commands polls for responses inline — no manual inbox checking needed
+- **Left-pane pollers** — Each window shows live history: build/test results with pass/fail stats, review findings, deploy status, git log, API history, analyze insights
+- **Live TUI dashboard** — Dracula-themed dashboard showing agent status, message flow, and session health
+- **Session inspection** — Query any agent's status, message history, or busy state from the CLI
+
+### Automation & integration
+- **Webhook HTTP endpoint** — HTTP-to-bus bridge for CI/CD, GitHub webhooks, monitoring. Optional bearer token auth
+- **Cron scheduling** — Recurring tasks on intervals (`@every 5m`, `@hourly`, `@daily`), managed by the bus watcher
+- **Background process tracking** — Launch long-running processes, track status, get notified on completion
+- **Jira integration** — Post PR comments and read/update issue descriptions via Atlassian REST API. Jira key extracted from branch name
+- **Lifecycle logging** — Persistent JSONL logs recording the full startup-to-cleanup lifecycle. Survives session restarts, filterable by source/level/event/time
+
+### Safety & guardrails
+- **Scoped tool permissions** — Per-role tool profiles enforce what each agent can and can't do. Build can't edit files, commit can't deploy, edit can't run builds
+- **Loop detection** — Bus detects agents stuck in repetitive patterns and escalates to the edit agent
+- **Edit guard** — Sync hook blocks prohibited commands (build, test, git, deploy) in the edit window with delegation instructions
+- **Watcher self-monitoring** — Keepalive heartbeat with companion monitor script — auto-restarts watcher if it hangs
 
 See the [Architecture](docs/architecture.md) and [Agent Bus](docs/agent-bus.md) docs for the full details.
 
@@ -210,6 +233,7 @@ Any agent role can run via a local LLM (Ollama) instead of Claude Code. This is 
 ### Setup
 
 1. Install and start Ollama:
+
    ```bash
    brew install ollama
    ollama serve
@@ -217,6 +241,7 @@ Any agent role can run via a local LLM (Ollama) instead of Claude Code. This is 
    ```
 
 2. Set per-role overrides in `.muxcode/config`:
+
    ```bash
    MUXCODE_GIT_CLI=local       # commit agent uses local LLM
    MUXCODE_BUILD_CLI=local     # build agent uses local LLM
@@ -226,21 +251,21 @@ Any agent role can run via a local LLM (Ollama) instead of Claude Code. This is 
 
 ### Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MUXCODE_{ROLE}_CLI` | (unset) | Set to `local` to use Ollama (e.g. `MUXCODE_GIT_CLI=local`) |
-| `MUXCODE_OLLAMA_MODEL` | `qwen2.5-coder:7b` | Ollama model name |
-| `MUXCODE_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
+| Variable               | Default                  | Description                                                 |
+| ---------------------- | ------------------------ | ----------------------------------------------------------- |
+| `MUXCODE_{ROLE}_CLI`   | (unset)                  | Set to `local` to use Ollama (e.g. `MUXCODE_GIT_CLI=local`) |
+| `MUXCODE_OLLAMA_MODEL` | `qwen2.5-coder:7b`       | Ollama model name                                           |
+| `MUXCODE_OLLAMA_URL`   | `http://localhost:11434` | Ollama server URL                                           |
 
 ### Recommended models
 
-| Model | Size | Best for | Notes |
-|-------|------|----------|-------|
-| `qwen2.5-coder:7b` | 4.7 GB | Build, test, git, general agent tasks | Default model — strong code understanding at low resource cost |
-| `qwen2.5-coder:14b` | 9.0 GB | Review, analysis, docs | Better reasoning for tasks that need more nuance |
-| `deepseek-coder-v2:16b` | 8.9 GB | Review, analysis, complex code tasks | Strong at code review and multi-file reasoning |
-| `codellama:7b` | 3.8 GB | Build, test, git | Lightweight alternative to Qwen for structured commands |
-| `llama3.1:8b` | 4.7 GB | General-purpose agent tasks | Good all-rounder when code specialization isn't critical |
+| Model                   | Size   | Best for                              | Notes                                                          |
+| ----------------------- | ------ | ------------------------------------- | -------------------------------------------------------------- |
+| `qwen2.5-coder:7b`      | 4.7 GB | Build, test, git, general agent tasks | Default model — strong code understanding at low resource cost |
+| `qwen2.5-coder:14b`     | 9.0 GB | Review, analysis, docs                | Better reasoning for tasks that need more nuance               |
+| `deepseek-coder-v2:16b` | 8.9 GB | Review, analysis, complex code tasks  | Strong at code review and multi-file reasoning                 |
+| `codellama:7b`          | 3.8 GB | Build, test, git                      | Lightweight alternative to Qwen for structured commands        |
+| `llama3.1:8b`           | 4.7 GB | General-purpose agent tasks           | Good all-rounder when code specialization isn't critical       |
 
 For most setups, `qwen2.5-coder:7b` is sufficient for command-execution roles (build, test, git, watch). Upgrade to a 14b+ model for roles that reason about code (review, analyze, docs).
 
@@ -260,13 +285,13 @@ Skills are reusable instruction sets defined as markdown files with YAML frontma
 
 ### Built-in skills
 
-| Skill | Roles | Description |
-|-------|-------|-------------|
-| `git-commit-conventions` | commit, edit | Commit message format and git workflow conventions |
-| `go-testing` | test, build | Go testing patterns and conventions |
-| `code-review-checklist` | review | Code review quality checklist |
-| `jira-pr-comment` | git | Post PR details as a comment on the corresponding Jira issue |
-| `jira-update-description` | git, edit | Read and update a Jira issue description with ADF content |
+| Skill                     | Roles        | Description                                                  |
+| ------------------------- | ------------ | ------------------------------------------------------------ |
+| `git-commit-conventions`  | commit, edit | Commit message format and git workflow conventions           |
+| `go-testing`              | test, build  | Go testing patterns and conventions                          |
+| `code-review-checklist`   | review       | Code review quality checklist                                |
+| `jira-pr-comment`         | git          | Post PR details as a comment on the corresponding Jira issue |
+| `jira-update-description` | git, edit    | Read and update a Jira issue description with ADF content    |
 
 ### Resolution order
 

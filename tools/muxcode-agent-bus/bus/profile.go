@@ -433,6 +433,8 @@ func DefaultConfig() *MuxcodeConfig {
 				Tools: []string{
 					"Bash(cdk *)", "Bash(npx cdk *)",
 					"Bash(envName=* cdk *)", "Bash(envName=* npx cdk *)",
+					"Bash(export envName=* && cdk *)", "Bash(export envName=* && npx cdk *)",
+					"Bash(export *)", "Bash(source *)",
 					"Bash(terraform *)", "Bash(pulumi *)",
 					"Bash(aws *)", "Bash(sam *)",
 					"Bash(./build.sh*)", "Bash(make*)",
