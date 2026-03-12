@@ -145,6 +145,39 @@ while true; do
       BUF+="    ${DIM}exit${RESET}  ${LAST_EC}\n"
     fi
 
+    # Last error summary — show most recent failure when latest build passed
+    if [ "$LAST_EC" = "0" ] && [ "$FAIL" -gt 0 ]; then
+      PREV_FAIL=$(jq -s '[.[] | select(.exit_code != "0" and .exit_code != 0)] | last' "$HISTORY_FILE" 2>/dev/null)
+      if [ -n "$PREV_FAIL" ] && [ "$PREV_FAIL" != "null" ]; then
+        PF_TS=$(printf '%s' "$PREV_FAIL" | jq -r '.ts // empty' 2>/dev/null)
+        PF_CMD=$(printf '%s' "$PREV_FAIL" | jq -r '.command // empty' 2>/dev/null)
+        PF_EC=$(printf '%s' "$PREV_FAIL" | jq -r '.exit_code // empty' 2>/dev/null)
+        PF_OUTPUT=$(printf '%s' "$PREV_FAIL" | jq -r '.output // empty' 2>/dev/null)
+        if [ -n "$PF_TS" ]; then
+          PF_TIME=$(format_ts "$PF_TS")
+          if [ ${#PF_CMD} -gt 35 ]; then
+            PF_CMD="${PF_CMD:0:32}..."
+          fi
+          BUF+="  ${YELLOW}⏺ Last errors${RESET}  ${DIM}${PF_TIME}${RESET}\n"
+          BUF+="    ${DIM}cmd${RESET}  ${PF_CMD}  ${DIM}exit ${PF_EC}${RESET}\n"
+          if [ -n "$PF_OUTPUT" ]; then
+            PF_LINE_COUNT=0
+            while IFS= read -r oline; do
+              oline=$(printf '%s' "$oline" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/^[[:space:]]*//')
+              [ -z "$oline" ] && continue
+              if [ ${#oline} -gt 60 ]; then
+                oline="${oline:0:57}..."
+              fi
+              BUF+="    ${DIM}- ${oline}${RESET}\n"
+              PF_LINE_COUNT=$(( PF_LINE_COUNT + 1 ))
+              [ "$PF_LINE_COUNT" -ge 10 ] && break
+            done <<< "$PF_OUTPUT"
+          fi
+          BUF+="\n"
+        fi
+      fi
+    fi
+
   else
     # python3 fallback
     PARSED=$(python3 -c '
@@ -183,8 +216,8 @@ for i, e in enumerate(recent):
 last = entries[-1] if entries else {}
 last_ec = str(last.get("exit_code", "0"))
 last_output = last.get("output", "")
+import re
 if last_output:
-    import re
     print(f"LAST_EC={last_ec}")
     for ol in last_output.strip().split("\n"):
         ol = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", ol).strip()
@@ -195,6 +228,30 @@ if last_output:
 if entries and last_ec != "0" and not last_output:
     print(f"LASTFAIL_CMD={last.get('command', '')}")
     print(f"LASTFAIL_EC={last_ec}")
+if last_ec == "0" and failed > 0:
+    failures = [e for e in entries if str(e.get("exit_code", "1")) != "0"]
+    if failures:
+        pf = failures[-1]
+        pf_ts = pf.get("ts", 0)
+        pf_cmd = pf.get("command", "")
+        pf_ec = str(pf.get("exit_code", "?"))
+        pf_output = pf.get("output", "")
+        if len(pf_cmd) > 35:
+            pf_cmd = pf_cmd[:32] + "..."
+        print(f"PREV_FAIL_TS={pf_ts}")
+        print(f"PREV_FAIL_CMD={pf_cmd}")
+        print(f"PREV_FAIL_EC={pf_ec}")
+        if pf_output:
+            count = 0
+            for ol in pf_output.strip().split("\n"):
+                ol = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", ol).strip()
+                if ol:
+                    if len(ol) > 60:
+                        ol = ol[:57] + "..."
+                    print(f"PREV_FAIL_LINE={ol}")
+                    count += 1
+                    if count >= 10:
+                        break
 ' "$HISTORY_FILE" 2>/dev/null)
 
     TOTAL=0; PASS=0; FAIL=0
@@ -276,6 +333,34 @@ if entries and last_ec != "0" and not last_output:
       BUF+="  ${RED}last failure${RESET}\n"
       BUF+="    ${DIM}cmd${RESET}   ${LASTFAIL_CMD}\n"
       BUF+="    ${DIM}exit${RESET}  ${LASTFAIL_EC}\n"
+    fi
+
+    # Last error summary — show most recent failure when latest build passed
+    PF_TS="" PF_CMD="" PF_EC="" PF_HAS_LINES=0
+    while IFS= read -r line; do
+      case "$line" in
+        PREV_FAIL_TS=*)  PF_TS="${line#PREV_FAIL_TS=}" ;;
+        PREV_FAIL_CMD=*) PF_CMD="${line#PREV_FAIL_CMD=}" ;;
+        PREV_FAIL_EC=*)  PF_EC="${line#PREV_FAIL_EC=}" ;;
+        PREV_FAIL_LINE=*)
+          if [ "$PF_HAS_LINES" -eq 0 ]; then
+            PF_HAS_LINES=1
+            PF_TIME=$(format_ts "$PF_TS")
+            BUF+="  ${YELLOW}⏺ Last errors${RESET}  ${DIM}${PF_TIME}${RESET}\n"
+            BUF+="    ${DIM}cmd${RESET}  ${PF_CMD}  ${DIM}exit ${PF_EC}${RESET}\n"
+          fi
+          OL="${line#PREV_FAIL_LINE=}"
+          BUF+="    ${DIM}- ${OL}${RESET}\n"
+          ;;
+      esac
+    done <<< "$PARSED"
+    if [ -n "$PF_TS" ] && [ "$PF_HAS_LINES" -eq 0 ]; then
+      PF_TIME=$(format_ts "$PF_TS")
+      BUF+="  ${YELLOW}⏺ Last errors${RESET}  ${DIM}${PF_TIME}${RESET}\n"
+      BUF+="    ${DIM}cmd${RESET}  ${PF_CMD}  ${DIM}exit ${PF_EC}${RESET}\n"
+    fi
+    if [ -n "$PF_TS" ]; then
+      BUF+="\n"
     fi
   fi
 
