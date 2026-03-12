@@ -40,6 +40,7 @@ Commands:
   agent       Run local LLM agent loop (run)
   api         Manage API collections, environments, and history
   agent-health  Manage agent health monitoring (stop, start, check)
+  lifecycle     Persistent lifecycle logging (log, show, list, purge)
 `
 
 func main() {
@@ -112,6 +113,8 @@ func main() {
 		cmd.Api(args)
 	case "agent-health":
 		cmd.AgentHealth(args)
+	case "lifecycle":
+		cmd.Lifecycle(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

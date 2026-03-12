@@ -4,6 +4,7 @@ import "os"
 
 // Cleanup removes the bus directory and trigger file for a session.
 func Cleanup(session string) error {
+	LogLifecycle(session, "info", "cleanup", "session-cleanup", BusDir(session))
 	if err := os.RemoveAll(BusDir(session)); err != nil {
 		return err
 	}

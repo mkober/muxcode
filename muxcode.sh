@@ -107,6 +107,18 @@ echo "  Project:  $PROJECT_DIR"
 echo "  Session:  $SESSION"
 echo ""
 
+# --- Lifecycle logging helper ---
+# Writes persistent lifecycle events to ~/.config/muxcode/logs/{session}.log
+# via the bus binary. Failures are silently ignored (|| true).
+lifecycle_log() {
+  local level="$1" source="$2" event="$3" detail="${4:-}"
+  local args=("$SESSION" "$level" "$source" "$event")
+  [ -n "$detail" ] && args+=(--detail "$detail")
+  muxcode-agent-bus lifecycle log "${args[@]}" 2>/dev/null || true
+}
+
+lifecycle_log "info" "launcher" "session-start" "Project: $PROJECT_DIR"
+
 # --- Parse window list ---
 read -ra WIN_ARRAY <<< "$WINDOWS"
 
@@ -159,16 +171,28 @@ rm -f "/tmp/muxcode-preview-${SESSION}.tmp"
 # --- Initialize agent bus ---
 export BUS_SESSION="$SESSION"
 (cd "$PROJECT_DIR" && muxcode-agent-bus init)
+lifecycle_log "info" "launcher" "bus-init"
 
 # --- Start bus watcher in background (loop detection, compaction alerts) ---
 # Kill any stale watcher processes from previous sessions with the same name.
 # Watchers are background processes detached from tmux — tmux kill-session
 # does not stop them, so they accumulate and cause duplicate notifications.
-pkill -f "muxcode-agent-bus watch $SESSION" 2>/dev/null || true
-pkill -f "muxcode-watcher-monitor.sh $SESSION" 2>/dev/null || true
+# nohup + disown: subsessions use switch-client (non-blocking), so the parent
+# shell exits and the terminal closes — background processes receive SIGHUP.
+# disown alone is insufficient; nohup prevents SIGHUP from killing the process.
+pkill -f "muxcode-agent-bus watch $SESSION" 2>/dev/null && \
+  lifecycle_log "info" "launcher" "stale-kill" "Killed stale watcher for $SESSION"
+pkill -f "muxcode-watcher-monitor.sh $SESSION" 2>/dev/null && \
+  lifecycle_log "info" "launcher" "stale-kill" "Killed stale monitor for $SESSION"
 sleep 0.1  # let old processes exit before starting the new one
-muxcode-agent-bus watch "$SESSION" &>/dev/null &
-muxcode-watcher-monitor.sh "$SESSION" &>/dev/null &
+nohup muxcode-agent-bus watch "$SESSION" &>/dev/null &
+WATCHER_PID=$!
+disown
+lifecycle_log "info" "launcher" "watcher-start" "PID: $WATCHER_PID"
+nohup muxcode-watcher-monitor.sh "$SESSION" &>/dev/null &
+MONITOR_PID=$!
+disown
+lifecycle_log "info" "launcher" "monitor-start" "PID: $MONITOR_PID"
 
 # --- Ensure Ollama is running if any role uses local LLM ---
 ensure_ollama() {
@@ -236,6 +260,7 @@ fi
 tmux new-session -d -s "$SESSION" -n "$FIRST_WIN" -c "$PROJECT_DIR" $NEW_SESSION_SIZE
 tmux set-environment -t "$SESSION" BUS_SESSION "$SESSION"
 tmux set-environment -t "$SESSION" MUXCODE 1
+lifecycle_log "info" "launcher" "session-create" "Windows: ${WINDOWS}"
 
 if [ "$FIRST_WIN" = "edit" ]; then
   send_init "$SESSION:$FIRST_WIN"
@@ -411,23 +436,27 @@ tmux set-hook -t "$SESSION" session-closed \
   "run-shell 'muxcode-agent-bus cleanup $SESSION'"
 
 # Force all windows to resize to the client's terminal dimensions after attaching.
+# nohup/trap SIGHUP so the subshell survives terminal close on subsession switch.
 (
+  trap '' HUP
   sleep 1
   tmux list-windows -t "$SESSION" -F '#I' 2>/dev/null | while read -r idx; do
     tmux resize-window -t "$SESSION:$idx" -A 2>/dev/null
   done
-) &
+) &>/dev/null &
+disown
 
 # --- Auto-accept startup prompts ---
 # Claude Code may show two prompts on launch:
 #   1. "Yes, I trust this folder" — workspace trust (new workspaces)
 #   2. "Bypass Permissions mode" — dangerous-skip-permissions warning (non-edit agents)
 # Poll agent panes and dismiss each prompt as it appears.
-# When an agent reaches the ❯ idle prompt, send its startup message and
-# wake-up immediately — no separate wake-up loop needed.
+# Startup messages (edit, analyze) are pre-populated in the inbox by
+# muxcode-agent.sh. The watcher's checkStartupNotifications() delivers
+# them once each agent reaches idle — no send-keys needed here.
 (
+  trap '' HUP
   accepted=""
-  edit_notified=""
   for attempt in $(seq 1 30); do
     all_done=true
     for WIN in "${WIN_ARRAY[@]}"; do
@@ -438,32 +467,19 @@ tmux set-hook -t "$SESSION" session-closed \
       if echo "$content" | grep -q "trust this folder"; then
         # Trust prompt — default selection is already correct, just confirm
         tmux send-keys -t "$pane" Enter 2>/dev/null
+        lifecycle_log "info" "auto-accept" "trust-prompt" "$WIN"
         all_done=false  # bypass prompt may follow
       elif echo "$content" | grep -q "Bypass Permissions"; then
         # Bypass permissions prompt — move to "Yes, I accept" and confirm
         tmux send-keys -t "$pane" Down 2>/dev/null
         sleep 0.2
         tmux send-keys -t "$pane" Enter 2>/dev/null
+        lifecycle_log "info" "auto-accept" "bypass-prompt" "$WIN"
         accepted="$accepted $WIN"
       elif echo "$content" | grep -q '❯'; then
         # Agent at Claude Code idle prompt — past all startup prompts.
+        lifecycle_log "info" "auto-accept" "agent-ready" "$WIN"
         accepted="$accepted $WIN"
-        # Send startup context to edit only, once. Wait 1s after first ❯
-        # detection so the TUI is fully ready for input (the prompt character
-        # can render before the input handler is active).
-        # Watch/analyze don't need startup messages — the watcher delivers
-        # inbox items naturally, and unsolicited responses CC noise to edit.
-        if [ "$WIN" = "edit" ] && [ -z "$edit_notified" ]; then
-          sleep 1
-          # Re-verify the agent is still idle after the delay
-          content2="$(tmux capture-pane -t "$pane" -p 2>/dev/null)" || continue
-          if echo "$content2" | grep -q '❯'; then
-            AGENT_ROLE=edit muxcode-agent-bus send edit notify \
-              "Session started — review last saved context from memory to restore session state." \
-              --type event 2>/dev/null
-            edit_notified=1
-          fi
-        fi
       else
         all_done=false
       fi
@@ -471,7 +487,11 @@ tmux set-hook -t "$SESSION" session-closed \
     $all_done && break
     sleep 2
   done
-) &
+  lifecycle_log "info" "auto-accept" "complete" "All agents accepted"
+) &>/dev/null &
+disown
+
+lifecycle_log "info" "launcher" "session-ready"
 
 # Switch to new session (works inside tmux) or attach from outside
 if [ -n "${TMUX:-}" ]; then

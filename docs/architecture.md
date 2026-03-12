@@ -35,6 +35,7 @@ Muxcode creates a tmux session with multiple windows, each running an independen
 
 Persistent:  .muxcode/memory/{role}.md      (project)
              ~/.config/muxcode/memory/     (global / cross-session)
+             ~/.config/muxcode/logs/       (lifecycle logs per session)
 ```
 
 ## Data Flow
@@ -320,6 +321,37 @@ When a MUXcode session restarts with the same name, `Init()` in `bus/setup.go` d
 - **Watcher grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (60s) and compaction checks (120s) skip the first interval
 
 Core code: `bus/setup.go` (`Init()`, `resetFile()`, `purgeStaleFiles()`), `watcher/watcher.go` (`New()`)
+
+## Lifecycle logging
+
+Persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record the full startup-to-cleanup lifecycle of each session. Unlike the ephemeral bus log at `/tmp/`, lifecycle logs survive session cleanup and accumulate across restarts of the same session name.
+
+**Instrumented components:**
+
+| Component | Source | Key events |
+|-----------|--------|------------|
+| `muxcode.sh` | `launcher` | session-start, bus-init, stale-kill, watcher-start, monitor-start, session-create, session-ready |
+| `muxcode.sh` (auto-accept loop) | `auto-accept` | trust-prompt, bypass-prompt, agent-ready, complete |
+| `muxcode-agent.sh` | `agent` | launch (role + CLI type) |
+| `bus/setup.go` | `init` | init, re-init |
+| `watcher/watcher.go` | `watcher` | started, lock-failed, inbox-notify, startup-notify, trigger-route, cron-fire, proc/spawn-complete, loop/compact alerts, ollama/agent health |
+| `muxcode-watcher-monitor.sh` | `monitor` | session-gone, stale-detected, watcher-restart |
+| `bus/cleanup.go` | `cleanup` | session-cleanup |
+
+**Dual-writer pattern:** Go code calls `bus.LogLifecycle()` directly. Bash scripts call `muxcode-agent-bus lifecycle log` (CLI wrapper) which handles JSON formatting and flock-protected writes. Both converge on the same JSONL file.
+
+**Debugging workflow:**
+
+```bash
+# After a subsession launch failure, check what happened
+muxcode-agent-bus lifecycle show is-admissions-gateway --source launcher
+muxcode-agent-bus lifecycle show is-admissions-gateway --source watcher --level error
+
+# Compare startup timing across sessions
+muxcode-agent-bus lifecycle show muxcode --event session-start --all
+```
+
+Core code: `bus/lifecycle.go`, `cmd/lifecycle.go`
 
 ## See also
 

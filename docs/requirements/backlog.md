@@ -40,6 +40,7 @@
 | Jira description read+update | General-purpose GET+PUT skill for git-manager — read current description with context fields, update with ADF content, explicit-key + branch-name extraction | [jira-update-description.md](./jira-update-description.md) |
 | Agent health monitoring | Watcher detects dead agents (3-strike restart) + watcher self-monitoring via keepalive file + monitor script — `agent-health` CLI for stop/start/check | [agent-health-monitoring.md](./agent-health-monitoring.md) |
 | Cross-session memory | Global memory at `~/.config/muxcode/memory/` persisting across projects — `write-global`, `--no-global`, `--scope` flags, global context in prompts, BM25 search across both layers | [cross-session-memory.md](./cross-session-memory.md) |
+| Lifecycle logging | Persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` recording launcher sequence, watcher events, agent launches, auto-accept, and cleanup — survives session cleanup, filterable by source/level/event/time via `lifecycle show`, rotation at 1000 entries, `lifecycle purge` for cleanup | |
 
 ## Planned
 
@@ -49,7 +50,7 @@
 |---------|-------------|----------|
 | Structured agent metrics | Track per-agent metrics (messages sent/received, tool calls, errors, avg response time) in `metrics.jsonl` — dashboard TUI shows metrics panel | Medium |
 | Message delivery receipts | Agents ACK message consumption — sender knows message was read vs. sitting unprocessed, enables "read but no response" alerts | Low |
-| Bus audit trail | Append-only audit log separate from `log.jsonl` capturing all bus operations (send, consume, lock, unlock, cron fire, proc start/stop) with caller identity — post-session debugging | Low |
+| Bus audit trail | Append-only audit log separate from `log.jsonl` capturing all bus operations (send, consume, lock, unlock, cron fire, proc start/stop) with caller identity — post-session debugging. Partially addressed by lifecycle logging (`~/.config/muxcode/logs/`) which covers process lifecycle and watcher events | Low |
 
 ### Performance & Cost
 

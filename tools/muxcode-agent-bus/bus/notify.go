@@ -102,6 +102,15 @@ func alreadyNotified(session, role string) bool {
 	return time.Since(markerInfo.ModTime()) < notifyCooldown
 }
 
+// ClearNotified removes the notification dedup marker for a role, allowing
+// the next Notify call to proceed even if a prior notification (e.g. a
+// display-message that Claude Code can't see) already marked the inbox as
+// notified. Used by the watcher's startup notification path to ensure agents
+// get a send-keys wake-up after reaching idle for the first time.
+func ClearNotified(session, role string) {
+	_ = os.Remove(notifiedSizePath(session, role))
+}
+
 // markNotified records the current inbox size as the last notified size.
 func markNotified(session, role string) {
 	inboxPath := InboxPath(session, role)

@@ -926,6 +926,114 @@ The watcher probes agent panes every 30 seconds. Three consecutive failures trig
 | `{role}.stopped` | `/tmp/muxcode-bus-{session}/lock/` | Marker suppressing auto-restart |
 | `watcher.keepalive` | `/tmp/muxcode-bus-{session}/` | Unix timestamp updated each watcher poll loop |
 
+### `muxcode-agent-bus lifecycle`
+
+Persistent lifecycle logging for debugging process and session issues across restarts. Logs are stored at `~/.config/muxcode/logs/{session}.log` as JSONL — survives session cleanup since the bus directory at `/tmp/` is ephemeral.
+
+```bash
+muxcode-agent-bus lifecycle log <session> <level> <source> <event> [--detail TEXT] [--pid N]
+muxcode-agent-bus lifecycle show [session] [--limit N] [--source S] [--level L] [--event E] [--since DURATION] [--all]
+muxcode-agent-bus lifecycle list
+muxcode-agent-bus lifecycle purge [--days N]
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `log` | Write a lifecycle entry (used by bash scripts via CLI) |
+| `show` | Display filtered entries with human-readable timestamps (default: last 50) |
+| `list` | List sessions with lifecycle logs, entry counts, and last modified date |
+| `purge` | Remove log files older than N days (default: 30) |
+
+**Entry format:**
+
+```json
+{"ts":1710244800,"level":"info","source":"launcher","session":"muxcode","event":"watcher-start","pid":12345,"detail":"PID: 12345"}
+```
+
+| Field | Description |
+|-------|-------------|
+| `ts` | Unix timestamp |
+| `level` | `info`, `warn`, or `error` |
+| `source` | Origin: `launcher`, `watcher`, `monitor`, `auto-accept`, `agent`, `init`, `cleanup` |
+| `session` | Session name |
+| `event` | Machine-readable event type (see catalog below) |
+| `pid` | Process ID (optional) |
+| `detail` | Human-readable context (optional) |
+
+**Event catalog:**
+
+| Source | Event | Level | When |
+|--------|-------|-------|------|
+| launcher | session-start | info | `muxcode.sh` begins |
+| launcher | bus-init | info | `muxcode-agent-bus init` completes |
+| launcher | stale-kill | info | Killed stale watcher or monitor |
+| launcher | watcher-start | info | Watcher process launched (with PID) |
+| launcher | monitor-start | info | Monitor process launched (with PID) |
+| launcher | session-create | info | tmux session created (with window list) |
+| launcher | session-ready | info | Session fully initialized |
+| auto-accept | trust-prompt | info | Workspace trust prompt dismissed |
+| auto-accept | bypass-prompt | info | Bypass permissions prompt dismissed |
+| auto-accept | agent-ready | info | Agent reached idle prompt |
+| auto-accept | complete | info | All agents past prompts |
+| init | init | info | Fresh bus directory created |
+| init | re-init | info | Stale data purged from previous session |
+| agent | launch | info | Agent process exec'd (role + CLI) |
+| watcher | started | info | Watcher `Run()` begins (with PID) |
+| watcher | lock-failed | error | Another watcher already running |
+| watcher | inbox-notify | info | Agent notified of new messages |
+| watcher | startup-notify | info | First-idle notification delivery |
+| watcher | trigger-route | info | Edit events routed to analyst |
+| watcher | cron-fire | info | Cron entry executed |
+| watcher | proc-complete | info | Background process finished |
+| watcher | spawn-complete | info | Spawned agent finished |
+| watcher | loop-detected | warn | Loop alert sent |
+| watcher | compact-alert | warn | Compaction recommended |
+| watcher | ollama-probe-fail | warn | Ollama health check failed |
+| watcher | ollama-restart | warn | Ollama restart attempted |
+| watcher | ollama-recovered | info | Ollama back online |
+| watcher | agent-health-fail | warn | Agent health check failed |
+| watcher | agent-restart | warn | Agent restart attempted |
+| watcher | agent-recovered | info | Agent came back |
+| monitor | session-gone | info | tmux session gone, monitor exiting |
+| monitor | stale-detected | warn | Watcher keepalive stale |
+| monitor | watcher-restart | info | Watcher restarted by monitor |
+| cleanup | session-cleanup | info | Bus directory removed |
+
+**Rotation:** 1000 entries per file (configurable via `MUXCODE_LIFECYCLE_LOG_MAX` env var).
+
+**Examples:**
+
+```bash
+# Show recent events for current session
+$ muxcode-agent-bus lifecycle show
+2026-03-12 08:30:01  info   launcher       session-start           Project: ~/Repos/mkober/muxcode
+2026-03-12 08:30:01  info   init           init                    Creating bus directory: /tmp/muxcode-bus-muxcode
+2026-03-12 08:30:01  info   launcher       watcher-start           PID: 12345
+2026-03-12 08:30:15  info   auto-accept    agent-ready             edit
+2026-03-12 08:30:16  info   watcher        startup-notify          edit
+
+# Filter by source and level
+$ muxcode-agent-bus lifecycle show --source watcher --level warn --since 1h
+
+# Show events for a subsession
+$ muxcode-agent-bus lifecycle show is-admissions-gateway --limit 20
+
+# List all sessions with logs
+$ muxcode-agent-bus lifecycle list
+  muxcode                         42 entries  2026-03-12 08:30
+  is-admissions-gateway           18 entries  2026-03-12 08:28
+
+# Clean up old logs
+$ muxcode-agent-bus lifecycle purge --days 30
+Purged 3 log file(s) older than 30 days
+```
+
+**Data files:**
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `{session}.log` | `~/.config/muxcode/logs/` | JSONL lifecycle events per session name |
+
 ### `muxcode-agent-bus session`
 
 Manage session context — save summaries for context preservation across restarts.
@@ -1067,6 +1175,7 @@ muxcode-agent-bus api import examples/api
 | `BUS_MEMORY_DIR` | Path to persistent memory directory (defaults to `.muxcode/memory/`) |
 | `MUXCODE_ROLES` | Comma-separated extra roles to add to the known roles list |
 | `MUXCODE_SPLIT_LEFT` | Space-separated windows with agent in pane 1 (defaults: edit api build test review deploy run analyze commit watch) |
+| `MUXCODE_LIFECYCLE_LOG_MAX` | Max entries per lifecycle log before rotation (default: 1000) |
 
 ## Message Format
 
@@ -1147,6 +1256,7 @@ tools/muxcode-agent-bus/
 │   ├── executor.go    # Tool executor for local LLM (bash, read, glob, grep, write, edit)
 │   ├── agent.go       # Local LLM agentic loop (inbox poll, tool-call loop, history)
 │   ├── api.go         # API testing (environments, collections, history, import)
+│   ├── lifecycle.go   # Persistent lifecycle logging (~/.config/muxcode/logs/)
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization and re-init purge
 ├── cmd/               # Subcommand handlers

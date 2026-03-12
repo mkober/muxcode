@@ -96,6 +96,7 @@ Both Go modules have **no external dependencies** (stdlib only).
 - **Agent notifications**: dual-path strategy in `Notify()` (`bus/notify.go`). Active agents (including edit) use passive `display-message` (tmux status bar flash) — never `send-keys` to active panes, as it disrupts input buffers, interrupts tool execution, and stalls agents. All idle agents (at `❯` prompt), including edit, receive `send-keys` wake-up ("You have new messages" + Enter) to trigger inbox processing. `IsAgentIdle()` detects idle state via `tmux capture-pane -S -8` (exact match on `❯`). Harness panes are skipped (they poll inbox directly).
 - **Edit inbox polling**: use `--wait` flag on send commands (`muxcode-agent-bus send <to> <action> "<msg>" --wait`) to poll the sender's inbox every 2 seconds until a response arrives (timeout: `MUXCODE_INBOX_POLL_TIMEOUT`, default 600s). The response is printed to stdout as part of the Bash tool result — no manual "check inbox" needed.
 - **System actions**: `loop-detected`, `compact-recommended`, `proc-complete`, `spawn-complete`, `ollama-down`, `ollama-recovered`, `ollama-restarting`, `agent-down`, `agent-restarting`, `agent-recovered` are excluded from message loop detection (`isSystemAction()`).
+- **Lifecycle logging**: persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record launcher sequence, watcher events, agent launches, auto-accept, and cleanup. Survives session cleanup. View with `muxcode-agent-bus lifecycle show [session]`, filter with `--source`, `--level`, `--event`, `--since`. Rotation at 1000 entries (configurable via `MUXCODE_LIFECYCLE_LOG_MAX`). Purge old logs with `lifecycle purge --days 30`.
 
 ## Code reference
 
@@ -107,6 +108,7 @@ Test: `cd tools/muxcode-agent-bus && go test ./...`
 | File | Key exports |
 |------|-------------|
 | `bus/config.go` | `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`, `HarnessMarkerPath()`, `GlobalMemoryDir()`, `GlobalMemoryPath()`, `GlobalMemoryArchiveDir()`, `GlobalMemoryArchivePath()`, path helpers for cron/proc/spawn/webhook/memory |
+| `bus/lifecycle.go` | `LifecycleLogDir()`, `LifecycleLogPath()`, `LogLifecycle()`, `LogLifecycleWithPID()`, `ReadLifecycleLog()`, `FilterLifecycleLog()`, `ListLifecycleSessions()`, `PurgeLifecycleLogs()`, `FormatLifecycleEntry()` |
 | `bus/message.go` | Message struct, JSONL encoding |
 | `bus/inbox.go` | Read/write/consume inbox, `Send()`, `SendNoCC()` |
 | `bus/setup.go` | `Init()`, session re-init purge (`resetFile()`, `purgeStaleFiles()`) |

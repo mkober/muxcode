@@ -8,11 +8,20 @@ SESSION="${1:?Usage: muxcode-watcher-monitor.sh <session>}"
 KEEPALIVE="/tmp/muxcode-bus-${SESSION}/watcher.keepalive"
 MAX_AGE=30  # seconds before considering keepalive stale
 
+# Lifecycle logging helper (same as muxcode.sh)
+lifecycle_log() {
+  local level="$1" source="$2" event="$3" detail="${4:-}"
+  local args=("$SESSION" "$level" "$source" "$event")
+  [ -n "$detail" ] && args+=(--detail "$detail")
+  muxcode-agent-bus lifecycle log "${args[@]}" 2>/dev/null || true
+}
+
 while true; do
   sleep 15
 
   # Exit if tmux session no longer exists
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    lifecycle_log "info" "monitor" "session-gone" "tmux session $SESSION no longer exists"
     exit 0
   fi
 
@@ -32,6 +41,7 @@ while true; do
 
   if [ "$age" -gt "$MAX_AGE" ]; then
     echo "  [monitor] Watcher keepalive stale (${age}s > ${MAX_AGE}s) — restarting"
+    lifecycle_log "warn" "monitor" "stale-detected" "Keepalive age: ${age}s > ${MAX_AGE}s"
 
     # Kill stale watcher
     pkill -f "muxcode-agent-bus watch $SESSION" 2>/dev/null || true
@@ -39,5 +49,6 @@ while true; do
 
     # Relaunch watcher
     muxcode-agent-bus watch "$SESSION" &>/dev/null &
+    lifecycle_log "info" "monitor" "watcher-restart" "PID: $!"
   fi
 done

@@ -18,6 +18,9 @@ func Init(session, memoryDir string) error {
 	reInit := false
 	if _, err := os.Stat(busDir); err == nil {
 		reInit = true
+		LogLifecycle(session, "info", "init", "re-init", "Purging stale data from previous session")
+	} else {
+		LogLifecycle(session, "info", "init", "init", fmt.Sprintf("Creating bus directory: %s", busDir))
 	}
 
 	// Create inbox, lock, and session directories

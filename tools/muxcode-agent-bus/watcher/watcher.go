@@ -45,6 +45,11 @@ type Watcher struct {
 	agentFailCounts      map[string]int   // consecutive failures per role
 	agentRestarts        map[string]int   // restart count per role (cap at 3)
 	agentWasDown         map[string]bool  // for recovery detection
+	// Startup notification: re-notify agents that had inbox messages before they were ready
+	firstIdleSeen    map[string]bool
+	allIdleSeen      bool // early-out: skip checkStartupNotifications once all roles seen
+	startupNotifyAt  map[string]int64 // unix timestamp of last startup notification per role
+	startupRetries   map[string]int   // retry count per role (cap at 3)
 }
 
 // New creates a new Watcher for the given session.
@@ -74,6 +79,9 @@ func New(session string, pollSecs, debounceSecs int) *Watcher {
 		agentFailCounts:      make(map[string]int),
 		agentRestarts:        make(map[string]int),
 		agentWasDown:         make(map[string]bool),
+		firstIdleSeen:        make(map[string]bool),
+		startupNotifyAt:      make(map[string]int64),
+		startupRetries:       make(map[string]int),
 	}
 }
 
@@ -114,9 +122,14 @@ func (w *Watcher) Run() error {
 	unlock, err := acquireWatcherLock(w.session)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  %s\n", err)
+		bus.LogLifecycle(w.session, "error", "watcher", "lock-failed", err.Error())
 		return err
 	}
 	defer unlock()
+
+	bus.LogLifecycleWithPID(w.session, "info", "watcher", "started",
+		fmt.Sprintf("Poll: %ds, Debounce: %ds", int(w.pollInterval.Seconds()), w.debounceSecs),
+		os.Getpid())
 
 	fmt.Println("  Agent Bus Watcher")
 	fmt.Printf("  Session: %s\n", w.session)
@@ -131,6 +144,7 @@ func (w *Watcher) Run() error {
 	for {
 		w.touchKeepalive()
 		w.checkInboxes()
+		w.checkStartupNotifications()
 		w.checkTrigger()
 		w.checkCron()
 		w.checkProcs()
@@ -183,10 +197,83 @@ func (w *Watcher) checkInboxes() {
 			// file locking + cooldown.
 			ts := time.Now().Format("15:04:05")
 			fmt.Printf("  %s  New message(s) for %s — notifying\n", ts, role)
+			bus.LogLifecycle(w.session, "info", "watcher", "inbox-notify", role)
 			_ = bus.Notify(w.session, role)
 		}
 
 		w.inboxSizes[role] = size
+	}
+}
+
+// checkStartupNotifications ensures agents that had inbox messages before they
+// were ready (e.g. pre-populated startup messages) get notified once they reach
+// idle for the first time. Without this, checkInboxes detects the message
+// early (before the agent is idle), updates inboxSizes, and never re-notifies.
+//
+// Retries up to 3 times with a 5-second cooldown between attempts. This guards
+// against lost send-keys notifications (e.g. Claude Code TUI not fully ready
+// when the first notification fires, timing races with auto-accept loop).
+func (w *Watcher) checkStartupNotifications() {
+	if w.allIdleSeen {
+		return
+	}
+	allSeen := true
+	now := time.Now().Unix()
+	for _, role := range bus.KnownRoles {
+		if !bus.IsAgentIdle(w.session, role) {
+			if !w.firstIdleSeen[role] {
+				allSeen = false
+			}
+			continue
+		}
+		w.firstIdleSeen[role] = true
+
+		// Check if inbox has unread messages
+		inboxPath := bus.InboxPath(w.session, role)
+		info, err := os.Stat(inboxPath)
+		if err != nil || info.Size() == 0 {
+			continue // inbox consumed or empty — done for this role
+		}
+
+		// Inbox still has messages and agent is idle — notify (or retry).
+		// Cap retries to prevent infinite loops.
+		retries := w.startupRetries[role]
+		if retries >= 3 {
+			continue
+		}
+
+		// Cooldown: wait at least 5 seconds between attempts so the agent
+		// has time to process the previous notification.
+		lastAttempt := w.startupNotifyAt[role]
+		if lastAttempt > 0 && now-lastAttempt < 5 {
+			allSeen = false
+			continue
+		}
+
+		w.startupRetries[role] = retries + 1
+		w.startupNotifyAt[role] = now
+
+		ts := time.Now().Format("15:04:05")
+		if retries == 0 {
+			fmt.Printf("  %s  Agent %s ready with pending inbox — notifying\n", ts, role)
+			bus.LogLifecycle(w.session, "info", "watcher", "startup-notify", role)
+		} else {
+			fmt.Printf("  %s  Agent %s still has pending inbox — retry %d/3\n", ts, role, retries)
+			bus.LogLifecycle(w.session, "info", "watcher", "startup-notify",
+				fmt.Sprintf("%s retry %d/3", role, retries))
+		}
+
+		// Clear the dedup marker before notifying. checkInboxes may have
+		// already fired a display-message (which Claude Code can't see) for
+		// this inbox growth, marking it as notified. Without clearing, the
+		// send-keys wake-up would be suppressed by alreadyNotified().
+		bus.ClearNotified(w.session, role)
+		_ = bus.Notify(w.session, role)
+
+		allSeen = false // keep checking until inbox consumed or retries exhausted
+	}
+	if allSeen {
+		w.allIdleSeen = true
 	}
 }
 
@@ -262,6 +349,8 @@ func (w *Watcher) routeTrigger() {
 
 	ts := time.Now().Format("15:04:05")
 	fmt.Printf("  %s  Edits stabilized — routing %d file(s)\n", ts, len(files))
+	bus.LogLifecycle(w.session, "info", "watcher", "trigger-route",
+		fmt.Sprintf("%d file(s): %s", len(files), strings.Join(files, ", ")))
 
 	// Send aggregate event to analyze agent
 	fileList := strings.Join(files, ", ")
@@ -320,6 +409,8 @@ func (w *Watcher) checkCron() {
 
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Cron firing: %s → %s:%s\n", ts, entry.ID, entry.Target, entry.Action)
+		bus.LogLifecycle(w.session, "info", "watcher", "cron-fire",
+			fmt.Sprintf("%s → %s:%s", entry.ID, entry.Target, entry.Action))
 
 		msgID, err := bus.ExecuteCron(w.session, entry)
 		if err != nil {
@@ -403,6 +494,8 @@ func (w *Watcher) checkProcs() {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Process completed: %s (status: %s, exit: %d)\n",
 			ts, entry.ID, entry.Status, entry.ExitCode)
+		bus.LogLifecycle(w.session, "info", "watcher", "proc-complete",
+			fmt.Sprintf("%s status=%s exit=%d", entry.ID, entry.Status, entry.ExitCode))
 
 		payload := fmt.Sprintf("Background process completed: %s\n  Command: %s\n  Status: %s  Exit code: %d\n  Log: %s",
 			entry.ID, entry.Command, entry.Status, entry.ExitCode, entry.LogFile)
@@ -471,6 +564,8 @@ func (w *Watcher) checkSpawns() {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Spawn completed: %s (role: %s, window: %s)\n",
 			ts, entry.ID, entry.Role, entry.Window)
+		bus.LogLifecycle(w.session, "info", "watcher", "spawn-complete",
+			fmt.Sprintf("%s role=%s window=%s", entry.ID, entry.Role, entry.Window))
 
 		// Try to extract the last result message from the spawn
 		resultInfo := "No result message found."
@@ -530,6 +625,8 @@ func (w *Watcher) checkLoops() {
 	for _, alert := range fresh {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Loop detected: %s (%s)\n", ts, alert.Role, alert.Type)
+		bus.LogLifecycle(w.session, "warn", "watcher", "loop-detected",
+			fmt.Sprintf("%s type=%s", alert.Role, alert.Type))
 
 		msg := bus.NewMessage("watcher", "edit", "event", "loop-detected", alert.Message, "")
 		if err := bus.Send(w.session, msg); err != nil {
@@ -569,6 +666,8 @@ func (w *Watcher) checkCompaction() {
 	for _, alert := range fresh {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Compact recommended: %s (total: %s)\n", ts, alert.Role, formatWatcherBytes(alert.TotalBytes))
+		bus.LogLifecycle(w.session, "warn", "watcher", "compact-alert",
+			fmt.Sprintf("%s total=%s", alert.Role, formatWatcherBytes(alert.TotalBytes)))
 
 		msg := bus.NewMessage("watcher", alert.Role, "event", "compact-recommended", alert.Message, "")
 		if err := bus.Send(w.session, msg); err != nil {
@@ -612,6 +711,7 @@ func (w *Watcher) checkOllama() {
 		if w.ollamaWasDown {
 			// Recovery detected
 			fmt.Printf("  %s  Ollama recovered — inference probe healthy\n", ts)
+			bus.LogLifecycle(w.session, "info", "watcher", "ollama-recovered", "")
 			w.ollamaWasDown = false
 			w.ollamaFailCount = 0
 
@@ -640,6 +740,8 @@ func (w *Watcher) checkOllama() {
 	}
 
 	fmt.Printf("  %s  Ollama probe failure #%d: %s\n", ts, w.ollamaFailCount, errMsg)
+	bus.LogLifecycle(w.session, "warn", "watcher", "ollama-probe-fail",
+		fmt.Sprintf("failure #%d: %s", w.ollamaFailCount, errMsg))
 
 	// Second consecutive failure (60s) — send ollama-down alert
 	if w.ollamaFailCount == 2 && !w.ollamaWasDown {
@@ -675,6 +777,8 @@ func (w *Watcher) checkOllama() {
 		}
 
 		fmt.Printf("  %s  Attempting Ollama restart (#%d)...\n", ts, w.ollamaRestarts+1)
+		bus.LogLifecycle(w.session, "warn", "watcher", "ollama-restart",
+			fmt.Sprintf("attempt %d/3", w.ollamaRestarts+1))
 		w.ollamaRestarts++
 
 		// Send restarting alert
@@ -746,6 +850,7 @@ func (w *Watcher) checkAgentHealth() {
 			// Recovery detection
 			if w.agentWasDown[role] {
 				fmt.Printf("  %s  Agent %s recovered\n", ts, role)
+				bus.LogLifecycle(w.session, "info", "watcher", "agent-recovered", role)
 				w.agentWasDown[role] = false
 				w.agentFailCounts[role] = 0
 
@@ -762,6 +867,8 @@ func (w *Watcher) checkAgentHealth() {
 		count := w.agentFailCounts[role]
 
 		fmt.Printf("  %s  Agent %s health check failure #%d\n", ts, role, count)
+		bus.LogLifecycle(w.session, "warn", "watcher", "agent-health-fail",
+			fmt.Sprintf("%s failure #%d", role, count))
 
 		// Strike 2 (60s) — alert edit
 		if count == 2 {
@@ -798,6 +905,8 @@ func (w *Watcher) checkAgentHealth() {
 			w.agentRestarts[role]++
 			attempt := w.agentRestarts[role]
 			fmt.Printf("  %s  Restarting agent %s (attempt %d/3)...\n", ts, role, attempt)
+			bus.LogLifecycle(w.session, "warn", "watcher", "agent-restart",
+				fmt.Sprintf("%s attempt %d/3", role, attempt))
 
 			// Send restarting alert
 			alert := bus.FormatAgentHealthAlert("restarting", role,

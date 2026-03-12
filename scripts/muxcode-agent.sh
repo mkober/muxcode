@@ -173,6 +173,29 @@ if [ "$ROLE" != "edit" ]; then
   PERM_FLAGS=(--dangerously-skip-permissions)
 fi
 
+# Pre-populate inbox with startup message so the watcher delivers it once the
+# agent reaches idle.  Uses --no-notify because the agent process isn't running
+# yet — the watcher's startup check will notify once the agent is ready.
+case "$ROLE" in
+  edit)
+    AGENT_ROLE=edit muxcode-agent-bus send edit notify \
+      "Session started — review last saved context from memory to restore session state." \
+      --type event --no-notify 2>/dev/null || true
+    ;;
+  analyst|analyze)
+    AGENT_ROLE=analyze muxcode-agent-bus send analyze notify \
+      "Session started — review last saved context from memory to restore session state." \
+      --type event --no-notify 2>/dev/null || true
+    ;;
+esac
+
+# Log agent launch to persistent lifecycle log
+_session="${BUS_SESSION:-$(tmux display-message -p '#S' 2>/dev/null)}"
+if [ -n "$_session" ]; then
+  muxcode-agent-bus lifecycle log "$_session" "info" "agent" "launch" \
+    --detail "role=$ROLE cli=$AGENT_CLI" 2>/dev/null || true
+fi
+
 # Clear terminal so Claude Code starts with a clean screen
 clear
 
