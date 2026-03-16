@@ -106,40 +106,64 @@ while true; do
     # Last test output
     LAST_EC=$(jq -s '.[-1].exit_code // "0"' "$HISTORY_FILE" 2>/dev/null)
     LAST_EC=$(printf '%s' "$LAST_EC" | tr -d '"')
+    LAST_TS=$(jq -s '.[-1].ts // 0' "$HISTORY_FILE" 2>/dev/null)
+    LAST_TS=$(printf '%s' "$LAST_TS" | tr -d '"')
+    LAST_TIME=""
+    if [ -n "$LAST_TS" ] && [ "$LAST_TS" != "0" ]; then
+      LAST_TIME=$(format_ts "$LAST_TS")
+    fi
     LAST_OUTPUT=$(jq -s -r '.[-1].output // ""' "$HISTORY_FILE" 2>/dev/null)
+    LAST_ERRORS=$(jq -s -r '.[-1].errors // ""' "$HISTORY_FILE" 2>/dev/null)
 
-    if [ -n "$LAST_OUTPUT" ]; then
+    # For failed tests, prefer errors field; for passing tests, show output
+    if [ "$LAST_EC" != "0" ]; then
+      DISPLAY_OUTPUT="${LAST_ERRORS:-$LAST_OUTPUT}"
+    else
+      DISPLAY_OUTPUT="$LAST_OUTPUT"
+    fi
+
+    if [ -n "$DISPLAY_OUTPUT" ] || [ "$LAST_EC" != "0" ]; then
       if [ "$LAST_EC" = "0" ]; then
-        BUF+="  ${GREEN}⏺ Tests passed:${RESET}\n\n"
+        BUF+="  ${GREEN}⏺ Tests passed${RESET}  ${DIM}${LAST_TIME}${RESET}\n\n"
       else
-        BUF+="  ${RED}⏺ Tests failed:${RESET}\n\n"
+        LAST_CMD=$(jq -s -r '.[-1].command // ""' "$HISTORY_FILE" 2>/dev/null)
+        if [ ${#LAST_CMD} -gt 45 ]; then
+          LAST_CMD="${LAST_CMD:0:42}..."
+        fi
+        BUF+="  ${RED}⏺ Tests failed${RESET}  ${DIM}${LAST_TIME}${RESET}\n"
+        BUF+="    ${DIM}cmd${RESET}  ${LAST_CMD}  ${DIM}exit ${LAST_EC}${RESET}\n\n"
       fi
-      FIRST_LINE=1
-      while IFS= read -r oline; do
-        oline=$(printf '%s' "$oline" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/^[[:space:]]*//')
-        [ -z "$oline" ] && continue
-        if [ ${#oline} -gt 60 ]; then
-          oline="${oline:0:57}..."
+      if [ -n "$DISPLAY_OUTPUT" ]; then
+        LINE_COUNT=0
+        while IFS= read -r oline; do
+          oline=$(printf '%s' "$oline" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/^[[:space:]]*//')
+          [ -z "$oline" ] && continue
+          case "$oline" in
+            "Exit code:"*) continue ;;
+          esac
+          if [ ${#oline} -gt 60 ]; then
+            oline="${oline:0:57}..."
+          fi
+          if [ "$LAST_EC" != "0" ]; then
+            BUF+="    ${RED}- ${oline}${RESET}\n"
+          else
+            if [ "$LINE_COUNT" -eq 0 ]; then
+              BUF+="  ${CYAN}${oline}${RESET}\n"
+            else
+              BUF+="    ${DIM}- ${oline}${RESET}\n"
+            fi
+          fi
+          LINE_COUNT=$(( LINE_COUNT + 1 ))
+          [ "$LINE_COUNT" -ge 20 ] && break
+        done <<< "$DISPLAY_OUTPUT"
+        if [ "$LINE_COUNT" -eq 0 ] && [ "$LAST_EC" != "0" ]; then
+          BUF+="    ${DIM}- No error details captured${RESET}\n"
         fi
-        if [ "$FIRST_LINE" -eq 1 ]; then
-          BUF+="  ${CYAN}${oline}${RESET}\n"
-          FIRST_LINE=0
-        else
-          BUF+="    ${DIM}- ${oline}${RESET}\n"
-        fi
-      done <<< "$LAST_OUTPUT"
+      fi
       if [ "$LAST_EC" = "0" ]; then
         BUF+="    ${DIM}- All tests passed${RESET}\n"
       fi
       BUF+="\n"
-    fi
-
-    # Last failure detail (if most recent test failed and no output captured)
-    if [ "$LAST_EC" != "0" ] && [ -z "$LAST_OUTPUT" ]; then
-      LAST_CMD=$(jq -s -r '.[-1].command // ""' "$HISTORY_FILE" 2>/dev/null)
-      BUF+="  ${RED}last failure${RESET}\n"
-      BUF+="    ${DIM}cmd${RESET}   ${LAST_CMD}\n"
-      BUF+="    ${DIM}exit${RESET}  ${LAST_EC}\n"
     fi
 
     # Last error summary — show most recent failure when latest run passed
@@ -149,7 +173,9 @@ while true; do
         PF_TS=$(printf '%s' "$PREV_FAIL" | jq -r '.ts // empty' 2>/dev/null)
         PF_CMD=$(printf '%s' "$PREV_FAIL" | jq -r '.command // empty' 2>/dev/null)
         PF_EC=$(printf '%s' "$PREV_FAIL" | jq -r '.exit_code // empty' 2>/dev/null)
+        PF_ERRORS=$(printf '%s' "$PREV_FAIL" | jq -r '.errors // empty' 2>/dev/null)
         PF_OUTPUT=$(printf '%s' "$PREV_FAIL" | jq -r '.output // empty' 2>/dev/null)
+        PF_DISPLAY="${PF_ERRORS:-$PF_OUTPUT}"
         if [ -n "$PF_TS" ]; then
           PF_TIME=$(format_ts "$PF_TS")
           if [ ${#PF_CMD} -gt 35 ]; then
@@ -157,18 +183,21 @@ while true; do
           fi
           BUF+="  ${YELLOW}⏺ Last errors${RESET}  ${DIM}${PF_TIME}${RESET}\n"
           BUF+="    ${DIM}cmd${RESET}  ${PF_CMD}  ${DIM}exit ${PF_EC}${RESET}\n"
-          if [ -n "$PF_OUTPUT" ]; then
+          if [ -n "$PF_DISPLAY" ]; then
             PF_LINE_COUNT=0
             while IFS= read -r oline; do
               oline=$(printf '%s' "$oline" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/^[[:space:]]*//')
               [ -z "$oline" ] && continue
+              case "$oline" in
+                "Exit code:"*) continue ;;
+              esac
               if [ ${#oline} -gt 60 ]; then
                 oline="${oline:0:57}..."
               fi
-              BUF+="    ${DIM}- ${oline}${RESET}\n"
+              BUF+="    ${YELLOW}- ${oline}${RESET}\n"
               PF_LINE_COUNT=$(( PF_LINE_COUNT + 1 ))
-              [ "$PF_LINE_COUNT" -ge 10 ] && break
-            done <<< "$PF_OUTPUT"
+              [ "$PF_LINE_COUNT" -ge 20 ] && break
+            done <<< "$PF_DISPLAY"
           fi
           BUF+="\n"
         fi
@@ -210,19 +239,25 @@ for i, e in enumerate(recent):
     print(f"ENTRY={ts}\t{status}\t{cmd}\t{ec}\t{num}\t{desc}")
 last = entries[-1] if entries else {}
 last_ec = str(last.get("exit_code", "0"))
+last_ts = last.get("ts", 0)
+last_cmd = last.get("command", "")
 last_output = last.get("output", "")
+last_errors = last.get("errors", "")
 import re
-if last_output:
-    print(f"LAST_EC={last_ec}")
-    for ol in last_output.strip().split("\n"):
+print(f"LAST_TS={last_ts}")
+print(f"LAST_EC={last_ec}")
+if len(last_cmd) > 45:
+    last_cmd = last_cmd[:42] + "..."
+print(f"LAST_CMD={last_cmd}")
+# For failures, prefer errors; for success, show output
+display = last_errors if (last_ec != "0" and last_errors) else last_output
+if display:
+    for ol in display.strip().split("\n"):
         ol = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", ol).strip()
-        if ol:
+        if ol and not ol.startswith("Exit code:"):
             if len(ol) > 60:
                 ol = ol[:57] + "..."
-            print(f"LAST_OUTPUT_LINE={ol}")
-if entries and last_ec != "0" and not last_output:
-    print(f"LASTFAIL_CMD={last.get('command', '')}")
-    print(f"LASTFAIL_EC={last_ec}")
+            print(f"LAST_DISPLAY_LINE={ol}")
 if last_ec == "0" and failed > 0:
     failures = [e for e in entries if str(e.get("exit_code", "1")) != "0"]
     if failures:
@@ -230,22 +265,24 @@ if last_ec == "0" and failed > 0:
         pf_ts = pf.get("ts", 0)
         pf_cmd = pf.get("command", "")
         pf_ec = str(pf.get("exit_code", "?"))
+        pf_errors = pf.get("errors", "")
         pf_output = pf.get("output", "")
+        pf_display = pf_errors if pf_errors else pf_output
         if len(pf_cmd) > 35:
             pf_cmd = pf_cmd[:32] + "..."
         print(f"PREV_FAIL_TS={pf_ts}")
         print(f"PREV_FAIL_CMD={pf_cmd}")
         print(f"PREV_FAIL_EC={pf_ec}")
-        if pf_output:
+        if pf_display:
             count = 0
-            for ol in pf_output.strip().split("\n"):
+            for ol in pf_display.strip().split("\n"):
                 ol = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", ol).strip()
-                if ol:
+                if ol and not ol.startswith("Exit code:"):
                     if len(ol) > 60:
                         ol = ol[:57] + "..."
                     print(f"PREV_FAIL_LINE={ol}")
                     count += 1
-                    if count >= 10:
+                    if count >= 20:
                         break
 ' "$HISTORY_FILE" 2>/dev/null)
 
@@ -282,52 +319,61 @@ if last_ec == "0" and failed > 0:
     done <<< "$PARSED"
     BUF+="\n"
 
-    # Last test output
+    # Last test summary
     PY_LAST_EC=""
-    HAS_OUTPUT=0
-    PY_FIRST_LINE=1
+    PY_LAST_TS=""
+    PY_LAST_CMD=""
+    HAS_DISPLAY=0
+    PY_LINE_COUNT=0
     while IFS= read -r line; do
       case "$line" in
+        LAST_TS=*) PY_LAST_TS="${line#LAST_TS=}" ;;
         LAST_EC=*) PY_LAST_EC="${line#LAST_EC=}" ;;
-        LAST_OUTPUT_LINE=*)
-          if [ "$HAS_OUTPUT" -eq 0 ]; then
-            HAS_OUTPUT=1
+        LAST_CMD=*) PY_LAST_CMD="${line#LAST_CMD=}" ;;
+        LAST_DISPLAY_LINE=*)
+          if [ "$HAS_DISPLAY" -eq 0 ]; then
+            HAS_DISPLAY=1
+            PY_LAST_TIME=""
+            if [ -n "$PY_LAST_TS" ] && [ "$PY_LAST_TS" != "0" ]; then
+              PY_LAST_TIME=$(format_ts "$PY_LAST_TS")
+            fi
             if [ "$PY_LAST_EC" = "0" ]; then
-              BUF+="  ${GREEN}⏺ Tests passed:${RESET}\n\n"
+              BUF+="  ${GREEN}⏺ Tests passed${RESET}  ${DIM}${PY_LAST_TIME}${RESET}\n\n"
             else
-              BUF+="  ${RED}⏺ Tests failed:${RESET}\n\n"
+              BUF+="  ${RED}⏺ Tests failed${RESET}  ${DIM}${PY_LAST_TIME}${RESET}\n"
+              BUF+="    ${DIM}cmd${RESET}  ${PY_LAST_CMD}  ${DIM}exit ${PY_LAST_EC}${RESET}\n\n"
             fi
           fi
-          OL="${line#LAST_OUTPUT_LINE=}"
-          if [ "$PY_FIRST_LINE" -eq 1 ]; then
-            BUF+="  ${CYAN}${OL}${RESET}\n"
-            PY_FIRST_LINE=0
+          OL="${line#LAST_DISPLAY_LINE=}"
+          if [ "$PY_LAST_EC" != "0" ]; then
+            BUF+="    ${RED}- ${OL}${RESET}\n"
           else
-            BUF+="    ${DIM}- ${OL}${RESET}\n"
+            if [ "$PY_LINE_COUNT" -eq 0 ]; then
+              BUF+="  ${CYAN}${OL}${RESET}\n"
+            else
+              BUF+="    ${DIM}- ${OL}${RESET}\n"
+            fi
           fi
+          PY_LINE_COUNT=$(( PY_LINE_COUNT + 1 ))
           ;;
       esac
     done <<< "$PARSED"
-    if [ "$HAS_OUTPUT" -eq 1 ] && [ "$PY_LAST_EC" = "0" ]; then
+    # Handle failed test with no display lines
+    if [ "$HAS_DISPLAY" -eq 0 ] && [ -n "$PY_LAST_EC" ] && [ "$PY_LAST_EC" != "0" ]; then
+      PY_LAST_TIME=""
+      if [ -n "$PY_LAST_TS" ] && [ "$PY_LAST_TS" != "0" ]; then
+        PY_LAST_TIME=$(format_ts "$PY_LAST_TS")
+      fi
+      BUF+="  ${RED}⏺ Tests failed${RESET}  ${DIM}${PY_LAST_TIME}${RESET}\n"
+      BUF+="    ${DIM}cmd${RESET}  ${PY_LAST_CMD}  ${DIM}exit ${PY_LAST_EC}${RESET}\n"
+      BUF+="    ${DIM}- No error details captured${RESET}\n"
+      HAS_DISPLAY=1
+    fi
+    if [ "$HAS_DISPLAY" -eq 1 ] && [ "$PY_LAST_EC" = "0" ]; then
       BUF+="    ${DIM}- All tests passed${RESET}\n"
     fi
-    if [ "$HAS_OUTPUT" -eq 1 ]; then
+    if [ "$HAS_DISPLAY" -eq 1 ]; then
       BUF+="\n"
-    fi
-
-    # Last failure detail (fallback when no output captured)
-    LASTFAIL_CMD=""
-    LASTFAIL_EC=""
-    while IFS= read -r line; do
-      case "$line" in
-        LASTFAIL_CMD=*) LASTFAIL_CMD="${line#LASTFAIL_CMD=}" ;;
-        LASTFAIL_EC=*)  LASTFAIL_EC="${line#LASTFAIL_EC=}" ;;
-      esac
-    done <<< "$PARSED"
-    if [ -n "$LASTFAIL_CMD" ]; then
-      BUF+="  ${RED}last failure${RESET}\n"
-      BUF+="    ${DIM}cmd${RESET}   ${LASTFAIL_CMD}\n"
-      BUF+="    ${DIM}exit${RESET}  ${LASTFAIL_EC}\n"
     fi
 
     # Last error summary — show most recent failure when latest run passed
@@ -345,7 +391,7 @@ if last_ec == "0" and failed > 0:
             BUF+="    ${DIM}cmd${RESET}  ${PF_CMD}  ${DIM}exit ${PF_EC}${RESET}\n"
           fi
           OL="${line#PREV_FAIL_LINE=}"
-          BUF+="    ${DIM}- ${OL}${RESET}\n"
+          BUF+="    ${YELLOW}- ${OL}${RESET}\n"
           ;;
       esac
     done <<< "$PARSED"

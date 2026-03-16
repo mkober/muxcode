@@ -183,6 +183,17 @@ except: pass
   # Replace HOME with ~ for readability
   BUILD_OUTPUT="${BUILD_OUTPUT//$HOME/\~}"
 
+  # Extract error-relevant lines for failed builds
+  BUILD_ERRORS=""
+  if [ "${EXIT_CODE:-0}" != "0" ] && [ -n "$BUILD_OUTPUT" ]; then
+    BUILD_ERRORS=$(printf '%s' "$BUILD_OUTPUT" | grep -iE '(error[:\[  (]|ERR!|failed|fatal|cannot |unable to |not found|no such|undefined|unresolved|exception|panic|FAIL[: ]|segfault|permission denied|syntax error|type.?error|reference.?error)' | head -20 2>/dev/null || true)
+    # Strip "Exit code:" lines — redundant with exit_code field
+    BUILD_ERRORS=$(printf '%s' "$BUILD_ERRORS" | grep -v '^Exit code:' || true)
+    if [ ${#BUILD_ERRORS} -gt 1000 ]; then
+      BUILD_ERRORS="${BUILD_ERRORS:0:997}..."
+    fi
+  fi
+
   # Capture short change summary from git
   BUILD_CHANGES=""
   if command -v git &>/dev/null && git rev-parse --is-inside-work-tree &>/dev/null; then
@@ -209,15 +220,15 @@ except: pass
   (
     command -v flock &>/dev/null && flock -n 9
     if command -v jq &>/dev/null; then
-      jq -nc --arg ts "$BUILD_TS" --arg cmd "$COMMAND" --arg desc "${DESCRIPTION:-}" --arg ec "${EXIT_CODE:-0}" --arg outcome "$BUILD_OUTCOME" --arg changes "$BUILD_CHANGES" --arg output "$BUILD_OUTPUT" \
-        '{ts:($ts|tonumber),command:$cmd,description:$desc,exit_code:$ec,outcome:$outcome,changes:$changes,output:$output}' \
+      jq -nc --arg ts "$BUILD_TS" --arg cmd "$COMMAND" --arg desc "${DESCRIPTION:-}" --arg ec "${EXIT_CODE:-0}" --arg outcome "$BUILD_OUTCOME" --arg changes "$BUILD_CHANGES" --arg output "$BUILD_OUTPUT" --arg errors "$BUILD_ERRORS" \
+        '{ts:($ts|tonumber),command:$cmd,description:$desc,exit_code:$ec,outcome:$outcome,changes:$changes,output:$output,errors:$errors}' \
         >> "$HISTORY_FILE" 2>/dev/null || true
     else
       python3 -c '
 import json, sys
-entry = {"ts": int(sys.argv[1]), "command": sys.argv[2], "description": sys.argv[3], "exit_code": sys.argv[4], "outcome": sys.argv[5], "changes": sys.argv[6], "output": sys.argv[7]}
+entry = {"ts": int(sys.argv[1]), "command": sys.argv[2], "description": sys.argv[3], "exit_code": sys.argv[4], "outcome": sys.argv[5], "changes": sys.argv[6], "output": sys.argv[7], "errors": sys.argv[8]}
 print(json.dumps(entry, ensure_ascii=False))
-' "$BUILD_TS" "$COMMAND" "${DESCRIPTION:-}" "${EXIT_CODE:-0}" "$BUILD_OUTCOME" "$BUILD_CHANGES" "$BUILD_OUTPUT" \
+' "$BUILD_TS" "$COMMAND" "${DESCRIPTION:-}" "${EXIT_CODE:-0}" "$BUILD_OUTCOME" "$BUILD_CHANGES" "$BUILD_OUTPUT" "$BUILD_ERRORS" \
         >> "$HISTORY_FILE" 2>/dev/null || true
     fi
 
@@ -273,19 +284,30 @@ except: pass
   # Replace HOME with ~ for readability
   TEST_OUTPUT="${TEST_OUTPUT//$HOME/\~}"
 
+  # Extract error-relevant lines for failed tests
+  TEST_ERRORS=""
+  if [ "${EXIT_CODE:-0}" != "0" ] && [ -n "$TEST_OUTPUT" ]; then
+    TEST_ERRORS=$(printf '%s' "$TEST_OUTPUT" | grep -iE '(error[:\[ (]|ERR!|failed|fatal|cannot |unable to |not found|no such|undefined|unresolved|exception|panic|FAIL[: ]|segfault|permission denied|syntax error|type.?error|reference.?error|assert|expect)' | head -20 2>/dev/null || true)
+    # Strip "Exit code:" lines — redundant with exit_code field
+    TEST_ERRORS=$(printf '%s' "$TEST_ERRORS" | grep -v '^Exit code:' || true)
+    if [ ${#TEST_ERRORS} -gt 1000 ]; then
+      TEST_ERRORS="${TEST_ERRORS:0:997}..."
+    fi
+  fi
+
   # Append + rotate under flock to prevent concurrent hook races
   (
     command -v flock &>/dev/null && flock -n 9
     if command -v jq &>/dev/null; then
-      jq -nc --arg ts "$TEST_TS" --arg cmd "$COMMAND" --arg desc "${DESCRIPTION:-}" --arg ec "${EXIT_CODE:-0}" --arg outcome "$TEST_OUTCOME" --arg output "$TEST_OUTPUT" \
-        '{ts:($ts|tonumber),command:$cmd,description:$desc,exit_code:$ec,outcome:$outcome,output:$output}' \
+      jq -nc --arg ts "$TEST_TS" --arg cmd "$COMMAND" --arg desc "${DESCRIPTION:-}" --arg ec "${EXIT_CODE:-0}" --arg outcome "$TEST_OUTCOME" --arg output "$TEST_OUTPUT" --arg errors "$TEST_ERRORS" \
+        '{ts:($ts|tonumber),command:$cmd,description:$desc,exit_code:$ec,outcome:$outcome,output:$output,errors:$errors}' \
         >> "$TEST_HISTORY_FILE" 2>/dev/null || true
     else
       python3 -c '
 import json, sys
-entry = {"ts": int(sys.argv[1]), "command": sys.argv[2], "description": sys.argv[3], "exit_code": sys.argv[4], "outcome": sys.argv[5], "output": sys.argv[6]}
+entry = {"ts": int(sys.argv[1]), "command": sys.argv[2], "description": sys.argv[3], "exit_code": sys.argv[4], "outcome": sys.argv[5], "output": sys.argv[6], "errors": sys.argv[7]}
 print(json.dumps(entry, ensure_ascii=False))
-' "$TEST_TS" "$COMMAND" "${DESCRIPTION:-}" "${EXIT_CODE:-0}" "$TEST_OUTCOME" "$TEST_OUTPUT" \
+' "$TEST_TS" "$COMMAND" "${DESCRIPTION:-}" "${EXIT_CODE:-0}" "$TEST_OUTCOME" "$TEST_OUTPUT" "$TEST_ERRORS" \
         >> "$TEST_HISTORY_FILE" 2>/dev/null || true
     fi
 
