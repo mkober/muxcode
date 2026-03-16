@@ -15,6 +15,19 @@ import (
 const (
 	// PollInterval is the sleep between inbox checks when idle.
 	PollInterval = 3 * time.Second
+
+	// BatchTimeout is the maximum time a single processBatch call can run.
+	BatchTimeout = 5 * time.Minute
+
+	// MaxConsecutiveFailures is how many failed batches before a cooldown.
+	MaxConsecutiveFailures = 3
+
+	// CooldownDuration is how long to pause after consecutive failures.
+	CooldownDuration = 30 * time.Second
+
+	// MaxAllBlockedTurns is how many consecutive all-blocked turns before
+	// breaking out of the tool loop early.
+	MaxAllBlockedTurns = 2
 )
 
 // runStty runs stty with the given arguments, explicitly passing os.Stdin
@@ -104,6 +117,10 @@ func Run(ctx context.Context, cfg Config) error {
 	// Initialize filter — use bus identity for self-send detection
 	filter := NewFilter(busRole)
 
+	// Cross-batch stuck detection
+	consecutiveFailures := 0
+	var cooldownUntil time.Time
+
 	// Main polling loop
 	for {
 		select {
@@ -115,6 +132,24 @@ func Run(ctx context.Context, cfg Config) error {
 		// Re-apply echo suppression — subprocesses (bash tool calls) can
 		// reset terminal attributes, re-enabling echo. Cheap: one exec per 3s.
 		_ = runStty("-echo")
+
+		// Cooldown: skip processing if we hit consecutive failures
+		if consecutiveFailures >= MaxConsecutiveFailures && time.Now().Before(cooldownUntil) {
+			remaining := time.Until(cooldownUntil).Round(time.Second)
+			fmt.Fprintf(os.Stderr, "[harness] Cooldown: %d consecutive failures, paused for %s\n",
+				consecutiveFailures, remaining)
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(PollInterval):
+			}
+			continue
+		}
+		// Reset after cooldown expires
+		if consecutiveFailures >= MaxConsecutiveFailures && time.Now().After(cooldownUntil) {
+			fmt.Fprintf(os.Stderr, "[harness] Cooldown expired, resuming\n")
+			consecutiveFailures = 0
+		}
 
 		inboxPath := cfg.InboxPath()
 
@@ -132,7 +167,22 @@ func Run(ctx context.Context, cfg Config) error {
 
 			if len(msgs) > 0 {
 				filter.Reset()
-				processBatch(ctx, cfg, bus, ollama, executor, tools, systemPrompt, filter, msgs)
+
+				// Run batch with timeout
+				batchCtx, batchCancel := context.WithTimeout(ctx, BatchTimeout)
+				success := processBatch(batchCtx, cfg, bus, ollama, executor, tools, systemPrompt, filter, msgs)
+				batchCancel()
+
+				if success {
+					consecutiveFailures = 0
+				} else {
+					consecutiveFailures++
+					if consecutiveFailures >= MaxConsecutiveFailures {
+						cooldownUntil = time.Now().Add(CooldownDuration)
+						fmt.Fprintf(os.Stderr, "[harness] %d consecutive failures — entering %s cooldown\n",
+							consecutiveFailures, CooldownDuration)
+					}
+				}
 			}
 
 			_ = bus.Unlock()
@@ -147,7 +197,9 @@ func Run(ctx context.Context, cfg Config) error {
 }
 
 // processBatch handles a batch of inbox messages through the Ollama conversation loop.
-func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *OllamaClient, executor *Executor, tools []ToolDef, systemPrompt string, filter *Filter, msgs []Message) {
+// Returns true if the batch produced a meaningful response, false if it exhausted
+// turns, timed out, or was blocked — used for cross-batch stuck detection.
+func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *OllamaClient, executor *Executor, tools []ToolDef, systemPrompt string, filter *Filter, msgs []Message) bool {
 	// Find last message for reply routing
 	lastMsg := msgs[len(msgs)-1]
 
@@ -173,16 +225,34 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 
 	// Tool-calling loop
 	var finalResponse string
+	batchSuccess := false
 	toolsExecuted := false
+	consecutiveAllBlocked := 0
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 10
 	}
 
 	for turn := 0; turn < maxTurns; turn++ {
+		// Check context (batch timeout or parent cancellation)
+		select {
+		case <-ctx.Done():
+			finalResponse = "Error: batch timed out"
+			fmt.Fprintf(os.Stderr, "[harness] Batch context cancelled: %v\n", ctx.Err())
+			goto sendResponse
+		default:
+		}
+
+		fmt.Fprintf(os.Stderr, "[harness] Turn %d/%d — calling Ollama...\n", turn+1, maxTurns)
+		ollamaStart := time.Now()
 		resp, err := ollama.ChatComplete(ctx, conversation, tools)
+		ollamaDur := time.Since(ollamaStart)
 		if err != nil {
-			finalResponse = fmt.Sprintf("Error calling Ollama: %v", err)
+			if ctx.Err() != nil {
+				finalResponse = "Error: batch timed out during Ollama call"
+			} else {
+				finalResponse = fmt.Sprintf("Error calling Ollama: %v", err)
+			}
 			break
 		}
 
@@ -192,6 +262,8 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 		}
 
 		choice := resp.Choices[0]
+		fmt.Fprintf(os.Stderr, "[harness] Ollama responded in %.1fs, %d tool call(s)\n",
+			ollamaDur.Seconds(), len(choice.Message.ToolCalls))
 
 		// Fallback: extract tool calls from text when model doesn't use structured API
 		if len(choice.Message.ToolCalls) == 0 && choice.Message.Content != "" {
@@ -207,6 +279,15 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 
 		// If no tool calls, check for hallucination on first turn
 		if len(choice.Message.ToolCalls) == 0 {
+			// Show truncated text response for visibility
+			text := choice.Message.Content
+			if len(text) > 100 {
+				text = text[:100] + "…"
+			}
+			if text != "" {
+				fmt.Fprintf(os.Stderr, "[harness] Text: %s\n", text)
+			}
+
 			if turn == 0 && !toolsExecuted && len(tools) > 0 {
 				// First response with no tool calls and tools are available —
 				// the LLM is likely hallucinating results instead of executing.
@@ -219,22 +300,33 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 				continue
 			}
 			finalResponse = choice.Message.Content
+			batchSuccess = true
 			break
 		}
 
 		// Execute tool calls
 		allBlocked := true
-		for _, tc := range choice.Message.ToolCalls {
+		for i, tc := range choice.Message.ToolCalls {
 			result := filter.Check(tc)
+
+			// Log tool invocation with key arguments
+			toolLabel := toolCallLabel(tc)
+			fmt.Fprintf(os.Stderr, "[harness] → %s [%d/%d]\n", toolLabel, i+1, len(choice.Message.ToolCalls))
 
 			var toolOutput string
 			if result.Blocked {
 				toolOutput = result.Reason
-				fmt.Fprintf(os.Stderr, "[harness] BLOCKED: %s\n", result.Reason)
+				fmt.Fprintf(os.Stderr, "[harness] ✗ BLOCKED: %s\n", result.Reason)
 			} else {
 				allBlocked = false
 				toolsExecuted = true
+				toolStart := time.Now()
 				toolOutput = executor.Execute(ctx, tc)
+				toolDur := time.Since(toolStart)
+
+				// Log completion with timing and brief result
+				exitInfo := toolExitInfo(tc, toolOutput)
+				fmt.Fprintf(os.Stderr, "[harness] ✓ %s (%.1fs%s)\n", tc.Function.Name, toolDur.Seconds(), exitInfo)
 
 				// Log bash commands to history
 				if tc.Function.Name == "bash" {
@@ -250,13 +342,21 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 			})
 		}
 
-		// If ALL tool calls were blocked, inject a corrective user message
-		// to strongly redirect the LLM
+		// Track consecutive all-blocked turns
 		if allBlocked {
+			consecutiveAllBlocked++
+			if consecutiveAllBlocked >= MaxAllBlockedTurns {
+				fmt.Fprintf(os.Stderr, "[harness] %d consecutive all-blocked turns — breaking out\n",
+					consecutiveAllBlocked)
+				finalResponse = "(all tool calls blocked — agent stuck in loop)"
+				break
+			}
 			conversation = append(conversation, ChatMessage{
 				Role:    "user",
 				Content: "All your tool calls were blocked. Your task is already in this conversation. Execute it using the appropriate commands (NOT muxcode-agent-bus inbox). If you have completed the task, provide your final response as text.",
 			})
+		} else {
+			consecutiveAllBlocked = 0
 		}
 	}
 
@@ -268,12 +368,21 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 			Role:    "user",
 			Content: "You already executed the commands above. Now provide ONLY a short factual summary of the result. Start with the outcome: succeeded or failed. Do not describe what you plan to do — just summarize what already happened.",
 		})
+		summaryStart := time.Now()
 		resp, err := ollama.ChatComplete(ctx, conversation, nil) // no tools — text only
+		fmt.Fprintf(os.Stderr, "[harness] Summary call %.1fs\n", time.Since(summaryStart).Seconds())
 		if err == nil && len(resp.Choices) > 0 && resp.Choices[0].Message.Content != "" {
 			finalResponse = resp.Choices[0].Message.Content
+			batchSuccess = true
 		}
 	}
 
+	// Mark success if tools executed and we got a real response
+	if toolsExecuted && finalResponse != "" && finalResponse != "(no response generated — tool loop exhausted)" && finalResponse != "(all tool calls blocked — agent stuck in loop)" {
+		batchSuccess = true
+	}
+
+sendResponse:
 	// Send response
 	if finalResponse == "" {
 		finalResponse = "(no response generated — tool loop exhausted)"
@@ -284,11 +393,14 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 		finalResponse = finalResponse[:4000] + "\n... [truncated]"
 	}
 
-	fmt.Fprintf(os.Stderr, "[harness] Response (%d bytes) → %s\n", len(finalResponse), lastMsg.From)
+	fmt.Fprintf(os.Stderr, "[harness] Response (%d bytes, success=%v) → %s\n",
+		len(finalResponse), batchSuccess, lastMsg.From)
 
 	if err := bus.Send(lastMsg.From, lastMsg.Action, finalResponse, "response", lastMsg.ID); err != nil {
 		fmt.Fprintf(os.Stderr, "[harness] send error: %v\n", err)
 	}
+
+	return batchSuccess
 }
 
 // looksLikeNarration detects when the LLM generated a planning/narration
@@ -317,6 +429,83 @@ func looksLikeNarration(response string) bool {
 		return true
 	}
 	return false
+}
+
+// toolCallLabel returns a human-readable label for a tool call, e.g. "bash: ./build.sh".
+func toolCallLabel(tc ToolCall) string {
+	name := tc.Function.Name
+	switch name {
+	case "bash":
+		var args struct {
+			Command string `json:"command"`
+		}
+		if json.Unmarshal(tc.Function.Arguments, &args) == nil && args.Command != "" {
+			cmd := args.Command
+			if len(cmd) > 80 {
+				cmd = cmd[:77] + "..."
+			}
+			return fmt.Sprintf("bash: %s", cmd)
+		}
+	case "read_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(tc.Function.Arguments, &args) == nil && args.Path != "" {
+			return fmt.Sprintf("read: %s", args.Path)
+		}
+	case "glob":
+		var args struct {
+			Pattern string `json:"pattern"`
+		}
+		if json.Unmarshal(tc.Function.Arguments, &args) == nil && args.Pattern != "" {
+			return fmt.Sprintf("glob: %s", args.Pattern)
+		}
+	case "grep":
+		var args struct {
+			Pattern string `json:"pattern"`
+		}
+		if json.Unmarshal(tc.Function.Arguments, &args) == nil && args.Pattern != "" {
+			pat := args.Pattern
+			if len(pat) > 40 {
+				pat = pat[:37] + "..."
+			}
+			return fmt.Sprintf("grep: %s", pat)
+		}
+	case "write_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(tc.Function.Arguments, &args) == nil && args.Path != "" {
+			return fmt.Sprintf("write: %s", args.Path)
+		}
+	case "edit_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(tc.Function.Arguments, &args) == nil && args.Path != "" {
+			return fmt.Sprintf("edit: %s", args.Path)
+		}
+	}
+	return name
+}
+
+// toolExitInfo returns a suffix string with exit code info for tool results.
+// Returns empty string for success, ", exit N" for failures.
+func toolExitInfo(tc ToolCall, output string) string {
+	if tc.Function.Name != "bash" {
+		return ""
+	}
+	if strings.Contains(output, "timed out") {
+		return ", TIMEOUT"
+	}
+	if idx := strings.LastIndex(output, "Exit code: "); idx >= 0 {
+		code := strings.TrimSpace(output[idx+len("Exit code: "):])
+		if nl := strings.IndexByte(code, '\n'); nl >= 0 {
+			code = code[:nl]
+		}
+		return fmt.Sprintf(", exit %s", code)
+	}
+	return ""
 }
 
 // logToolToHistory extracts command info and logs to the role's history JSONL.
