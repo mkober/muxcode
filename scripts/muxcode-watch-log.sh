@@ -13,8 +13,8 @@ INTERVAL="${1:-5}"
 SESSION="${BUS_SESSION:-${SESSION:-default}}"
 HISTORY_FILE="/tmp/muxcode-bus-${SESSION}/watch-history.jsonl"
 MAX_ENTRIES=25
-# Max width for summary text (leave room for padding + timestamp)
-MAX_WIDTH=42
+# Continuation indent: "             " = 13 chars (matches "  HH:MM:SS  " prefix)
+CONT_INDENT=13
 
 # Dracula colors
 PURPLE='\033[38;5;141m'
@@ -61,23 +61,27 @@ word_wrap() {
 }
 
 while true; do
+  # Detect pane width dynamically
+  PANE_WIDTH=$(tput cols 2>/dev/null || echo 80)
+  MAX_WIDTH=$(( PANE_WIDTH - CONT_INDENT - 1 ))
+  [ "$MAX_WIDTH" -lt 20 ] && MAX_WIDTH=20
+
   BUF=""
-  BUF+="\n"
-  BUF+="  ${PURPLE}watch log${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
-  BUF+="  ${DIM}$(printf '%.0s─' {1..48})${RESET}\n"
+  BUF+="${PURPLE}  watch log${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
+  BUF+="${DIM}$(printf '%.0s─' $(seq 1 "$PANE_WIDTH"))${RESET}\n"
   BUF+="\n"
 
   if [ ! -f "$HISTORY_FILE" ]; then
-    BUF+="   ${DIM}no watch history yet${RESET}\n"
-    BUF+="   ${DIM}waiting for watch agent...${RESET}\n"
+    BUF+="  ${DIM}no watch history yet${RESET}\n"
+    BUF+="  ${DIM}waiting for watch agent...${RESET}\n"
   else
     ENTRY_COUNT=$(wc -l < "$HISTORY_FILE" 2>/dev/null || echo 0)
     ENTRY_COUNT=$(echo "$ENTRY_COUNT" | tr -d ' ')
 
     if [ "$ENTRY_COUNT" -eq 0 ]; then
-      BUF+="   ${DIM}no watch entries yet${RESET}\n"
+      BUF+="  ${DIM}no watch entries yet${RESET}\n"
     else
-      BUF+="   ${DIM}${ENTRY_COUNT} entries${RESET}\n\n"
+      BUF+="  ${DIM}${ENTRY_COUNT} entries${RESET}\n\n"
 
       # Show last N entries (process substitution keeps loop in main shell)
       while IFS= read -r line; do
@@ -107,10 +111,10 @@ while true; do
           FIRST=1
           while IFS= read -r wline; do
             if [ "$FIRST" -eq 1 ]; then
-              BUF+="   ${DIM}${TIME:-??:??:??}${RESET}  ${COLOR}${wline}${RESET}\n"
+              BUF+="  ${DIM}${TIME:-??:??:??}${RESET}  ${COLOR}${wline}${RESET}\n"
               FIRST=0
             else
-              BUF+="              ${COLOR}${wline}${RESET}\n"
+              BUF+="             ${COLOR}${wline}${RESET}\n"
             fi
           done <<< "$(word_wrap "$SUMMARY" "$MAX_WIDTH")"
           BUF+="\n"

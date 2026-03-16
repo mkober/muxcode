@@ -41,6 +41,10 @@
 | Agent health monitoring | Watcher detects dead agents (3-strike restart) + watcher self-monitoring via keepalive file + monitor script — `agent-health` CLI for stop/start/check | [agent-health-monitoring.md](./agent-health-monitoring.md) |
 | Cross-session memory | Global memory at `~/.config/muxcode/memory/` persisting across projects — `write-global`, `--no-global`, `--scope` flags, global context in prompts, BM25 search across both layers | [cross-session-memory.md](./cross-session-memory.md) |
 | Lifecycle logging | Persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` recording launcher sequence, watcher events, agent launches, auto-accept, and cleanup — survives session cleanup, filterable by source/level/event/time via `lifecycle show`, rotation at 1000 entries, `lifecycle purge` for cleanup | |
+| Build/test error extraction | Bash hook extracts error-relevant lines from failed build/test output into `errors` field in history JSONL — left-pane log views prefer errors over raw output for failures, filter "Exit code:" noise, color errors red/yellow | |
+| Harness circuit breaker | 3-layer stuck protection: within-turn filter, within-batch all-blocked early exit (2 turns), cross-batch cooldown (3 failures → 30s pause), 5-minute batch timeout — prevents runaway Ollama calls | |
+| PII scrubbing | Automatic PII/secret redaction for api/runner/watch roles — harness: `scrub.go` in executor; Claude Code: `muxcode-pii-scrub.sh` pipe-through script + agent definition instructions. Patterns: emails, SSN, CC (prefix-anchored), phone (separator-required), AWS keys, JWTs, generic secrets | |
+| Agent debug skill | Edit-agent skill for diagnosing other agents via tmux capture-pane — pane content capture, idle detection, inbox/health checks, multi-agent sweep, troubleshooting table | |
 
 ## Planned
 
@@ -101,7 +105,7 @@
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
-| Secret scanning in commits | Pre-commit agent check scans staged diffs for patterns matching API keys, tokens, passwords — blocks commit and alerts edit | High |
+| Secret scanning in commits | Pre-commit agent check scans staged diffs for patterns matching API keys, tokens, passwords — blocks commit and alerts edit. PII scrubbing (`scrub.go`, `muxcode-pii-scrub.sh`) partially addresses this for tool output but not for commits | High |
 | Agent sandbox levels | Graduated trust levels — `read-only`, `project-scoped`, `unrestricted` — new agents start at read-only and escalate based on config, more granular than current tool profiles | Medium |
 | Webhook rate limiting | Per-IP and global rate limits on the webhook endpoint — currently only has auth token + localhost binding, important if exposing via tunnel | Low |
 

@@ -78,11 +78,6 @@ while true; do
         [ -z "$ts" ] && continue
         TIME=$(format_ts "$ts")
 
-        # Truncate long commands
-        if [ ${#cmd} -gt 35 ]; then
-          cmd="${cmd:0:32}..."
-        fi
-
         # Test number prefix
         NUM_LABEL=$(printf '#%-3s' "$TEST_NUM")
 
@@ -94,9 +89,6 @@ while true; do
 
         # Show description on second line if present
         if [ -n "$desc" ]; then
-          if [ ${#desc} -gt 44 ]; then
-            desc="${desc:0:41}..."
-          fi
           BUF+="         ${DIM}↳ ${desc}${RESET}\n"
         fi
       done <<< "$ENTRIES"
@@ -127,9 +119,6 @@ while true; do
         BUF+="  ${GREEN}⏺ Tests passed${RESET}  ${DIM}${LAST_TIME}${RESET}\n\n"
       else
         LAST_CMD=$(jq -s -r '.[-1].command // ""' "$HISTORY_FILE" 2>/dev/null)
-        if [ ${#LAST_CMD} -gt 45 ]; then
-          LAST_CMD="${LAST_CMD:0:42}..."
-        fi
         BUF+="  ${RED}⏺ Tests failed${RESET}  ${DIM}${LAST_TIME}${RESET}\n"
         BUF+="    ${DIM}cmd${RESET}  ${LAST_CMD}  ${DIM}exit ${LAST_EC}${RESET}\n\n"
       fi
@@ -141,9 +130,6 @@ while true; do
           case "$oline" in
             "Exit code:"*) continue ;;
           esac
-          if [ ${#oline} -gt 60 ]; then
-            oline="${oline:0:57}..."
-          fi
           if [ "$LAST_EC" != "0" ]; then
             BUF+="    ${RED}- ${oline}${RESET}\n"
           else
@@ -178,9 +164,6 @@ while true; do
         PF_DISPLAY="${PF_ERRORS:-$PF_OUTPUT}"
         if [ -n "$PF_TS" ]; then
           PF_TIME=$(format_ts "$PF_TS")
-          if [ ${#PF_CMD} -gt 35 ]; then
-            PF_CMD="${PF_CMD:0:32}..."
-          fi
           BUF+="  ${YELLOW}⏺ Last errors${RESET}  ${DIM}${PF_TIME}${RESET}\n"
           BUF+="    ${DIM}cmd${RESET}  ${PF_CMD}  ${DIM}exit ${PF_EC}${RESET}\n"
           if [ -n "$PF_DISPLAY" ]; then
@@ -191,9 +174,6 @@ while true; do
               case "$oline" in
                 "Exit code:"*) continue ;;
               esac
-              if [ ${#oline} -gt 60 ]; then
-                oline="${oline:0:57}..."
-              fi
               BUF+="    ${YELLOW}- ${oline}${RESET}\n"
               PF_LINE_COUNT=$(( PF_LINE_COUNT + 1 ))
               [ "$PF_LINE_COUNT" -ge 20 ] && break
@@ -231,10 +211,6 @@ for i, e in enumerate(recent):
     desc = e.get("description", "")
     ec = str(e.get("exit_code", "?"))
     num = offset + i + 1
-    if len(cmd) > 35:
-        cmd = cmd[:32] + "..."
-    if len(desc) > 44:
-        desc = desc[:41] + "..."
     status = "OK" if ec == "0" else "FAIL"
     print(f"ENTRY={ts}\t{status}\t{cmd}\t{ec}\t{num}\t{desc}")
 last = entries[-1] if entries else {}
@@ -246,8 +222,6 @@ last_errors = last.get("errors", "")
 import re
 print(f"LAST_TS={last_ts}")
 print(f"LAST_EC={last_ec}")
-if len(last_cmd) > 45:
-    last_cmd = last_cmd[:42] + "..."
 print(f"LAST_CMD={last_cmd}")
 # For failures, prefer errors; for success, show output
 display = last_errors if (last_ec != "0" and last_errors) else last_output
@@ -255,8 +229,6 @@ if display:
     for ol in display.strip().split("\n"):
         ol = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", ol).strip()
         if ol and not ol.startswith("Exit code:"):
-            if len(ol) > 60:
-                ol = ol[:57] + "..."
             print(f"LAST_DISPLAY_LINE={ol}")
 if last_ec == "0" and failed > 0:
     failures = [e for e in entries if str(e.get("exit_code", "1")) != "0"]
@@ -268,8 +240,6 @@ if last_ec == "0" and failed > 0:
         pf_errors = pf.get("errors", "")
         pf_output = pf.get("output", "")
         pf_display = pf_errors if pf_errors else pf_output
-        if len(pf_cmd) > 35:
-            pf_cmd = pf_cmd[:32] + "..."
         print(f"PREV_FAIL_TS={pf_ts}")
         print(f"PREV_FAIL_CMD={pf_cmd}")
         print(f"PREV_FAIL_EC={pf_ec}")
@@ -278,8 +248,6 @@ if last_ec == "0" and failed > 0:
             for ol in pf_display.strip().split("\n"):
                 ol = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", ol).strip()
                 if ol and not ol.startswith("Exit code:"):
-                    if len(ol) > 60:
-                        ol = ol[:57] + "..."
                     print(f"PREV_FAIL_LINE={ol}")
                     count += 1
                     if count >= 20:

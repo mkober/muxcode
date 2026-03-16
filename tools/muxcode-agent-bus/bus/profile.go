@@ -24,9 +24,10 @@ type SendPolicy struct {
 
 // ToolProfile defines allowed tools for a role.
 type ToolProfile struct {
-	Include  []string `json:"include,omitempty"`
-	Tools    []string `json:"tools,omitempty"`
-	CdPrefix bool     `json:"cd_prefix,omitempty"`
+	Include     []string `json:"include,omitempty"`
+	Tools       []string `json:"tools,omitempty"`
+	CdPrefix    bool     `json:"cd_prefix,omitempty"`
+	BashTimeout int      `json:"bash_timeout,omitempty"` // seconds, 0 = default (60s)
 }
 
 // EventChain defines actions triggered by command outcomes.
@@ -189,6 +190,17 @@ func ResolveTools(role string) []string {
 		return nil
 	}
 	return resolveProfile(cfg, profile)
+}
+
+// RoleBashTimeout returns the bash timeout in seconds for a role.
+// Returns 0 if the role has no custom timeout (caller should use default).
+func RoleBashTimeout(role string) int {
+	cfg := Config()
+	profile, ok := cfg.ToolProfiles[resolveRoleAlias(role)]
+	if !ok {
+		return 0
+	}
+	return profile.BashTimeout
 }
 
 // resolveProfile expands includes, tools, and cd-prefix variants.
@@ -364,8 +376,9 @@ func DefaultConfig() *MuxcodeConfig {
 		},
 		ToolProfiles: map[string]ToolProfile{
 			"build": {
-				Include:  []string{"bus", "readonly", "common"},
-				CdPrefix: true,
+				Include:     []string{"bus", "readonly", "common"},
+				CdPrefix:    true,
+				BashTimeout: 300,
 				Tools: []string{
 					"Bash(./build.sh*)", "Bash(make*)",
 					"Bash(pnpm run build*)", "Bash(pnpm build*)", "Bash(npm run build*)",
@@ -383,8 +396,9 @@ func DefaultConfig() *MuxcodeConfig {
 				},
 			},
 			"test": {
-				Include:  []string{"bus", "readonly", "common"},
-				CdPrefix: true,
+				Include:     []string{"bus", "readonly", "common"},
+				CdPrefix:    true,
+				BashTimeout: 300,
 				Tools: []string{
 					"Bash(./test.sh*)", "Bash(./scripts/muxcode-test-wrapper.sh*)",
 					"Bash(./scripts/test-and-notify.sh*)",

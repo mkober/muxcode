@@ -19,10 +19,20 @@ func Tools(args []string) {
 
 	role := args[0]
 	asJSON := false
+	bashTimeout := false
 	for _, a := range args[1:] {
-		if a == "--json" {
+		switch a {
+		case "--json":
 			asJSON = true
+		case "--bash-timeout":
+			bashTimeout = true
 		}
+	}
+
+	if bashTimeout {
+		t := bus.RoleBashTimeout(role)
+		fmt.Println(t)
+		return
 	}
 
 	tools := bus.ResolveTools(role)

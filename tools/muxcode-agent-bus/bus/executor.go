@@ -12,25 +12,36 @@ import (
 )
 
 const (
-	// BashTimeout is the max execution time for bash commands.
-	BashTimeout = 60 * time.Second
+	// DefaultBashTimeout is the max execution time for bash commands.
+	DefaultBashTimeout = 60 * time.Second
 	// MaxOutputLen is the maximum output length returned from tool execution.
 	MaxOutputLen = 10000
 )
 
 // ToolExecutor executes tool calls with allowedTools enforcement.
 type ToolExecutor struct {
-	Patterns []string // resolved tool patterns for the role
-	WorkDir  string   // working directory for commands
+	Patterns    []string      // resolved tool patterns for the role
+	WorkDir     string        // working directory for commands
+	BashTimeout time.Duration // per-role bash timeout, 0 = DefaultBashTimeout
 }
 
 // NewToolExecutor creates a new executor with the resolved tool patterns for a role.
 func NewToolExecutor(role string) *ToolExecutor {
 	wd, _ := os.Getwd()
+	timeout := time.Duration(RoleBashTimeout(role)) * time.Second
 	return &ToolExecutor{
-		Patterns: ResolveTools(role),
-		WorkDir:  wd,
+		Patterns:    ResolveTools(role),
+		WorkDir:     wd,
+		BashTimeout: timeout,
 	}
+}
+
+// bashTimeout returns the effective bash timeout for this executor.
+func (e *ToolExecutor) bashTimeout() time.Duration {
+	if e.BashTimeout > 0 {
+		return e.BashTimeout
+	}
+	return DefaultBashTimeout
 }
 
 // Execute runs a tool call and returns the result text.
@@ -81,7 +92,7 @@ func (e *ToolExecutor) executeBash(ctx context.Context, argsJSON json.RawMessage
 	}
 
 	// Execute with timeout
-	cmdCtx, cancel := context.WithTimeout(ctx, BashTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, e.bashTimeout())
 	defer cancel()
 
 	cmd := exec.CommandContext(cmdCtx, "bash", "-c", args.Command)
@@ -252,7 +263,7 @@ func (e *ToolExecutor) executeGrep(ctx context.Context, argsJSON json.RawMessage
 		path = "."
 	}
 
-	cmdCtx, cancel := context.WithTimeout(ctx, BashTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, e.bashTimeout())
 	defer cancel()
 
 	cmd := exec.CommandContext(cmdCtx, "grep", "-rn",

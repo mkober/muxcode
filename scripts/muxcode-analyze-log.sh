@@ -60,6 +60,27 @@ while true; do
     if [ "$TOTAL" -eq 0 ]; then
       BUF+="  ${DIM}no analyst findings yet${RESET}\n"
     else
+      # Last finding: full payload (shown first)
+      LAST_PAYLOAD=$(printf '%s' "$FINDINGS" | jq -r '.[-1].payload // ""' 2>/dev/null)
+      LAST_ACTION=$(printf '%s' "$FINDINGS" | jq -r '.[-1].action // ""' 2>/dev/null)
+      LAST_TO=$(printf '%s' "$FINDINGS" | jq -r '.[-1].to // ""' 2>/dev/null)
+
+      if [ -n "$LAST_PAYLOAD" ]; then
+        BUF+="  ${GREEN}⏺ Latest finding${RESET}  ${DIM}(${LAST_ACTION} → ${LAST_TO})${RESET}\n\n"
+        FIRST_LINE=1
+        while IFS= read -r oline; do
+          oline=$(printf '%s' "$oline" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/^[[:space:]]*//')
+          [ -z "$oline" ] && continue
+          if [ "$FIRST_LINE" -eq 1 ]; then
+            BUF+="  ${CYAN}${oline}${RESET}\n"
+            FIRST_LINE=0
+          else
+            BUF+="    ${DIM}- ${oline}${RESET}\n"
+          fi
+        done <<< "$LAST_PAYLOAD"
+        BUF+="\n"
+      fi
+
       # Recent findings (last N)
       BUF+="  ${CYAN}recent findings${RESET}\n"
       ENTRY_OFFSET=$(( TOTAL > MAX_RECENT ? TOTAL - MAX_RECENT : 0 ))
@@ -76,45 +97,15 @@ while true; do
           [ -z "$ts" ] && continue
           TIME=$(format_ts "$ts")
 
-          # Truncate payload for list view
-          short_payload="$payload"
-          if [ ${#short_payload} -gt 40 ]; then
-            short_payload="${short_payload:0:37}..."
-          fi
-
           NUM_LABEL=$(printf '#%-3s' "$FINDING_NUM")
 
           BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}${action}${RESET}  ${DIM}→${to_agent}${RESET}\n"
-          if [ -n "$short_payload" ]; then
-            BUF+="         ${DIM}${short_payload}${RESET}\n"
+          if [ -n "$payload" ]; then
+            BUF+="         ${DIM}${payload}${RESET}\n"
           fi
         done <<< "$ENTRIES"
       fi
       BUF+="\n"
-
-      # Last finding: full payload
-      LAST_PAYLOAD=$(printf '%s' "$FINDINGS" | jq -r '.[-1].payload // ""' 2>/dev/null)
-      LAST_ACTION=$(printf '%s' "$FINDINGS" | jq -r '.[-1].action // ""' 2>/dev/null)
-      LAST_TO=$(printf '%s' "$FINDINGS" | jq -r '.[-1].to // ""' 2>/dev/null)
-
-      if [ -n "$LAST_PAYLOAD" ]; then
-        BUF+="  ${GREEN}⏺ Latest finding${RESET}  ${DIM}(${LAST_ACTION} → ${LAST_TO})${RESET}\n\n"
-        FIRST_LINE=1
-        while IFS= read -r oline; do
-          oline=$(printf '%s' "$oline" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/^[[:space:]]*//')
-          [ -z "$oline" ] && continue
-          if [ ${#oline} -gt 60 ]; then
-            oline="${oline:0:57}..."
-          fi
-          if [ "$FIRST_LINE" -eq 1 ]; then
-            BUF+="  ${CYAN}${oline}${RESET}\n"
-            FIRST_LINE=0
-          else
-            BUF+="    ${DIM}- ${oline}${RESET}\n"
-          fi
-        done <<< "$LAST_PAYLOAD"
-        BUF+="\n"
-      fi
     fi
 
   else
@@ -143,8 +134,6 @@ for i, e in enumerate(recent):
     payload = e.get("payload", "")
     to_agent = e.get("to", "")
     num = offset + i + 1
-    if len(payload) > 40:
-        payload = payload[:37] + "..."
     print(f"ENTRY={ts}\t{action}\t{to_agent}\t{num}\t{payload}")
 if entries:
     last = entries[-1]
@@ -153,8 +142,6 @@ if entries:
     for ol in last.get("payload", "").strip().split("\n"):
         ol = ol.strip()
         if ol:
-            if len(ol) > 60:
-                ol = ol[:57] + "..."
             print(f"LAST_PAYLOAD_LINE={ol}")
 ' "$LOG_FILE" "$MAX_RECENT" 2>/dev/null)
 
@@ -171,24 +158,7 @@ if entries:
     if [ "$TOTAL" -eq 0 ]; then
       BUF+="  ${DIM}no analyst findings yet${RESET}\n"
     else
-      BUF+="  ${CYAN}recent findings${RESET}\n"
-      while IFS= read -r line; do
-        case "$line" in
-          ENTRY=*)
-            line="${line#ENTRY=}"
-            IFS=$'\t' read -r ts action to_agent num payload <<< "$line"
-            TIME=$(format_ts "$ts")
-            NUM_LABEL=$(printf '#%-3s' "$num")
-            BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}${action}${RESET}  ${DIM}→${to_agent}${RESET}\n"
-            if [ -n "$payload" ]; then
-              BUF+="         ${DIM}${payload}${RESET}\n"
-            fi
-            ;;
-        esac
-      done <<< "$PARSED"
-      BUF+="\n"
-
-      # Last finding: full payload
+      # Last finding: full payload (shown first)
       PY_LAST_ACTION=""
       PY_LAST_TO=""
       HAS_PAYLOAD=0
@@ -215,6 +185,24 @@ if entries:
       if [ "$HAS_PAYLOAD" -eq 1 ]; then
         BUF+="\n"
       fi
+
+      # Recent findings (last N)
+      BUF+="  ${CYAN}recent findings${RESET}\n"
+      while IFS= read -r line; do
+        case "$line" in
+          ENTRY=*)
+            line="${line#ENTRY=}"
+            IFS=$'\t' read -r ts action to_agent num payload <<< "$line"
+            TIME=$(format_ts "$ts")
+            NUM_LABEL=$(printf '#%-3s' "$num")
+            BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}${action}${RESET}  ${DIM}→${to_agent}${RESET}\n"
+            if [ -n "$payload" ]; then
+              BUF+="         ${DIM}${payload}${RESET}\n"
+            fi
+            ;;
+        esac
+      done <<< "$PARSED"
+      BUF+="\n"
     fi
   fi
 

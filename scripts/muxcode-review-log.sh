@@ -94,11 +94,7 @@ while true; do
         [ -z "$ts" ] && continue
         TIME=$(format_ts "$ts")
 
-        # Truncate long summaries for first line
         DISPLAY_SUMMARY="$summary"
-        if [ ${#DISPLAY_SUMMARY} -gt 30 ]; then
-          DISPLAY_SUMMARY="${DISPLAY_SUMMARY:0:27}..."
-        fi
 
         # Review number prefix
         NUM_LABEL=$(printf '#%-3s' "$REVIEW_NUM")
@@ -134,9 +130,6 @@ while true; do
       while IFS= read -r oline; do
         oline=$(printf '%s' "$oline" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/^[[:space:]]*//')
         [ -z "$oline" ] && continue
-        if [ ${#oline} -gt 60 ]; then
-          oline="${oline:0:57}..."
-        fi
         if [ "$FIRST_LINE" -eq 1 ]; then
           BUF+="  ${CYAN}${oline}${RESET}\n"
           FIRST_LINE=0
@@ -180,7 +173,7 @@ for i, e in enumerate(recent):
     summary = e.get("summary", "")
     ec = str(e.get("exit_code", "?"))
     num = offset + i + 1
-    display = summary[:27] + "..." if len(summary) > 30 else summary
+    display = summary
     status = "CLEAN" if ec == "0" else "ISSUES"
     # Extract counts
     mf = re.search(r"(\d+)\s*must-fix", summary)
@@ -199,8 +192,6 @@ if last_output:
     for ol in last_output.strip().split("\n"):
         ol = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", ol).strip()
         if ol:
-            if len(ol) > 60:
-                ol = ol[:57] + "..."
             print(f"LAST_OUTPUT_LINE={ol}")
 elif last_summary:
     print(f"LAST_EC={last_ec}")

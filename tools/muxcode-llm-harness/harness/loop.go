@@ -78,6 +78,12 @@ func Run(ctx context.Context, cfg Config) error {
 	// Initialize executor
 	executor := NewExecutor(patterns)
 
+	// Set per-role bash timeout if configured
+	if t := bus.ResolveBashTimeout(); t > 0 {
+		executor.BashTimeout = time.Duration(t) * time.Second
+		fmt.Fprintf(os.Stderr, "[%s] Bash timeout: %ds\n", logTag, t)
+	}
+
 	// Enable PII scrubbing for roles that handle external data
 	if IsPIISensitiveRole(cfg.Role) || IsPIISensitiveRole(cfg.BusRole) {
 		executor.ScrubPII = true

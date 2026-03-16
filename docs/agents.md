@@ -343,9 +343,34 @@ Standalone binary (`muxcode-llm-harness`) that replaces `muxcode-agent-bus agent
 | Corrective feedback | Blocked tool calls receive explanatory messages |
 | Loop prevention | Command hash tracking, blocks same command after 3 repetitions |
 | Role examples | `RoleExamples()` provides concrete tool call examples per role |
+| Circuit breaker | Cross-batch failure tracking with cooldown — prevents runaway Ollama calls |
+| PII scrubbing | Automatic redaction of PII/secrets in tool output for sensitive roles |
 
 CLI: `muxcode-llm-harness run <role> [--model MODEL] [--url URL] [--max-turns N]`
 
 Separate Go module at `tools/muxcode-llm-harness/` — stdlib only, no external deps. The launcher (`muxcode-agent.sh`) prefers the harness binary when available, falls back to `muxcode-agent-bus agent run`.
 
-Core code: `harness/` package — `config.go`, `ollama.go`, `bus.go`, `tools.go`, `executor.go`, `filter.go`, `prompt.go`, `loop.go`, `message.go`.
+### Circuit breaker
+
+The harness has three layers of stuck-loop protection:
+
+| Layer | Scope | Mechanism |
+|-------|-------|-----------|
+| Within-turn | Single tool call | Filter blocks inbox checks, self-sends, repeated commands (3x limit) |
+| Within-batch | Single message batch | `MaxAllBlockedTurns` (2) — breaks out early if all tool calls are blocked for 2 consecutive turns |
+| Cross-batch | Across message batches | `MaxConsecutiveFailures` (3) — after 3 failed batches, enters 30s cooldown before resuming |
+
+Each batch runs under a 5-minute `context.WithTimeout`. A batch is considered failed if it produces `(no response generated)`, `(all tool calls blocked)`, times out, or encounters an Ollama error.
+
+### PII scrubbing
+
+Tool output from `api`, `runner`/`run`, and `watch` roles is automatically scrubbed before entering the Ollama conversation. Patterns redacted:
+
+- Email addresses, SSN, credit card numbers (prefix-anchored: Visa, MC, Amex, Discover), phone numbers (separator-required)
+- AWS access/secret keys, JWT tokens, generic API keys/tokens/passwords, dates of birth
+
+Redacted values are replaced with bracketed placeholders (e.g. `[EMAIL_REDACTED]`, `[SECRET_REDACTED]`). Scrubbing is logged to stderr with redaction count per tool call.
+
+For Claude Code agents in the same roles, the `muxcode-pii-scrub.sh` script provides equivalent pipe-through filtering. Agent definitions for api, runner, and watch instruct the agent to pipe sensitive output through the scrubber.
+
+Core code: `harness/` package — `config.go`, `ollama.go`, `bus.go`, `tools.go`, `executor.go`, `filter.go`, `prompt.go`, `loop.go`, `message.go`, `scrub.go`.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -112,6 +113,20 @@ func (b *BusClient) ResolveTools() ([]string, error) {
 		}
 	}
 	return patterns, nil
+}
+
+// ResolveBashTimeout gets the bash timeout in seconds for the agent role.
+// Returns 0 if no custom timeout is configured.
+func (b *BusClient) ResolveBashTimeout() int {
+	out, err := b.run("tools", b.AgentRole, "--bash-timeout")
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // SkillPrompt returns the skills prompt for the agent definition role.

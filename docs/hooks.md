@@ -123,7 +123,7 @@ Signals that a file was edited. Performs three tasks:
 **Phase:** PostToolUse
 **Trigger:** Bash
 
-Detects build, test, and deploy commands and drives event chains:
+Detects build, test, deploy, and git commands, drives event chains, and logs history with error extraction:
 
 ```
 Build success        → trigger test agent
@@ -147,6 +147,8 @@ After the primary chain action, the hook fires event subscriptions — matching 
 - `MUXCODE_TEST_PATTERNS` — pipe-separated patterns for test command detection
 - `MUXCODE_DEPLOY_PATTERNS` — pipe-separated patterns for deploy command detection (all deploy commands)
 - `MUXCODE_DEPLOY_APPLY_PATTERNS` — pipe-separated patterns for deploy-apply commands that trigger the verify chain
+
+**Error extraction:** For failed build and test commands, the hook extracts error-relevant lines from tool output into an `errors` field in the history JSONL. The regex matches common error patterns: `error:`, `ERR!`, `failed`, `fatal`, `panic`, `FAIL:`, `not found`, `undefined`, `syntax error`, `permission denied`, etc. Test patterns additionally match `assert` and `expect`. The left-pane log views prefer the `errors` field over raw `output` when displaying failures, surfacing diagnostic information instead of noise like "Exit code: 1".
 
 **JSON parsing:** Uses `jq` by default with a `python3` fallback. If neither `jq` nor `python3` is available, the `command` and `exit_code` fields will be empty and the hook exits silently — the build-test-review chain will not trigger. The preview hook uses `python3` specifically for generating proposed file content; without it, no split diff appears in nvim.
 

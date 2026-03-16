@@ -159,11 +159,6 @@ while true; do
         [ -z "$ts" ] && continue
         TIME=$(format_ts "$ts")
 
-        # Truncate long commands
-        if [ ${#cmd} -gt 35 ]; then
-          cmd="${cmd:0:32}..."
-        fi
-
         # Operation number prefix
         NUM_LABEL=$(printf '#%-3s' "$OP_NUM")
 
@@ -176,9 +171,6 @@ while true; do
         # Show summary (preferred), description, or nothing on second line
         DETAIL="${summary:-$desc}"
         if [ -n "$DETAIL" ]; then
-          if [ ${#DETAIL} -gt 44 ]; then
-            DETAIL="${DETAIL:0:41}..."
-          fi
           BUF+="         ${DIM}↳ ${DETAIL}${RESET}\n"
         fi
       done <<< "$ENTRIES"
@@ -200,9 +192,6 @@ while true; do
       while IFS= read -r oline; do
         oline=$(printf '%s' "$oline" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/^[[:space:]]*//')
         [ -z "$oline" ] && continue
-        if [ ${#oline} -gt 60 ]; then
-          oline="${oline:0:57}..."
-        fi
         if [ "$FIRST_LINE" -eq 1 ]; then
           BUF+="  ${CYAN}${oline}${RESET}\n"
           FIRST_LINE=0
@@ -250,10 +239,6 @@ for i, e in enumerate(recent):
     detail = summary if summary else desc
     ec = str(e.get("exit_code", "?"))
     num = offset + i + 1
-    if len(cmd) > 35:
-        cmd = cmd[:32] + "..."
-    if len(detail) > 44:
-        detail = detail[:41] + "..."
     status = "OK" if ec == "0" else "FAIL"
     print(f"ENTRY={ts}\t{status}\t{cmd}\t{ec}\t{num}\t{detail}")
 last = entries[-1] if entries else {}
@@ -265,8 +250,6 @@ if last_output:
     for ol in last_output.strip().split("\n"):
         ol = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", ol).strip()
         if ol:
-            if len(ol) > 60:
-                ol = ol[:57] + "..."
             print(f"LAST_OUTPUT_LINE={ol}")
 if entries and last_ec != "0" and not last_output:
     print(f"LASTFAIL_CMD={last.get('command', '')}")

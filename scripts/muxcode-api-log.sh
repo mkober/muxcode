@@ -134,11 +134,6 @@ while true; do
         [ -z "$ts" ] && continue
         TIME=$(format_ts "$ts")
 
-        # Truncate long URLs
-        if [ ${#url} -gt 35 ]; then
-          url="${url:0:32}..."
-        fi
-
         NUM_LABEL=$(printf '#%-3s' "$REQ_NUM")
         MCOL=$(method_color "$method")
         SCOL=$(status_color "$status")
@@ -189,8 +184,6 @@ for i, e in enumerate(recent):
     col = e.get("collection", "")
     req = e.get("request", "")
     num = offset + i + 1
-    if len(url) > 35:
-        url = url[:32] + "..."
     detail = f"{col}/{req}" if col and req else ""
     print(f"ENTRY={ts}\t{method}\t{url}\t{status}\t{dur}\t{num}\t{detail}")
 if entries:

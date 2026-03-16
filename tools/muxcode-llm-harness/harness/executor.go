@@ -12,17 +12,18 @@ import (
 )
 
 const (
-	// BashTimeout is the max execution time for bash commands.
-	BashTimeout = 60 * time.Second
+	// DefaultBashTimeout is the max execution time for bash commands.
+	DefaultBashTimeout = 60 * time.Second
 	// MaxOutputLen is the maximum output length returned from tool execution.
 	MaxOutputLen = 10000
 )
 
 // Executor executes tool calls with allowedTools enforcement.
 type Executor struct {
-	Patterns []string // allowed tool patterns
-	WorkDir  string   // working directory for commands
-	ScrubPII bool     // enable PII scrubbing on tool output
+	Patterns    []string      // allowed tool patterns
+	WorkDir     string        // working directory for commands
+	ScrubPII    bool          // enable PII scrubbing on tool output
+	BashTimeout time.Duration // per-role bash timeout, 0 = DefaultBashTimeout
 }
 
 // NewExecutor creates a new executor with the given patterns.
@@ -32,6 +33,14 @@ func NewExecutor(patterns []string) *Executor {
 		Patterns: patterns,
 		WorkDir:  wd,
 	}
+}
+
+// bashTimeout returns the effective bash timeout for this executor.
+func (e *Executor) bashTimeout() time.Duration {
+	if e.BashTimeout > 0 {
+		return e.BashTimeout
+	}
+	return DefaultBashTimeout
 }
 
 // Execute runs a tool call and returns the result text.
@@ -91,7 +100,7 @@ func (e *Executor) executeBash(ctx context.Context, argsJSON json.RawMessage) st
 		return fmt.Sprintf("Error: command not allowed by tool profile: %s", args.Command)
 	}
 
-	cmdCtx, cancel := context.WithTimeout(ctx, BashTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, e.bashTimeout())
 	defer cancel()
 
 	cmd := exec.CommandContext(cmdCtx, "bash", "-c", args.Command)
@@ -261,7 +270,7 @@ func (e *Executor) executeGrep(ctx context.Context, argsJSON json.RawMessage) st
 		path = "."
 	}
 
-	cmdCtx, cancel := context.WithTimeout(ctx, BashTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, e.bashTimeout())
 	defer cancel()
 
 	cmd := exec.CommandContext(cmdCtx, "grep", "-rn",
