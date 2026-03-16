@@ -196,6 +196,24 @@ if [ -n "$_session" ]; then
     --detail "role=$ROLE cli=$AGENT_CLI" 2>/dev/null || true
 fi
 
+# Activate Python venv if one exists in the project directory.
+# Checks common names (.venv, venv) and a configurable override.
+# The sourced activate script sets VIRTUAL_ENV and prepends to PATH,
+# both of which survive the exec into Claude Code.
+_venv_dir="${MUXCODE_VENV_DIR:-}"
+if [ -z "$_venv_dir" ]; then
+  for _candidate in .venv venv; do
+    if [ -f "$_candidate/bin/activate" ]; then
+      _venv_dir="$_candidate"
+      break
+    fi
+  done
+fi
+if [ -n "$_venv_dir" ] && [ -f "$_venv_dir/bin/activate" ]; then
+  # shellcheck disable=SC1091
+  source "$_venv_dir/bin/activate"
+fi
+
 # Clear terminal so Claude Code starts with a clean screen
 clear
 

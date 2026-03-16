@@ -30,6 +30,10 @@ const (
 	MaxAllBlockedTurns = 2
 )
 
+// logTag is the prefix used in all harness log lines. Set to the model
+// name at startup so the pane shows which LLM is running.
+var logTag = "harness"
+
 // runStty runs stty with the given arguments, explicitly passing os.Stdin
 // so stty can see the controlling terminal. Go's exec.Command defaults
 // nil Stdin to /dev/null, which causes stty to silently fail.
@@ -65,7 +69,7 @@ func Run(ctx context.Context, cfg Config) error {
 	// Resolve tools once at startup (cached)
 	patterns, err := bus.ResolveTools()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[harness] Warning: could not resolve tools: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[%s] Warning: could not resolve tools: %v\n", logTag, err)
 	}
 
 	// Build tool definitions for Ollama
@@ -73,6 +77,12 @@ func Run(ctx context.Context, cfg Config) error {
 
 	// Initialize executor
 	executor := NewExecutor(patterns)
+
+	// Enable PII scrubbing for roles that handle external data
+	if IsPIISensitiveRole(cfg.Role) || IsPIISensitiveRole(cfg.BusRole) {
+		executor.ScrubPII = true
+		fmt.Fprintf(os.Stderr, "[%s] PII scrubbing enabled for role %s\n", logTag, cfg.Role)
+	}
 
 	// Initialize Ollama client
 	ollama := NewOllamaClient(cfg.OllamaURL, cfg.OllamaModel)
@@ -85,8 +95,12 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("Ollama health check failed: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "[harness] Connected to Ollama (%s), model: %s\n", cfg.OllamaURL, cfg.OllamaModel)
-	fmt.Fprintf(os.Stderr, "[harness] Tools: %d patterns, %d tool defs\n", len(patterns), len(tools))
+
+	// Set log prefix to the model name so the pane identifies the LLM
+	logTag = cfg.OllamaModel
+
+	fmt.Fprintf(os.Stderr, "[%s] Connected to Ollama (%s)\n", logTag, cfg.OllamaURL)
+	fmt.Fprintf(os.Stderr, "[%s] Tools: %d patterns, %d tool defs\n", logTag, len(patterns), len(tools))
 
 	// Build system prompt once at startup
 	agentDef := ReadAgentDefinition(cfg.Role)
@@ -103,16 +117,16 @@ func Run(ctx context.Context, cfg Config) error {
 	// Write harness marker so Notify() skips tmux send-keys for this pane
 	markerPath := filepath.Join(cfg.BusDir, "harness-"+busRole+".pid")
 	if err := os.WriteFile(markerPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "[harness] Warning: could not write marker %s: %v\n", markerPath, err)
+		fmt.Fprintf(os.Stderr, "[%s] Warning: could not write marker %s: %v\n", logTag, markerPath, err)
 	} else {
 		defer os.Remove(markerPath)
 	}
 
-	fmt.Fprintf(os.Stderr, "[harness] System prompt: %d bytes\n", len(systemPrompt))
+	fmt.Fprintf(os.Stderr, "[%s] System prompt: %d bytes\n", logTag, len(systemPrompt))
 	if cfg.BusRole != "" && cfg.BusRole != cfg.Role {
-		fmt.Fprintf(os.Stderr, "[harness] Agent role: %s, bus identity: %s\n", cfg.Role, cfg.BusRole)
+		fmt.Fprintf(os.Stderr, "[%s] Agent role: %s, bus identity: %s\n", logTag, cfg.Role, cfg.BusRole)
 	}
-	fmt.Fprintf(os.Stderr, "[harness] Ready, polling inbox for %s...\n", busRole)
+	fmt.Fprintf(os.Stderr, "[%s] Ready, polling inbox for %s...\n", logTag, busRole)
 
 	// Initialize filter — use bus identity for self-send detection
 	filter := NewFilter(busRole)
@@ -136,8 +150,8 @@ func Run(ctx context.Context, cfg Config) error {
 		// Cooldown: skip processing if we hit consecutive failures
 		if consecutiveFailures >= MaxConsecutiveFailures && time.Now().Before(cooldownUntil) {
 			remaining := time.Until(cooldownUntil).Round(time.Second)
-			fmt.Fprintf(os.Stderr, "[harness] Cooldown: %d consecutive failures, paused for %s\n",
-				consecutiveFailures, remaining)
+			fmt.Fprintf(os.Stderr, "[%s] Cooldown: %d consecutive failures, paused for %s\n",
+				logTag, consecutiveFailures, remaining)
 			select {
 			case <-ctx.Done():
 				return nil
@@ -147,7 +161,7 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 		// Reset after cooldown expires
 		if consecutiveFailures >= MaxConsecutiveFailures && time.Now().After(cooldownUntil) {
-			fmt.Fprintf(os.Stderr, "[harness] Cooldown expired, resuming\n")
+			fmt.Fprintf(os.Stderr, "[%s] Cooldown expired, resuming\n", logTag)
 			consecutiveFailures = 0
 		}
 
@@ -155,12 +169,12 @@ func Run(ctx context.Context, cfg Config) error {
 
 		if bus.HasMessages(inboxPath) {
 			if err := bus.Lock(); err != nil {
-				fmt.Fprintf(os.Stderr, "[harness] lock error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "[%s] lock error: %v\n", logTag, err)
 			}
 
 			msgs, err := bus.ConsumeInbox()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "[harness] consume error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "[%s] consume error: %v\n", logTag, err)
 				_ = bus.Unlock()
 				continue
 			}
@@ -179,8 +193,8 @@ func Run(ctx context.Context, cfg Config) error {
 					consecutiveFailures++
 					if consecutiveFailures >= MaxConsecutiveFailures {
 						cooldownUntil = time.Now().Add(CooldownDuration)
-						fmt.Fprintf(os.Stderr, "[harness] %d consecutive failures — entering %s cooldown\n",
-							consecutiveFailures, CooldownDuration)
+						fmt.Fprintf(os.Stderr, "[%s] %d consecutive failures — entering %s cooldown\n",
+							logTag, consecutiveFailures, CooldownDuration)
 					}
 				}
 			}
@@ -214,8 +228,8 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 		}
 		fmt.Fprintf(os.Stderr, "\n[%s → %s] %s\n", m.From, m.Action, payload)
 	}
-	fmt.Fprintf(os.Stderr, "[harness] Processing %d message(s) from %s: %s\n",
-		len(msgs), lastMsg.From, lastMsg.Action)
+	fmt.Fprintf(os.Stderr, "[%s] Processing %d message(s) from %s: %s\n",
+		logTag, len(msgs), lastMsg.From, lastMsg.Action)
 
 	// Fresh conversation: system + task
 	conversation := []ChatMessage{
@@ -238,12 +252,12 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 		select {
 		case <-ctx.Done():
 			finalResponse = "Error: batch timed out"
-			fmt.Fprintf(os.Stderr, "[harness] Batch context cancelled: %v\n", ctx.Err())
+			fmt.Fprintf(os.Stderr, "[%s] Batch context cancelled: %v\n", logTag, ctx.Err())
 			goto sendResponse
 		default:
 		}
 
-		fmt.Fprintf(os.Stderr, "[harness] Turn %d/%d — calling Ollama...\n", turn+1, maxTurns)
+		fmt.Fprintf(os.Stderr, "[%s] Turn %d/%d — calling Ollama...\n", logTag, turn+1, maxTurns)
 		ollamaStart := time.Now()
 		resp, err := ollama.ChatComplete(ctx, conversation, tools)
 		ollamaDur := time.Since(ollamaStart)
@@ -262,14 +276,14 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 		}
 
 		choice := resp.Choices[0]
-		fmt.Fprintf(os.Stderr, "[harness] Ollama responded in %.1fs, %d tool call(s)\n",
-			ollamaDur.Seconds(), len(choice.Message.ToolCalls))
+		fmt.Fprintf(os.Stderr, "[%s] Ollama responded in %.1fs, %d tool call(s)\n",
+			logTag, ollamaDur.Seconds(), len(choice.Message.ToolCalls))
 
 		// Fallback: extract tool calls from text when model doesn't use structured API
 		if len(choice.Message.ToolCalls) == 0 && choice.Message.Content != "" {
 			extracted := ExtractToolCalls(choice.Message.Content, toolNames(tools))
 			if len(extracted) > 0 {
-				fmt.Fprintf(os.Stderr, "[harness] Extracted %d tool call(s) from text response\n", len(extracted))
+				fmt.Fprintf(os.Stderr, "[%s] Extracted %d tool call(s) from text response\n", logTag, len(extracted))
 				choice.Message.ToolCalls = extracted
 				choice.Message.Content = ""
 			}
@@ -285,14 +299,14 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 				text = text[:100] + "…"
 			}
 			if text != "" {
-				fmt.Fprintf(os.Stderr, "[harness] Text: %s\n", text)
+				fmt.Fprintf(os.Stderr, "[%s] Text: %s\n", logTag, text)
 			}
 
 			if turn == 0 && !toolsExecuted && len(tools) > 0 {
 				// First response with no tool calls and tools are available —
 				// the LLM is likely hallucinating results instead of executing.
 				// Inject a corrective message and retry.
-				fmt.Fprintf(os.Stderr, "[harness] No tool calls on first turn — forcing tool use\n")
+				fmt.Fprintf(os.Stderr, "[%s] No tool calls on first turn — forcing tool use\n", logTag)
 				conversation = append(conversation, ChatMessage{
 					Role:    "user",
 					Content: "You did NOT execute any commands. You MUST use the bash tool to run the actual commands before responding. Do NOT describe results from memory — call the bash tool now to execute the task.",
@@ -311,12 +325,12 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 
 			// Log tool invocation with key arguments
 			toolLabel := toolCallLabel(tc)
-			fmt.Fprintf(os.Stderr, "[harness] → %s [%d/%d]\n", toolLabel, i+1, len(choice.Message.ToolCalls))
+			fmt.Fprintf(os.Stderr, "[%s] → %s [%d/%d]\n", logTag, toolLabel, i+1, len(choice.Message.ToolCalls))
 
 			var toolOutput string
 			if result.Blocked {
 				toolOutput = result.Reason
-				fmt.Fprintf(os.Stderr, "[harness] ✗ BLOCKED: %s\n", result.Reason)
+				fmt.Fprintf(os.Stderr, "[%s] ✗ BLOCKED: %s\n", logTag, result.Reason)
 			} else {
 				allBlocked = false
 				toolsExecuted = true
@@ -326,7 +340,7 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 
 				// Log completion with timing and brief result
 				exitInfo := toolExitInfo(tc, toolOutput)
-				fmt.Fprintf(os.Stderr, "[harness] ✓ %s (%.1fs%s)\n", tc.Function.Name, toolDur.Seconds(), exitInfo)
+				fmt.Fprintf(os.Stderr, "[%s] ✓ %s (%.1fs%s)\n", logTag, tc.Function.Name, toolDur.Seconds(), exitInfo)
 
 				// Log bash commands to history
 				if tc.Function.Name == "bash" {
@@ -346,8 +360,8 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 		if allBlocked {
 			consecutiveAllBlocked++
 			if consecutiveAllBlocked >= MaxAllBlockedTurns {
-				fmt.Fprintf(os.Stderr, "[harness] %d consecutive all-blocked turns — breaking out\n",
-					consecutiveAllBlocked)
+				fmt.Fprintf(os.Stderr, "[%s] %d consecutive all-blocked turns — breaking out\n",
+					logTag, consecutiveAllBlocked)
 				finalResponse = "(all tool calls blocked — agent stuck in loop)"
 				break
 			}
@@ -363,14 +377,14 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 	// If tools were executed but the final response looks like narration
 	// instead of a summary, do one more call with no tools to force a summary.
 	if toolsExecuted && looksLikeNarration(finalResponse) {
-		fmt.Fprintf(os.Stderr, "[harness] Final response looks like narration, requesting summary...\n")
+		fmt.Fprintf(os.Stderr, "[%s] Final response looks like narration, requesting summary...\n", logTag)
 		conversation = append(conversation, ChatMessage{
 			Role:    "user",
 			Content: "You already executed the commands above. Now provide ONLY a short factual summary of the result. Start with the outcome: succeeded or failed. Do not describe what you plan to do — just summarize what already happened.",
 		})
 		summaryStart := time.Now()
 		resp, err := ollama.ChatComplete(ctx, conversation, nil) // no tools — text only
-		fmt.Fprintf(os.Stderr, "[harness] Summary call %.1fs\n", time.Since(summaryStart).Seconds())
+		fmt.Fprintf(os.Stderr, "[%s] Summary call %.1fs\n", logTag, time.Since(summaryStart).Seconds())
 		if err == nil && len(resp.Choices) > 0 && resp.Choices[0].Message.Content != "" {
 			finalResponse = resp.Choices[0].Message.Content
 			batchSuccess = true
@@ -393,11 +407,11 @@ sendResponse:
 		finalResponse = finalResponse[:4000] + "\n... [truncated]"
 	}
 
-	fmt.Fprintf(os.Stderr, "[harness] Response (%d bytes, success=%v) → %s\n",
-		len(finalResponse), batchSuccess, lastMsg.From)
+	fmt.Fprintf(os.Stderr, "[%s] Response (%d bytes, success=%v) → %s\n",
+		logTag, len(finalResponse), batchSuccess, lastMsg.From)
 
 	if err := bus.Send(lastMsg.From, lastMsg.Action, finalResponse, "response", lastMsg.ID); err != nil {
-		fmt.Fprintf(os.Stderr, "[harness] send error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[%s] send error: %v\n", logTag, err)
 	}
 
 	return batchSuccess

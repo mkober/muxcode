@@ -32,9 +32,13 @@ install: build
 	@for f in scripts/muxcode-*.sh; do \
 		[ -f "$$f" ] && install -m 755 "$$f" $(BINDIR)/ ; \
 	done; true
-	@cp -n agents/*.md $(CONFIGDIR)/agents/ 2>/dev/null || true
+	@# Agents and skills always overwrite — these are repo defaults that track
+	@# upstream changes. User customizations go in .claude/agents/ (project-level
+	@# 3-tier resolution) or .muxcode/skills/, not in ~/.config/muxcode/.
+	@cp agents/*.md $(CONFIGDIR)/agents/ 2>/dev/null || true
 	@install -d $(CONFIGDIR)/skills
-	@cp -n skills/*.md $(CONFIGDIR)/skills/ 2>/dev/null || true
+	@cp skills/*.md $(CONFIGDIR)/skills/ 2>/dev/null || true
+	@# Config files use cp -n to preserve user customizations (e.g. tmux.conf).
 	@cp -n config/* $(CONFIGDIR)/ 2>/dev/null || true
 	@# Always overwrite settings.json — this is the hook template that install.sh
 	@# merges into ~/.claude/settings.json. User customizations live there, not here.

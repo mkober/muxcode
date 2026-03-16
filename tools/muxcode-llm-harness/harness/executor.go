@@ -22,6 +22,7 @@ const (
 type Executor struct {
 	Patterns []string // allowed tool patterns
 	WorkDir  string   // working directory for commands
+	ScrubPII bool     // enable PII scrubbing on tool output
 }
 
 // NewExecutor creates a new executor with the given patterns.
@@ -34,26 +35,38 @@ func NewExecutor(patterns []string) *Executor {
 }
 
 // Execute runs a tool call and returns the result text.
+// If ScrubPII is enabled, the output is scrubbed before returning.
 func (e *Executor) Execute(ctx context.Context, call ToolCall) string {
 	name := call.Function.Name
 	args := call.Function.Arguments
 
+	var result string
 	switch name {
 	case "bash":
-		return e.executeBash(ctx, args)
+		result = e.executeBash(ctx, args)
 	case "read_file":
-		return e.executeRead(args)
+		result = e.executeRead(args)
 	case "glob":
-		return e.executeGlob(args)
+		result = e.executeGlob(args)
 	case "grep":
-		return e.executeGrep(ctx, args)
+		result = e.executeGrep(ctx, args)
 	case "write_file":
-		return e.executeWrite(args)
+		result = e.executeWrite(args)
 	case "edit_file":
-		return e.executeEdit(args)
+		result = e.executeEdit(args)
 	default:
-		return fmt.Sprintf("Error: unknown tool %q", name)
+		result = fmt.Sprintf("Error: unknown tool %q", name)
 	}
+
+	if e.ScrubPII {
+		scrubbed, n := ScrubPII(result)
+		if n > 0 {
+			fmt.Fprintf(os.Stderr, "[%s] PII scrub: %d redaction(s) in %s output\n", logTag, n, name)
+			result = scrubbed
+		}
+	}
+
+	return result
 }
 
 // executeBash runs a bash command with timeout and output truncation.

@@ -86,9 +86,25 @@ Report results clearly to the requesting agent:
 - **Headers** when relevant (auth tokens, rate limits, content type)
 - For failures: error details, suggested fixes (check URL, auth, network)
 
+## PII and Secret Scrubbing
+
+API responses often contain personally identifiable information (PII) and secrets. **Always** pipe responses through the scrubber before including them in your reply or conversation:
+
+```bash
+curl -s https://api.example.com/users | muxcode-pii-scrub.sh
+```
+
+This redacts emails, SSNs, credit cards, phone numbers, AWS keys, JWTs, API tokens, and passwords. Use the scrubber on:
+- All `curl` response bodies
+- Any file containing user/customer data
+- Environment variable dumps that may contain secrets
+
+If `muxcode-pii-scrub.sh` is not available, manually redact PII before reporting.
+
 ## Safety Rules
 
 - Never send credentials or API keys in plain text responses — mask sensitive values
+- **Always scrub PII from API responses** before including in messages or replies
 - Warn before making mutating requests (POST/PUT/DELETE) to production environments
 - Prefer GET/read operations unless explicitly asked for mutations
 - Check environment name before executing against non-local endpoints

@@ -66,10 +66,27 @@ When you discover something noteworthy:
 2. If it's actionable, send it to the edit agent: `muxcode-agent-bus send edit notify "description of finding"`
 3. For critical errors, include the relevant log snippet in the message
 
+## PII and Secret Scrubbing
+
+Log output frequently contains personally identifiable information (PII) and secrets. **Always** pipe log output through the scrubber before including in your replies or findings:
+
+```bash
+aws logs tail /aws/lambda/my-function --follow 2>&1 | muxcode-pii-scrub.sh
+kubectl logs my-pod | muxcode-pii-scrub.sh
+tail -100 /var/log/app.log | muxcode-pii-scrub.sh
+```
+
+This redacts emails, SSNs, credit cards, phone numbers, AWS keys, JWTs, API tokens, and passwords. Use the scrubber on:
+- All log output before including in messages
+- Stack traces that may contain user data in variable values
+- Environment variable dumps from container logs
+
+If `muxcode-pii-scrub.sh` is not available, manually redact PII before reporting.
+
 ## Safety Rules
 
 - **Read-only by default** — do not modify files, restart services, or mutate infrastructure
+- **Always scrub PII from log output** before including in messages or findings
 - Do not expose secrets, tokens, or credentials found in logs
-- Redact sensitive data (API keys, passwords, PII) before reporting
 - If a log source requires authentication, verify the credentials are already configured
 - For cloud services, confirm the target account/region before querying
