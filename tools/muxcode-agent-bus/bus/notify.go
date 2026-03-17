@@ -102,6 +102,14 @@ func alreadyNotified(session, role string) bool {
 	return time.Since(markerInfo.ModTime()) < notifyCooldown
 }
 
+// IsNotifiedCurrent returns true if the dedup marker matches the current inbox
+// size — meaning a prior Notify call already ran for this exact inbox state.
+// Used by the watcher startup path to avoid re-notifying when the initial
+// send-keys notification from cmd/send.go already succeeded.
+func IsNotifiedCurrent(session, role string) bool {
+	return alreadyNotified(session, role)
+}
+
 // ClearNotified removes the notification dedup marker for a role, allowing
 // the next Notify call to proceed even if a prior notification (e.g. a
 // display-message that Claude Code can't see) already marked the inbox as
@@ -171,10 +179,14 @@ func IsAgentIdle(session, role string) bool {
 func notifySendKeys(session, role string) error {
 	target := PaneTarget(session, role)
 
-	// Step 0: clear any residual input so the text starts at column 0
-	// (prevents extra left-padding from stale whitespace in the TUI)
+	// Step 0: clear any residual input so the text starts at column 0.
+	// Escape dismisses any completion popups/overlays, C-u clears the line.
+	esc := exec.Command("tmux", "send-keys", "-t", target, "Escape")
+	_ = esc.Run()
+	time.Sleep(50 * time.Millisecond)
 	clr := exec.Command("tmux", "send-keys", "-t", target, "C-u")
 	_ = clr.Run()
+	time.Sleep(50 * time.Millisecond)
 
 	// Step 1: send the text
 	cmd := exec.Command("tmux", "send-keys", "-t", target, "You have new messages")
@@ -183,10 +195,20 @@ func notifySendKeys(session, role string) error {
 		return nil
 	}
 
-	// Brief delay so Claude Code's TUI processes the text before Enter
-	time.Sleep(100 * time.Millisecond)
+	// Step 2: poll the pane until the text appears, then send Enter.
+	// This avoids blind timing delays — we confirm the TUI has rendered
+	// the text before submitting. Polls up to 10 times (50ms intervals,
+	// ~500ms max) which handles both fast steady-state and slow startup.
+	const needle = "You have new messages"
+	for i := 0; i < 10; i++ {
+		time.Sleep(50 * time.Millisecond)
+		out, err := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-S", "-3").Output()
+		if err == nil && strings.Contains(string(out), needle) {
+			break
+		}
+	}
 
-	// Step 2: send Enter separately
+	// Step 3: send Enter
 	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s failed: %v\n", role, err)

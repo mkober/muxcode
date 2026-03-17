@@ -61,6 +61,9 @@ func sessionWindows(session string) []string {
 
 // Run starts the main render loop.
 func (d *Dashboard) Run() error {
+	// Switch terminal to raw mode so any keypress is immediate.
+	rawErr := exec.Command("stty", "raw", "-echo").Run()
+
 	// Clear screen and hide cursor
 	fmt.Print("\033[2J\033[H")
 	fmt.Print("\033[?25l")
@@ -73,7 +76,7 @@ func (d *Dashboard) Run() error {
 	d.keyCh = make(chan byte, 16)
 	go d.readKeys()
 
-	defer d.cleanup()
+	defer d.cleanup(rawErr == nil)
 
 	for {
 		frame := d.render()
@@ -92,13 +95,9 @@ func (d *Dashboard) Run() error {
 			select {
 			case <-sigCh:
 				return nil
-			case key := <-d.keyCh:
-				switch key {
-				case 'q', 'Q':
-					return nil
-				case 'r', 'R':
-					break waitLoop
-				}
+			case <-d.keyCh:
+				// Any keypress exits
+				return nil
 			case <-deadline:
 				break waitLoop
 			}
@@ -120,11 +119,39 @@ func (d *Dashboard) readKeys() {
 }
 
 // cleanup restores the terminal to a usable state.
-func (d *Dashboard) cleanup() {
+func (d *Dashboard) cleanup(restoreStty bool) {
+	if restoreStty {
+		_ = exec.Command("stty", "sane").Run()
+	}
 	fmt.Print("\033[?25h") // show cursor
 	fmt.Print(RST)        // reset colors
 	fmt.Print("\033[2J")   // clear screen
 	fmt.Print("\033[H")    // move to top
+}
+
+// termHeight returns the terminal height, defaulting to 24.
+func termHeight() int {
+	out, err := exec.Command("tput", "lines").Output()
+	if err == nil {
+		s := strings.TrimSpace(string(out))
+		if h, err := strconv.Atoi(s); err == nil && h > 0 {
+			return h
+		}
+	}
+
+	cmd := exec.Command("stty", "size")
+	cmd.Stdin = os.Stdin
+	out, err = cmd.Output()
+	if err == nil {
+		parts := strings.Fields(strings.TrimSpace(string(out)))
+		if len(parts) == 2 {
+			if h, err := strconv.Atoi(parts[0]); err == nil && h > 0 {
+				return h
+			}
+		}
+	}
+
+	return 24
 }
 
 // termWidth returns the terminal width, defaulting to 62.
@@ -157,49 +184,49 @@ func termWidth() int {
 // render builds the complete dashboard frame as a single string.
 func (d *Dashboard) render() string {
 	W := termWidth()
-	inner := W - 2 // inside box (minus left + right border)
-	if inner < 10 {
-		inner = 10
+	H := termHeight()
+	if W < 10 {
+		W = 10
 	}
 
 	var b strings.Builder
+	lineCount := 0
 
-	border := Purple + Bold
-	borderRst := RST
-
-	// ── Top border ──
-	b.WriteString(border)
-	b.WriteRune('\u2554') // ╔
-	b.WriteString(HLine('\u2550', inner))
-	b.WriteRune('\u2557') // ╗
-	b.WriteString(borderRst)
-	b.WriteRune('\n')
-
-	// ── Header ──
-	title := "AGENT DASHBOARD"
-	right := fmt.Sprintf("Session: %s   %ds", d.session, d.refresh)
-	gap := inner - len(title) - len(right) - 4
-	if gap < 1 {
-		gap = 1
+	// writeLine writes a full-width line, padding or truncating to W visible chars.
+	writeLine := func(content string) {
+		vw := VisibleWidth(content)
+		if vw > W {
+			content = TruncateAnsi(content, W)
+			vw = W
+		}
+		pad := W - vw
+		b.WriteString(content)
+		if pad > 0 {
+			b.WriteString(strings.Repeat(" ", pad))
+		}
+		b.WriteRune('\n')
+		lineCount++
 	}
-	b.WriteString(border)
-	b.WriteRune('\u2551') // ║
-	b.WriteString(borderRst)
-	b.WriteString("  ")
-	b.WriteString(Pink + Bold + title + RST)
-	b.WriteString(strings.Repeat(" ", gap))
-	b.WriteString(Comment + right + RST)
-	b.WriteString("  ")
-	b.WriteString(border)
-	b.WriteRune('\u2551') // ║
-	b.WriteString(borderRst)
-	b.WriteRune('\n')
 
-	// ── Separator ──
-	b.WriteString(d.separator(inner))
+	// hrLine writes a dim horizontal rule.
+	hrLine := func() {
+		writeLine(Comment + HLine('\u2500', W) + RST)
+	}
+
+	// ── Session info line ──
+	right := fmt.Sprintf("Session: %s   %ds", d.session, d.refresh)
+	rpad := W - len(right) - 2
+	if rpad < 0 {
+		rpad = 0
+	}
+	writeLine(fmt.Sprintf("%s%s%s%s",
+		strings.Repeat(" ", rpad),
+		Comment, right, RST))
+
+	hrLine()
 
 	// ── AGENTS section ──
-	b.WriteString(d.sectionHeader("AGENTS", inner))
+	writeLine(fmt.Sprintf("  %s%s%s", Orange+Bold, "AGENTS", RST))
 
 	sessionCost := 0.0
 	sessionTokens := 0
@@ -210,9 +237,8 @@ func (d *Dashboard) render() string {
 		// Check if window exists
 		windowExists := d.windowExists(win)
 		if !windowExists {
-			line := fmt.Sprintf("  %so %s  --          -       -     window not found%s",
-				Dim, Pad(win, 8), RST)
-			b.WriteString(d.boxLine(line, inner))
+			writeLine(fmt.Sprintf("  %so %s  --          -       -     window not found%s",
+				Dim, Pad(win, 8), RST))
 			continue
 		}
 
@@ -258,7 +284,7 @@ func (d *Dashboard) render() string {
 
 		// Calculate snippet space
 		prefixLen := 2 + 2 + 8 + 2 + 8 + 2 + 7 + 1 + 7 + 2
-		snippetMax := inner - prefixLen - 2
+		snippetMax := W - prefixLen
 		if snippetMax < 0 {
 			snippetMax = 0
 		}
@@ -266,157 +292,85 @@ func (d *Dashboard) render() string {
 		if len([]rune(snip)) > snippetMax {
 			snip = string([]rune(snip)[:snippetMax])
 		}
-		snipLen := len([]rune(snip))
-		trailing := inner - prefixLen - snipLen
-		if trailing < 0 {
-			trailing = 0
-		}
 
-		line := fmt.Sprintf("  %s%s %s%s  %s%s%s%s  %s%s%s %s%s%s  %s%s%s%s",
+		writeLine(fmt.Sprintf("  %s%s %s%s  %s%s%s%s  %s%s%s %s%s%s  %s%s%s",
 			status.StatusColor, bullet, winPad, RST,
 			status.StatusColor, Bold, statusPad, RST,
 			Yellow, costPad, RST,
 			Cyan, tokensPad, RST,
-			Comment, snip, RST,
-			strings.Repeat(" ", trailing))
-		b.WriteString(border)
-		b.WriteRune('\u2551')
-		b.WriteString(borderRst)
-		b.WriteString(line)
-		b.WriteString(border)
-		b.WriteRune('\u2551')
-		b.WriteString(borderRst)
-		b.WriteRune('\n')
+			Comment, snip, RST))
 	}
 
 	// Session total line
 	totalFmt := fmt.Sprintf("$%.2f", sessionCost)
 	totalTokensFmt := RawToCompact(sessionTokens)
 	totalText := fmt.Sprintf("Session total: %s / %s tokens", totalFmt, totalTokensFmt)
-	tpad := inner - len(totalText) - 2
+	tpad := W - len(totalText) - 2
 	if tpad < 0 {
 		tpad = 0
 	}
-	totalLine := fmt.Sprintf("%s%s%s%s / %s tokens%s  ",
+	writeLine(fmt.Sprintf("%s%s%s%s / %s tokens%s",
 		strings.Repeat(" ", tpad),
 		Yellow+Bold, "Session total: "+totalFmt, RST,
-		Cyan+Bold+totalTokensFmt, RST)
-	b.WriteString(border)
-	b.WriteRune('\u2551')
-	b.WriteString(borderRst)
-	b.WriteString(totalLine)
-	b.WriteString(border)
-	b.WriteRune('\u2551')
-	b.WriteString(borderRst)
-	b.WriteRune('\n')
+		Cyan+Bold+totalTokensFmt, RST))
 
-	// ── Separator ──
-	b.WriteString(d.separator(inner))
+	hrLine()
 
 	// ── MESSAGE BUS section ──
-	b.WriteString(d.sectionHeader("MESSAGE BUS", inner))
-	busLines := RenderBus(d.session, inner)
+	writeLine(fmt.Sprintf("  %s%s%s", Orange+Bold, "MESSAGE BUS", RST))
+	busLines := RenderBus(d.session, W)
 	for _, line := range busLines {
-		b.WriteString(d.boxLine(line, inner))
+		writeLine(line)
 	}
 
-	// ── Separator ──
-	b.WriteString(d.separator(inner))
+	hrLine()
 
 	// ── TEAMS section ──
-	b.WriteString(d.sectionHeader("TEAMS", inner))
+	writeLine(fmt.Sprintf("  %s%s%s", Orange+Bold, "TEAMS", RST))
 	teamLines := RenderTeams()
 	for _, line := range teamLines {
-		b.WriteString(d.boxLine(line, inner))
+		writeLine(line)
 	}
 
-	// ── Separator ──
-	b.WriteString(d.separator(inner))
+	hrLine()
 
 	// ── MESSAGES section ──
-	b.WriteString(d.sectionHeader("MESSAGES", inner))
+	writeLine(fmt.Sprintf("  %s%s%s", Orange+Bold, "MESSAGES", RST))
 	msgs := d.msgBuffer.Messages()
 	if len(msgs) == 0 {
-		noMsg := fmt.Sprintf("  %s(no recent messages)%s", Comment, RST)
-		b.WriteString(d.boxLine(noMsg, inner))
+		writeLine(fmt.Sprintf("  %s(no recent messages)%s", Comment, RST))
 	} else {
 		for _, msg := range msgs {
-			maxLen := inner - 4
+			maxLen := W - 4
 			truncated := msg
 			if len([]rune(truncated)) > maxLen {
 				truncated = string([]rune(truncated)[:maxLen])
 			}
-			line := fmt.Sprintf("  %s%s%s", Comment, truncated, RST)
-			b.WriteString(d.boxLine(line, inner))
+			writeLine(fmt.Sprintf("  %s%s%s", Comment, truncated, RST))
 		}
 	}
 
-	// ── Separator ──
-	b.WriteString(d.separator(inner))
+	// ── Fill remaining space + footer ──
+	footer := "Press any key to close"
+	// Reserve 1 line for footer
+	remaining := H - lineCount - 1
+	for i := 0; i < remaining; i++ {
+		b.WriteString(strings.Repeat(" ", W))
+		b.WriteRune('\n')
+	}
 
-	// ── Footer ──
-	footer := "q: quit  r: refresh  F1-F8: jump to window"
-	fpad := inner - len(footer) - 4
+	// Footer centered at bottom
+	fpad := (W - len(footer)) / 2
 	if fpad < 0 {
 		fpad = 0
 	}
-	footerLine := fmt.Sprintf("  %s%s%s%s  ", Comment, footer, RST, strings.Repeat(" ", fpad))
-	b.WriteString(border)
-	b.WriteRune('\u2551')
-	b.WriteString(borderRst)
-	b.WriteString(footerLine)
-	b.WriteString(border)
-	b.WriteRune('\u2551')
-	b.WriteString(borderRst)
-	b.WriteRune('\n')
-
-	// ── Bottom border ──
-	b.WriteString(border)
-	b.WriteRune('\u255a') // ╚
-	b.WriteString(HLine('\u2550', inner))
-	b.WriteRune('\u255d') // ╝
-	b.WriteString(borderRst)
-	b.WriteRune('\n')
+	b.WriteString(fmt.Sprintf("%s%s%s%s",
+		strings.Repeat(" ", fpad),
+		Comment, footer, RST))
 
 	return b.String()
 }
 
-// separator writes a ╠═══╣ divider line.
-func (d *Dashboard) separator(inner int) string {
-	border := Purple + Bold
-	return fmt.Sprintf("%s\u2560%s\u2563%s\n",
-		border, HLine('\u2550', inner), RST)
-}
-
-// sectionHeader writes a section title inside the box (e.g. "║  AGENTS  ║").
-func (d *Dashboard) sectionHeader(title string, inner int) string {
-	border := Purple + Bold
-	pad := inner - len(title) - 4
-	if pad < 0 {
-		pad = 0
-	}
-	return fmt.Sprintf("%s\u2551%s  %s%s%s%s  %s\u2551%s\n",
-		border, RST,
-		Orange+Bold, title, RST,
-		strings.Repeat(" ", pad),
-		border, RST)
-}
-
-// boxLine wraps a content line inside ║...║, padding or truncating to inner width.
-func (d *Dashboard) boxLine(content string, inner int) string {
-	border := Purple + Bold
-	plen := VisibleWidth(content)
-	if plen > inner {
-		content = TruncateAnsi(content, inner)
-		plen = inner
-	}
-	padN := inner - plen
-	return fmt.Sprintf("%s\u2551%s%s%s%s\u2551%s\n",
-		border, RST,
-		content,
-		strings.Repeat(" ", padN),
-		border, RST)
-}
 
 // windowExists checks if a tmux window exists in the session.
 func (d *Dashboard) windowExists(window string) bool {

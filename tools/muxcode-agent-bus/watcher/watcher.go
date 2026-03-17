@@ -242,6 +242,16 @@ func (w *Watcher) checkStartupNotifications() {
 			continue
 		}
 
+		// If the dedup marker already matches (meaning Notify was called
+		// and the agent was idle at the time), the initial send from
+		// cmd/send.go already delivered via send-keys. No need to re-notify.
+		// Only clear + retry when the marker is missing or stale (e.g. the
+		// initial Notify fired a display-message because the agent wasn't
+		// idle yet, then the agent became idle afterward).
+		if retries == 0 && bus.IsNotifiedCurrent(w.session, role) {
+			continue
+		}
+
 		// Cooldown: wait at least 5 seconds between attempts so the agent
 		// has time to process the previous notification.
 		lastAttempt := w.startupNotifyAt[role]
