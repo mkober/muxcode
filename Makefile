@@ -38,11 +38,12 @@ install: build
 	@cp agents/*.md $(CONFIGDIR)/agents/ 2>/dev/null || true
 	@install -d $(CONFIGDIR)/skills
 	@cp skills/*.md $(CONFIGDIR)/skills/ 2>/dev/null || true
-	@# Config files use cp -n to preserve user customizations (e.g. tmux.conf).
+	@# Config files use cp -n to preserve user customizations.
 	@cp -n config/* $(CONFIGDIR)/ 2>/dev/null || true
-	@# Always overwrite settings.json — this is the hook template that install.sh
-	@# merges into ~/.claude/settings.json. User customizations live there, not here.
+	@# Always overwrite settings.json and tmux.conf — these are managed by the repo.
+	@# User customizations for tmux go in ~/.tmux.conf (which sources this file).
 	@cp config/settings.json $(CONFIGDIR)/settings.json
+	@cp config/tmux.conf $(CONFIGDIR)/tmux.conf
 	@install -d $(HOME)/.claude/commands
 	@cp -n config/commands/*.md $(HOME)/.claude/commands/ 2>/dev/null || true
 	@cp -n muxcode.conf.example $(CONFIGDIR)/config 2>/dev/null || true
