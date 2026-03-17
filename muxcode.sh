@@ -426,17 +426,14 @@ _sr="$(echo "$_sr" | sed $'s/#\\[fg=#50fa7b\\]/#[fg=#6272a4, bg=#44475a]\xee\x82
 _sr="$(echo "$_sr" | sed "s/%b/ %b/; s/'%y/'%y /; s/%H:%M/ %H:%M:%S /")"
 tmux set-option -t "$SESSION" status-right "${_sr}"
 # Capitalize window labels in the status bar (internal names stay lowercase for bus routing).
-# Replace #W with a shell command that uppercases the first letter via bash ${var^}.
-_wsf="$(tmux show-options -gv window-status-format 2>/dev/null)"
-_wscf="$(tmux show-options -gv window-status-current-format 2>/dev/null)"
-if [ -n "$_wsf" ]; then
-  tmux set-option -t "$SESSION" window-status-format \
-    "$(echo "$_wsf" | sed 's/#W/#(w=#W; echo ${w^})/')"
-fi
-if [ -n "$_wscf" ]; then
-  tmux set-option -t "$SESSION" window-status-current-format \
-    "$(echo "$_wscf" | sed 's/#W/#(w=#W; echo ${w^})/')"
-fi
+# Set explicit Dracula-style formats with powerline arrows and awk capitalize.
+# Uses awk (not ${var^}) because macOS ships bash 3.2 which lacks that syntax.
+# Must use global (-g) because Dracula's #{T:window-status-format} only resolves globals.
+_cap="awk '{print toupper(substr(\$0,1,1)) substr(\$0,2)}'"
+tmux set-option -g window-status-format \
+  $'#[fg=#282a36,bg=#44475a,noitalics]\xee\x82\xb0#[fg=#f8f8f2,bg=#44475a] F#I#[fg=#f8f8f2, bg=#44475a] #(echo #W | '"${_cap}"$') #[fg=#44475a, bg=#282a36]\xee\x82\xb0'
+tmux set-option -g window-status-current-format \
+  $'#[fg=#282a36, bg=#00ff00]\xee\x82\xb0#[fg=#44475a, bg=#00ff00] F#I*#[fg=#44475a, bg=#00ff00, bold] #(echo #W | '"${_cap}"$') #[fg=#00ff00, bg=#282a36]\xee\x82\xb0'
 # Replace the Dracula session icon (❐) with hamburger (☰) in status-left
 _sl="$(tmux show-options -gv status-left 2>/dev/null)"
 _sl_with_icon="$(echo "$_sl" | sed 's/❐/☰/')"

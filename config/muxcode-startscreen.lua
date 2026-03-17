@@ -63,13 +63,18 @@ end
 -- Read lock files to determine which agents are busy.
 local function get_agents(session)
   local lock_dir = "/tmp/muxcode-bus-" .. session .. "/lock"
-  local roles    = { "edit", "build", "test", "review", "commit", "analyze" }
+  local roles    = {
+    "edit", "build", "test", "review", "deploy",
+    "commit", "analyze", "api", "run", "watch",
+  }
   local result   = {}
   for _, role in ipairs(roles) do
     local f    = io.open(lock_dir .. "/" .. role .. ".lock", "r")
     local busy = f ~= nil
     if f then f:close() end
-    table.insert(result, { role = role, busy = busy })
+    -- Capitalize the display label (Edit, Build, etc.)
+    local label = role:sub(1, 1):upper() .. role:sub(2)
+    table.insert(result, { role = role, label = label, busy = busy })
   end
   return result
 end
@@ -112,11 +117,11 @@ local function open_start()
   local telescope  = has_telescope()
 
   local shortcuts = {
-    { key = "e", desc = "new file", cmd = ":enew<CR>" },
-    { key = "f", desc = "find",     cmd = ":Telescope find_files<CR>", fallback = ":edit .<CR>" },
-    { key = "r", desc = "recent",   cmd = ":Telescope oldfiles<CR>",   fallback = ":browse oldfiles<CR>" },
-    { key = "g", desc = "grep",     cmd = ":Telescope live_grep<CR>",  fallback = ":vimgrep " },
-    { key = "q", desc = "quit",     cmd = ":qa<CR>" },
+    { key = "e", desc = "New File", cmd = ":enew<CR>" },
+    { key = "f", desc = "Find",     cmd = ":Telescope find_files<CR>", fallback = ":edit .<CR>" },
+    { key = "r", desc = "Recent",   cmd = ":Telescope oldfiles<CR>",   fallback = ":browse oldfiles<CR>" },
+    { key = "g", desc = "Grep",     cmd = ":Telescope live_grep<CR>",  fallback = ":vimgrep " },
+    { key = "q", desc = "Quit",     cmd = ":qa<CR>" },
   }
 
   -- ── Render (called on initial open and VimResized) ──────────────────────
@@ -189,32 +194,40 @@ local function open_start()
     push(center("AGENTS", width), "MuxcodeSection")
 
     do
-      -- Build inner string and record per-icon byte offsets for colored dots.
-      local parts     = {}
-      local icon_meta = {}  -- { inner_byte_start, icon_byte_len, busy }
-      local cursor    = 0
-
+      -- Split agents into two rows (5 + 5) so they fit comfortably.
+      local mid = math.ceil(#agents / 2)
+      local rows = { {}, {} }
       for i, a in ipairs(agents) do
-        local icon  = a.busy and "●" or "○"  -- each is 3 UTF-8 bytes
-        local label = " " .. a.role
-        table.insert(icon_meta, { cursor, #icon, a.busy })
-        table.insert(parts, icon .. label)
-        cursor = cursor + #icon + #label
-        if i < #agents then cursor = cursor + 3 end  -- "   " separator
+        table.insert(rows[i <= mid and 1 or 2], a)
       end
 
-      local inner    = table.concat(parts, "   ")
-      local row, pad = center(inner, width)
-      local row_idx  = #content_lines  -- 0-based index of the line about to be pushed
+      for _, agent_row in ipairs(rows) do
+        local parts     = {}
+        local icon_meta = {}  -- { inner_byte_start, icon_byte_len, busy }
+        local cursor    = 0
 
-      push(row)
+        for i, a in ipairs(agent_row) do
+          local icon  = a.busy and "●" or "○"  -- each is 3 UTF-8 bytes
+          local label = " " .. a.label
+          table.insert(icon_meta, { cursor, #icon, a.busy })
+          table.insert(parts, icon .. label)
+          cursor = cursor + #icon + #label
+          if i < #agent_row then cursor = cursor + 3 end  -- "   " separator
+        end
 
-      -- Per-icon highlights (green = idle, orange = busy)
-      for _, m in ipairs(icon_meta) do
-        local s  = pad + m[1]
-        local e  = s + m[2]
-        local hl = m[3] and "MuxcodeAgentBusy" or "MuxcodeAgentIdle"
-        table.insert(content_hls, { row_idx, hl, s, e })
+        local inner    = table.concat(parts, "   ")
+        local row, pad = center(inner, width)
+        local row_idx  = #content_lines  -- 0-based index of the line about to be pushed
+
+        push(row)
+
+        -- Per-icon highlights (green = idle, orange = busy)
+        for _, m in ipairs(icon_meta) do
+          local s  = pad + m[1]
+          local e  = s + m[2]
+          local hl = m[3] and "MuxcodeAgentBusy" or "MuxcodeAgentIdle"
+          table.insert(content_hls, { row_idx, hl, s, e })
+        end
       end
     end
 
