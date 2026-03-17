@@ -65,6 +65,12 @@ Do NOT run `gh pr view`, `gh pr diff`, `gh pr checks`, or any `gh` command yours
 
 **Note**: Always use `--force` as a CLI flag (not inside the message string) on commit/push/PR sends to bypass the pre-commit agent-idle check. Passive agents (analyze, watch) may have pending notifications that are safe to ignore.
 
+### Bash tool timeout — CRITICAL for `--wait`
+
+The `--wait` flag polls for up to 600 seconds, but the **Bash tool's default timeout is 120 seconds** (2 minutes). If a build or test takes longer than 2 minutes, the Bash tool kills the `--wait` process and the response is lost.
+
+**Always set `timeout: 300000`** (5 minutes) on Bash tool calls that use `--wait` for build, test, deploy, review, and commit delegations. Only short operations (inbox checks, memory reads) can use the default timeout.
+
 ### Decision rule
 
 Before running **any** Bash command, check: does it start with a prohibited prefix from the table above? If yes → delegate via the bus. Never run it directly, even "just to check" or "read-only".
