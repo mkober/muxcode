@@ -424,8 +424,7 @@ _sr="$(echo "$_sr" | sed $'s/#\\[fg=#6272a4, bg=#282a36\\]/#[fg=#44475a, bg=#282
 _sr="$(echo "$_sr" | sed $'s/#\\[fg=#50fa7b\\]/#[fg=#6272a4, bg=#44475a]\xee\x82\xb2#[fg=#f8f8f2, bg=#6272a4]/')"
 # Add padding around date and time text
 _sr="$(echo "$_sr" | sed "s/%b/ %b/; s/'%y/'%y /; s/%H:%M/ %H:%M:%S /")"
-# Rotating tips via shell command — tmux re-evaluates #() on each status refresh
-tmux set-option -t "$SESSION" status-right "#[fg=#6272a4,italics]#(muxcode-tip.sh)  #[default]${_sr}"
+tmux set-option -t "$SESSION" status-right "${_sr}"
 # Replace the Dracula session icon (❐) with hamburger (☰) in status-left
 _sl="$(tmux show-options -gv status-left 2>/dev/null)"
 _sl_with_icon="$(echo "$_sl" | sed 's/❐/☰/')"

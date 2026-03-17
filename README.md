@@ -1,4 +1,4 @@
-# MUXcode
+# MuxCode
 
 ```
 ███╗   ███╗██╗   ██╗██╗  ██╗   ██████╗ ██████╗ ██████╗ ███████╗
@@ -11,11 +11,11 @@
 
 A multi-agent coding environment built on tmux — where you stay in the loop.
 
-![MUXcode demo](assets/demo.gif)
+![MuxCode demo](assets/demo.gif)
 
-## What is MUXcode?
+## What is MuxCode?
 
-MUXcode is a tmux-native multi-agent development environment. Ten specialist AI agents — editor, builder, tester, reviewer, deployer, git manager, and more — each run in their own tmux window, coordinated through a file-based message bus. You work in neovim alongside an editing agent, and every other part of the development lifecycle has its own dedicated agent a function key away.
+MuxCode is a tmux-native multi-agent development environment. Ten specialist AI agents — editor, builder, tester, reviewer, deployer, git manager, and more — each run in their own tmux window, coordinated through a file-based message bus. You work in neovim alongside an editing agent, and every other part of the development lifecycle has its own dedicated agent a function key away.
 
 You stay in control. The edit agent is your primary interface — it helps you write code and delegates to specialists when you're ready. Ask for a build, and the build agent runs it. Tests fire automatically on success. Review follows tests. Results flow back while you keep editing. The chain routing is hook-driven — bash scripts checking exit codes, not LLM routing decisions — so dispatch is deterministic and fast. The agents themselves run as [Claude Code](https://claude.ai/code) sessions by default, but any role can be switched to a local LLM via [Ollama](https://ollama.com/) to reduce API costs for structured-command roles like git, build, and log monitoring.
 
@@ -63,7 +63,7 @@ The `muxcode-agent-bus tui` command launches a live dashboard showing which agen
 
 ## Agents
 
-MUXcode ships with these default agents:
+MuxCode ships with these default agents:
 
 | Window (F-key) | Agent          | Default model      | Local LLM                   | What it does                                                                            |
 | -------------- | -------------- | ------------------ | --------------------------- | --------------------------------------------------------------------------------------- |
@@ -137,15 +137,15 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 
 See the [Architecture](docs/architecture.md) and [Agent Bus](docs/agent-bus.md) docs for the full details.
 
-## How MUXcode compares to autonomous AI coding tools
+## How MuxCode compares to autonomous AI coding tools
 
-Tools like [OpenClaw](https://github.com/openclaw/openclaw), Devin, OpenHands, and SWE-agent push toward fully autonomous software engineering — give the AI a task, let it plan and execute end-to-end with minimal human input. MUXcode shares some of the same building blocks but takes a different approach to how humans and AI agents collaborate.
+Tools like [OpenClaw](https://github.com/openclaw/openclaw), Devin, OpenHands, and SWE-agent push toward fully autonomous software engineering — give the AI a task, let it plan and execute end-to-end with minimal human input. MuxCode shares some of the same building blocks but takes a different approach to how humans and AI agents collaborate.
 
-OpenClaw is a good point of comparison because it's also open-source and runs locally. It's a long-running Node.js service that acts as a message router between chat platforms (WhatsApp, Telegram, Discord) and an AI agent that can browse the web, read and write files, and run shell commands autonomously. It can manage Claude Code sessions, run tests, capture errors via Sentry, and open PRs on GitHub — all without you in the loop. MUXcode solves many of the same problems but keeps you in your terminal, in your editor, making the decisions.
+OpenClaw is a good point of comparison because it's also open-source and runs locally. It's a long-running Node.js service that acts as a message router between chat platforms (WhatsApp, Telegram, Discord) and an AI agent that can browse the web, read and write files, and run shell commands autonomously. It can manage Claude Code sessions, run tests, capture errors via Sentry, and open PRs on GitHub — all without you in the loop. MuxCode solves many of the same problems but keeps you in your terminal, in your editor, making the decisions.
 
 ### What they have in common
 
-Both MUXcode and autonomous AI tools solve the same coordination problems:
+Both MuxCode and autonomous AI tools solve the same coordination problems:
 
 - **Persistent memory** — Context that survives across sessions, searchable and shared between agents
 - **Skills and plugins** — Reusable instruction sets that shape agent behavior for specific tasks or domains
@@ -154,9 +154,9 @@ Both MUXcode and autonomous AI tools solve the same coordination problems:
 - **Background process tracking** — Launching, monitoring, and reacting to long-running tasks
 - **Loop detection** — Guardrails that catch agents stuck in repetitive failure patterns
 
-### Where MUXcode differs
+### Where MuxCode differs
 
-**Human-in-the-loop, not fully autonomous.** MUXcode keeps you as the orchestrator. The edit agent delegates on your behalf — you see every step, you decide what happens next. Autonomous tools aim to minimize human involvement, handling planning, execution, and error recovery on their own.
+**Human-in-the-loop, not fully autonomous.** MuxCode keeps you as the orchestrator. The edit agent delegates on your behalf — you see every step, you decide what happens next. Autonomous tools aim to minimize human involvement, handling planning, execution, and error recovery on their own.
 
 **Local-first, minimal infrastructure.** The message bus is JSONL files in `/tmp/`. The memory system is markdown files in your project directory. There's no database, no container runtime. An optional webhook HTTP endpoint bridges external tools (CI/CD, GitHub) to the bus, but it's a single lightweight server — not a required runtime. Autonomous tools typically require a runtime environment — SQLite, vector databases, sandboxed execution containers.
 
@@ -168,7 +168,7 @@ Both MUXcode and autonomous AI tools solve the same coordination problems:
 
 **Zero external dependencies.** The bus binary is stdlib-only Go — it compiles in seconds with no dependency management. The hooks are bash scripts that use `jq` and standard Unix tools. Autonomous tools typically have significant dependency trees (Python packages, Node modules, system libraries).
 
-The tradeoff is clear: autonomous tools can handle more without you, but MUXcode gives you visibility and control at every step. If you want to understand what's happening in your codebase — not just get a result — MUXcode is designed for that workflow.
+The tradeoff is clear: autonomous tools can handle more without you, but MuxCode gives you visibility and control at every step. If you want to understand what's happening in your codebase — not just get a result — MuxCode is designed for that workflow.
 
 ## Quick start
 
@@ -213,11 +213,11 @@ muxcode ~/Projects/my-app my-session
 
 ### Workspace trust
 
-When Claude Code opens a new workspace for the first time, it shows a "Yes, I trust this folder" safety prompt in every agent window. MUXcode automatically accepts this prompt on your behalf — a background process polls each agent pane after launch and presses Enter on any window showing the trust dialog. This runs over ~18 seconds to catch slow-starting agents, and skips panes that are already past the prompt.
+When Claude Code opens a new workspace for the first time, it shows a "Yes, I trust this folder" safety prompt in every agent window. MuxCode automatically accepts this prompt on your behalf — a background process polls each agent pane after launch and presses Enter on any window showing the trust dialog. This runs over ~18 seconds to catch slow-starting agents, and skips panes that are already past the prompt.
 
 ## Configuration
 
-MUXcode uses a shell-sourceable config file. Resolution order:
+MuxCode uses a shell-sourceable config file. Resolution order:
 
 1. `$MUXCODE_CONFIG` (explicit path)
 2. `.muxcode/config` (project-local)
@@ -247,7 +247,7 @@ Any agent role can run via a local LLM (Ollama) instead of Claude Code. This is 
    MUXCODE_BUILD_CLI=local     # build agent uses local LLM
    ```
 
-3. Launch MUXcode normally — configured roles run via Ollama, others use Claude Code. If Ollama is unreachable at launch, the agent falls back to Claude Code automatically.
+3. Launch MuxCode normally — configured roles run via Ollama, others use Claude Code. If Ollama is unreachable at launch, the agent falls back to Claude Code automatically.
 
 ### Configuration
 
@@ -334,6 +334,29 @@ JIRA_API_TOKEN="your-atlassian-api-token"
 ```
 
 If the env vars are missing or the branch name doesn't start with a Jira key, the skill skips silently.
+
+## Tmux tips
+
+Useful keybindings for navigating your MuxCode session:
+
+| Keybinding | Action |
+| --- | --- |
+| `F1`–`F10` | Switch between agent windows |
+| `Prefix + b` | Open MuxCode quick menu |
+| `Prefix + C` | New MuxCode session (project picker) |
+| `Prefix + z` | Zoom current pane to full screen |
+| `Prefix + [` | Enter scroll/copy mode |
+| `Prefix + d` | Detach from session |
+| `Ctrl + h/j/k/l` | Switch panes (vim-style, works across nvim and tmux) |
+| `Prefix + c` | New tmux window |
+| `Prefix + n` / `Prefix + p` | Next / previous window |
+| `Prefix + w` | Window list |
+| `Prefix + s` | Session list |
+| `Prefix + x` | Close current pane |
+| `Prefix + %` | Split pane horizontally |
+| `Prefix + "` | Split pane vertically |
+| `Prefix + :` | Tmux command prompt |
+| `Prefix + ?` | List all keybindings |
 
 ## Documentation
 

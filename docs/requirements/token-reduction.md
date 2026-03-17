@@ -2,7 +2,7 @@
 
 ## Context
 
-The multi-agent MUXcode system burns excessive tokens due to three primary causes:
+The multi-agent MuxCode system burns excessive tokens due to three primary causes:
 1. **Auto-CC duplication**: Every chain message (build→test, test→review) is copied to edit's inbox via auto-CC, causing edit to process ~5 intermediate messages per build cycle that provide no actionable info
 2. **Analyst spam on success**: The analyst agent is notified on every build/test outcome (including routine success), consuming ~3-4K tokens per notification for trivial "all good" responses
 3. **Watcher overhead**: Loop detection scans all history every 30s; inbox stat calls poll all 13 known roles every 5s; cron/proc/spawn files are parsed every cycle even when empty
@@ -134,7 +134,7 @@ Add a note about the `NotifyAnalystOn` config field and `SendNoCC` function to t
 
 1. `cd tools/muxcode-agent-bus && go vet ./...` — no errors
 2. `cd tools/muxcode-agent-bus && go test ./...` — all tests pass
-3. Manual test: start a MUXcode session, trigger a build, verify:
+3. Manual test: start a MuxCode session, trigger a build, verify:
    - Edit does NOT receive CC messages for build→test and test→review chain steps
    - Analyst is NOT notified on build/test success
    - Analyst IS notified on build/test failure

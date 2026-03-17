@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# muxcode-demo.sh — Record a MUXcode demo and convert to GIF
+# muxcode-demo.sh — Record a MuxCode demo and convert to GIF
 #
 # Usage:
 #   muxcode-demo.sh [--speed FACTOR] [--output FILE] [--scenario NAME] [--no-record]
@@ -100,7 +100,7 @@ fi
 
 # Check tmux session is running
 if ! tmux has-session 2>/dev/null; then
-  echo "Error: No tmux session found. Start MUXcode first." >&2
+  echo "Error: No tmux session found. Start MuxCode first." >&2
   exit 1
 fi
 
@@ -110,7 +110,7 @@ if [[ -n "$output_dir" ]] && [[ "$output_dir" != "." ]]; then
   mkdir -p "$output_dir"
 fi
 
-echo "=== MUXcode Demo Recording ==="
+echo "=== MuxCode Demo Recording ==="
 echo "  Scenario: ${SCENARIO}"
 echo "  Speed:    ${SPEED}x"
 echo "  Output:   ${OUTPUT}"

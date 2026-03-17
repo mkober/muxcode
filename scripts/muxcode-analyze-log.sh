@@ -36,7 +36,7 @@ format_ts() {
 while true; do
   BUF=""
   BUF+="${PURPLE}  analyze log${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
-  BUF+="${DIM}$(printf '%.0s─' {1..50})${RESET}\n"
+  BUF+="  ${DIM}$(printf '%.0s─' {1..46})${RESET}\n"
   BUF+="\n"
 
   if [ ! -f "$LOG_FILE" ] || [ ! -s "$LOG_FILE" ]; then

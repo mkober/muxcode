@@ -316,7 +316,7 @@ Core code: `muxcode.sh` (auto-accept block near end of file)
 
 ## Session re-init
 
-When a MUXcode session restarts with the same name, `Init()` in `bus/setup.go` detects the existing bus directory and purges stale data to prevent false watcher alerts (loop-detected, compact-recommended) from the previous session.
+When a MuxCode session restarts with the same name, `Init()` in `bus/setup.go` detects the existing bus directory and purges stale data to prevent false watcher alerts (loop-detected, compact-recommended) from the previous session.
 
 - **Detection**: `os.Stat(busDir)` — if the directory exists, `reInit` flag is set
 - **Truncated files** (path preserved for writers): inboxes, `log.jsonl`, `cron.jsonl`, `proc.jsonl`, `spawn.jsonl`, `subscriptions.jsonl`, `{role}-history.jsonl`, `cron-history.jsonl`

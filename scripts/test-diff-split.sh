@@ -114,7 +114,7 @@ EDIT_EVENT=$(cat << EVENTEOF
   "tool_input": {
     "file_path": "$TEST_FILE",
     "old_string": "    fmt.Println(\"Hello, World!\")",
-    "new_string": "    fmt.Println(\"Hello, MUXcode!\")\n    fmt.Println(\"Welcome aboard!\")"
+    "new_string": "    fmt.Println(\"Hello, MuxCode!\")\n    fmt.Println(\"Welcome aboard!\")"
   }
 }
 EVENTEOF
@@ -137,7 +137,7 @@ else
 fi
 
 # Test 2: Temp file should contain the new string
-if [ -f "$TEMP_FILE" ] && grep -q "Hello, MUXcode" "$TEMP_FILE"; then
+if [ -f "$TEMP_FILE" ] && grep -q "Hello, MuxCode" "$TEMP_FILE"; then
   log_pass "Temp file contains proposed change"
 else
   log_fail "Temp file contains proposed change" "new_string not found in temp file"
@@ -171,9 +171,9 @@ echo ""
 echo "--- Phase 2: PostToolUse Analyze Hook (accepted edit) ---"
 
 # First, apply the edit to the actual file so the analyze hook can find the new content
-sed -i '' 's/Hello, World!/Hello, MUXcode!/' "$TEST_FILE"
+sed -i '' 's/Hello, World!/Hello, MuxCode!/' "$TEST_FILE"
 # Add the extra line
-sed -i '' '/Hello, MUXcode/a\
+sed -i '' '/Hello, MuxCode/a\
     fmt.Println("Welcome aboard!")' "$TEST_FILE"
 
 # Simulate the PostToolUse event (accepted edit)
@@ -183,7 +183,7 @@ ANALYZE_EVENT=$(cat << EVENTEOF
   "tool_input": {
     "file_path": "$TEST_FILE",
     "old_string": "    fmt.Println(\"Hello, World!\")",
-    "new_string": "    fmt.Println(\"Hello, MUXcode!\")\n    fmt.Println(\"Welcome aboard!\")"
+    "new_string": "    fmt.Println(\"Hello, MuxCode!\")\n    fmt.Println(\"Welcome aboard!\")"
   }
 }
 EVENTEOF

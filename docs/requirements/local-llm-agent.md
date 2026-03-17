@@ -149,7 +149,7 @@ Remove `MUXCODE_GIT_CLI=local` from config to permanently revert.
 1. `go test ./...` — all unit tests pass (mocked Ollama via httptest)
 2. Start Ollama: `ollama serve && ollama pull qwen2.5-coder:7b`
 3. Set `MUXCODE_GIT_CLI=local` in `.muxcode/config`
-4. Start MUXcode session, send: `muxcode-agent-bus send commit status "Show git status"`
+4. Start MuxCode session, send: `muxcode-agent-bus send commit status "Show git status"`
 5. Verify commit agent reads inbox, calls Ollama, executes `git status`, sends response to edit
 6. Full flow: `muxcode-agent-bus send commit commit "Commit current changes"` — verify git add + commit + response
 7. Kill Ollama, restart session — verify fallback to Claude Code
