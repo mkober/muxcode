@@ -67,7 +67,7 @@ while true; do
   [ "$MAX_WIDTH" -lt 20 ] && MAX_WIDTH=20
 
   BUF=""
-  BUF+="${PURPLE}  watch log${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
+  BUF+="${PURPLE}  Watch${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
   SEP_WIDTH=$(( PANE_WIDTH - 4 ))
   [ "$SEP_WIDTH" -lt 20 ] && SEP_WIDTH=20
   BUF+="  ${DIM}$(printf '%.0s─' $(seq 1 "$SEP_WIDTH"))${RESET}\n"

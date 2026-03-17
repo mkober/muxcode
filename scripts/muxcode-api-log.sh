@@ -66,7 +66,7 @@ method_color() {
 
 while true; do
   BUF=""
-  BUF+="${PURPLE}  api log${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
+  BUF+="${PURPLE}  API${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
   BUF+="  ${DIM}$(printf '%.0s─' {1..46})${RESET}\n"
   BUF+="\n"
 

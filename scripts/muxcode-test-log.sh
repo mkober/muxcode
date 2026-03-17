@@ -36,7 +36,7 @@ format_ts() {
 
 while true; do
   BUF=""
-  BUF+="${PURPLE}  test log${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
+  BUF+="${PURPLE}  Test${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
   BUF+="  ${DIM}$(printf '%.0s─' {1..46})${RESET}\n"
   BUF+="\n"
 

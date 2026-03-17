@@ -425,6 +425,18 @@ _sr="$(echo "$_sr" | sed $'s/#\\[fg=#50fa7b\\]/#[fg=#6272a4, bg=#44475a]\xee\x82
 # Add padding around date and time text
 _sr="$(echo "$_sr" | sed "s/%b/ %b/; s/'%y/'%y /; s/%H:%M/ %H:%M:%S /")"
 tmux set-option -t "$SESSION" status-right "${_sr}"
+# Capitalize window labels in the status bar (internal names stay lowercase for bus routing).
+# Replace #W with a shell command that uppercases the first letter via bash ${var^}.
+_wsf="$(tmux show-options -gv window-status-format 2>/dev/null)"
+_wscf="$(tmux show-options -gv window-status-current-format 2>/dev/null)"
+if [ -n "$_wsf" ]; then
+  tmux set-option -t "$SESSION" window-status-format \
+    "$(echo "$_wsf" | sed 's/#W/#(w=#W; echo ${w^})/')"
+fi
+if [ -n "$_wscf" ]; then
+  tmux set-option -t "$SESSION" window-status-current-format \
+    "$(echo "$_wscf" | sed 's/#W/#(w=#W; echo ${w^})/')"
+fi
 # Replace the Dracula session icon (❐) with hamburger (☰) in status-left
 _sl="$(tmux show-options -gv status-left 2>/dev/null)"
 _sl_with_icon="$(echo "$_sl" | sed 's/❐/☰/')"

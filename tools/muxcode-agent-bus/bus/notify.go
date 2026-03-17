@@ -267,7 +267,7 @@ func notifyDisplayMessage(session, role string) error {
 	msg := notifyText(session, role)
 	target := fmt.Sprintf("%s:%s", session, WindowForRole(role))
 	cmd := exec.Command("tmux", "display-message", "-t", target, "-d", "5000",
-		fmt.Sprintf("\U0001f4ec [%s] %s", role, msg))
+		fmt.Sprintf("\U0001f4ec %s [%s] %s", session, role, msg))
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] display-message for %s failed: %v\n", role, err)
 	}
