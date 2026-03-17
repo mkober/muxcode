@@ -185,6 +185,10 @@ func Run(ctx context.Context, cfg Config) error {
 				continue
 			}
 
+			// Filter out file-change notify events — these are informational
+			// routing from the analyze hook and not actionable tasks for the LLM.
+			msgs = filterFileChangeNotify(msgs, busRole)
+
 			if len(msgs) > 0 {
 				filter.Reset()
 
@@ -421,6 +425,23 @@ sendResponse:
 	}
 
 	return batchSuccess
+}
+
+// filterFileChangeNotify removes "File changed:" notify events from the message
+// batch. These are informational routing from the analyze hook — useful for
+// Claude Code agents that can decide what to do, but wasteful for local LLMs
+// that treat every message as an actionable task. Direct action messages
+// (e.g. action=build) pass through unchanged.
+func filterFileChangeNotify(msgs []Message, role string) []Message {
+	var filtered []Message
+	for _, m := range msgs {
+		if m.Action == "notify" && strings.HasPrefix(m.Payload, "File changed:") {
+			fmt.Fprintf(os.Stderr, "[%s] Skipping file-change notify: %s\n", logTag, m.Payload)
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	return filtered
 }
 
 // looksLikeNarration detects when the LLM generated a planning/narration

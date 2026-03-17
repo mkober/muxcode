@@ -58,6 +58,8 @@
     "allow": [
       "Bash(muxcode-agent-bus *)",
       "Bash(./bin/muxcode-agent-bus *)",
+      "Bash(tmux capture-pane *)",
+      "Bash(tmux display-message *)",
       "Bash(cat /tmp/muxcode-*)",
       "Bash(cat /private/tmp/muxcode-*)",
       "Read(/tmp/muxcode-*)",

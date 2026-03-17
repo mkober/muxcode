@@ -429,6 +429,7 @@ func DefaultConfig() *MuxcodeConfig {
 				CdPrefix: false,
 				Tools: []string{
 					"Bash(tree *)", "Bash(python3*)", "Bash(jq*)",
+					"Bash(tmux capture-pane *)", "Bash(tmux display-message *)",
 				},
 			},
 			"git": {

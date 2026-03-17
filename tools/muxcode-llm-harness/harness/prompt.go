@@ -68,18 +68,14 @@ muxcode-agent-bus memory write "<section>" "<text>"
 		base += `
 
 ### Build Agent Override
-The agent definition mentions "Run muxcode-agent-bus inbox" as step 1 — skip that step entirely.
-Your task has already been delivered above. Start directly with the build sequence.
-Follow the build sequence in the examples below: detect project → lint → build → summarize.
+Start directly with the build sequence: detect project → lint → build → summarize.
 Your final text response IS the reply — do NOT call muxcode-agent-bus send to reply.`
 
 	case "test":
 		base += `
 
 ### Test Agent Override
-The agent definition mentions "Run muxcode-agent-bus inbox" as step 1 — skip that step entirely.
-Your task has already been delivered above. Start directly with the test sequence.
-Follow the test sequence in the examples below: detect test runner → run tests → summarize.
+Start directly with the test sequence: detect test runner → run tests → summarize.
 Your final text response IS the reply — do NOT call muxcode-agent-bus send to reply.
 You MUST call the bash tool to run the actual test commands. NEVER generate test results from memory — always execute the real commands and report their actual output.`
 
@@ -87,9 +83,7 @@ You MUST call the bash tool to run the actual test commands. NEVER generate test
 		base += `
 
 ### Review Agent Override
-The agent definition mentions "Run muxcode-agent-bus inbox" as step 1 — skip that step entirely.
-Your task has already been delivered above. Start directly with the review sequence.
-Follow the review sequence in the examples below: get diff → analyze → log findings → summarize.
+Start directly with the review sequence: get diff → analyze → log findings → summarize.
 Your final text response IS the reply — do NOT call muxcode-agent-bus send to reply.
 Do NOT send a separate notify to edit — the bus auto-CC handles that.`
 	}

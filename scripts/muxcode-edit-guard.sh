@@ -28,38 +28,38 @@ block() {
 case "$CMD" in
   # PR reading → commit agent (git-manager handles pr-read action)
   gh\ pr\ view*|gh\ pr\ checks*|gh\ pr\ diff*|gh\ pr\ status*|gh\ pr\ list*|gh\ api\ repos/*/pulls*)
-    block "BLOCKED: PR read commands are prohibited in the edit window. Delegate to the commit agent. Run this command: muxcode-agent-bus send commit pr-read \"Read the PR on the current branch and report review feedback, CI failures, and suggested fixes\""
+    block "BLOCKED: PR read commands are prohibited in the edit window. Delegate to the commit agent. Run this command: muxcode-agent-bus send commit pr-read \"Read the PR on the current branch and report review feedback, CI failures, and suggested fixes\" --wait"
     ;;
   # PR/release mutations → commit agent
   gh\ pr\ create*|gh\ pr\ merge*|gh\ pr\ close*|gh\ pr\ reopen*|gh\ pr\ edit*|gh\ release*)
-    block "BLOCKED: PR/release mutations are prohibited in the edit window. Delegate to the commit agent. Run: muxcode-agent-bus send commit commit \"<describe the PR/release operation>\""
+    block "BLOCKED: PR/release mutations are prohibited in the edit window. Delegate to the commit agent. Run: muxcode-agent-bus send commit commit \"<describe the PR/release operation>\" --wait"
     ;;
   # Other gh commands → commit agent
   gh\ *)
-    block "BLOCKED: gh commands are prohibited in the edit window. Delegate to the commit agent. Run: muxcode-agent-bus send commit commit \"<describe the operation>\""
+    block "BLOCKED: gh commands are prohibited in the edit window. Delegate to the commit agent. Run: muxcode-agent-bus send commit commit \"<describe the operation>\" --wait"
     ;;
   # All git commands → commit agent (edit window runs no git at all)
   git\ *)
-    block "BLOCKED: All git commands are prohibited in the edit window. Delegate to the commit agent. Run: muxcode-agent-bus send commit commit \"<describe the git operation>\""
+    block "BLOCKED: All git commands are prohibited in the edit window. Delegate to the commit agent. Run: muxcode-agent-bus send commit commit \"<describe the git operation>\" --wait"
     ;;
   # Build commands → build agent
   ./build.sh*|pnpm\ build*|pnpm\ run\ build*|npm\ run\ build*|go\ build*|cargo\ build*|tsc\ *)
-    block "BLOCKED: Build commands are prohibited in the edit window. Delegate to the build agent. Run: muxcode-agent-bus send build build \"Run ./build.sh and report results\""
+    block "BLOCKED: Build commands are prohibited in the edit window. Delegate to the build agent. Run: muxcode-agent-bus send build build \"Run ./build.sh and report results\" --wait"
     ;;
   make\ *|make)
-    block "BLOCKED: Build commands are prohibited in the edit window. Delegate to the build agent. Run: muxcode-agent-bus send build build \"Run ./build.sh and report results\""
+    block "BLOCKED: Build commands are prohibited in the edit window. Delegate to the build agent. Run: muxcode-agent-bus send build build \"Run ./build.sh and report results\" --wait"
     ;;
   # Test commands → test agent
   ./test.sh*|pnpm\ test*|pnpm\ run\ test*|npm\ test*|npm\ run\ test*|jest*|npx\ jest*|npx\ vitest*|pytest*|python\ -m\ pytest*|go\ test*|cargo\ test*)
-    block "BLOCKED: Test commands are prohibited in the edit window. Delegate to the test agent. Run: muxcode-agent-bus send test test \"Run tests and report results\""
+    block "BLOCKED: Test commands are prohibited in the edit window. Delegate to the test agent. Run: muxcode-agent-bus send test test \"Run tests and report results\" --wait"
     ;;
   # CDK/deploy commands → deploy agent
   cdk\ *|npx\ cdk\ *|envName=*cdk\ *|envName=*npx\ cdk\ *|terraform\ *|pulumi\ *|sam\ *)
-    block "BLOCKED: Deploy commands are prohibited in the edit window. Delegate to the deploy agent. Run: muxcode-agent-bus send deploy deploy \"<describe the deploy operation>\""
+    block "BLOCKED: Deploy commands are prohibited in the edit window. Delegate to the deploy agent. Run: muxcode-agent-bus send deploy deploy \"<describe the deploy operation>\" --wait"
     ;;
   # Log tailing commands → watch agent
   aws\ logs*|tail\ -f*|tail\ -F*|kubectl\ logs*|docker\ logs*|docker-compose\ logs*|stern\ *)
-    block "BLOCKED: Log tailing commands are prohibited in the edit window. Delegate to the watch agent. Run: muxcode-agent-bus send watch watch \"<describe what logs to tail>\""
+    block "BLOCKED: Log tailing commands are prohibited in the edit window. Delegate to the watch agent. Run: muxcode-agent-bus send watch watch \"<describe what logs to tail>\" --wait"
     ;;
 esac
 

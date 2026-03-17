@@ -90,8 +90,7 @@ Step through the activity:
 ## Startup
 
 When you first start or receive a "Session started" message:
-1. Check your inbox: `muxcode-agent-bus inbox`
-2. Read shared memory for project context: `muxcode-agent-bus memory context`
+1. Read shared memory for project context: `muxcode-agent-bus memory context`
 3. Announce readiness — you are now monitoring for file-change events
 4. Wait for incoming events (do not poll — the bus will notify you)
 

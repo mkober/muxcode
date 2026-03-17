@@ -50,20 +50,33 @@ muxcode-agent-bus send commit pr-read "Read the PR on the current branch and rep
 
 Do NOT run `gh pr view`, `gh pr diff`, `gh pr checks`, or any `gh` command yourself. Do NOT send PR reads to the review agent — always send to **commit** with action `pr-read`.
 
-### All delegation commands
+### All delegation commands — ALWAYS use `--wait`
 
-- **Read PR**: `muxcode-agent-bus send commit pr-read "Read the PR on the current branch and report review feedback, CI failures, and suggested fixes"`
-- **Build**: `muxcode-agent-bus send build build "Run ./build.sh and report results"`
-- **Test**: `muxcode-agent-bus send test test "Run tests and report results"`
-- **Review**: `muxcode-agent-bus send review review "Review the latest changes on this branch"`
-- **Deploy**: `muxcode-agent-bus send deploy deploy "Run deployment diff and report changes"`
-- **Watch logs**: `muxcode-agent-bus send watch watch "Tail CloudWatch logs for /aws/lambda/my-function and report errors"`
-- **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes"`
-- **PR/Release**: `muxcode-agent-bus send commit commit "Create a PR for the current branch"`
+**Every `send` command MUST include `--wait`** so the response is returned inline. Never use `sleep`, manual `inbox` polling, or `capture-pane` as a substitute for `--wait`.
+
+- **Read PR**: `muxcode-agent-bus send commit pr-read "Read the PR on the current branch and report review feedback, CI failures, and suggested fixes" --wait`
+- **Build**: `muxcode-agent-bus send build build "Run ./build.sh and report results" --wait`
+- **Test**: `muxcode-agent-bus send test test "Run tests and report results" --wait`
+- **Review**: `muxcode-agent-bus send review review "Review the latest changes on this branch" --wait`
+- **Deploy**: `muxcode-agent-bus send deploy deploy "Run deployment diff and report changes" --wait`
+- **Watch logs**: `muxcode-agent-bus send watch watch "Tail CloudWatch logs for /aws/lambda/my-function and report errors" --wait`
+- **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes" --wait`
+- **PR/Release**: `muxcode-agent-bus send commit commit "Create a PR for the current branch" --wait`
 
 ### Decision rule
 
 Before running **any** Bash command, check: does it start with a prohibited prefix from the table above? If yes → delegate via the bus. Never run it directly, even "just to check" or "read-only".
+
+### When `--wait` times out
+
+If `--wait` returns with no response (timeout), automatically diagnose by capturing the target agent's tmux pane:
+
+```bash
+SESSION="${BUS_SESSION:-$(tmux display-message -p '#S')}"
+tmux capture-pane -t "${SESSION}:<role>.1" -p -S -30 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
+```
+
+Check if the agent is idle or active, report what you see, and suggest next steps (e.g. re-send, restart agent). Never use `sleep` loops or manual `inbox` checks — `--wait` handles all polling.
 
 ## Orchestration Role
 As the edit agent, you are the primary orchestrator. After making code changes:
