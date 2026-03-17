@@ -147,7 +147,8 @@ else
     reduce ($mc[0].hooks.PostToolUse // [] | .[] | . as $entry | $entry.hooks[] | {m: $entry.matcher, h: .}) as $x (
       .; add_hook("PostToolUse"; $x.m; $x.h)
     ) |
-    .permissions.allow = (.permissions.allow + ($mc[0].permissions.allow // []) | unique)
+    .permissions.allow = (.permissions.allow + ($mc[0].permissions.allow // []) | unique) |
+    .permissions.deny = ((.permissions.deny // []) + ($mc[0].permissions.deny // []) | unique)
   ' "$CLAUDE_SETTINGS" > "${CLAUDE_SETTINGS}.tmp"
 
   if ! diff -q "${CLAUDE_SETTINGS}.tmp" "$CLAUDE_SETTINGS" >/dev/null 2>&1; then

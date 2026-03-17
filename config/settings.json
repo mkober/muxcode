@@ -66,6 +66,14 @@
       "Read(/private/tmp/muxcode-*)",
       "Write(/tmp/muxcode-*)",
       "Write(/private/tmp/muxcode-*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /)*",
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(cdk destroy*)",
+      "Bash(aws s3 rm*)",
+      "Bash(aws s3 rb*)"
     ]
   }
 }
