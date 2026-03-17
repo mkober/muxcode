@@ -13,7 +13,13 @@ INTERVAL="${1:-5}"
 SESSION="${BUS_SESSION:-${SESSION:-default}}"
 HISTORY_FILE="/tmp/muxcode-bus-${SESSION}/watch-history.jsonl"
 MAX_ENTRIES=25
-# Continuation indent: "             " = 13 chars (matches "  HH:MM:SS  " prefix)
+
+# Padding
+PAD="   "          # 3-space left padding
+CONT_PAD="     "   # 5-space continuation indent (for wrapped lines)
+ENTRY_PAD="         "  # 9-space entry payload indent
+RIGHT_MARGIN=2
+# Continuation indent for wrapped summary lines: PAD + "HH:MM:SS" + "  " = 3+8+2 = 13
 CONT_INDENT=13
 
 # Dracula colors
@@ -63,27 +69,27 @@ word_wrap() {
 while true; do
   # Detect pane width dynamically
   PANE_WIDTH=$(tput cols 2>/dev/null || echo 80)
-  MAX_WIDTH=$(( PANE_WIDTH - CONT_INDENT - 1 ))
+  MAX_WIDTH=$(( PANE_WIDTH - CONT_INDENT - RIGHT_MARGIN ))
   [ "$MAX_WIDTH" -lt 20 ] && MAX_WIDTH=20
+  SEP_WIDTH=$(( PANE_WIDTH - ${#PAD} - RIGHT_MARGIN ))
+  [ "$SEP_WIDTH" -lt 10 ] && SEP_WIDTH=10
 
   BUF=""
-  BUF+="${PURPLE}  Watch${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
-  SEP_WIDTH=$(( PANE_WIDTH - 4 ))
-  [ "$SEP_WIDTH" -lt 20 ] && SEP_WIDTH=20
-  BUF+="  ${DIM}$(printf '%.0s─' $(seq 1 "$SEP_WIDTH"))${RESET}\n"
+  BUF+="${PAD}${PURPLE}Watch${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
+  BUF+="${PAD}${DIM}$(printf '%.0s─' $(seq 1 "$SEP_WIDTH"))${RESET}\n"
   BUF+="\n"
 
   if [ ! -f "$HISTORY_FILE" ]; then
-    BUF+="  ${DIM}no watch history yet${RESET}\n"
-    BUF+="  ${DIM}waiting for watch agent...${RESET}\n"
+    BUF+="${PAD}${DIM}no watch history yet${RESET}\n"
+    BUF+="${PAD}${DIM}waiting for watch agent...${RESET}\n"
   else
     ENTRY_COUNT=$(wc -l < "$HISTORY_FILE" 2>/dev/null || echo 0)
     ENTRY_COUNT=$(echo "$ENTRY_COUNT" | tr -d ' ')
 
     if [ "$ENTRY_COUNT" -eq 0 ]; then
-      BUF+="  ${DIM}no watch entries yet${RESET}\n"
+      BUF+="${PAD}${DIM}no watch entries yet${RESET}\n"
     else
-      BUF+="  ${DIM}${ENTRY_COUNT} entries${RESET}\n\n"
+      BUF+="${PAD}${DIM}${ENTRY_COUNT} entries${RESET}\n\n"
 
       # Show last N entries (process substitution keeps loop in main shell)
       while IFS= read -r line; do
@@ -113,10 +119,10 @@ while true; do
           FIRST=1
           while IFS= read -r wline; do
             if [ "$FIRST" -eq 1 ]; then
-              BUF+="  ${DIM}${TIME:-??:??:??}${RESET}  ${COLOR}${wline}${RESET}\n"
+              BUF+="${PAD}${DIM}${TIME:-??:??:??}${RESET}  ${COLOR}${wline}${RESET}\n"
               FIRST=0
             else
-              BUF+="             ${COLOR}${wline}${RESET}\n"
+              BUF+="$(printf '%*s' "$CONT_INDENT" '')${COLOR}${wline}${RESET}\n"
             fi
           done <<< "$(word_wrap "$SUMMARY" "$MAX_WIDTH")"
           BUF+="\n"

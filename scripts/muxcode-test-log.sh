@@ -20,6 +20,31 @@ YELLOW='\033[38;5;228m'
 DIM='\033[2m'
 RESET='\033[0m'
 
+# Padding
+PAD="   "          # 3-space left padding
+CONT_PAD="     "   # 5-space continuation indent (for wrapped lines)
+ENTRY_PAD="         "  # 9-space entry payload indent
+RIGHT_MARGIN=2
+
+# Word-wrap text to a given width, returning lines
+word_wrap() {
+  local text="$1"
+  local width="$2"
+  local line="" word=""
+
+  for word in $text; do
+    if [ -z "$line" ]; then
+      line="$word"
+    elif [ $(( ${#line} + 1 + ${#word} )) -le "$width" ]; then
+      line="$line $word"
+    else
+      echo "$line"
+      line="$word"
+    fi
+  done
+  [ -n "$line" ] && echo "$line"
+}
+
 # Format epoch timestamp to "Mon DD HH:MM:SS"
 format_ts() {
   local ts="$1"
@@ -35,13 +60,22 @@ format_ts() {
 }
 
 while true; do
+  # Detect pane width dynamically
+  PANE_WIDTH=$(tput cols 2>/dev/null || echo 80)
+  CONTENT_WIDTH=$(( PANE_WIDTH - ${#PAD} - RIGHT_MARGIN ))
+  [ "$CONTENT_WIDTH" -lt 20 ] && CONTENT_WIDTH=20
+  ENTRY_CONTENT_WIDTH=$(( PANE_WIDTH - ${#ENTRY_PAD} - RIGHT_MARGIN ))
+  [ "$ENTRY_CONTENT_WIDTH" -lt 20 ] && ENTRY_CONTENT_WIDTH=20
+  SEP_WIDTH=$(( PANE_WIDTH - ${#PAD} - RIGHT_MARGIN ))
+  [ "$SEP_WIDTH" -lt 10 ] && SEP_WIDTH=10
+
   BUF=""
-  BUF+="${PURPLE}  Test${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
-  BUF+="  ${DIM}$(printf '%.0s─' {1..46})${RESET}\n"
+  BUF+="${PAD}${PURPLE}Test${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
+  BUF+="${PAD}${DIM}$(printf '%.0s─' $(seq 1 "$SEP_WIDTH"))${RESET}\n"
   BUF+="\n"
 
   if [ ! -f "$HISTORY_FILE" ] || [ ! -s "$HISTORY_FILE" ]; then
-    BUF+="  ${DIM}no tests yet${RESET}\n"
+    BUF+="${PAD}${DIM}no tests yet${RESET}\n"
     printf '\033[2J\033[H'
     echo -ne "$BUF"
     sleep "$INTERVAL"
@@ -55,11 +89,11 @@ while true; do
     FAIL=$(( TOTAL - PASS ))
 
     # Summary line
-    BUF+="  ${DIM}total${RESET} ${CYAN}${TOTAL}${RESET}  ${DIM}pass${RESET} ${GREEN}${PASS}${RESET}  ${DIM}fail${RESET} ${RED}${FAIL}${RESET}\n"
+    BUF+="${PAD}${DIM}total${RESET} ${CYAN}${TOTAL}${RESET}  ${DIM}pass${RESET} ${GREEN}${PASS}${RESET}  ${DIM}fail${RESET} ${RED}${FAIL}${RESET}\n"
     BUF+="\n"
 
     # Recent tests (last 15)
-    BUF+="  ${CYAN}recent tests${RESET}\n"
+    BUF+="${PAD}${CYAN}recent tests${RESET}\n"
     ENTRY_OFFSET=$(( TOTAL > 15 ? TOTAL - 15 : 0 ))
     ENTRIES=$(jq -s '.[-15:][] | @json' "$HISTORY_FILE" 2>/dev/null)
     TEST_NUM=$ENTRY_OFFSET
@@ -82,14 +116,22 @@ while true; do
         NUM_LABEL=$(printf '#%-3s' "$TEST_NUM")
 
         if [ "$ec" = "0" ]; then
-          BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}OK${RESET}    ${cmd}\n"
+          BUF+="${CONT_PAD}${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}OK${RESET}    ${cmd}\n"
         else
-          BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${RED}FAIL${RESET}  ${cmd}  ${DIM}exit ${ec}${RESET}\n"
+          BUF+="${CONT_PAD}${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${RED}FAIL${RESET}  ${cmd}  ${DIM}exit ${ec}${RESET}\n"
         fi
 
         # Show description on second line if present
         if [ -n "$desc" ]; then
-          BUF+="         ${DIM}↳ ${desc}${RESET}\n"
+          FIRST_WRAP=1
+          while IFS= read -r wline; do
+            if [ "$FIRST_WRAP" -eq 1 ]; then
+              BUF+="${ENTRY_PAD}${DIM}↳ ${wline}${RESET}\n"
+              FIRST_WRAP=0
+            else
+              BUF+="${ENTRY_PAD}${DIM}  ${wline}${RESET}\n"
+            fi
+          done <<< "$(word_wrap "$desc" "$ENTRY_CONTENT_WIDTH")"
         fi
       done <<< "$ENTRIES"
     fi
@@ -116,11 +158,11 @@ while true; do
 
     if [ -n "$DISPLAY_OUTPUT" ] || [ "$LAST_EC" != "0" ]; then
       if [ "$LAST_EC" = "0" ]; then
-        BUF+="  ${GREEN}⏺ Tests passed${RESET}  ${DIM}${LAST_TIME}${RESET}\n\n"
+        BUF+="${PAD}${GREEN}⏺ Tests passed${RESET}  ${DIM}${LAST_TIME}${RESET}\n\n"
       else
         LAST_CMD=$(jq -s -r '.[-1].command // ""' "$HISTORY_FILE" 2>/dev/null)
-        BUF+="  ${RED}⏺ Tests failed${RESET}  ${DIM}${LAST_TIME}${RESET}\n"
-        BUF+="    ${DIM}cmd${RESET}  ${LAST_CMD}  ${DIM}exit ${LAST_EC}${RESET}\n\n"
+        BUF+="${PAD}${RED}⏺ Tests failed${RESET}  ${DIM}${LAST_TIME}${RESET}\n"
+        BUF+="${CONT_PAD}${DIM}cmd${RESET}  ${LAST_CMD}  ${DIM}exit ${LAST_EC}${RESET}\n\n"
       fi
       if [ -n "$DISPLAY_OUTPUT" ]; then
         LINE_COUNT=0
@@ -131,23 +173,47 @@ while true; do
             "Exit code:"*) continue ;;
           esac
           if [ "$LAST_EC" != "0" ]; then
-            BUF+="    ${RED}- ${oline}${RESET}\n"
+            FIRST_WRAP=1
+            while IFS= read -r wline; do
+              if [ "$FIRST_WRAP" -eq 1 ]; then
+                BUF+="${CONT_PAD}${RED}- ${wline}${RESET}\n"
+                FIRST_WRAP=0
+              else
+                BUF+="${CONT_PAD}${RED}  ${wline}${RESET}\n"
+              fi
+            done <<< "$(word_wrap "$oline" "$CONTENT_WIDTH")"
           else
             if [ "$LINE_COUNT" -eq 0 ]; then
-              BUF+="  ${CYAN}${oline}${RESET}\n"
+              FIRST_WRAP=1
+              while IFS= read -r wline; do
+                if [ "$FIRST_WRAP" -eq 1 ]; then
+                  BUF+="${PAD}${CYAN}${wline}${RESET}\n"
+                  FIRST_WRAP=0
+                else
+                  BUF+="${PAD}${CYAN}${wline}${RESET}\n"
+                fi
+              done <<< "$(word_wrap "$oline" "$CONTENT_WIDTH")"
             else
-              BUF+="    ${DIM}- ${oline}${RESET}\n"
+              FIRST_WRAP=1
+              while IFS= read -r wline; do
+                if [ "$FIRST_WRAP" -eq 1 ]; then
+                  BUF+="${CONT_PAD}${DIM}- ${wline}${RESET}\n"
+                  FIRST_WRAP=0
+                else
+                  BUF+="${CONT_PAD}${DIM}  ${wline}${RESET}\n"
+                fi
+              done <<< "$(word_wrap "$oline" "$CONTENT_WIDTH")"
             fi
           fi
           LINE_COUNT=$(( LINE_COUNT + 1 ))
           [ "$LINE_COUNT" -ge 20 ] && break
         done <<< "$DISPLAY_OUTPUT"
         if [ "$LINE_COUNT" -eq 0 ] && [ "$LAST_EC" != "0" ]; then
-          BUF+="    ${DIM}- No error details captured${RESET}\n"
+          BUF+="${CONT_PAD}${DIM}- No error details captured${RESET}\n"
         fi
       fi
       if [ "$LAST_EC" = "0" ]; then
-        BUF+="    ${DIM}- All tests passed${RESET}\n"
+        BUF+="${CONT_PAD}${DIM}- All tests passed${RESET}\n"
       fi
       BUF+="\n"
     fi
@@ -164,8 +230,8 @@ while true; do
         PF_DISPLAY="${PF_ERRORS:-$PF_OUTPUT}"
         if [ -n "$PF_TS" ]; then
           PF_TIME=$(format_ts "$PF_TS")
-          BUF+="  ${YELLOW}⏺ Last errors${RESET}  ${DIM}${PF_TIME}${RESET}\n"
-          BUF+="    ${DIM}cmd${RESET}  ${PF_CMD}  ${DIM}exit ${PF_EC}${RESET}\n"
+          BUF+="${PAD}${YELLOW}⏺ Last errors${RESET}  ${DIM}${PF_TIME}${RESET}\n"
+          BUF+="${CONT_PAD}${DIM}cmd${RESET}  ${PF_CMD}  ${DIM}exit ${PF_EC}${RESET}\n"
           if [ -n "$PF_DISPLAY" ]; then
             PF_LINE_COUNT=0
             while IFS= read -r oline; do
@@ -174,7 +240,15 @@ while true; do
               case "$oline" in
                 "Exit code:"*) continue ;;
               esac
-              BUF+="    ${YELLOW}- ${oline}${RESET}\n"
+              FIRST_WRAP=1
+              while IFS= read -r wline; do
+                if [ "$FIRST_WRAP" -eq 1 ]; then
+                  BUF+="${CONT_PAD}${YELLOW}- ${wline}${RESET}\n"
+                  FIRST_WRAP=0
+                else
+                  BUF+="${CONT_PAD}${YELLOW}  ${wline}${RESET}\n"
+                fi
+              done <<< "$(word_wrap "$oline" "$CONTENT_WIDTH")"
               PF_LINE_COUNT=$(( PF_LINE_COUNT + 1 ))
               [ "$PF_LINE_COUNT" -ge 20 ] && break
             done <<< "$PF_DISPLAY"
@@ -263,10 +337,10 @@ if last_ec == "0" and failed > 0:
       esac
     done <<< "$PARSED"
 
-    BUF+="  ${DIM}total${RESET} ${CYAN}${TOTAL}${RESET}  ${DIM}pass${RESET} ${GREEN}${PASS}${RESET}  ${DIM}fail${RESET} ${RED}${FAIL}${RESET}\n"
+    BUF+="${PAD}${DIM}total${RESET} ${CYAN}${TOTAL}${RESET}  ${DIM}pass${RESET} ${GREEN}${PASS}${RESET}  ${DIM}fail${RESET} ${RED}${FAIL}${RESET}\n"
     BUF+="\n"
 
-    BUF+="  ${CYAN}recent tests${RESET}\n"
+    BUF+="${PAD}${CYAN}recent tests${RESET}\n"
     while IFS= read -r line; do
       case "$line" in
         ENTRY=*)
@@ -275,12 +349,20 @@ if last_ec == "0" and failed > 0:
           TIME=$(format_ts "$ts")
           NUM_LABEL=$(printf '#%-3s' "$num")
           if [ "$status" = "OK" ]; then
-            BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}OK${RESET}    ${cmd}\n"
+            BUF+="${CONT_PAD}${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}OK${RESET}    ${cmd}\n"
           else
-            BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${RED}FAIL${RESET}  ${cmd}  ${DIM}exit ${ec}${RESET}\n"
+            BUF+="${CONT_PAD}${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${RED}FAIL${RESET}  ${cmd}  ${DIM}exit ${ec}${RESET}\n"
           fi
           if [ -n "$desc" ]; then
-            BUF+="         ${DIM}↳ ${desc}${RESET}\n"
+            FIRST_WRAP=1
+            while IFS= read -r wline; do
+              if [ "$FIRST_WRAP" -eq 1 ]; then
+                BUF+="${ENTRY_PAD}${DIM}↳ ${wline}${RESET}\n"
+                FIRST_WRAP=0
+              else
+                BUF+="${ENTRY_PAD}${DIM}  ${wline}${RESET}\n"
+              fi
+            done <<< "$(word_wrap "$desc" "$ENTRY_CONTENT_WIDTH")"
           fi
           ;;
       esac
@@ -306,20 +388,44 @@ if last_ec == "0" and failed > 0:
               PY_LAST_TIME=$(format_ts "$PY_LAST_TS")
             fi
             if [ "$PY_LAST_EC" = "0" ]; then
-              BUF+="  ${GREEN}⏺ Tests passed${RESET}  ${DIM}${PY_LAST_TIME}${RESET}\n\n"
+              BUF+="${PAD}${GREEN}⏺ Tests passed${RESET}  ${DIM}${PY_LAST_TIME}${RESET}\n\n"
             else
-              BUF+="  ${RED}⏺ Tests failed${RESET}  ${DIM}${PY_LAST_TIME}${RESET}\n"
-              BUF+="    ${DIM}cmd${RESET}  ${PY_LAST_CMD}  ${DIM}exit ${PY_LAST_EC}${RESET}\n\n"
+              BUF+="${PAD}${RED}⏺ Tests failed${RESET}  ${DIM}${PY_LAST_TIME}${RESET}\n"
+              BUF+="${CONT_PAD}${DIM}cmd${RESET}  ${PY_LAST_CMD}  ${DIM}exit ${PY_LAST_EC}${RESET}\n\n"
             fi
           fi
           OL="${line#LAST_DISPLAY_LINE=}"
           if [ "$PY_LAST_EC" != "0" ]; then
-            BUF+="    ${RED}- ${OL}${RESET}\n"
+            FIRST_WRAP=1
+            while IFS= read -r wline; do
+              if [ "$FIRST_WRAP" -eq 1 ]; then
+                BUF+="${CONT_PAD}${RED}- ${wline}${RESET}\n"
+                FIRST_WRAP=0
+              else
+                BUF+="${CONT_PAD}${RED}  ${wline}${RESET}\n"
+              fi
+            done <<< "$(word_wrap "$OL" "$CONTENT_WIDTH")"
           else
             if [ "$PY_LINE_COUNT" -eq 0 ]; then
-              BUF+="  ${CYAN}${OL}${RESET}\n"
+              FIRST_WRAP=1
+              while IFS= read -r wline; do
+                if [ "$FIRST_WRAP" -eq 1 ]; then
+                  BUF+="${PAD}${CYAN}${wline}${RESET}\n"
+                  FIRST_WRAP=0
+                else
+                  BUF+="${PAD}${CYAN}${wline}${RESET}\n"
+                fi
+              done <<< "$(word_wrap "$OL" "$CONTENT_WIDTH")"
             else
-              BUF+="    ${DIM}- ${OL}${RESET}\n"
+              FIRST_WRAP=1
+              while IFS= read -r wline; do
+                if [ "$FIRST_WRAP" -eq 1 ]; then
+                  BUF+="${CONT_PAD}${DIM}- ${wline}${RESET}\n"
+                  FIRST_WRAP=0
+                else
+                  BUF+="${CONT_PAD}${DIM}  ${wline}${RESET}\n"
+                fi
+              done <<< "$(word_wrap "$OL" "$CONTENT_WIDTH")"
             fi
           fi
           PY_LINE_COUNT=$(( PY_LINE_COUNT + 1 ))
@@ -332,13 +438,13 @@ if last_ec == "0" and failed > 0:
       if [ -n "$PY_LAST_TS" ] && [ "$PY_LAST_TS" != "0" ]; then
         PY_LAST_TIME=$(format_ts "$PY_LAST_TS")
       fi
-      BUF+="  ${RED}⏺ Tests failed${RESET}  ${DIM}${PY_LAST_TIME}${RESET}\n"
-      BUF+="    ${DIM}cmd${RESET}  ${PY_LAST_CMD}  ${DIM}exit ${PY_LAST_EC}${RESET}\n"
-      BUF+="    ${DIM}- No error details captured${RESET}\n"
+      BUF+="${PAD}${RED}⏺ Tests failed${RESET}  ${DIM}${PY_LAST_TIME}${RESET}\n"
+      BUF+="${CONT_PAD}${DIM}cmd${RESET}  ${PY_LAST_CMD}  ${DIM}exit ${PY_LAST_EC}${RESET}\n"
+      BUF+="${CONT_PAD}${DIM}- No error details captured${RESET}\n"
       HAS_DISPLAY=1
     fi
     if [ "$HAS_DISPLAY" -eq 1 ] && [ "$PY_LAST_EC" = "0" ]; then
-      BUF+="    ${DIM}- All tests passed${RESET}\n"
+      BUF+="${CONT_PAD}${DIM}- All tests passed${RESET}\n"
     fi
     if [ "$HAS_DISPLAY" -eq 1 ]; then
       BUF+="\n"
@@ -355,18 +461,26 @@ if last_ec == "0" and failed > 0:
           if [ "$PF_HAS_LINES" -eq 0 ]; then
             PF_HAS_LINES=1
             PF_TIME=$(format_ts "$PF_TS")
-            BUF+="  ${YELLOW}⏺ Last errors${RESET}  ${DIM}${PF_TIME}${RESET}\n"
-            BUF+="    ${DIM}cmd${RESET}  ${PF_CMD}  ${DIM}exit ${PF_EC}${RESET}\n"
+            BUF+="${PAD}${YELLOW}⏺ Last errors${RESET}  ${DIM}${PF_TIME}${RESET}\n"
+            BUF+="${CONT_PAD}${DIM}cmd${RESET}  ${PF_CMD}  ${DIM}exit ${PF_EC}${RESET}\n"
           fi
           OL="${line#PREV_FAIL_LINE=}"
-          BUF+="    ${YELLOW}- ${OL}${RESET}\n"
+          FIRST_WRAP=1
+          while IFS= read -r wline; do
+            if [ "$FIRST_WRAP" -eq 1 ]; then
+              BUF+="${CONT_PAD}${YELLOW}- ${wline}${RESET}\n"
+              FIRST_WRAP=0
+            else
+              BUF+="${CONT_PAD}${YELLOW}  ${wline}${RESET}\n"
+            fi
+          done <<< "$(word_wrap "$OL" "$CONTENT_WIDTH")"
           ;;
       esac
     done <<< "$PARSED"
     if [ -n "$PF_TS" ] && [ "$PF_HAS_LINES" -eq 0 ]; then
       PF_TIME=$(format_ts "$PF_TS")
-      BUF+="  ${YELLOW}⏺ Last errors${RESET}  ${DIM}${PF_TIME}${RESET}\n"
-      BUF+="    ${DIM}cmd${RESET}  ${PF_CMD}  ${DIM}exit ${PF_EC}${RESET}\n"
+      BUF+="${PAD}${YELLOW}⏺ Last errors${RESET}  ${DIM}${PF_TIME}${RESET}\n"
+      BUF+="${CONT_PAD}${DIM}cmd${RESET}  ${PF_CMD}  ${DIM}exit ${PF_EC}${RESET}\n"
     fi
     if [ -n "$PF_TS" ]; then
       BUF+="\n"

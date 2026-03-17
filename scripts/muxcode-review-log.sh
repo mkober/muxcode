@@ -20,6 +20,31 @@ YELLOW='\033[38;5;228m'
 DIM='\033[2m'
 RESET='\033[0m'
 
+# Padding
+PAD="   "          # 3-space left padding
+CONT_PAD="     "   # 5-space continuation indent (for wrapped lines)
+ENTRY_PAD="         "  # 9-space entry payload indent
+RIGHT_MARGIN=2
+
+# Word-wrap text to a given width, returning lines
+word_wrap() {
+  local text="$1"
+  local width="$2"
+  local line="" word=""
+
+  for word in $text; do
+    if [ -z "$line" ]; then
+      line="$word"
+    elif [ $(( ${#line} + 1 + ${#word} )) -le "$width" ]; then
+      line="$line $word"
+    else
+      echo "$line"
+      line="$word"
+    fi
+  done
+  [ -n "$line" ] && echo "$line"
+}
+
 # Format epoch timestamp to "Mon DD HH:MM:SS"
 format_ts() {
   local ts="$1"
@@ -52,13 +77,22 @@ extract_counts() {
 }
 
 while true; do
+  # Detect pane width dynamically
+  PANE_WIDTH=$(tput cols 2>/dev/null || echo 80)
+  CONTENT_WIDTH=$(( PANE_WIDTH - ${#PAD} - RIGHT_MARGIN ))
+  [ "$CONTENT_WIDTH" -lt 20 ] && CONTENT_WIDTH=20
+  ENTRY_CONTENT_WIDTH=$(( PANE_WIDTH - ${#ENTRY_PAD} - RIGHT_MARGIN ))
+  [ "$ENTRY_CONTENT_WIDTH" -lt 20 ] && ENTRY_CONTENT_WIDTH=20
+  SEP_WIDTH=$(( PANE_WIDTH - ${#PAD} - RIGHT_MARGIN ))
+  [ "$SEP_WIDTH" -lt 10 ] && SEP_WIDTH=10
+
   BUF=""
-  BUF+="${PURPLE}  Review${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
-  BUF+="  ${DIM}$(printf '%.0s─' {1..46})${RESET}\n"
+  BUF+="${PAD}${PURPLE}Review${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
+  BUF+="${PAD}${DIM}$(printf '%.0s─' $(seq 1 "$SEP_WIDTH"))${RESET}\n"
   BUF+="\n"
 
   if [ ! -f "$HISTORY_FILE" ] || [ ! -s "$HISTORY_FILE" ]; then
-    BUF+="  ${DIM}no reviews yet${RESET}\n"
+    BUF+="${PAD}${DIM}no reviews yet${RESET}\n"
     printf '\033[2J\033[H'
     echo -ne "$BUF"
     sleep "$INTERVAL"
@@ -72,11 +106,11 @@ while true; do
     ISSUES=$(( TOTAL - CLEAN ))
 
     # Summary line
-    BUF+="  ${DIM}total${RESET} ${CYAN}${TOTAL}${RESET}  ${DIM}clean${RESET} ${GREEN}${CLEAN}${RESET}  ${DIM}issues${RESET} ${RED}${ISSUES}${RESET}\n"
+    BUF+="${PAD}${DIM}total${RESET} ${CYAN}${TOTAL}${RESET}  ${DIM}clean${RESET} ${GREEN}${CLEAN}${RESET}  ${DIM}issues${RESET} ${RED}${ISSUES}${RESET}\n"
     BUF+="\n"
 
     # Recent reviews (last 15)
-    BUF+="  ${CYAN}recent reviews${RESET}\n"
+    BUF+="${PAD}${CYAN}recent reviews${RESET}\n"
     ENTRY_OFFSET=$(( TOTAL > 15 ? TOTAL - 15 : 0 ))
     ENTRIES=$(jq -s '.[-15:][] | @json' "$HISTORY_FILE" 2>/dev/null)
     REVIEW_NUM=$ENTRY_OFFSET
@@ -100,15 +134,33 @@ while true; do
         NUM_LABEL=$(printf '#%-3s' "$REVIEW_NUM")
 
         if [ "$ec" = "0" ]; then
-          BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}CLEAN${RESET}   ${DISPLAY_SUMMARY}\n"
+          WRAPPED_SUMMARY=$(word_wrap "${DISPLAY_SUMMARY}" "$ENTRY_CONTENT_WIDTH")
+          FIRST_WRAP=1
+          while IFS= read -r wline; do
+            if [ "$FIRST_WRAP" -eq 1 ]; then
+              BUF+="${CONT_PAD}${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}CLEAN${RESET}   ${wline}\n"
+              FIRST_WRAP=0
+            else
+              BUF+="${ENTRY_PAD}${wline}\n"
+            fi
+          done <<< "$WRAPPED_SUMMARY"
         else
-          BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${RED}ISSUES${RESET}  ${DISPLAY_SUMMARY}\n"
+          WRAPPED_SUMMARY=$(word_wrap "${DISPLAY_SUMMARY}" "$ENTRY_CONTENT_WIDTH")
+          FIRST_WRAP=1
+          while IFS= read -r wline; do
+            if [ "$FIRST_WRAP" -eq 1 ]; then
+              BUF+="${CONT_PAD}${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${RED}ISSUES${RESET}  ${wline}\n"
+              FIRST_WRAP=0
+            else
+              BUF+="${ENTRY_PAD}${wline}\n"
+            fi
+          done <<< "$WRAPPED_SUMMARY"
         fi
 
         # Extract and show issue counts on second line
         read -r mf sf ni <<< "$(extract_counts "$summary")"
         if [ "$mf" -gt 0 ] || [ "$sf" -gt 0 ] || [ "$ni" -gt 0 ]; then
-          BUF+="         ${DIM}↳ must-fix: ${RESET}${RED}${mf}${RESET}${DIM}  should-fix: ${RESET}${YELLOW}${sf}${RESET}${DIM}  nits: ${RESET}${CYAN}${ni}${RESET}\n"
+          BUF+="${ENTRY_PAD}${DIM}↳ must-fix: ${RESET}${RED}${mf}${RESET}${DIM}  should-fix: ${RESET}${YELLOW}${sf}${RESET}${DIM}  nits: ${RESET}${CYAN}${ni}${RESET}\n"
         fi
       done <<< "$ENTRIES"
     fi
@@ -122,28 +174,64 @@ while true; do
 
     if [ -n "$LAST_OUTPUT" ]; then
       if [ "$LAST_EC" = "0" ]; then
-        BUF+="  ${GREEN}⏺ Review clean:${RESET}\n\n"
+        BUF+="${PAD}${GREEN}⏺ Review clean:${RESET}\n\n"
       else
-        BUF+="  ${RED}⏺ Review found issues:${RESET}\n\n"
+        BUF+="${PAD}${RED}⏺ Review found issues:${RESET}\n\n"
       fi
       FIRST_LINE=1
       while IFS= read -r oline; do
         oline=$(printf '%s' "$oline" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/^[[:space:]]*//')
         [ -z "$oline" ] && continue
         if [ "$FIRST_LINE" -eq 1 ]; then
-          BUF+="  ${CYAN}${oline}${RESET}\n"
+          WRAPPED_LINE=$(word_wrap "${oline}" "$CONTENT_WIDTH")
+          FIRST_WRAP=1
+          while IFS= read -r wline; do
+            if [ "$FIRST_WRAP" -eq 1 ]; then
+              BUF+="${PAD}${CYAN}${wline}${RESET}\n"
+              FIRST_WRAP=0
+            else
+              BUF+="${CONT_PAD}${CYAN}${wline}${RESET}\n"
+            fi
+          done <<< "$WRAPPED_LINE"
           FIRST_LINE=0
         else
-          BUF+="    ${DIM}- ${oline}${RESET}\n"
+          WRAPPED_LINE=$(word_wrap "${oline}" "$CONTENT_WIDTH")
+          FIRST_WRAP=1
+          while IFS= read -r wline; do
+            if [ "$FIRST_WRAP" -eq 1 ]; then
+              BUF+="${CONT_PAD}${DIM}- ${wline}${RESET}\n"
+              FIRST_WRAP=0
+            else
+              BUF+="${CONT_PAD}${DIM}  ${wline}${RESET}\n"
+            fi
+          done <<< "$WRAPPED_LINE"
         fi
       done <<< "$LAST_OUTPUT"
       BUF+="\n"
     elif [ -n "$LAST_SUMMARY" ]; then
       # Show summary as detail when no output captured
       if [ "$LAST_EC" = "0" ]; then
-        BUF+="  ${GREEN}⏺ Last review: ${LAST_SUMMARY}${RESET}\n"
+        WRAPPED_LINE=$(word_wrap "Last review: ${LAST_SUMMARY}" "$CONTENT_WIDTH")
+        FIRST_WRAP=1
+        while IFS= read -r wline; do
+          if [ "$FIRST_WRAP" -eq 1 ]; then
+            BUF+="${PAD}${GREEN}⏺ ${wline}${RESET}\n"
+            FIRST_WRAP=0
+          else
+            BUF+="${CONT_PAD}${GREEN}${wline}${RESET}\n"
+          fi
+        done <<< "$WRAPPED_LINE"
       else
-        BUF+="  ${RED}⏺ Last review: ${LAST_SUMMARY}${RESET}\n"
+        WRAPPED_LINE=$(word_wrap "Last review: ${LAST_SUMMARY}" "$CONTENT_WIDTH")
+        FIRST_WRAP=1
+        while IFS= read -r wline; do
+          if [ "$FIRST_WRAP" -eq 1 ]; then
+            BUF+="${PAD}${RED}⏺ ${wline}${RESET}\n"
+            FIRST_WRAP=0
+          else
+            BUF+="${CONT_PAD}${RED}${wline}${RESET}\n"
+          fi
+        done <<< "$WRAPPED_LINE"
       fi
     fi
 
@@ -207,10 +295,10 @@ elif last_summary:
       esac
     done <<< "$PARSED"
 
-    BUF+="  ${DIM}total${RESET} ${CYAN}${TOTAL}${RESET}  ${DIM}clean${RESET} ${GREEN}${CLEAN}${RESET}  ${DIM}issues${RESET} ${RED}${ISSUES}${RESET}\n"
+    BUF+="${PAD}${DIM}total${RESET} ${CYAN}${TOTAL}${RESET}  ${DIM}clean${RESET} ${GREEN}${CLEAN}${RESET}  ${DIM}issues${RESET} ${RED}${ISSUES}${RESET}\n"
     BUF+="\n"
 
-    BUF+="  ${CYAN}recent reviews${RESET}\n"
+    BUF+="${PAD}${CYAN}recent reviews${RESET}\n"
     while IFS= read -r line; do
       case "$line" in
         ENTRY=*)
@@ -219,12 +307,30 @@ elif last_summary:
           TIME=$(format_ts "$ts")
           NUM_LABEL=$(printf '#%-3s' "$num")
           if [ "$status" = "CLEAN" ]; then
-            BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}CLEAN${RESET}   ${display}\n"
+            WRAPPED_DISPLAY=$(word_wrap "${display}" "$ENTRY_CONTENT_WIDTH")
+            FIRST_WRAP=1
+            while IFS= read -r wline; do
+              if [ "$FIRST_WRAP" -eq 1 ]; then
+                BUF+="${CONT_PAD}${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}CLEAN${RESET}   ${wline}\n"
+                FIRST_WRAP=0
+              else
+                BUF+="${ENTRY_PAD}${wline}\n"
+              fi
+            done <<< "$WRAPPED_DISPLAY"
           else
-            BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${RED}ISSUES${RESET}  ${display}\n"
+            WRAPPED_DISPLAY=$(word_wrap "${display}" "$ENTRY_CONTENT_WIDTH")
+            FIRST_WRAP=1
+            while IFS= read -r wline; do
+              if [ "$FIRST_WRAP" -eq 1 ]; then
+                BUF+="${CONT_PAD}${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${RED}ISSUES${RESET}  ${wline}\n"
+                FIRST_WRAP=0
+              else
+                BUF+="${ENTRY_PAD}${wline}\n"
+              fi
+            done <<< "$WRAPPED_DISPLAY"
           fi
           if [ "$mf" != "0" ] || [ "$sf" != "0" ] || [ "$ni" != "0" ]; then
-            BUF+="         ${DIM}↳ must-fix: ${RESET}${RED}${mf}${RESET}${DIM}  should-fix: ${RESET}${YELLOW}${sf}${RESET}${DIM}  nits: ${RESET}${CYAN}${ni}${RESET}\n"
+            BUF+="${ENTRY_PAD}${DIM}↳ must-fix: ${RESET}${RED}${mf}${RESET}${DIM}  should-fix: ${RESET}${YELLOW}${sf}${RESET}${DIM}  nits: ${RESET}${CYAN}${ni}${RESET}\n"
           fi
           ;;
       esac
@@ -244,17 +350,35 @@ elif last_summary:
           if [ "$HAS_OUTPUT" -eq 0 ]; then
             HAS_OUTPUT=1
             if [ "$PY_LAST_EC" = "0" ]; then
-              BUF+="  ${GREEN}⏺ Review clean:${RESET}\n\n"
+              BUF+="${PAD}${GREEN}⏺ Review clean:${RESET}\n\n"
             else
-              BUF+="  ${RED}⏺ Review found issues:${RESET}\n\n"
+              BUF+="${PAD}${RED}⏺ Review found issues:${RESET}\n\n"
             fi
           fi
           OL="${line#LAST_OUTPUT_LINE=}"
           if [ "$PY_FIRST_LINE" -eq 1 ]; then
-            BUF+="  ${CYAN}${OL}${RESET}\n"
+            WRAPPED_LINE=$(word_wrap "${OL}" "$CONTENT_WIDTH")
+            FIRST_WRAP=1
+            while IFS= read -r wline; do
+              if [ "$FIRST_WRAP" -eq 1 ]; then
+                BUF+="${PAD}${CYAN}${wline}${RESET}\n"
+                FIRST_WRAP=0
+              else
+                BUF+="${CONT_PAD}${CYAN}${wline}${RESET}\n"
+              fi
+            done <<< "$WRAPPED_LINE"
             PY_FIRST_LINE=0
           else
-            BUF+="    ${DIM}- ${OL}${RESET}\n"
+            WRAPPED_LINE=$(word_wrap "${OL}" "$CONTENT_WIDTH")
+            FIRST_WRAP=1
+            while IFS= read -r wline; do
+              if [ "$FIRST_WRAP" -eq 1 ]; then
+                BUF+="${CONT_PAD}${DIM}- ${wline}${RESET}\n"
+                FIRST_WRAP=0
+              else
+                BUF+="${CONT_PAD}${DIM}  ${wline}${RESET}\n"
+              fi
+            done <<< "$WRAPPED_LINE"
           fi
           ;;
       esac
@@ -263,9 +387,27 @@ elif last_summary:
       BUF+="\n"
     elif [ -n "$PY_LAST_SUMMARY" ]; then
       if [ "$PY_LAST_EC" = "0" ]; then
-        BUF+="  ${GREEN}⏺ Last review: ${PY_LAST_SUMMARY}${RESET}\n"
+        WRAPPED_LINE=$(word_wrap "Last review: ${PY_LAST_SUMMARY}" "$CONTENT_WIDTH")
+        FIRST_WRAP=1
+        while IFS= read -r wline; do
+          if [ "$FIRST_WRAP" -eq 1 ]; then
+            BUF+="${PAD}${GREEN}⏺ ${wline}${RESET}\n"
+            FIRST_WRAP=0
+          else
+            BUF+="${CONT_PAD}${GREEN}${wline}${RESET}\n"
+          fi
+        done <<< "$WRAPPED_LINE"
       else
-        BUF+="  ${RED}⏺ Last review: ${PY_LAST_SUMMARY}${RESET}\n"
+        WRAPPED_LINE=$(word_wrap "Last review: ${PY_LAST_SUMMARY}" "$CONTENT_WIDTH")
+        FIRST_WRAP=1
+        while IFS= read -r wline; do
+          if [ "$FIRST_WRAP" -eq 1 ]; then
+            BUF+="${PAD}${RED}⏺ ${wline}${RESET}\n"
+            FIRST_WRAP=0
+          else
+            BUF+="${CONT_PAD}${RED}${wline}${RESET}\n"
+          fi
+        done <<< "$WRAPPED_LINE"
       fi
     fi
   fi

@@ -23,6 +23,31 @@ ORANGE='\033[38;5;215m'
 DIM='\033[2m'
 RESET='\033[0m'
 
+# Padding
+PAD="   "          # 3-space left padding
+CONT_PAD="     "   # 5-space continuation indent (for wrapped lines)
+ENTRY_PAD="         "  # 9-space entry payload indent
+RIGHT_MARGIN=2
+
+# Word-wrap text to a given width, returning lines
+word_wrap() {
+  local text="$1"
+  local width="$2"
+  local line="" word=""
+
+  for word in $text; do
+    if [ -z "$line" ]; then
+      line="$word"
+    elif [ $(( ${#line} + 1 + ${#word} )) -le "$width" ]; then
+      line="$line $word"
+    else
+      echo "$line"
+      line="$word"
+    fi
+  done
+  [ -n "$line" ] && echo "$line"
+}
+
 # Format epoch timestamp to "Mon DD HH:MM:SS"
 format_ts() {
   local ts="$1"
@@ -65,13 +90,22 @@ method_color() {
 }
 
 while true; do
+  # Detect pane width dynamically
+  PANE_WIDTH=$(tput cols 2>/dev/null || echo 80)
+  CONTENT_WIDTH=$(( PANE_WIDTH - ${#PAD} - RIGHT_MARGIN ))
+  [ "$CONTENT_WIDTH" -lt 20 ] && CONTENT_WIDTH=20
+  ENTRY_CONTENT_WIDTH=$(( PANE_WIDTH - ${#ENTRY_PAD} - RIGHT_MARGIN ))
+  [ "$ENTRY_CONTENT_WIDTH" -lt 20 ] && ENTRY_CONTENT_WIDTH=20
+  SEP_WIDTH=$(( PANE_WIDTH - ${#PAD} - RIGHT_MARGIN ))
+  [ "$SEP_WIDTH" -lt 10 ] && SEP_WIDTH=10
+
   BUF=""
-  BUF+="${PURPLE}  API${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
-  BUF+="  ${DIM}$(printf '%.0s─' {1..46})${RESET}\n"
+  BUF+="${PAD}${PURPLE}API${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
+  BUF+="${PAD}${DIM}$(printf '%.0s─' $(seq 1 "$SEP_WIDTH"))${RESET}\n"
   BUF+="\n"
 
   if [ ! -f "$HISTORY_FILE" ] || [ ! -s "$HISTORY_FILE" ]; then
-    BUF+="  ${DIM}no requests yet${RESET}\n"
+    BUF+="${PAD}${DIM}no requests yet${RESET}\n"
 
     # Show environment and collection counts
     ENV_COUNT=0
@@ -83,7 +117,7 @@ while true; do
       COL_COUNT=$(find .muxcode/api/collections -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
     fi
     if [ "$ENV_COUNT" -gt 0 ] || [ "$COL_COUNT" -gt 0 ]; then
-      BUF+="\n  ${DIM}envs${RESET} ${CYAN}${ENV_COUNT}${RESET}  ${DIM}collections${RESET} ${CYAN}${COL_COUNT}${RESET}\n"
+      BUF+="\n${PAD}${DIM}envs${RESET} ${CYAN}${ENV_COUNT}${RESET}  ${DIM}collections${RESET} ${CYAN}${COL_COUNT}${RESET}\n"
     fi
 
     printf '\033[2J\033[H'
@@ -98,7 +132,7 @@ while true; do
     ERR=$(( TOTAL - OK ))
 
     # Summary line
-    BUF+="  ${DIM}total${RESET} ${CYAN}${TOTAL}${RESET}  ${DIM}ok${RESET} ${GREEN}${OK}${RESET}  ${DIM}err${RESET} ${RED}${ERR}${RESET}\n"
+    BUF+="${PAD}${DIM}total${RESET} ${CYAN}${TOTAL}${RESET}  ${DIM}ok${RESET} ${GREEN}${OK}${RESET}  ${DIM}err${RESET} ${RED}${ERR}${RESET}\n"
 
     # Environment and collection counts
     ENV_COUNT=0
@@ -109,11 +143,11 @@ while true; do
     if [ -d ".muxcode/api/collections" ]; then
       COL_COUNT=$(find .muxcode/api/collections -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
     fi
-    BUF+="  ${DIM}envs${RESET} ${CYAN}${ENV_COUNT}${RESET}  ${DIM}collections${RESET} ${CYAN}${COL_COUNT}${RESET}\n"
+    BUF+="${PAD}${DIM}envs${RESET} ${CYAN}${ENV_COUNT}${RESET}  ${DIM}collections${RESET} ${CYAN}${COL_COUNT}${RESET}\n"
     BUF+="\n"
 
     # Recent requests (last 15)
-    BUF+="  ${CYAN}recent requests${RESET}\n"
+    BUF+="${PAD}${CYAN}recent requests${RESET}\n"
     ENTRY_OFFSET=$(( TOTAL > 15 ? TOTAL - 15 : 0 ))
     ENTRIES=$(jq -s '.[-15:][] | @json' "$HISTORY_FILE" 2>/dev/null)
     REQ_NUM=$ENTRY_OFFSET
@@ -139,12 +173,30 @@ while true; do
         SCOL=$(status_color "$status")
         DUR="${duration:-?}ms"
 
-        BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${MCOL}$(printf '%-6s' "$method")${RESET} ${SCOL}${status}${RESET} ${DIM}${DUR}${RESET}\n"
-        BUF+="         ${DIM}${url}${RESET}\n"
+        BUF+="${CONT_PAD}${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${MCOL}$(printf '%-6s' "$method")${RESET} ${SCOL}${status}${RESET} ${DIM}${DUR}${RESET}\n"
+        # Word-wrap URL
+        FIRST_URL=1
+        while IFS= read -r wline; do
+          if [ "$FIRST_URL" -eq 1 ]; then
+            BUF+="${ENTRY_PAD}${DIM}${wline}${RESET}\n"
+            FIRST_URL=0
+          else
+            BUF+="${ENTRY_PAD}${DIM}${wline}${RESET}\n"
+          fi
+        done <<< "$(word_wrap "$url" "$ENTRY_CONTENT_WIDTH")"
 
         # Show collection/request name on third line if present
         if [ -n "$collection" ] && [ -n "$request" ]; then
-          BUF+="         ${DIM}↳ ${collection}/${request}${RESET}\n"
+          DETAIL="${collection}/${request}"
+          FIRST_DETAIL=1
+          while IFS= read -r wline; do
+            if [ "$FIRST_DETAIL" -eq 1 ]; then
+              BUF+="${ENTRY_PAD}${DIM}↳ ${wline}${RESET}\n"
+              FIRST_DETAIL=0
+            else
+              BUF+="${ENTRY_PAD}${DIM}  ${wline}${RESET}\n"
+            fi
+          done <<< "$(word_wrap "$DETAIL" "$ENTRY_CONTENT_WIDTH")"
         fi
       done <<< "$ENTRIES"
     fi
@@ -152,7 +204,7 @@ while true; do
 
     # Average response time
     AVG=$(jq -s 'if length > 0 then ([.[].duration_ms] | add / length | floor) else 0 end' "$HISTORY_FILE" 2>/dev/null || echo 0)
-    BUF+="  ${DIM}avg response time${RESET} ${CYAN}${AVG}ms${RESET}\n"
+    BUF+="${PAD}${DIM}avg response time${RESET} ${CYAN}${AVG}ms${RESET}\n"
 
   else
     # python3 fallback
@@ -200,10 +252,10 @@ if entries:
       esac
     done <<< "$PARSED"
 
-    BUF+="  ${DIM}total${RESET} ${CYAN}${TOTAL}${RESET}  ${DIM}ok${RESET} ${GREEN}${OK}${RESET}  ${DIM}err${RESET} ${RED}${ERR}${RESET}\n"
+    BUF+="${PAD}${DIM}total${RESET} ${CYAN}${TOTAL}${RESET}  ${DIM}ok${RESET} ${GREEN}${OK}${RESET}  ${DIM}err${RESET} ${RED}${ERR}${RESET}\n"
     BUF+="\n"
 
-    BUF+="  ${CYAN}recent requests${RESET}\n"
+    BUF+="${PAD}${CYAN}recent requests${RESET}\n"
     while IFS= read -r line; do
       case "$line" in
         ENTRY=*)
@@ -213,10 +265,23 @@ if entries:
           NUM_LABEL=$(printf '#%-3s' "$num")
           MCOL=$(method_color "$method")
           SCOL=$(status_color "$status")
-          BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${MCOL}$(printf '%-6s' "$method")${RESET} ${SCOL}${status}${RESET} ${DIM}${dur}ms${RESET}\n"
-          BUF+="         ${DIM}${url}${RESET}\n"
+          BUF+="${CONT_PAD}${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${MCOL}$(printf '%-6s' "$method")${RESET} ${SCOL}${status}${RESET} ${DIM}${dur}ms${RESET}\n"
+          # Word-wrap URL
+          FIRST_URL=1
+          while IFS= read -r wline; do
+            BUF+="${ENTRY_PAD}${DIM}${wline}${RESET}\n"
+            FIRST_URL=0
+          done <<< "$(word_wrap "$url" "$ENTRY_CONTENT_WIDTH")"
           if [ -n "$detail" ]; then
-            BUF+="         ${DIM}↳ ${detail}${RESET}\n"
+            FIRST_DETAIL=1
+            while IFS= read -r wline; do
+              if [ "$FIRST_DETAIL" -eq 1 ]; then
+                BUF+="${ENTRY_PAD}${DIM}↳ ${wline}${RESET}\n"
+                FIRST_DETAIL=0
+              else
+                BUF+="${ENTRY_PAD}${DIM}  ${wline}${RESET}\n"
+              fi
+            done <<< "$(word_wrap "$detail" "$ENTRY_CONTENT_WIDTH")"
           fi
           ;;
       esac
@@ -231,7 +296,7 @@ if entries:
       esac
     done <<< "$PARSED"
     if [ -n "$PY_AVG" ]; then
-      BUF+="  ${DIM}avg response time${RESET} ${CYAN}${PY_AVG}ms${RESET}\n"
+      BUF+="${PAD}${DIM}avg response time${RESET} ${CYAN}${PY_AVG}ms${RESET}\n"
     fi
   fi
 

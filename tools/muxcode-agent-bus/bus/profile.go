@@ -134,9 +134,27 @@ func mergeConfigs(base, override *MuxcodeConfig) *MuxcodeConfig {
 	for k, v := range base.ToolProfiles {
 		result.ToolProfiles[k] = v
 	}
-	// Override tool profiles (entire profile replaced per role)
-	for k, v := range override.ToolProfiles {
-		result.ToolProfiles[k] = v
+	// Merge override tool profiles field-by-field so partial overrides
+	// don't drop fields like BashTimeout that only exist in defaults.
+	for k, ov := range override.ToolProfiles {
+		base, exists := result.ToolProfiles[k]
+		if !exists {
+			result.ToolProfiles[k] = ov
+			continue
+		}
+		if len(ov.Include) > 0 {
+			base.Include = ov.Include
+		}
+		if len(ov.Tools) > 0 {
+			base.Tools = ov.Tools
+		}
+		if ov.CdPrefix {
+			base.CdPrefix = true
+		}
+		if ov.BashTimeout > 0 {
+			base.BashTimeout = ov.BashTimeout
+		}
+		result.ToolProfiles[k] = base
 	}
 
 	// Copy base event chains
@@ -378,7 +396,7 @@ func DefaultConfig() *MuxcodeConfig {
 			"build": {
 				Include:     []string{"bus", "readonly", "common"},
 				CdPrefix:    true,
-				BashTimeout: 300,
+				BashTimeout: 600,
 				Tools: []string{
 					"Bash(./build.sh*)", "Bash(make*)",
 					"Bash(pnpm run build*)", "Bash(pnpm build*)", "Bash(npm run build*)",
@@ -398,7 +416,7 @@ func DefaultConfig() *MuxcodeConfig {
 			"test": {
 				Include:     []string{"bus", "readonly", "common"},
 				CdPrefix:    true,
-				BashTimeout: 300,
+				BashTimeout: 600,
 				Tools: []string{
 					"Bash(./test.sh*)", "Bash(./scripts/muxcode-test-wrapper.sh*)",
 					"Bash(./scripts/test-and-notify.sh*)",

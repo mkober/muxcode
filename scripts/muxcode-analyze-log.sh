@@ -14,12 +14,37 @@ SESSION="${BUS_SESSION:-$(tmux display-message -p '#S' 2>/dev/null || echo defau
 LOG_FILE="/tmp/muxcode-bus-${SESSION}/log.jsonl"
 MAX_RECENT=15
 
+# Padding
+PAD="   "          # 3-space left padding
+CONT_PAD="     "   # 5-space continuation indent (for wrapped lines)
+ENTRY_PAD="         "  # 9-space entry payload indent
+RIGHT_MARGIN=2
+
 # Dracula colors
 PURPLE='\033[38;5;141m'
 CYAN='\033[38;5;117m'
 GREEN='\033[38;5;80m'
 DIM='\033[2m'
 RESET='\033[0m'
+
+# Word-wrap text to a given width, returning lines
+word_wrap() {
+  local text="$1"
+  local width="$2"
+  local line="" word=""
+
+  for word in $text; do
+    if [ -z "$line" ]; then
+      line="$word"
+    elif [ $(( ${#line} + 1 + ${#word} )) -le "$width" ]; then
+      line="$line $word"
+    else
+      echo "$line"
+      line="$word"
+    fi
+  done
+  [ -n "$line" ] && echo "$line"
+}
 
 # Format epoch timestamp to "Mon DD HH:MM:SS"
 format_ts() {
@@ -34,14 +59,23 @@ format_ts() {
 }
 
 while true; do
+  # Detect pane width dynamically
+  PANE_WIDTH=$(tput cols 2>/dev/null || echo 80)
+  CONTENT_WIDTH=$(( PANE_WIDTH - ${#PAD} - RIGHT_MARGIN ))
+  [ "$CONTENT_WIDTH" -lt 20 ] && CONTENT_WIDTH=20
+  ENTRY_CONTENT_WIDTH=$(( PANE_WIDTH - ${#ENTRY_PAD} - RIGHT_MARGIN ))
+  [ "$ENTRY_CONTENT_WIDTH" -lt 20 ] && ENTRY_CONTENT_WIDTH=20
+  SEP_WIDTH=$(( PANE_WIDTH - ${#PAD} - RIGHT_MARGIN ))
+  [ "$SEP_WIDTH" -lt 10 ] && SEP_WIDTH=10
+
   BUF=""
-  BUF+="${PURPLE}  Analyze${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
-  BUF+="  ${DIM}$(printf '%.0s─' {1..46})${RESET}\n"
+  BUF+="${PAD}${PURPLE}Analyze${RESET}  ${DIM}$(date '+%H:%M:%S')${RESET}  ${DIM}(every ${INTERVAL}s)${RESET}\n"
+  BUF+="${PAD}${DIM}$(printf '%.0s─' $(seq 1 "$SEP_WIDTH"))${RESET}\n"
   BUF+="\n"
 
   if [ ! -f "$LOG_FILE" ] || [ ! -s "$LOG_FILE" ]; then
-    BUF+="  ${DIM}no findings yet${RESET}\n"
-    BUF+="  ${DIM}waiting for analyst agent...${RESET}\n"
+    BUF+="${PAD}${DIM}no findings yet${RESET}\n"
+    BUF+="${PAD}${DIM}waiting for analyst agent...${RESET}\n"
     printf '\033[2J\033[H'
     echo -ne "$BUF"
     sleep "$INTERVAL"
@@ -54,11 +88,11 @@ while true; do
     TOTAL=$(printf '%s' "$FINDINGS" | jq 'length' 2>/dev/null || echo 0)
 
     # Summary line
-    BUF+="  ${DIM}findings${RESET} ${CYAN}${TOTAL}${RESET}\n"
+    BUF+="${PAD}${DIM}findings${RESET} ${CYAN}${TOTAL}${RESET}\n"
     BUF+="\n"
 
     if [ "$TOTAL" -eq 0 ]; then
-      BUF+="  ${DIM}no analyst findings yet${RESET}\n"
+      BUF+="${PAD}${DIM}no analyst findings yet${RESET}\n"
     else
       # Last finding: full payload (shown first)
       LAST_PAYLOAD=$(printf '%s' "$FINDINGS" | jq -r '.[-1].payload // ""' 2>/dev/null)
@@ -66,23 +100,27 @@ while true; do
       LAST_TO=$(printf '%s' "$FINDINGS" | jq -r '.[-1].to // ""' 2>/dev/null)
 
       if [ -n "$LAST_PAYLOAD" ]; then
-        BUF+="  ${GREEN}⏺ Latest finding${RESET}  ${DIM}(${LAST_ACTION} → ${LAST_TO})${RESET}\n\n"
+        BUF+="${PAD}${GREEN}⏺ Latest finding${RESET}  ${DIM}(${LAST_ACTION} → ${LAST_TO})${RESET}\n\n"
         FIRST_LINE=1
         while IFS= read -r oline; do
           oline=$(printf '%s' "$oline" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/^[[:space:]]*//')
           [ -z "$oline" ] && continue
           if [ "$FIRST_LINE" -eq 1 ]; then
-            BUF+="  ${CYAN}${oline}${RESET}\n"
+            while IFS= read -r wline; do
+              BUF+="${PAD}${CYAN}${wline}${RESET}\n"
+            done <<< "$(word_wrap "$oline" "$CONTENT_WIDTH")"
             FIRST_LINE=0
           else
-            BUF+="    ${DIM}- ${oline}${RESET}\n"
+            while IFS= read -r wline; do
+              BUF+="${CONT_PAD}${DIM}- ${wline}${RESET}\n"
+            done <<< "$(word_wrap "$oline" "$(( CONTENT_WIDTH - ${#CONT_PAD} + ${#PAD} ))")"
           fi
         done <<< "$LAST_PAYLOAD"
         BUF+="\n"
       fi
 
       # Recent findings (last N)
-      BUF+="  ${CYAN}recent findings${RESET}\n"
+      BUF+="${PAD}${CYAN}recent findings${RESET}\n"
       ENTRY_OFFSET=$(( TOTAL > MAX_RECENT ? TOTAL - MAX_RECENT : 0 ))
       ENTRIES=$(printf '%s' "$FINDINGS" | jq -c ".[-${MAX_RECENT}:][]" 2>/dev/null)
       FINDING_NUM=$ENTRY_OFFSET
@@ -99,9 +137,11 @@ while true; do
 
           NUM_LABEL=$(printf '#%-3s' "$FINDING_NUM")
 
-          BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}${action}${RESET}  ${DIM}→${to_agent}${RESET}\n"
+          BUF+="${CONT_PAD}${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}${action}${RESET}  ${DIM}→${to_agent}${RESET}\n"
           if [ -n "$payload" ]; then
-            BUF+="         ${DIM}${payload}${RESET}\n"
+            while IFS= read -r wline; do
+              BUF+="${ENTRY_PAD}${DIM}${wline}${RESET}\n"
+            done <<< "$(word_wrap "$payload" "$ENTRY_CONTENT_WIDTH")"
           fi
         done <<< "$ENTRIES"
       fi
@@ -152,11 +192,11 @@ if entries:
       esac
     done <<< "$PARSED"
 
-    BUF+="  ${DIM}findings${RESET} ${CYAN}${TOTAL}${RESET}\n"
+    BUF+="${PAD}${DIM}findings${RESET} ${CYAN}${TOTAL}${RESET}\n"
     BUF+="\n"
 
     if [ "$TOTAL" -eq 0 ]; then
-      BUF+="  ${DIM}no analyst findings yet${RESET}\n"
+      BUF+="${PAD}${DIM}no analyst findings yet${RESET}\n"
     else
       # Last finding: full payload (shown first)
       PY_LAST_ACTION=""
@@ -170,14 +210,18 @@ if entries:
           LAST_PAYLOAD_LINE=*)
             if [ "$HAS_PAYLOAD" -eq 0 ]; then
               HAS_PAYLOAD=1
-              BUF+="  ${GREEN}⏺ Latest finding${RESET}  ${DIM}(${PY_LAST_ACTION} → ${PY_LAST_TO})${RESET}\n\n"
+              BUF+="${PAD}${GREEN}⏺ Latest finding${RESET}  ${DIM}(${PY_LAST_ACTION} → ${PY_LAST_TO})${RESET}\n\n"
             fi
             OL="${line#LAST_PAYLOAD_LINE=}"
             if [ "$PY_FIRST_LINE" -eq 1 ]; then
-              BUF+="  ${CYAN}${OL}${RESET}\n"
+              while IFS= read -r wline; do
+                BUF+="${PAD}${CYAN}${wline}${RESET}\n"
+              done <<< "$(word_wrap "$OL" "$CONTENT_WIDTH")"
               PY_FIRST_LINE=0
             else
-              BUF+="    ${DIM}- ${OL}${RESET}\n"
+              while IFS= read -r wline; do
+                BUF+="${CONT_PAD}${DIM}- ${wline}${RESET}\n"
+              done <<< "$(word_wrap "$OL" "$(( CONTENT_WIDTH - ${#CONT_PAD} + ${#PAD} ))")"
             fi
             ;;
         esac
@@ -187,7 +231,7 @@ if entries:
       fi
 
       # Recent findings (last N)
-      BUF+="  ${CYAN}recent findings${RESET}\n"
+      BUF+="${PAD}${CYAN}recent findings${RESET}\n"
       while IFS= read -r line; do
         case "$line" in
           ENTRY=*)
@@ -195,9 +239,11 @@ if entries:
             IFS=$'\t' read -r ts action to_agent num payload <<< "$line"
             TIME=$(format_ts "$ts")
             NUM_LABEL=$(printf '#%-3s' "$num")
-            BUF+="    ${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}${action}${RESET}  ${DIM}→${to_agent}${RESET}\n"
+            BUF+="${CONT_PAD}${DIM}${NUM_LABEL}${RESET} ${DIM}${TIME}${RESET}  ${GREEN}${action}${RESET}  ${DIM}→${to_agent}${RESET}\n"
             if [ -n "$payload" ]; then
-              BUF+="         ${DIM}${payload}${RESET}\n"
+              while IFS= read -r wline; do
+                BUF+="${ENTRY_PAD}${DIM}${wline}${RESET}\n"
+              done <<< "$(word_wrap "$payload" "$ENTRY_CONTENT_WIDTH")"
             fi
             ;;
         esac
