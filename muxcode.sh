@@ -454,17 +454,19 @@ tmux set-hook -t "$SESSION" session-closed \
 ) &>/dev/null &
 disown
 
-# --- Auto-accept startup prompts ---
+# --- Auto-accept startup prompts & wake edit/analyze agents ---
 # Claude Code may show two prompts on launch:
 #   1. "Yes, I trust this folder" — workspace trust (new workspaces)
 #   2. "Bypass Permissions mode" — dangerous-skip-permissions warning (non-edit agents)
 # Poll agent panes and dismiss each prompt as it appears.
 # Startup messages (edit, analyze) are pre-populated in the inbox by
-# muxcode-agent.sh. The watcher's checkStartupNotifications() delivers
-# them once each agent reaches idle — no send-keys needed here.
+# muxcode-agent.sh. Once those agents reach idle, this loop directly
+# injects "You have new messages" + Enter to ensure they process it —
+# does not rely solely on the watcher's checkStartupNotifications().
 (
   trap '' HUP
   accepted=""
+  woken=""
   for attempt in $(seq 1 30); do
     all_done=true
     for WIN in "${WIN_ARRAY[@]}"; do
@@ -488,6 +490,33 @@ disown
         # Agent at Claude Code idle prompt — past all startup prompts.
         lifecycle_log "info" "auto-accept" "agent-ready" "$WIN"
         accepted="$accepted $WIN"
+
+        # Wake edit and analyze agents that have pre-populated startup
+        # messages. Check if "You have new messages" is already in the
+        # pane (from watcher) — if so just send Enter, otherwise inject
+        # the full text + Enter. Only attempt once per agent.
+        if [ "$WIN" = "edit" ] || [ "$WIN" = "analyze" ]; then
+          if ! echo "$woken" | grep -qw "$WIN"; then
+            woken="$woken $WIN"
+            # Brief stabilization delay — let TUI finish rendering
+            sleep 1
+            if echo "$content" | grep -q "You have new messages"; then
+              # Text already present — just submit it
+              tmux send-keys -t "$pane" Enter 2>/dev/null
+              lifecycle_log "info" "auto-accept" "startup-wake-enter" "$WIN"
+            else
+              # Inject the wake-up text, wait for it to render, then Enter
+              tmux send-keys -t "$pane" "You have new messages" 2>/dev/null
+              for _poll in $(seq 1 10); do
+                sleep 0.1
+                _cap="$(tmux capture-pane -t "$pane" -p -S -3 2>/dev/null)" || break
+                echo "$_cap" | grep -q "You have new messages" && break
+              done
+              tmux send-keys -t "$pane" Enter 2>/dev/null
+              lifecycle_log "info" "auto-accept" "startup-wake-full" "$WIN"
+            fi
+          fi
+        fi
       else
         all_done=false
       fi

@@ -61,6 +61,32 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `MUXCODE_ROLES` | (empty) | Comma-separated extra roles to add to the known roles list |
 | `MUXCODE_SPLIT_LEFT` | `edit api build test review deploy run analyze commit watch` | See Window Layout above — also read by the bus binary for pane targeting |
 
+### Claude model selection
+
+Built-in defaults by role:
+
+| Roles | Default model |
+|-------|---------------|
+| `edit`, `review`, `analyze` | `claude-opus-4-6` |
+| `api`, `deploy`, `run`, `watch`, `commit` | `claude-sonnet-4-5` |
+| all others (`build`, `test`, `docs`, `research`, …) | claude CLI default |
+
+Override with env vars (resolution order: per-role → global → built-in default):
+
+| Variable | Description |
+|----------|-------------|
+| `MUXCODE_CLAUDE_MODEL` | Global override for all agents. Passed as `--model` to the `claude` CLI. |
+| `MUXCODE_{ROLE}_CLAUDE_MODEL` | Per-role override. Role key examples: `EDIT`, `BUILD`, `TEST`, `REVIEW`, `DEPLOY`, `GIT`, `ANALYZE`, `WATCH`, `DOCS`, `RESEARCH`, `RUN`, `API`. |
+
+Example — downgrade review to Sonnet, use Haiku for build/test:
+
+```bash
+# ~/.config/muxcode/config
+MUXCODE_REVIEW_CLAUDE_MODEL=claude-sonnet-4-5
+MUXCODE_BUILD_CLAUDE_MODEL=claude-haiku-4-5
+MUXCODE_TEST_CLAUDE_MODEL=claude-haiku-4-5
+```
+
 ### Local LLM (Ollama)
 
 | Variable | Default | Description |

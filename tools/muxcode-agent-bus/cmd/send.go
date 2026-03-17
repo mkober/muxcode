@@ -120,8 +120,13 @@ func Send(args []string) {
 
 	fmt.Printf("Sent %s:%s to %s\n", msgType, action, to)
 
-	// --wait: poll own inbox until a response from the target arrives or timeout
+	// --wait: poll own inbox until a response from the target arrives or timeout.
+	// Set a waiting marker so Notify() skips send-keys for our role — the
+	// --wait loop is already polling and send-keys would interrupt the
+	// running Bash tool in Claude Code's TUI.
 	if wait {
+		bus.SetWaiting(session, from)
+		defer bus.ClearWaiting(session, from)
 		waitForResponse(session, from, to)
 	}
 }
@@ -130,7 +135,7 @@ func Send(args []string) {
 // the target agent. Messages from other agents are left in the inbox.
 // For hosted roles (docs→edit, research→edit, pr-read→commit), also accepts
 // responses from the host agent since it processes the request.
-// Timeout is controlled by MUXCODE_INBOX_POLL_TIMEOUT (default 120s).
+// Timeout is controlled by MUXCODE_INBOX_POLL_TIMEOUT (default 600s).
 func waitForResponse(session, role, target string) {
 	timeout := 600
 	if v := os.Getenv("MUXCODE_INBOX_POLL_TIMEOUT"); v != "" {

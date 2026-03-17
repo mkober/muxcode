@@ -158,11 +158,13 @@ func FormatStatusJSON(statuses []AgentStatus) (string, error) {
 // edit: the sender, always busy during its turn.
 // commit: the target, about to receive the commit message.
 // watch: passive watcher, not a task-producing agent.
+// analyze: passive observer, receives file-change notifications.
 // webhook: passive HTTP bridge, not a working agent.
 var preCommitExcludedRoles = map[string]bool{
 	"edit":    true,
 	"commit":  true,
 	"watch":   true,
+	"analyze": true,
 	"webhook": true,
 }
 
@@ -170,7 +172,8 @@ var preCommitExcludedRoles = map[string]bool{
 // before allowing a commit. Returns nil if safe to proceed, or an error
 // describing which agents have pending work.
 //
-// Excluded roles: edit (sender), commit (target), watch (passive).
+// Excluded roles: edit (sender), commit (target), watch (passive),
+// analyze (passive observer), webhook (passive bridge).
 func PreCommitCheck(session string) error {
 	statuses := GetAllAgentStatus(session)
 

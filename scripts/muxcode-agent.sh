@@ -163,8 +163,49 @@ launch_agent_from_file() {
   local agents_json
   agents_json="$(jq -n --arg n "$name" --arg d "$desc" --arg p "$prompt" \
     '{($n): {description: $d, prompt: $p}}')"
-  exec $AGENT_CLI --agent "$name" --agents "$agents_json" "$@"
+  exec $AGENT_CLI --agent "$name" --agents "$agents_json" "${CLAUDE_MODEL_FLAGS[@]}" "$@"
 }
+
+# Per-role Claude model selection.
+# Resolution order (highest priority first):
+#   1. MUXCODE_{ROLE}_CLAUDE_MODEL  — per-role env override
+#   2. MUXCODE_CLAUDE_MODEL         — global env override
+#   3. role_claude_model_default()  — built-in per-role default
+# Defaults: edit/review/analyze → opus; api/deploy/run/watch/commit → sonnet.
+# Override in ~/.config/muxcode/config or .muxcode/config.
+role_claude_model_var() {
+  case "$1" in
+    commit|git) echo "MUXCODE_GIT_CLAUDE_MODEL" ;;
+    build)      echo "MUXCODE_BUILD_CLAUDE_MODEL" ;;
+    test)       echo "MUXCODE_TEST_CLAUDE_MODEL" ;;
+    review)     echo "MUXCODE_REVIEW_CLAUDE_MODEL" ;;
+    deploy)     echo "MUXCODE_DEPLOY_CLAUDE_MODEL" ;;
+    edit)       echo "MUXCODE_EDIT_CLAUDE_MODEL" ;;
+    analyze|analyst) echo "MUXCODE_ANALYZE_CLAUDE_MODEL" ;;
+    docs)       echo "MUXCODE_DOCS_CLAUDE_MODEL" ;;
+    research)   echo "MUXCODE_RESEARCH_CLAUDE_MODEL" ;;
+    watch)      echo "MUXCODE_WATCH_CLAUDE_MODEL" ;;
+    pr-read)    echo "MUXCODE_PR_READ_CLAUDE_MODEL" ;;
+    runner|run) echo "MUXCODE_RUN_CLAUDE_MODEL" ;;
+    api)        echo "MUXCODE_API_CLAUDE_MODEL" ;;
+    webhook)    echo "MUXCODE_WEBHOOK_CLAUDE_MODEL" ;;
+    *)          echo "MUXCODE_$(echo "$1" | tr '[:lower:]' '[:upper:]')_CLAUDE_MODEL" ;;
+  esac
+}
+
+role_claude_model_default() {
+  case "$1" in
+    edit|review|analyze|analyst) echo "claude-opus-4-6" ;;
+    api|deploy|runner|run|watch|commit|git) echo "claude-sonnet-4-5" ;;
+  esac
+}
+
+CLAUDE_MODEL_FLAGS=()
+if [ "$ROLE_CLI" != "local" ]; then
+  _claude_model_var="$(role_claude_model_var "$ROLE")"
+  _claude_model="${!_claude_model_var:-${MUXCODE_CLAUDE_MODEL:-$(role_claude_model_default "$ROLE")}}"
+  [ -n "$_claude_model" ] && CLAUDE_MODEL_FLAGS=(--model "$_claude_model")
+fi
 
 # Permission mode: edit agent prompts (user toggles with Shift+Tab),
 # all other agents auto-accept so they run autonomously.
@@ -223,7 +264,7 @@ if [ -n "$AGENT" ]; then
   INSTALL_DIR="${SCRIPT_DIR%/scripts}"
 
   if [ -f ".claude/agents/${AGENT}.md" ]; then
-    exec $AGENT_CLI --agent "$AGENT" "${PERM_FLAGS[@]}" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
+    exec $AGENT_CLI --agent "$AGENT" "${CLAUDE_MODEL_FLAGS[@]}" "${PERM_FLAGS[@]}" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
   elif [ -f "$HOME/.config/muxcode/agents/${AGENT}.md" ]; then
     launch_agent_from_file "$AGENT" "$HOME/.config/muxcode/agents/${AGENT}.md" "${PERM_FLAGS[@]}" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
   elif [ -f "$INSTALL_DIR/agents/${AGENT}.md" ]; then
@@ -277,4 +318,4 @@ case "$ROLE" in
     ;;
 esac
 
-exec $AGENT_CLI --append-system-prompt "$PROMPT" "${PERM_FLAGS[@]}" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"
+exec $AGENT_CLI --append-system-prompt "$PROMPT" "${CLAUDE_MODEL_FLAGS[@]}" "${PERM_FLAGS[@]}" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"

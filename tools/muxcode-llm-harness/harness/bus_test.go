@@ -76,7 +76,7 @@ func TestLogHistory_TruncatesOutput(t *testing.T) {
 		Role:   "test",
 	}
 
-	longOutput := make([]byte, 5000)
+	longOutput := make([]byte, 10000)
 	for i := range longOutput {
 		longOutput[i] = 'x'
 	}
@@ -95,7 +95,7 @@ func TestLogHistory_TruncatesOutput(t *testing.T) {
 	json.Unmarshal(data[:len(data)-1], &entry)
 
 	output := entry["output"].(string)
-	if len(output) > 2100 { // 2000 + "..." + margin
-		t.Errorf("output length = %d, should be truncated to ~2000", len(output))
+	if len(output) > 8100 { // 8000 + "..." + margin
+		t.Errorf("output length = %d, should be truncated to ~8000", len(output))
 	}
 }

@@ -119,6 +119,38 @@ func ClearNotified(session, role string) {
 	_ = os.Remove(notifiedSizePath(session, role))
 }
 
+// SetWaiting creates a marker file indicating that a --wait polling loop is
+// active for the given role. While the marker exists, Notify() skips send-keys
+// notifications to avoid interrupting the running Bash tool.
+func SetWaiting(session, role string) {
+	_ = os.WriteFile(WaitingMarkerPath(session, role), []byte(strconv.Itoa(os.Getpid())), 0644)
+}
+
+// ClearWaiting removes the --wait marker for a role.
+func ClearWaiting(session, role string) {
+	_ = os.Remove(WaitingMarkerPath(session, role))
+}
+
+// IsWaiting returns true if the given role has an active --wait polling loop.
+// Validates that the PID in the marker is still alive to prevent stale markers
+// from permanently suppressing notifications.
+func IsWaiting(session, role string) bool {
+	data, err := os.ReadFile(WaitingMarkerPath(session, role))
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		_ = os.Remove(WaitingMarkerPath(session, role))
+		return false
+	}
+	if !CheckProcAlive(pid) {
+		_ = os.Remove(WaitingMarkerPath(session, role))
+		return false
+	}
+	return true
+}
+
 // markNotified records the current inbox size as the last notified size.
 func markNotified(session, role string) {
 	inboxPath := InboxPath(session, role)
@@ -234,12 +266,13 @@ func notifyIdleSendKeys(session, role string) error {
 //
 // Dual-path strategy:
 //   - Harness panes: skipped entirely (they poll inbox directly)
-//   - Edit role: always uses display-message (user types there, send-keys would disrupt)
-//   - Idle agents (at ❯ prompt): uses send-keys to wake them up. The shared
-//     agent prompt instructs them to run `muxcode-agent-bus inbox` on seeing
-//     "You have new messages".
-//   - Active agents: uses display-message (passive status bar flash) to avoid
-//     disrupting in-progress tool execution
+//   - Waiting roles (active --wait loop): skipped — the loop already polls
+//     the inbox and send-keys would interrupt the running Bash tool
+//   - Idle agents (at ❯ prompt, all roles including edit): uses send-keys to
+//     wake them up. The shared agent prompt instructs them to run
+//     `muxcode-agent-bus inbox` on seeing "You have new messages".
+//   - Active agents (all roles including edit): uses display-message (passive
+//     status bar flash) to avoid disrupting in-progress tool execution
 //
 // Deduplicates: skips if the inbox hasn't changed since the last notification.
 func Notify(session, role string) error {
@@ -249,6 +282,14 @@ func Notify(session, role string) error {
 
 	// Skip harness panes — the harness polls inbox directly
 	if IsHarnessActive(session, role) {
+		return nil
+	}
+
+	// Skip send-keys when the role has an active --wait polling loop.
+	// The --wait already polls the inbox every 2s, so send-keys is redundant
+	// and dangerous — it can interrupt the running Bash tool in Claude Code's
+	// TUI, causing the agent to lose its execution flow.
+	if IsWaiting(session, role) {
 		return nil
 	}
 
@@ -266,9 +307,9 @@ func Notify(session, role string) error {
 }
 
 // notifyDisplayMessage sends a passive notification via tmux display-message
-// (status bar flash). Used for:
-//   - Edit role (always — user types there, send-keys would disrupt)
-//   - Active agents (not at idle prompt — send-keys would interrupt tool execution)
+// (status bar flash). Used for active agents (not at idle prompt — send-keys
+// would interrupt tool execution). All roles including edit use this path
+// when the agent is busy.
 //
 // Best-effort: errors are logged but not returned, since the message is
 // already in the inbox and will be seen on the next inbox read.

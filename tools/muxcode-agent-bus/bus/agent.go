@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -373,10 +374,16 @@ func logBashToHistory(cfg AgentConfig, tc ToolCall, result string) {
 		exitCode = code
 	}
 
-	// Truncate output for history
+	// Truncate output for history (configurable via MUXCODE_HISTORY_MAX_OUTPUT)
 	output := result
-	if len(output) > 2000 {
-		output = output[:2000] + "..."
+	maxOutput := 8000
+	if v := os.Getenv("MUXCODE_HISTORY_MAX_OUTPUT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxOutput = n
+		}
+	}
+	if len(output) > maxOutput {
+		output = output[:maxOutput] + "..."
 	}
 
 	entry := map[string]interface{}{

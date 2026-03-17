@@ -195,6 +195,9 @@ func purgeStaleFiles(session string) error {
 			if strings.HasPrefix(name, "notified-") && strings.HasSuffix(name, ".size") {
 				_ = os.Remove(filepath.Join(busDir, name))
 			}
+			if strings.HasPrefix(name, "waiting-") && strings.HasSuffix(name, ".marker") {
+				_ = os.Remove(filepath.Join(busDir, name))
+			}
 		}
 	}
 

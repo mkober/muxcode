@@ -60,8 +60,10 @@ Do NOT run `gh pr view`, `gh pr diff`, `gh pr checks`, or any `gh` command yours
 - **Review**: `muxcode-agent-bus send review review "Review the latest changes on this branch" --wait`
 - **Deploy**: `muxcode-agent-bus send deploy deploy "Run deployment diff and report changes" --wait`
 - **Watch logs**: `muxcode-agent-bus send watch watch "Tail CloudWatch logs for /aws/lambda/my-function and report errors" --wait`
-- **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes" --wait`
-- **PR/Release**: `muxcode-agent-bus send commit commit "Create a PR for the current branch" --wait`
+- **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes" --force --wait`
+- **PR/Release**: `muxcode-agent-bus send commit commit "Create a PR for the current branch" --force --wait`
+
+**Note**: Always use `--force` as a CLI flag (not inside the message string) on commit/push/PR sends to bypass the pre-commit agent-idle check. Passive agents (analyze, watch) may have pending notifications that are safe to ignore.
 
 ### Decision rule
 
@@ -95,6 +97,6 @@ As the edit agent, you are the primary orchestrator. After making code changes:
 - "create a PR", "open a pull request"
 
 When the user requests one, delegate normally:
-- **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes"`
-- **Push**: `muxcode-agent-bus send commit commit "Push to remote"`
-- **PR**: `muxcode-agent-bus send commit commit "Create a PR for the current branch"`
+- **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes" --force --wait`
+- **Push**: `muxcode-agent-bus send commit commit "Push to remote" --force --wait`
+- **PR**: `muxcode-agent-bus send commit commit "Create a PR for the current branch" --force --wait`

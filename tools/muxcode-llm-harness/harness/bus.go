@@ -151,9 +151,15 @@ func (b *BusClient) ContextPrompt() (string, error) {
 func (b *BusClient) LogHistory(command, output, exitCode, outcome string) error {
 	historyPath := b.BusDir + "/" + b.Role + "-history.jsonl"
 
-	// Truncate output for history
-	if len(output) > 2000 {
-		output = output[:2000] + "..."
+	// Truncate output for history (configurable via MUXCODE_HISTORY_MAX_OUTPUT)
+	maxOutput := 8000
+	if v := os.Getenv("MUXCODE_HISTORY_MAX_OUTPUT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxOutput = n
+		}
+	}
+	if len(output) > maxOutput {
+		output = output[:maxOutput] + "..."
 	}
 
 	entry := map[string]interface{}{

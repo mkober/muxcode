@@ -267,6 +267,13 @@ func WatcherPidPath(session string) string {
 	return filepath.Join(BusDir(session), "watcher.pid")
 }
 
+// WaitingMarkerPath returns the path to a marker file that indicates the given
+// role has an active --wait polling loop. While this marker exists, Notify()
+// skips send-keys notifications because --wait is already polling the inbox.
+func WaitingMarkerPath(session, role string) string {
+	return filepath.Join(BusDir(session), "waiting-"+role+".marker")
+}
+
 // SubscriptionPath returns the subscriptions JSONL file path for a session.
 func SubscriptionPath(session string) string {
 	return filepath.Join(BusDir(session), "subscriptions.jsonl")
