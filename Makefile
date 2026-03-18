@@ -1,6 +1,7 @@
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 CONFIGDIR ?= $(HOME)/.config/muxcode
+NVIM_CONFIGDIR ?= $(HOME)/.config/muxcode/nvim
 NVIM_PLUGIN_DIR ?= $(HOME)/.local/share/nvim/site/plugin
 
 .PHONY: build test install clean
@@ -46,10 +47,14 @@ install: build
 	@install -d $(HOME)/.claude/commands
 	@cp -n config/commands/*.md $(HOME)/.claude/commands/ 2>/dev/null || true
 	@cp -n muxcode.conf.example $(CONFIGDIR)/config 2>/dev/null || true
-	@install -d $(NVIM_PLUGIN_DIR)
-	@install -m 644 config/muxcode-startscreen.lua $(NVIM_PLUGIN_DIR)/muxcode-startscreen.lua
+	@install -d $(NVIM_CONFIGDIR)/plugin
+	@install -m 644 config/nvim/init.lua $(NVIM_CONFIGDIR)/init.lua
+	@install -m 644 config/nvim/plugin/startscreen.lua $(NVIM_CONFIGDIR)/plugin/startscreen.lua
+	@# Clean up old site plugin from pre-NVIM_APPNAME installs
+	@rm -f $(NVIM_PLUGIN_DIR)/muxcode-startscreen.lua
 	@printf 'Installed: binary to %s/, scripts/agents/configs to %s/\n' "$(BINDIR)" "$(CONFIGDIR)" | sed "s|$$HOME|~|g"
 
 clean:
 	rm -rf bin/
 	rm -f $(NVIM_PLUGIN_DIR)/muxcode-startscreen.lua
+	rm -rf $(NVIM_CONFIGDIR)

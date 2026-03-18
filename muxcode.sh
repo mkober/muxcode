@@ -37,6 +37,7 @@ ROLE_MAP="${MUXCODE_ROLE_MAP:-run=runner commit=git analyze=analyst}"
 SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-edit api build test review deploy run analyze commit watch}"
 SHELL_INIT="${MUXCODE_SHELL_INIT:-}"
 EDITOR="${MUXCODE_EDITOR:-nvim}"
+NVIM_APPNAME="${MUXCODE_NVIM_APPNAME:-muxcode/nvim}"
 AGENT_CLI="${MUXCODE_AGENT_CLI:-claude}"
 
 # Ensure local bins are in PATH (display-popup skips shell profile)
@@ -264,7 +265,7 @@ lifecycle_log "info" "launcher" "session-create" "Windows: ${WINDOWS}"
 
 if [ "$FIRST_WIN" = "edit" ]; then
   send_init "$SESSION:$FIRST_WIN"
-  tmux send-keys -t "$SESSION:$FIRST_WIN" "MUXCODE=1 $EDITOR" Enter
+  tmux send-keys -t "$SESSION:$FIRST_WIN" "MUXCODE=1 NVIM_APPNAME=$NVIM_APPNAME $EDITOR" Enter
   tmux split-window -h -t "$SESSION:$FIRST_WIN" -c "$PROJECT_DIR"
   send_init "$SESSION:$FIRST_WIN.1"
   tmux send-keys -t "$SESSION:$FIRST_WIN.1" "$AGENT_LAUNCHER edit" Enter
@@ -279,7 +280,7 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
     # Edit window (if not first): editor + agent
     tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN"
-    tmux send-keys -t "$SESSION:$WIN" "MUXCODE=1 $EDITOR" Enter
+    tmux send-keys -t "$SESSION:$WIN" "MUXCODE=1 NVIM_APPNAME=$NVIM_APPNAME $EDITOR" Enter
     tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN.1"
     tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER edit" Enter

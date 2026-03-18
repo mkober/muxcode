@@ -20,7 +20,10 @@ muxcode.sh                    # Main launcher — creates tmux session & windows
 scripts/                      # Hook scripts, agent launcher, pollers
 agents/                       # Default agent definition files (.md)
 skills/                       # Default skill definition files (.md)
-config/                       # settings.json, tmux.conf, nvim.lua
+config/                       # settings.json, tmux.conf, nvim/ (managed nvim config)
+config/nvim/                  # Neovim config loaded via NVIM_APPNAME=muxcode
+├── init.lua                  # Full lazy.nvim config (Dracula, treesitter, render-markdown, telescope)
+└── plugin/startscreen.lua    # MuxCode start screen (logo, agents, shortcuts)
 docs/                         # Documentation
 tools/muxcode-agent-bus/      # Go module — the bus binary
 ├── bus/                      # Core library

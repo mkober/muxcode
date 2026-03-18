@@ -1,19 +1,5 @@
--- muxcode-startscreen.lua
--- Auto-loaded from ~/.local/share/nvim/site/plugin/
--- Only activates inside a muxcode tmux session
-
--- Detect muxcode session: MUXCODE env var, or fallback to checking for
--- the bus directory matching the current tmux session name.
-local function in_muxcode()
-  if vim.env.MUXCODE then return true end
-  if not vim.env.TMUX then return false end
-  local session = vim.fn.system("tmux display-message -p '#S'"):gsub("\n", "")
-  return session ~= "" and vim.fn.isdirectory("/tmp/muxcode-bus-" .. session) == 1
-end
-
-if not in_muxcode() then
-  return
-end
+-- muxcode startscreen
+-- Loaded via NVIM_APPNAME=muxcode — always inside a muxcode session
 
 local M = {}
 

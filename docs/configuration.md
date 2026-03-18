@@ -29,6 +29,7 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `MUXCODE_PROJECTS_DIR` | `$HOME` | Directories to scan for git projects (comma-separated) |
 | `MUXCODE_SCAN_DEPTH` | `3` | Max depth for project discovery via `find` |
 | `MUXCODE_EDITOR` | `nvim` | Editor command for the edit window |
+| `MUXCODE_NVIM_APPNAME` | `muxcode/nvim` | Neovim `NVIM_APPNAME` — isolates muxcode's nvim config from your personal `~/.config/nvim/` |
 | `MUXCODE_AGENT_CLI` | `claude` | AI CLI command to run agents |
 | `MUXCODE_SHELL_INIT` | (empty) | Command to run in each new tmux pane (e.g. activate a virtualenv) |
 
@@ -146,7 +147,13 @@ Created on first `muxcode-agent-bus init` in the project directory.
 ├── config                 # User global config
 ├── settings.json          # Claude Code hooks template
 ├── tmux.conf              # Tmux snippet to source
-├── nvim.lua               # Reference nvim snippet (not auto-loaded — copy relevant sections to your nvim config manually)
+├── nvim/                  # Neovim config (loaded via NVIM_APPNAME=muxcode)
+│   ├── init.lua           # Full lazy.nvim config (Dracula, treesitter, render-markdown, telescope)
+│   ├── plugin/            # Auto-loaded plugins
+│   │   └── startscreen.lua  # MuxCode start screen
+│   ├── lua/user/          # User extensions (not overwritten by install)
+│   │   └── plugins.lua    # Additional lazy.nvim plugin specs (optional)
+│   └── after/plugin/      # User overrides (not overwritten by install)
 ├── agents/                # User global agent definitions
 │   ├── code-editor.md
 │   ├── code-builder.md

@@ -116,6 +116,7 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 - **Session compaction** — Agents snapshot context to memory for long-running sessions. Watcher triggers compaction alerts when context approaches limits
 
 ### Developer experience
+- **Managed Neovim config** — MuxCode ships its own neovim configuration via `NVIM_APPNAME=muxcode`, fully isolated from your personal `~/.config/nvim/`. Includes Dracula theme, treesitter, render-markdown.nvim, telescope, and vim-tmux-navigator out of the box. Extend with `~/.config/muxcode/nvim/lua/user/plugins.lua`
 - **Inline diff preview** — Every Write/Edit tool call opens a scrollbound diff split in neovim before you accept or reject
 - **Inline response delivery** — The `--wait` flag on send commands polls for responses inline — no manual inbox checking needed
 - **Left-pane pollers** — Each window shows live history: build/test results with pass/fail stats, review findings, deploy status, git log, API history, analyze insights
@@ -190,7 +191,7 @@ cd muxcode
 ./install.sh
 ```
 
-The installer checks prerequisites, builds the Go binary, and installs everything to `~/.local/bin/` and `~/.config/muxcode/`. It walks you through the remaining setup (tmux config, Claude Code hooks).
+The installer checks prerequisites, builds the Go binary, and installs everything to `~/.local/bin/` and `~/.config/muxcode/`. It sets up the managed neovim config (via `NVIM_APPNAME=muxcode`), tmux integration, and Claude Code hooks. Your personal `~/.config/nvim/` is never modified.
 
 For subsequent builds after pulling updates:
 

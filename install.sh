@@ -104,13 +104,41 @@ else
   warn "No ~/.tmux.conf found — add manually: $TMUX_SOURCE_LINE"
 fi
 
-# --- Install Neovim start screen ---
-NVIM_SITE_PLUGIN="$HOME/.local/share/nvim/site/plugin"
+# --- Install Neovim configuration (NVIM_APPNAME=muxcode) ---
+NVIM_CONFIGDIR="$HOME/.config/muxcode/nvim"
 
-info "Installing Neovim start screen..."
-mkdir -p "$NVIM_SITE_PLUGIN"
-cp "$REPO_DIR/config/muxcode-startscreen.lua" "$NVIM_SITE_PLUGIN/muxcode-startscreen.lua"
-ok "Neovim start screen installed (only activates inside muxcode)"
+info "MuxCode manages its own Neovim config via NVIM_APPNAME=muxcode"
+info "Config location: ~/.config/muxcode/nvim/"
+info "Your personal ~/.config/nvim/ will NOT be modified"
+echo ""
+if [ -f "$NVIM_CONFIGDIR/init.lua" ]; then
+  warn "Existing muxcode nvim config will be overwritten:"
+  warn "  $NVIM_CONFIGDIR/init.lua"
+  warn "  $NVIM_CONFIGDIR/plugin/startscreen.lua"
+  warn "User extensions in lua/user/ and after/ will be preserved."
+  echo ""
+  read -rp "Overwrite muxcode nvim config? [Y/n] " nvim_ans
+  if [[ "$nvim_ans" =~ ^[Nn]$ ]]; then
+    warn "Skipping nvim config install"
+  else
+    mkdir -p "$NVIM_CONFIGDIR/plugin"
+    cp "$REPO_DIR/config/nvim/init.lua" "$NVIM_CONFIGDIR/init.lua"
+    cp "$REPO_DIR/config/nvim/plugin/startscreen.lua" "$NVIM_CONFIGDIR/plugin/startscreen.lua"
+    ok "Neovim config installed to ~/.config/muxcode/nvim/"
+  fi
+else
+  mkdir -p "$NVIM_CONFIGDIR/plugin"
+  cp "$REPO_DIR/config/nvim/init.lua" "$NVIM_CONFIGDIR/init.lua"
+  cp "$REPO_DIR/config/nvim/plugin/startscreen.lua" "$NVIM_CONFIGDIR/plugin/startscreen.lua"
+  ok "Neovim config installed to ~/.config/muxcode/nvim/"
+fi
+
+# Clean up old site plugin from pre-NVIM_APPNAME installs
+OLD_SITE_PLUGIN="$HOME/.local/share/nvim/site/plugin/muxcode-startscreen.lua"
+if [ -f "$OLD_SITE_PLUGIN" ]; then
+  rm -f "$OLD_SITE_PLUGIN"
+  ok "Removed old start screen from site/plugin (migrated to NVIM_APPNAME config)"
+fi
 
 # --- Configure Claude Code hooks ---
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
