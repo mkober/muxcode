@@ -40,6 +40,14 @@ A PreToolUse hook (`muxcode-edit-guard.sh`) enforces this at the tool level — 
 | `cdk synth`, `cdk diff`, `cdk deploy` | deploy agent | `muxcode-agent-bus send deploy deploy "..."` |
 | `aws logs`, `tail -f`, `kubectl logs`, `docker logs`, `stern` | watch agent | `muxcode-agent-bus send watch watch "..."` |
 
+### Jira & Confluence — handle directly (DO NOT delegate)
+
+When the user asks about a Jira story, issue, ticket, or Confluence page — handle it yourself using the `jira-update-description` or `confluence-update-page` skills. Load the skill via `muxcode-agent-bus skill load <name>` and follow its instructions.
+
+**Never** delegate Jira or Confluence operations to the commit agent or any other agent. The edit agent owns these integrations.
+
+Trigger phrases: "read the jira story", "review the jira ticket", "update the description", "check the acceptance criteria", "read the confluence page", "update the confluence doc".
+
 ### PR reading — ALWAYS delegate to commit agent
 
 When the user says **any** of: "read PR", "check PR", "PR issues", "PR reviews", "PR feedback", "CI failures", "PR comments" — **immediately** run:

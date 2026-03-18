@@ -2,35 +2,35 @@
 
 ## Purpose
 
-General-purpose skill for the git-manager agent to read a Jira issue's current description (with context fields) and update it with new ADF content. The Jira issue key is extracted from the request message or falls back to the branch name. Uses the Atlassian REST API v3 with Basic auth via environment variables.
+General-purpose skill for the git-manager and edit agents to read a Jira issue's current description (with context fields) and update it with new ADF content. The Jira issue key is extracted from the request message or falls back to the branch name. Uses the `muxcode-jira.sh` wrapper script which handles Atlassian REST API v3 auth internally.
 
 ## Requirements
 
-- Skill file at `skills/jira-update-description.md` with frontmatter: `name: jira-update-description`, `roles: [git]`, `tags: [jira, integration, description, adf]`
-- Git-manager agent executes the skill when asked to read or update a Jira issue description
-- Gracefully skip (no error) when env vars are missing (`JIRA_BASE_URL`, `JIRA_USER_EMAIL`, `JIRA_API_TOKEN`)
+- Skill file at `skills/jira-update-description.md` with frontmatter: `name: jira-update-description`, `roles: [git, edit]`, `tags: [jira, integration, description, adf]`
+- Agents execute the skill when asked to read or update a Jira issue description
 - Two-path key identification: first scan request message for `[A-Z][A-Z0-9]*-[0-9]+`, then fall back to branch name extraction (`^` anchored); skip silently if neither yields a key
-- GET `/rest/api/3/issue/{key}?fields=description,summary,status,assignee` — parse context fields and flatten ADF text nodes for human-readable preview
-- PUT `/rest/api/3/issue/{key}` with `{"fields":{"description":{...}}}` — success is 204 No Content
-- ADF content array composed via `jq -n --argjson blocks` to avoid shell escaping issues
+- Read via `muxcode-jira.sh read <KEY>` — outputs summary, type, priority, status, assignee, and flattened description
+- Update via `muxcode-jira.sh update <KEY> <ADF-FILE>` — success is 204 No Content
+- ADF content array composed via `jq -n --argjson blocks` to avoid shell escaping issues, written to temp file
 - Report result back to edit agent
-- No Go code or tool profile changes needed — `Bash(curl*)` is already in the `git` tool profile
+- `Bash(muxcode-jira.sh *)` must be in the agent's permissions (global settings)
 
 ## Changes
 
 ### 1. Create `skills/jira-update-description.md`
 
-New skill file with instructions for the git-manager agent:
+New skill file with instructions:
 
-1. Check env vars (`JIRA_BASE_URL`, `JIRA_USER_EMAIL`, `JIRA_API_TOKEN`) — skip silently if missing
-2. Extract Jira key from request message, fall back to branch name — skip if no match
-3. GET issue with context fields (`description`, `summary`, `status`, `assignee`)
-4. Flatten ADF description to human-readable text via `jq`
-5. Build ADF content array and inject via `jq -n --argjson blocks`
-6. PUT updated description — check for 204 success
-7. Report result back to edit agent
+1. Extract Jira key from request message, fall back to branch name — skip if no match
+2. Read: `muxcode-jira.sh read "$jira_key"`
+3. Update: build ADF content array via `jq`, write to temp file, `muxcode-jira.sh update "$jira_key" "$tmpfile"`
+4. Report result back to edit agent
 
-### 2. Update backlog
+### 2. Wrapper script `scripts/muxcode-jira.sh`
+
+Handles config sourcing and curl+auth internally. Avoids inline curl+auth that triggers Claude Code "quoted characters in flag names" permission prompts.
+
+### 3. Update backlog
 
 Add row to the Implemented table in `docs/requirements/backlog.md`.
 
@@ -38,8 +38,9 @@ Add row to the Implemented table in `docs/requirements/backlog.md`.
 
 - `muxcode-agent-bus skill list --role git` shows `jira-update-description`
 - `muxcode-agent-bus skill load jira-update-description` renders skill content correctly
-- Build passes — no Go changes, but install copies new skill file
-- With env vars set and a valid Jira key, GET returns issue context and flattened description
-- PUT with ADF content array returns 204 and updates the issue description
+- Build passes — install copies skill file and wrapper script
+- `muxcode-jira.sh read PROJ-123` returns issue context and flattened description without permission prompts
+- `muxcode-jira.sh update PROJ-123 /tmp/payload.json` updates the description without permission prompts
 - Explicit key in request message (`"update PROJ-456 description"`) takes priority over branch name
-- Missing env vars or no Jira key cause silent skip, not an error
+- Missing env vars cause script error (non-zero exit), skill reports failure gracefully
+- No Jira key causes silent skip, not an error

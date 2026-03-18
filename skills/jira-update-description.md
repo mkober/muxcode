@@ -11,13 +11,13 @@ Read the current description of a Jira issue and/or update it with new ADF conte
 
 ### Prerequisites
 
-Three environment variables must be set (in `.muxcode/config` or `~/.config/muxcode/config`):
+The `muxcode-jira.sh` helper script must be installed (included in `make install`). It reads credentials from `.muxcode/config` or `~/.config/muxcode/config`:
 
 - `JIRA_BASE_URL` — e.g. `https://your-org.atlassian.net`
 - `JIRA_USER_EMAIL` — Atlassian account email
 - `JIRA_API_TOKEN` — Atlassian API token (create at https://id.atlassian.com/manage-profile/security/api-tokens)
 
-If any are missing, skip silently — do not treat it as an error.
+If any are missing, the script reports an error.
 
 ### Key identification
 
@@ -42,39 +42,13 @@ If neither yields a key, skip silently.
 
 ### Read (GET)
 
-Fetch the current issue description along with context fields:
+Use the wrapper script to fetch the issue:
 
 ```bash
-response=$(curl -s -w "\n%{http_code}" \
-  -u "${JIRA_USER_EMAIL}:${JIRA_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  "${JIRA_BASE_URL}/rest/api/3/issue/${jira_key}?fields=description,summary,status,assignee")
-
-body=$(echo "$response" | sed '$d')
-status=$(echo "$response" | tail -1)
+muxcode-jira.sh read "$jira_key"
 ```
 
-Check the HTTP status code — `200` means success.
-
-Parse context fields from the response:
-
-```bash
-summary=$(echo "$body" | jq -r '.fields.summary // "No summary"')
-issue_status=$(echo "$body" | jq -r '.fields.status.name // "Unknown"')
-assignee=$(echo "$body" | jq -r '.fields.assignee.displayName // "Unassigned"')
-```
-
-Flatten ADF description text nodes into a human-readable preview:
-
-```bash
-description_text=$(echo "$body" | jq -r '
-  [.fields.description // empty | .. | .text? // empty] | join(" ")
-')
-```
-
-Report context to edit:
-- `"Jira ${jira_key}: ${summary} [${issue_status}, ${assignee}]"`
-- Include the flattened description text
+This outputs summary, type, priority, status, assignee, and the flattened description text.
 
 ### ADF reference
 
@@ -155,7 +129,7 @@ Building-block examples for composing the `content` array. Each is a standalone 
 
 ### Update (PUT)
 
-Compose the ADF `content` array as a JSON value, then inject it into the wrapper via `jq -n --argjson`:
+Compose the ADF `content` array as a JSON value, write to a temp file, then use the wrapper:
 
 ```bash
 payload=$(jq -n --argjson blocks "$content_array" '{
@@ -167,22 +141,14 @@ payload=$(jq -n --argjson blocks "$content_array" '{
     }
   }
 }')
+
+tmpfile=$(mktemp /tmp/jira-update-XXXXXX.json)
+echo "$payload" > "$tmpfile"
+muxcode-jira.sh update "$jira_key" "$tmpfile"
+rm -f "$tmpfile"
 ```
 
-Send the update — success is **204 No Content** (not 200):
-
-```bash
-response=$(curl -s -w "\n%{http_code}" \
-  -u "${JIRA_USER_EMAIL}:${JIRA_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -X PUT \
-  -d "$payload" \
-  "${JIRA_BASE_URL}/rest/api/3/issue/${jira_key}")
-
-status=$(echo "$response" | tail -1)
-```
-
-Check the HTTP status code — `204` means success.
+Success output: `"Updated description for <KEY>"`
 
 ### Reporting
 
@@ -190,11 +156,10 @@ Send a message to edit with the outcome:
 
 - **Read success**: `"Jira ${jira_key}: ${summary} [${issue_status}, ${assignee}] — description fetched"`
 - **Update success**: `"Updated description for Jira issue ${jira_key}"`
-- **Failure**: `"Failed to update Jira description for ${jira_key} (HTTP ${status})"`
+- **Failure**: report the error output from the script
 
 ### Error handling
 
-- Missing env vars: skip silently, do not report an error
 - No Jira key from request or branch name: skip silently
 - `jq` not available: skip silently (do not break the calling workflow)
-- Jira API error (non-200 on GET, non-204 on PUT): report failure to edit but do not fail the overall workflow
+- Script errors (non-zero exit): report failure to edit but do not fail the overall workflow

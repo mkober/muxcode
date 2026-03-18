@@ -20,7 +20,11 @@ load_config() {
   elif [ -f "$HOME/.config/muxcode/config" ]; then
     config_file="$HOME/.config/muxcode/config"
   fi
-  [ -n "$config_file" ] && source "$config_file"
+  if [ -n "$config_file" ]; then
+    set -a  # auto-export all vars defined during source
+    source "$config_file"
+    set +a
+  fi
 }
 
 load_config
