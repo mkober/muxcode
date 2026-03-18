@@ -54,6 +54,9 @@ vim.keymap.set('i', 'jk', '<Esc>:update<CR>')
 -- Clear search highlight on Escape
 vim.keymap.set('n', '<Esc>', '<cmd>nohlsearch<CR>')
 
+-- Directory view (netrw)
+vim.keymap.set('n', '<leader>pv', vim.cmd.Ex, { desc = '[P]roject [V]iew (netrw)' })
+
 -- Window navigation (also handled by vim-tmux-navigator)
 vim.keymap.set('n', '<C-h>', '<C-w><C-h>', { desc = 'Move focus left' })
 vim.keymap.set('n', '<C-l>', '<C-w><C-l>', { desc = 'Move focus right' })
@@ -83,9 +86,11 @@ if not (vim.uv or vim.loop).fs_stat(lazypath) then
 end
 vim.opt.rtp:prepend(lazypath)
 
--- ── User plugin extensions ────────────────────────────────────────────────────
--- Users can create ~/.config/muxcode/nvim/lua/user/plugins.lua returning a
--- table of lazy.nvim plugin specs to extend the default muxcode config.
+-- ── User extensions ──────────────────────────────────────────────────────────
+-- Users can create files in ~/.config/muxcode/nvim/lua/user/ to extend the
+-- default muxcode config:
+--   plugins.lua  — return a table of lazy.nvim plugin specs
+--   keymaps.lua  — additional keymaps (loaded after plugins)
 
 local user_plugins = {}
 local user_spec_path = vim.fn.stdpath('config') .. '/lua/user/plugins.lua'
@@ -309,3 +314,11 @@ require('lazy').setup({
     },
   },
 })
+
+-- ── User keymaps ────────────────────────────────────────────────────────────
+-- Load after plugins so user keymaps can reference plugin modules.
+
+local user_keymaps_path = vim.fn.stdpath('config') .. '/lua/user/keymaps.lua'
+if vim.fn.filereadable(user_keymaps_path) == 1 then
+  pcall(require, 'user.keymaps')
+end
