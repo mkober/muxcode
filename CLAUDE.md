@@ -89,6 +89,11 @@ Both Go modules have **no external dependencies** (stdlib only).
 - When updating docs, augment existing content — don't rewrite or reorganize
 - Feature requirements live in `docs/requirements/` — completed specs in `completed/`, in-progress drafts in `drafts/`, backlog at top level
 
+### Permissions (`.claude/settings.local.json`)
+
+- **No hardcoded user paths**: this is an open-source project — never add absolute paths containing usernames or home directories (e.g. `/Users/mkoberlein/...`). Use relative paths (`tools/muxcode-agent-bus/...`) or generic patterns (`~/.config/muxcode/...`).
+- User-specific `Read()` permissions for external dirs (nvim plugins, dotfiles, etc.) belong in the user's global `~/.claude/settings.json`, not in the project-local file.
+
 ## Key constraints
 
 - **Edit agent delegation**: never runs build, test, deploy, API requests, log tailing, git commands (including read-only like `git status`), or GitHub CLI commands (`gh`). All delegated via message bus. API testing requests go to the `api` agent (role `api`, window `api`). PR review reads (Copilot comments, CI failures) go to the **commit** agent with action `pr-read` — never to the review agent. See [Architecture](docs/architecture.md).
