@@ -106,6 +106,38 @@ MUXCODE_TEST_CLAUDE_MODEL=claude-haiku-4-5
 | `JIRA_API_TOKEN` | (unset) | Atlassian API token ([create one here](https://id.atlassian.com/manage-profile/security/api-tokens)) |
 | `CONFLUENCE_BASE_URL` | (unset) | Override Confluence base URL if different from `JIRA_BASE_URL`. Falls back to `JIRA_BASE_URL` if unset. |
 
+## Claude Code Permissions
+
+The `config/settings.json` template includes pre-approved permissions for common CLI commands. These are merged into `~/.claude/settings.json` during `install.sh` so agents can run standard commands without triggering interactive approval prompts.
+
+### Allowed commands
+
+| Category | Commands |
+|----------|----------|
+| **MuxCode** | `muxcode-agent-bus`, `muxcode-jira.sh`, `muxcode-confluence.sh`, tmux capture/display |
+| **Git (read-only)** | `branch`, `diff`, `log`, `show`, `stash list`, `status` |
+| **Build/Test** | `go build/test/vet`, `pnpm install/build/lint/test`, `npx jest/cdk`, `pytest`, `ruff` |
+| **AWS** | CloudFormation (`describe-stacks`, `list-stacks`), DynamoDB (`describe-table`, `get-item`, `query`, `scan`), EventBridge (`describe-rule`, `list-rules`, `list-targets`), Glue (`get-job`, `get-job-run`, `list-jobs`), Lambda (`get-function`, `invoke`, `list-functions`), CloudWatch Logs (`describe-log-groups`, `filter-log-events`, `get-log-events`, `tail`), S3 (`cp`, `ls`), SNS, SQS, SSM (`get-parameter`), Step Functions (`describe-execution`, `get-execution-history`, `list-executions`, `list-state-machines`, `start-execution`), STS (`get-caller-identity`), CDK (`diff`, `ls`, `synth`) |
+| **GCP** | `gcloud` — App Engine (`app describe`, `app services list`), Compute (`instances list/describe`), Functions (`list`, `describe`, `logs read`), Cloud Run (`services list/describe`), Pub/Sub (`topics list/publish`, `subscriptions list`), Logging (`read`), Storage (`ls`, `cp`), SQL (`instances list/describe`), Projects (`list`, `describe`), Config (`list`, `get-value`). Also `gsutil ls/cp`. |
+| **Azure** | `az` — Account (`show`), Resources (`list`, `show`), Groups (`list`, `show`), Functions (`functionapp list/show`), Web Apps (`webapp list/show`), Storage (`blob *`, `container list`), Service Bus (`queue/topic *`), SQL (`db list/show`), Key Vault (`secret show`), Monitoring (`log-analytics query`) |
+| **Infrastructure** | Terraform (`plan`, `show`, `output`, `state list/show`), kubectl (`get`, `describe`, `logs`), Docker (`ps`, `logs`, `inspect`) |
+| **Shell** | `ls`, `which`, `node --version`, `python3 --version` |
+
+### Denied commands (blocked even if explicitly requested)
+
+| Category | Commands |
+|----------|----------|
+| **Git** | `push --force`, `reset --hard` |
+| **AWS** | `s3 rb` (delete bucket), `s3 rm` (delete objects) |
+| **GCP** | `gcloud projects delete`, `gcloud storage rm`, `gsutil rm` |
+| **Azure** | `az group delete`, `az resource delete`, `az storage blob delete`, `az storage container delete` |
+| **Infrastructure** | `cdk destroy`, `terraform destroy`, `kubectl delete` |
+| **Shell** | `rm -rf /` |
+
+### Customizing permissions
+
+Add project-specific permissions in `.claude/settings.local.json` (not committed). Add user-wide permissions in `~/.claude/settings.json`. The `install.sh` script merges the template into your existing settings without overwriting custom entries.
+
 ## Directory Structure
 
 ### Ephemeral (per-session)
