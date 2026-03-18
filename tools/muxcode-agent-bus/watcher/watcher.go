@@ -178,6 +178,10 @@ func (w *Watcher) refreshInboxSizes() {
 // auto-CC'd messages to edit don't need immediate notification since
 // edit will see them on its next inbox read. The watcher's role is to
 // catch messages that arrive without a Notify (e.g. auto-CC).
+//
+// Also retries passive notifications: if a prior Notify() used display-message
+// (invisible to Claude Code) because the agent was active, and the agent has
+// since become idle, clear the dedup marker and re-notify via send-keys.
 func (w *Watcher) checkInboxes() {
 	for _, role := range bus.KnownRoles {
 		inboxPath := bus.InboxPath(w.session, role)
@@ -199,6 +203,16 @@ func (w *Watcher) checkInboxes() {
 			fmt.Printf("  %s  New message(s) for %s — notifying\n", ts, role)
 			bus.LogLifecycle(w.session, "info", "watcher", "inbox-notify", role)
 			_ = bus.Notify(w.session, role)
+		} else if size > 0 && bus.HasPassiveNotify(w.session, role) {
+			// Prior notification was passive (display-message, invisible to
+			// Claude Code). If the agent is now idle, retry with send-keys.
+			if bus.IsAgentIdle(w.session, role) {
+				ts := time.Now().Format("15:04:05")
+				fmt.Printf("  %s  Retrying notification for %s (was passive, now idle)\n", ts, role)
+				bus.LogLifecycle(w.session, "info", "watcher", "passive-retry", role)
+				bus.ClearNotified(w.session, role)
+				_ = bus.Notify(w.session, role)
+			}
 		}
 
 		w.inboxSizes[role] = size

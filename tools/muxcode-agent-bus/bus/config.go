@@ -274,6 +274,13 @@ func WaitingMarkerPath(session, role string) string {
 	return filepath.Join(BusDir(session), "waiting-"+role+".marker")
 }
 
+// PassiveNotifyMarkerPath returns the path to a marker indicating the last
+// notification for a role was passive (display-message, invisible to Claude Code).
+// The watcher uses this to retry with send-keys once the agent becomes idle.
+func PassiveNotifyMarkerPath(session, role string) string {
+	return filepath.Join(BusDir(session), "passive-notify-"+role+".marker")
+}
+
 // SubscriptionPath returns the subscriptions JSONL file path for a session.
 func SubscriptionPath(session string) string {
 	return filepath.Join(BusDir(session), "subscriptions.jsonl")

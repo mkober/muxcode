@@ -151,6 +151,25 @@ func IsWaiting(session, role string) bool {
 	return true
 }
 
+// SetPassiveNotify creates a marker indicating the last notification for a role
+// was passive (display-message). The watcher checks this to retry with send-keys
+// once the agent becomes idle.
+func SetPassiveNotify(session, role string) {
+	_ = os.WriteFile(PassiveNotifyMarkerPath(session, role), []byte("1"), 0644)
+}
+
+// ClearPassiveNotify removes the passive notification marker for a role.
+// Called after a successful send-keys notification.
+func ClearPassiveNotify(session, role string) {
+	_ = os.Remove(PassiveNotifyMarkerPath(session, role))
+}
+
+// HasPassiveNotify returns true if the last notification for a role was passive.
+func HasPassiveNotify(session, role string) bool {
+	_, err := os.Stat(PassiveNotifyMarkerPath(session, role))
+	return err == nil
+}
+
 // markNotified records the current inbox size as the last notified size.
 func markNotified(session, role string) {
 	inboxPath := InboxPath(session, role)
@@ -259,6 +278,7 @@ func notifyIdleSendKeys(session, role string) error {
 	}
 
 	markNotified(session, role)
+	ClearPassiveNotify(session, role)
 	return notifySendKeys(session, role)
 }
 
@@ -322,6 +342,8 @@ func notifyDisplayMessage(session, role string) error {
 	}
 
 	markNotified(session, role)
+
+	SetPassiveNotify(session, role)
 
 	// Passive: display-message shows in the tmux status bar.
 	// -d 5000 keeps it visible for 5 seconds (default is often too brief).
