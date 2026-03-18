@@ -1,50 +1,8 @@
 # Requirements Backlog
 
-## Implemented
+## Completed
 
-| Feature | Description | Requirements doc |
-|---------|-------------|-----------------|
-| Memory search | Keyword search and section inventory across agent memory files | [memory-search.md](./memory-search.md) |
-| Skills plugin system | File-based plugin mechanism for reusable instruction sets with role-based injection | [skills-plugin.md](./skills-plugin.md) |
-| Session compaction | Manual session summary save/restore for context preservation across restarts | |
-| Cron scheduling | Interval-based scheduled tasks with watcher integration and execution history | |
-| Tool profiles | Config-driven per-role tool permissions with shared groups and composition | [tool-profiles-and-chains.md](./tool-profiles-and-chains.md) |
-| Event-driven chains | Configurable build-test-review and deploy-verify automation chains | [tool-profiles-and-chains.md](./tool-profiles-and-chains.md) |
-| Session inspection | Agent status overview and message history querying | |
-| Loop detection | Automatic detection of repetitive agent patterns with escalation to edit agent | |
-| Dynamic prompts | Go-based system prompt composition with role-specific sections | |
-| Process management | Background process lifecycle tracking with auto-notification on completion | |
-| Deploy verification | Post-deploy health checks triggered automatically after successful deployments | [deploy-verify.md](./deploy-verify.md) |
-| Demo mode | Scripted demo scenarios with bus messages, window switching, and GIF capture | |
-| Auto session compaction | Watcher-triggered compaction alerts when agent context approaches limits | |
-| Agent spawn | Create temporary agent sessions for one-off tasks, collect result, tear down | |
-| Session re-init purge | Stale data cleanup on session restart — preserves memory, purges ephemeral files | |
-| Runner execution history | Left-pane poller for run window showing command history, exit codes, and output | |
-| Preview fold fix | Persistent `foldlevel=99` in nvim diff previews replacing one-shot `zR` | |
-| User-initiated git ops | Chain stops at review — commits, pushes, and PRs require explicit user action | |
-| Log tailing delegation | Route `aws logs`, `tail -f`, `kubectl logs`, etc. to the watch agent via edit guard | |
-| Review agent permissions | Process substitution (`diff <(...)`), `python3`, `jq` added to review tool profile | |
-| Git manager HEREDOC | Commit agent uses HEREDOC for commit messages instead of temp files | |
-| Analyze findings log | Left-pane poller for analyze window — filters `log.jsonl` for analyst responses, shows findings count, recent entries, and full latest payload. Watcher moved to background process at session init. | |
-| BM25 memory search | Okapi BM25 ranking with IDF weighting, length normalization, stemming, stop words, and quoted phrase matching — replaces keyword counting as default search mode | |
-| Daily memory rotation | Lazy daily rotation on first write — archives previous day's file to `{role}/YYYY-MM-DD.md`, configurable 30-day retention, 7-day context window, search covers archives | |
-| Loop-detected self-loop fix | System action exclusion (`isSystemAction()`) filters infrastructure actions from message loop detection; dedup cooldown increased from 300s to 600s to exceed detection window | |
-| Webhook endpoint | HTTP listener converting POST requests to bus messages — `POST /send` with role validation, bearer token auth, PID management; `GET /health`; detached background process via CLI | |
-| Context directory | Per-agent `context.d/` drop-in context files — `shared/` for all roles, `<role>/` for role-specific; project shadows user by filename; injected into prompt between skills and session resume | |
-| Project-aware context | Auto-detect project type (17 types via indicator files/globs) and inject convention snippets into all agent prompts — metadata extraction from go.mod, package.json, cdk.json, composer.json; manual context.d files shadow auto-detected; `--no-auto` opt-out on list/prompt | |
-| Event subscription | JSONL-persisted subscription table for event fan-out — agents subscribe to event+outcome patterns (`build/success`, `*/failure`, `*/*`), chain fires subscriptions after primary action, message template expansion with `${event}`, `${outcome}`, `${exit_code}`, `${command}` | |
-| Token usage reduction | `SendNoCC()` skips auto-CC on chain/subscription messages, `ChainShouldNotifyAnalyst()` with `NotifyAnalystOn` field for outcome-conditional analyst notifications (build/test: failure+unknown only), watcher efficiency: loop interval 30→60s, lazy cron/proc/spawn loading, running-state cache | [token-reduction.md](./token-reduction.md) |
-| Vim diff preview fix | `sil!` prefix on every command in vim pipe chains (only suppresses next command, not full chain) — fixes E35 errors and "Press ENTER" prompts. Separate `tmux send-keys` with 150ms delay for jump-to-line after diff setup so scrollbind is active | |
-| Local LLM agent | Per-role Ollama integration — Go agentic loop (`muxcode-agent-bus agent run`) with OpenAI-compatible API, tool execution (bash/read/glob/grep/write/edit), allowedTools enforcement, per-role config via `MUXCODE_{ROLE}_CLI=local`, fallback to Claude Code if Ollama unreachable | [local-llm-agent.md](./local-llm-agent.md) |
-| Ollama health monitoring | Watcher-integrated inference probes (30s interval) detect stuck Ollama instances — `ollama-down` alert at 60s, auto-restart at 90s (cap 3), agent relaunch, recovery detection; agent-side failure sentinels track consecutive `ChatComplete` errors | |
-| Jira description read+update | General-purpose GET+PUT skill for git-manager — read current description with context fields, update with ADF content, explicit-key + branch-name extraction | [jira-update-description.md](./jira-update-description.md) |
-| Agent health monitoring | Watcher detects dead agents (3-strike restart) + watcher self-monitoring via keepalive file + monitor script — `agent-health` CLI for stop/start/check | [agent-health-monitoring.md](./agent-health-monitoring.md) |
-| Cross-session memory | Global memory at `~/.config/muxcode/memory/` persisting across projects — `write-global`, `--no-global`, `--scope` flags, global context in prompts, BM25 search across both layers | [cross-session-memory.md](./cross-session-memory.md) |
-| Lifecycle logging | Persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` recording launcher sequence, watcher events, agent launches, auto-accept, and cleanup — survives session cleanup, filterable by source/level/event/time via `lifecycle show`, rotation at 1000 entries, `lifecycle purge` for cleanup | |
-| Build/test error extraction | Bash hook extracts error-relevant lines from failed build/test output into `errors` field in history JSONL — left-pane log views prefer errors over raw output for failures, filter "Exit code:" noise, color errors red/yellow | |
-| Harness circuit breaker | 3-layer stuck protection: within-turn filter, within-batch all-blocked early exit (2 turns), cross-batch cooldown (3 failures → 30s pause), 5-minute batch timeout — prevents runaway Ollama calls | |
-| PII scrubbing | Automatic PII/secret redaction for api/runner/watch roles — harness: `scrub.go` in executor; Claude Code: `muxcode-pii-scrub.sh` pipe-through script + agent definition instructions. Patterns: emails, SSN, CC (prefix-anchored), phone (separator-required), AWS keys, JWTs, generic secrets | |
-| Agent debug skill | Edit-agent skill for diagnosing other agents via tmux capture-pane — pane content capture, idle detection, inbox/health checks, multi-agent sweep, troubleshooting table | |
+44 delivered feature specs live in [`completed/`](./completed/). Each file contains requirements, key files, and implementation notes.
 
 ## Planned
 

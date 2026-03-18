@@ -100,9 +100,10 @@ MUXCODE_TEST_CLAUDE_MODEL=claude-haiku-4-5
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JIRA_BASE_URL` | (unset) | Atlassian instance URL (e.g. `https://your-org.atlassian.net`). Required for the `jira-pr-comment` skill. |
+| `JIRA_BASE_URL` | (unset) | Atlassian instance URL (e.g. `https://your-org.atlassian.net`). Used by Jira and Confluence skills. |
 | `JIRA_USER_EMAIL` | (unset) | Atlassian account email for API authentication |
 | `JIRA_API_TOKEN` | (unset) | Atlassian API token ([create one here](https://id.atlassian.com/manage-profile/security/api-tokens)) |
+| `CONFLUENCE_BASE_URL` | (unset) | Override Confluence base URL if different from `JIRA_BASE_URL`. Falls back to `JIRA_BASE_URL` if unset. |
 
 ## Directory Structure
 

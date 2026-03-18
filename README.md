@@ -126,7 +126,7 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 - **Webhook HTTP endpoint** — HTTP-to-bus bridge for CI/CD, GitHub webhooks, monitoring. Optional bearer token auth
 - **Cron scheduling** — Recurring tasks on intervals (`@every 5m`, `@hourly`, `@daily`), managed by the bus watcher
 - **Background process tracking** — Launch long-running processes, track status, get notified on completion
-- **Jira integration** — Post PR comments and read/update issue descriptions via Atlassian REST API. Jira key extracted from branch name
+- **Atlassian integration** — Jira issue descriptions, PR comments, and Confluence page updates via Atlassian REST API. Jira key extracted from branch name, Confluence pages identified by ID, URL, or space+title
 - **Lifecycle logging** — Persistent JSONL logs recording the full startup-to-cleanup lifecycle. Survives session restarts, filterable by source/level/event/time
 
 ### Safety & guardrails
@@ -292,6 +292,7 @@ Skills are reusable instruction sets defined as markdown files with YAML frontma
 | `code-review-checklist`   | review       | Code review quality checklist                                |
 | `jira-pr-comment`         | git          | Post PR details as a comment on the corresponding Jira issue |
 | `jira-update-description` | git, edit    | Read and update a Jira issue description with ADF content    |
+| `confluence-update-page`  | git, edit    | Read and update Confluence pages with ADF content            |
 
 ### Resolution order
 
@@ -318,12 +319,13 @@ tags: [ci, workflow]
 Instructions for the agent...
 ```
 
-### Jira integration
+### Atlassian integration
 
-Two skills integrate with Jira via the Atlassian REST API. Both extract the Jira key from the branch name (e.g. `DATA-456-add-validation` → `DATA-456`):
+Three skills integrate with Atlassian Cloud via the REST API:
 
-- **`jira-pr-comment`** — The git-manager agent posts a comment on the Jira issue when a PR is created, including the PR link with diff stats.
+- **`jira-pr-comment`** — The git-manager agent posts a comment on the Jira issue when a PR is created, including the PR link with diff stats. Extracts the Jira key from the branch name (e.g. `DATA-456-add-validation` → `DATA-456`).
 - **`jira-update-description`** — Reads and updates Jira issue descriptions using Atlassian Document Format (ADF). Available to the git and edit roles.
+- **`confluence-update-page`** — Reads and updates Confluence pages using ADF. Pages identified by page ID, Confluence URL, or space key + title. Supports full replacement, append mode, and CQL search. Available to the git and edit roles.
 
 Add to `.muxcode/config` or `~/.config/muxcode/config`:
 
@@ -331,9 +333,12 @@ Add to `.muxcode/config` or `~/.config/muxcode/config`:
 JIRA_BASE_URL="https://your-org.atlassian.net"
 JIRA_USER_EMAIL="you@example.com"
 JIRA_API_TOKEN="your-atlassian-api-token"
+
+# Optional: override base URL for Confluence (defaults to JIRA_BASE_URL)
+# CONFLUENCE_BASE_URL="https://your-org.atlassian.net"
 ```
 
-If the env vars are missing or the branch name doesn't start with a Jira key, the skill skips silently.
+If the env vars are missing, all Atlassian skills skip silently. Jira skills also skip if the branch name doesn't start with a Jira key.
 
 ## Tmux tips
 

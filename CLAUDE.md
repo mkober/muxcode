@@ -84,7 +84,7 @@ Both Go modules have **no external dependencies** (stdlib only).
 - Prefer tables and code blocks over prose
 - Cross-link docs with relative paths (e.g. `docs/architecture.md`)
 - When updating docs, augment existing content — don't rewrite or reorganize
-- Feature requirements live in `docs/requirements/`
+- Feature requirements live in `docs/requirements/` — completed specs in `completed/`, in-progress drafts in `drafts/`, backlog at top level
 
 ## Key constraints
 

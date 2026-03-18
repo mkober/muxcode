@@ -1076,6 +1076,8 @@ muxcode-agent-bus skill prompt <role>
 | `go-testing` | test, build | Go testing patterns and conventions |
 | `code-review-checklist` | review | Code review quality checklist |
 | `jira-pr-comment` | git | Post a comment on a Jira issue when a PR is created. Extracts the Jira key from the branch name (e.g. `DATA-456-*`, `PBP1-4365-*`) and posts PR link + diff stats via the Atlassian REST API. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` env vars — skips silently if missing. |
+| `jira-update-description` | git, edit | Read and update a Jira issue description with ADF content. Extracts the Jira key from the request message or branch name. Uses the Atlassian REST API v3. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` env vars — skips silently if missing. |
+| `confluence-update-page` | git, edit | Read and update Confluence pages with ADF content. Pages identified by page ID, Confluence URL, or space key + title. Supports full replacement, append mode, and CQL search. Uses `CONFLUENCE_BASE_URL` (falls back to `JIRA_BASE_URL`), `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` — skips silently if missing. |
 
 ### `muxcode-agent-bus tools`
 
