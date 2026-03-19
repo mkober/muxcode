@@ -31,6 +31,7 @@ vim.opt.smartcase = true
 vim.opt.inccommand = 'split'
 vim.opt.list = true
 vim.opt.listchars = { tab = '» ', trail = '·', nbsp = '␣' }
+vim.opt.swapfile = false
 
 -- Auto-equalize splits on resize (essential for tiling WMs / tmux resizes)
 vim.api.nvim_create_autocmd('VimResized', {
