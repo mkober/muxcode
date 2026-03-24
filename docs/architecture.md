@@ -271,29 +271,29 @@ The build-test-review and deploy-verify chains are **deterministic** — driven 
 6. Matching subscribers receive messages via SendNoCC() (no auto-CC to edit)
 ```
 
-## Left-pane pollers
+## Left-pane consoles
 
-Each split-left window runs a poller script in the left pane that displays role-specific history.
+Each split-left window runs `muxcode-agent-bus console <role>` in the left pane, displaying role-specific status and history. The console command is a single Go binary that replaced the original per-role shell poller scripts.
 
-| Window | Script | Data source |
-|--------|--------|-------------|
-| build | `muxcode-build-log.sh` | `build-history.jsonl` |
-| test | `muxcode-test-log.sh` | `test-history.jsonl` |
-| review | `muxcode-review-log.sh` | `review-history.jsonl` |
-| deploy | `muxcode-deploy-log.sh` | `deploy-history.jsonl` |
-| run | `muxcode-runner-log.sh` | `run-history.jsonl` |
-| watch | `muxcode-watch-log.sh` | `watch-history.jsonl` |
-| commit | `muxcode-commit-log.sh` / `muxcode-git-status.sh` | `commit-history.jsonl` / git |
-| analyze | `muxcode-analyze-log.sh` | `log.jsonl` (filtered: `from=analyze`, `type=response`) |
-| api | `muxcode-api-log.sh` | `.muxcode/api/history.jsonl` |
+| Window | Command | Data source |
+|--------|---------|-------------|
+| build | `console build` | `build-history.jsonl` |
+| test | `console test` | `test-history.jsonl` |
+| review | `console review` | `review-history.jsonl` |
+| deploy | `console deploy` | `deploy-history.jsonl` |
+| run | `console run` | `run-history.jsonl` |
+| watch | `console watch` | `watch-history.jsonl` |
+| commit | `console commit` | `commit-history.jsonl` + live git status |
+| analyze | `console analyze` | `log.jsonl` (filtered: `from=analyze`, `type=response`) |
+| api | `console api` | `.muxcode/api/history.jsonl` |
 
-Pollers share a common pattern: `set -uo pipefail`, Dracula color scheme, `jq` primary with `python3` fallback, 5-second poll interval, clear-and-redraw via `\033[2J\033[H`.
+Consoles share a common rendering pipeline in `bus/console.go`: Dracula color scheme, 5-second poll interval (configurable via `--interval`), clear-and-redraw via ANSI escape codes. Per-role rendering is driven by a config map (`DefaultConsoleConfigs()`) with function pointers — not separate codepaths.
 
-Build and test log views display an `errors` field (extracted by the bash hook) for failed entries, preferring error-relevant lines over raw output. Failed builds/tests show the command, exit code, and error lines in red; previous failures show in yellow. "Exit code:" noise lines are filtered out.
+Build and test consoles display an `errors` field (extracted by the bash hook) for failed entries, preferring error-relevant lines over raw output. Failed builds/tests show the command, exit code, and error lines in red; previous failures show in yellow.
 
-The watch log view formats epoch timestamps via `format_ts()` (same as build/test), word-wraps long summaries, and adds padding for readability.
+The commit console combines live git status (branch, staged, modified, untracked files) with commit history entries.
 
-The analyze poller is unique — it reads the shared bus log (`log.jsonl`) rather than a dedicated history file, filtering for analyst response messages. It displays: findings count, last 15 entries with timestamp/action/target/truncated payload, and the full payload of the latest finding.
+The analyze console reads the shared bus log (`log.jsonl`) rather than a dedicated history file, filtering for analyst response messages. It displays findings count, recent entries with timestamp/action/target/truncated payload, and the full payload of the latest finding.
 
 ## Startup prompt handling
 

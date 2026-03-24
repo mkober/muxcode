@@ -40,7 +40,7 @@ The Go binary already has 27 subcommands, a TUI with Dracula colors, JSONL histo
 
 ---
 
-## Phase 1: Log pollers → `log-view` subcommand
+## Phase 1: Log pollers → `console` subcommand
 
 **Scripts:** 10 scripts, ~3,301 lines → single `muxcode-agent-bus log-view <role>` command
 **ROI:** Highest — eliminates the most duplicated code in the project
@@ -49,13 +49,13 @@ The Go binary already has 27 subcommands, a TUI with Dracula colors, JSONL histo
 
 | File | Purpose |
 |------|---------|
-| `bus/logview.go` | JSONL parsing, word-wrap, ANSI/Dracula formatting, timestamp formatting, terminal width detection |
-| `bus/logview_test.go` | Unit tests for parsing, word-wrap, per-role rendering |
-| `cmd/logview.go` | Handler: `log-view <role> [--interval N] [--once]` |
+| `bus/console.go` | JSONL parsing, word-wrap, ANSI/Dracula formatting, timestamp formatting, terminal width detection, per-role renderers |
+| `bus/console_test.go` | Unit tests for parsing, word-wrap, per-role rendering (22 tests) |
+| `cmd/console.go` | Handler: `console <role> [--interval N] [--once]` |
 
 ### Design
 
-- **Per-role rendering** as a config map (not separate codepaths). Each role entry specifies: title, history file name, which JSON fields to display, summary stats, optional extra sections
+- **Per-role rendering** as a config map (not separate codepaths). Each role entry specifies: title, empty message, recent label, max recent count, renderer function pointer
 - **`commit` role** combines git status (branch, staged, modified, untracked) with commit history — absorbs `muxcode-git-status.sh` and `muxcode-commit-log.sh`
 - **Screen management:** Clear terminal with ANSI escape, render full buffer, sleep interval. Raw ANSI output — no TUI framework (matches current behavior)
 - **`--once` flag** for testing — renders once without looping
@@ -71,16 +71,15 @@ The Go binary already has 27 subcommands, a TUI with Dracula colors, JSONL histo
 | run | `run-history.jsonl` | total count | Command output |
 | commit | `commit-history.jsonl` | total/pass/fail | Git status (exec `git` directly) |
 | watch | `watch-history.jsonl` | event count | — |
-| analyze | `analyze-history.jsonl` | file count | File routing summary |
-| api | `api-history.jsonl` | request count | Status code distribution |
+| analyze | `log.jsonl` (filtered) | findings count | Analyst response messages |
+| api | `.muxcode/api/history.jsonl` | request count | Status code distribution |
 
 ### Changes to existing files
 
 | File | Change |
 |------|--------|
-| `main.go` | Add `case "log-view": cmd.LogView(args)` |
-| `muxcode.sh` | Change left-pane commands from `muxcode-build-log.sh 5` to `muxcode-agent-bus log-view build --interval 5` |
-| `Makefile` | Stop installing the 10 eliminated log scripts |
+| `main.go` | Add `case "console": cmd.Console(args)` |
+| `muxcode.sh` | Change left-pane commands from per-role script calls to `muxcode-agent-bus console $ROLE` |
 
 ### Scripts eliminated
 
@@ -88,8 +87,8 @@ The Go binary already has 27 subcommands, a TUI with Dracula colors, JSONL histo
 
 ### Verification
 
-- Unit tests: JSONL parsing, word-wrap at various widths, timestamp formatting, per-role config resolution
-- Integration: write sample JSONL, run `log-view build --once`, assert output contains expected headers/colors/stats
+- Unit tests: JSONL parsing, word-wrap at various widths, timestamp formatting, per-role config resolution (22 tests, all passing)
+- Integration: write sample JSONL, run `console build --once`, assert output contains expected headers/colors/stats
 - Visual: run in live session, compare output side-by-side with old shell scripts
 
 ---

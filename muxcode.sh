@@ -289,111 +289,22 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
     send_init "$SESSION:$WIN.1"
     tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER edit" Enter
     tmux select-pane -t "$SESSION:$WIN.0"
-  elif [ "$WIN" = "build" ] && is_split_left "$WIN"; then
-    # Build window: build log poller (left) + agent (right)
-    tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN"
-    if command -v muxcode-build-log.sh &>/dev/null; then
-      tmux send-keys -t "$SESSION:$WIN" "muxcode-build-log.sh" Enter
-    fi
-    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN.1"
-    tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
-    tmux select-pane -t "$SESSION:$WIN.1"
-  elif [ "$WIN" = "test" ] && is_split_left "$WIN"; then
-    # Test window: test log poller (left) + agent (right)
-    tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN"
-    if command -v muxcode-test-log.sh &>/dev/null; then
-      tmux send-keys -t "$SESSION:$WIN" "muxcode-test-log.sh" Enter
-    fi
-    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN.1"
-    tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
-    tmux select-pane -t "$SESSION:$WIN.1"
-  elif [ "$WIN" = "review" ] && is_split_left "$WIN"; then
-    # Review window: review log poller (left) + agent (right)
-    tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN"
-    if command -v muxcode-review-log.sh &>/dev/null; then
-      tmux send-keys -t "$SESSION:$WIN" "muxcode-review-log.sh" Enter
-    fi
-    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN.1"
-    tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
-    tmux select-pane -t "$SESSION:$WIN.1"
-  elif [ "$WIN" = "deploy" ] && is_split_left "$WIN"; then
-    # Deploy window: deploy log poller (left) + agent (right)
-    tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN"
-    if command -v muxcode-deploy-log.sh &>/dev/null; then
-      tmux send-keys -t "$SESSION:$WIN" "muxcode-deploy-log.sh" Enter
-    fi
-    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN.1"
-    tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
-    tmux select-pane -t "$SESSION:$WIN.1"
-  elif [ "$WIN" = "run" ] && is_split_left "$WIN"; then
-    # Run window: runner log poller (left) + agent (right)
-    tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN"
-    if command -v muxcode-runner-log.sh &>/dev/null; then
-      tmux send-keys -t "$SESSION:$WIN" "muxcode-runner-log.sh" Enter
-    fi
-    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN.1"
-    tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
-    tmux select-pane -t "$SESSION:$WIN.1"
-  elif [ "$WIN" = "watch" ] && is_split_left "$WIN"; then
-    # Watch window: watch log poller (left) + agent (right)
-    tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN"
-    if command -v muxcode-watch-log.sh &>/dev/null; then
-      tmux send-keys -t "$SESSION:$WIN" "muxcode-watch-log.sh" Enter
-    fi
-    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN.1"
-    tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
-    tmux select-pane -t "$SESSION:$WIN.1"
-  elif [ "$WIN" = "commit" ] && is_split_left "$WIN"; then
-    # Commit window: commit log poller (left) + agent (right)
-    tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN"
-    if command -v muxcode-commit-log.sh &>/dev/null; then
-      tmux send-keys -t "$SESSION:$WIN" "muxcode-commit-log.sh" Enter
-    elif command -v muxcode-git-status.sh &>/dev/null; then
-      tmux send-keys -t "$SESSION:$WIN" "muxcode-git-status.sh" Enter
-    fi
-    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN.1"
-    tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
-    tmux select-pane -t "$SESSION:$WIN.1"
-  elif [ "$WIN" = "analyze" ] && is_split_left "$WIN"; then
-    # Analyze window: findings log (left) + analyst agent (right)
-    tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN"
-    if command -v muxcode-analyze-log.sh &>/dev/null; then
-      tmux send-keys -t "$SESSION:$WIN" "muxcode-analyze-log.sh" Enter
-    fi
-    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN.1"
-    tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
-    tmux select-pane -t "$SESSION:$WIN.1"
-  elif [ "$WIN" = "api" ] && is_split_left "$WIN"; then
-    # API window: api history log (left) + agent (right)
-    tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN"
-    if command -v muxcode-api-log.sh &>/dev/null; then
-      tmux send-keys -t "$SESSION:$WIN" "muxcode-api-log.sh" Enter
-    fi
-    tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
-    send_init "$SESSION:$WIN.1"
-    tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter
-    tmux select-pane -t "$SESSION:$WIN.1"
   elif is_split_left "$WIN"; then
-    # Custom split-left window: terminal (left) + agent (right)
+    # Split-left window: console status display (left) + agent (right)
+    # Uses muxcode-agent-bus console <role> for all known roles (build, test,
+    # review, deploy, run, watch, commit, analyze, api). Falls back to an
+    # empty terminal for custom split-left windows.
     tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN"
+    if command -v muxcode-agent-bus &>/dev/null; then
+      # Check if window has a console view (all standard windows do)
+      # Use $WIN not $ROLE — console configs are keyed by window name
+      case "$WIN" in
+        build|test|review|deploy|run|watch|commit|analyze|api)
+          tmux send-keys -t "$SESSION:$WIN" "muxcode-agent-bus console $WIN" Enter
+          ;;
+      esac
+    fi
     tmux split-window -h -t "$SESSION:$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN.1"
     tmux send-keys -t "$SESSION:$WIN.1" "$AGENT_LAUNCHER $ROLE" Enter

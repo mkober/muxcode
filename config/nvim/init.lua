@@ -88,6 +88,20 @@ vim.treesitter.get_parser = function(bufnr, lang, opts)
   return nil
 end
 
+-- Wrap vim.treesitter.highlighter.new so a nil tree (from get_parser above)
+-- doesn't crash Telescope's ts_highlighter callback at previewers/utils.lua:141.
+local _orig_hl_new = vim.treesitter.highlighter.new
+vim.treesitter.highlighter.new = function(tree, opts)
+  if not tree then
+    return nil
+  end
+  local ok, hl = pcall(_orig_hl_new, tree, opts)
+  if ok then
+    return hl
+  end
+  return nil
+end
+
 -- ── Bootstrap lazy.nvim ───────────────────────────────────────────────────────
 
 local lazypath = vim.fn.stdpath('data') .. '/lazy/lazy.nvim'

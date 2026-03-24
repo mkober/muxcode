@@ -41,6 +41,7 @@ Commands:
   api         Manage API collections, environments, and history
   agent-health  Manage agent health monitoring (stop, start, check)
   lifecycle     Persistent lifecycle logging (log, show, list, purge)
+  console       Display role-specific status console (replaces log poller scripts)
 `
 
 func main() {
@@ -115,6 +116,8 @@ func main() {
 		cmd.AgentHealth(args)
 	case "lifecycle":
 		cmd.Lifecycle(args)
+	case "console":
+		cmd.Console(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)
