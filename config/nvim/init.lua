@@ -76,6 +76,18 @@ if not vim.treesitter.language.ft_to_lang then
   vim.treesitter.language.ft_to_lang = vim.treesitter.language.get_lang
 end
 
+-- Wrap vim.treesitter.get_parser so missing parsers return nil instead of
+-- throwing.  Telescope's previewer calls this for every file and crashes
+-- with "Parser could not be created" if a language parser isn't compiled.
+local _orig_get_parser = vim.treesitter.get_parser
+vim.treesitter.get_parser = function(bufnr, lang, opts)
+  local ok, parser = pcall(_orig_get_parser, bufnr, lang, opts)
+  if ok then
+    return parser
+  end
+  return nil
+end
+
 -- ── Bootstrap lazy.nvim ───────────────────────────────────────────────────────
 
 local lazypath = vim.fn.stdpath('data') .. '/lazy/lazy.nvim'
@@ -227,12 +239,6 @@ require('lazy').setup({
       pipe_table = {
         style = 'full',
       },
-      win_options = {
-        wrap = {
-          default = vim.o.wrap,
-          rendered = false,
-        },
-      },
     },
     config = function(_, opts)
       local rm = require('render-markdown')
@@ -280,6 +286,25 @@ require('lazy').setup({
       'nvim-telescope/telescope-ui-select.nvim',
     },
     config = function()
+      -- Ensure nvim-treesitter.parsers.ft_to_lang exists before any
+      -- previewer callback fires — the shim in nvim-treesitter config
+      -- may not have run yet due to lazy.nvim load ordering.
+      local ok, p = pcall(require, 'nvim-treesitter.parsers')
+      if ok and type(p) == 'table' and not p.ft_to_lang then
+        p.ft_to_lang = function(ft)
+          return vim.treesitter.language.get_lang(ft) or ft
+        end
+      elseif not ok then
+        package.loaded['nvim-treesitter.parsers'] = {
+          ft_to_lang = function(ft)
+            return vim.treesitter.language.get_lang(ft) or ft
+          end,
+          get_parser = function(bufnr, lang)
+            return vim.treesitter.get_parser(bufnr, lang)
+          end,
+        }
+      end
+
       require('telescope').setup({
         extensions = {
           ['ui-select'] = {
