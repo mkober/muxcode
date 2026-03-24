@@ -11,7 +11,7 @@ Use these techniques to inspect what other agents are doing, verify message deli
 
 ### Prerequisites
 
-- `BUS_SESSION` env var or detect via `tmux display-message -p '#S'`
+- `BUS_SESSION` env var (always exported in muxcode sessions)
 - Agent pane targeting: agent runs in pane 1 (right pane) of its window
 
 ### Pane target format
@@ -29,10 +29,8 @@ Where `window` matches the role name for most agents. Hosted roles map to their 
 Capture the last N lines from an agent's tmux pane to see what it's currently doing:
 
 ```bash
-SESSION="${BUS_SESSION:-$(tmux display-message -p '#S')}"
-
 # Capture last 30 lines from an agent pane (strip ANSI codes)
-tmux capture-pane -t "${SESSION}:{role}.1" -p -S -30 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
+tmux capture-pane -t "${BUS_SESSION}:{role}.1" -p -S -30 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
 ```
 
 Adjust `-S -30` for more/less context (e.g. `-S -50` for 50 lines, `-S -100` for 100 lines).
@@ -42,7 +40,7 @@ Adjust `-S -30` for more/less context (e.g. `-S -50` for 50 lines, `-S -100` for
 An idle agent shows the `❯` prompt character. Check:
 
 ```bash
-tmux capture-pane -t "${SESSION}:{role}.1" -p -S -8 | grep -q '❯' && echo "idle" || echo "active"
+tmux capture-pane -t "${BUS_SESSION}:{role}.1" -p -S -8 | grep -q '❯' && echo "idle" || echo "active"
 ```
 
 ### Check agent left pane (log view)
@@ -51,7 +49,7 @@ Windows with split panes have a log view in pane 0 (left):
 
 ```bash
 # Capture the build log view
-tmux capture-pane -t "${SESSION}:build.0" -p -S -30 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
+tmux capture-pane -t "${BUS_SESSION}:build.0" -p -S -30 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
 ```
 
 Split-left windows: edit, build, test, review, deploy, analyze, commit, watch, api.
@@ -75,12 +73,12 @@ When an agent appears stuck or unresponsive:
 
 1. **Capture pane** — see what the agent is currently showing:
    ```bash
-   tmux capture-pane -t "${SESSION}:{role}.1" -p -S -50 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
+   tmux capture-pane -t "${BUS_SESSION}:{role}.1" -p -S -50 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
    ```
 
 2. **Check idle state** — is the agent at the prompt or mid-execution?
    ```bash
-   tmux capture-pane -t "${SESSION}:{role}.1" -p -S -8 | grep -q '❯' && echo "idle" || echo "active"
+   tmux capture-pane -t "${BUS_SESSION}:{role}.1" -p -S -8 | grep -q '❯' && echo "idle" || echo "active"
    ```
 
 3. **Check inbox** — does it have unprocessed messages?
@@ -113,13 +111,12 @@ When an agent appears stuck or unresponsive:
 To get a quick overview of all agents:
 
 ```bash
-SESSION="${BUS_SESSION:-$(tmux display-message -p '#S')}"
 for role in build test review commit deploy; do
   echo "=== ${role} ==="
-  idle=$(tmux capture-pane -t "${SESSION}:${role}.1" -p -S -8 2>/dev/null | grep -q '❯' && echo "idle" || echo "active")
+  idle=$(tmux capture-pane -t "${BUS_SESSION}:${role}.1" -p -S -8 2>/dev/null | grep -q '❯' && echo "idle" || echo "active")
   inbox=$(muxcode-agent-bus inbox --role "${role}" --peek 2>/dev/null | grep -c "Message from" || echo 0)
   echo "  status: ${idle}  inbox: ${inbox}"
-  tmux capture-pane -t "${SESSION}:${role}.1" -p -S -5 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tail -3 | sed 's/^/  /'
+  tmux capture-pane -t "${BUS_SESSION}:${role}.1" -p -S -5 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tail -3 | sed 's/^/  /'
   echo ""
 done
 ```

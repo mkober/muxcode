@@ -2,7 +2,7 @@
 
 ## Overview
 
-Muxcode uses Claude Code's hook system to integrate the AI agent with tmux and neovim. Hooks are shell scripts that run before or after tool execution, receiving the tool event as JSON on stdin.
+Muxcode uses Claude Code's hook system to integrate the AI agent with tmux and neovim. Hooks run before or after tool execution, receiving the tool event as JSON on stdin. Most hooks are implemented as subcommands of `muxcode-agent-bus hook` (Go binary); two remain as shell scripts for tmux/vim timing-sensitive operations.
 
 All hooks are **async** — they do not block the AI agent from continuing.
 
@@ -16,7 +16,7 @@ Hooks are configured in `.claude/settings.json` in your project:
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "hooks": [{"type": "command", "command": "muxcode-edit-guard.sh"}]
+        "hooks": [{"type": "command", "command": "muxcode-agent-bus hook guard"}]
       },
       {
         "matcher": "Write|Edit|NotebookEdit",
@@ -30,11 +30,11 @@ Hooks are configured in `.claude/settings.json` in your project:
     "PostToolUse": [
       {
         "matcher": "Write|Edit|NotebookEdit",
-        "hooks": [{"type": "command", "command": "muxcode-analyze-hook.sh", "async": true}]
+        "hooks": [{"type": "command", "command": "muxcode-agent-bus hook analyze", "async": true}]
       },
       {
         "matcher": "Bash",
-        "hooks": [{"type": "command", "command": "muxcode-bash-hook.sh", "async": true}]
+        "hooks": [{"type": "command", "command": "muxcode-agent-bus hook bash", "async": true}]
       }
     ]
   }
@@ -48,8 +48,9 @@ cp ~/.config/muxcode/settings.json .claude/settings.json
 
 ## Hook Descriptions
 
-### muxcode-edit-guard.sh
+### hook guard (edit guard)
 
+**Command:** `muxcode-agent-bus hook guard`
 **Phase:** PreToolUse
 **Trigger:** Bash
 **Mode:** sync (blocks tool execution)
@@ -98,8 +99,9 @@ Opens the target file in nvim and shows a diff preview of the proposed change be
 
 Lightweight cleanup hook. If a diff preview is still open from a previously rejected edit, this closes it before the next tool runs.
 
-### muxcode-analyze-hook.sh
+### hook analyze (analyze hook)
 
+**Command:** `muxcode-agent-bus hook analyze`
 **Phase:** PostToolUse
 **Trigger:** Write, Edit, NotebookEdit
 
@@ -118,8 +120,9 @@ Signals that a file was edited. Performs three tasks:
 
 **Matching mechanics:** Rules are evaluated in order (first match wins). Each rule's pattern is `|`-separated substrings matched case-sensitively against the full file path. Files matching no rule skip routing silently.
 
-### muxcode-bash-hook.sh
+### hook bash (bash hook)
 
+**Command:** `muxcode-agent-bus hook bash`
 **Phase:** PostToolUse
 **Trigger:** Bash
 
@@ -150,7 +153,7 @@ After the primary chain action, the hook fires event subscriptions — matching 
 
 **Error extraction:** For failed build and test commands, the hook extracts error-relevant lines from tool output into an `errors` field in the history JSONL. The regex matches common error patterns: `error:`, `ERR!`, `failed`, `fatal`, `panic`, `FAIL:`, `not found`, `undefined`, `syntax error`, `permission denied`, etc. Test patterns additionally match `assert` and `expect`. The left-pane log views prefer the `errors` field over raw `output` when displaying failures, surfacing diagnostic information instead of noise like "Exit code: 1".
 
-**JSON parsing:** Uses `jq` by default with a `python3` fallback. If neither `jq` nor `python3` is available, the `command` and `exit_code` fields will be empty and the hook exits silently — the build-test-review chain will not trigger. The preview hook uses `python3` specifically for generating proposed file content; without it, no split diff appears in nvim.
+**JSON parsing:** Implemented in Go using `encoding/json` — no external dependencies (`jq`/`python3` not required). The preview hook (`muxcode-preview-hook.sh`) still uses `python3` for generating proposed file content; without it, no split diff appears in nvim.
 
 ## Hook Event Format
 
@@ -180,7 +183,7 @@ PostToolUse hooks receive both `tool_input` and `tool_response`.
 The chain is **hook-driven**, ensuring deterministic behavior:
 
 1. Build agent runs `./build.sh` (or configured build command)
-2. `muxcode-bash-hook.sh` detects build command completed
+2. `hook bash` detects build command completed
 3. If exit code 0: hook sends `request:test` to test agent
 4. Test agent runs tests
 5. Hook detects test command completed
@@ -196,7 +199,7 @@ On failure at any step, the hook notifies edit directly with the error details.
 When a deploy-apply command succeeds, the hook triggers a verification self-loop:
 
 1. Deploy agent runs `cdk deploy` (or `terraform apply`, `pulumi up`, etc.)
-2. `muxcode-bash-hook.sh` detects deploy-apply command completed
+2. `hook bash` detects deploy-apply command completed
 3. If exit code 0: hook sends `request:verify` back to deploy agent
 4. Deploy agent runs verification checks (AWS resource health, HTTP smoke tests, CloudWatch alarms/logs)
 5. Deploy agent reports PASS/FAIL results to edit

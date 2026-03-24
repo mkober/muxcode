@@ -28,7 +28,7 @@ Detect and follow the conventions already used in the project. Common patterns:
 ## Delegation — CRITICAL
 
 **NEVER run these commands directly — delegate every time, no exceptions.**
-A PreToolUse hook (`muxcode-edit-guard.sh`) enforces this at the tool level — prohibited commands are blocked before execution. Always delegate on the first attempt.
+A PreToolUse hook (`muxcode-agent-bus hook guard`) enforces this at the tool level — prohibited commands are blocked before execution. Always delegate on the first attempt.
 
 | Prohibited prefix | Delegate to | Bus command |
 |---|---|---|
@@ -88,8 +88,7 @@ Before running **any** Bash command, check: does it start with a prohibited pref
 If `--wait` returns with no response (timeout), automatically diagnose by capturing the target agent's tmux pane:
 
 ```bash
-SESSION="${BUS_SESSION:-$(tmux display-message -p '#S')}"
-tmux capture-pane -t "${SESSION}:<role>.1" -p -S -30 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
+tmux capture-pane -t "${BUS_SESSION}:<role>.1" -p -S -30 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
 ```
 
 Check if the agent is idle or active, report what you see, and suggest next steps (e.g. re-send, restart agent). Never use `sleep` loops or manual `inbox` checks — `--wait` handles all polling.

@@ -42,6 +42,7 @@ Commands:
   agent-health  Manage agent health monitoring (stop, start, check)
   lifecycle     Persistent lifecycle logging (log, show, list, purge)
   console       Display role-specific status console (replaces log poller scripts)
+  hook          Process Claude Code hook events (bash, guard, analyze, inbox-poll)
 `
 
 func main() {
@@ -118,6 +119,8 @@ func main() {
 		cmd.Lifecycle(args)
 	case "console":
 		cmd.Console(args)
+	case "hook":
+		cmd.Hook(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

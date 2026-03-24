@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "muxcode-edit-guard.sh"
+            "command": "muxcode-agent-bus hook guard"
           }
         ]
       },
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "muxcode-analyze-hook.sh",
+            "command": "muxcode-agent-bus hook analyze",
             "async": true
           }
         ]
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "muxcode-bash-hook.sh",
+            "command": "muxcode-agent-bus hook bash",
             "async": true
           }
         ]
@@ -72,6 +72,8 @@
       "Bash(SESSION=*; output=*)",
       "Bash(SESSION=*; echo *)",
       "Bash(SESSION=*; pane=*)",
+      "Bash(SESSION=* tmux capture-pane *)",
+      "Bash(SESSION=* tmux display-message *)",
       "Bash(tmux capture-pane *)",
       "Bash(tmux display-message *)",
       "Bash(tmux list-windows *)",

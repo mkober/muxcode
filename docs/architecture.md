@@ -51,7 +51,7 @@ Persistent:  .muxcode/memory/{role}.md      (project)
 6. Build agent reads inbox, runs ./build.sh
 7. Build agent replies: muxcode-agent-bus send edit result "Build succeeded"
 8. --wait detects response, prints it to stdout as part of the Bash tool result
-9. PostToolUse hook (muxcode-bash-hook.sh) detects build success
+9. PostToolUse hook (hook bash) detects build success
 10. Hook automatically sends: muxcode-agent-bus send test test "Run tests"
 11. Test agent reads inbox, runs tests
 12. Hook detects test success, sends request to review
@@ -62,7 +62,7 @@ Persistent:  .muxcode/memory/{role}.md      (project)
 
 ```
 1. Deploy agent runs `cdk deploy` (or terraform apply, pulumi up, etc.)
-2. PostToolUse hook (muxcode-bash-hook.sh) detects deploy-apply command success
+2. PostToolUse hook (hook bash) detects deploy-apply command success
 3. Hook sends: muxcode-agent-bus chain deploy success
 4. Chain self-loops: sends verify request back to deploy agent
 5. Deploy agent runs verification checks (AWS health, HTTP smoke, CloudWatch)
@@ -75,7 +75,7 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
 
 ```
 1. Agent writes/edits a file (Write/Edit tool)
-2. PostToolUse hook (muxcode-analyze-hook.sh) fires
+2. PostToolUse hook (hook analyze) fires
 3. Hook appends file path to trigger file
 4. Hook routes event to relevant agent (test/deploy/build) based on file type
 5. In edit window: hook cleans up nvim diff preview, reloads file
@@ -203,11 +203,11 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 
 | Hook | Phase | Trigger | Mode | Purpose |
 |------|-------|---------|------|---------|
-| `muxcode-edit-guard.sh` | PreToolUse | Bash | sync | Block prohibited commands in edit window |
+| `muxcode-agent-bus hook guard` | PreToolUse | Bash | sync | Block prohibited commands in edit window |
 | `muxcode-preview-hook.sh` | PreToolUse | Write/Edit | async | Show diff preview in nvim |
 | `muxcode-diff-cleanup.sh` | PreToolUse | Read/Bash/etc | async | Clean stale diff preview |
-| `muxcode-analyze-hook.sh` | PostToolUse | Write/Edit | async | Route file events, trigger watcher |
-| `muxcode-bash-hook.sh` | PostToolUse | Bash | async | Drive build-test-review and deploy-verify chains + subscription fan-out |
+| `muxcode-agent-bus hook analyze` | PostToolUse | Write/Edit | async | Route file events, trigger watcher |
+| `muxcode-agent-bus hook bash` | PostToolUse | Bash | async | Drive build-test-review and deploy-verify chains + subscription fan-out |
 
 ### Hook Chain Guarantee
 
@@ -264,7 +264,7 @@ The build-test-review and deploy-verify chains are **deterministic** — driven 
 
 ```
 1. Build/test/deploy command completes
-2. muxcode-bash-hook.sh detects exit code
+2. hook bash detects exit code
 3. Hook sends: muxcode-agent-bus chain <event> <outcome>
 4. Chain fires primary action (e.g. build success → test)
 5. Chain fires subscriptions: read subscriptions.jsonl, match event+outcome

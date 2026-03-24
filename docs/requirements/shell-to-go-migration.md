@@ -93,8 +93,9 @@ The Go binary already has 27 subcommands, a TUI with Dracula colors, JSONL histo
 
 ---
 
-## Phase 2: Hooks → `hook` subcommand
+## Phase 2: Hooks → `hook` subcommand ✅
 
+**Status:** Complete
 **Scripts:** 4 of 6 hooks, ~777 lines → `muxcode-agent-bus hook <name>` subcommands
 **Retained as shell:** `muxcode-preview-hook.sh`, `muxcode-diff-cleanup.sh`
 

@@ -149,7 +149,7 @@ Runs in the `analyze` window left pane.
 
 #### Trigger file format
 
-The trigger file (`/tmp/muxcode-analyze-{SESSION}.trigger`) is written by `muxcode-analyze-hook.sh` with one line per file edit:
+The trigger file (`/tmp/muxcode-analyze-{SESSION}.trigger`) is written by `muxcode-agent-bus hook analyze` with one line per file edit:
 
 ```
 <unix-timestamp> <filepath>
@@ -161,7 +161,7 @@ When the watcher detects a change in the trigger file, it starts debouncing. Aft
 2. Sends an aggregate `analyze` event to the analyst agent with all edited files
 3. Truncates the trigger file
 
-Per-file routing to specific agents (test/deploy/build) is handled earlier by `muxcode-analyze-hook.sh` at edit time — the watcher only handles the aggregate analyst notification.
+Per-file routing to specific agents (test/deploy/build) is handled earlier by `hook analyze` at edit time — the watcher only handles the aggregate analyst notification.
 
 ### `muxcode-agent-bus dashboard`
 
@@ -1213,7 +1213,7 @@ Messages from `build`, `test`, or `review` to any non-edit agent are automatical
 
 ### Build-Test-Review Chain
 
-Driven by `muxcode-bash-hook.sh`, not by agent LLMs:
+Driven by `muxcode-agent-bus hook bash`, not by agent LLMs:
 
 1. **Build succeeds** -> hook sends `request:test` to the test agent
 2. **Test succeeds** -> hook sends `request:review` to the review agent
