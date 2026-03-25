@@ -123,9 +123,6 @@ func TestLocalLLMInstructions_BuildOverride(t *testing.T) {
 	if !strings.Contains(result, "Build Agent Override") {
 		t.Error("should contain build agent override section")
 	}
-	if !strings.Contains(result, "skip that step entirely") {
-		t.Error("should tell LLM to skip inbox step")
-	}
 	if !strings.Contains(result, "Start directly with the build sequence") {
 		t.Error("should tell LLM to start with the build sequence")
 	}

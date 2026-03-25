@@ -151,8 +151,9 @@ Reads JSON stdin, writes trigger file, routes file-change events. The nvim diff 
 
 ---
 
-## Phase 3: Utilities → individual subcommands
+## Phase 3: Utilities → individual subcommands ✅
 
+**Status:** Complete
 **Scripts:** 3 scripts, ~149 lines
 
 ### 3a: `pii-scrub` (replaces muxcode-pii-scrub.sh, 56 lines)

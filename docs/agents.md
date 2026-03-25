@@ -311,9 +311,9 @@ Watcher-integrated liveness detection for agent processes. The watcher probes ag
 
 ### Watcher self-monitoring
 
-The watcher writes a Unix timestamp to `watcher.keepalive` at the top of each poll loop. A companion script (`muxcode-watcher-monitor.sh`) checks the keepalive every 15 seconds — if stale (>30s), it kills and relaunches the watcher.
+The watcher writes a Unix timestamp to `watcher.keepalive` at the top of each poll loop. A companion monitor (`muxcode-agent-bus watch --monitor`) checks the keepalive every 15 seconds — if stale (>30s), it kills and relaunches the watcher.
 
-Core code: `bus/agent_health.go`, `bus/watcher_health.go`. Watcher code: `watcher/watcher.go` (`checkAgentHealth()`, `touchKeepalive()`). Monitor: `scripts/muxcode-watcher-monitor.sh`.
+Core code: `bus/agent_health.go`, `bus/watcher_health.go`. Watcher code: `watcher/watcher.go` (`checkAgentHealth()`, `touchKeepalive()`). Monitor: `cmd/watch.go` (`runWatcherMonitor()`).
 
 ## Ollama health monitoring
 
@@ -371,6 +371,6 @@ Tool output from `api`, `runner`/`run`, and `watch` roles is automatically scrub
 
 Redacted values are replaced with bracketed placeholders (e.g. `[EMAIL_REDACTED]`, `[SECRET_REDACTED]`). Scrubbing is logged to stderr with redaction count per tool call.
 
-For Claude Code agents in the same roles, the `muxcode-pii-scrub.sh` script provides equivalent pipe-through filtering. Agent definitions for api, runner, and watch instruct the agent to pipe sensitive output through the scrubber.
+For Claude Code agents in the same roles, `muxcode-agent-bus pii-scrub` provides equivalent pipe-through filtering. Agent definitions for api, runner, and watch instruct the agent to pipe sensitive output through the scrubber.
 
 Core code: `harness/` package — `config.go`, `ollama.go`, `bus.go`, `tools.go`, `executor.go`, `filter.go`, `prompt.go`, `loop.go`, `message.go`, `scrub.go`.

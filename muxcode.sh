@@ -185,16 +185,17 @@ lifecycle_log "info" "launcher" "bus-init"
 # nohup + disown: subsessions use switch-client (non-blocking), so the parent
 # shell exits and the terminal closes — background processes receive SIGHUP.
 # disown alone is insufficient; nohup prevents SIGHUP from killing the process.
-pkill -f "muxcode-agent-bus watch $SESSION" 2>/dev/null && \
-  lifecycle_log "info" "launcher" "stale-kill" "Killed stale watcher for $SESSION"
-pkill -f "muxcode-watcher-monitor.sh $SESSION" 2>/dev/null && \
+# Anchor patterns with $ to avoid "watch SESSION" matching "watch --monitor SESSION"
+pkill -f "muxcode-agent-bus watch --monitor ${SESSION}$" 2>/dev/null && \
   lifecycle_log "info" "launcher" "stale-kill" "Killed stale monitor for $SESSION"
+pkill -f "muxcode-agent-bus watch ${SESSION}$" 2>/dev/null && \
+  lifecycle_log "info" "launcher" "stale-kill" "Killed stale watcher for $SESSION"
 sleep 0.1  # let old processes exit before starting the new one
 nohup muxcode-agent-bus watch "$SESSION" &>/dev/null &
 WATCHER_PID=$!
 disown
 lifecycle_log "info" "launcher" "watcher-start" "PID: $WATCHER_PID"
-nohup muxcode-watcher-monitor.sh "$SESSION" &>/dev/null &
+nohup muxcode-agent-bus watch --monitor "$SESSION" &>/dev/null &
 MONITOR_PID=$!
 disown
 lifecycle_log "info" "launcher" "monitor-start" "PID: $MONITOR_PID"

@@ -92,7 +92,7 @@ Report results clearly to the requesting agent:
 API responses often contain personally identifiable information (PII) and secrets. **Always** pipe responses through the scrubber before including them in your reply or conversation:
 
 ```bash
-curl -s https://api.example.com/users | muxcode-pii-scrub.sh
+curl -s https://api.example.com/users | muxcode-agent-bus pii-scrub
 ```
 
 This redacts emails, SSNs, credit cards, phone numbers, AWS keys, JWTs, API tokens, and passwords. Use the scrubber on:
@@ -100,7 +100,7 @@ This redacts emails, SSNs, credit cards, phone numbers, AWS keys, JWTs, API toke
 - Any file containing user/customer data
 - Environment variable dumps that may contain secrets
 
-If `muxcode-pii-scrub.sh` is not available, manually redact PII before reporting.
+If `muxcode-agent-bus pii-scrub` is not available, manually redact PII before reporting.
 
 ## Safety Rules
 

@@ -74,6 +74,21 @@ func hookBash() {
 // triggerChain fires the event chain and analyst notifications.
 // This mirrors the logic in cmd/chain.go but called inline.
 func triggerChain(session, from, eventType, outcome, exitCode, command string) {
+	// Workflow guard: prevent re-triggering when already in or past target state.
+	// This breaks the test→review→test loop where review completion causes the
+	// test agent to re-run tests, which re-triggers another review request.
+	state := bus.ReadWorkflowState(session).State
+	switch eventType {
+	case "test":
+		if outcome == "success" && (state == bus.StateReviewing || state == bus.StateReviewed) {
+			return
+		}
+	case "build":
+		if outcome == "success" && (state == bus.StateTesting || state == bus.StateReviewing || state == bus.StateReviewed) {
+			return
+		}
+	}
+
 	action := bus.ResolveChain(eventType, outcome)
 	if action == nil {
 		return
@@ -81,7 +96,10 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string) {
 
 	message := bus.ExpandMessage(action.Message, exitCode, command)
 	msg := bus.NewMessage(from, action.SendTo, action.Type, action.Action, message, "")
-	if err := bus.SendNoCC(session, msg); err != nil {
+
+	// Atomic dedup check + send under file lock
+	sent, err := bus.SendNoCCIfNotDuplicate(session, msg)
+	if err != nil || !sent {
 		return
 	}
 	_ = bus.Notify(session, action.SendTo)

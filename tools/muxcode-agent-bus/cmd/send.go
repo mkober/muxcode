@@ -103,9 +103,16 @@ func Send(args []string) {
 	}
 
 	msg := bus.NewMessage(from, to, msgType, action, payload, replyTo)
-	if err := bus.Send(session, msg); err != nil {
+
+	// Atomic dedup check + send under file lock to avoid TOCTOU race
+	sent, err := bus.SendIfNotDuplicate(session, msg)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error sending message: %v\n", err)
 		os.Exit(1)
+	}
+	if !sent {
+		fmt.Printf("Suppressed duplicate %s:%s to %s (within dedup window)\n", msgType, action, to)
+		return
 	}
 
 	if !noNotify {

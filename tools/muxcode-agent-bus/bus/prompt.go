@@ -46,12 +46,12 @@ func SharedPrompt(role string) string {
 	b.WriteString("**Combined compact**: When the user says \"compact\", when you receive a `compact-recommended` alert, ")
 	b.WriteString("or whenever you decide to compact, always do both steps together:\n")
 	b.WriteString("1. Save context to memory: `muxcode-agent-bus session compact \"<summary of key work, decisions, and state>\"`\n")
-	b.WriteString("2. Trigger conversation compression: run `muxcode-compact.sh` in the background — ")
+	b.WriteString("2. Trigger conversation compression: run `muxcode-agent-bus compact` in the background — ")
 	b.WriteString("it waits for the agent to go idle, then injects `/compact` via tmux send-keys.\n")
-	b.WriteString("   ```bash\n   muxcode-compact.sh  # run in background (Bash run_in_background=true)\n   ```\n\n")
+	b.WriteString("   ```bash\n   muxcode-agent-bus compact  # run in background (Bash run_in_background=true)\n   ```\n\n")
 	b.WriteString("This preserves learnings across sessions (step 1) and keeps the current session lean (step 2). ")
 	b.WriteString("**Important**: Do NOT output `/compact` as text — it is a built-in slash command that only works when typed at the `❯` prompt. ")
-	b.WriteString("The `muxcode-compact.sh` script handles this automatically.\n\n")
+	b.WriteString("The `muxcode-agent-bus compact` command handles this automatically.\n\n")
 
 	// Protocol
 	b.WriteString("### Protocol\n")

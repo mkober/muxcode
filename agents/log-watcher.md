@@ -71,9 +71,9 @@ When you discover something noteworthy:
 Log output frequently contains personally identifiable information (PII) and secrets. **Always** pipe log output through the scrubber before including in your replies or findings:
 
 ```bash
-aws logs tail /aws/lambda/my-function --follow 2>&1 | muxcode-pii-scrub.sh
-kubectl logs my-pod | muxcode-pii-scrub.sh
-tail -100 /var/log/app.log | muxcode-pii-scrub.sh
+aws logs tail /aws/lambda/my-function --follow 2>&1 | muxcode-agent-bus pii-scrub
+kubectl logs my-pod | muxcode-agent-bus pii-scrub
+tail -100 /var/log/app.log | muxcode-agent-bus pii-scrub
 ```
 
 This redacts emails, SSNs, credit cards, phone numbers, AWS keys, JWTs, API tokens, and passwords. Use the scrubber on:
@@ -81,7 +81,7 @@ This redacts emails, SSNs, credit cards, phone numbers, AWS keys, JWTs, API toke
 - Stack traces that may contain user data in variable values
 - Environment variable dumps from container logs
 
-If `muxcode-pii-scrub.sh` is not available, manually redact PII before reporting.
+If `muxcode-agent-bus pii-scrub` is not available, manually redact PII before reporting.
 
 ## Safety Rules
 

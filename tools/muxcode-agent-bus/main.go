@@ -44,6 +44,8 @@ Commands:
   console       Display role-specific status console (replaces log poller scripts)
   hook          Process Claude Code hook events (bash, guard, analyze, inbox-poll)
   workflow      Show or reset workflow state machine (--json, reset)
+  pii-scrub     Scrub PII and secrets from stdin (pipe filter)
+  compact       Wait for agent idle, then inject /compact via tmux
 `
 
 func main() {
@@ -124,6 +126,10 @@ func main() {
 		cmd.Hook(args)
 	case "workflow":
 		cmd.Workflow(args)
+	case "pii-scrub":
+		cmd.Scrub(args)
+	case "compact":
+		cmd.Compact(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

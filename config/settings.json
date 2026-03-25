@@ -58,7 +58,7 @@
     "allow": [
       "Bash(muxcode-agent-bus *)",
       "Bash(./bin/muxcode-agent-bus *)",
-      "Bash(muxcode-compact.sh*)",
+      "Bash(muxcode-agent-bus compact*)",
       "Bash(muxcode-confluence.sh *)",
       "Bash(muxcode-jira.sh *)",
       "Bash(SESSION=* && tmux capture-pane *)",

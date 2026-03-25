@@ -391,7 +391,7 @@ Persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record the full 
 | `muxcode-agent.sh` | `agent` | launch (role + CLI type) |
 | `bus/setup.go` | `init` | init, re-init |
 | `watcher/watcher.go` | `watcher` | started, lock-failed, inbox-notify, startup-notify, trigger-route, cron-fire, proc/spawn-complete, loop/compact alerts, ollama/agent health |
-| `muxcode-watcher-monitor.sh` | `monitor` | session-gone, stale-detected, watcher-restart |
+| `cmd/watch.go` (`--monitor`) | `monitor` | session-gone, stale-detected, watcher-restart |
 | `bus/cleanup.go` | `cleanup` | session-cleanup |
 
 **Dual-writer pattern:** Go code calls `bus.LogLifecycle()` directly. Bash scripts call `muxcode-agent-bus lifecycle log` (CLI wrapper) which handles JSON formatting and flock-protected writes. Both converge on the same JSONL file.
