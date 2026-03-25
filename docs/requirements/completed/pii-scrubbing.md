@@ -5,7 +5,7 @@ Automatic PII and secret redaction for tool output in api, runner, and watch rol
 ## Requirements
 
 - Harness agents use automatic scrubbing in the executor via `ScrubPII` flag
-- Claude Code agents pipe tool output through `muxcode-agent-bus pii-scrub`
+- Claude Code agents pipe tool output through `muxcode pii-scrub`
 - Patterns redacted: emails, SSN, credit card numbers (prefix-anchored), phone numbers (separator-required)
 - Secret patterns redacted: AWS access keys, AWS secret keys, JWTs, generic secret/token values, dates of birth
 - Scrubbing applies only to PII-sensitive roles (`api`, `runner`/`run`, `watch`)

@@ -1,11 +1,11 @@
 {
   "shared_tools": {
     "bus": [
-      "Bash(muxcode-agent-bus *)",
-      "Bash(./bin/muxcode-agent-bus *)",
-      "Bash(cd * && muxcode-agent-bus *)",
-      "Bash(printf * | muxcode-agent-bus *)",
-      "Bash(echo * | muxcode-agent-bus *)",
+      "Bash(muxcode *)",
+      "Bash(./bin/muxcode *)",
+      "Bash(cd * && muxcode *)",
+      "Bash(printf * | muxcode *)",
+      "Bash(echo * | muxcode *)",
       "Bash(printf *)"
     ],
     "readonly": ["Read", "Glob", "Grep"],

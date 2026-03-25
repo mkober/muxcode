@@ -1,6 +1,6 @@
 # Shell-to-Go Migration
 
-Consolidate 30 shell scripts (5,159 lines) into the existing `muxcode-agent-bus` Go binary. Phased approach — one category per phase, tested independently before proceeding.
+Consolidate 30 shell scripts (5,159 lines) into the existing `muxcode` Go binary. Phased approach — one category per phase, tested independently before proceeding.
 
 ## Context
 
@@ -14,7 +14,7 @@ The Go binary already has 27 subcommands, a TUI with Dracula colors, JSONL histo
 
 ## Architecture decision
 
-**Absorb into `muxcode-agent-bus`** (not new binaries). Reasons:
+**Absorb into `muxcode`** (not new binaries). Reasons:
 - Single binary already in PATH, ~10ms startup
 - Shares bus state (paths, config, history files)
 - Makefile auto-builds from `tools/*/go.mod` — no new modules needed
@@ -42,7 +42,7 @@ The Go binary already has 27 subcommands, a TUI with Dracula colors, JSONL histo
 
 ## Phase 1: Log pollers → `console` subcommand
 
-**Scripts:** 10 scripts, ~3,301 lines → single `muxcode-agent-bus log-view <role>` command
+**Scripts:** 10 scripts, ~3,301 lines → single `muxcode log-view <role>` command
 **ROI:** Highest — eliminates the most duplicated code in the project
 
 ### New files
@@ -79,7 +79,7 @@ The Go binary already has 27 subcommands, a TUI with Dracula colors, JSONL histo
 | File | Change |
 |------|--------|
 | `main.go` | Add `case "console": cmd.Console(args)` |
-| `muxcode.sh` | Change left-pane commands from per-role script calls to `muxcode-agent-bus console $ROLE` |
+| `muxcode.sh` | Change left-pane commands from per-role script calls to `muxcode console $ROLE` |
 
 ### Scripts eliminated
 
@@ -96,7 +96,7 @@ The Go binary already has 27 subcommands, a TUI with Dracula colors, JSONL histo
 ## Phase 2: Hooks → `hook` subcommand ✅
 
 **Status:** Complete
-**Scripts:** 4 of 6 hooks, ~777 lines → `muxcode-agent-bus hook <name>` subcommands
+**Scripts:** 4 of 6 hooks, ~777 lines → `muxcode hook <name>` subcommands
 **Retained as shell:** `muxcode-preview-hook.sh`, `muxcode-diff-cleanup.sh`
 
 ### New files
@@ -134,7 +134,7 @@ Reads JSON stdin, writes trigger file, routes file-change events. The nvim diff 
 | File | Change |
 |------|--------|
 | `main.go` | Add `case "hook": cmd.Hook(args)` |
-| `.claude/settings.local.json` | Update hook commands from `muxcode-bash-hook.sh` to `muxcode-agent-bus hook bash` |
+| `.claude/settings.local.json` | Update hook commands from `muxcode-bash-hook.sh` to `muxcode hook bash` |
 | `config/settings.json` | Same hook command updates in template |
 | `install.sh` | Update hook paths in settings.json merge logic |
 | `Makefile` | Stop installing eliminated hook scripts |
@@ -147,7 +147,7 @@ Reads JSON stdin, writes trigger file, routes file-change events. The nvim diff 
 
 - Unit tests: JSON event parsing, command classification (build vs test vs deploy vs git), history JSONL writing/rotation, guard pattern matching
 - Integration: pipe sample tool events through `hook bash`, verify history files written and chains triggered
-- Hook latency: measure startup time (`time muxcode-agent-bus hook guard < event.json`) — must stay under 50ms
+- Hook latency: measure startup time (`time muxcode hook guard < event.json`) — must stay under 50ms
 
 ---
 
@@ -187,7 +187,7 @@ Polls tmux for idle state, sends `/compact` via tmux send-keys. Idle detection (
 | File | Change |
 |------|--------|
 | `main.go` | Add `case "pii-scrub"` and `case "compact"` |
-| `muxcode.sh` | Change watcher-monitor launch from `muxcode-watcher-monitor.sh` to `muxcode-agent-bus watch --monitor` |
+| `muxcode.sh` | Change watcher-monitor launch from `muxcode-watcher-monitor.sh` to `muxcode watch --monitor` |
 | `Makefile` | Stop installing eliminated scripts |
 
 ### Scripts eliminated
@@ -205,7 +205,7 @@ Polls tmux for idle state, sends `/compact` via tmux send-keys. Idle detection (
 ## Phase 4: Atlassian wrappers → `atlassian` subcommand ✅
 
 **Status:** Complete
-**Scripts:** 2 scripts, 260 lines → `muxcode-agent-bus atlassian <jira|confluence> <action>`
+**Scripts:** 2 scripts, 260 lines → `muxcode atlassian <jira|confluence> <action>`
 
 ### New files
 
@@ -226,8 +226,8 @@ Polls tmux for idle state, sends `/compact` via tmux send-keys. Idle detection (
 | File | Change |
 |------|--------|
 | `main.go` | Add `case "atlassian": cmd.Atlassian(args)` |
-| `skills/jira-update-description.md` | Update command from `muxcode-jira.sh` to `muxcode-agent-bus atlassian jira` |
-| `skills/confluence-update-page.md` | Update command from `muxcode-confluence.sh` to `muxcode-agent-bus atlassian confluence` |
+| `skills/jira-update-description.md` | Update command from `muxcode-jira.sh` to `muxcode atlassian jira` |
+| `skills/confluence-update-page.md` | Update command from `muxcode-confluence.sh` to `muxcode atlassian confluence` |
 | `Makefile` | Stop installing eliminated scripts |
 
 ### Scripts eliminated
@@ -245,7 +245,7 @@ Polls tmux for idle state, sends `/compact` via tmux send-keys. Idle detection (
 ## Phase 5: Agent launcher → `agent launch` subcommand ✅
 
 **Status:** Complete
-**Script:** `muxcode-agent.sh`, 325 lines → `muxcode-agent-bus agent launch <role>`
+**Script:** `muxcode-agent.sh`, 325 lines → `muxcode agent launch <role>`
 **Out of scope:** `muxcode.sh` (543 lines) — deferred to future evaluation after Phase 5 experience
 
 ### New files
@@ -270,7 +270,7 @@ Polls tmux for idle state, sends `/compact` via tmux send-keys. Idle detection (
 | File | Change |
 |------|--------|
 | `main.go` | Extend existing `agent` case to handle `agent launch` subcommand |
-| `muxcode.sh` | Change agent launch calls from `muxcode-agent.sh` to `muxcode-agent-bus agent launch` |
+| `muxcode.sh` | Change agent launch calls from `muxcode-agent.sh` to `muxcode agent launch` |
 | `Makefile` | Stop installing `muxcode-agent.sh` |
 
 ### Scripts eliminated

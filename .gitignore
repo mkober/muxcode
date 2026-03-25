@@ -3,7 +3,7 @@ bin/
 *.dll
 *.so
 *.dylib
-tools/muxcode-agent-bus/muxcode-agent-bus
+tools/muxcode/muxcode
 tools/muxcode-llm-harness/muxcode-llm-harness
 .DS_Store
 .muxcode/

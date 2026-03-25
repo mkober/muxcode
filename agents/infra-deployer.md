@@ -93,7 +93,7 @@ When you receive a bus message with action **verify**, run the following checks 
 ### Verification Output
 - Summarize results as PASS/FAIL per check category
 - On any failure, include the specific resource and error details
-- Send results to edit via: `muxcode-agent-bus send edit notify "<summary>"`
+- Send results to edit via: `muxcode send edit notify "<summary>"`
 
 ## Output
 When writing IaC code, include the resource definitions AND any configuration changes needed. When debugging, provide the root cause and a concrete fix.

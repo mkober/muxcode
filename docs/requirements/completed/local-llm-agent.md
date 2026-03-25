@@ -6,7 +6,7 @@ The commit agent (git-manager) currently runs Claude Code CLI, which is overkill
 
 ## Architecture: Go subcommand
 
-New `muxcode-agent-bus agent run <role>` subcommand — a self-contained agentic loop that:
+New `muxcode agent run <role>` subcommand — a self-contained agentic loop that:
 1. Builds system prompt from agent definition + shared prompt + skills + context + session resume
 2. Polls inbox for messages
 3. Sends messages to Ollama's OpenAI-compatible API with tool definitions
@@ -16,7 +16,7 @@ New `muxcode-agent-bus agent run <role>` subcommand — a self-contained agentic
 
 Ollama serves models locally at `http://localhost:11434/v1/chat/completions`.
 
-## New files (all in `tools/muxcode-agent-bus/`)
+## New files (all in `tools/muxcode/`)
 
 | File | Purpose |
 |------|---------|
@@ -28,7 +28,7 @@ Ollama serves models locally at `http://localhost:11434/v1/chat/completions`.
 | `bus/executor_test.go` | Executor tests |
 | `bus/agent.go` | Core agentic loop — inbox polling, conversation state, tool-calling loop, history logging |
 | `bus/agent_test.go` | Agent loop tests |
-| `cmd/agent.go` | CLI entry point — `muxcode-agent-bus agent run <role> [--model MODEL] [--url URL]` |
+| `cmd/agent.go` | CLI entry point — `muxcode agent run <role> [--model MODEL] [--url URL]` |
 
 ## Modified files
 
@@ -36,7 +36,7 @@ Ollama serves models locally at `http://localhost:11434/v1/chat/completions`.
 |------|--------|
 | `main.go` | Add `case "agent": cmd.Agent(args)` to dispatch |
 | `bus/profile.go` | Add `AgentCLI string` field to `ToolProfile`, add `OllamaConfig` to `MuxcodeConfig` |
-| `scripts/muxcode-agent.sh` | Check per-role CLI override, route to `muxcode-agent-bus agent run` when set to `"local"` |
+| `scripts/muxcode-agent.sh` | Check per-role CLI override, route to `muxcode agent run` when set to `"local"` |
 
 ## Configuration
 
@@ -50,7 +50,7 @@ MUXCODE_OLLAMA_URL=http://localhost:11434  # default URL
 
 Model is fully configurable — no hard-coded preference. Default `qwen2.5-coder:7b` as the lightest option that fits any Mac.
 
-Launcher integration (`muxcode-agent.sh`): Before `exec claude ...`, check `MUXCODE_${ROLE^^}_CLI`. If `"local"`, run `exec muxcode-agent-bus agent run "$ROLE"` instead. Fallback to Claude Code if Ollama is unreachable.
+Launcher integration (`muxcode-agent.sh`): Before `exec claude ...`, check `MUXCODE_${ROLE^^}_CLI`. If `"local"`, run `exec muxcode agent run "$ROLE"` instead. Fallback to Claude Code if Ollama is unreachable.
 
 ## Ollama API integration (`bus/ollama.go`)
 
@@ -125,7 +125,7 @@ In `muxcode-agent.sh`, if `MUXCODE_GIT_CLI=local` but Ollama is unreachable:
 
 ```bash
 if curl -s --max-time 2 "http://localhost:11434/api/tags" >/dev/null 2>&1; then
-  exec muxcode-agent-bus agent run "$ROLE"
+  exec muxcode agent run "$ROLE"
 else
   echo "Ollama not running, falling back to Claude Code" >&2
   # Fall through to normal claude launch
@@ -149,7 +149,7 @@ Remove `MUXCODE_GIT_CLI=local` from config to permanently revert.
 1. `go test ./...` — all unit tests pass (mocked Ollama via httptest)
 2. Start Ollama: `ollama serve && ollama pull qwen2.5-coder:7b`
 3. Set `MUXCODE_GIT_CLI=local` in `.muxcode/config`
-4. Start MuxCode session, send: `muxcode-agent-bus send commit status "Show git status"`
+4. Start MuxCode session, send: `muxcode send commit status "Show git status"`
 5. Verify commit agent reads inbox, calls Ollama, executes `git status`, sends response to edit
-6. Full flow: `muxcode-agent-bus send commit commit "Commit current changes"` — verify git add + commit + response
+6. Full flow: `muxcode send commit commit "Commit current changes"` — verify git add + commit + response
 7. Kill Ollama, restart session — verify fallback to Claude Code

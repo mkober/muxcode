@@ -44,12 +44,12 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I run this?
 Command output may contain personally identifiable information (PII) and secrets. **Always** pipe output through the scrubber when the command returns user data, API responses, or credentials:
 
 ```bash
-curl -s https://api.example.com/data | muxcode-agent-bus pii-scrub
-aws dynamodb scan --table-name users | muxcode-agent-bus pii-scrub
-cat /tmp/export.json | muxcode-agent-bus pii-scrub
+curl -s https://api.example.com/data | muxcode pii-scrub
+aws dynamodb scan --table-name users | muxcode pii-scrub
+cat /tmp/export.json | muxcode pii-scrub
 ```
 
-This redacts emails, SSNs, credit cards, phone numbers, AWS keys, JWTs, API tokens, and passwords. If `muxcode-agent-bus pii-scrub` is not available, manually redact PII before reporting.
+This redacts emails, SSNs, credit cards, phone numbers, AWS keys, JWTs, API tokens, and passwords. If `muxcode pii-scrub` is not available, manually redact PII before reporting.
 
 ## Safety Rules
 
@@ -66,5 +66,5 @@ This redacts emails, SSNs, credit cards, phone numbers, AWS keys, JWTs, API toke
 Report results clearly:
 - **Success**: Show the response payload, status code, and any relevant IDs
 - **Failure**: Show the error code, message, and suggest next steps (check permissions, input format, or delegate log tailing to watch agent)
-- **Always scrub** response payloads through `muxcode-agent-bus pii-scrub` when they may contain user data
+- **Always scrub** response payloads through `muxcode pii-scrub` when they may contain user data
 

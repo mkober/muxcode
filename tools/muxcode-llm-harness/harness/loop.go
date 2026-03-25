@@ -377,7 +377,7 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 			}
 			conversation = append(conversation, ChatMessage{
 				Role:    "user",
-				Content: "All your tool calls were blocked. Your task is already in this conversation. Execute it using the appropriate commands (NOT muxcode-agent-bus inbox). If you have completed the task, provide your final response as text.",
+				Content: "All your tool calls were blocked. Your task is already in this conversation. Execute it using the appropriate commands (NOT muxcode inbox). If you have completed the task, provide your final response as text.",
 			})
 		} else {
 			consecutiveAllBlocked = 0

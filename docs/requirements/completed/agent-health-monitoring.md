@@ -69,9 +69,9 @@ A stopped marker file at `/tmp/muxcode-bus-{session}/lock/{role}.stopped` suppre
 
 | Operation | CLI | Effect |
 |-----------|-----|--------|
-| Stop | `muxcode-agent-bus agent-health --stop <role>` | Writes marker, suppresses auto-restart |
-| Start | `muxcode-agent-bus agent-health --start <role>` | Removes marker, re-enables auto-restart |
-| Check | `muxcode-agent-bus agent-health --check <role>` | Reports alive/dead/stopped/excluded status |
+| Stop | `muxcode agent-health --stop <role>` | Writes marker, suppresses auto-restart |
+| Start | `muxcode agent-health --start <role>` | Removes marker, re-enables auto-restart |
+| Check | `muxcode agent-health --check <role>` | Reports alive/dead/stopped/excluded status |
 
 ### Watcher self-monitoring
 
@@ -93,11 +93,11 @@ Background bash loop launched alongside the watcher in `muxcode.sh`:
 **Startup in `muxcode.sh`:**
 ```bash
 # Kill stale processes from previous sessions
-pkill -f "muxcode-agent-bus watch $SESSION" 2>/dev/null || true
+pkill -f "muxcode watch $SESSION" 2>/dev/null || true
 pkill -f "muxcode-watcher-monitor.sh $SESSION" 2>/dev/null || true
 sleep 0.1
 # Launch both
-muxcode-agent-bus watch "$SESSION" &>/dev/null &
+muxcode watch "$SESSION" &>/dev/null &
 muxcode-watcher-monitor.sh "$SESSION" &>/dev/null &
 ```
 
@@ -147,7 +147,7 @@ These join the existing system actions: `loop-detected`, `compact-recommended`, 
 | 19 | Add `watcher.keepalive` to configuration.md ephemeral directory listing | `docs/configuration.md` | Low |
 | 20 | Manual verification: kill agent pane, wait 90s, verify restart + edit notification | — | High |
 | 21 | Manual verification: kill watcher, wait 30s, verify monitor restarts it | — | High |
-| 22 | Manual verification: `muxcode-agent-bus status` shows HEALTH column | — | High |
+| 22 | Manual verification: `muxcode status` shows HEALTH column | — | High |
 
 ## Data files
 
@@ -185,9 +185,9 @@ Reads watcher.keepalive timestamp
   ↓
 Age > 30s → stale
   ↓
-pkill -f "muxcode-agent-bus watch $SESSION"
+pkill -f "muxcode watch $SESSION"
   ↓
-Relaunch: muxcode-agent-bus watch "$SESSION" &>/dev/null &
+Relaunch: muxcode watch "$SESSION" &>/dev/null &
 ```
 
 ## Verification plan
@@ -195,17 +195,17 @@ Relaunch: muxcode-agent-bus watch "$SESSION" &>/dev/null &
 | Test | Steps | Expected result |
 |------|-------|-----------------|
 | Agent crash detection | Kill Claude Code in a non-edit agent pane (`Ctrl-C` or `kill`). Wait 90s. | Watcher logs 3 strikes, edit receives `agent-down` then `agent-restarting`, agent relaunches. |
-| Agent recovery | After restart, check `muxcode-agent-bus status`. | Role shows `alive` in HEALTH column. Edit receives `agent-recovered`. |
-| Intentional stop | Run `muxcode-agent-bus agent-health --stop build`, kill build agent. Wait 90s. | Watcher skips build in health checks. Status shows `stopped`. |
-| Intentional start | Run `muxcode-agent-bus agent-health --start build`. | Watcher resumes monitoring build. Next probe detects dead → escalation begins. |
+| Agent recovery | After restart, check `muxcode status`. | Role shows `alive` in HEALTH column. Edit receives `agent-recovered`. |
+| Intentional stop | Run `muxcode agent-health --stop build`, kill build agent. Wait 90s. | Watcher skips build in health checks. Status shows `stopped`. |
+| Intentional start | Run `muxcode agent-health --start build`. | Watcher resumes monitoring build. Next probe detects dead → escalation begins. |
 | Restart cap | Kill an agent 4 times in sequence. | First 3 auto-restart. 4th triggers alert-only mode ("Restart cap (3) reached"). |
 | Excluded roles | Kill edit pane's Claude Code. Wait 90s. | No health alerts — edit is excluded. |
-| Watcher death | `pkill -f "muxcode-agent-bus watch"`. Wait 30s. | Monitor detects stale keepalive, relaunches watcher. |
+| Watcher death | `pkill -f "muxcode watch"`. Wait 30s. | Monitor detects stale keepalive, relaunches watcher. |
 | Watcher hang | Not easily simulated — verify keepalive file is being updated during normal operation. | `cat /tmp/muxcode-bus-{session}/watcher.keepalive` shows recent timestamp. |
 | Session restart | Kill session, restart with same name. | Lock dir purged (stopped markers removed), keepalive overwritten by new watcher. |
-| Status table | Run `muxcode-agent-bus status`. | HEALTH column shows alive/excluded/stopped/dead for each role. |
-| JSON status | Run `muxcode-agent-bus status --json`. | Each entry has `"health"` field. |
-| Unit tests | `cd tools/muxcode-agent-bus && go test ./...` | All tests pass including new `agent_health_test.go` and `watcher_health_test.go`. |
+| Status table | Run `muxcode status`. | HEALTH column shows alive/excluded/stopped/dead for each role. |
+| JSON status | Run `muxcode status --json`. | Each entry has `"health"` field. |
+| Unit tests | `cd tools/muxcode && go test ./...` | All tests pass including new `agent_health_test.go` and `watcher_health_test.go`. |
 
 ## Relationship to Ollama health monitoring
 

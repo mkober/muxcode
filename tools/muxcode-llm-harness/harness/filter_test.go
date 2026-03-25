@@ -24,11 +24,11 @@ func TestFilter_BlocksInbox(t *testing.T) {
 		command string
 		blocked bool
 	}{
-		{"muxcode-agent-bus inbox", true},
-		{"muxcode-agent-bus inbox --raw", true},
-		{"/usr/local/bin/muxcode-agent-bus inbox", true},
+		{"muxcode inbox", true},
+		{"muxcode inbox --raw", true},
+		{"/usr/local/bin/muxcode inbox", true},
 		{"git status", false},
-		{"muxcode-agent-bus send edit status \"done\"", false},
+		{"muxcode send edit status \"done\"", false},
 	}
 
 	for _, tt := range tests {
@@ -47,10 +47,10 @@ func TestFilter_BlocksSelfSend(t *testing.T) {
 		command string
 		blocked bool
 	}{
-		{"muxcode-agent-bus send commit status \"test\"", true},
-		{"muxcode-agent-bus send commit", true},
-		{"muxcode-agent-bus send edit status \"test\"", false},
-		{"muxcode-agent-bus send build build \"test\"", false},
+		{"muxcode send commit status \"test\"", true},
+		{"muxcode send commit", true},
+		{"muxcode send edit status \"test\"", false},
+		{"muxcode send build build \"test\"", false},
 	}
 
 	for _, tt := range tests {
@@ -148,7 +148,7 @@ func TestFilter_NonBashToolsNotFiltered(t *testing.T) {
 
 func TestFilter_InboxBlockedReason(t *testing.T) {
 	f := NewFilter("commit")
-	result := f.Check(makeToolCall("muxcode-agent-bus inbox"))
+	result := f.Check(makeToolCall("muxcode inbox"))
 	if !result.Blocked {
 		t.Fatal("inbox should be blocked")
 	}
@@ -159,7 +159,7 @@ func TestFilter_InboxBlockedReason(t *testing.T) {
 
 func TestFilter_SelfSendBlockedReason(t *testing.T) {
 	f := NewFilter("commit")
-	result := f.Check(makeToolCall("muxcode-agent-bus send commit status \"test\""))
+	result := f.Check(makeToolCall("muxcode send commit status \"test\""))
 	if !result.Blocked {
 		t.Fatal("self-send should be blocked")
 	}
@@ -177,22 +177,22 @@ func TestCommandHash_NormalizesWhitespace(t *testing.T) {
 }
 
 func TestIsInboxCommand(t *testing.T) {
-	if !isInboxCommand("muxcode-agent-bus inbox") {
+	if !isInboxCommand("muxcode inbox") {
 		t.Error("should detect exact inbox command")
 	}
-	if !isInboxCommand("muxcode-agent-bus inbox --raw") {
+	if !isInboxCommand("muxcode inbox --raw") {
 		t.Error("should detect inbox with flags")
 	}
-	if isInboxCommand("muxcode-agent-bus send edit status") {
+	if isInboxCommand("muxcode send edit status") {
 		t.Error("should not match send command")
 	}
 }
 
 func TestIsSelfSend(t *testing.T) {
-	if !isSelfSend("muxcode-agent-bus send commit status \"test\"", "commit") {
+	if !isSelfSend("muxcode send commit status \"test\"", "commit") {
 		t.Error("should detect self-send")
 	}
-	if isSelfSend("muxcode-agent-bus send edit status \"test\"", "commit") {
+	if isSelfSend("muxcode send edit status \"test\"", "commit") {
 		t.Error("should not detect send to other role")
 	}
 }

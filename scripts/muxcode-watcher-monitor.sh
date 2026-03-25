@@ -13,7 +13,7 @@ lifecycle_log() {
   local level="$1" source="$2" event="$3" detail="${4:-}"
   local args=("$SESSION" "$level" "$source" "$event")
   [ -n "$detail" ] && args+=(--detail "$detail")
-  muxcode-agent-bus lifecycle log "${args[@]}" 2>/dev/null || true
+  muxcode lifecycle log "${args[@]}" 2>/dev/null || true
 }
 
 while true; do
@@ -44,11 +44,11 @@ while true; do
     lifecycle_log "warn" "monitor" "stale-detected" "Keepalive age: ${age}s > ${MAX_AGE}s"
 
     # Kill stale watcher
-    pkill -f "muxcode-agent-bus watch $SESSION" 2>/dev/null || true
+    pkill -f "muxcode watch $SESSION" 2>/dev/null || true
     sleep 0.2
 
     # Relaunch watcher
-    muxcode-agent-bus watch "$SESSION" &>/dev/null &
+    muxcode watch "$SESSION" &>/dev/null &
     lifecycle_log "info" "monitor" "watcher-restart" "PID: $!"
   fi
 done

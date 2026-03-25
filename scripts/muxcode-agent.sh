@@ -95,7 +95,7 @@ if [ "$ROLE_CLI" = "local" ]; then
     if command -v muxcode-llm-harness >/dev/null 2>&1; then
       exec muxcode-llm-harness "${HARNESS_ARGS[@]}"
     else
-      exec muxcode-agent-bus agent "${HARNESS_ARGS[@]}"
+      exec muxcode agent "${HARNESS_ARGS[@]}"
     fi
   else
     echo "Ollama not running at $OLLAMA_URL, falling back to Claude Code" >&2
@@ -122,12 +122,12 @@ agent_name() {
 }
 
 # Build --allowedTools flags from config-driven tool profiles.
-# Uses muxcode-agent-bus tools <role> to resolve the tool list.
+# Uses muxcode tools <role> to resolve the tool list.
 # Populates the TOOL_FLAGS array (patterns may contain spaces).
 TOOL_FLAGS=()
 build_flags() {
   local tools
-  tools="$(muxcode-agent-bus tools "$1" 2>/dev/null)" || return
+  tools="$(muxcode tools "$1" 2>/dev/null)" || return
   [ -z "$tools" ] && return
   while IFS= read -r tool; do
     [ -z "$tool" ] && continue
@@ -139,14 +139,14 @@ AGENT="$(agent_name "$ROLE")"
 build_flags "$ROLE"
 
 # Build --append-system-prompt flag from shared prompt template + skills.
-# Uses muxcode-agent-bus prompt <role> for coordination and skill prompt <role> for skills.
+# Uses muxcode prompt <role> for coordination and skill prompt <role> for skills.
 SHARED_PROMPT_FLAGS=()
 build_shared_prompt() {
   local prompt skills context resume combined
-  prompt="$(muxcode-agent-bus prompt "$1" 2>/dev/null)" || prompt=""
-  skills="$(muxcode-agent-bus skill prompt "$1" 2>/dev/null)" || skills=""
-  context="$(muxcode-agent-bus context prompt "$1" 2>/dev/null)" || context=""
-  resume="$(muxcode-agent-bus session resume "$1" 2>/dev/null)" || resume=""
+  prompt="$(muxcode prompt "$1" 2>/dev/null)" || prompt=""
+  skills="$(muxcode skill prompt "$1" 2>/dev/null)" || skills=""
+  context="$(muxcode context prompt "$1" 2>/dev/null)" || context=""
+  resume="$(muxcode session resume "$1" 2>/dev/null)" || resume=""
   combined="${prompt}${skills:+$'\n'$skills}${context:+$'\n'$context}${resume:+$'\n'$resume}"
   [ -z "$combined" ] && return
   SHARED_PROMPT_FLAGS=(--append-system-prompt "$combined")
@@ -223,12 +223,12 @@ fi
 # yet — the watcher's startup check will notify once the agent is ready.
 case "$ROLE" in
   edit)
-    AGENT_ROLE=edit muxcode-agent-bus send edit notify \
+    AGENT_ROLE=edit muxcode send edit notify \
       "Session started — review last saved context from memory to restore session state." \
       --type event --no-notify 2>/dev/null || true
     ;;
   analyst|analyze)
-    AGENT_ROLE=analyze muxcode-agent-bus send analyze notify \
+    AGENT_ROLE=analyze muxcode send analyze notify \
       "Session started — review last saved context from memory to restore session state." \
       --type event --no-notify 2>/dev/null || true
     ;;
@@ -237,7 +237,7 @@ esac
 # Log agent launch to persistent lifecycle log
 _session="${BUS_SESSION:-$(tmux display-message -p '#S' 2>/dev/null)}"
 if [ -n "$_session" ]; then
-  muxcode-agent-bus lifecycle log "$_session" "info" "agent" "launch" \
+  muxcode lifecycle log "$_session" "info" "agent" "launch" \
     --detail "role=$ROLE cli=$AGENT_CLI" 2>/dev/null || true
 fi
 
@@ -315,7 +315,7 @@ case "$ROLE" in
     PROMPT="You are the pr-read agent. Read GitHub PR reviews and CI check failures, then report suggested fixes to the edit agent. Use gh pr view, gh pr checks, gh api to read feedback. Never modify files directly — report suggestions only. The edit agent will prompt the user before making changes."
     ;;
   api)
-    PROMPT="You are the API testing agent. Manage API collections and environments using muxcode-agent-bus api subcommands. Execute requests via curl with jq formatting. Support variable substitution from environments. Log requests to history. Report results (status, timing, response) to the edit agent."
+    PROMPT="You are the API testing agent. Manage API collections and environments using muxcode api subcommands. Execute requests via curl with jq formatting. Support variable substitution from environments. Log requests to history. Report results (status, timing, response) to the edit agent."
     ;;
   *)
     PROMPT="You are a general-purpose coding assistant."

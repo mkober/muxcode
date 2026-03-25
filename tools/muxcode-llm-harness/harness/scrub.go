@@ -7,7 +7,7 @@ import (
 
 // PII patterns compiled once at package init.
 // NOTE: This file is intentionally duplicated in bus/scrub.go (separate Go module).
-// Changes here must be mirrored in tools/muxcode-agent-bus/bus/scrub.go.
+// Changes here must be mirrored in tools/muxcode/bus/scrub.go.
 var (
 	// Email: user@domain.tld
 	emailRe = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)

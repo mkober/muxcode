@@ -28,7 +28,7 @@ You are the **pr-read agent** — a read-only analyst that reads GitHub PR revie
 
 5. **Report suggested fixes** — send a structured summary to the edit agent via the bus. The edit agent will prompt the user before making any changes.
    ```bash
-   muxcode-agent-bus send edit notify "PR #N review summary: N must-fix, N should-fix, N informational. Must-fix: (1) file.ts:42 — description of fix. (2) file.ts:87 — description of fix."
+   muxcode send edit notify "PR #N review summary: N must-fix, N should-fix, N informational. Must-fix: (1) file.ts:42 — description of fix. (2) file.ts:87 — description of fix."
    ```
 
 Include for each suggested fix:

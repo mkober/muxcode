@@ -16,7 +16,7 @@ type Config struct {
 	OllamaModel string // default qwen2.5:7b (must support tool calling)
 	MaxTurns    int    // max tool-calling turns per batch (default 10)
 	BusDir      string // /tmp/muxcode-bus-{session}/
-	BusBin      string // path to muxcode-agent-bus binary
+	BusBin      string // path to muxcode binary
 }
 
 // DefaultConfig returns a Config with sensible defaults, reading from env vars.
@@ -124,23 +124,23 @@ func (c Config) HistoryPath() string {
 	return filepath.Join(c.BusDir, c.busRole()+"-history.jsonl")
 }
 
-// findBusBin locates the muxcode-agent-bus binary.
+// findBusBin locates the muxcode binary.
 func findBusBin() string {
-	if p, err := exec.LookPath("muxcode-agent-bus"); err == nil {
+	if p, err := exec.LookPath("muxcode"); err == nil {
 		return p
 	}
 	// Fallback to common locations
 	home, _ := os.UserHomeDir()
 	candidates := []string{
-		filepath.Join(home, ".local", "bin", "muxcode-agent-bus"),
-		"/usr/local/bin/muxcode-agent-bus",
+		filepath.Join(home, ".local", "bin", "muxcode"),
+		"/usr/local/bin/muxcode",
 	}
 	for _, c := range candidates {
 		if _, err := os.Stat(c); err == nil {
 			return c
 		}
 	}
-	return "muxcode-agent-bus" // let PATH resolve it at runtime
+	return "muxcode" // let PATH resolve it at runtime
 }
 
 // tmuxVar runs tmux display-message to get a variable value.

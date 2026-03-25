@@ -15,7 +15,7 @@ This plan addresses the top 3 by impact-to-effort ratio. On-demand agent spawnin
 
 A variant of `Send()` that skips auto-CC. Chain and subscription fan-out messages will use this.
 
-**File**: `tools/muxcode-agent-bus/bus/inbox.go`
+**File**: `tools/muxcode/bus/inbox.go`
 
 - Add `SendNoCC(session string, m Message) error` — identical to `Send()` but omits lines 37-41 (auto-CC block)
 - Extract the shared write logic into a private `sendMessage(session string, m Message, autoCC bool) error` to avoid duplication
@@ -31,7 +31,7 @@ A variant of `Send()` that skips auto-CC. Chain and subscription fan-out message
 
 Switch chain intermediate messages and analyst notifications to `SendNoCC`.
 
-**File**: `tools/muxcode-agent-bus/cmd/chain.go`
+**File**: `tools/muxcode/cmd/chain.go`
 
 - **Line 86**: Replace `bus.Send(session, msg)` → `bus.SendNoCC(session, msg)` for the primary chain action
 - **Line 114**: Replace `bus.Send(session, aMsg)` → `bus.SendNoCC(session, aMsg)` for analyst notification
@@ -45,7 +45,7 @@ Edit still receives:
 
 ## Step 3 — Use `SendNoCC` in subscription fan-out (`bus/subscribe.go`)
 
-**File**: `tools/muxcode-agent-bus/bus/subscribe.go`
+**File**: `tools/muxcode/bus/subscribe.go`
 
 - In `FireSubscriptions()` (~line 191), replace `Send(session, msg)` → `SendNoCC(session, msg)`
 - Subscription fan-out messages are derivative of chain events and should not duplicate to edit
@@ -56,7 +56,7 @@ Edit still receives:
 
 Make analyst notifications outcome-conditional instead of always-on.
 
-**File**: `tools/muxcode-agent-bus/bus/profile.go`
+**File**: `tools/muxcode/bus/profile.go`
 
 - Add `NotifyAnalystOn []string` field to `EventChain` struct (JSON: `"notify_analyst_on"`)
   - Valid values: `"success"`, `"failure"`, `"unknown"`, `"*"` (wildcard)
@@ -68,7 +68,7 @@ Make analyst notifications outcome-conditional instead of always-on.
   - `test`: `NotifyAnalystOn: []string{"failure", "unknown"}` (was `NotifyAnalyst: true`)
   - `deploy`: `NotifyAnalystOn: []string{"*"}` (keep all — deploy outcomes always matter)
 
-**File**: `tools/muxcode-agent-bus/cmd/chain.go`
+**File**: `tools/muxcode/cmd/chain.go`
 
 - **Line 68** (dry-run): Replace `ChainNotifyAnalyst(eventType)` → `ChainShouldNotifyAnalyst(eventType, outcome)`
 - **Line 102**: Same replacement
@@ -132,8 +132,8 @@ Add a note about the `NotifyAnalystOn` config field and `SendNoCC` function to t
 
 ## Verification
 
-1. `cd tools/muxcode-agent-bus && go vet ./...` — no errors
-2. `cd tools/muxcode-agent-bus && go test ./...` — all tests pass
+1. `cd tools/muxcode && go vet ./...` — no errors
+2. `cd tools/muxcode && go test ./...` — all tests pass
 3. Manual test: start a MuxCode session, trigger a build, verify:
    - Edit does NOT receive CC messages for build→test and test→review chain steps
    - Analyst is NOT notified on build/test success

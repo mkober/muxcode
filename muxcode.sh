@@ -119,7 +119,7 @@ lifecycle_log() {
   local level="$1" source="$2" event="$3" detail="${4:-}"
   local args=("$SESSION" "$level" "$source" "$event")
   [ -n "$detail" ] && args+=(--detail "$detail")
-  muxcode-agent-bus lifecycle log "${args[@]}" 2>/dev/null || true
+  muxcode lifecycle log "${args[@]}" 2>/dev/null || true
 }
 
 lifecycle_log "info" "launcher" "session-start" "Project: $PROJECT_DIR"
@@ -150,7 +150,7 @@ is_split_left() {
 }
 
 # --- Agent launcher (Go binary handles config, model, tools, prompt resolution) ---
-AGENT_LAUNCHER="muxcode-agent-bus agent launch"
+AGENT_LAUNCHER="muxcode agent launch"
 
 # --- Kill existing session if any ---
 tmux kill-session -t "$SESSION" 2>/dev/null || true
@@ -163,7 +163,7 @@ rm -f "/tmp/muxcode-preview-${SESSION}.tmp"
 
 # --- Initialize agent bus ---
 export BUS_SESSION="$SESSION"
-(cd "$PROJECT_DIR" && muxcode-agent-bus init)
+(cd "$PROJECT_DIR" && muxcode init)
 lifecycle_log "info" "launcher" "bus-init"
 
 # --- Start bus watcher in background (loop detection, compaction alerts) ---
@@ -174,16 +174,16 @@ lifecycle_log "info" "launcher" "bus-init"
 # shell exits and the terminal closes — background processes receive SIGHUP.
 # disown alone is insufficient; nohup prevents SIGHUP from killing the process.
 # Anchor patterns with $ to avoid "watch SESSION" matching "watch --monitor SESSION"
-pkill -f "muxcode-agent-bus watch --monitor ${SESSION}$" 2>/dev/null && \
+pkill -f "muxcode watch --monitor ${SESSION}$" 2>/dev/null && \
   lifecycle_log "info" "launcher" "stale-kill" "Killed stale monitor for $SESSION"
-pkill -f "muxcode-agent-bus watch ${SESSION}$" 2>/dev/null && \
+pkill -f "muxcode watch ${SESSION}$" 2>/dev/null && \
   lifecycle_log "info" "launcher" "stale-kill" "Killed stale watcher for $SESSION"
 sleep 0.1  # let old processes exit before starting the new one
-nohup muxcode-agent-bus watch "$SESSION" &>/dev/null &
+nohup muxcode watch "$SESSION" &>/dev/null &
 WATCHER_PID=$!
 disown
 lifecycle_log "info" "launcher" "watcher-start" "PID: $WATCHER_PID"
-nohup muxcode-agent-bus watch --monitor "$SESSION" &>/dev/null &
+nohup muxcode watch --monitor "$SESSION" &>/dev/null &
 MONITOR_PID=$!
 disown
 lifecycle_log "info" "launcher" "monitor-start" "PID: $MONITOR_PID"
@@ -280,17 +280,17 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
     tmux select-pane -t "$SESSION:$WIN.0"
   elif is_split_left "$WIN"; then
     # Split-left window: console status display (left) + agent (right)
-    # Uses muxcode-agent-bus console <role> for all known roles (build, test,
+    # Uses muxcode console <role> for all known roles (build, test,
     # review, deploy, run, watch, commit, analyze, api). Falls back to an
     # empty terminal for custom split-left windows.
     tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN"
-    if command -v muxcode-agent-bus &>/dev/null; then
+    if command -v muxcode &>/dev/null; then
       # Check if window has a console view (all standard windows do)
       # Use $WIN not $ROLE — console configs are keyed by window name
       case "$WIN" in
         build|test|review|deploy|run|watch|commit|analyze|api)
-          tmux send-keys -t "$SESSION:$WIN" "muxcode-agent-bus console $WIN" Enter
+          tmux send-keys -t "$SESSION:$WIN" "muxcode console $WIN" Enter
           ;;
       esac
     fi
@@ -346,7 +346,7 @@ tmux set-option -t "$SESSION" status-left "$_sl_with_icon"
 
 # --- Register cleanup hook for bus directory ---
 tmux set-hook -t "$SESSION" session-closed \
-  "run-shell 'muxcode-agent-bus cleanup $SESSION'"
+  "run-shell 'muxcode cleanup $SESSION'"
 
 # Force all windows to resize to the client's terminal dimensions after attaching.
 # nohup/trap SIGHUP so the subshell survives terminal close on subsession switch.

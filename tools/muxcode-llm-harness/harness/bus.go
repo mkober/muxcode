@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// BusClient wraps the muxcode-agent-bus CLI for bus operations.
+// BusClient wraps the muxcode CLI for bus operations.
 type BusClient struct {
 	BinPath   string
 	Session   string

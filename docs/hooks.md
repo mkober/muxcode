@@ -2,7 +2,7 @@
 
 ## Overview
 
-Muxcode uses Claude Code's hook system to integrate the AI agent with tmux and neovim. Hooks run before or after tool execution, receiving the tool event as JSON on stdin. Most hooks are implemented as subcommands of `muxcode-agent-bus hook` (Go binary); two remain as shell scripts for tmux/vim timing-sensitive operations.
+Muxcode uses Claude Code's hook system to integrate the AI agent with tmux and neovim. Hooks run before or after tool execution, receiving the tool event as JSON on stdin. Most hooks are implemented as subcommands of `muxcode hook` (Go binary); two remain as shell scripts for tmux/vim timing-sensitive operations.
 
 All hooks are **async** — they do not block the AI agent from continuing.
 
@@ -16,7 +16,7 @@ Hooks are configured in `.claude/settings.json` in your project:
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "hooks": [{"type": "command", "command": "muxcode-agent-bus hook guard"}]
+        "hooks": [{"type": "command", "command": "muxcode hook guard"}]
       },
       {
         "matcher": "Write|Edit|NotebookEdit",
@@ -30,11 +30,11 @@ Hooks are configured in `.claude/settings.json` in your project:
     "PostToolUse": [
       {
         "matcher": "Write|Edit|NotebookEdit",
-        "hooks": [{"type": "command", "command": "muxcode-agent-bus hook analyze", "async": true}]
+        "hooks": [{"type": "command", "command": "muxcode hook analyze", "async": true}]
       },
       {
         "matcher": "Bash",
-        "hooks": [{"type": "command", "command": "muxcode-agent-bus hook bash", "async": true}]
+        "hooks": [{"type": "command", "command": "muxcode hook bash", "async": true}]
       }
     ]
   }
@@ -50,7 +50,7 @@ cp ~/.config/muxcode/settings.json .claude/settings.json
 
 ### hook guard (edit guard)
 
-**Command:** `muxcode-agent-bus hook guard`
+**Command:** `muxcode hook guard`
 **Phase:** PreToolUse
 **Trigger:** Bash
 **Mode:** sync (blocks tool execution)
@@ -101,7 +101,7 @@ Lightweight cleanup hook. If a diff preview is still open from a previously reje
 
 ### hook analyze (analyze hook)
 
-**Command:** `muxcode-agent-bus hook analyze`
+**Command:** `muxcode hook analyze`
 **Phase:** PostToolUse
 **Trigger:** Write, Edit, NotebookEdit
 
@@ -123,7 +123,7 @@ Signals that a file was edited. Performs three tasks:
 
 ### hook bash (bash hook)
 
-**Command:** `muxcode-agent-bus hook bash`
+**Command:** `muxcode hook bash`
 **Phase:** PostToolUse
 **Trigger:** Bash
 
@@ -144,7 +144,7 @@ Preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) match deploy p
 
 Also sends events to the analyst for analysis (conditional on outcome — build/test only notify analyst on failure or unknown exit codes, deploy notifies on all outcomes).
 
-After the primary chain action, the hook fires event subscriptions — matching `subscriptions.jsonl` entries by event+outcome pattern and sending fan-out messages via `SendNoCC()` (no auto-CC to edit). Use `muxcode-agent-bus subscribe add` to configure.
+After the primary chain action, the hook fires event subscriptions — matching `subscriptions.jsonl` entries by event+outcome pattern and sending fan-out messages via `SendNoCC()` (no auto-CC to edit). Use `muxcode subscribe add` to configure.
 
 **Customization:**
 - `MUXCODE_BUILD_PATTERNS` — pipe-separated patterns for build command detection

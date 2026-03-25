@@ -189,7 +189,7 @@ ANALYZE_EVENT=$(cat << EVENTEOF
 EVENTEOF
 )
 
-echo "$ANALYZE_EVENT" | TMUX_PANE=$(tmux display-message -t "$PANE" -p '#{pane_id}') muxcode-agent-bus hook analyze
+echo "$ANALYZE_EVENT" | TMUX_PANE=$(tmux display-message -t "$PANE" -p '#{pane_id}') muxcode hook analyze
 
 # Wait for the analyze hook (has a 1s sleep + commands)
 sleep 2

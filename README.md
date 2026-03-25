@@ -59,7 +59,7 @@ A typical workflow looks like this:
 
 The entire build-test-review chain is **hook-driven** — Go hooks check exit codes and fire the next step. No tokens are spent on routing decisions, and the chain runs at the speed of your tools, not your LLM.
 
-The `muxcode-agent-bus tui` command launches a live dashboard showing which agents are busy, idle, or waiting on messages, so you always know what's happening across the session. You can add a dashboard window by including `status` in your `MUXCODE_WINDOWS` list.
+The `muxcode tui` command launches a live dashboard showing which agents are busy, idle, or waiting on messages, so you always know what's happening across the session. You can add a dashboard window by including `status` in your `MUXCODE_WINDOWS` list.
 
 ## Agents
 
@@ -85,7 +85,7 @@ Additional roles that share a host agent's window (messages are routed to the ho
 | docs     | edit        | Documentation writer — handled by the edit agent                                            |
 | research | edit        | Web search and codebase exploration — handled by the edit agent                             |
 | pr-read  | commit      | PR review analysis — handled by the commit agent                                            |
-| status   | —           | Live TUI dashboard (`muxcode-agent-bus tui`) — add `status` to `MUXCODE_WINDOWS` to include |
+| status   | —           | Live TUI dashboard (`muxcode tui`) — add `status` to `MUXCODE_WINDOWS` to include |
 
 Most agents default to Claude Code. Build and test default to a local LLM via [Ollama](https://ollama.com/) since they primarily execute structured commands where a small model is sufficient. Any role can be switched between Claude Code and a local LLM by setting its override variable in `.muxcode/config` (e.g. `MUXCODE_GIT_CLI=local`). Per-role model selection is also supported via `MUXCODE_{ROLE}_MODEL` (falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
 
@@ -306,7 +306,7 @@ Skills are reusable instruction sets defined as markdown files with YAML frontma
 ### Creating skills
 
 ```bash
-muxcode-agent-bus skill create my-skill "Description" --roles build,test --tags ci,workflow "Skill body here"
+muxcode skill create my-skill "Description" --roles build,test --tags ci,workflow "Skill body here"
 ```
 
 Or drop a markdown file in `.muxcode/skills/`:
@@ -369,7 +369,7 @@ Useful keybindings for navigating your MuxCode session:
 ## Documentation
 
 - [Architecture](docs/architecture.md) — System design, data flow, and hook chains
-- [Agent Bus](docs/agent-bus.md) — CLI reference for `muxcode-agent-bus`
+- [Agent Bus](docs/agent-bus.md) — CLI reference for `muxcode`
 - [Agents](docs/agents.md) — Role descriptions and customization
 - [Hooks](docs/hooks.md) — Hook system details
 - [Configuration](docs/configuration.md) — Config file and environment variable reference

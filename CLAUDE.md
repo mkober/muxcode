@@ -25,7 +25,7 @@ config/nvim/                  # Neovim config loaded via NVIM_APPNAME=muxcode
 ├── init.lua                  # Full lazy.nvim config (Dracula, treesitter, render-markdown, telescope)
 └── plugin/startscreen.lua    # MuxCode start screen (logo, agents, shortcuts)
 docs/                         # Documentation
-tools/muxcode-agent-bus/      # Go module — the bus binary
+tools/muxcode/      # Go module — the bus binary
 ├── bus/                      # Core library
 ├── cmd/                      # Subcommand handlers
 ├── watcher/                  # Inbox poller + trigger file monitor
@@ -42,7 +42,7 @@ tools/muxcode-llm-harness/    # Go module — standalone local LLM harness
 |---------|-------------|
 | `./build.sh` | Runs `make install` — builds Go binary, installs scripts/agents/configs |
 | `./test.sh` | Runs `go vet ./...` and `go test -v ./...` in the bus module |
-| `make build` | Builds Go binary to `bin/muxcode-agent-bus` |
+| `make build` | Builds Go binary to `bin/muxcode` |
 | `make install` | Build + install binary to `~/.local/bin/`, scripts, agents, configs to `~/.config/muxcode/` |
 | `make clean` | Remove `bin/` directory |
 | `./install.sh` | First-time setup — checks prereqs, builds, configures tmux and Claude Code hooks |
@@ -91,7 +91,7 @@ Both Go modules have **no external dependencies** (stdlib only).
 
 ### Permissions (`.claude/settings.local.json`)
 
-- **No hardcoded user paths**: this is an open-source project — never add absolute paths containing usernames or home directories (e.g. `/Users/mkoberlein/...`). Use relative paths (`tools/muxcode-agent-bus/...`) or generic patterns (`~/.config/muxcode/...`).
+- **No hardcoded user paths**: this is an open-source project — never add absolute paths containing usernames or home directories (e.g. `/Users/mkoberlein/...`). Use relative paths (`tools/muxcode/...`) or generic patterns (`~/.config/muxcode/...`).
 - User-specific `Read()` permissions for external dirs (nvim plugins, dotfiles, etc.) belong in the user's global `~/.claude/settings.json`, not in the project-local file.
 
 ## Key constraints
@@ -102,18 +102,18 @@ Both Go modules have **no external dependencies** (stdlib only).
 - **Pre-commit safeguard**: commit delegation blocked when any agent has pending inbox, is busy, or has running procs/spawns. Bypass with `--force`.
 - **Auto-CC**: messages from build/test/review/deploy to non-edit agents are copied to edit inbox. Chain/subscription messages use `SendNoCC()` to avoid redundant CC.
 - **Agent notifications**: dual-path strategy in `Notify()` (`bus/notify.go`). Active agents (including edit) use passive `display-message` (tmux status bar flash) — never `send-keys` to active panes, as it disrupts input buffers, interrupts tool execution, and stalls agents. All idle agents (at `❯` prompt), including edit, receive `send-keys` wake-up ("You have new messages" + Enter) to trigger inbox processing. `IsAgentIdle()` detects idle state via `tmux capture-pane -S -8` (exact match on `❯`). Harness panes are skipped (they poll inbox directly).
-- **Edit inbox polling**: use `--wait` flag on send commands (`muxcode-agent-bus send <to> <action> "<msg>" --wait`) to poll the sender's inbox every 2 seconds until a response arrives (timeout: `MUXCODE_INBOX_POLL_TIMEOUT`, default 600s). The response is printed to stdout as part of the Bash tool result — no manual "check inbox" needed.
+- **Edit inbox polling**: use `--wait` flag on send commands (`muxcode send <to> <action> "<msg>" --wait`) to poll the sender's inbox every 2 seconds until a response arrives (timeout: `MUXCODE_INBOX_POLL_TIMEOUT`, default 600s). The response is printed to stdout as part of the Bash tool result — no manual "check inbox" needed.
 - **System actions**: `loop-detected`, `compact-recommended`, `proc-complete`, `spawn-complete`, `ollama-down`, `ollama-recovered`, `ollama-restarting`, `agent-down`, `agent-restarting`, `agent-recovered` are excluded from message loop detection (`isSystemAction()`).
-- **Lifecycle logging**: persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record launcher sequence, watcher events, agent launches, auto-accept, and cleanup. Survives session cleanup. View with `muxcode-agent-bus lifecycle show [session]`, filter with `--source`, `--level`, `--event`, `--since`. Rotation at 1000 entries (configurable via `MUXCODE_LIFECYCLE_LOG_MAX`). Purge old logs with `lifecycle purge --days 30`.
-- **PII scrubbing**: tool output from `api`, `runner`/`run`, and `watch` roles is redacted before entering the LLM conversation. Harness agents use automatic scrubbing in the executor (`harness/scrub.go`). Claude Code agents pipe output through `muxcode-agent-bus pii-scrub`. Patterns: emails, SSN, credit cards (prefix-anchored), phone numbers (separator-required), AWS keys, JWTs, generic secrets/tokens.
+- **Lifecycle logging**: persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record launcher sequence, watcher events, agent launches, auto-accept, and cleanup. Survives session cleanup. View with `muxcode lifecycle show [session]`, filter with `--source`, `--level`, `--event`, `--since`. Rotation at 1000 entries (configurable via `MUXCODE_LIFECYCLE_LOG_MAX`). Purge old logs with `lifecycle purge --days 30`.
+- **PII scrubbing**: tool output from `api`, `runner`/`run`, and `watch` roles is redacted before entering the LLM conversation. Harness agents use automatic scrubbing in the executor (`harness/scrub.go`). Claude Code agents pipe output through `muxcode pii-scrub`. Patterns: emails, SSN, credit cards (prefix-anchored), phone numbers (separator-required), AWS keys, JWTs, generic secrets/tokens.
 - **Harness circuit breaker**: 3-layer stuck protection — within-turn (filter), within-batch (`MaxAllBlockedTurns=2`), cross-batch (`MaxConsecutiveFailures=3` triggers 30s cooldown). Each batch has 5-minute timeout. See [Agents](docs/agents.md#circuit-breaker).
 
 ## Code reference
 
-### Go bus binary (`tools/muxcode-agent-bus/`)
+### Go bus binary (`tools/muxcode/`)
 
-Build: `cd tools/muxcode-agent-bus && go build .`
-Test: `cd tools/muxcode-agent-bus && go test ./...`
+Build: `cd tools/muxcode && go build .`
+Test: `cd tools/muxcode && go test ./...`
 
 | File | Key exports |
 |------|-------------|

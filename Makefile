@@ -27,9 +27,9 @@ test:
 
 install: build
 	@install -d $(BINDIR) $(CONFIGDIR)/agents
-	@install -m 755 bin/muxcode-agent-bus $(BINDIR)/muxcode-agent-bus
+	@install -m 755 bin/muxcode $(BINDIR)/muxcode
+	@ln -sf muxcode $(BINDIR)/muxcode-agent-bus
 	@[ -f bin/muxcode-llm-harness ] && install -m 755 bin/muxcode-llm-harness $(BINDIR)/muxcode-llm-harness || true
-	@install -m 755 muxcode.sh $(BINDIR)/muxcode
 	@for f in scripts/muxcode-*.sh; do \
 		[ -f "$$f" ] && install -m 755 "$$f" $(BINDIR)/ ; \
 	done; true

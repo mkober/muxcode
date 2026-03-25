@@ -29,7 +29,7 @@ New skill file with instructions for the git-manager agent:
 
 ### 2. Add `Bash(curl*)` to `git` tool profile
 
-**File**: `tools/muxcode-agent-bus/bus/profile.go`
+**File**: `tools/muxcode/bus/profile.go`
 
 Add `"Bash(curl*)"` to the `Tools` slice for the `"git"` profile entry. One-line addition — `curl` is already permitted in `deploy` and `runner` profiles.
 
@@ -50,8 +50,8 @@ JIRA_API_TOKEN="your-atlassian-api-token"
 ## Acceptance criteria
 
 - Build passes after `profile.go` change
-- `muxcode-agent-bus skill list --role git` shows `jira-pr-comment`
-- `muxcode-agent-bus skill load jira-pr-comment` renders skill content correctly
+- `muxcode skill list --role git` shows `jira-pr-comment`
+- `muxcode skill load jira-pr-comment` renders skill content correctly
 - On a branch named `PROJ-123-something`, with env vars set, creating a PR posts a comment to Jira
 - On a branch without a Jira key prefix, the skill skips silently without breaking PR creation
 - `muxcode-jira.sh comment PROJ-123 /tmp/payload.json` posts comment without triggering permission prompts

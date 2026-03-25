@@ -9,7 +9,7 @@
 #
 # The script:
 #   1. Starts screen recording of the tmux session
-#   2. Runs the demo scenario via muxcode-agent-bus demo run
+#   2. Runs the demo scenario via muxcode demo run
 #   3. Stops recording and converts to GIF
 #
 set -euo pipefail
@@ -92,7 +92,7 @@ check_command() {
   fi
 }
 
-check_command muxcode-agent-bus "Run ./build.sh in the muxcode repo"
+check_command muxcode "Run ./build.sh in the muxcode repo"
 
 if [[ "$NO_RECORD" == false ]]; then
   check_command ffmpeg "brew install ffmpeg"
@@ -119,7 +119,7 @@ echo ""
 # Preview mode — just run the demo
 if [[ "$NO_RECORD" == true ]]; then
   echo "Running demo in preview mode (no recording)..."
-  muxcode-agent-bus demo run "$SCENARIO" --speed "$SPEED"
+  muxcode demo run "$SCENARIO" --speed "$SPEED"
   exit 0
 fi
 
@@ -163,7 +163,7 @@ else
   echo "  gifski --fps $FPS --width $WIDTH -o $OUTPUT <recording.mov>" >&2
   echo "" >&2
   echo "Running demo without recording..."
-  muxcode-agent-bus demo run "$SCENARIO" --speed "$SPEED"
+  muxcode demo run "$SCENARIO" --speed "$SPEED"
   exit 0
 fi
 
@@ -185,7 +185,7 @@ RECORD_PID=$!
 sleep 2
 
 echo "Running demo..."
-muxcode-agent-bus demo run "$SCENARIO" --speed "$SPEED"
+muxcode demo run "$SCENARIO" --speed "$SPEED"
 
 # Brief pause after demo completes
 sleep 2

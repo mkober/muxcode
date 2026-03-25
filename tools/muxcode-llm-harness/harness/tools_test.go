@@ -25,7 +25,7 @@ func TestGlobMatch(t *testing.T) {
 		{"", "something", false},
 		{"file?.txt", "file1.txt", true},
 		{"file?.txt", "file12.txt", false},
-		{"muxcode-agent-bus *", "muxcode-agent-bus send build build \"test\"", true},
+		{"muxcode *", "muxcode send build build \"test\"", true},
 		{"./build.sh*", "./build.sh", true},
 		{"./build.sh*", "./build.sh --verbose", true},
 	}
@@ -42,7 +42,7 @@ func TestIsToolAllowed_Bash(t *testing.T) {
 	patterns := []string{
 		"Bash(git *)",
 		"Bash(gh *)",
-		"Bash(muxcode-agent-bus *)",
+		"Bash(muxcode *)",
 		"Read",
 		"Glob",
 	}
@@ -54,7 +54,7 @@ func TestIsToolAllowed_Bash(t *testing.T) {
 		{"git status", true},
 		{"git commit -m 'test'", true},
 		{"gh pr create", true},
-		{"muxcode-agent-bus send build build \"test\"", true},
+		{"muxcode send build build \"test\"", true},
 		{"rm -rf /", false},
 		{"curl http://example.com", false},
 	}

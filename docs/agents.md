@@ -27,10 +27,10 @@ The three-tier search (project-local → user config → install default) runs i
 
 Every agent (regardless of source) receives a dynamically assembled `--append-system-prompt` containing:
 
-1. **Coordinator prompt** — role-specific coordination instructions (`muxcode-agent-bus prompt <role>`)
-2. **Skills** — matching skill definitions for the role (`muxcode-agent-bus skill prompt <role>`)
-3. **Context files** — from `context.d/shared/` + `context.d/<role>/` (`muxcode-agent-bus context prompt <role>`)
-4. **Session resume** — previous session summaries from memory (`muxcode-agent-bus session resume <role>`)
+1. **Coordinator prompt** — role-specific coordination instructions (`muxcode prompt <role>`)
+2. **Skills** — matching skill definitions for the role (`muxcode skill prompt <role>`)
+3. **Context files** — from `context.d/shared/` + `context.d/<role>/` (`muxcode context prompt <role>`)
+4. **Session resume** — previous session summaries from memory (`muxcode session resume <role>`)
 
 ### Permission mode
 
@@ -61,9 +61,9 @@ The edit agent runs without `--dangerously-skip-permissions` — users accept/re
 The edit agent is the primary user-facing agent. It **never** runs build, test, deploy, or commit commands directly. Instead, it delegates via the message bus:
 
 ```bash
-muxcode-agent-bus send build build "Run ./build.sh and report results"
-muxcode-agent-bus send test test "Run tests and report results"
-muxcode-agent-bus send review review "Review the latest changes"
+muxcode send build build "Run ./build.sh and report results"
+muxcode send test test "Run tests and report results"
+muxcode send review review "Review the latest changes"
 ```
 
 ### Autonomous Specialists (build, test, review, analyst)
@@ -71,9 +71,9 @@ muxcode-agent-bus send review review "Review the latest changes"
 These agents operate autonomously — they receive requests, execute unconditionally, and reply. They never ask for permission before acting.
 
 **Sequence:**
-1. Read inbox: `muxcode-agent-bus inbox`
+1. Read inbox: `muxcode inbox`
 2. Execute their command
-3. Reply to requester: `muxcode-agent-bus send <from> <action> "<result>" --type response --reply-to <id>`
+3. Reply to requester: `muxcode send <from> <action> "<result>" --type response --reply-to <id>`
 
 ### PR Reading (via commit agent)
 
@@ -81,7 +81,7 @@ PR review analysis runs in the **commit window** via the git-manager agent. The 
 
 **Invoke from the edit agent:**
 ```bash
-muxcode-agent-bus send commit pr-read "Read PR reviews and CI failures on the current branch and report suggested fixes"
+muxcode send commit pr-read "Read PR reviews and CI failures on the current branch and report suggested fixes"
 ```
 
 The git-manager reads reviews, CI checks, and inline comments, categorizes them (must-fix / should-fix / informational), and reports a structured summary back to edit.
@@ -94,7 +94,7 @@ muxcode-agent.sh pr-read
 
 ### Observers (watch)
 
-The watch agent monitors logs from various sources — local files, CloudWatch, Kubernetes, Docker — and reports findings back to the edit agent. It is **read-only** by default: no Write/Edit tools, no git commands. It uses `muxcode-agent-bus log watch "summary"` to record observations to the watch history.
+The watch agent monitors logs from various sources — local files, CloudWatch, Kubernetes, Docker — and reports findings back to the edit agent. It is **read-only** by default: no Write/Edit tools, no git commands. It uses `muxcode log watch "summary"` to record observations to the watch history.
 
 ### Tool Specialists (deploy, runner, git)
 
@@ -106,16 +106,16 @@ Any agent can create a temporary spawned agent for one-off tasks. The spawn inhe
 
 ```bash
 # Spawn a research agent for a one-off task
-muxcode-agent-bus spawn start research "What does bus/guard.go do?"
+muxcode spawn start research "What does bus/guard.go do?"
 
 # Check status
-muxcode-agent-bus spawn list
+muxcode spawn list
 
 # Get the result after completion
-muxcode-agent-bus spawn result <id>
+muxcode spawn result <id>
 
 # Clean up
-muxcode-agent-bus spawn clean
+muxcode spawn clean
 ```
 
 Spawned agents:
@@ -148,7 +148,7 @@ The variable format is `MUXCODE_{ROLE}_CLI=local` where `{ROLE}` is the uppercas
 
 1. `muxcode-agent.sh` checks `MUXCODE_{ROLE}_CLI` for the role
 2. If `"local"`, verifies Ollama is reachable (`GET /api/tags`)
-3. If reachable: runs `muxcode-agent-bus agent run <role>` instead of Claude Code
+3. If reachable: runs `muxcode agent run <role>` instead of Claude Code
 4. If unreachable: falls back to Claude Code with a warning
 
 ### Differences from Claude Code agents
@@ -164,10 +164,10 @@ The variable format is `MUXCODE_{ROLE}_CLI=local` where `{ROLE}` is the uppercas
 ### CLI
 
 ```bash
-muxcode-agent-bus agent run <role> [--model MODEL] [--url URL]
+muxcode agent run <role> [--model MODEL] [--url URL]
 ```
 
-See [Agent Bus CLI](agent-bus.md#muxcode-agent-bus-agent) for full reference.
+See [Agent Bus CLI](agent-bus.md#muxcode-agent) for full reference.
 
 ## Message Bus Protocol
 
@@ -175,25 +175,25 @@ All agents share the same bus protocol:
 
 ```bash
 # Check inbox
-muxcode-agent-bus inbox
+muxcode inbox
 
 # Send a message
-muxcode-agent-bus send <to> <action> "<message>"
+muxcode send <to> <action> "<message>"
 
 # Reply to a request
-muxcode-agent-bus send <from> <action> "<result>" --type response --reply-to <id>
+muxcode send <from> <action> "<result>" --type response --reply-to <id>
 
 # Read memory
-muxcode-agent-bus memory context
+muxcode memory context
 
 # Save learnings
-muxcode-agent-bus memory write "<section>" "<text>"
+muxcode memory write "<section>" "<text>"
 
 # Search memory
-muxcode-agent-bus memory search "<query>" [--role ROLE] [--limit N]
+muxcode memory search "<query>" [--role ROLE] [--limit N]
 
 # List all memory sections
-muxcode-agent-bus memory list [--role ROLE]
+muxcode memory list [--role ROLE]
 ```
 
 ## Customization
@@ -234,7 +234,7 @@ cp ~/.config/muxcode/agents/code-builder.md .claude/agents/code-builder.md
 
 ### Agent Permissions
 
-Agents have scoped permissions via tool profiles (`bus/profile.go`). The `--allowedTools` flags are resolved dynamically by `muxcode-agent-bus tools <role>` and passed to Claude Code at launch. Default permissions per role:
+Agents have scoped permissions via tool profiles (`bus/profile.go`). The `--allowedTools` flags are resolved dynamically by `muxcode tools <role>` and passed to Claude Code at launch. Default permissions per role:
 
 - **edit**: `Read`, `Glob`, `Grep`, `tree`, `python3`, `jq` (read-only — deliberately **no** `Write` or `Edit` tools, enforcing delegation via the bus)
 - **build**: `./build.sh`, `make`, `go build`, `pnpm build`, `cargo build`
@@ -248,7 +248,7 @@ Agents have scoped permissions via tool profiles (`bus/profile.go`). The `--allo
 - **pr-read**: `gh pr view/checks/diff/review/list/status`, `gh api`, `git diff/log/status/show/blame/rev-parse/branch`, `jq` (read-only: scoped gh + git, no Write/Edit)
 - **api**: `curl`, `wget`, `http`, `jq`, `python`, `node`, `openssl`, `base64`, `dig`, `nslookup`, `Write`, `Edit`
 
-All agents have access to `muxcode-agent-bus` commands. The edit agent's lack of `Write`/`Edit` tools is enforced at the tool profile level — Claude Code will not auto-approve file modifications, ensuring all code changes go through the user's accept/reject flow.
+All agents have access to `muxcode` commands. The edit agent's lack of `Write`/`Edit` tools is enforced at the tool profile level — Claude Code will not auto-approve file modifications, ensuring all code changes go through the user's accept/reject flow.
 
 ## Memory
 
@@ -268,7 +268,7 @@ Memory has two layers — project-level and global (cross-session):
     └── YYYY-MM-DD.md
 ```
 
-Agents read memory with `muxcode-agent-bus memory context` (includes both global and project memory) and write with `muxcode-agent-bus memory write "<section>" "<text>"` (project) or `muxcode-agent-bus memory write-global "<section>" "<text>"` (global). Use `--no-global` on context to skip global memory. To find specific learnings, use `muxcode-agent-bus memory search "<query>"` (BM25 search with `--scope project|global|all`) or `muxcode-agent-bus memory list` to see all sections.
+Agents read memory with `muxcode memory context` (includes both global and project memory) and write with `muxcode memory write "<section>" "<text>"` (project) or `muxcode memory write-global "<section>" "<text>"` (global). Use `--no-global` on context to skip global memory. To find specific learnings, use `muxcode memory search "<query>"` (BM25 search with `--scope project|global|all`) or `muxcode memory list` to see all sections.
 
 Global memory stores universal patterns (conventions, tool quirks, workflow preferences) that apply across all projects. Project memory stores project-specific learnings (build commands, architecture decisions, test patterns).
 
@@ -284,11 +284,11 @@ Per-role tool permissions defined in `bus/profile.go`. Each profile specifies wh
 
 Shared groups:
 
-- `bus` — `Bash(muxcode-agent-bus *)` and bus CLI commands
+- `bus` — `Bash(muxcode *)` and bus CLI commands
 - `readonly` — `Read`, `Glob`, `Grep`
 - `common` — `ls`, `cat`, `diff`, `sed`, `awk`, etc.
 
-CLI: `muxcode-agent-bus tools <role>` — resolves includes, applies CdPrefix, outputs one pattern per line. Patterns use Claude Code `--allowedTools` glob syntax (e.g. `Bash(git diff*)`).
+CLI: `muxcode tools <role>` — resolves includes, applies CdPrefix, outputs one pattern per line. Patterns use Claude Code `--allowedTools` glob syntax (e.g. `Bash(git diff*)`).
 
 **Process substitution**: `Bash(diff *)` does NOT match `diff <(...)` — Claude Code treats `<()` as a special construct requiring explicit `Bash(diff <(*)`.
 
@@ -304,14 +304,14 @@ Watcher-integrated liveness detection for agent processes. The watcher probes ag
 
 - **Detection heuristic**: captures last 5 lines of agent pane — checks for harness PID, `❯` idle prompt, bare shell prompt (`$`/`%` at end of last line), or startup text
 - **Excluded roles**: `edit` (user session), `webhook` (PID-managed), `spawn-*` (own lifecycle)
-- **Intentional stop**: `muxcode-agent-bus agent-health --stop <role>` writes a `{role}.stopped` marker, suppressing auto-restart. `--start` removes it.
+- **Intentional stop**: `muxcode agent-health --stop <role>` writes a `{role}.stopped` marker, suppressing auto-restart. `--start` removes it.
 - **Restart cap**: max 3 per role per session — after cap, alerts only (no more restarts)
 - **Recovery detection**: when a previously-down agent passes a probe, sends `agent-recovered` event
 - **System action exclusion**: `agent-down`, `agent-restarting`, `agent-recovered` registered in `isSystemAction()`
 
 ### Watcher self-monitoring
 
-The watcher writes a Unix timestamp to `watcher.keepalive` at the top of each poll loop. A companion monitor (`muxcode-agent-bus watch --monitor`) checks the keepalive every 15 seconds — if stale (>30s), it kills and relaunches the watcher.
+The watcher writes a Unix timestamp to `watcher.keepalive` at the top of each poll loop. A companion monitor (`muxcode watch --monitor`) checks the keepalive every 15 seconds — if stale (>30s), it kills and relaunches the watcher.
 
 Core code: `bus/agent_health.go`, `bus/watcher_health.go`. Watcher code: `watcher/watcher.go` (`checkAgentHealth()`, `touchKeepalive()`). Monitor: `cmd/watch.go` (`runWatcherMonitor()`).
 
@@ -334,7 +334,7 @@ Core code: `bus/health.go`, `bus/health_test.go`. Watcher code: `watcher/watcher
 
 ## Local LLM harness
 
-Standalone binary (`muxcode-llm-harness`) that replaces `muxcode-agent-bus agent run` for local LLM roles. Solves the inbox-loop problem where small LLMs repeatedly call `muxcode-agent-bus inbox` instead of executing tasks.
+Standalone binary (`muxcode-llm-harness`) that replaces `muxcode agent run` for local LLM roles. Solves the inbox-loop problem where small LLMs repeatedly call `muxcode inbox` instead of executing tasks.
 
 | Feature | Description |
 |---------|-------------|
@@ -348,7 +348,7 @@ Standalone binary (`muxcode-llm-harness`) that replaces `muxcode-agent-bus agent
 
 CLI: `muxcode-llm-harness run <role> [--model MODEL] [--url URL] [--max-turns N]`
 
-Separate Go module at `tools/muxcode-llm-harness/` — stdlib only, no external deps. The launcher (`muxcode-agent.sh`) prefers the harness binary when available, falls back to `muxcode-agent-bus agent run`.
+Separate Go module at `tools/muxcode-llm-harness/` — stdlib only, no external deps. The launcher (`muxcode-agent.sh`) prefers the harness binary when available, falls back to `muxcode agent run`.
 
 ### Circuit breaker
 
@@ -371,6 +371,6 @@ Tool output from `api`, `runner`/`run`, and `watch` roles is automatically scrub
 
 Redacted values are replaced with bracketed placeholders (e.g. `[EMAIL_REDACTED]`, `[SECRET_REDACTED]`). Scrubbing is logged to stderr with redaction count per tool call.
 
-For Claude Code agents in the same roles, `muxcode-agent-bus pii-scrub` provides equivalent pipe-through filtering. Agent definitions for api, runner, and watch instruct the agent to pipe sensitive output through the scrubber.
+For Claude Code agents in the same roles, `muxcode pii-scrub` provides equivalent pipe-through filtering. Agent definitions for api, runner, and watch instruct the agent to pipe sensitive output through the scrubber.
 
 Core code: `harness/` package — `config.go`, `ollama.go`, `bus.go`, `tools.go`, `executor.go`, `filter.go`, `prompt.go`, `loop.go`, `message.go`, `scrub.go`.

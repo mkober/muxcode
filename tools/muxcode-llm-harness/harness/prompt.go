@@ -37,7 +37,7 @@ func LocalLLMInstructions(role string) string {
 	base := `## How You Work
 
 You are an autonomous agent. Tasks are delivered in the user message below.
-Your inbox has already been read — do NOT run ` + "`muxcode-agent-bus inbox`" + `.
+Your inbox has already been read — do NOT run ` + "`muxcode inbox`" + `.
 
 ### Rules
 1. Read the task below and execute it immediately using your tools
@@ -47,16 +47,16 @@ Your inbox has already been read — do NOT run ` + "`muxcode-agent-bus inbox`" 
 
 ### Sending Results
 Your final text response is automatically sent to the requesting agent as the reply.
-Do NOT use ` + "`muxcode-agent-bus send`" + ` to reply — just provide a concise summary as your last text output.
-Only use ` + "`muxcode-agent-bus send`" + ` when you need to notify a DIFFERENT agent than the requester.
+Do NOT use ` + "`muxcode send`" + ` to reply — just provide a concise summary as your last text output.
+Only use ` + "`muxcode send`" + ` when you need to notify a DIFFERENT agent than the requester.
 
 ### Saving Learnings
 ` + "```" + `
-muxcode-agent-bus memory write "<section>" "<text>"
+muxcode memory write "<section>" "<text>"
 ` + "```" + `
 
 ### Important
-- NEVER run ` + "`muxcode-agent-bus inbox`" + ` — messages are already delivered
+- NEVER run ` + "`muxcode inbox`" + ` — messages are already delivered
 - NEVER send messages to yourself (` + role + `)
 - Keep tool calls focused — complete the task, then stop
 - If a command fails, try a different approach (do not repeat the same command)
@@ -69,14 +69,14 @@ muxcode-agent-bus memory write "<section>" "<text>"
 
 ### Build Agent Override
 Start directly with the build sequence: detect project → lint → build → summarize.
-Your final text response IS the reply — do NOT call muxcode-agent-bus send to reply.`
+Your final text response IS the reply — do NOT call muxcode send to reply.`
 
 	case "test":
 		base += `
 
 ### Test Agent Override
 Start directly with the test sequence: detect test runner → run tests → summarize.
-Your final text response IS the reply — do NOT call muxcode-agent-bus send to reply.
+Your final text response IS the reply — do NOT call muxcode send to reply.
 You MUST call the bash tool to run the actual test commands. NEVER generate test results from memory — always execute the real commands and report their actual output.`
 
 	case "review":
@@ -84,7 +84,7 @@ You MUST call the bash tool to run the actual test commands. NEVER generate test
 
 ### Review Agent Override
 Start directly with the review sequence: get diff → analyze → log findings → summarize.
-Your final text response IS the reply — do NOT call muxcode-agent-bus send to reply.
+Your final text response IS the reply — do NOT call muxcode send to reply.
 Do NOT send a separate notify to edit — the bus auto-CC handles that.`
 	}
 
@@ -166,7 +166,7 @@ cargo build 2>&1
 ` + "```" + `
 
 **Step 4 — Provide your result summary**
-Your text response is sent automatically — do NOT call ` + "`muxcode-agent-bus send`" + ` to reply.
+Your text response is sent automatically — do NOT call ` + "`muxcode send`" + ` to reply.
 Just write a concise summary as your final text output:
 - On success: ` + "`Build succeeded: <what was built>`" + `
 - On failure: ` + "`Build FAILED: <error summary>`" + `
@@ -206,7 +206,7 @@ make test 2>&1
 ` + "```" + `
 
 **Step 3 — Provide your result summary**
-Your text response is sent automatically — do NOT call ` + "`muxcode-agent-bus send`" + ` to reply.
+Your text response is sent automatically — do NOT call ` + "`muxcode send`" + ` to reply.
 Just write a concise summary as your final text output:
 - On success: ` + "`Tests passed: X tests, 0 failures`" + `
 - On failure: ` + "`Tests FAILED: X passed, Y failed — <error summary>`" + `
@@ -245,12 +245,12 @@ must-fix: file:line — description
 should-fix: file:line — description
 nit: file:line — description
 FINDINGS
-muxcode-agent-bus log review "X must-fix, Y should-fix, Z nits" --exit-code 0 --output-file /tmp/muxcode-review-findings.txt
+muxcode log review "X must-fix, Y should-fix, Z nits" --exit-code 0 --output-file /tmp/muxcode-review-findings.txt
 ` + "```" + `
 Use ` + "`--exit-code 1`" + ` if there are any must-fix items.
 
 **Step 5 — Provide your result summary**
-Your text response is sent automatically — do NOT call ` + "`muxcode-agent-bus send`" + ` to reply.
+Your text response is sent automatically — do NOT call ` + "`muxcode send`" + ` to reply.
 Just write a concise one-line summary as your final text output:
 - Clean: ` + "`Review: 0 must-fix, 1 should-fix, 2 nits — LGTM`" + `
 - Issues: ` + "`Review: 1 must-fix, 2 should-fix, 0 nits — race condition in auth.go`" + `

@@ -60,26 +60,26 @@ Global memory appears first so project-specific learnings can override or refine
 
 ```bash
 # Write to global memory (any agent can call this)
-muxcode-agent-bus memory write-global "<section>" "<text>"
+muxcode memory write-global "<section>" "<text>"
 
 # Read global memory
-muxcode-agent-bus memory read-global [role]
+muxcode memory read-global [role]
 
 # Read global context (shared + role)
-muxcode-agent-bus memory context-global [--days N]
+muxcode memory context-global [--days N]
 ```
 
 #### Modified subcommands
 
 ```bash
 # context — now includes global memory as the first section
-muxcode-agent-bus memory context [--days N] [--no-global]
+muxcode memory context [--days N] [--no-global]
 
 # search — now includes global memory entries (tagged with source: "global")
-muxcode-agent-bus memory search <query> [--role R] [--limit N] [--scope project|global|all]
+muxcode memory search <query> [--role R] [--limit N] [--scope project|global|all]
 
 # list — now includes global memory entries (tagged with source: "global")
-muxcode-agent-bus memory list [--role R] [--scope project|global|all]
+muxcode memory list [--role R] [--scope project|global|all]
 ```
 
 - `--no-global` on `context` skips global memory (useful for reducing context size)
@@ -233,14 +233,14 @@ New test file: `bus/global_memory_test.go`
 
 ```
 Agent writes global memory:
-  muxcode-agent-bus memory write-global "conventions" "2-space indentation"
+  muxcode memory write-global "conventions" "2-space indentation"
     ↓
   AppendGlobalMemory() → ~/.config/muxcode/memory/shared.md
     ↓
   NeedsRotation() → lazy archive if new day
 
 Agent reads context (every prompt injection):
-  muxcode-agent-bus memory context
+  muxcode memory context
     ↓
   ReadContextWithOptions(role, 7, includeGlobal=true)
     ↓
@@ -252,7 +252,7 @@ Agent reads context (every prompt injection):
   Output: "# Global Memory\n...\n# Shared Memory\n...\n# {Role} Memory\n..."
 
 Agent searches memory:
-  muxcode-agent-bus memory search "indentation" --scope all
+  muxcode memory search "indentation" --scope all
     ↓
   AllMemoryEntriesWithArchives(includeGlobal=true)
     ↓
@@ -267,17 +267,17 @@ Agent searches memory:
 
 | Test | Steps | Expected result |
 |------|-------|-----------------|
-| Global write | `muxcode-agent-bus memory write-global "test" "hello"` | `~/.config/muxcode/memory/shared.md` contains entry |
-| Global read | `muxcode-agent-bus memory read-global` | Shows content of global shared memory |
-| Context includes global | `muxcode-agent-bus memory context` | Output starts with `# Global Memory` section |
-| No-global flag | `muxcode-agent-bus memory context --no-global` | Output has no `# Global Memory` section |
-| Search all scopes | `muxcode-agent-bus memory search "test"` | Results include both global and project entries with source tags |
-| Search project only | `muxcode-agent-bus memory search "test" --scope project` | Only project entries |
-| Search global only | `muxcode-agent-bus memory search "test" --scope global` | Only global entries |
-| List with source | `muxcode-agent-bus memory list` | Entries show `[global]` or `[project]` prefix |
+| Global write | `muxcode memory write-global "test" "hello"` | `~/.config/muxcode/memory/shared.md` contains entry |
+| Global read | `muxcode memory read-global` | Shows content of global shared memory |
+| Context includes global | `muxcode memory context` | Output starts with `# Global Memory` section |
+| No-global flag | `muxcode memory context --no-global` | Output has no `# Global Memory` section |
+| Search all scopes | `muxcode memory search "test"` | Results include both global and project entries with source tags |
+| Search project only | `muxcode memory search "test" --scope project` | Only project entries |
+| Search global only | `muxcode memory search "test" --scope global` | Only global entries |
+| List with source | `muxcode memory list` | Entries show `[global]` or `[project]` prefix |
 | Global rotation | Write on two different days | Previous day's file archived to `~/.config/muxcode/memory/{role}/YYYY-MM-DD.md` |
 | New project session | Start muxcode in a fresh project | Agent prompt includes global memory from `~/.config/muxcode/memory/` |
-| Init creates dir | `muxcode-agent-bus init` | `~/.config/muxcode/memory/` directory exists |
+| Init creates dir | `muxcode init` | `~/.config/muxcode/memory/` directory exists |
 | Unit tests | `go test ./...` | All existing + new tests pass |
 
 ## Token budget considerations

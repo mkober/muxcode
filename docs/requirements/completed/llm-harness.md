@@ -2,17 +2,17 @@
 
 ## Context
 
-The local LLM agent (qwen2.5-coder:7b via Ollama) running the commit/git role gets stuck in a loop calling `muxcode-agent-bus inbox` 20 times instead of executing the actual task. Root causes:
+The local LLM agent (qwen2.5-coder:7b via Ollama) running the commit/git role gets stuck in a loop calling `muxcode inbox` 20 times instead of executing the actual task. Root causes:
 
-1. **SharedPrompt** says "Check Messages: `muxcode-agent-bus inbox`" but inbox is already consumed before Ollama sees it
+1. **SharedPrompt** says "Check Messages: `muxcode inbox`" but inbox is already consumed before Ollama sees it
 2. **Agent definition** (git-manager.md) also has inbox instructions
-3. **No tool call filtering** — `Bash(muxcode-agent-bus *)` pattern allows inbox calls
+3. **No tool call filtering** — `Bash(muxcode *)` pattern allows inbox calls
 4. **No loop detection** within the tool-calling loop
 5. **Small LLMs need clearer, more structured prompts**
 
 ## Solution: Standalone Go application at `tools/muxcode-llm-harness/`
 
-A new binary that replaces `muxcode-agent-bus agent run` for local LLM roles. Uses the bus CLI for all bus operations (inbox, send, lock, tools), has its own Ollama client, tool executor, and harness logic.
+A new binary that replaces `muxcode agent run` for local LLM roles. Uses the bus CLI for all bus operations (inbox, send, lock, tools), has its own Ollama client, tool executor, and harness logic.
 
 ## Project structure
 
@@ -47,13 +47,13 @@ The harness uses the bus CLI as its interface — no direct file access needed:
 | Operation | Bus CLI command |
 |-----------|----------------|
 | Check for messages | `stat /tmp/muxcode-bus-{SESSION}/inbox/{ROLE}.jsonl` (file size > 0) |
-| Consume messages | `muxcode-agent-bus inbox --raw` (atomic consume, JSONL output) |
-| Send response | `muxcode-agent-bus send <to> <action> "<payload>" --type response --reply-to <id>` |
-| Lock (busy) | `muxcode-agent-bus lock <role>` |
-| Unlock (idle) | `muxcode-agent-bus unlock <role>` |
-| Get tool patterns | `muxcode-agent-bus tools <role>` (once at startup, cached) |
-| Get skills prompt | `muxcode-agent-bus skill prompt <role>` (once at startup) |
-| Get context prompt | `muxcode-agent-bus context prompt <role>` (once at startup) |
+| Consume messages | `muxcode inbox --raw` (atomic consume, JSONL output) |
+| Send response | `muxcode send <to> <action> "<payload>" --type response --reply-to <id>` |
+| Lock (busy) | `muxcode lock <role>` |
+| Unlock (idle) | `muxcode unlock <role>` |
+| Get tool patterns | `muxcode tools <role>` (once at startup, cached) |
+| Get skills prompt | `muxcode skill prompt <role>` (once at startup) |
+| Get context prompt | `muxcode context prompt <role>` (once at startup) |
 | Log bash history | Append JSONL to `/tmp/muxcode-bus-{SESSION}/{role}-history.jsonl` (direct file write — simple append, no protocol) |
 
 ## File-by-file design
@@ -78,7 +78,7 @@ type Config struct {
     OllamaModel string // default qwen2.5-coder:7b
     MaxTurns   int     // default 10
     BusDir     string  // /tmp/muxcode-bus-{session}/
-    BusBin     string  // path to muxcode-agent-bus binary
+    BusBin     string  // path to muxcode binary
 }
 
 func DefaultConfig() Config
@@ -114,13 +114,13 @@ type BusClient struct { BinPath string; Session string; Role string }
 
 func NewBusClient(cfg Config) *BusClient
 func (b *BusClient) HasMessages() bool           // stat inbox file
-func (b *BusClient) ConsumeInbox() ([]Message, error)  // muxcode-agent-bus inbox --raw
+func (b *BusClient) ConsumeInbox() ([]Message, error)  // muxcode inbox --raw
 func (b *BusClient) Send(to, action, payload, msgType, replyTo string) error
 func (b *BusClient) Lock() error
 func (b *BusClient) Unlock() error
-func (b *BusClient) ResolveTools() ([]string, error)   // muxcode-agent-bus tools <role>
-func (b *BusClient) SkillPrompt() (string, error)      // muxcode-agent-bus skill prompt <role>
-func (b *BusClient) ContextPrompt() (string, error)    // muxcode-agent-bus context prompt <role>
+func (b *BusClient) ResolveTools() ([]string, error)   // muxcode tools <role>
+func (b *BusClient) SkillPrompt() (string, error)      // muxcode skill prompt <role>
+func (b *BusClient) ContextPrompt() (string, error)    // muxcode context prompt <role>
 func (b *BusClient) LogHistory(command, output, exitCode, outcome string) error  // direct JSONL append
 ```
 
@@ -183,7 +183,7 @@ func StripFrontmatter(content string) string
 ## How You Work
 
 You are an autonomous agent. Tasks are delivered in the user message below.
-Your inbox has already been read — do NOT run `muxcode-agent-bus inbox`.
+Your inbox has already been read — do NOT run `muxcode inbox`.
 
 ### Rules
 1. Read the task below and execute it immediately using your tools
@@ -192,10 +192,10 @@ Your inbox has already been read — do NOT run `muxcode-agent-bus inbox`.
 4. After completing, provide a short summary
 
 ### Sending Results
-muxcode-agent-bus send <target> <action> "<short single-line result>"
+muxcode send <target> <action> "<short single-line result>"
 
 ### Memory
-muxcode-agent-bus memory write "<section>" "<text>"
+muxcode memory write "<section>" "<text>"
 ```
 
 **RoleExamples** returns concrete tool call examples per role:
@@ -223,8 +223,8 @@ func (f *Filter) Check(tc ToolCall) (blocked bool, reason string)
 
 **Filter rules** (in order):
 
-1. **Block inbox**: `muxcode-agent-bus inbox*` → "Messages already delivered. Execute the task."
-2. **Block self-send**: `muxcode-agent-bus send <own-role>` → "Cannot send to yourself."
+1. **Block inbox**: `muxcode inbox*` → "Messages already delivered. Execute the task."
+2. **Block self-send**: `muxcode send <own-role>` → "Cannot send to yourself."
 3. **Block repetition**: same command hash 3+ times → "Stuck in a loop. Try different approach."
 4. **Pass**: everything else goes to executor.
 
@@ -263,14 +263,14 @@ func Run(ctx context.Context, cfg Config) error
 - **From**: edit
 - **Instructions**: Stage and commit all current changes...
 
-Execute this task now using your available tools. Do NOT run `muxcode-agent-bus inbox`.
+Execute this task now using your available tools. Do NOT run `muxcode inbox`.
 ```
 
 ## Changes to existing files
 
 | File | Change |
 |------|--------|
-| `scripts/muxcode-agent.sh` | Change local LLM launch from `muxcode-agent-bus agent run` to `muxcode-llm-harness run` |
+| `scripts/muxcode-agent.sh` | Change local LLM launch from `muxcode agent run` to `muxcode-llm-harness run` |
 | `Makefile` | Add `build-harness` target, add to `install` target |
 | `CLAUDE.md` | Add "Local LLM harness" section documenting new binary |
 
@@ -282,6 +282,6 @@ The existing `agent run` command in the bus binary remains for backward compatib
 
 1. `cd tools/muxcode-llm-harness && go build .` — builds cleanly
 2. `cd tools/muxcode-llm-harness && go test ./...` — all tests pass
-3. `cd tools/muxcode-agent-bus && go test ./...` — existing tests still pass (nothing changed)
+3. `cd tools/muxcode && go test ./...` — existing tests still pass (nothing changed)
 4. `make install` — both binaries installed
-5. Manual test: start Ollama, send `muxcode-agent-bus send commit status "Show git status"` → harness should run `git status` and reply (not loop on inbox)
+5. Manual test: start Ollama, send `muxcode send commit status "Show git status"` → harness should run `git status` and reply (not loop on inbox)

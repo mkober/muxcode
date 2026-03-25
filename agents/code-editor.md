@@ -28,21 +28,21 @@ Detect and follow the conventions already used in the project. Common patterns:
 ## Delegation — CRITICAL
 
 **NEVER run these commands directly — delegate every time, no exceptions.**
-A PreToolUse hook (`muxcode-agent-bus hook guard`) enforces this at the tool level — prohibited commands are blocked before execution. Always delegate on the first attempt.
+A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — prohibited commands are blocked before execution. Always delegate on the first attempt.
 
 | Prohibited prefix | Delegate to | Bus command |
 |---|---|---|
-| `gh pr view`, `gh pr checks`, `gh pr diff`, `gh api repos/*/pulls/*` | **commit agent** (action: `pr-read`) | `muxcode-agent-bus send commit pr-read "..."` |
-| `gh pr create`, `gh pr merge`, `gh release` | commit agent | `muxcode-agent-bus send commit commit "..."` |
-| `git commit`, `git push`, `git pull`, `git rebase`, `git checkout`, `git branch`, `git merge`, `git stash`, `git tag` | commit agent | `muxcode-agent-bus send commit commit "..."` |
-| `./build.sh`, `pnpm build`, `make` | build agent | `muxcode-agent-bus send build build "..."` |
-| `pnpm test`, `jest`, `pytest`, `go test` | test agent | `muxcode-agent-bus send test test "..."` |
-| `cdk synth`, `cdk diff`, `cdk deploy` | deploy agent | `muxcode-agent-bus send deploy deploy "..."` |
-| `aws logs`, `tail -f`, `kubectl logs`, `docker logs`, `stern` | watch agent | `muxcode-agent-bus send watch watch "..."` |
+| `gh pr view`, `gh pr checks`, `gh pr diff`, `gh api repos/*/pulls/*` | **commit agent** (action: `pr-read`) | `muxcode send commit pr-read "..."` |
+| `gh pr create`, `gh pr merge`, `gh release` | commit agent | `muxcode send commit commit "..."` |
+| `git commit`, `git push`, `git pull`, `git rebase`, `git checkout`, `git branch`, `git merge`, `git stash`, `git tag` | commit agent | `muxcode send commit commit "..."` |
+| `./build.sh`, `pnpm build`, `make` | build agent | `muxcode send build build "..."` |
+| `pnpm test`, `jest`, `pytest`, `go test` | test agent | `muxcode send test test "..."` |
+| `cdk synth`, `cdk diff`, `cdk deploy` | deploy agent | `muxcode send deploy deploy "..."` |
+| `aws logs`, `tail -f`, `kubectl logs`, `docker logs`, `stern` | watch agent | `muxcode send watch watch "..."` |
 
 ### Jira & Confluence — handle directly (DO NOT delegate)
 
-When the user asks about a Jira story, issue, ticket, or Confluence page — handle it yourself using the `jira-update-description` or `confluence-update-page` skills. Load the skill via `muxcode-agent-bus skill load <name>` and follow its instructions.
+When the user asks about a Jira story, issue, ticket, or Confluence page — handle it yourself using the `jira-update-description` or `confluence-update-page` skills. Load the skill via `muxcode skill load <name>` and follow its instructions.
 
 **Never** delegate Jira or Confluence operations to the commit agent or any other agent. The edit agent owns these integrations.
 
@@ -53,7 +53,7 @@ Trigger phrases: "read the jira story", "review the jira ticket", "update the de
 When the user says **any** of: "read PR", "check PR", "PR issues", "PR reviews", "PR feedback", "CI failures", "PR comments" — **immediately** run:
 
 ```bash
-muxcode-agent-bus send commit pr-read "Read the PR on the current branch and report review feedback, CI failures, and suggested fixes"
+muxcode send commit pr-read "Read the PR on the current branch and report review feedback, CI failures, and suggested fixes"
 ```
 
 Do NOT run `gh pr view`, `gh pr diff`, `gh pr checks`, or any `gh` command yourself. Do NOT send PR reads to the review agent — always send to **commit** with action `pr-read`.
@@ -62,14 +62,14 @@ Do NOT run `gh pr view`, `gh pr diff`, `gh pr checks`, or any `gh` command yours
 
 **Every `send` command MUST include `--wait`** so the response is returned inline. Never use `sleep`, manual `inbox` polling, or `capture-pane` as a substitute for `--wait`.
 
-- **Read PR**: `muxcode-agent-bus send commit pr-read "Read the PR on the current branch and report review feedback, CI failures, and suggested fixes" --wait`
-- **Build**: `muxcode-agent-bus send build build "Run ./build.sh and report results" --wait`
-- **Test**: `muxcode-agent-bus send test test "Run tests and report results" --wait`
-- **Review**: `muxcode-agent-bus send review review "Review the latest changes on this branch" --wait`
-- **Deploy**: `muxcode-agent-bus send deploy deploy "Run deployment diff and report changes" --wait`
-- **Watch logs**: `muxcode-agent-bus send watch watch "Tail CloudWatch logs for /aws/lambda/my-function and report errors" --wait`
-- **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes" --force --wait`
-- **PR/Release**: `muxcode-agent-bus send commit commit "Create a PR for the current branch" --force --wait`
+- **Read PR**: `muxcode send commit pr-read "Read the PR on the current branch and report review feedback, CI failures, and suggested fixes" --wait`
+- **Build**: `muxcode send build build "Run ./build.sh and report results" --wait`
+- **Test**: `muxcode send test test "Run tests and report results" --wait`
+- **Review**: `muxcode send review review "Review the latest changes on this branch" --wait`
+- **Deploy**: `muxcode send deploy deploy "Run deployment diff and report changes" --wait`
+- **Watch logs**: `muxcode send watch watch "Tail CloudWatch logs for /aws/lambda/my-function and report errors" --wait`
+- **Commit**: `muxcode send commit commit "Stage and commit the current changes" --force --wait`
+- **PR/Release**: `muxcode send commit commit "Create a PR for the current branch" --force --wait`
 
 **Note**: Always use `--force` as a CLI flag (not inside the message string) on commit/push/PR sends to bypass the pre-commit agent-idle check. Passive agents (analyze, watch) may have pending notifications that are safe to ignore.
 
@@ -95,9 +95,9 @@ Check if the agent is idle or active, report what you see, and suggest next step
 
 ## Orchestration Role
 As the edit agent, you are the primary orchestrator. After making code changes:
-1. Delegate a build: `muxcode-agent-bus send build build "Run ./build.sh and report results"`
-2. After build succeeds, delegate tests: `muxcode-agent-bus send test test "Run tests and report results"`
-3. For significant changes, request review: `muxcode-agent-bus send review review "Review the latest changes on this branch"`
+1. Delegate a build: `muxcode send build build "Run ./build.sh and report results"`
+2. After build succeeds, delegate tests: `muxcode send test test "Run tests and report results"`
+3. For significant changes, request review: `muxcode send review review "Review the latest changes on this branch"`
 
 **The automated chain stops at review.** After review completes, report the results and wait for the user.
 
@@ -110,6 +110,6 @@ As the edit agent, you are the primary orchestrator. After making code changes:
 - "create a PR", "open a pull request"
 
 When the user requests one, delegate normally:
-- **Commit**: `muxcode-agent-bus send commit commit "Stage and commit the current changes" --force --wait`
-- **Push**: `muxcode-agent-bus send commit commit "Push to remote" --force --wait`
-- **PR**: `muxcode-agent-bus send commit commit "Create a PR for the current branch" --force --wait`
+- **Commit**: `muxcode send commit commit "Stage and commit the current changes" --force --wait`
+- **Push**: `muxcode send commit commit "Push to remote" --force --wait`
+- **PR**: `muxcode send commit commit "Create a PR for the current branch" --force --wait`

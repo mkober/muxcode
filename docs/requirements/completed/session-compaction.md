@@ -4,9 +4,9 @@ Manual session summary save/restore for context preservation across restarts.
 
 ## Requirements
 
-- `muxcode-agent-bus session compact` triggers a summary of the current agent session
+- `muxcode session compact` triggers a summary of the current agent session
 - Summary is saved to `.muxcode/memory/` as a persistent memory file per role
-- `muxcode-agent-bus memory context` retrieves stored context for session resume
+- `muxcode memory context` retrieves stored context for session resume
 - Memory files survive session teardown and bus directory cleanup
 - Summaries are injected into agent system prompts on session restart
 - Each role maintains its own memory file independently

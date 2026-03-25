@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "muxcode-agent-bus hook guard"
+            "command": "muxcode hook guard"
           }
         ]
       },
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "muxcode-agent-bus hook analyze",
+            "command": "muxcode hook analyze",
             "async": true
           }
         ]
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "muxcode-agent-bus hook bash",
+            "command": "muxcode hook bash",
             "async": true
           }
         ]
@@ -56,10 +56,10 @@
   },
   "permissions": {
     "allow": [
-      "Bash(muxcode-agent-bus *)",
-      "Bash(./bin/muxcode-agent-bus *)",
-      "Bash(muxcode-agent-bus compact*)",
-      "Bash(muxcode-agent-bus atlassian *)",
+      "Bash(muxcode *)",
+      "Bash(./bin/muxcode *)",
+      "Bash(muxcode compact*)",
+      "Bash(muxcode atlassian *)",
       "Bash(SESSION=* && tmux capture-pane *)",
       "Bash(SESSION=* && tmux display-message *)",
       "Bash(SESSION=* && for role in *)",

@@ -1,11 +1,11 @@
-# muxcode-agent-bus — CLI Reference
+# muxcode — CLI Reference
 
 Single Go binary for inter-agent communication in muxcode sessions. Manages message routing, persistent memory, inbox notifications, and the dashboard TUI.
 
 ## Module Location
 
 ```
-tools/muxcode-agent-bus/
+tools/muxcode/
 ```
 
 ## Build Instructions
@@ -15,26 +15,26 @@ From the repo root:
 make build
 ```
 
-The binary is built to `bin/muxcode-agent-bus` and installed to `~/.local/bin/muxcode-agent-bus`.
+The binary is built to `bin/muxcode` and installed to `~/.local/bin/muxcode`.
 
 ## CLI Reference
 
-### `muxcode-agent-bus init`
+### `muxcode init`
 
 Initialize the message bus directory structure for a session.
 
 ```bash
-muxcode-agent-bus init [--memory-dir PATH]
+muxcode init [--memory-dir PATH]
 ```
 
 Creates the ephemeral bus directory at `/tmp/muxcode-bus-{SESSION}/` with `inbox/`, `lock/`, and `log.jsonl`. Optionally initializes the persistent memory directory.
 
-### `muxcode-agent-bus send`
+### `muxcode send`
 
 Send a message to another agent's inbox.
 
 ```bash
-muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait]
+muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait]
 ```
 
 - `<to>` — target agent role (edit, build, test, review, deploy, run, commit, analyze, api)
@@ -54,7 +54,7 @@ Auto-detects sender from `AGENT_ROLE` env var or tmux window name.
 
 **Example:**
 ```
-$ muxcode-agent-bus send build build "Run ./build.sh and report results" --wait
+$ muxcode send build build "Run ./build.sh and report results" --wait
 Sent request:build to build
 
 --- Message from build at 14:32:05 ---
@@ -62,12 +62,12 @@ Type: response  Action: build
 Content: Build succeeded. 0 errors, 0 warnings.
 ```
 
-### `muxcode-agent-bus inbox`
+### `muxcode inbox`
 
 Read messages from an agent's inbox.
 
 ```bash
-muxcode-agent-bus inbox [--peek] [--raw] [--role ROLE]
+muxcode inbox [--peek] [--raw] [--role ROLE]
 ```
 
 - Default mode: consume messages and format as actionable prompts with reply commands
@@ -77,7 +77,7 @@ muxcode-agent-bus inbox [--peek] [--raw] [--role ROLE]
 
 **Example:**
 ```
-$ muxcode-agent-bus inbox
+$ muxcode inbox
 You have new messages! Check below and reply to any that need action.
 
 ---
@@ -86,24 +86,24 @@ Action: build
 Message: Run ./build.sh and report results
 ID: 1708300000-edit-a1b2c3d4
 
-→ Reply: muxcode-agent-bus send edit build "<your reply>" --type response --reply-to 1708300000-edit-a1b2c3d4
+→ Reply: muxcode send edit build "<your reply>" --type response --reply-to 1708300000-edit-a1b2c3d4
 ---
 ```
 
-### `muxcode-agent-bus memory`
+### `muxcode memory`
 
 Read, write, search, and list persistent per-project memory.
 
 ```bash
-muxcode-agent-bus memory read [role|shared]
-muxcode-agent-bus memory write "<section>" "<text>"
-muxcode-agent-bus memory write-shared "<section>" "<text>"
-muxcode-agent-bus memory write-global "<section>" "<text>"
-muxcode-agent-bus memory read-global [role]
-muxcode-agent-bus memory context [--no-global]
-muxcode-agent-bus memory context-global [--days N]
-muxcode-agent-bus memory search <query> [--role ROLE] [--limit N] [--scope project|global|all]
-muxcode-agent-bus memory list [--role ROLE] [--scope project|global|all]
+muxcode memory read [role|shared]
+muxcode memory write "<section>" "<text>"
+muxcode memory write-shared "<section>" "<text>"
+muxcode memory write-global "<section>" "<text>"
+muxcode memory read-global [role]
+muxcode memory context [--no-global]
+muxcode memory context-global [--days N]
+muxcode memory search <query> [--role ROLE] [--limit N] [--scope project|global|all]
+muxcode memory list [--role ROLE] [--scope project|global|all]
 ```
 
 - `read` — read a specific role's memory or shared memory
@@ -120,26 +120,26 @@ Project memory is stored in `.muxcode/memory/` relative to the project directory
 
 **Search examples:**
 ```bash
-$ muxcode-agent-bus memory search "pnpm build"
+$ muxcode memory search "pnpm build"
 --- [build] Build Config (2026-02-21 14:27) score:4.0 ---
 use pnpm for all builds
 
-$ muxcode-agent-bus memory search "permission" --role shared
+$ muxcode memory search "permission" --role shared
 --- [shared] Agent Permissions (2026-02-21 14:30) score:2.0 ---
 edit agent must never run build commands directly
 
-$ muxcode-agent-bus memory list
+$ muxcode memory list
 shared     Agent Permissions                    2026-02-21 14:27
 edit       delegation rules                     2026-02-20 17:30
 build      Build Config                         2026-02-21 14:27
 ```
 
-### `muxcode-agent-bus watch`
+### `muxcode watch`
 
 Run the unified bus watcher daemon.
 
 ```bash
-muxcode-agent-bus watch [session] [--poll N] [--debounce N] [--monitor]
+muxcode watch [session] [--poll N] [--debounce N] [--monitor]
 ```
 
 - Polls agent inboxes and notifies agents via `tmux display-message` (passive status bar flash) when new messages arrive
@@ -152,7 +152,7 @@ Without `--monitor`, runs in the `analyze` window left pane as the primary watch
 
 #### Trigger file format
 
-The trigger file (`/tmp/muxcode-analyze-{SESSION}.trigger`) is written by `muxcode-agent-bus hook analyze` with one line per file edit:
+The trigger file (`/tmp/muxcode-analyze-{SESSION}.trigger`) is written by `muxcode hook analyze` with one line per file edit:
 
 ```
 <unix-timestamp> <filepath>
@@ -166,12 +166,12 @@ When the watcher detects a change in the trigger file, it starts debouncing. Aft
 
 Per-file routing to specific agents (test/deploy/build) is handled earlier by `hook analyze` at edit time — the watcher only handles the aggregate analyst notification.
 
-### `muxcode-agent-bus dashboard`
+### `muxcode dashboard`
 
 Launch the Dracula-themed terminal dashboard TUI.
 
 ```bash
-muxcode-agent-bus dashboard [--refresh N]
+muxcode dashboard [--refresh N]
 ```
 
 - Displays agent window statuses (active/ready/idle/error)
@@ -184,39 +184,39 @@ muxcode-agent-bus dashboard [--refresh N]
 
 Runs in the `status` window (F9). Press `q` to quit, `r` to refresh.
 
-### `muxcode-agent-bus cleanup`
+### `muxcode cleanup`
 
 Remove the ephemeral bus directory and trigger files.
 
 ```bash
-muxcode-agent-bus cleanup [session]
+muxcode cleanup [session]
 ```
 
 Removes `/tmp/muxcode-bus-{SESSION}/` and `/tmp/muxcode-analyze-{SESSION}.trigger`. Called automatically by the tmux session-closed hook.
 
-### `muxcode-agent-bus notify`
+### `muxcode notify`
 
 Send a tmux notification to an agent's pane.
 
 ```bash
-muxcode-agent-bus notify <role>
+muxcode notify <role>
 ```
 
-Sends a passive `tmux display-message` to the target agent's window (status bar flash). The notification includes a preview: `[role] [from -> action] payload -> Run: muxcode-agent-bus inbox`. Harness panes are skipped (they poll inbox directly).
+Sends a passive `tmux display-message` to the target agent's window (status bar flash). The notification includes a preview: `[role] [from -> action] payload -> Run: muxcode inbox`. Harness panes are skipped (they poll inbox directly).
 
-**Note:** `muxcode-agent-bus send` calls `notify` automatically. Use `--no-notify` to suppress.
+**Note:** `muxcode send` calls `notify` automatically. Use `--no-notify` to suppress.
 
-### `muxcode-agent-bus cron`
+### `muxcode cron`
 
 Manage scheduled tasks that fire bus messages on a cadence.
 
 ```bash
-muxcode-agent-bus cron add <schedule> <target> <action> <message>
-muxcode-agent-bus cron list [--all]
-muxcode-agent-bus cron remove <id>
-muxcode-agent-bus cron enable <id>
-muxcode-agent-bus cron disable <id>
-muxcode-agent-bus cron history [--id CRON_ID] [--limit N]
+muxcode cron add <schedule> <target> <action> <message>
+muxcode cron list [--all]
+muxcode cron remove <id>
+muxcode cron enable <id>
+muxcode cron disable <id>
+muxcode cron history [--id CRON_ID] [--limit N]
 ```
 
 **Subcommands:**
@@ -247,25 +247,25 @@ Minimum interval is 30 seconds. Schedules are case-insensitive.
 **Examples:**
 ```bash
 # Schedule a git status check every 5 minutes
-$ muxcode-agent-bus cron add "@every 5m" commit status "Run git status and report"
+$ muxcode cron add "@every 5m" commit status "Run git status and report"
 Added cron entry: 1771897000-cron-a1b2c3d4
   Schedule: @every 5m  Target: commit  Action: status
   Message: Run git status and report
 
 # Schedule hourly test runs
-$ muxcode-agent-bus cron add "@hourly" test test "Run tests and report results"
+$ muxcode cron add "@hourly" test test "Run tests and report results"
 
 # List all enabled entries
-$ muxcode-agent-bus cron list
+$ muxcode cron list
 
 # Disable an entry
-$ muxcode-agent-bus cron disable 1771897000-cron-a1b2c3d4
+$ muxcode cron disable 1771897000-cron-a1b2c3d4
 
 # View execution history
-$ muxcode-agent-bus cron history --limit 10
+$ muxcode cron history --limit 10
 ```
 
-**Watcher integration:** The bus watcher (`muxcode-agent-bus watch`) checks for due cron entries on each poll cycle. It reloads the cron file from disk at most every 10 seconds to avoid excessive filesystem reads. When a cron entry fires, the watcher sends a bus message to the target agent, updates `last_run_ts`, appends to execution history, and notifies the target via tmux.
+**Watcher integration:** The bus watcher (`muxcode watch`) checks for due cron entries on each poll cycle. It reloads the cron file from disk at most every 10 seconds to avoid excessive filesystem reads. When a cron entry fires, the watcher sends a bus message to the target agent, updates `last_run_ts`, appends to execution history, and notifies the target via tmux.
 
 **Data files:**
 
@@ -274,12 +274,12 @@ $ muxcode-agent-bus cron history --limit 10
 | `cron.jsonl` | `/tmp/muxcode-bus-{SESSION}/cron.jsonl` | Cron entry definitions |
 | `cron-history.jsonl` | `/tmp/muxcode-bus-{SESSION}/cron-history.jsonl` | Execution history log |
 
-### `muxcode-agent-bus status`
+### `muxcode status`
 
 Show all agents' current state overview.
 
 ```bash
-muxcode-agent-bus status [--json]
+muxcode status [--json]
 ```
 
 - Default: human-readable table with role, state, inbox count, and last activity
@@ -290,7 +290,7 @@ muxcode-agent-bus status [--json]
 
 **Example:**
 ```
-$ muxcode-agent-bus status
+$ muxcode status
 ROLE         STATE  INBOX  LAST ACTIVITY
 edit         idle   0      14:32 ← build:response
 build        busy   1      14:31 ← edit:compile
@@ -298,13 +298,13 @@ test         idle   0      14:30 ← build:test
 review       idle   0      —
 ```
 
-### `muxcode-agent-bus workflow`
+### `muxcode workflow`
 
 Query or reset the workflow state machine.
 
 ```bash
-muxcode-agent-bus workflow [--json]
-muxcode-agent-bus workflow reset
+muxcode workflow [--json]
+muxcode workflow reset
 ```
 
 - Default: human-readable state with name, duration, trigger, files, and accumulated outcomes
@@ -315,13 +315,13 @@ The workflow state machine tracks the editing lifecycle (edit→build→test→r
 
 **Example:**
 ```
-$ muxcode-agent-bus workflow
+$ muxcode workflow
 state: testing  since: 2m ago  trigger: chain:build:success  files: 3  outcomes: build:success
 
-$ muxcode-agent-bus workflow --json
+$ muxcode workflow --json
 {"state":"testing","prev_state":"building","since":1711324800,"updated":1711324860,"trigger":"chain:build:success","files_changed":3,"last_files":["hook.go","config.go","cmd/hook.go"],"build_outcome":"success","test_outcome":"","review_outcome":"","deploy_outcome":""}
 
-$ muxcode-agent-bus workflow reset
+$ muxcode workflow reset
 Workflow state reset to idle
 ```
 
@@ -334,12 +334,12 @@ Workflow state reset to idle
 
 See [Architecture](architecture.md#workflow-state-machine) for state definitions, transition sources, and the regression rule.
 
-### `muxcode-agent-bus history`
+### `muxcode history`
 
 Show recent messages to/from an agent.
 
 ```bash
-muxcode-agent-bus history <role> [--limit N] [--context]
+muxcode history <role> [--limit N] [--context]
 ```
 
 - `<role>` — show messages involving this role (from `log.jsonl`)
@@ -348,7 +348,7 @@ muxcode-agent-bus history <role> [--limit N] [--context]
 
 **Default output:**
 ```
-$ muxcode-agent-bus history build
+$ muxcode history build
 --- Message history for build (last 20) ---
 14:30  edit → build  [request:build] Run ./build.sh and report results
 14:31  build → test  [request:test] Build succeeded — run tests
@@ -357,7 +357,7 @@ $ muxcode-agent-bus history build
 
 **Context output (`--context`):**
 ```
-$ muxcode-agent-bus history build --context
+$ muxcode history build --context
 ## Recent activity for build
 
 - 14:30 [request from edit] Run ./build.sh and report results
@@ -365,12 +365,12 @@ $ muxcode-agent-bus history build --context
 - 14:31 [request to test] Build succeeded — run tests
 ```
 
-### `muxcode-agent-bus guard`
+### `muxcode guard`
 
 Check for agent loop patterns — command retries and message ping-pong.
 
 ```bash
-muxcode-agent-bus guard [role] [--json] [--threshold N] [--window N]
+muxcode guard [role] [--json] [--threshold N] [--window N]
 ```
 
 - No role: check all known roles
@@ -393,14 +393,14 @@ Command normalization strips `cd ... &&` prefixes, env var assignments, `bash -c
 **Examples:**
 ```bash
 # Check all agents
-$ muxcode-agent-bus guard
+$ muxcode guard
 ⚠ LOOP DETECTED: build
   Type: command
   Command: go build ./... (failed 3x in 2m)
   Action: Check build window — agent may be stuck
 
 # Check a specific agent as JSON
-$ muxcode-agent-bus guard build --json
+$ muxcode guard build --json
 [
   {
     "role": "build",
@@ -413,7 +413,7 @@ $ muxcode-agent-bus guard build --json
 ]
 
 # Custom thresholds
-$ muxcode-agent-bus guard --threshold 5 --window 600
+$ muxcode guard --threshold 5 --window 600
 ```
 
 **Watcher integration:** The bus watcher checks for loops every 60 seconds. When a loop is detected, it sends a `loop-detected` event to the edit agent and notifies via tmux. Alerts are deduplicated within a 10-minute cooldown (exceeds the 5-minute detection window to prevent self-sustaining alerts). System actions (`loop-detected`, `compact-recommended`, `proc-complete`, `spawn-complete`) are excluded from message loop detection.
@@ -424,22 +424,22 @@ The watcher monitors agent context size (memory + history + log files) and stale
 
 ```
 Context approaching limits for edit (total: 620 KB, memory: 180 KB, history: 340 KB, log: 100 KB).
-Last compact: 2h 30m ago. Run: muxcode-agent-bus session compact "<summary>"
+Last compact: 2h 30m ago. Run: muxcode session compact "<summary>"
 ```
 
-Alerts are deduplicated within a 10-minute cooldown per role. The agent receiving the alert should run `muxcode-agent-bus session compact "<summary>"` to save its context and reset the staleness timer.
+Alerts are deduplicated within a 10-minute cooldown per role. The agent receiving the alert should run `muxcode session compact "<summary>"` to save its context and reset the staleness timer.
 
-### `muxcode-agent-bus proc`
+### `muxcode proc`
 
 Manage background processes — launch, track, and auto-notify on completion.
 
 ```bash
-muxcode-agent-bus proc start "<command>" [--dir DIR]
-muxcode-agent-bus proc list [--all]
-muxcode-agent-bus proc status <id>
-muxcode-agent-bus proc log <id> [--tail N]
-muxcode-agent-bus proc stop <id>
-muxcode-agent-bus proc clean
+muxcode proc start "<command>" [--dir DIR]
+muxcode proc list [--all]
+muxcode proc status <id>
+muxcode proc log <id> [--tail N]
+muxcode proc stop <id>
+muxcode proc clean
 ```
 
 **Subcommands:**
@@ -456,26 +456,26 @@ muxcode-agent-bus proc clean
 **Examples:**
 ```bash
 # Start a long-running build in the background
-$ muxcode-agent-bus proc start "./build.sh"
+$ muxcode proc start "./build.sh"
 Started process: 1740000000-proc-a1b2c3d4
   PID: 12345  Owner: build
   Command: ./build.sh
   Log: /tmp/muxcode-bus-mysession/proc/1740000000-proc-a1b2c3d4.log
 
 # Check running processes
-$ muxcode-agent-bus proc list
+$ muxcode proc list
 ID                                   PID      STATUS     OWNER      STARTED    COMMAND
 ----------------------------------------------------------------------------------------------------
 1740000000-proc-a1b2c3d4             12345    running    build      14:00:00   ./build.sh
 
 # View process log
-$ muxcode-agent-bus proc log 1740000000-proc-a1b2c3d4 --tail 20
+$ muxcode proc log 1740000000-proc-a1b2c3d4 --tail 20
 
 # Stop a process
-$ muxcode-agent-bus proc stop 1740000000-proc-a1b2c3d4
+$ muxcode proc stop 1740000000-proc-a1b2c3d4
 
 # Clean up finished processes
-$ muxcode-agent-bus proc clean
+$ muxcode proc clean
 Cleaned 2 finished process(es).
 ```
 
@@ -488,17 +488,17 @@ Cleaned 2 finished process(es).
 | `proc.jsonl` | `/tmp/muxcode-bus-{SESSION}/proc.jsonl` | Process entry definitions |
 | `{id}.log` | `/tmp/muxcode-bus-{SESSION}/proc/{id}.log` | Per-process stdout/stderr output |
 
-### `muxcode-agent-bus spawn`
+### `muxcode spawn`
 
 Manage spawned agent sessions — create temporary agents for one-off tasks, collect results, and tear down.
 
 ```bash
-muxcode-agent-bus spawn start <role> "<task>"
-muxcode-agent-bus spawn list [--all]
-muxcode-agent-bus spawn status <id>
-muxcode-agent-bus spawn result <id>
-muxcode-agent-bus spawn stop <id>
-muxcode-agent-bus spawn clean
+muxcode spawn start <role> "<task>"
+muxcode spawn list [--all]
+muxcode spawn status <id>
+muxcode spawn result <id>
+muxcode spawn stop <id>
+muxcode spawn clean
 ```
 
 **Subcommands:**
@@ -524,26 +524,26 @@ muxcode-agent-bus spawn clean
 **Examples:**
 ```bash
 # Spawn a research agent
-$ muxcode-agent-bus spawn start research "What does bus/guard.go do?"
+$ muxcode spawn start research "What does bus/guard.go do?"
 Started spawn: 1771900000-spawn-a1b2c3d4
   Role: research  Spawn Role: spawn-a1b2c3d4  Owner: edit
   Window: spawn-a1b2c3d4
   Task: What does bus/guard.go do?
 
 # Check running spawns
-$ muxcode-agent-bus spawn list
+$ muxcode spawn list
 ID                                   ROLE         SPAWN-ROLE   STATUS     OWNER      TASK
 --------------------------------------------------------------------------------------------------------------
 1771900000-spawn-a1b2c3d4            research     spawn-a1b2c  running    edit       What does bus/guard.go do?
 
 # Get the result after completion
-$ muxcode-agent-bus spawn result 1771900000-spawn-a1b2c3d4
+$ muxcode spawn result 1771900000-spawn-a1b2c3d4
 
 # Stop a running spawn
-$ muxcode-agent-bus spawn stop 1771900000-spawn-a1b2c3d4
+$ muxcode spawn stop 1771900000-spawn-a1b2c3d4
 
 # Clean up finished spawns
-$ muxcode-agent-bus spawn clean
+$ muxcode spawn clean
 Cleaned 1 finished spawn(s).
 ```
 
@@ -557,13 +557,13 @@ Cleaned 1 finished spawn(s).
 |------|----------|---------|
 | `spawn.jsonl` | `/tmp/muxcode-bus-{SESSION}/spawn.jsonl` | Spawn entry definitions |
 
-### `muxcode-agent-bus demo`
+### `muxcode demo`
 
 Run scripted demo scenarios — sends real bus messages, switches tmux windows, and toggles lock states with configurable timing.
 
 ```bash
-muxcode-agent-bus demo run [SCENARIO] [--speed FACTOR] [--dry-run] [--no-switch]
-muxcode-agent-bus demo list
+muxcode demo run [SCENARIO] [--speed FACTOR] [--dry-run] [--no-switch]
+muxcode demo list
 ```
 
 **Subcommands:**
@@ -607,20 +607,20 @@ muxcode-agent-bus demo list
 **Examples:**
 ```bash
 # List available scenarios
-$ muxcode-agent-bus demo list
+$ muxcode demo list
 Available demo scenarios:
 
   build-test-review          Full build-test-review-commit cycle across agent windows
                              20 steps, ~20s at 1.0x speed
 
 # Dry-run (no tmux needed)
-$ muxcode-agent-bus demo run --dry-run
+$ muxcode demo run --dry-run
 
 # Live demo at 2x speed (for GIF recording)
-$ muxcode-agent-bus demo run --speed 2.0
+$ muxcode demo run --speed 2.0
 
 # Slow demo for live presentation
-$ muxcode-agent-bus demo run --speed 0.5
+$ muxcode demo run --speed 0.5
 ```
 
 **GIF capture:** Use `scripts/muxcode-demo.sh` to record the screen during a demo run and convert to GIF:
@@ -631,14 +631,14 @@ scripts/muxcode-demo.sh --speed 2.0 --output assets/demo.gif
 
 Requires `ffmpeg` and `gifski` (`brew install ffmpeg gifski`). Auto-detects the screen capture device via avfoundation.
 
-### `muxcode-agent-bus webhook`
+### `muxcode webhook`
 
 Manage the webhook HTTP endpoint — an HTTP-to-bus bridge for external tools (CI/CD, GitHub webhooks, monitoring, custom scripts).
 
 ```bash
-muxcode-agent-bus webhook start [--port PORT] [--host HOST] [--token TOKEN]
-muxcode-agent-bus webhook stop
-muxcode-agent-bus webhook status
+muxcode webhook start [--port PORT] [--host HOST] [--token TOKEN]
+muxcode webhook stop
+muxcode webhook status
 ```
 
 **Subcommands:**
@@ -721,11 +721,11 @@ Error (4xx/5xx):
 
 ```bash
 # Start webhook with default settings
-$ muxcode-agent-bus webhook start
+$ muxcode webhook start
 Webhook server started on 127.0.0.1:9090 (PID 54854)
 
 # Start with auth token
-$ muxcode-agent-bus webhook start --port 8080 --token mysecret
+$ muxcode webhook start --port 8080 --token mysecret
 
 # Health check
 $ curl http://127.0.0.1:9090/health
@@ -744,11 +744,11 @@ $ curl -X POST http://127.0.0.1:8080/send \
   -d '{"to":"build","action":"build","payload":"CI triggered build"}'
 
 # Check status
-$ muxcode-agent-bus webhook status
+$ muxcode webhook status
 Webhook: running on 127.0.0.1:9090 (PID 54854)
 
 # Stop
-$ muxcode-agent-bus webhook stop
+$ muxcode webhook stop
 Webhook server stopped
 ```
 
@@ -758,14 +758,14 @@ Webhook server stopped
 |------|----------|---------|
 | `webhook.pid` | `/tmp/muxcode-bus-{SESSION}/webhook.pid` | PID file (`port:pid` format) |
 
-### `muxcode-agent-bus context`
+### `muxcode context`
 
 Manage per-agent drop-in context files — a lightweight, file-based way to inject project-specific knowledge into agent prompts without the frontmatter/roles/tags overhead of skills.
 
 ```bash
-muxcode-agent-bus context list [--role ROLE] [--no-auto]
-muxcode-agent-bus context prompt <role> [--no-auto]
-muxcode-agent-bus context detect [DIR]
+muxcode context list [--role ROLE] [--no-auto]
+muxcode context prompt <role> [--no-auto]
+muxcode context detect [DIR]
 ```
 
 **Subcommands:**
@@ -830,17 +830,17 @@ $ echo "Use 2-space indentation" > .muxcode/context.d/shared/conventions.md
 $ echo "Prefer minimal diffs" > .muxcode/context.d/edit/patterns.md
 
 # List all context files
-$ muxcode-agent-bus context list
+$ muxcode context list
 conventions              shared           project
 patterns                 edit             project
 
 # List files for a specific role
-$ muxcode-agent-bus context list --role edit
+$ muxcode context list --role edit
 conventions              shared           project
 patterns                 edit             project
 
 # Generate prompt for a role
-$ muxcode-agent-bus context prompt edit
+$ muxcode context prompt edit
 ## Project Context
 
 ### conventions
@@ -850,12 +850,12 @@ Use 2-space indentation
 Prefer minimal diffs
 ```
 
-### `muxcode-agent-bus agent`
+### `muxcode agent`
 
 Run a local LLM agentic loop for a role via Ollama, replacing Claude Code for that role.
 
 ```bash
-muxcode-agent-bus agent run <role> [--model MODEL] [--url URL]
+muxcode agent run <role> [--model MODEL] [--url URL]
 ```
 
 - `<role>` — agent role to run (e.g. `git`, `build`, `runner`)
@@ -887,21 +887,21 @@ muxcode-agent-bus agent run <role> [--model MODEL] [--url URL]
 **Examples:**
 ```bash
 # Run the git manager via local LLM
-$ muxcode-agent-bus agent run git
+$ muxcode agent run git
 
 # Use a specific model
-$ muxcode-agent-bus agent run git --model codellama:13b
+$ muxcode agent run git --model codellama:13b
 
 # Custom Ollama URL
-$ muxcode-agent-bus agent run build --url http://192.168.1.100:11434
+$ muxcode agent run build --url http://192.168.1.100:11434
 ```
 
-### `muxcode-agent-bus agent launch`
+### `muxcode agent launch`
 
 Launch a Claude Code (or local LLM) agent for a role. Replaces `muxcode-agent.sh` — resolves agent file, model, tools, prompt, and execs the agent CLI.
 
 ```bash
-muxcode-agent-bus agent launch <role>
+muxcode agent launch <role>
 ```
 
 - `<role>` — agent role to launch (e.g. `edit`, `build`, `test`, `commit`)
@@ -925,22 +925,22 @@ muxcode-agent-bus agent launch <role>
 **Examples:**
 ```bash
 # Launch the build agent (standard usage from muxcode.sh)
-$ muxcode-agent-bus agent launch build
+$ muxcode agent launch build
 
 # Launch the edit agent (prompted mode, opus model)
-$ muxcode-agent-bus agent launch edit
+$ muxcode agent launch edit
 ```
 
-### `muxcode-agent-bus subscribe`
+### `muxcode subscribe`
 
 Manage event subscriptions for fan-out after chain execution.
 
 ```bash
-muxcode-agent-bus subscribe add <event> <outcome> <notify-role> <action> [message-template]
-muxcode-agent-bus subscribe list [--all]
-muxcode-agent-bus subscribe remove <id>
-muxcode-agent-bus subscribe enable <id>
-muxcode-agent-bus subscribe disable <id>
+muxcode subscribe add <event> <outcome> <notify-role> <action> [message-template]
+muxcode subscribe list [--all]
+muxcode subscribe remove <id>
+muxcode subscribe enable <id>
+muxcode subscribe disable <id>
 ```
 
 **Subcommands:**
@@ -962,13 +962,13 @@ muxcode-agent-bus subscribe disable <id>
 **Examples:**
 ```bash
 # Notify watch agent on any build failure
-$ muxcode-agent-bus subscribe add build failure watch alert "Build failed: ${command}"
+$ muxcode subscribe add build failure watch alert "Build failed: ${command}"
 
 # Notify analyst on all events
-$ muxcode-agent-bus subscribe add "*" "*" analyze observe
+$ muxcode subscribe add "*" "*" analyze observe
 
 # List subscriptions
-$ muxcode-agent-bus subscribe list
+$ muxcode subscribe list
 ```
 
 **Data files:**
@@ -977,14 +977,14 @@ $ muxcode-agent-bus subscribe list
 |------|----------|---------|
 | `subscriptions.jsonl` | `/tmp/muxcode-bus-{SESSION}/subscriptions.jsonl` | Subscription definitions |
 
-### `muxcode-agent-bus agent-health`
+### `muxcode agent-health`
 
 Manage agent liveness monitoring — stop/start auto-restart, check agent status.
 
 ```bash
-muxcode-agent-bus agent-health --check <role>
-muxcode-agent-bus agent-health --stop <role>
-muxcode-agent-bus agent-health --start <role>
+muxcode agent-health --check <role>
+muxcode agent-health --stop <role>
+muxcode agent-health --start <role>
 ```
 
 - `--check <role>` — report agent status: `alive`, `dead`, `stopped`, or `excluded`
@@ -1000,15 +1000,15 @@ The watcher probes agent panes every 30 seconds. Three consecutive failures trig
 | `{role}.stopped` | `/tmp/muxcode-bus-{session}/lock/` | Marker suppressing auto-restart |
 | `watcher.keepalive` | `/tmp/muxcode-bus-{session}/` | Unix timestamp updated each watcher poll loop |
 
-### `muxcode-agent-bus lifecycle`
+### `muxcode lifecycle`
 
 Persistent lifecycle logging for debugging process and session issues across restarts. Logs are stored at `~/.config/muxcode/logs/{session}.log` as JSONL — survives session cleanup since the bus directory at `/tmp/` is ephemeral.
 
 ```bash
-muxcode-agent-bus lifecycle log <session> <level> <source> <event> [--detail TEXT] [--pid N]
-muxcode-agent-bus lifecycle show [session] [--limit N] [--source S] [--level L] [--event E] [--since DURATION] [--all]
-muxcode-agent-bus lifecycle list
-muxcode-agent-bus lifecycle purge [--days N]
+muxcode lifecycle log <session> <level> <source> <event> [--detail TEXT] [--pid N]
+muxcode lifecycle show [session] [--limit N] [--source S] [--level L] [--event E] [--since DURATION] [--all]
+muxcode lifecycle list
+muxcode lifecycle purge [--days N]
 ```
 
 | Subcommand | Description |
@@ -1039,7 +1039,7 @@ muxcode-agent-bus lifecycle purge [--days N]
 | Source | Event | Level | When |
 |--------|-------|-------|------|
 | launcher | session-start | info | `muxcode.sh` begins |
-| launcher | bus-init | info | `muxcode-agent-bus init` completes |
+| launcher | bus-init | info | `muxcode init` completes |
 | launcher | stale-kill | info | Killed stale watcher or monitor |
 | launcher | watcher-start | info | Watcher process launched (with PID) |
 | launcher | monitor-start | info | Monitor process launched (with PID) |
@@ -1079,7 +1079,7 @@ muxcode-agent-bus lifecycle purge [--days N]
 
 ```bash
 # Show recent events for current session
-$ muxcode-agent-bus lifecycle show
+$ muxcode lifecycle show
 2026-03-12 08:30:01  info   launcher       session-start           Project: ~/Repos/mkober/muxcode
 2026-03-12 08:30:01  info   init           init                    Creating bus directory: /tmp/muxcode-bus-muxcode
 2026-03-12 08:30:01  info   launcher       watcher-start           PID: 12345
@@ -1087,18 +1087,18 @@ $ muxcode-agent-bus lifecycle show
 2026-03-12 08:30:16  info   watcher        startup-notify          edit
 
 # Filter by source and level
-$ muxcode-agent-bus lifecycle show --source watcher --level warn --since 1h
+$ muxcode lifecycle show --source watcher --level warn --since 1h
 
 # Show events for a subsession
-$ muxcode-agent-bus lifecycle show is-admissions-gateway --limit 20
+$ muxcode lifecycle show is-admissions-gateway --limit 20
 
 # List all sessions with logs
-$ muxcode-agent-bus lifecycle list
+$ muxcode lifecycle list
   muxcode                         42 entries  2026-03-12 08:30
   is-admissions-gateway           18 entries  2026-03-12 08:28
 
 # Clean up old logs
-$ muxcode-agent-bus lifecycle purge --days 30
+$ muxcode lifecycle purge --days 30
 Purged 3 log file(s) older than 30 days
 ```
 
@@ -1108,28 +1108,28 @@ Purged 3 log file(s) older than 30 days
 |------|----------|---------|
 | `{session}.log` | `~/.config/muxcode/logs/` | JSONL lifecycle events per session name |
 
-### `muxcode-agent-bus session`
+### `muxcode session`
 
 Manage session context — save summaries for context preservation across restarts.
 
 ```bash
-muxcode-agent-bus session status
-muxcode-agent-bus session compact "<summary>"
+muxcode session status
+muxcode session compact "<summary>"
 ```
 
 - `status` — show session uptime and compact count
 - `compact "<summary>"` — save session summary to memory for restoration on restart
 
-### `muxcode-agent-bus skill`
+### `muxcode skill`
 
 Manage skill definitions — file-based plugins for reusable instruction sets.
 
 ```bash
-muxcode-agent-bus skill list [--role ROLE]
-muxcode-agent-bus skill load <name>
-muxcode-agent-bus skill search <query>
-muxcode-agent-bus skill create <name> <desc> [--roles r1,r2] [--tags t1,t2] <body>
-muxcode-agent-bus skill prompt <role>
+muxcode skill list [--role ROLE]
+muxcode skill load <name>
+muxcode skill search <query>
+muxcode skill create <name> <desc> [--roles r1,r2] [--tags t1,t2] <body>
+muxcode skill prompt <role>
 ```
 
 | Subcommand | Description |
@@ -1149,16 +1149,16 @@ muxcode-agent-bus skill prompt <role>
 | `git-commit-conventions` | commit, edit | Commit message format and git workflow conventions |
 | `go-testing` | test, build | Go testing patterns and conventions |
 | `code-review-checklist` | review | Code review quality checklist |
-| `jira-pr-comment` | git | Post a comment on a Jira issue when a PR is created. Extracts the Jira key from the branch name (e.g. `DATA-456-*`, `PBP1-4365-*`) and posts PR link + diff stats via `muxcode-agent-bus atlassian jira comment`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
-| `jira-update-description` | git, edit | Read and update a Jira issue description with ADF content. Extracts the Jira key from the request message or branch name. Uses `muxcode-agent-bus atlassian jira read/update`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
-| `confluence-update-page` | git, edit | Read and update Confluence pages with ADF content. Pages identified by page ID, Confluence URL, or space key + title. Supports full replacement, append mode, and CQL search. Uses `muxcode-agent-bus atlassian confluence read/update/search`. Requires `CONFLUENCE_BASE_URL` (falls back to `JIRA_BASE_URL`), `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
+| `jira-pr-comment` | git | Post a comment on a Jira issue when a PR is created. Extracts the Jira key from the branch name (e.g. `DATA-456-*`, `PBP1-4365-*`) and posts PR link + diff stats via `muxcode atlassian jira comment`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
+| `jira-update-description` | git, edit | Read and update a Jira issue description with ADF content. Extracts the Jira key from the request message or branch name. Uses `muxcode atlassian jira read/update`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
+| `confluence-update-page` | git, edit | Read and update Confluence pages with ADF content. Pages identified by page ID, Confluence URL, or space key + title. Supports full replacement, append mode, and CQL search. Uses `muxcode atlassian confluence read/update/search`. Requires `CONFLUENCE_BASE_URL` (falls back to `JIRA_BASE_URL`), `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
 
-### `muxcode-agent-bus tools`
+### `muxcode tools`
 
 Resolve and display the tool profile for a role.
 
 ```bash
-muxcode-agent-bus tools <role>
+muxcode tools <role>
 ```
 
 Outputs one `--allowedTools` pattern per line. Resolves shared includes (`bus`, `readonly`, `common`), applies `CdPrefix` variants, and appends role-specific patterns from `bus/profile.go`.
@@ -1166,8 +1166,8 @@ Outputs one `--allowedTools` pattern per line. Resolves shared includes (`bus`, 
 **Examples:**
 ```bash
 # Show git agent's tool permissions
-$ muxcode-agent-bus tools git
-Bash(muxcode-agent-bus *)
+$ muxcode tools git
+Bash(muxcode *)
 Bash(git *)
 Bash(gh *)
 Read
@@ -1176,21 +1176,21 @@ Grep
 ...
 ```
 
-### `muxcode-agent-bus lock` / `unlock` / `is-locked`
+### `muxcode lock` / `unlock` / `is-locked`
 
 Manage agent busy indicators.
 
 ```bash
-muxcode-agent-bus lock [role]
-muxcode-agent-bus unlock [role]
-muxcode-agent-bus is-locked [role]
+muxcode lock [role]
+muxcode unlock [role]
+muxcode is-locked [role]
 ```
 
 - `lock` — create the lock file for the specified role (defaults to own role)
 - `unlock` — remove the lock file
 - `is-locked` — check lock status (exits 0 if locked, 1 if not)
 
-### `muxcode-agent-bus api`
+### `muxcode api`
 
 Manage API collections, environments, and request history. Data is stored in `.muxcode/api/` as JSON files.
 
@@ -1205,52 +1205,52 @@ Manage API collections, environments, and request history. Data is stored in `.m
 #### Environment management
 
 ```bash
-muxcode-agent-bus api env list
-muxcode-agent-bus api env get <name>
-muxcode-agent-bus api env create <name> --base-url <url>
-muxcode-agent-bus api env set <name> <key> <value>
-muxcode-agent-bus api env delete <name>
+muxcode api env list
+muxcode api env get <name>
+muxcode api env create <name> --base-url <url>
+muxcode api env set <name> <key> <value>
+muxcode api env delete <name>
 ```
 
 #### Collection management
 
 ```bash
-muxcode-agent-bus api collection list
-muxcode-agent-bus api collection get <name>
-muxcode-agent-bus api collection create <name> [--description desc] [--base-url url]
-muxcode-agent-bus api collection delete <name>
-muxcode-agent-bus api collection add-request <collection> <name> --method GET --path /endpoint [--header key:value] [--body json] [--query key=value]
-muxcode-agent-bus api collection remove-request <collection> <name>
+muxcode api collection list
+muxcode api collection get <name>
+muxcode api collection create <name> [--description desc] [--base-url url]
+muxcode api collection delete <name>
+muxcode api collection add-request <collection> <name> --method GET --path /endpoint [--header key:value] [--body json] [--query key=value]
+muxcode api collection remove-request <collection> <name>
 ```
 
 #### History
 
 ```bash
-muxcode-agent-bus api history [--collection name] [--limit N]
+muxcode api history [--collection name] [--limit N]
 ```
 
 #### Import
 
 ```bash
-muxcode-agent-bus api import <source-dir>
+muxcode api import <source-dir>
 ```
 
 Copies environments and collections from a source directory into `.muxcode/api/`. Existing files are not overwritten. Example:
 
 ```bash
 # Import the bundled httpbin example
-muxcode-agent-bus api import examples/api
+muxcode api import examples/api
 ```
 
-### `muxcode-agent-bus hook`
+### `muxcode hook`
 
 Hook handlers for Claude Code's PreToolUse and PostToolUse events. Each subcommand reads the tool event as JSON from stdin.
 
 ```bash
-muxcode-agent-bus hook guard       # PreToolUse: edit agent command guard
-muxcode-agent-bus hook bash        # PostToolUse: build/test/deploy chain triggers
-muxcode-agent-bus hook analyze     # PostToolUse: file-edit trigger writer
-muxcode-agent-bus hook inbox-poll  # PreToolUse: inbox check on tool execution
+muxcode hook guard       # PreToolUse: edit agent command guard
+muxcode hook bash        # PostToolUse: build/test/deploy chain triggers
+muxcode hook analyze     # PostToolUse: file-edit trigger writer
+muxcode hook inbox-poll  # PreToolUse: inbox check on tool execution
 ```
 
 - `guard` — blocks prohibited commands for the edit agent (build, test, git, deploy, curl). Returns JSON `{"decision":"block","reason":"..."}` or passes through.
@@ -1264,12 +1264,12 @@ muxcode-agent-bus hook inbox-poll  # PreToolUse: inbox check on tool execution
 
 Core code: `bus/hook.go` (library), `cmd/hook.go` (CLI dispatcher).
 
-### `muxcode-agent-bus console`
+### `muxcode console`
 
 Run a left-pane log console for an agent window.
 
 ```bash
-muxcode-agent-bus console <role> [--interval N] [--once]
+muxcode console <role> [--interval N] [--once]
 ```
 
 - `<role>` — the window name (build, test, review, deploy, run, commit, analyze, watch, api)
@@ -1280,17 +1280,17 @@ Each role has a custom renderer showing relevant data: build/test/deploy show co
 
 Core code: `bus/console.go` (library with `DefaultConsoleConfigs()` map), `cmd/console.go` (CLI handler).
 
-### `muxcode-agent-bus atlassian`
+### `muxcode atlassian`
 
 Jira and Confluence API operations. Replaces the `muxcode-jira.sh` and `muxcode-confluence.sh` wrapper scripts with native Go `net/http` calls, eliminating Claude Code's curl permission prompt issues.
 
 ```bash
-muxcode-agent-bus atlassian jira read <ISSUE-KEY>
-muxcode-agent-bus atlassian jira update <ISSUE-KEY> <ADF-JSON-FILE>
-muxcode-agent-bus atlassian jira comment <ISSUE-KEY> <ADF-JSON-FILE>
-muxcode-agent-bus atlassian confluence read <PAGE-ID>
-muxcode-agent-bus atlassian confluence update <PAGE-ID> <ADF-JSON-FILE>
-muxcode-agent-bus atlassian confluence search <SPACE-KEY> <CQL-QUERY>
+muxcode atlassian jira read <ISSUE-KEY>
+muxcode atlassian jira update <ISSUE-KEY> <ADF-JSON-FILE>
+muxcode atlassian jira comment <ISSUE-KEY> <ADF-JSON-FILE>
+muxcode atlassian confluence read <PAGE-ID>
+muxcode atlassian confluence update <PAGE-ID> <ADF-JSON-FILE>
+muxcode atlassian confluence search <SPACE-KEY> <CQL-QUERY>
 ```
 
 **Config resolution:** reads credentials from `.muxcode/config` > `~/.config/muxcode/config` > env vars (highest priority). Required vars: `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, `JIRA_API_TOKEN`. For Confluence: `CONFLUENCE_BASE_URL` (falls back to `JIRA_BASE_URL`).
@@ -1301,12 +1301,12 @@ muxcode-agent-bus atlassian confluence search <SPACE-KEY> <CQL-QUERY>
 
 Core code: `bus/atlassian.go` (config loading, HTTP client, API handlers, ADF text extraction), `cmd/atlassian.go` (CLI dispatcher).
 
-### `muxcode-agent-bus pii-scrub`
+### `muxcode pii-scrub`
 
 Pipe-through PII and secret scrubber for stdin.
 
 ```bash
-echo "user@example.com" | muxcode-agent-bus pii-scrub
+echo "user@example.com" | muxcode pii-scrub
 # Output: [EMAIL_REDACTED]
 ```
 
@@ -1316,19 +1316,19 @@ Patterns: emails, SSN, credit cards (prefix-anchored), phone numbers (separator-
 
 Core code: `bus/scrub.go` (patterns + `ScrubPII()`), `cmd/scrub.go` (CLI handler).
 
-### `muxcode-agent-bus compact`
+### `muxcode compact`
 
 Trigger conversation compression for an agent.
 
 ```bash
-muxcode-agent-bus compact [role]
+muxcode compact [role]
 ```
 
 Polls the agent's tmux pane for idle state (detects `❯` prompt) every second for up to 30 seconds. Once idle, clears residual input and injects `/compact` via `tmux send-keys` to trigger Claude Code's built-in conversation compression. If the agent doesn't become idle within the timeout, exits silently.
 
 - `role` — target role (defaults to `AGENT_ROLE` env var)
 
-This is a fire-and-forget command — run it in the background after saving context via `muxcode-agent-bus session compact "<summary>"`.
+This is a fire-and-forget command — run it in the background after saving context via `muxcode session compact "<summary>"`.
 
 Core code: `cmd/compact.go`.
 
@@ -1379,7 +1379,7 @@ Messages from `build`, `test`, or `review` to any non-edit agent are automatical
 
 ### Build-Test-Review Chain
 
-Driven by `muxcode-agent-bus hook bash`, not by agent LLMs:
+Driven by `muxcode hook bash`, not by agent LLMs:
 
 1. **Build succeeds** -> hook sends `request:test` to the test agent
 2. **Test succeeds** -> hook sends `request:review` to the review agent
@@ -1397,7 +1397,7 @@ Pane targeting is consolidated in `bus/config.go`:
 ## Architecture
 
 ```
-tools/muxcode-agent-bus/
+tools/muxcode/
 ├── bus/               # Core library
 │   ├── config.go      # Session/role/path/pane configuration
 │   ├── message.go     # Message struct and JSONL encoding

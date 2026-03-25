@@ -88,14 +88,14 @@ func (f *Filter) Check(tc ToolCall) FilterResult {
 // isInboxCommand detects attempts to check the bus inbox.
 func isInboxCommand(command string) bool {
 	// Exact match or prefix match
-	if command == "muxcode-agent-bus inbox" {
+	if command == "muxcode inbox" {
 		return true
 	}
-	if strings.HasPrefix(command, "muxcode-agent-bus inbox ") {
+	if strings.HasPrefix(command, "muxcode inbox ") {
 		return true
 	}
-	// Also catch common variations
-	if strings.Contains(command, "agent-bus inbox") {
+	// Also catch with path prefix (e.g. /usr/local/bin/muxcode inbox)
+	if strings.Contains(command, "/muxcode inbox") {
 		return true
 	}
 	return false
@@ -103,13 +103,13 @@ func isInboxCommand(command string) bool {
 
 // isSelfSend detects attempts to send messages to the agent's own role.
 func isSelfSend(command, role string) bool {
-	// Check for "muxcode-agent-bus send <role>"
-	prefix := "muxcode-agent-bus send " + role
+	// Check for "muxcode send <role>"
+	prefix := "muxcode send " + role
 	if strings.HasPrefix(command, prefix+" ") || command == prefix {
 		return true
 	}
-	// Also match with path prefix
-	if strings.Contains(command, "agent-bus send "+role+" ") {
+	// Also match with path prefix (e.g. /usr/local/bin/muxcode send <role>)
+	if strings.Contains(command, "/muxcode send "+role+" ") {
 		return true
 	}
 	return false

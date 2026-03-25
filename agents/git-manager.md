@@ -67,7 +67,7 @@ When you receive a `pr-read` request, analyze the PR on the current branch and r
    - **Informational**: questions, praise, FYI — no action needed
 4. **Report to edit** — do NOT attempt to fix anything yourself. Send a structured summary with file paths, line numbers, and recommended changes so the edit agent can make the fixes:
    ```bash
-   muxcode-agent-bus send edit notify "PR #N: N must-fix, N should-fix. Must-fix: (1) file:line — fix desc (2) ..."
+   muxcode send edit notify "PR #N: N must-fix, N should-fix. Must-fix: (1) file:line — fix desc (2) ..."
    ```
 
 **pr-read safety rules:**
@@ -141,8 +141,8 @@ Always report the current state after operations: branch name, ahead/behind stat
 
 ## Git Agent Specifics
 - After completing git operations, notify the edit agent with the result
-- After commit: `muxcode-agent-bus send edit notify "Committed: <short hash> <message>"`
-- After branch operations: `muxcode-agent-bus send edit notify "Branch: <status summary>"`
+- After commit: `muxcode send edit notify "Committed: <short hash> <message>"`
+- After branch operations: `muxcode send edit notify "Branch: <status summary>"`
 - Save branch naming patterns and commit conventions to memory
 
 ### Session History Logging
@@ -151,16 +151,16 @@ After successful git operations, log them to the commit history for the left-pan
 
 ```bash
 # After a commit
-muxcode-agent-bus log commit "850b0d0 Remove --stdin dead code" --exit-code 0 --command "git commit -m '...'"
+muxcode log commit "850b0d0 Remove --stdin dead code" --exit-code 0 --command "git commit -m '...'"
 
 # After a push
-muxcode-agent-bus log commit "Pushed main → origin/main (3 commits)" --exit-code 0 --command "git push origin main"
+muxcode log commit "Pushed main → origin/main (3 commits)" --exit-code 0 --command "git push origin main"
 
 # After a merge/rebase
-muxcode-agent-bus log commit "Rebased feature/x onto main" --exit-code 0 --command "git rebase origin/main"
+muxcode log commit "Rebased feature/x onto main" --exit-code 0 --command "git rebase origin/main"
 
 # After a failed operation
-muxcode-agent-bus log commit "Merge conflict in src/app.ts" --exit-code 1 --command "git merge feature/y"
+muxcode log commit "Merge conflict in src/app.ts" --exit-code 1 --command "git merge feature/y"
 ```
 
-The bash hook also captures git commands automatically, but `muxcode-agent-bus log` entries provide enriched summaries that display better in the commit window's left pane.
+The bash hook also captures git commands automatically, but `muxcode log` entries provide enriched summaries that display better in the commit window's left pane.

@@ -58,13 +58,13 @@ Split-left windows: edit, build, test, review, deploy, analyze, commit, watch, a
 
 ```bash
 # Check if agent has pending messages
-muxcode-agent-bus inbox --role {role} --peek
+muxcode inbox --role {role} --peek
 
 # Check all agent statuses (health, inbox count, last message)
-muxcode-agent-bus inspect
+muxcode inspect
 
 # Check specific agent status
-muxcode-agent-bus inspect --role {role}
+muxcode inspect --role {role}
 ```
 
 ### Debugging workflow
@@ -83,28 +83,28 @@ When an agent appears stuck or unresponsive:
 
 3. **Check inbox** — does it have unprocessed messages?
    ```bash
-   muxcode-agent-bus inbox --role {role} --peek
+   muxcode inbox --role {role} --peek
    ```
 
 4. **Check health** — is the agent process alive?
    ```bash
-   muxcode-agent-bus inspect --role {role}
+   muxcode inspect --role {role}
    ```
 
 5. **Review recent messages** — did the message get delivered?
    ```bash
-   muxcode-agent-bus log --role {role} --last 5
+   muxcode log --role {role} --last 5
    ```
 
 ### Common issues
 
 | Symptom | Diagnosis | Fix |
 |---------|-----------|-----|
-| Agent idle with pending inbox | Notification missed | Re-send wake-up: `muxcode-agent-bus send {role} notify "You have new messages"` |
-| Agent active for too long | Stuck in tool execution | Check pane for errors, may need restart: `muxcode-agent-bus agent-health --start {role}` |
+| Agent idle with pending inbox | Notification missed | Re-send wake-up: `muxcode send {role} notify "You have new messages"` |
+| Agent active for too long | Stuck in tool execution | Check pane for errors, may need restart: `muxcode agent-health --start {role}` |
 | Agent shows "permission" prompt | Waiting for user approval | Approve/reject in the agent's tmux window |
-| Agent shows bash `$` prompt | Claude Code crashed | Restart: `muxcode-agent-bus agent-health --start {role}` |
-| Message sent but no response | Agent may not have received | Check log: `muxcode-agent-bus log --role {role} --last 5` then re-send |
+| Agent shows bash `$` prompt | Claude Code crashed | Restart: `muxcode agent-health --start {role}` |
+| Message sent but no response | Agent may not have received | Check log: `muxcode log --role {role} --last 5` then re-send |
 
 ### Capture multiple agents at once
 
@@ -114,7 +114,7 @@ To get a quick overview of all agents:
 for role in build test review commit deploy; do
   echo "=== ${role} ==="
   idle=$(tmux capture-pane -t "${BUS_SESSION}:${role}.1" -p -S -8 2>/dev/null | grep -q '❯' && echo "idle" || echo "active")
-  inbox=$(muxcode-agent-bus inbox --role "${role}" --peek 2>/dev/null | grep -c "Message from" || echo 0)
+  inbox=$(muxcode inbox --role "${role}" --peek 2>/dev/null | grep -c "Message from" || echo 0)
   echo "  status: ${idle}  inbox: ${inbox}"
   tmux capture-pane -t "${BUS_SESSION}:${role}.1" -p -S -5 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tail -3 | sed 's/^/  /'
   echo ""

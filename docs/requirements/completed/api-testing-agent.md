@@ -2,7 +2,7 @@
 
 ## Context
 
-Replace the "console" tmux window (currently a dashboard TUI + bash shell, no agent) with a new "api" agent — a Postman-like API testing specialist. The api agent manages per-project collections and environments stored as JSON files in `.muxcode/api/`, executes requests via `curl`, and tracks request history. New `muxcode-agent-bus api` CLI subcommands provide structured CRUD for collections, environments, and history.
+Replace the "console" tmux window (currently a dashboard TUI + bash shell, no agent) with a new "api" agent — a Postman-like API testing specialist. The api agent manages per-project collections and environments stored as JSON files in `.muxcode/api/`, executes requests via `curl`, and tracks request history. New `muxcode api` CLI subcommands provide structured CRUD for collections, environments, and history.
 
 ## Storage Structure
 
@@ -110,7 +110,7 @@ No role alias needed — window name = role name = profile key = `api`.
 Frontmatter: `description: API testing specialist — manages collections, environments, executes requests, and tracks history`
 
 Instructions:
-- Use `muxcode-agent-bus api` subcommands for collection/environment/history management
+- Use `muxcode api` subcommands for collection/environment/history management
 - Execute requests via `curl -s -w` with `jq` response formatting
 - Support variable substitution: `{{var}}` resolved from active environment
 - Support auth patterns: Bearer, Basic, API key (header or query)
@@ -158,16 +158,16 @@ Ship a ready-to-use demo that targets a free public API (httpbin.org). This serv
 
 Add an `api import <dir>` subcommand to `cmd/api.go` that copies environments and collections from a source directory into `.muxcode/api/`. This lets users bootstrap from examples:
 ```bash
-muxcode-agent-bus api import examples/api
+muxcode api import examples/api
 ```
 
 Document in README and agent definition how to use the example:
 ```bash
 # Copy example collection into your project
-muxcode-agent-bus api import examples/api
+muxcode api import examples/api
 # List what was imported
-muxcode-agent-bus api env list
-muxcode-agent-bus api collection list
+muxcode api env list
+muxcode api collection list
 ```
 
 ### 12. Documentation updates
@@ -182,7 +182,7 @@ muxcode-agent-bus api collection list
 - Line 41: Update default `MUXCODE_SPLIT_LEFT` to include `api`
 
 **`docs/agent-bus.md`**:
-- Add `muxcode-agent-bus api` section with all subcommands, data file table, examples
+- Add `muxcode api` section with all subcommands, data file table, examples
 
 **`CLAUDE.md`**:
 - Add `"api"` to KnownRoles listing
@@ -194,12 +194,12 @@ muxcode-agent-bus api collection list
 
 1. `go vet ./...` and `go test ./...` pass in the bus module
 2. `make build` succeeds
-3. `muxcode-agent-bus api env create dev --base-url http://localhost:8080` creates `.muxcode/api/environments/dev.json`
-4. `muxcode-agent-bus api collection create auth --description "Auth API"` creates collection file
-5. `muxcode-agent-bus api collection add-request auth login --method POST --path /auth/login` adds request
-6. `muxcode-agent-bus api env list` and `api collection list` show created entries
-7. `muxcode-agent-bus api history --limit 5` shows recent requests
-8. `muxcode-agent-bus api import examples/api` imports the httpbin demo collection and environment
-8. `muxcode-agent-bus tools api` shows the expected tool profile
+3. `muxcode api env create dev --base-url http://localhost:8080` creates `.muxcode/api/environments/dev.json`
+4. `muxcode api collection create auth --description "Auth API"` creates collection file
+5. `muxcode api collection add-request auth login --method POST --path /auth/login` adds request
+6. `muxcode api env list` and `api collection list` show created entries
+7. `muxcode api history --limit 5` shows recent requests
+8. `muxcode api import examples/api` imports the httpbin demo collection and environment
+8. `muxcode tools api` shows the expected tool profile
 9. Launch `muxcode` — "api" window appears with split-left layout and agent running
-10. From edit agent: `muxcode-agent-bus send api request "GET https://httpbin.org/get"` executes and reports back
+10. From edit agent: `muxcode send api request "GET https://httpbin.org/get"` executes and reports back

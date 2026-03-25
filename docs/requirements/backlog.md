@@ -73,8 +73,8 @@
 - **Conditional chains** — Extend event chains with conditions beyond exit codes — file pattern matching (only run deploy chain if infra files changed), time-of-day gates, branch name filters
 - **Pipeline definitions** — User-defined multi-step pipelines as YAML/JSON files (e.g. `lint → build → test → security-scan → review`) — more flexible than hardcoded build→test→review chain
 - **Retry with backoff** — Configurable retry policy for failed chain steps — exponential backoff, max attempts, different behavior per step
-- **Workspace checkpoints** — Snapshot working directory state before risky operations (deploy, large refactor) — allows rollback via `muxcode-agent-bus checkpoint restore`, leverages `git stash` or worktrees internally
-- **Undo/redo for agent file changes** — Track file snapshots before each agent Write/Edit operation — `muxcode-agent-bus undo [steps]` restores previous state via git stash or shadow copies. Enables safe experimentation without manual git gymnastics. Inspired by OpenCode's `/undo` and `/redo` commands
+- **Workspace checkpoints** — Snapshot working directory state before risky operations (deploy, large refactor) — allows rollback via `muxcode checkpoint restore`, leverages `git stash` or worktrees internally
+- **Undo/redo for agent file changes** — Track file snapshots before each agent Write/Edit operation — `muxcode undo [steps]` restores previous state via git stash or shadow copies. Enables safe experimentation without manual git gymnastics. Inspired by OpenCode's `/undo` and `/redo` commands
 - **Pre-commit hooks** — Beyond the current safeguard (pending inbox check), run configurable checks before commit — lint, type-check, test subset — blocks commit until all pass
 
 ### Intelligence & Context
@@ -105,7 +105,7 @@
 
 - **Dashboard activity timeline** — Visual timeline in TUI showing message flow between agents over time — like a sequence diagram but live — currently dashboard shows status tables but no temporal view
 - **TUI theme system** — Configurable color themes for the dashboard TUI and left-pane log scripts — ship built-in themes (Dracula default, Tokyo Night, Catppuccin, Nord, Gruvbox), support custom themes via JSON files in `~/.config/muxcode/themes/` or `.muxcode/themes/`. Theme applies to dashboard, log scripts, and tmux status bar. Inspired by OpenCode's theme system
-- **Agent log viewer in TUI** — Navigate and search `log.jsonl` from the dashboard — filter by role, action, time range — currently requires `muxcode-agent-bus history` CLI
+- **Agent log viewer in TUI** — Navigate and search `log.jsonl` from the dashboard — filter by role, action, time range — currently requires `muxcode history` CLI
 - **Notification sound/bell** — Optional terminal bell or macOS notification on important events (build failure, review complete, agent-down) — configurable per-event
 - **Session recording & replay** — Record all bus messages during a session for later replay/analysis — useful for demos, debugging, understanding multi-agent interactions — inverse of demo mode (record real sessions)
 
@@ -148,8 +148,8 @@
 | Low | Multi-repo sessions |
 
 - **`muxcode init` wizard** — Interactive project setup — detects project type, generates `.muxcode/config`, copies relevant agent overrides, suggests window layout
-- **Agent definition linting** — Validate agent markdown files — check frontmatter schema, verify referenced tools exist in profiles, warn about common mistakes — `muxcode-agent-bus agent lint`
-- **Skill marketplace** — Community-shared skills via a git-based registry — `muxcode-agent-bus skill install <url>` — each skill is a markdown file with frontmatter, already the right format
+- **Agent definition linting** — Validate agent markdown files — check frontmatter schema, verify referenced tools exist in profiles, warn about common mistakes — `muxcode agent lint`
+- **Skill marketplace** — Community-shared skills via a git-based registry — `muxcode skill install <url>` — each skill is a markdown file with frontmatter, already the right format
 - **Custom slash commands** — User-defined slash commands with argument interpolation — markdown files in `.muxcode/commands/` with `$ARGUMENTS`, `$1`/`$2` positional args, `` !`command` `` for bash output injection, `@file` for content inclusion. Override built-in commands by name. Extends current skills (passive injection) with active command triggers. Inspired by OpenCode's custom commands system
 - **Multi-repo sessions** — Support sessions spanning multiple related repos (monorepo-like) — each repo gets its own bus directory but agents can cross-reference
 

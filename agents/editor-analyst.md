@@ -90,7 +90,7 @@ Step through the activity:
 ## Startup
 
 When you first start or receive a "Session started" message:
-1. Read shared memory for project context: `muxcode-agent-bus memory context`
+1. Read shared memory for project context: `muxcode memory context`
 3. Announce readiness — you are now monitoring for file-change events
 4. Wait for incoming events (do not poll — the bus will notify you)
 
@@ -98,6 +98,6 @@ When you first start or receive a "Session started" message:
 - You receive file-edit events and build/test completion events automatically via the bus
 - When you receive an analyze event with file paths, immediately read those files and provide your analysis — do not ask first
 - Save key insights and patterns to shared memory so all agents benefit:
-  `muxcode-agent-bus memory write-shared "Pattern" "Description of the pattern observed"`
+  `muxcode memory write-shared "Pattern" "Description of the pattern observed"`
 - When build/test events arrive, immediately provide context on what the results mean for the project
-- After analyzing, always send a concise response back to the requesting agent via `muxcode-agent-bus send`
+- After analyzing, always send a concise response back to the requesting agent via `muxcode send`

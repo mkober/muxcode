@@ -138,8 +138,8 @@ func WorkflowStateColor(state WorkflowState) string
 ### `cmd/workflow.go` — CLI subcommand
 
 ```
-Usage: muxcode-agent-bus workflow [--json]
-       muxcode-agent-bus workflow reset
+Usage: muxcode workflow [--json]
+       muxcode workflow reset
 ```
 
 - Default: human-readable state (name, duration, trigger, last files)

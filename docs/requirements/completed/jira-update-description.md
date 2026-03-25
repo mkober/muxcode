@@ -36,8 +36,8 @@ Add row to the Implemented table in `docs/requirements/backlog.md`.
 
 ## Acceptance criteria
 
-- `muxcode-agent-bus skill list --role git` shows `jira-update-description`
-- `muxcode-agent-bus skill load jira-update-description` renders skill content correctly
+- `muxcode skill list --role git` shows `jira-update-description`
+- `muxcode skill load jira-update-description` renders skill content correctly
 - Build passes — install copies skill file and wrapper script
 - `muxcode-jira.sh read PROJ-123` returns issue context and flattened description without permission prompts
 - `muxcode-jira.sh update PROJ-123 /tmp/payload.json` updates the description without permission prompts

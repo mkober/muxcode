@@ -47,15 +47,15 @@ Persistent:  .muxcode/memory/{role}.md      (project)
 
 ```
 1. User types in edit window
-2. Edit agent sends: muxcode-agent-bus send build build "Run ./build.sh" --wait
+2. Edit agent sends: muxcode send build build "Run ./build.sh" --wait
 3. Bus writes to /tmp/muxcode-bus-{s}/inbox/build.jsonl
 4. Bus sends tmux notification to build agent pane
 5. --wait polls edit's inbox every 2s for a response
 6. Build agent reads inbox, runs ./build.sh
-7. Build agent replies: muxcode-agent-bus send edit result "Build succeeded"
+7. Build agent replies: muxcode send edit result "Build succeeded"
 8. --wait detects response, prints it to stdout as part of the Bash tool result
 9. PostToolUse hook (hook bash) detects build success
-10. Hook automatically sends: muxcode-agent-bus send test test "Run tests"
+10. Hook automatically sends: muxcode send test test "Run tests"
 11. Test agent reads inbox, runs tests
 12. Hook detects test success, sends request to review
 13. Review agent reviews diff, replies to edit
@@ -66,7 +66,7 @@ Persistent:  .muxcode/memory/{role}.md      (project)
 ```
 1. Deploy agent runs `cdk deploy` (or terraform apply, pulumi up, etc.)
 2. PostToolUse hook (hook bash) detects deploy-apply command success
-3. Hook sends: muxcode-agent-bus chain deploy success
+3. Hook sends: muxcode chain deploy success
 4. Chain self-loops: sends verify request back to deploy agent
 5. Deploy agent runs verification checks (AWS health, HTTP smoke, CloudWatch)
 6. Deploy agent reports results to edit
@@ -89,7 +89,7 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
 ### Agent Spawn Flow
 
 ```
-1. Agent runs: muxcode-agent-bus spawn start research "What does guard.go do?"
+1. Agent runs: muxcode spawn start research "What does guard.go do?"
 2. Bus generates spawn role (spawn-a1b2c3d4), creates tmux window
 3. Task message pre-seeded in spawn's inbox
 4. Launches: AGENT_ROLE=spawn-a1b2c3d4 muxcode-agent.sh research
@@ -98,7 +98,7 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
 7. Spawn agent completes, exits (tmux window closes)
 8. Watcher detects window death via checkSpawns()
 9. Watcher sends spawn-complete event to owner with last result
-10. Owner retrieves result: muxcode-agent-bus spawn result <id>
+10. Owner retrieves result: muxcode spawn result <id>
 ```
 
 ### Watcher debounce
@@ -144,7 +144,7 @@ Messages from build, test, review, and deploy agents to any non-edit agent are a
 
 ### Notification Flow
 
-1. `muxcode-agent-bus send` delivers message to inbox file
+1. `muxcode send` delivers message to inbox file
 2. `send` calls `Notify()` to alert the recipient (dual-path):
    - **Harness panes**: skipped — they poll inbox directly
    - **Idle agents** (at `❯` prompt, including edit): `send-keys` "You have new messages" + Enter to wake them up
@@ -158,7 +158,7 @@ Never use `send-keys` on **active** agents — it disrupts Claude Code's input b
 
 The `--wait` flag on `send` provides inline response delivery for agents that need synchronous request/response patterns:
 
-1. Edit agent runs: `muxcode-agent-bus send build build "Run ./build.sh" --wait`
+1. Edit agent runs: `muxcode send build build "Run ./build.sh" --wait`
 2. Bus delivers the message and notifies the recipient
 3. `--wait` enters a poll loop — checks the sender's (edit's) inbox every 2 seconds
 4. When a response arrives, `--wait` consumes it and prints it to stdout
@@ -172,9 +172,9 @@ Timeout is controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default: 600 seconds). If
 
 Agents indicate busy state via lock files at `/tmp/muxcode-bus-{session}/lock/{role}.lock`. The dashboard TUI reads lock status for display. Commands:
 
-- `muxcode-agent-bus lock [role]` — create the lock file
-- `muxcode-agent-bus unlock [role]` — remove the lock file
-- `muxcode-agent-bus is-locked [role]` — check status (exit 0 if locked, 1 if not)
+- `muxcode lock [role]` — create the lock file
+- `muxcode unlock [role]` — remove the lock file
+- `muxcode is-locked [role]` — check status (exit 0 if locked, 1 if not)
 
 ## Memory System
 
@@ -194,9 +194,9 @@ Memory has two layers:
 └── ...                              # Per-role files
 ```
 
-When agents read context (`muxcode-agent-bus memory context`), global memory is prepended before project memory. Project-specific learnings can override or refine global patterns. Use `--no-global` to skip global memory.
+When agents read context (`muxcode memory context`), global memory is prepended before project memory. Project-specific learnings can override or refine global patterns. Use `--no-global` to skip global memory.
 
-Agents can search memory with `muxcode-agent-bus memory search "<query>"` (BM25 ranking by default with IDF weighting, length normalization, and 2x header boost; keyword mode also available via `--mode keyword`). List all sections with `muxcode-agent-bus memory list`. Both support `--role` filtering and `--scope project|global|all`.
+Agents can search memory with `muxcode memory search "<query>"` (BM25 ranking by default with IDF weighting, length normalization, and 2x header boost; keyword mode also available via `--mode keyword`). List all sections with `muxcode memory list`. Both support `--role` filtering and `--scope project|global|all`.
 
 Memory files rotate daily — on first write each day, the previous day's file is archived to `{role}/YYYY-MM-DD.md`. Archives are retained for 30 days. Context includes the active file plus the last 7 days of archives by default (`--days N` to override). Both global and project memory rotate independently.
 
@@ -206,11 +206,11 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 
 | Hook | Phase | Trigger | Mode | Purpose |
 |------|-------|---------|------|---------|
-| `muxcode-agent-bus hook guard` | PreToolUse | Bash | sync | Block prohibited commands in edit window |
+| `muxcode hook guard` | PreToolUse | Bash | sync | Block prohibited commands in edit window |
 | `muxcode-preview-hook.sh` | PreToolUse | Write/Edit | async | Show diff preview in nvim |
 | `muxcode-diff-cleanup.sh` | PreToolUse | Read/Bash/etc | async | Clean stale diff preview |
-| `muxcode-agent-bus hook analyze` | PostToolUse | Write/Edit | async | Route file events, trigger watcher |
-| `muxcode-agent-bus hook bash` | PostToolUse | Bash | async | Drive build-test-review and deploy-verify chains + subscription fan-out |
+| `muxcode hook analyze` | PostToolUse | Write/Edit | async | Route file events, trigger watcher |
+| `muxcode hook bash` | PostToolUse | Bash | async | Drive build-test-review and deploy-verify chains + subscription fan-out |
 
 ### Hook Chain Guarantee
 
@@ -255,7 +255,7 @@ The build-test-review and deploy-verify chains are **deterministic** — driven 
 ```
 1. muxcode-agent.sh checks MUXCODE_{ROLE}_CLI for role
 2. If "local", checks Ollama health (GET /api/tags)
-3a. Ollama reachable: exec muxcode-agent-bus agent run <role>
+3a. Ollama reachable: exec muxcode agent run <role>
 3b. Ollama unreachable: fall through to Claude Code
 4. Agent loop: poll inbox → build conversation → call Ollama API → execute tools → send response
 5. Tool execution enforces allowedTools from tool profile
@@ -268,7 +268,7 @@ The build-test-review and deploy-verify chains are **deterministic** — driven 
 ```
 1. Build/test/deploy command completes
 2. hook bash detects exit code
-3. Hook sends: muxcode-agent-bus chain <event> <outcome>
+3. Hook sends: muxcode chain <event> <outcome>
 4. Chain fires primary action (e.g. build success → test)
 5. Chain fires subscriptions: read subscriptions.jsonl, match event+outcome
 6. Matching subscribers receive messages via SendNoCC() (no auto-CC to edit)
@@ -276,7 +276,7 @@ The build-test-review and deploy-verify chains are **deterministic** — driven 
 
 ## Left-pane consoles
 
-Each split-left window runs `muxcode-agent-bus console <role>` in the left pane, displaying role-specific status and history. The console command is a single Go binary that replaced the original per-role shell poller scripts.
+Each split-left window runs `muxcode console <role>` in the left pane, displaying role-specific status and history. The console command is a single Go binary that replaced the original per-role shell poller scripts.
 
 | Window | Command | Data source |
 |--------|---------|-------------|
@@ -311,7 +311,7 @@ The launcher handles both automatically via a single background loop that runs a
 3. If "trust this folder" detected: sends Enter to accept (marks as not-done — bypass prompt may follow)
 4. If "Bypass Permissions" detected: sends Down + Enter to select "Yes, I accept"
 5. If `❯` idle prompt detected: agent is past all prompts — marks as accepted
-6. **Edit agent startup**: when the edit agent reaches `❯`, waits 1s for the TUI to fully initialize, re-verifies `❯` is still showing, then sends a startup event (`Session started — review last saved context from memory`) via `muxcode-agent-bus send` with `AGENT_ROLE=edit` (the bus `Notify()` handles wake-up via `notifyIdleSendKeys()` with dedup)
+6. **Edit agent startup**: when the edit agent reaches `❯`, waits 1s for the TUI to fully initialize, re-verifies `❯` is still showing, then sends a startup event (`Session started — review last saved context from memory`) via `muxcode send` with `AGENT_ROLE=edit` (the bus `Notify()` handles wake-up via `notifyIdleSendKeys()` with dedup)
 7. Watch/analyze agents do **not** get startup messages — the watcher delivers inbox items naturally, and unsolicited responses would CC noise to edit
 8. Exits early once all panes are handled
 
@@ -374,7 +374,7 @@ Any transition to `editing` from state >= `analyzing` clears all outcome fields 
 
 - **TUI dashboard** (`tui/model.go`): WORKFLOW section between session info and AGENTS, color-coded by state
 - **Left-pane consoles** (`cmd/console.go`): workflow state line in header across all agent consoles
-- **CLI**: `muxcode-agent-bus workflow [--json]` to query, `workflow reset` to manually reset
+- **CLI**: `muxcode workflow [--json]` to query, `workflow reset` to manually reset
 
 Every transition logs to the lifecycle system via `LogLifecycle()`.
 
@@ -396,24 +396,24 @@ Persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record the full 
 | `cmd/watch.go` (`--monitor`) | `monitor` | session-gone, stale-detected, watcher-restart |
 | `bus/cleanup.go` | `cleanup` | session-cleanup |
 
-**Dual-writer pattern:** Go code calls `bus.LogLifecycle()` directly. Bash scripts call `muxcode-agent-bus lifecycle log` (CLI wrapper) which handles JSON formatting and flock-protected writes. Both converge on the same JSONL file.
+**Dual-writer pattern:** Go code calls `bus.LogLifecycle()` directly. Bash scripts call `muxcode lifecycle log` (CLI wrapper) which handles JSON formatting and flock-protected writes. Both converge on the same JSONL file.
 
 **Debugging workflow:**
 
 ```bash
 # After a subsession launch failure, check what happened
-muxcode-agent-bus lifecycle show is-admissions-gateway --source launcher
-muxcode-agent-bus lifecycle show is-admissions-gateway --source watcher --level error
+muxcode lifecycle show is-admissions-gateway --source launcher
+muxcode lifecycle show is-admissions-gateway --source watcher --level error
 
 # Compare startup timing across sessions
-muxcode-agent-bus lifecycle show muxcode --event session-start --all
+muxcode lifecycle show muxcode --event session-start --all
 ```
 
 Core code: `bus/lifecycle.go`, `cmd/lifecycle.go`
 
 ## See also
 
-- [Agent Bus](agent-bus.md) — CLI reference for `muxcode-agent-bus`
+- [Agent Bus](agent-bus.md) — CLI reference for `muxcode`
 - [Agents](agents.md) — Role descriptions and customization
 - [Hooks](hooks.md) — Hook system and customization
 - [Configuration](configuration.md) — Config file and env var reference

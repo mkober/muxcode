@@ -55,6 +55,6 @@ func FormatTask(msgs []Message) string {
 		b.WriteString(fmt.Sprintf("- **From**: %s\n", m.From))
 		b.WriteString(fmt.Sprintf("- **Instructions**: %s\n", m.Payload))
 	}
-	b.WriteString("\nExecute this task now using your available tools. Do NOT run `muxcode-agent-bus inbox`.\n")
+	b.WriteString("\nExecute this task now using your available tools. Do NOT run `muxcode inbox`.\n")
 	return b.String()
 }

@@ -10,7 +10,7 @@ func TestLocalLLMInstructions_ContainsInboxWarning(t *testing.T) {
 	if !strings.Contains(result, "do NOT run") {
 		t.Error("should contain inbox warning")
 	}
-	if !strings.Contains(result, "muxcode-agent-bus inbox") {
+	if !strings.Contains(result, "muxcode inbox") {
 		t.Error("should mention inbox command")
 	}
 }
@@ -126,7 +126,7 @@ func TestLocalLLMInstructions_BuildOverride(t *testing.T) {
 	if !strings.Contains(result, "Start directly with the build sequence") {
 		t.Error("should tell LLM to start with the build sequence")
 	}
-	if !strings.Contains(result, "do NOT call muxcode-agent-bus send to reply") {
+	if !strings.Contains(result, "do NOT call muxcode send to reply") {
 		t.Error("should tell LLM not to send reply via bus")
 	}
 }

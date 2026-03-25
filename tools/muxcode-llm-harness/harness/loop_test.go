@@ -135,7 +135,7 @@ func TestProcessBatch_FilterBlocksInbox(t *testing.T) {
 									Type: "function",
 									Function: FunctionCall{
 										Name:      "bash",
-										Arguments: json.RawMessage(`{"command":"muxcode-agent-bus inbox"}`),
+										Arguments: json.RawMessage(`{"command":"muxcode inbox"}`),
 									},
 								},
 							},
@@ -165,8 +165,8 @@ func TestProcessBatch_FilterBlocksInbox(t *testing.T) {
 	}
 
 	ollama := NewOllamaClient(server.URL, "test-model")
-	executor := NewExecutor([]string{"Bash(muxcode-agent-bus *)"})
-	tools := BuildToolDefs([]string{"Bash(muxcode-agent-bus *)"})
+	executor := NewExecutor([]string{"Bash(muxcode *)"})
+	tools := BuildToolDefs([]string{"Bash(muxcode *)"})
 	filter := NewFilter("commit")
 	bus := &BusClient{BusDir: dir, Role: "commit", BinPath: "echo"}
 
@@ -335,14 +335,14 @@ func TestLooksLikeNarration(t *testing.T) {
 		expected bool
 	}{
 		{"empty", "", false},
-		{"clean success", "Build succeeded: compiled muxcode-agent-bus binary", false},
+		{"clean success", "Build succeeded: compiled muxcode binary", false},
 		{"clean failure", "Build FAILED: missing dependency in bus/agent.go", false},
 		{"lets narration", "Let's try running ./build.sh directly and capture its output.", true},
 		{"let me narration", "Let me execute the build command now.", true},
 		{"i will narration", "I will now run the build script.", true},
 		{"ill narration", "I'll run ./build.sh to build the project.", true},
 		{"code block narration", "Here's the command:\n```bash\n./build.sh 2>&1\n```\nThis will build the project.", true},
-		{"code block with succeeded", "Build succeeded:\n```\nok muxcode-agent-bus\n```", false},
+		{"code block with succeeded", "Build succeeded:\n```\nok muxcode\n```", false},
 		{"code block with failed", "Build failed:\n```\nerror in main.go\n```", false},
 		{"now i need to", "Now I need to run the build command.", true},
 		{"going to", "I'm going to execute the build.", true},
