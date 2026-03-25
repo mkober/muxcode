@@ -37,7 +37,7 @@ Commands:
   demo        Run scripted demo scenarios (run, list)
   webhook     Manage webhook HTTP endpoint (start, stop, status)
   subscribe   Manage event subscriptions (add, list, remove, enable, disable)
-  agent       Run local LLM agent loop (run)
+  agent       Run local LLM agent loop (run) or launch Claude Code agent (launch)
   api         Manage API collections, environments, and history
   agent-health  Manage agent health monitoring (stop, start, check)
   lifecycle     Persistent lifecycle logging (log, show, list, purge)

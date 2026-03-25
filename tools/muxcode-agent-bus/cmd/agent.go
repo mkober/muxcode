@@ -13,7 +13,7 @@ import (
 // Agent handles the "muxcode-agent-bus agent" subcommand.
 func Agent(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus agent <run> [flags]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus agent <run|launch> [flags]\n")
 		os.Exit(1)
 	}
 
@@ -23,9 +23,11 @@ func Agent(args []string) {
 	switch subcmd {
 	case "run":
 		agentRun(subArgs)
+	case "launch":
+		Launch(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown agent subcommand: %s\n", subcmd)
-		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus agent <run> [flags]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-agent-bus agent <run|launch> [flags]\n")
 		os.Exit(1)
 	}
 }

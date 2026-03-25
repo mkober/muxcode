@@ -242,8 +242,9 @@ Polls tmux for idle state, sends `/compact` via tmux send-keys. Idle detection (
 
 ---
 
-## Phase 5: Agent launcher → `agent launch` subcommand
+## Phase 5: Agent launcher → `agent launch` subcommand ✅
 
+**Status:** Complete
 **Script:** `muxcode-agent.sh`, 325 lines → `muxcode-agent-bus agent launch <role>`
 **Out of scope:** `muxcode.sh` (543 lines) — deferred to future evaluation after Phase 5 experience
 

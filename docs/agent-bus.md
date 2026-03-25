@@ -896,6 +896,41 @@ $ muxcode-agent-bus agent run git --model codellama:13b
 $ muxcode-agent-bus agent run build --url http://192.168.1.100:11434
 ```
 
+### `muxcode-agent-bus agent launch`
+
+Launch a Claude Code (or local LLM) agent for a role. Replaces `muxcode-agent.sh` — resolves agent file, model, tools, prompt, and execs the agent CLI.
+
+```bash
+muxcode-agent-bus agent launch <role>
+```
+
+- `<role>` — agent role to launch (e.g. `edit`, `build`, `test`, `commit`)
+
+**Resolution cascade:**
+
+1. **Config loading** — reads shell-sourceable config from `MUXCODE_CONFIG` > `.muxcode/config` > `~/.config/muxcode/config`
+2. **CLI selection** — checks `MUXCODE_{ROLE}_CLI` env var; if `"local"`, routes to Ollama harness
+3. **Agent file** — 3-tier search: `.claude/agents/<name>.md` > `~/.config/muxcode/agents/<name>.md` > install dir defaults
+4. **Model** — per-role env (`MUXCODE_{ROLE}_CLAUDE_MODEL`) > global env (`MUXCODE_CLAUDE_MODEL`) > role default (opus for edit/review/analyze, sonnet for others)
+5. **Tools** — resolves from tool profiles in `muxcode.json`
+6. **Prompt** — assembles shared coordination prompt + skills + context.d + session resume
+7. **Venv** — activates Python venv if found (`MUXCODE_VENV_DIR` > `.venv` > `venv`)
+8. **Exec** — replaces process with `claude` (or `muxcode-llm-harness` for local LLM)
+
+**Pre-launch actions:**
+
+- Sends startup inbox message for `edit` and `analyze` roles (context restoration)
+- Logs agent launch to persistent lifecycle log
+
+**Examples:**
+```bash
+# Launch the build agent (standard usage from muxcode.sh)
+$ muxcode-agent-bus agent launch build
+
+# Launch the edit agent (prompted mode, opus model)
+$ muxcode-agent-bus agent launch edit
+```
+
 ### `muxcode-agent-bus subscribe`
 
 Manage event subscriptions for fan-out after chain execution.

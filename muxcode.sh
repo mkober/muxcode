@@ -149,20 +149,8 @@ is_split_left() {
   return 1
 }
 
-# --- Resolve agent launcher ---
-find_agent_launcher() {
-  if command -v muxcode-agent.sh &>/dev/null; then
-    echo "muxcode-agent.sh"
-  elif [ -f "$SCRIPT_DIR/scripts/muxcode-agent.sh" ]; then
-    echo "$SCRIPT_DIR/scripts/muxcode-agent.sh"
-  elif [ -f "$SCRIPT_DIR/muxcode-agent.sh" ]; then
-    echo "$SCRIPT_DIR/muxcode-agent.sh"
-  else
-    echo "muxcode-agent.sh"
-  fi
-}
-
-AGENT_LAUNCHER="$(find_agent_launcher)"
+# --- Agent launcher (Go binary handles config, model, tools, prompt resolution) ---
+AGENT_LAUNCHER="muxcode-agent-bus agent launch"
 
 # --- Kill existing session if any ---
 tmux kill-session -t "$SESSION" 2>/dev/null || true

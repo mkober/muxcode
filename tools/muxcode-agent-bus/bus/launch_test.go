@@ -1,0 +1,525 @@
+package bus
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestAgentFileNameExported(t *testing.T) {
+	tests := []struct {
+		role string
+		want string
+	}{
+		{"edit", "code-editor"},
+		{"build", "code-builder"},
+		{"test", "test-runner"},
+		{"review", "code-reviewer"},
+		{"deploy", "infra-deployer"},
+		{"runner", "command-runner"},
+		{"run", "command-runner"},
+		{"git", "git-manager"},
+		{"commit", "git-manager"},
+		{"analyst", "editor-analyst"},
+		{"analyze", "editor-analyst"},
+		{"docs", "doc-writer"},
+		{"research", "code-researcher"},
+		{"watch", "log-watcher"},
+		{"pr-read", "pr-reader"},
+		{"api", "api-tester"},
+		{"unknown", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			got := AgentFileName(tt.role)
+			if got != tt.want {
+				t.Errorf("AgentFileName(%q) = %q, want %q", tt.role, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRoleCLIEnvVar(t *testing.T) {
+	tests := []struct {
+		role string
+		want string
+	}{
+		{"commit", "MUXCODE_GIT_CLI"},
+		{"git", "MUXCODE_GIT_CLI"},
+		{"build", "MUXCODE_BUILD_CLI"},
+		{"edit", "MUXCODE_EDIT_CLI"},
+		{"analyze", "MUXCODE_ANALYZE_CLI"},
+		{"analyst", "MUXCODE_ANALYZE_CLI"},
+		{"runner", "MUXCODE_RUN_CLI"},
+		{"run", "MUXCODE_RUN_CLI"},
+		{"pr-read", "MUXCODE_PR_READ_CLI"},
+		{"api", "MUXCODE_API_CLI"},
+		{"custom", "MUXCODE_CUSTOM_CLI"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			got := RoleCLIEnvVar(tt.role)
+			if got != tt.want {
+				t.Errorf("RoleCLIEnvVar(%q) = %q, want %q", tt.role, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRoleClaudeModelEnvVar(t *testing.T) {
+	tests := []struct {
+		role string
+		want string
+	}{
+		{"commit", "MUXCODE_GIT_CLAUDE_MODEL"},
+		{"edit", "MUXCODE_EDIT_CLAUDE_MODEL"},
+		{"analyze", "MUXCODE_ANALYZE_CLAUDE_MODEL"},
+		{"custom", "MUXCODE_CUSTOM_CLAUDE_MODEL"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			got := RoleClaudeModelEnvVar(tt.role)
+			if got != tt.want {
+				t.Errorf("RoleClaudeModelEnvVar(%q) = %q, want %q", tt.role, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRoleClaudeModelDefault(t *testing.T) {
+	tests := []struct {
+		role string
+		want string
+	}{
+		{"edit", "claude-opus-4-6"},
+		{"review", "claude-opus-4-6"},
+		{"analyze", "claude-opus-4-6"},
+		{"analyst", "claude-opus-4-6"},
+		{"build", "claude-sonnet-4-5"},
+		{"test", "claude-sonnet-4-5"},
+		{"commit", "claude-sonnet-4-5"},
+		{"git", "claude-sonnet-4-5"},
+		{"deploy", "claude-sonnet-4-5"},
+		{"api", "claude-sonnet-4-5"},
+		{"runner", "claude-sonnet-4-5"},
+		{"run", "claude-sonnet-4-5"},
+		{"watch", "claude-sonnet-4-5"},
+		{"custom", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			got := RoleClaudeModelDefault(tt.role)
+			if got != tt.want {
+				t.Errorf("RoleClaudeModelDefault(%q) = %q, want %q", tt.role, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractFrontmatter(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		desc    string
+		body    string
+	}{
+		{
+			name:    "with frontmatter",
+			content: "---\ndescription: Build agent\n---\n# Build Agent\nDo builds.",
+			desc:    "Build agent",
+			body:    "# Build Agent\nDo builds.",
+		},
+		{
+			name:    "no frontmatter",
+			content: "# Just a prompt\nNo frontmatter here.",
+			desc:    "",
+			body:    "# Just a prompt\nNo frontmatter here.",
+		},
+		{
+			name:    "empty description",
+			content: "---\ntags: build\n---\n# Agent\nBody.",
+			desc:    "",
+			body:    "# Agent\nBody.",
+		},
+		{
+			name:    "frontmatter only",
+			content: "---\ndescription: Test\n---\n",
+			desc:    "Test",
+			body:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fm, body := ExtractFrontmatter(tt.content)
+			if fm.Description != tt.desc {
+				t.Errorf("description = %q, want %q", fm.Description, tt.desc)
+			}
+			if body != tt.body {
+				t.Errorf("body = %q, want %q", body, tt.body)
+			}
+		})
+	}
+}
+
+func TestResolveAgentFile_ThreeTier(t *testing.T) {
+	// Create temp directories for all 3 tiers
+	tmpDir := t.TempDir()
+	projectDir := filepath.Join(tmpDir, "project")
+	installDir := filepath.Join(tmpDir, "install")
+
+	// Create tier 1: project-local
+	tier1Dir := filepath.Join(projectDir, ".claude", "agents")
+	os.MkdirAll(tier1Dir, 0o755)
+	os.WriteFile(filepath.Join(tier1Dir, "test-agent.md"), []byte("tier1"), 0o644)
+
+	// Create tier 3: install dir
+	tier3Dir := filepath.Join(installDir, "agents")
+	os.MkdirAll(tier3Dir, 0o755)
+	os.WriteFile(filepath.Join(tier3Dir, "test-agent.md"), []byte("tier3"), 0o644)
+	os.WriteFile(filepath.Join(tier3Dir, "install-only.md"), []byte("tier3-only"), 0o644)
+
+	// Save and change to project dir
+	origDir, _ := os.Getwd()
+	os.Chdir(projectDir)
+	defer os.Chdir(origDir)
+
+	// Test tier 1 takes priority
+	path, tier := ResolveAgentFile("test-agent", installDir)
+	if tier != 1 {
+		t.Errorf("expected tier 1, got %d (path: %s)", tier, path)
+	}
+
+	// Test tier 3 fallback
+	path, tier = ResolveAgentFile("install-only", installDir)
+	if tier != 3 {
+		t.Errorf("expected tier 3, got %d (path: %s)", tier, path)
+	}
+
+	// Test not found
+	_, tier = ResolveAgentFile("nonexistent", installDir)
+	if tier != 0 {
+		t.Errorf("expected tier 0 for nonexistent, got %d", tier)
+	}
+
+	// Test empty name
+	_, tier = ResolveAgentFile("", installDir)
+	if tier != 0 {
+		t.Errorf("expected tier 0 for empty name, got %d", tier)
+	}
+}
+
+func TestBuildAgentsJSON(t *testing.T) {
+	jsonStr, err := BuildAgentsJSON("test-agent", "A test agent", "Do testing stuff.")
+	if err != nil {
+		t.Fatalf("BuildAgentsJSON error: %v", err)
+	}
+
+	// Verify it's valid JSON and contains expected fields
+	if jsonStr == "" {
+		t.Fatal("expected non-empty JSON")
+	}
+
+	// Check key substrings (avoid brittle exact JSON matching)
+	for _, want := range []string{"test-agent", "A test agent", "Do testing stuff."} {
+		if !strings.Contains(jsonStr, want) {
+			t.Errorf("JSON missing %q: %s", want, jsonStr)
+		}
+	}
+}
+
+func TestInlineFallbackPrompt(t *testing.T) {
+	// Known roles should return non-empty prompts
+	for _, role := range []string{"edit", "build", "test", "review", "deploy",
+		"runner", "run", "git", "commit", "analyst", "analyze",
+		"docs", "research", "watch", "pr-read", "api"} {
+		prompt := InlineFallbackPrompt(role)
+		if prompt == "" {
+			t.Errorf("InlineFallbackPrompt(%q) returned empty", role)
+		}
+	}
+
+	// Default fallback
+	prompt := InlineFallbackPrompt("unknown-role")
+	if prompt == "" {
+		t.Error("expected default fallback for unknown role")
+	}
+}
+
+func TestResolveVenv(t *testing.T) {
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
+
+	// No venv — should return ""
+	got := ResolveVenv()
+	if got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+
+	// Create .venv
+	os.MkdirAll(filepath.Join(tmpDir, ".venv", "bin"), 0o755)
+	os.WriteFile(filepath.Join(tmpDir, ".venv", "bin", "activate"), []byte(""), 0o644)
+
+	got = ResolveVenv()
+	if got != ".venv" {
+		t.Errorf("expected .venv, got %q", got)
+	}
+}
+
+func TestResolveVenv_EnvOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create custom venv
+	customVenv := filepath.Join(tmpDir, "custom-venv")
+	os.MkdirAll(filepath.Join(customVenv, "bin"), 0o755)
+	os.WriteFile(filepath.Join(customVenv, "bin", "activate"), []byte(""), 0o644)
+
+	t.Setenv("MUXCODE_VENV_DIR", customVenv)
+
+	got := ResolveVenv()
+	if got != customVenv {
+		t.Errorf("expected %q, got %q", customVenv, got)
+	}
+}
+
+func TestResolveLaunchConfig_BuildRole(t *testing.T) {
+	// Clear env to get defaults
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("MUXCODE_BUILD_CLI", "")
+	t.Setenv("MUXCODE_BUILD_CLAUDE_MODEL", "")
+	t.Setenv("MUXCODE_CLAUDE_MODEL", "")
+
+	cfg := ResolveLaunchConfig("build")
+
+	if cfg.Role != "build" {
+		t.Errorf("Role = %q, want build", cfg.Role)
+	}
+	if cfg.CLI != "claude" {
+		t.Errorf("CLI = %q, want claude", cfg.CLI)
+	}
+	if cfg.IsLocal {
+		t.Error("expected IsLocal=false")
+	}
+	if cfg.Agent != "code-builder" {
+		t.Errorf("Agent = %q, want code-builder", cfg.Agent)
+	}
+
+	// Should have --model claude-sonnet-4-5
+	if len(cfg.ModelFlags) != 2 || cfg.ModelFlags[1] != "claude-sonnet-4-5" {
+		t.Errorf("ModelFlags = %v, want [--model claude-sonnet-4-5]", cfg.ModelFlags)
+	}
+
+	// Should have --dangerously-skip-permissions
+	if len(cfg.PermFlags) == 0 {
+		t.Error("expected PermFlags for non-edit role")
+	}
+}
+
+func TestResolveLaunchConfig_EditRole(t *testing.T) {
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("MUXCODE_EDIT_CLI", "")
+	t.Setenv("MUXCODE_EDIT_CLAUDE_MODEL", "")
+	t.Setenv("MUXCODE_CLAUDE_MODEL", "")
+
+	cfg := ResolveLaunchConfig("edit")
+
+	// Edit should have opus model
+	if len(cfg.ModelFlags) != 2 || cfg.ModelFlags[1] != "claude-opus-4-6" {
+		t.Errorf("ModelFlags = %v, want [--model claude-opus-4-6]", cfg.ModelFlags)
+	}
+
+	// Edit should NOT have --dangerously-skip-permissions
+	if len(cfg.PermFlags) != 0 {
+		t.Errorf("PermFlags = %v, want empty for edit", cfg.PermFlags)
+	}
+}
+
+func TestResolveLaunchConfig_LocalLLM(t *testing.T) {
+	t.Setenv("MUXCODE_BUILD_CLI", "local")
+
+	cfg := ResolveLaunchConfig("build")
+
+	if !cfg.IsLocal {
+		t.Error("expected IsLocal=true when CLI=local")
+	}
+	if len(cfg.HarnessArgs) == 0 {
+		t.Error("expected HarnessArgs for local LLM")
+	}
+	if cfg.HarnessArgs[0] != "run" || cfg.HarnessArgs[1] != "build" {
+		t.Errorf("HarnessArgs = %v, want [run build ...]", cfg.HarnessArgs)
+	}
+}
+
+func TestResolveLaunchConfig_CustomCLI(t *testing.T) {
+	t.Setenv("MUXCODE_AGENT_CLI", "my-claude")
+
+	cfg := ResolveLaunchConfig("build")
+
+	if cfg.CLI != "my-claude" {
+		t.Errorf("CLI = %q, want my-claude", cfg.CLI)
+	}
+}
+
+func TestResolveLaunchConfig_ModelEnvOverride(t *testing.T) {
+	t.Setenv("MUXCODE_BUILD_CLAUDE_MODEL", "claude-haiku-3")
+	t.Setenv("MUXCODE_BUILD_CLI", "")
+
+	cfg := ResolveLaunchConfig("build")
+
+	if len(cfg.ModelFlags) != 2 || cfg.ModelFlags[1] != "claude-haiku-3" {
+		t.Errorf("ModelFlags = %v, want [--model claude-haiku-3]", cfg.ModelFlags)
+	}
+}
+
+func TestResolveLaunchConfig_GlobalModelOverride(t *testing.T) {
+	t.Setenv("MUXCODE_BUILD_CLAUDE_MODEL", "")
+	t.Setenv("MUXCODE_CLAUDE_MODEL", "claude-custom-99")
+	t.Setenv("MUXCODE_BUILD_CLI", "")
+
+	cfg := ResolveLaunchConfig("build")
+
+	if len(cfg.ModelFlags) != 2 || cfg.ModelFlags[1] != "claude-custom-99" {
+		t.Errorf("ModelFlags = %v, want [--model claude-custom-99]", cfg.ModelFlags)
+	}
+}
+
+func TestBuildExecArgs_Claude(t *testing.T) {
+	cfg := &LaunchConfig{
+		Role:         "build",
+		CLI:          "claude",
+		AgentName:    "code-builder",
+		ModelFlags:   []string{"--model", "claude-sonnet-4-5"},
+		PermFlags:    []string{"--dangerously-skip-permissions"},
+		ToolFlags:    []string{"--allowedTools", "Bash(make*)"},
+		SharedPrompt: "You are part of a team.",
+	}
+
+	binary, args := cfg.BuildExecArgs()
+
+	if binary != "claude" {
+		t.Errorf("binary = %q, want claude", binary)
+	}
+
+	// Should contain --agent
+	found := false
+	for _, a := range args {
+		if a == "code-builder" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("args missing agent name: %v", args)
+	}
+}
+
+func TestBuildExecArgs_FallbackPrompt(t *testing.T) {
+	// No agent file — should include inline fallback prompt
+	cfg := &LaunchConfig{
+		Role:      "build",
+		CLI:       "claude",
+		AgentName: "", // no agent file found
+	}
+
+	_, args := cfg.BuildExecArgs()
+
+	// Should have --append-system-prompt with fallback
+	found := false
+	for i, a := range args {
+		if a == "--append-system-prompt" && i+1 < len(args) {
+			if args[i+1] != "" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected fallback prompt in args: %v", args)
+	}
+}
+
+func TestBuildExecArgs_Local(t *testing.T) {
+	// Mock lookPath to not find harness
+	origLookPath := lookPath
+	lookPath = func(file string) (string, error) {
+		return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
+	}
+	defer func() { lookPath = origLookPath }()
+
+	cfg := &LaunchConfig{
+		Role:        "build",
+		IsLocal:     true,
+		HarnessArgs: []string{"run", "build"},
+	}
+
+	binary, args := cfg.BuildExecArgs()
+
+	if binary != "muxcode-agent-bus" {
+		t.Errorf("binary = %q, want muxcode-agent-bus", binary)
+	}
+	if args[0] != "agent" || args[1] != "run" || args[2] != "build" {
+		t.Errorf("args = %v, want [agent run build]", args)
+	}
+}
+
+func TestBuildExecArgs_LocalWithHarness(t *testing.T) {
+	// Mock lookPath to find harness
+	origLookPath := lookPath
+	lookPath = func(file string) (string, error) {
+		if file == "muxcode-llm-harness" {
+			return "/usr/local/bin/muxcode-llm-harness", nil
+		}
+		return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
+	}
+	defer func() { lookPath = origLookPath }()
+
+	cfg := &LaunchConfig{
+		Role:        "build",
+		IsLocal:     true,
+		HarnessArgs: []string{"run", "build"},
+	}
+
+	binary, args := cfg.BuildExecArgs()
+
+	if binary != "muxcode-llm-harness" {
+		t.Errorf("binary = %q, want muxcode-llm-harness", binary)
+	}
+	if args[0] != "run" || args[1] != "build" {
+		t.Errorf("args = %v, want [run build]", args)
+	}
+}
+
+func TestBuildExecArgs_AgentJSON(t *testing.T) {
+	cfg := &LaunchConfig{
+		Role:      "build",
+		CLI:       "claude",
+		AgentName: "code-builder",
+		AgentJSON: `{"code-builder":{"description":"Build","prompt":"Do builds."}}`,
+	}
+
+	_, args := cfg.BuildExecArgs()
+
+	// Should contain --agents
+	foundAgent := false
+	foundAgents := false
+	for i, a := range args {
+		if a == "--agent" && i+1 < len(args) && args[i+1] == "code-builder" {
+			foundAgent = true
+		}
+		if a == "--agents" && i+1 < len(args) {
+			foundAgents = true
+		}
+	}
+	if !foundAgent {
+		t.Errorf("args missing --agent: %v", args)
+	}
+	if !foundAgents {
+		t.Errorf("args missing --agents: %v", args)
+	}
+}

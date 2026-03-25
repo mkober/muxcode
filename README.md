@@ -17,7 +17,7 @@ A multi-agent coding environment built on tmux — where you stay in the loop.
 
 MuxCode is a tmux-native multi-agent development environment. Ten specialist AI agents — editor, builder, tester, reviewer, deployer, git manager, and more — each run in their own tmux window, coordinated through a file-based message bus. You work in neovim alongside an editing agent, and every other part of the development lifecycle has its own dedicated agent a function key away.
 
-You stay in control. The edit agent is your primary interface — it helps you write code and delegates to specialists when you're ready. Ask for a build, and the build agent runs it. Tests fire automatically on success. Review follows tests. Results flow back while you keep editing. The chain routing is hook-driven — bash scripts checking exit codes, not LLM routing decisions — so dispatch is deterministic and fast. The agents themselves run as [Claude Code](https://claude.ai/code) sessions by default, but any role can be switched to a local LLM via [Ollama](https://ollama.com/) to reduce API costs for structured-command roles like git, build, and log monitoring.
+You stay in control. The edit agent is your primary interface — it helps you write code and delegates to specialists when you're ready. Ask for a build, and the build agent runs it. Tests fire automatically on success. Review follows tests. Results flow back while you keep editing. The chain routing is hook-driven — Go hooks checking exit codes, not LLM routing decisions — so dispatch is deterministic and fast. The agents themselves run as [Claude Code](https://claude.ai/code) sessions by default, but any role can be switched to a local LLM via [Ollama](https://ollama.com/) to reduce API costs for structured-command roles like git, build, and log monitoring.
 
 The coordination layer is entirely local. Agents communicate through JSONL files in `/tmp/`. Memory persists across sessions as markdown files. The bus binary is stdlib-only Go — no external dependencies, no containers, no databases. If Ollama goes down, affected agents fall back to Claude Code automatically, and the bus watcher handles restart and recovery.
 
@@ -57,7 +57,7 @@ A typical workflow looks like this:
 5. **You iterate.** Results flow back to the edit agent. If the reviewer finds issues, you fix them and kick off another cycle.
 6. **You commit when ready.** The commit agent handles staging, committing, and pushing. A pre-commit safeguard blocks commits if other agents still have pending work.
 
-The entire build-test-review chain is **hook-driven** — bash scripts check exit codes and fire the next step. No tokens are spent on routing decisions, and the chain runs at the speed of your tools, not your LLM.
+The entire build-test-review chain is **hook-driven** — Go hooks check exit codes and fire the next step. No tokens are spent on routing decisions, and the chain runs at the speed of your tools, not your LLM.
 
 The `muxcode-agent-bus tui` command launches a live dashboard showing which agents are busy, idle, or waiting on messages, so you always know what's happening across the session. You can add a dashboard window by including `status` in your `MUXCODE_WINDOWS` list.
 
@@ -165,7 +165,7 @@ Both MuxCode and autonomous AI tools solve the same coordination problems:
 
 **Tmux-native, editor-centric.** You work in your actual editor alongside the agents. Press F3 to watch the build agent work. Press F9 to see the commit agent run git commands. There's no web UI, no chat interface separate from your terminal. Autonomous tools typically abstract the execution environment behind an API or web interface.
 
-**Hook-driven orchestration, not LLM-driven.** The build-test-review chain fires via bash exit codes — deterministic, fast, zero token cost for routing. Autonomous tools typically use the LLM itself to decide what to do next, which is more flexible but slower and more expensive.
+**Hook-driven orchestration, not LLM-driven.** The build-test-review chain fires via exit codes in Go hooks — deterministic, fast, zero token cost for routing. Autonomous tools typically use the LLM itself to decide what to do next, which is more flexible but slower and more expensive.
 
 **Composable specialists, not a monolithic agent.** Each agent is a focused role with constrained permissions. The build agent can't edit files. The commit agent can't deploy. This separation of concerns mirrors how teams actually work. Autonomous tools often use a single agent with broad capabilities that handles everything.
 
