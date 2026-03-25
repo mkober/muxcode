@@ -77,12 +77,24 @@ func Console(args []string) {
 		// Build header
 		header := bus.ConsoleHeader(configs[role].Title, interval, width)
 
+		// Workflow state line
+		wfEntry := bus.ReadWorkflowState(session)
+		wfLine := ""
+		if wfEntry.State != bus.StateIdle || wfEntry.Since > 0 {
+			wfLine = fmt.Sprintf("%s%sworkflow:%s %s\n\n",
+				bus.Pad, bus.ColorDim, bus.ColorReset,
+				bus.FormatWorkflowStateCompact(wfEntry, width))
+		}
+
 		// Build body
 		body := bus.RenderConsole(role, session, width)
 
 		// Clear screen and render
 		fmt.Print("\033[2J\033[H")
 		fmt.Print(header)
+		if wfLine != "" {
+			fmt.Print(wfLine)
+		}
 		fmt.Print(body)
 
 		if once {

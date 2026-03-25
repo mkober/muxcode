@@ -41,15 +41,15 @@ type Watcher struct {
 	ollamaURL       string   // Ollama base URL
 	ollamaModel     string   // Ollama model name
 	// Agent health monitoring
-	lastAgentHealthCheck int64            // 30s interval
-	agentFailCounts      map[string]int   // consecutive failures per role
-	agentRestarts        map[string]int   // restart count per role (cap at 3)
-	agentWasDown         map[string]bool  // for recovery detection
+	lastAgentHealthCheck int64           // 30s interval
+	agentFailCounts      map[string]int  // consecutive failures per role
+	agentRestarts        map[string]int  // restart count per role (cap at 3)
+	agentWasDown         map[string]bool // for recovery detection
 	// Startup notification: re-notify agents that had inbox messages before they were ready
-	firstIdleSeen    map[string]bool
-	allIdleSeen      bool // early-out: skip checkStartupNotifications once all roles seen
-	startupNotifyAt  map[string]int64 // unix timestamp of last startup notification per role
-	startupRetries   map[string]int   // retry count per role (cap at 3)
+	firstIdleSeen   map[string]bool
+	allIdleSeen     bool             // early-out: skip checkStartupNotifications once all roles seen
+	startupNotifyAt map[string]int64 // unix timestamp of last startup notification per role
+	startupRetries  map[string]int   // retry count per role (cap at 3)
 }
 
 // New creates a new Watcher for the given session.
@@ -195,6 +195,12 @@ func (w *Watcher) checkInboxes() {
 		prev := w.inboxSizes[role]
 
 		if size > prev && size > 0 {
+			// Workflow: detect review→edit messages for reviewed transition
+			if role == "edit" && bus.HasNewMessageFrom(w.session, "edit", "review") {
+				bus.TransitionWorkflow(w.session, bus.StateReviewed, "watcher:review-complete",
+					bus.WithOutcome("review", "complete"))
+			}
+
 			// Notify handles per-role logic: display-message for all
 			// Claude Code panes (non-intrusive status bar flash), skip
 			// for harness panes. Dedup is handled inside Notify via
@@ -375,6 +381,10 @@ func (w *Watcher) routeTrigger() {
 	fmt.Printf("  %s  Edits stabilized — routing %d file(s)\n", ts, len(files))
 	bus.LogLifecycle(w.session, "info", "watcher", "trigger-route",
 		fmt.Sprintf("%d file(s): %s", len(files), strings.Join(files, ", ")))
+
+	// Workflow: transition to analyzing
+	bus.TransitionWorkflow(w.session, bus.StateAnalyzing, "watcher:analyze-route",
+		bus.WithFiles(files))
 
 	// Send aggregate event to analyze agent
 	fileList := strings.Join(files, ", ")

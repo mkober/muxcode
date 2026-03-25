@@ -43,6 +43,7 @@ Commands:
   lifecycle     Persistent lifecycle logging (log, show, list, purge)
   console       Display role-specific status console (replaces log poller scripts)
   hook          Process Claude Code hook events (bash, guard, analyze, inbox-poll)
+  workflow      Show or reset workflow state machine (--json, reset)
 `
 
 func main() {
@@ -121,6 +122,8 @@ func main() {
 		cmd.Console(args)
 	case "hook":
 		cmd.Hook(args)
+	case "workflow":
+		cmd.Workflow(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

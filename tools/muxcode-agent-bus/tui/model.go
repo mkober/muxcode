@@ -124,7 +124,7 @@ func (d *Dashboard) cleanup(restoreStty bool) {
 		_ = exec.Command("stty", "sane").Run()
 	}
 	fmt.Print("\033[?25h") // show cursor
-	fmt.Print(RST)        // reset colors
+	fmt.Print(RST)         // reset colors
 	fmt.Print("\033[2J")   // clear screen
 	fmt.Print("\033[H")    // move to top
 }
@@ -224,6 +224,15 @@ func (d *Dashboard) render() string {
 		Comment, right, RST))
 
 	hrLine()
+
+	// ── WORKFLOW section ──
+	wfEntry := bus.ReadWorkflowState(d.session)
+	if wfEntry.State != bus.StateIdle || wfEntry.Since > 0 {
+		writeLine(fmt.Sprintf("  %s%s%s  %s",
+			Orange+Bold, "WORKFLOW", RST,
+			bus.FormatWorkflowStateCompact(wfEntry, W)))
+		hrLine()
+	}
 
 	// ── AGENTS section ──
 	writeLine(fmt.Sprintf("  %s%s%s", Orange+Bold, "AGENTS", RST))
@@ -370,7 +379,6 @@ func (d *Dashboard) render() string {
 
 	return b.String()
 }
-
 
 // windowExists checks if a tmux window exists in the session.
 func (d *Dashboard) windowExists(window string) bool {

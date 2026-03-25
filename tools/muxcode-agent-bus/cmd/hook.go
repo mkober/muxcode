@@ -86,6 +86,31 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string) {
 	}
 	_ = bus.Notify(session, action.SendTo)
 
+	// Workflow: transition on chain outcomes
+	switch eventType {
+	case "build":
+		if outcome == "success" {
+			bus.TransitionWorkflow(session, bus.StateTesting, "chain:build:success",
+				bus.WithOutcome("build", "success"))
+		} else {
+			bus.TransitionWorkflow(session, bus.StateBuildFail, "chain:build:failure",
+				bus.WithOutcome("build", "failure"))
+		}
+	case "test":
+		if outcome == "success" {
+			bus.TransitionWorkflow(session, bus.StateReviewing, "chain:test:success",
+				bus.WithOutcome("test", "success"))
+		} else {
+			bus.TransitionWorkflow(session, bus.StateTestFail, "chain:test:failure",
+				bus.WithOutcome("test", "failure"))
+		}
+	case "deploy":
+		if outcome != "success" {
+			bus.TransitionWorkflow(session, bus.StateDeployFail, "chain:deploy:failure",
+				bus.WithOutcome("deploy", "failure"))
+		}
+	}
+
 	// Notify analyst if configured
 	if bus.ChainShouldNotifyAnalyst(eventType, outcome) && action.SendTo != "analyze" {
 		var analystMsg string

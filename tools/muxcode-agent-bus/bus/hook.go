@@ -528,6 +528,16 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 
 	result := HookBashResult{CommandType: cmdType}
 
+	// Workflow: transition on command detection
+	switch cmdType {
+	case CmdBuild:
+		TransitionWorkflow(session, StateBuilding, "hook:bash:build")
+	case CmdTest:
+		TransitionWorkflow(session, StateTesting, "hook:bash:test")
+	case CmdDeployApply:
+		TransitionWorkflow(session, StateDeploying, "hook:bash:deploy")
+	}
+
 	switch cmdType {
 	case CmdBuild:
 		errors := ExtractErrors(output, 20, 1000)
@@ -760,8 +770,6 @@ type AnalyzeHookResult struct {
 	FilePath       string
 	TriggerWritten bool
 	DiffCleaned    bool
-	Routed         bool
-	RoutedTo       string
 }
 
 // ProcessAnalyzeHook handles a PostToolUse Write/Edit event: writes the trigger file,
@@ -792,43 +800,19 @@ func ProcessAnalyzeHook(session, windowName string, ev *ToolEvent) AnalyzeHookRe
 		result.TriggerWritten = true
 	}
 
+	// Workflow: file edit regresses state to editing
+	TransitionWorkflow(session, StateEditing, "hook:analyze:edit",
+		WithFiles([]string{filePath}))
+
 	// Clean up nvim diff preview (edit window only)
 	if windowName == "edit" {
 		cleanupDiffPreview(session, ev, filePath)
 		result.DiffCleaned = true
 	}
 
-	// Route file-change events
-	busDir := BusDir(session)
-	if _, err := os.Stat(busDir); err == nil {
-		routeRules := os.Getenv("MUXCODE_ROUTE_RULES")
-		if routeRules == "" {
-			routeRules = "test|spec=test cdk|stack|construct|terraform|pulumi=deploy .ts|.js|.py|.go|.rs=build"
-		}
-
-		from := windowName
-		if from == "" {
-			from = "edit"
-		}
-
-		for _, rule := range strings.Fields(routeRules) {
-			parts := strings.SplitN(rule, "=", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			patterns := strings.Split(parts[0], "|")
-			target := parts[1]
-			for _, pat := range patterns {
-				if strings.Contains(filePath, pat) {
-					msg := NewMessage(from, target, "event", "notify", "File changed: "+filePath, "")
-					_ = SendNoCC(session, msg)
-					result.Routed = true
-					result.RoutedTo = target
-					return result
-				}
-			}
-		}
-	}
+	// File-change routing goes exclusively to the analyze agent via the
+	// trigger file + watcher's routeTrigger(). Build, test, and deploy
+	// agents are only triggered by explicit bus messages, not file changes.
 
 	return result
 }
