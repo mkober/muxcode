@@ -65,7 +65,7 @@ func (f FunctionCall) MarshalJSON() ([]byte, error) {
 
 // ToolDef defines a tool available to the model.
 type ToolDef struct {
-	Type     string         `json:"type"`
+	Type     string          `json:"type"`
 	Function ToolDefFunction `json:"function"`
 }
 

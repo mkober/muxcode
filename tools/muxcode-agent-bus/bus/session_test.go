@@ -2,31 +2,21 @@ package bus
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestInitSessionMeta_Creates(t *testing.T) {
-	busDir := t.TempDir()
+	useTempBusDir(t)
+
 	session := "test-session"
 	t.Setenv("BUS_SESSION", session)
 
-	// Point BusDir to our temp dir by creating session dir manually
-	sessDir := filepath.Join(busDir, "session")
-	if err := os.MkdirAll(sessDir, 0755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-
-	// Override BusDir by using a known session and pre-creating the path
-	// We'll use the real BusDir function, so set up the actual path
-	realBusDir := BusDir(session)
 	realSessDir := SessionDir(session)
 	if err := os.MkdirAll(realSessDir, 0755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	defer os.RemoveAll(realBusDir)
 
 	before := time.Now().Unix()
 	meta, err := InitSessionMeta(session, "edit")
@@ -44,13 +34,13 @@ func TestInitSessionMeta_Creates(t *testing.T) {
 }
 
 func TestInitSessionMeta_Idempotent(t *testing.T) {
+	useTempBusDir(t)
+
 	session := "test-idempotent"
-	realBusDir := BusDir(session)
 	realSessDir := SessionDir(session)
 	if err := os.MkdirAll(realSessDir, 0755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	defer os.RemoveAll(realBusDir)
 
 	meta1, err := InitSessionMeta(session, "build")
 	if err != nil {
@@ -71,13 +61,13 @@ func TestInitSessionMeta_Idempotent(t *testing.T) {
 }
 
 func TestReadSessionMeta_NotFound(t *testing.T) {
+	useTempBusDir(t)
+
 	session := "test-notfound"
-	realBusDir := BusDir(session)
 	realSessDir := SessionDir(session)
 	if err := os.MkdirAll(realSessDir, 0755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	defer os.RemoveAll(realBusDir)
 
 	meta, err := ReadSessionMeta(session, "nonexistent")
 	if err != nil {
@@ -89,15 +79,14 @@ func TestReadSessionMeta_NotFound(t *testing.T) {
 }
 
 func TestCompactSession_FirstCompact(t *testing.T) {
+	useTempBusDir(t)
 	t.Setenv("BUS_MEMORY_DIR", t.TempDir())
 
 	session := "test-compact1"
-	realBusDir := BusDir(session)
 	realSessDir := SessionDir(session)
 	if err := os.MkdirAll(realSessDir, 0755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	defer os.RemoveAll(realBusDir)
 
 	if err := CompactSession(session, "edit", "completed auth refactor"); err != nil {
 		t.Fatalf("CompactSession: %v", err)
@@ -129,15 +118,14 @@ func TestCompactSession_FirstCompact(t *testing.T) {
 }
 
 func TestCompactSession_MultipleCompacts(t *testing.T) {
+	useTempBusDir(t)
 	t.Setenv("BUS_MEMORY_DIR", t.TempDir())
 
 	session := "test-compact-multi"
-	realBusDir := BusDir(session)
 	realSessDir := SessionDir(session)
 	if err := os.MkdirAll(realSessDir, 0755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	defer os.RemoveAll(realBusDir)
 
 	if err := CompactSession(session, "build", "first summary"); err != nil {
 		t.Fatalf("CompactSession 1: %v", err)

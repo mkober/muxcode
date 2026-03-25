@@ -42,14 +42,14 @@ var (
 
 // Redaction placeholders
 const (
-	redactEmail     = "[EMAIL_REDACTED]"
-	redactSSN       = "[SSN_REDACTED]"
-	redactCC        = "[CC_REDACTED]"
-	redactPhone     = "[PHONE_REDACTED]"
-	redactAWSKey    = "[AWS_KEY_REDACTED]"
-	redactSecret    = "[SECRET_REDACTED]"
-	redactJWT       = "[JWT_REDACTED]"
-	redactDOB       = "[DOB_REDACTED]"
+	redactEmail  = "[EMAIL_REDACTED]"
+	redactSSN    = "[SSN_REDACTED]"
+	redactCC     = "[CC_REDACTED]"
+	redactPhone  = "[PHONE_REDACTED]"
+	redactAWSKey = "[AWS_KEY_REDACTED]"
+	redactSecret = "[SECRET_REDACTED]"
+	redactJWT    = "[JWT_REDACTED]"
+	redactDOB    = "[DOB_REDACTED]"
 )
 
 // ScrubPII redacts common PII and secrets from text.

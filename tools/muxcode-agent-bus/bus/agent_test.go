@@ -15,9 +15,9 @@ import (
 
 func TestStripFrontmatter(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		want    string
+		name  string
+		input string
+		want  string
 	}{
 		{
 			name:  "with frontmatter",
@@ -278,16 +278,20 @@ func TestAgentLoop_ContextCancel(t *testing.T) {
 	}
 	defer func() { _ = Cleanup(session) }()
 
-	// Mock server for health check
+	// Mock server for health check — done channel unblocks handlers on close
+	done := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/tags" {
 			w.Write([]byte(`{"models":[{"name":"test-model"}]}`))
 			return
 		}
-		// Chat endpoint — shouldn't be called if we cancel quickly
-		time.Sleep(10 * time.Second)
+		// Chat endpoint — block until test completes
+		<-done
 	}))
-	defer server.Close()
+	defer func() {
+		close(done)
+		server.Close()
+	}()
 
 	cfg := AgentConfig{
 		Role:    "commit",

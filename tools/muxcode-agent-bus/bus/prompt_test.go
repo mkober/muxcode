@@ -45,26 +45,25 @@ func TestSharedPrompt_ContainsTargets(t *testing.T) {
 	}
 }
 
-func TestSharedPrompt_BuildSendRestrictions(t *testing.T) {
+func TestSharedPrompt_BuildNoSendRestrictions(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
+	// No send policy denies — all agents report to edit
 	prompt := SharedPrompt("build")
-	if !strings.Contains(prompt, "### Send Restrictions") {
-		t.Error("SharedPrompt(build) should include send restrictions section")
-	}
-	if !strings.Contains(prompt, "Do NOT send messages to test") {
-		t.Error("SharedPrompt(build) should deny sending to test")
+	if strings.Contains(prompt, "### Send Restrictions") {
+		t.Error("SharedPrompt(build) should not include send restrictions (no deny policy)")
 	}
 }
 
-func TestSharedPrompt_TestSendRestrictions(t *testing.T) {
+func TestSharedPrompt_TestNoSendRestrictions(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
+	// No send policy denies — all agents report to edit
 	prompt := SharedPrompt("test")
-	if !strings.Contains(prompt, "Do NOT send messages to review") {
-		t.Error("SharedPrompt(test) should deny sending to review")
+	if strings.Contains(prompt, "### Send Restrictions") {
+		t.Error("SharedPrompt(test) should not include send restrictions (no deny policy)")
 	}
 }
 

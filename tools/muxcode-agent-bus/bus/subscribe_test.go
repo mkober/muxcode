@@ -8,14 +8,12 @@ import (
 )
 
 func TestAddSubscription(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-add-sub"
 	t.Setenv("BUS_SESSION", session)
-	os.Setenv("BUS_SESSION", session)
-	// Point BusDir to temp by symlinking
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	sub, err := AddSubscription(session, Subscription{
 		Event:   "build",
@@ -41,11 +39,11 @@ func TestAddSubscription(t *testing.T) {
 }
 
 func TestAddSubscription_DefaultMessage(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-default-msg"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	sub, err := AddSubscription(session, Subscription{
 		Event:   "test",
@@ -61,11 +59,11 @@ func TestAddSubscription_DefaultMessage(t *testing.T) {
 }
 
 func TestAddSubscription_InvalidRole(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-invalid-role"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	_, err := AddSubscription(session, Subscription{
 		Event:   "build",
@@ -81,11 +79,11 @@ func TestAddSubscription_InvalidRole(t *testing.T) {
 }
 
 func TestAddSubscription_InvalidEvent(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-invalid-event"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	_, err := AddSubscription(session, Subscription{
 		Event:   "invalid",
@@ -101,11 +99,11 @@ func TestAddSubscription_InvalidEvent(t *testing.T) {
 }
 
 func TestAddSubscription_InvalidOutcome(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-invalid-outcome"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	_, err := AddSubscription(session, Subscription{
 		Event:   "build",
@@ -121,11 +119,11 @@ func TestAddSubscription_InvalidOutcome(t *testing.T) {
 }
 
 func TestReadWriteSubscriptions(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-rw-subs"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	entries := []Subscription{
 		{ID: "sub-1", Event: "build", Outcome: "success", Notify: "docs", Enabled: true},
@@ -149,11 +147,11 @@ func TestReadWriteSubscriptions(t *testing.T) {
 }
 
 func TestReadSubscriptions_Empty(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-read-empty"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	// File doesn't exist
 	subs, err := ReadSubscriptions(session)
@@ -166,11 +164,11 @@ func TestReadSubscriptions_Empty(t *testing.T) {
 }
 
 func TestRemoveSubscription(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-remove-sub"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	entries := []Subscription{
 		{ID: "sub-1", Event: "build", Outcome: "success", Notify: "docs", Enabled: true},
@@ -192,11 +190,11 @@ func TestRemoveSubscription(t *testing.T) {
 }
 
 func TestRemoveSubscription_NotFound(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-remove-notfound"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	WriteSubscriptions(session, nil)
 
@@ -207,11 +205,11 @@ func TestRemoveSubscription_NotFound(t *testing.T) {
 }
 
 func TestSetSubscriptionEnabled(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-set-enabled"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	entries := []Subscription{
 		{ID: "sub-1", Event: "build", Outcome: "success", Notify: "docs", Enabled: true},
@@ -238,11 +236,11 @@ func TestSetSubscriptionEnabled(t *testing.T) {
 }
 
 func TestSetSubscriptionEnabled_NotFound(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-enabled-notfound"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	WriteSubscriptions(session, nil)
 
@@ -361,11 +359,11 @@ func TestExpandSubscriptionMessage(t *testing.T) {
 }
 
 func TestFireSubscriptions(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-fire-subs"
 	busDir := BusDir(session)
 	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
-	defer os.RemoveAll(busDir)
 
 	// Create inbox files for target roles
 	touchFile(InboxPath(session, "docs"))
@@ -411,11 +409,11 @@ func TestFireSubscriptions(t *testing.T) {
 }
 
 func TestFireSubscriptions_NoMatch(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-fire-nomatch"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	entries := []Subscription{
 		{ID: "sub-1", Event: "test", Outcome: "failure", Notify: "edit", Enabled: true, Message: "test failed"},
@@ -432,11 +430,11 @@ func TestFireSubscriptions_NoMatch(t *testing.T) {
 }
 
 func TestFireSubscriptions_Empty(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-fire-empty"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	// No subscriptions file
 	count, err := FireSubscriptions(session, "build", "build", "success", "0", "go build")
@@ -486,11 +484,11 @@ func TestFormatSubscriptionList_Empty(t *testing.T) {
 }
 
 func TestAddSubscription_WildcardEvent(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
+	useTempBusDir(t)
+
+	session := "test-wildcard-event"
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
-	defer os.RemoveAll(busDir)
 
 	sub, err := AddSubscription(session, Subscription{
 		Event:   "*",

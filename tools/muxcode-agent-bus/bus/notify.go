@@ -270,6 +270,10 @@ func notifySendKeys(session, role string) error {
 // notifyIdleSendKeys wraps notifySendKeys with the same deduplication logic
 // used by notifyDisplayMessage (file lock + inbox size + cooldown).
 func notifyIdleSendKeys(session, role string) error {
+	if err := exec.Command("tmux", "has-session", "-t", session).Run(); err != nil {
+		return nil
+	}
+
 	unlock := lockNotify(session, role)
 	defer unlock()
 
@@ -296,6 +300,14 @@ func notifyIdleSendKeys(session, role string) error {
 //
 // Deduplicates: skips if the inbox hasn't changed since the last notification.
 func Notify(session, role string) error {
+	// Guard: verify the tmux session exists before any tmux commands.
+	// Without this, tmux display-message silently falls through to the
+	// current pane, causing test/demo sessions to leak notifications
+	// into the user's live session.
+	if err := exec.Command("tmux", "has-session", "-t", session).Run(); err != nil {
+		return nil // session doesn't exist — nothing to notify
+	}
+
 	// Hosted roles (docs, research, pr-read) resolve to their host agent.
 	// The message is already in the host's inbox; notify the host's pane.
 	role = WindowForRole(role)
@@ -334,6 +346,10 @@ func Notify(session, role string) error {
 // Best-effort: errors are logged but not returned, since the message is
 // already in the inbox and will be seen on the next inbox read.
 func notifyDisplayMessage(session, role string) error {
+	if err := exec.Command("tmux", "has-session", "-t", session).Run(); err != nil {
+		return nil
+	}
+
 	unlock := lockNotify(session, role)
 	defer unlock()
 

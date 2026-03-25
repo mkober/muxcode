@@ -181,9 +181,15 @@ func TestBuildToolDefs_GitRole(t *testing.T) {
 		names[d.Function.Name] = true
 	}
 
-	for _, want := range []string{"bash", "read_file", "glob", "grep", "write_file", "edit_file"} {
+	for _, want := range []string{"bash", "read_file", "glob", "grep"} {
 		if !names[want] {
 			t.Errorf("git role missing tool %q", want)
+		}
+	}
+	// Write and Edit are exclusive to the edit agent
+	for _, deny := range []string{"write_file", "edit_file"} {
+		if names[deny] {
+			t.Errorf("git role should NOT have tool %q (edit-only)", deny)
 		}
 	}
 }

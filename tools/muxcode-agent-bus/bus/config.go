@@ -101,10 +101,30 @@ func BusRole() string {
 	return "unknown"
 }
 
+// busDirOverride, when non-empty, replaces the default /tmp base for BusDir.
+// Used by tests to isolate bus directories in t.TempDir() instead of polluting
+// the real /tmp/muxcode-bus-* namespace. Set via SetBusDirBase / ResetBusDirBase.
+var busDirOverride string
+
+// SetBusDirBase overrides the base directory for BusDir. When set, BusDir
+// returns baseDir/muxcode-bus-{session} instead of /tmp/muxcode-bus-{session}.
+// Intended for tests only — production code should never call this.
+func SetBusDirBase(baseDir string) {
+	busDirOverride = baseDir
+}
+
+// ResetBusDirBase clears the BusDir override, restoring default /tmp behavior.
+func ResetBusDirBase() {
+	busDirOverride = ""
+}
+
 // BusDir returns the bus directory for a session.
 // Uses /tmp directly (not os.TempDir) for compatibility with bash scripts
 // that hardcode /tmp/muxcode-bus-{SESSION}/.
 func BusDir(session string) string {
+	if busDirOverride != "" {
+		return filepath.Join(busDirOverride, "muxcode-bus-"+session)
+	}
 	return "/tmp/muxcode-bus-" + session
 }
 

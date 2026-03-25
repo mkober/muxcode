@@ -222,7 +222,7 @@ func TestStartProc(t *testing.T) {
 	}
 
 	// Wait for the process to complete
-	time.Sleep(500 * time.Millisecond)
+	waitForProc(t, entry.PID)
 
 	// Verify log file was created
 	if _, err := os.Stat(entry.LogFile); err != nil {
@@ -263,7 +263,7 @@ func TestRefreshProcStatus(t *testing.T) {
 	}
 
 	// Wait for it to finish
-	time.Sleep(1 * time.Second)
+	waitForProc(t, entry.PID)
 
 	completed, err := RefreshProcStatus(session)
 	if err != nil {
@@ -297,12 +297,12 @@ func TestRefreshProcStatus_FailedProcess(t *testing.T) {
 	_ = Init(session, memDir)
 
 	// Start a process that exits with non-zero
-	_, err := StartProc(session, "exit 42", "/tmp", "build")
+	entry, err := StartProc(session, "exit 42", "/tmp", "build")
 	if err != nil {
 		t.Fatalf("StartProc: %v", err)
 	}
 
-	time.Sleep(1 * time.Second)
+	waitForProc(t, entry.PID)
 
 	completed, err := RefreshProcStatus(session)
 	if err != nil {

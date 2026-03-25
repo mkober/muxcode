@@ -10,11 +10,11 @@ import (
 
 // MuxcodeConfig holds tool profiles, event chains, auto-CC, and send policy config.
 type MuxcodeConfig struct {
-	SharedTools  map[string][]string     `json:"shared_tools"`
-	ToolProfiles map[string]ToolProfile  `json:"tool_profiles"`
-	EventChains  map[string]EventChain   `json:"event_chains"`
-	AutoCC       []string                `json:"auto_cc"`
-	SendPolicy   map[string]SendPolicy   `json:"send_policy,omitempty"`
+	SharedTools  map[string][]string    `json:"shared_tools"`
+	ToolProfiles map[string]ToolProfile `json:"tool_profiles"`
+	EventChains  map[string]EventChain  `json:"event_chains"`
+	AutoCC       []string               `json:"auto_cc"`
+	SendPolicy   map[string]SendPolicy  `json:"send_policy,omitempty"`
 }
 
 // SendPolicy defines send restrictions for a role.
@@ -148,9 +148,8 @@ func mergeConfigs(base, override *MuxcodeConfig) *MuxcodeConfig {
 		if len(ov.Tools) > 0 {
 			base.Tools = ov.Tools
 		}
-		if ov.CdPrefix {
-			base.CdPrefix = true
-		}
+		// Always copy CdPrefix — false is a valid override value
+		base.CdPrefix = ov.CdPrefix
 		if ov.BashTimeout > 0 {
 			base.BashTimeout = ov.BashTimeout
 		}
@@ -454,7 +453,6 @@ func DefaultConfig() *MuxcodeConfig {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: true,
 				Tools: []string{
-					"Write", "Edit",
 					"Bash(git *)", "Bash(gh *)",
 					"Bash(ssh-keyscan *)", "Bash(ssh-add *)",
 					"Bash(curl*)",
@@ -500,13 +498,13 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(mkdir *)", "Bash(rm *)", "Bash(chmod *)",
 					"Bash(tar *)", "Bash(unzip *)", "Bash(gzip *)", "Bash(base64 *)",
 					"Bash(export *)", "Bash(eval *)", "Bash(eval \"$(*))",
-				"Bash(source *)",
-				"Bash(grep *)", "Bash(head *)", "Bash(tail *)", "Bash(cat *)",
-				"Bash(wc *)", "Bash(sort *)", "Bash(cut *)", "Bash(awk *)", "Bash(sed *)",
-				"Bash(sleep *)", "Bash(echo *)", "Bash(printf *)", "Bash(date *)",
-				"Bash(find *)", "Bash(ls *)", "Bash(diff *)", "Bash(env *)",
-				"Bash(touch *)", "Bash(cp *)", "Bash(mv *)",
-				"Read(/tmp/*)", "Read(/private/tmp/*)",
+					"Bash(source *)",
+					"Bash(grep *)", "Bash(head *)", "Bash(tail *)", "Bash(cat *)",
+					"Bash(wc *)", "Bash(sort *)", "Bash(cut *)", "Bash(awk *)", "Bash(sed *)",
+					"Bash(sleep *)", "Bash(echo *)", "Bash(printf *)", "Bash(date *)",
+					"Bash(find *)", "Bash(ls *)", "Bash(diff *)", "Bash(env *)",
+					"Bash(touch *)", "Bash(cp *)", "Bash(mv *)",
+					"Read(/tmp/*)", "Read(/private/tmp/*)",
 				},
 			},
 			"analyst": {
@@ -583,9 +581,9 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(dig*)", "Bash(nslookup*)",
 					"Bash(echo *)",
 					"Bash(RESP=*)", "Bash(BODY=*)", "Bash(STATUS=*)", "Bash(DURATION=*)",
-				"Bash(START=*)", "Bash(END=*)", "Bash(ELAPSED=*)",
-				"Bash(RESPONSE=*)", "Bash(RESULT=*)", "Bash(TIME=*)",
-				"Bash(HTTP=*)", "Bash(HEADERS=*)", "Bash(CODE=*)",
+					"Bash(START=*)", "Bash(END=*)", "Bash(ELAPSED=*)",
+					"Bash(RESPONSE=*)", "Bash(RESULT=*)", "Bash(TIME=*)",
+					"Bash(HTTP=*)", "Bash(HEADERS=*)", "Bash(CODE=*)",
 					"Bash(mkdir *)", "Bash(rm *)",
 					"Write", "Edit",
 				},
@@ -615,10 +613,10 @@ func DefaultConfig() *MuxcodeConfig {
 			},
 			"build": {
 				OnSuccess: &ChainAction{
-					SendTo:  "test",
-					Action:  "test",
-					Message: "Build succeeded — run tests and report results",
-					Type:    "request",
+					SendTo:  "edit",
+					Action:  "notify",
+					Message: "Build succeeded (${command}) — ready for tests",
+					Type:    "event",
 				},
 				OnFailure: &ChainAction{
 					SendTo:  "edit",
@@ -627,7 +625,7 @@ func DefaultConfig() *MuxcodeConfig {
 					Type:    "event",
 				},
 				OnUnknown: &ChainAction{
-					SendTo:  "analyze",
+					SendTo:  "edit",
 					Action:  "notify",
 					Message: "Build completed (exit code unknown): ${command}",
 					Type:    "event",
@@ -636,10 +634,10 @@ func DefaultConfig() *MuxcodeConfig {
 			},
 			"test": {
 				OnSuccess: &ChainAction{
-					SendTo:  "review",
-					Action:  "review",
-					Message: "Tests passed — review working tree and staged changes, then report results to edit",
-					Type:    "request",
+					SendTo:  "edit",
+					Action:  "notify",
+					Message: "Tests passed (${command}) — ready for review",
+					Type:    "event",
 				},
 				OnFailure: &ChainAction{
 					SendTo:  "edit",
@@ -648,7 +646,7 @@ func DefaultConfig() *MuxcodeConfig {
 					Type:    "event",
 				},
 				OnUnknown: &ChainAction{
-					SendTo:  "analyze",
+					SendTo:  "edit",
 					Action:  "notify",
 					Message: "Tests completed (exit code unknown): ${command}",
 					Type:    "event",
@@ -656,10 +654,7 @@ func DefaultConfig() *MuxcodeConfig {
 				NotifyAnalystOn: []string{"failure", "unknown"},
 			},
 		},
-		AutoCC: []string{"build", "test", "review", "deploy", "analyze"},
-		SendPolicy: map[string]SendPolicy{
-			"build": {Deny: []string{"test"}},
-			"test":  {Deny: []string{"review"}},
-		},
+		AutoCC:     []string{"build", "test", "review", "deploy", "analyze"},
+		SendPolicy: map[string]SendPolicy{},
 	}
 }

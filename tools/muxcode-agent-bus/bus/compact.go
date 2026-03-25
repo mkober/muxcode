@@ -30,8 +30,8 @@ type CompactThresholds struct {
 // 512 KB total size and 2 hours since last compact.
 func DefaultCompactThresholds() CompactThresholds {
 	return CompactThresholds{
-		SizeBytes: 512 * 1024,            // 512 KB
-		MinAge:    2 * time.Hour,          // 2 hours
+		SizeBytes: 512 * 1024,    // 512 KB
+		MinAge:    2 * time.Hour, // 2 hours
 	}
 }
 

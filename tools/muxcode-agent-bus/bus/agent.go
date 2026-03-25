@@ -22,8 +22,8 @@ const (
 
 // AgentConfig holds configuration for the local LLM agent loop.
 type AgentConfig struct {
-	Role    string       // agent definition role (git, build, etc.) — for tools, skills, agent def
-	BusRole string       // bus identity role (commit, build, etc.) — for inbox, lock, send, history
+	Role    string // agent definition role (git, build, etc.) — for tools, skills, agent def
+	BusRole string // bus identity role (commit, build, etc.) — for inbox, lock, send, history
 	Session string
 	Ollama  OllamaConfig
 }

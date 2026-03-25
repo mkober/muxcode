@@ -93,20 +93,12 @@ func LogLifecycleWithPID(session, level, source, event, detail string, pid int) 
 
 	_, _ = f.Write(append(data, '\n'))
 
-	// Check line count under lock to decide if rotation is needed
-	info, statErr := f.Stat()
-
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	f.Close()
 
-	// Rotate only when file size suggests it may exceed maxEntries.
-	// Rough heuristic: average JSONL line ~120 bytes.
-	if statErr == nil {
-		maxEntries := lifecycleMaxEntries()
-		if info.Size() > int64(maxEntries)*120 {
-			rotateLifecycleLog(logPath, maxEntries)
-		}
-	}
+	// Rotate if needed — rotateLifecycleLog has an early return when
+	// the file is under maxEntries, so this is cheap in the common case.
+	rotateLifecycleLog(logPath, lifecycleMaxEntries())
 }
 
 // ReadLifecycleLog reads all entries from a session's lifecycle log.

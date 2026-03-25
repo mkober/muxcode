@@ -366,10 +366,14 @@ func TestCheckHealth_ConnectionError(t *testing.T) {
 }
 
 func TestChatComplete_ContextCancelled(t *testing.T) {
+	done := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(5 * time.Second) // slow response
+		<-done // block until test completes
 	}))
-	defer server.Close()
+	defer func() {
+		close(done)
+		server.Close()
+	}()
 
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL: server.URL,

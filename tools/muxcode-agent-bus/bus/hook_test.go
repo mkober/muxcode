@@ -367,7 +367,7 @@ func TestShouldPollInbox(t *testing.T) {
 	}{
 		{"muxcode-agent-bus send build build test", true},
 		{"agent-bus send test test run", true},
-		{"muxcode-agent-bus send edit notify hello", false},       // self
+		{"muxcode-agent-bus send edit notify hello", false},        // self
 		{"muxcode-agent-bus send build build --type event", false}, // fire-and-forget
 		{"muxcode-agent-bus send build build --no-notify", false},  // no-notify
 		{"muxcode-agent-bus inbox", false},                         // not a send
@@ -443,13 +443,11 @@ func TestWriteHookHistory_Rotation(t *testing.T) {
 }
 
 func TestProcessBashHook_Build(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
-	// Override bus dir by using the session name that maps to our temp dir
-	os.Setenv("BUS_SESSION", session)
-	defer os.Unsetenv("BUS_SESSION")
+	useTempBusDir(t)
 
-	// Create the bus dir
+	session := "test-bash-build"
+	t.Setenv("BUS_SESSION", session)
+
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
 
@@ -490,10 +488,10 @@ func TestProcessBashHook_BusCommand(t *testing.T) {
 }
 
 func TestProcessBashHook_Runner(t *testing.T) {
-	dir := t.TempDir()
-	session := filepath.Base(dir)
-	os.Setenv("BUS_SESSION", session)
-	defer os.Unsetenv("BUS_SESSION")
+	useTempBusDir(t)
+
+	session := "test-bash-runner"
+	t.Setenv("BUS_SESSION", session)
 
 	busDir := BusDir(session)
 	os.MkdirAll(busDir, 0755)
@@ -520,10 +518,10 @@ func TestProcessBashHook_Runner(t *testing.T) {
 }
 
 func TestProcessAnalyzeHook_TriggerFile(t *testing.T) {
-	dir := t.TempDir()
-	session := "test-analyze-" + filepath.Base(dir)
+	useTempBusDir(t)
 
-	// Create bus dir
+	session := "test-analyze-trigger"
+
 	busDir := BusDir(session)
 	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
 
@@ -543,7 +541,6 @@ func TestProcessAnalyzeHook_TriggerFile(t *testing.T) {
 	if !strings.Contains(string(data), "/foo/bar.go") {
 		t.Error("trigger file missing file path")
 	}
-	os.Remove(triggerPath)
 }
 
 func TestProcessAnalyzeHook_SkipsAgentFiles(t *testing.T) {
@@ -584,7 +581,7 @@ func TestIsEnvVarName(t *testing.T) {
 		{"FOO", true},
 		{"FOO_BAR", true},
 		{"A1", true},
-		{"envName", true},  // camelCase for CDK compatibility
+		{"envName", true}, // camelCase for CDK compatibility
 		{"Foo", true},
 		{"foo", true},
 		{"", false},

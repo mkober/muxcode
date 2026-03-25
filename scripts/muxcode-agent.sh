@@ -200,7 +200,7 @@ role_claude_model_var() {
 role_claude_model_default() {
   case "$1" in
     edit|review|analyze|analyst) echo "claude-opus-4-6" ;;
-    api|deploy|runner|run|watch|commit|git) echo "claude-sonnet-4-5" ;;
+    build|test|api|deploy|runner|run|watch|commit|git) echo "claude-sonnet-4-5" ;;
   esac
 }
 

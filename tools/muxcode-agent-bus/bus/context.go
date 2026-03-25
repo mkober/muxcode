@@ -10,11 +10,11 @@ import (
 
 // ContextFile represents a context file read from a context.d directory.
 type ContextFile struct {
-	Name    string // filename without .md extension
-	Role    string // "shared" or a specific role name
-	Body    string // file content
-	Source  string // "project" or "user"
-	Path    string // full filesystem path
+	Name   string // filename without .md extension
+	Role   string // "shared" or a specific role name
+	Body   string // file content
+	Source string // "project" or "user"
+	Path   string // full filesystem path
 }
 
 // contextFileKey is a dedup key for context files by (role, name).

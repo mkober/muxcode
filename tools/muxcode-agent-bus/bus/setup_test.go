@@ -9,6 +9,8 @@ import (
 )
 
 func TestInit_CreatesStructure(t *testing.T) {
+	useTempBusDir(t)
+
 	session := fmt.Sprintf("test-init-%d", rand.Int())
 	memDir := t.TempDir()
 	t.Cleanup(func() { _ = Cleanup(session) })
@@ -48,6 +50,8 @@ func TestInit_CreatesStructure(t *testing.T) {
 }
 
 func TestInit_Idempotent(t *testing.T) {
+	useTempBusDir(t)
+
 	session := fmt.Sprintf("test-idem-%d", rand.Int())
 	memDir := t.TempDir()
 	t.Cleanup(func() { _ = Cleanup(session) })
@@ -61,6 +65,8 @@ func TestInit_Idempotent(t *testing.T) {
 }
 
 func TestInit_ReInit_PurgesStaleData(t *testing.T) {
+	useTempBusDir(t)
+
 	session := fmt.Sprintf("test-reinit-%d", rand.Int())
 	memDir := t.TempDir()
 	t.Cleanup(func() { _ = Cleanup(session) })
@@ -177,6 +183,8 @@ func TestInit_ReInit_PurgesStaleData(t *testing.T) {
 }
 
 func TestInit_ReInit_PreservesMemory(t *testing.T) {
+	useTempBusDir(t)
+
 	session := fmt.Sprintf("test-reinit-mem-%d", rand.Int())
 	memDir := t.TempDir()
 	t.Cleanup(func() { _ = Cleanup(session) })

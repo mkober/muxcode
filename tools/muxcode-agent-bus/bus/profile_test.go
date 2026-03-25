@@ -59,9 +59,10 @@ func TestResolveTools_Edit(t *testing.T) {
 	assertContains(t, tools, "Read")
 	assertContains(t, tools, "Glob")
 	assertContains(t, tools, "Grep")
-	// Should include Write and Edit
-	assertContains(t, tools, "Write")
-	assertContains(t, tools, "Edit")
+	// Write and Edit come from Claude Code settings.json, not tool profiles
+	// (edit agent runs Claude Code directly, not via LLM harness)
+	assertNotContains(t, tools, "Write")
+	assertNotContains(t, tools, "Edit")
 	// Should NOT include any git/gh commands (all delegated to commit agent)
 	assertNotContains(t, tools, "Bash(git diff*)")
 	assertNotContains(t, tools, "Bash(git log*)")
@@ -87,9 +88,9 @@ func TestResolveTools_Git(t *testing.T) {
 	// Should include broad git/gh patterns
 	assertContains(t, tools, "Bash(git *)")
 	assertContains(t, tools, "Bash(gh *)")
-	// Should include Write and Edit for conflict resolution
-	assertContains(t, tools, "Write")
-	assertContains(t, tools, "Edit")
+	// Write and Edit are exclusive to the edit agent
+	assertNotContains(t, tools, "Write")
+	assertNotContains(t, tools, "Edit")
 	// Should NOT have bare Bash (unrestricted)
 	assertNotContains(t, tools, "Bash")
 	// Should have cd-prefix variants (CdPrefix: true)
@@ -434,14 +435,14 @@ func TestResolveChain_BuildSuccess(t *testing.T) {
 	if action == nil {
 		t.Fatal("expected chain action for build success")
 	}
-	if action.SendTo != "test" {
-		t.Errorf("send_to = %q, want test", action.SendTo)
+	if action.SendTo != "edit" {
+		t.Errorf("send_to = %q, want edit", action.SendTo)
 	}
-	if action.Action != "test" {
-		t.Errorf("action = %q, want test", action.Action)
+	if action.Action != "notify" {
+		t.Errorf("action = %q, want notify", action.Action)
 	}
-	if action.Type != "request" {
-		t.Errorf("type = %q, want request", action.Type)
+	if action.Type != "event" {
+		t.Errorf("type = %q, want event", action.Type)
 	}
 }
 
@@ -643,18 +644,19 @@ func TestGetAutoCC_Custom(t *testing.T) {
 	}
 }
 
-func TestCheckSendPolicy_Denied(t *testing.T) {
+func TestCheckSendPolicy_NoDenyByDefault(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
+	// All agents report to edit — no inter-agent send denies needed
 	msg := CheckSendPolicy("build", "test")
-	if msg == "" {
-		t.Error("expected deny message for build → test, got empty")
+	if msg != "" {
+		t.Errorf("expected no deny for build → test, got %q", msg)
 	}
 
 	msg = CheckSendPolicy("test", "review")
-	if msg == "" {
-		t.Error("expected deny message for test → review, got empty")
+	if msg != "" {
+		t.Errorf("expected no deny for test → review, got %q", msg)
 	}
 }
 

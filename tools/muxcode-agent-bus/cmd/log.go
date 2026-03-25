@@ -16,9 +16,10 @@ import (
 // Usage: muxcode-agent-bus log <role> "<summary>" [--exit-code N] [--command CMD] [--output TEXT] [--output-stdin] [--output-file PATH]
 //
 // Output sources (mutually exclusive):
-//   --output TEXT        inline output string
-//   --output-stdin       read output from stdin (for piping)
-//   --output-file PATH   read output from a file (preferred for multi-line content)
+//
+//	--output TEXT        inline output string
+//	--output-stdin       read output from stdin (for piping)
+//	--output-file PATH   read output from a file (preferred for multi-line content)
 //
 // --output-file is the preferred method for multi-line output because it avoids
 // piping through printf, which breaks allowedTools glob patterns when the LLM

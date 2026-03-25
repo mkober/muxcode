@@ -51,11 +51,15 @@ func TestCheckOllamaInference_Healthy(t *testing.T) {
 }
 
 func TestCheckOllamaInference_Timeout(t *testing.T) {
-	// Server that hangs forever
+	// Server that hangs until test completes — done channel unblocks on close
+	done := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(30 * time.Second) // hang
+		<-done
 	}))
-	defer server.Close()
+	defer func() {
+		close(done)
+		server.Close()
+	}()
 
 	err := CheckOllamaInference(server.URL, "test-model", 500*time.Millisecond)
 	if err == nil {
@@ -123,7 +127,7 @@ func TestLocalLLMRoles(t *testing.T) {
 	// Set some roles
 	os.Setenv("MUXCODE_GIT_CLI", "local")
 	os.Setenv("MUXCODE_BUILD_CLI", "local")
-	os.Setenv("MUXCODE_TEST_CLI", "claude") // not local
+	os.Setenv("MUXCODE_TEST_CLI", "claude")  // not local
 	os.Setenv("MUXCODE_CUSTOM_CLI", "local") // custom role
 
 	roles = LocalLLMRoles()

@@ -136,7 +136,7 @@ func (f FunctionCall) MarshalJSON() ([]byte, error) {
 
 // ToolDef defines a tool available to the model.
 type ToolDef struct {
-	Type     string         `json:"type"`
+	Type     string          `json:"type"`
 	Function ToolDefFunction `json:"function"`
 }
 
@@ -159,10 +159,10 @@ type ChatRequest struct {
 
 // ChatResponse is the response from Ollama's OpenAI-compatible API.
 type ChatResponse struct {
-	ID      string         `json:"id"`
-	Choices []ChatChoice   `json:"choices"`
-	Usage   *ChatUsage     `json:"usage,omitempty"`
-	Error   *OllamaError   `json:"error,omitempty"`
+	ID      string       `json:"id"`
+	Choices []ChatChoice `json:"choices"`
+	Usage   *ChatUsage   `json:"usage,omitempty"`
+	Error   *OllamaError `json:"error,omitempty"`
 }
 
 // ChatChoice is a single choice in the chat response.
