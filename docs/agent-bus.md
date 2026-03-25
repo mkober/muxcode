@@ -295,6 +295,42 @@ test         idle   0      14:30 ← build:test
 review       idle   0      —
 ```
 
+### `muxcode-agent-bus workflow`
+
+Query or reset the workflow state machine.
+
+```bash
+muxcode-agent-bus workflow [--json]
+muxcode-agent-bus workflow reset
+```
+
+- Default: human-readable state with name, duration, trigger, files, and accumulated outcomes
+- `--json` — raw `WorkflowStateEntry` as JSON
+- `reset` — manually transition to `idle` (clears all outcomes)
+
+The workflow state machine tracks the editing lifecycle (edit→build→test→review) as a single persisted state. It is purely observational — it never blocks actions.
+
+**Example:**
+```
+$ muxcode-agent-bus workflow
+state: testing  since: 2m ago  trigger: chain:build:success  files: 3  outcomes: build:success
+
+$ muxcode-agent-bus workflow --json
+{"state":"testing","prev_state":"building","since":1711324800,"updated":1711324860,"trigger":"chain:build:success","files_changed":3,"last_files":["hook.go","config.go","cmd/hook.go"],"build_outcome":"success","test_outcome":"","review_outcome":"","deploy_outcome":""}
+
+$ muxcode-agent-bus workflow reset
+Workflow state reset to idle
+```
+
+**Data files:**
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `workflow-state.json` | `/tmp/muxcode-bus-{SESSION}/workflow-state.json` | Current workflow state |
+| `workflow.lock` | `/tmp/muxcode-bus-{SESSION}/lock/workflow.lock` | Flock for atomic transitions |
+
+See [Architecture](architecture.md#workflow-state-machine) for state definitions, transition sources, and the regression rule.
+
 ### `muxcode-agent-bus history`
 
 Show recent messages to/from an agent.

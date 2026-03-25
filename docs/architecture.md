@@ -19,6 +19,7 @@ Muxcode creates a tmux session with multiple windows, each running an independen
 │       │     Message Bus (/tmp/muxcode-bus-{session}/)           │
 │       │     ├── inbox/{role}.jsonl                              │
 │       │     ├── lock/{role}.lock                                │
+│       │     ├── workflow-state.json                              │
 │       │     ├── log.jsonl                                       │
 │       │     ├── proc.jsonl                                      │
 │       │     ├── spawn.jsonl                                     │
@@ -325,6 +326,57 @@ When a MuxCode session restarts with the same name, `Init()` in `bus/setup.go` d
 - **Watcher grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (60s) and compaction checks (120s) skip the first interval
 
 Core code: `bus/setup.go` (`Init()`, `resetFile()`, `purgeStaleFiles()`), `watcher/watcher.go` (`New()`)
+
+## Workflow state machine
+
+The workflow state machine tracks the editing lifecycle as code moves from editing through validation to ready-for-commit. It observes events (file edits, chain outcomes, agent messages) and maintains a single persisted state — it never blocks actions.
+
+### States
+
+12 ordered integer states for regression comparison:
+
+| # | State | Color | Meaning |
+|---|-------|-------|---------|
+| 0 | `idle` | dim | No activity |
+| 1 | `editing` | cyan | Files being edited |
+| 2 | `analyzing` | cyan | Analyze agent processing |
+| 3 | `building` | yellow | Build in progress |
+| 4 | `build-failed` | red | Build failed |
+| 5 | `testing` | yellow | Tests in progress |
+| 6 | `test-failed` | red | Tests failed |
+| 7 | `reviewing` | yellow | Review in progress |
+| 8 | `reviewed` | green | Review complete — ready for commit |
+| 9 | `committing` | yellow | Git commit/push in progress |
+| 10 | `deploying` | yellow | Deploy in progress |
+| 11 | `deploy-failed` | red | Deploy failed |
+
+### Persistence
+
+Single JSON file at `{BusDir(session)}/workflow-state.json`. Read-modify-write under exclusive `syscall.Flock` on `{BusDir}/lock/workflow.lock`.
+
+### Transition sources
+
+| Source | Transitions |
+|--------|-------------|
+| `hook analyze` | → `editing` (file edit detected) |
+| `watcher routeTrigger` | → `analyzing` (analyze event sent) |
+| `hook bash` | → `building`, `testing`, `deploying` (command detected) |
+| `triggerChain` | → `testing`/`build-failed`, `reviewing`/`test-failed`, `deploy-failed` (chain outcomes) |
+| `watcher checkInboxes` | → `reviewed` (review message to edit detected) |
+
+### Regression rule
+
+Any transition to `editing` from state >= `analyzing` clears all outcome fields (`build_outcome`, `test_outcome`, `review_outcome`, `deploy_outcome`). File changes potentially invalidate prior results.
+
+### Visibility
+
+- **TUI dashboard** (`tui/model.go`): WORKFLOW section between session info and AGENTS, color-coded by state
+- **Left-pane consoles** (`cmd/console.go`): workflow state line in header across all agent consoles
+- **CLI**: `muxcode-agent-bus workflow [--json]` to query, `workflow reset` to manually reset
+
+Every transition logs to the lifecycle system via `LogLifecycle()`.
+
+Core code: `bus/workflow.go`, `bus/workflow_test.go`, `cmd/workflow.go`
 
 ## Lifecycle logging
 

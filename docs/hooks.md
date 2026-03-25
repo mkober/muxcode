@@ -107,9 +107,10 @@ Lightweight cleanup hook. If a diff preview is still open from a previously reje
 
 Signals that a file was edited. Performs three tasks:
 
-1. **Trigger file**: Appends the edited file path to the trigger file for the bus watcher
-2. **Event routing**: Sends file-change events to appropriate agents based on file type (uses `--no-notify` — no status bar flash for file-change events)
-3. **Diff cleanup**: In the edit window, waits ~1s for the async preview hook to finish, then closes the diff preview and reloads the file at the changed line. The delay prevents the cleanup from racing ahead of the preview setup.
+1. **Workflow transition**: Transitions the [workflow state machine](architecture.md#workflow-state-machine) to `editing` (clears outcomes if regressing from a later state)
+2. **Trigger file**: Appends the edited file path to the trigger file for the bus watcher
+3. **Event routing**: Sends file-change events to appropriate agents based on file type (uses `--no-notify` — no status bar flash for file-change events)
+4. **Diff cleanup**: In the edit window, waits ~1s for the async preview hook to finish, then closes the diff preview and reloads the file at the changed line. The delay prevents the cleanup from racing ahead of the preview setup.
 
 **NotebookEdit:** For `NotebookEdit` tool events, `file_path` is extracted from `tool_input.notebook_path`. The diff preview opens the `.ipynb` file at the raw JSON level.
 
@@ -126,7 +127,7 @@ Signals that a file was edited. Performs three tasks:
 **Phase:** PostToolUse
 **Trigger:** Bash
 
-Detects build, test, deploy, and git commands, drives event chains, and logs history with error extraction:
+Detects build, test, deploy, and git commands, drives event chains, transitions the [workflow state machine](architecture.md#workflow-state-machine), and logs history with error extraction:
 
 ```
 Build success        → trigger test agent
@@ -192,6 +193,8 @@ The chain is **hook-driven**, ensuring deterministic behavior:
 
 On failure at any step, the hook notifies edit directly with the error details.
 
+Each chain step also transitions the [workflow state machine](architecture.md#workflow-state-machine): build success → `testing` (with `build_outcome: success`), test success → `reviewing` (with `test_outcome: success`), failures → `build-failed` or `test-failed`. File edits during or after the chain regress the state to `editing` and clear all accumulated outcomes.
+
 **Key property:** Agents are NOT responsible for chaining. They only run their command and reply. The hook guarantees the chain fires deterministically based on exit codes.
 
 ## Deploy-Verify Chain
@@ -204,7 +207,7 @@ When a deploy-apply command succeeds, the hook triggers a verification self-loop
 4. Deploy agent runs verification checks (AWS resource health, HTTP smoke tests, CloudWatch alarms/logs)
 5. Deploy agent reports PASS/FAIL results to edit
 
-Preview commands (`cdk diff`, `terraform plan`) are logged to deploy history but do **not** trigger the verify chain. See [Deploy verify plan](plan-deploy-verify.md) for full details.
+Preview commands (`cdk diff`, `terraform plan`) are logged to deploy history but do **not** trigger the verify chain. Deploy failures transition the workflow state to `deploy-failed`. See [Deploy verify plan](plan-deploy-verify.md) for full details.
 
 ## Testing
 
