@@ -78,11 +78,27 @@ Phase 1 resolves this atomically: add `launch` subcommand → install Go binary 
 
 ---
 
-## Phase 1: Core launcher + full rename
+## Phase 1: Core launcher + full rename ✅
 
-Convert the main session creation flow from `muxcode.sh` to Go and complete the binary rename. These happen together because the Go binary can only replace `muxcode.sh` as `muxcode` when it has the `launch` subcommand.
+**Completed.** Converted the main session creation flow from `muxcode.sh` to Go and completed the binary rename. The Go binary is now installed as `muxcode` with a `muxcode-agent-bus` backward-compat symlink. `muxcode.sh` is no longer installed by the Makefile.
 
-### New files
+### What changed
+
+| Area | Detail |
+|------|--------|
+| New: `bus/tmux.go` (184 lines) | Thin tmux wrapper — `TmuxRun`, `TmuxOutput`, `TmuxNewSession`, `TmuxNewWindow`, `TmuxSplitWindow`, `TmuxSendKeys`, `TmuxSendEnter`, `TmuxSetEnv`, `TmuxSetOption`, `TmuxSetHook`, `TmuxCapturePaneLines`, etc. |
+| New: `bus/tmux_test.go` (192 lines) | Tests for tmux command building (no live tmux required) |
+| New: `bus/launcher.go` (653 lines) | Core launcher: `LauncherConfig`, config loading, session creation, window loop, Ollama startup, process management, cleanup hooks |
+| New: `bus/launcher_test.go` (259 lines) | Unit tests for config parsing, role mapping, split-left detection, window commands |
+| New: `cmd/launcher.go` (93 lines) | CLI handler: arg parsing, routes to `bus.Launch()` |
+| Updated: `main.go` | `knownSubcommands` map + invocation name detection — bare `muxcode` routes to launcher |
+| Updated: Makefile | Go binary installed as `muxcode`, `muxcode-agent-bus` symlink for backward compat, `muxcode.sh` install removed |
+| Global rename | ~900 replacements of `muxcode-agent-bus` → `muxcode` across agents, skills, docs, configs, scripts |
+| `muxcode.sh` | Retained in repo as reference but no longer installed |
+
+### Original spec (preserved for reference)
+
+#### New files
 
 | File | Purpose |
 |------|---------|
@@ -277,9 +293,9 @@ Once the `launch` subcommand works, complete the rename atomically:
 
 ---
 
-## Phase 2: Project picker
+## Phase 2: Project picker ✅
 
-Interactive project selection when no path argument is provided.
+**Completed.** Interactive project selection when no path argument is provided. Implemented as part of Phase 1 (code was written alongside the launcher). Tests added separately.
 
 ### 2.1 Project scanning
 
@@ -457,20 +473,22 @@ TmuxSendEnter(pane)
 |------|-------|-------|------------|
 | ~~1~~ | ~~0~~ | ~~Rename Go module directory, update imports~~ | ~~done~~ |
 | ~~2~~ | ~~0~~ | ~~Update Makefile, .gitignore~~ | ~~done~~ |
-| 3 | 1 | `bus/tmux.go` + `bus/tmux_test.go` — tmux helper functions | ~250 |
-| 4 | 1 | Promote `loadShellConfig()` to bus package | ~50 |
-| 5 | 1 | `bus/launcher.go` — config, session creation, window loop, Ollama | ~400 |
-| 6 | 1 | `cmd/launcher.go` — CLI handler, arg parsing | ~80 |
-| 7 | 1 | `main.go` — `launch` subcommand + invocation name detection | ~20 |
-| 8 | 1 | `bus/launcher_test.go` — unit tests | ~200 |
-| 9 | 1 | Full binary rename: agents, skills, docs, configs, scripts (~900 replacements) | ~0 new lines |
-| 10 | 2 | Project scanner + fzf picker in `bus/launcher.go` | ~100 |
+| ~~3~~ | ~~1~~ | ~~`bus/tmux.go` + `bus/tmux_test.go` — tmux helper functions~~ | ~~376~~ |
+| ~~4~~ | ~~1~~ | ~~Promote `loadShellConfig()` to bus package~~ | ~~done~~ |
+| ~~5~~ | ~~1~~ | ~~`bus/launcher.go` — config, session creation, window loop, Ollama~~ | ~~653~~ |
+| ~~6~~ | ~~1~~ | ~~`cmd/launcher.go` — CLI handler, arg parsing~~ | ~~93~~ |
+| ~~7~~ | ~~1~~ | ~~`main.go` — `launch` subcommand + invocation name detection~~ | ~~done~~ |
+| ~~8~~ | ~~1~~ | ~~`bus/launcher_test.go` — unit tests~~ | ~~259~~ |
+| ~~9~~ | ~~1~~ | ~~Full binary rename: agents, skills, docs, configs, scripts (~900 replacements)~~ | ~~done~~ |
+| ~~10~~ | ~~2~~ | ~~Project scanner + fzf picker in `bus/launcher.go`~~ | ~~done~~ |
 | 11 | 3 | Status bar customization in `bus/launcher.go` | ~80 |
 | 12 | 4 | Auto-accept loop + `--auto-accept` flag | ~130 |
 | 13 | — | Docs: update CLAUDE.md, architecture.md, shell-to-go-migration.md | ~100 |
 
 **Phase 0:** ✅ Complete — Go module directory renamed, internal Go refs updated, Makefile + .gitignore updated
-**Phase 1-4 total:** ~1,410 lines of new Go code (replacing 443 lines of bash) + ~900 string replacements for full rename
+**Phase 1:** ✅ Complete — 1,381 lines of new Go code, ~900 string replacements, Go binary is `muxcode`, `muxcode.sh` retired
+**Phase 2:** ✅ Complete — `ScanProjects()`, `PickProject()`, `pickProjectFallback()` implemented in launcher.go, 6 unit tests added
+**Phase 3-4 remaining:** ~210 lines of new Go code
 
 ### Verification cadence
 
@@ -502,17 +520,17 @@ After each phase is complete, rebuild and restart muxcode to verify before commi
 - [x] Go module directory renamed to `tools/muxcode/`
 - [x] All Go internal refs use `muxcode`
 - [x] Build and tests pass with renamed module
-- [ ] `muxcode ~/Repos/project` launches identical session to current `muxcode.sh`
-- [ ] `grep -r "muxcode"` returns 0 matches (excluding git history)
-- [ ] All 10 standard windows created with correct pane layout
-- [ ] Console views start in left panes for split-left windows
-- [ ] Agents launch in right panes with correct roles
+- [x] `muxcode ~/Repos/project` launches identical session to current `muxcode.sh`
+- [x] `grep -r "muxcode-agent-bus"` returns 0 matches outside backward-compat symlink
+- [x] All 10 standard windows created with correct pane layout
+- [x] Console views start in left panes for split-left windows
+- [x] Agents launch in right panes with correct roles
 - [ ] Status bar shows Dracula theme with capitalized window names and hamburger icon
 - [ ] Auto-accept handles trust and bypass prompts
 - [ ] Edit and analyze agents receive startup wake-up
-- [ ] Watcher and monitor processes start in background and survive session attach
-- [ ] Cleanup hook registered and fires on session close
-- [ ] Interactive picker works from inside and outside tmux
-- [ ] `muxcode.sh` no longer installed by Makefile
-- [ ] `muxcode` symlink works for backward compatibility
-- [ ] New unit tests cover config, role mapping, tmux command building, project scanning
+- [x] Watcher and monitor processes start in background and survive session attach
+- [x] Cleanup hook registered and fires on session close
+- [x] Interactive picker works from inside and outside tmux
+- [x] `muxcode.sh` no longer installed by Makefile
+- [x] `muxcode-agent-bus` symlink works for backward compatibility
+- [x] New unit tests cover config, role mapping, tmux command building, project scanning

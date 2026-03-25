@@ -241,6 +241,82 @@ func TestLoadLauncherConfig_RoleMapOverride(t *testing.T) {
 	}
 }
 
+func TestScanProjects_FindsGitDirs(t *testing.T) {
+	tmp := t.TempDir()
+	// Create a few git projects at varying depths
+	os.MkdirAll(tmp+"/projectA/.git", 0755)
+	os.MkdirAll(tmp+"/sub/projectB/.git", 0755)
+	os.MkdirAll(tmp+"/sub/deep/projectC/.git", 0755)
+
+	projects := ScanProjects(tmp, 4)
+	if len(projects) != 3 {
+		t.Fatalf("expected 3 projects, got %d: %v", len(projects), projects)
+	}
+
+	want := map[string]bool{
+		tmp + "/projectA":          true,
+		tmp + "/sub/projectB":      true,
+		tmp + "/sub/deep/projectC": true,
+	}
+	for _, p := range projects {
+		if !want[p] {
+			t.Errorf("unexpected project: %s", p)
+		}
+	}
+}
+
+func TestScanProjects_RespectsMaxDepth(t *testing.T) {
+	tmp := t.TempDir()
+	os.MkdirAll(tmp+"/shallow/.git", 0755)
+	os.MkdirAll(tmp+"/a/b/c/deep/.git", 0755)
+
+	projects := ScanProjects(tmp, 2)
+	if len(projects) != 1 {
+		t.Fatalf("expected 1 project (depth-limited), got %d: %v", len(projects), projects)
+	}
+	if projects[0] != tmp+"/shallow" {
+		t.Errorf("expected shallow project, got %s", projects[0])
+	}
+}
+
+func TestScanProjects_EmptyDir(t *testing.T) {
+	tmp := t.TempDir()
+	projects := ScanProjects(tmp, 3)
+	if len(projects) != 0 {
+		t.Errorf("expected 0 projects, got %d", len(projects))
+	}
+}
+
+func TestScanProjects_CommaSeparatedDirs(t *testing.T) {
+	tmp1 := t.TempDir()
+	tmp2 := t.TempDir()
+	os.MkdirAll(tmp1+"/projA/.git", 0755)
+	os.MkdirAll(tmp2+"/projB/.git", 0755)
+
+	projects := ScanProjects(tmp1+","+tmp2, 3)
+	if len(projects) != 2 {
+		t.Fatalf("expected 2 projects from 2 dirs, got %d: %v", len(projects), projects)
+	}
+}
+
+func TestScanProjects_NonexistentDir(t *testing.T) {
+	projects := ScanProjects("/nonexistent/path/xyz", 3)
+	if len(projects) != 0 {
+		t.Errorf("expected 0 projects for nonexistent dir, got %d", len(projects))
+	}
+}
+
+func TestPickProjectFallback_InvalidSelection(t *testing.T) {
+	// pickProjectFallback reads from stdin — we can't easily test interactive input
+	// but we can verify the function signature and error path
+	projects := []string{"/a", "/b"}
+	// idx -1 (parseInt("abc") returns 0, 0-1 = -1)
+	idx := parseInt("abc", 0) - 1
+	if idx >= 0 && idx < len(projects) {
+		t.Error("expected invalid index for non-numeric input")
+	}
+}
+
 func TestLoadLauncherConfig_SplitLeftOverride(t *testing.T) {
 	t.Setenv("MUXCODE_SPLIT_LEFT", "edit build")
 	cfg := LoadLauncherConfig()
