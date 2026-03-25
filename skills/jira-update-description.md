@@ -11,13 +11,13 @@ Read the current description of a Jira issue and/or update it with new ADF conte
 
 ### Prerequisites
 
-The `muxcode-jira.sh` helper script must be installed (included in `make install`). It reads credentials from `.muxcode/config` or `~/.config/muxcode/config`:
+The `muxcode-agent-bus atlassian` subcommand handles Jira API calls. It reads credentials from `.muxcode/config` or `~/.config/muxcode/config`:
 
 - `JIRA_BASE_URL` — e.g. `https://your-org.atlassian.net`
 - `JIRA_USER_EMAIL` — Atlassian account email
 - `JIRA_API_TOKEN` — Atlassian API token (create at https://id.atlassian.com/manage-profile/security/api-tokens)
 
-If any are missing, the script reports an error.
+If any are missing, the command reports an error.
 
 ### Key identification
 
@@ -42,10 +42,10 @@ If neither yields a key, skip silently.
 
 ### Read (GET)
 
-Use the wrapper script to fetch the issue:
+Fetch the issue using the bus binary:
 
 ```bash
-muxcode-jira.sh read "$jira_key"
+muxcode-agent-bus atlassian jira read "$jira_key"
 ```
 
 This outputs summary, type, priority, status, assignee, and the flattened description text.
@@ -144,7 +144,7 @@ payload=$(jq -n --argjson blocks "$content_array" '{
 
 tmpfile=$(mktemp /tmp/jira-update-XXXXXX.json)
 echo "$payload" > "$tmpfile"
-muxcode-jira.sh update "$jira_key" "$tmpfile"
+muxcode-agent-bus atlassian jira update "$jira_key" "$tmpfile"
 rm -f "$tmpfile"
 ```
 

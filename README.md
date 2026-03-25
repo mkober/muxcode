@@ -134,7 +134,9 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 - **Scoped tool permissions** — Per-role tool profiles enforce what each agent can and can't do. Build can't edit files, commit can't deploy, edit can't run builds
 - **Loop detection** — Bus detects agents stuck in repetitive patterns and escalates to the edit agent
 - **Edit guard** — Sync hook blocks prohibited commands (build, test, git, deploy) in the edit window with delegation instructions
-- **Watcher self-monitoring** — Keepalive heartbeat with companion monitor script — auto-restarts watcher if it hangs
+- **PII scrubbing** — Automatic redaction of emails, SSNs, credit cards, AWS keys, JWTs, and other secrets from tool output in PII-sensitive roles (api, runner, watch)
+- **Message dedup** — Duplicate messages (same sender/target/action/type) within a 30-second window are atomically suppressed to prevent chain loops
+- **Watcher self-monitoring** — Keepalive heartbeat with companion monitor process (`watch --monitor`) — auto-restarts watcher if it hangs
 
 See the [Architecture](docs/architecture.md) and [Agent Bus](docs/agent-bus.md) docs for the full details.
 
@@ -167,7 +169,7 @@ Both MuxCode and autonomous AI tools solve the same coordination problems:
 
 **Composable specialists, not a monolithic agent.** Each agent is a focused role with constrained permissions. The build agent can't edit files. The commit agent can't deploy. This separation of concerns mirrors how teams actually work. Autonomous tools often use a single agent with broad capabilities that handles everything.
 
-**Zero external dependencies.** The bus binary is stdlib-only Go — it compiles in seconds with no dependency management. The hooks are bash scripts that use `jq` and standard Unix tools. Autonomous tools typically have significant dependency trees (Python packages, Node modules, system libraries).
+**Zero external dependencies.** The bus binary is stdlib-only Go — it compiles in seconds with no dependency management. The hooks are Go subcommands of the bus binary (with two remaining shell scripts for tmux/vim timing-sensitive operations). Autonomous tools typically have significant dependency trees (Python packages, Node modules, system libraries).
 
 The tradeoff is clear: autonomous tools can handle more without you, but MuxCode gives you visibility and control at every step. If you want to understand what's happening in your codebase — not just get a result — MuxCode is designed for that workflow.
 

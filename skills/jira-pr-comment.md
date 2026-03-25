@@ -11,7 +11,7 @@ After creating a PR with `gh pr create`, post a comment on the corresponding Jir
 
 ### Prerequisites
 
-The `muxcode-jira.sh` helper script must be installed (included in `make install`). It reads credentials from `.muxcode/config` or `~/.config/muxcode/config`:
+The `muxcode-agent-bus atlassian` subcommand handles Jira API calls. It reads credentials from `.muxcode/config` or `~/.config/muxcode/config`:
 
 - `JIRA_BASE_URL` — e.g. `https://your-org.atlassian.net`
 - `JIRA_USER_EMAIL` — Atlassian account email
@@ -158,7 +158,7 @@ If any are missing, the script reports an error. Skip the Jira comment silently 
 6. **POST comment to Jira** — use the wrapper script:
 
    ```bash
-   muxcode-jira.sh comment "$jira_key" "$tmpfile"
+   muxcode-agent-bus atlassian jira comment "$jira_key" "$tmpfile"
    rm -f "$tmpfile"
    ```
 

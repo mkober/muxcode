@@ -133,7 +133,7 @@
 | Medium | Agent sandbox levels |
 | Low | Webhook rate limiting |
 
-- **Secret scanning in commits** — Pre-commit agent check scans staged diffs for patterns matching API keys, tokens, passwords — blocks commit and alerts edit. PII scrubbing (`scrub.go`, `muxcode-pii-scrub.sh`) partially addresses this for tool output but not for commits
+- **Secret scanning in commits** — Pre-commit agent check scans staged diffs for patterns matching API keys, tokens, passwords — blocks commit and alerts edit. PII scrubbing (`bus/scrub.go`, `harness/scrub.go`) partially addresses this for tool output but not for commits
 - **Agent sandbox levels** — Graduated trust levels — `read-only`, `project-scoped`, `unrestricted` — new agents start at read-only and escalate based on config, more granular than current tool profiles
 - **Webhook rate limiting** — Per-IP and global rate limits on the webhook endpoint — currently only has auth token + localhost binding, important if exposing via tunnel
 

@@ -44,6 +44,7 @@ Commands:
   console       Display role-specific status console (replaces log poller scripts)
   hook          Process Claude Code hook events (bash, guard, analyze, inbox-poll)
   workflow      Show or reset workflow state machine (--json, reset)
+  atlassian     Jira and Confluence API operations (read, update, comment, search)
   pii-scrub     Scrub PII and secrets from stdin (pipe filter)
   compact       Wait for agent idle, then inject /compact via tmux
 `
@@ -128,6 +129,8 @@ func main() {
 		cmd.Workflow(args)
 	case "pii-scrub":
 		cmd.Scrub(args)
+	case "atlassian":
+		cmd.Atlassian(args)
 	case "compact":
 		cmd.Compact(args)
 	default:

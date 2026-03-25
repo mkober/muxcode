@@ -25,6 +25,8 @@ Muxcode creates a tmux session with multiple windows, each running an independen
 │       │     ├── spawn.jsonl                                     │
 │       │     ├── cron.jsonl                                      │
 │       │     ├── subscriptions.jsonl                              │
+│       │     ├── dedup.lock                                      │
+│       │     ├── watcher.keepalive                                │
 │       │     └── webhook.pid                                     │
 │  ─────┼───────────┼───────────┼───────────┼──────────────────── │
 │       │           │           │           │                     │

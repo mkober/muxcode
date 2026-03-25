@@ -61,6 +61,9 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `BUS_MEMORY_DIR` | `.muxcode/memory/` | Path to persistent memory directory |
 | `MUXCODE_ROLES` | (empty) | Comma-separated extra roles to add to the known roles list |
 | `MUXCODE_SPLIT_LEFT` | `edit api build test review deploy run analyze commit watch` | See Window Layout above — also read by the bus binary for pane targeting |
+| `MUXCODE_DEDUP_WINDOW` | `30` | Dedup window in seconds for duplicate message suppression (set to 0 to disable) |
+| `MUXCODE_INBOX_POLL_TIMEOUT` | `600` | Timeout in seconds for `send --wait` polling |
+| `MUXCODE_LIFECYCLE_LOG_MAX` | `1000` | Max entries per lifecycle log before rotation |
 
 ### Claude model selection
 
@@ -114,7 +117,7 @@ The `config/settings.json` template includes pre-approved permissions for common
 
 | Category | Commands |
 |----------|----------|
-| **MuxCode** | `muxcode-agent-bus`, `muxcode-jira.sh`, `muxcode-confluence.sh`, tmux capture/display |
+| **MuxCode** | `muxcode-agent-bus` (including `atlassian` subcommand for Jira/Confluence), tmux capture/display |
 | **Git (read-only)** | `branch`, `diff`, `log`, `show`, `stash list`, `status` |
 | **Build/Test** | `go build/test/vet`, `pnpm install/build/lint/test`, `npx jest/cdk`, `pytest`, `ruff` |
 | **AWS** | CloudFormation (`describe-stacks`, `list-stacks`), DynamoDB (`describe-table`, `get-item`, `query`, `scan`), EventBridge (`describe-rule`, `list-rules`, `list-targets`), Glue (`get-job`, `get-job-run`, `list-jobs`), Lambda (`get-function`, `invoke`, `list-functions`), CloudWatch Logs (`describe-log-groups`, `filter-log-events`, `get-log-events`, `tail`), S3 (`cp`, `ls`), SNS, SQS, SSM (`get-parameter`), Step Functions (`describe-execution`, `get-execution-history`, `list-executions`, `list-state-machines`, `start-execution`), STS (`get-caller-identity`), CDK (`diff`, `ls`, `synth`) |

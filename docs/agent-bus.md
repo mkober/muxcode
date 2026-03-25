@@ -48,6 +48,8 @@ muxcode-agent-bus send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [
 
 **Pre-commit safeguard:** When sending a commit action (`commit`, `stage`, `push`, `merge`, `rebase`, `tag`) to the commit agent, the bus checks that all other agents (excluding edit, commit, watch) have empty inboxes, are not busy, and have no running background processes. If any agent has pending work, the send is blocked with an error. Use `--force` to bypass.
 
+**Dedup guard:** Duplicate messages (same `from`, `to`, `action`, `type` tuple) within a 30-second window are automatically suppressed. The check and send are performed atomically under a file lock (`dedup.lock`) to prevent TOCTOU races. System actions are never deduped. Configure the window via `MUXCODE_DEDUP_WINDOW` env var (seconds); set to `0` to disable.
+
 Auto-detects sender from `AGENT_ROLE` env var or tmux window name.
 
 **Example:**
@@ -137,15 +139,16 @@ build      Build Config                         2026-02-21 14:27
 Run the unified bus watcher daemon.
 
 ```bash
-muxcode-agent-bus watch [session] [--poll N] [--debounce N]
+muxcode-agent-bus watch [session] [--poll N] [--debounce N] [--monitor]
 ```
 
 - Polls agent inboxes and notifies agents via `tmux display-message` (passive status bar flash) when new messages arrive
 - Monitors the analyze trigger file and routes file-edit events to relevant agents based on file patterns
 - `--poll N` — inbox polling interval in seconds (default: 2)
 - `--debounce N` — trigger file debounce interval in seconds (default: 8)
+- `--monitor` — run as watcher health monitor instead of the watcher itself. Checks the watcher keepalive every 15 seconds; if stale (>30s), kills and relaunches the watcher process. Exits cleanly when the tmux session is gone.
 
-Runs in the `analyze` window left pane.
+Without `--monitor`, runs in the `analyze` window left pane as the primary watcher. With `--monitor`, runs as a companion background process launched by `muxcode.sh`.
 
 #### Trigger file format
 
@@ -1111,9 +1114,9 @@ muxcode-agent-bus skill prompt <role>
 | `git-commit-conventions` | commit, edit | Commit message format and git workflow conventions |
 | `go-testing` | test, build | Go testing patterns and conventions |
 | `code-review-checklist` | review | Code review quality checklist |
-| `jira-pr-comment` | git | Post a comment on a Jira issue when a PR is created. Extracts the Jira key from the branch name (e.g. `DATA-456-*`, `PBP1-4365-*`) and posts PR link + diff stats via `muxcode-jira.sh comment`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
-| `jira-update-description` | git, edit | Read and update a Jira issue description with ADF content. Extracts the Jira key from the request message or branch name. Uses `muxcode-jira.sh read/update`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
-| `confluence-update-page` | git, edit | Read and update Confluence pages with ADF content. Pages identified by page ID, Confluence URL, or space key + title. Supports full replacement, append mode, and CQL search. Uses `muxcode-confluence.sh read/update/search`. Requires `CONFLUENCE_BASE_URL` (falls back to `JIRA_BASE_URL`), `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
+| `jira-pr-comment` | git | Post a comment on a Jira issue when a PR is created. Extracts the Jira key from the branch name (e.g. `DATA-456-*`, `PBP1-4365-*`) and posts PR link + diff stats via `muxcode-agent-bus atlassian jira comment`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
+| `jira-update-description` | git, edit | Read and update a Jira issue description with ADF content. Extracts the Jira key from the request message or branch name. Uses `muxcode-agent-bus atlassian jira read/update`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
+| `confluence-update-page` | git, edit | Read and update Confluence pages with ADF content. Pages identified by page ID, Confluence URL, or space key + title. Supports full replacement, append mode, and CQL search. Uses `muxcode-agent-bus atlassian confluence read/update/search`. Requires `CONFLUENCE_BASE_URL` (falls back to `JIRA_BASE_URL`), `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
 
 ### `muxcode-agent-bus tools`
 
@@ -1204,6 +1207,96 @@ Copies environments and collections from a source directory into `.muxcode/api/`
 muxcode-agent-bus api import examples/api
 ```
 
+### `muxcode-agent-bus hook`
+
+Hook handlers for Claude Code's PreToolUse and PostToolUse events. Each subcommand reads the tool event as JSON from stdin.
+
+```bash
+muxcode-agent-bus hook guard       # PreToolUse: edit agent command guard
+muxcode-agent-bus hook bash        # PostToolUse: build/test/deploy chain triggers
+muxcode-agent-bus hook analyze     # PostToolUse: file-edit trigger writer
+muxcode-agent-bus hook inbox-poll  # PreToolUse: inbox check on tool execution
+```
+
+- `guard` — blocks prohibited commands for the edit agent (build, test, git, deploy, curl). Returns JSON `{"decision":"block","reason":"..."}` or passes through.
+- `bash` — detects build, test, deploy, and git commands from exit codes and command text. Drives the build→test→review chain via `ResolveChain()`. Transitions the workflow state machine. Logs command history with error extraction.
+- `analyze` — writes file-edit events to the analyze trigger file for watcher debounce. Transitions workflow to `editing`.
+- `inbox-poll` — checks the agent's inbox on each tool execution and injects a "You have new messages" notification if messages are pending.
+
+**Chain dedup:** Chain messages use `SendNoCCIfNotDuplicate()` with atomic file locking to prevent duplicate chain triggers within the 30-second dedup window.
+
+**Workflow state guard:** Before firing chains, `triggerChain` checks the current workflow state — if state is already `reviewing`/`reviewed`, test success chain is skipped; if `testing`/`reviewing`/`reviewed`, build success chain is skipped. This prevents the test→review loop where review responses re-triggered the test chain.
+
+Core code: `bus/hook.go` (library), `cmd/hook.go` (CLI dispatcher).
+
+### `muxcode-agent-bus console`
+
+Run a left-pane log console for an agent window.
+
+```bash
+muxcode-agent-bus console <role> [--interval N] [--once]
+```
+
+- `<role>` — the window name (build, test, review, deploy, run, commit, analyze, watch, api)
+- `--interval N` — refresh interval in seconds (default: 2)
+- `--once` — render once and exit (useful for testing)
+
+Each role has a custom renderer showing relevant data: build/test/deploy show command history with exit codes, review shows review outcomes, commit shows git status + recent log, analyze shows recent file edits + workflow state, watch shows agent health + Ollama status, api shows request history. All use Dracula theme colors.
+
+Core code: `bus/console.go` (library with `DefaultConsoleConfigs()` map), `cmd/console.go` (CLI handler).
+
+### `muxcode-agent-bus atlassian`
+
+Jira and Confluence API operations. Replaces the `muxcode-jira.sh` and `muxcode-confluence.sh` wrapper scripts with native Go `net/http` calls, eliminating Claude Code's curl permission prompt issues.
+
+```bash
+muxcode-agent-bus atlassian jira read <ISSUE-KEY>
+muxcode-agent-bus atlassian jira update <ISSUE-KEY> <ADF-JSON-FILE>
+muxcode-agent-bus atlassian jira comment <ISSUE-KEY> <ADF-JSON-FILE>
+muxcode-agent-bus atlassian confluence read <PAGE-ID>
+muxcode-agent-bus atlassian confluence update <PAGE-ID> <ADF-JSON-FILE>
+muxcode-agent-bus atlassian confluence search <SPACE-KEY> <CQL-QUERY>
+```
+
+**Config resolution:** reads credentials from `.muxcode/config` > `~/.config/muxcode/config` > env vars (highest priority). Required vars: `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, `JIRA_API_TOKEN`. For Confluence: `CONFLUENCE_BASE_URL` (falls back to `JIRA_BASE_URL`).
+
+**Input validation:** Jira issue keys must match `[A-Z][A-Z0-9]*-[0-9]+`, Confluence page IDs must be numeric. Invalid inputs are rejected before any API call.
+
+**Output format:** matches the original shell scripts — human-readable with `=== HEADER ===` sections, tab-separated search results, and raw ADF blocks.
+
+Core code: `bus/atlassian.go` (config loading, HTTP client, API handlers, ADF text extraction), `cmd/atlassian.go` (CLI dispatcher).
+
+### `muxcode-agent-bus pii-scrub`
+
+Pipe-through PII and secret scrubber for stdin.
+
+```bash
+echo "user@example.com" | muxcode-agent-bus pii-scrub
+# Output: [EMAIL_REDACTED]
+```
+
+Reads stdin, scrubs PII/secrets using the same regex patterns as the harness executor, writes scrubbed output to stdout. Logs redaction count to stderr when > 0. Used by Claude Code agents in PII-sensitive roles (`api`, `runner`/`run`, `watch`) to pipe tool output through before including in conversation.
+
+Patterns: emails, SSN, credit cards (prefix-anchored), phone numbers (separator-required), AWS access keys, AWS secret keys, JWTs, generic secrets/tokens, dates of birth.
+
+Core code: `bus/scrub.go` (patterns + `ScrubPII()`), `cmd/scrub.go` (CLI handler).
+
+### `muxcode-agent-bus compact`
+
+Trigger conversation compression for an agent.
+
+```bash
+muxcode-agent-bus compact [role]
+```
+
+Polls the agent's tmux pane for idle state (detects `❯` prompt) every second for up to 30 seconds. Once idle, clears residual input and injects `/compact` via `tmux send-keys` to trigger Claude Code's built-in conversation compression. If the agent doesn't become idle within the timeout, exits silently.
+
+- `role` — target role (defaults to `AGENT_ROLE` env var)
+
+This is a fire-and-forget command — run it in the background after saving context via `muxcode-agent-bus session compact "<summary>"`.
+
+Core code: `cmd/compact.go`.
+
 ## Environment Variables
 
 | Variable | Description |
@@ -1214,6 +1307,8 @@ muxcode-agent-bus api import examples/api
 | `MUXCODE_ROLES` | Comma-separated extra roles to add to the known roles list |
 | `MUXCODE_SPLIT_LEFT` | Space-separated windows with agent in pane 1 (defaults: edit api build test review deploy run analyze commit watch) |
 | `MUXCODE_LIFECYCLE_LOG_MAX` | Max entries per lifecycle log before rotation (default: 1000) |
+| `MUXCODE_DEDUP_WINDOW` | Dedup window in seconds for duplicate message suppression (default: 30, set to 0 to disable) |
+| `MUXCODE_INBOX_POLL_TIMEOUT` | Timeout in seconds for `--wait` polling (default: 600) |
 
 ## Message Format
 
@@ -1295,6 +1390,14 @@ tools/muxcode-agent-bus/
 │   ├── agent.go       # Local LLM agentic loop (inbox poll, tool-call loop, history)
 │   ├── api.go         # API testing (environments, collections, history, import)
 │   ├── lifecycle.go   # Persistent lifecycle logging (~/.config/muxcode/logs/)
+│   ├── hook.go        # Hook handlers (guard, bash, analyze, inbox-poll)
+│   ├── console.go     # Left-pane log consoles (per-role renderers, Dracula theme)
+│   ├── dedup.go       # Message dedup guard (30s window, flock-protected atomic check+send)
+│   ├── scrub.go       # PII scrubbing (regex patterns, ScrubPII — mirrored in harness)
+│   ├── workflow.go    # Workflow state machine (edit→build→test→review lifecycle)
+│   ├── health.go      # Ollama health monitoring
+│   ├── agent_health.go # Agent process health monitoring
+│   ├── watcher_health.go # Watcher keepalive monitoring
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization and re-init purge
 ├── cmd/               # Subcommand handlers

@@ -11,7 +11,7 @@ Read the current content of a Confluence page and/or update it with new ADF cont
 
 ### Prerequisites
 
-The `muxcode-confluence.sh` helper script must be installed (included in `make install`). It reads credentials from `.muxcode/config` or `~/.config/muxcode/config`:
+The `muxcode-agent-bus atlassian` subcommand handles Confluence API calls. It reads credentials from `.muxcode/config` or `~/.config/muxcode/config`:
 
 - `CONFLUENCE_BASE_URL` — e.g. `https://your-org.atlassian.net` (falls back to `JIRA_BASE_URL`)
 - `JIRA_USER_EMAIL` — Atlassian account email (shared with Jira)
@@ -45,7 +45,7 @@ Use a three-path approach to find the target page:
      page_title=$(echo "$request_message" | grep -oE 'title[: ]+".+"' | sed 's/title[: ]*"//;s/"$//' | head -1)
 
      if [ -n "$space_key" ] && [ -n "$page_title" ]; then
-       muxcode-confluence.sh search "$space_key" "space=${space_key} AND title=\"${page_title}\""
+       muxcode-agent-bus atlassian confluence search "$space_key" "space=${space_key} AND title=\"${page_title}\""
      fi
    fi
    ```
@@ -57,7 +57,7 @@ If no page ID is found, report to the caller and stop.
 Use the wrapper script to fetch the page:
 
 ```bash
-muxcode-confluence.sh read "$page_id"
+muxcode-agent-bus atlassian confluence read "$page_id"
 ```
 
 This outputs title, space, version info, URL, flattened content text, and raw ADF.
@@ -248,7 +248,7 @@ payload=$(jq -n \
 
 tmpfile=$(mktemp /tmp/confluence-update-XXXXXX.json)
 echo "$payload" > "$tmpfile"
-muxcode-confluence.sh update "$page_id" "$tmpfile"
+muxcode-agent-bus atlassian confluence update "$page_id" "$tmpfile"
 rm -f "$tmpfile"
 ```
 
@@ -273,7 +273,7 @@ merged_blocks=$(jq -n --argjson existing "$existing_blocks" --argjson new_blocks
 Find pages by label, ancestor, or full-text search:
 
 ```bash
-muxcode-confluence.sh search "$space_key" "space=${space_key} AND title=\"${search_title}\""
+muxcode-agent-bus atlassian confluence search "$space_key" "space=${space_key} AND title=\"${search_title}\""
 ```
 
 Common CQL patterns:

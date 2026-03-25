@@ -125,9 +125,14 @@ Test: `cd tools/muxcode-agent-bus && go test ./...`
 | `bus/inspect.go` | `GetAgentStatus()`, `GetAllAgentStatus()`, `ReadLogHistory()`, `ExtractContext()`, `PreCommitCheck()` |
 | `bus/guard.go` | `ReadHistory()`, `DetectCommandLoop()`, `DetectMessageLoop()`, `CheckLoops()`, `CheckAllLoops()` |
 | `bus/compact.go` | `CheckCompaction()`, `CheckRoleCompaction()`, `FormatCompactAlert()`, `FilterNewCompactAlerts()` |
+| `bus/dedup.go` | `IsDuplicateMessage()`, `SendIfNotDuplicate()`, `SendNoCCIfNotDuplicate()`, `DedupWindowSecs()` |
+| `bus/scrub.go` | `ScrubPII()`, `IsPIISensitiveRole()`, PII/secret regex patterns (mirrored in harness) |
+| `bus/hook.go` | `ProcessBashHook()`, `ProcessAnalyzeHook()`, `ProcessGuardHook()`, `ResolveChain()`, `ExpandMessage()` |
+| `bus/console.go` | `DefaultConsoleConfigs()`, `ConsoleConfig`, `RunConsole()`, per-role renderers (Dracula theme) |
 | `bus/profile.go` | `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`, `ChainShouldNotifyAnalyst()` (`NotifyAnalystOn` field) |
 | `bus/search.go` | BM25: `tokenize()`, `stem()`, `buildCorpus()`, `bm25Score()`, `SearchMemoryBM25()`, `SearchMemoryWithOptions()` |
 | `bus/rotation.go` | `NeedsRotation()`, `RotateMemory()`, `PurgeOldArchives()`, `ReadMemoryWithHistory()`, `AllMemoryEntriesWithArchives()`, `ListMemoryRoles()` |
+| `bus/atlassian.go` | `LoadAtlassianConfig()`, `AtlassianConfig`, `JiraRead()`, `JiraUpdate()`, `JiraComment()`, `ConfluenceRead()`, `ConfluenceUpdate()`, `ConfluenceSearch()`, `flattenADF()` |
 | `bus/api.go` | API testing: `Environment`, `Collection`, `Request`, `ApiHistoryEntry` structs, CRUD, `ImportApiDir()`, formatters |
 | `bus/cron.go` | Cron scheduling: structs, parsing, CRUD, execution, formatting |
 | `bus/proc.go` | `StartProc()`, `CheckProcAlive()`, `RefreshProcStatus()`, `StopProc()`, `CleanFinished()` |

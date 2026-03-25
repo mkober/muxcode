@@ -7,7 +7,7 @@ Consolidate 30 shell scripts (5,159 lines) into the existing `muxcode-agent-bus`
 The shell scripts have grown organically alongside the Go bus binary. Key problems:
 - **10 log pollers** (3,301 lines) are 90%+ duplicated code — same JSONL parsing, word-wrap, Dracula colors, poll loop
 - **Hooks** shell out to `jq` with `python3` fallback paths, adding ~40% of their line count for JSON parsing that Go handles natively
-- **PII scrubbing** is implemented twice (Go in `harness/scrub.go`, bash in `muxcode-pii-scrub.sh`)
+- **PII scrubbing** was implemented twice (Go in `harness/scrub.go`, bash in `muxcode-pii-scrub.sh`) — now both in Go (`bus/scrub.go` + `harness/scrub.go`, kept in sync)
 - **Atlassian wrappers** exist solely to work around Claude Code's curl permission prompt issues — Go's `net/http` eliminates this
 
 The Go binary already has 27 subcommands, a TUI with Dracula colors, JSONL history handling, and idle detection. Most shell logic maps directly to existing bus library functions.
@@ -202,8 +202,9 @@ Polls tmux for idle state, sends `/compact` via tmux send-keys. Idle detection (
 
 ---
 
-## Phase 4: Atlassian wrappers → `atlassian` subcommand
+## Phase 4: Atlassian wrappers → `atlassian` subcommand ✅
 
+**Status:** Complete
 **Scripts:** 2 scripts, 260 lines → `muxcode-agent-bus atlassian <jira|confluence> <action>`
 
 ### New files

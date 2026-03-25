@@ -11,6 +11,21 @@ import (
 	"github.com/mkober/muxcode/tools/muxcode-agent-bus/bus"
 )
 
+// printWithLineClears prints text with \033[K (clear-to-EOL) appended after
+// each line. This prevents stale characters from lingering when a line becomes
+// shorter between refreshes (e.g. timestamp changes, entry count changes).
+func printWithLineClears(text string) {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if i < len(lines)-1 {
+			fmt.Print(line + "\033[K\n")
+		} else if line != "" {
+			// Last segment without trailing newline
+			fmt.Print(line + "\033[K")
+		}
+	}
+}
+
 // Console handles the "muxcode-agent-bus console" subcommand.
 // Usage: muxcode-agent-bus console <role> [--interval N] [--once]
 //
@@ -71,6 +86,9 @@ func Console(args []string) {
 
 	session := bus.BusSession()
 
+	// Initial clear to remove shell startup content
+	fmt.Print("\033[2J\033[H")
+
 	for {
 		width := bus.TerminalWidth()
 
@@ -89,13 +107,17 @@ func Console(args []string) {
 		// Build body
 		body := bus.RenderConsole(role, session, width)
 
-		// Clear screen and render
-		fmt.Print("\033[2J\033[H")
-		fmt.Print(header)
+		// Move cursor to home and overwrite in place (no full clear).
+		// This keeps the header visually fixed — no flicker between refreshes.
+		// Each line gets \033[K (clear-to-EOL) to remove stale characters when
+		// content shrinks. \033[J after the body clears any stale trailing lines.
+		fmt.Print("\033[H")
+		printWithLineClears(header)
 		if wfLine != "" {
-			fmt.Print(wfLine)
+			printWithLineClears(wfLine)
 		}
-		fmt.Print(body)
+		printWithLineClears(body)
+		fmt.Print("\033[J")
 
 		if once {
 			return
