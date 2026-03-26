@@ -316,6 +316,14 @@ func notifyIdleSendKeys(session, role string) error {
 		return nil
 	}
 
+	// Re-check cooldown under lock. The caller checks IsSendKeysCoolingDown()
+	// before entering this function, but two concurrent callers can both pass
+	// that check before either writes the marker. This second check inside the
+	// lock prevents the "You have new messagesYou have new messages" race.
+	if IsSendKeysCoolingDown(session, role) {
+		return nil
+	}
+
 	markNotified(session, role)
 	ClearPassiveNotify(session, role)
 	markSendKeys(session, role)

@@ -158,7 +158,7 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 		return nil
 	}
 
-	now := messages[len(messages)-1].TS
+	now := time.Now().Unix()
 
 	// Filter to request messages within the time window.
 	// Responses and events repeat naturally across chain cycles and are not loops.
