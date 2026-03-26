@@ -244,20 +244,18 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	TmuxSetHook(session, "session-closed",
 		fmt.Sprintf("run-shell 'muxcode cleanup %s'", session))
 
-	// Start background window resize (1s delay)
-	go func() {
-		time.Sleep(1 * time.Second)
-		indices, err := TmuxListWindowIndices(session)
-		if err != nil {
-			return
-		}
-		for _, idx := range indices {
-			TmuxResizeWindow(session + ":" + idx)
-		}
-	}()
+	// Start background window resize as detached process (survives syscall.Exec)
+	startDetachedProcess("muxcode", "launch", "--resize", session)
 
-	// Start auto-accept in background
-	go AutoAccept(session, cfg.Windows)
+	// Start auto-accept as a detached process (survives syscall.Exec)
+	autoAcceptArgs := append([]string{"launch", "--auto-accept", session}, cfg.Windows...)
+	autoAcceptPID, err := startDetachedProcess("muxcode", autoAcceptArgs...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to start auto-accept: %v\n", err)
+	} else {
+		LogLifecycle(session, "info", "launcher", "auto-accept-start",
+			fmt.Sprintf("PID: %d", autoAcceptPID))
+	}
 
 	LogLifecycle(session, "info", "launcher", "session-ready", "")
 
@@ -418,6 +416,48 @@ func EnsureOllama() {
 	fmt.Fprintf(os.Stderr, "  Warning: Ollama did not become ready in 10s (agents will fall back to Claude Code)\n")
 }
 
+// ResizeWindows resizes all windows in a session after a 1s delay.
+// Run as a detached process so it survives the parent's syscall.Exec into tmux.
+func ResizeWindows(session string) {
+	time.Sleep(1 * time.Second)
+	indices, err := TmuxListWindowIndices(session)
+	if err != nil {
+		return
+	}
+	for _, idx := range indices {
+		TmuxResizeWindow(session + ":" + idx)
+	}
+}
+
+// PaneState represents the detected state of an agent pane.
+type PaneState int
+
+const (
+	PaneNotReady     PaneState = iota // Agent still loading
+	PaneTrustPrompt                   // "trust this folder" prompt
+	PaneBypassPrompt                  // "Bypass Permissions" prompt
+	PaneIdle                          // Agent at ❯ prompt (ready)
+)
+
+// ClassifyPane determines the state of an agent pane from its captured content.
+func ClassifyPane(content string) PaneState {
+	if strings.Contains(content, "trust this folder") {
+		return PaneTrustPrompt
+	}
+	if strings.Contains(content, "Bypass Permissions") {
+		return PaneBypassPrompt
+	}
+	if strings.Contains(content, "❯") {
+		return PaneIdle
+	}
+	return PaneNotReady
+}
+
+// NeedsWakeUp returns true if the window should receive a startup wake-up message.
+func NeedsWakeUp(window string) bool {
+	return window == "edit" || window == "analyze"
+}
+
 // AutoAccept polls agent panes and dismisses startup prompts.
 func AutoAccept(session string, windows []string) {
 	accepted := make(map[string]bool)
@@ -437,25 +477,28 @@ func AutoAccept(session string, windows []string) {
 				continue
 			}
 
-			if strings.Contains(content, "trust this folder") {
+			switch ClassifyPane(content) {
+			case PaneTrustPrompt:
 				// Trust prompt — default selection is correct, just confirm
 				TmuxSendEnter(pane)
 				LogLifecycle(session, "info", "auto-accept", "trust-prompt", win)
 				allDone = false // bypass prompt may follow
-			} else if strings.Contains(content, "Bypass Permissions") {
+
+			case PaneBypassPrompt:
 				// Bypass permissions — move to "Yes, I accept" and confirm
 				TmuxSendKeys(pane, "Down")
 				time.Sleep(200 * time.Millisecond)
 				TmuxSendEnter(pane)
 				LogLifecycle(session, "info", "auto-accept", "bypass-prompt", win)
 				accepted[win] = true
-			} else if strings.Contains(content, "❯") {
+
+			case PaneIdle:
 				// Agent at idle prompt — past all startup prompts
 				LogLifecycle(session, "info", "auto-accept", "agent-ready", win)
 				accepted[win] = true
 
 				// Wake edit and analyze agents
-				if (win == "edit" || win == "analyze") && !woken[win] {
+				if NeedsWakeUp(win) && !woken[win] {
 					woken[win] = true
 					time.Sleep(1 * time.Second) // stabilization delay
 
@@ -485,7 +528,8 @@ func AutoAccept(session string, windows []string) {
 						LogLifecycle(session, "info", "auto-accept", "startup-wake-full", win)
 					}
 				}
-			} else {
+
+			default:
 				allDone = false
 			}
 		}
@@ -613,41 +657,59 @@ const (
 	pwrThinRight = "\ue0b3" //
 )
 
+// TransformStatusRight applies Dracula theme transformations to a tmux status-right string.
+func TransformStatusRight(sr string) string {
+	// Remove powerline arrows
+	sr = strings.ReplaceAll(sr, pwrThinRight, "")
+	sr = strings.ReplaceAll(sr, pwrRight, "")
+	// Strip green arrow color block and unused music segment
+	sr = strings.ReplaceAll(sr, "#[fg=#00ff00, bg=#282a36] ", "")
+	sr = strings.ReplaceAll(sr, "#[fg=#282a36, bg=#00ff00] #(~/dotfiles/tmux_scripts/music.sh) ", "")
+	// Restyle date: tab-color bg
+	sr = strings.ReplaceAll(sr, "#[fg=#6272a4, bg=#282a36]",
+		"#[fg=#44475a, bg=#282a36]"+pwrRight+"#[fg=#f8f8f2, bg=#44475a]")
+	// Restyle time: comment-color bg
+	sr = strings.ReplaceAll(sr, "#[fg=#50fa7b]",
+		"#[fg=#6272a4, bg=#44475a]"+pwrRight+"#[fg=#f8f8f2, bg=#6272a4]")
+	// Add padding around date and time
+	sr = strings.Replace(sr, "%b", " %b", 1)
+	sr = strings.Replace(sr, "'%y", "'%y ", 1)
+	sr = strings.Replace(sr, "%H:%M", " %H:%M:%S ", 1)
+	return sr
+}
+
+// TransformStatusLeft replaces the window icon with a hamburger menu icon.
+func TransformStatusLeft(sl string) string {
+	return strings.Replace(sl, "❐", "☰", 1)
+}
+
+// WindowStatusFormat returns the Dracula-themed window-status-format string.
+func WindowStatusFormat() string {
+	cap := "awk '{print toupper(substr($0,1,1)) substr($0,2)}'"
+	return "#[fg=#282a36,bg=#44475a,noitalics]" + pwrLeft + "#[fg=#f8f8f2,bg=#44475a] F#I#[fg=#f8f8f2, bg=#44475a] #(echo #W | " + cap + ") #[fg=#44475a, bg=#282a36]" + pwrLeft
+}
+
+// WindowStatusCurrentFormat returns the Dracula-themed window-status-current-format string.
+func WindowStatusCurrentFormat() string {
+	cap := "awk '{print toupper(substr($0,1,1)) substr($0,2)}'"
+	return "#[fg=#282a36, bg=#00ff00]" + pwrLeft + "#[fg=#44475a, bg=#00ff00] F#I*#[fg=#44475a, bg=#00ff00, bold] #(echo #W | " + cap + ") #[fg=#00ff00, bg=#282a36]" + pwrLeft
+}
+
 // ConfigureStatusBar configures the tmux status bar with Dracula theme.
 func ConfigureStatusBar(session string) {
 	// --- status-right ---
 	sr, err := TmuxShowOption("-gv", "status-right")
 	if err == nil && sr != "" {
-		// Remove powerline arrows
-		sr = strings.ReplaceAll(sr, pwrThinRight, "")
-		sr = strings.ReplaceAll(sr, pwrRight, "")
-		// Strip green arrow color block and unused music segment
-		sr = strings.ReplaceAll(sr, "#[fg=#00ff00, bg=#282a36] ", "")
-		sr = strings.ReplaceAll(sr, "#[fg=#282a36, bg=#00ff00] #(~/dotfiles/tmux_scripts/music.sh) ", "")
-		// Restyle date: tab-color bg
-		sr = strings.ReplaceAll(sr, "#[fg=#6272a4, bg=#282a36]",
-			"#[fg=#44475a, bg=#282a36]"+pwrRight+"#[fg=#f8f8f2, bg=#44475a]")
-		// Restyle time: comment-color bg
-		sr = strings.ReplaceAll(sr, "#[fg=#50fa7b]",
-			"#[fg=#6272a4, bg=#44475a]"+pwrRight+"#[fg=#f8f8f2, bg=#6272a4]")
-		// Add padding around date and time
-		sr = strings.Replace(sr, "%b", " %b", 1)
-		sr = strings.Replace(sr, "'%y", "'%y ", 1)
-		sr = strings.Replace(sr, "%H:%M", " %H:%M:%S ", 1)
-		TmuxSetOption(session, "status-right", sr)
+		TmuxSetOption(session, "status-right", TransformStatusRight(sr))
 	}
 
 	// --- window-status-format ---
-	cap := "awk '{print toupper(substr($0,1,1)) substr($0,2)}'"
-	TmuxSetGlobalOption("window-status-format",
-		"#[fg=#282a36,bg=#44475a,noitalics]"+pwrLeft+"#[fg=#f8f8f2,bg=#44475a] F#I#[fg=#f8f8f2, bg=#44475a] #(echo #W | "+cap+") #[fg=#44475a, bg=#282a36]"+pwrLeft)
-	TmuxSetGlobalOption("window-status-current-format",
-		"#[fg=#282a36, bg=#00ff00]"+pwrLeft+"#[fg=#44475a, bg=#00ff00] F#I*#[fg=#44475a, bg=#00ff00, bold] #(echo #W | "+cap+") #[fg=#00ff00, bg=#282a36]"+pwrLeft)
+	TmuxSetGlobalOption("window-status-format", WindowStatusFormat())
+	TmuxSetGlobalOption("window-status-current-format", WindowStatusCurrentFormat())
 
 	// --- status-left hamburger ---
 	sl, err := TmuxShowOption("-gv", "status-left")
 	if err == nil && sl != "" {
-		sl = strings.Replace(sl, "❐", "☰", 1)
-		TmuxSetOption(session, "status-left", sl)
+		TmuxSetOption(session, "status-left", TransformStatusLeft(sl))
 	}
 }

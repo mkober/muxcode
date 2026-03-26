@@ -2,6 +2,7 @@ package bus
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -314,6 +315,201 @@ func TestPickProjectFallback_InvalidSelection(t *testing.T) {
 	idx := parseInt("abc", 0) - 1
 	if idx >= 0 && idx < len(projects) {
 		t.Error("expected invalid index for non-numeric input")
+	}
+}
+
+func TestTransformStatusRight_RemovesPowerlineArrows(t *testing.T) {
+	// Input with thin-right and right powerline arrows, no restyle triggers
+	input := "prefix" + pwrThinRight + "middle" + pwrRight + "suffix"
+	got := TransformStatusRight(input)
+	if strings.Contains(got, pwrThinRight) {
+		t.Error("expected thin-right powerline arrow to be removed")
+	}
+	// pwrRight is removed from original input (no restyle color triggers present)
+	if strings.Contains(got, pwrRight) {
+		t.Error("expected right powerline arrow to be removed")
+	}
+	if got != "prefixmiddlesuffix" {
+		t.Errorf("expected 'prefixmiddlesuffix', got %q", got)
+	}
+}
+
+func TestTransformStatusRight_RestyleDate(t *testing.T) {
+	input := "#[fg=#6272a4, bg=#282a36] %b %d '%y"
+	got := TransformStatusRight(input)
+	// Date should get tab-color bg restyle
+	if !strings.Contains(got, "#[fg=#44475a, bg=#282a36]") {
+		t.Error("expected tab-color bg in date restyle")
+	}
+	if !strings.Contains(got, "#[fg=#f8f8f2, bg=#44475a]") {
+		t.Error("expected f8f8f2 fg in date restyle")
+	}
+	// Padding around date
+	if !strings.Contains(got, " %b") {
+		t.Error("expected space before date month format")
+	}
+	if !strings.Contains(got, "'%y ") {
+		t.Error("expected space after year format")
+	}
+}
+
+func TestTransformStatusRight_RestyleTime(t *testing.T) {
+	input := "#[fg=#50fa7b] %H:%M"
+	got := TransformStatusRight(input)
+	// Time should get comment-color bg restyle
+	if !strings.Contains(got, "#[fg=#6272a4, bg=#44475a]") {
+		t.Error("expected comment-color bg in time restyle")
+	}
+	// %H:%M replaced with padded %H:%M:%S
+	if !strings.Contains(got, " %H:%M:%S ") {
+		t.Error("expected padded %H:%M:%S")
+	}
+}
+
+func TestTransformStatusRight_StripsMusicSegment(t *testing.T) {
+	input := "before #[fg=#282a36, bg=#00ff00] #(~/dotfiles/tmux_scripts/music.sh) after"
+	got := TransformStatusRight(input)
+	if strings.Contains(got, "music.sh") {
+		t.Error("expected music segment to be stripped")
+	}
+}
+
+func TestTransformStatusLeft_HamburgerIcon(t *testing.T) {
+	input := "#[fg=#f8f8f2]❐ #S"
+	got := TransformStatusLeft(input)
+	if strings.Contains(got, "❐") {
+		t.Error("expected ❐ to be replaced")
+	}
+	if !strings.Contains(got, "☰") {
+		t.Error("expected ☰ hamburger icon")
+	}
+	if !strings.Contains(got, "#S") {
+		t.Error("expected session name placeholder preserved")
+	}
+}
+
+func TestTransformStatusLeft_NoIcon(t *testing.T) {
+	input := "no icon here"
+	got := TransformStatusLeft(input)
+	if got != input {
+		t.Errorf("expected unchanged string, got %q", got)
+	}
+}
+
+func TestWindowStatusFormat_ContainsDraculaColors(t *testing.T) {
+	got := WindowStatusFormat()
+	if !strings.Contains(got, "#282a36") {
+		t.Error("expected Dracula background color")
+	}
+	if !strings.Contains(got, "#44475a") {
+		t.Error("expected Dracula current-line color")
+	}
+	if !strings.Contains(got, "#f8f8f2") {
+		t.Error("expected Dracula foreground color")
+	}
+	if !strings.Contains(got, pwrLeft) {
+		t.Error("expected powerline left arrow")
+	}
+	if !strings.Contains(got, "toupper") {
+		t.Error("expected awk toupper for capitalization")
+	}
+}
+
+func TestWindowStatusCurrentFormat_ContainsGreenHighlight(t *testing.T) {
+	got := WindowStatusCurrentFormat()
+	if !strings.Contains(got, "#00ff00") {
+		t.Error("expected green highlight for current window")
+	}
+	if !strings.Contains(got, "bold") {
+		t.Error("expected bold for current window")
+	}
+	if !strings.Contains(got, "F#I*") {
+		t.Error("expected F#I* (function key + asterisk) for current window")
+	}
+}
+
+func TestClassifyPane_TrustPrompt(t *testing.T) {
+	content := `Welcome to Claude Code!
+
+Do you trust this folder and want to proceed?
+  > Yes, I trust this folder
+    No, exit`
+	if got := ClassifyPane(content); got != PaneTrustPrompt {
+		t.Errorf("expected PaneTrustPrompt, got %d", got)
+	}
+}
+
+func TestClassifyPane_BypassPrompt(t *testing.T) {
+	content := `Bypass Permissions mode lets Claude run commands without asking.
+This can be dangerous. Do you accept the risk?
+  > No, keep safe mode
+    Yes, I accept`
+	if got := ClassifyPane(content); got != PaneBypassPrompt {
+		t.Errorf("expected PaneBypassPrompt, got %d", got)
+	}
+}
+
+func TestClassifyPane_Idle(t *testing.T) {
+	content := `Claude Code v1.2.3
+
+/home/user/project
+
+❯`
+	if got := ClassifyPane(content); got != PaneIdle {
+		t.Errorf("expected PaneIdle, got %d", got)
+	}
+}
+
+func TestClassifyPane_NotReady(t *testing.T) {
+	content := `Loading Claude Code...
+Initializing agent...`
+	if got := ClassifyPane(content); got != PaneNotReady {
+		t.Errorf("expected PaneNotReady, got %d", got)
+	}
+}
+
+func TestClassifyPane_Empty(t *testing.T) {
+	if got := ClassifyPane(""); got != PaneNotReady {
+		t.Errorf("expected PaneNotReady for empty, got %d", got)
+	}
+}
+
+func TestClassifyPane_TrustTakesPrecedence(t *testing.T) {
+	// If both trust and ❯ appear (unlikely but defensive), trust wins
+	content := "trust this folder\n❯"
+	if got := ClassifyPane(content); got != PaneTrustPrompt {
+		t.Errorf("expected PaneTrustPrompt to take precedence, got %d", got)
+	}
+}
+
+func TestClassifyPane_BypassTakesPrecedence(t *testing.T) {
+	// Bypass before idle check
+	content := "Bypass Permissions\n❯"
+	if got := ClassifyPane(content); got != PaneBypassPrompt {
+		t.Errorf("expected PaneBypassPrompt to take precedence, got %d", got)
+	}
+}
+
+func TestNeedsWakeUp(t *testing.T) {
+	tests := []struct {
+		window string
+		want   bool
+	}{
+		{"edit", true},
+		{"analyze", true},
+		{"build", false},
+		{"test", false},
+		{"review", false},
+		{"commit", false},
+		{"deploy", false},
+		{"run", false},
+		{"watch", false},
+		{"api", false},
+	}
+	for _, tt := range tests {
+		if got := NeedsWakeUp(tt.window); got != tt.want {
+			t.Errorf("NeedsWakeUp(%q) = %v, want %v", tt.window, got, tt.want)
+		}
 	}
 }
 

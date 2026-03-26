@@ -12,6 +12,10 @@ import (
 // Override in tests to capture args without invoking tmux.
 var tmuxRunner = defaultTmuxRun
 
+// tmuxQuietRunner executes tmux commands with stderr suppressed.
+// Override in tests to capture args without invoking tmux.
+var tmuxQuietRunner = defaultTmuxRunQuiet
+
 // tmuxOutputRunner is the function used to execute tmux commands and capture output.
 var tmuxOutputRunner = defaultTmuxOutput
 
@@ -19,6 +23,13 @@ func defaultTmuxRun(args ...string) error {
 	cmd := exec.Command("tmux", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func defaultTmuxRunQuiet(args ...string) error {
+	cmd := exec.Command("tmux", args...)
+	cmd.Stdout = os.Stdout
+	// stderr intentionally not set — discarded to suppress "no server running" noise
 	return cmd.Run()
 }
 
@@ -32,14 +43,21 @@ func TmuxRun(args ...string) error {
 	return tmuxRunner(args...)
 }
 
+// TmuxRunQuiet executes a tmux command with stderr suppressed.
+// Use for cleanup commands that are expected to fail (e.g. no server running).
+func TmuxRunQuiet(args ...string) error {
+	return tmuxQuietRunner(args...)
+}
+
 // TmuxOutput executes a tmux command and returns its stdout.
 func TmuxOutput(args ...string) (string, error) {
 	return tmuxOutputRunner(args...)
 }
 
 // TmuxKillSession kills a tmux session by name, ignoring errors.
+// Uses TmuxRunQuiet to suppress "no server running" stderr noise.
 func TmuxKillSession(session string) error {
-	return TmuxRun("kill-session", "-t", session)
+	return TmuxRunQuiet("kill-session", "-t", session)
 }
 
 // TmuxNewSession creates a new detached tmux session.
@@ -104,8 +122,9 @@ func TmuxSetHook(session, hook, cmd string) error {
 }
 
 // TmuxUnsetGlobalHook unsets a global tmux hook.
+// Uses TmuxRunQuiet to suppress "no server running" stderr noise.
 func TmuxUnsetGlobalHook(hook string) error {
-	return TmuxRun("set-hook", "-gu", hook)
+	return TmuxRunQuiet("set-hook", "-gu", hook)
 }
 
 // TmuxCapturePaneLines captures the last N lines from a tmux pane.

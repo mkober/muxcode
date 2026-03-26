@@ -17,7 +17,24 @@ import (
 //	muxcode <path> <name>            # launch with project path and session name
 //	muxcode launch                   # explicit subcommand
 //	muxcode launch <path> [<name>]   # explicit with args
+//	muxcode launch --auto-accept <session> <win1> <win2> ...  # internal: dismiss startup prompts
 func RunLauncher(args []string) {
+	// Handle internal flags (launched as detached processes by LaunchSession)
+	if len(args) >= 2 && args[0] == "--auto-accept" {
+		session := args[1]
+		windows := args[2:]
+		bus.AutoAccept(session, windows)
+		return
+	}
+	if len(args) >= 1 && args[0] == "--resize" {
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: muxcode launch --resize <session>")
+			os.Exit(1)
+		}
+		bus.ResizeWindows(args[1])
+		return
+	}
+
 	// Check tmux dependency
 	if _, err := exec.LookPath("tmux"); err != nil {
 		fmt.Fprintln(os.Stderr, "Error: tmux is required")

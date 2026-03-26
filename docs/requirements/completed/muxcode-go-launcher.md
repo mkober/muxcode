@@ -324,9 +324,9 @@ func PickProject(projects []string) (string, error)
 
 ---
 
-## Phase 3: Status bar customization
+## Phase 3: Status bar customization ✅
 
-Port the Dracula-themed status bar configuration.
+**Completed.** Dracula-themed status bar configuration implemented as part of Phase 1. Refactored into testable pure functions (`TransformStatusRight`, `TransformStatusLeft`, `WindowStatusFormat`, `WindowStatusCurrentFormat`) with 8 unit tests added.
 
 ### 3.1 Status-right modifications
 
@@ -365,9 +365,19 @@ Replace `❐` with `☰` in `status-left` using `strings.Replace`.
 
 ---
 
-## Phase 4: Auto-accept
+## Phase 4: Auto-accept ✅
 
-Port the background auto-accept/wake-up loop that dismisses Claude Code startup prompts.
+**Completed.** Ported auto-accept as a detached process that survives the parent's `syscall.Exec` into tmux. Also fixed window resize (same goroutine-vs-exec issue). Extracted `ClassifyPane()` and `NeedsWakeUp()` as testable pure functions with 10 unit tests.
+
+### What changed
+
+| Area | Detail |
+|------|--------|
+| `cmd/launcher.go` | Added `--auto-accept` and `--resize` internal flags — when passed, runs the corresponding function directly and exits |
+| `bus/launcher.go` | `AutoAccept` refactored: `ClassifyPane()` (pure function, 4 states), `NeedsWakeUp()` (pure function), `ResizeWindows()` (extracted from goroutine). Both goroutines replaced with `startDetachedProcess()` calls. Lifecycle logging for auto-accept-start PID. |
+| `bus/launcher_test.go` | 10 new tests: `ClassifyPane` (7 cases: trust, bypass, idle, not-ready, empty, trust-precedence, bypass-precedence), `NeedsWakeUp` (10 window roles) |
+
+### Original spec (preserved for reference)
 
 ### 4.1 Approach
 
@@ -481,14 +491,14 @@ TmuxSendEnter(pane)
 | ~~8~~ | ~~1~~ | ~~`bus/launcher_test.go` — unit tests~~ | ~~259~~ |
 | ~~9~~ | ~~1~~ | ~~Full binary rename: agents, skills, docs, configs, scripts (~900 replacements)~~ | ~~done~~ |
 | ~~10~~ | ~~2~~ | ~~Project scanner + fzf picker in `bus/launcher.go`~~ | ~~done~~ |
-| 11 | 3 | Status bar customization in `bus/launcher.go` | ~80 |
-| 12 | 4 | Auto-accept loop + `--auto-accept` flag | ~130 |
+| ~~11~~ | ~~3~~ | ~~Status bar customization in `bus/launcher.go`~~ | ~~done~~ |
+| ~~12~~ | ~~4~~ | ~~Auto-accept loop + `--auto-accept` flag + `--resize` flag~~ | ~~done~~ |
 | 13 | — | Docs: update CLAUDE.md, architecture.md, shell-to-go-migration.md | ~100 |
 
 **Phase 0:** ✅ Complete — Go module directory renamed, internal Go refs updated, Makefile + .gitignore updated
 **Phase 1:** ✅ Complete — 1,381 lines of new Go code, ~900 string replacements, Go binary is `muxcode`, `muxcode.sh` retired
 **Phase 2:** ✅ Complete — `ScanProjects()`, `PickProject()`, `pickProjectFallback()` implemented in launcher.go, 6 unit tests added
-**Phase 3-4 remaining:** ~210 lines of new Go code
+**Phase 4:** ✅ Complete — auto-accept + resize as detached processes, 10 new tests
 
 ### Verification cadence
 
@@ -525,9 +535,9 @@ After each phase is complete, rebuild and restart muxcode to verify before commi
 - [x] All 10 standard windows created with correct pane layout
 - [x] Console views start in left panes for split-left windows
 - [x] Agents launch in right panes with correct roles
-- [ ] Status bar shows Dracula theme with capitalized window names and hamburger icon
-- [ ] Auto-accept handles trust and bypass prompts
-- [ ] Edit and analyze agents receive startup wake-up
+- [x] Status bar shows Dracula theme with capitalized window names and hamburger icon
+- [x] Auto-accept handles trust and bypass prompts
+- [x] Edit and analyze agents receive startup wake-up
 - [x] Watcher and monitor processes start in background and survive session attach
 - [x] Cleanup hook registered and fires on session close
 - [x] Interactive picker works from inside and outside tmux

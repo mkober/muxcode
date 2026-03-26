@@ -24,11 +24,14 @@ func setupTmuxCapture(t *testing.T) *capturedArgs {
 	t.Helper()
 	cap := &capturedArgs{}
 	origRun := tmuxRunner
+	origQuiet := tmuxQuietRunner
 	origOutput := tmuxOutputRunner
 	tmuxRunner = cap.run
+	tmuxQuietRunner = cap.run
 	tmuxOutputRunner = cap.output
 	t.Cleanup(func() {
 		tmuxRunner = origRun
+		tmuxQuietRunner = origQuiet
 		tmuxOutputRunner = origOutput
 	})
 	return cap
