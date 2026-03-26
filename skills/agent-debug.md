@@ -52,7 +52,7 @@ Windows with split panes have a log view in pane 0 (left):
 tmux capture-pane -t "${BUS_SESSION}:build.0" -p -S -30 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
 ```
 
-Split-left windows: edit, build, test, review, deploy, analyze, commit, watch, api.
+Split-left windows: edit, build, test, review, deploy, analyze, commit, watch.
 
 ### Check inbox and message status
 

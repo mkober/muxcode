@@ -644,19 +644,20 @@ func TestGetAutoCC_Custom(t *testing.T) {
 	}
 }
 
-func TestCheckSendPolicy_NoDenyByDefault(t *testing.T) {
+func TestCheckSendPolicy_DenyByDefault(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
-	// All agents report to edit — no inter-agent send denies needed
+	// build → test denied (hook-driven chain handles this)
 	msg := CheckSendPolicy("build", "test")
-	if msg != "" {
-		t.Errorf("expected no deny for build → test, got %q", msg)
+	if msg == "" {
+		t.Error("expected deny for build → test")
 	}
 
+	// test → review denied (hook-driven chain handles this)
 	msg = CheckSendPolicy("test", "review")
-	if msg != "" {
-		t.Errorf("expected no deny for test → review, got %q", msg)
+	if msg == "" {
+		t.Error("expected deny for test → review")
 	}
 }
 

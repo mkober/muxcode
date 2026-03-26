@@ -47,12 +47,13 @@ type ConsoleEntry struct {
 	Output      string          `json:"output"`
 	Errors      string          `json:"errors"`
 	// API-specific fields
-	Method     string `json:"method"`
-	URL        string `json:"url"`
-	Status     int    `json:"status"`
-	DurationMS int    `json:"duration_ms"`
-	Collection string `json:"collection"`
-	Request    string `json:"request"`
+	Method       string `json:"method"`
+	URL          string `json:"url"`
+	Status       int    `json:"status"`
+	DurationMS   int    `json:"duration_ms"`
+	Collection   string `json:"collection"`
+	Request      string `json:"request"`
+	ResponseBody string `json:"response_body"`
 	// Watch/analyze fields
 	Message string `json:"message"`
 	Action  string `json:"action"`
@@ -1222,6 +1223,34 @@ func renderAPI(cfg *ConsoleConfig, session string, width int) string {
 		}
 	}
 	b.WriteString("\n")
+
+	// Last request detail — show endpoint and response body
+	last := entries[len(entries)-1]
+	if last.ResponseBody != "" {
+		methodColor := httpMethodColor(last.Method)
+		statusColor := httpStatusColor(last.Status)
+		b.WriteString(fmt.Sprintf("%s%slast response%s\n", Pad, ColorCyan, ColorReset))
+		b.WriteString(fmt.Sprintf("%s%s%s%s %s%s%d%s %s%s%s\n",
+			ContPad, methodColor, last.Method, ColorReset,
+			statusColor, "", last.Status, ColorReset,
+			ColorDim, last.URL, ColorReset))
+
+		// Response body (word-wrapped, capped at 20 lines for the console)
+		maxLines := 20
+		lines := 0
+		for _, bodyLine := range strings.Split(last.ResponseBody, "\n") {
+			for _, wline := range WordWrap(bodyLine, ecw) {
+				b.WriteString(fmt.Sprintf("%s%s%s%s\n", EntryPad, ColorDim, wline, ColorReset))
+				lines++
+				if lines >= maxLines {
+					b.WriteString(fmt.Sprintf("%s%s... (truncated)%s\n", EntryPad, ColorDim, ColorReset))
+					goto doneBody
+				}
+			}
+		}
+	doneBody:
+		b.WriteString("\n")
+	}
 
 	// Average response time
 	totalDur := 0

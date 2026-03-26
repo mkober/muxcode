@@ -45,6 +45,20 @@ func notifiedSizePath(session, role string) string {
 // This is a defense-in-depth against rapid-fire duplicates if file locking fails.
 const notifyCooldown = 2 * time.Second
 
+// sendKeysCooldown is the minimum interval between send-keys notifications for
+// the same agent. After delivering a send-keys wake-up, further send-keys are
+// suppressed for this duration — falling back to display-message instead.
+//
+// This prevents the inter-tool-call race: the ❯ prompt appears briefly between
+// consecutive tool calls (~100-200ms), and IsAgentIdle() fires send-keys into
+// an agent that's about to start its next tool execution. Claude Code interprets
+// the injected text as user input and interrupts the running tool.
+//
+// 10 seconds covers the typical tool-call chain (inbox read → execute → reply →
+// inbox peek = 3-8s). The watcher's passive-retry mechanism re-sends via
+// send-keys once the agent is truly idle and the cooldown has expired.
+const sendKeysCooldown = 10 * time.Second
+
 // lockNotify acquires a per-role file lock for notification deduplication.
 // Returns an unlock function. If lock acquisition fails, returns a no-op
 // (graceful degradation — old behavior without locking).
@@ -149,6 +163,27 @@ func IsWaiting(session, role string) bool {
 		return false
 	}
 	return true
+}
+
+// IsSendKeysCoolingDown returns true if a send-keys notification was recently
+// delivered to this role (within sendKeysCooldown window). During cooldown,
+// Notify falls back to display-message to avoid interrupting tool execution.
+func IsSendKeysCoolingDown(session, role string) bool {
+	data, err := os.ReadFile(SendKeysMarkerPath(session, role))
+	if err != nil {
+		return false
+	}
+	ts, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return false
+	}
+	return time.Since(time.Unix(ts, 0)) < sendKeysCooldown
+}
+
+// markSendKeys records the current time as the last send-keys delivery for a role.
+func markSendKeys(session, role string) {
+	_ = os.WriteFile(SendKeysMarkerPath(session, role),
+		[]byte(strconv.FormatInt(time.Now().Unix(), 10)), 0644)
 }
 
 // SetPassiveNotify creates a marker indicating the last notification for a role
@@ -283,6 +318,7 @@ func notifyIdleSendKeys(session, role string) error {
 
 	markNotified(session, role)
 	ClearPassiveNotify(session, role)
+	markSendKeys(session, role)
 	return notifySendKeys(session, role)
 }
 
@@ -332,7 +368,13 @@ func Notify(session, role string) error {
 	// and necessary — display-message is only visible to the human and
 	// Claude Code never sees it, so responses go unnoticed after --wait
 	// times out.
-	if IsAgentIdle(session, role) {
+	//
+	// Send-keys cooldown: after delivering send-keys, suppress further
+	// send-keys for sendKeysCooldown to prevent the inter-tool-call race.
+	// The ❯ prompt appears briefly between tool calls (~100-200ms), and
+	// IsAgentIdle() would fire send-keys into an agent about to start its
+	// next tool. The watcher's passive-retry re-sends once truly idle.
+	if IsAgentIdle(session, role) && !IsSendKeysCoolingDown(session, role) {
 		return notifyIdleSendKeys(session, role)
 	}
 	return notifyDisplayMessage(session, role)

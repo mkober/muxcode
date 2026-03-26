@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -462,5 +463,67 @@ func TestAlreadyNotified_CooldownExpired(t *testing.T) {
 	// Cooldown expired and size differs — should allow notification
 	if alreadyNotified(session, role) {
 		t.Error("alreadyNotified should return false when cooldown has expired and inbox size differs")
+	}
+}
+
+func TestIsSendKeysCoolingDown_NoMarker(t *testing.T) {
+	useTempBusDir(t)
+
+	// No marker file — not cooling down
+	if IsSendKeysCoolingDown("nonexistent-session", "build") {
+		t.Error("IsSendKeysCoolingDown should return false when no marker exists")
+	}
+}
+
+func TestIsSendKeysCoolingDown_RecentMarker(t *testing.T) {
+	useTempBusDir(t)
+
+	session := "test-sendkeys-recent"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	// Write a marker with current timestamp
+	markSendKeys(session, "test")
+
+	if !IsSendKeysCoolingDown(session, "test") {
+		t.Error("IsSendKeysCoolingDown should return true for a just-written marker")
+	}
+}
+
+func TestIsSendKeysCoolingDown_ExpiredMarker(t *testing.T) {
+	useTempBusDir(t)
+
+	session := "test-sendkeys-expired"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	// Write a marker with a timestamp well in the past (beyond sendKeysCooldown)
+	past := time.Now().Add(-15 * time.Second).Unix()
+	os.WriteFile(SendKeysMarkerPath(session, "test"),
+		[]byte(fmt.Sprintf("%d", past)), 0644)
+
+	if IsSendKeysCoolingDown(session, "test") {
+		t.Error("IsSendKeysCoolingDown should return false for an expired marker")
+	}
+}
+
+func TestIsSendKeysCoolingDown_InvalidContent(t *testing.T) {
+	useTempBusDir(t)
+
+	session := "test-sendkeys-invalid"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	os.WriteFile(SendKeysMarkerPath(session, "test"), []byte("garbage"), 0644)
+
+	if IsSendKeysCoolingDown(session, "test") {
+		t.Error("IsSendKeysCoolingDown should return false for invalid marker content")
+	}
+}
+
+func TestSendKeysMarkerPath(t *testing.T) {
+	p := SendKeysMarkerPath("mysession", "build")
+	if !strings.Contains(p, "sendkeys-build.ts") {
+		t.Errorf("unexpected marker path: %s", p)
 	}
 }

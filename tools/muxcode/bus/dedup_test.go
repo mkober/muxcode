@@ -49,15 +49,37 @@ func TestIsDuplicateMessage_Duplicate(t *testing.T) {
 	logDir := filepath.Dir(LogPath(session))
 	os.MkdirAll(logDir, 0755)
 
-	// Write a message to the log
-	m1 := NewMessage("review", "test", "response", "review-complete", "LGTM", "")
+	// Write a request message to the log (responses are exempt from dedup)
+	m1 := NewMessage("edit", "build", "request", "build", "Run build", "")
 	data, _ := EncodeMessage(m1)
 	appendToFile(LogPath(session), append(data, '\n'))
 
 	// Same (from, to, action, type) — is a duplicate
-	m2 := NewMessage("review", "test", "response", "review-complete", "LGTM again", "")
+	m2 := NewMessage("edit", "build", "request", "build", "Run build again", "")
 	if !IsDuplicateMessage(session, m2) {
 		t.Error("same from/to/action/type within window should be duplicate")
+	}
+}
+
+func TestIsDuplicateMessage_ResponseExcluded(t *testing.T) {
+	dir := t.TempDir()
+	old := busDirOverride
+	busDirOverride = dir
+	defer func() { busDirOverride = old }()
+
+	session := "test-dedup"
+	logDir := filepath.Dir(LogPath(session))
+	os.MkdirAll(logDir, 0755)
+
+	// Write a response to the log
+	m1 := NewMessage("test", "edit", "response", "test", "Tests passed", "")
+	data, _ := EncodeMessage(m1)
+	appendToFile(LogPath(session), append(data, '\n'))
+
+	// Same tuple — should NOT be deduped because responses are exempt
+	m2 := NewMessage("test", "edit", "response", "test", "Tests passed again", "")
+	if IsDuplicateMessage(session, m2) {
+		t.Error("response messages should never be deduped")
 	}
 }
 

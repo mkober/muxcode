@@ -37,7 +37,7 @@ Send a message to another agent's inbox.
 muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait]
 ```
 
-- `<to>` — target agent role (edit, build, test, review, deploy, run, commit, analyze, api)
+- `<to>` — target agent role (edit, build, test, review, deploy, run, commit, analyze, api, watch)
 - `<action>` — action name (build, test, review, deploy, run, commit, analyze, notify, etc.)
 - `<payload>` — message content (quoted string)
 - `--type TYPE` — message type: `request` (default), `response`, or `event`
@@ -1272,7 +1272,7 @@ Run a left-pane log console for an agent window.
 muxcode console <role> [--interval N] [--once]
 ```
 
-- `<role>` — the window name (build, test, review, deploy, run, commit, analyze, watch, api)
+- `<role>` — the window name (build, test, review, deploy, run, commit, analyze, watch) or modal role (api)
 - `--interval N` — refresh interval in seconds (default: 2)
 - `--once` — render once and exit (useful for testing)
 
@@ -1340,7 +1340,7 @@ Core code: `cmd/compact.go`.
 | `AGENT_ROLE` | Current agent's role name (auto-detected from tmux window if unset) |
 | `BUS_MEMORY_DIR` | Path to persistent memory directory (defaults to `.muxcode/memory/`) |
 | `MUXCODE_ROLES` | Comma-separated extra roles to add to the known roles list |
-| `MUXCODE_SPLIT_LEFT` | Space-separated windows with agent in pane 1 (defaults: edit api build test review deploy run analyze commit watch) |
+| `MUXCODE_SPLIT_LEFT` | Space-separated windows with agent in pane 1 (defaults: edit build test review deploy run analyze commit watch) |
 | `MUXCODE_LIFECYCLE_LOG_MAX` | Max entries per lifecycle log before rotation (default: 1000) |
 | `MUXCODE_DEDUP_WINDOW` | Dedup window in seconds for duplicate message suppression (default: 30, set to 0 to disable) |
 | `MUXCODE_INBOX_POLL_TIMEOUT` | Timeout in seconds for `--wait` polling (default: 600) |
@@ -1390,7 +1390,7 @@ Driven by `muxcode hook bash`, not by agent LLMs:
 
 Pane targeting is consolidated in `bus/config.go`:
 
-- **Split-left windows** (default: edit, api, build, test, review, deploy, run, analyze, commit, watch): agent runs in pane 1
+- **Split-left windows** (default: edit, build, test, review, deploy, run, analyze, commit, watch): agent runs in pane 1
 - **All other windows**: agent runs in pane 0
 - Override via `MUXCODE_SPLIT_LEFT` env var
 

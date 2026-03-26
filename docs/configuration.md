@@ -37,9 +37,9 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MUXCODE_WINDOWS` | `edit api build test review deploy run watch commit analyze` | Space-separated list of windows to create |
+| `MUXCODE_WINDOWS` | `edit build test review deploy run watch commit analyze` | Space-separated list of windows to create |
 | `MUXCODE_ROLE_MAP` | `run=runner commit=git analyze=analyst` | Space-separated `window=role` mappings for windows whose role differs from name |
-| `MUXCODE_SPLIT_LEFT` | `edit api build test review deploy run analyze commit watch` | Space-separated windows that have a left pane (tool) + right pane (agent) |
+| `MUXCODE_SPLIT_LEFT` | `edit build test review deploy run analyze commit watch` | Space-separated windows that have a left pane (tool) + right pane (agent) |
 
 ### Hook Configuration
 
@@ -60,7 +60,7 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `AGENT_ROLE` | (auto-detected) | Current agent's role name |
 | `BUS_MEMORY_DIR` | `.muxcode/memory/` | Path to persistent memory directory |
 | `MUXCODE_ROLES` | (empty) | Comma-separated extra roles to add to the known roles list |
-| `MUXCODE_SPLIT_LEFT` | `edit api build test review deploy run analyze commit watch` | See Window Layout above — also read by the bus binary for pane targeting |
+| `MUXCODE_SPLIT_LEFT` | `edit build test review deploy run analyze commit watch` | See Window Layout above — also read by the bus binary for pane targeting |
 | `MUXCODE_DEDUP_WINDOW` | `30` | Dedup window in seconds for duplicate message suppression (set to 0 to disable) |
 | `MUXCODE_INBOX_POLL_TIMEOUT` | `600` | Timeout in seconds for `send --wait` polling |
 | `MUXCODE_LIFECYCLE_LOG_MAX` | `1000` | Max entries per lifecycle log before rotation |

@@ -21,7 +21,7 @@ var knownSubcommands = map[string]bool{
 	"demo": true, "webhook": true, "subscribe": true, "agent": true,
 	"api": true, "agent-health": true, "lifecycle": true, "console": true,
 	"hook": true, "workflow": true, "pii-scrub": true, "atlassian": true,
-	"compact": true, "launch": true,
+	"compact": true, "launch": true, "modal": true,
 }
 
 var usage = `Usage: muxcode <command> [args...]
@@ -68,6 +68,7 @@ Commands:
   hook          Process Claude Code hook events (bash, guard, analyze, inbox-poll)
   workflow      Show or reset workflow state machine (--json, reset)
   atlassian     Jira and Confluence API operations (read, update, comment, search)
+  modal         Manage modal windows (open, list, status)
   pii-scrub     Scrub PII and secrets from stdin (pipe filter)
   compact       Wait for agent idle, then inject /compact via tmux
 `
@@ -174,6 +175,8 @@ func main() {
 		cmd.Scrub(args)
 	case "atlassian":
 		cmd.Atlassian(args)
+	case "modal":
+		cmd.Modal(args)
 	case "compact":
 		cmd.Compact(args)
 	default:

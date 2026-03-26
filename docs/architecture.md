@@ -228,7 +228,7 @@ The build-test-review and deploy-verify chains are **deterministic** — driven 
 └────────────────────┴────────────────────┘
 ```
 
-### Split-Left Windows (edit, build, test, review, deploy, analyze, commit, watch, api)
+### Split-Left Windows (edit, build, test, review, deploy, analyze, commit, watch)
 ```
 ┌────────────────────┬────────────────────┐
 │                    │                    │

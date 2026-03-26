@@ -654,7 +654,10 @@ func DefaultConfig() *MuxcodeConfig {
 				NotifyAnalystOn: []string{"failure", "unknown"},
 			},
 		},
-		AutoCC:     []string{"build", "test", "review", "deploy", "analyze"},
-		SendPolicy: map[string]SendPolicy{},
+		AutoCC: []string{"build", "test", "review", "deploy", "analyze"},
+		SendPolicy: map[string]SendPolicy{
+			"build": {Deny: []string{"test"}},
+			"test":  {Deny: []string{"review"}},
+		},
 	}
 }

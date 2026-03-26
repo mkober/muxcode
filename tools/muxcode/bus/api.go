@@ -43,13 +43,26 @@ type Request struct {
 
 // ApiHistoryEntry records a single executed API request.
 type ApiHistoryEntry struct {
-	TS         int64  `json:"ts"`
-	Collection string `json:"collection,omitempty"`
-	Request    string `json:"request,omitempty"`
-	Method     string `json:"method"`
-	URL        string `json:"url"`
-	Status     int    `json:"status"`
-	Duration   int64  `json:"duration_ms"`
+	TS           int64  `json:"ts"`
+	Collection   string `json:"collection,omitempty"`
+	Request      string `json:"request,omitempty"`
+	Method       string `json:"method"`
+	URL          string `json:"url"`
+	Status       int    `json:"status"`
+	Duration     int64  `json:"duration_ms"`
+	ResponseBody string `json:"response_body,omitempty"`
+}
+
+// MaxResponseBodyLen is the maximum length of response body stored in history.
+// Longer responses are truncated with a "..." suffix.
+const MaxResponseBodyLen = 2048
+
+// TruncateResponseBody truncates a response body to MaxResponseBodyLen.
+func TruncateResponseBody(body string) string {
+	if len(body) <= MaxResponseBodyLen {
+		return body
+	}
+	return body[:MaxResponseBodyLen] + "..."
 }
 
 // --- Path helpers ---

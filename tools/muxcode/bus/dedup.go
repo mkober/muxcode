@@ -39,6 +39,13 @@ func IsDuplicateMessage(session string, m Message) bool {
 		return false
 	}
 
+	// Responses are replies to specific requests — never suppress them.
+	// Without this, two consecutive test→edit responses get deduped because
+	// (from, to, action, type) matches even though they answer different requests.
+	if m.Type == "response" {
+		return false
+	}
+
 	cutoff := time.Now().Unix() - window
 	return hasDuplicateInLog(LogPath(session), m.From, m.To, m.Action, m.Type, cutoff)
 }

@@ -29,7 +29,6 @@ var splitLeftWindows = map[string]bool{
 	"analyze": true,
 	"commit":  true,
 	"watch":   true,
-	"api":     true,
 }
 
 func init() {
@@ -277,6 +276,16 @@ func SpawnPath(session string) string {
 	return filepath.Join(BusDir(session), "spawn.jsonl")
 }
 
+// ModalDir returns the modal PID directory path for a session.
+func ModalDir(session string) string {
+	return filepath.Join(BusDir(session), "modals")
+}
+
+// ModalPidPath returns the PID file path for a named modal in a session.
+func ModalPidPath(session, name string) string {
+	return filepath.Join(ModalDir(session), name+".pid")
+}
+
 // WebhookPidPath returns the webhook PID file path for a session.
 func WebhookPidPath(session string) string {
 	return filepath.Join(BusDir(session), "webhook.pid")
@@ -299,6 +308,15 @@ func WaitingMarkerPath(session, role string) string {
 // The watcher uses this to retry with send-keys once the agent becomes idle.
 func PassiveNotifyMarkerPath(session, role string) string {
 	return filepath.Join(BusDir(session), "passive-notify-"+role+".marker")
+}
+
+// SendKeysMarkerPath returns the path to a marker recording the Unix timestamp
+// of the last send-keys notification for a role. Used to enforce a cooldown
+// between send-keys deliveries, preventing the inter-tool-call race where the
+// ❯ prompt appears briefly between tool calls and IsAgentIdle fires send-keys
+// into an agent that's about to start its next tool execution.
+func SendKeysMarkerPath(session, role string) string {
+	return filepath.Join(BusDir(session), "sendkeys-"+role+".ts")
 }
 
 // SubscriptionPath returns the subscriptions JSONL file path for a session.

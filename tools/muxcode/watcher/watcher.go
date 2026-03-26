@@ -211,8 +211,9 @@ func (w *Watcher) checkInboxes() {
 			_ = bus.Notify(w.session, role)
 		} else if size > 0 && bus.HasPassiveNotify(w.session, role) {
 			// Prior notification was passive (display-message, invisible to
-			// Claude Code). If the agent is now idle, retry with send-keys.
-			if bus.IsAgentIdle(w.session, role) {
+			// Claude Code). If the agent is now idle and send-keys cooldown
+			// has expired, retry with send-keys.
+			if bus.IsAgentIdle(w.session, role) && !bus.IsSendKeysCoolingDown(w.session, role) {
 				ts := time.Now().Format("15:04:05")
 				fmt.Printf("  %s  Retrying notification for %s (was passive, now idle)\n", ts, role)
 				bus.LogLifecycle(w.session, "info", "watcher", "passive-retry", role)

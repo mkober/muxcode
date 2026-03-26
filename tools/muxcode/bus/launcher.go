@@ -31,9 +31,9 @@ func DefaultLauncherConfig() *LauncherConfig {
 	return &LauncherConfig{
 		ProjectsDir: home,
 		ScanDepth:   3,
-		Windows:     []string{"edit", "api", "build", "test", "review", "deploy", "run", "watch", "commit", "analyze"},
+		Windows:     []string{"edit", "build", "test", "review", "deploy", "run", "watch", "commit", "analyze"},
 		RoleMap:     map[string]string{"run": "runner", "commit": "git", "analyze": "analyst"},
-		SplitLeft:   []string{"edit", "api", "build", "test", "review", "deploy", "run", "analyze", "commit", "watch"},
+		SplitLeft:   []string{"edit", "build", "test", "review", "deploy", "run", "analyze", "commit", "watch"},
 		ShellInit:   "",
 		Editor:      "nvim",
 		NvimAppName: "muxcode/nvim",

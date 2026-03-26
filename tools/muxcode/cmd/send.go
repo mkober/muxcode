@@ -116,7 +116,13 @@ func Send(args []string) {
 	}
 
 	if !noNotify {
-		_ = bus.Notify(session, to)
+		// For modal roles, auto-open the modal (or spawn headless if no client).
+		// The modal agent reads its inbox on startup — no send-keys needed.
+		if bus.IsModalRole(to) {
+			_ = bus.OpenOrSpawn(session, to, "")
+		} else {
+			_ = bus.Notify(session, to)
+		}
 		// Also notify edit when auto-CC fires (message from build/test/review
 		// to a non-edit target). The watcher skips edit to prevent duplicates,
 		// so cmd/send.go is responsible for all edit notifications.
@@ -133,8 +139,15 @@ func Send(args []string) {
 	// running Bash tool in Claude Code's TUI.
 	if wait {
 		bus.SetWaiting(session, from)
-		defer bus.ClearWaiting(session, from)
 		waitForResponse(session, from, to)
+		// Keep the waiting marker alive briefly after --wait completes.
+		// Between --wait finishing and the agent's next tool call, the agent
+		// pane shows ❯ momentarily. Without this grace period, Notify sees
+		// IsAgentIdle=true and fires send-keys, which interrupts the agent.
+		go func() {
+			time.Sleep(5 * time.Second)
+			bus.ClearWaiting(session, from)
+		}()
 	}
 }
 

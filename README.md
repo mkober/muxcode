@@ -15,7 +15,7 @@ A multi-agent coding environment built on tmux — where you stay in the loop.
 
 ## What is MuxCode?
 
-MuxCode is a tmux-native multi-agent development environment. Ten specialist AI agents — editor, builder, tester, reviewer, deployer, git manager, and more — each run in their own tmux window, coordinated through a file-based message bus. You work in neovim alongside an editing agent, and every other part of the development lifecycle has its own dedicated agent a function key away.
+MuxCode is a tmux-native multi-agent development environment. Nine specialist AI agents — editor, builder, tester, reviewer, deployer, git manager, and more — each run in their own tmux window, coordinated through a file-based message bus. You work in neovim alongside an editing agent, and every other part of the development lifecycle has its own dedicated agent a function key away.
 
 You stay in control. The edit agent is your primary interface — it helps you write code and delegates to specialists when you're ready. Ask for a build, and the build agent runs it. Tests fire automatically on success. Review follows tests. Results flow back while you keep editing. The chain routing is hook-driven — Go hooks checking exit codes, not LLM routing decisions — so dispatch is deterministic and fast. The agents themselves run as [Claude Code](https://claude.ai/code) sessions by default, but any role can be switched to a local LLM via [Ollama](https://ollama.com/) to reduce API costs for structured-command roles like git, build, and log monitoring.
 
@@ -24,10 +24,10 @@ The coordination layer is entirely local. Agents communicate through JSONL files
 Each agent has scoped tool permissions — the build agent can't edit files, the commit agent can't deploy infrastructure, the edit agent can't run builds or git commands. This separation prevents agents from stepping on each other and keeps the human in the loop for every code change.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  F1 edit  F2 api  F3 build  F4 test  F5 review  F6 deploy   │
-│  F7 run  F8 watch  F9 commit  F10 analyze                   │
-├─────────────────────────────────────────────────────────────┤
+┌──────────────────────────────────────────────────────────────────────┐
+│  F1 edit  F2 build  F3 test  F4 review  F5 deploy  F6 run           │
+│  F7 watch  F8 commit  F9 analyze                  [prefix+i → API]  │
+├──────────────────────────────────────────────────────────────────────┤
 │                                                             │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
 │  │ edit         │    │ build        │    │ test         │   │
@@ -46,7 +46,7 @@ Each agent has scoped tool permissions — the build agent can't edit files, the
 
 ## How it works
 
-You launch `muxcode`, pick a project (or pass a path directly), and a tmux session spins up with ten windows — one per agent. The edit window opens neovim on the left and the edit agent on the right. Every other window has a terminal pane alongside its specialist agent.
+You launch `muxcode`, pick a project (or pass a path directly), and a tmux session spins up with nine windows — one per agent. The edit window opens neovim on the left and the edit agent on the right. Every other window has a terminal pane alongside its specialist agent.
 
 A typical workflow looks like this:
 
@@ -68,24 +68,24 @@ MuxCode ships with these default agents:
 | Window (F-key) | Agent          | Default model      | Local LLM                   | What it does                                                                            |
 | -------------- | -------------- | ------------------ | --------------------------- | --------------------------------------------------------------------------------------- |
 | edit (F1)      | Code editor    | Claude Code        | `MUXCODE_EDIT_CLI=local`    | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
-| api (F2)       | API tester     | Claude Code        | `MUXCODE_API_CLI=local`     | Manages API collections, executes requests, tracks history                              |
-| build (F3)     | Code builder   | Local LLM (Ollama) | `MUXCODE_BUILD_CLI`         | Compiles and packages your project                                                      |
-| test (F4)      | Test runner    | Local LLM (Ollama) | `MUXCODE_TEST_CLI`          | Runs your test suite and reports results                                                |
-| review (F5)    | Code reviewer  | Claude Code        | `MUXCODE_REVIEW_CLI=local`  | Reviews diffs for bugs, style issues, and improvements                                  |
-| deploy (F6)    | Infra deployer | Claude Code        | `MUXCODE_DEPLOY_CLI=local`  | Runs infrastructure deployments and diffs                                               |
-| run (F7)       | Command runner | Claude Code        | `MUXCODE_RUN_CLI=local`     | Executes ad-hoc commands                                                                |
-| watch (F8)     | Log watcher    | Claude Code        | `MUXCODE_WATCH_CLI=local`   | Monitors logs — local files, CloudWatch, Kubernetes, Docker                             |
-| commit (F9)    | Git manager    | Claude Code        | `MUXCODE_GIT_CLI=local`     | Handles all git operations — commits, branches, rebases, pushes                         |
-| analyze (F10)  | Editor analyst | Claude Code        | `MUXCODE_ANALYZE_CLI=local` | Watches file changes and provides codebase analysis                                     |
+| build (F2)     | Code builder   | Local LLM (Ollama) | `MUXCODE_BUILD_CLI`         | Compiles and packages your project                                                      |
+| test (F3)      | Test runner    | Local LLM (Ollama) | `MUXCODE_TEST_CLI`          | Runs your test suite and reports results                                                |
+| review (F4)    | Code reviewer  | Claude Code        | `MUXCODE_REVIEW_CLI=local`  | Reviews diffs for bugs, style issues, and improvements                                  |
+| deploy (F5)    | Infra deployer | Claude Code        | `MUXCODE_DEPLOY_CLI=local`  | Runs infrastructure deployments and diffs                                               |
+| run (F6)       | Command runner | Claude Code        | `MUXCODE_RUN_CLI=local`     | Executes ad-hoc commands                                                                |
+| watch (F7)     | Log watcher    | Claude Code        | `MUXCODE_WATCH_CLI=local`   | Monitors logs — local files, CloudWatch, Kubernetes, Docker                             |
+| commit (F8)    | Git manager    | Claude Code        | `MUXCODE_GIT_CLI=local`     | Handles all git operations — commits, branches, rebases, pushes                         |
+| analyze (F9)   | Editor analyst | Claude Code        | `MUXCODE_ANALYZE_CLI=local` | Watches file changes and provides codebase analysis                                     |
 
 Additional roles that share a host agent's window (messages are routed to the host's inbox):
 
-| Role     | Host window | What it does                                                                                |
-| -------- | ----------- | ------------------------------------------------------------------------------------------- |
-| docs     | edit        | Documentation writer — handled by the edit agent                                            |
-| research | edit        | Web search and codebase exploration — handled by the edit agent                             |
-| pr-read  | commit      | PR review analysis — handled by the commit agent                                            |
-| status   | —           | Live TUI dashboard (`muxcode tui`) — add `status` to `MUXCODE_WINDOWS` to include |
+| Role     | Host / access | What it does                                                                                |
+| -------- | ------------- | ------------------------------------------------------------------------------------------- |
+| api      | Modal popup   | API tester — opens via `prefix + i` or `muxcode modal open api`. Manages collections, executes requests, tracks history |
+| docs     | edit          | Documentation writer — handled by the edit agent                                            |
+| research | edit          | Web search and codebase exploration — handled by the edit agent                             |
+| pr-read  | commit        | PR review analysis — handled by the commit agent                                            |
+| status   | —             | Live TUI dashboard (`muxcode tui`) — add `status` to `MUXCODE_WINDOWS` to include |
 
 Most agents default to Claude Code. Build and test default to a local LLM via [Ollama](https://ollama.com/) since they primarily execute structured commands where a small model is sufficient. Any role can be switched between Claude Code and a local LLM by setting its override variable in `.muxcode/config` (e.g. `MUXCODE_GIT_CLI=local`). Per-role model selection is also supported via `MUXCODE_{ROLE}_MODEL` (falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
 
@@ -96,7 +96,7 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 ## Key features
 
 ### Agent orchestration
-- **10 specialist agents** — Edit, build, test, review, deploy, run, commit, analyze, watch, and API — each with scoped tool permissions and its own tmux window
+- **9 specialist agents** — Edit, build, test, review, deploy, run, commit, analyze, and watch — each with scoped tool permissions and its own tmux window. API testing runs as a modal popup (`prefix + i`)
 - **Hook-driven automation chains** — Build→test→review and deploy→verify chains fire via bash exit codes. Deterministic, fast, zero token cost for routing
 - **Event subscriptions** — Fan-out after chain execution. Subscribe any agent to build/test/deploy events with outcome filtering
 - **Spawned agents** — Create temporary agents for one-off tasks in their own tmux window. Results collected automatically on completion
@@ -349,7 +349,8 @@ Useful keybindings for navigating your MuxCode session:
 
 | Keybinding | Action |
 | --- | --- |
-| `F1`–`F10` | Switch between agent windows |
+| `F1`–`F9` | Switch between agent windows |
+| `Prefix + i` | Open API testing modal |
 | `Prefix + b` | Open MuxCode quick menu |
 | `Prefix + C` | New MuxCode session (project picker) |
 | `Prefix + z` | Zoom current pane to full screen |

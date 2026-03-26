@@ -51,6 +51,11 @@ func Init(session, memoryDir string) error {
 		return err
 	}
 
+	// Create modals directory for modal PID files
+	if err := os.MkdirAll(ModalDir(session), 0755); err != nil {
+		return err
+	}
+
 	// Create proc directory and reset proc.jsonl
 	if err := os.MkdirAll(ProcDir(session), 0755); err != nil {
 		return err
@@ -206,8 +211,14 @@ func purgeStaleFiles(session string) error {
 			if strings.HasPrefix(name, "passive-notify-") && strings.HasSuffix(name, ".marker") {
 				_ = os.Remove(filepath.Join(busDir, name))
 			}
+			if strings.HasPrefix(name, "sendkeys-") && strings.HasSuffix(name, ".ts") {
+				_ = os.Remove(filepath.Join(busDir, name))
+			}
 		}
 	}
+
+	// Remove modal PID files
+	cleanupModalPids(session)
 
 	// Remove Ollama health state file
 	_ = os.Remove(OllamaHealthPath(session))
