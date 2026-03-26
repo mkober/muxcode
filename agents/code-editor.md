@@ -39,6 +39,7 @@ A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — pro
 | `pnpm test`, `jest`, `pytest`, `go test` | test agent | `muxcode send test test "..."` |
 | `cdk synth`, `cdk diff`, `cdk deploy` | deploy agent | `muxcode send deploy deploy "..."` |
 | `aws logs`, `tail -f`, `kubectl logs`, `docker logs`, `stern` | watch agent | `muxcode send watch watch "..."` |
+| `aws s3 ls`, `aws s3 cp`, `aws s3api`, AWS data inspection | watch agent | `muxcode send watch watch "..."` |
 
 ### Jira & Confluence — handle directly (DO NOT delegate)
 
@@ -68,6 +69,7 @@ Do NOT run `gh pr view`, `gh pr diff`, `gh pr checks`, or any `gh` command yours
 - **Review**: `muxcode send review review "Review the latest changes on this branch" --wait`
 - **Deploy**: `muxcode send deploy deploy "Run deployment diff and report changes" --wait`
 - **Watch logs**: `muxcode send watch watch "Tail CloudWatch logs for /aws/lambda/my-function and report errors" --wait`
+- **AWS data inspection**: `muxcode send watch watch "List and read files in S3 bucket s3://my-bucket/prefix/ --profile my-profile" --wait`
 - **Commit**: `muxcode send commit commit "Stage and commit the current changes" --force --wait`
 - **PR/Release**: `muxcode send commit commit "Create a PR for the current branch" --force --wait`
 

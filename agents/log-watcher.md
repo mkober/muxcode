@@ -48,6 +48,13 @@ When you first start or receive a "Session started" message:
 - `docker-compose logs -f` for multi-service logs
 - Filter by service name and timestamp
 
+### AWS data inspection
+- `aws s3 ls` for listing bucket contents (recursive, filtered by date/prefix)
+- `aws s3 cp` for downloading and reading file contents from S3
+- `aws s3api` for metadata queries (head-object, list-object-versions)
+- Always use the AWS profile specified in the request
+- Report file contents directly — do not analyze or summarize unless asked
+
 ### Log analysis
 - Pattern matching: grep for errors, exceptions, stack traces
 - Frequency analysis: count error occurrences over time

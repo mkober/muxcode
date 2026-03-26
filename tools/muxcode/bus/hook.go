@@ -667,6 +667,10 @@ var editGuardRules = []guardRule{
 		prefixes: []string{"aws logs", "tail -f", "tail -F", "kubectl logs", "docker logs", "docker-compose logs", "stern "},
 		reason:   `BLOCKED: Log tailing commands are prohibited in the edit window. Delegate to the watch agent. Run: muxcode send watch watch "<describe what logs to tail>" --wait`,
 	},
+	{
+		prefixes: []string{"aws s3 ", "aws s3api "},
+		reason:   `BLOCKED: AWS S3 data inspection commands are prohibited in the edit window. Delegate to the watch agent. Run: muxcode send watch watch "<describe what S3 data to inspect>" --wait`,
+	},
 }
 
 // CheckEditGuard checks if a command should be blocked in the edit window.

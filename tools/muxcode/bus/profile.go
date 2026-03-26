@@ -547,6 +547,7 @@ func DefaultConfig() *MuxcodeConfig {
 				Tools: []string{
 					"Bash(tail *)", "Bash(journalctl *)",
 					"Bash(aws logs*)", "Bash(aws cloudwatch*)",
+					"Bash(aws s3 *)", "Bash(aws s3api *)",
 					"Bash(gcloud logging*)", "Bash(az monitor*)",
 					"Bash(kubectl logs*)", "Bash(kubectl get events*)",
 					"Bash(docker logs*)", "Bash(docker-compose logs*)",
