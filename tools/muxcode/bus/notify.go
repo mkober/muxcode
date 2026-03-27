@@ -344,6 +344,16 @@ func notifyIdleSendKeys(session, role string) error {
 //
 // Deduplicates: skips if the inbox hasn't changed since the last notification.
 func Notify(session, role string) error {
+	// Hosted roles (docs, research, pr-read) resolve to their host agent.
+	// The message is already in the host's inbox; notify the host's pane.
+	role = WindowForRole(role)
+
+	// Always write the trigger file — safe, non-intrusive, no tmux dependency.
+	// Agents running `muxcode inbox --poll` detect this via stat() polling.
+	// Written before the has-session guard because it's a pure file write that
+	// works regardless of tmux state.
+	writeTriggerNotify(session, role)
+
 	// Guard: verify the tmux session exists before any tmux commands.
 	// Without this, tmux display-message silently falls through to the
 	// current pane, causing test/demo sessions to leak notifications
@@ -351,10 +361,6 @@ func Notify(session, role string) error {
 	if err := exec.Command("tmux", "has-session", "-t", session).Run(); err != nil {
 		return nil // session doesn't exist — nothing to notify
 	}
-
-	// Hosted roles (docs, research, pr-read) resolve to their host agent.
-	// The message is already in the host's inbox; notify the host's pane.
-	role = WindowForRole(role)
 
 	// Skip harness panes — the harness polls inbox directly
 	if IsHarnessActive(session, role) {
@@ -366,6 +372,13 @@ func Notify(session, role string) error {
 	// and dangerous — it can interrupt the running Bash tool in Claude Code's
 	// TUI, causing the agent to lose its execution flow.
 	if IsWaiting(session, role) {
+		return nil
+	}
+
+	// Skip send-keys when the role has an active --poll loop.
+	// The poll loop watches the trigger file we just wrote — send-keys is
+	// redundant and risks the inter-tool-call interruption race.
+	if IsPolling(session, role) {
 		return nil
 	}
 
@@ -386,6 +399,45 @@ func Notify(session, role string) error {
 		return notifyIdleSendKeys(session, role)
 	}
 	return notifyDisplayMessage(session, role)
+}
+
+// writeTriggerNotify writes the current unix timestamp to the role's trigger
+// file. This is always safe — no pane interaction, no TOCTOU race. Agents
+// running `muxcode inbox --poll` detect the mtime change and read their inbox.
+func writeTriggerNotify(session, role string) {
+	ts := strconv.FormatInt(time.Now().UnixNano(), 10)
+	_ = os.WriteFile(TriggerNotifyPath(session, role), []byte(ts), 0644)
+}
+
+// SetPolling creates a marker file indicating that a --poll loop is active
+// for the given role. Stores the PID for stale-marker detection.
+func SetPolling(session, role string) {
+	_ = os.WriteFile(PollingMarkerPath(session, role), []byte(strconv.Itoa(os.Getpid())), 0644)
+}
+
+// ClearPolling removes the --poll marker for a role.
+func ClearPolling(session, role string) {
+	_ = os.Remove(PollingMarkerPath(session, role))
+}
+
+// IsPolling returns true if the given role has an active --poll loop.
+// Validates that the PID in the marker is still alive to prevent stale markers
+// from permanently suppressing send-keys notifications.
+func IsPolling(session, role string) bool {
+	data, err := os.ReadFile(PollingMarkerPath(session, role))
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		_ = os.Remove(PollingMarkerPath(session, role))
+		return false
+	}
+	if !CheckProcAlive(pid) {
+		_ = os.Remove(PollingMarkerPath(session, role))
+		return false
+	}
+	return true
 }
 
 // notifyDisplayMessage sends a passive notification via tmux display-message

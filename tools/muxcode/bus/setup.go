@@ -214,6 +214,12 @@ func purgeStaleFiles(session string) error {
 			if strings.HasPrefix(name, "sendkeys-") && strings.HasSuffix(name, ".ts") {
 				_ = os.Remove(filepath.Join(busDir, name))
 			}
+			if strings.HasPrefix(name, "trigger-") && strings.HasSuffix(name, ".notify") {
+				_ = os.Remove(filepath.Join(busDir, name))
+			}
+			if strings.HasPrefix(name, "polling-") && strings.HasSuffix(name, ".marker") {
+				_ = os.Remove(filepath.Join(busDir, name))
+			}
 		}
 	}
 

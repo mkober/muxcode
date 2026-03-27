@@ -319,6 +319,22 @@ func SendKeysMarkerPath(session, role string) string {
 	return filepath.Join(BusDir(session), "sendkeys-"+role+".ts")
 }
 
+// PollingMarkerPath returns the path to a marker file indicating that a
+// --poll loop is active for the given role. While this marker exists,
+// Notify() skips send-keys — the poll loop watches the trigger file instead.
+func PollingMarkerPath(session, role string) string {
+	return filepath.Join(BusDir(session), "polling-"+role+".marker")
+}
+
+// TriggerNotifyPath returns the path to the trigger file that signals new
+// messages for a role. Notify() writes a timestamp here; `muxcode inbox --poll`
+// watches it for changes. This replaces send-keys as the notification mechanism
+// — the agent reads its own trigger file when ready, eliminating the TOCTOU
+// race where send-keys interrupts agents between tool calls.
+func TriggerNotifyPath(session, role string) string {
+	return filepath.Join(BusDir(session), "trigger-"+role+".notify")
+}
+
 // SubscriptionPath returns the subscriptions JSONL file path for a session.
 func SubscriptionPath(session string) string {
 	return filepath.Join(BusDir(session), "subscriptions.jsonl")

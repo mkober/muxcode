@@ -286,45 +286,15 @@ Once all agents use polling, remove the send-keys path entirely.
 | 15 | Simplify `checkInboxes()` to just trigger file writes | `watcher/watcher.go` |
 | 16 | Clean up `purgeStaleFiles()` for removed marker types | `bus/setup.go` |
 
-### Phase 4: Remove API window from session
-
-**Goal:** The `api` agent runs exclusively as a modal popup — remove the dedicated F2 window from the tmux session. See also `docs/requirements/modal-window-manager.md` Phase 2.
+### Phase 4: Hardening
 
 | # | Change | File |
 |---|--------|------|
-| 17 | Remove `api` from `DefaultLauncherConfig().Windows` and `SplitLeft` | `bus/launcher.go` |
-| 18 | Remove `F2` binding for api window | `config/tmux.conf` |
-| 19 | Reflow F-key bindings: build=F2, test=F3, review=F4, deploy=F5, etc. | `config/tmux.conf` |
-| 20 | Add `bind i run-shell 'muxcode modal open api'` keybinding | `config/tmux.conf` |
-| 21 | For modal roles in `cmd/send.go`: auto-open modal via `OpenOrSpawn()` on message delivery | `cmd/send.go` |
-| 22 | Update status bar format to exclude api window (modal-only roles not shown in window list) | `bus/launcher.go` |
-| 23 | Update README, docs, CLAUDE.md to reflect new window order | `README.md`, `docs/`, `CLAUDE.md` |
-
-#### New window order
-
-```
-edit(1) build(2) test(3) review(4) deploy(5) run(6) watch(7) commit(8) analyze(9)
-```
-
-#### F-key reflow
-
-| Key | Before | After |
-|-----|--------|-------|
-| F1 | edit | edit |
-| F2 | api | build |
-| F3 | build | test |
-| F4 | test | review |
-| F5 | review | deploy |
-
-### Phase 5: Hardening
-
-| # | Change | File |
-|---|--------|------|
-| 24 | Add delivery status expiry/cleanup in watcher | `watcher/watcher.go` |
-| 25 | Add `muxcode tasks` and `muxcode track` to CLI help | `main.go` |
-| 26 | Update architecture.md, agent-bus.md, agents.md | `docs/` |
-| 27 | Update CLAUDE.md notification documentation | `CLAUDE.md` |
-| 28 | Add integration tests for poll-based notification | `bus/notify_test.go` |
+| 17 | Add delivery status expiry/cleanup in watcher | `watcher/watcher.go` |
+| 18 | Add `muxcode tasks` and `muxcode track` to CLI help | `main.go` |
+| 19 | Update architecture.md, agent-bus.md, agents.md | `docs/` |
+| 20 | Update CLAUDE.md notification documentation | `CLAUDE.md` |
+| 21 | Add integration tests for poll-based notification | `bus/notify_test.go` |
 
 ## Success criteria
 
@@ -336,7 +306,6 @@ edit(1) build(2) test(3) review(4) deploy(5) run(6) watch(7) commit(8) analyze(9
 | Marker file reduction | From 6 marker file types (notified-size, passive-notify, sendkeys-ts, waiting, per role) to 1 (trigger-notify, per role) |
 | Watcher simplification | `checkInboxes()` reduced to ~15 lines; `checkStartupNotifications()` removed entirely |
 | No regressions | All existing tests pass; build->test->review chain completes end-to-end |
-| API window removed | `api` not in default window list; F2 maps to build; API accessible only via modal (`prefix + i`) or `muxcode modal open api` |
 
 ## Open questions
 

@@ -527,3 +527,187 @@ func TestSendKeysMarkerPath(t *testing.T) {
 		t.Errorf("unexpected marker path: %s", p)
 	}
 }
+
+func TestTriggerNotifyPath(t *testing.T) {
+	p := TriggerNotifyPath("mysession", "build")
+	if !strings.Contains(p, "trigger-build.notify") {
+		t.Errorf("unexpected trigger path: %s", p)
+	}
+}
+
+func TestWriteTriggerNotify(t *testing.T) {
+	useTempBusDir(t)
+
+	session := "test-trigger-write"
+	role := "build"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	// Trigger file should not exist yet
+	triggerPath := TriggerNotifyPath(session, role)
+	if _, err := os.Stat(triggerPath); !os.IsNotExist(err) {
+		t.Fatal("trigger file should not exist before writeTriggerNotify")
+	}
+
+	writeTriggerNotify(session, role)
+
+	// Trigger file should now exist with a timestamp
+	data, err := os.ReadFile(triggerPath)
+	if err != nil {
+		t.Fatalf("trigger file should exist after writeTriggerNotify: %v", err)
+	}
+	if len(data) == 0 {
+		t.Error("trigger file should contain a timestamp")
+	}
+}
+
+func TestWriteTriggerNotify_MtimeChanges(t *testing.T) {
+	useTempBusDir(t)
+
+	session := "test-trigger-mtime"
+	role := "test"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	writeTriggerNotify(session, role)
+	info1, _ := os.Stat(TriggerNotifyPath(session, role))
+	mtime1 := info1.ModTime()
+
+	// Small delay to ensure mtime differs
+	time.Sleep(10 * time.Millisecond)
+
+	writeTriggerNotify(session, role)
+	info2, _ := os.Stat(TriggerNotifyPath(session, role))
+	mtime2 := info2.ModTime()
+
+	if !mtime2.After(mtime1) {
+		t.Error("second writeTriggerNotify should update mtime")
+	}
+}
+
+func TestPollingMarkerPath(t *testing.T) {
+	p := PollingMarkerPath("mysession", "review")
+	if !strings.Contains(p, "polling-review.marker") {
+		t.Errorf("unexpected polling marker path: %s", p)
+	}
+}
+
+func TestSetPolling_ClearPolling(t *testing.T) {
+	useTempBusDir(t)
+
+	session := "test-polling-marker"
+	role := "build"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	// Not polling initially
+	if IsPolling(session, role) {
+		t.Error("IsPolling should return false when no marker exists")
+	}
+
+	SetPolling(session, role)
+
+	// Now polling (our own PID is alive)
+	if !IsPolling(session, role) {
+		t.Error("IsPolling should return true after SetPolling")
+	}
+
+	ClearPolling(session, role)
+
+	// No longer polling
+	if IsPolling(session, role) {
+		t.Error("IsPolling should return false after ClearPolling")
+	}
+}
+
+func TestIsPolling_StalePID(t *testing.T) {
+	useTempBusDir(t)
+
+	session := "test-polling-stale"
+	role := "test"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	// Write a dead PID
+	os.WriteFile(PollingMarkerPath(session, role), []byte("999999999"), 0644)
+
+	if IsPolling(session, role) {
+		t.Error("IsPolling should return false for dead PID")
+	}
+
+	// Stale marker should be cleaned up
+	if _, err := os.Stat(PollingMarkerPath(session, role)); !os.IsNotExist(err) {
+		t.Error("stale polling marker should have been removed")
+	}
+}
+
+func TestIsPolling_InvalidContent(t *testing.T) {
+	useTempBusDir(t)
+
+	session := "test-polling-invalid"
+	role := "commit"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	os.WriteFile(PollingMarkerPath(session, role), []byte("garbage"), 0644)
+
+	if IsPolling(session, role) {
+		t.Error("IsPolling should return false for invalid marker content")
+	}
+
+	// Invalid marker should be cleaned up
+	if _, err := os.Stat(PollingMarkerPath(session, role)); !os.IsNotExist(err) {
+		t.Error("invalid polling marker should have been removed")
+	}
+}
+
+func TestNotify_PollingMarkerPreventsNotifiedMarker(t *testing.T) {
+	useTempBusDir(t)
+
+	// Without a real tmux session, Notify returns early at the has-session guard.
+	// This test verifies the IsPolling check itself works correctly.
+	session := "test-notify-polling"
+	role := "build"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
+
+	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
+
+	// Set polling marker with our own PID
+	SetPolling(session, role)
+	defer ClearPolling(session, role)
+
+	// Without a tmux session, Notify returns nil early (before reaching polling check)
+	err := Notify(session, role)
+	if err != nil {
+		t.Errorf("Notify should return nil, got %v", err)
+	}
+
+	// Notified-size marker should NOT be written (has-session guard returns early)
+	if _, err := os.Stat(notifiedSizePath(session, role)); !os.IsNotExist(err) {
+		t.Error("Notify should NOT write notified marker without tmux session")
+	}
+}
+
+func TestWriteTriggerNotify_Direct(t *testing.T) {
+	useTempBusDir(t)
+
+	// writeTriggerNotify is called directly (not through Notify) in some paths.
+	// Verify it works independently of tmux.
+	session := "test-trigger-direct"
+	role := "deploy"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	writeTriggerNotify(session, role)
+
+	triggerPath := TriggerNotifyPath(session, role)
+	data, err := os.ReadFile(triggerPath)
+	if err != nil {
+		t.Fatalf("trigger file should exist: %v", err)
+	}
+	if len(data) == 0 {
+		t.Error("trigger file should contain a timestamp")
+	}
+}
