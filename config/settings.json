@@ -92,6 +92,8 @@
       "Bash(git show*)",
       "Bash(git stash list*)",
       "Bash(git status*)",
+      "Bash(git push*)",
+      "Bash(git push --force-with-lease*)",
       "Bash(go build*)",
       "Bash(go test*)",
       "Bash(go vet*)",
@@ -199,7 +201,6 @@
     ],
     "deny": [
       "Bash(rm -rf /)*",
-      "Bash(git push --force*)",
       "Bash(git reset --hard*)",
       "Bash(aws s3 rb*)",
       "Bash(aws s3 rm*)",
