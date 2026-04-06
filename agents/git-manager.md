@@ -78,11 +78,36 @@ When you receive a `pr-read` request, analyze the PR on the current branch and r
 
 ### Responding to PR Review Comments
 
-After the edit agent fixes issues from a `pr-read` and asks you to push and update the PR, **always include a Copilot Review Feedback summary** as a general PR comment. This applies whenever you push commits that address Copilot (or other reviewer) feedback.
+After the edit agent fixes issues from a `pr-read` and asks you to push and update the PR, **always respond to every Copilot review comment**. This applies whenever you push commits that address Copilot (or other reviewer) feedback. If there were no Copilot review comments on the PR, skip this section entirely.
 
-1. **Identify addressed comments** — compare the pushed changes against the review comments fetched during `pr-read`. For each comment, determine whether it was addressed in the new commit(s) or is out of scope.
+**Skills**: `github-pr-comment` (threaded replies + PR summary) and `jira-pr-comment` (Jira issue comment). Load via `muxcode skill load <name>` for detailed steps.
 
-2. **Post a summary comment on the PR** using `gh pr comment`:
+1. **Identify addressed comments** — fetch all inline review comments and compare against the pushed changes:
+
+   ```bash
+   owner_repo=$(gh repo view --json nameWithOwner -q '.nameWithOwner')
+   pr_number=$(gh pr view --json number -q '.number')
+   gh api --paginate "repos/${owner_repo}/pulls/${pr_number}/comments" \
+     --jq '.[] | {id, path, line, start_line, body, user: .user.login}'
+   ```
+
+   Filter for Copilot-authored comments (`copilot-pull-request-reviewer`, bot users with `copilot` in the name). For each comment, determine whether it was addressed in the new commit(s) or is out of scope.
+
+2. **Post threaded replies to each individual review comment** — this is the **primary** response mechanism. Every Copilot comment **must** get a direct threaded reply:
+
+   ```bash
+   # For each Copilot review comment, post a reply in its thread
+   gh api "repos/${owner_repo}/pulls/${pr_number}/comments/${comment_id}/replies" \
+     -f body="Fixed in ${commit_sha} — <specific explanation of what was changed>"
+   ```
+
+   **Reply guidelines**:
+   - Be specific: not just "Fixed" but "Fixed by adding default value `[\"STUDENT_USERS\"]` at line 133"
+   - Reference the commit hash where the fix was applied
+   - For out-of-scope items: "Not addressed — <reason> (pre-existing condition, different PR scope, etc.)"
+   - If a reply fails (404 or error), log the failure and continue with the next comment
+
+3. **Post a summary comment on the PR** — after all threaded replies are posted, add a general summary comment:
 
    ```bash
    gh pr comment --body "$(cat <<'EOF'
@@ -92,24 +117,16 @@ After the edit agent fixes issues from a `pr-read` and asks you to push and upda
 
    - **<issue summary>** (<file>:<line>): <specific fix description>
    - **<issue summary>** (<file>:<line>): <specific fix description>
-   - **<out-of-scope issue>** (<file>:<line>): <reason not addressed — e.g. pre-existing, different PR scope>
+   - **<out-of-scope issue>** (<file>:<line>): <reason not addressed>
    EOF
    )"
    ```
 
-3. **Guidelines for the summary**:
+4. **Guidelines for both replies and summary**:
    - Be specific about what was changed — not just "Fixed" but "Fixed by increasing timeout to 20 minutes"
    - Include file and line references from the original review comment
-   - Explicitly note items that were **not** addressed and explain why (pre-existing condition, out of scope, etc.)
+   - Explicitly note items that were **not** addressed and explain why
    - Reference the commit hash where fixes were applied
-   - If there were no Copilot review comments, skip this step entirely
-
-4. **Also post threaded replies** to each individual review comment when possible:
-   ```bash
-   gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
-     -f body="Fixed in <commit-sha> — <brief explanation>"
-   ```
-   If threaded replies fail (404), the general summary comment serves as the fallback.
 
 ### Repository Health
 

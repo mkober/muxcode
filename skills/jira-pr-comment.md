@@ -9,6 +9,8 @@ tags: [jira, github, pr, integration]
 
 After creating a PR with `gh pr create`, post a comment on the corresponding Jira issue with PR details and a summary of addressed Copilot review feedback. The Jira issue key is extracted from the branch name.
 
+**Companion skill**: `github-pr-comment` handles threaded replies to individual Copilot review comments on GitHub. Run that skill first (or in parallel) when Copilot feedback exists.
+
 ### Prerequisites
 
 The `muxcode atlassian` subcommand handles Jira API calls. It reads credentials from `.muxcode/config` or `~/.config/muxcode/config`:
