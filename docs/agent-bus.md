@@ -1316,6 +1316,26 @@ Patterns: emails, SSN, credit cards (prefix-anchored), phone numbers (separator-
 
 Core code: `bus/scrub.go` (patterns + `ScrubPII()`), `cmd/scrub.go` (CLI handler).
 
+### `muxcode track`
+
+Show the delivery status of a message by ID.
+
+```bash
+muxcode track <msg-id>
+```
+
+Reads the delivery status file for the given message ID and prints its lifecycle state. Delivery tracking is automatically managed by `Send()` (creates "sent" status), `Receive()` (marks "delivered"), and reply messages with `--reply-to` (marks original as "responded").
+
+**Output example:**
+
+```
+1711324800-edit-a1b2c3d4  delivered  (delivered in 3s)
+```
+
+Status values: `sent`, `delivered`, `responded`, `expired`.
+
+Core code: `cmd/track.go`, `bus/delivery.go`.
+
 ### `muxcode compact`
 
 Trigger conversation compression for an agent.

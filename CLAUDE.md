@@ -126,6 +126,7 @@ Test: `cd tools/muxcode && go test ./...`
 | `bus/guard.go` | `ReadHistory()`, `DetectCommandLoop()`, `DetectMessageLoop()`, `CheckLoops()`, `CheckAllLoops()` |
 | `bus/compact.go` | `CheckCompaction()`, `CheckRoleCompaction()`, `FormatCompactAlert()`, `FilterNewCompactAlerts()` |
 | `bus/dedup.go` | `IsDuplicateMessage()`, `SendIfNotDuplicate()`, `SendNoCCIfNotDuplicate()`, `DedupWindowSecs()` |
+| `bus/delivery.go` | `DeliveryStatus`, `CreateDeliveryStatus()`, `MarkDelivered()`, `MarkResponded()`, `ReadDeliveryStatus()`, `ListDeliveryStatuses()`, `CleanExpiredDeliveries()`, `FormatDeliveryStatus()` |
 | `bus/scrub.go` | `ScrubPII()`, `IsPIISensitiveRole()`, PII/secret regex patterns (mirrored in harness) |
 | `bus/hook.go` | `ProcessBashHook()`, `ProcessAnalyzeHook()`, `ProcessGuardHook()`, `ResolveChain()`, `ExpandMessage()` |
 | `bus/console.go` | `DefaultConsoleConfigs()`, `ConsoleConfig`, `RunConsole()`, per-role renderers (Dracula theme) |

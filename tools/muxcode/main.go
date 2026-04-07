@@ -179,6 +179,8 @@ func main() {
 		cmd.Modal(args)
 	case "compact":
 		cmd.Compact(args)
+	case "track":
+		cmd.Track(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

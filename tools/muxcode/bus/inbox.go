@@ -56,6 +56,14 @@ func sendMessage(session string, m Message, autoCC bool) error {
 		}
 	}
 
+	// Delivery tracking: create "sent" status, mark original as "responded" on reply
+	if err := CreateDeliveryStatus(session, m); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: delivery status creation failed: %v\n", err)
+	}
+	if m.ReplyTo != "" {
+		MarkResponded(session, m.ReplyTo, m.ID)
+	}
+
 	// Append to log
 	logDir := filepath.Dir(LogPath(session))
 	if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -89,6 +97,11 @@ func Receive(session, role string) ([]Message, error) {
 
 	// Remove consuming file regardless of read errors
 	_ = os.Remove(consuming)
+
+	// Mark all consumed messages as delivered
+	for _, m := range msgs {
+		MarkDelivered(session, m.ID)
+	}
 
 	return msgs, err
 }
@@ -127,6 +140,11 @@ func ReceiveFrom(session, role, fromRole string) ([]Message, error) {
 		} else {
 			rest = append(rest, m)
 		}
+	}
+
+	// Mark consumed messages as delivered
+	for _, m := range matched {
+		MarkDelivered(session, m.ID)
 	}
 
 	// Write unmatched messages back to inbox (prepend before any new arrivals)
@@ -184,6 +202,11 @@ func ReceiveFromFunc(session, role string, matchFn func(string) bool) ([]Message
 		} else {
 			rest = append(rest, m)
 		}
+	}
+
+	// Mark consumed messages as delivered
+	for _, m := range matched {
+		MarkDelivered(session, m.ID)
 	}
 
 	if len(rest) > 0 {

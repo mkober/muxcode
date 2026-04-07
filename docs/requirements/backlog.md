@@ -40,7 +40,7 @@
 - **Structured agent metrics** — Track per-agent metrics (messages sent/received, tool calls, errors, avg response time) in `metrics.jsonl` — dashboard TUI shows metrics panel
 - **File integrity validation** — Timestamp-based change detection on file operations — detect external modifications between read and edit/write, warn agent of stale content before applying changes. Inspired by OpenCode's file integrity checks
 - **Tool-call doom loop detection** — Detect 3+ identical consecutive tool calls within a single agent turn (same tool, same args) — prompt user or abort. Complements existing message-level loop detection in `bus/guard.go`. Inspired by OpenCode's `doom_loop` permission
-- **Message delivery receipts** — Agents ACK message consumption — sender knows message was read vs. sitting unprocessed, enables "read but no response" alerts
+- **Message delivery receipts** — ~~Agents ACK message consumption~~ Partially implemented: `bus/delivery.go` tracks sent→delivered→responded lifecycle per message via status files. Remaining: agent-facing `muxcode tasks` command for in-flight task listing, watcher integration for `CleanExpiredDeliveries()`, "read but no response" alerts
 - **Bus audit trail** — Append-only audit log separate from `log.jsonl` capturing all bus operations (send, consume, lock, unlock, cron fire, proc start/stop) with caller identity — post-session debugging. Partially addressed by lifecycle logging (`~/.config/muxcode/logs/`) which covers process lifecycle and watcher events
 
 ### Performance & Cost

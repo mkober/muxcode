@@ -249,18 +249,21 @@ The 1-2s latency increase is acceptable. Most agent tasks take 5-30 seconds. The
 
 ## Migration path
 
-### Phase 1: Add trigger file notification (non-breaking)
+### Phase 1: Add trigger file notification (non-breaking) ✅
 
 Add the trigger file write path alongside existing notification. Add `muxcode inbox --poll` command. No behavior change yet -- agents still use the old send-keys path.
 
-| # | Change | File |
-|---|--------|------|
-| 1 | Add `TriggerNotifyPath()` to config | `bus/config.go` |
-| 2 | Add trigger file write in `Notify()` (alongside existing logic) | `bus/notify.go` |
-| 3 | Add `--poll` flag to inbox command | `cmd/inbox.go` |
-| 4 | Add delivery status file creation in `Send()` | `bus/inbox.go` |
-| 5 | Add delivery status update in `Receive()` | `bus/inbox.go` |
-| 6 | Add `bus/delivery.go` for status tracking functions | `bus/delivery.go` |
+| # | Change | File | Status |
+|---|--------|------|--------|
+| 1 | Add `TriggerNotifyPath()` to config | `bus/config.go` | ✅ |
+| 2 | Add trigger file write in `Notify()` (alongside existing logic) | `bus/notify.go` | ✅ |
+| 3 | Add `--poll` flag to inbox command | `cmd/inbox.go` | ✅ |
+| 4 | Add delivery status file creation in `Send()` | `bus/inbox.go` | ✅ |
+| 5 | Add delivery status update in `Receive()` (all 3 paths) | `bus/inbox.go` | ✅ |
+| 6 | Add `bus/delivery.go` for status tracking functions | `bus/delivery.go` | ✅ |
+| — | Add `DeliveryDir()` creation in `Init()`, cleanup in `purgeStaleFiles()` | `bus/setup.go` | ✅ |
+| — | Add `muxcode track` command (pulled forward from Phase 2 #10) | `cmd/track.go`, `main.go` | ✅ |
+| — | Add `bus/delivery_test.go` with 14 tests | `bus/delivery_test.go` | ✅ |
 
 ### Phase 2: Agent prompt migration
 
@@ -271,7 +274,7 @@ Update agent prompts to use `muxcode inbox --poll` instead of waiting for send-k
 | 7 | Update shared prompt to use `--poll` pattern | `bus/launch.go` |
 | 8 | Add task tracking on `--wait` | `cmd/send.go` |
 | 9 | Add `muxcode tasks` command | `cmd/tasks.go` |
-| 10 | Add `muxcode track` command | `cmd/track.go` |
+| 10 | Add `muxcode track` command | `cmd/track.go` | ✅ (done in Phase 1) |
 
 ### Phase 3: Remove send-keys notification
 
@@ -290,10 +293,10 @@ Once all agents use polling, remove the send-keys path entirely.
 
 | # | Change | File |
 |---|--------|------|
-| 17 | Add delivery status expiry/cleanup in watcher | `watcher/watcher.go` |
-| 18 | Add `muxcode tasks` and `muxcode track` to CLI help | `main.go` |
-| 19 | Update architecture.md, agent-bus.md, agents.md | `docs/` |
-| 20 | Update CLAUDE.md notification documentation | `CLAUDE.md` |
+| 17 | Add delivery status expiry/cleanup in watcher | `watcher/watcher.go` | `CleanExpiredDeliveries()` ready in `bus/delivery.go`, watcher integration pending |
+| 18 | Add `muxcode tasks` and `muxcode track` to CLI help | `main.go` | ✅ `track` registered (done in Phase 1), `tasks` pending |
+| 19 | Update architecture.md, agent-bus.md, agents.md | `docs/` | ✅ (Phase 1 docs) |
+| 20 | Update CLAUDE.md notification documentation | `CLAUDE.md` | ✅ (Phase 1 docs) |
 | 21 | Add integration tests for poll-based notification | `bus/notify_test.go` |
 
 ## Success criteria

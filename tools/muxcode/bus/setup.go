@@ -51,6 +51,11 @@ func Init(session, memoryDir string) error {
 		return err
 	}
 
+	// Create delivery status directory for message tracking
+	if err := os.MkdirAll(DeliveryDir(session), 0755); err != nil {
+		return err
+	}
+
 	// Create modals directory for modal PID files
 	if err := os.MkdirAll(ModalDir(session), 0755); err != nil {
 		return err
@@ -220,6 +225,15 @@ func purgeStaleFiles(session string) error {
 			if strings.HasPrefix(name, "polling-") && strings.HasSuffix(name, ".marker") {
 				_ = os.Remove(filepath.Join(busDir, name))
 			}
+		}
+	}
+
+	// Remove delivery status files
+	deliveryDir := DeliveryDir(session)
+	entries, err = os.ReadDir(deliveryDir)
+	if err == nil {
+		for _, e := range entries {
+			_ = os.Remove(filepath.Join(deliveryDir, e.Name()))
 		}
 	}
 

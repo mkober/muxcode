@@ -19,14 +19,15 @@ Muxcode creates a tmux session with multiple windows, each running an independen
 │       │     Message Bus (/tmp/muxcode-bus-{session}/)           │
 │       │     ├── inbox/{role}.jsonl                              │
 │       │     ├── lock/{role}.lock                                │
-│       │     ├── workflow-state.json                              │
+│       │     ├── workflow-state.json                             │
 │       │     ├── log.jsonl                                       │
 │       │     ├── proc.jsonl                                      │
 │       │     ├── spawn.jsonl                                     │
 │       │     ├── cron.jsonl                                      │
-│       │     ├── subscriptions.jsonl                              │
+│       │     ├── subscriptions.jsonl                             │
+│       │     ├── delivery/{msg-id}.status                        │
 │       │     ├── dedup.lock                                      │
-│       │     ├── watcher.keepalive                                │
+│       │     ├── watcher.keepalive                               │
 │       │     └── webhook.pid                                     │
 │  ─────┼───────────┼───────────┼───────────┼──────────────────── │
 │       │           │           │           │                     │
@@ -145,14 +146,33 @@ Messages from build, test, review, and deploy agents to any non-edit agent are a
 ### Notification Flow
 
 1. `muxcode send` delivers message to inbox file
-2. `send` calls `Notify()` to alert the recipient (dual-path):
+2. `Send()` creates a delivery status file (`delivery/{msg-id}.status`) tracking the message lifecycle (sent → delivered → responded)
+3. If the message has `ReplyTo`, `Send()` marks the original message as "responded"
+4. `send` calls `Notify()` to alert the recipient (triple-path):
+   - **Trigger file** (always): writes timestamp to `trigger-{role}.notify` — agents running `muxcode inbox --poll` detect this via `stat()` polling (no pane interaction, no TOCTOU race)
+   - **Polling agents** (`--poll` or `--wait` active): skipped for send-keys — the poll loop watches the trigger file
    - **Harness panes**: skipped — they poll inbox directly
    - **Idle agents** (at `❯` prompt, including edit): `send-keys` "You have new messages" + Enter to wake them up
    - **Active agents** (including edit): `display-message` (passive status bar flash)
-3. If auto-CC fires, `send` also notifies edit
-4. The watcher provides fallback notifications for all roles
+5. If auto-CC fires, `send` also notifies edit
+6. The watcher provides fallback notifications for all roles
+7. When an agent reads its inbox via `Receive()`, consumed messages are marked "delivered" in their status files
 
 Never use `send-keys` on **active** agents — it disrupts Claude Code's input buffer, interrupts in-progress tool execution, and causes agents to stall at "Interrupted" prompts. Idle agents at the `❯` prompt are safe to wake via `send-keys` because no tool execution is in progress. `IsAgentIdle()` detects idle state via `tmux capture-pane -S -8` (scans all captured lines for exact match on the `❯` character — scans all lines because Claude Code renders a decorative footer below the prompt).
+
+### Delivery Tracking
+
+Every message sent through the bus gets a delivery status file at `delivery/{msg-id}.status` tracking its lifecycle:
+
+| State | Written by | Meaning |
+|-------|-----------|---------|
+| `sent` | `Send()` | Message appended to recipient inbox |
+| `delivered` | `Receive()` | Message consumed from inbox by recipient |
+| `responded` | `Send()` with `ReplyTo` | Response sent with matching reply-to ID |
+
+Query status via `muxcode track <msg-id>`. Expired status files are cleaned by `CleanExpiredDeliveries()` based on `SentAt` age.
+
+Core code: `bus/delivery.go`, `cmd/track.go`.
 
 ### Edit inbox polling (`--wait`)
 
@@ -323,7 +343,7 @@ When a MuxCode session restarts with the same name, `Init()` in `bus/setup.go` d
 
 - **Detection**: `os.Stat(busDir)` — if the directory exists, `reInit` flag is set
 - **Truncated files** (path preserved for writers): inboxes, `log.jsonl`, `cron.jsonl`, `proc.jsonl`, `spawn.jsonl`, `subscriptions.jsonl`, `{role}-history.jsonl`, `cron-history.jsonl`
-- **Removed files** (recreated on demand): session meta (`session/*.json`), lock files (`lock/*.lock`, `lock/*.stopped`), proc logs (`proc/*.log`), orphaned spawn inboxes (`inbox/spawn-*.jsonl`), trigger file
+- **Removed files** (recreated on demand): session meta (`session/*.json`), lock files (`lock/*.lock`, `lock/*.stopped`), proc logs (`proc/*.log`), orphaned spawn inboxes (`inbox/spawn-*.jsonl`), trigger file, delivery status files (`delivery/*.status`)
 - **Preserved**: memory files (`.muxcode/memory/`, `~/.config/muxcode/memory/`) — persistent learnings survive re-init
 - **Watcher grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (60s) and compaction checks (120s) skip the first interval
 
