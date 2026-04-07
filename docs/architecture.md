@@ -322,7 +322,7 @@ The analyze console reads the shared bus log (`log.jsonl`) rather than a dedicat
 
 When launching a session, Claude Code may show two sequential prompts per agent window:
 1. **Workspace trust** — "Yes, I trust this folder" (new workspaces)
-2. **Bypass permissions** — "Bypass Permissions mode" warning (non-edit agents using `--dangerously-skip-permissions`)
+2. **Bypass permissions** — "Bypass Permissions mode" warning (all agents use `--dangerously-skip-permissions`)
 
 The launcher handles both automatically via a single background loop that runs after all windows are created:
 

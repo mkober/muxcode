@@ -34,7 +34,7 @@ Every agent (regardless of source) receives a dynamically assembled `--append-sy
 
 ### Permission mode
 
-The edit agent runs without `--dangerously-skip-permissions` — users accept/reject each tool call (toggleable with Shift+Tab). All other agents run with `--dangerously-skip-permissions` for autonomous operation.
+All agents run with `--dangerously-skip-permissions` for autonomous operation. The edit agent relies on hook-based guardrails (`muxcode hook guard`) and tool profiles to enforce safety, rather than interactive permission prompts.
 
 ## Built-in Roles
 

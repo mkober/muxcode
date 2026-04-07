@@ -45,11 +45,10 @@ type Watcher struct {
 	agentFailCounts      map[string]int  // consecutive failures per role
 	agentRestarts        map[string]int  // restart count per role (cap at 3)
 	agentWasDown         map[string]bool // for recovery detection
-	// Startup notification: re-notify agents that had inbox messages before they were ready
-	firstIdleSeen   map[string]bool
-	allIdleSeen     bool             // early-out: skip checkStartupNotifications once all roles seen
-	startupNotifyAt map[string]int64 // unix timestamp of last startup notification per role
-	startupRetries  map[string]int   // retry count per role (cap at 3)
+	// Delivery/task cleanup
+	lastCleanupCheck int64 // 300s interval
+	// Idle agent wake-up
+	lastIdleCheck int64 // 5s interval
 }
 
 // New creates a new Watcher for the given session.
@@ -79,9 +78,6 @@ func New(session string, pollSecs, debounceSecs int) *Watcher {
 		agentFailCounts:      make(map[string]int),
 		agentRestarts:        make(map[string]int),
 		agentWasDown:         make(map[string]bool),
-		firstIdleSeen:        make(map[string]bool),
-		startupNotifyAt:      make(map[string]int64),
-		startupRetries:       make(map[string]int),
 	}
 }
 
@@ -144,7 +140,6 @@ func (w *Watcher) Run() error {
 	for {
 		w.touchKeepalive()
 		w.checkInboxes()
-		w.checkStartupNotifications()
 		w.checkTrigger()
 		w.checkCron()
 		w.checkProcs()
@@ -153,6 +148,8 @@ func (w *Watcher) Run() error {
 		w.checkCompaction()
 		w.checkOllama()
 		w.checkAgentHealth()
+		w.checkIdleAgents()
+		w.checkCleanup()
 		time.Sleep(w.pollInterval)
 	}
 }
@@ -173,15 +170,12 @@ func (w *Watcher) refreshInboxSizes() {
 }
 
 // checkInboxes polls all agent inboxes for new messages.
-// Only notifies agents that are NOT directly targeted by cmd/send.go.
-// cmd/send.go already calls Notify() for the direct recipient, and
-// auto-CC'd messages to edit don't need immediate notification since
-// edit will see them on its next inbox read. The watcher's role is to
-// catch messages that arrive without a Notify (e.g. auto-CC).
+// When inbox growth is detected, writes the trigger file (via Notify) so
+// agents running `muxcode inbox --poll` pick up the messages. Also sends
+// a display-message for human visibility.
 //
-// Also retries passive notifications: if a prior Notify() used display-message
-// (invisible to Claude Code) because the agent was active, and the agent has
-// since become idle, clear the dedup marker and re-notify via send-keys.
+// cmd/send.go already calls Notify() for direct recipients. The watcher
+// catches messages that arrive without a Notify (e.g. auto-CC, hooks).
 func (w *Watcher) checkInboxes() {
 	for _, role := range bus.KnownRoles {
 		inboxPath := bus.InboxPath(w.session, role)
@@ -201,110 +195,16 @@ func (w *Watcher) checkInboxes() {
 					bus.WithOutcome("review", "complete"))
 			}
 
-			// Notify handles per-role logic: display-message for all
-			// Claude Code panes (non-intrusive status bar flash), skip
-			// for harness panes. Dedup is handled inside Notify via
+			// Notify writes the trigger file and optionally sends a
+			// display-message. Dedup is handled inside Notify via
 			// file locking + cooldown.
 			ts := time.Now().Format("15:04:05")
 			fmt.Printf("  %s  New message(s) for %s — notifying\n", ts, role)
 			bus.LogLifecycle(w.session, "info", "watcher", "inbox-notify", role)
 			_ = bus.Notify(w.session, role)
-		} else if size > 0 && bus.HasPassiveNotify(w.session, role) {
-			// Prior notification was passive (display-message, invisible to
-			// Claude Code). If the agent is now idle and send-keys cooldown
-			// has expired, retry with send-keys.
-			if bus.IsAgentIdle(w.session, role) && !bus.IsSendKeysCoolingDown(w.session, role) {
-				ts := time.Now().Format("15:04:05")
-				fmt.Printf("  %s  Retrying notification for %s (was passive, now idle)\n", ts, role)
-				bus.LogLifecycle(w.session, "info", "watcher", "passive-retry", role)
-				bus.ClearNotified(w.session, role)
-				_ = bus.Notify(w.session, role)
-			}
 		}
 
 		w.inboxSizes[role] = size
-	}
-}
-
-// checkStartupNotifications ensures agents that had inbox messages before they
-// were ready (e.g. pre-populated startup messages) get notified once they reach
-// idle for the first time. Without this, checkInboxes detects the message
-// early (before the agent is idle), updates inboxSizes, and never re-notifies.
-//
-// Retries up to 3 times with a 5-second cooldown between attempts. This guards
-// against lost send-keys notifications (e.g. Claude Code TUI not fully ready
-// when the first notification fires, timing races with auto-accept loop).
-func (w *Watcher) checkStartupNotifications() {
-	if w.allIdleSeen {
-		return
-	}
-	allSeen := true
-	now := time.Now().Unix()
-	for _, role := range bus.KnownRoles {
-		if !bus.IsAgentIdle(w.session, role) {
-			if !w.firstIdleSeen[role] {
-				allSeen = false
-			}
-			continue
-		}
-		w.firstIdleSeen[role] = true
-
-		// Check if inbox has unread messages
-		inboxPath := bus.InboxPath(w.session, role)
-		info, err := os.Stat(inboxPath)
-		if err != nil || info.Size() == 0 {
-			continue // inbox consumed or empty — done for this role
-		}
-
-		// Inbox still has messages and agent is idle — notify (or retry).
-		// Cap retries to prevent infinite loops.
-		retries := w.startupRetries[role]
-		if retries >= 3 {
-			continue
-		}
-
-		// If the dedup marker already matches (meaning Notify was called
-		// and the agent was idle at the time), the initial send from
-		// cmd/send.go already delivered via send-keys. No need to re-notify.
-		// Only clear + retry when the marker is missing or stale (e.g. the
-		// initial Notify fired a display-message because the agent wasn't
-		// idle yet, then the agent became idle afterward).
-		if retries == 0 && bus.IsNotifiedCurrent(w.session, role) {
-			continue
-		}
-
-		// Cooldown: wait at least 5 seconds between attempts so the agent
-		// has time to process the previous notification.
-		lastAttempt := w.startupNotifyAt[role]
-		if lastAttempt > 0 && now-lastAttempt < 5 {
-			allSeen = false
-			continue
-		}
-
-		w.startupRetries[role] = retries + 1
-		w.startupNotifyAt[role] = now
-
-		ts := time.Now().Format("15:04:05")
-		if retries == 0 {
-			fmt.Printf("  %s  Agent %s ready with pending inbox — notifying\n", ts, role)
-			bus.LogLifecycle(w.session, "info", "watcher", "startup-notify", role)
-		} else {
-			fmt.Printf("  %s  Agent %s still has pending inbox — retry %d/3\n", ts, role, retries)
-			bus.LogLifecycle(w.session, "info", "watcher", "startup-notify",
-				fmt.Sprintf("%s retry %d/3", role, retries))
-		}
-
-		// Clear the dedup marker before notifying. checkInboxes may have
-		// already fired a display-message (which Claude Code can't see) for
-		// this inbox growth, marking it as notified. Without clearing, the
-		// send-keys wake-up would be suppressed by alreadyNotified().
-		bus.ClearNotified(w.session, role)
-		_ = bus.Notify(w.session, role)
-
-		allSeen = false // keep checking until inbox consumed or retries exhausted
-	}
-	if allSeen {
-		w.allIdleSeen = true
 	}
 }
 
@@ -960,6 +860,76 @@ func (w *Watcher) checkAgentHealth() {
 			// Reset fail count to let next probe detect recovery
 			w.agentFailCounts[role] = 0
 		}
+	}
+}
+
+// checkIdleAgents wakes agents that are idle with unread messages.
+// Runs every 5 seconds. For each non-edit agent that has unread inbox messages
+// and is sitting at the idle prompt (not polling or waiting), injects
+// "You have new messages" via send-keys. This replaces the LLM-driven polling
+// loop — agents no longer need to run `muxcode inbox --poll` themselves.
+// The edit agent is excluded because it uses background polling managed by
+// the user/orchestrator.
+func (w *Watcher) checkIdleAgents() {
+	now := time.Now().Unix()
+	if now-w.lastIdleCheck < 5 {
+		return
+	}
+	w.lastIdleCheck = now
+
+	for _, role := range bus.KnownRoles {
+		// Edit agent manages its own polling via background Bash tool
+		if role == "edit" {
+			continue
+		}
+		// Skip hosted roles — they share a pane with their host
+		if bus.WindowForRole(role) != role {
+			continue
+		}
+		// Skip if no unread messages
+		if !bus.HasMessages(w.session, role) {
+			continue
+		}
+		// Skip if agent is polling or waiting (already watching inbox)
+		if bus.IsPolling(w.session, role) || bus.IsWaiting(w.session, role) {
+			continue
+		}
+		// Skip harness panes — they poll inbox directly
+		if bus.IsHarnessActive(w.session, role) {
+			continue
+		}
+		// Only wake idle agents (at ❯ prompt) — don't interrupt active ones
+		if !bus.IsAgentIdle(w.session, role) {
+			continue
+		}
+
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Waking idle agent %s (unread messages)\n", ts, role)
+		bus.LogLifecycle(w.session, "info", "watcher", "idle-wake", role)
+		_ = bus.Notify(w.session, role)
+	}
+}
+
+// checkCleanup removes expired delivery status and task files every 5 minutes.
+// Delivery and task files accumulate from --wait send operations; without
+// periodic cleanup they grow unbounded over long sessions.
+func (w *Watcher) checkCleanup() {
+	now := time.Now().Unix()
+	if now-w.lastCleanupCheck < 300 {
+		return
+	}
+	w.lastCleanupCheck = now
+
+	// Clean delivery status files older than 1 hour
+	deliveryCleaned := bus.CleanExpiredDeliveries(w.session, 1*time.Hour)
+	// Clean task files older than 1 hour
+	tasksCleaned := bus.CleanExpiredTasks(w.session, 1*time.Hour)
+
+	if deliveryCleaned > 0 || tasksCleaned > 0 {
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Cleanup: %d delivery, %d task files removed\n", ts, deliveryCleaned, tasksCleaned)
+		bus.LogLifecycle(w.session, "info", "watcher", "cleanup",
+			fmt.Sprintf("delivery=%d tasks=%d", deliveryCleaned, tasksCleaned))
 	}
 }
 

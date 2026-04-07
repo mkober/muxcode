@@ -53,8 +53,17 @@ func SharedPrompt(role string) string {
 	b.WriteString("**Important**: Do NOT output `/compact` as text — it is a built-in slash command that only works when typed at the `❯` prompt. ")
 	b.WriteString("The `muxcode compact` command handles this automatically.\n\n")
 
-	// Protocol
+	// Protocol — edit agent uses background polling; all others are woken by the watcher
 	b.WriteString("### Protocol\n")
+	if role == "edit" {
+		b.WriteString("- **Message polling**: after processing inbox messages (or when idle), start `muxcode inbox --poll` as a background Bash tool (timeout: 300s). ")
+		b.WriteString("It watches for new messages and returns them when they arrive. Process them immediately, then restart the poll.\n")
+		b.WriteString("- If the poll times out with no messages, restart it — this keeps you responsive while idle.\n")
+		b.WriteString("- **IMPORTANT**: Always start polling immediately on session start, even if there are no messages to process.\n")
+	} else {
+		b.WriteString("- **Do NOT poll for messages.** The watcher process automatically detects when you have unread messages and wakes you by typing \"You have new messages\" at your prompt. ")
+		b.WriteString("Just process your messages, reply, and go idle — you will be woken when new work arrives.\n")
+	}
 	b.WriteString("- When prompted with \"You have new messages\", immediately run `muxcode inbox` and act on every message without asking\n")
 	b.WriteString("- After completing each task, run `muxcode inbox --peek` to check for new messages before going idle\n")
 	b.WriteString("- Reply to requests with `--type response --reply-to <id>`\n")

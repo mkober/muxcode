@@ -56,6 +56,11 @@ func Init(session, memoryDir string) error {
 		return err
 	}
 
+	// Create tasks directory for --wait task tracking
+	if err := os.MkdirAll(TaskDir(session), 0755); err != nil {
+		return err
+	}
+
 	// Create modals directory for modal PID files
 	if err := os.MkdirAll(ModalDir(session), 0755); err != nil {
 		return err
@@ -213,12 +218,6 @@ func purgeStaleFiles(session string) error {
 			if strings.HasPrefix(name, "waiting-") && strings.HasSuffix(name, ".marker") {
 				_ = os.Remove(filepath.Join(busDir, name))
 			}
-			if strings.HasPrefix(name, "passive-notify-") && strings.HasSuffix(name, ".marker") {
-				_ = os.Remove(filepath.Join(busDir, name))
-			}
-			if strings.HasPrefix(name, "sendkeys-") && strings.HasSuffix(name, ".ts") {
-				_ = os.Remove(filepath.Join(busDir, name))
-			}
 			if strings.HasPrefix(name, "trigger-") && strings.HasSuffix(name, ".notify") {
 				_ = os.Remove(filepath.Join(busDir, name))
 			}
@@ -234,6 +233,15 @@ func purgeStaleFiles(session string) error {
 	if err == nil {
 		for _, e := range entries {
 			_ = os.Remove(filepath.Join(deliveryDir, e.Name()))
+		}
+	}
+
+	// Remove task tracking files
+	taskDir := TaskDir(session)
+	entries, err = os.ReadDir(taskDir)
+	if err == nil {
+		for _, e := range entries {
+			_ = os.Remove(filepath.Join(taskDir, e.Name()))
 		}
 	}
 

@@ -336,9 +336,9 @@ func TestResolveLaunchConfig_EditRole(t *testing.T) {
 		t.Errorf("ModelFlags = %v, want [--model claude-opus-4-6]", cfg.ModelFlags)
 	}
 
-	// Edit should NOT have --dangerously-skip-permissions
-	if len(cfg.PermFlags) != 0 {
-		t.Errorf("PermFlags = %v, want empty for edit", cfg.PermFlags)
+	// Edit should have --dangerously-skip-permissions (all roles use bypass)
+	if len(cfg.PermFlags) == 0 {
+		t.Error("expected PermFlags for edit role")
 	}
 }
 

@@ -414,29 +414,6 @@ func TestNotify_EditSkipsWithoutTmuxSession(t *testing.T) {
 	}
 }
 
-func TestNotifyIdleSendKeys_Dedup(t *testing.T) {
-	useTempBusDir(t)
-
-	session := "test-idle-sendkeys-dedup"
-	role := "review"
-	busDir := BusDir(session)
-	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
-	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
-
-	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
-
-	// Call returns nil but has-session guard prevents marker write (no real tmux session)
-	err := notifyIdleSendKeys(session, role)
-	if err != nil {
-		t.Errorf("notifyIdleSendKeys should return nil, got %v", err)
-	}
-
-	// Marker should NOT be written — has-session guard returns before dedup/mark
-	if _, err := os.Stat(notifiedSizePath(session, role)); !os.IsNotExist(err) {
-		t.Error("notifyIdleSendKeys should skip marker when tmux session doesn't exist")
-	}
-}
-
 func TestAlreadyNotified_CooldownExpired(t *testing.T) {
 	useTempBusDir(t)
 
@@ -463,68 +440,6 @@ func TestAlreadyNotified_CooldownExpired(t *testing.T) {
 	// Cooldown expired and size differs — should allow notification
 	if alreadyNotified(session, role) {
 		t.Error("alreadyNotified should return false when cooldown has expired and inbox size differs")
-	}
-}
-
-func TestIsSendKeysCoolingDown_NoMarker(t *testing.T) {
-	useTempBusDir(t)
-
-	// No marker file — not cooling down
-	if IsSendKeysCoolingDown("nonexistent-session", "build") {
-		t.Error("IsSendKeysCoolingDown should return false when no marker exists")
-	}
-}
-
-func TestIsSendKeysCoolingDown_RecentMarker(t *testing.T) {
-	useTempBusDir(t)
-
-	session := "test-sendkeys-recent"
-	busDir := BusDir(session)
-	os.MkdirAll(busDir, 0755)
-
-	// Write a marker with current timestamp
-	markSendKeys(session, "test")
-
-	if !IsSendKeysCoolingDown(session, "test") {
-		t.Error("IsSendKeysCoolingDown should return true for a just-written marker")
-	}
-}
-
-func TestIsSendKeysCoolingDown_ExpiredMarker(t *testing.T) {
-	useTempBusDir(t)
-
-	session := "test-sendkeys-expired"
-	busDir := BusDir(session)
-	os.MkdirAll(busDir, 0755)
-
-	// Write a marker with a timestamp well in the past (beyond sendKeysCooldown)
-	past := time.Now().Add(-15 * time.Second).Unix()
-	os.WriteFile(SendKeysMarkerPath(session, "test"),
-		[]byte(fmt.Sprintf("%d", past)), 0644)
-
-	if IsSendKeysCoolingDown(session, "test") {
-		t.Error("IsSendKeysCoolingDown should return false for an expired marker")
-	}
-}
-
-func TestIsSendKeysCoolingDown_InvalidContent(t *testing.T) {
-	useTempBusDir(t)
-
-	session := "test-sendkeys-invalid"
-	busDir := BusDir(session)
-	os.MkdirAll(busDir, 0755)
-
-	os.WriteFile(SendKeysMarkerPath(session, "test"), []byte("garbage"), 0644)
-
-	if IsSendKeysCoolingDown(session, "test") {
-		t.Error("IsSendKeysCoolingDown should return false for invalid marker content")
-	}
-}
-
-func TestSendKeysMarkerPath(t *testing.T) {
-	p := SendKeysMarkerPath("mysession", "build")
-	if !strings.Contains(p, "sendkeys-build.ts") {
-		t.Errorf("unexpected marker path: %s", p)
 	}
 }
 

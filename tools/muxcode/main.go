@@ -12,7 +12,7 @@ import (
 // When invoked as "muxcode", any arg that isn't a known subcommand
 // is treated as a project path (routes to the launcher).
 var knownSubcommands = map[string]bool{
-	"init": true, "send": true, "inbox": true, "memory": true,
+	"init": true, "send": true, "inbox": true, "memory": true, "tasks": true,
 	"watch": true, "dashboard": true, "cleanup": true, "notify": true,
 	"lock": true, "unlock": true, "is-locked": true, "tools": true,
 	"chain": true, "log": true, "prompt": true, "skill": true,
@@ -69,6 +69,8 @@ Commands:
   workflow      Show or reset workflow state machine (--json, reset)
   atlassian     Jira and Confluence API operations (read, update, comment, search)
   modal         Manage modal windows (open, list, status)
+  tasks         List delegated tasks tracked via --wait (--all, --status)
+  track         Show delivery status for a message ID
   pii-scrub     Scrub PII and secrets from stdin (pipe filter)
   compact       Wait for agent idle, then inject /compact via tmux
 `
@@ -179,6 +181,8 @@ func main() {
 		cmd.Modal(args)
 	case "compact":
 		cmd.Compact(args)
+	case "tasks":
+		cmd.Tasks(args)
 	case "track":
 		cmd.Track(args)
 	default:

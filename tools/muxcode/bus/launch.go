@@ -409,9 +409,7 @@ func ResolveLaunchConfig(role string) *LaunchConfig {
 	}
 
 	// --- Permission mode ---
-	if role != "edit" {
-		cfg.PermFlags = []string{"--dangerously-skip-permissions"}
-	}
+	cfg.PermFlags = []string{"--dangerously-skip-permissions"}
 
 	// --- Tool profiles ---
 	tools := ResolveTools(role)

@@ -45,20 +45,6 @@ func notifiedSizePath(session, role string) string {
 // This is a defense-in-depth against rapid-fire duplicates if file locking fails.
 const notifyCooldown = 2 * time.Second
 
-// sendKeysCooldown is the minimum interval between send-keys notifications for
-// the same agent. After delivering a send-keys wake-up, further send-keys are
-// suppressed for this duration — falling back to display-message instead.
-//
-// This prevents the inter-tool-call race: the ❯ prompt appears briefly between
-// consecutive tool calls (~100-200ms), and IsAgentIdle() fires send-keys into
-// an agent that's about to start its next tool execution. Claude Code interprets
-// the injected text as user input and interrupts the running tool.
-//
-// 10 seconds covers the typical tool-call chain (inbox read → execute → reply →
-// inbox peek = 3-8s). The watcher's passive-retry mechanism re-sends via
-// send-keys once the agent is truly idle and the cooldown has expired.
-const sendKeysCooldown = 10 * time.Second
-
 // lockNotify acquires a per-role file lock for notification deduplication.
 // Returns an unlock function. If lock acquisition fails, returns a no-op
 // (graceful degradation — old behavior without locking).
@@ -116,26 +102,9 @@ func alreadyNotified(session, role string) bool {
 	return time.Since(markerInfo.ModTime()) < notifyCooldown
 }
 
-// IsNotifiedCurrent returns true if the dedup marker matches the current inbox
-// size — meaning a prior Notify call already ran for this exact inbox state.
-// Used by the watcher startup path to avoid re-notifying when the initial
-// send-keys notification from cmd/send.go already succeeded.
-func IsNotifiedCurrent(session, role string) bool {
-	return alreadyNotified(session, role)
-}
-
-// ClearNotified removes the notification dedup marker for a role, allowing
-// the next Notify call to proceed even if a prior notification (e.g. a
-// display-message that Claude Code can't see) already marked the inbox as
-// notified. Used by the watcher's startup notification path to ensure agents
-// get a send-keys wake-up after reaching idle for the first time.
-func ClearNotified(session, role string) {
-	_ = os.Remove(notifiedSizePath(session, role))
-}
-
 // SetWaiting creates a marker file indicating that a --wait polling loop is
-// active for the given role. While the marker exists, Notify() skips send-keys
-// notifications to avoid interrupting the running Bash tool.
+// active for the given role. While the marker exists, Notify() skips
+// display-message notifications since the --wait loop is already polling.
 func SetWaiting(session, role string) {
 	_ = os.WriteFile(WaitingMarkerPath(session, role), []byte(strconv.Itoa(os.Getpid())), 0644)
 }
@@ -165,46 +134,6 @@ func IsWaiting(session, role string) bool {
 	return true
 }
 
-// IsSendKeysCoolingDown returns true if a send-keys notification was recently
-// delivered to this role (within sendKeysCooldown window). During cooldown,
-// Notify falls back to display-message to avoid interrupting tool execution.
-func IsSendKeysCoolingDown(session, role string) bool {
-	data, err := os.ReadFile(SendKeysMarkerPath(session, role))
-	if err != nil {
-		return false
-	}
-	ts, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-	if err != nil {
-		return false
-	}
-	return time.Since(time.Unix(ts, 0)) < sendKeysCooldown
-}
-
-// markSendKeys records the current time as the last send-keys delivery for a role.
-func markSendKeys(session, role string) {
-	_ = os.WriteFile(SendKeysMarkerPath(session, role),
-		[]byte(strconv.FormatInt(time.Now().Unix(), 10)), 0644)
-}
-
-// SetPassiveNotify creates a marker indicating the last notification for a role
-// was passive (display-message). The watcher checks this to retry with send-keys
-// once the agent becomes idle.
-func SetPassiveNotify(session, role string) {
-	_ = os.WriteFile(PassiveNotifyMarkerPath(session, role), []byte("1"), 0644)
-}
-
-// ClearPassiveNotify removes the passive notification marker for a role.
-// Called after a successful send-keys notification.
-func ClearPassiveNotify(session, role string) {
-	_ = os.Remove(PassiveNotifyMarkerPath(session, role))
-}
-
-// HasPassiveNotify returns true if the last notification for a role was passive.
-func HasPassiveNotify(session, role string) bool {
-	_, err := os.Stat(PassiveNotifyMarkerPath(session, role))
-	return err == nil
-}
-
 // markNotified records the current inbox size as the last notified size.
 func markNotified(session, role string) {
 	inboxPath := InboxPath(session, role)
@@ -230,6 +159,9 @@ const idlePromptChar = "\u276f"
 //
 // Returns false on any error (no tmux, session doesn't exist, etc.) — safe
 // to call unconditionally.
+//
+// Used by agent-health detection and compact command. Not used in the
+// notification path — agents use trigger-file polling instead.
 func IsAgentIdle(session, role string) bool {
 	target := PaneTarget(session, role)
 	cmd := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-S", "-8")
@@ -250,97 +182,14 @@ func IsAgentIdle(session, role string) bool {
 	return false
 }
 
-// notifySendKeys injects "You have new messages" + Enter into the agent's
-// tmux pane via send-keys. This wakes up idle Claude Code agents that are
-// sitting at the ❯ prompt. The shared agent prompt instructs them to run
-// `muxcode inbox` when they see this text.
+// Notify sends a notification to an agent that new messages are available.
 //
-// Text and Enter are sent as separate tmux send-keys calls with a brief
-// delay between them. Claude Code's TUI can drop the Enter key when it
-// arrives in the same pty write as the preceding text characters.
-//
-// ONLY safe when the agent is confirmed idle (at ❯). Active agents must
-// use display-message instead — send-keys to an active pane disrupts
-// tool execution, pollutes conversation history, and causes stalls.
-func notifySendKeys(session, role string) error {
-	target := PaneTarget(session, role)
-
-	// Step 0: clear any residual input so the text starts at column 0.
-	// Escape dismisses any completion popups/overlays, C-u clears the line.
-	esc := exec.Command("tmux", "send-keys", "-t", target, "Escape")
-	_ = esc.Run()
-	time.Sleep(50 * time.Millisecond)
-	clr := exec.Command("tmux", "send-keys", "-t", target, "C-u")
-	_ = clr.Run()
-	time.Sleep(50 * time.Millisecond)
-
-	// Step 1: send the text
-	cmd := exec.Command("tmux", "send-keys", "-t", target, "You have new messages")
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s failed: %v\n", role, err)
-		return nil
-	}
-
-	// Step 2: poll the pane until the text appears, then send Enter.
-	// This avoids blind timing delays — we confirm the TUI has rendered
-	// the text before submitting. Polls up to 10 times (50ms intervals,
-	// ~500ms max) which handles both fast steady-state and slow startup.
-	const needle = "You have new messages"
-	for i := 0; i < 10; i++ {
-		time.Sleep(50 * time.Millisecond)
-		out, err := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-S", "-3").Output()
-		if err == nil && strings.Contains(string(out), needle) {
-			break
-		}
-	}
-
-	// Step 3: send Enter
-	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s failed: %v\n", role, err)
-	}
-	return nil
-}
-
-// notifyIdleSendKeys wraps notifySendKeys with the same deduplication logic
-// used by notifyDisplayMessage (file lock + inbox size + cooldown).
-func notifyIdleSendKeys(session, role string) error {
-	if err := exec.Command("tmux", "has-session", "-t", session).Run(); err != nil {
-		return nil
-	}
-
-	unlock := lockNotify(session, role)
-	defer unlock()
-
-	if alreadyNotified(session, role) {
-		return nil
-	}
-
-	// Re-check cooldown under lock. The caller checks IsSendKeysCoolingDown()
-	// before entering this function, but two concurrent callers can both pass
-	// that check before either writes the marker. This second check inside the
-	// lock prevents the "You have new messagesYou have new messages" race.
-	if IsSendKeysCoolingDown(session, role) {
-		return nil
-	}
-
-	markNotified(session, role)
-	ClearPassiveNotify(session, role)
-	markSendKeys(session, role)
-	return notifySendKeys(session, role)
-}
-
-// Notify sends a tmux notification to an agent's pane.
-//
-// Dual-path strategy:
-//   - Harness panes: skipped entirely (they poll inbox directly)
-//   - Waiting roles (active --wait loop): skipped — the loop already polls
-//     the inbox and send-keys would interrupt the running Bash tool
-//   - Idle agents (at ❯ prompt, all roles including edit): uses send-keys to
-//     wake them up. The shared agent prompt instructs them to run
-//     `muxcode inbox` on seeing "You have new messages".
-//   - Active agents (all roles including edit): uses display-message (passive
-//     status bar flash) to avoid disrupting in-progress tool execution
+// Strategy:
+//   - Always writes the trigger file — agents running `muxcode inbox --poll`
+//     detect this via stat() polling. This is the primary notification mechanism.
+//   - Harness panes: skipped (they poll inbox directly)
+//   - Waiting/polling roles: trigger file only (already polling)
+//   - All other agents: trigger file + display-message (visual indicator)
 //
 // Deduplicates: skips if the inbox hasn't changed since the last notification.
 func Notify(session, role string) error {
@@ -367,37 +216,29 @@ func Notify(session, role string) error {
 		return nil
 	}
 
-	// Skip send-keys when the role has an active --wait polling loop.
-	// The --wait already polls the inbox every 2s, so send-keys is redundant
-	// and dangerous — it can interrupt the running Bash tool in Claude Code's
-	// TUI, causing the agent to lose its execution flow.
+	// Skip display-message when the role has an active --wait polling loop.
+	// The --wait already polls the inbox every 2s, so display-message is
+	// redundant noise.
 	if IsWaiting(session, role) {
 		return nil
 	}
 
-	// Skip send-keys when the role has an active --poll loop.
-	// The poll loop watches the trigger file we just wrote — send-keys is
-	// redundant and risks the inter-tool-call interruption race.
+	// Skip display-message when the role has an active --poll loop.
+	// The poll loop watches the trigger file we just wrote.
 	if IsPolling(session, role) {
 		return nil
 	}
 
-	// All roles (including edit): wake idle agents via send-keys,
-	// fall back to display-message for active agents.
-	// Edit was previously excluded (display-message only) because the user
-	// types there. But when Claude Code is idle at ❯, send-keys is safe
-	// and necessary — display-message is only visible to the human and
-	// Claude Code never sees it, so responses go unnoticed after --wait
-	// times out.
-	//
-	// Send-keys cooldown: after delivering send-keys, suppress further
-	// send-keys for sendKeysCooldown to prevent the inter-tool-call race.
-	// The ❯ prompt appears briefly between tool calls (~100-200ms), and
-	// IsAgentIdle() would fire send-keys into an agent about to start its
-	// next tool. The watcher's passive-retry re-sends once truly idle.
-	if IsAgentIdle(session, role) && !IsSendKeysCoolingDown(session, role) {
-		return notifyIdleSendKeys(session, role)
+	// If the agent is idle (at ❯ prompt) and not polling/waiting, inject
+	// "You have new messages" via send-keys as a last resort. This covers
+	// agents that launched but never started their polling loop — without
+	// this fallback, messages pile up unread.
+	if IsAgentIdle(session, role) {
+		return notifySendKeys(session, role)
 	}
+
+	// Visual indicator via display-message (status bar flash).
+	// The trigger file is the real notification; this is for human visibility.
 	return notifyDisplayMessage(session, role)
 }
 
@@ -422,7 +263,7 @@ func ClearPolling(session, role string) {
 
 // IsPolling returns true if the given role has an active --poll loop.
 // Validates that the PID in the marker is still alive to prevent stale markers
-// from permanently suppressing send-keys notifications.
+// from permanently suppressing notifications.
 func IsPolling(session, role string) bool {
 	data, err := os.ReadFile(PollingMarkerPath(session, role))
 	if err != nil {
@@ -440,13 +281,47 @@ func IsPolling(session, role string) bool {
 	return true
 }
 
+// notifySendKeys injects "You have new messages" into the agent's tmux pane
+// via send-keys. This is the last-resort notification for agents that are idle
+// (at the ❯ prompt) but not running a --poll or --wait loop. The injected text
+// triggers Claude Code's "When prompted with 'You have new messages'" protocol.
+//
+// Text and Enter are sent as separate tmux send-keys calls with a brief delay
+// to avoid Claude Code's TUI dropping the Enter key (see CLAUDE.md pitfalls).
+func notifySendKeys(session, role string) error {
+	unlock := lockNotify(session, role)
+	defer unlock()
+
+	if alreadyNotified(session, role) {
+		return nil
+	}
+
+	markNotified(session, role)
+
+	target := PaneTarget(session, role)
+	// Send text first
+	cmd := exec.Command("tmux", "send-keys", "-t", target, "You have new messages")
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s failed: %v\n", role, err)
+		return err
+	}
+	// Brief delay so Claude Code's TUI registers the text before Enter
+	time.Sleep(100 * time.Millisecond)
+	// Send Enter
+	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s failed: %v\n", role, err)
+		return err
+	}
+	return nil
+}
+
 // notifyDisplayMessage sends a passive notification via tmux display-message
-// (status bar flash). Used for active agents (not at idle prompt — send-keys
-// would interrupt tool execution). All roles including edit use this path
-// when the agent is busy.
+// (status bar flash). Used as a visual indicator for humans — the trigger
+// file is the primary mechanism for agent notification.
 //
 // Best-effort: errors are logged but not returned, since the message is
-// already in the inbox and will be seen on the next inbox read.
+// already in the inbox and will be seen on the next inbox read or poll.
 func notifyDisplayMessage(session, role string) error {
 	if err := exec.Command("tmux", "has-session", "-t", session).Run(); err != nil {
 		return nil
@@ -460,8 +335,6 @@ func notifyDisplayMessage(session, role string) error {
 	}
 
 	markNotified(session, role)
-
-	SetPassiveNotify(session, role)
 
 	// Passive: display-message shows in the tmux status bar.
 	// -d 5000 keeps it visible for 5 seconds (default is often too brief).

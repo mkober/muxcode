@@ -298,30 +298,14 @@ func WatcherPidPath(session string) string {
 
 // WaitingMarkerPath returns the path to a marker file that indicates the given
 // role has an active --wait polling loop. While this marker exists, Notify()
-// skips send-keys notifications because --wait is already polling the inbox.
+// skips display-message notifications because --wait is already polling the inbox.
 func WaitingMarkerPath(session, role string) string {
 	return filepath.Join(BusDir(session), "waiting-"+role+".marker")
 }
 
-// PassiveNotifyMarkerPath returns the path to a marker indicating the last
-// notification for a role was passive (display-message, invisible to Claude Code).
-// The watcher uses this to retry with send-keys once the agent becomes idle.
-func PassiveNotifyMarkerPath(session, role string) string {
-	return filepath.Join(BusDir(session), "passive-notify-"+role+".marker")
-}
-
-// SendKeysMarkerPath returns the path to a marker recording the Unix timestamp
-// of the last send-keys notification for a role. Used to enforce a cooldown
-// between send-keys deliveries, preventing the inter-tool-call race where the
-// ❯ prompt appears briefly between tool calls and IsAgentIdle fires send-keys
-// into an agent that's about to start its next tool execution.
-func SendKeysMarkerPath(session, role string) string {
-	return filepath.Join(BusDir(session), "sendkeys-"+role+".ts")
-}
-
 // PollingMarkerPath returns the path to a marker file indicating that a
 // --poll loop is active for the given role. While this marker exists,
-// Notify() skips send-keys — the poll loop watches the trigger file instead.
+// Notify() skips display-message — the poll loop watches the trigger file instead.
 func PollingMarkerPath(session, role string) string {
 	return filepath.Join(BusDir(session), "polling-"+role+".marker")
 }

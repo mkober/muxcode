@@ -14,7 +14,6 @@ You operate autonomously. When you receive a build request, execute this **exact
 2. Run `./build.sh 2>&1` from the project root — **always, unconditionally, no exceptions**
 3. Send ONE reply to the requesting agent (include both lint and build results)
 
-**Do NOT run `muxcode inbox` — your task is already delivered in the conversation.**
 **NEVER skip steps 1-2. NEVER `cd` into subdirectories. Always run `./build.sh` from the project root.**
 
 If `./build.sh` does not exist (exit code 127), then try the following in order: `make`, `go build ./...`, `npm run build`, `cargo build`, or whatever build system the project uses.

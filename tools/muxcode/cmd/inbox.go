@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
@@ -12,6 +14,14 @@ import (
 // Inbox handles the "muxcode inbox" subcommand.
 // Usage: muxcode inbox [--peek] [--raw] [--role ROLE] [--wait [TIMEOUT]] [--from ROLE] [--poll [TIMEOUT]]
 func Inbox(args []string) {
+	// Pre-process args: inject default timeout (600) for --wait/--poll when
+	// given without a value. Go's flag package requires Int flags to have an
+	// argument, so bare "--poll" or "--wait" would fail with exit code 2.
+	args = injectOptionalIntDefaults(args, map[string]string{
+		"wait": "600",
+		"poll": "600",
+	})
+
 	fs := flag.NewFlagSet("inbox", flag.ExitOnError)
 	peek := fs.Bool("peek", false, "read without consuming messages")
 	raw := fs.Bool("raw", false, "output raw JSONL")
@@ -27,18 +37,8 @@ func Inbox(args []string) {
 		r = bus.BusRole()
 	}
 
-	// --wait with no value gets parsed as 0; treat as default 600s.
-	// Distinguish "not given" (0) from "given without value" by checking args.
 	waitTimeout := *wait
 	pollTimeout := *poll
-	for _, a := range args {
-		if a == "--wait" && waitTimeout == 0 {
-			waitTimeout = 600
-		}
-		if a == "--poll" && pollTimeout == 0 {
-			pollTimeout = 600
-		}
-	}
 
 	if pollTimeout > 0 && waitTimeout > 0 {
 		fmt.Fprintf(os.Stderr, "Error: --poll and --wait are mutually exclusive\n")
@@ -177,6 +177,43 @@ func inboxWait(session, role, from string, raw bool, timeout int) {
 	}
 
 	fmt.Fprintf(os.Stderr, "No messages within %ds\n", timeout)
+}
+
+// injectOptionalIntDefaults pre-processes args so that Int flags can be used
+// without a value (e.g. "--poll" becomes "--poll 600"). For each flag name in
+// defaults, if the flag appears in args without a following integer value, the
+// default is inserted. Handles both "-flag" and "--flag" forms, plus "="-style
+// ("--flag=VAL" is left as-is since Go's flag package handles it natively).
+func injectOptionalIntDefaults(args []string, defaults map[string]string) []string {
+	out := make([]string, 0, len(args)+len(defaults))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		out = append(out, a)
+
+		// Strip leading dashes to get the flag name
+		name := strings.TrimLeft(a, "-")
+
+		// Skip "="-style values (--poll=300) — already has a value
+		if strings.Contains(name, "=") {
+			continue
+		}
+
+		def, ok := defaults[name]
+		if !ok {
+			continue
+		}
+
+		// Check if the next arg is a valid integer (i.e. the value was provided)
+		if i+1 < len(args) {
+			if _, err := strconv.Atoi(args[i+1]); err == nil {
+				continue // next arg is the value, leave it alone
+			}
+		}
+
+		// No value follows — inject the default
+		out = append(out, def)
+	}
+	return out
 }
 
 // printMessages formats and prints messages to stdout.

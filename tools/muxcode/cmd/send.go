@@ -138,12 +138,30 @@ func Send(args []string) {
 	// --wait loop is already polling and send-keys would interrupt the
 	// running Bash tool in Claude Code's TUI.
 	if wait {
+		// Create task entry for orchestrator tracking
+		waitTimeout := resolveWaitTimeout()
+		_ = bus.CreateTask(session, msg, waitTimeout)
+
 		bus.SetWaiting(session, from)
-		waitForResponse(session, from, to)
+		responded := waitForResponse(session, from, to, msg.ID)
+
+		// Update task status based on outcome
+		if responded {
+			// Task completed — find the response message ID from delivery status
+			ds, err := bus.ReadDeliveryStatus(session, msg.ID)
+			if err == nil && ds.ResponseID != "" {
+				bus.CompleteTask(session, msg.ID, ds.ResponseID)
+			} else {
+				bus.CompleteTask(session, msg.ID, "")
+			}
+		} else {
+			bus.TimeoutTask(session, msg.ID)
+		}
+
 		// Keep the waiting marker alive briefly after --wait completes.
 		// Between --wait finishing and the agent's next tool call, the agent
-		// pane shows ❯ momentarily. Without this grace period, Notify sees
-		// IsAgentIdle=true and fires send-keys, which interrupts the agent.
+		// pane shows ❯ momentarily. The grace period prevents unnecessary
+		// display-message notifications during this window.
 		go func() {
 			time.Sleep(5 * time.Second)
 			bus.ClearWaiting(session, from)
@@ -156,13 +174,9 @@ func Send(args []string) {
 // For hosted roles (docs→edit, research→edit, pr-read→commit), also accepts
 // responses from the host agent since it processes the request.
 // Timeout is controlled by MUXCODE_INBOX_POLL_TIMEOUT (default 600s).
-func waitForResponse(session, role, target string) {
-	timeout := 600
-	if v := os.Getenv("MUXCODE_INBOX_POLL_TIMEOUT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			timeout = n
-		}
-	}
+// Returns true if a response was received, false on timeout.
+func waitForResponse(session, role, target, msgID string) bool {
+	timeout := resolveWaitTimeout()
 
 	// For hosted roles, also accept responses from the host agent
 	host := bus.WindowForRole(target)
@@ -181,7 +195,7 @@ func waitForResponse(session, role, target string) {
 		msgs, err := bus.ReceiveFromFunc(session, role, acceptFrom)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading inbox: %v\n", err)
-			return
+			return false
 		}
 		if len(msgs) == 0 {
 			continue
@@ -192,10 +206,22 @@ func waitForResponse(session, role, target string) {
 			fmt.Print(bus.FormatMessage(m))
 			fmt.Println()
 		}
-		return
+		return true
 	}
 
 	fmt.Fprintf(os.Stderr, "\nNo response from %s within %ds — check: muxcode inbox --peek\n", target, timeout)
+	return false
+}
+
+// resolveWaitTimeout returns the --wait timeout in seconds.
+func resolveWaitTimeout() int {
+	timeout := 600
+	if v := os.Getenv("MUXCODE_INBOX_POLL_TIMEOUT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			timeout = n
+		}
+	}
+	return timeout
 }
 
 // isCommitAction returns true for actions that trigger actual git commits.

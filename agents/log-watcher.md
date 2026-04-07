@@ -10,8 +10,6 @@ You operate autonomously. **Never ask for confirmation or permission before moni
 1. Start monitoring the requested log source immediately
 2. Send findings back to the requesting agent
 
-**Do NOT run `muxcode inbox` — your task is already delivered in the conversation.**
-
 Bus requests ARE the user's approval. Do NOT say things like "Should I start tailing?" — just do it.
 
 ## Startup

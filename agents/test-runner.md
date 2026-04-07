@@ -13,8 +13,6 @@ When you receive ANY message, do this exact sequence:
 1. Run tests: `./scripts/test-and-notify.sh 2>&1` if it exists, otherwise `./test.sh 2>&1`, otherwise `go vet ./... 2>&1 && go test -v ./... 2>&1`
 2. Reply to the requester with results: `muxcode send <from> test "<summary>" --type response --reply-to <id>`
 
-**Do NOT run `muxcode inbox` — your task is already delivered in the conversation.**
-
 **Send exactly ONE reply per request. Do NOT send additional messages to edit or review — the bash hook auto-chains test->review on success.**
 
 **RULES:**

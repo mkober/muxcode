@@ -211,25 +211,38 @@ if [ "$ROLE_CLI" != "local" ]; then
   [ -n "$_claude_model" ] && CLAUDE_MODEL_FLAGS=(--model "$_claude_model")
 fi
 
-# Permission mode: edit agent prompts (user toggles with Shift+Tab),
-# all other agents auto-accept so they run autonomously.
-PERM_FLAGS=()
-if [ "$ROLE" != "edit" ]; then
+# Permission mode: non-edit agents run with bypass permissions for autonomous
+# operation. The edit agent uses normal permissions so the user can review and
+# approve tool calls.
+if [ "$ROLE" = "edit" ]; then
+  PERM_FLAGS=()
+else
   PERM_FLAGS=(--dangerously-skip-permissions)
 fi
 
-# Pre-populate inbox with startup message so the watcher delivers it once the
-# agent reaches idle.  Uses --no-notify because the agent process isn't running
-# yet — the watcher's startup check will notify once the agent is ready.
+# Pre-populate inbox with startup message so agents boot into activity and
+# start their inbox polling loop. Uses --no-notify because the agent process
+# isn't running yet — Claude Code will see the message on first idle.
+#
+# All agents get a startup message. Without it, passive agents (build, test,
+# review, commit, deploy, watch) launch, sit at the idle prompt, and never
+# start polling — making them unreachable via the message bus.
+_startup_role="$ROLE"
 case "$ROLE" in
-  edit)
-    AGENT_ROLE=edit muxcode send edit notify \
+  analyst) _startup_role="analyze" ;;
+  git)     _startup_role="commit" ;;
+  runner)  _startup_role="run" ;;
+esac
+
+case "$ROLE" in
+  edit|analyst|analyze)
+    AGENT_ROLE="$_startup_role" muxcode send "$_startup_role" notify \
       "Session started — review last saved context from memory to restore session state." \
       --type event --no-notify 2>/dev/null || true
     ;;
-  analyst|analyze)
-    AGENT_ROLE=analyze muxcode send analyze notify \
-      "Session started — review last saved context from memory to restore session state." \
+  *)
+    AGENT_ROLE="$_startup_role" muxcode send "$_startup_role" notify \
+      "Session started — check inbox and begin polling for messages." \
       --type event --no-notify 2>/dev/null || true
     ;;
 esac
