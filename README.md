@@ -24,10 +24,10 @@ The coordination layer is entirely local. Agents communicate through JSONL files
 Each agent has scoped tool permissions — the build agent can't edit files, the commit agent can't deploy infrastructure, the edit agent can't run builds or git commands. This separation prevents agents from stepping on each other and keeps the human in the loop for every code change.
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│  F1 edit  F2 build  F3 test  F4 review  F5 deploy  F6 run           │
-│  F7 watch  F8 commit  F9 analyze                  [prefix+i → API]  │
-├──────────────────────────────────────────────────────────────────────┤
+┌─────────────────────────────────────────────────────────────┐
+│  F1 Edit  F2 Build  F3 Test  F4 review  F5 Deploy  F6 Run   │
+│  F7 Watch  F8 Commit  F9 Analyze                            │
+├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
 │  │ edit         │    │ build        │    │ test         │   │
