@@ -265,39 +265,39 @@ Add the trigger file write path alongside existing notification. Add `muxcode in
 | — | Add `muxcode track` command (pulled forward from Phase 2 #10) | `cmd/track.go`, `main.go` | ✅ |
 | — | Add `bus/delivery_test.go` with 14 tests | `bus/delivery_test.go` | ✅ |
 
-### Phase 2: Agent prompt migration
+### Phase 2: Agent prompt migration ✅
 
 Update agent prompts to use `muxcode inbox --poll` instead of waiting for send-keys. Both paths work during transition -- agents that haven't restarted still get send-keys, new agents use polling.
 
-| # | Change | File |
-|---|--------|------|
-| 7 | Update shared prompt to use `--poll` pattern | `bus/launch.go` |
-| 8 | Add task tracking on `--wait` | `cmd/send.go` |
-| 9 | Add `muxcode tasks` command | `cmd/tasks.go` |
+| # | Change | File | Status |
+|---|--------|------|--------|
+| 7 | Update shared prompt to use `--poll` pattern | `bus/prompt.go` | ✅ |
+| 8 | Add task tracking on `--wait` | `cmd/send.go`, `bus/task.go` | ✅ |
+| 9 | Add `muxcode tasks` command | `cmd/tasks.go`, `main.go` | ✅ |
 | 10 | Add `muxcode track` command | `cmd/track.go` | ✅ (done in Phase 1) |
 
-### Phase 3: Remove send-keys notification
+### Phase 3: Remove send-keys notification ✅
 
 Once all agents use polling, remove the send-keys path entirely.
 
-| # | Change | File |
-|---|--------|------|
-| 11 | Remove `notifySendKeys()`, `notifyIdleSendKeys()` | `bus/notify.go` |
-| 12 | Remove send-keys marker files and cooldown logic | `bus/notify.go`, `bus/config.go` |
-| 13 | Remove passive notify markers and retry logic | `bus/notify.go`, `bus/config.go` |
-| 14 | Remove `checkStartupNotifications()` and related watcher state | `watcher/watcher.go` |
-| 15 | Simplify `checkInboxes()` to just trigger file writes | `watcher/watcher.go` |
-| 16 | Clean up `purgeStaleFiles()` for removed marker types | `bus/setup.go` |
+| # | Change | File | Status |
+|---|--------|------|--------|
+| 11 | Remove `notifySendKeys()`, `notifyIdleSendKeys()` | `bus/notify.go` | ✅ |
+| 12 | Remove send-keys marker files and cooldown logic | `bus/notify.go`, `bus/config.go` | ✅ |
+| 13 | Remove passive notify markers and retry logic | `bus/notify.go`, `bus/config.go` | ✅ |
+| 14 | Remove `checkStartupNotifications()` and related watcher state | `watcher/watcher.go` | ✅ |
+| 15 | Simplify `checkInboxes()` to just trigger file writes | `watcher/watcher.go` | ✅ |
+| 16 | Clean up `purgeStaleFiles()` for removed marker types | `bus/setup.go` | ✅ |
 
 ### Phase 4: Hardening
 
-| # | Change | File |
-|---|--------|------|
-| 17 | Add delivery status expiry/cleanup in watcher | `watcher/watcher.go` | `CleanExpiredDeliveries()` ready in `bus/delivery.go`, watcher integration pending |
-| 18 | Add `muxcode tasks` and `muxcode track` to CLI help | `main.go` | ✅ `track` registered (done in Phase 1), `tasks` pending |
+| # | Change | File | Status |
+|---|--------|------|--------|
+| 17 | Add delivery/task expiry cleanup in watcher | `watcher/watcher.go` | ✅ `checkCleanup()` runs every 5min, cleans files > 1hr old |
+| 18 | Add `muxcode tasks` and `muxcode track` to CLI help | `main.go` | ✅ Both registered in knownSubcommands and usage |
 | 19 | Update architecture.md, agent-bus.md, agents.md | `docs/` | ✅ (Phase 1 docs) |
 | 20 | Update CLAUDE.md notification documentation | `CLAUDE.md` | ✅ (Phase 1 docs) |
-| 21 | Add integration tests for poll-based notification | `bus/notify_test.go` |
+| 21 | Add integration tests for poll-based notification | `bus/poll_test.go` | ✅ 10 tests covering trigger file, polling markers, delivery lifecycle |
 
 ## Success criteria
 
