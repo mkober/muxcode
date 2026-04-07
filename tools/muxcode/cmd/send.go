@@ -169,10 +169,15 @@ func Send(args []string) {
 	}
 }
 
-// waitForResponse polls the sender's inbox for messages specifically from
-// the target agent. Messages from other agents are left in the inbox.
-// For hosted roles (docs→edit, research→edit, pr-read→commit), also accepts
-// responses from the host agent since it processes the request.
+// waitForResponse watches the delivery status file for the sent message,
+// waiting for it to transition to "responded". This avoids racing with
+// the background --poll loop which also reads the inbox — previously both
+// competed for the same inbox file, causing --wait to miss responses.
+//
+// When a response is detected, attempts to consume the response message
+// from the inbox for display. If the background --poll already consumed
+// it (and printed it as a task result), prints a short confirmation.
+//
 // Timeout is controlled by MUXCODE_INBOX_POLL_TIMEOUT (default 600s).
 // Returns true if a response was received, false on timeout.
 func waitForResponse(session, role, target, msgID string) bool {
@@ -184,28 +189,38 @@ func waitForResponse(session, role, target, msgID string) bool {
 		return from == target || from == host
 	}
 
-	const pollInterval = 2 // seconds
-	for elapsed := 0; elapsed < timeout; elapsed += pollInterval {
-		time.Sleep(time.Duration(pollInterval) * time.Second)
+	// Poll delivery status at 500ms — just stat + read a small JSON file,
+	// no inbox locking or contention with --poll.
+	const pollMs = 500
+	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 
-		if !bus.HasMessages(session, role) {
-			continue
-		}
+	for time.Now().Before(deadline) {
+		time.Sleep(time.Duration(pollMs) * time.Millisecond)
 
-		msgs, err := bus.ReceiveFromFunc(session, role, acceptFrom)
+		ds, err := bus.ReadDeliveryStatus(session, msgID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading inbox: %v\n", err)
-			return false
+			continue // status file not yet written or read error
 		}
-		if len(msgs) == 0 {
+		if ds.Status != bus.StatusResponded {
 			continue
 		}
 
-		fmt.Println()
-		for _, m := range msgs {
-			fmt.Print(bus.FormatMessage(m))
-			fmt.Println()
+		// Response detected — try to consume it from inbox for display.
+		// The background --poll may have already consumed it, which is fine.
+		if bus.HasMessages(session, role) {
+			msgs, err := bus.ReceiveFromFunc(session, role, acceptFrom)
+			if err == nil && len(msgs) > 0 {
+				fmt.Println()
+				for _, m := range msgs {
+					fmt.Print(bus.FormatMessage(m))
+					fmt.Println()
+				}
+				return true
+			}
 		}
+
+		// Response was already consumed by --poll — print confirmation
+		fmt.Printf("\nResponse from %s received (delivered via poll)\n", target)
 		return true
 	}
 
