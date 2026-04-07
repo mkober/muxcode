@@ -91,6 +91,7 @@ func Console(args []string) {
 
 	for {
 		width := bus.TerminalWidth()
+		height := bus.TerminalHeight()
 
 		// Build header
 		header := bus.ConsoleHeader(configs[role].Title, interval, width)
@@ -106,6 +107,15 @@ func Console(args []string) {
 
 		// Build body
 		body := bus.RenderConsole(role, session, width)
+
+		// Count header + workflow lines to determine remaining space for body.
+		headerLines := strings.Count(header, "\n")
+		wfLines := strings.Count(wfLine, "\n")
+		bodyBudget := height - headerLines - wfLines
+		if bodyBudget < 5 {
+			bodyBudget = 5
+		}
+		body = bus.TruncateToHeight(body, bodyBudget)
 
 		// Move cursor to home and overwrite in place (no full clear).
 		// This keeps the header visually fixed — no flicker between refreshes.

@@ -165,6 +165,37 @@ func TerminalWidth() int {
 	return w
 }
 
+// TerminalHeight returns the current terminal height, defaulting to 50.
+func TerminalHeight() int {
+	cmd := exec.Command("tput", "lines")
+	cmd.Stdin = os.Stdin
+	out, err := cmd.Output()
+	if err != nil {
+		return 50
+	}
+	h, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || h < 10 {
+		return 50
+	}
+	return h
+}
+
+// TruncateToHeight truncates rendered output to fit within maxLines.
+// It counts newlines and cuts at the limit, appending a dim "…" indicator
+// if content was truncated. The caller should account for header lines
+// when computing maxLines.
+func TruncateToHeight(text string, maxLines int) string {
+	if maxLines <= 0 {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) <= maxLines {
+		return text
+	}
+	truncated := strings.Join(lines[:maxLines-1], "\n")
+	return truncated + "\n" + Pad + ColorDim + "…" + ColorReset + "\n"
+}
+
 // WordWrap wraps text to the given width, breaking on spaces.
 func WordWrap(text string, width int) []string {
 	if width <= 0 {
@@ -331,6 +362,44 @@ func ConsoleHeader(title string, interval int, width int) string {
 		ColorDim, interval, ColorReset))
 	b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorDim, Separator(sepWidth), ColorReset))
 	b.WriteString("\n")
+	return b.String()
+}
+
+// countNonEmpty returns the number of non-empty strings in the slice.
+func countNonEmpty(lines []string) int {
+	n := 0
+	for _, l := range lines {
+		if l != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// limitFileList renders a tab-separated name-status list (git diff output),
+// capping at maxFiles entries with a "… +N more files" overflow indicator.
+// The formatLine callback receives (status, file) and returns the formatted line.
+func limitFileList(raw string, maxFiles int, formatLine func(status, file string) string) string {
+	lines := strings.Split(raw, "\n")
+	var b strings.Builder
+	shown := 0
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		if shown >= maxFiles {
+			remaining := countNonEmpty(lines[shown:])
+			if remaining > 0 {
+				b.WriteString(fmt.Sprintf("%s%s… +%d more files%s\n", ContPad, ColorDim, remaining, ColorReset))
+			}
+			break
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) == 2 {
+			b.WriteString(formatLine(parts[0], parts[1]))
+		}
+		shown++
+	}
 	return b.String()
 }
 
@@ -928,47 +997,46 @@ func renderGitStatus() string {
 		b.WriteString("\n")
 	}
 
-	// Staged files
+	// Staged files (cap to avoid overflow)
 	staged := gitCmd("diff", "--cached", "--name-status")
 	if staged != "" {
 		b.WriteString(fmt.Sprintf("%s%sstaged%s\n", Pad, ColorGreen, ColorReset))
-		for _, line := range strings.Split(staged, "\n") {
-			if line == "" {
-				continue
-			}
-			parts := strings.SplitN(line, "\t", 2)
-			if len(parts) == 2 {
-				b.WriteString(fmt.Sprintf("%s%s%s%s  %s\n", ContPad, ColorGreen, parts[0], ColorReset, parts[1]))
-			}
-		}
+		b.WriteString(limitFileList(staged, 10, func(status, file string) string {
+			return fmt.Sprintf("%s%s%s%s  %s\n", ContPad, ColorGreen, status, ColorReset, file)
+		}))
 		b.WriteString("\n")
 	}
 
-	// Unstaged changes
+	// Unstaged changes (cap to avoid overflow)
 	unstaged := gitCmd("diff", "--name-status")
 	if unstaged != "" {
 		b.WriteString(fmt.Sprintf("%s%smodified%s\n", Pad, ColorPink, ColorReset))
-		for _, line := range strings.Split(unstaged, "\n") {
-			if line == "" {
-				continue
-			}
-			parts := strings.SplitN(line, "\t", 2)
-			if len(parts) == 2 {
-				b.WriteString(fmt.Sprintf("%s%s%s%s  %s\n", ContPad, ColorPink, parts[0], ColorReset, parts[1]))
-			}
-		}
+		b.WriteString(limitFileList(unstaged, 10, func(status, file string) string {
+			return fmt.Sprintf("%s%s%s%s  %s\n", ContPad, ColorPink, status, ColorReset, file)
+		}))
 		b.WriteString("\n")
 	}
 
-	// Untracked files
+	// Untracked files (cap to avoid overflow)
 	untracked := gitCmd("ls-files", "--others", "--exclude-standard")
 	if untracked != "" {
 		b.WriteString(fmt.Sprintf("%s%suntracked%s\n", Pad, ColorDim, ColorReset))
-		for _, file := range strings.Split(untracked, "\n") {
+		shown := 0
+		maxFiles := 10
+		fileLines := strings.Split(untracked, "\n")
+		for _, file := range fileLines {
 			if file == "" {
 				continue
 			}
+			if shown >= maxFiles {
+				remaining := countNonEmpty(fileLines[shown:])
+				if remaining > 0 {
+					b.WriteString(fmt.Sprintf("%s%s… +%d more files%s\n", ContPad, ColorDim, remaining, ColorReset))
+				}
+				break
+			}
 			b.WriteString(fmt.Sprintf("%s%s?%s  %s\n", ContPad, ColorDim, ColorReset, file))
+			shown++
 		}
 		b.WriteString("\n")
 	}
@@ -979,30 +1047,21 @@ func renderGitStatus() string {
 		b.WriteString("\n")
 	}
 
-	// Last commit
+	// Last commit (cap file list to avoid overflow)
 	lastCommit := gitCmd("log", "-1", "--format=%h %s")
 	if lastCommit != "" {
 		b.WriteString(fmt.Sprintf("%s%slast commit%s  %s\n", Pad, ColorCyan, ColorReset, lastCommit))
 		lastFiles := gitCmd("diff-tree", "--no-commit-id", "--name-status", "-r", "HEAD")
 		if lastFiles != "" {
-			for _, line := range strings.Split(lastFiles, "\n") {
-				if line == "" {
-					continue
-				}
-				parts := strings.SplitN(line, "\t", 2)
-				if len(parts) < 2 {
-					continue
-				}
-				status := parts[0]
-				file := parts[1]
+			b.WriteString(limitFileList(lastFiles, 10, func(status, file string) string {
 				color := ColorYellow
 				if strings.HasPrefix(status, "A") {
 					color = ColorGreen
 				} else if strings.HasPrefix(status, "D") {
 					color = ColorRed
 				}
-				b.WriteString(fmt.Sprintf("%s%s%s%s  %s\n", ContPad, color, status, ColorReset, file))
-			}
+				return fmt.Sprintf("%s%s%s%s  %s\n", ContPad, color, status, ColorReset, file)
+			}))
 		}
 		b.WriteString("\n")
 	}
