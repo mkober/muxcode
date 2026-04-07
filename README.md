@@ -96,17 +96,24 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 ## Key features
 
 ### Agent orchestration
-- **9 specialist agents** — Edit, build, test, review, deploy, run, commit, analyze, and watch — each with scoped tool permissions and its own tmux window. API testing runs as a modal popup (`prefix + i`)
+- **9 specialist agents** — Edit, build, test, review, deploy, run, commit, analyze, and watch — each with scoped tool permissions and its own tmux window
 - **Hook-driven automation chains** — Build→test→review and deploy→verify chains fire via bash exit codes. Deterministic, fast, zero token cost for routing
 - **Event subscriptions** — Fan-out after chain execution. Subscribe any agent to build/test/deploy events with outcome filtering
 - **Spawned agents** — Create temporary agents for one-off tasks in their own tmux window. Results collected automatically on completion
+- **Modal windows** — On-demand overlay windows for specialized tasks. API testing opens via `prefix + i` or `muxcode modal open api`. Declarative config with size presets and optional pane splits
 - **Pre-commit safeguards** — Commit delegation blocked when other agents have pending work, preventing incomplete commits
+- **Workflow state machine** — Persistent state tracking through the development lifecycle (idle → editing → building → testing → reviewing → committing → deploying). Automatic state regression on file edits, color-coded display. Query with `muxcode workflow`
 
 ### Local LLM & cost control
 - **Ollama integration** — Any agent role can run via a local LLM instead of Claude Code. Per-role model selection via `MUXCODE_{ROLE}_MODEL`
 - **Ollama health monitoring** — Watcher detects stuck inference (not just process liveness), auto-restarts Ollama and affected agents with 3-strike escalation
 - **LLM harness** — Standalone binary with guardrails for smaller models: tool call filtering, loop prevention, structured task formatting, corrective feedback
 - **Agent health monitoring** — Watcher probes agent tmux panes every 30s, auto-restarts dead agents after 3-strike escalation (log → alert → restart)
+
+### Transactional messaging
+- **Delivery tracking** — Every message gets a delivery status (sent → delivered → responded → expired). Track with `muxcode track <msg-id>`
+- **Task tracking** — Delegated work is tracked with timeouts. The `--wait` flag on send commands creates a task entry and polls until a response arrives. List in-flight tasks with `muxcode tasks`
+- **Message dedup** — Duplicate messages (same sender/target/action/type) within a 30-second window are atomically suppressed to prevent chain loops
 
 ### Memory & context
 - **Persistent memory** — Two-layer system: project-level (`.muxcode/memory/`) and global (`~/.config/muxcode/memory/`). Daily rotation with 30-day archive retention
@@ -121,6 +128,7 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 - **Inline response delivery** — The `--wait` flag on send commands polls for responses inline — no manual inbox checking needed
 - **Left-pane pollers** — Each window shows live history: build/test results with pass/fail stats, review findings, deploy status, git log, API history, analyze insights
 - **Live TUI dashboard** — Dracula-themed dashboard showing agent status, message flow, and session health
+- **Demo mode** — Scripted demo scenarios that replay bus message sequences with tmux window switching, suitable for screen recording and presentations. Run with `muxcode demo`
 - **Session inspection** — Query any agent's status, message history, or busy state from the CLI
 
 ### Automation & integration
@@ -135,7 +143,6 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 - **Loop detection** — Bus detects agents stuck in repetitive patterns and escalates to the edit agent
 - **Edit guard** — Sync hook blocks prohibited commands (build, test, git, deploy) in the edit window with delegation instructions
 - **PII scrubbing** — Automatic redaction of emails, SSNs, credit cards, AWS keys, JWTs, and other secrets from tool output in PII-sensitive roles (api, runner, watch)
-- **Message dedup** — Duplicate messages (same sender/target/action/type) within a 30-second window are atomically suppressed to prevent chain loops
 - **Watcher self-monitoring** — Keepalive heartbeat with companion monitor process (`watch --monitor`) — auto-restarts watcher if it hangs
 
 See the [Architecture](docs/architecture.md) and [Agent Bus](docs/agent-bus.md) docs for the full details.
@@ -293,9 +300,11 @@ Skills are reusable instruction sets defined as markdown files with YAML frontma
 | `git-commit-conventions`  | commit, edit | Commit message format and git workflow conventions           |
 | `go-testing`              | test, build  | Go testing patterns and conventions                          |
 | `code-review-checklist`   | review       | Code review quality checklist                                |
+| `github-pr-comment`       | git          | Post threaded replies to Copilot review comments on PRs and summary comments addressing all feedback |
 | `jira-pr-comment`         | git          | Post PR details as a comment on the corresponding Jira issue |
 | `jira-update-description` | git, edit    | Read and update a Jira issue description with ADF content    |
 | `confluence-update-page`  | git, edit    | Read and update Confluence pages with ADF content            |
+| `agent-debug`             | edit         | Diagnostic procedures for inspecting agent state, checking idle/active status, and troubleshooting stuck agents |
 
 ### Resolution order
 
