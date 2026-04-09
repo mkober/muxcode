@@ -521,10 +521,17 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 
 	exitCode := ev.GetExitCode()
 	outcome := HookOutcome(exitCode)
-	output := ev.GetOutput(15, 1000)
 	firstCmd := stripCommandPrefix(command)
 	ts := time.Now().Unix()
 	maxHistory := 100
+
+	// Use larger capture limits for deploy commands (long output)
+	maxLines, maxChars := 15, 1000
+	switch cmdType {
+	case CmdDeploy, CmdDeployApply:
+		maxLines, maxChars = 50, 4000
+	}
+	output := ev.GetOutput(maxLines, maxChars)
 
 	result := HookBashResult{CommandType: cmdType}
 
@@ -570,6 +577,7 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 		result.Logged = true
 
 	case CmdDeploy, CmdDeployApply:
+		errors := ExtractErrors(output, 20, 2000)
 		entry := HookHistoryEntry{
 			TS:          ts,
 			Command:     command,
@@ -577,6 +585,7 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 			ExitCode:    exitCode,
 			Outcome:     outcome,
 			Output:      output,
+			Errors:      errors,
 		}
 		_ = WriteHookHistory(filepath.Join(BusDir(session), "deploy-history.jsonl"), entry, maxHistory)
 		result.Logged = true

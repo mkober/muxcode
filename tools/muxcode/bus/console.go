@@ -799,10 +799,14 @@ func renderDeployRunner(cfg *ConsoleConfig, session string, width int) string {
 	}
 	b.WriteString("\n")
 
-	// Last output
+	// Last output — prefer errors field on failure
 	last := entries[len(entries)-1]
 	lastEC := last.ExitCodeStr()
-	if last.Output != "" {
+	displayOutput := last.Output
+	if lastEC != "0" && lastEC != "" && last.Errors != "" {
+		displayOutput = last.Errors
+	}
+	if displayOutput != "" {
 		if lastEC == "0" || lastEC == "" {
 			successLabel := cfg.Title + " succeeded"
 			if cfg.Title == "Run" {
@@ -815,19 +819,27 @@ func renderDeployRunner(cfg *ConsoleConfig, session string, width int) string {
 		}
 
 		lineCount := 0
-		for _, rawLine := range strings.Split(last.Output, "\n") {
+		for _, rawLine := range strings.Split(displayOutput, "\n") {
 			oline := strings.TrimSpace(StripANSI(rawLine))
 			if oline == "" {
 				continue
 			}
 			if lineCount == 0 {
 				for _, wline := range WordWrap(oline, cw) {
-					b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorCyan, wline, ColorReset))
+					if lastEC != "0" && lastEC != "" {
+						b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorRed, wline, ColorReset))
+					} else {
+						b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorCyan, wline, ColorReset))
+					}
 				}
 			} else {
 				wrapWidth := cw - len(ContPad) + len(Pad)
+				color := ColorDim
+				if lastEC != "0" && lastEC != "" {
+					color = ColorRed
+				}
 				for _, wline := range WordWrap(oline, wrapWidth) {
-					b.WriteString(fmt.Sprintf("%s%s- %s%s\n", ContPad, ColorDim, wline, ColorReset))
+					b.WriteString(fmt.Sprintf("%s%s- %s%s\n", ContPad, color, wline, ColorReset))
 				}
 			}
 			lineCount++
