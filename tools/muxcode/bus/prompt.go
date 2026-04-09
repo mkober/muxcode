@@ -67,9 +67,9 @@ func SharedPrompt(role string) string {
 	// Protocol — edit agent uses background polling; all others are woken by the watcher
 	b.WriteString("### Protocol\n")
 	if role == "edit" {
-		b.WriteString("- **Message polling**: after processing inbox messages (or when idle), start `muxcode inbox --poll` as a background Bash tool (timeout: 300s). ")
-		b.WriteString("It watches for new messages and returns them when they arrive. Process them immediately, then restart the poll.\n")
-		b.WriteString("- If the poll times out with no messages, restart it — this keeps you responsive while idle.\n")
+		b.WriteString("- **Message polling**: after processing inbox messages (or when idle), start `muxcode inbox --poll --loop` as a background Bash tool (timeout: 600s). ")
+		b.WriteString("The `--loop` flag keeps polling across timeouts without exiting, so no restart cycle is needed. ")
+		b.WriteString("It returns only when messages arrive. Process them immediately, then restart the poll.\n")
 		b.WriteString("- **IMPORTANT**: Always start polling immediately on session start, even if there are no messages to process.\n")
 	} else {
 		b.WriteString("- **Do NOT poll for messages.** The watcher process automatically detects when you have unread messages and wakes you by typing \"You have new messages\" at your prompt. ")

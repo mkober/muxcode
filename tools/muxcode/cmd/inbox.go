@@ -12,7 +12,7 @@ import (
 )
 
 // Inbox handles the "muxcode inbox" subcommand.
-// Usage: muxcode inbox [--peek] [--raw] [--role ROLE] [--wait [TIMEOUT]] [--from ROLE] [--poll [TIMEOUT]]
+// Usage: muxcode inbox [--peek] [--raw] [--role ROLE] [--wait [TIMEOUT]] [--from ROLE] [--poll [TIMEOUT]] [--loop]
 func Inbox(args []string) {
 	// Pre-process args: inject default timeout (600) for --wait/--poll when
 	// given without a value. Go's flag package requires Int flags to have an
@@ -28,6 +28,7 @@ func Inbox(args []string) {
 	role := fs.String("role", "", "override role (default: auto-detect)")
 	wait := fs.Int("wait", 0, "poll until messages arrive (timeout in seconds, default 600 if flag given)")
 	poll := fs.Int("poll", 0, "watch trigger file for new messages (timeout in seconds, default 600 if flag given)")
+	loop := fs.Bool("loop", false, "loop forever on --poll timeout instead of exiting (reduces restart noise)")
 	from := fs.String("from", "", "only consume messages from this role (leave others in inbox)")
 	fs.Parse(args)
 
@@ -46,7 +47,7 @@ func Inbox(args []string) {
 	}
 
 	if pollTimeout > 0 {
-		inboxPoll(session, r, *from, *raw, pollTimeout)
+		inboxPoll(session, r, *from, *raw, pollTimeout, *loop)
 		return
 	}
 
@@ -109,7 +110,7 @@ func readInbox(session, role, from string, peek bool) []bus.Message {
 // The poll also checks the inbox directly on each tick to catch messages that
 // arrived before the poll started or without a trigger file update (e.g. from
 // hooks or direct Send() calls that predate the trigger mechanism).
-func inboxPoll(session, role, from string, raw bool, timeout int) {
+func inboxPoll(session, role, from string, raw bool, timeout int, loop bool) {
 	// Set polling marker so Notify() skips send-keys for our role
 	bus.SetPolling(session, role)
 	defer bus.ClearPolling(session, role)
@@ -123,34 +124,41 @@ func inboxPoll(session, role, from string, raw bool, timeout int) {
 	}
 
 	const pollInterval = 2 // seconds
-	for elapsed := 0; elapsed < timeout; elapsed += pollInterval {
-		time.Sleep(time.Duration(pollInterval) * time.Second)
+	for {
+		for elapsed := 0; elapsed < timeout; elapsed += pollInterval {
+			time.Sleep(time.Duration(pollInterval) * time.Second)
 
-		// Check trigger file for mtime change
-		triggered := false
-		if info, err := os.Stat(triggerPath); err == nil {
-			mtime := info.ModTime().UnixNano()
-			if mtime != lastMtime {
-				lastMtime = mtime
-				triggered = true
+			// Check trigger file for mtime change
+			triggered := false
+			if info, err := os.Stat(triggerPath); err == nil {
+				mtime := info.ModTime().UnixNano()
+				if mtime != lastMtime {
+					lastMtime = mtime
+					triggered = true
+				}
 			}
+
+			// Also check inbox directly (catches pre-existing messages)
+			if !triggered && !bus.HasMessages(session, role) {
+				continue
+			}
+
+			msgs := readInbox(session, role, from, false)
+			if len(msgs) == 0 {
+				continue
+			}
+
+			printMessages(msgs, raw)
+			return
 		}
 
-		// Also check inbox directly (catches pre-existing messages)
-		if !triggered && !bus.HasMessages(session, role) {
-			continue
+		// Timeout reached with no messages
+		if !loop {
+			fmt.Fprintf(os.Stderr, "No messages within %ds\n", timeout)
+			return
 		}
-
-		msgs := readInbox(session, role, from, false)
-		if len(msgs) == 0 {
-			continue
-		}
-
-		printMessages(msgs, raw)
-		return
+		// --loop: silently restart the poll cycle
 	}
-
-	fmt.Fprintf(os.Stderr, "No messages within %ds\n", timeout)
 }
 
 // inboxWait polls the inbox until messages arrive or timeout is reached.

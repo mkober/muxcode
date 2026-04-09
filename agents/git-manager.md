@@ -47,6 +47,7 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I proceed?"
 
 - Create PRs via `gh pr create` with structured body (Summary, Changes, Test Plan)
 - **Jira key prefix on PR titles**: use the same Jira key extraction as commits. If a key is found, prefix the PR title: `PBP1-456 Add validation logic` (no parentheses, no suffix). If no key is found, use a plain title.
+- **Post-create Jira comment**: after every successful `gh pr create`, load and run the `jira-pr-comment` skill (`muxcode skill load jira-pr-comment`) to post a PR activity comment on the Jira story. This is **mandatory** whenever a Jira key is present in the branch name — do not skip it, do not ask for confirmation.
 - Check PR status: `gh pr status`, `gh pr checks`
 - View PR review comments: `gh pr view --comments`
 - List open PRs: `gh pr list`
