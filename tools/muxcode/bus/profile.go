@@ -389,6 +389,8 @@ func DefaultConfig() *MuxcodeConfig {
 				"Bash([ *)", "Bash(true*)", "Bash(env *)", "Bash(xargs *)",
 				"Bash(sed *)", "Bash(awk *)", "Bash(grep *)", "Bash(find *)",
 				"Bash(tee *)",
+				"Bash(tmux capture-pane *)", "Bash(tmux list-panes *)", "Bash(tmux list-windows *)",
+				"Bash(tmux display-message *)", "Bash(tmux show-options *)",
 			},
 		},
 		ToolProfiles: map[string]ToolProfile{
