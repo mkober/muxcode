@@ -260,6 +260,18 @@ func InboxCount(session, role string) int {
 	return count
 }
 
+// AppendToInbox writes a message directly to a role's inbox without
+// delivery tracking, auto-CC, or notify. Used to restore unconsumed
+// messages after filtered consumption.
+func AppendToInbox(session, role string, m Message) error {
+	data, err := EncodeMessage(m)
+	if err != nil {
+		return err
+	}
+	line := append(data[:len(data):len(data)], '\n')
+	return appendToFile(InboxPath(session, role), line)
+}
+
 // appendToFile appends data to a file, creating it if necessary.
 func appendToFile(path string, data []byte) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)

@@ -102,6 +102,16 @@ func Send(args []string) {
 		}
 	}
 
+	// Pre-send inbox check: if sending a request, check if the sender already
+	// has unread responses from the target role. This prevents redundant requests
+	// when hook chains have already produced results (e.g., build→test→review
+	// auto-chained, and edit tries to manually send another build request).
+	if msgType == "request" && !force {
+		if consumed := consumeExistingResponses(session, from, to, action); consumed {
+			return
+		}
+	}
+
 	msg := bus.NewMessage(from, to, msgType, action, payload, replyTo)
 
 	// Atomic dedup check + send under file lock to avoid TOCTOU race
@@ -247,6 +257,76 @@ func isCommitAction(action string) bool {
 		return true
 	}
 	return false
+}
+
+// consumeExistingResponses checks if the sender's inbox already has unread
+// responses from the target role matching the requested action. If so,
+// consumes and prints them, returning true (caller should skip sending).
+// This prevents redundant requests when hook-driven chains have already
+// delivered results (e.g., build→test→review auto-chains).
+//
+// TOCTOU note: the peek→consume sequence is not atomic. If another process
+// consumes the response between peek and ReceiveFromFunc, the function
+// returns false and falls through to normal send — a benign race.
+func consumeExistingResponses(session, from, to, action string) bool {
+	msgs, err := bus.Peek(session, from)
+	if err != nil || len(msgs) == 0 {
+		return false
+	}
+
+	// Also accept responses from the host agent for hosted roles
+	host := bus.WindowForRole(to)
+	hasMatch := false
+	for _, m := range msgs {
+		if m.Type != "response" {
+			continue
+		}
+		if m.From != to && m.From != host {
+			continue
+		}
+		// Only match responses with the same action as the request
+		if m.Action == action {
+			hasMatch = true
+			break
+		}
+	}
+
+	if !hasMatch {
+		return false
+	}
+
+	// Consume matching responses from inbox
+	acceptFrom := func(sender string) bool {
+		return sender == to || sender == host
+	}
+	consumed, err := bus.ReceiveFromFunc(session, from, acceptFrom)
+	if err != nil || len(consumed) == 0 {
+		return false
+	}
+
+	// Separate matching responses from non-matching ones
+	var matching, other []bus.Message
+	for _, m := range consumed {
+		if m.Type == "response" && m.Action == action {
+			matching = append(matching, m)
+		} else {
+			other = append(other, m)
+		}
+	}
+
+	// Put non-matching messages back in the inbox (direct write, no Send
+	// to avoid reordering, duplicate delivery tracking, or notify retrigger)
+	for _, m := range other {
+		_ = bus.AppendToInbox(session, from, m)
+	}
+
+	fmt.Printf("Found %d existing %s response(s) from %s in inbox — skipping send:\n", len(matching), action, to)
+	for _, m := range matching {
+		fmt.Println()
+		fmt.Print(bus.FormatMessage(m))
+	}
+	fmt.Println()
+	return true
 }
 
 // validatePayload returns warning strings for payload issues.

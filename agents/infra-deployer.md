@@ -97,12 +97,11 @@ When you receive a bus message with action **verify**, run the following checks 
 
 ## Output
 
-### Command Output Reporting
-After running any deployment or diff command, **always report the key output verbosely** in your text response. This ensures the output is visible in the tmux pane and captured by the console renderer. Specifically:
+### Deploy Output Details
+For infrastructure commands specifically, always include these details in your text output:
 - **Diff/Plan**: List every resource being created, updated, or destroyed with its logical ID
-- **Deploy/Apply**: Report the stack name, number of resources changed, and any warnings or errors
-- **Failures**: Include the full error message, resource that failed, and the reason
-- Do NOT rely on the collapsed Bash tool output — restate the important parts as text
+- **Deploy/Apply**: Stack name, resource count changed, duration, and any warnings
+- **Failures**: The full error message, which resource failed, and why
 
 ### Code Output
 When writing IaC code, include the resource definitions AND any configuration changes needed. When debugging, provide the root cause and a concrete fix.

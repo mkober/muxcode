@@ -53,6 +53,17 @@ func SharedPrompt(role string) string {
 	b.WriteString("**Important**: Do NOT output `/compact` as text — it is a built-in slash command that only works when typed at the `❯` prompt. ")
 	b.WriteString("The `muxcode compact` command handles this automatically.\n\n")
 
+	// Output visibility — critical for tmux-based monitoring
+	b.WriteString("### Output Visibility\n")
+	b.WriteString("Claude Code's TUI collapses tool calls into terse summaries like \"Ran 5 bash commands\". ")
+	b.WriteString("Since your tmux pane is monitored by the console and by other agents via `tmux capture-pane`, ")
+	b.WriteString("you MUST produce visible text output so observers can tell what you are doing:\n")
+	b.WriteString("- **Before** running commands, briefly state what you are about to do\n")
+	b.WriteString("- **After** each significant command, report the key results as text (not just the tool output)\n")
+	b.WriteString("- **Never** run a batch of commands silently — intersperse text explaining progress\n")
+	b.WriteString("- On failure, always restate the error message and what went wrong in your text response\n")
+	b.WriteString("- On success, summarize what was accomplished (e.g. \"Deployed 3 stacks, 12 resources updated, no errors\")\n\n")
+
 	// Protocol — edit agent uses background polling; all others are woken by the watcher
 	b.WriteString("### Protocol\n")
 	if role == "edit" {
