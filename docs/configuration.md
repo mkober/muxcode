@@ -119,9 +119,9 @@ Provider comparison:
 
 | Feature | Claude Code | OpenCode | Local LLM (Ollama) |
 |---------|-------------|----------|-------------------|
-| Hook-driven chains | Yes | No (prompt-based fallback) | No (prompt-based fallback) |
+| Hook-driven chains | Yes (send policy blocks manual sends) | No — role-specific prompt + body adaptation + send policy bypass | No (prompt-based fallback) |
 | Idle detection | `❯` prompt match | Not supported (TUI) | Not supported |
-| Wake-up notifications | Send-keys text injection | Display-message (status bar flash) | N/A (watcher-driven) |
+| Wake-up notifications | Send-keys text injection | Send-keys message payload injection | N/A (watcher-driven) |
 | Tool permissions | `--allowedTools` patterns | `permission` blocks in agent config | `IsToolAllowed()` in Go |
 | Context compaction | `/compact` via send-keys | Auto-compact at 95% (no-op from muxcode) | Reset between inbox checks |
 | LLM providers | Anthropic only | Anthropic, OpenAI, Google, Groq, Bedrock | Ollama (any pulled model) |

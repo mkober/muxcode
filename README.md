@@ -286,16 +286,17 @@ Any agent role can run via [OpenCode](https://opencode.ai/) instead of Claude Co
 
 OpenCode agents run as interactive TUI sessions in their tmux panes. MuxCode generates per-role agent definitions in `.opencode/agents/<role>.md` with tool permissions translated from muxcode's tool profiles. The TUI manages its own context window, compaction, and tool execution autonomously.
 
-Since OpenCode has no hook system, chain-driven features (build→test→review) are replaced with prompt-based bus messaging — the system prompt instructs agents to send bus messages after completing commands. Idle detection is not supported (the TUI has no stable prompt character), so wake-up notifications use either send-keys payload injection or display-message status bar flashes.
+Since OpenCode has no hook system, chain-driven features (build→test→review) are replaced with role-specific prompt instructions — each agent only sees chain commands relevant to its role (build agents see build→test, test agents see test→review, review agents see generic reply instructions). Agent definition body text is adapted to replace hook chain references with manual commands, and the send policy is bypassed so non-hook agents can actually send chain messages. Wake-up notifications inject message content directly into the TUI input via send-keys.
 
 ### Limitations
 
 | Feature | Behavior with OpenCode |
 |---------|----------------------|
-| Build/test/review chains | Prompt-based (best-effort) instead of hook-driven (deterministic) |
+| Build/test/review chains | Role-specific prompt instructions + adapted body text + send policy bypass (best-effort) instead of hook-driven (deterministic) |
 | Edit guard | Disabled — relies on OpenCode's native `permission` blocks |
 | Workflow state transitions | Skipped for non-hook agents |
 | Idle detection | Not supported — agent always treated as "active" |
+| Wake-up | Message content injected via send-keys into TUI input |
 | Compact | No-op from muxcode — OpenCode auto-compacts at 95% context |
 
 ## Local LLM agents

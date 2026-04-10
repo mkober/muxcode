@@ -60,7 +60,7 @@ OpenCode's architecture offers integration paths that Claude Code doesn't:
 2. **Per-agent permissions in config** — OpenCode's `permission` block per agent aligns well with muxcode's tool profile concept. Permissions can be pre-configured in `opencode.json` without runtime flags.
 3. **Custom agents in markdown** — OpenCode's `.opencode/agents/*.md` format is similar to muxcode's `agents/*.md`. The agent definition could be shared or adapted.
 4. **Multi-provider** — OpenCode supports Anthropic, OpenAI, Google, Groq, Bedrock, etc. An agent using OpenCode could use any provider.
-5. **Future server mode** — `opencode serve` runs a headless API server. If programmatic control is needed later, server mode can be added as an optional enhancement (Phase 5).
+5. **Headless server available** — `opencode serve` runs a headless API server. Evaluated and deferred indefinitely — TUI mode covers all MuxCode use cases (see Phase 5 resolution).
 
 ## Design
 
@@ -653,251 +653,9 @@ Success criteria:
 - [x] Build passes (gofmt clean, no compile errors)
 - [x] All existing tests pass
 
-### Phase 0d: role mimicry and takeover for testbed window
+### Phase 0d: role mimicry and takeover — superseded
 
-The beta testbed window (F10) should be able to mimic or take over the role of another agent — e.g., act as the build agent with the build console on the left pane and OpenCode on the right. Two modes:
-
-1. **Mimic mode** (default) — read-only: uses the mimicked role's console, prompt, tools, and context, but keeps its own `beta` bus identity. The real agent continues running. Good for observing how OpenCode handles a role's workload without disrupting the session.
-2. **Takeover mode** — the beta window assumes the mimicked role's bus identity. The real agent for that role is stopped, and all bus messages for that role are delivered to the F10 window. This is the primary testing mode for verifying that OpenCode can receive and send bus messages as a real agent.
-
-#### Configuration
-
-Add `MUXCODE_BETA_ROLE` to either config file — no shell export needed:
-
-- `~/.config/muxcode/config` — user-global (applies to all projects)
-- `.muxcode/config` in the project directory — project-level (applies to one project)
-
-Example (`~/.config/muxcode/config`):
-```
-MUXCODE_BETA_ROLE=build
-```
-
-| Variable | Default | Effect |
-|----------|---------|--------|
-| `MUXCODE_BETA_ROLE` | (unset) | Beta window runs as its own `beta` role — no console view, standalone TUI |
-| `MUXCODE_BETA_ROLE=build` | — | Mimic mode: left pane shows the build console; agent gets the build role's shared prompt, tool profile, and context; bus identity stays `beta` |
-| `MUXCODE_BETA_TAKEOVER=true` | `false` | Combined with `MUXCODE_BETA_ROLE`: enables takeover mode — stops the real agent and assumes its bus identity |
-
-Any role with a console view can be mimicked: `build`, `test`, `review`, `deploy`, `run`, `watch`, `commit`, `analyze`.
-
-#### Mimic mode behavior
-
-When `MUXCODE_BETA_ROLE` is set and `MUXCODE_BETA_TAKEOVER` is unset or `false`:
-
-1. **Left pane (console)**: runs `muxcode console <mimicked-role>` — shows that role's history, stats, and live updates.
-2. **Right pane (agent)**: runs OpenCode (or Claude Code if `MUXCODE_BETA_CLI=claude`) with the mimicked role's:
-   - Shared prompt (`muxcode prompt <mimicked-role>`)
-   - Tool profile (`muxcode tools <mimicked-role>`)
-   - Agent context files (`muxcode context prompt <mimicked-role>`)
-   - Skills (`muxcode skill prompt <mimicked-role>`)
-3. **Bus identity**: remains `beta` — messages sent to the mimicked role still go to the real agent.
-4. **Console history**: the beta agent writes to its own history, not the mimicked role's.
-
-#### Takeover mode behavior
-
-When both `MUXCODE_BETA_ROLE=<role>` and `MUXCODE_BETA_TAKEOVER=true` are set:
-
-1. **Stop real agent**: runs `muxcode agent-health --stop <role>` to gracefully stop the real agent and set its stopped marker (prevents auto-restart by the watcher).
-2. **Assume bus identity**: the agent in the F10 pane sets `AGENT_ROLE=<mimicked-role>` so all bus operations (`muxcode send`, `muxcode inbox`, notifications) use the mimicked role's inbox and identity.
-3. **Left pane (console)**: runs `muxcode console <mimicked-role>` — same as mimic mode.
-4. **Right pane (agent)**: launches with the mimicked role's full config (prompt, tools, context, agent definition). The startup message is delivered to the mimicked role's inbox so the agent picks it up on boot.
-5. **Message routing**: messages sent to the mimicked role (e.g. `muxcode send build build "Run ./build.sh"`) are delivered to the mimicked role's inbox, which the F10 agent is now reading. Replies from F10 carry the mimicked role as sender.
-6. **Notification targeting**: the watcher's idle check and `Notify()` target the `beta` pane (F10) for the mimicked role — since the real agent's pane is stopped, the watcher's `PaneTarget` resolution must account for takeover.
-
-#### Takeover lifecycle
-
-```
-┌─ User sets env vars ─────────────────────────────────────┐
-│  MUXCODE_BETA_ROLE=build  MUXCODE_BETA_TAKEOVER=true     │
-└──────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─ Agent launch (muxcode agent launch beta) ───────────────┐
-│  1. Read MUXCODE_BETA_ROLE → "build"                     │
-│  2. Read MUXCODE_BETA_TAKEOVER → true                    │
-│  3. muxcode agent-health --stop build (stop real agent)  │
-│  4. Export AGENT_ROLE=build (bus identity override)       │
-│  5. Resolve config as if role=build (prompt, tools, ctx)  │
-│  6. Launch OpenCode/Claude in F10 pane                   │
-└──────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─ Testing ────────────────────────────────────────────────────┐
-│  • edit agent sends: muxcode send build build "Run build"    │
-│  • Message lands in build inbox → F10 agent picks it up      │
-│  • F10 agent replies as "build" → edit receives response     │
-│  • Left pane shows build console with history                │
-└──────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─ Teardown (restore real agent) ──────────────────────────────┐
-│  muxcode agent-health --start build                          │
-│  (clears stopped marker, watcher auto-restarts real agent)   │
-└──────────────────────────────────────────────────────────────┘
-```
-
-#### Restore command
-
-After testing, restore the real agent:
-
-```bash
-# Stop the beta testbed (or let it keep running as standalone)
-muxcode agent-health --stop beta
-
-# Restart the real build agent
-muxcode agent-health --start build
-```
-
-Or from the edit agent via bus:
-
-```bash
-muxcode send commit commit "Run: muxcode agent-health --start build"
-```
-
-A convenience alias could be added later:
-
-```bash
-muxcode testbed release build   # stops takeover, restarts real agent
-```
-
-#### Implementation
-
-Updated files:
-
-| File | Change |
-|------|--------|
-| `tools/muxcode/bus/launch.go` | Add `MimicRole` and `Takeover` fields to `LaunchConfig`; read `MUXCODE_BETA_ROLE` and `MUXCODE_BETA_TAKEOVER` in `ResolveLaunchConfig`; in takeover mode, set `Role` to the mimicked role (not `beta`) for bus identity; resolve agent config (prompt, tools, context, agent definition) using the mimicked role |
-| `tools/muxcode/bus/launcher.go` | In `LaunchWindow`, when window is `beta` and `MUXCODE_BETA_ROLE` is set, pass the mimicked role to `HasConsoleView` check and `muxcode console` command for the left pane |
-| `tools/muxcode/bus/config.go` | Add `MimicRoleEnvVar` and `TakeoverEnvVar` constants |
-| `tools/muxcode/bus/agent_health.go` | In takeover mode, `PaneTarget` for the mimicked role resolves to the `beta` window's pane (so watcher notifications reach F10) |
-| `scripts/muxcode-agent.sh` | Read `MUXCODE_BETA_ROLE` and `MUXCODE_BETA_TAKEOVER`; in takeover mode, run `agent-health --stop` on the real agent before launch, export `AGENT_ROLE=<mimicked-role>`, and use the mimicked role for `build_shared_prompt`, `build_flags`, and startup message |
-
-**LaunchConfig changes:**
-
-```go
-type LaunchConfig struct {
-    Role       string // Agent role — bus identity (mimicked role in takeover mode)
-    MimicRole  string // Role to mimic (e.g. "build") — for prompt/tools/context
-    Takeover   bool   // True if taking over the mimicked role's bus identity
-    CLI        string
-    IsLocal    bool
-    IsBetaCLI  bool
-    // ...
-}
-```
-
-**ResolveLaunchConfig routing (in the beta block):**
-
-```go
-// --- Beta window routing ---
-if role == "beta" {
-    if roleCLI == "" {
-        cfg.CLI = "opencode"
-    } else {
-        cfg.CLI = roleCLI
-    }
-
-    // Role mimicry / takeover
-    if mimicRole := os.Getenv("MUXCODE_BETA_ROLE"); mimicRole != "" {
-        cfg.MimicRole = mimicRole
-        if os.Getenv("MUXCODE_BETA_TAKEOVER") == "true" {
-            cfg.Takeover = true
-            cfg.Role = mimicRole // bus identity becomes the mimicked role
-        }
-    }
-
-    if cfg.CLI != "claude" {
-        cfg.IsBetaCLI = true
-        return cfg
-    }
-    // Falls through to Claude Code config using MimicRole for prompt/tools
-}
-```
-
-**Pre-launch takeover (in PreLaunchSetup or muxcode-agent.sh):**
-
-```bash
-# Takeover: stop the real agent before launching
-if [ "$MUXCODE_BETA_TAKEOVER" = "true" ] && [ -n "$MUXCODE_BETA_ROLE" ]; then
-    muxcode agent-health --stop "$MUXCODE_BETA_ROLE" 2>/dev/null || true
-    export AGENT_ROLE="$MUXCODE_BETA_ROLE"
-fi
-```
-
-**Launcher left-pane console selection (same for both modes):**
-
-```go
-// In LaunchWindow, for split-left windows:
-consoleRole := win
-if win == "beta" {
-    if mr := os.Getenv("MUXCODE_BETA_ROLE"); mr != "" && HasConsoleView(mr) {
-        consoleRole = mr
-    }
-}
-if HasConsoleView(consoleRole) {
-    sendCommand(target, "muxcode console "+consoleRole)
-}
-```
-
-**Shared prompt resolution uses MimicRole when set:**
-
-```go
-func (c *LaunchConfig) promptRole() string {
-    if c.MimicRole != "" {
-        return c.MimicRole
-    }
-    return c.Role
-}
-```
-
-**Watcher PaneTarget override for takeover:**
-
-```go
-// When a role is taken over, the watcher needs to know that the
-// mimicked role's agent is running in the beta pane, not its
-// original pane.
-func PaneTargetWithTakeover(session, role string) string {
-    if isTakenOver(session, role) {
-        return PaneTarget(session, "beta")
-    }
-    return PaneTarget(session, role)
-}
-```
-
-The `isTakenOver` check reads a marker file (e.g. `takeover-{role}` in the bus lock dir) written during pre-launch setup and cleared on restore.
-
-#### Constraints
-
-- **Mimic mode**: beta keeps its own bus identity — never impersonates the mimicked role
-- **Takeover mode**: beta assumes the mimicked role's bus identity — the real agent MUST be stopped first to avoid two agents reading the same inbox
-- Console view is shared: in both modes, the left pane shows the mimicked role's console
-- Only one role can be mimicked/taken over at a time (single env var)
-- The mimicked role must have a console view (`HasConsoleView` returns true) for the left pane to show a console; otherwise the left pane is empty
-- Takeover does not persist across session restarts — if muxcode is relaunched, the beta window returns to its default behavior (env vars must be re-set)
-- OpenCode TUI mode (default) does not use shared prompts or tool profiles — mimic mode is most useful with `MUXCODE_BETA_CLI=claude`; takeover mode works with both OpenCode and Claude Code since bus identity is the key feature
-- Restore is manual — the user must explicitly restart the real agent after testing
-
-Success criteria:
-
-**Mimic mode:**
-- [ ] `MUXCODE_BETA_ROLE=build` shows the build console in the beta window's left pane
-- [ ] Claude Code in the beta window (via `MUXCODE_BETA_CLI=claude MUXCODE_BETA_ROLE=build`) receives the build role's shared prompt, tool profile, and context
-- [ ] OpenCode TUI launches normally when `MUXCODE_BETA_ROLE` is set (mimicry affects console only in TUI mode)
-- [ ] The beta agent's bus identity remains `beta` — messages to `build` are not intercepted
-
-**Takeover mode:**
-- [ ] `MUXCODE_BETA_TAKEOVER=true` with `MUXCODE_BETA_ROLE=build` stops the real build agent via `agent-health --stop`
-- [ ] The F10 agent reads from the build inbox and replies as `build`
-- [ ] `muxcode send build build "Run ./build.sh"` is received by the F10 agent (not the stopped real agent)
-- [ ] Watcher notifications for the mimicked role target the F10 pane
-- [ ] `muxcode agent-health --start build` restores the real build agent after testing
-- [ ] Takeover marker file is written on takeover and cleared on restore
-
-**Both modes:**
-- [ ] Console history from the beta agent does not leak into the mimicked role's history (mimic mode only — takeover mode writes to the mimicked role's history intentionally)
-- [ ] Unset `MUXCODE_BETA_ROLE` preserves existing Phase 0c behavior (no console, standalone TUI)
-- [ ] Build passes (gofmt clean, no compile errors)
-- [ ] All existing tests pass
+> **Status**: Superseded. The beta window was removed from the codebase (commit 5b5bbad). Per-agent provider assignment via `MUXCODE_{ROLE}_CLI` env vars (e.g. `MUXCODE_BUILD_CLI=opencode`) replaces the beta testbed approach — any role can run OpenCode directly without a dedicated testbed window or role takeover mechanism.
 
 ### Phase 1: provider interface and Claude Code extraction ✅
 
@@ -1094,34 +852,25 @@ Success criteria:
 - [x] Agent config generated correctly in `.opencode/agents/` for each OpenCode role
 - [x] Watcher does not error on OpenCode roles (skips idle check, display-message notifications)
 
-### Phase 5: server mode (future/optional)
+### Phase 5: server mode — not planned
 
-Programmatic interaction via `opencode serve` HTTP API for environments that need reliable idle detection, automated message sending, and deterministic wake-up. Server mode is not required for basic OpenCode integration — TUI mode (Phases 2-4) covers the primary use case. Server mode adds value for fully automated pipelines where the user does not interact with the TUI directly.
+> **Status**: Evaluated and deferred indefinitely. Server mode (`opencode serve`) does not provide meaningful benefits over TUI mode for MuxCode's use case.
 
-Server mode would launch `opencode serve --port <port>` instead of the bare TUI binary, then drive interaction via REST API:
+**Rationale for deferral:**
 
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /session` | Create session |
-| `POST /session/{id}/message` | Send prompt (streams response) |
-| `POST /session/{id}/prompt_async` | Send prompt (fire-and-forget, returns 204) |
-| `GET /session/{id}/status` | Idle/busy state |
-| `GET /global/event` | SSE event stream |
+Server mode was originally positioned as an optional enhancement for reliable idle detection, programmatic message sending, and automated wake-up via the `opencode serve` HTTP API. After completing Phases 2-4 with TUI mode, each of these gaps has been addressed:
 
-This would enable:
-- **Reliable idle detection** via `GET /session/{id}/status` (replaces TUI's `return false`)
-- **Programmatic message sending** via API (replaces TUI's display-message-only)
-- **Automated wake-up** — send prompts to idle agents without user interaction
-- **Session management** — create/list/delete sessions via API
+1. **Idle detection** — The watcher's `checkIdleAgents` skips non-hook providers entirely, and `Notify()` routes OpenCode directly to `SendWakeUp()` without gating on `IsIdle`. `DetectTaskCompletion()` handles the reverse direction (knowing when an agent finished). No functional gap remains.
+2. **Programmatic messaging** — `SendWakeUp()` injects message content via tmux send-keys into the TUI input. Server mode would replace a 30-line function with an HTTP client, session management, port allocation, and auth — more complexity for the same outcome.
+3. **Automated wake-up** — Same as messaging. The send-keys approach works reliably.
+4. **Session management** — MuxCode already manages agent lifecycle via tmux (`agent_health.go`). An HTTP session API would create a parallel control plane.
 
-Success criteria:
-- [ ] `MUXCODE_OPENCODE_MODE=server` launches `opencode serve --port <port>` in the agent pane
-- [ ] Session created via `POST /session` on startup
-- [ ] Messages sent via API (`POST /session/{id}/message` or `/prompt_async`)
-- [ ] Idle detection works via `GET /session/{id}/status`
-- [ ] Port management: unique port per role via `OpenCodePort(role)`
-- [ ] Auth support via `OPENCODE_SERVER_PASSWORD` env var
-- [ ] Documented as optional enhancement over TUI mode
+**Risks of adding server mode:**
+
+- `opencode serve` is **headless** — loses the interactive TUI that users can directly interact with, which was the core rationale for TUI-first (Resolved Question #1)
+- Two interaction paths to the same agent (send-keys + HTTP API) would create race conditions
+- Port management overhead (`MUXCODE_OPENCODE_PORT`, per-role allocation, auth via `OPENCODE_SERVER_PASSWORD`)
+- MuxCode is a tmux-based interactive environment, not a headless CI/CD pipeline — server mode solves a problem that doesn't exist here
 
 ## Configuration
 
@@ -1138,11 +887,6 @@ Success criteria:
 | `MUXCODE_ANALYZE_CLI` | (falls back to default) | AI CLI for the analyze agent |
 | `MUXCODE_COMMIT_CLI` | (falls back to default) | AI CLI for the commit agent |
 | `MUXCODE_WATCH_CLI` | (falls back to default) | AI CLI for the watch agent |
-| `MUXCODE_BETA_CLI` | (falls back to default) | AI CLI for the beta testbed agent |
-| `MUXCODE_BETA_ROLE` | (unset) | Role to mimic in beta window (e.g. `build`, `test`) |
-| `MUXCODE_BETA_TAKEOVER` | `false` | Enable takeover mode (assume mimicked role's bus identity) |
-| `MUXCODE_OPENCODE_MODE` | `tui` | OpenCode interaction mode (`tui`, `server`). Server mode is future/optional (Phase 5) |
-| `MUXCODE_OPENCODE_PORT` | `4096` | Port for OpenCode server mode (only used when `MUXCODE_OPENCODE_MODE=server`) |
 
 All `MUXCODE_{ROLE}_CLI` vars accept: `claude`, `opencode`, or `local`. Resolution: per-role → session default → `claude`.
 
@@ -1174,7 +918,7 @@ The trade-off is reduced programmability: muxcode cannot reliably inject text in
 3. **Bus messaging still works** — OpenCode agents read their inbox via `muxcode inbox` and send replies via `muxcode send`, same as Claude Code agents
 4. **Graceful degradation is well-defined** — each hook-dependent feature has a documented fallback (permission deny rules, system prompt instructions, auto-compact)
 
-Server mode (`opencode serve`) remains available as Phase 5 for environments that need reliable idle detection and programmatic message sending. The TUI approach is sufficient for the primary use case: mixed-provider sessions where OpenCode agents handle specific roles alongside Claude Code.
+Server mode (`opencode serve`) was evaluated and deferred indefinitely — the TUI approach covers all MuxCode use cases. See Phase 5 rationale for details.
 
 ### 2. Accept prompt-based hook replacement; custom commands cannot substitute
 

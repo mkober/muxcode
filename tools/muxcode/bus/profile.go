@@ -334,12 +334,23 @@ func ExpandMessage(template, exitCode, command string) string {
 var autoCCCache map[string]bool
 
 // CheckSendPolicy returns an error message if the send is denied by policy,
-// or "" if the send is allowed.
+// or "" if the send is allowed. Send policies only apply to hook-supporting
+// providers (Claude Code) where chains fire automatically. Non-hook providers
+// (OpenCode, local LLM) must send chain messages manually, so the policy
+// is skipped for them.
 func CheckSendPolicy(from, to string) string {
 	cfg := Config()
 	if cfg.SendPolicy == nil {
 		return ""
 	}
+
+	// Skip policy enforcement for non-hook providers — they need to
+	// manually chain (build→test, test→review) since hooks don't fire.
+	provider := ResolveProvider(from)
+	if !provider.SupportsHooks() {
+		return ""
+	}
+
 	policy, ok := cfg.SendPolicy[from]
 	if !ok {
 		return ""

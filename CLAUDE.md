@@ -97,7 +97,7 @@ Both Go modules have **no external dependencies** (stdlib only).
 ## Key constraints
 
 - **Edit agent delegation**: never runs build, test, deploy, API requests, log tailing, AWS data inspection, git commands (including read-only like `git status`), or GitHub CLI commands (`gh`). All delegated via message bus. AWS data inspection (`aws s3 ls`, `aws s3 cp`, `aws s3api`) goes to the **watch** agent — same as log tailing. API testing requests go to the `api` agent (modal-only role, opened via `prefix + i` or `muxcode modal open api`). PR review reads (Copilot comments, CI failures) go to the **commit** agent with action `pr-read` — never to the review agent. See [Architecture](docs/architecture.md).
-- **Hook-driven chains**: build→test→review and deploy→verify chains are deterministic (bash exit codes), not LLM-driven. Only fires for hook-supporting providers (`provider.SupportsHooks()`). Non-hook providers (OpenCode, local LLM) use prompt-based bus messaging instead. See [Hooks](docs/hooks.md).
+- **Hook-driven chains**: build→test→review and deploy→verify chains are deterministic (bash exit codes), not LLM-driven. Only fires for hook-supporting providers (`provider.SupportsHooks()`). Non-hook providers (OpenCode, local LLM) use three-layer graceful degradation: (1) role-specific prompt instructions in `SharedPrompt()`, (2) agent body adaptation via `adaptBodyForNonHookProvider()` that rewrites hook chain references to manual commands, (3) `CheckSendPolicy()` bypass so non-hook agents can send chain messages that would be blocked for hook agents. See [Hooks](docs/hooks.md).
 - **User-initiated commits**: git commits, pushes, and PR creation are never auto-triggered. The automated chain stops at review.
 - **Pre-commit safeguard**: commit delegation blocked when any agent has pending inbox, is busy, or has running procs/spawns. Bypass with `--force`.
 - **Auto-CC**: messages from build/test/review/deploy to non-edit agents are copied to edit inbox. Chain/subscription messages use `SendNoCC()` to avoid redundant CC.
@@ -132,10 +132,10 @@ Test: `cd tools/muxcode && go test ./...`
 | `bus/scrub.go` | `ScrubPII()`, `IsPIISensitiveRole()`, PII/secret regex patterns (mirrored in harness) |
 | `bus/provider.go` | `Provider` interface, `ResolveProvider()`, `ResolveProviderCLI()`, `LocalProvider` |
 | `bus/provider_claude.go` | `ClaudeCodeProvider` — full Claude Code integration (hooks, idle detection, startup acceptance, compact) |
-| `bus/provider_opencode.go` | `OpenCodeProvider` — TUI mode (pane detection, send-keys wake-up, agent config generation, tool profile translation, task completion detection) |
+| `bus/provider_opencode.go` | `OpenCodeProvider` — TUI mode (pane detection, send-keys wake-up, agent config generation, tool profile translation, task completion detection, `adaptBodyForNonHookProvider()`) |
 | `bus/hook.go` | `ProcessBashHook()`, `ProcessAnalyzeHook()`, `ProcessGuardHook()`, `ResolveChain()`, `ExpandMessage()` |
 | `bus/console.go` | `DefaultConsoleConfigs()`, `ConsoleConfig`, `RunConsole()`, per-role renderers (Dracula theme) |
-| `bus/profile.go` | `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`, `ChainShouldNotifyAnalyst()` (`NotifyAnalystOn` field) |
+| `bus/profile.go` | `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`, `CheckSendPolicy()` (provider-aware — bypasses deny for non-hook providers), `ChainShouldNotifyAnalyst()` (`NotifyAnalystOn` field) |
 | `bus/search.go` | BM25: `tokenize()`, `stem()`, `buildCorpus()`, `bm25Score()`, `SearchMemoryBM25()`, `SearchMemoryWithOptions()` |
 | `bus/rotation.go` | `NeedsRotation()`, `RotateMemory()`, `PurgeOldArchives()`, `ReadMemoryWithHistory()`, `AllMemoryEntriesWithArchives()`, `ListMemoryRoles()` |
 | `bus/launch.go` | `LaunchConfig`, `AgentFileName()`, `RoleCLIEnvVar()`, `RoleClaudeModelEnvVar()`, `RoleClaudeModelDefault()`, `InlineFallbackPrompt()`, `ExtractFrontmatter()`, `ResolveAgentFile()`, `BuildAgentsJSON()`, `ResolveVenv()`, `BuildSharedPrompt()`, `ResolveLaunchConfig()`, `BuildExecArgs()`, `PreLaunchSetup()` |

@@ -209,8 +209,9 @@ func writeOpenCodeAgentConfig(role string) error {
 
 	buf.WriteString("---\n\n")
 
-	// Agent body from definition file
+	// Agent body from definition file — adapt hook references for non-hook provider
 	if agentBody != "" {
+		agentBody = adaptBodyForNonHookProvider(agentBody, role)
 		buf.WriteString(agentBody)
 		buf.WriteString("\n\n")
 	}
@@ -449,6 +450,36 @@ func isUIChrome(line string) bool {
 		return true
 	}
 	return false
+}
+
+// adaptBodyForNonHookProvider rewrites agent definition body text to replace
+// Claude Code hook chain references with manual bus messaging instructions.
+// The source agent definitions assume hooks auto-chain (build→test→review),
+// but OpenCode and local LLM providers don't support hooks.
+func adaptBodyForNonHookProvider(body, role string) string {
+	replacements := map[string]map[string]string{
+		"build": {
+			// Replace "don't send test — hooks handle it" with "send test manually"
+			"The bash hook automatically chains to the test agent — do NOT send a test request yourself.": "Your CLI does not support automatic hooks. After a successful build, send the test request manually:\n`muxcode send test test \"Build succeeded, run tests\" --type request`",
+			"**Do NOT send a test request — the bash hook auto-chains build->test on success.**":          "**After a successful build, send a test request manually** (no auto-chain):\n`muxcode send test test \"Build succeeded, run tests\" --type request`",
+			"the bash hook auto-chains build->test on success":                                            "send a test request manually after a successful build",
+		},
+		"test": {
+			// Replace "don't send review — hooks handle it" with "send review manually"
+			"**Do NOT send a review request — the bash hook auto-chains test->review on success.**": "**After tests pass, send a review request manually** (no auto-chain):\n`muxcode send review review \"Tests passed, review changes\" --type request`",
+			"the bash hook auto-chains test->review on success":                                     "send a review request manually after tests pass",
+		},
+	}
+
+	roleReplacements, ok := replacements[role]
+	if !ok {
+		return body
+	}
+
+	for old, new := range roleReplacements {
+		body = strings.ReplaceAll(body, old, new)
+	}
+	return body
 }
 
 // --- Helpers ---

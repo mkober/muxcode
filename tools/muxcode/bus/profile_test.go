@@ -648,6 +648,10 @@ func TestCheckSendPolicy_DenyByDefault(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
+	// Ensure Claude Code (hook-supporting) provider for these roles
+	t.Setenv("MUXCODE_BUILD_CLI", "claude")
+	t.Setenv("MUXCODE_TEST_CLI", "claude")
+
 	// build → test denied (hook-driven chain handles this)
 	msg := CheckSendPolicy("build", "test")
 	if msg == "" {
@@ -690,6 +694,25 @@ func TestCheckSendPolicy_NilPolicy(t *testing.T) {
 	msg := CheckSendPolicy("build", "test")
 	if msg != "" {
 		t.Errorf("expected empty for nil policy, got %q", msg)
+	}
+}
+
+func TestCheckSendPolicy_NonHookProviderBypasses(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	// OpenCode build agent should be allowed to send to test (manual chaining)
+	t.Setenv("MUXCODE_BUILD_CLI", "opencode")
+	msg := CheckSendPolicy("build", "test")
+	if msg != "" {
+		t.Errorf("expected empty for opencode build → test (non-hook bypass), got %q", msg)
+	}
+
+	// OpenCode test agent should be allowed to send to review
+	t.Setenv("MUXCODE_TEST_CLI", "opencode")
+	msg = CheckSendPolicy("test", "review")
+	if msg != "" {
+		t.Errorf("expected empty for opencode test → review (non-hook bypass), got %q", msg)
 	}
 }
 

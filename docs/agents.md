@@ -50,7 +50,11 @@ Each agent independently resolves its AI CLI provider. The provider is fixed for
 
 Set per-role: `MUXCODE_{ROLE}_CLI=opencode` in `.muxcode/config`. Set session-wide: `MUXCODE_AGENT_CLI=opencode`.
 
-Non-hook providers degrade gracefully — the system prompt includes a "Manual Bus Messaging" section instructing the agent to send bus messages after commands (e.g. `muxcode send edit build-complete "Build finished"`). This is best-effort but provides reasonable chain-like behavior.
+Non-hook providers degrade gracefully across three layers:
+
+1. **Role-specific prompt instructions** — the shared prompt includes a "Manual Bus Messaging" section with instructions specific to the agent's role (build agents see build chain commands, test agents see test chain commands, review agents see generic reply instructions). The shared prompt also includes explicit role identity ("You are the build agent") to prevent LLM confusion.
+2. **Agent body adaptation** — hook chain references in agent definitions (e.g. "the bash hook auto-chains build→test") are rewritten to manual chain instructions via `adaptBodyForNonHookProvider()`.
+3. **Send policy bypass** — `CheckSendPolicy()` skips deny rules for non-hook providers, and the "Send Restrictions" prompt section is hidden. Without this, non-hook agents told to manually chain would have their sends blocked by the very policy meant for hook-capable agents.
 
 ## Built-in Roles
 
@@ -174,7 +178,7 @@ The variable format is `MUXCODE_{ROLE}_CLI=local` where `{ROLE}` is the uppercas
 |--------|------------|----------------|-------------------|
 | System prompt | Claude Code built-in + agent file | Agent markdown body + shared prompt | Same assembly: agent def + shared + skills + context.d + resume |
 | Tool enforcement | `--allowedTools` flag | `permission` blocks in agent config | `IsToolAllowed()` in Go, same patterns |
-| Hook chains | PostToolUse hooks fire automatically | No hooks (prompt-based bus messaging) | Bash commands logged directly to `{role}-history.jsonl` |
+| Hook chains | PostToolUse hooks fire automatically | No hooks — role-specific prompt instructions + adapted body text + send policy bypass | Bash commands logged directly to `{role}-history.jsonl` |
 | Conversation state | Managed by Claude Code | Managed by OpenCode TUI (auto-compact) | Reset between inbox checks (prevents unbounded context) |
 | Idle detection | `❯` prompt match | Not supported (TUI) | Not supported |
 | Cost | Anthropic API usage | Provider-dependent (multi-provider) | Free (local compute) |

@@ -11,7 +11,7 @@ func SharedPrompt(role string) string {
 	var b strings.Builder
 
 	b.WriteString("## Agent Coordination\n\n")
-	b.WriteString("You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.\n\n")
+	b.WriteString(fmt.Sprintf("**You are the %s agent.** You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.\n\n", role))
 
 	// Check Messages
 	b.WriteString("### Check Messages\n")
@@ -84,26 +84,41 @@ func SharedPrompt(role string) string {
 	// Non-hook provider instructions: since OpenCode TUI and local LLM agents
 	// don't have PreToolUse/PostToolUse hooks, they must send bus messages
 	// manually after build/test/deploy commands instead of relying on chains.
+	// Only show instructions relevant to the agent's actual role to avoid
+	// confusing the LLM about its identity.
 	provider := ResolveProvider(role)
 	if !provider.SupportsHooks() && role != "edit" {
 		b.WriteString("### Manual Bus Messaging (no hook support)\n")
 		b.WriteString("Your AI CLI does not support automatic hooks, so you must send bus messages manually after completing tasks.\n\n")
-		b.WriteString("**After build commands** (`./build.sh`, `make`, `pnpm build`, etc.):\n")
-		b.WriteString("```bash\n# On success:\nmuxcode send edit build \"Build succeeded\" --type response\n")
-		b.WriteString("# On failure:\nmuxcode send edit build \"Build FAILED: <error summary>\" --type response\n```\n\n")
-		b.WriteString("**After test commands** (`pnpm test`, `jest`, `pytest`, `go test`, etc.):\n")
-		b.WriteString("```bash\n# On success:\nmuxcode send edit test \"Tests passed\" --type response\n")
-		b.WriteString("# On failure:\nmuxcode send edit test \"Tests FAILED: <error summary>\" --type response\n```\n\n")
-		b.WriteString("**After deploy commands** (`cdk deploy`, `terraform apply`, etc.):\n")
-		b.WriteString("```bash\n# On success:\nmuxcode send edit deploy \"Deploy succeeded\" --type response\n")
-		b.WriteString("# On failure:\nmuxcode send edit deploy \"Deploy FAILED: <error summary>\" --type response\n```\n\n")
+
+		switch role {
+		case "build":
+			b.WriteString("**After build commands** (`./build.sh`, `make`, `pnpm build`, etc.):\n")
+			b.WriteString("```bash\n# On success:\nmuxcode send edit build \"Build succeeded\" --type response\n")
+			b.WriteString("# On failure:\nmuxcode send edit build \"Build FAILED: <error summary>\" --type response\n```\n\n")
+		case "test":
+			b.WriteString("**After test commands** (`pnpm test`, `jest`, `pytest`, `go test`, etc.):\n")
+			b.WriteString("```bash\n# On success:\nmuxcode send edit test \"Tests passed\" --type response\n")
+			b.WriteString("# On failure:\nmuxcode send edit test \"Tests FAILED: <error summary>\" --type response\n```\n\n")
+		case "deploy":
+			b.WriteString("**After deploy commands** (`cdk deploy`, `terraform apply`, etc.):\n")
+			b.WriteString("```bash\n# On success:\nmuxcode send edit deploy \"Deploy succeeded\" --type response\n")
+			b.WriteString("# On failure:\nmuxcode send edit deploy \"Deploy FAILED: <error summary>\" --type response\n```\n\n")
+		default:
+			// For review, commit, watch, and other non-build/test/deploy roles,
+			// give generic reply instructions instead of irrelevant build/test examples.
+			b.WriteString("**After completing a task**, reply to the requester:\n")
+			b.WriteString("```bash\nmuxcode send <requester> response \"<result summary>\" --type response --reply-to <id>\n```\n\n")
+		}
+
 		b.WriteString("These messages replace the automatic hook-driven chains that Claude Code agents use. ")
 		b.WriteString("Always send a result message so the edit agent knows your task is complete.\n\n")
 	}
 
-	// Send restrictions from policy
+	// Send restrictions from policy — only for hook-supporting providers.
+	// Non-hook providers need to manually chain, so restrictions don't apply.
 	cfg := Config()
-	if cfg.SendPolicy != nil {
+	if cfg.SendPolicy != nil && provider.SupportsHooks() {
 		if policy, ok := cfg.SendPolicy[role]; ok && len(policy.Deny) > 0 {
 			b.WriteString("### Send Restrictions\n")
 			for _, denied := range policy.Deny {

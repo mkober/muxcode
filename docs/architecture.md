@@ -85,12 +85,14 @@ Core code: `bus/provider.go` (interface + resolution), `bus/provider_claude.go`,
 
 When an agent uses a non-hook provider (OpenCode or local LLM), hook-dependent features degrade:
 
-- **Build/test/review chains**: disabled for that agent; system prompt instructs the agent to send bus messages after commands (`muxcode send edit build-complete "..."`)
+- **Build/test/review chains**: disabled for that agent; system prompt instructs the agent to send bus messages manually. Instructions are role-specific — build agents only see build chain instructions, test agents see test chain instructions, review agents see generic reply instructions. Agent body text is adapted via `adaptBodyForNonHookProvider()` to replace hook chain references with manual chain commands.
+- **Send policy**: `CheckSendPolicy()` bypasses deny rules for non-hook providers. The default policy denies build→test and test→review sends (hooks handle chaining), but non-hook providers must send those messages manually — the policy would block them otherwise.
 - **Edit guard**: disabled; rely on provider-native permission deny rules
 - **Workflow state transitions**: hooks skip non-hook providers via `provider.SupportsHooks()`
 - **Idle-based notifications**: watcher skips idle check for non-hook providers; uses display-message or 60s cooldown send-keys instead
+- **Send restrictions prompt**: the "Send Restrictions" section in the shared prompt (which tells Claude Code agents not to send to chain targets) is hidden for non-hook providers
 
-Core code: `cmd/hook.go` (hook gating), `bus/prompt.go` (manual bus messaging section), `watcher/watcher.go` (idle check skip).
+Core code: `cmd/hook.go` (hook gating), `bus/prompt.go` (role-specific manual bus messaging, send restriction gating), `bus/profile.go` (send policy bypass), `bus/provider_opencode.go` (body adaptation), `watcher/watcher.go` (idle check skip).
 
 ## Data Flow
 

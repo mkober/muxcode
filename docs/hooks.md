@@ -6,7 +6,7 @@ Muxcode uses Claude Code's hook system to integrate the AI agent with tmux and n
 
 All hooks are **async** — they do not block the AI agent from continuing.
 
-**Provider gating**: Hooks only fire for providers that support them (`provider.SupportsHooks() == true`). Currently only Claude Code supports hooks. OpenCode and local LLM agents skip hook processing entirely — all four hook functions (`hookBash`, `hookGuard`, `hookAnalyze`, `hookInboxPoll`) exit early when the provider is non-hook. For non-hook agents, the system prompt includes manual bus messaging instructions as a fallback.
+**Provider gating**: Hooks only fire for providers that support them (`provider.SupportsHooks() == true`). Currently only Claude Code supports hooks. OpenCode and local LLM agents skip hook processing entirely — all four hook functions (`hookBash`, `hookGuard`, `hookAnalyze`, `hookInboxPoll`) exit early when the provider is non-hook. For non-hook agents, three layers replace hooks: (1) role-specific manual bus messaging instructions in the system prompt, (2) agent body text adaptation that rewrites hook chain references to manual commands, (3) `CheckSendPolicy()` bypass that allows non-hook agents to send chain messages (build→test, test→review) that would be blocked for hook agents where chains fire automatically.
 
 ## Hook Configuration
 
