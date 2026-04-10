@@ -257,6 +257,38 @@ func TestAlreadyNotified_SameSize(t *testing.T) {
 	}
 }
 
+func TestAlreadyNotified_SameSize_RetryAfterInterval(t *testing.T) {
+	useTempBusDir(t)
+
+	session := "test-dedup-same-retry"
+	role := "run"
+
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+
+	// Write a message to the inbox
+	inboxData := []byte(`{"from":"edit"}` + "\n")
+	os.WriteFile(InboxPath(session, role), inboxData, 0644)
+
+	// Mark as notified
+	markNotified(session, role)
+
+	// Same size, recent marker — should be deduplicated
+	if !alreadyNotified(session, role) {
+		t.Error("alreadyNotified should return true for same size within retry interval")
+	}
+
+	// Backdate the marker beyond the retry interval to simulate a missed notification
+	markerPath := notifiedSizePath(session, role)
+	past := time.Now().Add(-31 * time.Second)
+	os.Chtimes(markerPath, past, past)
+
+	// Same size but marker is old — should allow re-notification
+	if alreadyNotified(session, role) {
+		t.Error("alreadyNotified should return false when same size but retry interval expired (missed send-keys)")
+	}
+}
+
 func TestAlreadyNotified_DifferentSize(t *testing.T) {
 	useTempBusDir(t)
 

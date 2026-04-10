@@ -45,6 +45,13 @@ func notifiedSizePath(session, role string) string {
 // This is a defense-in-depth against rapid-fire duplicates if file locking fails.
 const notifyCooldown = 2 * time.Second
 
+// notifyRetryInterval is the maximum time before re-notifying an agent whose
+// inbox still has the same unread messages. Handles the case where a previous
+// send-keys injection was missed (e.g., Claude Code TUI redraw race). Without
+// this, alreadyNotified() would permanently suppress re-notification since the
+// inbox size hasn't changed, leaving the agent stuck at the idle prompt.
+const notifyRetryInterval = 30 * time.Second
+
 // lockNotify acquires a per-role file lock for notification deduplication.
 // Returns an unlock function. If lock acquisition fails, returns a no-op
 // (graceful degradation — old behavior without locking).
@@ -64,10 +71,14 @@ func lockNotify(session, role string) func() {
 	}
 }
 
-// alreadyNotified returns true if the inbox size matches the last notified size,
-// or if the marker was written within the cooldown window (defense-in-depth).
-// This prevents duplicate tmux display-message when Notify is called from
-// multiple sources (cmd/send.go, watcher, subscriptions) for the same unread messages.
+// alreadyNotified returns true if a notification was recently sent for the
+// same inbox content. This prevents duplicate tmux display-message / send-keys
+// when Notify is called from multiple sources (cmd/send.go, watcher, subscriptions).
+//
+// Key behavior: if the inbox size matches the last notified size AND the marker
+// is older than notifyRetryInterval, returns false to allow a retry. This handles
+// missed send-keys injections (e.g., Claude Code TUI redraw race) where the agent
+// remains idle with unread messages after a notification was "sent" but not received.
 func alreadyNotified(session, role string) bool {
 	inboxPath := InboxPath(session, role)
 	info, err := os.Stat(inboxPath)
@@ -79,7 +90,8 @@ func alreadyNotified(session, role string) bool {
 		return true // nothing to notify about
 	}
 
-	data, err := os.ReadFile(notifiedSizePath(session, role))
+	markerPath := notifiedSizePath(session, role)
+	data, err := os.ReadFile(markerPath)
 	if err != nil {
 		return false
 	}
@@ -87,18 +99,28 @@ func alreadyNotified(session, role string) bool {
 	if err != nil {
 		return false
 	}
-	if currentSize == lastSize {
-		return true
-	}
 
-	// Defense-in-depth: if the marker was written recently (within cooldown),
-	// suppress even though the size differs. This catches TOCTOU races where
-	// two callers both pass the size check before either writes the marker.
-	markerPath := notifiedSizePath(session, role)
 	markerInfo, err := os.Stat(markerPath)
 	if err != nil {
 		return false
 	}
+	markerAge := time.Since(markerInfo.ModTime())
+
+	if currentSize == lastSize {
+		// Same inbox content — allow retry if marker is old enough.
+		// This catches the case where send-keys was injected but the agent
+		// missed it (TUI redraw, pty buffering). Without this, the agent
+		// would be stuck at the idle prompt permanently.
+		if markerAge >= notifyRetryInterval {
+			return false // allow re-notification
+		}
+		return true // recently notified, suppress duplicate
+	}
+
+	// Different inbox size (new messages arrived since last notification).
+	// Defense-in-depth: if the marker was written recently (within cooldown),
+	// suppress even though the size differs. This catches TOCTOU races where
+	// two callers both pass the size check before either writes the marker.
 	return time.Since(markerInfo.ModTime()) < notifyCooldown
 }
 
