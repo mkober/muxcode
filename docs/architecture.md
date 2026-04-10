@@ -42,6 +42,56 @@ Persistent:  .muxcode/memory/{role}.md      (project)
              ~/.config/muxcode/logs/       (lifecycle logs per session)
 ```
 
+## Provider Architecture
+
+Each agent window independently resolves its AI CLI provider via a `Provider` interface (`bus/provider.go`). The bus, hooks, and watcher all dispatch through the provider abstraction — no component directly assumes Claude Code.
+
+### Provider interface
+
+```
+Provider
+├── Name()                  # "claude", "opencode", "local"
+├── ConfigureLaunch()       # Populate LaunchConfig with CLI-specific fields
+├── BuildExecArgs()         # Construct (binary, args) for exec
+├── IsIdle() / IsAlive()    # Pane detection
+├── ClassifyPane()          # Startup state detection
+├── AcceptStartup()         # Handle startup prompts
+├── SendWakeUp()            # Inject wake-up notification
+├── Compact()               # Trigger context compaction
+├── SupportsHooks()         # Hook support flag
+├── WriteAgentConfig()      # Generate provider-specific agent config
+└── DetectTaskCompletion()  # Analyze pane for task completion (non-hook only)
+```
+
+### Provider implementations
+
+| Provider | Binary | Hooks | Idle detection | Wake-up | Compact | Permissions |
+|----------|--------|-------|----------------|---------|---------|-------------|
+| `ClaudeCodeProvider` | `claude` | Yes | `❯` prompt match | send-keys text + Enter | `/compact` via send-keys | `--allowedTools` patterns |
+| `OpenCodeProvider` | `opencode` | No | Not supported (TUI) | display-message / send-keys with payload | No-op (auto-compact) | `permission` blocks in frontmatter |
+| `LocalProvider` | `muxcode-llm-harness` | No | Not supported | N/A (watcher-driven) | N/A (context reset) | `IsToolAllowed()` in Go |
+
+### Provider resolution
+
+```
+MUXCODE_{ROLE}_CLI  →  MUXCODE_AGENT_CLI  →  "claude" (default)
+       ↓                      ↓                    ↓
+  per-role override    session-wide default    built-in fallback
+```
+
+Core code: `bus/provider.go` (interface + resolution), `bus/provider_claude.go`, `bus/provider_opencode.go`.
+
+### Graceful degradation
+
+When an agent uses a non-hook provider (OpenCode or local LLM), hook-dependent features degrade:
+
+- **Build/test/review chains**: disabled for that agent; system prompt instructs the agent to send bus messages after commands (`muxcode send edit build-complete "..."`)
+- **Edit guard**: disabled; rely on provider-native permission deny rules
+- **Workflow state transitions**: hooks skip non-hook providers via `provider.SupportsHooks()`
+- **Idle-based notifications**: watcher skips idle check for non-hook providers; uses display-message or 60s cooldown send-keys instead
+
+Core code: `cmd/hook.go` (hook gating), `bus/prompt.go` (manual bus messaging section), `watcher/watcher.go` (idle check skip).
+
 ## Data Flow
 
 ### Edit-Initiated Build
@@ -148,12 +198,13 @@ Messages from build, test, review, and deploy agents to any non-edit agent are a
 1. `muxcode send` delivers message to inbox file
 2. `Send()` creates a delivery status file (`delivery/{msg-id}.status`) tracking the message lifecycle (sent → delivered → responded)
 3. If the message has `ReplyTo`, `Send()` marks the original message as "responded"
-4. `send` calls `Notify()` to alert the recipient (triple-path):
+4. `send` calls `Notify()` to alert the recipient (provider-aware):
    - **Trigger file** (always): writes timestamp to `trigger-{role}.notify` — agents running `muxcode inbox --poll` detect this via `stat()` polling (no pane interaction, no TOCTOU race)
    - **Polling agents** (`--poll` or `--wait` active): skipped for send-keys — the poll loop watches the trigger file
    - **Harness panes**: skipped — they poll inbox directly
-   - **Idle agents** (at `❯` prompt, including edit): `send-keys` "You have new messages" + Enter to wake them up
-   - **Active agents** (including edit): `display-message` (passive status bar flash)
+   - **Non-hook providers** (OpenCode, local LLM): routed directly to `provider.SendWakeUp()` — OpenCode injects message payload via send-keys, local LLM is no-op
+   - **Idle Claude Code agents** (at `❯` prompt, including edit): `send-keys` "You have new messages" + Enter to wake them up
+   - **Active Claude Code agents** (including edit): `display-message` (passive status bar flash)
 5. If auto-CC fires, `send` also notifies edit
 6. The watcher provides fallback notifications for all roles
 7. When an agent reads its inbox via `Receive()`, consumed messages are marked "delivered" in their status files
@@ -270,12 +321,25 @@ The build-test-review and deploy-verify chains are **deterministic** — driven 
 └─────────────────────────────────────────┘
 ```
 
+### OpenCode TUI Agent Flow
+
+```
+1. Provider resolved via MUXCODE_{ROLE}_CLI or MUXCODE_AGENT_CLI
+2. OpenCodeProvider.BuildExecArgs returns bare "opencode" binary (no args)
+3. TUI renders in the tmux pane (box-drawing frame detected by ClassifyPane)
+4. No hooks — system prompt instructs agent to send bus messages manually
+5. Wake-up: Notify() injects message payload via send-keys into TUI input
+6. Context compaction managed by OpenCode TUI (auto-compact at 95%)
+7. Tool permissions pre-configured in .opencode/agents/<role>.md frontmatter
+```
+
 ### Local LLM Agent Flow
 
 ```
-1. muxcode-agent.sh checks MUXCODE_{ROLE}_CLI for role
-2. If "local", checks Ollama health (GET /api/tags)
-3a. Ollama reachable: exec muxcode agent run <role>
+1. Provider resolved via MUXCODE_{ROLE}_CLI="local"
+2. LocalProvider.BuildExecArgs returns muxcode-llm-harness (or muxcode agent fallback)
+3. muxcode-agent.sh checks Ollama health (GET /api/tags)
+3a. Ollama reachable: exec harness binary
 3b. Ollama unreachable: fall through to Claude Code
 4. Agent loop: poll inbox → build conversation → call Ollama API → execute tools → send response
 5. Tool execution enforces allowedTools from tool profile
@@ -320,11 +384,12 @@ The analyze console reads the shared bus log (`log.jsonl`) rather than a dedicat
 
 ## Startup prompt handling
 
-When launching a session, Claude Code may show two sequential prompts per agent window:
-1. **Workspace trust** — "Yes, I trust this folder" (new workspaces)
-2. **Bypass permissions** — "Bypass Permissions mode" warning (all agents use `--dangerously-skip-permissions`)
+When launching a session, agents may show provider-specific startup prompts:
+- **Claude Code**: "Yes, I trust this folder" (new workspaces) + "Bypass Permissions mode" warning
+- **OpenCode**: TUI frame rendering (box-drawing characters indicate ready state)
+- **Local LLM**: no startup prompts (harness starts directly)
 
-The launcher handles both automatically via a single background loop that runs after all windows are created:
+The launcher handles all prompts automatically via `provider.ClassifyPane()` and `provider.AcceptStartup()`, dispatched through a single background loop:
 
 1. Polls each agent pane every 2 seconds (30 attempts, ~60 seconds max)
 2. Captures pane content with `tmux capture-pane -p`

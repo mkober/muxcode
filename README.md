@@ -17,7 +17,9 @@ A multi-agent coding environment built on tmux — where you stay in the loop.
 
 MuxCode is a tmux-native multi-agent development environment. Nine specialist AI agents — editor, builder, tester, reviewer, deployer, git manager, and more — each run in their own tmux window, coordinated through a file-based message bus. You work in neovim alongside an editing agent, and every other part of the development lifecycle has its own dedicated agent a function key away.
 
-You stay in control. The edit agent is your primary interface — it helps you write code and delegates to specialists when you're ready. Ask for a build, and the build agent runs it. Tests fire automatically on success. Review follows tests. Results flow back while you keep editing. The chain routing is hook-driven — Go hooks checking exit codes, not LLM routing decisions — so dispatch is deterministic and fast. The agents themselves run as [Claude Code](https://claude.ai/code) sessions by default, but any role can be switched to a local LLM via [Ollama](https://ollama.com/) to reduce API costs for structured-command roles like git, build, and log monitoring.
+You stay in control. The edit agent is your primary interface — it helps you write code and delegates to specialists when you're ready. Ask for a build, and the build agent runs it. Tests fire automatically on success. Review follows tests. Results flow back while you keep editing. The chain routing is hook-driven — Go hooks checking exit codes, not LLM routing decisions — so dispatch is deterministic and fast.
+
+MuxCode supports multiple AI CLI providers. Each agent window can independently use [Claude Code](https://claude.ai/code), [OpenCode](https://opencode.ai/), or a local LLM via [Ollama](https://ollama.com/) — a single session can mix providers. Claude Code provides full hook support for deterministic chains. OpenCode brings multi-provider LLM access (Anthropic, OpenAI, Google, Groq, Bedrock) via its TUI. Ollama reduces API costs for structured-command roles. Provider assignment is per-agent at launch time via environment variables.
 
 The coordination layer is entirely local. Agents communicate through JSONL files in `/tmp/`. Memory persists across sessions as markdown files. The bus binary is stdlib-only Go — no external dependencies, no containers, no databases. If Ollama goes down, affected agents fall back to Claude Code automatically, and the bus watcher handles restart and recovery.
 
@@ -87,13 +89,27 @@ Additional roles that share a host agent's window (messages are routed to the ho
 | pr-read  | commit        | PR review analysis — handled by the commit agent                                            |
 | status   | —             | Live TUI dashboard (`muxcode tui`) — add `status` to `MUXCODE_WINDOWS` to include |
 
-Most agents default to Claude Code. Build and test default to a local LLM via [Ollama](https://ollama.com/) since they primarily execute structured commands where a small model is sufficient. Any role can be switched between Claude Code and a local LLM by setting its override variable in `.muxcode/config` (e.g. `MUXCODE_GIT_CLI=local`). Per-role model selection is also supported via `MUXCODE_{ROLE}_MODEL` (falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
+Most agents default to Claude Code. Build and test default to a local LLM via [Ollama](https://ollama.com/) since they primarily execute structured commands where a small model is sufficient. Any role can be switched between providers by setting its override variable in `.muxcode/config`:
 
-Each agent has constrained tool permissions — the build agent can run builds but can't edit files, the commit agent can run git but can't deploy infrastructure. This separation prevents agents from stepping on each other.
+- `MUXCODE_{ROLE}_CLI=claude` — Claude Code (full hook support, deterministic chains)
+- `MUXCODE_{ROLE}_CLI=opencode` — OpenCode TUI (multi-provider LLM access, autonomous context management)
+- `MUXCODE_{ROLE}_CLI=local` — Local LLM via Ollama (free, structured commands)
+
+Per-role model selection is also supported via `MUXCODE_{ROLE}_MODEL` (falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
+
+Each agent has constrained tool permissions — the build agent can run builds but can't edit files, the commit agent can run git but can't deploy infrastructure. This separation prevents agents from stepping on each other. Tool profiles are automatically translated to each provider's permission format (Claude Code's `--allowedTools`, OpenCode's `permission` blocks, or the harness's `IsToolAllowed()`).
 
 You can customize or replace any agent by dropping a markdown file in `.claude/agents/` (per-project) or `~/.config/muxcode/agents/` (global). See [Agents](docs/agents.md) for details.
 
 ## Key features
+
+### Multi-CLI provider support
+- **Provider interface** — Abstraction layer (`bus/provider.go`) encapsulating all CLI-specific behavior: launch, idle detection, notifications, lifecycle management, and agent configuration
+- **Claude Code provider** — Full integration: hook-driven chains, idle prompt detection, startup acceptance, `/compact` injection, `--allowedTools` permissions
+- **OpenCode provider** — TUI mode integration: bare `opencode` binary launch, box-drawing frame detection, display-message notifications, auto-compact, permission block generation. Multi-provider LLM access (Anthropic, OpenAI, Google, Groq, Bedrock)
+- **Per-agent provider assignment** — Each tmux window independently resolves its CLI via `MUXCODE_{ROLE}_CLI`. A single session can mix Claude Code, OpenCode, and local LLM agents
+- **Graceful degradation** — Non-hook providers (OpenCode, local LLM) degrade gracefully: chains disabled (system prompt instructs bus messaging instead), idle detection skipped, tool profiles translated to provider-native permission format
+- **Interactive installer** — `install.sh` detects and offers to install both Claude Code and OpenCode, with default provider selection when both are available
 
 ### Agent orchestration
 - **9 specialist agents** — Edit, build, test, review, deploy, run, commit, analyze, and watch — each with scoped tool permissions and its own tmux window
@@ -186,7 +202,9 @@ The tradeoff is clear: autonomous tools can handle more without you, but MuxCode
 
 - tmux >= 3.0
 - Go >= 1.22
-- [Claude Code](https://claude.ai/code) CLI (`claude`)
+- At least one AI CLI provider:
+  - [Claude Code](https://claude.ai/code) CLI (`claude`) — recommended, full hook support
+  - [OpenCode](https://opencode.ai/) (`opencode`) — alternative, multi-provider LLM access
 - jq
 - Neovim
 - fzf (optional, for interactive project picker)
@@ -200,7 +218,7 @@ cd muxcode
 ./install.sh
 ```
 
-The installer checks prerequisites, builds the Go binary, and installs everything to `~/.local/bin/` and `~/.config/muxcode/`. It sets up the managed neovim config (via `NVIM_APPNAME=muxcode`), tmux integration, and Claude Code hooks. Your personal `~/.config/nvim/` is never modified.
+The installer checks prerequisites, builds the Go binary, and installs everything to `~/.local/bin/` and `~/.config/muxcode/`. It interactively detects and offers to install AI CLI providers (Claude Code and/or OpenCode), sets up the managed neovim config (via `NVIM_APPNAME=muxcode`), tmux integration, and Claude Code hooks (when Claude Code is selected). Your personal `~/.config/nvim/` is never modified.
 
 For subsequent builds after pulling updates:
 
@@ -235,6 +253,50 @@ MuxCode uses a shell-sourceable config file. Resolution order:
 4. Built-in defaults
 
 See [Configuration](docs/configuration.md) for the full variable reference.
+
+## OpenCode agents
+
+Any agent role can run via [OpenCode](https://opencode.ai/) instead of Claude Code. OpenCode is an open-source AI coding agent with multi-provider LLM support (Anthropic, OpenAI, Google, Groq, Bedrock) and a full TUI interface. This is useful when you want to use non-Anthropic models for specific roles or take advantage of OpenCode's autonomous context management.
+
+### Setup
+
+1. Install OpenCode:
+
+   ```bash
+   curl -fsSL https://opencode.ai/install | bash
+   ```
+
+2. Set per-role overrides in `.muxcode/config`:
+
+   ```bash
+   MUXCODE_BUILD_CLI=opencode     # build agent uses OpenCode
+   MUXCODE_TEST_CLI=opencode      # test agent uses OpenCode
+   ```
+
+   Or set the session-wide default:
+
+   ```bash
+   MUXCODE_AGENT_CLI=opencode     # all agents use OpenCode
+   MUXCODE_EDIT_CLI=claude        # except edit — keep Claude Code for hooks
+   ```
+
+3. Launch MuxCode normally — configured roles launch the OpenCode TUI, others use Claude Code.
+
+### How it works
+
+OpenCode agents run as interactive TUI sessions in their tmux panes. MuxCode generates per-role agent definitions in `.opencode/agents/<role>.md` with tool permissions translated from muxcode's tool profiles. The TUI manages its own context window, compaction, and tool execution autonomously.
+
+Since OpenCode has no hook system, chain-driven features (build→test→review) are replaced with prompt-based bus messaging — the system prompt instructs agents to send bus messages after completing commands. Idle detection is not supported (the TUI has no stable prompt character), so wake-up notifications use either send-keys payload injection or display-message status bar flashes.
+
+### Limitations
+
+| Feature | Behavior with OpenCode |
+|---------|----------------------|
+| Build/test/review chains | Prompt-based (best-effort) instead of hook-driven (deterministic) |
+| Edit guard | Disabled — relies on OpenCode's native `permission` blocks |
+| Workflow state transitions | Skipped for non-hook agents |
+| Idle detection | Not supported — agent always treated as "active" |
+| Compact | No-op from muxcode — OpenCode auto-compacts at 95% context |
 
 ## Local LLM agents
 

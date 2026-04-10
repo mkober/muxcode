@@ -30,7 +30,8 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `MUXCODE_SCAN_DEPTH` | `3` | Max depth for project discovery via `find` |
 | `MUXCODE_EDITOR` | `nvim` | Editor command for the edit window |
 | `MUXCODE_NVIM_APPNAME` | `muxcode/nvim` | Neovim `NVIM_APPNAME` — isolates muxcode's nvim config from your personal `~/.config/nvim/` |
-| `MUXCODE_AGENT_CLI` | `claude` | AI CLI command to run agents |
+| `MUXCODE_AGENT_CLI` | `claude` | Default AI CLI provider (`claude`, `opencode`, or `local`) |
+| `MUXCODE_{ROLE}_CLI` | (unset) | Per-role AI CLI override (e.g. `MUXCODE_BUILD_CLI=opencode`). See [Multi-CLI providers](#multi-cli-providers) |
 | `MUXCODE_SHELL_INIT` | (empty) | Command to run in each new tmux pane (e.g. activate a virtualenv) |
 
 ### Window Layout
@@ -99,6 +100,42 @@ MUXCODE_TEST_CLAUDE_MODEL=claude-haiku-4-5
 | `MUXCODE_{ROLE}_MODEL` | (unset) | Per-role Ollama model override (e.g. `MUXCODE_GIT_MODEL=llama3.1:8b`). Takes precedence over `MUXCODE_OLLAMA_MODEL`. |
 | `MUXCODE_OLLAMA_MODEL` | `qwen2.5-coder:7b` | Default Ollama model for local LLM agents |
 | `MUXCODE_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
+
+### Multi-CLI providers
+
+Each agent window independently resolves its AI CLI provider. A single session can mix Claude Code, OpenCode, and local LLM agents.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_AGENT_CLI` | `claude` | Session-wide default provider (`claude`, `opencode`, or `local`) |
+| `MUXCODE_{ROLE}_CLI` | (unset) | Per-role override (e.g. `MUXCODE_BUILD_CLI=opencode`, `MUXCODE_GIT_CLI=local`) |
+
+Resolution order (first non-empty wins):
+1. `MUXCODE_{ROLE}_CLI` — per-agent override
+2. `MUXCODE_AGENT_CLI` — session-wide default
+3. `claude` — built-in fallback
+
+Provider comparison:
+
+| Feature | Claude Code | OpenCode | Local LLM (Ollama) |
+|---------|-------------|----------|-------------------|
+| Hook-driven chains | Yes | No (prompt-based fallback) | No (prompt-based fallback) |
+| Idle detection | `❯` prompt match | Not supported (TUI) | Not supported |
+| Wake-up notifications | Send-keys text injection | Display-message (status bar flash) | N/A (watcher-driven) |
+| Tool permissions | `--allowedTools` patterns | `permission` blocks in agent config | `IsToolAllowed()` in Go |
+| Context compaction | `/compact` via send-keys | Auto-compact at 95% (no-op from muxcode) | Reset between inbox checks |
+| LLM providers | Anthropic only | Anthropic, OpenAI, Google, Groq, Bedrock | Ollama (any pulled model) |
+| Startup handling | Trust + bypass prompts | TUI frame detection | N/A |
+
+Example — mixed session via config file:
+
+```bash
+# ~/.config/muxcode/config
+MUXCODE_AGENT_CLI=claude              # default: Claude Code
+MUXCODE_BUILD_CLI=opencode            # build uses OpenCode
+MUXCODE_TEST_CLI=opencode             # test uses OpenCode
+MUXCODE_GIT_CLI=local                 # commit uses local LLM
+```
 
 ### Integrations
 

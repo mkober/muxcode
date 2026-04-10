@@ -34,7 +34,23 @@ Every agent (regardless of source) receives a dynamically assembled `--append-sy
 
 ### Permission mode
 
-All agents run with `--dangerously-skip-permissions` for autonomous operation. The edit agent relies on hook-based guardrails (`muxcode hook guard`) and tool profiles to enforce safety, rather than interactive permission prompts.
+All Claude Code agents run with `--dangerously-skip-permissions` for autonomous operation. The edit agent relies on hook-based guardrails (`muxcode hook guard`) and tool profiles to enforce safety, rather than interactive permission prompts.
+
+OpenCode agents use per-agent `permission` blocks in their generated agent definition (`.opencode/agents/<role>.md`). Muxcode's tool profiles are automatically translated to OpenCode's format — `Bash(pattern)` → `"pattern": allow`, `Write`/`Edit` → `edit: allow`.
+
+### Multi-CLI provider support
+
+Each agent independently resolves its AI CLI provider. The provider is fixed for the session lifetime.
+
+| Provider | CLI value | Best for |
+|----------|-----------|----------|
+| Claude Code | `claude` (default) | Edit, review, deploy — full hook support, deterministic chains |
+| OpenCode | `opencode` | Build, test — multi-provider LLM access, autonomous TUI |
+| Local LLM | `local` | Git, build, watch — structured commands, zero API cost |
+
+Set per-role: `MUXCODE_{ROLE}_CLI=opencode` in `.muxcode/config`. Set session-wide: `MUXCODE_AGENT_CLI=opencode`.
+
+Non-hook providers degrade gracefully — the system prompt includes a "Manual Bus Messaging" section instructing the agent to send bus messages after commands (e.g. `muxcode send edit build-complete "Build finished"`). This is best-effort but provides reasonable chain-like behavior.
 
 ## Built-in Roles
 
@@ -146,20 +162,22 @@ The variable format is `MUXCODE_{ROLE}_CLI=local` where `{ROLE}` is the uppercas
 
 ### How it works
 
-1. `muxcode-agent.sh` checks `MUXCODE_{ROLE}_CLI` for the role
-2. If `"local"`, verifies Ollama is reachable (`GET /api/tags`)
-3. If reachable: runs `muxcode agent run <role>` instead of Claude Code
-4. If unreachable: falls back to Claude Code with a warning
+1. The provider system resolves `MUXCODE_{ROLE}_CLI` for the role
+2. If `"local"`, `LocalProvider.ConfigureLaunch()` sets `IsLocal=true` and builds harness args
+3. `muxcode-agent.sh` verifies Ollama is reachable (`GET /api/tags`)
+4. If reachable: runs `muxcode-llm-harness run <role>` (or `muxcode agent run <role>` as fallback)
+5. If unreachable: falls back to Claude Code with a warning
 
-### Differences from Claude Code agents
+### Differences across providers
 
-| Aspect | Claude Code | Local LLM (Ollama) |
-|--------|------------|-------------------|
-| System prompt | Claude Code built-in + agent file | Same assembly: agent def + shared + skills + context.d + resume |
-| Tool enforcement | `--allowedTools` flag | `IsToolAllowed()` in Go, same patterns |
-| Hook chains | PostToolUse hooks fire automatically | Bash commands logged directly to `{role}-history.jsonl` |
-| Conversation state | Managed by Claude Code | Reset between inbox checks (prevents unbounded context) |
-| Cost | Anthropic API usage | Free (local compute) |
+| Aspect | Claude Code | OpenCode (TUI) | Local LLM (Ollama) |
+|--------|------------|----------------|-------------------|
+| System prompt | Claude Code built-in + agent file | Agent markdown body + shared prompt | Same assembly: agent def + shared + skills + context.d + resume |
+| Tool enforcement | `--allowedTools` flag | `permission` blocks in agent config | `IsToolAllowed()` in Go, same patterns |
+| Hook chains | PostToolUse hooks fire automatically | No hooks (prompt-based bus messaging) | Bash commands logged directly to `{role}-history.jsonl` |
+| Conversation state | Managed by Claude Code | Managed by OpenCode TUI (auto-compact) | Reset between inbox checks (prevents unbounded context) |
+| Idle detection | `❯` prompt match | Not supported (TUI) | Not supported |
+| Cost | Anthropic API usage | Provider-dependent (multi-provider) | Free (local compute) |
 
 ### CLI
 
