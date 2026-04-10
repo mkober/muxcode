@@ -81,6 +81,26 @@ func SharedPrompt(role string) string {
 	b.WriteString("- Save important learnings to memory after completing tasks\n")
 	b.WriteString("- Never wait for human input — process all requests autonomously\n\n")
 
+	// Non-hook provider instructions: since OpenCode TUI and local LLM agents
+	// don't have PreToolUse/PostToolUse hooks, they must send bus messages
+	// manually after build/test/deploy commands instead of relying on chains.
+	provider := ResolveProvider(role)
+	if !provider.SupportsHooks() && role != "edit" {
+		b.WriteString("### Manual Bus Messaging (no hook support)\n")
+		b.WriteString("Your AI CLI does not support automatic hooks, so you must send bus messages manually after completing tasks.\n\n")
+		b.WriteString("**After build commands** (`./build.sh`, `make`, `pnpm build`, etc.):\n")
+		b.WriteString("```bash\n# On success:\nmuxcode send edit build \"Build succeeded\" --type response\n")
+		b.WriteString("# On failure:\nmuxcode send edit build \"Build FAILED: <error summary>\" --type response\n```\n\n")
+		b.WriteString("**After test commands** (`pnpm test`, `jest`, `pytest`, `go test`, etc.):\n")
+		b.WriteString("```bash\n# On success:\nmuxcode send edit test \"Tests passed\" --type response\n")
+		b.WriteString("# On failure:\nmuxcode send edit test \"Tests FAILED: <error summary>\" --type response\n```\n\n")
+		b.WriteString("**After deploy commands** (`cdk deploy`, `terraform apply`, etc.):\n")
+		b.WriteString("```bash\n# On success:\nmuxcode send edit deploy \"Deploy succeeded\" --type response\n")
+		b.WriteString("# On failure:\nmuxcode send edit deploy \"Deploy FAILED: <error summary>\" --type response\n```\n\n")
+		b.WriteString("These messages replace the automatic hook-driven chains that Claude Code agents use. ")
+		b.WriteString("Always send a result message so the edit agent knows your task is complete.\n\n")
+	}
+
 	// Send restrictions from policy
 	cfg := Config()
 	if cfg.SendPolicy != nil {

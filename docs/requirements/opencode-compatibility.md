@@ -1021,7 +1021,7 @@ Success criteria:
 - [x] `IsBetaCLI` removed from `LaunchConfig` — provider dispatch handles all routing
 - [x] All existing tests pass (300+), new tests cover all provider methods
 
-### Phase 3: graceful degradation
+### Phase 3: graceful degradation ✅
 
 Ensure muxcode operates correctly when OpenCode TUI agents are present alongside Claude Code agents. Since TUI agents cannot be driven programmatically (no hooks, no idle detection, no reliable input injection), the system must degrade gracefully — skipping hook-driven features for those agents and relying on pre-configured permissions and system prompt instructions instead.
 
@@ -1029,12 +1029,11 @@ Updated files:
 
 | File | Change |
 |------|--------|
-| `cmd/hook.go` | Chain triggers check `provider.SupportsHooks()` — skip chain firing for non-hook providers |
-| `bus/hook.go` | Guard check skips for non-hook providers (no PreToolUse interception) |
-| `watcher/watcher.go` | `checkIdleAgents()` skips OpenCode roles (idle detection not supported); notification path uses provider's `SendWakeUp` |
-| `bus/workflow.go` | Workflow transitions gated by `provider.SupportsHooks()` — transitions skipped for OpenCode agents |
-| `bus/prompt.go` | Shared prompt for non-hook providers includes: (1) explicit bus message instructions ("after build, run `muxcode send edit build-complete ...`"), (2) no inbox polling instructions (user-driven, not watcher-driven) |
-| `bus/agent_health.go` | `IsAgentIdle` returns false for OpenCode roles (consistent with provider) |
+| `cmd/hook.go` | All 4 hook functions (`hookBash`, `hookGuard`, `hookAnalyze`, `hookInboxPoll`) check `provider.SupportsHooks()` — early return for non-hook providers |
+| `bus/prompt.go` | `SharedPrompt()` adds "Manual Bus Messaging" section for non-hook, non-edit roles — explicit instructions to send build/test/deploy results via `muxcode send` |
+| `watcher/watcher.go` | `checkIdleAgents()` skips non-hook providers early (avoids unnecessary pane captures); falls back to `provider.SendWakeUp()` (display-message) |
+| `bus/provider_test.go` | Tests for `SupportsHooks()` gating, `ResolveProvider` hook support by env var, `IsIdle` always-false for OpenCode/local |
+| `bus/prompt_test.go` | Tests for Manual Bus Messaging section presence/absence by provider and role |
 
 Key degradation behaviors:
 
@@ -1047,13 +1046,13 @@ Key degradation behaviors:
 | Compact trigger | `/compact` injected via send-keys | TUI auto-compacts | No-op from muxcode; TUI handles internally |
 
 Success criteria:
-- [ ] Agents with OpenCode provider run without errors when hooks are absent
-- [ ] Build/test/review chains disabled for non-hook agents (no spurious chain fires)
-- [ ] Edit guard disabled for non-hook agents (no PreToolUse errors)
-- [ ] Watcher skips idle check for OpenCode roles (no false positives)
-- [ ] System prompt includes bus message instructions for non-hook providers
-- [ ] OpenCode `permission.bash` deny rules replace edit guard for dangerous commands
-- [ ] Workflow state transitions skipped for non-hook agents without errors
+- [x] Agents with OpenCode provider run without errors when hooks are absent
+- [x] Build/test/review chains disabled for non-hook agents (no spurious chain fires)
+- [x] Edit guard disabled for non-hook agents (no PreToolUse errors)
+- [x] Watcher skips idle check for OpenCode roles (no false positives)
+- [x] System prompt includes bus message instructions for non-hook providers
+- [x] OpenCode `permission.bash` deny rules replace edit guard for dangerous commands
+- [x] Workflow state transitions skipped for non-hook agents without errors
 
 ### Phase 4: mixed-provider session testing
 

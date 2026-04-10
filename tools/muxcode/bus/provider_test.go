@@ -254,5 +254,68 @@ func TestClaudeBuildExecArgs_FallbackPrompt(t *testing.T) {
 	}
 }
 
+// --- Phase 3: graceful degradation ---
+
+func TestSupportsHooks_ClaudeOnly(t *testing.T) {
+	// Only Claude Code supports hooks; all others should return false
+	providers := map[string]Provider{
+		"claude":   &ClaudeCodeProvider{},
+		"opencode": &OpenCodeProvider{},
+		"local":    &LocalProvider{},
+	}
+
+	for name, p := range providers {
+		expectHooks := name == "claude"
+		if p.SupportsHooks() != expectHooks {
+			t.Errorf("%s.SupportsHooks() = %v, want %v", name, p.SupportsHooks(), expectHooks)
+		}
+	}
+}
+
+func TestResolveProvider_HookGating(t *testing.T) {
+	// Verify that providers resolved via env vars have correct hook support
+	tests := []struct {
+		name     string
+		envVar   string
+		envVal   string
+		role     string
+		wantHook bool
+	}{
+		{"default claude has hooks", "MUXCODE_BUILD_CLI", "", "build", true},
+		{"opencode no hooks", "MUXCODE_BUILD_CLI", "opencode", "build", false},
+		{"local no hooks", "MUXCODE_BUILD_CLI", "local", "build", false},
+		{"beta defaults to opencode, no hooks", "MUXCODE_BETA_CLI", "", "beta", false},
+		{"beta override to claude has hooks", "MUXCODE_BETA_CLI", "claude", "beta", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("MUXCODE_AGENT_CLI", "")
+			t.Setenv(tt.envVar, tt.envVal)
+			p := ResolveProvider(tt.role)
+			if p.SupportsHooks() != tt.wantHook {
+				t.Errorf("ResolveProvider(%q).SupportsHooks() = %v, want %v",
+					tt.role, p.SupportsHooks(), tt.wantHook)
+			}
+		})
+	}
+}
+
+func TestIsAgentIdle_OpenCode_AlwaysFalse(t *testing.T) {
+	// OpenCode TUI has no reliable idle detection — IsIdle always returns false.
+	// This ensures checkIdleAgents() never tries to wake OpenCode agents via send-keys.
+	p := &OpenCodeProvider{}
+	if p.IsIdle("test-session", "build") {
+		t.Error("OpenCode IsIdle should always return false")
+	}
+}
+
+func TestIsAgentIdle_Local_AlwaysFalse(t *testing.T) {
+	p := &LocalProvider{}
+	if p.IsIdle("test-session", "build") {
+		t.Error("Local IsIdle should always return false")
+	}
+}
+
 // --- OpenCodeProvider ---
 // Full OpenCode provider tests are in provider_opencode_test.go

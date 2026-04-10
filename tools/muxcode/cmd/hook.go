@@ -35,12 +35,23 @@ func Hook(args []string) {
 
 // hookBash implements the PostToolUse Bash hook (replaces muxcode-bash-hook.sh).
 // Detects build/test/deploy/git commands, writes history, triggers chains.
+// Only fires for providers that support hooks (Claude Code). Non-hook providers
+// (OpenCode TUI, local LLM) skip this entirely — they rely on system prompt
+// instructions for bus messaging instead of hook-driven chains.
 func hookBash() {
 	session := bus.BusSession()
 	if session == "" {
 		return
 	}
 	role := bus.BusRole()
+
+	// Gate: skip hook processing for providers that don't support hooks.
+	// OpenCode TUI and local LLM agents never fire PostToolUse hooks, but
+	// this guard protects against misconfigured hook registrations.
+	provider := bus.ResolveProvider(role)
+	if !provider.SupportsHooks() {
+		return
+	}
 
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil || len(data) == 0 {
@@ -152,6 +163,8 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string) {
 
 // hookGuard implements the PreToolUse Bash hook for the edit window
 // (replaces muxcode-edit-guard.sh).
+// Only fires for providers that support hooks. Non-hook providers (OpenCode TUI)
+// use permission.bash deny rules in their agent config instead.
 func hookGuard() {
 	session := bus.BusSession()
 	if session == "" {
@@ -161,6 +174,14 @@ func hookGuard() {
 	// Only run on the edit window
 	window := bus.BusRole()
 	if window != "edit" {
+		return
+	}
+
+	// Gate: skip guard for providers that don't support hooks.
+	// OpenCode agents use permission.bash deny rules in .opencode/agents/<role>.md
+	// instead of PreToolUse hook interception.
+	provider := bus.ResolveProvider(window)
+	if !provider.SupportsHooks() {
 		return
 	}
 
@@ -182,9 +203,17 @@ func hookGuard() {
 
 // hookAnalyze implements the PostToolUse Write/Edit hook
 // (replaces muxcode-analyze-hook.sh).
+// Only fires for providers that support hooks.
 func hookAnalyze() {
 	session := bus.BusSession()
 	if session == "" {
+		return
+	}
+
+	// Gate: skip for non-hook providers
+	window := bus.BusRole()
+	provider := bus.ResolveProvider(window)
+	if !provider.SupportsHooks() {
 		return
 	}
 
@@ -198,12 +227,12 @@ func hookAnalyze() {
 		return
 	}
 
-	window := bus.BusRole()
 	bus.ProcessAnalyzeHook(session, window, ev)
 }
 
 // hookInboxPoll implements the PostToolUse Bash hook for inbox polling
 // (replaces muxcode-inbox-poll.sh).
+// Only fires for providers that support hooks.
 func hookInboxPoll() {
 	session := bus.BusSession()
 	if session == "" {
@@ -213,6 +242,12 @@ func hookInboxPoll() {
 	// Only run on the edit window
 	window := bus.BusRole()
 	if window != "edit" {
+		return
+	}
+
+	// Gate: skip for non-hook providers
+	provider := bus.ResolveProvider(window)
+	if !provider.SupportsHooks() {
 		return
 	}
 

@@ -48,7 +48,8 @@ type Watcher struct {
 	// Delivery/task cleanup
 	lastCleanupCheck int64 // 300s interval
 	// Idle agent wake-up
-	lastIdleCheck int64 // 5s interval
+	lastIdleCheck   int64            // 5s interval
+	lastNonHookWake map[string]int64 // cooldown: last wake time per non-hook role (60s)
 }
 
 // New creates a new Watcher for the given session.
@@ -78,6 +79,7 @@ func New(session string, pollSecs, debounceSecs int) *Watcher {
 		agentFailCounts:      make(map[string]int),
 		agentRestarts:        make(map[string]int),
 		agentWasDown:         make(map[string]bool),
+		lastNonHookWake:      make(map[string]int64),
 	}
 }
 
@@ -896,6 +898,20 @@ func (w *Watcher) checkIdleAgents() {
 		}
 		// Skip harness panes — they poll inbox directly
 		if bus.IsHarnessActive(w.session, role) {
+			continue
+		}
+		// Skip non-hook providers (OpenCode TUI, local LLM) — they cannot
+		// be reliably woken via send-keys. IsIdle always returns false for
+		// these providers, but skipping early avoids unnecessary pane captures.
+		provider := bus.ResolveProvider(role)
+		if !provider.SupportsHooks() {
+			// Best-effort: send display-message so user sees a flash.
+			// Cooldown: once per 60s per role to avoid display-message spam
+			// since this check runs every 5s.
+			if now-w.lastNonHookWake[role] >= 60 {
+				w.lastNonHookWake[role] = now
+				_ = provider.SendWakeUp(w.session, role)
+			}
 			continue
 		}
 		// Only wake idle agents (at ❯ prompt) — don't interrupt active ones
