@@ -13,12 +13,13 @@ import (
 
 // LaunchConfig holds all resolved configuration for launching an agent.
 type LaunchConfig struct {
-	Role      string // Agent role (e.g. "build", "edit")
-	CLI       string // Agent CLI binary (e.g. "claude", "muxcode-llm-harness", "opencode")
-	IsLocal   bool   // True if routing to local LLM (harness/bus agent)
-	IsBetaCLI bool   // True if launching a non-Claude standalone CLI (e.g. OpenCode TUI)
-	Agent     string // Agent definition filename (without .md)
-	AgentFile string // Resolved path to agent definition file (empty if not found)
+	Role      string   // Agent role (e.g. "build", "edit")
+	CLI       string   // Agent CLI binary (e.g. "claude", "muxcode-llm-harness", "opencode")
+	Provider  Provider // AI CLI provider (resolved from MUXCODE_{ROLE}_CLI env var)
+	IsLocal   bool     // True if routing to local LLM (harness/bus agent)
+	IsBetaCLI bool     // True if launching a non-Claude standalone CLI (e.g. OpenCode TUI)
+	Agent     string   // Agent definition filename (without .md)
+	AgentFile string   // Resolved path to agent definition file (empty if not found)
 
 	// Claude Code flags
 	ModelFlags   []string // --model flags
@@ -353,96 +354,22 @@ func BuildSharedPrompt(role string) string {
 }
 
 // ResolveLaunchConfig resolves all configuration needed to launch an agent.
-// It performs the full resolution cascade: config loading, CLI selection,
-// model selection, agent file resolution, tool profiles, and prompt assembly.
+// It resolves the provider from environment variables, delegates CLI-specific
+// configuration to the provider, and sets provider-independent fields.
 func ResolveLaunchConfig(role string) *LaunchConfig {
 	cfg := &LaunchConfig{
 		Role: role,
 	}
 
-	// --- Determine CLI ---
-	agentCLI := os.Getenv("MUXCODE_AGENT_CLI")
-	if agentCLI == "" {
-		agentCLI = "claude"
-	}
-	cfg.CLI = agentCLI
+	// Resolve provider and CLI from environment variables
+	cfg.Provider = ResolveProvider(role)
+	cfg.CLI = ResolveProviderCLI(role)
 
-	// Check per-role CLI override
-	roleCLI := os.Getenv(RoleCLIEnvVar(role))
+	// Delegate CLI-specific configuration to provider
+	// (agent file resolution, model flags, permissions, tools, prompt)
+	cfg.Provider.ConfigureLaunch(cfg, role)
 
-	// --- Local LLM routing ---
-	if roleCLI == "local" {
-		cfg.IsLocal = true
-		cfg.HarnessArgs = buildHarnessArgs(role)
-		return cfg
-	}
-
-	// --- Beta window routing ---
-	// The beta role defaults to the "opencode" binary (standalone TUI).
-	// Override with MUXCODE_BETA_CLI=claude to use Claude Code instead.
-	if role == "beta" {
-		if roleCLI == "" {
-			cfg.CLI = "opencode"
-		} else {
-			cfg.CLI = roleCLI
-		}
-		if cfg.CLI != "claude" {
-			cfg.IsBetaCLI = true
-			return cfg
-		}
-	}
-
-	// --- Agent file resolution ---
-	agentName := AgentFileName(role)
-	cfg.Agent = agentName
-
-	// Resolve install dir from binary location or MUXCODE_INSTALL_DIR
-	installDir := resolveInstallDir()
-
-	if agentName != "" {
-		agentFile, tier := ResolveAgentFile(agentName, installDir)
-		cfg.AgentFile = agentFile
-
-		if tier == 1 {
-			// Project-local: Claude Code discovers it via --agent
-			cfg.AgentName = agentName
-		} else if tier >= 2 && agentFile != "" {
-			// User config or install dir: need to pass via --agents JSON
-			data, err := os.ReadFile(agentFile)
-			if err == nil {
-				fm, body := ExtractFrontmatter(string(data))
-				desc := fm.Description
-				if desc == "" {
-					desc = agentName
-				}
-				agentJSON, jsonErr := BuildAgentsJSON(agentName, desc, body)
-				if jsonErr == nil {
-					cfg.AgentName = agentName
-					cfg.AgentJSON = agentJSON
-				}
-			}
-		}
-	}
-
-	// --- Claude model selection ---
-	model := resolveClaudeModel(role)
-	if model != "" {
-		cfg.ModelFlags = []string{"--model", model}
-	}
-
-	// --- Permission mode ---
-	cfg.PermFlags = []string{"--dangerously-skip-permissions"}
-
-	// --- Tool profiles ---
-	tools := ResolveTools(role)
-	for _, tool := range tools {
-		cfg.ToolFlags = append(cfg.ToolFlags, "--allowedTools", tool)
-	}
-
-	// --- Shared prompt ---
-	cfg.SharedPrompt = BuildSharedPrompt(role)
-
-	// --- Python venv ---
+	// Python venv (provider-independent)
 	cfg.VenvDir = ResolveVenv()
 
 	return cfg
@@ -450,72 +377,23 @@ func ResolveLaunchConfig(role string) *LaunchConfig {
 
 // BuildExecArgs constructs the final CLI arguments for launching an agent.
 // Returns (binary, args) suitable for syscall.Exec or exec.Command.
+// Delegates to the Provider when set; falls back to type-based dispatch
+// for manually constructed LaunchConfig (e.g. tests).
 func (c *LaunchConfig) BuildExecArgs() (string, []string) {
+	if c.Provider != nil {
+		return c.Provider.BuildExecArgs(c)
+	}
+	// Legacy fallback for manually constructed LaunchConfig (e.g. tests)
 	if c.IsLocal {
-		return c.buildLocalExecArgs()
+		p := &LocalProvider{}
+		return p.BuildExecArgs(c)
 	}
 	if c.IsBetaCLI {
-		return c.buildBetaCLIExecArgs()
+		p := &OpenCodeProvider{}
+		return p.BuildExecArgs(c)
 	}
-	return c.buildClaudeExecArgs()
-}
-
-// buildBetaCLIExecArgs constructs args for launching via a standalone CLI (e.g. OpenCode TUI).
-// Standalone CLIs auto-detect the project — no extra flags needed.
-func (c *LaunchConfig) buildBetaCLIExecArgs() (string, []string) {
-	return c.CLI, nil
-}
-
-// buildClaudeExecArgs constructs args for launching via Claude Code CLI.
-func (c *LaunchConfig) buildClaudeExecArgs() (string, []string) {
-	var args []string
-
-	// Agent selection
-	if c.AgentName != "" {
-		args = append(args, "--agent", c.AgentName)
-		if c.AgentJSON != "" {
-			args = append(args, "--agents", c.AgentJSON)
-		}
-	}
-
-	// Model flags
-	args = append(args, c.ModelFlags...)
-
-	// Permission flags
-	args = append(args, c.PermFlags...)
-
-	// Tool flags
-	args = append(args, c.ToolFlags...)
-
-	// Shared prompt
-	if c.SharedPrompt != "" {
-		args = append(args, "--append-system-prompt", c.SharedPrompt)
-	}
-
-	// If no agent file found, use inline fallback prompt
-	if c.AgentName == "" {
-		prompt := InlineFallbackPrompt(c.Role)
-		if prompt != "" {
-			args = append(args, "--append-system-prompt", prompt)
-		}
-	}
-
-	return c.CLI, args
-}
-
-// buildLocalExecArgs constructs args for launching via local LLM harness.
-func (c *LaunchConfig) buildLocalExecArgs() (string, []string) {
-	// Prefer standalone harness binary; fall back to bus agent subcommand
-	binary := "muxcode"
-	args := []string{"agent"}
-	args = append(args, c.HarnessArgs...)
-
-	if _, err := lookPath("muxcode-llm-harness"); err == nil {
-		binary = "muxcode-llm-harness"
-		args = c.HarnessArgs
-	}
-
-	return binary, args
+	p := &ClaudeCodeProvider{}
+	return p.BuildExecArgs(c)
 }
 
 // buildHarnessArgs constructs args for the local LLM harness.

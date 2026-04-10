@@ -3,7 +3,6 @@ package bus
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -44,53 +43,22 @@ func IsAgentHealthExcluded(role string) bool {
 	return agentHealthExcludedRoles[role]
 }
 
-// IsAgentAlive checks whether an agent's tmux pane is running a Claude Code
+// IsAgentAlive checks whether an agent's tmux pane is running an AI CLI
 // session or a local LLM harness, as opposed to having crashed back to a
 // bare shell prompt.
 //
-// Detection heuristic (in order):
-//  1. Harness marker PID alive → alive
-//  2. IsAgentIdle sees ❯ → alive (idle Claude Code)
-//  3. Last non-empty line ends with $ or % and no ❯ → dead (bare shell)
-//  4. "muxcode-agent" or "claude" in capture → alive (starting up)
-//  5. Default: assume alive if indeterminate
+// Detection strategy:
+//  1. Harness marker PID alive → alive (provider-independent catch-all)
+//  2. Delegate to provider for CLI-specific alive detection
 func IsAgentAlive(session, role string) bool {
-	// 1. Harness check
+	// 1. Harness check — provider-independent catch-all for local LLM agents
 	if IsHarnessActive(session, role) {
 		return true
 	}
 
-	// 2. Idle check (❯ present = Claude Code is running)
-	if IsAgentIdle(session, role) {
-		return true
-	}
-
-	// Capture pane content for heuristic checks
-	target := PaneTarget(session, role)
-	cmd := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-S", "-5")
-	out, err := cmd.Output()
-	if err != nil {
-		// Can't reach pane — assume alive (indeterminate)
-		return true
-	}
-
-	lines := strings.Split(string(out), "\n")
-
-	// 4. Startup check — look for agent launcher or claude text
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.Contains(trimmed, "muxcode-agent") || strings.Contains(trimmed, "claude") || strings.Contains(trimmed, "opencode") {
-			return true
-		}
-	}
-
-	// 3. Shell prompt check — bare $ or % with no ❯ anywhere
-	if isShellPrompt(lines) {
-		return false
-	}
-
-	// 5. Default: assume alive
-	return true
+	// 2. Delegate to provider for CLI-specific alive detection
+	provider := ResolveProvider(role)
+	return provider.IsAlive(session, role)
 }
 
 // isShellPrompt returns true if the captured pane lines indicate a bare shell

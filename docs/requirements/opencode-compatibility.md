@@ -921,11 +921,40 @@ Updated files:
 | `cmd/compact.go` | Compact delegates to provider |
 | `bus/agent_health.go` | Idle/alive detection delegates to provider |
 
+Design:
+
+`Provider` interface in `bus/provider.go`:
+```go
+type Provider interface {
+    Name() string
+    ConfigureLaunch(cfg *LaunchConfig, role string)
+    BuildExecArgs(cfg *LaunchConfig) (string, []string)
+    IsIdle(session, role string) bool
+    IsAlive(session, role string) bool
+    ClassifyPane(content string) PaneState
+    AcceptStartup(session, pane string, state PaneState) bool
+    SendWakeUp(session, role string) error
+    Compact(session, role, target string) error
+    SupportsHooks() bool
+    IdlePromptChar() string
+    WriteAgentConfig(role string) error
+}
+```
+
+Resolution via `ResolveProvider(role)` — checks `MUXCODE_{ROLE}_CLI` → `MUXCODE_AGENT_CLI` → `"claude"`. Beta defaults to `"opencode"` when no per-role override.
+
+Three implementations:
+- `ClaudeCodeProvider` — full implementation wrapping all existing behavior
+- `OpenCodeProvider` — Phase 2 stub (bare binary launch, no idle/compact/hooks)
+- `LocalProvider` — wraps existing harness logic
+
+`LaunchConfig.BuildExecArgs()` delegates to `Provider.BuildExecArgs()` with legacy fallback for manually constructed configs (tests).
+
 Success criteria:
-- [ ] All existing behavior unchanged (pure refactor)
-- [ ] Claude Code provider passes all existing tests
-- [ ] Provider resolved per-role via `MUXCODE_{ROLE}_CLI` env var
-- [ ] Provider interface covers: exec args, idle detection, send message, startup, compact, hooks, permissions, agent config
+- [x] All existing behavior unchanged (pure refactor)
+- [x] Claude Code provider passes all existing tests (150+ tests pass)
+- [x] Provider resolved per-role via `MUXCODE_{ROLE}_CLI` env var
+- [x] Provider interface covers: exec args, idle detection, send message, startup, compact, hooks, permissions, agent config
 
 ### Phase 2: OpenCode provider (server mode)
 

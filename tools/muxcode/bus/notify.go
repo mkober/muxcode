@@ -150,12 +150,8 @@ func markNotified(session, role string) {
 const idlePromptChar = "\u276f"
 
 // IsAgentIdle returns true if the agent's tmux pane is sitting at the idle
-// prompt (❯). It captures the last 8 lines of the pane and checks whether
-// ANY line is an exact match for the idle prompt character.
-//
-// Claude Code renders decorative UI elements (borders, "? for shortcuts")
-// below the ❯ prompt, so the last non-empty line is often NOT the prompt.
-// Scanning all captured lines avoids false negatives from this footer.
+// prompt. Delegates to the role's resolved Provider for CLI-specific idle
+// detection (e.g. ❯ for Claude Code, API status check for OpenCode).
 //
 // Returns false on any error (no tmux, session doesn't exist, etc.) — safe
 // to call unconditionally.
@@ -163,23 +159,8 @@ const idlePromptChar = "\u276f"
 // Used by agent-health detection and compact command. Not used in the
 // notification path — agents use trigger-file polling instead.
 func IsAgentIdle(session, role string) bool {
-	target := PaneTarget(session, role)
-	cmd := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-S", "-8")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	lines := strings.Split(string(out), "\n")
-	// Scan all lines — the ❯ prompt may not be the last non-empty line
-	// due to Claude Code's decorative footer (borders, help text).
-	// When the agent is active, ❯ only appears as part of a longer line
-	// (e.g. "❯ You have new messages") which won't match the exact check.
-	for _, line := range lines {
-		if strings.TrimSpace(line) == idlePromptChar {
-			return true
-		}
-	}
-	return false
+	provider := ResolveProvider(role)
+	return provider.IsIdle(session, role)
 }
 
 // Notify sends a notification to an agent that new messages are available.
@@ -281,13 +262,10 @@ func IsPolling(session, role string) bool {
 	return true
 }
 
-// notifySendKeys injects "You have new messages" into the agent's tmux pane
-// via send-keys. This is the last-resort notification for agents that are idle
-// (at the ❯ prompt) but not running a --poll or --wait loop. The injected text
-// triggers Claude Code's "When prompted with 'You have new messages'" protocol.
-//
-// Text and Enter are sent as separate tmux send-keys calls with a brief delay
-// to avoid Claude Code's TUI dropping the Enter key (see CLAUDE.md pitfalls).
+// notifySendKeys injects a wake-up message into the agent's tmux pane.
+// This is the last-resort notification for agents that are idle but not
+// running a --poll or --wait loop. Delegates the actual pane interaction
+// to the role's resolved Provider.
 func notifySendKeys(session, role string) error {
 	unlock := lockNotify(session, role)
 	defer unlock()
@@ -298,22 +276,8 @@ func notifySendKeys(session, role string) error {
 
 	markNotified(session, role)
 
-	target := PaneTarget(session, role)
-	// Send text first
-	cmd := exec.Command("tmux", "send-keys", "-t", target, "You have new messages")
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s failed: %v\n", role, err)
-		return err
-	}
-	// Brief delay so Claude Code's TUI registers the text before Enter
-	time.Sleep(100 * time.Millisecond)
-	// Send Enter
-	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s failed: %v\n", role, err)
-		return err
-	}
-	return nil
+	provider := ResolveProvider(role)
+	return provider.SendWakeUp(session, role)
 }
 
 // notifyDisplayMessage sends a passive notification via tmux display-message

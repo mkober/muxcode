@@ -440,17 +440,11 @@ const (
 )
 
 // ClassifyPane determines the state of an agent pane from its captured content.
+// Delegates to ClaudeCodeProvider as the default implementation.
+// For provider-specific classification, use provider.ClassifyPane().
 func ClassifyPane(content string) PaneState {
-	if strings.Contains(content, "trust this folder") {
-		return PaneTrustPrompt
-	}
-	if strings.Contains(content, "Bypass Permissions") {
-		return PaneBypassPrompt
-	}
-	if strings.Contains(content, "❯") {
-		return PaneIdle
-	}
-	return PaneNotReady
+	p := &ClaudeCodeProvider{}
+	return p.ClassifyPane(content)
 }
 
 // NeedsWakeUp returns true if the window should receive a startup wake-up message.
@@ -477,18 +471,17 @@ func AutoAccept(session string, windows []string) {
 				continue
 			}
 
-			switch ClassifyPane(content) {
+			provider := ResolveProvider(win)
+			state := provider.ClassifyPane(content)
+
+			switch state {
 			case PaneTrustPrompt:
-				// Trust prompt — default selection is correct, just confirm
-				TmuxSendEnter(pane)
+				provider.AcceptStartup(session, pane, state)
 				LogLifecycle(session, "info", "auto-accept", "trust-prompt", win)
 				allDone = false // bypass prompt may follow
 
 			case PaneBypassPrompt:
-				// Bypass permissions — move to "Yes, I accept" and confirm
-				TmuxSendKeys(pane, "Down")
-				time.Sleep(200 * time.Millisecond)
-				TmuxSendEnter(pane)
+				provider.AcceptStartup(session, pane, state)
 				LogLifecycle(session, "info", "auto-accept", "bypass-prompt", win)
 				accepted[win] = true
 
