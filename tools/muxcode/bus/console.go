@@ -323,13 +323,6 @@ func DefaultConsoleConfigs() map[string]*ConsoleConfig {
 			MaxRecent:   15,
 			Renderer:    renderAPI,
 		},
-		"beta": {
-			Title:       "Beta",
-			EmptyMsg:    "no activity yet",
-			RecentLabel: "recent activity",
-			MaxRecent:   15,
-			Renderer:    renderDeployRunner,
-		},
 	}
 }
 

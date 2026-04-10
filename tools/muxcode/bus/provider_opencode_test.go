@@ -27,7 +27,7 @@ func TestOpenCodeProvider_Interface(t *testing.T) {
 func TestOpenCodeBuildExecArgs_TUIMode(t *testing.T) {
 	p := &OpenCodeProvider{}
 
-	for _, role := range []string{"beta", "build", "test", "edit", "review"} {
+	for _, role := range []string{"build", "test", "edit", "review"} {
 		t.Run(role, func(t *testing.T) {
 			cfg := &LaunchConfig{
 				Role: role,
@@ -67,7 +67,7 @@ func TestOpenCodeBuildExecArgs_CustomCLI(t *testing.T) {
 
 func TestOpenCodeIsIdle_AlwaysFalse(t *testing.T) {
 	p := &OpenCodeProvider{}
-	for _, role := range []string{"beta", "build", "test", "edit"} {
+	for _, role := range []string{"build", "test", "edit"} {
 		if p.IsIdle("test-session", role) {
 			t.Errorf("IsIdle(%q) = true, want false (TUI limitation)", role)
 		}
@@ -350,6 +350,169 @@ func TestOpenCodeWakeUp_DisplayMessage(t *testing.T) {
 	_ = p.SendWakeUp("test-session", "build")
 }
 
+// --- DetectTaskCompletion ---
+
+func TestOpenCodeDetectTaskCompletion_Completed(t *testing.T) {
+	p := &OpenCodeProvider{}
+
+	// Simulate a completed build — real captured pane output
+	pane := `
+     Build completed successfully. Let me verify the outputs:
+
+  ┃  $ ls -la bin/
+  ┃  total 47288
+  ┃  -rwxr-xr-x  1 user  staff  7715680 Apr 10 01:14 muxcode
+  ┃  -rwxr-xr-x  1 user  staff  6134848 Apr 10 01:14 muxcode-llm-harness
+
+     Build Succeeded
+
+     Lint Status: ✅ All clean
+     - gofmt -l .: No issues
+     - go vet ./...: No issues
+
+     ▣  Build · Kimi K2.5 · 12.9s
+
+  Build  Kimi K2.5 OpenCode Zen
+╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                19.2K (7%) · $0.01  ctrl+p commands
+`
+	completed, errored, summary := p.DetectTaskCompletion("session", "build", pane)
+	if !completed {
+		t.Error("expected completed=true for pane with stop marker")
+	}
+	if errored {
+		t.Error("expected errored=false for successful build")
+	}
+	if summary == "" {
+		t.Error("expected non-empty summary")
+	}
+	if !strings.Contains(summary, "▣") {
+		t.Error("summary should contain stop marker")
+	}
+}
+
+func TestOpenCodeDetectTaskCompletion_ActiveRunning(t *testing.T) {
+	p := &OpenCodeProvider{}
+
+	// Simulate an active (still running) task
+	pane := `
+     Running build...
+
+  ┃  $ make build
+  ┃  go build -o bin/muxcode ./...
+
+     ▸  Building... 5.2s
+
+  Build  Kimi K2.5 OpenCode Zen
+╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+`
+	completed, errored, _ := p.DetectTaskCompletion("session", "build", pane)
+	if completed {
+		t.Error("expected completed=false when running marker ▸ present")
+	}
+	if errored {
+		t.Error("expected errored=false when still running")
+	}
+}
+
+func TestOpenCodeDetectTaskCompletion_CompletedWithErrors(t *testing.T) {
+	p := &OpenCodeProvider{}
+
+	// Simulate a build that completed but had errors
+	pane := `
+     Running build...
+
+  ┃  $ make build
+  ┃  go build -o bin/muxcode ./...
+  ┃  Error: compilation failed
+  ┃  exit code 1
+
+     Build Failed
+
+     ▣  Build · Kimi K2.5 · 8.1s
+
+  Build  Kimi K2.5 OpenCode Zen
+╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                12.5K (5%) · $0.01  ctrl+p commands
+`
+	completed, errored, summary := p.DetectTaskCompletion("session", "build", pane)
+	if !completed {
+		t.Error("expected completed=true — stop marker present")
+	}
+	if !errored {
+		t.Error("expected errored=true — error indicators in output")
+	}
+	if summary == "" {
+		t.Error("expected non-empty summary")
+	}
+}
+
+func TestOpenCodeDetectTaskCompletion_EmptyPane(t *testing.T) {
+	p := &OpenCodeProvider{}
+	completed, errored, summary := p.DetectTaskCompletion("session", "build", "")
+	if completed || errored || summary != "" {
+		t.Error("empty pane should return all zero values")
+	}
+}
+
+func TestOpenCodeDetectTaskCompletion_NoStopMarker(t *testing.T) {
+	p := &OpenCodeProvider{}
+
+	// Pane with content but no stop marker
+	pane := `
+  Build  Kimi K2.5 OpenCode Zen
+╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                0K (0%) · $0.00  ctrl+p commands
+`
+	completed, _, _ := p.DetectTaskCompletion("session", "build", pane)
+	if completed {
+		t.Error("expected completed=false — no stop marker in pane")
+	}
+}
+
+// --- isUIChrome ---
+
+func TestIsUIChrome(t *testing.T) {
+	tests := []struct {
+		line string
+		want bool
+	}{
+		{"─────────────", true},
+		{"╭── header ──╮", true},
+		{"╰────────────╯", true},
+		{"╹▀▀▀▀▀▀▀▀▀▀▀▀", true},
+		{"19.2K (7%) · $0.01  ctrl+p commands", true},
+		{"Build succeeded", false},
+		{"     ▣  Build · Kimi K2.5 · 12.9s", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			if got := isUIChrome(tt.line); got != tt.want {
+				t.Errorf("isUIChrome(%q) = %v, want %v", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- Provider interface conformance for DetectTaskCompletion ---
+
+func TestClaudeProvider_DetectTaskCompletion_NoOp(t *testing.T) {
+	p := &ClaudeCodeProvider{}
+	completed, errored, summary := p.DetectTaskCompletion("session", "build", "some content")
+	if completed || errored || summary != "" {
+		t.Error("Claude provider DetectTaskCompletion should be no-op")
+	}
+}
+
+func TestLocalProvider_DetectTaskCompletion_NoOp(t *testing.T) {
+	p := &LocalProvider{}
+	completed, errored, summary := p.DetectTaskCompletion("session", "build", "some content")
+	if completed || errored || summary != "" {
+		t.Error("Local provider DetectTaskCompletion should be no-op")
+	}
+}
+
 // --- roleFromPane ---
 
 func TestRoleFromPane(t *testing.T) {
@@ -359,7 +522,7 @@ func TestRoleFromPane(t *testing.T) {
 	}{
 		{"muxcode:build.1", "build"},
 		{"muxcode:edit.0", "edit"},
-		{"session:beta.1", "beta"},
+		{"session:deploy.1", "deploy"},
 		{"build.1", "build"},
 		{"build", "build"},
 	}

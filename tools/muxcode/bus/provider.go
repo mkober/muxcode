@@ -47,6 +47,15 @@ type Provider interface {
 	// For Claude Code: no-op (agent files discovered from .claude/agents/).
 	// For OpenCode: writes .opencode/agents/<role>.md with frontmatter.
 	WriteAgentConfig(role string) error
+
+	// DetectTaskCompletion analyzes captured pane content to determine if
+	// the agent has finished processing a task. Returns:
+	//   completed: true if the agent appears idle after working
+	//   errored:   true if error indicators were detected
+	//   summary:   human-readable description of what was detected
+	// Only meaningful for non-hook providers (OpenCode, local LLM).
+	// Hook providers return (false, false, "") since they report via hooks.
+	DetectTaskCompletion(session, role, paneContent string) (completed bool, errored bool, summary string)
 }
 
 // ResolveProvider returns the appropriate Provider for a role based on
@@ -70,11 +79,6 @@ func ResolveProvider(role string) Provider {
 // constructing a full Provider. Used for logging and configuration.
 func ResolveProviderCLI(role string) string {
 	cli := os.Getenv(RoleCLIEnvVar(role))
-
-	// Beta role defaults to opencode when no per-role override is set
-	if cli == "" && role == "beta" {
-		return "opencode"
-	}
 
 	if cli == "" {
 		cli = os.Getenv("MUXCODE_AGENT_CLI")
@@ -114,3 +118,6 @@ func (p *LocalProvider) Compact(_, _, _ string) error                { return ni
 func (p *LocalProvider) SupportsHooks() bool                         { return false }
 func (p *LocalProvider) IdlePromptChar() string                      { return "" }
 func (p *LocalProvider) WriteAgentConfig(_ string) error             { return nil }
+func (p *LocalProvider) DetectTaskCompletion(_, _, _ string) (bool, bool, string) {
+	return false, false, ""
+}

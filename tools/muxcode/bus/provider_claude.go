@@ -257,3 +257,8 @@ func (p *ClaudeCodeProvider) Compact(session, role, target string) error {
 func (p *ClaudeCodeProvider) SupportsHooks() bool             { return true }
 func (p *ClaudeCodeProvider) IdlePromptChar() string          { return idlePromptChar }
 func (p *ClaudeCodeProvider) WriteAgentConfig(_ string) error { return nil }
+
+// DetectTaskCompletion is a no-op for Claude Code — hooks handle completion.
+func (p *ClaudeCodeProvider) DetectTaskCompletion(_, _, _ string) (bool, bool, string) {
+	return false, false, ""
+}

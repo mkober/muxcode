@@ -662,6 +662,16 @@ The beta testbed window (F10) should be able to mimic or take over the role of a
 
 #### Configuration
 
+Add `MUXCODE_BETA_ROLE` to either config file — no shell export needed:
+
+- `~/.config/muxcode/config` — user-global (applies to all projects)
+- `.muxcode/config` in the project directory — project-level (applies to one project)
+
+Example (`~/.config/muxcode/config`):
+```
+MUXCODE_BETA_ROLE=build
+```
+
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `MUXCODE_BETA_ROLE` | (unset) | Beta window runs as its own `beta` role — no console view, standalone TUI |

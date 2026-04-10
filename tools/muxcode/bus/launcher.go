@@ -31,9 +31,9 @@ func DefaultLauncherConfig() *LauncherConfig {
 	return &LauncherConfig{
 		ProjectsDir: home,
 		ScanDepth:   3,
-		Windows:     []string{"edit", "build", "test", "review", "deploy", "run", "watch", "commit", "analyze", "beta"},
+		Windows:     []string{"edit", "build", "test", "review", "deploy", "run", "watch", "commit", "analyze"},
 		RoleMap:     map[string]string{"run": "runner", "commit": "git", "analyze": "analyst"},
-		SplitLeft:   []string{"edit", "build", "test", "review", "deploy", "run", "analyze", "commit", "watch", "beta"},
+		SplitLeft:   []string{"edit", "build", "test", "review", "deploy", "run", "analyze", "commit", "watch"},
 		ShellInit:   "",
 		Editor:      "nvim",
 		NvimAppName: "muxcode/nvim",
@@ -111,7 +111,7 @@ func (c *LauncherConfig) IsSplitLeftWindow(window string) bool {
 // HasConsoleView returns true if the window has a built-in console view.
 func HasConsoleView(window string) bool {
 	switch window {
-	case "build", "test", "review", "deploy", "run", "watch", "commit", "analyze", "api", "beta":
+	case "build", "test", "review", "deploy", "run", "watch", "commit", "analyze", "api":
 		return true
 	}
 	return false
@@ -123,6 +123,17 @@ func CapitalizeWindow(name string) string {
 		return ""
 	}
 	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// filterString returns a copy of the slice with all occurrences of val removed.
+func filterString(slice []string, val string) []string {
+	out := make([]string, 0, len(slice))
+	for _, s := range slice {
+		if s != val {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // parseInt parses a string to int with a fallback default.
@@ -209,6 +220,7 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	}
 	TmuxSetEnv(session, "BUS_SESSION", session)
 	TmuxSetEnv(session, "MUXCODE", "1")
+
 	LogLifecycle(session, "info", "launcher", "session-create",
 		fmt.Sprintf("Windows: %s", strings.Join(cfg.Windows, " ")))
 

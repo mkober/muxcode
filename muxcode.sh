@@ -36,9 +36,9 @@ load_config
 # Configuration with defaults
 PROJECTS_DIR="${MUXCODE_PROJECTS_DIR:-$HOME}"
 SCAN_DEPTH="${MUXCODE_SCAN_DEPTH:-3}"
-WINDOWS="${MUXCODE_WINDOWS:-edit build test review deploy run watch commit analyze beta}"
+WINDOWS="${MUXCODE_WINDOWS:-edit build test review deploy run watch commit analyze}"
 ROLE_MAP="${MUXCODE_ROLE_MAP:-run=runner commit=git analyze=analyst}"
-SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-edit build test review deploy run analyze commit watch beta}"
+SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-edit build test review deploy run analyze commit watch}"
 SHELL_INIT="${MUXCODE_SHELL_INIT:-}"
 EDITOR="${MUXCODE_EDITOR:-nvim}"
 NVIM_APPNAME="${MUXCODE_NVIM_APPNAME:-muxcode/nvim}"
@@ -254,6 +254,8 @@ fi
 tmux new-session -d -s "$SESSION" -n "$FIRST_WIN" -c "$PROJECT_DIR" $NEW_SESSION_SIZE
 tmux set-environment -t "$SESSION" BUS_SESSION "$SESSION"
 tmux set-environment -t "$SESSION" MUXCODE 1
+
+
 lifecycle_log "info" "launcher" "session-create" "Windows: ${WINDOWS}"
 
 if [ "$FIRST_WIN" = "edit" ]; then
@@ -287,9 +289,8 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
     send_init "$SESSION:$WIN"
     if command -v muxcode &>/dev/null; then
       # Check if window has a console view (all standard windows do)
-      # Use $WIN not $ROLE — console configs are keyed by window name
       case "$WIN" in
-        build|test|review|deploy|run|watch|commit|analyze|beta)
+        build|test|review|deploy|run|watch|commit|analyze)
           tmux send-keys -t "$SESSION:$WIN" "muxcode console $WIN" Enter
           ;;
       esac

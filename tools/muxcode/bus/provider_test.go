@@ -93,25 +93,6 @@ func TestResolveProvider_PerRoleOverridesSession(t *testing.T) {
 	}
 }
 
-func TestResolveProvider_BetaDefaultsToOpenCode(t *testing.T) {
-	t.Setenv("MUXCODE_BETA_CLI", "")
-	t.Setenv("MUXCODE_AGENT_CLI", "")
-
-	p := ResolveProvider("beta")
-	if p.Name() != "opencode" {
-		t.Errorf("beta provider = %q, want opencode", p.Name())
-	}
-}
-
-func TestResolveProvider_BetaOverrideToClaude(t *testing.T) {
-	t.Setenv("MUXCODE_BETA_CLI", "claude")
-
-	p := ResolveProvider("beta")
-	if p.Name() != "claude" {
-		t.Errorf("beta provider = %q, want claude", p.Name())
-	}
-}
-
 func TestResolveProvider_UnknownCLIDefaultsToClaude(t *testing.T) {
 	t.Setenv("MUXCODE_AGENT_CLI", "my-custom-claude")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
@@ -130,15 +111,6 @@ func TestResolveProviderCLI_Defaults(t *testing.T) {
 
 	if got := ResolveProviderCLI("build"); got != "claude" {
 		t.Errorf("ResolveProviderCLI(build) = %q, want claude", got)
-	}
-}
-
-func TestResolveProviderCLI_BetaDefault(t *testing.T) {
-	t.Setenv("MUXCODE_BETA_CLI", "")
-	t.Setenv("MUXCODE_AGENT_CLI", "")
-
-	if got := ResolveProviderCLI("beta"); got != "opencode" {
-		t.Errorf("ResolveProviderCLI(beta) = %q, want opencode", got)
 	}
 }
 
@@ -285,8 +257,6 @@ func TestResolveProvider_HookGating(t *testing.T) {
 		{"default claude has hooks", "MUXCODE_BUILD_CLI", "", "build", true},
 		{"opencode no hooks", "MUXCODE_BUILD_CLI", "opencode", "build", false},
 		{"local no hooks", "MUXCODE_BUILD_CLI", "local", "build", false},
-		{"beta defaults to opencode, no hooks", "MUXCODE_BETA_CLI", "", "beta", false},
-		{"beta override to claude has hooks", "MUXCODE_BETA_CLI", "claude", "beta", true},
 	}
 
 	for _, tt := range tests {
@@ -325,19 +295,11 @@ func TestAgentStatus_ProviderField(t *testing.T) {
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
 	t.Setenv("MUXCODE_TEST_CLI", "")
-	t.Setenv("MUXCODE_BETA_CLI", "")
-
 	session := t.TempDir()
 
 	status := GetAgentStatus(session, "build")
 	if status.Provider != "claude" {
 		t.Errorf("build provider = %q, want claude", status.Provider)
-	}
-
-	// Beta defaults to opencode
-	status = GetAgentStatus(session, "beta")
-	if status.Provider != "opencode" {
-		t.Errorf("beta provider = %q, want opencode", status.Provider)
 	}
 }
 
@@ -347,8 +309,6 @@ func TestAgentStatus_MixedProviders(t *testing.T) {
 	t.Setenv("MUXCODE_EDIT_CLI", "")
 	t.Setenv("MUXCODE_BUILD_CLI", "opencode")
 	t.Setenv("MUXCODE_TEST_CLI", "local")
-	t.Setenv("MUXCODE_BETA_CLI", "")
-
 	session := t.TempDir()
 	statuses := GetAllAgentStatus(session)
 
@@ -366,16 +326,12 @@ func TestAgentStatus_MixedProviders(t *testing.T) {
 	if providerMap["test"] != "local" {
 		t.Errorf("test provider = %q, want local", providerMap["test"])
 	}
-	if providerMap["beta"] != "opencode" {
-		t.Errorf("beta provider = %q, want opencode", providerMap["beta"])
-	}
 }
 
 func TestFormatStatusTable_ShowsProvider(t *testing.T) {
 	statuses := []AgentStatus{
 		{Role: "edit", Provider: "claude", Health: "alive"},
 		{Role: "build", Provider: "opencode", Health: "alive"},
-		{Role: "beta", Provider: "opencode", Health: "alive"},
 		{Role: "test", Provider: "local", Health: "alive"},
 	}
 

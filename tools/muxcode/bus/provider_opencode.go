@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // OpenCodeProvider implements the Provider interface for OpenCode CLI
@@ -94,13 +95,45 @@ func (p *OpenCodeProvider) AcceptStartup(session, pane string, state PaneState) 
 	return state == PaneIdle
 }
 
-// SendWakeUp sends a display-message notification to the agent's pane.
-// The TUI's input model doesn't support programmatic text injection,
-// so display-message is the best-effort approach (user-visible flash).
+// SendWakeUp reads the latest pending message from the inbox and injects
+// it as text into the OpenCode TUI input via tmux send-keys. Since OpenCode
+// has no hooks or inbox polling, the message content must be typed directly
+// into the prompt. Text and Enter are sent as separate send-keys calls with
+// a brief delay to avoid the TUI dropping the Enter key.
 func (p *OpenCodeProvider) SendWakeUp(session, role string) error {
 	target := PaneTarget(session, role)
-	cmd := exec.Command("tmux", "display-message", "-t", target, "You have new messages")
-	return cmd.Run()
+
+	// Read pending messages to build the prompt text
+	msgs, err := Peek(session, role)
+	if err != nil || len(msgs) == 0 {
+		return nil // nothing to inject
+	}
+
+	// Use the latest message's payload as the prompt
+	last := msgs[len(msgs)-1]
+	prompt := last.Payload
+	if prompt == "" {
+		prompt = fmt.Sprintf("You have a new %s request from %s", last.Action, last.From)
+	}
+
+	// Consume the inbox so the message isn't re-injected on next wake-up
+	_, _ = Receive(session, role)
+
+	// Send text first
+	cmd := exec.Command("tmux", "send-keys", "-t", target, prompt)
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s/%s failed: %v\n", role, "opencode", err)
+		return err
+	}
+	// Brief delay so the TUI registers the text before Enter
+	time.Sleep(150 * time.Millisecond)
+	// Send Enter
+	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s/%s failed: %v\n", role, "opencode", err)
+		return err
+	}
+	return nil
 }
 
 // Compact is a no-op for TUI mode — the TUI manages its own context
@@ -268,6 +301,154 @@ func resolveOpenCodeModel(role string) string {
 		return "anthropic/" + claudeModel
 	}
 	return claudeModel
+}
+
+// DetectTaskCompletion analyzes captured pane content from the OpenCode TUI
+// to determine if the agent has finished processing a task.
+//
+// Completion signals (from OpenCode Zen mode output):
+//   - Stop marker "▣" followed by role/model/timing (e.g. "▣  Build · Kimi K2.5 · 12.9s")
+//   - Status bar at bottom with ctrl+p indicator
+//
+// Active signals (task still running):
+//   - Running marker "▸" (spinning indicator)
+//   - "Thinking:" blocks in output
+//
+// Error signals:
+//   - Lines containing "error", "Error", "FATAL", "failed" (case-insensitive check)
+//   - "permission denied", "command not found"
+func (p *OpenCodeProvider) DetectTaskCompletion(session, role, paneContent string) (completed bool, errored bool, summary string) {
+	if paneContent == "" {
+		return false, false, ""
+	}
+
+	lines := strings.Split(paneContent, "\n")
+
+	// Check for active signals first — if the agent is still working, don't report
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "▸") {
+			return false, false, "" // still running
+		}
+	}
+
+	// Look for the stop marker "▣" which indicates task completion
+	var stopLine string
+	hasStop := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "▣") {
+			hasStop = true
+			stopLine = trimmed
+		}
+	}
+
+	if !hasStop {
+		return false, false, "" // no completion signal
+	}
+
+	// Check for error indicators in the output above the stop marker
+	// Error detection uses phrase patterns to reduce false positives.
+	// "failed" alone would match "0 tests failed" (a success message).
+	errorPatterns := []string{
+		"error:", "error!", "ERROR:",
+		"fatal:", "FATAL",
+		"build failed", "compilation failed", "test failed",
+		"permission denied", "command not found",
+		"exit code 1", "exit code 2", "non-zero exit",
+		"panic:", "segfault",
+	}
+	// Negative patterns: skip lines that look like success summaries
+	successPatterns := []string{
+		"0 failed", "0 errors", "no errors", "no issues",
+		"all clean", "all passed", "succeeded",
+	}
+	var errorLines []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Skip the stop/status lines themselves
+		if strings.Contains(trimmed, "▣") || strings.Contains(trimmed, "ctrl+p") {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		// Skip lines that match success patterns
+		isSuccess := false
+		for _, sp := range successPatterns {
+			if strings.Contains(lower, sp) {
+				isSuccess = true
+				break
+			}
+		}
+		if isSuccess {
+			continue
+		}
+		for _, pat := range errorPatterns {
+			if strings.Contains(lower, pat) {
+				errorLines = append(errorLines, trimmed)
+				break
+			}
+		}
+	}
+
+	// Build summary from stop line (contains role, model, timing)
+	summary = stopLine
+	if summary == "" {
+		summary = "Task completed"
+	}
+
+	// Extract the content between the injected prompt and the stop marker
+	// to build a more useful summary for the requester
+	var contentLines []string
+	pastPrompt := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "▣") {
+			break // stop at completion marker
+		}
+		// Skip empty lines at the start
+		if !pastPrompt && trimmed == "" {
+			continue
+		}
+		pastPrompt = true
+		// Skip box-drawing / UI chrome
+		if isUIChrome(trimmed) {
+			continue
+		}
+		if trimmed != "" {
+			contentLines = append(contentLines, trimmed)
+		}
+	}
+
+	// Build a useful summary: last few content lines + stop line
+	if len(contentLines) > 10 {
+		contentLines = contentLines[len(contentLines)-10:]
+	}
+	var sb strings.Builder
+	for _, cl := range contentLines {
+		sb.WriteString(cl)
+		sb.WriteString("\n")
+	}
+	sb.WriteString(stopLine)
+	summary = sb.String()
+
+	if len(errorLines) > 0 {
+		return true, true, summary
+	}
+	return true, false, summary
+}
+
+// isUIChrome returns true if the line is OpenCode TUI decoration.
+func isUIChrome(line string) bool {
+	for _, ch := range []string{"─", "╭", "╰", "┌", "└", "╹", "╻"} {
+		if strings.HasPrefix(line, ch) {
+			return true
+		}
+	}
+	// Status bar lines
+	if strings.Contains(line, "ctrl+p") && strings.Contains(line, "commands") {
+		return true
+	}
+	return false
 }
 
 // --- Helpers ---

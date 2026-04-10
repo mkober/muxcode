@@ -72,8 +72,6 @@ func AgentFileName(role string) string {
 		return "pr-reader"
 	case "api":
 		return "api-tester"
-	case "beta":
-		return "beta-agent"
 	default:
 		return ""
 	}
@@ -109,8 +107,6 @@ func RoleCLIEnvVar(role string) string {
 		return "MUXCODE_RUN_CLI"
 	case "api":
 		return "MUXCODE_API_CLI"
-	case "beta":
-		return "MUXCODE_BETA_CLI"
 	case "webhook":
 		return "MUXCODE_WEBHOOK_CLI"
 	default:
@@ -147,8 +143,6 @@ func RoleClaudeModelEnvVar(role string) string {
 		return "MUXCODE_RUN_CLAUDE_MODEL"
 	case "api":
 		return "MUXCODE_API_CLAUDE_MODEL"
-	case "beta":
-		return "MUXCODE_BETA_CLAUDE_MODEL"
 	case "webhook":
 		return "MUXCODE_WEBHOOK_CLAUDE_MODEL"
 	default:
@@ -162,7 +156,7 @@ func RoleClaudeModelDefault(role string) string {
 	switch role {
 	case "edit", "review", "analyze", "analyst":
 		return "claude-opus-4-6"
-	case "build", "test", "api", "deploy", "runner", "run", "watch", "commit", "git", "beta":
+	case "build", "test", "api", "deploy", "runner", "run", "watch", "commit", "git":
 		return "claude-sonnet-4-5"
 	default:
 		return ""

@@ -50,6 +50,10 @@ type Watcher struct {
 	// Idle agent wake-up
 	lastIdleCheck   int64            // 5s interval
 	lastNonHookWake map[string]int64 // cooldown: last wake time per non-hook role (60s)
+	// Non-hook task completion detection
+	lastTaskCheck       int64             // 5s interval
+	taskDeliveredAt     map[string]int64  // msgID -> unix time when message was delivered (wake-up sent)
+	taskLastPaneContent map[string]string // role -> last pane hash to avoid re-processing identical content
 }
 
 // New creates a new Watcher for the given session.
@@ -80,6 +84,8 @@ func New(session string, pollSecs, debounceSecs int) *Watcher {
 		agentRestarts:        make(map[string]int),
 		agentWasDown:         make(map[string]bool),
 		lastNonHookWake:      make(map[string]int64),
+		taskDeliveredAt:      make(map[string]int64),
+		taskLastPaneContent:  make(map[string]string),
 	}
 }
 
@@ -151,6 +157,7 @@ func (w *Watcher) Run() error {
 		w.checkOllama()
 		w.checkAgentHealth()
 		w.checkIdleAgents()
+		w.checkNonHookTasks()
 		w.checkCleanup()
 		time.Sleep(w.pollInterval)
 	}
@@ -923,6 +930,111 @@ func (w *Watcher) checkIdleAgents() {
 		fmt.Printf("  %s  Waking idle agent %s (unread messages)\n", ts, role)
 		bus.LogLifecycle(w.session, "info", "watcher", "idle-wake", role)
 		_ = bus.Notify(w.session, role)
+	}
+}
+
+// checkNonHookTasks monitors in-flight tasks targeting non-hook providers
+// (OpenCode TUI, local LLM) by capturing their tmux pane content and detecting
+// task completion or errors. When a task completes, sends a synthetic response
+// message back to the requesting agent so --wait unblocks and the delivery
+// lifecycle completes normally.
+//
+// Runs every 5 seconds. Only processes tasks that have been in-flight for at
+// least 5 seconds (grace period for the agent to start working).
+func (w *Watcher) checkNonHookTasks() {
+	now := time.Now().Unix()
+	if now-w.lastTaskCheck < 5 {
+		return
+	}
+	w.lastTaskCheck = now
+
+	// Find in-flight tasks targeting non-hook providers
+	tasks, err := bus.ListTasks(w.session, bus.TaskInFlight)
+	if err != nil || len(tasks) == 0 {
+		return
+	}
+
+	for _, task := range tasks {
+		provider := bus.ResolveProvider(task.To)
+		if provider.SupportsHooks() {
+			continue // hook providers handle their own completion
+		}
+
+		// Grace period: wait at least 5s after the task was sent before checking.
+		// This avoids false positives from the previous task's stop marker still
+		// being visible when a new task starts.
+		if now-task.SentAt < 5 {
+			continue
+		}
+
+		// Track when we first saw this task delivered (wake-up was sent).
+		// The grace period starts from delivery, not from our first observation.
+		if _, ok := w.taskDeliveredAt[task.ID]; !ok {
+			w.taskDeliveredAt[task.ID] = now
+		}
+
+		// Require at least 3s since we started tracking this task
+		if now-w.taskDeliveredAt[task.ID] < 3 {
+			continue
+		}
+
+		// Capture the agent's pane (30 lines for context)
+		target := bus.PaneTarget(w.session, task.To)
+		paneContent, err := bus.TmuxCapturePaneLines(target, 30)
+		if err != nil {
+			continue
+		}
+
+		// Skip if pane content hasn't changed since last check —
+		// avoids re-analyzing the same static output.
+		contentKey := task.To + ":" + task.ID
+		if paneContent == w.taskLastPaneContent[contentKey] {
+			continue
+		}
+		w.taskLastPaneContent[contentKey] = paneContent
+
+		// Ask the provider to analyze the pane content
+		completed, errored, summary := provider.DetectTaskCompletion(w.session, task.To, paneContent)
+		if !completed {
+			continue
+		}
+
+		// Task completed — send synthetic response to the requester
+		ts := time.Now().Format("15:04:05")
+		status := "succeeded"
+		action := "response"
+		if errored {
+			status = "completed with errors"
+			action = "error"
+		}
+		fmt.Printf("  %s  Detected %s task %s (%s)\n", ts, task.To, status, task.Action)
+		bus.LogLifecycle(w.session, "info", "watcher", "task-detected",
+			fmt.Sprintf("%s task %s from %s: %s", task.To, task.Action, task.From, status))
+
+		// Truncate summary for the message payload (keep it reasonable)
+		payload := summary
+		if len(payload) > 2000 {
+			payload = payload[:1997] + "..."
+		}
+
+		// Send response back to the original requester
+		msg := bus.NewMessage(task.To, task.From, "response", action, payload, task.ID)
+		if err := bus.Send(w.session, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "  [task-detect] failed to send response for %s: %v\n", task.ID, err)
+			continue
+		}
+
+		// Mark the task as completed so it's not re-detected on next check.
+		// Send() already called MarkResponded() on the delivery status (via
+		// ReplyTo), so waitForResponse() in --wait will also unblock.
+		bus.CompleteTask(w.session, task.ID, msg.ID)
+
+		// Clean up tracking state for this task
+		delete(w.taskDeliveredAt, task.ID)
+		delete(w.taskLastPaneContent, contentKey)
+
+		// Notify the requester so they pick up the response
+		_ = bus.Notify(w.session, task.From)
 	}
 }
 

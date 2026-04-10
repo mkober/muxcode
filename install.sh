@@ -352,7 +352,6 @@ MUXCODE_AGENT_CLI=$default_cli
 # Per-role overrides (uncomment to customize):
 # MUXCODE_BUILD_CLI=opencode
 # MUXCODE_TEST_CLI=opencode
-# MUXCODE_BETA_CLI=opencode
 EOF
   ok "Created config at $CONFIG_FILE"
 fi

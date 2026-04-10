@@ -20,8 +20,8 @@ func TestDefaultLauncherConfig(t *testing.T) {
 	if cfg.ScanDepth != 3 {
 		t.Errorf("expected scan depth 3, got %d", cfg.ScanDepth)
 	}
-	if len(cfg.Windows) != 10 {
-		t.Errorf("expected 10 windows, got %d", len(cfg.Windows))
+	if len(cfg.Windows) != 9 {
+		t.Errorf("expected 9 windows, got %d", len(cfg.Windows))
 	}
 	if cfg.Windows[0] != "edit" {
 		t.Errorf("expected first window edit, got %s", cfg.Windows[0])
@@ -101,7 +101,7 @@ func TestAgentRole(t *testing.T) {
 func TestIsSplitLeftWindow(t *testing.T) {
 	cfg := DefaultLauncherConfig()
 	// Standard split-left windows
-	for _, w := range []string{"edit", "build", "test", "review", "deploy", "run", "analyze", "commit", "watch", "beta"} {
+	for _, w := range []string{"edit", "build", "test", "review", "deploy", "run", "analyze", "commit", "watch"} {
 		if !cfg.IsSplitLeftWindow(w) {
 			t.Errorf("expected %s to be split-left", w)
 		}
@@ -113,7 +113,7 @@ func TestIsSplitLeftWindow(t *testing.T) {
 }
 
 func TestHasConsoleView(t *testing.T) {
-	for _, w := range []string{"build", "test", "review", "deploy", "run", "watch", "commit", "analyze", "api", "beta"} {
+	for _, w := range []string{"build", "test", "review", "deploy", "run", "watch", "commit", "analyze", "api"} {
 		if !HasConsoleView(w) {
 			t.Errorf("expected %s to have console view", w)
 		}
@@ -229,6 +229,30 @@ func TestEnsureOllama_NoLocalRoles(t *testing.T) {
 	// Should return immediately without any env vars set
 	// (no MUXCODE_*_CLI=local)
 	EnsureOllama()
+}
+
+func TestFilterString(t *testing.T) {
+	tests := []struct {
+		input []string
+		val   string
+		want  int
+	}{
+		{[]string{"a", "b", "c"}, "b", 2},
+		{[]string{"a", "b", "c"}, "d", 3},
+		{[]string{"a", "a", "b"}, "a", 1},
+		{[]string{}, "a", 0},
+	}
+	for _, tt := range tests {
+		got := filterString(tt.input, tt.val)
+		if len(got) != tt.want {
+			t.Errorf("filterString(%v, %q) = %d items, want %d", tt.input, tt.val, len(got), tt.want)
+		}
+		for _, v := range got {
+			if v == tt.val {
+				t.Errorf("filterString(%v, %q) still contains %q", tt.input, tt.val, tt.val)
+			}
+		}
+	}
 }
 
 func TestLoadLauncherConfig_RoleMapOverride(t *testing.T) {

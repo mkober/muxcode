@@ -360,6 +360,7 @@ func TestResolveLaunchConfig_LocalLLM(t *testing.T) {
 
 func TestResolveLaunchConfig_CustomCLI(t *testing.T) {
 	t.Setenv("MUXCODE_AGENT_CLI", "my-claude")
+	t.Setenv("MUXCODE_BUILD_CLI", "")
 
 	cfg := ResolveLaunchConfig("build")
 

@@ -210,6 +210,15 @@ func Notify(session, role string) error {
 		return nil
 	}
 
+	// Non-hook providers (OpenCode TUI, local LLM) have no inbox polling or
+	// hook-driven message consumption. The only way to deliver a message is
+	// to inject it directly into the TUI input via send-keys. Do this
+	// immediately — don't gate on IsIdle (which returns false for OpenCode).
+	provider := ResolveProvider(role)
+	if !provider.SupportsHooks() {
+		return notifySendKeys(session, role)
+	}
+
 	// If the agent is idle (at ❯ prompt) and not polling/waiting, inject
 	// "You have new messages" via send-keys as a last resort. This covers
 	// agents that launched but never started their polling loop — without
