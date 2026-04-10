@@ -677,8 +677,8 @@ var editGuardRules = []guardRule{
 		reason:   `BLOCKED: Log tailing commands are prohibited in the edit window. Delegate to the watch agent. Run: muxcode send watch watch "<describe what logs to tail>" --wait`,
 	},
 	{
-		prefixes: []string{"aws s3 ", "aws s3api "},
-		reason:   `BLOCKED: AWS S3 data inspection commands are prohibited in the edit window. Delegate to the watch agent. Run: muxcode send watch watch "<describe what S3 data to inspect>" --wait`,
+		prefixes: []string{"aws s3 ", "aws s3api ", "aws lambda ", "aws stepfunctions "},
+		reason:   `BLOCKED: AWS commands are prohibited in the edit window. Delegate to the run agent. Run: muxcode send run run "<describe the AWS operation>" --wait`,
 	},
 }
 

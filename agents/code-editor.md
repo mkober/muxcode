@@ -39,7 +39,7 @@ A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — pro
 | `pnpm test`, `jest`, `pytest`, `go test` | test agent | `muxcode send test test "..."` |
 | `cdk synth`, `cdk diff`, `cdk deploy` | deploy agent | `muxcode send deploy deploy "..."` |
 | `aws logs`, `tail -f`, `kubectl logs`, `docker logs`, `stern` | watch agent | `muxcode send watch watch "..."` |
-| `aws s3 ls`, `aws s3 cp`, `aws s3api`, AWS data inspection | watch agent | `muxcode send watch watch "..."` |
+| `aws lambda`, `aws stepfunctions`, `aws s3 ls`, `aws s3 cp`, `aws s3api`, AWS commands | run agent | `muxcode send run run "..."` |
 
 ### Jira & Confluence — handle directly (DO NOT delegate)
 

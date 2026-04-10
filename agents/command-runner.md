@@ -32,7 +32,21 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I run this?
 - Check process status and resource usage
 - Verify that triggered processes complete successfully
 
-### Cloud CLI (when applicable)
+### AWS Lambda & Step Functions
+- Invoke Lambda functions: `aws lambda invoke`, `aws lambda list-functions`, `aws lambda get-function`
+- Start Step Function executions: `aws stepfunctions start-execution`, `aws stepfunctions describe-execution`
+- Check execution status and history
+- Use `--profile` and `--region` flags as specified in the request
+- Always verify caller identity (`aws sts get-caller-identity`) before mutating operations
+
+### AWS S3 Data Inspection
+- `aws s3 ls` for listing bucket contents (recursive, filtered by date/prefix)
+- `aws s3 cp` for downloading and reading file contents from S3
+- `aws s3api` for metadata queries (head-object, list-object-versions)
+- Always use the AWS profile specified in the request
+- Report file contents directly — do not analyze or summarize unless asked
+
+### Cloud CLI (general)
 - Run cloud provider CLI commands (`aws`, `gcloud`, `az`, etc.) as requested
 - Use query/filter flags for targeted results
 - Check caller identity before mutating operations
