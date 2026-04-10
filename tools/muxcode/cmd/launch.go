@@ -27,6 +27,13 @@ func Launch(args []string) {
 	// Resolve all launch configuration
 	cfg := bus.ResolveLaunchConfig(role)
 
+	// Pre-launch: generate agent config for non-Claude providers
+	if cfg.Provider != nil {
+		if err := cfg.Provider.WriteAgentConfig(role); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: WriteAgentConfig(%s): %v\n", role, err)
+		}
+	}
+
 	// Pre-launch: startup inbox message + lifecycle log
 	session := bus.BusSession()
 	binary, launchArgs := cfg.BuildExecArgs()

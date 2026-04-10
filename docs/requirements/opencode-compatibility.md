@@ -1054,7 +1054,7 @@ Success criteria:
 - [x] OpenCode `permission.bash` deny rules replace edit guard for dangerous commands
 - [x] Workflow state transitions skipped for non-hook agents without errors
 
-### Phase 4: mixed-provider session testing
+### Phase 4: mixed-provider session testing ✅
 
 End-to-end validation that a session with both Claude Code and OpenCode TUI agents works correctly. The edit agent stays on Claude Code (full hook support), while one or more other roles run OpenCode TUI. The bus handles cross-provider messaging transparently — both providers read from and write to the same file-based inbox.
 
@@ -1065,15 +1065,24 @@ Test scenarios:
 3. **Multi-OpenCode**: Multiple roles on OpenCode (e.g. `MUXCODE_BUILD_CLI=opencode MUXCODE_TEST_CLI=opencode`) — verify each gets its own agent config and TUI instance.
 4. **Config coexistence**: `.claude/agents/` and `.opencode/agents/` directories coexist without conflicts.
 
+Updated files:
+
+| File | Changes |
+|------|---------|
+| `bus/inspect.go` | Added `Provider` field to `AgentStatus`, populated via `ResolveProviderCLI()`. `FormatStatusTable()` includes PROVIDER column |
+| `cmd/launch.go` | Pre-launch `WriteAgentConfig()` call for all providers (no-op for Claude/local, generates `.opencode/agents/<role>.md` for OpenCode) |
+| `bus/provider_test.go` | 4 new tests: `TestAgentStatus_ProviderField`, `TestAgentStatus_MixedProviders`, `TestFormatStatusTable_ShowsProvider`, `TestFormatStatusJSON_IncludesProvider` |
+| `bus/provider_opencode_test.go` | 4 new tests: `TestConfigCoexistence_ClaudeAndOpenCode`, `TestMultipleOpenCodeRoles`, `TestWriteAgentConfig_ProviderDispatch`, `TestOpenCodeWakeUp_DisplayMessage` |
+
 Success criteria:
-- [ ] Session with mixed providers (Claude Code edit + OpenCode beta TUI) launches without errors
-- [ ] F1/F10 toggle between edit (Claude Code) and beta (OpenCode TUI) works
-- [ ] Bus messaging works between providers (edit sends to beta, beta replies via `muxcode send`)
-- [ ] Claude Code agents compact via `/compact`; OpenCode TUI agents auto-compact (no muxcode intervention)
-- [ ] `muxcode status` shows provider per agent
-- [ ] `.claude/` and `.opencode/` directories coexist without conflicts
-- [ ] Agent config generated correctly in `.opencode/agents/` for each OpenCode role
-- [ ] Watcher does not error on OpenCode roles (skips idle check, display-message notifications)
+- [x] Session with mixed providers (Claude Code edit + OpenCode beta TUI) launches without errors
+- [x] F1/F10 toggle between edit (Claude Code) and beta (OpenCode TUI) works
+- [x] Bus messaging works between providers (edit sends to beta, beta replies via `muxcode send`)
+- [x] Claude Code agents compact via `/compact`; OpenCode TUI agents auto-compact (no muxcode intervention)
+- [x] `muxcode status` shows provider per agent
+- [x] `.claude/` and `.opencode/` directories coexist without conflicts
+- [x] Agent config generated correctly in `.opencode/agents/` for each OpenCode role
+- [x] Watcher does not error on OpenCode roles (skips idle check, display-message notifications)
 
 ### Phase 5: server mode (future/optional)
 

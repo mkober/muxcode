@@ -13,6 +13,7 @@ import (
 // AgentStatus represents the current state of an agent.
 type AgentStatus struct {
 	Role       string `json:"role"`
+	Provider   string `json:"provider"` // "claude", "opencode", "local"
 	Locked     bool   `json:"locked"`
 	InboxCount int    `json:"inbox_count"`
 	LastMsgTS  int64  `json:"last_msg_ts"`
@@ -25,8 +26,9 @@ type AgentStatus struct {
 // GetAgentStatus returns the current status for a single agent role.
 func GetAgentStatus(session, role string) AgentStatus {
 	status := AgentStatus{
-		Role:   role,
-		Locked: IsLocked(session, role),
+		Role:     role,
+		Provider: ResolveProviderCLI(role),
+		Locked:   IsLocked(session, role),
 	}
 	status.InboxCount = InboxCount(session, role)
 
@@ -73,7 +75,7 @@ func FormatStatusTable(statuses []AgentStatus) string {
 	var b strings.Builder
 
 	// Header
-	b.WriteString(fmt.Sprintf("%-12s %-6s %-8s %-6s %s\n", "ROLE", "STATE", "HEALTH", "INBOX", "LAST ACTIVITY"))
+	b.WriteString(fmt.Sprintf("%-12s %-10s %-6s %-8s %-6s %s\n", "ROLE", "PROVIDER", "STATE", "HEALTH", "INBOX", "LAST ACTIVITY"))
 
 	for _, s := range statuses {
 		state := "idle"
@@ -96,7 +98,12 @@ func FormatStatusTable(statuses []AgentStatus) string {
 			activity = fmt.Sprintf("%s %s %s:%s", t, arrow, s.LastPeer, s.LastAction)
 		}
 
-		b.WriteString(fmt.Sprintf("%-12s %-6s %-8s %-6d %s\n", s.Role, state, health, s.InboxCount, activity))
+		provider := s.Provider
+		if provider == "" {
+			provider = "—"
+		}
+
+		b.WriteString(fmt.Sprintf("%-12s %-10s %-6s %-8s %-6d %s\n", s.Role, provider, state, health, s.InboxCount, activity))
 	}
 
 	return b.String()

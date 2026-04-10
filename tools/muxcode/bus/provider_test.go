@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -314,6 +315,105 @@ func TestIsAgentIdle_Local_AlwaysFalse(t *testing.T) {
 	p := &LocalProvider{}
 	if p.IsIdle("test-session", "build") {
 		t.Error("Local IsIdle should always return false")
+	}
+}
+
+// --- Phase 4: mixed-provider session testing ---
+
+func TestAgentStatus_ProviderField(t *testing.T) {
+	// Default: all roles show claude
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("MUXCODE_BUILD_CLI", "")
+	t.Setenv("MUXCODE_TEST_CLI", "")
+	t.Setenv("MUXCODE_BETA_CLI", "")
+
+	session := t.TempDir()
+
+	status := GetAgentStatus(session, "build")
+	if status.Provider != "claude" {
+		t.Errorf("build provider = %q, want claude", status.Provider)
+	}
+
+	// Beta defaults to opencode
+	status = GetAgentStatus(session, "beta")
+	if status.Provider != "opencode" {
+		t.Errorf("beta provider = %q, want opencode", status.Provider)
+	}
+}
+
+func TestAgentStatus_MixedProviders(t *testing.T) {
+	// Simulate mixed session: edit=claude, build=opencode, test=local
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("MUXCODE_EDIT_CLI", "")
+	t.Setenv("MUXCODE_BUILD_CLI", "opencode")
+	t.Setenv("MUXCODE_TEST_CLI", "local")
+	t.Setenv("MUXCODE_BETA_CLI", "")
+
+	session := t.TempDir()
+	statuses := GetAllAgentStatus(session)
+
+	providerMap := make(map[string]string)
+	for _, s := range statuses {
+		providerMap[s.Role] = s.Provider
+	}
+
+	if providerMap["edit"] != "claude" {
+		t.Errorf("edit provider = %q, want claude", providerMap["edit"])
+	}
+	if providerMap["build"] != "opencode" {
+		t.Errorf("build provider = %q, want opencode", providerMap["build"])
+	}
+	if providerMap["test"] != "local" {
+		t.Errorf("test provider = %q, want local", providerMap["test"])
+	}
+	if providerMap["beta"] != "opencode" {
+		t.Errorf("beta provider = %q, want opencode", providerMap["beta"])
+	}
+}
+
+func TestFormatStatusTable_ShowsProvider(t *testing.T) {
+	statuses := []AgentStatus{
+		{Role: "edit", Provider: "claude", Health: "alive"},
+		{Role: "build", Provider: "opencode", Health: "alive"},
+		{Role: "beta", Provider: "opencode", Health: "alive"},
+		{Role: "test", Provider: "local", Health: "alive"},
+	}
+
+	table := FormatStatusTable(statuses)
+
+	// Header should include PROVIDER column
+	if !strings.Contains(table, "PROVIDER") {
+		t.Error("status table missing PROVIDER header")
+	}
+
+	// Each row should show its provider
+	if !strings.Contains(table, "claude") {
+		t.Error("status table missing claude provider")
+	}
+	if !strings.Contains(table, "opencode") {
+		t.Error("status table missing opencode provider")
+	}
+	if !strings.Contains(table, "local") {
+		t.Error("status table missing local provider")
+	}
+}
+
+func TestFormatStatusJSON_IncludesProvider(t *testing.T) {
+	statuses := []AgentStatus{
+		{Role: "edit", Provider: "claude"},
+		{Role: "build", Provider: "opencode"},
+	}
+
+	out, err := FormatStatusJSON(statuses)
+	if err != nil {
+		t.Fatalf("FormatStatusJSON error: %v", err)
+	}
+
+	if !strings.Contains(out, `"provider": "claude"`) {
+		t.Error("JSON output missing claude provider")
+	}
+	if !strings.Contains(out, `"provider": "opencode"`) {
+		t.Error("JSON output missing opencode provider")
 	}
 }
 

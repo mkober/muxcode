@@ -231,6 +231,125 @@ func TestResolveOpenCodeModel_AlreadyPrefixed(t *testing.T) {
 	}
 }
 
+// --- Phase 4: mixed-provider config coexistence ---
+
+func TestConfigCoexistence_ClaudeAndOpenCode(t *testing.T) {
+	// Both .claude/ and .opencode/ directories should coexist without conflicts.
+	dir := t.TempDir()
+	oldDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldDir)
+
+	// Create .claude/agents/ (Claude Code's config directory)
+	claudeDir := filepath.Join(".claude", "agents")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("mkdir .claude/agents: %v", err)
+	}
+	// Write a Claude agent file
+	claudeAgent := filepath.Join(claudeDir, "code-builder.md")
+	os.WriteFile(claudeAgent, []byte("# Claude build agent\n"), 0o644)
+
+	// Generate OpenCode agent config
+	err := writeOpenCodeAgentConfig("build")
+	if err != nil {
+		t.Fatalf("writeOpenCodeAgentConfig: %v", err)
+	}
+
+	// Verify both directories exist independently
+	opencodePath := filepath.Join(".opencode", "agents", "build.md")
+
+	claudeData, err := os.ReadFile(claudeAgent)
+	if err != nil {
+		t.Fatalf("read .claude agent: %v", err)
+	}
+	if string(claudeData) != "# Claude build agent\n" {
+		t.Error("Claude agent file was modified by OpenCode config generation")
+	}
+
+	opencodeData, err := os.ReadFile(opencodePath)
+	if err != nil {
+		t.Fatalf("read .opencode agent: %v", err)
+	}
+	if !strings.HasPrefix(string(opencodeData), "---\n") {
+		t.Error("OpenCode agent missing frontmatter")
+	}
+}
+
+func TestMultipleOpenCodeRoles(t *testing.T) {
+	// Verify multiple roles can each get their own OpenCode agent config.
+	dir := t.TempDir()
+	oldDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldDir)
+
+	roles := []string{"build", "test", "review"}
+	for _, role := range roles {
+		if err := writeOpenCodeAgentConfig(role); err != nil {
+			t.Fatalf("writeOpenCodeAgentConfig(%s): %v", role, err)
+		}
+	}
+
+	// Verify each role has its own file
+	for _, role := range roles {
+		path := filepath.Join(".opencode", "agents", role+".md")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("missing agent config for %s: %v", role, err)
+			continue
+		}
+		content := string(data)
+		if !strings.Contains(content, "description:") {
+			t.Errorf("%s agent config missing description field", role)
+		}
+		if !strings.Contains(content, "mode: primary") {
+			t.Errorf("%s agent config missing mode field", role)
+		}
+	}
+}
+
+func TestWriteAgentConfig_ProviderDispatch(t *testing.T) {
+	// Claude: no-op. OpenCode: writes file. Local: no-op.
+	dir := t.TempDir()
+	oldDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldDir)
+
+	// Claude Code — should not create .opencode/
+	claude := &ClaudeCodeProvider{}
+	if err := claude.WriteAgentConfig("build"); err != nil {
+		t.Errorf("Claude WriteAgentConfig: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(".opencode", "agents", "build.md")); err == nil {
+		t.Error("Claude WriteAgentConfig should not create .opencode/ files")
+	}
+
+	// OpenCode — should create .opencode/agents/build.md
+	opencode := &OpenCodeProvider{}
+	if err := opencode.WriteAgentConfig("build"); err != nil {
+		t.Errorf("OpenCode WriteAgentConfig: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(".opencode", "agents", "build.md")); err != nil {
+		t.Error("OpenCode WriteAgentConfig should create .opencode/agents/build.md")
+	}
+
+	// Local — should not create any config files
+	local := &LocalProvider{}
+	if err := local.WriteAgentConfig("test"); err != nil {
+		t.Errorf("Local WriteAgentConfig: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(".opencode", "agents", "test.md")); err == nil {
+		t.Error("Local WriteAgentConfig should not create config files")
+	}
+}
+
+func TestOpenCodeWakeUp_DisplayMessage(t *testing.T) {
+	// SendWakeUp should not panic — it executes tmux display-message.
+	// In test environment without tmux, it will fail gracefully.
+	p := &OpenCodeProvider{}
+	// We only verify it doesn't panic; the tmux command will error in CI.
+	_ = p.SendWakeUp("test-session", "build")
+}
+
 // --- roleFromPane ---
 
 func TestRoleFromPane(t *testing.T) {
