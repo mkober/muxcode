@@ -39,8 +39,9 @@ func TestOpenCodeBuildExecArgs_TUIMode(t *testing.T) {
 			if binary != "opencode" {
 				t.Errorf("binary = %q, want opencode", binary)
 			}
-			if len(args) != 0 {
-				t.Errorf("args = %v, want empty (TUI mode)", args)
+			// Should pass --agent <role> to select the correct agent config
+			if len(args) != 2 || args[0] != "--agent" || args[1] != role {
+				t.Errorf("args = %v, want [--agent %s]", args, role)
 			}
 		})
 	}
@@ -58,8 +59,8 @@ func TestOpenCodeBuildExecArgs_CustomCLI(t *testing.T) {
 	if binary != "/usr/local/bin/opencode" {
 		t.Errorf("binary = %q, want custom path", binary)
 	}
-	if len(args) != 0 {
-		t.Errorf("args = %v, want empty (TUI mode)", args)
+	if len(args) != 2 || args[0] != "--agent" || args[1] != "build" {
+		t.Errorf("args = %v, want [--agent build]", args)
 	}
 }
 

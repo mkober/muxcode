@@ -36,9 +36,11 @@ func (p *OpenCodeProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 }
 
 // BuildExecArgs constructs the OpenCode launch command.
-// All roles launch the bare TUI: ("opencode", []).
+// Passes --agent <role> so each window uses its matching agent config
+// from .opencode/agents/<role>.md instead of all defaulting to the
+// first alphabetical "primary" agent.
 func (p *OpenCodeProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
-	return cfg.CLI, nil
+	return cfg.CLI, []string{"--agent", cfg.Role}
 }
 
 // IsIdle always returns false for TUI mode.

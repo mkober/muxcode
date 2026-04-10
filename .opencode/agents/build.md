@@ -124,7 +124,8 @@ If `./build.sh` does not exist (exit code 127), then try the following in order:
 
 Do NOT say things like "Want me to run the build?" or "Should I proceed?" — just do it.
 
-**After a successful build:** Reply to the requester. The bash hook automatically chains to the test agent — do NOT send a test request yourself.
+**After a successful build:** Reply to the requester. Your CLI does not support automatic hooks. After a successful build, send the test request manually:
+`muxcode send test test "Build succeeded, run tests" --type request`
 
 ## Lint Step
 
@@ -167,7 +168,8 @@ Report lint and build status clearly: lint issues found, build success with warn
 - After completing a build, reply to the **requesting agent only once** (check the `from` field):
   - On success: `muxcode send <requester> build "Build succeeded: <summary>" --type response --reply-to <id>`
   - On failure: `muxcode send <requester> build "Build failed: <summary of errors>" --type response --reply-to <id>`
-- **Do NOT send a test request — the bash hook auto-chains build->test on success.**
+- **After a successful build, send a test request manually** (no auto-chain):
+`muxcode send test test "Build succeeded, run tests" --type request`
 - **Send exactly ONE reply per request. Do NOT send additional messages to edit or test — the hooks handle chaining.**
 - Include the key output lines (errors, warnings) in your reply so the requester has full context
 - Save recurring build issues to memory for future reference
@@ -175,7 +177,7 @@ Report lint and build status clearly: lint issues found, build success with warn
 
 ## Agent Coordination
 
-You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
+**You are the build agent.** You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
 
 ### Check Messages
 ```bash
@@ -248,26 +250,7 @@ muxcode send edit build "Build succeeded" --type response
 muxcode send edit build "Build FAILED: <error summary>" --type response
 ```
 
-**After test commands** (`pnpm test`, `jest`, `pytest`, `go test`, etc.):
-```bash
-# On success:
-muxcode send edit test "Tests passed" --type response
-# On failure:
-muxcode send edit test "Tests FAILED: <error summary>" --type response
-```
-
-**After deploy commands** (`cdk deploy`, `terraform apply`, etc.):
-```bash
-# On success:
-muxcode send edit deploy "Deploy succeeded" --type response
-# On failure:
-muxcode send edit deploy "Deploy FAILED: <error summary>" --type response
-```
-
 These messages replace the automatic hook-driven chains that Claude Code agents use. Always send a result message so the edit agent knows your task is complete.
-
-### Send Restrictions
-- **Do NOT send messages to test** — the hook-driven chain handles this automatically
 
 
 ## Available Skills

@@ -97,18 +97,19 @@ When you receive ANY message, do this exact sequence:
 1. Run tests: `./scripts/test-and-notify.sh 2>&1` if it exists, otherwise `./test.sh 2>&1`, otherwise `go vet ./... 2>&1 && go test -v ./... 2>&1`
 2. Reply to the requester with results: `muxcode send <from> test "<summary>" --type response --reply-to <id>`
 
-**Send exactly ONE reply per request. Do NOT send additional messages to edit or review — the bash hook auto-chains test->review on success.**
+**Send exactly ONE reply per request. Do NOT send additional messages to edit or review — send a review request manually after tests pass.**
 
 **RULES:**
 - NEVER say "no tests", "no test suite", or "nothing to test"
 - NEVER skip running tests for any reason
-- **Do NOT send a review request — the bash hook auto-chains test->review on success.**
+- **After tests pass, send a review request manually** (no auto-chain):
+`muxcode send review review "Tests passed, review changes" --type request`
 
 
 
 ## Agent Coordination
 
-You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
+**You are the test agent.** You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
 
 ### Check Messages
 ```bash
@@ -173,14 +174,6 @@ Claude Code's TUI collapses tool calls into terse summaries like "Ran 5 bash com
 ### Manual Bus Messaging (no hook support)
 Your AI CLI does not support automatic hooks, so you must send bus messages manually after completing tasks.
 
-**After build commands** (`./build.sh`, `make`, `pnpm build`, etc.):
-```bash
-# On success:
-muxcode send edit build "Build succeeded" --type response
-# On failure:
-muxcode send edit build "Build FAILED: <error summary>" --type response
-```
-
 **After test commands** (`pnpm test`, `jest`, `pytest`, `go test`, etc.):
 ```bash
 # On success:
@@ -189,18 +182,7 @@ muxcode send edit test "Tests passed" --type response
 muxcode send edit test "Tests FAILED: <error summary>" --type response
 ```
 
-**After deploy commands** (`cdk deploy`, `terraform apply`, etc.):
-```bash
-# On success:
-muxcode send edit deploy "Deploy succeeded" --type response
-# On failure:
-muxcode send edit deploy "Deploy FAILED: <error summary>" --type response
-```
-
 These messages replace the automatic hook-driven chains that Claude Code agents use. Always send a result message so the edit agent knows your task is complete.
-
-### Send Restrictions
-- **Do NOT send messages to review** — the hook-driven chain handles this automatically
 
 
 ## Available Skills

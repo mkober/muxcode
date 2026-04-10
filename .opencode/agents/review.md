@@ -154,7 +154,7 @@ Each item: file:line, issue description, suggested fix.
 
 ## Agent Coordination
 
-You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
+**You are the review agent.** You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
 
 ### Check Messages
 ```bash
@@ -219,28 +219,9 @@ Claude Code's TUI collapses tool calls into terse summaries like "Ran 5 bash com
 ### Manual Bus Messaging (no hook support)
 Your AI CLI does not support automatic hooks, so you must send bus messages manually after completing tasks.
 
-**After build commands** (`./build.sh`, `make`, `pnpm build`, etc.):
+**After completing a task**, reply to the requester:
 ```bash
-# On success:
-muxcode send edit build "Build succeeded" --type response
-# On failure:
-muxcode send edit build "Build FAILED: <error summary>" --type response
-```
-
-**After test commands** (`pnpm test`, `jest`, `pytest`, `go test`, etc.):
-```bash
-# On success:
-muxcode send edit test "Tests passed" --type response
-# On failure:
-muxcode send edit test "Tests FAILED: <error summary>" --type response
-```
-
-**After deploy commands** (`cdk deploy`, `terraform apply`, etc.):
-```bash
-# On success:
-muxcode send edit deploy "Deploy succeeded" --type response
-# On failure:
-muxcode send edit deploy "Deploy FAILED: <error summary>" --type response
+muxcode send <requester> response "<result summary>" --type response --reply-to <id>
 ```
 
 These messages replace the automatic hook-driven chains that Claude Code agents use. Always send a result message so the edit agent knows your task is complete.
