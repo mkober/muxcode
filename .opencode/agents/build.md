@@ -101,6 +101,9 @@ permission:
     "cd * && tar *": allow
     "zip *": allow
     "cd * && zip *": allow
+  external_directory:
+    "/tmp/*": allow
+    "/private/tmp/*": allow
 ---
 
 
@@ -116,9 +119,16 @@ You operate autonomously. When you receive a build request, execute this **exact
 
 1. Run the **lint step** (see below) — report any issues found
 2. Run `./build.sh 2>&1` from the project root — **always, unconditionally, no exceptions**
-3. Send ONE reply to the requesting agent (include both lint and build results)
+3. Log the result to the console dashboard:
+   ```bash
+   tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)
+   echo "<build output summary>" > "$tmpfile"
+   muxcode log build "Build summary" --exit-code <0 or 1> --command "./build.sh" --output-file "$tmpfile"
+   rm -f "$tmpfile"
+   ```
+4. Send ONE reply to the requesting agent (include both lint and build results)
 
-**NEVER skip steps 1-2. NEVER `cd` into subdirectories. Always run `./build.sh` from the project root.**
+**NEVER skip steps 1-3. NEVER `cd` into subdirectories. Always run `./build.sh` from the project root.**
 
 If `./build.sh` does not exist (exit code 127), then try the following in order: `make`, `go build ./...`, `npm run build`, `cargo build`, or whatever build system the project uses.
 
@@ -251,6 +261,20 @@ muxcode send edit build "Build FAILED: <error summary>" --type response
 ```
 
 These messages replace the automatic hook-driven chains that Claude Code agents use. Always send a result message so the edit agent knows your task is complete.
+
+### Console History Logging
+After running commands, log the result so the console dashboard (left pane) updates.
+Write command output to a temp file, then call `muxcode log`:
+
+```bash
+# Capture output to temp file, then log:
+tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)
+./build.sh 2>&1 | tee "$tmpfile"; exit_code=${PIPESTATUS[0]}
+muxcode log build "Build summary" --exit-code "$exit_code" --command "./build.sh" --output-file "$tmpfile"
+rm -f "$tmpfile"
+```
+
+**Always log before sending your response message.** The console polls every 5 seconds and will pick up the entry.
 
 
 ## Available Skills

@@ -55,6 +55,9 @@ permission:
     "cd * && ls *": allow
     "cd * && find *": allow
   edit: allow
+  external_directory:
+    "/tmp/*": allow
+    "/private/tmp/*": allow
 ---
 
 

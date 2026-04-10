@@ -133,6 +133,13 @@ func TestSharedPrompt_NonHookProvider_HasManualBusSection(t *testing.T) {
 	if strings.Contains(prompt, "muxcode send edit deploy") {
 		t.Error("SharedPrompt(build) should NOT include deploy result example (role-specific)")
 	}
+	// Console history logging section
+	if !strings.Contains(prompt, "### Console History Logging") {
+		t.Error("SharedPrompt(build) with opencode should include Console History Logging section")
+	}
+	if !strings.Contains(prompt, "muxcode log build") {
+		t.Error("SharedPrompt(build) should include muxcode log build example")
+	}
 }
 
 func TestSharedPrompt_NonHookProvider_RoleSpecificInstructions(t *testing.T) {
@@ -148,6 +155,9 @@ func TestSharedPrompt_NonHookProvider_RoleSpecificInstructions(t *testing.T) {
 	if strings.Contains(testPrompt, "muxcode send edit build") {
 		t.Error("SharedPrompt(test) should NOT include build result example")
 	}
+	if !strings.Contains(testPrompt, "muxcode log test") {
+		t.Error("SharedPrompt(test) should include muxcode log test example")
+	}
 
 	// Review agent should get generic reply instructions, not build/test/deploy
 	t.Setenv("MUXCODE_REVIEW_CLI", "opencode")
@@ -160,6 +170,9 @@ func TestSharedPrompt_NonHookProvider_RoleSpecificInstructions(t *testing.T) {
 	}
 	if !strings.Contains(reviewPrompt, "reply to the requester") {
 		t.Error("SharedPrompt(review) should include generic reply instructions")
+	}
+	if !strings.Contains(reviewPrompt, "muxcode log review") {
+		t.Error("SharedPrompt(review) should include muxcode log review example")
 	}
 }
 
@@ -206,6 +219,9 @@ func TestSharedPrompt_HookProvider_NoManualBusSection(t *testing.T) {
 	if strings.Contains(prompt, "### Manual Bus Messaging") {
 		t.Error("SharedPrompt(build) with claude provider should NOT include Manual Bus Messaging section")
 	}
+	if strings.Contains(prompt, "### Console History Logging") {
+		t.Error("SharedPrompt(build) with claude provider should NOT include Console History Logging section")
+	}
 }
 
 func TestSharedPrompt_EditAgent_NoManualBusSection(t *testing.T) {
@@ -217,6 +233,9 @@ func TestSharedPrompt_EditAgent_NoManualBusSection(t *testing.T) {
 	prompt := SharedPrompt("edit")
 	if strings.Contains(prompt, "### Manual Bus Messaging") {
 		t.Error("SharedPrompt(edit) should NOT include Manual Bus Messaging section (edit is the orchestrator)")
+	}
+	if strings.Contains(prompt, "### Console History Logging") {
+		t.Error("SharedPrompt(edit) should NOT include Console History Logging section (edit is the orchestrator)")
 	}
 }
 

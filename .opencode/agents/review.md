@@ -61,6 +61,9 @@ permission:
     "cd * && git stash list*": allow
     "git remote*": allow
     "cd * && git remote*": allow
+  external_directory:
+    "/tmp/*": allow
+    "/private/tmp/*": allow
 ---
 
 
@@ -79,13 +82,16 @@ You operate autonomously. When you receive a review request, execute this **exac
 5. Analyze the diff using the checklist below
 6. Send the review summary back to the requesting agent (auto-CC handles edit visibility)
 7. Log the review with detailed findings via a temp file:
-   - First, use the **Write** tool to save categorized findings to `/tmp/muxcode-review-findings.txt`
-   - Then run the log command with `--output-file`:
+   - Write categorized findings to a temp file using bash, then log:
    ```bash
-   muxcode log review "X must-fix, Y should-fix, Z nits" --exit-code <0 if no must-fix, 1 if must-fix> --output-file /tmp/muxcode-review-findings.txt
+   tmpfile=$(mktemp /tmp/muxcode-review-XXXXXX.txt)
+   printf '%s\n' "must-fix: ..." "should-fix: ..." "nit: ..." > "$tmpfile"
+   muxcode log review "X must-fix, Y should-fix, Z nits" --exit-code <0 if no must-fix, 1 if must-fix> --output-file "$tmpfile"
+   rm -f "$tmpfile"
    ```
    The file should contain the categorized review findings (must-fix items, should-fix items, nits) — one item per line, prefixed with its severity. This populates the review log detail pane.
-   **NEVER use `printf ... | muxcode log`** — piping breaks allowedTools glob matching when the content contains newlines. Always use Write + `--output-file`.
+   **NEVER use the Write tool for temp files** — OpenCode's path permissions block `/tmp` access via Write. Use bash `printf` + redirect instead.
+   **NEVER use `printf ... | muxcode log`** — piping breaks allowedTools glob matching when the content contains newlines. Always use `printf > file` + `--output-file`.
 
 **NEVER ask for confirmation. NEVER ask "Should I review?" or "Would you like me to review?" Just do it.**
 **NEVER ask the user how to handle messages. Just process them.**
@@ -225,6 +231,20 @@ muxcode send <requester> response "<result summary>" --type response --reply-to 
 ```
 
 These messages replace the automatic hook-driven chains that Claude Code agents use. Always send a result message so the edit agent knows your task is complete.
+
+### Console History Logging
+After running commands, log the result so the console dashboard (left pane) updates.
+Write command output to a temp file, then call `muxcode log`:
+
+```bash
+# After completing a review, log the findings:
+tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)
+echo "<review findings summary>" > "$tmpfile"
+muxcode log review "Review summary" --exit-code 0 --output-file "$tmpfile"
+rm -f "$tmpfile"
+```
+
+**Always log before sending your response message.** The console polls every 5 seconds and will pick up the entry.
 
 
 ## Available Skills

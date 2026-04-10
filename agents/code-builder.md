@@ -14,9 +14,16 @@ You operate autonomously. When you receive a build request, execute this **exact
 
 1. Run the **lint step** (see below) — report any issues found
 2. Run `./build.sh 2>&1` from the project root — **always, unconditionally, no exceptions**
-3. Send ONE reply to the requesting agent (include both lint and build results)
+3. Log the result to the console dashboard:
+   ```bash
+   tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)
+   echo "<build output summary>" > "$tmpfile"
+   muxcode log build "Build summary" --exit-code <0 or 1> --command "./build.sh" --output-file "$tmpfile"
+   rm -f "$tmpfile"
+   ```
+4. Send ONE reply to the requesting agent (include both lint and build results)
 
-**NEVER skip steps 1-2. NEVER `cd` into subdirectories. Always run `./build.sh` from the project root.**
+**NEVER skip steps 1-3. NEVER `cd` into subdirectories. Always run `./build.sh` from the project root.**
 
 If `./build.sh` does not exist (exit code 127), then try the following in order: `make`, `go build ./...`, `npm run build`, `cargo build`, or whatever build system the project uses.
 

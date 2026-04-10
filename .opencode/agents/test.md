@@ -83,6 +83,9 @@ permission:
     "cd * && python -m coverage*": allow
     "tox *": allow
     "cd * && tox *": allow
+  external_directory:
+    "/tmp/*": allow
+    "/private/tmp/*": allow
 ---
 
 
@@ -183,6 +186,20 @@ muxcode send edit test "Tests FAILED: <error summary>" --type response
 ```
 
 These messages replace the automatic hook-driven chains that Claude Code agents use. Always send a result message so the edit agent knows your task is complete.
+
+### Console History Logging
+After running commands, log the result so the console dashboard (left pane) updates.
+Write command output to a temp file, then call `muxcode log`:
+
+```bash
+# Capture output to temp file, then log:
+tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)
+<test command> 2>&1 | tee "$tmpfile"; exit_code=${PIPESTATUS[0]}
+muxcode log test "Test summary" --exit-code "$exit_code" --command "<test command>" --output-file "$tmpfile"
+rm -f "$tmpfile"
+```
+
+**Always log before sending your response message.** The console polls every 5 seconds and will pick up the entry.
 
 
 ## Available Skills

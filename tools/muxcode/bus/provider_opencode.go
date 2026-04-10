@@ -278,6 +278,11 @@ func translateToolProfile(role string) string {
 		buf.WriteString("  edit: allow\n")
 	}
 
+	// Allow Read/Write tool access to temp directories (macOS: /tmp -> /private/tmp)
+	buf.WriteString("  external_directory:\n")
+	buf.WriteString("    \"/tmp/*\": allow\n")
+	buf.WriteString("    \"/private/tmp/*\": allow\n")
+
 	return buf.String()
 }
 

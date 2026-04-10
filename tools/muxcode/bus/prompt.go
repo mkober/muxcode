@@ -113,6 +113,47 @@ func SharedPrompt(role string) string {
 
 		b.WriteString("These messages replace the automatic hook-driven chains that Claude Code agents use. ")
 		b.WriteString("Always send a result message so the edit agent knows your task is complete.\n\n")
+
+		// Console history logging — non-hook agents must log manually so the
+		// left-pane console view has data to render.
+		b.WriteString("### Console History Logging\n")
+		b.WriteString("After running commands, log the result so the console dashboard (left pane) updates.\n")
+		b.WriteString("Write command output to a temp file, then call `muxcode log`:\n\n")
+
+		switch role {
+		case "build":
+			b.WriteString("```bash\n# Capture output to temp file, then log:\n")
+			b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
+			b.WriteString("./build.sh 2>&1 | tee \"$tmpfile\"; exit_code=${PIPESTATUS[0]}\n")
+			b.WriteString("muxcode log build \"Build summary\" --exit-code \"$exit_code\" --command \"./build.sh\" --output-file \"$tmpfile\"\n")
+			b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
+		case "test":
+			b.WriteString("```bash\n# Capture output to temp file, then log:\n")
+			b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
+			b.WriteString("<test command> 2>&1 | tee \"$tmpfile\"; exit_code=${PIPESTATUS[0]}\n")
+			b.WriteString("muxcode log test \"Test summary\" --exit-code \"$exit_code\" --command \"<test command>\" --output-file \"$tmpfile\"\n")
+			b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
+		case "deploy":
+			b.WriteString("```bash\n# Capture output to temp file, then log:\n")
+			b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
+			b.WriteString("<deploy command> 2>&1 | tee \"$tmpfile\"; exit_code=${PIPESTATUS[0]}\n")
+			b.WriteString("muxcode log deploy \"Deploy summary\" --exit-code \"$exit_code\" --command \"<deploy command>\" --output-file \"$tmpfile\"\n")
+			b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
+		case "review":
+			b.WriteString("```bash\n# After completing a review, log the findings:\n")
+			b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
+			b.WriteString("echo \"<review findings summary>\" > \"$tmpfile\"\n")
+			b.WriteString("muxcode log review \"Review summary\" --exit-code 0 --output-file \"$tmpfile\"\n")
+			b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
+		default:
+			b.WriteString("```bash\n# Log task output:\n")
+			b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
+			b.WriteString("echo \"<output>\" > \"$tmpfile\"\n")
+			b.WriteString(fmt.Sprintf("muxcode log %s \"Task summary\" --exit-code 0 --output-file \"$tmpfile\"\n", role))
+			b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
+		}
+
+		b.WriteString("**Always log before sending your response message.** The console polls every 5 seconds and will pick up the entry.\n\n")
 	}
 
 	// Send restrictions from policy — only for hook-supporting providers.

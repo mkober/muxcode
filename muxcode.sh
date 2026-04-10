@@ -326,7 +326,7 @@ _sr="$(echo "$_sr" | sed $'s/\xee\x82\xb3//g; s/\xee\x82\xb2//g')"
 _sr="$(echo "$_sr" | sed 's/#\[fg=#00ff00, bg=#282a36\] //')"
 _sr="$(echo "$_sr" | sed 's|#\[fg=#282a36, bg=#00ff00\] #(~/dotfiles/tmux_scripts/music.sh) ||')"
 # Restyle date/time: tab-color bg for date, comment-color bg for time, with powerline arrows
-_sr="$(echo "$_sr" | sed $'s/#\\[fg=#6272a4, bg=#282a36\\]/#[fg=#44475a, bg=#282a36]\xee\x82\xb2#[fg=#f8f8f2, bg=#44475a]/')"
+_sr="$(echo "$_sr" | sed $'s/#\\[fg=#6272a4, bg=#282a36\\]/#[fg=#44475a, bg=default]\xee\x82\xb2#[fg=#f8f8f2, bg=#44475a]/')"
 _sr="$(echo "$_sr" | sed $'s/#\\[fg=#50fa7b\\]/#[fg=#6272a4, bg=#44475a]\xee\x82\xb2#[fg=#f8f8f2, bg=#6272a4]/')"
 # Add padding around date and time text
 _sr="$(echo "$_sr" | sed "s/%b/ %b/; s/'%y/'%y /; s/%H:%M/ %H:%M:%S /")"
@@ -335,11 +335,12 @@ tmux set-option -t "$SESSION" status-right "${_sr}"
 # Set explicit Dracula-style formats with powerline arrows and awk capitalize.
 # Uses awk (not ${var^}) because macOS ships bash 3.2 which lacks that syntax.
 # Must use global (-g) because Dracula's #{T:window-status-format} only resolves globals.
+# Uses 'default' bg for outer regions to inherit terminal transparency.
 _cap="awk '{print toupper(substr(\$0,1,1)) substr(\$0,2)}'"
 tmux set-option -g window-status-format \
-  $'#[fg=#282a36,bg=#44475a,noitalics]\xee\x82\xb0#[fg=#f8f8f2,bg=#44475a] F#I#[fg=#f8f8f2, bg=#44475a] #(echo #W | '"${_cap}"$') #[fg=#44475a, bg=#282a36]\xee\x82\xb0'
+  $'#[fg=default,bg=#44475a,noitalics]\xee\x82\xb0#[fg=#f8f8f2,bg=#44475a] F#I#[fg=#f8f8f2, bg=#44475a] #(echo #W | '"${_cap}"$') #[fg=#44475a, bg=default]\xee\x82\xb0'
 tmux set-option -g window-status-current-format \
-  $'#[fg=#282a36, bg=#00ff00]\xee\x82\xb0#[fg=#44475a, bg=#00ff00] F#I*#[fg=#44475a, bg=#00ff00, bold] #(echo #W | '"${_cap}"$') #[fg=#00ff00, bg=#282a36]\xee\x82\xb0'
+  $'#[fg=default, bg=#00ff00]\xee\x82\xb0#[fg=#44475a, bg=#00ff00] F#I*#[fg=#44475a, bg=#00ff00, bold] #(echo #W | '"${_cap}"$') #[fg=#00ff00, bg=default]\xee\x82\xb0'
 # Replace the Dracula session icon (❐) with hamburger (☰) in status-left
 _sl="$(tmux show-options -gv status-left 2>/dev/null)"
 _sl_with_icon="$(echo "$_sl" | sed 's/❐/☰/')"

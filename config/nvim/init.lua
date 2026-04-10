@@ -135,8 +135,20 @@ require('lazy').setup({
   {
     'Mofiqul/dracula.nvim',
     priority = 1000,
+    opts = {
+      transparent_bg = true,
+    },
     init = function()
       vim.cmd.colorscheme('dracula')
+      -- Extra transparency overrides to match OpenCode TUI
+      local hl = vim.api.nvim_set_hl
+      hl(0, 'Normal', { bg = 'NONE' })
+      hl(0, 'NormalNC', { bg = 'NONE' })
+      hl(0, 'NormalFloat', { bg = 'NONE' })
+      hl(0, 'SignColumn', { bg = 'NONE' })
+      hl(0, 'EndOfBuffer', { bg = 'NONE' })
+      hl(0, 'LineNr', { bg = 'NONE' })
+      hl(0, 'FoldColumn', { bg = 'NONE' })
     end,
   },
 
