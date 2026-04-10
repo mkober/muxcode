@@ -31,9 +31,9 @@ func DefaultLauncherConfig() *LauncherConfig {
 	return &LauncherConfig{
 		ProjectsDir: home,
 		ScanDepth:   3,
-		Windows:     []string{"edit", "build", "test", "review", "deploy", "run", "watch", "commit", "analyze"},
+		Windows:     []string{"edit", "build", "test", "review", "deploy", "run", "watch", "commit", "analyze", "beta"},
 		RoleMap:     map[string]string{"run": "runner", "commit": "git", "analyze": "analyst"},
-		SplitLeft:   []string{"edit", "build", "test", "review", "deploy", "run", "analyze", "commit", "watch"},
+		SplitLeft:   []string{"edit", "build", "test", "review", "deploy", "run", "analyze", "commit", "watch", "beta"},
 		ShellInit:   "",
 		Editor:      "nvim",
 		NvimAppName: "muxcode/nvim",
@@ -111,7 +111,7 @@ func (c *LauncherConfig) IsSplitLeftWindow(window string) bool {
 // HasConsoleView returns true if the window has a built-in console view.
 func HasConsoleView(window string) bool {
 	switch window {
-	case "build", "test", "review", "deploy", "run", "watch", "commit", "analyze", "api":
+	case "build", "test", "review", "deploy", "run", "watch", "commit", "analyze", "api", "beta":
 		return true
 	}
 	return false

@@ -14,8 +14,9 @@ import (
 // LaunchConfig holds all resolved configuration for launching an agent.
 type LaunchConfig struct {
 	Role      string // Agent role (e.g. "build", "edit")
-	CLI       string // Agent CLI binary (e.g. "claude", "muxcode-llm-harness")
+	CLI       string // Agent CLI binary (e.g. "claude", "muxcode-llm-harness", "opencode")
 	IsLocal   bool   // True if routing to local LLM (harness/bus agent)
+	IsBetaCLI bool   // True if launching a non-Claude standalone CLI (e.g. OpenCode TUI)
 	Agent     string // Agent definition filename (without .md)
 	AgentFile string // Resolved path to agent definition file (empty if not found)
 
@@ -71,6 +72,8 @@ func AgentFileName(role string) string {
 		return "pr-reader"
 	case "api":
 		return "api-tester"
+	case "beta":
+		return "beta-agent"
 	default:
 		return ""
 	}
@@ -106,6 +109,8 @@ func RoleCLIEnvVar(role string) string {
 		return "MUXCODE_RUN_CLI"
 	case "api":
 		return "MUXCODE_API_CLI"
+	case "beta":
+		return "MUXCODE_BETA_CLI"
 	case "webhook":
 		return "MUXCODE_WEBHOOK_CLI"
 	default:
@@ -142,6 +147,8 @@ func RoleClaudeModelEnvVar(role string) string {
 		return "MUXCODE_RUN_CLAUDE_MODEL"
 	case "api":
 		return "MUXCODE_API_CLAUDE_MODEL"
+	case "beta":
+		return "MUXCODE_BETA_CLAUDE_MODEL"
 	case "webhook":
 		return "MUXCODE_WEBHOOK_CLAUDE_MODEL"
 	default:
@@ -155,7 +162,7 @@ func RoleClaudeModelDefault(role string) string {
 	switch role {
 	case "edit", "review", "analyze", "analyst":
 		return "claude-opus-4-6"
-	case "build", "test", "api", "deploy", "runner", "run", "watch", "commit", "git":
+	case "build", "test", "api", "deploy", "runner", "run", "watch", "commit", "git", "beta":
 		return "claude-sonnet-4-5"
 	default:
 		return ""
@@ -370,6 +377,21 @@ func ResolveLaunchConfig(role string) *LaunchConfig {
 		return cfg
 	}
 
+	// --- Beta window routing ---
+	// The beta role defaults to the "opencode" binary (standalone TUI).
+	// Override with MUXCODE_BETA_CLI=claude to use Claude Code instead.
+	if role == "beta" {
+		if roleCLI == "" {
+			cfg.CLI = "opencode"
+		} else {
+			cfg.CLI = roleCLI
+		}
+		if cfg.CLI != "claude" {
+			cfg.IsBetaCLI = true
+			return cfg
+		}
+	}
+
 	// --- Agent file resolution ---
 	agentName := AgentFileName(role)
 	cfg.Agent = agentName
@@ -432,7 +454,16 @@ func (c *LaunchConfig) BuildExecArgs() (string, []string) {
 	if c.IsLocal {
 		return c.buildLocalExecArgs()
 	}
+	if c.IsBetaCLI {
+		return c.buildBetaCLIExecArgs()
+	}
 	return c.buildClaudeExecArgs()
+}
+
+// buildBetaCLIExecArgs constructs args for launching via a standalone CLI (e.g. OpenCode TUI).
+// Standalone CLIs auto-detect the project — no extra flags needed.
+func (c *LaunchConfig) buildBetaCLIExecArgs() (string, []string) {
+	return c.CLI, nil
 }
 
 // buildClaudeExecArgs constructs args for launching via Claude Code CLI.

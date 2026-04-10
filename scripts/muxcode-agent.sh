@@ -48,6 +48,7 @@ role_cli_var() {
     pr-read)    echo "MUXCODE_PR_READ_CLI" ;;
     runner|run) echo "MUXCODE_RUN_CLI" ;;
     api)        echo "MUXCODE_API_CLI" ;;
+    beta)       echo "MUXCODE_BETA_CLI" ;;
     webhook)    echo "MUXCODE_WEBHOOK_CLI" ;;
     *)          echo "MUXCODE_$(echo "$1" | tr '[:lower:]' '[:upper:]')_CLI" ;;
   esac
@@ -118,6 +119,7 @@ agent_name() {
     watch)    echo "log-watcher" ;;
     pr-read)  echo "pr-reader" ;;
     api)      echo "api-tester" ;;
+    beta) echo "beta-agent" ;;
   esac
 }
 
@@ -192,6 +194,7 @@ role_claude_model_var() {
     pr-read)    echo "MUXCODE_PR_READ_CLAUDE_MODEL" ;;
     runner|run) echo "MUXCODE_RUN_CLAUDE_MODEL" ;;
     api)        echo "MUXCODE_API_CLAUDE_MODEL" ;;
+    beta)       echo "MUXCODE_BETA_CLAUDE_MODEL" ;;
     webhook)    echo "MUXCODE_WEBHOOK_CLAUDE_MODEL" ;;
     *)          echo "MUXCODE_$(echo "$1" | tr '[:lower:]' '[:upper:]')_CLAUDE_MODEL" ;;
   esac
@@ -200,7 +203,7 @@ role_claude_model_var() {
 role_claude_model_default() {
   case "$1" in
     edit|review|analyze|analyst) echo "claude-opus-4-6" ;;
-    build|test|api|deploy|runner|run|watch|commit|git) echo "claude-sonnet-4-5" ;;
+    build|test|api|deploy|runner|run|watch|commit|git|beta) echo "claude-sonnet-4-5" ;;
   esac
 }
 

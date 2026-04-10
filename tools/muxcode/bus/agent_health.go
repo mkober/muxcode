@@ -79,7 +79,7 @@ func IsAgentAlive(session, role string) bool {
 	// 4. Startup check — look for agent launcher or claude text
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.Contains(trimmed, "muxcode-agent") || strings.Contains(trimmed, "claude") {
+		if strings.Contains(trimmed, "muxcode-agent") || strings.Contains(trimmed, "claude") || strings.Contains(trimmed, "opencode") {
 			return true
 		}
 	}

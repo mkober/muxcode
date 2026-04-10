@@ -571,6 +571,16 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(jq *)", "Bash(jq*)",
 				},
 			},
+			"beta": {
+				Include:  []string{"bus", "readonly", "common"},
+				CdPrefix: true,
+				Tools: []string{
+					"Bash(opencode *)", "Bash(curl *)", "Bash(jq *)",
+					"Bash(python3 *)", "Bash(node *)",
+					"Bash(cat *)", "Bash(ls *)", "Bash(find *)",
+					"Write", "Edit",
+				},
+			},
 			"api": {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: true,

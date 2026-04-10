@@ -605,7 +605,7 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 		result.Logged = true
 
 	case CmdUnknown:
-		if role == "run" {
+		if role == "run" || role == "beta" {
 			entry := HookHistoryEntry{
 				TS:          ts,
 				Command:     command,
@@ -614,7 +614,7 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 				Outcome:     outcome,
 				Output:      output,
 			}
-			_ = WriteHookHistory(filepath.Join(BusDir(session), "run-history.jsonl"), entry, maxHistory)
+			_ = WriteHookHistory(filepath.Join(BusDir(session), role+"-history.jsonl"), entry, maxHistory)
 			result.Logged = true
 		}
 	}

@@ -262,8 +262,8 @@ func TestDefaultConsoleConfigs(t *testing.T) {
 
 func TestConsoleRoles(t *testing.T) {
 	roles := ConsoleRoles()
-	if len(roles) != 9 {
-		t.Errorf("ConsoleRoles() = %d roles, want 9", len(roles))
+	if len(roles) != 10 {
+		t.Errorf("ConsoleRoles() = %d roles, want 10", len(roles))
 	}
 }
 
