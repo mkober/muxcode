@@ -56,11 +56,11 @@ Key capabilities relevant to muxcode integration:
 
 OpenCode's architecture offers integration paths that Claude Code doesn't:
 
-1. **Headless server mode** — `opencode serve` runs a headless API server. Agents could potentially be driven via HTTP API instead of tmux send-keys, bypassing TUI interaction entirely.
+1. **TUI as autonomous agent** — OpenCode's TUI manages its own context, tools, and compaction. Agents can be more autonomous, reducing muxcode's orchestration burden for non-critical roles.
 2. **Per-agent permissions in config** — OpenCode's `permission` block per agent aligns well with muxcode's tool profile concept. Permissions can be pre-configured in `opencode.json` without runtime flags.
 3. **Custom agents in markdown** — OpenCode's `.opencode/agents/*.md` format is similar to muxcode's `agents/*.md`. The agent definition could be shared or adapted.
-4. **`opencode run` with `--continue`** — non-interactive mode with session continuation could enable a bus-driven interaction model without TUI interaction.
-5. **Multi-provider** — OpenCode supports Anthropic, OpenAI, Google, Groq, Bedrock, etc. An agent using OpenCode could use any provider.
+4. **Multi-provider** — OpenCode supports Anthropic, OpenAI, Google, Groq, Bedrock, etc. An agent using OpenCode could use any provider.
+5. **Future server mode** — `opencode serve` runs a headless API server. If programmatic control is needed later, server mode can be added as an optional enhancement (Phase 5).
 
 ## Design
 
@@ -136,30 +136,21 @@ type Provider interface {
 
 **OpenCode provider** (`bus/provider_opencode.go`):
 
-Two interaction modes, selected via `MUXCODE_OPENCODE_MODE`:
+TUI mode — OpenCode runs as an interactive TUI in the tmux pane, the same way the beta window works today. The agent is a full TUI session that the user can interact with directly. Muxcode treats it as a semi-autonomous agent with graceful degradation:
 
-**Mode 1: Server mode** (default) — OpenCode runs as headless API server, muxcode drives it via HTTP:
-- `BuildExecArgs`: `opencode serve --port <port>` in the tmux pane
-- `IdlePrompt`: `""` (not applicable — uses API status endpoint)
-- `DetectIdle`: `GET /session/{id}/status` returns `idle`/`busy`; SSE events via `/global/event` for real-time status changes
-- `SendMessage`: `POST /session/{id}/message` (streaming response) or `POST /session/{id}/prompt_async` (fire-and-forget, returns 204)
-- `AcceptStartup`: `POST /session` to create session; no TUI prompts to dismiss
-- `CompactSession`: auto-compact configured in `opencode.json` (`compaction.auto: true`)
+- `BuildExecArgs`: bare `opencode` binary (no flags) — launches TUI in the tmux pane
+- `IdlePrompt`: `""` (TUI — cannot reliably detect idle state via pane capture)
+- `DetectIdle`: `false` (always treated as active — TUI has no stable prompt character)
+- `SendMessage`: tmux `display-message` notification only (best-effort — stdin piping breaks the TUI, github issue #3871)
+- `AcceptStartup`: detect TUI frame via box-drawing characters (─, │, ╭, ╰); no startup prompts to dismiss
+- `CompactSession`: no-op (TUI manages its own context and auto-compacts)
 - `SupportsHooks`: `false`
 - `SupportsToolPermissions`: `true` (via `permission` blocks in agent config)
 - `WriteAgentConfig`: write to `.opencode/agents/<role>.md` with permissions in frontmatter
 - `SystemPromptMethod`: `"file"` (agent markdown body is the system prompt)
 - `MemoryFile`: `"AGENTS.md"`
-- Auth: optional via `OPENCODE_SERVER_PASSWORD` env var
 
-**Mode 2: TUI mode** (fallback) — OpenCode runs as interactive TUI in the tmux pane:
-- `BuildExecArgs`: `opencode --agent <role>` with config in `opencode.json`
-- `IdlePrompt`: `""` (TUI — cannot reliably detect via pane capture)
-- `DetectIdle`: `false` (always treated as active)
-- `SendMessage`: tmux send-keys (timing-dependent, best-effort — stdin piping breaks TUI)
-- `AcceptStartup`: handle "Initialize Project" dialog if present
-- `CompactSession`: auto-compact configured in `opencode.json`
-- Less reliable than server mode; documented as fallback
+The TUI approach means OpenCode agents are more autonomous than Claude Code agents — they manage their own context window, compaction, and tool execution. Muxcode's role is limited to: launching the TUI, detecting whether it's alive, and providing configuration (agent definitions, permissions, system prompts). Hook-driven chains and idle-based wake-up notifications are handled via graceful degradation (see below).
 
 ### Per-agent provider assignment
 
@@ -281,15 +272,16 @@ Muxcode's tool profiles (`bus/profile.go`) are translated to OpenCode's permissi
 
 When a provider doesn't support a feature, muxcode degrades gracefully:
 
-| Feature | Claude Code | OpenCode | Degradation |
-|---------|-------------|----------|-------------|
+| Feature | Claude Code | OpenCode (TUI) | Degradation |
+|---------|-------------|----------------|-------------|
 | Build/test/review chains | Hook-driven | No hooks | Chains disabled for that agent; system prompt instructs agent to send bus messages after commands |
 | Edit guard | PreToolUse hook blocks commands | No hooks | Guard disabled; rely on OpenCode permission `deny` rules |
 | Workflow state transitions | Hooks fire transitions | No hooks | State transitions skipped for that agent |
-| Idle detection | `❯` prompt match | Server: API status endpoint; TUI: not detectable | Server mode: full idle detection via `/session/{id}/status`; TUI mode: always treated as "active" |
-| Wake-up notifications | Send-keys "You have new messages" | Server: API message endpoint; TUI: unreliable | Server mode: send via API; TUI mode: display-message only |
-| Auto-accept | Dismiss Claude Code startup prompts | Different/no startup prompts | Provider-specific startup handling |
+| Idle detection | `❯` prompt match | Not detectable (TUI has no stable prompt) | Always treated as "active" — watcher skips idle-based notifications |
+| Wake-up notifications | Send-keys "You have new messages" | Display-message only (best-effort) | User sees tmux status bar flash; agent does not auto-process |
+| Auto-accept | Dismiss Claude Code startup prompts | TUI frame detection (box-drawing chars) | Provider-specific startup handling |
 | Tool permissions | `--allowedTools` patterns | Per-agent `permission` blocks | Translated from tool profiles to OpenCode format |
+| Compact | `/compact` via send-keys | No-op (TUI auto-compacts) | TUI manages its own context window |
 
 ### Hook replacement for non-hook providers
 
@@ -309,19 +301,17 @@ This is best-effort — the LLM may not always follow instructions — but provi
 func Notify(session, role, message string) {
     provider := resolveProvider(role)
 
-    if provider.DetectIdle(capturedPane) {
-        provider.SendMessage(session, paneTarget, message)
-    } else {
-        notifyDisplayMessage(session, role, message)
-    }
+    // Provider handles wake-up in its own way
+    provider.SendWakeUp(session, role)
 }
 ```
 
-For OpenCode TUI mode (`DetectIdle` returns false), notifications are always passive display-message.
+- **Claude Code**: `SendWakeUp` injects "You have new messages" via `tmux send-keys` when idle at `❯` prompt; falls back to `display-message`.
+- **OpenCode TUI**: `SendWakeUp` sends `tmux display-message` only — the user sees a status bar flash but the TUI agent does not auto-process. This is by design: TUI agents are user-driven, not watcher-driven.
 
 ## Implementation
 
-### Phase 0a: install.sh provider selection
+### Phase 0a: install.sh provider selection ✅
 
 Replace the current hard requirement on `claude` with an interactive AI CLI provider selection flow. The user chooses which providers to install and configure during `install.sh`. At least one provider must be selected. This must land first so that OpenCode is available on the system before any subsequent phases.
 
@@ -463,7 +453,7 @@ if $use_claude && $use_opencode; then
   echo "  Which should be the default for new agent windows?"
   echo ""
   echo "    1) Claude Code (recommended — full hook support)"
-  echo "    2) OpenCode (server mode — multi-provider LLM support)"
+  echo "    2) OpenCode (TUI mode — multi-provider LLM support)"
   echo ""
   read -rp "  Default provider [1]: " default_choice
   if [[ "$default_choice" == "2" ]]; then
@@ -566,7 +556,7 @@ Success criteria:
 - [x] Skips OpenCode install prompt when Claude Code already available (no re-ask on repeat runs)
 - [x] Adds `~/.opencode/bin` to script PATH before detection (non-interactive shells don't source `.bashrc`)
 
-### Phase 0b: testbed window (F10)
+### Phase 0b: testbed window (F10) ✅
 
 Add a dedicated `beta` tmux window at position 10, bound to F10. Runs Claude Code initially (standard agent launch) so existing functionality is unaffected. Phase 0c adds default routing so the beta window launches the OpenCode binary without requiring explicit env var overrides.
 
@@ -603,7 +593,7 @@ Success criteria:
 - [x] Hook history logging records beta commands to `beta-history.jsonl` for console display
 - [x] No impact on existing windows 1-9
 
-### Phase 0c: OpenCode default routing
+### Phase 0c: OpenCode default routing ✅
 
 The beta role should default to the `opencode` binary (standalone TUI) without requiring an explicit `MUXCODE_BETA_CLI=opencode` env var. Phase 0b launched Claude Code in the beta window because `ResolveLaunchConfig` fell through to the global `MUXCODE_AGENT_CLI` default (`claude`). This phase adds role-specific routing so the beta window launches OpenCode out of the box.
 
@@ -899,7 +889,7 @@ Success criteria:
 - [ ] Build passes (gofmt clean, no compile errors)
 - [ ] All existing tests pass
 
-### Phase 1: provider interface and Claude Code extraction
+### Phase 1: provider interface and Claude Code extraction ✅
 
 Extract current Claude Code behavior into the provider interface without changing any functionality.
 
@@ -956,74 +946,164 @@ Success criteria:
 - [x] Provider resolved per-role via `MUXCODE_{ROLE}_CLI` env var
 - [x] Provider interface covers: exec args, idle detection, send message, startup, compact, hooks, permissions, agent config
 
-### Phase 2: OpenCode provider (server mode)
+### Phase 2: OpenCode provider (TUI mode) ✅
+
+Upgrade the `OpenCodeProvider` stub (created in Phase 1 inside `bus/provider.go`) into a full TUI-based implementation. Phase 0c established bare TUI launch for the beta role — this phase extends TUI mode to all OpenCode roles and adds agent config generation, tool profile translation, and pane-based detection.
 
 New files:
 
 | File | Purpose |
 |------|---------|
-| `bus/provider_opencode.go` | OpenCode provider implementation (server mode primary) |
+| `bus/provider_opencode.go` | Full OpenCode provider — moves stub from `provider.go`, implements TUI mode for all roles |
 | `bus/provider_opencode_test.go` | Unit tests |
 
-The provider launches `opencode serve --port <port>` in the agent pane, then drives interaction via HTTP API:
+All OpenCode roles launch the bare `opencode` binary in TUI mode (same as beta):
 
 | Operation | Implementation |
 |-----------|---------------|
-| Launch | `opencode serve --port <port>` in tmux pane |
-| Send message | `POST /session/{id}/message` (streaming) or `/prompt_async` (fire-and-forget) |
-| Idle detection | `GET /session/{id}/status` → `idle`/`busy` |
-| Create session | `POST /session` at startup |
-| Version check | `opencode --version` → require >= 1.4.0 |
+| Launch | bare `opencode` binary in tmux pane (TUI mode, no flags) |
+| Alive detection | Pane capture — look for "opencode" text or box-drawing characters; shell prompt = dead |
+| Idle detection | Not supported — TUI has no stable prompt character; always returns false |
+| Wake-up | `tmux display-message` notification (best-effort, user-visible) |
+| Startup detection | Box-drawing characters (─, │, ╭, ╰) in pane indicate TUI has rendered |
+| Compact | No-op — TUI manages its own context and auto-compacts at 95% |
+| Agent config | Pre-generated `.opencode/agents/<role>.md` with permissions and system prompt |
 
-Success criteria:
-- [ ] `MUXCODE_DESIGNER_CLI=opencode` launches `opencode serve` in the agent pane
-- [ ] Session created via API on startup
-- [ ] Agent config generated in `.opencode/agents/<role>.md` with correct frontmatter
-- [ ] Tool profiles translated to OpenCode `permission` format
-- [ ] System prompt written as agent markdown body
-- [ ] Messages sent and responses received via HTTP API
-- [ ] Idle detection works via status endpoint
-- [ ] Agent health check works (process alive + API health)
-
-### Phase 3: graceful degradation
+> **Note**: Phase 1 added `IsBetaCLI` to `LaunchConfig` for Phase 0c bare launch routing. Phase 2 removes it — all OpenCode launch logic moves into `OpenCodeProvider.BuildExecArgs()` and `ConfigureLaunch()`.
 
 Updated files:
 
 | File | Change |
 |------|--------|
-| `cmd/hook.go` | Chain triggers check `provider.SupportsHooks()` — skip if false |
-| `bus/hook.go` | Guard check skips for non-hook providers |
-| `watcher/watcher.go` | Notification path uses provider |
-| `bus/workflow.go` | Workflow transitions gated by provider capability |
-| `bus/prompt.go` | Shared prompt includes inbox polling instructions for non-hook providers |
+| `bus/provider.go` | Removed `OpenCodeProvider` stub (moved to dedicated file), removed unused `strings` import |
+| `bus/launch.go` | Removed `IsBetaCLI` field from `LaunchConfig`, removed legacy `IsBetaCLI` dispatch in `BuildExecArgs()` |
+| `bus/provider_test.go` | Removed stub-specific tests (replaced by `provider_opencode_test.go`) |
+
+Design:
+
+`OpenCodeProvider` in `bus/provider_opencode.go`:
+
+**TUI launch** — all OpenCode roles launch the bare `opencode` binary with no flags. The TUI renders in the tmux pane and the user (or bus-initiated notifications) drives interaction. No server process, no HTTP API, no port management.
+
+**Alive detection** — pane capture only. Looks for "opencode" text or box-drawing characters (TUI frame). If the pane shows a bare shell prompt (`$`, `%`, `❯`), the agent is dead. Indeterminate defaults to alive.
+
+**Idle detection** — not supported. TUI has no stable prompt character that can be matched via pane capture. `IsIdle` always returns false, so the watcher treats OpenCode agents as always active and skips idle-based notifications.
+
+**Wake-up notifications** — `tmux display-message` only. The TUI's input model doesn't support programmatic text injection (stdin piping breaks the UI). Display-message shows a flash in the tmux status bar — the user sees it but the agent does not auto-process inbox messages.
+
+**Pane classification** — `ClassifyPane` detects box-drawing characters (─, │, ╭, ╰, ┌, └) as ready (TUI rendered). "Error"/"FATAL" in pane content indicates not ready.
+
+**Agent config generation** — `WriteAgentConfig(role)` writes `.opencode/agents/<role>.md` with YAML frontmatter:
+- `description` from source agent definition
+- `mode: primary`
+- `model` mapped from Claude model names to `anthropic/<model>` format (override via `MUXCODE_{ROLE}_MODEL`)
+- `permission` block translated from tool profiles: `Bash(pattern)` → bash allow, `!Bash(pattern)` → bash deny, `Write`/`Edit` → edit allow
+
+**Tool profile translation** — `translateToolProfile(role)` converts muxcode tool profiles to OpenCode permission YAML:
+- `Bash(pattern)` → `"pattern": allow` in bash permission
+- `!Bash(pattern)` → `"pattern": deny` in bash permission
+- `Write`, `Edit` → `edit: allow`
+- `Read`, `Grep`, `Glob` → implicitly allowed (no permission needed)
+
+**Model mapping** — `resolveOpenCodeModel(role)` maps Claude model names to OpenCode provider format. Check `MUXCODE_{ROLE}_MODEL` env var first, then map Claude defaults: `claude-sonnet-4-5` → `anthropic/claude-sonnet-4-5`.
+
+Success criteria:
+- [x] Any role with `MUXCODE_{ROLE}_CLI=opencode` launches the bare `opencode` binary in TUI mode
+- [x] Beta role defaults to `opencode` TUI without explicit env var (preserves Phase 0c behavior)
+- [x] Agent config generated in `.opencode/agents/<role>.md` with correct frontmatter
+- [x] Tool profiles translated to OpenCode `permission` format
+- [x] System prompt written as agent markdown body
+- [x] Pane classification detects TUI frame via box-drawing characters
+- [x] Alive detection works via pane capture (opencode text + box-drawing chars)
+- [x] Idle detection gracefully returns false (TUI limitation)
+- [x] Wake-up uses display-message (best-effort notification)
+- [x] Compact is no-op (TUI auto-manages context)
+- [x] `IsBetaCLI` removed from `LaunchConfig` — provider dispatch handles all routing
+- [x] All existing tests pass (300+), new tests cover all provider methods
+
+### Phase 3: graceful degradation
+
+Ensure muxcode operates correctly when OpenCode TUI agents are present alongside Claude Code agents. Since TUI agents cannot be driven programmatically (no hooks, no idle detection, no reliable input injection), the system must degrade gracefully — skipping hook-driven features for those agents and relying on pre-configured permissions and system prompt instructions instead.
+
+Updated files:
+
+| File | Change |
+|------|--------|
+| `cmd/hook.go` | Chain triggers check `provider.SupportsHooks()` — skip chain firing for non-hook providers |
+| `bus/hook.go` | Guard check skips for non-hook providers (no PreToolUse interception) |
+| `watcher/watcher.go` | `checkIdleAgents()` skips OpenCode roles (idle detection not supported); notification path uses provider's `SendWakeUp` |
+| `bus/workflow.go` | Workflow transitions gated by `provider.SupportsHooks()` — transitions skipped for OpenCode agents |
+| `bus/prompt.go` | Shared prompt for non-hook providers includes: (1) explicit bus message instructions ("after build, run `muxcode send edit build-complete ...`"), (2) no inbox polling instructions (user-driven, not watcher-driven) |
+| `bus/agent_health.go` | `IsAgentIdle` returns false for OpenCode roles (consistent with provider) |
+
+Key degradation behaviors:
+
+| Feature | Claude Code | OpenCode TUI | How it degrades |
+|---------|-------------|--------------|-----------------|
+| Build→test→review chain | Hook fires automatically | No hooks | Chain does not fire; system prompt instructs agent to send bus messages manually |
+| Edit guard | PreToolUse blocks dangerous commands | No hooks | Guard skipped; `permission.bash` deny rules in agent config block commands at OpenCode's level |
+| Workflow state | Hooks transition state | No hooks | State transitions skipped for that agent |
+| Watcher wake-up | Send-keys when idle | Cannot detect idle | Watcher skips; user interacts with TUI directly |
+| Compact trigger | `/compact` injected via send-keys | TUI auto-compacts | No-op from muxcode; TUI handles internally |
 
 Success criteria:
 - [ ] Agents with OpenCode provider run without errors when hooks are absent
-- [ ] Build/test/review chains disabled for non-hook agents
-- [ ] Edit guard disabled for non-hook agents
-- [ ] System prompt includes bus polling instructions for non-hook providers
+- [ ] Build/test/review chains disabled for non-hook agents (no spurious chain fires)
+- [ ] Edit guard disabled for non-hook agents (no PreToolUse errors)
+- [ ] Watcher skips idle check for OpenCode roles (no false positives)
+- [ ] System prompt includes bus message instructions for non-hook providers
 - [ ] OpenCode `permission.bash` deny rules replace edit guard for dangerous commands
+- [ ] Workflow state transitions skipped for non-hook agents without errors
 
 ### Phase 4: mixed-provider session testing
 
+End-to-end validation that a session with both Claude Code and OpenCode TUI agents works correctly. The edit agent stays on Claude Code (full hook support), while one or more other roles run OpenCode TUI. The bus handles cross-provider messaging transparently — both providers read from and write to the same file-based inbox.
+
+Test scenarios:
+
+1. **Basic mixed session**: Claude Code edit + OpenCode beta — verify both agents launch, respond to bus messages, and coexist without errors.
+2. **Role takeover**: Beta window takes over a Claude Code role (e.g. build) — verify bus messages route correctly to the F10 pane.
+3. **Multi-OpenCode**: Multiple roles on OpenCode (e.g. `MUXCODE_BUILD_CLI=opencode MUXCODE_TEST_CLI=opencode`) — verify each gets its own agent config and TUI instance.
+4. **Config coexistence**: `.claude/agents/` and `.opencode/agents/` directories coexist without conflicts.
+
 Success criteria:
-- [ ] Session with mixed providers (Claude Code edit + OpenCode designer) works end-to-end
-- [ ] F1 toggle between edit (Claude Code) and designer (OpenCode) works
-- [ ] Bus messaging works between providers (edit sends to designer, designer replies)
-- [ ] Session compact works for Claude Code agents, auto-compact handles OpenCode agents
+- [ ] Session with mixed providers (Claude Code edit + OpenCode beta TUI) launches without errors
+- [ ] F1/F10 toggle between edit (Claude Code) and beta (OpenCode TUI) works
+- [ ] Bus messaging works between providers (edit sends to beta, beta replies via `muxcode send`)
+- [ ] Claude Code agents compact via `/compact`; OpenCode TUI agents auto-compact (no muxcode intervention)
 - [ ] `muxcode status` shows provider per agent
-- [ ] Config files don't conflict (`.claude/` and `.opencode/` coexist)
+- [ ] `.claude/` and `.opencode/` directories coexist without conflicts
+- [ ] Agent config generated correctly in `.opencode/agents/` for each OpenCode role
+- [ ] Watcher does not error on OpenCode roles (skips idle check, display-message notifications)
 
-### Phase 5: TUI mode fallback (future/optional)
+### Phase 5: server mode (future/optional)
 
-Best-effort TUI interaction for environments where `opencode serve` is unavailable.
+Programmatic interaction via `opencode serve` HTTP API for environments that need reliable idle detection, automated message sending, and deterministic wake-up. Server mode is not required for basic OpenCode integration — TUI mode (Phases 2-4) covers the primary use case. Server mode adds value for fully automated pipelines where the user does not interact with the TUI directly.
+
+Server mode would launch `opencode serve --port <port>` instead of the bare TUI binary, then drive interaction via REST API:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /session` | Create session |
+| `POST /session/{id}/message` | Send prompt (streams response) |
+| `POST /session/{id}/prompt_async` | Send prompt (fire-and-forget, returns 204) |
+| `GET /session/{id}/status` | Idle/busy state |
+| `GET /global/event` | SSE event stream |
+
+This would enable:
+- **Reliable idle detection** via `GET /session/{id}/status` (replaces TUI's `return false`)
+- **Programmatic message sending** via API (replaces TUI's display-message-only)
+- **Automated wake-up** — send prompts to idle agents without user interaction
+- **Session management** — create/list/delete sessions via API
 
 Success criteria:
-- [ ] `MUXCODE_OPENCODE_MODE=tui` launches OpenCode in interactive TUI mode
-- [ ] Messages sent via tmux send-keys (timing-dependent, best-effort)
-- [ ] Idle detection disabled (always treated as active)
-- [ ] Notifications degrade to display-message only
-- [ ] Documented as less reliable than server mode
+- [ ] `MUXCODE_OPENCODE_MODE=server` launches `opencode serve --port <port>` in the agent pane
+- [ ] Session created via `POST /session` on startup
+- [ ] Messages sent via API (`POST /session/{id}/message` or `/prompt_async`)
+- [ ] Idle detection works via `GET /session/{id}/status`
+- [ ] Port management: unique port per role via `OpenCodePort(role)`
+- [ ] Auth support via `OPENCODE_SERVER_PASSWORD` env var
+- [ ] Documented as optional enhancement over TUI mode
 
 ## Configuration
 
@@ -1043,8 +1123,8 @@ Success criteria:
 | `MUXCODE_BETA_CLI` | (falls back to default) | AI CLI for the beta testbed agent |
 | `MUXCODE_BETA_ROLE` | (unset) | Role to mimic in beta window (e.g. `build`, `test`) |
 | `MUXCODE_BETA_TAKEOVER` | `false` | Enable takeover mode (assume mimicked role's bus identity) |
-| `MUXCODE_OPENCODE_MODE` | `server` | OpenCode interaction mode (`server`, `tui`) |
-| `MUXCODE_OPENCODE_PORT` | `4096` | Port for OpenCode server mode |
+| `MUXCODE_OPENCODE_MODE` | `tui` | OpenCode interaction mode (`tui`, `server`). Server mode is future/optional (Phase 5) |
+| `MUXCODE_OPENCODE_PORT` | `4096` | Port for OpenCode server mode (only used when `MUXCODE_OPENCODE_MODE=server`) |
 
 All `MUXCODE_{ROLE}_CLI` vars accept: `claude`, `opencode`, or `local`. Resolution: per-role → session default → `claude`.
 
@@ -1063,34 +1143,20 @@ All `MUXCODE_{ROLE}_CLI` vars accept: `claude`, `opencode`, or `local`. Resoluti
 
 ## Resolved questions
 
-### 1. Server mode is the primary integration path
+### 1. TUI mode is the primary integration path
 
-**Decision**: Server mode (`opencode serve`) is the primary path. TUI mode is a best-effort fallback.
+**Decision**: TUI mode (bare `opencode` binary) is the primary path. Server mode (`opencode serve`) is a future/optional enhancement.
 
-**Rationale**: OpenCode's TUI has no programmatic input mode — stdin piping breaks the UI (github issue #3871), and the `--prompt` flag only pre-fills without auto-submitting. Reliable tmux send-keys interaction is not feasible.
+**Rationale**: TUI mode provides the simplest integration with the least coupling. OpenCode agents run as interactive TUI sessions in tmux panes — users can interact with them directly, and the TUI manages its own context window, tool execution, and compaction. This matches the beta window pattern (Phase 0c) that's already proven to work.
 
-The server API (`opencode serve`, port 4096 default) exposes a comprehensive REST API with OpenAPI 3.1 spec at `/doc`:
+The trade-off is reduced programmability: muxcode cannot reliably inject text into the TUI (stdin piping breaks the UI, github issue #3871), detect idle state, or trigger compaction. But these limitations are acceptable because:
 
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /session` | Create session |
-| `GET /session/{id}` | Get session info |
-| `POST /session/{id}/message` | Send prompt (streams response) |
-| `POST /session/{id}/prompt_async` | Send prompt (returns 204, async) |
-| `GET /session/{id}/status` | Idle/busy state |
-| `GET /global/event` | SSE event stream (session.status, etc.) |
-| `GET /session/{id}/messages` | Conversation history |
-| `GET /session/{id}/shell` | Execute shell commands |
+1. **OpenCode agents are semi-autonomous** — they handle their own tool execution and context management without muxcode orchestration
+2. **The edit agent stays on Claude Code** — hook-driven chains, edit guard, and workflow state transitions are only needed on the orchestrator
+3. **Bus messaging still works** — OpenCode agents read their inbox via `muxcode inbox` and send replies via `muxcode send`, same as Claude Code agents
+4. **Graceful degradation is well-defined** — each hook-dependent feature has a documented fallback (permission deny rules, system prompt instructions, auto-compact)
 
-The API has explicit idle detection via `session.status` events (`idle`/`busy`), structured JSON responses with model/provider/agent metadata, and optional auth via `OPENCODE_SERVER_PASSWORD`.
-
-**Impact on design**: The `OpenCodeProvider` should implement server mode first:
-- `SendMessage`: HTTP POST to `/session/{id}/message` or `/session/{id}/prompt_async`
-- `DetectIdle`: GET `/session/{id}/status` or subscribe to SSE events
-- `AcceptStartup`: create session via `POST /session`, no TUI prompts to dismiss
-- TUI mode remains in the provider as a degraded fallback (display-message notifications only, no reliable input)
-
-Update Phase 1 to focus on server mode. Move TUI mode to Phase 4 (future/optional).
+Server mode (`opencode serve`) remains available as Phase 5 for environments that need reliable idle detection and programmatic message sending. The TUI approach is sufficient for the primary use case: mixed-provider sessions where OpenCode agents handle specific roles alongside Claude Code.
 
 ### 2. Accept prompt-based hook replacement; custom commands cannot substitute
 

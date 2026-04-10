@@ -17,7 +17,6 @@ type LaunchConfig struct {
 	CLI       string   // Agent CLI binary (e.g. "claude", "muxcode-llm-harness", "opencode")
 	Provider  Provider // AI CLI provider (resolved from MUXCODE_{ROLE}_CLI env var)
 	IsLocal   bool     // True if routing to local LLM (harness/bus agent)
-	IsBetaCLI bool     // True if launching a non-Claude standalone CLI (e.g. OpenCode TUI)
 	Agent     string   // Agent definition filename (without .md)
 	AgentFile string   // Resolved path to agent definition file (empty if not found)
 
@@ -386,10 +385,6 @@ func (c *LaunchConfig) BuildExecArgs() (string, []string) {
 	// Legacy fallback for manually constructed LaunchConfig (e.g. tests)
 	if c.IsLocal {
 		p := &LocalProvider{}
-		return p.BuildExecArgs(c)
-	}
-	if c.IsBetaCLI {
-		p := &OpenCodeProvider{}
 		return p.BuildExecArgs(c)
 	}
 	p := &ClaudeCodeProvider{}

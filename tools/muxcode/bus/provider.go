@@ -2,8 +2,6 @@ package bus
 
 import (
 	"os"
-	"os/exec"
-	"strings"
 )
 
 // Provider abstracts the AI CLI backend used by an agent role.
@@ -86,42 +84,6 @@ func ResolveProviderCLI(role string) string {
 	}
 	return cli
 }
-
-// --- OpenCodeProvider (stub — full implementation in Phase 2) ---
-
-// OpenCodeProvider implements the Provider interface for OpenCode CLI.
-// Phase 1: minimal stub that launches the bare binary.
-// Phase 2: server mode with HTTP API for messaging, idle detection, etc.
-type OpenCodeProvider struct{}
-
-func (p *OpenCodeProvider) Name() string                              { return "opencode" }
-func (p *OpenCodeProvider) ConfigureLaunch(_ *LaunchConfig, _ string) {}
-func (p *OpenCodeProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
-	return cfg.CLI, nil
-}
-func (p *OpenCodeProvider) IsIdle(_, _ string) bool { return false }
-func (p *OpenCodeProvider) IsAlive(session, role string) bool {
-	target := PaneTarget(session, role)
-	cmd := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-S", "-5")
-	out, err := cmd.Output()
-	if err != nil {
-		return true // indeterminate → assume alive
-	}
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
-		if strings.Contains(strings.TrimSpace(line), "opencode") {
-			return true
-		}
-	}
-	return !isShellPrompt(lines)
-}
-func (p *OpenCodeProvider) ClassifyPane(_ string) PaneState             { return PaneNotReady }
-func (p *OpenCodeProvider) AcceptStartup(_, _ string, _ PaneState) bool { return false }
-func (p *OpenCodeProvider) SendWakeUp(_, _ string) error                { return nil }
-func (p *OpenCodeProvider) Compact(_, _, _ string) error                { return nil }
-func (p *OpenCodeProvider) SupportsHooks() bool                         { return false }
-func (p *OpenCodeProvider) IdlePromptChar() string                      { return "" }
-func (p *OpenCodeProvider) WriteAgentConfig(_ string) error             { return nil }
 
 // --- LocalProvider ---
 

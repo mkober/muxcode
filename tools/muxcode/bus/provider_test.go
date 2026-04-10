@@ -28,7 +28,7 @@ func TestProviderInterface_OpenCode(t *testing.T) {
 		t.Error("OpenCode should not support hooks")
 	}
 	if p.IdlePromptChar() != "" {
-		t.Error("OpenCode stub should have empty idle prompt char")
+		t.Error("OpenCode should have empty idle prompt char")
 	}
 }
 
@@ -255,28 +255,4 @@ func TestClaudeBuildExecArgs_FallbackPrompt(t *testing.T) {
 }
 
 // --- OpenCodeProvider ---
-
-func TestOpenCodeBuildExecArgs(t *testing.T) {
-	p := &OpenCodeProvider{}
-	cfg := &LaunchConfig{
-		Role: "beta",
-		CLI:  "opencode",
-	}
-
-	binary, args := p.BuildExecArgs(cfg)
-
-	if binary != "opencode" {
-		t.Errorf("binary = %q, want opencode", binary)
-	}
-	if args != nil {
-		t.Errorf("args = %v, want nil", args)
-	}
-}
-
-func TestOpenCodeClassifyPane_AlwaysNotReady(t *testing.T) {
-	p := &OpenCodeProvider{}
-	// Even with Claude Code content, OpenCode stub returns PaneNotReady
-	if got := p.ClassifyPane("trust this folder\n❯"); got != PaneNotReady {
-		t.Errorf("OpenCode ClassifyPane should return PaneNotReady, got %d", got)
-	}
-}
+// Full OpenCode provider tests are in provider_opencode_test.go
