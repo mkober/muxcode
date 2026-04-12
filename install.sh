@@ -130,31 +130,73 @@ else
   fi
 fi
 
-# Validate: at least one provider selected
-if ! $use_claude && ! $use_opencode; then
-  fail "At least one AI CLI provider is required. Re-run and select Claude Code or OpenCode."
+# Codex CLI
+use_codex=false
+if command -v codex >/dev/null 2>&1; then
+  codex_version=$(codex --version 2>/dev/null || echo "version unknown")
+  ok "Codex CLI found ($codex_version)"
+  use_codex=true
+else
+  # Only prompt if user doesn't already have both other providers
+  if $use_claude && $use_opencode; then
+    info "Codex CLI not found (optional — Claude Code and OpenCode are available)"
+    ans="n"
+  elif $use_claude || $use_opencode; then
+    info "Codex CLI not found (optional — provides OpenAI model access)"
+    ans="n"
+  else
+    read -rp "  Install Codex CLI? (provides OpenAI model access) [y/N] " ans
+  fi
+  if [[ "$ans" =~ ^[Yy]$ ]]; then
+    info "Installing Codex CLI..."
+    if npm install -g @openai/codex 2>/dev/null; then
+      ok "Codex CLI installed"
+      use_codex=true
+    elif brew install --cask codex 2>/dev/null; then
+      ok "Codex CLI installed via Homebrew"
+      use_codex=true
+    else
+      warn "Auto-install failed. Install manually:"
+      echo "    npm install -g @openai/codex"
+      echo "    — or —"
+      echo "    brew install --cask codex"
+      echo ""
+      read -rp "  Continue without Codex CLI? [y/N] " skip_ans
+      [[ "$skip_ans" =~ ^[Yy]$ ]] && use_codex=false || fail "Install Codex CLI and re-run"
+    fi
+  fi
 fi
 
-# Default provider selection (when both available)
+# Validate: at least one provider selected
+if ! $use_claude && ! $use_opencode && ! $use_codex; then
+  fail "At least one AI CLI provider is required. Re-run and select a provider."
+fi
+
+# Default provider selection (when multiple available)
 default_cli="claude"
-if $use_claude && $use_opencode; then
+provider_count=0
+$use_claude   && ((provider_count++)) || true
+$use_opencode && ((provider_count++)) || true
+$use_codex    && ((provider_count++)) || true
+
+if [ "$provider_count" -gt 1 ]; then
   echo ""
-  info "Both Claude Code and OpenCode are available."
-  echo "  Which should be the default for new agent windows?"
+  info "Multiple providers available. Which should be the default?"
   echo ""
-  echo "    1) Claude Code (recommended — full hook support)"
-  echo "    2) OpenCode (server mode — multi-provider LLM support)"
+  $use_claude   && echo "    1) Claude Code (recommended — full hook support)"
+  $use_opencode && echo "    2) OpenCode (TUI mode — multi-provider LLM support)"
+  $use_codex    && echo "    3) Codex CLI (exec mode — OpenAI model access)"
   echo ""
   read -rp "  Default provider [1]: " default_choice
-  if [[ "$default_choice" == "2" ]]; then
-    default_cli="opencode"
-    info "Default: OpenCode (override per-role with MUXCODE_{ROLE}_CLI=claude)"
-  else
-    default_cli="claude"
-    info "Default: Claude Code (override per-role with MUXCODE_{ROLE}_CLI=opencode)"
-  fi
+  case "$default_choice" in
+    2) default_cli="opencode"; info "Default: OpenCode" ;;
+    3) default_cli="codex";    info "Default: Codex CLI" ;;
+    *) default_cli="claude";   info "Default: Claude Code" ;;
+  esac
 elif $use_opencode; then
   default_cli="opencode"
+elif $use_codex; then
+  default_cli="codex"
 fi
 
 echo ""
@@ -329,12 +371,32 @@ if $use_opencode; then
   ok "OpenCode configured"
 fi
 
+# --- Configure Codex CLI (if selected) ---
+if $use_codex; then
+  info "Configuring Codex CLI..."
+
+  # API key check
+  if [ -z "${OPENAI_API_KEY:-}" ]; then
+    echo ""
+    info "Codex CLI needs an OpenAI API key."
+    echo "  Set in your shell profile or .env:"
+    echo "    export OPENAI_API_KEY=sk-..."
+    echo "  Or authenticate with: codex login"
+    echo ""
+    warn "No OPENAI_API_KEY detected — Codex agents will fail until configured"
+  else
+    ok "OPENAI_API_KEY found for Codex CLI"
+  fi
+
+  ok "Codex CLI configured"
+fi
+
 # --- Write default provider to config ---
 CONFIG_FILE="$HOME/.config/muxcode/config"
 if [ -f "$CONFIG_FILE" ]; then
   if ! grep -q '^MUXCODE_AGENT_CLI=' "$CONFIG_FILE"; then
     echo "" >> "$CONFIG_FILE"
-    echo "# Default AI CLI provider (claude, opencode, local)" >> "$CONFIG_FILE"
+    echo "# Default AI CLI provider (claude, opencode, codex, local)" >> "$CONFIG_FILE"
     echo "MUXCODE_AGENT_CLI=$default_cli" >> "$CONFIG_FILE"
     ok "Added MUXCODE_AGENT_CLI=$default_cli to config"
   else
@@ -346,12 +408,13 @@ else
 # MuxCode configuration
 # See: docs/configuration.md
 
-# Default AI CLI provider (claude, opencode, local)
+# Default AI CLI provider (claude, opencode, codex, local)
 MUXCODE_AGENT_CLI=$default_cli
 
 # Per-role overrides (uncomment to customize):
 # MUXCODE_BUILD_CLI=opencode
 # MUXCODE_TEST_CLI=opencode
+# MUXCODE_REVIEW_CLI=codex
 EOF
   ok "Created config at $CONFIG_FILE"
 fi
@@ -363,6 +426,7 @@ echo ""
 echo "Installed providers:"
 $use_claude   && echo -e "  ${GREEN}✓${NC} Claude Code (default: $( [[ $default_cli == claude ]] && echo 'yes' || echo 'no' ))"
 $use_opencode && echo -e "  ${GREEN}✓${NC} OpenCode (default: $( [[ $default_cli == opencode ]] && echo 'yes' || echo 'no' ))"
+$use_codex    && echo -e "  ${GREEN}✓${NC} Codex CLI (default: $( [[ $default_cli == codex ]] && echo 'yes' || echo 'no' ))"
 echo ""
 echo "Next steps:"
 echo ""
@@ -372,8 +436,9 @@ echo ""
 echo "  2. Launch a session:"
 echo "     muxcode"
 echo ""
-if $use_opencode; then
-  echo "  3. Assign agents to OpenCode (per-role):"
-  echo "     MUXCODE_BUILD_CLI=opencode muxcode"
+if $use_opencode || $use_codex; then
+  echo "  3. Assign agents to alternate providers (per-role):"
+  $use_opencode && echo "     MUXCODE_BUILD_CLI=opencode muxcode"
+  $use_codex    && echo "     MUXCODE_REVIEW_CLI=codex muxcode"
   echo ""
 fi
