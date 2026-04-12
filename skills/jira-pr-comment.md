@@ -1,7 +1,7 @@
 ---
 name: jira-pr-comment
 description: Post a comment on a Jira issue when a PR is created
-roles: [git]
+roles: [git, commit]
 tags: [jira, github, pr, integration]
 ---
 

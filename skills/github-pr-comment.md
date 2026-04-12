@@ -1,7 +1,7 @@
 ---
 name: github-pr-comment
 description: Post threaded replies to Copilot review comments and a summary comment on a GitHub PR
-roles: [git]
+roles: [git, commit]
 tags: [github, pr, copilot, review]
 ---
 
