@@ -196,11 +196,11 @@ func RoleClaudeModelDefault(role string) string {
 }
 
 // RoleOpenCodeModelDefault returns the default OpenCode model for a role.
-// build/test/deploy/run/watch/commit → Big Pickle (free via OpenCode Zen).
+// build/test/deploy/run/watch/commit → Kimi K2.5 (free via OpenCode Zen).
 func RoleOpenCodeModelDefault(role string) string {
 	switch role {
 	case "build", "test", "deploy", "run", "runner", "watch", "commit", "git":
-		return "opencode/big-pickle"
+		return "moonshotai/kimi-k2.5"
 	default:
 		return ""
 	}

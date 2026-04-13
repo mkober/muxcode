@@ -1,7 +1,7 @@
 ---
 description: Command execution specialist — runs CLI commands, invokes APIs, and executes processes safely
 mode: primary
-model: opencode/big-pickle
+model: moonshotai/kimi-k2.5
 permission:
   bash:
     "muxcode *": allow

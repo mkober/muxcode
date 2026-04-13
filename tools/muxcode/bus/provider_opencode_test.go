@@ -207,9 +207,9 @@ func TestResolveOpenCodeModel_Default(t *testing.T) {
 
 	model := resolveOpenCodeModel("build")
 
-	// Command-execution roles default to Big Pickle
-	if model != "opencode/big-pickle" {
-		t.Errorf("model = %q, want opencode/big-pickle", model)
+	// Command-execution roles default to Kimi K2.5
+	if model != "moonshotai/kimi-k2.5" {
+		t.Errorf("model = %q, want moonshotai/kimi-k2.5", model)
 	}
 }
 

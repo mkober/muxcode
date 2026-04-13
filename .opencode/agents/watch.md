@@ -1,7 +1,7 @@
 ---
 description: Log tailing specialist — tails local files, CloudWatch, Kubernetes, and Docker logs (read-only, no AWS mutations)
 mode: primary
-model: opencode/big-pickle
+model: moonshotai/kimi-k2.5
 permission:
   bash:
     "muxcode *": allow

@@ -330,7 +330,7 @@ func resolveOpenCodeModel(role string) string {
 		return model
 	}
 
-	// OpenCode role default (Big Pickle for command-execution roles)
+	// OpenCode role default (Kimi K2.5 for command-execution roles)
 	if model := RoleOpenCodeModelDefault(role); model != "" {
 		return model
 	}

@@ -1,7 +1,7 @@
 ---
 description: Test runner — runs tests and reports results
 mode: primary
-model: opencode/big-pickle
+model: moonshotai/kimi-k2.5
 permission:
   bash:
     "muxcode *": allow

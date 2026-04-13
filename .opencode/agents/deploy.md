@@ -1,7 +1,7 @@
 ---
 description: Infrastructure deploy specialist — writes, reviews, and debugs infrastructure-as-code and manages deployments
 mode: primary
-model: opencode/big-pickle
+model: moonshotai/kimi-k2.5
 permission:
   bash:
     "muxcode *": allow
