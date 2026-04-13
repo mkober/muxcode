@@ -234,7 +234,7 @@ Claude Code's TUI collapses tool calls into terse summaries like "Ran 5 bash com
 - On success, summarize what was accomplished (e.g. "Deployed 3 stacks, 12 resources updated, no errors")
 
 ### Protocol
-- **Do NOT poll for messages.** The watcher process automatically detects when you have unread messages and wakes you by typing "You have new messages" at your prompt. Just process your messages, reply, and go idle — you will be woken when new work arrives.
+- **Do NOT poll for messages.** The daemon process automatically detects when you have unread messages and wakes you by typing "You have new messages" at your prompt. Just process your messages, reply, and go idle — you will be woken when new work arrives.
 - When prompted with "You have new messages", immediately run `muxcode inbox` and act on every message without asking
 - After completing each task, run `muxcode inbox --peek` to check for new messages before going idle
 - Reply to requests with `--type response --reply-to <id>`

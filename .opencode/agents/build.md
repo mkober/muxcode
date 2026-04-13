@@ -175,15 +175,12 @@ Report lint and build status clearly: lint issues found, build success with warn
 
 ## Build Agent Specifics
 - When you receive a build request, run the build immediately — do not ask for confirmation
-- After completing a build, you MUST do TWO things in order:
-  1. **Reply to the requester** (check the `from` field):
-     - On success: `muxcode send <requester> response "Build succeeded: <summary>" --type response --reply-to <id>`
-     - On failure: `muxcode send <requester> response "Build failed: <summary of errors>" --type response --reply-to <id>`
-  2. **On success ONLY, trigger the test agent** — this is REQUIRED, do not skip:
-     ```
-     muxcode send test test "Build succeeded — run tests and report results" --type request
-     ```
-- On failure, do NOT send to test — only reply to the requester
+- After completing a build, reply to the **requesting agent only once** (check the `from` field):
+  - On success: `muxcode send <requester> build "Build succeeded: <summary>" --type response --reply-to <id>`
+  - On failure: `muxcode send <requester> build "Build failed: <summary of errors>" --type response --reply-to <id>`
+- **After a successful build, send a test request manually** (no auto-chain):
+`muxcode send test test "Build succeeded, run tests" --type request`
+- **Send exactly ONE reply + ONE chain request per build request. No other messages.**
 - Include the key output lines (errors, warnings) in your reply so the requester has full context
 - Save recurring build issues to memory for future reference
 
@@ -245,7 +242,7 @@ Claude Code's TUI collapses tool calls into terse summaries like "Ran 5 bash com
 - On success, summarize what was accomplished (e.g. "Deployed 3 stacks, 12 resources updated, no errors")
 
 ### Protocol
-- **Do NOT poll for messages.** The watcher process automatically detects when you have unread messages and wakes you by typing "You have new messages" at your prompt. Just process your messages, reply, and go idle — you will be woken when new work arrives.
+- **Do NOT poll for messages.** The daemon process automatically detects when you have unread messages and wakes you by typing "You have new messages" at your prompt. Just process your messages, reply, and go idle — you will be woken when new work arrives.
 - When prompted with "You have new messages", immediately run `muxcode inbox` and act on every message without asking
 - After completing each task, run `muxcode inbox --peek` to check for new messages before going idle
 - Reply to requests with `--type response --reply-to <id>`
