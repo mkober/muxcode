@@ -1,7 +1,7 @@
 ---
 description: Log tailing specialist — tails local files, CloudWatch, Kubernetes, and Docker logs (read-only, no AWS mutations)
 mode: primary
-model: anthropic/claude-sonnet-4-5
+model: opencode/big-pickle
 permission:
   bash:
     "muxcode *": allow

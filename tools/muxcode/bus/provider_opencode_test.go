@@ -207,9 +207,9 @@ func TestResolveOpenCodeModel_Default(t *testing.T) {
 
 	model := resolveOpenCodeModel("build")
 
-	// Should have anthropic/ prefix
-	if model != "" && !strings.HasPrefix(model, "anthropic/") {
-		t.Errorf("model = %q, want anthropic/ prefix", model)
+	// Command-execution roles default to Big Pickle
+	if model != "opencode/big-pickle" {
+		t.Errorf("model = %q, want opencode/big-pickle", model)
 	}
 }
 
@@ -223,10 +223,11 @@ func TestResolveOpenCodeModel_ExplicitOverride(t *testing.T) {
 }
 
 func TestResolveOpenCodeModel_AlreadyPrefixed(t *testing.T) {
-	t.Setenv("MUXCODE_BUILD_MODEL", "")
-	t.Setenv("MUXCODE_BUILD_CLAUDE_MODEL", "anthropic/claude-sonnet-4-5")
+	// Use "edit" role which has no OpenCode default, so Claude fallback applies
+	t.Setenv("MUXCODE_EDIT_MODEL", "")
+	t.Setenv("MUXCODE_EDIT_CLAUDE_MODEL", "anthropic/claude-sonnet-4-5")
 
-	model := resolveOpenCodeModel("build")
+	model := resolveOpenCodeModel("edit")
 	if model != "anthropic/claude-sonnet-4-5" {
 		t.Errorf("model = %q, want anthropic/claude-sonnet-4-5", model)
 	}

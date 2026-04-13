@@ -415,13 +415,15 @@ else
 # MuxCode configuration
 # See: docs/configuration.md
 
-# Default AI CLI provider (claude, opencode, codex, local)
-MUXCODE_AGENT_CLI=$default_cli
+# Default AI CLI provider — overrides built-in role defaults.
+# Built-in defaults: edit/review/analyze/api → claude,
+#   build/test/deploy/run/watch/commit → opencode (free Big Pickle model).
+# Uncomment to force all roles to a single provider:
+# MUXCODE_AGENT_CLI=$default_cli
 
 # Per-role overrides (uncomment to customize):
-# MUXCODE_BUILD_CLI=opencode
-# MUXCODE_TEST_CLI=opencode
 # MUXCODE_REVIEW_CLI=codex
+# MUXCODE_BUILD_MODEL=anthropic/claude-sonnet-4-5
 EOF
   ok "Created config at $CONFIG_FILE"
 fi

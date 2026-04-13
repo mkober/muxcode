@@ -1,7 +1,7 @@
 ---
 description: Infrastructure deploy specialist — writes, reviews, and debugs infrastructure-as-code and manages deployments
 mode: primary
-model: anthropic/claude-sonnet-4-5
+model: opencode/big-pickle
 permission:
   bash:
     "muxcode *": allow

@@ -1,7 +1,7 @@
 ---
 description: Command execution specialist — runs CLI commands, invokes APIs, and executes processes safely
 mode: primary
-model: anthropic/claude-sonnet-4-5
+model: opencode/big-pickle
 permission:
   bash:
     "muxcode *": allow

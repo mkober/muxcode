@@ -45,13 +45,23 @@ func TestProviderInterface_Local(t *testing.T) {
 
 // --- ResolveProvider ---
 
-func TestResolveProvider_DefaultClaude(t *testing.T) {
+func TestResolveProvider_DefaultOpenCode(t *testing.T) {
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
 
 	p := ResolveProvider("build")
+	if p.Name() != "opencode" {
+		t.Errorf("default provider for build = %q, want opencode", p.Name())
+	}
+}
+
+func TestResolveProvider_DefaultClaude(t *testing.T) {
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("MUXCODE_EDIT_CLI", "")
+
+	p := ResolveProvider("edit")
 	if p.Name() != "claude" {
-		t.Errorf("default provider = %q, want claude", p.Name())
+		t.Errorf("default provider for edit = %q, want claude", p.Name())
 	}
 }
 
@@ -108,9 +118,15 @@ func TestResolveProvider_UnknownCLIDefaultsToClaude(t *testing.T) {
 func TestResolveProviderCLI_Defaults(t *testing.T) {
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
+	t.Setenv("MUXCODE_EDIT_CLI", "")
 
-	if got := ResolveProviderCLI("build"); got != "claude" {
-		t.Errorf("ResolveProviderCLI(build) = %q, want claude", got)
+	// Command-execution roles default to opencode
+	if got := ResolveProviderCLI("build"); got != "opencode" {
+		t.Errorf("ResolveProviderCLI(build) = %q, want opencode", got)
+	}
+	// Orchestration roles default to claude
+	if got := ResolveProviderCLI("edit"); got != "claude" {
+		t.Errorf("ResolveProviderCLI(edit) = %q, want claude", got)
 	}
 }
 
@@ -255,7 +271,7 @@ func TestResolveProvider_HookGating(t *testing.T) {
 		role     string
 		wantHook bool
 	}{
-		{"default claude has hooks", "MUXCODE_BUILD_CLI", "", "build", true},
+		{"default opencode no hooks", "MUXCODE_BUILD_CLI", "", "build", false},
 		{"opencode no hooks", "MUXCODE_BUILD_CLI", "opencode", "build", false},
 		{"codex no hooks", "MUXCODE_BUILD_CLI", "codex", "build", false},
 		{"local no hooks", "MUXCODE_BUILD_CLI", "local", "build", false},
@@ -293,15 +309,15 @@ func TestIsAgentIdle_Local_AlwaysFalse(t *testing.T) {
 // --- Phase 4: mixed-provider session testing ---
 
 func TestAgentStatus_ProviderField(t *testing.T) {
-	// Default: all roles show claude
+	// Default: command-execution roles show opencode
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
 	t.Setenv("MUXCODE_TEST_CLI", "")
 	session := t.TempDir()
 
 	status := GetAgentStatus(session, "build")
-	if status.Provider != "claude" {
-		t.Errorf("build provider = %q, want claude", status.Provider)
+	if status.Provider != "opencode" {
+		t.Errorf("build provider = %q, want opencode", status.Provider)
 	}
 }
 

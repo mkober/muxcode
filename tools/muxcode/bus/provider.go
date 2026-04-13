@@ -79,6 +79,9 @@ func ResolveProvider(role string) Provider {
 
 // ResolveProviderCLI returns the CLI identifier for a role without
 // constructing a full Provider. Used for logging and configuration.
+// Resolution: per-role env → global env → role default.
+// Command-execution roles (build, test, deploy, run, watch, commit)
+// default to "opencode" (free Big Pickle model via OpenCode Zen).
 func ResolveProviderCLI(role string) string {
 	cli := os.Getenv(RoleCLIEnvVar(role))
 
@@ -86,9 +89,21 @@ func ResolveProviderCLI(role string) string {
 		cli = os.Getenv("MUXCODE_AGENT_CLI")
 	}
 	if cli == "" {
-		cli = "claude"
+		cli = roleDefaultCLI(role)
 	}
 	return cli
+}
+
+// roleDefaultCLI returns the built-in default CLI for a role.
+// Command-execution roles default to OpenCode (free Big Pickle model).
+// All other roles default to Claude Code (hook support, orchestration).
+func roleDefaultCLI(role string) string {
+	switch role {
+	case "build", "test", "deploy", "run", "runner", "watch", "commit", "git":
+		return "opencode"
+	default:
+		return "claude"
+	}
 }
 
 // chainInstructionForRole returns an additional SendWakeUp prompt suffix

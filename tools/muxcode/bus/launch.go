@@ -183,13 +183,24 @@ func RoleCodexModelDefault(role string) string {
 }
 
 // RoleClaudeModelDefault returns the default Claude model for a role.
-// edit/review/analyze → opus, build/test/api/deploy/run/watch/commit → sonnet.
+// edit/review/analyze → opus, everything else → sonnet.
 func RoleClaudeModelDefault(role string) string {
 	switch role {
 	case "edit", "review", "analyze", "analyst":
 		return "claude-opus-4-6"
 	case "build", "test", "api", "deploy", "run", "runner", "watch", "commit", "git":
 		return "claude-sonnet-4-5"
+	default:
+		return ""
+	}
+}
+
+// RoleOpenCodeModelDefault returns the default OpenCode model for a role.
+// build/test/deploy/run/watch/commit → Big Pickle (free via OpenCode Zen).
+func RoleOpenCodeModelDefault(role string) string {
+	switch role {
+	case "build", "test", "deploy", "run", "runner", "watch", "commit", "git":
+		return "opencode/big-pickle"
 	default:
 		return ""
 	}

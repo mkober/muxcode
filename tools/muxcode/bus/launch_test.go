@@ -302,8 +302,8 @@ func TestResolveLaunchConfig_BuildRole(t *testing.T) {
 	if cfg.Role != "build" {
 		t.Errorf("Role = %q, want build", cfg.Role)
 	}
-	if cfg.CLI != "claude" {
-		t.Errorf("CLI = %q, want claude", cfg.CLI)
+	if cfg.CLI != "opencode" {
+		t.Errorf("CLI = %q, want opencode (default for build)", cfg.CLI)
 	}
 	if cfg.IsLocal {
 		t.Error("expected IsLocal=false")
@@ -312,14 +312,12 @@ func TestResolveLaunchConfig_BuildRole(t *testing.T) {
 		t.Errorf("Agent = %q, want code-builder", cfg.Agent)
 	}
 
-	// Should have --model claude-sonnet-4-5
-	if len(cfg.ModelFlags) != 2 || cfg.ModelFlags[1] != "claude-sonnet-4-5" {
-		t.Errorf("ModelFlags = %v, want [--model claude-sonnet-4-5]", cfg.ModelFlags)
+	// OpenCode provider doesn't set ModelFlags or PermFlags (handled in agent config)
+	if len(cfg.ModelFlags) != 0 {
+		t.Errorf("ModelFlags = %v, want empty (OpenCode handles model in agent config)", cfg.ModelFlags)
 	}
-
-	// Should have --dangerously-skip-permissions
-	if len(cfg.PermFlags) == 0 {
-		t.Error("expected PermFlags for non-edit role")
+	if len(cfg.PermFlags) != 0 {
+		t.Errorf("PermFlags = %v, want empty (OpenCode doesn't use Claude permission flags)", cfg.PermFlags)
 	}
 }
 

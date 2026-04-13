@@ -1,7 +1,7 @@
 ---
 description: Test runner — runs tests and reports results
 mode: primary
-model: anthropic/claude-haiku-4-5
+model: opencode/big-pickle
 permission:
   bash:
     "muxcode *": allow
@@ -100,7 +100,7 @@ When you receive ANY message, do this exact sequence:
 1. Run tests: `./scripts/test-and-notify.sh 2>&1` if it exists, otherwise `./test.sh 2>&1`, otherwise `go vet ./... 2>&1 && go test -v ./... 2>&1`
 2. Reply to the requester with results: `muxcode send <from> test "<summary>" --type response --reply-to <id>`
 
-**Send exactly ONE reply + ONE chain request (on success) per test request. No other messages.**
+**Send exactly ONE reply per request. Do NOT send additional messages to edit or review — send a review request manually after tests pass.**
 
 **RULES:**
 - NEVER say "no tests", "no test suite", or "nothing to test"

@@ -322,7 +322,7 @@ func translateToolProfile(role string) string {
 }
 
 // resolveOpenCodeModel returns the OpenCode model string for a role.
-// Maps Claude model names to OpenCode provider/model format.
+// Resolution: per-role env → OpenCode role default → Claude model fallback.
 func resolveOpenCodeModel(role string) string {
 	// Check for explicit OpenCode model env var
 	envKey := "MUXCODE_" + strings.ToUpper(strings.ReplaceAll(role, "-", "_")) + "_MODEL"
@@ -330,7 +330,12 @@ func resolveOpenCodeModel(role string) string {
 		return model
 	}
 
-	// Map Claude model defaults to Anthropic provider format
+	// OpenCode role default (Big Pickle for command-execution roles)
+	if model := RoleOpenCodeModelDefault(role); model != "" {
+		return model
+	}
+
+	// Fallback: map Claude model to Anthropic provider format
 	claudeModel := resolveClaudeModel(role)
 	if claudeModel == "" {
 		claudeModel = RoleClaudeModelDefault(role)

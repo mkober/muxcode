@@ -91,40 +91,28 @@ Additional roles that share a host agent's window (messages are routed to the ho
 
 ### Default model assignments
 
-Out of the box, all agents use Claude Code with these model defaults:
+Out of the box, MuxCode uses Claude Code for orchestration roles and OpenCode with Big Pickle (free) for command-execution roles:
 
-| Role                          | Default CLI  | Default model        |
-| ----------------------------- | ------------ | -------------------- |
-| edit, review, analyze         | Claude Code  | `claude-opus-4-6`    |
-| build, test, deploy, run, watch, commit | Claude Code  | `claude-sonnet-4-5`  |
-| api                           | Claude Code  | `claude-sonnet-4-5`  |
+| Role                                      | Default CLI | Default model            |
+| ----------------------------------------- | ----------- | ------------------------ |
+| edit, review, analyze                     | Claude Code | `claude-opus-4-6`       |
+| build, test, deploy, run, watch, commit   | OpenCode    | `opencode/big-pickle`   |
+| api                                       | Claude Code | `claude-sonnet-4-5`     |
 
-Override the model per role with `MUXCODE_{ROLE}_CLAUDE_MODEL` (e.g. `MUXCODE_BUILD_CLAUDE_MODEL=claude-haiku-4-5`). Override the CLI provider per role with `MUXCODE_{ROLE}_CLI`.
+Big Pickle is a free model available through [OpenCode Zen](https://opencode.ai/zen). Override the model per role with `MUXCODE_{ROLE}_MODEL` for OpenCode roles (e.g. `MUXCODE_BUILD_MODEL=anthropic/claude-sonnet-4-5`) or `MUXCODE_{ROLE}_CLAUDE_MODEL` for Claude Code roles. Override the CLI provider per role with `MUXCODE_{ROLE}_CLI`.
 
 ### Recommended multi-provider configuration
 
-A mixed-provider setup balances cost, quality, and capability. Claude Code handles the edit and commit workflows where hook support and precise tool control matter most. OpenCode runs the structured-command roles (build, test, deploy, run, watch) with access to cost-effective models. Codex CLI brings strong reasoning to review and analysis.
+The defaults above already provide a cost-effective split — Claude Code for orchestration (edit, review, analyze) and OpenCode with Big Pickle (free) for command execution. To further customize, add Codex CLI for reasoning-heavy roles:
 
 ```bash
 # ~/.config/muxcode/config or .muxcode/config
 
-# Session-wide default — Claude Code for hook support
-MUXCODE_AGENT_CLI=claude
-
-# Structured-command roles — OpenCode with a fast, affordable model
-MUXCODE_BUILD_CLI=opencode
-MUXCODE_TEST_CLI=opencode
-MUXCODE_DEPLOY_CLI=opencode
-MUXCODE_RUN_CLI=opencode
-MUXCODE_WATCH_CLI=opencode
-
-# Reasoning-heavy roles — Codex CLI with GPT-5.4
+# Reasoning-heavy roles — Codex CLI with gpt-5.3-codex
 MUXCODE_REVIEW_CLI=codex
 MUXCODE_ANALYZE_CLI=codex
 
-# Cost optimization — use Haiku for roles that run simple commands
-MUXCODE_BUILD_CLAUDE_MODEL=claude-haiku-4-5
-MUXCODE_TEST_CLAUDE_MODEL=claude-haiku-4-5
+# Cost optimization — use Haiku for API role
 MUXCODE_API_CLAUDE_MODEL=claude-haiku-4-5
 ```
 
@@ -133,12 +121,12 @@ This gives you:
 | Role     | Provider    | Model              | Why                                                      |
 | -------- | ----------- | ------------------ | -------------------------------------------------------- |
 | edit     | Claude Code | Opus 4.6           | Full hook support, orchestration, code editing            |
-| commit   | Claude Code | Sonnet 4.5         | Git operations need hooks for pre-commit safeguards       |
-| build    | OpenCode    | (provider default) | Runs `./build.sh` — structured commands, no hooks needed |
-| test     | OpenCode    | (provider default) | Runs `./test.sh` — structured commands, no hooks needed  |
-| deploy   | OpenCode    | (provider default) | Runs CDK/terraform — command execution role              |
-| run      | OpenCode    | (provider default) | Ad-hoc commands — any model works                        |
-| watch    | OpenCode    | (provider default) | Log tailing — lightweight, read-only                     |
+| commit   | OpenCode    | Big Pickle         | Git operations — free model, prompt-instructed chains     |
+| build    | OpenCode    | Big Pickle         | Runs `./build.sh` — structured commands, no hooks needed |
+| test     | OpenCode    | Big Pickle         | Runs `./test.sh` — structured commands, no hooks needed  |
+| deploy   | OpenCode    | Big Pickle         | Runs CDK/terraform — command execution role              |
+| run      | OpenCode    | Big Pickle         | Ad-hoc commands — free model works well                  |
+| watch    | OpenCode    | Big Pickle         | Log tailing — lightweight, read-only                     |
 | review   | Codex CLI   | gpt-5.3-codex      | Deep code reasoning, thorough diff analysis              |
 | analyze  | Codex CLI   | gpt-5.3-codex      | Codebase-wide analysis, pattern detection                |
 
