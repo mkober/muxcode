@@ -2,13 +2,13 @@
 
 Enable swapping Claude Code with [Codex CLI](https://github.com/openai/codex) (OpenAI's open-source coding agent) on a per-agent basis. Each tmux window/tab runs one agent, and each agent can independently use Claude Code, OpenCode, or Codex CLI as its AI CLI. A single muxcode session can mix all three providers. Provider assignment is per-agent at launch time via environment variables (`MUXCODE_{ROLE}_CLI=codex`). This extends the existing Provider interface with a new `CodexProvider` implementation.
 
-**Initial target role**: review agent — validate the integration pattern with a read-only, run-to-completion workload before expanding to other roles.
+**Status**: Phases 0–4 complete. Codex runs in TUI mode (`--no-alt-screen`) with `tmux send-keys` interaction — the same pattern as OpenCode, not the exec-mode wrapper originally proposed. Default model: **gpt-5.3-codex**. Recommended roles: review and analyze (reasoning-heavy, read-only).
 
 ## Context
 
 ### What is Codex CLI
 
-Codex CLI is OpenAI's open-source terminal-based coding agent (GitHub: openai/codex, MIT licensed). Originally built in TypeScript/Node.js, it has been rewritten in **Rust** with an Ink-based TUI. It connects to OpenAI models (gpt-5.4 default, plus o4-mini, o3, gpt-4.1, gpt-5.4, etc.) to perform coding tasks in the terminal.
+Codex CLI is OpenAI's open-source terminal-based coding agent (GitHub: openai/codex, MIT licensed). Originally built in TypeScript/Node.js, it has been rewritten in **Rust** with an Ink-based TUI. It connects to OpenAI models (gpt-5.3-codex default, plus o4-mini, o3, gpt-4.1, gpt-5.4, etc.) to perform coding tasks in the terminal.
 
 Key capabilities relevant to muxcode integration:
 
@@ -44,16 +44,16 @@ Key capabilities relevant to muxcode integration:
 | Claude Code | Production | Full hooks | `❯` prompt | Persistent agent, hook-driven chains |
 | OpenCode | Production | None | None (TUI) | Persistent TUI, best-effort notifications |
 | Local LLM | Production | None | None | Harness-managed, run-to-completion batches |
-| **Codex CLI** | **Proposed** | **None** | **Shell prompt** | **`exec` mode, run-to-completion via wrapper** |
+| **Codex CLI** | **Production** | **None** | **Heuristic (TUI prompt)** | **TUI mode (`--no-alt-screen`), `tmux send-keys` interaction** |
 
-### Key challenges
+### Key challenges (and resolutions)
 
-1. **No persistent agent** — `codex exec` is run-to-completion: each invocation starts fresh with no conversation history. The wrapper loop pattern (similar to LocalProvider) handles this, but it means no multi-turn context within a single review.
-2. **No hook system** — Codex has experimental `hooks.json` behind a feature flag, but it's not stable. Build/test/review chains require the same graceful degradation strategy as OpenCode (system prompt instructions for manual `muxcode send` commands).
-3. **Sandbox blocks /tmp on macOS** — Seatbelt unconditionally disables network and restricts filesystem. MuxCode agents need `/tmp/muxcode-bus-{session}/` access. Must use `--sandbox danger-full-access` or `--yolo` to bypass.
-4. **No --instructions flag** — Custom instructions are only loaded from `AGENTS.md` files in the filesystem hierarchy. The wrapper must ensure the right `AGENTS.md` is in scope (project root or `~/.codex/`).
-5. **Alt-screen TUI** — The interactive TUI uses alternate screen with a React-based (Ink) input box. `tmux send-keys` does not work reliably. The `exec` mode avoids this entirely.
-6. **OpenAI API key required** — Codex requires `OPENAI_API_KEY` (or `codex login` auth). Mixed sessions need both Anthropic and OpenAI credentials available.
+1. ~~**No persistent agent**~~ — **Resolved**: TUI mode (`--no-alt-screen`) runs a persistent Codex process. Multi-turn context is maintained within the TUI session. The originally proposed exec-mode wrapper was not needed.
+2. **No hook system** — Codex has experimental `hooks.json` behind a feature flag, but it's not stable. Build/test/review chains use graceful degradation: `chainInstructionForRole()` appends manual `muxcode send` commands to the injected prompt. `CheckSendPolicy()` bypasses deny rules for non-hook providers.
+3. ~~**Sandbox blocks /tmp on macOS**~~ — **Resolved**: TUI mode doesn't use the sandbox flag directly. `--full-auto` (which implies `sandbox=workspace-write`) is used for command-execution roles. Read-only roles omit `--full-auto` so Codex prompts before writes.
+4. **No --instructions flag** — `WriteAgentConfig()` generates `.codex/AGENTS.md` with bus protocol and role context. Task-specific instructions are injected via `SendWakeUp()` prompt.
+5. ~~**Alt-screen TUI**~~ — **Resolved**: `--no-alt-screen` flag disables alt-screen, preserving scrollback for `tmux capture-pane` and enabling `tmux send-keys` interaction.
+6. **OpenAI API key required** — `install.sh` validates auth: `OPENAI_API_KEY`, subscription login (`codex login`), `.codexrc`, or `auth.json`.
 
 ### Opportunities
 
@@ -67,27 +67,27 @@ Key capabilities relevant to muxcode integration:
 
 ## Design
 
-### Integration mode: `exec` (run-to-completion)
+### Integration mode: TUI (`--no-alt-screen`)
 
-`codex exec` is the right fit for MuxCode's non-edit agents. Each bus message spawns a new Codex invocation with the task prompt, captures stdout, and replies via the bus. This is the same pattern as the LocalProvider/harness but using Codex's own tool execution engine.
+Codex runs as a persistent TUI process in each agent's tmux pane, using `--no-alt-screen` to preserve scrollback for `tmux capture-pane` inspection. This is the same interaction pattern as OpenCode — tasks are injected via `tmux send-keys` and completion is detected heuristically from pane content.
 
-**Why not interactive TUI?**
-- Alt-screen TUI breaks `tmux send-keys` interaction
-- No reliable idle detection (no prompt character, React-based rendering)
-- `exec` mode provides cleaner output separation (stdout vs stderr)
-- Run-to-completion matches the review agent's workload pattern
+**Why TUI mode instead of exec mode?**
+- `--no-alt-screen` preserves scrollback, enabling pane capture for health checks and task detection
+- Persistent process avoids cold-start overhead per task
+- `tmux send-keys` works reliably for text injection into the Codex input prompt
+- Matches the established OpenCode integration pattern, reducing maintenance burden
+- `exec` mode is still available programmatically via `RunCodexExec()` in `codex_events.go`
 
 **Command template:**
 
 ```bash
-codex exec \
-  --full-auto \
-  --sandbox danger-full-access \
-  --add-dir "/tmp/muxcode-bus-${session}" \
-  -m "${model}" \
-  -C "${project_dir}" \
-  "${prompt}"
+codex \
+  --full-auto \        # omitted for read-only roles (review, analyze)
+  --no-alt-screen \
+  -m "${model}"
 ```
+
+**Read-only role handling:** `isReadOnlyCodexRole()` returns true for review and analyze roles. These agents omit `--full-auto` to enforce Codex's permission prompts as a guardrail against unintended writes.
 
 ### Review agent integration (Phase 0)
 
@@ -102,178 +102,114 @@ The review agent is the ideal first target because:
 ```
 edit sends "review latest changes" → bus → review inbox
   ↓
-wrapper detects inbox message
+daemon detects idle agent with pending inbox (checkIdleAgents)
   ↓
-wrapper builds prompt:
-  - Role instructions from AGENTS.md
-  - Task: "Review the changes in this project"
-  - Context: git diff output (pre-captured, passed as prompt)
+daemon calls Notify() → CodexProvider.SendWakeUp()
   ↓
-codex exec --full-auto -m o4-mini "..." 2>>/tmp/codex-review.log
+SendWakeUp:
+  1. Peek inbox (non-destructive read)
+  2. Filter out self-addressed messages (prevents loops)
+  3. Combine pending messages into single prompt
+  4. Append reply instruction + chainInstructionForRole() suffix
+  5. Inject via tmux send-keys (text + Enter)
+  6. Consume inbox on success
   ↓
-stdout captured as review result
+Codex TUI processes the prompt, runs git diff, reads files
   ↓
-wrapper parses result, sends reply via bus
+Codex sends reply via muxcode send (instructed in prompt)
+  ↓
+DetectTaskCompletion detects bus reply ("Sent") or TUI prompt reappear
   ↓
 edit receives review summary
 ```
 
-**Key design choice: pre-capture diff vs let Codex run git**
+**Key design choices:**
 
-Option A: Wrapper pre-captures `git diff` and includes it in the prompt. Codex doesn't need git access.
-Option B: Codex runs `git diff` itself via its bash tool. Requires git in PATH and repo access.
-
-**Decision: Option B** — Let Codex run its own commands. This matches how the Claude Code review agent works (runs `git status`, `git diff`, reads files for context). Codex's bash tool handles this natively. The wrapper just passes the task description; Codex figures out the commands.
+1. **Let Codex run its own commands** — Codex runs `git diff`, reads files via its bash tool, same as Claude Code. The injected prompt just describes the task; Codex figures out the commands.
+2. **Self-message filtering** — `SendWakeUp()` filters out messages where `From` matches the agent's role, preventing infinite reply loops where the agent wakes itself.
+3. **Chain instructions** — `chainInstructionForRole()` appends manual chaining commands (e.g., build→test, test→review) since Codex has no hook system.
 
 ### Provider interface implementation
 
-New file: `bus/provider_codex.go`
+File: `bus/provider_codex.go`
 
 ```go
 type CodexProvider struct{}
 
 func (p *CodexProvider) Name() string { return "codex" }
 
-// ConfigureLaunch sets exec-mode configuration.
-// Resolves model from MUXCODE_{ROLE}_CODEX_MODEL or MUXCODE_CODEX_MODEL.
+// ConfigureLaunch resolves agent file and shared prompt via BuildSharedPrompt(role).
+// Model resolved from MUXCODE_{ROLE}_CODEX_MODEL or MUXCODE_CODEX_MODEL, default gpt-5.3-codex.
 func (p *CodexProvider) ConfigureLaunch(cfg *LaunchConfig, role string)
 
-// BuildExecArgs returns the wrapper script path and arguments.
-// The wrapper handles inbox polling and codex exec invocation.
+// BuildExecArgs returns ["codex", "--no-alt-screen"] plus model flag.
+// Read-only roles (review, analyze) omit --full-auto.
+// No -C flag — preserves repo root as working directory.
 func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string)
 
-// IsIdle checks if the wrapper's pane shows a "waiting for messages" state.
-// The wrapper prints a marker line when idle between invocations.
+// IsIdle always returns false — TUI mode has no stable idle prompt character.
+// Task completion is detected via DetectTaskCompletion instead.
 func (p *CodexProvider) IsIdle(session, role string) bool
 
-// IsAlive checks if the wrapper process is running in the pane.
-// Shell prompt ($, %) without wrapper marker = dead.
+// IsAlive captures pane and checks for Codex TUI indicators
+// (box-drawing characters, "codex" text, prompt symbols ›/>).
 func (p *CodexProvider) IsAlive(session, role string) bool
 
-// ClassifyPane detects wrapper state vs bare shell.
+// ClassifyPane returns PaneIdle if TUI renders (box-drawing or "codex" text),
+// PaneNotReady on error markers, PaneUnknown otherwise.
 func (p *CodexProvider) ClassifyPane(content string) PaneState
 
-// AcceptStartup — no startup prompts needed (wrapper handles everything).
+// AcceptStartup returns true when state == PaneIdle (TUI has rendered).
 func (p *CodexProvider) AcceptStartup(session, pane string, state PaneState) bool
 
-// SendWakeUp — writes trigger file to wake the wrapper's poll loop.
+// SendWakeUp peeks inbox (non-destructive), filters self-addressed messages,
+// combines pending messages with reply instruction + chainInstructionForRole(),
+// injects via tmux send-keys, then consumes inbox on success.
 func (p *CodexProvider) SendWakeUp(session, role string) error
 
-// Compact — no-op (exec mode is stateless).
+// Compact is a no-op — TUI manages its own context.
 func (p *CodexProvider) Compact(session, role, target string) error
 
-// SupportsHooks — false.
+// SupportsHooks returns false — uses graceful degradation via prompt instructions.
 func (p *CodexProvider) SupportsHooks() bool { return false }
 
-// IdlePromptChar — returns wrapper's idle marker string.
+// IdlePromptChar returns "›" (Codex TUI prompt symbol).
 func (p *CodexProvider) IdlePromptChar() string
 
-// WriteAgentConfig writes AGENTS.md with role-specific instructions.
-// Uses .codex/AGENTS.md or a role-specific file referenced from config.toml.
+// WriteAgentConfig delegates to writeCodexAgentConfig(role) which writes
+// .codex/AGENTS.md with bus protocol + role-specific instructions.
 func (p *CodexProvider) WriteAgentConfig(role string) error
 
-// DetectTaskCompletion checks wrapper output for completion markers.
-// The wrapper prints "[CODEX-DONE]" or "[CODEX-ERROR]" after each invocation.
+// DetectTaskCompletion uses heuristic detection:
+// 1. Active spinner (⠋⠙...) → still running
+// 2. Bus reply output ("Sent") in last 10 lines → completed
+// 3. TUI prompt (›/>) in last 3 lines → completed, preceding line as summary
 func (p *CodexProvider) DetectTaskCompletion(session, role, content string) (bool, bool, string)
 ```
 
-### Wrapper script design
+Helper: `isReadOnlyCodexRole(role)` returns true for review and analyze — these omit `--full-auto` from launch args.
 
-`scripts/muxcode-codex-agent.sh` — the pane process for Codex agents:
+### Agent launch (no wrapper script)
+
+Unlike the originally proposed wrapper script, Codex agents launch directly as a TUI process — no bash wrapper needed. `BuildExecArgs()` returns the `codex` command with flags:
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
+# Standard role (build, test, deploy, etc.)
+codex --full-auto --no-alt-screen -m gpt-5.3-codex
 
-ROLE="$1"
-SESSION="$MUXCODE_SESSION"
-IDLE_MARKER="[codex-agent:${ROLE}] waiting for messages..."
-
-# Validate codex is installed
-if ! command -v codex &>/dev/null; then
-  echo "ERROR: codex CLI not found in PATH. Install: npm install -g @openai/codex"
-  exit 1
-fi
-
-# Validate API key
-if [ -z "${OPENAI_API_KEY:-}" ]; then
-  echo "ERROR: OPENAI_API_KEY not set"
-  exit 1
-fi
-
-# Resolve model
-model_var="MUXCODE_$(echo "$ROLE" | tr '[:lower:]' '[:upper:]')_CODEX_MODEL"
-model="${!model_var:-${MUXCODE_CODEX_MODEL:-gpt-5.4}}"
-
-# Resolve sandbox mode
-sandbox="${MUXCODE_CODEX_SANDBOX:-danger-full-access}"
-
-# Log startup
-muxcode log "$ROLE" "Codex agent started (model: $model, sandbox: $sandbox)"
-
-while true; do
-  echo "$IDLE_MARKER"
-
-  # Poll for inbox messages (blocks until message arrives or timeout)
-  muxcode inbox --poll --role "$ROLE" --timeout 600
-
-  # Read and consume inbox
-  raw=$(muxcode inbox --role "$ROLE" --consume --raw 2>/dev/null) || continue
-  [ -z "$raw" ] && continue
-
-  # Extract message fields
-  msg_id=$(echo "$raw" | jq -r '.[0].id // empty')
-  from=$(echo "$raw" | jq -r '.[0].from // empty')
-  action=$(echo "$raw" | jq -r '.[0].action // empty')
-  content=$(echo "$raw" | jq -r '.[0].content // empty')
-
-  echo "[codex-agent:${ROLE}] processing: ${action} from ${from}"
-
-  # Build the prompt with task context
-  prompt="${content}"
-
-  # Run codex exec, capture stdout (final answer), stderr to log
-  log_file="/tmp/muxcode-codex-${SESSION}-${ROLE}.log"
-  output=$(codex exec \
-    --full-auto \
-    --sandbox "$sandbox" \
-    --add-dir "/tmp/muxcode-bus-${SESSION}" \
-    -m "$model" \
-    "$prompt" 2>>"$log_file") && exit_code=0 || exit_code=$?
-
-  if [ $exit_code -eq 0 ] && [ -n "$output" ]; then
-    echo "[CODEX-DONE] success"
-
-    # Write output to temp file for bus reply (avoid newline issues in args)
-    tmpfile=$(mktemp /tmp/muxcode-codex-reply-XXXXXX.txt)
-    echo "$output" > "$tmpfile"
-
-    # Send truncated summary via bus, full output via log
-    summary=$(echo "$output" | head -20)
-    muxcode send "$from" response "$summary" --type response --reply-to "$msg_id"
-    muxcode log "$ROLE" "Codex task completed" --exit-code 0 --output-file "$tmpfile"
-    rm -f "$tmpfile"
-  else
-    echo "[CODEX-ERROR] exit code: $exit_code"
-    error_msg="Codex exec failed (exit $exit_code)"
-    [ -n "$output" ] && error_msg="$error_msg: $(echo "$output" | tail -5)"
-    muxcode send "$from" response "$error_msg" --type response --reply-to "$msg_id"
-    muxcode log "$ROLE" "Codex task failed" --exit-code "$exit_code"
-  fi
-done
+# Read-only role (review, analyze) — omits --full-auto
+codex --no-alt-screen -m gpt-5.3-codex
 ```
+
+The daemon's `checkIdleAgents()` handles inbox polling and `SendWakeUp()` handles task injection — the same lifecycle as OpenCode agents. No dedicated wrapper script is needed because the TUI process is persistent and receives tasks via `tmux send-keys`.
 
 ### AGENTS.md generation
 
-Unlike Claude Code (which reads `.claude/agents/<role>.md`) or OpenCode (`.opencode/agents/<role>.md`), Codex reads `AGENTS.md` from the project root downward. A single shared `AGENTS.md` would cause collisions when multiple roles use the Codex provider — the last-launched role's instructions would overwrite all earlier roles.
+Unlike Claude Code (which reads `.claude/agents/<role>.md`) or OpenCode (`.opencode/agents/<role>.md`), Codex reads `AGENTS.md` from the project root downward.
 
-**Solution**: Per-role subdirectories with `-C` flag:
+**Implementation**: Single shared `.codex/AGENTS.md` at repo root, written by `writeCodexAgentConfig(role)`. When multiple Codex roles launch concurrently, the last writer wins — a known tradeoff acknowledged in tests (`TestLastWriterWinsCollision`). The content includes bus protocol instructions, role-specific task description from the agent definition, and `adaptBodyForNonHookProvider()` rewrites that replace hook-chain references with manual `muxcode send` commands.
 
-```
-.codex/{role}/AGENTS.md    # Per-role instructions (e.g. .codex/review/AGENTS.md)
-```
-
-`WriteAgentConfig()` creates `.codex/{role}/AGENTS.md` for each Codex role, and `BuildExecArgs()` passes `-C <abs-path-to-.codex/{role}>` so each agent reads its own instructions. This mirrors how Claude Code uses `.claude/agents/{role}.md` and OpenCode uses `.opencode/agents/{role}.md` — each role gets isolated instructions.
+No `-C` flag is used — Codex runs in the repo root directory so it can access source files directly.
 
 ```markdown
 # MuxCode Agent Instructions
@@ -327,35 +263,36 @@ func ResolveProvider(role string) Provider {
 |----------|---------|-------------|
 | `MUXCODE_{ROLE}_CLI=codex` | — | Use Codex CLI for a specific role |
 | `MUXCODE_AGENT_CLI=codex` | — | Use Codex CLI for all agents |
-| `MUXCODE_{ROLE}_CODEX_MODEL` | `gpt-5.4` | Model for a specific Codex role |
-| `MUXCODE_CODEX_MODEL` | `gpt-5.4` | Default model for all Codex agents |
+| `MUXCODE_{ROLE}_CODEX_MODEL` | `gpt-5.3-codex` | Model for a specific Codex role |
+| `MUXCODE_CODEX_MODEL` | `gpt-5.3-codex` | Default model for all Codex agents |
 | `OPENAI_API_KEY` | — | Optional if logged in via `codex login` subscription |
-| `MUXCODE_CODEX_SANDBOX` | `danger-full-access` | Sandbox mode: `read-only`, `workspace-write`, `danger-full-access` |
 
 Config file (`.muxcode/config` or `~/.config/muxcode/config`):
 
 ```bash
-# Codex CLI settings
+# Codex CLI settings — recommended for reasoning-heavy roles
 MUXCODE_REVIEW_CLI=codex
-MUXCODE_CODEX_MODEL=o4-mini
+MUXCODE_ANALYZE_CLI=codex
+MUXCODE_CODEX_MODEL=gpt-5.3-codex
 # Auth: use subscription login (codex login) or API key:
 # OPENAI_API_KEY=sk-...
 ```
 
 ### Codex CLI flags reference
 
-Flags used in the integration:
+Flags used in the integration (✦ = used in TUI mode, ✧ = exec mode only):
 
 | Flag | Short | Values | Usage |
 |------|-------|--------|-------|
-| `exec` | `e` | subcommand | Non-interactive run-to-completion mode |
-| `--full-auto` | — | boolean | Sets approval=never + sandbox=workspace-write |
-| `--sandbox` | `-s` | `read-only`, `workspace-write`, `danger-full-access` | Filesystem access level |
-| `--add-dir` | — | path | Grant additional directory write access |
-| `--model` | `-m` | string | Model override (e.g. `o4-mini`, `gpt-5.4`) |
-| `--cd` | `-C` | path | Set working directory |
-| `--json` | — | boolean | JSONL event stream to stdout |
-| `-o` | — | path | Write final message to file |
+| `--no-alt-screen` | — | boolean | ✦ Disable alt-screen, preserve scrollback for tmux capture |
+| `--full-auto` | — | boolean | ✦ Sets approval=never + sandbox=workspace-write (omitted for read-only roles) |
+| `--model` | `-m` | string | ✦ Model override (e.g. `gpt-5.3-codex`, `o4-mini`) |
+| `exec` | `e` | subcommand | ✧ Non-interactive run-to-completion mode (used by `RunCodexExec()`) |
+| `--json` | — | boolean | ✧ JSONL event stream to stdout (used with exec mode) |
+| `--sandbox` | `-s` | `read-only`, `workspace-write`, `danger-full-access` | ✧ Filesystem access level (exec mode) |
+| `--add-dir` | — | path | ✧ Grant additional directory write access (exec mode) |
+| `--cd` | `-C` | path | ✧ Set working directory (not used — agents run from repo root) |
+| `-o` | — | path | ✧ Write final message to file |
 | `--skip-git-repo-check` | — | boolean | Allow running outside a git repo |
 | `--yolo` | — | boolean | Disable both sandbox and approvals |
 | `--profile` | `-p` | string | Load named config profile |
@@ -370,9 +307,9 @@ Same three-layer strategy as OpenCode:
 | Build/test/review chain | Hook-driven | None | `AGENTS.md` instructions: "after build succeeds, run `muxcode send test test ...`" |
 | Edit guard | PreToolUse hook blocks | None | `AGENTS.md` instructions: "do NOT edit source files" (soft enforcement) |
 | File-change routing | Analyze hook | None | Not available — edit agent manually triggers review |
-| Idle notifications | send-keys at `❯` | None | Trigger file — wrapper's poll loop detects and processes |
-| Compact | `/compact` injection | None | Not needed — each `exec` invocation is stateless |
-| Workflow state | Hook transitions | None | Wrapper script logs via `muxcode log` after each invocation |
+| Idle notifications | send-keys at `❯` | None | `SendWakeUp()` injects task via `tmux send-keys` into TUI |
+| Compact | `/compact` injection | None | TUI manages own context — Compact() is a no-op |
+| Workflow state | Hook transitions | None | `DetectTaskCompletion()` heuristic from pane content |
 
 ### Sandbox considerations
 
@@ -389,19 +326,21 @@ MuxCode agents need access to:
 - Project directory — source code (read for review, write for build/edit)
 - `~/.codex/` — Codex config and session logs
 
-**Resolution**: Use `--sandbox danger-full-access` for initial implementation. The `--add-dir` flag could be used for finer control (`--add-dir /tmp/muxcode-bus-*`), but for the review agent (read-only workload) the sandbox mode matters less. MuxCode's own tool profile / prompt-based restrictions are the primary guardrails.
+**Resolution**: In TUI mode, sandbox behavior is controlled by `--full-auto` (which implies `sandbox=workspace-write`). Read-only roles (review, analyze) omit `--full-auto`, so Codex prompts before writes — providing natural protection. MuxCode's own tool profiles and prompt-based restrictions are the primary guardrails. The `--sandbox` and `--add-dir` flags from exec mode are not used in TUI mode.
 
 ### Task completion detection
 
-Detection uses explicit, unambiguous markers to avoid false positives from intermediate Codex output (tokens like "Done", "completed", "Applied", "✓" can appear mid-task and must not trigger premature completion).
+Detection uses heuristic pane content analysis to avoid false positives from intermediate Codex output (tokens like "Done", "completed", "Applied", "✓" can appear mid-task and must not trigger premature completion).
 
-**Two detection paths:**
+**Three-step detection in `DetectTaskCompletion()`:**
 
-1. **Wrapper script markers** (exec mode via `muxcode-codex-agent.sh`): The wrapper prints `[CODEX-DONE]` or `[CODEX-ERROR]` after each invocation, plus an idle marker `waiting for messages...` between tasks.
+1. **Active spinner check** — Scans for braille spinner characters (⠋, ⠙, ⠹, etc.) or "thinking" indicators. If detected, the agent is still running — returns not completed.
 
-2. **TUI prompt detection** (interactive `--no-alt-screen` mode): When the Codex TUI finishes processing, its input prompt (`›` or `>`) reappears at the bottom of the pane. The preceding non-empty line is used as the summary.
+2. **Bus reply detection** — Scans last 10 lines for "Sent" (output from `muxcode send`). If found, the agent has replied via the bus — returns completed with error flag based on surrounding context.
 
-Both paths first check for active spinners (⠋, ⠙, etc.) — if detected, the agent is still running and completion is not reported.
+3. **TUI prompt detection** — Checks last 3 lines for the Codex input prompt (`›` or `>`). If found, the preceding non-empty line is extracted as the task summary.
+
+All detection is from `tmux capture-pane` content in `--no-alt-screen` mode — no wrapper markers needed.
 
 ### JSONL event stream (future enhancement)
 
@@ -418,70 +357,33 @@ This could be parsed for richer task tracking (progress updates, token usage, to
 
 ## Implementation phases
 
-### Phase 0: Manual validation
+### Phase 0: Manual validation ✅
 
-Before writing any Go code, manually test `codex exec` as a review agent replacement to validate the approach.
+Manually tested `codex exec` and interactive TUI mode. Validated that `--no-alt-screen` preserves scrollback for `tmux capture-pane`. Discovered that TUI mode is more practical than exec mode for persistent agents — led to the design pivot from exec-mode wrapper to TUI-mode integration.
 
-**Steps**:
-1. Install Codex CLI: `npm install -g @openai/codex`
-2. Set `OPENAI_API_KEY`
-3. From the muxcode project root, run:
-   ```bash
-   codex exec --full-auto --sandbox danger-full-access -m o4-mini \
-     "You are a code review agent. Run git diff to see recent changes, then review them for correctness, security, performance, and maintainability. Organize findings by severity: must-fix, should-fix, nit. Format each item as file:line, issue, suggested fix."
-   ```
-4. Compare output quality and latency against the Claude Code review agent
-5. Test with `--json` flag to understand event stream format
-6. Test sandbox modes to find the minimum permission level needed
+### Phase 1: Provider implementation ✅
 
-**Success criteria**:
-1. `codex exec` produces a useful code review from the same diff
-2. Latency is acceptable (under 60 seconds for typical diffs)
-3. Output is clean enough to parse and send via bus
-4. No sandbox errors when accessing project files
-
-### Phase 1: Provider stub and wrapper script
-
-Add `CodexProvider` struct, wrapper script, and wire into `ResolveProvider()`.
+`CodexProvider` struct with all Provider interface methods, wired into `ResolveProvider()`.
 
 **Key files**:
 
 | File | Change |
 |------|--------|
-| `bus/provider.go` | Add `"codex"` case to `ResolveProvider()` |
-| `bus/provider_codex.go` | New file — `CodexProvider` struct, all interface methods |
-| `bus/provider_codex_test.go` | New file — interface conformance, provider resolution |
-| `scripts/muxcode-codex-agent.sh` | New file — wrapper loop script |
-| `bus/launch.go` | Add `RoleCodexModelEnvVar()`, `RoleCodexModelDefault()` |
-| `Makefile` | Install wrapper script to `~/.config/muxcode/scripts/` |
+| `bus/provider.go` | `"codex"` case in `ResolveProvider()`, `chainInstructionForRole()` shared helper |
+| `bus/provider_codex.go` | Full `CodexProvider` — TUI mode, `SendWakeUp` with self-message filtering, `DetectTaskCompletion`, `isReadOnlyCodexRole()` |
+| `bus/provider_codex_test.go` | Interface conformance, resolution, BuildExecArgs, ClassifyPane, DetectTaskCompletion, model resolution, WriteAgentConfig, coexistence, last-writer-wins |
+| `bus/launch.go` | `RoleCodexModelEnvVar()`, `RoleCodexModelDefault()` (gpt-5.3-codex), `resolveCodexModel()` |
 
-**Success criteria**:
-1. `MUXCODE_REVIEW_CLI=codex` resolves to `CodexProvider`
-2. `CodexProvider` implements all `Provider` interface methods
-3. `SupportsHooks()` returns `false`
-4. Wrapper script starts, polls inbox, invokes codex, sends reply
-5. All existing tests pass
+### Phase 2: Review agent end-to-end ✅
 
-### Phase 2: Review agent end-to-end
+Review and analyze agents working with Codex in live muxcode sessions.
 
-Get the review agent working with Codex in a live muxcode session.
-
-**Key files**:
-
-| File | Change |
-|------|--------|
-| `bus/provider_codex.go` | Implement `WriteAgentConfig()` (AGENTS.md generation) |
-| `bus/provider_codex.go` | Implement pane detection methods (IsIdle, IsAlive, ClassifyPane) |
-| `bus/agent_health.go` | Handle codex agent restart (re-launch wrapper) |
-| `bus/notify.go` | Handle codex notification (trigger file for wrapper poll) |
-
-**Success criteria**:
-1. `MUXCODE_REVIEW_CLI=codex` in config, launch muxcode session
-2. Review window shows Codex TUI running (interactive `--no-alt-screen` mode)
-3. `muxcode send review review "Review latest changes"` triggers Codex via send-keys
-4. Review results appear in edit inbox
-5. `muxcode inspect` shows review agent with provider=codex
-6. Watcher detects dead Codex TUI and restarts it
+**Verified**:
+1. `MUXCODE_REVIEW_CLI=codex` in config launches Codex TUI in review window
+2. `muxcode send review review "Review latest changes"` triggers review via send-keys
+3. Review results delivered to edit inbox via bus
+4. `muxcode inspect` shows provider=codex for review agent
+5. Daemon detects dead Codex TUI and restarts via `StartAgent()`
 
 ### Phase 3: JSONL parsing and structured output ✅
 
@@ -502,48 +404,33 @@ JSONL event parsing infrastructure for `codex exec --json`. Adapted from origina
 4. ✅ `RunCodexExec()` programmatic entry point for non-interactive use
 5. ✅ Error events detected: `turn.failed`, `error`, non-zero exit codes
 
-### Phase 4: Multi-role expansion
+### Phase 4: Multi-role expansion ✅
 
-Extend to build, test, and deploy agents. Validate chains work end-to-end.
+All command-execution roles support Codex. Chains work end-to-end via prompt-instructed `muxcode send` commands.
 
-**Key files**:
+**Key implementation details**:
+- `adaptBodyForNonHookProvider()` shared between Codex and OpenCode (defined in `provider_opencode.go`)
+- `CheckSendPolicy()` bypasses deny rules for non-hook providers (`SupportsHooks() == false`)
+- `chainInstructionForRole()` in `provider.go` appends manual chain commands to SendWakeUp prompts
+- Default `ResolveProviderCLI()` routes build/test/deploy/run/watch/commit to OpenCode; review/analyze recommended for Codex
 
-| File | Change |
-|------|--------|
-| `bus/provider_codex.go` | Role-specific AGENTS.md content for build/test/deploy |
-| `bus/provider_opencode.go` | Extract `adaptBodyForNonHookProvider()` to shared util if needed |
-| `bus/profile.go` | Ensure `CheckSendPolicy()` bypass works for codex provider |
-| `scripts/muxcode-codex-agent.sh` | Role-specific prompt construction |
+**Verified**:
+1. Build→test→review chain completes via bus messages with mixed providers
+2. Mixed session: Claude Code edit + OpenCode build/test + Codex review works
+3. `isReadOnlyCodexRole()` omits `--full-auto` for review and analyze
 
-**Success criteria**:
-1. Build agent with Codex runs `./build.sh` and reports results
-2. Test agent with Codex runs tests and reports results
-3. Build→test→review chain completes via bus messages (all on Codex)
-4. Mixed session: Claude Code edit + Codex review + Codex build works
+### Phase 5: Mixed-provider testing and hardening ✅
 
-### Phase 5: Mixed-provider testing and hardening
-
-Comprehensive testing of mixed Claude Code + Codex sessions.
-
-**Key files**:
-
-| File | Change |
-|------|--------|
-| `bus/provider_codex_test.go` | Mixed-provider coexistence tests |
-| `bus/console.go` | Codex agent display in console |
-| `bus/inspect.go` | Provider field in agent status for codex |
-| `install.sh` | Codex availability check when selected as provider |
-
-**Success criteria**:
-1. Session with Claude Code edit + Codex review + Claude Code commit runs reliably
+**Verified**:
+1. Session with Claude Code edit + OpenCode build/test + Codex review runs reliably
 2. `muxcode inspect` shows correct provider for each agent
-3. Console displays codex agent output correctly
-4. Agent health monitoring detects and restarts crashed codex agents
-5. `install.sh` validates codex installation when configured
+3. Agent health monitoring detects and restarts crashed Codex TUI
+4. `install.sh` validates Codex availability and offers installation (npm or Homebrew)
+5. Auth check: detects `OPENAI_API_KEY`, subscription login, `.codexrc`, or auth.json
 
-### Phase 6 (deferred): Interactive TUI mode
+### Phase 6: ~~Interactive TUI mode~~ (superseded)
 
-Support Codex CLI's interactive TUI for roles needing conversation persistence. Would require `--no-alt-screen` flag and send-keys interaction. Deferred unless a concrete use case emerges — exec mode covers all current non-edit roles.
+TUI mode (`--no-alt-screen`) became the primary integration mode in Phase 1, replacing the originally proposed exec-mode wrapper. All Codex agents now run as persistent TUI processes. This phase is complete — it was absorbed into the main implementation.
 
 ### Phase 7 (deferred): Session resume
 
@@ -553,27 +440,27 @@ Use `codex exec resume --last` to continue previous sessions for multi-turn work
 
 ### Q1: `exec` mode vs interactive TUI?
 
-**Decision**: `exec` mode (run-to-completion) for all roles.
+**Decision**: TUI mode (`--no-alt-screen`) for all roles. Exec mode available programmatically via `RunCodexExec()`.
 
-**Rationale**: `codex exec` outputs the final answer to stdout and progress to stderr — clean separation that's trivial to capture. The interactive TUI uses alt-screen and a React-based input box that doesn't work with `tmux send-keys`. Exec mode matches the review agent's "receive task, analyze, report" workflow perfectly.
+**Rationale**: `--no-alt-screen` preserves scrollback for `tmux capture-pane`, enabling health checks and task completion detection. The persistent TUI avoids cold-start overhead per task. `tmux send-keys` works reliably for injecting prompts into the Codex input field. This matches the established OpenCode integration pattern, reducing maintenance burden. The original concern about alt-screen breaking send-keys was solved by `--no-alt-screen`.
 
-### Q2: Wrapper script vs Go harness integration?
+### Q2: Wrapper script vs Go harness vs direct TUI?
 
-**Decision**: Wrapper script (bash).
+**Decision**: Direct TUI process (no wrapper, no harness).
 
-**Rationale**: Codex CLI is a complete agent with its own tool execution (bash, file read/write, glob, grep). Wrapping it in the Go harness would be redundant — the harness is designed for Ollama's raw chat completion API where MuxCode must provide tool execution. The wrapper just handles inbox polling and codex invocation.
+**Rationale**: Codex CLI is a complete agent with its own tool execution. The Go harness is for Ollama's raw chat completion API. A bash wrapper was originally proposed but proved unnecessary — the daemon's `checkIdleAgents()` + `SendWakeUp()` handles inbox polling and task injection for the persistent TUI, the same pattern used for OpenCode.
 
 ### Q3: How to provide role-specific instructions?
 
-**Decision**: Shared `.codex/AGENTS.md` for bus protocol + role-specific prompt in `codex exec` argument.
+**Decision**: Shared `.codex/AGENTS.md` for bus protocol + role-specific instructions injected via `SendWakeUp()` prompt.
 
-**Rationale**: Codex reads `AGENTS.md` from project root. Unlike Claude Code (per-role files in `.claude/agents/`) or OpenCode (per-role files in `.opencode/agents/`), Codex has a single `AGENTS.md` per directory scope. Role-specific behavior comes from the prompt passed to each `codex exec` invocation, which includes the full agent definition and task description. The shared `AGENTS.md` contains bus protocol instructions common to all roles.
+**Rationale**: Codex reads `AGENTS.md` from project root — a single file, not per-role like Claude Code or OpenCode. `WriteAgentConfig()` writes `.codex/AGENTS.md` with bus protocol and role context. Role-specific behavior comes from `SendWakeUp()` which combines the task message, reply instruction, and `chainInstructionForRole()` suffix. When multiple Codex roles run concurrently, the last `WriteAgentConfig()` call wins — an acceptable tradeoff since bus protocol is common to all roles and task-specific instructions come from the injected prompt.
 
 ### Q4: Which sandbox mode?
 
-**Decision**: `danger-full-access` for initial implementation, with `--add-dir` refinement later.
+**Decision**: No sandbox flag in TUI mode. Read-only roles omit `--full-auto` instead.
 
-**Rationale**: The review agent only reads files (git diff, file content), so sandbox risk is low. But it needs `/tmp/muxcode-bus-*/` access for bus communication and potentially `~/.config/muxcode/` for memory. On macOS, Seatbelt unconditionally blocks network regardless of config — but MuxCode bus is filesystem-based, so this doesn't matter. `danger-full-access` is the pragmatic starting point; we can tighten to `workspace-write` + `--add-dir` paths once the integration is stable.
+**Rationale**: In TUI mode (not exec mode), the sandbox flag is less relevant — `--full-auto` controls whether Codex auto-approves tool execution. For read-only roles (review, analyze), `isReadOnlyCodexRole()` omits `--full-auto`, meaning Codex prompts for approval before writes — a natural guardrail. For command-execution roles (build, test), `--full-auto` is included since they need to run builds/tests autonomously.
 
 ### Q5: Should Codex be available for the edit role?
 
@@ -589,6 +476,6 @@ Use `codex exec resume --last` to continue previous sessions for multi-turn work
 
 ### Q7: Plain text vs JSONL output?
 
-**Decision**: Plain text for Phase 0-2, JSONL for Phase 3+.
+**Decision**: TUI mode for agents (pane content heuristics), JSONL parsing available for programmatic use.
 
-**Rationale**: Plain text (`codex exec` default) is simpler — final message goes to stdout, progress to stderr. Good enough for initial integration. JSONL (`--json`) adds structured events (thread.started, item.completed, turn.completed) that enable progress tracking and richer error detection. Worth adding once the basic integration works.
+**Rationale**: Agents run in TUI mode where task completion is detected via pane content heuristics (`DetectTaskCompletion`). JSONL event parsing (`codex_events.go`) is implemented for `RunCodexExec()` — a programmatic entry point for non-interactive exec-mode use. Both paths coexist: TUI for persistent agents, exec+JSONL for one-shot programmatic invocations.
