@@ -436,14 +436,33 @@ func TestResolveChain_BuildSuccess(t *testing.T) {
 	if action == nil {
 		t.Fatal("expected chain action for build success")
 	}
-	if action.SendTo != "edit" {
-		t.Errorf("send_to = %q, want edit", action.SendTo)
+	if action.SendTo != "test" {
+		t.Errorf("send_to = %q, want test", action.SendTo)
 	}
-	if action.Action != "notify" {
-		t.Errorf("action = %q, want notify", action.Action)
+	if action.Action != "test" {
+		t.Errorf("action = %q, want test", action.Action)
 	}
-	if action.Type != "event" {
-		t.Errorf("type = %q, want event", action.Type)
+	if action.Type != "request" {
+		t.Errorf("type = %q, want request", action.Type)
+	}
+}
+
+func TestResolveChain_TestSuccess(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	action := ResolveChain("test", "success")
+	if action == nil {
+		t.Fatal("expected chain action for test success")
+	}
+	if action.SendTo != "review" {
+		t.Errorf("send_to = %q, want review", action.SendTo)
+	}
+	if action.Action != "review" {
+		t.Errorf("action = %q, want review", action.Action)
+	}
+	if action.Type != "request" {
+		t.Errorf("type = %q, want request", action.Type)
 	}
 }
 

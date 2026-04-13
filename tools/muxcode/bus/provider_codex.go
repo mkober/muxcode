@@ -37,14 +37,21 @@ func (p *CodexProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 // BuildExecArgs constructs the Codex CLI launch command.
 // Uses --full-auto for automatic approval and --no-alt-screen for
 // tmux compatibility (inline mode preserves scrollback).
+// Read-only roles (review, analyze) omit --full-auto so Codex prompts
+// for approval on tool use — this prevents reviewers from running
+// tests/builds and analysts from making unintended changes.
 // Does NOT use -C (--cd) — that flag changes the agent's working root,
 // which would prevent it from seeing the actual project files. Instead,
 // WriteAgentConfig writes role-specific AGENTS.md to .codex/AGENTS.md
 // at the repo root before each launch.
 func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 	args := []string{
-		"--full-auto",
 		"--no-alt-screen",
+	}
+
+	// Read-only roles skip --full-auto to enforce permission prompts
+	if !isReadOnlyCodexRole(cfg.Role) {
+		args = append([]string{"--full-auto"}, args...)
 	}
 
 	// Model selection
@@ -54,6 +61,18 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 	}
 
 	return "codex", args
+}
+
+// isReadOnlyCodexRole returns true for roles that should not run in
+// --full-auto mode. These roles only read code (diffs, files) and must
+// not execute builds, tests, or deploys.
+func isReadOnlyCodexRole(role string) bool {
+	switch role {
+	case "review", "analyze":
+		return true
+	default:
+		return false
+	}
 }
 
 // IsIdle always returns false for TUI mode.
@@ -152,6 +171,7 @@ func (p *CodexProvider) SendWakeUp(session, role string) error {
 	// which injects the self-message, which triggers another response.
 	var parts []string
 	var lastFrom string
+	hasRequest := false
 	for _, msg := range msgs {
 		// Skip messages from self — these are loop artifacts
 		if NormalizeBusRole(msg.From) == role {
@@ -164,6 +184,9 @@ func (p *CodexProvider) SendWakeUp(session, role string) error {
 		parts = append(parts, text)
 		if msg.From != "" {
 			lastFrom = msg.From
+		}
+		if msg.Type == "request" {
+			hasRequest = true
 		}
 	}
 	// If all messages were self-addressed, consume and discard them
@@ -179,7 +202,13 @@ func (p *CodexProvider) SendWakeUp(session, role string) error {
 	if replyTarget == "" || !IsKnownRole(replyTarget) {
 		replyTarget = "edit"
 	}
-	prompt += fmt.Sprintf(" — When done, you MUST EXECUTE this bash command (do NOT print it as text): muxcode send %s response \"<your results>\" --type response", replyTarget)
+	// Append reply and chain instructions only for request messages.
+	// Response-only wake-ups should not prompt the agent to reply or
+	// chain, which would cause infinite response echo loops.
+	if hasRequest {
+		prompt += fmt.Sprintf(" — When done, you MUST EXECUTE this bash command (do NOT print it as text): muxcode send %s response \"<your results>\" --type response", replyTarget)
+		prompt += chainInstructionForRole(role)
+	}
 
 	// Send text first — do NOT consume inbox until both send-keys succeed
 	cmd := exec.Command("tmux", "send-keys", "-t", target, prompt)

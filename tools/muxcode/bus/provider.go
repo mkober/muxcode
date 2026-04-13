@@ -91,6 +91,21 @@ func ResolveProviderCLI(role string) string {
 	return cli
 }
 
+// chainInstructionForRole returns an additional SendWakeUp prompt suffix
+// for roles that participate in the build→test→review chain. Non-hook
+// providers (OpenCode, Codex) don't have PostToolUse bash hooks, so the
+// chain must be triggered explicitly via the injected prompt.
+func chainInstructionForRole(role string) string {
+	switch role {
+	case "build":
+		return " — ALSO on SUCCESS ONLY, you MUST trigger tests: muxcode send test test \"Build succeeded, run tests\" --type request"
+	case "test":
+		return " — ALSO on SUCCESS ONLY, you MUST trigger review: muxcode send review review \"Tests passed, review changes\" --type request"
+	default:
+		return ""
+	}
+}
+
 // --- LocalProvider ---
 
 // LocalProvider implements the Provider interface for local LLM harness.

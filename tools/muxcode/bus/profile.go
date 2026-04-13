@@ -623,10 +623,10 @@ func DefaultConfig() *MuxcodeConfig {
 			},
 			"build": {
 				OnSuccess: &ChainAction{
-					SendTo:  "edit",
-					Action:  "notify",
-					Message: "Build succeeded (${command}) — ready for tests",
-					Type:    "event",
+					SendTo:  "test",
+					Action:  "test",
+					Message: "Build succeeded (${command}) — run tests and report results",
+					Type:    "request",
 				},
 				OnFailure: &ChainAction{
 					SendTo:  "edit",
@@ -644,10 +644,10 @@ func DefaultConfig() *MuxcodeConfig {
 			},
 			"test": {
 				OnSuccess: &ChainAction{
-					SendTo:  "edit",
-					Action:  "notify",
-					Message: "Tests passed (${command}) — ready for review",
-					Type:    "event",
+					SendTo:  "review",
+					Action:  "review",
+					Message: "Tests passed (${command}) — review the latest changes on this branch and report findings to edit",
+					Type:    "request",
 				},
 				OnFailure: &ChainAction{
 					SendTo:  "edit",

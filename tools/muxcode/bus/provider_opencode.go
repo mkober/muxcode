@@ -119,6 +119,7 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string) error {
 	// which injects the self-message, which triggers another response.
 	var parts []string
 	var lastFrom string
+	hasRequest := false
 	for _, m := range msgs {
 		// Skip messages from self — these are loop artifacts
 		if NormalizeBusRole(m.From) == role {
@@ -130,6 +131,9 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string) error {
 			parts = append(parts, fmt.Sprintf("You have a new %s request from %s", m.Action, m.From))
 		}
 		lastFrom = m.From
+		if m.Type == "request" {
+			hasRequest = true
+		}
 	}
 	// If all messages were self-addressed, consume and discard them
 	if len(parts) == 0 {
@@ -141,7 +145,13 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string) error {
 	if replyTarget == "" || !IsKnownRole(replyTarget) {
 		replyTarget = "edit"
 	}
-	prompt += fmt.Sprintf(" — When done, you MUST EXECUTE this bash command (do NOT print it as text): muxcode send %s response \"<your results>\" --type response", replyTarget)
+	// Append reply and chain instructions only for request messages.
+	// Response-only wake-ups should not prompt the agent to reply or
+	// chain, which would cause infinite response echo loops.
+	if hasRequest {
+		prompt += fmt.Sprintf(" — When done, you MUST EXECUTE this bash command (do NOT print it as text): muxcode send %s response \"<your results>\" --type response", replyTarget)
+		prompt += chainInstructionForRole(role)
+	}
 
 	// Send text first — do NOT consume inbox until both send-keys succeed
 	cmd := exec.Command("tmux", "send-keys", "-t", target, prompt)

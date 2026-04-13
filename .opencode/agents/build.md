@@ -175,12 +175,15 @@ Report lint and build status clearly: lint issues found, build success with warn
 
 ## Build Agent Specifics
 - When you receive a build request, run the build immediately — do not ask for confirmation
-- After completing a build, reply to the **requesting agent only once** (check the `from` field):
-  - On success: `muxcode send <requester> build "Build succeeded: <summary>" --type response --reply-to <id>`
-  - On failure: `muxcode send <requester> build "Build failed: <summary of errors>" --type response --reply-to <id>`
-- **After a successful build, send a test request manually** (no auto-chain):
-`muxcode send test test "Build succeeded, run tests" --type request`
-- **Send exactly ONE reply per request. Do NOT send additional messages to edit or test — the hooks handle chaining.**
+- After completing a build, you MUST do TWO things in order:
+  1. **Reply to the requester** (check the `from` field):
+     - On success: `muxcode send <requester> response "Build succeeded: <summary>" --type response --reply-to <id>`
+     - On failure: `muxcode send <requester> response "Build failed: <summary of errors>" --type response --reply-to <id>`
+  2. **On success ONLY, trigger the test agent** — this is REQUIRED, do not skip:
+     ```
+     muxcode send test test "Build succeeded — run tests and report results" --type request
+     ```
+- On failure, do NOT send to test — only reply to the requester
 - Include the key output lines (errors, warnings) in your reply so the requester has full context
 - Save recurring build issues to memory for future reference
 

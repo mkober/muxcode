@@ -57,7 +57,7 @@ func TestResolveProvider_CodexNoHooks(t *testing.T) {
 func TestCodexBuildExecArgs(t *testing.T) {
 	p := &CodexProvider{}
 
-	for _, role := range []string{"build", "test", "review"} {
+	for _, role := range []string{"build", "test", "review", "analyze"} {
 		t.Run(role, func(t *testing.T) {
 			t.Setenv("MUXCODE_CODEX_MODEL", "")
 			t.Setenv(RoleCodexModelEnvVar(role), "")
@@ -72,8 +72,10 @@ func TestCodexBuildExecArgs(t *testing.T) {
 			if binary != "codex" {
 				t.Errorf("binary = %q, want codex", binary)
 			}
-			// Should contain --full-auto and --no-alt-screen but NOT -C
+			// Should contain --no-alt-screen but NOT -C
 			// (-C changes the working directory away from the repo root)
+			// --full-auto is present for execution roles but omitted for
+			// read-only roles (review, analyze) to enforce permission prompts
 			hasFullAuto := false
 			hasNoAltScreen := false
 			for _, arg := range args {
@@ -87,8 +89,9 @@ func TestCodexBuildExecArgs(t *testing.T) {
 					t.Error("-C flag should NOT be present (changes working root away from project)")
 				}
 			}
-			if !hasFullAuto {
-				t.Error("missing --full-auto flag")
+			wantFullAuto := !isReadOnlyCodexRole(role)
+			if hasFullAuto != wantFullAuto {
+				t.Errorf("--full-auto = %v, want %v for role %q", hasFullAuto, wantFullAuto, role)
 			}
 			if !hasNoAltScreen {
 				t.Error("missing --no-alt-screen flag")
