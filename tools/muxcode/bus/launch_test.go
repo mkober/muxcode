@@ -18,12 +18,12 @@ func TestAgentFileNameExported(t *testing.T) {
 		{"test", "test-runner"},
 		{"review", "code-reviewer"},
 		{"deploy", "infra-deployer"},
-		{"runner", "command-runner"},
 		{"run", "command-runner"},
-		{"git", "git-manager"},
+		{"runner", "command-runner"},
 		{"commit", "git-manager"},
-		{"analyst", "editor-analyst"},
+		{"git", "git-manager"},
 		{"analyze", "editor-analyst"},
+		{"analyst", "editor-analyst"},
 		{"docs", "doc-writer"},
 		{"research", "code-researcher"},
 		{"watch", "log-watcher"},
@@ -47,8 +47,8 @@ func TestRoleCLIEnvVar(t *testing.T) {
 		role string
 		want string
 	}{
-		{"commit", "MUXCODE_GIT_CLI"},
-		{"git", "MUXCODE_GIT_CLI"},
+		{"commit", "MUXCODE_COMMIT_CLI"},
+		{"git", "MUXCODE_COMMIT_CLI"},
 		{"build", "MUXCODE_BUILD_CLI"},
 		{"edit", "MUXCODE_EDIT_CLI"},
 		{"analyze", "MUXCODE_ANALYZE_CLI"},
@@ -75,7 +75,7 @@ func TestRoleClaudeModelEnvVar(t *testing.T) {
 		role string
 		want string
 	}{
-		{"commit", "MUXCODE_GIT_CLAUDE_MODEL"},
+		{"commit", "MUXCODE_COMMIT_CLAUDE_MODEL"},
 		{"edit", "MUXCODE_EDIT_CLAUDE_MODEL"},
 		{"analyze", "MUXCODE_ANALYZE_CLAUDE_MODEL"},
 		{"custom", "MUXCODE_CUSTOM_CLAUDE_MODEL"},
@@ -106,8 +106,8 @@ func TestRoleClaudeModelDefault(t *testing.T) {
 		{"git", "claude-sonnet-4-5"},
 		{"deploy", "claude-sonnet-4-5"},
 		{"api", "claude-sonnet-4-5"},
-		{"runner", "claude-sonnet-4-5"},
 		{"run", "claude-sonnet-4-5"},
+		{"runner", "claude-sonnet-4-5"},
 		{"watch", "claude-sonnet-4-5"},
 		{"custom", ""},
 	}
@@ -237,7 +237,7 @@ func TestBuildAgentsJSON(t *testing.T) {
 func TestInlineFallbackPrompt(t *testing.T) {
 	// Known roles should return non-empty prompts
 	for _, role := range []string{"edit", "build", "test", "review", "deploy",
-		"runner", "run", "git", "commit", "analyst", "analyze",
+		"run", "runner", "commit", "git", "analyze", "analyst",
 		"docs", "research", "watch", "pr-read", "api"} {
 		prompt := InlineFallbackPrompt(role)
 		if prompt == "" {

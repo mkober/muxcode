@@ -46,7 +46,8 @@ Each agent independently resolves its AI CLI provider. The provider is fixed for
 |----------|-----------|----------|
 | Claude Code | `claude` (default) | Edit, review, deploy — full hook support, deterministic chains |
 | OpenCode | `opencode` | Build, test — multi-provider LLM access, autonomous TUI |
-| Local LLM | `local` | Git, build, watch — structured commands, zero API cost |
+| Codex CLI | `codex` | Analyze, build — OpenAI models, full-auto mode |
+| Local LLM | `local` | Commit, build, watch — structured commands, zero API cost |
 
 Set per-role: `MUXCODE_{ROLE}_CLI=opencode` in `.muxcode/config`. Set session-wide: `MUXCODE_AGENT_CLI=opencode`.
 
@@ -65,9 +66,9 @@ Non-hook providers degrade gracefully across three layers:
 | test | test-runner.md | test | Run tests |
 | review | code-reviewer.md | review | Review diffs for quality |
 | deploy | infra-deployer.md | deploy | Infrastructure deployments |
-| runner | command-runner.md | run | Execute commands |
-| git | git-manager.md | commit | Git operations |
-| analyst | editor-analyst.md | analyze | Analyze changes and explain patterns |
+| run | command-runner.md | run | Execute commands |
+| commit | git-manager.md | commit | Git operations |
+| analyze | editor-analyst.md | analyze | Analyze changes and explain patterns |
 | watch | log-watcher.md | watch | Monitor logs (local, CloudWatch, k8s, Docker) |
 | docs | doc-writer.md | docs | Generate and maintain documentation |
 | research | code-researcher.md | research | Search web, explore codebases, answer questions |
@@ -116,7 +117,7 @@ muxcode-agent.sh pr-read
 
 The watch agent monitors logs from various sources — local files, CloudWatch, Kubernetes, Docker — and reports findings back to the edit agent. It is **read-only** by default: no Write/Edit tools, no git commands. It uses `muxcode log watch "summary"` to record observations to the watch history.
 
-### Tool Specialists (deploy, runner, git)
+### Tool Specialists (deploy, run, commit)
 
 These agents receive requests and execute, but may require more context or confirmation depending on the operation.
 
@@ -142,7 +143,7 @@ Spawned agents:
 - Run in their own tmux window (named `spawn-{id}`)
 - Receive their task via the bus inbox (pre-seeded before launch)
 - Send results back to the owner via normal bus messages
-- Are tracked in `spawn.jsonl` and monitored by the watcher
+- Are tracked in `spawn.jsonl` and monitored by the daemon
 - Block commits while running (same as background processes)
 
 ## Local LLM Agent (Ollama)
@@ -154,13 +155,13 @@ Any agent role can optionally run via a local LLM (Ollama) instead of Claude Cod
 Set per-role CLI override in `.muxcode/config`:
 
 ```bash
-MUXCODE_GIT_CLI=local              # commit agent uses local LLM
+MUXCODE_COMMIT_CLI=local           # commit agent uses local LLM
 MUXCODE_OLLAMA_MODEL=qwen2.5-coder:7b  # global default model
-MUXCODE_GIT_MODEL=llama3.1:8b      # per-role model override
+MUXCODE_COMMIT_MODEL=llama3.1:8b   # per-role model override
 MUXCODE_OLLAMA_URL=http://localhost:11434  # Ollama URL (default)
 ```
 
-The variable format is `MUXCODE_{ROLE}_CLI=local` where `{ROLE}` is the uppercase role name (e.g. `GIT` for the git/commit agent, `BUILD` for the build agent).
+The variable format is `MUXCODE_{ROLE}_CLI=local` where `{ROLE}` is the uppercase canonical role name (e.g. `COMMIT` for the commit agent, `BUILD` for the build agent, `ANALYZE` for the analyze agent).
 
 **Per-role model selection:** Each role can use a different model via `MUXCODE_{ROLE}_MODEL`. Resolution order: per-role env var → `MUXCODE_OLLAMA_MODEL` → default (`qwen2.5:7b`).
 
@@ -174,14 +175,14 @@ The variable format is `MUXCODE_{ROLE}_CLI=local` where `{ROLE}` is the uppercas
 
 ### Differences across providers
 
-| Aspect | Claude Code | OpenCode (TUI) | Local LLM (Ollama) |
-|--------|------------|----------------|-------------------|
-| System prompt | Claude Code built-in + agent file | Agent markdown body + shared prompt | Same assembly: agent def + shared + skills + context.d + resume |
-| Tool enforcement | `--allowedTools` flag | `permission` blocks in agent config | `IsToolAllowed()` in Go, same patterns |
-| Hook chains | PostToolUse hooks fire automatically | No hooks — role-specific prompt instructions + adapted body text + send policy bypass | Bash commands logged directly to `{role}-history.jsonl` |
-| Conversation state | Managed by Claude Code | Managed by OpenCode TUI (auto-compact) | Reset between inbox checks (prevents unbounded context) |
-| Idle detection | `❯` prompt match | Not supported (TUI) | Not supported |
-| Cost | Anthropic API usage | Provider-dependent (multi-provider) | Free (local compute) |
+| Aspect | Claude Code | OpenCode (TUI) | Codex CLI | Local LLM (Ollama) |
+|--------|------------|----------------|-----------|-------------------|
+| System prompt | Claude Code built-in + agent file | Agent markdown body + shared prompt | Shared `.codex/AGENTS.md` + prompt instructions | Same assembly: agent def + shared + skills + context.d + resume |
+| Tool enforcement | `--allowedTools` flag | `permission` blocks in agent config | `.codex/AGENTS.md` instructions | `IsToolAllowed()` in Go, same patterns |
+| Hook chains | PostToolUse hooks fire automatically | No hooks — role-specific prompt instructions + adapted body text + send policy bypass | No hooks — prompt instructions + send policy bypass | Bash commands logged directly to `{role}-history.jsonl` |
+| Conversation state | Managed by Claude Code | Managed by OpenCode TUI (auto-compact) | Managed by Codex CLI | Reset between inbox checks (prevents unbounded context) |
+| Idle detection | `❯` prompt match | Not supported (TUI) | Heuristic (`>` prompt / "Summarize") | Not supported |
+| Cost | Anthropic API usage | Provider-dependent (multi-provider) | OpenAI API usage | Free (local compute) |
 
 ### CLI
 
@@ -239,7 +240,7 @@ cp ~/.config/muxcode/agents/code-builder.md .claude/agents/code-builder.md
 
 2. Add a role mapping if window name differs from role:
    ```bash
-   MUXCODE_ROLE_MAP="run=runner commit=git analyze=analyst docs=documentor"
+   MUXCODE_ROLE_MAP="docs=documentor"
    ```
 
 3. Add the role to known roles:
@@ -262,10 +263,10 @@ Agents have scoped permissions via tool profiles (`bus/profile.go`). The `--allo
 - **build**: `./build.sh`, `make`, `go build`, `pnpm build`, `cargo build`
 - **test**: `./test.sh`, `go test`, `jest`, `pytest`, `cargo test`
 - **review**: `git diff`, `git log`, `git status`, `git show` (read-only git), `Write`
-- **git**: `git *`, `gh *` (all git and GitHub CLI subcommands), `Write`, `Edit`
+- **commit**: `git *`, `gh *` (all git and GitHub CLI subcommands), `Write`, `Edit`
 - **deploy**: `cdk`, `terraform`, `pulumi`, `aws`, `sam`, `curl`, `wget`, `./build.sh`, `make`, read-only git, `Write`, `Edit`
-- **runner**: unrestricted (no `--allowedTools` filter)
-- **analyst**: bus commands + Read, Glob, Grep (no shell commands)
+- **run**: unrestricted (no `--allowedTools` filter)
+- **analyze**: bus commands + Read, Glob, Grep (no shell commands)
 - **watch**: `tail`, `journalctl`, `aws logs`, `kubectl logs`, `docker logs`, `stern`, `ssh`, `lnav` (read-only log tools)
 - **pr-read**: `gh pr view/checks/diff/review/list/status`, `gh api`, `git diff/log/status/show/blame/rev-parse/branch`, `jq` (read-only: scoped gh + git, no Write/Edit)
 - **api**: `curl`, `wget`, `http`, `jq`, `python`, `node`, `openssl`, `base64`, `dig`, `nslookup`, `Write`, `Edit`
@@ -316,7 +317,7 @@ CLI: `muxcode tools <role>` — resolves includes, applies CdPrefix, outputs one
 
 ## Agent health monitoring
 
-Watcher-integrated liveness detection for agent processes. The watcher probes agent tmux panes every 30 seconds and applies a 3-strike escalation:
+Daemon-integrated liveness detection for agent processes. The daemon probes agent tmux panes every 30 seconds and applies a 3-strike escalation:
 
 | Strike | Elapsed | Action |
 |--------|---------|--------|
@@ -331,15 +332,15 @@ Watcher-integrated liveness detection for agent processes. The watcher probes ag
 - **Recovery detection**: when a previously-down agent passes a probe, sends `agent-recovered` event
 - **System action exclusion**: `agent-down`, `agent-restarting`, `agent-recovered` registered in `isSystemAction()`
 
-### Watcher self-monitoring
+### Daemon self-monitoring
 
-The watcher writes a Unix timestamp to `watcher.keepalive` at the top of each poll loop. A companion monitor (`muxcode watch --monitor`) checks the keepalive every 15 seconds — if stale (>30s), it kills and relaunches the watcher.
+The daemon writes a Unix timestamp to `watcher.keepalive` at the top of each poll loop. A companion monitor (`muxcode watch --monitor`) checks the keepalive every 15 seconds — if stale (>30s), it kills and relaunches the daemon.
 
-Core code: `bus/agent_health.go`, `bus/watcher_health.go`. Watcher code: `watcher/watcher.go` (`checkAgentHealth()`, `touchKeepalive()`). Monitor: `cmd/watch.go` (`runWatcherMonitor()`).
+Core code: `bus/agent_health.go`, `bus/watcher_health.go`. Daemon code: `watcher/watcher.go` (`checkAgentHealth()`, `touchKeepalive()`). Monitor: `cmd/watch.go` (`runWatcherMonitor()`).
 
 ## Ollama health monitoring
 
-Watcher-integrated health monitoring detects stuck Ollama instances (process alive but inference hanging) and auto-restarts both Ollama and affected agents.
+Daemon-integrated health monitoring detects stuck Ollama instances (process alive but inference hanging) and auto-restarts both Ollama and affected agents.
 
 - **Inference probe**: `CheckOllamaInference()` sends minimal chat completion (`max_tokens:1`) with 10s timeout — distinguishes "process alive but stuck" from "healthy" (unlike `/api/tags` which only checks process liveness)
 - **Role discovery**: `LocalLLMRoles()` scans `MUXCODE_*_CLI=local` env vars to find which roles use Ollama
@@ -352,7 +353,7 @@ Watcher-integrated health monitoring detects stuck Ollama instances (process ali
 - **System action exclusion**: registered in `isSystemAction()` to prevent false loop detection
 - **Re-init cleanup**: `ollama-health.json` and `lock/*.ollama-fail` sentinels purged on session restart
 
-Core code: `bus/health.go`, `bus/health_test.go`. Watcher code: `watcher/watcher.go` (`checkOllama()`).
+Core code: `bus/health.go`, `bus/health_test.go`. Daemon code: `watcher/watcher.go` (`checkOllama()`).
 
 ## Local LLM harness
 

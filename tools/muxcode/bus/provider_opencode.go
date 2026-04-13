@@ -111,17 +111,39 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string) error {
 		return nil // nothing to inject
 	}
 
-	// Use the latest message's payload as the prompt
-	last := msgs[len(msgs)-1]
-	prompt := last.Payload
-	if prompt == "" {
-		prompt = fmt.Sprintf("You have a new %s request from %s", last.Action, last.From)
+	// Build a combined prompt from ALL pending messages so none are dropped.
+	// Earlier implementations only used the last message and consumed the
+	// entire inbox, silently dropping earlier requests.
+	// Filter out self-addressed messages to prevent infinite loops where
+	// the agent sends a response to itself, which triggers a wake-up,
+	// which injects the self-message, which triggers another response.
+	var parts []string
+	var lastFrom string
+	for _, m := range msgs {
+		// Skip messages from self — these are loop artifacts
+		if NormalizeBusRole(m.From) == role {
+			continue
+		}
+		if m.Payload != "" {
+			parts = append(parts, m.Payload)
+		} else {
+			parts = append(parts, fmt.Sprintf("You have a new %s request from %s", m.Action, m.From))
+		}
+		lastFrom = m.From
 	}
+	// If all messages were self-addressed, consume and discard them
+	if len(parts) == 0 {
+		_, _ = Receive(session, role)
+		return nil
+	}
+	prompt := strings.Join(parts, " | ALSO: ")
+	replyTarget := NormalizeBusRole(lastFrom)
+	if replyTarget == "" || !IsKnownRole(replyTarget) {
+		replyTarget = "edit"
+	}
+	prompt += fmt.Sprintf(" — When done, you MUST EXECUTE this bash command (do NOT print it as text): muxcode send %s response \"<your results>\" --type response", replyTarget)
 
-	// Consume the inbox so the message isn't re-injected on next wake-up
-	_, _ = Receive(session, role)
-
-	// Send text first
+	// Send text first — do NOT consume inbox until both send-keys succeed
 	cmd := exec.Command("tmux", "send-keys", "-t", target, prompt)
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s/%s failed: %v\n", role, "opencode", err)
@@ -135,6 +157,9 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string) error {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s/%s failed: %v\n", role, "opencode", err)
 		return err
 	}
+
+	// Both send-keys succeeded — now consume inbox so messages aren't re-injected
+	_, _ = Receive(session, role)
 	return nil
 }
 

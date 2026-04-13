@@ -1,4 +1,4 @@
-package watcher
+package daemon
 
 import (
 	"bufio"
@@ -14,8 +14,8 @@ import (
 	"github.com/mkober/muxcode/tools/muxcode/bus"
 )
 
-// Watcher monitors agent inboxes and a trigger file for file-edit events.
-type Watcher struct {
+// Daemon monitors agent inboxes and a trigger file for file-edit events.
+type Daemon struct {
 	session          string
 	pollInterval     time.Duration
 	debounceSecs     int
@@ -54,10 +54,13 @@ type Watcher struct {
 	lastTaskCheck       int64             // 5s interval
 	taskDeliveredAt     map[string]int64  // msgID -> unix time when message was delivered (wake-up sent)
 	taskLastPaneContent map[string]string // role -> last pane hash to avoid re-processing identical content
+	// Hook-provider idle task detection (safety net for dropped responses)
+	lastIdleTaskCheck int64            // 10s interval
+	idleTaskFirstSeen map[string]int64 // taskID -> unix time when first observed idle with in-flight task
 }
 
-// New creates a new Watcher for the given session.
-func New(session string, pollSecs, debounceSecs int) *Watcher {
+// New creates a new Daemon for the given session.
+func New(session string, pollSecs, debounceSecs int) *Daemon {
 	now := time.Now().Unix()
 
 	// Discover which roles use local LLM
@@ -66,7 +69,7 @@ func New(session string, pollSecs, debounceSecs int) *Watcher {
 	// Read Ollama config for health probes
 	ollamaCfg := bus.DefaultOllamaConfig()
 
-	return &Watcher{
+	return &Daemon{
 		session:              session,
 		pollInterval:         time.Duration(pollSecs) * time.Second,
 		debounceSecs:         debounceSecs,
@@ -86,23 +89,24 @@ func New(session string, pollSecs, debounceSecs int) *Watcher {
 		lastNonHookWake:      make(map[string]int64),
 		taskDeliveredAt:      make(map[string]int64),
 		taskLastPaneContent:  make(map[string]string),
+		idleTaskFirstSeen:    make(map[string]int64),
 	}
 }
 
-// acquireWatcherLock ensures only one watcher runs per session.
+// acquireDaemonLock ensures only one daemon runs per session.
 // Uses flock on a lock file for race-free single-instance enforcement.
-// Returns an unlock function, or an error if another watcher is already running.
-func acquireWatcherLock(session string) (func(), error) {
-	lockPath := filepath.Join(bus.BusDir(session), "lock", "watcher.lock")
+// Returns an unlock function, or an error if another daemon is already running.
+func acquireDaemonLock(session string) (func(), error) {
+	lockPath := filepath.Join(bus.BusDir(session), "lock", "daemon.lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("cannot open watcher lock: %w", err)
+		return nil, fmt.Errorf("cannot open daemon lock: %w", err)
 	}
 
-	// Non-blocking exclusive lock — fails immediately if another watcher holds it
+	// Non-blocking exclusive lock — fails immediately if another daemon holds it
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("another watcher is already running for session %s", session)
+		return nil, fmt.Errorf("another daemon is already running for session %s", session)
 	}
 
 	// Write our PID for diagnostics (the flock is the real guard, not the PID)
@@ -116,65 +120,66 @@ func acquireWatcherLock(session string) (func(), error) {
 	}, nil
 }
 
-// Run starts the main watcher loop. It never returns under normal operation.
-// Acquires a per-session flock to prevent duplicate watcher processes — stale
-// watchers from previous session starts cause duplicate tmux notifications.
-func (w *Watcher) Run() error {
-	busDir := bus.BusDir(w.session)
+// Run starts the main daemon loop. It never returns under normal operation.
+// Acquires a per-session flock to prevent duplicate daemon processes — stale
+// daemons from previous session starts cause duplicate tmux notifications.
+func (d *Daemon) Run() error {
+	busDir := bus.BusDir(d.session)
 
-	// Single-instance enforcement: exit immediately if another watcher is running
-	unlock, err := acquireWatcherLock(w.session)
+	// Single-instance enforcement: exit immediately if another daemon is running
+	unlock, err := acquireDaemonLock(d.session)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  %s\n", err)
-		bus.LogLifecycle(w.session, "error", "watcher", "lock-failed", err.Error())
+		bus.LogLifecycle(d.session, "error", "daemon", "lock-failed", err.Error())
 		return err
 	}
 	defer unlock()
 
-	bus.LogLifecycleWithPID(w.session, "info", "watcher", "started",
-		fmt.Sprintf("Poll: %ds, Debounce: %ds", int(w.pollInterval.Seconds()), w.debounceSecs),
+	bus.LogLifecycleWithPID(d.session, "info", "daemon", "started",
+		fmt.Sprintf("Poll: %ds, Debounce: %ds", int(d.pollInterval.Seconds()), d.debounceSecs),
 		os.Getpid())
 
-	fmt.Println("  Agent Bus Watcher")
-	fmt.Printf("  Session: %s\n", w.session)
+	fmt.Println("  Agent Bus Daemon")
+	fmt.Printf("  Session: %s\n", d.session)
 	fmt.Printf("  Bus: %s\n", busDir)
-	fmt.Printf("  Trigger: %s\n", w.triggerFile)
-	fmt.Printf("  Poll: %ds  Debounce: %ds\n", int(w.pollInterval.Seconds()), w.debounceSecs)
-	if len(w.ollamaRoles) > 0 {
-		fmt.Printf("  Ollama monitoring: %s (roles: %s)\n", w.ollamaURL, strings.Join(w.ollamaRoles, ", "))
+	fmt.Printf("  Trigger: %s\n", d.triggerFile)
+	fmt.Printf("  Poll: %ds  Debounce: %ds\n", int(d.pollInterval.Seconds()), d.debounceSecs)
+	if len(d.ollamaRoles) > 0 {
+		fmt.Printf("  Ollama monitoring: %s (roles: %s)\n", d.ollamaURL, strings.Join(d.ollamaRoles, ", "))
 	}
 	fmt.Println()
 
 	for {
-		w.touchKeepalive()
-		w.checkInboxes()
-		w.checkTrigger()
-		w.checkCron()
-		w.checkProcs()
-		w.checkSpawns()
-		w.checkLoops()
-		w.checkCompaction()
-		w.checkOllama()
-		w.checkAgentHealth()
-		w.checkIdleAgents()
-		w.checkNonHookTasks()
-		w.checkCleanup()
-		time.Sleep(w.pollInterval)
+		d.touchKeepalive()
+		d.checkInboxes()
+		d.checkTrigger()
+		d.checkCron()
+		d.checkProcs()
+		d.checkSpawns()
+		d.checkLoops()
+		d.checkCompaction()
+		d.checkOllama()
+		d.checkAgentHealth()
+		d.checkIdleAgents()
+		d.checkNonHookTasks()
+		d.checkIdleTaskCompletion()
+		d.checkCleanup()
+		time.Sleep(d.pollInterval)
 	}
 }
 
 // refreshInboxSizes updates the tracked inbox sizes without sending notifications.
 // Call this after programmatically adding messages to prevent checkInboxes from
 // re-notifying for messages that were already handled.
-func (w *Watcher) refreshInboxSizes() {
+func (d *Daemon) refreshInboxSizes() {
 	for _, role := range bus.KnownRoles {
-		inboxPath := bus.InboxPath(w.session, role)
+		inboxPath := bus.InboxPath(d.session, role)
 		info, err := os.Stat(inboxPath)
 		if err != nil {
-			w.inboxSizes[role] = 0
+			d.inboxSizes[role] = 0
 			continue
 		}
-		w.inboxSizes[role] = info.Size()
+		d.inboxSizes[role] = info.Size()
 	}
 }
 
@@ -183,24 +188,24 @@ func (w *Watcher) refreshInboxSizes() {
 // agents running `muxcode inbox --poll` pick up the messages. Also sends
 // a display-message for human visibility.
 //
-// cmd/send.go already calls Notify() for direct recipients. The watcher
+// cmd/send.go already calls Notify() for direct recipients. The daemon
 // catches messages that arrive without a Notify (e.g. auto-CC, hooks).
-func (w *Watcher) checkInboxes() {
+func (d *Daemon) checkInboxes() {
 	for _, role := range bus.KnownRoles {
-		inboxPath := bus.InboxPath(w.session, role)
+		inboxPath := bus.InboxPath(d.session, role)
 		info, err := os.Stat(inboxPath)
 		if err != nil {
-			w.inboxSizes[role] = 0
+			d.inboxSizes[role] = 0
 			continue
 		}
 
 		size := info.Size()
-		prev := w.inboxSizes[role]
+		prev := d.inboxSizes[role]
 
 		if size > prev && size > 0 {
 			// Workflow: detect review→edit messages for reviewed transition
-			if role == "edit" && bus.HasNewMessageFrom(w.session, "edit", "review") {
-				bus.TransitionWorkflow(w.session, bus.StateReviewed, "watcher:review-complete",
+			if role == "edit" && bus.HasNewMessageFrom(d.session, "edit", "review") {
+				bus.TransitionWorkflow(d.session, bus.StateReviewed, "daemon:review-complete",
 					bus.WithOutcome("review", "complete"))
 			}
 
@@ -209,17 +214,17 @@ func (w *Watcher) checkInboxes() {
 			// file locking + cooldown.
 			ts := time.Now().Format("15:04:05")
 			fmt.Printf("  %s  New message(s) for %s — notifying\n", ts, role)
-			bus.LogLifecycle(w.session, "info", "watcher", "inbox-notify", role)
-			_ = bus.Notify(w.session, role)
+			bus.LogLifecycle(d.session, "info", "daemon", "inbox-notify", role)
+			_ = bus.Notify(d.session, role)
 		}
 
-		w.inboxSizes[role] = size
+		d.inboxSizes[role] = size
 	}
 }
 
 // checkTrigger monitors the trigger file for file-edit events with debouncing.
-func (w *Watcher) checkTrigger() {
-	info, err := os.Stat(w.triggerFile)
+func (d *Daemon) checkTrigger() {
+	info, err := os.Stat(d.triggerFile)
 	if err != nil || info.Size() == 0 {
 		return
 	}
@@ -227,24 +232,24 @@ func (w *Watcher) checkTrigger() {
 	size := info.Size()
 	now := time.Now().Unix()
 
-	if size != w.lastTriggerSize {
-		if w.pendingSince == 0 {
+	if size != d.lastTriggerSize {
+		if d.pendingSince == 0 {
 			ts := time.Now().Format("15:04:05")
 			fmt.Printf("  %s  Claude edits detected, waiting to stabilize...\n", ts)
 		}
-		w.pendingSince = now
-		w.lastTriggerSize = size
-	} else if w.pendingSince > 0 {
-		elapsed := now - w.pendingSince
-		if elapsed >= int64(w.debounceSecs) {
-			w.routeTrigger()
+		d.pendingSince = now
+		d.lastTriggerSize = size
+	} else if d.pendingSince > 0 {
+		elapsed := now - d.pendingSince
+		if elapsed >= int64(d.debounceSecs) {
+			d.routeTrigger()
 			// Truncate the trigger file
-			f, err := os.OpenFile(w.triggerFile, os.O_WRONLY|os.O_TRUNC, 0644)
+			f, err := os.OpenFile(d.triggerFile, os.O_WRONLY|os.O_TRUNC, 0644)
 			if err == nil {
 				f.Close()
 			}
-			w.pendingSince = 0
-			w.lastTriggerSize = 0
+			d.pendingSince = 0
+			d.lastTriggerSize = 0
 		}
 	}
 }
@@ -252,8 +257,8 @@ func (w *Watcher) checkTrigger() {
 // routeTrigger reads the trigger file, extracts unique file paths, and sends
 // an aggregate analyze event. Individual file routing (test/deploy/build) is
 // handled by claude-teach-hook.sh to avoid duplicate messages.
-func (w *Watcher) routeTrigger() {
-	f, err := os.Open(w.triggerFile)
+func (d *Daemon) routeTrigger() {
+	f, err := os.Open(d.triggerFile)
 	if err != nil {
 		return
 	}
@@ -289,74 +294,74 @@ func (w *Watcher) routeTrigger() {
 
 	ts := time.Now().Format("15:04:05")
 	fmt.Printf("  %s  Edits stabilized — routing %d file(s)\n", ts, len(files))
-	bus.LogLifecycle(w.session, "info", "watcher", "trigger-route",
+	bus.LogLifecycle(d.session, "info", "daemon", "trigger-route",
 		fmt.Sprintf("%d file(s): %s", len(files), strings.Join(files, ", ")))
 
 	// Workflow: transition to analyzing
-	bus.TransitionWorkflow(w.session, bus.StateAnalyzing, "watcher:analyze-route",
+	bus.TransitionWorkflow(d.session, bus.StateAnalyzing, "daemon:analyze-route",
 		bus.WithFiles(files))
 
 	// Send aggregate event to analyze agent
 	fileList := strings.Join(files, ", ")
 	analyzePayload := fmt.Sprintf("Claude edited files: %s — Read those files and explain what was changed and why.", fileList)
-	msg := bus.NewMessage("watcher", "analyze", "event", "analyze", analyzePayload, "")
-	if err := bus.Send(w.session, msg); err != nil {
+	msg := bus.NewMessage("daemon", "analyze", "event", "analyze", analyzePayload, "")
+	if err := bus.Send(d.session, msg); err != nil {
 		fmt.Fprintf(os.Stderr, "  [route] failed to send analyze event: %v\n", err)
 		return
 	}
 
 	// Notify the analyze agent
-	if err := bus.Notify(w.session, "analyze"); err != nil {
+	if err := bus.Notify(d.session, "analyze"); err != nil {
 		fmt.Fprintf(os.Stderr, "  [route] failed to notify analyze: %v\n", err)
 	}
 
 	// Refresh inbox sizes so checkInboxes doesn't re-notify for the
 	// message we just sent (prevents double notification).
-	w.refreshInboxSizes()
+	d.refreshInboxSizes()
 }
 
 // loadCron reloads cron entries from disk at most once per 10 seconds.
 // Skips loading if the cron file is empty or missing.
-func (w *Watcher) loadCron() {
+func (d *Daemon) loadCron() {
 	now := time.Now().Unix()
-	if now-w.lastCronLoad < 10 {
+	if now-d.lastCronLoad < 10 {
 		return
 	}
 
 	// Skip if cron file is empty or missing
-	info, err := os.Stat(bus.CronPath(w.session))
+	info, err := os.Stat(bus.CronPath(d.session))
 	if err != nil || info.Size() == 0 {
-		w.cronEntries = nil
-		w.lastCronLoad = now
+		d.cronEntries = nil
+		d.lastCronLoad = now
 		return
 	}
 
-	entries, err := bus.ReadCronEntries(w.session)
+	entries, err := bus.ReadCronEntries(d.session)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  [cron] failed to read cron entries: %v\n", err)
 		return
 	}
-	w.cronEntries = entries
-	w.lastCronLoad = now
+	d.cronEntries = entries
+	d.lastCronLoad = now
 }
 
 // checkCron iterates cached cron entries, fires due ones, and updates state.
-func (w *Watcher) checkCron() {
-	w.loadCron()
+func (d *Daemon) checkCron() {
+	d.loadCron()
 
 	now := time.Now().Unix()
 	fired := false
-	for _, entry := range w.cronEntries {
+	for _, entry := range d.cronEntries {
 		if !bus.CronDue(entry, now) {
 			continue
 		}
 
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Cron firing: %s → %s:%s\n", ts, entry.ID, entry.Target, entry.Action)
-		bus.LogLifecycle(w.session, "info", "watcher", "cron-fire",
+		bus.LogLifecycle(d.session, "info", "daemon", "cron-fire",
 			fmt.Sprintf("%s → %s:%s", entry.ID, entry.Target, entry.Action))
 
-		msgID, err := bus.ExecuteCron(w.session, entry)
+		msgID, err := bus.ExecuteCron(d.session, entry)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  [cron] failed to execute %s: %v\n", entry.ID, err)
 			continue
@@ -365,7 +370,7 @@ func (w *Watcher) checkCron() {
 		fired = true
 
 		// Update last run timestamp
-		if err := bus.UpdateLastRun(w.session, entry.ID, now); err != nil {
+		if err := bus.UpdateLastRun(d.session, entry.ID, now); err != nil {
 			fmt.Fprintf(os.Stderr, "  [cron] failed to update last_run for %s: %v\n", entry.ID, err)
 		}
 
@@ -377,50 +382,50 @@ func (w *Watcher) checkCron() {
 			Target:    entry.Target,
 			Action:    entry.Action,
 		}
-		if err := bus.AppendCronHistory(w.session, histEntry); err != nil {
+		if err := bus.AppendCronHistory(d.session, histEntry); err != nil {
 			fmt.Fprintf(os.Stderr, "  [cron] failed to append history for %s: %v\n", entry.ID, err)
 		}
 
 		// Notify target agent (harness panes are skipped inside Notify)
-		if err := bus.Notify(w.session, entry.Target); err != nil {
+		if err := bus.Notify(d.session, entry.Target); err != nil {
 			fmt.Fprintf(os.Stderr, "  [cron] failed to notify %s: %v\n", entry.Target, err)
 		}
 	}
 
 	if fired {
 		// Refresh inbox sizes after cron messages to prevent double notification
-		w.refreshInboxSizes()
+		d.refreshInboxSizes()
 		// Force cron reload on next cycle so updated last_run_ts values are picked up
-		w.lastCronLoad = 0
+		d.lastCronLoad = 0
 	}
 }
 
 // checkProcs polls running background processes and notifies owners on completion.
 // Skips entirely if proc file is empty/missing and no running procs are tracked.
-func (w *Watcher) checkProcs() {
+func (d *Daemon) checkProcs() {
 	// Skip if proc file is empty/missing and no running procs cached
-	info, err := os.Stat(bus.ProcPath(w.session))
+	info, err := os.Stat(bus.ProcPath(d.session))
 	currentSize := int64(0)
 	if err == nil {
 		currentSize = info.Size()
 	}
-	if currentSize == 0 && !w.hasRunningProcs {
+	if currentSize == 0 && !d.hasRunningProcs {
 		return
 	}
 	// Reset running flag if file size changed (new proc may have been added)
-	if currentSize != w.lastProcSize {
-		w.hasRunningProcs = true
-		w.lastProcSize = currentSize
+	if currentSize != d.lastProcSize {
+		d.hasRunningProcs = true
+		d.lastProcSize = currentSize
 	}
 
-	completed, err := bus.RefreshProcStatus(w.session)
+	completed, err := bus.RefreshProcStatus(d.session)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  [proc] failed to refresh proc status: %v\n", err)
 		return
 	}
 
 	// Update running state: check if any procs are still running
-	entries, _ := bus.ReadProcEntries(w.session)
+	entries, _ := bus.ReadProcEntries(d.session)
 	hasRunning := false
 	for _, e := range entries {
 		if e.Status == "running" {
@@ -428,7 +433,7 @@ func (w *Watcher) checkProcs() {
 			break
 		}
 	}
-	w.hasRunningProcs = hasRunning
+	d.hasRunningProcs = hasRunning
 
 	if len(completed) == 0 {
 		return
@@ -438,59 +443,59 @@ func (w *Watcher) checkProcs() {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Process completed: %s (status: %s, exit: %d)\n",
 			ts, entry.ID, entry.Status, entry.ExitCode)
-		bus.LogLifecycle(w.session, "info", "watcher", "proc-complete",
+		bus.LogLifecycle(d.session, "info", "daemon", "proc-complete",
 			fmt.Sprintf("%s status=%s exit=%d", entry.ID, entry.Status, entry.ExitCode))
 
 		payload := fmt.Sprintf("Background process completed: %s\n  Command: %s\n  Status: %s  Exit code: %d\n  Log: %s",
 			entry.ID, entry.Command, entry.Status, entry.ExitCode, entry.LogFile)
 
 		msg := bus.NewMessage("proc", entry.Owner, "event", "proc-complete", payload, "")
-		if err := bus.Send(w.session, msg); err != nil {
+		if err := bus.Send(d.session, msg); err != nil {
 			fmt.Fprintf(os.Stderr, "  [proc] failed to send completion event to %s: %v\n", entry.Owner, err)
 			continue
 		}
 
 		// Notify uses display-message for all Claude Code panes (safe, non-intrusive).
 		// Harness panes are skipped inside Notify() — they poll inbox directly.
-		if err := bus.Notify(w.session, entry.Owner); err != nil {
+		if err := bus.Notify(d.session, entry.Owner); err != nil {
 			fmt.Fprintf(os.Stderr, "  [proc] failed to notify %s: %v\n", entry.Owner, err)
 		}
 
 		// Mark as notified
-		_ = bus.UpdateProcEntry(w.session, entry.ID, func(e *bus.ProcEntry) {
+		_ = bus.UpdateProcEntry(d.session, entry.ID, func(e *bus.ProcEntry) {
 			e.Notified = true
 		})
 	}
 
-	w.refreshInboxSizes()
+	d.refreshInboxSizes()
 }
 
 // checkSpawns polls running spawned agents and notifies owners on completion.
 // Skips entirely if spawn file is empty/missing and no running spawns are tracked.
-func (w *Watcher) checkSpawns() {
+func (d *Daemon) checkSpawns() {
 	// Skip if spawn file is empty/missing and no running spawns cached
-	info, err := os.Stat(bus.SpawnPath(w.session))
+	info, err := os.Stat(bus.SpawnPath(d.session))
 	currentSize := int64(0)
 	if err == nil {
 		currentSize = info.Size()
 	}
-	if currentSize == 0 && !w.hasRunningSpawns {
+	if currentSize == 0 && !d.hasRunningSpawns {
 		return
 	}
 	// Reset running flag if file size changed (new spawn may have been added)
-	if currentSize != w.lastSpawnSize {
-		w.hasRunningSpawns = true
-		w.lastSpawnSize = currentSize
+	if currentSize != d.lastSpawnSize {
+		d.hasRunningSpawns = true
+		d.lastSpawnSize = currentSize
 	}
 
-	completed, err := bus.RefreshSpawnStatus(w.session)
+	completed, err := bus.RefreshSpawnStatus(d.session)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  [spawn] failed to refresh spawn status: %v\n", err)
 		return
 	}
 
 	// Update running state: check if any spawns are still running
-	entries, _ := bus.ReadSpawnEntries(w.session)
+	entries, _ := bus.ReadSpawnEntries(d.session)
 	hasRunning := false
 	for _, e := range entries {
 		if e.Status == "running" {
@@ -498,7 +503,7 @@ func (w *Watcher) checkSpawns() {
 			break
 		}
 	}
-	w.hasRunningSpawns = hasRunning
+	d.hasRunningSpawns = hasRunning
 
 	if len(completed) == 0 {
 		return
@@ -508,12 +513,12 @@ func (w *Watcher) checkSpawns() {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Spawn completed: %s (role: %s, window: %s)\n",
 			ts, entry.ID, entry.Role, entry.Window)
-		bus.LogLifecycle(w.session, "info", "watcher", "spawn-complete",
+		bus.LogLifecycle(d.session, "info", "daemon", "spawn-complete",
 			fmt.Sprintf("%s role=%s window=%s", entry.ID, entry.Role, entry.Window))
 
 		// Try to extract the last result message from the spawn
 		resultInfo := "No result message found."
-		if result, ok := bus.GetSpawnResult(w.session, entry.SpawnRole); ok {
+		if result, ok := bus.GetSpawnResult(d.session, entry.SpawnRole); ok {
 			resultInfo = result.Payload
 			if len(resultInfo) > 200 {
 				resultInfo = resultInfo[:200] + "..."
@@ -524,36 +529,36 @@ func (w *Watcher) checkSpawns() {
 			entry.ID, entry.Role, entry.SpawnRole, entry.Task, resultInfo)
 
 		msg := bus.NewMessage("spawn", entry.Owner, "event", "spawn-complete", payload, "")
-		if err := bus.Send(w.session, msg); err != nil {
+		if err := bus.Send(d.session, msg); err != nil {
 			fmt.Fprintf(os.Stderr, "  [spawn] failed to send completion event to %s: %v\n", entry.Owner, err)
 			continue
 		}
 
 		// Notify uses display-message for all Claude Code panes (safe, non-intrusive).
 		// Harness panes are skipped inside Notify() — they poll inbox directly.
-		if err := bus.Notify(w.session, entry.Owner); err != nil {
+		if err := bus.Notify(d.session, entry.Owner); err != nil {
 			fmt.Fprintf(os.Stderr, "  [spawn] failed to notify %s: %v\n", entry.Owner, err)
 		}
 
 		// Mark as notified
-		_ = bus.UpdateSpawnEntry(w.session, entry.ID, func(e *bus.SpawnEntry) {
+		_ = bus.UpdateSpawnEntry(d.session, entry.ID, func(e *bus.SpawnEntry) {
 			e.Notified = true
 		})
 	}
 
-	w.refreshInboxSizes()
+	d.refreshInboxSizes()
 }
 
 // checkLoops runs loop detection every 60 seconds and sends alerts to the edit agent.
 // Deduplicates alerts within a 10-minute cooldown to avoid spamming.
-func (w *Watcher) checkLoops() {
+func (d *Daemon) checkLoops() {
 	now := time.Now().Unix()
-	if now-w.lastLoopCheck < 60 {
+	if now-d.lastLoopCheck < 60 {
 		return
 	}
-	w.lastLoopCheck = now
+	d.lastLoopCheck = now
 
-	alerts := bus.CheckAllLoops(w.session)
+	alerts := bus.CheckAllLoops(d.session)
 	if len(alerts) == 0 {
 		return
 	}
@@ -561,7 +566,7 @@ func (w *Watcher) checkLoops() {
 	// Filter out alerts that were already sent within the cooldown window.
 	// Cooldown (600s) must exceed detection window (300s) to prevent
 	// loop-detected events from sustaining their own detection window.
-	fresh := bus.FilterNewAlerts(alerts, w.lastAlertKey, 600)
+	fresh := bus.FilterNewAlerts(alerts, d.lastAlertKey, 600)
 	if len(fresh) == 0 {
 		return
 	}
@@ -569,108 +574,108 @@ func (w *Watcher) checkLoops() {
 	for _, alert := range fresh {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Loop detected: %s (%s)\n", ts, alert.Role, alert.Type)
-		bus.LogLifecycle(w.session, "warn", "watcher", "loop-detected",
+		bus.LogLifecycle(d.session, "warn", "daemon", "loop-detected",
 			fmt.Sprintf("%s type=%s", alert.Role, alert.Type))
 
-		msg := bus.NewMessage("watcher", "edit", "event", "loop-detected", alert.Message, "")
-		if err := bus.Send(w.session, msg); err != nil {
+		msg := bus.NewMessage("daemon", "edit", "event", "loop-detected", alert.Message, "")
+		if err := bus.Send(d.session, msg); err != nil {
 			fmt.Fprintf(os.Stderr, "  [guard] failed to send loop alert: %v\n", err)
 			continue
 		}
 		// Notify edit via display-message (passive status bar flash)
-		if err := bus.Notify(w.session, "edit"); err != nil {
+		if err := bus.Notify(d.session, "edit"); err != nil {
 			fmt.Fprintf(os.Stderr, "  [guard] failed to notify edit: %v\n", err)
 		}
 	}
 
-	w.refreshInboxSizes()
+	d.refreshInboxSizes()
 }
 
 // checkCompaction runs compaction checks every 120 seconds and sends recommendations
 // to the role itself. Deduplicates alerts within a 10-minute cooldown.
-func (w *Watcher) checkCompaction() {
+func (d *Daemon) checkCompaction() {
 	now := time.Now().Unix()
-	if now-w.lastCompactCheck < 120 {
+	if now-d.lastCompactCheck < 120 {
 		return
 	}
-	w.lastCompactCheck = now
+	d.lastCompactCheck = now
 
 	th := bus.DefaultCompactThresholds()
-	alerts := bus.CheckCompaction(w.session, th)
+	alerts := bus.CheckCompaction(d.session, th)
 	if len(alerts) == 0 {
 		return
 	}
 
 	// Filter out alerts that were already sent within the cooldown window (600s = 10 min)
-	fresh := bus.FilterNewCompactAlerts(alerts, w.lastAlertKey, 600)
+	fresh := bus.FilterNewCompactAlerts(alerts, d.lastAlertKey, 600)
 	if len(fresh) == 0 {
 		return
 	}
 
 	for _, alert := range fresh {
 		ts := time.Now().Format("15:04:05")
-		fmt.Printf("  %s  Compact recommended: %s (total: %s)\n", ts, alert.Role, formatWatcherBytes(alert.TotalBytes))
-		bus.LogLifecycle(w.session, "warn", "watcher", "compact-alert",
-			fmt.Sprintf("%s total=%s", alert.Role, formatWatcherBytes(alert.TotalBytes)))
+		fmt.Printf("  %s  Compact recommended: %s (total: %s)\n", ts, alert.Role, formatDaemonBytes(alert.TotalBytes))
+		bus.LogLifecycle(d.session, "warn", "daemon", "compact-alert",
+			fmt.Sprintf("%s total=%s", alert.Role, formatDaemonBytes(alert.TotalBytes)))
 
-		msg := bus.NewMessage("watcher", alert.Role, "event", "compact-recommended", alert.Message, "")
-		if err := bus.Send(w.session, msg); err != nil {
+		msg := bus.NewMessage("daemon", alert.Role, "event", "compact-recommended", alert.Message, "")
+		if err := bus.Send(d.session, msg); err != nil {
 			fmt.Fprintf(os.Stderr, "  [compact] failed to send compact alert to %s: %v\n", alert.Role, err)
 			continue
 		}
 		// Notify uses display-message for all Claude Code panes (safe, non-intrusive).
 		// Harness panes are skipped inside Notify() — they poll inbox directly.
-		if err := bus.Notify(w.session, alert.Role); err != nil {
+		if err := bus.Notify(d.session, alert.Role); err != nil {
 			fmt.Fprintf(os.Stderr, "  [compact] failed to notify %s: %v\n", alert.Role, err)
 		}
 	}
 
-	w.refreshInboxSizes()
+	d.refreshInboxSizes()
 }
 
 // checkOllama runs Ollama health probes every 30 seconds for roles using local LLM.
 // Detection timeline: 30s first probe, 60s alert, 90s restart attempt.
 // Caps automatic restarts at 3 to prevent restart loops.
-func (w *Watcher) checkOllama() {
-	if len(w.ollamaRoles) == 0 {
+func (d *Daemon) checkOllama() {
+	if len(d.ollamaRoles) == 0 {
 		return
 	}
 
 	now := time.Now().Unix()
-	if now-w.lastOllamaCheck < 30 {
+	if now-d.lastOllamaCheck < 30 {
 		return
 	}
-	w.lastOllamaCheck = now
+	d.lastOllamaCheck = now
 
 	// Run inference probe
-	err := bus.CheckOllamaInference(w.ollamaURL, w.ollamaModel, bus.OllamaProbeTimeout)
+	err := bus.CheckOllamaInference(d.ollamaURL, d.ollamaModel, bus.OllamaProbeTimeout)
 
 	// Also check for agent failure sentinels
-	hasSentinels := bus.HasOllamaFailSentinel(w.session)
+	hasSentinels := bus.HasOllamaFailSentinel(d.session)
 
 	ts := time.Now().Format("15:04:05")
 
 	if err == nil && !hasSentinels {
 		// Healthy
-		if w.ollamaWasDown {
+		if d.ollamaWasDown {
 			// Recovery detected
 			fmt.Printf("  %s  Ollama recovered — inference probe healthy\n", ts)
-			bus.LogLifecycle(w.session, "info", "watcher", "ollama-recovered", "")
-			w.ollamaWasDown = false
-			w.ollamaFailCount = 0
+			bus.LogLifecycle(d.session, "info", "daemon", "ollama-recovered", "")
+			d.ollamaWasDown = false
+			d.ollamaFailCount = 0
 
-			alert := bus.FormatOllamaAlert("recovered", w.ollamaRoles, "Ollama is responsive again")
-			msg := bus.NewMessage("watcher", "edit", "event", "ollama-recovered", alert, "")
-			if sendErr := bus.Send(w.session, msg); sendErr != nil {
+			alert := bus.FormatOllamaAlert("recovered", d.ollamaRoles, "Ollama is responsive again")
+			msg := bus.NewMessage("daemon", "edit", "event", "ollama-recovered", alert, "")
+			if sendErr := bus.Send(d.session, msg); sendErr != nil {
 				fmt.Fprintf(os.Stderr, "  [ollama] failed to send recovery alert: %v\n", sendErr)
 			}
-			w.refreshInboxSizes()
+			d.refreshInboxSizes()
 		}
 		return
 	}
 
 	// Unhealthy
-	w.ollamaFailCount++
+	d.ollamaFailCount++
 	errMsg := ""
 	if err != nil {
 		errMsg = err.Error()
@@ -683,58 +688,58 @@ func (w *Watcher) checkOllama() {
 		}
 	}
 
-	fmt.Printf("  %s  Ollama probe failure #%d: %s\n", ts, w.ollamaFailCount, errMsg)
-	bus.LogLifecycle(w.session, "warn", "watcher", "ollama-probe-fail",
-		fmt.Sprintf("failure #%d: %s", w.ollamaFailCount, errMsg))
+	fmt.Printf("  %s  Ollama probe failure #%d: %s\n", ts, d.ollamaFailCount, errMsg)
+	bus.LogLifecycle(d.session, "warn", "daemon", "ollama-probe-fail",
+		fmt.Sprintf("failure #%d: %s", d.ollamaFailCount, errMsg))
 
 	// Second consecutive failure (60s) — send ollama-down alert
-	if w.ollamaFailCount == 2 && !w.ollamaWasDown {
-		w.ollamaWasDown = true
+	if d.ollamaFailCount == 2 && !d.ollamaWasDown {
+		d.ollamaWasDown = true
 
 		// Dedup via lastAlertKey with 600s cooldown
 		alertKey := bus.OllamaHealthAlertKey("down")
-		if lastTS, ok := w.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
-			w.lastAlertKey[alertKey] = now
-			alert := bus.FormatOllamaAlert("down", w.ollamaRoles, errMsg)
-			msg := bus.NewMessage("watcher", "edit", "event", "ollama-down", alert, "")
-			if sendErr := bus.Send(w.session, msg); sendErr != nil {
+		if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
+			d.lastAlertKey[alertKey] = now
+			alert := bus.FormatOllamaAlert("down", d.ollamaRoles, errMsg)
+			msg := bus.NewMessage("daemon", "edit", "event", "ollama-down", alert, "")
+			if sendErr := bus.Send(d.session, msg); sendErr != nil {
 				fmt.Fprintf(os.Stderr, "  [ollama] failed to send down alert: %v\n", sendErr)
 			}
-			w.refreshInboxSizes()
+			d.refreshInboxSizes()
 		}
 	}
 
 	// Third consecutive failure (90s) — attempt restart
-	if w.ollamaFailCount == 3 {
-		if w.ollamaRestarts >= 3 {
+	if d.ollamaFailCount == 3 {
+		if d.ollamaRestarts >= 3 {
 			// Cap reached — periodic alerts only
 			alertKey := bus.OllamaHealthAlertKey("down")
-			if lastTS, ok := w.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
-				w.lastAlertKey[alertKey] = now
-				alert := bus.FormatOllamaAlert("down", w.ollamaRoles,
+			if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
+				d.lastAlertKey[alertKey] = now
+				alert := bus.FormatOllamaAlert("down", d.ollamaRoles,
 					fmt.Sprintf("Restart cap (3) reached. %s. Manual intervention required.", errMsg))
-				msg := bus.NewMessage("watcher", "edit", "event", "ollama-down", alert, "")
-				_ = bus.Send(w.session, msg)
-				w.refreshInboxSizes()
+				msg := bus.NewMessage("daemon", "edit", "event", "ollama-down", alert, "")
+				_ = bus.Send(d.session, msg)
+				d.refreshInboxSizes()
 			}
 			return
 		}
 
-		fmt.Printf("  %s  Attempting Ollama restart (#%d)...\n", ts, w.ollamaRestarts+1)
-		bus.LogLifecycle(w.session, "warn", "watcher", "ollama-restart",
-			fmt.Sprintf("attempt %d/3", w.ollamaRestarts+1))
-		w.ollamaRestarts++
+		fmt.Printf("  %s  Attempting Ollama restart (#%d)...\n", ts, d.ollamaRestarts+1)
+		bus.LogLifecycle(d.session, "warn", "daemon", "ollama-restart",
+			fmt.Sprintf("attempt %d/3", d.ollamaRestarts+1))
+		d.ollamaRestarts++
 
 		// Send restarting alert
-		alert := bus.FormatOllamaAlert("restarting", w.ollamaRoles,
-			fmt.Sprintf("Attempt %d/3 — killing and restarting ollama serve", w.ollamaRestarts))
-		msg := bus.NewMessage("watcher", "edit", "event", "ollama-restarting", alert, "")
-		_ = bus.Send(w.session, msg)
-		w.refreshInboxSizes()
+		alert := bus.FormatOllamaAlert("restarting", d.ollamaRoles,
+			fmt.Sprintf("Attempt %d/3 — killing and restarting ollama serve", d.ollamaRestarts))
+		msg := bus.NewMessage("daemon", "edit", "event", "ollama-restarting", alert, "")
+		_ = bus.Send(d.session, msg)
+		d.refreshInboxSizes()
 
 		// Attempt restart with 30s timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		restartErr := bus.RestartOllama(ctx, w.ollamaURL)
+		restartErr := bus.RestartOllama(ctx, d.ollamaURL)
 		cancel()
 
 		if restartErr != nil {
@@ -745,8 +750,8 @@ func (w *Watcher) checkOllama() {
 		fmt.Printf("  %s  Ollama restarted successfully, relaunching agents...\n", ts)
 
 		// Relaunch affected agents
-		for _, role := range w.ollamaRoles {
-			if restartErr := bus.RestartLocalAgent(w.session, role); restartErr != nil {
+		for _, role := range d.ollamaRoles {
+			if restartErr := bus.RestartLocalAgent(d.session, role); restartErr != nil {
 				fmt.Fprintf(os.Stderr, "  [ollama] failed to restart agent %s: %v\n", role, restartErr)
 			} else {
 				fmt.Printf("  %s  Relaunched agent: %s\n", ts, role)
@@ -754,26 +759,26 @@ func (w *Watcher) checkOllama() {
 		}
 
 		// Reset fail count to let the next probe cycle detect recovery
-		w.ollamaFailCount = 0
+		d.ollamaFailCount = 0
 	}
 }
 
-// touchKeepalive writes the current timestamp to the watcher keepalive file.
-// Called at the top of each poll loop iteration so the watcher monitor can
-// detect if the watcher process has died or become stuck.
-func (w *Watcher) touchKeepalive() {
-	bus.TouchKeepalive(w.session)
+// touchKeepalive writes the current timestamp to the daemon keepalive file.
+// Called at the top of each poll loop iteration so the daemon monitor can
+// detect if the daemon process has died or become stuck.
+func (d *Daemon) touchKeepalive() {
+	bus.TouchKeepaliveDaemon(d.session)
 }
 
 // checkAgentHealth probes agent liveness every 30 seconds using a 3-strike
 // escalation pattern: log → alert edit → restart (capped at 3 restarts).
 // Excludes edit and webhook roles. Respects intentional stop markers.
-func (w *Watcher) checkAgentHealth() {
+func (d *Daemon) checkAgentHealth() {
 	now := time.Now().Unix()
-	if now-w.lastAgentHealthCheck < 30 {
+	if now-d.lastAgentHealthCheck < 30 {
 		return
 	}
-	w.lastAgentHealthCheck = now
+	d.lastAgentHealthCheck = now
 
 	ts := time.Now().Format("15:04:05")
 
@@ -784,127 +789,126 @@ func (w *Watcher) checkAgentHealth() {
 		}
 
 		// Skip intentionally stopped agents
-		if bus.IsAgentStopped(w.session, role) {
+		if bus.IsAgentStopped(d.session, role) {
 			continue
 		}
 
-		alive := bus.IsAgentAlive(w.session, role)
+		alive := bus.IsAgentAlive(d.session, role)
 
 		if alive {
 			// Recovery detection
-			if w.agentWasDown[role] {
+			if d.agentWasDown[role] {
 				fmt.Printf("  %s  Agent %s recovered\n", ts, role)
-				bus.LogLifecycle(w.session, "info", "watcher", "agent-recovered", role)
-				w.agentWasDown[role] = false
-				w.agentFailCounts[role] = 0
+				bus.LogLifecycle(d.session, "info", "daemon", "agent-recovered", role)
+				d.agentWasDown[role] = false
+				d.agentFailCounts[role] = 0
 
 				alert := bus.FormatAgentHealthAlert("recovered", role, "Agent is responsive again")
-				msg := bus.NewMessage("watcher", "edit", "event", "agent-recovered", alert, "")
-				_ = bus.Send(w.session, msg)
-				w.refreshInboxSizes()
+				msg := bus.NewMessage("daemon", "edit", "event", "agent-recovered", alert, "")
+				_ = bus.Send(d.session, msg)
+				d.refreshInboxSizes()
 			}
 			continue
 		}
 
 		// Agent appears dead — increment fail count
-		w.agentFailCounts[role]++
-		count := w.agentFailCounts[role]
+		d.agentFailCounts[role]++
+		count := d.agentFailCounts[role]
 
 		fmt.Printf("  %s  Agent %s health check failure #%d\n", ts, role, count)
-		bus.LogLifecycle(w.session, "warn", "watcher", "agent-health-fail",
+		bus.LogLifecycle(d.session, "warn", "daemon", "agent-health-fail",
 			fmt.Sprintf("%s failure #%d", role, count))
 
 		// Strike 2 (60s) — alert edit
 		if count == 2 {
-			w.agentWasDown[role] = true
+			d.agentWasDown[role] = true
 
 			alertKey := bus.AgentHealthAlertKey(role, "down")
-			if lastTS, ok := w.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
-				w.lastAlertKey[alertKey] = now
+			if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
+				d.lastAlertKey[alertKey] = now
 				alert := bus.FormatAgentHealthAlert("down", role, "Agent pane shows bare shell prompt")
-				msg := bus.NewMessage("watcher", "edit", "event", "agent-down", alert, "")
-				if err := bus.Send(w.session, msg); err != nil {
+				msg := bus.NewMessage("daemon", "edit", "event", "agent-down", alert, "")
+				if err := bus.Send(d.session, msg); err != nil {
 					fmt.Fprintf(os.Stderr, "  [agent-health] failed to send down alert for %s: %v\n", role, err)
 				}
-				w.refreshInboxSizes()
+				d.refreshInboxSizes()
 			}
 		}
 
 		// Strike 3 (90s) — attempt restart
 		if count == 3 {
-			if w.agentRestarts[role] >= 3 {
+			if d.agentRestarts[role] >= 3 {
 				// Cap reached — alert-only mode
 				alertKey := bus.AgentHealthAlertKey(role, "down")
-				if lastTS, ok := w.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
-					w.lastAlertKey[alertKey] = now
+				if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
+					d.lastAlertKey[alertKey] = now
 					alert := bus.FormatAgentHealthAlert("down", role,
 						fmt.Sprintf("Restart cap (3) reached. Manual intervention required."))
-					msg := bus.NewMessage("watcher", "edit", "event", "agent-down", alert, "")
-					_ = bus.Send(w.session, msg)
-					w.refreshInboxSizes()
+					msg := bus.NewMessage("daemon", "edit", "event", "agent-down", alert, "")
+					_ = bus.Send(d.session, msg)
+					d.refreshInboxSizes()
 				}
 				continue
 			}
 
-			w.agentRestarts[role]++
-			attempt := w.agentRestarts[role]
+			d.agentRestarts[role]++
+			attempt := d.agentRestarts[role]
 			fmt.Printf("  %s  Restarting agent %s (attempt %d/3)...\n", ts, role, attempt)
-			bus.LogLifecycle(w.session, "warn", "watcher", "agent-restart",
+			bus.LogLifecycle(d.session, "warn", "daemon", "agent-restart",
 				fmt.Sprintf("%s attempt %d/3", role, attempt))
 
 			// Send restarting alert
 			alert := bus.FormatAgentHealthAlert("restarting", role,
 				fmt.Sprintf("Attempt %d/3 — relaunching agent", attempt))
-			msg := bus.NewMessage("watcher", "edit", "event", "agent-restarting", alert, "")
-			_ = bus.Send(w.session, msg)
-			w.refreshInboxSizes()
+			msg := bus.NewMessage("daemon", "edit", "event", "agent-restarting", alert, "")
+			_ = bus.Send(d.session, msg)
+			d.refreshInboxSizes()
 
 			// Attempt restart
-			if err := bus.RestartLocalAgent(w.session, role); err != nil {
+			if err := bus.RestartLocalAgent(d.session, role); err != nil {
 				fmt.Fprintf(os.Stderr, "  [agent-health] failed to restart %s: %v\n", role, err)
 			} else {
 				fmt.Printf("  %s  Agent %s restarted successfully\n", ts, role)
 			}
 
 			// Reset fail count to let next probe detect recovery
-			w.agentFailCounts[role] = 0
+			d.agentFailCounts[role] = 0
 		}
 	}
 }
 
 // checkIdleAgents wakes agents that are idle with unread messages.
 // Runs every 5 seconds. For each non-edit agent that has unread inbox messages
-// and is sitting at the idle prompt (not polling or waiting), injects
-// "You have new messages" via send-keys. This replaces the LLM-driven polling
-// loop — agents no longer need to run `muxcode inbox --poll` themselves.
-// The edit agent is excluded because it uses background polling managed by
-// the user/orchestrator.
-func (w *Watcher) checkIdleAgents() {
+// and is sitting at the idle prompt (not polling or waiting), triggers a
+// wake-up via the provider. Hook providers (Claude Code) get "You have new
+// messages" via send-keys; non-hook providers (Codex, OpenCode) get the actual
+// message content injected via provider.SendWakeUp(). The edit agent is
+// excluded because it uses background polling managed by the user/orchestrator.
+func (d *Daemon) checkIdleAgents() {
 	now := time.Now().Unix()
-	if now-w.lastIdleCheck < 5 {
+	if now-d.lastIdleCheck < 5 {
 		return
 	}
-	w.lastIdleCheck = now
+	d.lastIdleCheck = now
 
 	for _, role := range bus.KnownRoles {
-		// Edit agent manages its own polling via background Bash tool
-		if role == "edit" {
-			continue
-		}
 		// Skip hosted roles — they share a pane with their host
 		if bus.WindowForRole(role) != role {
 			continue
 		}
-		// Skip if no unread messages
-		if !bus.HasMessages(w.session, role) {
+		// Skip if no actionable messages. Only wake agents for request-type
+		// messages — responses and events are informational and don't require
+		// the agent to act. This prevents echo loops where agents keep
+		// acknowledging each other's responses.
+		if !bus.HasActionableMessages(d.session, role) {
 			continue
 		}
 		// Skip if agent is polling or waiting (already watching inbox)
-		if bus.IsPolling(w.session, role) || bus.IsWaiting(w.session, role) {
+		if bus.IsPolling(d.session, role) || bus.IsWaiting(d.session, role) {
 			continue
 		}
 		// Skip harness panes — they poll inbox directly
-		if bus.IsHarnessActive(w.session, role) {
+		if bus.IsHarnessActive(d.session, role) {
 			continue
 		}
 		// Skip non-hook providers (OpenCode TUI, local LLM) — they cannot
@@ -915,21 +919,21 @@ func (w *Watcher) checkIdleAgents() {
 			// Best-effort: send display-message so user sees a flash.
 			// Cooldown: once per 60s per role to avoid display-message spam
 			// since this check runs every 5s.
-			if now-w.lastNonHookWake[role] >= 60 {
-				w.lastNonHookWake[role] = now
-				_ = provider.SendWakeUp(w.session, role)
+			if now-d.lastNonHookWake[role] >= 60 {
+				d.lastNonHookWake[role] = now
+				_ = provider.SendWakeUp(d.session, role)
 			}
 			continue
 		}
 		// Only wake idle agents (at ❯ prompt) — don't interrupt active ones
-		if !bus.IsAgentIdle(w.session, role) {
+		if !bus.IsAgentIdle(d.session, role) {
 			continue
 		}
 
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Waking idle agent %s (unread messages)\n", ts, role)
-		bus.LogLifecycle(w.session, "info", "watcher", "idle-wake", role)
-		_ = bus.Notify(w.session, role)
+		bus.LogLifecycle(d.session, "info", "daemon", "idle-wake", role)
+		_ = bus.Notify(d.session, role)
 	}
 }
 
@@ -941,15 +945,15 @@ func (w *Watcher) checkIdleAgents() {
 //
 // Runs every 5 seconds. Only processes tasks that have been in-flight for at
 // least 5 seconds (grace period for the agent to start working).
-func (w *Watcher) checkNonHookTasks() {
+func (d *Daemon) checkNonHookTasks() {
 	now := time.Now().Unix()
-	if now-w.lastTaskCheck < 5 {
+	if now-d.lastTaskCheck < 5 {
 		return
 	}
-	w.lastTaskCheck = now
+	d.lastTaskCheck = now
 
 	// Find in-flight tasks targeting non-hook providers
-	tasks, err := bus.ListTasks(w.session, bus.TaskInFlight)
+	tasks, err := bus.ListTasks(d.session, bus.TaskInFlight)
 	if err != nil || len(tasks) == 0 {
 		return
 	}
@@ -969,17 +973,17 @@ func (w *Watcher) checkNonHookTasks() {
 
 		// Track when we first saw this task delivered (wake-up was sent).
 		// The grace period starts from delivery, not from our first observation.
-		if _, ok := w.taskDeliveredAt[task.ID]; !ok {
-			w.taskDeliveredAt[task.ID] = now
+		if _, ok := d.taskDeliveredAt[task.ID]; !ok {
+			d.taskDeliveredAt[task.ID] = now
 		}
 
 		// Require at least 3s since we started tracking this task
-		if now-w.taskDeliveredAt[task.ID] < 3 {
+		if now-d.taskDeliveredAt[task.ID] < 3 {
 			continue
 		}
 
 		// Capture the agent's pane (30 lines for context)
-		target := bus.PaneTarget(w.session, task.To)
+		target := bus.PaneTarget(d.session, task.To)
 		paneContent, err := bus.TmuxCapturePaneLines(target, 30)
 		if err != nil {
 			continue
@@ -988,13 +992,13 @@ func (w *Watcher) checkNonHookTasks() {
 		// Skip if pane content hasn't changed since last check —
 		// avoids re-analyzing the same static output.
 		contentKey := task.To + ":" + task.ID
-		if paneContent == w.taskLastPaneContent[contentKey] {
+		if paneContent == d.taskLastPaneContent[contentKey] {
 			continue
 		}
-		w.taskLastPaneContent[contentKey] = paneContent
+		d.taskLastPaneContent[contentKey] = paneContent
 
 		// Ask the provider to analyze the pane content
-		completed, errored, summary := provider.DetectTaskCompletion(w.session, task.To, paneContent)
+		completed, errored, summary := provider.DetectTaskCompletion(d.session, task.To, paneContent)
 		if !completed {
 			continue
 		}
@@ -1008,7 +1012,7 @@ func (w *Watcher) checkNonHookTasks() {
 			action = "error"
 		}
 		fmt.Printf("  %s  Detected %s task %s (%s)\n", ts, task.To, status, task.Action)
-		bus.LogLifecycle(w.session, "info", "watcher", "task-detected",
+		bus.LogLifecycle(d.session, "info", "daemon", "task-detected",
 			fmt.Sprintf("%s task %s from %s: %s", task.To, task.Action, task.From, status))
 
 		// Truncate summary for the message payload (keep it reasonable)
@@ -1019,7 +1023,7 @@ func (w *Watcher) checkNonHookTasks() {
 
 		// Send response back to the original requester
 		msg := bus.NewMessage(task.To, task.From, "response", action, payload, task.ID)
-		if err := bus.Send(w.session, msg); err != nil {
+		if err := bus.Send(d.session, msg); err != nil {
 			fmt.Fprintf(os.Stderr, "  [task-detect] failed to send response for %s: %v\n", task.ID, err)
 			continue
 		}
@@ -1027,42 +1031,218 @@ func (w *Watcher) checkNonHookTasks() {
 		// Mark the task as completed so it's not re-detected on next check.
 		// Send() already called MarkResponded() on the delivery status (via
 		// ReplyTo), so waitForResponse() in --wait will also unblock.
-		bus.CompleteTask(w.session, task.ID, msg.ID)
+		bus.CompleteTask(d.session, task.ID, msg.ID)
+
+		// Log to console history so the left-pane console view updates.
+		// Non-hook providers don't have PostToolUse hooks to write history,
+		// so the daemon writes it when it detects task completion.
+		logTaskToConsoleHistory(d.session, task.To, task.Action, payload, errored)
 
 		// Clean up tracking state for this task
-		delete(w.taskDeliveredAt, task.ID)
-		delete(w.taskLastPaneContent, contentKey)
+		delete(d.taskDeliveredAt, task.ID)
+		delete(d.taskLastPaneContent, contentKey)
 
 		// Notify the requester so they pick up the response
-		_ = bus.Notify(w.session, task.From)
+		_ = bus.Notify(d.session, task.From)
+	}
+}
+
+// idleTaskGracePeriod is how long a hook-provider agent must be idle with an
+// in-flight task before the daemon sends a synthetic response. This gives the
+// agent time to send its own response via the Bash tool before the safety net
+// kicks in. 30 seconds covers normal response composition time while catching
+// the case where the agent output the send command as text instead of executing it.
+const idleTaskGracePeriod int64 = 30
+
+// checkIdleTaskCompletion is a safety net for hook-provider agents (Claude Code)
+// that go idle without having responded to an in-flight task. This catches the
+// failure mode where an agent composes a `muxcode send` command as text output
+// in the TUI instead of executing it via the Bash tool — the response silently
+// vanishes and the requester's --wait hangs forever.
+//
+// When detected (agent idle + in-flight task + grace period elapsed), captures
+// the agent's pane content and sends a synthetic response back to the requester,
+// similar to checkNonHookTasks() but triggered by idle detection instead of
+// task completion heuristics.
+//
+// Runs every 10 seconds to avoid excessive tmux capture-pane calls.
+func (d *Daemon) checkIdleTaskCompletion() {
+	now := time.Now().Unix()
+	if now-d.lastIdleTaskCheck < 10 {
+		return
+	}
+	d.lastIdleTaskCheck = now
+
+	// Find in-flight tasks
+	tasks, err := bus.ListTasks(d.session, bus.TaskInFlight)
+	if err != nil || len(tasks) == 0 {
+		// Clean up tracking state when no in-flight tasks exist
+		for k := range d.idleTaskFirstSeen {
+			delete(d.idleTaskFirstSeen, k)
+		}
+		return
+	}
+
+	for _, task := range tasks {
+		provider := bus.ResolveProvider(task.To)
+		// Only handle hook providers — non-hook providers are covered by checkNonHookTasks
+		if !provider.SupportsHooks() {
+			continue
+		}
+
+		// Skip tasks that are too fresh (< 10s) — agent may still be working
+		if now-task.SentAt < 10 {
+			continue
+		}
+
+		// Check if the target agent is idle (at ❯ prompt)
+		if !bus.IsAgentIdle(d.session, task.To) {
+			// Agent is active — reset tracking for this task
+			delete(d.idleTaskFirstSeen, task.ID)
+			continue
+		}
+
+		// Agent is idle with an in-flight task — track grace period
+		firstSeen, tracked := d.idleTaskFirstSeen[task.ID]
+		if !tracked {
+			d.idleTaskFirstSeen[task.ID] = now
+			continue // start grace period
+		}
+
+		// Wait for grace period before acting
+		if now-firstSeen < idleTaskGracePeriod {
+			continue
+		}
+
+		// Grace period elapsed — re-read the task to confirm it's still in-flight.
+		// The real agent may have responded during the grace period, in which
+		// case CompleteTask already flipped the status.
+		freshTask, freshErr := bus.ReadTask(d.session, task.ID)
+		if freshErr != nil || freshTask.Status != bus.TaskInFlight {
+			delete(d.idleTaskFirstSeen, task.ID)
+			continue
+		}
+
+		// Agent is stuck idle without having responded.
+		// Capture pane content for the synthetic response.
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Detected idle %s with unresponded task %s (idle %ds) — sending synthetic response\n",
+			ts, task.To, task.Action, now-firstSeen)
+		bus.LogLifecycle(d.session, "warn", "daemon", "idle-task-rescue",
+			fmt.Sprintf("%s idle with unresponded task %s from %s (idle %ds)",
+				task.To, task.Action, task.From, now-firstSeen))
+
+		target := bus.PaneTarget(d.session, task.To)
+		paneContent, err := bus.TmuxCapturePaneLines(target, 50)
+		if err != nil {
+			paneContent = "(pane capture failed)"
+		}
+
+		// Truncate for the message payload
+		payload := paneContent
+		if len(payload) > 2000 {
+			payload = payload[:1997] + "..."
+		}
+
+		// Send synthetic response back to the original requester
+		msg := bus.NewMessage(task.To, task.From, "response", "response",
+			fmt.Sprintf("[daemon: %s went idle without responding — pane content follows]\n%s", task.To, payload),
+			task.ID)
+		if err := bus.Send(d.session, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "  [idle-task-rescue] failed to send response for %s: %v\n", task.ID, err)
+			continue
+		}
+
+		// Mark the task as completed
+		bus.CompleteTask(d.session, task.ID, msg.ID)
+
+		// Log to console history so the left-pane console view updates.
+		logTaskToConsoleHistory(d.session, task.To, task.Action, payload, false)
+
+		// Clean up tracking state
+		delete(d.idleTaskFirstSeen, task.ID)
+
+		// Notify the requester
+		_ = bus.Notify(d.session, task.From)
+	}
+
+	// Clean up tracking for tasks that are no longer in-flight
+	taskIDs := make(map[string]bool, len(tasks))
+	for _, t := range tasks {
+		taskIDs[t.ID] = true
+	}
+	for k := range d.idleTaskFirstSeen {
+		if !taskIDs[k] {
+			delete(d.idleTaskFirstSeen, k)
+		}
+	}
+}
+
+// logTaskToConsoleHistory writes a history entry to the role's console history
+// JSONL file when the daemon detects task completion for a non-hook provider.
+// This replaces the PostToolUse hook logging that hook-based providers use —
+// without it, left-pane console views for non-hook agents remain empty.
+func logTaskToConsoleHistory(session, role, action, output string, errored bool) {
+	outcome := "success"
+	exitCode := "0"
+	if errored {
+		outcome = "failure"
+		exitCode = "1"
+	}
+
+	// Build a summary from the action (e.g. "review", "build", "test")
+	summary := action
+	if len(output) > 200 {
+		// Use first line as summary if output is long
+		if idx := strings.Index(output, "\n"); idx > 0 && idx < 200 {
+			summary = output[:idx]
+		} else if len(output) > 200 {
+			summary = output[:200] + "..."
+		}
+	} else if output != "" {
+		summary = output
+	}
+
+	entry := bus.HookHistoryEntry{
+		TS:       time.Now().Unix(),
+		Command:  action,
+		ExitCode: exitCode,
+		Outcome:  outcome,
+		Output:   output,
+		Summary:  summary,
+	}
+
+	historyPath := bus.HistoryPath(session, role)
+	if err := bus.WriteHookHistory(historyPath, entry, 100); err != nil {
+		fmt.Fprintf(os.Stderr, "  [console-log] failed to write %s history: %v\n", role, err)
 	}
 }
 
 // checkCleanup removes expired delivery status and task files every 5 minutes.
 // Delivery and task files accumulate from --wait send operations; without
 // periodic cleanup they grow unbounded over long sessions.
-func (w *Watcher) checkCleanup() {
+func (d *Daemon) checkCleanup() {
 	now := time.Now().Unix()
-	if now-w.lastCleanupCheck < 300 {
+	if now-d.lastCleanupCheck < 300 {
 		return
 	}
-	w.lastCleanupCheck = now
+	d.lastCleanupCheck = now
 
 	// Clean delivery status files older than 1 hour
-	deliveryCleaned := bus.CleanExpiredDeliveries(w.session, 1*time.Hour)
+	deliveryCleaned := bus.CleanExpiredDeliveries(d.session, 1*time.Hour)
 	// Clean task files older than 1 hour
-	tasksCleaned := bus.CleanExpiredTasks(w.session, 1*time.Hour)
+	tasksCleaned := bus.CleanExpiredTasks(d.session, 1*time.Hour)
 
 	if deliveryCleaned > 0 || tasksCleaned > 0 {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Cleanup: %d delivery, %d task files removed\n", ts, deliveryCleaned, tasksCleaned)
-		bus.LogLifecycle(w.session, "info", "watcher", "cleanup",
+		bus.LogLifecycle(d.session, "info", "daemon", "cleanup",
 			fmt.Sprintf("delivery=%d tasks=%d", deliveryCleaned, tasksCleaned))
 	}
 }
 
-// formatWatcherBytes is a simple bytes formatter for watcher log lines.
-func formatWatcherBytes(b int64) string {
+// formatDaemonBytes is a simple bytes formatter for daemon log lines.
+func formatDaemonBytes(b int64) string {
 	if b < 1024 {
 		return fmt.Sprintf("%d B", b)
 	}

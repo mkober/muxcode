@@ -138,8 +138,8 @@ func ScrubPII(text string) (string, int) {
 // piiSensitiveRoles lists roles whose tool output should be scrubbed.
 var piiSensitiveRoles = map[string]bool{
 	"api":    true,
-	"runner": true,
 	"run":    true,
+	"runner": true,
 	"watch":  true,
 }
 

@@ -44,7 +44,7 @@ Persistent:  .muxcode/memory/{role}.md      (project)
 
 ## Provider Architecture
 
-Each agent window independently resolves its AI CLI provider via a `Provider` interface (`bus/provider.go`). The bus, hooks, and watcher all dispatch through the provider abstraction — no component directly assumes Claude Code.
+Each agent window independently resolves its AI CLI provider via a `Provider` interface (`bus/provider.go`). The bus, hooks, and daemon all dispatch through the provider abstraction — no component directly assumes Claude Code.
 
 ### Provider interface
 
@@ -69,7 +69,8 @@ Provider
 |----------|--------|-------|----------------|---------|---------|-------------|
 | `ClaudeCodeProvider` | `claude` | Yes | `❯` prompt match | send-keys text + Enter | `/compact` via send-keys | `--allowedTools` patterns |
 | `OpenCodeProvider` | `opencode` | No | Not supported (TUI) | display-message / send-keys with payload | No-op (auto-compact) | `permission` blocks in frontmatter |
-| `LocalProvider` | `muxcode-llm-harness` | No | Not supported | N/A (watcher-driven) | N/A (context reset) | `IsToolAllowed()` in Go |
+| `CodexProvider` | `codex` | No | Heuristic (`>` prompt / "Summarize") | send-keys with payload (self-message filtered) | No-op | `.codex/AGENTS.md` shared config |
+| `LocalProvider` | `muxcode-llm-harness` | No | Not supported | N/A (daemon-driven) | N/A (context reset) | `IsToolAllowed()` in Go |
 
 ### Provider resolution
 
@@ -79,20 +80,20 @@ MUXCODE_{ROLE}_CLI  →  MUXCODE_AGENT_CLI  →  "claude" (default)
   per-role override    session-wide default    built-in fallback
 ```
 
-Core code: `bus/provider.go` (interface + resolution), `bus/provider_claude.go`, `bus/provider_opencode.go`.
+Core code: `bus/provider.go` (interface + resolution), `bus/provider_claude.go`, `bus/provider_opencode.go`, `bus/provider_codex.go`.
 
 ### Graceful degradation
 
-When an agent uses a non-hook provider (OpenCode or local LLM), hook-dependent features degrade:
+When an agent uses a non-hook provider (OpenCode, Codex CLI, or local LLM), hook-dependent features degrade:
 
 - **Build/test/review chains**: disabled for that agent; system prompt instructs the agent to send bus messages manually. Instructions are role-specific — build agents only see build chain instructions, test agents see test chain instructions, review agents see generic reply instructions. Agent body text is adapted via `adaptBodyForNonHookProvider()` to replace hook chain references with manual chain commands.
 - **Send policy**: `CheckSendPolicy()` bypasses deny rules for non-hook providers. The default policy denies build→test and test→review sends (hooks handle chaining), but non-hook providers must send those messages manually — the policy would block them otherwise.
 - **Edit guard**: disabled; rely on provider-native permission deny rules
 - **Workflow state transitions**: hooks skip non-hook providers via `provider.SupportsHooks()`
-- **Idle-based notifications**: watcher skips idle check for non-hook providers; uses display-message or 60s cooldown send-keys instead
+- **Idle-based notifications**: daemon skips idle check for non-hook providers; uses display-message or 60s cooldown send-keys instead
 - **Send restrictions prompt**: the "Send Restrictions" section in the shared prompt (which tells Claude Code agents not to send to chain targets) is hidden for non-hook providers
 
-Core code: `cmd/hook.go` (hook gating), `bus/prompt.go` (role-specific manual bus messaging, send restriction gating), `bus/profile.go` (send policy bypass), `bus/provider_opencode.go` (body adaptation), `watcher/watcher.go` (idle check skip).
+Core code: `cmd/hook.go` (hook gating), `bus/prompt.go` (role-specific manual bus messaging, send restriction gating), `bus/profile.go` (send policy bypass, `resolveRoleAlias()` for canonical role names), `bus/provider_opencode.go` (body adaptation), `bus/provider_codex.go` (shared agent config), `watcher/watcher.go` (daemon idle check skip, `HasActionableMessages()` filtering).
 
 ## Data Flow
 
@@ -135,8 +136,8 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
 3. Hook appends file path to trigger file
 4. Hook routes event to relevant agent (test/deploy/build) based on file type
 5. In edit window: hook cleans up nvim diff preview, reloads file
-6. Bus watcher (in analyze window) detects trigger file changes
-7. After debounce, watcher sends aggregate analyze event to analyst
+6. Bus daemon (in analyze window) detects trigger file changes
+7. After debounce, daemon sends aggregate analyze event to analyst
 ```
 
 ### Agent Spawn Flow
@@ -149,14 +150,23 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
 5. After 2s delay, bus notifies spawn agent to read inbox
 6. Spawn agent works on task, sends messages back to owner via bus
 7. Spawn agent completes, exits (tmux window closes)
-8. Watcher detects window death via checkSpawns()
-9. Watcher sends spawn-complete event to owner with last result
+8. Daemon detects window death via checkSpawns()
+9. Daemon sends spawn-complete event to owner with last result
 10. Owner retrieves result: muxcode spawn result <id>
 ```
 
-### Watcher debounce
+### Daemon identity
 
-The watcher uses a two-phase approach to coalesce burst edits:
+The bus daemon (implemented in `watcher/watcher.go`) uses `daemon` as its message bus identity — not `watcher`, which would collide with the `watch` agent (F7 window, the log-monitoring agent). This naming distinction prevents confusion in message routing, loop detection, and lifecycle logs.
+
+- **Bus messages**: the daemon sends messages with `from: daemon` (e.g. loop-detected, compact-recommended, agent-down alerts)
+- **Role normalization**: `NormalizeBusRole("daemon")` maps to `edit`, so reply instructions in daemon-originated messages point agents to reply to the edit agent (a valid interactive role) rather than to `daemon` (which has no inbox)
+- **Lifecycle logs**: daemon events appear with source `daemon` in the lifecycle JSONL
+- **Loop detection**: `daemon` is filtered out of message loop detection to prevent false positives from the daemon's frequent system events
+
+### Daemon debounce
+
+The daemon uses a two-phase approach to coalesce burst edits:
 
 1. **Detect change**: trigger file size changes → record pending timestamp
 2. **Wait for stability**: if no further changes for the debounce interval (default 8 seconds), fire the aggregate event
@@ -204,11 +214,11 @@ Messages from build, test, review, and deploy agents to any non-edit agent are a
    - **Trigger file** (always): writes timestamp to `trigger-{role}.notify` — agents running `muxcode inbox --poll` detect this via `stat()` polling (no pane interaction, no TOCTOU race)
    - **Polling agents** (`--poll` or `--wait` active): skipped for send-keys — the poll loop watches the trigger file
    - **Harness panes**: skipped — they poll inbox directly
-   - **Non-hook providers** (OpenCode, local LLM): routed directly to `provider.SendWakeUp()` — OpenCode injects message payload via send-keys, local LLM is no-op
+   - **Non-hook providers** (OpenCode, Codex CLI, local LLM): routed directly to `provider.SendWakeUp()` — OpenCode and Codex inject message payload via send-keys (self-addressed messages filtered to prevent echo loops), local LLM is no-op
    - **Idle Claude Code agents** (at `❯` prompt, including edit): `send-keys` "You have new messages" + Enter to wake them up
    - **Active Claude Code agents** (including edit): `display-message` (passive status bar flash)
 5. If auto-CC fires, `send` also notifies edit
-6. The watcher provides fallback notifications for all roles
+6. The daemon provides fallback notifications for all roles
 7. When an agent reads its inbox via `Receive()`, consumed messages are marked "delivered" in their status files
 
 Never use `send-keys` on **active** agents — it disrupts Claude Code's input buffer, interrupts in-progress tool execution, and causes agents to stall at "Interrupted" prompts. Idle agents at the `❯` prompt are safe to wake via `send-keys` because no tool execution is in progress. `IsAgentIdle()` detects idle state via `tmux capture-pane -S -8` (scans all captured lines for exact match on the `❯` character — scans all lines because Claude Code renders a decorative footer below the prompt).
@@ -282,7 +292,7 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 | `muxcode hook guard` | PreToolUse | Bash | sync | Block prohibited commands in edit window |
 | `muxcode-preview-hook.sh` | PreToolUse | Write/Edit | async | Show diff preview in nvim |
 | `muxcode-diff-cleanup.sh` | PreToolUse | Read/Bash/etc | async | Clean stale diff preview |
-| `muxcode hook analyze` | PostToolUse | Write/Edit | async | Route file events, trigger watcher |
+| `muxcode hook analyze` | PostToolUse | Write/Edit | async | Route file events, trigger daemon |
 | `muxcode hook bash` | PostToolUse | Bash | async | Drive build-test-review and deploy-verify chains + subscription fan-out |
 
 ### Hook Chain Guarantee
@@ -306,7 +316,7 @@ The build-test-review and deploy-verify chains are **deterministic** — driven 
 ┌────────────────────┬────────────────────┐
 │                    │                    │
 │   Tool             │   AI Agent         │
-│   (nvim/watcher/   │   (pane 1)         │
+│   (nvim/daemon/    │   (pane 1)         │
 │    git-status/     │                    │
 │    watch-log)      │                    │
 │   (pane 0)         │                    │
@@ -333,6 +343,19 @@ The build-test-review and deploy-verify chains are **deterministic** — driven 
 5. Wake-up: Notify() injects message payload via send-keys into TUI input
 6. Context compaction managed by OpenCode TUI (auto-compact at 95%)
 7. Tool permissions pre-configured in .opencode/agents/<role>.md frontmatter
+```
+
+### Codex CLI Agent Flow
+
+```
+1. Provider resolved via MUXCODE_{ROLE}_CLI="codex"
+2. CodexProvider.BuildExecArgs returns "codex --full-auto --no-alt-screen"
+3. Agent runs in tmux pane without alternate screen (pane capture works)
+4. Shared agent config generated at .codex/AGENTS.md with bus instructions
+5. No hooks — system prompt instructs agent to send bus messages manually
+6. Wake-up: Notify() injects message payload via send-keys (self-messages filtered)
+7. Idle detection: heuristic — looks for ">" prompt or "Summarize" text in pane
+8. Task completion: heuristic analysis of pane content for completion indicators
 ```
 
 ### Local LLM Agent Flow
@@ -398,21 +421,21 @@ The launcher handles all prompts automatically via `provider.ClassifyPane()` and
 3. If "trust this folder" detected: sends Enter to accept (marks as not-done — bypass prompt may follow)
 4. If "Bypass Permissions" detected: sends Down + Enter to select "Yes, I accept"
 5. If `❯` idle prompt detected: agent is past all prompts — marks as accepted
-6. **Edit agent startup**: when the edit agent reaches `❯`, waits 1s for the TUI to fully initialize, re-verifies `❯` is still showing, then sends a startup event (`Session started — review last saved context from memory`) via `muxcode send` with `AGENT_ROLE=edit` (the bus `Notify()` handles wake-up via `notifyIdleSendKeys()` with dedup)
-7. Watch/analyze agents do **not** get startup messages — the watcher delivers inbox items naturally, and unsolicited responses would CC noise to edit
+6. **Edit agent startup**: when the edit agent reaches `❯`, waits 1s for the TUI to fully initialize, re-verifies `❯` is still showing, then sends a startup event (`Session started — review last saved context from memory`) via `muxcode send` with `AGENT_ROLE=edit` (the bus `Notify()` handles wake-up via `notifyIdleSendKeys()` with dedup). For non-hook providers (OpenCode, Codex CLI), startup messages are delivered via `provider.SendWakeUp()` which injects the message payload directly.
+7. Watch/analyze agents do **not** get startup messages — the daemon delivers inbox items naturally, and unsolicited responses would CC noise to edit
 8. Exits early once all panes are handled
 
 Core code: `muxcode.sh` (auto-accept block near end of file)
 
 ## Session re-init
 
-When a MuxCode session restarts with the same name, `Init()` in `bus/setup.go` detects the existing bus directory and purges stale data to prevent false watcher alerts (loop-detected, compact-recommended) from the previous session.
+When a MuxCode session restarts with the same name, `Init()` in `bus/setup.go` detects the existing bus directory and purges stale data to prevent false daemon alerts (loop-detected, compact-recommended) from the previous session.
 
 - **Detection**: `os.Stat(busDir)` — if the directory exists, `reInit` flag is set
 - **Truncated files** (path preserved for writers): inboxes, `log.jsonl`, `cron.jsonl`, `proc.jsonl`, `spawn.jsonl`, `subscriptions.jsonl`, `{role}-history.jsonl`, `cron-history.jsonl`
 - **Removed files** (recreated on demand): session meta (`session/*.json`), lock files (`lock/*.lock`, `lock/*.stopped`), proc logs (`proc/*.log`), orphaned spawn inboxes (`inbox/spawn-*.jsonl`), trigger file, delivery status files (`delivery/*.status`)
 - **Preserved**: memory files (`.muxcode/memory/`, `~/.config/muxcode/memory/`) — persistent learnings survive re-init
-- **Watcher grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (60s) and compaction checks (120s) skip the first interval
+- **Daemon grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (60s) and compaction checks (120s) skip the first interval
 
 Core code: `bus/setup.go` (`Init()`, `resetFile()`, `purgeStaleFiles()`), `watcher/watcher.go` (`New()`)
 
@@ -448,10 +471,10 @@ Single JSON file at `{BusDir(session)}/workflow-state.json`. Read-modify-write u
 | Source | Transitions |
 |--------|-------------|
 | `hook analyze` | → `editing` (file edit detected) |
-| `watcher routeTrigger` | → `analyzing` (analyze event sent) |
+| `daemon routeTrigger` | → `analyzing` (analyze event sent) |
 | `hook bash` | → `building`, `testing`, `deploying` (command detected) |
 | `triggerChain` | → `testing`/`build-failed`, `reviewing`/`test-failed`, `deploy-failed` (chain outcomes) |
-| `watcher checkInboxes` | → `reviewed` (review message to edit detected) |
+| `daemon checkInboxes` | → `reviewed` (review message to edit detected) |
 
 ### Regression rule
 
@@ -479,18 +502,18 @@ Persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record the full 
 | `muxcode.sh` (auto-accept loop) | `auto-accept` | trust-prompt, bypass-prompt, agent-ready, complete |
 | `muxcode-agent.sh` | `agent` | launch (role + CLI type) |
 | `bus/setup.go` | `init` | init, re-init |
-| `watcher/watcher.go` | `watcher` | started, lock-failed, inbox-notify, startup-notify, trigger-route, cron-fire, proc/spawn-complete, loop/compact alerts, ollama/agent health |
+| `watcher/watcher.go` | `daemon` | started, lock-failed, inbox-notify, startup-notify, trigger-route, cron-fire, proc/spawn-complete, loop/compact alerts, ollama/agent health |
 | `cmd/watch.go` (`--monitor`) | `monitor` | session-gone, stale-detected, watcher-restart |
 | `bus/cleanup.go` | `cleanup` | session-cleanup |
 
-**Dual-writer pattern:** Go code calls `bus.LogLifecycle()` directly. Bash scripts call `muxcode lifecycle log` (CLI wrapper) which handles JSON formatting and flock-protected writes. Both converge on the same JSONL file.
+**Dual-writer pattern:** Go code calls `bus.LogLifecycle()` directly (using source `daemon` for the bus daemon). Bash scripts call `muxcode lifecycle log` (CLI wrapper) which handles JSON formatting and flock-protected writes. Both converge on the same JSONL file.
 
 **Debugging workflow:**
 
 ```bash
 # After a subsession launch failure, check what happened
 muxcode lifecycle show is-admissions-gateway --source launcher
-muxcode lifecycle show is-admissions-gateway --source watcher --level error
+muxcode lifecycle show is-admissions-gateway --source daemon --level error
 
 # Compare startup timing across sessions
 muxcode lifecycle show muxcode --event session-start --all

@@ -82,8 +82,9 @@ func CheckOllamaInference(baseURL, model string, timeout time.Duration) error {
 }
 
 // roleEnvMap maps MUXCODE_{NAME}_CLI env var names to agent roles.
+// Includes legacy env var names (MUXCODE_GIT_CLI) for backward compatibility.
 var roleEnvMap = map[string]string{
-	"MUXCODE_GIT_CLI":      "commit",
+	"MUXCODE_COMMIT_CLI":   "commit",
 	"MUXCODE_BUILD_CLI":    "build",
 	"MUXCODE_TEST_CLI":     "test",
 	"MUXCODE_REVIEW_CLI":   "review",
@@ -93,7 +94,7 @@ var roleEnvMap = map[string]string{
 	"MUXCODE_DOCS_CLI":     "docs",
 	"MUXCODE_RESEARCH_CLI": "research",
 	"MUXCODE_WATCH_CLI":    "watch",
-	"MUXCODE_COMMIT_CLI":   "commit",
+	"MUXCODE_GIT_CLI":      "commit", // legacy alias
 }
 
 // LocalLLMRoles returns the list of agent roles configured to use a local LLM.
@@ -192,7 +193,9 @@ func RestartOllama(ctx context.Context, ollamaURL string) error {
 }
 
 // RestartLocalAgent sends C-c to interrupt a stuck agent and relaunches it.
-// Uses tmux send-keys to target the agent's pane.
+// Uses tmux send-keys to target the agent's pane. The relaunch command uses
+// `muxcode agent launch` which resolves the correct provider (Claude Code,
+// OpenCode, Codex, or local LLM) via environment variables.
 func RestartLocalAgent(session, role string) error {
 	target := PaneTarget(session, role)
 
@@ -205,8 +208,8 @@ func RestartLocalAgent(session, role string) error {
 	// Wait for process to exit
 	time.Sleep(500 * time.Millisecond)
 
-	// Relaunch agent
-	launchCmd := fmt.Sprintf("muxcode-agent.sh %s", role)
+	// Relaunch agent via the Go launcher (handles provider resolution)
+	launchCmd := fmt.Sprintf("muxcode agent launch %s", role)
 	relaunchCmd := exec.Command("tmux", "send-keys", "-t", target, launchCmd, "Enter")
 	if err := relaunchCmd.Run(); err != nil {
 		return fmt.Errorf("relaunching agent %s: %w", role, err)

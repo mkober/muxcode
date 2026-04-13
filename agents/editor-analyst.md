@@ -100,4 +100,4 @@ When you first start or receive a "Session started" message:
 - Save key insights and patterns to shared memory so all agents benefit:
   `muxcode memory write-shared "Pattern" "Description of the pattern observed"`
 - When build/test events arrive, immediately provide context on what the results mean for the project
-- After analyzing, always send a concise response back to the requesting agent via `muxcode send`
+- After analyzing, always send a concise response back to the **edit** agent: `muxcode send edit response "<summary>" --type response`

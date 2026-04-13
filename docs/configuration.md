@@ -30,7 +30,7 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `MUXCODE_SCAN_DEPTH` | `3` | Max depth for project discovery via `find` |
 | `MUXCODE_EDITOR` | `nvim` | Editor command for the edit window |
 | `MUXCODE_NVIM_APPNAME` | `muxcode/nvim` | Neovim `NVIM_APPNAME` — isolates muxcode's nvim config from your personal `~/.config/nvim/` |
-| `MUXCODE_AGENT_CLI` | `claude` | Default AI CLI provider (`claude`, `opencode`, or `local`) |
+| `MUXCODE_AGENT_CLI` | `claude` | Default AI CLI provider (`claude`, `opencode`, `codex`, or `local`) |
 | `MUXCODE_{ROLE}_CLI` | (unset) | Per-role AI CLI override (e.g. `MUXCODE_BUILD_CLI=opencode`). See [Multi-CLI providers](#multi-cli-providers) |
 | `MUXCODE_SHELL_INIT` | (empty) | Command to run in each new tmux pane (e.g. activate a virtualenv) |
 
@@ -39,7 +39,7 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MUXCODE_WINDOWS` | `edit build test review deploy run watch commit analyze` | Space-separated list of windows to create |
-| `MUXCODE_ROLE_MAP` | `run=runner commit=git analyze=analyst` | Space-separated `window=role` mappings for windows whose role differs from name |
+| `MUXCODE_ROLE_MAP` | (empty) | Space-separated `window=role` mappings for windows whose role differs from name. Not needed for built-in roles — `commit`, `analyze`, and `run` are now canonical names matching their window names. Only needed for custom roles (e.g. `docs=documentor`). |
 | `MUXCODE_SPLIT_LEFT` | `edit build test review deploy run analyze commit watch` | Space-separated windows that have a left pane (tool) + right pane (agent) |
 
 ### Hook Configuration
@@ -81,7 +81,7 @@ Override with env vars (resolution order: per-role → global → built-in defau
 | Variable | Description |
 |----------|-------------|
 | `MUXCODE_CLAUDE_MODEL` | Global override for all agents. Passed as `--model` to the `claude` CLI. |
-| `MUXCODE_{ROLE}_CLAUDE_MODEL` | Per-role override. Role key examples: `EDIT`, `BUILD`, `TEST`, `REVIEW`, `DEPLOY`, `GIT`, `ANALYZE`, `WATCH`, `DOCS`, `RESEARCH`, `RUN`, `API`. |
+| `MUXCODE_{ROLE}_CLAUDE_MODEL` | Per-role override. Role key examples: `EDIT`, `BUILD`, `TEST`, `REVIEW`, `DEPLOY`, `COMMIT`, `ANALYZE`, `WATCH`, `DOCS`, `RESEARCH`, `RUN`, `API`. |
 
 Example — downgrade review to Sonnet, use Haiku for build/test:
 
@@ -96,8 +96,8 @@ MUXCODE_TEST_CLAUDE_MODEL=claude-haiku-4-5
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MUXCODE_{ROLE}_CLI` | (unset) | Set to `local` to run a role via Ollama instead of Claude Code (e.g. `MUXCODE_GIT_CLI=local`) |
-| `MUXCODE_{ROLE}_MODEL` | (unset) | Per-role Ollama model override (e.g. `MUXCODE_GIT_MODEL=llama3.1:8b`). Takes precedence over `MUXCODE_OLLAMA_MODEL`. |
+| `MUXCODE_{ROLE}_CLI` | (unset) | Set to `local` to run a role via Ollama instead of Claude Code (e.g. `MUXCODE_COMMIT_CLI=local`) |
+| `MUXCODE_{ROLE}_MODEL` | (unset) | Per-role Ollama model override (e.g. `MUXCODE_COMMIT_MODEL=llama3.1:8b`). Takes precedence over `MUXCODE_OLLAMA_MODEL`. |
 | `MUXCODE_OLLAMA_MODEL` | `qwen2.5-coder:7b` | Default Ollama model for local LLM agents |
 | `MUXCODE_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
 
@@ -107,8 +107,8 @@ Each agent window independently resolves its AI CLI provider. A single session c
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MUXCODE_AGENT_CLI` | `claude` | Session-wide default provider (`claude`, `opencode`, or `local`) |
-| `MUXCODE_{ROLE}_CLI` | (unset) | Per-role override (e.g. `MUXCODE_BUILD_CLI=opencode`, `MUXCODE_GIT_CLI=local`) |
+| `MUXCODE_AGENT_CLI` | `claude` | Session-wide default provider (`claude`, `opencode`, `codex`, or `local`) |
+| `MUXCODE_{ROLE}_CLI` | (unset) | Per-role override (e.g. `MUXCODE_BUILD_CLI=opencode`, `MUXCODE_COMMIT_CLI=local`, `MUXCODE_ANALYZE_CLI=codex`) |
 
 Resolution order (first non-empty wins):
 1. `MUXCODE_{ROLE}_CLI` — per-agent override
@@ -117,15 +117,15 @@ Resolution order (first non-empty wins):
 
 Provider comparison:
 
-| Feature | Claude Code | OpenCode | Local LLM (Ollama) |
-|---------|-------------|----------|-------------------|
-| Hook-driven chains | Yes (send policy blocks manual sends) | No — role-specific prompt + body adaptation + send policy bypass | No (prompt-based fallback) |
-| Idle detection | `❯` prompt match | Not supported (TUI) | Not supported |
-| Wake-up notifications | Send-keys text injection | Send-keys message payload injection | N/A (watcher-driven) |
-| Tool permissions | `--allowedTools` patterns | `permission` blocks in agent config | `IsToolAllowed()` in Go |
-| Context compaction | `/compact` via send-keys | Auto-compact at 95% (no-op from muxcode) | Reset between inbox checks |
-| LLM providers | Anthropic only | Anthropic, OpenAI, Google, Groq, Bedrock | Ollama (any pulled model) |
-| Startup handling | Trust + bypass prompts | TUI frame detection | N/A |
+| Feature | Claude Code | OpenCode | Codex CLI | Local LLM (Ollama) |
+|---------|-------------|----------|-----------|-------------------|
+| Hook-driven chains | Yes (send policy blocks manual sends) | No — role-specific prompt + body adaptation + send policy bypass | No — prompt instructions + send policy bypass | No (prompt-based fallback) |
+| Idle detection | `❯` prompt match | Not supported (TUI) | Heuristic (`>` / "Summarize") | Not supported |
+| Wake-up notifications | Send-keys text injection | Send-keys message payload injection | Send-keys message payload injection | N/A (daemon-driven) |
+| Tool permissions | `--allowedTools` patterns | `permission` blocks in agent config | `.codex/AGENTS.md` instructions | `IsToolAllowed()` in Go |
+| Context compaction | `/compact` via send-keys | Auto-compact at 95% (no-op from muxcode) | No-op | Reset between inbox checks |
+| LLM providers | Anthropic only | Anthropic, OpenAI, Google, Groq, Bedrock | OpenAI (GPT-4.1, o3, o4-mini, etc.) | Ollama (any pulled model) |
+| Startup handling | Trust + bypass prompts | TUI frame detection | Prompt ready detection | N/A |
 
 Example — mixed session via config file:
 
@@ -134,7 +134,8 @@ Example — mixed session via config file:
 MUXCODE_AGENT_CLI=claude              # default: Claude Code
 MUXCODE_BUILD_CLI=opencode            # build uses OpenCode
 MUXCODE_TEST_CLI=opencode             # test uses OpenCode
-MUXCODE_GIT_CLI=local                 # commit uses local LLM
+MUXCODE_ANALYZE_CLI=codex             # analyze uses Codex CLI
+MUXCODE_COMMIT_CLI=local              # commit uses local LLM
 ```
 
 ### Integrations
@@ -195,7 +196,7 @@ Add project-specific permissions in `.claude/settings.local.json` (not committed
 ├── cron-history.jsonl     # Cron execution history
 ├── subscriptions.jsonl    # Event subscription definitions
 ├── webhook.pid            # Webhook server PID file (port:pid)
-└── watcher.keepalive      # Unix timestamp updated each watcher poll loop
+└── watcher.keepalive      # Unix timestamp updated each daemon poll loop
 ```
 
 Created by `muxcode init`, cleaned up by the tmux session-closed hook.
@@ -282,5 +283,5 @@ MUXCODE_WINDOWS="edit build test review commit analyze status"
 
 ```bash
 MUXCODE_WINDOWS="code compile verify review ship exec git watch dash"
-MUXCODE_ROLE_MAP="code=edit compile=build verify=test ship=deploy exec=runner git=git watch=analyst dash=status"
+MUXCODE_ROLE_MAP="code=edit compile=build verify=test ship=deploy exec=run git=commit watch=analyze dash=status"
 ```

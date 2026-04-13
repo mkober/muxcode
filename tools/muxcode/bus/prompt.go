@@ -64,17 +64,10 @@ func SharedPrompt(role string) string {
 	b.WriteString("- On failure, always restate the error message and what went wrong in your text response\n")
 	b.WriteString("- On success, summarize what was accomplished (e.g. \"Deployed 3 stacks, 12 resources updated, no errors\")\n\n")
 
-	// Protocol — edit agent uses background polling; all others are woken by the watcher
+	// Protocol — all agents are woken by the daemon when messages arrive
 	b.WriteString("### Protocol\n")
-	if role == "edit" {
-		b.WriteString("- **Message polling**: after processing inbox messages (or when idle), start `muxcode inbox --poll --loop` as a background Bash tool (timeout: 600s). ")
-		b.WriteString("The `--loop` flag keeps polling across timeouts without exiting, so no restart cycle is needed. ")
-		b.WriteString("It returns only when messages arrive. Process them immediately, then restart the poll.\n")
-		b.WriteString("- **IMPORTANT**: Always start polling immediately on session start, even if there are no messages to process.\n")
-	} else {
-		b.WriteString("- **Do NOT poll for messages.** The watcher process automatically detects when you have unread messages and wakes you by typing \"You have new messages\" at your prompt. ")
-		b.WriteString("Just process your messages, reply, and go idle — you will be woken when new work arrives.\n")
-	}
+	b.WriteString("- **Do NOT poll for messages.** The daemon process automatically detects when you have unread messages and wakes you by typing \"You have new messages\" at your prompt. ")
+	b.WriteString("Just process your messages, reply, and go idle — you will be woken when new work arrives.\n")
 	b.WriteString("- When prompted with \"You have new messages\", immediately run `muxcode inbox` and act on every message without asking\n")
 	b.WriteString("- After completing each task, run `muxcode inbox --peek` to check for new messages before going idle\n")
 	b.WriteString("- Reply to requests with `--type response --reply-to <id>`\n")
@@ -104,11 +97,14 @@ func SharedPrompt(role string) string {
 			b.WriteString("**After deploy commands** (`cdk deploy`, `terraform apply`, etc.):\n")
 			b.WriteString("```bash\n# On success:\nmuxcode send edit deploy \"Deploy succeeded\" --type response\n")
 			b.WriteString("# On failure:\nmuxcode send edit deploy \"Deploy FAILED: <error summary>\" --type response\n```\n\n")
+		case "analyze":
+			b.WriteString("**After completing analysis**, always reply to the edit agent:\n")
+			b.WriteString("```bash\nmuxcode send edit response \"<analysis summary>\" --type response --reply-to <id>\n```\n\n")
 		default:
 			// For review, commit, watch, and other non-build/test/deploy roles,
 			// give generic reply instructions instead of irrelevant build/test examples.
-			b.WriteString("**After completing a task**, reply to the requester:\n")
-			b.WriteString("```bash\nmuxcode send <requester> response \"<result summary>\" --type response --reply-to <id>\n```\n\n")
+			b.WriteString("**After completing a task**, reply to the requester (usually `edit`):\n")
+			b.WriteString("```bash\nmuxcode send edit response \"<result summary>\" --type response --reply-to <id>\n```\n\n")
 		}
 
 		b.WriteString("These messages replace the automatic hook-driven chains that Claude Code agents use. ")

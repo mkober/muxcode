@@ -37,7 +37,7 @@ load_config
 PROJECTS_DIR="${MUXCODE_PROJECTS_DIR:-$HOME}"
 SCAN_DEPTH="${MUXCODE_SCAN_DEPTH:-3}"
 WINDOWS="${MUXCODE_WINDOWS:-edit build test review deploy run watch commit analyze}"
-ROLE_MAP="${MUXCODE_ROLE_MAP:-run=runner commit=git analyze=analyst}"
+ROLE_MAP="${MUXCODE_ROLE_MAP:-}"
 SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-edit build test review deploy run analyze commit watch}"
 SHELL_INIT="${MUXCODE_SHELL_INIT:-}"
 EDITOR="${MUXCODE_EDITOR:-nvim}"
@@ -166,9 +166,9 @@ export BUS_SESSION="$SESSION"
 (cd "$PROJECT_DIR" && muxcode init)
 lifecycle_log "info" "launcher" "bus-init"
 
-# --- Start bus watcher in background (loop detection, compaction alerts) ---
-# Kill any stale watcher processes from previous sessions with the same name.
-# Watchers are background processes detached from tmux — tmux kill-session
+# --- Start bus daemon in background (loop detection, compaction alerts) ---
+# Kill any stale daemon processes from previous sessions with the same name.
+# Daemons are background processes detached from tmux — tmux kill-session
 # does not stop them, so they accumulate and cause duplicate notifications.
 # nohup + disown: subsessions use switch-client (non-blocking), so the parent
 # shell exits and the terminal closes — background processes receive SIGHUP.
@@ -177,12 +177,12 @@ lifecycle_log "info" "launcher" "bus-init"
 pkill -f "muxcode watch --monitor ${SESSION}$" 2>/dev/null && \
   lifecycle_log "info" "launcher" "stale-kill" "Killed stale monitor for $SESSION"
 pkill -f "muxcode watch ${SESSION}$" 2>/dev/null && \
-  lifecycle_log "info" "launcher" "stale-kill" "Killed stale watcher for $SESSION"
+  lifecycle_log "info" "launcher" "stale-kill" "Killed stale daemon for $SESSION"
 sleep 0.1  # let old processes exit before starting the new one
 nohup muxcode watch "$SESSION" &>/dev/null &
-WATCHER_PID=$!
+DAEMON_PID=$!
 disown
-lifecycle_log "info" "launcher" "watcher-start" "PID: $WATCHER_PID"
+lifecycle_log "info" "launcher" "daemon-start" "PID: $DAEMON_PID"
 nohup muxcode watch --monitor "$SESSION" &>/dev/null &
 MONITOR_PID=$!
 disown
@@ -369,7 +369,7 @@ disown
 # Startup messages (edit, analyze) are pre-populated in the inbox by
 # muxcode-agent.sh. Once those agents reach idle, this loop directly
 # injects "You have new messages" + Enter to ensure they process it —
-# does not rely solely on the watcher's checkStartupNotifications().
+# does not rely solely on the daemon's checkStartupNotifications().
 (
   trap '' HUP
   accepted=""
@@ -400,7 +400,7 @@ disown
 
         # Wake all agents that have pre-populated startup messages.
         # Check if "You have new messages" is already in the pane
-        # (from watcher) — if so just send Enter, otherwise inject
+        # (from daemon) — if so just send Enter, otherwise inject
         # the full text + Enter. Only attempt once per agent.
         if ! echo "$woken" | grep -qw "$WIN"; then
           woken="$woken $WIN"

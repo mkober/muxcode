@@ -122,7 +122,7 @@ func ListDeliveryStatuses(session string) ([]DeliveryStatus, error) {
 // CleanExpiredDeliveries removes delivery status files older than maxAge.
 // Uses SentAt from the JSON payload (not file mtime) because status
 // transitions update mtime, making mtime unreliable for age checks.
-// Called by the watcher during periodic cleanup.
+// Called by the daemon during periodic cleanup.
 func CleanExpiredDeliveries(session string, maxAge time.Duration) int {
 	dir := DeliveryDir(session)
 	entries, err := os.ReadDir(dir)

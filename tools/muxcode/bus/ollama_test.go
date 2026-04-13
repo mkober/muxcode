@@ -486,7 +486,7 @@ func TestRoleModel_RoleMapping(t *testing.T) {
 		{"deploy", "MUXCODE_DEPLOY_MODEL"},
 		{"edit", "MUXCODE_EDIT_MODEL"},
 		{"analyze", "MUXCODE_ANALYZE_MODEL"},
-		{"analyst", "MUXCODE_ANALYZE_MODEL"},
+		{"analyze", "MUXCODE_ANALYZE_MODEL"},
 		{"docs", "MUXCODE_DOCS_MODEL"},
 		{"research", "MUXCODE_RESEARCH_MODEL"},
 		{"watch", "MUXCODE_WATCH_MODEL"},

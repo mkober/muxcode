@@ -307,11 +307,3 @@ rm -f "$tmpfile"
 - Build: `make` or `make build`
 - Check Makefile for available targets
 
-## Session Resume
-
-Previous session summaries (most recent last):
-
-### 2026-02-24 14:52
-Deploy agent session - received compact-recommended alerts from watcher. No active deploy tasks were in progress. Log file at 755KB, no memory or history files. Compacting to reset context size.
-
-

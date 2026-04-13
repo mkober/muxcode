@@ -28,7 +28,7 @@ docs/                         # Documentation
 tools/muxcode/      # Go module — the bus binary
 ├── bus/                      # Core library
 ├── cmd/                      # Subcommand handlers
-├── watcher/                  # Inbox poller + trigger file monitor
+├── watcher/                  # Bus daemon — inbox poller + trigger file monitor
 ├── tui/                      # Dracula-themed dashboard TUI
 └── main.go                   # Entry point
 tools/muxcode-llm-harness/    # Go module — standalone local LLM harness
@@ -97,16 +97,18 @@ Both Go modules have **no external dependencies** (stdlib only).
 ## Key constraints
 
 - **Edit agent delegation**: never runs build, test, deploy, API requests, log tailing, AWS commands, git commands (including read-only like `git status`), or GitHub CLI commands (`gh`). All delegated via message bus. AWS process execution (`aws lambda invoke`, `aws stepfunctions`, `aws s3 ls`, `aws s3 cp`, `aws s3api`) goes to the **run** agent. Log tailing (`aws logs`, `kubectl logs`, `docker logs`, `tail -f`) goes to the **watch** agent — watch is strictly read-only log tailing, no AWS mutations or data inspection. API testing requests go to the `api` agent (modal-only role, opened via `prefix + i` or `muxcode modal open api`). PR review reads (Copilot comments, CI failures) go to the **commit** agent with action `pr-read` — never to the review agent. See [Architecture](docs/architecture.md).
-- **Hook-driven chains**: build→test→review and deploy→verify chains are deterministic (bash exit codes), not LLM-driven. Only fires for hook-supporting providers (`provider.SupportsHooks()`). Non-hook providers (OpenCode, local LLM) use three-layer graceful degradation: (1) role-specific prompt instructions in `SharedPrompt()`, (2) agent body adaptation via `adaptBodyForNonHookProvider()` that rewrites hook chain references to manual commands, (3) `CheckSendPolicy()` bypass so non-hook agents can send chain messages that would be blocked for hook agents. See [Hooks](docs/hooks.md).
+- **Hook-driven chains**: build→test→review and deploy→verify chains are deterministic (bash exit codes), not LLM-driven. Only fires for hook-supporting providers (`provider.SupportsHooks()`). Non-hook providers (OpenCode, Codex CLI, local LLM) use three-layer graceful degradation: (1) role-specific prompt instructions in `SharedPrompt()`, (2) agent body adaptation via `adaptBodyForNonHookProvider()` (OpenCode) or shared agent config via `WriteAgentConfig()` (Codex) that rewrites hook chain references to manual commands, (3) `CheckSendPolicy()` bypass so non-hook agents can send chain messages that would be blocked for hook agents. See [Hooks](docs/hooks.md).
 - **User-initiated commits**: git commits, pushes, and PR creation are never auto-triggered. The automated chain stops at review.
 - **Pre-commit safeguard**: commit delegation blocked when any agent has pending inbox, is busy, or has running procs/spawns. Bypass with `--force`.
 - **Auto-CC**: messages from build/test/review/deploy to non-edit agents are copied to edit inbox. Chain/subscription messages use `SendNoCC()` to avoid redundant CC.
-- **Agent notifications**: trigger-file polling in `Notify()` (`bus/notify.go`). `Notify()` writes a timestamp to `trigger-{role}.notify` — agents running `muxcode inbox --poll` detect the mtime change and read their inbox. Non-hook providers (OpenCode TUI) are routed directly to `provider.SendWakeUp()` which injects message payload via send-keys. For Claude Code agents that are idle (at `❯` prompt) but not polling, `Notify()` falls back to `send-keys` text injection ("You have new messages") as a last resort. Display-message (tmux status bar flash) is sent as a human-visible indicator for agents that are active but not idle. Harness panes are skipped (they poll inbox directly).
-- **Edit inbox polling**: use `--wait` flag on send commands (`muxcode send <to> <action> "<msg>" --wait`) to poll the sender's inbox every 2 seconds until a response arrives (timeout: `MUXCODE_INBOX_POLL_TIMEOUT`, default 600s). The response is printed to stdout as part of the Bash tool result — no manual "check inbox" needed. `--wait` also creates a task entry in `/tmp/muxcode-bus-{session}/tasks/` for orchestrator tracking (view with `muxcode tasks`).
-- **Agent wake-up**: non-edit agents do NOT poll for messages. The watcher's `checkIdleAgents()` runs every 5 seconds — for each idle agent with unread inbox messages, it calls `Notify()` which injects "You have new messages" via send-keys. Agents just process messages, reply, and go idle. The edit agent uses `muxcode inbox --poll` as a background Bash tool (self-managed). On startup, `muxcode.sh` wakes all agents via send-keys after they reach the `❯` prompt.
+- **Agent notifications**: `Notify()` (`bus/notify.go`) writes a timestamp to `trigger-{role}.notify` and wakes agents via send-keys. Non-hook providers (OpenCode TUI, Codex CLI) are routed to `provider.SendWakeUp()` which injects the actual message payload (filtering out self-addressed messages to prevent echo loops). Claude Code agents get "You have new messages" text injection. Display-message (tmux status bar flash) is sent as a human-visible indicator for agents that are active but not idle. Harness panes are skipped (they poll inbox directly).
+- **Edit inbox**: use `--wait` flag on send commands (`muxcode send <to> <action> "<msg>" --wait`) to poll the sender's inbox every 2 seconds until a response arrives (timeout: `MUXCODE_INBOX_POLL_TIMEOUT`, default 600s). The response is printed to stdout as part of the Bash tool result — no manual "check inbox" needed. `--wait` also creates a task entry in `/tmp/muxcode-bus-{session}/tasks/` for orchestrator tracking (view with `muxcode tasks`).
+- **Agent wake-up**: the daemon's `checkIdleAgents()` runs every 5 seconds — for each idle agent (including edit) with actionable inbox messages (request-type only, not response-only), it calls `Notify()` which injects "You have new messages" via send-keys. Agents just process messages, reply, and go idle. No agent polls for messages — all are woken by the daemon. On startup, `muxcode.sh` wakes edit and analyze agents — for Claude Code agents via send-keys after reaching the `❯` prompt, for non-hook providers (OpenCode, Codex CLI) via `provider.SendWakeUp()` which injects the startup message payload directly.
+- **Daemon identity**: the bus daemon (background supervisor process) uses `daemon` as its bus identity — not `watcher`, which would collide with the `watch` agent (F7 window). `NormalizeBusRole("daemon")` maps to `edit` so reply instructions route to a valid agent. Lifecycle logs show source `daemon`. The `daemon` identity is filtered out of message loop detection.
 - **System actions**: `loop-detected`, `compact-recommended`, `proc-complete`, `spawn-complete`, `ollama-down`, `ollama-recovered`, `ollama-restarting`, `agent-down`, `agent-restarting`, `agent-recovered` are excluded from message loop detection (`isSystemAction()`).
-- **Lifecycle logging**: persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record launcher sequence, watcher events, agent launches, auto-accept, and cleanup. Survives session cleanup. View with `muxcode lifecycle show [session]`, filter with `--source`, `--level`, `--event`, `--since`. Rotation at 1000 entries (configurable via `MUXCODE_LIFECYCLE_LOG_MAX`). Purge old logs with `lifecycle purge --days 30`.
+- **Lifecycle logging**: persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record launcher sequence, daemon events, agent launches, auto-accept, and cleanup. Survives session cleanup. View with `muxcode lifecycle show [session]`, filter with `--source`, `--level`, `--event`, `--since`. Rotation at 1000 entries (configurable via `MUXCODE_LIFECYCLE_LOG_MAX`). Purge old logs with `lifecycle purge --days 30`.
 - **PII scrubbing**: tool output from `api`, `runner`/`run`, and `watch` roles is redacted before entering the LLM conversation. Harness agents use automatic scrubbing in the executor (`harness/scrub.go`). Claude Code agents pipe output through `muxcode pii-scrub`. Patterns: emails, SSN, credit cards (prefix-anchored), phone numbers (separator-required), AWS keys, JWTs, generic secrets/tokens.
+- **Daemon self-monitoring**: the daemon writes a Unix timestamp to `watcher.keepalive` at the top of each poll loop. A companion monitor (`muxcode watch --monitor`) checks the keepalive every 15 seconds — if stale (>30s), it kills and relaunches the daemon.
 - **Harness circuit breaker**: 3-layer stuck protection — within-turn (filter), within-batch (`MaxAllBlockedTurns=2`), cross-batch (`MaxConsecutiveFailures=3` triggers 30s cooldown). Each batch has 5-minute timeout. See [Agents](docs/agents.md#circuit-breaker).
 
 ## Code reference
@@ -118,10 +120,10 @@ Test: `cd tools/muxcode && go test ./...`
 
 | File | Key exports |
 |------|-------------|
-| `bus/config.go` | `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`, `HarnessMarkerPath()`, `GlobalMemoryDir()`, `GlobalMemoryPath()`, `GlobalMemoryArchiveDir()`, `GlobalMemoryArchivePath()`, path helpers for cron/proc/spawn/webhook/memory |
+| `bus/config.go` | `BusDir()`, `InboxPath()`, `LockPath()`, `TriggerFile()`, `PaneTarget()`, `AgentPane()`, `IsSplitLeft()`, `BusRole()`, `NormalizeBusRole()`, `IsKnownRole()`, `WindowForRole()`, `HarnessMarkerPath()`, `GlobalMemoryDir()`, `GlobalMemoryPath()`, `GlobalMemoryArchiveDir()`, `GlobalMemoryArchivePath()`, path helpers for cron/proc/spawn/webhook/memory |
 | `bus/lifecycle.go` | `LifecycleLogDir()`, `LifecycleLogPath()`, `LogLifecycle()`, `LogLifecycleWithPID()`, `ReadLifecycleLog()`, `FilterLifecycleLog()`, `ListLifecycleSessions()`, `PurgeLifecycleLogs()`, `FormatLifecycleEntry()` |
 | `bus/message.go` | Message struct, JSONL encoding |
-| `bus/inbox.go` | Read/write/consume inbox, `Send()`, `SendNoCC()` |
+| `bus/inbox.go` | Read/write/consume inbox, `Send()`, `SendNoCC()`, `HasActionableMessages()` |
 | `bus/setup.go` | `Init()`, session re-init purge (`resetFile()`, `purgeStaleFiles()`) |
 | `bus/inspect.go` | `GetAgentStatus()`, `GetAllAgentStatus()`, `ReadLogHistory()`, `ExtractContext()`, `PreCommitCheck()` |
 | `bus/guard.go` | `ReadHistory()`, `DetectCommandLoop()`, `DetectMessageLoop()`, `CheckLoops()`, `CheckAllLoops()` |
@@ -132,10 +134,12 @@ Test: `cd tools/muxcode && go test ./...`
 | `bus/scrub.go` | `ScrubPII()`, `IsPIISensitiveRole()`, PII/secret regex patterns (mirrored in harness) |
 | `bus/provider.go` | `Provider` interface, `ResolveProvider()`, `ResolveProviderCLI()`, `LocalProvider` |
 | `bus/provider_claude.go` | `ClaudeCodeProvider` — full Claude Code integration (hooks, idle detection, startup acceptance, compact) |
-| `bus/provider_opencode.go` | `OpenCodeProvider` — TUI mode (pane detection, send-keys wake-up, agent config generation, tool profile translation, task completion detection, `adaptBodyForNonHookProvider()`) |
+| `bus/provider_opencode.go` | `OpenCodeProvider` — TUI mode (pane detection, send-keys wake-up, agent config generation, tool profile translation, task completion detection, `adaptBodyForNonHookProvider()`, self-message filtering in `SendWakeUp()`) |
+| `bus/provider_codex.go` | `CodexProvider` — TUI mode (`codex --full-auto --no-alt-screen`, send-keys wake-up with self-message filtering, `.codex/AGENTS.md` generation, heuristic task completion detection) |
+| `bus/codex_events.go` | Codex JSONL event types, `ParseCodexEvents()`, `AnalyzeCodexEvents()`, `FormatCodexResult()`, `RunCodexExec()` |
 | `bus/hook.go` | `ProcessBashHook()`, `ProcessAnalyzeHook()`, `ProcessGuardHook()`, `ResolveChain()`, `ExpandMessage()` |
 | `bus/console.go` | `DefaultConsoleConfigs()`, `ConsoleConfig`, `RunConsole()`, per-role renderers (Dracula theme) |
-| `bus/profile.go` | `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`, `CheckSendPolicy()` (provider-aware — bypasses deny for non-hook providers), `ChainShouldNotifyAnalyst()` (`NotifyAnalystOn` field) |
+| `bus/profile.go` | `DefaultConfig()`, `MuxcodeConfig`, `ToolProfile`, `ResolveTools()`, `CheckSendPolicy()` (provider-aware — bypasses deny for non-hook providers), `ChainShouldNotifyAnalyst()` (`NotifyAnalystOn` field), `resolveRoleAlias()` (normalizes legacy profile key aliases to canonical role names) |
 | `bus/search.go` | BM25: `tokenize()`, `stem()`, `buildCorpus()`, `bm25Score()`, `SearchMemoryBM25()`, `SearchMemoryWithOptions()` |
 | `bus/rotation.go` | `NeedsRotation()`, `RotateMemory()`, `PurgeOldArchives()`, `ReadMemoryWithHistory()`, `AllMemoryEntriesWithArchives()`, `ListMemoryRoles()` |
 | `bus/launch.go` | `LaunchConfig`, `AgentFileName()`, `RoleCLIEnvVar()`, `RoleClaudeModelEnvVar()`, `RoleClaudeModelDefault()`, `InlineFallbackPrompt()`, `ExtractFrontmatter()`, `ResolveAgentFile()`, `BuildAgentsJSON()`, `ResolveVenv()`, `BuildSharedPrompt()`, `ResolveLaunchConfig()`, `BuildExecArgs()`, `PreLaunchSetup()` |
@@ -156,9 +160,9 @@ Test: `cd tools/muxcode && go test ./...`
 | `bus/agent.go` | `AgentLoop()`, `AgentConfig`, `buildSystemPrompt()`, `processMessages()` |
 | `bus/health.go` | `CheckOllamaInference()`, `LocalLLMRoles()`, `RestartOllama()`, `RestartLocalAgent()` |
 | `bus/agent_health.go` | `IsAgentAlive()`, `IsAgentStopped()`, `StopAgent()`, `StartAgent()`, `CheckAgentHealth()`, `FormatAgentHealthAlert()` |
-| `bus/watcher_health.go` | `KeepalivePath()`, `IsKeepaliveStale()`, `TouchKeepalive()` |
+| `bus/watcher_health.go` | `KeepalivePath()`, `IsKeepaliveStale()`, `TouchKeepalive()` — daemon keepalive monitoring |
 | `cmd/` | Subcommand handlers (one per CLI command) |
-| `watcher/watcher.go` | Unified watcher: inbox polling, trigger debounce, cron/proc/spawn/loop/compaction/ollama checks |
+| `watcher/watcher.go` | Bus daemon: inbox polling, trigger debounce, cron/proc/spawn/loop/compaction/ollama checks |
 | `tui/` | Dashboard TUI (Dracula theme) |
 
 ### Go LLM harness (`tools/muxcode-llm-harness/`)

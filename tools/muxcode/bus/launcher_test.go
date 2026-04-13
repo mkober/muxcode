@@ -82,9 +82,10 @@ func TestAgentRole(t *testing.T) {
 		window string
 		want   string
 	}{
-		{"run", "runner"},
-		{"commit", "git"},
-		{"analyze", "analyst"},
+		// With empty default RoleMap, windows pass through as canonical names
+		{"run", "run"},
+		{"commit", "commit"},
+		{"analyze", "analyze"},
 		{"build", "build"},
 		{"edit", "edit"},
 		{"test", "test"},

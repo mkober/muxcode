@@ -199,7 +199,8 @@ func TestDetectMessageLoop_PingPong(t *testing.T) {
 
 func TestDetectMessageLoop_ChainTrafficIgnored(t *testing.T) {
 	// Simulate two build→test→review chain cycles within the window.
-	// These are response/event messages that should NOT trigger loop detection.
+	// Normal chain traffic stays below the threshold (4) even though
+	// responses are now included in detection (events are still excluded).
 	now := time.Now().Unix()
 	messages := []Message{
 		// Cycle 1
@@ -208,19 +209,19 @@ func TestDetectMessageLoop_ChainTrafficIgnored(t *testing.T) {
 		{TS: now - 100, From: "review", To: "test", Action: "review-complete", Type: "response"},
 		{TS: now - 95, From: "review", To: "edit", Action: "review-complete", Type: "response"},
 		{TS: now - 90, From: "test", To: "analyze", Action: "notify", Type: "event"},
-		{TS: now - 85, From: "watcher", To: "analyze", Action: "analyze", Type: "event"},
+		{TS: now - 85, From: "daemon", To: "analyze", Action: "analyze", Type: "event"},
 		// Cycle 2
 		{TS: now - 60, From: "build", To: "test", Action: "test", Type: "request"},
 		{TS: now - 50, From: "test", To: "review", Action: "review", Type: "request"},
 		{TS: now - 40, From: "review", To: "test", Action: "review-complete", Type: "response"},
 		{TS: now - 35, From: "review", To: "edit", Action: "review-complete", Type: "response"},
 		{TS: now - 30, From: "test", To: "analyze", Action: "notify", Type: "event"},
-		{TS: now - 25, From: "watcher", To: "analyze", Action: "analyze", Type: "event"},
+		{TS: now - 25, From: "daemon", To: "analyze", Action: "analyze", Type: "event"},
 	}
 
-	// None of these roles should trigger a loop alert — the responses and
-	// events are expected chain traffic, not actual loops.
-	for _, role := range []string{"test", "review", "analyze", "edit", "watcher"} {
+	// None of these roles should trigger a loop alert — two chain cycles
+	// produce at most 2 of each (from, to, action) tuple, below threshold of 4.
+	for _, role := range []string{"test", "review", "analyze", "edit", "daemon"} {
 		alert := DetectMessageLoop(messages, role, 4, 300)
 		if alert != nil {
 			t.Errorf("role %q: unexpected alert for chain traffic: %s", role, alert.Message)
@@ -228,23 +229,23 @@ func TestDetectMessageLoop_ChainTrafficIgnored(t *testing.T) {
 	}
 }
 
-func TestDetectMessageLoop_WatcherTrafficIgnored(t *testing.T) {
-	// Watcher-originated messages repeat during active editing (file-change events,
+func TestDetectMessageLoop_DaemonTrafficIgnored(t *testing.T) {
+	// Daemon-originated messages repeat during active editing (file-change events,
 	// loop alerts, compaction alerts). These should NOT trigger loop detection.
 	now := time.Now().Unix()
 	messages := []Message{
-		{TS: now - 120, From: "watcher", To: "analyze", Action: "analyze", Type: "request"},
-		{TS: now - 90, From: "watcher", To: "analyze", Action: "analyze", Type: "request"},
-		{TS: now - 60, From: "watcher", To: "analyze", Action: "analyze", Type: "request"},
-		{TS: now - 30, From: "watcher", To: "analyze", Action: "analyze", Type: "request"},
-		{TS: now, From: "watcher", To: "analyze", Action: "analyze", Type: "request"},
+		{TS: now - 120, From: "daemon", To: "analyze", Action: "analyze", Type: "request"},
+		{TS: now - 90, From: "daemon", To: "analyze", Action: "analyze", Type: "request"},
+		{TS: now - 60, From: "daemon", To: "analyze", Action: "analyze", Type: "request"},
+		{TS: now - 30, From: "daemon", To: "analyze", Action: "analyze", Type: "request"},
+		{TS: now, From: "daemon", To: "analyze", Action: "analyze", Type: "request"},
 	}
 
-	// Neither analyze nor watcher should trigger a loop alert
-	for _, role := range []string{"analyze", "watcher"} {
+	// Neither analyze nor daemon should trigger a loop alert
+	for _, role := range []string{"analyze", "daemon"} {
 		alert := DetectMessageLoop(messages, role, 4, 300)
 		if alert != nil {
-			t.Errorf("role %q: unexpected alert for watcher traffic: %s", role, alert.Message)
+			t.Errorf("role %q: unexpected alert for daemon traffic: %s", role, alert.Message)
 		}
 	}
 }
@@ -555,11 +556,11 @@ func TestDetectMessageLoop_SystemActionsIgnored(t *testing.T) {
 	// This prevents loop-detected alerts from sustaining their own detection window.
 	now := time.Now().Unix()
 	messages := []Message{
-		{TS: now - 120, From: "watcher", To: "edit", Action: "loop-detected", Type: "request"},
-		{TS: now - 90, From: "watcher", To: "edit", Action: "loop-detected", Type: "request"},
-		{TS: now - 60, From: "watcher", To: "edit", Action: "loop-detected", Type: "request"},
-		{TS: now - 30, From: "watcher", To: "edit", Action: "loop-detected", Type: "request"},
-		{TS: now, From: "watcher", To: "edit", Action: "loop-detected", Type: "request"},
+		{TS: now - 120, From: "daemon", To: "edit", Action: "loop-detected", Type: "request"},
+		{TS: now - 90, From: "daemon", To: "edit", Action: "loop-detected", Type: "request"},
+		{TS: now - 60, From: "daemon", To: "edit", Action: "loop-detected", Type: "request"},
+		{TS: now - 30, From: "daemon", To: "edit", Action: "loop-detected", Type: "request"},
+		{TS: now, From: "daemon", To: "edit", Action: "loop-detected", Type: "request"},
 	}
 
 	alert := DetectMessageLoop(messages, "edit", 4, 300)
@@ -569,11 +570,11 @@ func TestDetectMessageLoop_SystemActionsIgnored(t *testing.T) {
 
 	// Also test compact-recommended
 	compactMsgs := []Message{
-		{TS: now - 120, From: "watcher", To: "build", Action: "compact-recommended", Type: "request"},
-		{TS: now - 90, From: "watcher", To: "build", Action: "compact-recommended", Type: "request"},
-		{TS: now - 60, From: "watcher", To: "build", Action: "compact-recommended", Type: "request"},
-		{TS: now - 30, From: "watcher", To: "build", Action: "compact-recommended", Type: "request"},
-		{TS: now, From: "watcher", To: "build", Action: "compact-recommended", Type: "request"},
+		{TS: now - 120, From: "daemon", To: "build", Action: "compact-recommended", Type: "request"},
+		{TS: now - 90, From: "daemon", To: "build", Action: "compact-recommended", Type: "request"},
+		{TS: now - 60, From: "daemon", To: "build", Action: "compact-recommended", Type: "request"},
+		{TS: now - 30, From: "daemon", To: "build", Action: "compact-recommended", Type: "request"},
+		{TS: now, From: "daemon", To: "build", Action: "compact-recommended", Type: "request"},
 	}
 
 	alert = DetectMessageLoop(compactMsgs, "build", 4, 300)

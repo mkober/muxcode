@@ -31,11 +31,12 @@ load_config
 
 AGENT_CLI="${MUXCODE_AGENT_CLI:-claude}"
 
-# Check for per-role local LLM override (e.g. MUXCODE_GIT_CLI=local for commit agent)
-# Maps role -> env var name: commit->GIT, build->BUILD, test->TEST, etc.
+# Check for per-role local LLM override (e.g. MUXCODE_COMMIT_CLI=local for commit agent)
+# Maps role -> env var name using canonical role names (commit, run, analyze).
+# Legacy env vars (MUXCODE_GIT_CLI) are checked as fallbacks.
 role_cli_var() {
   case "$1" in
-    commit|git) echo "MUXCODE_GIT_CLI" ;;
+    commit|git) echo "MUXCODE_COMMIT_CLI" ;;
     build)      echo "MUXCODE_BUILD_CLI" ;;
     test)       echo "MUXCODE_TEST_CLI" ;;
     review)     echo "MUXCODE_REVIEW_CLI" ;;
@@ -46,7 +47,7 @@ role_cli_var() {
     research)   echo "MUXCODE_RESEARCH_CLI" ;;
     watch)      echo "MUXCODE_WATCH_CLI" ;;
     pr-read)    echo "MUXCODE_PR_READ_CLI" ;;
-    runner|run) echo "MUXCODE_RUN_CLI" ;;
+    run|runner) echo "MUXCODE_RUN_CLI" ;;
     api)        echo "MUXCODE_API_CLI" ;;
     webhook)    echo "MUXCODE_WEBHOOK_CLI" ;;
     *)          echo "MUXCODE_$(echo "$1" | tr '[:lower:]' '[:upper:]')_CLI" ;;
@@ -179,7 +180,7 @@ launch_agent_from_file() {
 # Override in ~/.config/muxcode/config or .muxcode/config.
 role_claude_model_var() {
   case "$1" in
-    commit|git) echo "MUXCODE_GIT_CLAUDE_MODEL" ;;
+    commit|git) echo "MUXCODE_COMMIT_CLAUDE_MODEL" ;;
     build)      echo "MUXCODE_BUILD_CLAUDE_MODEL" ;;
     test)       echo "MUXCODE_TEST_CLAUDE_MODEL" ;;
     review)     echo "MUXCODE_REVIEW_CLAUDE_MODEL" ;;
@@ -190,7 +191,7 @@ role_claude_model_var() {
     research)   echo "MUXCODE_RESEARCH_CLAUDE_MODEL" ;;
     watch)      echo "MUXCODE_WATCH_CLAUDE_MODEL" ;;
     pr-read)    echo "MUXCODE_PR_READ_CLAUDE_MODEL" ;;
-    runner|run) echo "MUXCODE_RUN_CLAUDE_MODEL" ;;
+    run|runner) echo "MUXCODE_RUN_CLAUDE_MODEL" ;;
     api)        echo "MUXCODE_API_CLAUDE_MODEL" ;;
     webhook)    echo "MUXCODE_WEBHOOK_CLAUDE_MODEL" ;;
     *)          echo "MUXCODE_$(echo "$1" | tr '[:lower:]' '[:upper:]')_CLAUDE_MODEL" ;;
@@ -334,5 +335,9 @@ case "$ROLE" in
     PROMPT="You are a general-purpose coding assistant."
     ;;
 esac
+
+# Export AGENT_ROLE so child processes (muxcode send) can identify the sender.
+# Without this, BusRole() falls back to tmux window name or "unknown".
+export AGENT_ROLE="$ROLE"
 
 exec $AGENT_CLI --append-system-prompt "$PROMPT" "${CLAUDE_MODEL_FLAGS[@]}" "${PERM_FLAGS[@]}" "${TOOL_FLAGS[@]}" "${SHARED_PROMPT_FLAGS[@]}"

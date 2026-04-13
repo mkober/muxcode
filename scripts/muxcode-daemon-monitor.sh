@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# muxcode-watcher-monitor.sh — monitors the bus watcher and restarts it if stale.
-# Runs as a background loop alongside the watcher, launched by muxcode.sh.
+# muxcode-daemon-monitor.sh — monitors the bus daemon and restarts it if stale.
+# Runs as a background loop alongside the daemon, launched by muxcode.sh.
 #
-# Usage: muxcode-watcher-monitor.sh <session>
+# Usage: muxcode-daemon-monitor.sh <session>
 
-SESSION="${1:?Usage: muxcode-watcher-monitor.sh <session>}"
-KEEPALIVE="/tmp/muxcode-bus-${SESSION}/watcher.keepalive"
+SESSION="${1:?Usage: muxcode-daemon-monitor.sh <session>}"
+KEEPALIVE="/tmp/muxcode-bus-${SESSION}/daemon.keepalive"
 MAX_AGE=30  # seconds before considering keepalive stale
 
 # Lifecycle logging helper (same as muxcode.sh)
@@ -25,7 +25,7 @@ while true; do
     exit 0
   fi
 
-  # Skip if keepalive file doesn't exist yet (watcher may be starting)
+  # Skip if keepalive file doesn't exist yet (daemon may be starting)
   if [ ! -f "$KEEPALIVE" ]; then
     continue
   fi
@@ -40,15 +40,15 @@ while true; do
   age=$(( now - ts ))
 
   if [ "$age" -gt "$MAX_AGE" ]; then
-    echo "  [monitor] Watcher keepalive stale (${age}s > ${MAX_AGE}s) — restarting"
+    echo "  [monitor] Daemon keepalive stale (${age}s > ${MAX_AGE}s) — restarting"
     lifecycle_log "warn" "monitor" "stale-detected" "Keepalive age: ${age}s > ${MAX_AGE}s"
 
-    # Kill stale watcher
+    # Kill stale daemon
     pkill -f "muxcode watch $SESSION" 2>/dev/null || true
     sleep 0.2
 
-    # Relaunch watcher
+    # Relaunch daemon
     muxcode watch "$SESSION" &>/dev/null &
-    lifecycle_log "info" "monitor" "watcher-restart" "PID: $!"
+    lifecycle_log "info" "monitor" "daemon-restart" "PID: $!"
   fi
 done

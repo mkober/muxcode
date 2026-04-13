@@ -56,7 +56,7 @@ func TestLogLifecycleWithPID(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 
 	session := "test-pid"
-	LogLifecycleWithPID(session, "info", "launcher", "watcher-start", "started", 12345)
+	LogLifecycleWithPID(session, "info", "launcher", "daemon-start", "started", 12345)
 
 	entries, err := ReadLifecycleLog(session)
 	if err != nil {
@@ -76,14 +76,14 @@ func TestFilterLifecycleLog(t *testing.T) {
 
 	session := "test-filter"
 	LogLifecycle(session, "info", "launcher", "session-start", "")
-	LogLifecycle(session, "warn", "watcher", "loop-detected", "edit")
-	LogLifecycle(session, "info", "watcher", "inbox-notify", "build")
+	LogLifecycle(session, "warn", "daemon", "loop-detected", "edit")
+	LogLifecycle(session, "info", "daemon", "inbox-notify", "build")
 	LogLifecycle(session, "error", "monitor", "stale-detected", "age=35s")
 
 	// Filter by source
-	entries, _ := FilterLifecycleLog(session, LifecycleFilterOpts{Source: "watcher"})
+	entries, _ := FilterLifecycleLog(session, LifecycleFilterOpts{Source: "daemon"})
 	if len(entries) != 2 {
-		t.Errorf("source=watcher: expected 2 entries, got %d", len(entries))
+		t.Errorf("source=daemon: expected 2 entries, got %d", len(entries))
 	}
 
 	// Filter by level
@@ -104,7 +104,7 @@ func TestFilterLifecycleLog(t *testing.T) {
 		t.Errorf("limit=2: expected 2 entries, got %d", len(entries))
 	}
 	// Should be the last 2
-	if entries[0].Source != "watcher" || entries[1].Source != "monitor" {
+	if entries[0].Source != "daemon" || entries[1].Source != "monitor" {
 		t.Errorf("limit=2: expected last 2 entries, got sources %s, %s", entries[0].Source, entries[1].Source)
 	}
 }
@@ -208,7 +208,7 @@ func TestFormatLifecycleEntry(t *testing.T) {
 		Level:   "info",
 		Source:  "launcher",
 		Session: "muxcode",
-		Event:   "watcher-start",
+		Event:   "daemon-start",
 		PID:     12345,
 		Detail:  "nohup muxcode watch muxcode",
 	}
@@ -218,7 +218,7 @@ func TestFormatLifecycleEntry(t *testing.T) {
 		t.Error("expected non-empty formatted line")
 	}
 	// Should contain all key pieces
-	for _, want := range []string{"info", "launcher", "watcher-start", "pid:12345"} {
+	for _, want := range []string{"info", "launcher", "daemon-start", "pid:12345"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("formatted line missing %q: %s", want, line)
 		}

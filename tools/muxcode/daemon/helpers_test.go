@@ -1,4 +1,4 @@
-package watcher
+package daemon
 
 import (
 	"fmt"
@@ -8,10 +8,10 @@ import (
 	"github.com/mkober/muxcode/tools/muxcode/bus"
 )
 
-// testSession creates an isolated bus session for watcher tests.
+// testSession creates an isolated bus session for daemon tests.
 func testSession(t *testing.T) string {
 	t.Helper()
-	session := fmt.Sprintf("test-router-%d", rand.Int())
+	session := fmt.Sprintf("test-daemon-%d", rand.Int())
 	if err := bus.Init(session, t.TempDir()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}

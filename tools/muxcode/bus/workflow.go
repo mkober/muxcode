@@ -324,7 +324,7 @@ func workflowDuration(d time.Duration) string {
 }
 
 // HasNewMessageFrom checks if there are unread messages from a specific sender
-// in a role's inbox. Used by the watcher to detect review→edit transitions.
+// in a role's inbox. Used by the daemon to detect review→edit transitions.
 func HasNewMessageFrom(session, role, from string) bool {
 	msgs, err := Peek(session, role)
 	if err != nil || len(msgs) == 0 {

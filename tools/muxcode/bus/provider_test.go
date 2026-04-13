@@ -234,6 +234,7 @@ func TestSupportsHooks_ClaudeOnly(t *testing.T) {
 	providers := map[string]Provider{
 		"claude":   &ClaudeCodeProvider{},
 		"opencode": &OpenCodeProvider{},
+		"codex":    &CodexProvider{},
 		"local":    &LocalProvider{},
 	}
 
@@ -256,6 +257,7 @@ func TestResolveProvider_HookGating(t *testing.T) {
 	}{
 		{"default claude has hooks", "MUXCODE_BUILD_CLI", "", "build", true},
 		{"opencode no hooks", "MUXCODE_BUILD_CLI", "opencode", "build", false},
+		{"codex no hooks", "MUXCODE_BUILD_CLI", "codex", "build", false},
 		{"local no hooks", "MUXCODE_BUILD_CLI", "local", "build", false},
 	}
 

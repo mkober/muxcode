@@ -804,7 +804,7 @@ func ProcessAnalyzeHook(session, windowName string, ev *ToolEvent) AnalyzeHookRe
 		return result
 	}
 
-	// Write trigger file for the watcher
+	// Write trigger file for the daemon
 	triggerPath := TriggerFile(session)
 	triggerLine := fmt.Sprintf("%d %s\n", time.Now().Unix(), filePath)
 	if f, err := os.OpenFile(triggerPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
@@ -824,7 +824,7 @@ func ProcessAnalyzeHook(session, windowName string, ev *ToolEvent) AnalyzeHookRe
 	}
 
 	// File-change routing goes exclusively to the analyze agent via the
-	// trigger file + watcher's routeTrigger(). Build, test, and deploy
+	// trigger file + daemon's routeTrigger(). Build, test, and deploy
 	// agents are only triggered by explicit bus messages, not file changes.
 
 	return result

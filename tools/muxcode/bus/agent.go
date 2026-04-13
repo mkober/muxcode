@@ -42,7 +42,7 @@ type agentState struct {
 }
 
 // ollamaFailSentinelThreshold is the number of consecutive Ollama failures
-// before writing a sentinel file for the watcher to detect.
+// before writing a sentinel file for the daemon to detect.
 const ollamaFailSentinelThreshold = 3
 
 // runStty runs stty with the given arguments, explicitly passing os.Stdin
@@ -305,11 +305,11 @@ func agentFileName(role string) string {
 		return "code-reviewer"
 	case "deploy":
 		return "infra-deployer"
-	case "runner":
+	case "run", "runner":
 		return "command-runner"
-	case "git", "commit":
+	case "commit", "git":
 		return "git-manager"
-	case "analyst", "analyze":
+	case "analyze", "analyst":
 		return "editor-analyst"
 	case "docs":
 		return "doc-writer"

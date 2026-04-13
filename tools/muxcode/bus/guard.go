@@ -150,8 +150,9 @@ func DetectCommandLoop(entries []HistoryEntry, threshold int, windowSecs int64) 
 
 // DetectMessageLoop checks log messages for repetitive patterns involving a role.
 // Detects both repeated identical messages and ping-pong patterns.
-// Only counts "request" type messages — "response" and "event" types are expected
-// to repeat across chain cycles (build→test→review) and are not loops.
+// Counts both "request" and "response" type messages — response echo loops
+// (agents acknowledging each other's responses) are just as problematic as
+// request loops. Only "event" type messages are excluded.
 // Returns an alert if any pattern repeats >= threshold times within windowSecs.
 func DetectMessageLoop(messages []Message, role string, threshold int, windowSecs int64) *LoopAlert {
 	if len(messages) == 0 || threshold < 1 {
@@ -160,18 +161,18 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 
 	now := time.Now().Unix()
 
-	// Filter to request messages within the time window.
-	// Responses and events repeat naturally across chain cycles and are not loops.
-	// Watcher-originated messages are system-generated traffic (file-change events,
-	// loop alerts, compaction alerts) — they repeat during active editing and are
-	// not agent-to-agent loops. System actions (loop-detected, compact-recommended)
-	// are infrastructure traffic that should never trigger loop detection.
+	// Filter to request and response messages within the time window.
+	// Events repeat naturally and are excluded. Daemon-originated messages are
+	// system-generated traffic (file-change events, loop alerts, compaction
+	// alerts) — they repeat during active editing and are not agent-to-agent
+	// loops. System actions (loop-detected, compact-recommended) are
+	// infrastructure traffic that should never trigger loop detection.
 	var recent []Message
 	for _, m := range messages {
-		if m.Type != "request" {
+		if m.Type == "event" {
 			continue
 		}
-		if m.From == "watcher" {
+		if m.From == "daemon" {
 			continue
 		}
 		if isSystemAction(m.Action) {
@@ -330,7 +331,7 @@ func FormatAlertsJSON(alerts []LoopAlert) (string, error) {
 	return string(data), nil
 }
 
-// isSystemAction returns true for watcher infrastructure actions that should
+// isSystemAction returns true for daemon infrastructure actions that should
 // be excluded from message loop detection. These repeat naturally and are not
 // indicative of agent-to-agent loops.
 func isSystemAction(action string) bool {

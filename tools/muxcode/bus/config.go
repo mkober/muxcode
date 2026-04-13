@@ -88,16 +88,17 @@ func BusSession() string {
 // BusRole returns the current agent role.
 // Checks AGENT_ROLE env, BUS_ROLE env, tmux window name, then defaults to "unknown".
 func BusRole() string {
+	var role string
 	if v := os.Getenv("AGENT_ROLE"); v != "" {
-		return v
+		role = v
+	} else if v := os.Getenv("BUS_ROLE"); v != "" {
+		role = v
+	} else if v := tmuxVar("#W"); v != "" {
+		role = v
+	} else {
+		return "unknown"
 	}
-	if v := os.Getenv("BUS_ROLE"); v != "" {
-		return v
-	}
-	if v := tmuxVar("#W"); v != "" {
-		return v
-	}
-	return "unknown"
+	return NormalizeBusRole(role)
 }
 
 // busDirOverride, when non-empty, replaces the default /tmp base for BusDir.
@@ -292,8 +293,14 @@ func WebhookPidPath(session string) string {
 }
 
 // WatcherPidPath returns the path to the watcher PID file.
+// Deprecated: Use DaemonPidPath instead.
 func WatcherPidPath(session string) string {
 	return filepath.Join(BusDir(session), "watcher.pid")
+}
+
+// DaemonPidPath returns the path to the daemon PID file.
+func DaemonPidPath(session string) string {
+	return filepath.Join(BusDir(session), "daemon.pid")
 }
 
 // WaitingMarkerPath returns the path to a marker file that indicates the given
@@ -367,6 +374,26 @@ func IsHostedRole(role string) bool {
 // IsSpawnRole returns true if the role is a spawn-prefixed role (e.g. "spawn-a1b2c3d4").
 func IsSpawnRole(role string) bool {
 	return strings.HasPrefix(role, "spawn-")
+}
+
+// NormalizeBusRole maps legacy role aliases back to canonical bus role names.
+// Canonical names match tmux window names: commit, analyze, run.
+// Legacy aliases (git, analyst, runner) are accepted for backward compatibility.
+// Unknown roles are returned unchanged.
+func NormalizeBusRole(role string) string {
+	switch role {
+	case "analyst":
+		return "analyze"
+	case "git":
+		return "commit"
+	case "runner":
+		return "run"
+	case "daemon":
+		// The daemon process is not an agent — route replies to edit.
+		return "edit"
+	default:
+		return role
+	}
 }
 
 // IsKnownRole checks if a role is in the known roles list or is a spawn role.

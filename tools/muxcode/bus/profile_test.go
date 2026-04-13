@@ -12,7 +12,7 @@ func TestDefaultConfig_HasAllRoles(t *testing.T) {
 	cfg := DefaultConfig()
 
 	// All known roles should have a tool profile
-	want := []string{"build", "test", "review", "git", "deploy", "runner", "analyst", "edit", "docs", "research", "watch", "pr-read"}
+	want := []string{"build", "test", "review", "commit", "deploy", "run", "analyze", "edit", "docs", "research", "watch", "pr-read"}
 	for _, role := range want {
 		if _, ok := cfg.ToolProfiles[role]; !ok {
 			t.Errorf("DefaultConfig missing tool profile for role %q", role)
@@ -209,21 +209,21 @@ func TestResolveTools_RoleAliases(t *testing.T) {
 		t.Errorf("commit tools != git tools: %d vs %d", len(commitTools), len(gitTools))
 	}
 
-	// analyze → analyst
+	// analyst → analyze (legacy alias resolves to canonical)
 	analyzeTools := ResolveTools("analyze")
 	analystTools := ResolveTools("analyst")
 	if len(analyzeTools) == 0 {
-		t.Fatal("ResolveTools(analyze) returned empty — alias not resolved")
+		t.Fatal("ResolveTools(analyze) returned empty")
 	}
 	if !reflect.DeepEqual(analyzeTools, analystTools) {
 		t.Errorf("analyze tools != analyst tools: %d vs %d", len(analyzeTools), len(analystTools))
 	}
 
-	// run → runner
+	// runner → run (legacy alias resolves to canonical)
 	runTools := ResolveTools("run")
 	runnerTools := ResolveTools("runner")
 	if len(runTools) == 0 {
-		t.Fatal("ResolveTools(run) returned empty — alias not resolved")
+		t.Fatal("ResolveTools(run) returned empty")
 	}
 	if !reflect.DeepEqual(runTools, runnerTools) {
 		t.Errorf("run tools != runner tools: %d vs %d", len(runTools), len(runnerTools))
@@ -235,13 +235,14 @@ func TestResolveRoleAlias(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"commit", "git"},
-		{"analyze", "analyst"},
-		{"run", "runner"},
+		// Legacy aliases resolve to canonical names
+		{"git", "commit"},
+		{"analyst", "analyze"},
+		{"runner", "run"},
 		// Canonical names pass through unchanged
-		{"git", "git"},
-		{"analyst", "analyst"},
-		{"runner", "runner"},
+		{"commit", "commit"},
+		{"analyze", "analyze"},
+		{"run", "run"},
 		{"build", "build"},
 		{"edit", "edit"},
 		{"nonexistent", "nonexistent"},

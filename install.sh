@@ -375,17 +375,24 @@ fi
 if $use_codex; then
   info "Configuring Codex CLI..."
 
-  # API key check
-  if [ -z "${OPENAI_API_KEY:-}" ]; then
-    echo ""
-    info "Codex CLI needs an OpenAI API key."
-    echo "  Set in your shell profile or .env:"
-    echo "    export OPENAI_API_KEY=sk-..."
-    echo "  Or authenticate with: codex login"
-    echo ""
-    warn "No OPENAI_API_KEY detected — Codex agents will fail until configured"
-  else
+  # Auth check: subscription login OR API key
+  codex_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/codex"
+  has_codex_auth=false
+  if [ -n "${OPENAI_API_KEY:-}" ]; then
+    has_codex_auth=true
     ok "OPENAI_API_KEY found for Codex CLI"
+  elif [ -d "$codex_config_dir" ] || [ -f "$HOME/.codex/auth.json" ] || [ -f "$HOME/.codexrc" ]; then
+    has_codex_auth=true
+    ok "Codex CLI subscription login detected"
+  fi
+
+  if ! $has_codex_auth; then
+    echo ""
+    info "Codex CLI needs authentication. Choose one:"
+    echo "  1. Subscription login: codex login"
+    echo "  2. API key: export OPENAI_API_KEY=sk-..."
+    echo ""
+    warn "No Codex auth detected — Codex agents will fail until configured"
   fi
 
   ok "Codex CLI configured"

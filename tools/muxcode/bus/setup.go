@@ -10,7 +10,7 @@ import (
 // Init creates the bus directory structure and initializes files.
 // If the bus directory already exists from a previous session, stale data
 // files (inboxes, log, history, cron, proc, spawn, session meta) are
-// truncated so the watcher doesn't fire alerts based on old data.
+// truncated so the daemon doesn't fire alerts based on old data.
 func Init(session, memoryDir string) error {
 	busDir := BusDir(session)
 

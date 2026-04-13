@@ -134,7 +134,7 @@ func Send(args []string) {
 			_ = bus.Notify(session, to)
 		}
 		// Also notify edit when auto-CC fires (message from build/test/review
-		// to a non-edit target). The watcher skips edit to prevent duplicates,
+		// to a non-edit target). The daemon skips edit to prevent duplicates,
 		// so cmd/send.go is responsible for all edit notifications.
 		if bus.IsAutoCCRole(from) && to != "edit" && bus.WindowForRole(to) != "edit" {
 			_ = bus.Notify(session, "edit")
@@ -153,7 +153,7 @@ func Send(args []string) {
 		_ = bus.CreateTask(session, msg, waitTimeout)
 
 		bus.SetWaiting(session, from)
-		responded := waitForResponse(session, from, to, msg.ID)
+		responded, responsePayload := waitForResponse(session, from, to, msg.ID)
 
 		// Update task status based on outcome
 		if responded {
@@ -164,6 +164,12 @@ func Send(args []string) {
 			} else {
 				bus.CompleteTask(session, msg.ID, "")
 			}
+
+			// Log to console history so the target role's left-pane view updates.
+			// Non-hook providers don't have PostToolUse hooks, and the daemon's
+			// checkNonHookTasks won't see the task (it's already completed). Without
+			// this, the console stays empty for roles like review.
+			logWaitResponseToHistory(session, to, action, responsePayload)
 		} else {
 			bus.TimeoutTask(session, msg.ID)
 		}
@@ -190,7 +196,7 @@ func Send(args []string) {
 //
 // Timeout is controlled by MUXCODE_INBOX_POLL_TIMEOUT (default 600s).
 // Returns true if a response was received, false on timeout.
-func waitForResponse(session, role, target, msgID string) bool {
+func waitForResponse(session, role, target, msgID string) (bool, string) {
 	timeout := resolveWaitTimeout()
 
 	// For hosted roles, also accept responses from the host agent
@@ -221,21 +227,25 @@ func waitForResponse(session, role, target, msgID string) bool {
 			msgs, err := bus.ReceiveFromFunc(session, role, acceptFrom)
 			if err == nil && len(msgs) > 0 {
 				fmt.Println()
+				var payload string
 				for _, m := range msgs {
 					fmt.Print(bus.FormatMessage(m))
 					fmt.Println()
+					if payload == "" {
+						payload = m.Payload
+					}
 				}
-				return true
+				return true, payload
 			}
 		}
 
 		// Response was already consumed by --poll — print confirmation
 		fmt.Printf("\nResponse from %s received (delivered via poll)\n", target)
-		return true
+		return true, ""
 	}
 
 	fmt.Fprintf(os.Stderr, "\nNo response from %s within %ds — check: muxcode inbox --peek\n", target, timeout)
-	return false
+	return false, ""
 }
 
 // resolveWaitTimeout returns the --wait timeout in seconds.
@@ -247,6 +257,68 @@ func resolveWaitTimeout() int {
 		}
 	}
 	return timeout
+}
+
+// logWaitResponseToHistory writes a console history entry for the target role
+// when --wait receives a response. Non-hook providers don't have PostToolUse
+// hooks to log history, and the daemon's checkNonHookTasks skips tasks that
+// are already completed by --wait. Without this, left-pane console views for
+// non-hook agents (e.g. review on Codex) remain empty.
+func logWaitResponseToHistory(session, role, action, payload string) {
+	// If payload wasn't captured (consumed by --poll), try to recover it
+	// from the session log via the delivery status.
+	if payload == "" {
+		tasks, err := bus.ListTasks(session, bus.TaskCompleted)
+		if err == nil {
+			for _, t := range tasks {
+				if t.To == role && t.ResponseID != "" {
+					if msg, ok := bus.FindMessageByID(session, t.ResponseID); ok {
+						payload = msg.Payload
+					}
+					break
+				}
+			}
+		}
+	}
+	if payload == "" {
+		return
+	}
+
+	// Build summary from payload — first line or truncated
+	summary := action
+	if len(payload) > 200 {
+		if idx := strings.Index(payload, "\n"); idx > 0 && idx < 200 {
+			summary = payload[:idx]
+		} else {
+			summary = payload[:200] + "..."
+		}
+	} else {
+		summary = payload
+	}
+
+	// Determine exit code heuristically from the action and payload
+	exitCode := "0"
+	if action == "error" || strings.Contains(strings.ToLower(payload), "failed") ||
+		strings.Contains(strings.ToLower(payload), "error:") {
+		exitCode = "1"
+	}
+
+	outcome := "success"
+	if exitCode != "0" {
+		outcome = "failure"
+	}
+
+	entry := bus.HookHistoryEntry{
+		TS:       time.Now().Unix(),
+		Command:  action,
+		ExitCode: exitCode,
+		Outcome:  outcome,
+		Output:   payload,
+		Summary:  summary,
+	}
+
+	historyPath := bus.HistoryPath(session, role)
+	_ = bus.WriteHookHistory(historyPath, entry, 100)
 }
 
 // isCommitAction returns true for actions that trigger actual git commits.

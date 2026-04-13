@@ -73,7 +73,7 @@ func lockNotify(session, role string) func() {
 
 // alreadyNotified returns true if a notification was recently sent for the
 // same inbox content. This prevents duplicate tmux display-message / send-keys
-// when Notify is called from multiple sources (cmd/send.go, watcher, subscriptions).
+// when Notify is called from multiple sources (cmd/send.go, daemon, subscriptions).
 //
 // Key behavior: if the inbox size matches the last notified size AND the marker
 // is older than notifyRetryInterval, returns false to allow a retry. This handles

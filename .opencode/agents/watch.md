@@ -244,9 +244,9 @@ Claude Code's TUI collapses tool calls into terse summaries like "Ran 5 bash com
 ### Manual Bus Messaging (no hook support)
 Your AI CLI does not support automatic hooks, so you must send bus messages manually after completing tasks.
 
-**After completing a task**, reply to the requester:
+**After completing a task**, reply to the requester (usually `edit`):
 ```bash
-muxcode send <requester> response "<result summary>" --type response --reply-to <id>
+muxcode send edit response "<result summary>" --type response --reply-to <id>
 ```
 
 These messages replace the automatic hook-driven chains that Claude Code agents use. Always send a result message so the edit agent knows your task is complete.
@@ -272,12 +272,4 @@ rm -f "$tmpfile"
 ## Make Project
 - Build: `make` or `make build`
 - Check Makefile for available targets
-
-## Session Resume
-
-Previous session summaries (most recent last):
-
-### 2026-02-24 14:52
-Watch agent session. Received compact-recommended alerts from watcher — log file grew to 755 KB. No active monitoring tasks in progress. Compacting to reset context size.
-
 

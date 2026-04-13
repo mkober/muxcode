@@ -136,7 +136,7 @@ build      Build Config                         2026-02-21 14:27
 
 ### `muxcode watch`
 
-Run the unified bus watcher daemon.
+Run the bus daemon (unified background supervisor).
 
 ```bash
 muxcode watch [session] [--poll N] [--debounce N] [--monitor]
@@ -146,9 +146,9 @@ muxcode watch [session] [--poll N] [--debounce N] [--monitor]
 - Monitors the analyze trigger file and routes file-edit events to relevant agents based on file patterns
 - `--poll N` — inbox polling interval in seconds (default: 2)
 - `--debounce N` — trigger file debounce interval in seconds (default: 8)
-- `--monitor` — run as watcher health monitor instead of the watcher itself. Checks the watcher keepalive every 15 seconds; if stale (>30s), kills and relaunches the watcher process. Exits cleanly when the tmux session is gone.
+- `--monitor` — run as daemon health monitor instead of the daemon itself. Checks the daemon keepalive every 15 seconds; if stale (>30s), kills and relaunches the daemon process. Exits cleanly when the tmux session is gone.
 
-Without `--monitor`, runs in the `analyze` window left pane as the primary watcher. With `--monitor`, runs as a companion background process launched by `muxcode.sh`.
+Without `--monitor`, runs in the `analyze` window left pane as the primary daemon. With `--monitor`, runs as a companion background process launched by `muxcode.sh`.
 
 #### Trigger file format
 
@@ -158,13 +158,13 @@ The trigger file (`/tmp/muxcode-analyze-{SESSION}.trigger`) is written by `muxco
 <unix-timestamp> <filepath>
 ```
 
-When the watcher detects a change in the trigger file, it starts debouncing. After the debounce interval elapses with no further changes, the watcher:
+When the daemon detects a change in the trigger file, it starts debouncing. After the debounce interval elapses with no further changes, the daemon:
 
 1. Reads the trigger file and collects unique file paths
 2. Sends an aggregate `analyze` event to the analyst agent with all edited files
 3. Truncates the trigger file
 
-Per-file routing to specific agents (test/deploy/build) is handled earlier by `hook analyze` at edit time — the watcher only handles the aggregate analyst notification.
+Per-file routing to specific agents (test/deploy/build) is handled earlier by `hook analyze` at edit time — the daemon only handles the aggregate analyst notification.
 
 ### `muxcode dashboard`
 
@@ -265,7 +265,7 @@ $ muxcode cron disable 1771897000-cron-a1b2c3d4
 $ muxcode cron history --limit 10
 ```
 
-**Watcher integration:** The bus watcher (`muxcode watch`) checks for due cron entries on each poll cycle. It reloads the cron file from disk at most every 10 seconds to avoid excessive filesystem reads. When a cron entry fires, the watcher sends a bus message to the target agent, updates `last_run_ts`, appends to execution history, and notifies the target via tmux.
+**Daemon integration:** The bus daemon (`muxcode watch`) checks for due cron entries on each poll cycle. It reloads the cron file from disk at most every 10 seconds to avoid excessive filesystem reads. When a cron entry fires, the daemon sends a bus message to the target agent, updates `last_run_ts`, appends to execution history, and notifies the target via tmux.
 
 **Data files:**
 
@@ -416,11 +416,11 @@ $ muxcode guard build --json
 $ muxcode guard --threshold 5 --window 600
 ```
 
-**Watcher integration:** The bus watcher checks for loops every 60 seconds. When a loop is detected, it sends a `loop-detected` event to the edit agent and notifies via tmux. Alerts are deduplicated within a 10-minute cooldown (exceeds the 5-minute detection window to prevent self-sustaining alerts). System actions (`loop-detected`, `compact-recommended`, `proc-complete`, `spawn-complete`) are excluded from message loop detection.
+**Daemon integration:** The bus daemon checks for loops every 60 seconds. When a loop is detected, it sends a `loop-detected` event to the edit agent and notifies via tmux. Alerts are deduplicated within a 10-minute cooldown (exceeds the 5-minute detection window to prevent self-sustaining alerts). System actions (`loop-detected`, `compact-recommended`, `proc-complete`, `spawn-complete`) are excluded from message loop detection.
 
 #### Watcher event: `compact-recommended`
 
-The watcher monitors agent context size (memory + history + log files) and staleness (time since last compaction) every 120 seconds. When **both** conditions are met — total tracked size > 512 KB **and** time since last compact > 2 hours — the watcher sends a `compact-recommended` event to the role itself with an actionable message:
+The daemon monitors agent context size (memory + history + log files) and staleness (time since last compaction) every 120 seconds. When **both** conditions are met — total tracked size > 512 KB **and** time since last compact > 2 hours — the daemon sends a `compact-recommended` event to the role itself with an actionable message:
 
 ```
 Context approaching limits for edit (total: 620 KB, memory: 180 KB, history: 340 KB, log: 100 KB).
@@ -479,7 +479,7 @@ $ muxcode proc clean
 Cleaned 2 finished process(es).
 ```
 
-**Watcher integration:** The bus watcher checks running processes on each poll cycle (2s). When a process completes, it sends a `proc-complete` event to the owner agent with the command, status, and exit code. The owner is notified via tmux.
+**Daemon integration:** The bus daemon checks running processes on each poll cycle (2s). When a process completes, it sends a `proc-complete` event to the owner agent with the command, status, and exit code. The owner is notified via tmux.
 
 **Data files:**
 
@@ -519,7 +519,7 @@ muxcode spawn clean
 3. Pre-seeds the spawn's inbox with the task message
 4. Launches `AGENT_ROLE=spawn-a1b2c3d4 muxcode-agent.sh research` — the base role (`research`) determines agent definition, tools, and prompts; the `AGENT_ROLE` env var (`spawn-a1b2c3d4`) determines the bus communication channel
 5. After 2s delay, notifies the spawn agent to read its inbox
-6. When the agent finishes and exits (tmux window closes), the watcher detects it and sends a `spawn-complete` event to the owner
+6. When the agent finishes and exits (tmux window closes), the daemon detects it and sends a `spawn-complete` event to the owner
 
 **Examples:**
 ```bash
@@ -547,7 +547,7 @@ $ muxcode spawn clean
 Cleaned 1 finished spawn(s).
 ```
 
-**Watcher integration:** The bus watcher checks spawned agent windows on each poll cycle (2s). When a spawn's tmux window no longer exists, it marks the spawn as `completed`, extracts the last result message from `log.jsonl`, and sends a `spawn-complete` event to the owner agent with the result summary.
+**Daemon integration:** The bus daemon checks spawned agent windows on each poll cycle (2s). When a spawn's tmux window no longer exists, it marks the spawn as `completed`, extracts the last result message from `log.jsonl`, and sends a `spawn-complete` event to the owner agent with the result summary.
 
 **Pre-commit safeguard:** Running spawns block commits, same as running background processes. Use `--force` on the send command to bypass.
 
@@ -991,14 +991,14 @@ muxcode agent-health --start <role>
 - `--stop <role>` — write a stopped marker, suppressing auto-restart for that role
 - `--start <role>` — remove the stopped marker, re-enabling auto-restart
 
-The watcher probes agent panes every 30 seconds. Three consecutive failures trigger auto-restart (capped at 3 per role per session). Excluded roles: `edit`, `webhook`, `spawn-*`.
+The daemon probes agent panes every 30 seconds. Three consecutive failures trigger auto-restart (capped at 3 per role per session). Excluded roles: `edit`, `webhook`, `spawn-*`.
 
 **Data files:**
 
 | File | Location | Purpose |
 |------|----------|---------|
 | `{role}.stopped` | `/tmp/muxcode-bus-{session}/lock/` | Marker suppressing auto-restart |
-| `watcher.keepalive` | `/tmp/muxcode-bus-{session}/` | Unix timestamp updated each watcher poll loop |
+| `watcher.keepalive` | `/tmp/muxcode-bus-{session}/` | Unix timestamp updated each daemon poll loop |
 
 ### `muxcode lifecycle`
 
@@ -1028,7 +1028,7 @@ muxcode lifecycle purge [--days N]
 |-------|-------------|
 | `ts` | Unix timestamp |
 | `level` | `info`, `warn`, or `error` |
-| `source` | Origin: `launcher`, `watcher`, `monitor`, `auto-accept`, `agent`, `init`, `cleanup` |
+| `source` | Origin: `launcher`, `daemon`, `monitor`, `auto-accept`, `agent`, `init`, `cleanup` |
 | `session` | Session name |
 | `event` | Machine-readable event type (see catalog below) |
 | `pid` | Process ID (optional) |
@@ -1040,8 +1040,8 @@ muxcode lifecycle purge [--days N]
 |--------|-------|-------|------|
 | launcher | session-start | info | `muxcode.sh` begins |
 | launcher | bus-init | info | `muxcode init` completes |
-| launcher | stale-kill | info | Killed stale watcher or monitor |
-| launcher | watcher-start | info | Watcher process launched (with PID) |
+| launcher | stale-kill | info | Killed stale daemon or monitor |
+| launcher | watcher-start | info | Daemon process launched (with PID) |
 | launcher | monitor-start | info | Monitor process launched (with PID) |
 | launcher | session-create | info | tmux session created (with window list) |
 | launcher | session-ready | info | Session fully initialized |
@@ -1052,25 +1052,25 @@ muxcode lifecycle purge [--days N]
 | init | init | info | Fresh bus directory created |
 | init | re-init | info | Stale data purged from previous session |
 | agent | launch | info | Agent process exec'd (role + CLI) |
-| watcher | started | info | Watcher `Run()` begins (with PID) |
-| watcher | lock-failed | error | Another watcher already running |
-| watcher | inbox-notify | info | Agent notified of new messages |
-| watcher | startup-notify | info | First-idle notification delivery |
-| watcher | trigger-route | info | Edit events routed to analyst |
-| watcher | cron-fire | info | Cron entry executed |
-| watcher | proc-complete | info | Background process finished |
-| watcher | spawn-complete | info | Spawned agent finished |
-| watcher | loop-detected | warn | Loop alert sent |
-| watcher | compact-alert | warn | Compaction recommended |
-| watcher | ollama-probe-fail | warn | Ollama health check failed |
-| watcher | ollama-restart | warn | Ollama restart attempted |
-| watcher | ollama-recovered | info | Ollama back online |
-| watcher | agent-health-fail | warn | Agent health check failed |
-| watcher | agent-restart | warn | Agent restart attempted |
-| watcher | agent-recovered | info | Agent came back |
+| daemon | started | info | Daemon `Run()` begins (with PID) |
+| daemon | lock-failed | error | Another daemon already running |
+| daemon | inbox-notify | info | Agent notified of new messages |
+| daemon | startup-notify | info | First-idle notification delivery |
+| daemon | trigger-route | info | Edit events routed to analyst |
+| daemon | cron-fire | info | Cron entry executed |
+| daemon | proc-complete | info | Background process finished |
+| daemon | spawn-complete | info | Spawned agent finished |
+| daemon | loop-detected | warn | Loop alert sent |
+| daemon | compact-alert | warn | Compaction recommended |
+| daemon | ollama-probe-fail | warn | Ollama health check failed |
+| daemon | ollama-restart | warn | Ollama restart attempted |
+| daemon | ollama-recovered | info | Ollama back online |
+| daemon | agent-health-fail | warn | Agent health check failed |
+| daemon | agent-restart | warn | Agent restart attempted |
+| daemon | agent-recovered | info | Agent came back |
 | monitor | session-gone | info | tmux session gone, monitor exiting |
-| monitor | stale-detected | warn | Watcher keepalive stale |
-| monitor | watcher-restart | info | Watcher restarted by monitor |
+| monitor | stale-detected | warn | Daemon keepalive stale |
+| monitor | watcher-restart | info | Daemon restarted by monitor |
 | cleanup | session-cleanup | info | Bus directory removed |
 
 **Rotation:** 1000 entries per file (configurable via `MUXCODE_LIFECYCLE_LOG_MAX` env var).
@@ -1084,10 +1084,10 @@ $ muxcode lifecycle show
 2026-03-12 08:30:01  info   init           init                    Creating bus directory: /tmp/muxcode-bus-muxcode
 2026-03-12 08:30:01  info   launcher       watcher-start           PID: 12345
 2026-03-12 08:30:15  info   auto-accept    agent-ready             edit
-2026-03-12 08:30:16  info   watcher        startup-notify          edit
+2026-03-12 08:30:16  info   daemon         startup-notify          edit
 
 # Filter by source and level
-$ muxcode lifecycle show --source watcher --level warn --since 1h
+$ muxcode lifecycle show --source daemon --level warn --since 1h
 
 # Show events for a subsession
 $ muxcode lifecycle show is-admissions-gateway --limit 20
@@ -1255,7 +1255,7 @@ muxcode hook inbox-poll  # PreToolUse: inbox check on tool execution
 
 - `guard` — blocks prohibited commands for the edit agent (build, test, git, deploy, curl). Returns JSON `{"decision":"block","reason":"..."}` or passes through.
 - `bash` — detects build, test, deploy, and git commands from exit codes and command text. Drives the build→test→review chain via `ResolveChain()`. Transitions the workflow state machine. Logs command history with error extraction.
-- `analyze` — writes file-edit events to the analyze trigger file for watcher debounce. Transitions workflow to `editing`.
+- `analyze` — writes file-edit events to the analyze trigger file for daemon debounce. Transitions workflow to `editing`.
 - `inbox-poll` — checks the agent's inbox on each tool execution and injects a "You have new messages" notification if messages are pending.
 
 **Chain dedup:** Chain messages use `SendNoCCIfNotDuplicate()` with atomic file locking to prevent duplicate chain triggers within the 30-second dedup window.
@@ -1452,11 +1452,11 @@ tools/muxcode/
 │   ├── workflow.go    # Workflow state machine (edit→build→test→review lifecycle)
 │   ├── health.go      # Ollama health monitoring
 │   ├── agent_health.go # Agent process health monitoring
-│   ├── watcher_health.go # Watcher keepalive monitoring
+│   ├── watcher_health.go # Daemon keepalive monitoring
 │   ├── cleanup.go     # Session cleanup
 │   └── setup.go       # Bus directory initialization and re-init purge
 ├── cmd/               # Subcommand handlers
-├── watcher/           # Inbox poller + trigger file monitor
+├── watcher/           # Bus daemon — inbox poller + trigger file monitor
 ├── tui/               # Dracula-themed dashboard TUI
 └── main.go            # Entry point and subcommand dispatch
 ```

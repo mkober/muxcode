@@ -56,11 +56,11 @@ func AgentFileName(role string) string {
 		return "code-reviewer"
 	case "deploy":
 		return "infra-deployer"
-	case "runner", "run":
+	case "run", "runner":
 		return "command-runner"
-	case "git", "commit":
+	case "commit", "git":
 		return "git-manager"
-	case "analyst", "analyze":
+	case "analyze", "analyst":
 		return "editor-analyst"
 	case "docs":
 		return "doc-writer"
@@ -82,7 +82,7 @@ func AgentFileName(role string) string {
 func RoleCLIEnvVar(role string) string {
 	switch role {
 	case "commit", "git":
-		return "MUXCODE_GIT_CLI"
+		return "MUXCODE_COMMIT_CLI"
 	case "build":
 		return "MUXCODE_BUILD_CLI"
 	case "test":
@@ -103,7 +103,7 @@ func RoleCLIEnvVar(role string) string {
 		return "MUXCODE_WATCH_CLI"
 	case "pr-read":
 		return "MUXCODE_PR_READ_CLI"
-	case "runner", "run":
+	case "run", "runner":
 		return "MUXCODE_RUN_CLI"
 	case "api":
 		return "MUXCODE_API_CLI"
@@ -118,7 +118,7 @@ func RoleCLIEnvVar(role string) string {
 func RoleClaudeModelEnvVar(role string) string {
 	switch role {
 	case "commit", "git":
-		return "MUXCODE_GIT_CLAUDE_MODEL"
+		return "MUXCODE_COMMIT_CLAUDE_MODEL"
 	case "build":
 		return "MUXCODE_BUILD_CLAUDE_MODEL"
 	case "test":
@@ -139,7 +139,7 @@ func RoleClaudeModelEnvVar(role string) string {
 		return "MUXCODE_WATCH_CLAUDE_MODEL"
 	case "pr-read":
 		return "MUXCODE_PR_READ_CLAUDE_MODEL"
-	case "runner", "run":
+	case "run", "runner":
 		return "MUXCODE_RUN_CLAUDE_MODEL"
 	case "api":
 		return "MUXCODE_API_CLAUDE_MODEL"
@@ -150,13 +150,45 @@ func RoleClaudeModelEnvVar(role string) string {
 	}
 }
 
+// RoleCodexModelEnvVar returns the per-role Codex model env var name.
+func RoleCodexModelEnvVar(role string) string {
+	switch role {
+	case "commit", "git":
+		return "MUXCODE_COMMIT_CODEX_MODEL"
+	case "build":
+		return "MUXCODE_BUILD_CODEX_MODEL"
+	case "test":
+		return "MUXCODE_TEST_CODEX_MODEL"
+	case "review":
+		return "MUXCODE_REVIEW_CODEX_MODEL"
+	case "deploy":
+		return "MUXCODE_DEPLOY_CODEX_MODEL"
+	case "edit":
+		return "MUXCODE_EDIT_CODEX_MODEL"
+	case "analyze", "analyst":
+		return "MUXCODE_ANALYZE_CODEX_MODEL"
+	case "watch":
+		return "MUXCODE_WATCH_CODEX_MODEL"
+	case "run", "runner":
+		return "MUXCODE_RUN_CODEX_MODEL"
+	default:
+		return "MUXCODE_" + strings.ToUpper(strings.ReplaceAll(role, "-", "_")) + "_CODEX_MODEL"
+	}
+}
+
+// RoleCodexModelDefault returns the default Codex model for a role.
+// All roles default to gpt-5.4.
+func RoleCodexModelDefault(role string) string {
+	return "gpt-5.4"
+}
+
 // RoleClaudeModelDefault returns the default Claude model for a role.
 // edit/review/analyze → opus, build/test/api/deploy/run/watch/commit → sonnet.
 func RoleClaudeModelDefault(role string) string {
 	switch role {
 	case "edit", "review", "analyze", "analyst":
 		return "claude-opus-4-6"
-	case "build", "test", "api", "deploy", "runner", "run", "watch", "commit", "git":
+	case "build", "test", "api", "deploy", "run", "runner", "watch", "commit", "git":
 		return "claude-sonnet-4-5"
 	default:
 		return ""
@@ -177,12 +209,12 @@ func InlineFallbackPrompt(role string) string {
 		return "You are the review agent. Focus on reviewing code for correctness, security, and quality. Run git diff and provide feedback organized by severity."
 	case "deploy":
 		return "You are the deploy agent. Focus on infrastructure as code and deployments. Write, review, and debug infrastructure definitions. Run deployment diffs. Check security and compliance."
-	case "runner", "run":
-		return "You are the runner agent. Focus on executing commands and processes. Confirm target environment before running. Show command and parse responses. Report errors clearly."
-	case "git", "commit":
-		return "You are the git agent. Focus on git operations: branches, commits, rebasing, PRs. Run git status, git diff, gh pr commands. Keep the repo clean."
-	case "analyst", "analyze":
-		return "You are the analyst agent. Evaluate code changes, builds, tests, reviews, deployments, and runs. Explain what happened, why it matters, and what to watch for. Highlight patterns and concepts. Be concise but informative."
+	case "run", "runner":
+		return "You are the run agent. Focus on executing commands and processes. Confirm target environment before running. Show command and parse responses. Report errors clearly."
+	case "commit", "git":
+		return "You are the commit agent. Focus on git operations: branches, commits, rebasing, PRs. Run git status, git diff, gh pr commands. Keep the repo clean."
+	case "analyze", "analyst":
+		return "You are the analyze agent. Evaluate code changes, builds, tests, reviews, deployments, and runs. Explain what happened, why it matters, and what to watch for. Highlight patterns and concepts. Be concise but informative."
 	case "docs":
 		return "You are the docs agent. Generate, update, and maintain project documentation. Read code changes, update READMEs, write doc comments, maintain changelogs. Keep docs accurate and in sync with the code."
 	case "research":
@@ -452,7 +484,7 @@ var lookPath = exec.LookPath
 
 // PreLaunchSetup performs pre-launch actions: startup inbox message, lifecycle log.
 // Uses SendNoCC to avoid notification since the agent process isn't running yet —
-// the watcher's startup check will notify once the agent is ready.
+// the daemon's startup check will notify once the agent is ready.
 // cli is the resolved CLI binary name (e.g. "claude", "muxcode-llm-harness").
 func PreLaunchSetup(role, session, cli string) {
 	startupMsg := "Session started — review last saved context from memory to restore session state."
@@ -470,7 +502,7 @@ func PreLaunchSetup(role, session, cli string) {
 			Payload: startupMsg,
 		}
 		_ = SendNoCC(session, m)
-	case "analyst", "analyze":
+	case "analyze":
 		m := Message{
 			ID:      NewMsgID("analyze"),
 			TS:      time.Now().Unix(),

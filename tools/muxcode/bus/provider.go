@@ -68,6 +68,8 @@ func ResolveProvider(role string) Provider {
 	switch cli {
 	case "opencode":
 		return &OpenCodeProvider{}
+	case "codex":
+		return &CodexProvider{}
 	case "local":
 		return &LocalProvider{}
 	default:

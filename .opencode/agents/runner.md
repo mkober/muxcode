@@ -101,14 +101,6 @@ permission:
     "cd * && brew *": allow
     "pip *": allow
     "cd * && pip *": allow
-    "pnpm *": allow
-    "cd * && pnpm *": allow
-    "npm *": allow
-    "cd * && npm *": allow
-    "npx *": allow
-    "cd * && npx *": allow
-    "yarn *": allow
-    "cd * && yarn *": allow
     "go run *": allow
     "cd * && go run *": allow
     "cargo run *": allow
@@ -131,42 +123,6 @@ permission:
     "cd * && base64 *": allow
     "export *": allow
     "cd * && export *": allow
-    "eval *": allow
-    "cd * && eval *": allow
-    "eval "$(*)": allow
-    "cd * && eval "$(*)": allow
-    "source *": allow
-    "cd * && source *": allow
-    "cd * && grep *": allow
-    "head *": allow
-    "cd * && head *": allow
-    "tail *": allow
-    "cd * && tail *": allow
-    "cat *": allow
-    "cd * && cat *": allow
-    "wc *": allow
-    "cd * && wc *": allow
-    "cd * && sort *": allow
-    "cd * && cut *": allow
-    "cd * && awk *": allow
-    "cd * && sed *": allow
-    "sleep *": allow
-    "cd * && sleep *": allow
-    "echo *": allow
-    "cd * && echo *": allow
-    "cd * && printf *": allow
-    "cd * && date *": allow
-    "cd * && find *": allow
-    "ls *": allow
-    "cd * && ls *": allow
-    "cd * && diff *": allow
-    "cd * && env *": allow
-    "touch *": allow
-    "cd * && touch *": allow
-    "cp *": allow
-    "cd * && cp *": allow
-    "mv *": allow
-    "cd * && mv *": allow
   external_directory:
     "/tmp/*": allow
     "/private/tmp/*": allow
@@ -257,7 +213,7 @@ Report results clearly:
 
 ## Agent Coordination
 
-**You are the run agent.** You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
+**You are the runner agent.** You are part of a multi-agent tmux session. Use the message bus to communicate with other agents.
 
 ### Check Messages
 ```bash
@@ -337,7 +293,7 @@ Write command output to a temp file, then call `muxcode log`:
 # Log task output:
 tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)
 echo "<output>" > "$tmpfile"
-muxcode log run "Task summary" --exit-code 0 --output-file "$tmpfile"
+muxcode log runner "Task summary" --exit-code 0 --output-file "$tmpfile"
 rm -f "$tmpfile"
 ```
 

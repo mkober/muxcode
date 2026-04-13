@@ -17,7 +17,7 @@ type LauncherConfig struct {
 	ProjectsDir string            // MUXCODE_PROJECTS_DIR (default: $HOME)
 	ScanDepth   int               // MUXCODE_SCAN_DEPTH (default: 3)
 	Windows     []string          // MUXCODE_WINDOWS
-	RoleMap     map[string]string // MUXCODE_ROLE_MAP (run=runner commit=git analyze=analyst)
+	RoleMap     map[string]string // MUXCODE_ROLE_MAP (optional, e.g. custom=mycustomrole)
 	SplitLeft   []string          // MUXCODE_SPLIT_LEFT
 	ShellInit   string            // MUXCODE_SHELL_INIT
 	Editor      string            // MUXCODE_EDITOR (default: nvim)
@@ -32,7 +32,7 @@ func DefaultLauncherConfig() *LauncherConfig {
 		ProjectsDir: home,
 		ScanDepth:   3,
 		Windows:     []string{"edit", "build", "test", "review", "deploy", "run", "watch", "commit", "analyze"},
-		RoleMap:     map[string]string{"run": "runner", "commit": "git", "analyze": "analyst"},
+		RoleMap:     map[string]string{},
 		SplitLeft:   []string{"edit", "build", "test", "review", "deploy", "run", "analyze", "commit", "watch"},
 		ShellInit:   "",
 		Editor:      "nvim",
@@ -184,16 +184,16 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	}
 	LogLifecycle(session, "info", "launcher", "bus-init", "")
 
-	// Kill stale watcher/monitor processes
+	// Kill stale daemon/monitor processes
 	killStaleProcesses(session)
 
-	// Start watcher and monitor as detached background processes
-	watcherPID, err := startDetachedProcess("muxcode", "watch", session)
+	// Start daemon and monitor as detached background processes
+	daemonPID, err := startDetachedProcess("muxcode", "watch", session)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to start watcher: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to start daemon: %v\n", err)
 	} else {
-		LogLifecycle(session, "info", "launcher", "watcher-start",
-			fmt.Sprintf("PID: %d", watcherPID))
+		LogLifecycle(session, "info", "launcher", "daemon-start",
+			fmt.Sprintf("PID: %d", daemonPID))
 	}
 
 	monitorPID, err := startDetachedProcess("muxcode", "watch", "--monitor", session)
@@ -335,7 +335,7 @@ func sendCommand(target, command string) {
 	TmuxSendEnter(target)
 }
 
-// killStaleProcesses kills stale watcher/monitor processes from previous sessions.
+// killStaleProcesses kills stale daemon/monitor processes from previous sessions.
 func killStaleProcesses(session string) {
 	// Anchor patterns with $ to avoid "watch SESSION" matching "watch --monitor SESSION"
 	patterns := []struct {
@@ -343,7 +343,7 @@ func killStaleProcesses(session string) {
 		label   string
 	}{
 		{"muxcode watch --monitor " + session + "$", "monitor"},
-		{"muxcode watch " + session + "$", "watcher"},
+		{"muxcode watch " + session + "$", "daemon"},
 	}
 	for _, p := range patterns {
 		cmd := exec.Command("pkill", "-f", p.pattern)
@@ -507,30 +507,43 @@ func AutoAccept(session string, windows []string) {
 					woken[win] = true
 					time.Sleep(1 * time.Second) // stabilization delay
 
-					// Re-capture to check for existing wake text
-					freshContent, err := TmuxCapturePaneLines(pane, 50)
-					if err != nil {
-						continue
-					}
-
-					if strings.Contains(freshContent, "You have new messages") {
-						TmuxSendEnter(pane)
-						LogLifecycle(session, "info", "auto-accept", "startup-wake-enter", win)
-					} else {
-						TmuxSendKeys(pane, "You have new messages")
-						// Poll for text to appear
-						for poll := 0; poll < 10; poll++ {
-							time.Sleep(100 * time.Millisecond)
-							cap, err := TmuxCapturePaneLines(pane, 3)
-							if err != nil {
-								break
-							}
-							if strings.Contains(cap, "You have new messages") {
-								break
-							}
+					// Non-hook providers (Codex, OpenCode) don't understand
+					// the generic "You have new messages" text. Use their
+					// SendWakeUp() method which reads the inbox and injects
+					// the actual message content with explicit instructions.
+					if !provider.SupportsHooks() {
+						if err := provider.SendWakeUp(session, win); err != nil {
+							LogLifecycle(session, "warn", "auto-accept", "startup-wake-failed", win+": "+err.Error())
+						} else {
+							LogLifecycle(session, "info", "auto-accept", "startup-wake-provider", win)
 						}
-						TmuxSendEnter(pane)
-						LogLifecycle(session, "info", "auto-accept", "startup-wake-full", win)
+					} else {
+						// Claude Code agents understand "You have new messages"
+						// Re-capture to check for existing wake text
+						freshContent, err := TmuxCapturePaneLines(pane, 50)
+						if err != nil {
+							continue
+						}
+
+						if strings.Contains(freshContent, "You have new messages") {
+							TmuxSendEnter(pane)
+							LogLifecycle(session, "info", "auto-accept", "startup-wake-enter", win)
+						} else {
+							TmuxSendKeys(pane, "You have new messages")
+							// Poll for text to appear
+							for poll := 0; poll < 10; poll++ {
+								time.Sleep(100 * time.Millisecond)
+								cap, err := TmuxCapturePaneLines(pane, 3)
+								if err != nil {
+									break
+								}
+								if strings.Contains(cap, "You have new messages") {
+									break
+								}
+							}
+							TmuxSendEnter(pane)
+							LogLifecycle(session, "info", "auto-accept", "startup-wake-full", win)
+						}
 					}
 				}
 

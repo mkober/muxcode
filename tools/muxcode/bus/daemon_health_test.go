@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-func TestWatcherKeepalivePath(t *testing.T) {
-	path := WatcherKeepalivePath("test-session")
-	if path != "/tmp/muxcode-bus-test-session/watcher.keepalive" {
+func TestDaemonKeepalivePath(t *testing.T) {
+	path := DaemonKeepalivePath("test-session")
+	if path != "/tmp/muxcode-bus-test-session/daemon.keepalive" {
 		t.Errorf("unexpected keepalive path: %s", path)
 	}
 }
 
-func TestIsWatcherAlive_Fresh(t *testing.T) {
+func TestIsDaemonAlive_Fresh(t *testing.T) {
 	tmpDir := t.TempDir()
 	session := filepath.Base(tmpDir) // use tmpDir name as session
 
@@ -27,17 +27,17 @@ func TestIsWatcherAlive_Fresh(t *testing.T) {
 	defer os.RemoveAll(busDir)
 
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	keepalivePath := filepath.Join(busDir, "watcher.keepalive")
+	keepalivePath := filepath.Join(busDir, "daemon.keepalive")
 	if err := os.WriteFile(keepalivePath, []byte(ts), 0644); err != nil {
 		t.Fatalf("failed to write keepalive: %v", err)
 	}
 
-	if !IsWatcherAlive(session, 30) {
-		t.Error("expected watcher to be alive with fresh timestamp")
+	if !IsDaemonAlive(session, 30) {
+		t.Error("expected daemon to be alive with fresh timestamp")
 	}
 }
 
-func TestIsWatcherAlive_Stale(t *testing.T) {
+func TestIsDaemonAlive_Stale(t *testing.T) {
 	tmpDir := t.TempDir()
 	session := filepath.Base(tmpDir)
 
@@ -49,18 +49,18 @@ func TestIsWatcherAlive_Stale(t *testing.T) {
 
 	// Write a stale timestamp (60 seconds ago)
 	ts := strconv.FormatInt(time.Now().Unix()-60, 10)
-	keepalivePath := filepath.Join(busDir, "watcher.keepalive")
+	keepalivePath := filepath.Join(busDir, "daemon.keepalive")
 	if err := os.WriteFile(keepalivePath, []byte(ts), 0644); err != nil {
 		t.Fatalf("failed to write keepalive: %v", err)
 	}
 
-	if IsWatcherAlive(session, 30) {
-		t.Error("expected watcher to be stale with 60s-old timestamp and 30s max age")
+	if IsDaemonAlive(session, 30) {
+		t.Error("expected daemon to be stale with 60s-old timestamp and 30s max age")
 	}
 }
 
-func TestIsWatcherAlive_Missing(t *testing.T) {
-	if IsWatcherAlive("nonexistent-session-xyz", 30) {
-		t.Error("expected watcher to be not alive with missing keepalive file")
+func TestIsDaemonAlive_Missing(t *testing.T) {
+	if IsDaemonAlive("nonexistent-session-xyz", 30) {
+		t.Error("expected daemon to be not alive with missing keepalive file")
 	}
 }

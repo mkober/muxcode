@@ -82,7 +82,7 @@ func TestTransitionWorkflowRegression(t *testing.T) {
 		WithOutcome("build", "success"))
 	TransitionWorkflow(session, StateReviewing, "chain:test:success",
 		WithOutcome("test", "success"))
-	TransitionWorkflow(session, StateReviewed, "watcher:review-complete",
+	TransitionWorkflow(session, StateReviewed, "daemon:review-complete",
 		WithOutcome("review", "lgtm"))
 
 	entry := ReadWorkflowState(session)

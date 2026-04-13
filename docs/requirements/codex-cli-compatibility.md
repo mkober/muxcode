@@ -8,7 +8,7 @@ Enable swapping Claude Code with [Codex CLI](https://github.com/openai/codex) (O
 
 ### What is Codex CLI
 
-Codex CLI is OpenAI's open-source terminal-based coding agent (GitHub: openai/codex, MIT licensed). Originally built in TypeScript/Node.js, it has been rewritten in **Rust** with an Ink-based TUI. It connects to OpenAI models (codex-mini-latest default, plus o4-mini, o3, gpt-4.1, gpt-5.4, etc.) to perform coding tasks in the terminal.
+Codex CLI is OpenAI's open-source terminal-based coding agent (GitHub: openai/codex, MIT licensed). Originally built in TypeScript/Node.js, it has been rewritten in **Rust** with an Ink-based TUI. It connects to OpenAI models (gpt-5.4 default, plus o4-mini, o3, gpt-4.1, gpt-5.4, etc.) to perform coding tasks in the terminal.
 
 Key capabilities relevant to muxcode integration:
 
@@ -33,7 +33,7 @@ Key capabilities relevant to muxcode integration:
 ### Why add Codex CLI support
 
 1. **OpenAI model access** — Codex CLI natively supports OpenAI's reasoning models (o4-mini, o3, codex-mini) which have different strengths for certain coding tasks. The review agent benefits from reasoning model capabilities for code analysis.
-2. **Cost optimization** — Mix cheaper models for simple roles (build, test) while using Claude for complex roles (edit). OpenAI's codex-mini-latest is optimized for coding tasks at lower cost.
+2. **Cost optimization** — Mix cheaper models for simple roles (build, test) while using Claude for complex roles (edit). OpenAI's gpt-5.4 is optimized for coding tasks at lower cost.
 3. **Provider diversity** — Reduce single-vendor dependency. If one provider has an outage, agents on other providers keep working.
 4. **Clean exec mode** — `codex exec` outputs the final assistant message to stdout and progress to stderr, making response capture trivial compared to TUI-based providers.
 
@@ -203,7 +203,7 @@ fi
 
 # Resolve model
 model_var="MUXCODE_$(echo "$ROLE" | tr '[:lower:]' '[:upper:]')_CODEX_MODEL"
-model="${!model_var:-${MUXCODE_CODEX_MODEL:-codex-mini-latest}}"
+model="${!model_var:-${MUXCODE_CODEX_MODEL:-gpt-5.4}}"
 
 # Resolve sandbox mode
 sandbox="${MUXCODE_CODEX_SANDBOX:-danger-full-access}"
@@ -265,17 +265,15 @@ done
 
 ### AGENTS.md generation
 
-Unlike Claude Code (which reads `.claude/agents/<role>.md`) or OpenCode (`.opencode/agents/<role>.md`), Codex reads `AGENTS.md` from the project root downward. MuxCode cannot create per-role `AGENTS.md` files without conflicts.
+Unlike Claude Code (which reads `.claude/agents/<role>.md`) or OpenCode (`.opencode/agents/<role>.md`), Codex reads `AGENTS.md` from the project root downward. A single shared `AGENTS.md` would cause collisions when multiple roles use the Codex provider — the last-launched role's instructions would overwrite all earlier roles.
 
-**Solution**: Use Codex's `--cd` flag to set a role-specific working directory that contains a tailored `AGENTS.md`:
+**Solution**: Per-role subdirectories with `-C` flag:
 
 ```
-/tmp/muxcode-codex-{session}/{role}/AGENTS.md    # Role-specific instructions
+.codex/{role}/AGENTS.md    # Per-role instructions (e.g. .codex/review/AGENTS.md)
 ```
 
-The wrapper script creates this directory, writes `AGENTS.md`, and passes `--cd` to point at the project dir while the instructions file is in a parent scope. Alternatively, use `~/.codex/AGENTS.override.md` for global instructions and rely on the project's own `AGENTS.md` for project context.
-
-**Preferred approach**: Write role instructions to `.codex/AGENTS.md` in the project directory. This file is role-agnostic (contains shared instructions about the bus protocol). Role-specific behavior comes from the prompt passed to `codex exec`.
+`WriteAgentConfig()` creates `.codex/{role}/AGENTS.md` for each Codex role, and `BuildExecArgs()` passes `-C <abs-path-to-.codex/{role}>` so each agent reads its own instructions. This mirrors how Claude Code uses `.claude/agents/{role}.md` and OpenCode uses `.opencode/agents/{role}.md` — each role gets isolated instructions.
 
 ```markdown
 # MuxCode Agent Instructions
@@ -329,9 +327,9 @@ func ResolveProvider(role string) Provider {
 |----------|---------|-------------|
 | `MUXCODE_{ROLE}_CLI=codex` | — | Use Codex CLI for a specific role |
 | `MUXCODE_AGENT_CLI=codex` | — | Use Codex CLI for all agents |
-| `MUXCODE_{ROLE}_CODEX_MODEL` | `codex-mini-latest` | Model for a specific Codex role |
-| `MUXCODE_CODEX_MODEL` | `codex-mini-latest` | Default model for all Codex agents |
-| `OPENAI_API_KEY` | — | Required for Codex CLI |
+| `MUXCODE_{ROLE}_CODEX_MODEL` | `gpt-5.4` | Model for a specific Codex role |
+| `MUXCODE_CODEX_MODEL` | `gpt-5.4` | Default model for all Codex agents |
+| `OPENAI_API_KEY` | — | Optional if logged in via `codex login` subscription |
 | `MUXCODE_CODEX_SANDBOX` | `danger-full-access` | Sandbox mode: `read-only`, `workspace-write`, `danger-full-access` |
 
 Config file (`.muxcode/config` or `~/.config/muxcode/config`):
@@ -340,7 +338,8 @@ Config file (`.muxcode/config` or `~/.config/muxcode/config`):
 # Codex CLI settings
 MUXCODE_REVIEW_CLI=codex
 MUXCODE_CODEX_MODEL=o4-mini
-OPENAI_API_KEY=sk-...
+# Auth: use subscription login (codex login) or API key:
+# OPENAI_API_KEY=sk-...
 ```
 
 ### Codex CLI flags reference
@@ -353,7 +352,7 @@ Flags used in the integration:
 | `--full-auto` | — | boolean | Sets approval=never + sandbox=workspace-write |
 | `--sandbox` | `-s` | `read-only`, `workspace-write`, `danger-full-access` | Filesystem access level |
 | `--add-dir` | — | path | Grant additional directory write access |
-| `--model` | `-m` | string | Model override (e.g. `o4-mini`, `codex-mini-latest`) |
+| `--model` | `-m` | string | Model override (e.g. `o4-mini`, `gpt-5.4`) |
 | `--cd` | `-C` | path | Set working directory |
 | `--json` | — | boolean | JSONL event stream to stdout |
 | `-o` | — | path | Write final message to file |
@@ -394,36 +393,22 @@ MuxCode agents need access to:
 
 ### Task completion detection
 
-The wrapper script prints explicit markers, making detection simple:
+Detection uses explicit, unambiguous markers to avoid false positives from intermediate Codex output (tokens like "Done", "completed", "Applied", "✓" can appear mid-task and must not trigger premature completion).
 
-```go
-func (p *CodexProvider) DetectTaskCompletion(session, role, content string) (bool, bool, string) {
-    lines := strings.Split(strings.TrimSpace(content), "\n")
-    for i := len(lines) - 1; i >= 0 && i >= len(lines)-10; i-- {
-        line := strings.TrimSpace(lines[i])
-        if strings.Contains(line, "[CODEX-DONE]") {
-            return true, false, "codex task completed successfully"
-        }
-        if strings.Contains(line, "[CODEX-ERROR]") {
-            return true, true, "codex task failed"
-        }
-    }
-    // Check for wrapper idle marker (between tasks)
-    for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
-        if strings.Contains(lines[i], "waiting for messages") {
-            return true, false, "codex agent idle"
-        }
-    }
-    return false, false, ""
-}
-```
+**Two detection paths:**
+
+1. **Wrapper script markers** (exec mode via `muxcode-codex-agent.sh`): The wrapper prints `[CODEX-DONE]` or `[CODEX-ERROR]` after each invocation, plus an idle marker `waiting for messages...` between tasks.
+
+2. **TUI prompt detection** (interactive `--no-alt-screen` mode): When the Codex TUI finishes processing, its input prompt (`›` or `>`) reappears at the bottom of the pane. The preceding non-empty line is used as the summary.
+
+Both paths first check for active spinners (⠋, ⠙, etc.) — if detected, the agent is still running and completion is not reported.
 
 ### JSONL event stream (future enhancement)
 
 `codex exec --json` outputs structured JSONL events:
 
 ```jsonl
-{"type":"thread.started","thread_id":"...","model":"codex-mini-latest"}
+{"type":"thread.started","thread_id":"...","model":"gpt-5.4"}
 {"type":"turn.started"}
 {"type":"item.completed","item":{"type":"message","content":"Review complete..."}}
 {"type":"turn.completed"}
@@ -492,29 +477,30 @@ Get the review agent working with Codex in a live muxcode session.
 
 **Success criteria**:
 1. `MUXCODE_REVIEW_CLI=codex` in config, launch muxcode session
-2. Review window shows wrapper script running
-3. `muxcode send review review "Review latest changes"` triggers codex exec
+2. Review window shows Codex TUI running (interactive `--no-alt-screen` mode)
+3. `muxcode send review review "Review latest changes"` triggers Codex via send-keys
 4. Review results appear in edit inbox
 5. `muxcode inspect` shows review agent with provider=codex
-6. Watcher detects dead wrapper and restarts it
+6. Watcher detects dead Codex TUI and restarts it
 
-### Phase 3: JSONL parsing and structured output
+### Phase 3: JSONL parsing and structured output ✅
 
-Upgrade from plain text capture to JSONL event parsing for richer task tracking.
+JSONL event parsing infrastructure for `codex exec --json`. Adapted from original exec-mode design to support both TUI mode (primary) and programmatic exec-mode via `RunCodexExec()`.
 
 **Key files**:
 
 | File | Change |
 |------|--------|
-| `bus/provider_codex.go` | Add JSONL event parser, structured output schema |
-| `bus/provider_codex_test.go` | JSONL parsing tests |
-| `scripts/muxcode-codex-agent.sh` | Switch to `--json` mode, parse events |
+| `bus/codex_events.go` | Event types, JSONL parser, `AnalyzeCodexEvents()`, `FormatCodexResult()`, `RunCodexExec()` |
+| `bus/codex_events_test.go` | 30+ tests: parsing, analysis, formatting, end-to-end with real JSONL |
+| `bus/provider_codex.go` | Rewritten for TUI mode (`codex --full-auto --no-alt-screen`) |
 
 **Success criteria**:
-1. Wrapper parses JSONL events from codex exec
-2. Progress events logged to console
-3. Final message extracted cleanly from event stream
-4. Error events detected and reported
+1. ✅ JSONL events parsed from `codex exec --json` output (7 event types)
+2. ✅ `AnalyzeCodexEvents()` extracts messages, commands, errors, token usage
+3. ✅ `FormatCodexResult()` produces concise bus-friendly summaries
+4. ✅ `RunCodexExec()` programmatic entry point for non-interactive use
+5. ✅ Error events detected: `turn.failed`, `error`, non-zero exit codes
 
 ### Phase 4: Multi-role expansion
 

@@ -164,7 +164,7 @@ func FormatStatusJSON(statuses []AgentStatus) (string, error) {
 // preCommitExcludedRoles are skipped during pre-commit checks.
 // edit: the sender, always busy during its turn.
 // commit: the target, about to receive the commit message.
-// watch: passive watcher, not a task-producing agent.
+// watch: passive log-watcher, not a task-producing agent.
 // analyze: passive observer, receives file-change notifications.
 // webhook: passive HTTP bridge, not a working agent.
 var preCommitExcludedRoles = map[string]bool{

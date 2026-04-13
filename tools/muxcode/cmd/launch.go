@@ -44,6 +44,14 @@ func Launch(args []string) {
 		activateVenv(cfg.VenvDir)
 	}
 
+	// Export AGENT_ROLE so child processes (e.g. `muxcode send`) can identify
+	// the sender. Without this, BusRole() falls back to tmux window name or
+	// "unknown" — the latter happens when Codex/OpenCode TUI processes call
+	// muxcode send and tmux context variables aren't inherited.
+	// Normalize to canonical bus role — the launcher's RoleMap may pass aliases
+	// like legacy aliases that aren't valid bus targets.
+	os.Setenv("AGENT_ROLE", bus.NormalizeBusRole(role))
+
 	// Clear terminal for clean agent startup
 	fmt.Print("\033[2J\033[H")
 

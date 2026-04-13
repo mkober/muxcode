@@ -6,7 +6,7 @@ Muxcode uses Claude Code's hook system to integrate the AI agent with tmux and n
 
 All hooks are **async** — they do not block the AI agent from continuing.
 
-**Provider gating**: Hooks only fire for providers that support them (`provider.SupportsHooks() == true`). Currently only Claude Code supports hooks. OpenCode and local LLM agents skip hook processing entirely — all four hook functions (`hookBash`, `hookGuard`, `hookAnalyze`, `hookInboxPoll`) exit early when the provider is non-hook. For non-hook agents, three layers replace hooks: (1) role-specific manual bus messaging instructions in the system prompt, (2) agent body text adaptation that rewrites hook chain references to manual commands, (3) `CheckSendPolicy()` bypass that allows non-hook agents to send chain messages (build→test, test→review) that would be blocked for hook agents where chains fire automatically.
+**Provider gating**: Hooks only fire for providers that support them (`provider.SupportsHooks() == true`). Currently only Claude Code supports hooks. OpenCode, Codex CLI, and local LLM agents skip hook processing entirely — all four hook functions (`hookBash`, `hookGuard`, `hookAnalyze`, `hookInboxPoll`) exit early when the provider is non-hook. For non-hook agents, three layers replace hooks: (1) role-specific manual bus messaging instructions in the system prompt, (2) agent body text adaptation (OpenCode: `adaptBodyForNonHookProvider()`, Codex CLI: shared `.codex/AGENTS.md`) that rewrites hook chain references to manual commands, (3) `CheckSendPolicy()` bypass that allows non-hook agents to send chain messages (build→test, test→review) that would be blocked for hook agents where chains fire automatically.
 
 ## Hook Configuration
 
@@ -110,7 +110,7 @@ Lightweight cleanup hook. If a diff preview is still open from a previously reje
 Signals that a file was edited. Performs three tasks:
 
 1. **Workflow transition**: Transitions the [workflow state machine](architecture.md#workflow-state-machine) to `editing` (clears outcomes if regressing from a later state)
-2. **Trigger file**: Appends the edited file path to the trigger file for the bus watcher
+2. **Trigger file**: Appends the edited file path to the trigger file for the bus daemon
 3. **Event routing**: Sends file-change events to appropriate agents based on file type (uses `--no-notify` — no status bar flash for file-change events)
 4. **Diff cleanup**: In the edit window, waits ~1s for the async preview hook to finish, then closes the diff preview and reloads the file at the changed line. The delay prevents the cleanup from racing ahead of the preview setup.
 

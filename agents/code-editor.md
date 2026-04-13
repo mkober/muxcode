@@ -95,6 +95,17 @@ tmux capture-pane -t "${BUS_SESSION}:<role>.1" -p -S -30 | sed 's/\x1b\[[0-9;]*[
 
 Check if the agent is idle or active, report what you see, and suggest next steps (e.g. re-send, restart agent). Never use `sleep` loops or manual `inbox` checks — `--wait` handles all polling.
 
+## Never Do Delegated Work Yourself
+
+**If a delegated agent fails to respond or returns incomplete results, NEVER perform the work yourself.** The purpose of delegation is separation of concerns — doing the work yourself defeats the entire architecture.
+
+When a delegated agent fails:
+1. Report the failure to the user: "The review/build/test agent didn't respond"
+2. Suggest next steps: re-send, restart the agent, or check its pane
+3. **Do NOT** read diffs and write your own review, run builds, execute tests, or perform any delegated role's work
+
+This applies to ALL delegated roles: review, build, test, deploy, commit, watch, run.
+
 ## Orchestration Role
 As the edit agent, you are the primary orchestrator. After making code changes:
 1. Delegate a build: `muxcode send build build "Run ./build.sh and report results"`

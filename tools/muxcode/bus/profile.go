@@ -184,16 +184,17 @@ func mergeConfigs(base, override *MuxcodeConfig) *MuxcodeConfig {
 	return result
 }
 
-// resolveRoleAlias maps window-name roles to their canonical tool profile names.
-// Window names (commit, analyze, run) differ from profile keys (git, analyst, runner).
+// resolveRoleAlias normalizes legacy profile key aliases to canonical role names.
+// Canonical names match tmux window names: commit, analyze, run.
+// Legacy aliases (git, analyst, runner) are accepted for backward compatibility.
 func resolveRoleAlias(role string) string {
 	switch role {
-	case "commit":
-		return "git"
-	case "analyze":
-		return "analyst"
-	case "run":
-		return "runner"
+	case "git":
+		return "commit"
+	case "analyst":
+		return "analyze"
+	case "runner":
+		return "run"
 	default:
 		return role
 	}
@@ -459,7 +460,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(tmux capture-pane *)", "Bash(tmux display-message *)",
 				},
 			},
-			"git": {
+			"commit": {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: true,
 				Tools: []string{
@@ -487,7 +488,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Write", "Edit",
 				},
 			},
-			"runner": {
+			"run": {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: true,
 				Tools: []string{
@@ -517,7 +518,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Read(/tmp/*)", "Read(/private/tmp/*)",
 				},
 			},
-			"analyst": {
+			"analyze": {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: true,
 				Tools: []string{

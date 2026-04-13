@@ -136,7 +136,7 @@ func ReadCronEntries(session string) ([]CronEntry, error) {
 
 // WriteCronEntries overwrites the cron JSONL file with the given entries.
 // TODO: Add file-level locking to prevent read-modify-write races between
-// the watcher (UpdateLastRun) and CLI (add/remove/enable/disable).
+// the daemon (UpdateLastRun) and CLI (add/remove/enable/disable).
 // Low risk today — matches existing bus patterns and worst case is one
 // extra or missed cron firing.
 func WriteCronEntries(session string, entries []CronEntry) error {

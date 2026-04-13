@@ -124,12 +124,12 @@ func TestIsDuplicateMessage_SystemActionExcluded(t *testing.T) {
 	os.MkdirAll(logDir, 0755)
 
 	// Write a system action to the log
-	m1 := NewMessage("watcher", "edit", "event", "loop-detected", "test<->review loop", "")
+	m1 := NewMessage("daemon", "edit", "event", "loop-detected", "test<->review loop", "")
 	data, _ := EncodeMessage(m1)
 	appendToFile(LogPath(session), append(data, '\n'))
 
 	// Same system action — should NOT be deduped
-	m2 := NewMessage("watcher", "edit", "event", "loop-detected", "another loop", "")
+	m2 := NewMessage("daemon", "edit", "event", "loop-detected", "another loop", "")
 	if IsDuplicateMessage(session, m2) {
 		t.Error("system actions should never be deduped")
 	}

@@ -73,7 +73,7 @@ func roleModelEnvVar(role string) string {
 		return "MUXCODE_DEPLOY_MODEL"
 	case "edit":
 		return "MUXCODE_EDIT_MODEL"
-	case "analyze", "analyst":
+	case "analyze":
 		return "MUXCODE_ANALYZE_MODEL"
 	case "docs":
 		return "MUXCODE_DOCS_MODEL"

@@ -310,11 +310,3 @@ Go testing patterns and conventions
 - Build: `make` or `make build`
 - Check Makefile for available targets
 
-## Session Resume
-
-Previous session summaries (most recent last):
-
-### 2026-02-24 14:46
-Build agent session compacted. Key context: Go stdlib-only project at tools/muxcode-agent-bus/. Build via ./build.sh (runs make install). No external deps. Bus binary builds to bin/muxcode-agent-bus, installs to ~/.local/bin/. Always build from project root.
-
-

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
-	"github.com/mkober/muxcode/tools/muxcode/watcher"
+	"github.com/mkober/muxcode/tools/muxcode/daemon"
 )
 
 // Watch handles the "muxcode watch" subcommand.
@@ -63,20 +63,20 @@ func Watch(args []string) {
 	}
 
 	if monitor {
-		runWatcherMonitor(session)
+		runDaemonMonitor(session)
 		return
 	}
 
-	w := watcher.New(session, pollSecs, debounceSecs)
-	if err := w.Run(); err != nil {
+	d := daemon.New(session, pollSecs, debounceSecs)
+	if err := d.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// runWatcherMonitor monitors the bus watcher and restarts it if stale.
-// Runs as a background loop alongside the watcher, checking every 15 seconds.
-func runWatcherMonitor(session string) {
+// runDaemonMonitor monitors the bus daemon and restarts it if stale.
+// Runs as a background loop alongside the daemon, checking every 15 seconds.
+func runDaemonMonitor(session string) {
 	const maxAgeSecs int64 = 30
 	const checkInterval = 15 * time.Second
 
@@ -91,19 +91,19 @@ func runWatcherMonitor(session string) {
 		}
 
 		// Check keepalive staleness
-		if !bus.IsWatcherAlive(session, maxAgeSecs) {
-			// Skip if keepalive file doesn't exist yet (watcher may be starting)
-			if _, err := os.Stat(bus.WatcherKeepalivePath(session)); os.IsNotExist(err) {
+		if !bus.IsDaemonAlive(session, maxAgeSecs) {
+			// Skip if keepalive file doesn't exist yet (daemon may be starting)
+			if _, err := os.Stat(bus.DaemonKeepalivePath(session)); os.IsNotExist(err) {
 				continue
 			}
 
-			fmt.Printf("  [monitor] Watcher keepalive stale — restarting\n")
+			fmt.Printf("  [monitor] Daemon keepalive stale — restarting\n")
 			bus.LogLifecycle(session, "warn", "monitor", "stale-detected", "Keepalive stale")
 
-			if err := bus.RestartWatcher(session); err != nil {
+			if err := bus.RestartDaemon(session); err != nil {
 				bus.LogLifecycle(session, "error", "monitor", "restart-failed", err.Error())
 			} else {
-				bus.LogLifecycle(session, "info", "monitor", "watcher-restart", "Watcher restarted")
+				bus.LogLifecycle(session, "info", "monitor", "daemon-restart", "Daemon restarted")
 			}
 		}
 	}

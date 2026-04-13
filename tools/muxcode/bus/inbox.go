@@ -56,6 +56,17 @@ func sendMessage(session string, m Message, autoCC bool) error {
 		}
 	}
 
+	// Guard against duplicate replies: if this message is a reply to a task
+	// that is already completed (e.g. the daemon sent a synthetic response
+	// via idle-task-rescue, and the real agent sends a late reply), skip
+	// delivery to avoid the requester receiving conflicting responses.
+	if m.ReplyTo != "" {
+		if t, err := ReadTask(session, m.ReplyTo); err == nil && t.Status == TaskCompleted {
+			fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate reply to already-completed task %s from %s\n", m.ReplyTo, m.From)
+			return nil
+		}
+	}
+
 	// Delivery tracking: create "sent" status, mark original as "responded" on reply
 	if err := CreateDeliveryStatus(session, m); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: delivery status creation failed: %v\n", err)
@@ -70,6 +81,36 @@ func sendMessage(session string, m Message, autoCC bool) error {
 		return err
 	}
 	return appendToFile(LogPath(session), line)
+}
+
+// FindMessageByID searches the session log for a message with the given ID.
+// Scans the log in reverse for efficiency since recent messages are at the end.
+// Returns the message and true if found, or an empty message and false if not.
+func FindMessageByID(session, msgID string) (Message, bool) {
+	data, err := os.ReadFile(LogPath(session))
+	if err != nil {
+		return Message{}, false
+	}
+	// Scan lines in reverse (most recent first)
+	lines := bytes.Split(data, []byte("\n"))
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := bytes.TrimSpace(lines[i])
+		if len(line) == 0 {
+			continue
+		}
+		// Quick check before full parse
+		if !bytes.Contains(line, []byte(msgID)) {
+			continue
+		}
+		msg, err := DecodeMessage(line)
+		if err != nil {
+			continue
+		}
+		if msg.ID == msgID {
+			return msg, true
+		}
+	}
+	return Message{}, false
 }
 
 // Receive reads and consumes all messages from a role's inbox.
@@ -241,6 +282,24 @@ func HasMessages(session, role string) bool {
 		return false
 	}
 	return info.Size() > 0
+}
+
+// HasActionableMessages returns true if the role's inbox contains at least one
+// message that requires action (i.e. a "request" type). Response and event
+// messages are informational — they don't require the agent to do anything.
+// Use this instead of HasMessages() for wake-up decisions to prevent echo loops
+// where agents keep acknowledging each other's responses.
+func HasActionableMessages(session, role string) bool {
+	msgs, err := Peek(session, role)
+	if err != nil || len(msgs) == 0 {
+		return false
+	}
+	for _, m := range msgs {
+		if m.Type == "request" {
+			return true
+		}
+	}
+	return false
 }
 
 // InboxCount returns the number of messages in a role's inbox.
