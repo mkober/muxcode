@@ -326,11 +326,11 @@ func TestRoleCodexModelDefault(t *testing.T) {
 		role string
 		want string
 	}{
-		{"review", "gpt-5.4"},
-		{"analyze", "gpt-5.4"},
-		{"build", "gpt-5.4"},
-		{"test", "gpt-5.4"},
-		{"commit", "gpt-5.4"},
+		{"review", "gpt-5.3-codex"},
+		{"analyze", "gpt-5.3-codex"},
+		{"build", "gpt-5.3-codex"},
+		{"test", "gpt-5.3-codex"},
+		{"commit", "gpt-5.3-codex"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.role, func(t *testing.T) {
@@ -346,8 +346,8 @@ func TestResolveCodexModel_Default(t *testing.T) {
 	t.Setenv("MUXCODE_CODEX_MODEL", "")
 
 	model := resolveCodexModel("review")
-	if model != "gpt-5.4" {
-		t.Errorf("model = %q, want gpt-5.4", model)
+	if model != "gpt-5.3-codex" {
+		t.Errorf("model = %q, want gpt-5.3-codex", model)
 	}
 }
 

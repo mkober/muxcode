@@ -177,9 +177,9 @@ func RoleCodexModelEnvVar(role string) string {
 }
 
 // RoleCodexModelDefault returns the default Codex model for a role.
-// All roles default to gpt-5.4.
+// All roles default to gpt-5.3-codex.
 func RoleCodexModelDefault(role string) string {
-	return "gpt-5.4"
+	return "gpt-5.3-codex"
 }
 
 // RoleClaudeModelDefault returns the default Claude model for a role.

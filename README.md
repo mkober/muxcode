@@ -65,19 +65,19 @@ The `muxcode tui` command launches a live dashboard showing which agents are bus
 
 ## Agents
 
-MuxCode ships with these default agents:
+MuxCode ships with nine specialist agents, each in its own tmux window:
 
-| Window (F-key) | Agent          | Default model      | Local LLM                   | What it does                                                                            |
-| -------------- | -------------- | ------------------ | --------------------------- | --------------------------------------------------------------------------------------- |
-| edit (F1)      | Code editor    | Claude Code        | `MUXCODE_EDIT_CLI=local`    | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
-| build (F2)     | Code builder   | Local LLM (Ollama) | `MUXCODE_BUILD_CLI`         | Compiles and packages your project                                                      |
-| test (F3)      | Test runner    | Local LLM (Ollama) | `MUXCODE_TEST_CLI`          | Runs your test suite and reports results                                                |
-| review (F4)    | Code reviewer  | Claude Code        | `MUXCODE_REVIEW_CLI=local`  | Reviews diffs for bugs, style issues, and improvements                                  |
-| deploy (F5)    | Infra deployer | Claude Code        | `MUXCODE_DEPLOY_CLI=local`  | Runs infrastructure deployments and diffs                                               |
-| run (F6)       | Command runner | Claude Code        | `MUXCODE_RUN_CLI=local`     | Executes ad-hoc commands                                                                |
-| watch (F7)     | Log watcher    | Claude Code        | `MUXCODE_WATCH_CLI=local`   | Monitors logs — local files, CloudWatch, Kubernetes, Docker                             |
-| commit (F8)    | Git manager    | Claude Code        | `MUXCODE_COMMIT_CLI=local`  | Handles all git operations — commits, branches, rebases, pushes                         |
-| analyze (F9)   | Editor analyst | Claude Code        | `MUXCODE_ANALYZE_CLI=local` | Watches file changes and provides codebase analysis                                     |
+| Window (F-key) | Agent          | What it does                                                                            |
+| -------------- | -------------- | --------------------------------------------------------------------------------------- |
+| edit (F1)      | Code editor    | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
+| build (F2)     | Code builder   | Compiles and packages your project                                                      |
+| test (F3)      | Test runner    | Runs your test suite and reports results                                                |
+| review (F4)    | Code reviewer  | Reviews diffs for bugs, style issues, and improvements                                  |
+| deploy (F5)    | Infra deployer | Runs infrastructure deployments and diffs                                               |
+| run (F6)       | Command runner | Executes ad-hoc commands                                                                |
+| watch (F7)     | Log watcher    | Monitors logs — local files, CloudWatch, Kubernetes, Docker                             |
+| commit (F8)    | Git manager    | Handles all git operations — commits, branches, rebases, pushes                         |
+| analyze (F9)   | Editor analyst | Watches file changes and provides codebase analysis                                     |
 
 Additional roles that share a host agent's window (messages are routed to the host's inbox):
 
@@ -89,14 +89,76 @@ Additional roles that share a host agent's window (messages are routed to the ho
 | pr-read  | commit        | PR review analysis — handled by the commit agent                                            |
 | status   | —             | Live TUI dashboard (`muxcode tui`) — add `status` to `MUXCODE_WINDOWS` to include |
 
-Most agents default to Claude Code. Build and test default to a local LLM via [Ollama](https://ollama.com/) since they primarily execute structured commands where a small model is sufficient. Any role can be switched between providers by setting its override variable in `.muxcode/config`:
+### Default model assignments
+
+Out of the box, all agents use Claude Code with these model defaults:
+
+| Role                          | Default CLI  | Default model        |
+| ----------------------------- | ------------ | -------------------- |
+| edit, review, analyze         | Claude Code  | `claude-opus-4-6`    |
+| build, test, deploy, run, watch, commit | Claude Code  | `claude-sonnet-4-5`  |
+| api                           | Claude Code  | `claude-sonnet-4-5`  |
+
+Override the model per role with `MUXCODE_{ROLE}_CLAUDE_MODEL` (e.g. `MUXCODE_BUILD_CLAUDE_MODEL=claude-haiku-4-5`). Override the CLI provider per role with `MUXCODE_{ROLE}_CLI`.
+
+### Recommended multi-provider configuration
+
+A mixed-provider setup balances cost, quality, and capability. Claude Code handles the edit and commit workflows where hook support and precise tool control matter most. OpenCode runs the structured-command roles (build, test, deploy, run, watch) with access to cost-effective models. Codex CLI brings strong reasoning to review and analysis.
+
+```bash
+# ~/.config/muxcode/config or .muxcode/config
+
+# Session-wide default — Claude Code for hook support
+MUXCODE_AGENT_CLI=claude
+
+# Structured-command roles — OpenCode with a fast, affordable model
+MUXCODE_BUILD_CLI=opencode
+MUXCODE_TEST_CLI=opencode
+MUXCODE_DEPLOY_CLI=opencode
+MUXCODE_RUN_CLI=opencode
+MUXCODE_WATCH_CLI=opencode
+
+# Reasoning-heavy roles — Codex CLI with GPT-5.4
+MUXCODE_REVIEW_CLI=codex
+MUXCODE_ANALYZE_CLI=codex
+
+# Cost optimization — use Haiku for roles that run simple commands
+MUXCODE_BUILD_CLAUDE_MODEL=claude-haiku-4-5
+MUXCODE_TEST_CLAUDE_MODEL=claude-haiku-4-5
+MUXCODE_API_CLAUDE_MODEL=claude-haiku-4-5
+```
+
+This gives you:
+
+| Role     | Provider    | Model              | Why                                                      |
+| -------- | ----------- | ------------------ | -------------------------------------------------------- |
+| edit     | Claude Code | Opus 4.6           | Full hook support, orchestration, code editing            |
+| commit   | Claude Code | Sonnet 4.5         | Git operations need hooks for pre-commit safeguards       |
+| build    | OpenCode    | (provider default) | Runs `./build.sh` — structured commands, no hooks needed |
+| test     | OpenCode    | (provider default) | Runs `./test.sh` — structured commands, no hooks needed  |
+| deploy   | OpenCode    | (provider default) | Runs CDK/terraform — command execution role              |
+| run      | OpenCode    | (provider default) | Ad-hoc commands — any model works                        |
+| watch    | OpenCode    | (provider default) | Log tailing — lightweight, read-only                     |
+| review   | Codex CLI   | gpt-5.3-codex      | Deep code reasoning, thorough diff analysis              |
+| analyze  | Codex CLI   | gpt-5.3-codex      | Codebase-wide analysis, pattern detection                |
+
+**Provider tradeoffs:**
+
+| Provider   | Hooks | Chains           | Idle detection | Best for                           |
+| ---------- | ----- | ---------------- | -------------- | ---------------------------------- |
+| Claude Code | Yes   | Deterministic    | Yes            | Edit, commit — need hooks + control |
+| OpenCode   | No    | Prompt-instructed | Limited        | Build, test, deploy — command execution |
+| Codex CLI  | No    | Prompt-instructed | Heuristic      | Review, analyze — strong reasoning  |
+| Local LLM  | No    | Prompt-instructed | No             | Cost-sensitive structured commands  |
+
+Any role can use any provider. Set `MUXCODE_{ROLE}_CLI` to `claude`, `opencode`, `codex`, or `local`:
 
 - `MUXCODE_{ROLE}_CLI=claude` — Claude Code (full hook support, deterministic chains)
 - `MUXCODE_{ROLE}_CLI=opencode` — OpenCode TUI (multi-provider LLM access, autonomous context management)
 - `MUXCODE_{ROLE}_CLI=codex` — Codex CLI (OpenAI models, full-auto mode)
 - `MUXCODE_{ROLE}_CLI=local` — Local LLM via Ollama (free, structured commands)
 
-Per-role model selection is also supported via `MUXCODE_{ROLE}_MODEL` (falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
+Per-role model selection is also supported via `MUXCODE_{ROLE}_CLAUDE_MODEL` (Claude Code), `MUXCODE_{ROLE}_CODEX_MODEL` (Codex CLI, default `gpt-5.3-codex`), or `MUXCODE_{ROLE}_MODEL` (OpenCode/local, falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
 
 Each agent has constrained tool permissions — the build agent can run builds but can't edit files, the commit agent can run git but can't deploy infrastructure. This separation prevents agents from stepping on each other. Tool profiles are automatically translated to each provider's permission format (Claude Code's `--allowedTools`, OpenCode's `permission` blocks, or the harness's `IsToolAllowed()`).
 
