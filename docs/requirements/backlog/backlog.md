@@ -2,7 +2,7 @@
 
 ## Completed
 
-45 delivered feature specs live in [`completed/`](./completed/). Each file contains requirements, key files, and implementation notes.
+51 delivered feature specs live in [`completed/`](./completed/). Each file contains requirements, key files, and implementation notes.
 
 ## Top priorities
 
