@@ -180,22 +180,22 @@ Common link types and when to use them:
 
 #### Create a link
 
-The `link` command takes three arguments: the link type name, the inward issue key, and the outward issue key.
+The `link` command takes three arguments: the link type name, the source issue key, and the target issue key.
 
-**Argument order**: `<TYPE> <INWARD-KEY> <OUTWARD-KEY>` — the outward issue performs the action toward the inward issue.
+**Argument order**: `<TYPE> <SOURCE-KEY> <TARGET-KEY>` — reads naturally as "SOURCE [type] TARGET".
 
 ```bash
 # "PROJ-200 blocks PROJ-100" (PROJ-200 is a pre-req for PROJ-100)
-muxcode atlassian jira link "Blocks" "PROJ-100" "PROJ-200"
+muxcode atlassian jira link "Blocks" "PROJ-200" "PROJ-100"
 ```
 
-This means: PROJ-200 (outward) **blocks** PROJ-100 (inward), or equivalently PROJ-100 **is blocked by** PROJ-200.
+This means: PROJ-200 **blocks** PROJ-100, or equivalently PROJ-100 **is blocked by** PROJ-200.
 
 **Dependency example** — when a requirements doc says "Story B depends on Story A":
 
 ```bash
 # "PROJ-B depends on PROJ-A"
-muxcode atlassian jira link "Dependency" "PROJ-A" "PROJ-B"
+muxcode atlassian jira link "Dependency" "PROJ-B" "PROJ-A"
 ```
 
 #### Extracting dependencies from a requirements doc
@@ -221,10 +221,11 @@ When a requirements document references pre-requisite stories, extract the Jira 
 4. Create the appropriate link for each dependency:
    ```bash
    # For each pre-requisite referenced in the requirements
-   muxcode atlassian jira link "Blocks" "$jira_key" "$prereq_key"
+   # prereq_key blocks jira_key (prereq must complete first)
+   muxcode atlassian jira link "Blocks" "$prereq_key" "$jira_key"
    ```
 
-Success output: `"Linked PROJ-200 -[Blocks]-> PROJ-100"`
+Success output: `"Linked PROJ-200 -[Blocks]-> PROJ-100"` (PROJ-200 blocks PROJ-100)
 
 ### Transition issue status
 
@@ -355,7 +356,7 @@ Send a message to edit with the outcome:
 
 - **Read success**: `"Jira ${jira_key}: ${summary} [${issue_status}, ${assignee}] — description fetched"`
 - **Update success**: `"Updated description for Jira issue ${jira_key}"`
-- **Link success**: `"Linked ${outward_key} -[${link_type}]-> ${inward_key}"`
+- **Link success**: `"Linked ${source_key} -[${link_type}]-> ${target_key}"`
 - **Link types listed**: `"Found ${count} link types on Jira instance"`
 - **Transition success**: `"Transitioned ${jira_key} via transition ${transition_id}"`
 - **Search success**: `"Found ${count} issues matching JQL query"`

@@ -258,13 +258,17 @@ func JiraRead(cfg *AtlassianConfig, issueKey string) (string, error) {
 		sb.WriteString("\n--- Links ---\n")
 		for _, link := range issue.Fields.IssueLinks {
 			if link.OutwardIssue != nil {
+				// OutwardIssue present → current issue is the inward side
+				// Show inward label (e.g. "is blocked by") toward the outward issue
 				fmt.Fprintf(&sb, "  %s %s [%s] — %s\n",
-					link.Type.Outward, link.OutwardIssue.Key,
+					link.Type.Inward, link.OutwardIssue.Key,
 					link.OutwardIssue.Fields.Status.Name, link.OutwardIssue.Fields.Summary)
 			}
 			if link.InwardIssue != nil {
+				// InwardIssue present → current issue is the outward side
+				// Show outward label (e.g. "blocks") toward the inward issue
 				fmt.Fprintf(&sb, "  %s %s [%s] — %s\n",
-					link.Type.Inward, link.InwardIssue.Key,
+					link.Type.Outward, link.InwardIssue.Key,
 					link.InwardIssue.Fields.Status.Name, link.InwardIssue.Fields.Summary)
 			}
 		}
@@ -408,6 +412,9 @@ func FormatLinkTypes(types []JiraLinkType) string {
 // linkTypeName is the link type name (e.g. "Blocks", "Dependency").
 // inwardKey is the inward issue (e.g. "is blocked by" side).
 // outwardKey is the outward issue (e.g. "blocks" side).
+//
+// Note: the CLI swaps args so users write "link Blocks A B" (A blocks B).
+// Internally, inwardKey=B (is blocked by), outwardKey=A (blocks).
 //
 // Example: JiraLinkIssues(cfg, "Blocks", "PROJ-2", "PROJ-1")
 // means "PROJ-1 blocks PROJ-2" / "PROJ-2 is blocked by PROJ-1".

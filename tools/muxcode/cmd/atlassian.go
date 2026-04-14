@@ -19,7 +19,7 @@ Jira actions:
   comment <ISSUE-KEY> <ADF-JSON-FILE>     Post a comment on an issue
   comments <ISSUE-KEY>                    Read comments on an issue
   link-types                              List available issue link types
-  link <TYPE> <INWARD-KEY> <OUTWARD-KEY>  Link two issues (outward -[type]-> inward)
+  link <TYPE> <SOURCE-KEY> <TARGET-KEY>   Link two issues (source -[type]-> target)
   transitions <ISSUE-KEY>                 List available workflow transitions
   transition <ISSUE-KEY> <TRANSITION-ID>  Transition issue to a new status
   search <JQL-QUERY>                      Search issues using JQL
@@ -120,10 +120,12 @@ func atlassianJira(cfg *bus.AtlassianConfig, action string, args []string) {
 
 	case "link":
 		if len(args) < 3 {
-			fmt.Fprintln(os.Stderr, "Usage: muxcode atlassian jira link <TYPE> <INWARD-KEY> <OUTWARD-KEY>")
+			fmt.Fprintln(os.Stderr, "Usage: muxcode atlassian jira link <TYPE> <SOURCE-KEY> <TARGET-KEY>")
 			os.Exit(1)
 		}
-		result, err := bus.JiraLinkIssues(cfg, args[0], args[1], args[2])
+		// SOURCE performs the outward action on TARGET (inward).
+		// e.g. link "Blocks" A B → A blocks B (A=outward, B=inward)
+		result, err := bus.JiraLinkIssues(cfg, args[0], args[2], args[1])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			os.Exit(1)
