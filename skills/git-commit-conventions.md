@@ -19,6 +19,20 @@ tags: [git, commit]
 - Apply the same Jira key prefix rule to PR titles: `PBP1-456 Add validation logic` (no parentheses, no suffix)
 - Keep the title under 70 characters
 
+## Handling commit-msg hook failures
+
+When a commit fails because the Jira key prefix doesn't match the repo's commit-msg hook regex:
+
+1. **Parse the error** — look for the hook's expected regex pattern in the error output (e.g. `Run regex="..."` followed by `Commit message does not start with a Jira Issue ID`)
+2. **Check if the branch Jira key matches** — extract the allowed prefixes from the regex and compare against the key extracted from the branch name
+3. **Retry without the prefix** — if the branch key (e.g. `PROMGT-115`) doesn't match any allowed prefix in the regex (e.g. only `PT`, `PS`, `PBP1`), strip the Jira key prefix from the commit message and retry the commit. The hook may also accept `build(deps)` or other non-Jira prefixes — check the full regex
+4. **Never force past the hook** — do not use `--no-verify`. Fix the message to satisfy the hook
+
+Example: branch `PROMGT-115-fix-syntax` → key `PROMGT-115` → hook only allows `PT|PS|PBP1` → commit without prefix:
+```
+Fix EventBridge schedule syntax
+```
+
 ## Commit workflow
 
 - Build and test before committing

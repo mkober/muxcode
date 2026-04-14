@@ -29,6 +29,7 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I proceed?"
 - Stage specific files (prefer explicit file names over `git add .`)
 - Write clear commit messages: imperative mood, focused on "why"
 - **Jira key prefix**: extract the Jira key from the branch name and prepend it to the commit subject. Use `git rev-parse --abbrev-ref HEAD | grep -oE '^[A-Z][A-Z0-9]*-[0-9]+'` to extract the key. If present, prefix the subject: `PBP1-456 Add validation logic`. If no key is found, commit without a prefix.
+- **Commit-msg hook failure recovery**: if a commit fails because the Jira key doesn't match the repo's commit-msg hook regex (error like `Commit message does not start with a Jira Issue ID`), parse the allowed prefixes from the regex in the error output, and if the branch key doesn't match, **retry the commit without the Jira prefix**. Never use `--no-verify` to bypass the hook.
 - **Always use HEREDOC for commit messages** — never write temp files:
   ```bash
   git commit -m "$(cat <<'EOF'
@@ -46,7 +47,7 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I proceed?"
 ### Pull Requests
 
 - Create PRs via `gh pr create` with structured body (Summary, Changes, Test Plan)
-- **Jira key prefix on PR titles**: use the same Jira key extraction as commits. If a key is found, prefix the PR title: `PBP1-456 Add validation logic` (no parentheses, no suffix). If no key is found, use a plain title.
+- **Jira key prefix on PR titles**: use the same Jira key extraction as commits. If a key is found, prefix the PR title: `PBP1-456 Add validation logic` (no parentheses, no suffix). If no key is found, use a plain title. If a previous commit in the branch failed its commit-msg hook due to a non-matching Jira prefix, omit the prefix from the PR title as well.
 - **Post-create Jira comment**: after every successful `gh pr create`, load and run the `jira-pr-comment` skill (`muxcode skill load jira-pr-comment`) to post a PR activity comment on the Jira story. This is **mandatory** whenever a Jira key is present in the branch name — do not skip it, do not ask for confirmation.
 - Check PR status: `gh pr status`, `gh pr checks`
 - View PR review comments: `gh pr view --comments`
