@@ -32,7 +32,7 @@ A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — pro
 
 | Prohibited prefix | Delegate to | Bus command |
 |---|---|---|
-| `gh pr view`, `gh pr checks`, `gh pr diff`, `gh api repos/*/pulls/*` | **commit agent** (action: `pr-read`) | `muxcode send commit pr-read "..."` |
+| `gh pr view`, `gh pr checks`, `gh pr diff`, `gh api repos/*/pulls/*` | **review agent** (action: `pr-review`) for analysis; **commit agent** (action: `pr-read`) for raw data | `muxcode send review pr-review "..."` |
 | `gh pr create`, `gh pr merge`, `gh release` | commit agent | `muxcode send commit commit "..."` |
 | `git commit`, `git push`, `git pull`, `git rebase`, `git checkout`, `git branch`, `git merge`, `git stash`, `git tag` | commit agent | `muxcode send commit commit "..."` |
 | `./build.sh`, `pnpm build`, `make` | build agent | `muxcode send build build "..."` |
@@ -49,24 +49,35 @@ When the user asks about a Jira story, issue, ticket, or Confluence page — han
 
 Trigger phrases: "read the jira story", "review the jira ticket", "update the description", "check the acceptance criteria", "read the confluence page", "update the confluence doc".
 
-### PR reading — ALWAYS delegate to commit agent
+### PR review — delegate to review agent
 
-When the user says **any** of: "read PR", "check PR", "PR issues", "PR reviews", "PR feedback", "CI failures", "PR comments" — **immediately** run:
+When the user says **any** of: "review PR", "review pr N", "check PR", "PR issues", "PR reviews", "PR feedback", "CI failures", "PR comments" — **immediately** delegate to the **review agent**:
 
 ```bash
-muxcode send commit pr-read "Read the PR on the current branch and report review feedback, CI failures, and suggested fixes"
+muxcode send review pr-review "Review PR #161 — fetch PR data from commit agent, analyze feedback, CI status, and report findings" --wait
 ```
 
-Do NOT run `gh pr view`, `gh pr diff`, `gh pr checks`, or any `gh` command yourself. Do NOT send PR reads to the review agent — always send to **commit** with action `pr-read`.
+The review agent will coordinate with the commit agent to fetch raw PR data (reviews, comments, checks) and then analyze it.
+
+Do NOT run `gh pr view`, `gh pr diff`, `gh pr checks`, or any `gh` command yourself. Do NOT handle PR reviews directly — always delegate to the **review** agent.
+
+### PR reading (raw data only) — delegate to commit agent
+
+When you need **raw PR data** without analysis (e.g. to check if a PR exists, get its URL, or fetch a specific field), delegate to the commit agent:
+
+```bash
+muxcode send commit pr-read "Read the PR on the current branch and report raw data: CI check status, review comments, and inline comments" --wait
+```
 
 ### All delegation commands — ALWAYS use `--wait`
 
 **Every `send` command MUST include `--wait`** so the response is returned inline. Never use `sleep`, manual `inbox` polling, or `capture-pane` as a substitute for `--wait`.
 
-- **Read PR**: `muxcode send commit pr-read "Read the PR on the current branch and report review feedback, CI failures, and suggested fixes" --wait`
+- **Review PR**: `muxcode send review pr-review "Review PR #N — fetch PR data, analyze feedback, CI status, and report" --wait`
+- **Read PR** (raw data): `muxcode send commit pr-read "Read the PR on the current branch and report raw data: CI check status, review comments, and inline comments" --wait`
 - **Build**: `muxcode send build build "Run ./build.sh and report results" --wait`
 - **Test**: `muxcode send test test "Run tests and report results" --wait`
-- **Review**: `muxcode send review review "Review the latest changes on this branch" --wait`
+- **Review** (local changes): `muxcode send review review "Review the latest changes on this branch" --wait`
 - **Deploy**: `muxcode send deploy deploy "Run deployment diff and report changes" --wait`
 - **Watch logs**: `muxcode send watch watch "Tail CloudWatch logs for /aws/lambda/my-function and report errors" --wait`
 - **AWS data inspection**: `muxcode send watch watch "List and read files in S3 bucket s3://my-bucket/prefix/ --profile my-profile" --wait`

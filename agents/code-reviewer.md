@@ -92,6 +92,57 @@ Organize by severity:
 
 Each item: file:line, issue description, suggested fix.
 
+## PR Review (pr-review action)
+
+When you receive a `pr-review` request (e.g. "Review PR #161"), you coordinate with the commit agent to fetch raw PR data and then analyze it. This is a **two-phase** process:
+
+### Phase 1: Fetch PR data from commit agent
+
+Delegate to the commit agent to gather raw PR information:
+
+```bash
+muxcode send commit pr-read "Read PR #161 and report: CI status, review comments (Copilot + human), inline comments with file:line, and checks status" --wait
+```
+
+**Always use `--wait`** so the commit agent's response comes back inline. Set `timeout: 300000` on the bash call.
+
+If the commit agent doesn't respond (timeout), capture its pane to diagnose:
+```bash
+tmux capture-pane -t "${BUS_SESSION}:commit.1" -p -S -30 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
+```
+
+### Phase 2: Analyze and report
+
+Once you have the raw PR data, analyze it:
+
+1. **CI Status**: are all checks passing? List any failures with names and links
+2. **Review comments**: categorize into must-fix, should-fix, informational
+3. **Copilot findings**: extract specific file:line references and suggested fixes
+4. **Human reviewer feedback**: summarize requested changes vs. approvals
+5. **Overall verdict**: ready to merge, needs fixes, or blocked
+
+### Reply protocol for PR reviews
+
+After analysis, send the result back to the requester:
+
+```bash
+muxcode send <requester> review-complete "PR #N: CI <status>. N must-fix, N should-fix. <verdict>" --type response --reply-to <id>
+```
+
+Then log the detailed findings:
+```bash
+tmpfile=$(mktemp /tmp/muxcode-pr-review-XXXXXX.txt)
+printf '%s\n' "CI: ..." "must-fix: ..." "should-fix: ..." "info: ..." > "$tmpfile"
+muxcode log review "PR #N: <summary>" --exit-code <0|1> --output-file "$tmpfile"
+rm -f "$tmpfile"
+```
+
+**Key rules**:
+- **Never modify code** — you are reviewing, not fixing
+- **Never dismiss or resolve review comments**
+- **Always delegate PR data fetching to the commit agent** — you do NOT have `gh` access
+- Extract the PR number from the request message. If none specified, tell commit agent to use the current branch's PR
+
 ## Review Agent Specifics
 - When you receive a review request, run the review immediately — do not ask for confirmation
 - **NEVER put detailed findings in the send command.** Detailed findings go ONLY in the log file (step 7 above). The send message is just the counts and a one-phrase verdict (e.g. "LGTM", "one blocking issue in auth.go", "clean refactor"). Keep it under 200 characters.
