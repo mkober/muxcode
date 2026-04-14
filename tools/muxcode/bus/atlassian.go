@@ -142,7 +142,7 @@ func JiraRead(cfg *AtlassianConfig, issueKey string) (string, error) {
 		return "", err
 	}
 
-	apiURL := fmt.Sprintf("%s/rest/api/3/issue/%s?fields=description,summary,status,assignee,issuetype,priority",
+	apiURL := fmt.Sprintf("%s/rest/api/3/issue/%s?fields=description,summary,status,assignee,issuetype,priority,issuelinks,parent,subtasks",
 		strings.TrimRight(cfg.JiraBaseURL, "/"), issueKey)
 
 	resp, err := atlassianRequest("GET", apiURL, nil, cfg)
@@ -175,6 +175,46 @@ func JiraRead(cfg *AtlassianConfig, issueKey string) (string, error) {
 				Name string `json:"name"`
 			} `json:"priority"`
 			Description json.RawMessage `json:"description"`
+			IssueLinks  []struct {
+				Type struct {
+					Name    string `json:"name"`
+					Inward  string `json:"inward"`
+					Outward string `json:"outward"`
+				} `json:"type"`
+				InwardIssue *struct {
+					Key    string `json:"key"`
+					Fields struct {
+						Summary string `json:"summary"`
+						Status  struct {
+							Name string `json:"name"`
+						} `json:"status"`
+					} `json:"fields"`
+				} `json:"inwardIssue"`
+				OutwardIssue *struct {
+					Key    string `json:"key"`
+					Fields struct {
+						Summary string `json:"summary"`
+						Status  struct {
+							Name string `json:"name"`
+						} `json:"status"`
+					} `json:"fields"`
+				} `json:"outwardIssue"`
+			} `json:"issuelinks"`
+			Parent *struct {
+				Key    string `json:"key"`
+				Fields struct {
+					Summary string `json:"summary"`
+				} `json:"fields"`
+			} `json:"parent"`
+			Subtasks []struct {
+				Key    string `json:"key"`
+				Fields struct {
+					Summary string `json:"summary"`
+					Status  struct {
+						Name string `json:"name"`
+					} `json:"status"`
+				} `json:"fields"`
+			} `json:"subtasks"`
 		} `json:"fields"`
 	}
 
@@ -209,6 +249,34 @@ func JiraRead(cfg *AtlassianConfig, issueKey string) (string, error) {
 	fmt.Fprintf(&sb, "Summary: %s\n", summary)
 	fmt.Fprintf(&sb, "Type: %s | Priority: %s\n", issueType, priority)
 	fmt.Fprintf(&sb, "Status: %s | Assignee: %s\n", status, assignee)
+
+	if issue.Fields.Parent != nil {
+		fmt.Fprintf(&sb, "Parent: %s — %s\n", issue.Fields.Parent.Key, issue.Fields.Parent.Fields.Summary)
+	}
+
+	if len(issue.Fields.IssueLinks) > 0 {
+		sb.WriteString("\n--- Links ---\n")
+		for _, link := range issue.Fields.IssueLinks {
+			if link.OutwardIssue != nil {
+				fmt.Fprintf(&sb, "  %s %s [%s] — %s\n",
+					link.Type.Outward, link.OutwardIssue.Key,
+					link.OutwardIssue.Fields.Status.Name, link.OutwardIssue.Fields.Summary)
+			}
+			if link.InwardIssue != nil {
+				fmt.Fprintf(&sb, "  %s %s [%s] — %s\n",
+					link.Type.Inward, link.InwardIssue.Key,
+					link.InwardIssue.Fields.Status.Name, link.InwardIssue.Fields.Summary)
+			}
+		}
+	}
+
+	if len(issue.Fields.Subtasks) > 0 {
+		sb.WriteString("\n--- Subtasks ---\n")
+		for _, st := range issue.Fields.Subtasks {
+			fmt.Fprintf(&sb, "  %s [%s] — %s\n", st.Key, st.Fields.Status.Name, st.Fields.Summary)
+		}
+	}
+
 	sb.WriteString("\n--- Description ---\n")
 	sb.WriteString(flattenADF(issue.Fields.Description))
 
@@ -281,6 +349,462 @@ func JiraComment(cfg *AtlassianConfig, issueKey, payloadFile string) (string, er
 	}
 
 	return fmt.Sprintf("Posted comment to %s", issueKey), nil
+}
+
+// --- Jira Issue Links ---
+
+// JiraLinkType describes an available link type on the Jira instance.
+type JiraLinkType struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Inward  string `json:"inward"`
+	Outward string `json:"outward"`
+}
+
+// JiraListLinkTypes fetches all available issue link types from the Jira instance.
+func JiraListLinkTypes(cfg *AtlassianConfig) ([]JiraLinkType, error) {
+	if cfg.JiraBaseURL == "" || cfg.UserEmail == "" || cfg.APIToken == "" {
+		return nil, fmt.Errorf("missing Jira config (JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN)")
+	}
+
+	apiURL := fmt.Sprintf("%s/rest/api/3/issueLinkType",
+		strings.TrimRight(cfg.JiraBaseURL, "/"))
+
+	resp, err := atlassianRequest("GET", apiURL, nil, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("Jira API request failed: %w", err)
+	}
+
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Jira API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		IssueLinkTypes []JiraLinkType `json:"issueLinkTypes"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parsing link types: %w", err)
+	}
+
+	return result.IssueLinkTypes, nil
+}
+
+// FormatLinkTypes returns a human-readable listing of available link types.
+func FormatLinkTypes(types []JiraLinkType) string {
+	var sb strings.Builder
+	sb.WriteString("=== Available Issue Link Types ===\n")
+	for _, lt := range types {
+		fmt.Fprintf(&sb, "%-20s  outward: %-25s  inward: %s\n", lt.Name, lt.Outward, lt.Inward)
+	}
+	return sb.String()
+}
+
+// JiraLinkIssues creates a link between two Jira issues.
+// linkTypeName is the link type name (e.g. "Blocks", "Dependency").
+// inwardKey is the inward issue (e.g. "is blocked by" side).
+// outwardKey is the outward issue (e.g. "blocks" side).
+//
+// Example: JiraLinkIssues(cfg, "Blocks", "PROJ-2", "PROJ-1")
+// means "PROJ-1 blocks PROJ-2" / "PROJ-2 is blocked by PROJ-1".
+func JiraLinkIssues(cfg *AtlassianConfig, linkTypeName, inwardKey, outwardKey string) (string, error) {
+	if cfg.JiraBaseURL == "" || cfg.UserEmail == "" || cfg.APIToken == "" {
+		return "", fmt.Errorf("missing Jira config (JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN)")
+	}
+	if err := validateJiraKey(inwardKey); err != nil {
+		return "", fmt.Errorf("inward issue: %w", err)
+	}
+	if err := validateJiraKey(outwardKey); err != nil {
+		return "", fmt.Errorf("outward issue: %w", err)
+	}
+	if linkTypeName == "" {
+		return "", fmt.Errorf("link type name is required")
+	}
+
+	payload := map[string]interface{}{
+		"type": map[string]string{
+			"name": linkTypeName,
+		},
+		"inwardIssue": map[string]string{
+			"key": inwardKey,
+		},
+		"outwardIssue": map[string]string{
+			"key": outwardKey,
+		},
+	}
+
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshalling payload: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("%s/rest/api/3/issueLink",
+		strings.TrimRight(cfg.JiraBaseURL, "/"))
+
+	resp, err := atlassianRequest("POST", apiURL, strings.NewReader(string(payloadJSON)), cfg)
+	if err != nil {
+		return "", fmt.Errorf("Jira API request failed: %w", err)
+	}
+
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return "", fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != 201 {
+		return "", fmt.Errorf("Jira API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return fmt.Sprintf("Linked %s -[%s]-> %s", outwardKey, linkTypeName, inwardKey), nil
+}
+
+// --- Jira Transitions ---
+
+// JiraTransition describes an available workflow transition for an issue.
+type JiraTransition struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	To   struct {
+		Name string `json:"name"`
+	} `json:"to"`
+}
+
+// JiraListTransitions fetches available transitions for a specific issue.
+func JiraListTransitions(cfg *AtlassianConfig, issueKey string) ([]JiraTransition, error) {
+	if cfg.JiraBaseURL == "" || cfg.UserEmail == "" || cfg.APIToken == "" {
+		return nil, fmt.Errorf("missing Jira config (JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN)")
+	}
+	if err := validateJiraKey(issueKey); err != nil {
+		return nil, err
+	}
+
+	apiURL := fmt.Sprintf("%s/rest/api/3/issue/%s/transitions",
+		strings.TrimRight(cfg.JiraBaseURL, "/"), issueKey)
+
+	resp, err := atlassianRequest("GET", apiURL, nil, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("Jira API request failed: %w", err)
+	}
+
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Jira API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Transitions []JiraTransition `json:"transitions"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parsing transitions: %w", err)
+	}
+
+	return result.Transitions, nil
+}
+
+// FormatTransitions returns a human-readable listing of available transitions.
+func FormatTransitions(issueKey string, transitions []JiraTransition) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "=== Available Transitions for %s ===\n", issueKey)
+	for _, t := range transitions {
+		fmt.Fprintf(&sb, "  ID: %-6s  %-25s  -> %s\n", t.ID, t.Name, t.To.Name)
+	}
+	return sb.String()
+}
+
+// JiraTransitionIssue moves an issue to a new status via a transition.
+// transitionID is the numeric transition ID (from JiraListTransitions).
+func JiraTransitionIssue(cfg *AtlassianConfig, issueKey, transitionID string) (string, error) {
+	if cfg.JiraBaseURL == "" || cfg.UserEmail == "" || cfg.APIToken == "" {
+		return "", fmt.Errorf("missing Jira config (JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN)")
+	}
+	if err := validateJiraKey(issueKey); err != nil {
+		return "", err
+	}
+	if transitionID == "" {
+		return "", fmt.Errorf("transition ID is required")
+	}
+
+	payload := map[string]interface{}{
+		"transition": map[string]string{
+			"id": transitionID,
+		},
+	}
+
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshalling payload: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("%s/rest/api/3/issue/%s/transitions",
+		strings.TrimRight(cfg.JiraBaseURL, "/"), issueKey)
+
+	resp, err := atlassianRequest("POST", apiURL, strings.NewReader(string(payloadJSON)), cfg)
+	if err != nil {
+		return "", fmt.Errorf("Jira API request failed: %w", err)
+	}
+
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return "", fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != 204 {
+		return "", fmt.Errorf("Jira API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return fmt.Sprintf("Transitioned %s via transition %s", issueKey, transitionID), nil
+}
+
+// --- Jira Search (JQL) ---
+
+// JiraSearchResult holds a single issue from a JQL search.
+type JiraSearchResult struct {
+	Key     string `json:"key"`
+	Summary string `json:"summary"`
+	Status  string `json:"status"`
+	Type    string `json:"type"`
+}
+
+// JiraSearch executes a JQL query and returns matching issues.
+func JiraSearch(cfg *AtlassianConfig, jql string, maxResults int) ([]JiraSearchResult, int, error) {
+	if cfg.JiraBaseURL == "" || cfg.UserEmail == "" || cfg.APIToken == "" {
+		return nil, 0, fmt.Errorf("missing Jira config (JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN)")
+	}
+	if jql == "" {
+		return nil, 0, fmt.Errorf("JQL query is required")
+	}
+	if maxResults <= 0 {
+		maxResults = 50
+	}
+
+	params := url.Values{
+		"jql":        {jql},
+		"fields":     {"summary,status,issuetype"},
+		"maxResults": {fmt.Sprintf("%d", maxResults)},
+	}
+	apiURL := fmt.Sprintf("%s/rest/api/3/search?%s",
+		strings.TrimRight(cfg.JiraBaseURL, "/"), params.Encode())
+
+	resp, err := atlassianRequest("GET", apiURL, nil, cfg)
+	if err != nil {
+		return nil, 0, fmt.Errorf("Jira API request failed: %w", err)
+	}
+
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return nil, 0, fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, 0, fmt.Errorf("Jira API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Total  int `json:"total"`
+		Issues []struct {
+			Key    string `json:"key"`
+			Fields struct {
+				Summary string `json:"summary"`
+				Status  struct {
+					Name string `json:"name"`
+				} `json:"status"`
+				IssueType struct {
+					Name string `json:"name"`
+				} `json:"issuetype"`
+			} `json:"fields"`
+		} `json:"issues"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, 0, fmt.Errorf("parsing search results: %w", err)
+	}
+
+	var issues []JiraSearchResult
+	for _, i := range result.Issues {
+		issues = append(issues, JiraSearchResult{
+			Key:     i.Key,
+			Summary: i.Fields.Summary,
+			Status:  i.Fields.Status.Name,
+			Type:    i.Fields.IssueType.Name,
+		})
+	}
+
+	return issues, result.Total, nil
+}
+
+// FormatJiraSearch returns a human-readable listing of search results.
+func FormatJiraSearch(issues []JiraSearchResult, total int, jql string) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "=== Jira Search Results (%d of %d) ===\n", len(issues), total)
+	fmt.Fprintf(&sb, "JQL: %s\n\n", jql)
+	for _, i := range issues {
+		fmt.Fprintf(&sb, "%-12s  [%-12s]  %-10s  %s\n", i.Key, i.Status, i.Type, i.Summary)
+	}
+	return sb.String()
+}
+
+// --- Jira Comments (Read) ---
+
+// JiraCommentEntry holds a single comment from an issue.
+type JiraCommentEntry struct {
+	ID      string `json:"id"`
+	Author  string `json:"author"`
+	Created string `json:"created"`
+	Body    string `json:"body"`
+}
+
+// JiraReadComments fetches comments for a Jira issue.
+func JiraReadComments(cfg *AtlassianConfig, issueKey string) ([]JiraCommentEntry, error) {
+	if cfg.JiraBaseURL == "" || cfg.UserEmail == "" || cfg.APIToken == "" {
+		return nil, fmt.Errorf("missing Jira config (JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN)")
+	}
+	if err := validateJiraKey(issueKey); err != nil {
+		return nil, err
+	}
+
+	apiURL := fmt.Sprintf("%s/rest/api/3/issue/%s/comment?orderBy=-created&maxResults=50",
+		strings.TrimRight(cfg.JiraBaseURL, "/"), issueKey)
+
+	resp, err := atlassianRequest("GET", apiURL, nil, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("Jira API request failed: %w", err)
+	}
+
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Jira API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Comments []struct {
+			ID     string `json:"id"`
+			Author struct {
+				DisplayName string `json:"displayName"`
+			} `json:"author"`
+			Created string          `json:"created"`
+			Body    json.RawMessage `json:"body"`
+		} `json:"comments"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parsing comments: %w", err)
+	}
+
+	var comments []JiraCommentEntry
+	for _, c := range result.Comments {
+		author := c.Author.DisplayName
+		if author == "" {
+			author = "Unknown"
+		}
+		comments = append(comments, JiraCommentEntry{
+			ID:      c.ID,
+			Author:  author,
+			Created: c.Created,
+			Body:    flattenADF(c.Body),
+		})
+	}
+
+	return comments, nil
+}
+
+// FormatJiraComments returns a human-readable listing of comments.
+func FormatJiraComments(issueKey string, comments []JiraCommentEntry) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "=== Comments on %s (%d) ===\n\n", issueKey, len(comments))
+	for _, c := range comments {
+		fmt.Fprintf(&sb, "--- %s at %s ---\n", c.Author, c.Created)
+		sb.WriteString(c.Body)
+		sb.WriteString("\n\n")
+	}
+	return sb.String()
+}
+
+// --- Jira Create Subtask ---
+
+// JiraCreateSubtask creates a subtask under a parent issue.
+// summary is the subtask summary/title. description is optional ADF JSON (pass nil to skip).
+func JiraCreateSubtask(cfg *AtlassianConfig, parentKey, projectKey, summary string, description json.RawMessage) (string, error) {
+	if cfg.JiraBaseURL == "" || cfg.UserEmail == "" || cfg.APIToken == "" {
+		return "", fmt.Errorf("missing Jira config (JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN)")
+	}
+	if err := validateJiraKey(parentKey); err != nil {
+		return "", fmt.Errorf("parent issue: %w", err)
+	}
+	if summary == "" {
+		return "", fmt.Errorf("subtask summary is required")
+	}
+
+	// If no project key provided, derive from parent key (e.g. "PROJ-123" -> "PROJ")
+	if projectKey == "" {
+		idx := strings.LastIndex(parentKey, "-")
+		if idx > 0 {
+			projectKey = parentKey[:idx]
+		}
+	}
+
+	fields := map[string]interface{}{
+		"project": map[string]string{
+			"key": projectKey,
+		},
+		"parent": map[string]string{
+			"key": parentKey,
+		},
+		"summary": summary,
+		"issuetype": map[string]string{
+			"name": "Sub-task",
+		},
+	}
+
+	if len(description) > 0 && string(description) != "null" {
+		fields["description"] = json.RawMessage(description)
+	}
+
+	payload := map[string]interface{}{
+		"fields": fields,
+	}
+
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshalling payload: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("%s/rest/api/3/issue",
+		strings.TrimRight(cfg.JiraBaseURL, "/"))
+
+	resp, err := atlassianRequest("POST", apiURL, strings.NewReader(string(payloadJSON)), cfg)
+	if err != nil {
+		return "", fmt.Errorf("Jira API request failed: %w", err)
+	}
+
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return "", fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != 201 {
+		return "", fmt.Errorf("Jira API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var created struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		return "", fmt.Errorf("parsing response: %w", err)
+	}
+
+	return fmt.Sprintf("Created subtask %s under %s: %s", created.Key, parentKey, summary), nil
 }
 
 // --- Confluence API ---

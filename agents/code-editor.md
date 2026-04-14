@@ -43,7 +43,7 @@ A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — pro
 
 ### Jira & Confluence — handle directly (DO NOT delegate)
 
-When the user asks about a Jira story, issue, ticket, or Confluence page — handle it yourself using the `jira-update-description` or `confluence-update-page` skills. Load the skill via `muxcode skill load <name>` and follow its instructions.
+When the user asks about a Jira story, issue, ticket, or Confluence page — handle it yourself using the `jira-manage-issues` or `confluence-update-page` skills. Load the skill via `muxcode skill load <name>` and follow its instructions.
 
 **Never** delegate Jira or Confluence operations to the commit agent or any other agent. The edit agent owns these integrations.
 

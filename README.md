@@ -463,7 +463,7 @@ Skills are reusable instruction sets defined as markdown files with YAML frontma
 | `code-review-checklist`   | review       | Code review quality checklist                                |
 | `github-pr-comment`       | commit       | Post threaded replies to Copilot review comments on PRs and summary comments addressing all feedback |
 | `jira-pr-comment`         | commit       | Post PR details as a comment on the corresponding Jira issue |
-| `jira-update-description` | commit, edit | Read and update a Jira issue description with ADF content    |
+| `jira-manage-issues` | commit, edit | Full Jira issue lifecycle — read, update, search (JQL), transition status, link dependencies, read/post comments, create subtasks |
 | `confluence-update-page`  | commit, edit | Read and update Confluence pages with ADF content            |
 | `agent-debug`             | edit         | Diagnostic procedures for inspecting agent state, checking idle/active status, and troubleshooting stuck agents |
 
@@ -497,7 +497,7 @@ Instructions for the agent...
 Three skills integrate with Atlassian Cloud via the REST API:
 
 - **`jira-pr-comment`** — The git-manager agent posts a comment on the Jira issue when a PR is created, including the PR link with diff stats. Extracts the Jira key from the branch name (e.g. `DATA-456-add-validation` → `DATA-456`).
-- **`jira-update-description`** — Reads and updates Jira issue descriptions using Atlassian Document Format (ADF). Available to the git and edit roles.
+- **`jira-manage-issues`** — Full Jira issue lifecycle: read (with links/subtasks), update descriptions, search via JQL, transition status, link dependencies, read/post comments, create subtasks. Available to the commit and edit roles.
 - **`confluence-update-page`** — Reads and updates Confluence pages using ADF. Pages identified by page ID, Confluence URL, or space key + title. Supports full replacement, append mode, and CQL search. Available to the git and edit roles.
 
 Add to `.muxcode/config` or `~/.config/muxcode/config`:

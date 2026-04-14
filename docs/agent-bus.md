@@ -1150,7 +1150,7 @@ muxcode skill prompt <role>
 | `go-testing` | test, build | Go testing patterns and conventions |
 | `code-review-checklist` | review | Code review quality checklist |
 | `jira-pr-comment` | git | Post a comment on a Jira issue when a PR is created. Extracts the Jira key from the branch name (e.g. `DATA-456-*`, `PBP1-4365-*`) and posts PR link + diff stats via `muxcode atlassian jira comment`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
-| `jira-update-description` | git, edit | Read and update a Jira issue description with ADF content. Extracts the Jira key from the request message or branch name. Uses `muxcode atlassian jira read/update`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
+| `jira-manage-issues` | commit, edit | Full Jira issue lifecycle. Read (with links/subtasks), update descriptions (ADF), search (JQL), transition status, link dependencies, read/post comments, create subtasks. Uses `muxcode atlassian jira read/update/comment/comments/link/link-types/transitions/transition/search/create-subtask`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
 | `confluence-update-page` | git, edit | Read and update Confluence pages with ADF content. Pages identified by page ID, Confluence URL, or space key + title. Supports full replacement, append mode, and CQL search. Uses `muxcode atlassian confluence read/update/search`. Requires `CONFLUENCE_BASE_URL` (falls back to `JIRA_BASE_URL`), `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
 
 ### `muxcode tools`

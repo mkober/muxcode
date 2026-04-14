@@ -105,7 +105,8 @@ When you receive ANY message, do this exact sequence:
 **RULES:**
 - NEVER say "no tests", "no test suite", or "nothing to test"
 - NEVER skip running tests for any reason
-- **Do NOT send a review request — send a review request manually after tests pass.**
+- **After tests pass, send a review request manually** (no auto-chain):
+`muxcode send review review "Tests passed, review changes" --type request`
 
 
 

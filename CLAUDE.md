@@ -143,7 +143,7 @@ Test: `cd tools/muxcode && go test ./...`
 | `bus/search.go` | BM25: `tokenize()`, `stem()`, `buildCorpus()`, `bm25Score()`, `SearchMemoryBM25()`, `SearchMemoryWithOptions()` |
 | `bus/rotation.go` | `NeedsRotation()`, `RotateMemory()`, `PurgeOldArchives()`, `ReadMemoryWithHistory()`, `AllMemoryEntriesWithArchives()`, `ListMemoryRoles()` |
 | `bus/launch.go` | `LaunchConfig`, `AgentFileName()`, `RoleCLIEnvVar()`, `RoleClaudeModelEnvVar()`, `RoleClaudeModelDefault()`, `InlineFallbackPrompt()`, `ExtractFrontmatter()`, `ResolveAgentFile()`, `BuildAgentsJSON()`, `ResolveVenv()`, `BuildSharedPrompt()`, `ResolveLaunchConfig()`, `BuildExecArgs()`, `PreLaunchSetup()` |
-| `bus/atlassian.go` | `LoadAtlassianConfig()`, `AtlassianConfig`, `JiraRead()`, `JiraUpdate()`, `JiraComment()`, `ConfluenceRead()`, `ConfluenceUpdate()`, `ConfluenceSearch()`, `flattenADF()` |
+| `bus/atlassian.go` | `LoadAtlassianConfig()`, `AtlassianConfig`, `JiraRead()`, `JiraUpdate()`, `JiraComment()`, `JiraReadComments()`, `FormatJiraComments()`, `JiraListLinkTypes()`, `JiraLinkIssues()`, `FormatLinkTypes()`, `JiraLinkType`, `JiraListTransitions()`, `JiraTransitionIssue()`, `FormatTransitions()`, `JiraTransition`, `JiraSearch()`, `FormatJiraSearch()`, `JiraSearchResult`, `JiraCreateSubtask()`, `JiraCommentEntry`, `ConfluenceRead()`, `ConfluenceUpdate()`, `ConfluenceSearch()`, `flattenADF()` |
 | `bus/api.go` | API testing: `Environment`, `Collection`, `Request`, `ApiHistoryEntry` structs, CRUD, `ImportApiDir()`, formatters |
 | `bus/cron.go` | Cron scheduling: structs, parsing, CRUD, execution, formatting |
 | `bus/proc.go` | `StartProc()`, `CheckProcAlive()`, `RefreshProcStatus()`, `StopProc()`, `CleanFinished()` |
