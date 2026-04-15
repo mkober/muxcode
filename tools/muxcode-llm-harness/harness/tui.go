@@ -54,8 +54,8 @@ type TUISink struct {
 	stats      tuiStats
 	startAt    time.Time
 	done       chan struct{}
-	input      *tuiInput    // interactive text input state
-	restoreTTY func()       // restores terminal on cleanup
+	input      *tuiInput // interactive text input state
+	restoreTTY func()    // restores terminal on cleanup
 }
 
 type tuiStats struct {
@@ -262,7 +262,7 @@ func (t *TUISink) render() {
 	if cursor > textWidth-1 {
 		visibleStart = cursor - textWidth + 1
 	}
-	_ = text // used for scroll calculation
+	_ = text                                               // used for scroll calculation
 	cursorCol := promptWidth + (cursor - visibleStart) + 1 // 1-indexed
 
 	// Show cursor at input position

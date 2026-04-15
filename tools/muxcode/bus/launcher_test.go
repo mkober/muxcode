@@ -20,11 +20,11 @@ func TestDefaultLauncherConfig(t *testing.T) {
 	if cfg.ScanDepth != 3 {
 		t.Errorf("expected scan depth 3, got %d", cfg.ScanDepth)
 	}
-	if len(cfg.Windows) != 9 {
-		t.Errorf("expected 9 windows, got %d", len(cfg.Windows))
+	if len(cfg.Windows) != 10 {
+		t.Errorf("expected 10 windows, got %d", len(cfg.Windows))
 	}
-	if cfg.Windows[0] != "edit" {
-		t.Errorf("expected first window edit, got %s", cfg.Windows[0])
+	if cfg.Windows[0] != "plan" {
+		t.Errorf("expected first window plan, got %s", cfg.Windows[0])
 	}
 }
 

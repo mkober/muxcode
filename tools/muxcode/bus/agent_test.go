@@ -56,6 +56,8 @@ func TestAgentFileName(t *testing.T) {
 		role string
 		want string
 	}{
+		{"plan", "planner"},
+		{"planner", "planner"},
 		{"edit", "code-editor"},
 		{"build", "code-builder"},
 		{"test", "test-runner"},

@@ -61,6 +61,7 @@ Non-hook providers degrade gracefully across three layers:
 
 | Role | Agent File | Window | Description |
 |------|-----------|--------|-------------|
+| plan | planner.md | plan | Documentation specialist — maintains requirements, architecture docs, and planning artifacts |
 | edit | code-editor.md | edit | Primary orchestrator — delegates to other agents |
 | build | code-builder.md | build | Compile and package |
 | test | test-runner.md | test | Run tests |
@@ -70,7 +71,7 @@ Non-hook providers degrade gracefully across three layers:
 | commit | git-manager.md | commit | Git operations |
 | analyze | editor-analyst.md | analyze | Analyze changes and explain patterns |
 | watch | log-watcher.md | watch | Monitor logs (local, CloudWatch, k8s, Docker) |
-| docs | doc-writer.md | docs | Generate and maintain documentation |
+| docs | doc-writer.md | plan *(via planner)* | Generate and maintain documentation |
 | research | code-researcher.md | research | Search web, explore codebases, answer questions |
 | pr-read | pr-reader.md | commit *(via git-manager)* | Analyze PR review feedback and report suggested fixes |
 | api | api-tester.md | api | Manage API collections, execute requests, track history |
@@ -86,6 +87,18 @@ muxcode send build build "Run ./build.sh and report results"
 muxcode send test test "Run tests and report results"
 muxcode send review review "Review the latest changes"
 ```
+
+### Documentation (plan)
+
+The plan agent maintains project documentation — requirements specs, architecture docs, and planning artifacts. It runs in the F1 window with Neovim on the left (opening the last-edited doc) and Claude Code on the right. The edit agent delegates doc updates to the planner:
+
+```bash
+muxcode send plan update-docs "Phase 1 complete — check off acceptance criteria"
+muxcode send plan create-spec "Create a draft spec for webhook retry logic"
+muxcode send plan move-spec "Move conditional-chains.md from drafts to completed"
+```
+
+The plan agent is scoped to docs directories only — it can read source code for context but never writes outside `docs/`, `CLAUDE.md`, or `README.md`.
 
 ### Autonomous Specialists (build, test, review, analyst)
 
@@ -259,6 +272,7 @@ cp ~/.config/muxcode/agents/code-builder.md .claude/agents/code-builder.md
 
 Agents have scoped permissions via tool profiles (`bus/profile.go`). The `--allowedTools` flags are resolved dynamically by `muxcode tools <role>` and passed to Claude Code at launch. Default permissions per role:
 
+- **plan**: `Read`, `Glob`, `Grep`, `Write`, `Edit`, read-only git (`git diff`, `git log`, `git status`, `git rev-parse`), `tree`, `python3`, `jq` (scoped to docs directories)
 - **edit**: `Read`, `Glob`, `Grep`, `tree`, `python3`, `jq` (read-only — deliberately **no** `Write` or `Edit` tools, enforcing delegation via the bus)
 - **build**: `./build.sh`, `make`, `go build`, `pnpm build`, `cargo build`
 - **test**: `./test.sh`, `go test`, `jest`, `pytest`, `cargo test`
@@ -417,7 +431,7 @@ Resolution order for `ReadAgentDefinition()`:
 3. `.claude/agents/<name>.md` — project-local standard
 4. `~/.config/muxcode/agents/<name>.md` — user standard
 
-Shipped harness definitions: `code-builder.md`, `test-runner.md`, `code-reviewer.md`.
+Shipped harness definitions: `code-builder.md`, `test-runner.md`, `code-reviewer.md`, `planner.md`.
 
 ### Harness TUI
 

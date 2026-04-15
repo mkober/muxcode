@@ -246,6 +246,8 @@ func ReadAgentDefinition(role string) string {
 // AgentFileName maps role names to agent definition filenames (without .md).
 func AgentFileName(role string) string {
 	switch role {
+	case "plan", "planner":
+		return "planner"
 	case "edit":
 		return "code-editor"
 	case "build":

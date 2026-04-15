@@ -10,7 +10,7 @@ import (
 // KnownRoles lists all valid agent roles.
 // Extended at runtime via MUXCODE_ROLES env var (comma-separated).
 var KnownRoles = []string{
-	"edit", "build", "test", "review",
+	"plan", "edit", "build", "test", "review",
 	"deploy", "run", "commit", "analyze",
 	"docs", "research", "watch", "pr-read",
 	"webhook", "api",
@@ -21,6 +21,7 @@ var KnownRoles = []string{
 // so this map is used only for informational purposes.
 // Override via MUXCODE_SPLIT_LEFT env var (space-separated).
 var splitLeftWindows = map[string]bool{
+	"plan":    true,
 	"edit":    true,
 	"build":   true,
 	"test":    true,
@@ -351,7 +352,7 @@ func TriggerFile(session string) string {
 // Messages sent to a hosted role are delivered to the host's inbox.
 // The host agent sees the original "To" field to distinguish the request context.
 var hostedRoles = map[string]string{
-	"docs":     "edit",
+	"docs":     "plan",
 	"research": "edit",
 	"pr-read":  "commit",
 }
@@ -388,6 +389,8 @@ func NormalizeBusRole(role string) string {
 		return "commit"
 	case "runner":
 		return "run"
+	case "planner":
+		return "plan"
 	case "daemon":
 		// The daemon process is not an agent — route replies to edit.
 		return "edit"

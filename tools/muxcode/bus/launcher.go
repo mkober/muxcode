@@ -31,9 +31,9 @@ func DefaultLauncherConfig() *LauncherConfig {
 	return &LauncherConfig{
 		ProjectsDir: home,
 		ScanDepth:   3,
-		Windows:     []string{"edit", "build", "test", "review", "deploy", "run", "watch", "commit", "analyze"},
+		Windows:     []string{"plan", "edit", "build", "test", "review", "deploy", "run", "watch", "commit", "analyze"},
 		RoleMap:     map[string]string{},
-		SplitLeft:   []string{"edit", "build", "test", "review", "deploy", "run", "analyze", "commit", "watch"},
+		SplitLeft:   []string{"plan", "edit", "build", "test", "review", "deploy", "run", "analyze", "commit", "watch"},
 		ShellInit:   "",
 		Editor:      "nvim",
 		NvimAppName: "muxcode/nvim",
@@ -288,6 +288,14 @@ func createWindowContent(cfg *LauncherConfig, session, win, projectDir, agentLau
 		sendInit(cfg, target+".1")
 		sendCommand(target+".1", agentLauncher+" edit")
 		TmuxSelectPane(target + ".0")
+	} else if win == "plan" {
+		// Plan window: Neovim with last-edited doc (left) + agent (right)
+		sendInit(cfg, target)
+		sendPlanEditorCommand(cfg, target, projectDir)
+		TmuxSplitWindow(target, projectDir)
+		sendInit(cfg, target+".1")
+		sendCommand(target+".1", agentLauncher+" plan")
+		TmuxSelectPane(target + ".0")
 	} else if cfg.IsSplitLeftWindow(win) {
 		// Split-left: console (left) + agent (right)
 		sendInit(cfg, target)
@@ -322,6 +330,34 @@ func sendInit(cfg *LauncherConfig, target string) {
 // sendEditorCommand sends the editor launch command to the edit pane.
 func sendEditorCommand(cfg *LauncherConfig, target string) {
 	cmd := fmt.Sprintf("MUXCODE=1 NVIM_APPNAME=%s %s", cfg.NvimAppName, cfg.Editor)
+	TmuxSendKeys(target, cmd)
+	time.Sleep(100 * time.Millisecond)
+	TmuxSendEnter(target)
+}
+
+// sendPlanEditorCommand sends the editor launch command for the plan window.
+// Opens the last-edited doc file in Neovim, falling back to docs/ directory.
+func sendPlanEditorCommand(cfg *LauncherConfig, target, projectDir string) {
+	// Find last-edited doc file via git
+	lastDoc := ""
+	out, err := exec.Command("git", "-C", projectDir, "log", "-1",
+		"--diff-filter=M", "--name-only", "--pretty=format:", "--", "docs/").Output()
+	if err == nil {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if len(lines) > 0 && lines[0] != "" {
+			candidate := filepath.Join(projectDir, lines[0])
+			if _, err := os.Stat(candidate); err == nil {
+				lastDoc = lines[0]
+			}
+		}
+	}
+
+	var cmd string
+	if lastDoc != "" {
+		cmd = fmt.Sprintf("MUXCODE=1 NVIM_APPNAME=%s %s %s", cfg.NvimAppName, cfg.Editor, lastDoc)
+	} else {
+		cmd = fmt.Sprintf("MUXCODE=1 NVIM_APPNAME=%s %s docs/", cfg.NvimAppName, cfg.Editor)
+	}
 	TmuxSendKeys(target, cmd)
 	time.Sleep(100 * time.Millisecond)
 	TmuxSendEnter(target)

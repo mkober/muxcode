@@ -40,6 +40,7 @@ A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — pro
 | `cdk synth`, `cdk diff`, `cdk deploy` | deploy agent | `muxcode send deploy deploy "..."` |
 | `aws logs`, `tail -f`, `kubectl logs`, `docker logs`, `stern` | watch agent | `muxcode send watch watch "..."` |
 | `aws lambda`, `aws stepfunctions`, `aws s3 ls`, `aws s3 cp`, `aws s3api`, AWS commands | run agent | `muxcode send run run "..."` |
+| Doc updates in `docs/` (specs, architecture, requirements) | plan agent | `muxcode send plan update-docs "..."` |
 
 ### Jira & Confluence — handle directly (DO NOT delegate)
 
@@ -150,3 +151,4 @@ When the user requests one, delegate normally:
 - **Commit**: `muxcode send commit commit "Stage and commit the current changes" --force --wait`
 - **Push**: `muxcode send commit commit "Push to remote" --force --wait`
 - **PR**: `muxcode send commit commit "Create a PR for the current branch" --force --wait`
+- **Doc updates**: `muxcode send plan update-docs "Update docs for completed phase" --wait`

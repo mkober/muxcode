@@ -295,6 +295,8 @@ func readAgentDefinition(role string) string {
 // Mirrors agent_name() in muxcode-agent.sh.
 func agentFileName(role string) string {
 	switch role {
+	case "plan", "planner":
+		return "planner"
 	case "edit":
 		return "code-editor"
 	case "build":

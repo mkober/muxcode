@@ -15,7 +15,7 @@ A multi-agent coding environment built on tmux — where you stay in the loop.
 
 ## What is MuxCode?
 
-MuxCode is a tmux-native multi-agent development environment. Nine specialist AI agents — editor, builder, tester, reviewer, deployer, git manager, and more — each run in their own tmux window, coordinated through a file-based message bus. You work in neovim alongside an editing agent, and every other part of the development lifecycle has its own dedicated agent a function key away.
+MuxCode is a tmux-native multi-agent development environment. Ten specialist AI agents — planner, editor, builder, tester, reviewer, deployer, git manager, and more — each run in their own tmux window, coordinated through a file-based message bus. You work in neovim alongside an editing agent, and every other part of the development lifecycle has its own dedicated agent a function key away.
 
 You stay in control. The edit agent is your primary interface — it helps you write code and delegates to specialists when you're ready. Ask for a build, and the build agent runs it. Tests fire automatically on success. Review follows tests. Results flow back while you keep editing. The chain routing is hook-driven — Go hooks checking exit codes, not LLM routing decisions — so dispatch is deterministic and fast.
 
@@ -26,29 +26,29 @@ The coordination layer is entirely local. Agents communicate through JSONL files
 Each agent has scoped tool permissions — the build agent can't edit files, the commit agent can't deploy infrastructure, the edit agent can't run builds or git commands. This separation prevents agents from stepping on each other and keeps the human in the loop for every code change.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  F1 Edit  F2 Build  F3 Test  F4 review  F5 Deploy  F6 Run   │
-│  F7 Watch  F8 Commit  F9 Analyze                            │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
-│  │ edit         │    │ build        │    │ test         │   │
-│  │ nvim | agent │──→ │ term | agent │──→ │ term | agent │   │
-│  └──────────────┘    └──────────────┘    └──────────────┘   │
-│         │                                       │           │
-│         │            ┌──────────────┐           │           │
-│         └───────────→│ review       │←──────────┘           │
-│                      │ term | agent │                       │
-│                      └──────────────┘                       │
-│                                                             │
-│  Message Bus: /tmp/muxcode-bus-{session}/                   │
-│  Memory:      .muxcode/memory/                              │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  F1 Plan  F2 Edit  F3 Build  F4 Test  F5 Review  F6 Deploy      │
+│  F7 Run  F8 Watch  F9 Commit  F10 Analyze                       │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐        │
+│  │ edit         │    │ build        │    │ test         │        │
+│  │ nvim | agent │──→ │ term | agent │──→ │ term | agent │        │
+│  └──────────────┘    └──────────────┘    └──────────────┘        │
+│         │                                       │                │
+│         │            ┌──────────────┐           │                │
+│         └───────────→│ review       │←──────────┘                │
+│                      │ term | agent │                            │
+│                      └──────────────┘                            │
+│                                                                  │
+│  Message Bus: /tmp/muxcode-bus-{session}/                        │
+│  Memory:      .muxcode/memory/                                   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## How it works
 
-You launch `muxcode`, pick a project (or pass a path directly), and a tmux session spins up with nine windows — one per agent. The edit window opens neovim on the left and the edit agent on the right. Every other window has a terminal pane alongside its specialist agent.
+You launch `muxcode`, pick a project (or pass a path directly), and a tmux session spins up with ten windows — one per agent. The plan window opens neovim on the left (showing the last-edited doc) and the plan agent on the right. The edit window opens neovim and the edit agent. Every other window has a terminal pane alongside its specialist agent.
 
 A typical workflow looks like this:
 
@@ -65,26 +65,27 @@ The `muxcode tui` command launches a live dashboard showing which agents are bus
 
 ## Agents
 
-MuxCode ships with nine specialist agents, each in its own tmux window:
+MuxCode ships with ten specialist agents, each in its own tmux window:
 
 | Window (F-key) | Agent          | What it does                                                                            |
 | -------------- | -------------- | --------------------------------------------------------------------------------------- |
-| edit (F1)      | Code editor    | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
-| build (F2)     | Code builder   | Compiles and packages your project                                                      |
-| test (F3)      | Test runner    | Runs your test suite and reports results                                                |
-| review (F4)    | Code reviewer  | Reviews diffs for bugs, style issues, and improvements                                  |
-| deploy (F5)    | Infra deployer | Runs infrastructure deployments and diffs                                               |
-| run (F6)       | Command runner | Executes ad-hoc commands                                                                |
-| watch (F7)     | Log watcher    | Monitors logs — local files, CloudWatch, Kubernetes, Docker                             |
-| commit (F8)    | Git manager    | Handles all git operations — commits, branches, rebases, pushes                         |
-| analyze (F9)   | Editor analyst | Watches file changes and provides codebase analysis                                     |
+| plan (F1)      | Planner        | Maintains requirements specs, architecture docs, and planning artifacts                 |
+| edit (F2)      | Code editor    | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
+| build (F3)     | Code builder   | Compiles and packages your project                                                      |
+| test (F4)      | Test runner    | Runs your test suite and reports results                                                |
+| review (F5)    | Code reviewer  | Reviews diffs for bugs, style issues, and improvements                                  |
+| deploy (F6)    | Infra deployer | Runs infrastructure deployments and diffs                                               |
+| run (F7)       | Command runner | Executes ad-hoc commands                                                                |
+| watch (F8)     | Log watcher    | Monitors logs — local files, CloudWatch, Kubernetes, Docker                             |
+| commit (F9)    | Git manager    | Handles all git operations — commits, branches, rebases, pushes                         |
+| analyze (F10)  | Editor analyst | Watches file changes and provides codebase analysis                                     |
 
 Additional roles that share a host agent's window (messages are routed to the host's inbox):
 
 | Role     | Host / access | What it does                                                                                |
 | -------- | ------------- | ------------------------------------------------------------------------------------------- |
 | api      | Modal popup   | API tester — opens via `prefix + i` or `muxcode modal open api`. Manages collections, executes requests, tracks history |
-| docs     | edit          | Documentation writer — handled by the edit agent                                            |
+| docs     | plan          | Documentation writer — handled by the plan agent                                            |
 | research | edit          | Web search and codebase exploration — handled by the edit agent                             |
 | pr-read  | commit        | PR review analysis — handled by the commit agent                                            |
 | status   | —             | Live TUI dashboard (`muxcode tui`) — add `status` to `MUXCODE_WINDOWS` to include |
@@ -95,7 +96,7 @@ Out of the box, MuxCode uses Claude Code for orchestration roles and OpenCode wi
 
 | Role                                      | Default CLI | Default model            |
 | ----------------------------------------- | ----------- | ------------------------ |
-| edit, review, analyze                     | Claude Code | `claude-opus-4-6`       |
+| plan, edit, review, analyze               | Claude Code | `claude-opus-4-6`       |
 | build, test, deploy, run, watch, commit   | OpenCode    | `minimax/m2.5-free`  |
 | api                                       | Claude Code | `claude-sonnet-4-5`     |
 
@@ -164,7 +165,7 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 - **Interactive installer** — `install.sh` detects and offers to install Claude Code, OpenCode, and Codex CLI, with default provider selection when multiple are available
 
 ### Agent orchestration
-- **9 specialist agents** — Edit, build, test, review, deploy, run, commit, analyze, and watch — each with scoped tool permissions and its own tmux window
+- **10 specialist agents** — Plan, edit, build, test, review, deploy, run, commit, analyze, and watch — each with scoped tool permissions and its own tmux window
 - **Hook-driven automation chains** — Build→test→review and deploy→verify chains fire via bash exit codes. Deterministic, fast, zero token cost for routing
 - **Event subscriptions** — Fan-out after chain execution. Subscribe any agent to build/test/deploy events with outcome filtering
 - **Spawned agents** — Create temporary agents for one-off tasks in their own tmux window. Results collected automatically on completion
@@ -467,6 +468,7 @@ Skills are reusable instruction sets defined as markdown files with YAML frontma
 | `jira-pr-comment`         | commit       | Post PR details as a comment on the corresponding Jira issue |
 | `jira-manage-issues` | commit, edit | Full Jira issue lifecycle — read, update, search (JQL), transition status, link dependencies, read/post comments, create subtasks |
 | `confluence-update-page`  | commit, edit | Read and update Confluence pages with ADF content            |
+| `docs-management`         | plan, edit   | Documentation lifecycle — move specs, update status, check off phases, cross-reference verification |
 | `agent-debug`             | edit         | Diagnostic procedures for inspecting agent state, checking idle/active status, and troubleshooting stuck agents |
 
 ### Resolution order
@@ -521,7 +523,7 @@ Useful keybindings for navigating your MuxCode session:
 
 | Keybinding | Action |
 | --- | --- |
-| `F1`–`F9` | Switch between agent windows |
+| `F1`–`F10` | Switch between agent windows |
 | `Prefix + i` | Open API testing modal |
 | `Prefix + b` | Open MuxCode quick menu |
 | `Prefix + C` | New MuxCode session (project picker) |

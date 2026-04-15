@@ -1,7 +1,7 @@
 ---
 description: Test runner — runs tests and reports results
 mode: primary
-model: moonshotai/kimi-k2.5
+model: minimax/m2.5-free
 permission:
   bash:
     "muxcode *": allow
@@ -100,12 +100,13 @@ When you receive ANY message, do this exact sequence:
 1. Run tests: `./scripts/test-and-notify.sh 2>&1` if it exists, otherwise `./test.sh 2>&1`, otherwise `go vet ./... 2>&1 && go test -v ./... 2>&1`
 2. Reply to the requester with results: `muxcode send <from> test "<summary>" --type response --reply-to <id>`
 
-**Send exactly TWO messages per request: ONE reply to the requester with results, then ONE chain request to the review agent if tests passed.**
+**Send exactly ONE reply per request. Do NOT send additional messages to edit or review — send a review request manually after tests pass.**
 
 **RULES:**
 - NEVER say "no tests", "no test suite", or "nothing to test"
 - NEVER skip running tests for any reason
-- After tests pass, send a review request: `muxcode send review review "Tests passed, review changes" --type request`
+- **After tests pass, send a review request manually** (no auto-chain):
+`muxcode send review review "Tests passed, review changes" --type request`
 
 
 
@@ -202,6 +203,68 @@ rm -f "$tmpfile"
 
 
 ## Available Skills
+
+### Skill: docs-management
+Manage documentation lifecycle — move specs, update status, check off phases
+
+## Documentation lifecycle management
+
+Manage requirements specs through their lifecycle: backlog -> drafts -> completed.
+
+### Move a spec between directories
+
+Move specs to reflect their current state:
+
+```bash
+# Move from backlog to drafts (starting work)
+git mv docs/requirements/my-feature.md docs/requirements/drafts/my-feature.md
+
+# Move from drafts to completed (fully implemented)
+git mv docs/requirements/drafts/my-feature.md docs/requirements/completed/my-feature.md
+```
+
+After moving, update cross-references in other docs that link to the old path.
+
+### Update status field
+
+Find and update the `## Status` section at the bottom of a spec:
+
+- `Draft` — initial design, not yet started
+- `In Progress` — actively being implemented
+- `Complete` — fully implemented and verified
+
+### Check off acceptance criteria
+
+Acceptance criteria use markdown checkboxes. Check them off as phases complete:
+
+```markdown
+### Phase 1: Core implementation
+
+- [x] Feature A implemented
+- [x] Tests written and passing
+- [ ] Documentation updated
+```
+
+Change `- [ ]` to `- [x]` for completed items.
+
+### Update phase status tables
+
+Some specs use tables to track phase status:
+
+```markdown
+| Phase | Status |
+|-------|--------|
+| Phase 1 | Complete |
+| Phase 2 | In Progress |
+| Phase 3 | Not Started |
+```
+
+### Cross-reference verification
+
+When updating docs, verify that:
+- File paths in "Key files" tables still exist (`ls` or `Glob` to check)
+- Cross-links to other docs use correct relative paths
+- Code examples match current function signatures
 
 ### Skill: go-testing
 Go testing patterns and conventions

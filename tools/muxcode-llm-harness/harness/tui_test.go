@@ -176,15 +176,15 @@ func TestRuneWidth(t *testing.T) {
 	}{
 		{'a', 1},
 		{' ', 1},
-		{'─', 1},   // box drawing
-		{'●', 1},   // geometric shapes (U+25CF)
-		{'✓', 1},   // check mark (U+2713)
-		{'❯', 1},   // dingbats (U+276F)
-		{'◀', 1},   // geometric shapes (U+25C0)
-		{'⚡', 2},   // miscellaneous symbols (U+26A1)
-		{'⚙', 2},   // miscellaneous symbols (U+2699)
-		{'⚠', 2},   // miscellaneous symbols (U+26A0)
-		{'⏸', 2},   // transport symbols (U+23F8)
+		{'─', 1}, // box drawing
+		{'●', 1}, // geometric shapes (U+25CF)
+		{'✓', 1}, // check mark (U+2713)
+		{'❯', 1}, // dingbats (U+276F)
+		{'◀', 1}, // geometric shapes (U+25C0)
+		{'⚡', 2}, // miscellaneous symbols (U+26A1)
+		{'⚙', 2}, // miscellaneous symbols (U+2699)
+		{'⚠', 2}, // miscellaneous symbols (U+26A0)
+		{'⏸', 2}, // transport symbols (U+23F8)
 	}
 	for _, tt := range tests {
 		if got := runeWidth(tt.r); got != tt.want {

@@ -41,9 +41,9 @@ type tuiInput struct {
 	cursor   int
 	submitCh chan string   // submitted messages → harness loop
 	keyCh    chan keyPress // raw key events from reader goroutine
-	history  []string     // input history (most recent last)
-	histIdx  int          // -1 = current input, 0+ = history index
-	savedBuf []rune       // saved current input while browsing history
+	history  []string      // input history (most recent last)
+	histIdx  int           // -1 = current input, 0+ = history index
+	savedBuf []rune        // saved current input while browsing history
 	quitCh   chan struct{} // signals user wants to quit (Ctrl+C on empty)
 }
 

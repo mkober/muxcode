@@ -195,6 +195,8 @@ func resolveRoleAlias(role string) string {
 		return "analyze"
 	case "runner":
 		return "run"
+	case "planner":
+		return "plan"
 	default:
 		return role
 	}
@@ -406,6 +408,17 @@ func DefaultConfig() *MuxcodeConfig {
 			},
 		},
 		ToolProfiles: map[string]ToolProfile{
+			"plan": {
+				Include:  []string{"bus", "readonly", "common"},
+				CdPrefix: true,
+				Tools: []string{
+					"Write", "Edit",
+					"Bash(git diff*)", "Bash(git log*)", "Bash(git status*)",
+					"Bash(git rev-parse*)",
+					"Bash(python3*)", "Bash(jq*)",
+					"Bash(tree *)",
+				},
+			},
 			"build": {
 				Include:     []string{"bus", "readonly", "common"},
 				CdPrefix:    true,

@@ -46,6 +46,8 @@ type AgentFrontmatter struct {
 // Returns "" for unknown roles.
 func AgentFileName(role string) string {
 	switch role {
+	case "plan", "planner":
+		return "planner"
 	case "edit":
 		return "code-editor"
 	case "build":
@@ -81,6 +83,8 @@ func AgentFileName(role string) string {
 // Maps role names to MUXCODE_{ROLE}_CLI env vars.
 func RoleCLIEnvVar(role string) string {
 	switch role {
+	case "plan", "planner":
+		return "MUXCODE_PLAN_CLI"
 	case "commit", "git":
 		return "MUXCODE_COMMIT_CLI"
 	case "build":
@@ -117,6 +121,8 @@ func RoleCLIEnvVar(role string) string {
 // RoleClaudeModelEnvVar returns the per-role Claude model env var name.
 func RoleClaudeModelEnvVar(role string) string {
 	switch role {
+	case "plan", "planner":
+		return "MUXCODE_PLAN_CLAUDE_MODEL"
 	case "commit", "git":
 		return "MUXCODE_COMMIT_CLAUDE_MODEL"
 	case "build":
@@ -186,7 +192,7 @@ func RoleCodexModelDefault(role string) string {
 // edit/review/analyze → opus, everything else → sonnet.
 func RoleClaudeModelDefault(role string) string {
 	switch role {
-	case "edit", "review", "analyze", "analyst":
+	case "plan", "planner", "edit", "review", "analyze", "analyst":
 		return "claude-opus-4-6"
 	case "build", "test", "api", "deploy", "run", "runner", "watch", "commit", "git":
 		return "claude-sonnet-4-5"
@@ -210,6 +216,8 @@ func RoleOpenCodeModelDefault(role string) string {
 // no agent definition file. Returns "" for unknown roles.
 func InlineFallbackPrompt(role string) string {
 	switch role {
+	case "plan", "planner":
+		return "You are the plan agent. Focus on maintaining project documentation — requirements specs, architecture docs, and planning artifacts. Read code changes, update docs, check off completed phases, record decisions. Scoped to docs/ directories only."
 	case "edit":
 		return "You are the edit agent. Focus on writing and modifying code. Make precise, minimal changes that follow existing patterns. One concern at a time."
 	case "build":

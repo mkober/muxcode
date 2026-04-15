@@ -10,10 +10,10 @@ Muxcode creates a tmux session with multiple windows, each running an independen
 ┌─────────────────────────────────────────────────────────────────┐
 │                          tmux session                           │
 │                                                                 │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐    │
-│  │  edit   │ │  build  │ │  test   │ │ review  │ │  ...    │    │
-│  │nvim|cli │ │term|cli │ │term|cli │ │term|cli │ │         │    │
-│  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └─────────┘    │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ...│
+│  │  plan   │ │  edit   │ │  build  │ │  test   │ │ review  │    │
+│  │nvim|cli │ │nvim|cli │ │term|cli │ │term|cli │ │term|cli │    │
+│  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘    │
 │       │           │           │           │                     │
 │  ─────┼───────────┼───────────┼───────────┼──────────────────── │
 │       │     Message Bus (/tmp/muxcode-bus-{session}/)           │
@@ -311,7 +311,7 @@ The build-test-review and deploy-verify chains are **deterministic** — driven 
 └────────────────────┴────────────────────┘
 ```
 
-### Split-Left Windows (edit, build, test, review, deploy, analyze, commit, watch)
+### Split-Left Windows (plan, edit, build, test, review, deploy, analyze, commit, watch)
 ```
 ┌────────────────────┬────────────────────┐
 │                    │                    │

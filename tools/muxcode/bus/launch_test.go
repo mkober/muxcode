@@ -13,6 +13,8 @@ func TestAgentFileNameExported(t *testing.T) {
 		role string
 		want string
 	}{
+		{"plan", "planner"},
+		{"planner", "planner"},
 		{"edit", "code-editor"},
 		{"build", "code-builder"},
 		{"test", "test-runner"},
@@ -47,6 +49,8 @@ func TestRoleCLIEnvVar(t *testing.T) {
 		role string
 		want string
 	}{
+		{"plan", "MUXCODE_PLAN_CLI"},
+		{"planner", "MUXCODE_PLAN_CLI"},
 		{"commit", "MUXCODE_COMMIT_CLI"},
 		{"git", "MUXCODE_COMMIT_CLI"},
 		{"build", "MUXCODE_BUILD_CLI"},
@@ -75,6 +79,7 @@ func TestRoleClaudeModelEnvVar(t *testing.T) {
 		role string
 		want string
 	}{
+		{"plan", "MUXCODE_PLAN_CLAUDE_MODEL"},
 		{"commit", "MUXCODE_COMMIT_CLAUDE_MODEL"},
 		{"edit", "MUXCODE_EDIT_CLAUDE_MODEL"},
 		{"analyze", "MUXCODE_ANALYZE_CLAUDE_MODEL"},
@@ -96,6 +101,8 @@ func TestRoleClaudeModelDefault(t *testing.T) {
 		role string
 		want string
 	}{
+		{"plan", "claude-opus-4-6"},
+		{"planner", "claude-opus-4-6"},
 		{"edit", "claude-opus-4-6"},
 		{"review", "claude-opus-4-6"},
 		{"analyze", "claude-opus-4-6"},
@@ -236,7 +243,7 @@ func TestBuildAgentsJSON(t *testing.T) {
 
 func TestInlineFallbackPrompt(t *testing.T) {
 	// Known roles should return non-empty prompts
-	for _, role := range []string{"edit", "build", "test", "review", "deploy",
+	for _, role := range []string{"plan", "planner", "edit", "build", "test", "review", "deploy",
 		"run", "runner", "commit", "git", "analyze", "analyst",
 		"docs", "research", "watch", "pr-read", "api"} {
 		prompt := InlineFallbackPrompt(role)
