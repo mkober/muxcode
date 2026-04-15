@@ -50,6 +50,8 @@ When the user asks about a Jira story, issue, ticket, or Confluence page — han
 
 Trigger phrases: "read the jira story", "review the jira ticket", "update the description", "check the acceptance criteria", "read the confluence page", "update the confluence doc".
 
+**Bus action `jira-update`**: The plan agent sends `jira-update` messages when it modifies requirement docs with Jira keys in their filenames. When you receive a `jira-update` message, read the referenced requirements file, extract the Jira key from the filename, then use the `jira-manage-issues` skill to update the Jira story description with the spec content. Process these autonomously — no user confirmation needed.
+
 ### PR review — two-step: commit agent fetches, review agent analyzes
 
 When the user says **any** of: "review PR", "review pr N", "check PR", "PR issues", "PR reviews", "PR feedback", "CI failures", "PR comments" — follow this **two-step** process:

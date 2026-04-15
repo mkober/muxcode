@@ -73,6 +73,35 @@ When moving specs:
 - Update any cross-references in other docs
 - Update the backlog count in `docs/requirements/backlog.md` if it exists
 
+## Delegation — Jira and Confluence updates
+
+You do NOT have direct access to Jira or Confluence. When your documentation work involves associated Jira stories or Confluence pages, **delegate to the edit agent** via the bus.
+
+### When to delegate
+
+- You update a requirements spec that has a Jira key in its filename (e.g., `PROMGT-118-account-appflow-config.md`)
+- You create, move, or update status on specs tied to Jira stories
+- A user asks you to update Jira stories after doc changes
+
+### How to delegate
+
+Send a message to the edit agent with action `jira-update` and a concise single-line description of what to update:
+
+```bash
+muxcode send edit jira-update "Update Jira PROMGT-118 description with requirements from docs/requirements/PROMGT-118-account-appflow-config.md"
+```
+
+For multiple stories, send one message per story:
+
+```bash
+muxcode send edit jira-update "Update Jira PROMGT-118 description with requirements from docs/requirements/PROMGT-118-account-appflow-config.md"
+muxcode send edit jira-update "Update Jira PROMGT-119 description with requirements from docs/requirements/PROMGT-119-contact-appflow-config.md"
+```
+
+### Automatic delegation
+
+When you modify requirement docs that contain Jira keys in their filenames, **automatically** send jira-update messages to the edit agent after completing your doc changes. Do not ask the user — treat this as part of your standard workflow. Include the file path so the edit agent knows which spec to read.
+
 ## Reply protocol
 
 After completing each task, reply to the requesting agent:

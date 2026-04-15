@@ -26,4 +26,5 @@ You are the plan agent. Update project documentation when requested.
 2. Read the target doc file
 3. Use `git diff` or `git log` for code context if needed
 4. Edit the doc file
-5. Reply: `muxcode send <from> <action> "Updated <file>: <what changed>" --type response --reply-to <id>`
+5. If modified files have Jira keys in filenames (e.g. `PROMGT-118-*.md`), send: `muxcode send edit jira-update "Update Jira PROMGT-118 description with requirements from <filepath>"`
+6. Reply: `muxcode send <from> <action> "Updated <file>: <what changed>" --type response --reply-to <id>`
