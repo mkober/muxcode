@@ -44,6 +44,18 @@ func sendMessage(session string, m Message, autoCC bool) error {
 		return err
 	}
 
+	// Guard against duplicate replies: if this message is a reply to a task
+	// that is already completed (e.g. the daemon sent a synthetic response
+	// via idle-task-rescue, and the real agent sends a late reply), skip
+	// delivery to avoid the requester receiving conflicting responses.
+	// Check BEFORE writing to inbox so nothing is written anywhere.
+	if m.ReplyTo != "" {
+		if t, err := ReadTask(session, m.ReplyTo); err == nil && t.Status == TaskCompleted {
+			fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate reply to already-completed task %s from %s\n", m.ReplyTo, m.From)
+			return nil
+		}
+	}
+
 	// Append to recipient inbox (host inbox for hosted roles)
 	if err := appendToFile(InboxPath(session, inboxRole), line); err != nil {
 		return err
@@ -53,17 +65,6 @@ func sendMessage(session string, m Message, autoCC bool) error {
 	if autoCC && IsAutoCCRole(m.From) && m.To != "edit" && inboxRole != "edit" {
 		if err := appendToFile(InboxPath(session, "edit"), line); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: auto-CC to edit failed: %v\n", err)
-		}
-	}
-
-	// Guard against duplicate replies: if this message is a reply to a task
-	// that is already completed (e.g. the daemon sent a synthetic response
-	// via idle-task-rescue, and the real agent sends a late reply), skip
-	// delivery to avoid the requester receiving conflicting responses.
-	if m.ReplyTo != "" {
-		if t, err := ReadTask(session, m.ReplyTo); err == nil && t.Status == TaskCompleted {
-			fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate reply to already-completed task %s from %s\n", m.ReplyTo, m.From)
-			return nil
 		}
 	}
 

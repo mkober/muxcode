@@ -210,38 +210,66 @@ func waitForResponse(session, role, target, msgID string) (bool, string) {
 	const pollMs = 500
 	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 
+	var polls int
 	for time.Now().Before(deadline) {
 		time.Sleep(time.Duration(pollMs) * time.Millisecond)
+		polls++
 
+		// Primary: check delivery status (set by MarkResponded when --reply-to is used)
 		ds, err := bus.ReadDeliveryStatus(session, msgID)
-		if err != nil {
-			continue // status file not yet written or read error
-		}
-		if ds.Status != bus.StatusResponded {
-			continue
+		if err == nil && ds.Status == bus.StatusResponded {
+			// Response detected — try to consume it from inbox for display.
+			// The background --poll may have already consumed it, which is fine.
+			if bus.HasMessages(session, role) {
+				msgs, err := bus.ReceiveFromFunc(session, role, acceptFrom)
+				if err == nil && len(msgs) > 0 {
+					fmt.Println()
+					var payload string
+					for _, m := range msgs {
+						fmt.Print(bus.FormatMessage(m))
+						fmt.Println()
+						if payload == "" {
+							payload = m.Payload
+						}
+					}
+					return true, payload
+				}
+			}
+
+			// Response was already consumed by --poll — print confirmation
+			fmt.Printf("\nResponse from %s received (delivered via poll)\n", target)
+			return true, ""
 		}
 
-		// Response detected — try to consume it from inbox for display.
-		// The background --poll may have already consumed it, which is fine.
-		if bus.HasMessages(session, role) {
-			msgs, err := bus.ReceiveFromFunc(session, role, acceptFrom)
-			if err == nil && len(msgs) > 0 {
-				fmt.Println()
-				var payload string
+		// Fallback: peek inbox for responses without --reply-to (every ~2.5s).
+		// This handles agents that send responses without linking them to the
+		// original request — the delivery status never transitions, but the
+		// response message is in the inbox.
+		if polls%5 == 0 {
+			if msgs, err := bus.Peek(session, role); err == nil {
 				for _, m := range msgs {
-					fmt.Print(bus.FormatMessage(m))
-					fmt.Println()
-					if payload == "" {
-						payload = m.Payload
+					if (m.From == target || m.From == host) && m.Type == "response" {
+						consumed, cErr := bus.ReceiveFromFunc(session, role, acceptFrom)
+						if cErr == nil && len(consumed) > 0 {
+							fmt.Println()
+							var payload string
+							for _, c := range consumed {
+								fmt.Print(bus.FormatMessage(c))
+								fmt.Println()
+								if payload == "" {
+									payload = c.Payload
+								}
+							}
+							// Best-effort: mark the original request as responded
+							// so the task lifecycle completes normally.
+							bus.MarkResponded(session, msgID, consumed[0].ID)
+							return true, payload
+						}
+						break // already attempted consume
 					}
 				}
-				return true, payload
 			}
 		}
-
-		// Response was already consumed by --poll — print confirmation
-		fmt.Printf("\nResponse from %s received (delivered via poll)\n", target)
-		return true, ""
 	}
 
 	fmt.Fprintf(os.Stderr, "\nNo response from %s within %ds — check: muxcode inbox --peek\n", target, timeout)
