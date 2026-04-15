@@ -91,19 +91,19 @@ Additional roles that share a host agent's window (messages are routed to the ho
 
 ### Default model assignments
 
-Out of the box, MuxCode uses Claude Code for orchestration roles and OpenCode with Kimi K2.5 for command-execution roles:
+Out of the box, MuxCode uses Claude Code for orchestration roles and OpenCode with MiniMax M2.5 Free for command-execution roles:
 
 | Role                                      | Default CLI | Default model            |
 | ----------------------------------------- | ----------- | ------------------------ |
 | edit, review, analyze                     | Claude Code | `claude-opus-4-6`       |
-| build, test, deploy, run, watch, commit   | OpenCode    | `moonshotai/kimi-k2.5`  |
+| build, test, deploy, run, watch, commit   | OpenCode    | `minimax/m2.5-free`  |
 | api                                       | Claude Code | `claude-sonnet-4-5`     |
 
-Kimi K2.5 is available through [OpenCode Zen](https://opencode.ai/zen). Override the model per role with `MUXCODE_{ROLE}_MODEL` for OpenCode roles (e.g. `MUXCODE_BUILD_MODEL=anthropic/claude-sonnet-4-5`) or `MUXCODE_{ROLE}_CLAUDE_MODEL` for Claude Code roles. Override the CLI provider per role with `MUXCODE_{ROLE}_CLI`.
+MiniMax M2.5 Free is available through [OpenCode Zen](https://opencode.ai/zen). Override the model per role with `MUXCODE_{ROLE}_MODEL` for OpenCode roles (e.g. `MUXCODE_BUILD_MODEL=anthropic/claude-sonnet-4-5`) or `MUXCODE_{ROLE}_CLAUDE_MODEL` for Claude Code roles. Override the CLI provider per role with `MUXCODE_{ROLE}_CLI`.
 
 ### Recommended multi-provider configuration
 
-The defaults above already provide a cost-effective split — Claude Code for orchestration (edit, review, analyze) and OpenCode with Kimi K2.5 for command execution. To further customize, add Codex CLI for reasoning-heavy roles:
+The defaults above already provide a cost-effective split — Claude Code for orchestration (edit, review, analyze) and OpenCode with MiniMax M2.5 Free for command execution. To further customize, add Codex CLI for reasoning-heavy roles:
 
 ```bash
 # ~/.config/muxcode/config or .muxcode/config
@@ -121,12 +121,12 @@ This gives you:
 | Role     | Provider    | Model              | Why                                                      |
 | -------- | ----------- | ------------------ | -------------------------------------------------------- |
 | edit     | Claude Code | Opus 4.6           | Full hook support, orchestration, code editing            |
-| commit   | OpenCode    | Kimi K2.5          | Git operations — prompt-instructed chains                |
-| build    | OpenCode    | Kimi K2.5          | Runs `./build.sh` — structured commands, no hooks needed |
-| test     | OpenCode    | Kimi K2.5          | Runs `./test.sh` — structured commands, no hooks needed  |
-| deploy   | OpenCode    | Kimi K2.5          | Runs CDK/terraform — command execution role              |
-| run      | OpenCode    | Kimi K2.5          | Ad-hoc commands — capable free model                     |
-| watch    | OpenCode    | Kimi K2.5          | Log tailing — lightweight, read-only                     |
+| commit   | OpenCode    | MiniMax M2.5 Free          | Git operations — prompt-instructed chains                |
+| build    | OpenCode    | MiniMax M2.5 Free          | Runs `./build.sh` — structured commands, no hooks needed |
+| test     | OpenCode    | MiniMax M2.5 Free          | Runs `./test.sh` — structured commands, no hooks needed  |
+| deploy   | OpenCode    | MiniMax M2.5 Free          | Runs CDK/terraform — command execution role              |
+| run      | OpenCode    | MiniMax M2.5 Free          | Ad-hoc commands — capable free model                     |
+| watch    | OpenCode    | MiniMax M2.5 Free          | Log tailing — lightweight, read-only                     |
 | review   | Codex CLI   | gpt-5.3-codex      | Deep code reasoning, thorough diff analysis              |
 | analyze  | Codex CLI   | gpt-5.3-codex      | Codebase-wide analysis, pattern detection                |
 
@@ -446,7 +446,9 @@ The bus daemon monitors Ollama inference health (not just process liveness) and 
 
 ### LLM harness
 
-For smaller models that struggle with structured tool calling, the standalone `muxcode-llm-harness` binary provides guardrails: tool call filtering, loop prevention, structured task formatting, and corrective feedback. The launcher prefers the harness when available.
+For smaller models that struggle with structured tool calling, the standalone `muxcode-llm-harness` binary provides guardrails: tool call filtering, loop prevention, structured task formatting, corrective feedback, and single-shot auto-complete for build/test roles. The harness includes a Dracula-themed TUI with a live activity log showing Ollama calls, tool executions with output previews, and a status bar. The launcher prefers the harness when available.
+
+Harness-specific agent definitions in `agents/harness/` provide simplified instructions tailored for local LLMs — shorter, more directive prompts that avoid confusing smaller models with bus messaging or multi-step discovery sequences.
 
 See [Agents](docs/agents.md#local-llm-agent-ollama) for the full reference.
 

@@ -196,11 +196,11 @@ func RoleClaudeModelDefault(role string) string {
 }
 
 // RoleOpenCodeModelDefault returns the default OpenCode model for a role.
-// build/test/deploy/run/watch/commit → Kimi K2.5 (free via OpenCode Zen).
+// build/test/deploy/run/watch/commit → MiniMax M2.5 Free (via OpenCode Zen).
 func RoleOpenCodeModelDefault(role string) string {
 	switch role {
 	case "build", "test", "deploy", "run", "runner", "watch", "commit", "git":
-		return "moonshotai/kimi-k2.5"
+		return "minimax/m2.5-free"
 	default:
 		return ""
 	}
@@ -443,6 +443,11 @@ func buildHarnessArgs(role string) []string {
 	ollamaURL := os.Getenv("MUXCODE_OLLAMA_URL")
 	if ollamaURL != "" && ollamaURL != "http://localhost:11434" {
 		args = append(args, "--url", ollamaURL)
+	}
+
+	// TUI mode: enabled by default, disable with MUXCODE_HARNESS_TUI=0
+	if os.Getenv("MUXCODE_HARNESS_TUI") != "0" {
+		args = append(args, "--tui")
 	}
 
 	return args

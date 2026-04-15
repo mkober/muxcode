@@ -367,9 +367,13 @@ Standalone binary (`muxcode-llm-harness`) that replaces `muxcode agent run` for 
 | Loop prevention | Command hash tracking, blocks same command after 3 repetitions |
 | Role examples | `RoleExamples()` provides concrete tool call examples per role |
 | Circuit breaker | Cross-batch failure tracking with cooldown — prevents runaway Ollama calls |
+| Single-shot auto-complete | Build and test roles auto-complete after one successful tool execution — prevents small models from looping |
+| Harness agent definitions | Simplified prompts in `agents/harness/` tailored for local LLMs |
+| TUI activity log | Dracula-themed display showing Ollama calls, tool executions with output previews, and status bar |
+| Chat history truncation | Tool outputs truncated to 2KB in persistent chat history to prevent context exhaustion |
 | PII scrubbing | Automatic redaction of PII/secrets in tool output for sensitive roles |
 
-CLI: `muxcode-llm-harness run <role> [--model MODEL] [--url URL] [--max-turns N]`
+CLI: `muxcode-llm-harness run <role> [--model MODEL] [--url URL] [--max-turns N] [--tui]`
 
 Separate Go module at `tools/muxcode-llm-harness/` — stdlib only, no external deps. The launcher (`muxcode-agent.sh`) prefers the harness binary when available, falls back to `muxcode agent run`.
 
@@ -396,4 +400,37 @@ Redacted values are replaced with bracketed placeholders (e.g. `[EMAIL_REDACTED]
 
 For Claude Code agents in the same roles, `muxcode pii-scrub` provides equivalent pipe-through filtering. Agent definitions for api, runner, and watch instruct the agent to pipe sensitive output through the scrubber.
 
-Core code: `harness/` package — `config.go`, `ollama.go`, `bus.go`, `tools.go`, `executor.go`, `filter.go`, `prompt.go`, `loop.go`, `message.go`, `scrub.go`.
+### Single-shot auto-complete
+
+Build and test roles are designated as "single-shot" via `isSingleShotRole()`. After one successful tool execution, the harness breaks out of the tool-calling loop and forces a text-only Ollama call to generate the response summary. This prevents small models (e.g. gemma4, qwen2.5-coder) from endlessly re-running the same command.
+
+Flow: tool executes → single-shot detected → loop breaks → summary call (no tools) → response sent.
+
+### Harness agent definitions
+
+The `agents/harness/` directory contains simplified agent definitions for local LLMs. These are shorter and more directive than the standard definitions — they avoid bus messaging instructions, multi-step discovery sequences, and other patterns that confuse smaller models.
+
+Resolution order for `ReadAgentDefinition()`:
+
+1. `agents/harness/<name>.md` — project-local harness-specific (highest priority)
+2. `~/.config/muxcode/agents/harness/<name>.md` — user harness-specific
+3. `.claude/agents/<name>.md` — project-local standard
+4. `~/.config/muxcode/agents/<name>.md` — user standard
+
+Shipped harness definitions: `code-builder.md`, `test-runner.md`, `code-reviewer.md`.
+
+### Harness TUI
+
+The `--tui` flag enables a Dracula-themed terminal UI (used by default when launched from muxcode). Features:
+
+- **Activity log** — live event stream showing Ollama calls, tool executions with timing, and output previews (last meaningful line of command output, tabs replaced with spaces)
+- **Status bar** — bottom line with status/uptime (left) and role/model/provider (right)
+- **Action labels** — turns labeled by action name (e.g. "Build 1/10", "Test 1/10") instead of generic "Turn"
+- **Alternate screen buffer** — clean rendering without scrollback pollution
+- **Tool output preview** — `╰` connector showing the last line of tool output (skips exit codes and truncation markers)
+
+### Chat history management
+
+Tool outputs in the current conversation turn use full output (up to `MaxOutputLen` = 30KB). When stored in persistent chat history for subsequent turns, outputs are truncated to `maxChatToolOutput` (2KB) to prevent context window exhaustion with small models.
+
+Core code: `harness/` package — `config.go`, `ollama.go`, `bus.go`, `tools.go`, `executor.go`, `filter.go`, `prompt.go`, `loop.go`, `events.go`, `tui.go`, `message.go`, `scrub.go`.

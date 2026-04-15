@@ -29,6 +29,10 @@ func TestOpenCodeBuildExecArgs_TUIMode(t *testing.T) {
 
 	for _, role := range []string{"build", "test", "edit", "review"} {
 		t.Run(role, func(t *testing.T) {
+			// Clear per-role model env so defaults apply
+			envKey := "MUXCODE_" + strings.ToUpper(role) + "_MODEL"
+			t.Setenv(envKey, "")
+
 			cfg := &LaunchConfig{
 				Role: role,
 				CLI:  "opencode",
@@ -39,15 +43,29 @@ func TestOpenCodeBuildExecArgs_TUIMode(t *testing.T) {
 			if binary != "opencode" {
 				t.Errorf("binary = %q, want opencode", binary)
 			}
-			// Should pass --agent <role> to select the correct agent config
-			if len(args) != 2 || args[0] != "--agent" || args[1] != role {
-				t.Errorf("args = %v, want [--agent %s]", args, role)
+			// Must always start with --agent <role>
+			if len(args) < 2 || args[0] != "--agent" || args[1] != role {
+				t.Errorf("args = %v, want --agent %s as first two args", args, role)
+			}
+			// All roles should get a --model flag via resolveOpenCodeModel:
+			// roles with an OpenCode default get that, others fall back to
+			// the Claude model mapped to anthropic/ prefix.
+			expectedModel := resolveOpenCodeModel(role)
+			if expectedModel != "" {
+				if len(args) != 4 || args[2] != "--model" || args[3] != expectedModel {
+					t.Errorf("args = %v, want [--agent %s --model %s]", args, role, expectedModel)
+				}
+			} else {
+				if len(args) != 2 {
+					t.Errorf("args = %v, want [--agent %s] (no model resolved)", args, role)
+				}
 			}
 		})
 	}
 }
 
 func TestOpenCodeBuildExecArgs_CustomCLI(t *testing.T) {
+	t.Setenv("MUXCODE_BUILD_MODEL", "")
 	p := &OpenCodeProvider{}
 	cfg := &LaunchConfig{
 		Role: "build",
@@ -59,8 +77,31 @@ func TestOpenCodeBuildExecArgs_CustomCLI(t *testing.T) {
 	if binary != "/usr/local/bin/opencode" {
 		t.Errorf("binary = %q, want custom path", binary)
 	}
-	if len(args) != 2 || args[0] != "--agent" || args[1] != "build" {
-		t.Errorf("args = %v, want [--agent build]", args)
+	// build role has a default model, so expect --model flag too
+	defaultModel := RoleOpenCodeModelDefault("build")
+	if len(args) < 2 || args[0] != "--agent" || args[1] != "build" {
+		t.Errorf("args = %v, want --agent build as first two args", args)
+	}
+	if defaultModel != "" && (len(args) != 4 || args[2] != "--model" || args[3] != defaultModel) {
+		t.Errorf("args = %v, want [--agent build --model %s]", args, defaultModel)
+	}
+}
+
+func TestOpenCodeBuildExecArgs_ExplicitModel(t *testing.T) {
+	t.Setenv("MUXCODE_BUILD_MODEL", "gemma4")
+	p := &OpenCodeProvider{}
+	cfg := &LaunchConfig{
+		Role: "build",
+		CLI:  "opencode",
+	}
+
+	binary, args := p.BuildExecArgs(cfg)
+
+	if binary != "opencode" {
+		t.Errorf("binary = %q, want opencode", binary)
+	}
+	if len(args) != 4 || args[0] != "--agent" || args[1] != "build" || args[2] != "--model" || args[3] != "gemma4" {
+		t.Errorf("args = %v, want [--agent build --model gemma4]", args)
 	}
 }
 
@@ -207,9 +248,9 @@ func TestResolveOpenCodeModel_Default(t *testing.T) {
 
 	model := resolveOpenCodeModel("build")
 
-	// Command-execution roles default to Kimi K2.5
-	if model != "moonshotai/kimi-k2.5" {
-		t.Errorf("model = %q, want moonshotai/kimi-k2.5", model)
+	// Command-execution roles default to MiniMax M2.5 Free
+	if model != "minimax/m2.5-free" {
+		t.Errorf("model = %q, want minimax/m2.5-free", model)
 	}
 }
 
@@ -372,9 +413,9 @@ func TestOpenCodeDetectTaskCompletion_Completed(t *testing.T) {
      - gofmt -l .: No issues
      - go vet ./...: No issues
 
-     ▣  Build · Kimi K2.5 · 12.9s
+     ▣  Build · MiniMax M2.5 Free · 12.9s
 
-  Build  Kimi K2.5 OpenCode Zen
+  Build  MiniMax M2.5 Free OpenCode Zen
 ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
                                 19.2K (7%) · $0.01  ctrl+p commands
 `
@@ -405,7 +446,7 @@ func TestOpenCodeDetectTaskCompletion_ActiveRunning(t *testing.T) {
 
      ▸  Building... 5.2s
 
-  Build  Kimi K2.5 OpenCode Zen
+  Build  MiniMax M2.5 Free OpenCode Zen
 ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 `
 	completed, errored, _ := p.DetectTaskCompletion("session", "build", pane)
@@ -431,9 +472,9 @@ func TestOpenCodeDetectTaskCompletion_CompletedWithErrors(t *testing.T) {
 
      Build Failed
 
-     ▣  Build · Kimi K2.5 · 8.1s
+     ▣  Build · MiniMax M2.5 Free · 8.1s
 
-  Build  Kimi K2.5 OpenCode Zen
+  Build  MiniMax M2.5 Free OpenCode Zen
 ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
                                 12.5K (5%) · $0.01  ctrl+p commands
 `
@@ -462,7 +503,7 @@ func TestOpenCodeDetectTaskCompletion_NoStopMarker(t *testing.T) {
 
 	// Pane with content but no stop marker
 	pane := `
-  Build  Kimi K2.5 OpenCode Zen
+  Build  MiniMax M2.5 Free OpenCode Zen
 ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
                                 0K (0%) · $0.00  ctrl+p commands
 `
@@ -485,7 +526,7 @@ func TestIsUIChrome(t *testing.T) {
 		{"╹▀▀▀▀▀▀▀▀▀▀▀▀", true},
 		{"19.2K (7%) · $0.01  ctrl+p commands", true},
 		{"Build succeeded", false},
-		{"     ▣  Build · Kimi K2.5 · 12.9s", false},
+		{"     ▣  Build · MiniMax M2.5 Free · 12.9s", false},
 		{"", false},
 	}
 	for _, tt := range tests {

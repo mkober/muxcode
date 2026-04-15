@@ -9,14 +9,16 @@ import (
 
 // Config holds configuration for the LLM harness.
 type Config struct {
-	Role        string // agent definition role (git, build, etc.) — for tools, skills, agent def
-	BusRole     string // bus identity role (commit, build, etc.) — for inbox, lock, send, history
-	Session     string // bus session name
-	OllamaURL   string // default http://localhost:11434
-	OllamaModel string // default qwen2.5:7b (must support tool calling)
-	MaxTurns    int    // max tool-calling turns per batch (default 10)
-	BusDir      string // /tmp/muxcode-bus-{session}/
-	BusBin      string // path to muxcode binary
+	Role        string       // agent definition role (git, build, etc.) — for tools, skills, agent def
+	BusRole     string       // bus identity role (commit, build, etc.) — for inbox, lock, send, history
+	Session     string       // bus session name
+	OllamaURL   string       // default http://localhost:11434
+	OllamaModel string       // default qwen2.5:7b (must support tool calling)
+	MaxTurns    int          // max tool-calling turns per batch (default 10)
+	BusDir      string       // /tmp/muxcode-bus-{session}/
+	BusBin      string       // path to muxcode binary
+	TUI         bool         // enable TUI mode (live activity display)
+	UserInput   <-chan string // user-submitted chat messages (TUI mode only)
 }
 
 // DefaultConfig returns a Config with sensible defaults, reading from env vars.

@@ -39,8 +39,14 @@ func (p *OpenCodeProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 // Passes --agent <role> so each window uses its matching agent config
 // from .opencode/agents/<role>.md instead of all defaulting to the
 // first alphabetical "primary" agent.
+// Passes --model <model> when a per-role model is configured so
+// OpenCode uses it instead of its default (e.g. ollama/gemma4).
 func (p *OpenCodeProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
-	return cfg.CLI, []string{"--agent", cfg.Role}
+	args := []string{"--agent", cfg.Role}
+	if model := resolveOpenCodeModel(cfg.Role); model != "" {
+		args = append(args, "--model", model)
+	}
+	return cfg.CLI, args
 }
 
 // IsIdle always returns false for TUI mode.
@@ -330,7 +336,7 @@ func resolveOpenCodeModel(role string) string {
 		return model
 	}
 
-	// OpenCode role default (Kimi K2.5 for command-execution roles)
+	// OpenCode role default (MiniMax M2.5 Free for command-execution roles)
 	if model := RoleOpenCodeModelDefault(role); model != "" {
 		return model
 	}
@@ -355,7 +361,7 @@ func resolveOpenCodeModel(role string) string {
 // to determine if the agent has finished processing a task.
 //
 // Completion signals (from OpenCode Zen mode output):
-//   - Stop marker "▣" followed by role/model/timing (e.g. "▣  Build · Kimi K2.5 · 12.9s")
+//   - Stop marker "▣" followed by role/model/timing (e.g. "▣  Build · MiniMax M2.5 Free · 12.9s")
 //   - Status bar at bottom with ctrl+p indicator
 //
 // Active signals (task still running):

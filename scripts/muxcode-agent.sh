@@ -91,6 +91,8 @@ if [ "$ROLE_CLI" = "local" ]; then
       HARNESS_ARGS+=(--model "$MUXCODE_OLLAMA_MODEL")
     fi
     [ "$OLLAMA_URL" != "http://localhost:11434" ] && HARNESS_ARGS+=(--url "$OLLAMA_URL")
+    # TUI mode: enabled by default, disable with MUXCODE_HARNESS_TUI=0
+    [ "${MUXCODE_HARNESS_TUI:-1}" != "0" ] && HARNESS_ARGS+=(--tui)
     clear
     # Prefer harness binary; fall back to bus agent subcommand
     if command -v muxcode-llm-harness >/dev/null 2>&1; then

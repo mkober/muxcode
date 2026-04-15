@@ -1,7 +1,6 @@
 ---
 description: Build and packaging specialist — compiles, bundles, and resolves build issues
 mode: primary
-model: moonshotai/kimi-k2.5
 permission:
   bash:
     "muxcode *": allow

@@ -215,7 +215,7 @@ func TestExecuteBash_OutputTruncation(t *testing.T) {
 	call := ToolCall{
 		Function: FunctionCall{
 			Name:      "bash",
-			Arguments: json.RawMessage(`{"command":"python3 -c \"print('x' * 20000)\""}`),
+			Arguments: json.RawMessage(`{"command":"python3 -c \"print('x' * 50000)\""}`),
 		},
 	}
 

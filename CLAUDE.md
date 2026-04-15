@@ -19,6 +19,7 @@ Multi-agent coding environment built on tmux, Neovim, and Claude Code. Each agen
 muxcode.sh                    # Main launcher — creates tmux session & windows
 scripts/                      # Hook scripts, agent launcher, pollers
 agents/                       # Default agent definition files (.md)
+agents/harness/               # Simplified agent definitions for local LLM harness
 skills/                       # Default skill definition files (.md)
 config/                       # settings.json, tmux.conf, nvim/ (managed nvim config)
 config/nvim/                  # Neovim config loaded via NVIM_APPNAME=muxcode
@@ -110,6 +111,9 @@ Both Go modules have **no external dependencies** (stdlib only).
 - **PII scrubbing**: tool output from `api`, `runner`/`run`, and `watch` roles is redacted before entering the LLM conversation. Harness agents use automatic scrubbing in the executor (`harness/scrub.go`). Claude Code agents pipe output through `muxcode pii-scrub`. Patterns: emails, SSN, credit cards (prefix-anchored), phone numbers (separator-required), AWS keys, JWTs, generic secrets/tokens.
 - **Daemon self-monitoring**: the daemon writes a Unix timestamp to `watcher.keepalive` at the top of each poll loop. A companion monitor (`muxcode watch --monitor`) checks the keepalive every 15 seconds — if stale (>30s), it kills and relaunches the daemon.
 - **Harness circuit breaker**: 3-layer stuck protection — within-turn (filter), within-batch (`MaxAllBlockedTurns=2`), cross-batch (`MaxConsecutiveFailures=3` triggers 30s cooldown). Each batch has 5-minute timeout. See [Agents](docs/agents.md#circuit-breaker).
+- **Harness single-shot roles**: build and test roles auto-complete after one successful tool execution (`isSingleShotRole()`). Prevents small models from looping endlessly re-running the same command. After auto-complete, a text-only Ollama call generates the response summary.
+- **Harness agent definitions**: `agents/harness/` directory provides simplified agent definitions for local LLMs. Resolution: `agents/harness/` > `.claude/agents/` > `~/.config/muxcode/agents/harness/` > `~/.config/muxcode/agents/`. Shorter, more directive prompts that avoid confusing smaller models.
+- **Harness TUI**: Dracula-themed terminal UI with activity log (Ollama calls, tool executions, output previews), status bar (status/uptime left, role/model/provider right), and alternate screen buffer for clean rendering. Tool output previews show the last meaningful line of command output.
 
 ## Code reference
 
@@ -179,7 +183,9 @@ Test: `cd tools/muxcode-llm-harness && go test ./...`
 | `harness/executor.go` | `Executor`, `Execute()` — bash/read/glob/grep/write/edit, `ScrubPII` flag |
 | `harness/filter.go` | `Filter`, `Check()`, `isInboxCommand()`, `isSelfSend()`, `commandHash()` |
 | `harness/prompt.go` | `BuildSystemPrompt()`, `LocalLLMInstructions()`, `RoleExamples()`, `ReadAgentDefinition()` |
-| `harness/loop.go` | `Run()`, `processBatch()`, `logToolToHistory()`, circuit breaker (cooldown, batch timeout) |
+| `harness/loop.go` | `Run()`, `processBatch()`, `logToolToHistory()`, `isSingleShotRole()`, `toolOutputPreview()`, circuit breaker (cooldown, batch timeout), single-shot auto-complete |
+| `harness/events.go` | `EventKind` constants (`EventStartup`, `EventToolOutput`, etc.), `Event` struct |
+| `harness/tui.go` | `TUISink`, `NewTUISink()`, Dracula-themed TUI with activity log, status bar, alternate screen buffer |
 | `harness/scrub.go` | `ScrubPII()`, `IsPIISensitiveRole()`, PII/secret regex patterns |
 | `harness/message.go` | `Message`, `ParseMessages()`, `FormatTask()` |
 

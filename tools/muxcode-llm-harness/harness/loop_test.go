@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+// mockEventSink is a no-op EventSink for testing
+type mockEventSink struct{}
+
+func (m *mockEventSink) Emit(e Event) {}
+func (m *mockEventSink) Close()       {}
+
 func TestProcessBatch_SimpleResponse(t *testing.T) {
 	// Set up mock Ollama that returns a text response (no tool calls)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +52,7 @@ func TestProcessBatch_SimpleResponse(t *testing.T) {
 
 	// This will fail on bus.Send because echo isn't the real bus binary,
 	// but we can verify the conversation logic works
-	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs)
+	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{})
 
 	// If we got here without panic, the conversation loop worked
 }
@@ -110,7 +116,7 @@ func TestProcessBatch_WithToolCall(t *testing.T) {
 		{ID: "1", From: "edit", To: "commit", Action: "test", Payload: "Run echo hello"},
 	}
 
-	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs)
+	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{})
 
 	if callCount != 2 {
 		t.Errorf("expected 2 Ollama calls, got %d", callCount)
@@ -174,7 +180,7 @@ func TestProcessBatch_FilterBlocksInbox(t *testing.T) {
 		{ID: "1", From: "edit", To: "commit", Action: "status", Payload: "Show status"},
 	}
 
-	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs)
+	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{})
 
 	// Should have called Ollama twice: once with tool call, once after block
 	if callCount < 2 {
@@ -262,7 +268,7 @@ func TestRun_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	err := Run(ctx, cfg)
+	err := Run(ctx, cfg, &mockEventSink{})
 	if err != nil {
 		t.Errorf("Run should return nil on context cancel, got: %v", err)
 	}
@@ -302,7 +308,7 @@ func TestRun_HarnessMarkerLifecycle(t *testing.T) {
 	markerSeen := false
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, cfg)
+		done <- Run(ctx, cfg, &mockEventSink{})
 	}()
 
 	// Poll for marker creation
@@ -424,9 +430,85 @@ func TestProcessBatch_NarrationRecovery(t *testing.T) {
 		{ID: "1", From: "edit", To: "build", Action: "build", Payload: "Run build"},
 	}
 
-	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs)
+	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{})
 
-	// Should have 3 calls: tool call, narration, then summarization recovery
+	// Build is a single-shot role: after successful tool execution, the loop
+	// breaks and fires one summary call. That's 2 calls total (tool + summary).
+	if callCount != 2 {
+		t.Errorf("expected 2 Ollama calls (tool + single-shot summary), got %d", callCount)
+	}
+}
+
+func TestProcessBatch_NarrationRecovery_NonSingleShot(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+
+		switch callCount {
+		case 1:
+			// First call: tool call to run a command
+			resp := ChatResponse{
+				Choices: []ChatChoice{
+					{
+						Message: ChatMessage{
+							Role: "assistant",
+							ToolCalls: []ToolCall{
+								{
+									ID:   "call_1",
+									Type: "function",
+									Function: FunctionCall{
+										Name:      "bash",
+										Arguments: json.RawMessage(`{"command":"echo review ok"}`),
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			json.NewEncoder(w).Encode(resp)
+		case 2:
+			// Second call: narration response (the bug)
+			resp := ChatResponse{
+				Choices: []ChatChoice{
+					{Message: ChatMessage{Role: "assistant", Content: "Let's try running the review again."}},
+				},
+			}
+			json.NewEncoder(w).Encode(resp)
+		case 3:
+			// Third call: summarization recovery (no tools passed)
+			resp := ChatResponse{
+				Choices: []ChatChoice{
+					{Message: ChatMessage{Role: "assistant", Content: "Review completed: no issues found"}},
+				},
+			}
+			json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	// Use "review" role — not single-shot, so narration recovery still applies
+	cfg := Config{
+		Role:     "review",
+		Session:  "test",
+		BusDir:   dir,
+		MaxTurns: 10,
+	}
+
+	ollama := NewOllamaClient(server.URL, "test-model")
+	executor := NewExecutor([]string{"Bash(echo *)"})
+	tools := BuildToolDefs([]string{"Bash(echo *)"})
+	filter := NewFilter("review")
+	bus := &BusClient{BusDir: dir, Role: "review", BinPath: "echo"}
+
+	msgs := []Message{
+		{ID: "1", From: "edit", To: "review", Action: "review", Payload: "Run review"},
+	}
+
+	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{})
+
+	// Non-single-shot role: 3 calls — tool + narration + summary recovery
 	if callCount != 3 {
 		t.Errorf("expected 3 Ollama calls (tool + narration + recovery), got %d", callCount)
 	}

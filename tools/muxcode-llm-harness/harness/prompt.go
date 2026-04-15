@@ -129,90 +129,29 @@ git log --oneline -10
 ` + "```"
 
 	case "build":
-		return `### Build Sequence
+		return `### Build Examples
 
-Follow these 4 steps in order for every build request.
-
-**Step 1 — Detect project type**
-` + "```" + `bash
-ls go.mod package.json Cargo.toml Makefile 2>/dev/null
-` + "```" + `
-
-**Step 2 — Lint (failures here do NOT block the build)**
-Choose the linter for the detected project type:
-` + "```" + `bash
-# Go
-gofmt -l . 2>&1
-go vet ./... 2>&1
-
-# Node (package.json)
-npm run lint 2>&1
-
-# Rust (Cargo.toml)
-cargo clippy 2>&1
-` + "```" + `
-If no linter is available, skip this step. Report lint warnings in your reply but continue to step 3.
-
-**Step 3 — Build**
+When the task specifies a command, run exactly that command:
 ` + "```" + `bash
 ./build.sh 2>&1
 ` + "```" + `
-If ` + "`./build.sh`" + ` does not exist, try these fallbacks in order:
-` + "```" + `bash
-make build 2>&1
-go build ./... 2>&1
-npm run build 2>&1
-cargo build 2>&1
-` + "```" + `
 
-**Step 4 — Provide your result summary**
-Your text response is sent automatically — do NOT call ` + "`muxcode send`" + ` to reply.
-Just write a concise summary as your final text output:
-- On success: ` + "`Build succeeded: <what was built>`" + `
-- On failure: ` + "`Build FAILED: <error summary>`" + `
+If no command is specified, run ` + "`./build.sh 2>&1`" + `. If that doesn't exist, try ` + "`make 2>&1`" + `.
 
-**Important**: Do NOT send to test — hooks handle chaining automatically.`
+Respond with a short summary. Do NOT call ` + "`muxcode send`" + `.`
 
 	case "test":
-		return `### Test Sequence
+		return `### Test Examples
 
-Follow these 3 steps in order for every test request.
-
-**Step 1 — Detect test runner**
+When the task specifies a command, run exactly that command:
 ` + "```" + `bash
-ls ./scripts/test-and-notify.sh ./test.sh Makefile go.mod package.json Cargo.toml 2>/dev/null
+cd tools/muxcode-llm-harness && go test ./...
 ` + "```" + `
 
-**Step 2 — Run the tests**
-Use the first runner that exists, in this order:
-` + "```" + `bash
-# Option A: project test-and-notify script
-./scripts/test-and-notify.sh 2>&1
+If no command is specified, run ` + "`./test.sh 2>&1`" + `. If that doesn't exist, try ` + "`go test -v ./... 2>&1`" + `.
 
-# Option B: project test script
-./test.sh 2>&1
-
-# Option C: Go project
-go vet ./... 2>&1 && go test -v ./... 2>&1
-
-# Option D: Node project (package.json)
-npm test 2>&1
-
-# Option E: Rust project (Cargo.toml)
-cargo test 2>&1
-
-# Option F: Makefile
-make test 2>&1
-` + "```" + `
-
-**Step 3 — Provide your result summary**
-Your text response is sent automatically — do NOT call ` + "`muxcode send`" + ` to reply.
-Just write a concise summary as your final text output:
-- On success: ` + "`Tests passed: X tests, 0 failures`" + `
-- On failure: ` + "`Tests FAILED: X passed, Y failed — <error summary>`" + `
-
-**Important**: You MUST use the bash tool to run the actual test commands. NEVER fabricate test results.
-Do NOT send to review — hooks handle chaining automatically.`
+Respond with a short summary of pass/fail counts. Do NOT call ` + "`muxcode send`" + `.
+NEVER fabricate test results — always run the actual commands.`
 
 	case "review":
 		return `### Review Sequence
@@ -277,11 +216,18 @@ func ReadAgentDefinition(role string) string {
 		return ""
 	}
 
+	// Harness-specific definitions first (simplified for local LLMs),
+	// then standard agent definitions.
 	paths := []string{
-		".claude/agents/" + name + ".md",
+		"agents/harness/" + name + ".md",
 	}
 
 	home, _ := os.UserHomeDir()
+	if home != "" {
+		paths = append(paths, home+"/.config/muxcode/agents/harness/"+name+".md")
+	}
+
+	paths = append(paths, ".claude/agents/"+name+".md")
 	if home != "" {
 		paths = append(paths, home+"/.config/muxcode/agents/"+name+".md")
 	}

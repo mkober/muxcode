@@ -81,7 +81,7 @@ func ResolveProvider(role string) Provider {
 // constructing a full Provider. Used for logging and configuration.
 // Resolution: per-role env → global env → role default.
 // Command-execution roles (build, test, deploy, run, watch, commit)
-// default to "opencode" (Kimi K2.5 via OpenCode Zen).
+// default to "opencode" (MiniMax M2.5 Free via OpenCode Zen).
 func ResolveProviderCLI(role string) string {
 	cli := os.Getenv(RoleCLIEnvVar(role))
 
@@ -95,7 +95,7 @@ func ResolveProviderCLI(role string) string {
 }
 
 // roleDefaultCLI returns the built-in default CLI for a role.
-// Command-execution roles default to OpenCode (Kimi K2.5).
+// Command-execution roles default to OpenCode (MiniMax M2.5 Free).
 // All other roles default to Claude Code (hook support, orchestration).
 func roleDefaultCLI(role string) string {
 	switch role {

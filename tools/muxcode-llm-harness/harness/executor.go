@@ -15,7 +15,7 @@ const (
 	// DefaultBashTimeout is the max execution time for bash commands.
 	DefaultBashTimeout = 60 * time.Second
 	// MaxOutputLen is the maximum output length returned from tool execution.
-	MaxOutputLen = 10000
+	MaxOutputLen = 30000
 )
 
 // Executor executes tool calls with allowedTools enforcement.

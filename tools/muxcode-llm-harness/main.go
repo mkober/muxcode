@@ -13,7 +13,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 || os.Args[1] != "run" {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode-llm-harness run <role> [--model MODEL] [--url URL] [--max-turns N]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode-llm-harness run <role> [--model MODEL] [--url URL] [--max-turns N] [--tui]\n")
 		os.Exit(1)
 	}
 
@@ -44,6 +44,8 @@ func main() {
 				}
 				i++
 			}
+		case "--tui":
+			cfg.TUI = true
 		}
 	}
 
@@ -55,12 +57,40 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		fmt.Fprintf(os.Stderr, "[harness] Shutting down...\n")
 		cancel()
 	}()
 
-	if err := harness.Run(ctx, cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "[harness] Error: %v\n", err)
-		os.Exit(1)
+	if cfg.TUI {
+		// TUI mode: render loop on main goroutine, harness in background.
+		// errCh communicates the harness exit status without a data race.
+		tui := harness.NewTUISink(cfg.Role, cfg.OllamaModel)
+		cfg.UserInput = tui.SubmitCh() // wire TUI input → harness loop
+		errCh := make(chan error, 1)
+
+		go func() {
+			err := harness.Run(ctx, cfg, tui)
+			if err != nil {
+				tui.Emit(harness.Event{Kind: harness.EventError, Message: fmt.Sprintf("Fatal: %v", err)})
+			}
+			errCh <- err
+			tui.Close()
+		}()
+
+		tui.RunLoop(ctx)
+
+		// RunLoop exited — either ctx was cancelled (signal), harness
+		// closed the TUI (fatal error), or user quit (Ctrl+C/Ctrl+D).
+		// Cancel ctx so harness.Run stops and writes to errCh.
+		cancel()
+
+		if err := <-errCh; err != nil {
+			os.Exit(1)
+		}
+	} else {
+		// Headless mode: stderr logging (original behavior)
+		if err := harness.Run(ctx, cfg, nil); err != nil {
+			fmt.Fprintf(os.Stderr, "[harness] Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }
