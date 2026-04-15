@@ -291,11 +291,24 @@ func createWindowContent(cfg *LauncherConfig, session, win, projectDir, agentLau
 	} else if win == "plan" {
 		// Plan window: Neovim with last-edited doc (left) + agent (right)
 		sendInit(cfg, target)
-		sendPlanEditorCommand(cfg, target, projectDir)
+		openedDoc := sendPlanEditorCommand(cfg, target, projectDir)
 		TmuxSplitWindow(target, projectDir)
 		sendInit(cfg, target+".1")
 		sendCommand(target+".1", agentLauncher+" plan")
 		TmuxSelectPane(target + ".0")
+
+		// Send startup context message so agent reads the opened doc
+		if openedDoc != "" {
+			_ = SendNoCC(session, Message{
+				ID:      NewMsgID("launcher"),
+				TS:      time.Now().Unix(),
+				From:    "launcher",
+				To:      "plan",
+				Type:    "request",
+				Action:  "context",
+				Payload: "Read " + openedDoc + " for initial context — this file is open in Neovim in the left pane.",
+			})
+		}
 	} else if cfg.IsSplitLeftWindow(win) {
 		// Split-left: console (left) + agent (right)
 		sendInit(cfg, target)
@@ -337,7 +350,8 @@ func sendEditorCommand(cfg *LauncherConfig, target string) {
 
 // sendPlanEditorCommand sends the editor launch command for the plan window.
 // Opens the last-edited doc file in Neovim, falling back to docs/ directory.
-func sendPlanEditorCommand(cfg *LauncherConfig, target, projectDir string) {
+// Returns the opened file path (relative to project root), or "" if fallback to docs/.
+func sendPlanEditorCommand(cfg *LauncherConfig, target, projectDir string) string {
 	// Find last-edited doc file via git
 	lastDoc := ""
 	out, err := exec.Command("git", "-C", projectDir, "log", "-1",
@@ -361,6 +375,7 @@ func sendPlanEditorCommand(cfg *LauncherConfig, target, projectDir string) {
 	TmuxSendKeys(target, cmd)
 	time.Sleep(100 * time.Millisecond)
 	TmuxSendEnter(target)
+	return lastDoc
 }
 
 // sendCommand sends a command string to a tmux pane.

@@ -13,6 +13,7 @@ You are the plan agent. Update project documentation when requested.
 
 ## Actions
 
+- `context` — read the referenced file for initial context (sent at startup, no reply needed)
 - `update-docs` — update docs based on implementation progress
 - `update-status` — change a spec's status field
 - `check-phase` — check off completed phase checkboxes

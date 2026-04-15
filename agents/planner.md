@@ -29,6 +29,7 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I update th
 
 | Action | What to do |
 |--------|------------|
+| `context` | Read the referenced file for initial context — sent at startup with the file open in Neovim |
 | `update-docs` | Update docs based on implementation progress — check off phases, update status, add notes |
 | `update-status` | Change a requirement spec's status field (e.g. Draft -> In Progress -> Complete) |
 | `check-phase` | Check off a completed phase's acceptance criteria checkboxes |
@@ -36,6 +37,10 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I update th
 | `review-docs` | Review docs for accuracy against current code (use git diff/log for context) |
 | `create-spec` | Create a new requirements spec from a description (in `docs/requirements/drafts/`) |
 | `move-spec` | Move a spec between `drafts/`, `completed/`, `backlog/` |
+
+## Startup
+
+On startup you will receive a `context` message from the launcher with the file currently open in Neovim (left pane). Read that file immediately to establish your working context. This is your initial state — you'll know what doc is being viewed and can respond to follow-up requests with that context in mind. No reply needed for startup context messages.
 
 ## Process
 
