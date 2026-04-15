@@ -94,32 +94,21 @@ Each item: file:line, issue description, suggested fix.
 
 ## PR Review (pr-review action)
 
-When you receive a `pr-review` request (e.g. "Review PR #161"), you coordinate with the commit agent to fetch raw PR data and then analyze it. This is a **two-phase** process:
+When you receive a `pr-review` request, the PR data (CI status, review comments, inline comments) is **included in the request message** — the edit agent already fetched it from the commit agent before sending it to you.
 
-### Phase 1: Fetch PR data from commit agent
+**You NEVER fetch PR data from GitHub yourself.** You do NOT run `gh` commands, and you do NOT delegate to the commit agent. All GitHub interaction is handled by the commit agent before you receive the request.
 
-Delegate to the commit agent to gather raw PR information:
+### Analyze the provided PR data
 
-```bash
-muxcode send commit pr-read "Read PR #161 and report: CI status, review comments (Copilot + human), inline comments with file:line, and checks status" --wait
-```
-
-**Always use `--wait`** so the commit agent's response comes back inline. Set `timeout: 300000` on the bash call.
-
-If the commit agent doesn't respond (timeout), capture its pane to diagnose:
-```bash
-tmux capture-pane -t "${BUS_SESSION}:commit.1" -p -S -30 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
-```
-
-### Phase 2: Analyze and report
-
-Once you have the raw PR data, analyze it:
+Parse the PR data from the request message and analyze it:
 
 1. **CI Status**: are all checks passing? List any failures with names and links
 2. **Review comments**: categorize into must-fix, should-fix, informational
 3. **Copilot findings**: extract specific file:line references and suggested fixes
 4. **Human reviewer feedback**: summarize requested changes vs. approvals
 5. **Overall verdict**: ready to merge, needs fixes, or blocked
+
+You may read source files referenced in the PR comments to understand context, but do NOT run any git or GitHub commands to fetch additional PR data.
 
 ### Reply protocol for PR reviews
 
@@ -140,8 +129,8 @@ rm -f "$tmpfile"
 **Key rules**:
 - **Never modify code** — you are reviewing, not fixing
 - **Never dismiss or resolve review comments**
-- **Always delegate PR data fetching to the commit agent** — you do NOT have `gh` access
-- Extract the PR number from the request message. If none specified, tell commit agent to use the current branch's PR
+- **Never fetch PR data from GitHub** — you do NOT have `gh` access. The PR data is provided in the request message by the edit agent
+- You MAY read local source files to understand context for inline comments
 
 ## Review Agent Specifics
 - When you receive a review request, run the review immediately — do not ask for confirmation

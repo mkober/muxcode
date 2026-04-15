@@ -32,7 +32,7 @@ A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — pro
 
 | Prohibited prefix | Delegate to | Bus command |
 |---|---|---|
-| `gh pr view`, `gh pr checks`, `gh pr diff`, `gh api repos/*/pulls/*` | **review agent** (action: `pr-review`) for analysis; **commit agent** (action: `pr-read`) for raw data | `muxcode send review pr-review "..."` |
+| `gh pr view`, `gh pr checks`, `gh pr diff`, `gh api repos/*/pulls/*` | **commit agent** (action: `pr-read`) for raw data; then forward to **review agent** for analysis | `muxcode send commit pr-read "..."` |
 | `gh pr create`, `gh pr merge`, `gh release` | commit agent | `muxcode send commit commit "..."` |
 | `git commit`, `git push`, `git pull`, `git rebase`, `git checkout`, `git branch`, `git merge`, `git stash`, `git tag` | commit agent | `muxcode send commit commit "..."` |
 | `./build.sh`, `pnpm build`, `make` | build agent | `muxcode send build build "..."` |
@@ -49,17 +49,29 @@ When the user asks about a Jira story, issue, ticket, or Confluence page — han
 
 Trigger phrases: "read the jira story", "review the jira ticket", "update the description", "check the acceptance criteria", "read the confluence page", "update the confluence doc".
 
-### PR review — delegate to review agent
+### PR review — two-step: commit agent fetches, review agent analyzes
 
-When the user says **any** of: "review PR", "review pr N", "check PR", "PR issues", "PR reviews", "PR feedback", "CI failures", "PR comments" — **immediately** delegate to the **review agent**:
+When the user says **any** of: "review PR", "review pr N", "check PR", "PR issues", "PR reviews", "PR feedback", "CI failures", "PR comments" — follow this **two-step** process:
+
+**Step 1: Fetch PR data from the commit agent**
+
+The commit agent is the ONLY agent that interacts with GitHub. Delegate to it first:
 
 ```bash
-muxcode send review pr-review "Review PR #161 — fetch PR data from commit agent, analyze feedback, CI status, and report findings" --wait
+muxcode send commit pr-read "Read PR #161 and report: CI status, review comments (Copilot + human), inline comments with file:line, and checks status" --wait
 ```
 
-The review agent will coordinate with the commit agent to fetch raw PR data (reviews, comments, checks) and then analyze it.
+**Step 2: Forward PR data to the review agent for analysis**
 
-Do NOT run `gh pr view`, `gh pr diff`, `gh pr checks`, or any `gh` command yourself. Do NOT handle PR reviews directly — always delegate to the **review** agent.
+Take the commit agent's response (raw PR data) and forward it to the review agent:
+
+```bash
+muxcode send review pr-review "Review this PR data and analyze for issues: <paste commit agent's response summary>" --wait
+```
+
+The review agent analyzes the PR data provided in the message — it never fetches from GitHub itself.
+
+Do NOT run `gh pr view`, `gh pr diff`, `gh pr checks`, or any `gh` command yourself. Do NOT send `pr-review` to the review agent without first fetching data from the commit agent.
 
 ### PR reading (raw data only) — delegate to commit agent
 
@@ -73,8 +85,9 @@ muxcode send commit pr-read "Read the PR on the current branch and report raw da
 
 **Every `send` command MUST include `--wait`** so the response is returned inline. Never use `sleep`, manual `inbox` polling, or `capture-pane` as a substitute for `--wait`.
 
-- **Review PR**: `muxcode send review pr-review "Review PR #N — fetch PR data, analyze feedback, CI status, and report" --wait`
-- **Read PR** (raw data): `muxcode send commit pr-read "Read the PR on the current branch and report raw data: CI check status, review comments, and inline comments" --wait`
+- **Review PR** (step 1 — fetch): `muxcode send commit pr-read "Read PR #N and report: CI status, review comments, inline comments with file:line, checks status" --wait`
+- **Review PR** (step 2 — analyze): `muxcode send review pr-review "Review this PR data and analyze for issues: <commit agent response>" --wait`
+- **Read PR** (raw data only): `muxcode send commit pr-read "Read the PR on the current branch and report raw data: CI check status, review comments, and inline comments" --wait`
 - **Build**: `muxcode send build build "Run ./build.sh and report results" --wait`
 - **Test**: `muxcode send test test "Run tests and report results" --wait`
 - **Review** (local changes): `muxcode send review review "Review the latest changes on this branch" --wait`
