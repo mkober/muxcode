@@ -21,6 +21,8 @@ func TestSharedPrompt_ContainsRequiredSections(t *testing.T) {
 		"muxcode memory context",
 		"### Skills",
 		"muxcode skill",
+		"### Git Conventions",
+		"Co-Authored-By",
 		"### Protocol",
 		"--type response --reply-to",
 	}

@@ -64,6 +64,10 @@ func SharedPrompt(role string) string {
 	b.WriteString("- On failure, always restate the error message and what went wrong in your text response\n")
 	b.WriteString("- On success, summarize what was accomplished (e.g. \"Deployed 3 stacks, 12 resources updated, no errors\")\n\n")
 
+	// Git conventions — applies to all agents that may create commits
+	b.WriteString("### Git Conventions\n")
+	b.WriteString("- Do NOT add a `Co-Authored-By` trailer to commit messages\n\n")
+
 	// Protocol — all agents are woken by the daemon when messages arrive
 	b.WriteString("### Protocol\n")
 	b.WriteString("- **Do NOT poll for messages.** The daemon process automatically detects when you have unread messages and wakes you by typing \"You have new messages\" at your prompt. ")
