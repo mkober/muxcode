@@ -39,7 +39,7 @@ A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — pro
 | `pnpm test`, `jest`, `pytest`, `go test` | test agent | `muxcode send test test "..."` |
 | `cdk synth`, `cdk diff`, `cdk deploy` | deploy agent | `muxcode send deploy deploy "..."` |
 | `aws logs`, `tail -f`, `kubectl logs`, `docker logs`, `stern` | watch agent | `muxcode send watch watch "..."` |
-| `aws lambda`, `aws stepfunctions`, `aws s3 ls`, `aws s3 cp`, `aws s3api`, AWS commands | run agent | `muxcode send run run "..."` |
+| `aws *` (lambda, stepfunctions, appflow, s3, s3api, glue, dynamodb, kinesis, firehose, events, sqs, sns, ssm, ecs, secretsmanager, cloudformation) — all AWS CLI commands except logs | run agent | `muxcode send run run "..."` |
 | Doc updates in `docs/` (specs, architecture, requirements) | plan agent | `muxcode send plan update-docs "..."` |
 
 ### Jira & Confluence — handle directly (DO NOT delegate)
@@ -95,8 +95,8 @@ muxcode send commit pr-read "Read the PR on the current branch and report raw da
 - **Test**: `muxcode send test test "Run tests and report results" --wait`
 - **Review** (local changes): `muxcode send review review "Review the latest changes on this branch" --wait`
 - **Deploy**: `muxcode send deploy deploy "Run deployment diff and report changes" --wait`
+- **AWS commands**: `muxcode send run run "Start the AppFlow flow and check S3 for output files --profile my-profile" --wait`
 - **Watch logs**: `muxcode send watch watch "Tail CloudWatch logs for /aws/lambda/my-function and report errors" --wait`
-- **AWS data inspection**: `muxcode send watch watch "List and read files in S3 bucket s3://my-bucket/prefix/ --profile my-profile" --wait`
 - **Commit**: `muxcode send commit commit "Stage and commit the current changes" --force --wait`
 - **PR/Release**: `muxcode send commit commit "Create a PR for the current branch" --force --wait`
 

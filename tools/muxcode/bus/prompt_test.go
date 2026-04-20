@@ -128,6 +128,10 @@ func TestSharedPrompt_NonHookProvider_HasManualBusSection(t *testing.T) {
 	if !strings.Contains(prompt, "muxcode send edit build") {
 		t.Error("SharedPrompt(build) should include build result message example")
 	}
+	// Build response examples must include --reply-to so --wait can detect responses
+	if !strings.Contains(prompt, `--type response --reply-to <id>`) {
+		t.Error("SharedPrompt(build) manual bus examples must include --reply-to for --wait reliability")
+	}
 	// Build agent should only see build-specific instructions, not test/deploy
 	if strings.Contains(prompt, "muxcode send edit test") {
 		t.Error("SharedPrompt(build) should NOT include test result example (role-specific)")

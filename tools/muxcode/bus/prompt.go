@@ -91,16 +91,16 @@ func SharedPrompt(role string) string {
 		switch role {
 		case "build":
 			b.WriteString("**After build commands** (`./build.sh`, `make`, `pnpm build`, etc.):\n")
-			b.WriteString("```bash\n# On success:\nmuxcode send edit build \"Build succeeded\" --type response\n")
-			b.WriteString("# On failure:\nmuxcode send edit build \"Build FAILED: <error summary>\" --type response\n```\n\n")
+			b.WriteString("```bash\n# On success:\nmuxcode send edit build \"Build succeeded\" --type response --reply-to <id>\n")
+			b.WriteString("# On failure:\nmuxcode send edit build \"Build FAILED: <error summary>\" --type response --reply-to <id>\n```\n\n")
 		case "test":
 			b.WriteString("**After test commands** (`pnpm test`, `jest`, `pytest`, `go test`, etc.):\n")
-			b.WriteString("```bash\n# On success:\nmuxcode send edit test \"Tests passed\" --type response\n")
-			b.WriteString("# On failure:\nmuxcode send edit test \"Tests FAILED: <error summary>\" --type response\n```\n\n")
+			b.WriteString("```bash\n# On success:\nmuxcode send edit test \"Tests passed\" --type response --reply-to <id>\n")
+			b.WriteString("# On failure:\nmuxcode send edit test \"Tests FAILED: <error summary>\" --type response --reply-to <id>\n```\n\n")
 		case "deploy":
 			b.WriteString("**After deploy commands** (`cdk deploy`, `terraform apply`, etc.):\n")
-			b.WriteString("```bash\n# On success:\nmuxcode send edit deploy \"Deploy succeeded\" --type response\n")
-			b.WriteString("# On failure:\nmuxcode send edit deploy \"Deploy FAILED: <error summary>\" --type response\n```\n\n")
+			b.WriteString("```bash\n# On success:\nmuxcode send edit deploy \"Deploy succeeded\" --type response --reply-to <id>\n")
+			b.WriteString("# On failure:\nmuxcode send edit deploy \"Deploy FAILED: <error summary>\" --type response --reply-to <id>\n```\n\n")
 		case "analyze":
 			b.WriteString("**After completing analysis**, always reply to the edit agent:\n")
 			b.WriteString("```bash\nmuxcode send edit response \"<analysis summary>\" --type response --reply-to <id>\n```\n\n")

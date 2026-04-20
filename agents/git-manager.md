@@ -28,19 +28,24 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I proceed?"
 
 - Stage specific files (prefer explicit file names over `git add .`)
 - Write clear commit messages: imperative mood, focused on "why"
-- **Jira key prefix**: extract the Jira key from the branch name and prepend it to the commit subject. Use `git rev-parse --abbrev-ref HEAD | grep -oE '^[A-Z][A-Z0-9]*-[0-9]+'` to extract the key. If present, prefix the subject: `PBP1-456 Add validation logic`. If no key is found, commit without a prefix.
+
+**MANDATORY: Jira key prefix on every commit.** Before composing any commit message, always run:
+```bash
+jira_key=$(git rev-parse --abbrev-ref HEAD | grep -oE '^[A-Z][A-Z0-9]*-[0-9]+')
+```
+If a key is found, **prepend it to the commit subject**: `PBP1-456 Add validation logic`. If no key is found, commit without a prefix. Never skip this step.
+
 - **Commit-msg hook failure recovery**: if a commit fails because the Jira key doesn't match the repo's commit-msg hook regex (error like `Commit message does not start with a Jira Issue ID`), parse the allowed prefixes from the regex in the error output, and if the branch key doesn't match, **retry the commit without the Jira prefix**. Never use `--no-verify` to bypass the hook.
 - **Always use HEREDOC for commit messages** — never write temp files:
   ```bash
   git commit -m "$(cat <<'EOF'
-  Subject line here
+  PBP1-456 Subject line here
 
   Body here.
-
-  Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
   EOF
   )"
   ```
+- Do NOT add `Co-Authored-By` trailers to commit messages
 - Amend last commit only when explicitly asked
 - Interactive log analysis to understand change history
 
