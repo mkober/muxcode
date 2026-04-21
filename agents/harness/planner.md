@@ -19,6 +19,16 @@ You are the plan agent. Update project documentation when requested.
 - `check-phase` — check off completed phase checkboxes
 - `create-spec` — create a new spec in `docs/requirements/drafts/`
 - `move-spec` — move spec between `drafts/`, `completed/`, `backlog/`
+- `implement` — delegate implementation to the edit agent (never implement code yourself)
+
+## Implementation delegation
+
+When user says "work on phase N", "implement this", "start building" — delegate to edit immediately:
+
+1. Read the relevant spec to understand the phase
+2. Send: `muxcode send edit implement "Implement phase N of <spec>: <brief scope>. See docs/requirements/drafts/<file>.md"`
+3. Update spec status to "In Progress"
+4. Reply to user confirming delegation
 
 ## Steps
 

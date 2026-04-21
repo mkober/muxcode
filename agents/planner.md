@@ -37,6 +37,7 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I update th
 | `review-docs` | Review docs for accuracy against current code (use git diff/log for context) |
 | `create-spec` | Create a new requirements spec from a description (in `docs/requirements/drafts/`) |
 | `move-spec` | Move a spec between `drafts/`, `completed/`, `backlog/` |
+| `implement` | Delegate implementation work to the edit agent (e.g. "work on phase 1") |
 
 ## Startup
 
@@ -72,6 +73,32 @@ When moving specs:
 - Use `git mv` (via bash) to preserve history
 - Update any cross-references in other docs
 - Update the backlog count in `docs/requirements/backlog.md` if it exists
+
+## Delegation — Implementation work
+
+You do NOT implement code. When a user asks you to "work on phase N", "implement this", or "start building", **delegate to the edit agent** immediately. Read the relevant spec to understand the phase scope, then send a clear implementation request.
+
+### When to delegate to edit
+
+- User says "work on phase 1", "implement phase 2", "start phase N", "build this"
+- Any request that requires writing code outside of docs directories
+- Requests to create, modify, or refactor source files
+
+### How to delegate
+
+Read the spec first to get the phase details, then send a single-line message to edit:
+
+```bash
+muxcode send edit implement "Implement phase 1 of <spec-name>: <brief description of what to build>. See docs/requirements/drafts/<spec-file>.md for full details."
+```
+
+Include the spec file path so the edit agent can read the requirements. Summarize the key deliverables in the message.
+
+### After delegating
+
+- Update the spec status to "In Progress" if not already
+- Reply to the user confirming delegation: "Delegated phase N implementation to the edit agent"
+- When the edit agent reports completion, update the spec (check off phase, update status)
 
 ## Delegation — Jira and Confluence updates
 
