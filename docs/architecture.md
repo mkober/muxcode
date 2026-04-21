@@ -115,6 +115,22 @@ Core code: `cmd/hook.go` (hook gating), `bus/prompt.go` (role-specific manual bu
 13. Review agent reviews diff, replies to edit
 ```
 
+### Documentation Update (edit → plan)
+
+```
+1. Edit agent completes an implementation phase
+2. Edit sends: muxcode send plan update-docs "Phase 1 complete — check off criteria" --wait
+3. Bus delivers to /tmp/muxcode-bus-{s}/inbox/plan.jsonl
+4. Plan agent reads inbox, reads the target spec and relevant code/diffs
+5. Plan agent updates docs: checks off acceptance criteria, updates status fields
+6. Plan agent replies: muxcode send edit update-docs "Updated conditional-chains.md..." --type response --reply-to <id>
+7. --wait detects response, prints summary to edit's Bash tool result
+```
+
+The plan agent (F1) is scoped exclusively to docs directories (`docs/`, `CLAUDE.md`, `README.md`). It maintains requirements specs, architecture docs, and planning artifacts. The `docs` hosted role is mapped to `plan` — messages to `docs` deliver to the plan agent's inbox.
+
+Actions: `update-docs`, `update-status`, `check-phase`, `add-decision`, `review-docs`, `create-spec`, `move-spec`. The plan agent does not participate in the build→test→review chain — it responds to explicit requests only.
+
 ### Deploy-Initiated Verification
 
 ```

@@ -391,5 +391,213 @@ func TestFormatStatusJSON_IncludesProvider(t *testing.T) {
 	}
 }
 
+// --- buildChainInstruction ---
+
+func TestBuildChainInstruction_NilConfig(t *testing.T) {
+	if got := buildChainInstruction("build", nil); got != "" {
+		t.Errorf("nil config should return empty, got %q", got)
+	}
+}
+
+func TestBuildChainInstruction_NoChainForRole(t *testing.T) {
+	cfg := &MuxcodeConfig{EventChains: map[string]EventChain{}}
+	if got := buildChainInstruction("build", cfg); got != "" {
+		t.Errorf("missing chain should return empty, got %q", got)
+	}
+}
+
+func TestBuildChainInstruction_DefaultBuildChain(t *testing.T) {
+	// Default config: build → test on success, notify edit on failure
+	cfg := DefaultConfig()
+	got := buildChainInstruction("build", cfg)
+
+	// Should mention sending to test on success
+	if !strings.Contains(got, "SUCCESS") {
+		t.Errorf("expected SUCCESS in instruction, got %q", got)
+	}
+	if !strings.Contains(got, "muxcode send test test") {
+		t.Errorf("expected 'muxcode send test test' in instruction, got %q", got)
+	}
+	// Should NOT mention failure (edit notifications are filtered out)
+	if strings.Contains(got, "FAILURE") {
+		t.Errorf("expected failure actions (edit events) to be filtered, got %q", got)
+	}
+}
+
+func TestBuildChainInstruction_DefaultTestChain(t *testing.T) {
+	cfg := DefaultConfig()
+	got := buildChainInstruction("test", cfg)
+
+	if !strings.Contains(got, "SUCCESS") {
+		t.Errorf("expected SUCCESS in instruction, got %q", got)
+	}
+	if !strings.Contains(got, "muxcode send review review") {
+		t.Errorf("expected 'muxcode send review review' in instruction, got %q", got)
+	}
+}
+
+func TestBuildChainInstruction_DefaultDeployChain(t *testing.T) {
+	cfg := DefaultConfig()
+	got := buildChainInstruction("deploy", cfg)
+
+	if !strings.Contains(got, "SUCCESS") {
+		t.Errorf("expected SUCCESS in instruction, got %q", got)
+	}
+	if !strings.Contains(got, "muxcode send run run") {
+		t.Errorf("expected 'muxcode send run run' in instruction, got %q", got)
+	}
+}
+
+func TestBuildChainInstruction_ConditionalActions(t *testing.T) {
+	cfg := &MuxcodeConfig{
+		EventChains: map[string]EventChain{
+			"build": {
+				OnSuccess: ChainActions{
+					{
+						SendTo:  "deploy",
+						Action:  "deploy",
+						Message: "Deploy infra changes",
+						Type:    "request",
+						Conditions: map[string]any{
+							"files_match":  "lib/**/*.ts",
+							"branch_match": "^main$",
+						},
+					},
+					{
+						SendTo:  "test",
+						Action:  "test",
+						Message: "Run tests",
+						Type:    "request",
+					},
+				},
+			},
+		},
+	}
+
+	got := buildChainInstruction("build", cfg)
+
+	// Should describe conditions
+	if !strings.Contains(got, "files match") {
+		t.Errorf("expected 'files match' condition description, got %q", got)
+	}
+	if !strings.Contains(got, "branch matches") {
+		t.Errorf("expected 'branch matches' condition description, got %q", got)
+	}
+	// Should have fallback
+	if !strings.Contains(got, "otherwise") {
+		t.Errorf("expected 'otherwise' fallback, got %q", got)
+	}
+	// Should mention both targets
+	if !strings.Contains(got, "deploy") {
+		t.Errorf("expected deploy target, got %q", got)
+	}
+	if !strings.Contains(got, "test") {
+		t.Errorf("expected test target, got %q", got)
+	}
+}
+
+func TestBuildChainInstruction_OnlyEditEvents(t *testing.T) {
+	// A chain that only notifies edit with events should produce no instruction
+	cfg := &MuxcodeConfig{
+		EventChains: map[string]EventChain{
+			"build": {
+				OnSuccess: ChainActions{{
+					SendTo:  "edit",
+					Action:  "notify",
+					Message: "Build done",
+					Type:    "event",
+				}},
+				OnFailure: ChainActions{{
+					SendTo:  "edit",
+					Action:  "notify",
+					Message: "Build failed",
+					Type:    "event",
+				}},
+			},
+		},
+	}
+
+	got := buildChainInstruction("build", cfg)
+	if got != "" {
+		t.Errorf("expected empty for edit-only events, got %q", got)
+	}
+}
+
+func TestBuildChainInstruction_AllConditionTypes(t *testing.T) {
+	cfg := &MuxcodeConfig{
+		EventChains: map[string]EventChain{
+			"build": {
+				OnSuccess: ChainActions{
+					{
+						SendTo:  "deploy",
+						Action:  "deploy",
+						Message: "Deploy",
+						Type:    "request",
+						Conditions: map[string]any{
+							"files_not_match":  "docs/**",
+							"branch_not_match": "^hotfix/",
+							"env_set":          "DEPLOY_ENABLED",
+							"env_equals":       map[string]any{"name": "ENV", "value": "prod"},
+							"output_contains":  "success",
+							"exit_code":        0,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	got := buildChainInstruction("build", cfg)
+
+	checks := []string{
+		"no changed files match",
+		"branch does not match",
+		"env var DEPLOY_ENABLED is set",
+		"env var ENV equals",
+		"output contains",
+		"exit code is",
+	}
+	for _, check := range checks {
+		if !strings.Contains(got, check) {
+			t.Errorf("expected %q in instruction, got %q", check, got)
+		}
+	}
+}
+
+func TestDescribeOutcome_Empty(t *testing.T) {
+	got := describeOutcome("SUCCESS", nil)
+	if got != "" {
+		t.Errorf("expected empty for nil actions, got %q", got)
+	}
+}
+
+func TestFilterMeaningfulActions(t *testing.T) {
+	actions := ChainActions{
+		{SendTo: "edit", Action: "notify", Type: "event"},
+		{SendTo: "test", Action: "test", Type: "request"},
+		{SendTo: "edit", Action: "notify", Type: "event"},
+	}
+
+	result := filterMeaningfulActions(actions)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 meaningful action, got %d", len(result))
+	}
+	if result[0].SendTo != "test" {
+		t.Errorf("expected test action, got %q", result[0].SendTo)
+	}
+}
+
+func TestActionType_Default(t *testing.T) {
+	a := ChainAction{Type: ""}
+	if got := actionType(a); got != "request" {
+		t.Errorf("empty type should default to request, got %q", got)
+	}
+
+	a.Type = "event"
+	if got := actionType(a); got != "event" {
+		t.Errorf("explicit type should be preserved, got %q", got)
+	}
+}
+
 // --- OpenCodeProvider ---
 // Full OpenCode provider tests are in provider_opencode_test.go

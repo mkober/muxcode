@@ -122,36 +122,36 @@ Create a `docs-management` skill available to the `plan` role:
 
 ### Phase 1: Core window and agent
 
-- [ ] `plan` window created at F1 with Neovim (left) + Claude Code (right)
-- [ ] `edit` shifts to F2, all other windows shift accordingly
-- [ ] `plan` role registered in `KnownRoles`, `splitLeftWindows`, `WindowForRole`
-- [ ] `agents/planner.md` agent definition created with docs-scoped instructions
-- [ ] Tool profile in `bus/profile.go` restricts plan agent to docs directories
-- [ ] `muxcode send plan update-docs "..."` delivers messages and planner responds
-- [ ] Neovim in plan window opens the last-edited doc file (via `git log` of `docs/`)
+- [x] `plan` window created at F1 with Neovim (left) + Claude Code (right)
+- [x] `edit` shifts to F2, all other windows shift accordingly
+- [x] `plan` role registered in `KnownRoles`, `splitLeftWindows`, `WindowForRole`
+- [x] `agents/planner.md` agent definition created with docs-scoped instructions
+- [x] Tool profile in `bus/profile.go` restricts plan agent to docs directories
+- [x] `muxcode send plan update-docs "..."` delivers messages and planner responds
+- [x] Neovim in plan window opens the last-edited doc file (via `git log` of `docs/`)
 
 ### Phase 2: Edit agent integration
 
-- [ ] `code-editor.md` updated with planner delegation rules
-- [ ] Edit agent delegates doc updates to planner when user requests
-- [ ] Planner replies via standard response protocol
-- [ ] `docs` hosted role remapped from `edit` to `plan`
+- [x] `code-editor.md` updated with planner delegation rules
+- [x] Edit agent delegates doc updates to planner when user requests
+- [x] Planner replies via standard response protocol
+- [x] `docs` hosted role remapped from `edit` to `plan`
 
 ### Phase 3: Skills and polish
 
-- [ ] `docs-management` skill created with spec lifecycle operations
-- [ ] Planner can move specs between `drafts/`, `completed/`, `backlog/`
-- [ ] Planner can check off acceptance criteria and update status fields
-- [ ] Harness agent definition created at `agents/harness/planner.md` for local LLMs
-- [ ] Status bar shows `F1 Plan` label
+- [x] `docs-management` skill created with spec lifecycle operations
+- [x] Planner can move specs between `drafts/`, `completed/`, `backlog/`
+- [x] Planner can check off acceptance criteria and update status fields
+- [x] Harness agent definition created at `agents/harness/planner.md` for local LLMs
+- [x] Status bar shows `F1 Plan` label
 
 ### Phase 4: Documentation
 
-- [ ] `CLAUDE.md` updated with plan role, tool profile, and key constraints
-- [ ] `docs/agents.md` updated with planner role description
-- [ ] `docs/architecture.md` updated with plan window in layout diagram
-- [ ] `README.md` updated with plan window in feature list
-- [ ] This spec moved to `completed/`
+- [x] `CLAUDE.md` updated with plan role, tool profile, and key constraints
+- [x] `docs/agents.md` updated with planner role description
+- [x] `docs/architecture.md` updated with plan window in layout diagram
+- [x] `README.md` updated with plan window in feature list
+- [x] This spec moved to `completed/`
 
 ## Key files
 
@@ -188,4 +188,4 @@ Create a `docs-management` skill available to the `plan` role:
 
 ## Status
 
-Draft
+Complete

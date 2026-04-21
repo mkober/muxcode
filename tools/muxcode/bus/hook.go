@@ -605,7 +605,7 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 		result.Logged = true
 
 	case CmdUnknown:
-		if role == "run" {
+		if role == "run" || role == "runner" || role == "watch" {
 			entry := HookHistoryEntry{
 				TS:          ts,
 				Command:     command,

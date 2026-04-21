@@ -12,15 +12,16 @@ import (
 
 // Subscription represents an event subscription for fan-out notifications.
 type Subscription struct {
-	ID        string `json:"id"`
-	Event     string `json:"event"`
-	Outcome   string `json:"outcome"`
-	Notify    string `json:"notify"`
-	Action    string `json:"action"`
-	Message   string `json:"message"`
-	Enabled   bool   `json:"enabled"`
-	CreatedAt int64  `json:"created_at"`
-	FireCount int    `json:"fire_count"`
+	ID         string         `json:"id"`
+	Event      string         `json:"event"`
+	Outcome    string         `json:"outcome"`
+	Notify     string         `json:"notify"`
+	Action     string         `json:"action"`
+	Message    string         `json:"message"`
+	Conditions map[string]any `json:"conditions,omitempty"`
+	Enabled    bool           `json:"enabled"`
+	CreatedAt  int64          `json:"created_at"`
+	FireCount  int            `json:"fire_count"`
 }
 
 // ReadSubscriptions reads all subscriptions from the JSONL file.
@@ -152,8 +153,10 @@ func SetSubscriptionEnabled(session, id string, enabled bool) error {
 	return WriteSubscriptions(session, entries)
 }
 
-// MatchSubscriptions filters subscriptions that are enabled and match the event+outcome.
-func MatchSubscriptions(subs []Subscription, event, outcome string) []Subscription {
+// MatchSubscriptions filters subscriptions that are enabled, match the event+outcome,
+// and whose conditions (if any) all pass against the given context.
+// When ctx is nil, conditions are skipped (backward compatible).
+func MatchSubscriptions(subs []Subscription, event, outcome string, ctx *ChainContext) []Subscription {
 	var matched []Subscription
 	for _, s := range subs {
 		if !s.Enabled {
@@ -165,6 +168,13 @@ func MatchSubscriptions(subs []Subscription, event, outcome string) []Subscripti
 		if s.Outcome != "*" && s.Outcome != outcome {
 			continue
 		}
+		// Evaluate conditions if present
+		if len(s.Conditions) > 0 && ctx != nil {
+			passed, _ := EvaluateConditions(s.Conditions, ctx)
+			if !passed {
+				continue
+			}
+		}
 		matched = append(matched, s)
 	}
 	return matched
@@ -172,14 +182,14 @@ func MatchSubscriptions(subs []Subscription, event, outcome string) []Subscripti
 
 // FireSubscriptions reads subscriptions, matches against the event/outcome,
 // expands message templates, and sends notifications. Returns the count of
-// fired subscriptions.
-func FireSubscriptions(session, from, event, outcome, exitCode, command string) (int, error) {
+// fired subscriptions. When ctx is nil, conditions are skipped (backward compatible).
+func FireSubscriptions(session, from, event, outcome, exitCode, command string, ctx *ChainContext) (int, error) {
 	subs, err := ReadSubscriptions(session)
 	if err != nil {
 		return 0, err
 	}
 
-	matched := MatchSubscriptions(subs, event, outcome)
+	matched := MatchSubscriptions(subs, event, outcome, ctx)
 	if len(matched) == 0 {
 		return 0, nil
 	}
@@ -187,7 +197,7 @@ func FireSubscriptions(session, from, event, outcome, exitCode, command string) 
 	fired := 0
 	notified := make(map[string]bool) // dedupe tmux notifications per role
 	for _, s := range matched {
-		payload := ExpandSubscriptionMessage(s.Message, event, outcome, exitCode, command)
+		payload := ExpandSubscriptionMessage(s.Message, event, outcome, exitCode, command, ctx)
 		msg := NewMessage(from, s.Notify, "event", s.Action, payload, "")
 		if err := SendNoCC(session, msg); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: subscription %s notify failed: %v\n", s.ID, err)
@@ -223,12 +233,24 @@ func FireSubscriptions(session, from, event, outcome, exitCode, command string) 
 }
 
 // ExpandSubscriptionMessage substitutes template variables in a subscription message.
-// Supported: ${event}, ${outcome}, ${exit_code}, ${command}
-func ExpandSubscriptionMessage(template, event, outcome, exitCode, command string) string {
+// Supported: ${event}, ${outcome}, ${exit_code}, ${command}, ${branch}, ${changed_files}
+// When ctx is nil, ${branch} and ${changed_files} are left as empty strings.
+func ExpandSubscriptionMessage(template, event, outcome, exitCode, command string, ctx *ChainContext) string {
 	s := strings.ReplaceAll(template, "${event}", event)
 	s = strings.ReplaceAll(s, "${outcome}", outcome)
 	s = strings.ReplaceAll(s, "${exit_code}", exitCode)
 	s = strings.ReplaceAll(s, "${command}", command)
+	if ctx != nil {
+		// Populate git info lazily if the template references it
+		if strings.Contains(s, "${branch}") || strings.Contains(s, "${changed_files}") {
+			ctx.PopulateGitInfo()
+		}
+		s = strings.ReplaceAll(s, "${branch}", ctx.Branch)
+		s = strings.ReplaceAll(s, "${changed_files}", formatChangedFiles(ctx.ChangedFiles))
+	} else {
+		s = strings.ReplaceAll(s, "${branch}", "")
+		s = strings.ReplaceAll(s, "${changed_files}", "")
+	}
 	return s
 }
 

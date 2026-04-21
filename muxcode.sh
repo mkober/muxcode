@@ -267,9 +267,15 @@ if [ "$FIRST_WIN" = "edit" ]; then
   tmux select-pane -t "$SESSION:$FIRST_WIN.0"
 elif [ "$FIRST_WIN" = "plan" ]; then
   send_init "$SESSION:$FIRST_WIN"
-  # Open the last-edited doc file in Neovim (fall back to docs/ directory)
-  _last_doc="$(cd "$PROJECT_DIR" && git log -1 --diff-filter=M --name-only --pretty=format: -- docs/ 2>/dev/null | head -1)"
-  if [ -n "$_last_doc" ] && [ -f "$PROJECT_DIR/$_last_doc" ]; then
+  # Open the last-changed doc file in Neovim (fall back to docs/ directory)
+  # Use git log (mtime unreliable after checkout/rebase), fall back to find/ls for non-git repos
+  _last_doc="$(git -C "$PROJECT_DIR" log -1 --diff-filter=M --name-only --pretty=format: -- 'docs/*.md' 'docs/**/*.md' 2>/dev/null | head -1)"
+  [ -n "$_last_doc" ] && _last_doc="$PROJECT_DIR/$_last_doc"
+  if [ -z "$_last_doc" ] || [ ! -f "$_last_doc" ]; then
+    _last_doc="$(find "$PROJECT_DIR/docs" -name '*.md' -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1)"
+  fi
+  if [ -n "$_last_doc" ] && [ -f "$_last_doc" ]; then
+    _last_doc="${_last_doc#"$PROJECT_DIR/"}"
     tmux send-keys -t "$SESSION:$FIRST_WIN" "MUXCODE=1 NVIM_APPNAME=$NVIM_APPNAME $EDITOR $_last_doc" Enter
   else
     tmux send-keys -t "$SESSION:$FIRST_WIN" "MUXCODE=1 NVIM_APPNAME=$NVIM_APPNAME $EDITOR docs/" Enter
@@ -297,8 +303,14 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
     # Plan window: Neovim (left, last-edited doc) + agent (right)
     tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN"
-    _last_doc="$(cd "$PROJECT_DIR" && git log -1 --diff-filter=M --name-only --pretty=format: -- docs/ 2>/dev/null | head -1)"
-    if [ -n "$_last_doc" ] && [ -f "$PROJECT_DIR/$_last_doc" ]; then
+    # Use git log (mtime unreliable after checkout/rebase), fall back to find/ls for non-git repos
+    _last_doc="$(git -C "$PROJECT_DIR" log -1 --diff-filter=M --name-only --pretty=format: -- 'docs/*.md' 'docs/**/*.md' 2>/dev/null | head -1)"
+    [ -n "$_last_doc" ] && _last_doc="$PROJECT_DIR/$_last_doc"
+    if [ -z "$_last_doc" ] || [ ! -f "$_last_doc" ]; then
+      _last_doc="$(find "$PROJECT_DIR/docs" -name '*.md' -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1)"
+    fi
+    if [ -n "$_last_doc" ] && [ -f "$_last_doc" ]; then
+      _last_doc="${_last_doc#"$PROJECT_DIR/"}"
       tmux send-keys -t "$SESSION:$WIN" "MUXCODE=1 NVIM_APPNAME=$NVIM_APPNAME $EDITOR $_last_doc" Enter
     else
       tmux send-keys -t "$SESSION:$WIN" "MUXCODE=1 NVIM_APPNAME=$NVIM_APPNAME $EDITOR docs/" Enter

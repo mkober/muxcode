@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -432,7 +433,7 @@ func TestResolveChain_BuildSuccess(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
-	action := ResolveChain("build", "success")
+	action := ResolveChain("build", "success", nil)
 	if action == nil {
 		t.Fatal("expected chain action for build success")
 	}
@@ -451,7 +452,7 @@ func TestResolveChain_TestSuccess(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
-	action := ResolveChain("test", "success")
+	action := ResolveChain("test", "success", nil)
 	if action == nil {
 		t.Fatal("expected chain action for test success")
 	}
@@ -470,7 +471,7 @@ func TestResolveChain_TestFailure(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
-	action := ResolveChain("test", "failure")
+	action := ResolveChain("test", "failure", nil)
 	if action == nil {
 		t.Fatal("expected chain action for test failure")
 	}
@@ -486,7 +487,7 @@ func TestResolveChain_DeploySuccess(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
-	action := ResolveChain("deploy", "success")
+	action := ResolveChain("deploy", "success", nil)
 	if action == nil {
 		t.Fatal("expected chain action for deploy success")
 	}
@@ -505,7 +506,7 @@ func TestResolveChain_NoChain(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
-	action := ResolveChain("nonexistent", "success")
+	action := ResolveChain("nonexistent", "success", nil)
 	if action != nil {
 		t.Errorf("expected nil for nonexistent success, got %+v", action)
 	}
@@ -766,4 +767,136 @@ func assertContainsStr(t *testing.T, slice []string, want string) {
 		}
 	}
 	t.Errorf("slice missing %q, got %v", want, slice)
+}
+
+func TestChainActions_UnmarshalSingleObject(t *testing.T) {
+	data := []byte(`{"send_to":"test","action":"test","message":"run tests","type":"request"}`)
+	var ca ChainActions
+	if err := json.Unmarshal(data, &ca); err != nil {
+		t.Fatalf("unmarshal single object: %v", err)
+	}
+	if len(ca) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(ca))
+	}
+	if ca[0].SendTo != "test" {
+		t.Errorf("send_to = %q, want test", ca[0].SendTo)
+	}
+}
+
+func TestChainActions_UnmarshalArray(t *testing.T) {
+	data := []byte(`[
+		{"send_to":"deploy","action":"deploy","type":"request","conditions":{"branch_match":"^main$"}},
+		{"send_to":"test","action":"test","type":"request"}
+	]`)
+	var ca ChainActions
+	if err := json.Unmarshal(data, &ca); err != nil {
+		t.Fatalf("unmarshal array: %v", err)
+	}
+	if len(ca) != 2 {
+		t.Fatalf("expected 2 actions, got %d", len(ca))
+	}
+	if ca[0].SendTo != "deploy" {
+		t.Errorf("first action send_to = %q, want deploy", ca[0].SendTo)
+	}
+	if ca[1].SendTo != "test" {
+		t.Errorf("second action send_to = %q, want test", ca[1].SendTo)
+	}
+	if ca[0].Conditions == nil || ca[0].Conditions["branch_match"] != "^main$" {
+		t.Errorf("first action conditions = %v, want branch_match=^main$", ca[0].Conditions)
+	}
+}
+
+func TestChainActions_MarshalSinglePreservesObject(t *testing.T) {
+	ca := ChainActions{{SendTo: "test", Action: "test", Type: "request"}}
+	data, err := json.Marshal(ca)
+	if err != nil {
+		t.Fatalf("marshal single: %v", err)
+	}
+	// Should be an object, not an array
+	s := string(data)
+	if s[0] == '[' {
+		t.Errorf("single action should marshal as object, got: %s", s)
+	}
+	if s[0] != '{' {
+		t.Errorf("expected object, got: %s", s)
+	}
+}
+
+func TestChainActions_MarshalMultipleAsArray(t *testing.T) {
+	ca := ChainActions{
+		{SendTo: "deploy", Action: "deploy", Type: "request"},
+		{SendTo: "test", Action: "test", Type: "request"},
+	}
+	data, err := json.Marshal(ca)
+	if err != nil {
+		t.Fatalf("marshal multiple: %v", err)
+	}
+	s := string(data)
+	if s[0] != '[' {
+		t.Errorf("multiple actions should marshal as array, got: %s", s)
+	}
+}
+
+func TestChainActions_RoundTrip(t *testing.T) {
+	// Single object round-trip
+	original := ChainActions{{SendTo: "test", Action: "test", Message: "run tests", Type: "request"}}
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var restored ChainActions
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(restored) != 1 || restored[0].SendTo != "test" {
+		t.Errorf("round-trip single failed: %+v", restored)
+	}
+
+	// Array round-trip
+	original2 := ChainActions{
+		{SendTo: "deploy", Action: "deploy", Type: "request"},
+		{SendTo: "test", Action: "test", Type: "request"},
+	}
+	data2, err := json.Marshal(original2)
+	if err != nil {
+		t.Fatalf("marshal array: %v", err)
+	}
+	var restored2 ChainActions
+	if err := json.Unmarshal(data2, &restored2); err != nil {
+		t.Fatalf("unmarshal array: %v", err)
+	}
+	if len(restored2) != 2 || restored2[0].SendTo != "deploy" || restored2[1].SendTo != "test" {
+		t.Errorf("round-trip array failed: %+v", restored2)
+	}
+}
+
+func TestEventChain_UnmarshalJSON(t *testing.T) {
+	// Full EventChain with mixed single-object and array actions
+	data := []byte(`{
+		"on_success": [
+			{"send_to":"deploy","action":"deploy","type":"request","conditions":{"branch_match":"^main$"}},
+			{"send_to":"test","action":"test","type":"request"}
+		],
+		"on_failure": {"send_to":"edit","action":"notify","type":"event"},
+		"notify_analyst_on": ["failure"]
+	}`)
+	var chain EventChain
+	if err := json.Unmarshal(data, &chain); err != nil {
+		t.Fatalf("unmarshal EventChain: %v", err)
+	}
+	if len(chain.OnSuccess) != 2 {
+		t.Fatalf("on_success: expected 2 actions, got %d", len(chain.OnSuccess))
+	}
+	if len(chain.OnFailure) != 1 {
+		t.Fatalf("on_failure: expected 1 action, got %d", len(chain.OnFailure))
+	}
+	if len(chain.OnUnknown) != 0 {
+		t.Fatalf("on_unknown: expected 0 actions, got %d", len(chain.OnUnknown))
+	}
+	if chain.OnSuccess[0].SendTo != "deploy" {
+		t.Errorf("first success action send_to = %q, want deploy", chain.OnSuccess[0].SendTo)
+	}
+	if chain.OnSuccess[1].SendTo != "test" {
+		t.Errorf("second success action send_to = %q, want test", chain.OnSuccess[1].SendTo)
+	}
 }

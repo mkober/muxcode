@@ -169,6 +169,17 @@ Always report the current state after operations: branch name, ahead/behind stat
 - After branch operations: `muxcode send edit notify "Branch: <status summary>"`
 - Save branch naming patterns and commit conventions to memory
 
+### Context Management
+
+**Compact after every multi-step operation.** PR creation (with Copilot replies), rebases, branch creation sequences, and pr-read analyses all consume large amounts of context. After completing any of these, immediately compact:
+
+```bash
+muxcode session compact "<summary of what was done>"
+muxcode compact  # run in background
+```
+
+Do not wait for a `compact-recommended` alert — by that point your context may already be too large to respond. Compact proactively after every PR, every rebase, and every pr-read cycle.
+
 ### Session History Logging
 
 After successful git operations, log them to the commit history for the left-pane display. This provides richer summaries than the automatic bash hook capture:

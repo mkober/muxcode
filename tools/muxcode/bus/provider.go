@@ -1,7 +1,9 @@
 package bus
 
 import (
+	"fmt"
 	"os"
+	"strings"
 )
 
 // Provider abstracts the AI CLI backend used by an agent role.
@@ -107,18 +109,141 @@ func roleDefaultCLI(role string) string {
 }
 
 // chainInstructionForRole returns an additional SendWakeUp prompt suffix
-// for roles that participate in the build→test→review chain. Non-hook
-// providers (OpenCode, Codex) don't have PostToolUse bash hooks, so the
-// chain must be triggered explicitly via the injected prompt.
+// for roles that participate in event chains (e.g. build→test→review).
+// Non-hook providers (OpenCode, Codex) don't have PostToolUse bash hooks,
+// so the chain must be triggered explicitly via the injected prompt.
+// Delegates to buildChainInstruction() using the global config.
 func chainInstructionForRole(role string) string {
-	switch role {
-	case "build":
-		return " — ALSO on SUCCESS ONLY, you MUST trigger tests: muxcode send test test \"Build succeeded, run tests\" --type request"
-	case "test":
-		return " — ALSO on SUCCESS ONLY, you MUST trigger review: muxcode send review review \"Tests passed, review changes\" --type request"
-	default:
+	return buildChainInstruction(role, Config())
+}
+
+// buildChainInstruction generates a natural-language chain instruction for
+// a role by reading EventChains config. Returns "" if the role has no chain
+// responsibilities. The role is the event source (e.g. "build" owns the
+// "build" event chain).
+func buildChainInstruction(role string, cfg *MuxcodeConfig) string {
+	if cfg == nil {
 		return ""
 	}
+	chain, ok := cfg.EventChains[role]
+	if !ok {
+		return ""
+	}
+
+	var parts []string
+
+	if inst := describeOutcome("SUCCESS", chain.OnSuccess); inst != "" {
+		parts = append(parts, inst)
+	}
+	if inst := describeOutcome("FAILURE", chain.OnFailure); inst != "" {
+		parts = append(parts, inst)
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return " — ALSO after your task completes, you MUST trigger the chain: " + strings.Join(parts, "; ")
+}
+
+// describeOutcome generates a natural-language instruction for one outcome's
+// action list. Returns "" if there are no actions to describe.
+func describeOutcome(outcome string, actions ChainActions) string {
+	if len(actions) == 0 {
+		return ""
+	}
+
+	// Filter out actions that just notify edit (events) — those are handled
+	// by hooks/CC, not by the agent prompt.
+	meaningful := filterMeaningfulActions(actions)
+	if len(meaningful) == 0 {
+		return ""
+	}
+
+	// Single unconditional action — simple instruction
+	if len(meaningful) == 1 && len(meaningful[0].Conditions) == 0 {
+		a := meaningful[0]
+		return fmt.Sprintf("on %s, send: muxcode send %s %s %q --type %s",
+			outcome, a.SendTo, a.Action, a.Message, actionType(a))
+	}
+
+	// Multiple actions or conditional actions — describe in order
+	var descs []string
+	for i, a := range meaningful {
+		desc := describeAction(a, i == len(meaningful)-1)
+		descs = append(descs, desc)
+	}
+
+	return fmt.Sprintf("on %s: %s", outcome, strings.Join(descs, "; "))
+}
+
+// describeAction generates a description of a single chain action,
+// including its conditions if any.
+func describeAction(a ChainAction, isLast bool) string {
+	cmd := fmt.Sprintf("muxcode send %s %s %q --type %s",
+		a.SendTo, a.Action, a.Message, actionType(a))
+
+	if len(a.Conditions) == 0 {
+		if isLast {
+			return fmt.Sprintf("otherwise send: %s", cmd)
+		}
+		return fmt.Sprintf("send: %s", cmd)
+	}
+
+	condDesc := describeConditions(a.Conditions)
+	return fmt.Sprintf("if %s, send: %s", condDesc, cmd)
+}
+
+// describeConditions generates a natural-language description of a conditions map.
+func describeConditions(conditions map[string]any) string {
+	var parts []string
+	for key, val := range conditions {
+		switch key {
+		case "files_match":
+			parts = append(parts, fmt.Sprintf("changed files match %q", val))
+		case "files_not_match":
+			parts = append(parts, fmt.Sprintf("no changed files match %q", val))
+		case "branch_match":
+			parts = append(parts, fmt.Sprintf("branch matches %q", val))
+		case "branch_not_match":
+			parts = append(parts, fmt.Sprintf("branch does not match %q", val))
+		case "env_set":
+			parts = append(parts, fmt.Sprintf("env var %v is set", val))
+		case "env_equals":
+			if m, ok := val.(map[string]any); ok {
+				parts = append(parts, fmt.Sprintf("env var %v equals %q", m["name"], m["value"]))
+			}
+		case "output_contains":
+			parts = append(parts, fmt.Sprintf("output contains %q", val))
+		case "exit_code":
+			parts = append(parts, fmt.Sprintf("exit code is %v", val))
+		default:
+			parts = append(parts, fmt.Sprintf("%s=%v", key, val))
+		}
+	}
+	return strings.Join(parts, " AND ")
+}
+
+// filterMeaningfulActions returns actions that are not just edit notifications
+// (event-type messages to edit are handled by hooks/CC, not agent prompts).
+func filterMeaningfulActions(actions ChainActions) []ChainAction {
+	var result []ChainAction
+	for _, a := range actions {
+		// Skip event notifications to edit — those are for the hook system
+		if a.SendTo == "edit" && a.Type == "event" {
+			continue
+		}
+		result = append(result, a)
+	}
+	return result
+}
+
+// actionType returns the action type, defaulting to "request" if empty.
+func actionType(a ChainAction) string {
+	if a.Type != "" {
+		return a.Type
+	}
+	return "request"
 }
 
 // --- LocalProvider ---

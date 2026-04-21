@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -36,32 +37,52 @@ func Subscribe(args []string) {
 	}
 }
 
-// subscribeAdd handles: subscribe add <event> <outcome> <notify> [message...]
+// subscribeAdd handles: subscribe add <event> <outcome> <notify> [--conditions JSON] [message...]
 func subscribeAdd(args []string) {
 	if len(args) < 3 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode subscribe add <event> <outcome> <notify> [message]\n")
-		fmt.Fprintf(os.Stderr, "  event:   build, test, deploy, or * (all)\n")
-		fmt.Fprintf(os.Stderr, "  outcome: success, failure, or * (any)\n")
-		fmt.Fprintf(os.Stderr, "  notify:  agent role to notify\n")
-		fmt.Fprintf(os.Stderr, "  message: template (supports ${event}, ${outcome}, ${exit_code}, ${command})\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode subscribe add <event> <outcome> <notify> [--conditions JSON] [message]\n")
+		fmt.Fprintf(os.Stderr, "  event:      build, test, deploy, or * (all)\n")
+		fmt.Fprintf(os.Stderr, "  outcome:    success, failure, or * (any)\n")
+		fmt.Fprintf(os.Stderr, "  notify:     agent role to notify\n")
+		fmt.Fprintf(os.Stderr, "  conditions: JSON object (e.g. '{\"files_match\":\"lib/**/*.ts\"}')\n")
+		fmt.Fprintf(os.Stderr, "  message:    template (supports ${event}, ${outcome}, ${exit_code}, ${command}, ${branch}, ${changed_files})\n")
 		os.Exit(1)
 	}
 
 	event := args[0]
 	outcome := args[1]
 	notify := args[2]
-	message := ""
-	if len(args) > 3 {
-		message = strings.Join(args[3:], " ")
+	remaining := args[3:]
+
+	var conditions map[string]any
+	var messageParts []string
+
+	for i := 0; i < len(remaining); i++ {
+		if remaining[i] == "--conditions" {
+			if i+1 >= len(remaining) {
+				fmt.Fprintf(os.Stderr, "Error: --conditions requires a JSON value\n")
+				os.Exit(1)
+			}
+			i++
+			if err := json.Unmarshal([]byte(remaining[i]), &conditions); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid conditions JSON: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			messageParts = append(messageParts, remaining[i])
+		}
 	}
+
+	message := strings.Join(messageParts, " ")
 
 	session := bus.BusSession()
 
 	entry, err := bus.AddSubscription(session, bus.Subscription{
-		Event:   event,
-		Outcome: outcome,
-		Notify:  notify,
-		Message: message,
+		Event:      event,
+		Outcome:    outcome,
+		Notify:     notify,
+		Message:    message,
+		Conditions: conditions,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error adding subscription: %v\n", err)
@@ -70,6 +91,10 @@ func subscribeAdd(args []string) {
 
 	fmt.Printf("Added subscription: %s\n", entry.ID)
 	fmt.Printf("  Event: %s  Outcome: %s  Notify: %s\n", entry.Event, entry.Outcome, entry.Notify)
+	if len(entry.Conditions) > 0 {
+		condJSON, _ := json.Marshal(entry.Conditions)
+		fmt.Printf("  Conditions: %s\n", condJSON)
+	}
 	fmt.Printf("  Message: %s\n", entry.Message)
 }
 

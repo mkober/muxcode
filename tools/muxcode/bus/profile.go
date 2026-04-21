@@ -32,19 +32,48 @@ type ToolProfile struct {
 
 // EventChain defines actions triggered by command outcomes.
 type EventChain struct {
-	OnSuccess       *ChainAction `json:"on_success,omitempty"`
-	OnFailure       *ChainAction `json:"on_failure,omitempty"`
-	OnUnknown       *ChainAction `json:"on_unknown,omitempty"`
+	OnSuccess       ChainActions `json:"on_success,omitempty"`
+	OnFailure       ChainActions `json:"on_failure,omitempty"`
+	OnUnknown       ChainActions `json:"on_unknown,omitempty"`
 	NotifyAnalyst   bool         `json:"notify_analyst"`
 	NotifyAnalystOn []string     `json:"notify_analyst_on,omitempty"`
 }
 
+// ChainActions wraps []ChainAction with custom JSON marshal/unmarshal
+// to support both single-object and array forms in config.
+type ChainActions []ChainAction
+
+func (ca *ChainActions) UnmarshalJSON(data []byte) error {
+	// Try array first
+	var arr []ChainAction
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*ca = arr
+		return nil
+	}
+	// Fall back to single object
+	var single ChainAction
+	if err := json.Unmarshal(data, &single); err != nil {
+		return err
+	}
+	*ca = ChainActions{single}
+	return nil
+}
+
+func (ca ChainActions) MarshalJSON() ([]byte, error) {
+	// Preserve single-object format when only one action (config readability)
+	if len(ca) == 1 {
+		return json.Marshal(ca[0])
+	}
+	return json.Marshal([]ChainAction(ca))
+}
+
 // ChainAction is a single action in an event chain.
 type ChainAction struct {
-	SendTo  string `json:"send_to"`
-	Action  string `json:"action"`
-	Message string `json:"message"`
-	Type    string `json:"type"`
+	SendTo     string         `json:"send_to"`
+	Action     string         `json:"action"`
+	Message    string         `json:"message"`
+	Type       string         `json:"type"`
+	Conditions map[string]any `json:"conditions,omitempty"`
 }
 
 // configSingleton is the lazy-loaded config (single-goroutine safe).
@@ -99,7 +128,14 @@ func LoadConfig() (*MuxcodeConfig, error) {
 	}
 
 	// Merge over defaults so missing roles still work
-	return mergeConfigs(DefaultConfig(), loaded), nil
+	result := mergeConfigs(DefaultConfig(), loaded)
+
+	// Validate conditions — emit warnings for unknown types
+	for _, w := range ValidateConfig(result) {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
+
+	return result, nil
 }
 
 // configDir returns the user config directory.
@@ -272,12 +308,36 @@ func expandCdPrefix(tool string) string {
 }
 
 // ResolveChain looks up the chain action for an event type and outcome.
-func ResolveChain(eventType, outcome string) *ChainAction {
+// When the outcome has multiple actions (array), they are evaluated in order —
+// first action whose conditions all pass is returned (first-match wins).
+// An action with no conditions acts as an unconditional fallback.
+// When ctx is nil, conditions are skipped (backward compatible) and the first
+// action is returned.
+func ResolveChain(eventType, outcome string, ctx *ChainContext) *ChainAction {
 	cfg := Config()
 	chain, ok := cfg.EventChains[eventType]
 	if !ok {
 		return nil
 	}
+	actions := resolveActions(chain, outcome)
+	if len(actions) == 0 {
+		return nil
+	}
+	for i := range actions {
+		a := &actions[i]
+		if ctx != nil && len(a.Conditions) > 0 {
+			passed, _ := EvaluateConditions(a.Conditions, ctx)
+			if !passed {
+				continue
+			}
+		}
+		return a
+	}
+	return nil
+}
+
+// resolveActions returns the action list for an outcome.
+func resolveActions(chain EventChain, outcome string) ChainActions {
 	switch outcome {
 	case "success":
 		return chain.OnSuccess
@@ -287,6 +347,36 @@ func ResolveChain(eventType, outcome string) *ChainAction {
 		return chain.OnUnknown
 	}
 	return nil
+}
+
+// ResolveChainVerbose is like ResolveChain but returns condition evaluation details.
+// Used by the CLI --verbose flag. Returns all condition results across all actions
+// evaluated (not just the matching one).
+func ResolveChainVerbose(eventType, outcome string, ctx *ChainContext) (*ChainAction, []ConditionResult) {
+	cfg := Config()
+	chain, ok := cfg.EventChains[eventType]
+	if !ok {
+		return nil, nil
+	}
+	actions := resolveActions(chain, outcome)
+	if len(actions) == 0 {
+		return nil, nil
+	}
+	var allResults []ConditionResult
+	for i := range actions {
+		a := &actions[i]
+		if ctx != nil && len(a.Conditions) > 0 {
+			passed, results := EvaluateConditions(a.Conditions, ctx)
+			allResults = append(allResults, results...)
+			if !passed {
+				continue
+			}
+			return a, allResults
+		}
+		// Unconditional action — matches immediately
+		return a, allResults
+	}
+	return nil, allResults
 }
 
 // ChainNotifyAnalyst returns whether the chain should notify the analyst.
@@ -326,11 +416,38 @@ func ChainShouldNotifyAnalyst(eventType, outcome string) bool {
 }
 
 // ExpandMessage substitutes template variables in a chain message.
-// Supported: ${exit_code}, ${command}
+// Supported: ${exit_code}, ${command}, ${branch}, ${changed_files}
 func ExpandMessage(template, exitCode, command string) string {
 	s := strings.ReplaceAll(template, "${exit_code}", exitCode)
 	s = strings.ReplaceAll(s, "${command}", command)
 	return s
+}
+
+// ExpandMessageWithContext substitutes all template variables including context-aware ones.
+// Supported: ${exit_code}, ${command}, ${branch}, ${changed_files}
+func ExpandMessageWithContext(template, exitCode, command string, ctx *ChainContext) string {
+	s := ExpandMessage(template, exitCode, command)
+	if ctx != nil {
+		// Populate git info lazily if the template references it
+		if strings.Contains(s, "${branch}") || strings.Contains(s, "${changed_files}") {
+			ctx.PopulateGitInfo()
+		}
+		s = strings.ReplaceAll(s, "${branch}", ctx.Branch)
+		s = strings.ReplaceAll(s, "${changed_files}", formatChangedFiles(ctx.ChangedFiles))
+	}
+	return s
+}
+
+// formatChangedFiles returns a comma-separated list of files, truncated to 10.
+func formatChangedFiles(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	max := 10
+	if len(files) <= max {
+		return strings.Join(files, ", ")
+	}
+	return strings.Join(files[:max], ", ") + fmt.Sprintf(", ... (%d more)", len(files)-max)
 }
 
 // autoCCCache is the cached auto-CC role set.
@@ -614,66 +731,108 @@ func DefaultConfig() *MuxcodeConfig {
 		},
 		EventChains: map[string]EventChain{
 			"deploy": {
-				OnSuccess: &ChainAction{
-					SendTo:  "deploy",
-					Action:  "verify",
-					Message: "Deployment succeeded (${command}) — verify deployed resources and report results to edit",
+				OnSuccess: ChainActions{{
+					SendTo:  "run",
+					Action:  "run",
+					Message: "Deployment succeeded (${command}) — run post-deploy verification and report results",
 					Type:    "request",
-				},
-				OnFailure: &ChainAction{
+				}},
+				OnFailure: ChainActions{{
 					SendTo:  "edit",
 					Action:  "notify",
 					Message: "Deployment FAILED (exit ${exit_code}): ${command} — check deploy window",
 					Type:    "event",
-				},
-				OnUnknown: &ChainAction{
+				}},
+				OnUnknown: ChainActions{{
 					SendTo:  "edit",
 					Action:  "notify",
 					Message: "Deployment completed (exit code unknown): ${command}",
 					Type:    "event",
-				},
+				}},
 				NotifyAnalystOn: []string{"*"},
 			},
+			"run": {
+				OnSuccess: ChainActions{{
+					SendTo:  "watch",
+					Action:  "watch",
+					Message: "Run succeeded (${command}) — tail logs to verify deployed services are healthy and report findings to edit",
+					Type:    "request",
+				}},
+				OnFailure: ChainActions{{
+					SendTo:  "edit",
+					Action:  "notify",
+					Message: "Run FAILED (exit ${exit_code}): ${command} — check run window",
+					Type:    "event",
+				}},
+				OnUnknown: ChainActions{{
+					SendTo:  "edit",
+					Action:  "notify",
+					Message: "Run completed (exit code unknown): ${command}",
+					Type:    "event",
+				}},
+				NotifyAnalystOn: []string{"failure", "unknown"},
+			},
+			"watch": {
+				OnSuccess: ChainActions{{
+					SendTo:  "edit",
+					Action:  "notify",
+					Message: "Watch completed — logs look healthy after deploy (${command})",
+					Type:    "event",
+				}},
+				OnFailure: ChainActions{{
+					SendTo:  "edit",
+					Action:  "notify",
+					Message: "Watch detected errors (exit ${exit_code}): ${command} — check watch window for log details",
+					Type:    "event",
+				}},
+				OnUnknown: ChainActions{{
+					SendTo:  "edit",
+					Action:  "notify",
+					Message: "Watch completed (exit code unknown): ${command}",
+					Type:    "event",
+				}},
+				NotifyAnalystOn: []string{"failure"},
+			},
 			"build": {
-				OnSuccess: &ChainAction{
+				OnSuccess: ChainActions{{
 					SendTo:  "test",
 					Action:  "test",
 					Message: "Build succeeded (${command}) — run tests and report results",
 					Type:    "request",
-				},
-				OnFailure: &ChainAction{
+				}},
+				OnFailure: ChainActions{{
 					SendTo:  "edit",
 					Action:  "notify",
 					Message: "Build FAILED (exit ${exit_code}): ${command} — check build window",
 					Type:    "event",
-				},
-				OnUnknown: &ChainAction{
+				}},
+				OnUnknown: ChainActions{{
 					SendTo:  "edit",
 					Action:  "notify",
 					Message: "Build completed (exit code unknown): ${command}",
 					Type:    "event",
-				},
+				}},
 				NotifyAnalystOn: []string{"failure", "unknown"},
 			},
 			"test": {
-				OnSuccess: &ChainAction{
+				OnSuccess: ChainActions{{
 					SendTo:  "review",
 					Action:  "review",
 					Message: "Tests passed (${command}) — review the latest changes on this branch and report findings to edit",
 					Type:    "request",
-				},
-				OnFailure: &ChainAction{
+				}},
+				OnFailure: ChainActions{{
 					SendTo:  "edit",
 					Action:  "notify",
 					Message: "Tests FAILED (exit ${exit_code}): ${command} — check test window",
 					Type:    "event",
-				},
-				OnUnknown: &ChainAction{
+				}},
+				OnUnknown: ChainActions{{
 					SendTo:  "edit",
 					Action:  "notify",
 					Message: "Tests completed (exit code unknown): ${command}",
 					Type:    "event",
-				},
+				}},
 				NotifyAnalystOn: []string{"failure", "unknown"},
 			},
 		},
@@ -683,4 +842,22 @@ func DefaultConfig() *MuxcodeConfig {
 			"test":  {Deny: []string{"review"}},
 		},
 	}
+}
+
+// ValidateConfig checks event chain conditions for unknown types.
+// Returns warnings (not errors) for forward compatibility.
+func ValidateConfig(cfg *MuxcodeConfig) []string {
+	var warnings []string
+	for event, chain := range cfg.EventChains {
+		for _, actions := range []ChainActions{chain.OnSuccess, chain.OnFailure, chain.OnUnknown} {
+			for _, action := range actions {
+				for key := range action.Conditions {
+					if !IsKnownCondition(key) {
+						warnings = append(warnings, fmt.Sprintf("event_chains.%s: unknown condition type %q", event, key))
+					}
+				}
+			}
+		}
+	}
+	return warnings
 }

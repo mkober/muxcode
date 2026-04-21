@@ -178,8 +178,7 @@ Report lint and build status clearly: lint issues found, build success with warn
 - After completing a build, reply to the **requesting agent only once** (check the `from` field):
   - On success: `muxcode send <requester> build "Build succeeded: <summary>" --type response --reply-to <id>`
   - On failure: `muxcode send <requester> build "Build failed: <summary of errors>" --type response --reply-to <id>`
-- **After a successful build, send a test request manually** (no auto-chain):
-`muxcode send test test "Build succeeded, run tests" --type request`
+- **Do NOT send a test request — send a test request manually after a successful build.**
 - **Send exactly ONE reply per request. Do NOT send additional messages to edit or test — the hooks handle chaining.**
 - Include the key output lines (errors, warnings) in your reply so the requester has full context
 - Save recurring build issues to memory for future reference
@@ -222,7 +221,13 @@ muxcode session status           # check session uptime and compact count
 muxcode session compact "<summary>"  # save session summary to memory
 ```
 
-**When to compact**: After completing a major task or when your session has been running for a long time. Summaries are automatically restored on restart.
+**When to compact**: Compact proactively to avoid running out of context. Triggers:
+- After completing a multi-step task (PR creation, rebase, deploy, review)
+- After 3+ consecutive requests without compacting
+- When you receive a `compact-recommended` alert from the daemon
+- When your session has been running for a long time
+
+**Do not wait until context is full** — by then it's too late and you may get stuck thinking. Compact early and often. Summaries are automatically restored on restart.
 
 **Combined compact**: When the user says "compact", when you receive a `compact-recommended` alert, or whenever you decide to compact, always do both steps together:
 1. Save context to memory: `muxcode session compact "<summary of key work, decisions, and state>"`
@@ -241,6 +246,9 @@ Claude Code's TUI collapses tool calls into terse summaries like "Ran 5 bash com
 - On failure, always restate the error message and what went wrong in your text response
 - On success, summarize what was accomplished (e.g. "Deployed 3 stacks, 12 resources updated, no errors")
 
+### Git Conventions
+- Do NOT add a `Co-Authored-By` trailer to commit messages
+
 ### Protocol
 - **Do NOT poll for messages.** The daemon process automatically detects when you have unread messages and wakes you by typing "You have new messages" at your prompt. Just process your messages, reply, and go idle — you will be woken when new work arrives.
 - When prompted with "You have new messages", immediately run `muxcode inbox` and act on every message without asking
@@ -255,9 +263,9 @@ Your AI CLI does not support automatic hooks, so you must send bus messages manu
 **After build commands** (`./build.sh`, `make`, `pnpm build`, etc.):
 ```bash
 # On success:
-muxcode send edit build "Build succeeded" --type response
+muxcode send edit build "Build succeeded" --type response --reply-to <id>
 # On failure:
-muxcode send edit build "Build FAILED: <error summary>" --type response
+muxcode send edit build "Build FAILED: <error summary>" --type response --reply-to <id>
 ```
 
 These messages replace the automatic hook-driven chains that Claude Code agents use. Always send a result message so the edit agent knows your task is complete.

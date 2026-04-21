@@ -27,6 +27,10 @@ const (
 	StateCommitting WorkflowState = 9
 	StateDeploying  WorkflowState = 10
 	StateDeployFail WorkflowState = 11
+	StateRunning    WorkflowState = 12
+	StateRunFail    WorkflowState = 13
+	StateWatching   WorkflowState = 14
+	StateWatchFail  WorkflowState = 15
 )
 
 // stateNames maps workflow states to their string names.
@@ -43,6 +47,10 @@ var stateNames = map[WorkflowState]string{
 	StateCommitting: "committing",
 	StateDeploying:  "deploying",
 	StateDeployFail: "deploy-failed",
+	StateRunning:    "running",
+	StateRunFail:    "run-failed",
+	StateWatching:   "watching",
+	StateWatchFail:  "watch-failed",
 }
 
 // stateFromName maps string names back to workflow states.
@@ -94,6 +102,8 @@ type WorkflowStateEntry struct {
 	TestOutcome   string        `json:"test_outcome"`
 	ReviewOutcome string        `json:"review_outcome"`
 	DeployOutcome string        `json:"deploy_outcome"`
+	RunOutcome    string        `json:"run_outcome"`
+	WatchOutcome  string        `json:"watch_outcome"`
 }
 
 // WorkflowStatePath returns the state file path.
@@ -147,6 +157,10 @@ func WithOutcome(phase string, outcome string) TransitionOpt {
 			e.ReviewOutcome = outcome
 		case "deploy":
 			e.DeployOutcome = outcome
+		case "run":
+			e.RunOutcome = outcome
+		case "watch":
+			e.WatchOutcome = outcome
 		}
 	}
 }
@@ -188,6 +202,8 @@ func TransitionWorkflow(session string, newState WorkflowState, trigger string, 
 		entry.TestOutcome = ""
 		entry.ReviewOutcome = ""
 		entry.DeployOutcome = ""
+		entry.RunOutcome = ""
+		entry.WatchOutcome = ""
 	}
 
 	entry.PrevState = entry.State
@@ -259,6 +275,12 @@ func FormatWorkflowState(entry WorkflowStateEntry) string {
 	if entry.DeployOutcome != "" {
 		outcomes = append(outcomes, "deploy:"+entry.DeployOutcome)
 	}
+	if entry.RunOutcome != "" {
+		outcomes = append(outcomes, "run:"+entry.RunOutcome)
+	}
+	if entry.WatchOutcome != "" {
+		outcomes = append(outcomes, "watch:"+entry.WatchOutcome)
+	}
 	if len(outcomes) > 0 {
 		parts = append(parts, fmt.Sprintf("outcomes: %s", strings.Join(outcomes, " ")))
 	}
@@ -295,9 +317,9 @@ func WorkflowStateColor(state WorkflowState) string {
 		return ColorDim
 	case StateEditing, StateAnalyzing:
 		return ColorCyan
-	case StateBuilding, StateTesting, StateReviewing, StateCommitting, StateDeploying:
+	case StateBuilding, StateTesting, StateReviewing, StateCommitting, StateDeploying, StateRunning, StateWatching:
 		return ColorYellow
-	case StateBuildFail, StateTestFail, StateDeployFail:
+	case StateBuildFail, StateTestFail, StateDeployFail, StateRunFail, StateWatchFail:
 		return ColorRed
 	case StateReviewed:
 		return ColorGreen

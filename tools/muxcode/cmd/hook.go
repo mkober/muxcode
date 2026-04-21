@@ -70,13 +70,34 @@ func hookBash() {
 	outcome := bus.HookOutcome(exitCode)
 	command := ev.ToolInput.Command
 
+	// Build chain context from tool event for condition evaluation
+	var ctx *bus.ChainContext
+	switch result.CommandType {
+	case bus.CmdBuild, bus.CmdTest, bus.CmdDeployApply:
+		ctx = bus.BuildChainContext(ev)
+	}
+
 	switch result.CommandType {
 	case bus.CmdBuild:
-		triggerChain(session, role, "build", outcome, exitCode, command)
+		triggerChain(session, role, "build", outcome, exitCode, command, ctx)
 	case bus.CmdTest:
-		triggerChain(session, role, "test", outcome, exitCode, command)
+		triggerChain(session, role, "test", outcome, exitCode, command, ctx)
 	case bus.CmdDeployApply:
-		triggerChain(session, role, "deploy", outcome, exitCode, command)
+		triggerChain(session, role, "deploy", outcome, exitCode, command, ctx)
+	case bus.CmdUnknown:
+		// Run and watch agents execute arbitrary commands — trigger their chains
+		switch role {
+		case "run", "runner":
+			if ctx == nil {
+				ctx = bus.BuildChainContext(ev)
+			}
+			triggerChain(session, role, "run", outcome, exitCode, command, ctx)
+		case "watch":
+			if ctx == nil {
+				ctx = bus.BuildChainContext(ev)
+			}
+			triggerChain(session, role, "watch", outcome, exitCode, command, ctx)
+		}
 	}
 	// CmdDeploy (diff/plan without apply) — no chain trigger
 	// CmdGit — no chain trigger
@@ -84,7 +105,7 @@ func hookBash() {
 
 // triggerChain fires the event chain and analyst notifications.
 // This mirrors the logic in cmd/chain.go but called inline.
-func triggerChain(session, from, eventType, outcome, exitCode, command string) {
+func triggerChain(session, from, eventType, outcome, exitCode, command string, ctx *bus.ChainContext) {
 	// Workflow guard: prevent re-triggering when already in or past target state.
 	// This breaks the test→review→test loop where review completion causes the
 	// test agent to re-run tests, which re-triggers another review request.
@@ -98,14 +119,22 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string) {
 		if outcome == "success" && (state == bus.StateTesting || state == bus.StateReviewing || state == bus.StateReviewed) {
 			return
 		}
+	case "deploy":
+		if outcome == "success" && (state == bus.StateRunning || state == bus.StateWatching) {
+			return
+		}
+	case "run":
+		if outcome == "success" && state == bus.StateWatching {
+			return
+		}
 	}
 
-	action := bus.ResolveChain(eventType, outcome)
+	action := bus.ResolveChain(eventType, outcome, ctx)
 	if action == nil {
 		return
 	}
 
-	message := bus.ExpandMessage(action.Message, exitCode, command)
+	message := bus.ExpandMessageWithContext(action.Message, exitCode, command, ctx)
 	msg := bus.NewMessage(from, action.SendTo, action.Type, action.Action, message, "")
 
 	// Atomic dedup check + send under file lock
@@ -134,9 +163,28 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string) {
 				bus.WithOutcome("test", "failure"))
 		}
 	case "deploy":
-		if outcome != "success" {
+		if outcome == "success" {
+			bus.TransitionWorkflow(session, bus.StateRunning, "chain:deploy:success",
+				bus.WithOutcome("deploy", "success"))
+		} else {
 			bus.TransitionWorkflow(session, bus.StateDeployFail, "chain:deploy:failure",
 				bus.WithOutcome("deploy", "failure"))
+		}
+	case "run":
+		if outcome == "success" {
+			bus.TransitionWorkflow(session, bus.StateWatching, "chain:run:success",
+				bus.WithOutcome("run", "success"))
+		} else {
+			bus.TransitionWorkflow(session, bus.StateRunFail, "chain:run:failure",
+				bus.WithOutcome("run", "failure"))
+		}
+	case "watch":
+		if outcome == "success" {
+			bus.TransitionWorkflow(session, bus.StateIdle, "chain:watch:success",
+				bus.WithOutcome("watch", "success"))
+		} else {
+			bus.TransitionWorkflow(session, bus.StateWatchFail, "chain:watch:failure",
+				bus.WithOutcome("watch", "failure"))
 		}
 	}
 
@@ -157,8 +205,8 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string) {
 		}
 	}
 
-	// Fire event subscriptions
-	bus.FireSubscriptions(session, from, eventType, outcome, exitCode, command)
+	// Fire event subscriptions (pass context for condition evaluation)
+	bus.FireSubscriptions(session, from, eventType, outcome, exitCode, command, ctx)
 }
 
 // hookGuard implements the PreToolUse Bash hook for the edit window
