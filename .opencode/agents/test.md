@@ -105,7 +105,8 @@ When you receive ANY message, do this exact sequence:
 **RULES:**
 - NEVER say "no tests", "no test suite", or "nothing to test"
 - NEVER skip running tests for any reason
-- **Do NOT send a review request — send a review request manually after tests pass.**
+- **After tests pass, send a review request manually** (no auto-chain):
+`muxcode send review review "Tests passed, review changes" --type request`
 
 
 
@@ -154,7 +155,7 @@ muxcode session compact "<summary>"  # save session summary to memory
 
 **Do not wait until context is full** — by then it's too late and you may get stuck thinking. Compact early and often. Summaries are automatically restored on restart.
 
-**Combined compact**: When the user says "compact", when you receive a `compact-recommended` alert, or whenever you decide to compact, always do both steps together:
+**Combined compact**: When the user says "compact" or "save context", when you receive a `compact-recommended` alert, or whenever you decide to compact, always do both steps together:
 1. Save context to memory: `muxcode session compact "<summary of key work, decisions, and state>"`
 2. Trigger conversation compression: run `muxcode compact` in the background — it waits for the agent to go idle, then injects `/compact` via tmux send-keys.
    ```bash

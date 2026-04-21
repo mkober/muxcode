@@ -1382,19 +1382,22 @@ Core code: `cmd/track.go`, `bus/delivery.go`.
 
 ### `muxcode compact`
 
-Trigger conversation compression for an agent.
+Trigger conversation compression for an agent or all agents.
 
 ```bash
-muxcode compact [role]
+muxcode compact [--all] [role]
 ```
 
 Polls the agent's tmux pane for idle state (detects `❯` prompt) every second for up to 30 seconds. Once idle, clears residual input and injects `/compact` via `tmux send-keys` to trigger Claude Code's built-in conversation compression. If the agent doesn't become idle within the timeout, exits silently.
 
+- `--all` — compact all active agents (skips hosted roles, stopped agents, dead agents)
 - `role` — target role (defaults to `AGENT_ROLE` env var)
+
+With `--all`, iterates over all compactable roles (excludes hosted roles like `docs`/`research`/`pr-read`, modal roles like `api`/`webhook`, stopped agents, and dead agents). Each agent is compacted sequentially. Progress is printed to stderr.
 
 This is a fire-and-forget command — run it in the background after saving context via `muxcode session compact "<summary>"`.
 
-Core code: `cmd/compact.go`.
+Core code: `cmd/compact.go`, `bus/compact.go` (`CompactableRoles`).
 
 ## Environment Variables
 

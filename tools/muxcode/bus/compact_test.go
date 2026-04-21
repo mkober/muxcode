@@ -387,6 +387,41 @@ func TestCheckRoleCompaction_SizeNotMet_TimeMet(t *testing.T) {
 	}
 }
 
+func TestCompactableRoles_ExcludesHostedAndSpecial(t *testing.T) {
+	session := testSession(t)
+	roles := CompactableRoles(session)
+
+	// Hosted roles should never appear
+	for _, role := range roles {
+		if IsHostedRole(role) {
+			t.Errorf("CompactableRoles includes hosted role: %s", role)
+		}
+	}
+
+	// Excluded roles should never appear
+	for _, role := range roles {
+		if compactExcludedRoles[role] {
+			t.Errorf("CompactableRoles includes excluded role: %s", role)
+		}
+	}
+}
+
+func TestCompactableRoles_ExcludesStopped(t *testing.T) {
+	session := testSession(t)
+
+	// Mark build as stopped
+	if err := MarkAgentStopped(session, "build"); err != nil {
+		t.Fatal(err)
+	}
+
+	roles := CompactableRoles(session)
+	for _, role := range roles {
+		if role == "build" {
+			t.Error("CompactableRoles includes stopped role: build")
+		}
+	}
+}
+
 // writeTestFile creates a file of the given size at the specified path.
 func writeTestFile(t *testing.T, path string, size int) {
 	t.Helper()

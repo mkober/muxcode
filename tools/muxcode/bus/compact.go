@@ -154,6 +154,41 @@ func formatCompactMessage(role string, total, memory, history, log int64, hours 
 	)
 }
 
+// compactExcludedRoles lists roles that should be excluded from --all compaction.
+// webhook: not a tmux-based agent.
+// api: modal role, not always running.
+var compactExcludedRoles = map[string]bool{
+	"webhook": true,
+	"api":     true,
+}
+
+// CompactableRoles returns the list of roles that should be compacted
+// during a --all operation. Filters out hosted roles (they share windows),
+// excluded roles, stopped agents, and dead agents.
+func CompactableRoles(session string) []string {
+	var roles []string
+	for _, role := range KnownRoles {
+		// Skip hosted roles — they share a window with their host
+		if IsHostedRole(role) {
+			continue
+		}
+		// Skip excluded roles
+		if compactExcludedRoles[role] {
+			continue
+		}
+		// Skip stopped agents
+		if IsAgentStopped(session, role) {
+			continue
+		}
+		// Skip dead agents
+		if !IsAgentAlive(session, role) {
+			continue
+		}
+		roles = append(roles, role)
+	}
+	return roles
+}
+
 // formatBytes formats a byte count as a human-readable string (KB/MB).
 func formatBytes(b int64) string {
 	if b < 1024 {

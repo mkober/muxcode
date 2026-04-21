@@ -222,7 +222,7 @@ muxcode session compact "<summary>"  # save session summary to memory
 
 **Do not wait until context is full** — by then it's too late and you may get stuck thinking. Compact early and often. Summaries are automatically restored on restart.
 
-**Combined compact**: When the user says "compact", when you receive a `compact-recommended` alert, or whenever you decide to compact, always do both steps together:
+**Combined compact**: When the user says "compact" or "save context", when you receive a `compact-recommended` alert, or whenever you decide to compact, always do both steps together:
 1. Save context to memory: `muxcode session compact "<summary of key work, decisions, and state>"`
 2. Trigger conversation compression: run `muxcode compact` in the background — it waits for the agent to go idle, then injects `/compact` via tmux send-keys.
    ```bash

@@ -48,13 +48,20 @@ func SharedPrompt(role string) string {
 	b.WriteString("- When your session has been running for a long time\n\n")
 	b.WriteString("**Do not wait until context is full** — by then it's too late and you may get stuck thinking. ")
 	b.WriteString("Compact early and often. Summaries are automatically restored on restart.\n\n")
-	b.WriteString("**Combined compact**: When the user says \"compact\", when you receive a `compact-recommended` alert, ")
+	b.WriteString("**Combined compact**: When the user says \"compact\" or \"save context\", when you receive a `compact-recommended` alert, ")
 	b.WriteString("or whenever you decide to compact, always do both steps together:\n")
 	b.WriteString("1. Save context to memory: `muxcode session compact \"<summary of key work, decisions, and state>\"`\n")
-	b.WriteString("2. Trigger conversation compression: run `muxcode compact` in the background — ")
-	b.WriteString("it waits for the agent to go idle, then injects `/compact` via tmux send-keys.\n")
-	b.WriteString("   ```bash\n   muxcode compact  # run in background (Bash run_in_background=true)\n   ```\n\n")
-	b.WriteString("This preserves learnings across sessions (step 1) and keeps the current session lean (step 2). ")
+	if role == "edit" {
+		b.WriteString("2. Trigger conversation compression for **all** agents: run `muxcode compact --all` in the background — ")
+		b.WriteString("it iterates over all active agents, waits for each to become idle, then injects `/compact` via tmux send-keys.\n")
+		b.WriteString("   ```bash\n   muxcode compact --all  # run in background (Bash run_in_background=true)\n   ```\n\n")
+		b.WriteString("This preserves learnings across sessions (step 1) and compresses context for all agents at once (step 2). ")
+	} else {
+		b.WriteString("2. Trigger conversation compression: run `muxcode compact` in the background — ")
+		b.WriteString("it waits for the agent to go idle, then injects `/compact` via tmux send-keys.\n")
+		b.WriteString("   ```bash\n   muxcode compact  # run in background (Bash run_in_background=true)\n   ```\n\n")
+		b.WriteString("This preserves learnings across sessions (step 1) and keeps the current session lean (step 2). ")
+	}
 	b.WriteString("**Important**: Do NOT output `/compact` as text — it is a built-in slash command that only works when typed at the `❯` prompt. ")
 	b.WriteString("The `muxcode compact` command handles this automatically.\n\n")
 

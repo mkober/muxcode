@@ -38,19 +38,29 @@ func Spawn(args []string) {
 	}
 }
 
-// spawnStart handles: spawn start <role> "<task>"
+// spawnStart handles: spawn start <role> "<task>" [--no-worktree]
 func spawnStart(args []string) {
-	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode spawn start <role> \"<task>\"\n")
+	useWorktree := true
+	var filtered []string
+	for _, arg := range args {
+		if arg == "--no-worktree" {
+			useWorktree = false
+		} else {
+			filtered = append(filtered, arg)
+		}
+	}
+
+	if len(filtered) < 2 {
+		fmt.Fprintf(os.Stderr, "Usage: muxcode spawn start <role> \"<task>\" [--no-worktree]\n")
 		os.Exit(1)
 	}
 
-	role := args[0]
-	task := strings.Join(args[1:], " ")
+	role := filtered[0]
+	task := strings.Join(filtered[1:], " ")
 	session := bus.BusSession()
 	owner := bus.BusRole()
 
-	entry, err := bus.StartSpawn(session, role, task, owner)
+	entry, err := bus.StartSpawn(session, role, task, owner, useWorktree)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting spawn: %v\n", err)
 		os.Exit(1)
@@ -59,6 +69,11 @@ func spawnStart(args []string) {
 	fmt.Printf("Started spawn: %s\n", entry.ID)
 	fmt.Printf("  Role: %s  Spawn Role: %s  Owner: %s\n", entry.Role, entry.SpawnRole, entry.Owner)
 	fmt.Printf("  Window: %s\n", entry.Window)
+	if entry.Worktree != "" {
+		fmt.Printf("  Worktree: %s (ref: %s)\n", entry.Worktree, entry.WorktreeRef)
+	} else {
+		fmt.Printf("  Worktree: shared (main working directory)\n")
+	}
 	fmt.Printf("  Task: %s\n", entry.Task)
 }
 

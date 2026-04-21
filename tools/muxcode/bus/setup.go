@@ -3,6 +3,7 @@ package bus
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -94,6 +95,8 @@ func Init(session, memoryDir string) error {
 		if err := purgeStaleFiles(session); err != nil {
 			return err
 		}
+		// Clean up orphaned spawn worktrees from previous session
+		cleanSpawnWorktrees(session)
 	}
 
 	// Create memory directory and shared.md if not exists
@@ -255,4 +258,17 @@ func purgeStaleFiles(session string) error {
 	// Already handled by the lock dir cleanup above, but explicit for clarity
 
 	return nil
+}
+
+// cleanSpawnWorktrees removes the entire spawn worktree base directory for a session
+// and prunes stale git worktree references. Called during re-init to clean up from
+// a previous session.
+func cleanSpawnWorktrees(session string) {
+	base := SpawnWorktreeBase(session)
+	if _, err := os.Stat(base); err != nil {
+		return // nothing to clean
+	}
+	_ = os.RemoveAll(base)
+	// Prune stale git worktree references
+	_ = exec.Command("git", "worktree", "prune").Run()
 }

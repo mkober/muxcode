@@ -422,7 +422,7 @@ func OpenOrSpawn(session, name, sizeFlag string) error {
 
 	// No client — headless spawn fallback
 	if cfg.Role != "" {
-		_, spawnErr := StartSpawn(session, cfg.Role, "modal-fallback", "modal")
+		_, spawnErr := StartSpawn(session, cfg.Role, "modal-fallback", "modal", false)
 		return spawnErr
 	}
 

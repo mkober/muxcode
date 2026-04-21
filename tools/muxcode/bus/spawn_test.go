@@ -1,9 +1,11 @@
 package bus
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -350,6 +352,201 @@ func TestFormatSpawnStatus_Running(t *testing.T) {
 	}
 	if strings.Contains(out, "Duration:") {
 		t.Error("running spawn should not show duration")
+	}
+}
+
+func TestSpawnWorktreeBase(t *testing.T) {
+	base := SpawnWorktreeBase("test-session")
+	if !strings.Contains(base, "muxcode-spawn-test-session") {
+		t.Errorf("SpawnWorktreeBase: expected path containing muxcode-spawn-test-session, got %s", base)
+	}
+}
+
+func TestSpawnEntryWorktreeFields_BackwardCompat(t *testing.T) {
+	// Verify that SpawnEntry without worktree fields still unmarshals correctly
+	// (backward compatibility with pre-worktree spawn entries)
+	jsonStr := `{"id":"s1","role":"research","spawn_role":"spawn-11111111","owner":"edit","task":"test","status":"running","window":"spawn-11111111","started_at":1700000000}`
+	var e SpawnEntry
+	if err := json.Unmarshal([]byte(jsonStr), &e); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if e.Worktree != "" {
+		t.Errorf("expected empty Worktree, got %q", e.Worktree)
+	}
+	if e.WorktreeRef != "" {
+		t.Errorf("expected empty WorktreeRef, got %q", e.WorktreeRef)
+	}
+	if e.ID != "s1" || e.Role != "research" {
+		t.Errorf("unexpected fields: ID=%q Role=%q", e.ID, e.Role)
+	}
+}
+
+func TestSpawnEntryWorktreeFields_Marshal(t *testing.T) {
+	// Verify that empty worktree fields are omitted from JSON (omitempty)
+	e := SpawnEntry{ID: "s1", Role: "research", SpawnRole: "spawn-11111111", Status: "running"}
+	data, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(data), "worktree") {
+		t.Errorf("expected worktree fields to be omitted, got: %s", string(data))
+	}
+
+	// With worktree set, it should appear
+	e.Worktree = "/tmp/muxcode-spawn-test/spawn-11111111"
+	e.WorktreeRef = "abc123"
+	data, err = json.Marshal(e)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"worktree"`) {
+		t.Errorf("expected worktree field in JSON, got: %s", string(data))
+	}
+	if !strings.Contains(string(data), `"worktree_ref"`) {
+		t.Errorf("expected worktree_ref field in JSON, got: %s", string(data))
+	}
+}
+
+func TestRemoveSpawnWorktree_EmptyPath(t *testing.T) {
+	// Should be a no-op for empty path
+	if err := removeSpawnWorktree(""); err != nil {
+		t.Errorf("removeSpawnWorktree empty path: %v", err)
+	}
+}
+
+func TestRemoveSpawnWorktree_NonexistentPath(t *testing.T) {
+	// Should succeed even if path doesn't exist (graceful)
+	if err := removeSpawnWorktree("/tmp/nonexistent-worktree-path-12345"); err != nil {
+		t.Errorf("removeSpawnWorktree nonexistent path: %v", err)
+	}
+}
+
+func TestPruneOrphanedWorktrees_NoBaseDir(t *testing.T) {
+	// Should not panic when base dir doesn't exist
+	pruneOrphanedWorktrees("nonexistent-session-xyz", nil)
+}
+
+func TestPruneOrphanedWorktrees_RemovesOrphans(t *testing.T) {
+	session := fmt.Sprintf("test-prune-%d", rand.Int())
+	base := SpawnWorktreeBase(session)
+	defer os.RemoveAll(base)
+
+	// Create some directories under the base
+	activeDir := filepath.Join(base, "spawn-active1")
+	orphanDir := filepath.Join(base, "spawn-orphan1")
+	if err := os.MkdirAll(activeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(orphanDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Only active entry references activeDir
+	running := []SpawnEntry{
+		{Worktree: activeDir, Status: "running"},
+	}
+
+	pruneOrphanedWorktrees(session, running)
+
+	// Active dir should still exist
+	if _, err := os.Stat(activeDir); err != nil {
+		t.Errorf("expected active dir to still exist: %v", err)
+	}
+	// Orphan dir should be removed
+	if _, err := os.Stat(orphanDir); !os.IsNotExist(err) {
+		t.Errorf("expected orphan dir to be removed")
+	}
+}
+
+func TestCleanFinishedSpawns_CleansWorktrees(t *testing.T) {
+	session := testSession(t)
+
+	// Create a fake worktree directory for a completed spawn
+	wtDir := filepath.Join(t.TempDir(), "fake-worktree")
+	if err := os.MkdirAll(wtDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	testEntries := []SpawnEntry{
+		{ID: "s1", SpawnRole: "spawn-11111111", Status: "running"},
+		{ID: "s2", SpawnRole: "spawn-22222222", Status: "completed", Worktree: wtDir},
+	}
+	_ = WriteSpawnEntries(session, testEntries)
+	_ = touchFile(InboxPath(session, "spawn-11111111"))
+	_ = touchFile(InboxPath(session, "spawn-22222222"))
+
+	removed, err := CleanFinishedSpawns(session)
+	if err != nil {
+		t.Fatalf("CleanFinishedSpawns: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("expected 1 removed, got %d", removed)
+	}
+
+	// Worktree dir should be removed
+	if _, err := os.Stat(wtDir); !os.IsNotExist(err) {
+		t.Errorf("expected worktree dir to be removed")
+	}
+}
+
+func TestFormatSpawnList_ShowsWorktreeColumn(t *testing.T) {
+	entries := []SpawnEntry{
+		{ID: "s1", Role: "research", SpawnRole: "spawn-11111111", Status: "running", Owner: "edit",
+			Task: "task1", Worktree: "/tmp/wt"},
+		{ID: "s2", Role: "test", SpawnRole: "spawn-22222222", Status: "running", Owner: "edit",
+			Task: "task2"},
+	}
+
+	out := FormatSpawnList(entries, true)
+	if !strings.Contains(out, "WORKTREE") {
+		t.Error("expected WORKTREE header column")
+	}
+	if !strings.Contains(out, "yes") {
+		t.Error("expected 'yes' for spawn with worktree")
+	}
+	if !strings.Contains(out, "shared") {
+		t.Error("expected 'shared' for spawn without worktree")
+	}
+}
+
+func TestFormatSpawnStatus_ShowsWorktree(t *testing.T) {
+	entry := SpawnEntry{
+		ID:          "s1",
+		Role:        "research",
+		SpawnRole:   "spawn-a1b2c3d4",
+		Status:      "running",
+		Owner:       "edit",
+		Window:      "spawn-a1b2c3d4",
+		Task:        "Research the topic",
+		StartedAt:   time.Now().Unix(),
+		Worktree:    "/tmp/muxcode-spawn-test/spawn-a1b2c3d4",
+		WorktreeRef: "abc123def456",
+	}
+
+	out := FormatSpawnStatus(entry)
+	if !strings.Contains(out, "/tmp/muxcode-spawn-test/spawn-a1b2c3d4") {
+		t.Error("expected worktree path in output")
+	}
+	if !strings.Contains(out, "abc123def456") {
+		t.Error("expected worktree ref in output")
+	}
+}
+
+func TestFormatSpawnStatus_SharedWorktree(t *testing.T) {
+	entry := SpawnEntry{
+		ID:        "s1",
+		Role:      "research",
+		SpawnRole: "spawn-a1b2c3d4",
+		Status:    "running",
+		Owner:     "edit",
+		Window:    "spawn-a1b2c3d4",
+		Task:      "Research the topic",
+		StartedAt: time.Now().Unix(),
+	}
+
+	out := FormatSpawnStatus(entry)
+	if !strings.Contains(out, "shared") {
+		t.Error("expected 'shared' for spawn without worktree")
 	}
 }
 
