@@ -75,6 +75,7 @@ Non-hook providers degrade gracefully across three layers:
 | research | code-researcher.md | research | Search web, explore codebases, answer questions |
 | pr-read | pr-reader.md | commit *(via git-manager)* | Analyze PR review feedback and report suggested fixes |
 | api | api-tester.md | api | Manage API collections, execute requests, track history |
+| agent | autonomous-agent.md | edit *(via mode cycle)* | Autonomous story executor — reads Jira, creates requirements, implements features, submits PRs |
 
 ## Agent Categories
 
@@ -125,6 +126,54 @@ The git-manager reads reviews, CI checks, and inline comments, categorizes them 
 export BUS_SESSION="your-session"
 muxcode-agent.sh pr-read
 ```
+
+### Autonomous Agent (agent)
+
+The autonomous agent operates a complete Jira story lifecycle without user intervention — from reading todo stories to submitting completed PRs. It shares the F2 window with the edit agent via mode cycling (press F2 when on the edit window to toggle, or `prefix + a` from any window).
+
+**Mode cycling**: `muxcode mode cycle` swaps panes between the edit agent (nvim + Claude Code) and the autonomous agent (console viewer + Claude Code). All processes persist across cycles — nvim, edit agent, and autonomous agent keep their sessions alive in hidden tmux holding windows.
+
+| Command | Description |
+|---------|-------------|
+| `muxcode mode cycle` | Cycle to next agent on the edit window |
+| `muxcode mode status` | Show current agent, cycle index, registered agents |
+| `muxcode mode switch <mode>` | Jump directly to a specific agent by mode name |
+| `muxcode mode list` | List all registered agents with current indicator |
+
+**Story lifecycle**: The agent polls Jira for assigned todo stories, creates feature branches, writes requirements docs, opens review PRs, implements approved requirements via build/test/review delegation, and submits implementation PRs. Jira status transitions happen automatically (To Do → In Progress → Done).
+
+**Delegation model**: The agent delegates autonomously to all specialist agents — `commit` (branch, commit, push, PR), `build`, `test`, `review`, `deploy`, `run`, `watch`, and `plan`. All delegations use `--wait` for synchronous responses.
+
+**Task file**: The agent reads `.muxcode/agent-tasks.md` (or `MUXCODE_AGENT_TASKS` path) for natural-language task configuration — polling intervals, story limits, guardrails. Changes take effect on the next heartbeat cycle without restart. Env vars override task file values.
+
+**Story lifecycle skill**: The workflow is defined in `skills/story-lifecycle.md` — users can override it via `.muxcode/skills/story-lifecycle.md` to customize the pipeline (skip requirements PR, add deploy phase, etc.).
+
+**Heartbeat**: The daemon fires a `heartbeat` action to the agent inbox at `MUXCODE_AGENT_HEARTBEAT` interval (default 30 minutes). On heartbeat, the agent checks for higher-priority stories, PR status on open PRs, and stale delegations. Set to `0` to disable.
+
+**Console viewer**: The left pane shows a Dracula-themed activity log (`muxcode console agent`) with a status header displaying: current story, phase, stories done, uptime, and last heartbeat. Query status programmatically via `muxcode agent status`.
+
+**State files** (ephemeral, in `/tmp/muxcode-bus-{session}/`):
+
+| File | Purpose |
+|------|---------|
+| `mode-cycle-edit.json` | Cycle state: current index, registered agents |
+| `agent-current-story` | Current Jira key being worked |
+| `agent-phase` | Current phase: requirements, implementation, waiting |
+| `agent-stories-done` | Count of completed stories this session |
+| `agent-last-heartbeat` | Timestamp of last heartbeat |
+
+**Safety guardrails**:
+
+| Guardrail | Default |
+|-----------|---------|
+| Max stories per session | `MUXCODE_AGENT_MAX_STORIES` = 5 |
+| Max build/test/fix iterations per story | `MUXCODE_AGENT_MAX_ITERATIONS` = 10 |
+| PR wait timeout | `MUXCODE_AGENT_PR_MAX_WAIT` = 3600s |
+| Consecutive failures before pause | `MUXCODE_AGENT_PAUSE_ON_FAILURE` = 3 |
+| Branch protection | Always feature branches, never main |
+| Commit delegation | All commits via commit agent |
+
+Core code: `bus/mode.go` (cycle state, pane swap), `bus/console.go` (agent status header, console renderer), `cmd/mode.go` (CLI), `cmd/agent.go` (status sub-subcommand).
 
 ### Observers (watch)
 

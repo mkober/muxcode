@@ -2,6 +2,7 @@ package bus
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -574,10 +575,11 @@ func JiraTransitionIssue(cfg *AtlassianConfig, issueKey, transitionID string) (s
 
 // JiraSearchResult holds a single issue from a JQL search.
 type JiraSearchResult struct {
-	Key     string `json:"key"`
-	Summary string `json:"summary"`
-	Status  string `json:"status"`
-	Type    string `json:"type"`
+	Key      string `json:"key"`
+	Summary  string `json:"summary"`
+	Status   string `json:"status"`
+	Type     string `json:"type"`
+	Priority string `json:"priority"`
 }
 
 // JiraSearch executes a JQL query and returns matching issues.
@@ -592,15 +594,19 @@ func JiraSearch(cfg *AtlassianConfig, jql string, maxResults int) ([]JiraSearchR
 		maxResults = 50
 	}
 
-	params := url.Values{
-		"jql":        {jql},
-		"fields":     {"summary,status,issuetype"},
-		"maxResults": {fmt.Sprintf("%d", maxResults)},
+	reqBody := map[string]interface{}{
+		"jql":        jql,
+		"fields":     []string{"summary", "status", "issuetype", "priority"},
+		"maxResults": maxResults,
 	}
-	apiURL := fmt.Sprintf("%s/rest/api/3/search?%s",
-		strings.TrimRight(cfg.JiraBaseURL, "/"), params.Encode())
+	reqJSON, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, 0, fmt.Errorf("encoding search request: %w", err)
+	}
+	apiURL := fmt.Sprintf("%s/rest/api/3/search/jql",
+		strings.TrimRight(cfg.JiraBaseURL, "/"))
 
-	resp, err := atlassianRequest("GET", apiURL, nil, cfg)
+	resp, err := atlassianRequest("POST", apiURL, bytes.NewReader(reqJSON), cfg)
 	if err != nil {
 		return nil, 0, fmt.Errorf("Jira API request failed: %w", err)
 	}
@@ -615,7 +621,7 @@ func JiraSearch(cfg *AtlassianConfig, jql string, maxResults int) ([]JiraSearchR
 	}
 
 	var result struct {
-		Total  int `json:"total"`
+		IsLast bool `json:"isLast"`
 		Issues []struct {
 			Key    string `json:"key"`
 			Fields struct {
@@ -626,6 +632,9 @@ func JiraSearch(cfg *AtlassianConfig, jql string, maxResults int) ([]JiraSearchR
 				IssueType struct {
 					Name string `json:"name"`
 				} `json:"issuetype"`
+				Priority struct {
+					Name string `json:"name"`
+				} `json:"priority"`
 			} `json:"fields"`
 		} `json:"issues"`
 	}
@@ -637,23 +646,29 @@ func JiraSearch(cfg *AtlassianConfig, jql string, maxResults int) ([]JiraSearchR
 	var issues []JiraSearchResult
 	for _, i := range result.Issues {
 		issues = append(issues, JiraSearchResult{
-			Key:     i.Key,
-			Summary: i.Fields.Summary,
-			Status:  i.Fields.Status.Name,
-			Type:    i.Fields.IssueType.Name,
+			Key:      i.Key,
+			Summary:  i.Fields.Summary,
+			Status:   i.Fields.Status.Name,
+			Type:     i.Fields.IssueType.Name,
+			Priority: i.Fields.Priority.Name,
 		})
 	}
 
-	return issues, result.Total, nil
+	// New /search/jql API uses cursor pagination; total count not available.
+	return issues, len(issues), nil
 }
 
 // FormatJiraSearch returns a human-readable listing of search results.
 func FormatJiraSearch(issues []JiraSearchResult, total int, jql string) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "=== Jira Search Results (%d of %d) ===\n", len(issues), total)
+	fmt.Fprintf(&sb, "=== Jira Search Results (%d) ===\n", len(issues))
 	fmt.Fprintf(&sb, "JQL: %s\n\n", jql)
 	for _, i := range issues {
-		fmt.Fprintf(&sb, "%-12s  [%-12s]  %-10s  %s\n", i.Key, i.Status, i.Type, i.Summary)
+		priority := i.Priority
+		if priority == "" {
+			priority = "-"
+		}
+		fmt.Fprintf(&sb, "%-12s  [%-12s]  %-10s  %-8s  %s\n", i.Key, i.Status, i.Type, priority, i.Summary)
 	}
 	return sb.String()
 }

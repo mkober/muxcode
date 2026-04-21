@@ -404,6 +404,41 @@ The build-test-review and deploy-run-watch chains are **deterministic** — driv
 
 Subscriptions support the same condition types as chain actions — evaluated via `EvaluateConditions()` with `ChainContext`.
 
+## Agent mode (F2 cycling)
+
+The F2 window hosts multiple agents that share the window via mode cycling. Only one agent is visible at a time — cycling swaps pane pairs between the visible window and hidden tmux holding windows. All processes persist across cycles.
+
+### Registered agents
+
+| Index | Mode | Left pane | Right pane | Role |
+|-------|------|-----------|------------|------|
+| 0 | Edit (default) | Neovim | Edit agent | `edit` |
+| 1 | Agent | Console log | Autonomous agent | `agent` |
+
+The cycle is extensible — future modes register at a new index and F2 cycles through all of them.
+
+### Cycle mechanism
+
+```
+F2 pressed → is current window F2?
+  YES → muxcode mode cycle (advance to next agent)
+  NO  → select-window -t:2 (switch to F2, show active agent)
+```
+
+`muxcode mode cycle` reads `mode-cycle-edit.json`, computes the next index, and uses `swap-window` to exchange the visible window with the target agent's holding window. State file tracks current index and registered agents.
+
+### Daemon heartbeat
+
+The daemon fires a `heartbeat` action to the `agent` inbox at `MUXCODE_AGENT_HEARTBEAT` interval (default 1800s / 30 min). The heartbeat triggers the agent to:
+1. Check for higher-priority Jira stories assigned since last check
+2. Check PR status on all open PRs
+3. Check for stale delegations (waiting too long without response)
+4. Report status to the console log
+
+State file: `agent-last-heartbeat` in the bus directory. Set `MUXCODE_AGENT_HEARTBEAT=0` to disable.
+
+Core code: `bus/mode.go`, `cmd/mode.go`, `watcher/watcher.go` (`checkHeartbeat()`).
+
 ## Left-pane consoles
 
 Each split-left window runs `muxcode console <role>` in the left pane, displaying role-specific status and history. The console command is a single Go binary that replaced the original per-role shell poller scripts.
@@ -419,6 +454,7 @@ Each split-left window runs `muxcode console <role>` in the left pane, displayin
 | commit | `console commit` | `commit-history.jsonl` + live git status |
 | analyze | `console analyze` | `log.jsonl` (filtered: `from=analyze`, `type=response`) |
 | api | `console api` | `.muxcode/api/history.jsonl` |
+| agent | `console agent` | `log.jsonl` (filtered: agent role) + status header from state files |
 
 Consoles share a common rendering pipeline in `bus/console.go`: Dracula color scheme, 5-second poll interval (configurable via `--interval`), clear-and-redraw via ANSI escape codes. Per-role rendering is driven by a config map (`DefaultConsoleConfigs()`) with function pointers — not separate codepaths.
 

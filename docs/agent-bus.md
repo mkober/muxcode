@@ -931,6 +931,82 @@ $ muxcode agent launch build
 $ muxcode agent launch edit
 ```
 
+### `muxcode agent status`
+
+Show the autonomous agent's current status — story, phase, heartbeat, and session statistics.
+
+```bash
+muxcode agent status
+```
+
+Reads state files (`agent-current-story`, `agent-phase`, `agent-stories-done`, `agent-last-heartbeat`) and prints a summary to stdout.
+
+**Example:**
+```
+$ muxcode agent status
+Story: PROJ-123 Implement user authentication
+Phase: implementation (iteration 3/10)
+Stories: 2 done, 1 in progress
+Uptime: 1h 23m | Last heartbeat: 2m ago
+```
+
+Core code: `cmd/agent.go`, `bus/console.go` (`ReadAutonomousAgentStatus()`, `FormatAutonomousAgentStatus()`).
+
+### `muxcode mode`
+
+Manage agent mode cycling on the edit window — swap between edit and autonomous agents while preserving all sessions.
+
+```bash
+muxcode mode cycle [--window NAME]
+muxcode mode status [--window NAME]
+muxcode mode switch <mode> [--window NAME]
+muxcode mode list [--window NAME]
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `cycle` | Cycle to the next registered agent (wraps around) |
+| `status` | Show current agent, cycle index, registered agents |
+| `switch <mode>` | Jump directly to a specific agent by mode name |
+| `list` | List all registered agents with current indicator |
+
+All subcommands accept `--window <name>` to target a different window (default: `edit`).
+
+**Cycle mechanism**: uses `swap-window` to exchange the visible window with the target agent's holding window. All processes (nvim, Claude Code agents, console viewer) continue running — only visibility changes.
+
+**State file**: `mode-cycle-{window}.json` in the bus directory. Per-window state enables future multi-window cycling (e.g. design-mode on the edit window).
+
+**Keybindings**:
+
+| Key | Action |
+|-----|--------|
+| `F2` | Cycle when on edit window, switch to edit window otherwise |
+| `prefix + a` | Cycle edit-window agents regardless of current window |
+
+**Examples:**
+```bash
+# Cycle to next agent (edit → agent → edit)
+$ muxcode mode cycle
+Cycled to: agent (index 1)
+
+# Check current mode
+$ muxcode mode status
+Window: edit  Current: agent (index 1/2)
+  [0] edit (default)
+  [1] agent ← active
+
+# Switch directly to edit mode
+$ muxcode mode switch edit
+Switched to: edit (index 0)
+
+# List all registered agents
+$ muxcode mode list
+  [0] edit (default)
+  [1] agent
+```
+
+Core code: `bus/mode.go` (cycle state, pane swap), `cmd/mode.go` (CLI handler).
+
 ### `muxcode subscribe`
 
 Manage event subscriptions for fan-out after chain execution.

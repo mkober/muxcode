@@ -416,3 +416,120 @@ func TestHttpStatusColor(t *testing.T) {
 		t.Error("500 should be red")
 	}
 }
+
+func TestAgentDuration(t *testing.T) {
+	tests := []struct {
+		secs int64
+		want string
+	}{
+		{0, "0s"},
+		{30, "30s"},
+		{59, "59s"},
+		{60, "1m 0s"},
+		{90, "1m 30s"},
+		{3599, "59m 59s"},
+		{3600, "1h 0m"},
+		{7260, "2h 1m"},
+	}
+
+	for _, tt := range tests {
+		got := agentDuration(tt.secs)
+		if got != tt.want {
+			t.Errorf("agentDuration(%d) = %q, want %q", tt.secs, got, tt.want)
+		}
+	}
+}
+
+func TestReadAutonomousAgentStatus_Empty(t *testing.T) {
+	// Use a session name that won't exist
+	s := ReadAutonomousAgentStatus("nonexistent-agent-test-xyz")
+	if s.CurrentStory != "" {
+		t.Errorf("empty CurrentStory = %q, want empty", s.CurrentStory)
+	}
+	if s.Phase != "" {
+		t.Errorf("empty Phase = %q, want empty", s.Phase)
+	}
+	if s.StoriesDone != 0 {
+		t.Errorf("empty StoriesDone = %d, want 0", s.StoriesDone)
+	}
+	if s.LastHeartbeat != 0 {
+		t.Errorf("empty LastHeartbeat = %d, want 0", s.LastHeartbeat)
+	}
+}
+
+func TestReadAutonomousAgentStatus_WithFiles(t *testing.T) {
+	dir := t.TempDir()
+	SetBusDirBase(dir)
+	defer ResetBusDirBase()
+
+	session := "test-agent-status"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	// Write state files
+	os.WriteFile(AgentCurrentStoryPath(session), []byte("PROJ-123"), 0644)
+	os.WriteFile(AgentPhasePath(session), []byte("implementation"), 0644)
+	os.WriteFile(AgentStoriesDonePath(session), []byte("3"), 0644)
+	os.WriteFile(AgentHeartbeatPath(session), []byte("1700000000"), 0644)
+
+	s := ReadAutonomousAgentStatus(session)
+	if s.CurrentStory != "PROJ-123" {
+		t.Errorf("CurrentStory = %q, want PROJ-123", s.CurrentStory)
+	}
+	if s.Phase != "implementation" {
+		t.Errorf("Phase = %q, want implementation", s.Phase)
+	}
+	if s.StoriesDone != 3 {
+		t.Errorf("StoriesDone = %d, want 3", s.StoriesDone)
+	}
+	if s.LastHeartbeat != 1700000000 {
+		t.Errorf("LastHeartbeat = %d, want 1700000000", s.LastHeartbeat)
+	}
+}
+
+func TestFormatAutonomousAgentStatus(t *testing.T) {
+	s := AutonomousAgentStatus{
+		CurrentStory: "PROJ-456",
+		Phase:        "requirements",
+		StoriesDone:  2,
+	}
+
+	output := FormatAutonomousAgentStatus(s)
+	if !strings.Contains(output, "PROJ-456") {
+		t.Error("output should contain story key")
+	}
+	if !strings.Contains(output, "requirements") {
+		t.Error("output should contain phase")
+	}
+	if !strings.Contains(output, "2") {
+		t.Error("output should contain stories done count")
+	}
+}
+
+func TestFormatAutonomousAgentStatus_Empty(t *testing.T) {
+	s := AutonomousAgentStatus{}
+	output := FormatAutonomousAgentStatus(s)
+	if !strings.Contains(output, "(none)") {
+		t.Error("empty status should show (none) for story")
+	}
+	if !strings.Contains(output, "idle") {
+		t.Error("empty status should show idle for phase")
+	}
+}
+
+func TestRenderConsoleAgentEmpty(t *testing.T) {
+	output := RenderConsole("agent", "nonexistent-agent-test-xyz", 80)
+	if !strings.Contains(output, "no activity yet") {
+		t.Errorf("empty agent console should contain 'no activity yet', got: %q", output)
+	}
+	if !strings.Contains(output, "waiting for autonomous agent") {
+		t.Errorf("empty agent console should contain waiting message, got: %q", output)
+	}
+	// Should include status header
+	if !strings.Contains(output, "Story:") {
+		t.Errorf("agent console should contain status header with 'Story:', got: %q", output)
+	}
+	if !strings.Contains(output, "Phase:") {
+		t.Errorf("agent console should contain status header with 'Phase:', got: %q", output)
+	}
+}

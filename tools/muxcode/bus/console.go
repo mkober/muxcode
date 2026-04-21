@@ -1342,14 +1342,158 @@ func renderAPI(cfg *ConsoleConfig, session string, width int) string {
 	return b.String()
 }
 
+// AutonomousAgentStatus holds the autonomous agent's current state, read from state files.
+type AutonomousAgentStatus struct {
+	CurrentStory  string // Jira key (e.g. "PROJ-123") or empty
+	Phase         string // "requirements", "implementation", "waiting", "idle"
+	StoriesDone   int    // count of completed stories this session
+	LastHeartbeat int64  // Unix timestamp of last heartbeat
+	SessionStart  int64  // Unix timestamp of session start (from bus dir mtime)
+}
+
+// ReadAutonomousAgentStatus reads the agent's state files and returns the current status.
+func ReadAutonomousAgentStatus(session string) AutonomousAgentStatus {
+	var s AutonomousAgentStatus
+
+	if data, err := os.ReadFile(AgentCurrentStoryPath(session)); err == nil {
+		s.CurrentStory = strings.TrimSpace(string(data))
+	}
+	if data, err := os.ReadFile(AgentPhasePath(session)); err == nil {
+		s.Phase = strings.TrimSpace(string(data))
+	}
+	if data, err := os.ReadFile(AgentStoriesDonePath(session)); err == nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			s.StoriesDone = n
+		}
+	}
+	if data, err := os.ReadFile(AgentHeartbeatPath(session)); err == nil {
+		if ts, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
+			s.LastHeartbeat = ts
+		}
+	}
+
+	// Session start: use bus dir creation time as proxy
+	if info, err := os.Stat(BusDir(session)); err == nil {
+		s.SessionStart = info.ModTime().Unix()
+	}
+
+	return s
+}
+
+// FormatAutonomousAgentStatus returns a human-readable status summary for CLI output.
+func FormatAutonomousAgentStatus(s AutonomousAgentStatus) string {
+	var b strings.Builder
+
+	// Story line
+	if s.CurrentStory != "" {
+		b.WriteString(fmt.Sprintf("Story: %s\n", s.CurrentStory))
+	} else {
+		b.WriteString("Story: (none)\n")
+	}
+
+	// Phase line
+	if s.Phase != "" {
+		b.WriteString(fmt.Sprintf("Phase: %s\n", s.Phase))
+	} else {
+		b.WriteString("Phase: idle\n")
+	}
+
+	// Stories done
+	b.WriteString(fmt.Sprintf("Stories done: %d\n", s.StoriesDone))
+
+	// Heartbeat
+	if s.LastHeartbeat > 0 {
+		ago := time.Now().Unix() - s.LastHeartbeat
+		b.WriteString(fmt.Sprintf("Last heartbeat: %s ago\n", agentDuration(ago)))
+	} else {
+		b.WriteString("Last heartbeat: (none)\n")
+	}
+
+	// Uptime
+	if s.SessionStart > 0 {
+		uptime := time.Now().Unix() - s.SessionStart
+		b.WriteString(fmt.Sprintf("Uptime: %s\n", agentDuration(uptime)))
+	}
+
+	return b.String()
+}
+
+// agentDuration formats seconds into a human-readable "Xh Ym" or "Xm Ys" string.
+func agentDuration(secs int64) string {
+	if secs < 60 {
+		return fmt.Sprintf("%ds", secs)
+	}
+	if secs < 3600 {
+		return fmt.Sprintf("%dm %ds", secs/60, secs%60)
+	}
+	hours := secs / 3600
+	mins := (secs % 3600) / 60
+	return fmt.Sprintf("%dh %dm", hours, mins)
+}
+
+// renderAgentStatusHeader renders the status block at the top of the agent console.
+func renderAgentStatusHeader(session string, width int) string {
+	s := ReadAutonomousAgentStatus(session)
+	sepWidth := width - len(Pad) - RightMargin
+	if sepWidth < 10 {
+		sepWidth = 10
+	}
+
+	var b strings.Builder
+
+	// Story + phase
+	storyLabel := "(idle)"
+	if s.CurrentStory != "" {
+		storyLabel = s.CurrentStory
+	}
+	phaseLabel := "idle"
+	if s.Phase != "" {
+		phaseLabel = s.Phase
+	}
+	b.WriteString(fmt.Sprintf("%s%sStory:%s %s%s%s  %sPhase:%s %s%s%s\n",
+		Pad, ColorDim, ColorReset,
+		ColorCyan, storyLabel, ColorReset,
+		ColorDim, ColorReset,
+		ColorPurple, phaseLabel, ColorReset))
+
+	// Stories done + heartbeat + uptime
+	heartbeat := "(none)"
+	if s.LastHeartbeat > 0 {
+		ago := time.Now().Unix() - s.LastHeartbeat
+		heartbeat = agentDuration(ago) + " ago"
+	}
+	uptime := ""
+	if s.SessionStart > 0 {
+		ut := time.Now().Unix() - s.SessionStart
+		uptime = agentDuration(ut)
+	}
+	b.WriteString(fmt.Sprintf("%s%sDone:%s %s%d%s  %sHeartbeat:%s %s%s%s",
+		Pad, ColorDim, ColorReset,
+		ColorGreen, s.StoriesDone, ColorReset,
+		ColorDim, ColorReset,
+		ColorDim, heartbeat, ColorReset))
+	if uptime != "" {
+		b.WriteString(fmt.Sprintf("  %sUptime:%s %s%s%s", ColorDim, ColorReset, ColorDim, uptime, ColorReset))
+	}
+	b.WriteString("\n")
+
+	b.WriteString(fmt.Sprintf("%s%s%s%s\n\n", Pad, ColorDim, Separator(sepWidth), ColorReset))
+
+	return b.String()
+}
+
 // renderAgent handles the agent role — shows bus message activity (delegations
 // sent/received) by reading from log.jsonl filtered for the agent role.
+// Includes a status header showing current story, phase, heartbeat, and uptime.
 func renderAgent(cfg *ConsoleConfig, session string, width int) string {
 	logPath := LogPath(session)
 	entries := readAgentEntries(logPath, 0)
 	ecw := calcEntryContentWidth(width)
 
 	var b strings.Builder
+
+	// Status header always shown
+	b.WriteString(renderAgentStatusHeader(session, width))
 
 	if len(entries) == 0 {
 		b.WriteString(emptyBlock(cfg.EmptyMsg))

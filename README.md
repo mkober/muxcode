@@ -80,6 +80,8 @@ MuxCode ships with ten specialist agents, each in its own tmux window:
 | commit (F9)    | Git manager    | Handles all git operations — commits, branches, rebases, pushes                         |
 | analyze (F10)  | Editor analyst | Watches file changes and provides codebase analysis                                     |
 
+**Agent mode** — Press F2 when already on the edit window to cycle to the autonomous agent, which reads Jira stories and drives the full story lifecycle (requirements → PR → implementation → PR) without user intervention. Press F2 again to cycle back to the editor. Both sessions persist across cycles. See [Agents](docs/agents.md#autonomous-agent-agent) for details.
+
 Additional roles that share a host agent's window (messages are routed to the host's inbox):
 
 | Role     | Host / access | What it does                                                                                |
@@ -166,6 +168,7 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 
 ### Agent orchestration
 - **10 specialist agents** — Plan, edit, build, test, review, deploy, run, commit, analyze, and watch — each with scoped tool permissions and its own tmux window
+- **Autonomous agent mode** — An autonomous agent shares the F2 window with the editor. Press F2 to cycle between them. The agent reads Jira stories, creates requirements docs, opens review PRs, implements approved requirements, and submits completed PRs — all without user intervention. Configurable via natural-language task files (`.muxcode/agent-tasks.md`) and a customizable story-lifecycle skill
 - **Hook-driven automation chains** — Build→test→review and deploy→run→watch chains fire via bash exit codes. Deterministic, fast, zero token cost for routing
 - **Conditional chain actions** — Chain actions support 8 condition types (`files_match`, `branch_match`, `env_set`, `output_contains`, etc.) with first-match-wins on action arrays. Route builds to deploy on release branches, to test on feature branches — all config-driven
 - **Event subscriptions** — Fan-out after chain execution. Subscribe any agent to build/test/deploy/run/watch events with outcome and condition filtering
@@ -525,6 +528,8 @@ Useful keybindings for navigating your MuxCode session:
 | Keybinding | Action |
 | --- | --- |
 | `F1`–`F10` | Switch between agent windows |
+| `F2` (on edit window) | Cycle agent mode (edit → agent → edit) |
+| `Prefix + a` | Cycle edit-window agents from any window |
 | `Prefix + i` | Open API testing modal |
 | `Prefix + b` | Open MuxCode quick menu |
 | `Prefix + C` | New MuxCode session (project picker) |

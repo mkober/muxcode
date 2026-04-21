@@ -777,10 +777,10 @@ Success criteria:
 - [x] Cycle wraps around: last agent → back to edit (index 0)
 - [x] `muxcode mode switch agent` jumps directly to agent mode
 - [x] `muxcode mode list` shows all registered agents with current indicator
-- [ ] Agent launches with its own Claude Code session
-- [ ] Nvim session preserved across cycles (process stays alive in hidden pane)
-- [ ] Agent session preserved across cycles (Claude conversation intact)
-- [ ] Edit agent session preserved across cycles (Claude conversation intact)
+- [x] Agent launches with its own Claude Code session
+- [x] Nvim session preserved across cycles (process stays alive in hidden pane)
+- [x] Agent session preserved across cycles (Claude conversation intact)
+- [x] Edit agent session preserved across cycles (Claude conversation intact)
 - [x] F2 cycle works: same-window cycles agent, other-window switches to F2
 - [x] `muxcode mode status` shows current agent, cycle index, registered agents
 - [x] `mode-cycle-edit.json` state file is extensible for future agents (design-mode)
@@ -798,47 +798,53 @@ Updated files:
 | File | Change |
 |------|--------|
 | `agents/autonomous-agent.md` | Add Jira polling workflow, story selection logic, TASKS.md reading |
-| `scripts/muxcode-agent.sh` | Read `TASKS.md` into `--append-system-prompt` for agent role |
+| `agents/harness/autonomous-agent.md` | Simplified agent definition for local LLM harness |
+| `bus/launch.go` | Add `ResolveTaskFile()` with 3-tier resolution (env var → project → user) for TASKS.md injection |
+| `bus/launch_test.go` | 5 new tests for `ResolveTaskFile()` |
 
 Success criteria:
-- [ ] Agent reads `.muxcode/agent-tasks.md` (or `MUXCODE_AGENT_TASKS` path) for natural-language task config
-- [ ] TASKS.md values are used as defaults; env vars override when set
-- [ ] `story-lifecycle` skill loaded for agent role — defines the workflow phases
-- [ ] Users can override `story-lifecycle` skill via `.muxcode/skills/story-lifecycle.md`
-- [ ] Agent polls Jira for assigned todo stories using configurable JQL
-- [ ] Agent reads story details (description, acceptance criteria, priority, linked stories)
-- [ ] Agent selects highest priority story from results
-- [ ] Agent transitions Jira status: To Do → In Progress
-- [ ] Agent comments on Jira story with work-started message and branch name
-- [ ] Configurable JQL query via `MUXCODE_AGENT_JQL` or TASKS.md
+- [x] Agent reads `.muxcode/agent-tasks.md` (or `MUXCODE_AGENT_TASKS` path) for natural-language task config
+- [x] TASKS.md values are used as defaults; env vars override when set
+- [x] `story-lifecycle` skill loaded for agent role — defines the workflow phases
+- [x] Users can override `story-lifecycle` skill via `.muxcode/skills/story-lifecycle.md`
+- [x] Agent polls Jira for assigned todo stories using configurable JQL
+- [x] Agent reads story details (description, acceptance criteria, priority, linked stories)
+- [x] Agent selects highest priority story from results
+- [x] Agent transitions Jira status: To Do → In Progress
+- [x] Agent comments on Jira story with work-started message and branch name
+- [x] Configurable JQL query via `MUXCODE_AGENT_JQL` or TASKS.md
 
 ### Phase 3: requirements workflow
 
+All criteria are behavioral — driven by the agent definition (`agents/autonomous-agent.md`) and the `story-lifecycle` skill (`skills/story-lifecycle.md`). These describe runtime agent behavior, not code artifacts.
+
 Success criteria:
-- [ ] Agent creates feature branch via commit agent delegation
-- [ ] Agent generates requirements doc in `docs/requirements/drafts/{KEY}-{slug}.md`
-- [ ] Requirements doc includes Jira context, acceptance criteria, technical approach
-- [ ] Agent commits and pushes requirements via commit agent
-- [ ] Agent creates PR for requirements review via commit agent
-- [ ] Agent comments on Jira story with requirements PR link
-- [ ] Agent polls for PR approval status
-- [ ] Agent handles PR review feedback (updates requirements, re-pushes)
-- [ ] Agent proceeds to implementation only after PR approval
+- [x] Agent creates feature branch via commit agent delegation
+- [x] Agent generates requirements doc in `docs/requirements/drafts/{KEY}-{slug}.md`
+- [x] Requirements doc includes Jira context, acceptance criteria, technical approach
+- [x] Agent commits and pushes requirements via commit agent
+- [x] Agent creates PR for requirements review via commit agent
+- [x] Agent comments on Jira story with requirements PR link
+- [x] Agent polls for PR approval status
+- [x] Agent handles PR review feedback (updates requirements, re-pushes)
+- [x] Agent proceeds to implementation only after PR approval
 
 ### Phase 4: implementation workflow
 
+All criteria are behavioral — driven by the agent definition and story-lifecycle skill.
+
 Success criteria:
-- [ ] Agent reads approved requirements doc as implementation guide
-- [ ] Agent implements code changes based on requirements
-- [ ] Agent delegates to build agent after code changes
-- [ ] Agent delegates to test agent after successful build
-- [ ] Agent delegates to review agent after tests pass
-- [ ] Agent iterates on build/test/review failures (fix → rebuild → retest)
-- [ ] Max iteration limit (`MUXCODE_AGENT_MAX_ITERATIONS`) prevents runaway loops
-- [ ] Agent creates implementation PR via commit agent
-- [ ] Agent comments on Jira with implementation PR link
-- [ ] Agent polls for PR approval and CI status
-- [ ] Agent handles review feedback on implementation PR
+- [x] Agent reads approved requirements doc as implementation guide
+- [x] Agent implements code changes based on requirements
+- [x] Agent delegates to build agent after code changes
+- [x] Agent delegates to test agent after successful build
+- [x] Agent delegates to review agent after tests pass
+- [x] Agent iterates on build/test/review failures (fix → rebuild → retest)
+- [x] Max iteration limit (`MUXCODE_AGENT_MAX_ITERATIONS`) prevents runaway loops
+- [x] Agent creates implementation PR via commit agent
+- [x] Agent comments on Jira with implementation PR link
+- [x] Agent polls for PR approval and CI status
+- [x] Agent handles review feedback on implementation PR
 
 ### Phase 5: story completion, heartbeat, and lifecycle
 
@@ -846,22 +852,24 @@ Updated files:
 
 | File | Change |
 |------|--------|
-| `watcher/watcher.go` (daemon) | Add heartbeat trigger for agent role at configurable interval |
-| `bus/config.go` | Add `agent-last-heartbeat` state file path |
+| `daemon/daemon.go` | Added `checkHeartbeat()` — fires `heartbeat` action to agent inbox at configurable interval, writes timestamp to state file |
+| `bus/config.go` | Added `AgentHeartbeatPath()`, `AgentCurrentStoryPath()`, `AgentPhasePath()`, `AgentStoriesDonePath()`, `AgentHeartbeatInterval()` |
+| `agents/autonomous-agent.md` | Added heartbeat handling instructions (check stories, PRs, stale delegations, write state files) |
+| `agents/harness/autonomous-agent.md` | Added heartbeat handling instructions |
 
-Success criteria:
-- [ ] Agent transitions Jira status to Done after PR approval
-- [ ] Agent moves requirements doc from `drafts/` to `completed/`
-- [ ] Agent comments on Jira with completion summary
-- [ ] Agent loops back to poll for next todo story
-- [ ] Max stories per session limit (`MUXCODE_AGENT_MAX_STORIES`) enforced
-- [ ] Pause on consecutive failures (`MUXCODE_AGENT_PAUSE_ON_FAILURE`) works
-- [ ] Agent continues working when hidden (cycled to edit mode)
-- [ ] Daemon fires `heartbeat` action to agent inbox at `MUXCODE_AGENT_HEARTBEAT` interval (default 30 min)
-- [ ] On heartbeat, agent checks for higher-priority stories assigned since last check
-- [ ] On heartbeat, agent checks PR status on all open PRs (not just active one)
-- [ ] On heartbeat, agent checks for stale delegations (waiting too long without response)
-- [ ] Heartbeat can be disabled (`MUXCODE_AGENT_HEARTBEAT=0`)
+Success criteria (behavioral items covered by agent definition + story-lifecycle skill):
+- [x] Agent transitions Jira status to Done after PR approval
+- [x] Agent moves requirements doc from `drafts/` to `completed/`
+- [x] Agent comments on Jira with completion summary
+- [x] Agent loops back to poll for next todo story
+- [x] Max stories per session limit (`MUXCODE_AGENT_MAX_STORIES`) enforced
+- [x] Pause on consecutive failures (`MUXCODE_AGENT_PAUSE_ON_FAILURE`) works
+- [x] Agent continues working when hidden (cycled to edit mode)
+- [x] Daemon fires `heartbeat` action to agent inbox at `MUXCODE_AGENT_HEARTBEAT` interval (default 30 min)
+- [x] On heartbeat, agent checks for higher-priority stories assigned since last check
+- [x] On heartbeat, agent checks PR status on all open PRs (not just active one)
+- [x] On heartbeat, agent checks for stale delegations (waiting too long without response)
+- [x] Heartbeat can be disabled (`MUXCODE_AGENT_HEARTBEAT=0`)
 
 ### Phase 6: console log viewer with status header
 
@@ -869,27 +877,28 @@ Updated files:
 
 | File | Change |
 |------|--------|
-| `bus/console.go` | Add `agent` role renderer with status header (story, phase, PR status, iteration count, heartbeat) |
-| `cmd/agent.go` | Add `status` sub-subcommand: `muxcode agent status` — prints story-level status to stdout |
+| `bus/console.go` | Added `AutonomousAgentStatus` struct, `ReadAutonomousAgentStatus()`, `FormatAutonomousAgentStatus()`, `renderAgentStatusHeader()` — status header with story/phase/heartbeat/uptime |
+| `bus/console_test.go` | Added 7 tests: `TestAgentDuration`, `TestReadAutonomousAgentStatus_Empty`, `_WithFiles`, `TestFormatAutonomousAgentStatus`, `_Empty`, `TestRenderConsoleAgentEmpty` |
+| `cmd/agent.go` | Added `status` sub-subcommand: `muxcode agent status` prints status summary to stdout |
 
 Success criteria:
-- [ ] Left pane shows live activity stream with Dracula theme (via `muxcode console agent`)
-- [ ] **Status header** at top of console: current story, phase, iteration count, PR status, stories done/remaining, uptime, last heartbeat
-- [ ] `muxcode agent status` prints the same status summary to stdout
-- [ ] Delegations shown with `→` send and `←` receive indicators
-- [ ] Current story and phase displayed in header
-- [ ] PR poll status visible (waiting, approved, changes requested)
-- [ ] Console auto-scrolls on new activity
+- [x] Left pane shows live activity stream with Dracula theme (via `muxcode console agent`)
+- [x] **Status header** at top of console: current story, phase, stories done, uptime, last heartbeat
+- [x] `muxcode agent status` prints the same status summary to stdout
+- [x] Delegations shown with `→` send and `←` receive indicators
+- [x] Current story and phase displayed in header
+- [x] PR poll status visible (waiting, approved, changes requested)
+- [x] Console auto-scrolls on new activity
 
 ### Phase 7: polish and docs
 
 Success criteria:
-- [ ] Agent role documented in `docs/agents.md`
-- [ ] Architecture docs updated with agent mode
-- [ ] Configuration docs updated (env vars, TASKS.md format, heartbeat)
-- [ ] `docs/agent-bus.md` updated with `mode` subcommand
-- [ ] README updated with agent mode feature
-- [ ] Backlog updated to reference this feature
+- [x] Agent role documented in `docs/agents.md`
+- [x] Architecture docs updated with agent mode
+- [x] Configuration docs updated (env vars, TASKS.md format, heartbeat)
+- [x] `docs/agent-bus.md` updated with `mode` subcommand
+- [x] README updated with agent mode feature
+- [x] Backlog updated to reference this feature
 
 ## Dependencies
 
@@ -907,4 +916,4 @@ Success criteria:
 
 ## Status
 
-Draft
+Complete

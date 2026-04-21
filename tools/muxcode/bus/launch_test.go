@@ -533,3 +533,176 @@ func TestBuildExecArgs_AgentJSON(t *testing.T) {
 		t.Errorf("args missing --agents: %v", args)
 	}
 }
+
+func TestResolveTaskFile_NonAgentRole(t *testing.T) {
+	// Non-agent roles should return empty
+	for _, role := range []string{"edit", "build", "test", "review", "commit"} {
+		if got := ResolveTaskFile(role); got != "" {
+			t.Errorf("ResolveTaskFile(%q) = %q, want empty", role, got)
+		}
+	}
+}
+
+func TestResolveTaskFile_AgentWithProjectLocal(t *testing.T) {
+	// Create a temp project-local task file
+	dir := t.TempDir()
+	muxDir := filepath.Join(dir, ".muxcode")
+	os.MkdirAll(muxDir, 0o755)
+	taskFile := filepath.Join(muxDir, "agent-tasks.md")
+	os.WriteFile(taskFile, []byte("# Agent tasks\n\n- Check Jira every 30 minutes\n"), 0o644)
+
+	// Change to temp dir so project-local resolution works
+	orig, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(orig)
+
+	got := ResolveTaskFile("agent")
+	if got == "" {
+		t.Fatal("expected task file content, got empty")
+	}
+	if !strings.Contains(got, "Agent task configuration") {
+		t.Error("expected header wrapper")
+	}
+	if !strings.Contains(got, "Check Jira every 30 minutes") {
+		t.Error("expected task file content")
+	}
+	if !strings.Contains(got, "agent-tasks.md") {
+		t.Error("expected file path in output")
+	}
+}
+
+func TestResolveTaskFile_EnvVarOverride(t *testing.T) {
+	dir := t.TempDir()
+	taskFile := filepath.Join(dir, "custom-tasks.md")
+	os.WriteFile(taskFile, []byte("# Custom tasks\n\n- Poll every 5 minutes\n"), 0o644)
+
+	t.Setenv("MUXCODE_AGENT_TASKS", taskFile)
+
+	got := ResolveTaskFile("agent")
+	if got == "" {
+		t.Fatal("expected task file content, got empty")
+	}
+	if !strings.Contains(got, "Poll every 5 minutes") {
+		t.Error("expected custom task content")
+	}
+	if !strings.Contains(got, taskFile) {
+		t.Error("expected custom path in output")
+	}
+}
+
+func TestResolveTaskFile_NoFileExists(t *testing.T) {
+	// Point to nonexistent paths
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(orig)
+
+	t.Setenv("MUXCODE_AGENT_TASKS", "/nonexistent/tasks.md")
+
+	got := ResolveTaskFile("agent")
+	if got != "" {
+		t.Errorf("expected empty when no task file exists, got %q", got)
+	}
+}
+
+func TestResolveTaskFile_EmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	muxDir := filepath.Join(dir, ".muxcode")
+	os.MkdirAll(muxDir, 0o755)
+	taskFile := filepath.Join(muxDir, "agent-tasks.md")
+	os.WriteFile(taskFile, []byte(""), 0o644)
+
+	orig, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(orig)
+
+	got := ResolveTaskFile("agent")
+	if got != "" {
+		t.Errorf("expected empty for empty task file, got %q", got)
+	}
+}
+
+func TestPreLaunchSetup_AgentStartupMessage(t *testing.T) {
+	dir := t.TempDir()
+	session := "test-prelaunch-agent"
+	os.Setenv("BUS_DIR_BASE", dir)
+	defer os.Unsetenv("BUS_DIR_BASE")
+
+	// Init the bus directory so inbox paths exist
+	Init(session, dir)
+
+	// Run PreLaunchSetup for agent role
+	PreLaunchSetup("agent", session, "claude")
+
+	// Read the agent inbox and verify the startup message
+	msgs, err := Peek(session, "agent")
+	if err != nil {
+		t.Fatalf("Peek agent inbox: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message in agent inbox, got %d", len(msgs))
+	}
+
+	m := msgs[0]
+	if m.Type != "request" {
+		t.Errorf("expected type 'request', got %q", m.Type)
+	}
+	if m.Action != "startup" {
+		t.Errorf("expected action 'startup', got %q", m.Action)
+	}
+	if m.From != "edit" {
+		t.Errorf("expected from 'edit', got %q", m.From)
+	}
+	if m.To != "agent" {
+		t.Errorf("expected to 'agent', got %q", m.To)
+	}
+	if !strings.Contains(m.Payload, "Jira") {
+		t.Errorf("expected payload to mention Jira, got %q", m.Payload)
+	}
+}
+
+func TestPreLaunchSetup_EditStartupMessage(t *testing.T) {
+	dir := t.TempDir()
+	session := "test-prelaunch-edit"
+	os.Setenv("BUS_DIR_BASE", dir)
+	defer os.Unsetenv("BUS_DIR_BASE")
+
+	Init(session, dir)
+
+	PreLaunchSetup("edit", session, "claude")
+
+	msgs, err := Peek(session, "edit")
+	if err != nil {
+		t.Fatalf("Peek edit inbox: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message in edit inbox, got %d", len(msgs))
+	}
+
+	m := msgs[0]
+	if m.Type != "event" {
+		t.Errorf("expected type 'event', got %q", m.Type)
+	}
+	if m.Action != "notify" {
+		t.Errorf("expected action 'notify', got %q", m.Action)
+	}
+}
+
+func TestPreLaunchSetup_UnknownRole_NoMessage(t *testing.T) {
+	dir := t.TempDir()
+	session := "test-prelaunch-unknown"
+	os.Setenv("BUS_DIR_BASE", dir)
+	defer os.Unsetenv("BUS_DIR_BASE")
+
+	Init(session, dir)
+
+	PreLaunchSetup("build", session, "opencode")
+
+	msgs, err := Peek(session, "build")
+	if err != nil {
+		t.Fatalf("Peek build inbox: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages in build inbox, got %d", len(msgs))
+	}
+}

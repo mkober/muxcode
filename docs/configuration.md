@@ -138,6 +138,31 @@ MUXCODE_ANALYZE_CLI=codex             # analyze uses Codex CLI
 MUXCODE_COMMIT_CLI=local              # commit uses local LLM
 ```
 
+### Autonomous agent
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_AGENT_JQL` | `assignee = currentUser() AND status = 'To Do' ORDER BY priority DESC` | JQL query for finding stories (override for `TASKS.md`) |
+| `MUXCODE_AGENT_PR_POLL_INTERVAL` | `120` | Seconds between PR approval checks |
+| `MUXCODE_AGENT_PR_MAX_WAIT` | `3600` | Max seconds to wait for PR approval |
+| `MUXCODE_AGENT_MAX_STORIES` | `5` | Max stories to process per session |
+| `MUXCODE_AGENT_MAX_ITERATIONS` | `10` | Max build/test/fix cycles per story |
+| `MUXCODE_AGENT_PAUSE_ON_FAILURE` | `3` | Consecutive story failures before pausing |
+| `MUXCODE_AGENT_HEARTBEAT` | `1800` | Seconds between heartbeat ticks (0 to disable) |
+| `MUXCODE_AGENT_TASKS` | `.muxcode/agent-tasks.md` | Path to natural-language task definitions file |
+
+**Task file** (`TASKS.md`): The autonomous agent reads `.muxcode/agent-tasks.md` (or the path in `MUXCODE_AGENT_TASKS`) for natural-language task configuration. Changes take effect on the next heartbeat cycle — no restart needed. Env vars override task file values when set.
+
+**State files** (ephemeral, in `/tmp/muxcode-bus-{session}/`):
+
+| File | Purpose |
+|------|---------|
+| `mode-cycle-edit.json` | Mode cycle state: current index, registered agents |
+| `agent-current-story` | Current Jira key being worked |
+| `agent-phase` | Current phase: requirements, implementation, waiting |
+| `agent-stories-done` | Count of completed stories this session |
+| `agent-last-heartbeat` | Timestamp of last heartbeat |
+
 ### Integrations
 
 | Variable | Default | Description |

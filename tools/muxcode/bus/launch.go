@@ -372,7 +372,7 @@ func ResolveVenv() string {
 }
 
 // BuildSharedPrompt assembles the combined --append-system-prompt content
-// from shared prompt, skills, context, and session resume for a role.
+// from shared prompt, skills, context, task file, and session resume for a role.
 func BuildSharedPrompt(role string) string {
 	var parts []string
 
@@ -393,7 +393,12 @@ func BuildSharedPrompt(role string) string {
 		parts = append(parts, ctxPrompt)
 	}
 
-	// 4. Session resume
+	// 4. Task file (agent role only)
+	if taskPrompt := ResolveTaskFile(role); taskPrompt != "" {
+		parts = append(parts, taskPrompt)
+	}
+
+	// 5. Session resume
 	resume, _ := ResumeContext(role)
 	if resume != "" {
 		parts = append(parts, resume)
@@ -403,6 +408,59 @@ func BuildSharedPrompt(role string) string {
 		return ""
 	}
 	return strings.Join(parts, "\n")
+}
+
+// ResolveTaskFile reads the natural-language task file for the agent role.
+// Returns empty string for non-agent roles or if no task file is found.
+//
+// Resolution order:
+//  1. MUXCODE_AGENT_TASKS env var (explicit path)
+//  2. .muxcode/agent-tasks.md (project-local)
+//  3. ~/.config/muxcode/agent-tasks.md (user-global)
+func ResolveTaskFile(role string) string {
+	if role != "agent" {
+		return ""
+	}
+	path := resolveTaskFilePath()
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		return ""
+	}
+	return "## Agent task configuration\n\n" +
+		"The following task configuration was loaded from `" + path + "`.\n" +
+		"Environment variables override these values when set.\n\n" +
+		content
+}
+
+// resolveTaskFilePath returns the path to the agent task file, or empty if none found.
+func resolveTaskFilePath() string {
+	// 1. Explicit env var
+	if v := os.Getenv("MUXCODE_AGENT_TASKS"); v != "" {
+		if _, err := os.Stat(v); err == nil {
+			return v
+		}
+	}
+	// 2. Project-local
+	local := filepath.Join(".muxcode", "agent-tasks.md")
+	if _, err := os.Stat(local); err == nil {
+		return local
+	}
+	// 3. User-global
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		global := filepath.Join(home, ".config", "muxcode", "agent-tasks.md")
+		if _, err := os.Stat(global); err == nil {
+			return global
+		}
+	}
+	return ""
 }
 
 // ResolveLaunchConfig resolves all configuration needed to launch an agent.
@@ -543,6 +601,18 @@ func PreLaunchSetup(role, session, cli string) {
 			Type:    "event",
 			Action:  "notify",
 			Payload: startupMsg,
+		}
+		_ = SendNoCC(session, m)
+	case "agent":
+		agentStartupMsg := "Agent started — search Jira for available stories and present them to the user for selection."
+		m := Message{
+			ID:      NewMsgID("agent"),
+			TS:      time.Now().Unix(),
+			From:    "edit",
+			To:      "agent",
+			Type:    "request",
+			Action:  "startup",
+			Payload: agentStartupMsg,
 		}
 		_ = SendNoCC(session, m)
 	}

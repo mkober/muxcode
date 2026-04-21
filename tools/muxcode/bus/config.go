@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -340,6 +341,38 @@ func OllamaHealthPath(session string) string {
 // HarnessMarkerPath returns the harness PID marker file path for a role in a session.
 func HarnessMarkerPath(session, role string) string {
 	return filepath.Join(BusDir(session), "harness-"+role+".pid")
+}
+
+// AgentHeartbeatPath returns the path to the last heartbeat timestamp file for the agent.
+func AgentHeartbeatPath(session string) string {
+	return filepath.Join(BusDir(session), "agent-last-heartbeat")
+}
+
+// AgentCurrentStoryPath returns the path to the file tracking the current Jira story.
+func AgentCurrentStoryPath(session string) string {
+	return filepath.Join(BusDir(session), "agent-current-story")
+}
+
+// AgentPhasePath returns the path to the file tracking the agent's current phase.
+func AgentPhasePath(session string) string {
+	return filepath.Join(BusDir(session), "agent-phase")
+}
+
+// AgentStoriesDonePath returns the path to the file tracking completed story count.
+func AgentStoriesDonePath(session string) string {
+	return filepath.Join(BusDir(session), "agent-stories-done")
+}
+
+// AgentHeartbeatInterval returns the configured heartbeat interval in seconds.
+// Uses MUXCODE_AGENT_HEARTBEAT env var, defaulting to 1800 (30 minutes).
+// Returns 0 if heartbeat is disabled.
+func AgentHeartbeatInterval() int {
+	if v := os.Getenv("MUXCODE_AGENT_HEARTBEAT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return 1800
 }
 
 // TriggerFile returns the analyze trigger file path for a session.

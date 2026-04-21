@@ -57,6 +57,9 @@ type Daemon struct {
 	// Hook-provider idle task detection (safety net for dropped responses)
 	lastIdleTaskCheck int64            // 10s interval
 	idleTaskFirstSeen map[string]int64 // taskID -> unix time when first observed idle with in-flight task
+	// Agent heartbeat
+	lastHeartbeatCheck int64 // tracks last heartbeat fire time
+	heartbeatInterval  int   // seconds between heartbeats (0 = disabled)
 }
 
 // New creates a new Daemon for the given session.
@@ -90,6 +93,8 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		taskDeliveredAt:      make(map[string]int64),
 		taskLastPaneContent:  make(map[string]string),
 		idleTaskFirstSeen:    make(map[string]int64),
+		lastHeartbeatCheck:   now,
+		heartbeatInterval:    bus.AgentHeartbeatInterval(),
 	}
 }
 
@@ -147,6 +152,9 @@ func (d *Daemon) Run() error {
 	if len(d.ollamaRoles) > 0 {
 		fmt.Printf("  Ollama monitoring: %s (roles: %s)\n", d.ollamaURL, strings.Join(d.ollamaRoles, ", "))
 	}
+	if d.heartbeatInterval > 0 {
+		fmt.Printf("  Agent heartbeat: every %ds\n", d.heartbeatInterval)
+	}
 	fmt.Println()
 
 	for {
@@ -163,6 +171,7 @@ func (d *Daemon) Run() error {
 		d.checkIdleAgents()
 		d.checkNonHookTasks()
 		d.checkIdleTaskCompletion()
+		d.checkHeartbeat()
 		d.checkCleanup()
 		time.Sleep(d.pollInterval)
 	}
@@ -1216,6 +1225,49 @@ func logTaskToConsoleHistory(session, role, action, output string, errored bool)
 	if err := bus.WriteHookHistory(historyPath, entry, 100); err != nil {
 		fmt.Fprintf(os.Stderr, "  [console-log] failed to write %s history: %v\n", role, err)
 	}
+}
+
+// checkHeartbeat fires a heartbeat message to the agent role at the configured
+// interval. The heartbeat triggers the agent to check for higher-priority stories,
+// PR status updates, and stale delegations. Only fires if the agent role is active
+// (has a running process in its pane). Writes the last heartbeat timestamp to
+// the agent-last-heartbeat state file.
+func (d *Daemon) checkHeartbeat() {
+	if d.heartbeatInterval <= 0 {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastHeartbeatCheck < int64(d.heartbeatInterval) {
+		return
+	}
+	d.lastHeartbeatCheck = now
+
+	// Only fire if the agent role is known and has an active pane.
+	// Skip if agent has no inbox (never launched).
+	inboxPath := bus.InboxPath(d.session, "agent")
+	if _, err := os.Stat(filepath.Dir(inboxPath)); os.IsNotExist(err) {
+		return
+	}
+
+	// Write heartbeat timestamp to state file
+	heartbeatPath := bus.AgentHeartbeatPath(d.session)
+	_ = os.WriteFile(heartbeatPath, []byte(fmt.Sprintf("%d", now)), 0644)
+
+	// Send heartbeat message to agent inbox
+	msg := bus.NewMessage("daemon", "agent", "request", "heartbeat",
+		"Heartbeat tick — check for higher-priority stories, PR status on open PRs, and stale delegations", "")
+	if err := bus.Send(d.session, msg); err != nil {
+		fmt.Fprintf(os.Stderr, "  [heartbeat] failed to send to agent: %v\n", err)
+		return
+	}
+
+	ts := time.Now().Format("15:04:05")
+	fmt.Printf("  %s  Heartbeat fired to agent\n", ts)
+	bus.LogLifecycle(d.session, "info", "daemon", "heartbeat", "agent")
+
+	// Notify the agent
+	_ = bus.Notify(d.session, "agent")
+	d.refreshInboxSizes()
 }
 
 // checkCleanup removes expired delivery status and task files every 5 minutes.

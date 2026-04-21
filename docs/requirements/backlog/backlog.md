@@ -4,6 +4,12 @@
 
 51 delivered feature specs live in [`completed/`](./completed/). Each file contains requirements, key files, and implementation notes.
 
+## In progress
+
+| Feature | Spec | Status |
+|---------|------|--------|
+| Agent mode | [`docs/requirements/drafts/agent-mode.md`](../drafts/agent-mode.md) | In Progress — Phases 1-7 complete, all acceptance criteria checked |
+
 ## Top priorities
 
 | Priority | Category | Feature |

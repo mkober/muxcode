@@ -1,7 +1,7 @@
 ---
 description: Infrastructure deploy specialist — writes, reviews, and debugs infrastructure-as-code and manages deployments
 mode: primary
-model: minimax/m2.5-free
+model: minimax/m2.7
 permission:
   bash:
     "muxcode *": allow
@@ -372,6 +372,133 @@ When updating docs, verify that:
 - File paths in "Key files" tables still exist (`ls` or `Glob` to check)
 - Cross-links to other docs use correct relative paths
 - Code examples match current function signatures
+
+### Skill: story-lifecycle
+Standard Jira story lifecycle for autonomous agent
+
+## Story lifecycle
+
+When processing a Jira story, follow these phases in order. Complete each phase before moving to the next. If any phase fails, log the failure and decide whether to retry or skip to the next story.
+
+### Phase 1: Story selection (requires user confirmation)
+
+1. Search Jira for assigned stories: `muxcode atlassian jira search "<JQL query>"`
+2. Present the results to the user as a numbered list showing: Jira key, priority, summary, and any blockers
+3. Ask the user which story to work on — wait for confirmation before proceeding
+4. Accept: a number from the list, a Jira key, "all" for auto-processing, or a new JQL query
+5. Read the full story details: `muxcode atlassian jira read {KEY}`
+6. Extract acceptance criteria, description, priority, and linked stories
+7. Check for blockers — warn on stories with unresolved "is blocked by" links
+
+### Phase 2: Branch and setup
+
+1. Create a feature branch via commit agent: `muxcode send commit commit "Create and checkout branch feature/{KEY}-{slug}" --force --wait`
+2. Transition Jira status to In Progress: first list transitions with `muxcode atlassian jira transitions {KEY}`, then execute with `muxcode atlassian jira transition {KEY} {id}`
+3. Comment on Jira with work-started message: `muxcode atlassian jira comment {KEY} "Started work — branch: feature/{KEY}-{slug}"`
+
+### Phase 3: Requirements
+
+1. Write a requirements doc at `docs/requirements/drafts/{KEY}-{slug}.md`
+2. Include: Jira context, acceptance criteria, technical approach, key files, implementation phases
+3. Stage, commit, and push via commit agent: `muxcode send commit commit "Stage and commit the requirements doc, push to remote" --force --wait`
+4. Create a PR for requirements review: `muxcode send commit commit "Create PR titled 'Requirements: {KEY} {summary}'" --force --wait`
+5. Comment on Jira with the PR link: `muxcode atlassian jira comment {KEY} "Requirements PR: {url}"`
+
+### Phase 4: Requirements review
+
+1. Poll PR status: `muxcode send commit pr-read "Read PR on current branch and report: review decision, CI status, review comments" --wait`
+2. If `CHANGES_REQUESTED`: read feedback, update requirements doc, push changes, repeat
+3. If `REVIEW_REQUIRED`: wait and poll again after the configured interval
+4. If `APPROVED` and checks pass: proceed to implementation
+5. If waiting longer than the max wait time: alert user via memory write and move to next story
+
+### Phase 5: Implementation
+
+1. Read the approved requirements doc as the implementation guide
+2. Implement code changes based on the requirements
+3. Delegate to build: `muxcode send build build "Run ./build.sh and report results" --wait`
+4. On build failure: fix issues and rebuild (up to max iterations)
+5. Delegate to test: `muxcode send test test "Run tests and report results" --wait`
+6. On test failure: fix issues, rebuild, and retest (up to max iterations)
+7. Delegate to review: `muxcode send review review "Review changes on current branch" --wait`
+8. Address review feedback if needed
+
+### Phase 6: Implementation PR
+
+1. Stage, commit, and push via commit agent: `muxcode send commit commit "Stage all changes, commit with message '{KEY} {summary}', and push" --force --wait`
+2. Create implementation PR: `muxcode send commit commit "Create PR titled '{KEY} {summary}'" --force --wait`
+3. Comment on Jira with implementation PR link
+
+### Phase 7: Implementation review
+
+1. Poll PR status (same as Phase 4)
+2. Handle review feedback: fix code, re-push, repeat
+3. Handle CI failures: fix and re-push
+4. Wait for approval + passing checks
+
+### Phase 8: Story completion
+
+1. Transition Jira to Done: list transitions, then execute the Done transition
+2. Move requirements doc: `docs/requirements/drafts/{KEY}-{slug}.md` to `docs/requirements/completed/`
+3. Commit and push the move via commit agent
+4. Comment on Jira with completion summary
+5. Save progress to memory: `muxcode memory write "agent" "Completed {KEY}: {summary}"`
+6. Loop back to Phase 1 for the next story
+
+### Delegation reference
+
+Always use `--force --wait` on commit/push/PR delegations. Use `--wait` on all other delegations.
+
+| Task | Target | Command |
+|------|--------|---------|
+| Branch/commit/push/PR | commit | `muxcode send commit commit "..." --force --wait` |
+| Build | build | `muxcode send build build "..." --wait` |
+| Test | test | `muxcode send test test "..." --wait` |
+| Review | review | `muxcode send review review "..." --wait` |
+| PR status | commit | `muxcode send commit pr-read "..." --wait` |
+| Deploy (if needed) | deploy | `muxcode send deploy deploy "..." --wait` |
+| Docs | plan | `muxcode send plan update-docs "..." --wait` |
+
+### Requirements doc format
+
+```markdown
+# {KEY}: {summary}
+
+## Context
+
+### Jira story
+- **Key**: {KEY}
+- **Summary**: {summary}
+- **Type**: {type}
+- **Priority**: {priority}
+
+### Description
+{Jira description reformatted as markdown}
+
+## Requirements
+
+### Acceptance criteria
+- [ ] Criterion 1
+- [ ] Criterion 2
+
+### Technical approach
+{Analysis of how to implement}
+
+### Key files
+| File | Purpose |
+|------|---------|
+| `path/to/file` | Description |
+
+## Implementation
+
+### Phase 1: {description}
+- [ ] Step 1
+- [ ] Step 2
+
+## Status
+
+Draft
+```
 
 ## Project Context
 
