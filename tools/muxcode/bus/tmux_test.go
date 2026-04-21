@@ -193,3 +193,138 @@ func TestTmuxUnsetGlobalHook(t *testing.T) {
 		t.Errorf("unexpected args: %v", args)
 	}
 }
+
+func TestTmuxListSessions(t *testing.T) {
+	origOutput := tmuxOutputRunner
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		return "project-a\nproject-b\nproject-c", nil
+	}
+	t.Cleanup(func() { tmuxOutputRunner = origOutput })
+
+	sessions, err := TmuxListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 3 {
+		t.Errorf("expected 3 sessions, got %d", len(sessions))
+	}
+	if sessions[0] != "project-a" || sessions[1] != "project-b" || sessions[2] != "project-c" {
+		t.Errorf("unexpected sessions: %v", sessions)
+	}
+}
+
+func TestTmuxListSessions_Empty(t *testing.T) {
+	origOutput := tmuxOutputRunner
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		return "", nil
+	}
+	t.Cleanup(func() { tmuxOutputRunner = origOutput })
+
+	sessions, err := TmuxListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessions != nil {
+		t.Errorf("expected nil sessions, got %v", sessions)
+	}
+}
+
+func TestQuitSession_MultipleSessions(t *testing.T) {
+	// Mock: current session is "project-b", two others exist
+	var runCalls [][]string
+	origRun := tmuxRunner
+	origQuiet := tmuxQuietRunner
+	origOutput := tmuxOutputRunner
+
+	tmuxRunner = func(args ...string) error {
+		runCalls = append(runCalls, args)
+		return nil
+	}
+	tmuxQuietRunner = func(args ...string) error {
+		runCalls = append(runCalls, args)
+		return nil
+	}
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		if args[0] == "display-message" {
+			return "project-b", nil
+		}
+		if args[0] == "list-sessions" {
+			return "project-a\nproject-b\nproject-c", nil
+		}
+		return "", nil
+	}
+	t.Cleanup(func() {
+		tmuxRunner = origRun
+		tmuxQuietRunner = origQuiet
+		tmuxOutputRunner = origOutput
+	})
+
+	if err := QuitSession(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have: switch-client -l, then kill-session -t project-b
+	if len(runCalls) < 2 {
+		t.Fatalf("expected at least 2 run calls, got %d: %v", len(runCalls), runCalls)
+	}
+
+	// First call: switch-client -l
+	first := runCalls[0]
+	if first[0] != "switch-client" || first[1] != "-l" {
+		t.Errorf("expected switch-client -l, got %v", first)
+	}
+
+	// Second call: kill-session -t project-b
+	second := runCalls[1]
+	if second[0] != "kill-session" || second[2] != "project-b" {
+		t.Errorf("expected kill-session -t project-b, got %v", second)
+	}
+}
+
+func TestQuitSession_OnlySession(t *testing.T) {
+	// Mock: current session is "project-a", no others
+	var runCalls [][]string
+	origRun := tmuxRunner
+	origQuiet := tmuxQuietRunner
+	origOutput := tmuxOutputRunner
+
+	tmuxRunner = func(args ...string) error {
+		runCalls = append(runCalls, args)
+		return nil
+	}
+	tmuxQuietRunner = func(args ...string) error {
+		runCalls = append(runCalls, args)
+		return nil
+	}
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		if args[0] == "display-message" {
+			return "project-a", nil
+		}
+		if args[0] == "list-sessions" {
+			return "project-a", nil
+		}
+		return "", nil
+	}
+	t.Cleanup(func() {
+		tmuxRunner = origRun
+		tmuxQuietRunner = origQuiet
+		tmuxOutputRunner = origOutput
+	})
+
+	if err := QuitSession(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should detach with -E to kill after
+	if len(runCalls) != 1 {
+		t.Fatalf("expected 1 run call, got %d: %v", len(runCalls), runCalls)
+	}
+
+	call := runCalls[0]
+	if call[0] != "detach-client" || call[1] != "-E" {
+		t.Errorf("expected detach-client -E, got %v", call)
+	}
+	if !strings.Contains(call[2], "kill-session") || !strings.Contains(call[2], "project-a") {
+		t.Errorf("expected -E command to kill project-a, got %q", call[2])
+	}
+}

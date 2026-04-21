@@ -10,7 +10,7 @@ import (
 // Session handles the "muxcode session" subcommand.
 func Session(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode session <compact|resume|status> [args...]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode session <compact|quit|resume|status> [args...]\n")
 		os.Exit(1)
 	}
 
@@ -20,13 +20,22 @@ func Session(args []string) {
 	switch subcmd {
 	case "compact":
 		sessionCompact(subArgs)
+	case "quit":
+		sessionQuit()
 	case "resume":
 		sessionResume(subArgs)
 	case "status":
 		sessionStatus()
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown session subcommand: %s\n", subcmd)
-		fmt.Fprintf(os.Stderr, "Usage: muxcode session <compact|resume|status> [args...]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode session <compact|quit|resume|status> [args...]\n")
+		os.Exit(1)
+	}
+}
+
+func sessionQuit() {
+	if err := bus.QuitSession(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error quitting session: %v\n", err)
 		os.Exit(1)
 	}
 }

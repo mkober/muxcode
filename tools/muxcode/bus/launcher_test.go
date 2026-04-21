@@ -2,8 +2,10 @@ package bus
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefaultLauncherConfig(t *testing.T) {
@@ -559,5 +561,59 @@ func TestLoadLauncherConfig_SplitLeftOverride(t *testing.T) {
 	}
 	if cfg.IsSplitLeftWindow("test") {
 		t.Error("expected test to not be split-left")
+	}
+}
+
+func TestFindRecentMarkdown(t *testing.T) {
+	dir := t.TempDir()
+	docsDir := filepath.Join(dir, "docs")
+	os.MkdirAll(filepath.Join(docsDir, "requirements"), 0o755)
+
+	// Create two .md files with different mtimes
+	older := filepath.Join(docsDir, "architecture.md")
+	newer := filepath.Join(docsDir, "requirements", "feature.md")
+	os.WriteFile(older, []byte("# Arch"), 0o644)
+	time.Sleep(50 * time.Millisecond)
+	os.WriteFile(newer, []byte("# Feature"), 0o644)
+
+	got := findRecentMarkdown(dir)
+	want := "docs/requirements/feature.md"
+	if got != want {
+		t.Errorf("findRecentMarkdown() = %q, want %q", got, want)
+	}
+}
+
+func TestFindRecentMarkdown_Empty(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "docs"), 0o755)
+
+	got := findRecentMarkdown(dir)
+	if got != "" {
+		t.Errorf("findRecentMarkdown() on empty docs = %q, want empty", got)
+	}
+}
+
+func TestFindRecentMarkdown_NoDocs(t *testing.T) {
+	dir := t.TempDir()
+
+	got := findRecentMarkdown(dir)
+	if got != "" {
+		t.Errorf("findRecentMarkdown() with no docs dir = %q, want empty", got)
+	}
+}
+
+func TestFindRecentMarkdown_IgnoresNonMd(t *testing.T) {
+	dir := t.TempDir()
+	docsDir := filepath.Join(dir, "docs")
+	os.MkdirAll(docsDir, 0o755)
+
+	// Create a non-.md file and an .md file
+	os.WriteFile(filepath.Join(docsDir, "notes.txt"), []byte("text"), 0o644)
+	time.Sleep(50 * time.Millisecond)
+	os.WriteFile(filepath.Join(docsDir, "readme.md"), []byte("# Readme"), 0o644)
+
+	got := findRecentMarkdown(dir)
+	if got != "docs/readme.md" {
+		t.Errorf("findRecentMarkdown() = %q, want %q", got, "docs/readme.md")
 	}
 }

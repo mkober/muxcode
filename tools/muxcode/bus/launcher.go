@@ -356,16 +356,22 @@ func sendEditorCommand(cfg *LauncherConfig, target string) {
 // Opens the last-edited doc file in Neovim, falling back to docs/ directory.
 // Returns the opened file path (relative to project root), or "" if fallback to docs/.
 func sendPlanEditorCommand(cfg *LauncherConfig, target, projectDir string) string {
-	// Find last-edited doc file via git
 	lastDoc := ""
-	out, err := exec.Command("git", "-C", projectDir, "log", "-1",
-		"--diff-filter=M", "--name-only", "--pretty=format:", "--", "docs/").Output()
-	if err == nil {
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		if len(lines) > 0 && lines[0] != "" {
-			candidate := filepath.Join(projectDir, lines[0])
-			if _, err := os.Stat(candidate); err == nil {
-				lastDoc = lines[0]
+
+	// Primary: most recently modified .md file in docs/ (reflects actual plan agent edits)
+	lastDoc = findRecentMarkdown(projectDir)
+
+	// Fallback: last committed doc change via git log (for fresh checkouts where mtimes are reset)
+	if lastDoc == "" {
+		out, err := exec.Command("git", "-C", projectDir, "log", "-1",
+			"--diff-filter=M", "--name-only", "--pretty=format:", "--", "docs/").Output()
+		if err == nil {
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			if len(lines) > 0 && lines[0] != "" {
+				candidate := filepath.Join(projectDir, lines[0])
+				if _, err := os.Stat(candidate); err == nil {
+					lastDoc = lines[0]
+				}
 			}
 		}
 	}
@@ -380,6 +386,40 @@ func sendPlanEditorCommand(cfg *LauncherConfig, target, projectDir string) strin
 	time.Sleep(100 * time.Millisecond)
 	TmuxSendEnter(target)
 	return lastDoc
+}
+
+// findRecentMarkdown finds the most recently modified .md file under docs/.
+// Returns the path relative to projectDir, or "" if none found.
+func findRecentMarkdown(projectDir string) string {
+	docsDir := filepath.Join(projectDir, "docs")
+	var newest string
+	var newestTime time.Time
+
+	filepath.Walk(docsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // skip errors
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(info.Name(), ".md") {
+			return nil
+		}
+		if info.ModTime().After(newestTime) {
+			newestTime = info.ModTime()
+			newest = path
+		}
+		return nil
+	})
+
+	if newest == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(projectDir, newest)
+	if err != nil {
+		return ""
+	}
+	return rel
 }
 
 // sendCommand sends a command string to a tmux pane.

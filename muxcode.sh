@@ -112,6 +112,18 @@ echo "  Project:  $PROJECT_DIR"
 echo "  Session:  $SESSION"
 echo ""
 
+# --- Attach to existing session if running ---
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  echo "  Session already running — attaching..."
+  echo ""
+  if [ -n "${TMUX:-}" ]; then
+    tmux switch-client -t "$SESSION"
+  else
+    tmux attach-session -t "$SESSION"
+  fi
+  exit 0
+fi
+
 # --- Lifecycle logging helper ---
 # Writes persistent lifecycle events to ~/.config/muxcode/logs/{session}.log
 # via the bus binary. Failures are silently ignored (|| true).
@@ -151,9 +163,6 @@ is_split_left() {
 
 # --- Agent launcher (Go binary handles config, model, tools, prompt resolution) ---
 AGENT_LAUNCHER="muxcode agent launch"
-
-# --- Kill existing session if any ---
-tmux kill-session -t "$SESSION" 2>/dev/null || true
 
 # --- Clear stale session-created hook from any running tmux server ---
 tmux set-hook -gu session-created 2>/dev/null || true
@@ -279,12 +288,12 @@ if [ "$FIRST_WIN" = "edit" ]; then
   tmux select-pane -t "$SESSION:$FIRST_WIN.0"
 elif [ "$FIRST_WIN" = "plan" ]; then
   send_init "$SESSION:$FIRST_WIN"
-  # Open the last-changed doc file in Neovim (fall back to docs/ directory)
-  # Use git log (mtime unreliable after checkout/rebase), fall back to find/ls for non-git repos
-  _last_doc="$(git -C "$PROJECT_DIR" log -1 --diff-filter=M --name-only --pretty=format: -- 'docs/*.md' 'docs/**/*.md' 2>/dev/null | head -1)"
-  [ -n "$_last_doc" ] && _last_doc="$PROJECT_DIR/$_last_doc"
+  # Open the last-edited doc file in Neovim (fall back to docs/ directory)
+  # Primary: mtime (reflects actual plan agent edits). Fallback: git log (for fresh checkouts).
+  _last_doc="$(find "$PROJECT_DIR/docs" -name '*.md' -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1)"
   if [ -z "$_last_doc" ] || [ ! -f "$_last_doc" ]; then
-    _last_doc="$(find "$PROJECT_DIR/docs" -name '*.md' -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1)"
+    _last_doc="$(git -C "$PROJECT_DIR" log -1 --diff-filter=M --name-only --pretty=format: -- 'docs/*.md' 'docs/**/*.md' 2>/dev/null | head -1)"
+    [ -n "$_last_doc" ] && _last_doc="$PROJECT_DIR/$_last_doc"
   fi
   if [ -n "$_last_doc" ] && [ -f "$_last_doc" ]; then
     _last_doc="${_last_doc#"$PROJECT_DIR/"}"
@@ -315,11 +324,11 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
     # Plan window: Neovim (left, last-edited doc) + agent (right)
     tmux new-window -t "$SESSION" -n "$WIN" -c "$PROJECT_DIR"
     send_init "$SESSION:$WIN"
-    # Use git log (mtime unreliable after checkout/rebase), fall back to find/ls for non-git repos
-    _last_doc="$(git -C "$PROJECT_DIR" log -1 --diff-filter=M --name-only --pretty=format: -- 'docs/*.md' 'docs/**/*.md' 2>/dev/null | head -1)"
-    [ -n "$_last_doc" ] && _last_doc="$PROJECT_DIR/$_last_doc"
+    # Primary: mtime (reflects actual plan agent edits). Fallback: git log (for fresh checkouts).
+    _last_doc="$(find "$PROJECT_DIR/docs" -name '*.md' -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1)"
     if [ -z "$_last_doc" ] || [ ! -f "$_last_doc" ]; then
-      _last_doc="$(find "$PROJECT_DIR/docs" -name '*.md' -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1)"
+      _last_doc="$(git -C "$PROJECT_DIR" log -1 --diff-filter=M --name-only --pretty=format: -- 'docs/*.md' 'docs/**/*.md' 2>/dev/null | head -1)"
+      [ -n "$_last_doc" ] && _last_doc="$PROJECT_DIR/$_last_doc"
     fi
     if [ -n "$_last_doc" ] && [ -f "$_last_doc" ]; then
       _last_doc="${_last_doc#"$PROJECT_DIR/"}"

@@ -201,6 +201,65 @@ func IsInsideTmux() bool {
 	return os.Getenv("TMUX") != ""
 }
 
+// TmuxListSessions returns the names of all tmux sessions.
+func TmuxListSessions() ([]string, error) {
+	out, err := TmuxOutput("list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
+}
+
+// TmuxCurrentSession returns the name of the current tmux session.
+func TmuxCurrentSession() (string, error) {
+	return TmuxOutput("display-message", "-p", "#{session_name}")
+}
+
+// TmuxDetachClient detaches the current tmux client.
+func TmuxDetachClient() error {
+	return TmuxRun("detach-client")
+}
+
+// QuitSession gracefully quits the current muxcode session.
+// If other sessions exist, switches to the last/next one and kills the current.
+// If this is the only session, detaches the client and kills in background.
+func QuitSession() error {
+	current, err := TmuxCurrentSession()
+	if err != nil {
+		return fmt.Errorf("get current session: %w", err)
+	}
+
+	sessions, err := TmuxListSessions()
+	if err != nil {
+		return fmt.Errorf("list sessions: %w", err)
+	}
+
+	// Count other sessions
+	var others []string
+	for _, s := range sessions {
+		if s != current {
+			others = append(others, s)
+		}
+	}
+
+	if len(others) > 0 {
+		// Switch to last session (most recent), fall back to next
+		if err := TmuxRunQuiet("switch-client", "-l"); err != nil {
+			TmuxRunQuiet("switch-client", "-n")
+		}
+		// Kill the session we just left
+		return TmuxKillSession(current)
+	}
+
+	// Only session — detach first so the terminal stays open, then kill
+	// Use run-shell to kill after detach completes
+	return TmuxRun("detach-client", "-E",
+		fmt.Sprintf("tmux kill-session -t %q 2>/dev/null", current))
+}
+
 // TmuxBuildArgs builds a tmux command argument list (for testing).
 // This is a convenience function that returns the args as a slice.
 func TmuxBuildArgs(subcmd string, args ...string) []string {
