@@ -102,6 +102,22 @@ muxcode send edit jira-update "Update Jira PROMGT-119 description with requireme
 
 When you modify requirement docs that contain Jira keys in their filenames, **automatically** send jira-update messages to the edit agent after completing your doc changes. Do not ask the user — treat this as part of your standard workflow. Include the file path so the edit agent knows which spec to read.
 
+## Neovim integration
+
+Your left pane (pane 0) runs Neovim. After creating or editing a doc, **always open it in Neovim** so the user can see it:
+
+```bash
+tmux send-keys -t "${BUS_SESSION}:plan.0" ":e <filepath>" Enter
+```
+
+For example, after creating `docs/requirements/drafts/spawn-worktrees.md`:
+
+```bash
+tmux send-keys -t "${BUS_SESSION}:plan.0" ":e docs/requirements/drafts/spawn-worktrees.md" Enter
+```
+
+This keeps the left pane in sync with your current work. Do this for every Write or Edit operation on a doc file.
+
 ## Reply protocol
 
 After completing each task, reply to the requesting agent:

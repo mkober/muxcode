@@ -59,7 +59,7 @@ A typical workflow looks like this:
 5. **You iterate.** Results flow back to the edit agent. If the reviewer finds issues, you fix them and kick off another cycle.
 6. **You commit when ready.** The commit agent handles staging, committing, and pushing. A pre-commit safeguard blocks commits if other agents still have pending work.
 
-The entire build-test-review chain is **hook-driven** — Go hooks check exit codes and fire the next step. No tokens are spent on routing decisions, and the chain runs at the speed of your tools, not your LLM.
+The entire build-test-review chain is **hook-driven** — Go hooks check exit codes and fire the next step. No tokens are spent on routing decisions, and the chain runs at the speed of your tools, not your LLM. Chain actions support conditional expressions — route builds to deploy on release branches, to test on feature branches — all config-driven with first-match-wins semantics.
 
 The `muxcode tui` command launches a live dashboard showing which agents are busy, idle, or waiting on messages, so you always know what's happening across the session. You can add a dashboard window by including `status` in your `MUXCODE_WINDOWS` list.
 
@@ -166,12 +166,13 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 
 ### Agent orchestration
 - **10 specialist agents** — Plan, edit, build, test, review, deploy, run, commit, analyze, and watch — each with scoped tool permissions and its own tmux window
-- **Hook-driven automation chains** — Build→test→review and deploy→verify chains fire via bash exit codes. Deterministic, fast, zero token cost for routing
-- **Event subscriptions** — Fan-out after chain execution. Subscribe any agent to build/test/deploy events with outcome filtering
+- **Hook-driven automation chains** — Build→test→review and deploy→run→watch chains fire via bash exit codes. Deterministic, fast, zero token cost for routing
+- **Conditional chain actions** — Chain actions support 8 condition types (`files_match`, `branch_match`, `env_set`, `output_contains`, etc.) with first-match-wins on action arrays. Route builds to deploy on release branches, to test on feature branches — all config-driven
+- **Event subscriptions** — Fan-out after chain execution. Subscribe any agent to build/test/deploy/run/watch events with outcome and condition filtering
 - **Spawned agents** — Create temporary agents for one-off tasks in their own tmux window. Results collected automatically on completion
 - **Modal windows** — On-demand overlay windows for specialized tasks. API testing opens via `prefix + i` or `muxcode modal open api`. Declarative config with size presets and optional pane splits
 - **Pre-commit safeguards** — Commit delegation blocked when other agents have pending work, preventing incomplete commits
-- **Workflow state machine** — Persistent state tracking through the development lifecycle (idle → editing → building → testing → reviewing → committing → deploying). Automatic state regression on file edits, color-coded display. Query with `muxcode workflow`
+- **Workflow state machine** — Persistent state tracking through the development lifecycle (idle → editing → building → testing → reviewing → committing → deploying → running → watching). 16 states with automatic regression on file edits, color-coded display. Query with `muxcode workflow`
 
 ### Local LLM & cost control
 - **Ollama integration** — Any agent role can run via a local LLM instead of Claude Code. Per-role model selection via `MUXCODE_{ROLE}_MODEL`
@@ -241,7 +242,7 @@ Both MuxCode and autonomous AI tools solve the same coordination problems:
 
 **Tmux-native, editor-centric.** You work in your actual editor alongside the agents. Press F3 to watch the build agent work. Press F9 to see the commit agent run git commands. There's no web UI, no chat interface separate from your terminal. Autonomous tools typically abstract the execution environment behind an API or web interface.
 
-**Hook-driven orchestration, not LLM-driven.** The build-test-review chain fires via exit codes in Go hooks — deterministic, fast, zero token cost for routing. Autonomous tools typically use the LLM itself to decide what to do next, which is more flexible but slower and more expensive.
+**Hook-driven orchestration, not LLM-driven.** The build-test-review and deploy-run-watch chains fire via exit codes in Go hooks — deterministic, fast, zero token cost for routing. Conditional chain actions add branch-aware, file-aware routing without leaving the config-driven model. Autonomous tools typically use the LLM itself to decide what to do next, which is more flexible but slower and more expensive.
 
 **Composable specialists, not a monolithic agent.** Each agent is a focused role with constrained permissions. The build agent can't edit files. The commit agent can't deploy. This separation of concerns mirrors how teams actually work. Autonomous tools often use a single agent with broad capabilities that handles everything.
 
@@ -340,7 +341,7 @@ Any agent role can run via [OpenCode](https://opencode.ai/) instead of Claude Co
 
 OpenCode agents run as interactive TUI sessions in their tmux panes. MuxCode generates per-role agent definitions in `.opencode/agents/<role>.md` with tool permissions translated from muxcode's tool profiles. The TUI manages its own context window, compaction, and tool execution autonomously.
 
-Since OpenCode has no hook system, chain-driven features (build→test→review) are replaced with role-specific prompt instructions — each agent only sees chain commands relevant to its role (build agents see build→test, test agents see test→review, review agents see generic reply instructions). Agent definition body text is adapted to replace hook chain references with manual commands, and the send policy is bypassed so non-hook agents can actually send chain messages. Wake-up notifications inject message content directly into the TUI input via send-keys. This same graceful degradation applies to all non-hook providers (OpenCode, Codex CLI, local LLM).
+Since OpenCode has no hook system, chain-driven features (build→test→review, deploy→run→watch) are replaced with config-driven prompt instructions generated by `buildChainInstruction()` — each agent only sees chain commands relevant to its role, including condition descriptions for conditional actions. Agent definition body text is adapted to replace hook chain references with manual commands, and the send policy is bypassed so non-hook agents can actually send chain messages. Wake-up notifications inject message content directly into the TUI input via send-keys. This same graceful degradation applies to all non-hook providers (OpenCode, Codex CLI, local LLM).
 
 ### Limitations
 

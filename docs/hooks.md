@@ -199,17 +199,85 @@ Each chain step also transitions the [workflow state machine](architecture.md#wo
 
 **Key property:** Agents are NOT responsible for chaining. They only run their command and reply. The hook guarantees the chain fires deterministically based on exit codes.
 
-## Deploy-Verify Chain
+## Deploy-Run-Watch Chain
 
-When a deploy-apply command succeeds, the hook triggers a verification self-loop:
+When a deploy-apply command succeeds, the hook triggers a run→watch chain:
 
 1. Deploy agent runs `cdk deploy` (or `terraform apply`, `pulumi up`, etc.)
 2. `hook bash` detects deploy-apply command completed
-3. If exit code 0: hook sends `request:verify` back to deploy agent
-4. Deploy agent runs verification checks (AWS resource health, HTTP smoke tests, CloudWatch alarms/logs)
-5. Deploy agent reports PASS/FAIL results to edit
+3. If exit code 0: hook sends `request:run` to the run agent
+4. Run agent executes validation commands (AWS resource health, API smoke tests)
+5. If run succeeds: hook sends `request:watch` to the watch agent
+6. Watch agent monitors logs (CloudWatch, k8s, Docker) and reports findings to edit
+7. On failure at any step: hook notifies edit directly with error details
 
-Preview commands (`cdk diff`, `terraform plan`) are logged to deploy history but do **not** trigger the verify chain. Deploy failures transition the workflow state to `deploy-failed`. See [Deploy verify plan](plan-deploy-verify.md) for full details.
+Preview commands (`cdk diff`, `terraform plan`) are logged to deploy history but do **not** trigger the chain. Deploy failures transition the workflow state to `deploy-failed`.
+
+## Conditional chains
+
+Chain actions support condition expressions that control when they fire. Conditions are evaluated as AND logic — all conditions in an action must pass for it to fire.
+
+### Condition types
+
+| Condition | Value | Passes when |
+|-----------|-------|-------------|
+| `files_match` | glob pattern | Any changed file matches the pattern |
+| `files_not_match` | glob pattern | No changed file matches the pattern |
+| `branch_match` | regex | Current branch name matches |
+| `branch_not_match` | regex | Current branch name does not match |
+| `env_set` | env var name | Environment variable is set and non-empty |
+| `env_equals` | `VAR=value` | Environment variable equals the specified value |
+| `output_contains` | substring | Command output contains the substring |
+| `exit_code` | integer | Command exit code equals the value |
+
+### Action arrays (first-match-wins)
+
+Each chain outcome (`on_success`, `on_failure`, `on_unknown`) accepts either a single action or an array. When multiple actions are configured, the first action whose conditions all pass fires — remaining actions are skipped:
+
+```json
+{
+  "build": {
+    "on_success": [
+      {
+        "target": "deploy",
+        "action": "deploy",
+        "message": "Deploy to staging",
+        "conditions": { "branch_match": "^release/" }
+      },
+      {
+        "target": "test",
+        "action": "test",
+        "message": "Run tests"
+      }
+    ]
+  }
+}
+```
+
+In this example, build success on a `release/*` branch sends to deploy; on any other branch, it falls through to test.
+
+### Chain context
+
+`ChainContext` carries runtime state for condition evaluation:
+
+- **Branch** — current git branch name
+- **ChangedFiles** — list of uncommitted changed files
+- **Output** — command stdout/stderr
+- **ExitCode** — command exit code
+
+Git information (branch, changed files) is lazy-loaded via `PopulateGitInfo()` — only called when conditions or message templates reference `${branch}` or `${changed_files}`.
+
+### Message templates
+
+Chain messages support template variables: `${exit_code}`, `${command}`, `${branch}`, `${changed_files}`. Templates are expanded via `ExpandMessageWithContext()`.
+
+### CLI
+
+```bash
+muxcode chain <event> <outcome> [--verbose] [--files F] [--branch B] [--output O] [--exit-code N] [--command CMD] [--dry-run] [--no-notify]
+```
+
+Use `--verbose` to see per-condition PASS/FAIL results. Use `--files`, `--branch`, `--output` to override context values for testing.
 
 ## Testing
 

@@ -491,11 +491,11 @@ func TestResolveChain_DeploySuccess(t *testing.T) {
 	if action == nil {
 		t.Fatal("expected chain action for deploy success")
 	}
-	if action.SendTo != "deploy" {
-		t.Errorf("send_to = %q, want deploy", action.SendTo)
+	if action.SendTo != "run" {
+		t.Errorf("send_to = %q, want run", action.SendTo)
 	}
-	if action.Action != "verify" {
-		t.Errorf("action = %q, want verify", action.Action)
+	if action.Action != "run" {
+		t.Errorf("action = %q, want run", action.Action)
 	}
 	if action.Type != "request" {
 		t.Errorf("type = %q, want request", action.Type)

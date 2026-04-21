@@ -936,7 +936,7 @@ $ muxcode agent launch edit
 Manage event subscriptions for fan-out after chain execution.
 
 ```bash
-muxcode subscribe add <event> <outcome> <notify-role> <action> [message-template]
+muxcode subscribe add <event> <outcome> <notify-role> <action> [message-template] [--conditions JSON]
 muxcode subscribe list [--all]
 muxcode subscribe remove <id>
 muxcode subscribe enable <id>
@@ -947,17 +947,18 @@ muxcode subscribe disable <id>
 
 | Subcommand | Description |
 |------------|-------------|
-| `add` | Create a new subscription |
+| `add` | Create a new subscription (with optional conditions) |
 | `list` | Show enabled subscriptions (use `--all` to include disabled) |
 | `remove` | Delete a subscription by ID |
 | `enable` | Enable a disabled subscription |
 | `disable` | Disable a subscription without removing it |
 
-- `<event>` — event to match: `build`, `test`, `deploy`, or `*` (wildcard)
+- `<event>` — event to match: `build`, `test`, `deploy`, `run`, `watch`, or `*` (wildcard)
 - `<outcome>` — outcome to match: `success`, `failure`, or `*` (wildcard)
 - `<notify-role>` — role to notify when matched
 - `<action>` — action name for the sent message
-- `[message-template]` — optional template with `${event}`, `${outcome}`, `${exit_code}`, `${command}` (default: `"${event} ${outcome}: ${command}"`)
+- `[message-template]` — optional template with `${event}`, `${outcome}`, `${exit_code}`, `${command}`, `${branch}`, `${changed_files}` (default: `"${event} ${outcome}: ${command}"`)
+- `--conditions JSON` — optional JSON object with condition expressions (same types as chain conditions: `files_match`, `branch_match`, `env_set`, `env_equals`, `output_contains`, `exit_code`, etc.). All conditions must pass for the subscription to fire.
 
 **Examples:**
 ```bash
@@ -966,6 +967,9 @@ $ muxcode subscribe add build failure watch alert "Build failed: ${command}"
 
 # Notify analyst on all events
 $ muxcode subscribe add "*" "*" analyze observe
+
+# Only fire on release branches
+$ muxcode subscribe add build success deploy deploy "Deploy ${branch}" --conditions '{"branch_match": "^release/"}'
 
 # List subscriptions
 $ muxcode subscribe list
@@ -1242,9 +1246,49 @@ Copies environments and collections from a source directory into `.muxcode/api/`
 muxcode api import examples/api
 ```
 
+### `muxcode chain`
+
+Resolve and fire event chain actions. Used by `hook bash` internally and available as a standalone CLI for testing and manual chain triggers.
+
+```bash
+muxcode chain <event_type> <outcome> [flags]
+```
+
+**Arguments:**
+
+- `<event_type>` — event to resolve: `build`, `test`, `deploy`, `run`, `watch`
+- `<outcome>` — outcome to match: `success`, `failure`, `unknown`
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--exit-code N` | Override exit code in chain context |
+| `--command CMD` | Override command in chain context |
+| `--files F` | Override changed files (comma-separated) for condition evaluation |
+| `--branch B` | Override branch name for condition evaluation |
+| `--output O` | Override command output for condition evaluation |
+| `--verbose` | Show per-condition PASS/FAIL results |
+| `--dry-run` | Resolve chain without sending messages |
+| `--no-notify` | Skip analyst notification |
+
+**Exit codes:** 0 = sent, 1 = error, 2 = no chain configured
+
+**Examples:**
+```bash
+# Test what chain action would fire for build success on a release branch
+muxcode chain build success --branch release/v2 --dry-run --verbose
+
+# Manually trigger test chain with file context
+muxcode chain build success --files "src/main.go,src/util.go"
+
+# Check deploy chain resolution
+muxcode chain deploy success --verbose
+```
+
 ### `muxcode hook`
 
-Hook handlers for Claude Code's PreToolUse and PostToolUse events. Each subcommand reads the tool event as JSON from stdin.
+Hook handlers for Claude Code's PreToolUse and PostToolUse events. Each subcommand reads the tool event as JSON on stdin.
 
 ```bash
 muxcode hook guard       # PreToolUse: edit agent command guard
@@ -1254,7 +1298,7 @@ muxcode hook inbox-poll  # PreToolUse: inbox check on tool execution
 ```
 
 - `guard` — blocks prohibited commands for the edit agent (build, test, git, deploy, curl). Returns JSON `{"decision":"block","reason":"..."}` or passes through.
-- `bash` — detects build, test, deploy, and git commands from exit codes and command text. Drives the build→test→review chain via `ResolveChain()`. Transitions the workflow state machine. Logs command history with error extraction.
+- `bash` — detects build, test, deploy, run, watch, and git commands from exit codes and command text. Drives the build→test→review and deploy→run→watch chains via `ResolveChain()` with `ChainContext` (conditions, action arrays). Transitions the workflow state machine. Logs command history with error extraction.
 - `analyze` — writes file-edit events to the analyze trigger file for daemon debounce. Transitions workflow to `editing`.
 - `inbox-poll` — checks the agent's inbox on each tool execution and injects a "You have new messages" notification if messages are pending.
 
@@ -1397,14 +1441,24 @@ Messages are stored as JSONL in per-agent inbox files.
 
 Messages from `build`, `test`, or `review` to any non-edit agent are automatically copied to the edit inbox via `Send()`, giving the orchestrator visibility into all workflow events. Chain-triggered messages and subscription fan-out use `SendNoCC()` to avoid redundant CC copies (the edit agent already receives chain results directly).
 
-### Build-Test-Review Chain
+### Event Chains
 
-Driven by `muxcode hook bash`, not by agent LLMs:
+Driven by `muxcode hook bash`, not by agent LLMs. Chain actions support conditional expressions with first-match-wins on action arrays.
 
-1. **Build succeeds** -> hook sends `request:test` to the test agent
-2. **Test succeeds** -> hook sends `request:review` to the review agent
-3. **Any failure** -> hook sends `event:notify` directly to edit
-4. After primary chain action, subscription fan-out fires for matching event+outcome patterns
+**Build-Test-Review chain:**
+
+1. **Build succeeds** → hook evaluates build success actions → sends `request:test` to the test agent
+2. **Test succeeds** → hook evaluates test success actions → sends `request:review` to the review agent
+3. **Any failure** → hook sends `event:notify` directly to edit
+
+**Deploy-Run-Watch chain:**
+
+1. **Deploy succeeds** → hook sends `request:run` to the run agent
+2. **Run succeeds** → hook sends `request:watch` to the watch agent
+3. **Watch completes** → hook sends results to edit
+4. **Any failure** → hook sends `event:notify` directly to edit
+
+After the primary chain action, subscription fan-out fires for matching event+outcome+condition patterns.
 
 ## Pane Targeting
 

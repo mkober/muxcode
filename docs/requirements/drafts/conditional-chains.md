@@ -431,4 +431,4 @@ The spec references `bus/hook.go` but doesn't explain the call path. Currently `
 
 ## Status
 
-In Progress
+Complete
