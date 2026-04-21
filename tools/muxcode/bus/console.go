@@ -323,6 +323,13 @@ func DefaultConsoleConfigs() map[string]*ConsoleConfig {
 			MaxRecent:   15,
 			Renderer:    renderAPI,
 		},
+		"agent": {
+			Title:       "Agent",
+			EmptyMsg:    "no activity yet",
+			RecentLabel: "recent activity",
+			MaxRecent:   25,
+			Renderer:    renderAgent,
+		},
 	}
 }
 
@@ -1333,6 +1340,119 @@ func renderAPI(cfg *ConsoleConfig, session string, width int) string {
 		Pad, ColorDim, ColorReset, ColorCyan, avg, ColorReset))
 
 	return b.String()
+}
+
+// renderAgent handles the agent role — shows bus message activity (delegations
+// sent/received) by reading from log.jsonl filtered for the agent role.
+func renderAgent(cfg *ConsoleConfig, session string, width int) string {
+	logPath := LogPath(session)
+	entries := readAgentEntries(logPath, 0)
+	ecw := calcEntryContentWidth(width)
+
+	var b strings.Builder
+
+	if len(entries) == 0 {
+		b.WriteString(emptyBlock(cfg.EmptyMsg))
+		b.WriteString(fmt.Sprintf("%s%swaiting for autonomous agent...%s\n", Pad, ColorDim, ColorReset))
+		return b.String()
+	}
+
+	total := len(entries)
+	sent := 0
+	recv := 0
+	for _, e := range entries {
+		if e.From == "agent" {
+			sent++
+		} else {
+			recv++
+		}
+	}
+
+	b.WriteString(fmt.Sprintf("%s%stotal%s %s%d%s  %ssent%s %s%d%s  %sreceived%s %s%d%s\n\n",
+		Pad, ColorDim, ColorReset,
+		ColorCyan, total, ColorReset,
+		ColorDim, ColorReset,
+		ColorPurple, sent, ColorReset,
+		ColorDim, ColorReset,
+		ColorGreen, recv, ColorReset))
+
+	// Recent activity
+	b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorCyan, cfg.RecentLabel, ColorReset))
+	recent := entries
+	offset := 0
+	if len(recent) > cfg.MaxRecent {
+		offset = len(recent) - cfg.MaxRecent
+		recent = recent[offset:]
+	}
+
+	for i, e := range recent {
+		num := offset + i + 1
+		ts := FormatTimestamp(e.TS)
+		numLabel := fmt.Sprintf("#%-3d", num)
+
+		// Direction indicator: → sent, ← received
+		direction := "←"
+		dirColor := ColorGreen
+		peer := e.From
+		if e.From == "agent" {
+			direction = "→"
+			dirColor = ColorPurple
+			peer = e.To
+		}
+
+		b.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %s%s%s %s  %s%s%s\n",
+			ContPad, ColorDim, numLabel, ColorReset,
+			ColorDim, ts, ColorReset,
+			dirColor, direction, ColorReset,
+			peer,
+			ColorDim, e.Action, ColorReset))
+
+		// Message preview (first line, word-wrapped)
+		msg := e.Message
+		if msg == "" {
+			msg = e.Payload
+		}
+		if msg != "" {
+			firstLine := strings.TrimSpace(strings.Split(msg, "\n")[0])
+			if firstLine != "" {
+				for _, wline := range WordWrap(firstLine, ecw) {
+					b.WriteString(fmt.Sprintf("%s%s↳ %s%s\n", EntryPad, ColorDim, wline, ColorReset))
+				}
+			}
+		}
+	}
+
+	return b.String()
+}
+
+// readAgentEntries reads log.jsonl and filters for messages involving the agent role.
+func readAgentEntries(logPath string, limit int) []ConsoleEntry {
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return nil
+	}
+
+	var all []ConsoleEntry
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var entry ConsoleEntry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			continue
+		}
+		if entry.From == "agent" || entry.To == "agent" {
+			all = append(all, entry)
+		}
+	}
+
+	if limit > 0 && len(all) > limit {
+		all = all[len(all)-limit:]
+	}
+	return all
 }
 
 // --- Helpers ---

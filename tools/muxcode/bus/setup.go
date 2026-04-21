@@ -97,6 +97,8 @@ func Init(session, memoryDir string) error {
 		}
 		// Clean up orphaned spawn worktrees from previous session
 		cleanSpawnWorktrees(session)
+		// Reset mode cycle state — hold windows don't survive restarts
+		cleanModeCycleState(session)
 	}
 
 	// Create memory directory and shared.md if not exists
@@ -258,6 +260,22 @@ func purgeStaleFiles(session string) error {
 	// Already handled by the lock dir cleanup above, but explicit for clarity
 
 	return nil
+}
+
+// cleanModeCycleState removes mode cycle state files on re-init.
+// Hold windows don't survive session restarts, so stale state pointing to
+// non-existent hold windows would cause swap-pane failures.
+func cleanModeCycleState(session string) {
+	busDir := BusDir(session)
+	entries, err := os.ReadDir(busDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "mode-cycle-") && strings.HasSuffix(e.Name(), ".json") {
+			_ = os.Remove(filepath.Join(busDir, e.Name()))
+		}
+	}
 }
 
 // cleanSpawnWorktrees removes the entire spawn worktree base directory for a session

@@ -423,33 +423,40 @@ func TestTransformStatusLeft_NoIcon(t *testing.T) {
 
 func TestWindowStatusFormat_ContainsDraculaColors(t *testing.T) {
 	got := WindowStatusFormat()
-	if !strings.Contains(got, "#282a36") {
-		t.Error("expected Dracula background color")
-	}
 	if !strings.Contains(got, "#44475a") {
 		t.Error("expected Dracula current-line color")
 	}
 	if !strings.Contains(got, "#f8f8f2") {
 		t.Error("expected Dracula foreground color")
 	}
+	if !strings.Contains(got, "#282a36") {
+		t.Error("expected Dracula background color for powerline edges")
+	}
 	if !strings.Contains(got, pwrLeft) {
 		t.Error("expected powerline left arrow")
 	}
-	if !strings.Contains(got, "toupper") {
-		t.Error("expected awk toupper for capitalization")
+	if !strings.Contains(got, "@display-name") {
+		t.Error("expected @display-name user option for window labels")
+	}
+	// Must NOT use #{?} conditional — breaks when #[] escapes contain commas
+	if strings.Contains(got, "#{?") {
+		t.Error("must not use #{?} conditional (breaks with commas in style escapes)")
 	}
 }
 
 func TestWindowStatusCurrentFormat_ContainsGreenHighlight(t *testing.T) {
 	got := WindowStatusCurrentFormat()
-	if !strings.Contains(got, "#00ff00") {
-		t.Error("expected green highlight for current window")
+	if !strings.Contains(got, "#50fa7b") {
+		t.Error("expected Dracula green (#50fa7b) for current window")
 	}
 	if !strings.Contains(got, "bold") {
 		t.Error("expected bold for current window")
 	}
 	if !strings.Contains(got, "F#I*") {
 		t.Error("expected F#I* (function key + asterisk) for current window")
+	}
+	if strings.Contains(got, "#{?") {
+		t.Error("must not use #{?} conditional (breaks with commas in style escapes)")
 	}
 }
 

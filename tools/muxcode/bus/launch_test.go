@@ -31,6 +31,7 @@ func TestAgentFileNameExported(t *testing.T) {
 		{"watch", "log-watcher"},
 		{"pr-read", "pr-reader"},
 		{"api", "api-tester"},
+		{"agent", "autonomous-agent"},
 		{"unknown", ""},
 	}
 
@@ -61,6 +62,7 @@ func TestRoleCLIEnvVar(t *testing.T) {
 		{"run", "MUXCODE_RUN_CLI"},
 		{"pr-read", "MUXCODE_PR_READ_CLI"},
 		{"api", "MUXCODE_API_CLI"},
+		{"agent", "MUXCODE_AGENT_CLI"},
 		{"custom", "MUXCODE_CUSTOM_CLI"},
 	}
 
@@ -83,6 +85,7 @@ func TestRoleClaudeModelEnvVar(t *testing.T) {
 		{"commit", "MUXCODE_COMMIT_CLAUDE_MODEL"},
 		{"edit", "MUXCODE_EDIT_CLAUDE_MODEL"},
 		{"analyze", "MUXCODE_ANALYZE_CLAUDE_MODEL"},
+		{"agent", "MUXCODE_AGENT_CLAUDE_MODEL"},
 		{"custom", "MUXCODE_CUSTOM_CLAUDE_MODEL"},
 	}
 
@@ -107,6 +110,7 @@ func TestRoleClaudeModelDefault(t *testing.T) {
 		{"review", "claude-opus-4-6"},
 		{"analyze", "claude-opus-4-6"},
 		{"analyst", "claude-opus-4-6"},
+		{"agent", "claude-opus-4-6"},
 		{"build", "claude-sonnet-4-5"},
 		{"test", "claude-sonnet-4-5"},
 		{"commit", "claude-sonnet-4-5"},

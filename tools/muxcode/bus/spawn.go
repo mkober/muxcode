@@ -15,17 +15,17 @@ import (
 // SpawnEntry represents a tracked spawned agent session.
 type SpawnEntry struct {
 	ID          string `json:"id"`
-	Role        string `json:"role"`                    // base role, e.g. "research"
-	SpawnRole   string `json:"spawn_role"`              // bus role + window name, e.g. "spawn-a1b2c3d4"
-	Owner       string `json:"owner"`                   // requesting agent, e.g. "edit"
-	Task        string `json:"task"`                    // task description
-	Status      string `json:"status"`                  // "running", "completed", "stopped"
-	Window      string `json:"window"`                  // tmux window name (= SpawnRole)
+	Role        string `json:"role"`       // base role, e.g. "research"
+	SpawnRole   string `json:"spawn_role"` // bus role + window name, e.g. "spawn-a1b2c3d4"
+	Owner       string `json:"owner"`      // requesting agent, e.g. "edit"
+	Task        string `json:"task"`       // task description
+	Status      string `json:"status"`     // "running", "completed", "stopped"
+	Window      string `json:"window"`     // tmux window name (= SpawnRole)
 	StartedAt   int64  `json:"started_at"`
 	FinishedAt  int64  `json:"finished_at"`
 	Notified    bool   `json:"notified"`
-	Worktree    string `json:"worktree,omitempty"`      // worktree directory path
-	WorktreeRef string `json:"worktree_ref,omitempty"`  // git ref used (commit SHA)
+	Worktree    string `json:"worktree,omitempty"`     // worktree directory path
+	WorktreeRef string `json:"worktree_ref,omitempty"` // git ref used (commit SHA)
 }
 
 // ReadSpawnEntries reads all spawn entries from the spawn JSONL file.

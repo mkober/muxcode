@@ -328,6 +328,10 @@ func createWindowContent(cfg *LauncherConfig, session, win, projectDir, agentLau
 		TmuxSelectPane(target + ".1")
 	}
 
+	// Set display name for the status bar label (used by #{@display-name} format).
+	// Per-window user option — follows the window object across swap-window operations.
+	TmuxSetWindowOption(target, "@display-name", CapitalizeWindow(win))
+
 	return nil
 }
 
@@ -753,15 +757,22 @@ func TransformStatusLeft(sl string) string {
 }
 
 // WindowStatusFormat returns the Dracula-themed window-status-format string.
+// Uses #{@display-name} (per-window user option) instead of #() shell commands
+// for instant synchronous rendering. No #{?} conditional — index 0 hiding is
+// handled by per-window format overrides in mode.go.
+// (tmux #{?} conditionals break when #[] style escapes contain commas.)
 func WindowStatusFormat() string {
-	cap := "awk '{print toupper(substr($0,1,1)) substr($0,2)}'"
-	return "#[fg=#282a36,bg=#44475a,noitalics]" + pwrLeft + "#[fg=#f8f8f2,bg=#44475a] F#I#[fg=#f8f8f2, bg=#44475a] #(echo #W | " + cap + ") #[fg=#44475a, bg=#282a36]" + pwrLeft
+	return "#[fg=#282a36,bg=#44475a]" + pwrLeft +
+		"#[fg=#f8f8f2,bg=#44475a] F#I #{@display-name} " +
+		"#[fg=#44475a,bg=#282a36]" + pwrLeft
 }
 
 // WindowStatusCurrentFormat returns the Dracula-themed window-status-current-format string.
 func WindowStatusCurrentFormat() string {
-	cap := "awk '{print toupper(substr($0,1,1)) substr($0,2)}'"
-	return "#[fg=#282a36, bg=#00ff00]" + pwrLeft + "#[fg=#44475a, bg=#00ff00] F#I*#[fg=#44475a, bg=#00ff00, bold] #(echo #W | " + cap + ") #[fg=#00ff00, bg=#282a36]" + pwrLeft
+	return "#[fg=#282a36,bg=#50fa7b]" + pwrLeft +
+		"#[fg=#282a36,bg=#50fa7b] F#I*" +
+		"#[fg=#282a36,bg=#50fa7b,bold] #{@display-name} " +
+		"#[fg=#50fa7b,bg=#282a36]" + pwrLeft
 }
 
 // ConfigureStatusBar configures the tmux status bar with Dracula theme.
@@ -773,6 +784,8 @@ func ConfigureStatusBar(session string) {
 	}
 
 	// --- window-status-format ---
+	// window-status-format is a window option — must use -g (global window default).
+	// -t session doesn't work for window options.
 	TmuxSetGlobalOption("window-status-format", WindowStatusFormat())
 	TmuxSetGlobalOption("window-status-current-format", WindowStatusCurrentFormat())
 

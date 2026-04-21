@@ -13,7 +13,7 @@ var KnownRoles = []string{
 	"plan", "edit", "build", "test", "review",
 	"deploy", "run", "commit", "analyze",
 	"docs", "research", "watch", "pr-read",
-	"webhook", "api",
+	"webhook", "api", "agent",
 }
 
 // splitLeftWindows lists windows that have a dedicated tool in the left pane.
@@ -357,13 +357,29 @@ var hostedRoles = map[string]string{
 	"pr-read":  "commit",
 }
 
+// modeRoles maps roles that share a window via mode cycling.
+// Unlike hostedRoles, mode roles have their own independent inboxes.
+// The value is the host window name (for PaneTarget resolution).
+var modeRoles = map[string]string{
+	"agent": "agent",
+}
+
 // WindowForRole returns the tmux window name where a role runs.
 // Hosted roles return their host window; all others return themselves.
 func WindowForRole(role string) string {
 	if host, ok := hostedRoles[role]; ok {
 		return host
 	}
+	if host, ok := modeRoles[role]; ok {
+		return host
+	}
 	return role
+}
+
+// IsModeRole returns true if the role shares a window via mode cycling.
+func IsModeRole(role string) bool {
+	_, ok := modeRoles[role]
+	return ok
 }
 
 // IsHostedRole returns true if the role runs inside another agent's window.

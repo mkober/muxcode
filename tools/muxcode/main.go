@@ -16,12 +16,12 @@ var knownSubcommands = map[string]bool{
 	"watch": true, "dashboard": true, "cleanup": true, "notify": true,
 	"lock": true, "unlock": true, "is-locked": true, "tools": true,
 	"chain": true, "log": true, "prompt": true, "skill": true,
-	"context": true, "session": true, "cron": true, "status": true,
+	"context": true, "session": true, "cron": true, "status": true, "uitest": true,
 	"history": true, "guard": true, "proc": true, "spawn": true,
 	"demo": true, "webhook": true, "subscribe": true, "agent": true,
 	"api": true, "agent-health": true, "lifecycle": true, "console": true,
 	"hook": true, "workflow": true, "pii-scrub": true, "atlassian": true,
-	"compact": true, "launch": true, "modal": true,
+	"compact": true, "launch": true, "modal": true, "mode": true,
 }
 
 var usage = `Usage: muxcode <command> [args...]
@@ -69,6 +69,8 @@ Commands:
   workflow      Show or reset workflow state machine (--json, reset)
   atlassian     Jira and Confluence API operations (read, update, comment, search)
   modal         Manage modal windows (open, list, status)
+  mode          Cycle between agent modes on a window (cycle, status, switch, list)
+  uitest        Run integration tests in a live tmux session (--list, --verbose)
   tasks         List delegated tasks tracked via --wait (--all, --status)
   track         Show delivery status for a message ID
   pii-scrub     Scrub PII and secrets from stdin (pipe filter)
@@ -179,6 +181,10 @@ func main() {
 		cmd.Atlassian(args)
 	case "modal":
 		cmd.Modal(args)
+	case "mode":
+		cmd.Mode(args)
+	case "uitest":
+		cmd.UITest(args)
 	case "compact":
 		cmd.Compact(args)
 	case "tasks":

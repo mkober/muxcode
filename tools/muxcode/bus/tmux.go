@@ -116,6 +116,11 @@ func TmuxSetGlobalOption(key, value string) error {
 	return TmuxRun("set-option", "-g", key, value)
 }
 
+// TmuxSetWindowOption sets a per-window tmux option.
+func TmuxSetWindowOption(target, key, value string) error {
+	return TmuxRun("set-option", "-w", "-t", target, key, value)
+}
+
 // TmuxSetHook sets a tmux session hook.
 func TmuxSetHook(session, hook, cmd string) error {
 	return TmuxRun("set-hook", "-t", session, hook, cmd)

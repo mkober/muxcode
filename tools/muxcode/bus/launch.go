@@ -74,6 +74,8 @@ func AgentFileName(role string) string {
 		return "pr-reader"
 	case "api":
 		return "api-tester"
+	case "agent":
+		return "autonomous-agent"
 	default:
 		return ""
 	}
@@ -113,6 +115,8 @@ func RoleCLIEnvVar(role string) string {
 		return "MUXCODE_API_CLI"
 	case "webhook":
 		return "MUXCODE_WEBHOOK_CLI"
+	case "agent":
+		return "MUXCODE_AGENT_CLI"
 	default:
 		return "MUXCODE_" + strings.ToUpper(strings.ReplaceAll(role, "-", "_")) + "_CLI"
 	}
@@ -151,6 +155,8 @@ func RoleClaudeModelEnvVar(role string) string {
 		return "MUXCODE_API_CLAUDE_MODEL"
 	case "webhook":
 		return "MUXCODE_WEBHOOK_CLAUDE_MODEL"
+	case "agent":
+		return "MUXCODE_AGENT_CLAUDE_MODEL"
 	default:
 		return "MUXCODE_" + strings.ToUpper(strings.ReplaceAll(role, "-", "_")) + "_CLAUDE_MODEL"
 	}
@@ -192,7 +198,7 @@ func RoleCodexModelDefault(role string) string {
 // edit/review/analyze → opus, everything else → sonnet.
 func RoleClaudeModelDefault(role string) string {
 	switch role {
-	case "plan", "planner", "edit", "review", "analyze", "analyst":
+	case "plan", "planner", "edit", "review", "analyze", "analyst", "agent":
 		return "claude-opus-4-6"
 	case "build", "test", "api", "deploy", "run", "runner", "watch", "commit", "git":
 		return "claude-sonnet-4-5"
@@ -244,6 +250,8 @@ func InlineFallbackPrompt(role string) string {
 		return "You are the pr-read agent. Read GitHub PR reviews and CI check failures, then report suggested fixes to the edit agent. Use gh pr view, gh pr checks, gh api to read feedback. Never modify files directly — report suggestions only. The edit agent will prompt the user before making changes."
 	case "api":
 		return "You are the API testing agent. Manage API collections and environments using muxcode api subcommands. Execute requests via curl with jq formatting. Support variable substitution from environments. Log requests to history. Report results (status, timing, response) to the edit agent."
+	case "agent":
+		return "You are the autonomous agent. Poll Jira for assigned stories, create requirements docs, implement features, and submit PRs — all without user intervention. Delegate freely to build, test, review, deploy, run, watch, and commit agents via the message bus."
 	default:
 		return "You are a general-purpose coding assistant."
 	}

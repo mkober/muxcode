@@ -211,7 +211,7 @@ This is lighter than OpenClaw's full heartbeat (which wakes the agent from scrat
 └─────────────────────────────────────────────────────┘
 ```
 
-CLI: `muxcode agent-mode status` — prints the same summary to stdout for scripted queries.
+CLI: `muxcode agent status` — prints the same summary to stdout for scripted queries (extends the existing `muxcode agent` subcommand alongside `run` and `launch`).
 
 **Implementation**: extend console viewer header in Phase 6. Status data comes from existing state files (`agent-current-story`, `agent-phase`, `agent-stories-done`).
 
@@ -296,11 +296,12 @@ F2 Window — Cycle Index
 **Cycle state file**:
 
 ```
-/tmp/muxcode-bus-{session}/f2-cycle.json
+/tmp/muxcode-bus-{session}/mode-cycle-edit.json
 ```
 
 ```json
 {
+  "window": "edit",
   "current": 0,
   "agents": [
     {"index": 0, "mode": "edit", "role": "edit", "hold_window": ""},
@@ -309,7 +310,7 @@ F2 Window — Cycle Index
 }
 ```
 
-Index 0 (edit) has no hold window — it's the default owner of the F2 window panes. All other agents store their panes in a hold window when not visible.
+Index 0 (edit) has no hold window — it's the default owner of the edit window panes. All other agents store their panes in a hold window when not visible. State files are per-window (`mode-cycle-{window}.json`) so the mechanism generalizes to any window, not just edit.
 
 The **agent** is a distinct agent role (`agent`) with its own:
 - Persistent Claude Code session (survives cycles)
@@ -339,12 +340,14 @@ Each non-default agent stores its pane pair in a dedicated holding window:
 **Key constraint**: `swap-pane` swaps individual panes, not pairs. The cycle must swap pane 0 and pane 1 independently, maintaining the left/right split layout in both states.
 
 **Generalized cycle logic**:
-1. Read `f2-cycle.json` for current index and agent list
+1. Read `mode-cycle-edit.json` for current index and agent list
 2. Compute next index: `(current + 1) % len(agents)`
 3. Swap current agent's panes to its hold window (unless index 0 — edit owns the window)
-4. Swap next agent's panes from its hold window to the F2 window (unless index 0)
+4. Swap next agent's panes from its hold window to the edit window (unless index 0)
 5. Update `current` in state file
 6. Update tmux window name to the active mode name
+
+**Note on N > 2 agents**: the swap logic is self-correcting for any number of agents. When index 0 (edit, no hold window) is current, its panes remain in the host window and get displaced by the target's `swap-pane` into the target's hold window. On subsequent cycles, panes migrate between hold windows but always resolve correctly because `swap-pane` is symmetric — each swap restores the invariant that the right panes are in the right places.
 
 ### F2 cycling
 
@@ -356,23 +359,28 @@ F2 pressed → is current window F2?
   NO  → switch to F2 window (show whichever agent is active)
 ```
 
-Implementation: F2 keybinding calls `muxcode f2 cycle` when already on the F2 window, otherwise does the normal `select-window -t:2`.
+Implementation: F2 keybinding calls `muxcode mode cycle` when already on the edit window, otherwise does the normal `select-window -t:2`. The `prefix + a` keybinding cycles modes regardless of the current window.
 
 ```bash
 # In tmux.conf
 bind -n F2 if-shell '[ "$(tmux display-message -p "#I")" = "2" ]' \
-  'run-shell "muxcode f2 cycle"' \
+  'run-shell "muxcode mode cycle"' \
   'select-window -t:2'
+
+# prefix + a — cycle modes regardless of current window
+bind a run-shell 'muxcode mode cycle'
 ```
 
 **CLI commands**:
 
 | Command | Description |
 |---------|-------------|
-| `muxcode f2 cycle` | Cycle to next agent on F2 window |
-| `muxcode f2 status` | Show current agent, registered agents, cycle index |
-| `muxcode f2 switch <mode>` | Jump directly to a specific agent by mode name (e.g. `edit`, `agent`) |
-| `muxcode f2 list` | List all registered agents with index and mode name |
+| `muxcode mode cycle` | Cycle to next agent on the edit window |
+| `muxcode mode status` | Show current agent, registered agents, cycle index |
+| `muxcode mode switch <mode>` | Jump directly to a specific agent by mode name (e.g. `edit`, `agent`) |
+| `muxcode mode list` | List all registered agents with index and mode name |
+
+All `mode` commands accept `--window <name>` to target a different window (default: `edit`).
 
 ### Autonomous agent
 
@@ -409,7 +417,7 @@ description: Autonomous agent — reads Jira stories, creates requirements, impl
     "Bash(muxcode send *)", "Bash(muxcode inbox *)",
     "Bash(muxcode memory *)", "Bash(muxcode session *)",
     "Bash(muxcode jira *)", "Bash(muxcode confluence *)",
-    "Bash(muxcode agent-mode *)",
+    "Bash(muxcode mode *)",
     "Bash(gh pr view *)", "Bash(gh pr checks *)",
     "Bash(gh pr list *)", "Bash(gh pr status *)",
     "Bash(git branch *)", "Bash(git checkout *)",
@@ -637,7 +645,7 @@ The console viewer monitors the agent's bus history and renders a Dracula-themed
 └──────────────────────────────────────────────────┘
 ```
 
-Implementation: `muxcode agent-mode console` — tails the agent's `log.jsonl`, filters for agent-role messages, renders with Dracula colors. Uses the same pattern as the existing console infrastructure (`bus/console.go`).
+Implementation: `muxcode console agent` — tails the agent's `log.jsonl`, filters for agent-role messages, renders with Dracula colors. Uses the existing console infrastructure (`bus/console.go`) with an `agent` role renderer.
 
 ### Safety guardrails
 
@@ -657,52 +665,49 @@ The autonomous agent operates without user intervention but has safety limits:
 ### State management
 
 ```
-/tmp/muxcode-bus-{session}/f2-cycle.json          # cycle state: current index, registered agents
+/tmp/muxcode-bus-{session}/mode-cycle-edit.json    # cycle state: current index, registered agents
 /tmp/muxcode-bus-{session}/agent-hold              # hidden tmux window for agent panes
 /tmp/muxcode-bus-{session}/agent-current-story     # current Jira key being worked
 /tmp/muxcode-bus-{session}/agent-phase             # current phase: requirements|implementation|waiting
 /tmp/muxcode-bus-{session}/agent-stories-done      # count of completed stories this session
 ```
 
-`f2-cycle.json` is the shared cycle state for all F2 agents (edit, agent, and any future modes like design). Per-agent state files (current story, phase, stories done) are agent-mode specific. State does not persist across session restarts.
+`mode-cycle-edit.json` is the shared cycle state for all edit-window agents (edit, agent, and any future modes like design). Per-agent state files (current story, phase, stories done) are autonomous-agent specific. State does not persist across session restarts.
 
 ### Mode transitions
 
 **First cycle to Agent (agent not yet launched):**
 
-1. Read `f2-cycle.json` — current index 0 (edit)
-2. Create holding window `agent-hold` for edit panes
-3. Create agent panes: console viewer (pane 0) + agent agent (pane 1) in holding window
-4. Swap edit panes → `agent-hold`, agent panes → F2 window
-5. Update `current` to 1 in state file
-6. Update tmux window name to `agent`
-7. Agent begins autonomous story lifecycle loop
+1. Read `mode-cycle-edit.json` — current index 0 (edit)
+2. Create holding window `agent-hold` with console viewer (pane 0) + agent (pane 1)
+3. Swap agent panes from `agent-hold` → edit window (edit panes displaced into `agent-hold` by `swap-pane`)
+4. Update `current` to 1 in state file
+5. Update tmux window name to `agent`
+6. Agent begins autonomous story lifecycle loop
 
 **Subsequent cycle (Edit → Agent, agent already running):**
 
-1. Swap edit panes → `agent-hold`
-2. Swap agent panes from `agent-hold` → F2 window
-3. Update `current` to 1 in state file
-4. Update tmux window name to `agent`
+1. Swap agent panes from `agent-hold` → edit window (edit panes displaced into `agent-hold`)
+2. Update `current` to 1 in state file
+3. Update tmux window name to `agent`
 
 **Cycle (Agent → Edit):**
 
-1. Swap agent panes → `agent-hold`
-2. Swap edit panes from `agent-hold` → F2 window
-3. Update `current` to 0 in state file
-4. Update tmux window name to `edit`
-5. Agent continues running in background (hidden pane)
+1. Swap agent panes → `agent-hold` (edit panes return from `agent-hold` to edit window)
+2. Update `current` to 0 in state file
+3. Update tmux window name to `edit`
+4. Agent continues running in background (hidden pane)
 
 All pane processes continue running throughout cycles. The agent does not pause when hidden — it continues its autonomous workflow.
 
-**Generalized for N agents**: with 3+ agents registered (e.g. edit → agent → design → edit), the cycle command always moves the current agent's panes to its hold window and the next agent's panes to the F2 window. Each agent has its own dedicated hold window. Only one agent is visible at a time.
+**Generalized for N agents**: with 3+ agents registered (e.g. edit → agent → design → edit), the cycle command moves the current agent's panes to its hold window and the next agent's panes from its hold window to the edit window. `swap-pane` is symmetric — panes that get displaced into a hold window are correctly retrieved on the next cycle. Index 0 (edit) has no hold window; its panes are displaced by the target's swap and recovered when cycling back. Each non-default agent has its own dedicated hold window. Only one agent is visible at a time.
 
 ### Keybindings
 
 | Key | Action |
 |-----|--------|
-| `F2` | Cycle to next agent when on F2 window, switch to F2 otherwise |
-| `prefix + a` | Cycle F2 agents regardless of current window |
+| `F2` | Cycle to next agent when on edit window, switch to edit window otherwise |
+| `prefix + a` | Cycle edit-window agents regardless of current window |
 
 ### Configuration
 
@@ -743,39 +748,42 @@ The agent's left pane runs a Dracula-themed console viewer (same infrastructure 
 
 ## Implementation
 
-### Phase 1: F2 cycle infrastructure and persistence
+### Phase 1: Mode cycle infrastructure and persistence
 
 New files:
 
 | File | Purpose |
 |------|---------|
-| `bus/f2_cycle.go` | Cycle state (JSON read/write), agent registration, pane swap logic, holding window management — generic for all F2 agents |
-| `bus/f2_cycle_test.go` | Unit tests for cycle state, index wrapping, agent registration |
-| `cmd/f2.go` | CLI subcommand: `muxcode f2 {cycle,status,switch,list}` |
+| `bus/mode.go` | `ModeCycleState`, `ModeAgent`, cycle state JSON read/write, `ModeCycle()`, `ModeSwitch()`, `modeSwitchTo()` pane swap logic, `modeCreateAgent()` holding window management, `modeSwapPanes()`, `tmuxWindowExists()` — generic for any window's mode cycle |
+| `bus/mode_test.go` | Unit tests for cycle state, index wrapping, agent lookup, 3-agent cycling, read/write round-trip, format output |
+| `cmd/mode.go` | CLI subcommand: `muxcode mode {cycle,status,switch,list}` with `--window` flag |
 | `agents/autonomous-agent.md` | Agent definition with autonomous story execution prompt |
+| `agents/harness/autonomous-agent.md` | Simplified agent definition for local LLM harness |
 
 Updated files:
 
 | File | Change |
 |------|--------|
-| `main.go` | Add `f2` subcommand dispatch |
-| `config/tmux.conf` | F2 cycle keybinding, `prefix + a` keybinding |
-| `bus/config.go` | Add `agent` to role lists, `WindowForRole` mapping |
+| `main.go` | Add `mode` subcommand dispatch |
+| `config/tmux.conf` | F2 `if-shell` cycle keybinding, `prefix + a` cycle keybinding |
+| `bus/config.go` | Add `agent` to `KnownRoles`, add `modeRoles` map (`agent` → `edit`), update `WindowForRole()` |
 | `bus/profile.go` | Add `agent` tool profile |
-| `muxcode.sh` | Initialize `f2-cycle.json` with edit as index 0 + agent as index 1 |
+| `bus/launch.go` | Add `agent` to `AgentFileName()`, `RoleCLIEnvVar()`, `RoleClaudeModelEnvVar()`, `RoleClaudeModelDefault()` (opus), `InlineFallbackPrompt()` |
+
+**Architecture note — `modeRoles` vs `hostedRoles`**: the `agent` role is registered in `modeRoles`, not `hostedRoles`. Mode roles get their own independent bus inbox and identity (unlike hosted roles like `docs` → `plan` which share the host's inbox). `WindowForRole("agent")` returns `"edit"` for pane targeting, but messages to `agent` deliver to the agent's own inbox.
 
 Success criteria:
-- [ ] `muxcode f2 cycle` advances to the next registered agent
-- [ ] Cycle wraps around: last agent → back to edit (index 0)
-- [ ] `muxcode f2 switch agent` jumps directly to agent mode
-- [ ] `muxcode f2 list` shows all registered agents with current indicator
+- [x] `muxcode mode cycle` advances to the next registered agent
+- [x] Cycle wraps around: last agent → back to edit (index 0)
+- [x] `muxcode mode switch agent` jumps directly to agent mode
+- [x] `muxcode mode list` shows all registered agents with current indicator
 - [ ] Agent launches with its own Claude Code session
 - [ ] Nvim session preserved across cycles (process stays alive in hidden pane)
 - [ ] Agent session preserved across cycles (Claude conversation intact)
 - [ ] Edit agent session preserved across cycles (Claude conversation intact)
-- [ ] F2 cycle works: same-window cycles agent, other-window switches to F2
-- [ ] `muxcode f2 status` shows current agent, cycle index, registered agents
-- [ ] `f2-cycle.json` state file is extensible for future agents (design-mode)
+- [x] F2 cycle works: same-window cycles agent, other-window switches to F2
+- [x] `muxcode mode status` shows current agent, cycle index, registered agents
+- [x] `mode-cycle-edit.json` state file is extensible for future agents (design-mode)
 
 ### Phase 2: Jira integration, task file, and story lifecycle skill
 
@@ -838,7 +846,7 @@ Updated files:
 
 | File | Change |
 |------|--------|
-| `watcher/watcher.go` | Add heartbeat trigger for agent role at configurable interval |
+| `watcher/watcher.go` (daemon) | Add heartbeat trigger for agent role at configurable interval |
 | `bus/config.go` | Add `agent-last-heartbeat` state file path |
 
 Success criteria:
@@ -857,23 +865,17 @@ Success criteria:
 
 ### Phase 6: console log viewer with status header
 
-New files:
-
-| File | Purpose |
-|------|---------|
-| `scripts/agent-console.sh` | Console viewer script for left pane |
-| `cmd/agent_mode.go` | CLI: `muxcode agent-mode {status,console}` |
-
 Updated files:
 
 | File | Change |
 |------|--------|
-| `bus/console.go` | Add `agent` role renderer with status header for console view |
+| `bus/console.go` | Add `agent` role renderer with status header (story, phase, PR status, iteration count, heartbeat) |
+| `cmd/agent.go` | Add `status` sub-subcommand: `muxcode agent status` — prints story-level status to stdout |
 
 Success criteria:
-- [ ] Left pane shows live activity stream with Dracula theme
+- [ ] Left pane shows live activity stream with Dracula theme (via `muxcode console agent`)
 - [ ] **Status header** at top of console: current story, phase, iteration count, PR status, stories done/remaining, uptime, last heartbeat
-- [ ] `muxcode agent-mode status` prints the same status summary to stdout
+- [ ] `muxcode agent status` prints the same status summary to stdout
 - [ ] Delegations shown with `→` send and `←` receive indicators
 - [ ] Current story and phase displayed in header
 - [ ] PR poll status visible (waiting, approved, changes requested)
@@ -885,7 +887,7 @@ Success criteria:
 - [ ] Agent role documented in `docs/agents.md`
 - [ ] Architecture docs updated with agent mode
 - [ ] Configuration docs updated (env vars, TASKS.md format, heartbeat)
-- [ ] `docs/agent-bus.md` updated with `agent-mode` subcommand
+- [ ] `docs/agent-bus.md` updated with `mode` subcommand
 - [ ] README updated with agent mode feature
 - [ ] Backlog updated to reference this feature
 
@@ -901,7 +903,7 @@ Success criteria:
 | Commit agent | Git operations, PR creation | Existing |
 | Build/test/review agents | Implementation feedback loop | Existing |
 
-**Shared infrastructure with design-mode**: the F2 cycle mechanism (`bus/f2_cycle.go`, `cmd/f2.go`, `f2-cycle.json`) is generic — design-mode registers as another agent at index 2 and F2 cycles through all three: edit → agent → design → edit. If design-mode is implemented later, it adds an entry to `f2-cycle.json` and a holding window — no changes to the cycle infrastructure itself.
+**Shared infrastructure with design-mode**: the mode cycle mechanism (`bus/mode.go`, `cmd/mode.go`, `mode-cycle-edit.json`) is generic — design-mode registers as another agent at index 2 and F2/`prefix+a` cycles through all three: edit → agent → design → edit. If design-mode is implemented later, it adds an entry to `mode-cycle-edit.json` and a holding window — no changes to the cycle infrastructure itself.
 
 ## Status
 

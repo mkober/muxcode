@@ -166,6 +166,18 @@ export BUS_SESSION="$SESSION"
 (cd "$PROJECT_DIR" && muxcode init)
 lifecycle_log "info" "launcher" "bus-init"
 
+# --- Initialize mode cycle state for the edit window ---
+cat > "/tmp/muxcode-bus-${SESSION}/mode-cycle-edit.json" <<'MODEJSON'
+{
+  "window": "edit",
+  "current": 0,
+  "agents": [
+    {"index": 0, "mode": "edit", "role": "edit", "hold_window": ""},
+    {"index": 1, "mode": "agent", "role": "agent", "hold_window": "agent"}
+  ]
+}
+MODEJSON
+
 # --- Start bus daemon in background (loop detection, compaction alerts) ---
 # Kill any stale daemon processes from previous sessions with the same name.
 # Daemons are background processes detached from tmux — tmux kill-session
@@ -370,16 +382,22 @@ _sr="$(echo "$_sr" | sed $'s/#\\[fg=#50fa7b\\]/#[fg=#6272a4, bg=#44475a]\xee\x82
 # Add padding around date and time text
 _sr="$(echo "$_sr" | sed "s/%b/ %b/; s/'%y/'%y /; s/%H:%M/ %H:%M:%S /")"
 tmux set-option -t "$SESSION" status-right "${_sr}"
-# Capitalize window labels in the status bar (internal names stay lowercase for bus routing).
-# Set explicit Dracula-style formats with powerline arrows and awk capitalize.
-# Uses awk (not ${var^}) because macOS ships bash 3.2 which lacks that syntax.
-# Must use global (-g) because Dracula's #{T:window-status-format} only resolves globals.
-# Uses 'default' bg for outer regions to inherit terminal transparency.
-_cap="awk '{print toupper(substr(\$0,1,1)) substr(\$0,2)}'"
+# Set per-window @display-name for capitalized status bar labels.
+# Uses tmux user option instead of #() shell commands — synchronous rendering,
+# no awk subprocess per redraw, no stale-cache races during window swaps.
+# The global format uses #{@display-name} and a conditional to hide index 0.
+for WIN in "${WIN_ARRAY[@]}"; do
+  _dn="$(echo "$WIN" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
+  tmux set-option -w -t "$SESSION:$WIN" @display-name "$_dn"
+done
+# Set global window formats for labels. window-status-format is a window
+# option — must use -g (global window default), NOT -t session. No #{?}
+# conditional — index 0 hiding is handled by per-window overrides in mode.go.
+# (tmux #{?} conditionals break when #[] style escapes contain commas.)
 tmux set-option -g window-status-format \
-  $'#[fg=default,bg=#44475a,noitalics]\xee\x82\xb0#[fg=#f8f8f2,bg=#44475a] F#I#[fg=#f8f8f2, bg=#44475a] #(echo #W | '"${_cap}"$') #[fg=#44475a, bg=default]\xee\x82\xb0'
+  $'#[fg=#282a36,bg=#44475a]\xee\x82\xb0#[fg=#f8f8f2,bg=#44475a] F#I #{@display-name} #[fg=#44475a,bg=#282a36]\xee\x82\xb0'
 tmux set-option -g window-status-current-format \
-  $'#[fg=default, bg=#00ff00]\xee\x82\xb0#[fg=#44475a, bg=#00ff00] F#I*#[fg=#44475a, bg=#00ff00, bold] #(echo #W | '"${_cap}"$') #[fg=#00ff00, bg=default]\xee\x82\xb0'
+  $'#[fg=#282a36,bg=#50fa7b]\xee\x82\xb0#[fg=#282a36,bg=#50fa7b] F#I*#[fg=#282a36,bg=#50fa7b,bold] #{@display-name} #[fg=#50fa7b,bg=#282a36]\xee\x82\xb0'
 # Replace the Dracula session icon (❐) with hamburger (☰) in status-left
 _sl="$(tmux show-options -gv status-left 2>/dev/null)"
 _sl_with_icon="$(echo "$_sl" | sed 's/❐/☰/')"

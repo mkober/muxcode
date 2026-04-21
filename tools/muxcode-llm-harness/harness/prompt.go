@@ -258,7 +258,7 @@ func AgentFileName(role string) string {
 		return "code-reviewer"
 	case "deploy":
 		return "infra-deployer"
-	case "runner":
+	case "run", "runner":
 		return "command-runner"
 	case "git", "commit":
 		return "git-manager"
@@ -272,6 +272,8 @@ func AgentFileName(role string) string {
 		return "log-watcher"
 	case "pr-read":
 		return "pr-reader"
+	case "agent":
+		return "autonomous-agent"
 	default:
 		return role
 	}

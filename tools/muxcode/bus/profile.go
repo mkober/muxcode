@@ -728,6 +728,20 @@ func DefaultConfig() *MuxcodeConfig {
 					"Write", "Edit",
 				},
 			},
+			"agent": {
+				Include:  []string{"bus", "readonly", "common"},
+				CdPrefix: true,
+				Tools: []string{
+					"Write(*)", "Edit(*)",
+					"Bash(muxcode atlassian *)",
+					"Bash(muxcode mode *)",
+					"Bash(gh pr view *)", "Bash(gh pr checks *)",
+					"Bash(gh pr list *)", "Bash(gh pr status *)",
+					"Bash(git branch *)", "Bash(git checkout *)",
+					"Bash(git status)", "Bash(git diff *)",
+					"Bash(git log *)", "Bash(git rev-parse *)",
+				},
+			},
 		},
 		EventChains: map[string]EventChain{
 			"deploy": {
