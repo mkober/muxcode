@@ -1,7 +1,7 @@
 ---
 description: Command execution specialist — runs CLI commands, invokes APIs, and executes processes safely
 mode: primary
-model: minimax/m2.7
+model: opencode-go/minimax-m2.7
 permission:
   bash:
     "muxcode *": allow

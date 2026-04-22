@@ -1,7 +1,7 @@
 ---
 description: Build and packaging specialist — compiles, bundles, and resolves build issues
 mode: primary
-model: minimax/m2.7
+model: opencode-go/minimax-m2.7
 permission:
   bash:
     "muxcode *": allow

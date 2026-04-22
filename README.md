@@ -94,19 +94,21 @@ Additional roles that share a host agent's window (messages are routed to the ho
 
 ### Default model assignments
 
-Out of the box, MuxCode uses Claude Code for orchestration roles and OpenCode with MiniMax M2.5 Free for command-execution roles:
+Out of the box, MuxCode uses Claude Code for orchestration roles and OpenCode for command-execution roles:
 
-| Role                                      | Default CLI | Default model            |
-| ----------------------------------------- | ----------- | ------------------------ |
-| plan, edit, review, analyze               | Claude Code | `claude-opus-4-6`       |
-| build, test, deploy, run, watch, commit   | OpenCode    | `minimax/m2.5-free`  |
-| api                                       | Claude Code | `claude-sonnet-4-5`     |
+| Role                                      | Default CLI | Default model                   |
+| ----------------------------------------- | ----------- | ------------------------------- |
+| plan, edit                                | Claude Code | `claude-opus-4-6`              |
+| review                                    | OpenCode    | `opencode-go/mimo-v2.5-pro`    |
+| analyze                                   | OpenCode    | `opencode-go/qwen3.6-plus`     |
+| build, test, deploy, run, watch, commit   | OpenCode    | `opencode-go/minimax-m2.7`     |
+| api                                       | Claude Code | `claude-sonnet-4-5`            |
 
-MiniMax M2.5 Free is available through [OpenCode Zen](https://opencode.ai/zen). Override the model per role with `MUXCODE_{ROLE}_MODEL` for OpenCode roles (e.g. `MUXCODE_BUILD_MODEL=anthropic/claude-sonnet-4-5`) or `MUXCODE_{ROLE}_CLAUDE_MODEL` for Claude Code roles. Override the CLI provider per role with `MUXCODE_{ROLE}_CLI`.
+OpenCode Go models are available through [OpenCode Go](https://opencode.ai/go). Override the model per role with `MUXCODE_{ROLE}_MODEL` for OpenCode roles (e.g. `MUXCODE_BUILD_MODEL=opencode-go/minimax-m2.7`) or `MUXCODE_{ROLE}_CLAUDE_MODEL` for Claude Code roles. Override the CLI provider per role with `MUXCODE_{ROLE}_CLI`.
 
 ### Recommended multi-provider configuration
 
-The defaults above already provide a cost-effective split — Claude Code for orchestration (edit, review, analyze) and OpenCode with MiniMax M2.5 Free for command execution. To further customize, add Codex CLI for reasoning-heavy roles:
+The defaults above already provide a cost-effective split — Claude Code for orchestration (edit, plan) and OpenCode with role-specific models for everything else. To further customize, add Codex CLI for reasoning-heavy roles:
 
 ```bash
 # ~/.config/muxcode/config or .muxcode/config
@@ -124,12 +126,12 @@ This gives you:
 | Role     | Provider    | Model              | Why                                                      |
 | -------- | ----------- | ------------------ | -------------------------------------------------------- |
 | edit     | Claude Code | Opus 4.6           | Full hook support, orchestration, code editing            |
-| commit   | OpenCode    | MiniMax M2.5 Free          | Git operations — prompt-instructed chains                |
-| build    | OpenCode    | MiniMax M2.5 Free          | Runs `./build.sh` — structured commands, no hooks needed |
-| test     | OpenCode    | MiniMax M2.5 Free          | Runs `./test.sh` — structured commands, no hooks needed  |
-| deploy   | OpenCode    | MiniMax M2.5 Free          | Runs CDK/terraform — command execution role              |
-| run      | OpenCode    | MiniMax M2.5 Free          | Ad-hoc commands — capable free model                     |
-| watch    | OpenCode    | MiniMax M2.5 Free          | Log tailing — lightweight, read-only                     |
+| commit   | OpenCode    | MiniMax M2.7       | Git operations — prompt-instructed chains                |
+| build    | OpenCode    | MiniMax M2.7       | Runs `./build.sh` — structured commands, no hooks needed |
+| test     | OpenCode    | MiniMax M2.7       | Runs `./test.sh` — structured commands, no hooks needed  |
+| deploy   | OpenCode    | MiniMax M2.7       | Runs CDK/terraform — command execution role              |
+| run      | OpenCode    | MiniMax M2.7       | Ad-hoc commands — capable free model                     |
+| watch    | OpenCode    | MiniMax M2.7       | Log tailing — lightweight, read-only                     |
 | review   | Codex CLI   | gpt-5.3-codex      | Deep code reasoning, thorough diff analysis              |
 | analyze  | Codex CLI   | gpt-5.3-codex      | Codebase-wide analysis, pattern detection                |
 

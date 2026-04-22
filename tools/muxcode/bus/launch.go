@@ -208,17 +208,18 @@ func RoleClaudeModelDefault(role string) string {
 }
 
 // RoleOpenCodeModelDefault returns the default OpenCode model for a role.
+// OpenCode model IDs require the provider prefix (e.g. "opencode-go/").
 // review → MiMo V2.5 Pro (reasoning model for code analysis).
 // analyze → Qwen 3.6 Plus (strong analytical model).
 // build/test/deploy/run/watch/commit → MiniMax M2.7 (fast command execution).
 func RoleOpenCodeModelDefault(role string) string {
 	switch role {
 	case "review":
-		return "mimo/v2.5-pro"
+		return "opencode-go/mimo-v2.5-pro"
 	case "analyze", "analyst":
-		return "qwen/3.6-plus"
+		return "opencode-go/qwen3.6-plus"
 	case "build", "test", "deploy", "run", "runner", "watch", "commit", "git":
-		return "minimax/m2.7"
+		return "opencode-go/minimax-m2.7"
 	default:
 		return ""
 	}
