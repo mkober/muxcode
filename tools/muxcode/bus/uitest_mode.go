@@ -18,11 +18,11 @@ func ModeCycleTestSuite() UITestSuite {
 		Setup: func(ctx *UITestContext) error {
 			fmt.Println("  Setting up: reset mode state, clean stale hold windows")
 
-			// Kill any stale agent window from previous runs.
-			if ctx.TmuxWindowExists("agent") {
+			// Kill any stale auto window from previous runs.
+			if ctx.TmuxWindowExists("auto") {
 				// Switch to edit first to avoid killing the active window.
 				ModeSwitch(ctx.Session, "edit", "edit")
-				ctx.TmuxKillWindow("agent")
+				ctx.TmuxKillWindow("auto")
 			}
 
 			// Reset mode state to edit (index 0).
@@ -35,11 +35,11 @@ func ModeCycleTestSuite() UITestSuite {
 		},
 		Tests: []UITest{
 			{"initial state", testModeInitialState},
-			{"cycle edit to agent", testModeCycleEditToAgent},
+			{"cycle edit to auto", testModeCycleEditToAgent},
 			{"verify agent panes", testModeVerifyAgentPanes},
-			{"cycle agent to edit", testModeCycleAgentToEdit},
+			{"cycle auto to edit", testModeCycleAgentToEdit},
 			{"verify edit restored", testModeVerifyEditRestored},
-			{"direct switch to agent", testModeDirectSwitchToAgent},
+			{"direct switch to auto", testModeDirectSwitchToAgent},
 			{"direct switch to edit", testModeDirectSwitchToEdit},
 			{"idempotent switch", testModeIdempotentSwitch},
 			{"rapid round-trips", testModeRapidRoundTrips},
@@ -54,9 +54,9 @@ func ModeCycleTestSuite() UITestSuite {
 				ModeSwitch(ctx.Session, "edit", "edit")
 			}
 
-			// Kill agent window if it exists.
-			if ctx.TmuxWindowExists("agent") {
-				ctx.TmuxKillWindow("agent")
+			// Kill auto window if it exists.
+			if ctx.TmuxWindowExists("auto") {
+				ctx.TmuxKillWindow("auto")
 			}
 
 			// Reset state to default.
@@ -84,7 +84,7 @@ func testModeInitialState(ctx *UITestContext) {
 // testModeCycleEditToAgent cycles from edit to agent and verifies state.
 func testModeCycleEditToAgent(ctx *UITestContext) {
 	err := ModeCycle(ctx.Session, "edit")
-	ctx.AssertNoError(err, "cycle edit → agent")
+	ctx.AssertNoError(err, "cycle edit → auto")
 
 	state, err := ReadModeCycleState(ctx.Session, "edit")
 	ctx.AssertNoError(err, "read state after cycle")
@@ -92,17 +92,17 @@ func testModeCycleEditToAgent(ctx *UITestContext) {
 		return
 	}
 
-	ctx.AssertEqual(strconv.Itoa(state.Current), "1", "current index is 1 (agent)")
+	ctx.AssertEqual(strconv.Itoa(state.Current), "1", "current index is 1 (auto)")
 
 	current := CurrentModeAgent(state)
-	ctx.AssertTrue(current != nil && current.Mode == "agent", "current mode is agent")
+	ctx.AssertTrue(current != nil && current.Mode == "auto", "current mode is auto")
 
-	// agent window should exist.
-	ctx.AssertTrue(ctx.TmuxWindowExists("agent"), "agent window created")
+	// auto window should exist.
+	ctx.AssertTrue(ctx.TmuxWindowExists("auto"), "auto window created")
 
-	// agent should have 2 panes.
-	_, panes, found := ctx.TmuxWindowInfo("agent")
-	ctx.AssertTrue(found && panes == 2, "agent has 2 panes")
+	// auto should have 2 panes.
+	_, panes, found := ctx.TmuxWindowInfo("auto")
+	ctx.AssertTrue(found && panes == 2, "auto has 2 panes")
 }
 
 // testModeVerifyAgentPanes checks that the agent window is now at the host index.
@@ -111,13 +111,13 @@ func testModeVerifyAgentPanes(ctx *UITestContext) {
 	// Brief pause for the agent launch command to render in the pane.
 	ctx.Sleep(500 * time.Millisecond)
 
-	// agent window (now at index 2) pane 1 should have the autonomous agent.
-	content := ctx.TmuxCapturePane(ctx.Session+":agent.1", 30)
+	// auto window (now at index 2) pane 1 should have the autonomous agent.
+	content := ctx.TmuxCapturePane(ctx.Session+":auto.1", 30)
 	hasAgent := strings.Contains(content, "autonomous-agent") ||
-		strings.Contains(content, "launch agent")
-	ctx.AssertTrue(hasAgent, "agent.1 has autonomous agent")
+		strings.Contains(content, "launch auto")
+	ctx.AssertTrue(hasAgent, "auto.1 has autonomous agent")
 
-	// edit window (swapped to agent's old index) pane 1 should still have the edit agent.
+	// edit window (swapped to auto's old index) pane 1 should still have the edit agent.
 	content = ctx.TmuxCapturePane(ctx.Session+":edit.1", 30)
 	ctx.AssertContains(content, "code-editor", "edit.1 still has edit agent")
 }
@@ -125,7 +125,7 @@ func testModeVerifyAgentPanes(ctx *UITestContext) {
 // testModeCycleAgentToEdit cycles back from agent to edit (the critical round-trip).
 func testModeCycleAgentToEdit(ctx *UITestContext) {
 	err := ModeCycle(ctx.Session, "edit")
-	ctx.AssertNoError(err, "cycle agent → edit")
+	ctx.AssertNoError(err, "cycle auto → edit")
 
 	state, err := ReadModeCycleState(ctx.Session, "edit")
 	ctx.AssertNoError(err, "read state after round-trip")
@@ -145,17 +145,17 @@ func testModeVerifyEditRestored(ctx *UITestContext) {
 	content := ctx.TmuxCapturePane(ctx.Session+":edit.1", 30)
 	ctx.AssertContains(content, "code-editor", "edit.1 has edit agent after round-trip")
 
-	// Agent pane 1 should have the autonomous agent.
-	content = ctx.TmuxCapturePane(ctx.Session+":agent.1", 30)
+	// Auto pane 1 should have the autonomous agent.
+	content = ctx.TmuxCapturePane(ctx.Session+":auto.1", 30)
 	hasAgent := strings.Contains(content, "autonomous-agent") ||
-		strings.Contains(content, "launch agent")
-	ctx.AssertTrue(hasAgent, "agent.1 has autonomous agent after round-trip")
+		strings.Contains(content, "launch auto")
+	ctx.AssertTrue(hasAgent, "auto.1 has autonomous agent after round-trip")
 }
 
 // testModeDirectSwitchToAgent tests the direct switch command.
 func testModeDirectSwitchToAgent(ctx *UITestContext) {
-	err := ModeSwitch(ctx.Session, "edit", "agent")
-	ctx.AssertNoError(err, "switch directly to agent")
+	err := ModeSwitch(ctx.Session, "edit", "auto")
+	ctx.AssertNoError(err, "switch directly to auto")
 
 	state, _ := ReadModeCycleState(ctx.Session, "edit")
 	if state != nil {
@@ -192,11 +192,11 @@ func testModeRapidRoundTrips(ctx *UITestContext) {
 		label := fmt.Sprintf("rapid cycle %d", i)
 
 		err := ModeCycle(ctx.Session, "edit")
-		ctx.AssertNoError(err, label+" → agent")
+		ctx.AssertNoError(err, label+" → auto")
 
 		state, _ := ReadModeCycleState(ctx.Session, "edit")
 		if state != nil {
-			ctx.AssertEqual(strconv.Itoa(state.Current), "1", label+" state is agent")
+			ctx.AssertEqual(strconv.Itoa(state.Current), "1", label+" state is auto")
 		}
 
 		err = ModeCycle(ctx.Session, "edit")
@@ -212,16 +212,16 @@ func testModeRapidRoundTrips(ctx *UITestContext) {
 // testModeWindowNameStability verifies windows swap indices correctly.
 // With window-swap, the edit and agent windows exchange indices.
 func testModeWindowNameStability(ctx *UITestContext) {
-	// Cycle to agent — windows swap indices.
-	ModeCycle(ctx.Session, "edit") // → agent
+	// Cycle to auto — windows swap indices.
+	ModeCycle(ctx.Session, "edit") // → auto
 
-	// During agent mode: agent is at index 2, edit is at agent's old index.
-	agentIdx, _, agentFound := ctx.TmuxWindowInfo("agent")
-	ctx.AssertTrue(agentFound, "agent window exists while in agent mode")
-	ctx.AssertEqual(strconv.Itoa(agentIdx), "2", "agent at index 2 during agent mode")
+	// During auto mode: auto is at index 2, edit is at auto's old index.
+	autoIdx, _, autoFound := ctx.TmuxWindowInfo("auto")
+	ctx.AssertTrue(autoFound, "auto window exists while in auto mode")
+	ctx.AssertEqual(strconv.Itoa(autoIdx), "2", "auto at index 2 during auto mode")
 
 	_, _, editFound := ctx.TmuxWindowInfo("edit")
-	ctx.AssertTrue(editFound, "edit window still exists during agent mode")
+	ctx.AssertTrue(editFound, "edit window still exists during auto mode")
 
 	ModeCycle(ctx.Session, "edit") // → edit
 

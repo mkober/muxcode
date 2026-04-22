@@ -272,7 +272,7 @@ func AgentFileName(role string) string {
 		return "log-watcher"
 	case "pr-read":
 		return "pr-reader"
-	case "agent":
+	case "auto":
 		return "autonomous-agent"
 	default:
 		return role

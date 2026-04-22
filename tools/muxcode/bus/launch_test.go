@@ -31,7 +31,7 @@ func TestAgentFileNameExported(t *testing.T) {
 		{"watch", "log-watcher"},
 		{"pr-read", "pr-reader"},
 		{"api", "api-tester"},
-		{"agent", "autonomous-agent"},
+		{"auto", "autonomous-agent"},
 		{"unknown", ""},
 	}
 
@@ -62,7 +62,7 @@ func TestRoleCLIEnvVar(t *testing.T) {
 		{"run", "MUXCODE_RUN_CLI"},
 		{"pr-read", "MUXCODE_PR_READ_CLI"},
 		{"api", "MUXCODE_API_CLI"},
-		{"agent", "MUXCODE_AGENT_CLI"},
+		{"auto", "MUXCODE_AUTO_CLI"},
 		{"custom", "MUXCODE_CUSTOM_CLI"},
 	}
 
@@ -85,7 +85,7 @@ func TestRoleClaudeModelEnvVar(t *testing.T) {
 		{"commit", "MUXCODE_COMMIT_CLAUDE_MODEL"},
 		{"edit", "MUXCODE_EDIT_CLAUDE_MODEL"},
 		{"analyze", "MUXCODE_ANALYZE_CLAUDE_MODEL"},
-		{"agent", "MUXCODE_AGENT_CLAUDE_MODEL"},
+		{"auto", "MUXCODE_AUTO_CLAUDE_MODEL"},
 		{"custom", "MUXCODE_CUSTOM_CLAUDE_MODEL"},
 	}
 
@@ -110,7 +110,7 @@ func TestRoleClaudeModelDefault(t *testing.T) {
 		{"review", "claude-opus-4-6"},
 		{"analyze", "claude-opus-4-6"},
 		{"analyst", "claude-opus-4-6"},
-		{"agent", "claude-opus-4-6"},
+		{"auto", "claude-opus-4-6"},
 		{"build", "claude-sonnet-4-5"},
 		{"test", "claude-sonnet-4-5"},
 		{"commit", "claude-sonnet-4-5"},
@@ -556,7 +556,7 @@ func TestResolveTaskFile_AgentWithProjectLocal(t *testing.T) {
 	os.Chdir(dir)
 	defer os.Chdir(orig)
 
-	got := ResolveTaskFile("agent")
+	got := ResolveTaskFile("auto")
 	if got == "" {
 		t.Fatal("expected task file content, got empty")
 	}
@@ -576,9 +576,9 @@ func TestResolveTaskFile_EnvVarOverride(t *testing.T) {
 	taskFile := filepath.Join(dir, "custom-tasks.md")
 	os.WriteFile(taskFile, []byte("# Custom tasks\n\n- Poll every 5 minutes\n"), 0o644)
 
-	t.Setenv("MUXCODE_AGENT_TASKS", taskFile)
+	t.Setenv("MUXCODE_AUTO_TASKS", taskFile)
 
-	got := ResolveTaskFile("agent")
+	got := ResolveTaskFile("auto")
 	if got == "" {
 		t.Fatal("expected task file content, got empty")
 	}
@@ -597,9 +597,9 @@ func TestResolveTaskFile_NoFileExists(t *testing.T) {
 	os.Chdir(dir)
 	defer os.Chdir(orig)
 
-	t.Setenv("MUXCODE_AGENT_TASKS", "/nonexistent/tasks.md")
+	t.Setenv("MUXCODE_AUTO_TASKS", "/nonexistent/tasks.md")
 
-	got := ResolveTaskFile("agent")
+	got := ResolveTaskFile("auto")
 	if got != "" {
 		t.Errorf("expected empty when no task file exists, got %q", got)
 	}
@@ -616,31 +616,31 @@ func TestResolveTaskFile_EmptyFile(t *testing.T) {
 	os.Chdir(dir)
 	defer os.Chdir(orig)
 
-	got := ResolveTaskFile("agent")
+	got := ResolveTaskFile("auto")
 	if got != "" {
 		t.Errorf("expected empty for empty task file, got %q", got)
 	}
 }
 
-func TestPreLaunchSetup_AgentStartupMessage(t *testing.T) {
+func TestPreLaunchSetup_AutoStartupMessage(t *testing.T) {
 	dir := t.TempDir()
-	session := "test-prelaunch-agent"
+	session := "test-prelaunch-auto"
 	os.Setenv("BUS_DIR_BASE", dir)
 	defer os.Unsetenv("BUS_DIR_BASE")
 
 	// Init the bus directory so inbox paths exist
 	Init(session, dir)
 
-	// Run PreLaunchSetup for agent role
-	PreLaunchSetup("agent", session, "claude")
+	// Run PreLaunchSetup for auto role
+	PreLaunchSetup("auto", session, "claude")
 
-	// Read the agent inbox and verify the startup message
-	msgs, err := Peek(session, "agent")
+	// Read the auto inbox and verify the startup message
+	msgs, err := Peek(session, "auto")
 	if err != nil {
-		t.Fatalf("Peek agent inbox: %v", err)
+		t.Fatalf("Peek auto inbox: %v", err)
 	}
 	if len(msgs) != 1 {
-		t.Fatalf("expected 1 message in agent inbox, got %d", len(msgs))
+		t.Fatalf("expected 1 message in auto inbox, got %d", len(msgs))
 	}
 
 	m := msgs[0]
@@ -653,8 +653,8 @@ func TestPreLaunchSetup_AgentStartupMessage(t *testing.T) {
 	if m.From != "edit" {
 		t.Errorf("expected from 'edit', got %q", m.From)
 	}
-	if m.To != "agent" {
-		t.Errorf("expected to 'agent', got %q", m.To)
+	if m.To != "auto" {
+		t.Errorf("expected to 'auto', got %q", m.To)
 	}
 	if !strings.Contains(m.Payload, "Jira") {
 		t.Errorf("expected payload to mention Jira, got %q", m.Payload)

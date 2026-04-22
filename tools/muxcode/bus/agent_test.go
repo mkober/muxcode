@@ -73,7 +73,7 @@ func TestAgentFileName(t *testing.T) {
 		{"research", "code-researcher"},
 		{"watch", "log-watcher"},
 		{"pr-read", "pr-reader"},
-		{"agent", "autonomous-agent"},
+		{"auto", "autonomous-agent"},
 		{"custom", "custom"},
 	}
 

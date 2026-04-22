@@ -182,7 +182,7 @@ cat > "/tmp/muxcode-bus-${SESSION}/mode-cycle-edit.json" <<'MODEJSON'
   "current": 0,
   "agents": [
     {"index": 0, "mode": "edit", "role": "edit", "hold_window": ""},
-    {"index": 1, "mode": "agent", "role": "agent", "hold_window": "agent"}
+    {"index": 1, "mode": "auto", "role": "auto", "hold_window": "auto"}
   ]
 }
 MODEJSON

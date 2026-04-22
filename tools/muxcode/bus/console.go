@@ -323,8 +323,8 @@ func DefaultConsoleConfigs() map[string]*ConsoleConfig {
 			MaxRecent:   15,
 			Renderer:    renderAPI,
 		},
-		"agent": {
-			Title:       "Agent",
+		"auto": {
+			Title:       "Auto",
 			EmptyMsg:    "no activity yet",
 			RecentLabel: "recent activity",
 			MaxRecent:   25,
@@ -1505,7 +1505,7 @@ func renderAgent(cfg *ConsoleConfig, session string, width int) string {
 	sent := 0
 	recv := 0
 	for _, e := range entries {
-		if e.From == "agent" {
+		if e.From == "auto" {
 			sent++
 		} else {
 			recv++
@@ -1538,7 +1538,7 @@ func renderAgent(cfg *ConsoleConfig, session string, width int) string {
 		direction := "←"
 		dirColor := ColorGreen
 		peer := e.From
-		if e.From == "agent" {
+		if e.From == "auto" {
 			direction = "→"
 			dirColor = ColorPurple
 			peer = e.To
@@ -1569,7 +1569,7 @@ func renderAgent(cfg *ConsoleConfig, session string, width int) string {
 	return b.String()
 }
 
-// readAgentEntries reads log.jsonl and filters for messages involving the agent role.
+// readAgentEntries reads log.jsonl and filters for messages involving the auto role.
 func readAgentEntries(logPath string, limit int) []ConsoleEntry {
 	data, err := os.ReadFile(logPath)
 	if err != nil {
@@ -1588,7 +1588,7 @@ func readAgentEntries(logPath string, limit int) []ConsoleEntry {
 		if err := json.Unmarshal(line, &entry); err != nil {
 			continue
 		}
-		if entry.From == "agent" || entry.To == "agent" {
+		if entry.From == "auto" || entry.To == "auto" {
 			all = append(all, entry)
 		}
 	}

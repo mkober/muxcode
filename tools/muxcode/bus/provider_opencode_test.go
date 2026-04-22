@@ -248,9 +248,9 @@ func TestResolveOpenCodeModel_Default(t *testing.T) {
 
 	model := resolveOpenCodeModel("build")
 
-	// Command-execution roles default to MiniMax M2.5 Free
-	if model != "minimax/m2.5-free" {
-		t.Errorf("model = %q, want minimax/m2.5-free", model)
+	// Command-execution roles default to MiniMax M2.7
+	if model != "minimax/m2.7" {
+		t.Errorf("model = %q, want minimax/m2.7", model)
 	}
 }
 
@@ -260,6 +260,28 @@ func TestResolveOpenCodeModel_ExplicitOverride(t *testing.T) {
 	model := resolveOpenCodeModel("build")
 	if model != "openai/gpt-4o" {
 		t.Errorf("model = %q, want openai/gpt-4o", model)
+	}
+}
+
+func TestResolveOpenCodeModel_ReviewDefault(t *testing.T) {
+	t.Setenv("MUXCODE_REVIEW_MODEL", "")
+	t.Setenv("MUXCODE_REVIEW_CLAUDE_MODEL", "")
+
+	model := resolveOpenCodeModel("review")
+
+	if model != "mimo/v2.5-pro" {
+		t.Errorf("model = %q, want mimo/v2.5-pro", model)
+	}
+}
+
+func TestResolveOpenCodeModel_AnalyzeDefault(t *testing.T) {
+	t.Setenv("MUXCODE_ANALYZE_MODEL", "")
+	t.Setenv("MUXCODE_ANALYZE_CLAUDE_MODEL", "")
+
+	model := resolveOpenCodeModel("analyze")
+
+	if model != "qwen/3.6-plus" {
+		t.Errorf("model = %q, want qwen/3.6-plus", model)
 	}
 }
 

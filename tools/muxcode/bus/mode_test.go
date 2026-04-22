@@ -24,11 +24,11 @@ func TestDefaultModeCycleState(t *testing.T) {
 	if state.Agents[0].HoldWindow != "" {
 		t.Errorf("Agent[0].HoldWindow = %q, want empty", state.Agents[0].HoldWindow)
 	}
-	if state.Agents[1].Mode != "agent" {
-		t.Errorf("Agent[1].Mode = %q, want %q", state.Agents[1].Mode, "agent")
+	if state.Agents[1].Mode != "auto" {
+		t.Errorf("Agent[1].Mode = %q, want %q", state.Agents[1].Mode, "auto")
 	}
-	if state.Agents[1].HoldWindow != "agent" {
-		t.Errorf("Agent[1].HoldWindow = %q, want %q", state.Agents[1].HoldWindow, "agent")
+	if state.Agents[1].HoldWindow != "auto" {
+		t.Errorf("Agent[1].HoldWindow = %q, want %q", state.Agents[1].HoldWindow, "auto")
 	}
 }
 
@@ -65,12 +65,12 @@ func TestFindModeAgent(t *testing.T) {
 		t.Errorf("found.Role = %q, want %q", found.Role, "edit")
 	}
 
-	found = FindModeAgent(state, "agent")
+	found = FindModeAgent(state, "auto")
 	if found == nil {
-		t.Fatal("FindModeAgent('agent') returned nil")
+		t.Fatal("FindModeAgent('auto') returned nil")
 	}
-	if found.Role != "agent" {
-		t.Errorf("found.Role = %q, want %q", found.Role, "agent")
+	if found.Role != "auto" {
+		t.Errorf("found.Role = %q, want %q", found.Role, "auto")
 	}
 
 	found = FindModeAgent(state, "nonexistent")
@@ -94,8 +94,8 @@ func TestCurrentModeAgent(t *testing.T) {
 	if current == nil {
 		t.Fatal("CurrentModeAgent returned nil for index 1")
 	}
-	if current.Mode != "agent" {
-		t.Errorf("current.Mode = %q, want %q", current.Mode, "agent")
+	if current.Mode != "auto" {
+		t.Errorf("current.Mode = %q, want %q", current.Mode, "auto")
 	}
 
 	// Out of range.
@@ -214,8 +214,8 @@ func TestFormatModeList(t *testing.T) {
 	if !strings.Contains(out, "edit") {
 		t.Error("list should show edit")
 	}
-	if !strings.Contains(out, "agent") {
-		t.Error("list should show agent")
+	if !strings.Contains(out, "auto") {
+		t.Error("list should show auto")
 	}
 }
 
@@ -245,7 +245,7 @@ func TestModeCycleState_ThreeAgents(t *testing.T) {
 		Current: 0,
 		Agents: []ModeAgent{
 			{Index: 0, Mode: "edit", Role: "edit", HoldWindow: ""},
-			{Index: 1, Mode: "agent", Role: "agent", HoldWindow: "agent"},
+			{Index: 1, Mode: "auto", Role: "auto", HoldWindow: "auto"},
 			{Index: 2, Mode: "design", Role: "design", HoldWindow: "design-hold"},
 		},
 	}

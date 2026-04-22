@@ -50,8 +50,9 @@ end
 local function get_agents(session)
   local lock_dir = "/tmp/muxcode-bus-" .. session .. "/lock"
   local roles    = {
-    "edit", "build", "test", "review", "deploy",
-    "commit", "analyze", "api", "run", "watch",
+    "plan", "edit", "build", "test", "review",
+    "deploy", "run", "watch", "commit", "analyze",
+    "api", "auto",
   }
   local result   = {}
   for _, role in ipairs(roles) do
@@ -180,7 +181,7 @@ local function open_start()
     push(center("AGENTS", width), "MuxcodeSection")
 
     do
-      -- Split agents into two rows (5 + 5) so they fit comfortably.
+      -- Split agents into two rows (6 + 6) so they fit comfortably.
       local mid = math.ceil(#agents / 2)
       local rows = { {}, {} }
       for i, a in ipairs(agents) do

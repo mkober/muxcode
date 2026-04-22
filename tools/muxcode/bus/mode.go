@@ -30,14 +30,14 @@ func ModeCyclePath(session, window string) string {
 }
 
 // DefaultModeCycleState returns the initial cycle state for the edit window
-// with edit and agent modes registered.
+// with edit and auto modes registered.
 func DefaultModeCycleState() *ModeCycleState {
 	return &ModeCycleState{
 		Window:  "edit",
 		Current: 0,
 		Agents: []ModeAgent{
 			{Index: 0, Mode: "edit", Role: "edit", HoldWindow: ""},
-			{Index: 1, Mode: "agent", Role: "agent", HoldWindow: "agent"},
+			{Index: 1, Mode: "auto", Role: "auto", HoldWindow: "auto"},
 		},
 	}
 }

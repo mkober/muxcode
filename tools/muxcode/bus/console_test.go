@@ -238,7 +238,7 @@ func TestReadAnalyzeEntries(t *testing.T) {
 func TestDefaultConsoleConfigs(t *testing.T) {
 	configs := DefaultConsoleConfigs()
 
-	expectedRoles := []string{"build", "test", "review", "deploy", "run", "commit", "watch", "analyze", "api", "agent"}
+	expectedRoles := []string{"build", "test", "review", "deploy", "run", "commit", "watch", "analyze", "api", "auto"}
 	for _, role := range expectedRoles {
 		cfg, ok := configs[role]
 		if !ok {
@@ -518,7 +518,7 @@ func TestFormatAutonomousAgentStatus_Empty(t *testing.T) {
 }
 
 func TestRenderConsoleAgentEmpty(t *testing.T) {
-	output := RenderConsole("agent", "nonexistent-agent-test-xyz", 80)
+	output := RenderConsole("auto", "nonexistent-agent-test-xyz", 80)
 	if !strings.Contains(output, "no activity yet") {
 		t.Errorf("empty agent console should contain 'no activity yet', got: %q", output)
 	}

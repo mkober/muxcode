@@ -14,7 +14,7 @@ var KnownRoles = []string{
 	"plan", "edit", "build", "test", "review",
 	"deploy", "run", "commit", "analyze",
 	"docs", "research", "watch", "pr-read",
-	"webhook", "api", "agent",
+	"webhook", "api", "auto",
 }
 
 // splitLeftWindows lists windows that have a dedicated tool in the left pane.
@@ -394,7 +394,7 @@ var hostedRoles = map[string]string{
 // Unlike hostedRoles, mode roles have their own independent inboxes.
 // The value is the host window name (for PaneTarget resolution).
 var modeRoles = map[string]string{
-	"agent": "agent",
+	"auto": "auto",
 }
 
 // WindowForRole returns the tmux window name where a role runs.
@@ -440,6 +440,8 @@ func NormalizeBusRole(role string) string {
 		return "run"
 	case "planner":
 		return "plan"
+	case "agent":
+		return "auto"
 	case "daemon":
 		// The daemon process is not an agent — route replies to edit.
 		return "edit"

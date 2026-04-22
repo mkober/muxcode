@@ -74,7 +74,7 @@ func AgentFileName(role string) string {
 		return "pr-reader"
 	case "api":
 		return "api-tester"
-	case "agent":
+	case "auto":
 		return "autonomous-agent"
 	default:
 		return ""
@@ -115,8 +115,8 @@ func RoleCLIEnvVar(role string) string {
 		return "MUXCODE_API_CLI"
 	case "webhook":
 		return "MUXCODE_WEBHOOK_CLI"
-	case "agent":
-		return "MUXCODE_AGENT_CLI"
+	case "auto":
+		return "MUXCODE_AUTO_CLI"
 	default:
 		return "MUXCODE_" + strings.ToUpper(strings.ReplaceAll(role, "-", "_")) + "_CLI"
 	}
@@ -155,8 +155,8 @@ func RoleClaudeModelEnvVar(role string) string {
 		return "MUXCODE_API_CLAUDE_MODEL"
 	case "webhook":
 		return "MUXCODE_WEBHOOK_CLAUDE_MODEL"
-	case "agent":
-		return "MUXCODE_AGENT_CLAUDE_MODEL"
+	case "auto":
+		return "MUXCODE_AUTO_CLAUDE_MODEL"
 	default:
 		return "MUXCODE_" + strings.ToUpper(strings.ReplaceAll(role, "-", "_")) + "_CLAUDE_MODEL"
 	}
@@ -198,7 +198,7 @@ func RoleCodexModelDefault(role string) string {
 // edit/review/analyze → opus, everything else → sonnet.
 func RoleClaudeModelDefault(role string) string {
 	switch role {
-	case "plan", "planner", "edit", "review", "analyze", "analyst", "agent":
+	case "plan", "planner", "edit", "review", "analyze", "analyst", "auto":
 		return "claude-opus-4-6"
 	case "build", "test", "api", "deploy", "run", "runner", "watch", "commit", "git":
 		return "claude-sonnet-4-5"
@@ -208,11 +208,17 @@ func RoleClaudeModelDefault(role string) string {
 }
 
 // RoleOpenCodeModelDefault returns the default OpenCode model for a role.
-// build/test/deploy/run/watch/commit → MiniMax M2.5 Free (via OpenCode Zen).
+// review → MiMo V2.5 Pro (reasoning model for code analysis).
+// analyze → Qwen 3.6 Plus (strong analytical model).
+// build/test/deploy/run/watch/commit → MiniMax M2.7 (fast command execution).
 func RoleOpenCodeModelDefault(role string) string {
 	switch role {
+	case "review":
+		return "mimo/v2.5-pro"
+	case "analyze", "analyst":
+		return "qwen/3.6-plus"
 	case "build", "test", "deploy", "run", "runner", "watch", "commit", "git":
-		return "minimax/m2.5-free"
+		return "minimax/m2.7"
 	default:
 		return ""
 	}
@@ -250,7 +256,7 @@ func InlineFallbackPrompt(role string) string {
 		return "You are the pr-read agent. Read GitHub PR reviews and CI check failures, then report suggested fixes to the edit agent. Use gh pr view, gh pr checks, gh api to read feedback. Never modify files directly — report suggestions only. The edit agent will prompt the user before making changes."
 	case "api":
 		return "You are the API testing agent. Manage API collections and environments using muxcode api subcommands. Execute requests via curl with jq formatting. Support variable substitution from environments. Log requests to history. Report results (status, timing, response) to the edit agent."
-	case "agent":
+	case "auto":
 		return "You are the autonomous agent. Poll Jira for assigned stories, create requirements docs, implement features, and submit PRs — all without user intervention. Delegate freely to build, test, review, deploy, run, watch, and commit agents via the message bus."
 	default:
 		return "You are a general-purpose coding assistant."
@@ -414,11 +420,11 @@ func BuildSharedPrompt(role string) string {
 // Returns empty string for non-agent roles or if no task file is found.
 //
 // Resolution order:
-//  1. MUXCODE_AGENT_TASKS env var (explicit path)
+//  1. MUXCODE_AUTO_TASKS env var (explicit path)
 //  2. .muxcode/agent-tasks.md (project-local)
 //  3. ~/.config/muxcode/agent-tasks.md (user-global)
 func ResolveTaskFile(role string) string {
-	if role != "agent" {
+	if role != "auto" {
 		return ""
 	}
 	path := resolveTaskFilePath()
@@ -442,7 +448,7 @@ func ResolveTaskFile(role string) string {
 // resolveTaskFilePath returns the path to the agent task file, or empty if none found.
 func resolveTaskFilePath() string {
 	// 1. Explicit env var
-	if v := os.Getenv("MUXCODE_AGENT_TASKS"); v != "" {
+	if v := os.Getenv("MUXCODE_AUTO_TASKS"); v != "" {
 		if _, err := os.Stat(v); err == nil {
 			return v
 		}
@@ -603,13 +609,13 @@ func PreLaunchSetup(role, session, cli string) {
 			Payload: startupMsg,
 		}
 		_ = SendNoCC(session, m)
-	case "agent":
+	case "auto":
 		agentStartupMsg := "Agent started — search Jira for available stories and present them to the user for selection."
 		m := Message{
-			ID:      NewMsgID("agent"),
+			ID:      NewMsgID("auto"),
 			TS:      time.Now().Unix(),
 			From:    "edit",
-			To:      "agent",
+			To:      "auto",
 			Type:    "request",
 			Action:  "startup",
 			Payload: agentStartupMsg,

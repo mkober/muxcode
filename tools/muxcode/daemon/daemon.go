@@ -218,6 +218,15 @@ func (d *Daemon) checkInboxes() {
 					bus.WithOutcome("review", "complete"))
 			}
 
+			// Only notify if the inbox has actionable (request-type) messages.
+			// Response-only inbox growth (e.g. heartbeat-ack routed to edit
+			// via daemon→edit normalization) should not wake agents — responses
+			// are informational and get consumed on the next natural wake-up.
+			if !bus.HasActionableMessages(d.session, role) {
+				d.inboxSizes[role] = size
+				continue
+			}
+
 			// Notify writes the trigger file and optionally sends a
 			// display-message. Dedup is handled inside Notify via
 			// file locking + cooldown.
@@ -1242,9 +1251,9 @@ func (d *Daemon) checkHeartbeat() {
 	}
 	d.lastHeartbeatCheck = now
 
-	// Only fire if the agent role is known and has an active pane.
-	// Skip if agent has no inbox (never launched).
-	inboxPath := bus.InboxPath(d.session, "agent")
+	// Only fire if the auto role is known and has an active pane.
+	// Skip if auto has no inbox (never launched).
+	inboxPath := bus.InboxPath(d.session, "auto")
 	if _, err := os.Stat(filepath.Dir(inboxPath)); os.IsNotExist(err) {
 		return
 	}
@@ -1253,20 +1262,20 @@ func (d *Daemon) checkHeartbeat() {
 	heartbeatPath := bus.AgentHeartbeatPath(d.session)
 	_ = os.WriteFile(heartbeatPath, []byte(fmt.Sprintf("%d", now)), 0644)
 
-	// Send heartbeat message to agent inbox
-	msg := bus.NewMessage("daemon", "agent", "request", "heartbeat",
+	// Send heartbeat message to auto inbox
+	msg := bus.NewMessage("daemon", "auto", "request", "heartbeat",
 		"Heartbeat tick — check for higher-priority stories, PR status on open PRs, and stale delegations", "")
 	if err := bus.Send(d.session, msg); err != nil {
-		fmt.Fprintf(os.Stderr, "  [heartbeat] failed to send to agent: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  [heartbeat] failed to send to auto: %v\n", err)
 		return
 	}
 
 	ts := time.Now().Format("15:04:05")
-	fmt.Printf("  %s  Heartbeat fired to agent\n", ts)
-	bus.LogLifecycle(d.session, "info", "daemon", "heartbeat", "agent")
+	fmt.Printf("  %s  Heartbeat fired to auto\n", ts)
+	bus.LogLifecycle(d.session, "info", "daemon", "heartbeat", "auto")
 
-	// Notify the agent
-	_ = bus.Notify(d.session, "agent")
+	// Notify the auto agent
+	_ = bus.Notify(d.session, "auto")
 	d.refreshInboxSizes()
 }
 

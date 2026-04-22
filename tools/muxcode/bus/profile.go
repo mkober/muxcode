@@ -233,6 +233,8 @@ func resolveRoleAlias(role string) string {
 		return "run"
 	case "planner":
 		return "plan"
+	case "agent":
+		return "auto"
 	default:
 		return role
 	}
@@ -728,7 +730,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Write", "Edit",
 				},
 			},
-			"agent": {
+			"auto": {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: true,
 				Tools: []string{
