@@ -11,6 +11,22 @@ import (
 	"syscall"
 )
 
+// Dracula popup style constants — used by BuildPopupArgs and documented in
+// config/tmux.conf for static display-popup calls. Requires tmux >= 3.3.
+const (
+	PopupBorderStyle = "rounded"      // tmux display-popup -b value
+	PopupBorderColor = "fg=colour141" // Dracula purple (#bd93f9)
+)
+
+// PopupStyleArgs returns the tmux display-popup arguments for Dracula-themed
+// modal borders. Returns nil if the tmux version doesn't support popup styling.
+func PopupStyleArgs() []string {
+	if !TmuxSupportsPopupStyle() {
+		return nil
+	}
+	return []string{"-b", PopupBorderStyle, "-S", PopupBorderColor}
+}
+
 // ModalConfig defines a modal window configuration.
 type ModalConfig struct {
 	Name    string               // unique identifier (e.g. "api", "logs", "memory")
@@ -309,8 +325,8 @@ func BuildPopupArgs(cfg ModalConfig, session, sizeFlag string) []string {
 	args := []string{"display-popup", "-E", "-d", "#{pane_current_path}"}
 
 	// Dracula border on tmux 3.3+
-	if TmuxSupportsPopupStyle() {
-		args = append(args, "-b", "rounded", "-S", "fg=colour141")
+	if style := PopupStyleArgs(); style != nil {
+		args = append(args, style...)
 	}
 
 	args = append(args, "-w", width, "-h", height)

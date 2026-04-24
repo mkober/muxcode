@@ -233,6 +233,30 @@ func TestTmuxSupportsPopupStyle(t *testing.T) {
 	}
 }
 
+func TestPopupStyleArgs(t *testing.T) {
+	orig := tmuxVersionRunner
+	t.Cleanup(func() { tmuxVersionRunner = orig })
+
+	// tmux 3.4 — should return Dracula style args
+	tmuxVersionRunner = func() (string, error) { return "tmux 3.4", nil }
+	args := PopupStyleArgs()
+	if len(args) != 4 {
+		t.Fatalf("expected 4 args, got %d", len(args))
+	}
+	if args[0] != "-b" || args[1] != PopupBorderStyle {
+		t.Errorf("expected -b %s, got %s %s", PopupBorderStyle, args[0], args[1])
+	}
+	if args[2] != "-S" || args[3] != PopupBorderColor {
+		t.Errorf("expected -S %s, got %s %s", PopupBorderColor, args[2], args[3])
+	}
+
+	// tmux 3.2 — should return nil
+	tmuxVersionRunner = func() (string, error) { return "tmux 3.2", nil }
+	if PopupStyleArgs() != nil {
+		t.Error("expected nil for tmux 3.2")
+	}
+}
+
 // --- Command building tests ---
 
 func TestBuildModalCommand_NoSplit(t *testing.T) {

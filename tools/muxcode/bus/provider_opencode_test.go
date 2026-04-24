@@ -248,7 +248,19 @@ func TestResolveOpenCodeModel_Default(t *testing.T) {
 
 	model := resolveOpenCodeModel("build")
 
-	// Command-execution roles default to MiniMax M2.7
+	// Command-execution roles default to MiniMax M2.5
+	if model != "opencode-go/minimax-m2.5" {
+		t.Errorf("model = %q, want opencode-go/minimax-m2.5", model)
+	}
+}
+
+func TestResolveOpenCodeModel_CommitDefault(t *testing.T) {
+	t.Setenv("MUXCODE_COMMIT_MODEL", "")
+	t.Setenv("MUXCODE_COMMIT_CLAUDE_MODEL", "")
+
+	model := resolveOpenCodeModel("commit")
+
+	// Commit role defaults to MiniMax M2.7
 	if model != "opencode-go/minimax-m2.7" {
 		t.Errorf("model = %q, want opencode-go/minimax-m2.7", model)
 	}
@@ -269,8 +281,8 @@ func TestResolveOpenCodeModel_ReviewDefault(t *testing.T) {
 
 	model := resolveOpenCodeModel("review")
 
-	if model != "opencode-go/mimo-v2.5-pro" {
-		t.Errorf("model = %q, want opencode-go/mimo-v2.5-pro", model)
+	if model != "opencode-go/qwen3.5-plus" {
+		t.Errorf("model = %q, want opencode-go/qwen3.5-plus", model)
 	}
 }
 
@@ -280,8 +292,8 @@ func TestResolveOpenCodeModel_AnalyzeDefault(t *testing.T) {
 
 	model := resolveOpenCodeModel("analyze")
 
-	if model != "opencode-go/qwen3.6-plus" {
-		t.Errorf("model = %q, want opencode-go/qwen3.6-plus", model)
+	if model != "opencode-go/qwen3.5-plus" {
+		t.Errorf("model = %q, want opencode-go/qwen3.5-plus", model)
 	}
 }
 
