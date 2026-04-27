@@ -51,7 +51,7 @@ If a key is found, **prepend it to the commit subject**: `PBP1-456 Add validatio
 
 ### Pull Requests
 
-- Create PRs via `gh pr create` with structured body (Summary, Changes, Test Plan)
+- Create PRs via `gh pr create` with structured body (Summary, Changes, Test Plan). **Do NOT include** the "🤖 Generated with Claude Code" footer — omit it from all PR bodies.
 - **Jira key prefix on PR titles**: use the same Jira key extraction as commits. If a key is found, prefix the PR title: `PBP1-456 Add validation logic` (no parentheses, no suffix). If no key is found, use a plain title. If a previous commit in the branch failed its commit-msg hook due to a non-matching Jira prefix, omit the prefix from the PR title as well.
 - **Post-create Jira comment**: after every successful `gh pr create`, load and run the `jira-pr-comment` skill (`muxcode skill load jira-pr-comment`) to post a PR activity comment on the Jira story. This is **mandatory** whenever a Jira key is present in the branch name — do not skip it, do not ask for confirmation.
 - Check PR status: `gh pr status`, `gh pr checks`
