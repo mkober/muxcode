@@ -1,7 +1,7 @@
 ---
 description: Code review specialist — reviews diffs for correctness, security, and quality
 mode: primary
-model: opencode-go/mimo-v2.5-pro
+model: opencode-go/qwen3.5-plus
 permission:
   bash:
     "muxcode *": allow

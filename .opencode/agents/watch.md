@@ -1,7 +1,7 @@
 ---
 description: Log tailing specialist — tails local files, CloudWatch, Kubernetes, and Docker logs (read-only, no AWS mutations)
 mode: primary
-model: opencode-go/minimax-m2.7
+model: opencode-go/minimax-m2.5
 permission:
   bash:
     "muxcode *": allow

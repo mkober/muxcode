@@ -1,7 +1,7 @@
 ---
 description: Analyst agent — evaluates code changes, builds, tests, reviews, deployments, and runs with clear explanations
 mode: primary
-model: opencode-go/qwen3.6-plus
+model: opencode-go/qwen3.5-plus
 permission:
   bash:
     "muxcode *": allow
