@@ -39,7 +39,7 @@ Commands:
   memory      Read/write persistent agent memory
   watch       Watch for file changes and route events
   dashboard   Launch the agent dashboard TUI
-  cleanup     Remove bus session directory
+  cleanup     Remove stale session temp files (--dry-run, --all)
   notify      Send tmux notification to an agent
   lock        Set agent lock (busy indicator)
   unlock      Remove agent lock

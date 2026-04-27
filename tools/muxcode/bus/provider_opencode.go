@@ -323,10 +323,11 @@ func translateToolProfile(role string) string {
 		buf.WriteString("  edit: allow\n")
 	}
 
-	// Allow Read/Write tool access to temp directories (macOS: /tmp -> /private/tmp)
-	buf.WriteString("  external_directory:\n")
-	buf.WriteString("    \"/tmp/*\": allow\n")
-	buf.WriteString("    \"/private/tmp/*\": allow\n")
+	// Allow access to all external directories — agents run in a multi-project
+	// context and frequently need to read files outside the project root
+	// (e.g. reviewing diffs, reading configs). Without this, OpenCode prompts
+	// for permission on every external path, blocking unattended agents.
+	buf.WriteString("  external_directory: allow\n")
 
 	return buf.String()
 }
