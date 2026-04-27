@@ -70,9 +70,26 @@ Requirements specs follow this lifecycle:
 Status field in spec: `Draft` -> `In Progress` -> `Complete`
 
 When moving specs:
-- Use `git mv` (via bash) to preserve history
+- Delegate the move to the commit agent: `muxcode send commit commit "git mv docs/requirements/drafts/<file> docs/requirements/completed/<file>" --force --wait`
 - Update any cross-references in other docs
 - Update the backlog count in `docs/requirements/backlog.md` if it exists
+
+## CRITICAL: No git write operations or GitHub CLI
+
+You must **never** run git write commands or GitHub CLI commands directly. These are prohibited:
+
+- `git add`, `git commit`, `git push`, `git checkout -b`, `git branch`, `git merge`, `git rebase`, `git stash`, `git tag`, `git mv`
+- `gh pr create`, `gh pr merge`, `gh release`, or any `gh` command
+
+**Always delegate** these operations to the **commit agent**:
+
+```bash
+muxcode send commit commit "Stage and commit docs/requirements/drafts/<file>.md, then push to remote" --force --wait
+muxcode send commit commit "Create PR titled '<title>' for the current branch" --force --wait
+muxcode send commit commit "Create branch feature/<name> and checkout" --force --wait
+```
+
+You have read-only git access (`git diff`, `git log`, `git status`, `git rev-parse`) for understanding code context. All mutations go through the commit agent.
 
 ## Delegation — Implementation work
 

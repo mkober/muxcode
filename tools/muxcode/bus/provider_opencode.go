@@ -151,11 +151,15 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string) error {
 	if replyTarget == "" || !IsKnownRole(replyTarget) {
 		replyTarget = "edit"
 	}
-	// Append reply and chain instructions only for request messages.
-	// Response-only wake-ups should not prompt the agent to reply or
-	// chain, which would cause infinite response echo loops.
+	// Prepend AND append reply instructions for request messages.
+	// Smaller models lose trailing instructions after long tool-use
+	// sequences, so the reply command appears both at the start (as a
+	// priority directive) and at the end (as a reminder).
+	// Response-only wake-ups skip this to avoid infinite echo loops.
 	if hasRequest {
-		prompt += fmt.Sprintf(" — When done, you MUST EXECUTE this bash command (do NOT print it as text): muxcode send %s response \"<your results>\" --type response", replyTarget)
+		replyCmd := fmt.Sprintf("muxcode send %s response \"<your one-line summary>\" --type response", replyTarget)
+		prompt = fmt.Sprintf("IMPORTANT: After completing this task, you MUST run this bash command: %s — ", replyCmd) + prompt
+		prompt += fmt.Sprintf(" — REMINDER: Your FINAL step MUST be to EXECUTE (not print): %s", replyCmd)
 		prompt += chainInstructionForRole(role)
 	}
 
