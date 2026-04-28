@@ -96,9 +96,7 @@ permission:
     "wget*": allow
     "cd * && wget*": allow
   edit: allow
-  external_directory:
-    "/tmp/*": allow
-    "/private/tmp/*": allow
+  external_directory: allow
 ---
 
 

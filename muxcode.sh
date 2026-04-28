@@ -36,9 +36,9 @@ load_config
 # Configuration with defaults
 PROJECTS_DIR="${MUXCODE_PROJECTS_DIR:-$HOME}"
 SCAN_DEPTH="${MUXCODE_SCAN_DEPTH:-3}"
-WINDOWS="${MUXCODE_WINDOWS:-plan edit build test review deploy run watch commit analyze}"
+WINDOWS="${MUXCODE_WINDOWS:-plan edit build test review deploy run watch commit}"
 ROLE_MAP="${MUXCODE_ROLE_MAP:-}"
-SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-plan edit build test review deploy run analyze commit watch}"
+SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-plan edit build test review deploy run commit watch}"
 SHELL_INIT="${MUXCODE_SHELL_INIT:-}"
 EDITOR="${MUXCODE_EDITOR:-nvim}"
 NVIM_APPNAME="${MUXCODE_NVIM_APPNAME:-muxcode/nvim}"
@@ -427,12 +427,12 @@ tmux set-hook -t "$SESSION" session-closed \
 ) &>/dev/null &
 disown
 
-# --- Auto-accept startup prompts & wake edit/analyze agents ---
+# --- Auto-accept startup prompts & wake agents ---
 # Claude Code may show two prompts on launch:
 #   1. "Yes, I trust this folder" — workspace trust (new workspaces)
 #   2. "Bypass Permissions mode" — dangerous-skip-permissions warning (all agents)
 # Poll agent panes and dismiss each prompt as it appears.
-# Startup messages (edit, analyze) are pre-populated in the inbox by
+# Startup messages are pre-populated in the inbox by
 # muxcode-agent.sh. Once those agents reach idle, this loop directly
 # injects "You have new messages" + Enter to ensure they process it —
 # does not rely solely on the daemon's checkStartupNotifications().

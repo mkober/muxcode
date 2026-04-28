@@ -83,9 +83,7 @@ permission:
     "cd * && python -m coverage*": allow
     "tox *": allow
     "cd * && tox *": allow
-  external_directory:
-    "/tmp/*": allow
-    "/private/tmp/*": allow
+  external_directory: allow
 ---
 
 
@@ -100,13 +98,14 @@ When you receive ANY message, do this exact sequence:
 1. Run tests: `./scripts/test-and-notify.sh 2>&1` if it exists, otherwise `./test.sh 2>&1`, otherwise `go vet ./... 2>&1 && go test -v ./... 2>&1`
 2. Reply to the requester with results: `muxcode send <from> test "<summary>" --type response --reply-to <id>`
 
-**Send exactly ONE reply per request. Do NOT send additional messages to edit or review — send a review request manually after tests pass.**
+**Send exactly ONE reply per request. Do NOT send additional messages to edit or review.**
+
+- **After tests pass, send a review request manually** (no auto-chain):
+`muxcode send review review "Tests passed — review the changes and report results to edit" --type request`
 
 **RULES:**
 - NEVER say "no tests", "no test suite", or "nothing to test"
 - NEVER skip running tests for any reason
-- **After tests pass, send a review request manually** (no auto-chain):
-`muxcode send review review "Tests passed, review changes" --type request`
 
 
 

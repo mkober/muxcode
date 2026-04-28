@@ -154,7 +154,7 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
 3. Hook appends file path to trigger file
 4. Hook routes event to relevant agent (test/deploy/build) based on file type
 5. In edit window: hook cleans up nvim diff preview, reloads file
-6. Bus daemon (in analyze window) detects trigger file changes
+6. Bus daemon detects trigger file changes
 7. After debounce, daemon sends aggregate analyze event to analyst
 ```
 
@@ -329,7 +329,7 @@ The build-test-review and deploy-run-watch chains are **deterministic** — driv
 └────────────────────┴────────────────────┘
 ```
 
-### Split-Left Windows (plan, edit, build, test, review, deploy, analyze, commit, watch)
+### Split-Left Windows (plan, edit, build, test, review, deploy, commit, watch)
 ```
 ┌────────────────────┬────────────────────┐
 │                    │                    │
@@ -452,7 +452,6 @@ Each split-left window runs `muxcode console <role>` in the left pane, displayin
 | run | `console run` | `run-history.jsonl` |
 | watch | `console watch` | `watch-history.jsonl` |
 | commit | `console commit` | `commit-history.jsonl` + live git status |
-| analyze | `console analyze` | `log.jsonl` (filtered: `from=analyze`, `type=response`) |
 | api | `console api` | `.muxcode/api/history.jsonl` |
 | agent | `console agent` | `log.jsonl` (filtered: agent role) + status header from state files |
 
@@ -462,7 +461,7 @@ Build and test consoles display an `errors` field (extracted by the bash hook) f
 
 The commit console combines live git status (branch, staged, modified, untracked files) with commit history entries.
 
-The analyze console reads the shared bus log (`log.jsonl`) rather than a dedicated history file, filtering for analyst response messages. It displays findings count, recent entries with timestamp/action/target/truncated payload, and the full payload of the latest finding.
+The analyze console (available when the analyze window is enabled via `MUXCODE_WINDOWS`) reads the shared bus log (`log.jsonl`) rather than a dedicated history file, filtering for analyst response messages. It displays findings count, recent entries with timestamp/action/target/truncated payload, and the full payload of the latest finding.
 
 ## Startup prompt handling
 
@@ -479,7 +478,7 @@ The launcher handles all prompts automatically via `provider.ClassifyPane()` and
 4. If "Bypass Permissions" detected: sends Down + Enter to select "Yes, I accept"
 5. If `❯` idle prompt detected: agent is past all prompts — marks as accepted
 6. **Edit agent startup**: when the edit agent reaches `❯`, waits 1s for the TUI to fully initialize, re-verifies `❯` is still showing, then sends a startup event (`Session started — review last saved context from memory`) via `muxcode send` with `AGENT_ROLE=edit` (the bus `Notify()` handles wake-up via `notifyIdleSendKeys()` with dedup). For non-hook providers (OpenCode, Codex CLI), startup messages are delivered via `provider.SendWakeUp()` which injects the message payload directly.
-7. Watch/analyze agents do **not** get startup messages — the daemon delivers inbox items naturally, and unsolicited responses would CC noise to edit
+7. Watch agents do **not** get startup messages — the daemon delivers inbox items naturally, and unsolicited responses would CC noise to edit. The analyze agent is not in the default window list but can be re-enabled via `MUXCODE_WINDOWS`
 8. Exits early once all panes are handled
 
 Core code: `muxcode.sh` (auto-accept block near end of file)

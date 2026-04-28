@@ -167,9 +167,7 @@ permission:
     "cd * && cp *": allow
     "mv *": allow
     "cd * && mv *": allow
-  external_directory:
-    "/tmp/*": allow
-    "/private/tmp/*": allow
+  external_directory: allow
 ---
 
 

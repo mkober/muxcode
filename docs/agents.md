@@ -69,7 +69,7 @@ Non-hook providers degrade gracefully across three layers:
 | deploy | infra-deployer.md | deploy | Infrastructure deployments |
 | run | command-runner.md | run | Execute commands |
 | commit | git-manager.md | commit | Git operations |
-| analyze | editor-analyst.md | analyze | Analyze changes and explain patterns |
+| analyze | editor-analyst.md | *(no default window)* | Analyze changes and explain patterns |
 | watch | log-watcher.md | watch | Monitor logs (local, CloudWatch, k8s, Docker) |
 | docs | doc-writer.md | plan *(via planner)* | Generate and maintain documentation |
 | research | code-researcher.md | research | Search web, explore codebases, answer questions |
@@ -297,7 +297,7 @@ cp ~/.config/muxcode/agents/code-builder.md .claude/agents/code-builder.md
 
 1. Add the window to your config:
    ```bash
-   MUXCODE_WINDOWS="edit build test review deploy run commit analyze api docs status"
+   MUXCODE_WINDOWS="edit build test review deploy run commit watch api analyze"
    ```
 
 2. Add a role mapping if window name differs from role:

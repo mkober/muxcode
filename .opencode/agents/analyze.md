@@ -59,9 +59,7 @@ permission:
     "cd * && python3*": allow
     "jq*": allow
     "cd * && jq*": allow
-  external_directory:
-    "/tmp/*": allow
-    "/private/tmp/*": allow
+  external_directory: allow
 ---
 
 

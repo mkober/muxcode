@@ -407,16 +407,229 @@ export MUXCODE_EDIT_MODEL=opencode-go/deepseek-v4-pro
 muxcode
 ```
 
+## Compensating controls
+
+Six features that can be added to muxcode to close the gaps between hook-based enforcement (Claude Code) and prompt-based enforcement (OpenCode). Each is provider-agnostic infrastructure that benefits all non-hook providers.
+
+### 1. Daemon-side command audit (`checkEditCommands`)
+
+**Risk addressed**: Soft delegation enforcement — OpenCode deny rules can be bypassed by creative command construction (`bash -c "git push"`, env var prefixes, `cd && git`).
+
+**Design**: The daemon already captures pane content for non-hook task detection (`checkNonHookTasks`). Extend this with a new `checkEditCommands()` function that:
+
+1. Captures the edit pane every 5 seconds (same cadence as `checkIdleAgents`)
+2. Parses new lines since last capture for command patterns
+3. Runs each detected command through `CheckEditGuard()` — the same guard logic used by the PreToolUse hook, which already handles `cd &&` prefixes, env var stripping, and `bash -c` unwrapping
+4. On violation: logs to lifecycle, sends an `edit-violation` event to edit's inbox with the block reason and correct delegation command, transitions workflow to a `StateGuardViolation` state
+
+**Why pane audit works**: OpenCode's bash tool output appears in the tmux pane — the daemon sees it regardless of how the command was constructed. Even if the model bypasses deny pattern matching, the pane shows what actually ran.
+
+```go
+// New daemon check — runs every 5s when edit is non-hook
+func (d *Daemon) checkEditCommands() {
+    provider := bus.ResolveProvider("edit")
+    if provider.SupportsHooks() {
+        return // hook guard handles this
+    }
+    // Capture edit pane, diff against last capture, extract commands
+    // Run CheckEditGuard() on each new command
+    // On violation: Send("daemon", "edit", "event", "edit-violation", reason)
+}
+```
+
+**Severity**: This is a **detective** control (catches violations after execution), not a **preventive** control (blocks before execution). OpenCode deny rules are preventive but imperfect; pane audit catches what slips through. Together they provide layered defense.
+
+**Implementation**: Add to daemon poll loop, new state fields (`lastEditPaneContent`, `lastEditCommandCheck`). ~60 lines of code.
+
+### 2. Chain orchestration command (`muxcode chain`)
+
+**Risk addressed**: Model capability gap — the edit agent must manually orchestrate build→test→review, which requires 3 sequential `muxcode send --wait` commands with error checking between each. DeepSeek V4 Pro could misorder them, forget `--wait`, or skip steps.
+
+**Design**: A new `muxcode chain` subcommand that encapsulates multi-step workflows:
+
+```bash
+# Replaces 3 manual sends with 1 command
+muxcode chain build-test-review
+
+# With options
+muxcode chain build-test-review --stop-on-fail --timeout 600
+```
+
+The command:
+1. Sends `build` to the build agent with `--wait`
+2. Parses the build response for success/failure
+3. On success: sends `test` to the test agent with `--wait`
+4. Parses the test response
+5. On success: sends `review` to the review agent with `--wait`
+6. Reports the aggregate result to stdout
+
+**Chain definitions**: Stored in the config profile alongside `EventChains`:
+
+```go
+type WorkflowChain struct {
+    Steps []ChainStep `json:"steps"`
+}
+type ChainStep struct {
+    Target  string `json:"target"`
+    Action  string `json:"action"`
+    Message string `json:"message"`
+    OnFail  string `json:"on_fail"` // "stop" or "continue"
+}
+```
+
+**Agent body instruction**: Instead of:
+> "After code changes, manually orchestrate: (1) send build, (2) on success send test, (3) on success send review"
+
+Replace with:
+> "After code changes, run: `muxcode chain build-test-review`"
+
+**Impact**: Reduces a 3-step error-prone sequence to a single atomic command. Works for any model on any provider.
+
+**Implementation**: New `cmd/chain.go` (~100 lines), chain definitions in `bus/profile.go`, agent body adaptation update.
+
+### 3. Pane activity idle detection (`IsIdleByActivity`)
+
+**Risk addressed**: No idle detection for OpenCode — `IsIdle()` returns false, so the daemon can't distinguish "agent is thinking" from "agent is waiting for input." Messages injected via `SendWakeUp` during active work can derail the agent.
+
+**Design**: Track pane content changes over time. If the pane content is stable (unchanged) for N seconds, the agent is idle.
+
+```go
+// In bus/provider_opencode.go
+func (p *OpenCodeProvider) IsIdleByActivity(session, role string) bool {
+    target := PaneTarget(session, role)
+    content, err := TmuxCapturePaneLines(target, 10) // last 10 lines
+    if err != nil {
+        return false
+    }
+    
+    hash := quickHash(content)
+    key := role + ":idle-hash"
+    prev := readStateFile(session, key)
+    
+    if hash == prev.Hash && time.Now().Unix()-prev.TS >= 15 {
+        return true // pane stable for 15+ seconds
+    }
+    
+    writeStateFile(session, key, hash, time.Now().Unix())
+    return false
+}
+```
+
+**Integration**: Update `checkIdleAgents()` to call `provider.IsIdleByActivity()` for non-hook providers instead of skipping them entirely. Only inject messages when the agent is actually idle.
+
+**Tuning**: 15-second stability threshold balances responsiveness (agent idle → gets woken quickly) with safety (don't interrupt mid-thought). The current 60-second cooldown is a blunt instrument — this replaces it with actual activity detection.
+
+**Implementation**: New method on `OpenCodeProvider`, state files in bus dir, update `checkIdleAgents()`. ~50 lines.
+
+### 4. Startup context injection via agent config
+
+**Risk addressed**: Weak startup context — OpenCode edit relies on the model proactively running `muxcode memory context` from a prompt instruction. If it skips this, session state is lost.
+
+**Design**: Write the last session's memory context directly into the generated `.opencode/agents/edit.md` file at launch time, so it's part of the system prompt — not a command the model must choose to run.
+
+```go
+// In bus/provider_opencode.go ConfigureLaunch()
+if role == "edit" {
+    // Read last session memory and embed in agent config
+    mem := readMemoryContext(session)
+    if mem != "" {
+        cfg.SharedPrompt += "\n\n## Previous session context\n\n" + mem
+    }
+}
+```
+
+**Impact**: Context is guaranteed to be present in the agent's initial prompt. No model compliance required.
+
+**Implementation**: Read from memory files in `ConfigureLaunch()`, append to SharedPrompt. ~15 lines.
+
+### 5. Violation history and circuit breaker
+
+**Risk addressed**: Repeated delegation violations — if DeepSeek consistently ignores deny rules, the model is fundamentally incompatible and continuing wastes resources.
+
+**Design**: Track delegation violations per session. After N violations in M minutes, escalate:
+
+| Violations | Action |
+|-----------|--------|
+| 1 | Log + alert edit with correct delegation command |
+| 3 in 5 min | Alert edit: "Repeated delegation violations — review your approach" |
+| 5 in 5 min | Pause edit agent (write stop marker), alert user via display-message |
+
+Reuses the existing `LoopAlert` / `FilterNewAlerts` infrastructure from `guard.go`:
+
+```go
+type ViolationEntry struct {
+    TS      int64  `json:"ts"`
+    Command string `json:"command"`
+    Reason  string `json:"reason"`
+}
+
+func CheckViolationCircuitBreaker(session string, threshold int, windowSecs int64) bool {
+    violations := ReadViolationHistory(session)
+    // Count violations within window
+    // Return true if threshold exceeded
+}
+```
+
+**Integration**: Called from `checkEditCommands()` (control #1). The circuit breaker prevents a runaway agent from executing dozens of prohibited commands.
+
+**Implementation**: New `bus/violation.go` (~80 lines), integration with daemon audit check.
+
+### 6. Git server-side safety net (pre-receive/pre-push hooks)
+
+**Risk addressed**: Destructive git operations — even if pane audit detects a `git push --force`, it's too late if the push already completed.
+
+**Design**: Install git hooks (local, not server-side) in the project repo that prevent destructive operations from the edit agent's context:
+
+```bash
+# .git/hooks/pre-push (installed by muxcode on launch)
+#!/bin/bash
+# Block force-push from edit agent pane
+if [ "$MUXCODE_ROLE" = "edit" ]; then
+    while read local_ref local_sha remote_ref remote_sha; do
+        if echo "$@" | grep -q -- '--force\|--force-with-lease'; then
+            echo "BLOCKED: Force push from edit agent. Use commit agent."
+            exit 1
+        fi
+    done
+fi
+```
+
+**Scope**: Only blocks destructive operations (`--force`, `--hard`). Normal `git` read commands that slip through deny rules are harmless. The `MUXCODE_ROLE` env var is already set for each agent pane.
+
+**Implementation**: Add hooks to `PreLaunchSetup()` for non-hook providers. ~30 lines of bash per hook, ~20 lines of Go to install them.
+
+### Control matrix
+
+| Risk | Control | Type | Confidence |
+|------|---------|------|------------|
+| Delegation bypass | OpenCode deny rules | Preventive | Medium — pattern-matched, bypassable |
+| Delegation bypass | Daemon pane audit (#1) | Detective | High — sees actual execution |
+| Delegation bypass | Violation circuit breaker (#5) | Corrective | High — stops runaway agents |
+| Destructive git ops | Git pre-push hooks (#6) | Preventive | High — shell-level block |
+| Chain orchestration errors | `muxcode chain` command (#2) | Preventive | High — atomic single command |
+| Message injection during work | Pane activity idle detection (#3) | Preventive | Medium — heuristic-based |
+| Lost startup context | Config injection (#4) | Preventive | High — embedded in system prompt |
+
+### Priority
+
+1. **Daemon pane audit** (#1) + **violation circuit breaker** (#5) — these together replace the hard enforcement of the PreToolUse hook
+2. **Chain orchestration command** (#2) — eliminates the most complex manual orchestration
+3. **Pane activity idle detection** (#3) — prevents message injection during active work
+4. **Startup context injection** (#4) — guarantees context restoration
+5. **Git safety hooks** (#6) — defense-in-depth for the worst-case scenario
+
 ## Known limitations
 
 | Limitation | Impact | Mitigation |
 |------------|--------|------------|
-| No real-time delegation enforcement | DeepSeek V4 Pro could attempt prohibited commands if it ignores deny rules | OpenCode permission deny blocks execution; agent body strongly instructs delegation |
+| No real-time delegation enforcement | DeepSeek V4 Pro could attempt prohibited commands if it ignores deny rules | 3-layer defense: OpenCode deny rules (preventive) + daemon pane audit (detective, control #1) + violation circuit breaker (corrective, control #5) |
+| Manual chain orchestration | Model could misorder build→test→review steps or forget `--wait` | `muxcode chain build-test-review` command (control #2) — single atomic command |
 | No nvim diff preview cleanup | PostToolUse hook that cleans diff splits doesn't fire | Diff previews must be manually closed; could add daemon-side cleanup |
 | No file-level workflow precision | `git diff --stat` polling detects changes at file level, not edit-by-edit | Acceptable — workflow state is coarse-grained anyway |
-| `IsIdle` always false | Daemon can't detect when OpenCode edit is idle at the prompt | 60-second cooldown on `SendWakeUp` prevents spam; future: OpenCode idle detection via `▣` marker |
+| `IsIdle` always false | Daemon can't detect when OpenCode edit is idle at the prompt | Pane activity idle detection (control #3) — content stability heuristic replaces blunt 60s cooldown |
 | No inline `--wait` hook polling | `--wait` works via the Go binary's built-in polling, not the hook | Response appears in bash stdout — OpenCode captures this. Functionally equivalent. |
 | OpenCode auto-compact timing | OpenCode decides when to compact, not the user | `compaction.autocontinue` config controls behavior |
+| Destructive git operations | Force-push or hard-reset could execute before pane audit detects it | Git pre-push/pre-commit hooks block destructive ops from edit pane (control #6) |
 
 ## Dependencies
 

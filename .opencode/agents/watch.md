@@ -75,9 +75,7 @@ permission:
     "cd * && gunzip *": allow
     "lnav *": allow
     "cd * && lnav *": allow
-  external_directory:
-    "/tmp/*": allow
-    "/private/tmp/*": allow
+  external_directory: allow
 ---
 
 

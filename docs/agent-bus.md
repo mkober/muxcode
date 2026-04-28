@@ -148,7 +148,7 @@ muxcode watch [session] [--poll N] [--debounce N] [--monitor]
 - `--debounce N` — trigger file debounce interval in seconds (default: 8)
 - `--monitor` — run as daemon health monitor instead of the daemon itself. Checks the daemon keepalive every 15 seconds; if stale (>30s), kills and relaunches the daemon process. Exits cleanly when the tmux session is gone.
 
-Without `--monitor`, runs in the `analyze` window left pane as the primary daemon. With `--monitor`, runs as a companion background process launched by `muxcode.sh`.
+Without `--monitor`, runs in a split-left window's left pane as the primary daemon. With `--monitor`, runs as a companion background process launched by `muxcode.sh`.
 
 #### Trigger file format
 
@@ -911,7 +911,7 @@ muxcode agent launch <role>
 1. **Config loading** — reads shell-sourceable config from `MUXCODE_CONFIG` > `.muxcode/config` > `~/.config/muxcode/config`
 2. **CLI selection** — checks `MUXCODE_{ROLE}_CLI` env var; if `"local"`, routes to Ollama harness
 3. **Agent file** — 3-tier search: `.claude/agents/<name>.md` > `~/.config/muxcode/agents/<name>.md` > install dir defaults
-4. **Model** — per-role env (`MUXCODE_{ROLE}_CLAUDE_MODEL`) > global env (`MUXCODE_CLAUDE_MODEL`) > role default (opus for edit/review/analyze, sonnet for others)
+4. **Model** — per-role env (`MUXCODE_{ROLE}_CLAUDE_MODEL`) > global env (`MUXCODE_CLAUDE_MODEL`) > role default (opus for edit/review, sonnet for others)
 5. **Tools** — resolves from tool profiles in `muxcode.json`
 6. **Prompt** — assembles shared coordination prompt + skills + context.d + session resume
 7. **Venv** — activates Python venv if found (`MUXCODE_VENV_DIR` > `.venv` > `venv`)
@@ -919,7 +919,7 @@ muxcode agent launch <role>
 
 **Pre-launch actions:**
 
-- Sends startup inbox message for `edit` and `analyze` roles (context restoration)
+- Sends startup inbox message for `edit` role (context restoration). The analyze role also receives one when enabled via `MUXCODE_WINDOWS`.
 - Logs agent launch to persistent lifecycle log
 
 **Examples:**
@@ -1483,7 +1483,7 @@ Core code: `cmd/compact.go`, `bus/compact.go` (`CompactableRoles`).
 | `AGENT_ROLE` | Current agent's role name (auto-detected from tmux window if unset) |
 | `BUS_MEMORY_DIR` | Path to persistent memory directory (defaults to `.muxcode/memory/`) |
 | `MUXCODE_ROLES` | Comma-separated extra roles to add to the known roles list |
-| `MUXCODE_SPLIT_LEFT` | Space-separated windows with agent in pane 1 (defaults: edit build test review deploy run analyze commit watch) |
+| `MUXCODE_SPLIT_LEFT` | Space-separated windows with agent in pane 1 (defaults: plan edit build test review deploy run commit watch) |
 | `MUXCODE_LIFECYCLE_LOG_MAX` | Max entries per lifecycle log before rotation (default: 1000) |
 | `MUXCODE_DEDUP_WINDOW` | Dedup window in seconds for duplicate message suppression (default: 30, set to 0 to disable) |
 | `MUXCODE_INBOX_POLL_TIMEOUT` | Timeout in seconds for `--wait` polling (default: 600) |
@@ -1543,7 +1543,7 @@ After the primary chain action, subscription fan-out fires for matching event+ou
 
 Pane targeting is consolidated in `bus/config.go`:
 
-- **Split-left windows** (default: edit, build, test, review, deploy, run, analyze, commit, watch): agent runs in pane 1
+- **Split-left windows** (default: plan, edit, build, test, review, deploy, run, commit, watch): agent runs in pane 1
 - **All other windows**: agent runs in pane 0
 - Override via `MUXCODE_SPLIT_LEFT` env var
 

@@ -61,9 +61,7 @@ permission:
     "cd * && git stash list*": allow
     "git remote*": allow
     "cd * && git remote*": allow
-  external_directory:
-    "/tmp/*": allow
-    "/private/tmp/*": allow
+  external_directory: allow
 ---
 
 
