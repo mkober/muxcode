@@ -319,3 +319,209 @@ func TestModeSwitchTo_StaleState(t *testing.T) {
 		t.Errorf("Current = %d, want 0 (auto-corrected)", final.Current)
 	}
 }
+
+func TestDefaultPlanModeCycleState(t *testing.T) {
+	state := DefaultPlanModeCycleState()
+	if state.Window != "plan" {
+		t.Errorf("Window = %q, want %q", state.Window, "plan")
+	}
+	if state.Current != 0 {
+		t.Errorf("Current = %d, want 0", state.Current)
+	}
+	if len(state.Agents) != 2 {
+		t.Fatalf("Agents count = %d, want 2", len(state.Agents))
+	}
+	if state.Agents[0].Mode != "plan" {
+		t.Errorf("Agent[0].Mode = %q, want %q", state.Agents[0].Mode, "plan")
+	}
+	if state.Agents[0].Role != "plan" {
+		t.Errorf("Agent[0].Role = %q, want %q", state.Agents[0].Role, "plan")
+	}
+	if state.Agents[0].HoldWindow != "" {
+		t.Errorf("Agent[0].HoldWindow = %q, want empty", state.Agents[0].HoldWindow)
+	}
+	if state.Agents[1].Mode != "research" {
+		t.Errorf("Agent[1].Mode = %q, want %q", state.Agents[1].Mode, "research")
+	}
+	if state.Agents[1].Role != "research" {
+		t.Errorf("Agent[1].Role = %q, want %q", state.Agents[1].Role, "research")
+	}
+	if state.Agents[1].HoldWindow != "research" {
+		t.Errorf("Agent[1].HoldWindow = %q, want %q", state.Agents[1].HoldWindow, "research")
+	}
+}
+
+func TestReadModeCycleState_MissingFilePlan(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetBusDirBase(tmpDir)
+	defer ResetBusDirBase()
+
+	// Missing file for "plan" window returns default plan state.
+	state, err := ReadModeCycleState("nonexistent", "plan")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state.Window != "plan" {
+		t.Errorf("Window = %q, want %q", state.Window, "plan")
+	}
+	if state.Current != 0 {
+		t.Errorf("Current = %d, want 0", state.Current)
+	}
+	if len(state.Agents) != 2 {
+		t.Errorf("Agents count = %d, want 2", len(state.Agents))
+	}
+	if state.Agents[0].Role != "plan" {
+		t.Errorf("Agents[0].Role = %q, want %q", state.Agents[0].Role, "plan")
+	}
+	if state.Agents[1].Role != "research" {
+		t.Errorf("Agents[1].Role = %q, want %q", state.Agents[1].Role, "research")
+	}
+}
+
+func TestReadModeCycleState_EmptyAgentsPlan(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetBusDirBase(tmpDir)
+	defer ResetBusDirBase()
+
+	session := "test-empty-plan"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0o755)
+
+	// Write empty agents array for plan window.
+	os.WriteFile(filepath.Join(busDir, "mode-cycle-plan.json"),
+		[]byte(`{"window":"plan","current":0,"agents":[]}`), 0o644)
+
+	// Should return default plan state.
+	state, err := ReadModeCycleState(session, "plan")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state.Window != "plan" {
+		t.Errorf("Window = %q, want %q", state.Window, "plan")
+	}
+	if len(state.Agents) != 2 {
+		t.Errorf("Agents count = %d, want 2", len(state.Agents))
+	}
+}
+
+func TestPlanModeCycleWrap(t *testing.T) {
+	state := DefaultPlanModeCycleState()
+
+	// Cycle from plan (0) to research (1).
+	next := NextModeIndex(0, len(state.Agents))
+	if next != 1 {
+		t.Errorf("NextModeIndex(0, 2) = %d, want 1", next)
+	}
+
+	// Cycle from research (1) wraps back to plan (0).
+	next = NextModeIndex(1, len(state.Agents))
+	if next != 0 {
+		t.Errorf("NextModeIndex(1, 2) = %d, want 0", next)
+	}
+
+	// FindModeAgent works for plan window agents.
+	found := FindModeAgent(state, "plan")
+	if found == nil || found.Index != 0 {
+		t.Error("should find plan agent at index 0")
+	}
+	found = FindModeAgent(state, "research")
+	if found == nil || found.Index != 1 {
+		t.Error("should find research agent at index 1")
+	}
+}
+
+func TestActiveModeRole_EditDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetBusDirBase(tmpDir)
+	defer ResetBusDirBase()
+
+	session := "test-active"
+
+	// No file — edit window defaults to "edit" role active.
+	role, err := ActiveModeRole(session, "edit")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if role != "edit" {
+		t.Errorf("ActiveModeRole(edit) = %q, want %q", role, "edit")
+	}
+}
+
+func TestActiveModeRole_PlanDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetBusDirBase(tmpDir)
+	defer ResetBusDirBase()
+
+	session := "test-active-plan"
+
+	// No file — plan window defaults to "plan" role active.
+	role, err := ActiveModeRole(session, "plan")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if role != "plan" {
+		t.Errorf("ActiveModeRole(plan) = %q, want %q", role, "plan")
+	}
+}
+
+func TestActiveModeRole_SwitchedToAuto(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetBusDirBase(tmpDir)
+	defer ResetBusDirBase()
+
+	session := "test-active-switched"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0o755)
+
+	// Write state with current=1 (auto mode on edit window).
+	state := DefaultModeCycleState()
+	state.Current = 1
+	if err := WriteModeCycleState(session, state); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	role, err := ActiveModeRole(session, "edit")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if role != "auto" {
+		t.Errorf("ActiveModeRole(edit) = %q, want %q", role, "auto")
+	}
+}
+
+func TestActiveModeRole_SwitchedToResearch(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetBusDirBase(tmpDir)
+	defer ResetBusDirBase()
+
+	session := "test-active-research"
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0o755)
+
+	// Write state with current=1 (research mode on plan window).
+	state := DefaultPlanModeCycleState()
+	state.Current = 1
+	if err := WriteModeCycleState(session, state); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	role, err := ActiveModeRole(session, "plan")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if role != "research" {
+		t.Errorf("ActiveModeRole(plan) = %q, want %q", role, "research")
+	}
+}
+
+func TestActiveModeRole_UnknownWindow(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetBusDirBase(tmpDir)
+	defer ResetBusDirBase()
+
+	// Unknown window with no state file should return error.
+	_, err := ActiveModeRole("nonexistent", "build")
+	if err == nil {
+		t.Error("expected error for unknown window")
+	}
+}

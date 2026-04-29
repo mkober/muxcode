@@ -42,16 +42,33 @@ func DefaultModeCycleState() *ModeCycleState {
 	}
 }
 
+// DefaultPlanModeCycleState returns the initial cycle state for the plan window
+// with plan and research modes registered.
+func DefaultPlanModeCycleState() *ModeCycleState {
+	return &ModeCycleState{
+		Window:  "plan",
+		Current: 0,
+		Agents: []ModeAgent{
+			{Index: 0, Mode: "plan", Role: "plan", HoldWindow: ""},
+			{Index: 1, Mode: "research", Role: "research", HoldWindow: "research"},
+		},
+	}
+}
+
 // ReadModeCycleState reads the cycle state from disk.
-// Returns the default state if the file doesn't exist and window is "edit".
+// Returns the default state if the file doesn't exist and window is "edit" or "plan".
 func ReadModeCycleState(session, window string) (*ModeCycleState, error) {
 	data, err := os.ReadFile(ModeCyclePath(session, window))
 	if err != nil {
 		if os.IsNotExist(err) {
-			if window == "edit" {
+			switch window {
+			case "edit":
 				return DefaultModeCycleState(), nil
+			case "plan":
+				return DefaultPlanModeCycleState(), nil
+			default:
+				return nil, fmt.Errorf("no mode cycle for window %q", window)
 			}
-			return nil, fmt.Errorf("no mode cycle for window %q", window)
 		}
 		return nil, fmt.Errorf("read mode cycle state: %w", err)
 	}
@@ -60,10 +77,14 @@ func ReadModeCycleState(session, window string) (*ModeCycleState, error) {
 		return nil, fmt.Errorf("parse mode cycle state: %w", err)
 	}
 	if len(state.Agents) == 0 {
-		if window == "edit" {
+		switch window {
+		case "edit":
 			return DefaultModeCycleState(), nil
+		case "plan":
+			return DefaultPlanModeCycleState(), nil
+		default:
+			return nil, fmt.Errorf("empty mode cycle for window %q", window)
 		}
-		return nil, fmt.Errorf("empty mode cycle for window %q", window)
 	}
 	return &state, nil
 }
@@ -105,6 +126,20 @@ func CurrentModeAgent(state *ModeCycleState) *ModeAgent {
 		return &state.Agents[state.Current]
 	}
 	return nil
+}
+
+// ActiveModeRole returns the currently active role for a window.
+// Returns the role name (e.g. "edit", "auto", "plan", "research").
+func ActiveModeRole(session, window string) (string, error) {
+	state, err := ReadModeCycleState(session, window)
+	if err != nil {
+		return "", err
+	}
+	agent := CurrentModeAgent(state)
+	if agent == nil {
+		return "", fmt.Errorf("no active agent for window %q", window)
+	}
+	return agent.Role, nil
 }
 
 // ModeCycle performs the pane swap cycle to the next registered agent.

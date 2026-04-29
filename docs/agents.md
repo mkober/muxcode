@@ -72,7 +72,7 @@ Non-hook providers degrade gracefully across three layers:
 | analyze | editor-analyst.md | *(no default window)* | Analyze changes and explain patterns |
 | watch | log-watcher.md | watch | Monitor logs (local, CloudWatch, k8s, Docker) |
 | docs | doc-writer.md | plan *(via planner)* | Generate and maintain documentation |
-| research | code-researcher.md | research | Search web, explore codebases, answer questions |
+| research | code-researcher.md | plan *(via mode cycle)* | Search API docs, platform refs, GitHub projects (OpenCode/DeepSeek) |
 | pr-read | pr-reader.md | commit *(via git-manager)* | Analyze PR review feedback and report suggested fixes |
 | api | api-tester.md | api | Manage API collections, execute requests, track history |
 | agent | autonomous-agent.md | edit *(via mode cycle)* | Autonomous story executor — reads Jira, creates requirements, implements features, submits PRs |
@@ -188,8 +188,8 @@ These agents receive requests and execute, but may require more context or confi
 Any agent can create a temporary spawned agent for one-off tasks. The spawn inherits the base role's agent definition, tool permissions, and prompts but runs with a unique bus identity (`spawn-{id}`).
 
 ```bash
-# Spawn a research agent for a one-off task
-muxcode spawn start research "What does bus/guard.go do?"
+# Spawn a review agent for a one-off task
+muxcode spawn start review "Review the changes in bus/guard.go"
 
 # Check status
 muxcode spawn list

@@ -400,21 +400,24 @@ Updated files:
 | `bus/config.go` | Move `research` from `hostedRoles` to `modeRoles` |
 | `bus/mode.go` | Add `DefaultPlanModeCycleState()`, update `ReadModeCycleState()` fallback for `window == "plan"` |
 | `bus/mode_test.go` | Add tests for plan cycle state (default state, read fallback, cycle wrapping) |
-| `bus/launch.go` | Add `case "research"` to `RoleOpenCodeModelDefault()` returning `"opencode-go/deepseek-v4-pro"`, set `roleDefaultCLI("research")` to `"opencode"` |
+| `bus/launch.go` | Add `case "research"` to `RoleOpenCodeModelDefault()` returning `"opencode-go/deepseek-v4-pro"` |
+| `bus/provider.go` | Add `"research"` to `roleDefaultCLI()` OpenCode case (defaults to `opencode`) |
 | `bus/launcher.go` | Add `research` to `HasConsoleView()` |
+| `~/.config/muxcode/config` | Add `MUXCODE_RESEARCH_CLI=opencode` and `MUXCODE_RESEARCH_MODEL=opencode-go/deepseek-v4-pro` (required — `MUXCODE_AGENT_CLI=claude` overrides the role default) |
 
 Success criteria:
-- [ ] `research` removed from `hostedRoles` map
-- [ ] `research` added to `modeRoles` map with value `"research"`
-- [ ] `DefaultPlanModeCycleState()` returns plan/research cycle with plan at index 0
-- [ ] `ReadModeCycleState(session, "plan")` falls back to `DefaultPlanModeCycleState()` when file missing
-- [ ] Research agent gets independent inbox (`inbox/research.jsonl`)
-- [ ] `WindowForRole("research")` returns `"research"` (hold window)
-- [ ] `research` in `HasConsoleView()` list
-- [ ] `RoleOpenCodeModelDefault("research")` returns `"opencode-go/deepseek-v4-pro"`
-- [ ] `MUXCODE_RESEARCH_CLI` defaults to `opencode`
-- [ ] `MUXCODE_RESEARCH_CLI` can be overridden to `claude` for users who prefer Claude Code
-- [ ] Existing mode cycling tests still pass
+- [x] `research` removed from `hostedRoles` map
+- [x] `research` added to `modeRoles` map with value `"research"`
+- [x] `DefaultPlanModeCycleState()` returns plan/research cycle with plan at index 0
+- [x] `ReadModeCycleState(session, "plan")` falls back to `DefaultPlanModeCycleState()` when file missing
+- [x] Research agent gets independent inbox (`inbox/research.jsonl`)
+- [x] `WindowForRole("research")` returns `"research"` (hold window)
+- [x] `research` in `HasConsoleView()` list
+- [x] `RoleOpenCodeModelDefault("research")` returns `"opencode-go/deepseek-v4-pro"`
+- [x] `MUXCODE_RESEARCH_CLI` defaults to `opencode`
+- [x] `MUXCODE_RESEARCH_CLI` can be overridden to `claude` for users who prefer Claude Code
+- [x] Existing mode cycling tests still pass
+- [x] Config file includes `MUXCODE_RESEARCH_CLI=opencode` (prevents `MUXCODE_AGENT_CLI` global override)
 
 ### Phase 2: F1 keybinding and prefix shortcut
 
@@ -427,10 +430,10 @@ Updated files:
 | `config/tmux.conf` | F1 `if-shell` toggle keybinding (same pattern as F2), `prefix + r` toggle shortcut |
 
 Success criteria:
-- [ ] F1 when on plan window (index 1) runs `muxcode mode cycle --window plan`
-- [ ] F1 when on other window runs `select-window -t:1`
-- [ ] `prefix + r` toggles plan/research modes regardless of current window
-- [ ] F2 cycling continues to work unchanged
+- [x] F1 when on plan window (index 1) runs `muxcode mode cycle --window plan`
+- [x] F1 when on other window runs `select-window -t:1`
+- [x] `prefix + r` toggles plan/research modes regardless of current window
+- [x] F2 cycling continues to work unchanged
 
 ### Phase 3: Findings console and active mode helper
 
@@ -447,12 +450,12 @@ Updated files:
 | `config/nvim/plugin/startscreen.lua` | Add `research` to roles list for status display |
 
 Success criteria:
-- [ ] `muxcode console research` renders Dracula-themed findings log
-- [ ] Console displays research findings with question, answer summary, source URLs, timestamp
-- [ ] Console reads from `research-history.jsonl` (dedicated history file, not `log.jsonl`)
-- [ ] `muxcode mode active --window edit` returns `edit` or `auto` depending on current state
-- [ ] `muxcode mode active --window plan` returns `plan` or `research` depending on current state
-- [ ] Startscreen shows research agent status
+- [x] `muxcode console research` renders Dracula-themed findings log
+- [x] Console displays research findings with question, answer summary, source URLs, timestamp
+- [x] Console reads from `research-history.jsonl` (dedicated history file, not `log.jsonl`)
+- [x] `muxcode mode active --window edit` returns `edit` or `auto` depending on current state
+- [x] `muxcode mode active --window plan` returns `plan` or `research` depending on current state
+- [x] Startscreen shows research agent status
 
 ### Phase 4: Agent definition update
 
@@ -465,14 +468,14 @@ Updated files:
 | `agents/code-researcher.md` | Refocus on API docs / platform refs / GitHub research, add F2-aware delegation via `muxcode mode active`, add repo context awareness, add chain exclusion note, add findings persistence instructions (write to `research-history.jsonl` and memory) |
 
 Success criteria:
-- [ ] Agent definition emphasizes web search for API docs, platform references, and GitHub projects
-- [ ] Agent definition routes delegations to active F2 agent via `muxcode mode active --window edit`
-- [ ] Agent definition notes repo context awareness (CLAUDE.md, project structure, git history)
-- [ ] Agent definition explicitly states it is not part of any event chain
-- [ ] Agent definition instructs research agent to save findings to `research-history.jsonl` after each completed research
-- [ ] Agent definition instructs saving important findings to memory for cross-session persistence
-- [ ] Reply-to pattern documented: reply to sender for bus requests, active F2 agent for direct interaction
-- [ ] `adaptBodyForNonHookProvider()` correctly adapts agent body for OpenCode
+- [x] Agent definition emphasizes web search for API docs, platform references, and GitHub projects
+- [x] Agent definition routes delegations to active F2 agent via `muxcode mode active --window edit`
+- [x] Agent definition notes repo context awareness (CLAUDE.md, project structure, git history)
+- [x] Agent definition explicitly states it is not part of any event chain
+- [x] Agent definition instructs research agent to save findings to `research-history.jsonl` after each completed research
+- [x] Agent definition instructs saving important findings to memory for cross-session persistence
+- [x] Reply-to pattern documented: reply to sender for bus requests, active F2 agent for direct interaction
+- [x] `adaptBodyForNonHookProvider()` correctly adapts agent body for OpenCode
 
 ### Phase 5: Documentation
 
@@ -488,10 +491,10 @@ Updated files:
 | `CLAUDE.md` | Update key constraints noting research has independent inbox and F1 toggle |
 
 Success criteria:
-- [ ] Architecture docs describe F1 plan/research toggle
-- [ ] Agents docs show research as a mode on the plan window (not spawn-only)
-- [ ] CLI reference includes `--window plan` examples and `mode active` subcommand
-- [ ] CLAUDE.md reflects research role migration
+- [x] Architecture docs describe F1 plan/research toggle
+- [x] Agents docs show research as a mode on the plan window (not spawn-only)
+- [x] CLI reference includes `--window plan` examples and `mode active` subcommand
+- [x] CLAUDE.md reflects research role migration
 
 ## Key files
 
@@ -529,8 +532,11 @@ Success criteria:
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `MUXCODE_RESEARCH_CLI` | `opencode` | CLI provider — set to `claude` to use Claude Code instead |
+| `MUXCODE_RESEARCH_MODEL` | `opencode-go/deepseek-v4-pro` | OpenCode model for research role |
 | `OPENCODE_MODEL` | `opencode-go/deepseek-v4-pro` | OpenCode model — set globally or per-role via `RoleOpenCodeModelDefault("research")` |
 | `MUXCODE_RESEARCH_CLAUDE_MODEL` | `claude-sonnet-4-5` | Claude model override (only when `MUXCODE_RESEARCH_CLI=claude`) |
+
+**Important**: `MUXCODE_RESEARCH_CLI=opencode` must be explicitly set in the user's config file (`~/.config/muxcode/config`). The `roleDefaultCLI("research")` code default returns `opencode`, but `ResolveProviderCLI()` checks `MUXCODE_AGENT_CLI` before the role default — if the global fallback is set to `claude` (common for orchestration-first setups), research will launch with Claude instead of OpenCode. All other OpenCode roles (build, test, review, deploy, run, watch, commit) have explicit per-role overrides in the config for the same reason.
 
 ## Risks
 
@@ -543,7 +549,8 @@ Success criteria:
 | Lazy launch delay on first F1 toggle | Same as F2 agent-mode — acceptable UX, agent launches in ~2-3 seconds |
 | Plan agent wake-up after toggle | Daemon's `checkIdleAgents()` handles this — no special case needed |
 | Mixed providers on same window | Plan (Claude Code) and Research (OpenCode/DeepSeek) use different providers — `modeCreateAgent()` resolves the provider per-role, not per-window |
+| `MUXCODE_AGENT_CLI` overrides role default | `ResolveProviderCLI()` checks per-role env → global env → role default. If `MUXCODE_AGENT_CLI=claude` is set (common), the `roleDefaultCLI("research") → opencode` default is never reached. **Fix**: explicit `MUXCODE_RESEARCH_CLI=opencode` in config, same pattern as all other OpenCode roles |
 
 ## Status
 
-Draft
+Complete

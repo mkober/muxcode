@@ -954,13 +954,14 @@ Core code: `cmd/agent.go`, `bus/console.go` (`ReadAutonomousAgentStatus()`, `For
 
 ### `muxcode mode`
 
-Manage agent mode cycling on the edit window — swap between edit and autonomous agents while preserving all sessions.
+Manage agent mode cycling — swap between agents on a shared window while preserving all sessions. Supports both the edit window (F2) and plan window (F1).
 
 ```bash
 muxcode mode cycle [--window NAME]
 muxcode mode status [--window NAME]
 muxcode mode switch <mode> [--window NAME]
 muxcode mode list [--window NAME]
+muxcode mode active [--window NAME]
 ```
 
 | Subcommand | Description |
@@ -969,12 +970,13 @@ muxcode mode list [--window NAME]
 | `status` | Show current agent, cycle index, registered agents |
 | `switch <mode>` | Jump directly to a specific agent by mode name |
 | `list` | List all registered agents with current indicator |
+| `active` | Print the currently active role name for a window |
 
 All subcommands accept `--window <name>` to target a different window (default: `edit`).
 
 **Cycle mechanism**: uses `swap-window` to exchange the visible window with the target agent's holding window. All processes (nvim, Claude Code agents, console viewer) continue running — only visibility changes.
 
-**State file**: `mode-cycle-{window}.json` in the bus directory. Per-window state enables future multi-window cycling (e.g. design-mode on the edit window).
+**State file**: `mode-cycle-{window}.json` in the bus directory. Per-window state — `mode-cycle-edit.json` for F2, `mode-cycle-plan.json` for F1.
 
 **Keybindings**:
 
@@ -982,18 +984,31 @@ All subcommands accept `--window <name>` to target a different window (default: 
 |-----|--------|
 | `F2` | Cycle when on edit window, switch to edit window otherwise |
 | `prefix + a` | Cycle edit-window agents regardless of current window |
+| `F1` | Cycle when on plan window, switch to plan window otherwise |
+| `prefix + r` | Cycle plan-window agents regardless of current window |
 
 **Examples:**
 ```bash
-# Cycle to next agent (edit → agent → edit)
+# Cycle to next agent on edit window (edit → agent → edit)
 $ muxcode mode cycle
 Cycled to: agent (index 1)
+
+# Cycle plan window agents (plan → research → plan)
+$ muxcode mode cycle --window plan
+Cycled to: research (index 1)
 
 # Check current mode
 $ muxcode mode status
 Window: edit  Current: agent (index 1/2)
   [0] edit (default)
   [1] agent ← active
+
+# Get active role for a window (useful for routing)
+$ muxcode mode active --window edit
+edit
+
+$ muxcode mode active --window plan
+research
 
 # Switch directly to edit mode
 $ muxcode mode switch edit
@@ -1005,7 +1020,7 @@ $ muxcode mode list
   [1] agent
 ```
 
-Core code: `bus/mode.go` (cycle state, pane swap), `cmd/mode.go` (CLI handler).
+Core code: `bus/mode.go` (cycle state, pane swap, `ActiveModeRole()`), `cmd/mode.go` (CLI handler).
 
 ### `muxcode subscribe`
 

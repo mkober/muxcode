@@ -31,9 +31,9 @@ func DefaultLauncherConfig() *LauncherConfig {
 	return &LauncherConfig{
 		ProjectsDir: home,
 		ScanDepth:   3,
-		Windows:     []string{"plan", "edit", "build", "test", "review", "deploy", "run", "watch", "commit", "analyze"},
+		Windows:     []string{"plan", "edit", "build", "test", "review", "deploy", "run", "watch", "commit"},
 		RoleMap:     map[string]string{},
-		SplitLeft:   []string{"plan", "edit", "build", "test", "review", "deploy", "run", "analyze", "commit", "watch"},
+		SplitLeft:   []string{"plan", "edit", "build", "test", "review", "deploy", "run", "commit", "watch"},
 		ShellInit:   "",
 		Editor:      "nvim",
 		NvimAppName: "muxcode/nvim",
@@ -108,10 +108,11 @@ func (c *LauncherConfig) IsSplitLeftWindow(window string) bool {
 	return false
 }
 
-// HasConsoleView returns true if the window has a built-in console view.
+// HasConsoleView returns true for roles that support a left-pane console view.
+// Includes "analyze" and "research" for opt-in/mode-cycled configurations.
 func HasConsoleView(window string) bool {
 	switch window {
-	case "build", "test", "review", "deploy", "run", "watch", "commit", "analyze", "api":
+	case "build", "test", "review", "deploy", "run", "watch", "commit", "analyze", "api", "research":
 		return true
 	}
 	return false
@@ -556,7 +557,7 @@ func ClassifyPane(content string) PaneState {
 
 // NeedsWakeUp returns true if the window should receive a startup wake-up message.
 func NeedsWakeUp(window string) bool {
-	return window == "edit" || window == "analyze"
+	return window == "edit"
 }
 
 // AutoAccept polls agent panes and dismisses startup prompts.
@@ -597,7 +598,7 @@ func AutoAccept(session string, windows []string) {
 				LogLifecycle(session, "info", "auto-accept", "agent-ready", win)
 				accepted[win] = true
 
-				// Wake edit and analyze agents
+				// Wake edit agent
 				if NeedsWakeUp(win) && !woken[win] {
 					woken[win] = true
 					time.Sleep(1 * time.Second) // stabilization delay

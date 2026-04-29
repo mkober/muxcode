@@ -10,7 +10,7 @@ import (
 // Mode handles the "muxcode mode" subcommand.
 func Mode(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode mode <cycle|status|switch|list> [--window <name>]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode mode <cycle|status|switch|list|active> [--window <name>]\n")
 		os.Exit(1)
 	}
 
@@ -26,9 +26,11 @@ func Mode(args []string) {
 		modeSwitch(subArgs)
 	case "list":
 		modeList(subArgs)
+	case "active":
+		modeActive(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown mode subcommand: %s\n", subcmd)
-		fmt.Fprintf(os.Stderr, "Usage: muxcode mode <cycle|status|switch|list> [--window <name>]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode mode <cycle|status|switch|list|active> [--window <name>]\n")
 		os.Exit(1)
 	}
 }
@@ -100,4 +102,16 @@ func modeList(args []string) {
 		os.Exit(1)
 	}
 	fmt.Print(bus.FormatModeList(state))
+}
+
+// modeActive prints the currently active role for a window.
+func modeActive(args []string) {
+	window, _ := parseWindowFlag(args)
+	session := bus.BusSession()
+	role, err := bus.ActiveModeRole(session, window)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(role)
 }

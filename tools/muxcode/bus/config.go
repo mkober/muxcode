@@ -385,16 +385,16 @@ func TriggerFile(session string) string {
 // Messages sent to a hosted role are delivered to the host's inbox.
 // The host agent sees the original "To" field to distinguish the request context.
 var hostedRoles = map[string]string{
-	"docs":     "plan",
-	"research": "edit",
-	"pr-read":  "commit",
+	"docs":    "plan",
+	"pr-read": "commit",
 }
 
 // modeRoles maps roles that share a window via mode cycling.
 // Unlike hostedRoles, mode roles have their own independent inboxes.
 // The value is the host window name (for PaneTarget resolution).
 var modeRoles = map[string]string{
-	"auto": "auto",
+	"auto":     "auto",
+	"research": "research",
 }
 
 // WindowForRole returns the tmux window name where a role runs.

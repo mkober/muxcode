@@ -51,8 +51,8 @@ local function get_agents(session)
   local lock_dir = "/tmp/muxcode-bus-" .. session .. "/lock"
   local roles    = {
     "plan", "edit", "build", "test", "review",
-    "deploy", "run", "watch", "commit", "analyze",
-    "api", "auto",
+    "deploy", "run", "watch", "commit",
+    "api", "auto", "research",
   }
   local result   = {}
   for _, role in ipairs(roles) do

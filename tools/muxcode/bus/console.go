@@ -330,6 +330,13 @@ func DefaultConsoleConfigs() map[string]*ConsoleConfig {
 			MaxRecent:   25,
 			Renderer:    renderAgent,
 		},
+		"research": {
+			Title:       "Research",
+			EmptyMsg:    "no findings yet",
+			RecentLabel: "recent findings",
+			MaxRecent:   20,
+			Renderer:    renderResearch,
+		},
 	}
 }
 
@@ -1199,6 +1206,87 @@ func renderAnalyze(cfg *ConsoleConfig, session string, width int) string {
 
 		if e.Payload != "" {
 			firstLine := strings.TrimSpace(strings.Split(e.Payload, "\n")[0])
+			if firstLine != "" {
+				for _, wline := range WordWrap(firstLine, ecw) {
+					b.WriteString(fmt.Sprintf("%s%s↳ %s%s\n", EntryPad, ColorDim, wline, ColorReset))
+				}
+			}
+		}
+	}
+
+	return b.String()
+}
+
+// renderResearch handles the research role — shows findings from research-history.jsonl.
+// Each entry has question, answer summary, source URLs, and timestamp.
+func renderResearch(cfg *ConsoleConfig, session string, width int) string {
+	path := HistoryPath(session, "research")
+	entries := ReadConsoleEntries(path, 0)
+	ecw := calcEntryContentWidth(width)
+
+	var b strings.Builder
+
+	if len(entries) == 0 {
+		b.WriteString(emptyBlock(cfg.EmptyMsg))
+		b.WriteString(fmt.Sprintf("%s%swaiting for research requests...%s\n", Pad, ColorDim, ColorReset))
+		return b.String()
+	}
+
+	total := len(entries)
+	b.WriteString(fmt.Sprintf("%s%sfindings%s %s%d%s\n\n", Pad, ColorDim, ColorReset, ColorCyan, total, ColorReset))
+
+	// Latest finding (full payload)
+	latest := entries[len(entries)-1]
+	summary := latest.Summary
+	if summary == "" {
+		summary = latest.Message
+	}
+	if summary != "" {
+		b.WriteString(fmt.Sprintf("%s%slatest finding%s\n", Pad, ColorCyan, ColorReset))
+		for _, rawLine := range strings.Split(summary, "\n") {
+			line := strings.TrimSpace(rawLine)
+			if line == "" {
+				continue
+			}
+			for _, wline := range WordWrap(line, ecw) {
+				b.WriteString(fmt.Sprintf("%s%s%s%s\n", ContPad, ColorDim, wline, ColorReset))
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	// Recent findings
+	b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorCyan, cfg.RecentLabel, ColorReset))
+	recent := entries
+	offset := 0
+	if len(recent) > cfg.MaxRecent {
+		offset = len(recent) - cfg.MaxRecent
+		recent = recent[offset:]
+	}
+
+	for i, e := range recent {
+		num := offset + i + 1
+		ts := FormatTimestamp(e.TS)
+		numLabel := fmt.Sprintf("#%-3d", num)
+
+		// Source: who requested the research
+		source := e.From
+		if source == "" {
+			source = "direct"
+		}
+
+		b.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %s← %s%s\n",
+			ContPad, ColorDim, numLabel, ColorReset,
+			ColorDim, ts, ColorReset,
+			ColorPurple, source, ColorReset))
+
+		// Show summary/message as the finding description
+		desc := e.Summary
+		if desc == "" {
+			desc = e.Message
+		}
+		if desc != "" {
+			firstLine := strings.TrimSpace(strings.Split(desc, "\n")[0])
 			if firstLine != "" {
 				for _, wline := range WordWrap(firstLine, ecw) {
 					b.WriteString(fmt.Sprintf("%s%s↳ %s%s\n", EntryPad, ColorDim, wline, ColorReset))

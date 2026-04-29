@@ -131,6 +131,8 @@ The plan agent (F1) is scoped exclusively to docs directories (`docs/`, `CLAUDE.
 
 Actions: `update-docs`, `update-status`, `check-phase`, `add-decision`, `review-docs`, `create-spec`, `move-spec`. The plan agent does not participate in the build→test→review chain — it responds to explicit requests only.
 
+The F1 window also hosts a **research agent** via mode cycling (same mechanism as F2). Pressing F1 when already on the plan window toggles between plan and research modes. The research agent runs on **OpenCode with DeepSeek** and specializes in web searching API docs, platform references, and GitHub projects. It has its own independent inbox (`inbox/research.jsonl`) — not hosted on plan or edit. See [Agent mode (F1 cycling)](#agent-mode-f1-cycling) below.
+
 ### Deploy-Run-Watch Chain
 
 ```
@@ -439,6 +441,46 @@ State file: `agent-last-heartbeat` in the bus directory. Set `MUXCODE_AGENT_HEAR
 
 Core code: `bus/mode.go`, `cmd/mode.go`, `watcher/watcher.go` (`checkHeartbeat()`).
 
+## Agent mode (F1 cycling)
+
+The F1 window hosts two agents that share the window via mode cycling — the same mechanism as F2. Pressing F1 when already on the plan window toggles between plan and research modes.
+
+### Registered agents
+
+| Index | Mode | Left pane | Right pane | Role | Provider |
+|-------|------|-----------|------------|------|----------|
+| 0 | Plan (default) | Neovim | Plan agent | `plan` | Claude Code |
+| 1 | Research | Findings console | Research agent | `research` | OpenCode / DeepSeek |
+
+### Cycle mechanism
+
+```
+F1 pressed → is current window F1?
+  YES → muxcode mode cycle --window plan (advance to next agent)
+  NO  → select-window -t:1 (switch to F1, show active agent)
+```
+
+State file: `mode-cycle-plan.json` in the bus directory. Falls back to `DefaultPlanModeCycleState()` when the file doesn't exist.
+
+### Keybindings
+
+| Key | Action |
+|-----|--------|
+| `F1` | Cycle when on plan window, switch to plan window otherwise |
+| `prefix + r` | Cycle plan-window agents regardless of current window |
+
+### Research agent
+
+The research agent runs on **OpenCode with DeepSeek V4 Pro** — a non-hook provider. It specializes in web searching API docs, platform references, and GitHub projects. Key properties:
+
+- **Independent inbox**: `inbox/research.jsonl` (not hosted on edit or plan)
+- **Chain exclusion**: not part of build→test→review or deploy→run→watch chains
+- **F2-aware routing**: delegates implementation to the active F2 agent via `muxcode mode active --window edit`
+- **Findings persistence**: writes to `research-history.jsonl` (console display) and memory (cross-session)
+- **Lazy launch**: created on first F1 toggle to research mode (same as F2 auto agent)
+
+Core code: `bus/mode.go` (`DefaultPlanModeCycleState()`), `cmd/mode.go`, `agents/code-researcher.md`.
+
 ## Left-pane consoles
 
 Each split-left window runs `muxcode console <role>` in the left pane, displaying role-specific status and history. The console command is a single Go binary that replaced the original per-role shell poller scripts.
@@ -454,6 +496,7 @@ Each split-left window runs `muxcode console <role>` in the left pane, displayin
 | commit | `console commit` | `commit-history.jsonl` + live git status |
 | api | `console api` | `.muxcode/api/history.jsonl` |
 | agent | `console agent` | `log.jsonl` (filtered: agent role) + status header from state files |
+| research | `console research` | `research-history.jsonl` (question, answer, sources, timestamp) |
 
 Consoles share a common rendering pipeline in `bus/console.go`: Dracula color scheme, 5-second poll interval (configurable via `--interval`), clear-and-redraw via ANSI escape codes. Per-role rendering is driven by a config map (`DefaultConsoleConfigs()`) with function pointers — not separate codepaths.
 
@@ -478,7 +521,7 @@ The launcher handles all prompts automatically via `provider.ClassifyPane()` and
 4. If "Bypass Permissions" detected: sends Down + Enter to select "Yes, I accept"
 5. If `❯` idle prompt detected: agent is past all prompts — marks as accepted
 6. **Edit agent startup**: when the edit agent reaches `❯`, waits 1s for the TUI to fully initialize, re-verifies `❯` is still showing, then sends a startup event (`Session started — review last saved context from memory`) via `muxcode send` with `AGENT_ROLE=edit` (the bus `Notify()` handles wake-up via `notifyIdleSendKeys()` with dedup). For non-hook providers (OpenCode, Codex CLI), startup messages are delivered via `provider.SendWakeUp()` which injects the message payload directly.
-7. Watch agents do **not** get startup messages — the daemon delivers inbox items naturally, and unsolicited responses would CC noise to edit. The analyze agent is not in the default window list but can be re-enabled via `MUXCODE_WINDOWS`
+7. Watch agents do **not** get startup messages — the daemon delivers inbox items naturally, and unsolicited responses would CC noise to edit. The analyze agent is no longer in the default window list — opt in via `MUXCODE_WINDOWS`
 8. Exits early once all panes are handled
 
 Core code: `muxcode.sh` (auto-accept block near end of file)

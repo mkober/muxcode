@@ -216,6 +216,8 @@ func RoleOpenCodeModelDefault(role string) string {
 	switch role {
 	case "review", "analyze", "analyst":
 		return "opencode-go/qwen3.5-plus"
+	case "research":
+		return "opencode-go/deepseek-v4-pro"
 	case "build", "test", "deploy", "run", "runner", "watch":
 		return "opencode-go/minimax-m2.5"
 	case "commit", "git":
