@@ -26,6 +26,7 @@ type SendPolicy struct {
 type ToolProfile struct {
 	Include     []string `json:"include,omitempty"`
 	Tools       []string `json:"tools,omitempty"`
+	DenyTools   []string `json:"deny_tools,omitempty"`   // prohibited command patterns (for non-hook providers)
 	CdPrefix    bool     `json:"cd_prefix,omitempty"`
 	BashTimeout int      `json:"bash_timeout,omitempty"` // seconds, 0 = default (60s)
 }
@@ -183,6 +184,9 @@ func mergeConfigs(base, override *MuxcodeConfig) *MuxcodeConfig {
 		}
 		if len(ov.Tools) > 0 {
 			base.Tools = ov.Tools
+		}
+		if len(ov.DenyTools) > 0 {
+			base.DenyTools = ov.DenyTools
 		}
 		// Always copy CdPrefix — false is a valid override value
 		base.CdPrefix = ov.CdPrefix
@@ -585,11 +589,39 @@ func DefaultConfig() *MuxcodeConfig {
 				},
 			},
 			"edit": {
-				Include:  []string{"bus", "readonly", "common"},
-				CdPrefix: false,
+				Include:     []string{"bus", "readonly", "common"},
+				CdPrefix:    false,
+				BashTimeout: 300,
 				Tools: []string{
+					"Write", "Edit", // required for OpenCode; no-op for Claude Code
 					"Bash(tree *)", "Bash(python3*)", "Bash(jq*)",
 					"Bash(tmux capture-pane *)", "Bash(tmux display-message *)",
+				},
+				DenyTools: []string{
+					// Git write operations (read-only delegated to commit agent)
+					"git commit*", "git push*", "git pull*", "git rebase*",
+					"git checkout*", "git branch*", "git merge*", "git stash*",
+					"git tag*", "git reset*", "git cherry-pick*", "git revert*",
+					"git am*", "git add*", "git rm*", "git mv*", "git restore*",
+					// GitHub CLI (all operations delegated to commit agent)
+					"gh *",
+					// Build commands (delegated to build agent)
+					"./build.sh*", "pnpm build*", "pnpm run build*", "make*",
+					"go build*", "cargo build*",
+					// Test commands (delegated to test agent)
+					"pnpm test*", "pnpm run test*", "jest*", "pytest*",
+					"go test*", "cargo test*",
+					// Deploy commands (delegated to deploy agent)
+					"cdk synth*", "cdk diff*", "cdk deploy*",
+					// Log tailing (delegated to watch agent)
+					"aws logs*", "tail -f*", "kubectl logs*", "docker logs*", "stern*",
+					// AWS operations (delegated to run agent)
+					"aws lambda*", "aws stepfunctions*", "aws s3*", "aws s3api*",
+					"aws glue*", "aws dynamodb*", "aws kinesis*", "aws firehose*",
+					"aws events*", "aws sqs*", "aws sns*", "aws ssm*", "aws ecs*",
+					"aws secretsmanager*", "aws cloudformation*", "aws appflow*",
+					// API requests (delegated to api agent)
+					"curl*",
 				},
 			},
 			"commit": {

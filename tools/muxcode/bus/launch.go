@@ -214,6 +214,8 @@ func RoleClaudeModelDefault(role string) string {
 // commit → MiniMax M2.7 (git operations).
 func RoleOpenCodeModelDefault(role string) string {
 	switch role {
+	case "edit":
+		return "opencode-go/deepseek-v4-pro"
 	case "review", "analyze", "analyst":
 		return "opencode-go/qwen3.5-plus"
 	case "research":

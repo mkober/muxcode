@@ -306,12 +306,12 @@ Updated files:
 | `bus/profile_test.go` | Tests for edit profile containing Write/Edit, DenyTools resolution, translateToolProfile deny output. |
 
 Success criteria:
-- [ ] `ResolveTools("edit")` includes `Write` and `Edit`
-- [ ] Edit `ToolProfile.DenyTools` contains all prohibited prefixes from `code-editor.md`
-- [ ] `translateToolProfile("edit")` produces OpenCode permission with `edit: allow` and bash deny rules
-- [ ] `mergeConfigs` correctly merges `DenyTools` from override configs
-- [ ] Claude Code edit agent is unaffected (existing tests pass)
-- [ ] `BashTimeout` on edit profile is 300 seconds
+- [x] `ResolveTools("edit")` includes `Write` and `Edit`
+- [x] Edit `ToolProfile.DenyTools` contains all prohibited prefixes from `code-editor.md`
+- [x] `translateToolProfile("edit")` produces OpenCode permission with `edit: allow` and bash deny rules
+- [x] `mergeConfigs` correctly merges `DenyTools` from override configs
+- [x] Claude Code edit agent is unaffected (existing tests pass)
+- [x] `BashTimeout` on edit profile is 300 seconds
 
 ### Phase 2: Agent body adaptation and model config
 
@@ -645,4 +645,4 @@ fi
 
 ## Status
 
-Draft
+In Progress — Phase 2

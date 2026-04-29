@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,6 +243,67 @@ func TestTranslateToolProfile_EditPermission(t *testing.T) {
 	}
 }
 
+func TestTranslateToolProfile_EditDenyRules(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	result := translateToolProfile("edit")
+
+	if result == "" {
+		t.Fatal("translateToolProfile(edit) returned empty string")
+	}
+
+	// Should have permission header and bash section
+	if !strings.Contains(result, "permission:") {
+		t.Error("missing permission: header")
+	}
+	if !strings.Contains(result, "bash:") {
+		t.Error("missing bash: section")
+	}
+
+	// Should have edit: allow (Write/Edit in profile)
+	if !strings.Contains(result, "edit: allow") {
+		t.Error("missing edit: allow — Write/Edit tools should produce edit permission")
+	}
+
+	// Should have deny entries for prohibited commands
+	denyPatterns := []string{
+		"git commit*", "git push*", "gh *",
+		"./build.sh*", "make*",
+		"go test*", "pytest*",
+		"cdk synth*",
+		"aws lambda*", "aws s3*",
+		"curl*",
+	}
+	for _, pattern := range denyPatterns {
+		expected := fmt.Sprintf("\"%s\": deny", pattern)
+		if !strings.Contains(result, expected) {
+			t.Errorf("missing deny entry for %q", pattern)
+		}
+	}
+
+	// Should have allow entries for legitimate edit tools
+	allowPatterns := []string{"muxcode *", "tree *"}
+	for _, pattern := range allowPatterns {
+		expected := fmt.Sprintf("\"%s\": allow", pattern)
+		if !strings.Contains(result, expected) {
+			t.Errorf("missing allow entry for %q", pattern)
+		}
+	}
+}
+
+func TestTranslateToolProfile_NoDenyForBuild(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	result := translateToolProfile("build")
+
+	// Build role should not have deny entries (no DenyTools configured)
+	if strings.Contains(result, ": deny") {
+		t.Error("build role should not have deny entries")
+	}
+}
+
 func TestResolveOpenCodeModel_Default(t *testing.T) {
 	t.Setenv("MUXCODE_BUILD_MODEL", "")
 	t.Setenv("MUXCODE_BUILD_CLAUDE_MODEL", "")
@@ -298,13 +360,113 @@ func TestResolveOpenCodeModel_AnalyzeDefault(t *testing.T) {
 }
 
 func TestResolveOpenCodeModel_AlreadyPrefixed(t *testing.T) {
-	// Use "edit" role which has no OpenCode default, so Claude fallback applies
-	t.Setenv("MUXCODE_EDIT_MODEL", "")
-	t.Setenv("MUXCODE_EDIT_CLAUDE_MODEL", "anthropic/claude-sonnet-4-5")
+	// Use "plan" role which has no OpenCode default, so Claude fallback applies
+	t.Setenv("MUXCODE_PLAN_MODEL", "")
+	t.Setenv("MUXCODE_PLAN_CLAUDE_MODEL", "anthropic/claude-sonnet-4-5")
 
-	model := resolveOpenCodeModel("edit")
+	model := resolveOpenCodeModel("plan")
 	if model != "anthropic/claude-sonnet-4-5" {
 		t.Errorf("model = %q, want anthropic/claude-sonnet-4-5", model)
+	}
+}
+
+func TestResolveOpenCodeModel_EditDefault(t *testing.T) {
+	t.Setenv("MUXCODE_EDIT_MODEL", "")
+	t.Setenv("MUXCODE_EDIT_CLAUDE_MODEL", "")
+
+	model := resolveOpenCodeModel("edit")
+	if model != "opencode-go/deepseek-v4-pro" {
+		t.Errorf("model = %q, want opencode-go/deepseek-v4-pro", model)
+	}
+}
+
+func TestResolveOpenCodeModel_EditOverride(t *testing.T) {
+	t.Setenv("MUXCODE_EDIT_MODEL", "opencode-go/custom-model")
+
+	model := resolveOpenCodeModel("edit")
+	if model != "opencode-go/custom-model" {
+		t.Errorf("model = %q, want opencode-go/custom-model", model)
+	}
+}
+
+func TestAdaptBodyForNonHookProvider_Edit(t *testing.T) {
+	hookGuard := "A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — prohibited commands are blocked before execution. Always delegate on the first attempt."
+	chainRef := "**The automated chain stops at review.** After review completes, report the results and wait for the user."
+	body := "Some preamble text.\n" + hookGuard + "\nMiddle text.\n" + chainRef + "\nEnd text."
+
+	result := adaptBodyForNonHookProvider(body, "edit")
+
+	// Original hook guard sentence should be replaced
+	if strings.Contains(result, "enforces this at the tool level") {
+		t.Error("original hook guard sentence was not replaced")
+	}
+	if !strings.Contains(result, "MUST self-enforce delegation rules") {
+		t.Error("missing self-enforcement instruction")
+	}
+
+	// Automated chain reference should be replaced
+	if strings.Contains(result, "The automated chain stops at review.") {
+		t.Error("automated chain reference was not replaced")
+	}
+	if !strings.Contains(result, "MUST manually orchestrate") {
+		t.Error("missing manual orchestration instruction")
+	}
+
+	// Surrounding text should be preserved
+	if !strings.Contains(result, "Some preamble text.") {
+		t.Error("preamble text was removed")
+	}
+	if !strings.Contains(result, "End text.") {
+		t.Error("end text was removed")
+	}
+}
+
+func TestAdaptBodyForNonHookProvider_EditNoEffect(t *testing.T) {
+	// Body without the target strings should be unchanged
+	body := "Just some regular agent body text without hook references."
+	result := adaptBodyForNonHookProvider(body, "edit")
+	if result != body {
+		t.Errorf("body was modified when it shouldn't have been:\n%s", result)
+	}
+}
+
+func TestAdaptBodyForNonHookProvider_BuildUnchanged(t *testing.T) {
+	// Edit replacements should not affect the build role
+	body := "A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level."
+	result := adaptBodyForNonHookProvider(body, "build")
+	if result != body {
+		t.Errorf("build body was incorrectly modified by edit replacements")
+	}
+}
+
+func TestConfigureLaunch_EditStartupContext(t *testing.T) {
+	provider := &OpenCodeProvider{}
+	cfg := &LaunchConfig{Role: "edit"}
+
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	provider.ConfigureLaunch(cfg, "edit")
+
+	if !strings.Contains(cfg.SharedPrompt, "## Startup") {
+		t.Error("missing startup section in edit SharedPrompt")
+	}
+	if !strings.Contains(cfg.SharedPrompt, "muxcode memory context") {
+		t.Error("missing memory context command in startup instruction")
+	}
+}
+
+func TestConfigureLaunch_NonEditNoStartup(t *testing.T) {
+	provider := &OpenCodeProvider{}
+	cfg := &LaunchConfig{Role: "build"}
+
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	provider.ConfigureLaunch(cfg, "build")
+
+	if strings.Contains(cfg.SharedPrompt, "## Startup") {
+		t.Error("non-edit role should not have startup section")
 	}
 }
 

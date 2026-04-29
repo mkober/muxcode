@@ -33,6 +33,13 @@ func (p *OpenCodeProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 
 	// Shared prompt (used as agent markdown body in WriteAgentConfig)
 	cfg.SharedPrompt = BuildSharedPrompt(role)
+
+	// Edit role: append startup context instruction so the agent restores
+	// session state on launch. Replaces the self-addressed inbox message
+	// approach used by Claude Code (which SendWakeUp filters out).
+	if role == "edit" {
+		cfg.SharedPrompt += "\n\n## Startup\n\nOn startup, review last saved context from memory to restore session state: `muxcode memory context`"
+	}
 }
 
 // BuildExecArgs constructs the OpenCode launch command.
@@ -276,9 +283,17 @@ func writeOpenCodeAgentConfig(role string) error {
 
 // translateToolProfile converts muxcode tool profiles to OpenCode permission YAML.
 // Returns a YAML fragment suitable for embedding in frontmatter.
+// DenyTools from the profile are emitted as bash deny entries, providing
+// delegation enforcement for non-hook providers (replaces PreToolUse guard hook).
 func translateToolProfile(role string) string {
-	tools := ResolveTools(role)
-	if len(tools) == 0 {
+	cfg := Config()
+	profile, ok := cfg.ToolProfiles[resolveRoleAlias(role)]
+	if !ok {
+		return ""
+	}
+
+	tools := resolveProfile(cfg, profile)
+	if len(tools) == 0 && len(profile.DenyTools) == 0 {
 		return ""
 	}
 
@@ -301,6 +316,9 @@ func translateToolProfile(role string) string {
 			// Read, Grep, Glob — implicitly allowed in OpenCode, no permission needed
 		}
 	}
+
+	// Append DenyTools from the profile config (e.g. edit role's prohibited commands)
+	bashDeny = append(bashDeny, profile.DenyTools...)
 
 	if len(bashAllow) == 0 && len(bashDeny) == 0 && !editAllow {
 		return ""
@@ -526,6 +544,12 @@ func adaptBodyForNonHookProvider(body, role string) string {
 			// Replace "don't send review — hooks handle it" with "send review manually"
 			"**Do NOT send a review request — the bash hook auto-chains test->review on success.**": "**After tests pass, send a review request manually** (no auto-chain):\n`muxcode send review review \"Tests passed, review changes\" --type request`",
 			"the bash hook auto-chains test->review on success":                                     "send a review request manually after tests pass",
+		},
+		"edit": {
+			// Replace hook guard reference with self-enforcement instruction
+			"A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — prohibited commands are blocked before execution. Always delegate on the first attempt.": "Your CLI does not have a PreToolUse hook to enforce this. The permission system blocks prohibited commands, but you MUST self-enforce delegation rules. Never attempt a prohibited command — delegate on the first attempt.",
+			// Replace automated chain reference with manual orchestration steps
+			"**The automated chain stops at review.** After review completes, report the results and wait for the user.": "There is no automated hook chain. After code changes, you MUST manually orchestrate: (1) send build, (2) on success send test, (3) on success send review. The chain stops at review — wait for the user before committing.",
 		},
 	}
 

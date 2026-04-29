@@ -60,10 +60,10 @@ func TestResolveTools_Edit(t *testing.T) {
 	assertContains(t, tools, "Read")
 	assertContains(t, tools, "Glob")
 	assertContains(t, tools, "Grep")
-	// Write and Edit come from Claude Code settings.json, not tool profiles
-	// (edit agent runs Claude Code directly, not via LLM harness)
-	assertNotContains(t, tools, "Write")
-	assertNotContains(t, tools, "Edit")
+	// Write and Edit are in the profile for OpenCode compatibility
+	// (no-op for Claude Code which has them implicitly)
+	assertContains(t, tools, "Write")
+	assertContains(t, tools, "Edit")
 	// Should NOT include any git/gh commands (all delegated to commit agent)
 	assertNotContains(t, tools, "Bash(git diff*)")
 	assertNotContains(t, tools, "Bash(git log*)")
@@ -898,5 +898,159 @@ func TestEventChain_UnmarshalJSON(t *testing.T) {
 	}
 	if chain.OnSuccess[1].SendTo != "test" {
 		t.Errorf("second success action send_to = %q, want test", chain.OnSuccess[1].SendTo)
+	}
+}
+
+func TestEditProfile_DenyTools(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	cfg := Config()
+	profile := cfg.ToolProfiles["edit"]
+
+	if len(profile.DenyTools) == 0 {
+		t.Fatal("edit profile DenyTools is empty — should contain prohibited command patterns")
+	}
+
+	// Verify key deny categories are present
+	denySet := make(map[string]bool)
+	for _, d := range profile.DenyTools {
+		denySet[d] = true
+	}
+
+	// Git write operations
+	for _, pattern := range []string{
+		"git commit*", "git push*", "git pull*", "git rebase*",
+		"git checkout*", "git branch*", "git merge*",
+	} {
+		if !denySet[pattern] {
+			t.Errorf("missing deny pattern: %s", pattern)
+		}
+	}
+
+	// GitHub CLI
+	if !denySet["gh *"] {
+		t.Error("missing deny pattern: gh *")
+	}
+
+	// Build commands
+	if !denySet["./build.sh*"] {
+		t.Error("missing deny pattern: ./build.sh*")
+	}
+	if !denySet["make*"] {
+		t.Error("missing deny pattern: make*")
+	}
+
+	// Test commands
+	if !denySet["go test*"] {
+		t.Error("missing deny pattern: go test*")
+	}
+	if !denySet["pytest*"] {
+		t.Error("missing deny pattern: pytest*")
+	}
+
+	// Deploy commands
+	if !denySet["cdk synth*"] {
+		t.Error("missing deny pattern: cdk synth*")
+	}
+
+	// AWS operations
+	if !denySet["aws lambda*"] {
+		t.Error("missing deny pattern: aws lambda*")
+	}
+	if !denySet["aws s3*"] {
+		t.Error("missing deny pattern: aws s3*")
+	}
+
+	// curl
+	if !denySet["curl*"] {
+		t.Error("missing deny pattern: curl*")
+	}
+}
+
+func TestEditProfile_BashTimeout(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	timeout := RoleBashTimeout("edit")
+	if timeout != 300 {
+		t.Errorf("edit BashTimeout = %d, want 300", timeout)
+	}
+}
+
+func TestMergeConfigs_DenyTools(t *testing.T) {
+	base := &MuxcodeConfig{
+		SharedTools: map[string][]string{},
+		ToolProfiles: map[string]ToolProfile{
+			"edit": {
+				Tools:     []string{"Write", "Edit"},
+				DenyTools: []string{"git commit*", "git push*", "curl*"},
+			},
+		},
+		EventChains: map[string]EventChain{},
+	}
+
+	// Override with custom deny list
+	override := &MuxcodeConfig{
+		SharedTools: map[string][]string{},
+		ToolProfiles: map[string]ToolProfile{
+			"edit": {
+				DenyTools: []string{"docker*", "kubectl*"},
+			},
+		},
+		EventChains: map[string]EventChain{},
+	}
+
+	result := mergeConfigs(base, override)
+
+	profile := result.ToolProfiles["edit"]
+
+	// DenyTools should be replaced by override (not merged/appended)
+	if len(profile.DenyTools) != 2 {
+		t.Fatalf("DenyTools length = %d, want 2: %v", len(profile.DenyTools), profile.DenyTools)
+	}
+	if profile.DenyTools[0] != "docker*" || profile.DenyTools[1] != "kubectl*" {
+		t.Errorf("DenyTools = %v, want [docker* kubectl*]", profile.DenyTools)
+	}
+
+	// Tools should be preserved from base (override has no Tools)
+	if len(profile.Tools) != 2 {
+		t.Errorf("Tools should be preserved from base: %v", profile.Tools)
+	}
+}
+
+func TestMergeConfigs_DenyTools_PreservesBase(t *testing.T) {
+	base := &MuxcodeConfig{
+		SharedTools: map[string][]string{},
+		ToolProfiles: map[string]ToolProfile{
+			"edit": {
+				Tools:     []string{"Write"},
+				DenyTools: []string{"git commit*", "curl*"},
+			},
+		},
+		EventChains: map[string]EventChain{},
+	}
+
+	// Override with no DenyTools — base should be preserved
+	override := &MuxcodeConfig{
+		SharedTools: map[string][]string{},
+		ToolProfiles: map[string]ToolProfile{
+			"edit": {
+				Tools: []string{"Write", "Edit"},
+			},
+		},
+		EventChains: map[string]EventChain{},
+	}
+
+	result := mergeConfigs(base, override)
+
+	profile := result.ToolProfiles["edit"]
+
+	// DenyTools should be preserved from base
+	if len(profile.DenyTools) != 2 {
+		t.Fatalf("DenyTools should be preserved from base: %v", profile.DenyTools)
+	}
+	if profile.DenyTools[0] != "git commit*" || profile.DenyTools[1] != "curl*" {
+		t.Errorf("DenyTools = %v, want [git commit* curl*]", profile.DenyTools)
 	}
 }
