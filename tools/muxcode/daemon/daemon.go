@@ -3,8 +3,11 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -60,6 +63,9 @@ type Daemon struct {
 	// Agent heartbeat
 	lastHeartbeatCheck int64 // tracks last heartbeat fire time
 	heartbeatInterval  int   // seconds between heartbeats (0 = disabled)
+	// Non-hook edit file change detection
+	lastEditDiffCheck int64  // 10s debounce interval
+	lastEditDiffHash  string // last observed git diff --stat hash
 }
 
 // New creates a new Daemon for the given session.
@@ -170,6 +176,7 @@ func (d *Daemon) Run() error {
 		d.checkAgentHealth()
 		d.checkIdleAgents()
 		d.checkNonHookTasks()
+		d.checkNonHookEdits()
 		d.checkIdleTaskCompletion()
 		d.checkHeartbeat()
 		d.checkCleanup()
@@ -1070,6 +1077,88 @@ func (d *Daemon) checkNonHookTasks() {
 // agent time to send its own response via the Bash tool before the safety net
 // kicks in. 30 seconds covers normal response composition time while catching
 // the case where the agent output the send command as text instead of executing it.
+// checkNonHookEdits detects file changes made by the edit agent on a non-hook
+// provider (e.g. OpenCode). Since PostToolUse Write/Edit hooks don't fire,
+// the daemon polls git diff --stat every 10 seconds to detect new changes.
+// On new changes: transitions workflow to StateEditing and writes the analyze
+// trigger file so the analyze agent picks up the changed files.
+// Skips entirely when the edit agent runs on Claude Code (hooks handle it).
+func (d *Daemon) checkNonHookEdits() {
+	now := time.Now().Unix()
+	if now-d.lastEditDiffCheck < 10 {
+		return
+	}
+	d.lastEditDiffCheck = now
+
+	// Only run for non-hook edit providers
+	provider := bus.ResolveProvider("edit")
+	if provider.SupportsHooks() {
+		return
+	}
+
+	// Run git diff --stat with a short timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "diff", "--stat")
+	out, err := cmd.Output()
+	if err != nil {
+		return // git not available or not in a repo — skip silently
+	}
+
+	diffOutput := strings.TrimSpace(string(out))
+	if diffOutput == "" {
+		return // no changes
+	}
+
+	// Hash the diff output to detect changes
+	h := sha256.Sum256(out)
+	hash := hex.EncodeToString(h[:8]) // short hash is sufficient for change detection
+
+	if hash == d.lastEditDiffHash {
+		return // no new changes since last check
+	}
+	d.lastEditDiffHash = hash
+
+	// Persist hash to state file for cross-restart consistency
+	_ = os.WriteFile(bus.EditDiffHashPath(d.session), []byte(hash), 0644)
+
+	// Transition workflow to StateEditing
+	bus.TransitionWorkflow(d.session, bus.StateEditing, "daemon:edit-diff",
+		bus.WithFiles(extractDiffFiles(diffOutput)))
+
+	// Write analyze trigger file with changed file paths
+	triggerPath := bus.TriggerFile(d.session)
+	var triggerLines []string
+	ts := fmt.Sprintf("%d", now)
+	for _, f := range extractDiffFiles(diffOutput) {
+		triggerLines = append(triggerLines, ts+" "+f)
+	}
+	if len(triggerLines) > 0 {
+		_ = os.WriteFile(triggerPath, []byte(strings.Join(triggerLines, "\n")+"\n"), 0644)
+	}
+}
+
+// extractDiffFiles parses git diff --stat output to extract changed file paths.
+// Each line has the format: " path/to/file | N ++--"
+func extractDiffFiles(diffStat string) []string {
+	var files []string
+	for _, line := range strings.Split(diffStat, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "---") || strings.Contains(line, "files changed") || strings.Contains(line, "file changed") {
+			continue
+		}
+		// Split on " | " to get the file path
+		parts := strings.SplitN(line, " | ", 2)
+		if len(parts) >= 1 {
+			f := strings.TrimSpace(parts[0])
+			if f != "" {
+				files = append(files, f)
+			}
+		}
+	}
+	return files
+}
+
 const idleTaskGracePeriod int64 = 30
 
 // checkIdleTaskCompletion is a safety net for hook-provider agents (Claude Code)

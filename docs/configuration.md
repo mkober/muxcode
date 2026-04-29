@@ -132,11 +132,23 @@ Example — mixed session via config file:
 ```bash
 # ~/.config/muxcode/config
 MUXCODE_AGENT_CLI=claude              # default: Claude Code
+MUXCODE_EDIT_CLI=opencode             # edit uses OpenCode + DeepSeek V4 Pro
 MUXCODE_BUILD_CLI=opencode            # build uses OpenCode
 MUXCODE_TEST_CLI=opencode             # test uses OpenCode
 MUXCODE_ANALYZE_CLI=codex             # analyze uses Codex CLI
 MUXCODE_COMMIT_CLI=local              # commit uses local LLM
 ```
+
+### OpenCode edit agent
+
+The edit agent can run on OpenCode with DeepSeek V4 Pro. Set `MUXCODE_EDIT_CLI=opencode` to enable; unset or set to `claude` to restore the default Claude Code edit agent.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_EDIT_CLI` | `claude` | Set to `opencode` to run edit on OpenCode |
+| `MUXCODE_EDIT_MODEL` | `opencode-go/deepseek-v4-pro` | OpenCode model override (only when `MUXCODE_EDIT_CLI=opencode`) |
+
+When running on OpenCode: delegation enforcement uses `DenyTools` permission denies instead of the hook guard, the build→test→review chain is prompt-driven instead of hook-driven, and workflow state transitions are detected by the daemon via `git diff --stat` polling. See [Agents — OpenCode edit agent](agents.md#opencode-edit-agent) for details.
 
 ### Autonomous agent
 

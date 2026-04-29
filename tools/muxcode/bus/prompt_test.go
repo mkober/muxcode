@@ -230,18 +230,41 @@ func TestSharedPrompt_HookProvider_NoManualBusSection(t *testing.T) {
 	}
 }
 
-func TestSharedPrompt_EditAgent_NoManualBusSection(t *testing.T) {
+func TestSharedPrompt_EditAgent_OpenCode_HasManualBusSection(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
-	// Edit agent should never get manual bus section even with non-hook provider
+	// Edit agent on OpenCode should get manual bus section with orchestration instructions
 	t.Setenv("MUXCODE_EDIT_CLI", "opencode")
 	prompt := SharedPrompt("edit")
-	if strings.Contains(prompt, "### Manual Bus Messaging") {
-		t.Error("SharedPrompt(edit) should NOT include Manual Bus Messaging section (edit is the orchestrator)")
+	if !strings.Contains(prompt, "### Manual Bus Messaging") {
+		t.Error("SharedPrompt(edit) with opencode should include Manual Bus Messaging section")
 	}
+	// Should have edit-specific orchestration instructions
+	if !strings.Contains(prompt, "muxcode send build build") {
+		t.Error("SharedPrompt(edit) should include build orchestration instruction")
+	}
+	if !strings.Contains(prompt, "muxcode send test test") {
+		t.Error("SharedPrompt(edit) should include test orchestration instruction")
+	}
+	if !strings.Contains(prompt, "muxcode send review review") {
+		t.Error("SharedPrompt(edit) should include review orchestration instruction")
+	}
+	// Should NOT have console history logging (edit doesn't run commands directly)
 	if strings.Contains(prompt, "### Console History Logging") {
-		t.Error("SharedPrompt(edit) should NOT include Console History Logging section (edit is the orchestrator)")
+		t.Error("SharedPrompt(edit) should NOT include Console History Logging section")
+	}
+}
+
+func TestSharedPrompt_EditAgent_ClaudeCode_NoManualBusSection(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	// Edit agent on Claude Code should NOT get manual bus section (hooks handle it)
+	t.Setenv("MUXCODE_EDIT_CLI", "claude")
+	prompt := SharedPrompt("edit")
+	if strings.Contains(prompt, "### Manual Bus Messaging") {
+		t.Error("SharedPrompt(edit) with claude should NOT include Manual Bus Messaging section")
 	}
 }
 
@@ -261,5 +284,54 @@ func TestSharedPrompt_NonHookProvider_NoSendRestrictions(t *testing.T) {
 	testPrompt := SharedPrompt("test")
 	if strings.Contains(testPrompt, "### Send Restrictions") {
 		t.Error("SharedPrompt(test) with opencode should NOT include Send Restrictions (needs manual chaining)")
+	}
+}
+
+func TestSharedPrompt_ClaudeCode_HasCompactCommand(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	// Claude Code edit agent should have /compact-related instructions
+	t.Setenv("MUXCODE_EDIT_CLI", "claude")
+	prompt := SharedPrompt("edit")
+	if !strings.Contains(prompt, "muxcode compact --all") {
+		t.Error("SharedPrompt(edit) with claude should include 'muxcode compact --all'")
+	}
+	if !strings.Contains(prompt, "/compact") {
+		t.Error("SharedPrompt(edit) with claude should reference /compact")
+	}
+}
+
+func TestSharedPrompt_OpenCode_NoCompactSlashCommand(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	// OpenCode edit agent should NOT have /compact references
+	t.Setenv("MUXCODE_EDIT_CLI", "opencode")
+	prompt := SharedPrompt("edit")
+	if strings.Contains(prompt, "/compact") {
+		t.Error("SharedPrompt(edit) with opencode should NOT reference /compact (Claude Code specific)")
+	}
+	if strings.Contains(prompt, "muxcode compact --all") {
+		t.Error("SharedPrompt(edit) with opencode should NOT include 'muxcode compact --all'")
+	}
+	// Should have auto-compaction note
+	if !strings.Contains(prompt, "auto-compaction") {
+		t.Error("SharedPrompt(edit) with opencode should reference auto-compaction")
+	}
+}
+
+func TestSharedPrompt_OpenCode_NonEditCompact(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	// OpenCode build agent should also get auto-compaction, not /compact
+	t.Setenv("MUXCODE_BUILD_CLI", "opencode")
+	prompt := SharedPrompt("build")
+	if strings.Contains(prompt, "/compact") {
+		t.Error("SharedPrompt(build) with opencode should NOT reference /compact")
+	}
+	if !strings.Contains(prompt, "auto-compaction") {
+		t.Error("SharedPrompt(build) with opencode should reference auto-compaction")
 	}
 }

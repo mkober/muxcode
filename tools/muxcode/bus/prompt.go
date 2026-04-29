@@ -48,22 +48,32 @@ func SharedPrompt(role string) string {
 	b.WriteString("- When your session has been running for a long time\n\n")
 	b.WriteString("**Do not wait until context is full** — by then it's too late and you may get stuck thinking. ")
 	b.WriteString("Compact early and often. Summaries are automatically restored on restart.\n\n")
+	// Resolve provider early — needed for compact instructions and manual bus messaging
+	provider := ResolveProvider(role)
+
 	b.WriteString("**Combined compact**: When the user says \"compact\" or \"save context\", when you receive a `compact-recommended` alert, ")
 	b.WriteString("or whenever you decide to compact, always do both steps together:\n")
 	b.WriteString("1. Save context to memory: `muxcode session compact \"<summary of key work, decisions, and state>\"`\n")
-	if role == "edit" {
-		b.WriteString("2. Trigger conversation compression for **all** agents: run `muxcode compact --all` in the background — ")
-		b.WriteString("it iterates over all active agents, waits for each to become idle, then injects `/compact` via tmux send-keys.\n")
-		b.WriteString("   ```bash\n   muxcode compact --all  # run in background (Bash run_in_background=true)\n   ```\n\n")
-		b.WriteString("This preserves learnings across sessions (step 1) and compresses context for all agents at once (step 2). ")
+	if provider.SupportsHooks() {
+		// Claude Code: use /compact injection via tmux send-keys
+		if role == "edit" {
+			b.WriteString("2. Trigger conversation compression for **all** agents: run `muxcode compact --all` in the background — ")
+			b.WriteString("it iterates over all active agents, waits for each to become idle, then injects `/compact` via tmux send-keys.\n")
+			b.WriteString("   ```bash\n   muxcode compact --all  # run in background (Bash run_in_background=true)\n   ```\n\n")
+			b.WriteString("This preserves learnings across sessions (step 1) and compresses context for all agents at once (step 2). ")
+		} else {
+			b.WriteString("2. Trigger conversation compression: run `muxcode compact` in the background — ")
+			b.WriteString("it waits for the agent to go idle, then injects `/compact` via tmux send-keys.\n")
+			b.WriteString("   ```bash\n   muxcode compact  # run in background (Bash run_in_background=true)\n   ```\n\n")
+			b.WriteString("This preserves learnings across sessions (step 1) and keeps the current session lean (step 2). ")
+		}
+		b.WriteString("**Important**: Do NOT output `/compact` as text — it is a built-in slash command that only works when typed at the `❯` prompt. ")
+		b.WriteString("The `muxcode compact` command handles this automatically.\n\n")
 	} else {
-		b.WriteString("2. Trigger conversation compression: run `muxcode compact` in the background — ")
-		b.WriteString("it waits for the agent to go idle, then injects `/compact` via tmux send-keys.\n")
-		b.WriteString("   ```bash\n   muxcode compact  # run in background (Bash run_in_background=true)\n   ```\n\n")
-		b.WriteString("This preserves learnings across sessions (step 1) and keeps the current session lean (step 2). ")
+		// Non-hook providers (OpenCode, Codex CLI, local LLM): no /compact slash command
+		b.WriteString("2. Your CLI handles conversation compaction automatically — no manual step needed.\n\n")
+		b.WriteString("This preserves learnings across sessions via memory. Conversation compaction is handled by your CLI's auto-compaction.\n\n")
 	}
-	b.WriteString("**Important**: Do NOT output `/compact` as text — it is a built-in slash command that only works when typed at the `❯` prompt. ")
-	b.WriteString("The `muxcode compact` command handles this automatically.\n\n")
 
 	// Output visibility — critical for tmux-based monitoring
 	b.WriteString("### Output Visibility\n")
@@ -95,12 +105,20 @@ func SharedPrompt(role string) string {
 	// manually after build/test/deploy commands instead of relying on chains.
 	// Only show instructions relevant to the agent's actual role to avoid
 	// confusing the LLM about its identity.
-	provider := ResolveProvider(role)
-	if !provider.SupportsHooks() && role != "edit" {
+	if !provider.SupportsHooks() {
 		b.WriteString("### Manual Bus Messaging (no hook support)\n")
 		b.WriteString("Your AI CLI does not support automatic hooks, so you must send bus messages manually after completing tasks.\n\n")
 
 		switch role {
+		case "edit":
+			b.WriteString("**After making code changes**, manually orchestrate the build→test→review chain:\n")
+			b.WriteString("```bash\n# 1. Send build request and wait for result:\n")
+			b.WriteString("muxcode send build build \"Run build and report results\" --wait\n")
+			b.WriteString("# 2. On build success, send test request:\n")
+			b.WriteString("muxcode send test test \"Run tests and report results\" --wait\n")
+			b.WriteString("# 3. On test success, send review request:\n")
+			b.WriteString("muxcode send review review \"Review the latest changes\" --wait\n```\n\n")
+			b.WriteString("The chain stops at review — wait for the user before committing.\n\n")
 		case "build":
 			b.WriteString("**After build commands** (`./build.sh`, `make`, `pnpm build`, etc.):\n")
 			b.WriteString("```bash\n# On success:\nmuxcode send edit build \"Build succeeded\" --type response --reply-to <id>\n")
@@ -123,49 +141,52 @@ func SharedPrompt(role string) string {
 			b.WriteString("```bash\nmuxcode send edit response \"<result summary>\" --type response --reply-to <id>\n```\n\n")
 		}
 
-		b.WriteString("These messages replace the automatic hook-driven chains that Claude Code agents use. ")
-		b.WriteString("Always send a result message so the edit agent knows your task is complete.\n\n")
+		if role != "edit" {
+			b.WriteString("These messages replace the automatic hook-driven chains that Claude Code agents use. ")
+			b.WriteString("Always send a result message so the edit agent knows your task is complete.\n\n")
 
-		// Console history logging — non-hook agents must log manually so the
-		// left-pane console view has data to render.
-		b.WriteString("### Console History Logging\n")
-		b.WriteString("After running commands, log the result so the console dashboard (left pane) updates.\n")
-		b.WriteString("Write command output to a temp file, then call `muxcode log`:\n\n")
+			// Console history logging — non-hook agents must log manually so the
+			// left-pane console view has data to render.
+			// Edit agent doesn't run commands directly, so no console logging needed.
+			b.WriteString("### Console History Logging\n")
+			b.WriteString("After running commands, log the result so the console dashboard (left pane) updates.\n")
+			b.WriteString("Write command output to a temp file, then call `muxcode log`:\n\n")
 
-		switch role {
-		case "build":
-			b.WriteString("```bash\n# Capture output to temp file, then log:\n")
-			b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
-			b.WriteString("./build.sh 2>&1 | tee \"$tmpfile\"; exit_code=${PIPESTATUS[0]}\n")
-			b.WriteString("muxcode log build \"Build summary\" --exit-code \"$exit_code\" --command \"./build.sh\" --output-file \"$tmpfile\"\n")
-			b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
-		case "test":
-			b.WriteString("```bash\n# Capture output to temp file, then log:\n")
-			b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
-			b.WriteString("<test command> 2>&1 | tee \"$tmpfile\"; exit_code=${PIPESTATUS[0]}\n")
-			b.WriteString("muxcode log test \"Test summary\" --exit-code \"$exit_code\" --command \"<test command>\" --output-file \"$tmpfile\"\n")
-			b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
-		case "deploy":
-			b.WriteString("```bash\n# Capture output to temp file, then log:\n")
-			b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
-			b.WriteString("<deploy command> 2>&1 | tee \"$tmpfile\"; exit_code=${PIPESTATUS[0]}\n")
-			b.WriteString("muxcode log deploy \"Deploy summary\" --exit-code \"$exit_code\" --command \"<deploy command>\" --output-file \"$tmpfile\"\n")
-			b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
-		case "review":
-			b.WriteString("```bash\n# After completing a review, log the findings:\n")
-			b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
-			b.WriteString("echo \"<review findings summary>\" > \"$tmpfile\"\n")
-			b.WriteString("muxcode log review \"Review summary\" --exit-code 0 --output-file \"$tmpfile\"\n")
-			b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
-		default:
-			b.WriteString("```bash\n# Log task output:\n")
-			b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
-			b.WriteString("echo \"<output>\" > \"$tmpfile\"\n")
-			b.WriteString(fmt.Sprintf("muxcode log %s \"Task summary\" --exit-code 0 --output-file \"$tmpfile\"\n", role))
-			b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
+			switch role {
+			case "build":
+				b.WriteString("```bash\n# Capture output to temp file, then log:\n")
+				b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
+				b.WriteString("./build.sh 2>&1 | tee \"$tmpfile\"; exit_code=${PIPESTATUS[0]}\n")
+				b.WriteString("muxcode log build \"Build summary\" --exit-code \"$exit_code\" --command \"./build.sh\" --output-file \"$tmpfile\"\n")
+				b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
+			case "test":
+				b.WriteString("```bash\n# Capture output to temp file, then log:\n")
+				b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
+				b.WriteString("<test command> 2>&1 | tee \"$tmpfile\"; exit_code=${PIPESTATUS[0]}\n")
+				b.WriteString("muxcode log test \"Test summary\" --exit-code \"$exit_code\" --command \"<test command>\" --output-file \"$tmpfile\"\n")
+				b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
+			case "deploy":
+				b.WriteString("```bash\n# Capture output to temp file, then log:\n")
+				b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
+				b.WriteString("<deploy command> 2>&1 | tee \"$tmpfile\"; exit_code=${PIPESTATUS[0]}\n")
+				b.WriteString("muxcode log deploy \"Deploy summary\" --exit-code \"$exit_code\" --command \"<deploy command>\" --output-file \"$tmpfile\"\n")
+				b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
+			case "review":
+				b.WriteString("```bash\n# After completing a review, log the findings:\n")
+				b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
+				b.WriteString("echo \"<review findings summary>\" > \"$tmpfile\"\n")
+				b.WriteString("muxcode log review \"Review summary\" --exit-code 0 --output-file \"$tmpfile\"\n")
+				b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
+			default:
+				b.WriteString("```bash\n# Log task output:\n")
+				b.WriteString("tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)\n")
+				b.WriteString("echo \"<output>\" > \"$tmpfile\"\n")
+				b.WriteString(fmt.Sprintf("muxcode log %s \"Task summary\" --exit-code 0 --output-file \"$tmpfile\"\n", role))
+				b.WriteString("rm -f \"$tmpfile\"\n```\n\n")
+			}
+
+			b.WriteString("**Always log before sending your response message.** The console polls every 5 seconds and will pick up the entry.\n\n")
 		}
-
-		b.WriteString("**Always log before sending your response message.** The console polls every 5 seconds and will pick up the entry.\n\n")
 	}
 
 	// Send restrictions from policy — only for hook-supporting providers.

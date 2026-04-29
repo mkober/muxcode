@@ -13,7 +13,7 @@ import (
 // Agent handles the "muxcode agent" subcommand.
 func Agent(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode agent <run|launch|status> [flags]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode agent <run|launch|config|status> [flags]\n")
 		os.Exit(1)
 	}
 
@@ -27,11 +27,33 @@ func Agent(args []string) {
 		Launch(subArgs)
 	case "status":
 		agentStatus(subArgs)
+	case "config":
+		agentConfig(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown agent subcommand: %s\n", subcmd)
-		fmt.Fprintf(os.Stderr, "Usage: muxcode agent <run|launch|status> [flags]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode agent <run|launch|config|status> [flags]\n")
 		os.Exit(1)
 	}
+}
+
+// agentConfig generates the agent config file for a role.
+// Used by integration tests to verify config generation without a running session.
+func agentConfig(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: muxcode agent config <role>\n")
+		os.Exit(1)
+	}
+	role := args[0]
+
+	// Load shell-sourceable config
+	bus.LoadShellConfig("")
+
+	provider := bus.ResolveProvider(role)
+	if err := provider.WriteAgentConfig(role); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: WriteAgentConfig(%s): %v\n", role, err)
+		os.Exit(1)
+	}
+	fmt.Printf("Generated agent config for %s\n", role)
 }
 
 // agentStatus prints the autonomous agent's current status to stdout.

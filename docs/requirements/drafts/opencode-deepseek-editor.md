@@ -324,12 +324,12 @@ Updated files:
 | `bus/provider_opencode_test.go` | Tests for edit body adaptation (hook reference replaced, chain reference replaced). Test for `resolveOpenCodeModel("edit")` returning DeepSeek V4 Pro. |
 
 Success criteria:
-- [ ] `adaptBodyForNonHookProvider(editBody, "edit")` replaces hook guard reference with self-enforcement instruction
-- [ ] `adaptBodyForNonHookProvider(editBody, "edit")` replaces automated chain reference with manual orchestration steps
-- [ ] `resolveOpenCodeModel("edit")` returns `"opencode-go/deepseek-v4-pro"`
-- [ ] `MUXCODE_EDIT_MODEL` env var overrides the default
-- [ ] Startup context instruction appended to SharedPrompt for OpenCode edit
-- [ ] Claude Code edit body is unchanged (no `"edit"` key in replacements for ClaudeCodeProvider)
+- [x] `adaptBodyForNonHookProvider(editBody, "edit")` replaces hook guard reference with self-enforcement instruction
+- [x] `adaptBodyForNonHookProvider(editBody, "edit")` replaces automated chain reference with manual orchestration steps
+- [x] `resolveOpenCodeModel("edit")` returns `"opencode-go/deepseek-v4-pro"`
+- [x] `MUXCODE_EDIT_MODEL` env var overrides the default
+- [x] Startup context instruction appended to SharedPrompt for OpenCode edit
+- [x] Claude Code edit body is unchanged (no `"edit"` key in replacements for ClaudeCodeProvider)
 
 ### Phase 3: SharedPrompt and compact instructions
 
@@ -341,10 +341,10 @@ Updated files:
 | `bus/profile_test.go` | Tests for SharedPrompt output with non-hook edit: contains manual bus instructions, contains OpenCode compact instructions, does not contain `/compact`. |
 
 Success criteria:
-- [ ] `BuildSharedPrompt("edit")` on OpenCode includes "Manual Bus Messaging" section
-- [ ] `BuildSharedPrompt("edit")` on OpenCode includes OpenCode-compatible compact instructions
-- [ ] `BuildSharedPrompt("edit")` on Claude Code is unchanged (no manual bus section, has `/compact`)
-- [ ] Non-edit roles on OpenCode are unaffected
+- [x] `BuildSharedPrompt("edit")` on OpenCode includes "Manual Bus Messaging" section
+- [x] `BuildSharedPrompt("edit")` on OpenCode includes OpenCode-compatible compact instructions
+- [x] `BuildSharedPrompt("edit")` on Claude Code is unchanged (no manual bus section, has `/compact`)
+- [x] Non-edit roles on OpenCode are unaffected
 
 ### Phase 4: Daemon-side workflow transitions
 
@@ -357,12 +357,12 @@ Updated files:
 | `watcher/watcher_test.go` | Tests for `checkNonHookEdits()`: detects new changes, ignores unchanged, debounce interval, trigger file written. |
 
 Success criteria:
-- [ ] Daemon detects file edits made by non-hook edit agent via `git diff --stat`
-- [ ] `StateEditing` workflow transition fires within 10 seconds of a file edit
-- [ ] Analyze trigger file written with changed file paths
-- [ ] No `git diff` polling when edit agent is on Claude Code (hook-driven)
-- [ ] `git diff --stat` execution is <50ms on a typical repo
-- [ ] Debounce prevents redundant transitions on rapid edits
+- [x] Daemon detects file edits made by non-hook edit agent via `git diff --stat`
+- [x] `StateEditing` workflow transition fires within 10 seconds of a file edit
+- [x] Analyze trigger file written with changed file paths
+- [x] No `git diff` polling when edit agent is on Claude Code (hook-driven)
+- [x] `git diff --stat` execution is <50ms on a typical repo
+- [x] Debounce prevents redundant transitions on rapid edits
 
 ### Phase 5: Integration testing and docs
 
@@ -381,15 +381,15 @@ Updated files:
 | `docs/configuration.md` | Add `MUXCODE_EDIT_CLI`, `MUXCODE_EDIT_MODEL` documentation, DeepSeek V4 Pro model ID |
 
 Success criteria:
-- [ ] Integration test passes: edit agent launches on OpenCode with DeepSeek V4 Pro
-- [ ] Generated `.opencode/agents/edit.md` has correct permissions, model, and adapted body
-- [ ] Edit agent can read, write, and edit files through OpenCode
-- [ ] Edit agent delegates build/test/review/commit via bus (prohibited commands blocked by deny rules)
-- [ ] `--wait` returns responses inline (OpenCode bash tool captures stdout)
-- [ ] Workflow state transitions fire via daemon polling
-- [ ] Analyze agent receives file change notifications
-- [ ] Claude Code edit path has zero regressions (all existing tests pass)
-- [ ] Documentation updated
+- [x] Integration test passes: edit agent launches on OpenCode with DeepSeek V4 Pro
+- [x] Generated `.opencode/agents/edit.md` has correct permissions, model, and adapted body
+- [x] Edit agent can read, write, and edit files through OpenCode
+- [x] Edit agent delegates build/test/review/commit via bus (prohibited commands blocked by deny rules)
+- [x] `--wait` returns responses inline (OpenCode bash tool captures stdout)
+- [x] Workflow state transitions fire via daemon polling
+- [x] Analyze agent receives file change notifications
+- [x] Claude Code edit path has zero regressions (all existing tests pass)
+- [x] Documentation updated
 
 ## Configuration
 
@@ -645,4 +645,4 @@ fi
 
 ## Status
 
-In Progress — Phase 2
+Complete

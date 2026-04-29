@@ -44,8 +44,8 @@ Each agent independently resolves its AI CLI provider. The provider is fixed for
 
 | Provider | CLI value | Best for |
 |----------|-----------|----------|
-| Claude Code | `claude` (default) | Edit, review, deploy — full hook support, deterministic chains |
-| OpenCode | `opencode` | Build, test — multi-provider LLM access, autonomous TUI |
+| Claude Code | `claude` (default) | Edit (default), review, deploy — full hook support, deterministic chains |
+| OpenCode | `opencode` | Edit (optional), build, test, research — multi-provider LLM access, autonomous TUI |
 | Codex CLI | `codex` | Analyze, build — OpenAI models, full-auto mode |
 | Local LLM | `local` | Commit, build, watch — structured commands, zero API cost |
 
@@ -88,6 +88,30 @@ muxcode send build build "Run ./build.sh and report results"
 muxcode send test test "Run tests and report results"
 muxcode send review review "Review the latest changes"
 ```
+
+#### OpenCode edit agent
+
+The edit agent can optionally run on OpenCode with DeepSeek V4 Pro instead of Claude Code. Set `MUXCODE_EDIT_CLI=opencode` to switch; set back to `claude` (or unset) to restore the default.
+
+```bash
+# In ~/.config/muxcode/config
+MUXCODE_EDIT_CLI=opencode
+MUXCODE_EDIT_MODEL=opencode-go/deepseek-v4-pro  # optional — this is the default
+```
+
+Key differences from the Claude Code edit agent:
+
+| Aspect | Claude Code (default) | OpenCode |
+|--------|----------------------|----------|
+| Delegation enforcement | PreToolUse hook (`muxcode hook guard`) | `DenyTools` in tool profile → OpenCode `deny` permission rules |
+| Build→test→review chain | PostToolUse bash hook (automatic) | Prompt-driven manual orchestration via `muxcode send` |
+| Write/Edit tools | Implicit (Claude built-in) | Explicit in tool profile |
+| Workflow state transitions | PostToolUse hooks | Daemon-side `checkNonHookEdits()` via `git diff --stat` polling |
+| Compact | `/compact` slash command | OpenCode auto-compaction + `muxcode session compact` |
+| Startup context | Self-addressed inbox message | Memory context appended to SharedPrompt |
+| Model | `claude-opus-4-6` | `opencode-go/deepseek-v4-pro` (configurable via `MUXCODE_EDIT_MODEL`) |
+
+All delegation rules, bus messaging, and agent coordination remain identical — only the enforcement mechanism changes.
 
 ### Documentation (plan)
 

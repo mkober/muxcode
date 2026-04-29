@@ -300,12 +300,9 @@ muxcode session compact "<summary>"  # save session summary to memory
 
 **Combined compact**: When the user says "compact" or "save context", when you receive a `compact-recommended` alert, or whenever you decide to compact, always do both steps together:
 1. Save context to memory: `muxcode session compact "<summary of key work, decisions, and state>"`
-2. Trigger conversation compression: run `muxcode compact` in the background — it waits for the agent to go idle, then injects `/compact` via tmux send-keys.
-   ```bash
-   muxcode compact  # run in background (Bash run_in_background=true)
-   ```
+2. Your CLI handles conversation compaction automatically — no manual step needed.
 
-This preserves learnings across sessions (step 1) and keeps the current session lean (step 2). **Important**: Do NOT output `/compact` as text — it is a built-in slash command that only works when typed at the `❯` prompt. The `muxcode compact` command handles this automatically.
+This preserves learnings across sessions via memory. Conversation compaction is handled by your CLI's auto-compaction.
 
 ### Output Visibility
 Claude Code's TUI collapses tool calls into terse summaries like "Ran 5 bash commands". Since your tmux pane is monitored by the console and by other agents via `tmux capture-pane`, you MUST produce visible text output so observers can tell what you are doing:

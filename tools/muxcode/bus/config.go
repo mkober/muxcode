@@ -381,6 +381,12 @@ func TriggerFile(session string) string {
 	return "/tmp/muxcode-analyze-" + session + ".trigger"
 }
 
+// EditDiffHashPath returns the path for the edit diff hash state file.
+// Used by the daemon to track file changes for non-hook edit providers.
+func EditDiffHashPath(session string) string {
+	return filepath.Join(BusDir(session), "edit-diff-hash")
+}
+
 // hostedRoles maps roles that share another agent's window and inbox.
 // Messages sent to a hosted role are delivered to the host's inbox.
 // The host agent sees the original "To" field to distinguish the request context.

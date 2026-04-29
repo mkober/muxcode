@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,5 +125,86 @@ func TestDaemon_NewInitializesFields(t *testing.T) {
 	}
 	if d.hasRunningSpawns {
 		t.Error("hasRunningSpawns should be false initially")
+	}
+}
+
+func TestExtractDiffFiles(t *testing.T) {
+	diffStat := ` bus/profile.go   | 30 ++++++++++++++++---------
+ bus/config.go    |  5 ++++-
+ daemon/daemon.go | 12 ++++++++++++
+ 3 files changed, 35 insertions(+), 12 deletions(-)`
+
+	files := extractDiffFiles(diffStat)
+	if len(files) != 3 {
+		t.Fatalf("expected 3 files, got %d: %v", len(files), files)
+	}
+	if files[0] != "bus/profile.go" {
+		t.Errorf("files[0] = %q, want bus/profile.go", files[0])
+	}
+	if files[1] != "bus/config.go" {
+		t.Errorf("files[1] = %q, want bus/config.go", files[1])
+	}
+	if files[2] != "daemon/daemon.go" {
+		t.Errorf("files[2] = %q, want daemon/daemon.go", files[2])
+	}
+}
+
+func TestExtractDiffFiles_Empty(t *testing.T) {
+	files := extractDiffFiles("")
+	if len(files) != 0 {
+		t.Errorf("expected 0 files for empty input, got %d", len(files))
+	}
+}
+
+func TestExtractDiffFiles_SingleFile(t *testing.T) {
+	diffStat := ` main.go | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)`
+
+	files := extractDiffFiles(diffStat)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d: %v", len(files), files)
+	}
+	if files[0] != "main.go" {
+		t.Errorf("files[0] = %q, want main.go", files[0])
+	}
+}
+
+func TestCheckNonHookEdits_Debounce(t *testing.T) {
+	session := testSession(t)
+	d := New(session, 5, 8)
+
+	// Set lastEditDiffCheck to now — should skip
+	now := time.Now().Unix()
+	d.lastEditDiffCheck = now
+
+	// Should not update lastEditDiffCheck (within 10s debounce)
+	d.checkNonHookEdits()
+	if d.lastEditDiffCheck != now {
+		t.Error("checkNonHookEdits should have been debounced")
+	}
+}
+
+func TestCheckNonHookEdits_SkipsHookProvider(t *testing.T) {
+	session := testSession(t)
+	d := New(session, 5, 8)
+
+	// Force past debounce
+	d.lastEditDiffCheck = 0
+
+	// Default edit provider is Claude Code (hooks supported)
+	// Should skip without updating lastEditDiffHash
+	d.checkNonHookEdits()
+	if d.lastEditDiffHash != "" {
+		t.Error("checkNonHookEdits should skip for hook-supporting providers")
+	}
+}
+
+func TestEditDiffHashPath(t *testing.T) {
+	path := bus.EditDiffHashPath("test-session")
+	if path == "" {
+		t.Error("EditDiffHashPath returned empty string")
+	}
+	if !strings.Contains(path, "edit-diff-hash") {
+		t.Errorf("path %q should contain edit-diff-hash", path)
 	}
 }
