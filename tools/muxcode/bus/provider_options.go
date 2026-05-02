@@ -27,8 +27,8 @@ func AvailableProviders() []ProviderOption {
 		{
 			Name:    "OpenCode",
 			CLI:     "opencode",
-			Models:  []string{"opencode-go/deepseek-v4-pro", "opencode-go/gpt-4.1", "opencode-go/gemini-2.5-pro"},
-			Default: "opencode-go/deepseek-v4-pro",
+			Models:  []string{"opencode-go/minimax-m2.5", "opencode-go/qwen3.5-plus", "opencode-go/deepseek-v4-pro"},
+			Default: "opencode-go/minimax-m2.5",
 		},
 		{
 			Name:    "Codex",
