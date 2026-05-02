@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // KnownRoles lists all valid agent roles.
@@ -196,6 +197,13 @@ func GlobalMemoryArchivePath(role, date string) string {
 	return filepath.Join(GlobalMemoryArchiveDir(role), date+".md")
 }
 
+// RuntimeConfigDir returns the runtime config directory path for a session.
+// Override files (per-role CLI/model runtime overrides) are stored here.
+// These files are ephemeral — they live under /tmp/ and are cleaned up with the session.
+func RuntimeConfigDir(session string) string {
+	return filepath.Join(BusDir(session), "config")
+}
+
 // BuildHistoryPath returns the build history JSONL file path for a session.
 func BuildHistoryPath(session string) string {
 	return filepath.Join(BusDir(session), "build-history.jsonl")
@@ -317,6 +325,48 @@ func WaitingMarkerPath(session, role string) string {
 // Notify() skips display-message — the poll loop watches the trigger file instead.
 func PollingMarkerPath(session, role string) string {
 	return filepath.Join(BusDir(session), "polling-"+role+".marker")
+}
+
+// staleMarkerAge returns the duration after which a waiting/polling marker
+// is considered stale and should be cleaned up. This prevents stale markers
+// from blocking notifications if a process crashes during --wait or --poll.
+const staleMarkerAge = 10 * time.Minute
+
+// CleanStaleMarkers removes waiting and polling markers that are older than
+// staleMarkerAge. This should be called during bus initialization to prevent
+// stale markers from blocking notifications.
+func CleanStaleMarkers(session string) error {
+	busDir := BusDir(session)
+	entries, err := os.ReadDir(busDir)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	for _, entry := range entries {
+		name := entry.Name()
+		// Only check waiting-*.marker and polling-*.marker files
+		if !strings.HasSuffix(name, ".marker") {
+			continue
+		}
+		if !strings.HasPrefix(name, "waiting-") && !strings.HasPrefix(name, "polling-") {
+			continue
+		}
+
+		path := filepath.Join(busDir, name)
+		info, err := os.Stat(path)
+		if err != nil {
+			continue // skip if can't stat
+		}
+		if now.Sub(info.ModTime()) > staleMarkerAge {
+			// Marker is stale - remove it
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				// Log but continue
+				continue
+			}
+		}
+	}
+	return nil
 }
 
 // TriggerNotifyPath returns the path to the trigger file that signals new

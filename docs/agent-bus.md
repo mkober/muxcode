@@ -1490,6 +1490,58 @@ This is a fire-and-forget command — run it in the background after saving cont
 
 Core code: `cmd/compact.go`, `bus/compact.go` (`CompactableRoles`).
 
+### `muxcode reload`
+
+Stop an agent, reconfigure, and relaunch (hot reload).
+
+```bash
+muxcode reload <role> [--cli <cli>] [--model <model>] [--compact]
+muxcode reload --all [--compact]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--cli <cli>` | CLI provider override (claude, opencode, codex, local) |
+| `--model <model>` | Model override (e.g. opencode-go/deepseek-v4-pro) |
+| `--compact` | Compact agent context before stopping |
+| `--all` | Reload all active agents sequentially (excludes edit) |
+
+Writes runtime override to `/tmp/muxcode-bus-{session}/config/{role}.env`, gracefully stops the agent (C-c, poll for exit, force-kill after 6s), regenerates provider config, relaunches via `muxcode agent launch`, and verifies liveness (15s timeout). Reload marker suppresses daemon health checks during the cycle. Edit agent is excluded from `--all`.
+
+Core code: `bus/reload.go`, `cmd/reload.go`.
+
+### `muxcode config`
+
+View or change agent CLI/model configuration.
+
+```bash
+muxcode config set <role>.<field> <value> [--reload]
+muxcode config get <role>
+muxcode config list
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `set` | Write a config value to the persistent config file. Fields: `cli`, `model`. |
+| `get` | Show effective CLI, model, and resolution source for a role |
+| `list` | Show all roles with their effective CLI and model |
+
+The `--reload` flag on `set` triggers an immediate agent reload after writing the config.
+
+Core code: `bus/config_file.go` (`SetShellConfigValue`, `ResolveConfigPath`), `bus/launch.go` (`EffectiveConfig`), `cmd/config.go`.
+
+### `muxcode provider-select`
+
+Interactive provider/model selector TUI (used by the provider modal).
+
+```bash
+muxcode provider-select [--role <role>]
+```
+
+Launched via `muxcode modal open provider` (keybinding: `prefix + R`). Presents an interactive TUI with provider and model selection. On confirm, writes a reload trigger file and exits; the modal wrapper executes the reload.
+
+Core code: `tui/provider_select.go`, `bus/provider_options.go`, `cmd/provider_select.go`.
+
 ## Environment Variables
 
 | Variable | Description |

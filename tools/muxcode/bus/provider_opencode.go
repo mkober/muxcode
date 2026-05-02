@@ -353,9 +353,8 @@ func translateToolProfile(role string) string {
 // resolveOpenCodeModel returns the OpenCode model string for a role.
 // Resolution: per-role env → OpenCode role default → Claude model fallback.
 func resolveOpenCodeModel(role string) string {
-	// Check for explicit OpenCode model env var
-	envKey := "MUXCODE_" + strings.ToUpper(strings.ReplaceAll(role, "-", "_")) + "_MODEL"
-	if model := os.Getenv(envKey); model != "" {
+	// Check for explicit per-role model env var (shared across providers)
+	if model := os.Getenv(RoleModelEnvVar(role)); model != "" {
 		return model
 	}
 

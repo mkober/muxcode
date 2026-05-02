@@ -39,7 +39,12 @@ func IsAgentStopped(session, role string) bool {
 
 // IsAgentHealthExcluded returns true if a role should be excluded from
 // automatic health monitoring (never auto-restarted).
-func IsAgentHealthExcluded(role string) bool {
+// Also returns true while a reload is in progress (reload marker exists),
+// since the agent is intentionally down during the reload cycle.
+func IsAgentHealthExcluded(session, role string) bool {
+	if IsReloading(session, role) {
+		return true
+	}
 	return agentHealthExcludedRoles[role]
 }
 
@@ -63,7 +68,7 @@ func IsAgentAlive(session, role string) bool {
 
 // isShellPrompt returns true if the captured pane lines indicate a bare shell
 // prompt (agent has exited). Checks that the last non-empty line ends with
-// '$' or '%' and that no ❯ appears anywhere.
+// a known prompt suffix ('$', '%', '>', '->') and that no ❯ appears anywhere.
 func isShellPrompt(lines []string) bool {
 	hasPromptChar := false
 
@@ -88,8 +93,15 @@ func isShellPrompt(lines []string) bool {
 		}
 	}
 
-	// Check if last non-empty line ends with $ or %
+	// Check if last non-empty line ends with a known shell prompt suffix.
+	// Common prompts: bash ($), zsh (%), custom arrow (->).
+	// Also check for standalone ">" but only for short lines (≤10 chars)
+	// to avoid false positives from command output ending with ">".
 	if strings.HasSuffix(lastNonEmpty, "$") || strings.HasSuffix(lastNonEmpty, "%") {
+		hasPromptChar = true
+	} else if strings.HasSuffix(lastNonEmpty, "->") {
+		hasPromptChar = true
+	} else if strings.HasSuffix(lastNonEmpty, ">") && len(lastNonEmpty) <= 10 {
 		hasPromptChar = true
 	}
 

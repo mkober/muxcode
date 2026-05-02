@@ -237,7 +237,7 @@ func TestIsUUID(t *testing.T) {
 		{"A1B2C3D4-E5F6-7890-ABCD-EF1234567890", true},
 		{"not-a-uuid", false},
 		{"", false},
-		{"009c901b-7902-4d3a-abde-fa421bd0063", false},  // too short
+		{"009c901b-7902-4d3a-abde-fa421bd0063", false},   // too short
 		{"009c901b-7902-4d3a-abde-fa421bd0063ab", false}, // too long
 		{"009c901b79024d3aabdefa421bd0063a1234", false},  // no dashes
 		{"009c901b-7902-4d3a-abde-fa421bd0063g", false},  // invalid hex char

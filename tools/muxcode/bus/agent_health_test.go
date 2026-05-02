@@ -85,6 +85,26 @@ func TestIsShellPrompt(t *testing.T) {
 			want:  false,
 		},
 		{
+			name:  "custom arrow prompt",
+			lines: []string{"", "mkoberlein@host /path (main)", "-> "},
+			want:  true,
+		},
+		{
+			name:  "custom arrow prompt trimmed",
+			lines: []string{"", "mkoberlein@host /path (main)", "->"},
+			want:  true,
+		},
+		{
+			name:  "short angle prompt",
+			lines: []string{"", "~/Repos>", ""},
+			want:  true,
+		},
+		{
+			name:  "long line ending with angle bracket not a prompt",
+			lines: []string{"", "Applying infrastructure changes>", ""},
+			want:  false,
+		},
+		{
 			name:  "dollar in middle of text",
 			lines: []string{"", "cost is $50", "some output"},
 			want:  false,
@@ -132,16 +152,45 @@ func TestAgentHealthAlertKey(t *testing.T) {
 }
 
 func TestIsAgentHealthExcluded(t *testing.T) {
-	if !IsAgentHealthExcluded("edit") {
+	session := "test-session"
+	if !IsAgentHealthExcluded(session, "edit") {
 		t.Error("expected edit to be excluded")
 	}
-	if !IsAgentHealthExcluded("webhook") {
+	if !IsAgentHealthExcluded(session, "webhook") {
 		t.Error("expected webhook to be excluded")
 	}
-	if IsAgentHealthExcluded("build") {
+	if IsAgentHealthExcluded(session, "build") {
 		t.Error("expected build to NOT be excluded")
 	}
-	if IsAgentHealthExcluded("test") {
+	if IsAgentHealthExcluded(session, "test") {
 		t.Error("expected test to NOT be excluded")
+	}
+}
+
+func TestIsAgentHealthExcluded_DuringReload(t *testing.T) {
+	baseDir := t.TempDir()
+	SetBusDirBase(baseDir)
+	defer ResetBusDirBase()
+
+	session := "test-session"
+	role := "build"
+
+	// Without marker: build is NOT excluded
+	if IsAgentHealthExcluded(session, role) {
+		t.Error("expected build to NOT be excluded")
+	}
+
+	// With reload marker: build IS excluded
+	if err := writeReloadMarker(session, role); err != nil {
+		t.Fatalf("writeReloadMarker: %v", err)
+	}
+	if !IsAgentHealthExcluded(session, role) {
+		t.Error("expected build to be excluded during reload")
+	}
+
+	// Cleanup
+	clearReloadMarker(session, role)
+	if IsAgentHealthExcluded(session, role) {
+		t.Error("expected build to NOT be excluded after reload marker cleared")
 	}
 }

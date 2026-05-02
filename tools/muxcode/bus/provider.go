@@ -81,11 +81,28 @@ func ResolveProvider(role string) Provider {
 
 // ResolveProviderCLI returns the CLI identifier for a role without
 // constructing a full Provider. Used for logging and configuration.
-// Resolution: per-role env → global env → role default.
+// Resolution: runtime override → per-role env → global env → role default.
 // Command-execution roles (build, test, deploy, run, watch, commit)
 // default to "opencode" (MiniMax M2.5 Free via OpenCode Zen).
+//
+// This function reads runtime overrides without mutating process env vars
+// (no os.Setenv). Callers that need env-side-effects for downstream model
+// resolution (ResolveLaunchConfig, ReloadAgent) call LoadRuntimeOverrides
+// separately.
 func ResolveProviderCLI(role string) string {
-	cli := os.Getenv(RoleCLIEnvVar(role))
+	// Check runtime overrides first (highest priority).
+	// Read the override file directly — don't call os.Setenv, which would
+	// pollute the process environment and break concurrent test isolation.
+	cliKey := RoleCLIEnvVar(role)
+	if session := BusSession(); session != "" {
+		if overrides, err := ReadRuntimeOverrides(session, role); err == nil && overrides != nil {
+			if v, ok := overrides[cliKey]; ok && v != "" {
+				return v
+			}
+		}
+	}
+
+	cli := os.Getenv(cliKey)
 
 	if cli == "" {
 		cli = os.Getenv("MUXCODE_AGENT_CLI")

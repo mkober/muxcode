@@ -33,7 +33,7 @@ func AgentHealth(args []string) {
 		fmt.Printf("Agent %s stop marker cleared (auto-restart enabled)\n", role)
 
 	case "--check":
-		if bus.IsAgentHealthExcluded(role) {
+		if bus.IsAgentHealthExcluded(session, role) {
 			fmt.Printf("Agent %s is excluded from health monitoring\n", role)
 			return
 		}

@@ -116,6 +116,8 @@ func TestSharedPrompt_SingleLineWarning(t *testing.T) {
 // --- Phase 3: non-hook provider prompt instructions ---
 
 func TestSharedPrompt_NonHookProvider_HasManualBusSection(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
@@ -233,6 +235,8 @@ func TestSharedPrompt_HookProvider_NoManualBusSection(t *testing.T) {
 func TestSharedPrompt_EditAgent_OpenCode_HasManualBusSection(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 
 	// Edit agent on OpenCode should get manual bus section with orchestration instructions
 	t.Setenv("MUXCODE_EDIT_CLI", "opencode")
@@ -259,6 +263,8 @@ func TestSharedPrompt_EditAgent_OpenCode_HasManualBusSection(t *testing.T) {
 func TestSharedPrompt_EditAgent_ClaudeCode_NoManualBusSection(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 
 	// Edit agent on Claude Code should NOT get manual bus section (hooks handle it)
 	t.Setenv("MUXCODE_EDIT_CLI", "claude")
@@ -269,6 +275,8 @@ func TestSharedPrompt_EditAgent_ClaudeCode_NoManualBusSection(t *testing.T) {
 }
 
 func TestSharedPrompt_NonHookProvider_NoSendRestrictions(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
@@ -290,6 +298,8 @@ func TestSharedPrompt_NonHookProvider_NoSendRestrictions(t *testing.T) {
 func TestSharedPrompt_ClaudeCode_HasCompactCommand(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 
 	// Claude Code edit agent should have /compact-related instructions
 	t.Setenv("MUXCODE_EDIT_CLI", "claude")
@@ -305,6 +315,8 @@ func TestSharedPrompt_ClaudeCode_HasCompactCommand(t *testing.T) {
 func TestSharedPrompt_OpenCode_NoCompactSlashCommand(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 
 	// OpenCode edit agent should NOT have /compact references
 	t.Setenv("MUXCODE_EDIT_CLI", "opencode")
@@ -322,6 +334,8 @@ func TestSharedPrompt_OpenCode_NoCompactSlashCommand(t *testing.T) {
 }
 
 func TestSharedPrompt_OpenCode_NonEditCompact(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 

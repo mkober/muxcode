@@ -26,7 +26,7 @@ type SendPolicy struct {
 type ToolProfile struct {
 	Include     []string `json:"include,omitempty"`
 	Tools       []string `json:"tools,omitempty"`
-	DenyTools   []string `json:"deny_tools,omitempty"`   // prohibited command patterns (for non-hook providers)
+	DenyTools   []string `json:"deny_tools,omitempty"` // prohibited command patterns (for non-hook providers)
 	CdPrefix    bool     `json:"cd_prefix,omitempty"`
 	BashTimeout int      `json:"bash_timeout,omitempty"` // seconds, 0 = default (60s)
 }

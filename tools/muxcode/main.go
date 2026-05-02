@@ -22,6 +22,7 @@ var knownSubcommands = map[string]bool{
 	"api": true, "agent-health": true, "lifecycle": true, "console": true,
 	"hook": true, "workflow": true, "pii-scrub": true, "atlassian": true,
 	"compact": true, "launch": true, "modal": true, "mode": true,
+	"reload": true, "config": true, "provider-select": true,
 }
 
 var usage = `Usage: muxcode <command> [args...]
@@ -74,6 +75,9 @@ Commands:
   tasks         List delegated tasks tracked via --wait (--all, --status)
   track         Show delivery status for a message ID
   pii-scrub     Scrub PII and secrets from stdin (pipe filter)
+  reload        Stop an agent, reconfigure, and relaunch (hot reload)
+  config        View or change agent CLI/model configuration (set, get, list)
+  provider-select  Interactive provider/model selector TUI (used by modal)
   compact       Wait for agent idle, then inject /compact via tmux
 `
 
@@ -175,6 +179,12 @@ func main() {
 		cmd.Hook(args)
 	case "workflow":
 		cmd.Workflow(args)
+	case "reload":
+		cmd.Reload(args)
+	case "config":
+		cmd.Config(args)
+	case "provider-select":
+		cmd.ProviderSelect(args)
 	case "pii-scrub":
 		cmd.Scrub(args)
 	case "atlassian":

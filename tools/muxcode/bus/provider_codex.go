@@ -448,8 +448,14 @@ func writeCodexAgentConfig(role string) error {
 }
 
 // resolveCodexModel returns the Codex model for a role.
-// Resolution: MUXCODE_{ROLE}_CODEX_MODEL → MUXCODE_CODEX_MODEL → default.
+// Resolution: generic per-role env → Codex-specific per-role env → global Codex env → role default.
 func resolveCodexModel(role string) string {
+	// Generic per-role env var (MUXCODE_{ROLE}_MODEL) - shared across providers
+	if v := os.Getenv(RoleModelEnvVar(role)); v != "" {
+		return v
+	}
+
+	// Codex-specific per-role env var (MUXCODE_{ROLE}_CODEX_MODEL)
 	envVar := RoleCodexModelEnvVar(role)
 	if v := os.Getenv(envVar); v != "" {
 		return v

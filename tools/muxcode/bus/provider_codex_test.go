@@ -25,6 +25,8 @@ func TestCodexProvider_Interface(t *testing.T) {
 // --- ResolveProvider ---
 
 func TestResolveProvider_PerRoleCodex(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_REVIEW_CLI", "codex")
 
 	p := ResolveProvider("review")
@@ -34,6 +36,8 @@ func TestResolveProvider_PerRoleCodex(t *testing.T) {
 }
 
 func TestResolveProvider_SessionDefaultCodex(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "codex")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
 
@@ -102,6 +106,7 @@ func TestCodexBuildExecArgs(t *testing.T) {
 
 func TestCodexBuildExecArgs_WithModel(t *testing.T) {
 	p := &CodexProvider{}
+	t.Setenv(RoleModelEnvVar("review"), "") // clear generic model env var
 	t.Setenv("MUXCODE_REVIEW_CODEX_MODEL", "o3")
 
 	cfg := &LaunchConfig{Role: "review", CLI: "codex"}
@@ -342,6 +347,7 @@ func TestRoleCodexModelDefault(t *testing.T) {
 }
 
 func TestResolveCodexModel_Default(t *testing.T) {
+	t.Setenv(RoleModelEnvVar("review"), "") // clear generic model env var
 	t.Setenv("MUXCODE_REVIEW_CODEX_MODEL", "")
 	t.Setenv("MUXCODE_CODEX_MODEL", "")
 
@@ -352,6 +358,7 @@ func TestResolveCodexModel_Default(t *testing.T) {
 }
 
 func TestResolveCodexModel_PerRole(t *testing.T) {
+	t.Setenv(RoleModelEnvVar("review"), "") // clear generic model env var
 	t.Setenv("MUXCODE_REVIEW_CODEX_MODEL", "o3")
 
 	model := resolveCodexModel("review")
@@ -361,6 +368,7 @@ func TestResolveCodexModel_PerRole(t *testing.T) {
 }
 
 func TestResolveCodexModel_Global(t *testing.T) {
+	t.Setenv(RoleModelEnvVar("review"), "") // clear generic model env var
 	t.Setenv("MUXCODE_REVIEW_CODEX_MODEL", "")
 	t.Setenv("MUXCODE_CODEX_MODEL", "gpt-4.1")
 
@@ -532,6 +540,8 @@ func TestCodexAgentConfigDir(t *testing.T) {
 // --- Mixed provider status ---
 
 func TestAgentStatus_CodexProvider(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_REVIEW_CLI", "codex")
 	session := t.TempDir()
@@ -543,6 +553,8 @@ func TestAgentStatus_CodexProvider(t *testing.T) {
 }
 
 func TestAgentStatus_MixedWithCodex(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_EDIT_CLI", "")
 	t.Setenv("MUXCODE_BUILD_CLI", "opencode")

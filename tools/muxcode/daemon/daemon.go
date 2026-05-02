@@ -809,7 +809,7 @@ func (d *Daemon) checkAgentHealth() {
 
 	for _, role := range bus.KnownRoles {
 		// Skip excluded roles and spawn roles
-		if bus.IsAgentHealthExcluded(role) || bus.IsSpawnRole(role) {
+		if bus.IsAgentHealthExcluded(d.session, role) || bus.IsSpawnRole(role) {
 			continue
 		}
 
@@ -919,6 +919,11 @@ func (d *Daemon) checkIdleAgents() {
 	for _, role := range bus.KnownRoles {
 		// Skip hosted roles — they share a pane with their host
 		if bus.WindowForRole(role) != role {
+			continue
+		}
+		// Skip roles being reloaded — agent is intentionally down during
+		// the stop→reconfigure→relaunch cycle
+		if bus.IsReloading(d.session, role) {
 			continue
 		}
 		// Skip if no actionable messages. Only wake agents for request-type
@@ -1135,6 +1140,59 @@ func (d *Daemon) checkNonHookEdits() {
 	}
 	if len(triggerLines) > 0 {
 		_ = os.WriteFile(triggerPath, []byte(strings.Join(triggerLines, "\n")+"\n"), 0644)
+	}
+
+	// Show changed files in Neovim (pane 0) so the user can see what
+	// the non-hook edit agent (e.g. OpenCode) changed. The first file
+	// opens with a git diff split (HEAD vs current); subsequent files
+	// are just reloaded in the background.
+	if files := extractDiffFiles(diffOutput); len(files) > 0 {
+		showEditInNeovim(d.session, files[0], true) // diff split for first file
+		for _, f := range files[1:] {
+			time.Sleep(200 * time.Millisecond)
+			showEditInNeovim(d.session, f, false) // reload only for remaining files
+		}
+	}
+}
+
+// showEditInNeovim reloads a changed file in the Neovim edit pane (pane 0)
+// so the user can see what a non-hook edit agent (OpenCode, Codex) changed.
+// When withDiff is true, it opens a git diff split showing HEAD vs current.
+func showEditInNeovim(session, file string, withDiff bool) {
+	pane := session + ":edit.0"
+
+	// Escape single quotes for vimscript single-quoted strings.
+	// fnameescape() handles all other special chars (%, #, |, spaces, etc).
+	nvimFile := strings.ReplaceAll(file, "'", "''")
+	// Shell-quote the file path for git commands inside :0r!
+	shellFile := "'" + strings.ReplaceAll(file, "'", "'\\''") + "'"
+
+	// Dismiss any pending "Press ENTER" prompts
+	exec.Command("tmux", "send-keys", "-t", pane, "Escape").Run()
+	time.Sleep(50 * time.Millisecond)
+	exec.Command("tmux", "send-keys", "-t", pane, "Escape").Run()
+	time.Sleep(50 * time.Millisecond)
+
+	if withDiff {
+		// Clean up any stale diff from a previous file
+		exec.Command("tmux", "send-keys", "-t", pane,
+			":sil! exe 'b!'.get(g:,'_mux_buf',bufnr()) | sil! diffoff! | sil! only | sil! set number",
+			"Enter").Run()
+		time.Sleep(200 * time.Millisecond)
+
+		// Open file and create diff split with git HEAD version:
+		//   Left (original): HEAD version from git
+		//   Right (current): working tree version
+		// Uses fnameescape() for safe vim path handling (spaces, %, #, etc.)
+		// and shell-quoting for the git show command.
+		cmd := fmt.Sprintf(":sil! exe 'e! ' . fnameescape('%s') | sil! setlocal foldlevel=99 | sil! set number | sil! diffthis | sil! new | sil! setlocal buftype=nofile bufhidden=wipe number | sil! exe '0r! git show HEAD:%s 2>/dev/null' | sil! 0delete _ | sil! diffthis | sil! setlocal foldlevel=99 | sil! norm! zR | sil! wincmd p | sil! setlocal foldlevel=99 | sil! norm! zR",
+			nvimFile, shellFile)
+		exec.Command("tmux", "send-keys", "-t", pane, cmd, "Enter").Run()
+	} else {
+		// Just reload the file without diff split
+		exec.Command("tmux", "send-keys", "-t", pane,
+			fmt.Sprintf(":sil! exe 'e! ' . fnameescape('%s') | sil! set number | sil! nohlsearch", nvimFile),
+			"Enter").Run()
 	}
 }
 
@@ -1382,12 +1440,15 @@ func (d *Daemon) checkCleanup() {
 	deliveryCleaned := bus.CleanExpiredDeliveries(d.session, 1*time.Hour)
 	// Clean task files older than 1 hour
 	tasksCleaned := bus.CleanExpiredTasks(d.session, 1*time.Hour)
+	// Clean stale reload markers (>60s — reload crashed or timed out)
+	reloadCleaned := bus.CleanStaleReloadMarkers(d.session)
 
-	if deliveryCleaned > 0 || tasksCleaned > 0 {
+	if deliveryCleaned > 0 || tasksCleaned > 0 || reloadCleaned > 0 {
 		ts := time.Now().Format("15:04:05")
-		fmt.Printf("  %s  Cleanup: %d delivery, %d task files removed\n", ts, deliveryCleaned, tasksCleaned)
+		fmt.Printf("  %s  Cleanup: %d delivery, %d task, %d reload marker files removed\n",
+			ts, deliveryCleaned, tasksCleaned, reloadCleaned)
 		bus.LogLifecycle(d.session, "info", "daemon", "cleanup",
-			fmt.Sprintf("delivery=%d tasks=%d", deliveryCleaned, tasksCleaned))
+			fmt.Sprintf("delivery=%d tasks=%d reload-markers=%d", deliveryCleaned, tasksCleaned, reloadCleaned))
 	}
 }
 

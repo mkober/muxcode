@@ -191,6 +191,19 @@ func TestCheckNonHookEdits_SkipsHookProvider(t *testing.T) {
 	// Force past debounce
 	d.lastEditDiffCheck = 0
 
+	// Isolate from live session override files. Without this, the test
+	// inherits BUS_SESSION=muxcode from the environment, and tmuxVar("#S")
+	// returns "muxcode" even when BUS_SESSION is cleared — causing
+	// ResolveProviderCLI to read the real session's override file
+	// (/tmp/muxcode-bus-muxcode/config/edit.env) which contains
+	// MUXCODE_EDIT_CLI=opencode, making the test fail.
+	bus.SetBusDirBase(t.TempDir())
+	defer bus.ResetBusDirBase()
+
+	// Force Claude Code edit provider (hooks supported) — the default may be
+	// overridden by a global MUXCODE_EDIT_CLI env var (e.g., set to opencode).
+	t.Setenv("MUXCODE_EDIT_CLI", "claude")
+
 	// Default edit provider is Claude Code (hooks supported)
 	// Should skip without updating lastEditDiffHash
 	d.checkNonHookEdits()

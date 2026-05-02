@@ -562,12 +562,12 @@ Updated files:
 | `bus/launch.go` | Update `ResolveLaunchConfig()` to call `LoadRuntimeOverrides(role)` at start |
 
 Success criteria:
-- [ ] `WriteRuntimeOverride("build", "MUXCODE_BUILD_CLI", "opencode")` creates override file
-- [ ] `LoadRuntimeOverrides("build")` sets env vars from override file
-- [ ] `ResolveProviderCLI("build")` returns `"opencode"` when runtime override is set (even if env var says `"claude"`)
-- [ ] `ClearRuntimeOverrides("build")` removes override file
-- [ ] Override files are in `/tmp/muxcode-bus-{session}/config/` (session-scoped, ephemeral)
-- [ ] Existing resolution chain works unchanged when no override file exists
+- [x] `WriteRuntimeOverride("build", "MUXCODE_BUILD_CLI", "opencode")` creates override file
+- [x] `LoadRuntimeOverrides("build")` sets env vars from override file
+- [x] `ResolveProviderCLI("build")` returns `"opencode"` when runtime override is set (even if env var says `"claude"`)
+- [x] `ClearRuntimeOverrides("build")` removes override file
+- [x] Override files are in `/tmp/muxcode-bus-{session}/config/` (session-scoped, ephemeral)
+- [x] Existing resolution chain works unchanged when no override file exists
 
 ### Phase 2: Graceful stop and reload command
 
@@ -587,15 +587,15 @@ Updated files:
 | `bus/agent_health.go` | `IsAgentHealthExcluded()` also returns true when `IsReloading()` is true |
 
 Success criteria:
-- [ ] `muxcode reload build` stops the build agent and relaunches with current config
-- [ ] `muxcode reload build --cli opencode` writes runtime override, relaunches on OpenCode
-- [ ] `muxcode reload build --model deepseek-v4-pro` writes model override, relaunches with new model
-- [ ] `GracefulStop()` waits up to 5s for process exit, force-kills after
-- [ ] Reload marker written during reload, removed after successful launch verification
-- [ ] `ReloadTarget()` resolves correct pane for mode-cycled agents (active vs holding window)
-- [ ] Agent health checks suppressed during reload (marker-based)
-- [ ] Lifecycle event logged for every reload
-- [ ] Edit agent notified of reload events
+- [x] `muxcode reload build` stops the build agent and relaunches with current config
+- [x] `muxcode reload build --cli opencode` writes runtime override, relaunches on OpenCode
+- [x] `muxcode reload build --model deepseek-v4-pro` writes model override, relaunches with new model
+- [x] `GracefulStop()` waits up to 5s for process exit, force-kills after
+- [x] Reload marker written during reload, removed after successful launch verification
+- [x] `ReloadTarget()` resolves correct pane for mode-cycled agents (active vs holding window)
+- [x] Agent health checks suppressed during reload (marker-based)
+- [x] Lifecycle event logged for every reload
+- [x] Edit agent notified of reload events
 
 ### Phase 3: `muxcode config` command
 
@@ -612,12 +612,18 @@ Updated files:
 | `main.go` | Add `"config"` case to subcommand dispatch (if not already present) |
 | `bus/launch.go` | Add `EffectiveConfig(role)` function that returns resolved CLI, model, and source for each |
 
+Updated files:
+
+| File | Change |
+|------|--------|
+| `bus/config_file.go` | Add `ResolveConfigPath()` and `SetShellConfigValue()` for persistent config read/write |
+
 Success criteria:
-- [ ] `muxcode config set build.cli opencode` writes to shell-sourceable config file
-- [ ] `muxcode config set build.cli opencode --reload` writes config and triggers reload
-- [ ] `muxcode config get build` shows effective CLI, model, and resolution source
-- [ ] `muxcode config list` shows all roles with their effective CLI and model
-- [ ] Config changes persist across session restarts (written to `~/.config/muxcode/config`)
+- [x] `muxcode config set build.cli opencode` writes to shell-sourceable config file
+- [x] `muxcode config set build.cli opencode --reload` writes config and triggers reload
+- [x] `muxcode config get build` shows effective CLI, model, and resolution source
+- [x] `muxcode config list` shows all roles with their effective CLI and model
+- [x] Config changes persist across session restarts (written to `~/.config/muxcode/config`)
 
 ### Phase 4: Daemon integration and `--all` support
 
@@ -630,11 +636,11 @@ Updated files:
 | `bus/reload.go` | Add `ReloadAll()` function, `IsReloadMarkerStale()` cleanup (>60s = stale) |
 
 Success criteria:
-- [ ] Daemon skips reloading agents in health checks and idle checks
-- [ ] `muxcode reload --all` reloads every active agent sequentially
-- [ ] Stale reload markers (>60s) are auto-cleaned by the daemon
-- [ ] No race conditions between reload and daemon health checks
-- [ ] Edit agent excluded from `--all` reload (interactive session — require explicit `muxcode reload edit`)
+- [x] Daemon skips reloading agents in health checks and idle checks
+- [x] `muxcode reload --all` reloads every active agent sequentially
+- [x] Stale reload markers (>60s) are auto-cleaned by the daemon
+- [x] No race conditions between reload and daemon health checks
+- [x] Edit agent excluded from `--all` reload (interactive session — require explicit `muxcode reload edit`)
 
 ### Phase 5: Provider selector modal
 
@@ -656,19 +662,19 @@ Updated files:
 | `main.go` | Add `"provider-select"` case to subcommand dispatch |
 
 Success criteria:
-- [ ] `prefix + R` opens the provider selector modal as a tmux popup
-- [ ] `prefix + b → Provider` opens the same modal from the quick menu
-- [ ] Modal shows the currently active agent window's role, current CLI, and current model
-- [ ] Provider list shows Claude Code, OpenCode, Codex, Local with installed status
-- [ ] Model list updates dynamically when switching providers
-- [ ] "custom..." option allows freeform model ID entry
-- [ ] Local (Ollama) models populated from `ollama list` output
-- [ ] Arrow keys / j/k navigate, Space selects, Tab switches sections, Enter confirms
-- [ ] "Compact before reload" and "Persist to config" checkboxes functional
-- [ ] On confirm: modal closes, `muxcode reload` executes with selected CLI + model
-- [ ] Unavailable providers shown greyed out with "(not installed)"
-- [ ] Mode-cycled windows resolve to the active role (e.g., research on F1, auto on F2)
-- [ ] TUI uses Dracula palette from `tui/styles.go`, no external dependencies
+- [x] `prefix + R` opens the provider selector modal as a tmux popup
+- [x] `prefix + b → Provider` opens the same modal from the quick menu
+- [x] Modal shows the currently active agent window's role, current CLI, and current model
+- [x] Provider list shows Claude Code, OpenCode, Codex, Local with installed status
+- [x] Model list updates dynamically when switching providers
+- [x] "custom..." option allows freeform model ID entry
+- [x] Local (Ollama) models populated from `ollama list` output
+- [x] Arrow keys / j/k navigate, Space selects, Tab switches sections, Enter confirms
+- [x] "Compact before reload" and "Persist to config" checkboxes functional
+- [x] On confirm: modal closes, `muxcode reload` executes with selected CLI + model
+- [x] Unavailable providers shown greyed out with "(not installed)"
+- [x] Mode-cycled windows resolve to the active role (e.g., research on F1, auto on F2)
+- [x] TUI uses Dracula palette from `tui/styles.go`, no external dependencies
 
 ### Phase 6: Integration tests and docs
 
@@ -688,14 +694,14 @@ Updated files:
 | `docs/agent-bus.md` | Add `reload` and `provider-select` subcommand references |
 
 Success criteria:
-- [ ] Integration test passes: reload build agent between providers
-- [ ] `muxcode reload build --cli opencode` completes in <20 seconds
-- [ ] Provider selector modal opens, selects, and reloads successfully
-- [ ] Inbox messages preserved across reload (bus identity unchanged)
-- [ ] Memory preserved across reload (separate from agent process)
-- [ ] Workflow state preserved (daemon-managed, not process-managed)
-- [ ] Console viewer (pane 0) unaffected by reload
-- [ ] Documentation updated with examples, keybindings, and resolution chain
+- [x] Integration test passes: reload build agent between providers
+- [x] `muxcode reload build --cli opencode` completes in <20 seconds
+- [x] Provider selector modal opens, selects, and reloads successfully
+- [x] Inbox messages preserved across reload (bus identity unchanged)
+- [x] Memory preserved across reload (separate from agent process)
+- [x] Workflow state preserved (daemon-managed, not process-managed)
+- [x] Console viewer (pane 0) unaffected by reload
+- [x] Documentation updated with examples, keybindings, and resolution chain
 
 ## Configuration
 
@@ -757,4 +763,4 @@ muxcode config get build
 
 ## Status
 
-Draft
+Complete

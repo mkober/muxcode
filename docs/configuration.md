@@ -111,9 +111,40 @@ Each agent window independently resolves its AI CLI provider. A single session c
 | `MUXCODE_{ROLE}_CLI` | (unset) | Per-role override (e.g. `MUXCODE_BUILD_CLI=opencode`, `MUXCODE_COMMIT_CLI=local`, `MUXCODE_ANALYZE_CLI=codex`) |
 
 Resolution order (first non-empty wins):
-1. `MUXCODE_{ROLE}_CLI` — per-agent override
-2. `MUXCODE_AGENT_CLI` — session-wide default
-3. `claude` — built-in fallback
+1. Runtime override (`/tmp/muxcode-bus-{session}/config/{role}.env`) — session-scoped, set by `muxcode reload --cli`
+2. `MUXCODE_{ROLE}_CLI` — per-agent override
+3. `MUXCODE_AGENT_CLI` — session-wide default
+4. Config file (`~/.config/muxcode/config`) — persistent, set by `muxcode config set`
+5. `roleDefaultCLI()` — built-in fallback
+
+### Runtime configuration
+
+Change CLI provider or model at runtime without restarting the session:
+
+```bash
+# Session-scoped override (lost on session exit)
+muxcode reload build --cli opencode --model opencode-go/deepseek-v4-pro
+
+# Persistent change (survives session restarts)
+muxcode config set build.cli opencode
+muxcode config set build.model opencode-go/deepseek-v4-pro
+
+# Persistent change + immediate reload
+muxcode config set build.cli opencode --reload
+
+# View effective config with resolution source
+muxcode config get build
+# Output:
+#   === build ===
+#   CLI:     opencode                       (runtime override)
+#   Model:   opencode-go/deepseek-v4-pro    (env: MUXCODE_BUILD_MODEL)
+#   Default: claude / claude-sonnet-4-6
+
+# List all roles
+muxcode config list
+```
+
+See [Agents — Hot reload](agents.md#hot-reload) for full details.
 
 Provider comparison:
 

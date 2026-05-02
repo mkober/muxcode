@@ -62,7 +62,9 @@ func sessionWindows(session string) []string {
 // Run starts the main render loop.
 func (d *Dashboard) Run() error {
 	// Switch terminal to raw mode so any keypress is immediate.
-	rawErr := exec.Command("stty", "raw", "-echo").Run()
+	rawCmd := exec.Command("stty", "raw", "-echo")
+	rawCmd.Stdin = os.Stdin
+	rawErr := rawCmd.Run()
 
 	// Clear screen and hide cursor
 	fmt.Print("\033[2J\033[H")
@@ -121,7 +123,9 @@ func (d *Dashboard) readKeys() {
 // cleanup restores the terminal to a usable state.
 func (d *Dashboard) cleanup(restoreStty bool) {
 	if restoreStty {
-		_ = exec.Command("stty", "sane").Run()
+		saneCmd := exec.Command("stty", "sane")
+		saneCmd.Stdin = os.Stdin
+		_ = saneCmd.Run()
 	}
 	fmt.Print("\033[?25h") // show cursor
 	fmt.Print(RST)         // reset colors

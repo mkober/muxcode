@@ -48,6 +48,7 @@ tools/muxcode-llm-harness/    # Go module — standalone local LLM harness
 | `make clean` | Remove `bin/` directory |
 | `./install.sh` | First-time setup — checks prereqs, builds, configures tmux and Claude Code hooks |
 | `bash scripts/test-diff-split.sh` | Integration test for nvim diff split preview (requires running muxcode session) |
+| `bash scripts/test-hot-reload.sh` | Integration test for agent hot reload (requires running muxcode session) |
 
 Both Go modules have **no external dependencies** (stdlib only).
 
@@ -102,6 +103,7 @@ Both Go modules have **no external dependencies** (stdlib only).
 - **Research agent**: runs on OpenCode with DeepSeek V4 Pro on the F1 window (mode index 1). Has its own independent inbox (`inbox/research.jsonl`) — not hosted on edit or plan. Specializes in web searching API docs, platform references, and GitHub projects. Not part of any event chain. Delegates implementation to the active F2 agent via `muxcode mode active --window edit`. Findings persist in `research-history.jsonl` (console) and memory (cross-session).
 - **Hook-driven chains**: build→test→review, deploy→run→watch chains are deterministic (bash exit codes), not LLM-driven. Only fires for hook-supporting providers (`provider.SupportsHooks()`). Non-hook providers (OpenCode, Codex CLI, local LLM) use three-layer graceful degradation: (1) config-driven `buildChainInstruction()` generates natural-language chain instructions per role, (2) agent body adaptation via `adaptBodyForNonHookProvider()` (OpenCode) or shared agent config via `WriteAgentConfig()` (Codex) that rewrites hook chain references to manual commands, (3) `CheckSendPolicy()` bypass so non-hook agents can send chain messages that would be blocked for hook agents. See [Hooks](docs/hooks.md).
 - **Conditional chains**: `ChainAction` supports a `Conditions` map with 8 condition types (`files_match`, `files_not_match`, `branch_match`, `branch_not_match`, `env_set`, `env_equals`, `output_contains`, `exit_code`). Actions in a `ChainActions` slice are evaluated first-match-wins — first action whose conditions pass (or has no conditions) fires. `ChainContext` carries git state (branch, changed files), command output, and exit code. Git info is lazy-loaded via `PopulateGitInfo()` only when conditions or templates reference it. Subscriptions also support conditions via the same mechanism.
+- **Hot reload**: `muxcode reload <role> [--cli <cli>] [--model <model>] [--compact]` stops an agent, reconfigures with optional CLI/model overrides (written to session-scoped runtime override files in `/tmp/muxcode-bus-{session}/config/{role}.env`), and relaunches. Reload markers suppress daemon health checks during the cycle. Provider selector modal (`prefix + R` or `prefix + b → Provider`) provides visual provider/model selection. `muxcode config set/get/list` manages persistent config. Resolution chain: runtime override → per-role env → global env → config file → default. See [Configuration](docs/configuration.md).
 - **User-initiated commits**: git commits, pushes, and PR creation are never auto-triggered. The automated chain stops at review.
 - **Pre-commit safeguard**: commit delegation blocked when any agent has pending inbox, is busy, or has running procs/spawns. Bypass with `--force`.
 - **Auto-CC**: messages from build/test/review/deploy to non-edit agents are copied to edit inbox. Chain/subscription messages use `SendNoCC()` to avoid redundant CC.
@@ -168,10 +170,14 @@ Test: `cd tools/muxcode && go test ./...`
 | `bus/agent.go` | `AgentLoop()`, `AgentConfig`, `buildSystemPrompt()`, `processMessages()` |
 | `bus/health.go` | `CheckOllamaInference()`, `LocalLLMRoles()`, `RestartOllama()`, `RestartLocalAgent()` |
 | `bus/agent_health.go` | `IsAgentAlive()`, `IsAgentStopped()`, `StopAgent()`, `StartAgent()`, `CheckAgentHealth()`, `FormatAgentHealthAlert()` |
+| `bus/override.go` | `WriteRuntimeOverride()`, `ReadRuntimeOverrides()`, `LoadRuntimeOverrides()`, `ClearRuntimeOverrides()`, `RuntimeOverridePath()` — session-scoped runtime config overrides |
+| `bus/reload.go` | `ReloadAgent()`, `ReloadAll()`, `GracefulStop()`, `ReloadTarget()`, `ReloadMarkerPath()`, `IsReloading()`, `IsReloadMarkerStale()`, `CleanStaleReloadMarkers()` |
+| `bus/provider_options.go` | `ProviderOption`, `AvailableProviders()`, `ProviderByIndex()`, `ProviderByCLI()`, `ResolveActiveAgentWindow()`, `WindowFKey()` — provider selector data layer |
+| `bus/config_file.go` | `GetShellConfig()`, `ResolveConfigPath()`, `SetShellConfigValue()` — shell-sourceable config file read/write |
 | `bus/watcher_health.go` | `KeepalivePath()`, `IsKeepaliveStale()`, `TouchKeepalive()` — daemon keepalive monitoring |
 | `cmd/` | Subcommand handlers (one per CLI command) |
 | `watcher/watcher.go` | Bus daemon: inbox polling, trigger debounce, cron/proc/spawn/loop/compaction/ollama checks |
-| `tui/` | Dashboard TUI (Dracula theme) |
+| `tui/` | Dashboard TUI (Dracula theme), Provider selector TUI (`provider_select.go`) |
 
 ### Go LLM harness (`tools/muxcode-llm-harness/`)
 

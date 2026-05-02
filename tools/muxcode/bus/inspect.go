@@ -33,7 +33,7 @@ func GetAgentStatus(session, role string) AgentStatus {
 	status.InboxCount = InboxCount(session, role)
 
 	// Health check
-	if IsAgentHealthExcluded(role) {
+	if IsAgentHealthExcluded(session, role) {
 		status.Health = "excluded"
 	} else if IsAgentStopped(session, role) {
 		status.Health = "stopped"

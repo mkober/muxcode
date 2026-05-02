@@ -402,6 +402,90 @@ CLI: `muxcode tools <role>` — resolves includes, applies CdPrefix, outputs one
 
 **Process substitution**: `Bash(diff *)` does NOT match `diff <(...)` — Claude Code treats `<()` as a special construct requiring explicit `Bash(diff <(*)`.
 
+## Hot reload
+
+Change the CLI provider and model for any agent at runtime without restarting the session. Preserves inbox, memory, workflow state, and bus identity.
+
+### Usage
+
+```bash
+# Reload with current config (re-reads env vars and config file)
+muxcode reload build
+
+# Switch CLI provider
+muxcode reload build --cli opencode
+
+# Switch model
+muxcode reload build --model opencode-go/deepseek-v4-pro
+
+# Switch both
+muxcode reload edit --cli opencode --model opencode-go/deepseek-v4-pro
+
+# Compact context before reloading
+muxcode reload edit --model claude-opus-4-6 --compact
+
+# Reload all active agents (excludes edit)
+muxcode reload --all
+```
+
+### Provider selector modal
+
+An interactive TUI modal for visually picking a provider and model. Targets the currently active agent window.
+
+- **Keybinding**: `prefix + R` or `prefix + b → Provider`
+- **Sections**: Provider (radio), Model (radio + custom input), Options (compact/persist checkboxes)
+- **Navigation**: `j`/`k`/arrows move, `Tab` switches section, `Space` selects, `Enter` confirms, `q`/`Esc` cancels
+
+Mode-cycled windows resolve to the active role (e.g., research on F1, auto on F2).
+
+### Persistent config changes
+
+```bash
+# Set CLI for a role (persists to ~/.config/muxcode/config)
+muxcode config set build.cli opencode
+
+# Set and reload in one step
+muxcode config set build.cli opencode --reload
+
+# View effective config (shows resolution source)
+muxcode config get build
+
+# List all roles
+muxcode config list
+```
+
+### Runtime override resolution
+
+When reloading, configuration is resolved in this order (first non-empty wins):
+
+| Priority | Source | Scope |
+|----------|--------|-------|
+| 1 | Runtime override (`/tmp/muxcode-bus-{session}/config/{role}.env`) | Per-role, session-scoped |
+| 2 | `MUXCODE_{ROLE}_CLI` / `MUXCODE_{ROLE}_MODEL` env var | Per-role, shell-scoped |
+| 3 | `MUXCODE_AGENT_CLI` env var | Session-wide |
+| 4 | Config file (`~/.config/muxcode/config`) | Persistent |
+| 5 | `roleDefaultCLI()` / `RoleClaudeModelDefault()` | Built-in default |
+
+Runtime overrides are ephemeral (session-scoped in `/tmp/`). Use `muxcode config set` for persistent changes.
+
+### Mode-cycled agents
+
+Reload operates on individual roles within mode cycles. The active role reloads in the host window pane; the inactive role reloads in its holding window pane. Mode state is preserved.
+
+### What is preserved across reload
+
+| Preserved | Not preserved |
+|-----------|---------------|
+| Inbox messages | Active conversation context |
+| Memory (cross-session) | In-progress tool executions |
+| Workflow state | Agent process state |
+| Bus identity | |
+| Console viewer (pane 0) | |
+
+Use `--compact` to save conversation context to memory before reloading.
+
+Core code: `bus/reload.go`, `bus/override.go`, `cmd/reload.go`, `cmd/config.go`, `tui/provider_select.go`, `bus/provider_options.go`.
+
 ## Agent health monitoring
 
 Daemon-integrated liveness detection for agent processes. The daemon probes agent tmux panes every 30 seconds and applies a 3-strike escalation:

@@ -475,9 +475,16 @@ func resolveTaskFilePath() string {
 }
 
 // ResolveLaunchConfig resolves all configuration needed to launch an agent.
-// It resolves the provider from environment variables, delegates CLI-specific
-// configuration to the provider, and sets provider-independent fields.
+// It loads runtime overrides first (highest priority), then resolves the
+// provider from environment variables, delegates CLI-specific configuration
+// to the provider, and sets provider-independent fields.
 func ResolveLaunchConfig(role string) *LaunchConfig {
+	// Load runtime overrides first (highest priority).
+	// Override files set env vars that are picked up by the existing
+	// os.Getenv resolution in ResolveProvider, resolveClaudeModel,
+	// resolveOpenCodeModel, etc.
+	_ = LoadRuntimeOverrides(BusSession(), role)
+
 	cfg := &LaunchConfig{
 		Role: role,
 	}
@@ -538,10 +545,142 @@ func buildHarnessArgs(role string) []string {
 	return args
 }
 
+// RoleConfig holds the effective CLI, model, and resolution source for a role.
+type RoleConfig struct {
+	Role      string // agent role name
+	CLI       string // effective CLI (claude, opencode, codex, local)
+	CLISource string // where CLI was resolved from
+	Model     string // effective model
+	ModelSrc  string // where model was resolved from
+}
+
+// EffectiveConfig returns the resolved CLI, model, and resolution source
+// for a role. Does not mutate process environment — reads override files
+// and env vars without calling os.Setenv.
+func EffectiveConfig(role string) RoleConfig {
+	rc := RoleConfig{Role: role}
+	session := BusSession()
+
+	// --- CLI resolution ---
+	cliKey := RoleCLIEnvVar(role)
+
+	// 1. Runtime override (session-scoped)
+	if session != "" {
+		if overrides, err := ReadRuntimeOverrides(session, role); err == nil && overrides != nil {
+			if v, ok := overrides[cliKey]; ok && v != "" {
+				rc.CLI = v
+				rc.CLISource = "runtime override"
+			}
+		}
+	}
+	// 2. Per-role env var
+	if rc.CLI == "" {
+		if v := os.Getenv(cliKey); v != "" {
+			rc.CLI = v
+			rc.CLISource = "env: " + cliKey
+		}
+	}
+	// 3. Session-wide env var
+	if rc.CLI == "" {
+		if v := os.Getenv("MUXCODE_AGENT_CLI"); v != "" {
+			rc.CLI = v
+			rc.CLISource = "env: MUXCODE_AGENT_CLI"
+		}
+	}
+	// 4. Config file
+	if rc.CLI == "" {
+		cfg := GetShellConfig("")
+		if v, ok := cfg[cliKey]; ok && v != "" {
+			rc.CLI = v
+			rc.CLISource = "config file"
+		}
+	}
+	// 5. Built-in default
+	if rc.CLI == "" {
+		rc.CLI = roleDefaultCLI(role)
+		rc.CLISource = "default"
+	}
+
+	// --- Model resolution ---
+	modelKey := RoleModelEnvVar(role)
+
+	// 1. Runtime override (session-scoped)
+	if session != "" {
+		if overrides, err := ReadRuntimeOverrides(session, role); err == nil && overrides != nil {
+			if v, ok := overrides[modelKey]; ok && v != "" {
+				rc.Model = v
+				rc.ModelSrc = "runtime override"
+			}
+		}
+	}
+	// 2. Generic per-role env var (MUXCODE_{ROLE}_MODEL)
+	if rc.Model == "" {
+		if v := os.Getenv(modelKey); v != "" {
+			rc.Model = v
+			rc.ModelSrc = "env: " + modelKey
+		}
+	}
+	// 3. Provider-specific per-role env var (e.g. MUXCODE_{ROLE}_CLAUDE_MODEL)
+	if rc.Model == "" {
+		var providerModelKey string
+		switch rc.CLI {
+		case "opencode":
+			// OpenCode uses generic model key only (no separate _OPENCODE_MODEL)
+		case "codex":
+			providerModelKey = RoleCodexModelEnvVar(role)
+		default:
+			providerModelKey = RoleClaudeModelEnvVar(role)
+		}
+		if providerModelKey != "" {
+			if v := os.Getenv(providerModelKey); v != "" {
+				rc.Model = v
+				rc.ModelSrc = "env: " + providerModelKey
+			}
+		}
+	}
+	// 4. Config file
+	if rc.Model == "" {
+		cfg := GetShellConfig("")
+		if v, ok := cfg[modelKey]; ok && v != "" {
+			rc.Model = v
+			rc.ModelSrc = "config file"
+		}
+	}
+	// 5. Provider-specific default
+	if rc.Model == "" {
+		switch rc.CLI {
+		case "opencode":
+			if m := RoleOpenCodeModelDefault(role); m != "" {
+				rc.Model = m
+				rc.ModelSrc = "default"
+			}
+		case "codex":
+			rc.Model = RoleCodexModelDefault(role)
+			rc.ModelSrc = "default"
+		default:
+			rc.Model = RoleClaudeModelDefault(role)
+			rc.ModelSrc = "default"
+		}
+	}
+
+	return rc
+}
+
+// RoleModelEnvVar returns the generic model env var key for a role.
+// This is used by all providers as a common override mechanism.
+func RoleModelEnvVar(role string) string {
+	return "MUXCODE_" + strings.ToUpper(strings.ReplaceAll(role, "-", "_")) + "_MODEL"
+}
+
 // resolveClaudeModel resolves the Claude model for a role.
-// Resolution: per-role env → global env → role default.
+// Resolution: generic per-role env → Claude-specific per-role env → global Claude env → role default.
 func resolveClaudeModel(role string) string {
-	// Per-role env var
+	// Generic per-role env var (MUXCODE_{ROLE}_MODEL) - shared across providers
+	if v := os.Getenv(RoleModelEnvVar(role)); v != "" {
+		return v
+	}
+
+	// Per-role env var (MUXCODE_{ROLE}_CLAUDE_MODEL)
 	envVar := RoleClaudeModelEnvVar(role)
 	if v := os.Getenv(envVar); v != "" {
 		return v

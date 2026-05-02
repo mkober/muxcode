@@ -719,6 +719,8 @@ func TestCheckSendPolicy_NilPolicy(t *testing.T) {
 }
 
 func TestCheckSendPolicy_NonHookProviderBypasses(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 

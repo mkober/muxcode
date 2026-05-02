@@ -46,6 +46,8 @@ func TestProviderInterface_Local(t *testing.T) {
 // --- ResolveProvider ---
 
 func TestResolveProvider_DefaultOpenCode(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
 
@@ -56,6 +58,8 @@ func TestResolveProvider_DefaultOpenCode(t *testing.T) {
 }
 
 func TestResolveProvider_DefaultClaude(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_EDIT_CLI", "")
 
@@ -66,6 +70,8 @@ func TestResolveProvider_DefaultClaude(t *testing.T) {
 }
 
 func TestResolveProvider_PerRoleOpenCode(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_BUILD_CLI", "opencode")
 
 	p := ResolveProvider("build")
@@ -75,6 +81,8 @@ func TestResolveProvider_PerRoleOpenCode(t *testing.T) {
 }
 
 func TestResolveProvider_PerRoleLocal(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_BUILD_CLI", "local")
 
 	p := ResolveProvider("build")
@@ -84,6 +92,8 @@ func TestResolveProvider_PerRoleLocal(t *testing.T) {
 }
 
 func TestResolveProvider_SessionDefault(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "opencode")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
 
@@ -116,6 +126,8 @@ func TestResolveProvider_UnknownCLIDefaultsToClaude(t *testing.T) {
 // --- ResolveProviderCLI ---
 
 func TestResolveProviderCLI_Defaults(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
 	t.Setenv("MUXCODE_EDIT_CLI", "")
@@ -131,6 +143,8 @@ func TestResolveProviderCLI_Defaults(t *testing.T) {
 }
 
 func TestResolveProviderCLI_PerRoleOverride(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_BUILD_CLI", "opencode")
 
 	if got := ResolveProviderCLI("build"); got != "opencode" {
@@ -139,6 +153,8 @@ func TestResolveProviderCLI_PerRoleOverride(t *testing.T) {
 }
 
 func TestResolveProviderCLI_SessionDefault(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "opencode")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
 
@@ -279,6 +295,8 @@ func TestResolveProvider_HookGating(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			SetBusDirBase(t.TempDir()) // isolate from live session override files
+			defer ResetBusDirBase()
 			t.Setenv("MUXCODE_AGENT_CLI", "")
 			t.Setenv(tt.envVar, tt.envVal)
 			p := ResolveProvider(tt.role)
@@ -309,6 +327,8 @@ func TestIsAgentIdle_Local_AlwaysFalse(t *testing.T) {
 // --- Phase 4: mixed-provider session testing ---
 
 func TestAgentStatus_ProviderField(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	// Default: command-execution roles show opencode
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
@@ -323,6 +343,8 @@ func TestAgentStatus_ProviderField(t *testing.T) {
 
 func TestAgentStatus_MixedProviders(t *testing.T) {
 	// Simulate mixed session: edit=claude, build=opencode, test=local
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_EDIT_CLI", "")
 	t.Setenv("MUXCODE_BUILD_CLI", "opencode")

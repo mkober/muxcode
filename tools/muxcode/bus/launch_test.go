@@ -302,6 +302,8 @@ func TestResolveVenv_EnvOverride(t *testing.T) {
 }
 
 func TestResolveLaunchConfig_BuildRole(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	// Clear env to get defaults
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
@@ -333,8 +335,11 @@ func TestResolveLaunchConfig_BuildRole(t *testing.T) {
 }
 
 func TestResolveLaunchConfig_EditRole(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_EDIT_CLI", "")
+	t.Setenv("MUXCODE_EDIT_MODEL", "")
 	t.Setenv("MUXCODE_EDIT_CLAUDE_MODEL", "")
 	t.Setenv("MUXCODE_CLAUDE_MODEL", "")
 
@@ -352,6 +357,8 @@ func TestResolveLaunchConfig_EditRole(t *testing.T) {
 }
 
 func TestResolveLaunchConfig_LocalLLM(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_BUILD_CLI", "local")
 
 	cfg := ResolveLaunchConfig("build")
@@ -368,6 +375,8 @@ func TestResolveLaunchConfig_LocalLLM(t *testing.T) {
 }
 
 func TestResolveLaunchConfig_CustomCLI(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "my-claude")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
 
@@ -379,8 +388,10 @@ func TestResolveLaunchConfig_CustomCLI(t *testing.T) {
 }
 
 func TestResolveLaunchConfig_ModelEnvOverride(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_BUILD_CLAUDE_MODEL", "claude-haiku-3")
-	t.Setenv("MUXCODE_BUILD_CLI", "")
+	t.Setenv("MUXCODE_BUILD_CLI", "claude")
 
 	cfg := ResolveLaunchConfig("build")
 
@@ -390,9 +401,11 @@ func TestResolveLaunchConfig_ModelEnvOverride(t *testing.T) {
 }
 
 func TestResolveLaunchConfig_GlobalModelOverride(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_BUILD_CLAUDE_MODEL", "")
 	t.Setenv("MUXCODE_CLAUDE_MODEL", "claude-custom-99")
-	t.Setenv("MUXCODE_BUILD_CLI", "")
+	t.Setenv("MUXCODE_BUILD_CLI", "claude")
 
 	cfg := ResolveLaunchConfig("build")
 

@@ -101,6 +101,11 @@ func Init(session, memoryDir string) error {
 		cleanModeCycleState(session)
 	}
 
+	// Clean up stale waiting and polling markers from crashed processes
+	if err := CleanStaleMarkers(session); err != nil {
+		return err
+	}
+
 	// Create memory directory and shared.md if not exists
 	if memoryDir == "" {
 		memoryDir = MemoryDir()

@@ -77,7 +77,24 @@ func DefaultModalConfigs() []ModalConfig {
 			},
 			Role: "api",
 		},
+		{
+			Name:    "provider",
+			Title:   " Provider Selector ",
+			Width:   "50%",
+			Height:  "60%",
+			Command: providerModalCommand(),
+			Sizes: map[string][2]string{
+				"compact": {"40%", "50%"},
+				"full":    {"60%", "70%"},
+			},
+		},
 	}
+}
+
+// providerModalCommand builds the command for the provider selector modal.
+// The reload runs directly inside the Go binary (no trigger file needed).
+func providerModalCommand() string {
+	return `muxcode provider-select`
 }
 
 // RegisterModal adds a modal config to the registry.
