@@ -166,6 +166,7 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 - **Codex CLI provider** — Full-auto mode integration: `codex --full-auto --no-alt-screen` launch, `.codex/AGENTS.md` generation, send-keys wake-up with message payload injection, heuristic task completion detection
 - **Per-agent provider assignment** — Each tmux window independently resolves its CLI via `MUXCODE_{ROLE}_CLI`. A single session can mix Claude Code, OpenCode, Codex CLI, and local LLM agents
 - **Graceful degradation** — Non-hook providers (OpenCode, Codex CLI, local LLM) degrade gracefully: chains disabled (system prompt instructs bus messaging instead), idle detection skipped, tool profiles translated to provider-native permission format
+- **Hot reload** — Switch any agent's CLI provider or model at runtime without restarting the session. `muxcode reload <role> --cli opencode --model opencode-go/mimo-v2.5-pro` gracefully stops the agent, writes session-scoped runtime overrides, and relaunches. Provider selector modal (`Prefix + R`) provides a visual TUI for browsing installed providers and models. Persistent config via `muxcode config set/get/list` with full resolution chain: runtime override → per-role env → global env → config file → default
 - **Interactive installer** — `install.sh` detects and offers to install Claude Code, OpenCode, and Codex CLI, with default provider selection when multiple are available
 
 ### Agent orchestration
@@ -313,6 +314,28 @@ MuxCode uses a shell-sourceable config file. Resolution order:
 4. Built-in defaults
 
 See [Configuration](docs/configuration.md) for the full variable reference.
+
+### Runtime configuration
+
+Switch providers or models at runtime without restarting your session:
+
+```bash
+# Reload a single agent with a different provider/model
+muxcode reload review --cli codex --model gpt-5.3-codex
+
+# Reload with compaction (saves context before restart)
+muxcode reload build --cli opencode --compact
+
+# Reload all agents
+muxcode reload --all
+
+# Persistent config (survives session restarts)
+muxcode config set MUXCODE_BUILD_CLI opencode
+muxcode config get MUXCODE_BUILD_CLI
+muxcode config list
+```
+
+Or press `Prefix + R` to open the visual provider selector — browse installed providers and models, pick one, and the agent reloads automatically.
 
 ## OpenCode agents
 
@@ -532,6 +555,7 @@ Useful keybindings for navigating your MuxCode session:
 | `F1`–`F10` | Switch between agent windows |
 | `F2` (on edit window) | Cycle agent mode (edit → agent → edit) |
 | `Prefix + a` | Cycle edit-window agents from any window |
+| `Prefix + R` | Open provider selector (hot reload) |
 | `Prefix + i` | Open API testing modal |
 | `Prefix + b` | Open MuxCode quick menu |
 | `Prefix + C` | New MuxCode session (project picker) |
