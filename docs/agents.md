@@ -46,10 +46,12 @@ Each agent independently resolves its AI CLI provider. The provider is fixed for
 |----------|-----------|----------|
 | Claude Code | `claude` (default) | Edit (default), review, deploy — full hook support, deterministic chains |
 | OpenCode | `opencode` | Edit (optional), build, test, research — multi-provider LLM access, autonomous TUI |
-| Codex CLI | `codex` | Analyze, build — OpenAI models, full-auto mode |
+| Codex CLI | `codex` | Analyze, review — OpenAI models, automatic approval mode (-a never) |
 | Local LLM | `local` | Commit, build, watch — structured commands, zero API cost |
 
 Set per-role: `MUXCODE_{ROLE}_CLI=opencode` in `.muxcode/config`. Set session-wide: `MUXCODE_AGENT_CLI=opencode`.
+
+**Codex CLI sandbox limitation**: Codex CLI sandboxes all filesystem writes to the workspace and blocks outbound network access. This makes it unsuitable for roles that write to `.git/` (commit, deploy) or push to remotes. Only use Codex for read-only or workspace-scoped roles (review, analyze). Use Claude Code or OpenCode for git operations and network-dependent tasks.
 
 Non-hook providers degrade gracefully across three layers:
 

@@ -76,26 +76,31 @@ func TestCodexBuildExecArgs(t *testing.T) {
 			if binary != "codex" {
 				t.Errorf("binary = %q, want codex", binary)
 			}
-			// Should contain --no-alt-screen but NOT -C
+			// Should contain --no-alt-screen and -a flag but NOT -C
 			// (-C changes the working directory away from the repo root)
-			// --full-auto is present for execution roles but omitted for
-			// read-only roles (review, analyze) to enforce permission prompts
-			hasFullAuto := false
+			// -a never for execution roles, -a on-request for read-only
+			// roles (review, analyze) to enforce permission prompts
 			hasNoAltScreen := false
-			for _, arg := range args {
-				if arg == "--full-auto" {
-					hasFullAuto = true
-				}
+			approvalPolicy := ""
+			for i, arg := range args {
 				if arg == "--no-alt-screen" {
 					hasNoAltScreen = true
+				}
+				if arg == "-a" && i+1 < len(args) {
+					approvalPolicy = args[i+1]
 				}
 				if arg == "-C" {
 					t.Error("-C flag should NOT be present (changes working root away from project)")
 				}
 			}
-			wantFullAuto := !isReadOnlyCodexRole(role)
-			if hasFullAuto != wantFullAuto {
-				t.Errorf("--full-auto = %v, want %v for role %q", hasFullAuto, wantFullAuto, role)
+			if isReadOnlyCodexRole(role) {
+				if approvalPolicy != "on-request" {
+					t.Errorf("approval policy = %q, want %q for read-only role %q", approvalPolicy, "on-request", role)
+				}
+			} else {
+				if approvalPolicy != "never" {
+					t.Errorf("approval policy = %q, want %q for role %q", approvalPolicy, "never", role)
+				}
 			}
 			if !hasNoAltScreen {
 				t.Error("missing --no-alt-screen flag")
@@ -138,7 +143,7 @@ func TestCodexClassifyPane(t *testing.T) {
 		want    PaneState
 	}{
 		{"tui_box_drawing", "╭─ codex prompt ─╮", PaneIdle},
-		{"codex_text", "codex --full-auto", PaneIdle},
+		{"codex_text", "codex -a never", PaneIdle},
 		{"codex_uppercase", "Codex is ready", PaneIdle},
 		{"error", "ERROR: codex CLI not found in PATH", PaneNotReady},
 		{"fatal", "FATAL: authentication failed", PaneNotReady},
@@ -277,7 +282,7 @@ func TestCodexDetectTaskCompletion_Empty(t *testing.T) {
 func TestCodexDetectTaskCompletion_NoMarker(t *testing.T) {
 	p := &CodexProvider{}
 
-	pane := `codex --full-auto
+	pane := `codex -a never
 Loading project...`
 
 	completed, _, _ := p.DetectTaskCompletion("session", "review", pane)
@@ -331,11 +336,11 @@ func TestRoleCodexModelDefault(t *testing.T) {
 		role string
 		want string
 	}{
-		{"review", "gpt-5.3-codex"},
-		{"analyze", "gpt-5.3-codex"},
-		{"build", "gpt-5.3-codex"},
-		{"test", "gpt-5.3-codex"},
-		{"commit", "gpt-5.3-codex"},
+		{"review", "gpt-5.5"},
+		{"analyze", "gpt-5.5"},
+		{"build", "gpt-5.5"},
+		{"test", "gpt-5.5"},
+		{"commit", "gpt-5.5"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.role, func(t *testing.T) {
@@ -352,8 +357,8 @@ func TestResolveCodexModel_Default(t *testing.T) {
 	t.Setenv("MUXCODE_CODEX_MODEL", "")
 
 	model := resolveCodexModel("review")
-	if model != "gpt-5.3-codex" {
-		t.Errorf("model = %q, want gpt-5.3-codex", model)
+	if model != "gpt-5.5" {
+		t.Errorf("model = %q, want gpt-5.5", model)
 	}
 }
 

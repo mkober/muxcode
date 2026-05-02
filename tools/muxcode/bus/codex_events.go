@@ -236,11 +236,11 @@ func FormatCodexResult(r CodexTaskResult) string {
 
 // --- Exec mode runner ---
 
-// RunCodexExec runs `codex exec --json --full-auto` with the given prompt
+// RunCodexExec runs `codex exec --json -a never` with the given prompt
 // and model, parses the JSONL output, and returns a structured result.
 // This is the programmatic entry point for non-interactive Codex usage.
 func RunCodexExec(prompt, model string) (CodexTaskResult, error) {
-	args := []string{"exec", "--json", "--full-auto"}
+	args := []string{"exec", "--json", "-a", "never"}
 	if model != "" {
 		args = append(args, "-m", model)
 	}

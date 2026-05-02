@@ -369,7 +369,7 @@ The build-test-review and deploy-run-watch chains are **deterministic** — driv
 
 ```
 1. Provider resolved via MUXCODE_{ROLE}_CLI="codex"
-2. CodexProvider.BuildExecArgs returns "codex --full-auto --no-alt-screen"
+2. CodexProvider.BuildExecArgs returns "codex -a never --no-alt-screen"
 3. Agent runs in tmux pane without alternate screen (pane capture works)
 4. Shared agent config generated at .codex/AGENTS.md with bus instructions
 5. No hooks — system prompt instructs agent to send bus messages manually

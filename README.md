@@ -113,7 +113,7 @@ The defaults above already provide a cost-effective split — Claude Code for or
 ```bash
 # ~/.config/muxcode/config or .muxcode/config
 
-# Reasoning-heavy roles — Codex CLI with gpt-5.3-codex
+# Reasoning-heavy roles — Codex CLI with gpt-5.5
 MUXCODE_REVIEW_CLI=codex
 MUXCODE_ANALYZE_CLI=codex
 
@@ -132,26 +132,28 @@ This gives you:
 | deploy   | OpenCode    | MiniMax M2.7       | Runs CDK/terraform — command execution role              |
 | run      | OpenCode    | MiniMax M2.7       | Ad-hoc commands — capable free model                     |
 | watch    | OpenCode    | MiniMax M2.7       | Log tailing — lightweight, read-only                     |
-| review   | Codex CLI   | gpt-5.3-codex      | Deep code reasoning, thorough diff analysis              |
-| analyze  | Codex CLI   | gpt-5.3-codex      | Codebase-wide analysis, pattern detection                |
+| review   | Codex CLI   | gpt-5.5      | Deep code reasoning, thorough diff analysis              |
+| analyze  | Codex CLI   | gpt-5.5      | Codebase-wide analysis, pattern detection                |
 
 **Provider tradeoffs:**
 
-| Provider   | Hooks | Chains           | Idle detection | Best for                           |
-| ---------- | ----- | ---------------- | -------------- | ---------------------------------- |
-| Claude Code | Yes   | Deterministic    | Yes            | Edit, commit — need hooks + control |
-| OpenCode   | No    | Prompt-instructed | Limited        | Build, test, deploy — command execution |
-| Codex CLI  | No    | Prompt-instructed | Heuristic      | Review, analyze — strong reasoning  |
-| Local LLM  | No    | Prompt-instructed | No             | Cost-sensitive structured commands  |
+| Provider   | Hooks | Chains           | Idle detection | Sandbox | Best for                           |
+| ---------- | ----- | ---------------- | -------------- | ------- | ---------------------------------- |
+| Claude Code | Yes   | Deterministic    | Yes            | No      | Edit, commit — need hooks + control |
+| OpenCode   | No    | Prompt-instructed | Limited        | No      | Build, test, deploy — command execution |
+| Codex CLI  | No    | Prompt-instructed | Heuristic      | Yes     | Review, analyze — read-only reasoning  |
+| Local LLM  | No    | Prompt-instructed | No             | No      | Cost-sensitive structured commands  |
+
+**Codex CLI sandbox restriction:** Codex CLI sandboxes all filesystem writes and blocks outbound network access. This makes it unsuitable for roles that write to `.git` (commit) or push to remotes. Use Claude Code or OpenCode for git operations. Codex is best for read-only roles like review and analyze.
 
 Any role can use any provider. Set `MUXCODE_{ROLE}_CLI` to `claude`, `opencode`, `codex`, or `local`:
 
 - `MUXCODE_{ROLE}_CLI=claude` — Claude Code (full hook support, deterministic chains)
 - `MUXCODE_{ROLE}_CLI=opencode` — OpenCode TUI (multi-provider LLM access, autonomous context management)
-- `MUXCODE_{ROLE}_CLI=codex` — Codex CLI (OpenAI models, full-auto mode)
+- `MUXCODE_{ROLE}_CLI=codex` — Codex CLI (OpenAI models, sandboxed — read-only roles only)
 - `MUXCODE_{ROLE}_CLI=local` — Local LLM via Ollama (free, structured commands)
 
-Per-role model selection is also supported via `MUXCODE_{ROLE}_CLAUDE_MODEL` (Claude Code), `MUXCODE_{ROLE}_CODEX_MODEL` (Codex CLI, default `gpt-5.3-codex`), or `MUXCODE_{ROLE}_MODEL` (OpenCode/local, falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
+Per-role model selection is also supported via `MUXCODE_{ROLE}_CLAUDE_MODEL` (Claude Code), `MUXCODE_{ROLE}_CODEX_MODEL` (Codex CLI, default `gpt-5.5`), or `MUXCODE_{ROLE}_MODEL` (OpenCode/local, falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
 
 Each agent has constrained tool permissions — the build agent can run builds but can't edit files, the commit agent can run git but can't deploy infrastructure. This separation prevents agents from stepping on each other. Tool profiles are automatically translated to each provider's permission format (Claude Code's `--allowedTools`, OpenCode's `permission` blocks, or the harness's `IsToolAllowed()`).
 
@@ -163,7 +165,7 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 - **Provider interface** — Abstraction layer (`bus/provider.go`) encapsulating all CLI-specific behavior: launch, idle detection, notifications, lifecycle management, and agent configuration
 - **Claude Code provider** — Full integration: hook-driven chains, idle prompt detection, startup acceptance, `/compact` injection, `--allowedTools` permissions
 - **OpenCode provider** — TUI mode integration: bare `opencode` binary launch, box-drawing frame detection, display-message notifications, auto-compact, permission block generation. Multi-provider LLM access (Anthropic, OpenAI, Google, Groq, Bedrock)
-- **Codex CLI provider** — Full-auto mode integration: `codex --full-auto --no-alt-screen` launch, `.codex/AGENTS.md` generation, send-keys wake-up with message payload injection, heuristic task completion detection
+- **Codex CLI provider** — Automatic approval mode: `codex -a never --no-alt-screen` launch, `.codex/AGENTS.md` generation, send-keys wake-up with message payload injection, heuristic task completion detection
 - **Per-agent provider assignment** — Each tmux window independently resolves its CLI via `MUXCODE_{ROLE}_CLI`. A single session can mix Claude Code, OpenCode, Codex CLI, and local LLM agents
 - **Graceful degradation** — Non-hook providers (OpenCode, Codex CLI, local LLM) degrade gracefully: chains disabled (system prompt instructs bus messaging instead), idle detection skipped, tool profiles translated to provider-native permission format
 - **Hot reload** — Switch any agent's CLI provider or model at runtime without restarting the session. `muxcode reload <role> --cli opencode --model opencode-go/mimo-v2.5-pro` gracefully stops the agent, writes session-scoped runtime overrides, and relaunches. Provider selector modal (`Prefix + R`) provides a visual TUI for browsing installed providers and models. Persistent config via `muxcode config set/get/list` with full resolution chain: runtime override → per-role env → global env → config file → default
@@ -321,7 +323,7 @@ Switch providers or models at runtime without restarting your session:
 
 ```bash
 # Reload a single agent with a different provider/model
-muxcode reload review --cli codex --model gpt-5.3-codex
+muxcode reload review --cli codex --model gpt-5.5
 
 # Reload with compaction (saves context before restart)
 muxcode reload build --cli opencode --compact
@@ -407,11 +409,11 @@ Any agent role can run via [Codex CLI](https://github.com/openai/codex) instead 
    MUXCODE_EDIT_CLI=claude       # except edit — keep Claude Code for hooks
    ```
 
-3. Launch MuxCode normally — configured roles launch `codex --full-auto --no-alt-screen`, others use their default provider.
+3. Launch MuxCode normally — configured roles launch `codex -a never --no-alt-screen`, others use their default provider.
 
 ### How it works
 
-Codex CLI agents run in full-auto mode (`--full-auto`) without the alternate screen buffer (`--no-alt-screen`) so tmux pane capture works for idle detection and task completion. MuxCode generates a shared agent definition at `.codex/AGENTS.md` with tool permissions and bus instructions. Wake-up notifications inject message content directly via send-keys.
+Codex CLI agents run with automatic approval (`-a never`) without the alternate screen buffer (`--no-alt-screen`) so tmux pane capture works for idle detection and task completion. MuxCode generates a shared agent definition at `.codex/AGENTS.md` with tool permissions and bus instructions. Wake-up notifications inject message content directly via send-keys.
 
 Since Codex CLI has no hook system, the same three-layer graceful degradation used by OpenCode applies: role-specific prompt instructions, agent body adaptation, and send policy bypass.
 
@@ -419,6 +421,7 @@ Since Codex CLI has no hook system, the same three-layer graceful degradation us
 
 | Feature | Behavior with Codex CLI |
 |---------|------------------------|
+| Sandbox | All filesystem writes sandboxed, outbound network blocked — **do not use for commit, deploy, or any role that writes to `.git` or pushes to remotes** |
 | Build/test/review chains | Role-specific prompt instructions + send policy bypass (best-effort) instead of hook-driven (deterministic) |
 | Edit guard | Disabled — relies on Codex's native sandbox |
 | Workflow state transitions | Skipped for non-hook agents |

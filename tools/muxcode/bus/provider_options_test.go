@@ -45,7 +45,7 @@ func TestAvailableProviders_Defaults(t *testing.T) {
 	}{
 		{"claude", "claude-sonnet-4-6"},
 		{"opencode", "opencode-go/minimax-m2.5"},
-		{"codex", "codex-mini-latest"},
+		{"codex", "gpt-5.5"},
 	}
 	for _, tt := range tests {
 		p := ProviderByCLI(providers, tt.cli)

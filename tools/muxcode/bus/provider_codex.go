@@ -10,7 +10,7 @@ import (
 )
 
 // CodexProvider implements the Provider interface for OpenAI Codex CLI
-// in interactive TUI mode. Launches `codex --full-auto --no-alt-screen`
+// in interactive TUI mode. Launches `codex -a never --no-alt-screen`
 // and uses send-keys to inject prompts, matching the OpenCode pattern.
 type CodexProvider struct{}
 
@@ -35,9 +35,9 @@ func (p *CodexProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 }
 
 // BuildExecArgs constructs the Codex CLI launch command.
-// Uses --full-auto for automatic approval and --no-alt-screen for
+// Uses -a never for automatic approval and --no-alt-screen for
 // tmux compatibility (inline mode preserves scrollback).
-// Read-only roles (review, analyze) omit --full-auto so Codex prompts
+// Read-only roles (review, analyze) use -a on-request so Codex prompts
 // for approval on tool use — this prevents reviewers from running
 // tests/builds and analysts from making unintended changes.
 // Does NOT use -C (--cd) — that flag changes the agent's working root,
@@ -49,9 +49,11 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 		"--no-alt-screen",
 	}
 
-	// Read-only roles skip --full-auto to enforce permission prompts
-	if !isReadOnlyCodexRole(cfg.Role) {
-		args = append([]string{"--full-auto"}, args...)
+	// Read-only roles use on-request approval to enforce permission prompts
+	if isReadOnlyCodexRole(cfg.Role) {
+		args = append(args, "-a", "on-request")
+	} else {
+		args = append(args, "-a", "never")
 	}
 
 	// Model selection
@@ -63,9 +65,9 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 	return "codex", args
 }
 
-// isReadOnlyCodexRole returns true for roles that should not run in
-// --full-auto mode. These roles only read code (diffs, files) and must
-// not execute builds, tests, or deploys.
+// isReadOnlyCodexRole returns true for roles that should use on-request
+// approval instead of automatic (-a never). These roles only read code
+// (diffs, files) and must not execute builds, tests, or deploys.
 func isReadOnlyCodexRole(role string) bool {
 	switch role {
 	case "review", "analyze":
@@ -93,6 +95,14 @@ func (p *CodexProvider) IsAlive(session, role string) bool {
 	}
 	lines := strings.Split(string(out), "\n")
 
+	// Shell prompt check first — if at a bare shell prompt, agent is dead.
+	// This must come before TUI marker checks because Codex's exit message
+	// and error output contain "codex" text and box-drawing characters that
+	// would false-positive the TUI checks.
+	if isShellPrompt(lines) {
+		return false
+	}
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		// Codex TUI markers
@@ -112,7 +122,7 @@ func (p *CodexProvider) IsAlive(session, role string) bool {
 			}
 		}
 	}
-	return !isShellPrompt(lines)
+	return true // indeterminate -> assume alive
 }
 
 // ClassifyPane determines the startup state of a Codex TUI pane.

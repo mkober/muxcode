@@ -1,7 +1,7 @@
 ---
 description: Git and Github operations specialist — manages git, shell commands, branches, commits, PRs, and repo workflows
 mode: primary
-model: opencode-go/minimax-m2.7
+model: opencode-go/deepseek-v4-pro
 permission:
   bash:
     "muxcode *": allow

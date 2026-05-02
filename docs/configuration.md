@@ -158,6 +158,12 @@ Provider comparison:
 | LLM providers | Anthropic only | Anthropic, OpenAI, Google, Groq, Bedrock | OpenAI (GPT-4.1, o3, o4-mini, etc.) | Ollama (any pulled model) |
 | Startup handling | Trust + bypass prompts | TUI frame detection | Prompt ready detection | N/A |
 
+**Codex CLI sandbox limitation**: Codex CLI sandboxes all filesystem writes to the workspace and blocks outbound network access (DNS resolution fails). This makes it unsuitable for:
+- **commit/deploy roles** — cannot write to `.git/` or push to remotes
+- **Any role requiring network** — cannot reach GitHub, npm registries, or APIs
+
+Only assign Codex to read-only or workspace-scoped roles (review, analyze). Use Claude Code or OpenCode for git operations and network-dependent tasks.
+
 Example — mixed session via config file:
 
 ```bash
@@ -166,8 +172,8 @@ MUXCODE_AGENT_CLI=claude              # default: Claude Code
 MUXCODE_EDIT_CLI=opencode             # edit uses OpenCode + DeepSeek V4 Pro
 MUXCODE_BUILD_CLI=opencode            # build uses OpenCode
 MUXCODE_TEST_CLI=opencode             # test uses OpenCode
-MUXCODE_ANALYZE_CLI=codex             # analyze uses Codex CLI
-MUXCODE_COMMIT_CLI=local              # commit uses local LLM
+MUXCODE_ANALYZE_CLI=codex             # analyze uses Codex CLI (read-only — no git/network)
+MUXCODE_COMMIT_CLI=claude             # commit needs git/network — use Claude Code
 ```
 
 ### OpenCode edit agent

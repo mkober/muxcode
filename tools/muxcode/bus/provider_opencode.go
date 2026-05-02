@@ -73,6 +73,15 @@ func (p *OpenCodeProvider) IsAlive(session, role string) bool {
 		return true // indeterminate -> assume alive
 	}
 	lines := strings.Split(string(out), "\n")
+
+	// Shell prompt check first — if at a bare shell prompt, agent is dead.
+	// This must come before TUI marker checks because exit/error output
+	// may contain "opencode" text or box-drawing characters that would
+	// false-positive the TUI checks.
+	if isShellPrompt(lines) {
+		return false
+	}
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.Contains(trimmed, "opencode") {
@@ -85,7 +94,7 @@ func (p *OpenCodeProvider) IsAlive(session, role string) bool {
 			}
 		}
 	}
-	return !isShellPrompt(lines)
+	return true // indeterminate -> assume alive
 }
 
 // ClassifyPane determines the startup state of an OpenCode pane.
