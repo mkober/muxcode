@@ -126,9 +126,13 @@ func (p *ClaudeCodeProvider) IsIdle(session, role string) bool {
 //
 // Detection heuristic (in order):
 //  1. IsIdle sees ❯ → alive (idle Claude Code)
-//  2. "muxcode-agent" or "claude" or "opencode" in capture → alive (starting up)
-//  3. Last non-empty line ends with $ or % and no ❯ → dead (bare shell)
+//  2. Last non-empty line ends with shell prompt ($, %, ->, >) and no ❯ → dead
+//  3. "muxcode-agent" or "claude" or "opencode" in capture → alive (starting up)
 //  4. Default: assume alive if indeterminate
+//
+// Shell prompt check (2) must come before startup text check (3) because
+// Claude Code's exit message contains "claude" in "Resume this session
+// with: claude --resume ..." which would false-positive the startup check.
 func (p *ClaudeCodeProvider) IsAlive(session, role string) bool {
 	// 1. Idle check (❯ present = Claude Code is running)
 	if p.IsIdle(session, role) {
@@ -146,7 +150,16 @@ func (p *ClaudeCodeProvider) IsAlive(session, role string) bool {
 
 	lines := strings.Split(string(out), "\n")
 
-	// 2. Startup check — look for agent launcher or claude text
+	// 2. Shell prompt check — bare shell prompt with no ❯ → dead.
+	// This must come BEFORE the startup text check because Claude Code's
+	// exit message ("Resume this session with: claude --resume ...") contains
+	// the word "claude", which would false-positive the startup check.
+	if isShellPrompt(lines) {
+		return false
+	}
+
+	// 3. Startup check — look for agent launcher or claude text
+	// Only reached if we're NOT at a shell prompt (agent is mid-startup).
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.Contains(trimmed, "muxcode-agent") ||
@@ -154,11 +167,6 @@ func (p *ClaudeCodeProvider) IsAlive(session, role string) bool {
 			strings.Contains(trimmed, "opencode") {
 			return true
 		}
-	}
-
-	// 3. Shell prompt check — bare $ or % with no ❯ anywhere
-	if isShellPrompt(lines) {
-		return false
 	}
 
 	// 4. Default: assume alive

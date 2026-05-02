@@ -71,11 +71,14 @@ func ReloadTarget(session, role string) string {
 
 // GracefulStop stops an agent process gracefully:
 //  1. Optionally triggers context compaction before stopping (--compact flag)
-//  2. Sends C-c to interrupt
-//  3. Polls for process exit (500ms intervals, max 5s)
-//  4. Force kills (second C-c) if still running
+//  2. Sends provider-specific exit sequence:
+//     - Claude Code: Escape (cancel input) → /exit + Enter (clean exit command)
+//     - OpenCode/Codex/Local: C-c to interrupt
+//  3. Polls for process exit (500ms intervals, max 10s)
+//  4. Falls back to C-c if provider-specific exit didn't work
+//  5. Force kills (second C-c) if still running
 //
-// Returns an error if the agent does not exit after ~6 seconds total.
+// Returns an error if the agent does not exit after ~12 seconds total.
 func GracefulStop(session, role string, compact bool) error {
 	target := ReloadTarget(session, role)
 	provider := ResolveProvider(role)
@@ -86,23 +89,46 @@ func GracefulStop(session, role string, compact bool) error {
 		time.Sleep(2 * time.Second)
 	}
 
-	// Send C-c to interrupt
-	exec.Command("tmux", "send-keys", "-t", target, "C-c").Run()
+	// Provider-specific exit sequence
+	if provider.SupportsHooks() {
+		// Claude Code: /exit is the clean exit command.
+		// First Escape to cancel any pending input, then /exit + Enter.
+		// send-keys text and Enter must be separate calls with a delay
+		// to avoid Claude Code's TUI dropping the Enter key.
+		exec.Command("tmux", "send-keys", "-t", target, "Escape").Run()
+		time.Sleep(200 * time.Millisecond)
+		exec.Command("tmux", "send-keys", "-t", target, "C-u").Run()
+		time.Sleep(100 * time.Millisecond)
+		exec.Command("tmux", "send-keys", "-t", target, "/exit").Run()
+		time.Sleep(200 * time.Millisecond)
+		exec.Command("tmux", "send-keys", "-t", target, "Enter").Run()
+	} else {
+		// OpenCode, Codex CLI, Local LLM: C-c interrupts and exits
+		exec.Command("tmux", "send-keys", "-t", target, "C-c").Run()
+	}
 
-	// Poll for process exit (max 5s)
-	for i := 0; i < 10; i++ {
+	// Poll for process exit (max 10s)
+	for i := 0; i < 20; i++ {
 		time.Sleep(500 * time.Millisecond)
 		if !IsAgentAlive(session, role) {
 			return nil
 		}
 	}
 
-	// Force kill if still running
+	// Fallback: send C-c in case provider-specific exit didn't work
+	exec.Command("tmux", "send-keys", "-t", target, "C-c").Run()
+	time.Sleep(1 * time.Second)
+
+	if !IsAgentAlive(session, role) {
+		return nil
+	}
+
+	// Last resort: second C-c
 	exec.Command("tmux", "send-keys", "-t", target, "C-c").Run()
 	time.Sleep(1 * time.Second)
 
 	if IsAgentAlive(session, role) {
-		return fmt.Errorf("agent %s did not exit after 6 seconds", role)
+		return fmt.Errorf("agent %s did not exit after 12 seconds", role)
 	}
 	return nil
 }
