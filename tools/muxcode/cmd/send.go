@@ -293,6 +293,12 @@ func resolveWaitTimeout() int {
 // are already completed by --wait. Without this, left-pane console views for
 // non-hook agents (e.g. review on Codex) remain empty.
 func logWaitResponseToHistory(session, role, action, payload string) {
+	// Skip research — the research agent self-logs findings via `muxcode log`
+	// with richer metadata. The daemon also skips research in logTaskToConsoleHistory.
+	if role == "research" {
+		return
+	}
+
 	// If payload wasn't captured (consumed by --poll), try to recover it
 	// from the session log via the delivery status.
 	if payload == "" {

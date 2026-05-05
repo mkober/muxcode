@@ -1235,17 +1235,21 @@ func renderResearch(cfg *ConsoleConfig, session string, width int) string {
 	total := len(entries)
 	b.WriteString(fmt.Sprintf("%s%sfindings%s %s%d%s\n\n", Pad, ColorDim, ColorReset, ColorCyan, total, ColorReset))
 
-	// Latest finding (full payload)
+	// Latest finding (full payload — prefer Message over Summary for detail)
 	latest := entries[len(entries)-1]
-	summary := latest.Summary
+	summary := latest.Message
 	if summary == "" {
-		summary = latest.Message
+		summary = latest.Output // fallback for HookHistoryEntry format
+	}
+	if summary == "" {
+		summary = latest.Summary
 	}
 	if summary != "" {
 		b.WriteString(fmt.Sprintf("%s%slatest finding%s\n", Pad, ColorCyan, ColorReset))
 		for _, rawLine := range strings.Split(summary, "\n") {
 			line := strings.TrimSpace(rawLine)
 			if line == "" {
+				b.WriteString("\n") // preserve blank lines for paragraph structure
 				continue
 			}
 			for _, wline := range WordWrap(line, ecw) {
@@ -1284,6 +1288,9 @@ func renderResearch(cfg *ConsoleConfig, session string, width int) string {
 		desc := e.Summary
 		if desc == "" {
 			desc = e.Message
+		}
+		if desc == "" {
+			desc = e.Output // fallback for HookHistoryEntry format
 		}
 		if desc != "" {
 			firstLine := strings.TrimSpace(strings.Split(desc, "\n")[0])

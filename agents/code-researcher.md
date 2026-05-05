@@ -101,10 +101,23 @@ muxcode send "$ACTIVE" implement "<what to change and why, based on research fin
 ## Findings persistence
 
 ### History (per-session)
-After each completed research, log the finding for the console display:
+After each completed research, log the full finding for the console display.
+Write the complete answer (with structure, paragraphs, and code examples) to a temp file, then log it:
 ```bash
-muxcode log research "<one-line summary of finding>" --exit-code 0 --output "<detailed findings>"
+tmpfile=$(mktemp /tmp/research-XXXXXX.txt)
+cat > "$tmpfile" << 'EOF'
+Answer
+
+<full detailed answer with paragraphs, numbered items, code examples>
+
+Sources
+- <urls or file paths>
+EOF
+muxcode log research "<one-line summary>" --exit-code 0 --output-file "$tmpfile"
+rm -f "$tmpfile"
 ```
+
+**Important**: The `--output-file` content is what appears in the F1 console's "latest finding" section. Write the FULL answer there — not a summary. The one-line summary argument is only used for the recent findings list.
 
 ### Memory (cross-session)
 Save important, reusable findings to memory for persistence across sessions:

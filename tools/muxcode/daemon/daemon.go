@@ -137,6 +137,13 @@ func acquireDaemonLock(session string) (func(), error) {
 func (d *Daemon) Run() error {
 	busDir := bus.BusDir(d.session)
 
+	// Set BUS_SESSION so downstream code (ResolveProviderCLI → BusSession())
+	// resolves the correct session. Without this, BusSession() falls through
+	// to "default" and runtime overrides (e.g. hot-reload CLI changes) are
+	// never read — the daemon resolves stale provider defaults for agents
+	// that were hot-reloaded to a different CLI.
+	os.Setenv("BUS_SESSION", d.session)
+
 	// Single-instance enforcement: exit immediately if another daemon is running
 	unlock, err := acquireDaemonLock(d.session)
 	if err != nil {
@@ -1348,6 +1355,13 @@ func (d *Daemon) checkIdleTaskCompletion() {
 // This replaces the PostToolUse hook logging that hook-based providers use —
 // without it, left-pane console views for non-hook agents remain empty.
 func logTaskToConsoleHistory(session, role, action, output string, errored bool) {
+	// Skip research — the research agent self-logs findings via `muxcode log`
+	// with richer metadata (output-file content, structured fields) that
+	// renderResearch expects.
+	if role == "research" {
+		return
+	}
+
 	outcome := "success"
 	exitCode := "0"
 	if errored {
