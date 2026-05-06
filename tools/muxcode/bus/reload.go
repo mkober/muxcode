@@ -304,6 +304,11 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 	// 10. Clear reload marker
 	clearReloadMarker(session, role)
 
+	// 10a. Reset notified-size marker so the daemon re-notifies the new agent
+	// about any pending inbox messages. Without this, the marker retains the
+	// pre-reload notification state and alreadyNotified() suppresses wake-up.
+	ClearNotifiedSize(session, role)
+
 	if !alive {
 		return fmt.Errorf("agent %s did not come alive within 15 seconds", role)
 	}
@@ -317,6 +322,18 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 	msg := NewMessage("daemon", "edit", "event", "agent-reloaded",
 		fmt.Sprintf("Agent %s reloaded: CLI=%s, Model=%s", role, newCLI, model), "")
 	_ = Send(session, msg)
+
+	// 13. Wake new agent if it has pending inbox messages.
+	// The daemon's checkInboxes() may fire before the agent reaches idle state,
+	// causing Notify() to fall through to notifyDisplayMessage() (status bar
+	// flash) which marks as notified without injecting text. When checkIdleAgents()
+	// runs later and the agent IS idle, alreadyNotified() suppresses the actual
+	// send-keys injection. Sending the wake-up directly here — after the grace
+	// period — avoids this race.
+	if HasActionableMessages(session, role) {
+		time.Sleep(2 * time.Second) // extra time for agent TUI to fully render
+		_ = Notify(session, role)
+	}
 
 	return nil
 }

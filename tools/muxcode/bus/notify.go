@@ -156,6 +156,14 @@ func IsWaiting(session, role string) bool {
 	return true
 }
 
+// ClearNotifiedSize removes the notified-size marker for a role, forcing the
+// next Notify() call to treat the inbox as unnotified. Called during agent
+// hot reload so the daemon re-notifies the new agent about pending messages
+// that the old (pre-reload) agent was already notified about.
+func ClearNotifiedSize(session, role string) {
+	_ = os.Remove(notifiedSizePath(session, role))
+}
+
 // markNotified records the current inbox size as the last notified size.
 func markNotified(session, role string) {
 	inboxPath := InboxPath(session, role)
