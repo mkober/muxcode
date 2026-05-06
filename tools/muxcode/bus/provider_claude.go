@@ -112,10 +112,14 @@ func (p *ClaudeCodeProvider) IsIdle(session, role string) bool {
 	lines := strings.Split(string(out), "\n")
 	// Scan all lines — the ❯ prompt may not be the last non-empty line
 	// due to Claude Code's decorative footer (borders, help text).
-	// When the agent is active, ❯ only appears as part of a longer line
-	// (e.g. "❯ You have new messages") which won't match the exact check.
+	// Accept lines that are exactly ❯ OR start with "❯ " (prompt with
+	// stale text in the input buffer). An agent at "❯ push it" is still
+	// idle — it's at the prompt with leftover text, not actively executing.
+	// When the agent is truly active, ❯ appears mid-line in tool output
+	// or status text, not as the line prefix after trimming.
 	for _, line := range lines {
-		if strings.TrimSpace(line) == idlePromptChar {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == idlePromptChar || strings.HasPrefix(trimmed, idlePromptChar+" ") {
 			return true
 		}
 	}
@@ -213,6 +217,14 @@ func (p *ClaudeCodeProvider) AcceptStartup(session, pane string, state PaneState
 // with a brief delay to avoid Claude Code's TUI dropping the Enter key.
 func (p *ClaudeCodeProvider) SendWakeUp(session, role string) error {
 	target := PaneTarget(session, role)
+	// Clear any stale text in the input buffer before injecting.
+	// After task completion, leftover text (e.g. partial commands, garbled
+	// injections) can remain in the prompt. Without clearing, the wake-up
+	// text concatenates with it (e.g. "push itYou have new messages").
+	exec.Command("tmux", "send-keys", "-t", target, "Escape").Run()
+	time.Sleep(50 * time.Millisecond)
+	exec.Command("tmux", "send-keys", "-t", target, "C-u").Run()
+	time.Sleep(50 * time.Millisecond)
 	// Send text first
 	cmd := exec.Command("tmux", "send-keys", "-t", target, "You have new messages")
 	if err := cmd.Run(); err != nil {
