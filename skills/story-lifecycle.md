@@ -20,8 +20,29 @@ When processing a Jira story, follow these phases in order. Complete each phase 
 3. Ask the user which story to work on — wait for confirmation before proceeding
 4. Accept: a number from the list, a Jira key, "all" for auto-processing, or a new JQL query
 5. Read the full story details: `muxcode atlassian jira read {KEY}`
-6. Extract acceptance criteria, description, priority, and linked stories
-7. Check for blockers — warn on stories with unresolved "is blocked by" links
+6. **Check for an existing requirements doc** (see "Requirements doc priority" below)
+7. Extract acceptance criteria, description, priority, and linked stories
+8. Check for blockers — warn on stories with unresolved "is blocked by" links
+
+### Requirements doc priority
+
+**The requirements doc in the repo is the authoritative source of truth for implementation.** The Jira description is only used to create the initial requirements doc. After story selection, always check for an existing doc before proceeding:
+
+```bash
+# Check all requirements directories for a doc matching the Jira key
+ls docs/requirements/drafts/{KEY}-*.md docs/requirements/completed/{KEY}-*.md docs/requirements/backlog/{KEY}-*.md 2>/dev/null
+```
+
+Based on where a doc is found:
+
+| Location | Action |
+|----------|--------|
+| `drafts/{KEY}-*.md` | **Read the doc and skip to Phase 5** (implementation). The requirements are already written — use the doc as your implementation guide. Do NOT re-read the Jira description for implementation details. |
+| `completed/{KEY}-*.md` | **Skip the story entirely** — it's already done. Report to the user and move to the next story. |
+| `backlog/{KEY}-*.md` | **Read the doc and use it as the starting point for Phase 3** (requirements). Move it to `drafts/`, enrich with Jira context if needed, then continue with the requirements review PR. |
+| Not found | **Proceed normally** from Phase 2 (branch and setup) through Phase 3 (write requirements from Jira). |
+
+When a requirements doc exists, **read it first and follow its implementation phases, acceptance criteria, and technical approach.** The Jira description may be outdated or incomplete compared to the reviewed requirements doc.
 
 ### Phase 2: Branch and setup
 
@@ -47,8 +68,8 @@ When processing a Jira story, follow these phases in order. Complete each phase 
 
 ### Phase 5: Implementation
 
-1. Read the approved requirements doc as the implementation guide
-2. Implement code changes based on the requirements
+1. **Read the requirements doc** (`docs/requirements/drafts/{KEY}-*.md`) as the implementation guide — this is the authoritative source, not the Jira description. Follow its implementation phases, acceptance criteria, key files, and technical approach.
+2. Implement code changes based on the requirements doc
 3. Delegate to build: `muxcode send build build "Run ./build.sh and report results" --wait`
 4. On build failure: fix issues and rebuild (up to max iterations)
 5. Delegate to test: `muxcode send test test "Run tests and report results" --wait`

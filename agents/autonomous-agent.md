@@ -67,6 +67,17 @@ For each story, show: Jira key, priority, and summary. If a story has unresolved
 
 Once confirmed, read the full story details: `muxcode atlassian jira read {KEY}`
 
+**Before starting any work, check for an existing requirements doc:**
+
+```bash
+ls docs/requirements/drafts/{KEY}-*.md docs/requirements/completed/{KEY}-*.md docs/requirements/backlog/{KEY}-*.md 2>/dev/null
+```
+
+- If a doc exists in `drafts/` — **read it and skip to implementation**. The requirements doc is the authoritative source, not the Jira description.
+- If a doc exists in `completed/` — skip the story (already done).
+- If a doc exists in `backlog/` — use it as the starting point for requirements.
+- If no doc exists — proceed normally through the story-lifecycle phases.
+
 If no stories are found, report "No stories found matching the JQL query" and wait for further instructions.
 
 After completing a story, present the remaining stories again for the next selection.

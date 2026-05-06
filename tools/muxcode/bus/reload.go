@@ -324,18 +324,60 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 	_ = Send(session, msg)
 
 	// 13. Wake new agent if it has pending inbox messages.
-	// The daemon's checkInboxes() may fire before the agent reaches idle state,
-	// causing Notify() to fall through to notifyDisplayMessage() (status bar
-	// flash) which marks as notified without injecting text. When checkIdleAgents()
-	// runs later and the agent IS idle, alreadyNotified() suppresses the actual
-	// send-keys injection. Sending the wake-up directly here — after the grace
-	// period — avoids this race.
+	// Must wait for the agent to reach the idle prompt (❯) before injecting
+	// the wake-up — mirrors the startup wake-up logic in muxcode.sh. Calling
+	// Notify() while the agent is still initializing takes the displayMessage
+	// path (status bar flash, invisible to the agent) which calls markNotified(),
+	// poisoning the dedup state so the daemon's checkIdleAgents → notifySendKeys
+	// is suppressed for 30s (notifyRetryInterval).
 	if HasActionableMessages(session, role) {
-		time.Sleep(2 * time.Second) // extra time for agent TUI to fully render
-		_ = Notify(session, role)
+		wakeAfterReload(session, role)
 	}
 
 	return nil
+}
+
+// wakeAfterReload waits for an agent to reach the idle prompt after a hot
+// reload, then injects a wake-up via send-keys. This mirrors the startup
+// wake-up logic in muxcode.sh (which waits for ❯ then sends "You have new
+// messages") but runs from within the Go reload path.
+//
+// The naive approach — calling Notify() right after the agent is alive —
+// fails because the agent is not yet idle (still initializing). Notify falls
+// to notifyDisplayMessage() (status bar flash, invisible to the agent) which
+// calls markNotified(), poisoning the dedup state. The daemon's subsequent
+// checkIdleAgents → Notify → notifySendKeys is then suppressed by
+// alreadyNotified() for 30 seconds (notifyRetryInterval).
+//
+// Polls IsAgentIdle every 500ms for up to 30 seconds. Once idle, clears the
+// notified-size marker and injects the wake-up directly via the provider's
+// SendWakeUp. If the agent doesn't reach idle within the timeout, the
+// daemon's checkIdleAgents will eventually wake it (ClearNotifiedSize was
+// already called in step 10a of ReloadAgent).
+func wakeAfterReload(session, role string) {
+	provider := ResolveProvider(role)
+
+	// Non-hook providers (OpenCode, Codex) can't be reliably detected as idle.
+	// Send wake-up immediately — their SendWakeUp handles injection directly.
+	if !provider.SupportsHooks() {
+		time.Sleep(2 * time.Second)
+		ClearNotifiedSize(session, role)
+		_ = provider.SendWakeUp(session, role)
+		return
+	}
+
+	// Hook providers (Claude Code): wait for idle prompt before injecting.
+	for i := 0; i < 60; i++ { // 30 seconds at 500ms intervals
+		time.Sleep(500 * time.Millisecond)
+		if IsAgentIdle(session, role) {
+			// Agent is at the ❯ prompt — clear dedup state and inject wake-up.
+			ClearNotifiedSize(session, role)
+			_ = provider.SendWakeUp(session, role)
+			return
+		}
+	}
+	// Timeout — daemon's checkIdleAgents will handle it. ClearNotifiedSize
+	// was already called in step 10a, so the daemon won't be suppressed.
 }
 
 // restartConsole kills the existing console process in the left pane of a

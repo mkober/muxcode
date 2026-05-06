@@ -787,6 +787,9 @@ func (d *Daemon) checkOllama() {
 				fmt.Fprintf(os.Stderr, "  [ollama] failed to restart agent %s: %v\n", role, restartErr)
 			} else {
 				fmt.Printf("  %s  Relaunched agent: %s\n", ts, role)
+				// Clear notified-size so checkIdleAgents re-notifies the
+				// new agent about any pending inbox messages.
+				bus.ClearNotifiedSize(d.session, role)
 			}
 		}
 
@@ -901,6 +904,9 @@ func (d *Daemon) checkAgentHealth() {
 				fmt.Fprintf(os.Stderr, "  [agent-health] failed to restart %s: %v\n", role, err)
 			} else {
 				fmt.Printf("  %s  Agent %s restarted successfully\n", ts, role)
+				// Clear notified-size so checkIdleAgents re-notifies the
+				// new agent about any pending inbox messages.
+				bus.ClearNotifiedSize(d.session, role)
 			}
 
 			// Reset fail count to let next probe detect recovery
