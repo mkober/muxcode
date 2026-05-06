@@ -44,6 +44,30 @@ Based on where a doc is found:
 
 When a requirements doc exists, **read it first and follow its implementation phases, acceptance criteria, and technical approach.** The Jira description may be outdated or incomplete compared to the reviewed requirements doc.
 
+### Progress tracking in the requirements doc
+
+As you complete implementation phases and acceptance criteria, **update the requirements doc to reflect progress**. This keeps the doc as the single source of truth for story status.
+
+**Check off completed items** by changing `- [ ]` to `- [x]`:
+
+```bash
+# After completing a phase step or acceptance criterion, edit the requirements doc:
+# Change: - [ ] Implement validation logic
+# To:     - [x] Implement validation logic
+```
+
+**Update the Status section** at the bottom of the doc as you progress:
+- `Draft` → `In Progress` when starting implementation
+- `In Progress` → `Complete` when all phases and criteria are done
+
+**When to update**:
+- After each implementation phase is completed (all steps checked off)
+- After each acceptance criterion is verified (build passes, tests pass)
+- After build/test/review cycles confirm a phase works
+- Commit the updated doc along with the code changes for that phase
+
+This ensures that if the agent is interrupted or restarted, it can read the doc, see which phases are `[x]` done vs `[ ]` pending, and resume from the right place.
+
 ### Phase 2: Branch and setup
 
 1. Create a feature branch via commit agent: `muxcode send commit commit "Create and checkout branch feature/{KEY}-{slug}" --force --wait`
@@ -69,13 +93,18 @@ When a requirements doc exists, **read it first and follow its implementation ph
 ### Phase 5: Implementation
 
 1. **Read the requirements doc** (`docs/requirements/drafts/{KEY}-*.md`) as the implementation guide — this is the authoritative source, not the Jira description. Follow its implementation phases, acceptance criteria, key files, and technical approach.
-2. Implement code changes based on the requirements doc
-3. Delegate to build: `muxcode send build build "Run ./build.sh and report results" --wait`
-4. On build failure: fix issues and rebuild (up to max iterations)
-5. Delegate to test: `muxcode send test test "Run tests and report results" --wait`
-6. On test failure: fix issues, rebuild, and retest (up to max iterations)
-7. Delegate to review: `muxcode send review review "Review changes on current branch" --wait`
-8. Address review feedback if needed
+2. **Update the doc Status to `In Progress`** if not already set.
+3. For each implementation phase in the doc:
+   a. Implement the code changes for that phase
+   b. Delegate to build: `muxcode send build build "Run ./build.sh and report results" --wait`
+   c. On build failure: fix issues and rebuild (up to max iterations)
+   d. Delegate to test: `muxcode send test test "Run tests and report results" --wait`
+   e. On test failure: fix issues, rebuild, and retest (up to max iterations)
+   f. **Check off completed steps** (`- [ ]` → `- [x]`) in the requirements doc for that phase
+   g. **Check off acceptance criteria** that are now satisfied
+   h. Commit the updated requirements doc along with the code changes
+4. Delegate to review: `muxcode send review review "Review changes on current branch" --wait`
+5. Address review feedback if needed
 
 ### Phase 6: Implementation PR
 
@@ -92,12 +121,13 @@ When a requirements doc exists, **read it first and follow its implementation ph
 
 ### Phase 8: Story completion
 
-1. Transition Jira to Done: list transitions, then execute the Done transition
-2. Move requirements doc: `docs/requirements/drafts/{KEY}-{slug}.md` to `docs/requirements/completed/`
-3. Commit and push the move via commit agent
-4. Comment on Jira with completion summary
-5. Save progress to memory: `muxcode memory write "agent" "Completed {KEY}: {summary}"`
-6. Loop back to Phase 1 for the next story
+1. **Update the requirements doc**: check off all remaining items, set Status to `Complete`
+2. Transition Jira to Done: list transitions, then execute the Done transition
+3. Move requirements doc: `docs/requirements/drafts/{KEY}-{slug}.md` to `docs/requirements/completed/`
+4. Commit and push the move via commit agent
+5. Comment on Jira with completion summary
+6. Save progress to memory: `muxcode memory write "agent" "Completed {KEY}: {summary}"`
+7. Loop back to Phase 1 for the next story
 
 ### Delegation reference
 

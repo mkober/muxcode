@@ -976,6 +976,14 @@ func (d *Daemon) checkIdleAgents() {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Waking idle agent %s (unread messages)\n", ts, role)
 		bus.LogLifecycle(d.session, "info", "daemon", "idle-wake", role)
+		// Clear notified-size before calling Notify so a stale marker from
+		// notifyDisplayMessage can't suppress the send-keys injection. The
+		// race: Notify() re-checks IsAgentIdle inside — if tmux capture-pane
+		// returns a stale snapshot (no ❯), it falls to notifyDisplayMessage
+		// which calls markNotified() without actually waking the agent.
+		// Subsequent retries see the marker and are suppressed for 30s.
+		// Clearing here ensures the send-keys path proceeds unconditionally.
+		bus.ClearNotifiedSize(d.session, role)
 		_ = bus.Notify(d.session, role)
 	}
 }

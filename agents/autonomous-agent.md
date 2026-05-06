@@ -143,10 +143,15 @@ Interpret the response:
 
 ## State tracking
 
-Track your progress in memory:
+**The requirements doc is your primary progress tracker.** As you complete each implementation phase and acceptance criterion, check off the items (`- [ ]` → `- [x]`) and update the Status field. This ensures that if you are restarted or interrupted, you can read the doc and resume from where you left off — only unchecked items remain.
+
+Track your progress in both the requirements doc and memory:
 
 ```bash
-# Save current story state
+# Update requirements doc: check off completed items and update Status
+# - [ ] Step 1  →  - [x] Step 1
+
+# Save current story state to memory
 muxcode memory write "agent" "Working on {KEY}: {summary} — Phase: {phase}, Iteration: {n}/{max}"
 
 # Save completion
