@@ -564,7 +564,7 @@ func TestInit_CreatesSpawnFile(t *testing.T) {
 	}
 }
 
-func TestFindAgentLauncher_NotFound(t *testing.T) {
+func TestFindMuxcodeBinary_NotFound(t *testing.T) {
 	// Save and clear PATH to test not-found case
 	origPath := os.Getenv("PATH")
 	os.Setenv("PATH", t.TempDir()) // empty dir
@@ -575,11 +575,14 @@ func TestFindAgentLauncher_NotFound(t *testing.T) {
 	os.Setenv("HOME", t.TempDir())
 	defer os.Setenv("HOME", origHome)
 
-	_, err := findAgentLauncher()
-	if err == nil {
-		t.Error("expected error when launcher not found")
+	// findMuxcodeBinary falls back to os.Executable(), so it should
+	// succeed even with empty PATH/HOME. We just verify it returns
+	// a non-empty path (the running test binary).
+	p, err := findMuxcodeBinary()
+	if err != nil {
+		t.Fatalf("expected fallback to os.Executable(), got error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "muxcode-agent.sh not found") {
-		t.Errorf("unexpected error message: %v", err)
+	if p == "" {
+		t.Error("expected non-empty path from os.Executable() fallback")
 	}
 }

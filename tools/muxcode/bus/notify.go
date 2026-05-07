@@ -40,6 +40,12 @@ func notifiedSizePath(session, role string) string {
 	return filepath.Join(BusDir(session), "notified-"+role+".size")
 }
 
+// NotifiedSizePath is the exported version of notifiedSizePath, for use in
+// daemon tests that need to verify marker file state.
+func NotifiedSizePath(session, role string) string {
+	return notifiedSizePath(session, role)
+}
+
 // notifyCooldown is the minimum interval between notifications for the same role.
 // Even if the inbox size changes, a notification within this window is suppressed.
 // This is a defense-in-depth against rapid-fire duplicates if file locking fails.

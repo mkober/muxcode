@@ -185,6 +185,20 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	}
 	LogLifecycle(session, "info", "launcher", "bus-init", "")
 
+	// Initialize mode cycle state for edit window (edit ↔ auto)
+	if err := WriteModeCycleState(session, DefaultModeCycleState()); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: write edit mode cycle: %v\n", err)
+	}
+	// Initialize mode cycle state for plan window (plan ↔ research) if plan is in window list
+	for _, w := range cfg.Windows {
+		if w == "plan" {
+			if err := WriteModeCycleState(session, DefaultPlanModeCycleState()); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: write plan mode cycle: %v\n", err)
+			}
+			break
+		}
+	}
+
 	// Kill stale daemon/monitor processes
 	killStaleProcesses(session)
 
@@ -273,7 +287,7 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	LogLifecycle(session, "info", "launcher", "session-ready", "")
 
 	// Attach or switch to session
-	return attachToSession(session)
+	return AttachToSession(session)
 }
 
 // createWindowContent sets up the content (panes) for a window.
@@ -655,9 +669,9 @@ func AutoAccept(session string, windows []string) {
 	LogLifecycle(session, "info", "auto-accept", "complete", "All agents accepted")
 }
 
-// attachToSession attaches or switches to a tmux session.
+// AttachToSession attaches or switches to a tmux session.
 // Uses syscall.Exec to replace the current process.
-func attachToSession(session string) error {
+func AttachToSession(session string) error {
 	tmuxPath, err := exec.LookPath("tmux")
 	if err != nil {
 		return fmt.Errorf("tmux not found: %w", err)

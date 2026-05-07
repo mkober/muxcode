@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # muxcode-daemon-monitor.sh — monitors the bus daemon and restarts it if stale.
-# Runs as a background loop alongside the daemon, launched by muxcode.sh.
+# Runs as a background loop alongside the daemon, launched by LaunchSession().
 #
 # Usage: muxcode-daemon-monitor.sh <session>
 
@@ -8,7 +8,7 @@ SESSION="${1:?Usage: muxcode-daemon-monitor.sh <session>}"
 KEEPALIVE="/tmp/muxcode-bus-${SESSION}/daemon.keepalive"
 MAX_AGE=30  # seconds before considering keepalive stale
 
-# Lifecycle logging helper (same as muxcode.sh)
+# Lifecycle logging helper (same as LaunchSession)
 lifecycle_log() {
   local level="$1" source="$2" event="$3" detail="${4:-}"
   local args=("$SESSION" "$level" "$source" "$event")

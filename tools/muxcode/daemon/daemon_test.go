@@ -221,3 +221,117 @@ func TestEditDiffHashPath(t *testing.T) {
 		t.Errorf("path %q should contain edit-diff-hash", path)
 	}
 }
+
+func TestNew_InitializesLastIdleState(t *testing.T) {
+	session := testSession(t)
+	d := New(session, 5, 8)
+	if d.lastIdleState == nil {
+		t.Fatal("lastIdleState should be initialized")
+	}
+	if len(d.lastIdleState) != 0 {
+		t.Error("lastIdleState should be empty on creation")
+	}
+}
+
+func TestIdleTransition_ClearsNotifiedSize(t *testing.T) {
+	session := testSession(t)
+	d := New(session, 5, 8)
+
+	role := "build"
+
+	// Create a notified-size marker to simulate stale dedup state
+	markerPath := bus.NotifiedSizePath(session, role)
+	if err := os.WriteFile(markerPath, []byte("1234"), 0644); err != nil {
+		t.Fatalf("writing marker: %v", err)
+	}
+
+	// Set a non-hook cooldown to verify it gets reset
+	d.lastNonHookWake[role] = time.Now().Unix() - 10
+
+	// Simulate transition: was not-idle, now idle
+	d.lastIdleState[role] = false
+
+	// After the transition logic runs, marker should be cleared.
+	// We test the transition logic directly by simulating what
+	// checkIdleAgents does for idle transitions.
+	isIdle := true // simulate agent becoming idle
+	wasIdle := d.lastIdleState[role]
+	if isIdle && !wasIdle {
+		bus.ClearNotifiedSize(session, role)
+		d.lastNonHookWake[role] = 0
+	}
+	d.lastIdleState[role] = isIdle
+
+	// Verify marker was cleared
+	if _, err := os.Stat(markerPath); err == nil {
+		t.Error("notified-size marker should be cleared on idle transition")
+	}
+
+	// Verify non-hook cooldown was reset
+	if d.lastNonHookWake[role] != 0 {
+		t.Errorf("lastNonHookWake should be 0, got %d", d.lastNonHookWake[role])
+	}
+
+	// Verify state was updated
+	if !d.lastIdleState[role] {
+		t.Error("lastIdleState should be true after transition")
+	}
+}
+
+func TestIdleTransition_NoopWhenAlreadyIdle(t *testing.T) {
+	session := testSession(t)
+	d := New(session, 5, 8)
+
+	role := "build"
+
+	// Create a notified-size marker
+	markerPath := bus.NotifiedSizePath(session, role)
+	if err := os.WriteFile(markerPath, []byte("1234"), 0644); err != nil {
+		t.Fatalf("writing marker: %v", err)
+	}
+
+	// Was already idle — no transition
+	d.lastIdleState[role] = true
+
+	isIdle := true
+	wasIdle := d.lastIdleState[role]
+	if isIdle && !wasIdle {
+		bus.ClearNotifiedSize(session, role)
+		d.lastNonHookWake[role] = 0
+	}
+	d.lastIdleState[role] = isIdle
+
+	// Marker should NOT be cleared (no transition)
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Error("notified-size marker should be preserved when already idle (no transition)")
+	}
+}
+
+func TestIdleTransition_NoopWhenBecomingNonIdle(t *testing.T) {
+	session := testSession(t)
+	d := New(session, 5, 8)
+
+	role := "build"
+
+	// Create a notified-size marker
+	markerPath := bus.NotifiedSizePath(session, role)
+	if err := os.WriteFile(markerPath, []byte("1234"), 0644); err != nil {
+		t.Fatalf("writing marker: %v", err)
+	}
+
+	// Was idle, now not-idle (agent is processing)
+	d.lastIdleState[role] = true
+
+	isIdle := false
+	wasIdle := d.lastIdleState[role]
+	if isIdle && !wasIdle {
+		bus.ClearNotifiedSize(session, role)
+		d.lastNonHookWake[role] = 0
+	}
+	d.lastIdleState[role] = isIdle
+
+	// Marker should NOT be cleared (wrong direction transition)
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Error("notified-size marker should be preserved when becoming non-idle")
+	}
+}

@@ -6,7 +6,7 @@ Each muxcode window runs an AI agent with a specific role. Agent behavior is def
 
 ## Agent File Resolution
 
-When `muxcode-agent.sh` launches an agent, it searches for the agent definition in this order:
+When `muxcode agent launch` runs, it searches for the agent definition in this order:
 
 1. `.claude/agents/<name>.md` — project-local (highest priority)
 2. `~/.config/muxcode/agents/<name>.md` — user global
@@ -16,12 +16,12 @@ If no agent file is found, a built-in inline prompt is used as fallback.
 
 ### How agent files are loaded
 
-The `launch_agent_from_file` function in `muxcode-agent.sh` handles agent file loading:
+The `RunAgentLaunch()` function in `bus/launch.go` handles agent file loading:
 
 - **Project-local files** (`.claude/agents/<name>.md`): launched natively via `claude --agent <name>` — Claude Code resolves the file automatically.
-- **External files** (`~/.config/muxcode/agents/` or install dir): the file is read, YAML frontmatter is stripped with `awk`, and the `description` field is extracted. The prompt body and metadata are passed to Claude Code via `--agents <JSON>` (requires `jq`).
+- **External files** (`~/.config/muxcode/agents/` or install dir): the file is read, YAML frontmatter is extracted by `ExtractFrontmatter()`, and the prompt body and metadata are passed to Claude Code via `--agents <JSON>` (via `BuildAgentsJSON()`).
 
-The three-tier search (project-local → user config → install default) runs in `muxcode-agent.sh` after resolving the agent filename via `agent_name()`.
+The three-tier search (project-local → user config → install default) runs in `ResolveAgentFile()` after resolving the agent filename via `AgentFileName()`.
 
 ### Shared prompt assembly
 
@@ -172,7 +172,7 @@ The git-manager reads reviews, CI checks, and inline comments, categorizes them 
 **Standalone use** (outside a session):
 ```bash
 export BUS_SESSION="your-session"
-muxcode-agent.sh pr-read
+muxcode agent launch pr-read
 ```
 
 ### Autonomous Agent (agent)
@@ -279,7 +279,7 @@ The variable format is `MUXCODE_{ROLE}_CLI=local` where `{ROLE}` is the uppercas
 
 1. The provider system resolves `MUXCODE_{ROLE}_CLI` for the role
 2. If `"local"`, `LocalProvider.ConfigureLaunch()` sets `IsLocal=true` and builds harness args
-3. `muxcode-agent.sh` verifies Ollama is reachable (`GET /api/tags`)
+3. `RunAgentLaunch()` verifies Ollama is reachable (`GET /api/tags`)
 4. If reachable: runs `muxcode-llm-harness run <role>` (or `muxcode agent run <role>` as fallback)
 5. If unreachable: falls back to Claude Code with a warning
 
@@ -363,7 +363,7 @@ cp ~/.config/muxcode/agents/code-builder.md .claude/agents/code-builder.md
    # ~/.config/muxcode/agents/repo-documentor.md
    ```
 
-5. Add a case to `agent_name()` in `scripts/muxcode-agent.sh` to map the role to its agent filename. Optionally add a tool profile entry in `bus/profile.go` to scope the agent's permissions.
+5. Add a case to `AgentFileName()` in `bus/launch.go` to map the role to its agent filename. Optionally add a tool profile entry in `bus/profile.go` to scope the agent's permissions.
 
 ### Agent Permissions
 
@@ -543,7 +543,7 @@ Daemon-integrated health monitoring detects stuck Ollama instances (process aliv
 - **Agent failure tracking**: `agentState.consecutiveFailures` counter — after 3 consecutive `ChatComplete` failures, writes sentinel file at `lock/{role}.ollama-fail`; cleared on success
 - **Detection timeline**: 30s first probe failure → 60s `ollama-down` alert to edit → 90s restart attempted → ~105s agents relaunched → ~135s recovery confirmed
 - **Restart mechanism**: `RestartOllama()` kills via `pkill -f "ollama serve"`, starts detached, polls `/api/tags` for readiness (500ms intervals, 15s timeout)
-- **Agent restart**: `RestartLocalAgent()` sends `C-c` via tmux, waits 500ms, relaunches `muxcode-agent.sh {role}`
+- **Agent restart**: `RestartLocalAgent()` sends `C-c` via tmux, waits 500ms, relaunches `muxcode agent launch {role}`
 - **Restart cap**: max 3 automatic restarts per session — after cap, periodic alerts only (manual intervention required)
 - **Alert dedup**: `ollama-down`, `ollama-recovered`, `ollama-restarting` events deduped via `lastAlertKey` with 600s cooldown
 - **System action exclusion**: registered in `isSystemAction()` to prevent false loop detection
@@ -571,7 +571,7 @@ Standalone binary (`muxcode-llm-harness`) that replaces `muxcode agent run` for 
 
 CLI: `muxcode-llm-harness run <role> [--model MODEL] [--url URL] [--max-turns N] [--tui]`
 
-Separate Go module at `tools/muxcode-llm-harness/` — stdlib only, no external deps. The launcher (`muxcode-agent.sh`) prefers the harness binary when available, falls back to `muxcode agent run`.
+Separate Go module at `tools/muxcode-llm-harness/` — stdlib only, no external deps. The launcher (`RunAgentLaunch()`) prefers the harness binary when available, falls back to `muxcode agent run`.
 
 ### Circuit breaker
 

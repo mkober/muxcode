@@ -8,3 +8,4 @@ tools/muxcode-llm-harness/muxcode-llm-harness
 .DS_Store
 .muxcode/
 .muxcoder/
+.opencode/

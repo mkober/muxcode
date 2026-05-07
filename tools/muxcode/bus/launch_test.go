@@ -719,3 +719,302 @@ func TestPreLaunchSetup_UnknownRole_NoMessage(t *testing.T) {
 		t.Errorf("expected 0 messages in build inbox, got %d", len(msgs))
 	}
 }
+
+func TestActivateVenv(t *testing.T) {
+	tmpDir := t.TempDir()
+	venvDir := filepath.Join(tmpDir, ".venv")
+	os.MkdirAll(filepath.Join(venvDir, "bin"), 0o755)
+
+	// Save original env
+	origPath := os.Getenv("PATH")
+	origVenv := os.Getenv("VIRTUAL_ENV")
+	origPyHome := os.Getenv("PYTHONHOME")
+	os.Setenv("PYTHONHOME", "/some/python")
+	defer func() {
+		os.Setenv("PATH", origPath)
+		if origVenv != "" {
+			os.Setenv("VIRTUAL_ENV", origVenv)
+		} else {
+			os.Unsetenv("VIRTUAL_ENV")
+		}
+		if origPyHome != "" {
+			os.Setenv("PYTHONHOME", origPyHome)
+		} else {
+			os.Unsetenv("PYTHONHOME")
+		}
+	}()
+
+	if err := ActivateVenv(venvDir); err != nil {
+		t.Fatalf("ActivateVenv: %v", err)
+	}
+
+	// Check VIRTUAL_ENV is set to absolute path
+	gotVenv := os.Getenv("VIRTUAL_ENV")
+	if gotVenv != venvDir {
+		t.Errorf("VIRTUAL_ENV = %q, want %q", gotVenv, venvDir)
+	}
+
+	// Check PATH has venv bin prepended
+	gotPath := os.Getenv("PATH")
+	wantPrefix := filepath.Join(venvDir, "bin")
+	if !strings.HasPrefix(gotPath, wantPrefix) {
+		t.Errorf("PATH should start with %q, got %q", wantPrefix, gotPath)
+	}
+
+	// Check PYTHONHOME is unset
+	if v := os.Getenv("PYTHONHOME"); v != "" {
+		t.Errorf("PYTHONHOME should be unset, got %q", v)
+	}
+}
+
+func TestActivateVenv_RelativePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	venvDir := filepath.Join(tmpDir, "myenv")
+	os.MkdirAll(filepath.Join(venvDir, "bin"), 0o755)
+
+	origDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
+
+	origPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", origPath)
+
+	if err := ActivateVenv("myenv"); err != nil {
+		t.Fatalf("ActivateVenv: %v", err)
+	}
+
+	gotVenv := os.Getenv("VIRTUAL_ENV")
+	if !filepath.IsAbs(gotVenv) {
+		t.Errorf("VIRTUAL_ENV should be absolute, got %q", gotVenv)
+	}
+	// Normalize to handle /var -> /private/var symlink on macOS
+	gotNorm, _ := filepath.EvalSymlinks(gotVenv)
+	wantNorm, _ := filepath.EvalSymlinks(venvDir)
+	if gotNorm != wantNorm {
+		t.Errorf("VIRTUAL_ENV = %q, want %q", gotVenv, venvDir)
+	}
+}
+
+func TestResolveExecPath_Absolute(t *testing.T) {
+	got, err := ResolveExecPath("/usr/bin/true")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "/usr/bin/true" {
+		t.Errorf("got %q, want /usr/bin/true", got)
+	}
+}
+
+func TestResolveExecPath_LookPath(t *testing.T) {
+	// "sh" should be findable on any Unix system
+	got, err := ResolveExecPath("sh")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("expected absolute path, got %q", got)
+	}
+}
+
+func TestResolveExecPath_NotFound(t *testing.T) {
+	_, err := ResolveExecPath("nonexistent-binary-xyz-123")
+	if err == nil {
+		t.Error("expected error for nonexistent binary")
+	}
+}
+
+func TestRunAgentLaunch_ExecArgs(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+
+	// Clear env to get defaults
+	t.Setenv("AGENT_ROLE", "")
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("MUXCODE_BUILD_CLI", "")
+	t.Setenv("MUXCODE_BUILD_CLAUDE_MODEL", "")
+	t.Setenv("MUXCODE_CLAUDE_MODEL", "")
+	t.Setenv("BUS_SESSION", "test-run-agent-launch")
+
+	// Init bus directory
+	Init("test-run-agent-launch", os.Getenv("BUS_DIR_BASE"))
+
+	// Capture the exec call instead of actually exec-ing
+	var capturedPath string
+	var capturedArgv []string
+	var capturedEnv []string
+	origExec := execSyscall
+	execSyscall = func(path string, argv []string, env []string) error {
+		capturedPath = path
+		capturedArgv = argv
+		capturedEnv = env
+		return nil // pretend exec succeeded (control returns for test)
+	}
+	defer func() { execSyscall = origExec }()
+
+	err := RunAgentLaunch("build")
+
+	// On systems without the default CLI binary, ResolveExecPath may fail.
+	// That's OK — we test the exec path separately. Just check if we got
+	// the exec call or a "cannot find" error.
+	if err != nil {
+		if strings.Contains(err.Error(), "cannot find") {
+			// Expected on systems without the CLI installed — the exec
+			// setup logic still ran correctly up to that point
+			return
+		}
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify exec was called
+	if capturedPath == "" {
+		t.Fatal("execSyscall was not called")
+	}
+
+	// Verify AGENT_ROLE was set
+	agentRole := os.Getenv("AGENT_ROLE")
+	if agentRole != "build" {
+		t.Errorf("AGENT_ROLE = %q, want build", agentRole)
+	}
+
+	// Verify argv[0] is the binary name
+	if len(capturedArgv) == 0 {
+		t.Fatal("argv is empty")
+	}
+
+	// Verify env was passed
+	if len(capturedEnv) == 0 {
+		t.Fatal("env is empty")
+	}
+
+	// Verify AGENT_ROLE is in the env
+	found := false
+	for _, e := range capturedEnv {
+		if strings.HasPrefix(e, "AGENT_ROLE=") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("AGENT_ROLE not found in exec env")
+	}
+}
+
+func TestRunAgentLaunch_VenvActivation(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetBusDirBase(tmpDir)
+	defer ResetBusDirBase()
+
+	// Create a venv in the working directory
+	origDir, _ := os.Getwd()
+	projectDir := filepath.Join(tmpDir, "project")
+	os.MkdirAll(filepath.Join(projectDir, ".venv", "bin"), 0o755)
+	os.WriteFile(filepath.Join(projectDir, ".venv", "bin", "activate"), []byte(""), 0o644)
+	os.Chdir(projectDir)
+	defer os.Chdir(origDir)
+
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("MUXCODE_BUILD_CLI", "")
+	t.Setenv("BUS_SESSION", "test-venv-launch")
+
+	Init("test-venv-launch", tmpDir)
+
+	// Save original env
+	origPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", origPath)
+
+	// Capture exec
+	origExec := execSyscall
+	execSyscall = func(path string, argv []string, env []string) error {
+		return nil
+	}
+	defer func() { execSyscall = origExec }()
+
+	_ = RunAgentLaunch("build")
+
+	// Check venv was activated
+	gotVenv := os.Getenv("VIRTUAL_ENV")
+	if gotVenv == "" {
+		t.Error("VIRTUAL_ENV not set — venv activation didn't happen")
+	} else if !strings.HasSuffix(gotVenv, ".venv") {
+		t.Errorf("VIRTUAL_ENV = %q, expected to end with .venv", gotVenv)
+	}
+}
+
+func TestRunAgentLaunch_SetsAgentRole(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+
+	t.Setenv("AGENT_ROLE", "")
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("MUXCODE_COMMIT_CLI", "")
+	t.Setenv("BUS_SESSION", "test-role-env")
+
+	Init("test-role-env", os.Getenv("BUS_DIR_BASE"))
+
+	origExec := execSyscall
+	execSyscall = func(path string, argv []string, env []string) error {
+		return nil
+	}
+	defer func() { execSyscall = origExec }()
+
+	_ = RunAgentLaunch("commit")
+
+	// "commit" normalizes to "commit" (not "git")
+	got := os.Getenv("AGENT_ROLE")
+	if got != "commit" {
+		t.Errorf("AGENT_ROLE = %q, want commit", got)
+	}
+}
+
+func TestRunAgentLaunch_LegacyRoleNormalization(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+
+	t.Setenv("AGENT_ROLE", "")
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("MUXCODE_RUN_CLI", "")
+	t.Setenv("BUS_SESSION", "test-legacy-role")
+
+	Init("test-legacy-role", os.Getenv("BUS_DIR_BASE"))
+
+	origExec := execSyscall
+	execSyscall = func(path string, argv []string, env []string) error {
+		return nil
+	}
+	defer func() { execSyscall = origExec }()
+
+	_ = RunAgentLaunch("runner")
+
+	// "runner" normalizes to "run"
+	got := os.Getenv("AGENT_ROLE")
+	if got != "run" {
+		t.Errorf("AGENT_ROLE = %q, want run", got)
+	}
+}
+
+func TestRunAgentLaunch_PresetAgentRolePreserved(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+
+	// Simulate spawn agent: AGENT_ROLE is pre-set to the spawn identity
+	t.Setenv("AGENT_ROLE", "spawn-edit-1")
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("MUXCODE_EDIT_CLI", "")
+	t.Setenv("BUS_SESSION", "test-spawn-role")
+
+	Init("test-spawn-role", os.Getenv("BUS_DIR_BASE"))
+
+	origExec := execSyscall
+	execSyscall = func(path string, argv []string, env []string) error {
+		return nil
+	}
+	defer func() { execSyscall = origExec }()
+
+	_ = RunAgentLaunch("edit")
+
+	// Pre-set AGENT_ROLE should be preserved (not overwritten to "edit")
+	got := os.Getenv("AGENT_ROLE")
+	if got != "spawn-edit-1" {
+		t.Errorf("AGENT_ROLE = %q, want spawn-edit-1 (pre-set value should be preserved)", got)
+	}
+}

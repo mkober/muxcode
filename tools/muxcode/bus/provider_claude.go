@@ -131,7 +131,7 @@ func (p *ClaudeCodeProvider) IsIdle(session, role string) bool {
 // Detection heuristic (in order):
 //  1. IsIdle sees ❯ → alive (idle Claude Code)
 //  2. Last non-empty line ends with shell prompt ($, %, ->, >) and no ❯ → dead
-//  3. "muxcode-agent" or "claude" or "opencode" in capture → alive (starting up)
+//  3. "muxcode agent launch" or "claude" or "opencode" in capture → alive (starting up)
 //  4. Default: assume alive if indeterminate
 //
 // Shell prompt check (2) must come before startup text check (3) because
@@ -162,11 +162,11 @@ func (p *ClaudeCodeProvider) IsAlive(session, role string) bool {
 		return false
 	}
 
-	// 3. Startup check — look for agent launcher or claude text
+	// 3. Startup check — look for agent launcher or CLI text
 	// Only reached if we're NOT at a shell prompt (agent is mid-startup).
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.Contains(trimmed, "muxcode-agent") ||
+		if strings.Contains(trimmed, "muxcode agent launch") ||
 			strings.Contains(trimmed, "claude") ||
 			strings.Contains(trimmed, "opencode") {
 			return true

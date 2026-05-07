@@ -27,8 +27,8 @@ Each agent has scoped tool permissions — the build agent can't edit files, the
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  F1 Plan  F2 Edit  F3 Build  F4 Test  F5 Serve  F6 Review       │
-│  F7 Deploy  F8 Run  F9 Watch  F10 Commit                        │
+│  F1 Plan  F2 Edit  F3 Build  F4 Test  F5 Serve  F6 Review        │
+│  F7 Deploy  F8 Run  F9 Watch  F10 Commit                         │
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐        │
@@ -256,7 +256,7 @@ Both MuxCode and autonomous AI tools solve the same coordination problems:
 
 **Composable specialists, not a monolithic agent.** Each agent is a focused role with constrained permissions. The build agent can't edit files. The commit agent can't deploy. The serve agent manages dev servers but can't modify source code. This separation of concerns mirrors how teams actually work. Autonomous tools often use a single agent with broad capabilities that handles everything.
 
-**Zero external dependencies.** The bus binary is stdlib-only Go — it compiles in seconds with no dependency management. The hooks are Go subcommands of the bus binary (with two remaining shell scripts for tmux/vim timing-sensitive operations). Autonomous tools typically have significant dependency trees (Python packages, Node modules, system libraries).
+**Zero external dependencies.** The bus binary is stdlib-only Go — it compiles in seconds with no dependency management. The launcher, agent bootstrap, and hooks are all Go subcommands of the single `muxcode` binary (with utility shell scripts for tmux/vim timing-sensitive operations). Autonomous tools typically have significant dependency trees (Python packages, Node modules, system libraries).
 
 The tradeoff is clear: autonomous tools can handle more without you, but MuxCode gives you visibility and control at every step. If you want to understand what's happening in your codebase — not just get a result — MuxCode is designed for that workflow.
 

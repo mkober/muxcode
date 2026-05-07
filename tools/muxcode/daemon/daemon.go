@@ -53,6 +53,7 @@ type Daemon struct {
 	// Idle agent wake-up
 	lastIdleCheck   int64            // 5s interval
 	lastNonHookWake map[string]int64 // cooldown: last wake time per non-hook role (60s)
+	lastIdleState   map[string]bool  // per-role idle state from last check (for transition detection)
 	// Non-hook task completion detection
 	lastTaskCheck       int64             // 5s interval
 	taskDeliveredAt     map[string]int64  // msgID -> unix time when message was delivered (wake-up sent)
@@ -96,6 +97,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		agentRestarts:        make(map[string]int),
 		agentWasDown:         make(map[string]bool),
 		lastNonHookWake:      make(map[string]int64),
+		lastIdleState:        make(map[string]bool),
 		taskDeliveredAt:      make(map[string]int64),
 		taskLastPaneContent:  make(map[string]string),
 		idleTaskFirstSeen:    make(map[string]int64),
@@ -939,6 +941,23 @@ func (d *Daemon) checkIdleAgents() {
 		if bus.IsReloading(d.session, role) {
 			continue
 		}
+
+		// Detect idle transitions: when an agent goes from not-idle to idle
+		// (e.g. after restart, hot reload, or startup), clear stale notification
+		// markers. Without this, the dedup in alreadyNotified() suppresses
+		// wake-ups for up to 30s because the notified-size marker matches the
+		// current inbox size from before the restart.
+		isIdle := bus.IsAgentIdle(d.session, role)
+		wasIdle := d.lastIdleState[role]
+		if isIdle && !wasIdle {
+			bus.ClearNotifiedSize(d.session, role)
+			d.lastNonHookWake[role] = 0 // reset non-hook cooldown too
+			ts := time.Now().Format("15:04:05")
+			fmt.Printf("  %s  Agent %s became idle — cleared stale notification markers\n", ts, role)
+			bus.LogLifecycle(d.session, "info", "daemon", "idle-transition", role)
+		}
+		d.lastIdleState[role] = isIdle
+
 		// Skip if no actionable messages. Only wake agents for request-type
 		// messages — responses and events are informational and don't require
 		// the agent to act. This prevents echo loops where agents keep
@@ -969,7 +988,7 @@ func (d *Daemon) checkIdleAgents() {
 			continue
 		}
 		// Only wake idle agents (at ❯ prompt) — don't interrupt active ones
-		if !bus.IsAgentIdle(d.session, role) {
+		if !isIdle {
 			continue
 		}
 

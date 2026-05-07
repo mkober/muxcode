@@ -154,10 +154,10 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 		return SpawnEntry{}, fmt.Errorf("seeding inbox: %v", err)
 	}
 
-	// Find agent launcher script
-	launcher, err := findAgentLauncher()
+	// Find the muxcode binary (agent launch is now native Go)
+	launcher, err := findMuxcodeBinary()
 	if err != nil {
-		return SpawnEntry{}, fmt.Errorf("finding agent launcher: %v", err)
+		return SpawnEntry{}, fmt.Errorf("finding muxcode binary: %v", err)
 	}
 
 	// Create tmux window
@@ -172,12 +172,14 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 		return SpawnEntry{}, fmt.Errorf("splitting window: %v", err)
 	}
 
-	// Launch agent in pane 1 — cd into worktree if set
+	// Launch agent in pane 1 — cd into worktree if set.
+	// AGENT_ROLE must be the spawn-specific role (e.g. "spawn-edit-1") so the
+	// agent reads from its own inbox, not the base role's inbox.
 	var launchStr string
 	if entry.Worktree != "" {
-		launchStr = fmt.Sprintf("cd %s && AGENT_ROLE=%s %s %s", entry.Worktree, spawnRole, launcher, role)
+		launchStr = fmt.Sprintf("cd %s && AGENT_ROLE=%s %s agent launch %s", entry.Worktree, spawnRole, launcher, role)
 	} else {
-		launchStr = fmt.Sprintf("AGENT_ROLE=%s %s %s", spawnRole, launcher, role)
+		launchStr = fmt.Sprintf("AGENT_ROLE=%s %s agent launch %s", spawnRole, launcher, role)
 	}
 	launchCmd := exec.Command("tmux", "send-keys", "-t", session+":"+spawnRole+".1", launchStr, "Enter")
 	if err := launchCmd.Run(); err != nil {
@@ -489,26 +491,26 @@ func pruneOrphanedWorktrees(session string, runningEntries []SpawnEntry) {
 	_ = exec.Command("git", "worktree", "prune").Run()
 }
 
-// findAgentLauncher locates the muxcode-agent.sh script.
-// Checks: ~/.config/muxcode/scripts/, ~/.local/bin/, PATH.
-func findAgentLauncher() (string, error) {
-	// Check user config dir
+// findMuxcodeBinary locates the muxcode binary.
+// Checks: ~/.local/bin/, PATH, then the current executable path.
+func findMuxcodeBinary() (string, error) {
 	home, _ := os.UserHomeDir()
-	candidates := []string{
-		filepath.Join(home, ".config", "muxcode", "scripts", "muxcode-agent.sh"),
-		filepath.Join(home, ".local", "bin", "muxcode-agent.sh"),
-	}
 
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
+	// Check common install location
+	candidate := filepath.Join(home, ".local", "bin", "muxcode")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate, nil
 	}
 
 	// Check PATH
-	if p, err := exec.LookPath("muxcode-agent.sh"); err == nil {
+	if p, err := exec.LookPath("muxcode"); err == nil {
 		return p, nil
 	}
 
-	return "", fmt.Errorf("muxcode-agent.sh not found in ~/.config/muxcode/scripts/, ~/.local/bin/, or PATH")
+	// Fall back to the current executable
+	if exe, err := os.Executable(); err == nil {
+		return exe, nil
+	}
+
+	return "", fmt.Errorf("muxcode binary not found in ~/.local/bin/, PATH, or as current executable")
 }

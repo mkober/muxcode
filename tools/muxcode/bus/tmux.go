@@ -54,6 +54,11 @@ func TmuxOutput(args ...string) (string, error) {
 	return tmuxOutputRunner(args...)
 }
 
+// TmuxHasSession checks if a tmux session with the given name exists.
+func TmuxHasSession(session string) bool {
+	return TmuxRunQuiet("has-session", "-t", session) == nil
+}
+
 // TmuxKillSession kills a tmux session by name, ignoring errors.
 // Uses TmuxRunQuiet to suppress "no server running" stderr noise.
 func TmuxKillSession(session string) error {

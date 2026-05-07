@@ -238,7 +238,7 @@ ok "~/.local/bin ready"
 # --- Build and install ---
 info "Building and installing..."
 "$REPO_DIR/build.sh"
-ok "Binary, scripts, agents, and configs installed"
+ok "Binary, agents, and configs installed"
 
 # --- Configure tmux ---
 TMUX_CONF="$HOME/.tmux.conf"

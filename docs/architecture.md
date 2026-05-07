@@ -166,7 +166,7 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
 1. Agent runs: muxcode spawn start research "What does guard.go do?"
 2. Bus generates spawn role (spawn-a1b2c3d4), creates tmux window
 3. Task message pre-seeded in spawn's inbox
-4. Launches: AGENT_ROLE=spawn-a1b2c3d4 muxcode-agent.sh research
+4. Launches: muxcode agent launch research (with AGENT_ROLE=spawn-a1b2c3d4)
 5. After 2s delay, bus notifies spawn agent to read inbox
 6. Spawn agent works on task, sends messages back to owner via bus
 7. Spawn agent completes, exits (tmux window closes)
@@ -383,7 +383,7 @@ The build-test-review and deploy-run-watch chains are **deterministic** — driv
 ```
 1. Provider resolved via MUXCODE_{ROLE}_CLI="local"
 2. LocalProvider.BuildExecArgs returns muxcode-llm-harness (or muxcode agent fallback)
-3. muxcode-agent.sh checks Ollama health (GET /api/tags)
+3. RunAgentLaunch() checks Ollama health (GET /api/tags)
 3a. Ollama reachable: exec harness binary
 3b. Ollama unreachable: fall through to Claude Code
 4. Agent loop: poll inbox → build conversation → call Ollama API → execute tools → send response
@@ -525,7 +525,7 @@ The launcher handles all prompts automatically via `provider.ClassifyPane()` and
 7. Watch agents do **not** get startup messages — the daemon delivers inbox items naturally, and unsolicited responses would CC noise to edit. The analyze agent is no longer in the default window list — opt in via `MUXCODE_WINDOWS`
 8. Exits early once all panes are handled
 
-Core code: `muxcode.sh` (auto-accept block near end of file)
+Core code: `AutoAccept()` in `bus/launcher.go`
 
 ## Session re-init
 
@@ -602,9 +602,9 @@ Persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record the full 
 
 | Component | Source | Key events |
 |-----------|--------|------------|
-| `muxcode.sh` | `launcher` | session-start, bus-init, stale-kill, watcher-start, monitor-start, session-create, session-ready |
-| `muxcode.sh` (auto-accept loop) | `auto-accept` | trust-prompt, bypass-prompt, agent-ready, complete |
-| `muxcode-agent.sh` | `agent` | launch (role + CLI type) |
+| `LaunchSession()` | `launcher` | session-start, bus-init, stale-kill, watcher-start, monitor-start, session-create, session-ready |
+| `AutoAccept()` | `auto-accept` | trust-prompt, bypass-prompt, agent-ready, complete |
+| `RunAgentLaunch()` | `agent` | launch (role + CLI type) |
 | `bus/setup.go` | `init` | init, re-init |
 | `watcher/watcher.go` | `daemon` | started, lock-failed, inbox-notify, startup-notify, trigger-route, cron-fire, proc/spawn-complete, loop/compact alerts, ollama/agent health |
 | `cmd/watch.go` (`--monitor`) | `monitor` | session-gone, stale-detected, watcher-restart |

@@ -148,7 +148,7 @@ muxcode watch [session] [--poll N] [--debounce N] [--monitor]
 - `--debounce N` — trigger file debounce interval in seconds (default: 8)
 - `--monitor` — run as daemon health monitor instead of the daemon itself. Checks the daemon keepalive every 15 seconds; if stale (>30s), kills and relaunches the daemon process. Exits cleanly when the tmux session is gone.
 
-Without `--monitor`, runs in a split-left window's left pane as the primary daemon. With `--monitor`, runs as a companion background process launched by `muxcode.sh`.
+Without `--monitor`, runs in a split-left window's left pane as the primary daemon. With `--monitor`, runs as a companion background process launched by `LaunchSession()`.
 
 #### Trigger file format
 
@@ -517,7 +517,7 @@ muxcode spawn clean
 1. `spawn start research "What does bus/guard.go do?"` generates a unique spawn ID (e.g. `spawn-a1b2c3d4`)
 2. Creates a tmux window named `spawn-a1b2c3d4`, splits horizontally (agent in pane 1)
 3. Pre-seeds the spawn's inbox with the task message
-4. Launches `AGENT_ROLE=spawn-a1b2c3d4 muxcode-agent.sh research` — the base role (`research`) determines agent definition, tools, and prompts; the `AGENT_ROLE` env var (`spawn-a1b2c3d4`) determines the bus communication channel
+4. Launches `muxcode agent launch research` with `AGENT_ROLE=spawn-a1b2c3d4` — the base role (`research`) determines agent definition, tools, and prompts; the `AGENT_ROLE` env var (`spawn-a1b2c3d4`) determines the bus communication channel
 5. After 2s delay, notifies the spawn agent to read its inbox
 6. When the agent finishes and exits (tmux window closes), the daemon detects it and sends a `spawn-complete` event to the owner
 
@@ -773,7 +773,7 @@ muxcode context detect [DIR]
 | Subcommand | Description |
 |------------|-------------|
 | `list` | Show all context files with source (project/user/auto), filterable by `--role` |
-| `prompt` | Output formatted context for prompt injection (used by `muxcode-agent.sh`) |
+| `prompt` | Output formatted context for prompt injection (used by `RunAgentLaunch()`) |
 | `detect` | Auto-detect project type from indicator files and show convention snippets |
 
 - `--no-auto` — exclude auto-detected project context (only show manual `context.d/` files)
@@ -898,7 +898,7 @@ $ muxcode agent run build --url http://192.168.1.100:11434
 
 ### `muxcode agent launch`
 
-Launch a Claude Code (or local LLM) agent for a role. Replaces `muxcode-agent.sh` — resolves agent file, model, tools, prompt, and execs the agent CLI.
+Launch an AI CLI agent for a role. Resolves agent file, model, tools, prompt, and execs the agent CLI.
 
 ```bash
 muxcode agent launch <role>
@@ -924,7 +924,7 @@ muxcode agent launch <role>
 
 **Examples:**
 ```bash
-# Launch the build agent (standard usage from muxcode.sh)
+# Launch the build agent (standard usage from LaunchSession)
 $ muxcode agent launch build
 
 # Launch the edit agent (prompted mode, opus model)
@@ -1133,7 +1133,7 @@ muxcode lifecycle purge [--days N]
 
 | Source | Event | Level | When |
 |--------|-------|-------|------|
-| launcher | session-start | info | `muxcode.sh` begins |
+| launcher | session-start | info | `LaunchSession()` begins |
 | launcher | bus-init | info | `muxcode init` completes |
 | launcher | stale-kill | info | Killed stale daemon or monitor |
 | launcher | watcher-start | info | Daemon process launched (with PID) |

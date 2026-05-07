@@ -30,9 +30,13 @@ install: build
 	@install -m 755 bin/muxcode $(BINDIR)/muxcode
 	@ln -sf muxcode $(BINDIR)/muxcode-agent-bus
 	@[ -f bin/muxcode-llm-harness ] && install -m 755 bin/muxcode-llm-harness $(BINDIR)/muxcode-llm-harness || true
+	@# Install hook and utility scripts (muxcode-agent.sh removed — agent
+	@# launch is now handled natively by the Go binary via "muxcode agent launch")
 	@for f in scripts/muxcode-*.sh; do \
 		[ -f "$$f" ] && install -m 755 "$$f" $(BINDIR)/ ; \
 	done; true
+	@# Clean up legacy scripts replaced by native Go (safe to run on fresh installs)
+	@rm -f $(BINDIR)/muxcode-agent.sh $(BINDIR)/muxcode.sh
 	@# Agents and skills always overwrite — these are repo defaults that track
 	@# upstream changes. User customizations go in .claude/agents/ (project-level
 	@# 3-tier resolution) or .muxcode/skills/, not in ~/.config/muxcode/.
@@ -52,7 +56,7 @@ install: build
 	@install -m 644 config/nvim/plugin/startscreen.lua $(NVIM_CONFIGDIR)/plugin/startscreen.lua
 	@# Clean up old site plugin from pre-NVIM_APPNAME installs
 	@rm -f $(NVIM_PLUGIN_DIR)/muxcode-startscreen.lua
-	@printf 'Installed: binary to %s/, scripts/agents/configs to %s/\n' "$(BINDIR)" "$(CONFIGDIR)" | sed "s|$$HOME|~|g"
+	@printf 'Installed: binary to %s/, agents/configs to %s/\n' "$(BINDIR)" "$(CONFIGDIR)" | sed "s|$$HOME|~|g"
 
 clean:
 	rm -rf bin/

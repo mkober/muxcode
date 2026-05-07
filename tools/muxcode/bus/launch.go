@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -784,4 +785,95 @@ func PreLaunchSetup(role, session, cli string) {
 		LogLifecycle(session, "info", "agent", "launch",
 			fmt.Sprintf("role=%s cli=%s", role, logCLI))
 	}
+}
+
+// ActivateVenv sets PATH and VIRTUAL_ENV environment variables to activate
+// a Python venv. This is equivalent to `source <venv>/bin/activate`.
+// Returns an error if the venv directory path cannot be resolved.
+func ActivateVenv(venvDir string) error {
+	absVenv, err := filepath.Abs(venvDir)
+	if err != nil {
+		return fmt.Errorf("resolve venv path %q: %w", venvDir, err)
+	}
+	binDir := filepath.Join(absVenv, "bin")
+	os.Setenv("VIRTUAL_ENV", absVenv)
+	// Prepend venv bin to PATH
+	os.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Remove PYTHONHOME if set (matches activate script behavior)
+	os.Unsetenv("PYTHONHOME")
+	return nil
+}
+
+// ResolveExecPath finds the absolute path for a binary name.
+func ResolveExecPath(binary string) (string, error) {
+	if filepath.IsAbs(binary) {
+		return binary, nil
+	}
+	path, err := exec.LookPath(binary)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(path)
+}
+
+// execSyscall is a testable wrapper around syscall.Exec.
+// Tests replace this to capture the exec call without replacing the process.
+var execSyscall = syscall.Exec
+
+// RunAgentLaunch performs the complete agent launch sequence:
+// load config, resolve provider/CLI/model/tools, pre-launch setup,
+// activate venv, set AGENT_ROLE, clear terminal, and exec into the CLI.
+// On success, syscall.Exec replaces the process — this function does not return.
+// This is the Go-native agent launcher.
+func RunAgentLaunch(role string) error {
+	// Load shell-sourceable config (same resolution as LoadShellConfig)
+	LoadShellConfig("")
+
+	// Resolve all launch configuration
+	cfg := ResolveLaunchConfig(role)
+
+	// Pre-launch: generate agent config for non-Claude providers
+	if cfg.Provider != nil {
+		if err := cfg.Provider.WriteAgentConfig(role); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: WriteAgentConfig(%s): %v\n", role, err)
+		}
+	}
+
+	// Pre-launch: startup inbox message + lifecycle log
+	session := BusSession()
+	binary, launchArgs := cfg.BuildExecArgs()
+	PreLaunchSetup(role, session, binary)
+
+	// Activate Python venv if found
+	if cfg.VenvDir != "" {
+		if err := ActivateVenv(cfg.VenvDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: venv activation: %v\n", err)
+		}
+	}
+
+	// Export AGENT_ROLE so child processes (e.g. `muxcode send`) can identify
+	// the sender. Respect pre-set values (spawn agents set AGENT_ROLE to
+	// their spawn-specific identity before calling RunAgentLaunch).
+	if os.Getenv("AGENT_ROLE") == "" {
+		os.Setenv("AGENT_ROLE", NormalizeBusRole(role))
+	}
+
+	// Clear terminal for clean agent startup
+	fmt.Print("\033[2J\033[H")
+
+	// Resolve binary to absolute path for exec
+	binPath, err := ResolveExecPath(binary)
+	if err != nil {
+		return fmt.Errorf("cannot find %s: %w", binary, err)
+	}
+
+	// Build argv for exec (argv[0] must be the binary name)
+	argv := append([]string{binary}, launchArgs...)
+
+	// Replace this process with the agent CLI
+	if err := execSyscall(binPath, argv, os.Environ()); err != nil {
+		return fmt.Errorf("exec %s: %w", binary, err)
+	}
+
+	return nil // unreachable after successful exec
 }

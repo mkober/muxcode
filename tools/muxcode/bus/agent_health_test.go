@@ -76,7 +76,7 @@ func TestIsShellPrompt(t *testing.T) {
 		},
 		{
 			name:  "agent starting",
-			lines: []string{"", "muxcode-agent.sh build", "Starting..."},
+			lines: []string{"", "muxcode agent launch build", "Starting..."},
 			want:  false,
 		},
 		{

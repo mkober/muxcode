@@ -87,6 +87,17 @@ func RunLauncher(args []string) {
 	fmt.Printf("  Session:  %s\n", sessionName)
 	fmt.Println()
 
+	// Attach to existing session if already running
+	if bus.TmuxHasSession(sessionName) {
+		fmt.Println("  Session already running — attaching...")
+		fmt.Println()
+		if err := bus.AttachToSession(sessionName); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := bus.LaunchSession(cfg, projectDir, sessionName); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

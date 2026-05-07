@@ -234,7 +234,7 @@ func processMessages(ctx context.Context, cfg AgentConfig, client *OllamaClient,
 func buildSystemPrompt(role string) string {
 	var parts []string
 
-	// 1. Agent definition — read from the same places muxcode-agent.sh looks
+	// 1. Agent definition — read from the same places ResolveAgentFile() checks
 	if def := readAgentDefinition(role); def != "" {
 		parts = append(parts, def)
 	}
@@ -292,7 +292,7 @@ func readAgentDefinition(role string) string {
 }
 
 // agentFileName maps role names to agent definition filenames.
-// Mirrors agent_name() in muxcode-agent.sh.
+// Mirrors AgentFileName() in bus/launch.go.
 func agentFileName(role string) string {
 	switch role {
 	case "plan", "planner":

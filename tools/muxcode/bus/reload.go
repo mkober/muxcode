@@ -325,7 +325,7 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 
 	// 13. Wake new agent if it has pending inbox messages.
 	// Must wait for the agent to reach the idle prompt (❯) before injecting
-	// the wake-up — mirrors the startup wake-up logic in muxcode.sh. Calling
+	// the wake-up — mirrors the startup wake-up logic in LaunchSession(). Calling
 	// Notify() while the agent is still initializing takes the displayMessage
 	// path (status bar flash, invisible to the agent) which calls markNotified(),
 	// poisoning the dedup state so the daemon's checkIdleAgents → notifySendKeys
@@ -339,8 +339,8 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 
 // wakeAfterReload waits for an agent to reach the idle prompt after a hot
 // reload, then injects a wake-up via send-keys. This mirrors the startup
-// wake-up logic in muxcode.sh (which waits for ❯ then sends "You have new
-// messages") but runs from within the Go reload path.
+// wake-up logic in LaunchSession() (which waits for ❯ then sends "You have
+// new messages") but runs from within the Go reload path.
 //
 // The naive approach — calling Notify() right after the agent is alive —
 // fails because the agent is not yet idle (still initializing). Notify falls
