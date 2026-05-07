@@ -15,7 +15,7 @@ var KnownRoles = []string{
 	"plan", "edit", "build", "test", "review",
 	"deploy", "run", "commit", "analyze",
 	"docs", "research", "watch", "pr-read",
-	"webhook", "api", "auto",
+	"webhook", "api", "auto", "serve",
 }
 
 // splitLeftWindows lists windows that have a dedicated tool in the left pane.
@@ -32,6 +32,7 @@ var splitLeftWindows = map[string]bool{
 	"analyze": true,
 	"commit":  true,
 	"watch":   true,
+	"serve":   true,
 }
 
 func init() {

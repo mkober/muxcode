@@ -15,7 +15,7 @@ A multi-agent coding environment built on tmux — where you stay in the loop.
 
 ## What is MuxCode?
 
-MuxCode is a tmux-native multi-agent development environment. Ten specialist AI agents — planner, editor, builder, tester, reviewer, deployer, git manager, and more — each run in their own tmux window, coordinated through a file-based message bus. You work in neovim alongside an editing agent, and every other part of the development lifecycle has its own dedicated agent a function key away.
+MuxCode is a tmux-native multi-agent development environment. Ten specialist AI agents — planner, editor, builder, tester, dev server, reviewer, deployer, runner, log watcher, and git manager — each run in their own tmux window, coordinated through a file-based message bus. You work in neovim alongside an editing agent, and every other part of the development lifecycle has its own dedicated agent a function key away.
 
 You stay in control. The edit agent is your primary interface — it helps you write code and delegates to specialists when you're ready. Ask for a build, and the build agent runs it. Tests fire automatically on success. Review follows tests. Results flow back while you keep editing. The chain routing is hook-driven — Go hooks checking exit codes, not LLM routing decisions — so dispatch is deterministic and fast.
 
@@ -27,8 +27,8 @@ Each agent has scoped tool permissions — the build agent can't edit files, the
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  F1 Plan  F2 Edit  F3 Build  F4 Test  F5 Review  F6 Deploy      │
-│  F7 Run  F8 Watch  F9 Commit  F10 Analyze                       │
+│  F1 Plan  F2 Edit  F3 Build  F4 Test  F5 Serve  F6 Review       │
+│  F7 Deploy  F8 Run  F9 Watch  F10 Commit                        │
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐        │
@@ -73,19 +73,20 @@ MuxCode ships with ten specialist agents, each in its own tmux window:
 | edit (F2)      | Code editor    | Your primary interface — orchestrates by delegating, never runs build/test/git directly |
 | build (F3)     | Code builder   | Compiles and packages your project                                                      |
 | test (F4)      | Test runner    | Runs your test suite and reports results                                                |
-| review (F5)    | Code reviewer  | Reviews diffs for bugs, style issues, and improvements                                  |
-| deploy (F6)    | Infra deployer | Runs infrastructure deployments and diffs                                               |
-| run (F7)       | Command runner | Executes ad-hoc commands                                                                |
-| watch (F8)     | Log watcher    | Monitors logs — local files, CloudWatch, Kubernetes, Docker                             |
-| commit (F9)    | Git manager    | Handles all git operations — commits, branches, rebases, pushes                         |
-| analyze (F10)  | Editor analyst | Watches file changes and provides codebase analysis                                     |
+| serve (F5)     | Dev server     | Starts, monitors, and auto-restarts local development servers                           |
+| review (F6)    | Code reviewer  | Reviews diffs for bugs, style issues, and improvements                                  |
+| deploy (F7)    | Infra deployer | Runs infrastructure deployments and diffs                                               |
+| run (F8)       | Command runner | Executes ad-hoc commands                                                                |
+| watch (F9)     | Log watcher    | Monitors logs — local files, CloudWatch, Kubernetes, Docker                             |
+| commit (F10)   | Git manager    | Handles all git operations — commits, branches, rebases, pushes                         |
 
 **Agent mode** — Press F2 when already on the edit window to cycle to the autonomous agent, which reads Jira stories and drives the full story lifecycle (requirements → PR → implementation → PR) without user intervention. Press F2 again to cycle back to the editor. Both sessions persist across cycles. See [Agents](docs/agents.md#autonomous-agent-agent) for details.
 
-Additional roles that share a host agent's window (messages are routed to the host's inbox):
+Additional roles that share a host agent's window or are available as opt-in:
 
 | Role     | Host / access | What it does                                                                                |
 | -------- | ------------- | ------------------------------------------------------------------------------------------- |
+| analyze  | Opt-in window | Watches file changes and provides codebase analysis — add `analyze` to `MUXCODE_WINDOWS`   |
 | api      | Modal popup   | API tester — opens via `prefix + i` or `muxcode modal open api`. Manages collections, executes requests, tracks history |
 | docs     | plan          | Documentation writer — handled by the plan agent                                            |
 | research | edit          | Web search and codebase exploration — handled by the edit agent                             |
@@ -96,13 +97,13 @@ Additional roles that share a host agent's window (messages are routed to the ho
 
 Out of the box, MuxCode uses Claude Code for orchestration roles and OpenCode for command-execution roles:
 
-| Role                                      | Default CLI | Default model                   |
-| ----------------------------------------- | ----------- | ------------------------------- |
-| plan, edit                                | Claude Code | `claude-opus-4-6`              |
-| review                                    | OpenCode    | `opencode-go/mimo-v2.5-pro`    |
-| analyze                                   | OpenCode    | `opencode-go/qwen3.6-plus`     |
-| build, test, deploy, run, watch, commit   | OpenCode    | `opencode-go/minimax-m2.7`     |
-| api                                       | Claude Code | `claude-sonnet-4-5`            |
+| Role                                             | Default CLI | Default model                   |
+| ------------------------------------------------ | ----------- | ------------------------------- |
+| plan, edit                                       | Claude Code | `claude-opus-4-6`              |
+| review                                           | OpenCode    | `opencode-go/mimo-v2.5-pro`    |
+| analyze                                          | OpenCode    | `opencode-go/qwen3.6-plus`     |
+| build, test, serve, deploy, run, watch, commit   | OpenCode    | `opencode-go/minimax-m2.7`     |
+| api                                              | Claude Code | `claude-sonnet-4-5`            |
 
 OpenCode Go models are available through [OpenCode Go](https://opencode.ai/go). Override the model per role with `MUXCODE_{ROLE}_MODEL` for OpenCode roles (e.g. `MUXCODE_BUILD_MODEL=opencode-go/minimax-m2.7`) or `MUXCODE_{ROLE}_CLAUDE_MODEL` for Claude Code roles. Override the CLI provider per role with `MUXCODE_{ROLE}_CLI`.
 
@@ -129,6 +130,7 @@ This gives you:
 | commit   | OpenCode    | MiniMax M2.7       | Git operations — prompt-instructed chains                |
 | build    | OpenCode    | MiniMax M2.7       | Runs `./build.sh` — structured commands, no hooks needed |
 | test     | OpenCode    | MiniMax M2.7       | Runs `./test.sh` — structured commands, no hooks needed  |
+| serve    | OpenCode    | MiniMax M2.7       | Dev server lifecycle — start, monitor, restart            |
 | deploy   | OpenCode    | MiniMax M2.7       | Runs CDK/terraform — command execution role              |
 | run      | OpenCode    | MiniMax M2.7       | Ad-hoc commands — capable free model                     |
 | watch    | OpenCode    | MiniMax M2.7       | Log tailing — lightweight, read-only                     |
@@ -172,7 +174,7 @@ You can customize or replace any agent by dropping a markdown file in `.claude/a
 - **Interactive installer** — `install.sh` detects and offers to install Claude Code, OpenCode, and Codex CLI, with default provider selection when multiple are available
 
 ### Agent orchestration
-- **10 specialist agents** — Plan, edit, build, test, review, deploy, run, commit, analyze, and watch — each with scoped tool permissions and its own tmux window
+- **10 specialist agents** — Plan, edit, build, test, serve, review, deploy, run, watch, and commit — each with scoped tool permissions and its own tmux window
 - **Autonomous agent mode** — An autonomous agent shares the F2 window with the editor. Press F2 to cycle between them. The agent reads Jira stories, creates requirements docs, opens review PRs, implements approved requirements, and submits completed PRs — all without user intervention. Configurable via natural-language task files (`.muxcode/agent-tasks.md`) and a customizable story-lifecycle skill
 - **Hook-driven automation chains** — Build→test→review and deploy→run→watch chains fire via bash exit codes. Deterministic, fast, zero token cost for routing
 - **Conditional chain actions** — Chain actions support 8 condition types (`files_match`, `branch_match`, `env_set`, `output_contains`, etc.) with first-match-wins on action arrays. Route builds to deploy on release branches, to test on feature branches — all config-driven
@@ -252,7 +254,7 @@ Both MuxCode and autonomous AI tools solve the same coordination problems:
 
 **Hook-driven orchestration, not LLM-driven.** The build-test-review and deploy-run-watch chains fire via exit codes in Go hooks — deterministic, fast, zero token cost for routing. Conditional chain actions add branch-aware, file-aware routing without leaving the config-driven model. Autonomous tools typically use the LLM itself to decide what to do next, which is more flexible but slower and more expensive.
 
-**Composable specialists, not a monolithic agent.** Each agent is a focused role with constrained permissions. The build agent can't edit files. The commit agent can't deploy. This separation of concerns mirrors how teams actually work. Autonomous tools often use a single agent with broad capabilities that handles everything.
+**Composable specialists, not a monolithic agent.** Each agent is a focused role with constrained permissions. The build agent can't edit files. The commit agent can't deploy. The serve agent manages dev servers but can't modify source code. This separation of concerns mirrors how teams actually work. Autonomous tools often use a single agent with broad capabilities that handles everything.
 
 **Zero external dependencies.** The bus binary is stdlib-only Go — it compiles in seconds with no dependency management. The hooks are Go subcommands of the bus binary (with two remaining shell scripts for tmux/vim timing-sensitive operations). Autonomous tools typically have significant dependency trees (Python packages, Node modules, system libraries).
 
@@ -555,7 +557,7 @@ Useful keybindings for navigating your MuxCode session:
 
 | Keybinding | Action |
 | --- | --- |
-| `F1`–`F10` | Switch between agent windows |
+| `F1`–`F10` | Switch between agent windows (plan, edit, build, test, serve, review, deploy, run, watch, commit) |
 | `F2` (on edit window) | Cycle agent mode (edit → agent → edit) |
 | `Prefix + a` | Cycle edit-window agents from any window |
 | `Prefix + R` | Open provider selector (hot reload) |

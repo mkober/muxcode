@@ -36,9 +36,9 @@ load_config
 # Configuration with defaults
 PROJECTS_DIR="${MUXCODE_PROJECTS_DIR:-$HOME}"
 SCAN_DEPTH="${MUXCODE_SCAN_DEPTH:-3}"
-WINDOWS="${MUXCODE_WINDOWS:-plan edit build test review deploy run watch commit}"
+WINDOWS="${MUXCODE_WINDOWS:-plan edit build test serve review deploy run watch commit}"
 ROLE_MAP="${MUXCODE_ROLE_MAP:-}"
-SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-plan edit build test review deploy run commit watch}"
+SPLIT_LEFT="${MUXCODE_SPLIT_LEFT:-plan edit build test serve review deploy run commit watch}"
 SHELL_INIT="${MUXCODE_SHELL_INIT:-}"
 EDITOR="${MUXCODE_EDITOR:-nvim}"
 NVIM_APPNAME="${MUXCODE_NVIM_APPNAME:-muxcode/nvim}"
@@ -350,7 +350,7 @@ for WIN in "${WIN_ARRAY[@]:1}"; do
     if command -v muxcode &>/dev/null; then
       # Check if window has a console view (all standard windows do)
       case "$WIN" in
-        build|test|review|deploy|run|watch|commit|analyze)
+        build|test|review|deploy|run|watch|commit|analyze|serve)
           tmux send-keys -t "$SESSION:$WIN" "muxcode console $WIN" Enter
           ;;
       esac

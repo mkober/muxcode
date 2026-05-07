@@ -59,6 +59,7 @@ On startup you will receive a `context` message from the launcher with the file 
 - Cross-link docs with relative paths (e.g., `docs/architecture.md`)
 - When updating docs, augment existing content — don't rewrite or reorganize
 - Feature requirements live in `docs/requirements/` — completed specs in `completed/`, in-progress drafts in `drafts/`, backlog at top level
+- **Always use checkboxes** (`- [ ]` / `- [x]`) for all actionable items in requirements docs — acceptance criteria, implementation steps, phase tasks. Never use plain bullet points for tasks that need to be tracked. This applies to both creating new specs and updating existing ones.
 
 ## Spec lifecycle
 

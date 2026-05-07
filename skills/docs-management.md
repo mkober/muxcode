@@ -14,6 +14,16 @@ tags:
 
 Manage requirements specs through their lifecycle: backlog -> drafts -> completed.
 
+### Checkbox convention
+
+**All actionable items in requirements docs MUST use checkboxes** (`- [ ]` / `- [x]`). This includes:
+- Acceptance criteria
+- Implementation phase steps
+- Task lists within phases
+- Any item that represents work to be done or verified
+
+Never use plain bullet points (`-`) for trackable tasks. When creating new specs or editing existing ones, convert plain bullets to checkboxes if they represent actionable work. This enables progress tracking — agents and humans can see at a glance what's done vs pending.
+
 ### Move a spec between directories
 
 Move specs to reflect their current state:

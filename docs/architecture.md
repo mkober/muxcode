@@ -177,7 +177,7 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
 
 ### Daemon identity
 
-The bus daemon (implemented in `watcher/watcher.go`) uses `daemon` as its message bus identity — not `watcher`, which would collide with the `watch` agent (F7 window, the log-monitoring agent). This naming distinction prevents confusion in message routing, loop detection, and lifecycle logs.
+The bus daemon (implemented in `watcher/watcher.go`) uses `daemon` as its message bus identity — not `watcher`, which would collide with the `watch` agent (F9 window, the log-monitoring agent). This naming distinction prevents confusion in message routing, loop detection, and lifecycle logs.
 
 - **Bus messages**: the daemon sends messages with `from: daemon` (e.g. loop-detected, compact-recommended, agent-down alerts)
 - **Role normalization**: `NormalizeBusRole("daemon")` maps to `edit`, so reply instructions in daemon-originated messages point agents to reply to the edit agent (a valid interactive role) rather than to `daemon` (which has no inbox)
@@ -331,7 +331,7 @@ The build-test-review and deploy-run-watch chains are **deterministic** — driv
 └────────────────────┴────────────────────┘
 ```
 
-### Split-Left Windows (plan, edit, build, test, review, deploy, commit, watch)
+### Split-Left Windows (plan, edit, build, test, serve, review, deploy, run, commit, watch)
 ```
 ┌────────────────────┬────────────────────┐
 │                    │                    │
@@ -489,6 +489,7 @@ Each split-left window runs `muxcode console <role>` in the left pane, displayin
 |--------|---------|-------------|
 | build | `console build` | `build-history.jsonl` |
 | test | `console test` | `test-history.jsonl` |
+| serve | `console serve` | `serve-state.json` (managed servers: name, port, PID, uptime, restarts) |
 | review | `console review` | `review-history.jsonl` |
 | deploy | `console deploy` | `deploy-history.jsonl` |
 | run | `console run` | `run-history.jsonl` |

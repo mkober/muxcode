@@ -118,7 +118,7 @@ func ResolveProviderCLI(role string) string {
 // All other roles default to Claude Code (hook support, orchestration).
 func roleDefaultCLI(role string) string {
 	switch role {
-	case "build", "test", "deploy", "run", "runner", "watch", "commit", "git", "research":
+	case "build", "test", "deploy", "run", "runner", "watch", "commit", "git", "research", "serve":
 		return "opencode"
 	default:
 		return "claude"

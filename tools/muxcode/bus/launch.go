@@ -74,6 +74,8 @@ func AgentFileName(role string) string {
 		return "pr-reader"
 	case "api":
 		return "api-tester"
+	case "serve":
+		return "dev-server"
 	case "auto":
 		return "autonomous-agent"
 	default:
@@ -107,6 +109,8 @@ func RoleCLIEnvVar(role string) string {
 		return "MUXCODE_RESEARCH_CLI"
 	case "watch":
 		return "MUXCODE_WATCH_CLI"
+	case "serve":
+		return "MUXCODE_SERVE_CLI"
 	case "pr-read":
 		return "MUXCODE_PR_READ_CLI"
 	case "run", "runner":
@@ -147,6 +151,8 @@ func RoleClaudeModelEnvVar(role string) string {
 		return "MUXCODE_RESEARCH_CLAUDE_MODEL"
 	case "watch":
 		return "MUXCODE_WATCH_CLAUDE_MODEL"
+	case "serve":
+		return "MUXCODE_SERVE_CLAUDE_MODEL"
 	case "pr-read":
 		return "MUXCODE_PR_READ_CLAUDE_MODEL"
 	case "run", "runner":
@@ -181,6 +187,8 @@ func RoleCodexModelEnvVar(role string) string {
 		return "MUXCODE_ANALYZE_CODEX_MODEL"
 	case "watch":
 		return "MUXCODE_WATCH_CODEX_MODEL"
+	case "serve":
+		return "MUXCODE_SERVE_CODEX_MODEL"
 	case "run", "runner":
 		return "MUXCODE_RUN_CODEX_MODEL"
 	default:
@@ -200,7 +208,7 @@ func RoleClaudeModelDefault(role string) string {
 	switch role {
 	case "plan", "planner", "edit", "review", "analyze", "analyst", "auto":
 		return "claude-opus-4-6"
-	case "build", "test", "api", "deploy", "run", "runner", "watch", "commit", "git":
+	case "build", "test", "api", "deploy", "run", "runner", "watch", "commit", "git", "serve":
 		return "claude-sonnet-4-5"
 	default:
 		return ""
@@ -220,7 +228,7 @@ func RoleOpenCodeModelDefault(role string) string {
 		return "opencode-go/qwen3.5-plus"
 	case "research":
 		return "opencode-go/deepseek-v4-pro"
-	case "build", "test", "deploy", "run", "runner", "watch":
+	case "build", "test", "deploy", "run", "runner", "watch", "serve":
 		return "opencode-go/minimax-m2.5"
 	case "commit", "git":
 		return "opencode-go/minimax-m2.7"

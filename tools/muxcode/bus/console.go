@@ -323,6 +323,13 @@ func DefaultConsoleConfigs() map[string]*ConsoleConfig {
 			MaxRecent:   15,
 			Renderer:    renderAPI,
 		},
+		"serve": {
+			Title:       "Serve",
+			EmptyMsg:    "no servers yet",
+			RecentLabel: "recent activity",
+			MaxRecent:   15,
+			Renderer:    renderDeployRunner,
+		},
 		"auto": {
 			Title:       "Auto",
 			EmptyMsg:    "no activity yet",

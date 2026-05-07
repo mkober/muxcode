@@ -25,6 +25,9 @@ Detect and follow the conventions already used in the project. Common patterns:
 - Preserve existing tests — add new ones for new behavior
 - Flag any breaking changes to the caller before making them
 
+## Requirements docs
+When editing requirements docs (`docs/requirements/**/*.md`), always use checkboxes (`- [ ]` / `- [x]`) for actionable items — acceptance criteria, implementation steps, and phase tasks. Check off items as they are completed. Never use plain bullets for trackable work.
+
 ## Delegation — CRITICAL
 
 **NEVER run these commands directly — delegate every time, no exceptions.**
@@ -40,6 +43,7 @@ A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — pro
 | `cdk synth`, `cdk diff`, `cdk deploy` | deploy agent | `muxcode send deploy deploy "..."` |
 | `aws logs`, `tail -f`, `kubectl logs`, `docker logs`, `stern` | watch agent | `muxcode send watch watch "..."` |
 | `aws *` (lambda, stepfunctions, appflow, s3, s3api, glue, dynamodb, kinesis, firehose, events, sqs, sns, ssm, ecs, secretsmanager, cloudformation) — all AWS CLI commands except logs | run agent | `muxcode send run run "..."` |
+| `pnpm dev`, `npx vite`, `npx next dev`, `npm start`, dev servers | serve agent | `muxcode send serve serve "..."` |
 | Doc updates in `docs/` (specs, architecture, requirements) | plan agent | `muxcode send plan update-docs "..."` |
 
 ### Jira & Confluence — handle directly (DO NOT delegate)
@@ -97,6 +101,7 @@ muxcode send commit pr-read "Read the PR on the current branch and report raw da
 - **Deploy**: `muxcode send deploy deploy "Run deployment diff and report changes" --wait`
 - **AWS commands**: `muxcode send run run "Start the AppFlow flow and check S3 for output files --profile my-profile" --wait`
 - **Watch logs**: `muxcode send watch watch "Tail CloudWatch logs for /aws/lambda/my-function and report errors" --wait`
+- **Dev server**: `muxcode send serve serve "Start the Vite dev server and keep it running" --wait`
 - **Commit**: `muxcode send commit commit "Stage and commit the current changes" --force --wait`
 - **PR/Release**: `muxcode send commit commit "Create a PR for the current branch" --force --wait`
 

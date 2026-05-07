@@ -38,9 +38,9 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MUXCODE_WINDOWS` | `plan edit build test review deploy run watch commit` | Space-separated list of windows to create |
-| `MUXCODE_ROLE_MAP` | (empty) | Space-separated `window=role` mappings for windows whose role differs from name. Not needed for built-in roles — `commit`, `analyze`, and `run` are now canonical names matching their window names. Only needed for custom roles (e.g. `docs=documentor`). |
-| `MUXCODE_SPLIT_LEFT` | `plan edit build test review deploy run commit watch` | Space-separated windows that have a left pane (tool) + right pane (agent) |
+| `MUXCODE_WINDOWS` | `plan edit build test serve review deploy run watch commit` | Space-separated list of windows to create |
+| `MUXCODE_ROLE_MAP` | (empty) | Space-separated `window=role` mappings for windows whose role differs from name. Not needed for built-in roles — `commit`, `serve`, `analyze`, and `run` are now canonical names matching their window names. Only needed for custom roles (e.g. `docs=documentor`). |
+| `MUXCODE_SPLIT_LEFT` | `plan edit build test serve review deploy run commit watch` | Space-separated windows that have a left pane (tool) + right pane (agent) |
 
 ### Hook Configuration
 
@@ -61,7 +61,7 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `AGENT_ROLE` | (auto-detected) | Current agent's role name |
 | `BUS_MEMORY_DIR` | `.muxcode/memory/` | Path to persistent memory directory |
 | `MUXCODE_ROLES` | (empty) | Comma-separated extra roles to add to the known roles list |
-| `MUXCODE_SPLIT_LEFT` | `plan edit build test review deploy run commit watch` | See Window Layout above — also read by the bus binary for pane targeting |
+| `MUXCODE_SPLIT_LEFT` | `plan edit build test serve review deploy run commit watch` | See Window Layout above — also read by the bus binary for pane targeting |
 | `MUXCODE_DEDUP_WINDOW` | `30` | Dedup window in seconds for duplicate message suppression (set to 0 to disable) |
 | `MUXCODE_INBOX_POLL_TIMEOUT` | `600` | Timeout in seconds for `send --wait` polling |
 | `MUXCODE_LIFECYCLE_LOG_MAX` | `1000` | Max entries per lifecycle log before rotation |
@@ -81,7 +81,7 @@ Override with env vars (resolution order: per-role → global → built-in defau
 | Variable | Description |
 |----------|-------------|
 | `MUXCODE_CLAUDE_MODEL` | Global override for all agents. Passed as `--model` to the `claude` CLI. |
-| `MUXCODE_{ROLE}_CLAUDE_MODEL` | Per-role override. Role key examples: `EDIT`, `BUILD`, `TEST`, `REVIEW`, `DEPLOY`, `COMMIT`, `ANALYZE`, `WATCH`, `DOCS`, `RESEARCH`, `RUN`, `API`. |
+| `MUXCODE_{ROLE}_CLAUDE_MODEL` | Per-role override. Role key examples: `EDIT`, `BUILD`, `TEST`, `SERVE`, `REVIEW`, `DEPLOY`, `COMMIT`, `ANALYZE`, `WATCH`, `DOCS`, `RESEARCH`, `RUN`, `API`. |
 
 Example — downgrade review to Sonnet, use Haiku for build/test:
 

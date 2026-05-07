@@ -121,6 +121,7 @@ agent_name() {
     watch)    echo "log-watcher" ;;
     pr-read)  echo "pr-reader" ;;
     api)      echo "api-tester" ;;
+    serve)    echo "dev-server" ;;
   esac
 }
 
@@ -203,7 +204,7 @@ role_claude_model_var() {
 role_claude_model_default() {
   case "$1" in
     plan|edit|review|analyze|analyst) echo "claude-opus-4-6" ;;
-    build|test|api|deploy|runner|run|watch|commit|git) echo "claude-sonnet-4-5" ;;
+    build|test|api|deploy|runner|run|watch|commit|git|serve) echo "claude-sonnet-4-5" ;;
   esac
 }
 
@@ -332,6 +333,9 @@ case "$ROLE" in
     ;;
   api)
     PROMPT="You are the API testing agent. Manage API collections and environments using muxcode api subcommands. Execute requests via curl with jq formatting. Support variable substitution from environments. Log requests to history. Report results (status, timing, response) to the edit agent."
+    ;;
+  serve)
+    PROMPT="You are the serve agent. Start, monitor, and auto-restart local development servers (Vite, Next.js, etc.). Keep servers alive throughout the session. Health-check via HTTP pings and restart on crash. Report URLs and status to the edit agent."
     ;;
   *)
     PROMPT="You are a general-purpose coding assistant."

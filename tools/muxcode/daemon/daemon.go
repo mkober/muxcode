@@ -976,14 +976,13 @@ func (d *Daemon) checkIdleAgents() {
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Waking idle agent %s (unread messages)\n", ts, role)
 		bus.LogLifecycle(d.session, "info", "daemon", "idle-wake", role)
-		// Clear notified-size before calling Notify so a stale marker from
-		// notifyDisplayMessage can't suppress the send-keys injection. The
-		// race: Notify() re-checks IsAgentIdle inside — if tmux capture-pane
-		// returns a stale snapshot (no ❯), it falls to notifyDisplayMessage
-		// which calls markNotified() without actually waking the agent.
-		// Subsequent retries see the marker and are suppressed for 30s.
-		// Clearing here ensures the send-keys path proceeds unconditionally.
-		bus.ClearNotifiedSize(d.session, role)
+		// Let Notify() handle dedup via alreadyNotified(). If the internal
+		// IsAgentIdle re-check races (stale tmux capture), Notify falls to
+		// notifyDisplayMessage which marks the inbox as notified. The existing
+		// notifyRetryInterval (30s) allows a retry — worst case the agent is
+		// woken 30s late, which is acceptable. Do NOT ClearNotifiedSize here:
+		// clearing every 5s defeats all dedup and causes infinite "You have
+		// new messages" spam when the agent can't consume fast enough.
 		_ = bus.Notify(d.session, role)
 	}
 }

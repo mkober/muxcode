@@ -63,16 +63,17 @@ Non-hook providers degrade gracefully across three layers:
 
 | Role | Agent File | Window | Description |
 |------|-----------|--------|-------------|
-| plan | planner.md | plan | Documentation specialist — maintains requirements, architecture docs, and planning artifacts |
-| edit | code-editor.md | edit | Primary orchestrator — delegates to other agents |
-| build | code-builder.md | build | Compile and package |
-| test | test-runner.md | test | Run tests |
-| review | code-reviewer.md | review | Review diffs for quality |
-| deploy | infra-deployer.md | deploy | Infrastructure deployments |
-| run | command-runner.md | run | Execute commands |
-| commit | git-manager.md | commit | Git operations |
-| analyze | editor-analyst.md | *(no default window)* | Analyze changes and explain patterns |
-| watch | log-watcher.md | watch | Monitor logs (local, CloudWatch, k8s, Docker) |
+| plan | planner.md | plan (F1) | Documentation specialist — maintains requirements, architecture docs, and planning artifacts |
+| edit | code-editor.md | edit (F2) | Primary orchestrator — delegates to other agents |
+| build | code-builder.md | build (F3) | Compile and package |
+| test | test-runner.md | test (F4) | Run tests |
+| serve | dev-server.md | serve (F5) | Start, monitor, and auto-restart local development servers |
+| review | code-reviewer.md | review (F6) | Review diffs for quality |
+| deploy | infra-deployer.md | deploy (F7) | Infrastructure deployments |
+| run | command-runner.md | run (F8) | Execute commands |
+| watch | log-watcher.md | watch (F9) | Monitor logs (local, CloudWatch, k8s, Docker) |
+| commit | git-manager.md | commit (F10) | Git operations |
+| analyze | editor-analyst.md | *(opt-in window)* | Analyze changes and explain patterns — add `analyze` to `MUXCODE_WINDOWS` |
 | docs | doc-writer.md | plan *(via planner)* | Generate and maintain documentation |
 | research | code-researcher.md | plan *(via mode cycle)* | Search API docs, platform refs, GitHub projects (OpenCode/DeepSeek) |
 | pr-read | pr-reader.md | commit *(via git-manager)* | Analyze PR review feedback and report suggested fixes |
@@ -126,6 +127,27 @@ muxcode send plan move-spec "Move conditional-chains.md from drafts to completed
 ```
 
 The plan agent is scoped to docs directories only — it can read source code for context but never writes outside `docs/`, `CLAUDE.md`, or `README.md`.
+
+### Dev server (serve)
+
+The serve agent manages local development server lifecycles — starting, monitoring, and auto-restarting dev servers (Vite, Next.js, Webpack, Flask, Go, Docker Compose, etc.). It runs in the F5 window.
+
+```bash
+muxcode send serve serve "Start the dev server"
+muxcode send serve status "Report server status"
+muxcode send serve stop "Stop the server on port 5173"
+muxcode send serve restart "Restart the dev server"
+```
+
+The serve agent:
+- Auto-detects project type from `package.json`, framework configs, or Makefile targets
+- Prefers repo scripts (`run.sh`, `run-dev.sh`, `dev.sh`) over framework-specific commands
+- Checks for port conflicts before starting
+- Monitors server health via PID liveness and HTTP probes
+- Auto-restarts crashed servers (up to 5 consecutive failures)
+- Tracks state in `/tmp/muxcode-bus-{session}/serve-state.json`
+
+Tool profile: `bus`, `readonly`, `common`, plus process management (`kill`, `nohup`), HTTP tools (`curl`, `wget`), network inspection (`lsof`, `ss`), framework CLIs (`node`, `pnpm`, `npx`, `python`, `flask`, `go run`, `docker`), and temp file I/O.
 
 ### Autonomous Specialists (build, test, review, analyst)
 
@@ -351,6 +373,7 @@ Agents have scoped permissions via tool profiles (`bus/profile.go`). The `--allo
 - **edit**: `Read`, `Glob`, `Grep`, `tree`, `python3`, `jq` (read-only — deliberately **no** `Write` or `Edit` tools, enforcing delegation via the bus)
 - **build**: `./build.sh`, `make`, `go build`, `pnpm build`, `cargo build`
 - **test**: `./test.sh`, `go test`, `jest`, `pytest`, `cargo test`
+- **serve**: `curl`, `wget`, `lsof`, `kill`, `nohup`, `node`, `pnpm`, `npx`, `python`, `flask`, `go run`, `docker`, `make`, repo scripts (`run.sh`, `run-dev.sh`, `dev.sh`), temp file I/O
 - **review**: `git diff`, `git log`, `git status`, `git show` (read-only git), `Write`
 - **commit**: `git *`, `gh *` (all git and GitHub CLI subcommands), `Write`, `Edit`
 - **deploy**: `cdk`, `terraform`, `pulumi`, `aws`, `sam`, `curl`, `wget`, `./build.sh`, `make`, read-only git, `Write`, `Edit`

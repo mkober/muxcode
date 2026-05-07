@@ -238,7 +238,7 @@ func TestReadAnalyzeEntries(t *testing.T) {
 func TestDefaultConsoleConfigs(t *testing.T) {
 	configs := DefaultConsoleConfigs()
 
-	expectedRoles := []string{"build", "test", "review", "deploy", "run", "commit", "watch", "analyze", "api", "auto", "research"}
+	expectedRoles := []string{"build", "test", "review", "deploy", "run", "commit", "watch", "analyze", "api", "auto", "research", "serve"}
 	for _, role := range expectedRoles {
 		cfg, ok := configs[role]
 		if !ok {
@@ -262,8 +262,8 @@ func TestDefaultConsoleConfigs(t *testing.T) {
 
 func TestConsoleRoles(t *testing.T) {
 	roles := ConsoleRoles()
-	if len(roles) != 11 {
-		t.Errorf("ConsoleRoles() = %d roles, want 11", len(roles))
+	if len(roles) != 12 {
+		t.Errorf("ConsoleRoles() = %d roles, want 12", len(roles))
 	}
 }
 

@@ -145,6 +145,8 @@ Always use `--force --wait` on commit/push/PR delegations. Use `--wait` on all o
 
 ### Requirements doc format
 
+**All actionable items MUST use checkboxes** (`- [ ]`). Never use plain bullets for tasks, criteria, or steps that need tracking. This applies to acceptance criteria, implementation steps, and phase tasks.
+
 ```markdown
 # {KEY}: {summary}
 

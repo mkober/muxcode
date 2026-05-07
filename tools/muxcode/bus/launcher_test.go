@@ -22,8 +22,8 @@ func TestDefaultLauncherConfig(t *testing.T) {
 	if cfg.ScanDepth != 3 {
 		t.Errorf("expected scan depth 3, got %d", cfg.ScanDepth)
 	}
-	if len(cfg.Windows) != 9 {
-		t.Errorf("expected 9 windows, got %d", len(cfg.Windows))
+	if len(cfg.Windows) != 10 {
+		t.Errorf("expected 10 windows, got %d", len(cfg.Windows))
 	}
 	if cfg.Windows[0] != "plan" {
 		t.Errorf("expected first window plan, got %s", cfg.Windows[0])
@@ -104,7 +104,7 @@ func TestAgentRole(t *testing.T) {
 func TestIsSplitLeftWindow(t *testing.T) {
 	cfg := DefaultLauncherConfig()
 	// Standard split-left windows
-	for _, w := range []string{"edit", "build", "test", "review", "deploy", "run", "commit", "watch"} {
+	for _, w := range []string{"plan", "edit", "build", "test", "serve", "review", "deploy", "run", "commit", "watch"} {
 		if !cfg.IsSplitLeftWindow(w) {
 			t.Errorf("expected %s to be split-left", w)
 		}
@@ -116,7 +116,7 @@ func TestIsSplitLeftWindow(t *testing.T) {
 }
 
 func TestHasConsoleView(t *testing.T) {
-	for _, w := range []string{"build", "test", "review", "deploy", "run", "watch", "commit", "api"} {
+	for _, w := range []string{"build", "test", "review", "deploy", "run", "watch", "commit", "api", "serve"} {
 		if !HasConsoleView(w) {
 			t.Errorf("expected %s to have console view", w)
 		}
