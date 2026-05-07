@@ -569,9 +569,11 @@ func ClassifyPane(content string) PaneState {
 	return p.ClassifyPane(content)
 }
 
-// NeedsWakeUp returns true if the window should receive a startup wake-up message.
-func NeedsWakeUp(window string) bool {
-	return window == "edit"
+// NeedsWakeUp returns true if the window should receive a startup wake-up
+// message. Any agent with actionable inbox messages (requests) gets woken —
+// not just edit.
+func NeedsWakeUp(session, window string) bool {
+	return HasActionableMessages(session, window)
 }
 
 // AutoAccept polls agent panes and dismisses startup prompts.
@@ -612,8 +614,8 @@ func AutoAccept(session string, windows []string) {
 				LogLifecycle(session, "info", "auto-accept", "agent-ready", win)
 				accepted[win] = true
 
-				// Wake edit agent
-				if NeedsWakeUp(win) && !woken[win] {
+				// Wake agent with pending inbox messages
+				if NeedsWakeUp(session, win) && !woken[win] {
 					woken[win] = true
 					time.Sleep(1 * time.Second) // stabilization delay
 

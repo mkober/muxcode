@@ -525,25 +525,45 @@ func TestClassifyPane_BypassTakesPrecedence(t *testing.T) {
 }
 
 func TestNeedsWakeUp(t *testing.T) {
-	tests := []struct {
-		window string
-		want   bool
-	}{
-		{"edit", true},
-		{"analyze", false},
-		{"build", false},
-		{"test", false},
-		{"review", false},
-		{"commit", false},
-		{"deploy", false},
-		{"run", false},
-		{"watch", false},
-		{"api", false},
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+
+	session := "test-needs-wakeup"
+	if err := Init(session, os.Getenv("BUS_DIR_BASE")); err != nil {
+		t.Fatalf("Init: %v", err)
 	}
-	for _, tt := range tests {
-		if got := NeedsWakeUp(tt.window); got != tt.want {
-			t.Errorf("NeedsWakeUp(%q) = %v, want %v", tt.window, got, tt.want)
-		}
+
+	// No messages — should not need wake-up
+	if NeedsWakeUp(session, "edit") {
+		t.Error("NeedsWakeUp(edit) should be false with empty inbox")
+	}
+	if NeedsWakeUp(session, "build") {
+		t.Error("NeedsWakeUp(build) should be false with empty inbox")
+	}
+
+	// Send a request message to build inbox
+	msg := NewMessage("edit", "build", "request", "build", "Run build", "")
+	if err := Send(session, msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	// build should need wake-up, edit should not
+	if !NeedsWakeUp(session, "build") {
+		t.Error("NeedsWakeUp(build) should be true with pending request")
+	}
+	if NeedsWakeUp(session, "edit") {
+		t.Error("NeedsWakeUp(edit) should be false with no messages")
+	}
+
+	// Send a response (non-actionable) to edit inbox
+	resp := NewMessage("build", "edit", "response", "response", "Done", "")
+	if err := Send(session, resp); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	// edit should NOT need wake-up — responses are not actionable
+	if NeedsWakeUp(session, "edit") {
+		t.Error("NeedsWakeUp(edit) should be false with only response messages")
 	}
 }
 

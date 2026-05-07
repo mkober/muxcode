@@ -88,13 +88,13 @@ When `checkIdleAgents()` detects a non-hook agent's idle transition (first time 
 - [x] In `checkIdleAgents()`, detect idle transitions (not-idle -> idle) and call `ClearNotifiedSize()` + reset `lastNonHookWake`
 - [x] Add test for idle transition clearing notified-size marker (4 tests: transition clears, already-idle noop, becoming-non-idle noop, init check)
 - [x] Export `NotifiedSizePath()` in `bus/notify.go` for daemon test access
-- [ ] Verify with manual test: send message to agent, restart agent, confirm wake-up within 10s
+- [x] Verify with manual test: sent message to commit agent, restarted daemon with new binary, agent woke and processed messages immediately
 
 ### Phase 2: Expand AutoAccept wake-up
 
-- [ ] Change `NeedsWakeUp()` to accept `session` param and check `HasActionableMessages()` for the window
-- [ ] Update `AutoAccept()` call site to pass session
-- [ ] Update tests for `NeedsWakeUp()`
+- [x] Change `NeedsWakeUp()` to accept `session` and `window` params and check `HasActionableMessages()`
+- [x] Update `AutoAccept()` call site to pass session
+- [x] Update tests for `NeedsWakeUp()` — rewrote to test with actual inbox messages (request vs response)
 - [ ] Verify with manual test: launch session with pre-existing inbox messages, confirm all agents wake up
 
 ## Status
