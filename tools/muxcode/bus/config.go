@@ -426,6 +426,18 @@ func AgentHeartbeatInterval() int {
 	return 1800
 }
 
+// TmpCleanupThreshold returns the /tmp disk usage percentage at which
+// automatic cleanup triggers. Uses MUXCODE_TMP_CLEANUP_THRESHOLD env var,
+// defaulting to 90 (percent). Set to 0 to disable automatic cleanup.
+func TmpCleanupThreshold() int {
+	if v := os.Getenv("MUXCODE_TMP_CLEANUP_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 100 {
+			return n
+		}
+	}
+	return 90
+}
+
 // TriggerFile returns the analyze trigger file path for a session.
 // Uses /tmp directly for compatibility with bash hooks.
 func TriggerFile(session string) string {

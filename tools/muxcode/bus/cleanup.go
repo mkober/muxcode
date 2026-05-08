@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -348,6 +349,87 @@ func dirSize(path string) int64 {
 		return nil
 	})
 	return size
+}
+
+// DiskPressureResult tracks what happened during a pressure-triggered cleanup.
+type DiskPressureResult struct {
+	UsagePct     int                  // /tmp usage % before cleanup
+	StaleResult  *CleanupResult       // muxcode artifact cleanup result
+	ClaudeResult *ClaudeCleanupResult // Claude Code session cleanup result (nil if first stage was sufficient)
+	PostUsagePct int                  // /tmp usage % after cleanup
+}
+
+// TmpDiskUsage returns the current /tmp disk usage as a percentage (0–100).
+// Uses syscall.Statfs to query filesystem statistics directly.
+func TmpDiskUsage() (int, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs("/tmp", &stat); err != nil {
+		return 0, fmt.Errorf("statfs /tmp: %w", err)
+	}
+	if stat.Blocks == 0 {
+		return 0, nil
+	}
+	used := stat.Blocks - stat.Bfree
+	pct := int(float64(used) * 100.0 / float64(stat.Blocks))
+	return pct, nil
+}
+
+// CheckDiskPressure checks /tmp disk usage against the configured threshold.
+// If usage exceeds the threshold, runs progressive cleanup:
+//  1. Removes stale muxcode session artifacts (current session is preserved)
+//  2. If still over threshold, removes old Claude Code /tmp session dirs (>7d)
+//
+// Returns nil if threshold is 0 (disabled) or usage is below threshold.
+func CheckDiskPressure(session string) (*DiskPressureResult, error) {
+	threshold := TmpCleanupThreshold()
+	if threshold == 0 {
+		return nil, nil
+	}
+
+	pct, err := TmpDiskUsage()
+	if err != nil {
+		return nil, err
+	}
+	if pct < threshold {
+		return nil, nil
+	}
+
+	result := &DiskPressureResult{UsagePct: pct}
+
+	// Stage 1: stale muxcode artifacts
+	staleResult, staleErr := CleanupStale(session, false, false)
+	if staleErr != nil {
+		result.StaleResult = staleResult
+		result.PostUsagePct = pct
+		return result, staleErr
+	}
+	result.StaleResult = staleResult
+
+	// Re-check after first stage
+	postPct, err := TmpDiskUsage()
+	if err != nil {
+		postPct = pct
+	}
+
+	// Stage 2: old Claude Code sessions (only if still over threshold)
+	if postPct >= threshold {
+		claudeResult, claudeErr := CleanupClaudeTmp(7*24*time.Hour, false)
+		result.ClaudeResult = claudeResult
+		if claudeErr != nil {
+			result.PostUsagePct = postPct
+			return result, claudeErr
+		}
+	}
+
+	// Final usage re-check
+	finalPct, err := TmpDiskUsage()
+	if err == nil {
+		result.PostUsagePct = finalPct
+	} else {
+		result.PostUsagePct = postPct
+	}
+
+	return result, nil
 }
 
 // formatBytes is defined in compact.go — reused here for byte formatting.

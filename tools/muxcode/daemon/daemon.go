@@ -50,6 +50,8 @@ type Daemon struct {
 	agentWasDown         map[string]bool // for recovery detection
 	// Delivery/task cleanup
 	lastCleanupCheck int64 // 300s interval
+	// Disk pressure monitoring
+	lastDiskPressureCheck int64 // 60s interval
 	// Idle agent wake-up
 	lastIdleCheck   int64            // 5s interval
 	lastNonHookWake map[string]int64 // cooldown: last wake time per non-hook role (60s)
@@ -80,29 +82,30 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 	ollamaCfg := bus.DefaultOllamaConfig()
 
 	return &Daemon{
-		session:              session,
-		pollInterval:         time.Duration(pollSecs) * time.Second,
-		debounceSecs:         debounceSecs,
-		triggerFile:          bus.TriggerFile(session),
-		inboxSizes:           make(map[string]int64),
-		lastAlertKey:         make(map[string]int64),
-		lastLoopCheck:        now, // skip first interval — avoids stale alerts on startup
-		lastCompactCheck:     now, // skip first interval — avoids stale alerts on startup
-		lastOllamaCheck:      now, // skip first interval
-		ollamaRoles:          ollamaRoles,
-		ollamaURL:            ollamaCfg.BaseURL,
-		ollamaModel:          ollamaCfg.Model,
-		lastAgentHealthCheck: now, // skip first interval
-		agentFailCounts:      make(map[string]int),
-		agentRestarts:        make(map[string]int),
-		agentWasDown:         make(map[string]bool),
-		lastNonHookWake:      make(map[string]int64),
-		lastIdleState:        make(map[string]bool),
-		taskDeliveredAt:      make(map[string]int64),
-		taskLastPaneContent:  make(map[string]string),
-		idleTaskFirstSeen:    make(map[string]int64),
-		lastHeartbeatCheck:   now,
-		heartbeatInterval:    bus.AgentHeartbeatInterval(),
+		session:               session,
+		pollInterval:          time.Duration(pollSecs) * time.Second,
+		debounceSecs:          debounceSecs,
+		triggerFile:           bus.TriggerFile(session),
+		inboxSizes:            make(map[string]int64),
+		lastAlertKey:          make(map[string]int64),
+		lastLoopCheck:         now, // skip first interval — avoids stale alerts on startup
+		lastCompactCheck:      now, // skip first interval — avoids stale alerts on startup
+		lastOllamaCheck:       now, // skip first interval
+		ollamaRoles:           ollamaRoles,
+		ollamaURL:             ollamaCfg.BaseURL,
+		ollamaModel:           ollamaCfg.Model,
+		lastAgentHealthCheck:  now, // skip first interval
+		agentFailCounts:       make(map[string]int),
+		agentRestarts:         make(map[string]int),
+		agentWasDown:          make(map[string]bool),
+		lastNonHookWake:       make(map[string]int64),
+		lastIdleState:         make(map[string]bool),
+		taskDeliveredAt:       make(map[string]int64),
+		taskLastPaneContent:   make(map[string]string),
+		idleTaskFirstSeen:     make(map[string]int64),
+		lastHeartbeatCheck:    now,
+		heartbeatInterval:     bus.AgentHeartbeatInterval(),
+		lastDiskPressureCheck: now,
 	}
 }
 
@@ -189,6 +192,7 @@ func (d *Daemon) Run() error {
 		d.checkIdleTaskCompletion()
 		d.checkHeartbeat()
 		d.checkCleanup()
+		d.checkDiskPressure()
 		time.Sleep(d.pollInterval)
 	}
 }
@@ -966,8 +970,10 @@ func (d *Daemon) checkIdleAgents() {
 				// This is the primary deferred delivery mechanism — messages that
 				// arrived while the agent was busy are combined into a single
 				// notification the moment the agent becomes idle.
+				//
+				// Hold if the user is mid-typing — injecting would corrupt input.
 				unnotified := bus.UnnotifiedMessages(d.session, role)
-				if len(unnotified) > 0 {
+				if len(unnotified) > 0 && !bus.HasPendingInput(d.session, role) {
 					provider := bus.ResolveProvider(role)
 					text := bus.BuildCombinedNotification(unnotified)
 					ids := make([]string, 0, len(unnotified))
@@ -1026,6 +1032,13 @@ func (d *Daemon) checkIdleAgents() {
 		// The idle transition above handles deferred delivery when the agent
 		// finishes its current work.
 		if !isIdle {
+			continue
+		}
+
+		// Hold if the user is mid-typing at the prompt — injecting via
+		// send-keys would corrupt their input. Skip this cycle; the daemon
+		// retries every 5 seconds and delivers once the prompt is clear.
+		if bus.HasPendingInput(d.session, role) {
 			continue
 		}
 
@@ -1533,6 +1546,73 @@ func (d *Daemon) checkCleanup() {
 			ts, deliveryCleaned, tasksCleaned, reloadCleaned)
 		bus.LogLifecycle(d.session, "info", "daemon", "cleanup",
 			fmt.Sprintf("delivery=%d tasks=%d reload-markers=%d", deliveryCleaned, tasksCleaned, reloadCleaned))
+	}
+}
+
+// checkDiskPressure checks /tmp disk usage every 60 seconds.
+// When usage exceeds the configured threshold (default 90%), runs progressive
+// cleanup and sends a disk-pressure alert to the edit agent.
+func (d *Daemon) checkDiskPressure() {
+	if bus.TmpCleanupThreshold() == 0 {
+		return
+	}
+
+	now := time.Now().Unix()
+	if now-d.lastDiskPressureCheck < 60 {
+		return
+	}
+	d.lastDiskPressureCheck = now
+
+	result, err := bus.CheckDiskPressure(d.session)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  [disk] check failed: %v\n", err)
+		return
+	}
+	if result == nil {
+		return
+	}
+
+	ts := time.Now().Format("15:04:05")
+
+	staleCleaned := 0
+	if result.StaleResult != nil {
+		staleCleaned = result.StaleResult.TotalItems()
+	}
+	claudeCleaned := 0
+	claudeFreed := int64(0)
+	if result.ClaudeResult != nil {
+		claudeCleaned = len(result.ClaudeResult.Sessions)
+		claudeFreed = result.ClaudeResult.BytesFreed
+	}
+
+	fmt.Printf("  %s  Disk pressure: /tmp at %d%% (threshold %d%%) — cleaned %d stale, %d Claude sessions (%s), now %d%%\n",
+		ts, result.UsagePct, bus.TmpCleanupThreshold(),
+		staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed), result.PostUsagePct)
+	bus.LogLifecycle(d.session, "warn", "daemon", "disk-pressure",
+		fmt.Sprintf("/tmp=%d%% stale=%d claude=%d freed=%s post=%d%%",
+			result.UsagePct, staleCleaned, claudeCleaned,
+			formatDaemonBytes(claudeFreed), result.PostUsagePct))
+
+	// Alert edit agent with 600s dedup cooldown
+	alertKey := "disk-pressure:/tmp"
+	if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
+		d.lastAlertKey[alertKey] = now
+
+		payload := fmt.Sprintf(
+			"/tmp disk pressure: %d%% used (threshold: %d%%). Cleaned: %d muxcode artifact(s), %d Claude Code session(s) (%s freed). Post-cleanup: %d%% used",
+			result.UsagePct, bus.TmpCleanupThreshold(),
+			staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed),
+			result.PostUsagePct,
+		)
+		msg := bus.NewMessage("daemon", "edit", "event", "disk-pressure", payload, "")
+		if err := bus.Send(d.session, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "  [disk] failed to send alert: %v\n", err)
+			return
+		}
+		if err := bus.Notify(d.session, "edit"); err != nil {
+			fmt.Fprintf(os.Stderr, "  [disk] failed to notify edit: %v\n", err)
+		}
+		d.refreshInboxSizes()
 	}
 }
 
