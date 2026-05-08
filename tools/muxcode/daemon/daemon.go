@@ -945,32 +945,41 @@ func (d *Daemon) checkIdleAgents() {
 		// Detect idle transitions: when an agent goes from not-idle to idle
 		// (e.g. after restart, hot reload, or startup), clear stale notification
 		// markers and deliver any pending messages as a combined notification.
+		//
+		// Guard: skip if the notified IDs marker was updated within the last 10s.
+		// A send-keys injection causes a brief active→idle transition as the TUI
+		// processes the injected text. Without this guard, the idle transition
+		// clears the notified IDs and re-delivers the same messages, creating a
+		// notification storm (inject → echo → idle → clear → re-inject → ...).
 		isIdle := bus.IsAgentIdle(d.session, role)
 		wasIdle := d.lastIdleState[role]
 		if isIdle && !wasIdle {
-			bus.ClearNotifiedIDs(d.session, role)
-			d.lastNonHookWake[role] = 0 // reset non-hook cooldown too
-			ts := time.Now().Format("15:04:05")
-			fmt.Printf("  %s  Agent %s became idle — cleared stale notification markers\n", ts, role)
-			bus.LogLifecycle(d.session, "info", "daemon", "idle-transition", role)
+			recentlyNotified := bus.IsNotifiedRecently(d.session, role, 10*time.Second)
+			if !recentlyNotified {
+				bus.ClearNotifiedIDs(d.session, role)
+				d.lastNonHookWake[role] = 0 // reset non-hook cooldown too
+				ts := time.Now().Format("15:04:05")
+				fmt.Printf("  %s  Agent %s became idle — cleared stale notification markers\n", ts, role)
+				bus.LogLifecycle(d.session, "info", "daemon", "idle-transition", role)
 
-			// Deliver combined notification for any accumulated messages.
-			// This is the primary deferred delivery mechanism — messages that
-			// arrived while the agent was busy are combined into a single
-			// notification the moment the agent becomes idle.
-			unnotified := bus.UnnotifiedMessages(d.session, role)
-			if len(unnotified) > 0 {
-				provider := bus.ResolveProvider(role)
-				text := bus.BuildCombinedNotification(unnotified)
-				ids := make([]string, 0, len(unnotified))
-				for _, m := range unnotified {
-					ids = append(ids, m.ID)
+				// Deliver combined notification for any accumulated messages.
+				// This is the primary deferred delivery mechanism — messages that
+				// arrived while the agent was busy are combined into a single
+				// notification the moment the agent becomes idle.
+				unnotified := bus.UnnotifiedMessages(d.session, role)
+				if len(unnotified) > 0 {
+					provider := bus.ResolveProvider(role)
+					text := bus.BuildCombinedNotification(unnotified)
+					ids := make([]string, 0, len(unnotified))
+					for _, m := range unnotified {
+						ids = append(ids, m.ID)
+					}
+					bus.AddNotifiedIDs(d.session, role, ids)
+					_ = bus.SendWakeUpWithText(d.session, role, provider, text)
+					fmt.Printf("  %s  Delivered combined notification to %s (%d messages)\n", ts, role, len(unnotified))
+					bus.LogLifecycle(d.session, "info", "daemon", "idle-combined-wake",
+						fmt.Sprintf("%s: %d messages", role, len(unnotified)))
 				}
-				bus.AddNotifiedIDs(d.session, role, ids)
-				_ = bus.SendWakeUpWithText(d.session, role, provider, text)
-				fmt.Printf("  %s  Delivered combined notification to %s (%d messages)\n", ts, role, len(unnotified))
-				bus.LogLifecycle(d.session, "info", "daemon", "idle-combined-wake",
-					fmt.Sprintf("%s: %d messages", role, len(unnotified)))
 			}
 		}
 		d.lastIdleState[role] = isIdle

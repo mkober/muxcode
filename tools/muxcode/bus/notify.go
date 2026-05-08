@@ -157,7 +157,7 @@ func BuildCombinedNotification(msgs []Message) string {
 // send-keys injection was missed (e.g., Claude Code TUI redraw race). Without
 // this, the agent could be stuck at the idle prompt if the IDs marker was
 // written but send-keys didn't land.
-const notifyRetryInterval = 30 * time.Second
+const notifyRetryInterval = 15 * time.Second
 
 // lockNotify acquires a per-role file lock for notification deduplication.
 // Returns an unlock function. If lock acquisition fails, returns a no-op
@@ -241,6 +241,18 @@ func IsWaiting(session, role string) bool {
 		return false
 	}
 	return true
+}
+
+// IsNotifiedRecently returns true if the notified IDs marker for a role was
+// updated within the given duration. Used by the daemon's idle transition
+// logic to avoid clearing IDs when a recent notification caused the
+// active→idle transition (send-keys echo, not genuine task completion).
+func IsNotifiedRecently(session, role string, within time.Duration) bool {
+	info, err := os.Stat(notifiedIDsPath(session, role))
+	if err != nil {
+		return false
+	}
+	return time.Since(info.ModTime()) < within
 }
 
 // ClearNotifiedIDs removes the notified IDs marker for a role, forcing the
@@ -398,20 +410,13 @@ func IsPolling(session, role string) bool {
 	return true
 }
 
-// sendKeysVerifyDelay is the time to wait after send-keys before checking
-// if the agent received the injection. Tests can override this to avoid
-// 500ms sleeps per test case.
-var sendKeysVerifyDelay = 500 * time.Millisecond
-
 // notifySendKeys injects a wake-up message into the agent's tmux pane.
 // Uses combined notification text from unnotified messages so the agent
 // can triage inline without running `muxcode inbox`.
 //
-// For hook providers (Claude Code), verifies delivery after injection.
-// If the agent is still idle after a brief delay, the send-keys was
-// silently dropped (TUI redraw race). In that case, clears the
-// notified IDs marker so the daemon retries on its next cycle (5s)
-// instead of waiting notifyRetryInterval (30s).
+// Dedup: marks message IDs as notified to prevent re-injection. If the
+// send-keys injection is dropped (TUI redraw race), the notifyRetryInterval
+// (15s) in alreadyNotified() eventually allows a retry on a subsequent call.
 func notifySendKeys(session, role string) error {
 	unlock := lockNotify(session, role)
 	defer unlock()
@@ -429,14 +434,12 @@ func notifySendKeys(session, role string) error {
 	provider := ResolveProvider(role)
 	err := SendWakeUpWithText(session, role, provider, text)
 
-	// Verify delivery for hook providers — send-keys can be silently dropped
-	// by Claude Code's TUI during redraws. If the agent is still idle after
-	// a brief delay, the text didn't land. Clear the notified IDs marker so
-	// the daemon's next checkIdleAgents() cycle (5s) retries immediately
-	// instead of waiting notifyRetryInterval (30s).
-	if err == nil && provider.SupportsHooks() {
-		verifySendKeysDelivery(session, role, provider)
-	}
+	// No in-line delivery verification. Claude Code's TUI takes 1-3 seconds
+	// to process send-keys input — the old 500ms verifySendKeysDelivery()
+	// falsely concluded the injection was dropped, cleared notified IDs, and
+	// let subsequent daemon cycles (checkInboxes, checkIdleAgents) re-inject
+	// the same message 3-5 times. Instead, rely on notifyRetryInterval (15s)
+	// in alreadyNotified() as the safety net for truly dropped injections.
 
 	return err
 }
@@ -467,28 +470,6 @@ func SendWakeUpWithText(session, role string, provider Provider, text string) er
 		return err
 	}
 	return nil
-}
-
-// verifySendKeysDelivery checks whether a send-keys injection was actually
-// received by the agent. Waits sendKeysVerifyDelay then checks IsIdle —
-// if the agent is still idle, the injection was dropped. Retries once
-// immediately (within the same Notify() call) before clearing the marker.
-// This gives a second attempt without waiting for the next 5s daemon cycle.
-func verifySendKeysDelivery(session, role string, provider Provider) {
-	time.Sleep(sendKeysVerifyDelay)
-	if !provider.IsIdle(session, role) {
-		return // agent is processing — delivery succeeded
-	}
-
-	// First attempt failed — retry once immediately.
-	provider.SendWakeUp(session, role)
-	time.Sleep(sendKeysVerifyDelay)
-	if provider.IsIdle(session, role) {
-		// Still idle after retry — clear marker so the daemon's next
-		// checkIdleAgents() cycle (5s) retries instead of waiting
-		// notifyRetryInterval (30s).
-		ClearNotifiedIDs(session, role)
-	}
 }
 
 // notifyDisplayMessage sends a passive notification via tmux display-message

@@ -217,9 +217,9 @@ func (p *ClaudeCodeProvider) AcceptStartup(session, pane string, state PaneState
 // interpreting special characters. Text and Enter are sent as separate
 // calls with a 200ms delay to give the TUI time to register the text.
 //
-// No Escape/C-u preamble — stale buffer text is handled by
-// verifySendKeysDelivery() retry. The multi-command preamble was the
-// primary cause of dropped injections during TUI redraws.
+// No Escape/C-u preamble — stale buffer text is handled by the daemon's
+// notifyRetryInterval (15s). The multi-command preamble was the primary
+// cause of dropped injections during TUI redraws.
 func (p *ClaudeCodeProvider) SendWakeUp(session, role string) error {
 	target := PaneTarget(session, role)
 	// Send text with -l (literal) to avoid tmux key interpretation
