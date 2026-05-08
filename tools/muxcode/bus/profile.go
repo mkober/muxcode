@@ -580,7 +580,6 @@ func DefaultConfig() *MuxcodeConfig {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: true,
 				Tools: []string{
-					"Write",
 					"Bash(git diff*)", "Bash(git log*)", "Bash(git status*)",
 					"Bash(git show*)", "Bash(git blame*)", "Bash(git branch*)",
 					"Bash(git rev-parse*)", "Bash(git rev-list*)",
@@ -649,7 +648,6 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(pnpm install*)", "Bash(npm install*)", "Bash(pip install*)",
 					"Bash(cfn-lint*)", "Bash(tflint*)", "Bash(checkov*)",
 					"Bash(curl*)", "Bash(wget*)",
-					"Write", "Edit",
 				},
 			},
 			"run": {
@@ -759,7 +757,6 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(RESPONSE=*)", "Bash(RESULT=*)", "Bash(TIME=*)",
 					"Bash(HTTP=*)", "Bash(HEADERS=*)", "Bash(CODE=*)",
 					"Bash(mkdir *)", "Bash(rm *)",
-					"Write", "Edit",
 				},
 			},
 			"serve": {

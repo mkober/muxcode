@@ -23,6 +23,7 @@ var knownSubcommands = map[string]bool{
 	"hook": true, "workflow": true, "pii-scrub": true, "atlassian": true,
 	"compact": true, "launch": true, "modal": true, "mode": true,
 	"reload": true, "config": true, "provider-select": true,
+	"simulate": true, "track": true,
 }
 
 var usage = `Usage: muxcode <command> [args...]
@@ -195,6 +196,8 @@ func main() {
 		cmd.Mode(args)
 	case "uitest":
 		cmd.UITest(args)
+	case "simulate":
+		cmd.Simulate(args)
 	case "compact":
 		cmd.Compact(args)
 	case "tasks":

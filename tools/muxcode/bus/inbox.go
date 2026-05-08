@@ -145,6 +145,9 @@ func Receive(session, role string) ([]Message, error) {
 		MarkDelivered(session, m.ID)
 	}
 
+	// Clear notification state — agent has consumed all messages, start fresh.
+	clearNotifiedIDs(session, role)
+
 	return msgs, err
 }
 
@@ -187,6 +190,16 @@ func ReceiveFrom(session, role, fromRole string) ([]Message, error) {
 	// Mark consumed messages as delivered
 	for _, m := range matched {
 		MarkDelivered(session, m.ID)
+	}
+
+	// Mark consumed message IDs as notified (partial consumption —
+	// only these messages are consumed, not the entire inbox).
+	if len(matched) > 0 {
+		ids := make([]string, 0, len(matched))
+		for _, m := range matched {
+			ids = append(ids, m.ID)
+		}
+		addNotifiedIDs(session, role, ids)
 	}
 
 	// Write unmatched messages back to inbox (prepend before any new arrivals)
@@ -249,6 +262,16 @@ func ReceiveFromFunc(session, role string, matchFn func(string) bool) ([]Message
 	// Mark consumed messages as delivered
 	for _, m := range matched {
 		MarkDelivered(session, m.ID)
+	}
+
+	// Mark consumed message IDs as notified (partial consumption —
+	// only these messages are consumed, not the entire inbox).
+	if len(matched) > 0 {
+		ids := make([]string, 0, len(matched))
+		for _, m := range matched {
+			ids = append(ids, m.ID)
+		}
+		addNotifiedIDs(session, role, ids)
 	}
 
 	if len(rest) > 0 {

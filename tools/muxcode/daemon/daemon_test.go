@@ -240,7 +240,7 @@ func TestIdleTransition_ClearsNotifiedSize(t *testing.T) {
 	role := "build"
 
 	// Create a notified-size marker to simulate stale dedup state
-	markerPath := bus.NotifiedSizePath(session, role)
+	markerPath := bus.NotifiedIDsPath(session, role)
 	if err := os.WriteFile(markerPath, []byte("1234"), 0644); err != nil {
 		t.Fatalf("writing marker: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestIdleTransition_ClearsNotifiedSize(t *testing.T) {
 	isIdle := true // simulate agent becoming idle
 	wasIdle := d.lastIdleState[role]
 	if isIdle && !wasIdle {
-		bus.ClearNotifiedSize(session, role)
+		bus.ClearNotifiedIDs(session, role)
 		d.lastNonHookWake[role] = 0
 	}
 	d.lastIdleState[role] = isIdle
@@ -285,7 +285,7 @@ func TestIdleTransition_NoopWhenAlreadyIdle(t *testing.T) {
 	role := "build"
 
 	// Create a notified-size marker
-	markerPath := bus.NotifiedSizePath(session, role)
+	markerPath := bus.NotifiedIDsPath(session, role)
 	if err := os.WriteFile(markerPath, []byte("1234"), 0644); err != nil {
 		t.Fatalf("writing marker: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestIdleTransition_NoopWhenAlreadyIdle(t *testing.T) {
 	isIdle := true
 	wasIdle := d.lastIdleState[role]
 	if isIdle && !wasIdle {
-		bus.ClearNotifiedSize(session, role)
+		bus.ClearNotifiedIDs(session, role)
 		d.lastNonHookWake[role] = 0
 	}
 	d.lastIdleState[role] = isIdle
@@ -314,7 +314,7 @@ func TestIdleTransition_NoopWhenBecomingNonIdle(t *testing.T) {
 	role := "build"
 
 	// Create a notified-size marker
-	markerPath := bus.NotifiedSizePath(session, role)
+	markerPath := bus.NotifiedIDsPath(session, role)
 	if err := os.WriteFile(markerPath, []byte("1234"), 0644); err != nil {
 		t.Fatalf("writing marker: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestIdleTransition_NoopWhenBecomingNonIdle(t *testing.T) {
 	isIdle := false
 	wasIdle := d.lastIdleState[role]
 	if isIdle && !wasIdle {
-		bus.ClearNotifiedSize(session, role)
+		bus.ClearNotifiedIDs(session, role)
 		d.lastNonHookWake[role] = 0
 	}
 	d.lastIdleState[role] = isIdle

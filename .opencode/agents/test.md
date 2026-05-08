@@ -103,7 +103,8 @@ When you receive ANY message, do this exact sequence:
 **RULES:**
 - NEVER say "no tests", "no test suite", or "nothing to test"
 - NEVER skip running tests for any reason
-- **Do NOT send a review request — send a review request manually after tests pass.**
+- **After tests pass, send a review request manually** (no auto-chain):
+`muxcode send review review "Tests passed, review changes" --type request`
 
 
 
@@ -495,7 +496,7 @@ Draft
 
 Previous session summaries (most recent last):
 
-### 2026-04-30 08:32
-Test agent completed: Ran ./test.sh across 4 Go modules (bus, cmd, daemon, tui) - all tests passed. Fixed provider_codex_test.go (9→0 failures). Completed build→test→review chain for Phase 2 hot-reload. Review: 0 must-fix, 1 should-fix, 2 nits, LGTM. Sent results to edit and triggered review chain.
+### 2026-05-08 10:40
+Test agent: completed build→test→review chain for notify_test.go and test.md changes. All 4 Go modules passed (bus 7.1s, cmd, daemon 0.2s, tui). Review: 0 must-fix, 1 should-fix (test.md:106), LGTM.
 
 

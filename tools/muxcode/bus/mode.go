@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ModeAgent represents a registered agent in a window's mode cycle.
@@ -342,6 +343,13 @@ func modeCreateAgent(session string, agent *ModeAgent) error {
 	tmuxRun("send-keys", "-t", session+":"+agent.HoldWindow+".1",
 		fmt.Sprintf("muxcode agent launch %s", agent.Role), "Enter")
 
+	// Start background auto-accept + wake-up for the new agent.
+	// Hold-window agents are not in the session's cfg.Windows list, so the
+	// main AutoAccept() process never sees them. Without this, the agent
+	// launches, reaches its ❯ prompt, but never gets woken to check inbox
+	// — even though PreLaunchSetup() wrote a startup message.
+	go modeAutoAcceptAndWake(session, agent)
+
 	return nil
 }
 
@@ -425,4 +433,97 @@ func tmuxRun(args ...string) {
 // tmuxRunErr runs a tmux command and returns any error.
 func tmuxRunErr(args ...string) error {
 	return exec.Command("tmux", args...).Run()
+}
+
+// modeAutoAcceptAndWake polls a hold-window agent pane for startup prompts
+// and wakes the agent once it reaches the idle prompt. Mirrors the behavior
+// of AutoAccept() for regular session windows.
+//
+// Hold-window agents (auto, research) are created on-demand via modeCreateAgent
+// and are NOT in the session's cfg.Windows list, so AutoAccept never covers
+// them. Without this, the agent launches, reaches ❯, and sits idle — never
+// waking to process the startup message that PreLaunchSetup wrote to its inbox.
+func modeAutoAcceptAndWake(session string, agent *ModeAgent) {
+	pane := session + ":" + agent.HoldWindow + ".1"
+	provider := ResolveProvider(agent.Role)
+
+	for attempt := 0; attempt < 30; attempt++ {
+		time.Sleep(2 * time.Second)
+
+		content, err := TmuxCapturePaneLines(pane, 50)
+		if err != nil {
+			continue
+		}
+
+		state := provider.ClassifyPane(content)
+
+		switch state {
+		case PaneTrustPrompt:
+			provider.AcceptStartup(session, pane, state)
+			LogLifecycle(session, "info", "mode-accept", "trust-prompt", agent.Role)
+
+		case PaneBypassPrompt:
+			provider.AcceptStartup(session, pane, state)
+			LogLifecycle(session, "info", "mode-accept", "bypass-prompt", agent.Role)
+			// Fall through to check for idle on next iteration
+
+		case PaneIdle:
+			LogLifecycle(session, "info", "mode-accept", "agent-ready", agent.Role)
+
+			if !NeedsWakeUp(session, agent.Role) {
+				return
+			}
+
+			// Stabilization delay — let the agent fully initialize
+			time.Sleep(1 * time.Second)
+
+			// Clear any stale notification markers so Notify() doesn't
+			// suppress the wake-up (the agent just reached idle for the
+			// first time — any markers are from a previous lifecycle).
+			ClearNotifiedIDs(session, agent.Role)
+
+			if !provider.SupportsHooks() {
+				if err := provider.SendWakeUp(session, agent.Role); err != nil {
+					LogLifecycle(session, "warn", "mode-accept", "wake-failed",
+						agent.Role+": "+err.Error())
+				} else {
+					LogLifecycle(session, "info", "mode-accept", "wake-provider", agent.Role)
+				}
+			} else {
+				// Claude Code agents: inject "You have new messages"
+				// Re-capture to check for existing wake text
+				freshContent, err := TmuxCapturePaneLines(pane, 50)
+				if err != nil {
+					return
+				}
+
+				if strings.Contains(freshContent, "You have new messages") {
+					TmuxSendEnter(pane)
+					LogLifecycle(session, "info", "mode-accept", "wake-enter", agent.Role)
+				} else {
+					TmuxSendKeys(pane, "You have new messages")
+					// Poll for text to appear
+					for poll := 0; poll < 10; poll++ {
+						time.Sleep(100 * time.Millisecond)
+						cap, err := TmuxCapturePaneLines(pane, 3)
+						if err != nil {
+							break
+						}
+						if strings.Contains(cap, "You have new messages") {
+							break
+						}
+					}
+					TmuxSendEnter(pane)
+					LogLifecycle(session, "info", "mode-accept", "wake-full", agent.Role)
+				}
+			}
+			return
+
+		default:
+			// PaneNotReady — keep polling
+		}
+	}
+	// Timed out (60s) without reaching idle — log and exit.
+	// The daemon's checkIdleAgents will eventually catch it.
+	LogLifecycle(session, "warn", "mode-accept", "timeout", agent.Role)
 }

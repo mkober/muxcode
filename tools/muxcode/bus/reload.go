@@ -304,10 +304,10 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 	// 10. Clear reload marker
 	clearReloadMarker(session, role)
 
-	// 10a. Reset notified-size marker so the daemon re-notifies the new agent
+	// 10a. Reset notified IDs marker so the daemon re-notifies the new agent
 	// about any pending inbox messages. Without this, the marker retains the
 	// pre-reload notification state and alreadyNotified() suppresses wake-up.
-	ClearNotifiedSize(session, role)
+	ClearNotifiedIDs(session, role)
 
 	if !alive {
 		return fmt.Errorf("agent %s did not come alive within 15 seconds", role)
@@ -350,9 +350,9 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 // alreadyNotified() for 30 seconds (notifyRetryInterval).
 //
 // Polls IsAgentIdle every 500ms for up to 30 seconds. Once idle, clears the
-// notified-size marker and injects the wake-up directly via the provider's
+// notified IDs marker and injects the wake-up directly via the provider's
 // SendWakeUp. If the agent doesn't reach idle within the timeout, the
-// daemon's checkIdleAgents will eventually wake it (ClearNotifiedSize was
+// daemon's checkIdleAgents will eventually wake it (ClearNotifiedIDs was
 // already called in step 10a of ReloadAgent).
 func wakeAfterReload(session, role string) {
 	provider := ResolveProvider(role)
@@ -361,7 +361,7 @@ func wakeAfterReload(session, role string) {
 	// Send wake-up immediately — their SendWakeUp handles injection directly.
 	if !provider.SupportsHooks() {
 		time.Sleep(2 * time.Second)
-		ClearNotifiedSize(session, role)
+		ClearNotifiedIDs(session, role)
 		_ = provider.SendWakeUp(session, role)
 		return
 	}
@@ -371,12 +371,12 @@ func wakeAfterReload(session, role string) {
 		time.Sleep(500 * time.Millisecond)
 		if IsAgentIdle(session, role) {
 			// Agent is at the ❯ prompt — clear dedup state and inject wake-up.
-			ClearNotifiedSize(session, role)
+			ClearNotifiedIDs(session, role)
 			_ = provider.SendWakeUp(session, role)
 			return
 		}
 	}
-	// Timeout — daemon's checkIdleAgents will handle it. ClearNotifiedSize
+	// Timeout — daemon's checkIdleAgents will handle it. ClearNotifiedIDs
 	// was already called in step 10a, so the daemon won't be suppressed.
 }
 

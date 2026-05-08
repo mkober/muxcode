@@ -791,7 +791,7 @@ func (d *Daemon) checkOllama() {
 				fmt.Printf("  %s  Relaunched agent: %s\n", ts, role)
 				// Clear notified-size so checkIdleAgents re-notifies the
 				// new agent about any pending inbox messages.
-				bus.ClearNotifiedSize(d.session, role)
+				bus.ClearNotifiedIDs(d.session, role)
 			}
 		}
 
@@ -908,7 +908,7 @@ func (d *Daemon) checkAgentHealth() {
 				fmt.Printf("  %s  Agent %s restarted successfully\n", ts, role)
 				// Clear notified-size so checkIdleAgents re-notifies the
 				// new agent about any pending inbox messages.
-				bus.ClearNotifiedSize(d.session, role)
+				bus.ClearNotifiedIDs(d.session, role)
 			}
 
 			// Reset fail count to let next probe detect recovery
@@ -944,25 +944,52 @@ func (d *Daemon) checkIdleAgents() {
 
 		// Detect idle transitions: when an agent goes from not-idle to idle
 		// (e.g. after restart, hot reload, or startup), clear stale notification
-		// markers. Without this, the dedup in alreadyNotified() suppresses
-		// wake-ups for up to 30s because the notified-size marker matches the
-		// current inbox size from before the restart.
+		// markers and deliver any pending messages as a combined notification.
 		isIdle := bus.IsAgentIdle(d.session, role)
 		wasIdle := d.lastIdleState[role]
 		if isIdle && !wasIdle {
-			bus.ClearNotifiedSize(d.session, role)
+			bus.ClearNotifiedIDs(d.session, role)
 			d.lastNonHookWake[role] = 0 // reset non-hook cooldown too
 			ts := time.Now().Format("15:04:05")
 			fmt.Printf("  %s  Agent %s became idle — cleared stale notification markers\n", ts, role)
 			bus.LogLifecycle(d.session, "info", "daemon", "idle-transition", role)
+
+			// Deliver combined notification for any accumulated messages.
+			// This is the primary deferred delivery mechanism — messages that
+			// arrived while the agent was busy are combined into a single
+			// notification the moment the agent becomes idle.
+			unnotified := bus.UnnotifiedMessages(d.session, role)
+			if len(unnotified) > 0 {
+				provider := bus.ResolveProvider(role)
+				text := bus.BuildCombinedNotification(unnotified)
+				ids := make([]string, 0, len(unnotified))
+				for _, m := range unnotified {
+					ids = append(ids, m.ID)
+				}
+				bus.AddNotifiedIDs(d.session, role, ids)
+				_ = bus.SendWakeUpWithText(d.session, role, provider, text)
+				fmt.Printf("  %s  Delivered combined notification to %s (%d messages)\n", ts, role, len(unnotified))
+				bus.LogLifecycle(d.session, "info", "daemon", "idle-combined-wake",
+					fmt.Sprintf("%s: %d messages", role, len(unnotified)))
+			}
 		}
 		d.lastIdleState[role] = isIdle
 
-		// Skip if no actionable messages. Only wake agents for request-type
-		// messages — responses and events are informational and don't require
-		// the agent to act. This prevents echo loops where agents keep
-		// acknowledging each other's responses.
-		if !bus.HasActionableMessages(d.session, role) {
+		// Skip if no unnotified messages (content-aware, not size-based).
+		unnotified := bus.UnnotifiedMessages(d.session, role)
+		if len(unnotified) == 0 {
+			continue
+		}
+		// Only wake for request-type messages — responses and events are
+		// informational and don't require the agent to act.
+		hasActionable := false
+		for _, m := range unnotified {
+			if m.Type == "request" {
+				hasActionable = true
+				break
+			}
+		}
+		if !hasActionable {
 			continue
 		}
 		// Skip if agent is polling or waiting (already watching inbox)
@@ -978,31 +1005,33 @@ func (d *Daemon) checkIdleAgents() {
 		// these providers, but skipping early avoids unnecessary pane captures.
 		provider := bus.ResolveProvider(role)
 		if !provider.SupportsHooks() {
-			// Best-effort: send display-message so user sees a flash.
-			// Cooldown: once per 60s per role to avoid display-message spam
-			// since this check runs every 5s.
+			// Best-effort: send wake-up with combined text.
+			// Cooldown: once per 60s per role to avoid spam.
 			if now-d.lastNonHookWake[role] >= 60 {
 				d.lastNonHookWake[role] = now
 				_ = provider.SendWakeUp(d.session, role)
 			}
 			continue
 		}
-		// Only wake idle agents (at ❯ prompt) — don't interrupt active ones
+		// Only wake idle agents (at ❯ prompt) — don't interrupt active ones.
+		// The idle transition above handles deferred delivery when the agent
+		// finishes its current work.
 		if !isIdle {
 			continue
 		}
 
+		// Agent is already idle with unnotified messages — deliver combined
+		// notification immediately.
 		ts := time.Now().Format("15:04:05")
-		fmt.Printf("  %s  Waking idle agent %s (unread messages)\n", ts, role)
+		text := bus.BuildCombinedNotification(unnotified)
+		ids := make([]string, 0, len(unnotified))
+		for _, m := range unnotified {
+			ids = append(ids, m.ID)
+		}
+		bus.AddNotifiedIDs(d.session, role, ids)
+		fmt.Printf("  %s  Waking idle agent %s (%d unnotified messages)\n", ts, role, len(unnotified))
 		bus.LogLifecycle(d.session, "info", "daemon", "idle-wake", role)
-		// Let Notify() handle dedup via alreadyNotified(). If the internal
-		// IsAgentIdle re-check races (stale tmux capture), Notify falls to
-		// notifyDisplayMessage which marks the inbox as notified. The existing
-		// notifyRetryInterval (30s) allows a retry — worst case the agent is
-		// woken 30s late, which is acceptable. Do NOT ClearNotifiedSize here:
-		// clearing every 5s defeats all dedup and causes infinite "You have
-		// new messages" spam when the agent can't consume fast enough.
-		_ = bus.Notify(d.session, role)
+		_ = bus.SendWakeUpWithText(d.session, role, provider, text)
 	}
 }
 
