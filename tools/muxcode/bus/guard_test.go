@@ -597,6 +597,61 @@ func TestDetectMessageLoop_SystemActionsIgnored(t *testing.T) {
 	}
 }
 
+func TestDetectMessageLoop_ResponsesIgnored(t *testing.T) {
+	// Response messages are expected replies to requests. Normal iterative
+	// development produces 4+ build responses in 5 minutes — that's not a
+	// loop. Only requests should trigger the repeated-tuple detector.
+	//
+	// This test verifies that 5 responses between the same pair don't trigger
+	// a loop alert, even when they exceed the threshold. The requests are
+	// varied (different actions) so they don't hit the threshold.
+	now := time.Now().Unix()
+	messages := []Message{
+		{TS: now - 240, From: "edit", To: "build", Action: "build", Type: "request"},
+		{TS: now - 230, From: "build", To: "edit", Action: "response", Type: "response"},
+		{TS: now - 180, From: "edit", To: "test", Action: "test", Type: "request"},
+		{TS: now - 170, From: "build", To: "edit", Action: "response", Type: "response"},
+		{TS: now - 120, From: "edit", To: "review", Action: "review", Type: "request"},
+		{TS: now - 110, From: "build", To: "edit", Action: "response", Type: "response"},
+		{TS: now - 60, From: "edit", To: "deploy", Action: "deploy", Type: "request"},
+		{TS: now - 50, From: "build", To: "edit", Action: "response", Type: "response"},
+		{TS: now - 10, From: "build", To: "edit", Action: "response", Type: "response"},
+	}
+
+	// 5 build→edit responses should NOT trigger alert — they're replies
+	alert := DetectMessageLoop(messages, "edit", 4, 300)
+	if alert != nil {
+		t.Errorf("expected no alert for response messages, got %+v", alert)
+	}
+
+	// Also check from build's perspective
+	alert = DetectMessageLoop(messages, "build", 4, 300)
+	if alert != nil {
+		t.Errorf("expected no alert for response messages (build perspective), got %+v", alert)
+	}
+}
+
+func TestDetectMessageLoop_ResponsePingPongDetected(t *testing.T) {
+	// While responses are excluded from tuple counting, the ping-pong
+	// detector should still catch genuinely pathological bidirectional
+	// response chains (agents echoing each other's responses).
+	now := time.Now().Unix()
+	messages := []Message{
+		{TS: now - 60, From: "build", To: "edit", Action: "ack", Type: "response"},
+		{TS: now - 45, From: "edit", To: "build", Action: "ack", Type: "response"},
+		{TS: now - 30, From: "build", To: "edit", Action: "ack", Type: "response"},
+		{TS: now, From: "edit", To: "build", Action: "ack", Type: "response"},
+	}
+
+	alert := DetectMessageLoop(messages, "build", 4, 300)
+	if alert == nil {
+		t.Fatal("expected alert for response ping-pong pattern, got nil")
+	}
+	if alert.Count < 4 {
+		t.Errorf("count = %d, want >= 4", alert.Count)
+	}
+}
+
 func TestIsSystemAction(t *testing.T) {
 	systemActions := []string{"loop-detected", "compact-recommended", "proc-complete", "spawn-complete"}
 	for _, action := range systemActions {

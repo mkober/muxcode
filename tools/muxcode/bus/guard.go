@@ -149,10 +149,15 @@ func DetectCommandLoop(entries []HistoryEntry, threshold int, windowSecs int64) 
 }
 
 // DetectMessageLoop checks log messages for repetitive patterns involving a role.
-// Detects both repeated identical messages and ping-pong patterns.
-// Counts both "request" and "response" type messages — response echo loops
-// (agents acknowledging each other's responses) are just as problematic as
-// request loops. Only "event" type messages are excluded.
+// Detects repeated request messages and ping-pong patterns.
+//
+// Response messages are excluded from the repeated-tuple count because they are
+// expected replies to requests — 4 build delegations in 5 minutes produce 4
+// (build→edit, response) tuples, which is normal iterative development, not a
+// loop. Ping-pong detection (below) still catches genuinely pathological
+// bidirectional response chains. Event messages and daemon traffic are also
+// excluded (they repeat naturally).
+//
 // Returns an alert if any pattern repeats >= threshold times within windowSecs.
 func DetectMessageLoop(messages []Message, role string, threshold int, windowSecs int64) *LoopAlert {
 	if len(messages) == 0 || threshold < 1 {
@@ -161,13 +166,19 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 
 	now := time.Now().Unix()
 
-	// Filter to request and response messages within the time window.
-	// Events repeat naturally and are excluded. Daemon-originated messages are
-	// system-generated traffic (file-change events, loop alerts, compaction
-	// alerts) — they repeat during active editing and are not agent-to-agent
-	// loops. System actions (loop-detected, compact-recommended) are
-	// infrastructure traffic that should never trigger loop detection.
-	var recent []Message
+	// Build two filtered slices:
+	// - recentAll: requests + responses (for ping-pong detection)
+	// - recentRequests: requests only (for repeated-tuple detection)
+	//
+	// Response messages are excluded from the tuple count because they are
+	// expected replies — 4 build responses in 5 minutes is normal iterative
+	// development, not a loop. But the ping-pong detector uses the full set
+	// (including responses) to catch bidirectional echo loops.
+	//
+	// Both exclude: event messages (repeat naturally), daemon traffic
+	// (system-generated), and system actions (infrastructure).
+	var recentAll []Message
+	var recentRequests []Message
 	for _, m := range messages {
 		if m.Type == "event" {
 			continue
@@ -178,21 +189,26 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 		if isSystemAction(m.Action) {
 			continue
 		}
-		if windowSecs <= 0 || (now-m.TS) <= windowSecs {
-			recent = append(recent, m)
+		if windowSecs > 0 && (now-m.TS) > windowSecs {
+			continue
+		}
+		recentAll = append(recentAll, m)
+		if m.Type != "response" {
+			recentRequests = append(recentRequests, m)
 		}
 	}
 
-	if len(recent) < threshold {
+	if len(recentAll) < threshold {
 		return nil
 	}
 
-	// Check for repeated (from, to, action) tuples
+	// Check for repeated (from, to, action) tuples — requests only.
+	// Responses are expected replies and don't indicate loops.
 	type tuple struct {
 		from, to, action string
 	}
 	counts := make(map[tuple]int)
-	for _, m := range recent {
+	for _, m := range recentRequests {
 		if m.From != role && m.To != role {
 			continue
 		}
@@ -206,7 +222,7 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 			if peer == role {
 				peer = key.from
 			}
-			elapsed := now - recent[0].TS
+			elapsed := now - recentAll[0].TS
 			return &LoopAlert{
 				Type:    "message",
 				Count:   count,
@@ -218,9 +234,11 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 		}
 	}
 
-	// Check for ping-pong: alternating A->B / B->A with same action
-	for i := 0; i < len(recent)-1; i++ {
-		a := recent[i]
+	// Check for ping-pong: alternating A->B / B->A with same action.
+	// Uses the full message set (including responses) to catch bidirectional
+	// response echo loops where agents acknowledge each other's responses.
+	for i := 0; i < len(recentAll)-1; i++ {
+		a := recentAll[i]
 		if a.From != role && a.To != role {
 			continue
 		}
@@ -229,8 +247,8 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 		action := a.Action
 		prevFrom := a.From
 		prevTo := a.To
-		for j := i + 1; j < len(recent); j++ {
-			b := recent[j]
+		for j := i + 1; j < len(recentAll); j++ {
+			b := recentAll[j]
 			if b.Action != action {
 				break
 			}
