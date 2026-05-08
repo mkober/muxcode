@@ -402,3 +402,86 @@ func TestFormatClaudeCleanupResult_WithSessions(t *testing.T) {
 		t.Errorf("FormatClaudeCleanupResult: expected '5.0 MB', got %q", out)
 	}
 }
+
+// --- Disk pressure tests ---
+
+func TestTmpDiskUsage_ReturnsValidPercentage(t *testing.T) {
+	pct, err := TmpDiskUsage()
+	if err != nil {
+		t.Fatalf("TmpDiskUsage: %v", err)
+	}
+	if pct < 0 || pct > 100 {
+		t.Errorf("TmpDiskUsage: got %d, want 0–100", pct)
+	}
+}
+
+func TestCheckDiskPressure_DisabledWhenThresholdZero(t *testing.T) {
+	t.Setenv("MUXCODE_TMP_CLEANUP_THRESHOLD", "0")
+	result, err := CheckDiskPressure("test-session")
+	if err != nil {
+		t.Fatalf("CheckDiskPressure: %v", err)
+	}
+	if result != nil {
+		t.Errorf("expected nil result when threshold=0 (disabled), got %+v", result)
+	}
+}
+
+func TestCheckDiskPressure_BelowThresholdReturnsNil(t *testing.T) {
+	// Threshold of 100% is practically never exceeded
+	t.Setenv("MUXCODE_TMP_CLEANUP_THRESHOLD", "100")
+	result, err := CheckDiskPressure("test-session")
+	if err != nil {
+		t.Fatalf("CheckDiskPressure: %v", err)
+	}
+	if result != nil {
+		t.Errorf("expected nil result when below threshold (100%%), got non-nil")
+	}
+}
+
+func TestCheckDiskPressure_AboveThresholdRunsCleanup(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetBusDirBase(tmpDir)
+	defer ResetBusDirBase()
+
+	// Threshold of 1% is always exceeded — forces cleanup to run
+	t.Setenv("MUXCODE_TMP_CLEANUP_THRESHOLD", "1")
+
+	// Create a stale muxcode artifact so cleanup has something to find
+	staleDir := filepath.Join(tmpDir, "muxcode-bus-stale-test-1234")
+	os.MkdirAll(staleDir, 0o755)
+
+	result, err := CheckDiskPressure("my-session")
+	if err != nil {
+		t.Fatalf("CheckDiskPressure: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result when threshold=1% (always exceeded)")
+	}
+	if result.UsagePct < 1 {
+		t.Errorf("UsagePct=%d, expected >= 1", result.UsagePct)
+	}
+	if result.StaleResult == nil {
+		t.Error("StaleResult should be non-nil after cleanup ran")
+	}
+	// The stale dir should have been cleaned (no real tmux session for "stale-test-1234")
+	if _, err := os.Stat(staleDir); !os.IsNotExist(err) {
+		t.Error("expected stale bus dir to be removed by CheckDiskPressure")
+	}
+}
+
+func TestCheckDiskPressure_PostUsagePctValid(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	t.Setenv("MUXCODE_TMP_CLEANUP_THRESHOLD", "1")
+
+	result, err := CheckDiskPressure("my-session")
+	if err != nil {
+		t.Fatalf("CheckDiskPressure: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result at 1% threshold")
+	}
+	if result.PostUsagePct < 0 || result.PostUsagePct > 100 {
+		t.Errorf("PostUsagePct=%d, expected 0–100", result.PostUsagePct)
+	}
+}

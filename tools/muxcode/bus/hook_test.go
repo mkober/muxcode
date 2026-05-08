@@ -301,6 +301,9 @@ func TestCheckEditGuard_Blocked(t *testing.T) {
 		{"aws logs tail", "Log tailing"},
 		{"tail -f /var/log/app.log", "Log tailing"},
 		{"kubectl logs pod-1", "Log tailing"},
+		{"until tmux capture-pane -t mux:commit.1 -p | grep -q '❯$'; do sleep 3; done", "Polling loops"},
+		{"while true; do sleep 5; done", "Polling loops"},
+		{"while :; do muxcode inbox; sleep 2; done", "Polling loops"},
 	}
 	for _, tt := range tests {
 		d := CheckEditGuard(tt.command)

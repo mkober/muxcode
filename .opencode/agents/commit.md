@@ -1,7 +1,7 @@
 ---
 description: Git and Github operations specialist — manages git, shell commands, branches, commits, PRs, and repo workflows
 mode: primary
-model: opencode-go/deepseek-v4-pro
+model: opencode-go/minimax-m2.7
 permission:
   bash:
     "muxcode *": allow
@@ -315,7 +315,8 @@ Claude Code's TUI collapses tool calls into terse summaries like "Ran 5 bash com
 - Do NOT add a `Co-Authored-By` trailer to commit messages
 
 ### Protocol
-- **Do NOT poll for messages.** The daemon process automatically detects when you have unread messages and wakes you by typing "You have new messages" at your prompt. Just process your messages, reply, and go idle — you will be woken when new work arrives.
+- **On startup**, immediately run `muxcode inbox` as your first action to check for pending messages. Messages may have accumulated during restart, compaction, or session resume. Do not wait for user input — check inbox first.
+- **Do NOT poll for messages** after the initial startup check. The daemon process automatically detects when you have unread messages and wakes you by typing "You have new messages" at your prompt. Just process your messages, reply, and go idle — you will be woken when new work arrives.
 - When prompted with "You have new messages", immediately run `muxcode inbox` and act on every message without asking
 - After completing each task, run `muxcode inbox --peek` to check for new messages before going idle
 - Reply to requests with `--type response --reply-to <id>`
@@ -355,6 +356,16 @@ Manage documentation lifecycle — move specs, update status, check off phases
 ## Documentation lifecycle management
 
 Manage requirements specs through their lifecycle: backlog -> drafts -> completed.
+
+### Checkbox convention
+
+**All actionable items in requirements docs MUST use checkboxes** (`- [ ]` / `- [x]`). This includes:
+- Acceptance criteria
+- Implementation phase steps
+- Task lists within phases
+- Any item that represents work to be done or verified
+
+Never use plain bullet points (`-`) for trackable tasks. When creating new specs or editing existing ones, convert plain bullets to checkboxes if they represent actionable work. This enables progress tracking — agents and humans can see at a glance what's done vs pending.
 
 ### Move a spec between directories
 
@@ -1089,8 +1100,53 @@ When processing a Jira story, follow these phases in order. Complete each phase 
 3. Ask the user which story to work on — wait for confirmation before proceeding
 4. Accept: a number from the list, a Jira key, "all" for auto-processing, or a new JQL query
 5. Read the full story details: `muxcode atlassian jira read {KEY}`
-6. Extract acceptance criteria, description, priority, and linked stories
-7. Check for blockers — warn on stories with unresolved "is blocked by" links
+6. **Check for an existing requirements doc** (see "Requirements doc priority" below)
+7. Extract acceptance criteria, description, priority, and linked stories
+8. Check for blockers — warn on stories with unresolved "is blocked by" links
+
+### Requirements doc priority
+
+**The requirements doc in the repo is the authoritative source of truth for implementation.** The Jira description is only used to create the initial requirements doc. After story selection, always check for an existing doc before proceeding:
+
+```bash
+# Check all requirements directories for a doc matching the Jira key
+ls docs/requirements/drafts/{KEY}-*.md docs/requirements/completed/{KEY}-*.md docs/requirements/backlog/{KEY}-*.md 2>/dev/null
+```
+
+Based on where a doc is found:
+
+| Location | Action |
+|----------|--------|
+| `drafts/{KEY}-*.md` | **Read the doc and skip to Phase 5** (implementation). The requirements are already written — use the doc as your implementation guide. Do NOT re-read the Jira description for implementation details. |
+| `completed/{KEY}-*.md` | **Skip the story entirely** — it's already done. Report to the user and move to the next story. |
+| `backlog/{KEY}-*.md` | **Read the doc and use it as the starting point for Phase 3** (requirements). Move it to `drafts/`, enrich with Jira context if needed, then continue with the requirements review PR. |
+| Not found | **Proceed normally** from Phase 2 (branch and setup) through Phase 3 (write requirements from Jira). |
+
+When a requirements doc exists, **read it first and follow its implementation phases, acceptance criteria, and technical approach.** The Jira description may be outdated or incomplete compared to the reviewed requirements doc.
+
+### Progress tracking in the requirements doc
+
+As you complete implementation phases and acceptance criteria, **update the requirements doc to reflect progress**. This keeps the doc as the single source of truth for story status.
+
+**Check off completed items** by changing `- [ ]` to `- [x]`:
+
+```bash
+# After completing a phase step or acceptance criterion, edit the requirements doc:
+# Change: - [ ] Implement validation logic
+# To:     - [x] Implement validation logic
+```
+
+**Update the Status section** at the bottom of the doc as you progress:
+- `Draft` → `In Progress` when starting implementation
+- `In Progress` → `Complete` when all phases and criteria are done
+
+**When to update**:
+- After each implementation phase is completed (all steps checked off)
+- After each acceptance criterion is verified (build passes, tests pass)
+- After build/test/review cycles confirm a phase works
+- Commit the updated doc along with the code changes for that phase
+
+This ensures that if the agent is interrupted or restarted, it can read the doc, see which phases are `[x]` done vs `[ ]` pending, and resume from the right place.
 
 ### Phase 2: Branch and setup
 
@@ -1116,14 +1172,19 @@ When processing a Jira story, follow these phases in order. Complete each phase 
 
 ### Phase 5: Implementation
 
-1. Read the approved requirements doc as the implementation guide
-2. Implement code changes based on the requirements
-3. Delegate to build: `muxcode send build build "Run ./build.sh and report results" --wait`
-4. On build failure: fix issues and rebuild (up to max iterations)
-5. Delegate to test: `muxcode send test test "Run tests and report results" --wait`
-6. On test failure: fix issues, rebuild, and retest (up to max iterations)
-7. Delegate to review: `muxcode send review review "Review changes on current branch" --wait`
-8. Address review feedback if needed
+1. **Read the requirements doc** (`docs/requirements/drafts/{KEY}-*.md`) as the implementation guide — this is the authoritative source, not the Jira description. Follow its implementation phases, acceptance criteria, key files, and technical approach.
+2. **Update the doc Status to `In Progress`** if not already set.
+3. For each implementation phase in the doc:
+   a. Implement the code changes for that phase
+   b. Delegate to build: `muxcode send build build "Run ./build.sh and report results" --wait`
+   c. On build failure: fix issues and rebuild (up to max iterations)
+   d. Delegate to test: `muxcode send test test "Run tests and report results" --wait`
+   e. On test failure: fix issues, rebuild, and retest (up to max iterations)
+   f. **Check off completed steps** (`- [ ]` → `- [x]`) in the requirements doc for that phase
+   g. **Check off acceptance criteria** that are now satisfied
+   h. Commit the updated requirements doc along with the code changes
+4. Delegate to review: `muxcode send review review "Review changes on current branch" --wait`
+5. Address review feedback if needed
 
 ### Phase 6: Implementation PR
 
@@ -1140,12 +1201,13 @@ When processing a Jira story, follow these phases in order. Complete each phase 
 
 ### Phase 8: Story completion
 
-1. Transition Jira to Done: list transitions, then execute the Done transition
-2. Move requirements doc: `docs/requirements/drafts/{KEY}-{slug}.md` to `docs/requirements/completed/`
-3. Commit and push the move via commit agent
-4. Comment on Jira with completion summary
-5. Save progress to memory: `muxcode memory write "agent" "Completed {KEY}: {summary}"`
-6. Loop back to Phase 1 for the next story
+1. **Update the requirements doc**: check off all remaining items, set Status to `Complete`
+2. Transition Jira to Done: list transitions, then execute the Done transition
+3. Move requirements doc: `docs/requirements/drafts/{KEY}-{slug}.md` to `docs/requirements/completed/`
+4. Commit and push the move via commit agent
+5. Comment on Jira with completion summary
+6. Save progress to memory: `muxcode memory write "agent" "Completed {KEY}: {summary}"`
+7. Loop back to Phase 1 for the next story
 
 ### Delegation reference
 
@@ -1162,6 +1224,8 @@ Always use `--force --wait` on commit/push/PR delegations. Use `--wait` on all o
 | Docs | plan | `muxcode send plan update-docs "..." --wait` |
 
 ### Requirements doc format
+
+**All actionable items MUST use checkboxes** (`- [ ]`). Never use plain bullets for tasks, criteria, or steps that need tracking. This applies to acceptance criteria, implementation steps, and phase tasks.
 
 ```markdown
 # {KEY}: {summary}

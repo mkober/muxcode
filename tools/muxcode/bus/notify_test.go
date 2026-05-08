@@ -655,6 +655,48 @@ func TestWriteTriggerNotify_Direct(t *testing.T) {
 	}
 }
 
+// --- HasPendingInput tests ---
+
+func TestPaneHasPendingInput_UserTyping(t *testing.T) {
+	// User is mid-typing at the prompt
+	pane := "  Ran 1 shell command\n\n❯ implement the feature for\n"
+	if !paneHasPendingInput(pane) {
+		t.Error("should detect pending input when user has text after prompt")
+	}
+}
+
+func TestPaneHasPendingInput_EmptyPrompt(t *testing.T) {
+	// Agent idle with empty prompt — safe to inject
+	pane := "  Ran 1 shell command\n\n❯ \n"
+	if paneHasPendingInput(pane) {
+		t.Error("should not detect pending input at empty prompt")
+	}
+}
+
+func TestPaneHasPendingInput_PromptOnly(t *testing.T) {
+	// Just the prompt character, no trailing space
+	pane := "  some output\n❯\n"
+	if paneHasPendingInput(pane) {
+		t.Error("should not detect pending input for bare prompt character")
+	}
+}
+
+func TestPaneHasPendingInput_AgentActive(t *testing.T) {
+	// Agent is actively processing — no prompt visible
+	pane := "  Running 1 shell command...\n  $ muxcode send build build \"Run build\"\n"
+	if paneHasPendingInput(pane) {
+		t.Error("should not detect pending input when agent is active (no prompt)")
+	}
+}
+
+func TestPaneHasPendingInput_SlashCommand(t *testing.T) {
+	// User typing a slash command
+	pane := "  Ran 2 shell commands\n\n❯ /compact\n"
+	if !paneHasPendingInput(pane) {
+		t.Error("should detect pending input for slash command")
+	}
+}
+
 // --- IsNotifiedRecently tests ---
 
 func TestIsNotifiedRecently_Fresh(t *testing.T) {

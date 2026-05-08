@@ -95,6 +95,7 @@ permission:
     "cd * && curl*": allow
     "wget*": allow
     "cd * && wget*": allow
+  edit: allow
   external_directory: allow
 ---
 

@@ -680,6 +680,10 @@ var editGuardRules = []guardRule{
 		prefixes: []string{"aws s3 ", "aws s3api ", "aws lambda ", "aws stepfunctions "},
 		reason:   `BLOCKED: AWS commands are prohibited in the edit window. Delegate to the run agent. Run: muxcode send run run "<describe the AWS operation>" --wait`,
 	},
+	{
+		prefixes: []string{"until ", "while true", "while :"},
+		reason:   `BLOCKED: Polling loops are prohibited in the edit window. Use --wait for delegation: muxcode send <target> <action> "<message>" --wait`,
+	},
 }
 
 // CheckEditGuard checks if a command should be blocked in the edit window.

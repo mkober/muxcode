@@ -287,6 +287,44 @@ func markNotified(session, role string) {
 // at the idle prompt vs actively executing.
 const idlePromptChar = "\u276f"
 
+// HasPendingInput returns true if the agent's tmux pane has text in the input
+// buffer after the idle prompt. This indicates the user is mid-typing and
+// send-keys injection would corrupt their input. Notifications are held until
+// the user submits (presses Enter) or clears the input.
+//
+// Only meaningful for hook providers (Claude Code) \u2014 non-hook providers return
+// false (safe to inject). Returns false on any error (graceful degradation).
+func HasPendingInput(session, role string) bool {
+	provider := ResolveProvider(role)
+	if !provider.SupportsHooks() {
+		return false
+	}
+	target := PaneTarget(session, role)
+	content, err := TmuxCapturePaneLines(target, 8)
+	if err != nil {
+		return false
+	}
+	return paneHasPendingInput(content)
+}
+
+// paneHasPendingInput checks captured pane content for text after the idle
+// prompt character (\u276f). Extracted for testability (no tmux dependency).
+func paneHasPendingInput(content string) bool {
+	promptPrefix := idlePromptChar + " "
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Look for prompt line with text after it: "\u276f some user input"
+		// Just "\u276f" or "\u276f " (whitespace only) means empty prompt \u2014 no pending input.
+		if strings.HasPrefix(trimmed, promptPrefix) {
+			afterPrompt := strings.TrimSpace(trimmed[len(promptPrefix):])
+			if afterPrompt != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IsAgentIdle returns true if the agent's tmux pane is sitting at the idle
 // prompt. Delegates to the role's resolved Provider for CLI-specific idle
 // detection (e.g. ❯ for Claude Code, API status check for OpenCode).
@@ -422,6 +460,14 @@ func notifySendKeys(session, role string) error {
 	defer unlock()
 
 	if alreadyNotified(session, role) {
+		return nil
+	}
+
+	// Hold notification if the user is mid-typing at the prompt.
+	// Injecting via send-keys would corrupt their input. Return without
+	// marking as notified so the daemon retries on the next cycle (5s).
+	// The notification is delivered once the user submits or clears input.
+	if HasPendingInput(session, role) {
 		return nil
 	}
 
