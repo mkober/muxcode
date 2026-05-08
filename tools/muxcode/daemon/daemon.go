@@ -993,6 +993,16 @@ func (d *Daemon) checkIdleAgents() {
 		// Skip if no unnotified messages (content-aware, not size-based).
 		unnotified := bus.UnnotifiedMessages(d.session, role)
 		if len(unnotified) == 0 {
+			// Safety net: if the agent is idle and has actionable messages
+			// but all are marked as notified with a stale marker (>15s),
+			// a previous send-keys injection was likely dropped by the TUI.
+			// Clear the notified IDs so the next cycle retries delivery.
+			// Without this, the agent stays stuck at ❯ until idle-task-rescue
+			// fires a synthetic response 30s later.
+			if isIdle && bus.HasActionableMessages(d.session, role) &&
+				!bus.IsNotifiedRecently(d.session, role, 15*time.Second) {
+				bus.ClearNotifiedIDs(d.session, role)
+			}
 			continue
 		}
 		// Only wake for request-type messages — responses and events are
