@@ -738,31 +738,8 @@ var lookPath = exec.LookPath
 func PreLaunchSetup(role, session, cli string) {
 	startupMsg := "Session started — review last saved context from memory to restore session state."
 
-	// Pre-populate inbox for roles that need startup context restoration
-	switch role {
-	case "edit":
-		m := Message{
-			ID:      NewMsgID("edit"),
-			TS:      time.Now().Unix(),
-			From:    "edit",
-			To:      "edit",
-			Type:    "event",
-			Action:  "notify",
-			Payload: startupMsg,
-		}
-		_ = SendNoCC(session, m)
-	case "analyze":
-		m := Message{
-			ID:      NewMsgID("analyze"),
-			TS:      time.Now().Unix(),
-			From:    "analyze",
-			To:      "analyze",
-			Type:    "event",
-			Action:  "notify",
-			Payload: startupMsg,
-		}
-		_ = SendNoCC(session, m)
-	case "auto":
+	// Auto agent gets a special startup message (task-oriented, not context restoration)
+	if role == "auto" {
 		agentStartupMsg := "Agent started — search Jira for available stories and present them to the user for selection."
 		m := Message{
 			ID:      NewMsgID("auto"),
@@ -772,6 +749,20 @@ func PreLaunchSetup(role, session, cli string) {
 			Type:    "request",
 			Action:  "startup",
 			Payload: agentStartupMsg,
+		}
+		_ = SendNoCC(session, m)
+	} else {
+		// All agents get a startup inbox message so they check inbox on launch,
+		// read memory, and restore session context. Without this, agents that
+		// launch into an empty inbox sit idle and never restore prior state.
+		m := Message{
+			ID:      NewMsgID(role),
+			TS:      time.Now().Unix(),
+			From:    role,
+			To:      role,
+			Type:    "event",
+			Action:  "notify",
+			Payload: startupMsg,
 		}
 		_ = SendNoCC(session, m)
 	}

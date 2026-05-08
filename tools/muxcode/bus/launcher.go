@@ -570,10 +570,12 @@ func ClassifyPane(content string) PaneState {
 }
 
 // NeedsWakeUp returns true if the window should receive a startup wake-up
-// message. Any agent with actionable inbox messages (requests) gets woken —
-// not just edit.
+// message. Any agent with inbox messages (including startup events) gets woken.
+// Uses HasMessages() instead of HasActionableMessages() because during startup,
+// all agents need to check their inbox — even if the only message is the
+// startup event from PreLaunchSetup telling them to restore session context.
 func NeedsWakeUp(session, window string) bool {
-	return HasActionableMessages(session, window)
+	return HasMessages(session, window)
 }
 
 // AutoAccept polls agent panes and dismisses startup prompts.

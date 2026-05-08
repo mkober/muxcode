@@ -658,3 +658,201 @@ func TestWriteTriggerNotify_Direct(t *testing.T) {
 		t.Error("trigger file should contain a timestamp")
 	}
 }
+
+// --- Delivery verification tests ---
+
+// sequenceMockProvider implements Provider for testing with per-call IsIdle and
+// SendWakeUp tracking. idleSequence controls what IsIdle returns on each
+// successive call (index 0 = first call, etc.). Falls back to false when
+// the sequence is exhausted.
+type sequenceMockProvider struct {
+	supportsHooks   bool
+	idleSequence    []bool
+	idleCallCount   int
+	wakeUpCallCount int
+}
+
+func (m *sequenceMockProvider) Name() string                                       { return "seq-mock" }
+func (m *sequenceMockProvider) ConfigureLaunch(cfg *LaunchConfig, role string)     {}
+func (m *sequenceMockProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) { return "", nil }
+func (m *sequenceMockProvider) IsIdle(session, role string) bool {
+	idx := m.idleCallCount
+	m.idleCallCount++
+	if idx < len(m.idleSequence) {
+		return m.idleSequence[idx]
+	}
+	return false
+}
+func (m *sequenceMockProvider) IsAlive(session, role string) bool                        { return true }
+func (m *sequenceMockProvider) ClassifyPane(content string) PaneState                    { return PaneNotReady }
+func (m *sequenceMockProvider) AcceptStartup(session, pane string, state PaneState) bool { return true }
+func (m *sequenceMockProvider) SendWakeUp(session, role string) error {
+	m.wakeUpCallCount++
+	return nil
+}
+func (m *sequenceMockProvider) Compact(session, role, target string) error { return nil }
+func (m *sequenceMockProvider) SupportsHooks() bool                        { return m.supportsHooks }
+func (m *sequenceMockProvider) IdlePromptChar() string                     { return "❯" }
+func (m *sequenceMockProvider) WriteAgentConfig(role string) error         { return nil }
+func (m *sequenceMockProvider) DetectTaskCompletion(session, role, pane string) (bool, bool, string) {
+	return false, false, ""
+}
+
+func TestVerifySendKeysDelivery_StillIdle_ClearsMarker(t *testing.T) {
+	useTempBusDir(t)
+
+	// Reduce delay for test speed
+	old := sendKeysVerifyDelay
+	sendKeysVerifyDelay = 10 * time.Millisecond
+	t.Cleanup(func() { sendKeysVerifyDelay = old })
+
+	session := "test-verify-idle"
+	role := "commit"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+
+	// Write a message to the inbox and mark as notified
+	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
+	markNotified(session, role)
+
+	// Verify marker exists before verification
+	if _, err := os.Stat(notifiedSizePath(session, role)); os.IsNotExist(err) {
+		t.Fatal("marker should exist before verification")
+	}
+
+	// Agent is idle on both checks (initial + post-retry) → both attempts dropped
+	provider := &sequenceMockProvider{
+		supportsHooks: true,
+		idleSequence:  []bool{true, true}, // idle on check, idle after retry
+	}
+	verifySendKeysDelivery(session, role, provider)
+
+	// Marker should be cleared so daemon retries on next cycle
+	if _, err := os.Stat(notifiedSizePath(session, role)); !os.IsNotExist(err) {
+		t.Error("marker should be cleared when agent is still idle after retry")
+	}
+
+	// Verify retry was attempted
+	if provider.wakeUpCallCount != 1 {
+		t.Errorf("expected 1 retry SendWakeUp call, got %d", provider.wakeUpCallCount)
+	}
+}
+
+func TestVerifySendKeysDelivery_NotIdle_MarkerPersists(t *testing.T) {
+	useTempBusDir(t)
+
+	// Reduce delay for test speed
+	old := sendKeysVerifyDelay
+	sendKeysVerifyDelay = 10 * time.Millisecond
+	t.Cleanup(func() { sendKeysVerifyDelay = old })
+
+	session := "test-verify-active"
+	role := "build"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+
+	// Write a message to the inbox and mark as notified
+	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
+	markNotified(session, role)
+
+	// Agent became active (processing the message) → injection landed
+	provider := &sequenceMockProvider{
+		supportsHooks: true,
+		idleSequence:  []bool{false}, // not idle on first check
+	}
+	verifySendKeysDelivery(session, role, provider)
+
+	// Marker should persist — delivery succeeded, no retry needed
+	if _, err := os.Stat(notifiedSizePath(session, role)); os.IsNotExist(err) {
+		t.Error("marker should persist when agent is active after send-keys (delivery succeeded)")
+	}
+
+	// No retry should have been attempted
+	if provider.wakeUpCallCount != 0 {
+		t.Errorf("expected 0 retry SendWakeUp calls, got %d", provider.wakeUpCallCount)
+	}
+}
+
+func TestVerifySendKeysDelivery_NonHookProvider_NotCalled(t *testing.T) {
+	useTempBusDir(t)
+
+	// This test verifies the calling convention in notifySendKeys: the
+	// verification is gated on provider.SupportsHooks(), so non-hook
+	// providers never reach verifySendKeysDelivery. We verify the gate
+	// by checking that notifySendKeys with a non-hook provider doesn't
+	// clear the marker even when idle=true.
+	//
+	// Since notifySendKeys uses ResolveProvider internally, we test
+	// the verification function directly with a non-hook mock to
+	// confirm it still clears (it doesn't check SupportsHooks itself —
+	// the gate is in notifySendKeys). This documents the contract:
+	// verifySendKeysDelivery always clears if idle; the caller decides
+	// whether to invoke it.
+
+	old := sendKeysVerifyDelay
+	sendKeysVerifyDelay = 10 * time.Millisecond
+	t.Cleanup(func() { sendKeysVerifyDelay = old })
+
+	session := "test-verify-nonhook"
+	role := "test"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+
+	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
+	markNotified(session, role)
+
+	// Non-hook provider that reports idle on both checks — verifySendKeysDelivery
+	// still retries and clears (the SupportsHooks gate is in notifySendKeys, not here).
+	provider := &sequenceMockProvider{
+		supportsHooks: false,
+		idleSequence:  []bool{true, true},
+	}
+	verifySendKeysDelivery(session, role, provider)
+
+	// Marker cleared because verifySendKeysDelivery doesn't check hooks
+	if _, err := os.Stat(notifiedSizePath(session, role)); !os.IsNotExist(err) {
+		t.Error("verifySendKeysDelivery should clear marker regardless of hook support (gate is in caller)")
+	}
+}
+
+func TestVerifySendKeysDelivery_RetrySucceeds_MarkerPersists(t *testing.T) {
+	useTempBusDir(t)
+
+	// Reduce delay for test speed
+	old := sendKeysVerifyDelay
+	sendKeysVerifyDelay = 10 * time.Millisecond
+	t.Cleanup(func() { sendKeysVerifyDelay = old })
+
+	session := "test-verify-retry-ok"
+	role := "commit"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+
+	// Write a message to the inbox and mark as notified
+	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
+	markNotified(session, role)
+
+	// Agent is idle on first check (injection dropped), but active on
+	// second check (retry succeeded). This is the key scenario: the
+	// retry within verifySendKeysDelivery lands the message.
+	provider := &sequenceMockProvider{
+		supportsHooks: true,
+		idleSequence:  []bool{true, false}, // idle → retry → active
+	}
+	verifySendKeysDelivery(session, role, provider)
+
+	// Marker should persist — retry succeeded, agent is now processing
+	if _, err := os.Stat(notifiedSizePath(session, role)); os.IsNotExist(err) {
+		t.Error("marker should persist when retry succeeds (agent became active)")
+	}
+
+	// Exactly one retry should have fired
+	if provider.wakeUpCallCount != 1 {
+		t.Errorf("expected 1 retry SendWakeUp call, got %d", provider.wakeUpCallCount)
+	}
+
+	// Two IsIdle calls: initial check + post-retry check
+	if provider.idleCallCount != 2 {
+		t.Errorf("expected 2 IsIdle calls, got %d", provider.idleCallCount)
+	}
+}

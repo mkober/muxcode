@@ -213,27 +213,25 @@ func (p *ClaudeCodeProvider) AcceptStartup(session, pane string, state PaneState
 }
 
 // SendWakeUp injects "You have new messages" into the agent's tmux pane
-// via send-keys. Text and Enter are sent as separate tmux send-keys calls
-// with a brief delay to avoid Claude Code's TUI dropping the Enter key.
+// via send-keys. Uses -l (literal) flag for the text to avoid tmux
+// interpreting special characters. Text and Enter are sent as separate
+// calls with a 200ms delay to give the TUI time to register the text.
+//
+// No Escape/C-u preamble — stale buffer text is handled by
+// verifySendKeysDelivery() retry. The multi-command preamble was the
+// primary cause of dropped injections during TUI redraws.
 func (p *ClaudeCodeProvider) SendWakeUp(session, role string) error {
 	target := PaneTarget(session, role)
-	// Clear any stale text in the input buffer before injecting.
-	// After task completion, leftover text (e.g. partial commands, garbled
-	// injections) can remain in the prompt. Without clearing, the wake-up
-	// text concatenates with it (e.g. "push itYou have new messages").
-	exec.Command("tmux", "send-keys", "-t", target, "Escape").Run()
-	time.Sleep(50 * time.Millisecond)
-	exec.Command("tmux", "send-keys", "-t", target, "C-u").Run()
-	time.Sleep(50 * time.Millisecond)
-	// Send text first
-	cmd := exec.Command("tmux", "send-keys", "-t", target, "You have new messages")
+	// Send text with -l (literal) to avoid tmux key interpretation
+	cmd := exec.Command("tmux", "send-keys", "-t", target, "-l", "You have new messages")
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s failed: %v\n", role, err)
 		return err
 	}
-	// Brief delay so Claude Code's TUI registers the text before Enter
-	time.Sleep(100 * time.Millisecond)
-	// Send Enter
+	// 200ms delay gives Claude Code's TUI time to register the text
+	// before the Enter keypress (increased from 100ms for reliability)
+	time.Sleep(200 * time.Millisecond)
+	// Send Enter separately (not literal — Enter is a tmux key name)
 	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s failed: %v\n", role, err)

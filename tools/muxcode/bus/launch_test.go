@@ -701,22 +701,46 @@ func TestPreLaunchSetup_EditStartupMessage(t *testing.T) {
 	}
 }
 
-func TestPreLaunchSetup_UnknownRole_NoMessage(t *testing.T) {
-	dir := t.TempDir()
-	session := "test-prelaunch-unknown"
-	os.Setenv("BUS_DIR_BASE", dir)
-	defer os.Unsetenv("BUS_DIR_BASE")
+func TestPreLaunchSetup_AllRolesGetStartupMessage(t *testing.T) {
+	// All non-auto roles should receive a startup event/notify message
+	// so they check inbox on launch and restore session context.
+	roles := []string{"build", "test", "commit", "review", "deploy", "plan", "run", "watch", "serve"}
+	for _, role := range roles {
+		t.Run(role, func(t *testing.T) {
+			dir := t.TempDir()
+			session := "test-prelaunch-" + role
+			os.Setenv("BUS_DIR_BASE", dir)
+			defer os.Unsetenv("BUS_DIR_BASE")
 
-	Init(session, dir)
+			Init(session, dir)
 
-	PreLaunchSetup("build", session, "opencode")
+			PreLaunchSetup(role, session, "claude")
 
-	msgs, err := Peek(session, "build")
-	if err != nil {
-		t.Fatalf("Peek build inbox: %v", err)
-	}
-	if len(msgs) != 0 {
-		t.Errorf("expected 0 messages in build inbox, got %d", len(msgs))
+			msgs, err := Peek(session, role)
+			if err != nil {
+				t.Fatalf("Peek %s inbox: %v", role, err)
+			}
+			if len(msgs) != 1 {
+				t.Fatalf("expected 1 message in %s inbox, got %d", role, len(msgs))
+			}
+
+			m := msgs[0]
+			if m.Type != "event" {
+				t.Errorf("expected type 'event', got %q", m.Type)
+			}
+			if m.Action != "notify" {
+				t.Errorf("expected action 'notify', got %q", m.Action)
+			}
+			if m.From != role {
+				t.Errorf("expected from %q, got %q", role, m.From)
+			}
+			if m.To != role {
+				t.Errorf("expected to %q, got %q", role, m.To)
+			}
+			if !strings.Contains(m.Payload, "Session started") {
+				t.Errorf("expected payload to contain 'Session started', got %q", m.Payload)
+			}
+		})
 	}
 }
 

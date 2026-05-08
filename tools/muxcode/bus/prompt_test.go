@@ -103,6 +103,22 @@ func TestSharedPrompt_NilPolicy(t *testing.T) {
 	}
 }
 
+func TestSharedPrompt_StartupInboxCheck(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	// All agents should be instructed to check inbox on startup
+	for _, role := range []string{"edit", "build", "test", "review", "commit", "deploy"} {
+		prompt := SharedPrompt(role)
+		if !strings.Contains(prompt, "On startup") {
+			t.Errorf("SharedPrompt(%s) should contain startup inbox check instruction", role)
+		}
+		if !strings.Contains(prompt, "muxcode inbox") {
+			t.Errorf("SharedPrompt(%s) should contain 'muxcode inbox' command", role)
+		}
+	}
+}
+
 func TestSharedPrompt_SingleLineWarning(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)

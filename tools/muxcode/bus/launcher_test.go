@@ -555,15 +555,16 @@ func TestNeedsWakeUp(t *testing.T) {
 		t.Error("NeedsWakeUp(edit) should be false with no messages")
 	}
 
-	// Send a response (non-actionable) to edit inbox
-	resp := NewMessage("build", "edit", "response", "response", "Done", "")
-	if err := Send(session, resp); err != nil {
+	// Send an event (startup notification) to edit inbox
+	evt := NewMessage("edit", "edit", "event", "notify", "Session started", "")
+	if err := Send(session, evt); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
-	// edit should NOT need wake-up — responses are not actionable
-	if NeedsWakeUp(session, "edit") {
-		t.Error("NeedsWakeUp(edit) should be false with only response messages")
+	// edit should need wake-up — any non-empty inbox triggers startup wake
+	// (even events/responses, since the agent needs to check inbox and restore context)
+	if !NeedsWakeUp(session, "edit") {
+		t.Error("NeedsWakeUp(edit) should be true with startup event in inbox")
 	}
 }
 

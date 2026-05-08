@@ -269,7 +269,8 @@ Claude Code's TUI collapses tool calls into terse summaries like "Ran 5 bash com
 - Do NOT add a `Co-Authored-By` trailer to commit messages
 
 ### Protocol
-- **Do NOT poll for messages.** The daemon process automatically detects when you have unread messages and wakes you by typing "You have new messages" at your prompt. Just process your messages, reply, and go idle — you will be woken when new work arrives.
+- **On startup**, immediately run `muxcode inbox` as your first action to check for pending messages. Messages may have accumulated during restart, compaction, or session resume. Do not wait for user input — check inbox first.
+- **Do NOT poll for messages** after the initial startup check. The daemon process automatically detects when you have unread messages and wakes you by typing "You have new messages" at your prompt. Just process your messages, reply, and go idle — you will be woken when new work arrives.
 - When prompted with "You have new messages", immediately run `muxcode inbox` and act on every message without asking
 - After completing each task, run `muxcode inbox --peek` to check for new messages before going idle
 - Reply to requests with `--type response --reply-to <id>`
