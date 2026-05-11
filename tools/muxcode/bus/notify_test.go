@@ -697,6 +697,144 @@ func TestPaneHasPendingInput_SlashCommand(t *testing.T) {
 	}
 }
 
+// --- IsWindowFocused / stale input clearing tests ---
+
+func TestNotifySendKeys_StaleInput_UnfocusedWindow(t *testing.T) {
+	// When there's text at the prompt but the user is NOT viewing that window,
+	// the notification should clear the stale input (C-u) and inject.
+	// We test this by verifying the expected tmux command sequence.
+	useTempBusDir(t)
+
+	session := "test-stale-unfocused"
+	role := "commit"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
+
+	// Write a message to the inbox
+	writeTestMessage(t, session, role, "msg-stale-001", "edit")
+
+	// Mock tmux to simulate: pane has pending input, window is NOT active
+	var calls [][]string
+	origOutput := tmuxOutputRunner
+	origRun := tmuxRunner
+	t.Cleanup(func() {
+		tmuxOutputRunner = origOutput
+		tmuxRunner = origRun
+	})
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		calls = append(calls, args)
+		joined := strings.Join(args, " ")
+		// has-session check
+		if strings.Contains(joined, "has-session") {
+			return "", nil
+		}
+		// capture-pane → return pane with text at prompt
+		if strings.Contains(joined, "capture-pane") {
+			return "  Ran 1 shell command\n\n❯ commit the requirements doc\n", nil
+		}
+		// display-message #{window_active} → NOT focused
+		if strings.Contains(joined, "window_active") {
+			return "0", nil
+		}
+		return "", nil
+	}
+	tmuxRunner = func(args ...string) error {
+		calls = append(calls, args)
+		return nil
+	}
+
+	// Force Claude Code provider via env var
+	t.Setenv("MUXCODE_COMMIT_CLI", "claude")
+
+	err := notifySendKeys(session, role)
+	if err != nil {
+		t.Fatalf("notifySendKeys failed: %v", err)
+	}
+
+	// Verify C-u was sent to clear stale input
+	foundClearInput := false
+	foundSendText := false
+	for _, call := range calls {
+		joined := strings.Join(call, " ")
+		if strings.Contains(joined, "send-keys") && strings.Contains(joined, "C-u") {
+			foundClearInput = true
+		}
+		if strings.Contains(joined, "send-keys") && strings.Contains(joined, "-l") {
+			foundSendText = true
+		}
+	}
+	if !foundClearInput {
+		t.Error("expected C-u to clear stale input when window not focused")
+	}
+	if !foundSendText {
+		t.Error("expected notification text to be injected after clearing")
+	}
+}
+
+func TestNotifySendKeys_PendingInput_FocusedWindow(t *testing.T) {
+	// When there's text at the prompt AND the user has the window focused,
+	// notification should be held (no injection).
+	useTempBusDir(t)
+
+	session := "test-pending-focused"
+	role := "commit"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
+
+	// Write a message to the inbox
+	writeTestMessage(t, session, role, "msg-focused-001", "edit")
+
+	origOutput := tmuxOutputRunner
+	origRun := tmuxRunner
+	t.Cleanup(func() {
+		tmuxOutputRunner = origOutput
+		tmuxRunner = origRun
+	})
+
+	sendKeysCalled := false
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "has-session") {
+			return "", nil
+		}
+		if strings.Contains(joined, "capture-pane") {
+			return "  Ran 1 shell command\n\n❯ implement the feature\n", nil
+		}
+		// Window IS focused — user is there
+		if strings.Contains(joined, "window_active") {
+			return "1", nil
+		}
+		return "", nil
+	}
+	tmuxRunner = func(args ...string) error {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "send-keys") {
+			sendKeysCalled = true
+		}
+		return nil
+	}
+
+	// Force Claude Code provider via env var
+	t.Setenv("MUXCODE_COMMIT_CLI", "claude")
+
+	err := notifySendKeys(session, role)
+	if err != nil {
+		t.Fatalf("notifySendKeys failed: %v", err)
+	}
+
+	if sendKeysCalled {
+		t.Error("should NOT inject send-keys when user has window focused with pending input")
+	}
+
+	// Verify message was NOT marked as notified (will retry next cycle)
+	unnotified := UnnotifiedMessages(session, role)
+	if len(unnotified) == 0 {
+		t.Error("message should still be unnotified when notification was held")
+	}
+}
+
 // --- IsNotifiedRecently tests ---
 
 func TestIsNotifiedRecently_Fresh(t *testing.T) {

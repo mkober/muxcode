@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -278,6 +279,59 @@ func TestQuitSession_MultipleSessions(t *testing.T) {
 	second := runCalls[1]
 	if second[0] != "kill-session" || second[2] != "project-b" {
 		t.Errorf("expected kill-session -t project-b, got %v", second)
+	}
+}
+
+func TestTmuxIsWindowActive_Active(t *testing.T) {
+	origOutput := tmuxOutputRunner
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		// Verify correct target format
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "display-message -t myproject:commit -p #{window_active}") {
+			t.Errorf("unexpected args: %v", args)
+		}
+		return "1", nil
+	}
+	t.Cleanup(func() { tmuxOutputRunner = origOutput })
+
+	if !TmuxIsWindowActive("myproject", "commit") {
+		t.Error("should return true when window_active is 1")
+	}
+}
+
+func TestTmuxIsWindowActive_Inactive(t *testing.T) {
+	origOutput := tmuxOutputRunner
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		return "0", nil
+	}
+	t.Cleanup(func() { tmuxOutputRunner = origOutput })
+
+	if TmuxIsWindowActive("myproject", "commit") {
+		t.Error("should return false when window_active is 0")
+	}
+}
+
+func TestTmuxIsWindowActive_Error(t *testing.T) {
+	origOutput := tmuxOutputRunner
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		return "", fmt.Errorf("no tmux server")
+	}
+	t.Cleanup(func() { tmuxOutputRunner = origOutput })
+
+	if TmuxIsWindowActive("myproject", "commit") {
+		t.Error("should return false on error")
+	}
+}
+
+func TestTmuxClearInput(t *testing.T) {
+	cap := setupTmuxCapture(t)
+	TmuxClearInput("s:commit.1")
+	if len(cap.calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(cap.calls))
+	}
+	args := cap.calls[0]
+	if args[0] != "send-keys" || args[2] != "s:commit.1" || args[3] != "C-u" {
+		t.Errorf("unexpected args: %v", args)
 	}
 }
 

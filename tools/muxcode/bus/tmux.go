@@ -142,6 +142,24 @@ func TmuxCapturePaneLines(target string, lines int) (string, error) {
 	return TmuxOutput("capture-pane", "-t", target, "-p", "-S", fmt.Sprintf("-%d", lines))
 }
 
+// TmuxIsWindowActive returns true if the given window is the active window
+// in the specified session (i.e. the user is currently viewing it).
+func TmuxIsWindowActive(session, window string) bool {
+	target := session + ":" + window
+	out, err := TmuxOutput("display-message", "-t", target, "-p", "#{window_active}")
+	if err != nil {
+		return false
+	}
+	return out == "1"
+}
+
+// TmuxClearInput sends C-u to a tmux pane to clear any text in the input
+// buffer. Used to clear stale agent output from the prompt before injecting
+// new text via send-keys.
+func TmuxClearInput(target string) error {
+	return TmuxRun("send-keys", "-t", target, "C-u")
+}
+
 // TmuxClientDimensions returns the current tmux client dimensions.
 func TmuxClientDimensions() (width, height int, err error) {
 	wStr, err := TmuxOutput("display-message", "-p", "#{client_width}")

@@ -307,6 +307,14 @@ func HasPendingInput(session, role string) bool {
 	return paneHasPendingInput(content)
 }
 
+// IsWindowFocused returns true if the user is currently viewing the window
+// for the given role. Used to distinguish user-typed input (window focused)
+// from stale agent output left at the prompt (window not focused).
+func IsWindowFocused(session, role string) bool {
+	window := WindowForRole(role)
+	return TmuxIsWindowActive(session, window)
+}
+
 // paneHasPendingInput checks captured pane content for text after the idle
 // prompt character (\u276f). Extracted for testability (no tmux dependency).
 func paneHasPendingInput(content string) bool {
@@ -463,12 +471,21 @@ func notifySendKeys(session, role string) error {
 		return nil
 	}
 
-	// Hold notification if the user is mid-typing at the prompt.
-	// Injecting via send-keys would corrupt their input. Return without
-	// marking as notified so the daemon retries on the next cycle (5s).
-	// The notification is delivered once the user submits or clears input.
+	// Check for text in the input buffer after the prompt.
+	// If the user has the window focused, they may be actively typing —
+	// hold the notification to avoid corrupting their input.
+	// If the window is NOT focused, the text is stale agent output (e.g.
+	// Claude printing a partial response that landed in the input buffer).
+	// Clear it with C-u and proceed with injection.
 	if HasPendingInput(session, role) {
-		return nil
+		if IsWindowFocused(session, role) {
+			// User might be typing — hold notification for next cycle (5s)
+			return nil
+		}
+		// Stale agent output — clear it before injecting
+		target := PaneTarget(session, role)
+		TmuxClearInput(target)
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	// Build combined notification from unnotified messages
@@ -502,16 +519,14 @@ func SendWakeUpWithText(session, role string, provider Provider, text string) er
 
 	target := PaneTarget(session, role)
 	// Send text with -l (literal) to avoid tmux key interpretation
-	cmd := exec.Command("tmux", "send-keys", "-t", target, "-l", text)
-	if err := cmd.Run(); err != nil {
+	if err := TmuxRun("send-keys", "-t", target, "-l", text); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s failed: %v\n", role, err)
 		return err
 	}
 	// 200ms delay gives Claude Code's TUI time to register the text
 	time.Sleep(200 * time.Millisecond)
 	// Send Enter separately (not literal — Enter is a tmux key name)
-	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
-	if err := cmd.Run(); err != nil {
+	if err := TmuxSendKeys(target, "Enter"); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s failed: %v\n", role, err)
 		return err
 	}
