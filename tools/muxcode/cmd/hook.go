@@ -209,8 +209,8 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string, c
 	bus.FireSubscriptions(session, from, eventType, outcome, exitCode, command, ctx)
 }
 
-// hookGuard implements the PreToolUse Bash hook for the edit window
-// (replaces muxcode-edit-guard.sh).
+// hookGuard implements the PreToolUse Bash hook for role-aware command blocking.
+// Enforces delegation rules for roles with guard rules (edit, plan, etc.).
 // Only fires for providers that support hooks. Non-hook providers (OpenCode TUI)
 // use permission.bash deny rules in their agent config instead.
 func hookGuard() {
@@ -219,16 +219,16 @@ func hookGuard() {
 		return
 	}
 
-	// Only run on the edit window
-	window := bus.BusRole()
-	if window != "edit" {
+	// Check if this role has guard rules — skip roles without enforcement
+	role := bus.BusRole()
+	if !bus.HasGuardRules(role) {
 		return
 	}
 
 	// Gate: skip guard for providers that don't support hooks.
 	// OpenCode agents use permission.bash deny rules in .opencode/agents/<role>.md
 	// instead of PreToolUse hook interception.
-	provider := bus.ResolveProvider(window)
+	provider := bus.ResolveProvider(role)
 	if !provider.SupportsHooks() {
 		return
 	}
@@ -243,7 +243,7 @@ func hookGuard() {
 		return
 	}
 
-	decision := bus.CheckEditGuard(ev.ToolInput.Command)
+	decision := bus.CheckGuard(role, ev.ToolInput.Command)
 	if decision != nil && decision.Blocked {
 		fmt.Println(bus.FormatGuardBlock(decision.Reason))
 	}

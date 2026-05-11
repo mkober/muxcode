@@ -126,6 +126,9 @@ func TestDaemon_NewInitializesFields(t *testing.T) {
 	if d.hasRunningSpawns {
 		t.Error("hasRunningSpawns should be false initially")
 	}
+	if d.idleTaskRetried == nil {
+		t.Error("idleTaskRetried should be initialized")
+	}
 }
 
 func TestExtractDiffFiles(t *testing.T) {

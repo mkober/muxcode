@@ -349,6 +349,115 @@ func TestCheckEditGuard_EnvPrefix(t *testing.T) {
 	}
 }
 
+func TestCheckGuard_PlanBlocked(t *testing.T) {
+	tests := []struct {
+		command  string
+		contains string
+	}{
+		{"git commit -m 'test'", "Git mutations are prohibited in the plan window"},
+		{"git push origin main", "Git mutations are prohibited in the plan window"},
+		{"git pull origin main", "Git mutations are prohibited in the plan window"},
+		{"git rebase main", "Git mutations are prohibited in the plan window"},
+		{"git checkout feature", "Git mutations are prohibited in the plan window"},
+		{"git switch feature", "Git mutations are prohibited in the plan window"},
+		{"git branch -d old", "Git mutations are prohibited in the plan window"},
+		{"git merge feature", "Git mutations are prohibited in the plan window"},
+		{"git stash", "Git mutations are prohibited in the plan window"},
+		{"git tag v1.0", "Git mutations are prohibited in the plan window"},
+		{"git reset --hard", "Git mutations are prohibited in the plan window"},
+		{"git clean -fd", "Git mutations are prohibited in the plan window"},
+		{"git revert HEAD", "Git mutations are prohibited in the plan window"},
+		{"git cherry-pick abc123", "Git mutations are prohibited in the plan window"},
+		{"git add .", "Git mutations are prohibited in the plan window"},
+		{"git add file.go", "Git mutations are prohibited in the plan window"},
+		{"git add.", "Git mutations are prohibited in the plan window"},
+		{"git mv old.go new.go", "Git mutations are prohibited in the plan window"},
+		{"git rm file.go", "Git mutations are prohibited in the plan window"},
+		{"gh pr create --title foo", "GitHub CLI commands are prohibited in the plan window"},
+		{"gh pr view 123", "GitHub CLI commands are prohibited in the plan window"},
+		{"./build.sh", "Build commands are prohibited in the plan window"},
+		{"make install", "Build commands are prohibited in the plan window"},
+		{"go test ./...", "Test commands are prohibited in the plan window"},
+		{"cdk diff", "Deploy commands are prohibited in the plan window"},
+	}
+	for _, tt := range tests {
+		d := CheckGuard("plan", tt.command)
+		if d == nil {
+			t.Errorf("CheckGuard(plan, %q) = nil, want blocked", tt.command)
+			continue
+		}
+		if !d.Blocked {
+			t.Errorf("CheckGuard(plan, %q).Blocked = false", tt.command)
+		}
+		if !strings.Contains(d.Reason, tt.contains) {
+			t.Errorf("CheckGuard(plan, %q).Reason missing %q: %q", tt.command, tt.contains, d.Reason)
+		}
+	}
+}
+
+func TestCheckGuard_PlanAllowed(t *testing.T) {
+	// Read-only git commands should be allowed for the plan agent
+	allowed := []string{
+		"git status",
+		"git log --oneline -10",
+		"git diff HEAD",
+		"git diff --name-only",
+		"git show HEAD:file.go",
+		"git rev-parse --abbrev-ref HEAD",
+		"ls -la",
+		"echo hello",
+		"muxcode send commit commit test",
+		"cat /tmp/foo",
+	}
+	for _, cmd := range allowed {
+		if d := CheckGuard("plan", cmd); d != nil {
+			t.Errorf("CheckGuard(plan, %q) = blocked, want allowed", cmd)
+		}
+	}
+}
+
+func TestCheckGuard_PlanCdPrefix(t *testing.T) {
+	d := CheckGuard("plan", "cd /foo && git commit -m 'test'")
+	if d == nil || !d.Blocked {
+		t.Error("CheckGuard(plan) with cd prefix should block git commit")
+	}
+}
+
+func TestCheckGuard_PlanEnvPrefix(t *testing.T) {
+	d := CheckGuard("plan", "envName=prod cdk diff")
+	if d == nil || !d.Blocked {
+		t.Error("CheckGuard(plan) with env prefix should block cdk")
+	}
+}
+
+func TestCheckGuard_UnknownRole(t *testing.T) {
+	// Roles without guard rules should always return nil
+	if d := CheckGuard("build", "git commit -m test"); d != nil {
+		t.Error("CheckGuard(build) should return nil — build has no guard rules")
+	}
+	if d := CheckGuard("commit", "git push"); d != nil {
+		t.Error("CheckGuard(commit) should return nil — commit has no guard rules")
+	}
+}
+
+func TestHasGuardRules(t *testing.T) {
+	if !HasGuardRules("edit") {
+		t.Error("edit should have guard rules")
+	}
+	if !HasGuardRules("plan") {
+		t.Error("plan should have guard rules")
+	}
+	if HasGuardRules("build") {
+		t.Error("build should not have guard rules")
+	}
+	if HasGuardRules("commit") {
+		t.Error("commit should not have guard rules")
+	}
+	if HasGuardRules("test") {
+		t.Error("test should not have guard rules")
+	}
+}
+
 func TestFormatGuardBlock(t *testing.T) {
 	result := FormatGuardBlock("test reason")
 	var obj map[string]string

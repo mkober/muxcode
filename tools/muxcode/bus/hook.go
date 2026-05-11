@@ -686,9 +686,95 @@ var editGuardRules = []guardRule{
 	},
 }
 
+// planGuardRules defines prohibited commands for the plan window.
+// The plan agent has read-only git access — mutations must be delegated.
+// Read-only git commands (status, log, diff, show, rev-parse) are allowed.
+var planGuardRules = []guardRule{
+	{
+		prefixes: []string{
+			"git commit", "git push", "git pull", "git rebase",
+			"git checkout", "git switch",
+			"git branch", "git merge", "git stash", "git tag",
+			"git reset", "git clean", "git revert", "git cherry-pick",
+			"git am", "git apply", "git mv", "git rm",
+			"git add",
+		},
+		reason: `BLOCKED: Git mutations are prohibited in the plan window. Delegate to the commit agent. Run: muxcode send commit commit "<describe the git operation>" --force --wait`,
+	},
+	{
+		prefixes: []string{"gh "},
+		reason:   `BLOCKED: GitHub CLI commands are prohibited in the plan window. Delegate to the commit agent. Run: muxcode send commit commit "<describe the operation>" --force --wait`,
+	},
+	{
+		prefixes: []string{"./build.sh", "pnpm build", "pnpm run build", "npm run build", "go build", "cargo build", "tsc "},
+		reason:   `BLOCKED: Build commands are prohibited in the plan window. Delegate to the build agent. Run: muxcode send build build "Run ./build.sh and report results" --wait`,
+	},
+	{
+		prefixes: []string{"make ", "make"},
+		reason:   `BLOCKED: Build commands are prohibited in the plan window. Delegate to the build agent. Run: muxcode send build build "Run ./build.sh and report results" --wait`,
+	},
+	{
+		prefixes: []string{
+			"./test.sh", "pnpm test", "pnpm run test", "npm test", "npm run test",
+			"jest", "npx jest", "npx vitest", "pytest", "python -m pytest",
+			"go test", "cargo test",
+		},
+		reason: `BLOCKED: Test commands are prohibited in the plan window. Delegate to the test agent. Run: muxcode send test test "Run tests and report results" --wait`,
+	},
+	{
+		prefixes: []string{"cdk ", "npx cdk ", "terraform ", "pulumi ", "sam "},
+		reason:   `BLOCKED: Deploy commands are prohibited in the plan window. Delegate to the deploy agent. Run: muxcode send deploy deploy "<describe the deploy operation>" --wait`,
+	},
+	{
+		prefixes: []string{"aws logs", "tail -f", "tail -F", "kubectl logs", "docker logs", "docker-compose logs", "stern "},
+		reason:   `BLOCKED: Log tailing commands are prohibited in the plan window. Delegate to the watch agent. Run: muxcode send watch watch "<describe what logs to tail>" --wait`,
+	},
+	{
+		prefixes: []string{"aws s3 ", "aws s3api ", "aws lambda ", "aws stepfunctions "},
+		reason:   `BLOCKED: AWS commands are prohibited in the plan window. Delegate to the run agent. Run: muxcode send run run "<describe the AWS operation>" --wait`,
+	},
+	{
+		prefixes: []string{"until ", "while true", "while :"},
+		reason:   `BLOCKED: Polling loops are prohibited in the plan window. Use --wait for delegation: muxcode send <target> <action> "<message>" --wait`,
+	},
+}
+
+// guardRulesForRole returns the guard rules for a given role.
+// Returns nil if the role has no guard enforcement.
+func guardRulesForRole(role string) []guardRule {
+	switch role {
+	case "edit":
+		return editGuardRules
+	case "plan":
+		return planGuardRules
+	default:
+		return nil
+	}
+}
+
+// HasGuardRules returns true if a role has guard enforcement rules.
+func HasGuardRules(role string) bool {
+	return guardRulesForRole(role) != nil
+}
+
+// CheckGuard checks if a command should be blocked for a given role.
+// Returns nil if the command is allowed or the role has no guard rules.
+func CheckGuard(role, command string) *GuardDecision {
+	rules := guardRulesForRole(role)
+	if rules == nil {
+		return nil
+	}
+	return checkAgainstRules(command, rules)
+}
+
 // CheckEditGuard checks if a command should be blocked in the edit window.
 // Returns nil if the command is allowed.
 func CheckEditGuard(command string) *GuardDecision {
+	return CheckGuard("edit", command)
+}
+
+// checkAgainstRules normalizes a command and checks it against a set of guard rules.
+func checkAgainstRules(command string, rules []guardRule) *GuardDecision {
 	cmd := strings.TrimSpace(command)
 	if idx := strings.Index(cmd, "&&"); idx >= 0 {
 		prefix := strings.TrimSpace(cmd[:idx])
@@ -712,7 +798,7 @@ func CheckEditGuard(command string) *GuardDecision {
 		break
 	}
 
-	for _, rule := range editGuardRules {
+	for _, rule := range rules {
 		for _, prefix := range rule.prefixes {
 			if strings.HasPrefix(cmd, prefix) || strings.HasPrefix(stripped, prefix) {
 				return &GuardDecision{Blocked: true, Reason: rule.reason}

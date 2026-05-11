@@ -12,7 +12,7 @@ import (
 // When invoked as "muxcode", any arg that isn't a known subcommand
 // is treated as a project path (routes to the launcher).
 var knownSubcommands = map[string]bool{
-	"init": true, "send": true, "inbox": true, "memory": true, "tasks": true,
+	"init": true, "send": true, "inbox": true, "memory": true, "tasks": true, "plugin": true,
 	"watch": true, "dashboard": true, "cleanup": true, "notify": true,
 	"lock": true, "unlock": true, "is-locked": true, "tools": true,
 	"chain": true, "log": true, "prompt": true, "skill": true,
@@ -78,6 +78,7 @@ Commands:
   pii-scrub     Scrub PII and secrets from stdin (pipe filter)
   reload        Stop an agent, reconfigure, and relaunch (hot reload)
   config        View or change agent CLI/model configuration (set, get, list)
+  plugin        Manage LLM provider plugins (list, add, remove, sync)
   provider-select  Interactive provider/model selector TUI (used by modal)
   compact       Wait for agent idle, then inject /compact via tmux
 `
@@ -184,6 +185,8 @@ func main() {
 		cmd.Reload(args)
 	case "config":
 		cmd.Config(args)
+	case "plugin":
+		cmd.Plugin(args)
 	case "provider-select":
 		cmd.ProviderSelect(args)
 	case "pii-scrub":

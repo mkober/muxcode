@@ -219,6 +219,9 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 			fmt.Sprintf("PID: %d", monitorPID))
 	}
 
+	// Sync provider plugins from plugins.json → provider settings
+	syncLaunchPlugins(session)
+
 	// Ensure Ollama if needed
 	EnsureOllama()
 
@@ -483,6 +486,32 @@ func startDetachedProcess(name string, args ...string) (int, error) {
 	// Don't Wait() — process is detached
 	go cmd.Wait() // collect zombie when done
 	return pid, nil
+}
+
+// syncLaunchPlugins syncs provider plugins from plugins.json to provider
+// settings during session launch. Best-effort — failures are logged but
+// don't block session startup.
+func syncLaunchPlugins(session string) {
+	cfg, err := LoadPluginConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: plugin config: %v\n", err)
+		return
+	}
+
+	results, err := SyncAllPlugins(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: plugin sync: %v\n", err)
+		return
+	}
+
+	for _, r := range results {
+		if len(r.Added) > 0 {
+			fmt.Printf("  Synced %d plugin(s) to %s (added: %s)\n",
+				r.Total, r.Provider, strings.Join(r.Added, ", "))
+			LogLifecycle(session, "info", "launcher", "plugin-sync",
+				fmt.Sprintf("%s: added %s", r.Provider, strings.Join(r.Added, ", ")))
+		}
+	}
 }
 
 // EnsureOllama starts Ollama if any role is configured for local LLM.

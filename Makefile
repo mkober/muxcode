@@ -47,6 +47,7 @@ install: build
 	@# User customizations go in .muxcode/ (project-level, higher priority).
 	@cp config/muxcode.json $(CONFIGDIR)/muxcode.json
 	@cp config/settings.json $(CONFIGDIR)/settings.json
+	@cp -n config/plugins.conf $(CONFIGDIR)/plugins.conf 2>/dev/null || true
 	@cp config/tmux.conf $(CONFIGDIR)/tmux.conf
 	@install -d $(HOME)/.claude/commands
 	@cp -n config/commands/*.md $(HOME)/.claude/commands/ 2>/dev/null || true

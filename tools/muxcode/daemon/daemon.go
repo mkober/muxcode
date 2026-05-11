@@ -61,8 +61,9 @@ type Daemon struct {
 	taskDeliveredAt     map[string]int64  // msgID -> unix time when message was delivered (wake-up sent)
 	taskLastPaneContent map[string]string // role -> last pane hash to avoid re-processing identical content
 	// Hook-provider idle task detection (safety net for dropped responses)
-	lastIdleTaskCheck int64            // 10s interval
-	idleTaskFirstSeen map[string]int64 // taskID -> unix time when first observed idle with in-flight task
+	lastIdleTaskCheck int64                       // 10s interval
+	idleTaskFirstSeen map[string]int64            // taskID -> unix time when first observed idle with in-flight task
+	idleTaskRetried   map[string]bool             // taskID -> true if we already re-queued the request
 	// Agent heartbeat
 	lastHeartbeatCheck int64 // tracks last heartbeat fire time
 	heartbeatInterval  int   // seconds between heartbeats (0 = disabled)
@@ -103,6 +104,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		taskDeliveredAt:       make(map[string]int64),
 		taskLastPaneContent:   make(map[string]string),
 		idleTaskFirstSeen:     make(map[string]int64),
+		idleTaskRetried:       make(map[string]bool),
 		lastHeartbeatCheck:    now,
 		heartbeatInterval:     bus.AgentHeartbeatInterval(),
 		lastDiskPressureCheck: now,
@@ -1325,10 +1327,14 @@ const idleTaskGracePeriod int64 = 30
 // in the TUI instead of executing it via the Bash tool — the response silently
 // vanishes and the requester's --wait hangs forever.
 //
-// When detected (agent idle + in-flight task + grace period elapsed), captures
-// the agent's pane content and sends a synthetic response back to the requester,
-// similar to checkNonHookTasks() but triggered by idle detection instead of
-// task completion heuristics.
+// Two-phase approach:
+//  1. First idle detection (after grace period): re-queue the original request
+//     into the agent's inbox and re-notify. This handles the common case where
+//     the agent consumed the message but went idle without processing it (e.g.,
+//     after a compaction or restart where context was lost).
+//  2. Second idle detection (after another grace period): the agent had a second
+//     chance and still didn't respond. Capture the pane content and send a
+//     synthetic response back to the requester.
 //
 // Runs every 10 seconds to avoid excessive tmux capture-pane calls.
 func (d *Daemon) checkIdleTaskCompletion() {
@@ -1344,6 +1350,9 @@ func (d *Daemon) checkIdleTaskCompletion() {
 		// Clean up tracking state when no in-flight tasks exist
 		for k := range d.idleTaskFirstSeen {
 			delete(d.idleTaskFirstSeen, k)
+		}
+		for k := range d.idleTaskRetried {
+			delete(d.idleTaskRetried, k)
 		}
 		return
 	}
@@ -1385,16 +1394,47 @@ func (d *Daemon) checkIdleTaskCompletion() {
 		freshTask, freshErr := bus.ReadTask(d.session, task.ID)
 		if freshErr != nil || freshTask.Status != bus.TaskInFlight {
 			delete(d.idleTaskFirstSeen, task.ID)
+			delete(d.idleTaskRetried, task.ID)
 			continue
 		}
 
-		// Agent is stuck idle without having responded.
-		// Capture pane content for the synthetic response.
 		ts := time.Now().Format("15:04:05")
-		fmt.Printf("  %s  Detected idle %s with unresponded task %s (idle %ds) — sending synthetic response\n",
+
+		// Phase 1: Re-queue the original request and re-notify the agent.
+		// This handles the common case where the agent consumed the inbox
+		// message but went idle without processing it (e.g., after compaction
+		// or restart where context was lost, or when the agent processed a
+		// startup message and missed the actual work request).
+		if !d.idleTaskRetried[task.ID] {
+			d.idleTaskRetried[task.ID] = true
+			// Reset grace period timer for the retry phase
+			d.idleTaskFirstSeen[task.ID] = now
+
+			fmt.Printf("  %s  Detected idle %s with unresponded task %s (idle %ds) — re-queuing request\n",
+				ts, task.To, task.Action, now-firstSeen)
+			bus.LogLifecycle(d.session, "info", "daemon", "idle-task-retry",
+				fmt.Sprintf("%s idle with unresponded task %s from %s — re-queuing (idle %ds)",
+					task.To, task.Action, task.From, now-firstSeen))
+
+			// Re-inject the original request into the agent's inbox
+			retryMsg := bus.NewMessage(task.From, task.To, "request", task.Action, task.Payload, "")
+			if err := bus.Send(d.session, retryMsg); err != nil {
+				fmt.Fprintf(os.Stderr, "  [idle-task-retry] failed to re-queue for %s: %v\n", task.ID, err)
+			}
+
+			// Clear notified IDs so the next checkIdleAgents cycle delivers the message
+			bus.ClearNotifiedIDs(d.session, task.To)
+			// Wake the agent immediately
+			_ = bus.Notify(d.session, task.To)
+			continue
+		}
+
+		// Phase 2: Agent had a second chance and still didn't respond.
+		// Capture pane content for the synthetic response.
+		fmt.Printf("  %s  Detected idle %s with unresponded task %s (idle %ds, retried) — sending synthetic response\n",
 			ts, task.To, task.Action, now-firstSeen)
 		bus.LogLifecycle(d.session, "warn", "daemon", "idle-task-rescue",
-			fmt.Sprintf("%s idle with unresponded task %s from %s (idle %ds)",
+			fmt.Sprintf("%s idle with unresponded task %s from %s (idle %ds, retry exhausted)",
 				task.To, task.Action, task.From, now-firstSeen))
 
 		target := bus.PaneTarget(d.session, task.To)
@@ -1411,7 +1451,7 @@ func (d *Daemon) checkIdleTaskCompletion() {
 
 		// Send synthetic response back to the original requester
 		msg := bus.NewMessage(task.To, task.From, "response", "response",
-			fmt.Sprintf("[daemon: %s went idle without responding — pane content follows]\n%s", task.To, payload),
+			fmt.Sprintf("[daemon: %s went idle without responding (retried once) — pane content follows]\n%s", task.To, payload),
 			task.ID)
 		if err := bus.Send(d.session, msg); err != nil {
 			fmt.Fprintf(os.Stderr, "  [idle-task-rescue] failed to send response for %s: %v\n", task.ID, err)
@@ -1426,6 +1466,7 @@ func (d *Daemon) checkIdleTaskCompletion() {
 
 		// Clean up tracking state
 		delete(d.idleTaskFirstSeen, task.ID)
+		delete(d.idleTaskRetried, task.ID)
 
 		// Notify the requester
 		_ = bus.Notify(d.session, task.From)
@@ -1439,6 +1480,11 @@ func (d *Daemon) checkIdleTaskCompletion() {
 	for k := range d.idleTaskFirstSeen {
 		if !taskIDs[k] {
 			delete(d.idleTaskFirstSeen, k)
+		}
+	}
+	for k := range d.idleTaskRetried {
+		if !taskIDs[k] {
+			delete(d.idleTaskRetried, k)
 		}
 	}
 }
