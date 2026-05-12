@@ -65,16 +65,16 @@ func TestAvailableProviders_Models(t *testing.T) {
 	if claude == nil {
 		t.Fatal("claude provider not found")
 	}
-	if len(claude.Models) != 3 {
-		t.Errorf("claude models count = %d, want 3", len(claude.Models))
+	if len(claude.Models) != 4 {
+		t.Errorf("claude models count = %d, want 4", len(claude.Models))
 	}
 
 	opencode := ProviderByCLI(providers, "opencode")
 	if opencode == nil {
 		t.Fatal("opencode provider not found")
 	}
-	if len(opencode.Models) != 3 {
-		t.Errorf("opencode models count = %d, want 3", len(opencode.Models))
+	if len(opencode.Models) != 4 {
+		t.Errorf("opencode models count = %d, want 4", len(opencode.Models))
 	}
 }
 

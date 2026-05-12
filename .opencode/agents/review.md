@@ -591,3 +591,11 @@ Draft
 - Build: `make` or `make build`
 - Check Makefile for available targets
 
+## Session Resume
+
+Previous session summaries (most recent last):
+
+### 2026-05-11 21:33
+Completed review of diagnose command implementation (2 must-fix: diagnose.go:636  bug, diagnose.go:255 timeline filter window). Findings sent to edit. Build/tests passed.
+
+

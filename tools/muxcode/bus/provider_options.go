@@ -15,44 +15,74 @@ type ProviderOption struct {
 	Installed bool     // true if the CLI binary is found on PATH
 }
 
-// AvailableProviders returns the list of known providers with installed status.
-func AvailableProviders() []ProviderOption {
-	providers := []ProviderOption{
-		{
-			Name:    "Claude Code",
-			CLI:     "claude",
-			Models:  []string{"claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-0"},
-			Default: "claude-sonnet-4-6",
-		},
-		{
-			Name:    "OpenCode",
-			CLI:     "opencode",
-			Models:  []string{"opencode-go/minimax-m2.5", "opencode-go/qwen3.5-plus", "opencode-go/deepseek-v4-pro"},
-			Default: "opencode-go/minimax-m2.5",
-		},
-		{
-			Name:    "Codex",
-			CLI:     "codex",
-			Models:  []string{"gpt-5.5", "gpt-5.4-mini", "gpt-5.3-codex-spark"},
-			Default: "gpt-5.5",
-		},
-		{
-			Name:    "Local (Ollama)",
-			CLI:     "local",
-			Models:  nil, // populated dynamically
-			Default: "",
-		},
-	}
+// providerDisplayName maps CLI identifiers to display names.
+var providerDisplayName = map[string]string{
+	"claude":  "Claude Code",
+	"opencode": "OpenCode",
+	"codex":   "Codex",
+	"local":   "Local (Ollama)",
+}
 
-	// Check installed status and populate local models
-	for i := range providers {
-		providers[i].Installed = isProviderInstalled(providers[i].CLI)
-		if providers[i].CLI == "local" {
-			providers[i].Models = listOllamaModels()
-			if len(providers[i].Models) > 0 {
-				providers[i].Default = providers[i].Models[0]
+// providerOrder defines the display order for providers.
+var providerOrder = []string{"claude", "opencode", "codex", "local"}
+
+// hardcodedFallbackModels provides built-in defaults when no config file exists.
+var hardcodedFallbackModels = map[string]ProviderModels{
+	"claude": {
+		Default: "claude-sonnet-4-6",
+		Models:  []string{"claude-opus-4-6", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"},
+	},
+	"opencode": {
+		Default: "opencode-go/minimax-m2.5",
+		Models:  []string{"opencode-go/minimax-m2.5", "opencode-go/minimax-m2.7", "opencode-go/qwen3.5-plus", "opencode-go/deepseek-v4-pro"},
+	},
+	"codex": {
+		Default: "gpt-5.5",
+		Models:  []string{"gpt-5.5", "gpt-5.4-mini", "gpt-5.3-codex-spark"},
+	},
+}
+
+// AvailableProviders returns the list of known providers with installed status.
+// Model lists and defaults are read from models.conf (config-driven). Falls back
+// to hardcoded defaults if the config file is missing or empty for a provider.
+func AvailableProviders() []ProviderOption {
+	// Load model config (returns empty config on missing file, never errors)
+	modelCfg, _ := LoadModelConfig()
+
+	var providers []ProviderOption
+	for _, cli := range providerOrder {
+		name := providerDisplayName[cli]
+		if name == "" {
+			name = cli
+		}
+
+		p := ProviderOption{
+			Name: name,
+			CLI:  cli,
+		}
+
+		// Try config-driven models first, then hardcoded fallback
+		if pm, ok := modelCfg.Providers[cli]; ok && len(pm.Models) > 0 {
+			p.Models = pm.Models
+			p.Default = pm.Default
+		} else if fb, ok := hardcodedFallbackModels[cli]; ok {
+			p.Models = fb.Models
+			p.Default = fb.Default
+		}
+		// Local (Ollama) models are always populated dynamically
+		if cli == "local" {
+			p.Models = listOllamaModels()
+			if len(p.Models) > 0 && p.Default == "" {
+				p.Default = p.Models[0]
 			}
 		}
+
+		providers = append(providers, p)
+	}
+
+	// Check installed status
+	for i := range providers {
+		providers[i].Installed = isProviderInstalled(providers[i].CLI)
 	}
 
 	return providers

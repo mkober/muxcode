@@ -12,7 +12,7 @@ import (
 // When invoked as "muxcode", any arg that isn't a known subcommand
 // is treated as a project path (routes to the launcher).
 var knownSubcommands = map[string]bool{
-	"init": true, "send": true, "inbox": true, "memory": true, "tasks": true, "plugin": true, "diagnose": true,
+	"init": true, "send": true, "inbox": true, "memory": true, "tasks": true, "plugin": true, "model": true, "diagnose": true,
 	"watch": true, "dashboard": true, "cleanup": true, "notify": true,
 	"lock": true, "unlock": true, "is-locked": true, "tools": true,
 	"chain": true, "log": true, "prompt": true, "skill": true,
@@ -79,6 +79,7 @@ Commands:
   reload        Stop an agent, reconfigure, and relaunch (hot reload)
   config        View or change agent CLI/model configuration (set, get, list)
   plugin        Manage LLM provider plugins (list, add, remove, sync)
+  model         Manage provider models for hot reload (list, add, remove, default)
   provider-select  Interactive provider/model selector TUI (used by modal)
   compact       Wait for agent idle, then inject /compact via tmux
   diagnose      Diagnose why an agent isn't responding (evidence + root cause)
@@ -188,6 +189,8 @@ func main() {
 		cmd.Config(args)
 	case "plugin":
 		cmd.Plugin(args)
+	case "model":
+		cmd.Model(args)
 	case "provider-select":
 		cmd.ProviderSelect(args)
 	case "pii-scrub":
