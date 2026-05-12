@@ -835,6 +835,71 @@ func TestNotifySendKeys_PendingInput_FocusedWindow(t *testing.T) {
 	}
 }
 
+func TestNotifySendKeys_ClearInputFails_HoldsNotification(t *testing.T) {
+	// When TmuxClearInput fails (e.g. pane disappeared), notification should
+	// be held for next cycle — no injection, no crash.
+	useTempBusDir(t)
+
+	session := "test-clear-fail"
+	role := "commit"
+	busDir := BusDir(session)
+	os.MkdirAll(filepath.Join(busDir, "inbox"), 0755)
+	os.MkdirAll(filepath.Join(busDir, "lock"), 0755)
+
+	writeTestMessage(t, session, role, "msg-clearfail-001", "edit")
+
+	origOutput := tmuxOutputRunner
+	origRun := tmuxRunner
+	t.Cleanup(func() {
+		tmuxOutputRunner = origOutput
+		tmuxRunner = origRun
+	})
+
+	sendKeysCalled := false
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "has-session") {
+			return "", nil
+		}
+		if strings.Contains(joined, "capture-pane") {
+			return "  Ran 1 shell command\n\n❯ stale output here\n", nil
+		}
+		// Window NOT focused — stale input path
+		if strings.Contains(joined, "window_active") {
+			return "0", nil
+		}
+		return "", nil
+	}
+	tmuxRunner = func(args ...string) error {
+		joined := strings.Join(args, " ")
+		// C-u clear fails
+		if strings.Contains(joined, "C-u") {
+			return fmt.Errorf("pane not found")
+		}
+		if strings.Contains(joined, "send-keys") {
+			sendKeysCalled = true
+		}
+		return nil
+	}
+
+	t.Setenv("MUXCODE_COMMIT_CLI", "claude")
+
+	err := notifySendKeys(session, role)
+	if err != nil {
+		t.Fatalf("notifySendKeys should return nil on clear failure, got %v", err)
+	}
+
+	if sendKeysCalled {
+		t.Error("should NOT inject send-keys when clearing stale input failed")
+	}
+
+	// Message should still be unnotified (held for next cycle)
+	unnotified := UnnotifiedMessages(session, role)
+	if len(unnotified) == 0 {
+		t.Error("message should still be unnotified when clear failed")
+	}
+}
+
 // --- IsNotifiedRecently tests ---
 
 func TestIsNotifiedRecently_Fresh(t *testing.T) {

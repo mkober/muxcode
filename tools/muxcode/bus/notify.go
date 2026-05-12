@@ -484,7 +484,10 @@ func notifySendKeys(session, role string) error {
 		}
 		// Stale agent output — clear it before injecting
 		target := PaneTarget(session, role)
-		TmuxClearInput(target)
+		if err := TmuxClearInput(target); err != nil {
+			fmt.Fprintf(os.Stderr, "  [notify] clear input for %s failed: %v\n", role, err)
+			return nil // can't clear stale input — hold for next cycle
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
