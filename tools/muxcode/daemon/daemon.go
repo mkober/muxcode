@@ -974,8 +974,18 @@ func (d *Daemon) checkIdleAgents() {
 				// notification the moment the agent becomes idle.
 				//
 				// Hold if the user is mid-typing — injecting would corrupt input.
+				// If the window isn't focused, any pending input is stale agent
+				// output — clear it with C-u and proceed.
 				unnotified := bus.UnnotifiedMessages(d.session, role)
-				if len(unnotified) > 0 && !bus.HasPendingInput(d.session, role) {
+				hasPending := bus.HasPendingInput(d.session, role)
+				if hasPending && !bus.IsWindowFocused(d.session, role) {
+					target := bus.PaneTarget(d.session, role)
+					if err := bus.TmuxClearInput(target); err == nil {
+						hasPending = false
+						time.Sleep(100 * time.Millisecond)
+					}
+				}
+				if len(unnotified) > 0 && !hasPending {
 					provider := bus.ResolveProvider(role)
 					text := bus.BuildCombinedNotification(unnotified)
 					ids := make([]string, 0, len(unnotified))
@@ -1048,10 +1058,19 @@ func (d *Daemon) checkIdleAgents() {
 		}
 
 		// Hold if the user is mid-typing at the prompt — injecting via
-		// send-keys would corrupt their input. Skip this cycle; the daemon
-		// retries every 5 seconds and delivers once the prompt is clear.
+		// send-keys would corrupt their input. If the window isn't focused,
+		// any pending input is stale agent output — clear it with C-u and
+		// proceed with delivery.
 		if bus.HasPendingInput(d.session, role) {
-			continue
+			if bus.IsWindowFocused(d.session, role) {
+				continue // user is typing — hold for next cycle
+			}
+			// Stale input in unfocused window — clear it
+			target := bus.PaneTarget(d.session, role)
+			if err := bus.TmuxClearInput(target); err != nil {
+				continue // can't clear — hold for next cycle
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
 
 		// Agent is already idle with unnotified messages — deliver combined
