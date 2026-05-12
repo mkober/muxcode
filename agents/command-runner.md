@@ -46,6 +46,12 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I run this?
 - Always use the AWS profile specified in the request
 - Report file contents directly — do not analyze or summarize unless asked
 
+### Agent Diagnostics
+- Diagnose unresponsive agents: `muxcode diagnose <role>` — collects agent state, inbox, notification pipeline, daemon health, and lifecycle timeline, then identifies the failure mode with remediation steps
+- Diagnose all agents: `muxcode diagnose --all` — summary table of all agent health
+- JSON output for parsing: `muxcode diagnose <role> --json`
+- Use when asked to troubleshoot agent communication issues or when a peer agent isn't responding
+
 ### Cloud CLI (general)
 - Run cloud provider CLI commands (`aws`, `gcloud`, `az`, etc.) as requested
 - Use query/filter flags for targeted results

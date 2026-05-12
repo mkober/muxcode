@@ -104,6 +104,8 @@ muxcode send commit pr-read "Read the PR on the current branch and report raw da
 - **Dev server**: `muxcode send serve serve "Start the Vite dev server and keep it running" --wait`
 - **Commit**: `muxcode send commit commit "Stage and commit the current changes" --force --wait`
 - **PR/Release**: `muxcode send commit commit "Create a PR for the current branch" --force --wait`
+- **Diagnose agent**: `muxcode diagnose <role>` (run directly — not delegated, identifies why an agent isn't responding)
+- **Diagnose all**: `muxcode diagnose --all` (summary table of all agent health)
 
 **Note**: Always use `--force` as a CLI flag (not inside the message string) on commit/push/PR sends to bypass the pre-commit agent-idle check. Passive agents (analyze, watch) may have pending notifications that are safe to ignore.
 
@@ -119,13 +121,17 @@ Before running **any** Bash command, check: does it start with a prohibited pref
 
 ### When `--wait` times out
 
-If `--wait` returns with no response (timeout), automatically diagnose by capturing the target agent's tmux pane:
+If `--wait` returns with no response (timeout), run the diagnostic command to identify the root cause:
 
 ```bash
-tmux capture-pane -t "${BUS_SESSION}:<role>.1" -p -S -30 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'
+muxcode diagnose <role>
 ```
 
-Check if the agent is idle or active, report what you see, and suggest next steps (e.g. re-send, restart agent). Never use `sleep` loops or manual `inbox` checks — `--wait` handles all polling.
+This collects agent state, inbox, notification pipeline, daemon health, and lifecycle timeline, then identifies the specific failure mode (stale notified IDs, missed send-keys, daemon dead, etc.) with actionable remediation steps.
+
+For JSON output (programmatic parsing): `muxcode diagnose <role> --json`
+
+Report the diagnosis findings to the user and follow the suggested remediation. Never use `sleep` loops or manual `inbox` checks — `--wait` handles all polling.
 
 ## Never Do Delegated Work Yourself
 

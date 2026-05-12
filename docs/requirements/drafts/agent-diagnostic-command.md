@@ -41,15 +41,15 @@ The manual process takes 2-5 minutes, requires deep knowledge of the notificatio
 
 ### Acceptance criteria
 
-- [ ] `muxcode diagnose <role>` produces a structured report covering: agent state, inbox state, notification state, lifecycle event timeline, and root cause diagnosis
-- [ ] The command identifies the specific failure mode from the table above (or reports "no issue detected" if the agent is healthy)
-- [ ] The command provides actionable remediation steps for each detected failure mode (e.g., "Clear stale notified IDs: `muxcode notify --clear <role>`", "Restart daemon: `muxcode watch --restart`")
-- [ ] The diagnosis completes in under 2 seconds (no network calls, all local state)
-- [ ] Output works in both human-readable (default) and JSON (`--json`) formats
-- [ ] The command can be run by any agent (not just humans) to self-diagnose or diagnose peers
-- [ ] `muxcode diagnose --all` runs diagnosis for all known roles and reports a summary
-- [ ] All existing tests pass (`go test ./...`)
-- [ ] New tests cover each failure mode detection path
+- [x] `muxcode diagnose <role>` produces a structured report covering: agent state, inbox state, notification state, lifecycle event timeline, and root cause diagnosis
+- [x] The command identifies the specific failure mode from the table above (or reports "no issue detected" if the agent is healthy)
+- [x] The command provides actionable remediation steps for each detected failure mode (e.g., "Clear stale notified IDs: `muxcode notify --clear <role>`", "Restart daemon: `muxcode watch --restart`")
+- [x] The diagnosis completes in under 2 seconds (no network calls, all local state)
+- [x] Output works in both human-readable (default) and JSON (`--json`) formats
+- [x] The command can be run by any agent (not just humans) to self-diagnose or diagnose peers
+- [x] `muxcode diagnose --all` runs diagnosis for all known roles and reports a summary
+- [x] All existing tests pass (`go test ./...`)
+- [x] New tests cover each failure mode detection path (42 test functions)
 
 ### Out of scope
 
@@ -243,60 +243,60 @@ Same data as `DiagnosticReport` struct, serialized with `json.MarshalIndent`. Us
 
 Build the data structures and collection functions for gathering state from all subsystems.
 
-- [ ] Create `bus/diagnose.go` with `DiagnosticReport`, `AgentStateEvidence`, `InboxStateEvidence`, `NotifyStateEvidence`, `DaemonStateEvidence`, `TimelineEvent`, `DiagnosticFinding` structs
-- [ ] Add `CollectAgentState(session, role) AgentStateEvidence` — calls `IsAgentIdle`, `IsAgentAlive`, `IsAgentStopped`, `IsReloading`, `ResolveProvider`, `HasPendingInput`, captures last pane line
-- [ ] Add `CollectInboxState(session, role) InboxStateEvidence` — calls `Peek`, `HasActionableMessages`, computes message ages and summaries
-- [ ] Add `CollectNotifyState(session, role) NotifyStateEvidence` — reads notified IDs file, computes `UnnotifiedMessages`, checks marker age, `IsPolling`, `IsWaiting`
-- [ ] Add `CollectDaemonState(session) DaemonStateEvidence` — checks keepalive file age via `IsKeepaliveStale`, `TouchKeepalive` path
-- [ ] Add `CollectEvidence(session, role) DiagnosticReport` — orchestrates all collectors
-- [ ] Add tests for each collector with synthetic bus directory state
-- [ ] **Verify**: `cd tools/muxcode && go test ./...` — all tests pass
-- [ ] **Verify**: `cd tools/muxcode && go vet ./...` — no issues
+- [x] Create `bus/diagnose.go` with `DiagnosticReport`, `AgentStateEvidence`, `InboxStateEvidence`, `NotifyStateEvidence`, `DaemonStateEvidence`, `TimelineEvent`, `DiagnosticFinding` structs
+- [x] Add `CollectAgentState(session, role) AgentStateEvidence` — calls `IsAgentIdle`, `IsAgentAlive`, `IsAgentStopped`, `IsReloading`, `ResolveProvider`, `HasPendingInput`, captures last pane line
+- [x] Add `CollectInboxState(session, role) InboxStateEvidence` — calls `Peek`, `HasActionableMessages`, computes message ages and summaries
+- [x] Add `CollectNotifyState(session, role) NotifyStateEvidence` — reads notified IDs file, computes `UnnotifiedMessages`, checks marker age, `IsPolling`, `IsWaiting`
+- [x] Add `CollectDaemonState(session) DaemonStateEvidence` — checks keepalive file age via `IsKeepaliveStale`, `TouchKeepalive` path
+- [x] Add `CollectEvidence(session, role) DiagnosticReport` — orchestrates all collectors
+- [x] Add tests for each collector with synthetic bus directory state
+- [x] **Verify**: `cd tools/muxcode && go test ./...` — all tests pass
+- [x] **Verify**: `cd tools/muxcode && go vet ./...` — no issues
 
 ### Phase 2: Lifecycle timeline analysis
 
 Build the timeline from lifecycle logs and annotate gaps in expected event chains.
 
-- [ ] Add `TimelineEvent` struct with `Timestamp`, `Event`, `Detail`, `GapSecs`, `GapNote` fields
-- [ ] Add `BuildTimeline(session, role, limit) []TimelineEvent` — filters lifecycle entries for role-relevant events
-- [ ] Add `annotateGaps(events, role)` — detects missing `idle-wake` after `inbox-notify`, missing `idle-transition` after `startup-wake`, etc.
-- [ ] Add `countRepeatedFailures(events, role) int` — counts consecutive `inbox-notify` without `idle-wake` to quantify the pattern
-- [ ] Add tests for timeline building with synthetic lifecycle log entries
-- [ ] **Verify**: `cd tools/muxcode && go test ./...` — all tests pass
+- [x] Add `TimelineEvent` struct with `Timestamp`, `Event`, `Detail`, `GapSecs`, `GapNote` fields
+- [x] Add `BuildTimeline(session, role, limit) []TimelineEvent` — filters lifecycle entries for role-relevant events
+- [x] Add `annotateGaps(events, role)` — detects missing `idle-wake` after `inbox-notify`, missing `idle-transition` after `startup-wake`, etc.
+- [x] Add `countRepeatedFailures(events, role) int` — counts consecutive `inbox-notify` without `idle-wake` to quantify the pattern
+- [x] Add tests for timeline building with synthetic lifecycle log entries
+- [x] **Verify**: `cd tools/muxcode && go test ./...` — all tests pass
 
 ### Phase 3: Diagnostic checks
 
 Implement each failure-mode detector as a standalone function.
 
-- [ ] Add `DiagnosticCheck` type: `func(*DiagnosticReport) *DiagnosticFinding`
-- [ ] Implement `checkDaemonDead` — keepalive stale >30s
-- [ ] Implement `checkStaleNotifiedIDs` — agent idle + unnotified messages + marker stale >15s
-- [ ] Implement `checkMissedSendKeys` — `idle-wake` in timeline but agent still idle with unconsumed inbox
-- [ ] Implement `checkIdleDetectionFailure` — pane shows `❯` but `IsAgentIdle` returned false
-- [ ] Implement `checkDaemonNotWaking` — `inbox-notify` without `idle-wake` within 10s, agent is idle
-- [ ] Implement `checkPostRestartWakeGap` — `idle-transition` after restart but no subsequent `idle-wake`
-- [ ] Implement `checkProviderMismatch` — non-hook provider with 60s cooldown blocking wake-up
-- [ ] Implement `checkReloadMarkerStuck` — `IsReloading` true for >60s (stale marker)
-- [ ] Implement `checkPendingInputBlocking` — `HasPendingInput` true, preventing injection
-- [ ] Implement `checkNoActionableMessages` — inbox has messages but none are requests (informational — not a bug)
-- [ ] Add `RunDiagnostics(report *DiagnosticReport)` — runs all checks, populates `report.Findings`
-- [ ] Add tests for each check with crafted evidence triggering/not-triggering the finding
-- [ ] **Verify**: `cd tools/muxcode && go test ./...` — all tests pass
+- [x] Add `DiagnosticCheck` type: `func(*DiagnosticReport) *DiagnosticFinding`
+- [x] Implement `checkDaemonDead` — keepalive stale >30s
+- [x] Implement `checkStaleNotifiedIDs` — agent idle + unnotified messages + marker stale >15s
+- [x] Implement `checkMissedSendKeys` — `idle-wake` in timeline but agent still idle with unconsumed inbox
+- [x] Implement `checkIdleDetectionFailure` — pane shows `❯` but `IsAgentIdle` returned false
+- [x] Implement `checkDaemonNotWaking` — `inbox-notify` without `idle-wake` within 10s, agent is idle
+- [x] Implement `checkPostRestartWakeGap` — `idle-transition` after restart but no subsequent `idle-wake`
+- [x] Implement `checkProviderMismatch` — non-hook provider with 60s cooldown blocking wake-up
+- [x] Implement `checkReloadMarkerStuck` — `IsReloading` true for >60s (stale marker)
+- [x] Implement `checkPendingInputBlocking` — `HasPendingInput` true, preventing injection
+- [x] Implement `checkNoActionableMessages` — inbox has messages but none are requests (informational — not a bug)
+- [x] Add `RunDiagnostics(report *DiagnosticReport)` — runs all checks, populates `report.Findings`
+- [x] Add tests for each check with crafted evidence triggering/not-triggering the finding
+- [x] **Verify**: `cd tools/muxcode && go test ./...` — all tests pass
 
 ### Phase 4: Output formatting and CLI
 
 Build the human-readable and JSON formatters, and wire up the CLI command.
 
-- [ ] Add `FormatDiagnosticReport(report) string` — human-readable output with sections, colors (Dracula), and severity icons
-- [ ] Add `FormatDiagnosticJSON(report) string` — JSON with `json.MarshalIndent`
-- [ ] Create `cmd/diagnose.go` with `Diagnose(args)` — parses role arg, `--json` flag, `--all` flag
-- [ ] `--all` mode: iterates `KnownRoles`, runs `CollectEvidence` + `RunDiagnostics` for each, prints summary table
-- [ ] Add `"diagnose"` to `knownSubcommands` in `main.go` and route to `cmd.Diagnose()`
-- [ ] Add tests for formatting output (human-readable structure, JSON valid)
-- [ ] **Verify**: `cd tools/muxcode && go test ./...` — all tests pass
-- [ ] **Verify**: `cd tools/muxcode && go vet ./...` — no issues
-- [ ] **Verify**: `make install` — binary builds and installs with diagnose command available
+- [x] Add `FormatDiagnosticReport(report) string` — human-readable output with sections, colors (Dracula), and severity icons
+- [x] Add `FormatDiagnosticJSON(report) string` — JSON with `json.MarshalIndent`
+- [x] Create `cmd/diagnose.go` with `Diagnose(args)` — parses role arg, `--json` flag, `--all` flag
+- [x] `--all` mode: iterates `KnownRoles`, runs `CollectEvidence` + `RunDiagnostics` for each, prints summary table
+- [x] Add `"diagnose"` to `knownSubcommands` in `main.go` and route to `cmd.Diagnose()`
+- [x] Add tests for formatting output (human-readable structure, JSON valid)
+- [x] **Verify**: `cd tools/muxcode && go test ./...` — all tests pass
+- [x] **Verify**: `cd tools/muxcode && go vet ./...` — no issues
+- [x] **Verify**: `make install` — binary builds and installs with diagnose command available
 
 ## Status
 
-Draft
+Complete
