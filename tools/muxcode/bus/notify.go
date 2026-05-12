@@ -315,6 +315,21 @@ func IsWindowFocused(session, role string) bool {
 	return TmuxIsWindowActive(session, window)
 }
 
+// PaneHasIdlePrompt checks whether captured pane content contains the idle
+// prompt character (\u276f) as a line prefix. Uses the same matching logic as
+// ClaudeCodeProvider.IsIdle but operates on pre-captured content, allowing
+// callers to use a wider capture window (e.g. 30 lines) than the standard
+// 8-line IsIdle check. Exported for use by the daemon watchdog.
+func PaneHasIdlePrompt(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == idlePromptChar || strings.HasPrefix(trimmed, idlePromptChar+" ") {
+			return true
+		}
+	}
+	return false
+}
+
 // paneHasPendingInput checks captured pane content for text after the idle
 // prompt character (\u276f). Extracted for testability (no tmux dependency).
 func paneHasPendingInput(content string) bool {

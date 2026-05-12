@@ -349,11 +349,15 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 // checkIdleAgents → Notify → notifySendKeys is then suppressed by
 // alreadyNotified() for 30 seconds (notifyRetryInterval).
 //
-// Polls IsAgentIdle every 500ms for up to 30 seconds. Once idle, clears the
-// notified IDs marker and injects the wake-up directly via the provider's
-// SendWakeUp. If the agent doesn't reach idle within the timeout, the
-// daemon's checkIdleAgents will eventually wake it (ClearNotifiedIDs was
-// already called in step 10a of ReloadAgent).
+// Polls for idle every 500ms for up to 15 seconds using both the standard
+// 8-line IsAgentIdle check AND a wider full-pane capture via PaneHasIdlePrompt.
+// The wider capture catches the ❯ prompt when Claude Code's status bar overlay
+// (e.g. "⏵⏵ bypass permissions on") sits below the prompt, pushing it beyond
+// the 8-line window.
+//
+// Always sends the wake-up after polling (detected idle or timeout). If the
+// agent isn't at ❯ yet, the text buffers in the PTY and gets processed when
+// the agent reaches the prompt.
 func wakeAfterReload(session, role string) {
 	provider := ResolveProvider(role)
 
@@ -367,17 +371,41 @@ func wakeAfterReload(session, role string) {
 	}
 
 	// Hook providers (Claude Code): wait for idle prompt before injecting.
-	for i := 0; i < 60; i++ { // 30 seconds at 500ms intervals
+	// Use both standard 8-line check and wider full-pane capture.
+	target := PaneTarget(session, role)
+	for i := 0; i < 30; i++ { // 15 seconds at 500ms intervals
 		time.Sleep(500 * time.Millisecond)
+		// Fast path: standard 8-line idle detection
 		if IsAgentIdle(session, role) {
-			// Agent is at the ❯ prompt — clear dedup state and inject wake-up.
-			ClearNotifiedIDs(session, role)
-			_ = provider.SendWakeUp(session, role)
-			return
+			break
+		}
+		// Fallback: wider capture catches ❯ behind status bar overlays
+		if content, err := TmuxCapturePaneLines(target, 200); err == nil {
+			if PaneHasIdlePrompt(content) {
+				break
+			}
 		}
 	}
-	// Timeout — daemon's checkIdleAgents will handle it. ClearNotifiedIDs
-	// was already called in step 10a, so the daemon won't be suppressed.
+
+	// Always send wake-up — handles both detected-idle and timeout.
+	// On timeout, the text buffers in the PTY and gets processed when the
+	// agent reaches ❯. Harmless if agent already processed its inbox.
+	ClearNotifiedIDs(session, role)
+	unnotified := UnnotifiedMessages(session, role)
+	text := BuildCombinedNotification(unnotified)
+	if len(unnotified) > 0 {
+		ids := make([]string, 0, len(unnotified))
+		for _, m := range unnotified {
+			ids = append(ids, m.ID)
+		}
+		AddNotifiedIDs(session, role, ids)
+	}
+	// Clear any stale input before injecting
+	if HasPendingInput(session, role) {
+		_ = TmuxClearInput(target)
+		time.Sleep(100 * time.Millisecond)
+	}
+	_ = SendWakeUpWithText(session, role, provider, text)
 }
 
 // restartConsole kills the existing console process in the left pane of a

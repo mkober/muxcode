@@ -54,8 +54,9 @@ type Daemon struct {
 	lastDiskPressureCheck int64 // 60s interval
 	// Idle agent wake-up
 	lastIdleCheck   int64            // 5s interval
-	lastNonHookWake map[string]int64 // cooldown: last wake time per non-hook role (60s)
-	lastIdleState   map[string]bool  // per-role idle state from last check (for transition detection)
+	lastNonHookWake      map[string]int64 // cooldown: last wake time per non-hook role (60s)
+	lastIdleState        map[string]bool  // per-role idle state from last check (for transition detection)
+	activeUnnotifiedSeen map[string]int64 // role -> unix time when unnotified msgs first seen while agent "active"
 	// Non-hook task completion detection
 	lastTaskCheck       int64             // 5s interval
 	taskDeliveredAt     map[string]int64  // msgID -> unix time when message was delivered (wake-up sent)
@@ -101,6 +102,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		agentWasDown:          make(map[string]bool),
 		lastNonHookWake:       make(map[string]int64),
 		lastIdleState:         make(map[string]bool),
+		activeUnnotifiedSeen:  make(map[string]int64),
 		taskDeliveredAt:       make(map[string]int64),
 		taskLastPaneContent:   make(map[string]string),
 		idleTaskFirstSeen:     make(map[string]int64),
@@ -1054,8 +1056,42 @@ func (d *Daemon) checkIdleAgents() {
 		// The idle transition above handles deferred delivery when the agent
 		// finishes its current work.
 		if !isIdle {
+			// Watchdog: track how long messages have been pending while the
+			// agent appears "active". If >30s, IsAgentIdle may be wrong
+			// (e.g. ❯ scrolled beyond the 8-line capture window after hot
+			// reload). Do a wider capture to check and deliver if found.
+			if _, seen := d.activeUnnotifiedSeen[role]; !seen {
+				d.activeUnnotifiedSeen[role] = now
+			}
+			if now-d.activeUnnotifiedSeen[role] >= 30 {
+				target := bus.PaneTarget(d.session, role)
+				if content, err := bus.TmuxCapturePaneLines(target, 200); err == nil {
+					if bus.PaneHasIdlePrompt(content) {
+						ts := time.Now().Format("15:04:05")
+						fmt.Printf("  %s  Watchdog: %s appears active but ❯ found in wider capture — forcing delivery\n", ts, role)
+						bus.LogLifecycle(d.session, "info", "daemon", "watchdog-force-wake", role)
+						if bus.HasPendingInput(d.session, role) && !bus.IsWindowFocused(d.session, role) {
+							_ = bus.TmuxClearInput(target)
+							time.Sleep(100 * time.Millisecond)
+						}
+						text := bus.BuildCombinedNotification(unnotified)
+						ids := make([]string, 0, len(unnotified))
+						for _, m := range unnotified {
+							ids = append(ids, m.ID)
+						}
+						bus.AddNotifiedIDs(d.session, role, ids)
+						_ = bus.SendWakeUpWithText(d.session, role, provider, text)
+						fmt.Printf("  %s  Watchdog delivered to %s (%d messages)\n", ts, role, len(unnotified))
+						delete(d.activeUnnotifiedSeen, role)
+						continue
+					}
+				}
+				// ❯ not found — reset timer, check again in 30s
+				d.activeUnnotifiedSeen[role] = now
+			}
 			continue
 		}
+		delete(d.activeUnnotifiedSeen, role) // agent is idle — clear watchdog
 
 		// Hold if the user is mid-typing at the prompt — injecting via
 		// send-keys would corrupt their input. If the window isn't focused,

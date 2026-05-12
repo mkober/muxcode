@@ -32,8 +32,10 @@ type AgentStateEvidence struct {
 	IsReloading     bool   `json:"is_reloading"`
 	Provider        string `json:"provider"`
 	SupportsHooks   bool   `json:"supports_hooks"`
-	HasPendingInput bool   `json:"has_pending_input"`
-	PaneLastLine    string `json:"pane_last_line"`
+	HasPendingInput    bool   `json:"has_pending_input"`
+	IsWindowFocused    bool   `json:"is_window_focused"`
+	WiderCaptureIdle   bool   `json:"wider_capture_idle"`
+	PaneLastLine       string `json:"pane_last_line"`
 }
 
 // InboxStateEvidence captures inbox contents and message ages.
@@ -112,6 +114,9 @@ func CollectAgentState(session, role string) AgentStateEvidence {
 		ev.IsIdle = IsAgentIdle(session, role)
 	}
 
+	// Check window focus state
+	ev.IsWindowFocused = IsWindowFocused(session, role)
+
 	// Capture last pane line for display and idle detection fallback
 	target := PaneTarget(session, role)
 	content, err := TmuxCapturePaneLines(target, 5)
@@ -121,6 +126,17 @@ func CollectAgentState(session, role string) AgentStateEvidence {
 		lines := strings.Split(strings.TrimSpace(content), "\n")
 		if len(lines) > 0 {
 			ev.PaneLastLine = strings.TrimSpace(lines[len(lines)-1])
+		}
+	}
+
+	// Wider capture (full pane) to detect ❯ that the standard 8-line
+	// IsAgentIdle check may have missed (e.g. status bar overlay below prompt).
+	// Used by checkIdleDetectionFailure to distinguish genuine "active" from
+	// narrow-capture false negative.
+	if !ev.IsIdle && ev.IsAlive {
+		wideContent, err := TmuxCapturePaneLines(target, 200)
+		if err == nil {
+			ev.WiderCaptureIdle = PaneHasIdlePrompt(wideContent)
 		}
 	}
 
@@ -383,6 +399,7 @@ var diagnosticChecks = []DiagnosticCheck{
 	checkProviderMismatch,
 	checkReloadMarkerStuck,
 	checkPendingInputBlocking,
+	checkActiveWithStaleMessages,
 	checkNoActionableMessages,
 }
 
@@ -494,22 +511,33 @@ func checkIdleDetectionFailure(report *DiagnosticReport) *DiagnosticFinding {
 		return nil // agent is dead, not an idle detection issue
 	}
 
-	// Check if the pane last line looks like an idle prompt
-	if !strings.Contains(report.AgentState.PaneLastLine, idlePromptChar) {
+	// Check if wider capture found ❯ that the standard 8-line check missed,
+	// or if the pane last line shows the idle prompt.
+	widerFound := report.AgentState.WiderCaptureIdle
+	lastLineFound := strings.Contains(report.AgentState.PaneLastLine, idlePromptChar)
+
+	if !widerFound && !lastLineFound {
 		return nil
 	}
 
+	evidence := []string{
+		fmt.Sprintf("IsAgentIdle (8-line): false, IsAlive: true"),
+		fmt.Sprintf("Provider: %s", report.AgentState.Provider),
+	}
+	if widerFound {
+		evidence = append(evidence, "Wider capture (30 lines) found ❯ — narrow capture missed it")
+	}
+	if lastLineFound {
+		evidence = append(evidence, fmt.Sprintf("Pane last line: %q", report.AgentState.PaneLastLine))
+	}
+
 	return &DiagnosticFinding{
-		Severity:    "warning",
+		Severity:    "critical",
 		FailureMode: "idle-detection-failure",
-		Summary:     "Agent pane shows idle prompt but IsAgentIdle() returned false",
-		Evidence: []string{
-			fmt.Sprintf("Pane last line: %q", report.AgentState.PaneLastLine),
-			fmt.Sprintf("IsAgentIdle: false, IsAlive: true"),
-			fmt.Sprintf("Provider: %s", report.AgentState.Provider),
-		},
+		Summary:     "Agent pane shows idle prompt but IsAgentIdle() returned false — daemon cannot deliver messages",
+		Evidence:    evidence,
 		Remediation: []string{
-			fmt.Sprintf("Check provider idle detection for %s", report.AgentState.Provider),
+			"Daemon watchdog (30s) will force delivery via wider capture",
 			fmt.Sprintf("Manual wake: tmux send-keys -t %s \"You have new messages\" Enter", report.Role),
 		},
 	}
@@ -695,6 +723,50 @@ func checkNoActionableMessages(report *DiagnosticReport) *DiagnosticFinding {
 	}
 }
 
+// checkActiveWithStaleMessages detects when an agent appears "active" (not idle)
+// but has unnotified actionable messages for a long time. Neither Notify() nor
+// the daemon's checkIdleAgents delivers to non-idle agents, so messages pile up.
+// This catches cases where IsAgentIdle is wrong and the wider capture also missed.
+func checkActiveWithStaleMessages(report *DiagnosticReport) *DiagnosticFinding {
+	if report.AgentState.IsIdle {
+		return nil // idle detection works — other checks handle this
+	}
+	if !report.AgentState.IsAlive {
+		return nil
+	}
+	if report.InboxState.ActionableCount == 0 {
+		return nil
+	}
+	// Only flag if oldest unnotified message is >60s old
+	if report.NotifyState.UnnotifiedCount == 0 {
+		return nil
+	}
+	if report.InboxState.OldestMessageAge < 60 {
+		return nil
+	}
+	// Skip if the idle detection failure check already caught it
+	if report.AgentState.WiderCaptureIdle {
+		return nil
+	}
+
+	return &DiagnosticFinding{
+		Severity:    "warning",
+		FailureMode: "active-with-stale-messages",
+		Summary:     fmt.Sprintf("Agent appears active with %d unnotified message(s) for %ds — delivery blocked", report.NotifyState.UnnotifiedCount, report.InboxState.OldestMessageAge),
+		Evidence: []string{
+			fmt.Sprintf("IsAgentIdle: false (8-line and 30-line capture)"),
+			fmt.Sprintf("%d actionable, %d unnotified, oldest: %ds ago", report.InboxState.ActionableCount, report.NotifyState.UnnotifiedCount, report.InboxState.OldestMessageAge),
+			"Neither Notify() nor daemon checkIdleAgents delivers to non-idle agents",
+		},
+		Remediation: []string{
+			"Agent may be genuinely busy — wait for it to finish",
+			"If stuck, check pane for permission prompts or errors",
+			fmt.Sprintf("Manual wake: tmux send-keys -t %s \"You have new messages\" Enter", report.Role),
+			fmt.Sprintf("Restart: muxcode agent-health --start %s", report.Role),
+		},
+	}
+}
+
 // --- Phase 4: Output formatting ---
 
 // Dracula color codes for terminal output.
@@ -733,6 +805,9 @@ func FormatDiagnosticReport(report *DiagnosticReport) string {
 		stateStr = fmt.Sprintf("%sreloading%s", diagColorYellow, diagColorReset)
 	} else if report.AgentState.IsIdle {
 		stateStr = fmt.Sprintf("%sidle%s (at %s prompt)", diagColorGreen, diagColorReset, idlePromptChar)
+	} else if report.AgentState.WiderCaptureIdle {
+		stateStr = fmt.Sprintf("%sactive%s (%s❯ found in wider capture — likely idle%s)",
+			diagColorPurple, diagColorReset, diagColorYellow, diagColorReset)
 	} else {
 		stateStr = fmt.Sprintf("%sactive%s", diagColorPurple, diagColorReset)
 	}
