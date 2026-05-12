@@ -85,7 +85,7 @@ func (d *Dashboard) Run() error {
 
 		// Move cursor to 0,0 and print frame
 		fmt.Print("\033[H")
-		fmt.Print(frame)
+		fmt.Print(ClearFrame(frame))
 		// Clear to end of screen
 		fmt.Print("\033[J")
 

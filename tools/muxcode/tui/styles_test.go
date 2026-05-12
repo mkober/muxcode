@@ -161,3 +161,25 @@ func TestHLine_Zero(t *testing.T) {
 		t.Errorf("HLine('═', 0) = %q, want empty", got)
 	}
 }
+
+func TestClearFrame(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"single line", "hello\n", "hello\033[K\n"},
+		{"multi line", "a\nb\nc\n", "a\033[K\nb\033[K\nc\033[K\n"},
+		{"no newline", "hello", "hello"},
+		{"empty", "", ""},
+		{"with ansi", Green + "hi" + RST + "\n", Green + "hi" + RST + "\033[K\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ClearFrame(tt.input)
+			if got != tt.want {
+				t.Errorf("ClearFrame(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}

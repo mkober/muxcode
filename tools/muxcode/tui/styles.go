@@ -20,9 +20,19 @@ const (
 	Red     = "\033[38;5;203m"
 	Comment = "\033[38;5;103m"
 	BG      = "\033[48;5;236m"
+
+	// ClearEOL erases from cursor to end of line.
+	ClearEOL = "\033[K"
 )
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// ClearFrame inserts an erase-to-end-of-line sequence before every newline
+// so that overwriting a shorter frame doesn't leave artifacts from the
+// previous render. Use this in any TUI render loop that redraws via cursor-home.
+func ClearFrame(frame string) string {
+	return strings.ReplaceAll(frame, "\n", ClearEOL+"\n")
+}
 
 // Pad pads or truncates s to exactly width visible characters.
 // ANSI codes are preserved when truncating.

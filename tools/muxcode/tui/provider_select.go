@@ -110,7 +110,7 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact, persist bool, can
 	for {
 		frame := ui.render()
 		fmt.Print("\033[H")
-		fmt.Print(frame)
+		fmt.Print(ClearFrame(frame))
 		fmt.Print("\033[J")
 
 		// Wait for key input
