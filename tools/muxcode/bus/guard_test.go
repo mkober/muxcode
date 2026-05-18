@@ -653,7 +653,7 @@ func TestDetectMessageLoop_ResponsePingPongDetected(t *testing.T) {
 }
 
 func TestIsSystemAction(t *testing.T) {
-	systemActions := []string{"loop-detected", "compact-recommended", "proc-complete", "spawn-complete"}
+	systemActions := []string{"loop-detected", "compact-recommended", "proc-complete", "spawn-complete", "disk-pressure"}
 	for _, action := range systemActions {
 		if !isSystemAction(action) {
 			t.Errorf("isSystemAction(%q) = false, want true", action)

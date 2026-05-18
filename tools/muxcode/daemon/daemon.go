@@ -1704,9 +1704,16 @@ func (d *Daemon) checkDiskPressure() {
 			result.UsagePct, staleCleaned, claudeCleaned,
 			formatDaemonBytes(claudeFreed), result.PostUsagePct))
 
-	// Alert edit agent with 600s dedup cooldown
+	// Alert edit agent with adaptive cooldown:
+	//  - 600s (10 min) when cleanup actually freed something
+	//  - 3600s (1 hour) when cleanup was ineffective (nothing to clean, usage unchanged)
+	// This prevents flooding the edit agent with repeated alerts it can't act on.
 	alertKey := "disk-pressure:/tmp"
-	if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
+	cooldown := int64(600)
+	if staleCleaned == 0 && claudeCleaned == 0 {
+		cooldown = 3600
+	}
+	if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= cooldown {
 		d.lastAlertKey[alertKey] = now
 
 		payload := fmt.Sprintf(
@@ -1720,9 +1727,9 @@ func (d *Daemon) checkDiskPressure() {
 			fmt.Fprintf(os.Stderr, "  [disk] failed to send alert: %v\n", err)
 			return
 		}
-		if err := bus.Notify(d.session, "edit"); err != nil {
-			fmt.Fprintf(os.Stderr, "  [disk] failed to notify edit: %v\n", err)
-		}
+		// Don't Notify() — disk-pressure is an event, not a request. The agent
+		// will see it next time it checks inbox. Notifying directly force-wakes
+		// the agent for something it can't fix, burning context repeatedly.
 		d.refreshInboxSizes()
 	}
 }
