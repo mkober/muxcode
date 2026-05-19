@@ -30,7 +30,7 @@ var providerOrder = []string{"claude", "opencode", "codex", "local"}
 var hardcodedFallbackModels = map[string]ProviderModels{
 	"claude": {
 		Default: "claude-sonnet-4-6",
-		Models:  []string{"claude-opus-4-6", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"},
+		Models:  []string{"claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"},
 	},
 	"opencode": {
 		Default: "opencode-go/minimax-m2.5",

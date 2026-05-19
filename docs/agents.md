@@ -449,19 +449,92 @@ muxcode reload edit --cli opencode --model opencode-go/deepseek-v4-pro
 # Compact context before reloading
 muxcode reload edit --model claude-opus-4-6 --compact
 
-# Reload all active agents (excludes edit)
+# Reload all active agents
 muxcode reload --all
+
+# Reload multiple specific agents with provider/model override
+muxcode reload build test review --cli opencode --model opencode-go/minimax-m2.5
+
+# Reload all agents currently on Claude, switching them to OpenCode
+muxcode reload --all --provider claude --cli opencode --model opencode-go/minimax-m2.5
 ```
+
+### Bulk reload
+
+Switch multiple agents to a different provider/model in a single operation — useful for responding to provider outages or migrating workloads.
+
+#### CLI multi-role
+
+Pass multiple role names as positional arguments. All agents are reloaded sequentially (3s gap) with the same `--cli`/`--model` overrides:
+
+```bash
+muxcode reload build test review --cli opencode --model opencode-go/minimax-m2.5
+```
+
+Per-agent results are printed as each completes. Failed agents don't abort the batch — all agents are attempted. Exit code is non-zero if any agent failed.
+
+#### `--provider` filter
+
+Combined with `--all`, the `--provider` flag limits the reload to agents currently running on the specified CLI:
+
+```bash
+# Only switch Claude agents to OpenCode (OpenCode agents are untouched)
+muxcode reload --all --provider claude --cli opencode --model opencode-go/minimax-m2.5
+```
+
+`--provider` requires `--all` and is rejected without it.
+
+#### `--all` with overrides
+
+`--all` now accepts `--cli` and `--model` flags — applies the same override to every active agent:
+
+```bash
+muxcode reload --all --cli opencode --model opencode-go/minimax-m2.5
+```
+
+Core code: `bus/reload_batch.go` (`ReloadBatch()`, `ReloadResult`, `ActiveAgentStatuses()`).
 
 ### Provider selector modal
 
-An interactive TUI modal for visually picking a provider and model. Targets the currently active agent window.
+An interactive TUI modal for visually picking a provider, model, and target agents. Supports single-agent reload (existing workflow) and multi-agent bulk reload.
 
 - **Keybinding**: `prefix + R` or `prefix + b → Provider`
-- **Sections**: Provider (radio), Model (radio + custom input), Options (compact/persist checkboxes)
+- **Sections**: Provider (radio), Model (radio + custom input), Agents (checkboxes), Options (compact/persist checkboxes)
 - **Navigation**: `j`/`k`/arrows move, `Tab` switches section, `Space` selects, `Enter` confirms, `q`/`Esc` cancels
 
 Mode-cycled windows resolve to the active role (e.g., research on F1, auto on F2).
+
+#### Agents section
+
+The Agents section lists all active agents with their current CLI, abbreviated model, and F-key:
+
+```
+[x] Build     claude / sonnet-4-6 F3
+[ ] Test      opencode / minimax  F4
+[ ] Review    claude / opus-4-6   F6
+```
+
+**Safety indicators**: `edit` and `auto` are shown with a `⚠` warning suffix (orchestrator disruption risk). They are selectable individually but excluded from the `a` (select all) shortcut.
+
+| Key | Action |
+|-----|--------|
+| `a` | Select all agents (excludes edit/auto) |
+| `n` | Deselect all agents |
+| `p` | Toggle all agents matching the selected provider's CLI |
+| `Space` | Toggle individual agent |
+
+The `p` shortcut is the key workflow accelerator for provider outages: select the target provider, select the model, tab to Agents, press `p` to select all agents on the failing provider, then confirm.
+
+#### Progress view
+
+When >1 agent is selected, confirming transitions the modal to a live progress view:
+
+- `✓` — reload succeeded (green)
+- `✗` — reload failed (red)
+- `⟳` — currently reloading (yellow)
+- `○` — pending (dim)
+
+Progress bar shows `N/M` completion count. Pressing `q` closes the modal but does not cancel in-progress reloads.
 
 ### Persistent config changes
 
@@ -509,7 +582,7 @@ Reload operates on individual roles within mode cycles. The active role reloads 
 
 Use `--compact` to save conversation context to memory before reloading.
 
-Core code: `bus/reload.go`, `bus/override.go`, `cmd/reload.go`, `cmd/config.go`, `tui/provider_select.go`, `bus/provider_options.go`.
+Core code: `bus/reload.go`, `bus/reload_batch.go`, `bus/override.go`, `cmd/reload.go`, `cmd/config.go`, `tui/provider_select.go`, `bus/provider_options.go`.
 
 ## Agent health monitoring
 

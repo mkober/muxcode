@@ -157,45 +157,54 @@ func CleanStaleReloadMarkers(session string) int {
 	return cleaned
 }
 
-// ReloadAll reloads every active agent sequentially with a 5-second gap
-// between each. Skips:
-//   - edit (interactive orchestrator — require explicit `muxcode reload edit`)
+// ReloadAll reloads every active agent sequentially with a gap between each.
+// Accepts optional CLI/model overrides and a provider filter.
+//
+// Parameters:
+//   - cli, model: override the provider/model for each reloaded agent (empty = keep current)
+//   - providerFilter: only reload agents currently on this CLI (empty = reload all)
+//
+// Skips:
+//   - edit/auto (interactive orchestrator — require explicit reload)
 //   - hosted roles that share a window with their host (e.g. docs, pr-read)
 //   - agents that are not alive (no point reloading a dead agent)
 //
 // Returns the count of successfully reloaded agents and any errors encountered.
-func ReloadAll(session string, compact bool) (int, []error) {
-	var errs []error
-	reloaded := 0
-
-	for _, role := range KnownRoles {
-		// Skip edit — interactive session, require explicit reload
-		if role == "edit" {
-			continue
-		}
-		// Skip hosted roles that share a window
-		if WindowForRole(role) != role {
+func ReloadAll(session, cli, model, providerFilter string, compact bool) (int, []error) {
+	var roles []string
+	for _, role := range ReloadableRoles() {
+		// Skip orchestrator roles — require explicit reload
+		if role == "edit" || role == "auto" {
 			continue
 		}
 		// Skip dead agents
 		if !IsAgentAlive(session, role) {
 			continue
 		}
-
-		fmt.Printf("Reloading %s...\n", role)
-		if err := ReloadAgent(session, role, "", "", compact); err != nil {
-			fmt.Printf("  ✗ %s: %v\n", role, err)
-			errs = append(errs, fmt.Errorf("%s: %w", role, err))
-		} else {
-			newCLI := ResolveProviderCLI(role)
-			fmt.Printf("  ✓ %s reloaded (CLI: %s)\n", role, newCLI)
-			reloaded++
+		// Apply provider filter
+		if providerFilter != "" && ResolveProviderCLI(role) != providerFilter {
+			continue
 		}
-
-		// 5-second gap between reloads to avoid overwhelming the system
-		time.Sleep(5 * time.Second)
+		roles = append(roles, role)
 	}
 
+	results := ReloadBatch(session, roles, cli, model, compact, func(i int, r ReloadResult) {
+		if r.Success {
+			fmt.Printf("  ✓ %-10s %s → %s  (%s)\n", r.Role, r.OldCLI, r.NewCLI, r.Duration.Round(time.Second))
+		} else {
+			fmt.Printf("  ✗ %-10s %v\n", r.Role, r.Error)
+		}
+	})
+
+	var errs []error
+	reloaded := 0
+	for _, r := range results {
+		if r.Success {
+			reloaded++
+		} else {
+			errs = append(errs, fmt.Errorf("%s: %w", r.Role, r.Error))
+		}
+	}
 	return reloaded, errs
 }
 

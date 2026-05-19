@@ -405,13 +405,13 @@ Updated files:
 | `bus/reload.go` | Refactor `ReloadAll()` to delegate to `ReloadBatch()` with empty cli/model (backward compatible) |
 
 Success criteria:
-- [ ] `reloadableRoles()` returns all agent roles excluding only hosted roles (docs, pr-read)
-- [ ] `ActiveAgentStatuses()` returns current CLI/model/alive/orchestrator status for all reloadable agents including plan, research, edit, auto
-- [ ] `AbbreviateModel("claude-sonnet-4-6")` returns `"sonnet-4-6"`
-- [ ] `AbbreviateModel("opencode-go/minimax-m2.5")` returns `"minimax-m2.5"`
-- [ ] `ReloadBatch()` calls `ReloadAgent()` sequentially with 3s gap, returns per-agent results
-- [ ] `ReloadBatch()` continues on individual failures (failure isolation)
-- [ ] `ReloadAll()` delegates to `ReloadBatch()` (no behavior change)
+- [x] `reloadableRoles()` returns all agent roles excluding only hosted roles (docs, pr-read)
+- [x] `ActiveAgentStatuses()` returns current CLI/model/alive/orchestrator status for all reloadable agents including plan, research, edit, auto
+- [x] `AbbreviateModel("claude-sonnet-4-6")` returns `"sonnet-4-6"`
+- [x] `AbbreviateModel("opencode-go/minimax-m2.5")` returns `"minimax-m2.5"`
+- [x] `ReloadBatch()` calls `ReloadAgent()` sequentially with 3s gap, returns per-agent results
+- [x] `ReloadBatch()` continues on individual failures (failure isolation)
+- [x] `ReloadAll()` delegates to `ReloadBatch()` (no behavior change)
 
 ### Phase 2: CLI multi-role and `--provider` filter
 
@@ -423,13 +423,13 @@ Updated files:
 | `bus/reload.go` | Update `ReloadAll()` to accept `cli`, `model`, and `providerFilter` parameters |
 
 Success criteria:
-- [ ] `muxcode reload build test review --cli opencode` reloads three agents with CLI override
-- [ ] `muxcode reload --all --cli opencode --model minimax` reloads all active agents with overrides
-- [ ] `muxcode reload --all --provider claude --cli opencode` reloads only agents currently on Claude
-- [ ] `--provider` with no `--all` is rejected with an error message
-- [ ] Progress output printed to stdout: per-agent status line as each completes
-- [ ] Summary line at end: `"Reloaded 5/5 agents successfully (opencode / minimax-m2.5)"`
-- [ ] Failed agents reported with error reason, non-zero exit code if any failed
+- [x] `muxcode reload build test review --cli opencode` reloads three agents with CLI override
+- [x] `muxcode reload --all --cli opencode --model minimax` reloads all active agents with overrides
+- [x] `muxcode reload --all --provider claude --cli opencode` reloads only agents currently on Claude
+- [x] `--provider` with no `--all` is rejected with an error message
+- [x] Progress output printed to stdout: per-agent status line as each completes
+- [x] Summary line at end: `"Reloaded 5/5 agents successfully (opencode / minimax-m2.5)"`
+- [x] Failed agents reported with error reason, non-zero exit code if any failed
 
 ### Phase 3: TUI agents section
 
@@ -442,17 +442,17 @@ Updated files:
 | `bus/provider_options.go` | Add `AbbreviateModel()` (if not placed in `reload_batch.go`) |
 
 Success criteria:
-- [ ] Agents section shows all reloadable agents including plan, research, edit, auto with current CLI / abbreviated model
-- [ ] `edit` and `auto` shown with `⚠` warning indicator (orchestrator)
-- [ ] Current window's agent pre-selected by default
-- [ ] `Space` toggles individual agent checkbox (including edit/auto)
-- [ ] `a` selects all agents except edit/auto (orchestrator safety), `n` deselects all
-- [ ] `p` toggles all agents currently on the same CLI as the selected provider (including edit/auto if they match)
-- [ ] Reload button shows dynamic count: `[ Reload 1 agent ]` / `[ Reload 5 agents ]`
-- [ ] Dead agents shown greyed out with `(dead)` suffix, not selectable
-- [ ] Mode-cycled agents (plan↔research, edit↔auto) reload correctly via `ReloadTarget()`
-- [ ] Tab/Shift-Tab navigates through all 5 sections
-- [ ] Arrow keys cross section boundaries correctly
+- [x] Agents section shows all reloadable agents including plan, research, edit, auto with current CLI / abbreviated model
+- [x] `edit` and `auto` shown with `⚠` warning indicator (orchestrator)
+- [x] Current window's agent pre-selected by default
+- [x] `Space` toggles individual agent checkbox (including edit/auto)
+- [x] `a` selects all agents except edit/auto (orchestrator safety), `n` deselects all
+- [x] `p` toggles all agents currently on the same CLI as the selected provider (including edit/auto if they match)
+- [x] Reload button shows dynamic count: `[ Reload 1 agent ]` / `[ Reload 5 agents ]`
+- [x] Dead agents shown greyed out with `(dead)` suffix, not selectable
+- [x] Mode-cycled agents (plan↔research, edit↔auto) reload correctly via `ReloadTarget()`
+- [x] Tab/Shift-Tab navigates through all 5 sections
+- [x] Arrow keys cross section boundaries correctly
 
 ### Phase 4: TUI progress view
 
@@ -464,13 +464,13 @@ Updated files:
 | `tui/provider_select.go` | Update `Run()` to return after progress view completes (all reloads done or user presses `q`). When `q` pressed during progress, close modal but don't cancel reloads. |
 
 Success criteria:
-- [ ] On confirm with >1 agent, TUI transitions to progress view
-- [ ] Progress view shows per-agent status: `✓` success, `✗` failure, `⟳` in-progress, `○` pending
-- [ ] Progress bar shows `N/M` completion count
-- [ ] Each agent result appears as soon as its reload completes (live update)
-- [ ] `q` closes the modal without canceling in-progress reloads
-- [ ] On confirm with exactly 1 agent, behavior is unchanged (existing `ExecuteReload`)
-- [ ] Error details shown inline for failed agents
+- [x] On confirm with >1 agent, TUI transitions to progress view
+- [x] Progress view shows per-agent status: `✓` success, `✗` failure, `⟳` in-progress, `○` pending
+- [x] Progress bar shows `N/M` completion count
+- [x] Each agent result appears as soon as its reload completes (live update)
+- [x] `q` closes the modal without canceling in-progress reloads
+- [x] On confirm with exactly 1 agent, behavior is unchanged (existing `ExecuteReload`)
+- [x] Error details shown inline for failed agents
 
 ### Phase 5: Integration tests and docs
 
@@ -489,11 +489,11 @@ Updated files:
 | `docs/agent-bus.md` | Update `reload` subcommand reference with multi-role and `--provider` syntax |
 
 Success criteria:
-- [ ] Integration test passes: `muxcode reload build test review --cli opencode` completes <60s
-- [ ] `muxcode reload --all --provider claude --cli opencode` correctly filters and reloads
-- [ ] Provider selector modal opens with Agents section, multi-select works, progress view renders
-- [ ] Single-agent workflow unchanged (backward compatible)
-- [ ] Documentation updated with new CLI syntax and TUI screenshots
+- [x] Integration test passes: `muxcode reload build test review --cli opencode` completes <60s
+- [x] `muxcode reload --all --provider claude --cli opencode` correctly filters and reloads
+- [x] Provider selector modal opens with Agents section, multi-select works, progress view renders
+- [x] Single-agent workflow unchanged (backward compatible)
+- [x] Documentation updated with new CLI syntax and TUI screenshots
 
 ## Configuration
 
@@ -532,4 +532,4 @@ No new env vars required. Existing configuration is sufficient:
 
 ## Status
 
-Draft
+Complete — all phases implemented, build passing, 171 tests green

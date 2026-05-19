@@ -1492,11 +1492,17 @@ Core code: `cmd/compact.go`, `bus/compact.go` (`CompactableRoles`).
 
 ### `muxcode reload`
 
-Stop an agent, reconfigure, and relaunch (hot reload).
+Stop one or more agents, reconfigure, and relaunch (hot reload).
 
 ```bash
+# Single agent
 muxcode reload <role> [--cli <cli>] [--model <model>] [--compact]
-muxcode reload --all [--compact]
+
+# Multiple agents
+muxcode reload <role1> <role2> ... [--cli <cli>] [--model <model>] [--compact]
+
+# All agents (with optional overrides and provider filter)
+muxcode reload --all [--cli <cli>] [--model <model>] [--compact] [--provider <cli>]
 ```
 
 | Flag | Description |
@@ -1504,11 +1510,29 @@ muxcode reload --all [--compact]
 | `--cli <cli>` | CLI provider override (claude, opencode, codex, local) |
 | `--model <model>` | Model override (e.g. opencode-go/deepseek-v4-pro) |
 | `--compact` | Compact agent context before stopping |
-| `--all` | Reload all active agents sequentially (excludes edit) |
+| `--all` | Reload all active agents sequentially (3s gap between agents) |
+| `--provider <cli>` | Filter `--all` to only agents currently on the specified CLI (requires `--all`) |
 
-Writes runtime override to `/tmp/muxcode-bus-{session}/config/{role}.env`, gracefully stops the agent (C-c, poll for exit, force-kill after 6s), regenerates provider config, relaunches via `muxcode agent launch`, and verifies liveness (15s timeout). Reload marker suppresses daemon health checks during the cycle. Edit agent is excluded from `--all`.
+**Single agent**: writes runtime override to `/tmp/muxcode-bus-{session}/config/{role}.env`, gracefully stops the agent (C-c, poll for exit, force-kill after 6s), regenerates provider config, relaunches via `muxcode agent launch`, and verifies liveness (15s timeout). Reload marker suppresses daemon health checks during the cycle.
 
-Core code: `bus/reload.go`, `cmd/reload.go`.
+**Multi-role**: accepts multiple positional role arguments. Reloads agents sequentially via `ReloadBatch()` with a 3s gap between each. Per-agent results are printed as each completes, with a summary line at the end. Failure of one agent does not abort the batch.
+
+**`--all` with overrides**: `--all` now supports `--cli` and `--model` flags — applies the same provider/model override to every active agent. Combined with `--provider`, only agents currently running on the specified CLI are reloaded (others are skipped).
+
+Examples:
+
+```bash
+# Switch 3 agents to OpenCode
+muxcode reload build test review --cli opencode --model opencode-go/minimax-m2.5
+
+# Switch ALL agents to OpenCode
+muxcode reload --all --cli opencode --model opencode-go/minimax-m2.5
+
+# Switch only Claude agents to OpenCode (leaves OpenCode agents untouched)
+muxcode reload --all --provider claude --cli opencode --model opencode-go/minimax-m2.5
+```
+
+Core code: `bus/reload.go`, `bus/reload_batch.go`, `cmd/reload.go`.
 
 ### `muxcode config`
 
@@ -1538,9 +1562,9 @@ Interactive provider/model selector TUI (used by the provider modal).
 muxcode provider-select [--role <role>]
 ```
 
-Launched via `muxcode modal open provider` (keybinding: `prefix + R`). Presents an interactive TUI with provider and model selection. On confirm, writes a reload trigger file and exits; the modal wrapper executes the reload.
+Launched via `muxcode modal open provider` (keybinding: `prefix + R`). Presents an interactive TUI with provider and model selection, plus an **Agents section** for multi-agent bulk reload. Select a target provider/model, then check which agents to switch. Shortcuts: `a` (select all, excludes edit/auto), `p` (select by current provider), `n` (deselect all). On confirm with >1 agent, transitions to a live progress view showing per-agent reload status. Single-agent selection preserves the existing workflow.
 
-Core code: `tui/provider_select.go`, `bus/provider_options.go`, `cmd/provider_select.go`.
+Core code: `tui/provider_select.go`, `bus/provider_options.go`, `bus/reload_batch.go`, `cmd/provider_select.go`.
 
 ## Environment Variables
 

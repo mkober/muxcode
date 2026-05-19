@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,11 +17,12 @@ import (
 const (
 	sectionProvider = 0
 	sectionModel    = 1
-	sectionOptions  = 2
-	sectionButtons  = 3
+	sectionAgents   = 2
+	sectionOptions  = 3
+	sectionButtons  = 4
 )
 
-const numSections = 4
+const numSections = 5
 
 // ProviderSelectUI is the interactive provider selector modal.
 type ProviderSelectUI struct {
@@ -35,6 +37,11 @@ type ProviderSelectUI struct {
 	section     int // active section
 	cursorRow   int // cursor row within the current section
 
+	// Agent selection
+	agents      []bus.AgentReloadStatus
+	agentChecks []bool
+	agentScroll int // scroll offset for agent list
+
 	// Options
 	compact bool
 	persist bool
@@ -46,9 +53,20 @@ type ProviderSelectUI struct {
 	customModel  string
 	customActive bool // true when typing a custom model
 
+	// Progress view state
+	inProgress      bool
+	progressMu      sync.Mutex
+	progressResults []bus.ReloadResult
+	progressTotal   int
+	progressDone    bool
+	progressCh      chan struct{} // signals render loop to redraw on progress
+
 	// Terminal
 	keyCh chan byte
 }
+
+// maxVisibleAgents is the max agents shown before scrolling.
+const maxVisibleAgents = 10
 
 // NewProviderSelectUI creates a new provider selector for the given session and role.
 func NewProviderSelectUI(session, role, window string) *ProviderSelectUI {
@@ -76,6 +94,14 @@ func NewProviderSelectUI(session, role, window string) *ProviderSelectUI {
 		}
 	}
 
+	// Build agent list
+	agents := bus.ActiveAgentStatuses(session)
+	agentChecks := make([]bool, len(agents))
+
+	// The current window's agent is not pre-selected — it's shown greyed
+	// out and non-selectable (the user opens the modal to reload *other*
+	// agents, not the one they're already on).
+
 	return &ProviderSelectUI{
 		session:     session,
 		role:        role,
@@ -85,12 +111,54 @@ func NewProviderSelectUI(session, role, window string) *ProviderSelectUI {
 		selectedMdl: selectedMdl,
 		section:     sectionProvider,
 		cursorRow:   selectedCLI,
+		agents:      agents,
+		agentChecks: agentChecks,
+		progressCh:  make(chan struct{}, 16), // initialized for render loop select
 	}
 }
 
+// selectedAgentCount returns the number of checked agents.
+func (ui *ProviderSelectUI) selectedAgentCount() int {
+	count := 0
+	for _, c := range ui.agentChecks {
+		if c {
+			count++
+		}
+	}
+	return count
+}
+
+// selectedAgentRoles returns the role names of checked agents.
+func (ui *ProviderSelectUI) selectedAgentRoles() []string {
+	var roles []string
+	for i, c := range ui.agentChecks {
+		if c {
+			roles = append(roles, ui.agents[i].Role)
+		}
+	}
+	return roles
+}
+
+// isSelectable returns true if the agent at index i can be checked/unchecked.
+// Dead agents and the current active window's agent are not selectable.
+func (ui *ProviderSelectUI) isSelectable(i int) bool {
+	if i < 0 || i >= len(ui.agents) {
+		return false
+	}
+	a := &ui.agents[i]
+	if !a.Alive {
+		return false
+	}
+	// The agent for the window that opened the modal is not selectable
+	if a.Role == ui.role {
+		return false
+	}
+	return true
+}
+
 // Run starts the interactive TUI loop. Returns the selected CLI, model,
-// compact, and persist flags — or empty strings if cancelled.
-func (ui *ProviderSelectUI) Run() (cli, model string, compact, persist bool, cancelled bool) {
+// compact, persist flags, and selected agent roles — or empty if cancelled.
+func (ui *ProviderSelectUI) Run() (cli, model string, compact, persist bool, roles []string, cancelled bool) {
 	rawCmd := exec.Command("stty", "-icanon", "-echo", "min", "1")
 	rawCmd.Stdin = os.Stdin
 	rawErr := rawCmd.Run()
@@ -108,20 +176,46 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact, persist bool, can
 	defer ui.cleanup(rawErr == nil)
 
 	for {
-		frame := ui.render()
+		var frame string
+		if ui.inProgress {
+			frame = ui.renderProgress()
+		} else {
+			frame = ui.render()
+		}
 		fmt.Print("\033[H")
 		fmt.Print(ClearFrame(frame))
 		fmt.Print("\033[J")
 
-		// Wait for key input
+		// Wait for key input or progress update
 		select {
 		case <-sigCh:
-			return "", "", false, false, true
+			return "", "", false, false, nil, true
+		case <-ui.progressCh:
+			// Progress update — just redraw (loop continues to top)
+			continue
 		case key := <-ui.keyCh:
+			if ui.inProgress {
+				action := ui.handleProgressKey(key)
+				if action == "close" {
+					roles := ui.selectedAgentRoles()
+					p := &ui.providers[ui.selectedCLI]
+					cli = p.CLI
+					if ui.customActive && ui.customModel != "" {
+						model = ui.customModel
+					} else if ui.selectedMdl < len(p.Models) {
+						model = p.Models[ui.selectedMdl]
+					} else {
+						model = p.Default
+					}
+					return cli, model, ui.compact, ui.persist, roles, false
+				}
+				continue
+			}
+
 			action := ui.handleKey(key)
 			switch action {
 			case "cancel":
-				return "", "", false, false, true
+				return "", "", false, false, nil, true
 			case "confirm":
 				p := &ui.providers[ui.selectedCLI]
 				cli = p.CLI
@@ -132,10 +226,65 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact, persist bool, can
 				} else {
 					model = p.Default
 				}
-				return cli, model, ui.compact, ui.persist, false
+				roles = ui.selectedAgentRoles()
+
+				// Multi-agent: transition to progress view
+				if len(roles) > 1 {
+					ui.startBatchReload(cli, model)
+					continue
+				}
+
+				return cli, model, ui.compact, ui.persist, roles, false
 			}
 		}
 	}
+}
+
+// startBatchReload kicks off the background batch reload and switches to progress view.
+func (ui *ProviderSelectUI) startBatchReload(cli, model string) {
+	roles := ui.selectedAgentRoles()
+	ui.progressTotal = len(roles)
+	ui.progressResults = nil
+	ui.progressDone = false
+	ui.progressCh = make(chan struct{}, 16) // buffered to avoid blocking goroutine
+	ui.inProgress = true
+
+	go func() {
+		bus.ReloadBatch(ui.session, roles, cli, model, ui.compact, func(i int, r bus.ReloadResult) {
+			ui.progressMu.Lock()
+			ui.progressResults = append(ui.progressResults, r)
+			ui.progressMu.Unlock()
+			// Signal render loop to redraw
+			select {
+			case ui.progressCh <- struct{}{}:
+			default: // don't block if channel is full
+			}
+		})
+		ui.progressMu.Lock()
+		ui.progressDone = true
+		ui.progressMu.Unlock()
+		// Signal render loop for final "done" redraw
+		select {
+		case ui.progressCh <- struct{}{}:
+		default:
+		}
+	}()
+}
+
+// handleProgressKey handles input during the progress view.
+func (ui *ProviderSelectUI) handleProgressKey(key byte) string {
+	switch key {
+	case 'q', 27: // q or Escape
+		return "close"
+	case 10, 13: // Enter
+		ui.progressMu.Lock()
+		done := ui.progressDone
+		ui.progressMu.Unlock()
+		if done {
+			return "close"
+		}
+	}
+	return ""
 }
 
 // handleKey processes a single keypress and returns an action string.
@@ -191,6 +340,24 @@ func (ui *ProviderSelectUI) handleKey(key byte) string {
 
 	case ' ': // Space — select
 		ui.selectCurrent()
+		return ""
+
+	case 'a': // Select all agents (excludes orchestrators)
+		if ui.section == sectionAgents {
+			ui.selectAllAgents()
+		}
+		return ""
+
+	case 'n': // Deselect all agents
+		if ui.section == sectionAgents {
+			ui.deselectAllAgents()
+		}
+		return ""
+
+	case 'p': // Toggle agents by current provider
+		if ui.section == sectionAgents {
+			ui.toggleAgentsByProvider()
+		}
 		return ""
 
 	case 'h': // Left (buttons)
@@ -256,13 +423,28 @@ func (ui *ProviderSelectUI) moveUp() {
 			ui.section = sectionProvider
 			ui.cursorRow = len(ui.providers) - 1
 		}
-	case sectionOptions:
+	case sectionAgents:
 		if ui.cursorRow > 0 {
 			ui.cursorRow--
+			// Scroll up if cursor is above visible area
+			if ui.cursorRow < ui.agentScroll {
+				ui.agentScroll = ui.cursorRow
+			}
 		} else {
 			ui.section = sectionModel
 			p := &ui.providers[ui.selectedCLI]
 			ui.cursorRow = len(p.Models) // "custom..." row
+		}
+	case sectionOptions:
+		if ui.cursorRow > 0 {
+			ui.cursorRow--
+		} else {
+			ui.section = sectionAgents
+			ui.cursorRow = len(ui.agents) - 1
+			// Ensure visible
+			if ui.cursorRow >= ui.agentScroll+maxVisibleAgents {
+				ui.agentScroll = ui.cursorRow - maxVisibleAgents + 1
+			}
 		}
 	case sectionButtons:
 		ui.section = sectionOptions
@@ -285,6 +467,18 @@ func (ui *ProviderSelectUI) moveDown() {
 		maxIdx := len(p.Models) // "custom..." row index
 		if ui.cursorRow < maxIdx {
 			ui.cursorRow++
+		} else {
+			ui.section = sectionAgents
+			ui.cursorRow = 0
+			ui.agentScroll = 0
+		}
+	case sectionAgents:
+		if ui.cursorRow < len(ui.agents)-1 {
+			ui.cursorRow++
+			// Scroll down if cursor is below visible area
+			if ui.cursorRow >= ui.agentScroll+maxVisibleAgents {
+				ui.agentScroll = ui.cursorRow - maxVisibleAgents + 1
+			}
 		} else {
 			ui.section = sectionOptions
 			ui.cursorRow = 0
@@ -324,11 +518,54 @@ func (ui *ProviderSelectUI) selectCurrent() {
 			ui.customActive = true
 			ui.customModel = ""
 		}
+	case sectionAgents:
+		if ui.isSelectable(ui.cursorRow) {
+			ui.agentChecks[ui.cursorRow] = !ui.agentChecks[ui.cursorRow]
+		}
 	case sectionOptions:
 		if ui.cursorRow == 0 {
 			ui.compact = !ui.compact
 		} else {
 			ui.persist = !ui.persist
+		}
+	}
+}
+
+// selectAllAgents selects all selectable agents except orchestrators (edit/auto).
+func (ui *ProviderSelectUI) selectAllAgents() {
+	for i, a := range ui.agents {
+		if ui.isSelectable(i) && !a.Orchestrator {
+			ui.agentChecks[i] = true
+		}
+	}
+}
+
+// deselectAllAgents deselects all agents.
+func (ui *ProviderSelectUI) deselectAllAgents() {
+	for i := range ui.agentChecks {
+		ui.agentChecks[i] = false
+	}
+}
+
+// toggleAgentsByProvider toggles all agents whose current CLI matches the
+// *currently selected* target provider. This enables the "select all agents
+// currently on the failing provider" workflow.
+func (ui *ProviderSelectUI) toggleAgentsByProvider() {
+	targetCLI := ui.providers[ui.selectedCLI].CLI
+
+	// Check if any matching selectable agents are currently unchecked
+	anyUnchecked := false
+	for i, a := range ui.agents {
+		if ui.isSelectable(i) && a.CLI == targetCLI && !ui.agentChecks[i] {
+			anyUnchecked = true
+			break
+		}
+	}
+
+	// Toggle: if any are unchecked, check all matching; otherwise uncheck all matching
+	for i, a := range ui.agents {
+		if ui.isSelectable(i) && a.CLI == targetCLI {
+			ui.agentChecks[i] = anyUnchecked
 		}
 	}
 }
@@ -340,6 +577,21 @@ func (ui *ProviderSelectUI) syncCursorToSection() {
 		ui.cursorRow = ui.selectedCLI
 	case sectionModel:
 		ui.cursorRow = ui.selectedMdl
+	case sectionAgents:
+		// Find first checked agent, or default to 0
+		ui.cursorRow = 0
+		for i, c := range ui.agentChecks {
+			if c {
+				ui.cursorRow = i
+				break
+			}
+		}
+		// Ensure visible
+		if ui.cursorRow < ui.agentScroll {
+			ui.agentScroll = ui.cursorRow
+		} else if ui.cursorRow >= ui.agentScroll+maxVisibleAgents {
+			ui.agentScroll = ui.cursorRow - maxVisibleAgents + 1
+		}
 	case sectionOptions:
 		ui.cursorRow = 0
 	case sectionButtons:
@@ -430,6 +682,82 @@ func (ui *ProviderSelectUI) render() string {
 	}
 	b.WriteString("\n")
 
+	// Agents section
+	active = ui.section == sectionAgents
+	agentCount := ui.selectedAgentCount()
+	agentLabel := "Agents"
+	if agentCount > 0 {
+		agentLabel = fmt.Sprintf("Agents (%d selected)", agentCount)
+	}
+	b.WriteString(ui.sectionHeader(agentLabel, active))
+	b.WriteString("\n")
+
+	// Determine visible window
+	visEnd := ui.agentScroll + maxVisibleAgents
+	if visEnd > len(ui.agents) {
+		visEnd = len(ui.agents)
+	}
+
+	// Scroll indicator (top)
+	if ui.agentScroll > 0 {
+		b.WriteString(fmt.Sprintf("      %s↑ %d more%s\n", Comment, ui.agentScroll, RST))
+	}
+
+	for i := ui.agentScroll; i < visEnd; i++ {
+		a := ui.agents[i]
+		cursor := "  "
+		if active && ui.cursorRow == i {
+			cursor = Purple + "> " + RST
+		}
+
+		check := "[ ]"
+		if ui.agentChecks[i] {
+			check = Green + "[x]" + RST
+		}
+
+		// Role name (padded to 10 chars)
+		roleName := Pad(a.Role, 10)
+
+		// CLI / abbreviated model
+		cliModel := fmt.Sprintf("%s / %s", a.CLI, bus.AbbreviateModel(a.Model))
+
+		// Suffix: warning for orchestrators, (dead) for dead, (active) for current window
+		suffix := ""
+		if !a.Alive {
+			roleName = Comment + Pad(a.Role, 10) + RST
+			cliModel = Comment + cliModel + RST
+			check = Comment + "[ ]" + RST
+			suffix = Comment + " (dead)" + RST
+		} else if a.Role == ui.role {
+			roleName = Comment + Pad(a.Role, 10) + RST
+			cliModel = Comment + cliModel + RST
+			check = Comment + "[ ]" + RST
+			suffix = Comment + " (active)" + RST
+		} else if a.Orchestrator {
+			suffix = Yellow + "⚠" + RST
+		}
+
+		// F-key label
+		fkeyLabel := ""
+		if a.FKey != "" {
+			fkeyLabel = Comment + " " + a.FKey + RST
+		}
+
+		b.WriteString(fmt.Sprintf("  %s %s %s %s%s%s\n",
+			cursor, check, roleName, cliModel, suffix, fkeyLabel))
+	}
+
+	// Scroll indicator (bottom)
+	if visEnd < len(ui.agents) {
+		b.WriteString(fmt.Sprintf("      %s↓ %d more%s\n", Comment, len(ui.agents)-visEnd, RST))
+	}
+
+	// Agent shortcuts help
+	if active {
+		b.WriteString(fmt.Sprintf("      %s(a) All  (p) By provider  (n) None%s\n", Comment, RST))
+	}
+	b.WriteString("\n")
+
 	// Options section
 	active = ui.section == sectionOptions
 	b.WriteString(ui.sectionHeader("Options", active))
@@ -466,12 +794,127 @@ func (ui *ProviderSelectUI) render() string {
 			cancelStyle = Bold + Red
 		}
 	}
-	b.WriteString(fmt.Sprintf("  %s[ Reload ]%s  %s[ Cancel ]%s\n",
-		reloadStyle, RST, cancelStyle, RST))
+
+	// Dynamic reload button text
+	reloadText := "Reload"
+	if agentCount > 1 {
+		reloadText = fmt.Sprintf("Reload %d agents", agentCount)
+	} else if agentCount == 1 {
+		reloadText = "Reload 1 agent"
+	}
+
+	b.WriteString(fmt.Sprintf("  %s[ %s ]%s  %s[ Cancel ]%s\n",
+		reloadStyle, reloadText, RST, cancelStyle, RST))
 	b.WriteString("\n")
 
 	// Help line
 	b.WriteString(fmt.Sprintf("  %s↑↓ Navigate  ␣ Select  ⏎ Reload  Tab/S-Tab Section  q Quit%s\n", Comment, RST))
+
+	return b.String()
+}
+
+// renderProgress draws the progress view during a batch reload.
+func (ui *ProviderSelectUI) renderProgress() string {
+	var b strings.Builder
+	p := &ui.providers[ui.selectedCLI]
+
+	// Determine target model
+	model := p.Default
+	if ui.customActive && ui.customModel != "" {
+		model = ui.customModel
+	} else if ui.selectedMdl < len(p.Models) {
+		model = p.Models[ui.selectedMdl]
+	}
+
+	ui.progressMu.Lock()
+	results := make([]bus.ReloadResult, len(ui.progressResults))
+	copy(results, ui.progressResults)
+	total := ui.progressTotal
+	done := ui.progressDone
+	ui.progressMu.Unlock()
+
+	completed := len(results)
+	roles := ui.selectedAgentRoles()
+
+	// Header
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("  %s%sReloading %d agents%s → %s\n",
+		Bold, Purple, total, RST, p.CLI))
+	b.WriteString(fmt.Sprintf("  %sModel:%s %s\n", Dim, RST, bus.AbbreviateModel(model)))
+	b.WriteString("\n")
+
+	// Section header
+	b.WriteString(fmt.Sprintf("  %s%s── Progress ─────────────────────%s\n", Bold, Purple, RST))
+	b.WriteString("\n")
+
+	// Status for each agent
+	resultMap := make(map[string]*bus.ReloadResult)
+	for i := range results {
+		resultMap[results[i].Role] = &results[i]
+	}
+
+	// Determine currently-reloading agent
+	currentRole := ""
+	if completed < total && completed < len(roles) {
+		currentRole = roles[completed]
+	}
+
+	for _, role := range roles {
+		if r, ok := resultMap[role]; ok {
+			// Completed
+			if r.Success {
+				dur := r.Duration.Round(time.Second)
+				if r.OldCLI == r.NewCLI && r.OldModel == r.NewModel {
+					b.WriteString(fmt.Sprintf("    %s✓%s %-10s %s(no change)%s  %s\n",
+						Green, RST, r.Role, Comment, RST, dur))
+				} else {
+					b.WriteString(fmt.Sprintf("    %s✓%s %-10s %s → %s  %s\n",
+						Green, RST, r.Role, r.OldCLI, r.NewCLI, dur))
+				}
+			} else {
+				b.WriteString(fmt.Sprintf("    %s✗%s %-10s %s%v%s\n",
+					Red, RST, r.Role, Red, r.Error, RST))
+			}
+		} else if role == currentRole {
+			// Currently reloading
+			b.WriteString(fmt.Sprintf("    %s⟳%s %-10s %s...\n",
+				Yellow, RST, role, Comment))
+		} else {
+			// Pending
+			b.WriteString(fmt.Sprintf("    %s○%s %-10s\n",
+				Comment, RST, role))
+		}
+	}
+	b.WriteString("\n")
+
+	// Progress bar
+	barWidth := 30
+	filled := 0
+	if total > 0 {
+		filled = (completed * barWidth) / total
+	}
+	bar := strings.Repeat("━", filled) + strings.Repeat("░", barWidth-filled)
+	b.WriteString(fmt.Sprintf("  %s%s%s  %d/%d\n", Green, bar, RST, completed, total))
+	b.WriteString("\n")
+
+	// Footer
+	if done {
+		succeeded := 0
+		for _, r := range results {
+			if r.Success {
+				succeeded++
+			}
+		}
+		if succeeded == total {
+			b.WriteString(fmt.Sprintf("  %s✓ All agents reloaded successfully%s\n", Green, RST))
+		} else {
+			b.WriteString(fmt.Sprintf("  %s%d/%d succeeded, %d failed%s\n",
+				Yellow, succeeded, total, total-succeeded, RST))
+		}
+		b.WriteString(fmt.Sprintf("  %sPress Enter or q to close%s\n", Comment, RST))
+	} else {
+		b.WriteString(fmt.Sprintf("  %sPress q to close (reload continues in background)%s\n", Comment, RST))
+	}
 
 	return b.String()
 }
@@ -510,24 +953,36 @@ func (ui *ProviderSelectUI) cleanup(restoreStty bool) {
 	fmt.Print("\033[H")
 }
 
-// ExecuteReload runs the agent reload directly as a subprocess so output
-// is visible in the popup. Previously used a trigger file but that was
-// fragile — the shell trigger check could silently fail.
-func ExecuteReload(session, role, cli, model string, compact, persist bool) error {
+// ExecuteReload runs agent reload(s) directly as a subprocess so output
+// is visible in the popup.
+func ExecuteReload(session, role, cli, model string, compact, persist bool, roles []string) error {
 	if persist {
-		// Write to persistent config file
-		cliKey := bus.RoleCLIEnvVar(role)
-		modelKey := bus.RoleModelEnvVar(role)
-		if cli != "" {
-			_ = bus.SetShellConfigValue(cliKey, cli)
+		// Write to persistent config file for each selected role
+		targetRoles := roles
+		if len(targetRoles) == 0 {
+			targetRoles = []string{role}
 		}
-		if model != "" {
-			_ = bus.SetShellConfigValue(modelKey, model)
+		for _, r := range targetRoles {
+			cliKey := bus.RoleCLIEnvVar(r)
+			modelKey := bus.RoleModelEnvVar(r)
+			if cli != "" {
+				_ = bus.SetShellConfigValue(cliKey, cli)
+			}
+			if model != "" {
+				_ = bus.SetShellConfigValue(modelKey, model)
+			}
 		}
 	}
 
+	// For multi-agent, roles were already handled by the TUI progress view
+	// This path is only for single-agent reload
+	targetRole := role
+	if len(roles) == 1 {
+		targetRole = roles[0]
+	}
+
 	// Build reload command args
-	args := []string{"reload", role}
+	args := []string{"reload", targetRole}
 	if cli != "" {
 		args = append(args, "--cli", cli)
 	}
@@ -545,7 +1000,7 @@ func ExecuteReload(session, role, cli, model string, compact, persist bool) erro
 	}
 
 	// Run reload directly — stdout/stderr visible in the popup
-	fmt.Printf("\nReloading %s (cli=%s, model=%s)...\n", role, cli, model)
+	fmt.Printf("\nReloading %s (cli=%s, model=%s)...\n", targetRole, cli, model)
 	cmd := exec.Command(exe, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
