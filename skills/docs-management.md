@@ -24,6 +24,28 @@ Manage requirements specs through their lifecycle: backlog -> drafts -> complete
 
 Never use plain bullet points (`-`) for trackable tasks. When creating new specs or editing existing ones, convert plain bullets to checkboxes if they represent actionable work. This enables progress tracking — agents and humans can see at a glance what's done vs pending.
 
+### Integration test phase required
+
+**Every requirements doc MUST include a dedicated integration test phase** as the final (or near-final) implementation phase. This phase must contain either:
+
+1. **Specific automatable test steps** written as checkboxes that describe verifiable behavior:
+   ```markdown
+   ### Phase N: Integration test
+   - [ ] Reload build+test agents with --cli opencode → verify config changed
+   - [ ] Run --provider filter → verify only matching agents reloaded
+   - [ ] Restore original config → verify agents back on original CLI
+   ```
+
+2. **A step to create a test automation script** (`scripts/test-{feature}.sh`):
+   ```markdown
+   ### Phase N: Integration test
+   - [ ] Create `scripts/test-{feature}.sh` with end-to-end verification
+   - [ ] Script tests: prerequisite checks, happy path, error handling, cleanup
+   - [ ] Run script and verify all checks pass
+   ```
+
+The integration test phase validates end-to-end behavior — not just unit tests. It should exercise the feature as a user would, across component boundaries.
+
 ### Move a spec between directories
 
 Move specs to reflect their current state:

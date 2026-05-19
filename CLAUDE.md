@@ -90,6 +90,7 @@ Both Go modules have **no external dependencies** (stdlib only).
 - Cross-link docs with relative paths (e.g. `docs/architecture.md`)
 - When updating docs, augment existing content — don't rewrite or reorganize
 - Feature requirements live in `docs/requirements/` — completed specs in `completed/`, in-progress drafts in `drafts/`, backlog at top level
+- **Integration test phase required**: every requirements doc MUST include a dedicated integration test phase (typically the final implementation phase). It must contain either: (1) specific test steps written as checkboxes that can be automated (e.g. `- [ ] Reload build+test agents → verify config changed`), or (2) a step to create a test automation script (e.g. `- [ ] Create scripts/test-{feature}.sh with automated verification`). The test phase should validate end-to-end behavior, not just unit tests.
 
 ### Permissions (`.claude/settings.local.json`)
 
