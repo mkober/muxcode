@@ -185,6 +185,11 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	}
 	LogLifecycle(session, "info", "launcher", "bus-init", "")
 
+	// Install git commit-msg hook to strip Co-authored-by trailers
+	if err := InstallCommitMsgHook(projectDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: install commit-msg hook: %v\n", err)
+	}
+
 	// Initialize mode cycle state for edit window (edit ↔ auto)
 	if err := WriteModeCycleState(session, DefaultModeCycleState()); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: write edit mode cycle: %v\n", err)
