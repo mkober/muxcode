@@ -44,6 +44,29 @@ func sendMessage(session string, m Message, autoCC bool) error {
 		return err
 	}
 
+	// Guard against duplicate requests: prevent identical requests from
+	// stacking in the agent's inbox. This is the primary dedup gate and
+	// covers ALL send paths (CLI, daemon, chains, subscriptions).
+	//
+	// Two checks:
+	// 1. Inbox check: is the same (from, action) request already pending?
+	// 2. Task check: is the agent already working on a task with same (to, action)?
+	//
+	// Skipped for system actions (loop-detected, compact-recommended, etc.)
+	// which naturally repeat and should never be suppressed.
+	if m.Type == "request" && !isSystemAction(m.Action) {
+		if HasPendingInboxRequest(session, m.To, m.From, m.Action, m.Payload) {
+			fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate request %s→%s:%s (identical request already in inbox)\n",
+				m.From, m.To, m.Action)
+			return nil
+		}
+		if HasInFlightTaskForRole(session, m.To, m.Action) {
+			fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate request %s→%s:%s (in-flight task exists)\n",
+				m.From, m.To, m.Action)
+			return nil
+		}
+	}
+
 	// Guard against duplicate replies: if this message is a reply to a task
 	// that is already completed (e.g. the daemon sent a synthetic response
 	// via idle-task-rescue, and the real agent sends a late reply), skip

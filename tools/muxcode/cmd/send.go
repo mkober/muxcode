@@ -112,6 +112,37 @@ func Send(args []string) {
 		}
 	}
 
+	// Pre-send task dedup: if there's already an in-flight task for the same
+	// (to, action), reattach --wait to the existing task instead of sending a
+	// duplicate. This handles the common case where --wait was killed by Bash
+	// tool timeout and the agent retries the same request. Without this, the
+	// duplicate message gets injected into the agent's TUI, wasting tokens.
+	// Skip for --force (explicit override) and non-request messages.
+	if msgType == "request" && !force && wait {
+		if existing, found := bus.FindInFlightTask(session, to, action); found {
+			fmt.Printf("In-flight task for %s:%s already exists (sent %ds ago) — reattaching --wait\n",
+				to, action, time.Now().Unix()-existing.SentAt)
+			bus.SetWaiting(session, from)
+			responded, responsePayload := waitForResponse(session, from, to, existing.ID)
+			if responded {
+				ds, err := bus.ReadDeliveryStatus(session, existing.ID)
+				if err == nil && ds.ResponseID != "" {
+					bus.CompleteTask(session, existing.ID, ds.ResponseID)
+				} else {
+					bus.CompleteTask(session, existing.ID, "")
+				}
+				logWaitResponseToHistory(session, to, action, responsePayload)
+			} else {
+				bus.TimeoutTask(session, existing.ID)
+			}
+			go func() {
+				time.Sleep(5 * time.Second)
+				bus.ClearWaiting(session, from)
+			}()
+			return
+		}
+	}
+
 	msg := bus.NewMessage(from, to, msgType, action, payload, replyTo)
 
 	// Atomic dedup check + send under file lock to avoid TOCTOU race

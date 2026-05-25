@@ -171,3 +171,263 @@ func TestIsDuplicateMessage_EmptyLog(t *testing.T) {
 		t.Error("no log file should mean no duplicate")
 	}
 }
+
+func TestHasPendingInboxRequest(t *testing.T) {
+	dir := t.TempDir()
+	old := busDirOverride
+	busDirOverride = dir
+	defer func() { busDirOverride = old }()
+
+	session := "test-inbox-dedup"
+
+	// Setup: create inbox directory
+	inboxDir := filepath.Dir(InboxPath(session, "deploy"))
+	os.MkdirAll(inboxDir, 0755)
+
+	// No inbox → no pending request
+	if HasPendingInboxRequest(session, "deploy", "edit", "deploy", "Run cdk deploy") {
+		t.Error("empty inbox should have no pending request")
+	}
+
+	// Write a request to the inbox
+	m1 := NewMessage("edit", "deploy", "request", "deploy", "Run cdk deploy", "")
+	data, _ := EncodeMessage(m1)
+	appendToFile(InboxPath(session, "deploy"), append(data, '\n'))
+
+	// Same (from, action, payload) → found
+	if !HasPendingInboxRequest(session, "deploy", "edit", "deploy", "Run cdk deploy") {
+		t.Error("should find pending request with matching from+action+payload")
+	}
+
+	// Same (from, action) but different payload → not found
+	if HasPendingInboxRequest(session, "deploy", "edit", "deploy", "Run cdk deploy again") {
+		t.Error("different payload should not match")
+	}
+
+	// Different from → not found
+	if HasPendingInboxRequest(session, "deploy", "build", "deploy", "Run cdk deploy") {
+		t.Error("different from should not match")
+	}
+
+	// Different action → not found
+	if HasPendingInboxRequest(session, "deploy", "edit", "build", "Run cdk deploy") {
+		t.Error("different action should not match")
+	}
+
+	// Response messages should NOT match
+	m2 := NewMessage("edit", "deploy", "response", "deploy", "Done", "")
+	data2, _ := EncodeMessage(m2)
+	os.WriteFile(InboxPath(session, "deploy"), append(data2, '\n'), 0644)
+	if HasPendingInboxRequest(session, "deploy", "edit", "deploy", "Done") {
+		t.Error("response messages should not be matched")
+	}
+}
+
+func TestHasInFlightTaskForRole(t *testing.T) {
+	dir := t.TempDir()
+	old := busDirOverride
+	busDirOverride = dir
+	defer func() { busDirOverride = old }()
+
+	session := "test-task-dedup"
+
+	// No tasks → false
+	if HasInFlightTaskForRole(session, "deploy", "deploy") {
+		t.Error("no tasks should mean no in-flight task")
+	}
+
+	os.MkdirAll(TaskDir(session), 0755)
+
+	// Create an in-flight task
+	m := NewMessage("edit", "deploy", "request", "deploy", "Run cdk deploy", "")
+	CreateTask(session, m, 600)
+
+	// Same (to, action) → found
+	if !HasInFlightTaskForRole(session, "deploy", "deploy") {
+		t.Error("should find in-flight task with matching to+action")
+	}
+
+	// Different action → not found
+	if HasInFlightTaskForRole(session, "deploy", "build") {
+		t.Error("different action should not match")
+	}
+
+	// Different target → not found
+	if HasInFlightTaskForRole(session, "build", "deploy") {
+		t.Error("different target should not match")
+	}
+
+	// Completed task → not found
+	CompleteTask(session, m.ID, "resp-123")
+	if HasInFlightTaskForRole(session, "deploy", "deploy") {
+		t.Error("completed task should not be found")
+	}
+}
+
+func TestFindInFlightTask(t *testing.T) {
+	dir := t.TempDir()
+	old := busDirOverride
+	busDirOverride = dir
+	defer func() { busDirOverride = old }()
+
+	session := "test-find-task"
+
+	// No tasks
+	_, found := FindInFlightTask(session, "deploy", "deploy")
+	if found {
+		t.Error("should not find task when none exist")
+	}
+
+	os.MkdirAll(TaskDir(session), 0755)
+
+	// Create in-flight task
+	m := NewMessage("edit", "deploy", "request", "deploy", "Run cdk deploy", "")
+	CreateTask(session, m, 600)
+
+	task, found := FindInFlightTask(session, "deploy", "deploy")
+	if !found {
+		t.Fatal("should find in-flight task")
+	}
+	if task.ID != m.ID {
+		t.Errorf("task ID mismatch: got %s, want %s", task.ID, m.ID)
+	}
+	if task.Action != "deploy" {
+		t.Errorf("task action: got %s, want deploy", task.Action)
+	}
+}
+
+func TestSendMessage_SuppressesDuplicateInboxRequest(t *testing.T) {
+	dir := t.TempDir()
+	old := busDirOverride
+	busDirOverride = dir
+	defer func() { busDirOverride = old }()
+
+	session := "test-send-dedup"
+
+	// Setup: init session directories and config (deploy is auto-CC)
+	Init(session, dir)
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	// First send should succeed
+	m1 := NewMessage("edit", "deploy", "request", "deploy", "Run cdk deploy", "")
+	err := Send(session, m1)
+	if err != nil {
+		t.Fatalf("first send failed: %v", err)
+	}
+
+	// Verify message is in inbox
+	msgs, _ := Peek(session, "deploy")
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message in inbox, got %d", len(msgs))
+	}
+
+	// Second send with same (from, to, action, type, payload) should be suppressed
+	m2 := NewMessage("edit", "deploy", "request", "deploy", "Run cdk deploy", "")
+	err = Send(session, m2)
+	if err != nil {
+		t.Fatalf("second send should not error: %v", err)
+	}
+
+	// Verify still only 1 message in inbox (duplicate suppressed)
+	msgs, _ = Peek(session, "deploy")
+	if len(msgs) != 1 {
+		t.Errorf("expected 1 message after dedup, got %d", len(msgs))
+	}
+
+	// Third send with DIFFERENT payload should NOT be suppressed
+	m3 := NewMessage("edit", "deploy", "request", "deploy", "Deploy with different context", "")
+	err = Send(session, m3)
+	if err != nil {
+		t.Fatalf("third send should not error: %v", err)
+	}
+
+	// Should have 2 messages now (original + different payload)
+	msgs, _ = Peek(session, "deploy")
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 messages (different payloads), got %d", len(msgs))
+	}
+}
+
+func TestSendMessage_SuppressesDuplicateWithInFlightTask(t *testing.T) {
+	dir := t.TempDir()
+	old := busDirOverride
+	busDirOverride = dir
+	defer func() { busDirOverride = old }()
+
+	session := "test-task-send-dedup"
+	Init(session, dir)
+
+	// Send first request and create a task (simulating --wait)
+	m1 := NewMessage("edit", "deploy", "request", "deploy", "Run cdk deploy", "")
+	err := Send(session, m1)
+	if err != nil {
+		t.Fatalf("first send failed: %v", err)
+	}
+	CreateTask(session, m1, 600)
+
+	// Consume the inbox (simulating SendWakeUp consuming after injection)
+	Receive(session, "deploy")
+
+	// Second send: inbox is empty but task is in-flight → should be suppressed
+	m2 := NewMessage("edit", "deploy", "request", "deploy", "Run cdk deploy retry", "")
+	err = Send(session, m2)
+	if err != nil {
+		t.Fatalf("second send should not error: %v", err)
+	}
+
+	// Verify inbox is still empty (suppressed)
+	msgs, _ := Peek(session, "deploy")
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages after task dedup, got %d", len(msgs))
+	}
+}
+
+func TestSendMessage_AllowsResponsesDespiteInFlightTask(t *testing.T) {
+	dir := t.TempDir()
+	old := busDirOverride
+	busDirOverride = dir
+	defer func() { busDirOverride = old }()
+
+	session := "test-response-pass"
+	Init(session, dir)
+
+	// Create an in-flight task
+	m1 := NewMessage("edit", "deploy", "request", "deploy", "Run cdk deploy", "")
+	CreateTask(session, m1, 600)
+
+	// Response messages should NOT be suppressed
+	m2 := NewMessage("deploy", "edit", "response", "deploy", "Deploy complete", "")
+	err := Send(session, m2)
+	if err != nil {
+		t.Fatalf("response send failed: %v", err)
+	}
+
+	msgs, _ := Peek(session, "edit")
+	if len(msgs) != 1 {
+		t.Errorf("response should not be suppressed, got %d messages", len(msgs))
+	}
+}
+
+func TestSendMessage_AllowsSystemActions(t *testing.T) {
+	dir := t.TempDir()
+	old := busDirOverride
+	busDirOverride = dir
+	defer func() { busDirOverride = old }()
+
+	session := "test-system-pass"
+	Init(session, dir)
+
+	// Write a system action to inbox
+	m1 := NewMessage("daemon", "edit", "request", "compact-recommended", "Context growing", "")
+	Send(session, m1)
+
+	// Same system action should NOT be suppressed
+	m2 := NewMessage("daemon", "edit", "request", "compact-recommended", "Context growing more", "")
+	Send(session, m2)
+
+	msgs, _ := Peek(session, "edit")
+	if len(msgs) != 2 {
+		t.Errorf("system actions should not be deduped, got %d messages (want 2)", len(msgs))
+	}
+}

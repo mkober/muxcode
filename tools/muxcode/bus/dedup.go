@@ -157,3 +157,58 @@ func SendIfNotDuplicate(session string, m Message) (bool, error) {
 func SendNoCCIfNotDuplicate(session string, m Message) (bool, error) {
 	return sendIfNotDuplicate(session, m, SendNoCC)
 }
+
+// HasPendingInboxRequest checks if the target's inbox already contains a
+// request message with the same (from, action, payload) tuple. Prevents
+// stacking duplicate requests when the agent hasn't consumed the inbox yet.
+// The payload check ensures that legitimately different requests with the
+// same action (e.g. sequential builds with different context) are not
+// suppressed — only true duplicates (exact same payload) are caught.
+// Only checks request-type messages — responses and events are never deduped.
+func HasPendingInboxRequest(session, to, from, action, payload string) bool {
+	// Resolve hosted roles to their host inbox
+	inboxRole := WindowForRole(to)
+	msgs, err := Peek(session, inboxRole)
+	if err != nil || len(msgs) == 0 {
+		return false
+	}
+	for _, m := range msgs {
+		if m.Type == "request" && m.From == from && m.Action == action && m.Payload == payload {
+			return true
+		}
+	}
+	return false
+}
+
+// HasInFlightTaskForRole checks if there is an in-flight task targeting
+// the given role and action. This indicates the agent has already consumed
+// the message and is actively working on it — sending another identical
+// request would create a duplicate prompt injection (especially for
+// non-hook providers like OpenCode where messages are injected via send-keys).
+func HasInFlightTaskForRole(session, to, action string) bool {
+	tasks, err := ListTasks(session, TaskInFlight)
+	if err != nil || len(tasks) == 0 {
+		return false
+	}
+	for _, t := range tasks {
+		if t.To == to && t.Action == action {
+			return true
+		}
+	}
+	return false
+}
+
+// FindInFlightTask returns the first in-flight task matching (to, action),
+// or an empty task and false if none found. Used by --wait reattachment.
+func FindInFlightTask(session, to, action string) (Task, bool) {
+	tasks, err := ListTasks(session, TaskInFlight)
+	if err != nil || len(tasks) == 0 {
+		return Task{}, false
+	}
+	for _, t := range tasks {
+		if t.To == to && t.Action == action {
+			return t, true
+		}
+	}
+	return Task{}, false
+}

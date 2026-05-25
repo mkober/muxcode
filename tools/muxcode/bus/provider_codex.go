@@ -167,6 +167,19 @@ func (p *CodexProvider) AcceptStartup(session, pane string, state PaneState) boo
 func (p *CodexProvider) SendWakeUp(session, role string) error {
 	target := PaneTarget(session, role)
 
+	// Guard: skip injection if the agent already has an in-flight task.
+	// The message was already consumed and injected on a prior wake-up.
+	// Re-injecting would create duplicate prompts, wasting tokens and
+	// confusing the agent.
+	tasks, _ := ListTasks(session, TaskInFlight)
+	for _, t := range tasks {
+		if t.To == role && time.Now().Unix()-t.SentAt > 5 {
+			fmt.Fprintf(os.Stderr, "  [wakeup] skipping %s injection — in-flight task %s:%s exists (%ds old)\n",
+				role, t.Action, t.ID[:8], time.Now().Unix()-t.SentAt)
+			return nil
+		}
+	}
+
 	// Read pending messages to build the prompt text (non-destructive peek)
 	msgs, err := Peek(session, role)
 	if err != nil || len(msgs) == 0 {
