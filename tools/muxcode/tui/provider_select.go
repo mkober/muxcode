@@ -44,7 +44,6 @@ type ProviderSelectUI struct {
 
 	// Options
 	compact bool
-	persist bool
 
 	// Button focus (0=Reload, 1=Cancel)
 	buttonFocus int
@@ -157,8 +156,8 @@ func (ui *ProviderSelectUI) isSelectable(i int) bool {
 }
 
 // Run starts the interactive TUI loop. Returns the selected CLI, model,
-// compact, persist flags, and selected agent roles — or empty if cancelled.
-func (ui *ProviderSelectUI) Run() (cli, model string, compact, persist bool, roles []string, cancelled bool) {
+// compact flag, and selected agent roles — or empty if cancelled.
+func (ui *ProviderSelectUI) Run() (cli, model string, compact bool, roles []string, cancelled bool) {
 	rawCmd := exec.Command("stty", "-icanon", "-echo", "min", "1")
 	rawCmd.Stdin = os.Stdin
 	rawErr := rawCmd.Run()
@@ -189,7 +188,7 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact, persist bool, rol
 		// Wait for key input or progress update
 		select {
 		case <-sigCh:
-			return "", "", false, false, nil, true
+			return "", "", false, nil, true
 		case <-ui.progressCh:
 			// Progress update — just redraw (loop continues to top)
 			continue
@@ -207,7 +206,7 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact, persist bool, rol
 					} else {
 						model = p.Default
 					}
-					return cli, model, ui.compact, ui.persist, roles, false
+					return cli, model, ui.compact, roles, false
 				}
 				continue
 			}
@@ -215,7 +214,7 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact, persist bool, rol
 			action := ui.handleKey(key)
 			switch action {
 			case "cancel":
-				return "", "", false, false, nil, true
+				return "", "", false, nil, true
 			case "confirm":
 				p := &ui.providers[ui.selectedCLI]
 				cli = p.CLI
@@ -234,7 +233,7 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact, persist bool, rol
 					continue
 				}
 
-				return cli, model, ui.compact, ui.persist, roles, false
+				return cli, model, ui.compact, roles, false
 			}
 		}
 	}
@@ -243,6 +242,12 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact, persist bool, rol
 // startBatchReload kicks off the background batch reload and switches to progress view.
 func (ui *ProviderSelectUI) startBatchReload(cli, model string) {
 	roles := ui.selectedAgentRoles()
+
+	// Persist provider/model choices to muxcode config before reloading.
+	// This makes the selection permanent for this subsession — agents will
+	// use these settings on any subsequent reload or restart.
+	persistToConfig(roles, cli, model)
+
 	ui.progressTotal = len(roles)
 	ui.progressResults = nil
 	ui.progressDone = false
@@ -448,7 +453,7 @@ func (ui *ProviderSelectUI) moveUp() {
 		}
 	case sectionButtons:
 		ui.section = sectionOptions
-		ui.cursorRow = 1 // last option
+		ui.cursorRow = 0 // single option
 	}
 }
 
@@ -484,12 +489,9 @@ func (ui *ProviderSelectUI) moveDown() {
 			ui.cursorRow = 0
 		}
 	case sectionOptions:
-		if ui.cursorRow < 1 { // 2 options: compact, persist
-			ui.cursorRow++
-		} else {
-			ui.section = sectionButtons
-			ui.buttonFocus = 0
-		}
+		// Single option (compact) — move straight to buttons
+		ui.section = sectionButtons
+		ui.buttonFocus = 0
 	case sectionButtons:
 		if ui.buttonFocus < 1 {
 			ui.buttonFocus++
@@ -523,11 +525,7 @@ func (ui *ProviderSelectUI) selectCurrent() {
 			ui.agentChecks[ui.cursorRow] = !ui.agentChecks[ui.cursorRow]
 		}
 	case sectionOptions:
-		if ui.cursorRow == 0 {
-			ui.compact = !ui.compact
-		} else {
-			ui.persist = !ui.persist
-		}
+		ui.compact = !ui.compact
 	}
 }
 
@@ -763,23 +761,16 @@ func (ui *ProviderSelectUI) render() string {
 	b.WriteString(ui.sectionHeader("Options", active))
 	b.WriteString("\n")
 
-	options := []struct {
-		label   string
-		checked bool
-	}{
-		{"Compact before reload", ui.compact},
-		{"Persist to config", ui.persist},
-	}
-	for i, opt := range options {
+	{
 		cursor := "  "
-		if active && ui.cursorRow == i {
+		if active && ui.cursorRow == 0 {
 			cursor = Purple + "> " + RST
 		}
 		check := "[ ]"
-		if opt.checked {
+		if ui.compact {
 			check = Green + "[x]" + RST
 		}
-		b.WriteString(fmt.Sprintf("  %s %s %s\n", cursor, check, opt.label))
+		b.WriteString(fmt.Sprintf("  %s %s Compact before reload\n", cursor, check))
 	}
 	b.WriteString("\n")
 
@@ -955,24 +946,15 @@ func (ui *ProviderSelectUI) cleanup(restoreStty bool) {
 
 // ExecuteReload runs agent reload(s) directly as a subprocess so output
 // is visible in the popup.
-func ExecuteReload(session, role, cli, model string, compact, persist bool, roles []string) error {
-	if persist {
-		// Write to persistent config file for each selected role
-		targetRoles := roles
-		if len(targetRoles) == 0 {
-			targetRoles = []string{role}
-		}
-		for _, r := range targetRoles {
-			cliKey := bus.RoleCLIEnvVar(r)
-			modelKey := bus.RoleModelEnvVar(r)
-			if cli != "" {
-				_ = bus.SetShellConfigValue(cliKey, cli)
-			}
-			if model != "" {
-				_ = bus.SetShellConfigValue(modelKey, model)
-			}
-		}
+func ExecuteReload(session, role, cli, model string, compact bool, roles []string) error {
+	// Persist provider/model choices to muxcode config. This makes the
+	// selection permanent for this subsession — agents will use these
+	// settings on any subsequent reload or restart.
+	targetRoles := roles
+	if len(targetRoles) == 0 {
+		targetRoles = []string{role}
 	}
+	persistToConfig(targetRoles, cli, model)
 
 	// For multi-agent, roles were already handled by the TUI progress view
 	// This path is only for single-agent reload
@@ -1005,4 +987,17 @@ func ExecuteReload(session, role, cli, model string, compact, persist bool, role
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// persistToConfig writes provider/model choices to the muxcode config file
+// for each role. This makes the selection permanent for this subsession.
+func persistToConfig(roles []string, cli, model string) {
+	for _, r := range roles {
+		if cli != "" {
+			_ = bus.SetShellConfigValue(bus.RoleCLIEnvVar(r), cli)
+		}
+		if model != "" {
+			_ = bus.SetShellConfigValue(bus.RoleModelEnvVar(r), model)
+		}
+	}
 }

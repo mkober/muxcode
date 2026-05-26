@@ -63,7 +63,7 @@ func ProviderSelect(args []string) {
 	}
 
 	ui := tui.NewProviderSelectUI(session, role, window)
-	cli, model, compact, persist, roles, cancelled := ui.Run()
+	cli, model, compact, roles, cancelled := ui.Run()
 
 	if cancelled {
 		return
@@ -72,7 +72,7 @@ func ProviderSelect(args []string) {
 	// Multi-agent reloads are handled by the TUI progress view — nothing to do here.
 	// Single-agent reloads still use ExecuteReload for subprocess output visibility.
 	if len(roles) <= 1 {
-		if err := tui.ExecuteReload(session, role, cli, model, compact, persist, roles); err != nil {
+		if err := tui.ExecuteReload(session, role, cli, model, compact, roles); err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing reload trigger: %v\n", err)
 			os.Exit(1)
 		}
