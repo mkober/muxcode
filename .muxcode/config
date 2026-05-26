@@ -1,0 +1,29 @@
+# muxcode project-local configuration
+# Overrides global ~/.config/muxcode/config for this project.
+
+# Edit agent: Claude Code
+MUXCODE_EDIT_CLI=claude
+
+# Review agent: OpenCode with DeepSeek V4 Pro
+MUXCODE_REVIEW_CLI=opencode
+MUXCODE_REVIEW_MODEL=opencode-go/deepseek-v4-pro
+
+# Serve agent: OpenCode with MiniMax M2.5
+MUXCODE_SERVE_CLI=opencode
+MUXCODE_SERVE_MODEL=opencode-go/minimax-m2.5
+
+MUXCODE_DEPLOY_CLI=claude
+
+MUXCODE_DEPLOY_MODEL=claude-sonnet-4-6
+
+MUXCODE_RUN_CLI=claude
+
+MUXCODE_RUN_MODEL=claude-sonnet-4-6
+
+MUXCODE_WATCH_CLI=claude
+
+MUXCODE_WATCH_MODEL=claude-sonnet-4-6
+
+MUXCODE_COMMIT_CLI=claude
+
+MUXCODE_COMMIT_MODEL=claude-sonnet-4-6
