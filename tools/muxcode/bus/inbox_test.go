@@ -106,17 +106,22 @@ func TestPeek_DoesNotConsume(t *testing.T) {
 func TestSendMultiple_OrderPreserved(t *testing.T) {
 	session := testSession(t)
 
+	// Collect messages across multiple send-receive cycles.
+	// Each Receive clears the inbox so HasPendingInboxRequest returns false
+	// (allowing the next send to bypass the inbox dedup check).
+	var msgs []Message
 	for i := 0; i < 3; i++ {
 		msg := NewMessage("edit", "build", "request", "compile", fmt.Sprintf("msg-%d", i), "")
 		if err := Send(session, msg); err != nil {
 			t.Fatalf("Send %d: %v", i, err)
 		}
+		received, err := Receive(session, "build")
+		if err != nil {
+			t.Fatalf("Receive %d: %v", i, err)
+		}
+		msgs = append(msgs, received...)
 	}
 
-	msgs, err := Receive(session, "build")
-	if err != nil {
-		t.Fatalf("Receive: %v", err)
-	}
 	if len(msgs) != 3 {
 		t.Fatalf("got %d messages, want 3", len(msgs))
 	}
@@ -220,14 +225,32 @@ func TestInboxCount(t *testing.T) {
 		t.Errorf("initial count = %d, want 0", got)
 	}
 
+	// Use unique actions to avoid inbox dedup suppression between sends.
+	// Each Receive clears the inbox so the next send is not suppressed.
+	actions := []string{"compile", "build", "link"}
+	var msgs []Message
 	for i := 0; i < 3; i++ {
-		msg := NewMessage("edit", "build", "request", "compile", fmt.Sprintf("msg-%d", i), "")
+		msg := NewMessage("edit", "build", "request", actions[i], fmt.Sprintf("msg-%d", i), "")
 		if err := Send(session, msg); err != nil {
 			t.Fatalf("Send %d: %v", i, err)
 		}
+		received, err := Receive(session, "build")
+		if err != nil {
+			t.Fatalf("Receive %d: %v", i, err)
+		}
+		msgs = append(msgs, received...)
 	}
 
-	if got := InboxCount(session, "build"); got != 3 {
-		t.Errorf("count after 3 sends = %d, want 3", got)
+	if got := InboxCount(session, "build"); got != 0 {
+		t.Errorf("count after full consume = %d, want 0", got)
+	}
+	if len(msgs) != 3 {
+		t.Errorf("got %d received messages, want 3", len(msgs))
+	}
+	for i, m := range msgs {
+		want := fmt.Sprintf("msg-%d", i)
+		if m.Payload != want {
+			t.Errorf("message %d: payload=%q, want %q", i, m.Payload, want)
+		}
 	}
 }

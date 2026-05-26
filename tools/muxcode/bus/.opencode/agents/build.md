@@ -301,6 +301,28 @@ Manage requirements specs through their lifecycle: backlog -> drafts -> complete
 
 Never use plain bullet points (`-`) for trackable tasks. When creating new specs or editing existing ones, convert plain bullets to checkboxes if they represent actionable work. This enables progress tracking — agents and humans can see at a glance what's done vs pending.
 
+### Integration test phase required
+
+**Every requirements doc MUST include a dedicated integration test phase** as the final (or near-final) implementation phase. This phase must contain either:
+
+1. **Specific automatable test steps** written as checkboxes that describe verifiable behavior:
+   ```markdown
+   ### Phase N: Integration test
+   - [ ] Reload build+test agents with --cli opencode → verify config changed
+   - [ ] Run --provider filter → verify only matching agents reloaded
+   - [ ] Restore original config → verify agents back on original CLI
+   ```
+
+2. **A step to create a test automation script** (`scripts/test-{feature}.sh`):
+   ```markdown
+   ### Phase N: Integration test
+   - [ ] Create `scripts/test-{feature}.sh` with end-to-end verification
+   - [ ] Script tests: prerequisite checks, happy path, error handling, cleanup
+   - [ ] Run script and verify all checks pass
+   ```
+
+The integration test phase validates end-to-end behavior — not just unit tests. It should exercise the feature as a user would, across component boundaries.
+
 ### Move a spec between directories
 
 Move specs to reflect their current state:
@@ -452,9 +474,10 @@ This ensures that if the agent is interrupted or restarted, it can read the doc,
 
 1. Write a requirements doc at `docs/requirements/drafts/{KEY}-{slug}.md`
 2. Include: Jira context, acceptance criteria, technical approach, key files, implementation phases
-3. Stage, commit, and push via commit agent: `muxcode send commit commit "Stage and commit the requirements doc, push to remote" --force --wait`
-4. Create a PR for requirements review: `muxcode send commit commit "Create PR titled 'Requirements: {KEY} {summary}'" --force --wait`
-5. Comment on Jira with the PR link: `muxcode atlassian jira comment {KEY} "Requirements PR: {url}"`
+3. **The final implementation phase MUST be an integration test phase** — include either specific automatable test steps as checkboxes (e.g. `- [ ] Reload agents → verify config changed`) or a step to create a `scripts/test-{feature}.sh` automation script. The test phase validates end-to-end behavior.
+4. Stage, commit, and push via commit agent: `muxcode send commit commit "Stage and commit the requirements doc, push to remote" --force --wait`
+5. Create a PR for requirements review: `muxcode send commit commit "Create PR titled 'Requirements: {KEY} {summary}'" --force --wait`
+6. Comment on Jira with the PR link: `muxcode atlassian jira comment {KEY} "Requirements PR: {url}"`
 
 ### Phase 4: Requirements review
 
@@ -554,6 +577,12 @@ Always use `--force --wait` on commit/push/PR delegations. Use `--wait` on all o
 ### Phase 1: {description}
 - [ ] Step 1
 - [ ] Step 2
+
+### Phase N: Integration test
+- [ ] Create `scripts/test-{feature}.sh` automation script
+- [ ] Test step 1: {describe specific verifiable behavior}
+- [ ] Test step 2: {describe specific verifiable behavior}
+- [ ] Run integration test and verify all steps pass
 
 ## Status
 

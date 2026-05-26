@@ -625,6 +625,65 @@ muxcode lifecycle show muxcode --event session-start --all
 
 Core code: `bus/lifecycle.go`, `cmd/lifecycle.go`
 
+## Remote session investigation
+
+The `muxcode remote` subcommand provides cross-session visibility — inspecting other muxcode sessions running on the same machine without affecting them. This is useful when debugging agent issues across multiple projects, comparing session states, or diagnosing problems in a session from outside it.
+
+### Session discovery
+
+Sessions are discovered by scanning `/tmp/muxcode-bus-*` directories. Each bus directory corresponds to a session, with liveness determined by `tmux has-session`. The `DiscoverSessions()` function returns all sessions with metadata: name, bus directory, tmux liveness, agent count (inbox files), log size, and project directory (from tmux `#{session_path}`).
+
+Session names support **prefix matching** — `muxcode remote status mux` resolves to `muxcode` if it's the only session starting with that prefix. Ambiguous prefixes produce an error listing all matches.
+
+### Data reuse
+
+Remote investigation reuses existing bus functions with an arbitrary session name rather than the current session:
+
+| Function | Local equivalent | Remote usage |
+|----------|-----------------|--------------|
+| `GetAllAgentStatus()` | `muxcode status` | Agent table with provider, state, health, inbox count |
+| `GetRemoteInbox()` / `Peek()` | `muxcode inbox --peek` | Read inbox messages without consuming them |
+| `ReadLogHistory()` | `muxcode log` | Message history for a specific role |
+| `CollectEvidence()` / `RunDiagnostics()` | `muxcode diagnose` | Full diagnostic report with pattern matching |
+| `RemoteAgentCapture()` | `tmux capture-pane` | Live pane content from a remote agent |
+
+All reads are non-destructive — remote investigation never modifies the target session's bus state.
+
+### Capabilities
+
+```
+muxcode remote list                           # discover all sessions on this machine
+muxcode remote status <session>               # agent overview: provider, state, health, inbox
+muxcode remote capture <session> <role> [N]   # tmux pane capture (requires live session)
+muxcode remote inbox <session> [role]         # peek at agent inboxes
+muxcode remote log <session> <role> [N]       # message history
+muxcode remote diagnose <session> <role>      # full diagnostic report
+muxcode remote diagnose <session> --all       # diagnose all agents
+```
+
+### Interactive TUI mode
+
+Running `muxcode remote` with no arguments (or pressing `r` from the dashboard) launches an interactive session browser TUI. The TUI has three views:
+
+1. **Session list** — all discovered sessions with status, agent count, log size, and project directory. Current session marked with `*`. Auto-refreshes every 10 seconds.
+2. **Session detail** — agent table for the selected session showing role, provider, state, health, inbox count, and last activity. Hotkeys for per-agent actions (capture, inbox, diagnose) and session-wide actions (all inboxes, diagnose all).
+3. **Content view** — scrollable display for capture output, inbox messages, or diagnostic reports. Supports `↑↓`/`j`/`k` scrolling.
+
+| Key | View | Action |
+|-----|------|--------|
+| `↑↓` / `j` `k` | All | Navigate list or scroll content |
+| `Enter` | Session list | Open session detail |
+| `Enter` / `c` | Session detail | Capture selected agent's pane |
+| `i` | Session detail | Show selected agent's inbox |
+| `d` | Session detail | Run diagnostics on selected agent |
+| `I` | Session detail | Show all inboxes in session |
+| `D` | Session detail | Diagnose all agents in session |
+| `r` | List / Detail | Refresh data |
+| `q` / `Esc` | Content / Detail | Go back one level |
+| `q` | Session list | Quit TUI |
+
+Core code: `bus/remote.go`, `cmd/remote.go`, `tui/remote.go`.
+
 ## See also
 
 - [Agent Bus](agent-bus.md) — CLI reference for `muxcode`

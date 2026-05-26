@@ -104,6 +104,8 @@ func TestResolveProvider_SessionDefault(t *testing.T) {
 }
 
 func TestResolveProvider_PerRoleOverridesSession(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "opencode")
 	t.Setenv("MUXCODE_BUILD_CLI", "claude")
 
@@ -114,6 +116,8 @@ func TestResolveProvider_PerRoleOverridesSession(t *testing.T) {
 }
 
 func TestResolveProvider_UnknownCLIDefaultsToClaude(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_AGENT_CLI", "my-custom-claude")
 	t.Setenv("MUXCODE_BUILD_CLI", "")
 

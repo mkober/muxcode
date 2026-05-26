@@ -178,12 +178,14 @@ Test: `cd tools/muxcode && go test ./...`
 | `bus/override.go` | `WriteRuntimeOverride()`, `ReadRuntimeOverrides()`, `LoadRuntimeOverrides()`, `ClearRuntimeOverrides()`, `RuntimeOverridePath()` — session-scoped runtime config overrides |
 | `bus/reload.go` | `ReloadAgent()`, `ReloadAll()`, `GracefulStop()`, `ReloadTarget()`, `ReloadMarkerPath()`, `IsReloading()`, `IsReloadMarkerStale()`, `CleanStaleReloadMarkers()` |
 | `bus/reload_batch.go` | `AgentReloadStatus`, `ActiveAgentStatuses()`, `ReloadableRoles()`, `ReloadResult`, `ReloadBatch()`, `AbbreviateModel()`, `FormatReloadResults()` |
+| `bus/remote.go` | `RemoteSession`, `DiscoverSessions()`, `FormatSessionList()`, `RemoteAgentCapture()`, `RemoteAgentIsIdle()`, `RemoteInboxSummary`, `GetRemoteInbox()`, `FormatRemoteInbox()`, `RemoteOverview()`, `TmuxListWindowNames()` — cross-session investigation |
 | `bus/provider_options.go` | `ProviderOption`, `AvailableProviders()`, `ProviderByIndex()`, `ProviderByCLI()`, `ResolveActiveAgentWindow()`, `WindowFKey()` — provider selector data layer |
 | `bus/config_file.go` | `GetShellConfig()`, `ResolveConfigPath()`, `SetShellConfigValue()` — shell-sourceable config file read/write |
 | `bus/watcher_health.go` | `KeepalivePath()`, `IsKeepaliveStale()`, `TouchKeepalive()` — daemon keepalive monitoring |
 | `cmd/` | Subcommand handlers (one per CLI command) |
 | `watcher/watcher.go` | Bus daemon: inbox polling, trigger debounce, cron/proc/spawn/loop/compaction/ollama checks |
-| `tui/` | Dashboard TUI (Dracula theme), Provider selector TUI (`provider_select.go`) |
+| `tui/` | Dashboard TUI (Dracula theme), Provider selector TUI (`provider_select.go`), Remote session browser TUI (`remote.go`) |
+| `tui/remote.go` | `RemoteUI`, `NewRemoteUI()`, `Run()` — interactive cross-session browser with session list, agent detail, and content views (capture/inbox/diagnose) |
 
 ### Go LLM harness (`tools/muxcode-llm-harness/`)
 

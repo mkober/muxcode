@@ -182,7 +182,7 @@ muxcode dashboard [--refresh N]
 - `--refresh N` — refresh interval in seconds (default: 5)
 - Dynamically reads windows from the tmux session
 
-Runs in the `status` window (F9). Press `q` to quit, `r` to refresh.
+Runs in the `status` window (F9). Hotkeys: `r` opens the Remote session browser TUI, `q` closes the dashboard.
 
 ### `muxcode cleanup`
 
@@ -1565,6 +1565,74 @@ muxcode provider-select [--role <role>]
 Launched via `muxcode modal open provider` (keybinding: `prefix + R`). Presents an interactive TUI with provider and model selection, plus an **Agents section** for multi-agent bulk reload. Select a target provider/model, then check which agents to switch. Shortcuts: `a` (select all, excludes edit/auto), `p` (select by current provider), `n` (deselect all). On confirm with >1 agent, transitions to a live progress view showing per-agent reload status. Single-agent selection preserves the existing workflow.
 
 Core code: `tui/provider_select.go`, `bus/provider_options.go`, `bus/reload_batch.go`, `cmd/provider_select.go`.
+
+### `muxcode remote`
+
+Cross-session investigation — inspect other muxcode sessions running on the same machine without affecting them.
+
+```bash
+muxcode remote                                  # Launch interactive session browser TUI
+muxcode remote list                             # List all muxcode sessions
+muxcode remote status <session>                 # Agent status overview
+muxcode remote capture <session> <role> [N]     # Capture last N lines from agent pane (default: 30)
+muxcode remote inbox <session> [role]           # Peek at agent inbox(es)
+muxcode remote log <session> <role> [N]         # Show last N messages for a role (default: 20)
+muxcode remote diagnose <session> <role>        # Run diagnostics on a remote agent
+muxcode remote diagnose <session> --all         # Diagnose all agents in a session
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| _(no args)_ | Launch the interactive session browser TUI. Three views: session list → session detail (agent table) → content view (capture/inbox/diagnose). Also accessible via `r` hotkey from the dashboard. Auto-refreshes every 10s. See keyboard shortcuts below. |
+| `list` (alias: `ls`) | Discover all sessions via `/tmp/muxcode-bus-*` dirs. Shows session name, tmux liveness, agent count, log size, and project directory. Current session marked with `*`. |
+| `status` | Combined agent table (role, provider, state, health, inbox count, last activity) plus pending inbox summaries. Reuses `GetAllAgentStatus()` with the remote session name. |
+| `capture` (alias: `cap`) | Captures the last N lines from a remote agent's tmux pane. Requires a live tmux session. Reports whether the agent is idle (shows `❯` prompt) or active. |
+| `inbox` | Peeks at inbox messages without consuming them. If role is omitted, shows all roles with non-empty inboxes. Each message shows ID, sender, type, action, age, and payload preview (truncated to 80 chars). |
+| `log` | Shows the last N messages from the bus log for a specific role. Reuses `ReadLogHistory()`. |
+| `diagnose` | Runs the full diagnostic pipeline (`CollectEvidence()` + `RunDiagnostics()`) against a remote agent. Same 10 failure mode patterns as local `muxcode diagnose`. Supports `--json` output and `--all` for a summary table of all agents. Exits non-zero on critical findings. |
+
+**Session name resolution**: supports prefix matching — `muxcode remote status mux` resolves to `muxcode` if it's the only session with that prefix. Ambiguous prefixes produce an error listing all matches. Exact matches are preferred over prefix matches.
+
+**Read-only**: all remote operations are non-destructive — they never modify the target session's bus state, inbox files, or agent processes.
+
+**TUI keyboard shortcuts** (interactive mode):
+
+| Key | View | Action |
+|-----|------|--------|
+| `↑↓` / `j` `k` | All | Navigate list or scroll content |
+| `Enter` | Session list | Open session detail |
+| `Enter` / `c` | Session detail | Capture selected agent's pane |
+| `i` | Session detail | Show selected agent's inbox |
+| `d` | Session detail | Run diagnostics on selected agent |
+| `I` | Session detail | Show all inboxes in session |
+| `D` | Session detail | Diagnose all agents in session |
+| `r` | List / Detail | Refresh data |
+| `q` / `Esc` | Content / Detail | Go back one level |
+| `q` | Session list | Quit TUI |
+
+Examples:
+
+```bash
+# List all sessions to find the one you want
+muxcode remote list
+
+# Get a full status overview of another project's session
+muxcode remote status is-admissions-gateway
+
+# Capture what the build agent is currently showing
+muxcode remote capture is-admissions-gateway build 50
+
+# Check if any agents have stuck inbox messages
+muxcode remote inbox is-admissions-gateway
+
+# Diagnose why the commit agent isn't responding in another session
+muxcode remote diagnose is-admissions commit
+
+# Diagnose all agents at once (prefix match: "is-admissions" → "is-admissions-gateway")
+muxcode remote diagnose is-admissions --all --json
+```
+
+Core code: `bus/remote.go`, `cmd/remote.go`, `tui/remote.go`.
 
 ## Environment Variables
 

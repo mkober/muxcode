@@ -148,9 +148,9 @@ func TestFormatStatusTable_SentArrow(t *testing.T) {
 func TestReadLogHistory(t *testing.T) {
 	session := testSession(t)
 
-	// Send 5 messages involving build
+	actions := []string{"compile", "build", "link", "test", "deploy"}
 	for i := 0; i < 5; i++ {
-		msg := NewMessage("edit", "build", "request", "compile", "msg", "")
+		msg := NewMessage("edit", "build", "request", actions[i], "msg", "")
 		if err := Send(session, msg); err != nil {
 			t.Fatalf("Send %d: %v", i, err)
 		}
@@ -171,8 +171,9 @@ func TestReadLogHistory(t *testing.T) {
 func TestReadLogHistory_Limit(t *testing.T) {
 	session := testSession(t)
 
+	actions := []string{"compile", "build", "link", "test", "deploy", "package", "install", "run", "clean", "watch"}
 	for i := 0; i < 10; i++ {
-		msg := NewMessage("edit", "build", "request", "compile", "msg", "")
+		msg := NewMessage("edit", "build", "request", actions[i], "msg", "")
 		if err := Send(session, msg); err != nil {
 			t.Fatalf("Send %d: %v", i, err)
 		}

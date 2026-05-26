@@ -666,6 +666,8 @@ func TestGetAutoCC_Custom(t *testing.T) {
 }
 
 func TestCheckSendPolicy_DenyByDefault(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 

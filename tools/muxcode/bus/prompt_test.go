@@ -48,6 +48,8 @@ func TestSharedPrompt_ContainsTargets(t *testing.T) {
 }
 
 func TestSharedPrompt_BuildHasSendRestrictions(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
@@ -65,6 +67,8 @@ func TestSharedPrompt_BuildHasSendRestrictions(t *testing.T) {
 }
 
 func TestSharedPrompt_TestHasSendRestrictions(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
@@ -234,6 +238,8 @@ func TestSharedPrompt_NonHookProvider_LocalAlsoHasManualBus(t *testing.T) {
 }
 
 func TestSharedPrompt_HookProvider_NoManualBusSection(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
