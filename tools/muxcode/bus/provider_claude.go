@@ -109,7 +109,17 @@ func (p *ClaudeCodeProvider) IsIdle(session, role string) bool {
 	if err != nil {
 		return false
 	}
-	lines := strings.Split(string(out), "\n")
+	content := string(out)
+
+	// Check for thinking/ideating state first — during Claude Code's extended
+	// thinking phase, the ❯ prompt is visible but the agent cannot accept input.
+	// Injecting send-keys during this state wastes context tokens and causes
+	// notification spam.
+	if isClaudeThinking(content) {
+		return false
+	}
+
+	lines := strings.Split(content, "\n")
 	// Scan all lines — the ❯ prompt may not be the last non-empty line
 	// due to Claude Code's decorative footer (borders, help text).
 	// Accept lines that are exactly ❯ OR start with "❯ " (prompt with
@@ -120,6 +130,24 @@ func (p *ClaudeCodeProvider) IsIdle(session, role string) bool {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == idlePromptChar || strings.HasPrefix(trimmed, idlePromptChar+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// isClaudeThinking returns true if the pane content indicates Claude Code is
+// in an extended thinking phase (Ideating, Thinking, Cogitating, Spelunking).
+// During these phases the ❯ prompt is visible but the agent cannot process
+// input — send-keys injections accumulate in the input buffer and cause
+// notification spam when the safety net clears notified IDs.
+func isClaudeThinking(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Claude Code thinking indicators: "✢ Ideating…", "✻ Cogitated for 20s",
+		// "✢ Thinking…", "✢ Spelunking…", "✢ Reasoning…"
+		// The ✢ (U+2722) and ✻ (U+273B) characters are Claude Code's thinking markers.
+		if strings.HasPrefix(trimmed, "✢ ") || strings.HasPrefix(trimmed, "✻ ") {
 			return true
 		}
 	}

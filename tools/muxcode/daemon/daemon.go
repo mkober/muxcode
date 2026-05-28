@@ -71,6 +71,10 @@ type Daemon struct {
 	// Non-hook edit file change detection
 	lastEditDiffCheck int64  // 10s debounce interval
 	lastEditDiffHash  string // last observed git diff --stat hash
+	// Tracked task completion (--track sends)
+	lastTrackedTaskCheck int64 // 5s interval
+	// Safety net retry cap — prevents notification storm when agent can't process
+	safetyNetRetries map[string]int // role -> consecutive safety-net clears
 }
 
 // New creates a new Daemon for the given session.
@@ -110,6 +114,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		lastHeartbeatCheck:    now,
 		heartbeatInterval:     bus.AgentHeartbeatInterval(),
 		lastDiskPressureCheck: now,
+		safetyNetRetries:      make(map[string]int),
 	}
 }
 
@@ -192,6 +197,7 @@ func (d *Daemon) Run() error {
 		d.checkAgentHealth()
 		d.checkIdleAgents()
 		d.checkNonHookTasks()
+		d.checkTrackedTasks()
 		d.checkNonHookEdits()
 		d.checkIdleTaskCompletion()
 		d.checkHeartbeat()
@@ -961,6 +967,10 @@ func (d *Daemon) checkIdleAgents() {
 		// notification storm (inject → echo → idle → clear → re-inject → ...).
 		isIdle := bus.IsAgentIdle(d.session, role)
 		wasIdle := d.lastIdleState[role]
+		// Reset safety-net retry counter when agent becomes active (processing messages)
+		if !isIdle && wasIdle {
+			d.safetyNetRetries[role] = 0
+		}
 		if isIdle && !wasIdle {
 			recentlyNotified := bus.IsNotifiedRecently(d.session, role, 10*time.Second)
 			if !recentlyNotified {
@@ -1013,9 +1023,15 @@ func (d *Daemon) checkIdleAgents() {
 			// Clear the notified IDs so the next cycle retries delivery.
 			// Without this, the agent stays stuck at ❯ until idle-task-rescue
 			// fires a synthetic response 30s later.
+			//
+			// Capped at 3 retries to prevent notification storms when the agent
+			// looks idle but can't process input (e.g. during Claude Code's
+			// Ideating/Thinking phase where ❯ is visible but the LLM is working).
 			if isIdle && bus.HasActionableMessages(d.session, role) &&
-				!bus.IsNotifiedRecently(d.session, role, 15*time.Second) {
+				!bus.IsNotifiedRecently(d.session, role, 15*time.Second) &&
+				d.safetyNetRetries[role] < 3 {
 				bus.ClearNotifiedIDs(d.session, role)
+				d.safetyNetRetries[role]++
 			}
 			continue
 		}
@@ -1122,6 +1138,95 @@ func (d *Daemon) checkIdleAgents() {
 		bus.LogLifecycle(d.session, "info", "daemon", "idle-wake", role)
 		_ = bus.SendWakeUpWithText(d.session, role, provider, text)
 	}
+}
+
+// checkTrackedTasks auto-completes in-flight tasks whose delivery status has
+// reached "responded". This handles --track sends where no --wait polling loop
+// is running to call CompleteTask. Also logs the response to console history
+// so left-pane views update for non-hook providers.
+//
+// Runs every 5 seconds. Skips tasks where --wait is active for the sender
+// (IsWaiting), since --wait handles its own completion.
+func (d *Daemon) checkTrackedTasks() {
+	now := time.Now().Unix()
+	if now-d.lastTrackedTaskCheck < 5 {
+		return
+	}
+	d.lastTrackedTaskCheck = now
+
+	tasks, err := bus.ListTasks(d.session, bus.TaskInFlight)
+	if err != nil || len(tasks) == 0 {
+		return
+	}
+
+	for _, task := range tasks {
+		// Skip if the sender has an active --wait (it handles its own completion)
+		if bus.IsWaiting(d.session, task.From) {
+			continue
+		}
+
+		// Check delivery status — if "responded", the target agent already
+		// sent a reply and MarkResponded fired. Complete the task.
+		ds, err := bus.ReadDeliveryStatus(d.session, task.ID)
+		if err != nil || ds.Status != bus.StatusResponded {
+			continue
+		}
+
+		bus.CompleteTask(d.session, task.ID, ds.ResponseID)
+
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Tracked task %s→%s:%s completed (response: %s)\n",
+			ts, task.From, task.To, task.Action, ds.ResponseID)
+
+		// Log to console history for the target role's left-pane view
+		if ds.ResponseID != "" {
+			if msg, ok := bus.FindMessageByID(d.session, ds.ResponseID); ok {
+				logTrackedTaskToHistory(d.session, task.To, task.Action, msg.Payload)
+			}
+		}
+	}
+}
+
+// logTrackedTaskToHistory writes a console history entry when a tracked task
+// completes. Mirrors the logic in cmd/send.go logWaitResponseToHistory.
+func logTrackedTaskToHistory(session, role, action, payload string) {
+	if role == "research" || payload == "" {
+		return
+	}
+
+	summary := action
+	if len(payload) > 200 {
+		if idx := strings.Index(payload, "\n"); idx > 0 && idx < 200 {
+			summary = payload[:idx]
+		} else {
+			summary = payload[:200] + "..."
+		}
+	} else {
+		summary = payload
+	}
+
+	exitCode := "0"
+	if action == "error" || strings.Contains(strings.ToLower(payload), "failed") ||
+		strings.Contains(strings.ToLower(payload), "error:") {
+		exitCode = "1"
+	}
+
+	outcome := "success"
+	if exitCode != "0" {
+		outcome = "failure"
+	}
+
+	entry := bus.HookHistoryEntry{
+		TS:       time.Now().Unix(),
+		Command:  action,
+		ExitCode: exitCode,
+		Outcome:  outcome,
+		Output:   payload,
+		Summary:  summary,
+	}
+
+	historyPath := bus.HistoryPath(session, role)
+	_ = bus.WriteHookHistory(historyPath, entry, 100)
 }
 
 // checkNonHookTasks monitors in-flight tasks targeting non-hook providers

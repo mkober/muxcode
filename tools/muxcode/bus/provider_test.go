@@ -312,6 +312,43 @@ func TestResolveProvider_HookGating(t *testing.T) {
 	}
 }
 
+// --- Claude thinking detection ---
+
+func TestIsClaudeThinking_Ideating(t *testing.T) {
+	content := "  ⏺ Running 1 shell command…\n  ⎿  $ cdk deploy --all\n\n✢ Ideating… (11m 18s · ↓ 634 tokens)\n\n❯ "
+	if !isClaudeThinking(content) {
+		t.Error("should detect ✢ Ideating… as thinking state")
+	}
+}
+
+func TestIsClaudeThinking_Cogitated(t *testing.T) {
+	content := "✻ Cogitated for 20s\n\n❯ "
+	if !isClaudeThinking(content) {
+		t.Error("should detect ✻ Cogitated as thinking state")
+	}
+}
+
+func TestIsClaudeThinking_Spelunking(t *testing.T) {
+	content := "✢ Spelunking… (3m 42s · ↓ 200 tokens)\n\n❯ "
+	if !isClaudeThinking(content) {
+		t.Error("should detect ✢ Spelunking… as thinking state")
+	}
+}
+
+func TestIsClaudeThinking_IdlePromptOnly(t *testing.T) {
+	content := "  some output\n\n❯ "
+	if isClaudeThinking(content) {
+		t.Error("should not detect thinking when only idle prompt is present")
+	}
+}
+
+func TestIsClaudeThinking_ToolExecution(t *testing.T) {
+	content := "  ⏺ Running 1 shell command…\n  ⎿  $ ./build.sh\n     Build succeeded\n\n❯ "
+	if isClaudeThinking(content) {
+		t.Error("should not detect thinking during normal tool execution")
+	}
+}
+
 func TestIsAgentIdle_OpenCode_AlwaysFalse(t *testing.T) {
 	// OpenCode TUI has no reliable idle detection — IsIdle always returns false.
 	// This ensures checkIdleAgents() never tries to wake OpenCode agents via send-keys.

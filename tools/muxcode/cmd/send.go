@@ -11,10 +11,10 @@ import (
 )
 
 // Send handles the "muxcode send" subcommand.
-// Usage: muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait]
+// Usage: muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait] [--track]
 func Send(args []string) {
 	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode send <to> <action> \"<payload>\" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode send <to> <action> \"<payload>\" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait] [--track]\n")
 		os.Exit(1)
 	}
 
@@ -28,6 +28,7 @@ func Send(args []string) {
 	noNotify := false
 	force := false
 	wait := false
+	track := false
 	payloadSet := false
 
 	remaining := args[2:]
@@ -53,6 +54,8 @@ func Send(args []string) {
 			force = true
 		case "--wait":
 			wait = true
+		case "--track":
+			track = true
 		default:
 			if strings.HasPrefix(remaining[i], "--") {
 				fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", remaining[i])
@@ -67,6 +70,12 @@ func Send(args []string) {
 				os.Exit(1)
 			}
 		}
+	}
+
+	// --wait and --track are mutually exclusive
+	if wait && track {
+		fmt.Fprintf(os.Stderr, "Error: --wait and --track are mutually exclusive\n")
+		os.Exit(1)
 	}
 
 	if !payloadSet {
@@ -118,6 +127,14 @@ func Send(args []string) {
 	// tool timeout and the agent retries the same request. Without this, the
 	// duplicate message gets injected into the agent's TUI, wasting tokens.
 	// Skip for --force (explicit override) and non-request messages.
+	// For --track, just report the existing task and return (no polling).
+	if msgType == "request" && !force && track {
+		if existing, found := bus.FindInFlightTask(session, to, action); found {
+			fmt.Printf("In-flight task for %s:%s already exists (sent %ds ago) — already tracking\n",
+				to, action, time.Now().Unix()-existing.SentAt)
+			return
+		}
+	}
 	if msgType == "request" && !force && wait {
 		if existing, found := bus.FindInFlightTask(session, to, action); found {
 			fmt.Printf("In-flight task for %s:%s already exists (sent %ds ago) — reattaching --wait\n",
@@ -173,6 +190,17 @@ func Send(args []string) {
 	}
 
 	fmt.Printf("Sent %s:%s to %s\n", msgType, action, to)
+
+	// --track: create a task for tracking but return immediately without blocking.
+	// The daemon's checkTrackedTasks() auto-completes the task when the response
+	// arrives, and checkInboxes() wakes the sender when the response hits their
+	// inbox. This lets the sender continue working on other tasks.
+	if track {
+		waitTimeout := resolveWaitTimeout()
+		_ = bus.CreateTask(session, msg, waitTimeout)
+		fmt.Printf("Tracking task %s — response will arrive in inbox\n", msg.ID)
+		return
+	}
 
 	// --wait: poll own inbox until a response from the target arrives or timeout.
 	// Set a waiting marker so Notify() skips send-keys for our role — the

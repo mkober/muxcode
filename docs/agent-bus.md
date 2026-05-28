@@ -34,7 +34,7 @@ Creates the ephemeral bus directory at `/tmp/muxcode-bus-{SESSION}/` with `inbox
 Send a message to another agent's inbox.
 
 ```bash
-muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait]
+muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait] [--track]
 ```
 
 - `<to>` — target agent role (edit, build, test, review, deploy, run, commit, analyze, api, watch)
@@ -44,7 +44,8 @@ muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notif
 - `--reply-to ID` — ID of the message being replied to
 - `--no-notify` — skip tmux notification to the target agent
 - `--force` — bypass pre-commit safeguard (only relevant when sending commit actions to the commit agent)
-- `--wait` — after sending, poll the sender's inbox every 2s until a response arrives or timeout. Timeout controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default 600s). The response is printed to stdout inline.
+- `--wait` — after sending, poll the sender's inbox every 500ms until a response arrives or timeout. Timeout controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default 600s). The response is printed to stdout inline.
+- `--track` — after sending, create a tracked task and return immediately. The daemon auto-completes the task when the response arrives and wakes the sender via inbox notification. Use for long-running or fire-and-forget operations. Mutually exclusive with `--wait`.
 
 **Pre-commit safeguard:** When sending a commit action (`commit`, `stage`, `push`, `merge`, `rebase`, `tag`) to the commit agent, the bus checks that all other agents (excluding edit, commit, watch) have empty inboxes, are not busy, and have no running background processes. If any agent has pending work, the send is blocked with an error. Use `--force` to bypass.
 
@@ -52,14 +53,20 @@ muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notif
 
 Auto-detects sender from `AGENT_ROLE` env var or tmux window name.
 
-**Example:**
+**Examples:**
 ```
+# Blocking — wait for response inline
 $ muxcode send build build "Run ./build.sh and report results" --wait
 Sent request:build to build
 
 --- Message from build at 14:32:05 ---
 Type: response  Action: build
 Content: Build succeeded. 0 errors, 0 warnings.
+
+# Non-blocking — track and continue working
+$ muxcode send deploy deploy "Deploy to dev01" --track
+Sent request:deploy to deploy
+Tracking task 1779979541-edit-d2c7d769 — response will arrive in inbox
 ```
 
 ### `muxcode inbox`

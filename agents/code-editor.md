@@ -88,9 +88,22 @@ When you need **raw PR data** without analysis (e.g. to check if a PR exists, ge
 muxcode send commit pr-read "Read the PR on the current branch and report raw data: CI check status, review comments, and inline comments" --wait
 ```
 
-### All delegation commands — ALWAYS use `--wait`
+### Delegation modes — `--wait` vs `--track`
 
-**Every `send` command MUST include `--wait`** so the response is returned inline. Never use `sleep`, manual `inbox` polling, or `capture-pane` as a substitute for `--wait`.
+Two modes for delegated sends:
+
+| Flag | Behavior | Use when |
+|------|----------|----------|
+| `--wait` | Blocks until response arrives (polls inline) | You need the result before proceeding — e.g., build before test, PR data before review |
+| `--track` | Creates a tracked task, returns immediately | Long-running tasks where you can continue working — e.g., deploy, watch logs, dev server |
+
+**Default**: use `--wait` for most delegations. Use `--track` when the user wants to continue working while an agent runs in the background, or for inherently long-running operations (deploy, watch, serve).
+
+With `--track`, the daemon auto-completes the task when the response arrives and wakes you with "You have new messages". Check results via `muxcode inbox`.
+
+Never use `sleep`, manual `inbox` polling, or `capture-pane` as a substitute for `--wait` or `--track`.
+
+### Delegation command reference
 
 - **Review PR** (step 1 — fetch): `muxcode send commit pr-read "Read PR #N and report: CI status, review comments, inline comments with file:line, checks status" --wait`
 - **Review PR** (step 2 — analyze): `muxcode send review pr-review "Review this PR data and analyze for issues: <commit agent response>" --wait`
@@ -98,14 +111,15 @@ muxcode send commit pr-read "Read the PR on the current branch and report raw da
 - **Build**: `muxcode send build build "Run ./build.sh and report results" --wait`
 - **Test**: `muxcode send test test "Run tests and report results" --wait`
 - **Review** (local changes): `muxcode send review review "Review the latest changes on this branch" --wait`
-- **Deploy**: `muxcode send deploy deploy "Run deployment diff and report changes" --wait`
-- **AWS commands**: `muxcode send run run "Start the AppFlow flow and check S3 for output files --profile my-profile" --wait`
-- **Watch logs**: `muxcode send watch watch "Tail CloudWatch logs for /aws/lambda/my-function and report errors" --wait`
-- **Dev server**: `muxcode send serve serve "Start the Vite dev server and keep it running" --wait`
+- **Deploy**: `muxcode send deploy deploy "Run deployment diff and report changes" --wait` (or `--track` for long deploys)
+- **AWS commands**: `muxcode send run run "Start the AppFlow flow and check S3 for output files --profile my-profile" --wait` (or `--track`)
+- **Watch logs**: `muxcode send watch watch "Tail CloudWatch logs for /aws/lambda/my-function and report errors" --track`
+- **Dev server**: `muxcode send serve serve "Start the Vite dev server and keep it running" --track`
 - **Commit**: `muxcode send commit commit "Stage and commit the current changes" --force --wait`
 - **PR/Release**: `muxcode send commit commit "Create a PR for the current branch" --force --wait`
 - **Diagnose agent**: `muxcode diagnose <role>` (run directly — not delegated, identifies why an agent isn't responding)
 - **Diagnose all**: `muxcode diagnose --all` (summary table of all agent health)
+- **Check tracked tasks**: `muxcode tasks` (shows in-flight tracked tasks)
 
 **Note**: Always use `--force` as a CLI flag (not inside the message string) on commit/push/PR sends to bypass the pre-commit agent-idle check. Passive agents (analyze, watch) may have pending notifications that are safe to ignore.
 
@@ -114,6 +128,8 @@ muxcode send commit pr-read "Read the PR on the current branch and report raw da
 The `--wait` flag polls for up to 600 seconds, but the **Bash tool's default timeout is 120 seconds** (2 minutes). If a build or test takes longer than 2 minutes, the Bash tool kills the `--wait` process and the response is lost.
 
 **Always set `timeout: 300000`** (5 minutes) on Bash tool calls that use `--wait` for build, test, deploy, review, and commit delegations. Only short operations (inbox checks, memory reads) can use the default timeout.
+
+This timeout issue does not apply to `--track` — it returns immediately.
 
 ### Decision rule
 
