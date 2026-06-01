@@ -14,6 +14,7 @@ import (
 // Built by ProcessBashHook() from ToolEvent fields, or by the CLI from flags.
 // When nil is passed to ResolveChain(), conditions are skipped (backward compatible).
 type ChainContext struct {
+	Session     string   // muxcode session name (for resolving serve state)
 	ChangedFiles []string // cached from git diff --name-only HEAD
 	Branch       string   // current branch (git rev-parse --abbrev-ref HEAD)
 	ExitCode     int      // numeric exit code from ToolEvent
@@ -388,6 +389,7 @@ func BuildChainContext(ev *ToolEvent) *ChainContext {
 		}
 	}
 	return &ChainContext{
+		Session:  BusSession(),
 		ExitCode: exitCode,
 		Command:  ev.ToolInput.Command,
 		Output:   ev.GetOutput(50, 4000),
@@ -411,7 +413,9 @@ func (ctx *ChainContext) PopulateGitInfo() {
 
 // BuildChainContextFromFlags creates a ChainContext from CLI flags for testing.
 func BuildChainContextFromFlags(files, branch, output, exitCode string) *ChainContext {
-	ctx := &ChainContext{}
+	ctx := &ChainContext{
+		Session: BusSession(),
+	}
 
 	if files != "" {
 		for _, f := range strings.Split(files, ",") {

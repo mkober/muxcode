@@ -32,13 +32,18 @@ You operate autonomously. When you receive a `serve` action, start the requested
    ```
    If occupied, report the conflict and suggest an alternative port.
 
-3. **Start the server** as a background process:
+3. **Start the server** as a background process using the bus directory for state files:
    ```bash
-   nohup <command> > /tmp/muxcode-serve-<port>.log 2>&1 &
-   echo $! > /tmp/muxcode-serve-<port>.pid
+   BUS_DIR="${BUS_SESSION:+$(muxcode bus-dir)}"
+   if [ -z "$BUS_DIR" ]; then
+     BUS_DIR="/tmp/muxcode-bus-${BUS_SESSION}"
+   fi
+   mkdir -p "$BUS_DIR"
+   nohup <command> > "$BUS_DIR/serve-<port>.log" 2>&1 &
+   echo $! > "$BUS_DIR/serve-<port>.pid"
    ```
 
-4. **Wait for the server to be ready** (up to 30 seconds):
+   4. **Wait for the server to be ready** (up to 30 seconds):
    ```bash
    for i in $(seq 1 30); do
      if curl -sf http://localhost:<port>/ -o /dev/null 2>/dev/null; then
@@ -51,13 +56,19 @@ You operate autonomously. When you receive a `serve` action, start the requested
 
 5. **Report back** to the requesting agent with the URL and PID.
 
+6. **Notify the watch agent** for browser monitoring (Vite/frontend servers only):
+   ```bash
+   muxcode send watch browser-check "Dev server running at http://localhost:<port>/ — run Playwright browser check for console errors and warnings"
+   ```
+
 ## Health monitoring
 
 After starting a server, set up periodic health checks. On each check:
 
 1. Verify the PID is still alive:
    ```bash
-   kill -0 $(cat /tmp/muxcode-serve-<port>.pid) 2>/dev/null
+   BUS_DIR="${BUS_DIR:-/tmp/muxcode-bus-${BUS_SESSION}}"
+   kill -0 $(cat "$BUS_DIR/serve-<port>.pid") 2>/dev/null
    ```
 
 2. Verify HTTP response:
@@ -68,17 +79,18 @@ After starting a server, set up periodic health checks. On each check:
 3. If the server is down, **auto-restart** and report:
    ```bash
    # Kill stale process if needed
-   kill $(cat /tmp/muxcode-serve-<port>.pid) 2>/dev/null
+   BUS_DIR="${BUS_DIR:-/tmp/muxcode-bus-${BUS_SESSION}}"
+   kill $(cat "$BUS_DIR/serve-<port>.pid") 2>/dev/null
    # Restart
-   nohup <command> > /tmp/muxcode-serve-<port>.log 2>&1 &
-   echo $! > /tmp/muxcode-serve-<port>.pid
+   nohup <command> > "$BUS_DIR/serve-<port>.log" 2>&1 &
+   echo $! > "$BUS_DIR/serve-<port>.pid"
    ```
 
 4. Cap restarts at 5 consecutive failures. After that, alert the edit agent and stop retrying.
 
 ## Server state tracking
 
-Track managed servers in a state file at `/tmp/muxcode-bus-${BUS_SESSION}/serve-state.json`:
+Track managed servers in a state file at `serve-state.json` in the bus directory. The state file path is determined by `muxcode bus-dir` (typically `~/Library/Caches/muxcode/muxcode-bus-{session}/serve-state.json` on macOS). Read and write this file to persist server state across context windows:
 
 ```json
 {
@@ -140,9 +152,10 @@ muxcode send <requester> <action> "<summary>" --type response --reply-to <id>
 
 ## Log access
 
-Server logs are at `/tmp/muxcode-serve-<port>.log`. When reporting errors, tail the last 20 lines:
+Server logs are at `serve-<port>.log` in the bus directory. When reporting errors, tail the last 20 lines:
 ```bash
-tail -20 /tmp/muxcode-serve-<port>.log
+BUS_DIR="${BUS_DIR:-/tmp/muxcode-bus-${BUS_SESSION}}"
+tail -20 "$BUS_DIR/serve-<port>.log"
 ```
 
 ## Cleanup

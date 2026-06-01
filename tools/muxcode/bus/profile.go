@@ -449,7 +449,7 @@ func ExpandMessage(template, exitCode, command string) string {
 }
 
 // ExpandMessageWithContext substitutes all template variables including context-aware ones.
-// Supported: ${exit_code}, ${command}, ${branch}, ${changed_files}
+// Supported: ${exit_code}, ${command}, ${branch}, ${changed_files}, ${serve_url}
 func ExpandMessageWithContext(template, exitCode, command string, ctx *ChainContext) string {
 	s := ExpandMessage(template, exitCode, command)
 	if ctx != nil {
@@ -459,8 +459,26 @@ func ExpandMessageWithContext(template, exitCode, command string, ctx *ChainCont
 		}
 		s = strings.ReplaceAll(s, "${branch}", ctx.Branch)
 		s = strings.ReplaceAll(s, "${changed_files}", formatChangedFiles(ctx.ChangedFiles))
+		// Expand ${serve_url} from the current serve state (first running server)
+		if strings.Contains(s, "${serve_url}") {
+			serveUrl := resolveServeURL(ctx.Session)
+			s = strings.ReplaceAll(s, "${serve_url}", serveUrl)
+		}
 	}
 	return s
+}
+
+// resolveServeURL returns the URL of the first running dev server, or "(unknown)" if none.
+func resolveServeURL(session string) string {
+	state := ReadServeState(session)
+	if state == nil {
+		return "(unknown)"
+	}
+	running := state.RunningServers()
+	if len(running) == 0 {
+		return "(unknown)"
+	}
+	return running[0].URL
 }
 
 // formatChangedFiles returns a comma-separated list of files, truncated to 10.
@@ -746,6 +764,11 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(jq*)", "Bash(yq*)",
 					"Bash(python3*)", "Bash(node*)",
 					"Bash(zcat *)", "Bash(gunzip *)", "Bash(lnav *)",
+					// Browser monitoring (Playwright)
+					"Bash(npx playwright*)",
+					"Bash(curl*)",
+					"Read(/tmp/muxcode-bus-*/serve-state.json)",
+					"Read(/private/tmp/muxcode-bus-*/serve-state.json)",
 				},
 			},
 			"pr-read": {
@@ -926,6 +949,20 @@ func DefaultConfig() *MuxcodeConfig {
 			},
 			"review": {
 				NotifyPlanOn: []string{"success"},
+			},
+			"serve": {
+				OnSuccess: ChainActions{{
+					SendTo:  "watch",
+					Action:  "browser-check",
+					Message: "Dev server started (${command}) — read serve-state.json to find the URL, then run a Playwright browser check for console errors and warnings",
+					Type:    "request",
+				}},
+				OnFailure: ChainActions{{
+					SendTo:  "edit",
+					Action:  "notify",
+					Message: "Dev server FAILED (exit ${exit_code}): ${command} — check serve window",
+					Type:    "event",
+				}},
 			},
 		},
 		AutoCC: []string{"build", "test", "review", "deploy", "analyze"},

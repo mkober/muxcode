@@ -9,3 +9,4 @@ tools/muxcode-llm-harness/muxcode-llm-harness
 .muxcode/
 .muxcoder/
 firepit-log.txt
+node_modules/

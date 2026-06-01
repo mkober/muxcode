@@ -75,6 +75,9 @@ type Daemon struct {
 	lastTrackedTaskCheck int64 // 5s interval
 	// Safety net retry cap — prevents notification storm when agent can't process
 	safetyNetRetries map[string]int // role -> consecutive safety-net clears
+	// Serve health monitoring (browser checks via Playwright)
+	lastServeCheck     int64            // 60s interval
+	serveCheckSentFor  map[string]int64 // url -> unix time of last browser-check sent
 }
 
 // New creates a new Daemon for the given session.
@@ -115,6 +118,8 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		heartbeatInterval:     bus.AgentHeartbeatInterval(),
 		lastDiskPressureCheck: now,
 		safetyNetRetries:      make(map[string]int),
+		lastServeCheck:        now,
+		serveCheckSentFor:     make(map[string]int64),
 	}
 }
 
@@ -201,6 +206,7 @@ func (d *Daemon) Run() error {
 		d.checkNonHookEdits()
 		d.checkIdleTaskCompletion()
 		d.checkHeartbeat()
+		d.checkServeHealth()
 		d.checkCleanup()
 		d.checkDiskPressure()
 		time.Sleep(d.pollInterval)
@@ -1781,6 +1787,67 @@ func (d *Daemon) checkHeartbeat() {
 	// Notify the auto agent
 	_ = bus.Notify(d.session, "auto")
 	d.refreshInboxSizes()
+}
+
+// checkServeHealth reads the serve-state.json file every 60 seconds and
+// triggers the watch agent to run a Playwright browser check when a Vite
+// dev server is detected as running. Each URL is only triggered once per
+// 5-minute window to avoid spamming the watch agent.
+func (d *Daemon) checkServeHealth() {
+	now := time.Now().Unix()
+	if now-d.lastServeCheck < 60 {
+		return
+	}
+	d.lastServeCheck = now
+
+	state := bus.ReadServeState(d.session)
+	if state == nil {
+		return
+	}
+
+	running := state.RunningServers()
+	if len(running) == 0 {
+		return
+	}
+
+	for _, srv := range running {
+		if !srv.IsViteServer() {
+			continue
+		}
+		url := srv.URL
+		if url == "" {
+			url = fmt.Sprintf("http://localhost:%d/", srv.Port)
+		}
+
+		// Deduplicate: only send once per 5-minute window per URL
+		if lastSent, ok := d.serveCheckSentFor[url]; ok && now-lastSent < 300 {
+			continue
+		}
+
+		// Check if the watch agent is alive before sending
+		if !bus.IsAgentAlive(d.session, "watch") {
+			continue
+		}
+
+		payload := fmt.Sprintf("Dev server %q is running at %s — run a Playwright browser check for console errors and warnings: node scripts/playwright-check.js %s",
+			srv.Name, url, url)
+
+		msg := bus.NewMessage("daemon", "watch", "request", "browser-check", payload, "")
+		if err := bus.Send(d.session, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "  [serve] failed to send browser-check to watch: %v\n", err)
+			continue
+		}
+		if err := bus.Notify(d.session, "watch"); err != nil {
+			fmt.Fprintf(os.Stderr, "  [serve] failed to notify watch agent: %v\n", err)
+		}
+		d.serveCheckSentFor[url] = now
+		d.refreshInboxSizes()
+
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Serve health: triggered browser check for %s (%s)\n", ts, url, srv.Name)
+		bus.LogLifecycle(d.session, "info", "daemon", "serve-browser-check",
+			fmt.Sprintf("url=%s name=%s port=%d", url, srv.Name, srv.Port))
+	}
 }
 
 // checkCleanup removes expired delivery status and task files every 5 minutes.
