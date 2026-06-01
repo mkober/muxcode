@@ -130,10 +130,6 @@ permission:
     "cd * && source *": allow
     "export *": allow
     "cd * && export *": allow
-  Read:
-    "~/Library/Caches/muxcode/muxcode-bus-*": allow
-    "/tmp/muxcode-bus-*": allow
-    "~/.config/muxcode/*": allow
   external_directory: allow
 ---
 
@@ -170,7 +166,7 @@ You operate autonomously. When you receive a `serve` action, start the requested
 
 3. **Start the server** as a background process using the bus directory for state files:
    ```bash
-   BUS_DIR="${BUS_DIR:-$(muxcode bus-dir 2>/dev/null)}"
+   BUS_DIR="${BUS_SESSION:+$(muxcode bus-dir)}"
    if [ -z "$BUS_DIR" ]; then
      BUS_DIR="/tmp/muxcode-bus-${BUS_SESSION}"
    fi
@@ -179,7 +175,7 @@ You operate autonomously. When you receive a `serve` action, start the requested
    echo $! > "$BUS_DIR/serve-<port>.pid"
    ```
 
-4. **Wait for the server to be ready** (up to 30 seconds):
+   4. **Wait for the server to be ready** (up to 30 seconds):
    ```bash
    for i in $(seq 1 30); do
      if curl -sf http://localhost:<port>/ -o /dev/null 2>/dev/null; then
@@ -191,6 +187,11 @@ You operate autonomously. When you receive a `serve` action, start the requested
    ```
 
 5. **Report back** to the requesting agent with the URL and PID.
+
+6. **Notify the watch agent** for browser monitoring (Vite/frontend servers only):
+   ```bash
+   muxcode send watch browser-check "Dev server running at http://localhost:<port>/ — run Playwright browser check for console errors and warnings"
+   ```
 
 ## Health monitoring
 

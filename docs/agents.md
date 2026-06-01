@@ -112,7 +112,7 @@ Key differences from the Claude Code edit agent:
 | Workflow state transitions | PostToolUse hooks | Daemon-side `checkNonHookEdits()` via `git diff --stat` polling |
 | Compact | `/compact` slash command | OpenCode auto-compaction + `muxcode session compact` |
 | Startup context | Self-addressed inbox message | Memory context appended to SharedPrompt |
-| Model | `claude-opus-4-6` | `opencode-go/deepseek-v4-pro` (configurable via `MUXCODE_EDIT_MODEL`) |
+| Model | `claude-opus-4-8` | `opencode-go/deepseek-v4-pro` (configurable via `MUXCODE_EDIT_MODEL`) |
 
 All delegation rules, bus messaging, and agent coordination remain identical — only the enforcement mechanism changes.
 
@@ -447,7 +447,7 @@ muxcode reload build --model opencode-go/deepseek-v4-pro
 muxcode reload edit --cli opencode --model opencode-go/deepseek-v4-pro
 
 # Compact context before reloading
-muxcode reload edit --model claude-opus-4-6 --compact
+muxcode reload edit --model claude-opus-4-8 --compact
 
 # Reload all active agents
 muxcode reload --all
@@ -511,7 +511,7 @@ The Agents section lists all active agents with their current CLI, abbreviated m
 ```
 [x] Build     claude / sonnet-4-6 F3
 [ ] Test      opencode / minimax  F4
-[ ] Review    claude / opus-4-6   F6
+[ ] Review    claude / opus-4-8   F6
 ```
 
 **Safety indicators**: `edit` and `auto` are shown with a `⚠` warning suffix (orchestrator disruption risk). They are selectable individually but excluded from the `a` (select all) shortcut.

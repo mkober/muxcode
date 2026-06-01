@@ -45,7 +45,7 @@ Examples:
   muxcode model add claude-haiku-4-5
   muxcode model add opencode-go/deepseek-v4-pro --provider opencode
   muxcode model remove claude-sonnet-4-0
-  muxcode model default claude-opus-4-6
+  muxcode model default claude-opus-4-8
 `
 
 func modelList() {

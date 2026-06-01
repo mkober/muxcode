@@ -104,13 +104,13 @@ func TestRoleClaudeModelDefault(t *testing.T) {
 		role string
 		want string
 	}{
-		{"plan", "claude-opus-4-6"},
-		{"planner", "claude-opus-4-6"},
-		{"edit", "claude-opus-4-6"},
-		{"review", "claude-opus-4-6"},
-		{"analyze", "claude-opus-4-6"},
-		{"analyst", "claude-opus-4-6"},
-		{"auto", "claude-opus-4-6"},
+		{"plan", "claude-opus-4-8"},
+		{"planner", "claude-opus-4-8"},
+		{"edit", "claude-opus-4-8"},
+		{"review", "claude-opus-4-8"},
+		{"analyze", "claude-opus-4-8"},
+		{"analyst", "claude-opus-4-8"},
+		{"auto", "claude-opus-4-8"},
 		{"build", "claude-sonnet-4-5"},
 		{"test", "claude-sonnet-4-5"},
 		{"commit", "claude-sonnet-4-5"},
@@ -346,8 +346,8 @@ func TestResolveLaunchConfig_EditRole(t *testing.T) {
 	cfg := ResolveLaunchConfig("edit")
 
 	// Edit should have opus model
-	if len(cfg.ModelFlags) != 2 || cfg.ModelFlags[1] != "claude-opus-4-6" {
-		t.Errorf("ModelFlags = %v, want [--model claude-opus-4-6]", cfg.ModelFlags)
+	if len(cfg.ModelFlags) != 2 || cfg.ModelFlags[1] != "claude-opus-4-8" {
+		t.Errorf("ModelFlags = %v, want [--model claude-opus-4-8]", cfg.ModelFlags)
 	}
 
 	// Edit should have --dangerously-skip-permissions (all roles use bypass)

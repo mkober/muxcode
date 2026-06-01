@@ -150,7 +150,7 @@ func TestCommitMsgHookFull_StripsAttribution(t *testing.T) {
 	}{
 		{
 			name:  "standard",
-			input: "Add feature\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n",
+			input: "Add feature\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>\n",
 			want:  "Add feature\n\n",
 		},
 		{

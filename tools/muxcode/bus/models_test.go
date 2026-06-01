@@ -11,7 +11,7 @@ func TestParseModelConfig_Basic(t *testing.T) {
 	content := `
 [claude]
 # default: claude-sonnet-4-6
-claude-opus-4-6
+claude-opus-4-8
 claude-sonnet-4-6
 claude-haiku-4-5
 
@@ -33,8 +33,8 @@ opencode-go/deepseek-v4-pro
 	if len(claude.Models) != 3 {
 		t.Errorf("claude models count = %d, want 3", len(claude.Models))
 	}
-	if claude.Models[0] != "claude-opus-4-6" {
-		t.Errorf("claude models[0] = %q, want %q", claude.Models[0], "claude-opus-4-6")
+	if claude.Models[0] != "claude-opus-4-8" {
+		t.Errorf("claude models[0] = %q, want %q", claude.Models[0], "claude-opus-4-8")
 	}
 
 	// OpenCode provider
@@ -52,7 +52,7 @@ func TestParseModelConfig_DisabledModels(t *testing.T) {
 [claude]
 # default: claude-sonnet-4-6
 claude-sonnet-4-6
-# claude-opus-4-6
+# claude-opus-4-8
 # claude-haiku-4-5
 `
 	cfg, err := ParseModelConfig(content)
@@ -67,8 +67,8 @@ claude-sonnet-4-6
 	if len(claude.Disabled) != 2 {
 		t.Errorf("disabled models = %d, want 2", len(claude.Disabled))
 	}
-	if claude.Disabled[0] != "claude-opus-4-6" {
-		t.Errorf("disabled[0] = %q, want %q", claude.Disabled[0], "claude-opus-4-6")
+	if claude.Disabled[0] != "claude-opus-4-8" {
+		t.Errorf("disabled[0] = %q, want %q", claude.Disabled[0], "claude-opus-4-8")
 	}
 }
 
@@ -129,7 +129,7 @@ func TestIsModelName(t *testing.T) {
 		want  bool
 	}{
 		{"claude-sonnet-4-6", true},
-		{"claude-opus-4-6", true},
+		{"claude-opus-4-8", true},
 		{"opencode-go/deepseek-v4-pro", true},
 		{"gpt-5.5", true},
 		{"gpt-5.4-mini", true},
@@ -158,7 +158,7 @@ func TestAddModel(t *testing.T) {
 	}}
 
 	// Add new model
-	if !AddModel(cfg, "claude", "claude-opus-4-6") {
+	if !AddModel(cfg, "claude", "claude-opus-4-8") {
 		t.Error("AddModel returned false for new model")
 	}
 	if len(cfg.Providers["claude"].Models) != 2 {
@@ -166,7 +166,7 @@ func TestAddModel(t *testing.T) {
 	}
 
 	// Add duplicate — should return false
-	if AddModel(cfg, "claude", "claude-opus-4-6") {
+	if AddModel(cfg, "claude", "claude-opus-4-8") {
 		t.Error("AddModel returned true for duplicate")
 	}
 }
@@ -175,11 +175,11 @@ func TestAddModel_FromDisabled(t *testing.T) {
 	cfg := &ModelConfig{Providers: map[string]ProviderModels{
 		"claude": {
 			Models:   []string{"claude-sonnet-4-6"},
-			Disabled: []string{"claude-opus-4-6"},
+			Disabled: []string{"claude-opus-4-8"},
 		},
 	}}
 
-	if !AddModel(cfg, "claude", "claude-opus-4-6") {
+	if !AddModel(cfg, "claude", "claude-opus-4-8") {
 		t.Error("AddModel returned false for disabled model")
 	}
 
@@ -209,11 +209,11 @@ func TestRemoveModel(t *testing.T) {
 	cfg := &ModelConfig{Providers: map[string]ProviderModels{
 		"claude": {
 			Default: "claude-sonnet-4-6",
-			Models:  []string{"claude-opus-4-6", "claude-sonnet-4-6"},
+			Models:  []string{"claude-opus-4-8", "claude-sonnet-4-6"},
 		},
 	}}
 
-	if !RemoveModel(cfg, "claude", "claude-opus-4-6") {
+	if !RemoveModel(cfg, "claude", "claude-opus-4-8") {
 		t.Error("RemoveModel returned false for existing model")
 	}
 
@@ -224,8 +224,8 @@ func TestRemoveModel(t *testing.T) {
 	if len(claude.Disabled) != 1 {
 		t.Errorf("disabled count = %d, want 1", len(claude.Disabled))
 	}
-	if claude.Disabled[0] != "claude-opus-4-6" {
-		t.Errorf("disabled[0] = %q, want %q", claude.Disabled[0], "claude-opus-4-6")
+	if claude.Disabled[0] != "claude-opus-4-8" {
+		t.Errorf("disabled[0] = %q, want %q", claude.Disabled[0], "claude-opus-4-8")
 	}
 }
 
@@ -247,15 +247,15 @@ func TestSetDefaultModel(t *testing.T) {
 	cfg := &ModelConfig{Providers: map[string]ProviderModels{
 		"claude": {
 			Default: "claude-sonnet-4-6",
-			Models:  []string{"claude-opus-4-6", "claude-sonnet-4-6"},
+			Models:  []string{"claude-opus-4-8", "claude-sonnet-4-6"},
 		},
 	}}
 
-	if !SetDefaultModel(cfg, "claude", "claude-opus-4-6") {
+	if !SetDefaultModel(cfg, "claude", "claude-opus-4-8") {
 		t.Error("SetDefaultModel returned false for enabled model")
 	}
-	if cfg.Providers["claude"].Default != "claude-opus-4-6" {
-		t.Errorf("default = %q, want %q", cfg.Providers["claude"].Default, "claude-opus-4-6")
+	if cfg.Providers["claude"].Default != "claude-opus-4-8" {
+		t.Errorf("default = %q, want %q", cfg.Providers["claude"].Default, "claude-opus-4-8")
 	}
 
 	// Not in enabled list
@@ -273,7 +273,7 @@ func TestFormatModelConfigFile_RoundTrip(t *testing.T) {
 	cfg := &ModelConfig{Providers: map[string]ProviderModels{
 		"claude": {
 			Default:  "claude-sonnet-4-6",
-			Models:   []string{"claude-opus-4-6", "claude-sonnet-4-6"},
+			Models:   []string{"claude-opus-4-8", "claude-sonnet-4-6"},
 			Disabled: []string{"claude-haiku-4-5"},
 		},
 	}}
@@ -302,7 +302,7 @@ func TestFormatModelList(t *testing.T) {
 	cfg := &ModelConfig{Providers: map[string]ProviderModels{
 		"claude": {
 			Default:  "claude-sonnet-4-6",
-			Models:   []string{"claude-opus-4-6", "claude-sonnet-4-6"},
+			Models:   []string{"claude-opus-4-8", "claude-sonnet-4-6"},
 			Disabled: []string{"claude-haiku-4-5"},
 		},
 	}}
@@ -315,7 +315,7 @@ func TestFormatModelList(t *testing.T) {
 	if !strings.Contains(output, "claude-sonnet-4-6 (default)") {
 		t.Error("output missing default marker")
 	}
-	if !strings.Contains(output, "claude-opus-4-6") {
+	if !strings.Contains(output, "claude-opus-4-8") {
 		t.Error("output missing enabled model")
 	}
 	if !strings.Contains(output, "1 hidden") {
@@ -347,7 +347,7 @@ func TestLoadModelConfigFromFile_Real(t *testing.T) {
 
 	content := `[claude]
 # default: claude-sonnet-4-6
-claude-opus-4-6
+claude-opus-4-8
 claude-sonnet-4-6
 claude-haiku-4-5
 
@@ -379,7 +379,7 @@ func TestParseModelConfig_MultipleProviders(t *testing.T) {
 	content := `
 [claude]
 # default: claude-sonnet-4-6
-claude-opus-4-6
+claude-opus-4-8
 claude-sonnet-4-6
 
 [opencode]

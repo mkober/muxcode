@@ -13,7 +13,7 @@ func TestAbbreviateModel(t *testing.T) {
 		want  string
 	}{
 		{"claude-sonnet-4-6", "sonnet-4-6"},
-		{"claude-opus-4-6", "opus-4-6"},
+		{"claude-opus-4-8", "opus-4-8"},
 		{"claude-haiku-4-5", "haiku-4-5"},
 		{"opencode-go/minimax-m2.5", "minimax-m2.5"},
 		{"opencode-go/deepseek-v4-pro", "deepseek-v4-pro"},

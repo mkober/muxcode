@@ -72,7 +72,7 @@ Built-in defaults by role:
 
 | Roles | Default model |
 |-------|---------------|
-| `edit`, `review` | `claude-opus-4-6` |
+| `edit`, `review` | `claude-opus-4-8` |
 | `api`, `deploy`, `run`, `watch`, `commit` | `claude-sonnet-4-5` |
 | all others (`build`, `test`, `docs`, `research`, …) | claude CLI default |
 

@@ -9,7 +9,7 @@ Run the editor agent on OpenCode with DeepSeek V4 Pro instead of Claude Code, wh
 | Aspect | Current behavior |
 |--------|-----------------|
 | Edit agent CLI | Claude Code (`claude`) — hardcoded default via `roleDefaultCLI("edit")` |
-| Edit agent model | `claude-opus-4-6` via `RoleClaudeModelDefault("edit")` |
+| Edit agent model | `claude-opus-4-8` via `RoleClaudeModelDefault("edit")` |
 | Tool profile | `bus` + `readonly` + `common` groups — no `Write`/`Edit` tools (Claude's built-in tools aren't gated by `--allowedTools`) |
 | Delegation enforcement | PreToolUse hook (`muxcode hook guard`) blocks prohibited commands |
 | Event chains | PostToolUse bash hook fires build->test->review chain automatically |
