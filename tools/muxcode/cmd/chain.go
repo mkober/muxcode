@@ -81,6 +81,7 @@ func Chain(args []string) {
 
 	// Build chain context for condition evaluation
 	ctx := bus.BuildChainContextFromFlags(filesOverride, branchOverride, outputOverride, exitCode)
+	ctx.Command = command
 
 	if dryRun {
 		var action *bus.ChainAction
