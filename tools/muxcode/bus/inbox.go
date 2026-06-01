@@ -6,11 +6,29 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // IsAutoCCRole returns true if messages from this role are auto-CC'd to edit.
 func IsAutoCCRole(role string) bool {
 	return GetAutoCC()[role]
+}
+
+// autoCCLastSent tracks the last CC time per role for rate limiting.
+var autoCCLastSent = make(map[string]int64)
+
+// autoCCWindowSecs is the minimum interval between CC messages from the same role.
+const autoCCWindowSecs int64 = 60
+
+// shouldAutoCC returns true if a CC from this role should be delivered to edit.
+// Rate-limits to one CC per role per 60-second window.
+func shouldAutoCC(from string) bool {
+	now := time.Now().Unix()
+	if last, ok := autoCCLastSent[from]; ok && now-last < autoCCWindowSecs {
+		return false
+	}
+	autoCCLastSent[from] = now
+	return true
 }
 
 // Send appends a message to the recipient's inbox and the session log.
@@ -84,10 +102,13 @@ func sendMessage(session string, m Message, autoCC bool) error {
 		return err
 	}
 
-	// Auto-CC to edit: copy messages from auto-CC roles when not already going to edit
+	// Auto-CC to edit: copy messages from auto-CC roles when not already going to edit.
+	// Rate-limited to 1 CC per role per 60s to prevent context pressure on edit.
 	if autoCC && IsAutoCCRole(m.From) && m.To != "edit" && inboxRole != "edit" {
-		if err := appendToFile(InboxPath(session, "edit"), line); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: auto-CC to edit failed: %v\n", err)
+		if shouldAutoCC(m.From) {
+			if err := appendToFile(InboxPath(session, "edit"), line); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: auto-CC to edit failed: %v\n", err)
+			}
 		}
 	}
 

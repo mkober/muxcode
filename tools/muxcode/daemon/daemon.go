@@ -78,6 +78,11 @@ type Daemon struct {
 	// Serve health monitoring (browser checks via Playwright)
 	lastServeCheck     int64            // 60s interval
 	serveCheckSentFor  map[string]int64 // url -> unix time of last browser-check sent
+	// Event dedup for edit inbox — suppress repeated informational events
+	lastEventSent map[string]int64 // "action:key" -> unix time of last send (5-min window)
+	// Notification budget — caps messages delivered to edit per 5-minute window
+	editNotifyCount int   // messages sent to edit in current window
+	editWindowStart int64 // unix time when current budget window started
 }
 
 // New creates a new Daemon for the given session.
@@ -120,6 +125,8 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		safetyNetRetries:      make(map[string]int),
 		lastServeCheck:        now,
 		serveCheckSentFor:     make(map[string]int64),
+		lastEventSent:         make(map[string]int64),
+		editWindowStart:       now,
 	}
 }
 
@@ -675,12 +682,17 @@ func (d *Daemon) checkLoops() {
 		bus.LogLifecycle(d.session, "warn", "daemon", "loop-detected",
 			fmt.Sprintf("%s type=%s", alert.Role, alert.Type))
 
+		if !d.shouldSendEvent("loop-detected", alert.Role) {
+			continue
+		}
+		if !d.shouldNotifyEdit("event") {
+			continue
+		}
 		msg := bus.NewMessage("daemon", "edit", "event", "loop-detected", alert.Message, "")
 		if err := bus.Send(d.session, msg); err != nil {
 			fmt.Fprintf(os.Stderr, "  [guard] failed to send loop alert: %v\n", err)
 			continue
 		}
-		// Notify edit via display-message (passive status bar flash)
 		if err := bus.Notify(d.session, "edit"); err != nil {
 			fmt.Fprintf(os.Stderr, "  [guard] failed to notify edit: %v\n", err)
 		}
@@ -904,10 +916,12 @@ func (d *Daemon) checkAgentHealth() {
 				d.agentWasDown[role] = false
 				d.agentFailCounts[role] = 0
 
-				alert := bus.FormatAgentHealthAlert("recovered", role, "Agent is responsive again")
-				msg := bus.NewMessage("daemon", "edit", "event", "agent-recovered", alert, "")
-				_ = bus.Send(d.session, msg)
-				d.refreshInboxSizes()
+				if d.shouldSendEvent("agent-health", role) {
+					alert := bus.FormatAgentHealthAlert("recovered", role, "Agent is responsive again")
+					msg := bus.NewMessage("daemon", "edit", "event", "agent-recovered", alert, "")
+					_ = bus.Send(d.session, msg)
+					d.refreshInboxSizes()
+				}
 			}
 			continue
 		}
@@ -958,12 +972,14 @@ func (d *Daemon) checkAgentHealth() {
 			bus.LogLifecycle(d.session, "warn", "daemon", "agent-restart",
 				fmt.Sprintf("%s attempt %d/3", role, attempt))
 
-			// Send restarting alert
-			alert := bus.FormatAgentHealthAlert("restarting", role,
-				fmt.Sprintf("Attempt %d/3 — relaunching agent", attempt))
-			msg := bus.NewMessage("daemon", "edit", "event", "agent-restarting", alert, "")
-			_ = bus.Send(d.session, msg)
-			d.refreshInboxSizes()
+			// Send restarting alert (deduped with recovery — at most one per 5-min window)
+			if d.shouldSendEvent("agent-health", role) {
+				alert := bus.FormatAgentHealthAlert("restarting", role,
+					fmt.Sprintf("Attempt %d/3 — relaunching agent", attempt))
+				msg := bus.NewMessage("daemon", "edit", "event", "agent-restarting", alert, "")
+				_ = bus.Send(d.session, msg)
+				d.refreshInboxSizes()
+			}
 
 			// Attempt restart
 			if err := bus.RestartLocalAgent(d.session, role); err != nil {
@@ -1020,6 +1036,10 @@ func (d *Daemon) checkIdleAgents() {
 		// Reset safety-net retry counter when agent becomes active (processing messages)
 		if !isIdle && wasIdle {
 			d.safetyNetRetries[role] = 0
+		}
+		// Reset edit notification budget when edit becomes idle (finished processing)
+		if isIdle && !wasIdle && role == "edit" {
+			d.resetEditBudget()
 		}
 		if isIdle && !wasIdle {
 			recentlyNotified := bus.IsNotifiedRecently(d.session, role, 10*time.Second)
@@ -1787,6 +1807,61 @@ func (d *Daemon) checkHeartbeat() {
 	// Notify the auto agent
 	_ = bus.Notify(d.session, "auto")
 	d.refreshInboxSizes()
+}
+
+// shouldSendEvent returns true if this event should be delivered to edit.
+// Suppresses duplicate events with the same action and key within a 5-minute
+// window to prevent notification storms from filling the edit context window.
+func (d *Daemon) shouldSendEvent(action, key string) bool {
+	now := time.Now().Unix()
+	dedupKey := action + ":" + key
+	if last, ok := d.lastEventSent[dedupKey]; ok && now-last < 300 {
+		return false
+	}
+	d.lastEventSent[dedupKey] = now
+	return true
+}
+
+// editNotifyBudget is the max number of event-type messages the daemon will
+// deliver to edit's inbox per 5-minute window. Request-type messages (direct
+// asks) are never throttled. Configurable via MUXCODE_EDIT_NOTIFY_BUDGET.
+const editNotifyBudgetDefault = 15
+
+func editNotifyBudget() int {
+	if v := os.Getenv("MUXCODE_EDIT_NOTIFY_BUDGET"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return editNotifyBudgetDefault
+}
+
+// shouldNotifyEdit returns true if an event-type message should be delivered
+// to edit. Enforces a per-window budget to prevent context exhaustion.
+// Request-type messages bypass the budget — the edit agent always receives
+// direct asks. The window resets every 5 minutes or on edit idle transition.
+func (d *Daemon) shouldNotifyEdit(msgType string) bool {
+	if msgType == "request" {
+		return true
+	}
+	now := time.Now().Unix()
+	if now-d.editWindowStart >= 300 {
+		d.editNotifyCount = 0
+		d.editWindowStart = now
+	}
+	budget := editNotifyBudget()
+	if d.editNotifyCount >= budget {
+		return false
+	}
+	d.editNotifyCount++
+	return true
+}
+
+// resetEditBudget resets the notification budget window. Called when
+// the edit agent transitions to idle (processing complete).
+func (d *Daemon) resetEditBudget() {
+	d.editNotifyCount = 0
+	d.editWindowStart = time.Now().Unix()
 }
 
 // checkServeHealth reads the serve-state.json file every 60 seconds and

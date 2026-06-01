@@ -32,14 +32,16 @@ type ConditionResult struct {
 
 // knownConditionTypes lists all recognized condition keys for validation.
 var knownConditionTypes = map[string]bool{
-	"files_match":      true,
-	"files_not_match":  true,
-	"branch_match":     true,
-	"branch_not_match": true,
-	"env_set":          true,
-	"env_equals":       true,
-	"output_contains":  true,
-	"exit_code":        true,
+	"files_match":       true,
+	"files_not_match":   true,
+	"branch_match":      true,
+	"branch_not_match":  true,
+	"command_match":     true,
+	"command_not_match": true,
+	"env_set":           true,
+	"env_equals":        true,
+	"output_contains":   true,
+	"exit_code":         true,
 }
 
 // IsKnownCondition returns true if the condition type is recognized.
@@ -91,6 +93,10 @@ func evaluateCondition(condType string, value any, ctx *ChainContext) ConditionR
 		return evalBranchMatch(value, ctx)
 	case "branch_not_match":
 		return evalBranchNotMatch(value, ctx)
+	case "command_match":
+		return evalCommandMatch(value, ctx)
+	case "command_not_match":
+		return evalCommandNotMatch(value, ctx)
 	case "env_set":
 		return evalEnvSet(value)
 	case "env_equals":
@@ -233,6 +239,38 @@ func evalEnvEquals(value any) ConditionResult {
 		result.Detail = fmt.Sprintf("%s equals %q", name, expected)
 	} else {
 		result.Detail = fmt.Sprintf("%s is %q, want %q", name, actual, expected)
+	}
+	return result
+}
+
+// evalCommandMatch checks if the command string matches a glob pattern.
+func evalCommandMatch(value any, ctx *ChainContext) ConditionResult {
+	pattern, ok := value.(string)
+	if !ok {
+		return ConditionResult{Type: "command_match", Passed: false, Detail: "pattern must be a string"}
+	}
+	result := ConditionResult{Type: "command_match", Pattern: pattern}
+	result.Passed = globMatch(pattern, ctx.Command)
+	if result.Passed {
+		result.Detail = fmt.Sprintf("command %q matches %q", ctx.Command, pattern)
+	} else {
+		result.Detail = fmt.Sprintf("command %q does not match %q", ctx.Command, pattern)
+	}
+	return result
+}
+
+// evalCommandNotMatch checks that the command string does NOT match a glob pattern.
+func evalCommandNotMatch(value any, ctx *ChainContext) ConditionResult {
+	pattern, ok := value.(string)
+	if !ok {
+		return ConditionResult{Type: "command_not_match", Passed: false, Detail: "pattern must be a string"}
+	}
+	result := ConditionResult{Type: "command_not_match", Pattern: pattern}
+	result.Passed = !globMatch(pattern, ctx.Command)
+	if result.Passed {
+		result.Detail = fmt.Sprintf("command %q does not match %q (good)", ctx.Command, pattern)
+	} else {
+		result.Detail = fmt.Sprintf("command %q matches excluded pattern %q", ctx.Command, pattern)
 	}
 	return result
 }

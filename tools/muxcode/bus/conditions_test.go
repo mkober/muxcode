@@ -582,6 +582,94 @@ func TestBuildChainContextFromFlags(t *testing.T) {
 	}
 }
 
+func TestCommandMatch(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		command string
+		want    bool
+	}{
+		{"exact match", "muxcode *", "muxcode inbox", true},
+		{"glob match", "muxcode *", "muxcode send edit notify hello", true},
+		{"no match", "muxcode *", "aws lambda invoke", false},
+		{"deploy match", "aws *", "aws lambda invoke --function-name test", true},
+		{"curl match", "curl *", "curl -sf http://localhost:8080/", true},
+		{"empty command", "muxcode *", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := &ChainContext{Command: tt.command}
+			result := evalCommandMatch(tt.pattern, ctx)
+			if result.Passed != tt.want {
+				t.Errorf("command_match(%q, %q) = %v, want %v", tt.pattern, tt.command, result.Passed, tt.want)
+			}
+		})
+	}
+}
+
+func TestCommandNotMatch(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		command string
+		want    bool
+	}{
+		{"muxcode excluded", "muxcode *", "muxcode inbox", false},
+		{"muxcode send excluded", "muxcode *", "muxcode send edit notify hello", false},
+		{"deploy allowed", "muxcode *", "aws lambda invoke --function-name test", true},
+		{"curl allowed", "muxcode *", "curl -sf http://localhost:8080/", true},
+		{"bash script allowed", "muxcode *", "bash scripts/test.sh", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := &ChainContext{Command: tt.command}
+			result := evalCommandNotMatch(tt.pattern, ctx)
+			if result.Passed != tt.want {
+				t.Errorf("command_not_match(%q, %q) = %v, want %v", tt.pattern, tt.command, result.Passed, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunChainSkipsMuxcodeCommands(t *testing.T) {
+	// Verify the default run chain config excludes muxcode bus commands
+	cfg := DefaultConfig()
+	SetConfig(cfg)
+	defer SetConfig(nil)
+
+	// muxcode inbox → should NOT trigger watch
+	ctx := &ChainContext{Command: "muxcode inbox", ExitCode: 0}
+	action := ResolveChain("run", "success", ctx)
+	if action != nil {
+		t.Errorf("run chain should not fire for 'muxcode inbox', got action: %+v", action)
+	}
+
+	// muxcode send → should NOT trigger watch
+	ctx = &ChainContext{Command: "muxcode send edit notify hello", ExitCode: 0}
+	action = ResolveChain("run", "success", ctx)
+	if action != nil {
+		t.Errorf("run chain should not fire for 'muxcode send', got action: %+v", action)
+	}
+
+	// aws lambda invoke → SHOULD trigger watch
+	ctx = &ChainContext{Command: "aws lambda invoke --function-name test", ExitCode: 0}
+	action = ResolveChain("run", "success", ctx)
+	if action == nil {
+		t.Error("run chain should fire for 'aws lambda invoke'")
+	} else if action.SendTo != "watch" {
+		t.Errorf("run chain should send to watch, got %q", action.SendTo)
+	}
+
+	// bash scripts/deploy.sh → SHOULD trigger watch
+	ctx = &ChainContext{Command: "bash scripts/deploy.sh", ExitCode: 0}
+	action = ResolveChain("run", "success", ctx)
+	if action == nil {
+		t.Error("run chain should fire for 'bash scripts/deploy.sh'")
+	}
+}
+
 // contains is a test helper for substring matching.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))

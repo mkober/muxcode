@@ -714,7 +714,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(sleep *)", "Bash(echo *)", "Bash(printf *)", "Bash(date *)",
 					"Bash(find *)", "Bash(ls *)", "Bash(diff *)", "Bash(env *)",
 					"Bash(touch *)", "Bash(cp *)", "Bash(mv *)",
-					"Read(/tmp/*)", "Read(/private/tmp/*)",
+					"Read(/tmp/muxcode-bus-*)", "Read(/private/tmp/muxcode-bus-*)",
 				},
 			},
 			"analyze": {
@@ -766,7 +766,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(zcat *)", "Bash(gunzip *)", "Bash(lnav *)",
 					// Browser monitoring (Playwright)
 					"Bash(npx playwright*)",
-					"Bash(curl*)",
+					"Bash(curl *)",
 					"Read(/tmp/muxcode-bus-*/serve-state.json)",
 					"Read(/private/tmp/muxcode-bus-*/serve-state.json)",
 				},
@@ -822,8 +822,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(find *)", "Bash(ls *)", "Bash(env *)",
 					"Bash(mkdir *)", "Bash(rm *)", "Bash(touch *)",
 					"Bash(source *)", "Bash(export *)",
-					"Read(/tmp/*)", "Read(/private/tmp/*)",
-					"Write(/tmp/*)", "Write(/private/tmp/*)",
+					"Read(/tmp/muxcode-bus-*)", "Read(/private/tmp/muxcode-bus-*)",
 				},
 			},
 			"auto": {
@@ -869,6 +868,9 @@ func DefaultConfig() *MuxcodeConfig {
 					Action:  "watch",
 					Message: "Run succeeded (${command}) — tail logs to verify deployed services are healthy and report findings to edit",
 					Type:    "request",
+					Conditions: map[string]any{
+						"command_not_match": "muxcode *",
+					},
 				}},
 				OnFailure: ChainActions{{
 					SendTo:  "edit",
