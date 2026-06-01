@@ -23,7 +23,7 @@ var knownSubcommands = map[string]bool{
 	"hook": true, "workflow": true, "pii-scrub": true, "atlassian": true,
 	"compact": true, "launch": true, "modal": true, "mode": true,
 	"reload": true, "config": true, "provider-select": true,
-	"simulate": true, "track": true, "remote": true,
+	"simulate": true, "track": true, "remote": true, "spec": true,
 }
 
 var usage = `Usage: muxcode <command> [args...]
@@ -84,6 +84,7 @@ Commands:
   compact       Wait for agent idle, then inject /compact via tmux
   diagnose      Diagnose why an agent isn't responding (evidence + root cause)
   remote        Investigate agents in other muxcode sessions (TUI browser, or list/status/capture/inbox/diagnose)
+  spec          Manage the active requirements spec for plan agent verification (set, get, clear)
 `
 
 func main() {
@@ -216,6 +217,8 @@ func main() {
 		cmd.Diagnose(args)
 	case "remote":
 		cmd.Remote(args)
+	case "spec":
+		cmd.Spec(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

@@ -38,6 +38,7 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I update th
 | `create-spec` | Create a new requirements spec from a description (in `docs/requirements/drafts/`) |
 | `move-spec` | Move a spec between `drafts/`, `completed/`, `backlog/` |
 | `implement` | Delegate implementation work to the edit agent (e.g. "work on phase 1") |
+| `verify-spec` | Automated: verify implementation progress against the active spec after review completes |
 
 ## Startup
 
@@ -146,6 +147,39 @@ muxcode send edit jira-update "Update Jira PROMGT-119 description with requireme
 ### Automatic delegation
 
 When you modify requirement docs that contain Jira keys in their filenames, **automatically** send jira-update messages to the edit agent after completing your doc changes. Do not ask the user — treat this as part of your standard workflow. Include the file path so the edit agent knows which spec to read.
+
+## Automated spec verification
+
+When you receive a `verify-spec` message, the build→test→review chain has just completed. Your job is to verify what the edit agent accomplished against the requirements spec and check off completed items.
+
+### Verification process
+
+1. **Extract the spec path** from the message (e.g. `docs/requirements/drafts/foo.md`)
+2. **Read the spec** — identify the current phase, acceptance criteria, and implementation steps
+3. **Read the changed files** listed in the message — understand what was implemented
+4. **Run `git diff HEAD~1 HEAD`** for detailed context on what changed
+5. **Compare changes against the spec** — for each acceptance criterion and phase step:
+   - Does the code change satisfy this criterion?
+   - Is the implementation consistent with the spec's technical approach?
+   - Are there any gaps between what was implemented and what the spec requires?
+6. **Check off completed items** — change `- [ ]` to `- [x]` for satisfied criteria and steps
+7. **Update the status field** if an entire phase is now complete
+8. **Reply to edit** with a summary: what was checked off, what remains, any concerns
+
+### What to check off
+
+- **Phase steps** (`- [ ] Step description`) — check off when the code change clearly implements the step
+- **Acceptance criteria** (`- [ ] Criterion`) — check off when the implementation verifiably satisfies the criterion
+- **Do NOT check off** items that are only partially implemented or require further verification
+
+### Example reply
+
+```
+Verified against docs/requirements/drafts/hot-reload.md:
+- Phase 2: checked off 3/4 steps (WriteRuntimeOverride, ReadRuntimeOverrides, ClearRuntimeOverrides)
+- Remaining: LoadRuntimeOverrides integration not yet implemented
+- Acceptance criteria: 2/5 satisfied (config persistence, reload marker)
+```
 
 ## Neovim integration
 

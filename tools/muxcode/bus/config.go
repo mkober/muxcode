@@ -414,6 +414,34 @@ func AgentStoriesDonePath(session string) string {
 	return filepath.Join(BusDir(session), "agent-stories-done")
 }
 
+// ActiveSpecPath returns the path to the file tracking the active requirements spec.
+func ActiveSpecPath(session string) string {
+	return filepath.Join(BusDir(session), "active-spec")
+}
+
+// ReadActiveSpec returns the active spec path, or "" if none is set.
+func ReadActiveSpec(session string) string {
+	data, err := os.ReadFile(ActiveSpecPath(session))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// WriteActiveSpec sets the active spec path.
+func WriteActiveSpec(session, specPath string) error {
+	return os.WriteFile(ActiveSpecPath(session), []byte(specPath+"\n"), 0644)
+}
+
+// ClearActiveSpec removes the active spec marker.
+func ClearActiveSpec(session string) error {
+	err := os.Remove(ActiveSpecPath(session))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
 // AgentHeartbeatInterval returns the configured heartbeat interval in seconds.
 // Uses MUXCODE_AGENT_HEARTBEAT env var, defaulting to 1800 (30 minutes).
 // Returns 0 if heartbeat is disabled.

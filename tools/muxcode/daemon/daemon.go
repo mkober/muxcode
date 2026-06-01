@@ -53,7 +53,7 @@ type Daemon struct {
 	// Disk pressure monitoring
 	lastDiskPressureCheck int64 // 60s interval
 	// Idle agent wake-up
-	lastIdleCheck   int64            // 5s interval
+	lastIdleCheck        int64            // 5s interval
 	lastNonHookWake      map[string]int64 // cooldown: last wake time per non-hook role (60s)
 	lastIdleState        map[string]bool  // per-role idle state from last check (for transition detection)
 	activeUnnotifiedSeen map[string]int64 // role -> unix time when unnotified msgs first seen while agent "active"
@@ -62,9 +62,9 @@ type Daemon struct {
 	taskDeliveredAt     map[string]int64  // msgID -> unix time when message was delivered (wake-up sent)
 	taskLastPaneContent map[string]string // role -> last pane hash to avoid re-processing identical content
 	// Hook-provider idle task detection (safety net for dropped responses)
-	lastIdleTaskCheck int64                       // 10s interval
-	idleTaskFirstSeen map[string]int64            // taskID -> unix time when first observed idle with in-flight task
-	idleTaskRetried   map[string]bool             // taskID -> true if we already re-queued the request
+	lastIdleTaskCheck int64            // 10s interval
+	idleTaskFirstSeen map[string]int64 // taskID -> unix time when first observed idle with in-flight task
+	idleTaskRetried   map[string]bool  // taskID -> true if we already re-queued the request
 	// Agent heartbeat
 	lastHeartbeatCheck int64 // tracks last heartbeat fire time
 	heartbeatInterval  int   // seconds between heartbeats (0 = disabled)
@@ -246,6 +246,9 @@ func (d *Daemon) checkInboxes() {
 			if role == "edit" && bus.HasNewMessageFrom(d.session, "edit", "review") {
 				bus.TransitionWorkflow(d.session, bus.StateReviewed, "daemon:review-complete",
 					bus.WithOutcome("review", "complete"))
+
+				// Notify plan agent to verify progress against active spec
+				d.notifyPlanOnReview()
 			}
 
 			// Only notify if the inbox has actionable (request-type) messages.
@@ -268,6 +271,47 @@ func (d *Daemon) checkInboxes() {
 
 		d.inboxSizes[role] = size
 	}
+}
+
+// notifyPlanOnReview sends a verification request to the plan agent after
+// review completion, if an active spec is set and the review chain is
+// configured to notify plan (NotifyPlanOn).
+func (d *Daemon) notifyPlanOnReview() {
+	if !bus.ChainShouldNotifyPlan("review", "success") {
+		return
+	}
+
+	specPath := bus.ReadActiveSpec(d.session)
+	if specPath == "" {
+		return
+	}
+
+	// Get changed files from workflow state
+	wf := bus.ReadWorkflowState(d.session)
+	files := strings.Join(wf.LastFiles, ", ")
+	if files == "" {
+		files = "(unknown)"
+	}
+
+	planMsg := fmt.Sprintf(
+		"Review complete — verify progress against spec %s. Changed files: %s. "+
+			"Read the spec and the changed files, determine which acceptance criteria and phase steps "+
+			"are now satisfied, check them off (- [ ] to - [x]), and update the status field if a phase is complete. "+
+			"Reply to edit with a summary of what was verified.",
+		specPath, files,
+	)
+
+	msg := bus.NewMessage("daemon", "plan", "request", "verify-spec", planMsg, "")
+	if err := bus.Send(d.session, msg); err != nil {
+		fmt.Fprintf(os.Stderr, "  [daemon] failed to send plan verification: %v\n", err)
+		return
+	}
+
+	ts := time.Now().Format("15:04:05")
+	fmt.Printf("  %s  Review complete — notifying plan to verify spec\n", ts)
+	bus.LogLifecycle(d.session, "info", "daemon", "plan-verify", specPath)
+	_ = bus.Notify(d.session, "plan")
+	d.refreshInboxSizes()
 }
 
 // checkTrigger monitors the trigger file for file-edit events with debouncing.

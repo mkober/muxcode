@@ -38,6 +38,7 @@ type EventChain struct {
 	OnUnknown       ChainActions `json:"on_unknown,omitempty"`
 	NotifyAnalyst   bool         `json:"notify_analyst"`
 	NotifyAnalystOn []string     `json:"notify_analyst_on,omitempty"`
+	NotifyPlanOn    []string     `json:"notify_plan_on,omitempty"`
 }
 
 // ChainActions wraps []ChainAction with custom JSON marshal/unmarshal
@@ -419,6 +420,24 @@ func ChainShouldNotifyAnalyst(eventType, outcome string) bool {
 
 	// Legacy fallback
 	return chain.NotifyAnalyst
+}
+
+// ChainShouldNotifyPlan returns whether the chain should notify the plan agent
+// for the given outcome. The plan agent is notified to verify implementation
+// progress against the active requirements spec. Only fires when NotifyPlanOn
+// is set and the outcome matches an entry (or "*" wildcard).
+func ChainShouldNotifyPlan(eventType, outcome string) bool {
+	cfg := Config()
+	chain, ok := cfg.EventChains[eventType]
+	if !ok {
+		return false
+	}
+	for _, o := range chain.NotifyPlanOn {
+		if o == "*" || o == outcome {
+			return true
+		}
+	}
+	return false
 }
 
 // ExpandMessage substitutes template variables in a chain message.
@@ -904,6 +923,9 @@ func DefaultConfig() *MuxcodeConfig {
 					Type:    "event",
 				}},
 				NotifyAnalystOn: []string{"failure", "unknown"},
+			},
+			"review": {
+				NotifyPlanOn: []string{"success"},
 			},
 		},
 		AutoCC: []string{"build", "test", "review", "deploy", "analyze"},
