@@ -137,17 +137,38 @@ func (p *ClaudeCodeProvider) IsIdle(session, role string) bool {
 }
 
 // isClaudeThinking returns true if the pane content indicates Claude Code is
-// in an extended thinking phase (Ideating, Thinking, Cogitating, Spelunking).
-// During these phases the ❯ prompt is visible but the agent cannot process
-// input — send-keys injections accumulate in the input buffer and cause
-// notification spam when the safety net clears notified IDs.
+// actively working (extended thinking, e.g. Ideating/Combobulating/Spelunking,
+// or a long-running tool). During these phases the ❯ prompt is visible but the
+// agent cannot process input — send-keys injections pile into the input buffer
+// and cause a notification storm.
+//
+// Detection is GLYPH-INDEPENDENT. The leading spinner character animates across
+// many code points (✢ U+2722, ✳ U+2733, ✶ U+2736, ✺ U+273A, ✻ U+273B,
+// ✽ U+273D, …), so keying off a fixed glyph set misses frames — e.g. a
+// "✽ Combobulating…" frame slipped past a ✢/✻-only check and made a busy agent
+// look idle, triggering repeated "You have N new messages" injections. Instead
+// we match the live-spinner SIGNATURE, which is stable across animation frames
+// and Claude Code versions:
+//
+//	in-progress (agent CANNOT accept input):
+//	  "✽ Combobulating… (13m 9s · ↓ 17.8k tokens · esc to interrupt)"
+//	  "✢ Ideating… (11m 18s · ↓ 634 tokens)"
+//	  "✻ Cogitating (12s · esc to interrupt)"
+//
+//	completed (agent IS idle) — the recap feature's past-tense summary:
+//	  "✻ Cooked for 1m 47s"   "✻ Cogitated for 20s"
+//
+// The signature: an explicit "esc to interrupt" hint, OR a gerund ellipsis "…"
+// alongside the "(elapsed · tokens · …)" counter separator " · ". Completed
+// recap lines have neither, so an idle agent is correctly seen as idle (else the
+// daemon would never deliver its pending inbox messages).
 func isClaudeThinking(content string) bool {
 	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimSpace(line)
-		// Claude Code thinking indicators: "✢ Ideating…", "✻ Cogitated for 20s",
-		// "✢ Thinking…", "✢ Spelunking…", "✢ Reasoning…"
-		// The ✢ (U+2722) and ✻ (U+273B) characters are Claude Code's thinking markers.
-		if strings.HasPrefix(trimmed, "✢ ") || strings.HasPrefix(trimmed, "✻ ") {
+		if strings.Contains(trimmed, "esc to interrupt") {
+			return true
+		}
+		if strings.Contains(trimmed, "…") && strings.Contains(trimmed, " · ") {
 			return true
 		}
 	}

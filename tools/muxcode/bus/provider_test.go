@@ -321,10 +321,43 @@ func TestIsClaudeThinking_Ideating(t *testing.T) {
 	}
 }
 
-func TestIsClaudeThinking_Cogitated(t *testing.T) {
+func TestIsClaudeThinking_CogitatedRecapIsIdle(t *testing.T) {
+	// "✻ Cogitated for 20s" is the COMPLETED recap line (past tense, no live
+	// spinner) — the agent is idle at the ❯ prompt, not thinking. Treating it
+	// as thinking blocks message delivery to an idle agent.
 	content := "✻ Cogitated for 20s\n\n❯ "
+	if isClaudeThinking(content) {
+		t.Error("completed recap '✻ Cogitated for 20s' must NOT be detected as thinking")
+	}
+}
+
+func TestIsClaudeThinking_CookedRecapIsIdle(t *testing.T) {
+	// Claude Code's recap feature prints "✻ Cooked for 1m 47s" after a turn
+	// completes while the agent sits idle. This is the exact line that made the
+	// run agent look perpetually busy and stop receiving editor messages.
+	content := "✻ Cooked for 1m 47s\n\n※ recap: Investigated the thing. (disable recaps in /config)\n\n❯ "
+	if isClaudeThinking(content) {
+		t.Error("completed recap '✻ Cooked for 1m 47s' must NOT be detected as thinking")
+	}
+}
+
+func TestIsClaudeThinking_ActiveSpinnerWithInterruptHint(t *testing.T) {
+	// In-progress spinner carries the "esc to interrupt" hint even if the
+	// ellipsis is rendered elsewhere — must still be detected as thinking.
+	content := "✻ Cogitating (12s · esc to interrupt)\n\n❯ "
 	if !isClaudeThinking(content) {
-		t.Error("should detect ✻ Cogitated as thinking state")
+		t.Error("active spinner with 'esc to interrupt' must be detected as thinking")
+	}
+}
+
+func TestIsClaudeThinking_CombobulatingNonStandardGlyph(t *testing.T) {
+	// The spinner glyph animates across many code points. "✽" (U+273D) is NOT
+	// in the old ✢/✻ set, so this frame slipped past detection and made a busy
+	// agent look idle — causing a "You have N new messages" notification storm.
+	// Detection must be glyph-independent (match the live-spinner signature).
+	content := "✽ Combobulating… (13m 9s · ↓ 17.8k tokens · thinking with high effort)\n\n❯ "
+	if !isClaudeThinking(content) {
+		t.Error("active spinner '✽ Combobulating…' (non-✢/✻ glyph) must be detected as thinking")
 	}
 }
 
