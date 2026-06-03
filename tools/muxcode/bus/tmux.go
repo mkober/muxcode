@@ -153,11 +153,23 @@ func TmuxIsWindowActive(session, window string) bool {
 	return out == "1"
 }
 
-// TmuxClearInput sends C-u to a tmux pane to clear any text in the input
-// buffer. Used to clear stale agent output from the prompt before injecting
-// new text via send-keys.
+// TmuxClearInput clears any text in the agent's input buffer before injecting
+// new text via send-keys. Used to clear stale agent output left at the prompt.
+//
+// Sends a robust key sequence rather than a bare C-u: C-u alone kills only from
+// the cursor to the start of the line, so it misses text after the cursor and
+// does not reliably empty Claude Code's input box. The sequence is:
+//
+//	C-e  move cursor to end of input
+//	C-u  kill from cursor (now end) back to start — clears the whole line
+//	C-a  move to start (cleanup for any residual)
+//	C-k  kill from start to end — clears anything C-u left behind
+//
+// C-u is retained in the sequence both for its clearing effect and because the
+// notification path's failure handling keys off a C-u send failure to hold the
+// notification for the next cycle.
 func TmuxClearInput(target string) error {
-	return TmuxRun("send-keys", "-t", target, "C-u")
+	return TmuxRun("send-keys", "-t", target, "C-e", "C-u", "C-a", "C-k")
 }
 
 // TmuxClientDimensions returns the current tmux client dimensions.

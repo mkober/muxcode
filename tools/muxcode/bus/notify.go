@@ -548,7 +548,36 @@ func SendWakeUpWithText(session, role string, provider Provider, text string) er
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s failed: %v\n", role, err)
 		return err
 	}
+
+	// Verify the Enter actually submitted the text. Claude Code's TUI can drop
+	// the Enter keystroke when it lands in the same redraw window as the
+	// preceding literal text, leaving the message parked unsent in the input
+	// buffer — the agent then looks idle-with-pending-input and never processes
+	// the message until a manual restart. Re-check the pane and re-send Enter if
+	// the text is still parked. Submitting an empty prompt is a no-op, so a
+	// redundant Enter (text already submitted) is harmless.
+	verifyEnterDelivery(target)
+
 	return nil
+}
+
+// verifyEnterDelivery re-checks the pane after a wake-up injection and re-sends
+// Enter if the injected text is still parked at the prompt (dropped-Enter race).
+// Best-effort and bounded: on capture failure it returns immediately and relies
+// on the 15s notifyRetryInterval safety net.
+func verifyEnterDelivery(target string) {
+	for attempt := 0; attempt < 2; attempt++ {
+		time.Sleep(250 * time.Millisecond)
+		content, err := TmuxCapturePaneLines(target, 8)
+		if err != nil {
+			return // can't verify — rely on notifyRetryInterval retry
+		}
+		if !paneHasPendingInput(content) {
+			return // text was submitted — done
+		}
+		// Still parked — the Enter was dropped. Re-send it.
+		_ = TmuxSendKeys(target, "Enter")
+	}
 }
 
 // notifyDisplayMessage sends a passive notification via tmux display-message

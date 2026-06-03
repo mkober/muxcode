@@ -1134,3 +1134,116 @@ func TestReceive_ClearsNotifiedIDs(t *testing.T) {
 		t.Error("notified IDs marker should be cleared after Receive")
 	}
 }
+
+func TestTmuxClearInput_SendsRobustSequence(t *testing.T) {
+	// TmuxClearInput must send a robust clear sequence — not a bare C-u, which
+	// only kills from the cursor to the start of the line and does not reliably
+	// empty Claude Code's input box. It must still include C-u so the
+	// notification failure path (which keys off a C-u send failure) keeps working.
+	origRun := tmuxRunner
+	t.Cleanup(func() { tmuxRunner = origRun })
+
+	var got []string
+	tmuxRunner = func(args ...string) error {
+		got = args
+		return nil
+	}
+
+	if err := TmuxClearInput("sess:role.1"); err != nil {
+		t.Fatalf("TmuxClearInput failed: %v", err)
+	}
+
+	joined := strings.Join(got, " ")
+	for _, want := range []string{"C-u", "C-a", "C-k"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("clear sequence missing %q; got %q", want, joined)
+		}
+	}
+}
+
+func TestVerifyEnterDelivery_ResendsEnterWhenParked(t *testing.T) {
+	// When the pane still shows text parked at the prompt after the initial
+	// Enter, verifyEnterDelivery must re-send Enter (dropped-Enter recovery).
+	origOutput := tmuxOutputRunner
+	origRun := tmuxRunner
+	t.Cleanup(func() {
+		tmuxOutputRunner = origOutput
+		tmuxRunner = origRun
+	})
+
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		// Pane keeps showing parked text after the prompt.
+		return "  Ran 1 shell command\n\n❯ fix the bash script bug\n", nil
+	}
+	enterCount := 0
+	tmuxRunner = func(args ...string) error {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "Enter") {
+			enterCount++
+		}
+		return nil
+	}
+
+	verifyEnterDelivery("sess:role.1")
+
+	if enterCount == 0 {
+		t.Error("expected verifyEnterDelivery to re-send Enter when text stays parked")
+	}
+}
+
+func TestVerifyEnterDelivery_NoResendWhenSubmitted(t *testing.T) {
+	// When the pane shows a clean prompt (text was submitted), verifyEnterDelivery
+	// must NOT re-send Enter.
+	origOutput := tmuxOutputRunner
+	origRun := tmuxRunner
+	t.Cleanup(func() {
+		tmuxOutputRunner = origOutput
+		tmuxRunner = origRun
+	})
+
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		// Clean idle prompt — no pending input.
+		return "  Ran 1 shell command\n\n❯\n", nil
+	}
+	enterCount := 0
+	tmuxRunner = func(args ...string) error {
+		if strings.Contains(strings.Join(args, " "), "Enter") {
+			enterCount++
+		}
+		return nil
+	}
+
+	verifyEnterDelivery("sess:role.1")
+
+	if enterCount != 0 {
+		t.Errorf("expected no Enter re-send when prompt is clean, got %d", enterCount)
+	}
+}
+
+func TestVerifyEnterDelivery_CaptureErrorReturns(t *testing.T) {
+	// On capture failure, verifyEnterDelivery must return without re-sending
+	// (relies on the 15s notifyRetryInterval safety net).
+	origOutput := tmuxOutputRunner
+	origRun := tmuxRunner
+	t.Cleanup(func() {
+		tmuxOutputRunner = origOutput
+		tmuxRunner = origRun
+	})
+
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		return "", fmt.Errorf("pane gone")
+	}
+	enterCount := 0
+	tmuxRunner = func(args ...string) error {
+		if strings.Contains(strings.Join(args, " "), "Enter") {
+			enterCount++
+		}
+		return nil
+	}
+
+	verifyEnterDelivery("sess:role.1")
+
+	if enterCount != 0 {
+		t.Errorf("expected no Enter re-send on capture error, got %d", enterCount)
+	}
+}
