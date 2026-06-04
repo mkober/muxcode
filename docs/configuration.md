@@ -42,6 +42,8 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `MUXCODE_ROLE_MAP` | (empty) | Space-separated `window=role` mappings for windows whose role differs from name. Not needed for built-in roles — `commit`, `serve`, `analyze`, and `run` are now canonical names matching their window names. Only needed for custom roles (e.g. `docs=documentor`). |
 | `MUXCODE_SPLIT_LEFT` | `plan edit build test serve review deploy run commit watch` | Space-separated windows that have a left pane (tool) + right pane (agent) |
 
+**Auto-refit on resize**: `config/tmux.conf` registers a `client-resized` hook (tmux 3.0+) that re-fits every window in the session to the attached client whenever the terminal changes size (monitor resolution change, tile, or reattach). This prevents the session from being clipped at its old geometry without needing a restart. See [Architecture → Window Resize Flow](architecture.md#window-resize-flow) for the hook command and the tmux format-string gotcha it works around.
+
 ### Hook Configuration
 
 | Variable | Default | Description |

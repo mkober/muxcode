@@ -49,6 +49,7 @@ tools/muxcode-llm-harness/    # Go module — standalone local LLM harness
 | `./install.sh` | First-time setup — checks prereqs, builds, configures tmux and Claude Code hooks |
 | `bash scripts/test-diff-split.sh` | Integration test for nvim diff split preview (requires running muxcode session) |
 | `bash scripts/test-hot-reload.sh` | Integration test for agent hot reload (requires running muxcode session) |
+| `bash scripts/test-resize-hook.sh` | Integration test for the `client-resized` window auto-refit hook (requires running muxcode session) |
 
 Both Go modules have **no external dependencies** (stdlib only).
 

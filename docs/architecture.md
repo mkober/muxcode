@@ -213,6 +213,33 @@ This means rapid consecutive edits (e.g. Claude writing multiple files) are coal
 - Jump-to-line must be a separate `tmux send-keys` after 150ms so scrollbind is active
 - Concurrent hook invocations (global + project settings) guarded by temp file age (< 3s → skip)
 
+### Window Resize Flow
+
+When the attached terminal changes size — a monitor resolution change, a window
+tile, or detaching and reattaching from a differently-sized client — tmux resizes
+the terminal app but leaves each window at its old geometry, clipping the session
+until it is recreated. A `client-resized` hook (tmux 3.0+, in `config/tmux.conf`)
+auto-refits the whole session live, no restart needed:
+
+```
+1. Attached client changes size (resolution change / tile / reattach)
+2. tmux fires the client-resized hook
+3. run-shell -b lists every window in the session
+4. Each window is re-fit to the largest connected client (resize-window -A)
+5. The whole session tracks the new size — not just the window in view
+```
+
+```
+set-hook -g client-resized 'run-shell -b "tmux list-windows | cut -d: -f1 | xargs -I{} tmux resize-window -t :{} -A"'
+```
+
+**Key constraints:**
+- Loops over **every** window (not just the active one) so background agent windows refit too
+- **tmux format gotcha**: tmux expands both `#{...}` formats and `$vars` inside hook command strings before the shell runs, so a `#{window_index}` format or a `$i` shell loop variable would be mangled. The `{}` xargs placeholder contains neither, so it survives tmux parsing untouched and xargs substitutes each window index at run time.
+- `resize-window -A` fits to the largest connected client (the standard "aggressive resize" behavior)
+- Requires tmux >= 3.0 (already a project prerequisite)
+- Integration test: `scripts/test-resize-hook.sh` verifies the hook is registered and that its action refits a clipped background window back to the client size
+
 ## Bus Protocol
 
 ### Message Types
