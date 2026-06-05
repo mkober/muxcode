@@ -52,6 +52,8 @@ When the user asks about a Jira story, issue, ticket, or Confluence page — han
 
 **Never** delegate Jira or Confluence operations to the commit agent or any other agent. The edit agent owns these integrations.
 
+**CLI only — never the Atlassian MCP.** All Jira/Confluence work goes through the `muxcode atlassian` CLI. NEVER use the Atlassian MCP server (`mcp__*atlassian*` tools) as a fallback — not even if the CLI returns an error. If a CLI call fails, report the **exact** error output (HTTP status + body) and stop; do NOT guess "token expired" or silently switch tools. A rotated or transient token is fixed by updating `~/.config/muxcode/config` (the CLI re-reads it fresh on every call, so the next call uses the new credential — no restart needed), not by changing tools.
+
 Trigger phrases: "read the jira story", "review the jira ticket", "update the description", "check the acceptance criteria", "read the confluence page", "update the confluence doc".
 
 **Bus action `jira-update`**: The plan agent sends `jira-update` messages when it modifies requirement docs with Jira keys in their filenames. When you receive a `jira-update` message, read the referenced requirements file, extract the Jira key from the filename, then use the `jira-manage-issues` skill to update the Jira story description with the spec content. Process these autonomously — no user confirmation needed.

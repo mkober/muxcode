@@ -69,6 +69,78 @@ Sent request:deploy to deploy
 Tracking task 1779979541-edit-d2c7d769 — response will arrive in inbox
 ```
 
+**Message hygiene:** keep delegations short, single-line, and intent-level.
+
+- **Short, single-line, no newlines.** `validatePayload()` warns when a payload
+  contains newlines ("may break allowedTools glob matching") or exceeds 500 chars.
+  These warnings are advisory but real — a long or multi-line payload can miss the
+  `Bash(muxcode *)` permission glob and trigger a permission prompt instead of
+  delivering cleanly. Treat the warnings as errors to fix, not noise.
+- **Delegate intent, not pre-baked artifacts.** Describe *what* you want done and
+  let the receiving agent compose the details. Don't hand the commit agent a full
+  multi-line commit message or an exhaustive file list — say what to commit and
+  let it stage tracked files and write the message.
+  - Avoid: `muxcode send commit commit "Stage fileA fileB fileC fileD, commit with message '<long body…>', exclude untracked doc, then push"` (~580 chars, multi-field).
+  - Prefer: `muxcode send commit commit "Commit the canvas-api fixes for PR #188 (exclude the untracked doc) and push; report new HEAD." --force --track`
+- **File handoff for genuinely long or structured content.** When the work *needs*
+  a lot of detail (many items, multi-line bodies, per-item instructions), write it
+  to a scratch file and send a **short** message pointing the agent at the file —
+  never inline the content into the bus payload. The file holds the data and the
+  per-item instructions; the bus message stays one short line. This keeps the bus
+  uncluttered and avoids the length/newline/glob pitfalls entirely.
+  - Pattern: `Write /tmp/<descriptive-name>.md` (self-describing — include IDs,
+    bodies, and how to process each entry), then:
+    `muxcode send commit pr-read "Read /tmp/pr188-comment-replies.md and post each entry's body as a reply to its PR #188 review comment id; report how many of the 12 posted." --track`
+  - Good for: batches of PR-comment replies, multi-file commit plans, long
+    generated bodies, anything you'd otherwise cram into one giant payload.
+  - Prefer descriptive `/tmp/<name>.md` names; the receiving agent reads the file
+    directly. (A future `muxcode send --payload-file` will formalize this — see
+    `docs/requirements/backlog/delegation-message-hygiene.md`.)
+- **Prefer `--track` for delegations.** Use `--track` for fire-and-forget /
+  long-running work so the sender keeps working; reserve `--wait` for when the
+  result is needed before the next step. A healthy `--wait` polls every 500ms and
+  can look like a hang while the sender drains its inbox backlog — it is not stuck.
+
+**Keep agents deliverable (no blocking foreground commands):** the daemon's
+`checkIdleAgents()` delivers and notifies **only idle** agents. An agent stuck in
+**active** state never receives its inbox — messages pile up unnotified
+(`muxcode diagnose <role>` reports this as `active-with-stale-messages`).
+
+- **Never run a blocking / never-exiting command in an agent's interactive pane.**
+  `gh pr checks --watch`, `tail -f`, log follows, and interactive watchers keep
+  the agent active indefinitely, starving its inbox. Route watch-to-completion
+  work to the **watch** agent (log tailing) or a detached `muxcode proc`:
+  - Avoid (in an agent pane): `gh pr checks 188 --watch`
+  - Prefer: `muxcode proc start "gh pr checks 188 --watch" --name pr188-checks`
+- **Recovering a wedged-active agent.** Recovery depends on whether the agent is
+  *busy* or genuinely *frozen*:
+  - **Busy** (will finish): it returns to idle on its own; the daemon then delivers.
+  - **Frozen TUI** (`Escape`, `Ctrl-U`, **and** `Ctrl-C` all ignored, static
+    display): keystroke- and marker-based recovery all **fail**. `muxcode
+    agent-health --stop`/`--start` only toggles a marker (never touches the
+    process); `muxcode reload` / `GracefulStop()` recover via `tmux send-keys`
+    (Escape → `/exit` → C-c) which don't land on a frozen pane. A frozen-but-alive
+    process also passes `IsAgentAlive`, so the daemon's auto-restart (it fires only
+    on a **dead** process) never triggers.
+  - **Reliable fix — kill the OS process.** Find the agent PID (`claude --agent
+    <file>` under the role's pane) and `kill -TERM <pid>` (escalate to `-KILL` if
+    it survives). The now-dead process triggers daemon auto-restart; the fresh
+    agent re-reads its on-disk inbox on startup, so the pending message is not lost.
+    Beware the "1 shell still running" indicator — it can be **stale** (no real
+    child process), so don't waste time hunting a child to kill; terminate the
+    agent CLI process itself.
+  - **After respawn, confirm the inbox was drained.** A freshly respawned agent may
+    sit idle without running its startup inbox check (the daemon notify doesn't
+    always fire — the "post-restart wake gap"). If the pending message isn't picked
+    up, wake it manually so it re-reads its inbox.
+
+> There is currently no single `muxcode` command that force-terminates a
+> hung-but-alive agent, and a respawned agent isn't guaranteed to drain its inbox —
+> every stop/restart path is keystroke- or marker-based and the startup wake is
+> unreliable. An automatic watchdog (detect freeze → kill → respawn → verify inbox
+> drained, with no user intervention) is tracked in
+> `docs/requirements/backlog/delegation-message-hygiene.md`.
+
 ### `muxcode inbox`
 
 Read messages from an agent's inbox.

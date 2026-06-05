@@ -19,6 +19,14 @@ The `muxcode atlassian` subcommand handles Jira API calls. It reads credentials 
 
 If any are missing, the command reports an error.
 
+### Tooling policy — CLI only, never MCP
+
+**The `muxcode atlassian` CLI is the ONLY sanctioned path for Jira.** NEVER fall back to the Atlassian MCP server (`mcp__*atlassian*` tools such as `getJiraIssue`, `editJiraIssue`, `addCommentToJiraIssue`, `transitionJiraIssue`, etc.) under any circumstances — not even if the CLI returns an error.
+
+- **On CLI failure, report the actual command output verbatim** (HTTP status code + response body) and stop. Do NOT guess "token expired", do NOT invent a cause, and do NOT silently switch to another tool.
+- **A token-rotation or transient auth failure is fixed by updating `~/.config/muxcode/config`, not by changing tools.** The CLI re-reads that config file fresh on every invocation — once the file is updated, the very next CLI call uses the new credentials with no restart needed.
+- If you believe the credential is genuinely invalid, surface that to the caller with the exact error text so the config can be fixed — then retry the CLI. Switching to MCP is never the answer.
+
 ### Key identification
 
 Use a two-path approach to find the Jira issue key:
@@ -368,4 +376,5 @@ Send a message to edit with the outcome:
 
 - No Jira key from request or branch name: skip silently
 - `jq` not available: skip silently (do not break the calling workflow)
-- Script errors (non-zero exit): report failure to edit but do not fail the overall workflow
+- Script errors (non-zero exit): report the **exact** error output (HTTP status + body) to edit, but do not fail the overall workflow. Do NOT fall back to the Atlassian MCP — see "Tooling policy" above.
+- Auth errors (HTTP 401/403): report the verbatim error and note that `~/.config/muxcode/config` may need a fresh `JIRA_API_TOKEN`. Do NOT switch tools; once the config is updated, retry the same CLI command.

@@ -21,6 +21,8 @@ The `muxcode atlassian` subcommand handles Jira API calls. It reads credentials 
 
 If any are missing, the script reports an error. Skip the Jira comment silently if the script fails.
 
+**Tooling policy — CLI only, never MCP.** The `muxcode atlassian` CLI is the ONLY sanctioned path for Jira. NEVER fall back to the Atlassian MCP server (`mcp__*atlassian*` tools) under any circumstances — not even if the CLI errors. On failure, report the actual command output verbatim (HTTP status + body); do NOT guess "token expired" or silently switch tools. A token-rotation or transient auth failure is fixed by updating `~/.config/muxcode/config` (the CLI re-reads it fresh on every call), not by changing tools.
+
 ### Steps
 
 1. **Extract Jira key from branch name** — get the current branch name and match the leading Jira key pattern (`PROJ-123`). The key starts with an uppercase letter followed by uppercase letters or digits, a hyphen, then one or more digits. Examples: `DATA-456-add-validation` yields `DATA-456`, `PBP1-4365-fix-bug` yields `PBP1-4365`. If no match, skip silently.
@@ -175,4 +177,4 @@ If any are missing, the script reports an error. Skip the Jira comment silently 
 - No Jira key in branch name: skip silently
 - `jq` not available: skip the Jira comment (do not break PR creation)
 - Copilot comment fetch fails: post the Jira comment without the Copilot summary (degrade gracefully)
-- Script errors (non-zero exit): report failure to edit but do not fail the overall PR workflow
+- Script errors (non-zero exit): report the **exact** error output (HTTP status + body) to edit, but do not fail the overall PR workflow. Do NOT fall back to the Atlassian MCP — see the Tooling policy in Prerequisites.

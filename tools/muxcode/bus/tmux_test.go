@@ -330,8 +330,10 @@ func TestTmuxClearInput(t *testing.T) {
 		t.Fatalf("expected 1 call, got %d", len(cap.calls))
 	}
 	args := cap.calls[0]
-	if args[0] != "send-keys" || args[2] != "s:commit.1" || args[3] != "C-u" {
-		t.Errorf("unexpected args: %v", args)
+	// Robust clear sequence: move to end, kill to start, move to start, kill to end.
+	want := []string{"send-keys", "-t", "s:commit.1", "C-e", "C-u", "C-a", "C-k"}
+	if strings.Join(args, " ") != strings.Join(want, " ") {
+		t.Errorf("unexpected args: got %v, want %v", args, want)
 	}
 }
 
