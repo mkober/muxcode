@@ -693,17 +693,24 @@ func TestPreLaunchSetup_EditStartupMessage(t *testing.T) {
 	}
 
 	m := msgs[0]
-	if m.Type != "event" {
-		t.Errorf("expected type 'event', got %q", m.Type)
+	if m.Type != "request" {
+		t.Errorf("expected type 'request', got %q", m.Type)
 	}
-	if m.Action != "notify" {
-		t.Errorf("expected action 'notify', got %q", m.Action)
+	if m.Action != "startup" {
+		t.Errorf("expected action 'startup', got %q", m.Action)
+	}
+	// The startup message MUST be actionable so the daemon's wake-up paths
+	// (which gate on HasActionableMessages) can re-notify if the launch-time
+	// send-keys wake-up is dropped.
+	if !HasActionableMessages(session, "edit") {
+		t.Error("expected edit startup message to be actionable, but it is not")
 	}
 }
 
 func TestPreLaunchSetup_AllRolesGetStartupMessage(t *testing.T) {
-	// All non-auto roles should receive a startup event/notify message
-	// so they check inbox on launch and restore session context.
+	// All non-auto roles should receive a startup request/startup message
+	// so they check inbox on launch and restore session context. It must be
+	// request-type (actionable) so the daemon can re-wake a missed agent.
 	roles := []string{"build", "test", "commit", "review", "deploy", "plan", "run", "watch", "serve"}
 	for _, role := range roles {
 		t.Run(role, func(t *testing.T) {
@@ -725,11 +732,11 @@ func TestPreLaunchSetup_AllRolesGetStartupMessage(t *testing.T) {
 			}
 
 			m := msgs[0]
-			if m.Type != "event" {
-				t.Errorf("expected type 'event', got %q", m.Type)
+			if m.Type != "request" {
+				t.Errorf("expected type 'request', got %q", m.Type)
 			}
-			if m.Action != "notify" {
-				t.Errorf("expected action 'notify', got %q", m.Action)
+			if m.Action != "startup" {
+				t.Errorf("expected action 'startup', got %q", m.Action)
 			}
 			if m.From != role {
 				t.Errorf("expected from %q, got %q", role, m.From)
@@ -739,6 +746,9 @@ func TestPreLaunchSetup_AllRolesGetStartupMessage(t *testing.T) {
 			}
 			if !strings.Contains(m.Payload, "Session started") {
 				t.Errorf("expected payload to contain 'Session started', got %q", m.Payload)
+			}
+			if !HasActionableMessages(session, role) {
+				t.Errorf("expected %s startup message to be actionable, but it is not", role)
 			}
 		})
 	}

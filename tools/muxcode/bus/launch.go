@@ -732,8 +732,10 @@ func resolveInstallDir() string {
 var lookPath = exec.LookPath
 
 // PreLaunchSetup performs pre-launch actions: startup inbox message, lifecycle log.
-// Uses SendNoCC to avoid notification since the agent process isn't running yet —
-// the daemon's startup check will notify once the agent is ready.
+// Uses SendNoCC to avoid notifying before the agent process exists. The startup
+// message is request-type so the daemon's actionable-message wake-up paths
+// (which ignore event/response messages) will re-notify the agent if the
+// launch-time send-keys wake-up is missed.
 // cli is the resolved CLI binary name (e.g. "claude", "muxcode-llm-harness").
 func PreLaunchSetup(role, session, cli string) {
 	startupMsg := "Session started — review last saved context from memory to restore session state."
@@ -755,13 +757,22 @@ func PreLaunchSetup(role, session, cli string) {
 		// All agents get a startup inbox message so they check inbox on launch,
 		// read memory, and restore session context. Without this, agents that
 		// launch into an empty inbox sit idle and never restore prior state.
+		//
+		// Type MUST be "request" (not "event"): the daemon's wake-up paths gate
+		// on HasActionableMessages(), which only counts request-type messages.
+		// An event-type startup message is invisible to the daemon, so if the
+		// one-shot launch-time send-keys wake-up is dropped (Claude Code's TUI
+		// can ignore keystrokes during its post-prompt init phase), there is no
+		// recovery and the agent never restores context. As a request, the
+		// daemon's safety-net re-wakes the agent until the inbox is consumed.
+		// This mirrors the auto agent's startup message above.
 		m := Message{
 			ID:      NewMsgID(role),
 			TS:      time.Now().Unix(),
 			From:    role,
 			To:      role,
-			Type:    "event",
-			Action:  "notify",
+			Type:    "request",
+			Action:  "startup",
 			Payload: startupMsg,
 		}
 		_ = SendNoCC(session, m)
