@@ -72,6 +72,7 @@ Commands:
   atlassian     Jira and Confluence API operations (read, update, comment, search)
   modal         Manage modal windows (open, list, status)
   mode          Cycle between agent modes on a window (cycle, status, switch, list)
+  resize        Resize every window in every session to fit the connected client
   uitest        Run integration tests in a live tmux session (--list, --verbose)
   tasks         List delegated tasks tracked via --wait (--all, --status)
   track         Show delivery status for a message ID
@@ -203,6 +204,8 @@ func main() {
 		cmd.Modal(args)
 	case "mode":
 		cmd.Mode(args)
+	case "resize":
+		cmd.Resize(args)
 	case "uitest":
 		cmd.UITest(args)
 	case "simulate":

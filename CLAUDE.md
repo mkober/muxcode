@@ -186,6 +186,7 @@ Test: `cd tools/muxcode && go test ./...`
 | `bus/provider_options.go` | `ProviderOption`, `AvailableProviders()`, `ProviderByIndex()`, `ProviderByCLI()`, `ResolveActiveAgentWindow()`, `WindowFKey()` — provider selector data layer |
 | `bus/config_file.go` | `GetShellConfig()`, `ResolveConfigPath()`, `SetShellConfigValue()` — shell-sourceable config file read/write |
 | `bus/watcher_health.go` | `KeepalivePath()`, `IsKeepaliveStale()`, `TouchKeepalive()` — daemon keepalive monitoring |
+| `bus/resize.go` | `ResizeAllWindows()`, `listAllWindows()`, `attachedFitSize()` — `muxcode resize` backing the `client-resized` hook; two-pass refit of every window across **all** sessions (attached: `resize-window -A`; detached: explicit fit size), replacing the old single-session xargs one-liner |
 | `cmd/` | Subcommand handlers (one per CLI command) |
 | `watcher/watcher.go` | Bus daemon: inbox polling, trigger debounce, cron/proc/spawn/loop/compaction/ollama checks |
 | `tui/` | Dashboard TUI (Dracula theme), Provider selector TUI (`provider_select.go`), Remote session browser TUI (`remote.go`) |

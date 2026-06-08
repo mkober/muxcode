@@ -221,6 +221,14 @@ func TmuxResizeWindow(target string) error {
 	return TmuxRun("resize-window", "-t", target, "-A")
 }
 
+// TmuxResizeWindowToSize resizes a window to explicit dimensions. Used for
+// windows in detached sessions, where -A has no connected client to fit to and
+// is therefore a no-op.
+func TmuxResizeWindowToSize(target string, width, height int) error {
+	return TmuxRun("resize-window", "-t", target,
+		"-x", strconv.Itoa(width), "-y", strconv.Itoa(height))
+}
+
 // TmuxSwitchClient switches the current tmux client to a session.
 func TmuxSwitchClient(session string) error {
 	return TmuxRun("switch-client", "-t", session)

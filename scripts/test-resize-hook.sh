@@ -41,10 +41,16 @@ log_skip() { ((skip++)); echo -e "  ${YELLOW}SKIP${NC} $1: $2"; }
 
 BUS_DIR="/tmp/muxcode-bus-${SESSION}"
 
-# Restore real window geometry on exit so the test never leaves windows clipped.
+# Temp session created in Phase 3b — tracked here so the EXIT trap can reap it
+# even if the test aborts midway.
+TMP_SESSION=""
+
+# Restore real window geometry on exit so the test never leaves windows clipped,
+# and kill any temp session we spawned.
 restore_geometry() {
   tmux list-windows -t "$SESSION" 2>/dev/null | cut -d: -f1 \
     | xargs -I{} tmux resize-window -t "${SESSION}:{}" -A 2>/dev/null || true
+  [ -n "$TMP_SESSION" ] && tmux kill-session -t "$TMP_SESSION" 2>/dev/null || true
 }
 trap restore_geometry EXIT
 
@@ -94,20 +100,20 @@ else
   log_fail "Hook registration" "no client-resized hook (is tmux.conf loaded? run: tmux source-file ~/.config/muxcode/tmux.conf)"
 fi
 
-# The hook must use the xargs form — the earlier '$i' shell-loop variant was
-# silently broken by tmux's own '$' variable expansion.
-if echo "$HOOK" | grep -q "xargs -I{} tmux resize-window"; then
-  log_pass "Hook uses the xargs resize-window form"
+# The hook must delegate to `muxcode resize` — the Go subcommand that refits
+# every window in every session (including detached subsessions). The earlier
+# inline `xargs -I{} tmux resize-window` form only ever saw the current session.
+if echo "$HOOK" | grep -q "muxcode resize"; then
+  log_pass "Hook delegates to 'muxcode resize'"
 else
-  log_fail "Hook command" "expected 'xargs -I{} tmux resize-window' in: $HOOK"
+  log_fail "Hook command" "expected 'muxcode resize' in: $HOOK"
 fi
 
-# Guard against regressions: a literal '$i'/'$' or unescaped '#{' would have
-# been mangled by tmux and produce a no-op '-t :' target.
-if echo "$HOOK" | grep -q -- "-t : "; then
-  log_fail "Hook command" "contains an empty '-t :' target — variable was eaten by tmux"
+# Guard against a regression back to the inline single-session form.
+if echo "$HOOK" | grep -q "xargs -I{} tmux resize-window"; then
+  log_fail "Hook command" "still uses the inline single-session xargs form — should be 'muxcode resize'"
 else
-  log_pass "Hook target is well-formed (no empty -t :)"
+  log_pass "Hook does not use the legacy single-session inline form"
 fi
 
 echo ""
@@ -139,8 +145,13 @@ else
 fi
 
 # Run exactly what the hook runs.
-tmux list-windows -t "$SESSION" | cut -d: -f1 \
-  | xargs -I{} tmux resize-window -t "${SESSION}:{}" -A 2>/dev/null
+if command -v muxcode >/dev/null 2>&1; then
+  muxcode resize 2>/dev/null
+else
+  # Fallback to the equivalent action if the binary is not on PATH.
+  tmux list-windows -t "$SESSION" | cut -d: -f1 \
+    | xargs -I{} tmux resize-window -t "${SESSION}:{}" -A 2>/dev/null
+fi
 
 read -r AW AH < <(tmux display-message -p -t "${SESSION}:${TARGET_WIN}" '#{window_width} #{window_height}')
 echo "  After hook action: window $TARGET_WIN is ${AW}x${AH} (fit ${FIT_W}x${FIT_H})"
@@ -165,6 +176,45 @@ if [ "$ALL_MATCH" = true ]; then
   log_pass "All windows share the fit size after the action (none clipped)"
 else
   log_fail "All-windows refit" "one or more windows still differ from the fit size"
+fi
+
+echo ""
+
+# --- Phase 3b: Detached subsession refit (the cross-session fix) ---
+echo "--- Phase 3b: Detached subsession is refit too ---"
+
+if ! command -v muxcode >/dev/null 2>&1; then
+  log_skip "Detached subsession refit" "muxcode binary not on PATH"
+else
+  # Tracked by the EXIT trap so it is reaped even if the test aborts midway.
+  TMP_SESSION="resize-test-$$"
+  # Create a detached session whose window starts clipped (40x10). It has no
+  # attached client, so `resize-window -A` alone could never fix it — only the
+  # explicit-size push in `muxcode resize` can.
+  tmux new-session -d -s "$TMP_SESSION" -x 40 -y 10 2>/dev/null
+  if ! tmux has-session -t "$TMP_SESSION" 2>/dev/null; then
+    log_skip "Detached subsession refit" "could not create temp session"
+    TMP_SESSION=""
+  else
+    read -r DW DH < <(tmux display-message -p -t "${TMP_SESSION}:0" '#{window_width} #{window_height}')
+    echo "  Detached ${TMP_SESSION}:0 starts at ${DW}x${DH} (attached fit ${FIT_W}x${FIT_H})"
+
+    muxcode resize 2>/dev/null
+
+    read -r RW RH < <(tmux display-message -p -t "${TMP_SESSION}:0" '#{window_width} #{window_height}')
+    echo "  After refit: ${TMP_SESSION}:0 is ${RW}x${RH}"
+
+    if [ "$RW" -eq "$FIT_W" ] && [ "$RH" -eq "$FIT_H" ]; then
+      log_pass "Detached subsession refit to the attached client's fit size"
+    elif [ "$RW" -gt "$DW" ]; then
+      log_pass "Detached subsession grew toward the fit size (${RW}x${RH})"
+    else
+      log_fail "Detached subsession refit" "still ${RW}x${RH}, expected ${FIT_W}x${FIT_H}"
+    fi
+
+    tmux kill-session -t "$TMP_SESSION" 2>/dev/null || true
+    TMP_SESSION=""
+  fi
 fi
 
 echo ""

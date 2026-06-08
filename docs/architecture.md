@@ -219,26 +219,31 @@ When the attached terminal changes size — a monitor resolution change, a windo
 tile, or detaching and reattaching from a differently-sized client — tmux resizes
 the terminal app but leaves each window at its old geometry, clipping the session
 until it is recreated. A `client-resized` hook (tmux 3.0+, in `config/tmux.conf`)
-auto-refits the whole session live, no restart needed:
+calls `muxcode resize` to auto-refit **every window in every session** live — including
+detached subsessions — no restart needed:
 
 ```
 1. Attached client changes size (resolution change / tile / reattach)
 2. tmux fires the client-resized hook
-3. run-shell -b lists every window in the session
-4. Each window is re-fit to the largest connected client (resize-window -A)
-5. The whole session tracks the new size — not just the window in view
+3. run-shell -b "muxcode resize"
+4. Pass 1 — attached sessions: each window re-fit to its connected client (resize-window -A)
+5. Pass 2 — detached sessions: fit size read back from an attached window and
+   pushed explicitly (resize-window -x/-y), since -A is a no-op with no client
+6. Every session tracks the new size — not just the window in view, not just the current session
 ```
 
 ```
-set-hook -g client-resized 'run-shell -b "tmux list-windows | cut -d: -f1 | xargs -I{} tmux resize-window -t :{} -A"'
+set-hook -g client-resized 'run-shell -b "muxcode resize"'
 ```
 
 **Key constraints:**
-- Loops over **every** window (not just the active one) so background agent windows refit too
-- **tmux format gotcha**: tmux expands both `#{...}` formats and `$vars` inside hook command strings before the shell runs, so a `#{window_index}` format or a `$i` shell loop variable would be mangled. The `{}` xargs placeholder contains neither, so it survives tmux parsing untouched and xargs substitutes each window index at run time.
-- `resize-window -A` fits to the largest connected client (the standard "aggressive resize" behavior)
+- The work is done by `muxcode resize` (`bus/resize.go`, `ResizeAllWindows()`) rather than an inline tmux one-liner, for two reasons:
+  - **All sessions, not just the current one.** The old inline form (`tmux list-windows | cut -d: -f1 | xargs -I{} tmux resize-window -t :{} -A`) could only ever see the *current* session, so detached subsessions kept their clipped geometry until switched to and resized by hand. `muxcode resize` walks every session via `tmux list-windows -a`.
+  - **Detached sessions.** `resize-window -A` fits to the largest *connected* client and is a **no-op** for a session with no client attached, so a cross-session one-liner still could not refit a detached subsession. `muxcode resize` reads the fit size from an attached window (every session shares the same status-bar geometry) and pushes it explicitly with `resize-window -x/-y`; that explicit size is harmlessly overridden the next time a client attaches.
+- Two-pass design: attached windows use `-A` (status-bar-aware, honours true client size); detached windows get the explicit fit size copied from an attached window.
+- Tab-delimited `list-windows -a` parsing tolerates session names containing `:` (a legal tmux character) that would corrupt a `cut -d:` split.
 - Requires tmux >= 3.0 (already a project prerequisite)
-- Integration test: `scripts/test-resize-hook.sh` verifies the hook is registered and that its action refits a clipped background window back to the client size
+- Integration test: `scripts/test-resize-hook.sh` verifies the hook is registered and that its action refits a clipped background window back to the client size; unit tests in `bus/resize_test.go`
 
 ## Bus Protocol
 
