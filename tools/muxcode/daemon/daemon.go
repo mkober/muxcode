@@ -1149,7 +1149,7 @@ func (d *Daemon) checkIdleAgents() {
 			if _, seen := d.activeUnnotifiedSeen[role]; !seen {
 				d.activeUnnotifiedSeen[role] = now
 			}
-			if now-d.activeUnnotifiedSeen[role] >= 30 {
+			if now-d.activeUnnotifiedSeen[role] >= watchdogActiveSecs {
 				target := bus.PaneTarget(d.session, role)
 				if content, err := bus.TmuxCapturePaneLines(target, 200); err == nil {
 					if bus.PaneHasIdlePrompt(content) {
@@ -1172,8 +1172,10 @@ func (d *Daemon) checkIdleAgents() {
 						continue
 					}
 				}
-				// ❯ not found — reset timer, check again in 30s
-				d.activeUnnotifiedSeen[role] = now
+				// ❯ not found — leave the timer past-threshold so the NEXT poll
+				// (every 5s) re-checks, instead of waiting another full threshold
+				// window. A genuinely-busy agent has no ❯ prompt, so re-checking
+				// is a cheap no-op until it finishes.
 			}
 			continue
 		}
@@ -1550,6 +1552,13 @@ func extractDiffFiles(diffStat string) []string {
 }
 
 const idleTaskGracePeriod int64 = 30
+
+// watchdogActiveSecs is how long an agent may appear "active" with pending
+// unnotified messages before the watchdog does a wider pane capture and
+// force-delivers if a real ❯ prompt is found. Kept short so a finished agent
+// that pane-scrape idle-detection misreads as busy recovers quickly; once past
+// this threshold the wider check runs every poll (every 5s), not once.
+const watchdogActiveSecs int64 = 15
 
 // checkIdleTaskCompletion is a safety net for hook-provider agents (Claude Code)
 // that go idle without having responded to an in-flight task. This catches the

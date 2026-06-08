@@ -73,6 +73,7 @@ Commands:
   modal         Manage modal windows (open, list, status)
   mode          Cycle between agent modes on a window (cycle, status, switch, list)
   resize        Resize every window in every session to fit the connected client
+  deliver       Force-deliver an agent's pending inbox into its pane (--force)
   uitest        Run integration tests in a live tmux session (--list, --verbose)
   tasks         List delegated tasks tracked via --wait (--all, --status)
   track         Show delivery status for a message ID
@@ -206,6 +207,8 @@ func main() {
 		cmd.Mode(args)
 	case "resize":
 		cmd.Resize(args)
+	case "deliver":
+		cmd.Deliver(args)
 	case "uitest":
 		cmd.UITest(args)
 	case "simulate":
