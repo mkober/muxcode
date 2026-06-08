@@ -24,6 +24,7 @@ var knownSubcommands = map[string]bool{
 	"compact": true, "launch": true, "modal": true, "mode": true,
 	"reload": true, "config": true, "provider-select": true,
 	"simulate": true, "track": true, "remote": true, "spec": true,
+	"resize": true, "deliver": true,
 }
 
 var usage = `Usage: muxcode <command> [args...]
