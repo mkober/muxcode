@@ -51,8 +51,13 @@ func SharedPrompt(role string) string {
 	// Resolve provider early — needed for compact instructions and manual bus messaging
 	provider := ResolveProvider(role)
 
-	b.WriteString("**Combined compact**: When the user says \"compact\" or \"save context\", when you receive a `compact-recommended` alert, ")
-	b.WriteString("or whenever you decide to compact, always do both steps together:\n")
+	b.WriteString("**Save context** — when the user says \"save context\" (or \"save context to memory\"): ")
+	b.WriteString("save a summary to memory only — `muxcode session compact \"<summary of key work, decisions, and state>\"`. ")
+	b.WriteString("This persists learnings across sessions and is restored on restart. ")
+	b.WriteString("It does NOT trigger any conversation compaction — do NOT run `muxcode compact` for a \"save context\" request.\n\n")
+
+	b.WriteString("**Compact** — when the user explicitly says \"compact\", when you receive a `compact-recommended` alert, ")
+	b.WriteString("or whenever you decide to compact, do both steps together:\n")
 	b.WriteString("1. Save context to memory: `muxcode session compact \"<summary of key work, decisions, and state>\"`\n")
 	if provider.SupportsHooks() {
 		// Claude Code: use /compact injection via tmux send-keys

@@ -334,6 +334,34 @@ func TestSharedPrompt_ClaudeCode_HasCompactCommand(t *testing.T) {
 	}
 }
 
+func TestSharedPrompt_SaveContextDecoupledFromCompact(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
+
+	// "save context" must be documented as a memory-only action that does NOT
+	// trigger Claude conversation compaction.
+	t.Setenv("MUXCODE_EDIT_CLI", "claude")
+	prompt := SharedPrompt("edit")
+
+	// A distinct "Save context" section must exist and point at session compact.
+	if !strings.Contains(prompt, "**Save context**") {
+		t.Error("SharedPrompt(edit) should have a distinct '**Save context**' section")
+	}
+	if !strings.Contains(prompt, "muxcode session compact") {
+		t.Error("SharedPrompt(edit) save-context guidance should reference 'muxcode session compact'")
+	}
+	// It must explicitly state save-context does not run a conversation compaction.
+	if !strings.Contains(prompt, "do NOT run `muxcode compact` for a \"save context\" request") {
+		t.Error("SharedPrompt(edit) should state that 'save context' does NOT run 'muxcode compact'")
+	}
+	// The combined behavior must be gated behind an explicit "compact" request.
+	if !strings.Contains(prompt, "**Compact**") {
+		t.Error("SharedPrompt(edit) should have a distinct '**Compact**' section for the combined behavior")
+	}
+}
+
 func TestSharedPrompt_OpenCode_NoCompactSlashCommand(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
