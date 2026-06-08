@@ -998,12 +998,14 @@ func (d *Daemon) checkAgentHealth() {
 }
 
 // checkIdleAgents wakes agents that are idle with unread messages.
-// Runs every 5 seconds. For each non-edit agent that has unread inbox messages
+// Runs every 5 seconds. For each agent that has unread inbox messages
 // and is sitting at the idle prompt (not polling or waiting), triggers a
 // wake-up via the provider. Hook providers (Claude Code) get "You have new
 // messages" via send-keys; non-hook providers (Codex, OpenCode) get the actual
 // message content injected via provider.SendWakeUp(). The edit agent is
-// excluded because it uses background polling managed by the user/orchestrator.
+// included, but its event-type notifications are capped per 5-minute window by
+// the notification budget (see editNotifyBudget); request-type messages to edit
+// are never throttled.
 func (d *Daemon) checkIdleAgents() {
 	now := time.Now().Unix()
 	if now-d.lastIdleCheck < 5 {
