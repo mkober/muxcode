@@ -151,6 +151,14 @@ For JSON output (programmatic parsing): `muxcode diagnose <role> --json`
 
 Report the diagnosis findings to the user and follow the suggested remediation. Never use `sleep` loops or manual `inbox` checks — `--wait` handles all polling.
 
+**If the diagnosis shows stuck delivery** (agent has pending messages it never processed — stale notified IDs, missed send-keys, idle misdetection, parked input text), recover with:
+
+```bash
+muxcode deliver <role> --force
+```
+
+This force-delivers the pending inbox via the robust text→delay→Enter→verify path, clears stale notified markers, and clears parked input. **Never hand-roll recovery with `tmux send-keys "You have new messages" Enter`** — sending text and Enter together is the known dropped-Enter pitfall; `muxcode deliver` exists precisely for this.
+
 ## Never Do Delegated Work Yourself
 
 **If a delegated agent fails to respond or returns incomplete results, NEVER perform the work yourself.** The purpose of delegation is separation of concerns — doing the work yourself defeats the entire architecture.

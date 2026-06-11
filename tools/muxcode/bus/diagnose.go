@@ -457,8 +457,8 @@ func checkStaleNotifiedIDs(report *DiagnosticReport) *DiagnosticFinding {
 			fmt.Sprintf("Notification marker age: %ds (stale >15s)", report.NotifyState.MarkerAge),
 		},
 		Remediation: []string{
-			fmt.Sprintf("Clear stale notification state: muxcode notify --clear %s", report.Role),
-			fmt.Sprintf("Manual wake: tmux send-keys -t %s \"You have new messages\" Enter", report.Role),
+			fmt.Sprintf("Force-deliver pending inbox: muxcode deliver %s --force", report.Role),
+			fmt.Sprintf("Or clear stale notification state: muxcode notify --clear %s", report.Role),
 		},
 	}
 }
@@ -495,7 +495,7 @@ func checkMissedSendKeys(report *DiagnosticReport) *DiagnosticFinding {
 			"Send-keys may have been dropped by Claude Code TUI redraw",
 		},
 		Remediation: []string{
-			fmt.Sprintf("Manual wake: tmux send-keys -t %s \"You have new messages\" Enter", report.Role),
+			fmt.Sprintf("Force-deliver pending inbox: muxcode deliver %s --force", report.Role),
 			"Retry will happen automatically after 15s (notifyRetryInterval)",
 		},
 	}
@@ -537,8 +537,8 @@ func checkIdleDetectionFailure(report *DiagnosticReport) *DiagnosticFinding {
 		Summary:     "Agent pane shows idle prompt but IsAgentIdle() returned false — daemon cannot deliver messages",
 		Evidence:    evidence,
 		Remediation: []string{
-			"Daemon watchdog (30s) will force delivery via wider capture",
-			fmt.Sprintf("Manual wake: tmux send-keys -t %s \"You have new messages\" Enter", report.Role),
+			"Daemon watchdog (15s) will force delivery via wider capture",
+			fmt.Sprintf("Force-deliver now: muxcode deliver %s --force", report.Role),
 		},
 	}
 }
@@ -568,9 +568,9 @@ func checkDaemonNotWaking(report *DiagnosticReport) *DiagnosticFinding {
 			fmt.Sprintf("%d actionable message(s) in inbox", report.InboxState.ActionableCount),
 		},
 		Remediation: []string{
+			fmt.Sprintf("Force-deliver pending inbox: muxcode deliver %s", report.Role),
 			fmt.Sprintf("Clear notification state: muxcode notify --clear %s", report.Role),
 			"Restart daemon: muxcode watch &",
-			fmt.Sprintf("Manual wake: tmux send-keys -t %s \"You have new messages\" Enter", report.Role),
 		},
 	}
 }
@@ -611,8 +611,8 @@ func checkPostRestartWakeGap(report *DiagnosticReport) *DiagnosticFinding {
 			fmt.Sprintf("Agent is idle with %d actionable message(s)", report.InboxState.ActionableCount),
 		},
 		Remediation: []string{
+			fmt.Sprintf("Force-deliver pending inbox: muxcode deliver %s", report.Role),
 			fmt.Sprintf("Clear notification state: muxcode notify --clear %s", report.Role),
-			fmt.Sprintf("Manual wake: tmux send-keys -t %s \"You have new messages\" Enter", report.Role),
 		},
 	}
 }
@@ -693,7 +693,7 @@ func checkPendingInputBlocking(report *DiagnosticReport) *DiagnosticFinding {
 		},
 		Remediation: []string{
 			"If user is typing: wait for them to submit (press Enter)",
-			fmt.Sprintf("If stale output: clear with tmux send-keys -t %s C-u", report.Role),
+			fmt.Sprintf("Force-deliver (clears parked input first): muxcode deliver %s --force", report.Role),
 		},
 	}
 }
@@ -761,7 +761,7 @@ func checkActiveWithStaleMessages(report *DiagnosticReport) *DiagnosticFinding {
 		Remediation: []string{
 			"Agent may be genuinely busy — wait for it to finish",
 			"If stuck, check pane for permission prompts or errors",
-			fmt.Sprintf("Manual wake: tmux send-keys -t %s \"You have new messages\" Enter", report.Role),
+			fmt.Sprintf("Force-deliver pending inbox: muxcode deliver %s --force", report.Role),
 			fmt.Sprintf("Restart: muxcode agent-health --start %s", report.Role),
 		},
 	}

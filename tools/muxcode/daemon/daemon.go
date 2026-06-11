@@ -1219,6 +1219,12 @@ func (d *Daemon) checkIdleAgents() {
 // is running to call CompleteTask. Also logs the response to console history
 // so left-pane views update for non-hook providers.
 //
+// Timed-out tasks are scanned too: when a response arrives AFTER the sender's
+// --wait gave up (TimeoutTask already fired), the reply sits in the sender's
+// inbox as a non-actionable response-type message — checkIdleAgents never wakes
+// for response-only inboxes, so without this rescue the sender idles forever
+// and the user has to prompt for status manually.
+//
 // Runs every 5 seconds. Skips tasks where --wait is active for the sender
 // (IsWaiting), since --wait handles its own completion.
 func (d *Daemon) checkTrackedTasks() {
@@ -1229,7 +1235,15 @@ func (d *Daemon) checkTrackedTasks() {
 	d.lastTrackedTaskCheck = now
 
 	tasks, err := bus.ListTasks(d.session, bus.TaskInFlight)
-	if err != nil || len(tasks) == 0 {
+	if err != nil {
+		return
+	}
+	// Late responses: tasks --wait already marked timed-out can still get a
+	// reply. Their delivery status flips to "responded" when it lands.
+	if timedOut, toErr := bus.ListTasks(d.session, bus.TaskTimedOut); toErr == nil {
+		tasks = append(tasks, timedOut...)
+	}
+	if len(tasks) == 0 {
 		return
 	}
 
@@ -1246,11 +1260,19 @@ func (d *Daemon) checkTrackedTasks() {
 			continue
 		}
 
+		late := task.Status == bus.TaskTimedOut
 		bus.CompleteTask(d.session, task.ID, ds.ResponseID)
 
 		ts := time.Now().Format("15:04:05")
-		fmt.Printf("  %s  Tracked task %s→%s:%s completed (response: %s)\n",
-			ts, task.From, task.To, task.Action, ds.ResponseID)
+		suffix := ""
+		if late {
+			suffix = " [late — response arrived after --wait timeout]"
+			bus.LogLifecycle(d.session, "info", "daemon", "task-late-response",
+				fmt.Sprintf("%s→%s:%s completed after timeout (response: %s)",
+					task.From, task.To, task.Action, ds.ResponseID))
+		}
+		fmt.Printf("  %s  Tracked task %s→%s:%s completed (response: %s)%s\n",
+			ts, task.From, task.To, task.Action, ds.ResponseID, suffix)
 
 		// Log to console history for the target role's left-pane view
 		if ds.ResponseID != "" {
@@ -1258,6 +1280,11 @@ func (d *Daemon) checkTrackedTasks() {
 				logTrackedTaskToHistory(d.session, task.To, task.Action, msg.Payload)
 			}
 		}
+
+		// Wake the sender so it picks up the response. Response-type messages
+		// are non-actionable for checkIdleAgents, so without an explicit wake
+		// an already-idle sender would never see the reply.
+		_ = bus.Notify(d.session, task.From)
 	}
 }
 

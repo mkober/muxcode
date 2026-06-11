@@ -96,15 +96,32 @@ When an agent appears stuck or unresponsive:
    muxcode log --role {role} --last 5
    ```
 
+6. **Force-deliver the inbox** — if the agent has pending messages it never processed:
+   ```bash
+   muxcode deliver {role}           # safe: requires idle prompt in pane
+   muxcode deliver {role} --force   # skip idle check + clear stale notified markers
+   ```
+
+### Force delivery — `muxcode deliver`
+
+`muxcode deliver <role> [--force]` is the **preferred recovery** for stuck message delivery. It pushes the agent's pending inbox into its pane via the robust wake-up path (text → delay → Enter → verify), which avoids the dropped-Enter failure mode of manual `tmux send-keys "..." Enter` (text and Enter in one pty write can lose the Enter).
+
+- Without `--force`: only delivers if the pane shows an idle prompt (wide 200-line capture) — safe default.
+- With `--force`: skips the idle check AND clears stale notified markers, so messages stuck from a previously dropped send-keys re-deliver. Also clears stale parked input in the pane before injecting.
+
+**Never hand-roll `tmux send-keys ... "You have new messages" Enter`** — use `muxcode deliver` instead.
+
 ### Common issues
 
 | Symptom | Diagnosis | Fix |
 |---------|-----------|-----|
-| Agent idle with pending inbox | Notification missed | Re-send wake-up: `muxcode send {role} notify "You have new messages"` |
+| Agent idle with pending inbox | Notification missed | Force-deliver: `muxcode deliver {role}` |
+| Agent has messages marked notified but never processed them | Dropped send-keys / Enter | `muxcode deliver {role} --force` (clears stale notified markers) |
+| Wake-up text sits in input box, Enter not registering | TUI input-state race | `muxcode deliver {role} --force` (clears parked input, robust Enter path) |
 | Agent active for too long | Stuck in tool execution | Check pane for errors, may need restart: `muxcode agent-health --start {role}` |
 | Agent shows "permission" prompt | Waiting for user approval | Approve/reject in the agent's tmux window |
 | Agent shows bash `$` prompt | Claude Code crashed | Restart: `muxcode agent-health --start {role}` |
-| Message sent but no response | Agent may not have received | Check log: `muxcode log --role {role} --last 5` then re-send |
+| Message sent but no response | Agent may not have received | Run `muxcode diagnose {role}`, then `muxcode deliver {role} --force` if delivery is the issue |
 
 ### Capture multiple agents at once
 

@@ -12,38 +12,48 @@ import (
 // a recovery for the "active-with-stale-messages" wedge where a finished agent is
 // misread as busy and never receives its inbox.
 //
-// Usage: muxcode deliver <role> [--force]
+// Usage: muxcode deliver <role> [--force] [--session <name>]
 //
-//	--force  skip the idle-prompt check and inject regardless of pane state
+//	--force           skip the idle-prompt check and inject regardless of pane state
+//	--session <name>  target a different muxcode session (e.g. a subsession)
 func Deliver(args []string) {
-	var role string
+	var role, session string
 	force := false
-	for _, a := range args {
-		switch a {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--force", "-f":
 			force = true
+		case "--session", "-s":
+			if i+1 < len(args) {
+				i++
+				session = args[i]
+			}
 		case "-h", "--help":
-			fmt.Println("Usage: muxcode deliver <role> [--force]")
+			fmt.Println("Usage: muxcode deliver <role> [--force] [--session <name>]")
 			fmt.Println("  Force-deliver an agent's pending inbox messages into its pane.")
-			fmt.Println("  --force  skip the idle-prompt check and inject regardless of pane state")
+			fmt.Println("  --force           skip the idle-prompt check and inject regardless of pane state")
+			fmt.Println("  --session <name>  target a different muxcode session (default: current)")
 			return
 		default:
 			if role == "" {
-				role = a
+				role = args[i]
 			}
 		}
 	}
 	if role == "" {
-		fmt.Fprintln(os.Stderr, "Usage: muxcode deliver <role> [--force]")
+		fmt.Fprintln(os.Stderr, "Usage: muxcode deliver <role> [--force] [--session <name>]")
 		os.Exit(1)
 	}
 
-	session, err := bus.TmuxCurrentSession()
-	if err != nil || session == "" {
-		session = os.Getenv("BUS_SESSION")
+	if session == "" {
+		var err error
+		session, err = bus.TmuxCurrentSession()
+		if err != nil || session == "" {
+			session = os.Getenv("BUS_SESSION")
+		}
 	}
 	if session == "" {
-		fmt.Fprintln(os.Stderr, "deliver: could not determine session (set BUS_SESSION or run inside tmux)")
+		fmt.Fprintln(os.Stderr, "deliver: could not determine session (set BUS_SESSION, use --session, or run inside tmux)")
 		os.Exit(1)
 	}
 

@@ -285,6 +285,28 @@ Sends a passive `tmux display-message` to the target agent's window (status bar 
 
 **Note:** `muxcode send` calls `notify` automatically. Use `--no-notify` to suppress.
 
+### `muxcode deliver`
+
+Force-deliver an agent's pending inbox messages into its pane, bypassing the daemon's idle detection.
+
+```bash
+muxcode deliver <role>                      # requires the pane to show an idle prompt (wide 200-line capture)
+muxcode deliver <role> --force              # skip the idle check and inject regardless of pane state
+muxcode deliver <role> --session <name>     # target a different session (e.g. a subsession) from anywhere
+```
+
+Use this when an agent has pending inbox messages it never processed — the recovery for `active-with-stale-messages`, `stale-notified-ids`, `missed-send-keys`, and `pending-input-blocking` findings from `muxcode diagnose`.
+
+Behavior:
+
+- Resolves hosted roles to their host pane (`docs`/`research`/`pr-read` → host window).
+- Delivers via the robust wake-up path (text → delay → Enter → verify for hook providers, `SendWakeUp()` for non-hook providers) — avoids the dropped-Enter failure of a single `tmux send-keys "text" Enter` write.
+- With `--force`, if all messages are already marked notified but still unconsumed (a prior send-keys was dropped), the notified markers are cleared so they re-deliver.
+- Clears stale parked input in an unfocused pane before injecting.
+- On send failure, notified markers are rolled back so a later attempt can retry.
+
+**Prefer `muxcode deliver` over manual `tmux send-keys` wake-ups** — manual text+Enter in one pty write is the known dropped-Enter pitfall.
+
 ### `muxcode cron`
 
 Manage scheduled tasks that fire bus messages on a cadence.
