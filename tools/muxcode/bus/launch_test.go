@@ -104,22 +104,22 @@ func TestRoleClaudeModelDefault(t *testing.T) {
 		role string
 		want string
 	}{
+		{"edit", "claude-fable-5"},
+		{"auto", "claude-fable-5"},
 		{"plan", "claude-opus-4-8"},
 		{"planner", "claude-opus-4-8"},
-		{"edit", "claude-opus-4-8"},
 		{"review", "claude-opus-4-8"},
 		{"analyze", "claude-opus-4-8"},
 		{"analyst", "claude-opus-4-8"},
-		{"auto", "claude-opus-4-8"},
-		{"build", "claude-sonnet-4-5"},
-		{"test", "claude-sonnet-4-5"},
-		{"commit", "claude-sonnet-4-5"},
-		{"git", "claude-sonnet-4-5"},
-		{"deploy", "claude-sonnet-4-5"},
-		{"api", "claude-sonnet-4-5"},
-		{"run", "claude-sonnet-4-5"},
-		{"runner", "claude-sonnet-4-5"},
-		{"watch", "claude-sonnet-4-5"},
+		{"build", "claude-sonnet-4-6"},
+		{"test", "claude-sonnet-4-6"},
+		{"commit", "claude-sonnet-4-6"},
+		{"git", "claude-sonnet-4-6"},
+		{"deploy", "claude-sonnet-4-6"},
+		{"api", "claude-sonnet-4-6"},
+		{"run", "claude-sonnet-4-6"},
+		{"runner", "claude-sonnet-4-6"},
+		{"watch", "claude-sonnet-4-6"},
 		{"custom", ""},
 	}
 
@@ -345,9 +345,9 @@ func TestResolveLaunchConfig_EditRole(t *testing.T) {
 
 	cfg := ResolveLaunchConfig("edit")
 
-	// Edit should have opus model
-	if len(cfg.ModelFlags) != 2 || cfg.ModelFlags[1] != "claude-opus-4-8" {
-		t.Errorf("ModelFlags = %v, want [--model claude-opus-4-8]", cfg.ModelFlags)
+	// Edit should default to the fable model
+	if len(cfg.ModelFlags) != 2 || cfg.ModelFlags[1] != "claude-fable-5" {
+		t.Errorf("ModelFlags = %v, want [--model claude-fable-5]", cfg.ModelFlags)
 	}
 
 	// Edit should have --dangerously-skip-permissions (all roles use bypass)
@@ -419,7 +419,7 @@ func TestBuildExecArgs_Claude(t *testing.T) {
 		Role:         "build",
 		CLI:          "claude",
 		AgentName:    "code-builder",
-		ModelFlags:   []string{"--model", "claude-sonnet-4-5"},
+		ModelFlags:   []string{"--model", "claude-sonnet-4-6"},
 		PermFlags:    []string{"--dangerously-skip-permissions"},
 		ToolFlags:    []string{"--allowedTools", "Bash(make*)"},
 		SharedPrompt: "You are part of a team.",

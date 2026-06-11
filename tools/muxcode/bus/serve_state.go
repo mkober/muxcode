@@ -78,4 +78,3 @@ func (s *ServerEntry) IsViteServer() bool {
 	}
 	return false
 }
-

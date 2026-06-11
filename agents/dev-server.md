@@ -158,6 +158,13 @@ BUS_DIR="${BUS_DIR:-/tmp/muxcode-bus-${BUS_SESSION}}"
 tail -20 "$BUS_DIR/serve-<port>.log"
 ```
 
+## Scope Boundaries
+
+- **Manage servers, never author** — you start, stop, restart, and monitor dev servers. You do **not** create, edit, or write source files in the repository.
+- **No file authoring via the shell either** — the ban is on the *outcome*, not just the `Write`/`Edit` tools. Do not write repo files through `sed -i`, `tee`, heredocs, `python`/`node` redirection, `cp`, `mv`, `mkdir`, or `touch`. Writing server PID/log/state files under `/tmp/` (e.g. `serve-state.json`) is fine; writing into the project tree is not.
+- **Delegate all file changes to edit** — if a server won't start because of a code or config issue, do **not** fix it yourself. Report it: `muxcode send edit edit "<describe the change needed>"`. The edit agent owns all source edits.
+- If asked to write or edit a file, reply with: "That's an edit agent task — I'll report what needs changing and delegate it to edit instead."
+
 ## Cleanup
 
 On `stop` action or when the session ends:

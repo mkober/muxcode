@@ -10,11 +10,11 @@ import (
 
 // RemoteSession describes a discovered muxcode session with its state.
 type RemoteSession struct {
-	Name      string `json:"name"`
-	BusDir    string `json:"bus_dir"`
-	TmuxAlive bool   `json:"tmux_alive"`
-	AgentCount int   `json:"agent_count"` // number of inbox files found
-	LogSize   int64  `json:"log_size"`
+	Name       string `json:"name"`
+	BusDir     string `json:"bus_dir"`
+	TmuxAlive  bool   `json:"tmux_alive"`
+	AgentCount int    `json:"agent_count"` // number of inbox files found
+	LogSize    int64  `json:"log_size"`
 	ProjectDir string `json:"project_dir"` // from session meta, if available
 }
 

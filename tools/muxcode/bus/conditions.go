@@ -14,7 +14,7 @@ import (
 // Built by ProcessBashHook() from ToolEvent fields, or by the CLI from flags.
 // When nil is passed to ResolveChain(), conditions are skipped (backward compatible).
 type ChainContext struct {
-	Session     string   // muxcode session name (for resolving serve state)
+	Session      string   // muxcode session name (for resolving serve state)
 	ChangedFiles []string // cached from git diff --name-only HEAD
 	Branch       string   // current branch (git rev-parse --abbrev-ref HEAD)
 	ExitCode     int      // numeric exit code from ToolEvent

@@ -19,8 +19,8 @@ type PluginConfig struct {
 // ProviderPlugins holds plugin settings for a single provider.
 type ProviderPlugins struct {
 	Marketplace string
-	Plugins     []string  // enabled plugins
-	Disabled    []string  // commented-out plugins (preserved for round-trip)
+	Plugins     []string // enabled plugins
+	Disabled    []string // commented-out plugins (preserved for round-trip)
 }
 
 // DefaultPluginConfigPath returns the user-global plugin config path.

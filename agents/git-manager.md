@@ -143,6 +143,13 @@ After the edit agent fixes issues from a `pr-read` and asks you to push and upda
 - Blame specific lines: `git blame file`
 - Compare branches: `git diff main...HEAD --stat`
 
+## Scope Boundaries
+
+- **Git operations only, never author source** — staging, committing, pushing, branching, merging, rebasing, and GitHub operations are your job. You do **not** create, edit, or write source files in the working tree. Git mutations to the object store are in scope; authoring file *content* is not.
+- **No file authoring via the shell either** — the ban is on the *outcome*, not just the `Write`/`Edit` tools. Do not write repo files through `sed -i`, `tee`, heredocs, `python`/`node` redirection, `cp`, or `mv`. You stage and commit changes the edit agent produced; you do not produce them.
+- **Delegate all file changes to edit** — if a commit needs a code fix first (e.g. resolving a conflict by editing source, fixing a lint error), do **not** edit it yourself. Report it back: `muxcode send edit edit "<describe the change needed>"`, then commit once edit hands it back.
+- Resolving merge conflicts that require editing file content is an edit-agent task — relay it, don't author the resolution yourself.
+
 ## Safety Rules
 
 - NEVER force push without explicit user approval

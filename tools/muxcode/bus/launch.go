@@ -204,13 +204,15 @@ func RoleCodexModelDefault(role string) string {
 }
 
 // RoleClaudeModelDefault returns the default Claude model for a role.
-// edit/review/analyze → opus, everything else → sonnet.
+// edit/auto → fable (flagship), plan/review/analyze → opus, everything else → sonnet.
 func RoleClaudeModelDefault(role string) string {
 	switch role {
-	case "plan", "planner", "edit", "review", "analyze", "analyst", "auto":
+	case "edit", "auto":
+		return "claude-fable-5"
+	case "plan", "planner", "review", "analyze", "analyst":
 		return "claude-opus-4-8"
 	case "build", "test", "api", "deploy", "run", "runner", "watch", "commit", "git", "serve":
-		return "claude-sonnet-4-5"
+		return "claude-sonnet-4-6"
 	default:
 		return ""
 	}

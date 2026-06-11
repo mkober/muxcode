@@ -76,8 +76,8 @@ type Daemon struct {
 	// Safety net retry cap — prevents notification storm when agent can't process
 	safetyNetRetries map[string]int // role -> consecutive safety-net clears
 	// Serve health monitoring (browser checks via Playwright)
-	lastServeCheck     int64            // 60s interval
-	serveCheckSentFor  map[string]int64 // url -> unix time of last browser-check sent
+	lastServeCheck    int64            // 60s interval
+	serveCheckSentFor map[string]int64 // url -> unix time of last browser-check sent
 	// Event dedup for edit inbox — suppress repeated informational events
 	lastEventSent map[string]int64 // "action:key" -> unix time of last send (5-min window)
 	// Notification budget — caps messages delivered to edit per 5-minute window

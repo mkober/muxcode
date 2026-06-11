@@ -17,10 +17,10 @@ type ProviderOption struct {
 
 // providerDisplayName maps CLI identifiers to display names.
 var providerDisplayName = map[string]string{
-	"claude":  "Claude Code",
+	"claude":   "Claude Code",
 	"opencode": "OpenCode",
-	"codex":   "Codex",
-	"local":   "Local (Ollama)",
+	"codex":    "Codex",
+	"local":    "Local (Ollama)",
 }
 
 // providerOrder defines the display order for providers.
@@ -30,7 +30,7 @@ var providerOrder = []string{"claude", "opencode", "codex", "local"}
 var hardcodedFallbackModels = map[string]ProviderModels{
 	"claude": {
 		Default: "claude-sonnet-4-6",
-		Models:  []string{"claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"},
+		Models:  []string{"claude-fable-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"},
 	},
 	"opencode": {
 		Default: "opencode-go/minimax-m2.5",

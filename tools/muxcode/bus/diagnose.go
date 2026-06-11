@@ -26,16 +26,16 @@ type DiagnosticReport struct {
 
 // AgentStateEvidence captures the current state of the agent process and pane.
 type AgentStateEvidence struct {
-	IsIdle          bool   `json:"is_idle"`
-	IsAlive         bool   `json:"is_alive"`
-	IsStopped       bool   `json:"is_stopped"`
-	IsReloading     bool   `json:"is_reloading"`
-	Provider        string `json:"provider"`
-	SupportsHooks   bool   `json:"supports_hooks"`
-	HasPendingInput    bool   `json:"has_pending_input"`
-	IsWindowFocused    bool   `json:"is_window_focused"`
-	WiderCaptureIdle   bool   `json:"wider_capture_idle"`
-	PaneLastLine       string `json:"pane_last_line"`
+	IsIdle           bool   `json:"is_idle"`
+	IsAlive          bool   `json:"is_alive"`
+	IsStopped        bool   `json:"is_stopped"`
+	IsReloading      bool   `json:"is_reloading"`
+	Provider         string `json:"provider"`
+	SupportsHooks    bool   `json:"supports_hooks"`
+	HasPendingInput  bool   `json:"has_pending_input"`
+	IsWindowFocused  bool   `json:"is_window_focused"`
+	WiderCaptureIdle bool   `json:"wider_capture_idle"`
+	PaneLastLine     string `json:"pane_last_line"`
 }
 
 // InboxStateEvidence captures inbox contents and message ages.

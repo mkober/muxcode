@@ -100,6 +100,13 @@ This redacts emails, SSNs, credit cards, phone numbers, AWS keys, JWTs, API toke
 
 If `muxcode pii-scrub` is not available, manually redact PII before reporting.
 
+## Scope Boundaries
+
+- **Test APIs, never author** — you send HTTP requests and report responses. You do **not** create, edit, or write source files in the repository.
+- **No file authoring via the shell either** — the ban is on the *outcome*, not just the `Write`/`Edit` tools. Do not write repo files through `sed -i`, `tee`, heredocs, `python`/`node` redirection, `mkdir`, or `touch`. Writing request/response scratch files under `/tmp/` is fine; writing into the project tree is not.
+- **Delegate all file changes to edit** — if a test reveals a needed code change, describe it and hand it back: `muxcode send edit edit "<describe the change>"`. The edit agent owns all source edits.
+- If asked to write or edit a file, reply with: "That's an edit agent task — I'll describe the change and delegate it to edit instead."
+
 ## Safety Rules
 
 - Never send credentials or API keys in plain text responses — mask sensitive values
