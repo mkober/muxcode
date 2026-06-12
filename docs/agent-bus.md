@@ -245,6 +245,22 @@ When the daemon detects a change in the trigger file, it starts debouncing. Afte
 
 Per-file routing to specific agents (test/deploy/build) is handled earlier by `hook analyze` at edit time — the daemon only handles the aggregate analyst notification.
 
+### `muxcode upgrade-daemons`
+
+Restart all running session daemons so they pick up the freshly installed binary.
+
+```bash
+muxcode upgrade-daemons [--dry-run]
+```
+
+- Long-lived daemons keep executing the code loaded at their launch — a `make install` that fixes daemon behavior does not reach already-running sessions until they cycle. This command discovers every running `muxcode watch` daemon and monitor process (across all sessions on the machine via `ps`) and re-launches each from the binary currently on `PATH`.
+- Per session, the **monitor is killed first** (so it cannot resurrect the old daemon mid-cycle), then the daemon, then both are relaunched. Kills use `SIGTERM` with a 2s grace period, escalating to `SIGKILL`.
+- **Orphan cleanup**: daemons whose tmux session no longer exists are killed without relaunch (logged as `daemon-orphan-killed`). Successful upgrades log `daemon-upgraded`.
+- `--dry-run` (`-n`) — list the daemons that would be restarted (and orphans that would be killed) without touching any process.
+- Exits non-zero if any session's relaunch fails. Prints `no running daemons found` when none are discovered.
+
+`build.sh` calls `muxcode upgrade-daemons` after `make install`, so every install automatically rolls the new binary out to all live sessions.
+
 ### `muxcode dashboard`
 
 Launch the Dracula-themed terminal dashboard TUI.

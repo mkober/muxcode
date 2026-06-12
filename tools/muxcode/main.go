@@ -24,7 +24,7 @@ var knownSubcommands = map[string]bool{
 	"compact": true, "launch": true, "modal": true, "mode": true,
 	"reload": true, "config": true, "provider-select": true,
 	"simulate": true, "track": true, "remote": true, "spec": true,
-	"resize": true, "deliver": true,
+	"resize": true, "deliver": true, "upgrade-daemons": true,
 }
 
 var usage = `Usage: muxcode <command> [args...]
@@ -75,6 +75,7 @@ Commands:
   mode          Cycle between agent modes on a window (cycle, status, switch, list)
   resize        Resize every window in every session to fit the connected client
   deliver       Force-deliver an agent's pending inbox into its pane (--force)
+  upgrade-daemons  Restart all running session daemons on the installed binary (--dry-run)
   uitest        Run integration tests in a live tmux session (--list, --verbose)
   tasks         List delegated tasks tracked via --wait (--all, --status)
   track         Show delivery status for a message ID
@@ -226,6 +227,8 @@ func main() {
 		cmd.Remote(args)
 	case "spec":
 		cmd.Spec(args)
+	case "upgrade-daemons":
+		cmd.UpgradeDaemons(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

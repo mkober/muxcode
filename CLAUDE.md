@@ -41,7 +41,8 @@ tools/muxcode-llm-harness/    # Go module — standalone local LLM harness
 
 | Command | What it does |
 |---------|-------------|
-| `./build.sh` | Runs `make install` — builds Go binary, installs agents/configs |
+| `./build.sh` | Runs `make install` — builds Go binary, installs agents/configs — then `muxcode upgrade-daemons` so all running session daemons re-exec the new binary |
+| `muxcode upgrade-daemons [--dry-run]` | Restart all running session daemons/monitors on the installed binary (long-lived daemons otherwise keep the code from their launch). Kills orphan daemons whose tmux session is gone; `build.sh` runs it after `make install` |
 | `./test.sh` | Runs `go vet ./...` and `go test -v ./...` in the bus module |
 | `make build` | Builds Go binary to `bin/muxcode` |
 | `make install` | Build + install binary to `~/.local/bin/`, agents, skills, configs to `~/.config/muxcode/` |
