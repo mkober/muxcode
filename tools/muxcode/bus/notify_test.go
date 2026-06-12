@@ -733,6 +733,10 @@ func TestNotifySendKeys_StaleInput_UnfocusedWindow(t *testing.T) {
 		if strings.Contains(joined, "capture-pane") {
 			return "  Ran 1 shell command\n\n❯ commit the requirements doc\n", nil
 		}
+		// session has an attached client, but...
+		if strings.Contains(joined, "session_attached") {
+			return "1", nil
+		}
 		// display-message #{window_active} → NOT focused
 		if strings.Contains(joined, "window_active") {
 			return "0", nil
@@ -802,7 +806,10 @@ func TestNotifySendKeys_PendingInput_FocusedWindow(t *testing.T) {
 		if strings.Contains(joined, "capture-pane") {
 			return "  Ran 1 shell command\n\n❯ implement the feature\n", nil
 		}
-		// Window IS focused — user is there
+		// Session attached AND window focused — user is there
+		if strings.Contains(joined, "session_attached") {
+			return "1", nil
+		}
 		if strings.Contains(joined, "window_active") {
 			return "1", nil
 		}
@@ -897,6 +904,142 @@ func TestNotifySendKeys_ClearInputFails_HoldsNotification(t *testing.T) {
 	unnotified := UnnotifiedMessages(session, role)
 	if len(unnotified) == 0 {
 		t.Error("message should still be unnotified when clear failed")
+	}
+}
+
+// --- IsWindowFocused detached-session / ClearParkedInput tests ---
+
+func TestIsWindowFocused_DetachedSession(t *testing.T) {
+	// A detached session reports an active window, but no user can be typing
+	// into it — IsWindowFocused must return false so parked input is cleared.
+	origOutput := tmuxOutputRunner
+	t.Cleanup(func() { tmuxOutputRunner = origOutput })
+
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "session_attached") {
+			return "0", nil // detached
+		}
+		if strings.Contains(joined, "window_active") {
+			return "1", nil // tmux still tracks an active window
+		}
+		return "", nil
+	}
+
+	if IsWindowFocused("detached-session", "plan") {
+		t.Error("IsWindowFocused should be false for a detached session even when the window is active")
+	}
+}
+
+func TestClearParkedInput_WrappedTextDetachedSession(t *testing.T) {
+	// The plan-agent wedge: a dropped-Enter injection left long text parked at
+	// the prompt. The wide capture shows the ❯ line with pending text; the
+	// session is detached. ClearParkedInput must clear it and report true.
+	origOutput := tmuxOutputRunner
+	origRun := tmuxRunner
+	t.Cleanup(func() {
+		tmuxOutputRunner = origOutput
+		tmuxRunner = origRun
+	})
+
+	clearSent := false
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "capture-pane") {
+			// Wide capture: prompt line with parked text that would wrap past
+			// the 8-line IsIdle window in a real pane.
+			return "⏺ Done.\n\n❯ New message from edit [request:update-docs]: Update the 9 requirement docs\n  for stories completed by PR #85\n\n  footer line\n", nil
+		}
+		if strings.Contains(joined, "session_attached") {
+			return "0", nil // detached subsession
+		}
+		return "", nil
+	}
+	tmuxRunner = func(args ...string) error {
+		if strings.Contains(strings.Join(args, " "), "C-u") {
+			clearSent = true
+		}
+		return nil
+	}
+
+	t.Setenv("MUXCODE_PLAN_CLI", "claude")
+
+	if !ClearParkedInput("sub-session", "plan") {
+		t.Fatal("ClearParkedInput should return true when parked text was cleared")
+	}
+	if !clearSent {
+		t.Error("expected TmuxClearInput key sequence (C-u) to be sent")
+	}
+}
+
+func TestClearParkedInput_EmptyPrompt_NoClear(t *testing.T) {
+	// A clean idle prompt has nothing parked — no keys should be sent.
+	origOutput := tmuxOutputRunner
+	origRun := tmuxRunner
+	t.Cleanup(func() {
+		tmuxOutputRunner = origOutput
+		tmuxRunner = origRun
+	})
+
+	keysSent := false
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "capture-pane") {
+			return "⏺ Done.\n\n❯ \n", nil
+		}
+		if strings.Contains(joined, "session_attached") {
+			return "0", nil
+		}
+		return "", nil
+	}
+	tmuxRunner = func(args ...string) error {
+		keysSent = true
+		return nil
+	}
+
+	t.Setenv("MUXCODE_PLAN_CLI", "claude")
+
+	if ClearParkedInput("sub-session", "plan") {
+		t.Error("ClearParkedInput should return false for an empty prompt")
+	}
+	if keysSent {
+		t.Error("no keys should be sent when nothing is parked")
+	}
+}
+
+func TestClearParkedInput_BusyPane_NoClear(t *testing.T) {
+	// No ❯ prompt anywhere — agent is genuinely busy. Keys must not be sent
+	// into a live composer.
+	origOutput := tmuxOutputRunner
+	origRun := tmuxRunner
+	t.Cleanup(func() {
+		tmuxOutputRunner = origOutput
+		tmuxRunner = origRun
+	})
+
+	keysSent := false
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "capture-pane") {
+			return "✻ Thinking…\n\n  esc to interrupt\n", nil
+		}
+		if strings.Contains(joined, "session_attached") {
+			return "0", nil
+		}
+		return "", nil
+	}
+	tmuxRunner = func(args ...string) error {
+		keysSent = true
+		return nil
+	}
+
+	t.Setenv("MUXCODE_PLAN_CLI", "claude")
+
+	if ClearParkedInput("sub-session", "plan") {
+		t.Error("ClearParkedInput should return false when no prompt is visible")
+	}
+	if keysSent {
+		t.Error("no keys should be sent into a busy pane")
 	}
 }
 

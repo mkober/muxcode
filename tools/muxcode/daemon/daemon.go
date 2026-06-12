@@ -75,6 +75,9 @@ type Daemon struct {
 	lastTrackedTaskCheck int64 // 5s interval
 	// Safety net retry cap — prevents notification storm when agent can't process
 	safetyNetRetries map[string]int // role -> consecutive safety-net clears
+	// Pane hygiene sweep — proactive parked-input detection across all agent panes
+	lastPaneSweep int64             // 30s interval
+	parkedSeen    map[string]string // role -> parked prompt text observed last sweep
 	// Serve health monitoring (browser checks via Playwright)
 	lastServeCheck    int64            // 60s interval
 	serveCheckSentFor map[string]int64 // url -> unix time of last browser-check sent
@@ -123,6 +126,8 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		heartbeatInterval:     bus.AgentHeartbeatInterval(),
 		lastDiskPressureCheck: now,
 		safetyNetRetries:      make(map[string]int),
+		lastPaneSweep:         now,
+		parkedSeen:            make(map[string]string),
 		lastServeCheck:        now,
 		serveCheckSentFor:     make(map[string]int64),
 		lastEventSent:         make(map[string]int64),
@@ -208,6 +213,7 @@ func (d *Daemon) Run() error {
 		d.checkOllama()
 		d.checkAgentHealth()
 		d.checkIdleAgents()
+		d.checkPaneSweep()
 		d.checkNonHookTasks()
 		d.checkTrackedTasks()
 		d.checkNonHookEdits()
@@ -1089,21 +1095,39 @@ func (d *Daemon) checkIdleAgents() {
 		// Skip if no unnotified messages (content-aware, not size-based).
 		unnotified := bus.UnnotifiedMessages(d.session, role)
 		if len(unnotified) == 0 {
-			// Safety net: if the agent is idle and has actionable messages
-			// but all are marked as notified with a stale marker (>15s),
-			// a previous send-keys injection was likely dropped by the TUI.
-			// Clear the notified IDs so the next cycle retries delivery.
-			// Without this, the agent stays stuck at ❯ until idle-task-rescue
-			// fires a synthetic response 30s later.
+			// Safety net: if the agent has actionable messages but all are
+			// marked as notified with a stale marker (>15s), a previous
+			// send-keys injection was likely dropped by the TUI. Clear the
+			// notified IDs so the next cycle retries delivery. Without this,
+			// the agent stays stuck at ❯ until idle-task-rescue fires a
+			// synthetic response 30s later.
+			//
+			// Not gated on isIdle alone: a dropped-Enter injection leaves its
+			// text PARKED at the prompt, and long parked text wraps past
+			// IsIdle's 8-line capture — the agent reads as "active" while the
+			// watchdog branch is also unreachable (it requires unnotified>0).
+			// A wider capture showing ❯ proves the agent is deliverable; clear
+			// the parked text so the retried injection lands clean.
 			//
 			// Capped at 3 retries to prevent notification storms when the agent
 			// looks idle but can't process input (e.g. during Claude Code's
 			// Ideating/Thinking phase where ❯ is visible but the LLM is working).
-			if isIdle && bus.HasActionableMessages(d.session, role) &&
+			if bus.HasActionableMessages(d.session, role) &&
 				!bus.IsNotifiedRecently(d.session, role, 15*time.Second) &&
 				d.safetyNetRetries[role] < 3 {
-				bus.ClearNotifiedIDs(d.session, role)
-				d.safetyNetRetries[role]++
+				deliverable := isIdle
+				if !deliverable {
+					if bus.ClearParkedInput(d.session, role) {
+						deliverable = true
+						ts := time.Now().Format("15:04:05")
+						fmt.Printf("  %s  Safety net: cleared parked input on %s (notified-but-unconsumed) — retrying delivery\n", ts, role)
+						bus.LogLifecycle(d.session, "info", "daemon", "parked-input-cleared", role)
+					}
+				}
+				if deliverable {
+					bus.ClearNotifiedIDs(d.session, role)
+					d.safetyNetRetries[role]++
+				}
 			}
 			continue
 		}
@@ -1211,6 +1235,94 @@ func (d *Daemon) checkIdleAgents() {
 		fmt.Printf("  %s  Waking idle agent %s (%d unnotified messages)\n", ts, role, len(unnotified))
 		bus.LogLifecycle(d.session, "info", "daemon", "idle-wake", role)
 		_ = bus.SendWakeUpWithText(d.session, role, provider, text)
+	}
+}
+
+// checkPaneSweep proactively inspects every agent pane via a wide tmux
+// capture-pane and self-heals stale parked input — the residue of a
+// dropped-Enter injection or an abandoned manual prompt. Parked text is the
+// root of the delegation-wedge family: it blocks the next injection from
+// landing clean, and long text wraps past IsIdle's 8-line window so the agent
+// reads as "active" and every reactive delivery path holds. The sweep runs
+// unconditionally — it does not require pending messages — so panes are clean
+// BEFORE the next delegation arrives.
+//
+// Runs every 30 seconds. Two-sighting rule: the same parked text must be
+// observed in two consecutive sweeps before clearing — a single sighting may
+// be an in-flight injection caught between its text write and Enter keystroke,
+// or a notification the agent is about to process.
+//
+// Never clears under a user's cursor: skipped when the window is focused in an
+// attached client. Detached sessions are always fair game (nobody is typing).
+func (d *Daemon) checkPaneSweep() {
+	now := time.Now().Unix()
+	if now-d.lastPaneSweep < 30 {
+		return
+	}
+	d.lastPaneSweep = now
+
+	for _, role := range bus.KnownRoles {
+		// Skip hosted roles — they share a pane with their host
+		if bus.WindowForRole(role) != role {
+			continue
+		}
+		if bus.IsReloading(d.session, role) {
+			continue
+		}
+		// Only hook providers (Claude Code) — OpenCode/Codex TUIs manage
+		// their own input and have different prompt semantics.
+		provider := bus.ResolveProvider(role)
+		if !provider.SupportsHooks() {
+			continue
+		}
+		if bus.IsHarnessActive(d.session, role) {
+			continue
+		}
+
+		target := bus.PaneTarget(d.session, role)
+		content, err := bus.TmuxCapturePaneLines(target, 200)
+		if err != nil {
+			delete(d.parkedSeen, role)
+			continue
+		}
+		parked := ""
+		if bus.PaneHasIdlePrompt(content) {
+			parked = bus.ParkedInputText(content)
+		}
+		if parked == "" {
+			delete(d.parkedSeen, role)
+			continue
+		}
+
+		// First sighting of this exact text — remember it and wait one sweep.
+		if d.parkedSeen[role] != parked {
+			d.parkedSeen[role] = parked
+			continue
+		}
+
+		// Same text parked across two consecutive sweeps — stale residue.
+		if bus.IsWindowFocused(d.session, role) {
+			continue // user is viewing this window — never clear under them
+		}
+		if err := bus.TmuxClearInput(target); err != nil {
+			continue
+		}
+		delete(d.parkedSeen, role)
+
+		ts := time.Now().Format("15:04:05")
+		preview := parked
+		if len(preview) > 60 {
+			preview = preview[:60] + "..."
+		}
+		fmt.Printf("  %s  Pane sweep: cleared stale parked input on %s (%q)\n", ts, role, preview)
+		bus.LogLifecycle(d.session, "info", "daemon", "pane-sweep-clear",
+			fmt.Sprintf("%s: %s", role, preview))
+
+		// With the prompt clean, force pending messages through: clearing the
+		// notified markers lets the next checkIdleAgents cycle re-deliver.
+		if bus.HasActionableMessages(d.session, role) {
+			bus.ClearNotifiedIDs(d.session, role)
+		}
 	}
 }
 

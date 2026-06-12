@@ -310,9 +310,57 @@ func HasPendingInput(session, role string) bool {
 // IsWindowFocused returns true if the user is currently viewing the window
 // for the given role. Used to distinguish user-typed input (window focused)
 // from stale agent output left at the prompt (window not focused).
+//
+// A detached session always reports false: tmux tracks an "active window"
+// even with no client attached, but nobody can be typing into a detached
+// session — treating its active window as focused would hold parked-input
+// clearing forever (the plan-agent wedge in background subsessions).
 func IsWindowFocused(session, role string) bool {
+	if !TmuxSessionAttached(session) {
+		return false
+	}
 	window := WindowForRole(role)
 	return TmuxIsWindowActive(session, window)
+}
+
+// ClearParkedInput peeks the agent's pane with a wide capture and clears any
+// text parked at the ❯ prompt, returning true if it cleared something.
+//
+// Parked text is the residue of a dropped-Enter injection (or an abandoned
+// manual prompt). It is doubly toxic: long parked text WRAPS in the input box
+// and pushes the ❯ line above IsIdle's 8-line capture window, so the agent
+// reads as "active" and every delivery path holds — while the text itself
+// blocks the next injection from landing clean. Callers invoke this before
+// delivering (or delegating) to guarantee the injection lands on an empty
+// prompt.
+//
+// The wide capture is used for BOTH checks: the 8-line HasPendingInput misses
+// wrapped parked text for the same reason IsIdle does.
+//
+// Skipped when the user is actually viewing the window in an attached client
+// (they may be mid-typing) and when the pane shows no prompt at all (agent
+// genuinely busy — nothing is parked, keys would land in a live composer).
+func ClearParkedInput(session, role string) bool {
+	provider := ResolveProvider(role)
+	if !provider.SupportsHooks() {
+		return false // non-hook providers manage their own input
+	}
+	if IsWindowFocused(session, role) {
+		return false // user may be typing — never clear under their cursor
+	}
+	target := PaneTarget(session, role)
+	content, err := TmuxCapturePaneLines(target, 200)
+	if err != nil {
+		return false
+	}
+	if !PaneHasIdlePrompt(content) || !paneHasPendingInput(content) {
+		return false
+	}
+	if err := TmuxClearInput(target); err != nil {
+		return false
+	}
+	time.Sleep(100 * time.Millisecond)
+	return true
 }
 
 // PaneHasIdlePrompt checks whether captured pane content contains the idle
@@ -328,6 +376,23 @@ func PaneHasIdlePrompt(content string) bool {
 		}
 	}
 	return false
+}
+
+// ParkedInputText returns the text parked after the \u276f prompt in captured pane
+// content, or "" when the prompt is empty or absent. Used by the daemon's pane
+// sweep to distinguish text that persists across sweeps (dropped-Enter residue)
+// from a transient in-flight injection.
+func ParkedInputText(content string) string {
+	promptPrefix := idlePromptChar + " "
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, promptPrefix) {
+			if after := strings.TrimSpace(trimmed[len(promptPrefix):]); after != "" {
+				return after
+			}
+		}
+	}
+	return ""
 }
 
 // paneHasPendingInput checks captured pane content for text after the idle
@@ -417,6 +482,13 @@ func Notify(session, role string) error {
 	if !provider.SupportsHooks() {
 		return notifySendKeys(session, role)
 	}
+
+	// Peek the target pane and clear any text parked at its prompt BEFORE the
+	// idle check. Long parked text (a dropped-Enter injection) wraps in the
+	// input box and pushes the ❯ line above IsIdle's 8-line capture, making a
+	// deliverable agent read as busy — without this clear, a delegation to a
+	// wedged agent silently stalls until manual recovery.
+	ClearParkedInput(session, role)
 
 	// If the agent is idle (at ❯ prompt) and not polling/waiting, inject
 	// combined notification via send-keys. This covers agents that launched

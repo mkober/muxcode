@@ -153,6 +153,20 @@ func TmuxIsWindowActive(session, window string) bool {
 	return out == "1"
 }
 
+// TmuxSessionAttached returns true if the session has at least one attached
+// client. A detached session (e.g. a background subsession) has an "active
+// window" in tmux terms, but no user can actually be typing into it —
+// callers use this to distinguish real user focus from a meaningless
+// active-window flag on a detached session.
+func TmuxSessionAttached(session string) bool {
+	out, err := TmuxOutput("display-message", "-t", session, "-p", "#{session_attached}")
+	if err != nil {
+		return false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	return err == nil && n > 0
+}
+
 // TmuxClearInput clears any text in the agent's input buffer before injecting
 // new text via send-keys. Used to clear stale agent output left at the prompt.
 //
