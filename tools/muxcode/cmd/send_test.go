@@ -37,6 +37,34 @@ func TestRelaySuppressLimits_ZeroDisables(t *testing.T) {
 	}
 }
 
+func TestDegradeWaitSecs_Default(t *testing.T) {
+	t.Setenv("MUXCODE_WAIT_DEGRADE_SECS", "")
+	if got := degradeWaitSecs(); got != 90 {
+		t.Errorf("default = %d, want 90", got)
+	}
+}
+
+func TestDegradeWaitSecs_EnvOverride(t *testing.T) {
+	t.Setenv("MUXCODE_WAIT_DEGRADE_SECS", "30")
+	if got := degradeWaitSecs(); got != 30 {
+		t.Errorf("override = %d, want 30", got)
+	}
+}
+
+func TestDegradeWaitSecs_ZeroDisables(t *testing.T) {
+	t.Setenv("MUXCODE_WAIT_DEGRADE_SECS", "0")
+	if got := degradeWaitSecs(); got != 0 {
+		t.Errorf("disabled = %d, want 0", got)
+	}
+}
+
+func TestDegradeWaitSecs_GarbageFallsBack(t *testing.T) {
+	t.Setenv("MUXCODE_WAIT_DEGRADE_SECS", "notanint")
+	if got := degradeWaitSecs(); got != 90 {
+		t.Errorf("garbage fallback = %d, want 90", got)
+	}
+}
+
 func TestValidatePayload_Clean(t *testing.T) {
 	warnings := validatePayload("Build succeeded: all tests pass")
 	if len(warnings) != 0 {

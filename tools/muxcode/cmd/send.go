@@ -159,23 +159,7 @@ func Send(args []string) {
 		if existing, found := bus.FindInFlightTask(session, to, action); found {
 			fmt.Printf("In-flight task for %s:%s already exists (sent %ds ago) — reattaching --wait\n",
 				to, action, time.Now().Unix()-existing.SentAt)
-			bus.SetWaiting(session, from)
-			responded, responsePayload := waitForResponse(session, from, to, existing.ID)
-			if responded {
-				ds, err := bus.ReadDeliveryStatus(session, existing.ID)
-				if err == nil && ds.ResponseID != "" {
-					bus.CompleteTask(session, existing.ID, ds.ResponseID)
-				} else {
-					bus.CompleteTask(session, existing.ID, "")
-				}
-				logWaitResponseToHistory(session, to, action, responsePayload)
-			} else {
-				bus.TimeoutTask(session, existing.ID)
-			}
-			go func() {
-				time.Sleep(5 * time.Second)
-				bus.ClearWaiting(session, from)
-			}()
+			awaitOrTrack(session, from, to, action, existing.ID)
 			return
 		}
 	}
@@ -227,40 +211,12 @@ func Send(args []string) {
 	// --wait loop is already polling and send-keys would interrupt the
 	// running Bash tool in Claude Code's TUI.
 	if wait {
-		// Create task entry for orchestrator tracking
-		waitTimeout := resolveWaitTimeout()
-		_ = bus.CreateTask(session, msg, waitTimeout)
-
-		bus.SetWaiting(session, from)
-		responded, responsePayload := waitForResponse(session, from, to, msg.ID)
-
-		// Update task status based on outcome
-		if responded {
-			// Task completed — find the response message ID from delivery status
-			ds, err := bus.ReadDeliveryStatus(session, msg.ID)
-			if err == nil && ds.ResponseID != "" {
-				bus.CompleteTask(session, msg.ID, ds.ResponseID)
-			} else {
-				bus.CompleteTask(session, msg.ID, "")
-			}
-
-			// Log to console history so the target role's left-pane view updates.
-			// Non-hook providers don't have PostToolUse hooks, and the daemon's
-			// checkNonHookTasks won't see the task (it's already completed). Without
-			// this, the console stays empty for roles like review.
-			logWaitResponseToHistory(session, to, action, responsePayload)
-		} else {
-			bus.TimeoutTask(session, msg.ID)
-		}
-
-		// Keep the waiting marker alive briefly after --wait completes.
-		// Between --wait finishing and the agent's next tool call, the agent
-		// pane shows ❯ momentarily. The grace period prevents unnecessary
-		// display-message notifications during this window.
-		go func() {
-			time.Sleep(5 * time.Second)
-			bus.ClearWaiting(session, from)
-		}()
+		// Create task entry for orchestrator tracking, then block for the
+		// response — but only up to the degrade cap. If the cap is hit, the
+		// send is converted to a tracked task so the agent unblocks and drains
+		// its inbox instead of staying wedged-active (see awaitOrTrack).
+		_ = bus.CreateTask(session, msg, resolveWaitTimeout())
+		awaitOrTrack(session, from, to, action, msg.ID)
 	}
 }
 
@@ -273,10 +229,14 @@ func Send(args []string) {
 // from the inbox for display. If the background --poll already consumed
 // it (and printed it as a task result), prints a short confirmation.
 //
-// Timeout is controlled by MUXCODE_INBOX_POLL_TIMEOUT (default 600s).
-// Returns true if a response was received, false on timeout.
-func waitForResponse(session, role, target, msgID string) (bool, string) {
-	timeout := resolveWaitTimeout()
+// The caller supplies the block timeout in seconds (the --wait path may cap
+// this below MUXCODE_INBOX_POLL_TIMEOUT to auto-degrade to a tracked task).
+// Returns true if a response was received, false on timeout. The caller is
+// responsible for any timeout messaging.
+func waitForResponse(session, role, target, msgID string, timeout int) (bool, string) {
+	if timeout <= 0 {
+		timeout = resolveWaitTimeout()
+	}
 
 	// For hosted roles, also accept responses from the host agent
 	host := bus.WindowForRole(target)
@@ -351,8 +311,75 @@ func waitForResponse(session, role, target, msgID string) (bool, string) {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\nNo response from %s within %ds — check: muxcode inbox --peek\n", target, timeout)
 	return false, ""
+}
+
+// degradeWaitSecs returns the maximum seconds a --wait blocks before degrading
+// the send into a tracked task. Configurable via MUXCODE_WAIT_DEGRADE_SECS
+// (default 90). A value of 0 disables degradation, restoring full blocking up
+// to MUXCODE_INBOX_POLL_TIMEOUT.
+func degradeWaitSecs() int {
+	v := os.Getenv("MUXCODE_WAIT_DEGRADE_SECS")
+	if v == "" {
+		return 90
+	}
+	if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+		return n
+	}
+	return 90
+}
+
+// awaitOrTrack blocks for a response to taskID, but only up to the degrade cap.
+//
+//   - Response arrives in time: complete the task and log to console history.
+//   - Cap hit (degradation enabled): LEAVE the task in-flight and clear the
+//     waiting marker so the daemon's checkTrackedTasks completes it and wakes
+//     the sender when the response lands. The agent unblocks immediately and
+//     can drain its inbox instead of staying wedged-active for minutes.
+//   - Degradation disabled (cap 0 or >= full timeout): block the full poll
+//     timeout, then time the task out as before.
+func awaitOrTrack(session, from, to, action, taskID string) {
+	waitTimeout := resolveWaitTimeout()
+	blockSecs := waitTimeout
+	degradable := false
+	if cap := degradeWaitSecs(); cap > 0 && cap < waitTimeout {
+		blockSecs = cap
+		degradable = true
+	}
+
+	bus.SetWaiting(session, from)
+	responded, payload := waitForResponse(session, from, to, taskID, blockSecs)
+	if responded {
+		ds, err := bus.ReadDeliveryStatus(session, taskID)
+		if err == nil && ds.ResponseID != "" {
+			bus.CompleteTask(session, taskID, ds.ResponseID)
+		} else {
+			bus.CompleteTask(session, taskID, "")
+		}
+		logWaitResponseToHistory(session, to, action, payload)
+		go func() {
+			time.Sleep(5 * time.Second)
+			bus.ClearWaiting(session, from)
+		}()
+		return
+	}
+
+	if degradable {
+		// Hand off to the daemon's tracked-task handler immediately — it skips
+		// tasks while IsWaiting is set, so clear the marker now (not deferred).
+		bus.ClearWaiting(session, from)
+		fmt.Printf("No response from %s within %ds — converted to tracked task %s. "+
+			"Continue working; you'll be woken when the response arrives (muxcode inbox).\n",
+			to, blockSecs, taskID)
+		return
+	}
+
+	bus.TimeoutTask(session, taskID)
+	fmt.Fprintf(os.Stderr, "\nNo response from %s within %ds — check: muxcode inbox --peek\n", to, blockSecs)
+	go func() {
+		time.Sleep(5 * time.Second)
+		bus.ClearWaiting(session, from)
+	}()
 }
 
 // relaySuppressLimits returns the (threshold, windowSecs) for agent-to-agent
