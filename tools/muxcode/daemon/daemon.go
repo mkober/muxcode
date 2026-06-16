@@ -1485,8 +1485,16 @@ func (d *Daemon) checkIdleAgents() {
 			ids = append(ids, m.ID)
 		}
 		bus.AddNotifiedIDs(d.session, role, ids)
-		fmt.Printf("  %s  Waking idle agent %s (%d unnotified messages)\n", ts, role, len(unnotified))
-		bus.LogLifecycle(d.session, "info", "daemon", "idle-wake", role)
+		// Distinguish a "stranded response/event" delivery (no actionable
+		// request — delivered solely because the agent is idle) from a normal
+		// request wake, so it can be observed/monitored. This is the path that
+		// rescues a response orphaned by a missed one-shot tracked-task Notify.
+		event := "idle-wake"
+		if !hasActionable {
+			event = "idle-response-wake"
+		}
+		fmt.Printf("  %s  Waking idle agent %s (%d unnotified messages, %s)\n", ts, role, len(unnotified), event)
+		bus.LogLifecycle(d.session, "info", "daemon", event, role)
 		_ = bus.SendWakeUpWithText(d.session, role, provider, text)
 	}
 }
