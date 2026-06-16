@@ -1241,6 +1241,16 @@ func (d *Daemon) checkAgentHealth() {
 	}
 }
 
+// shouldWakeIdleOrActionable decides whether checkIdleAgents should proceed to
+// deliver an agent's unnotified messages. Actionable (request-type) messages
+// always warrant a wake-up. Non-actionable (response/event) messages warrant a
+// wake-up ONLY when the agent is idle — so an idle agent still receives a
+// stranded response (e.g. a completed tracked task whose one-shot Notify() was
+// missed) while an active agent is never interrupted for a mere response.
+func shouldWakeIdleOrActionable(hasActionable, isIdle bool) bool {
+	return hasActionable || isIdle
+}
+
 // checkIdleAgents wakes agents that are idle with unread messages.
 // Runs every 5 seconds. For each agent that has unread inbox messages
 // and is sitting at the idle prompt (not polling or waiting), triggers a
@@ -1369,8 +1379,13 @@ func (d *Daemon) checkIdleAgents() {
 			}
 			continue
 		}
-		// Only wake for request-type messages — responses and events are
-		// informational and don't require the agent to act.
+		// Request-type messages always justify a wake-up. Response/event
+		// messages do NOT justify interrupting an ACTIVE agent — but an IDLE
+		// agent must still receive them. A completed tracked task fires only a
+		// single Notify(); if that wake-up is missed (parked input, dropped
+		// send-keys), nothing re-delivers a response/event and it strands in
+		// the idle inbox forever. Delivering to idle agents (and marking them
+		// notified) closes that gap and self-retries until the wake-up lands.
 		hasActionable := false
 		for _, m := range unnotified {
 			if m.Type == "request" {
@@ -1378,7 +1393,7 @@ func (d *Daemon) checkIdleAgents() {
 				break
 			}
 		}
-		if !hasActionable {
+		if !shouldWakeIdleOrActionable(hasActionable, isIdle) {
 			continue
 		}
 		// Skip if agent is polling or waiting (already watching inbox)

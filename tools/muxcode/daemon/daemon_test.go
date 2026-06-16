@@ -218,6 +218,23 @@ func TestFormatWatchdogDuration(t *testing.T) {
 	}
 }
 
+func TestShouldWakeIdleOrActionable(t *testing.T) {
+	cases := []struct {
+		hasActionable, isIdle, want bool
+	}{
+		{true, true, true},    // actionable always wakes
+		{true, false, true},   // actionable wakes even when active
+		{false, true, true},   // response/event delivered to idle agent
+		{false, false, false}, // response/event must NOT interrupt active agent
+	}
+	for _, c := range cases {
+		if got := shouldWakeIdleOrActionable(c.hasActionable, c.isIdle); got != c.want {
+			t.Errorf("shouldWakeIdleOrActionable(actionable=%v, idle=%v) = %v, want %v",
+				c.hasActionable, c.isIdle, got, c.want)
+		}
+	}
+}
+
 func TestExtractDiffFiles(t *testing.T) {
 	diffStat := ` bus/profile.go   | 30 ++++++++++++++++---------
  bus/config.go    |  5 ++++-
