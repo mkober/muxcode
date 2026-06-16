@@ -1300,10 +1300,19 @@ func (d *Daemon) checkIdleAgents() {
 		if isIdle && !wasIdle {
 			recentlyNotified := bus.IsNotifiedRecently(d.session, role, 10*time.Second)
 			if !recentlyNotified {
-				bus.ClearNotifiedIDs(d.session, role)
+				// Do NOT clear notified IDs here. Clearing on every active→idle
+				// transition re-marks already-delivered-but-unconsumed messages
+				// as "new" and re-delivers them on each idle cycle — a
+				// re-notification loop for any agent doing many sequential
+				// operations (the same handful of build/test/review results and
+				// stale notifies re-surfacing endlessly). Restart, reload, and
+				// mode-switch clear notified IDs at their own events, and the
+				// stale-marker safety-net below handles dropped injections, so
+				// clearing here is both redundant and the loop's root cause.
+				// UnnotifiedMessages already returns only genuinely-new messages.
 				d.lastNonHookWake[role] = 0 // reset non-hook cooldown too
 				ts := time.Now().Format("15:04:05")
-				fmt.Printf("  %s  Agent %s became idle — cleared stale notification markers\n", ts, role)
+				fmt.Printf("  %s  Agent %s became idle — delivering newly-arrived messages\n", ts, role)
 				bus.LogLifecycle(d.session, "info", "daemon", "idle-transition", role)
 
 				// Deliver combined notification for any accumulated messages.
