@@ -164,6 +164,26 @@ func CleanExpiredTasks(session string, maxAge time.Duration) int {
 	return cleaned
 }
 
+// taskTimeoutSecs returns a task's effective timeout in seconds, defaulting to
+// 600 when unset/invalid.
+func taskTimeoutSecs(t Task) int {
+	if t.Timeout > 0 {
+		return t.Timeout
+	}
+	return 600
+}
+
+// TaskExpired reports whether an in-flight task has passed its timeout window
+// (SentAt + Timeout). A stuck task — one that was delivered but whose target
+// never responded (e.g. the agent was busy at delivery and went idle without
+// acting) — would otherwise remain "in-flight" forever and permanently block
+// new requests via the dedup suppression in Send(). Treating expired tasks as
+// no-longer-in-flight lets fresh requests through and lets the daemon time
+// them out.
+func TaskExpired(t Task, now int64) bool {
+	return now-t.SentAt > int64(taskTimeoutSecs(t))
+}
+
 // FormatTask returns a human-readable string for a task.
 func FormatTask(t Task) string {
 	s := fmt.Sprintf("%s  %s\u2192%s  %s  [%s]", t.ID, t.From, t.To, t.Action, t.Status)

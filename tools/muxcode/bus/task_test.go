@@ -6,6 +6,51 @@ import (
 	"time"
 )
 
+func TestTaskExpired(t *testing.T) {
+	now := time.Now().Unix()
+	if TaskExpired(Task{SentAt: now - 10, Timeout: 600}, now) {
+		t.Error("fresh task within timeout should not be expired")
+	}
+	if !TaskExpired(Task{SentAt: now - 700, Timeout: 600}, now) {
+		t.Error("task past its timeout should be expired")
+	}
+	// Timeout unset → default 600s.
+	if !TaskExpired(Task{SentAt: now - 601, Timeout: 0}, now) {
+		t.Error("task past default timeout should be expired")
+	}
+	if TaskExpired(Task{SentAt: now - 100, Timeout: 0}, now) {
+		t.Error("task within default timeout should not be expired")
+	}
+}
+
+func TestHasInFlightTaskForRole_IgnoresExpired(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+	now := time.Now().Unix()
+
+	// A fresh in-flight task blocks duplicate sends.
+	fresh := Message{ID: "fresh-1", TS: now, From: "edit", To: "run", Type: "request", Action: "run"}
+	if err := CreateTask(session, fresh, 600); err != nil {
+		t.Fatalf("create fresh task: %v", err)
+	}
+	if !HasInFlightTaskForRole(session, "run", "run") {
+		t.Fatal("fresh in-flight task should block new requests")
+	}
+
+	// Complete it, then create a stale one — stale must NOT block.
+	CompleteTask(session, "fresh-1", "")
+	stale := Message{ID: "stale-1", TS: now - 700, From: "edit", To: "run", Type: "request", Action: "run"}
+	if err := CreateTask(session, stale, 600); err != nil {
+		t.Fatalf("create stale task: %v", err)
+	}
+	if HasInFlightTaskForRole(session, "run", "run") {
+		t.Error("expired in-flight task must not block new requests")
+	}
+	if _, found := FindInFlightTask(session, "run", "run"); found {
+		t.Error("FindInFlightTask must not reattach to an expired task")
+	}
+}
+
 func TestCreateAndReadTask(t *testing.T) {
 	useTempBusDir(t)
 	session := testSession(t)

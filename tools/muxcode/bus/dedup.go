@@ -190,8 +190,11 @@ func HasInFlightTaskForRole(session, to, action string) bool {
 	if err != nil || len(tasks) == 0 {
 		return false
 	}
+	now := time.Now().Unix()
 	for _, t := range tasks {
-		if t.To == to && t.Action == action {
+		// Skip stale tasks: a task stuck in-flight past its timeout (delivered
+		// but never responded) must not block new requests indefinitely.
+		if t.To == to && t.Action == action && !TaskExpired(t, now) {
 			return true
 		}
 	}
@@ -205,8 +208,10 @@ func FindInFlightTask(session, to, action string) (Task, bool) {
 	if err != nil || len(tasks) == 0 {
 		return Task{}, false
 	}
+	now := time.Now().Unix()
 	for _, t := range tasks {
-		if t.To == to && t.Action == action {
+		// Don't reattach --wait to a stale task that will never complete.
+		if t.To == to && t.Action == action && !TaskExpired(t, now) {
 			return t, true
 		}
 	}

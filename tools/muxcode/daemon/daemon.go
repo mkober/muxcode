@@ -1607,6 +1607,17 @@ func (d *Daemon) checkTrackedTasks() {
 		// sent a reply and MarkResponded fired. Complete the task.
 		ds, err := bus.ReadDeliveryStatus(d.session, task.ID)
 		if err != nil || ds.Status != bus.StatusResponded {
+			// Not responded. Time out tasks stuck in-flight past their timeout
+			// (delivered while the agent was busy, then never acted on) so they
+			// stop blocking new requests via the in-flight dedup suppression.
+			if task.Status == bus.TaskInFlight && bus.TaskExpired(task, now) {
+				bus.TimeoutTask(d.session, task.ID)
+				ts := time.Now().Format("15:04:05")
+				fmt.Printf("  %s  Tracked task %s→%s:%s timed out (no response within %ds) — unblocking new requests\n",
+					ts, task.From, task.To, task.Action, task.Timeout)
+				bus.LogLifecycle(d.session, "warn", "daemon", "task-timeout",
+					fmt.Sprintf("%s→%s:%s expired in-flight", task.From, task.To, task.Action))
+			}
 			continue
 		}
 
