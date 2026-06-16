@@ -44,12 +44,16 @@ muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notif
 - `--reply-to ID` — ID of the message being replied to
 - `--no-notify` — skip tmux notification to the target agent
 - `--force` — bypass pre-commit safeguard (only relevant when sending commit actions to the commit agent)
-- `--wait` — after sending, poll the sender's inbox every 500ms until a response arrives or timeout. Timeout controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default 600s). The response is printed to stdout inline.
+- `--wait` — after sending, poll the sender's inbox every 500ms until a response arrives or timeout. Timeout controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default 600s). The response is printed to stdout inline. **Auto-degrade:** if no response arrives within `MUXCODE_WAIT_DEGRADE_SECS` (default 90s; `0` disables), the send is converted into a tracked task and returns immediately — the sender unblocks and drains its inbox, and the daemon wakes it when the result lands (same self-heal as `--track`). Backed by `awaitOrTrack`/`degradeWaitSecs` in `cmd/send.go`.
 - `--track` — after sending, create a tracked task and return immediately. The daemon auto-completes the task when the response arrives and wakes the sender via inbox notification. Use for long-running or fire-and-forget operations. Mutually exclusive with `--wait`.
 
 **Pre-commit safeguard:** When sending a commit action (`commit`, `stage`, `push`, `merge`, `rebase`, `tag`) to the commit agent, the bus checks that all other agents (excluding edit, commit, watch) have empty inboxes, are not busy, and have no running background processes. If any agent has pending work, the send is blocked with an error. Use `--force` to bypass.
 
 **Dedup guard:** Duplicate messages (same `from`, `to`, `action`, `type` tuple) within a 30-second window are automatically suppressed. The check and send are performed atomically under a file lock (`dedup.lock`) to prevent TOCTOU races. System actions are never deduped. Configure the window via `MUXCODE_DEDUP_WINDOW` env var (seconds); set to `0` to disable.
+
+**Relay-loop suppression:** repeated identical agent-to-agent request relays are dropped once the same `(from,to,action)` tuple fires `>= MUXCODE_RELAY_SUPPRESS_THRESHOLD` times (default 4; `0` disables) within `MUXCODE_RELAY_SUPPRESS_WINDOW` seconds (default 300). Scoped to non-edit senders — prevents wedged relay storms (e.g. `run→watch` when the watch agent is stood down). Backed by `bus.CountRecentRequestTuple` (`guard.go`) and a guard in `cmd/send.go`.
+
+**Stuck-task self-heal:** a tracked task left `in-flight` (delivered while the target was busy, never responded) used to permanently block all new `(to,action)` sends to that role via the dedup guard — even `--force` couldn't bypass it, so the target silently stopped receiving messages. Now `bus.TaskExpired` lets `HasInFlightTaskForRole`/`FindInFlightTask` (`dedup.go`) ignore expired in-flight tasks, and the daemon's `checkTrackedTasks` times them out (lifecycle `task-timeout`). Tasks self-heal after their timeout (default 600s). See also `muxcode deliver <role> [--force]` to force-drain a target's pending inbox.
 
 Auto-detects sender from `AGENT_ROLE` env var or tmux window name.
 
@@ -1564,9 +1568,11 @@ echo "user@example.com" | muxcode pii-scrub
 
 Reads stdin, scrubs PII/secrets using the same regex patterns as the harness executor, writes scrubbed output to stdout. Logs redaction count to stderr when > 0. Used by Claude Code agents in PII-sensitive roles (`api`, `runner`/`run`, `watch`) to pipe tool output through before including in conversation.
 
+**Self-documenting banner:** when anything is redacted, an in-band notice (`PIIScrubNotice`) is prepended to the output so the agent doesn't mistake redacted placeholders for real data or compute lengths/sizes/counts over masked text. This makes the redaction explicit in-conversation rather than silent. Backed by `ScrubPIIWithNotice()` (`bus/scrub.go` + `harness/scrub.go`), wired into `cmd/scrub.go` (CLI) and `harness/executor.go` (harness agents).
+
 Patterns: emails, SSN, credit cards (prefix-anchored), phone numbers (separator-required), AWS access keys, AWS secret keys, JWTs, generic secrets/tokens, dates of birth.
 
-Core code: `bus/scrub.go` (patterns + `ScrubPII()`), `cmd/scrub.go` (CLI handler).
+Core code: `bus/scrub.go` (patterns + `ScrubPII()`, `ScrubPIIWithNotice()`, `PIIScrubNotice`), `cmd/scrub.go` (CLI handler).
 
 ### `muxcode track`
 
@@ -1763,6 +1769,11 @@ Core code: `bus/remote.go`, `cmd/remote.go`, `tui/remote.go`.
 | `MUXCODE_LIFECYCLE_LOG_MAX` | Max entries per lifecycle log before rotation (default: 1000) |
 | `MUXCODE_DEDUP_WINDOW` | Dedup window in seconds for duplicate message suppression (default: 30, set to 0 to disable) |
 | `MUXCODE_INBOX_POLL_TIMEOUT` | Timeout in seconds for `--wait` polling (default: 600) |
+| `MUXCODE_WAIT_DEGRADE_SECS` | Cap before `--wait` auto-degrades to a tracked task and returns (default: 90, set to 0 to disable) |
+| `MUXCODE_RELAY_SUPPRESS_THRESHOLD` | Identical non-edit `(from,to,action)` relays past this count in the window are suppressed (default: 4, set to 0 to disable) |
+| `MUXCODE_RELAY_SUPPRESS_WINDOW` | Window in seconds for relay-loop suppression counting (default: 300) |
+| `MUXCODE_ACTIVE_WATCHDOG_SECS` | Daemon advisory threshold (seconds) for a continuously-active agent (default: 600, set to 0 to disable) |
+| `MUXCODE_STUCK_RELOAD_DISABLE` | Set to 1 to disable the daemon's stuck-provider auto-reload watchdog |
 
 ## Message Format
 

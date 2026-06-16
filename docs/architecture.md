@@ -193,6 +193,18 @@ The daemon uses a two-phase approach to coalesce burst edits:
 
 This means rapid consecutive edits (e.g. Claude writing multiple files) are coalesced into a single analyst event containing all affected file paths, rather than firing once per edit.
 
+### Daemon watchdogs
+
+Beyond inbox delivery, the daemon runs three resilience watchdogs that detect and self-heal stuck agents. All are opt-out via env var and emit lifecycle events for auditing.
+
+| Watchdog | Detects | Action | Tuning | Lifecycle event |
+|----------|---------|--------|--------|-----------------|
+| Long-active | An agent continuously active past the threshold (runaway think) | Queues a non-invasive advisory nudging it to summarize + escalate. Skips `--wait`/poll/reload/harness/non-hook agents | `MUXCODE_ACTIVE_WATCHDOG_SECS` (default 600; 0 disables) | `active-watchdog` (+ `long-active` bus event) |
+| Stuck-provider | A non-hook agent (OpenCode/Codex) wedged in a provider loop — signatures like `InternalError.Algo`, "repeated across multiple consecutive rounds", "No matching discriminator" — via two-sighting debounce | Auto-reloads the agent in place (cap 3/role, 180s cooldown); after the cap, sends an `agent-stuck` alert to edit | `MUXCODE_STUCK_RELOAD_DISABLE=1` disables | `stuck-provider-reload`, `stuck-provider-giveup` |
+| Task-timeout | A tracked task stuck `in-flight` (delivered while busy, never responded) past its timeout — would otherwise permanently block new `(to,action)` sends to that role | Times out the expired in-flight task so the dedup guard ignores it and the target receives messages again | Task timeout (default 600s) | `task-timeout` |
+
+Core code: `watcher/watcher.go` (`checkActiveWatchdog()`, `checkStuckProviders()`, `checkTrackedTasks()`), `bus/stuck.go` (`PaneShowsProviderLoop()`), `bus/task.go` (`TaskExpired()`), `bus/dedup.go` (`HasInFlightTaskForRole()`, `FindInFlightTask()` — both ignore expired tasks).
+
 ### Diff Preview Flow
 
 ```

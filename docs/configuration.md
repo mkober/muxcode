@@ -67,6 +67,11 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `MUXCODE_DEDUP_WINDOW` | `30` | Dedup window in seconds for duplicate message suppression (set to 0 to disable) |
 | `MUXCODE_INBOX_POLL_TIMEOUT` | `600` | Timeout in seconds for `send --wait` polling |
 | `MUXCODE_LIFECYCLE_LOG_MAX` | `1000` | Max entries per lifecycle log before rotation |
+| `MUXCODE_WAIT_DEGRADE_SECS` | `90` | Cap (seconds) before `send --wait` auto-degrades into a tracked task and returns, unblocking the sender. Set to `0` to disable (full blocking up to `MUXCODE_INBOX_POLL_TIMEOUT`) |
+| `MUXCODE_RELAY_SUPPRESS_THRESHOLD` | `4` | Identical `(from,to,action)` request relays from a non-edit sender within the window past this count are suppressed (relay-loop guard). Set to `0` to disable |
+| `MUXCODE_RELAY_SUPPRESS_WINDOW` | `300` | Window in seconds for relay-loop suppression counting |
+| `MUXCODE_ACTIVE_WATCHDOG_SECS` | `600` | Daemon advisory threshold (seconds) — an agent continuously active past this is nudged to summarize + escalate (runaway-think guard). Set to `0` to disable |
+| `MUXCODE_STUCK_RELOAD_DISABLE` | (unset) | Set to `1` to disable the daemon's stuck-provider auto-reload watchdog for non-hook agents |
 
 ### Claude model selection
 

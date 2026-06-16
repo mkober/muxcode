@@ -665,7 +665,7 @@ Tool output from `api`, `runner`/`run`, and `watch` roles is automatically scrub
 - Email addresses, SSN, credit card numbers (prefix-anchored: Visa, MC, Amex, Discover), phone numbers (separator-required)
 - AWS access/secret keys, JWT tokens, generic API keys/tokens/passwords, dates of birth
 
-Redacted values are replaced with bracketed placeholders (e.g. `[EMAIL_REDACTED]`, `[SECRET_REDACTED]`). Scrubbing is logged to stderr with redaction count per tool call.
+Redacted values are replaced with bracketed placeholders (e.g. `[EMAIL_REDACTED]`, `[SECRET_REDACTED]`). Scrubbing is logged to stderr with redaction count per tool call. When anything is redacted, a self-documenting banner (`PIIScrubNotice`) is also prepended to the output via `ScrubPIIWithNotice()` so the agent doesn't treat masked placeholders as real data or compute lengths/counts over them.
 
 For Claude Code agents in the same roles, `muxcode pii-scrub` provides equivalent pipe-through filtering. Agent definitions for api, runner, and watch instruct the agent to pipe sensitive output through the scrubber.
 
