@@ -68,7 +68,7 @@ func (e *Executor) Execute(ctx context.Context, call ToolCall) string {
 	}
 
 	if e.ScrubPII {
-		scrubbed, n := ScrubPII(result)
+		scrubbed, n := ScrubPIIWithNotice(result)
 		if n > 0 {
 			fmt.Fprintf(os.Stderr, "[%s] PII scrub: %d redaction(s) in %s output\n", logTag, n, name)
 			result = scrubbed

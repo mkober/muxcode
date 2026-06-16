@@ -2,6 +2,7 @@ package bus
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -395,6 +396,43 @@ func TestCheckLoops_Integration(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected a command loop alert for build")
+	}
+}
+
+func TestCountRecentRequestTuple(t *testing.T) {
+	session := testSession(t)
+
+	// Five distinct run->watch:watch requests (vary payload so the inbox
+	// pending-duplicate guard in Send doesn't suppress them).
+	for i := 0; i < 5; i++ {
+		m := NewMessage("run", "watch", "request", "watch", fmt.Sprintf("tail logs %d", i), "")
+		if err := Send(session, m); err != nil {
+			t.Fatalf("send %d: %v", i, err)
+		}
+	}
+	// A different action and a response must not count toward the tuple.
+	_ = Send(session, NewMessage("run", "watch", "request", "other", "x", ""))
+	_ = Send(session, NewMessage("run", "watch", "response", "watch", "y", ""))
+
+	if n := CountRecentRequestTuple(session, "run", "watch", "watch", 300); n != 5 {
+		t.Errorf("expected 5 matching request tuples, got %d", n)
+	}
+	if n := CountRecentRequestTuple(session, "run", "watch", "nope", 300); n != 0 {
+		t.Errorf("expected 0 for unmatched action, got %d", n)
+	}
+	if n := CountRecentRequestTuple(session, "build", "watch", "watch", 300); n != 0 {
+		t.Errorf("expected 0 for unmatched sender, got %d", n)
+	}
+}
+
+func TestCountRecentRequestTuple_SystemActionExcluded(t *testing.T) {
+	session := testSession(t)
+	// long-active is a system action and must never count toward suppression.
+	for i := 0; i < 6; i++ {
+		_ = Send(session, NewMessage("daemon", "edit", "request", "long-active", fmt.Sprintf("nudge %d", i), ""))
+	}
+	if n := CountRecentRequestTuple(session, "daemon", "edit", "long-active", 300); n != 0 {
+		t.Errorf("expected system action long-active to be excluded, got %d", n)
 	}
 }
 

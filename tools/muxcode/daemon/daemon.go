@@ -86,6 +86,11 @@ type Daemon struct {
 	// Notification budget — caps messages delivered to edit per 5-minute window
 	editNotifyCount int   // messages sent to edit in current window
 	editWindowStart int64 // unix time when current budget window started
+	// Long-active watchdog — nudges an agent that has been continuously active
+	// (e.g. a runaway multi-minute think) toward escalating to the user.
+	lastActiveWatchdogCheck int64            // 60s interval
+	activeSince             map[string]int64 // role -> unix time agent went active (0 = idle)
+	lastActiveNudge         map[string]int64 // role -> unix time of last nudge sent
 }
 
 // New creates a new Daemon for the given session.
@@ -132,6 +137,8 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		serveCheckSentFor:     make(map[string]int64),
 		lastEventSent:         make(map[string]int64),
 		editWindowStart:       now,
+		activeSince:           make(map[string]int64),
+		lastActiveNudge:       make(map[string]int64),
 	}
 }
 
@@ -209,6 +216,7 @@ func (d *Daemon) Run() error {
 		d.checkProcs()
 		d.checkSpawns()
 		d.checkLoops()
+		d.checkActiveWatchdog()
 		d.checkCompaction()
 		d.checkOllama()
 		d.checkAgentHealth()
@@ -705,6 +713,116 @@ func (d *Daemon) checkLoops() {
 	}
 
 	d.refreshInboxSizes()
+}
+
+// activeWatchdogSecs returns how long an agent may be continuously active
+// before the watchdog nudges it. Configurable via MUXCODE_ACTIVE_WATCHDOG_SECS
+// (0 disables). Default 600s (10 minutes).
+func activeWatchdogSecs() int64 {
+	if v := os.Getenv("MUXCODE_ACTIVE_WATCHDOG_SECS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 600
+}
+
+// checkActiveWatchdog detects an agent that has been continuously "active"
+// (not at the idle ❯ prompt) for longer than the threshold — e.g. a runaway
+// multi-minute think churning over contradictory data — and queues a one-time
+// advisory into the agent's own inbox suggesting it summarize and escalate to
+// the user rather than re-deriving. The advisory is delivered when the agent
+// next becomes idle (combined-notification path), so it never interrupts work.
+//
+// Scoped to hook providers (IsAgentIdle is unreliable for non-hook TUIs) and
+// skips agents legitimately blocked on --wait/--poll, reloading, or harness
+// panes. Runs every 60s.
+func (d *Daemon) checkActiveWatchdog() {
+	threshold := activeWatchdogSecs()
+	if threshold <= 0 {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastActiveWatchdogCheck < 60 {
+		return
+	}
+	d.lastActiveWatchdogCheck = now
+
+	for _, role := range bus.KnownRoles {
+		// Own pane only — hosted roles share their host's pane.
+		if bus.WindowForRole(role) != role {
+			continue
+		}
+		if bus.IsReloading(d.session, role) {
+			d.activeSince[role] = 0
+			continue
+		}
+		if bus.IsHarnessActive(d.session, role) {
+			continue
+		}
+		// Non-hook providers (OpenCode/Codex) report IsAgentIdle==false always,
+		// which would false-positive every cycle. Skip them.
+		if provider := bus.ResolveProvider(role); !provider.SupportsHooks() {
+			continue
+		}
+		// Legitimate long-running blocks: an agent draining a --wait delegation
+		// or actively polling its inbox is "active" by design, not stuck.
+		if bus.IsWaiting(d.session, role) || bus.IsPolling(d.session, role) {
+			d.activeSince[role] = 0
+			continue
+		}
+
+		if bus.IsAgentIdle(d.session, role) {
+			d.activeSince[role] = 0
+			continue
+		}
+
+		// Agent is active — track the start of this active spell.
+		if d.activeSince[role] == 0 {
+			d.activeSince[role] = now
+			continue
+		}
+		dur := now - d.activeSince[role]
+		if dur < threshold {
+			continue
+		}
+		// Re-nudge at most once per threshold window while still active.
+		if last, ok := d.lastActiveNudge[role]; ok && (now-last) < threshold {
+			continue
+		}
+		d.lastActiveNudge[role] = now
+
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Active watchdog: %s active %s with no idle return — nudging to escalate\n",
+			ts, role, formatWatchdogDuration(dur))
+		bus.LogLifecycle(d.session, "warn", "daemon", "active-watchdog",
+			fmt.Sprintf("%s active %ds", role, dur))
+
+		advisory := fmt.Sprintf(
+			"You have been active %s with no return to idle. If you are stuck on contradictory "+
+				"or unverifiable data, STOP re-deriving — summarize the conflict and escalate to "+
+				"the user with what you know and what you cannot resolve. Note: PII-sensitive "+
+				"reads (run/watch/api output) are scrubbed; never measure lengths/sizes/counts "+
+				"over scrubbed text — verify via a non-PII aggregation instead.",
+			formatWatchdogDuration(dur))
+		msg := bus.NewMessage("daemon", role, "event", "long-active", advisory, "")
+		if err := bus.Send(d.session, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "  [watchdog] failed to queue advisory for %s: %v\n", role, err)
+		}
+	}
+}
+
+// formatWatchdogDuration renders a second count as a compact "Xm" / "Xm Ys".
+func formatWatchdogDuration(secs int64) string {
+	if secs < 60 {
+		return fmt.Sprintf("%ds", secs)
+	}
+	m := secs / 60
+	s := secs % 60
+	if s == 0 {
+		return fmt.Sprintf("%dm", m)
+	}
+	return fmt.Sprintf("%dm %ds", m, s)
 }
 
 // checkCompaction runs compaction checks every 120 seconds and sends recommendations

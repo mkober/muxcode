@@ -103,6 +103,26 @@ func Send(args []string) {
 		os.Exit(1)
 	}
 
+	// Loop suppression: drop repeated identical agent-to-agent relay requests
+	// that are spinning with no resolution (e.g. run -> watch when watch is on
+	// a hard stand-down). The daemon's checkLoops only *reports* such loops;
+	// this enforces them at the source by dropping the send once the same
+	// (from, to, action) request tuple has fired >= threshold times in the
+	// window. Scoped to non-edit senders so the orchestrator's (edit's) varied
+	// delegations — including legitimate iterative build/test/review cycles —
+	// are never suppressed. Bypassable with --force.
+	if msgType == "request" && !force && from != "edit" && bus.WindowForRole(from) != "edit" {
+		threshold, window := relaySuppressLimits()
+		if threshold > 0 {
+			if n := bus.CountRecentRequestTuple(session, from, to, action, window); n >= threshold {
+				fmt.Fprintf(os.Stderr,
+					"Suppressed repeated request %s:%s to %s — already sent %dx in last %ds (loop guard; use --force to override)\n",
+					msgType, action, to, n, window)
+				return
+			}
+		}
+	}
+
 	// Pre-commit safeguard: block sends to commit agent unless all agents are idle
 	if to == "commit" && isCommitAction(action) && !force {
 		if err := bus.PreCommitCheck(session); err != nil {
@@ -333,6 +353,27 @@ func waitForResponse(session, role, target, msgID string) (bool, string) {
 
 	fmt.Fprintf(os.Stderr, "\nNo response from %s within %ds — check: muxcode inbox --peek\n", target, timeout)
 	return false, ""
+}
+
+// relaySuppressLimits returns the (threshold, windowSecs) for agent-to-agent
+// relay loop suppression. Configurable via MUXCODE_RELAY_SUPPRESS_THRESHOLD
+// (default 4; 0 disables suppression) and MUXCODE_RELAY_SUPPRESS_WINDOW
+// (default 300). The default threshold matches the daemon's loop-detection
+// threshold so suppression kicks in exactly when a loop would be flagged.
+func relaySuppressLimits() (threshold int, windowSecs int64) {
+	threshold = 4
+	windowSecs = 300
+	if v := os.Getenv("MUXCODE_RELAY_SUPPRESS_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			threshold = n
+		}
+	}
+	if v := os.Getenv("MUXCODE_RELAY_SUPPRESS_WINDOW"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			windowSecs = n
+		}
+	}
+	return threshold, windowSecs
 }
 
 // resolveWaitTimeout returns the --wait timeout in seconds.

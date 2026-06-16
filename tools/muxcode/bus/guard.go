@@ -285,6 +285,39 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 	return nil
 }
 
+// CountRecentRequestTuple counts request-type messages matching the exact
+// (from, to, action) tuple within the last windowSecs, read from the session
+// log. Used by the send path to suppress repeated agent-to-agent relay sends
+// that are spinning (e.g. run -> watch when watch is stood down) — a generic,
+// source-side enforcement of the loop the daemon's checkLoops only reports.
+//
+// Responses, events, and system/daemon actions are excluded so normal reply
+// traffic and infrastructure messages never count toward suppression.
+func CountRecentRequestTuple(session, from, to, action string, windowSecs int64) int {
+	if from == "" || to == "" {
+		return 0
+	}
+	now := time.Now().Unix()
+	// Read recent history for the sending role (its log includes messages it sent).
+	messages := readLogForRole(session, from, 100)
+	count := 0
+	for _, m := range messages {
+		if m.Type != "request" {
+			continue
+		}
+		if m.From == "daemon" || isSystemAction(m.Action) {
+			continue
+		}
+		if windowSecs > 0 && (now-m.TS) > windowSecs {
+			continue
+		}
+		if m.From == from && m.To == to && m.Action == action {
+			count++
+		}
+	}
+	return count
+}
+
 // CheckLoops runs all loop detection for a single role.
 func CheckLoops(session, role string) []LoopAlert {
 	var alerts []LoopAlert
@@ -357,7 +390,7 @@ func isSystemAction(action string) bool {
 	case "loop-detected", "compact-recommended", "proc-complete", "spawn-complete",
 		"ollama-down", "ollama-recovered", "ollama-restarting",
 		"agent-down", "agent-restarting", "agent-recovered",
-		"disk-pressure":
+		"disk-pressure", "long-active":
 		return true
 	}
 	return false

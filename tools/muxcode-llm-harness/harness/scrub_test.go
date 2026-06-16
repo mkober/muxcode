@@ -5,6 +5,31 @@ import (
 	"testing"
 )
 
+func TestScrubPIIWithNotice_PrependsBannerOnRedaction(t *testing.T) {
+	input := "user,email\nNCCU_suejones,suejones@nccu.edu"
+	out, n := ScrubPIIWithNotice(input)
+	if n == 0 {
+		t.Fatal("expected redactions")
+	}
+	if !strings.HasPrefix(out, "[muxcode pii-scrub:") {
+		t.Error("expected scrub notice banner prefix")
+	}
+	if !strings.Contains(out, "NCCU_suejones") {
+		t.Error("non-PII user_id should not be redacted")
+	}
+}
+
+func TestScrubPIIWithNotice_NoBannerWhenClean(t *testing.T) {
+	input := "no pii here, just counts: 1234"
+	out, n := ScrubPIIWithNotice(input)
+	if n != 0 {
+		t.Fatalf("expected 0 redactions, got %d", n)
+	}
+	if out != input {
+		t.Errorf("clean input should pass through unchanged, got %q", out)
+	}
+}
+
 func TestScrubPII_Email(t *testing.T) {
 	input := `{"name": "John", "email": "john.doe@example.com", "role": "admin"}`
 	out, n := ScrubPII(input)

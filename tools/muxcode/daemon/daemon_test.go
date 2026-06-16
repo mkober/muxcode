@@ -131,6 +131,73 @@ func TestDaemon_NewInitializesFields(t *testing.T) {
 	}
 }
 
+func TestActiveWatchdogSecs_Default(t *testing.T) {
+	t.Setenv("MUXCODE_ACTIVE_WATCHDOG_SECS", "")
+	if got := activeWatchdogSecs(); got != 600 {
+		t.Errorf("default = %d, want 600", got)
+	}
+}
+
+func TestActiveWatchdogSecs_EnvOverride(t *testing.T) {
+	t.Setenv("MUXCODE_ACTIVE_WATCHDOG_SECS", "120")
+	if got := activeWatchdogSecs(); got != 120 {
+		t.Errorf("override = %d, want 120", got)
+	}
+	// 0 disables; must be honored (not coerced to default).
+	t.Setenv("MUXCODE_ACTIVE_WATCHDOG_SECS", "0")
+	if got := activeWatchdogSecs(); got != 0 {
+		t.Errorf("disabled = %d, want 0", got)
+	}
+	// Garbage falls back to default.
+	t.Setenv("MUXCODE_ACTIVE_WATCHDOG_SECS", "notanint")
+	if got := activeWatchdogSecs(); got != 600 {
+		t.Errorf("garbage fallback = %d, want 600", got)
+	}
+}
+
+func TestCheckActiveWatchdog_DisabledNoCrash(t *testing.T) {
+	t.Setenv("MUXCODE_ACTIVE_WATCHDOG_SECS", "0")
+	d := New("test-session", 5, 8)
+	// Disabled threshold must early-return without touching tmux/panes.
+	d.checkActiveWatchdog()
+}
+
+func TestCheckActiveWatchdog_60sInterval(t *testing.T) {
+	t.Setenv("MUXCODE_ACTIVE_WATCHDOG_SECS", "600")
+	d := New("test-session", 5, 8)
+	// Simulate a check that just ran — the next call should be gated out.
+	d.lastActiveWatchdogCheck = time.Now().Unix()
+	before := d.lastActiveWatchdogCheck
+	d.checkActiveWatchdog()
+	if d.lastActiveWatchdogCheck != before {
+		t.Error("checkActiveWatchdog should be gated within the 60s interval")
+	}
+}
+
+func TestDaemon_NewInitializesWatchdogFields(t *testing.T) {
+	d := New("test-session", 5, 8)
+	if d.activeSince == nil {
+		t.Error("activeSince should be initialized")
+	}
+	if d.lastActiveNudge == nil {
+		t.Error("lastActiveNudge should be initialized")
+	}
+}
+
+func TestFormatWatchdogDuration(t *testing.T) {
+	cases := map[int64]string{
+		45:  "45s",
+		60:  "1m",
+		90:  "1m 30s",
+		600: "10m",
+	}
+	for secs, want := range cases {
+		if got := formatWatchdogDuration(secs); got != want {
+			t.Errorf("formatWatchdogDuration(%d) = %q, want %q", secs, got, want)
+		}
+	}
+}
+
 func TestExtractDiffFiles(t *testing.T) {
 	diffStat := ` bus/profile.go   | 30 ++++++++++++++++---------
  bus/config.go    |  5 ++++-

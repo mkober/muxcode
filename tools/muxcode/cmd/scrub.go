@@ -18,7 +18,7 @@ func Scrub(args []string) {
 		os.Exit(1)
 	}
 
-	out, n := bus.ScrubPII(string(data))
+	out, n := bus.ScrubPIIWithNotice(string(data))
 	if n > 0 {
 		fmt.Fprintf(os.Stderr, "pii-scrub: %d redaction(s) applied\n", n)
 	}

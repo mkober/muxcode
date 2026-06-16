@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -133,6 +134,32 @@ func ScrubPII(text string) (string, int) {
 	}
 
 	return text, count
+}
+
+// PIIScrubNotice returns an in-band banner to prepend to scrubbed output when
+// redactions occurred. PII-sensitive roles (api, run, watch) reason over their
+// own tool output, so without a visible notice an agent can mistake a redacted
+// placeholder (e.g. [EMAIL_REDACTED]) for real data — and, worse, compute
+// string lengths, byte sizes, or row counts over redacted text and report them
+// as fact. The notice tells the agent the data was masked and that quantitative
+// conclusions must come from a non-PII aggregation instead.
+func PIIScrubNotice(count int) string {
+	return fmt.Sprintf("[muxcode pii-scrub: %d value(s) redacted in the output below. "+
+		"Redacted tokens (e.g. [EMAIL_REDACTED]) are PLACEHOLDERS, not real data. "+
+		"Do NOT compute lengths, byte sizes, row counts, or draw conclusions from "+
+		"redacted content — for exact values use an aggregation that emits only "+
+		"non-PII numbers (e.g. LENGTH(col), COUNT(*)).]\n\n", count)
+}
+
+// ScrubPIIWithNotice scrubs PII and, if any redactions were made, prepends the
+// PIIScrubNotice banner so the consuming agent sees the redaction in-band.
+// Returns the (possibly annotated) text and the redaction count.
+func ScrubPIIWithNotice(text string) (string, int) {
+	out, n := ScrubPII(text)
+	if n > 0 {
+		out = PIIScrubNotice(n) + out
+	}
+	return out, n
 }
 
 // piiSensitiveRoles lists roles whose tool output should be scrubbed.

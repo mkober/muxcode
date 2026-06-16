@@ -5,6 +5,38 @@ import (
 	"testing"
 )
 
+func TestRelaySuppressLimits_Default(t *testing.T) {
+	t.Setenv("MUXCODE_RELAY_SUPPRESS_THRESHOLD", "")
+	t.Setenv("MUXCODE_RELAY_SUPPRESS_WINDOW", "")
+	threshold, window := relaySuppressLimits()
+	if threshold != 4 {
+		t.Errorf("default threshold = %d, want 4", threshold)
+	}
+	if window != 300 {
+		t.Errorf("default window = %d, want 300", window)
+	}
+}
+
+func TestRelaySuppressLimits_EnvOverride(t *testing.T) {
+	t.Setenv("MUXCODE_RELAY_SUPPRESS_THRESHOLD", "7")
+	t.Setenv("MUXCODE_RELAY_SUPPRESS_WINDOW", "120")
+	threshold, window := relaySuppressLimits()
+	if threshold != 7 {
+		t.Errorf("threshold = %d, want 7", threshold)
+	}
+	if window != 120 {
+		t.Errorf("window = %d, want 120", window)
+	}
+}
+
+func TestRelaySuppressLimits_ZeroDisables(t *testing.T) {
+	t.Setenv("MUXCODE_RELAY_SUPPRESS_THRESHOLD", "0")
+	threshold, _ := relaySuppressLimits()
+	if threshold != 0 {
+		t.Errorf("threshold = %d, want 0 (disabled)", threshold)
+	}
+}
+
 func TestValidatePayload_Clean(t *testing.T) {
 	warnings := validatePayload("Build succeeded: all tests pass")
 	if len(warnings) != 0 {
