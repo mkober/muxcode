@@ -91,6 +91,13 @@ type Daemon struct {
 	lastActiveWatchdogCheck int64            // 60s interval
 	activeSince             map[string]int64 // role -> unix time agent went active (0 = idle)
 	lastActiveNudge         map[string]int64 // role -> unix time of last nudge sent
+	// Stuck-provider watchdog — auto-reloads non-hook agents (OpenCode/Codex)
+	// wedged in a provider-side loop their process can't recover from.
+	lastStuckCheck  int64            // 60s interval
+	stuckSeen       map[string]int   // role -> consecutive sightings of a provider-loop signature
+	stuckReloads    map[string]int   // role -> auto-reload count (cap to avoid reload storms)
+	lastStuckReload map[string]int64 // role -> unix time of last auto-reload
+	stuckGaveUp     map[string]bool  // role -> alerted once after hitting the reload cap
 }
 
 // New creates a new Daemon for the given session.
@@ -139,6 +146,10 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		editWindowStart:       now,
 		activeSince:           make(map[string]int64),
 		lastActiveNudge:       make(map[string]int64),
+		stuckSeen:             make(map[string]int),
+		stuckReloads:          make(map[string]int),
+		lastStuckReload:       make(map[string]int64),
+		stuckGaveUp:           make(map[string]bool),
 	}
 }
 
@@ -217,6 +228,7 @@ func (d *Daemon) Run() error {
 		d.checkSpawns()
 		d.checkLoops()
 		d.checkActiveWatchdog()
+		d.checkStuckProviders()
 		d.checkCompaction()
 		d.checkOllama()
 		d.checkAgentHealth()
@@ -823,6 +835,114 @@ func formatWatchdogDuration(secs int64) string {
 		return fmt.Sprintf("%dm", m)
 	}
 	return fmt.Sprintf("%dm %ds", m, s)
+}
+
+// stuckReloadCap is the max number of automatic reloads the stuck-provider
+// watchdog will attempt for a single role before giving up and alerting edit.
+const stuckReloadCap = 3
+
+// stuckReloadCooldownSecs is the minimum gap between automatic reloads of the
+// same role — long enough for a relaunched agent to settle before re-judging.
+const stuckReloadCooldownSecs int64 = 180
+
+// checkStuckProviders auto-reloads non-hook agents (OpenCode/Codex) wedged in
+// a provider-side loop or fatal request-validation error. The agent process
+// stays alive+active in this state, so checkAgentHealth (dead-process restart)
+// and checkIdleAgents (idle wake-up) never fire — the agent would spin forever.
+//
+// A signature must persist across two consecutive checks (~60s apart) before a
+// reload fires, so a transient single error the agent recovers from is ignored.
+// Reloads are capped per role and rate-limited to avoid reload storms; on
+// hitting the cap the watchdog alerts edit once and stops. Runs every 60s.
+func (d *Daemon) checkStuckProviders() {
+	if os.Getenv("MUXCODE_STUCK_RELOAD_DISABLE") == "1" {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastStuckCheck < 60 {
+		return
+	}
+	d.lastStuckCheck = now
+
+	for _, role := range bus.KnownRoles {
+		// Own pane only; skip reloading/harness panes.
+		if bus.WindowForRole(role) != role {
+			continue
+		}
+		if bus.IsReloading(d.session, role) || bus.IsHarnessActive(d.session, role) {
+			continue
+		}
+		// Only non-hook providers exhibit this wedge — Claude Code recovers via
+		// its own mechanisms and IsAgentIdle works for it.
+		if bus.ResolveProvider(role).SupportsHooks() {
+			continue
+		}
+		// A dead agent is handled by checkAgentHealth's restart path.
+		if !bus.IsAgentAlive(d.session, role) {
+			delete(d.stuckSeen, role)
+			continue
+		}
+
+		target := bus.PaneTarget(d.session, role)
+		content, err := bus.TmuxCapturePaneLines(target, 60)
+		if err != nil {
+			continue
+		}
+		if !bus.PaneShowsProviderLoop(content) {
+			delete(d.stuckSeen, role)
+			d.stuckGaveUp[role] = false // recovered — re-arm alerting
+			continue
+		}
+
+		// Two-sighting debounce.
+		d.stuckSeen[role]++
+		if d.stuckSeen[role] < 2 {
+			continue
+		}
+
+		// Cap reached — alert edit once, then stop auto-reloading.
+		if d.stuckReloads[role] >= stuckReloadCap {
+			if !d.stuckGaveUp[role] {
+				d.stuckGaveUp[role] = true
+				ts := time.Now().Format("15:04:05")
+				fmt.Printf("  %s  Stuck-provider watchdog: %s still wedged after %d reloads — giving up\n", ts, role, stuckReloadCap)
+				bus.LogLifecycle(d.session, "error", "daemon", "stuck-provider-giveup",
+					fmt.Sprintf("%s wedged after %d reloads", role, stuckReloadCap))
+				if d.shouldSendEvent("agent-stuck", role) && d.shouldNotifyEdit("event") {
+					msg := bus.NewMessage("daemon", "edit", "event", "agent-stuck",
+						fmt.Sprintf("%s is wedged in a provider loop and did not recover after %d auto-reloads — manual intervention needed (try: muxcode reload %s --model <other>).", role, stuckReloadCap, role), "")
+					if err := bus.Send(d.session, msg); err == nil {
+						_ = bus.Notify(d.session, "edit")
+					}
+				}
+			}
+			continue
+		}
+
+		// Cooldown between reloads.
+		if last, ok := d.lastStuckReload[role]; ok && (now-last) < stuckReloadCooldownSecs {
+			continue
+		}
+
+		d.stuckReloads[role]++
+		d.lastStuckReload[role] = now
+		delete(d.stuckSeen, role)
+
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Stuck-provider watchdog: %s wedged in provider loop — auto-reloading (attempt %d/%d)\n",
+			ts, role, d.stuckReloads[role], stuckReloadCap)
+		bus.LogLifecycle(d.session, "warn", "daemon", "stuck-provider-reload",
+			fmt.Sprintf("%s auto-reload %d/%d", role, d.stuckReloads[role], stuckReloadCap))
+
+		// Reload in a goroutine — GracefulStop + relaunch blocks several
+		// seconds; the reload marker (set first by ReloadAgent) makes the next
+		// poll cycles skip this role. Reload in place (keep current CLI/model).
+		go func(r string) {
+			if err := bus.ReloadAgent(d.session, r, "", "", false); err != nil {
+				fmt.Fprintf(os.Stderr, "  [watchdog] auto-reload of %s failed: %v\n", r, err)
+			}
+		}(role)
+	}
 }
 
 // checkCompaction runs compaction checks every 120 seconds and sends recommendations

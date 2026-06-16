@@ -182,6 +182,26 @@ func TestDaemon_NewInitializesWatchdogFields(t *testing.T) {
 	if d.lastActiveNudge == nil {
 		t.Error("lastActiveNudge should be initialized")
 	}
+	if d.stuckSeen == nil || d.stuckReloads == nil || d.lastStuckReload == nil || d.stuckGaveUp == nil {
+		t.Error("stuck-provider watchdog maps should be initialized")
+	}
+}
+
+func TestCheckStuckProviders_DisabledNoCrash(t *testing.T) {
+	t.Setenv("MUXCODE_STUCK_RELOAD_DISABLE", "1")
+	d := New("test-session", 5, 8)
+	d.checkStuckProviders() // disabled — must early-return without touching panes
+}
+
+func TestCheckStuckProviders_60sInterval(t *testing.T) {
+	t.Setenv("MUXCODE_STUCK_RELOAD_DISABLE", "")
+	d := New("test-session", 5, 8)
+	d.lastStuckCheck = time.Now().Unix()
+	before := d.lastStuckCheck
+	d.checkStuckProviders()
+	if d.lastStuckCheck != before {
+		t.Error("checkStuckProviders should be gated within the 60s interval")
+	}
 }
 
 func TestFormatWatchdogDuration(t *testing.T) {
