@@ -78,6 +78,19 @@ func Send(args []string) {
 		os.Exit(1)
 	}
 
+	// Default request sends to async tracking unless --wait is explicitly given.
+	// A bare `muxcode send <role> <action> "..."` (request) now creates a
+	// tracked task and returns immediately — the daemon wakes the sender when
+	// the response lands — instead of fire-and-forget (no result delivered) or
+	// a blocking --wait (agent unresponsive, inbox piles up behind it).
+	// --wait stays opt-in for short, strictly sequential steps. Responses and
+	// events are unaffected — they never await a reply, so they remain
+	// fire-and-forget. MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET=1 restores the old
+	// no-task default for callers that explicitly want it.
+	if defaultsToTrack(msgType, wait, track) {
+		track = true
+	}
+
 	if !payloadSet {
 		fmt.Fprintf(os.Stderr, "Error: payload is required\n")
 		os.Exit(1)
@@ -380,6 +393,18 @@ func awaitOrTrack(session, from, to, action, taskID string) {
 		time.Sleep(5 * time.Second)
 		bus.ClearWaiting(session, from)
 	}()
+}
+
+// defaultsToTrack reports whether a send with no explicit --wait/--track should
+// default to async tracking. Request-type sends default to tracked so the
+// sender stays responsive and is woken when the result lands; responses and
+// events never await a reply, so they stay fire-and-forget. Setting
+// MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET=1 restores the old no-task default.
+func defaultsToTrack(msgType string, wait, track bool) bool {
+	if msgType != "request" || wait || track {
+		return false
+	}
+	return os.Getenv("MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET") != "1"
 }
 
 // relaySuppressLimits returns the (threshold, windowSecs) for agent-to-agent

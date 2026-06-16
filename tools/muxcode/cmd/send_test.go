@@ -65,6 +65,34 @@ func TestDegradeWaitSecs_GarbageFallsBack(t *testing.T) {
 	}
 }
 
+func TestDefaultsToTrack(t *testing.T) {
+	t.Setenv("MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET", "")
+	// Bare request → defaults to tracked.
+	if !defaultsToTrack("request", false, false) {
+		t.Error("bare request should default to tracked")
+	}
+	// Explicit flags or non-request → never overridden.
+	if defaultsToTrack("request", true, false) {
+		t.Error("--wait request must not be coerced to track")
+	}
+	if defaultsToTrack("request", false, true) {
+		t.Error("--track request is already tracked, not overridden")
+	}
+	if defaultsToTrack("response", false, false) {
+		t.Error("response must stay fire-and-forget")
+	}
+	if defaultsToTrack("event", false, false) {
+		t.Error("event must stay fire-and-forget")
+	}
+}
+
+func TestDefaultsToTrack_FireAndForgetEscapeHatch(t *testing.T) {
+	t.Setenv("MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET", "1")
+	if defaultsToTrack("request", false, false) {
+		t.Error("escape hatch should restore fire-and-forget default")
+	}
+}
+
 func TestValidatePayload_Clean(t *testing.T) {
 	warnings := validatePayload("Build succeeded: all tests pass")
 	if len(warnings) != 0 {
