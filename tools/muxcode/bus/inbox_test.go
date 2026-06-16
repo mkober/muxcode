@@ -17,6 +17,50 @@ func testSession(t *testing.T) string {
 	return session
 }
 
+func TestSendDropsSelfAddressed(t *testing.T) {
+	session := testSession(t)
+	// A self-addressed message (from == to) must never be delivered.
+	if err := Send(session, NewMessage("deploy", "deploy", "request", "verify", "self ping", "")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if msgs, _ := Peek(session, "deploy"); len(msgs) != 0 {
+		t.Errorf("self-send should be dropped, inbox has %d message(s)", len(msgs))
+	}
+}
+
+func TestStartupSelfSendStillDelivered(t *testing.T) {
+	session := testSession(t)
+	// The startup bootstrap is a LEGITIMATE self-addressed request — it must be
+	// delivered and remain actionable so the daemon re-wakes the agent until it
+	// consumes the message and restores context (see PreLaunchSetup). Use
+	// SendNoCC to mirror PreLaunchSetup and avoid touching the package-global
+	// auto-CC rate-limiter (which would pollute other tests in the same run).
+	if err := SendNoCC(session, NewMessage("build", "build", "request", "startup", "Session started", "")); err != nil {
+		t.Fatalf("SendNoCC: %v", err)
+	}
+	if msgs, _ := Peek(session, "build"); len(msgs) != 1 {
+		t.Fatalf("startup self-send should be delivered, got %d message(s)", len(msgs))
+	}
+	if !HasActionableMessages(session, "build") {
+		t.Error("startup self-send must remain actionable")
+	}
+}
+
+func TestSelfAddressedFilteredFromActionableAndUnnotified(t *testing.T) {
+	session := testSession(t)
+	// Simulate a self-message already in the inbox (e.g. queued before the fix).
+	self := NewMessage("deploy", "deploy", "request", "verify", "stale self request", "")
+	if err := AppendToInbox(session, "deploy", self); err != nil {
+		t.Fatalf("AppendToInbox: %v", err)
+	}
+	if HasActionableMessages(session, "deploy") {
+		t.Error("self-addressed message must not count as actionable")
+	}
+	if msgs := UnnotifiedMessages(session, "deploy"); len(msgs) != 0 {
+		t.Errorf("self-addressed message must not be unnotified, got %d", len(msgs))
+	}
+}
+
 func TestSendAndReceive(t *testing.T) {
 	session := testSession(t)
 

@@ -102,6 +102,13 @@ func UnnotifiedMessages(session, role string) []Message {
 	notified := readNotifiedIDs(session, role)
 	var unnotified []Message
 	for _, m := range msgs {
+		// Skip accidental self-addressed messages — delivering them would wake
+		// the sender about its own message, looping every idle cycle. The
+		// startup self-send is exempt (see isLoopingSelfSend) so launch-time
+		// context restoration still wakes the agent.
+		if isLoopingSelfSend(m) {
+			continue
+		}
 		if !notified[m.ID] {
 			unnotified = append(unnotified, m)
 		}

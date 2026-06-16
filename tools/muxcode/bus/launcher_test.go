@@ -555,8 +555,9 @@ func TestNeedsWakeUp(t *testing.T) {
 		t.Error("NeedsWakeUp(edit) should be false with no messages")
 	}
 
-	// Send an event (startup notification) to edit inbox
-	evt := NewMessage("edit", "edit", "event", "notify", "Session started", "")
+	// Send an event (startup notification) to edit inbox. Sender must differ
+	// from the recipient — a self-addressed message is filtered as a loop.
+	evt := NewMessage("daemon", "edit", "event", "notify", "Session started", "")
 	if err := Send(session, evt); err != nil {
 		t.Fatalf("Send: %v", err)
 	}

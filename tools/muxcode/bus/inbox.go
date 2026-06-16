@@ -44,8 +44,33 @@ func SendNoCC(session string, m Message) error {
 	return sendMessage(session, m, false)
 }
 
+// isLoopingSelfSend reports whether a message is an accidental self-addressed
+// message (from == to) that would create a notification loop. Such a message
+// lands in the sender's own inbox as an "actionable" request, the daemon wakes
+// the agent to act on it, the agent can't meaningfully complete its own
+// request, and it re-surfaces on every idle cycle.
+//
+// The "startup" action is EXEMPT: PreLaunchSetup intentionally seeds each
+// agent's inbox with a self-addressed startup request and relies on the
+// daemon's re-wake (HasActionableMessages) to keep waking the agent until it
+// consumes the message and restores context. That is the one legitimate
+// self-send; everything else is an addressing mistake.
+func isLoopingSelfSend(m Message) bool {
+	return m.From != "" && m.From == m.To && m.Action != "startup"
+}
+
 // sendMessage is the shared implementation for Send and SendNoCC.
 func sendMessage(session string, m Message, autoCC bool) error {
+	// Drop accidental self-addressed messages at the source so the loop is
+	// impossible for all providers (non-hook providers already discarded these
+	// at wake-up time; Claude/hook agents had no such guard). The startup
+	// bootstrap self-send is exempt — see isLoopingSelfSend.
+	if isLoopingSelfSend(m) {
+		fmt.Fprintf(os.Stderr, "  [send] dropping self-addressed message %s→%s:%s (self-sends are not delivered)\n",
+			m.From, m.To, m.Action)
+		return nil
+	}
+
 	data, err := EncodeMessage(m)
 	if err != nil {
 		return err
@@ -363,7 +388,10 @@ func HasActionableMessages(session, role string) bool {
 		return false
 	}
 	for _, m := range msgs {
-		if m.Type == "request" {
+		// Accidental self-addressed requests never warrant a wake-up — they
+		// would loop forever since the agent can't complete its own request.
+		// (The startup self-send is exempt — see isLoopingSelfSend.)
+		if m.Type == "request" && !isLoopingSelfSend(m) {
 			return true
 		}
 	}

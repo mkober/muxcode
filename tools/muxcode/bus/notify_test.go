@@ -380,8 +380,9 @@ func TestAlreadyNotified_NewMessageWhileNotifiedRecent(t *testing.T) {
 	writeTestMessage(t, session, role, "msg-001", "edit")
 	markNotified(session, role)
 
-	// Add a new message — even though marker is recent, there's an unnotified ID
-	writeTestMessage(t, session, role, "msg-002", "build")
+	// Add a new message — even though marker is recent, there's an unnotified ID.
+	// Sender must differ from role (a self-addressed message is filtered as a loop).
+	writeTestMessage(t, session, role, "msg-002", "deploy")
 
 	// New unnotified message — should return false (needs notification)
 	if alreadyNotified(session, role) {

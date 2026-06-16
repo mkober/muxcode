@@ -157,7 +157,10 @@ func CollectInboxState(session, role string) InboxStateEvidence {
 
 	var summaries []MessageSummary
 	for _, m := range msgs {
-		if m.Type == "request" {
+		// Self-addressed messages (from == to, non-startup) are filtered from
+		// the daemon's wake-up path and never loop — don't count them as
+		// actionable here, or diagnose would falsely report a stuck inbox.
+		if m.Type == "request" && !isLoopingSelfSend(m) {
 			ev.ActionableCount++
 		}
 		age := now - m.TS
