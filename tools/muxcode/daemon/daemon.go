@@ -210,7 +210,7 @@ func (d *Daemon) Run() error {
 	fmt.Printf("  Session: %s\n", d.session)
 	fmt.Printf("  Bus: %s\n", busDir)
 	fmt.Printf("  Trigger: %s\n", d.triggerFile)
-	fmt.Printf("  Poll: %ds  Debounce: %ds\n", int(d.pollInterval.Seconds()), d.debounceSecs)
+	fmt.Printf("  Poll: %ds  Debounce: %ds  Msg-check: %ds\n", int(d.pollInterval.Seconds()), d.debounceSecs, msgCheckSecs())
 	if len(d.ollamaRoles) > 0 {
 		fmt.Printf("  Ollama monitoring: %s (roles: %s)\n", d.ollamaURL, strings.Join(d.ollamaRoles, ", "))
 	}
@@ -1241,6 +1241,21 @@ func (d *Daemon) checkAgentHealth() {
 	}
 }
 
+// msgCheckSecs returns how often (in seconds) the daemon scans for messages to
+// deliver — idle-agent wake-ups (checkIdleAgents) and tracked-task completions
+// (checkTrackedTasks). Lower = snappier delivery, at the cost of more frequent
+// tmux pane captures. Configurable via MUXCODE_MSG_CHECK_SECS (default 2, was
+// 5). The effective floor is the daemon poll interval (--poll, default 2s);
+// to go below that, also lower --poll.
+func msgCheckSecs() int64 {
+	if v := os.Getenv("MUXCODE_MSG_CHECK_SECS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 1 {
+			return n
+		}
+	}
+	return 2
+}
+
 // shouldWakeIdleOrActionable decides whether checkIdleAgents should proceed to
 // deliver an agent's unnotified messages. Actionable (request-type) messages
 // always warrant a wake-up. Non-actionable (response/event) messages warrant a
@@ -1262,7 +1277,7 @@ func shouldWakeIdleOrActionable(hasActionable, isIdle bool) bool {
 // are never throttled.
 func (d *Daemon) checkIdleAgents() {
 	now := time.Now().Unix()
-	if now-d.lastIdleCheck < 5 {
+	if now-d.lastIdleCheck < msgCheckSecs() {
 		return
 	}
 	d.lastIdleCheck = now
@@ -1611,7 +1626,7 @@ func (d *Daemon) checkPaneSweep() {
 // (IsWaiting), since --wait handles its own completion.
 func (d *Daemon) checkTrackedTasks() {
 	now := time.Now().Unix()
-	if now-d.lastTrackedTaskCheck < 5 {
+	if now-d.lastTrackedTaskCheck < msgCheckSecs() {
 		return
 	}
 	d.lastTrackedTaskCheck = now

@@ -218,6 +218,26 @@ func TestFormatWatchdogDuration(t *testing.T) {
 	}
 }
 
+func TestMsgCheckSecs(t *testing.T) {
+	t.Setenv("MUXCODE_MSG_CHECK_SECS", "")
+	if got := msgCheckSecs(); got != 2 {
+		t.Errorf("default = %d, want 2", got)
+	}
+	t.Setenv("MUXCODE_MSG_CHECK_SECS", "1")
+	if got := msgCheckSecs(); got != 1 {
+		t.Errorf("override = %d, want 1", got)
+	}
+	// Invalid / out-of-range falls back to default.
+	t.Setenv("MUXCODE_MSG_CHECK_SECS", "0")
+	if got := msgCheckSecs(); got != 2 {
+		t.Errorf("zero should fall back to default 2, got %d", got)
+	}
+	t.Setenv("MUXCODE_MSG_CHECK_SECS", "notanint")
+	if got := msgCheckSecs(); got != 2 {
+		t.Errorf("garbage should fall back to default 2, got %d", got)
+	}
+}
+
 func TestShouldWakeIdleOrActionable(t *testing.T) {
 	cases := []struct {
 		hasActionable, isIdle, want bool
