@@ -27,3 +27,9 @@ MUXCODE_WATCH_MODEL=claude-sonnet-4-6
 MUXCODE_COMMIT_CLI=claude
 
 MUXCODE_COMMIT_MODEL=claude-sonnet-4-6
+
+MUXCODE_EDIT_MODEL=claude-opus-4-8
+
+MUXCODE_AUTO_CLI=claude
+
+MUXCODE_AUTO_MODEL=claude-opus-4-8
