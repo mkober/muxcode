@@ -137,6 +137,33 @@ func TestCheckRoleCompaction_NoSessionMeta(t *testing.T) {
 	}
 }
 
+func TestCheckRoleCompaction_ExcludesGlobalLog(t *testing.T) {
+	session := testSession(t)
+	th := CompactThresholds{SizeBytes: 100 * 1024, MinAge: 1 * time.Hour}
+
+	// Large GLOBAL bus message log, but tiny per-role context.
+	writeTestFile(t, LogPath(session), 800*1024)
+	writeTestFile(t, HistoryPath(session, "build"), 200)
+
+	// 3 hours since compact — the time threshold is satisfied, so only the
+	// size calculation can suppress the alert.
+	meta := &SessionMeta{
+		StartTS:       time.Now().Add(-5 * time.Hour).Unix(),
+		CompactCount:  1,
+		LastCompactTS: time.Now().Add(-3 * time.Hour).Unix(),
+	}
+	if err := WriteSessionMeta(session, "build", meta); err != nil {
+		t.Fatalf("WriteSessionMeta: %v", err)
+	}
+
+	// The shared global log.jsonl must NOT push a per-role total over the
+	// threshold — otherwise every agent would alert simultaneously whenever
+	// bus traffic grows (the compact-recommended storm regression).
+	if alert := CheckRoleCompaction(session, "build", th); alert != nil {
+		t.Errorf("global log.jsonl must not trigger per-role compaction; got total=%d bytes", alert.TotalBytes)
+	}
+}
+
 func TestCheckCompaction_MultipleRoles(t *testing.T) {
 	session := testSession(t)
 	th := CompactThresholds{SizeBytes: 100, MinAge: 1 * time.Hour}
@@ -176,10 +203,9 @@ func TestCheckCompaction_NoAlerts(t *testing.T) {
 func TestFormatCompactAlert(t *testing.T) {
 	alert := CompactAlert{
 		Role:              "edit",
-		TotalBytes:        640 * 1024,
+		TotalBytes:        540 * 1024,
 		MemoryBytes:       180 * 1024,
 		HistoryBytes:      360 * 1024,
-		LogBytes:          100 * 1024,
 		HoursSinceCompact: 2.5,
 		Message:           "test message",
 	}
@@ -188,7 +214,7 @@ func TestFormatCompactAlert(t *testing.T) {
 	if !strings.Contains(out, "COMPACT RECOMMENDED: edit") {
 		t.Error("missing header")
 	}
-	if !strings.Contains(out, "640 KB") {
+	if !strings.Contains(out, "540 KB") {
 		t.Error("missing total size")
 	}
 	if !strings.Contains(out, "180 KB") {
@@ -197,8 +223,8 @@ func TestFormatCompactAlert(t *testing.T) {
 	if !strings.Contains(out, "360 KB") {
 		t.Error("missing history size")
 	}
-	if !strings.Contains(out, "100 KB") {
-		t.Error("missing log size")
+	if strings.Contains(out, "log:") {
+		t.Error("global log size must not appear in per-role compact alert")
 	}
 	if !strings.Contains(out, "2h 30m ago") {
 		t.Error("missing time since compact")

@@ -13,7 +13,6 @@ type CompactAlert struct {
 	TotalBytes        int64   `json:"total_bytes"`
 	MemoryBytes       int64   `json:"memory_bytes"`
 	HistoryBytes      int64   `json:"history_bytes"`
-	LogBytes          int64   `json:"log_bytes"`
 	HoursSinceCompact float64 `json:"hours_since_compact"`
 	Message           string  `json:"message"`
 }
@@ -49,11 +48,15 @@ func CheckCompaction(session string, th CompactThresholds) []CompactAlert {
 // CheckRoleCompaction checks a single role for compaction recommendation.
 // Returns nil if compaction is not recommended (below thresholds or recently compacted).
 func CheckRoleCompaction(session, role string, th CompactThresholds) *CompactAlert {
-	// Measure file sizes (active + archives)
+	// Measure per-role context size: memory (active + archives) plus this
+	// role's own bus history. The global bus message log (log.jsonl) is
+	// intentionally excluded — it is shared by every role, so counting it
+	// would make all agents cross the threshold at the same instant, and
+	// `muxcode session compact` (the recommended remedy) cannot shrink it.
+	// Per-role history already reflects that role's bus activity.
 	memoryBytes := fileSize(MemoryPath(role)) + ArchiveTotalSize(role)
 	historyBytes := fileSize(HistoryPath(session, role))
-	logBytes := fileSize(LogPath(session))
-	totalBytes := memoryBytes + historyBytes + logBytes
+	totalBytes := memoryBytes + historyBytes
 
 	// Check size threshold
 	if totalBytes < th.SizeBytes {
@@ -71,9 +74,8 @@ func CheckRoleCompaction(session, role string, th CompactThresholds) *CompactAle
 		TotalBytes:        totalBytes,
 		MemoryBytes:       memoryBytes,
 		HistoryBytes:      historyBytes,
-		LogBytes:          logBytes,
 		HoursSinceCompact: hoursSince,
-		Message:           formatCompactMessage(role, totalBytes, memoryBytes, historyBytes, logBytes, hoursSince),
+		Message:           formatCompactMessage(role, totalBytes, memoryBytes, historyBytes, hoursSince),
 	}
 }
 
@@ -81,11 +83,10 @@ func CheckRoleCompaction(session, role string, th CompactThresholds) *CompactAle
 func FormatCompactAlert(alert CompactAlert) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("\u26a0 COMPACT RECOMMENDED: %s\n", alert.Role))
-	b.WriteString(fmt.Sprintf("  Total: %s  (memory: %s, history: %s, log: %s)\n",
+	b.WriteString(fmt.Sprintf("  Total: %s  (memory: %s, history: %s)\n",
 		formatBytes(alert.TotalBytes),
 		formatBytes(alert.MemoryBytes),
-		formatBytes(alert.HistoryBytes),
-		formatBytes(alert.LogBytes)))
+		formatBytes(alert.HistoryBytes)))
 	b.WriteString(fmt.Sprintf("  Last compact: %s ago\n", formatHours(alert.HoursSinceCompact)))
 	b.WriteString("  Run: muxcode session compact \"<summary>\"\n")
 	return b.String()
@@ -142,14 +143,13 @@ func hoursSinceLastCompact(session, role string) float64 {
 }
 
 // formatCompactMessage builds the actionable alert message.
-func formatCompactMessage(role string, total, memory, history, log int64, hours float64) string {
+func formatCompactMessage(role string, total, memory, history int64, hours float64) string {
 	return fmt.Sprintf(
-		"Context approaching limits for %s (total: %s, memory: %s, history: %s, log: %s). Last compact: %s ago. Run: muxcode session compact \"<summary>\"",
+		"Context approaching limits for %s (total: %s, memory: %s, history: %s). Last compact: %s ago. Run: muxcode session compact \"<summary>\"",
 		role,
 		formatBytes(total),
 		formatBytes(memory),
 		formatBytes(history),
-		formatBytes(log),
 		formatHours(hours),
 	)
 }
