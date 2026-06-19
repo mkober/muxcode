@@ -96,6 +96,14 @@ func TmuxSendEnter(target string) error {
 	return TmuxSendKeys(target, "Enter")
 }
 
+// TmuxSendEscape sends Escape to a tmux pane. Used before injecting a wake-up to
+// dismiss any Claude Code overlay (the periodic "How is Claude doing this
+// session?" feedback survey, autocomplete popups, etc.) that would otherwise
+// consume the subsequent Enter keystroke instead of submitting the injected text.
+func TmuxSendEscape(target string) error {
+	return TmuxSendKeys(target, "Escape")
+}
+
 // TmuxSelectPane selects a pane.
 func TmuxSelectPane(target string) error {
 	return TmuxRun("select-pane", "-t", target)

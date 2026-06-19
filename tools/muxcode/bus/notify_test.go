@@ -698,6 +698,43 @@ func TestPaneHasPendingInput_SlashCommand(t *testing.T) {
 	}
 }
 
+// --- composerHasText tests (live-composer detection for verifyEnterDelivery) ---
+
+func TestComposerHasText_LiveComposerParked(t *testing.T) {
+	// Live composer at the bottom holds parked text — should be detected.
+	pane := "  Ran 1 shell command\n\n──── command-runner ──\n❯ run the build\n────\n  hints"
+	if !composerHasText(pane) {
+		t.Error("should detect text parked in the live composer")
+	}
+}
+
+func TestComposerHasText_EmptyComposerWithScrollback(t *testing.T) {
+	// Stale "❯ <submitted text>" scrollback above an EMPTY live composer must
+	// NOT be misread as parked input — this is the false positive that made the
+	// wide-capture verify re-send Enter forever. The last prompt is empty.
+	pane := "❯ You have new messages\n\n⏺ done\n\n──── code-editor ──\n❯ \n────"
+	if composerHasText(pane) {
+		t.Error("empty live composer must not be flagged despite ❯ scrollback above")
+	}
+}
+
+func TestComposerHasText_ScrollbackAndParkedComposer(t *testing.T) {
+	// Scrollback prompt above AND parked text in the live composer — detected
+	// because the LAST prompt line carries text.
+	pane := "❯ You have new messages\n\n⏺ done\n\n──── run ──\n❯ refresh creds and retry\n────"
+	if !composerHasText(pane) {
+		t.Error("should detect parked text in the last (live) composer line")
+	}
+}
+
+func TestComposerHasText_NoPrompt(t *testing.T) {
+	// Agent actively working — no ❯ prompt anywhere.
+	pane := "  Running 1 shell command...\n  $ ./build.sh"
+	if composerHasText(pane) {
+		t.Error("should not detect composer text when no prompt is present")
+	}
+}
+
 // --- IsWindowFocused / stale input clearing tests ---
 
 func TestNotifySendKeys_StaleInput_UnfocusedWindow(t *testing.T) {

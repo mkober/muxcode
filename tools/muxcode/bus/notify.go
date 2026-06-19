@@ -615,6 +615,21 @@ func SendWakeUpWithText(session, role string, provider Provider, text string) er
 	}
 
 	target := PaneTarget(session, role)
+
+	// Clean the composer before injecting. Claude Code periodically pops an
+	// overlay (the "How is Claude doing this session?" feedback survey,
+	// autocomplete popups) that consumes the next Enter instead of submitting
+	// the composer — so the injected text parks unsent and even a re-sent Enter
+	// is eaten by the overlay. Pressing Escape dismisses the overlay; clearing
+	// the input box removes any dropped-Enter residue. This path only runs for
+	// agents at their prompt (the daemon's idle paths and force-deliver), so
+	// Escape never interrupts live generation.
+	_ = TmuxSendEscape(target)
+	time.Sleep(100 * time.Millisecond)
+	if err := TmuxClearInput(target); err == nil {
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	// Send text with -l (literal) to avoid tmux key interpretation
 	if err := TmuxRun("send-keys", "-t", target, "-l", text); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s failed: %v\n", role, err)
@@ -644,19 +659,51 @@ func SendWakeUpWithText(session, role string, provider Provider, text string) er
 // Enter if the injected text is still parked at the prompt (dropped-Enter race).
 // Best-effort and bounded: on capture failure it returns immediately and relies
 // on the 15s notifyRetryInterval safety net.
+//
+// Uses a wide (200-line) capture and inspects only the LIVE composer line (the
+// last ❯ prompt in the pane). A narrow 8-line capture can miss the composer when
+// an overlay (feedback survey) inflates the layout, and a naive any-line scan
+// would false-positive on stale "❯ <submitted text>" scrollback. If the composer
+// is still occupied across retries, an overlay is likely re-eating the Enter, so
+// each retry re-dismisses with Escape before re-sending Enter.
 func verifyEnterDelivery(target string) {
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < 3; attempt++ {
 		time.Sleep(250 * time.Millisecond)
-		content, err := TmuxCapturePaneLines(target, 8)
+		content, err := TmuxCapturePaneLines(target, 200)
 		if err != nil {
 			return // can't verify — rely on notifyRetryInterval retry
 		}
-		if !paneHasPendingInput(content) {
+		if !composerHasText(content) {
 			return // text was submitted — done
 		}
-		// Still parked — the Enter was dropped. Re-send it.
+		// Still parked — the Enter was dropped or an overlay ate it. Dismiss any
+		// overlay, then re-send Enter to submit the composer.
+		_ = TmuxSendEscape(target)
+		time.Sleep(50 * time.Millisecond)
 		_ = TmuxSendKeys(target, "Enter")
 	}
+}
+
+// composerHasText reports whether the LIVE input composer holds text, by
+// inspecting only the last ❯ prompt line in the captured pane content. The live
+// composer is always the last prompt occurrence — everything below it is the box
+// border and status hints. This avoids the false positive paneHasPendingInput
+// hits when earlier "❯ <submitted text>" scrollback lines are in view.
+func composerHasText(content string) bool {
+	promptPrefix := idlePromptChar + " "
+	last := ""
+	found := false
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == idlePromptChar || strings.HasPrefix(trimmed, promptPrefix) {
+			last = trimmed
+			found = true
+		}
+	}
+	if !found || last == idlePromptChar {
+		return false
+	}
+	return strings.TrimSpace(last[len(promptPrefix):]) != ""
 }
 
 // notifyDisplayMessage sends a passive notification via tmux display-message

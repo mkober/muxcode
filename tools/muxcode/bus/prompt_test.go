@@ -171,6 +171,8 @@ func TestSharedPrompt_NonHookProvider_HasManualBusSection(t *testing.T) {
 }
 
 func TestSharedPrompt_NonHookProvider_RoleSpecificInstructions(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
@@ -227,6 +229,8 @@ func TestSharedPrompt_RoleIdentity(t *testing.T) {
 }
 
 func TestSharedPrompt_NonHookProvider_LocalAlsoHasManualBus(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
