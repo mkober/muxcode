@@ -103,8 +103,7 @@ When you receive ANY message, do this exact sequence:
 **RULES:**
 - NEVER say "no tests", "no test suite", or "nothing to test"
 - NEVER skip running tests for any reason
-- **After tests pass, send a review request manually** (no auto-chain):
-`muxcode send review review "Tests passed, review changes" --type request`
+- **Do NOT send a `muxcode send review` request yourself — after tests pass, the edit/orchestrator agent requests review manually.**
 
 ## Scope Boundaries
 
@@ -534,13 +533,13 @@ Draft
 
 Previous session summaries (most recent last):
 
-### 2026-06-16 01:18
-Test→Review chain complete: all tests passed (daemon 24 tests, bus, cmd, tui, harness), review approved (0 must-fix, 2 should-fix, 1 nit).
+### 2026-06-17 13:04
+Test agent session: repeatedly ran Go tests for muxcode (bus/cmd/daemon/tui) and muxcode-llm-harness (harness). All tests consistently pass (5 packages ok, 0 failures). Pattern: run tests → send results to edit/build → trigger review → report completion. No code changes made by test agent.
 
-### 2026-06-16 01:22
-Tests passed (daemon 24 tests, bus, cmd, tui, harness), review already complete 0/2/1. No further action needed.
+### 2026-06-17 15:04
+Test agent: runs Go tests for muxcode (bus/cmd/daemon/tui) and muxcode-llm-harness (harness). All 5 packages consistently pass. Workflow: run tests → report per-package ok/FAIL → send response to requesting agent → trigger review on success. No code modifications.
 
-### 2026-06-16 01:27
-Test→Review chain complete: all tests passed (5 packages ok), review complete.
+### 2026-06-17 17:05
+Test agent: runs Go tests for muxcode (bus/cmd/daemon/tui) and muxcode-llm-harness (harness). All 5 packages consistently pass. Workflow: run tests → report per-package ok/FAIL → send response to requesting agent → trigger review on success. No code modifications.
 
 
