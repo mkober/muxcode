@@ -390,7 +390,7 @@ func isSystemAction(action string) bool {
 	case "loop-detected", "compact-recommended", "proc-complete", "spawn-complete",
 		"ollama-down", "ollama-recovered", "ollama-restarting",
 		"agent-down", "agent-restarting", "agent-recovered",
-		"disk-pressure", "long-active", "agent-stuck":
+		"disk-pressure", "long-active", "agent-stuck", "permission-blocked":
 		return true
 	}
 	return false

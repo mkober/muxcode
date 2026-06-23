@@ -103,6 +103,16 @@ type Daemon struct {
 	stuckReloads    map[string]int   // role -> auto-reload count (cap to avoid reload storms)
 	lastStuckReload map[string]int64 // role -> unix time of last auto-reload
 	stuckGaveUp     map[string]bool  // role -> alerted once after hitting the reload cap
+	// Permission-block watchdog — breaks the re-notification loop that forms when
+	// a hook-provider (Claude Code) agent is wedged at a REJECTED permission
+	// prompt it cannot satisfy autonomously (e.g. ./build.sh denied with no human
+	// to approve). Unlike the stuck-provider watchdog (non-hook, auto-reload),
+	// this only alerts + suppresses re-delivery; it never reloads or fabricates a
+	// response.
+	lastPermBlockCheck int64           // permBlockCheckSecs interval
+	permBlockSeen      map[string]int  // role -> consecutive sightings of a permission-block signature
+	permBlocked        map[string]bool // role -> currently suppressed from re-notification
+	permBlockAlerted   map[string]bool // role -> alerted edit once for the current block
 	// Agent-definition watchdog — auto-reloads a running agent when its resolved
 	// definition file changes on disk, so editing/reinstalling a definition takes
 	// effect without a manual `muxcode reload`. State lives in per-session stamp
@@ -161,6 +171,9 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		stuckReloads:          make(map[string]int),
 		lastStuckReload:       make(map[string]int64),
 		stuckGaveUp:           make(map[string]bool),
+		permBlockSeen:         make(map[string]int),
+		permBlocked:           make(map[string]bool),
+		permBlockAlerted:      make(map[string]bool),
 		lastAgentDefsCheck:    now, // skip first interval — lets stamps settle on startup
 	}
 }
@@ -241,6 +254,7 @@ func (d *Daemon) Run() error {
 		d.checkLoops()
 		d.checkActiveWatchdog()
 		d.checkStuckProviders()
+		d.checkStuckPermissions()
 		d.checkAgentDefs()
 		d.checkCompaction()
 		d.checkOllama()
@@ -959,6 +973,116 @@ func (d *Daemon) checkStuckProviders() {
 	}
 }
 
+// permBlockCheckSecs is the polling interval for the permission-block watchdog.
+const permBlockCheckSecs int64 = 30
+
+// permBlockDebounce is the number of consecutive sightings of a permission-block
+// signature required before the watchdog acts. Avoids reacting to a transient
+// live prompt a human is about to approve.
+const permBlockDebounce = 2
+
+// checkStuckPermissions breaks the re-notification loop that forms when a
+// hook-provider (Claude Code) agent is wedged at a REJECTED permission prompt it
+// can never satisfy autonomously — e.g. `./build.sh` denied with no human to
+// approve. The agent never sends a response, so its request stays actionable and
+// the idle-delivery safety net re-wakes it endlessly (each active→idle flap
+// resets the retry counter), while the requester hangs forever waiting.
+//
+// Unlike checkStuckProviders (non-hook providers, auto-reload), this targets
+// hook providers and only ALERTS edit + suppresses re-delivery (d.permBlocked).
+// It never reloads and never fabricates a response. Suppression is lifted
+// automatically by clearPermBlock once the pane no longer shows a block
+// signature (the agent recovered or the user intervened) or the pending request
+// drains. Opt out with MUXCODE_PERMBLOCK_WATCHDOG_DISABLE=1.
+func (d *Daemon) checkStuckPermissions() {
+	if os.Getenv("MUXCODE_PERMBLOCK_WATCHDOG_DISABLE") == "1" {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastPermBlockCheck < permBlockCheckSecs {
+		return
+	}
+	d.lastPermBlockCheck = now
+
+	for _, role := range bus.KnownRoles {
+		// Own pane only; skip hosted/reloading/harness panes.
+		if bus.WindowForRole(role) != role {
+			continue
+		}
+		if bus.IsReloading(d.session, role) || bus.IsHarnessActive(d.session, role) {
+			continue
+		}
+		// Hook providers only — non-hook wedges are handled by
+		// checkStuckProviders, and the permission-prompt model is
+		// Claude-Code-specific.
+		if !bus.ResolveProvider(role).SupportsHooks() {
+			continue
+		}
+		// A dead agent is handled by checkAgentHealth's restart path.
+		if !bus.IsAgentAlive(d.session, role) {
+			d.clearPermBlock(role)
+			continue
+		}
+		// Only meaningful while an actionable request is pending and unanswered —
+		// that is exactly what the loop re-delivers. With nothing pending, any
+		// "permission" text in the pane is harmless scrollback.
+		if !bus.HasActionableMessages(d.session, role) {
+			d.clearPermBlock(role)
+			continue
+		}
+
+		target := bus.PaneTarget(d.session, role)
+		content, err := bus.TmuxCapturePaneLines(target, 60)
+		if err != nil {
+			continue
+		}
+		if !bus.PaneShowsPermissionBlock(content) {
+			// Signature gone — block cleared / recovered. Re-arm + resume delivery.
+			d.clearPermBlock(role)
+			continue
+		}
+
+		// Debounce: require consecutive sightings before acting.
+		d.permBlockSeen[role]++
+		if d.permBlockSeen[role] < permBlockDebounce {
+			continue
+		}
+
+		// Suppress re-notification so checkIdleAgents stops waking the agent.
+		d.permBlocked[role] = true
+
+		// Alert edit once per block.
+		if !d.permBlockAlerted[role] {
+			d.permBlockAlerted[role] = true
+			ts := time.Now().Format("15:04:05")
+			fmt.Printf("  %s  Permission-block watchdog: %s wedged at a rejected permission prompt — suppressing re-notification, alerting edit\n", ts, role)
+			bus.LogLifecycle(d.session, "warn", "daemon", "permission-blocked", role)
+			if d.shouldSendEvent("permission-blocked", role) && d.shouldNotifyEdit("event") {
+				msg := bus.NewMessage("daemon", "edit", "event", "permission-blocked",
+					fmt.Sprintf("%s is stuck at a rejected permission prompt (a command was denied with no human to approve) and cannot finish its request — re-notification suppressed to stop the loop. Fix the agent's tool permissions or relaunch it with bypass-permissions, then re-send the request.", role), "")
+				if err := bus.Send(d.session, msg); err == nil {
+					_ = bus.Notify(d.session, "edit")
+				}
+			}
+		}
+	}
+}
+
+// clearPermBlock re-arms the permission-block watchdog for a role: it resets the
+// sighting counter and, if the role was suppressed, lifts the suppression and
+// logs that delivery has resumed. Called when the block signature clears, the
+// pending request drains, or the agent dies.
+func (d *Daemon) clearPermBlock(role string) {
+	delete(d.permBlockSeen, role)
+	if d.permBlocked[role] {
+		d.permBlocked[role] = false
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Permission-block watchdog: %s recovered — resuming delivery\n", ts, role)
+		bus.LogLifecycle(d.session, "info", "daemon", "permission-block-cleared", role)
+	}
+	d.permBlockAlerted[role] = false
+}
+
 // agentDefsCheckSecs is the polling interval for the agent-definition watchdog.
 const agentDefsCheckSecs int64 = 10
 
@@ -1389,6 +1513,14 @@ func (d *Daemon) checkIdleAgents() {
 		// Skip roles being reloaded — agent is intentionally down during
 		// the stop→reconfigure→relaunch cycle
 		if bus.IsReloading(d.session, role) {
+			continue
+		}
+
+		// Skip roles the permission-block watchdog has suppressed. The agent is
+		// wedged at a rejected permission prompt it cannot satisfy autonomously;
+		// re-waking it just restarts the loop. checkStuckPermissions lifts this
+		// the moment the block signature clears (recovery / user intervention).
+		if d.permBlocked[role] {
 			continue
 		}
 

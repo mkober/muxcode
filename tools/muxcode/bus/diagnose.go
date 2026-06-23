@@ -261,17 +261,19 @@ func CollectEvidence(session, role string) DiagnosticReport {
 // roleRelevantEvents lists lifecycle event types that are relevant for
 // per-role diagnosis. Events must mention the role in their detail.
 var roleRelevantEvents = map[string]bool{
-	"idle-wake":        true,
-	"idle-transition":  true,
-	"inbox-notify":     true,
-	"startup-wake":     true,
-	"idle-task-rescue": true,
-	"agent-down":       true,
-	"agent-restarting": true,
-	"agent-recovered":  true,
-	"compact-inject":   true,
-	"reload-start":     true,
-	"reload-complete":  true,
+	"idle-wake":                true,
+	"idle-transition":          true,
+	"inbox-notify":             true,
+	"startup-wake":             true,
+	"idle-task-rescue":         true,
+	"agent-down":               true,
+	"agent-restarting":         true,
+	"agent-recovered":          true,
+	"compact-inject":           true,
+	"reload-start":             true,
+	"reload-complete":          true,
+	"permission-blocked":       true,
+	"permission-block-cleared": true,
 }
 
 // BuildTimeline reads recent lifecycle events for a role and annotates gaps
