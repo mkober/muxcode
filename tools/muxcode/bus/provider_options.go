@@ -34,7 +34,7 @@ var hardcodedFallbackModels = map[string]ProviderModels{
 	},
 	"opencode": {
 		Default: "opencode-go/minimax-m2.5",
-		Models:  []string{"opencode-go/minimax-m2.5", "opencode-go/minimax-m2.7", "opencode-go/qwen3.5-plus", "opencode-go/deepseek-v4-pro"},
+		Models:  []string{"opencode-go/minimax-m2.5", "opencode-go/minimax-m2.7", "opencode-go/minimax-m3", "opencode-go/mimo-v2.5", "opencode-go/qwen3.5-plus", "opencode-go/deepseek-v4-pro"},
 	},
 	"codex": {
 		Default: "gpt-5.5",
