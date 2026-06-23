@@ -44,7 +44,7 @@ func TestAvailableProviders_Defaults(t *testing.T) {
 		wantDef string
 	}{
 		{"claude", "claude-sonnet-4-6"},
-		{"opencode", "opencode-go/minimax-m2.5"},
+		{"opencode", "opencode-go/minimax-m2.7"},
 		{"codex", "gpt-5.5"},
 	}
 	for _, tt := range tests {

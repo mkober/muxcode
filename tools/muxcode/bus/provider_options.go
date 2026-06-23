@@ -33,8 +33,8 @@ var hardcodedFallbackModels = map[string]ProviderModels{
 		Models:  []string{"claude-fable-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"},
 	},
 	"opencode": {
-		Default: "opencode-go/minimax-m2.5",
-		Models:  []string{"opencode-go/minimax-m2.5", "opencode-go/minimax-m2.7", "opencode-go/minimax-m3", "opencode-go/mimo-v2.5", "opencode-go/qwen3.5-plus", "opencode-go/deepseek-v4-pro"},
+		Default: "opencode-go/minimax-m2.7",
+		Models:  []string{"opencode-go/minimax-m2.7", "opencode-go/minimax-m3", "opencode-go/mimo-v2.5", "opencode-go/qwen3.5-plus", "opencode-go/deepseek-v4-pro", "opencode-go/deepseek-v4-flash"},
 	},
 	"codex": {
 		Default: "gpt-5.5",
