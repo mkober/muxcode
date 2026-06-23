@@ -46,6 +46,23 @@ A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — pro
 | `pnpm dev`, `npx vite`, `npx next dev`, `npm start`, dev servers | serve agent | `muxcode send serve serve "..."` |
 | Doc updates in `docs/` (specs, architecture, requirements) | plan agent | `muxcode send plan update-docs "..."` |
 
+### Complex runs — write a temp script, pass the run agent ONE bare command
+
+**Standard for delegating to the run agent: never hand the run agent a complex one-liner. Write a temp script first, then send a bare invocation.**
+
+The run agent's harness wraps incoming commands with its own injected reminder text and `eval`s the result. That mangles any command containing shell command substitution (`$(...)`), inline env juggling (`VAR=$(...) cmd`), pipes, or multi-line logic — the parentheses break the parse (`eval: syntax error near unexpected token '('`) and inline `$(...)` can silently expand to empty (e.g. an `aws ssm get-parameter` without `--region` returns an empty token). The agent then *looks* stuck when it actually failed.
+
+So for any run that is more than a single bare command:
+
+1. **Write the logic to a script** — prefer a tracked, reusable path under `scripts/` (e.g. `scripts/<task>.sh`) for anything that may be re-run; use `/tmp/<descriptive-name>.sh` for one-off throwaways. Put ALL the complexity inside the script: command substitution, env resolution (always include `--region` / `--profile` on AWS calls), pipes, loops, error handling. Make it read-only and PII-safe in what it prints when that applies.
+2. **Send the run agent ONE bare command** that just invokes the script — no `$(...)`, no inline env, no pipes in the bus message:
+   ```bash
+   muxcode send run run "Run exactly this one command and report its full stdout: bash scripts/<task>.sh" --wait
+   ```
+3. **Keep the bus message short and single-line** (the `Bash(muxcode *)` glob does not match newlines). The script carries the detail; the message stays one line.
+
+This mirrors the file-handoff pattern for long content: the script is the payload, the bus message is a short pointer. It turns a fragile, mangle-prone one-liner into a deterministic single-command run.
+
 ### Jira & Confluence — handle directly (DO NOT delegate)
 
 When the user asks about a Jira story, issue, ticket, or Confluence page — handle it yourself using the `jira-manage-issues` or `confluence-update-page` skills. Load the skill via `muxcode skill load <name>` and follow its instructions.
