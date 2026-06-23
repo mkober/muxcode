@@ -636,4 +636,7 @@ Previous session summaries (most recent last):
 ### 2026-06-01 16:15
 Completed review of serve-health feature (Playwright browser checks + daemon-driven health monitoring): found 2 must-fix (unexpanded serve_url template in profile.go:938, overly broad Read(/tmp/*) in watch perms profile.go:751-752), 2 should-fix (custom containsSubstring vs strings.Contains, ignored Notify error), 1 nit. Results sent to edit and test agents, logged to console.
 
+### 2026-06-22 21:05
+Review agent: reviewed 3 rounds of working-tree changes. Initial: test.md contradictory instruction (must-fix, later fixed). Round 2: defensive 'NEVER run tests' rules added to code-builder.md + harness/code-builder.md (clean). Round 3: new agent-defs watchdog feature (agentdefs.go + daemon.go + launch.go + test file) - clean, 1 should-fix (silent WriteFile error). Since then, hook chain loops firing same review for unchanged tree. Repeatedly responding 0/1/3.
+
 
