@@ -161,6 +161,28 @@ Each agent has constrained tool permissions — the build agent can run builds b
 
 You can customize or replace any agent by dropping a markdown file in `.claude/agents/` (per-project) or `~/.config/muxcode/agents/` (global). See [Agents](docs/agents.md) for details.
 
+### Choosing a model per role
+
+When assigning models, balance two axes — **capability** (reasoning/code quality) and **throughput/cost** (request quota) — against what each role actually does. The decision principle: **use Claude where hooks and reasoning compound (edit, deploy, high-stakes review); offload high-volume, low-reasoning roles to OpenCode's cheap, high-quota models.** Match the model's quota to how often the role fires — chain-driven roles (build, test, watch) burn requests fast, so they belong on the highest-quota models, not the flagships.
+
+Claude vs OpenCode, role by role:
+
+| Role          | Recommended            | Why                                                                                   |
+| ------------- | ---------------------- | ------------------------------------------------------------------------------------- |
+| edit          | Claude `sonnet`/`opus` | Tool-use + delegation reasoning, and the edit-agent guard is hook-enforced            |
+| review        | Claude `opus` or OpenCode `deepseek-v4-pro` | Correctness matters most; DeepSeek V4 Pro closes most of the gap at lower cost |
+| plan / docs   | Claude `sonnet` or OpenCode `deepseek-v4-pro` | Spec writing benefits from structure; low frequency tolerates lower quota |
+| research      | OpenCode `deepseek-v4-pro` or `kimi-k2.6` | Web/doc digestion — no hook need; long-context helps                          |
+| build / test  | OpenCode `minimax-m2.7` / `mimo-v2.5` | Single-shot, exit-code driven — spend the cheapest high-quota tokens            |
+| serve         | OpenCode `minimax-m3`  | Dev-server lifecycle — capable enough to parse logs, not in any chain                  |
+| deploy / run  | OpenCode `minimax-m3` or Claude | Deploy benefits from Claude's git/push reliability + hooks; run is command exec   |
+| watch         | OpenCode `mimo-v2.5`   | Log tailing — cheapest/highest-quota; output is PII-scrubbed before the model         |
+| commit        | OpenCode `minimax-m3` or Claude | Git operations — either works; Claude if you want hook-driven chain hygiene       |
+
+**Rough quality ranking:** `opus` ≳ `sonnet` ≈ `deepseek-v4-pro` > `minimax-m3` ≈ `qwen3.x-plus` > `minimax-m2.7` > `haiku` ≈ `mimo-v2.5`. Claude's top end edges out OpenCode's, but DeepSeek V4 Pro is competitive at the workhorse tier.
+
+**The real tradeoff is hooks vs. cost, not raw capability.** Claude Code gives native deterministic chains (build→test→review by exit code) and hook-enforced guards; OpenCode gives cheaper high-volume throughput via prompt-instructed chains, at the price of graceful-degradation fragility (mitigated by the daemon's stuck-provider auto-reload watchdog). For never-exiting processes (serve's `pnpm dev`, watch's `tail -f`), the dominant reliability factor is the agent staying deliverable (run them as background `muxcode proc`), which is independent of model choice — so pick those roles purely on cost.
+
 ## Key features
 
 ### Multi-CLI provider support
