@@ -78,6 +78,11 @@ type Daemon struct {
 	// Pane hygiene sweep — proactive parked-input detection across all agent panes
 	lastPaneSweep int64             // 30s interval
 	parkedSeen    map[string]string // role -> parked prompt text observed last sweep
+	// Fast parked-input recovery — resubmits a dropped wake-up (Enter eaten by a
+	// TUI redraw/overlay) on the fast poll cycle instead of waiting for the slow
+	// 30s pane sweep. Escalates to clear+re-deliver if resubmit doesn't take.
+	lastParkedCheck int64          // fast interval (msgCheckSecs)
+	parkedResubmits map[string]int // role -> consecutive resubmit attempts
 	// Serve health monitoring (browser checks via Playwright)
 	lastServeCheck    int64            // 60s interval
 	serveCheckSentFor map[string]int64 // url -> unix time of last browser-check sent
@@ -145,6 +150,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		safetyNetRetries:      make(map[string]int),
 		lastPaneSweep:         now,
 		parkedSeen:            make(map[string]string),
+		parkedResubmits:       make(map[string]int),
 		lastServeCheck:        now,
 		serveCheckSentFor:     make(map[string]int64),
 		lastEventSent:         make(map[string]int64),
@@ -240,6 +246,7 @@ func (d *Daemon) Run() error {
 		d.checkOllama()
 		d.checkAgentHealth()
 		d.checkIdleAgents()
+		d.checkParkedInput()
 		d.checkPaneSweep()
 		d.checkNonHookTasks()
 		d.checkTrackedTasks()
@@ -1615,6 +1622,108 @@ func (d *Daemon) checkIdleAgents() {
 	}
 }
 
+// parkedResubmitMax is the number of fast Enter-resubmit attempts the
+// parked-input watchdog makes before escalating to clear + re-deliver.
+const parkedResubmitMax = 2
+
+// checkParkedInput is the fast, default recovery for a dropped wake-up: when the
+// daemon injected a notification but the Enter was eaten by a TUI redraw or an
+// overlay (the "How is Claude doing this session?" survey, an autocomplete
+// popup), the text parks unsent in the composer and the agent never processes
+// it. Rather than wait for the slow 30s checkPaneSweep, this runs on the fast
+// poll cycle and re-sends Enter to submit the parked text immediately.
+//
+// Scope is deliberately narrow so it only ever acts on a genuine dropped
+// wake-up, never on live work or user input:
+//   - hook providers (Claude Code) only — OpenCode/Codex manage their own input
+//   - the agent must be at an idle prompt with text parked in the composer
+//   - there must be actionable messages waiting (so the parked text is a
+//     notification to submit, not unrelated residue — that stays with the sweep)
+//   - never when the window is focused in an attached client (user may be typing)
+//
+// After parkedResubmitMax resubmits that don't take (overlay keeps eating the
+// Enter), it escalates: clear the composer and clear notified IDs so the next
+// checkIdleAgents cycle re-delivers the message fresh.
+func (d *Daemon) checkParkedInput() {
+	now := time.Now().Unix()
+	if now-d.lastParkedCheck < msgCheckSecs() {
+		return
+	}
+	d.lastParkedCheck = now
+
+	for _, role := range bus.KnownRoles {
+		// Own pane only; skip panes mid-reload or running the local harness.
+		if bus.WindowForRole(role) != role {
+			continue
+		}
+		if bus.IsReloading(d.session, role) || bus.IsHarnessActive(d.session, role) {
+			continue
+		}
+		// Claude Code only — OpenCode/Codex TUIs manage their own input.
+		if !bus.ResolveProvider(role).SupportsHooks() {
+			continue
+		}
+		// Only act when there are messages to process; otherwise any parked text
+		// is unrelated residue owned by the slower checkPaneSweep.
+		if !bus.HasActionableMessages(d.session, role) {
+			delete(d.parkedResubmits, role)
+			continue
+		}
+
+		target := bus.PaneTarget(d.session, role)
+		content, err := bus.TmuxCapturePaneLines(target, 200)
+		if err != nil {
+			continue
+		}
+		// Must be at an idle prompt with text parked in the composer.
+		if !bus.PaneHasIdlePrompt(content) {
+			delete(d.parkedResubmits, role)
+			continue
+		}
+		parked := bus.ParkedInputText(content)
+		if parked == "" {
+			delete(d.parkedResubmits, role)
+			continue
+		}
+		// Never touch input while the user is viewing/typing in this window.
+		if bus.IsWindowFocused(d.session, role) {
+			continue
+		}
+
+		d.parkedResubmits[role]++
+		if d.parkedResubmits[role] <= parkedResubmitMax {
+			// Re-send Enter to submit the parked wake-up. Dismiss any overlay
+			// eating the Enter first — mirrors verifyEnterDelivery's proven retry.
+			_ = bus.TmuxSendEscape(target)
+			time.Sleep(50 * time.Millisecond)
+			_ = bus.TmuxSendKeys(target, "Enter")
+			ts := time.Now().Format("15:04:05")
+			fmt.Printf("  %s  Parked-input watchdog: resubmitting dropped wake-up on %s (attempt %d/%d)\n",
+				ts, role, d.parkedResubmits[role], parkedResubmitMax)
+			bus.LogLifecycle(d.session, "info", "daemon", "parked-resubmit",
+				fmt.Sprintf("%s resubmit %d/%d", role, d.parkedResubmits[role], parkedResubmitMax))
+			continue
+		}
+
+		// Resubmit didn't take — clear the composer and re-deliver fresh on the
+		// next checkIdleAgents cycle.
+		if err := bus.TmuxClearInput(target); err != nil {
+			continue
+		}
+		bus.ClearNotifiedIDs(d.session, role)
+		delete(d.parkedResubmits, role)
+		ts := time.Now().Format("15:04:05")
+		preview := parked
+		if len(preview) > 60 {
+			preview = preview[:60] + "..."
+		}
+		fmt.Printf("  %s  Parked-input watchdog: resubmit failed on %s — cleared + re-delivering (%q)\n",
+			ts, role, preview)
+		bus.LogLifecycle(d.session, "warn", "daemon", "parked-escalate-clear",
+			fmt.Sprintf("%s: %s", role, preview))
+	}
+}
+
 // checkPaneSweep proactively inspects every agent pane via a wide tmux
 // capture-pane and self-heals stale parked input — the residue of a
 // dropped-Enter injection or an abandoned manual prompt. Parked text is the
@@ -1653,6 +1762,13 @@ func (d *Daemon) checkPaneSweep() {
 			continue
 		}
 		if bus.IsHarnessActive(d.session, role) {
+			continue
+		}
+		// The fast checkParkedInput owns roles with actionable messages — it
+		// resubmits the dropped wake-up immediately. This sweep only clears
+		// unrelated stale residue, so skip roles that have messages waiting.
+		if bus.HasActionableMessages(d.session, role) {
+			delete(d.parkedSeen, role)
 			continue
 		}
 
