@@ -2,7 +2,6 @@ package bus
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -569,9 +568,11 @@ func tmuxVar(format string) string {
 		args = append(args, "-t", pane)
 	}
 	args = append(args, "-p", format)
-	out, err := exec.Command("tmux", args...).Output()
+	// Route through TmuxOutput (the mockable tmuxOutputRunner) rather than
+	// exec.Command directly, so unit tests can stub tmux without a live session.
+	out, err := TmuxOutput(args...)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(out)
 }

@@ -11,6 +11,18 @@ import (
 // Returns a pointer to the captured send-keys/run calls.
 func deliverTestSetup(t *testing.T, session, captureContent string) *[][]string {
 	t.Helper()
+	// Isolate provider resolution from the ambient environment. ResolveProvider
+	// reads runtime overrides keyed off BUS_SESSION, then per-role CLI env vars
+	// (MUXCODE_RUN_CLI), then the global one (MUXCODE_AGENT_CLI), then the role
+	// default (run → opencode). Without pinning, a live session's override or a
+	// leaked MUXCODE_RUN_CLI=opencode would route SendWakeUpWithText down a
+	// non-hook provider path that never performs the `send-keys -l` injection
+	// these tests assert. Point the override lookup at this test's (override-free)
+	// session and force the Claude hook path. All ForceDeliver tests target the
+	// "run" role, so pin its per-role CLI var (highest-precedence env source).
+	t.Setenv("BUS_SESSION", session)
+	t.Setenv("MUXCODE_AGENT_CLI", "claude")
+	t.Setenv(RoleCLIEnvVar("run"), "claude")
 	if err := Init(session, t.TempDir()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}

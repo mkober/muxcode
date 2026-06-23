@@ -3,7 +3,6 @@ package bus
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -67,12 +66,13 @@ func (p *OpenCodeProvider) IsIdle(session, role string) bool {
 // If the pane shows a bare shell prompt, the agent is dead.
 func (p *OpenCodeProvider) IsAlive(session, role string) bool {
 	target := PaneTarget(session, role)
-	cmd := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-S", "-5")
-	out, err := cmd.Output()
+	// Route through TmuxOutput (the mockable tmuxOutputRunner) so unit tests can
+	// stub pane capture without a live tmux session.
+	out, err := TmuxOutput("capture-pane", "-t", target, "-p", "-S", "-5")
 	if err != nil {
 		return true // indeterminate -> assume alive
 	}
-	lines := strings.Split(string(out), "\n")
+	lines := strings.Split(out, "\n")
 
 	// Shell prompt check first — if at a bare shell prompt, agent is dead.
 	// This must come before TUI marker checks because exit/error output
@@ -193,17 +193,17 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string) error {
 		prompt += chainInstructionForRole(role)
 	}
 
-	// Send text first — do NOT consume inbox until both send-keys succeed
-	cmd := exec.Command("tmux", "send-keys", "-t", target, prompt)
-	if err := cmd.Run(); err != nil {
+	// Send text first — do NOT consume inbox until both send-keys succeed.
+	// Route through TmuxRun (the mockable tmuxRunner) rather than exec.Command
+	// directly, so unit tests can stub tmux without a live session.
+	if err := TmuxRun("send-keys", "-t", target, prompt); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s/%s failed: %v\n", role, "opencode", err)
 		return err
 	}
 	// Brief delay so the TUI registers the text before Enter
 	time.Sleep(150 * time.Millisecond)
 	// Send Enter
-	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
-	if err := cmd.Run(); err != nil {
+	if err := TmuxRun("send-keys", "-t", target, "Enter"); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s/%s failed: %v\n", role, "opencode", err)
 		return err
 	}
