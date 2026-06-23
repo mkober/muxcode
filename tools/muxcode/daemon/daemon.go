@@ -98,6 +98,11 @@ type Daemon struct {
 	stuckReloads    map[string]int   // role -> auto-reload count (cap to avoid reload storms)
 	lastStuckReload map[string]int64 // role -> unix time of last auto-reload
 	stuckGaveUp     map[string]bool  // role -> alerted once after hitting the reload cap
+	// Agent-definition watchdog — auto-reloads a running agent when its resolved
+	// definition file changes on disk, so editing/reinstalling a definition takes
+	// effect without a manual `muxcode reload`. State lives in per-session stamp
+	// files (see bus/agentdefs.go) so it survives daemon restarts.
+	lastAgentDefsCheck int64 // 10s interval
 }
 
 // New creates a new Daemon for the given session.
@@ -150,6 +155,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		stuckReloads:          make(map[string]int),
 		lastStuckReload:       make(map[string]int64),
 		stuckGaveUp:           make(map[string]bool),
+		lastAgentDefsCheck:    now, // skip first interval — lets stamps settle on startup
 	}
 }
 
@@ -229,6 +235,7 @@ func (d *Daemon) Run() error {
 		d.checkLoops()
 		d.checkActiveWatchdog()
 		d.checkStuckProviders()
+		d.checkAgentDefs()
 		d.checkCompaction()
 		d.checkOllama()
 		d.checkAgentHealth()
@@ -940,6 +947,91 @@ func (d *Daemon) checkStuckProviders() {
 		go func(r string) {
 			if err := bus.ReloadAgent(d.session, r, "", "", false); err != nil {
 				fmt.Fprintf(os.Stderr, "  [watchdog] auto-reload of %s failed: %v\n", r, err)
+			}
+		}(role)
+	}
+}
+
+// agentDefsCheckSecs is the polling interval for the agent-definition watchdog.
+const agentDefsCheckSecs int64 = 10
+
+// checkAgentDefs auto-reloads a running agent when its resolved definition file
+// changes on disk, so editing/reinstalling an agent definition takes effect
+// without a manual `muxcode reload`.
+//
+// The definition the running agent launched with is stamped to a per-session
+// marker file by RunAgentLaunch (bus/agentdefs.go). This compares that stamp to
+// the current on-disk hash; a mismatch means the definition changed since the
+// agent launched. Using an on-disk stamp (not in-memory state) is what makes
+// this survive the daemon restart that `./build.sh` triggers via
+// `upgrade-daemons` right after reinstalling the defs.
+//
+// Reloads are deferred while an agent is busy, so a running build/test is never
+// interrupted — the reload fires on the next cycle once the agent is idle. The
+// orchestrator (edit) and autonomous (auto) agents are never auto-reloaded.
+// Opt out with MUXCODE_AGENTDEFS_WATCH_DISABLE=1.
+func (d *Daemon) checkAgentDefs() {
+	if os.Getenv("MUXCODE_AGENTDEFS_WATCH_DISABLE") == "1" {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastAgentDefsCheck < agentDefsCheckSecs {
+		return
+	}
+	d.lastAgentDefsCheck = now
+
+	for _, role := range bus.ReloadableRoles() {
+		// Never auto-reload the orchestrator or autonomous agent out from under
+		// active work — they drive everything else.
+		if role == "edit" || role == "auto" {
+			continue
+		}
+		// Own pane only; skip panes mid-reload or running the local harness.
+		if bus.WindowForRole(role) != role {
+			continue
+		}
+		if bus.IsReloading(d.session, role) || bus.IsHarnessActive(d.session, role) {
+			continue
+		}
+
+		onDisk := bus.AgentDefHash(role)
+		if onDisk == "" {
+			continue
+		}
+		stamp := bus.ReadAgentDefHash(d.session, role)
+		if stamp == "" {
+			// No stamp yet (agent launched before this feature shipped, or the
+			// stamp was lost). Seed a baseline without reloading — only future
+			// changes trigger an auto-reload.
+			bus.StampAgentDefHash(d.session, role)
+			continue
+		}
+		if onDisk == stamp {
+			continue
+		}
+
+		// Definition changed since the agent launched. A dead agent will pick up
+		// the new definition when checkAgentHealth restarts it.
+		if !bus.IsAgentAlive(d.session, role) {
+			continue
+		}
+		// Defer while busy so we never interrupt in-flight work. Leave the stamp
+		// unchanged so we retry once the agent is idle.
+		if !bus.IsAgentIdle(d.session, role) {
+			continue
+		}
+
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Agent-defs watchdog: %s definition changed — auto-reloading\n", ts, role)
+		bus.LogLifecycle(d.session, "info", "daemon", "agent-defs-reload",
+			fmt.Sprintf("%s definition changed on disk — auto-reload", role))
+
+		// Reload in a goroutine — GracefulStop + relaunch blocks several seconds.
+		// ReloadAgent sets the reload marker first, so subsequent poll cycles skip
+		// this role; the relaunch path re-stamps the new hash via RunAgentLaunch.
+		go func(r string) {
+			if err := bus.ReloadAgent(d.session, r, "", "", false); err != nil {
+				fmt.Fprintf(os.Stderr, "  [watchdog] agent-defs auto-reload of %s failed: %v\n", r, err)
 			}
 		}(role)
 	}

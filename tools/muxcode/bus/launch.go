@@ -848,6 +848,11 @@ func RunAgentLaunch(role string) error {
 	binary, launchArgs := cfg.BuildExecArgs()
 	PreLaunchSetup(role, session, binary)
 
+	// Stamp the definition hash this agent is launching with so the daemon's
+	// agent-defs watchdog can detect a later on-disk change and auto-reload.
+	// Done before exec (below) replaces this process.
+	StampAgentDefHash(session, role)
+
 	// Activate Python venv if found
 	if cfg.VenvDir != "" {
 		if err := ActivateVenv(cfg.VenvDir); err != nil {
