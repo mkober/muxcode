@@ -104,7 +104,7 @@ echo "--- Phase 3: Reload build agent ---"
 # Pick a target CLI different from current
 if [ "$ORIGINAL_CLI" = "opencode" ]; then
   TARGET_CLI="claude"
-  TARGET_MODEL="claude-sonnet-4-6"
+  TARGET_MODEL="claude-sonnet-5"
 else
   TARGET_CLI="opencode"
   TARGET_MODEL="opencode-go/deepseek-v4-pro"

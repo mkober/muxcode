@@ -145,7 +145,7 @@ muxcode config get build
 #   === build ===
 #   CLI:     opencode                       (runtime override)
 #   Model:   opencode-go/deepseek-v4-pro    (env: MUXCODE_BUILD_MODEL)
-#   Default: claude / claude-sonnet-4-6
+#   Default: claude / claude-sonnet-5
 
 # List all roles
 muxcode config list

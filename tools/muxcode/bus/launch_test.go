@@ -111,15 +111,15 @@ func TestRoleClaudeModelDefault(t *testing.T) {
 		{"review", "claude-opus-4-8"},
 		{"analyze", "claude-opus-4-8"},
 		{"analyst", "claude-opus-4-8"},
-		{"build", "claude-sonnet-4-6"},
-		{"test", "claude-sonnet-4-6"},
-		{"commit", "claude-sonnet-4-6"},
-		{"git", "claude-sonnet-4-6"},
-		{"deploy", "claude-sonnet-4-6"},
-		{"api", "claude-sonnet-4-6"},
-		{"run", "claude-sonnet-4-6"},
-		{"runner", "claude-sonnet-4-6"},
-		{"watch", "claude-sonnet-4-6"},
+		{"build", "claude-sonnet-5"},
+		{"test", "claude-sonnet-5"},
+		{"commit", "claude-sonnet-5"},
+		{"git", "claude-sonnet-5"},
+		{"deploy", "claude-sonnet-5"},
+		{"api", "claude-sonnet-5"},
+		{"run", "claude-sonnet-5"},
+		{"runner", "claude-sonnet-5"},
+		{"watch", "claude-sonnet-5"},
 		{"custom", ""},
 	}
 
@@ -390,6 +390,7 @@ func TestResolveLaunchConfig_CustomCLI(t *testing.T) {
 func TestResolveLaunchConfig_ModelEnvOverride(t *testing.T) {
 	SetBusDirBase(t.TempDir()) // isolate from live session override files
 	defer ResetBusDirBase()
+	t.Setenv("MUXCODE_BUILD_MODEL", "") // isolate from ambient session env (generic var wins over Claude-specific)
 	t.Setenv("MUXCODE_BUILD_CLAUDE_MODEL", "claude-haiku-3")
 	t.Setenv("MUXCODE_BUILD_CLI", "claude")
 
@@ -403,6 +404,7 @@ func TestResolveLaunchConfig_ModelEnvOverride(t *testing.T) {
 func TestResolveLaunchConfig_GlobalModelOverride(t *testing.T) {
 	SetBusDirBase(t.TempDir()) // isolate from live session override files
 	defer ResetBusDirBase()
+	t.Setenv("MUXCODE_BUILD_MODEL", "") // isolate from ambient session env (generic var wins over Claude-specific)
 	t.Setenv("MUXCODE_BUILD_CLAUDE_MODEL", "")
 	t.Setenv("MUXCODE_CLAUDE_MODEL", "claude-custom-99")
 	t.Setenv("MUXCODE_BUILD_CLI", "claude")
@@ -419,7 +421,7 @@ func TestBuildExecArgs_Claude(t *testing.T) {
 		Role:         "build",
 		CLI:          "claude",
 		AgentName:    "code-builder",
-		ModelFlags:   []string{"--model", "claude-sonnet-4-6"},
+		ModelFlags:   []string{"--model", "claude-sonnet-5"},
 		PermFlags:    []string{"--dangerously-skip-permissions"},
 		ToolFlags:    []string{"--allowedTools", "Bash(make*)"},
 		SharedPrompt: "You are part of a team.",

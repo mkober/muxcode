@@ -82,7 +82,7 @@ echo "--- Phase 3: Multi-role batch reload ---"
 # Pick target CLI different from build's current
 if [ "$ORIG_BUILD_CLI" = "opencode" ]; then
   TARGET_CLI="claude"
-  TARGET_MODEL="claude-sonnet-4-6"
+  TARGET_MODEL="claude-sonnet-5"
 else
   TARGET_CLI="opencode"
   TARGET_MODEL="opencode-go/minimax-m2.5"

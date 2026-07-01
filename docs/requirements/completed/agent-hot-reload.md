@@ -147,7 +147,7 @@ muxcode config get build
 === build ===
 CLI:     opencode  (runtime override)
 Model:   opencode-go/deepseek-v4-pro  (env: MUXCODE_BUILD_MODEL)
-Default: claude / claude-sonnet-4-6
+Default: claude / claude-sonnet-5
 ```
 
 ### 4. Graceful stop with context preservation
@@ -335,7 +335,7 @@ The `muxcode provider-select` command renders a Dracula-themed interactive TUI i
 │  ─── Model ─────────────────────────    │
 │                                         │
 │    ○ claude-opus-4-8                    │
-│    ● claude-sonnet-4-6                  │
+│    ● claude-sonnet-5                  │
 │    ○ claude-haiku-4-5                   │
 │    ○ custom...                          │
 │                                         │
@@ -393,8 +393,8 @@ func AvailableProviders() []ProviderOption {
         {
             Name:    "Claude Code",
             CLI:     "claude",
-            Models:  []string{"claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"},
-            Default: "claude-sonnet-4-6",
+            Models:  []string{"claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"},
+            Default: "claude-sonnet-5",
         },
         {
             Name:    "OpenCode",

@@ -207,7 +207,7 @@ func TestClaudeBuildExecArgs(t *testing.T) {
 		Role:         "build",
 		CLI:          "claude",
 		AgentName:    "code-builder",
-		ModelFlags:   []string{"--model", "claude-sonnet-4-6"},
+		ModelFlags:   []string{"--model", "claude-sonnet-5"},
 		PermFlags:    []string{"--dangerously-skip-permissions"},
 		ToolFlags:    []string{"--allowedTools", "Bash(make*)"},
 		SharedPrompt: "You are part of a team.",
@@ -233,7 +233,7 @@ func TestClaudeBuildExecArgs(t *testing.T) {
 	// Check --model
 	found = false
 	for i, a := range args {
-		if a == "--model" && i+1 < len(args) && args[i+1] == "claude-sonnet-4-6" {
+		if a == "--model" && i+1 < len(args) && args[i+1] == "claude-sonnet-5" {
 			found = true
 		}
 	}

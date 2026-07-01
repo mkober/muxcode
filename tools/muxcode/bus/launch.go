@@ -212,7 +212,7 @@ func RoleClaudeModelDefault(role string) string {
 	case "plan", "planner", "review", "analyze", "analyst":
 		return "claude-opus-4-8"
 	case "build", "test", "api", "deploy", "run", "runner", "watch", "commit", "git", "serve":
-		return "claude-sonnet-4-6"
+		return "claude-sonnet-5"
 	default:
 		return ""
 	}

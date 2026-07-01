@@ -509,7 +509,7 @@ Mode-cycled windows resolve to the active role (e.g., research on F1, auto on F2
 The Agents section lists all active agents with their current CLI, abbreviated model, and F-key:
 
 ```
-[x] Build     claude / sonnet-4-6 F3
+[x] Build     claude / sonnet-5 F3
 [ ] Test      opencode / minimax  F4
 [ ] Review    claude / opus-4-8   F6
 ```

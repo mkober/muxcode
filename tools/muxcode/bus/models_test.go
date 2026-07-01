@@ -10,9 +10,9 @@ import (
 func TestParseModelConfig_Basic(t *testing.T) {
 	content := `
 [claude]
-# default: claude-sonnet-4-6
+# default: claude-sonnet-5
 claude-opus-4-8
-claude-sonnet-4-6
+claude-sonnet-5
 claude-haiku-4-5
 
 [opencode]
@@ -27,8 +27,8 @@ opencode-go/deepseek-v4-pro
 
 	// Claude provider
 	claude := cfg.Providers["claude"]
-	if claude.Default != "claude-sonnet-4-6" {
-		t.Errorf("claude default = %q, want %q", claude.Default, "claude-sonnet-4-6")
+	if claude.Default != "claude-sonnet-5" {
+		t.Errorf("claude default = %q, want %q", claude.Default, "claude-sonnet-5")
 	}
 	if len(claude.Models) != 3 {
 		t.Errorf("claude models count = %d, want 3", len(claude.Models))
@@ -50,8 +50,8 @@ opencode-go/deepseek-v4-pro
 func TestParseModelConfig_DisabledModels(t *testing.T) {
 	content := `
 [claude]
-# default: claude-sonnet-4-6
-claude-sonnet-4-6
+# default: claude-sonnet-5
+claude-sonnet-5
 # claude-opus-4-8
 # claude-haiku-4-5
 `
@@ -78,10 +78,10 @@ func TestParseModelConfig_EmptyAndComments(t *testing.T) {
 # This is a header comment that should be ignored
 
 [claude]
-# default: claude-sonnet-4-6
+# default: claude-sonnet-5
 
 # ── Section header comment ──
-claude-sonnet-4-6
+claude-sonnet-5
 `
 	cfg, err := ParseModelConfig(content)
 	if err != nil {
@@ -101,7 +101,7 @@ claude-sonnet-4-6
 func TestParseModelConfig_NoSection(t *testing.T) {
 	content := `
 # Lines before any section header are ignored
-claude-sonnet-4-6
+claude-sonnet-5
 `
 	cfg, err := ParseModelConfig(content)
 	if err != nil {
@@ -128,7 +128,7 @@ func TestIsModelName(t *testing.T) {
 		input string
 		want  bool
 	}{
-		{"claude-sonnet-4-6", true},
+		{"claude-sonnet-5", true},
 		{"claude-opus-4-8", true},
 		{"opencode-go/deepseek-v4-pro", true},
 		{"gpt-5.5", true},
@@ -152,8 +152,8 @@ func TestIsModelName(t *testing.T) {
 func TestAddModel(t *testing.T) {
 	cfg := &ModelConfig{Providers: map[string]ProviderModels{
 		"claude": {
-			Default: "claude-sonnet-4-6",
-			Models:  []string{"claude-sonnet-4-6"},
+			Default: "claude-sonnet-5",
+			Models:  []string{"claude-sonnet-5"},
 		},
 	}}
 
@@ -174,7 +174,7 @@ func TestAddModel(t *testing.T) {
 func TestAddModel_FromDisabled(t *testing.T) {
 	cfg := &ModelConfig{Providers: map[string]ProviderModels{
 		"claude": {
-			Models:   []string{"claude-sonnet-4-6"},
+			Models:   []string{"claude-sonnet-5"},
 			Disabled: []string{"claude-opus-4-8"},
 		},
 	}}
@@ -195,7 +195,7 @@ func TestAddModel_FromDisabled(t *testing.T) {
 func TestAddModel_NewProvider(t *testing.T) {
 	cfg := &ModelConfig{Providers: make(map[string]ProviderModels)}
 
-	if !AddModel(cfg, "claude", "claude-sonnet-4-6") {
+	if !AddModel(cfg, "claude", "claude-sonnet-5") {
 		t.Error("AddModel returned false for new provider")
 	}
 
@@ -208,8 +208,8 @@ func TestAddModel_NewProvider(t *testing.T) {
 func TestRemoveModel(t *testing.T) {
 	cfg := &ModelConfig{Providers: map[string]ProviderModels{
 		"claude": {
-			Default: "claude-sonnet-4-6",
-			Models:  []string{"claude-opus-4-8", "claude-sonnet-4-6"},
+			Default: "claude-sonnet-5",
+			Models:  []string{"claude-opus-4-8", "claude-sonnet-5"},
 		},
 	}}
 
@@ -231,7 +231,7 @@ func TestRemoveModel(t *testing.T) {
 
 func TestRemoveModel_NotFound(t *testing.T) {
 	cfg := &ModelConfig{Providers: map[string]ProviderModels{
-		"claude": {Models: []string{"claude-sonnet-4-6"}},
+		"claude": {Models: []string{"claude-sonnet-5"}},
 	}}
 
 	if RemoveModel(cfg, "claude", "nonexistent") {
@@ -246,8 +246,8 @@ func TestRemoveModel_NotFound(t *testing.T) {
 func TestSetDefaultModel(t *testing.T) {
 	cfg := &ModelConfig{Providers: map[string]ProviderModels{
 		"claude": {
-			Default: "claude-sonnet-4-6",
-			Models:  []string{"claude-opus-4-8", "claude-sonnet-4-6"},
+			Default: "claude-sonnet-5",
+			Models:  []string{"claude-opus-4-8", "claude-sonnet-5"},
 		},
 	}}
 
@@ -272,8 +272,8 @@ func TestSetDefaultModel(t *testing.T) {
 func TestFormatModelConfigFile_RoundTrip(t *testing.T) {
 	cfg := &ModelConfig{Providers: map[string]ProviderModels{
 		"claude": {
-			Default:  "claude-sonnet-4-6",
-			Models:   []string{"claude-opus-4-8", "claude-sonnet-4-6"},
+			Default:  "claude-sonnet-5",
+			Models:   []string{"claude-opus-4-8", "claude-sonnet-5"},
 			Disabled: []string{"claude-haiku-4-5"},
 		},
 	}}
@@ -287,8 +287,8 @@ func TestFormatModelConfigFile_RoundTrip(t *testing.T) {
 	}
 
 	claude := parsed.Providers["claude"]
-	if claude.Default != "claude-sonnet-4-6" {
-		t.Errorf("round-trip default = %q, want %q", claude.Default, "claude-sonnet-4-6")
+	if claude.Default != "claude-sonnet-5" {
+		t.Errorf("round-trip default = %q, want %q", claude.Default, "claude-sonnet-5")
 	}
 	if len(claude.Models) != 2 {
 		t.Errorf("round-trip models = %d, want 2", len(claude.Models))
@@ -301,8 +301,8 @@ func TestFormatModelConfigFile_RoundTrip(t *testing.T) {
 func TestFormatModelList(t *testing.T) {
 	cfg := &ModelConfig{Providers: map[string]ProviderModels{
 		"claude": {
-			Default:  "claude-sonnet-4-6",
-			Models:   []string{"claude-opus-4-8", "claude-sonnet-4-6"},
+			Default:  "claude-sonnet-5",
+			Models:   []string{"claude-opus-4-8", "claude-sonnet-5"},
 			Disabled: []string{"claude-haiku-4-5"},
 		},
 	}}
@@ -312,7 +312,7 @@ func TestFormatModelList(t *testing.T) {
 	if !strings.Contains(output, "Provider: claude") {
 		t.Error("output missing provider name")
 	}
-	if !strings.Contains(output, "claude-sonnet-4-6 (default)") {
+	if !strings.Contains(output, "claude-sonnet-5 (default)") {
 		t.Error("output missing default marker")
 	}
 	if !strings.Contains(output, "claude-opus-4-8") {
@@ -346,9 +346,9 @@ func TestLoadModelConfigFromFile_Real(t *testing.T) {
 	path := filepath.Join(dir, "models.conf")
 
 	content := `[claude]
-# default: claude-sonnet-4-6
+# default: claude-sonnet-5
 claude-opus-4-8
-claude-sonnet-4-6
+claude-sonnet-5
 claude-haiku-4-5
 
 [codex]
@@ -378,9 +378,9 @@ gpt-5.5
 func TestParseModelConfig_MultipleProviders(t *testing.T) {
 	content := `
 [claude]
-# default: claude-sonnet-4-6
+# default: claude-sonnet-5
 claude-opus-4-8
-claude-sonnet-4-6
+claude-sonnet-5
 
 [opencode]
 # default: opencode-go/minimax-m2.5
@@ -406,7 +406,7 @@ gpt-5.4-mini
 		count    int
 		def      string
 	}{
-		{"claude", 2, "claude-sonnet-4-6"},
+		{"claude", 2, "claude-sonnet-5"},
 		{"opencode", 2, "opencode-go/minimax-m2.5"},
 		{"codex", 2, "gpt-5.5"},
 	}

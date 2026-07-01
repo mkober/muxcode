@@ -59,7 +59,7 @@ The existing Provider Selector modal gains a new **Agents** section between the 
 │  ─── Model ─────────────────────────    │
 │                                         │
 │    ○ claude-opus-4-8                    │
-│    ● claude-sonnet-4-6                  │
+│    ● claude-sonnet-5                  │
 │    ○ claude-haiku-4-5                   │
 │    ○ custom...                          │
 │                                         │
@@ -68,8 +68,8 @@ The existing Provider Selector modal gains a new **Agents** section between the 
 │    [ ] Plan      claude / opus-4-8   F1 │
 │    [ ] Research  opencode / deepseek F1 │
 │    [ ] Edit      claude / opus-4-8   F2⚠│
-│    [ ] Auto      claude / sonnet-4-6 F2⚠│
-│    [x] Build     claude / sonnet-4-6 F3 │
+│    [ ] Auto      claude / sonnet-5 F2⚠│
+│    [x] Build     claude / sonnet-5 F3 │
 │    [ ] Test      opencode / minimax  F4 │
 │    [ ] Serve     opencode / minimax  F5 │
 │    [ ] Review    claude / opus-4-8   F6 │
@@ -106,7 +106,7 @@ All other agents are shown, including mode-cycled agents (`plan`, `research`, `e
 Each agent row shows:
 - Checkbox (`[x]` / `[ ]`) for selection
 - Role name (padded to 8 chars)
-- Current CLI / abbreviated model (e.g., `claude / sonnet-4-6`)
+- Current CLI / abbreviated model (e.g., `claude / sonnet-5`)
 - `⚠` suffix for edit/auto (orchestrator warning)
 - `(dead)` suffix for agents that are not alive (greyed out, not selectable)
 
@@ -291,11 +291,11 @@ func reloadableRoles() []string {
 
 ### 6. Model abbreviation
 
-Full model IDs are long (`opencode-go/minimax-m2.5`, `claude-sonnet-4-6`). The agent list needs abbreviated display:
+Full model IDs are long (`opencode-go/minimax-m2.5`, `claude-sonnet-5`). The agent list needs abbreviated display:
 
 ```go
 // AbbreviateModel shortens a model ID for compact display.
-// "claude-sonnet-4-6" → "sonnet-4-6"
+// "claude-sonnet-5" → "sonnet-5"
 // "opencode-go/minimax-m2.5" → "minimax-m2.5"
 // "gpt-5.5" → "gpt-5.5" (already short)
 func AbbreviateModel(model string) string {
@@ -407,7 +407,7 @@ Updated files:
 Success criteria:
 - [x] `reloadableRoles()` returns all agent roles excluding only hosted roles (docs, pr-read)
 - [x] `ActiveAgentStatuses()` returns current CLI/model/alive/orchestrator status for all reloadable agents including plan, research, edit, auto
-- [x] `AbbreviateModel("claude-sonnet-4-6")` returns `"sonnet-4-6"`
+- [x] `AbbreviateModel("claude-sonnet-5")` returns `"sonnet-5"`
 - [x] `AbbreviateModel("opencode-go/minimax-m2.5")` returns `"minimax-m2.5"`
 - [x] `ReloadBatch()` calls `ReloadAgent()` sequentially with 3s gap, returns per-agent results
 - [x] `ReloadBatch()` continues on individual failures (failure isolation)
