@@ -70,6 +70,34 @@ Run the appropriate diff/plan command for the project's IaC tool:
 ### Apply Changes
 Only apply when explicitly requested. Always preview first.
 
+### Capturing Full Deploy/Diff Output
+`cdk deploy`, `cdk diff`, `terraform plan/apply`, and similar commands emit long
+output that the terminal UI truncates — on OpenCode the tail collapses behind a
+**"Click to expand"** affordance that is *human-only*: it is not in the tmux
+pane scrollback and is not clickable by the agent. Do NOT rely on inline output
+or try to "expand" it. Redirect the full output to a scratch log and read it
+back so nothing is lost:
+
+```bash
+envName=<env> AWS_PROFILE=<profile> cdk deploy <stack> --require-approval never \
+  > /tmp/deploy-<stack>.log 2>&1
+# then read the authoritative full result:
+tail -n 300 /tmp/deploy-<stack>.log
+grep -iE "fail|error|rollback|CREATE_FAILED|UPDATE_FAILED|✅|❌" /tmp/deploy-<stack>.log
+```
+
+For a deploy that runs longer than your pane can block on, run it detached and
+poll — this also keeps you deliverable for new bus messages:
+
+```bash
+id=$(muxcode proc start "envName=<env> AWS_PROFILE=<profile> cdk deploy <stack> --require-approval never")
+muxcode proc status "$id"
+muxcode proc log "$id" --tail 300     # read the full captured output when finished
+```
+
+Base your reported PASS/FAIL, resource counts, and error details on the log
+file, not on the collapsed inline preview.
+
 ## Post-deployment Verification
 
 When you receive a bus message with action **verify**, run the following checks against the deployed environment. Report results back to the edit agent via the bus.

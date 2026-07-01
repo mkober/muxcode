@@ -201,6 +201,33 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I run this?
 - Check process status and resource usage
 - Verify that triggered processes complete successfully
 
+### Capturing Full Output (long commands)
+Long command output is frequently truncated in the terminal UI. On OpenCode the
+tail collapses behind a **"Click to expand"** affordance that is *human-only* —
+it is NOT in the tmux pane scrollback (so `capture-pane` can't retrieve it) and
+NOT clickable by the agent. Never try to scrape or "expand" collapsed TUI
+output. Instead, capture the complete output at the source and read it back:
+
+```bash
+# Redirect the full command output (stdout+stderr) to a scratch log, then read it.
+<command> > /tmp/<descriptive-name>.log 2>&1
+tail -n 200 /tmp/<descriptive-name>.log        # or grep for the lines you need
+```
+
+For long-running or streaming processes, run them detached with captured output
+instead of blocking your pane (which also keeps you deliverable for new bus
+messages):
+
+```bash
+id=$(muxcode proc start "<command>")           # runs detached, captures stdout+stderr
+muxcode proc status "$id"                        # check state
+muxcode proc log "$id" --tail 200                # read captured output when finished
+```
+
+Always read the log/file for the authoritative full result — inline TUI output
+is a preview, not the source of truth. Scrub PII from any log you read back
+before reporting (see PII and Secret Scrubbing).
+
 ### AWS Lambda & Step Functions
 - Invoke Lambda functions: `aws lambda invoke`, `aws lambda list-functions`, `aws lambda get-function`
 - Start Step Function executions: `aws stepfunctions start-execution`, `aws stepfunctions describe-execution`
