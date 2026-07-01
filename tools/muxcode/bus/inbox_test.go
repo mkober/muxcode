@@ -61,6 +61,30 @@ func TestSelfAddressedFilteredFromActionableAndUnnotified(t *testing.T) {
 	}
 }
 
+func TestCCdRequestNotActionableForEdit(t *testing.T) {
+	session := testSession(t)
+	// Auto-CC copies a request addressed to another agent verbatim into edit's
+	// inbox (To stays the original recipient). That informational copy must NOT
+	// count as actionable for edit, otherwise the daemon re-wakes edit forever
+	// for a request it can never complete.
+	cc := NewMessage("test", "review", "request", "review", "review the changes", "")
+	if err := AppendToInbox(session, "edit", cc); err != nil {
+		t.Fatalf("AppendToInbox: %v", err)
+	}
+	if HasActionableMessages(session, "edit") {
+		t.Error("CC'd request addressed to review must not be actionable for edit")
+	}
+
+	// A request genuinely addressed to edit IS actionable.
+	direct := NewMessage("build", "edit", "request", "check", "please check", "")
+	if err := AppendToInbox(session, "edit", direct); err != nil {
+		t.Fatalf("AppendToInbox: %v", err)
+	}
+	if !HasActionableMessages(session, "edit") {
+		t.Error("request addressed to edit must be actionable for edit")
+	}
+}
+
 func TestSendAndReceive(t *testing.T) {
 	session := testSession(t)
 

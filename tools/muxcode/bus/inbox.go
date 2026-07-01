@@ -391,9 +391,21 @@ func HasActionableMessages(session, role string) bool {
 		// Accidental self-addressed requests never warrant a wake-up — they
 		// would loop forever since the agent can't complete its own request.
 		// (The startup self-send is exempt — see isLoopingSelfSend.)
-		if m.Type == "request" && !isLoopingSelfSend(m) {
-			return true
+		if m.Type != "request" || isLoopingSelfSend(m) {
+			continue
 		}
+		// A request is actionable for this role ONLY if the role is its primary
+		// destination. Auto-CC copies a request addressed to another agent (e.g.
+		// test→review) verbatim into edit's inbox — the copy keeps To="review".
+		// Such a CC is informational, not work edit can complete; counting it as
+		// actionable made the daemon re-wake edit indefinitely for a request it
+		// can never respond to. WindowForRole matches the delivery routing used
+		// in sendMessage, so a genuinely-addressed (or hosted) request still
+		// counts while a CC does not.
+		if WindowForRole(m.To) != role {
+			continue
+		}
+		return true
 	}
 	return false
 }

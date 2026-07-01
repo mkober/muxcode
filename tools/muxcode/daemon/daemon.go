@@ -1643,7 +1643,13 @@ func (d *Daemon) checkIdleAgents() {
 		// notified) closes that gap and self-retries until the wake-up lands.
 		hasActionable := false
 		for _, m := range unnotified {
-			if m.Type == "request" {
+			// Only requests whose primary destination is this role justify a
+			// forced wake-up. Auto-CC'd requests addressed to another agent
+			// (e.g. test→review copied into edit's inbox with To="review") are
+			// informational — treating them as actionable re-woke edit endlessly
+			// for work it can never complete. WindowForRole mirrors delivery
+			// routing so genuine and hosted requests still count.
+			if m.Type == "request" && bus.WindowForRole(m.To) == role {
 				hasActionable = true
 				break
 			}
