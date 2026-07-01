@@ -410,11 +410,23 @@ func formatDuration(secs int64) string {
 }
 
 // AlertKey returns a dedup key for a loop alert.
+//
+// For message loops the (role, peer) pair is canonicalized (sorted) so that
+// mirror alerts collapse to a single key. The same ping-pong is detected once
+// from each end — CheckAllLoops produces a role=edit/peer=run alert AND a
+// role=run/peer=edit alert for the identical loop. Without canonicalization
+// these yield two distinct dedup keys, so FilterNewAlerts lets both through and
+// edit receives duplicate loop-detected events. Sorting the pair maps both to
+// the same key, so only one alert fires per cooldown window.
 func AlertKey(a LoopAlert) string {
 	if a.Type == "command" {
 		return fmt.Sprintf("%s:command:%s", a.Role, a.Command)
 	}
-	return fmt.Sprintf("%s:message:%s:%s", a.Role, a.Peer, a.Action)
+	lo, hi := a.Role, a.Peer
+	if hi < lo {
+		lo, hi = hi, lo
+	}
+	return fmt.Sprintf("message:%s:%s:%s", lo, hi, a.Action)
 }
 
 // FilterNewAlerts filters alerts that haven't been seen within cooldownSecs.

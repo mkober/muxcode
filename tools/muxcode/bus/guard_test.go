@@ -526,8 +526,30 @@ func TestAlertKey(t *testing.T) {
 	}
 
 	msg := LoopAlert{Role: "test", Type: "message", Peer: "build", Action: "test"}
-	if got := AlertKey(msg); got != "test:message:build:test" {
+	if got := AlertKey(msg); got != "message:build:test:test" {
 		t.Errorf("AlertKey(msg) = %q", got)
+	}
+
+	// Mirror alerts for the same ping-pong must produce the SAME key so
+	// FilterNewAlerts collapses them to a single loop-detected event.
+	fwd := LoopAlert{Role: "edit", Type: "message", Peer: "run", Action: "run"}
+	rev := LoopAlert{Role: "run", Type: "message", Peer: "edit", Action: "run"}
+	if AlertKey(fwd) != AlertKey(rev) {
+		t.Errorf("mirror alerts produced different keys: %q vs %q", AlertKey(fwd), AlertKey(rev))
+	}
+}
+
+func TestFilterNewAlerts_MirrorDedup(t *testing.T) {
+	// Both ends of the same edit<->run ping-pong arrive in one batch; only one
+	// should survive so edit isn't spammed with duplicate loop events.
+	alerts := []LoopAlert{
+		{Role: "edit", Type: "message", Peer: "run", Action: "run"},
+		{Role: "run", Type: "message", Peer: "edit", Action: "run"},
+	}
+	lastSeen := make(map[string]int64)
+	fresh := FilterNewAlerts(alerts, lastSeen, 300)
+	if len(fresh) != 1 {
+		t.Errorf("mirror dedup: got %d fresh, want 1", len(fresh))
 	}
 }
 
