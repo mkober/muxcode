@@ -239,13 +239,28 @@ func hookGuard() {
 	}
 
 	ev, err := bus.ParseToolEvent(data)
-	if err != nil || ev.ToolInput.Command == "" {
+	if err != nil {
 		return
 	}
 
-	decision := bus.CheckGuard(role, ev.ToolInput.Command)
-	if decision != nil && decision.Blocked {
-		fmt.Println(bus.FormatGuardBlock(decision.Reason))
+	// Bash command guard: delegation of build/test/git/deploy/etc.
+	if ev.ToolInput.Command != "" {
+		if decision := bus.CheckGuard(role, ev.ToolInput.Command); decision != nil && decision.Blocked {
+			fmt.Println(bus.FormatGuardBlock(decision.Reason))
+		}
+		return
+	}
+
+	// Write/Edit/NotebookEdit file guard: documentation under docs/ must be
+	// authored by the plan agent, not written directly in the edit window.
+	filePath := ev.ToolInput.FilePath
+	if filePath == "" {
+		filePath = ev.ToolInput.NotebookPath
+	}
+	if filePath != "" {
+		if decision := bus.CheckDocFileGuard(role, filePath); decision != nil && decision.Blocked {
+			fmt.Println(bus.FormatGuardBlock(decision.Reason))
+		}
 	}
 }
 

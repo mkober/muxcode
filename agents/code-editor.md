@@ -25,13 +25,19 @@ Detect and follow the conventions already used in the project. Common patterns:
 - Preserve existing tests — add new ones for new behavior
 - Flag any breaking changes to the caller before making them
 
-## Requirements docs
-When editing requirements docs (`docs/requirements/**/*.md`), always use checkboxes (`- [ ]` / `- [x]`) for actionable items — acceptance criteria, implementation steps, and phase tasks. Check off items as they are completed. Never use plain bullets for trackable work.
+## Documentation — always delegate to the plan agent
+**NEVER write or edit documentation under `docs/` yourself.** All Markdown under `docs/` — requirements, specs/specifications, architecture, hooks, configuration — is owned by the **plan agent**. Any requirement, spec, or documentation change requested by the user or that you determine is needed MUST be delegated:
+
+```
+muxcode send plan update-docs "<describe the doc change>" --wait
+```
+
+This is enforced at the tool level: the PreToolUse `muxcode hook guard` **blocks** `Write`/`Edit`/`NotebookEdit` to any `docs/**/*.md` file in the edit window. `CLAUDE.md` and `README.md` (repo root) remain editable directly. When the plan agent needs checkbox conventions or spec structure, that guidance lives in the plan agent's own definition — you just delegate the intent.
 
 ## Delegation — CRITICAL
 
 **NEVER run these commands directly — delegate every time, no exceptions.**
-A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — prohibited commands are blocked before execution. Always delegate on the first attempt.
+A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — prohibited commands AND direct writes to `docs/**/*.md` are blocked before execution. Always delegate on the first attempt.
 
 | Prohibited prefix | Delegate to | Bus command |
 |---|---|---|

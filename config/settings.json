@@ -18,6 +18,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "muxcode hook guard"
+          },
+          {
+            "type": "command",
             "command": "muxcode-preview-hook.sh",
             "async": true
           }

@@ -773,6 +773,36 @@ func CheckEditGuard(command string) *GuardDecision {
 	return CheckGuard("edit", command)
 }
 
+// isDocsMarkdown reports whether filePath is a Markdown file under a docs/
+// directory (relative or absolute). CLAUDE.md and README.md at the repo root
+// are NOT docs/ files and therefore not matched.
+func isDocsMarkdown(filePath string) bool {
+	p := filepath.ToSlash(filePath)
+	if !strings.HasSuffix(strings.ToLower(p), ".md") {
+		return false
+	}
+	return strings.HasPrefix(p, "docs/") || strings.Contains(p, "/docs/")
+}
+
+// CheckDocFileGuard blocks a role from directly writing documentation that must
+// be authored by the plan agent instead. All Markdown under docs/ — specs,
+// requirements, architecture — is delegated: the plan agent owns the docs tree.
+// The plan agent is exempt (it is the delegation target). Returns nil when the
+// write is allowed (the plan agent, or any non-docs/*.md file). Only roles with
+// guard enforcement reach this via hookGuard, so in practice this gates edit.
+func CheckDocFileGuard(role, filePath string) *GuardDecision {
+	if role == "plan" {
+		return nil
+	}
+	if !isDocsMarkdown(filePath) {
+		return nil
+	}
+	return &GuardDecision{
+		Blocked: true,
+		Reason:  `BLOCKED: Documentation under docs/ (specs, requirements, architecture) must be authored by the plan agent, not edited directly in the edit window. Delegate to the plan agent. Run: muxcode send plan update-docs "<describe the doc change>" --wait`,
+	}
+}
+
 // checkAgainstRules normalizes a command and checks it against a set of guard rules.
 func checkAgainstRules(command string, rules []guardRule) *GuardDecision {
 	cmd := strings.TrimSpace(command)

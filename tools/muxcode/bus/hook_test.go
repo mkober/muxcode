@@ -342,6 +342,51 @@ func TestCheckEditGuard_CdPrefix(t *testing.T) {
 	}
 }
 
+func TestCheckDocFileGuard_Blocked(t *testing.T) {
+	blocked := []string{
+		"docs/architecture.md",
+		"docs/requirements/drafts/foo.md",
+		"docs/requirements/completed/bar.md",
+		"/Users/me/repo/docs/hooks.md",
+		"docs/nested/deep/Spec.MD",
+	}
+	for _, fp := range blocked {
+		d := CheckDocFileGuard("edit", fp)
+		if d == nil || !d.Blocked {
+			t.Errorf("CheckDocFileGuard(edit, %q) = allowed, want blocked", fp)
+			continue
+		}
+		if !strings.Contains(d.Reason, "plan") {
+			t.Errorf("CheckDocFileGuard(edit, %q).Reason should point to plan agent: %q", fp, d.Reason)
+		}
+	}
+}
+
+func TestCheckDocFileGuard_Allowed(t *testing.T) {
+	// CLAUDE.md/README.md are repo-root (not under docs/); code files, non-.md
+	// files under docs/, .md outside docs/, and non-segment "mydocs/" are allowed.
+	allowed := []string{
+		"CLAUDE.md",
+		"README.md",
+		"tools/muxcode/bus/hook.go",
+		"lib/thing_spec.md",
+		"docs/config.json",
+		"mydocs/foo.md",
+	}
+	for _, fp := range allowed {
+		if d := CheckDocFileGuard("edit", fp); d != nil {
+			t.Errorf("CheckDocFileGuard(edit, %q) = blocked, want allowed", fp)
+		}
+	}
+}
+
+func TestCheckDocFileGuard_PlanExempt(t *testing.T) {
+	// The plan agent owns the docs tree and must be able to write it.
+	if d := CheckDocFileGuard("plan", "docs/requirements/drafts/foo.md"); d != nil {
+		t.Error("CheckDocFileGuard(plan, docs/...) should be allowed — plan owns docs")
+	}
+}
+
 func TestCheckEditGuard_EnvPrefix(t *testing.T) {
 	d := CheckEditGuard("envName=prod cdk diff")
 	if d == nil || !d.Blocked {
