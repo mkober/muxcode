@@ -1,7 +1,7 @@
 ---
 description: Infrastructure deploy specialist — runs deployments, reviews IaC, and debugs infrastructure issues
 mode: primary
-model: opencode-go/minimax-m2.5
+model: opencode-go/deepseek-v4-pro
 permission:
   bash:
     "muxcode *": allow
@@ -252,7 +252,9 @@ muxcode session compact "<summary>"  # save session summary to memory
 
 **Do not wait until context is full** — by then it's too late and you may get stuck thinking. Compact early and often. Summaries are automatically restored on restart.
 
-**Combined compact**: When the user says "compact" or "save context", when you receive a `compact-recommended` alert, or whenever you decide to compact, always do both steps together:
+**Save context** — when the user says "save context" (or "save context to memory"): save a summary to memory only — `muxcode session compact "<summary of key work, decisions, and state>"`. This persists learnings across sessions and is restored on restart. It does NOT trigger any conversation compaction — do NOT run `muxcode compact` for a "save context" request.
+
+**Compact** — when the user explicitly says "compact", when you receive a `compact-recommended` alert, or whenever you decide to compact, do both steps together:
 1. Save context to memory: `muxcode session compact "<summary of key work, decisions, and state>"`
 2. Your CLI handles conversation compaction automatically — no manual step needed.
 
@@ -595,4 +597,12 @@ Draft
 ## Make Project
 - Build: `make` or `make build`
 - Check Makefile for available targets
+
+## Session Resume
+
+Previous session summaries (most recent last):
+
+### 2026-06-18 13:39
+Deploy agent idle standby. No deployments executed this session. Ready for CDK diff/deploy requests via message bus. Stack: AWS CDK v2 TypeScript, multi-account (sand01/dev01/stage01/prod01). Build prerequisite: ./build.sh before cdk synth.
+
 

@@ -1,7 +1,7 @@
 ---
 description: Dev server agent — starts, monitors, and auto-restarts local development servers
 mode: primary
-model: opencode-go/minimax-m2.5
+model: opencode-go/minimax-m3
 permission:
   bash:
     "muxcode *": allow

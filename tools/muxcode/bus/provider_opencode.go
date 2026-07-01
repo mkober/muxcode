@@ -557,15 +557,21 @@ func isUIChrome(line string) bool {
 func adaptBodyForNonHookProvider(body, role string) string {
 	replacements := map[string]map[string]string{
 		"build": {
-			// Replace "don't send test — hooks handle it" with "send test manually"
-			"The bash hook automatically chains to the test agent — do NOT send a test request yourself.": "Your CLI does not support automatic hooks. After a successful build, send the test request manually:\n`muxcode send test test \"Build succeeded, run tests\" --type request`",
-			"**Do NOT send a test request — the bash hook auto-chains build->test on success.**":          "**After a successful build, send a test request manually** (no auto-chain):\n`muxcode send test test \"Build succeeded, run tests\" --type request`",
-			"the bash hook auto-chains build->test on success":                                            "send a test request manually after a successful build",
+			// Replace "don't send test — hooks handle it" with "send test manually".
+			// These match WHOLE sentences. A narrower substring rule (e.g. replacing
+			// only "the bash hook auto-chains build->test on success") would mangle
+			// "do NOT send a test request — <justification>" into a self-contradiction
+			// ("do NOT send a test request — send a test request manually"), so always
+			// rewrite the entire clause coherently.
+			"The bash hook automatically chains to the test agent — do NOT send a test request yourself.":                                                                               "Your CLI does not support automatic hooks. After a successful build, send the test request manually:\n`muxcode send test test \"Build succeeded, run tests\" --type request`",
+			"Do NOT run tests yourself and do NOT send a test request — the bash hook auto-chains build->test on success. No `pnpm test`/`jest`/`go test`/`pytest`, not even to debug.": "Do NOT run tests yourself to debug — no `pnpm test`/`jest`/`go test`/`pytest`. After a successful build, send the test request manually (no auto-chain):\n`muxcode send test test \"Build succeeded, run tests\" --type request`",
 		},
 		"test": {
-			// Replace "don't send review — hooks handle it" with "send review manually"
-			"**Do NOT send a review request — the bash hook auto-chains test->review on success.**": "**After tests pass, send a review request manually** (no auto-chain):\n`muxcode send review review \"Tests passed, review changes\" --type request`",
-			"the bash hook auto-chains test->review on success":                                     "send a review request manually after tests pass",
+			// Replace "don't send review — hooks handle it" with "send review manually".
+			// Whole-sentence rewrites only — see the build note above for why a bare
+			// substring rule would create a contradiction.
+			"**Do NOT send a review request — the bash hook auto-chains test->review on success.**":                                                      "**After tests pass, send a review request manually** (no auto-chain):\n`muxcode send review review \"Tests passed, review changes\" --type request`",
+			"Send exactly ONE reply per request. Do NOT send additional messages to edit or review — the bash hook auto-chains test->review on success.": "Send exactly ONE reply per request to the requester. After tests pass, send a review request manually (no auto-chain):\n`muxcode send review review \"Tests passed, review changes\" --type request`",
 		},
 		"edit": {
 			// Replace hook guard reference with self-enforcement instruction

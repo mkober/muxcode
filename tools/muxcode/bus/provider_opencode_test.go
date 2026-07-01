@@ -439,6 +439,48 @@ func TestAdaptBodyForNonHookProvider_BuildUnchanged(t *testing.T) {
 	}
 }
 
+func TestAdaptBodyForNonHookProvider_BuildNoContradiction(t *testing.T) {
+	// The canonical agents/code-builder.md:77 line. For non-hook providers the
+	// build agent MUST send the test request manually, so the whole clause must be
+	// rewritten — a naive substring swap left "do NOT send a test request — send a
+	// test request manually", a self-contradiction. Guard against its return.
+	body := "- **Do NOT run tests yourself and do NOT send a test request — the bash hook auto-chains build->test on success. No `pnpm test`/`jest`/`go test`/`pytest`, not even to debug.**"
+	result := adaptBodyForNonHookProvider(body, "build")
+
+	if strings.Contains(result, "do NOT send a test request") {
+		t.Errorf("contradictory 'do NOT send a test request' survived adaptation:\n%s", result)
+	}
+	if strings.Contains(result, "the bash hook auto-chains") {
+		t.Errorf("hook-chain reference was not rewritten:\n%s", result)
+	}
+	if !strings.Contains(result, "send the test request manually") {
+		t.Errorf("missing manual test-request instruction:\n%s", result)
+	}
+	if !strings.Contains(result, "muxcode send test test") {
+		t.Errorf("missing concrete manual send command:\n%s", result)
+	}
+}
+
+func TestAdaptBodyForNonHookProvider_TestNoContradiction(t *testing.T) {
+	// The canonical agents/test-runner.md:16 + :21 lines. Both end in the same
+	// hook-chain clause; a bare substring rule would non-deterministically mangle
+	// the bolded :21 line into "do NOT send a review request — send a review
+	// request manually". Verify full-line rewrites keep both coherent.
+	line16 := "**Send exactly ONE reply per request. Do NOT send additional messages to edit or review — the bash hook auto-chains test->review on success.**"
+	line21 := "- **Do NOT send a review request — the bash hook auto-chains test->review on success.**"
+	result := adaptBodyForNonHookProvider(line16+"\n"+line21, "test")
+
+	if strings.Contains(result, "the bash hook auto-chains") {
+		t.Errorf("hook-chain reference was not rewritten:\n%s", result)
+	}
+	if strings.Contains(result, "Do NOT send a review request — send a review request manually") {
+		t.Errorf("contradictory review instruction produced:\n%s", result)
+	}
+	if !strings.Contains(result, "muxcode send review review") {
+		t.Errorf("missing concrete manual review send command:\n%s", result)
+	}
+}
+
 func TestConfigureLaunch_EditStartupContext(t *testing.T) {
 	provider := &OpenCodeProvider{}
 	cfg := &LaunchConfig{Role: "edit"}
