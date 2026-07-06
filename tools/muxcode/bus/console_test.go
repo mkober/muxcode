@@ -533,3 +533,173 @@ func TestRenderConsoleAgentEmpty(t *testing.T) {
 		t.Errorf("agent console should contain status header with 'Phase:', got: %q", output)
 	}
 }
+
+// TestRenderConsoleRunWithProcs verifies that background processes spawned via
+// `muxcode proc start` surface in the run console — including when there is no
+// command-execution history (the run agent's silent-proc scenario).
+func TestRenderConsoleRunWithProcs(t *testing.T) {
+	session := "test-console-run-procs"
+	_ = Init(session, t.TempDir())
+	t.Cleanup(func() { _ = Cleanup(session) })
+
+	if err := os.MkdirAll(ProcDir(session), 0755); err != nil {
+		t.Fatalf("mkdir proc dir: %v", err)
+	}
+
+	// A finished process owned by the run agent, with captured output.
+	id := "1700000000-proc-abcd1234"
+	logFile := ProcLogPath(session, id)
+	os.WriteFile(logFile, []byte("starting integration test\nstep 1 ok\nstep 2 ok\nEXIT_CODE:0\n"), 0644)
+
+	entry := ProcEntry{
+		ID:         id,
+		PID:        999999, // not alive → display uses stored terminal status
+		Command:    "bash scripts/test-student-data.sh",
+		Dir:        "/tmp",
+		Owner:      "run",
+		Status:     "exited",
+		ExitCode:   0,
+		StartedAt:  1700000000,
+		FinishedAt: 1700000012,
+		LogFile:    logFile,
+	}
+	if err := WriteProcEntries(session, []ProcEntry{entry}); err != nil {
+		t.Fatalf("WriteProcEntries: %v", err)
+	}
+
+	output := RenderConsole("run", session, 80)
+
+	if !strings.Contains(output, "background processes") {
+		t.Errorf("run console should show 'background processes' section, got: %q", output)
+	}
+	if !strings.Contains(output, "bash scripts/test-student-data.sh") {
+		t.Errorf("run console should show the proc command, got: %q", output)
+	}
+	if !strings.Contains(output, "abcd1234") {
+		t.Errorf("run console should show the short proc id, got: %q", output)
+	}
+	if !strings.Contains(output, "step 2 ok") {
+		t.Errorf("run console should show the proc output tail, got: %q", output)
+	}
+	if strings.Contains(output, "EXIT_CODE:0") {
+		t.Errorf("run console should strip the EXIT_CODE sentinel from output, got: %q", output)
+	}
+	// With no command history but a tracked proc, the empty placeholder must
+	// not be shown — the proc section stands in for it.
+	if strings.Contains(output, "no executions yet") {
+		t.Errorf("run console with procs should not show 'no executions yet', got: %q", output)
+	}
+}
+
+// TestRenderConsoleRunProcOwnerFilter verifies procs owned by other roles do
+// not leak into the run console.
+func TestRenderConsoleRunProcOwnerFilter(t *testing.T) {
+	session := "test-console-run-procfilter"
+	_ = Init(session, t.TempDir())
+	t.Cleanup(func() { _ = Cleanup(session) })
+
+	if err := os.MkdirAll(ProcDir(session), 0755); err != nil {
+		t.Fatalf("mkdir proc dir: %v", err)
+	}
+
+	id := "1700000000-proc-deadbeef"
+	logFile := ProcLogPath(session, id)
+	os.WriteFile(logFile, []byte("deploy log\nEXIT_CODE:0\n"), 0644)
+	entry := ProcEntry{
+		ID: id, PID: 999999, Command: "cdk deploy SomeStack", Owner: "deploy",
+		Status: "exited", ExitCode: 0, StartedAt: 1700000000, FinishedAt: 1700000005, LogFile: logFile,
+	}
+	if err := WriteProcEntries(session, []ProcEntry{entry}); err != nil {
+		t.Fatalf("WriteProcEntries: %v", err)
+	}
+
+	output := RenderConsole("run", session, 80)
+	if strings.Contains(output, "cdk deploy SomeStack") {
+		t.Errorf("run console must not show deploy-owned procs, got: %q", output)
+	}
+	if !strings.Contains(output, "no executions yet") {
+		t.Errorf("run console with no owned procs/history should show empty placeholder, got: %q", output)
+	}
+}
+
+// writeOwnedProc is a test helper: writes a single finished proc owned by the
+// given role, with the given command and log output, and returns the proc id.
+func writeOwnedProc(t *testing.T, session, owner, command, output string) string {
+	t.Helper()
+	if err := os.MkdirAll(ProcDir(session), 0755); err != nil {
+		t.Fatalf("mkdir proc dir: %v", err)
+	}
+	id := "1700000000-proc-" + owner + "01"
+	logFile := ProcLogPath(session, id)
+	os.WriteFile(logFile, []byte(output+"\nEXIT_CODE:0\n"), 0644)
+	entry := ProcEntry{
+		ID: id, PID: 999999, Command: command, Owner: owner,
+		Status: "exited", ExitCode: 0, StartedAt: 1700000000, FinishedAt: 1700000010, LogFile: logFile,
+	}
+	if err := WriteProcEntries(session, []ProcEntry{entry}); err != nil {
+		t.Fatalf("WriteProcEntries: %v", err)
+	}
+	return id
+}
+
+// TestRenderConsoleWatchWithProcs verifies the watch console surfaces its
+// background processes with the same section as the run console.
+func TestRenderConsoleWatchWithProcs(t *testing.T) {
+	session := "test-console-watch-procs"
+	_ = Init(session, t.TempDir())
+	t.Cleanup(func() { _ = Cleanup(session) })
+
+	writeOwnedProc(t, session, "watch", "bash scripts/tail-logs.sh /aws/lambda/fn", "streaming CloudWatch events")
+
+	output := RenderConsole("watch", session, 80)
+	if !strings.Contains(output, "background processes") {
+		t.Errorf("watch console should show 'background processes', got: %q", output)
+	}
+	if !strings.Contains(output, "tail-logs.sh") {
+		t.Errorf("watch console should show the derived proc name, got: %q", output)
+	}
+	if !strings.Contains(output, "streaming CloudWatch events") {
+		t.Errorf("watch console should show the proc output tail, got: %q", output)
+	}
+	if strings.Contains(output, "no events yet") {
+		t.Errorf("watch console with procs should not show empty placeholder, got: %q", output)
+	}
+}
+
+// TestRenderConsoleCommitWithProcs verifies the commit console surfaces its
+// background processes alongside the git status section.
+func TestRenderConsoleCommitWithProcs(t *testing.T) {
+	session := "test-console-commit-procs"
+	_ = Init(session, t.TempDir())
+	t.Cleanup(func() { _ = Cleanup(session) })
+
+	writeOwnedProc(t, session, "commit", "bash scripts/push-release.sh v1.2.0", "pushing tags to origin")
+
+	output := RenderConsole("commit", session, 80)
+	if !strings.Contains(output, "background processes") {
+		t.Errorf("commit console should show 'background processes', got: %q", output)
+	}
+	if !strings.Contains(output, "push-release.sh") {
+		t.Errorf("commit console should show the derived proc name, got: %q", output)
+	}
+	if !strings.Contains(output, "pushing tags to origin") {
+		t.Errorf("commit console should show the proc output tail, got: %q", output)
+	}
+}
+
+// TestRenderConsoleWatchProcOwnerFilter verifies non-watch procs don't leak in.
+func TestRenderConsoleWatchProcOwnerFilter(t *testing.T) {
+	session := "test-console-watch-procfilter"
+	_ = Init(session, t.TempDir())
+	t.Cleanup(func() { _ = Cleanup(session) })
+
+	writeOwnedProc(t, session, "run", "bash scripts/only-run.sh", "run output")
+
+	output := RenderConsole("watch", session, 80)
+	if strings.Contains(output, "only-run.sh") {
+		t.Errorf("watch console must not show run-owned procs, got: %q", output)
+	}
+	if !strings.Contains(output, "no events yet") {
+		t.Errorf("watch console with no owned procs should show empty placeholder, got: %q", output)
+	}
+}

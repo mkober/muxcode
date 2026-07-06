@@ -535,13 +535,13 @@ Draft
 
 Previous session summaries (most recent last):
 
-### 2026-06-24 07:04
-Test agent: runs muxcode Go tests. All pass. Idle.
+### 2026-07-02 04:55
+Test agent: repeatedly warned about context limits. Running session compact as instructed. Core function: execute ./test.sh on build success notifications. All 5 Go packages (harness, bus, cmd, daemon, tui) consistently PASS with 0 FAIL. Reviews always clean. Idle awaiting work.
 
-### 2026-06-24 09:05
-Test agent: muxcode Go test suite. All tests pass. Idle awaiting work.
+### 2026-07-02 06:56
+Test agent: runs ./test.sh on build→test→review chains. All 5 Go packages PASS 0 FAIL. Idle.
 
-### 2026-06-24 11:05
-Test agent: runs Go tests for muxcode. All packages pass consistently. No code changes. Idle.
+### 2026-07-02 08:56
+Test agent: repeatedly compacting as instructed. Core task: run ./test.sh on build success. All 5 Go packages always PASS 0 FAIL. Idle.
 
 

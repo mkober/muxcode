@@ -7,11 +7,101 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
 	"time"
 )
+
+// procScriptExts are file suffixes recognized as script names when deriving a
+// process display name from a command line.
+var procScriptExts = []string{".sh", ".bash", ".zsh", ".py", ".js", ".ts", ".rb", ".pl", ".go"}
+
+// procInterpreters are program names that run a script passed as an argument;
+// when one leads a command, the script argument becomes the process name.
+var procInterpreters = map[string]bool{
+	"bash": true, "sh": true, "zsh": true, "python": true, "python3": true,
+	"node": true, "ruby": true, "perl": true, "go": true,
+}
+
+// procShellKeywords are leading tokens of a bare inline shell construct that
+// has no single script to name.
+var procShellKeywords = map[string]bool{
+	"for": true, "while": true, "until": true, "if": true,
+	"case": true, "{": true, "(": true, "do": true, "then": true,
+}
+
+// envAssignRe matches a leading environment assignment token (FOO=bar).
+var envAssignRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
+// ProcName derives a short, human-friendly name for a background process from
+// its command — typically the script being run (e.g. "test-foo.sh" from
+// "bash scripts/test-foo.sh --env dev"). It falls back to the invoked program
+// name, or "(inline)" for a bare shell construct with no script.
+//
+// Order matters: the inline-construct check runs before any script scan, so a
+// script named only as loop data (e.g. "for f in a.sh b.sh") is reported as
+// "(inline)" rather than mistaken for the executed script.
+func ProcName(command string) string {
+	fields := strings.Fields(command)
+	// Skip leading environment assignments (FOO=bar bash script.sh).
+	for len(fields) > 0 && envAssignRe.MatchString(fields[0]) {
+		fields = fields[1:]
+	}
+	if len(fields) == 0 {
+		return "(none)"
+	}
+
+	head := fields[0]
+
+	// 1. Bare inline shell construct — no single script to name.
+	if procShellKeywords[head] {
+		return "(inline)"
+	}
+
+	// 2. Interpreter → prefer a script argument, else the first non-flag
+	//    argument (module or subcommand, e.g. "python -m pytest" → "pytest",
+	//    "go run main.go" → "main.go").
+	if procInterpreters[filepath.Base(head)] {
+		firstArg := ""
+		for _, f := range fields[1:] {
+			if strings.HasPrefix(f, "-") {
+				continue
+			}
+			if base, ok := scriptBase(f); ok {
+				return base
+			}
+			if firstArg == "" {
+				firstArg = filepath.Base(f)
+			}
+		}
+		if firstArg != "" {
+			return firstArg
+		}
+	}
+
+	// 3. Direct script execution (./foo.sh, scripts/foo.sh).
+	if base, ok := scriptBase(head); ok {
+		return base
+	}
+
+	// 4. Fallback: the invoked program name.
+	return filepath.Base(head)
+}
+
+// scriptBase returns the basename of tok and true when tok ends in a known
+// script extension. Extension matching is case-insensitive (".SH" matches);
+// the returned basename preserves the original case.
+func scriptBase(tok string) (string, bool) {
+	lower := strings.ToLower(tok)
+	for _, ext := range procScriptExts {
+		if strings.HasSuffix(lower, ext) {
+			return filepath.Base(tok), true
+		}
+	}
+	return "", false
+}
 
 // ProcEntry represents a tracked background process.
 type ProcEntry struct {
@@ -276,6 +366,57 @@ func extractExitCode(logFile string) (int, bool) {
 		break
 	}
 	return -1, false
+}
+
+// ProcDisplayStatus returns the effective status of a process entry for
+// display, performing a read-only liveness check without persisting changes.
+// A "running" entry whose process has already died (but has not yet been
+// reconciled by the daemon or a `proc list`/`status` call) is reported with
+// its terminal status derived from the log's EXIT_CODE sentinel. This lets the
+// console reflect completion immediately without mutating the proc JSONL from
+// the render path (which the daemon owns).
+func ProcDisplayStatus(e ProcEntry) (status string, exitCode int) {
+	if e.Status != "running" {
+		return e.Status, e.ExitCode
+	}
+	if CheckProcAlive(e.PID) {
+		return "running", -1
+	}
+	// Process is gone but not yet reconciled — derive terminal status.
+	if code, ok := extractExitCode(e.LogFile); ok {
+		if code == 0 {
+			return "exited", 0
+		}
+		return "failed", code
+	}
+	return "exited", -1
+}
+
+// ProcLogTail returns up to the last n non-empty lines of a process log,
+// stripping the trailing EXIT_CODE sentinel. ANSI stripping is left to the
+// caller so it can be reused for both console rendering and CLI output.
+func ProcLogTail(logFile string, n int) []string {
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		return nil
+	}
+
+	var lines []string
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimRight(raw, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if exitCodeRe.MatchString(strings.TrimSpace(line)) {
+			continue
+		}
+		lines = append(lines, line)
+	}
+
+	if n > 0 && len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return lines
 }
 
 // StopProc sends SIGTERM to a running process and updates its status.

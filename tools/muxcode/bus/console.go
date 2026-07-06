@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -756,6 +757,162 @@ func renderReview(cfg *ConsoleConfig, session string, width int) string {
 	return b.String()
 }
 
+// procStatusGlyph returns a status glyph and Dracula color for a background
+// process display status.
+func procStatusGlyph(status string) (glyph, color string) {
+	switch status {
+	case "running":
+		return "▸", ColorCyan
+	case "exited":
+		return "✓", ColorGreen
+	case "failed":
+		return "✗", ColorRed
+	case "stopped":
+		return "■", ColorYellow
+	default:
+		return "•", ColorDim
+	}
+}
+
+// shortProcID returns the trailing hex segment of a proc ID (e.g. the
+// "a1b2c3d4" of "1783000377-proc-a1b2c3d4") for compact display.
+// strings.Split always yields at least one element, so the tail index is safe.
+func shortProcID(id string) string {
+	parts := strings.Split(id, "-")
+	return parts[len(parts)-1]
+}
+
+// selectProcsForDisplay orders processes running-first (then most-recent) and
+// caps the result at max, guaranteeing live processes stay visible even behind
+// a backlog of finished ones.
+func selectProcsForDisplay(procs []ProcEntry, max int) []ProcEntry {
+	var running, finished []ProcEntry
+	for _, e := range procs {
+		if st, _ := ProcDisplayStatus(e); st == "running" {
+			running = append(running, e)
+		} else {
+			finished = append(finished, e)
+		}
+	}
+	// Newest first within each group (entries are appended in start order).
+	slices.Reverse(running)
+	slices.Reverse(finished)
+
+	ordered := append(running, finished...)
+	if max > 0 && len(ordered) > max {
+		ordered = ordered[:max]
+	}
+	return ordered
+}
+
+// renderProcSection surfaces background processes spawned by the given role via
+// `muxcode proc start`. These run detached and are otherwise invisible in the
+// console, so this shows their live status plus a tail of the most relevant
+// process's output. Returns "" when the role owns no tracked processes.
+func renderProcSection(session, role string, width int) string {
+	all, err := ReadProcEntries(session)
+	if err != nil || len(all) == 0 {
+		return ""
+	}
+
+	var owned []ProcEntry
+	for _, e := range all {
+		if e.Owner == role {
+			owned = append(owned, e)
+		}
+	}
+	if len(owned) == 0 {
+		return ""
+	}
+
+	cw := calcContentWidth(width)
+	var b strings.Builder
+
+	running := 0
+	for _, e := range owned {
+		if st, _ := ProcDisplayStatus(e); st == "running" {
+			running++
+		}
+	}
+
+	b.WriteString(fmt.Sprintf("%s%sbackground processes%s  %s%d running · %d total%s\n",
+		Pad, ColorPurple, ColorReset, ColorDim, running, len(owned), ColorReset))
+
+	const maxProcs = 5
+	shown := selectProcsForDisplay(owned, maxProcs)
+	for _, e := range shown {
+		st, ec := ProcDisplayStatus(e)
+		glyph, color := procStatusGlyph(st)
+
+		// Elapsed (running) or duration (finished).
+		when := ""
+		if st == "running" {
+			when = agentDuration(time.Now().Unix()-e.StartedAt) + " ago"
+		} else if e.FinishedAt > 0 {
+			when = agentDuration(e.FinishedAt-e.StartedAt) + " total"
+		}
+
+		label := st
+		if st == "failed" && ec > 0 {
+			label = fmt.Sprintf("failed (exit %d)", ec)
+		}
+
+		// Lead with the derived process name (script/program); status, elapsed,
+		// and short id follow. The full command is shown underneath.
+		meta := label
+		if when != "" {
+			meta += " · " + when
+		}
+		name := ProcName(e.Command)
+		b.WriteString(fmt.Sprintf("%s%s%s%s %s%-22s%s %s%s%s  %s%s%s\n",
+			ContPad, color, glyph, ColorReset,
+			ColorCyan, name, ColorReset,
+			ColorDim, meta, ColorReset,
+			ColorDim, shortProcID(e.ID), ColorReset))
+
+		// Command (word-wrapped under the name line), unless it adds nothing
+		// beyond the name itself.
+		if strings.TrimSpace(e.Command) != name {
+			for _, wline := range WordWrap(e.Command, cw-len(ContPad)+len(Pad)) {
+				b.WriteString(fmt.Sprintf("%s%s%s%s\n", EntryPad, ColorDim, wline, ColorReset))
+			}
+		}
+	}
+	b.WriteString("\n")
+
+	// Output tail of the most relevant process. selectProcsForDisplay orders
+	// running-first, so shown[0] is a live process when one exists, else the
+	// most recent finished one.
+	if len(shown) > 0 {
+		target := shown[0]
+		st, _ := ProcDisplayStatus(target)
+		_, color := procStatusGlyph(st)
+		b.WriteString(fmt.Sprintf("%s%s⏺ output%s  %s%s%s  %s%s · %s%s\n",
+			Pad, color, ColorReset,
+			ColorCyan, ProcName(target.Command), ColorReset,
+			ColorDim, shortProcID(target.ID), st, ColorReset))
+
+		tail := ProcLogTail(target.LogFile, 12)
+		if len(tail) == 0 {
+			b.WriteString(fmt.Sprintf("%s%s- (no output yet)%s\n", ContPad, ColorDim, ColorReset))
+		} else {
+			wrapWidth := cw - len(ContPad) + len(Pad)
+			for _, rawLine := range tail {
+				oline := strings.TrimSpace(StripANSI(rawLine))
+				if oline == "" {
+					continue
+				}
+				for _, wline := range WordWrap(oline, wrapWidth) {
+					b.WriteString(fmt.Sprintf("%s%s- %s%s\n", ContPad, ColorDim, wline, ColorReset))
+				}
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
 // renderDeployRunner handles deploy and run roles.
 func renderDeployRunner(cfg *ConsoleConfig, session string, width int) string {
 	roleName := strings.ToLower(cfg.Title)
@@ -766,8 +923,17 @@ func renderDeployRunner(cfg *ConsoleConfig, session string, width int) string {
 
 	var b strings.Builder
 
+	// Background processes spawned via `muxcode proc start` are tracked
+	// separately from command history — surface them first so silently-spawned
+	// work is visible even before (or without) a logged execution entry.
+	procSection := renderProcSection(session, roleName, width)
+
 	if len(entries) == 0 {
-		b.WriteString(emptyBlock(cfg.EmptyMsg))
+		if procSection != "" {
+			b.WriteString(procSection)
+		} else {
+			b.WriteString(emptyBlock(cfg.EmptyMsg))
+		}
 		return b.String()
 	}
 
@@ -782,6 +948,10 @@ func renderDeployRunner(cfg *ConsoleConfig, session string, width int) string {
 
 	b.WriteString(summaryLine(total, pass, fail))
 	b.WriteString("\n")
+
+	if procSection != "" {
+		b.WriteString(procSection)
+	}
 
 	// Recent entries
 	b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorCyan, cfg.RecentLabel, ColorReset))
@@ -888,6 +1058,12 @@ func renderCommit(cfg *ConsoleConfig, session string, width int) string {
 
 	// ── Git status section ──
 	b.WriteString(renderGitStatus())
+
+	// ── Background processes owned by the commit agent (if any) ──
+	if procSection := renderProcSection(session, "commit", width); procSection != "" {
+		b.WriteString("\n")
+		b.WriteString(procSection)
+	}
 
 	// Separator between git status and history
 	b.WriteString("\n")
@@ -1115,8 +1291,16 @@ func renderWatch(cfg *ConsoleConfig, session string, width int) string {
 
 	var b strings.Builder
 
+	// Background processes owned by the watch agent (e.g. detached log follows).
+	procSection := renderProcSection(session, "watch", width)
+	if procSection != "" {
+		b.WriteString(procSection)
+	}
+
 	if len(entries) == 0 {
-		b.WriteString(emptyBlock(cfg.EmptyMsg))
+		if procSection == "" {
+			b.WriteString(emptyBlock(cfg.EmptyMsg))
+		}
 		return b.String()
 	}
 

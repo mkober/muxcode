@@ -549,3 +549,87 @@ func TestInit_CreatesProcDir(t *testing.T) {
 		t.Errorf("proc.jsonl: %v", err)
 	}
 }
+
+func TestProcDisplayStatus(t *testing.T) {
+	// Terminal status is returned as-stored without a liveness probe.
+	exited := ProcEntry{Status: "exited", ExitCode: 0, PID: 999999}
+	if st, ec := ProcDisplayStatus(exited); st != "exited" || ec != 0 {
+		t.Errorf("exited: got (%s, %d), want (exited, 0)", st, ec)
+	}
+
+	// A live process reports running.
+	live := ProcEntry{Status: "running", PID: os.Getpid()}
+	if st, _ := ProcDisplayStatus(live); st != "running" {
+		t.Errorf("live process: got %s, want running", st)
+	}
+
+	// A "running" entry whose PID is dead reconciles from the log sentinel.
+	dir := t.TempDir()
+	okLog := filepath.Join(dir, "ok.log")
+	os.WriteFile(okLog, []byte("done\nEXIT_CODE:0\n"), 0644)
+	deadOK := ProcEntry{Status: "running", PID: 999999, LogFile: okLog}
+	if st, ec := ProcDisplayStatus(deadOK); st != "exited" || ec != 0 {
+		t.Errorf("dead-ok: got (%s, %d), want (exited, 0)", st, ec)
+	}
+
+	failLog := filepath.Join(dir, "fail.log")
+	os.WriteFile(failLog, []byte("boom\nEXIT_CODE:7\n"), 0644)
+	deadFail := ProcEntry{Status: "running", PID: 999999, LogFile: failLog}
+	if st, ec := ProcDisplayStatus(deadFail); st != "failed" || ec != 7 {
+		t.Errorf("dead-fail: got (%s, %d), want (failed, 7)", st, ec)
+	}
+}
+
+func TestProcName(t *testing.T) {
+	cases := []struct {
+		command string
+		want    string
+	}{
+		{"bash scripts/test-student-data.sh --env dev01", "test-student-data.sh"},
+		{"./build.sh", "build.sh"},
+		{"python3 resources/lambda/handler.py", "handler.py"},
+		{"FOO=bar bash scripts/run.sh", "run.sh"},
+		{"node dist/index.js --watch", "index.js"},
+		{"for i in $(seq 1 15); do echo $i; sleep 2; done", "(inline)"},
+		{"aws lambda invoke --function-name f out.json", "aws"},
+		{"make build", "make"},
+		{"", "(none)"},
+		// Interpreter subcommand/module forms.
+		{"go run main.go", "main.go"},
+		{"python -m pytest", "pytest"},
+		// Script named only as loop data must not be mistaken for the script.
+		{"for f in a.sh b.sh; do echo $f; done", "(inline)"},
+		{"./RUN.SH --flag", "RUN.SH"}, // case-insensitive extension match
+	}
+	for _, c := range cases {
+		if got := ProcName(c.command); got != c.want {
+			t.Errorf("ProcName(%q) = %q, want %q", c.command, got, c.want)
+		}
+	}
+}
+
+func TestProcLogTail(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "tail.log")
+	os.WriteFile(logFile, []byte("l1\n\nl2\nl3\nl4\nEXIT_CODE:0\n"), 0644)
+
+	// Sentinel and blank lines are stripped; tail cap applies to real lines.
+	got := ProcLogTail(logFile, 2)
+	if len(got) != 2 || got[0] != "l3" || got[1] != "l4" {
+		t.Errorf("tail 2: got %v, want [l3 l4]", got)
+	}
+
+	all := ProcLogTail(logFile, 0)
+	if len(all) != 4 {
+		t.Errorf("tail all: got %d lines, want 4 (%v)", len(all), all)
+	}
+	for _, l := range all {
+		if strings.HasPrefix(l, "EXIT_CODE:") {
+			t.Errorf("tail should strip EXIT_CODE sentinel, got %v", all)
+		}
+	}
+
+	if lines := ProcLogTail(filepath.Join(dir, "missing.log"), 5); lines != nil {
+		t.Errorf("missing log should return nil, got %v", lines)
+	}
+}
