@@ -57,6 +57,8 @@ type Daemon struct {
 	lastNonHookWake      map[string]int64 // cooldown: last wake time per non-hook role (60s)
 	lastIdleState        map[string]bool  // per-role idle state from last check (for transition detection)
 	activeUnnotifiedSeen map[string]int64 // role -> unix time when unnotified msgs first seen while agent "active"
+	forceWakeCount       map[string]int   // role -> consecutive active-but-❯ force-wakes this episode (churn cap)
+	churnSuppressed      map[string]bool  // role -> force-wake suppressed until the agent idles / inbox drains
 	// Non-hook task completion detection
 	lastTaskCheck       int64             // 5s interval
 	taskDeliveredAt     map[string]int64  // msgID -> unix time when message was delivered (wake-up sent)
@@ -96,6 +98,7 @@ type Daemon struct {
 	lastActiveWatchdogCheck int64            // 60s interval
 	activeSince             map[string]int64 // role -> unix time agent went active (0 = idle)
 	lastActiveNudge         map[string]int64 // role -> unix time of last nudge sent
+	activeNudgeCount        map[string]int   // role -> nudges sent this active-episode (capped; reset on idle)
 	// Stuck-provider watchdog — auto-reloads non-hook agents (OpenCode/Codex)
 	// wedged in a provider-side loop their process can't recover from.
 	lastStuckCheck  int64            // 60s interval
@@ -162,6 +165,8 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		lastNonHookWake:       make(map[string]int64),
 		lastIdleState:         make(map[string]bool),
 		activeUnnotifiedSeen:  make(map[string]int64),
+		forceWakeCount:        make(map[string]int),
+		churnSuppressed:       make(map[string]bool),
 		taskDeliveredAt:       make(map[string]int64),
 		taskLastPaneContent:   make(map[string]string),
 		idleTaskFirstSeen:     make(map[string]int64),
@@ -179,6 +184,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		editWindowStart:       now,
 		activeSince:           make(map[string]int64),
 		lastActiveNudge:       make(map[string]int64),
+		activeNudgeCount:      make(map[string]int),
 		stuckSeen:             make(map[string]int),
 		stuckReloads:          make(map[string]int),
 		lastStuckReload:       make(map[string]int64),
@@ -780,6 +786,20 @@ func activeWatchdogSecs() int64 {
 	return 600
 }
 
+// activeWatchdogMaxNudges returns the maximum number of long-active advisories
+// the watchdog will queue during a single continuous-active episode before going
+// silent (until the agent returns to idle, which resets the count). This bounds
+// the inbox pile-up that would otherwise grow one advisory per threshold window
+// indefinitely. Configurable via MUXCODE_ACTIVE_WATCHDOG_MAX_NUDGES. Default 2.
+func activeWatchdogMaxNudges() int {
+	if v := os.Getenv("MUXCODE_ACTIVE_WATCHDOG_MAX_NUDGES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 2
+}
+
 // checkActiveWatchdog detects an agent that has been continuously "active"
 // (not at the idle ❯ prompt) for longer than the threshold — e.g. a runaway
 // multi-minute think churning over contradictory data — and queues a one-time
@@ -808,6 +828,7 @@ func (d *Daemon) checkActiveWatchdog() {
 		}
 		if bus.IsReloading(d.session, role) {
 			d.activeSince[role] = 0
+			d.activeNudgeCount[role] = 0
 			continue
 		}
 		if bus.IsHarnessActive(d.session, role) {
@@ -822,11 +843,13 @@ func (d *Daemon) checkActiveWatchdog() {
 		// or actively polling its inbox is "active" by design, not stuck.
 		if bus.IsWaiting(d.session, role) || bus.IsPolling(d.session, role) {
 			d.activeSince[role] = 0
+			d.activeNudgeCount[role] = 0
 			continue
 		}
 
 		if bus.IsAgentIdle(d.session, role) {
 			d.activeSince[role] = 0
+			d.activeNudgeCount[role] = 0
 			continue
 		}
 
@@ -843,11 +866,19 @@ func (d *Daemon) checkActiveWatchdog() {
 		if last, ok := d.lastActiveNudge[role]; ok && (now-last) < threshold {
 			continue
 		}
+		// Cap total advisories per active-episode so the inbox doesn't accumulate
+		// one long-active message per threshold window indefinitely (the churn the
+		// user hit). 0 disables advisories entirely (never nudge). Reset happens
+		// when the agent returns to idle above.
+		if d.activeNudgeCount[role] >= activeWatchdogMaxNudges() {
+			continue
+		}
 		d.lastActiveNudge[role] = now
+		d.activeNudgeCount[role]++
 
 		ts := time.Now().Format("15:04:05")
-		fmt.Printf("  %s  Active watchdog: %s active %s with no idle return — nudging to escalate\n",
-			ts, role, formatWatchdogDuration(dur))
+		fmt.Printf("  %s  Active watchdog: %s active %s with no idle return — nudging to escalate (%d/%d)\n",
+			ts, role, formatWatchdogDuration(dur), d.activeNudgeCount[role], activeWatchdogMaxNudges())
 		bus.LogLifecycle(d.session, "warn", "daemon", "active-watchdog",
 			fmt.Sprintf("%s active %ds", role, dur))
 
@@ -1611,6 +1642,11 @@ func (d *Daemon) checkIdleAgents() {
 		// Skip if no unnotified messages (content-aware, not size-based).
 		unnotified := bus.UnnotifiedMessages(d.session, role)
 		if len(unnotified) == 0 {
+			// Inbox drained (nothing unnotified) — the churn episode resolved, so
+			// reset the force-wake budget and lift any suppression. Without this
+			// the reset in the idle branch below is unreachable when the inbox is
+			// empty, so a suppressed role would stay permanently undeliverable.
+			d.resetChurnGuard(role)
 			// Safety net: if the agent has actionable messages but all are
 			// marked as notified with a stale marker (>15s), a previous
 			// send-keys injection was likely dropped by the TUI. Clear the
@@ -1703,16 +1739,44 @@ func (d *Daemon) checkIdleAgents() {
 				d.activeUnnotifiedSeen[role] = now
 			}
 			if now-d.activeUnnotifiedSeen[role] >= watchdogActiveSecs {
+				// Churn cap: once we've force-woken this role churnForceWakeCap
+				// times without it draining, stop. Re-injecting every poll while
+				// the agent stays "active but ❯" (e.g. a parked blob wrapping past
+				// the idle window) burns a full agent turn each time. Back off
+				// until the agent genuinely idles or the inbox drains (reset below).
+				if d.churnSuppressed[role] {
+					continue
+				}
 				target := bus.PaneTarget(d.session, role)
 				if content, err := bus.TmuxCapturePaneLines(target, 200); err == nil {
 					if bus.PaneHasIdlePrompt(content) {
 						ts := time.Now().Format("15:04:05")
-						fmt.Printf("  %s  Watchdog: %s appears active but ❯ found in wider capture — forcing delivery\n", ts, role)
-						bus.LogLifecycle(d.session, "info", "daemon", "watchdog-force-wake", role)
+						// Clear any parked residue once, before either suppressing or
+						// delivering, so a retried injection lands clean.
 						if bus.HasPendingInput(d.session, role) && !bus.IsWindowFocused(d.session, role) {
 							_ = bus.TmuxClearInput(target)
 							time.Sleep(100 * time.Millisecond)
 						}
+						if d.forceWakeCount[role] >= churnForceWakeCap {
+							// Self-heal: suppress further force-wakes for this episode
+							// to stop the token churn, and alert edit once (deduped) so
+							// a human can intervene if the agent stays wedged.
+							d.churnSuppressed[role] = true
+							fmt.Printf("  %s  Churn guard: %s force-woken %d× without draining — suppressing until idle\n",
+								ts, role, d.forceWakeCount[role])
+							bus.LogLifecycle(d.session, "warn", "daemon", "churn-suppress",
+								fmt.Sprintf("%s: %d force-wakes, suppressing", role, d.forceWakeCount[role]))
+							alert := bus.NewMessage("daemon", "edit", "event", "churn-suppressed",
+								fmt.Sprintf("%s force-woken %d× without draining its inbox — delivery suppressed until it idles. If stuck: muxcode deliver %s --force",
+									role, d.forceWakeCount[role], role), "")
+							_, _ = bus.SendIfNotDuplicate(d.session, alert)
+							d.refreshInboxSizes()
+							continue
+						}
+						d.forceWakeCount[role]++
+						fmt.Printf("  %s  Watchdog: %s appears active but ❯ found in wider capture — forcing delivery (%d/%d)\n",
+							ts, role, d.forceWakeCount[role], churnForceWakeCap)
+						bus.LogLifecycle(d.session, "info", "daemon", "watchdog-force-wake", role)
 						text := bus.BuildCombinedNotification(unnotified)
 						ids := make([]string, 0, len(unnotified))
 						for _, m := range unnotified {
@@ -1732,7 +1796,9 @@ func (d *Daemon) checkIdleAgents() {
 			}
 			continue
 		}
-		delete(d.activeUnnotifiedSeen, role) // agent is idle — clear watchdog
+		// Agent is idle — clear watchdog + churn-guard state for the episode.
+		delete(d.activeUnnotifiedSeen, role)
+		d.resetChurnGuard(role)
 
 		// Hold if the user is mid-typing at the prompt — injecting via
 		// send-keys would corrupt their input. If the window isn't focused,
@@ -2356,6 +2422,22 @@ const idleTaskGracePeriod int64 = 30
 // this threshold the wider check runs every poll (every 5s), not once.
 const watchdogActiveSecs int64 = 15
 
+// churnForceWakeCap bounds how many times the "active but ❯ found in wider
+// capture" branch will force-deliver to a role before giving up for the episode.
+// Past this, the daemon clears the composer once and suppresses further
+// force-wakes (churnSuppressed) until the agent genuinely idles or its inbox
+// drains — preventing the re-inject-every-poll loop that burns a full agent turn
+// each time. Reset on idle transition.
+const churnForceWakeCap int = 3
+
+// resetChurnGuard clears the force-wake budget and lifts any delivery
+// suppression for a role — called when the episode resolves (agent idles or its
+// inbox drains) so a suppressed role becomes deliverable again.
+func (d *Daemon) resetChurnGuard(role string) {
+	delete(d.forceWakeCount, role)
+	delete(d.churnSuppressed, role)
+}
+
 // checkIdleTaskCompletion is a safety net for hook-provider agents (Claude Code)
 // that go idle without having responded to an in-flight task. This catches the
 // failure mode where an agent composes a `muxcode send` command as text output
@@ -2834,10 +2916,25 @@ func (d *Daemon) checkDiskPressure() {
 // the ledger (also flushed on branch change and on pause).
 const branchTimeFlushSecs int64 = 60
 
+// branchTimeIdleSecs returns how long the session may go without user input
+// (tmux client activity) before branch-time treats it as idle and pauses
+// accumulation — so time spent away from the keyboard is not counted even while
+// the session stays attached. Configurable via MUXCODE_BRANCH_TIME_IDLE_SECS;
+// 0 disables idle detection (revert to attach-only). Default 300s (5 minutes).
+func branchTimeIdleSecs() int64 {
+	if v := os.Getenv("MUXCODE_BRANCH_TIME_IDLE_SECS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 300
+}
+
 // checkBranchTime accumulates active working time onto the current git branch.
 // It runs every poll (reusing the daemon cadence, no separate ticker) and only
-// accrues while a tmux client is attached — the idle proxy: a detached session
-// means the user stepped away, so time pauses.
+// accrues while a tmux client is attached AND the user has interacted within
+// branchTimeIdleSecs — so time spent detached, or idle at the keyboard while
+// still attached (lunch, a meeting, overnight), is not counted.
 //
 // To keep the hot path cheap, per-tick deltas are accrued in memory and flushed
 // to the ledger at most once per branchTimeFlushSecs (or on a branch change /
@@ -2853,9 +2950,15 @@ func (d *Daemon) checkBranchTime() {
 
 	now := time.Now().Unix()
 
-	// Pause when no client is attached (detached / stepped away): flush what we
-	// have and reset the baseline so the paused interval isn't counted.
-	if !bus.ClientsAttached(d.session) {
+	// Pause when detached OR attached-but-idle, from a single tmux query:
+	// SessionIdleSeconds returns -1 when no client is attached (stepped away) and
+	// otherwise the seconds since the last keyboard interaction. Pause when
+	// detached, or (when idle detection is enabled) when idle beyond the
+	// threshold — so time away from the keyboard isn't counted. Flush and reset
+	// the baseline so the paused gap isn't back-counted on return.
+	idle := bus.SessionIdleSeconds(d.session)
+	idleMax := branchTimeIdleSecs()
+	if idle < 0 || (idleMax > 0 && idle > idleMax) {
 		d.flushBranchTime()
 		d.lastBranchTick = 0
 		return

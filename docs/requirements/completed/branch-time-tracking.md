@@ -21,7 +21,7 @@ When working across many branches (often one per Jira story), there is no automa
 |--------|----------|
 | What counts | **Active session time** — the daemon accumulates real elapsed seconds into a per-branch ledger while a muxcode session is open on that branch |
 | Pause: session closed | Accumulation pauses when the daemon is not running |
-| Pause: idle | Accumulation pauses when the session is idle. **MVP idle proxy: no tmux client attached** (`tmux list-clients -t <session>` empty) — user detached or stepped away. Deeper agent-activity-based idle is a follow-up |
+| Pause: idle | Accumulation pauses when the session is idle. Two pause signals ship: (1) **no tmux client attached** (detached / session closed), and (2) **input inactivity** — no user interaction for longer than `branchTimeIdleSecs()` (`MUXCODE_BRANCH_TIME_IDLE_SECS`, default 300s / 5 min), so time spent away from the keyboard while still attached (lunch, a meeting, overnight) is not counted. Setting the env to `0` disables the input-inactivity check (revert to attach-only) |
 | Cross-session persistence | Canonical ledger is global at `~/.config/muxcode/branch-time.json`, keyed by **repo identity + branch** so the same branch resumes its total across sessions/restarts |
 | Repo identity | Git remote URL if present, else the repo top-level path |
 | Clock-jump guard | Cap each tick's increment at ~2× the poll interval so a laptop sleep or clock change cannot add spurious hours |
@@ -65,7 +65,8 @@ When working across many branches (often one per Jira story), there is no automa
 
 - Add `checkBranchTime()` to the `Run()` loop alongside the other `check*()` calls (the cluster at daemon.go ~249–268). Reuse the existing single poll loop — no new ticker.
 - Track `d.lastBranchTick time.Time` and `d.lastBranch string` on the `Daemon` struct.
-- Each tick: resolve the current branch via existing `branchName()` (`bus/conditions.go:411`); if a client is attached and the branch is unchanged since the last tick, add `min(now-lastTick, 2*pollInterval)` seconds to that branch.
+- Each tick: resolve the current branch via existing `branchName()` (`bus/conditions.go:411`); if a client is attached, the session is not input-idle, and the branch is unchanged since the last tick, add `min(now-lastTick, 2*pollInterval)` seconds to that branch. On detach, input-idle, or branch change the accumulator flushes and resets the baseline so the paused interval is never back-counted.
+- Idle gate: `checkBranchTime()` (`daemon/daemon.go`) uses `bus.SessionIdleSeconds()` vs `branchTimeIdleSecs()` (`MUXCODE_BRANCH_TIME_IDLE_SECS`, default 300s; `0` disables). Per-tick deltas are accrued in memory and flushed to the ledger at most once per `branchTimeFlushSecs` (or on pause / branch change).
 - Opt-out env var `MUXCODE_BRANCH_TIME_DISABLE=1`.
 - Emit a lifecycle event on the first accumulation per branch.
 
@@ -124,7 +125,7 @@ Register the command in `main.go`'s command switch.
 
 ### Acceptance criteria
 
-- [x] Time accrues per-branch only while a tmux client is attached; accumulation pauses when the session is detached or closed
+- [x] Time accrues per-branch only while a tmux client is attached and the session is not input-idle; accumulation pauses when the session is detached, closed, or idle past `MUXCODE_BRANCH_TIME_IDLE_SECS`
 - [x] Totals persist across session restarts (global ledger keyed by repo identity + branch)
 - [x] Repo identity resolves to the git remote URL when present, else the repo top-level path
 - [x] Clock jumps cannot add more than ~2× the poll interval of time per tick
@@ -158,14 +159,14 @@ Success criteria:
 - [x] Add `lastBranchTick time.Time` and `lastBranch string` fields to the `Daemon` struct
 - [x] Implement `checkBranchTime()` and call it from the `Run()` loop
 - [x] Resolve the current branch via existing `branchName()`
-- [x] Only accumulate when a tmux client is attached (`tmux list-clients -t <session>` non-empty) and the branch is unchanged since the last tick
+- [x] Only accumulate when a tmux client is attached, the session is not input-idle (`SessionIdleSeconds` ≤ `branchTimeIdleSecs()`), and the branch is unchanged since the last tick
 - [x] Apply `min(now-lastTick, 2*pollInterval)` per tick
-- [x] Honor `MUXCODE_BRANCH_TIME_DISABLE=1` (skip accumulation)
+- [x] Honor `MUXCODE_BRANCH_TIME_DISABLE=1` (skip accumulation) and `MUXCODE_BRANCH_TIME_IDLE_SECS` (idle threshold; `0` = attach-only)
 - [x] Emit a lifecycle event on first accumulation per branch
 
 Success criteria:
-- [x] Accumulation advances only while a client is attached
-- [x] No accumulation when detached, closed, or disabled
+- [x] Accumulation advances only while a client is attached and the session is not input-idle
+- [x] No accumulation when detached, closed, input-idle past the threshold, or disabled
 - [x] Branch change resets the tick baseline (no cross-branch bleed)
 - [x] Clock jump / laptop sleep adds at most ~2× poll interval
 
@@ -240,6 +241,7 @@ Success criteria:
 | Aspect | Mechanism |
 |--------|-----------|
 | Disable feature | `MUXCODE_BRANCH_TIME_DISABLE=1` — disables accumulation and `--status` output |
+| Input-inactivity idle | `MUXCODE_BRANCH_TIME_IDLE_SECS` (default 300s / 5 min) — pause accumulation after this long without user input; `0` disables the idle check (attach-only) |
 | Ledger location | `~/.config/muxcode/branch-time.json` (global, cross-session) |
 | Poll cadence | Reuses the daemon's existing poll loop — no new ticker |
 | Status refresh | tmux `status-interval` (e.g. 15s) |
@@ -249,7 +251,7 @@ Success criteria:
 
 | Limitation | Impact | Mitigation |
 |------------|--------|------------|
-| Idle proxy is attach-based | "No client attached" is a coarse idle signal — an attached-but-away user still accrues time | Documented MVP proxy; deeper agent-activity idle is a follow-up |
+| Input-inactivity idle granularity | Idle is detected from tmux client input activity (`SessionIdleSeconds`), not agent-level work — an attached user reading output without typing for `> MUXCODE_BRANCH_TIME_IDLE_SECS` is treated as idle | Shipped: input-inactivity detection (default 5 min) supersedes the original attach-only proxy; agent-activity-aware idle remains a possible follow-up. Tune via `MUXCODE_BRANCH_TIME_IDLE_SECS` or set `0` for attach-only |
 | Repo identity via remote/path | Renamed remotes or moved repos start a fresh ledger key | Keyed on remote URL first, path fallback — stable for the common case |
 | Sequential daemon poll | Accumulation granularity is bounded by the poll interval | Acceptable — sub-poll precision is unnecessary for working-time totals |
 | Jira worklog needs a parseable key | Branches without a Jira key in the name can't `log-jira` | `log-jira` reports a clear error; other surfaces still work |

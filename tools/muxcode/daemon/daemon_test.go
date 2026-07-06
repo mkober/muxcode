@@ -155,6 +155,69 @@ func TestActiveWatchdogSecs_EnvOverride(t *testing.T) {
 	}
 }
 
+func TestActiveWatchdogMaxNudges(t *testing.T) {
+	t.Setenv("MUXCODE_ACTIVE_WATCHDOG_MAX_NUDGES", "")
+	if got := activeWatchdogMaxNudges(); got != 2 {
+		t.Errorf("default = %d, want 2", got)
+	}
+	t.Setenv("MUXCODE_ACTIVE_WATCHDOG_MAX_NUDGES", "5")
+	if got := activeWatchdogMaxNudges(); got != 5 {
+		t.Errorf("override = %d, want 5", got)
+	}
+	// 0 is valid (never nudge).
+	t.Setenv("MUXCODE_ACTIVE_WATCHDOG_MAX_NUDGES", "0")
+	if got := activeWatchdogMaxNudges(); got != 0 {
+		t.Errorf("zero = %d, want 0", got)
+	}
+	// Garbage falls back to default.
+	t.Setenv("MUXCODE_ACTIVE_WATCHDOG_MAX_NUDGES", "nope")
+	if got := activeWatchdogMaxNudges(); got != 2 {
+		t.Errorf("garbage fallback = %d, want 2", got)
+	}
+}
+
+func TestResetChurnGuard(t *testing.T) {
+	d := New("test-session", 5, 8)
+	// Simulate a role that hit the force-wake cap and was suppressed.
+	d.forceWakeCount["review"] = churnForceWakeCap
+	d.churnSuppressed["review"] = true
+
+	d.resetChurnGuard("review")
+
+	if _, ok := d.forceWakeCount["review"]; ok {
+		t.Error("resetChurnGuard should clear forceWakeCount")
+	}
+	if d.churnSuppressed["review"] {
+		t.Error("resetChurnGuard should lift churnSuppressed (permanent-suppression fix)")
+	}
+	// Idempotent on an already-clean role.
+	d.resetChurnGuard("build")
+	if d.churnSuppressed["build"] {
+		t.Error("resetChurnGuard must not create suppression")
+	}
+}
+
+func TestBranchTimeIdleSecs(t *testing.T) {
+	t.Setenv("MUXCODE_BRANCH_TIME_IDLE_SECS", "")
+	if got := branchTimeIdleSecs(); got != 300 {
+		t.Errorf("default = %d, want 300", got)
+	}
+	t.Setenv("MUXCODE_BRANCH_TIME_IDLE_SECS", "120")
+	if got := branchTimeIdleSecs(); got != 120 {
+		t.Errorf("override = %d, want 120", got)
+	}
+	// 0 disables idle detection and must be honored, not coerced to default.
+	t.Setenv("MUXCODE_BRANCH_TIME_IDLE_SECS", "0")
+	if got := branchTimeIdleSecs(); got != 0 {
+		t.Errorf("disabled = %d, want 0", got)
+	}
+	// Garbage falls back to default.
+	t.Setenv("MUXCODE_BRANCH_TIME_IDLE_SECS", "soon")
+	if got := branchTimeIdleSecs(); got != 300 {
+		t.Errorf("garbage fallback = %d, want 300", got)
+	}
+}
+
 func TestCheckActiveWatchdog_DisabledNoCrash(t *testing.T) {
 	t.Setenv("MUXCODE_ACTIVE_WATCHDOG_SECS", "0")
 	d := New("test-session", 5, 8)
@@ -181,6 +244,12 @@ func TestDaemon_NewInitializesWatchdogFields(t *testing.T) {
 	}
 	if d.lastActiveNudge == nil {
 		t.Error("lastActiveNudge should be initialized")
+	}
+	if d.activeNudgeCount == nil {
+		t.Error("activeNudgeCount should be initialized")
+	}
+	if d.forceWakeCount == nil || d.churnSuppressed == nil {
+		t.Error("churn-guard maps should be initialized")
 	}
 	if d.stuckSeen == nil || d.stuckReloads == nil || d.lastStuckReload == nil || d.stuckGaveUp == nil {
 		t.Error("stuck-provider watchdog maps should be initialized")

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // tmuxRunner is the function used to execute tmux commands.
@@ -59,15 +60,40 @@ func TmuxHasSession(session string) bool {
 	return TmuxRunQuiet("has-session", "-t", session) == nil
 }
 
-// ClientsAttached reports whether at least one tmux client is currently
-// attached to the session. Used as the branch-time idle proxy: when the user
-// detaches (no client), time accumulation pauses.
-func ClientsAttached(session string) bool {
-	out, err := TmuxOutput("list-clients", "-t", session, "-F", "#{client_name}")
+// SessionIdleSeconds returns the number of seconds since the most recent tmux
+// client activity (keyboard input) across all clients attached to the session,
+// or -1 when no client is attached or the query fails. tmux's client_activity
+// tracks real user input — background pane output and status-bar refreshes do
+// not bump it — so branch-time uses it to pause accumulation while the user is
+// idle (away from the keyboard) even though the session is still attached.
+func SessionIdleSeconds(session string) int64 {
+	out, err := TmuxOutput("list-clients", "-t", session, "-F", "#{client_activity}")
 	if err != nil {
-		return false
+		return -1
 	}
-	return strings.TrimSpace(out) != ""
+	return idleSecondsFromActivity(out, time.Now().Unix())
+}
+
+// idleSecondsFromActivity parses tmux client_activity timestamps (one epoch per
+// line) and returns seconds since the newest, or -1 when none are present.
+func idleSecondsFromActivity(out string, now int64) int64 {
+	newest := int64(-1)
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if ts, err := strconv.ParseInt(line, 10, 64); err == nil && ts > newest {
+			newest = ts
+		}
+	}
+	if newest < 0 {
+		return -1
+	}
+	if idle := now - newest; idle > 0 {
+		return idle
+	}
+	return 0
 }
 
 // TmuxKillSession kills a tmux session by name, ignoring errors.

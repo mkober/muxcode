@@ -384,3 +384,25 @@ func TestQuitSession_OnlySession(t *testing.T) {
 		t.Errorf("expected -E command to kill project-a, got %q", call[2])
 	}
 }
+
+func TestIdleSecondsFromActivity(t *testing.T) {
+	now := int64(1000000)
+	cases := []struct {
+		name string
+		out  string
+		want int64
+	}{
+		{"single recent", "999940\n", 60},
+		{"newest of several wins", "999000\n999950\n999900\n", 50},
+		{"blank lines ignored", "\n  999970  \n\n", 30},
+		{"future clamps to zero", "1000050\n", 0},
+		{"no clients", "", -1},
+		{"garbage ignored, none valid", "abc\n\n", -1},
+		{"garbage mixed with valid", "abc\n999985\n", 15},
+	}
+	for _, c := range cases {
+		if got := idleSecondsFromActivity(c.out, now); got != c.want {
+			t.Errorf("%s: idleSecondsFromActivity(%q) = %d, want %d", c.name, c.out, got, c.want)
+		}
+	}
+}

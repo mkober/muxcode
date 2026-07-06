@@ -116,37 +116,57 @@ func UnnotifiedMessages(session, role string) []Message {
 	return unnotified
 }
 
+// notifyMaxSubjects is the largest inbox size for which the combined
+// notification enumerates per-message subjects. Above this, the wake-up is a
+// short fixed string so a large inbox can't produce a blob that, on a dropped
+// Enter, parks in the composer and wraps past the idle-detection window — the
+// root of the re-wake token-churn loop.
+const notifyMaxSubjects = 3
+
+// notifyMaxLen hard-caps the enumerated (<= notifyMaxSubjects) form so even a
+// few long payloads stay short enough never to wrap the idle-detection capture.
+const notifyMaxLen = 200
+
+// truncRunes truncates s to at most max runes (not bytes), appending "..." when
+// truncated — so multibyte glyphs common in payloads (✓ → ⏱) are never split
+// into invalid UTF-8.
+func truncRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "..."
+}
+
 // BuildCombinedNotification produces a single-line notification string from
 // unnotified messages. For a single message, shows sender, type:action, and
-// payload preview. For multiple messages, combines per-message summaries so the
-// agent can triage inline without running `muxcode inbox`.
-//
-// Total output is capped at ~500 chars (tmux send-keys practical limit).
+// payload preview. For a small handful, combines compact per-message summaries
+// so the agent can triage inline. For many messages it degrades to a short,
+// fixed wake-up (no subject concatenation) that is bounded in length.
 func BuildCombinedNotification(msgs []Message) string {
 	if len(msgs) == 0 {
 		return "You have new messages"
 	}
 	if len(msgs) == 1 {
 		m := msgs[0]
-		preview := m.Payload
-		if len(preview) > 80 {
-			preview = preview[:80] + "..."
-		}
 		return fmt.Sprintf("New message from %s [%s:%s]: %s",
-			m.From, m.Type, m.Action, preview)
+			m.From, m.Type, m.Action, truncRunes(m.Payload, 80))
 	}
 
-	// Multiple messages — combine summaries
+	// Many messages — short fixed wake-up. Enumerating every subject produces a
+	// large blob; a dropped Enter then parks it in the composer where long
+	// wrapped text reads as "active", driving the re-wake loop. Keep it tiny.
+	if len(msgs) > notifyMaxSubjects {
+		return fmt.Sprintf("You have %d new messages. Run: muxcode inbox", len(msgs))
+	}
+
+	// A handful of messages — enumerate compact subjects, hard-capped in length.
 	var parts []string
 	totalLen := 0
 	shown := 0
 	for _, m := range msgs {
-		preview := m.Payload
-		if len(preview) > 50 {
-			preview = preview[:50] + "..."
-		}
-		part := fmt.Sprintf("[%s>%s] %s", m.From, m.Action, preview)
-		if totalLen+len(part) > 450 && shown > 0 {
+		part := fmt.Sprintf("[%s>%s] %s", m.From, m.Action, truncRunes(m.Payload, 50))
+		if totalLen+len(part) > notifyMaxLen && shown > 0 {
 			// Cap reached — show "and N more"
 			remaining := len(msgs) - shown
 			parts = append(parts, fmt.Sprintf("and %d more", remaining))

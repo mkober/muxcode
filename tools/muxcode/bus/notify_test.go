@@ -1193,24 +1193,58 @@ func TestBuildCombinedNotification_TruncatesLongPayload(t *testing.T) {
 	}
 }
 
-func TestBuildCombinedNotification_CapsTotal(t *testing.T) {
-	// Create many messages with long payloads to exceed the 450-char cap
+func TestBuildCombinedNotification_ManyMessagesShortForm(t *testing.T) {
+	// More than notifyMaxSubjects messages → short fixed wake-up, NOT a subject
+	// blob. This is the churn-loop fix: a large inbox must never produce a long
+	// notification that can park in the composer and wrap past idle detection.
 	var msgs []Message
 	for i := 0; i < 20; i++ {
 		msgs = append(msgs, Message{
 			ID:      fmt.Sprintf("msg-%03d", i),
-			From:    "build",
-			Type:    "response",
-			Action:  "build",
-			Payload: fmt.Sprintf("Long payload message number %d with lots of detail", i),
+			From:    "daemon",
+			Type:    "event",
+			Action:  "long-active",
+			Payload: strings.Repeat("You have been active with no return to idle. ", 5),
 		})
 	}
 	text := BuildCombinedNotification(msgs)
-	if !strings.Contains(text, "and ") && !strings.Contains(text, " more") {
-		t.Errorf("capped notification should show 'and N more': %q", text)
+	if text != "You have 20 new messages. Run: muxcode inbox" {
+		t.Errorf("many messages should use short fixed form, got: %q", text)
 	}
-	if len(text) > 600 {
-		t.Errorf("capped notification should be under ~500 chars, got %d", len(text))
+	if strings.Contains(text, "[daemon>long-active]") {
+		t.Errorf("short form must not enumerate subjects: %q", text)
+	}
+	if len(text) > 60 {
+		t.Errorf("short form should be tiny, got %d chars", len(text))
+	}
+}
+
+func TestBuildCombinedNotification_FourMessagesShortForm(t *testing.T) {
+	// Boundary: exactly notifyMaxSubjects+1 switches to the short form.
+	var msgs []Message
+	for i := 0; i < notifyMaxSubjects+1; i++ {
+		msgs = append(msgs, Message{ID: fmt.Sprintf("m%d", i), From: "build", Type: "response", Action: "build", Payload: "x"})
+	}
+	text := BuildCombinedNotification(msgs)
+	if !strings.Contains(text, "Run: muxcode inbox") {
+		t.Errorf("more than %d messages should use short form: %q", notifyMaxSubjects, text)
+	}
+}
+
+func TestBuildCombinedNotification_EnumeratedCapped(t *testing.T) {
+	// At-or-below notifyMaxSubjects with long payloads → enumerated but hard
+	// capped at notifyMaxLen with an "and N more" tail, never an unbounded blob.
+	msgs := []Message{
+		{ID: "m1", From: "build", Type: "response", Action: "build", Payload: strings.Repeat("a", 100)},
+		{ID: "m2", From: "test", Type: "response", Action: "test", Payload: strings.Repeat("b", 100)},
+		{ID: "m3", From: "review", Type: "response", Action: "review", Payload: strings.Repeat("c", 100)},
+	}
+	text := BuildCombinedNotification(msgs)
+	if len(text) > notifyMaxLen+60 {
+		t.Errorf("enumerated form should stay bounded, got %d chars: %q", len(text), text)
+	}
+	if !strings.Contains(text, "more") {
+		t.Errorf("over-long enumerated form should show 'and N more': %q", text)
 	}
 }
 
