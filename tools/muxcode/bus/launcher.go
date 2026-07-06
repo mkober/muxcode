@@ -190,6 +190,11 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 		fmt.Fprintf(os.Stderr, "Warning: install commit-msg hook: %v\n", err)
 	}
 
+	// Install git prepare-commit-msg hook to append a branch-time Time-spent: trailer
+	if err := InstallPrepareCommitMsgHook(projectDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: install prepare-commit-msg hook: %v\n", err)
+	}
+
 	// Initialize mode cycle state for edit window (edit ↔ auto)
 	if err := WriteModeCycleState(session, DefaultModeCycleState()); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: write edit mode cycle: %v\n", err)
@@ -849,6 +854,21 @@ func TransformStatusLeft(sl string) string {
 	return strings.Replace(sl, "❐", "☰", 1)
 }
 
+// BranchTimeStatusSegment returns the tmux status-right segment that renders the
+// live branch-time counter via `muxcode branch-time --status`. It is
+// foreground-only on the default (transparent) background so that when the
+// command outputs nothing (feature disabled, not a git repo, or no time yet)
+// the segment collapses to blank space with no stray colored block. tmux re-runs
+// the #() command on each status-interval tick.
+//
+// The command is run in #{pane_current_path} (tmux expands this before running
+// the #()), not the tmux server's cwd — so with multiple concurrent sessions
+// each status bar reports its own repo's time rather than whichever repo the
+// server happened to start in.
+func BranchTimeStatusSegment() string {
+	return "#[fg=#bd93f9,bg=default] #(cd #{pane_current_path} 2>/dev/null && muxcode branch-time --status) "
+}
+
 // WindowStatusFormat returns the Dracula-themed window-status-format string.
 // Uses #{@display-name} (per-window user option) instead of #() shell commands
 // for instant synchronous rendering. No #{?} conditional — index 0 hiding is
@@ -871,10 +891,19 @@ func WindowStatusCurrentFormat() string {
 // ConfigureStatusBar configures the tmux status bar with Dracula theme.
 func ConfigureStatusBar(session string) {
 	// --- status-right ---
+	// Prepend the live branch-time segment so it shows regardless of whether the
+	// user's base config defines a status-right.
+	seg := BranchTimeStatusSegment()
 	sr, err := TmuxShowOption("-gv", "status-right")
 	if err == nil && sr != "" {
-		TmuxSetOption(session, "status-right", TransformStatusRight(sr))
+		TmuxSetOption(session, "status-right", seg+TransformStatusRight(sr))
+	} else {
+		TmuxSetOption(session, "status-right", seg)
 	}
+	// Refresh the status bar every 15s so the #() branch-time segment updates.
+	// config/tmux.conf sets this globally too; this explicit session-scoped set is
+	// belt-and-braces in case the user's base tmux.conf overrides the default.
+	TmuxSetOption(session, "status-interval", "15")
 
 	// --- window-status-format ---
 	// window-status-format is a window option — must use -g (global window default).

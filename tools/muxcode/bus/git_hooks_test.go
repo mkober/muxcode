@@ -141,6 +141,85 @@ func TestInstallCommitMsgHook_CreatesHooksDir(t *testing.T) {
 	}
 }
 
+func TestInstallPrepareCommitMsgHook_NoGitDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := InstallPrepareCommitMsgHook(dir); err != nil {
+		t.Fatalf("expected nil error for non-git dir, got: %v", err)
+	}
+	hookPath := filepath.Join(dir, ".git", "hooks", "prepare-commit-msg")
+	if _, err := os.Stat(hookPath); err == nil {
+		t.Fatal("hook should not exist in non-git directory")
+	}
+}
+
+func TestInstallPrepareCommitMsgHook_CreatesNewHook(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0755)
+
+	if err := InstallPrepareCommitMsgHook(dir); err != nil {
+		t.Fatalf("InstallPrepareCommitMsgHook: %v", err)
+	}
+
+	hookPath := filepath.Join(dir, ".git", "hooks", "prepare-commit-msg")
+	data, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("read hook: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, prepareCommitMsgHookMarker) {
+		t.Error("hook missing marker")
+	}
+	if !strings.Contains(content, "branch-time --trailer") {
+		t.Error("hook should invoke branch-time --trailer")
+	}
+	if !strings.HasPrefix(content, "#!/bin/sh") {
+		t.Error("hook should have a shebang")
+	}
+	info, _ := os.Stat(hookPath)
+	if info.Mode()&0100 == 0 {
+		t.Error("hook should be executable")
+	}
+}
+
+func TestInstallPrepareCommitMsgHook_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0755)
+
+	InstallPrepareCommitMsgHook(dir)
+	InstallPrepareCommitMsgHook(dir)
+
+	hookPath := filepath.Join(dir, ".git", "hooks", "prepare-commit-msg")
+	data, _ := os.ReadFile(hookPath)
+	if count := strings.Count(string(data), prepareCommitMsgHookMarker); count != 1 {
+		t.Errorf("expected marker once, found %d times", count)
+	}
+}
+
+func TestInstallPrepareCommitMsgHook_AppendsToExisting(t *testing.T) {
+	dir := t.TempDir()
+	hooksDir := filepath.Join(dir, ".git", "hooks")
+	os.MkdirAll(hooksDir, 0755)
+
+	existing := "#!/bin/sh\n# other-hook\nsome-check \"$1\"\n"
+	os.WriteFile(filepath.Join(hooksDir, "prepare-commit-msg"), []byte(existing), 0755)
+
+	if err := InstallPrepareCommitMsgHook(dir); err != nil {
+		t.Fatalf("InstallPrepareCommitMsgHook: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(hooksDir, "prepare-commit-msg"))
+	content := string(data)
+	if !strings.Contains(content, "some-check") {
+		t.Error("existing hook logic should be preserved")
+	}
+	if !strings.Contains(content, prepareCommitMsgHookMarker) {
+		t.Error("our marker should be appended")
+	}
+	if count := strings.Count(content, "#!/bin/sh"); count != 1 {
+		t.Errorf("shebang should appear once, found %d", count)
+	}
+}
+
 func TestCommitMsgHookFull_StripsAttribution(t *testing.T) {
 	// Verify the sed pattern in the hook matches various Co-authored-by forms.
 	tests := []struct {

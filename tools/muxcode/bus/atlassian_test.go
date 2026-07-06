@@ -455,3 +455,23 @@ func TestJiraUpdate_MissingFile(t *testing.T) {
 		t.Errorf("expected file error, got: %v", err)
 	}
 }
+
+func TestJiraKeyFromString(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"PBP1-456-add-validation", "PBP1-456"},
+		{"feature/PROJ-123-do-thing", "PROJ-123"},
+		{"PROJ-7", "PROJ-7"},
+		{"A1B2-99", "A1B2-99"},
+		{"no-key-here", ""},
+		{"lowercase-12", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := JiraKeyFromString(c.in); got != c.want {
+			t.Errorf("JiraKeyFromString(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

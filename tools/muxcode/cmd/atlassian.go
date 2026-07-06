@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
 )
@@ -24,6 +25,7 @@ Jira actions:
   transition <ISSUE-KEY> <TRANSITION-ID>  Transition issue to a new status
   search <JQL-QUERY>                      Search issues using JQL
   create-subtask <PARENT-KEY> <SUMMARY> [PROJECT-KEY]  Create a subtask
+  worklog <ISSUE-KEY> <SECONDS> [COMMENT] Log time spent against an issue
 
 Confluence actions:
   read <PAGE-ID>                        Read page content
@@ -184,9 +186,30 @@ func atlassianJira(cfg *bus.AtlassianConfig, action string, args []string) {
 		}
 		fmt.Println(result)
 
+	case "worklog":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: muxcode atlassian jira worklog <ISSUE-KEY> <SECONDS> [COMMENT]")
+			os.Exit(1)
+		}
+		secs, err := strconv.ParseInt(args[1], 10, 64)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: invalid seconds %q: %v\n", args[1], err)
+			os.Exit(1)
+		}
+		comment := ""
+		if len(args) >= 3 {
+			comment = args[2]
+		}
+		result, err := bus.JiraAddWorklog(cfg, args[0], secs, comment)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(result)
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown jira action: %s\n", action)
-		fmt.Fprintln(os.Stderr, "Actions: read, update, comment, comments, link-types, link, transitions, transition, search, create-subtask")
+		fmt.Fprintln(os.Stderr, "Actions: read, update, comment, comments, link-types, link, transitions, transition, search, create-subtask, worklog")
 		os.Exit(1)
 	}
 }

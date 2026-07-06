@@ -25,6 +25,7 @@ var knownSubcommands = map[string]bool{
 	"reload": true, "config": true, "provider-select": true,
 	"simulate": true, "track": true, "remote": true, "spec": true,
 	"resize": true, "deliver": true, "upgrade-daemons": true,
+	"branch-time": true,
 }
 
 var usage = `Usage: muxcode <command> [args...]
@@ -221,6 +222,8 @@ func main() {
 		cmd.Tasks(args)
 	case "track":
 		cmd.Track(args)
+	case "branch-time":
+		cmd.BranchTime(args)
 	case "diagnose":
 		cmd.Diagnose(args)
 	case "remote":

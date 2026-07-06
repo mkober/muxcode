@@ -118,6 +118,18 @@ type Daemon struct {
 	// effect without a manual `muxcode reload`. State lives in per-session stamp
 	// files (see bus/agentdefs.go) so it survives daemon restarts.
 	lastAgentDefsCheck int64 // 10s interval
+	// Branch time-tracking accumulator — adds active working time to the current
+	// git branch while a client is attached. To avoid a disk write + git/tmux
+	// process spawn on every fast poll, time is accrued in memory
+	// (branchTimePending, attributed to lastBranch) and flushed to the ledger at
+	// most every branchTimeFlushSecs, on a branch change, or on pause.
+	lastBranchTick      int64  // unix time of last per-tick sample
+	lastBranch          string // branch the pending time belongs to
+	branchTimePending   int64  // accrued, un-flushed seconds
+	branchTimeRepoKey   string // cached RepoKey() (stable per repo)
+	lastBranchFlush     int64  // unix time of last ledger flush
+	branchTimeInit      bool   // whether first-tracking lifecycle event was logged
+	branchTimeErrLogged bool   // whether the current flush-error state was logged
 }
 
 // New creates a new Daemon for the given session.
@@ -270,6 +282,7 @@ func (d *Daemon) Run() error {
 		d.checkServeHealth()
 		d.checkCleanup()
 		d.checkDiskPressure()
+		d.checkBranchTime()
 		time.Sleep(d.pollInterval)
 	}
 }
@@ -2814,6 +2827,110 @@ func (d *Daemon) checkDiskPressure() {
 		// will see it next time it checks inbox. Notifying directly force-wakes
 		// the agent for something it can't fix, burning context repeatedly.
 		d.refreshInboxSizes()
+	}
+}
+
+// branchTimeFlushSecs is how often accrued in-memory branch time is written to
+// the ledger (also flushed on branch change and on pause).
+const branchTimeFlushSecs int64 = 60
+
+// checkBranchTime accumulates active working time onto the current git branch.
+// It runs every poll (reusing the daemon cadence, no separate ticker) and only
+// accrues while a tmux client is attached — the idle proxy: a detached session
+// means the user stepped away, so time pauses.
+//
+// To keep the hot path cheap, per-tick deltas are accrued in memory and flushed
+// to the ledger at most once per branchTimeFlushSecs (or on a branch change /
+// pause). The per-tick delta is capped at 2× the poll interval so a laptop sleep
+// or clock change cannot inject spurious hours, and a branch change flushes the
+// prior branch before resetting the baseline so time never bleeds across branches.
+//
+// Disable with MUXCODE_BRANCH_TIME_DISABLE=1.
+func (d *Daemon) checkBranchTime() {
+	if os.Getenv("MUXCODE_BRANCH_TIME_DISABLE") == "1" {
+		return
+	}
+
+	now := time.Now().Unix()
+
+	// Pause when no client is attached (detached / stepped away): flush what we
+	// have and reset the baseline so the paused interval isn't counted.
+	if !bus.ClientsAttached(d.session) {
+		d.flushBranchTime()
+		d.lastBranchTick = 0
+		return
+	}
+
+	branch := bus.CurrentBranch()
+	if branch == "" {
+		// Not in a git repo (or git failed) — flush and stop attributing time.
+		d.flushBranchTime()
+		d.lastBranchTick = 0
+		d.lastBranch = ""
+		return
+	}
+
+	// First observation, or a branch switch: flush the prior branch's pending
+	// time, then (re)set the baseline. We only count time between two consecutive
+	// same-branch observations.
+	if d.lastBranchTick == 0 || branch != d.lastBranch {
+		d.flushBranchTime()
+		d.lastBranchTick = now
+		d.lastBranch = branch
+		d.lastBranchFlush = now
+		return
+	}
+
+	delta := now - d.lastBranchTick
+	d.lastBranchTick = now
+	if delta > 0 {
+		maxDelta := int64(d.pollInterval.Seconds()) * 2
+		if maxDelta <= 0 {
+			maxDelta = 2
+		}
+		if delta > maxDelta {
+			delta = maxDelta // clock-jump guard
+		}
+		d.branchTimePending += delta
+	}
+
+	// Flush periodically.
+	if now-d.lastBranchFlush >= branchTimeFlushSecs {
+		d.flushBranchTime()
+		d.lastBranchFlush = now
+	}
+}
+
+// flushBranchTime writes the accrued in-memory branch time to the ledger,
+// attributing it to d.lastBranch, and resets the pending counter. A no-op when
+// nothing is pending. RepoKey is resolved once and cached.
+func (d *Daemon) flushBranchTime() {
+	if d.branchTimePending <= 0 || d.lastBranch == "" {
+		d.branchTimePending = 0
+		return
+	}
+	if d.branchTimeRepoKey == "" {
+		d.branchTimeRepoKey = bus.RepoKey()
+	}
+	if d.branchTimeRepoKey == "" {
+		return // not resolvable as a repo — keep pending for a later flush
+	}
+	pending := d.branchTimePending
+	// Per-tick deltas were already capped; the sum is trusted, so no extra cap.
+	total, err := bus.AccumulateBranchTime(d.branchTimeRepoKey, d.lastBranch, pending, 0)
+	if err != nil {
+		if !d.branchTimeErrLogged {
+			d.branchTimeErrLogged = true
+			fmt.Fprintf(os.Stderr, "  [branch-time] flush failed: %v\n", err)
+		}
+		return // keep pending; retry next flush
+	}
+	d.branchTimeErrLogged = false
+	d.branchTimePending = 0
+	if !d.branchTimeInit {
+		d.branchTimeInit = true
+		bus.LogLifecycle(d.session, "info", "daemon", "branch-time",
+			fmt.Sprintf("tracking %s (%s)", d.lastBranch, bus.FormatDuration(total)))
 	}
 }
 

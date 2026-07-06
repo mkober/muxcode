@@ -59,6 +59,17 @@ func TmuxHasSession(session string) bool {
 	return TmuxRunQuiet("has-session", "-t", session) == nil
 }
 
+// ClientsAttached reports whether at least one tmux client is currently
+// attached to the session. Used as the branch-time idle proxy: when the user
+// detaches (no client), time accumulation pauses.
+func ClientsAttached(session string) bool {
+	out, err := TmuxOutput("list-clients", "-t", session, "-F", "#{client_name}")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(out) != ""
+}
+
 // TmuxKillSession kills a tmux session by name, ignoring errors.
 // Uses TmuxRunQuiet to suppress "no server running" stderr noise.
 func TmuxKillSession(session string) error {

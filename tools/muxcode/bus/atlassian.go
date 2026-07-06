@@ -18,11 +18,20 @@ import (
 var (
 	// jiraKeyPattern validates Jira issue keys (e.g. PROJ-123, PBP1-4365).
 	jiraKeyPattern = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[0-9]+$`)
+	// jiraKeyFindPattern extracts a Jira key embedded in a larger string such
+	// as a branch name (e.g. "PBP1-456-add-validation" → "PBP1-456").
+	jiraKeyFindPattern = regexp.MustCompile(`[A-Z][A-Z0-9]*-[0-9]+`)
 	// pageIDPattern validates Confluence page IDs (numeric only).
 	pageIDPattern = regexp.MustCompile(`^[0-9]+$`)
 	// maxResponseSize limits API response body reads (10 MB).
 	maxResponseSize int64 = 10 * 1024 * 1024
 )
+
+// JiraKeyFromString extracts the first Jira issue key from an arbitrary string
+// (typically a branch name), or "" if none is present.
+func JiraKeyFromString(s string) string {
+	return jiraKeyFindPattern.FindString(s)
+}
 
 // AtlassianConfig holds Jira/Confluence connection settings.
 type AtlassianConfig struct {
@@ -354,6 +363,59 @@ func JiraComment(cfg *AtlassianConfig, issueKey, payloadFile string) (string, er
 	}
 
 	return fmt.Sprintf("Posted comment to %s", issueKey), nil
+}
+
+// JiraAddWorklog posts a worklog entry recording timeSpentSeconds against the
+// issue. An optional comment is attached as an ADF paragraph. Jira requires a
+// minimum of 60 seconds; callers should round up sub-minute durations.
+// POST /rest/api/3/issue/{key}/worklog — expects HTTP 201 on success.
+func JiraAddWorklog(cfg *AtlassianConfig, issueKey string, timeSpentSeconds int64, comment string) (string, error) {
+	if cfg.JiraBaseURL == "" || cfg.UserEmail == "" || cfg.APIToken == "" {
+		return "", fmt.Errorf("missing Jira config (JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN)")
+	}
+	if err := validateJiraKey(issueKey); err != nil {
+		return "", err
+	}
+	if timeSpentSeconds <= 0 {
+		return "", fmt.Errorf("timeSpentSeconds must be positive, got %d", timeSpentSeconds)
+	}
+
+	payload := map[string]any{"timeSpentSeconds": timeSpentSeconds}
+	if strings.TrimSpace(comment) != "" {
+		payload["comment"] = map[string]any{
+			"type":    "doc",
+			"version": 1,
+			"content": []any{
+				map[string]any{
+					"type":    "paragraph",
+					"content": []any{map[string]any{"type": "text", "text": comment}},
+				},
+			},
+		}
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshaling worklog payload: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("%s/rest/api/3/issue/%s/worklog",
+		strings.TrimRight(cfg.JiraBaseURL, "/"), issueKey)
+
+	resp, err := atlassianRequest("POST", apiURL, bytes.NewReader(body), cfg)
+	if err != nil {
+		return "", fmt.Errorf("Jira API request failed: %w", err)
+	}
+
+	respBody, err := readResponseBody(resp)
+	if err != nil {
+		return "", fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != 201 {
+		return "", fmt.Errorf("Jira API returned HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return fmt.Sprintf("Logged %ds of work to %s", timeSpentSeconds, issueKey), nil
 }
 
 // --- Jira Issue Links ---

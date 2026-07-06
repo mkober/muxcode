@@ -197,6 +197,20 @@ func GlobalMemoryArchivePath(role, date string) string {
 	return filepath.Join(GlobalMemoryArchiveDir(role), date+".md")
 }
 
+// BranchTimePath returns the global, cross-session branch-time ledger file path.
+// Resolution: MUXCODE_BRANCH_TIME_FILE (explicit file, used by tests) >
+// MUXCODE_CONFIG_DIR/branch-time.json > ~/.config/muxcode/branch-time.json.
+func BranchTimePath() string {
+	if v := os.Getenv("MUXCODE_BRANCH_TIME_FILE"); v != "" {
+		return v
+	}
+	if v := os.Getenv("MUXCODE_CONFIG_DIR"); v != "" {
+		return filepath.Join(v, "branch-time.json")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "muxcode", "branch-time.json")
+}
+
 // RuntimeConfigDir returns the runtime config directory path for a session.
 // Override files (per-role CLI/model runtime overrides) are stored here.
 // These files are ephemeral — they live under /tmp/ and are cleaned up with the session.
