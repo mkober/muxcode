@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -181,6 +182,163 @@ func TestBranchTimeFormatDuration(t *testing.T) {
 func TestBranchTimeFormatDurationCompact(t *testing.T) {
 	if got := FormatDurationCompact(4*3600 + 12*60); got != "4h12m" {
 		t.Errorf("FormatDurationCompact = %q, want 4h12m", got)
+	}
+}
+
+// unsetEnvForTest removes key for the duration of the test, restoring whatever
+// value — or absence — it had beforehand. t.Setenv registers the restore of the
+// original state; the Unsetenv then clears it for the test body, which lets a
+// test exercise the "variable not set" default path even when the ambient
+// session has it set.
+func unsetEnvForTest(t *testing.T, key string) {
+	t.Helper()
+	t.Setenv(key, os.Getenv(key))
+	os.Unsetenv(key)
+}
+
+func TestBranchTimeIgnoredDefaults(t *testing.T) {
+	// With no override, the shared integration branches are ignored, feature
+	// branches are tracked, and an empty branch (detached HEAD) is always ignored.
+	unsetEnvForTest(t, "MUXCODE_BRANCH_TIME_IGNORE")
+	if !BranchTimeIgnored("main") {
+		t.Error("main should be ignored by default")
+	}
+	if !BranchTimeIgnored("master") {
+		t.Error("master should be ignored by default")
+	}
+	if BranchTimeIgnored("feature/x") {
+		t.Error("feature/x should be tracked")
+	}
+	if !BranchTimeIgnored("") {
+		t.Error("empty branch should always be ignored")
+	}
+}
+
+func TestBranchTimeIgnoredOverride(t *testing.T) {
+	// An explicit override replaces the default set entirely (main becomes
+	// tracked) and trims whitespace around names.
+	t.Setenv("MUXCODE_BRANCH_TIME_IGNORE", "develop, release")
+	if BranchTimeIgnored("main") {
+		t.Error("main should be tracked when the override omits it")
+	}
+	if !BranchTimeIgnored("develop") {
+		t.Error("develop should be ignored per override")
+	}
+	if !BranchTimeIgnored("release") {
+		t.Error("release should be ignored per override (whitespace trimmed)")
+	}
+}
+
+func TestBranchTimeIgnoredEmptyOverrideTracksAll(t *testing.T) {
+	// An empty override opts out of the default ignore set — every named branch
+	// is tracked — but an empty branch is still ignored.
+	t.Setenv("MUXCODE_BRANCH_TIME_IGNORE", "")
+	if BranchTimeIgnored("main") {
+		t.Error("empty override should track main")
+	}
+	if BranchTimeIgnored("master") {
+		t.Error("empty override should track master")
+	}
+	if !BranchTimeIgnored("") {
+		t.Error("empty branch should still be ignored")
+	}
+}
+
+func TestBranchTimeActivityRolesExcludesAmbient(t *testing.T) {
+	unsetEnvForTest(t, "MUXCODE_BRANCH_TIME_ACTIVITY_ROLES")
+	roles := map[string]bool{}
+	for _, r := range BranchTimeActivityRoles() {
+		roles[r] = true
+	}
+	for _, want := range []string{"edit", "build", "test", "review", "run"} {
+		if !roles[want] {
+			t.Errorf("default activity roles should include %q", want)
+		}
+	}
+	// Ambient-output roles must be excluded so they don't keep the clock alive.
+	for _, excluded := range []string{"watch", "serve"} {
+		if roles[excluded] {
+			t.Errorf("activity roles should exclude ambient-output role %q", excluded)
+		}
+	}
+}
+
+func TestBranchTimeActivityRolesOverride(t *testing.T) {
+	t.Setenv("MUXCODE_BRANCH_TIME_ACTIVITY_ROLES", "edit, build")
+	got := BranchTimeActivityRoles()
+	if len(got) != 2 || got[0] != "edit" || got[1] != "build" {
+		t.Fatalf("override roles = %v, want [edit build]", got)
+	}
+}
+
+func TestPaneShowsAgentWorking(t *testing.T) {
+	cases := []struct {
+		name         string
+		content      string
+		hookProvider bool
+		want         bool
+	}{
+		{
+			"claude working (esc to interrupt)",
+			"✻ Nebulizing… (1m 29s · ↓ 5.1k tokens · thinking with xhigh effort)\n──── code-editor ──\n❯ \n⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents",
+			true, true,
+		},
+		{
+			"claude idle (completed recap)",
+			"✻ Cooked for 1m 47s\n──── code-editor ──\n❯ \n⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+			true, false,
+		},
+		{
+			"claude idle with daemon wake-up injection",
+			"❯ You have new messages\n⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+			true, false,
+		},
+		{
+			"opencode working (running marker)",
+			"▸  Build · MiniMax M2.5 · 3.2s\n  building...\n  ctrl+p commands",
+			false, true,
+		},
+		{
+			"opencode idle (cost/context status bar — phantom-churn source)",
+			"                80.1K (8%) · $0.44  ctrl+p commands    • OpenCode 1.17.13",
+			false, false,
+		},
+		{
+			"opencode completed (stop marker)",
+			"▣  Build · MiniMax M2.5 · 12.9s\n  ctrl+p commands • OpenCode 1.17.13",
+			false, false,
+		},
+		{
+			"opencode idle with truncated path (no false positive from … + ·)",
+			"  ~/Repos/…/is-advising-gateway · main\n  80.1K (8%) · $0.44  ctrl+p commands",
+			false, false,
+		},
+	}
+	for _, c := range cases {
+		if got := paneShowsAgentWorking(c.content, c.hookProvider); got != c.want {
+			t.Errorf("%s: paneShowsAgentWorking=%v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestBranchTimeUserActive(t *testing.T) {
+	cases := []struct {
+		name          string
+		idle, idleMax int64
+		want          bool
+	}{
+		{"detached always inactive", -1, 300, false},
+		{"detached with idle detection off", -1, 0, false},
+		{"attached and typing recently", 10, 300, true},
+		{"attached but idle past threshold", 400, 300, false},
+		{"attached exactly at threshold", 300, 300, true},
+		{"attached with idle detection off", 9999, 0, true},
+		{"attached just active", 0, 300, true},
+	}
+	for _, c := range cases {
+		if got := BranchTimeUserActive(c.idle, c.idleMax); got != c.want {
+			t.Errorf("%s: BranchTimeUserActive(%d,%d)=%v, want %v", c.name, c.idle, c.idleMax, got, c.want)
+		}
 	}
 }
 

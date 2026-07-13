@@ -1,0 +1,73 @@
+---
+title: "Reference Architecture — Operational + Analytical Paths"
+---
+%% Complex architecture sample — demonstrates the capability bar for this feature:
+%% nested swimlane containers, styled "card" nodes with headers + list items, a
+%% tabular id-mapping node, colored + labeled flow arrows, badges, title/subtitle.
+%% Content is intentionally GENERIC (no real vendor/internal names) because this file
+%% is committed to an open-source repo. Real internal diagrams go to Jira/Confluence.
+%% NOTE: Mermaid frontmatter must be the first thing in the file (before comments).
+flowchart LR
+  classDef source fill:#f5f0ff,stroke:#7c3aed,stroke-width:2px,color:#4c1d95;
+  classDef gateway fill:#e8f1ff,stroke:#2563eb,stroke-width:2px,color:#1e3a8a;
+  classDef store fill:#fff2e0,stroke:#c2410c,stroke-width:2px,color:#7c2d12;
+  classDef identity fill:#e9fbf3,stroke:#059669,stroke-width:2px,color:#065f46;
+  classDef badge fill:#e9fbf3,stroke:#059669,color:#065f46;
+  classDef bronze fill:#fff2e0,stroke:#ea7a2b,stroke-width:2px,color:#7c2d12;
+  classDef raw fill:#eef1f5,stroke:#94a3b8,stroke-width:2px,color:#334155;
+  classDef bi fill:#e9fbf3,stroke:#059669,stroke-width:2px,color:#065f46;
+
+  subgraph OP["Real-Time Operational Path"]
+    direction LR
+    subgraph SIN["Source Systems (Inbound)"]
+      direction TB
+      sin1["System A (via Connector)"]:::source
+      sin2["System B"]:::source
+      sin3["System C"]:::source
+      sin4["System D"]:::source
+    end
+    subgraph IGW["Inbound Gateways"]
+      direction TB
+      ig1["ingest-gateway-1"]:::gateway
+      ig2["ingest-gateway-2"]:::gateway
+      ig3["ingest-gateway-3"]:::gateway
+      igb["Validate · Resolve · Normalize"]:::badge
+    end
+    subgraph ODS["Operational Data Store"]
+      direction TB
+      idsvc["Identity Service · ID Spine<br/>IN&nbsp;&nbsp;src_id 1001 → uid U-9f3c<br/>IN&nbsp;&nbsp;crm_id 2002 → uid U-9f3c<br/>OUT&nbsp;uid U-9f3c → target_id 8801<br/>OUT&nbsp;uid U-9f3c → auth_uid 0xA1B2"]:::identity
+      odsnote["Current State · Outbound Log + Mappings"]:::store
+    end
+    subgraph OGW["Outbound Gateways"]
+      direction TB
+      og1["egress-gateway-1"]:::gateway
+      og2["egress-gateway-2"]:::gateway
+      og3["egress-gateway-3"]:::gateway
+      ogb["De-resolve · Business Logic · Reshape"]:::badge
+    end
+    subgraph TOUT["Target Systems (Outbound)"]
+      direction TB
+      to1["Target A"]:::source
+      to2["Target B"]:::source
+      to3["Target C"]:::source
+      to4["Auth Provider"]:::source
+    end
+    SIN ==> IGW ==> ODS ==> OGW ==> TOUT
+    igb -. resolve .-> idsvc
+    idsvc -. de-resolve .-> ogb
+  end
+
+  subgraph AN["Analytical Path (Append-only, no MERGE)"]
+    direction LR
+    raw["Raw Layer<br/>Append-only Parquet<br/>partitioned by date/source"]:::raw
+    bronze["Bronze<br/>1:1 with raw events<br/>No transformation"]:::bronze
+    silver["Silver<br/>Enrich · Denormalize<br/>Partition Overwrite"]:::bronze
+    gold["Gold<br/>Aggregates · Metrics<br/>Partition Overwrite"]:::bronze
+    bi["Analytics / BI<br/>Dashboards · Ad-Hoc Queries"]:::bi
+    raw <--> bronze --> silver --> gold --> bi
+  end
+
+  ODS -->|CDC Streams| raw
+
+  style OP fill:#eafaf1,stroke:#34d399,stroke-width:2px,stroke-dasharray:6 4;
+  style AN fill:#fffbeb,stroke:#f59e0b,stroke-width:2px,stroke-dasharray:6 4;

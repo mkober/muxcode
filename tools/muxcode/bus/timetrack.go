@@ -78,6 +78,140 @@ func CurrentBranch() string {
 	return b
 }
 
+// defaultIgnoredBranches are the branch names excluded from time tracking by
+// default. These are shared integration branches where attributing "active
+// working time" is not meaningful — real work happens on feature branches.
+// Overridable via MUXCODE_BRANCH_TIME_IGNORE.
+var defaultIgnoredBranches = []string{"main", "master"}
+
+// BranchTimeIgnoredBranches returns the set of branch names excluded from time
+// tracking. It is configured by MUXCODE_BRANCH_TIME_IGNORE (comma-separated
+// branch names); when that variable is set — even to an empty string — it fully
+// replaces the built-in {main, master} default. So MUXCODE_BRANCH_TIME_IGNORE=
+// (empty) tracks every branch including main, and MUXCODE_BRANCH_TIME_IGNORE=
+// main,develop ignores exactly those two.
+func BranchTimeIgnoredBranches() map[string]bool {
+	names := defaultIgnoredBranches
+	if v, ok := os.LookupEnv("MUXCODE_BRANCH_TIME_IGNORE"); ok {
+		names = splitTrimmed(v)
+	}
+	set := map[string]bool{}
+	for _, n := range names {
+		set[n] = true
+	}
+	return set
+}
+
+// splitTrimmed splits a comma-separated env value into its non-empty, trimmed
+// entries. A blank value yields an empty (not nil) slice, which lets callers
+// distinguish "set to empty — replace the default with nothing" from "unset".
+func splitTrimmed(v string) []string {
+	out := []string{}
+	for _, s := range strings.Split(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// BranchTimeIgnored reports whether branch should be excluded from time
+// tracking. An empty branch (detached HEAD or not a git repository) is always
+// ignored, as are the configured integration branches (main/master by default).
+func BranchTimeIgnored(branch string) bool {
+	if branch == "" {
+		return true
+	}
+	return BranchTimeIgnoredBranches()[branch]
+}
+
+// defaultActivityRoles are the agent windows whose visible pane output counts as
+// active work for branch-time. Ambient-output roles are deliberately excluded:
+// watch (log tailing) and serve (dev server) emit output continuously even when
+// no one is working, so counting them would keep the clock running forever.
+// Hosted/duplicate roles (docs/research/pr-read) and non-interactive roles
+// (webhook/api/auto) are omitted because they either share a host pane or have
+// no meaningful agent activity.
+//
+// analyze is included but is not one of the default session windows, so in most
+// sessions its capture fails and it simply reads as "not working". That is
+// harmless — it keeps the role counted in the sessions that do open the window,
+// at the cost of one failed capture per poll in those that do not.
+var defaultActivityRoles = []string{
+	"plan", "edit", "build", "test", "review", "deploy", "run", "commit", "analyze",
+}
+
+// BranchTimeActivityRoles returns the agent windows sampled to decide whether an
+// agent is actively working. Configurable via MUXCODE_BRANCH_TIME_ACTIVITY_ROLES
+// (comma-separated); when set it replaces the default set entirely.
+func BranchTimeActivityRoles() []string {
+	if v, ok := os.LookupEnv("MUXCODE_BRANCH_TIME_ACTIVITY_ROLES"); ok {
+		return splitTrimmed(v)
+	}
+	return defaultActivityRoles
+}
+
+// openCodeWorkingMarker is OpenCode's TUI "task still running" indicator (its
+// completion marker is "▣"). Used to tell a busy OpenCode pane from an idle one,
+// since OpenCode has no stable idle prompt for capture-based detection.
+const openCodeWorkingMarker = "▸"
+
+// paneShowsAgentWorking reports whether captured pane content shows an agent
+// actively processing a turn. It keys off POSITIVE, provider-specific working
+// markers rather than raw content change, so an idle pane that merely flickers —
+// a cost/context counter refresh, a periodic TUI redraw, or the daemon injecting
+// "You have new messages" wake-up text — is NOT mistaken for real work (which
+// would otherwise accrue unbounded phantom time on a detached idle session):
+//
+//   - Hook provider (Claude Code): isClaudeThinking matches the live spinner
+//     signature ("esc to interrupt", or a gerund ellipsis with the
+//     "(elapsed · tokens · …)" counter) even while the ❯ prompt is visible. A
+//     completed recap ("Cooked for 1m") and a plain idle prompt do not match.
+//   - Non-hook TUI (OpenCode): the "▸" running marker (flips to "▣" on
+//     completion). isClaudeThinking is NOT applied here — OpenCode truncates paths
+//     with "…" and uses " · " separators, which would false-positive its heuristic.
+func paneShowsAgentWorking(content string, hookProvider bool) bool {
+	if hookProvider {
+		return isClaudeThinking(content)
+	}
+	return strings.Contains(content, openCodeWorkingMarker)
+}
+
+// AgentIsWorking reports whether the agent in the given role's pane is actively
+// processing a turn. Returns false when the pane can't be captured (window
+// closed, no tmux) so a missing pane never counts as work.
+func AgentIsWorking(session, role string) bool {
+	out, err := TmuxCapturePaneLines(PaneTarget(session, role), 12)
+	if err != nil {
+		return false
+	}
+	return paneShowsAgentWorking(out, ResolveProvider(role).SupportsHooks())
+}
+
+// AnyAgentWorking reports whether any worker agent (BranchTimeActivityRoles) is
+// actively processing. Used by branch-time so a session accrues while an agent
+// is working even when the user isn't typing — including a detached background
+// session whose agents keep working.
+func AnyAgentWorking(session string) bool {
+	for _, role := range BranchTimeActivityRoles() {
+		if AgentIsWorking(session, role) {
+			return true
+		}
+	}
+	return false
+}
+
+// BranchTimeUserActive reports whether the user counts as active for branch-time,
+// given the seconds since the last keyboard interaction (idle, -1 when detached)
+// and the idle threshold (idleMax, <= 0 disables idle detection). The user is
+// active when a client is attached AND either idle detection is off or they have
+// interacted within idleMax. When this is false the caller falls back to the
+// agent-activity signal, so a detached or keyboard-idle session still accrues
+// while a worker agent is producing output. Pure for testing.
+func BranchTimeUserActive(idle, idleMax int64) bool {
+	return idle >= 0 && (idleMax <= 0 || idle <= idleMax)
+}
+
 // gitOutput runs a git command and returns trimmed stdout, or "" on error.
 func gitOutput(args ...string) string {
 	out, err := exec.Command("git", args...).Output()

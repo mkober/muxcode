@@ -1,7 +1,7 @@
 ---
 name: jira-manage-issues
 description: Read, update, search, transition, and link Jira issues — full issue lifecycle management
-roles: [commit, edit]
+roles: [commit, edit, plan]
 tags: [jira, integration, description, adf, links, dependencies, transitions, search, subtasks, comments]
 ---
 

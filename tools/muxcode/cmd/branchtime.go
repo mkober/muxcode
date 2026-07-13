@@ -83,15 +83,16 @@ func branchTimeAdd(args []string) {
 }
 
 // branchTimeStatus prints a compact status-bar segment. Output is empty when
-// the feature is disabled or the working dir is not a git repo, so tmux keeps a
-// clean status bar.
+// the feature is disabled, the working dir is not a git repo, or the current
+// branch is an ignored integration branch (main/master), so tmux keeps a clean
+// status bar.
 func branchTimeStatus() {
 	if os.Getenv("MUXCODE_BRANCH_TIME_DISABLE") == "1" {
 		return
 	}
 	branch := bus.CurrentBranch()
 	repoKey := bus.RepoKey()
-	if branch == "" || repoKey == "" {
+	if bus.BranchTimeIgnored(branch) || repoKey == "" {
 		return
 	}
 	secs := bus.BranchTimeSeconds(repoKey, branch)
@@ -102,15 +103,16 @@ func branchTimeStatus() {
 }
 
 // branchTimeTrailer prints a `Time-spent: <duration>` commit trailer line for
-// the current branch, or nothing when disabled, not in a repo, or no time has
-// accrued. Consumed by the prepare-commit-msg hook.
+// the current branch, or nothing when disabled, not in a repo, on an ignored
+// integration branch (main/master), or no time has accrued. Consumed by the
+// prepare-commit-msg hook.
 func branchTimeTrailer() {
 	if os.Getenv("MUXCODE_BRANCH_TIME_DISABLE") == "1" {
 		return
 	}
 	branch := bus.CurrentBranch()
 	repoKey := bus.RepoKey()
-	if branch == "" || repoKey == "" {
+	if bus.BranchTimeIgnored(branch) || repoKey == "" {
 		return
 	}
 	secs := bus.BranchTimeSeconds(repoKey, branch)

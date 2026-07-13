@@ -531,3 +531,74 @@ func TestIdleTransition_NoopWhenBecomingNonIdle(t *testing.T) {
 		t.Error("notified-size marker should be preserved when becoming non-idle")
 	}
 }
+
+// The safety-net retry budget must never be permanently exhaustible. Its only
+// other reset is the active transition in checkIdleAgents, which requires the
+// agent to PROCESS a message — the very thing a failed delivery prevents. Before
+// the window refill, three dropped send-keys wedged an agent for good: idle, an
+// actionable message pending, and no further delivery attempts ever. Recovering
+// it took a manual `muxcode deliver <role> --force`. Observed live on review.
+func TestSafetyNetBudget_RefillsAfterWindow(t *testing.T) {
+	d := &Daemon{
+		session:          "test-session",
+		safetyNetRetries: make(map[string]int),
+		safetyNetLast:    make(map[string]int64),
+	}
+	now := int64(1_000_000)
+
+	// Burn the budget: three consecutive retries, as a repeatedly-dropped
+	// send-keys injection would.
+	for i := 0; i < safetyNetMaxRetries; i++ {
+		if !d.safetyNetBudgetAvailable("review", now) {
+			t.Fatalf("budget should be available on attempt %d of %d", i+1, safetyNetMaxRetries)
+		}
+		d.spendSafetyNetRetry("review", now)
+	}
+
+	// Exhausted — this is the storm cap doing its job.
+	if d.safetyNetBudgetAvailable("review", now) {
+		t.Error("budget should be exhausted after safetyNetMaxRetries within the window")
+	}
+
+	// Still exhausted just inside the window.
+	if d.safetyNetBudgetAvailable("review", now+safetyNetRetryWindowSecs-1) {
+		t.Error("budget must stay exhausted until the retry window elapses")
+	}
+
+	// Refilled once the window elapses — the agent gets another chance without
+	// having to process a message first, which is what it could not do.
+	if !d.safetyNetBudgetAvailable("review", now+safetyNetRetryWindowSecs) {
+		t.Error("budget must refill after the retry window — otherwise a stuck agent is abandoned forever")
+	}
+}
+
+// A role that never spent a retry starts with a full budget.
+func TestSafetyNetBudget_FreshRoleHasBudget(t *testing.T) {
+	d := &Daemon{
+		session:          "test-session",
+		safetyNetRetries: make(map[string]int),
+		safetyNetLast:    make(map[string]int64),
+	}
+	if !d.safetyNetBudgetAvailable("build", int64(1_000_000)) {
+		t.Error("a role with no prior safety-net retries must have budget available")
+	}
+}
+
+// The budget is per-role: exhausting one agent's retries must not starve another.
+func TestSafetyNetBudget_IsolatedPerRole(t *testing.T) {
+	d := &Daemon{
+		session:          "test-session",
+		safetyNetRetries: make(map[string]int),
+		safetyNetLast:    make(map[string]int64),
+	}
+	now := int64(1_000_000)
+	for i := 0; i < safetyNetMaxRetries; i++ {
+		d.spendSafetyNetRetry("review", now)
+	}
+	if d.safetyNetBudgetAvailable("review", now) {
+		t.Error("review budget should be exhausted")
+	}
+	if !d.safetyNetBudgetAvailable("test", now) {
+		t.Error("exhausting review's budget must not starve test's")
+	}
+}

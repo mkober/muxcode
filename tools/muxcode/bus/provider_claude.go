@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // ClaudeCodeProvider implements the Provider interface for Claude Code CLI.
@@ -165,14 +166,71 @@ func (p *ClaudeCodeProvider) IsIdle(session, role string) bool {
 func isClaudeThinking(content string) bool {
 	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimSpace(line)
+		if isClaudeStatusFooter(trimmed) {
+			continue
+		}
 		if strings.Contains(trimmed, "esc to interrupt") {
 			return true
 		}
 		if strings.Contains(trimmed, "…") && strings.Contains(trimmed, " · ") {
 			return true
 		}
+		// Bare spinner, counter not yet rendered: "✶ Hullaballooing…".
+		//
+		// A turn renders the spinner gerund BEFORE its "(elapsed · tokens · esc
+		// to interrupt)" counter appears, so for the first seconds of a turn the
+		// line matches neither check above — no " · ", no interrupt hint. The ❯
+		// prompt is always present in the input box, so IsIdle read a working
+		// agent as IDLE, and the daemon's 5s poll injected a wake-up straight
+		// into the running turn and killed it:
+		//
+		//	⏺ Process
+		//	  ⎿  Interrupted · What should Claude do instead?
+		//
+		// That is the startup/interrupt loop that mangled review and plan.
+		if isClaudeSpinnerLine(trimmed) {
+			return true
+		}
 	}
 	return false
+}
+
+// isClaudeSpinnerLine reports whether a line is Claude Code's live activity
+// spinner — a spinner glyph followed by a gerund ellipsis, e.g. "✶ Ideating…".
+//
+// Matched by GLYPH RANGE, not a fixed glyph set: the spinner animates across
+// many dingbat code points (✢ U+2722, ✳ U+2733, ✶ U+2736, ✺ U+273A, ✻ U+273B,
+// ✽ U+273D, …) and a hardcoded set silently misses frames. The range excludes
+// the tool bullet ⏺ (U+23FA) and the result glyph ⎿ (U+23BF), so completed tool
+// output like "⏺ Running 1 shell command…" is NOT a spinner — the agent is back
+// at the prompt there and must stay deliverable.
+//
+// The "…" requirement is what separates a live spinner from the past-tense recap
+// an IDLE agent leaves behind ("✻ Cooked for 1m 47s"), which carries the same
+// glyph but no ellipsis. Without that, an idle agent would never be delivered.
+func isClaudeSpinnerLine(trimmed string) bool {
+	r, size := utf8.DecodeRuneInString(trimmed)
+	if size == 0 || r < 0x2720 || r > 0x273F {
+		return false
+	}
+	return strings.Contains(trimmed, "…")
+}
+
+// isClaudeStatusFooter reports whether a line is Claude Code's persistent status
+// footer, e.g.
+//
+//	"⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents"
+//
+// The footer is NOT a working signature: it renders the "esc to interrupt" hint
+// even when the agent sits idle at the ❯ prompt (notably whenever text is parked
+// in the composer, where Esc would clear the buffer). Counting it as "thinking"
+// wedged agents hard — IsIdle went permanently false, so the daemon never
+// delivered the pending inbox, the force-wake path re-injected, that parked more
+// text, and the footer kept the hint alive. Both the "review force-woken 3×
+// without draining its inbox" churn alert and the daemon's idle-delivery stall
+// trace back here. Skip the footer and judge only the spinner line above it.
+func isClaudeStatusFooter(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "⏵⏵") || strings.Contains(trimmed, "bypass permissions on")
 }
 
 // IsAlive checks whether the agent's tmux pane is running Claude Code.

@@ -1,0 +1,36 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="sample-shapes" name="Shapes">
+    <mxGraphModel dx="900" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="480" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <!-- Circle: start -->
+        <mxCell id="c1" value="Start" style="ellipse;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="60" y="180" width="110" height="110" as="geometry" />
+        </mxCell>
+        <!-- Rounded box: process A -->
+        <mxCell id="r1" value="Process A" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;arcSize=20;" vertex="1" parent="1">
+          <mxGeometry x="250" y="205" width="150" height="60" as="geometry" />
+        </mxCell>
+        <!-- Rounded box: process B -->
+        <mxCell id="r2" value="Process B" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;arcSize=20;" vertex="1" parent="1">
+          <mxGeometry x="480" y="205" width="150" height="60" as="geometry" />
+        </mxCell>
+        <!-- Circle: end -->
+        <mxCell id="c2" value="End" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="710" y="180" width="110" height="110" as="geometry" />
+        </mxCell>
+        <!-- Connecting arrows -->
+        <mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#333333;strokeWidth=2;" edge="1" parent="1" source="c1" target="r1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#333333;strokeWidth=2;" edge="1" parent="1" source="r1" target="r2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;strokeColor=#333333;strokeWidth=2;" edge="1" parent="1" source="r2" target="c2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

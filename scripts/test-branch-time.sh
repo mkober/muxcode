@@ -107,6 +107,17 @@ check "reset zeroes the branch total" "0m" "$out"
 out="$("$MUXCODE_BIN" branch-time --status)"
 check_empty "--status empty after reset (no accrued time)" "$out"
 
+# 9. Integration branches (main) are excluded from the passive surfaces even
+#    when time is present in the ledger, but an explicit override re-enables them.
+git checkout -q -b main
+"$MUXCODE_BIN" branch-time --add 3600 >/dev/null   # explicit --add still records
+out="$("$MUXCODE_BIN" branch-time --status)"
+check_empty "--status empty on main (ignored branch)" "$out"
+out="$("$MUXCODE_BIN" branch-time --trailer)"
+check_empty "--trailer empty on main (ignored branch)" "$out"
+out="$(MUXCODE_BRANCH_TIME_IGNORE= "$MUXCODE_BIN" branch-time --status)"
+check "--status tracks main with empty ignore override" "1h0m" "$out"
+
 echo
 echo "  ${GREEN}${PASS} passed${NC}, ${RED}${FAIL} failed${NC}"
 [ "$FAIL" -eq 0 ]

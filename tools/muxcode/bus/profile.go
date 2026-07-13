@@ -577,6 +577,10 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(git rev-parse*)",
 					"Bash(python3*)", "Bash(jq*)",
 					"Bash(tree *)",
+					// Atlassian: the plan agent authors specs/architecture, so it can
+					// read/update Confluence pages and Jira issues directly (CLI only,
+					// never the Atlassian MCP).
+					"Bash(muxcode atlassian *)",
 				},
 			},
 			"build": {

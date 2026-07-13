@@ -48,6 +48,8 @@ func TestResolveProvider_SessionDefaultCodex(t *testing.T) {
 }
 
 func TestResolveProvider_CodexNoHooks(t *testing.T) {
+	SetBusDirBase(t.TempDir()) // isolate from live session override files
+	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_REVIEW_CLI", "codex")
 
 	p := ResolveProvider("review")

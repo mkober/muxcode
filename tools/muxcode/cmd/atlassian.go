@@ -26,11 +26,13 @@ Jira actions:
   search <JQL-QUERY>                      Search issues using JQL
   create-subtask <PARENT-KEY> <SUMMARY> [PROJECT-KEY]  Create a subtask
   worklog <ISSUE-KEY> <SECONDS> [COMMENT] Log time spent against an issue
+  attach <ISSUE-KEY> <FILE>               Upload a file as an issue attachment
 
 Confluence actions:
   read <PAGE-ID>                        Read page content
   update <PAGE-ID> <ADF-JSON-FILE>      Update page content
   search <SPACE-KEY> <CQL-QUERY>        Search pages using CQL
+  attach <PAGE-ID> <FILE>               Upload a file as a page attachment
 `
 
 // Atlassian dispatches Jira and Confluence API commands.
@@ -207,9 +209,21 @@ func atlassianJira(cfg *bus.AtlassianConfig, action string, args []string) {
 		}
 		fmt.Println(result)
 
+	case "attach":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: muxcode atlassian jira attach <ISSUE-KEY> <FILE>")
+			os.Exit(1)
+		}
+		filename, id, err := bus.JiraUploadAttachment(cfg, args[0], args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Attached %s to %s (attachment id %s)\n", filename, args[0], id)
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown jira action: %s\n", action)
-		fmt.Fprintln(os.Stderr, "Actions: read, update, comment, comments, link-types, link, transitions, transition, search, create-subtask, worklog")
+		fmt.Fprintln(os.Stderr, "Actions: read, update, comment, comments, link-types, link, transitions, transition, search, create-subtask, worklog, attach")
 		os.Exit(1)
 	}
 }
@@ -252,9 +266,21 @@ func atlassianConfluence(cfg *bus.AtlassianConfig, action string, args []string)
 		}
 		fmt.Println(result)
 
+	case "attach":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: muxcode atlassian confluence attach <PAGE-ID> <FILE>")
+			os.Exit(1)
+		}
+		filename, fileID, err := bus.ConfluenceUploadAttachment(cfg, args[0], args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Attached %s to page %s (fileId %s)\n", filename, args[0], fileID)
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown confluence action: %s\n", action)
-		fmt.Fprintln(os.Stderr, "Actions: read, update, search")
+		fmt.Fprintln(os.Stderr, "Actions: read, update, search, attach")
 		os.Exit(1)
 	}
 }

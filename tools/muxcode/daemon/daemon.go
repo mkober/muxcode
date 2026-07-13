@@ -76,7 +76,8 @@ type Daemon struct {
 	// Tracked task completion (--track sends)
 	lastTrackedTaskCheck int64 // 5s interval
 	// Safety net retry cap — prevents notification storm when agent can't process
-	safetyNetRetries map[string]int // role -> consecutive safety-net clears
+	safetyNetRetries map[string]int   // role -> consecutive safety-net clears
+	safetyNetLast    map[string]int64 // role -> unix time of last safety-net clear
 	// Pane hygiene sweep — proactive parked-input detection across all agent panes
 	lastPaneSweep int64             // 30s interval
 	parkedSeen    map[string]string // role -> parked prompt text observed last sweep
@@ -175,6 +176,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		heartbeatInterval:     bus.AgentHeartbeatInterval(),
 		lastDiskPressureCheck: now,
 		safetyNetRetries:      make(map[string]int),
+		safetyNetLast:         make(map[string]int64),
 		lastPaneSweep:         now,
 		parkedSeen:            make(map[string]string),
 		parkedResubmits:       make(map[string]int),
@@ -1017,6 +1019,48 @@ func (d *Daemon) checkStuckProviders() {
 	}
 }
 
+// safetyNetMaxRetries caps safety-net delivery retries within one window, so a
+// TUI that genuinely cannot accept input is not stormed with injections.
+const safetyNetMaxRetries = 3
+
+// safetyNetRetryWindowSecs is how long a role's exhausted safety-net retry
+// budget stays spent before it refills. The budget caps delivery retries at
+// safetyNetMaxRetries per window so a genuinely unresponsive TUI can't be
+// stormed with injections, while still guaranteeing that a stuck-but-idle agent
+// is retried again later instead of being abandoned until someone runs
+// `muxcode deliver --force`.
+const safetyNetRetryWindowSecs int64 = 60
+
+// safetyNetBudgetAvailable reports whether role may spend a safety-net delivery
+// retry now, refilling an exhausted budget once the retry window has elapsed.
+//
+// The refill is the whole point. The only other reset is the active transition
+// in checkIdleAgents (!isIdle && wasIdle), which requires the agent to PROCESS a
+// message — the very thing a failed delivery prevents. So an agent whose
+// send-keys injections all dropped would burn its budget, never go active, never
+// reset, and sit idle with an actionable message indefinitely: the bus looks
+// dead, and only a manual `muxcode deliver <role> --force` recovers it. Observed
+// live on the review agent, twice. Refilling on a timer bounds the retry rate
+// without ever abandoning the agent.
+func (d *Daemon) safetyNetBudgetAvailable(role string, now int64) bool {
+	if last, ok := d.safetyNetLast[role]; ok && now-last >= safetyNetRetryWindowSecs {
+		d.safetyNetRetries[role] = 0
+	}
+	return d.safetyNetRetries[role] < safetyNetMaxRetries
+}
+
+// spendSafetyNetRetry records one safety-net delivery retry for role.
+func (d *Daemon) spendSafetyNetRetry(role string, now int64) {
+	d.safetyNetRetries[role]++
+	d.safetyNetLast[role] = now
+	if d.safetyNetRetries[role] >= safetyNetMaxRetries {
+		// Budget just ran out — say so. A silently-exhausted budget is exactly
+		// what made this failure mode look like a dead bus rather than a stuck
+		// agent. It will refill after safetyNetRetryWindowSecs.
+		bus.LogLifecycle(d.session, "warn", "daemon", "safety-net-exhausted", role)
+	}
+}
+
 // permBlockCheckSecs is the polling interval for the permission-block watchdog.
 const permBlockCheckSecs int64 = 30
 
@@ -1664,9 +1708,19 @@ func (d *Daemon) checkIdleAgents() {
 			// Capped at 3 retries to prevent notification storms when the agent
 			// looks idle but can't process input (e.g. during Claude Code's
 			// Ideating/Thinking phase where ❯ is visible but the LLM is working).
+			//
+			// The retry budget REFILLS after safetyNetRetryWindowSecs. It must not
+			// be permanently exhaustible: the only other reset is the active
+			// transition above, which requires the agent to PROCESS a message — the
+			// very thing a failed delivery prevents. An agent whose injections all
+			// dropped would burn its 3 retries, never go active, never refill, and
+			// sit idle with an actionable message forever, deliverable only by hand
+			// via `muxcode deliver <role> --force`. Refilling on a timer preserves
+			// the storm cap (3 attempts per window) while letting a stuck agent
+			// self-heal once the TUI is ready to accept input again.
 			if bus.HasActionableMessages(d.session, role) &&
 				!bus.IsNotifiedRecently(d.session, role, 15*time.Second) &&
-				d.safetyNetRetries[role] < 3 {
+				d.safetyNetBudgetAvailable(role, now) {
 				deliverable := isIdle
 				if !deliverable {
 					if bus.ClearParkedInput(d.session, role) {
@@ -1678,7 +1732,7 @@ func (d *Daemon) checkIdleAgents() {
 				}
 				if deliverable {
 					bus.ClearNotifiedIDs(d.session, role)
-					d.safetyNetRetries[role]++
+					d.spendSafetyNetRetry(role, now)
 				}
 			}
 			continue
@@ -2931,10 +2985,15 @@ func branchTimeIdleSecs() int64 {
 }
 
 // checkBranchTime accumulates active working time onto the current git branch.
-// It runs every poll (reusing the daemon cadence, no separate ticker) and only
-// accrues while a tmux client is attached AND the user has interacted within
-// branchTimeIdleSecs — so time spent detached, or idle at the keyboard while
-// still attached (lunch, a meeting, overnight), is not counted.
+// It runs every poll (reusing the daemon cadence, no separate ticker). Time
+// accrues while the user is active (attached and typing within branchTimeIdleSecs)
+// OR a worker agent is producing output — an agent working on the branch is
+// productive time even when the user is only watching, is away while agents run,
+// or has detached a background session whose agents keep working. When neither is
+// true (idle at the keyboard with idle agents, or detached with idle agents) the
+// clock pauses. Time is only tracked on feature branches: shared integration
+// branches (main/master by default, configurable via MUXCODE_BRANCH_TIME_IGNORE)
+// are skipped entirely.
 //
 // To keep the hot path cheap, per-tick deltas are accrued in memory and flushed
 // to the ledger at most once per branchTimeFlushSecs (or on a branch change /
@@ -2950,23 +3009,26 @@ func (d *Daemon) checkBranchTime() {
 
 	now := time.Now().Unix()
 
-	// Pause when detached OR attached-but-idle, from a single tmux query:
-	// SessionIdleSeconds returns -1 when no client is attached (stepped away) and
-	// otherwise the seconds since the last keyboard interaction. Pause when
-	// detached, or (when idle detection is enabled) when idle beyond the
-	// threshold — so time away from the keyboard isn't counted. Flush and reset
-	// the baseline so the paused gap isn't back-counted on return.
+	// Time accrues while the user is active (a client is attached and they've
+	// typed within the idle window) OR a worker agent is producing output — work
+	// on the branch counts even when the user is only watching, is away while
+	// agents run, or has detached a background session with agents still working.
+	// When neither is true the session is genuinely idle: flush and reset the
+	// baseline so the paused gap isn't back-counted on return.
+	// SessionIdleSeconds returns -1 when no client is attached (detached).
 	idle := bus.SessionIdleSeconds(d.session)
 	idleMax := branchTimeIdleSecs()
-	if idle < 0 || (idleMax > 0 && idle > idleMax) {
+	if !bus.BranchTimeUserActive(idle, idleMax) && !bus.AnyAgentWorking(d.session) {
 		d.flushBranchTime()
 		d.lastBranchTick = 0
 		return
 	}
 
 	branch := bus.CurrentBranch()
-	if branch == "" {
-		// Not in a git repo (or git failed) — flush and stop attributing time.
+	if bus.BranchTimeIgnored(branch) {
+		// Not in a git repo/detached HEAD, or on an ignored integration branch
+		// (main/master by default) — flush the prior branch's pending time and
+		// stop attributing. Active time is only tracked on feature branches.
 		d.flushBranchTime()
 		d.lastBranchTick = 0
 		d.lastBranch = ""

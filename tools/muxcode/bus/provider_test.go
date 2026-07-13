@@ -382,6 +382,30 @@ func TestIsClaudeThinking_ToolExecution(t *testing.T) {
 	}
 }
 
+// Regression: the status footer carries an "esc to interrupt" hint even when the
+// agent is idle at the ❯ prompt (Claude Code renders it whenever text is parked
+// in the composer). Treating the footer as a working signature pinned IsIdle to
+// false, so the daemon never delivered the agent's inbox and it wedged with
+// actionable messages — observed live on the review agent, which had to be
+// recovered by hand with `muxcode deliver review --force` twice.
+func TestIsClaudeThinking_StatusFooterIsNotThinking(t *testing.T) {
+	content := "✻ Cooked for 1m 47s\n──── code-reviewer ──\n❯ \n" +
+		"⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents"
+	if isClaudeThinking(content) {
+		t.Error("status footer 'esc to interrupt' must not count as thinking — idle agent would never be delivered")
+	}
+}
+
+// The footer must be ignored, but a genuine spinner ABOVE that same footer must
+// still register — otherwise the fix would trade a wedged agent for a spammed one.
+func TestIsClaudeThinking_SpinnerAboveStatusFooter(t *testing.T) {
+	content := "✻ Befuddling… (2m 3s · ↓ 8.1k tokens · esc to interrupt)\n──── code-reviewer ──\n❯ \n" +
+		"⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents"
+	if !isClaudeThinking(content) {
+		t.Error("active spinner above the status footer must still be detected as thinking")
+	}
+}
+
 func TestIsAgentIdle_OpenCode_AlwaysFalse(t *testing.T) {
 	// OpenCode TUI has no reliable idle detection — IsIdle always returns false.
 	// This ensures checkIdleAgents() never tries to wake OpenCode agents via send-keys.
@@ -697,3 +721,44 @@ func TestActionType_Default(t *testing.T) {
 
 // --- OpenCodeProvider ---
 // Full OpenCode provider tests are in provider_opencode_test.go
+
+// Regression (interrupt race): a turn renders its spinner gerund BEFORE the
+// "(elapsed · tokens · esc to interrupt)" counter appears. In that window the
+// line has no " · " and no interrupt hint, while the ❯ prompt sits in the input
+// box as always — so a WORKING agent read as idle and the daemon injected a
+// wake-up into the running turn, killing it ("Interrupted · What should Claude
+// do instead?"). Captured live from the review agent mid-review.
+func TestIsClaudeThinking_BareSpinnerWithoutCounter(t *testing.T) {
+	content := "❯ New message from test [request:review]: Tests passed\n" +
+		"✶ Hullaballooing…\n──── code-reviewer ──\n❯ \n" +
+		"⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents"
+	if !isClaudeThinking(content) {
+		t.Error("bare spinner (counter not yet rendered) must read as thinking — else the daemon interrupts the running turn")
+	}
+}
+
+// The spinner animates across code points; every frame must register, not just
+// the ones someone happened to hardcode.
+func TestIsClaudeSpinnerLine_AllAnimationFrames(t *testing.T) {
+	for _, glyph := range []string{"✢", "✳", "✶", "✺", "✻", "✽"} {
+		if !isClaudeSpinnerLine(glyph + " Combobulating…") {
+			t.Errorf("spinner frame %q must be detected as a live spinner", glyph)
+		}
+	}
+}
+
+// The past-tense recap carries a spinner glyph but no ellipsis, and marks an
+// IDLE agent. Misreading it as thinking would mean the agent is never delivered.
+func TestIsClaudeSpinnerLine_CompletedRecapIsNotSpinner(t *testing.T) {
+	if isClaudeSpinnerLine("✻ Cooked for 1m 47s") {
+		t.Error("completed recap must not read as a live spinner — the agent is idle and must be delivered")
+	}
+}
+
+// The tool bullet ⏺ (U+23FA) is outside the spinner glyph range: completed tool
+// output ends with an ellipsis too, but the agent is back at the prompt.
+func TestIsClaudeSpinnerLine_ToolBulletIsNotSpinner(t *testing.T) {
+	if isClaudeSpinnerLine("⏺ Running 1 shell command…") {
+		t.Error("tool bullet line must not read as a live spinner — agent is deliverable")
+	}
+}

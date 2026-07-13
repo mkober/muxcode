@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -1079,6 +1080,180 @@ func ConfluenceSearch(cfg *AtlassianConfig, spaceKey, cql string) (string, error
 	}
 
 	return sb.String(), nil
+}
+
+// --- Attachment upload (Confluence + Jira) ---
+
+// atlassianMultipartUpload sends a multipart/form-data POST with a single
+// "file" field to a Confluence/Jira attachment endpoint. It uses basic auth and
+// the X-Atlassian-Token: no-check header both APIs require to accept uploads.
+// The file is buffered in memory (diagram images are small).
+func atlassianMultipartUpload(apiURL, filePath string, cfg *AtlassianConfig) (*http.Response, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("opening attachment file: %w", err)
+	}
+	defer f.Close()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("building multipart body: %w", err)
+	}
+	if _, err := io.Copy(fw, f); err != nil {
+		return nil, fmt.Errorf("reading attachment file: %w", err)
+	}
+	if err := mw.Close(); err != nil {
+		return nil, fmt.Errorf("finalizing multipart body: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", apiURL, &buf)
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(cfg.UserEmail, cfg.APIToken)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("X-Atlassian-Token", "no-check")
+	req.Header.Set("Accept", "application/json")
+	return atlassianHTTPClient.Do(req)
+}
+
+// atlassianUploadFile stats filePath, POSTs it as a multipart attachment to
+// apiURL, verifies the response status, and extracts the filename + id via
+// parse. label prefixes error messages ("Confluence" / "Jira"). Shared by the
+// Confluence and Jira attachment upload functions.
+func atlassianUploadFile(apiURL, filePath, label string, cfg *AtlassianConfig, parse func([]byte) (string, string, error)) (string, string, error) {
+	if _, err := os.Stat(filePath); err != nil {
+		return "", "", fmt.Errorf("attachment file: %w", err)
+	}
+	resp, err := atlassianMultipartUpload(apiURL, filePath, cfg)
+	if err != nil {
+		return "", "", fmt.Errorf("%s attachment upload failed: %w", label, err)
+	}
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return "", "", fmt.Errorf("reading response: %w", err)
+	}
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		return "", "", fmt.Errorf("%s attachment API returned HTTP %d: %s", label, resp.StatusCode, string(body))
+	}
+	return parse(body)
+}
+
+// confluenceFindAttachmentID returns the id of an existing attachment on the
+// page with the given filename, or "" if none exists. Errors other than a clean
+// "not found" are treated as absent so the caller can fall through to create.
+func confluenceFindAttachmentID(cfg *AtlassianConfig, base, pageID, filename string) (string, error) {
+	apiURL := fmt.Sprintf("%s/wiki/rest/api/content/%s/child/attachment?filename=%s",
+		base, pageID, url.QueryEscape(filename))
+	resp, err := atlassianRequest("GET", apiURL, nil, cfg)
+	if err != nil {
+		return "", fmt.Errorf("checking existing attachment: %w", err)
+	}
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != 200 {
+		return "", nil // treat as "not found"; the upload path will surface real errors
+	}
+	var wrapped struct {
+		Results []struct {
+			ID string `json:"id"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &wrapped); err != nil {
+		return "", nil
+	}
+	if len(wrapped.Results) > 0 {
+		return wrapped.Results[0].ID, nil
+	}
+	return "", nil
+}
+
+// parseConfluenceAttachmentResponse extracts the attachment filename and fileId
+// (media id, used for ADF media embeds) from a Confluence attachment API
+// response. Handles both the create shape ({"results":[{...}]}) and the update
+// shape (a single attachment object).
+func parseConfluenceAttachmentResponse(body []byte) (filename, fileID string, err error) {
+	type attachment struct {
+		ID         string `json:"id"`
+		Title      string `json:"title"`
+		Extensions struct {
+			FileID string `json:"fileId"`
+		} `json:"extensions"`
+	}
+	var wrapped struct {
+		Results []attachment `json:"results"`
+	}
+	if e := json.Unmarshal(body, &wrapped); e == nil && len(wrapped.Results) > 0 {
+		a := wrapped.Results[0]
+		return a.Title, a.Extensions.FileID, nil
+	}
+	var single attachment
+	if e := json.Unmarshal(body, &single); e == nil && (single.Title != "" || single.ID != "") {
+		return single.Title, single.Extensions.FileID, nil
+	}
+	return "", "", fmt.Errorf("could not parse attachment from Confluence response: %s", string(body))
+}
+
+// ConfluenceUploadAttachment uploads filePath as an attachment on the given
+// page and returns the stored filename and fileId (media id for ADF embeds).
+// If an attachment with the same filename already exists it is updated in place
+// (Confluence rejects a create with a duplicate filename).
+func ConfluenceUploadAttachment(cfg *AtlassianConfig, pageID, filePath string) (filename, fileID string, err error) {
+	baseURL := cfg.ConfluenceBaseURL
+	if baseURL == "" || cfg.UserEmail == "" || cfg.APIToken == "" {
+		return "", "", fmt.Errorf("missing Confluence config (CONFLUENCE_BASE_URL or JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN)")
+	}
+	if err := validatePageID(pageID); err != nil {
+		return "", "", err
+	}
+	base := strings.TrimRight(baseURL, "/")
+
+	existingID, err := confluenceFindAttachmentID(cfg, base, pageID, filepath.Base(filePath))
+	if err != nil {
+		return "", "", err
+	}
+
+	var apiURL string
+	if existingID != "" {
+		apiURL = fmt.Sprintf("%s/wiki/rest/api/content/%s/child/attachment/%s/data", base, pageID, existingID)
+	} else {
+		apiURL = fmt.Sprintf("%s/wiki/rest/api/content/%s/child/attachment", base, pageID)
+	}
+
+	return atlassianUploadFile(apiURL, filePath, "Confluence", cfg, parseConfluenceAttachmentResponse)
+}
+
+// parseJiraAttachmentResponse extracts the filename and attachment id from a
+// Jira attachment API response (a JSON array of attachment objects).
+func parseJiraAttachmentResponse(body []byte) (filename, attachmentID string, err error) {
+	var arr []struct {
+		ID       string `json:"id"`
+		Filename string `json:"filename"`
+	}
+	if e := json.Unmarshal(body, &arr); e == nil && len(arr) > 0 {
+		return arr[0].Filename, arr[0].ID, nil
+	}
+	return "", "", fmt.Errorf("could not parse attachment from Jira response: %s", string(body))
+}
+
+// JiraUploadAttachment uploads filePath as an attachment on the given issue and
+// returns the stored filename and attachment id. Jira does not dedupe by
+// filename — re-uploading the same name creates a new attachment.
+func JiraUploadAttachment(cfg *AtlassianConfig, issueKey, filePath string) (filename, attachmentID string, err error) {
+	if cfg.JiraBaseURL == "" || cfg.UserEmail == "" || cfg.APIToken == "" {
+		return "", "", fmt.Errorf("missing Jira config (JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN)")
+	}
+	if err := validateJiraKey(issueKey); err != nil {
+		return "", "", err
+	}
+	apiURL := fmt.Sprintf("%s/rest/api/3/issue/%s/attachments",
+		strings.TrimRight(cfg.JiraBaseURL, "/"), issueKey)
+
+	return atlassianUploadFile(apiURL, filePath, "Jira", cfg, parseJiraAttachmentResponse)
 }
 
 // --- ADF text extraction ---

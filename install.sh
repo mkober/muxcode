@@ -225,6 +225,53 @@ else
   info "ollama not found (optional — install for local LLM agent: brew install ollama)"
 fi
 
+# --- Check optional: diagram renderers (plan-agent diagram authoring) ---
+# The plan agent renders draw.io / Mermaid architecture diagrams to SVG/PNG via
+# scripts/render-diagram.sh for embedding into docs, Jira, and Confluence. Both
+# renderers are optional — the feature degrades gracefully with an install hint
+# when a renderer is absent.
+info "Checking diagram renderers (optional — plan-agent diagram authoring)..."
+
+# Mermaid CLI (mmdc) — generic flow/sequence/ER diagrams
+if command -v mmdc >/dev/null 2>&1; then
+  ok "mmdc found (Mermaid diagrams)"
+else
+  read -rp "  Install Mermaid CLI (mmdc)? [y/N] " ans
+  if [[ "$ans" =~ ^[Yy]$ ]]; then
+    info "Installing @mermaid-js/mermaid-cli..."
+    if npm install -g @mermaid-js/mermaid-cli 2>/dev/null; then
+      ok "mmdc installed"
+    else
+      warn "Auto-install failed. Install manually: npm install -g @mermaid-js/mermaid-cli"
+    fi
+  else
+    info "mmdc not installed (optional — npm install -g @mermaid-js/mermaid-cli)"
+  fi
+fi
+
+# draw.io desktop (drawio) — draw.io / AWS mxgraph.aws4.* architecture diagrams.
+# The macOS cask installs the binary inside the app bundle (not on PATH);
+# scripts/render-diagram.sh auto-discovers it there, so no PATH surgery needed.
+if command -v drawio >/dev/null 2>&1 \
+   || [ -x "/Applications/draw.io.app/Contents/MacOS/draw.io" ] \
+   || [ -x "$HOME/Applications/draw.io.app/Contents/MacOS/draw.io" ]; then
+  ok "draw.io found (AWS / draw.io architecture diagrams)"
+else
+  read -rp "  Install draw.io desktop (drawio)? [y/N] " ans
+  if [[ "$ans" =~ ^[Yy]$ ]]; then
+    info "Installing draw.io..."
+    if brew install --cask drawio 2>/dev/null; then
+      ok "draw.io installed via Homebrew (render-diagram.sh finds it in the app bundle)"
+    else
+      warn "Auto-install failed. Install manually:"
+      echo "    brew install --cask drawio   (macOS)"
+      echo "    — or download from https://github.com/jgraph/drawio-desktop/releases"
+    fi
+  else
+    info "drawio not installed (optional — brew install --cask drawio)"
+  fi
+fi
+
 # --- Ensure ~/.local/bin exists and is in PATH ---
 info "Checking ~/.local/bin..."
 mkdir -p "$HOME/.local/bin"
