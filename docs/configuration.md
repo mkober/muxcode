@@ -219,6 +219,38 @@ When running on OpenCode: delegation enforcement uses `DenyTools` permission den
 | `agent-stories-done` | Count of completed stories this session |
 | `agent-last-heartbeat` | Timestamp of last heartbeat |
 
+### Branch time tracking
+
+Per-branch active working time, accumulated by the daemon and surfaced in the tmux status bar, `muxcode branch-time --status`, and the `prepare-commit-msg` commit trailer. See the [branch-time-tracking spec](requirements/completed/branch-time-tracking.md).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_BRANCH_TIME_DISABLE` | (unset) | Set to `1` to disable accumulation and suppress all `--status` / `--trailer` output |
+| `MUXCODE_BRANCH_TIME_IDLE_SECS` | `300` | Pause accumulation after this many seconds without user input; `0` disables the input-idle check (attach-only) |
+| `MUXCODE_BRANCH_TIME_IGNORE` | `main,master` | Comma-separated branch names excluded from tracking — shared integration branches where "active working time" is not meaningful |
+| `MUXCODE_BRANCH_TIME_ACTIVITY_ROLES` | `plan,edit,build,test,review,deploy,run,commit,analyze` | Comma-separated agent windows sampled to decide whether an agent is actively working |
+| `MUXCODE_BRANCH_TIME_FILE` | `~/.config/muxcode/branch-time.json` | Explicit path to the cross-session ledger (primarily for tests). Resolution: `MUXCODE_BRANCH_TIME_FILE` > `$MUXCODE_CONFIG_DIR/branch-time.json` > `~/.config/muxcode/branch-time.json` |
+
+**When time accrues**: while the user is active (a tmux client is attached *and* there has been input within `MUXCODE_BRANCH_TIME_IDLE_SECS`) **or** an agent in `MUXCODE_BRANCH_TIME_ACTIVITY_ROLES` is producing output. An agent working on the branch is productive time even when the user is only watching, is away while agents run, or has detached a background session whose agents keep working. When neither is true, the clock pauses.
+
+**Why `watch` and `serve` are excluded from the activity roles**: both emit output continuously even when no one is working (log tailing, dev server), so counting them would keep the clock running forever. Hosted/duplicate roles (`docs`, `research`, `pr-read`) and non-interactive roles (`webhook`, `api`, `auto`) are omitted because they share a host pane or have no meaningful agent activity.
+
+**Set-to-empty semantics**: `MUXCODE_BRANCH_TIME_IGNORE` and `MUXCODE_BRANCH_TIME_ACTIVITY_ROLES` both distinguish *unset* (use the built-in default) from *set to an empty string* (replace the default with nothing). Setting either variable — even to an empty value — **fully replaces** the built-in list rather than adding to it:
+
+```bash
+# Track every branch, including main/master
+MUXCODE_BRANCH_TIME_IGNORE=
+
+# Ignore exactly these two branches (main is no longer ignored unless listed)
+MUXCODE_BRANCH_TIME_IGNORE=main,develop
+
+# Only count edit/build agent output as agent activity
+MUXCODE_BRANCH_TIME_ACTIVITY_ROLES=edit,build
+
+# Never count agent output — accrue only on live user input
+MUXCODE_BRANCH_TIME_ACTIVITY_ROLES=
+```
+
 ### Integrations
 
 | Variable | Default | Description |
