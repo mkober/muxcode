@@ -229,8 +229,20 @@ func isClaudeSpinnerLine(trimmed string) bool {
 // text, and the footer kept the hint alive. Both the "review force-woken 3×
 // without draining its inbox" churn alert and the daemon's idle-delivery stall
 // trace back here. Skip the footer and judge only the spinner line above it.
+// The mode-cycle hint is the signature: it is the one part of the footer present
+// in EVERY permission mode. Keying only on "⏵⏵"/"bypass permissions on" matched
+// the bypass-mode footer and missed the others —
+//
+//	⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · …
+//	⏸  plan mode on (shift+tab to cycle) · esc to interrupt · …
+//
+// so an agent in any non-bypass mode fell straight back into the wedge this
+// function exists to prevent. The glyph and the mode name both vary; the
+// "(shift+tab to cycle)" hint does not.
 func isClaudeStatusFooter(trimmed string) bool {
-	return strings.HasPrefix(trimmed, "⏵⏵") || strings.Contains(trimmed, "bypass permissions on")
+	return strings.Contains(trimmed, "shift+tab to cycle") ||
+		strings.HasPrefix(trimmed, "⏵⏵") ||
+		strings.Contains(trimmed, "bypass permissions on")
 }
 
 // IsAlive checks whether the agent's tmux pane is running Claude Code.

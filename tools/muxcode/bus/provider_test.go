@@ -762,3 +762,22 @@ func TestIsClaudeSpinnerLine_ToolBulletIsNotSpinner(t *testing.T) {
 		t.Error("tool bullet line must not read as a live spinner — agent is deliverable")
 	}
 }
+
+// The status footer differs per permission mode, and only the "(shift+tab to
+// cycle)" hint is common to all of them. Keying the footer signature on the
+// bypass-mode glyph/text alone left every other mode (plan, accept-edits)
+// carrying an unfiltered "esc to interrupt" — which pins IsIdle false and wedges
+// the agent, the exact failure isClaudeStatusFooter exists to prevent.
+func TestIsClaudeThinking_StatusFooterAcrossPermissionModes(t *testing.T) {
+	footers := []string{
+		"⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents",
+		"⏸ plan mode on (shift+tab to cycle) · esc to interrupt · ← for agents",
+		"⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt · ← for agents",
+	}
+	for _, footer := range footers {
+		content := "✻ Cooked for 39s\n──── code-reviewer ──\n❯ \n" + footer
+		if isClaudeThinking(content) {
+			t.Errorf("idle agent must not read as thinking under footer: %q", footer)
+		}
+	}
+}
