@@ -116,6 +116,25 @@ func Send(args []string) {
 		os.Exit(1)
 	}
 
+	// Git mutations are user-initiated: only the user-facing agent may REQUEST a
+	// commit/stage/push/merge/rebase/tag. Checked here rather than left to agent
+	// prose, because prose did not hold — the plan agent's own definition handed
+	// it the delegation pattern and it produced eight unauthorized commits in a
+	// live session. NOT bypassed by --force (which only skips the idle check).
+	//
+	// Requests only. The inbox reply template is `muxcode send commit <action>
+	// ... --type response`, so a role replying TO the commit agent echoes the
+	// action label back — gating that would os.Exit(1) on a legitimate response,
+	// losing it and hanging commit's tracked task until timeout. Responses are
+	// never actionable, so refusing them buys no safety. (bus.sendMessage applies
+	// the same request-only rule as the backstop for non-CLI senders.)
+	if msgType == "request" {
+		if deny := bus.CheckCommitAuthority(from, to, action); deny != "" {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", deny)
+			os.Exit(1)
+		}
+	}
+
 	// Loop suppression: drop repeated identical agent-to-agent relay requests
 	// that are spinning with no resolution (e.g. run -> watch when watch is on
 	// a hard stand-down). The daemon's checkLoops only *reports* such loops;
@@ -509,12 +528,11 @@ func logWaitResponseToHistory(session, role, action, payload string) {
 
 // isCommitAction returns true for actions that trigger actual git commits.
 // Read-only operations (status, log, diff, pr-read) are not blocked.
+// isCommitAction reports whether an action mutates git state. Delegates to
+// bus.IsGitMutatingAction so the pre-commit check and the authority gate can
+// never drift apart — a label on one list but not the other is a bypass.
 func isCommitAction(action string) bool {
-	switch action {
-	case "commit", "stage", "push", "merge", "rebase", "tag":
-		return true
-	}
-	return false
+	return bus.IsGitMutatingAction("commit", action)
 }
 
 // consumeExistingResponses checks if the sender's inbox already has unread

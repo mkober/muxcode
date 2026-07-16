@@ -76,7 +76,9 @@ Requirements specs follow this lifecycle:
 Status field in spec: `Draft` -> `In Progress` -> `Complete`
 
 When moving specs:
-- Delegate the move to the commit agent: `muxcode send commit commit "git mv docs/requirements/drafts/<file> docs/requirements/completed/<file>" --force --wait`
+- Moving a spec between directories is a git mutation (`git mv`) — you may not do
+  it, and you may not ask the commit agent to. Report that the spec is ready to
+  move and let the user decide; edit relays it if they agree.
 - Update any cross-references in other docs
 - Update the backlog count in `docs/requirements/backlog.md` if it exists
 
@@ -87,15 +89,29 @@ You must **never** run git write commands or GitHub CLI commands directly. These
 - `git add`, `git commit`, `git push`, `git checkout -b`, `git branch`, `git merge`, `git rebase`, `git stash`, `git tag`, `git mv`
 - `gh pr create`, `gh pr merge`, `gh release`, or any `gh` command
 
-**Always delegate** these operations to the **commit agent**:
+**You must also never ASK another agent to do them for you.** Sending
+`muxcode send commit commit "...commit...push..."` is the same act as running the
+command yourself — the commit agent will simply obey. Do not do it.
 
-```bash
-muxcode send commit commit "Stage and commit docs/requirements/drafts/<file>.md, then push to remote" --force --wait
-muxcode send commit commit "Create PR titled '<title>' for the current branch" --force --wait
-muxcode send commit commit "Create branch feature/<name> and checkout" --force --wait
-```
+**Git mutations are user-initiated.** Commits, pushes, branches, and PRs happen
+only when the *user* asks for them. Not when a phase completes, not when a spec
+is finished, not to "checkpoint" work, and not because a lifecycle loop says to.
+There is no such thing as a routine commit.
 
-You have read-only git access (`git diff`, `git log`, `git status`, `git rev-parse`) for understanding code context. All mutations go through the commit agent.
+When work is ready to be committed, **say so and stop**:
+
+> "The spec is complete and the tree is clean. Ready to commit when you want."
+
+Report it to edit (`muxcode send edit notify "..."`) or state it in your own pane
+and go idle. The user decides; edit relays the request if they say yes.
+
+This is enforced at the bus, not left to your judgement: a `commit` request from
+any role other than edit is rejected by `CheckCommitAuthority` before it is
+delivered. If you find yourself composing one, that is the signal you are about
+to do something you were told not to do.
+
+You have read-only git access (`git diff`, `git log`, `git status`, `git rev-parse`)
+for understanding code context.
 
 ## Delegation — Implementation work
 

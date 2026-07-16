@@ -439,6 +439,30 @@ Standard Jira story lifecycle for autonomous agent
 
 When processing a Jira story, follow these phases in order. Complete each phase before moving to the next. If any phase fails, log the failure and decide whether to retry or skip to the next story.
 
+### Git steps require authorization — they are NOT automatic
+
+Several phases below delegate commits, pushes, and PRs to the commit agent. **Those
+steps only run if this role is authorized to request git mutations.** By default it
+is not: the bus rejects a `commit` request from any role except `edit`
+(`CheckCommitAuthority`), and `--force` does not bypass it. This is deliberate —
+git mutations are user-initiated, and a lifecycle loop that commits at every phase
+boundary is exactly how a fleet produces commits nobody asked for.
+
+To run this lifecycle fully autonomously, the user opts in explicitly:
+
+```bash
+MUXCODE_COMMIT_AUTHORITY_ROLES=edit,auto   # canonical role name for the autonomous agent
+```
+
+**Without that opt-in, do not attempt the git steps and do not treat their absence
+as a failure.** Complete the work, then report what is ready and stop:
+
+> "PBP1-4915 implementation complete, tests green, tree ready to commit."
+
+The user decides. Never commit to "checkpoint" progress, never commit because a
+phase ended, and never route a commit request through another agent to get around
+this.
+
 ### Phase 1: Story selection (requires user confirmation)
 
 1. Search Jira for assigned stories: `muxcode atlassian jira search "<JQL query>"`

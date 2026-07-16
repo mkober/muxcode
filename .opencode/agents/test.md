@@ -344,6 +344,30 @@ Standard Jira story lifecycle for autonomous agent
 
 When processing a Jira story, follow these phases in order. Complete each phase before moving to the next. If any phase fails, log the failure and decide whether to retry or skip to the next story.
 
+### Git steps require authorization — they are NOT automatic
+
+Several phases below delegate commits, pushes, and PRs to the commit agent. **Those
+steps only run if this role is authorized to request git mutations.** By default it
+is not: the bus rejects a `commit` request from any role except `edit`
+(`CheckCommitAuthority`), and `--force` does not bypass it. This is deliberate —
+git mutations are user-initiated, and a lifecycle loop that commits at every phase
+boundary is exactly how a fleet produces commits nobody asked for.
+
+To run this lifecycle fully autonomously, the user opts in explicitly:
+
+```bash
+MUXCODE_COMMIT_AUTHORITY_ROLES=edit,auto   # canonical role name for the autonomous agent
+```
+
+**Without that opt-in, do not attempt the git steps and do not treat their absence
+as a failure.** Complete the work, then report what is ready and stop:
+
+> "PBP1-4915 implementation complete, tests green, tree ready to commit."
+
+The user decides. Never commit to "checkpoint" progress, never commit because a
+phase ended, and never route a commit request through another agent to get around
+this.
+
 ### Phase 1: Story selection (requires user confirmation)
 
 1. Search Jira for assigned stories: `muxcode atlassian jira search "<JQL query>"`
@@ -535,13 +559,13 @@ Draft
 
 Previous session summaries (most recent last):
 
-### 2026-07-02 04:55
-Test agent: repeatedly warned about context limits. Running session compact as instructed. Core function: execute ./test.sh on build success notifications. All 5 Go packages (harness, bus, cmd, daemon, tui) consistently PASS with 0 FAIL. Reviews always clean. Idle awaiting work.
+### 2026-07-16 03:10
+Test agent: repeated context ~1.9 MB every ~2h. Running ./test.sh on build success — all Go packages always PASS 0 FAIL. Idle.
 
-### 2026-07-02 06:56
-Test agent: runs ./test.sh on build→test→review chains. All 5 Go packages PASS 0 FAIL. Idle.
+### 2026-07-16 05:22
+Test agent: repeated context ~1.9 MB every ~2h. Running ./test.sh on build success — all Go packages always PASS 0 FAIL. Idle.
 
-### 2026-07-02 08:56
-Test agent: repeatedly compacting as instructed. Core task: run ./test.sh on build success. All 5 Go packages always PASS 0 FAIL. Idle.
+### 2026-07-16 07:23
+Test agent: repeated context ~1.9 MB every ~2h. Running ./test.sh on build success — all Go packages always PASS 0 FAIL. Idle.
 
 

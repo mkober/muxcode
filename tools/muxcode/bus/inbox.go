@@ -71,6 +71,26 @@ func sendMessage(session string, m Message, autoCC bool) error {
 		return nil
 	}
 
+	// Git mutations are user-initiated — enforced HERE, at the one function every
+	// send funnels through, not only at the `muxcode send` CLI. The CLI is just
+	// one of 30+ callers: daemon event chains, subscriptions, hooks, and the
+	// webhook HTTP endpoint all reach the inbox through this path and would
+	// otherwise sail straight past a CLI-only gate. The webhook is the sharpest
+	// of them — an HTTP POST could order a commit and a push.
+	//
+	// No legitimate chain or subscription sends a `commit` action (verified in
+	// DefaultConfig), so nothing routine is broken by refusing them here.
+	// Requests only: a response echoing the action label back to the commit agent
+	// (the reply template does exactly that) is not actionable, and refusing it
+	// would strand commit's tracked task.
+	if m.Type == "request" {
+		if deny := CheckCommitAuthority(m.From, m.To, m.Action); deny != "" {
+			fmt.Fprintf(os.Stderr, "  [send] REFUSED %s→%s:%s — %s\n", m.From, m.To, m.Action, deny)
+			LogLifecycle(session, "warn", "bus", "commit-authority-refused", m.From)
+			return fmt.Errorf("%s", deny)
+		}
+	}
+
 	data, err := EncodeMessage(m)
 	if err != nil {
 		return err

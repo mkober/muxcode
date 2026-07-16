@@ -72,6 +72,7 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `MUXCODE_RELAY_SUPPRESS_WINDOW` | `300` | Window in seconds for relay-loop suppression counting |
 | `MUXCODE_ACTIVE_WATCHDOG_SECS` | `600` | Daemon advisory threshold (seconds) — an agent continuously active past this is nudged to summarize + escalate (runaway-think guard). Set to `0` to disable |
 | `MUXCODE_STUCK_RELOAD_DISABLE` | (unset) | Set to `1` to disable the daemon's stuck-provider auto-reload watchdog for non-hook agents |
+| `MUXCODE_COMMIT_AUTHORITY_ROLES` | `edit` | Comma-separated roles allowed to request a git mutation (`commit`, `stage`, `push`, `merge`, `rebase`, `tag`) from the commit agent — a send from any other role is rejected at the bus. **Not bypassable with `--force`.** Set to `edit,auto` to let the autonomous story-lifecycle agent commit by design; set to the empty string to deny every role, including edit. The commit agent's read-only `pr-read` action is never gated |
 
 ### Claude model selection
 
