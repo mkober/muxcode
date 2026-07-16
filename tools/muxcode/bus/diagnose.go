@@ -130,13 +130,13 @@ func CollectAgentState(session, role string) AgentStateEvidence {
 	}
 
 	// Wider capture (full pane) to detect ❯ that the standard 8-line
-	// IsAgentIdle check may have missed (e.g. status bar overlay below prompt).
-	// Used by checkIdleDetectionFailure to distinguish genuine "active" from
-	// narrow-capture false negative.
+	// IsAgentIdle check may have missed (e.g. long parked text wrapping the
+	// prompt out of the window). Used by checkIdleDetectionFailure to
+	// distinguish genuine "active" from narrow-capture false negative.
 	if !ev.IsIdle && ev.IsAlive {
-		wideContent, err := TmuxCapturePaneLines(target, 200)
+		wideContent, err := TmuxCapturePaneLines(target, widePaneCaptureLines)
 		if err == nil {
-			ev.WiderCaptureIdle = PaneHasIdlePrompt(wideContent)
+			ev.WiderCaptureIdle = paneShowsRecoverableIdle(wideContent)
 		}
 	}
 
@@ -506,6 +506,26 @@ func checkMissedSendKeys(report *DiagnosticReport) *DiagnosticFinding {
 	}
 }
 
+// paneShowsRecoverableIdle reports whether captured pane content shows an agent
+// genuinely parked at a prompt the daemon could deliver to — not a prompt
+// rendered mid-turn.
+//
+// The thinking check is the load-bearing half, and omitting it is not a
+// cosmetic gap. Claude Code renders ❯ in its input box at ALL times, including
+// while a turn runs, so a bare prompt scan reports every WORKING agent as
+// "likely idle". That fired a false critical idle-detection-failure whose own
+// remediation — `muxcode deliver <role> --force` — injects into the running
+// turn and kills it ("Interrupted · What should Claude do instead?"). The
+// diagnostic thus manufactured the breakage it claimed to have found, and the
+// wreckage read as fresh evidence for the phantom.
+//
+// Mirrors ClaudeCodeProvider.IsIdle's order (thinking first, then prompt scan)
+// so diagnose and the daemon share one definition of "idle" instead of
+// diagnose re-implementing half of it and drifting.
+func paneShowsRecoverableIdle(content string) bool {
+	return PaneHasIdlePrompt(content) && !isClaudeThinking(content)
+}
+
 // checkIdleDetectionFailure detects when the pane shows the idle prompt
 // but IsAgentIdle returned false.
 func checkIdleDetectionFailure(report *DiagnosticReport) *DiagnosticFinding {
@@ -516,12 +536,18 @@ func checkIdleDetectionFailure(report *DiagnosticReport) *DiagnosticFinding {
 		return nil // agent is dead, not an idle detection issue
 	}
 
-	// Check if wider capture found ❯ that the standard 8-line check missed,
-	// or if the pane last line shows the idle prompt.
+	// Fire ONLY on the wide capture, which now applies the provider's own
+	// thinking check (paneShowsRecoverableIdle). The old second trigger —
+	// strings.Contains(PaneLastLine, "❯") — was a bare substring scan of a
+	// single line with no thinking check at all, so it re-opened the same false
+	// positive through the back door. It is kept below purely as evidence: the
+	// 200-line capture already subsumes the last line, so it adds no signal of
+	// its own, only noise that could fire on a ❯ appearing mid-line in tool
+	// output.
 	widerFound := report.AgentState.WiderCaptureIdle
 	lastLineFound := strings.Contains(report.AgentState.PaneLastLine, idlePromptChar)
 
-	if !widerFound && !lastLineFound {
+	if !widerFound {
 		return nil
 	}
 
@@ -529,9 +555,9 @@ func checkIdleDetectionFailure(report *DiagnosticReport) *DiagnosticFinding {
 		fmt.Sprintf("IsAgentIdle (8-line): false, IsAlive: true"),
 		fmt.Sprintf("Provider: %s", report.AgentState.Provider),
 	}
-	if widerFound {
-		evidence = append(evidence, "Wider capture (30 lines) found ❯ — narrow capture missed it")
-	}
+	evidence = append(evidence, fmt.Sprintf(
+		"Wider capture (%d lines) found an idle prompt with no thinking indicator — narrow capture missed it",
+		widePaneCaptureLines))
 	if lastLineFound {
 		evidence = append(evidence, fmt.Sprintf("Pane last line: %q", report.AgentState.PaneLastLine))
 	}
@@ -811,7 +837,7 @@ func FormatDiagnosticReport(report *DiagnosticReport) string {
 	} else if report.AgentState.IsIdle {
 		stateStr = fmt.Sprintf("%sidle%s (at %s prompt)", diagColorGreen, diagColorReset, idlePromptChar)
 	} else if report.AgentState.WiderCaptureIdle {
-		stateStr = fmt.Sprintf("%sactive%s (%s❯ found in wider capture — likely idle%s)",
+		stateStr = fmt.Sprintf("%sactive%s (%sidle prompt in wider capture, not thinking — likely stuck%s)",
 			diagColorPurple, diagColorReset, diagColorYellow, diagColorReset)
 	} else {
 		stateStr = fmt.Sprintf("%sactive%s", diagColorPurple, diagColorReset)

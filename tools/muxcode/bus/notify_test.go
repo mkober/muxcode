@@ -1462,3 +1462,73 @@ func TestVerifyEnterDelivery_CaptureErrorReturns(t *testing.T) {
 		t.Errorf("expected no Enter re-send on capture error, got %d", enterCount)
 	}
 }
+
+func TestIsOwnWakeUpText_MatchesEveryBuildCombinedNotificationForm(t *testing.T) {
+	// Lockstep guard. Every shape BuildCombinedNotification can emit must be
+	// recognisable as ours, so the forms are GENERATED from the builder rather
+	// than hand-copied — hand-copied fixtures drift silently, and a form that
+	// stops matching is one whose dropped-Enter residue deadlocks a focused
+	// pane again.
+	msg := func(from, action, payload string) Message {
+		return Message{From: from, To: "plan", Type: "request", Action: action, Payload: payload}
+	}
+	many := make([]Message, 0, notifyMaxSubjects+2)
+	for i := 0; i < notifyMaxSubjects+2; i++ {
+		many = append(many, msg("edit", "update-docs", "fix the spec table"))
+	}
+
+	cases := []struct {
+		name string
+		msgs []Message
+	}{
+		{"empty inbox fallback", nil},
+		{"single message", []Message{msg("edit", "commit", "commit this")}},
+		{"enumerated subjects", []Message{
+			msg("edit", "build", "run the build"),
+			msg("test", "review", "review the diff"),
+		}},
+		{"over subject cap", many},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BuildCombinedNotification(tc.msgs)
+			if !IsOwnWakeUpText(got) {
+				t.Errorf("BuildCombinedNotification produced %q which IsOwnWakeUpText does not recognise as ours —\n"+
+					"its dropped-Enter residue would be treated as user input and never cleared under a focused window", got)
+			}
+		})
+	}
+}
+
+func TestIsOwnWakeUpText_LeavesUserTypedTextAlone(t *testing.T) {
+	// Clearing a human's unsent text is the worse failure, so anything we
+	// cannot prove we authored must be left untouched. "You have to ..." is the
+	// deliberate near-miss: it shares a prefix with our "You have N new
+	// messages" form and must NOT match.
+	for _, s := range []string{
+		"commit this",
+		"p1",
+		"You have to fix the NCAT prefix first",
+		"New message format looks wrong",
+		"",
+		"   ",
+	} {
+		if IsOwnWakeUpText(s) {
+			t.Errorf("IsOwnWakeUpText(%q) = true, want false — user text must never be cleared", s)
+		}
+	}
+}
+
+func TestIsOwnWakeUpText_MatchesParkedResidueFromPane(t *testing.T) {
+	// The realistic path: ParkedInputText pulls our injection off the ❯ line
+	// after its Enter was dropped, and we must recognise it as ours.
+	content := "⏺ Reading the spec…\n\n❯ New message from edit [request:commit]: commit this checkpoint\n"
+	parked := ParkedInputText(content)
+	if parked == "" {
+		t.Fatal("ParkedInputText found nothing — fixture is wrong")
+	}
+	if !IsOwnWakeUpText(parked) {
+		t.Errorf("parked residue %q not recognised as our own wake-up", parked)
+	}
+}

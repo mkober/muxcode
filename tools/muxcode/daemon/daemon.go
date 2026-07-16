@@ -1956,8 +1956,15 @@ func (d *Daemon) checkParkedInput() {
 			delete(d.parkedResubmits, role)
 			continue
 		}
-		// Never touch input while the user is viewing/typing in this window.
-		if bus.IsWindowFocused(d.session, role) {
+		// Never touch input while the user is viewing/typing in this window —
+		// UNLESS the parked text is provably our own wake-up. Focus cannot see
+		// authorship: it asks "might a human be here?", never "did a human write
+		// this?". Our own dropped-Enter residue will never be submitted by the
+		// user because they did not write it, so holding for their Enter holds
+		// forever. That is the focused-pane wedge, and it is why an editor's
+		// delegation silently stalls with the payload sitting in the target's
+		// composer. Text we cannot prove is ours is still left strictly alone.
+		if bus.IsWindowFocused(d.session, role) && !bus.IsOwnWakeUpText(parked) {
 			continue
 		}
 

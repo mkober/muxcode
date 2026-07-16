@@ -341,13 +341,24 @@ func TestCheckMissedSendKeys_NotDetected_NoWake(t *testing.T) {
 }
 
 func TestCheckIdleDetectionFailure_Detected(t *testing.T) {
+	// WiderCaptureIdle carries the signal now: it means "the 200-line capture
+	// found an idle prompt AND no thinking indicator" (paneShowsRecoverableIdle).
+	//
+	// This fixture previously relied on PaneLastLine alone, which cannot happen
+	// in production — CollectAgentState always computes WiderCaptureIdle when
+	// !IsIdle && IsAlive, and a pane whose last line is "❯ " is necessarily
+	// inside that capture. The only real state matching the old fixture was a
+	// THINKING agent, and firing a critical finding on one is the false positive
+	// this detector now exists to avoid. The assertion is unchanged; only the
+	// fixture moved to the field that actually carries the meaning.
 	report := &DiagnosticReport{
 		Role: "commit",
 		AgentState: AgentStateEvidence{
-			IsIdle:       false,
-			IsAlive:      true,
-			PaneLastLine: "❯ ",
-			Provider:     "claude",
+			IsIdle:           false,
+			IsAlive:          true,
+			WiderCaptureIdle: true,
+			PaneLastLine:     "❯ ",
+			Provider:         "claude",
 		},
 	}
 	finding := checkIdleDetectionFailure(report)
@@ -829,5 +840,55 @@ func TestBoolYesNo(t *testing.T) {
 	}
 	if boolYesNo(false) != "no" {
 		t.Error("expected no for false")
+	}
+}
+
+func TestPaneShowsRecoverableIdle_ThinkingAgentIsNotRecoverable(t *testing.T) {
+	// Captured verbatim from a live plan agent that diagnose reported as
+	// "❯ found in wider capture — likely idle" and flagged CRITICAL
+	// idle-detection-failure. The agent was thinking the whole time; ❯ is
+	// Claude Code's input box, which renders during a turn as well as at rest.
+	//
+	// The finding's own remediation is `deliver --force`, which injects into
+	// the running turn and kills it — so the false positive did not merely
+	// mislead, it destroyed the work it was called to rescue.
+	content := "⏺ Now updating the spec status to reflect that Phase 1 is underway:\n" +
+		"\n" +
+		"  Reading 1 file…\n" +
+		"  ⎿  docs/requirements/drafts/PBP1-4917-canvas-course-faculty-reconcile-report.md\n" +
+		"\n" +
+		"✻ Fermenting… (39s · ↓ 2.7k tokens · thinking with xhigh effort)\n" +
+		"\n" +
+		"─────────────────────────────── planner ──\n" +
+		"❯ \n" +
+		"──────────────────────────────────────────\n" +
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents\n"
+
+	if paneShowsRecoverableIdle(content) {
+		t.Error("a thinking agent must NOT be reported as a recoverable idle prompt — " +
+			"this is the false positive that drove force-delivery into a running turn")
+	}
+}
+
+func TestPaneShowsRecoverableIdle_ParkedTextWedgeIsRecoverable(t *testing.T) {
+	// The genuine wedge diagnose exists to catch: no thinking indicator, and a
+	// prompt carrying dropped-Enter residue. The agent is idle and deliverable,
+	// so this must still report true — the fix must not blind the detector.
+	content := "✻ Cooked for 1m 47s\n" +
+		"\n" +
+		"─────────────────────────────── planner ──\n" +
+		"❯ New message from edit [request:update-docs]: fix the NCAT prefix\n" +
+		"──────────────────────────────────────────\n" +
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
+
+	if !paneShowsRecoverableIdle(content) {
+		t.Error("a parked-text wedge at an idle prompt must still be detected")
+	}
+}
+
+func TestPaneShowsRecoverableIdle_NoPromptIsNotRecoverable(t *testing.T) {
+	content := "⏺ Running the build…\n  ⎿  $ ./build.sh\n"
+	if paneShowsRecoverableIdle(content) {
+		t.Error("pane with no idle prompt must not be reported as recoverable idle")
 	}
 }

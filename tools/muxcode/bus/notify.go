@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -179,6 +180,42 @@ func BuildCombinedNotification(msgs []Message) string {
 	return fmt.Sprintf("You have %d new messages: %s", len(msgs), strings.Join(parts, " | "))
 }
 
+// ownWakeUpPatterns match every string BuildCombinedNotification can produce:
+// the single-message form, and the "You have ..." family (empty, hard-capped,
+// and enumerated — the last wraps its "[from>action] ..." subjects in the same
+// prefix). Keep these in lockstep with BuildCombinedNotification: a wake-up
+// shape no pattern here matches is one that can deadlock a focused pane.
+var ownWakeUpPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`^New message from \S+ \[`),
+	regexp.MustCompile(`^You have (\d+ )?new messages?`),
+}
+
+// IsOwnWakeUpText reports whether text parked at a composer prompt is a wake-up
+// string WE injected — BuildCombinedNotification output whose Enter was dropped
+// — rather than something a human typed.
+//
+// Why authorship matters: the only thing separating "the user is mid-typing"
+// from "our own dropped-Enter residue" was window focus, which cannot see who
+// wrote the text. When our own injection parks under a focused window, the
+// clear is held pending a submit from a user who will never press Enter —
+// they did not write it — so delivery deadlocks until someone runs
+// `muxcode deliver --force` by hand. We know exactly what we inject, so
+// recognise it rather than inferring authorship from window state.
+//
+// Conservative by construction: only shapes BuildCombinedNotification can emit
+// match, and the patterns are anchored. Anything unrecognised — including a
+// user who happens to be typing — is left untouched, because clearing a
+// human's unsent text is by far the worse failure.
+func IsOwnWakeUpText(s string) bool {
+	s = strings.TrimSpace(s)
+	for _, re := range ownWakeUpPatterns {
+		if re.MatchString(s) {
+			return true
+		}
+	}
+	return false
+}
+
 // notifyRetryInterval is the maximum time before re-notifying an agent whose
 // inbox still has unnotified messages. Handles the case where a previous
 // send-keys injection was missed (e.g., Claude Code TUI redraw race). Without
@@ -314,6 +351,13 @@ func markNotified(session, role string) {
 // at the idle prompt vs actively executing.
 const idlePromptChar = "\u276f"
 
+// widePaneCaptureLines is the capture depth used when the standard 8-line probe
+// is too narrow \u2014 long parked text wraps in the composer and pushes the \u276f line
+// out of an 8-line window. Shared so the depth and the depth REPORTED in
+// diagnostics cannot drift apart (diagnose's evidence claimed "30 lines" while
+// the code captured 200).
+const widePaneCaptureLines = 200
+
 // HasPendingInput returns true if the agent's tmux pane has text in the input
 // buffer after the idle prompt. This indicates the user is mid-typing and
 // send-keys injection would corrupt their input. Notifications are held until
@@ -372,15 +416,22 @@ func ClearParkedInput(session, role string) bool {
 	if !provider.SupportsHooks() {
 		return false // non-hook providers manage their own input
 	}
-	if IsWindowFocused(session, role) {
-		return false // user may be typing — never clear under their cursor
-	}
 	target := PaneTarget(session, role)
-	content, err := TmuxCapturePaneLines(target, 200)
+	content, err := TmuxCapturePaneLines(target, widePaneCaptureLines)
 	if err != nil {
 		return false
 	}
 	if !PaneHasIdlePrompt(content) || !paneHasPendingInput(content) {
+		return false
+	}
+	// A focused window means the user MIGHT be typing, so we never clear under
+	// their cursor — UNLESS the parked text is provably our own wake-up whose
+	// Enter was dropped. Focus cannot see authorship, and treating our own
+	// residue as "the user is typing" waits forever on a submit that will never
+	// come: the user did not write it, so they have no reason to press Enter.
+	// That is the plan-agent wedge, and it is why `deliver --force` was the only
+	// way out. Text we cannot prove is ours is still left strictly alone.
+	if IsWindowFocused(session, role) && !IsOwnWakeUpText(ParkedInputText(content)) {
 		return false
 	}
 	if err := TmuxClearInput(target); err != nil {
