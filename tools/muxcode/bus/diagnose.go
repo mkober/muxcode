@@ -136,7 +136,7 @@ func CollectAgentState(session, role string) AgentStateEvidence {
 	if !ev.IsIdle && ev.IsAlive {
 		wideContent, err := TmuxCapturePaneLines(target, widePaneCaptureLines)
 		if err == nil {
-			ev.WiderCaptureIdle = paneShowsRecoverableIdle(wideContent)
+			ev.WiderCaptureIdle = PaneShowsRecoverableIdle(wideContent)
 		}
 	}
 
@@ -506,7 +506,7 @@ func checkMissedSendKeys(report *DiagnosticReport) *DiagnosticFinding {
 	}
 }
 
-// paneShowsRecoverableIdle reports whether captured pane content shows an agent
+// PaneShowsRecoverableIdle reports whether captured pane content shows an agent
 // genuinely parked at a prompt the daemon could deliver to — not a prompt
 // rendered mid-turn.
 //
@@ -522,7 +522,7 @@ func checkMissedSendKeys(report *DiagnosticReport) *DiagnosticFinding {
 // Mirrors ClaudeCodeProvider.IsIdle's order (thinking first, then prompt scan)
 // so diagnose and the daemon share one definition of "idle" instead of
 // diagnose re-implementing half of it and drifting.
-func paneShowsRecoverableIdle(content string) bool {
+func PaneShowsRecoverableIdle(content string) bool {
 	return PaneHasIdlePrompt(content) && !isClaudeThinking(content)
 }
 
@@ -537,7 +537,7 @@ func checkIdleDetectionFailure(report *DiagnosticReport) *DiagnosticFinding {
 	}
 
 	// Fire ONLY on the wide capture, which now applies the provider's own
-	// thinking check (paneShowsRecoverableIdle). The old second trigger —
+	// thinking check (PaneShowsRecoverableIdle). The old second trigger —
 	// strings.Contains(PaneLastLine, "❯") — was a bare substring scan of a
 	// single line with no thinking check at all, so it re-opened the same false
 	// positive through the back door. It is kept below purely as evidence: the

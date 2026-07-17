@@ -463,4 +463,5 @@ as `install.sh`-managed optional deps). Phase 3: Confluence + Jira attachment up
 (`ConfluenceUploadAttachment` w/ update-existing, `JiraUploadAttachment`, `attach` CLI for both,
 shared multipart helper) — reviewed LGTM 0-must-fix, build + test green. Next: **Phase 4 — embed
 across surfaces** (Confluence spike-first). Then 5 = profile/skill/docs, 6 = end-to-end
-upload+embed test. Nothing committed yet (all untracked).
+upload+embed test. Phases 1–3 committed in `2594f36` (render script, test script,
+`docs/media/` fixtures, Confluence/Jira attachment upload + `attach` CLI).

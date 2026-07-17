@@ -1532,3 +1532,55 @@ func TestIsOwnWakeUpText_MatchesParkedResidueFromPane(t *testing.T) {
 		t.Errorf("parked residue %q not recognised as our own wake-up", parked)
 	}
 }
+
+func TestParkedInputText_IgnoresSubmittedScrollbackEcho(t *testing.T) {
+	// A submitted prompt stays visible in scrollback. The LIVE composer is the
+	// LAST ❯ in the pane, and here it is empty — nothing is parked.
+	//
+	// Scanning forward returned the scrollback echo instead, so the daemon's
+	// sweep believed a wake-up had been dropped and Escape-resubmitted into the
+	// running turn it had just started, killing it every ~2s.
+	content := "❯ You have 2 new messages: [review>startup] Session started | [test>review] Tests passed\n" +
+		"\n" +
+		"⏺ Starting up — checking my inbox for pending messages.\n" +
+		"\n" +
+		"✻ Fermenting… (4s · ↓ 120 tokens)\n" +
+		"\n" +
+		"─────────────── code-reviewer ──\n" +
+		"❯ \n" +
+		"────────────────────────────────\n" +
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt\n"
+
+	if got := ParkedInputText(content); got != "" {
+		t.Errorf("ParkedInputText = %q, want \"\" — the live composer is empty; "+
+			"that text is a scrollback echo of an ALREADY-SUBMITTED prompt", got)
+	}
+	if paneHasPendingInput(content) {
+		t.Error("paneHasPendingInput must agree: no pending input when the live composer is empty")
+	}
+}
+
+func TestParkedInputText_ReturnsLiveComposerNotOldestEcho(t *testing.T) {
+	// Multiple prompts in scrollback: the newest (live) composer text wins.
+	content := "❯ an older submitted prompt\n" +
+		"⏺ did the thing\n" +
+		"❯ New message from edit [request:commit]: commit this\n"
+
+	got := ParkedInputText(content)
+	want := "New message from edit [request:commit]: commit this"
+	if got != want {
+		t.Errorf("ParkedInputText = %q, want %q — must read the LIVE composer, not the oldest echo", got, want)
+	}
+}
+
+func TestPaneShowsRecoverableIdle_ThinkingPaneIsNotSweepable(t *testing.T) {
+	// The daemon's parked-input sweep sends Escape, which interrupts a running
+	// turn. A thinking pane must never qualify, however its composer looks.
+	content := "⏺ Checking my inbox now.\n" +
+		"✻ Gesticulating… (6s · ↓ 318 tokens)\n" +
+		"❯ You have 3 new messages: [edit>review] review the diff\n"
+
+	if PaneShowsRecoverableIdle(content) {
+		t.Error("thinking pane must not be sweepable — Escape would kill the running turn")
+	}
+}

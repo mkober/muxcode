@@ -1946,8 +1946,17 @@ func (d *Daemon) checkParkedInput() {
 		if err != nil {
 			continue
 		}
-		// Must be at an idle prompt with text parked in the composer.
-		if !bus.PaneHasIdlePrompt(content) {
+		// Must be at an idle prompt with text parked in the composer — and NOT
+		// mid-turn. PaneHasIdlePrompt alone is true WHILE Claude works (❯ renders
+		// in the input box at all times), and the resubmit path below sends
+		// Escape, which INTERRUPTS a running turn. Gating on the prompt alone
+		// Escape-looped healthy agents every ~2s:
+		//
+		//	⏺ Starting up — checking my inbox for pending messages.
+		//	  ⎿  Interrupted · What should Claude do instead?
+		//
+		// killing the very turn the wake-up had just started, forever.
+		if !bus.PaneShowsRecoverableIdle(content) {
 			delete(d.parkedResubmits, role)
 			continue
 		}

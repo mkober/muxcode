@@ -342,7 +342,7 @@ func TestCheckMissedSendKeys_NotDetected_NoWake(t *testing.T) {
 
 func TestCheckIdleDetectionFailure_Detected(t *testing.T) {
 	// WiderCaptureIdle carries the signal now: it means "the 200-line capture
-	// found an idle prompt AND no thinking indicator" (paneShowsRecoverableIdle).
+	// found an idle prompt AND no thinking indicator" (PaneShowsRecoverableIdle).
 	//
 	// This fixture previously relied on PaneLastLine alone, which cannot happen
 	// in production — CollectAgentState always computes WiderCaptureIdle when
@@ -864,7 +864,7 @@ func TestPaneShowsRecoverableIdle_ThinkingAgentIsNotRecoverable(t *testing.T) {
 		"──────────────────────────────────────────\n" +
 		"  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents\n"
 
-	if paneShowsRecoverableIdle(content) {
+	if PaneShowsRecoverableIdle(content) {
 		t.Error("a thinking agent must NOT be reported as a recoverable idle prompt — " +
 			"this is the false positive that drove force-delivery into a running turn")
 	}
@@ -881,14 +881,14 @@ func TestPaneShowsRecoverableIdle_ParkedTextWedgeIsRecoverable(t *testing.T) {
 		"──────────────────────────────────────────\n" +
 		"  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
 
-	if !paneShowsRecoverableIdle(content) {
+	if !PaneShowsRecoverableIdle(content) {
 		t.Error("a parked-text wedge at an idle prompt must still be detected")
 	}
 }
 
 func TestPaneShowsRecoverableIdle_NoPromptIsNotRecoverable(t *testing.T) {
 	content := "⏺ Running the build…\n  ⎿  $ ./build.sh\n"
-	if paneShowsRecoverableIdle(content) {
+	if PaneShowsRecoverableIdle(content) {
 		t.Error("pane with no idle prompt must not be reported as recoverable idle")
 	}
 }

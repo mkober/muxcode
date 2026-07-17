@@ -462,12 +462,25 @@ func PaneHasIdlePrompt(content string) bool {
 // from a transient in-flight injection.
 func ParkedInputText(content string) string {
 	promptPrefix := idlePromptChar + " "
-	for _, line := range strings.Split(content, "\n") {
-		trimmed := strings.TrimSpace(line)
+	lines := strings.Split(content, "\n")
+	// Scan BACKWARD. The live composer is the LAST ❯ in the pane; every earlier
+	// one is scrollback — the echo of a prompt that was already submitted.
+	//
+	// Scanning forward returned the OLDEST echo in a 200-line capture and
+	// reported it as parked text, so the daemon's sweep "found" a dropped Enter
+	// that never happened and Escape-resubmitted into a healthy running turn,
+	// killing it every ~2s ("⎿ Interrupted · What should Claude do instead?").
+	// The wake-up it was trying to rescue was the very text it kept re-reading.
+	//
+	// A bare ❯ means the composer is empty: return "" immediately rather than
+	// walking further back into scrollback and resurrecting an old echo.
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == idlePromptChar {
+			return ""
+		}
 		if strings.HasPrefix(trimmed, promptPrefix) {
-			if after := strings.TrimSpace(trimmed[len(promptPrefix):]); after != "" {
-				return after
-			}
+			return strings.TrimSpace(trimmed[len(promptPrefix):])
 		}
 	}
 	return ""
@@ -476,19 +489,11 @@ func ParkedInputText(content string) string {
 // paneHasPendingInput checks captured pane content for text after the idle
 // prompt character (\u276f). Extracted for testability (no tmux dependency).
 func paneHasPendingInput(content string) bool {
-	promptPrefix := idlePromptChar + " "
-	for _, line := range strings.Split(content, "\n") {
-		trimmed := strings.TrimSpace(line)
-		// Look for prompt line with text after it: "\u276f some user input"
-		// Just "\u276f" or "\u276f " (whitespace only) means empty prompt \u2014 no pending input.
-		if strings.HasPrefix(trimmed, promptPrefix) {
-			afterPrompt := strings.TrimSpace(trimmed[len(promptPrefix):])
-			if afterPrompt != "" {
-				return true
-			}
-		}
-	}
-	return false
+	// Delegates to ParkedInputText so both answer from the LIVE composer (the
+	// last \u276f in the pane). This used to walk forward independently and answer
+	// from the oldest scrollback echo, reporting pending input on a pane whose
+	// composer was empty.
+	return ParkedInputText(content) != ""
 }
 
 // IsAgentIdle returns true if the agent's tmux pane is sitting at the idle

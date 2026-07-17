@@ -559,13 +559,13 @@ Draft
 
 Previous session summaries (most recent last):
 
-### 2026-07-16 03:10
-Test agent: repeated context ~1.9 MB every ~2h. Running ./test.sh on build success — all Go packages always PASS 0 FAIL. Idle.
+### 2026-07-17 04:17
+Test agent: idle loop. All 5 Go packages PASS 0 FAIL consistently. No new build→test requests.
 
-### 2026-07-16 05:22
-Test agent: repeated context ~1.9 MB every ~2h. Running ./test.sh on build success — all Go packages always PASS 0 FAIL. Idle.
+### 2026-07-17 06:19
+Test agent: idle between build cycles. All 5 Go packages PASS 0 FAIL.
 
-### 2026-07-16 07:23
-Test agent: repeated context ~1.9 MB every ~2h. Running ./test.sh on build success — all Go packages always PASS 0 FAIL. Idle.
+### 2026-07-17 08:21
+Test agent: idle. All 5 Go packages PASS 0 FAIL. No active build cycles.
 
 
