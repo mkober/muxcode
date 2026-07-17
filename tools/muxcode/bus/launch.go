@@ -848,6 +848,17 @@ func RunAgentLaunch(role string) error {
 	binary, launchArgs := cfg.BuildExecArgs()
 	PreLaunchSetup(role, session, binary)
 
+	// Clear stale in-flight tasks addressed to this role. This launch is a fresh
+	// agent instance, which cannot be mid-processing a task delivered to a prior
+	// instance — so any task still in-flight is stale and would otherwise block
+	// every new send of the same (to, action) via the dedup guard until the 600s
+	// TaskExpired grace. This is the durable fix for the crashed/restarted agent
+	// going silently undeliverable (a stuck chain task dropping re-sent requests).
+	if n := ClearInFlightTasksForRole(session, role); n > 0 {
+		LogLifecycle(session, "info", "launch", "cleared-inflight-tasks",
+			fmt.Sprintf("%s: %d stale in-flight task(s) cleared on launch", role, n))
+	}
+
 	// Stamp the definition hash this agent is launching with so the daemon's
 	// agent-defs watchdog can detect a later on-disk change and auto-reload.
 	// Done before exec (below) replaces this process.

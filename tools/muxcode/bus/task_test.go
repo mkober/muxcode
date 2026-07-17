@@ -146,6 +146,68 @@ func TestTimeoutTask_SkipsCompleted(t *testing.T) {
 	}
 }
 
+func TestClearInFlightTasksForRole_UnblocksSendsAfterRestart(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+
+	// A chain task to review that stuck in-flight because the review agent
+	// crashed before responding — the wedge this fix targets.
+	stuck := NewMessage("test", "review", "request", "review", "review the changes", "")
+	_ = CreateTask(session, stuck, 600)
+
+	// It blocks re-sends until cleared (the observed symptom).
+	if !HasInFlightTaskForRole(session, "review", "review") {
+		t.Fatal("precondition: in-flight review task should block sends")
+	}
+
+	// Relaunching the review agent must clear it.
+	if n := ClearInFlightTasksForRole(session, "review"); n != 1 {
+		t.Fatalf("cleared %d tasks, want 1", n)
+	}
+	task, _ := ReadTask(session, stuck.ID)
+	if task.Status != TaskTimedOut {
+		t.Errorf("stuck task Status = %q, want %q", task.Status, TaskTimedOut)
+	}
+	if HasInFlightTaskForRole(session, "review", "review") {
+		t.Error("sends to review must be unblocked after the restart clears the task")
+	}
+}
+
+func TestClearInFlightTasksForRole_LeavesOtherRolesAlone(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+
+	toReview := NewMessage("test", "review", "request", "review", "review", "")
+	toBuild := NewMessage("edit", "build", "request", "build", "build", "")
+	_ = CreateTask(session, toReview, 600)
+	_ = CreateTask(session, toBuild, 600)
+
+	// Only the review agent is relaunching — build's task must survive.
+	if n := ClearInFlightTasksForRole(session, "review"); n != 1 {
+		t.Fatalf("cleared %d tasks, want 1 (build's task must be untouched)", n)
+	}
+	if bt, _ := ReadTask(session, toBuild.ID); bt.Status != TaskInFlight {
+		t.Errorf("build task Status = %q, want %q — unrelated role's task was cleared", bt.Status, TaskInFlight)
+	}
+}
+
+func TestClearInFlightTasksForRole_ClearsHostedRole(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+
+	// docs is hosted on the plan window; a task addressed to docs is delivered
+	// to plan's inbox, so a plan relaunch must clear it too.
+	toDocs := NewMessage("edit", "docs", "request", "update-docs", "write spec", "")
+	_ = CreateTask(session, toDocs, 600)
+
+	if n := ClearInFlightTasksForRole(session, "plan"); n != 1 {
+		t.Fatalf("cleared %d tasks, want 1 (plan hosts docs)", n)
+	}
+	if dt, _ := ReadTask(session, toDocs.ID); dt.Status != TaskTimedOut {
+		t.Errorf("hosted docs task Status = %q, want %q", dt.Status, TaskTimedOut)
+	}
+}
+
 func TestListTasks(t *testing.T) {
 	useTempBusDir(t)
 	session := testSession(t)

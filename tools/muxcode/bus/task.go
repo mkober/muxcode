@@ -82,6 +82,37 @@ func TimeoutTask(session, taskID string) {
 	_ = writeTask(session, t)
 }
 
+// ClearInFlightTasksForRole times out every in-flight task addressed to role (or
+// a hosted role it fronts). Called when an agent (re)launches: a fresh agent
+// instance cannot be mid-processing a task that was delivered to a previous
+// instance, so any task still marked in-flight is stale by definition.
+//
+// Left stranded, such a task blocks EVERY new send of the same (to, action) via
+// HasInFlightTaskForRole until the 600s TaskExpired grace elapses — the exact
+// wedge that made a crashed-and-restarted review agent silently undeliverable:
+// the crash left its chain task in-flight, and the dedup guard then dropped each
+// re-sent review request before it reached the inbox. Clearing on launch ties
+// task liveness to agent liveness, so a restart (crash recovery, reload, manual
+// relaunch) unblocks delivery immediately instead of after a 10-minute stall.
+//
+// Matching is by WindowForRole so a relaunching host clears its hosted roles'
+// tasks too (e.g. plan clears docs, commit clears pr-read). Returns the count.
+func ClearInFlightTasksForRole(session, role string) int {
+	tasks, err := ListTasks(session, TaskInFlight)
+	if err != nil {
+		return 0
+	}
+	host := WindowForRole(role)
+	cleared := 0
+	for _, t := range tasks {
+		if WindowForRole(t.To) == host {
+			TimeoutTask(session, t.ID)
+			cleared++
+		}
+	}
+	return cleared
+}
+
 // ReadTask reads a task by its message ID.
 func ReadTask(session, msgID string) (Task, error) {
 	data, err := os.ReadFile(TaskPath(session, msgID))
