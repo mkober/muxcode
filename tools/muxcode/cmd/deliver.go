@@ -46,15 +46,17 @@ func Deliver(args []string) {
 	}
 
 	if session == "" {
-		var err error
-		session, err = bus.TmuxCurrentSession()
-		if err != nil || session == "" {
-			session = os.Getenv("BUS_SESSION")
-		}
-	}
-	if session == "" {
-		fmt.Fprintln(os.Stderr, "deliver: could not determine session (set BUS_SESSION, use --session, or run inside tmux)")
-		os.Exit(1)
+		// Match `muxcode inbox` precedence (bus.BusSession): BUS_SESSION/SESSION
+		// env win over the tmux session the command happens to run in. Without
+		// this, running `BUS_SESSION=<subsession> muxcode deliver ...` from
+		// inside another session's pane silently targeted the current pane's
+		// session instead of the subsession — force-delivering to the wrong
+		// agent and reporting a misleading "no pending messages".
+		//
+		// BusSession never returns "" (it falls back to "default"), so no empty
+		// guard follows — ForceDeliver's TmuxHasSession check surfaces a clear
+		// "session not found" if the resolved session doesn't exist.
+		session = bus.BusSession()
 	}
 
 	res, err := bus.ForceDeliver(session, role, force)

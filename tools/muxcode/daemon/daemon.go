@@ -57,8 +57,8 @@ type Daemon struct {
 	lastNonHookWake      map[string]int64 // cooldown: last wake time per non-hook role (60s)
 	lastIdleState        map[string]bool  // per-role idle state from last check (for transition detection)
 	activeUnnotifiedSeen map[string]int64 // role -> unix time when unnotified msgs first seen while agent "active"
-	forceWakeCount       map[string]int   // role -> consecutive active-but-❯ force-wakes this episode (churn cap)
-	churnSuppressed      map[string]bool  // role -> force-wake suppressed until the agent idles / inbox drains
+	forceWakeCount       map[string]int   // role -> consecutive recoverable-idle force-deliveries this episode (churn cap)
+	churnSuppressed      map[string]bool  // role -> force-delivery suppressed until the agent idles / inbox drains
 	// Non-hook task completion detection
 	lastTaskCheck       int64             // 5s interval
 	taskDeliveredAt     map[string]int64  // msgID -> unix time when message was delivered (wake-up sent)
@@ -1793,60 +1793,58 @@ func (d *Daemon) checkIdleAgents() {
 				d.activeUnnotifiedSeen[role] = now
 			}
 			if now-d.activeUnnotifiedSeen[role] >= watchdogActiveSecs {
-				// Churn cap: once we've force-woken this role churnForceWakeCap
-				// times without it draining, stop. Re-injecting every poll while
-				// the agent stays "active but ❯" (e.g. a parked blob wrapping past
-				// the idle window) burns a full agent turn each time. Back off
-				// until the agent genuinely idles or the inbox drains (reset below).
+				// Churn cap: once we've force-delivered this role churnForceWakeCap
+				// times without it draining, stop. Re-injecting every poll burns a
+				// full agent turn each time. Back off until the agent genuinely
+				// idles or the inbox drains (reset below).
 				if d.churnSuppressed[role] {
 					continue
 				}
+				// Gate on PaneShowsRecoverableIdle, NOT PaneHasIdlePrompt: the ❯
+				// composer renders even mid-turn, so PaneHasIdlePrompt is true for a
+				// genuinely-working agent — force-delivering there interrupts live
+				// work and burns a turn (the churn this cap was papering over).
+				// PaneShowsRecoverableIdle is true only for a finished-at-prompt
+				// agent (❯ present AND not thinking), which is exactly the
+				// "active-with-stale-messages" wedge that stranded the message.
 				target := bus.PaneTarget(d.session, role)
-				if content, err := bus.TmuxCapturePaneLines(target, 200); err == nil {
-					if bus.PaneHasIdlePrompt(content) {
-						ts := time.Now().Format("15:04:05")
-						// Clear any parked residue once, before either suppressing or
-						// delivering, so a retried injection lands clean.
-						if bus.HasPendingInput(d.session, role) && !bus.IsWindowFocused(d.session, role) {
-							_ = bus.TmuxClearInput(target)
-							time.Sleep(100 * time.Millisecond)
-						}
-						if d.forceWakeCount[role] >= churnForceWakeCap {
-							// Self-heal: suppress further force-wakes for this episode
-							// to stop the token churn, and alert edit once (deduped) so
-							// a human can intervene if the agent stays wedged.
-							d.churnSuppressed[role] = true
-							fmt.Printf("  %s  Churn guard: %s force-woken %d× without draining — suppressing until idle\n",
-								ts, role, d.forceWakeCount[role])
-							bus.LogLifecycle(d.session, "warn", "daemon", "churn-suppress",
-								fmt.Sprintf("%s: %d force-wakes, suppressing", role, d.forceWakeCount[role]))
-							alert := bus.NewMessage("daemon", "edit", "event", "churn-suppressed",
-								fmt.Sprintf("%s force-woken %d× without draining its inbox — delivery suppressed until it idles. If stuck: muxcode deliver %s --force",
-									role, d.forceWakeCount[role], role), "")
-							_, _ = bus.SendIfNotDuplicate(d.session, alert)
-							d.refreshInboxSizes()
-							continue
-						}
-						d.forceWakeCount[role]++
-						fmt.Printf("  %s  Watchdog: %s appears active but ❯ found in wider capture — forcing delivery (%d/%d)\n",
-							ts, role, d.forceWakeCount[role], churnForceWakeCap)
-						bus.LogLifecycle(d.session, "info", "daemon", "watchdog-force-wake", role)
-						text := bus.BuildCombinedNotification(unnotified)
-						ids := make([]string, 0, len(unnotified))
-						for _, m := range unnotified {
-							ids = append(ids, m.ID)
-						}
-						bus.AddNotifiedIDs(d.session, role, ids)
-						_ = bus.SendWakeUpWithText(d.session, role, provider, text)
-						fmt.Printf("  %s  Watchdog delivered to %s (%d messages)\n", ts, role, len(unnotified))
-						delete(d.activeUnnotifiedSeen, role)
-						continue
-					}
+				content, err := bus.TmuxCapturePaneLines(target, 200)
+				if err != nil || !bus.PaneShowsRecoverableIdle(content) {
+					// Genuinely working (or capture failed) — nothing at rest to
+					// deliver to. Leave the timer past-threshold so the next 5s poll
+					// re-checks cheaply once the agent finishes.
+					continue
 				}
-				// ❯ not found — leave the timer past-threshold so the NEXT poll
-				// (every 5s) re-checks, instead of waiting another full threshold
-				// window. A genuinely-busy agent has no ❯ prompt, so re-checking
-				// is a cheap no-op until it finishes.
+				ts := time.Now().Format("15:04:05")
+				if d.forceWakeCount[role] >= churnForceWakeCap {
+					// Recoverable-idle yet still not draining after several
+					// force-deliveries — a genuinely stuck agent. Suppress to stop
+					// the churn and alert edit once (deduped) for human eyes.
+					d.churnSuppressed[role] = true
+					fmt.Printf("  %s  Churn guard: %s force-delivered %d× without draining — suppressing until idle\n",
+						ts, role, d.forceWakeCount[role])
+					bus.LogLifecycle(d.session, "warn", "daemon", "churn-suppress",
+						fmt.Sprintf("%s: %d force-deliveries, suppressing", role, d.forceWakeCount[role]))
+					alert := bus.NewMessage("daemon", "edit", "event", "churn-suppressed",
+						fmt.Sprintf("%s force-delivered %d× without draining its inbox — delivery suppressed until it idles. If stuck: muxcode deliver %s --force",
+							role, d.forceWakeCount[role], role), "")
+					_, _ = bus.SendIfNotDuplicate(d.session, alert)
+					d.refreshInboxSizes()
+					continue
+				}
+				// Robust delivery: ForceDeliver runs the hardened text→delay→Enter→
+				// verify path, clears stale parked input in an unfocused pane, and
+				// rolls back its notified markers if the injection fails — the same
+				// escape hatch `muxcode deliver --force` uses, now fired automatically
+				// so no human has to notice the wedge and run it by hand.
+				d.forceWakeCount[role]++
+				fmt.Printf("  %s  Watchdog: %s idle-at-prompt but read active — force-delivering (%d/%d)\n",
+					ts, role, d.forceWakeCount[role], churnForceWakeCap)
+				bus.LogLifecycle(d.session, "info", "daemon", "watchdog-force-deliver", role)
+				if res, derr := bus.ForceDeliver(d.session, role, true); derr == nil && res.Delivered > 0 {
+					delete(d.activeUnnotifiedSeen, role)
+				}
+				continue
 			}
 			continue
 		}
@@ -2492,12 +2490,12 @@ const idleTaskGracePeriod int64 = 30
 // this threshold the wider check runs every poll (every 5s), not once.
 const watchdogActiveSecs int64 = 15
 
-// churnForceWakeCap bounds how many times the "active but ❯ found in wider
-// capture" branch will force-deliver to a role before giving up for the episode.
-// Past this, the daemon clears the composer once and suppresses further
-// force-wakes (churnSuppressed) until the agent genuinely idles or its inbox
-// drains — preventing the re-inject-every-poll loop that burns a full agent turn
-// each time. Reset on idle transition.
+// churnForceWakeCap bounds how many times the "read active but pane shows
+// recoverable-idle" branch will force-deliver to a role before giving up for the
+// episode. Past this, the daemon suppresses further force-deliveries
+// (churnSuppressed) until the agent genuinely idles or its inbox drains —
+// preventing the re-inject-every-poll loop that burns a full agent turn each
+// time. Reset on idle transition.
 const churnForceWakeCap int = 3
 
 // resetChurnGuard clears the force-wake budget and lifts any delivery

@@ -522,8 +522,44 @@ func checkMissedSendKeys(report *DiagnosticReport) *DiagnosticFinding {
 // Mirrors ClaudeCodeProvider.IsIdle's order (thinking first, then prompt scan)
 // so diagnose and the daemon share one definition of "idle" instead of
 // diagnose re-implementing half of it and drifting.
+//
+// Prompt scan runs over the FULL content (the ❯ may have scrolled past the live
+// region after a big tool-output block), but the thinking check runs only over
+// the live TAIL. "Thinking" is a CURRENT-STATE property: Claude Code's live
+// activity — the "✻ Fermenting…" spinner and its "· esc to interrupt ·" counter
+// — always renders in the bottom few lines, just above the composer and footer.
+// Judging it over the whole capture false-positived on scrollback: a completed
+// turn, a quoted footer, or the agent's own output literally discussing "esc to
+// interrupt" (the plan agent writing about idle detection did exactly this) all
+// match the thinking signatures even though the agent is idle NOW. That made the
+// daemon's recoverable-idle watchdog never fire on the very parked-input wedge it
+// exists to rescue — the wide capture that let it find a scrolled ❯ also swept up
+// stale thinking text. Anchoring the thinking check to the tail keeps the
+// scrolled-prompt reach without letting history masquerade as the present.
 func PaneShowsRecoverableIdle(content string) bool {
-	return PaneHasIdlePrompt(content) && !isClaudeThinking(content)
+	return PaneHasIdlePrompt(content) && !isClaudeThinking(paneLiveTail(content))
+}
+
+// recoverableIdleTailLines bounds how much of the pane bottom the thinking check
+// in PaneShowsRecoverableIdle considers. Claude Code's persistent bottom UI —
+// live spinner, composer, footer — spans only a handful of lines; a genuinely
+// working agent's spinner sits ~5-6 lines above the footer. Ten lines covers
+// that live region with margin while excluding the scrollback above it.
+const recoverableIdleTailLines = 10
+
+// paneLiveTail returns the last recoverableIdleTailLines non-blank-trimmed lines
+// of content — the live bottom region of the pane — after dropping trailing
+// blank padding that tmux capture-pane appends. Used to scope the thinking check
+// to the current state rather than the full scrollback.
+func paneLiveTail(content string) string {
+	lines := strings.Split(content, "\n")
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) > recoverableIdleTailLines {
+		lines = lines[len(lines)-recoverableIdleTailLines:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // checkIdleDetectionFailure detects when the pane shows the idle prompt

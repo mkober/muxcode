@@ -892,3 +892,38 @@ func TestPaneShowsRecoverableIdle_NoPromptIsNotRecoverable(t *testing.T) {
 		t.Error("pane with no idle prompt must not be reported as recoverable idle")
 	}
 }
+
+func TestPaneShowsRecoverableIdle_StaleThinkingInScrollbackIsRecoverable(t *testing.T) {
+	// The wedge that stranded the plan agent: the daemon's watchdog uses a WIDE
+	// (200-line) capture to find a ❯ that scrolled past the narrow window, but
+	// that same wide window sweeps up thinking signatures from SCROLLBACK — a
+	// completed turn's spinner, or, here, the agent's own output literally
+	// discussing "esc to interrupt" while writing about idle detection. Those are
+	// history, not the current state; the live tail is a clean idle prompt. This
+	// must be recoverable (true) — before the tail-scoped thinking check it
+	// returned false and the watchdog never fired, so the pending message sat
+	// undelivered until a human ran `deliver --force`.
+	content := "" +
+		"⏺ The daemon reads 'esc to interrupt' as a thinking indicator.\n" +
+		"  ⎿  isClaudeThinking matches 'esc to interrupt' and '… · ' counters.\n" +
+		"✻ Fermenting… (2m 56s · 11.4k tokens · esc to interrupt)\n" + // stale spinner in scrollback
+		"⏺ Done. The spec now documents the F6 toggle.\n" +
+		"  ⎿  docs/requirements/drafts/refactor-agent.md\n" +
+		"\n" +
+		"  Several lines of completed output here.\n" +
+		"  More completed output pushing the live region down.\n" +
+		"  Yet more so the stale spinner is well above the tail.\n" +
+		"  And a bit more padding to clear the tail window.\n" +
+		"  Final line of the recap block.\n" +
+		"✻ Sautéed for 1m 12s\n" + // past-tense recap: idle now
+		"─────────────────────────────── planner ──\n" +
+		"❯ Delegate phase 1 implementation to edit\n" + // parked-input wedge at the live prompt
+		"──────────────────────────────────────────\n" +
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
+
+	if !PaneShowsRecoverableIdle(content) {
+		t.Error("stale thinking text in scrollback must not block recovery when the " +
+			"live tail is a clean idle prompt — this is the plan-agent wedge the " +
+			"watchdog could not rescue")
+	}
+}
