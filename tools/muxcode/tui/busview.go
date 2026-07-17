@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -101,12 +100,15 @@ func tailFile(path string, n int) []string {
 		return nil
 	}
 
+	// Split on newlines directly rather than using bufio.Scanner: Scanner
+	// aborts the whole scan on any line over 64KB (bufio.MaxScanTokenSize).
+	// Because this returns the *last* n lines, that abort would silently pin
+	// the view to entries from before the oversized message — the dashboard
+	// would look stale rather than empty. data is already fully in memory.
 	var allLines []string
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line != "" {
-			allLines = append(allLines, line)
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		if len(line) > 0 {
+			allLines = append(allLines, string(line))
 		}
 	}
 

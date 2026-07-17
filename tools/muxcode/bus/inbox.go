@@ -1,7 +1,6 @@
 package bus
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"os"
@@ -225,8 +224,13 @@ func Receive(session, role string) ([]Message, error) {
 
 	// Read and parse consuming file
 	msgs, err := readMessages(consuming)
+	if err != nil {
+		// Never destroy unread messages on a read error: the rename above
+		// made .consuming the only copy. Put it back so a retry can read it.
+		restoreConsuming(inbox, consuming)
+		return nil, err
+	}
 
-	// Remove consuming file regardless of read errors
 	_ = os.Remove(consuming)
 
 	// Mark all consumed messages as delivered
@@ -242,11 +246,23 @@ func Receive(session, role string) ([]Message, error) {
 
 // ReceiveFrom reads and consumes only messages from a specific sender,
 // leaving messages from other senders in the inbox.
+//
+// Delegates to ReceiveFromFunc rather than duplicating the consume/restore
+// logic. The two used to be independent copies, which is how the same
+// oversized-message bug came to live in both.
 func ReceiveFrom(session, role, fromRole string) ([]Message, error) {
+	return ReceiveFromFunc(session, role, func(f string) bool {
+		return f == fromRole
+	})
+}
+
+// ReceiveFromFunc reads and consumes only messages where matchFn(m.From)
+// returns true, leaving other messages in the inbox. Used by --wait to
+// accept responses from both a hosted role and its host agent.
+func ReceiveFromFunc(session, role string, matchFn func(string) bool) ([]Message, error) {
 	inbox := InboxPath(session, role)
 	consuming := inbox + ".consuming"
 
-	// Atomic rename: move inbox to consuming file
 	if err := os.Rename(inbox, consuming); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -254,22 +270,22 @@ func ReceiveFrom(session, role, fromRole string) ([]Message, error) {
 		return nil, err
 	}
 
-	// Touch new empty inbox (new messages can arrive while we filter)
 	if err := touchFile(inbox); err != nil {
 		_ = err
 	}
 
-	// Read all messages from consuming file
 	all, err := readMessages(consuming)
-	_ = os.Remove(consuming)
 	if err != nil {
+		// Restore rather than remove: a read error here would otherwise
+		// destroy both matched and unmatched messages.
+		restoreConsuming(inbox, consuming)
 		return nil, err
 	}
+	_ = os.Remove(consuming)
 
-	// Split into matched (from target) and unmatched (from others)
 	var matched, rest []Message
 	for _, m := range all {
-		if m.From == fromRole {
+		if matchFn(m.From) {
 			matched = append(matched, m)
 		} else {
 			rest = append(rest, m)
@@ -302,80 +318,8 @@ func ReceiveFrom(session, role, fromRole string) ([]Message, error) {
 			buf = append(buf, data...)
 			buf = append(buf, '\n')
 		}
-		// Read any new messages that arrived since the rename
-		newData, _ := os.ReadFile(inbox)
-		// Prepend rest + append new arrivals
-		combined := append(buf, newData...)
-		if writeErr := os.WriteFile(inbox, combined, 0644); writeErr != nil {
+		if writeErr := prependToInbox(inbox, buf); writeErr != nil {
 			// Best effort: try appending instead
-			_ = appendToFile(inbox, buf)
-		}
-	}
-
-	return matched, nil
-}
-
-// ReceiveFromFunc reads and consumes only messages where matchFn(m.From)
-// returns true, leaving other messages in the inbox. Used by --wait to
-// accept responses from both a hosted role and its host agent.
-func ReceiveFromFunc(session, role string, matchFn func(string) bool) ([]Message, error) {
-	inbox := InboxPath(session, role)
-	consuming := inbox + ".consuming"
-
-	if err := os.Rename(inbox, consuming); err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	if err := touchFile(inbox); err != nil {
-		_ = err
-	}
-
-	all, err := readMessages(consuming)
-	_ = os.Remove(consuming)
-	if err != nil {
-		return nil, err
-	}
-
-	var matched, rest []Message
-	for _, m := range all {
-		if matchFn(m.From) {
-			matched = append(matched, m)
-		} else {
-			rest = append(rest, m)
-		}
-	}
-
-	// Mark consumed messages as delivered
-	for _, m := range matched {
-		MarkDelivered(session, m.ID)
-	}
-
-	// Mark consumed message IDs as notified (partial consumption —
-	// only these messages are consumed, not the entire inbox).
-	if len(matched) > 0 {
-		ids := make([]string, 0, len(matched))
-		for _, m := range matched {
-			ids = append(ids, m.ID)
-		}
-		addNotifiedIDs(session, role, ids)
-	}
-
-	if len(rest) > 0 {
-		var buf []byte
-		for _, m := range rest {
-			data, encErr := EncodeMessage(m)
-			if encErr != nil {
-				continue
-			}
-			buf = append(buf, data...)
-			buf = append(buf, '\n')
-		}
-		newData, _ := os.ReadFile(inbox)
-		combined := append(buf, newData...)
-		if writeErr := os.WriteFile(inbox, combined, 0644); writeErr != nil {
 			_ = appendToFile(inbox, buf)
 		}
 	}
@@ -437,9 +381,7 @@ func InboxCount(session, role string) int {
 		return 0
 	}
 	count := 0
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
 		if len(bytes.TrimSpace(line)) > 0 {
 			count++
 		}
@@ -480,19 +422,19 @@ func touchFile(path string) error {
 }
 
 // readMessages reads and parses all JSONL messages from a file.
-func readMessages(path string) ([]Message, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
+// decodeMessageLines parses newline-delimited JSON messages from data,
+// skipping blank and malformed lines.
+//
+// Deliberately splits on newlines directly instead of using bufio.Scanner.
+// Scanner caps a single token at bufio.MaxScanTokenSize (64KB) and returns
+// ErrTooLong for anything larger, which aborts the entire scan — not just the
+// oversized line. Agent replies carrying build logs or test output routinely
+// exceed 64KB, and that error caused callers to discard the whole inbox.
+// data is already fully in memory here, so splitting adds no allocation
+// overhead (the lines are views into data) and imposes no length limit.
+func decodeMessageLines(data []byte) []Message {
 	var msgs []Message
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
@@ -502,5 +444,50 @@ func readMessages(path string) ([]Message, error) {
 		}
 		msgs = append(msgs, m)
 	}
-	return msgs, scanner.Err()
+	return msgs
+}
+
+func readMessages(path string) ([]Message, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return decodeMessageLines(data), nil
+}
+
+// restoreConsuming puts an unread .consuming file back into the inbox after a
+// failed read. The Receive* functions rename the inbox to .consuming before
+// parsing, which makes .consuming the only copy of those messages — removing
+// it on a read error silently loses them (the caller reports an error and the
+// agent never sees the message again). Any messages that arrived during the
+// read are preserved and ordered after the restored ones.
+//
+// If the write-back fails, .consuming is deliberately left on disk so the
+// messages remain recoverable by hand rather than being destroyed.
+func restoreConsuming(inbox, consuming string) {
+	data, err := os.ReadFile(consuming)
+	if err != nil {
+		return // nothing to restore
+	}
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		data = append(data, '\n')
+	}
+
+	if err := prependToInbox(inbox, data); err != nil {
+		return // leave .consuming in place for manual recovery
+	}
+	_ = os.Remove(consuming)
+}
+
+// prependToInbox writes data at the head of the inbox, preserving any messages
+// that arrived after the caller renamed the inbox away. Callers snapshot the
+// inbox via rename, so anything already written back is a new arrival and must
+// stay ordered after the messages being restored.
+func prependToInbox(inbox string, data []byte) error {
+	newData, _ := os.ReadFile(inbox)
+	combined := append(data, newData...)
+	return os.WriteFile(inbox, combined, 0644)
 }

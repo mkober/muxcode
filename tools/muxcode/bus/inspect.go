@@ -1,8 +1,6 @@
 package bus
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -245,16 +243,7 @@ func readLogForRole(session, role string, limit int) []Message {
 	}
 
 	var all []Message
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		m, err := DecodeMessage(line)
-		if err != nil {
-			continue
-		}
+	for _, m := range decodeMessageLines(data) {
 		if m.From == role || m.To == role {
 			all = append(all, m)
 		}
