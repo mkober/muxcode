@@ -122,6 +122,14 @@ type Daemon struct {
 	// effect without a manual `muxcode reload`. State lives in per-session stamp
 	// files (see bus/agentdefs.go) so it survives daemon restarts.
 	lastAgentDefsCheck int64 // 10s interval
+	// Delivery-ack poll-health backstop (Phase 5, gated by ackDeliveryActive).
+	// The positive-signal replacement for pane-scrape wedge detection: a growing
+	// receipt gap (inbox messages with no receipt past a threshold) means the
+	// agent's self-poll / delivery sidecar stopped consuming. Inert unless the
+	// receipt-based cutover is activated.
+	lastPollHealthCheck int64            // pollHealthIntervalSecs interval
+	pollGapSince        map[string]int64 // role -> unix time a receipt gap first appeared (0 = none)
+	pollGapAlerted      map[string]bool  // role -> alerted edit once for the current gap
 	// Branch time-tracking accumulator — adds active working time to the current
 	// git branch while a client is attached. To avoid a disk write + git/tmux
 	// process spawn on every fast poll, time is accrued in memory
@@ -195,6 +203,8 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		permBlocked:           make(map[string]bool),
 		permBlockAlerted:      make(map[string]bool),
 		lastAgentDefsCheck:    now, // skip first interval — lets stamps settle on startup
+		pollGapSince:          make(map[string]int64),
+		pollGapAlerted:        make(map[string]bool),
 	}
 }
 
@@ -282,6 +292,7 @@ func (d *Daemon) Run() error {
 		d.checkIdleAgents()
 		d.checkParkedInput()
 		d.checkPaneSweep()
+		d.checkPollHealth()
 		d.checkNonHookTasks()
 		d.checkTrackedTasks()
 		d.checkNonHookEdits()
@@ -1586,7 +1597,112 @@ func shouldWakeIdleOrActionable(hasActionable, isIdle bool) bool {
 // included, but its event-type notifications are capped per 5-minute window by
 // the notification budget (see editNotifyBudget); request-type messages to edit
 // are never throttled.
+// pollHealth timing: how often the backstop runs, how stale an un-receipted
+// message must be before it counts as a gap, and how long a gap must persist
+// before alerting edit that the poll loop / sidecar is likely down.
+const (
+	pollHealthIntervalSecs = 15
+	pollHealthGapSecs      = 45
+	pollHealthAlertSecs    = 120
+)
+
+// ackDeliveryActive reports whether the receipt-based delivery cutover (Phase 5)
+// is active. Default is FALSE: the daemon keeps its current pane-scrape delivery
+// machinery so nothing breaks until the Claude self-poll (Phase 2 Stop hook) is
+// verified live. Set MUXCODE_DELIVERY_ACK=1 to activate the cutover.
+// MUXCODE_DELIVERY_ACK_DISABLE=1 is a hard kill switch that forces the old path
+// even when the cutover was enabled — the operational rollback valve.
+func (d *Daemon) ackDeliveryActive() bool {
+	if os.Getenv("MUXCODE_DELIVERY_ACK_DISABLE") != "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("MUXCODE_DELIVERY_ACK"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// checkPollHealth is the receipt-gap backstop that replaces pane-scrape wedge
+// detection under the delivery-ack cutover. For each agent it looks for inbox
+// messages carrying no receipt past pollHealthGapSecs — a positive signal the
+// agent's self-poll loop (Claude/harness) or verified-inject sidecar
+// (OpenCode/Codex) stopped consuming. It re-drives delivery (ForceDeliver for
+// self-pollers, SendWakeUp for non-hook TUIs) and alerts edit once the gap
+// persists past pollHealthAlertSecs.
+//
+// Inert unless the cutover is active: with the old machinery in charge, agents
+// are not self-polling and a receipt gap is normal, so running this would
+// false-alarm.
+func (d *Daemon) checkPollHealth() {
+	if !d.ackDeliveryActive() {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastPollHealthCheck < pollHealthIntervalSecs {
+		return
+	}
+	d.lastPollHealthCheck = now
+
+	for _, role := range bus.KnownRoles {
+		// Hosted roles share their host's pane/inbox — the host covers them.
+		if bus.WindowForRole(role) != role {
+			continue
+		}
+		// Skip agents mid-reload (intentionally down) and permission-blocked ones.
+		if bus.IsReloading(d.session, role) || d.permBlocked[role] {
+			continue
+		}
+
+		gap := bus.ReceiptGap(d.session, role, pollHealthGapSecs*time.Second)
+		if len(gap) == 0 {
+			d.pollGapSince[role] = 0
+			d.pollGapAlerted[role] = false
+			continue
+		}
+		if d.pollGapSince[role] == 0 {
+			d.pollGapSince[role] = now
+		}
+
+		// Re-drive delivery. Self-pollers (Claude/harness) get a robust
+		// force-deliver that re-wakes the poll; non-hook TUIs get another
+		// verified-inject attempt.
+		provider := bus.ResolveProvider(role)
+		if provider.SupportsHooks() {
+			if _, err := bus.ForceDeliver(d.session, role, true); err != nil {
+				bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
+					fmt.Sprintf("%s: force-deliver failed during receipt-gap recovery: %v", role, err))
+			}
+		} else {
+			if err := provider.SendWakeUp(d.session, role); err != nil {
+				bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
+					fmt.Sprintf("%s: wake-up failed during receipt-gap recovery: %v", role, err))
+			}
+		}
+
+		// Alert edit once if the gap persists well past recovery attempts.
+		if now-d.pollGapSince[role] >= pollHealthAlertSecs && !d.pollGapAlerted[role] {
+			d.pollGapAlerted[role] = true
+			bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
+				fmt.Sprintf("%s: %d un-receipted msg(s) for %ds — poll/sidecar may be down",
+					role, len(gap), now-d.pollGapSince[role]))
+			msg := bus.NewMessage("daemon", "edit", "event", "delivery-gap",
+				fmt.Sprintf("%s has %d un-receipted message(s) for %ds — self-poll or delivery sidecar may be down",
+					role, len(gap), now-d.pollGapSince[role]), "")
+			_ = bus.SendNoCC(d.session, msg)
+		}
+	}
+}
+
 func (d *Daemon) checkIdleAgents() {
+	// Delivery-ack cutover: when receipt-based delivery is active, agents pull
+	// their own inboxes (Claude self-poll, harness in-process) and non-hook TUIs
+	// are served by checkInboxes->Notify plus the checkPollHealth backstop. The
+	// pane-scrape idle-delivery machinery below is bypassed. Default (cutover off)
+	// keeps it as the delivery path.
+	if d.ackDeliveryActive() {
+		return
+	}
 	now := time.Now().Unix()
 	if now-d.lastIdleCheck < msgCheckSecs() {
 		return
@@ -1914,6 +2030,13 @@ const parkedResubmitMax = 2
 // Enter), it escalates: clear the composer and clear notified IDs so the next
 // checkIdleAgents cycle re-delivers the message fresh.
 func (d *Daemon) checkParkedInput() {
+	// Delivery-ack cutover: parked-input recovery is a pane-scrape delivery
+	// mechanism. Under the receipt model Claude self-polls (no send-keys to drop)
+	// and non-hook injection recovers its own Enter in confirmInjectionAndConsume,
+	// so this is bypassed. Default (cutover off) keeps it.
+	if d.ackDeliveryActive() {
+		return
+	}
 	now := time.Now().Unix()
 	if now-d.lastParkedCheck < msgCheckSecs() {
 		return
@@ -2026,6 +2149,11 @@ func (d *Daemon) checkParkedInput() {
 // Never clears under a user's cursor: skipped when the window is focused in an
 // attached client. Detached sessions are always fair game (nobody is typing).
 func (d *Daemon) checkPaneSweep() {
+	// Delivery-ack cutover: the pane sweep is pane-scrape delivery (dropped-Enter
+	// resubmit across panes). Bypassed under the receipt model; default keeps it.
+	if d.ackDeliveryActive() {
+		return
+	}
 	now := time.Now().Unix()
 	if now-d.lastPaneSweep < 30 {
 		return

@@ -313,9 +313,10 @@ func ReceiveFromFunc(session, role string, matchFn func(string) bool) ([]Message
 		}
 	}
 
-	// Write a consume-receipt for each matched message (this role read them —
-	// e.g. a --wait sender consuming its reply). See Receive for the Phase 4 note
-	// on the non-hook drain path.
+	// Write a true consume-ack receipt for each matched message — this role read
+	// them in-process (e.g. a --wait sender consuming its reply). The daemon's
+	// verified-inject path writes `delivered` receipts via ReceiveDelivered
+	// instead; this partial-consume path is always a genuine in-process read.
 	for _, m := range matched {
 		WriteReceipt(session, m.ID, role, ReceiptKindAck)
 	}
