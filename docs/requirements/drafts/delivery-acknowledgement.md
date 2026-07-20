@@ -85,13 +85,16 @@ receipts — is an **open item** (see below) to investigate before Phase 4.
   no longer injects wake-ups for routine delivery.
 - [ ] A message is **retried until a receipt** (or verified-inject) appears — no message
   strands due to a dropped Enter, idle misdetection, or a crashed+restarted agent.
-- [ ] A **dead poll loop / sidecar is detected via receipt-gap** and recovered (re-launch
-  or alert) — the new backstop.
+- [x] A **dead poll loop / sidecar is detected via receipt-gap** and recovered (re-launch
+  or alert) — the new backstop. (`checkPollHealth`, committed `e55a84a`.)
 - [ ] The notified-IDs marker, churn-suppression, safety-net retries, and the
-  active-with-stale-messages watchdog are **removed**.
+  active-with-stale-messages watchdog are **removed**. (Currently **bypassed** under the
+  cutover flag, not deleted — see Phase 5 decision note; removal deferred until Phase 6.)
 - [ ] Provider matrix documented: true receipts for Claude/harness; verified-inject
-  `delivered` for OpenCode/Codex with the limitation stated.
-- [ ] `muxcode deliver --force` **survives** as a manual last-resort escape hatch.
+  `delivered` for OpenCode/Codex with the limitation stated. (In-spec matrix done;
+  user-facing skill/doc write-up is Phase 4 step 3, still open.)
+- [x] `muxcode deliver --force` **survives** as a manual last-resort escape hatch.
+  (Kept, and now load-bearing inside `checkPollHealth`'s self-poller recovery.)
 
 ### Technical approach
 
@@ -259,15 +262,36 @@ must be removed as delivery mechanisms:
 
 ### Phase 5: Daemon cutover
 
-- [ ] Add `checkPollHealth` (receipt-gap backstop): detect a growing receipt gap per agent;
+- [x] Add `checkPollHealth` (receipt-gap backstop): detect a growing receipt gap per agent;
   re-launch the Claude poll / restart the OpenCode/Codex sidecar; else alert edit.
+  (`daemon.go` — `ReceiptGap` past `pollHealthGapSecs`=45s → `ForceDeliver` for self-pollers
+  / `SendWakeUp` for non-hook TUIs → `delivery-gap` event to edit past
+  `pollHealthAlertSecs`=120s; unit-tested in `poll_health_test.go`.)
 - [ ] Remove pane-scrape delivery machinery: idle-based delivery in `checkIdleAgents`,
   parked-input / pane-sweep **as delivery**, notified-IDs subsystem, churn-suppression,
   safety-net retries, active-with-stale-messages watchdog.
-- [ ] Keep task round-trip tracking (`checkTrackedTasks`, `StatusResponded`), non-hook
+  **Implemented as a gated bypass, not a deletion** — see decision note below; outright
+  removal deferred until Phase 6 verifies the self-poll path live.
+- [x] Keep task round-trip tracking (`checkTrackedTasks`, `StatusResponded`), non-hook
   task-completion detection, injection mechanics, and the `trigger-{role}.notify` write.
-- [ ] Add a kill-switch env var (e.g. `MUXCODE_DELIVERY_ACK_DISABLE`) as an operational
+  (All preserved and still called from `Run()`.)
+- [x] Add a kill-switch env var (e.g. `MUXCODE_DELIVERY_ACK_DISABLE`) as an operational
   rollback valve during rollout, even though the end-state replaces the old path.
+  (`ackDeliveryActive()`: `MUXCODE_DELIVERY_ACK=1` activates the cutover;
+  `MUXCODE_DELIVERY_ACK_DISABLE=1` hard-forces the old path; tested in `TestAckDeliveryActive`.)
+
+> **Decision (Phase 5) — cutover gate instead of outright removal.** The spec's
+> "Replace outright" decision called for **deleting** the notified-IDs subsystem,
+> churn-suppression, safety-net retries, and the active-with-stale-messages watchdog.
+> The implementation instead gates them behind `ackDeliveryActive()` (env
+> `MUXCODE_DELIVERY_ACK`, **default OFF**): `checkIdleAgents`, `checkParkedInput`, and
+> `checkPaneSweep` early-return when the cutover is active, so the receipt model
+> (`checkPollHealth` + agent self-poll) is fully in charge, while the old machinery
+> stays intact and default-on as a fallback. Rationale (per commit `e55a84a`): keep a
+> working delivery path until the Phase 2 Stop-hook self-poll is verified **live** in
+> Phase 6. **Consequence**: the "removed" acceptance criterion and this step stay open
+> **by design** — physical deletion of the dead machinery is the last step, after Phase 6
+> flips the cutover default to on and proves no regressions.
 
 ### Phase 6: Integration test (required)
 
@@ -275,17 +299,27 @@ Create `scripts/test-delivery-ack.sh` (`set -euo pipefail`) exercising the featu
 end-to-end. Document what requires a **live session / real providers** vs what is asserted
 **offline**, with graceful skips.
 
-- [ ] Create `scripts/test-delivery-ack.sh`.
-- [ ] For each provider type, send a message → assert a **receipt is written** (true `acked`
-  for Claude/harness; `delivered` for OpenCode/Codex).
-- [ ] Kill an agent's poll loop → assert the daemon detects the **receipt-gap and recovers**
-  (re-launch or alert).
-- [ ] Simulate a **dropped Enter** → assert retry-until-received (no strand).
-- [ ] Restart a **mid-task agent** → assert sends are not blocked and the message is received
-  after restart.
-- [ ] Assert **no `notified-{role}.ids` writes** occur (old marker path is gone).
-- [ ] Assert `muxcode deliver --force` still works as a manual escape hatch.
-- [ ] Run the script and verify all checks pass.
+- [x] Create `scripts/test-delivery-ack.sh`. (Committed `53b5b73`.)
+- [x] For each provider type, send a message → assert a **receipt is written** (true `acked`
+  for Claude/harness; `delivered` for OpenCode/Codex). (Asserted offline via
+  `TestWriteReceipt_*` / `TestReceiveMarksAcked` / `TestReceive_WritesConsumeReceipt`.)
+- [x] Kill an agent's poll loop → assert the daemon detects the **receipt-gap and recovers**
+  (re-launch or alert). (Asserted offline via `TestCheckPollHealth_RecordsGapAndAlertsWhenActive`
+  / `TestCheckPollHealth_ClearsGapOnReceipt`; the **destructive live** repro against real
+  providers is intentionally out of the CI runner's scope — documented in the script header.)
+- [x] Simulate a **dropped Enter** → assert retry-until-received (no strand). (Offline via
+  `TestVerifyInjectionLanded_*` / `TestConfirmInjectionAndConsume_*`.)
+- [x] Restart a **mid-task agent** → assert sends are not blocked and the message is received
+  after restart. (Offline via `TestClearInFlightTasksForRole_*` / `TestTaskExpired`.)
+- [ ] Assert **no `notified-{role}.ids` writes** occur (old marker path is gone). **Open by
+  design** — the marker path is *gated* (default OFF), not removed (Phase 5 decision), so it
+  still writes in the default state; the script instead asserts the pane-scrape delivery checks
+  *bypass* under the cutover (`TestDeliveryChecksGatedWhenCutoverActive`). This closes once the
+  cutover default flips on and the machinery is physically deleted.
+- [x] Assert `muxcode deliver --force` still works as a manual escape hatch. (Live smoke —
+  usage/flag presence, session-independent.)
+- [x] Run the script and verify all checks pass. (Edit reported green; **independently
+  confirmed by the run agent** — 27 Go tests + 3 live smoke checks, exit 0.)
 
 ## Open items
 
@@ -303,8 +337,12 @@ end-to-end. Document what requires a **live session / real providers** vs what i
 
 ## Status
 
-In Progress — **Phases 1–3 complete; Phase 4 code complete** (step 3 skill/docs write-up
-pending); Phases 5–6 remain.
+In Progress — **Phases 1–4 committed; Phase 5 committed as a gated cutover** (`e55a84a`);
+**Phase 6 integration test committed and green** (`scripts/test-delivery-ack.sh`, `53b5b73`).
+All Phases 1–6 are now committed and pushed to `origin/main`. Only two items remain:
+**Phase 4 step 3** (user-facing skill/doc for the verified-inject limitation) and, deferred
+by design, **physical removal** of the bypassed pane-scrape machinery once the cutover
+default flips on and no regressions are observed.
 
 **Phase 1 (receipt store)**: `delivery.go` extended with
 `AckedAt`/`AckedBy`/`ReceiptKind` + `StatusAcked`/`ReceiptKindAck`/`ReceiptKindDelivered`,
@@ -340,5 +378,31 @@ parked (no drop on a dropped Enter), fall back to consume when unverifiable. `pr
 daemon-side `delivered` deferral. Steps 1–2 checked off with full unit coverage
 (`inject_verify_test.go`); **step 3 (document the limitation in a user-facing skill/doc)
 remains** — currently only in code comments + this spec. The "investigate before Phase 4"
-open item stays open (no in-process poll path for these TUIs confirmed). Next: Phase 5 —
-daemon cutover (`checkPollHealth` receipt-gap backstop; remove pane-scrape delivery machinery).
+open item stays open (no in-process poll path for these TUIs confirmed).
+
+**Phase 5 (daemon cutover) — committed `e55a84a`**: new `checkPollHealth` receipt-gap
+backstop (`daemon.go` + `poll_health_test.go`) detects inbox messages un-receipted past
+`pollHealthGapSecs` (45s), re-drives delivery (`ForceDeliver` for hook self-pollers /
+`SendWakeUp` for non-hook TUIs), and emits a `delivery-gap` event to edit once the gap
+persists past `pollHealthAlertSecs` (120s); `delivery-gap` added to the `isSystemAction`
+allowlist (`guard.go`) so the alert doesn't trip loop detection. The pane-scrape delivery
+machinery (`checkIdleAgents`, `checkParkedInput`, `checkPaneSweep`) is **gated off** — not
+deleted — under the `MUXCODE_DELIVERY_ACK` cutover flag (default OFF), with
+`MUXCODE_DELIVERY_ACK_DISABLE` as a hard kill switch; task round-trip tracking, non-hook
+completion detection, injection mechanics, and the `trigger-{role}.notify` write are all
+kept. Steps 1, 3, 4 checked off; **step 2 (physical removal) stays open by design** until
+Phase 6 proves the self-poll path live and the cutover default flips on.
+
+**Phase 6 (integration test) — committed `53b5b73` and green** (`scripts/test-delivery-ack.sh`):
+mirrors `test-watchdog-churn.sh` — the authoritative coverage runs the Go
+suite (6 groups spanning the receipt store + per-provider kinds, receipt-gap
+detect/recover, verified-inject dropped-Enter retry, mid-task-restart send unblocking,
+cutover gating, and Stop-hook self-poll decision logic) with a strict "no silent pass"
+guard, then a non-destructive live smoke section (`muxcode deliver --force` present;
+receipt store active; `muxcode status` healthy — all graceful-skip without a session). Edit
+reports all checks green. Six of the eight Phase 6 boxes checked; the "no `notified-IDs`
+writes" box stays open by design (that path is gated, not deleted — the script asserts the
+pane-scrape checks *bypass* under the cutover instead). Destructive live scenarios (kill a
+poll loop, restart a mid-task agent, drop an Enter) are asserted deterministically offline
+rather than against a live user session, by design. Only remaining spec item: Phase 4
+step 3 (user-facing skill/doc).
