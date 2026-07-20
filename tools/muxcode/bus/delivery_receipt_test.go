@@ -155,6 +155,36 @@ func TestReceiptGap_IgnoresSelfSends(t *testing.T) {
 	}
 }
 
+func TestAckDeliveryToggle(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+
+	if AckDeliveryToggleOn(session) {
+		t.Fatal("toggle must be off before any marker is written")
+	}
+	if AckDeliveryTogglePath(session) == "" {
+		t.Error("AckDeliveryTogglePath must return a non-empty path")
+	}
+
+	if err := SetAckDeliveryToggle(session, true); err != nil {
+		t.Fatalf("SetAckDeliveryToggle on: %v", err)
+	}
+	if !AckDeliveryToggleOn(session) {
+		t.Error("toggle must be on after the marker is created (instant, no daemon restart)")
+	}
+
+	if err := SetAckDeliveryToggle(session, false); err != nil {
+		t.Fatalf("SetAckDeliveryToggle off: %v", err)
+	}
+	if AckDeliveryToggleOn(session) {
+		t.Error("toggle must be off after the marker is removed")
+	}
+	// off is idempotent when the marker is already absent.
+	if err := SetAckDeliveryToggle(session, false); err != nil {
+		t.Errorf("idempotent off returned error: %v", err)
+	}
+}
+
 func TestReceive_WritesConsumeReceipt(t *testing.T) {
 	useTempBusDir(t)
 	session := testSession(t)

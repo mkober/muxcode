@@ -24,7 +24,7 @@ var knownSubcommands = map[string]bool{
 	"compact": true, "launch": true, "modal": true, "mode": true,
 	"reload": true, "config": true, "provider-select": true,
 	"simulate": true, "track": true, "remote": true, "spec": true,
-	"resize": true, "deliver": true, "upgrade-daemons": true,
+	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true,
 	"branch-time": true,
 }
 
@@ -212,6 +212,8 @@ func main() {
 		cmd.Resize(args)
 	case "deliver":
 		cmd.Deliver(args)
+	case "delivery-ack":
+		cmd.DeliveryAck(args)
 	case "uitest":
 		cmd.UITest(args)
 	case "simulate":

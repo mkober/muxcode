@@ -1620,7 +1620,12 @@ func (d *Daemon) ackDeliveryActive() bool {
 	case "1", "true", "yes", "on":
 		return true
 	}
-	return false
+	// Runtime file toggle: a marker file in the bus dir activates the cutover
+	// without restarting the daemon — an instant flip + rollback, and a stronger
+	// operational valve than the startup-only env var (`muxcode delivery-ack
+	// on|off`). The env kill switch above still hard-forces the old path even
+	// when the marker is present.
+	return bus.AckDeliveryToggleOn(d.session)
 }
 
 // checkPollHealth is the receipt-gap backstop that replaces pane-scrape wedge

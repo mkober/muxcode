@@ -258,3 +258,32 @@ func writeDeliveryStatus(session string, ds DeliveryStatus) error {
 	}
 	return os.WriteFile(DeliveryPath(session, ds.ID), data, 0644)
 }
+
+// AckDeliveryTogglePath is the marker file whose presence activates the
+// receipt-based delivery cutover at runtime. The daemon's ackDeliveryActive()
+// re-reads it every poll, so touching / removing it flips the cutover (and rolls
+// it back) instantly without restarting the daemon — unlike the startup-only
+// MUXCODE_DELIVERY_ACK env var. MUXCODE_DELIVERY_ACK_DISABLE still hard-overrides
+// this marker to force the old path.
+func AckDeliveryTogglePath(session string) string {
+	return filepath.Join(BusDir(session), "delivery-ack.on")
+}
+
+// AckDeliveryToggleOn reports whether the runtime cutover marker file is present.
+func AckDeliveryToggleOn(session string) bool {
+	_, err := os.Stat(AckDeliveryTogglePath(session))
+	return err == nil
+}
+
+// SetAckDeliveryToggle creates (on) or removes (off) the runtime cutover marker.
+// Removing an absent marker is not an error, so `off` is idempotent.
+func SetAckDeliveryToggle(session string, on bool) error {
+	path := AckDeliveryTogglePath(session)
+	if on {
+		return os.WriteFile(path, []byte(time.Now().Format(time.RFC3339)+"\n"), 0644)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
