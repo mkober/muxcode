@@ -159,28 +159,31 @@ func TestAckDeliveryToggle(t *testing.T) {
 	useTempBusDir(t)
 	session := testSession(t)
 
-	if AckDeliveryToggleOn(session) {
-		t.Fatal("toggle must be off before any marker is written")
+	// No rollback marker by default — the cutover is on (the default path).
+	if AckDeliveryToggledOff(session) {
+		t.Fatal("rollback marker must be absent before any is written")
 	}
-	if AckDeliveryTogglePath(session) == "" {
-		t.Error("AckDeliveryTogglePath must return a non-empty path")
-	}
-
-	if err := SetAckDeliveryToggle(session, true); err != nil {
-		t.Fatalf("SetAckDeliveryToggle on: %v", err)
-	}
-	if !AckDeliveryToggleOn(session) {
-		t.Error("toggle must be on after the marker is created (instant, no daemon restart)")
+	if AckDeliveryOffMarkerPath(session) == "" {
+		t.Error("AckDeliveryOffMarkerPath must return a non-empty path")
 	}
 
-	if err := SetAckDeliveryToggle(session, false); err != nil {
-		t.Fatalf("SetAckDeliveryToggle off: %v", err)
+	// Writing the marker rolls the session back to the old pane-scrape path.
+	if err := SetAckDeliveryOff(session, true); err != nil {
+		t.Fatalf("SetAckDeliveryOff on: %v", err)
 	}
-	if AckDeliveryToggleOn(session) {
-		t.Error("toggle must be off after the marker is removed")
+	if !AckDeliveryToggledOff(session) {
+		t.Error("rollback marker must be present after it is written (instant, no daemon restart)")
 	}
-	// off is idempotent when the marker is already absent.
-	if err := SetAckDeliveryToggle(session, false); err != nil {
+
+	// Removing it restores the default (receipt-based delivery).
+	if err := SetAckDeliveryOff(session, false); err != nil {
+		t.Fatalf("SetAckDeliveryOff off: %v", err)
+	}
+	if AckDeliveryToggledOff(session) {
+		t.Error("rollback marker must be absent after it is removed")
+	}
+	// Restoring the default is idempotent when the marker is already absent.
+	if err := SetAckDeliveryOff(session, false); err != nil {
 		t.Errorf("idempotent off returned error: %v", err)
 	}
 }

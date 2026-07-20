@@ -1614,26 +1614,34 @@ const (
 	pollHealthAlertSecs    = 120
 )
 
-// ackDeliveryActive reports whether the receipt-based delivery cutover (Phase 5)
-// is active. Default is FALSE: the daemon keeps its current pane-scrape delivery
-// machinery so nothing breaks until the Claude self-poll (Phase 2 Stop hook) is
-// verified live. Set MUXCODE_DELIVERY_ACK=1 to activate the cutover.
-// MUXCODE_DELIVERY_ACK_DISABLE=1 is a hard kill switch that forces the old path
-// even when the cutover was enabled — the operational rollback valve.
+// ackDeliveryActive reports whether the receipt-based delivery cutover is active.
+// Default is TRUE: receipt-based delivery (per-message receipts + agent self-poll)
+// is the default delivery path, replacing pane-scrape wedge inference. Rollback
+// valves, in precedence order:
+//   - MUXCODE_DELIVERY_ACK_DISABLE (env) — hard kill switch, forces the old
+//     pane-scrape path. Read from the daemon's own process, so it needs a daemon
+//     restart to change.
+//   - MUXCODE_DELIVERY_ACK=off|0|false|no (env) — explicit startup opt-out;
+//     =on|1|true|yes pins it on (redundant with the default, kept for symmetry).
+//   - runtime OFF marker (`muxcode delivery-ack off`) — instant, restart-free
+//     rollback to the old path for a single session.
+//
+// Absent all of these, the cutover is ON.
 func (d *Daemon) ackDeliveryActive() bool {
 	if os.Getenv("MUXCODE_DELIVERY_ACK_DISABLE") != "" {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("MUXCODE_DELIVERY_ACK"))) {
+	case "0", "false", "no", "off":
+		return false
 	case "1", "true", "yes", "on":
 		return true
 	}
-	// Runtime file toggle: a marker file in the bus dir activates the cutover
-	// without restarting the daemon — an instant flip + rollback, and a stronger
-	// operational valve than the startup-only env var (`muxcode delivery-ack
-	// on|off`). The env kill switch above still hard-forces the old path even
-	// when the marker is present.
-	return bus.AckDeliveryToggleOn(d.session)
+	// Runtime OFF marker: an instant, restart-free rollback to the old pane-scrape
+	// path (`muxcode delivery-ack off`), a stronger operational valve than the
+	// startup-only env var. The env kill switch above still hard-forces the old
+	// path regardless. Absent marker = the default (ON).
+	return !bus.AckDeliveryToggledOff(d.session)
 }
 
 // checkPollHealth is the receipt-gap backstop that replaces pane-scrape wedge

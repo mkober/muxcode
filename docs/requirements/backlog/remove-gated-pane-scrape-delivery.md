@@ -3,9 +3,10 @@
 Physically delete the daemon's pane-scrape delivery machinery — the notified-IDs subsystem,
 churn-suppression, safety-net retries, and the active-with-stale-messages watchdog — now that
 receipt-based delivery ([delivery-acknowledgement](../drafts/delivery-acknowledgement.md))
-supersedes it. Today that machinery is **gated OFF at runtime** behind `ackDeliveryActive()`
-(`MUXCODE_DELIVERY_ACK`, default OFF) but still **present in the tree** as a fallback. This
-doc tracks the final step: removing the dead code once the cutover is proven stable live.
+supersedes it. That machinery is now **bypassed at runtime** behind `ackDeliveryActive()`
+(`MUXCODE_DELIVERY_ACK`, now **default ON**) but still **present in the tree** as a rollback
+fallback. This doc tracks the final step: removing the dead code once the default-ON cutover
+is proven stable live.
 
 This is the **deferred item** of the delivery-acknowledgement spec — its "Replace outright"
 decision called for deletion, but Phase 5 shipped a gated bypass instead so a working
@@ -18,7 +19,7 @@ delivery path survives until the self-poll model is verified in production. See 
 
 The delivery-ack redesign replaces pane-scrape delivery *inference* with per-message
 **receipts** + agent self-poll. Phase 5 gated the old machinery behind a cutover flag
-(default OFF) rather than deleting it, deliberately, so:
+(since flipped to **default ON**) rather than deleting it, deliberately, so:
 
 - the fallback stays intact until the Phase 2 Stop-hook self-poll is proven to fire reliably
   **live** (not just in unit tests), and
@@ -32,9 +33,9 @@ session with no delivery regressions.
 | Aspect | State |
 |--------|-------|
 | Receipt model (Phases 1–6) | Committed + pushed to `origin/main` |
-| Cutover flag `MUXCODE_DELIVERY_ACK` | Default **OFF** — old machinery still in charge |
+| Cutover flag `MUXCODE_DELIVERY_ACK` | **Default ON (soak)** — receipt model in charge; rollback via `MUXCODE_DELIVERY_ACK_DISABLE` / `MUXCODE_DELIVERY_ACK=off` / `muxcode delivery-ack off` |
 | Old pane-scrape machinery | Bypassed under the flag, **not deleted** |
-| This removal | **Backlog** — blocked on the prerequisite below |
+| This removal | **Backlog** — blocked on the prerequisites below (soak + mis-fire fix) |
 
 ### `checkPollHealth` hardening (committed `77b8093`)
 
@@ -51,7 +52,7 @@ The receipt-gap backstop was scoped and debounced to stop `delivery-gap` churn:
   clears and re-arms once a receipt lands. Prevents a failed-attempt + warning storm against an agent
   that legitimately hasn't consumed yet.
 
-### Known limitation — receipt-gap backstop mis-fires (why the cutover stays opt-in)
+### Known limitation — receipt-gap backstop mis-fires (why removal stays blocked)
 
 `provider.IsAlive` **fail-safes to "alive"** for a role whose pane cannot be captured, so the
 live-agent gate alone cannot suppress an agent that is **alive but not (yet) self-polling**. The
@@ -64,9 +65,11 @@ un-consumed for benign reasons:
 The recover-once guard reduces this to a single wasted attempt + one alert per episode rather than
 per-poll churn, but it does **not** eliminate the false positive. A durable fix needs a **positive
 "self-poll loop is running" signal** (e.g. a liveness heartbeat from the poll listener / sidecar)
-rather than inferring death from a receipt gap. **Until then the cutover stays opt-in**
-(`MUXCODE_DELIVERY_ACK` / `muxcode delivery-ack on`), never the default — this is an added
-prerequisite for the removal below.
+rather than inferring death from a receipt gap. The cutover has been **flipped to default ON
+as a soak** (rollback via `MUXCODE_DELIVERY_ACK_DISABLE` / `MUXCODE_DELIVERY_ACK=off` /
+`muxcode delivery-ack off`); because the mis-fire is **not yet resolved**, fixing it stays an
+added prerequisite for the physical **removal** below — the flip is a soak, not the go-ahead
+to delete.
 
 ## Requirements
 
@@ -80,8 +83,9 @@ prerequisite for the removal below.
 - [ ] The **receipt-gap mis-fire** (see Known limitation above) is resolved — a positive
   self-poll liveness signal replaces gap-inferred death so the backstop no longer false-alarms
   on busy non-hook TUIs or freshly-idle Claude agents.
-- [ ] Flip the `ackDeliveryActive()` default to ON (cutover is the default), keeping
-  `MUXCODE_DELIVERY_ACK_DISABLE` as the rollback valve for at least one release before removal.
+- [x] Flip the `ackDeliveryActive()` default to ON (cutover is the default), keeping
+  `MUXCODE_DELIVERY_ACK_DISABLE` (env) **and** the runtime `delivery-ack.off` marker
+  (`muxcode delivery-ack off`) as rollback valves for at least one release before removal.
 
 ### Removal list (delete outright)
 
@@ -131,8 +135,8 @@ Receipt delivery does not replace these — they are separate signals:
 
 ### Phase 1: Flip the default and soak
 
-- [ ] Flip `ackDeliveryActive()` to default ON; keep `MUXCODE_DELIVERY_ACK_DISABLE` as the
-  rollback valve.
+- [x] Flip `ackDeliveryActive()` to default ON; keep `MUXCODE_DELIVERY_ACK_DISABLE` (env) and
+  the runtime `delivery-ack.off` marker (`muxcode delivery-ack off`) as rollback valves.
 - [ ] Soak in a live session; confirm no stranded messages / missed wake-ups across providers.
 
 ### Phase 2: Delete the machinery
@@ -161,7 +165,7 @@ Receipt delivery does not replace these — they are separate signals:
 
 ## Status
 
-Backlog — blocked on the prerequisite: the receipt cutover must be proven stable live as the
-default before the gated machinery is deleted. Tracks the deferred "removed" acceptance
-criterion / Phase 5 step 2 of
+Backlog — the cutover default has been **flipped ON (soak)**; the gated machinery is deleted
+only after the default-ON soak proves stable live **and** the receipt-gap backstop mis-fire is
+resolved. Tracks the deferred "removed" acceptance criterion / Phase 5 step 2 of
 [delivery-acknowledgement](../drafts/delivery-acknowledgement.md).

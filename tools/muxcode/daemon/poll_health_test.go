@@ -17,56 +17,62 @@ func TestAckDeliveryActive(t *testing.T) {
 	session := testSession(t)
 	d := New(session, 5, 8)
 
-	// Default: cutover OFF (safe — the old delivery machinery stays in charge).
+	// Default: cutover ON — receipt-based delivery is the default path.
 	t.Setenv("MUXCODE_DELIVERY_ACK", "")
 	t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "")
-	if d.ackDeliveryActive() {
-		t.Error("default must be inactive (old delivery path)")
+	if !d.ackDeliveryActive() {
+		t.Error("default must be active (receipt-based delivery is the default)")
 	}
 
-	// Explicit env enable.
+	// Explicit env opt-out forces the old path.
+	t.Setenv("MUXCODE_DELIVERY_ACK", "off")
+	if d.ackDeliveryActive() {
+		t.Error("MUXCODE_DELIVERY_ACK=off must deactivate the cutover")
+	}
+
+	// Explicit env pin keeps it on.
 	t.Setenv("MUXCODE_DELIVERY_ACK", "1")
 	if !d.ackDeliveryActive() {
-		t.Error("MUXCODE_DELIVERY_ACK=1 must activate the cutover")
+		t.Error("MUXCODE_DELIVERY_ACK=1 must keep the cutover active")
 	}
 
-	// Kill switch overrides env enable.
+	// Kill switch overrides an explicit env enable.
 	t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "1")
 	if d.ackDeliveryActive() {
 		t.Error("MUXCODE_DELIVERY_ACK_DISABLE must force the old path even when enabled")
 	}
-
-	// Runtime file toggle: the marker activates the cutover with no env set and
-	// no daemon restart.
 	t.Setenv("MUXCODE_DELIVERY_ACK", "")
 	t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "")
-	if err := bus.SetAckDeliveryToggle(session, true); err != nil {
-		t.Fatalf("SetAckDeliveryToggle on: %v", err)
+
+	// Runtime OFF marker rolls back to the old path with no env set (instant, no
+	// daemon restart).
+	if err := bus.SetAckDeliveryOff(session, true); err != nil {
+		t.Fatalf("SetAckDeliveryOff on: %v", err)
+	}
+	if d.ackDeliveryActive() {
+		t.Error("delivery-ack OFF marker must roll back to the old path")
+	}
+
+	// An explicit env pin outranks the runtime marker (precedence: env > marker).
+	t.Setenv("MUXCODE_DELIVERY_ACK", "on")
+	if !d.ackDeliveryActive() {
+		t.Error("explicit MUXCODE_DELIVERY_ACK=on must outrank the OFF marker")
+	}
+	t.Setenv("MUXCODE_DELIVERY_ACK", "")
+
+	// Removing the marker restores the default (ON).
+	if err := bus.SetAckDeliveryOff(session, false); err != nil {
+		t.Fatalf("SetAckDeliveryOff off: %v", err)
 	}
 	if !d.ackDeliveryActive() {
-		t.Error("delivery-ack marker file must activate the cutover")
-	}
-
-	// Kill switch hard-overrides the marker too.
-	t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "1")
-	if d.ackDeliveryActive() {
-		t.Error("MUXCODE_DELIVERY_ACK_DISABLE must force the old path even with the marker present")
-	}
-	t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "")
-
-	// Removing the marker reverts to OFF.
-	if err := bus.SetAckDeliveryToggle(session, false); err != nil {
-		t.Fatalf("SetAckDeliveryToggle off: %v", err)
-	}
-	if d.ackDeliveryActive() {
-		t.Error("removing the marker must revert to the old path")
+		t.Error("removing the OFF marker must restore the default (cutover ON)")
 	}
 }
 
 func TestCheckPollHealth_InertWhenCutoverOff(t *testing.T) {
 	session := testSession(t)
 	d := New(session, 5, 8)
-	t.Setenv("MUXCODE_DELIVERY_ACK", "") // cutover off
+	t.Setenv("MUXCODE_DELIVERY_ACK", "off") // cutover explicitly off (default is now on)
 	t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "")
 
 	// A stale un-receipted message would be a gap IF the backstop ran.

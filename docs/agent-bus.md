@@ -331,25 +331,25 @@ Behavior:
 
 ### `muxcode delivery-ack`
 
-Flip the **receipt-based delivery cutover** ([delivery-acknowledgement](architecture.md#delivery-tracking)) at runtime — no daemon restart.
+Roll the **receipt-based delivery cutover** ([delivery-acknowledgement](architecture.md#delivery-tracking)) — now the **default** — on or off at runtime, no daemon restart.
 
 ```bash
 muxcode delivery-ack status                 # report current runtime + env state (default)
-muxcode delivery-ack on                      # activate receipt-based delivery (agents self-poll)
-muxcode delivery-ack off                     # revert to the pane-scrape delivery path
+muxcode delivery-ack on                      # restore the default (clears the rollback marker)
+muxcode delivery-ack off                     # roll back to the pane-scrape delivery path (writes the marker)
 muxcode delivery-ack <sub> --session <name>  # target a different session
 ```
 
-The toggle writes a **marker file** in the bus dir. The daemon's `ackDeliveryActive()` re-reads it every poll loop, so the flip (and rollback) takes effect **immediately** — unlike the startup-only `MUXCODE_DELIVERY_ACK` env var, which the daemon only reads at its own process start. This is the safe way to activate/test the cutover on a live session, and a fast operational kill valve.
+The cutover is on by default. `off` writes a **`delivery-ack.off` rollback marker** in the bus dir; `on` clears it. The daemon's `ackDeliveryActive()` re-reads the marker every poll loop, so the rollback (and its removal) takes effect **immediately** — unlike the startup-only `MUXCODE_DELIVERY_ACK` env var, which the daemon only reads at its own process start. This is the fast, restart-free operational rollback valve for a live session.
 
 Resolution order for whether the cutover is active:
 
-1. `MUXCODE_DELIVERY_ACK_DISABLE` env set → **OFF** (hard kill switch, forces the old path — overrides everything below).
-2. `MUXCODE_DELIVERY_ACK=1|true|yes|on` env → ON (evaluated at daemon startup).
-3. Runtime marker (`muxcode delivery-ack on`) → ON (no restart needed).
-4. Otherwise → OFF (default).
+1. `MUXCODE_DELIVERY_ACK_DISABLE` env set → **OFF** (hard kill switch, forces the old path — overrides everything below; needs a daemon restart).
+2. `MUXCODE_DELIVERY_ACK=off|0|false|no` env → OFF; `=on|1|true|yes` pins it ON (evaluated at daemon startup).
+3. Runtime OFF marker (`muxcode delivery-ack off`) → OFF (no restart needed).
+4. Otherwise → **ON** (default).
 
-`status` prints the runtime state, the marker path (present/absent), and any relevant env. **Still opt-in** — see the known receipt-gap-backstop limitation in [`remove-gated-pane-scrape-delivery`](requirements/backlog/remove-gated-pane-scrape-delivery.md).
+`status` prints the effective state (noting "default: ON"), the rollback-marker path (present/absent), and any relevant env. Physical removal of the bypassed pane-scrape machinery stays deferred behind the known receipt-gap-backstop limitation — see [`remove-gated-pane-scrape-delivery`](requirements/backlog/remove-gated-pane-scrape-delivery.md).
 
 ### `muxcode cron`
 

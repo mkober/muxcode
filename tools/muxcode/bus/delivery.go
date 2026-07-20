@@ -259,27 +259,32 @@ func writeDeliveryStatus(session string, ds DeliveryStatus) error {
 	return os.WriteFile(DeliveryPath(session, ds.ID), data, 0644)
 }
 
-// AckDeliveryTogglePath is the marker file whose presence activates the
-// receipt-based delivery cutover at runtime. The daemon's ackDeliveryActive()
-// re-reads it every poll, so touching / removing it flips the cutover (and rolls
-// it back) instantly without restarting the daemon — unlike the startup-only
-// MUXCODE_DELIVERY_ACK env var. MUXCODE_DELIVERY_ACK_DISABLE still hard-overrides
-// this marker to force the old path.
-func AckDeliveryTogglePath(session string) string {
-	return filepath.Join(BusDir(session), "delivery-ack.on")
+// AckDeliveryOffMarkerPath is the runtime ROLLBACK marker for the receipt-based
+// delivery cutover. The cutover is ON by default (see the daemon's
+// ackDeliveryActive); the PRESENCE of this marker reverts a single session to the
+// old pane-scrape delivery path. The daemon re-reads it every poll, so writing /
+// removing it rolls back (and restores) the cutover instantly without a daemon
+// restart — unlike the startup-only MUXCODE_DELIVERY_ACK env var.
+// MUXCODE_DELIVERY_ACK_DISABLE is a stronger env-level kill switch that forces the
+// old path regardless of this marker.
+func AckDeliveryOffMarkerPath(session string) string {
+	return filepath.Join(BusDir(session), "delivery-ack.off")
 }
 
-// AckDeliveryToggleOn reports whether the runtime cutover marker file is present.
-func AckDeliveryToggleOn(session string) bool {
-	_, err := os.Stat(AckDeliveryTogglePath(session))
+// AckDeliveryToggledOff reports whether the runtime rollback marker is present —
+// i.e. the session has been reverted from the default receipt-based delivery to
+// the old pane-scrape path via `muxcode delivery-ack off`.
+func AckDeliveryToggledOff(session string) bool {
+	_, err := os.Stat(AckDeliveryOffMarkerPath(session))
 	return err == nil
 }
 
-// SetAckDeliveryToggle creates (on) or removes (off) the runtime cutover marker.
-// Removing an absent marker is not an error, so `off` is idempotent.
-func SetAckDeliveryToggle(session string, on bool) error {
-	path := AckDeliveryTogglePath(session)
-	if on {
+// SetAckDeliveryOff creates (off=true) or removes (off=false) the runtime
+// rollback marker. Removing an absent marker is not an error, so restoring the
+// default (`on`) is idempotent.
+func SetAckDeliveryOff(session string, off bool) error {
+	path := AckDeliveryOffMarkerPath(session)
+	if off {
 		return os.WriteFile(path, []byte(time.Now().Format(time.RFC3339)+"\n"), 0644)
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

@@ -174,7 +174,7 @@ Part of the [delivery-acknowledgement](architecture.md#delivery-tracking) redesi
 - **Provider-gated** — only meaningful for hook providers (Claude Code); a no-op otherwise.
 - **Loop-guarded** — respects `stop_hook_active` so a re-launch can't recurse.
 - Backed by the pure `DecideStopHook` / `StopHookAction` / `StopHookPollReason` / `FormatStopBlock` helpers in `bus/hook.go` (`hookStop()` in `cmd/hook.go`).
-- Gated by the receipt cutover: relevant when self-poll delivery is active (`MUXCODE_DELIVERY_ACK`); `MUXCODE_DELIVERY_ACK_DISABLE` reverts to daemon-push delivery.
+- Relevant under the receipt cutover (now the **default**): self-poll delivery is on unless rolled back via `MUXCODE_DELIVERY_ACK_DISABLE` (hard kill switch), `MUXCODE_DELIVERY_ACK=off`, or `muxcode delivery-ack off`, each of which reverts to daemon-push delivery.
 
 ## Hook Event Format
 

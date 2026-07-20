@@ -286,16 +286,17 @@ must be removed as delivery mechanisms:
 > **Decision (Phase 5) — cutover gate instead of outright removal.** The spec's
 > "Replace outright" decision called for **deleting** the notified-IDs subsystem,
 > churn-suppression, safety-net retries, and the active-with-stale-messages watchdog.
-> The implementation instead gates them behind `ackDeliveryActive()` (env
-> `MUXCODE_DELIVERY_ACK`, **default OFF**): `checkIdleAgents`, `checkParkedInput`, and
-> `checkPaneSweep` early-return when the cutover is active, so the receipt model
-> (`checkPollHealth` + agent self-poll) is fully in charge, while the old machinery
-> stays intact and default-on as a fallback. Rationale (per commit `e55a84a`): keep a
-> working delivery path until the Phase 2 Stop-hook self-poll is verified **live** in
-> Phase 6. **Consequence**: the "removed" acceptance criterion and this step stay open
-> **by design** — physical deletion of the dead machinery is the last step, after Phase 6
-> flips the cutover default to on and proves no regressions. The deletion is tracked in the
-> backlog: [remove-gated-pane-scrape-delivery](../backlog/remove-gated-pane-scrape-delivery.md).
+> The implementation instead gates them behind `ackDeliveryActive()`. The cutover has
+> since been **flipped to default ON** (env `MUXCODE_DELIVERY_ACK`, unset → ON): the
+> receipt model (`checkPollHealth` + agent self-poll) is now in charge by default, while
+> `checkIdleAgents`, `checkParkedInput`, and `checkPaneSweep` early-return (bypassed) and
+> the old machinery stays intact only as a rollback fallback. Rationale (per commit
+> `e55a84a`): keep a working delivery path until the Phase 2 Stop-hook self-poll is
+> verified **live**. **Consequence**: the "removed" acceptance criterion and this step
+> stay open **by design** — physical deletion of the dead machinery is the last step, now
+> gated on the default-ON soak proving no regressions **and** the receipt-gap backstop
+> mis-fire being resolved. The deletion is tracked in the backlog:
+> [remove-gated-pane-scrape-delivery](../backlog/remove-gated-pane-scrape-delivery.md).
 
 ### Phase 6: Integration test (required)
 
@@ -316,10 +317,11 @@ end-to-end. Document what requires a **live session / real providers** vs what i
 - [x] Restart a **mid-task agent** → assert sends are not blocked and the message is received
   after restart. (Offline via `TestClearInFlightTasksForRole_*` / `TestTaskExpired`.)
 - [ ] Assert **no `notified-{role}.ids` writes** occur (old marker path is gone). **Open by
-  design** — the marker path is *gated* (default OFF), not removed (Phase 5 decision), so it
-  still writes in the default state; the script instead asserts the pane-scrape delivery checks
-  *bypass* under the cutover (`TestDeliveryChecksGatedWhenCutoverActive`). This closes once the
-  cutover default flips on and the machinery is physically deleted.
+  design** — the marker path is *gated* (bypassed under the now-default-ON cutover), not
+  removed (Phase 5 decision), so it still exists in the tree and writes only when the cutover
+  is rolled back; the script instead asserts the pane-scrape delivery checks *bypass* under the
+  cutover (`TestDeliveryChecksGatedWhenCutoverActive`). This closes once the machinery is
+  physically deleted.
 - [x] Assert `muxcode deliver --force` still works as a manual escape hatch. (Live smoke —
   usage/flag presence, session-independent.)
 - [x] Run the script and verify all checks pass. (Edit reported green; **independently
@@ -344,10 +346,11 @@ end-to-end. Document what requires a **live session / real providers** vs what i
 In Progress — **Phases 1–4 committed; Phase 5 committed as a gated cutover** (`e55a84a`);
 **Phase 6 integration test committed and green** (`scripts/test-delivery-ack.sh`, `53b5b73`).
 All Phases 1–6 are now committed and pushed to `origin/main`, and **Phase 4 step 3**
-(user-facing provider-matrix docs) is done in `docs/agents.md`. The **only** remaining work
-is deferred by design: **physical removal** of the bypassed pane-scrape machinery once the
-cutover default flips on and no regressions are observed. That removal is tracked in its own
-backlog doc — [remove-gated-pane-scrape-delivery](../backlog/remove-gated-pane-scrape-delivery.md)
+(user-facing provider-matrix docs) is done in `docs/agents.md`. The cutover default has now
+been **flipped to ON** (soak). The **only** remaining work is deferred by design: **physical
+removal** of the bypassed pane-scrape machinery, awaiting the default-ON soak proving no
+regressions **and** the receipt-gap backstop mis-fire being resolved. That removal is tracked
+in its own backlog doc — [remove-gated-pane-scrape-delivery](../backlog/remove-gated-pane-scrape-delivery.md)
 — along with the open "removed" acceptance criterion + Phase 5 step 2.
 
 **Phase 1 (receipt store)**: `delivery.go` extended with
@@ -394,11 +397,12 @@ backstop (`daemon.go` + `poll_health_test.go`) detects inbox messages un-receipt
 persists past `pollHealthAlertSecs` (120s); `delivery-gap` added to the `isSystemAction`
 allowlist (`guard.go`) so the alert doesn't trip loop detection. The pane-scrape delivery
 machinery (`checkIdleAgents`, `checkParkedInput`, `checkPaneSweep`) is **gated off** — not
-deleted — under the `MUXCODE_DELIVERY_ACK` cutover flag (default OFF), with
-`MUXCODE_DELIVERY_ACK_DISABLE` as a hard kill switch; task round-trip tracking, non-hook
+deleted — under the `MUXCODE_DELIVERY_ACK` cutover flag, now **default ON**, with
+`MUXCODE_DELIVERY_ACK_DISABLE` (env hard kill switch) and the runtime `delivery-ack.off`
+marker (`muxcode delivery-ack off`) as rollback valves; task round-trip tracking, non-hook
 completion detection, injection mechanics, and the `trigger-{role}.notify` write are all
 kept. Steps 1, 3, 4 checked off; **step 2 (physical removal) stays open by design** until
-Phase 6 proves the self-poll path live and the cutover default flips on.
+the default-ON soak proves the self-poll path live and the receipt-gap mis-fire is resolved.
 
 **Phase 6 (integration test) — committed `53b5b73` and green** (`scripts/test-delivery-ack.sh`):
 mirrors `test-watchdog-churn.sh` — the authoritative coverage runs the Go
