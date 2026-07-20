@@ -22,6 +22,88 @@ func TestParseToolEvent(t *testing.T) {
 	}
 }
 
+func TestParseToolEvent_StopHookActive(t *testing.T) {
+	// A Stop-hook event carries stop_hook_active; the tool-event parser reuses
+	// the same struct so the self-poll hook can read it.
+	raw := `{"hook_event_name":"Stop","stop_hook_active":true,"stop_reason":"end_turn"}`
+	ev, err := ParseToolEvent([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseToolEvent: %v", err)
+	}
+	if !ev.StopHookActive {
+		t.Errorf("StopHookActive = false, want true")
+	}
+
+	// Absent field defaults to false (a genuine first stop this turn).
+	ev2, err := ParseToolEvent([]byte(`{"hook_event_name":"Stop"}`))
+	if err != nil {
+		t.Fatalf("ParseToolEvent: %v", err)
+	}
+	if ev2.StopHookActive {
+		t.Errorf("StopHookActive = true for absent field, want false")
+	}
+}
+
+func TestDecideStopHook(t *testing.T) {
+	cases := []struct {
+		name           string
+		listenerAlive  bool
+		stopHookActive bool
+		disabled       bool
+		wantBlock      bool
+	}{
+		// Poll dead, first stop this turn, feature on → block to re-launch.
+		{"relaunch when listener dead", false, false, false, true},
+		// A poll/wait listener is already running → nothing to do.
+		{"allow when listener alive", true, false, false, false},
+		// Loop guard: we already blocked once this turn → must allow now.
+		{"allow when stop_hook_active", false, true, false, false},
+		// Loop guard wins even if listener still looks dead and feature is on.
+		{"stop_hook_active beats dead listener", false, true, false, false},
+		// Kill switch disables the whole self-poll re-launch behavior.
+		{"allow when disabled", false, false, true, false},
+		// Disabled takes precedence over everything.
+		{"disabled beats dead listener", false, false, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DecideStopHook(tc.listenerAlive, tc.stopHookActive, tc.disabled)
+			if got.Block != tc.wantBlock {
+				t.Errorf("DecideStopHook(alive=%v, active=%v, disabled=%v).Block = %v, want %v",
+					tc.listenerAlive, tc.stopHookActive, tc.disabled, got.Block, tc.wantBlock)
+			}
+			if got.Block && got.Reason == "" {
+				t.Errorf("blocking decision must carry a non-empty reason")
+			}
+			if !got.Block && got.Reason != "" {
+				t.Errorf("allowing decision must not carry a reason, got %q", got.Reason)
+			}
+		})
+	}
+}
+
+func TestFormatStopBlock(t *testing.T) {
+	out := FormatStopBlock(StopHookPollReason)
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatalf("FormatStopBlock output is not valid JSON: %v (%q)", err, out)
+	}
+	if decoded["decision"] != "block" {
+		t.Errorf("decision = %q, want block", decoded["decision"])
+	}
+	if decoded["reason"] != StopHookPollReason {
+		t.Errorf("reason = %q, want the poll re-launch instruction", decoded["reason"])
+	}
+	// The reason is echoed into the agent's context AND must be copy-pasteable
+	// as a single-line command hint — no embedded newlines.
+	if strings.Contains(StopHookPollReason, "\n") {
+		t.Errorf("StopHookPollReason must be single-line")
+	}
+	if !strings.Contains(StopHookPollReason, "muxcode inbox --poll --loop") {
+		t.Errorf("StopHookPollReason must name the poll command")
+	}
+}
+
 func TestParseToolEvent_FilePath(t *testing.T) {
 	raw := `{"tool_input":{"file_path":"/foo/bar.go","new_string":"hello"}}`
 	ev, err := ParseToolEvent([]byte(raw))

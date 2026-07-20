@@ -383,6 +383,16 @@ if $use_claude; then
       reduce ($mc[0].hooks.PostToolUse // [] | .[] | . as $entry | $entry.hooks[] | {m: $entry.matcher, h: .}) as $x (
         .; add_hook("PostToolUse"; $x.m; $x.h)
       ) |
+
+      # Stop (and other matcher-less events) fire on every turn end — they have
+      # no matcher, so merge by appending a { "hooks": [ ... ] } group for each
+      # command not already present anywhere under .hooks.Stop (idempotent).
+      reduce ($mc[0].hooks.Stop // [] | .[] | .hooks[]) as $h (
+        .;
+        if ((.hooks.Stop // []) | [.[].hooks[]?.command] | index($h.command)) then .
+        else .hooks.Stop = ((.hooks.Stop // []) + [{"hooks": [$h]}]) end
+      ) |
+
       .permissions.allow = (.permissions.allow + ($mc[0].permissions.allow // []) | unique) |
       .permissions.deny = ((.permissions.deny // []) + ($mc[0].permissions.deny // []) | unique)
     ' "$CLAUDE_SETTINGS" > "${CLAUDE_SETTINGS}.tmp"

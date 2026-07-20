@@ -59,6 +59,16 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "muxcode hook stop"
+          }
+        ]
+      }
     ]
   },
   "permissions": {

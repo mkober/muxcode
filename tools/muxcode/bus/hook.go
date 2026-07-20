@@ -18,6 +18,10 @@ type ToolEvent struct {
 	ToolResponse json.RawMessage `json:"tool_response,omitempty"`
 	ToolResult   json.RawMessage `json:"tool_result,omitempty"`
 	RawExitCode  interface{}     `json:"exit_code,omitempty"`
+	// StopHookActive is set on Stop-hook events: true means a Stop hook already
+	// blocked once this turn and the agent is being asked to stop again (a
+	// re-entrant Stop). It is the loop guard for the self-poll re-launch hook.
+	StopHookActive bool `json:"stop_hook_active,omitempty"`
 }
 
 // ToolInput holds the input fields of a tool event.
@@ -849,6 +853,54 @@ func FormatGuardBlock(reason string) string {
 	}
 	data, _ := json.Marshal(result)
 	return string(data)
+}
+
+// FormatStopBlock returns the JSON a Stop hook prints (exit 0) to prevent the
+// agent from stopping and feed reason back into its context. Shares the
+// {"decision":"block","reason":...} shape with FormatGuardBlock today, but is
+// named separately because a Stop-block and a tool-guard-block are distinct
+// hook responses that may diverge (e.g. hookSpecificOutput) later.
+func FormatStopBlock(reason string) string {
+	return FormatGuardBlock(reason)
+}
+
+// StopHookPollReason is the instruction fed back to a Claude agent whose
+// background inbox listener has died, telling it to re-launch the self-poll so
+// it keeps receiving delegated work. Kept as a single line: it is echoed into
+// the agent's context, and the poll command must be copy-pasteable.
+const StopHookPollReason = "Your background inbox listener is not running. " +
+	"Re-launch it now so you keep receiving delegated work: run `muxcode inbox --poll --loop` " +
+	"as a background Bash command (run_in_background=true). It blocks until a bus message " +
+	"arrives, then returns it for you to process. Start it before ending your turn."
+
+// StopHookAction is the decision computed by the Stop-hook self-poll logic.
+type StopHookAction struct {
+	Block  bool
+	Reason string
+}
+
+// DecideStopHook computes whether a Claude Stop hook should block the agent
+// from stopping in order to re-launch its self-poll listener.
+//
+// It blocks — forcing the agent to continue and restart the poll — only when a
+// listener is genuinely absent AND we are not already inside a stop-hook
+// continuation (stopHookActive). Gating on stopHookActive guarantees at most one
+// block per real stop, so the hook can never loop even if the re-launch keeps
+// failing. When a poll/wait listener is already alive, or the delivery-ack
+// feature is disabled via kill switch, it allows the stop.
+//
+// Pure and side-effect-free for testability; callers supply the observed state.
+func DecideStopHook(listenerAlive, stopHookActive, disabled bool) StopHookAction {
+	if disabled {
+		return StopHookAction{Block: false}
+	}
+	if stopHookActive {
+		return StopHookAction{Block: false} // loop guard: already blocked this turn
+	}
+	if listenerAlive {
+		return StopHookAction{Block: false} // a poll/wait listener is running
+	}
+	return StopHookAction{Block: true, Reason: StopHookPollReason}
 }
 
 // ShouldPollInbox checks if a command is a bus send that warrants inbox polling.

@@ -10,10 +10,10 @@ import (
 )
 
 // Hook handles the "muxcode hook" subcommand.
-// Usage: muxcode hook <bash|guard|analyze|inbox-poll>
+// Usage: muxcode hook <bash|guard|analyze|inbox-poll|stop>
 func Hook(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode hook <bash|guard|analyze|inbox-poll>\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode hook <bash|guard|analyze|inbox-poll|stop>\n")
 		os.Exit(1)
 	}
 
@@ -27,8 +27,10 @@ func Hook(args []string) {
 		hookAnalyze()
 	case "inbox-poll":
 		hookInboxPoll()
+	case "stop":
+		hookStop()
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown hook: %s\nAvailable: bash, guard, analyze, inbox-poll\n", subcmd)
+		fmt.Fprintf(os.Stderr, "Unknown hook: %s\nAvailable: bash, guard, analyze, inbox-poll, stop\n", subcmd)
 		os.Exit(1)
 	}
 }
@@ -338,4 +340,50 @@ func hookInboxPoll() {
 
 	result := bus.PollInbox(session, time.Duration(timeoutSec)*time.Second, 2*time.Second)
 	fmt.Println(result)
+}
+
+// hookStop implements the Stop hook: it keeps a Claude agent's self-poll
+// listener alive across turns. When the agent finishes a turn and no
+// `muxcode inbox --poll` (or `--wait`) listener is running, it blocks the stop
+// and instructs the agent to re-launch the background poll — the single point
+// of reliability for Claude delivery under the receipt model.
+//
+// Registered globally in ~/.claude/settings.json, so it fires for every Claude
+// Code session. It no-ops immediately outside a muxcode session (BusSession
+// empty) and for non-hook providers — matching every other muxcode hook.
+func hookStop() {
+	session := bus.BusSession()
+	if session == "" {
+		return // not in a muxcode session — global hook, stay silent
+	}
+	role := bus.BusRole()
+
+	// Gate: only Claude (hook providers) self-poll via a background Bash tool.
+	// The harness self-polls in-process (Phase 3); OpenCode/Codex get
+	// verified-inject delivery (Phase 4) — neither re-launches via this hook.
+	provider := bus.ResolveProvider(role)
+	if !provider.SupportsHooks() {
+		return
+	}
+
+	// Read the Stop event (best-effort) for the stop_hook_active loop guard.
+	stopHookActive := false
+	if data, err := io.ReadAll(os.Stdin); err == nil && len(data) > 0 {
+		if ev, err := bus.ParseToolEvent(data); err == nil {
+			stopHookActive = ev.StopHookActive
+		}
+	}
+
+	// Kill switch: MUXCODE_DELIVERY_ACK_DISABLE turns off the receipt/self-poll
+	// path entirely (rollback valve during rollout). Phase 5 extends the same
+	// env to the daemon cutover.
+	disabled := os.Getenv("MUXCODE_DELIVERY_ACK_DISABLE") != ""
+
+	// A listener is alive if a --poll or --wait loop is currently running.
+	listenerAlive := bus.IsPolling(session, role) || bus.IsWaiting(session, role)
+
+	action := bus.DecideStopHook(listenerAlive, stopHookActive, disabled)
+	if action.Block {
+		fmt.Println(bus.FormatStopBlock(action.Reason))
+	}
 }
