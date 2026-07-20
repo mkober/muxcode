@@ -130,6 +130,12 @@ type Daemon struct {
 	lastPollHealthCheck int64            // pollHealthIntervalSecs interval
 	pollGapSince        map[string]int64 // role -> unix time a receipt gap first appeared (0 = none)
 	pollGapAlerted      map[string]bool  // role -> alerted edit once for the current gap
+	pollGapRecovered    map[string]bool  // role -> re-drive attempted once for the current gap
+	// agentAlive gates the poll-health backstop to live agents. Injectable so
+	// unit tests can drive liveness deterministically: provider.IsAlive
+	// fail-safes to "alive" when it cannot capture a pane, so it can't be forced
+	// to false without a real tmux session. Defaults to bus.IsAgentAlive.
+	agentAlive func(session, role string) bool
 	// Branch time-tracking accumulator — adds active working time to the current
 	// git branch while a client is attached. To avoid a disk write + git/tmux
 	// process spawn on every fast poll, time is accrued in memory
@@ -205,6 +211,8 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		lastAgentDefsCheck:    now, // skip first interval — lets stamps settle on startup
 		pollGapSince:          make(map[string]int64),
 		pollGapAlerted:        make(map[string]bool),
+		pollGapRecovered:      make(map[string]bool),
+		agentAlive:            bus.IsAgentAlive,
 	}
 }
 
@@ -1659,29 +1667,55 @@ func (d *Daemon) checkPollHealth() {
 			continue
 		}
 
+		// Only backstop a LIVE agent with a genuinely-stuck REQUEST. Two guards,
+		// mirroring the checkInboxes delivery gate:
+		//   - agentAlive: skip a role whose agent has crashed to a shell (nothing
+		//     to recover — checkAgentHealth handles restarts). NOTE: provider.IsAlive
+		//     fail-safes to "alive" for a role whose pane can't be captured, so this
+		//     alone can't suppress a live-but-not-self-polling agent — the
+		//     recover-once guard below is what stops the churn for those.
+		//   - HasActionableMessages: response-only / informational inbox growth is
+		//     not a delivery failure (checkInboxes never wakes on it either); only
+		//     an un-consumed request past the threshold signals a dead poll loop.
+		// Reset any stale gap state when skipping so a later real gap starts clean.
+		if !d.agentAlive(d.session, role) || !bus.HasActionableMessages(d.session, role) {
+			d.pollGapSince[role] = 0
+			d.pollGapAlerted[role] = false
+			d.pollGapRecovered[role] = false
+			continue
+		}
+
 		gap := bus.ReceiptGap(d.session, role, pollHealthGapSecs*time.Second)
 		if len(gap) == 0 {
 			d.pollGapSince[role] = 0
 			d.pollGapAlerted[role] = false
+			d.pollGapRecovered[role] = false
 			continue
 		}
 		if d.pollGapSince[role] == 0 {
 			d.pollGapSince[role] = now
 		}
 
-		// Re-drive delivery. Self-pollers (Claude/harness) get a robust
-		// force-deliver that re-wakes the poll; non-hook TUIs get another
-		// verified-inject attempt.
-		provider := bus.ResolveProvider(role)
-		if provider.SupportsHooks() {
-			if _, err := bus.ForceDeliver(d.session, role, true); err != nil {
-				bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
-					fmt.Sprintf("%s: force-deliver failed during receipt-gap recovery: %v", role, err))
-			}
-		} else {
-			if err := provider.SendWakeUp(d.session, role); err != nil {
-				bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
-					fmt.Sprintf("%s: wake-up failed during receipt-gap recovery: %v", role, err))
+		// Re-drive delivery ONCE per gap episode, not every poll. Self-pollers
+		// (Claude/harness) get a robust force-deliver that re-wakes the poll;
+		// non-hook TUIs get another verified-inject attempt. Retrying every cycle
+		// churns failed attempts + warnings for an agent that legitimately isn't
+		// consuming yet (busy, or a freshly-idle agent whose self-poll loop hasn't
+		// launched); one attempt plus the single edit alert below is enough — the
+		// gap clears (and re-arms) once a receipt lands.
+		if !d.pollGapRecovered[role] {
+			d.pollGapRecovered[role] = true
+			provider := bus.ResolveProvider(role)
+			if provider.SupportsHooks() {
+				if _, err := bus.ForceDeliver(d.session, role, true); err != nil {
+					bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
+						fmt.Sprintf("%s: force-deliver failed during receipt-gap recovery: %v", role, err))
+				}
+			} else {
+				if err := provider.SendWakeUp(d.session, role); err != nil {
+					bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
+						fmt.Sprintf("%s: wake-up failed during receipt-gap recovery: %v", role, err))
+				}
 			}
 		}
 
