@@ -90,9 +90,9 @@ receipts — is an **open item** (see below) to investigate before Phase 4.
 - [ ] The notified-IDs marker, churn-suppression, safety-net retries, and the
   active-with-stale-messages watchdog are **removed**. (Currently **bypassed** under the
   cutover flag, not deleted — see Phase 5 decision note; removal deferred until Phase 6.)
-- [ ] Provider matrix documented: true receipts for Claude/harness; verified-inject
-  `delivered` for OpenCode/Codex with the limitation stated. (In-spec matrix done;
-  user-facing skill/doc write-up is Phase 4 step 3, still open.)
+- [x] Provider matrix documented: true receipts for Claude/harness; verified-inject
+  `delivered` for OpenCode/Codex with the limitation stated. (In-spec matrix + user-facing
+  `docs/agents.md` "Message delivery and receipts" subsection.)
 - [x] `muxcode deliver --force` **survives** as a manual last-resort escape hatch.
   (Kept, and now load-bearing inside `checkPollHealth`'s self-poller recovery.)
 
@@ -256,9 +256,12 @@ must be removed as delivery mechanisms:
   unverifiable. `inbox.go` split into `Receive` (ack) / `ReceiveDelivered` (delivered) over a
   shared `receiveWithReceipt` core — completing the Phase 1 daemon-side `delivered` deferral.
   Full unit coverage in `inject_verify_test.go`.)
-- [ ] Document the true-receipt limitation and the in-pane-poll open item in the skill/docs.
-  — Thoroughly documented in code comments (`inject_verify.go` header, provider `SendWakeUp`
-  docs) and this spec's provider matrix, but **not yet in a user-facing skill/doc**. Remaining.
+- [x] Document the true-receipt limitation and the in-pane-poll open item in the skill/docs.
+  — Added to `docs/agents.md` → **Message delivery and receipts** (new subsection under
+  "Differences across providers"): the receipt model, per-provider receipt-kind matrix
+  (`acked` for Claude/harness vs verified-inject `delivered` for OpenCode/Codex), the
+  limitation stated plainly, and the in-pane-poll open item, plus a `Message delivery` row in
+  the provider comparison table.
 
 ### Phase 5: Daemon cutover
 
@@ -339,10 +342,11 @@ end-to-end. Document what requires a **live session / real providers** vs what i
 
 In Progress — **Phases 1–4 committed; Phase 5 committed as a gated cutover** (`e55a84a`);
 **Phase 6 integration test committed and green** (`scripts/test-delivery-ack.sh`, `53b5b73`).
-All Phases 1–6 are now committed and pushed to `origin/main`. Only two items remain:
-**Phase 4 step 3** (user-facing skill/doc for the verified-inject limitation) and, deferred
-by design, **physical removal** of the bypassed pane-scrape machinery once the cutover
-default flips on and no regressions are observed.
+All Phases 1–6 are now committed and pushed to `origin/main`, and **Phase 4 step 3**
+(user-facing provider-matrix docs) is done in `docs/agents.md`. The **only** remaining work
+is deferred by design: **physical removal** of the bypassed pane-scrape machinery once the
+cutover default flips on and no regressions are observed (tracked as the open "removed"
+acceptance criterion + Phase 5 step 2).
 
 **Phase 1 (receipt store)**: `delivery.go` extended with
 `AckedAt`/`AckedBy`/`ReceiptKind` + `StatusAcked`/`ReceiptKindAck`/`ReceiptKindDelivered`,
@@ -376,9 +380,10 @@ parked (no drop on a dropped Enter), fall back to consume when unverifiable. `pr
 /`provider_codex.go` `SendWakeUp` rewired to it; `inbox.go` split into `Receive` (ack) /
 `ReceiveDelivered` (delivered) over a shared `receiveWithReceipt` core, finishing the Phase 1
 daemon-side `delivered` deferral. Steps 1–2 checked off with full unit coverage
-(`inject_verify_test.go`); **step 3 (document the limitation in a user-facing skill/doc)
-remains** — currently only in code comments + this spec. The "investigate before Phase 4"
-open item stays open (no in-process poll path for these TUIs confirmed).
+(`inject_verify_test.go`); **step 3 complete** — the provider matrix + true-receipt
+limitation + in-pane-poll open item are now documented user-facing in `docs/agents.md`
+("Message delivery and receipts"). The "investigate before Phase 4" open item stays open
+(no in-process poll path for these TUIs confirmed).
 
 **Phase 5 (daemon cutover) — committed `e55a84a`**: new `checkPollHealth` receipt-gap
 backstop (`daemon.go` + `poll_health_test.go`) detects inbox messages un-receipted past

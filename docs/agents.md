@@ -292,7 +292,43 @@ The variable format is `MUXCODE_{ROLE}_CLI=local` where `{ROLE}` is the uppercas
 | Hook chains | PostToolUse hooks fire automatically | No hooks — role-specific prompt instructions + adapted body text + send policy bypass | No hooks — prompt instructions + send policy bypass | Bash commands logged directly to `{role}-history.jsonl` |
 | Conversation state | Managed by Claude Code | Managed by OpenCode TUI (auto-compact) | Managed by Codex CLI | Reset between inbox checks (prevents unbounded context) |
 | Idle detection | `❯` prompt match | Not supported (TUI) | Heuristic (`>` prompt / "Summarize") | Not supported |
+| Message delivery | Self-poll + true `acked` receipt | Verified-inject + `delivered` receipt | Verified-inject + `delivered` receipt | In-process consume + true `acked` receipt |
 | Cost | Anthropic API usage | Provider-dependent (multi-provider) | OpenAI API usage | Free (local compute) |
+
+### Message delivery and receipts
+
+Inbox delivery is tracked by **per-message receipts** (`bus/delivery.go`) — a positive
+signal that an agent actually consumed a message, replacing the daemon's older pane-scrape
+"did it look idle?" inference. A receipt's *kind* depends on whether the provider's runtime
+can consume its own inbox in-process:
+
+| Provider | Consumes inbox in-process? | Receipt kind | Means |
+|----------|---------------------------|--------------|-------|
+| Claude Code | Yes — runs `muxcode inbox` via a Bash tool (self-poll loop) | `acked` (true consume-ack) | The agent read the message |
+| Local harness | Yes — `AgentLoop` consumes in-process | `acked` (true consume-ack) | The agent read the message |
+| OpenCode (TUI) | No — receives text only via pane injection | `delivered` (verified-inject) | Text confirmed to reach the pane, not that the agent processed it |
+| Codex CLI | No — same limitation | `delivered` (verified-inject) | Same as OpenCode |
+
+**Claude / harness** produce a **true receipt** — the agent's own inbox read writes it.
+Claude keeps a background `muxcode inbox --poll --loop` listener alive via a `Stop` hook;
+the harness consumes in-process.
+
+**OpenCode / Codex** cannot run `muxcode inbox` in-process — their TUI only receives text
+via `tmux send-keys`. Delivery therefore uses **verified injection** (`bus/inject_verify.go`):
+inject the wake-up, confirm the text actually left the composer (re-sending Enter if it
+parked), and only then consume the inbox and write a `delivered` receipt. A dropped Enter no
+longer loses the message — the inbox is left intact for the next cycle.
+
+**Limitation**: a `delivered` receipt confirms the text reached the pane, **not** that the
+agent processed it. A true `acked` receipt for these TUIs would need upstream support or an
+in-pane poll command they do not currently expose. Whether OpenCode Go / Codex can be
+configured to run `muxcode inbox --poll` themselves — upgrading them to true receipts — is an
+**open item**.
+
+A daemon backstop (`checkPollHealth`) watches for a growing **receipt gap** (inbox messages
+with no receipt past a threshold), re-drives delivery, and alerts edit if the gap persists —
+detecting a dead self-poll loop or delivery sidecar via a positive signal rather than
+pane-scraping. See the [delivery-acknowledgement spec](requirements/drafts/delivery-acknowledgement.md).
 
 ### CLI
 
