@@ -159,11 +159,12 @@ func (p *CodexProvider) AcceptStartup(session, pane string, state PaneState) boo
 // into the prompt. Text and Enter are sent as separate send-keys calls with
 // a brief delay to avoid the TUI dropping the Enter key.
 //
-// IMPORTANT: Uses Peek (not Receive) so the inbox is NOT consumed before
-// confirming send-keys succeeded. If pane injection fails (pane restarting,
-// wrong target, tmux error), the message stays in the inbox for retry on
-// the next wake-up cycle. The message is consumed only after both send-keys
-// calls succeed.
+// IMPORTANT: Uses Peek (not Receive) so the inbox is NOT consumed before the
+// injection is verified. If pane injection fails (pane restarting, wrong target,
+// tmux error) OR the injected text is confirmed still parked (dropped Enter), the
+// message stays in the inbox for retry on the next wake-up cycle. The message is
+// consumed — with a verified-inject `delivered` receipt — only after the text is
+// confirmed to have left the composer (see confirmInjectionAndConsume).
 func (p *CodexProvider) SendWakeUp(session, role string) error {
 	target := PaneTarget(session, role)
 
@@ -212,9 +213,10 @@ func (p *CodexProvider) SendWakeUp(session, role string) error {
 			hasRequest = true
 		}
 	}
-	// If all messages were self-addressed, consume and discard them
+	// If all messages were self-addressed, consume and discard them (daemon path
+	// uses the delivered-kind consume; self-sends are ignored by receipt readers).
 	if len(parts) == 0 {
-		_, _ = Receive(session, role)
+		_, _ = ReceiveDelivered(session, role)
 		return nil
 	}
 	prompt := strings.Join(parts, " | ")
@@ -252,8 +254,13 @@ func (p *CodexProvider) SendWakeUp(session, role string) error {
 		return err
 	}
 
-	// Both send-keys succeeded — now consume inbox so messages aren't re-injected
-	_, _ = Receive(session, role)
+	// send-keys "succeeding" only means tmux accepted the keys — not that the TUI
+	// submitted them (a dropped Enter parks the prompt unsent). Confirm the prompt
+	// actually left the composer (re-sending Enter if it parked), then consume with
+	// a verified-inject `delivered` receipt. If it can't be confirmed, the inbox is
+	// left for the daemon's next wake cycle — no drop on a dropped Enter, replacing
+	// the old fire-and-hope drain.
+	confirmInjectionAndConsume(session, role, target, injectionNeedle(prompt))
 	return nil
 }
 

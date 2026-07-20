@@ -202,9 +202,28 @@ func FindMessageByID(session, msgID string) (Message, bool) {
 	return Message{}, false
 }
 
-// Receive reads and consumes all messages from a role's inbox.
-// Uses atomic rename to avoid losing messages.
+// Receive reads and consumes all messages from a role's inbox, writing a true
+// consume-ack receipt for each — the agent's OWN runtime read them (Claude via
+// `muxcode inbox`, the local harness's AgentLoop, or a caller draining its own
+// inbox). Uses atomic rename to avoid losing messages.
 func Receive(session, role string) ([]Message, error) {
+	return receiveWithReceipt(session, role, ReceiptKindAck)
+}
+
+// ReceiveDelivered consumes a role's inbox like Receive but records a
+// verified-inject `delivered` receipt for each message instead of a true
+// consume-ack. Used by the daemon's non-hook (OpenCode/Codex) wake-up path once
+// it has confirmed the injected text landed in the TUI: the agent's runtime
+// never read the inbox in-process, so the receipt is `delivered`, not `acked`.
+func ReceiveDelivered(session, role string) ([]Message, error) {
+	return receiveWithReceipt(session, role, ReceiptKindDelivered)
+}
+
+// receiveWithReceipt is the shared consume core for Receive / ReceiveDelivered:
+// it atomically drains the inbox and writes a receipt of the given kind for each
+// consumed message. The kind is the caller's assertion of HOW the message was
+// received — a true in-process read (ack) vs a daemon verified-inject (delivered).
+func receiveWithReceipt(session, role, kind string) ([]Message, error) {
 	inbox := InboxPath(session, role)
 	consuming := inbox + ".consuming"
 
@@ -233,15 +252,11 @@ func Receive(session, role string) ([]Message, error) {
 
 	_ = os.Remove(consuming)
 
-	// Write a consume-receipt for each message: a positive signal that this
-	// role's own consume actually read it (ReceiptKindAck advances status to
-	// acked, superseding the old cosmetic `delivered`). Note: the non-hook
-	// SendWakeUp drain (OpenCode/Codex) also reaches here today and will be
-	// mis-tagged as ack until Phase 4 removes that drain and writes verified-inject
-	// `delivered` receipts instead; nothing reads receipts for delivery decisions
-	// until Phase 5, so this is inert in the interim.
+	// Write a receipt for each message — a positive signal of receipt keyed by
+	// message ID. Agent-side consumes pass ReceiptKindAck (advances status to
+	// acked); the daemon's verified-inject path passes ReceiptKindDelivered.
 	for _, m := range msgs {
-		WriteReceipt(session, m.ID, role, ReceiptKindAck)
+		WriteReceipt(session, m.ID, role, kind)
 	}
 
 	// Clear notification state — agent has consumed all messages, start fresh.

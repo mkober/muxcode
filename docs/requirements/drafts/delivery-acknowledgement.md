@@ -241,11 +241,21 @@ must be removed as delivery mechanisms:
 
 ### Phase 4: OpenCode/Codex verified-inject delivery
 
-- [ ] Remove the inbox-draining `Receive` from `SendWakeUp` in `provider_opencode.go` and
-  `provider_codex.go`.
-- [ ] Add a per-agent verified-injection + retry delivery loop: `send-keys` + pane-scrape
-  confirmation the text landed; retry until verified; write a `delivered` receipt.
+- [x] Remove the inbox-draining `Receive` from `SendWakeUp` in `provider_opencode.go` and
+  `provider_codex.go`. (Post-send-keys drain replaced with `confirmInjectionAndConsume`; the
+  self-addressed-only branch now uses `ReceiveDelivered`.)
+- [x] Add a per-agent verified-injection + retry delivery loop: `send-keys` + pane-scrape
+  confirmation the text landed; retry until verified; write a `delivered` receipt. (New
+  `bus/inject_verify.go`: `injectionNeedle` → tail-slice needle, `verifyInjectionLanded`
+  re-captures the composer and re-sends Enter up to `injectVerifyRetries`, returning
+  submitted/parked/unknown; `confirmInjectionAndConsume` writes a `ReceiptKindDelivered`
+  receipt on submit, leaves the inbox intact when parked, falls back to consume when
+  unverifiable. `inbox.go` split into `Receive` (ack) / `ReceiveDelivered` (delivered) over a
+  shared `receiveWithReceipt` core — completing the Phase 1 daemon-side `delivered` deferral.
+  Full unit coverage in `inject_verify_test.go`.)
 - [ ] Document the true-receipt limitation and the in-pane-poll open item in the skill/docs.
+  — Thoroughly documented in code comments (`inject_verify.go` header, provider `SendWakeUp`
+  docs) and this spec's provider matrix, but **not yet in a user-facing skill/doc**. Remaining.
 
 ### Phase 5: Daemon cutover
 
@@ -281,7 +291,9 @@ end-to-end. Document what requires a **live session / real providers** vs what i
 
 - [ ] **Can OpenCode Go / Codex run `muxcode inbox --poll` in-process** (upgrading them
   from verified-inject to true receipts)? Investigate **before Phase 4** — it changes the
-  provider matrix.
+  provider matrix. — Phase 4 shipped the verified-inject `delivered` path (the matrix's
+  fallback), so this remains **open**: no confirmed in-process poll path for these TUIs was
+  found. If one exists, it would upgrade them to true `acked` receipts. Still to confirm.
 - [x] **Confirm the `tools/muxcode-llm-harness` binary's consume path writes receipts**
   (external module — Phase 3 depends on it). Confirmed: `ConsumeInbox` consumes via the
   `muxcode inbox --raw` CLI (→ `bus.Receive`, role-attributed by `AGENT_ROLE`), so it is a
@@ -291,7 +303,8 @@ end-to-end. Document what requires a **live session / real providers** vs what i
 
 ## Status
 
-In Progress — **Phases 1–3 complete** (code); Phases 4–6 remain.
+In Progress — **Phases 1–3 complete; Phase 4 code complete** (step 3 skill/docs write-up
+pending); Phases 5–6 remain.
 
 **Phase 1 (receipt store)**: `delivery.go` extended with
 `AckedAt`/`AckedBy`/`ReceiptKind` + `StatusAcked`/`ReceiptKindAck`/`ReceiptKindDelivered`,
@@ -315,4 +328,17 @@ Phase 6 integration test.
 external `tools/muxcode-llm-harness` `ConsumeInbox` consumes via `muxcode inbox --raw`
 (→ `bus.Receive`, role-attributed by `AGENT_ROLE`), making it a first-class receipt
 producer — documented + guarded in `harness/bus.go`. Both steps checked off; the matching
-open item is closed. Next: Phase 4 — OpenCode/Codex verified-inject delivery.
+open item is closed.
+
+**Phase 4 (OpenCode/Codex verified-inject) — code complete**: new `bus/inject_verify.go`
+replaces the fire-and-hope post-send-keys drain with `confirmInjectionAndConsume` — verify
+the injected prompt left the composer (re-sending Enter up to `injectVerifyRetries`), then
+consume with a `ReceiptKindDelivered` receipt; leave the inbox intact when the text stays
+parked (no drop on a dropped Enter), fall back to consume when unverifiable. `provider_opencode.go`
+/`provider_codex.go` `SendWakeUp` rewired to it; `inbox.go` split into `Receive` (ack) /
+`ReceiveDelivered` (delivered) over a shared `receiveWithReceipt` core, finishing the Phase 1
+daemon-side `delivered` deferral. Steps 1–2 checked off with full unit coverage
+(`inject_verify_test.go`); **step 3 (document the limitation in a user-facing skill/doc)
+remains** — currently only in code comments + this spec. The "investigate before Phase 4"
+open item stays open (no in-process poll path for these TUIs confirmed). Next: Phase 5 —
+daemon cutover (`checkPollHealth` receipt-gap backstop; remove pane-scrape delivery machinery).
