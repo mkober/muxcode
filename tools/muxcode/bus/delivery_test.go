@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -27,58 +28,6 @@ func TestCreateDeliveryStatus(t *testing.T) {
 	if ds.SentAt != msg.TS {
 		t.Errorf("SentAt = %d, want %d", ds.SentAt, msg.TS)
 	}
-}
-
-func TestMarkDelivered(t *testing.T) {
-	useTempBusDir(t)
-	session := testSession(t)
-
-	msg := NewMessage("edit", "build", "request", "compile", "build it", "")
-	if err := CreateDeliveryStatus(session, msg); err != nil {
-		t.Fatalf("CreateDeliveryStatus: %v", err)
-	}
-
-	MarkDelivered(session, msg.ID)
-
-	ds, err := ReadDeliveryStatus(session, msg.ID)
-	if err != nil {
-		t.Fatalf("ReadDeliveryStatus: %v", err)
-	}
-	if ds.Status != StatusDelivered {
-		t.Errorf("Status = %q, want %q", ds.Status, StatusDelivered)
-	}
-	if ds.DeliveredAt == 0 {
-		t.Error("DeliveredAt should be set")
-	}
-}
-
-func TestMarkDelivered_Idempotent(t *testing.T) {
-	useTempBusDir(t)
-	session := testSession(t)
-
-	msg := NewMessage("edit", "build", "request", "compile", "build it", "")
-	if err := CreateDeliveryStatus(session, msg); err != nil {
-		t.Fatalf("CreateDeliveryStatus: %v", err)
-	}
-
-	MarkDelivered(session, msg.ID)
-	ds1, _ := ReadDeliveryStatus(session, msg.ID)
-
-	// Second call should not change anything (already past "sent")
-	MarkDelivered(session, msg.ID)
-	ds2, _ := ReadDeliveryStatus(session, msg.ID)
-
-	if ds1.DeliveredAt != ds2.DeliveredAt {
-		t.Errorf("DeliveredAt changed: %d -> %d", ds1.DeliveredAt, ds2.DeliveredAt)
-	}
-}
-
-func TestMarkDelivered_NoStatusFile(t *testing.T) {
-	useTempBusDir(t)
-	session := testSession(t)
-
-	// Should not panic — gracefully handles missing status file
-	MarkDelivered(session, "nonexistent-id")
 }
 
 func TestMarkResponded(t *testing.T) {
@@ -208,7 +157,7 @@ func TestSendCreatesDeliveryStatus(t *testing.T) {
 	}
 }
 
-func TestReceiveMarksDelivered(t *testing.T) {
+func TestReceiveMarksAcked(t *testing.T) {
 	useTempBusDir(t)
 	session := testSession(t)
 
@@ -226,8 +175,13 @@ func TestReceiveMarksDelivered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDeliveryStatus: %v", err)
 	}
-	if ds.Status != StatusDelivered {
-		t.Errorf("Status = %q, want %q", ds.Status, StatusDelivered)
+	// A consume is a true ack, not merely a delivery: status advances to acked
+	// and the message carries an ack receipt.
+	if ds.Status != StatusAcked {
+		t.Errorf("Status = %q, want %q", ds.Status, StatusAcked)
+	}
+	if ds.ReceiptKind != ReceiptKindAck {
+		t.Errorf("ReceiptKind = %q, want %q", ds.ReceiptKind, ReceiptKindAck)
 	}
 }
 
@@ -262,12 +216,19 @@ func TestSendWithReplyToMarksResponded(t *testing.T) {
 func TestFormatDeliveryStatus(t *testing.T) {
 	ds := DeliveryStatus{
 		ID:          "123-edit-abcd1234",
-		Status:      StatusDelivered,
+		Status:      StatusAcked,
 		SentAt:      1000,
-		DeliveredAt: 1003,
+		AckedAt:     1005,
+		AckedBy:     "plan",
+		ReceiptKind: ReceiptKindAck,
+		ResponseID:  "456-plan-ffff0000",
 	}
 	s := FormatDeliveryStatus(ds)
-	if s == "" {
-		t.Error("FormatDeliveryStatus returned empty string")
+	for _, want := range []string{
+		"123-edit-abcd1234", StatusAcked, "receipt=ack", "(plan)", "response=456-plan-ffff0000",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("FormatDeliveryStatus = %q, missing %q", s, want)
+		}
 	}
 }

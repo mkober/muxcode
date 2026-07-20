@@ -261,16 +261,16 @@ func TestDeliveryStatusUpdatedOnReceive(t *testing.T) {
 		t.Fatalf("got %d messages, want 1", len(msgs))
 	}
 
-	// Delivery status should now be "delivered"
+	// A consume writes an ack receipt: status advances to acked and AckedAt is set.
 	ds, err := ReadDeliveryStatus(session, msg.ID)
 	if err != nil {
 		t.Fatalf("ReadDeliveryStatus after Receive: %v", err)
 	}
-	if ds.Status != StatusDelivered {
-		t.Errorf("delivery status = %q, want %q", ds.Status, StatusDelivered)
+	if ds.Status != StatusAcked {
+		t.Errorf("delivery status = %q, want %q", ds.Status, StatusAcked)
 	}
-	if ds.DeliveredAt == 0 {
-		t.Error("DeliveredAt should be set after Receive")
+	if ds.AckedAt == 0 {
+		t.Error("AckedAt should be set after Receive")
 	}
 }
 

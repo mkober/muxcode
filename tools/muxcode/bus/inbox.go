@@ -233,9 +233,15 @@ func Receive(session, role string) ([]Message, error) {
 
 	_ = os.Remove(consuming)
 
-	// Mark all consumed messages as delivered
+	// Write a consume-receipt for each message: a positive signal that this
+	// role's own consume actually read it (ReceiptKindAck advances status to
+	// acked, superseding the old cosmetic `delivered`). Note: the non-hook
+	// SendWakeUp drain (OpenCode/Codex) also reaches here today and will be
+	// mis-tagged as ack until Phase 4 removes that drain and writes verified-inject
+	// `delivered` receipts instead; nothing reads receipts for delivery decisions
+	// until Phase 5, so this is inert in the interim.
 	for _, m := range msgs {
-		MarkDelivered(session, m.ID)
+		WriteReceipt(session, m.ID, role, ReceiptKindAck)
 	}
 
 	// Clear notification state — agent has consumed all messages, start fresh.
@@ -292,9 +298,11 @@ func ReceiveFromFunc(session, role string, matchFn func(string) bool) ([]Message
 		}
 	}
 
-	// Mark consumed messages as delivered
+	// Write a consume-receipt for each matched message (this role read them —
+	// e.g. a --wait sender consuming its reply). See Receive for the Phase 4 note
+	// on the non-hook drain path.
 	for _, m := range matched {
-		MarkDelivered(session, m.ID)
+		WriteReceipt(session, m.ID, role, ReceiptKindAck)
 	}
 
 	// Mark consumed message IDs as notified (partial consumption —

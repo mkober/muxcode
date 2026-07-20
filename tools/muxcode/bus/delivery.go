@@ -11,18 +11,40 @@ import (
 // DeliveryStatus represents the lifecycle state of a message.
 type DeliveryStatus struct {
 	ID          string `json:"id"`
-	Status      string `json:"status"` // sent, delivered, responded, expired
+	Status      string `json:"status"` // sent, delivered, acked, responded, expired
 	SentAt      int64  `json:"sent_at"`
 	DeliveredAt int64  `json:"delivered_at"`
 	ResponseID  string `json:"response_id"`
+
+	// Receipt fields (delivery-acknowledgement). A receipt is a POSITIVE signal
+	// of receipt, in contrast to the old optimistic notified-IDs marker which
+	// only recorded that the daemon SENT a wake-up.
+	AckedAt     int64  `json:"acked_at,omitempty"`     // when the receipt was written
+	AckedBy     string `json:"acked_by,omitempty"`     // role that received it
+	ReceiptKind string `json:"receipt_kind,omitempty"` // ReceiptKindAck | ReceiptKindDelivered
 }
 
 // Delivery status constants.
 const (
 	StatusSent      = "sent"
 	StatusDelivered = "delivered"
+	StatusAcked     = "acked"
 	StatusResponded = "responded"
 	StatusExpired   = "expired"
+)
+
+// Receipt kinds distinguish HOW a message's receipt was obtained.
+const (
+	// ReceiptKindAck is a true consume-ack: the agent's OWN runtime read the
+	// message out of its inbox (Claude via `muxcode inbox`, the local harness's
+	// AgentLoop, or a --wait sender consuming its reply). A positive signal the
+	// agent actually received the message.
+	ReceiptKindAck = "ack"
+	// ReceiptKindDelivered is a verified-inject receipt: the daemon injected the
+	// payload into a non-hook TUI (OpenCode/Codex) and confirmed the text landed,
+	// but the agent's runtime never consumed the inbox in-process. Weaker than an
+	// ack — it confirms the pane received the text, not that the agent read it.
+	ReceiptKindDelivered = "delivered"
 )
 
 // DeliveryDir returns the delivery status directory path for a session.
@@ -47,21 +69,6 @@ func CreateDeliveryStatus(session string, m Message) error {
 	return writeDeliveryStatus(session, ds)
 }
 
-// MarkDelivered updates a message's delivery status to "delivered".
-// Called by Receive() when messages are consumed from the inbox.
-func MarkDelivered(session, msgID string) {
-	ds, err := ReadDeliveryStatus(session, msgID)
-	if err != nil {
-		return // no status file — message predates delivery tracking
-	}
-	if ds.Status != StatusSent {
-		return // already advanced past sent
-	}
-	ds.Status = StatusDelivered
-	ds.DeliveredAt = time.Now().Unix()
-	_ = writeDeliveryStatus(session, ds)
-}
-
 // MarkResponded updates the original message's delivery status to "responded"
 // and records the response message ID. Called by Send() when ReplyTo is set.
 func MarkResponded(session, originalID, responseID string) {
@@ -75,6 +82,71 @@ func MarkResponded(session, originalID, responseID string) {
 	ds.Status = StatusResponded
 	ds.ResponseID = responseID
 	_ = writeDeliveryStatus(session, ds)
+}
+
+// WriteReceipt records that a message was received, keyed by message ID. ackedBy
+// is the role that received it; kind is ReceiptKindAck (true consume) or
+// ReceiptKindDelivered (verified inject). It extends the existing per-message
+// delivery-status file, creating a minimal one if the message predates delivery
+// tracking or its status was GC'd, so a receipt is never lost just because the
+// "sent" status is missing. A receipt never regresses a message already marked
+// responded (a reply already implies receipt).
+func WriteReceipt(session, msgID, ackedBy, kind string) {
+	ds, err := ReadDeliveryStatus(session, msgID)
+	if err != nil {
+		ds = DeliveryStatus{ID: msgID}
+	}
+	ds.AckedAt = time.Now().Unix()
+	ds.AckedBy = ackedBy
+	ds.ReceiptKind = kind
+	// Advance lifecycle status without regressing past a recorded response.
+	if ds.Status != StatusResponded {
+		if kind == ReceiptKindAck {
+			ds.Status = StatusAcked
+		} else if ds.Status == StatusSent || ds.Status == "" {
+			ds.Status = StatusDelivered
+		}
+	}
+	_ = writeDeliveryStatus(session, ds)
+}
+
+// ReadReceipt returns a message's delivery status and whether it carries a
+// receipt (AckedAt set). Used by the daemon's receipt-gap backstop and by the
+// delivery decisions that replace the notified-IDs marker.
+func ReadReceipt(session, msgID string) (DeliveryStatus, bool) {
+	ds, err := ReadDeliveryStatus(session, msgID)
+	if err != nil {
+		return DeliveryStatus{}, false
+	}
+	return ds, ds.AckedAt > 0
+}
+
+// ReceiptGap returns messages still sitting in role's inbox that carry no
+// receipt and have waited longer than olderThan. A non-empty gap means the
+// agent's self-poll has consumed nothing recently — its poll loop or delivery
+// sidecar may be dead. This is the positive-signal replacement for pane-scrape
+// wedge detection. Self-addressed messages are ignored (they never warrant
+// delivery and would otherwise register a permanent gap).
+func ReceiptGap(session, role string, olderThan time.Duration) []Message {
+	msgs, err := Peek(session, role)
+	if err != nil || len(msgs) == 0 {
+		return nil
+	}
+	cutoff := time.Now().Add(-olderThan).Unix()
+	var gap []Message
+	for _, m := range msgs {
+		if isLoopingSelfSend(m) {
+			continue
+		}
+		if m.TS > cutoff {
+			continue // too fresh to count as stuck
+		}
+		if _, acked := ReadReceipt(session, m.ID); acked {
+			continue // already receipted (shouldn't linger in the inbox, but be safe)
+		}
+		gap = append(gap, m)
+	}
+	return gap
 }
 
 // ReadDeliveryStatus reads the delivery status for a message ID.
@@ -164,6 +236,13 @@ func FormatDeliveryStatus(ds DeliveryStatus) string {
 	if ds.DeliveredAt > 0 {
 		latency := time.Duration(ds.DeliveredAt-ds.SentAt) * time.Second
 		s += fmt.Sprintf("  (delivered in %s)", latency)
+	}
+	if ds.AckedAt > 0 {
+		receipt := "  receipt=" + ds.ReceiptKind
+		if ds.AckedBy != "" {
+			receipt += "(" + ds.AckedBy + ")"
+		}
+		s += receipt
 	}
 	if ds.ResponseID != "" {
 		s += "  response=" + ds.ResponseID
