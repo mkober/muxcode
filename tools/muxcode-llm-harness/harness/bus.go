@@ -45,6 +45,16 @@ func (b *BusClient) HasMessages(inboxPath string) bool {
 
 // ConsumeInbox reads and consumes all pending inbox messages via the bus CLI.
 // Returns parsed messages. The CLI atomically consumes the inbox.
+//
+// Delivery receipts: consuming through `muxcode inbox` (rather than reading the
+// inbox file directly) is deliberate. The CLI's Receive writes a true `acked`
+// consume-receipt at the shared choke point, attributed to this role via the
+// AGENT_ROLE env that run() sets. That makes the local harness a first-class
+// receipt producer under the delivery-acknowledgement model — its reads are
+// observable to the daemon's poll-health backstop just like an in-process
+// Claude/AgentLoop consume. Do NOT replace this with an in-process file read:
+// that would silently drop the receipt the backstop relies on to know the
+// harness actually read its inbox.
 func (b *BusClient) ConsumeInbox() ([]Message, error) {
 	out, err := b.run("inbox", "--raw")
 	if err != nil {

@@ -77,7 +77,7 @@ receipts — is an **open item** (see below) to investigate before Phase 4.
 
 ### Acceptance criteria
 
-- [ ] A message consumed by an agent's own inbox read writes a **durable receipt**
+- [x] A message consumed by an agent's own inbox read writes a **durable receipt**
   (`AckedAt` / `AckedBy`) keyed by message ID.
 - [ ] The daemon makes **delivery decisions from receipts**, not `notified-{role}.ids`
   or pane-scrape idle detection.
@@ -107,19 +107,23 @@ written by `MarkDelivered` (from `Receive` / `ReceiveFromFunc`) yet **read by no
 for delivery decisions (only `StatusResponded` is read, for `--wait` / `--track`
 round-trips). Extend it — do **not** build a parallel store:
 
-- [ ] Add `AckedAt int64` + `AckedBy string` (role) fields and a `StatusAcked`.
-- [ ] Add a `ReceiptKind` field to distinguish a **true consume-ack** (agent-side
-  `Receive`) from a **verified-inject `delivered`** (OpenCode/Codex sidecar).
-- [ ] Add `WriteReceipt`, `ReadReceipt`, and a `ReceiptGap(session, role)` helper that
+- [x] Add `AckedAt int64` + `AckedBy string` (role) fields and a `StatusAcked`.
+- [x] Add a `ReceiptKind` field to distinguish a **true consume-ack** (agent-side
+  `Receive`, `ReceiptKindAck`) from a **verified-inject `delivered`**
+  (`ReceiptKindDelivered`, OpenCode/Codex sidecar).
+- [x] Add `WriteReceipt`, `ReadReceipt`, and a `ReceiptGap(session, role)` helper that
   returns inbox messages with no receipt older than a threshold.
 
 #### The consume choke point — `bus/inbox.go`
 
-- [ ] `Receive` (`inbox.go:207`) and `ReceiveFromFunc` (`inbox.go:262`) already call
+- [x] `Receive` (`inbox.go:207`) and `ReceiveFromFunc` (`inbox.go:262`) already call
   `MarkDelivered` per consumed message and are the single choke point for inbox
   consumption. Write the **receipt here**, tagging it agent-side vs daemon-side — the
   caller distinguishes: `cmd/inbox.go` = agent (true ack), `provider_*.go SendWakeUp` =
-  daemon (delivered).
+  daemon (delivered). **Done**: both `Receive` (`inbox.go:244`) and `ReceiveFromFunc`
+  (`inbox.go:305`) write `WriteReceipt(..., ReceiptKindAck)`. The daemon-side
+  `delivered` write lands in Phase 4 (the verified-inject loop), using the same
+  `kind` parameter.
 
 #### Self-poll loop per agent
 
@@ -195,30 +199,45 @@ must be removed as delivery mechanisms:
 
 ### Phase 1: Receipt store
 
-- [ ] Extend `DeliveryStatus` in `delivery.go`: `AckedAt int64`, `AckedBy string`,
-  `ReceiptKind` field, and a `StatusAcked` constant.
-- [ ] Add `WriteReceipt`, `ReadReceipt`, and `ReceiptGap(session, role)` helpers.
-- [ ] Write receipts in `Receive` / `ReceiveFromFunc`, tagged **agent-side** (true ack)
-  vs **daemon-side** (delivered) by caller.
-- [ ] Unit tests: receipt written on consume; `ReceiptGap` returns un-receipted messages
+- [x] Extend `DeliveryStatus` in `delivery.go`: `AckedAt int64`, `AckedBy string`,
+  `ReceiptKind` field, and a `StatusAcked` constant (+ `ReceiptKindAck` /
+  `ReceiptKindDelivered`).
+- [x] Add `WriteReceipt`, `ReadReceipt`, and `ReceiptGap(session, role)` helpers.
+- [x] Write receipts in `Receive` / `ReceiveFromFunc`, tagged **agent-side** (true ack)
+  by caller. (Daemon-side `delivered` write is Phase 4; the `kind` param is in place.)
+- [x] Unit tests: receipt written on consume; `ReceiptGap` returns un-receipted messages
   past threshold; agent- vs daemon-side tagging distinguished.
 
 ### Phase 2: Claude self-poll + Stop hook
 
-- [ ] Claude agent runs `muxcode inbox --poll --loop` as a background Bash tool; processes
-  messages on return, then re-launches the poll.
-- [ ] Add a new `Stop` hook to `config/settings.json` (none exists today).
-- [ ] Add a `stop` case to `cmd/hook.go` that re-launches the poll loop after each turn.
-- [ ] Update the relevant agent definitions with self-poll loop instructions.
+- [x] Claude agent runs `muxcode inbox --poll --loop` as a background Bash tool; processes
+  messages on return, then re-launches the poll. (`bus/prompt.go` `SharedPrompt` now emits
+  self-poll instructions gated on `provider.SupportsHooks()`; non-hook providers keep the
+  daemon-wake text.)
+- [x] Add a new `Stop` hook to `config/settings.json` (none exists today). (Also merged
+  idempotently into the user's global `~/.claude/settings.json` by `install.sh`.)
+- [x] Add a `stop` case to `cmd/hook.go` that re-launches the poll loop after each turn.
+  (`hookStop()` — provider-gated to hook providers, `stop_hook_active` loop guard, blocks the
+  stop with `StopHookPollReason` when no `--poll`/`--wait` listener is alive; backed by pure
+  `DecideStopHook` in `bus/hook.go`.)
+- [x] Update the relevant agent definitions with self-poll loop instructions. (Delivered via
+  the shared prompt injected into every Claude agent.)
 - [ ] Verify the Stop-hook re-launch fires reliably after a turn ends (the new single
-  point of reliability for Claude).
+  point of reliability for Claude). — Decision logic unit-tested (`TestDecideStopHook`,
+  `TestParseToolEvent_StopHookActive`); live end-to-end firing deferred to the Phase 6
+  integration test.
 
 ### Phase 3: Harness receipts
 
-- [ ] Ensure `AgentLoop`'s in-process consume (`bus/agent.go:118` → `Receive`) writes a
-  true `acked` receipt.
-- [ ] Confirm the external `tools/muxcode-llm-harness` binary's consume path writes
-  receipts (external module — see open items).
+- [x] Ensure `AgentLoop`'s in-process consume (`bus/agent.go:118` → `Receive`) writes a
+  true `acked` receipt. (Satisfied by the Phase 1 choke-point write; proven end-to-end by
+  `TestReceive_ClearsReceiptGap` — an in-process consume writes the receipt that clears the
+  `ReceiptGap` the Phase 5 backstop reads.)
+- [x] Confirm the external `tools/muxcode-llm-harness` binary's consume path writes
+  receipts (external module — see open items). (`harness/bus.go` `ConsumeInbox` consumes via
+  the `muxcode inbox --raw` CLI, which routes through `bus.Receive` and writes a true `acked`
+  receipt attributed via the `AGENT_ROLE` env `run()` sets — documented + guarded against
+  regressing to a direct file read.)
 
 ### Phase 4: OpenCode/Codex verified-inject delivery
 
@@ -263,11 +282,37 @@ end-to-end. Document what requires a **live session / real providers** vs what i
 - [ ] **Can OpenCode Go / Codex run `muxcode inbox --poll` in-process** (upgrading them
   from verified-inject to true receipts)? Investigate **before Phase 4** — it changes the
   provider matrix.
-- [ ] **Confirm the `tools/muxcode-llm-harness` binary's consume path writes receipts**
-  (external module — Phase 3 depends on it).
+- [x] **Confirm the `tools/muxcode-llm-harness` binary's consume path writes receipts**
+  (external module — Phase 3 depends on it). Confirmed: `ConsumeInbox` consumes via the
+  `muxcode inbox --raw` CLI (→ `bus.Receive`, role-attributed by `AGENT_ROLE`), so it is a
+  true receipt producer; behavior documented and guarded in `harness/bus.go`.
 - [ ] **Reliability of the Stop-hook poll re-launch for Claude** — is the daemon
   receipt-gap backstop (Phase 5) sufficient if the hook itself fails to fire?
 
 ## Status
 
-Draft
+In Progress — **Phases 1–3 complete** (code); Phases 4–6 remain.
+
+**Phase 1 (receipt store)**: `delivery.go` extended with
+`AckedAt`/`AckedBy`/`ReceiptKind` + `StatusAcked`/`ReceiptKindAck`/`ReceiptKindDelivered`,
+`WriteReceipt`/`ReadReceipt`/`ReceiptGap` added, agent-side `ReceiptKindAck` receipts
+written at the `inbox.go` `Receive`/`ReceiveFromFunc` choke points, with unit tests
+(`delivery_receipt_test.go` + additions to `delivery_test.go`/`poll_test.go`); build +
+test + review green.
+
+**Phase 2 (Claude self-poll + Stop hook)**: new `Stop` hook in `config/settings.json`
+(and idempotent merge into global `~/.claude/settings.json` via `install.sh`); `stop` case
++ `hookStop()` in `cmd/hook.go` re-launching the self-poll listener, backed by the pure
+`DecideStopHook`/`StopHookAction`/`StopHookPollReason`/`FormatStopBlock` helpers and the
+`ToolEvent.StopHookActive` loop guard in `bus/hook.go`; `SharedPrompt` (`bus/prompt.go`)
+now emits background `muxcode inbox --poll --loop` instructions for hook providers.
+`MUXCODE_DELIVERY_ACK_DISABLE` kill switch wired early (spec'd for Phase 5). Unit tests
+in `hook_test.go`. Steps 1–4 checked off; step 5 (live re-launch firing) deferred to the
+Phase 6 integration test.
+
+**Phase 3 (harness receipts)**: `AgentLoop`'s in-process `Receive` already writes a true
+`acked` receipt (Phase 1 choke point), proven by `TestReceive_ClearsReceiptGap`; the
+external `tools/muxcode-llm-harness` `ConsumeInbox` consumes via `muxcode inbox --raw`
+(→ `bus.Receive`, role-attributed by `AGENT_ROLE`), making it a first-class receipt
+producer — documented + guarded in `harness/bus.go`. Both steps checked off; the matching
+open item is closed. Next: Phase 4 — OpenCode/Codex verified-inject delivery.

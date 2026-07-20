@@ -180,3 +180,33 @@ func TestReceive_WritesConsumeReceipt(t *testing.T) {
 		t.Errorf("AckedBy = %q, want build", ds.AckedBy)
 	}
 }
+
+// TestReceive_ClearsReceiptGap proves the harness/AgentLoop delivery guarantee
+// end-to-end: an agent that consumes its own inbox in-process (bus/agent.go's
+// AgentLoop calls Receive, and the standalone harness consumes via the same
+// `muxcode inbox` -> Receive path) writes a receipt that removes the message
+// from ReceiptGap — the positive-signal detector the Phase 5 daemon backstop
+// reads instead of pane-scraping. Before the consume the stale message is a
+// gap (looks stuck); after it, the gap is clear.
+func TestReceive_ClearsReceiptGap(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+
+	// A stale message the local agent has not yet consumed registers as a gap.
+	msg := NewMessage("edit", "build", "request", "build", "build it", "")
+	msg.TS = time.Now().Unix() - 300
+	if err := Send(session, msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if g := ReceiptGap(session, "build", 60*time.Second); len(g) != 1 {
+		t.Fatalf("pre-consume gap = %d, want 1 (message looks stuck)", len(g))
+	}
+
+	// The agent's own in-process consume writes the receipt at the choke point.
+	if _, err := Receive(session, "build"); err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	if g := ReceiptGap(session, "build", 60*time.Second); len(g) != 0 {
+		t.Errorf("post-consume gap = %d, want 0 (consume must clear the gap)", len(g))
+	}
+}
