@@ -294,7 +294,8 @@ must be removed as delivery mechanisms:
 > working delivery path until the Phase 2 Stop-hook self-poll is verified **live** in
 > Phase 6. **Consequence**: the "removed" acceptance criterion and this step stay open
 > **by design** — physical deletion of the dead machinery is the last step, after Phase 6
-> flips the cutover default to on and proves no regressions.
+> flips the cutover default to on and proves no regressions. The deletion is tracked in the
+> backlog: [remove-gated-pane-scrape-delivery](../backlog/remove-gated-pane-scrape-delivery.md).
 
 ### Phase 6: Integration test (required)
 
@@ -345,8 +346,9 @@ In Progress — **Phases 1–4 committed; Phase 5 committed as a gated cutover**
 All Phases 1–6 are now committed and pushed to `origin/main`, and **Phase 4 step 3**
 (user-facing provider-matrix docs) is done in `docs/agents.md`. The **only** remaining work
 is deferred by design: **physical removal** of the bypassed pane-scrape machinery once the
-cutover default flips on and no regressions are observed (tracked as the open "removed"
-acceptance criterion + Phase 5 step 2).
+cutover default flips on and no regressions are observed. That removal is tracked in its own
+backlog doc — [remove-gated-pane-scrape-delivery](../backlog/remove-gated-pane-scrape-delivery.md)
+— along with the open "removed" acceptance criterion + Phase 5 step 2.
 
 **Phase 1 (receipt store)**: `delivery.go` extended with
 `AckedAt`/`AckedBy`/`ReceiptKind` + `StatusAcked`/`ReceiptKindAck`/`ReceiptKindDelivered`,

@@ -150,13 +150,15 @@ Tracking task 1779979541-edit-d2c7d769 — response will arrive in inbox
 Read messages from an agent's inbox.
 
 ```bash
-muxcode inbox [--peek] [--raw] [--role ROLE]
+muxcode inbox [--peek] [--raw] [--role ROLE] [--poll] [--loop]
 ```
 
 - Default mode: consume messages and format as actionable prompts with reply commands
 - `--peek` — non-destructive preview (does not consume messages)
 - `--raw` — dump raw JSONL
 - `--role ROLE` — read a specific role's inbox (defaults to own role)
+- `--poll` — block until a message arrives (watches `trigger-{role}.notify` mtime + inbox), then consume and return. Sets a `polling-{role}.marker` that suppresses redundant daemon send-keys wake-ups while the poll is active — the agent pulls its own inbox instead of being pushed to.
+- `--loop` — with `--poll`, re-arm the poll after each return. This is the **self-poll listener** each agent runs as a background job under the [delivery-acknowledgement](architecture.md#delivery-tracking) model; for Claude Code agents the [Stop hook](hooks.md#hook-stop-self-poll-re-launch) re-launches it if it dies.
 
 **Example:**
 ```
@@ -326,6 +328,28 @@ Behavior:
 - On send failure, notified markers are rolled back so a later attempt can retry.
 
 **Prefer `muxcode deliver` over manual `tmux send-keys` wake-ups** — manual text+Enter in one pty write is the known dropped-Enter pitfall.
+
+### `muxcode delivery-ack`
+
+Flip the **receipt-based delivery cutover** ([delivery-acknowledgement](architecture.md#delivery-tracking)) at runtime — no daemon restart.
+
+```bash
+muxcode delivery-ack status                 # report current runtime + env state (default)
+muxcode delivery-ack on                      # activate receipt-based delivery (agents self-poll)
+muxcode delivery-ack off                     # revert to the pane-scrape delivery path
+muxcode delivery-ack <sub> --session <name>  # target a different session
+```
+
+The toggle writes a **marker file** in the bus dir. The daemon's `ackDeliveryActive()` re-reads it every poll loop, so the flip (and rollback) takes effect **immediately** — unlike the startup-only `MUXCODE_DELIVERY_ACK` env var, which the daemon only reads at its own process start. This is the safe way to activate/test the cutover on a live session, and a fast operational kill valve.
+
+Resolution order for whether the cutover is active:
+
+1. `MUXCODE_DELIVERY_ACK_DISABLE` env set → **OFF** (hard kill switch, forces the old path — overrides everything below).
+2. `MUXCODE_DELIVERY_ACK=1|true|yes|on` env → ON (evaluated at daemon startup).
+3. Runtime marker (`muxcode delivery-ack on`) → ON (no restart needed).
+4. Otherwise → OFF (default).
+
+`status` prints the runtime state, the marker path (present/absent), and any relevant env. **Still opt-in** — see the known receipt-gap-backstop limitation in [`remove-gated-pane-scrape-delivery`](requirements/backlog/remove-gated-pane-scrape-delivery.md).
 
 ### `muxcode cron`
 

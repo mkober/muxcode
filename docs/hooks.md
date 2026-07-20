@@ -38,6 +38,11 @@ Hooks are configured in `.claude/settings.json` in your project:
         "matcher": "Bash",
         "hooks": [{"type": "command", "command": "muxcode hook bash", "async": true}]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [{"type": "command", "command": "muxcode hook stop"}]
+      }
     ]
   }
 }
@@ -157,6 +162,19 @@ After the primary chain action, the hook fires event subscriptions — matching 
 **Error extraction:** For failed build and test commands, the hook extracts error-relevant lines from tool output into an `errors` field in the history JSONL. The regex matches common error patterns: `error:`, `ERR!`, `failed`, `fatal`, `panic`, `FAIL:`, `not found`, `undefined`, `syntax error`, `permission denied`, etc. Test patterns additionally match `assert` and `expect`. The left-pane log views prefer the `errors` field over raw `output` when displaying failures, surfacing diagnostic information instead of noise like "Exit code: 1".
 
 **JSON parsing:** Implemented in Go using `encoding/json` — no external dependencies (`jq`/`python3` not required). The preview hook (`muxcode-preview-hook.sh`) still uses `python3` for generating proposed file content; without it, no split diff appears in nvim.
+
+### hook stop (self-poll re-launch)
+
+**Command:** `muxcode hook stop`
+**Phase:** Stop (fires when the agent finishes a turn)
+**Mode:** sync (can block the stop)
+
+Part of the [delivery-acknowledgement](architecture.md#delivery-tracking) redesign. Keeps a Claude Code agent's background inbox listener (`muxcode inbox --poll --loop`) alive: when the agent ends a turn without an active `--poll`/`--wait` listener, the Stop hook **blocks the stop** with instructions to re-launch the listener, so the agent never goes silent and stops receiving delegated work. This is the single point of reliability for Claude self-poll delivery.
+
+- **Provider-gated** — only meaningful for hook providers (Claude Code); a no-op otherwise.
+- **Loop-guarded** — respects `stop_hook_active` so a re-launch can't recurse.
+- Backed by the pure `DecideStopHook` / `StopHookAction` / `StopHookPollReason` / `FormatStopBlock` helpers in `bus/hook.go` (`hookStop()` in `cmd/hook.go`).
+- Gated by the receipt cutover: relevant when self-poll delivery is active (`MUXCODE_DELIVERY_ACK`); `MUXCODE_DELIVERY_ACK_DISABLE` reverts to daemon-push delivery.
 
 ## Hook Event Format
 

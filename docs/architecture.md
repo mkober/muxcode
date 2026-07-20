@@ -294,12 +294,26 @@ Every message sent through the bus gets a delivery status file at `delivery/{msg
 | State | Written by | Meaning |
 |-------|-----------|---------|
 | `sent` | `Send()` | Message appended to recipient inbox |
-| `delivered` | `Receive()` | Message consumed from inbox by recipient |
+| `delivered` | `Receive()` / `ReceiveDelivered()` | Message consumed from inbox by recipient |
+| `acked` | `Receive()` → `WriteReceipt()` | **Receipt** — the agent's own runtime read the message (see below) |
 | `responded` | `Send()` with `ReplyTo` | Response sent with matching reply-to ID |
 
 Query status via `muxcode track <msg-id>`. Expired status files are cleaned by `CleanExpiredDeliveries()` based on `SentAt` age.
 
 Core code: `bus/delivery.go`, `cmd/track.go`.
+
+#### Delivery receipts (delivery-acknowledgement)
+
+The [delivery-acknowledgement](requirements/drafts/delivery-acknowledgement.md) redesign replaces the daemon's pane-scrape "did it look idle?" delivery inference with a **positive receipt** — a per-message signal that an agent actually consumed a message — plus **agent self-poll**. A receipt's *kind* depends on whether the provider can consume its own inbox in-process:
+
+| Provider | Receipt kind | Written by |
+|----------|--------------|-----------|
+| Claude Code, local harness | `acked` — true consume-ack | The agent's own `muxcode inbox` read (Claude keeps `muxcode inbox --poll --loop` alive via the [Stop hook](hooks.md#hook-stop-self-poll-re-launch); the harness consumes in-process) |
+| OpenCode, Codex CLI | `delivered` — verified-inject | Daemon's `SendWakeUp()` → `confirmInjectionAndConsume()` (`bus/inject_verify.go`): confirms the injected text left the composer, then consumes and writes the receipt. Not a true consume-ack — the TUI can't run `muxcode inbox` in-process |
+
+A daemon backstop, **`checkPollHealth`**, watches for a growing **receipt gap** (inbox messages un-receipted past a threshold) — a positive signal a self-poll loop or delivery sidecar died — and re-drives delivery (`ForceDeliver` for self-pollers, `SendWakeUp` for non-hook TUIs), alerting edit with a `delivery-gap` event if the gap persists.
+
+**Rollout is gated:** the cutover is opt-in via `MUXCODE_DELIVERY_ACK` (default OFF), with `MUXCODE_DELIVERY_ACK_DISABLE` as a hard kill switch. Until the default flips, the pane-scrape delivery machinery above remains in charge and the receipt store runs alongside it. Core code: `bus/delivery.go` (`WriteReceipt`/`ReadReceipt`/`ReceiptGap`), `bus/inject_verify.go`, `daemon/daemon.go` (`checkPollHealth`, `ackDeliveryActive`).
 
 ### Edit inbox polling (`--wait`)
 
