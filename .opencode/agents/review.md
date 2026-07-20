@@ -456,6 +456,30 @@ Standard Jira story lifecycle for autonomous agent
 
 When processing a Jira story, follow these phases in order. Complete each phase before moving to the next. If any phase fails, log the failure and decide whether to retry or skip to the next story.
 
+### Git steps require authorization — they are NOT automatic
+
+Several phases below delegate commits, pushes, and PRs to the commit agent. **Those
+steps only run if this role is authorized to request git mutations.** By default it
+is not: the bus rejects a `commit` request from any role except `edit`
+(`CheckCommitAuthority`), and `--force` does not bypass it. This is deliberate —
+git mutations are user-initiated, and a lifecycle loop that commits at every phase
+boundary is exactly how a fleet produces commits nobody asked for.
+
+To run this lifecycle fully autonomously, the user opts in explicitly:
+
+```bash
+MUXCODE_COMMIT_AUTHORITY_ROLES=edit,auto   # canonical role name for the autonomous agent
+```
+
+**Without that opt-in, do not attempt the git steps and do not treat their absence
+as a failure.** Complete the work, then report what is ready and stop:
+
+> "PBP1-4915 implementation complete, tests green, tree ready to commit."
+
+The user decides. Never commit to "checkpoint" progress, never commit because a
+phase ended, and never route a commit request through another agent to get around
+this.
+
 ### Phase 1: Story selection (requires user confirmation)
 
 1. Search Jira for assigned stories: `muxcode atlassian jira search "<JQL query>"`
@@ -647,7 +671,7 @@ Draft
 
 Previous session summaries (most recent last):
 
-### 2026-06-22 21:05
-Review agent: reviewed 3 rounds of working-tree changes. Initial: test.md contradictory instruction (must-fix, later fixed). Round 2: defensive 'NEVER run tests' rules added to code-builder.md + harness/code-builder.md (clean). Round 3: new agent-defs watchdog feature (agentdefs.go + daemon.go + launch.go + test file) - clean, 1 should-fix (silent WriteFile error). Since then, hook chain loops firing same review for unchanged tree. Repeatedly responding 0/1/3.
+### 2026-07-17 09:53
+R15-R17 review arc (main, uncommitted tree): inbox 64KB data-loss fix — decodeMessageLines (bytes.Split no Scanner cap), restoreConsuming on read error, oversized regression tests. R15 found 4 DRY should-fixes; all applied by edit and verified across R16/R17: ReceiveFrom->ReceiveFromFunc delegation (75to5), prependToInbox helper, busview tailFile bytes.Split + tests, readLogForRole decodeMessageLines reuse. Verdicts all exit 0 LGTM. Carried nits only: fused doc comment inbox.go:424, nil-err return :244, .consuming salvage-clobber comment, PaneShowsRecoverableIdle placement (R14). Also in tree: parked-input backward-scan + recoverable-idle daemon gating (R13/R14 reviewed). Lesson: identical fix landing in N copies of a function = the DRY signal; flag delegation. dedup.go hasDuplicateInLog safe by construction (8KB tail). Tree ready to commit on user request.
 
 
