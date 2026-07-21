@@ -136,6 +136,12 @@ type Daemon struct {
 	// fail-safes to "alive" when it cannot capture a pane, so it can't be forced
 	// to false without a real tmux session. Defaults to bus.IsAgentAlive.
 	agentAlive func(session, role string) bool
+	// windowExists gates work at a role that has no tmux window at all (never
+	// launched in this session). agentAlive cannot express this: it fail-safes
+	// to "alive" for an uncapturable pane, so a phantom role reads as live.
+	// Injectable for the same reason as agentAlive. Defaults to
+	// bus.AgentWindowExists.
+	windowExists func(session, role string) bool
 	// Branch time-tracking accumulator — adds active working time to the current
 	// git branch while a client is attached. To avoid a disk write + git/tmux
 	// process spawn on every fast poll, time is accrued in memory
@@ -213,6 +219,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		pollGapAlerted:        make(map[string]bool),
 		pollGapRecovered:      make(map[string]bool),
 		agentAlive:            bus.IsAgentAlive,
+		windowExists:          bus.AgentWindowExists,
 	}
 }
 
@@ -1675,18 +1682,23 @@ func (d *Daemon) checkPollHealth() {
 			continue
 		}
 
-		// Only backstop a LIVE agent with a genuinely-stuck REQUEST. Two guards,
+		// Only backstop a LIVE agent with a genuinely-stuck REQUEST. Three guards,
 		// mirroring the checkInboxes delivery gate:
+		//   - windowExists: skip a role with no tmux window in this session (never
+		//     launched). Such a role can never consume, so every message to it
+		//     ages into a permanent gap that no recovery can clear — force-deliver
+		//     has no pane to target and fails. This guard is what agentAlive cannot
+		//     provide: provider.IsAlive fail-safes to "alive" when it cannot capture
+		//     a pane, so a phantom role reads as live.
 		//   - agentAlive: skip a role whose agent has crashed to a shell (nothing
-		//     to recover — checkAgentHealth handles restarts). NOTE: provider.IsAlive
-		//     fail-safes to "alive" for a role whose pane can't be captured, so this
-		//     alone can't suppress a live-but-not-self-polling agent — the
-		//     recover-once guard below is what stops the churn for those.
+		//     to recover — checkAgentHealth handles restarts).
 		//   - HasActionableMessages: response-only / informational inbox growth is
 		//     not a delivery failure (checkInboxes never wakes on it either); only
 		//     an un-consumed request past the threshold signals a dead poll loop.
+		// A live agent that simply hasn't consumed yet (busy, or self-poll not yet
+		// relaunched) is still covered by the recover-once guard below.
 		// Reset any stale gap state when skipping so a later real gap starts clean.
-		if !d.agentAlive(d.session, role) || !bus.HasActionableMessages(d.session, role) {
+		if !d.windowExists(d.session, role) || !d.agentAlive(d.session, role) || !bus.HasActionableMessages(d.session, role) {
 			d.pollGapSince[role] = 0
 			d.pollGapAlerted[role] = false
 			d.pollGapRecovered[role] = false
@@ -2911,10 +2923,15 @@ func (d *Daemon) checkHeartbeat() {
 	}
 	d.lastHeartbeatCheck = now
 
-	// Only fire if the auto role is known and has an active pane.
-	// Skip if auto has no inbox (never launched).
-	inboxPath := bus.InboxPath(d.session, "auto")
-	if _, err := os.Stat(filepath.Dir(inboxPath)); os.IsNotExist(err) {
+	// Only fire if an auto agent actually exists in this session. The default
+	// window set does not include auto, so in most sessions there is nothing
+	// to heartbeat: the message would sit un-consumed in auto's inbox, trip the
+	// receipt-gap backstop (delivery-gap alerts), and draw a force-deliver
+	// retry that cannot succeed against a window that isn't there.
+	//
+	// A window check is required here — bus.IsAgentAlive reports a phantom role
+	// as alive because it cannot capture its pane.
+	if !d.windowExists(d.session, "auto") {
 		return
 	}
 

@@ -48,6 +48,34 @@ func IsAgentHealthExcluded(session, role string) bool {
 	return agentHealthExcludedRoles[role]
 }
 
+// AgentWindowExists reports whether the tmux window backing a role exists in
+// the session.
+//
+// This is the DEFINITE-liveness counterpart to IsAgentAlive. IsAgentAlive
+// fail-safes to "alive" when a pane cannot be captured, which is indeterminate
+// for a role that was never launched: a session without an "auto" window makes
+// IsAgentAlive("auto") report alive even though no such agent exists. Callers
+// that must not act on a phantom role (sending it work, alarming that it never
+// consumed) need a signal that can actually say "no", which is this.
+//
+// Hosted and mode roles resolve to their host window via WindowForRole.
+//
+// A tmux failure is session-wide rather than role-specific, so it returns true
+// (indeterminate) rather than mass-suppressing every role at once.
+func AgentWindowExists(session, role string) bool {
+	names, err := TmuxListWindowNames(session)
+	if err != nil {
+		return true
+	}
+	want := WindowForRole(role)
+	for _, name := range names {
+		if name == want {
+			return true
+		}
+	}
+	return false
+}
+
 // IsAgentAlive checks whether an agent's tmux pane is running an AI CLI
 // session or a local LLM harness, as opposed to having crashed back to a
 // bare shell prompt.

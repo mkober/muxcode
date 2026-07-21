@@ -246,6 +246,35 @@ func TestCheckPollHealth_SkipsNonLiveOrNonActionable(t *testing.T) {
 	}
 }
 
+// A role with no tmux window in this session (never launched — e.g. "auto",
+// which the default window set omits) can never consume its inbox, so every
+// message to it ages into a permanent receipt gap that no recovery can clear:
+// force-deliver has no pane to target and fails every attempt. agentAlive
+// cannot filter these — provider.IsAlive fail-safes to "alive" when it cannot
+// capture a pane, so a phantom role reads as live.
+func TestCheckPollHealth_SkipsRoleWithNoWindow(t *testing.T) {
+	session := testSession(t)
+	d := New(session, 5, 8)
+	t.Setenv("MUXCODE_DELIVERY_ACK", "1")
+	t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "")
+	d.agentAlive = allAlive // phantom role still reports "alive" (the fail-safe)
+	// "auto" was never launched; every other role has a window.
+	d.windowExists = func(_, role string) bool { return role != "auto" }
+
+	stale := bus.NewMessage("daemon", "auto", "request", "heartbeat", "tick", "")
+	stale.TS = time.Now().Unix() - (pollHealthGapSecs + 30)
+	if err := bus.Send(session, stale); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	d.lastPollHealthCheck = 0
+	d.checkPollHealth()
+
+	if d.pollGapSince["auto"] != 0 {
+		t.Error("a stale request for a role with no window must not register a gap")
+	}
+}
+
 func TestDeliveryChecksGatedWhenCutoverActive(t *testing.T) {
 	d := New(testSession(t), 5, 8)
 	t.Setenv("MUXCODE_DELIVERY_ACK", "1")
