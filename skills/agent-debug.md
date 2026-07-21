@@ -61,10 +61,10 @@ Split-left windows: edit, build, test, review, deploy, analyze, commit, watch.
 muxcode inbox --role {role} --peek
 
 # Check all agent statuses (health, inbox count, last message)
-muxcode inspect
+muxcode status
 
-# Check specific agent status
-muxcode inspect --role {role}
+# Check specific agent status (status has no --role flag — filter the JSON)
+muxcode status --json | jq '.[] | select(.role=="{role}")'
 ```
 
 ### Debugging workflow
@@ -88,12 +88,12 @@ When an agent appears stuck or unresponsive:
 
 4. **Check health** — is the agent process alive?
    ```bash
-   muxcode inspect --role {role}
+   muxcode agent-health --check {role}
    ```
 
 5. **Review recent messages** — did the message get delivered?
    ```bash
-   muxcode log --role {role} --last 5
+   muxcode history {role} --limit 5
    ```
 
 6. **Force-deliver the inbox** — if the agent has pending messages it never processed:
