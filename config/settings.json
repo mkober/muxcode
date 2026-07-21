@@ -213,8 +213,8 @@
       "Bash(terraform state show*)",
       "Read(/tmp/muxcode-*)",
       "Read(/private/tmp/muxcode-*)",
-      "Write(/tmp/muxcode-*)",
-      "Write(/private/tmp/muxcode-*)"
+      "Edit(/tmp/muxcode-*)",
+      "Edit(/private/tmp/muxcode-*)"
     ],
     "deny": [
       "Bash(rm -rf /)*",

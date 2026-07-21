@@ -393,6 +393,13 @@ if $use_claude; then
         else .hooks.Stop = ((.hooks.Stop // []) + [{"hooks": [$h]}]) end
       ) |
 
+      # Drop allow rules superseded by a newer form before merging. Claude Code
+      # only matches Edit(path) rules for file edits — a Write(path) allow rule
+      # is rejected at startup with a warning. The merge below is an additive
+      # union, so a stale entry from an earlier install would survive forever
+      # unless it is pruned here.
+      .permissions.allow = (.permissions.allow - ["Write(/tmp/muxcode-*)", "Write(/private/tmp/muxcode-*)"]) |
+
       .permissions.allow = (.permissions.allow + ($mc[0].permissions.allow // []) | unique) |
       .permissions.deny = ((.permissions.deny // []) + ($mc[0].permissions.deny // []) | unique)
     ' "$CLAUDE_SETTINGS" > "${CLAUDE_SETTINGS}.tmp"
