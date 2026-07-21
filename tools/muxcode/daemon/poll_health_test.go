@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -258,8 +259,10 @@ func TestCheckPollHealth_SkipsRoleWithNoWindow(t *testing.T) {
 	t.Setenv("MUXCODE_DELIVERY_ACK", "1")
 	t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "")
 	d.agentAlive = allAlive // phantom role still reports "alive" (the fail-safe)
-	// "auto" was never launched; every other role has a window.
-	d.windowExists = func(_, role string) bool { return role != "auto" }
+	// "auto" was never launched; the default window set omits it.
+	d.windowNames = func(_ string) ([]string, error) {
+		return []string{"edit", "build", "test"}, nil
+	}
 
 	stale := bus.NewMessage("daemon", "auto", "request", "heartbeat", "tick", "")
 	stale.TS = time.Now().Unix() - (pollHealthGapSecs + 30)
@@ -272,6 +275,33 @@ func TestCheckPollHealth_SkipsRoleWithNoWindow(t *testing.T) {
 
 	if d.pollGapSince["auto"] != 0 {
 		t.Error("a stale request for a role with no window must not register a gap")
+	}
+}
+
+// An unreadable window list is session-wide, not role-specific, so it must be
+// treated as indeterminate — suppressing every role at once would silently
+// disable the backstop whenever a tmux call fails.
+func TestCheckPollHealth_WindowListErrorDoesNotSuppress(t *testing.T) {
+	session := testSession(t)
+	d := New(session, 5, 8)
+	t.Setenv("MUXCODE_DELIVERY_ACK", "1")
+	t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "")
+	d.agentAlive = allAlive
+	d.windowNames = func(_ string) ([]string, error) {
+		return nil, fmt.Errorf("tmux unavailable")
+	}
+
+	stale := bus.NewMessage("edit", "build", "request", "build", "build it", "")
+	stale.TS = time.Now().Unix() - (pollHealthGapSecs + 30)
+	if err := bus.Send(session, stale); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	d.lastPollHealthCheck = 0
+	d.checkPollHealth()
+
+	if d.pollGapSince["build"] == 0 {
+		t.Error("an unreadable window list must not suppress the backstop")
 	}
 }
 

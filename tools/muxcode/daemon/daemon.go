@@ -136,12 +136,14 @@ type Daemon struct {
 	// fail-safes to "alive" when it cannot capture a pane, so it can't be forced
 	// to false without a real tmux session. Defaults to bus.IsAgentAlive.
 	agentAlive func(session, role string) bool
-	// windowExists gates work at a role that has no tmux window at all (never
-	// launched in this session). agentAlive cannot express this: it fail-safes
-	// to "alive" for an uncapturable pane, so a phantom role reads as live.
-	// Injectable for the same reason as agentAlive. Defaults to
-	// bus.AgentWindowExists.
-	windowExists func(session, role string) bool
+	// windowNames lists the session's tmux window names, used to gate work at a
+	// role that has no window at all (never launched in this session).
+	// agentAlive cannot express that: it fail-safes to "alive" for an
+	// uncapturable pane, so a phantom role reads as live. Fetched once per
+	// sweep rather than per role, so a full KnownRoles pass costs one tmux call
+	// instead of ~17. Injectable for the same reason as agentAlive. Defaults to
+	// bus.TmuxListWindowNames.
+	windowNames func(session string) ([]string, error)
 	// Branch time-tracking accumulator — adds active working time to the current
 	// git branch while a client is attached. To avoid a disk write + git/tmux
 	// process spawn on every fast poll, time is accrued in memory
@@ -219,7 +221,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		pollGapAlerted:        make(map[string]bool),
 		pollGapRecovered:      make(map[string]bool),
 		agentAlive:            bus.IsAgentAlive,
-		windowExists:          bus.AgentWindowExists,
+		windowNames:           bus.TmuxListWindowNames,
 	}
 }
 
@@ -1662,6 +1664,28 @@ func (d *Daemon) ackDeliveryActive() bool {
 // Inert unless the cutover is active: with the old machinery in charge, agents
 // are not self-polling and a receipt gap is normal, so running this would
 // false-alarm.
+// sessionWindows returns the session's tmux window names, or nil if the list
+// could not be read. Callers pass the result to roleHasWindow; fetch it once
+// per sweep so a multi-role pass costs a single tmux call.
+func (d *Daemon) sessionWindows() []string {
+	names, err := d.windowNames(d.session)
+	if err != nil {
+		return nil
+	}
+	return names
+}
+
+// roleHasWindow reports whether role has a tmux window among names. A nil
+// names slice means the window list could not be read: a tmux failure is
+// session-wide rather than role-specific, so that is treated as indeterminate
+// (true) rather than mass-suppressing every role at once.
+func roleHasWindow(names []string, role string) bool {
+	if names == nil {
+		return true
+	}
+	return bus.RoleHasWindow(names, role)
+}
+
 func (d *Daemon) checkPollHealth() {
 	if !d.ackDeliveryActive() {
 		return
@@ -1671,6 +1695,10 @@ func (d *Daemon) checkPollHealth() {
 		return
 	}
 	d.lastPollHealthCheck = now
+
+	// One tmux call for the whole sweep — read after the gates above so an
+	// inert cycle spawns no process at all.
+	windows := d.sessionWindows()
 
 	for _, role := range bus.KnownRoles {
 		// Hosted roles share their host's pane/inbox — the host covers them.
@@ -1684,7 +1712,7 @@ func (d *Daemon) checkPollHealth() {
 
 		// Only backstop a LIVE agent with a genuinely-stuck REQUEST. Three guards,
 		// mirroring the checkInboxes delivery gate:
-		//   - windowExists: skip a role with no tmux window in this session (never
+		//   - roleHasWindow: skip a role with no tmux window in this session (never
 		//     launched). Such a role can never consume, so every message to it
 		//     ages into a permanent gap that no recovery can clear — force-deliver
 		//     has no pane to target and fails. This guard is what agentAlive cannot
@@ -1698,7 +1726,7 @@ func (d *Daemon) checkPollHealth() {
 		// A live agent that simply hasn't consumed yet (busy, or self-poll not yet
 		// relaunched) is still covered by the recover-once guard below.
 		// Reset any stale gap state when skipping so a later real gap starts clean.
-		if !d.windowExists(d.session, role) || !d.agentAlive(d.session, role) || !bus.HasActionableMessages(d.session, role) {
+		if !roleHasWindow(windows, role) || !d.agentAlive(d.session, role) || !bus.HasActionableMessages(d.session, role) {
 			d.pollGapSince[role] = 0
 			d.pollGapAlerted[role] = false
 			d.pollGapRecovered[role] = false
@@ -2931,7 +2959,7 @@ func (d *Daemon) checkHeartbeat() {
 	//
 	// A window check is required here — bus.IsAgentAlive reports a phantom role
 	// as alive because it cannot capture its pane.
-	if !d.windowExists(d.session, "auto") {
+	if !roleHasWindow(d.sessionWindows(), "auto") {
 		return
 	}
 

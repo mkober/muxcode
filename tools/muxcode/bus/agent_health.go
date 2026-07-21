@@ -48,8 +48,8 @@ func IsAgentHealthExcluded(session, role string) bool {
 	return agentHealthExcludedRoles[role]
 }
 
-// AgentWindowExists reports whether the tmux window backing a role exists in
-// the session.
+// RoleHasWindow reports whether the tmux window backing a role appears in
+// names, as returned by TmuxListWindowNames.
 //
 // This is the DEFINITE-liveness counterpart to IsAgentAlive. IsAgentAlive
 // fail-safes to "alive" when a pane cannot be captured, which is indeterminate
@@ -60,13 +60,11 @@ func IsAgentHealthExcluded(session, role string) bool {
 //
 // Hosted and mode roles resolve to their host window via WindowForRole.
 //
-// A tmux failure is session-wide rather than role-specific, so it returns true
-// (indeterminate) rather than mass-suppressing every role at once.
-func AgentWindowExists(session, role string) bool {
-	names, err := TmuxListWindowNames(session)
-	if err != nil {
-		return true
-	}
+// Taking the window list as a parameter lets a caller sweeping many roles pay
+// for one tmux call instead of one per role. A caller that could not read the
+// list must treat that as indeterminate rather than "no windows exist" — see
+// Daemon.roleHasWindow.
+func RoleHasWindow(names []string, role string) bool {
 	want := WindowForRole(role)
 	for _, name := range names {
 		if name == want {

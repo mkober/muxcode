@@ -16,6 +16,16 @@ func autoInboxCount(t *testing.T, session string) int {
 	return len(msgs)
 }
 
+// withAutoWindow / withoutAutoWindow are windowNames overrides standing in for
+// a session that did (or did not) launch an auto agent.
+func withAutoWindow(_ string) ([]string, error) {
+	return []string{"edit", "build", "auto"}, nil
+}
+
+func withoutAutoWindow(_ string) ([]string, error) {
+	return []string{"edit", "build"}, nil
+}
+
 // The default window set does not include auto, so most sessions have no auto
 // agent. Heartbeating one anyway leaves an un-consumed request that trips the
 // receipt-gap backstop and draws force-deliver retries that cannot succeed
@@ -25,7 +35,7 @@ func TestCheckHeartbeat_SkipsWhenNoAutoWindow(t *testing.T) {
 	d := New(session, 5, 8)
 	d.heartbeatInterval = 1800
 	d.lastHeartbeatCheck = 0 // clear interval guard so it would otherwise fire
-	d.windowExists = func(_, _ string) bool { return false }
+	d.windowNames = withoutAutoWindow
 
 	d.checkHeartbeat()
 
@@ -39,7 +49,7 @@ func TestCheckHeartbeat_FiresWhenAutoWindowExists(t *testing.T) {
 	d := New(session, 5, 8)
 	d.heartbeatInterval = 1800
 	d.lastHeartbeatCheck = 0
-	d.windowExists = func(_, _ string) bool { return true }
+	d.windowNames = withAutoWindow
 
 	d.checkHeartbeat()
 
@@ -61,7 +71,7 @@ func TestCheckHeartbeat_RespectsInterval(t *testing.T) {
 	d := New(session, 5, 8)
 	d.heartbeatInterval = 1800
 	d.lastHeartbeatCheck = 0
-	d.windowExists = func(_, _ string) bool { return true }
+	d.windowNames = withAutoWindow
 
 	d.checkHeartbeat() // fires
 	d.checkHeartbeat() // within interval — must not fire again
@@ -77,7 +87,7 @@ func TestCheckHeartbeat_DisabledWhenIntervalZero(t *testing.T) {
 	d := New(session, 5, 8)
 	d.heartbeatInterval = 0
 	d.lastHeartbeatCheck = 0
-	d.windowExists = func(_, _ string) bool { return true }
+	d.windowNames = withAutoWindow
 
 	d.checkHeartbeat()
 
