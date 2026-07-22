@@ -119,11 +119,15 @@ func inboxPoll(session, role, from string, raw bool, timeout int, loop bool) {
 	// each message, and whichever loop won would print it to a pipe that no
 	// agent runtime is reading — the message is gone from the inbox, the
 	// receipt tells the daemon it was delivered, and checkPollHealth's
-	// receipt-gap backstop stays quiet. Exiting keeps the incumbent listener
-	// the single consumer.
+	// receipt-gap backstop stays quiet.
+	//
+	// SetPolling takes the marker over from any incumbent (see its doc for why
+	// newest-wins), so a failure here means we genuinely lost a race with
+	// another listener starting at the same instant — that one is now the
+	// single consumer and we must not add a second.
 	if !bus.SetPolling(session, role) {
 		fmt.Fprintf(os.Stderr,
-			"An inbox listener is already running for %s — exiting rather than double-consuming\n", role)
+			"Another inbox listener claimed %s concurrently — exiting rather than double-consuming\n", role)
 		return
 	}
 	defer bus.ClearPolling(session, role)
@@ -137,9 +141,27 @@ func inboxPoll(session, role, from string, raw bool, timeout int, loop bool) {
 	}
 
 	const pollInterval = 2 // seconds
+	// sessionCheckTicks throttles the tmux lookup below to roughly every 30s;
+	// it is a leak check, not a hot path.
+	const sessionCheckTicks = 15
+	ticks := 0
 	for {
 		for elapsed := 0; elapsed < timeout; elapsed += pollInterval {
 			time.Sleep(time.Duration(pollInterval) * time.Second)
+
+			// Exit once the session this listener belongs to is gone.
+			//
+			// Without this a --loop listener outlives its own session forever:
+			// the tmux session ends, every agent in it is gone, and the process
+			// keeps polling a dead session's inbox. Observed in the wild —
+			// listeners still running 15+ hours after their session exited,
+			// reparented to launchd. They are not merely idle: if a session of
+			// the same name is ever recreated they would consume its messages
+			// into a pipe nobody reads.
+			ticks++
+			if ticks%sessionCheckTicks == 0 && !bus.TmuxHasSession(session) {
+				return
+			}
 
 			// Check trigger file for mtime change
 			triggered := false

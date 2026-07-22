@@ -684,13 +684,60 @@ func releaseMarker(path string) {
 	_ = os.Remove(path)
 }
 
+// terminateMarkerHolder asks the process holding a marker to exit, and waits
+// briefly for it to do so.
+//
+// SIGTERM rather than SIGKILL so the incumbent runs its deferred ClearPolling.
+// Either ordering is safe regardless: releaseMarker only removes a marker that
+// still records the caller's PID, so a late-exiting incumbent cannot delete the
+// successor's claim.
+func terminateMarkerHolder(pid int) {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return
+	}
+	_ = p.Signal(syscall.SIGTERM)
+	for i := 0; i < 20; i++ {
+		if !CheckProcAlive(pid) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // SetPolling claims the --poll marker for the given role on behalf of the
-// calling process. It returns false when another live listener already holds
-// the marker, in which case the caller must not start a second poll loop:
-// both would race for the same inbox and each consume is destructive, so the
-// loser's messages are read into a pipe nobody is listening to.
+// calling process, taking it over from any incumbent listener.
+//
+// Exactly one listener per role must consume, because each consume is
+// destructive: two loops would race for the same inbox and the loser's messages
+// would be read into a pipe nobody is listening to. The question is which one
+// gets to be that listener, and the answer is the NEWEST.
+//
+// This used to be incumbent-wins — a newcomer found a live holder and exited.
+// That is correct only while the incumbent's output is still being read, and
+// there is a common case where it is not. An agent's listener is launched as a
+// background task; when the runtime reclaims that task it stops reading the
+// output, but the `muxcode inbox` process itself survives. The incumbent is then
+// alive (so a liveness check clears it) yet abandoned: it holds the marker,
+// keeps consuming, and prints each message into a pipe with no reader — the
+// message leaves the inbox, an "acked" receipt tells the daemon it was
+// delivered, and checkPollHealth's receipt-gap backstop stays quiet. The agent
+// simply never sees it. That is the "agent never got the message" failure this
+// whole delivery redesign exists to eliminate, reintroduced through the back
+// door.
+//
+// Newest-wins is right because a listener is only useful if something is
+// reading it, and the newest claimant is by construction the one the agent
+// runtime is reading right now — the Stop hook just launched it. Any incumbent
+// is either that same agent's previous listener, which should already have
+// exited, or an abandoned orphan. In both cases the newcomer is the better
+// consumer, so we terminate the incumbent and take over.
 func SetPolling(session, role string) bool {
-	return claimMarker(PollingMarkerPath(session, role))
+	path := PollingMarkerPath(session, role)
+	if pid, ok := readMarkerPID(path); ok && pid != os.Getpid() && CheckProcAlive(pid) {
+		terminateMarkerHolder(pid)
+	}
+	return claimMarker(path)
 }
 
 // ClearPolling removes the --poll marker for a role, if this process owns it.

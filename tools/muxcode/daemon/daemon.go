@@ -1652,6 +1652,13 @@ const (
 	pollHealthIntervalSecs = 15
 	pollHealthGapSecs      = 45
 	pollHealthAlertSecs    = 120
+	// pollHealthListenerlessGapSecs applies to self-poll-capable agents that
+	// currently have no listener (see Daemon.listenerless). The generous 45s
+	// default exists to avoid mistaking a busy agent for a broken one; when we
+	// can see there is no consumer at all, that caution is unnecessary and only
+	// delays delivery. Still above the 15s poll interval so a message always
+	// gets at least one sweep to be consumed normally first.
+	pollHealthListenerlessGapSecs = 20
 )
 
 // ackDeliveryActive reports whether the receipt-based delivery cutover is active.
@@ -1764,7 +1771,16 @@ func (d *Daemon) checkPollHealth() {
 			continue
 		}
 
-		gap := bus.ReceiptGap(d.session, role, pollHealthGapSecs*time.Second)
+		// A self-poll-capable agent with no listener at all has nothing pulling
+		// its inbox right now, so waiting the full threshold just adds latency
+		// to a gap we can already explain. Recovery is identical (ForceDeliver
+		// below); only the patience differs.
+		gapThreshold := pollHealthGapSecs * time.Second
+		if d.listenerless(role) {
+			gapThreshold = pollHealthListenerlessGapSecs * time.Second
+		}
+
+		gap := bus.ReceiptGap(d.session, role, gapThreshold)
 		if len(gap) == 0 {
 			d.pollGapSince[role] = 0
 			d.pollGapAlerted[role] = false
@@ -1812,12 +1828,42 @@ func (d *Daemon) checkPollHealth() {
 	}
 }
 
+// listenerless reports whether a self-poll-capable agent currently has no
+// listener consuming its inbox.
+//
+// Under the cutover a hook agent's inbox is normally drained by its own
+// `muxcode inbox --poll --loop`, and the receipt-gap backstop only needs to
+// notice the rare case where that has broken. But there is a routine window
+// where no listener exists at all: the runtime reclaims the listener's
+// background task while the session is quiet, and the Stop hook relaunches one
+// only on the agent's next turn. A message arriving inside that window has
+// nothing pulling it, so it waits for the full gap threshold.
+//
+// Reported so checkPollHealth can shorten its threshold for exactly those roles
+// rather than making every role twitchy. Recovery still runs through
+// ForceDeliver, so this never resurrects pane-scrape delivery.
+//
+// Non-hook TUIs (OpenCode, Codex) are excluded: they can never run a listener,
+// so "no listener" is their steady state, not a gap — treating it as one is what
+// produced the delivery-gap false positives already on record. The local harness
+// consumes in-process and is likewise excluded.
+func (d *Daemon) listenerless(role string) bool {
+	if !bus.ResolveProvider(role).SupportsHooks() {
+		return false
+	}
+	if bus.IsHarnessActive(d.session, role) {
+		return false
+	}
+	return !bus.IsPolling(d.session, role) && !bus.IsWaiting(d.session, role)
+}
+
 func (d *Daemon) checkIdleAgents() {
 	// Delivery-ack cutover: when receipt-based delivery is active, agents pull
 	// their own inboxes (Claude self-poll, harness in-process) and non-hook TUIs
 	// are served by checkInboxes->Notify plus the checkPollHealth backstop. The
 	// pane-scrape idle-delivery machinery below is bypassed. Default (cutover off)
 	// keeps it as the delivery path.
+	//
 	if d.ackDeliveryActive() {
 		return
 	}

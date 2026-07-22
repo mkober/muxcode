@@ -399,7 +399,13 @@ func hookStop() {
 	// A listener is alive if a --poll or --wait loop is currently running.
 	listenerAlive := bus.IsPolling(session, role) || bus.IsWaiting(session, role)
 
-	action := bus.DecideStopHook(listenerAlive, stopHookActive, disabled)
+	// Only demand a relaunch when there is actually something to deliver —
+	// otherwise a quiet session turns into a relaunch treadmill (see
+	// DecideStopHook). Request-type messages only: a response-only inbox is not
+	// work waiting on a listener.
+	inboxPending := bus.HasActionableMessages(session, role)
+
+	action := bus.DecideStopHook(listenerAlive, stopHookActive, disabled, inboxPending)
 	if action.Block {
 		fmt.Println(bus.FormatStopBlock(action.Reason))
 	}

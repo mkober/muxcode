@@ -944,8 +944,20 @@ type StopHookAction struct {
 // failing. When a poll/wait listener is already alive, or the delivery-ack
 // feature is disabled via kill switch, it allows the stop.
 //
+// inboxPending is the escape from a treadmill. A listener blocks until a message
+// arrives, so on a quiet session it just sits there — and a runtime that reclaims
+// idle background tasks will eventually kill it. The agent then stops, this hook
+// finds no listener, blocks to demand a relaunch, the replacement sits idle and
+// is reclaimed in turn: a loop that burns a turn per cycle and delivers nothing,
+// because there was never a message to deliver. Blocking is only worth its cost
+// when something is actually waiting, or when a message could arrive and find
+// nobody home — and the latter is covered: the daemon's checkIdleAgents keeps
+// waking self-poll-capable agents that have no listener (see needsIdleFallback),
+// so an agent that stops empty-handed still gets its next message promptly and
+// relaunches the listener then.
+//
 // Pure and side-effect-free for testability; callers supply the observed state.
-func DecideStopHook(listenerAlive, stopHookActive, disabled bool) StopHookAction {
+func DecideStopHook(listenerAlive, stopHookActive, disabled, inboxPending bool) StopHookAction {
 	if disabled {
 		return StopHookAction{Block: false}
 	}
@@ -954,6 +966,11 @@ func DecideStopHook(listenerAlive, stopHookActive, disabled bool) StopHookAction
 	}
 	if listenerAlive {
 		return StopHookAction{Block: false} // a poll/wait listener is running
+	}
+	if !inboxPending {
+		// Nothing to deliver: let the agent rest. The daemon's idle wake covers
+		// the window until it launches a listener again.
+		return StopHookAction{Block: false}
 	}
 	return StopHookAction{Block: true, Reason: StopHookPollReason}
 }

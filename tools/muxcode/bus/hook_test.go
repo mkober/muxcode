@@ -50,27 +50,34 @@ func TestDecideStopHook(t *testing.T) {
 		listenerAlive  bool
 		stopHookActive bool
 		disabled       bool
+		inboxPending   bool
 		wantBlock      bool
 	}{
-		// Poll dead, first stop this turn, feature on → block to re-launch.
-		{"relaunch when listener dead", false, false, false, true},
+		// Poll dead, work waiting, first stop this turn → block to re-launch.
+		{"relaunch when listener dead and work pending", false, false, false, true, true},
 		// A poll/wait listener is already running → nothing to do.
-		{"allow when listener alive", true, false, false, false},
+		{"allow when listener alive", true, false, false, true, false},
 		// Loop guard: we already blocked once this turn → must allow now.
-		{"allow when stop_hook_active", false, true, false, false},
-		// Loop guard wins even if listener still looks dead and feature is on.
-		{"stop_hook_active beats dead listener", false, true, false, false},
+		{"allow when stop_hook_active", false, true, false, true, false},
+		// Loop guard wins even if listener still looks dead.
+		{"stop_hook_active beats dead listener", false, true, false, true, false},
 		// Kill switch disables the whole self-poll re-launch behavior.
-		{"allow when disabled", false, false, true, false},
+		{"allow when disabled", false, false, true, true, false},
 		// Disabled takes precedence over everything.
-		{"disabled beats dead listener", false, false, true, false},
+		{"disabled beats dead listener", false, false, true, true, false},
+		// The treadmill case: no listener, but nothing to deliver either.
+		// Blocking here buys nothing and burns a turn; the daemon's idle wake
+		// covers the window until a message actually arrives.
+		{"allow when idle with empty inbox", false, false, false, false, false},
+		// An alive listener plus an empty inbox is the ordinary steady state.
+		{"allow when listener alive and inbox empty", true, false, false, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := DecideStopHook(tc.listenerAlive, tc.stopHookActive, tc.disabled)
+			got := DecideStopHook(tc.listenerAlive, tc.stopHookActive, tc.disabled, tc.inboxPending)
 			if got.Block != tc.wantBlock {
-				t.Errorf("DecideStopHook(alive=%v, active=%v, disabled=%v).Block = %v, want %v",
-					tc.listenerAlive, tc.stopHookActive, tc.disabled, got.Block, tc.wantBlock)
+				t.Errorf("DecideStopHook(alive=%v, active=%v, disabled=%v, pending=%v).Block = %v, want %v",
+					tc.listenerAlive, tc.stopHookActive, tc.disabled, tc.inboxPending, got.Block, tc.wantBlock)
 			}
 			if got.Block && got.Reason == "" {
 				t.Errorf("blocking decision must carry a non-empty reason")
