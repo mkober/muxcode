@@ -577,10 +577,41 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(git rev-parse*)",
 					"Bash(python3*)", "Bash(jq*)",
 					"Bash(tree *)",
-					// Atlassian: the plan agent authors specs/architecture, so it can
-					// read/update Confluence pages and Jira issues directly (CLI only,
-					// never the Atlassian MCP).
-					"Bash(muxcode atlassian *)",
+					// Atlassian: READ ONLY. The plan agent needs Jira/Confluence
+					// context to author specs, but Jira and Confluence are shared
+					// systems the user's team sees — writes are gated to the edit
+					// agent by CheckAtlassianAuthority (bus/atlassian_authority.go).
+					// CLI only, never the Atlassian MCP.
+					"Bash(muxcode atlassian jira read *)",
+					"Bash(muxcode atlassian jira comments *)",
+					"Bash(muxcode atlassian jira link-types*)",
+					"Bash(muxcode atlassian jira transitions *)",
+					"Bash(muxcode atlassian jira search *)",
+					"Bash(muxcode atlassian confluence read *)",
+					"Bash(muxcode atlassian confluence search *)",
+				},
+				DenyTools: []string{
+					// Only consumed by non-hook providers (OpenCode), which emit
+					// these as bash deny rules; Claude Code enforcement runs through
+					// the PreToolUse guard instead. Present so the rule survives a
+					// `muxcode reload plan --cli opencode`.
+					//
+					// NOT redundant with the Tools allowlist above: the "bus" include
+					// group grants `Bash(muxcode *)`, which already matches every
+					// atlassian subcommand. Without an explicit deny, narrowing the
+					// allowlist accomplishes nothing.
+					//
+					// Trailing space matters — "comment *" must not match "comments",
+					// and "transition *" must not match "transitions".
+					"muxcode atlassian jira update *",
+					"muxcode atlassian jira comment *",
+					"muxcode atlassian jira link *",
+					"muxcode atlassian jira transition *",
+					"muxcode atlassian jira create-subtask *",
+					"muxcode atlassian jira worklog *",
+					"muxcode atlassian jira attach *",
+					"muxcode atlassian confluence update *",
+					"muxcode atlassian confluence attach *",
 				},
 			},
 			"build": {

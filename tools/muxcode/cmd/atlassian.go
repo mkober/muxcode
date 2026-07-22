@@ -42,15 +42,24 @@ func Atlassian(args []string) {
 		os.Exit(1)
 	}
 
+	service := args[0]
+	action := args[1]
+	rest := args[2:]
+
+	// Authority is checked BEFORE credentials are loaded, so an unauthorized
+	// agent is refused on the rule rather than on a missing token — the deny
+	// message has to be the reason it stops, not an auth error it might decide
+	// to work around.
+	if deny := bus.CheckAtlassianAuthority(bus.BusRole(), service, action); deny != "" {
+		fmt.Fprintf(os.Stderr, "DENIED: %s\n", deny)
+		os.Exit(1)
+	}
+
 	cfg, err := bus.LoadAtlassianConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}
-
-	service := args[0]
-	action := args[1]
-	rest := args[2:]
 
 	switch service {
 	case "jira":

@@ -23,9 +23,8 @@ Do NOT wait for further instructions — search Jira and present stories immedia
 For each story:
 
 1. Create feature branch: `muxcode send commit commit "Create and checkout branch feature/{KEY}-{slug}" --force --wait`
-2. List Jira transitions: `muxcode atlassian jira transitions {KEY}`
-3. Transition to In Progress: `muxcode atlassian jira transition {KEY} {id}`
-4. Comment on Jira: `muxcode atlassian jira comment {KEY} "Started work"`
+2. List Jira transitions: `muxcode atlassian jira transitions {KEY}` (read, always allowed)
+3. Jira writes (transition, comment) are gated to the edit agent and return `DENIED` for you unless the user set `MUXCODE_ATLASSIAN_AUTHORITY_ROLES=edit,auto`. Skip them, say what you would have written, and continue — do not retry.
 5. Write requirements doc at `docs/requirements/drafts/{KEY}-{slug}.md`
 6. Commit and push: `muxcode send commit commit "Stage, commit, push" --force --wait`
 7. Create requirements PR: `muxcode send commit commit "Create PR titled 'Requirements: {KEY} {summary}'" --force --wait`

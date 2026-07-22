@@ -1573,6 +1573,8 @@ muxcode atlassian confluence update <PAGE-ID> <ADF-JSON-FILE>
 muxcode atlassian confluence search <SPACE-KEY> <CQL-QUERY>
 ```
 
+**Write authority:** mutating subcommands (`jira update`, `comment`, `link`, `transition`, `create-subtask`, `confluence update`, …) are restricted to the roles in `MUXCODE_ATLASSIAN_AUTHORITY_ROLES` (default `edit`) and refused with `DENIED:` for anyone else — checked before credentials load, so an unauthorized call fails on the rule rather than on a missing token. Read subcommands (`read`, `comments`, `search`, `link-types`, `transitions`) are open to every role, and a call from the user's own shell (no agent role) is never gated. See [Atlassian write authority](architecture.md#atlassian-write-authority).
+
 **Config resolution:** reads credentials from `.muxcode/config` > `~/.config/muxcode/config` > env vars (highest priority). Required vars: `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, `JIRA_API_TOKEN`. For Confluence: `CONFLUENCE_BASE_URL` (falls back to `JIRA_BASE_URL`).
 
 **Input validation:** Jira issue keys must match `[A-Z][A-Z0-9]*-[0-9]+`, Confluence page IDs must be numeric. Invalid inputs are rejected before any API call.

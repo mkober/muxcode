@@ -367,7 +367,7 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 
 | Hook | Phase | Trigger | Mode | Purpose |
 |------|-------|---------|------|---------|
-| `muxcode hook guard` | PreToolUse | Bash | sync | Block prohibited commands in edit window |
+| `muxcode hook guard` | PreToolUse | Bash, MCP tools | sync | Block prohibited commands in edit window; block `docs/**/*.md` writes outside plan; block unauthorized Jira/Confluence writes (see [Atlassian write authority](#atlassian-write-authority)) |
 | `muxcode-preview-hook.sh` | PreToolUse | Write/Edit | async | Show diff preview in nvim |
 | `muxcode-diff-cleanup.sh` | PreToolUse | Read/Bash/etc | async | Clean stale diff preview |
 | `muxcode hook analyze` | PostToolUse | Write/Edit | async | Route file events, trigger daemon |
@@ -376,6 +376,28 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 ### Hook Chain Guarantee
 
 The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (8 condition types evaluated as AND logic) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
+
+### Atlassian write authority
+
+Jira and Confluence are **shared systems the user's team sees** — a description rewrite, comment, issue link, or transition lands under the user's name and cannot be quietly reverted. Writes are therefore gated to the one role in conversation with the user (`edit` by default), the same way `CheckCommitAuthority` gates git mutations. Prose in agent definitions did not hold this line: the plan agent once rewrote a Jira description, posted a comment, and linked a second story as a side effect of a spec-revision request, because its own definition instructed it to while the edit agent's definition claimed edit owned the integration.
+
+`CheckAtlassianAuthority` (`bus/atlassian_authority.go`) is the single decision point, enforced on three surfaces:
+
+| Surface | Enforcement | Covers |
+|---------|-------------|--------|
+| CLI | `cmd/atlassian.go` — checked **before** credentials load, so an unauthorized call fails on the rule, not on a missing token | Every provider, including OpenCode/Codex agents that never run hooks |
+| PreToolUse (bash) | `CheckAtlassianCommandGuard` — token-scans for `muxcode atlassian <service> <action>` | Claude Code agents, stopped at the tool layer with an actionable reason |
+| PreToolUse (MCP) | `CheckAtlassianMCPGuard` — gates on tool name, since MCP calls carry no bash command | `mcp__*atlassian*` mutating tools |
+
+Design notes:
+
+- **Reads stay open to every role.** Agents need ticket context to write good specs; the harm is writes landing in front of a team, not an agent knowing what a ticket says.
+- **Allowlist, not denylist.** `atlassianReadOnlyActions` enumerates the *read* side, so a newly added mutating subcommand lands closed. Actions are matched exactly — `comments` reads but `comment` writes; `transitions` lists but `transition` executes.
+- **The empty role is allowed** — the user running the CLI from their own shell has no `AGENT_ROLE`, while every launched agent always does (`bus/launch.go`, `harness/bus.go`, `bus/spawn.go`).
+- **The deny message never names the env var** that lifts the block, since an agent handed that string could self-authorize by prefixing it to the refused command. The opt-in is documented for the user in [Configuration](configuration.md#environment-variables).
+- The `plan` tool profile narrows to read-only atlassian rules **and** carries explicit `DenyTools` entries — the `bus` include group grants `Bash(muxcode *)`, which would otherwise match every subcommand regardless of the narrowed allowlist.
+
+When a spec change implies a Jira change, the plan agent reports it rather than acting: `muxcode send edit jira-suggest "..."`. That is a **notification, not an instruction** — edit surfaces it to the user rather than writing on another agent's behalf.
 
 ## Window Layout
 

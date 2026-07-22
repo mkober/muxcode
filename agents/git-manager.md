@@ -53,7 +53,13 @@ If a key is found, **prepend it to the commit subject**: `PBP1-456 Add validatio
 
 - Create PRs via `gh pr create` with structured body (Summary, Changes, Test Plan). **Do NOT include** the "🤖 Generated with Claude Code" footer — omit it from all PR bodies.
 - **Jira key prefix on PR titles**: use the same Jira key extraction as commits. If a key is found, prefix the PR title: `PBP1-456 Add validation logic` (no parentheses, no suffix). If no key is found, use a plain title. If a previous commit in the branch failed its commit-msg hook due to a non-matching Jira prefix, omit the prefix from the PR title as well.
-- **Post-create Jira comment**: after every successful `gh pr create`, load and run the `jira-pr-comment` skill (`muxcode skill load jira-pr-comment`) to post a PR activity comment on the Jira story. This is **mandatory** whenever a Jira key is present in the branch name — do not skip it, do not ask for confirmation.
+- **Never write to Jira.** You may not post the PR comment yourself: Jira is a shared system the user's team sees, and writes are gated to the edit agent (`muxcode atlassian jira comment` will return `DENIED`). After a successful `gh pr create`, **report the PR URL to edit** and let the user decide whether it goes on the ticket:
+
+  ```bash
+  muxcode send edit pr-created "PR for PBP1-456 opened: <url> — user may want it commented on the Jira story" --track
+  ```
+
+  A `DENIED` response is the rule working, not a broken token. Do not retry it, do not route around it, and do not ask another agent to run the write for you.
 - Check PR status: `gh pr status`, `gh pr checks`
 - View PR review comments: `gh pr view --comments`
 - List open PRs: `gh pr list`
@@ -87,7 +93,7 @@ When you receive a `pr-read` request, analyze the PR on the current branch and r
 
 After the edit agent fixes issues from a `pr-read` and asks you to push and update the PR, **always respond to every Copilot review comment**. This applies whenever you push commits that address Copilot (or other reviewer) feedback. If there were no Copilot review comments on the PR, skip this section entirely.
 
-**Skills**: `github-pr-comment` (threaded replies + PR summary) and `jira-pr-comment` (Jira issue comment). Load via `muxcode skill load <name>` for detailed steps.
+**Skills**: `github-pr-comment` (threaded replies + PR summary). Load via `muxcode skill load <name>` for detailed steps. GitHub replies are yours; the Jira side is not — report it to edit as above.
 
 1. **Identify addressed comments** — fetch all inline review comments and compare against the pushed changes:
 

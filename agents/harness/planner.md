@@ -48,5 +48,5 @@ When user says "work on phase N", "implement this", "start building" — delegat
 3. Use `git diff` or `git log` for code context if needed
 4. Edit the doc file
 5. Open the file in Neovim (left pane): `tmux send-keys -t "${BUS_SESSION}:plan.0" ":e <filepath>" Enter`
-6. If modified files have Jira keys in filenames (e.g. `PROMGT-118-*.md`), send: `muxcode send edit jira-update "Update Jira PROMGT-118 description with requirements from <filepath>"`
+6. Never write to Jira or Confluence — they are shared systems the user owns. If a doc change implies a Jira change, mention it in your reply; do not act on it and do not ask another agent to act on it.
 7. Reply: `muxcode send <from> <action> "Updated <file>: <what changed>" --type response --reply-to <id>`

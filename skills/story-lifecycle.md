@@ -37,6 +37,31 @@ The user decides. Never commit to "checkpoint" progress, never commit because a
 phase ended, and never route a commit request through another agent to get around
 this.
 
+### Jira writes require the same authorization
+
+The phases below also transition issues, post comments, and create links. **Those
+are gated identically** — `CheckAtlassianAuthority` (`bus/atlassian_authority.go`)
+allows Jira and Confluence writes from `edit` only by default, so
+`muxcode atlassian jira transition|comment|link|create-subtask` returns `DENIED`
+for this role. Jira is a shared system the user's team sees, and a lifecycle loop
+that comments at every phase boundary is how a fleet fills a team's tracker with
+noise nobody asked for.
+
+The opt-in mirrors the git one:
+
+```bash
+MUXCODE_ATLASSIAN_AUTHORITY_ROLES=edit,auto
+```
+
+**Without it, skip the Jira write steps and do not treat them as failures.** Reads
+(`read`, `comments`, `search`, `transitions`) stay available, so story selection and
+context-gathering work unchanged. Report what you would have written and continue:
+
+> "PBP1-4915 done — would transition to Done and comment the PR link, if authorized."
+
+A `DENIED` response is the rule working, not a broken token. Do not retry it and do
+not ask another agent to run the write for you.
+
 ### Phase 1: Story selection (requires user confirmation)
 
 1. Search Jira for assigned stories: `muxcode atlassian jira search "<JQL query>"`

@@ -221,9 +221,13 @@ func hookGuard() {
 		return
 	}
 
-	// Check if this role has guard rules — skip roles without enforcement
+	// Atlassian write authority applies to EVERY role, not just those with
+	// delegation guard rules. Jira and Confluence are shared systems the user's
+	// team sees, and roles like docs, api, and pr-read have no guard rules yet
+	// still inherit `Bash(muxcode *)` from the "bus" tool group — so gating this
+	// behind HasGuardRules would leave them able to write.
 	role := bus.BusRole()
-	if !bus.HasGuardRules(role) {
+	if !bus.HasGuardRules(role) && !bus.HasAtlassianAuthorityLimit(role) {
 		return
 	}
 
@@ -245,8 +249,21 @@ func hookGuard() {
 		return
 	}
 
+	// Atlassian MCP guard: an MCP tool carries no bash command, so it must be
+	// gated on the tool name before the command paths below.
+	if decision := bus.CheckAtlassianMCPGuard(role, ev.ToolName); decision != nil && decision.Blocked {
+		fmt.Println(bus.FormatGuardBlock(decision.Reason))
+		return
+	}
+
 	// Bash command guard: delegation of build/test/git/deploy/etc.
 	if ev.ToolInput.Command != "" {
+		// Atlassian writes first — checked for every role, whereas CheckGuard
+		// only has rules for edit and plan.
+		if decision := bus.CheckAtlassianCommandGuard(role, ev.ToolInput.Command); decision != nil && decision.Blocked {
+			fmt.Println(bus.FormatGuardBlock(decision.Reason))
+			return
+		}
 		if decision := bus.CheckGuard(role, ev.ToolInput.Command); decision != nil && decision.Blocked {
 			fmt.Println(bus.FormatGuardBlock(decision.Reason))
 		}

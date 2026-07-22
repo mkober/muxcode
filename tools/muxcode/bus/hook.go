@@ -14,6 +14,10 @@ import (
 
 // ToolEvent represents the JSON event received from Claude Code hooks.
 type ToolEvent struct {
+	// ToolName is the tool being invoked (e.g. "Bash", "Edit",
+	// "mcp__claude_ai_Atlassian__editJiraIssue"). Needed to gate MCP tools,
+	// which carry no bash command to inspect.
+	ToolName     string          `json:"tool_name,omitempty"`
 	ToolInput    ToolInput       `json:"tool_input"`
 	ToolResponse json.RawMessage `json:"tool_response,omitempty"`
 	ToolResult   json.RawMessage `json:"tool_result,omitempty"`
@@ -805,6 +809,57 @@ func CheckDocFileGuard(role, filePath string) *GuardDecision {
 		Blocked: true,
 		Reason:  `BLOCKED: Documentation under docs/ (specs, requirements, architecture) must be authored by the plan agent, not edited directly in the edit window. Delegate to the plan agent. Run: muxcode send plan update-docs "<describe the doc change>" --wait`,
 	}
+}
+
+// atlassianCommandTarget extracts the (service, action) pair from a bash command
+// that invokes `muxcode atlassian ...`, returning ("", "") when the command is
+// not an Atlassian call.
+//
+// Scans tokens rather than matching a prefix, so it survives the shapes these
+// commands actually arrive in: `cd /repo && muxcode atlassian jira update ...`,
+// `MUXCODE_CONFIG=x muxcode atlassian ...`, and `./bin/muxcode atlassian ...`.
+// A prefix match would miss all three.
+func atlassianCommandTarget(command string) (string, string) {
+	fields := strings.Fields(command)
+	for i := 1; i+2 < len(fields); i++ {
+		if fields[i] != "atlassian" {
+			continue
+		}
+		if filepath.Base(fields[i-1]) != "muxcode" {
+			continue
+		}
+		return fields[i+1], fields[i+2]
+	}
+	return "", ""
+}
+
+// CheckAtlassianCommandGuard blocks an unauthorized role from running a
+// mutating `muxcode atlassian` command, before the command executes.
+//
+// This is defence in depth, not the enforcement itself: CheckAtlassianAuthority
+// in cmd/atlassian.go is the load-bearing gate and covers every provider,
+// including the OpenCode and Codex agents that never run PreToolUse hooks at
+// all. The value of blocking here too is that the agent is stopped at the tool
+// layer with an actionable reason instead of discovering a non-zero exit, and
+// the tool profile cannot be relied on for this — the "bus" include group grants
+// `Bash(muxcode *)`, which already covers every atlassian subcommand for every
+// role that includes it.
+//
+// Deliberately delegates the mutating/read-only decision to
+// IsAtlassianMutatingAction rather than restating it as guard-rule prefixes.
+// A second copy of that list is how this incident happened: the agent
+// definition and the edit agent's definition each described a different owner
+// for Jira, and the model followed whichever it read last.
+func CheckAtlassianCommandGuard(role, command string) *GuardDecision {
+	service, action := atlassianCommandTarget(command)
+	if service == "" {
+		return nil
+	}
+	deny := CheckAtlassianAuthority(role, service, action)
+	if deny == "" {
+		return nil
+	}
+	return &GuardDecision{Blocked: true, Reason: "BLOCKED: " + deny}
 }
 
 // checkAgainstRules normalizes a command and checks it against a set of guard rules.

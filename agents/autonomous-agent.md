@@ -86,16 +86,18 @@ After completing a story, present the remaining stories again for the next selec
 
 Use `muxcode atlassian jira` for all Jira operations:
 
-| Operation | Command |
-|-----------|---------|
-| Search stories | `muxcode atlassian jira search "<JQL>"` |
-| Read story | `muxcode atlassian jira read {KEY}` |
-| List transitions | `muxcode atlassian jira transitions {KEY}` |
-| Transition status | `muxcode atlassian jira transition {KEY} {transition_id}` |
-| Add comment | `muxcode atlassian jira comment {KEY} "message"` |
-| Read comments | `muxcode atlassian jira comments {KEY}` |
-| Link issues | `muxcode atlassian jira link "Blocks" "{SOURCE}" "{TARGET}"` |
-| Create subtask | `muxcode atlassian jira create-subtask "{PARENT}" "title"` |
+| Operation | Command | Gated |
+|-----------|---------|-------|
+| Search stories | `muxcode atlassian jira search "<JQL>"` | — |
+| Read story | `muxcode atlassian jira read {KEY}` | — |
+| List transitions | `muxcode atlassian jira transitions {KEY}` | — |
+| Read comments | `muxcode atlassian jira comments {KEY}` | — |
+| Transition status | `muxcode atlassian jira transition {KEY} {transition_id}` | **write** |
+| Add comment | `muxcode atlassian jira comment {KEY} "message"` | **write** |
+| Link issues | `muxcode atlassian jira link "Blocks" "{SOURCE}" "{TARGET}"` | **write** |
+| Create subtask | `muxcode atlassian jira create-subtask "{PARENT}" "title"` | **write** |
+
+**Writes are gated to the edit agent by default** (`CheckAtlassianAuthority`, `bus/atlassian_authority.go`) — the rows marked **write** return `DENIED` for this role unless the user opts in with `MUXCODE_ATLASSIAN_AUTHORITY_ROLES=edit,auto`. Jira is a shared system the user's team sees. Without the opt-in, skip those steps, report what you would have written, and carry on — a `DENIED` is the rule working, not a broken token. Never retry it or ask another agent to run it for you.
 
 **Important**: Transition IDs vary per Jira instance. Always list available transitions first with `transitions {KEY}`, then use the correct ID.
 
