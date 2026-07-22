@@ -69,12 +69,26 @@ func ReloadTarget(session, role string) string {
 	return PaneTarget(session, role)
 }
 
+// paneAwaitingExitConfirmation reports whether the pane is currently showing
+// Claude Code's exit-confirmation dialog. A capture failure reads as "no
+// dialog": guessing yes would fire a blind Enter into a pane we cannot see.
+func paneAwaitingExitConfirmation(target string) bool {
+	out, err := TmuxOutput("capture-pane", "-t", target, "-p", "-S", "-12")
+	if err != nil {
+		return false
+	}
+	return PaneShowsExitConfirmation(out)
+}
+
 // GracefulStop stops an agent process gracefully:
 //  1. Optionally triggers context compaction before stopping (--compact flag)
 //  2. Sends provider-specific exit sequence:
 //     - Claude Code: Escape (cancel input) → /exit + Enter (clean exit command)
 //     - OpenCode/Codex/Local: C-c to interrupt
-//  3. Polls for process exit (500ms intervals, max 10s)
+//  3. Polls for process exit (500ms intervals, max 10s), answering Claude
+//     Code's "background shells are still running" confirmation dialog with
+//     Enter whenever it is on screen — without this, an agent running the
+//     `muxcode inbox --poll --loop` self-poll listener can never exit
 //  4. Falls back to C-c if provider-specific exit didn't work
 //  5. Force kills (second C-c) if still running
 //
@@ -112,6 +126,21 @@ func GracefulStop(session, role string, compact bool) error {
 		time.Sleep(500 * time.Millisecond)
 		if !IsAgentAlive(session, role) {
 			return nil
+		}
+		// Claude Code refuses to exit silently while background shells are
+		// running — it raises a confirmation dialog listing them. Since
+		// receipt-based delivery went default-ON every Claude agent runs
+		// `muxcode inbox --poll --loop`, so this dialog appears on EVERY
+		// reload and nothing was answering it.
+		//
+		// Re-detecting each iteration is the guard against sending a stray
+		// Enter: the key goes out only while the dialog is actually on screen,
+		// which also retries for free if the first Enter is dropped (Claude
+		// Code's TUI does drop keys that arrive in the same pty write as
+		// preceding text — the reason /exit and Enter are separate calls
+		// above).
+		if provider.SupportsHooks() && paneAwaitingExitConfirmation(target) {
+			exec.Command("tmux", "send-keys", "-t", target, "Enter").Run()
 		}
 	}
 

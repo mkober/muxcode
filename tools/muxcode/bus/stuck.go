@@ -72,3 +72,40 @@ func PaneShowsPermissionBlock(content string) bool {
 	}
 	return false
 }
+
+// PaneShowsExitConfirmation reports whether a Claude Code pane is sitting on the
+// "background shells are still running" confirmation dialog raised by /exit:
+//
+//	The following will stop when you exit:
+//	shell · muxcode inbox --poll --loop
+//	❯ 1. Exit anyway
+//	  2. Move to background and exit
+//	  3. Stay
+//
+// This became load-bearing when receipt-based delivery went default-ON: every
+// Claude agent now runs `muxcode inbox --poll --loop` as a background shell, so
+// /exit ALWAYS raises this dialog. GracefulStop sent /exit, never answered the
+// prompt, polled for an exit that could not happen, and failed every reload with
+// "did not exit after 12 seconds" — i.e. `muxcode reload` was broken for every
+// Claude agent, and the delivery feature that fixed message delivery was what
+// broke it.
+//
+// Matched on the live tail only: the dialog is a CURRENT-STATE property, and an
+// agent that merely printed these words earlier (or discussed this very bug)
+// must not read as prompting. Same lesson as PaneShowsRecoverableIdle, which had
+// to stop scanning full scrollback for exactly this reason.
+//
+// The distinctive header alone is sufficient; the "exit anyway" + "move to
+// background" pair is a fallback for wording drift. Requiring two phrases there
+// keeps ordinary prose containing "exit anyway" from matching.
+func PaneShowsExitConfirmation(content string) bool {
+	if content == "" {
+		return false
+	}
+	lower := strings.ToLower(paneLiveTail(content))
+	if strings.Contains(lower, "the following will stop when you exit") {
+		return true
+	}
+	return strings.Contains(lower, "exit anyway") &&
+		strings.Contains(lower, "move to background")
+}
