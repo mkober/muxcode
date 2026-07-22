@@ -153,7 +153,9 @@ func TestPollingMarkerPreventsDisplayMessage(t *testing.T) {
 	os.WriteFile(InboxPath(session, role), append(data, '\n'), 0644)
 
 	// Set polling marker (simulates active --poll loop)
-	SetPolling(session, role)
+	if !SetPolling(session, role) {
+		t.Fatal("SetPolling must claim a free marker")
+	}
 	defer ClearPolling(session, role)
 
 	// Notify should write trigger but skip display-message/send-keys

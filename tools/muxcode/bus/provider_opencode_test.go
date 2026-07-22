@@ -766,6 +766,16 @@ func TestIsUIChrome(t *testing.T) {
 		{"Build succeeded", false},
 		{"     ▣  Build · MiniMax M2.5 Free · 12.9s", false},
 		{"", false},
+		// Verticals and tees: OpenCode's most common frame runes. These were
+		// absent from the original literal list, so whole transcript lines and
+		// table rows leaked into synthesized task responses.
+		{"│Hosted role guard  │Correctness fix│  Context", true},
+		{"┃  $ muxcode send test response \"LGTM\"", true},
+		{"├──────────────┼──────────────┤", true},
+		{"┤ right tee", true},
+		{"┬ top tee", true},
+		{"┼ cross", true},
+		{"▀ block element", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.line, func(t *testing.T) {
@@ -813,5 +823,25 @@ func TestRoleFromPane(t *testing.T) {
 				t.Errorf("roleFromPane(%q) = %q, want %q", tt.pane, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestDetectTaskCompletion_ShellPromptIsNotCompletion guards against
+// fabricating a result from a pane whose agent has exited. A dead pane still
+// shows the previous task's stop marker, so without this the daemon reported a
+// macOS login banner as a successful build.
+func TestDetectTaskCompletion_ShellPromptIsNotCompletion(t *testing.T) {
+	p := &OpenCodeProvider{}
+	pane := strings.Join([]string{
+		"To update your account to use zsh, please run `chsh -s /bin/zsh`.",
+		"For more details, please visit https://support.apple.com/kb/HT208050.",
+		"▣  Build · MiniMax M2.5 Free · 12.9s",
+		"mkoberlein@PKHM-MKOBE /Users/mkoberlein/Repos/mkober/muxcode (main)",
+		"->",
+	}, "\n")
+
+	completed, _, summary := p.DetectTaskCompletion("s", "build", pane)
+	if completed {
+		t.Errorf("a bare shell prompt must not report completion (summary=%q)", summary)
 	}
 }

@@ -442,6 +442,16 @@ func (p *OpenCodeProvider) DetectTaskCompletion(session, role, paneContent strin
 		}
 	}
 
+	// A pane sitting at a bare shell prompt has no agent running in it. Any
+	// stop marker still on screen belongs to a previous task, and the text
+	// around it is whatever the shell printed — a login banner, the launch
+	// command. Reporting completion from that fabricates a result for work
+	// that was never done: it is how "run chsh -s /bin/zsh" was recorded as a
+	// successful build.
+	if isShellPrompt(lines) {
+		return false, false, ""
+	}
+
 	// Look for the stop marker "▣" which indicates task completion
 	var stopLine string
 	hasStop := false
@@ -549,8 +559,16 @@ func (p *OpenCodeProvider) DetectTaskCompletion(session, role, paneContent strin
 
 // isUIChrome returns true if the line is OpenCode TUI decoration.
 func isUIChrome(line string) bool {
-	for _, ch := range []string{"─", "╭", "╰", "┌", "└", "╹", "╻"} {
-		if strings.HasPrefix(line, ch) {
+	// A line opening with a box-drawing or block-element rune is frame, not
+	// content. This tests the Unicode ranges rather than a list of literals:
+	// the original list held only "─╭╰┌└╹╻", so OpenCode's much more common
+	// "│ ┃ ├ ┤ ┬ ┼" leaked through — table rows and every "┃ "-prefixed
+	// transcript line ended up inside synthesized task responses.
+	if r := []rune(line); len(r) > 0 {
+		switch {
+		case r[0] >= 0x2500 && r[0] <= 0x257F: // Box Drawing
+			return true
+		case r[0] >= 0x2580 && r[0] <= 0x259F: // Block Elements
 			return true
 		}
 	}

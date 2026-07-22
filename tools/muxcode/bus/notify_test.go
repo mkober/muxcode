@@ -549,7 +549,9 @@ func TestSetPolling_ClearPolling(t *testing.T) {
 		t.Error("IsPolling should return false when no marker exists")
 	}
 
-	SetPolling(session, role)
+	if !SetPolling(session, role) {
+		t.Fatal("SetPolling must claim a free marker")
+	}
 
 	// Now polling (our own PID is alive)
 	if !IsPolling(session, role) {
@@ -619,7 +621,9 @@ func TestNotify_PollingMarkerPreventsNotifiedMarker(t *testing.T) {
 	os.WriteFile(InboxPath(session, role), []byte(`{"from":"edit"}`+"\n"), 0644)
 
 	// Set polling marker with our own PID
-	SetPolling(session, role)
+	if !SetPolling(session, role) {
+		t.Fatal("SetPolling must claim a free marker")
+	}
 	defer ClearPolling(session, role)
 
 	// Without a tmux session, Notify returns nil early (before reaching polling check)

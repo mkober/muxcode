@@ -111,8 +111,21 @@ func readInbox(session, role, from string, peek bool) []bus.Message {
 // arrived before the poll started or without a trigger file update (e.g. from
 // hooks or direct Send() calls that predate the trigger mechanism).
 func inboxPoll(session, role, from string, raw bool, timeout int, loop bool) {
-	// Set polling marker so Notify() skips send-keys for our role
-	bus.SetPolling(session, role)
+	// Claim the polling marker so Notify() skips send-keys for our role.
+	//
+	// The claim is exclusive, and losing it is fatal: every tick below consumes
+	// destructively (readInbox with peek=false -> bus.Receive) and writes an
+	// "acked" receipt. A second loop on the same role would race the first for
+	// each message, and whichever loop won would print it to a pipe that no
+	// agent runtime is reading — the message is gone from the inbox, the
+	// receipt tells the daemon it was delivered, and checkPollHealth's
+	// receipt-gap backstop stays quiet. Exiting keeps the incumbent listener
+	// the single consumer.
+	if !bus.SetPolling(session, role) {
+		fmt.Fprintf(os.Stderr,
+			"An inbox listener is already running for %s — exiting rather than double-consuming\n", role)
+		return
+	}
 	defer bus.ClearPolling(session, role)
 
 	triggerPath := bus.TriggerNotifyPath(session, role)

@@ -278,13 +278,17 @@ func alreadyNotified(session, role string) bool {
 // SetWaiting creates a marker file indicating that a --wait polling loop is
 // active for the given role. While the marker exists, Notify() skips
 // display-message notifications since the --wait loop is already polling.
+// Unlike SetPolling this claim is not exclusive: --wait runs in the
+// foreground of the command that issued it, so it cannot accumulate the way a
+// backgrounded --poll loop can. It still writes atomically to avoid exposing a
+// truncated marker to a concurrent IsWaiting.
 func SetWaiting(session, role string) {
-	_ = os.WriteFile(WaitingMarkerPath(session, role), []byte(strconv.Itoa(os.Getpid())), 0644)
+	writeMarkerAtomic(WaitingMarkerPath(session, role), os.Getpid())
 }
 
-// ClearWaiting removes the --wait marker for a role.
+// ClearWaiting removes the --wait marker for a role, if this process owns it.
 func ClearWaiting(session, role string) {
-	_ = os.Remove(WaitingMarkerPath(session, role))
+	releaseMarker(WaitingMarkerPath(session, role))
 }
 
 // IsWaiting returns true if the given role has an active --wait polling loop.
@@ -595,15 +599,103 @@ func writeTriggerNotify(session, role string) {
 	_ = os.WriteFile(TriggerNotifyPath(session, role), []byte(ts), 0644)
 }
 
-// SetPolling creates a marker file indicating that a --poll loop is active
-// for the given role. Stores the PID for stale-marker detection.
-func SetPolling(session, role string) {
-	_ = os.WriteFile(PollingMarkerPath(session, role), []byte(strconv.Itoa(os.Getpid())), 0644)
+// readMarkerPID returns the PID recorded in a marker file. The second result
+// is false when the marker is missing, empty, or unparseable.
+func readMarkerPID(path string) (int, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, false
+	}
+	return pid, true
 }
 
-// ClearPolling removes the --poll marker for a role.
+// writeMarkerAtomic replaces a marker's contents via a temp file + rename, so a
+// concurrent reader never observes a partially-written file.
+//
+// This matters because os.WriteFile truncates in place, leaving a window where
+// the marker is zero bytes. IsPolling/IsWaiting treat an unparseable marker as
+// garbage and delete it — so a reader landing in that window permanently
+// un-registers a live listener, and nothing ever re-writes the marker.
+func writeMarkerAtomic(path string, pid int) bool {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
+	if err != nil {
+		return false
+	}
+	name := tmp.Name()
+	if _, err := tmp.WriteString(strconv.Itoa(pid)); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return false
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(name)
+		return false
+	}
+	if err := os.Rename(name, path); err != nil {
+		_ = os.Remove(name)
+		return false
+	}
+	return true
+}
+
+// claimMarker takes exclusive ownership of a PID marker for the calling
+// process, returning false when another live process already holds it.
+func claimMarker(path string) bool {
+	// Fast path: an exclusive create means we are unambiguously the owner.
+	if f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644); err == nil {
+		_, werr := f.WriteString(strconv.Itoa(os.Getpid()))
+		cerr := f.Close()
+		if werr == nil && cerr == nil {
+			return true
+		}
+		_ = os.Remove(path)
+		return false
+	}
+
+	// Someone else holds a live claim — leave it alone.
+	if pid, ok := readMarkerPID(path); ok && pid != os.Getpid() && CheckProcAlive(pid) {
+		return false
+	}
+
+	// Marker is stale, corrupt, or already ours: take it over atomically.
+	if !writeMarkerAtomic(path, os.Getpid()) {
+		return false
+	}
+	// Two processes can reach the takeover path together; only the one whose
+	// rename landed last actually owns the marker.
+	pid, ok := readMarkerPID(path)
+	return ok && pid == os.Getpid()
+}
+
+// releaseMarker removes a marker only while it still records the caller's PID.
+//
+// An unconditional remove lets the first of several listeners to exit
+// un-register every survivor: IsPolling then reports false even though a live
+// listener is still consuming, and the Stop hook launches yet another one —
+// a self-amplifying leak of duplicate inbox consumers.
+func releaseMarker(path string) {
+	if pid, ok := readMarkerPID(path); ok && pid != os.Getpid() {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+// SetPolling claims the --poll marker for the given role on behalf of the
+// calling process. It returns false when another live listener already holds
+// the marker, in which case the caller must not start a second poll loop:
+// both would race for the same inbox and each consume is destructive, so the
+// loser's messages are read into a pipe nobody is listening to.
+func SetPolling(session, role string) bool {
+	return claimMarker(PollingMarkerPath(session, role))
+}
+
+// ClearPolling removes the --poll marker for a role, if this process owns it.
 func ClearPolling(session, role string) {
-	_ = os.Remove(PollingMarkerPath(session, role))
+	releaseMarker(PollingMarkerPath(session, role))
 }
 
 // IsPolling returns true if the given role has an active --poll loop.

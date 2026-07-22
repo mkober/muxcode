@@ -1478,9 +1478,32 @@ func (d *Daemon) checkAgentHealth() {
 
 	ts := time.Now().Format("15:04:05")
 
+	// One tmux call for the whole sweep — read after the time gate above so an
+	// inert cycle spawns no process at all.
+	windows := d.sessionWindows()
+
 	for _, role := range bus.KnownRoles {
 		// Skip excluded roles and spawn roles
 		if bus.IsAgentHealthExcluded(d.session, role) || bus.IsSpawnRole(role) {
+			continue
+		}
+
+		// Hosted roles share their host's pane — the host's own probe covers
+		// them. Probing them separately is not just redundant here, it is
+		// destructive: RestartLocalAgent resolves PaneTarget by role, so
+		// restarting "pr-read" sends C-c into the *commit* window's pane and
+		// kills a healthy agent. It also doubles the effective restart budget
+		// for that pane, since a hosted role's counters are independent of its
+		// host's.
+		if bus.WindowForRole(role) != role {
+			continue
+		}
+
+		// A role with no tmux window in this session was never launched.
+		// provider.IsAlive fail-safes to "alive" when it cannot capture a pane,
+		// so this is the only signal that can definitively say "not here" —
+		// and restarting such a role would target a pane it does not own.
+		if !roleHasWindow(windows, role) {
 			continue
 		}
 
@@ -1489,7 +1512,7 @@ func (d *Daemon) checkAgentHealth() {
 			continue
 		}
 
-		alive := bus.IsAgentAlive(d.session, role)
+		alive := d.agentAlive(d.session, role)
 
 		if alive {
 			// Recovery detection
@@ -1546,6 +1569,14 @@ func (d *Daemon) checkAgentHealth() {
 					_ = bus.Send(d.session, msg)
 					d.refreshInboxSizes()
 				}
+				// Reset like the restart path below. The cap branch is nested
+				// under `count == 3`, so without this the counter climbs past 3
+				// and never matches again — alert-only mode would fire exactly
+				// one alert and then stay silent forever, however long the agent
+				// stays down. Resetting lets the count cycle back to 3 so the
+				// 600s re-alert above keeps reminding that a manual restart is
+				// still needed.
+				d.agentFailCounts[role] = 0
 				continue
 			}
 
@@ -2488,6 +2519,29 @@ func (d *Daemon) checkNonHookTasks() {
 
 		// Require at least 3s since we started tracking this task
 		if now-d.taskDeliveredAt[task.ID] < 3 {
+			continue
+		}
+
+		// The agent may have already answered for itself. OpenCode/Codex
+		// agents send their own replies, and the stop marker this check looks
+		// for is just the tail of that same turn — so "pane looks complete"
+		// does not mean a response is missing. Synthesizing one anyway
+		// delivers a second, pane-scraped response that the loop detector
+		// reports as a ping-pong between the two roles.
+		if respID, ok := bus.FindResponseSince(d.session, task.To, task.From, task.SentAt); ok {
+			bus.CompleteTask(d.session, task.ID, respID)
+			delete(d.taskDeliveredAt, task.ID)
+			delete(d.taskLastPaneContent, task.To+":"+task.ID)
+			continue
+		}
+
+		// Never fabricate a completion for an agent that is not running. A dead
+		// pane still shows the stop marker from its previous task, and the text
+		// around it is just whatever the shell left on screen — that is how a
+		// macOS "run chsh -s /bin/zsh" login banner was once recorded as a
+		// successful build. checkAgentHealth restarts the agent, and the task
+		// is re-delivered then.
+		if !d.agentAlive(d.session, task.To) {
 			continue
 		}
 

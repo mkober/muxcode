@@ -431,3 +431,54 @@ func TestSendMessage_AllowsSystemActions(t *testing.T) {
 		t.Errorf("system actions should not be deduped, got %d messages (want 2)", len(msgs))
 	}
 }
+
+// TestFindResponseSince covers the guard that stops the daemon from
+// synthesizing a duplicate reply for a non-hook agent that already answered.
+func TestFindResponseSince(t *testing.T) {
+	dir := t.TempDir()
+	old := busDirOverride
+	busDirOverride = dir
+	defer func() { busDirOverride = old }()
+
+	session := "test-find-response-since"
+	Init(session, dir)
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	if _, ok := FindResponseSince(session, "review", "test", 0); ok {
+		t.Error("must report no response before one is sent")
+	}
+
+	// A request in the opposite direction is not a response.
+	if err := Send(session, NewMessage("test", "review", "request", "review", "review the diff", "")); err != nil {
+		t.Fatalf("Send request: %v", err)
+	}
+	if _, ok := FindResponseSince(session, "review", "test", 0); ok {
+		t.Error("a request must not satisfy the response lookup")
+	}
+
+	// The agent answers for itself — exactly the case that must suppress
+	// synthesis of a second, pane-scraped response.
+	resp := NewMessage("review", "test", "response", "response", "LGTM", "")
+	if err := Send(session, resp); err != nil {
+		t.Fatalf("Send response: %v", err)
+	}
+	id, ok := FindResponseSince(session, "review", "test", 0)
+	if !ok {
+		t.Fatal("must find the response the agent sent")
+	}
+	if id != resp.ID {
+		t.Errorf("wrong response id: got %q want %q", id, resp.ID)
+	}
+
+	// A reply older than the task must not count, or a stale response would
+	// suppress synthesis for a brand-new task forever.
+	if _, ok := FindResponseSince(session, "review", "test", time.Now().Unix()+60); ok {
+		t.Error("a response older than `since` must not count")
+	}
+
+	// Direction matters.
+	if _, ok := FindResponseSince(session, "test", "review", 0); ok {
+		t.Error("response lookup must be direction-sensitive")
+	}
+}

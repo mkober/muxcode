@@ -217,3 +217,32 @@ func FindInFlightTask(session, to, action string) (Task, bool) {
 	}
 	return Task{}, false
 }
+
+// FindResponseSince returns the ID of the most recent response sent from one
+// role to another at or after the given unix timestamp.
+//
+// The daemon consults this before synthesizing a completion response for a
+// non-hook agent. OpenCode and Codex agents normally answer on their own, and
+// the stop marker left in their pane is just the tail of that same turn — so
+// detecting "completed" from the pane does not mean a reply is missing.
+// Without this check the requester gets the agent's real reply and, seconds
+// later, a second response built by scraping the pane, which the loop detector
+// then reports as a ping-pong between the two roles.
+//
+// It reads the append-only session log rather than peeking the requester's
+// inbox, so an already-consumed reply still counts.
+func FindResponseSince(session, from, to string, since int64) (string, bool) {
+	msgs := readLogForRole(session, from, 200)
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Type != "response" || m.From != from || m.To != to {
+			continue
+		}
+		if since > 0 && m.TS < since {
+			// Entries are chronological, so everything earlier is older still.
+			break
+		}
+		return m.ID, true
+	}
+	return "", false
+}
