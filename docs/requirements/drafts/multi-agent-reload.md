@@ -58,21 +58,21 @@ The existing Provider Selector modal gains a new **Agents** section between the 
 │                                         │
 │  ─── Model ─────────────────────────    │
 │                                         │
-│    ○ claude-opus-4-8                    │
+│    ○ claude-opus-5                    │
 │    ● claude-sonnet-5                  │
 │    ○ claude-haiku-4-5                   │
 │    ○ custom...                          │
 │                                         │
 │  ─── Agents ────────────────────────    │
 │                                         │
-│    [ ] Plan      claude / opus-4-8   F1 │
+│    [ ] Plan      claude / opus-5   F1 │
 │    [ ] Research  opencode / deepseek F1 │
-│    [ ] Edit      claude / opus-4-8   F2⚠│
+│    [ ] Edit      claude / opus-5   F2⚠│
 │    [ ] Auto      claude / sonnet-5 F2⚠│
 │    [x] Build     claude / sonnet-5 F3 │
 │    [ ] Test      opencode / minimax  F4 │
 │    [ ] Serve     opencode / minimax  F5 │
-│    [ ] Review    claude / opus-4-8   F6 │
+│    [ ] Review    claude / opus-5   F6 │
 │    [ ] Deploy    opencode / minimax  F7 │
 │    [ ] Run       opencode / minimax  F8 │
 │    [ ] Watch     opencode / minimax  F9 │

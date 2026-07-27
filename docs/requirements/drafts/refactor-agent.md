@@ -100,7 +100,7 @@ approximate anchors, not exact.
 - [ ] `tools/muxcode/bus/provider.go` — `roleDefaultCLI` (~L119): add `"refactor"` to
   the opencode list so it defaults to the OpenCode CLI.
 - [ ] `tools/muxcode/bus/launch.go` — `RoleClaudeModelDefault` (~L206): add `"refactor"`
-  to the `claude-opus-4-8` case (Claude fallback if ever run on the Claude CLI; the
+  to the `claude-opus-5` case (Claude fallback if ever run on the Claude CLI; the
   `default: return ""` branch means an unlisted role gets no model default, so an
   explicit case is needed).
 - [ ] Set the default OpenCode model for `refactor` to **`opencode-go/grok-4.5`**
@@ -183,7 +183,7 @@ approximate anchors, not exact.
 - [ ] `ToolProfile["refactor"]` in `profile.go` mirroring `"review"` (read-only, no
   Write/Edit, `CdPrefix: true`, `Include: ["bus","readonly","common"]`).
 - [ ] `roleDefaultCLI` += `"refactor"` (OpenCode) in `provider.go`.
-- [ ] `RoleClaudeModelDefault` `"refactor"` → `claude-opus-4-8` case in `launch.go`.
+- [ ] `RoleClaudeModelDefault` `"refactor"` → `claude-opus-5` case in `launch.go`.
 - [ ] OpenCode model default for `refactor` = **`opencode-go/grok-4.5`** (extend
   `RoleOpenCodeModelDefault` or equivalent).
 - [ ] Verify `MUXCODE_REFACTOR_CLI` / `MUXCODE_REFACTOR_MODEL` overrides resolve via the

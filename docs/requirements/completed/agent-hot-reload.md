@@ -28,7 +28,7 @@ Changing an agent's CLI or model requires restarting the entire muxcode session 
 Users want to:
 - Try DeepSeek V4 Pro on the build agent without disrupting the edit agent
 - Switch the edit agent from Claude Code to OpenCode mid-session
-- Upgrade a model (e.g., Sonnet 4 → Opus 4.8) for a specific role without restarting
+- Upgrade a model (e.g., Sonnet 4 → Opus 5) for a specific role without restarting
 - Downgrade a struggling agent to a cheaper/faster model on the fly
 
 ### Goal
@@ -334,7 +334,7 @@ The `muxcode provider-select` command renders a Dracula-themed interactive TUI i
 │                                         │
 │  ─── Model ─────────────────────────    │
 │                                         │
-│    ○ claude-opus-4-8                    │
+│    ○ claude-opus-5                    │
 │    ● claude-sonnet-5                  │
 │    ○ claude-haiku-4-5                   │
 │    ○ custom...                          │
@@ -393,7 +393,7 @@ func AvailableProviders() []ProviderOption {
         {
             Name:    "Claude Code",
             CLI:     "claude",
-            Models:  []string{"claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"},
+            Models:  []string{"claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"},
             Default: "claude-sonnet-5",
         },
         {
@@ -721,8 +721,8 @@ Success criteria:
 # CLI: switch build agent to OpenCode + DeepSeek mid-session
 muxcode reload build --cli opencode --model opencode-go/deepseek-v4-pro
 
-# CLI: switch edit agent to Claude Opus 4.8
-muxcode reload edit --model claude-opus-4-8
+# CLI: switch edit agent to Claude Opus 5
+muxcode reload edit --model claude-opus-5
 
 # Persist a change for future sessions
 muxcode config set build.cli opencode

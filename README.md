@@ -99,7 +99,7 @@ Out of the box, MuxCode uses Claude Code for orchestration roles and OpenCode fo
 
 | Role                                             | Default CLI | Default model                   |
 | ------------------------------------------------ | ----------- | ------------------------------- |
-| plan, edit                                       | Claude Code | `claude-opus-4-8`              |
+| plan, edit                                       | Claude Code | `claude-opus-5`               |
 | review                                           | OpenCode    | `opencode-go/mimo-v2.5-pro`    |
 | analyze                                          | OpenCode    | `opencode-go/qwen3.6-plus`     |
 | build, test, serve, deploy, run, watch, commit   | OpenCode    | `opencode-go/minimax-m2.7`     |
@@ -126,7 +126,7 @@ This gives you:
 
 | Role     | Provider    | Model              | Why                                                      |
 | -------- | ----------- | ------------------ | -------------------------------------------------------- |
-| edit     | Claude Code | Opus 4.8           | Full hook support, orchestration, code editing            |
+| edit     | Claude Code | Opus 5             | Full hook support, orchestration, code editing            |
 | commit   | OpenCode    | MiniMax M2.7       | Git operations — prompt-instructed chains                |
 | build    | OpenCode    | MiniMax M2.7       | Runs `./build.sh` — structured commands, no hooks needed |
 | test     | OpenCode    | MiniMax M2.7       | Runs `./test.sh` — structured commands, no hooks needed  |
