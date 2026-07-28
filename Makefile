@@ -48,7 +48,10 @@ install: build
 	@cp config/muxcode.json $(CONFIGDIR)/muxcode.json
 	@cp config/settings.json $(CONFIGDIR)/settings.json
 	@cp -n config/plugins.conf $(CONFIGDIR)/plugins.conf 2>/dev/null || true
-	@cp -n config/models.conf $(CONFIGDIR)/models.conf 2>/dev/null || true
+	@# models.conf overwrites (no -n, unlike plugins.conf above): it is the
+	@# provider-selector model list, so a model rename upstream must reach the
+	@# installed copy. With -n every rename silently stopped at the source.
+	@cp config/models.conf $(CONFIGDIR)/models.conf
 	@cp config/tmux.conf $(CONFIGDIR)/tmux.conf
 	@install -d $(HOME)/.claude/commands
 	@cp -n config/commands/*.md $(HOME)/.claude/commands/ 2>/dev/null || true
