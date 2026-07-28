@@ -168,7 +168,7 @@ func Send(args []string) {
 	// when hook chains have already produced results (e.g., build→test→review
 	// auto-chained, and edit tries to manually send another build request).
 	if msgType == "request" && !force {
-		if consumed := consumeExistingResponses(session, from, to, action); consumed {
+		if consumed := consumeExistingResponses(session, from, to, action, payload); consumed {
 			return
 		}
 	}
@@ -535,16 +535,28 @@ func isCommitAction(action string) bool {
 	return bus.IsGitMutatingAction("commit", action)
 }
 
-// consumeExistingResponses checks if the sender's inbox already has unread
-// responses from the target role matching the requested action. If so,
-// consumes and prints them, returning true (caller should skip sending).
-// This prevents redundant requests when hook-driven chains have already
-// delivered results (e.g., build→test→review auto-chains).
+// consumeExistingResponses checks if the sender's inbox already holds an unread
+// response answering *this exact request*. If so it consumes and prints it,
+// returning true (caller should skip sending). This prevents redundant requests
+// when hook-driven chains have already delivered results (e.g., build→test→
+// review auto-chains).
+//
+// Correlation is by ReplyTo, not by action alone. A response's payload is the
+// answer rather than the question, so the only way to know whether it addresses
+// the request being sent is to resolve ReplyTo back to the originating request
+// and compare that request's payload. Matching on (sender, action) alone
+// silently swallowed sends: any unread update-docs reply made the next —
+// entirely different — update-docs request look redundant, and because the
+// stale reply was printed, the drop read like a successful round-trip.
+//
+// Unresolvable correlation (empty ReplyTo, or a request aged out of the log)
+// counts as NOT redundant, so the message is sent. That direction is
+// deliberate: a suppressed send is unrecoverable, a redundant one costs tokens.
 //
 // TOCTOU note: the peek→consume sequence is not atomic. If another process
 // consumes the response between peek and ReceiveFromFunc, the function
 // returns false and falls through to normal send — a benign race.
-func consumeExistingResponses(session, from, to, action string) bool {
+func consumeExistingResponses(session, from, to, action, payload string) bool {
 	msgs, err := bus.Peek(session, from)
 	if err != nil || len(msgs) == 0 {
 		return false
@@ -552,16 +564,24 @@ func consumeExistingResponses(session, from, to, action string) bool {
 
 	// Also accept responses from the host agent for hosted roles
 	host := bus.WindowForRole(to)
-	hasMatch := false
-	for _, m := range msgs {
-		if m.Type != "response" {
-			continue
+
+	// Applied identically when detecting a match and when classifying consumed
+	// messages below. A looser second pass would consume and discard a response
+	// that this predicate deliberately declined to match.
+	answersThisRequest := func(m bus.Message) bool {
+		if m.Type != "response" || m.Action != action {
+			return false
 		}
 		if m.From != to && m.From != host {
-			continue
+			return false
 		}
-		// Only match responses with the same action as the request
-		if m.Action == action {
+		orig, ok := bus.FindRequestByID(session, m.ReplyTo)
+		return ok && orig.Payload == payload
+	}
+
+	hasMatch := false
+	for _, m := range msgs {
+		if answersThisRequest(m) {
 			hasMatch = true
 			break
 		}
@@ -580,10 +600,10 @@ func consumeExistingResponses(session, from, to, action string) bool {
 		return false
 	}
 
-	// Separate matching responses from non-matching ones
+	// Separate responses answering this request from everything else
 	var matching, other []bus.Message
 	for _, m := range consumed {
-		if m.Type == "response" && m.Action == action {
+		if answersThisRequest(m) {
 			matching = append(matching, m)
 		} else {
 			other = append(other, m)
@@ -596,12 +616,20 @@ func consumeExistingResponses(session, from, to, action string) bool {
 		_ = bus.AppendToInbox(session, from, m)
 	}
 
-	fmt.Printf("Found %d existing %s response(s) from %s in inbox — skipping send:\n", len(matching), action, to)
+	// The match can be consumed by another process between peek and receive,
+	// leaving only non-matching messages. With nothing to show, sending is the
+	// correct outcome — never return true with an empty result.
+	if len(matching) == 0 {
+		return false
+	}
+
+	fmt.Printf("NOT SENT — %d existing %s response(s) from %s already answer this exact request:\n",
+		len(matching), action, to)
 	for _, m := range matching {
 		fmt.Println()
 		fmt.Print(bus.FormatMessage(m))
 	}
-	fmt.Println()
+	fmt.Printf("\nRe-send with --force to deliver anyway.\n")
 	return true
 }
 

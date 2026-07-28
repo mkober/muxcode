@@ -218,6 +218,34 @@ func FindInFlightTask(session, to, action string) (Task, bool) {
 	return Task{}, false
 }
 
+// FindRequestByID returns the logged message with the given ID.
+//
+// Responses carry the ID of the request they answer in ReplyTo, so this
+// resolves a reply back to the original ask. It lets a caller tell "you already
+// have the answer to this exact question" apart from "you have an older,
+// unrelated answer that merely shares an action label".
+//
+// Returns false for an empty ID or for a request that has aged out of the log.
+// Callers must treat that as "not redundant" and send: a suppressed send is
+// unrecoverable, while a redundant one only costs tokens.
+func FindRequestByID(session, id string) (Message, bool) {
+	if id == "" {
+		return Message{}, false
+	}
+	data, err := os.ReadFile(LogPath(session))
+	if err != nil {
+		return Message{}, false
+	}
+	msgs := decodeMessageLines(data)
+	// Scan newest-first: the originating request is typically recent.
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].ID == id {
+			return msgs[i], true
+		}
+	}
+	return Message{}, false
+}
+
 // FindResponseSince returns the ID of the most recent response sent from one
 // role to another at or after the given unix timestamp.
 //

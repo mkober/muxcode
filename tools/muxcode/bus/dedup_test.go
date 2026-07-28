@@ -7,6 +7,36 @@ import (
 	"time"
 )
 
+func TestFindRequestByID(t *testing.T) {
+	dir := t.TempDir()
+	old := busDirOverride
+	busDirOverride = dir
+	defer func() { busDirOverride = old }()
+
+	session := "test-findreq"
+	os.MkdirAll(filepath.Dir(LogPath(session)), 0755)
+
+	req := NewMessage("edit", "plan", "request", "update-docs", "document the reload fix", "")
+	data, _ := EncodeMessage(req)
+	appendToFile(LogPath(session), append(data, '\n'))
+
+	got, ok := FindRequestByID(session, req.ID)
+	if !ok {
+		t.Fatal("logged request not found by ID")
+	}
+	if got.Payload != "document the reload fix" {
+		t.Errorf("payload = %q, want %q", got.Payload, "document the reload fix")
+	}
+
+	// Both unresolvable cases must report false so callers fail open and send.
+	if _, ok := FindRequestByID(session, ""); ok {
+		t.Error("empty ID must not match")
+	}
+	if _, ok := FindRequestByID(session, "1234567890-edit-deadbeef"); ok {
+		t.Error("unknown ID must not match")
+	}
+}
+
 func TestIsDuplicateMessage_NoDuplicate(t *testing.T) {
 	dir := t.TempDir()
 	old := busDirOverride
