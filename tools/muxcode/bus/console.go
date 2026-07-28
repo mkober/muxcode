@@ -1275,6 +1275,60 @@ func renderGitStatus() string {
 		b.WriteString("\n")
 	}
 
+	// Recent local branches
+	b.WriteString(renderRecentBranches(branch))
+
+	return b.String()
+}
+
+// recentBranchLimit caps how many local branches the commit console lists.
+const recentBranchLimit = 10
+
+// renderRecentBranches lists the most recently committed-to local branches,
+// newest first, marking the current branch with an asterisk. Returns an empty
+// string when the repo has no branches yet (e.g. before the first commit).
+func renderRecentBranches(current string) string {
+	raw := gitCmd("for-each-ref",
+		"--sort=-committerdate",
+		fmt.Sprintf("--count=%d", recentBranchLimit),
+		"--format=%(refname:short)\t%(committerdate:relative)",
+		"refs/heads/")
+	if raw == "" {
+		return ""
+	}
+
+	type branchRow struct{ name, when string }
+	var rows []branchRow
+	nameWidth := 0
+	for _, line := range strings.Split(raw, "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		rows = append(rows, branchRow{name: parts[0], when: parts[1]})
+		if len(parts[0]) > nameWidth {
+			nameWidth = len(parts[0])
+		}
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%s%srecent branches%s\n", Pad, ColorCyan, ColorReset))
+	for _, r := range rows {
+		marker, color := " ", ColorDim
+		if r.name == current {
+			marker, color = "*", ColorGreen
+		}
+		b.WriteString(fmt.Sprintf("%s%s%s %-*s%s  %s%s%s\n",
+			ContPad, color, marker, nameWidth, r.name, ColorReset, ColorDim, r.when, ColorReset))
+	}
+	b.WriteString("\n")
+
 	return b.String()
 }
 

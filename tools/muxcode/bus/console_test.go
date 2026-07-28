@@ -2,7 +2,9 @@ package bus
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -701,5 +703,133 @@ func TestRenderConsoleWatchProcOwnerFilter(t *testing.T) {
 	}
 	if !strings.Contains(output, "no events yet") {
 		t.Errorf("watch console with no owned procs should show empty placeholder, got: %q", output)
+	}
+}
+
+// runTestGit executes a git command in dir with a hermetic identity/config so
+// the caller's global gitconfig (hooks, signing) cannot influence the result.
+func runTestGit(t *testing.T, dir string, extraEnv []string, args ...string) {
+	t.Helper()
+	base := []string{
+		"-c", "user.name=Test",
+		"-c", "user.email=test@example.com",
+		"-c", "commit.gpgsign=false",
+		"-c", "core.hooksPath=",
+	}
+	cmd := exec.Command("git", append(base, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), extraEnv...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// makeBranchRepo builds a temp repo with one commit per branch name, dated
+// oldest-first in slice order, and chdirs into it for the duration of the test.
+func makeBranchRepo(t *testing.T, branches []string) string {
+	t.Helper()
+	dir := t.TempDir()
+	runTestGit(t, dir, nil, "init")
+
+	for i, b := range branches {
+		date := fmt.Sprintf("2026-01-01 %02d:00:00 +0000", i)
+		env := []string{"GIT_AUTHOR_DATE=" + date, "GIT_COMMITTER_DATE=" + date}
+		runTestGit(t, dir, nil, "checkout", "-b", b)
+		if err := os.WriteFile(filepath.Join(dir, b+".txt"), []byte("x"), 0644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+		runTestGit(t, dir, nil, "add", ".")
+		runTestGit(t, dir, env, "commit", "-m", "commit on "+b)
+	}
+
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+	return dir
+}
+
+// TestRenderRecentBranchesOrderAndCurrent pins newest-first ordering and that
+// the checked-out branch is the one marked.
+func TestRenderRecentBranchesOrderAndCurrent(t *testing.T) {
+	makeBranchRepo(t, []string{"old-feature", "mid-feature", "new-feature"})
+
+	out := StripANSI(renderRecentBranches("new-feature"))
+	if !strings.Contains(out, "recent branches") {
+		t.Fatalf("expected section header, got: %q", out)
+	}
+
+	iNew := strings.Index(out, "new-feature")
+	iMid := strings.Index(out, "mid-feature")
+	iOld := strings.Index(out, "old-feature")
+	if iNew < 0 || iMid < 0 || iOld < 0 {
+		t.Fatalf("all three branches should be listed, got: %q", out)
+	}
+	if !(iNew < iMid && iMid < iOld) {
+		t.Errorf("branches must be newest-first, got: %q", out)
+	}
+
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "-feature") {
+			continue
+		}
+		marked := strings.Contains(line, "*")
+		isCurrent := strings.Contains(line, "new-feature")
+		if marked != isCurrent {
+			t.Errorf("only the current branch may be marked, offending line: %q", line)
+		}
+	}
+}
+
+// TestRenderRecentBranchesCapsAtLimit verifies the list is capped at
+// recentBranchLimit and that it drops the OLDEST branches, not the newest.
+func TestRenderRecentBranchesCapsAtLimit(t *testing.T) {
+	var branches []string
+	for i := 0; i < recentBranchLimit+2; i++ {
+		branches = append(branches, fmt.Sprintf("branch-%02d", i))
+	}
+	makeBranchRepo(t, branches)
+
+	out := StripANSI(renderRecentBranches(branches[len(branches)-1]))
+
+	rows := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "branch-") {
+			rows++
+		}
+	}
+	if rows != recentBranchLimit {
+		t.Errorf("expected %d branch rows, got %d: %q", recentBranchLimit, rows, out)
+	}
+	// branch-00 and branch-01 are the two oldest and must be the ones dropped.
+	if strings.Contains(out, "branch-00") || strings.Contains(out, "branch-01") {
+		t.Errorf("oldest branches should be dropped, not newest, got: %q", out)
+	}
+	if !strings.Contains(out, "branch-11") {
+		t.Errorf("newest branch must be retained, got: %q", out)
+	}
+}
+
+// TestRenderRecentBranchesEmptyRepo verifies a repo with no commits renders
+// nothing rather than an empty header block.
+func TestRenderRecentBranchesEmptyRepo(t *testing.T) {
+	dir := t.TempDir()
+	runTestGit(t, dir, nil, "init")
+
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+
+	if out := renderRecentBranches(""); out != "" {
+		t.Errorf("repo with no commits should render nothing, got: %q", out)
 	}
 }
