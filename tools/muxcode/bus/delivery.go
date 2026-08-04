@@ -110,15 +110,37 @@ func WriteReceipt(session, msgID, ackedBy, kind string) {
 	_ = writeDeliveryStatus(session, ds)
 }
 
+// hasReceipt is the single definition of "this message was received", shared by
+// every read-side consumer (ReadReceipt, and through it ReceiptGap).
+//
+// Two ways a message can prove receipt:
+//   - AckedAt is set — an explicit receipt was written on consume.
+//   - Status is responded — the recipient REPLIED to it. A reply is strictly
+//     stronger evidence than a consume-ack: the agent didn't just read the
+//     message, it finished the work and answered.
+//
+// The second clause exists because MarkResponded (the reply path) records the
+// response without setting AckedAt. Without it, a request that was answered but
+// whose inbox row was never consumed reads as un-receipted forever, so
+// ReceiptGap counts it permanently and the daemon's backstop re-drives delivery
+// and alerts `delivery-gap` for work that is already done.
+//
+// WriteReceipt has always honored this invariant on the WRITE side ("a reply
+// already implies receipt" — it refuses to regress a responded message). This
+// keeps the READ side in agreement; the two disagreeing was the defect.
+func hasReceipt(ds DeliveryStatus) bool {
+	return ds.AckedAt > 0 || ds.Status == StatusResponded
+}
+
 // ReadReceipt returns a message's delivery status and whether it carries a
-// receipt (AckedAt set). Used by the daemon's receipt-gap backstop and by the
+// receipt (see hasReceipt). Used by the daemon's receipt-gap backstop and by the
 // delivery decisions that replace the notified-IDs marker.
 func ReadReceipt(session, msgID string) (DeliveryStatus, bool) {
 	ds, err := ReadDeliveryStatus(session, msgID)
 	if err != nil {
 		return DeliveryStatus{}, false
 	}
-	return ds, ds.AckedAt > 0
+	return ds, hasReceipt(ds)
 }
 
 // ReceiptGap returns messages still sitting in role's inbox that carry no
@@ -141,8 +163,12 @@ func ReceiptGap(session, role string, olderThan time.Duration) []Message {
 		if m.TS > cutoff {
 			continue // too fresh to count as stuck
 		}
+		// Already receipted — either consume-acked, or answered (a reply proves
+		// the agent got it). An answered request can still be sitting here if its
+		// row was never consumed; counting it would make the gap permanent and
+		// keep the backstop re-driving delivery for finished work.
 		if _, acked := ReadReceipt(session, m.ID); acked {
-			continue // already receipted (shouldn't linger in the inbox, but be safe)
+			continue
 		}
 		gap = append(gap, m)
 	}

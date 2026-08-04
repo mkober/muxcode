@@ -162,6 +162,16 @@ func sendMessage(session string, m Message, autoCC bool) error {
 	}
 	if m.ReplyTo != "" {
 		MarkResponded(session, m.ReplyTo, m.ID)
+		// Drain the request we just answered from our OWN inbox. Replying does
+		// not consume it, so without this the row stays actionable forever: the
+		// daemon re-wakes us for finished work and we answer again, and the
+		// receipt-gap backstop re-drives delivery + alerts `delivery-gap`.
+		// WindowForRole mirrors the delivery routing above, so a hosted role
+		// drains from its host's inbox rather than a phantom one. Already-consumed
+		// (the normal path) is a no-op.
+		if _, err := ConsumeByID(session, WindowForRole(m.From), m.ReplyTo); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: draining answered request %s failed: %v\n", m.ReplyTo, err)
+		}
 	}
 
 	// Append to log
@@ -349,6 +359,85 @@ func ReceiveFromFunc(session, role string, matchFn func(string) bool) ([]Message
 	}
 
 	return matched, nil
+}
+
+// ConsumeByID removes a single message from a role's inbox by message ID,
+// leaving every other message untouched, and writes a true consume-ack receipt
+// for it. Returns whether the message was found and removed.
+//
+// Used by Send() to drain a request the agent has just ANSWERED: replying does
+// not otherwise consume the request row, so it stays actionable forever, the
+// daemon keeps waking the agent for work it already finished, and the agent
+// answers again (the duplicate-response echo).
+//
+// Keying on message ID (rather than sender/action) is deliberate: an auto-CC
+// copy of a request addressed to another agent lives in edit's inbox with the
+// same From/Action, and must never be collaterally removed. Missing message,
+// missing inbox, and an already-consumed row are all ordinary no-ops, not errors.
+func ConsumeByID(session, role, msgID string) (bool, error) {
+	if msgID == "" {
+		return false, nil
+	}
+
+	inbox := InboxPath(session, role)
+	consuming := inbox + ".consuming-id"
+
+	if err := os.Rename(inbox, consuming); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	if err := touchFile(inbox); err != nil {
+		// Non-fatal: inbox will be recreated on next send
+		_ = err
+	}
+
+	all, err := readMessages(consuming)
+	if err != nil {
+		// The rename made .consuming-id the only copy — restore rather than
+		// drop the whole inbox on a transient read error.
+		restoreConsuming(inbox, consuming)
+		return false, err
+	}
+	_ = os.Remove(consuming)
+
+	// Drop EVERY copy of the target ID, not just the first. IDs are unique in
+	// practice, but if a row were ever duplicated, keeping one back would leave
+	// the request actionable — precisely the lingering-row bug this exists to fix.
+	var found bool
+	rest := make([]Message, 0, len(all))
+	for _, m := range all {
+		if m.ID == msgID {
+			found = true
+			continue
+		}
+		rest = append(rest, m)
+	}
+
+	// Write everything else back before reporting success, so a failure here
+	// can never silently discard unrelated messages.
+	if len(rest) > 0 {
+		var buf []byte
+		for _, m := range rest {
+			data, encErr := EncodeMessage(m)
+			if encErr != nil {
+				continue
+			}
+			buf = append(buf, data...)
+			buf = append(buf, '\n')
+		}
+		if writeErr := prependToInbox(inbox, buf); writeErr != nil {
+			// Best effort: try appending instead (mirrors ReceiveFromFunc).
+			_ = appendToFile(inbox, buf)
+		}
+	}
+
+	if found {
+		WriteReceipt(session, msgID, role, ReceiptKindAck)
+	}
+	return found, nil
 }
 
 // Peek reads messages from a role's inbox without consuming them.
