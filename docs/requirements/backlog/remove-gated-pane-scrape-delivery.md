@@ -62,6 +62,13 @@ un-consumed for benign reasons:
 - **Busy non-hook TUIs** (OpenCode/Codex mid-task) — not idle to accept an inject, no receipt yet.
 - **Freshly-idle Claude** whose `muxcode inbox --poll --loop` self-poll loop hasn't (re)launched yet.
 
+A third — distinct and much cheaper — cause of the same symptom was found live: a request the
+agent **answered but never consumed** read as un-receipted forever (read/write asymmetry in the
+receipt model), keeping the gap permanently non-empty and re-driving delivery for finished work.
+That cause is fixed by [answered-row-receipt](../drafts/answered-row-receipt.md), which removes a
+large share of these mis-fires without any heartbeat work — but the busy-TUI and freshly-idle
+cases below remain, so this prerequisite is **partially unblocked, not resolved**.
+
 The recover-once guard reduces this to a single wasted attempt + one alert per episode rather than
 per-poll churn, but it does **not** eliminate the false positive. A durable fix needs a **positive
 "self-poll loop is running" signal** (e.g. a liveness heartbeat from the poll listener / sidecar)
