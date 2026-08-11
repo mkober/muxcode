@@ -161,17 +161,12 @@ func sendMessage(session string, m Message, autoCC bool) error {
 		fmt.Fprintf(os.Stderr, "warning: delivery status creation failed: %v\n", err)
 	}
 	if m.ReplyTo != "" {
+		// MarkResponded also drains the answered request from the recipient's
+		// inbox — replying does not consume it, and a row left actionable gets
+		// the agent re-woken for finished work. The drain deliberately lives in
+		// MarkResponded rather than here, so the --wait correlation path (which
+		// marks a request responded without any reply message) gets it too.
 		MarkResponded(session, m.ReplyTo, m.ID)
-		// Drain the request we just answered from our OWN inbox. Replying does
-		// not consume it, so without this the row stays actionable forever: the
-		// daemon re-wakes us for finished work and we answer again, and the
-		// receipt-gap backstop re-drives delivery + alerts `delivery-gap`.
-		// WindowForRole mirrors the delivery routing above, so a hosted role
-		// drains from its host's inbox rather than a phantom one. Already-consumed
-		// (the normal path) is a no-op.
-		if _, err := ConsumeByID(session, WindowForRole(m.From), m.ReplyTo); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: draining answered request %s failed: %v\n", m.ReplyTo, err)
-		}
 	}
 
 	// Append to log

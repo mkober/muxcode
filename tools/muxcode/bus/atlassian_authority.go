@@ -25,13 +25,35 @@ import (
 // of prose and into the bus. Same disease, same cure.
 //
 // The gate is authority, not intent: we cannot verify "the user asked for this"
-// from inside a CLI call. What we CAN verify is which agent is calling. Routing
-// every external write through the one agent that is actually in conversation
-// with the user puts a human in the loop, which is the property that was missing.
+// from inside a CLI call. What we CAN verify is which agent is calling, so the
+// write surface is deliberately narrowed to exactly one role.
+//
+// That role is now the plan agent, by explicit operator decision: plan owns the
+// shared WRITTEN artifacts — specs under docs/, and the tracker items those
+// specs describe — so the tooling and the ownership finally sit together.
+//
+// Be clear about what this costs. The previous holder was edit, justified by
+// edit being the only agent in direct conversation with the user: the human was
+// structurally in the loop because the writing agent was the one being spoken
+// to. Plan does not have that property. It acts on bus messages, so the gate
+// alone no longer proves a human asked for anything.
+//
+// What replaces it is a scope rule, not a checkable invariant, and it is aimed
+// squarely at the incident above: plan writes to Jira/Confluence ONLY on an
+// explicit user-initiated request relayed from edit, and NEVER as a side effect
+// of a spec or docs change. agents/planner.md carries that rule, and the
+// "automatically update the corresponding Jira story / do not ask the user"
+// instruction that caused the original cascade is gone.
+//
+// So this default is weaker than what it replaces, on purpose. If the tracker
+// should be strictly human-owned, set MUXCODE_ATLASSIAN_AUTHORITY_ROLES="" and
+// every role is denied.
 
 // atlassianAuthorityDefault is the role permitted to write to Jira and
-// Confluence: the edit agent, the only agent the user talks to directly.
-var atlassianAuthorityDefault = []string{"edit"}
+// Confluence: the plan agent, which owns shared written artifacts. Changing this
+// value changes a security boundary — TestAtlassianAuthorityDefault pins it so
+// the change cannot happen silently.
+var atlassianAuthorityDefault = []string{"plan"}
 
 // AtlassianAuthorityRoles returns the roles allowed to mutate Jira/Confluence.
 //

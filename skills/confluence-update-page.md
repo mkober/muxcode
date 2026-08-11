@@ -1,7 +1,7 @@
 ---
 name: confluence-update-page
 description: Read and update a Confluence page with ADF content
-roles: [git, edit, plan]
+roles: [plan, edit]
 tags: [confluence, integration, documentation, adf]
 ---
 

@@ -1,6 +1,6 @@
 # Echo As Result
 
-Stop pane-scrape echoes from being recorded as passing command results in console history. When a `--wait` send receives a response from a non-hook provider (OpenCode/Codex), `logWaitResponseToHistory` synthesizes a history entry from the response payload and records it as a **passing command** — even when the payload is a launch banner or TUI chrome, not a result. This **fabricates GREEN**: it is arguably higher severity than the answered-row bug ([answered-row-receipt](answered-row-receipt.md)), because that one produced redundant noise while this one produces false evidence that work succeeded.
+Stop pane-scrape echoes from being recorded as passing command results in console history. When a response from a non-hook provider (OpenCode/Codex) completes a send, a history entry is synthesized from the response payload and recorded as a **passing command** — by `logWaitResponseToHistory` (`cmd/send.go`) on the `--wait` path AND by its daemon mirror `logTrackedTaskToHistory` (`daemon/daemon.go`) when a `--track` task completes — even when the payload is a launch banner or TUI chrome, not a result. This **fabricates GREEN**: it is arguably higher severity than the answered-row bug ([answered-row-receipt](answered-row-receipt.md)), because that one produced redundant noise while this one produces false evidence that work succeeded.
 
 ## Context
 
@@ -26,6 +26,32 @@ REAL: {"command":"./test.sh","exit_code":"0","outcome":"success",
 
 The `command` field is the tell: the real row records the shell command the agent actually ran (self-logged via `muxcode log ... --command ./test.sh --exit-code $exit_code`); the fake rows record the BUS ACTION name.
 
+### 2026-08-11 recurrence — `--track`, and silent work loss
+
+The same synthesis fired repeatedly on `--track` sends (not just `--wait`) on 2026-08-11. At session start, requests to `test` and `run` were answered ~15s later with the agents' shell launch banners (`muxcode agent launch test`, "LSPs are disabled", the model banner). Two false-green entries were recorded for runs that never happened:
+
+```json
+{"command":"test","exit_code":"0","outcome":"success","output":"muxcode agent launch test..."}
+```
+
+The `exit_code:"0"` / `outcome:"success"` are hardcoded defaults that only flip to failure when the payload contains `"failed"` or `"error:"` — a boot banner contains neither. Trigger appears to be OpenCode task-completion detection firing while the agent was still starting up.
+
+**The cascade — worse than the logging defect.** Later in the same session the bug compounded: agents began receiving OTHER agents' launch noise as their own wake-up payloads and acting on it.
+
+- The `run` agent reasoned "the pane text ... was the watch agent's response being injected as my next wake-up ... but the content is just launch noise. My inbox is empty" — and went idle WITHOUT running the script it had been asked to run.
+- The `test` agent skipped a requested re-run, concluding "Everything is clean — tests pass, review is LGTM ... Nothing more to do here", based on a stale prior result.
+
+Net effect: requested work silently does not happen while the console shows green. That is the real severity of this bug — it is not only a cosmetic logging issue.
+
+### Provenance detector
+
+Reliable classification of any console history entry, usable today by humans and agents — worth encoding in whatever design Phase 1 selects:
+
+| `command` field | Provenance |
+|-----------------|------------|
+| A bus action name (`test`, `run`, `build`, `review`) | SYNTHESIZED from a response payload — not evidence of a run |
+| A real shell command (`./test.sh`, `./build.sh`) or empty (agent self-log) | REAL |
+
 ### Root cause
 
 `logWaitResponseToHistory` in `cmd/send.go` (lines 466-527, called from the `--wait` response path at line 391). When a `--wait` send receives a response from a non-hook provider, it writes a console history entry synthesized from the RESPONSE PAYLOAD. Three defects compound:
@@ -33,6 +59,8 @@ The `command` field is the tell: the real row records the shell command the agen
 1. **Success by keyword-absence** — it sets `exitCode := "0"` and only flips to `"1"` when `action == "error"` or the payload contains `"failed"` or `"error:"`. Arbitrary chat/pane text contains none of those, so ANY payload is recorded as `outcome: "success"`. Absence of evidence is recorded as evidence of success.
 2. **Bus action written into `command`** — the entry is built with `Command: action`. In the console this is indistinguishable from a genuinely executed shell command, so a synthesized row renders exactly like a real `./test.sh` row.
 3. **No provenance** — nothing on `HookHistoryEntry` (`bus/hook.go:432`) distinguishes "the agent self-logged a real command with a real exit code" from "send.go synthesized this from a chat reply". The console and its pass/fail counters treat both as equally authoritative.
+
+**Second path — `--track` (scope wider than first documented)**: `logTrackedTaskToHistory` (`daemon/daemon.go:2486`, called from the tracked-task completion path at :2473) is a deliberate mirror of `logWaitResponseToHistory` — same hardcoded `exitCode := "0"`, same `"failed"`/`"error:"` keyword-absence scan, same `Command: action`. Every defect above exists twice. A fix that only touches the `--wait` path in `cmd/send.go` will not close this.
 
 **Upstream contributor**: for non-hook TUIs the payload that reaches `--wait` is frequently pane-scraped intermediate text (launch banner, `Thought: 242ms`, partial reasoning) rather than a real result, because completion detection for those providers is heuristic. The input to the above is often not a result at all.
 
@@ -49,6 +77,7 @@ Invariants any chosen design must satisfy:
 - [ ] A bus action name can never be read as an executed shell command in console history
 - [ ] Every history entry's provenance is distinguishable: agent-self-logged (real command, real exit code) vs synthesized from a `--wait` response payload
 - [ ] Obviously-not-a-result payloads (launch banners, `Thought:` lines, TUI chrome, prompt lines) are never recorded as a verdict
+- [ ] The fix covers every synthesized-entry path — `logWaitResponseToHistory` (`--wait`, `cmd/send.go`) and its daemon mirror `logTrackedTaskToHistory` (`--track`, `daemon/daemon.go`) alike
 - [ ] The genuine agent-self-logged path stays intact and authoritative: `muxcode log <role> ... --command X --exit-code $code --output-file f` is the trustworthy source
 - [ ] Non-hook console panes do not regress to empty — the original purpose of `logWaitResponseToHistory` (visibility) is preserved in some form
 
@@ -75,6 +104,7 @@ Candidate directions — **no pre-commitment**; Phase 1 evaluates and records th
 | File | Role in defect |
 |------|----------------|
 | `cmd/send.go` | `logWaitResponseToHistory()` (L466-527) — synthesizes the fabricated entry; called from `--wait` response path (L391) |
+| `daemon/daemon.go` | `logTrackedTaskToHistory()` (L2486) — `--track` mirror of the same synthesis; fires on tracked-task completion (L2473) |
 | `cmd/log.go` | `runLog` — `exitCode` defaults `"0"` (L49), outcome success unless non-zero (L126-129); no `unknown` outcome |
 | `bus/hook.go` | `HookHistoryEntry` (L432) — no provenance field, no `unknown` outcome |
 | `bus/console.go` | `ConsoleEntry.IsPass()` (L89) treats empty exit code as pass; `summaryLine()` pass/fail counters (L432-483) |
@@ -94,12 +124,13 @@ Same underlying disease as the answered-row echo loop ([answered-row-receipt](an
 - [ ] Evaluate: whether `logWaitResponseToHistory` should write a result row at all — dedicated verdict-free "activity" row shape
 - [ ] Record the chosen combination in this spec's Technical approach and update Phase 2 steps to match
 
-### Phase 2: Fix the synthesized-entry path (`cmd/send.go`)
+### Phase 2: Fix the synthesized-entry paths (`cmd/send.go` + `daemon/daemon.go`)
 
 - [ ] Implement the chosen design in `logWaitResponseToHistory` — synthesized entries can no longer carry an unearned `success`
-- [ ] Remove the keyword-absence heuristic (`"failed"` / `"error:"` scan) as a success/failure oracle
+- [ ] Apply the identical fix to the daemon mirror `logTrackedTaskToHistory` (`--track` path) — the mirror must not outlive the fix
+- [ ] Remove the keyword-absence heuristic (`"failed"` / `"error:"` scan) as a success/failure oracle — in both paths
 - [ ] Ensure a bus action is never rendered as a shell command in console history
-- [ ] Unit tests: launch-banner payload never records a pass; chat text never records a pass; real self-logged entries unaffected
+- [ ] Unit tests: launch-banner payload never records a pass (via `--wait` and `--track` paths); chat text never records a pass; real self-logged entries unaffected
 
 ### Phase 3: Fix the same family in `muxcode log` and the console model
 
@@ -112,6 +143,7 @@ Same underlying disease as the answered-row echo loop ([answered-row-receipt](an
 
 - [ ] Create `scripts/test-echo-as-result.sh` with end-to-end verification (requires running muxcode session)
 - [ ] Test: simulate a `--wait` response whose payload is a launch banner → verify console history records no pass for it
+- [ ] Test: simulate a `--track` task completion whose payload is a launch banner → verify console history records no pass for it
 - [ ] Test: real `muxcode log --command ./test.sh --exit-code 0` → verify it still renders as a pass (authoritative path intact)
 - [ ] Test: real `muxcode log --exit-code 1` → verify it renders as a fail
 - [ ] Test: console summary counters over a mixed history count only verdict-carrying entries as pass/fail

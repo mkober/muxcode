@@ -69,19 +69,43 @@ func CreateDeliveryStatus(session string, m Message) error {
 	return writeDeliveryStatus(session, ds)
 }
 
-// MarkResponded updates the original message's delivery status to "responded"
-// and records the response message ID. Called by Send() when ReplyTo is set.
+// MarkResponded updates the original message's delivery status to "responded",
+// records the response message ID, and drains the now-answered request from the
+// recipient's inbox.
+//
+// The drain lives HERE, not at the call sites, because there is more than one
+// way a request becomes "responded":
+//   - Send() when a reply carries ReplyTo.
+//   - cmd/send.go's --wait fallback, which correlates a response that was sent
+//     WITHOUT ReplyTo back to the request it was waiting on.
+//
+// The second path has no reply message to hang a drain off, so a drain wired
+// only into Send() left those rows actionable forever — the agent kept being
+// re-woken for finished work. That is the same shape as the original defect this
+// whole fix addresses (one path honoring an invariant, another quietly not), so
+// the invariant "marked responded implies drained" is enforced at the single
+// choke point every path already goes through.
+//
+// The recipient is resolved from the ORIGINAL request's To field rather than
+// from whoever sent the reply, so a mis-attributed or stale correlation still
+// drains the right inbox. Best-effort throughout: a request whose log entry has
+// been rotated away simply isn't drained.
 func MarkResponded(session, originalID, responseID string) {
 	if originalID == "" {
 		return
 	}
-	ds, err := ReadDeliveryStatus(session, originalID)
-	if err != nil {
-		return // no status file
+
+	// Status update — skipped when the status file is missing (GC'd or predates
+	// delivery tracking), but that must not skip the drain below.
+	if ds, err := ReadDeliveryStatus(session, originalID); err == nil {
+		ds.Status = StatusResponded
+		ds.ResponseID = responseID
+		_ = writeDeliveryStatus(session, ds)
 	}
-	ds.Status = StatusResponded
-	ds.ResponseID = responseID
-	_ = writeDeliveryStatus(session, ds)
+
+	if original, ok := FindMessageByID(session, originalID); ok {
+		_, _ = ConsumeByID(session, WindowForRole(original.To), originalID)
+	}
 }
 
 // WriteReceipt records that a message was received, keyed by message ID. ackedBy

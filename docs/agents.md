@@ -92,6 +92,8 @@ muxcode send test test "Run tests and report results"
 muxcode send review review "Review the latest changes"
 ```
 
+Jira and Confluence work is likewise delegated to the plan agent — edit never writes the tracker itself. Edit is the **consent boundary** for tracker writes: it is the role in conversation with the user, so a user-initiated Jira/Confluence change is relayed from edit to plan, and plan (the write authority) performs it. See [Atlassian write authority](architecture.md#atlassian-write-authority).
+
 #### OpenCode edit agent
 
 The edit agent can optionally run on OpenCode with DeepSeek V4 Pro instead of Claude Code. Set `MUXCODE_EDIT_CLI=opencode` to switch; set back to `claude` (or unset) to restore the default.
@@ -127,6 +129,8 @@ muxcode send plan move-spec "Move conditional-chains.md from drafts to completed
 ```
 
 The plan agent is scoped to docs directories only — it can read source code for context but never writes outside `docs/`, `CLAUDE.md`, or `README.md`.
+
+Plan also holds **Atlassian write authority**: it is the only role `CheckAtlassianAuthority` permits to write to Jira and Confluence (reads stay open to every role). Plan owns the shared *written* artifacts — specs under `docs/` and the tracker items those specs describe. Writes happen only on an explicit user-initiated request relayed from edit — never as a side effect of docs or spec work. See [Atlassian write authority](architecture.md#atlassian-write-authority).
 
 ### Dev server (serve)
 

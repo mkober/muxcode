@@ -937,6 +937,33 @@ func TestEditProfile_DenyTools(t *testing.T) {
 		t.Error("missing deny pattern: gh *")
 	}
 
+	// Atlassian writes — delegated to plan, which holds the authority.
+	// These only bite on non-hook providers (OpenCode emits them as bash deny
+	// rules); Claude Code goes through the PreToolUse guard. Without them, a
+	// `muxcode reload edit --cli opencode` would silently hand edit back the
+	// write surface the authority change just took away, because the "bus"
+	// include group grants Bash(muxcode *) and matches every subcommand.
+	for _, pattern := range []string{
+		"muxcode atlassian jira update *",
+		"muxcode atlassian jira comment *",
+		"muxcode atlassian jira transition *",
+		"muxcode atlassian confluence update *",
+	} {
+		if !denySet[pattern] {
+			t.Errorf("missing Atlassian write deny pattern: %s", pattern)
+		}
+	}
+
+	// Reads must stay open — every agent needs Jira/Confluence context.
+	for _, pattern := range []string{
+		"muxcode atlassian jira read *",
+		"muxcode atlassian confluence read *",
+	} {
+		if denySet[pattern] {
+			t.Errorf("read must not be denied: %s", pattern)
+		}
+	}
+
 	// Build commands
 	if !denySet["./build.sh*"] {
 		t.Error("missing deny pattern: ./build.sh*")

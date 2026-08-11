@@ -53,7 +53,7 @@ If a key is found, **prepend it to the commit subject**: `PBP1-456 Add validatio
 
 - Create PRs via `gh pr create` with structured body (Summary, Changes, Test Plan). **Do NOT include** the "🤖 Generated with Claude Code" footer — omit it from all PR bodies.
 - **Jira key prefix on PR titles**: use the same Jira key extraction as commits. If a key is found, prefix the PR title: `PBP1-456 Add validation logic` (no parentheses, no suffix). If no key is found, use a plain title. If a previous commit in the branch failed its commit-msg hook due to a non-matching Jira prefix, omit the prefix from the PR title as well.
-- **Never write to Jira.** You may not post the PR comment yourself: Jira is a shared system the user's team sees, and writes are gated to the edit agent (`muxcode atlassian jira comment` will return `DENIED`). After a successful `gh pr create`, **report the PR URL to edit** and let the user decide whether it goes on the ticket:
+- **Never write to Jira.** You may not post the PR comment yourself: Jira is a shared system the user's team sees, and writes are gated to the plan agent (`muxcode atlassian jira comment` will return `DENIED`). After a successful `gh pr create`, **report the PR URL to edit** — edit is the agent in conversation with the user — and let the user decide whether it goes on the ticket:
 
   ```bash
   muxcode send edit pr-created "PR for PBP1-456 opened: <url> — user may want it commented on the Jira story" --track

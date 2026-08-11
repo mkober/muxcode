@@ -577,10 +577,25 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(git rev-parse*)",
 					"Bash(python3*)", "Bash(jq*)",
 					"Bash(tree *)",
-					// Atlassian: READ ONLY. The plan agent needs Jira/Confluence
-					// context to author specs, but Jira and Confluence are shared
-					// systems the user's team sees — writes are gated to the edit
-					// agent by CheckAtlassianAuthority (bus/atlassian_authority.go).
+					// Atlassian: plan OWNS this integration — reads for spec context
+					// and writes, because plan is the one role that
+					// CheckAtlassianAuthority authorizes (bus/atlassian_authority.go).
+					//
+					// There is deliberately no write deny here. Plan previously
+					// carried one, back when authority sat with edit; leaving it in
+					// place would be inert on Claude Code (whose enforcement is the
+					// PreToolUse guard) but would emit real bash deny rules on a
+					// `muxcode reload plan --cli opencode`, locking plan out of the
+					// integration it now owns.
+					//
+					// The rule that keeps writes user-initiated — relayed from edit,
+					// never a side effect of docs work — lives in agents/planner.md.
+					// It is a scope discipline, not something a tool profile can
+					// express: the profile cannot tell who asked.
+					//
+					// The enumerated reads below are documentation of intent; the
+					// "bus" include group already grants `Bash(muxcode *)`, which
+					// matches every atlassian subcommand.
 					// CLI only, never the Atlassian MCP.
 					"Bash(muxcode atlassian jira read *)",
 					"Bash(muxcode atlassian jira comments *)",
@@ -589,29 +604,6 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(muxcode atlassian jira search *)",
 					"Bash(muxcode atlassian confluence read *)",
 					"Bash(muxcode atlassian confluence search *)",
-				},
-				DenyTools: []string{
-					// Only consumed by non-hook providers (OpenCode), which emit
-					// these as bash deny rules; Claude Code enforcement runs through
-					// the PreToolUse guard instead. Present so the rule survives a
-					// `muxcode reload plan --cli opencode`.
-					//
-					// NOT redundant with the Tools allowlist above: the "bus" include
-					// group grants `Bash(muxcode *)`, which already matches every
-					// atlassian subcommand. Without an explicit deny, narrowing the
-					// allowlist accomplishes nothing.
-					//
-					// Trailing space matters — "comment *" must not match "comments",
-					// and "transition *" must not match "transitions".
-					"muxcode atlassian jira update *",
-					"muxcode atlassian jira comment *",
-					"muxcode atlassian jira link *",
-					"muxcode atlassian jira transition *",
-					"muxcode atlassian jira create-subtask *",
-					"muxcode atlassian jira worklog *",
-					"muxcode atlassian jira attach *",
-					"muxcode atlassian confluence update *",
-					"muxcode atlassian confluence attach *",
 				},
 			},
 			"build": {
@@ -669,6 +661,32 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(tmux capture-pane *)", "Bash(tmux display-message *)",
 				},
 				DenyTools: []string{
+					// Atlassian writes (delegated to the plan agent, which holds the
+					// authority — bus/atlassian_authority.go). Edit stays the consent
+					// boundary: it talks to the user and relays their request to plan,
+					// but it does not perform the write itself.
+					//
+					// Only consumed by non-hook providers (OpenCode), which emit these
+					// as bash deny rules; Claude Code enforcement runs through the
+					// PreToolUse guard instead. Present so the rule survives a
+					// `muxcode reload edit --cli opencode`.
+					//
+					// NOT redundant with the Tools allowlist: the "bus" include group
+					// grants `Bash(muxcode *)`, which already matches every atlassian
+					// subcommand, so without an explicit deny the narrowing does
+					// nothing. Reads are deliberately left open.
+					//
+					// Trailing space matters — "comment *" must not match "comments",
+					// and "transition *" must not match "transitions".
+					"muxcode atlassian jira update *",
+					"muxcode atlassian jira comment *",
+					"muxcode atlassian jira link *",
+					"muxcode atlassian jira transition *",
+					"muxcode atlassian jira create-subtask *",
+					"muxcode atlassian jira worklog *",
+					"muxcode atlassian jira attach *",
+					"muxcode atlassian confluence update *",
+					"muxcode atlassian confluence attach *",
 					// Git write operations (read-only delegated to commit agent)
 					"git commit*", "git push*", "git pull*", "git rebase*",
 					"git checkout*", "git branch*", "git merge*", "git stash*",

@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -102,6 +103,156 @@ func TestReply_DrainsFromHostInboxForHostedRole(t *testing.T) {
 	if HasActionableMessages(session, host) {
 		t.Errorf("answered request still actionable in host inbox %q", host)
 	}
+}
+
+// TestReadReceipt_RespondedCountsAsReceipted isolates the Half 1 read-path rule
+// itself: MarkResponded records a reply WITHOUT setting AckedAt, and that must
+// still read as receipted. Asserting AckedAt is still zero proves the Status
+// clause of hasReceipt is doing the work — not an incidental ack written
+// elsewhere — so a future refactor that drops that clause fails here.
+func TestReadReceipt_RespondedCountsAsReceipted(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+
+	// Deliberately NOT Sent: only a delivery status exists, so the message is in
+	// neither the log nor an inbox. MarkResponded therefore finds nothing to
+	// drain and writes no ack receipt, leaving AckedAt at zero — which is what
+	// lets this assert that the Status clause alone makes it read as receipted.
+	req := NewMessage("edit", "build", "request", "build", "build it", "")
+	if err := CreateDeliveryStatus(session, req); err != nil {
+		t.Fatalf("CreateDeliveryStatus: %v", err)
+	}
+	if _, acked := ReadReceipt(session, req.ID); acked {
+		t.Fatal("a sent-but-unanswered message must not read as receipted")
+	}
+
+	MarkResponded(session, req.ID, "response-id-1")
+
+	ds, acked := ReadReceipt(session, req.ID)
+	if !acked {
+		t.Error("a responded message must read as receipted (a reply implies receipt)")
+	}
+	if ds.AckedAt != 0 {
+		t.Errorf("AckedAt = %d, want 0 — the Status clause must be what makes this receipted", ds.AckedAt)
+	}
+}
+
+// TestMarkResponded_DrainsWithoutAReplyMessage covers the path the live
+// integration test caught: cmd/send.go's --wait fallback correlates a response
+// that carried NO ReplyTo back to the request it was waiting on, calling
+// MarkResponded directly. There is no reply message to hang a drain off, so a
+// drain wired only into Send() left the row actionable forever. Found in a real
+// session as a stranded run.jsonl row whose "response" predated its request.
+func TestMarkResponded_DrainsWithoutAReplyMessage(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+
+	req := NewMessage("edit", "run", "request", "run", "run the script", "")
+	if err := Send(session, req); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if !HasActionableMessages(session, "run") {
+		t.Fatal("request must be actionable before correlation")
+	}
+
+	// No reply is Sent — the --wait fallback correlates an unrelated response.
+	MarkResponded(session, req.ID, "some-uncorrelated-response-id")
+
+	if HasActionableMessages(session, "run") {
+		t.Error("request marked responded is still actionable — drain did not fire")
+	}
+	if _, acked := ReadReceipt(session, req.ID); !acked {
+		t.Error("request marked responded must read as receipted")
+	}
+}
+
+// TestMarkResponded_SurvivesMissingStatusFile pins that a GC'd or absent delivery
+// status does not skip the drain — the status write and the drain are
+// independent best-effort steps, and an undrained row is the harmful outcome.
+func TestMarkResponded_SurvivesMissingStatusFile(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+
+	req := NewMessage("edit", "build", "request", "build", "build it", "")
+	if err := Send(session, req); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	// Simulate the status file having been cleaned up.
+	if err := os.Remove(DeliveryPath(session, req.ID)); err != nil {
+		t.Fatalf("removing status file: %v", err)
+	}
+
+	MarkResponded(session, req.ID, "response-id")
+
+	if HasActionableMessages(session, "build") {
+		t.Error("drain must still fire when the delivery status file is missing")
+	}
+}
+
+// TestReply_LeavesAutoCCCopyInEditInbox pins the blast-radius limit on the drain.
+// Auto-CC copies a request addressed to another agent verbatim into edit's inbox
+// — the copy carries the SAME message ID. Draining on reply must remove only the
+// responder's row, never the CC copy living in a different inbox.
+func TestReply_LeavesAutoCCCopyInEditInbox(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	// autoCCLastSent is a PACKAGE-LEVEL rate limiter (one CC per role per 60s),
+	// not per-session, so exercising the real auto-CC path here would silently
+	// consume build's budget and make a later build→test CC test fail. Give this
+	// test a fresh limiter and put the old one back.
+	savedAutoCC := autoCCLastSent
+	autoCCLastSent = make(map[string]int64)
+	t.Cleanup(func() { autoCCLastSent = savedAutoCC })
+
+	// build is an auto-CC role, so this genuinely copies the request into edit's
+	// inbox with the SAME message ID — the real collision the drain must survive.
+	req := NewMessage("build", "test", "request", "test", "run tests", "")
+	if err := Send(session, req); err != nil {
+		t.Fatalf("Send request: %v", err)
+	}
+	var ccPresent bool
+	for _, m := range mustPeek(t, session, "edit") {
+		if m.ID == req.ID {
+			ccPresent = true
+		}
+	}
+	if !ccPresent {
+		t.Fatal("auto-CC copy did not land in edit's inbox — test cannot prove anything")
+	}
+
+	reply := NewMessage("test", "build", "response", "test", "all green", req.ID)
+	if err := Send(session, reply); err != nil {
+		t.Fatalf("Send reply: %v", err)
+	}
+
+	// Responder's row is gone.
+	for _, m := range mustPeek(t, session, "test") {
+		if m.ID == req.ID {
+			t.Error("responder's request row was not drained")
+		}
+	}
+	// edit's CC copy survives.
+	var ccFound bool
+	for _, m := range mustPeek(t, session, "edit") {
+		if m.ID == req.ID {
+			ccFound = true
+		}
+	}
+	if !ccFound {
+		t.Error("auto-CC copy in edit's inbox was collaterally drained")
+	}
+}
+
+func mustPeek(t *testing.T, session, role string) []Message {
+	t.Helper()
+	msgs, err := Peek(session, role)
+	if err != nil {
+		t.Fatalf("Peek %s: %v", role, err)
+	}
+	return msgs
 }
 
 // TestConsumeByID_LeavesOtherMessages proves the removal is targeted. An auto-CC

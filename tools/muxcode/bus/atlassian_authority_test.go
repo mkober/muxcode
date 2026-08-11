@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -76,6 +77,38 @@ func TestIsAtlassianMutatingAction_UnknownDefaultsToMutating(t *testing.T) {
 	}
 	if !IsAtlassianMutatingAction("bitbucket", "read") {
 		t.Error("unknown service must default to mutating")
+	}
+}
+
+// The default authority list is a security boundary: it names the single role
+// allowed to mutate the user's shared tracker. Every other authority test in
+// this file pins the env override first, so without this test the default could
+// be flipped to another role — or widened to several — and the entire suite
+// would still pass green. That gap is how a security boundary moves silently.
+func TestAtlassianAuthorityDefault(t *testing.T) {
+	// t.Setenv registers the restore; os.Unsetenv then clears it for the test
+	// body so we read the compiled-in default rather than whatever the
+	// developer's shell happens to export.
+	t.Setenv("MUXCODE_ATLASSIAN_AUTHORITY_ROLES", "")
+	os.Unsetenv("MUXCODE_ATLASSIAN_AUTHORITY_ROLES")
+
+	roles := AtlassianAuthorityRoles()
+	if len(roles) != 1 || roles[0] != "plan" {
+		t.Fatalf("default authority must be exactly [plan], got %v", roles)
+	}
+	if deny := CheckAtlassianAuthority("plan", "jira", "update"); deny != "" {
+		t.Errorf("plan must hold write authority by default, got deny: %s", deny)
+	}
+	// Authority moved off edit deliberately. If it quietly returns, the
+	// single-writer property is gone and two roles can mutate the tracker.
+	if deny := CheckAtlassianAuthority("edit", "jira", "update"); deny == "" {
+		t.Error("edit must NOT hold Jira write authority by default")
+	}
+	// Narrowing writes must never narrow reads — every agent still needs context.
+	for _, role := range []string{"edit", "commit", "review"} {
+		if deny := CheckAtlassianAuthority(role, "jira", "read"); deny != "" {
+			t.Errorf("%s must still be able to read Jira, got deny: %s", role, deny)
+		}
 	}
 }
 

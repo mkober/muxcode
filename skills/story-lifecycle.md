@@ -41,7 +41,7 @@ this.
 
 The phases below also transition issues, post comments, and create links. **Those
 are gated identically** — `CheckAtlassianAuthority` (`bus/atlassian_authority.go`)
-allows Jira and Confluence writes from `edit` only by default, so
+allows Jira and Confluence writes from `plan` only by default, so
 `muxcode atlassian jira transition|comment|link|create-subtask` returns `DENIED`
 for this role. Jira is a shared system the user's team sees, and a lifecycle loop
 that comments at every phase boundary is how a fleet fills a team's tracker with
@@ -50,7 +50,7 @@ noise nobody asked for.
 The opt-in mirrors the git one:
 
 ```bash
-MUXCODE_ATLASSIAN_AUTHORITY_ROLES=edit,auto
+MUXCODE_ATLASSIAN_AUTHORITY_ROLES=plan,auto
 ```
 
 **Without it, skip the Jira write steps and do not treat them as failures.** Reads
