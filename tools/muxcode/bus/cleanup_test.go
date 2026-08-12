@@ -443,22 +443,26 @@ func TestCheckDiskPressure_AboveThresholdRunsCleanup(t *testing.T) {
 	SetBusDirBase(tmpDir)
 	defer ResetBusDirBase()
 
-	// Threshold of 1% is always exceeded — forces cleanup to run
 	t.Setenv("MUXCODE_TMP_CLEANUP_THRESHOLD", "1")
+	// Pressure is no longer triggered by the volume's percent-used — that fired
+	// perpetually on healthy machines. Trigger via the footprint signal, which
+	// is the quantity cleanup can actually move.
+	t.Setenv("MUXCODE_TMP_FOOTPRINT_LIMIT", "1")
 
-	// Create a stale muxcode artifact so cleanup has something to find
+	// Create a stale muxcode artifact so cleanup has something to find. It must
+	// contain a file: an empty dir is 0 bytes and would not exceed the limit.
 	staleDir := filepath.Join(tmpDir, "muxcode-bus-stale-test-1234")
 	os.MkdirAll(staleDir, 0o755)
+	if err := os.WriteFile(filepath.Join(staleDir, "artifact"), make([]byte, 2048), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := CheckDiskPressure("my-session")
 	if err != nil {
 		t.Fatalf("CheckDiskPressure: %v", err)
 	}
 	if result == nil {
-		t.Fatal("expected non-nil result when threshold=1% (always exceeded)")
-	}
-	if result.UsagePct < 1 {
-		t.Errorf("UsagePct=%d, expected >= 1", result.UsagePct)
+		t.Fatal("expected non-nil result when the muxcode footprint exceeds the limit")
 	}
 	if result.StaleResult == nil {
 		t.Error("StaleResult should be non-nil after cleanup ran")
@@ -473,13 +477,16 @@ func TestCheckDiskPressure_PostUsagePctValid(t *testing.T) {
 	SetBusDirBase(t.TempDir())
 	defer ResetBusDirBase()
 	t.Setenv("MUXCODE_TMP_CLEANUP_THRESHOLD", "1")
+	// Force the low-headroom signal: whatever the machine's real free space is,
+	// it is below this floor.
+	t.Setenv("MUXCODE_TMP_FREE_FLOOR", "9000000000000000000")
 
 	result, err := CheckDiskPressure("my-session")
 	if err != nil {
 		t.Fatalf("CheckDiskPressure: %v", err)
 	}
 	if result == nil {
-		t.Fatal("expected non-nil result at 1% threshold")
+		t.Fatal("expected non-nil result when free headroom is below the floor")
 	}
 	if result.PostUsagePct < 0 || result.PostUsagePct > 100 {
 		t.Errorf("PostUsagePct=%d, expected 0–100", result.PostUsagePct)

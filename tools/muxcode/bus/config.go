@@ -479,6 +479,57 @@ func TmpCleanupThreshold() int {
 	return 90
 }
 
+// Byte-size defaults for the /tmp pressure signals. These replace volume
+// percent-used as the trigger; MUXCODE_TMP_CLEANUP_THRESHOLD is retained as the
+// on/off switch (0 disables the check entirely) so existing configs keep working.
+const (
+	defaultTmpFreeFloor      = 2 << 30 // 2 GiB of absolute headroom
+	defaultTmpFootprintLimit = 1 << 30 // 1 GiB of muxcode's own /tmp usage
+)
+
+// TmpFreeFloorBytes is the absolute free-space floor below which /tmp counts as
+// under pressure. Override with MUXCODE_TMP_FREE_FLOOR (accepts K/M/G suffixes).
+func TmpFreeFloorBytes() int64 {
+	if n, ok := parseByteSize(os.Getenv("MUXCODE_TMP_FREE_FLOOR")); ok {
+		return n
+	}
+	return defaultTmpFreeFloor
+}
+
+// TmpFootprintLimitBytes is the muxcode /tmp footprint above which cleanup is
+// worth running. Override with MUXCODE_TMP_FOOTPRINT_LIMIT (K/M/G suffixes).
+func TmpFootprintLimitBytes() int64 {
+	if n, ok := parseByteSize(os.Getenv("MUXCODE_TMP_FOOTPRINT_LIMIT")); ok {
+		return n
+	}
+	return defaultTmpFootprintLimit
+}
+
+// parseByteSize parses a byte size with an optional K/M/G suffix ("512M",
+// "2G", "1073741824"). Returns ok=false for empty or malformed input so the
+// caller falls back to its default rather than to zero — a zero floor would
+// silently disable the signal.
+func parseByteSize(v string) (int64, bool) {
+	v = strings.TrimSpace(strings.ToUpper(v))
+	if v == "" {
+		return 0, false
+	}
+	mult := int64(1)
+	switch {
+	case strings.HasSuffix(v, "G"):
+		mult, v = 1<<30, strings.TrimSuffix(v, "G")
+	case strings.HasSuffix(v, "M"):
+		mult, v = 1<<20, strings.TrimSuffix(v, "M")
+	case strings.HasSuffix(v, "K"):
+		mult, v = 1<<10, strings.TrimSuffix(v, "K")
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n * mult, true
+}
+
 // TriggerFile returns the analyze trigger file path for a session.
 // Uses /tmp directly for compatibility with bash hooks.
 func TriggerFile(session string) string {

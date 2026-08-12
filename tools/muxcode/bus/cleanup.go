@@ -353,14 +353,22 @@ func dirSize(path string) int64 {
 
 // DiskPressureResult tracks what happened during a pressure-triggered cleanup.
 type DiskPressureResult struct {
-	UsagePct     int                  // /tmp usage % before cleanup
-	StaleResult  *CleanupResult       // muxcode artifact cleanup result
-	ClaudeResult *ClaudeCleanupResult // Claude Code session cleanup result (nil if first stage was sufficient)
-	PostUsagePct int                  // /tmp usage % after cleanup
+	UsagePct       int                  // /tmp volume % used before cleanup (context only, not the trigger; -1 if unavailable)
+	FreeBytes      int64                // absolute free headroom that triggered the check (-1 if unavailable)
+	FootprintBytes int64                // muxcode's own /tmp footprint before cleanup
+	StaleResult    *CleanupResult       // muxcode artifact cleanup result
+	ClaudeResult   *ClaudeCleanupResult // Claude Code session cleanup result (nil if first stage was sufficient)
+	PostUsagePct   int                  // /tmp volume % used after cleanup
 }
 
 // TmpDiskUsage returns the current /tmp disk usage as a percentage (0–100).
 // Uses syscall.Statfs to query filesystem statistics directly.
+//
+// This is reported for context only — it is NOT a pressure signal. On macOS
+// /tmp is a symlink to /private/tmp on the boot volume, and on a single-volume
+// Linux box /tmp is on the root filesystem, so this is the percent-used of the
+// whole machine. A dev box sitting at 90% with 49Gi free is not under pressure,
+// and no amount of muxcode cleanup can move the number. See TmpPressure.
 func TmpDiskUsage() (int, error) {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs("/tmp", &stat); err != nil {
@@ -374,27 +382,100 @@ func TmpDiskUsage() (int, error) {
 	return pct, nil
 }
 
-// CheckDiskPressure checks /tmp disk usage against the configured threshold.
-// If usage exceeds the threshold, runs progressive cleanup:
-//  1. Removes stale muxcode session artifacts (current session is preserved)
-//  2. If still over threshold, removes old Claude Code /tmp session dirs (>7d)
+// TmpFreeBytes returns the bytes actually available to an unprivileged process
+// on the filesystem backing /tmp. Uses Bavail rather than Bfree: the difference
+// is the reserved superuser margin, which this process can never allocate.
 //
-// Returns nil if threshold is 0 (disabled) or usage is below threshold.
+// Returns int64 to match the footprint and threshold types — every consumer
+// compares the two, and a uint64 here would force casts at each site.
+func TmpFreeBytes() (int64, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs("/tmp", &stat); err != nil {
+		return 0, fmt.Errorf("statfs /tmp: %w", err)
+	}
+	return int64(stat.Bavail) * int64(stat.Bsize), nil
+}
+
+// MuxcodeTmpFootprint returns the total bytes muxcode occupies under /tmp —
+// the only part of the disk its own cleanup can actually free.
+func MuxcodeTmpFootprint() int64 {
+	tmpDir := "/tmp"
+	if busDirOverride != "" {
+		tmpDir = busDirOverride
+	}
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "muxcode-") {
+			continue
+		}
+		total += dirSize(filepath.Join(tmpDir, e.Name()))
+	}
+	return total
+}
+
+// TmpPressure reports whether /tmp is genuinely under pressure, and why.
+//
+// Two independent signals, either of which is real where percent-used is not:
+//
+//   - Low headroom: absolute free bytes below a floor. This is a true risk
+//     signal at any volume size — 2Gi free is tight on a 460Gi disk and on a
+//     small tmpfs alike, whereas "90% used" means neither.
+//   - Large footprint: muxcode's own /tmp usage above a limit. This is the
+//     quantity cleanup can move, so alerting on it is actionable.
+//
+// Returns (pressured, freeBytes, footprintBytes). freeBytes is -1 when the
+// filesystem could not be queried.
+func TmpPressure() (bool, int64, int64) {
+	footprint := MuxcodeTmpFootprint()
+	bigFootprint := footprint > TmpFootprintLimitBytes()
+
+	free, err := TmpFreeBytes()
+	if err != nil {
+		// Can't measure headroom — fall back to footprint alone rather than
+		// crying pressure on an unknown.
+		return bigFootprint, -1, footprint
+	}
+	return free < TmpFreeFloorBytes() || bigFootprint, free, footprint
+}
+
+// CheckDiskPressure checks whether /tmp is under genuine pressure and, if so,
+// runs progressive cleanup:
+//  1. Removes stale muxcode session artifacts (current session is preserved)
+//  2. If still pressured, removes old Claude Code /tmp session dirs (>7d)
+//
+// Returns nil when disabled (MUXCODE_TMP_CLEANUP_THRESHOLD=0) or when /tmp is
+// healthy. Pressure is decided by TmpPressure — absolute free headroom and
+// muxcode's own footprint — NOT by the volume's percent-used. The percentage is
+// still reported for context, but triggering on it meant a dev box at a normal
+// 90% full ran cleanup every 60 seconds forever, freed 0 B every time, and
+// buried the lifecycle log in warnings that could never be acted on.
 func CheckDiskPressure(session string) (*DiskPressureResult, error) {
 	threshold := TmpCleanupThreshold()
 	if threshold == 0 {
 		return nil, nil
 	}
 
-	pct, err := TmpDiskUsage()
-	if err != nil {
-		return nil, err
-	}
-	if pct < threshold {
+	pressured, free, footprint := TmpPressure()
+	if !pressured {
 		return nil, nil
 	}
 
-	result := &DiskPressureResult{UsagePct: pct}
+	// Context only. -1 rather than 0 on error: 0 would render as "volume 0%",
+	// which reads as a healthy measurement rather than a missing one.
+	pct, err := TmpDiskUsage()
+	if err != nil {
+		pct = -1
+	}
+
+	result := &DiskPressureResult{
+		UsagePct:       pct,
+		FreeBytes:      free,
+		FootprintBytes: footprint,
+	}
 
 	// Stage 1: stale muxcode artifacts
 	staleResult, staleErr := CleanupStale(session, false, false)
@@ -405,28 +486,22 @@ func CheckDiskPressure(session string) (*DiskPressureResult, error) {
 	}
 	result.StaleResult = staleResult
 
-	// Re-check after first stage
-	postPct, err := TmpDiskUsage()
-	if err != nil {
-		postPct = pct
-	}
-
-	// Stage 2: old Claude Code sessions (only if still over threshold)
-	if postPct >= threshold {
+	// Stage 2: old Claude Code sessions, only if still pressured after stage 1
+	if stillPressured, _, _ := TmpPressure(); stillPressured {
 		claudeResult, claudeErr := CleanupClaudeTmp(7*24*time.Hour, false)
 		result.ClaudeResult = claudeResult
 		if claudeErr != nil {
-			result.PostUsagePct = postPct
+			result.PostUsagePct = pct
 			return result, claudeErr
 		}
 	}
 
 	// Final usage re-check
-	finalPct, err := TmpDiskUsage()
-	if err == nil {
+	finalPct, ferr := TmpDiskUsage()
+	if ferr == nil {
 		result.PostUsagePct = finalPct
 	} else {
-		result.PostUsagePct = postPct
+		result.PostUsagePct = pct
 	}
 
 	return result, nil

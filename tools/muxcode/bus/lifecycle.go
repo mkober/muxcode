@@ -31,8 +31,18 @@ type LifecycleFilterOpts struct {
 	Limit  int   // max entries to return (0 = all)
 }
 
-// LifecycleLogDir returns the persistent lifecycle log directory.
+// LifecycleLogDir returns the directory holding persistent lifecycle logs.
+//
+// MUXCODE_LIFECYCLE_LOG_DIR overrides the location. Tests MUST set it (see
+// TestMain in this package) — lifecycle logging is a side effect of a great
+// many code paths, and without an override a test run writes one real log file
+// per synthetic session name into the user's actual ~/.config/muxcode/logs.
+// That leaked 41,789 stray test-*.log files into a live install before this
+// override existed.
 func LifecycleLogDir() string {
+	if dir := os.Getenv("MUXCODE_LIFECYCLE_LOG_DIR"); dir != "" {
+		return dir
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "muxcode", "logs")
 }

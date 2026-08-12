@@ -3167,9 +3167,12 @@ func (d *Daemon) checkCleanup() {
 	}
 }
 
-// checkDiskPressure checks /tmp disk usage every 60 seconds.
-// When usage exceeds the configured threshold (default 90%), runs progressive
-// cleanup and sends a disk-pressure alert to the edit agent.
+// checkDiskPressure checks /tmp for genuine pressure every 60 seconds and, when
+// found, runs progressive cleanup and alerts the edit agent.
+//
+// Pressure is decided by bus.TmpPressure — absolute free headroom and muxcode's
+// own footprint — not by the volume's percent-used.
+// MUXCODE_TMP_CLEANUP_THRESHOLD is now only an on/off switch (0 disables).
 func (d *Daemon) checkDiskPressure() {
 	if bus.TmpCleanupThreshold() == 0 {
 		return
@@ -3203,13 +3206,9 @@ func (d *Daemon) checkDiskPressure() {
 		claudeFreed = result.ClaudeResult.BytesFreed
 	}
 
-	fmt.Printf("  %s  Disk pressure: /tmp at %d%% (threshold %d%%) — cleaned %d stale, %d Claude sessions (%s), now %d%%\n",
-		ts, result.UsagePct, bus.TmpCleanupThreshold(),
-		staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed), result.PostUsagePct)
-	bus.LogLifecycle(d.session, "warn", "daemon", "disk-pressure",
-		fmt.Sprintf("/tmp=%d%% stale=%d claude=%d freed=%s post=%d%%",
-			result.UsagePct, staleCleaned, claudeCleaned,
-			formatDaemonBytes(claudeFreed), result.PostUsagePct))
+	fmt.Printf("  %s  Disk pressure: /tmp free %s, muxcode footprint %s (volume %d%%) — cleaned %d stale, %d Claude sessions (%s)\n",
+		ts, formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
+		result.UsagePct, staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed))
 
 	// Alert edit agent with adaptive cooldown:
 	//  - 600s (10 min) when cleanup actually freed something
@@ -3217,17 +3216,33 @@ func (d *Daemon) checkDiskPressure() {
 	// This prevents flooding the edit agent with repeated alerts it can't act on.
 	alertKey := "disk-pressure:/tmp"
 	cooldown := int64(600)
-	if staleCleaned == 0 && claudeCleaned == 0 {
+	ineffective := staleCleaned == 0 && claudeCleaned == 0
+	if ineffective {
 		cooldown = 3600
 	}
+	alerting := false
 	if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= cooldown {
+		alerting = true
+	}
+
+	// Write the lifecycle warn only when the condition is actionable or newly
+	// alerted. An unactionable repeat every 60s produced 813 of the last 1000
+	// lifecycle entries, and since the log rotates at 1000, that spam evicted
+	// the very history needed to diagnose overnight incidents.
+	if alerting || !ineffective {
+		bus.LogLifecycle(d.session, "warn", "daemon", "disk-pressure",
+			fmt.Sprintf("/tmp free=%s footprint=%s volume=%d%% stale=%d claude=%d freed=%s",
+				formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
+				result.UsagePct, staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed)))
+	}
+
+	if alerting {
 		d.lastAlertKey[alertKey] = now
 
 		payload := fmt.Sprintf(
-			"/tmp disk pressure: %d%% used (threshold: %d%%). Cleaned: %d muxcode artifact(s), %d Claude Code session(s) (%s freed). Post-cleanup: %d%% used",
-			result.UsagePct, bus.TmpCleanupThreshold(),
-			staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed),
-			result.PostUsagePct,
+			"/tmp disk pressure: %s free, muxcode footprint %s (volume %d%% used). Cleaned: %d muxcode artifact(s), %d Claude Code session(s) (%s freed).",
+			formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
+			result.UsagePct, staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed),
 		)
 		msg := bus.NewMessage("daemon", "edit", "event", "disk-pressure", payload, "")
 		if err := bus.Send(d.session, msg); err != nil {

@@ -9,13 +9,23 @@ import (
 	"time"
 )
 
+// pinLogDir isolates a single test's lifecycle logs to dir.
+//
+// Both env vars are needed: HOME because LifecycleLogDir falls back to it, and
+// MUXCODE_LIFECYCLE_LOG_DIR because the package TestMain sets it to a shared
+// temp dir and it takes precedence over HOME — without pinning it here, every
+// test would read and write that one shared directory and see each other's logs.
+// t.Setenv restores both automatically at test end.
+func pinLogDir(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", dir)
+}
+
 func TestLogLifecycle(t *testing.T) {
 	// Use a temp dir for logs
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	// Override HOME so LifecycleLogDir() resolves to temp
-	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	pinLogDir(t, tmpDir)
 
 	// Create the logs directory structure
 	logDir := filepath.Join(tmpDir, ".config", "muxcode", "logs")
@@ -53,7 +63,7 @@ func TestLogLifecycle(t *testing.T) {
 
 func TestLogLifecycleWithPID(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	pinLogDir(t, tmpDir)
 
 	session := "test-pid"
 	LogLifecycleWithPID(session, "info", "launcher", "daemon-start", "started", 12345)
@@ -72,7 +82,7 @@ func TestLogLifecycleWithPID(t *testing.T) {
 
 func TestFilterLifecycleLog(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	pinLogDir(t, tmpDir)
 
 	session := "test-filter"
 	LogLifecycle(session, "info", "launcher", "session-start", "")
@@ -111,7 +121,7 @@ func TestFilterLifecycleLog(t *testing.T) {
 
 func TestFilterLifecycleLogSince(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	pinLogDir(t, tmpDir)
 
 	session := "test-since"
 	now := time.Now().Unix()
@@ -142,7 +152,7 @@ func TestFilterLifecycleLogSince(t *testing.T) {
 
 func TestRotateLifecycleLog(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	pinLogDir(t, tmpDir)
 	t.Setenv("MUXCODE_LIFECYCLE_LOG_MAX", "5")
 
 	session := "test-rotate"
@@ -160,7 +170,7 @@ func TestRotateLifecycleLog(t *testing.T) {
 
 func TestListLifecycleSessions(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	pinLogDir(t, tmpDir)
 
 	LogLifecycle("session-a", "info", "test", "event", "")
 	LogLifecycle("session-b", "info", "test", "event", "")
@@ -176,7 +186,7 @@ func TestListLifecycleSessions(t *testing.T) {
 
 func TestPurgeLifecycleLogs(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	pinLogDir(t, tmpDir)
 
 	// Create a log file and backdate it
 	LogLifecycle("old-session", "info", "test", "event", "")
@@ -227,7 +237,7 @@ func TestFormatLifecycleEntry(t *testing.T) {
 
 func TestReadLifecycleLogNonExistent(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	pinLogDir(t, tmpDir)
 
 	entries, err := ReadLifecycleLog("nonexistent")
 	if err != nil {
