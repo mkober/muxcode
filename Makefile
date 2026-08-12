@@ -6,16 +6,34 @@ NVIM_PLUGIN_DIR ?= $(HOME)/.local/share/nvim/site/plugin
 
 .PHONY: build test install clean
 
+# The whole recipe is one shell command, so without `set -e` a failing
+# `go build` inside the loop was ignored: the recipe's exit status came from
+# the trailing `if/echo`, which always succeeds. Make then reported success,
+# `install` ran on its stale prerequisite, and a broken build silently
+# installed the previous binary while printing "Built N modules".
 build:
-	@REPO_DIR="$$(pwd)"; BIN_DIR="$$REPO_DIR/bin"; mkdir -p "$$BIN_DIR"; \
+	@set -e; \
+	REPO_DIR="$$(pwd)"; BIN_DIR="$$REPO_DIR/bin"; mkdir -p "$$BIN_DIR"; \
 	built=0; last_name=""; \
 	for moddir in "$$REPO_DIR"/tools/*/; do \
 		[ -f "$$moddir/go.mod" ] || continue; \
-		last_name="$$(basename "$$moddir")"; \
-		(cd "$$moddir" && go build -ldflags="-s -w" -o "$$BIN_DIR/$$last_name" .); \
-		codesign --force --sign - "$$BIN_DIR/$$last_name" 2>/dev/null || true; \
+		name="$$(basename "$$moddir")"; \
+		if ! (cd "$$moddir" && go build -ldflags="-s -w" -o "$$BIN_DIR/$$name" .); then \
+			echo "Go build FAILED for module $$name — not installing" >&2; \
+			exit 1; \
+		fi; \
+		if [ ! -x "$$BIN_DIR/$$name" ]; then \
+			echo "Go build produced no executable for module $$name" >&2; \
+			exit 1; \
+		fi; \
+		last_name="$$name"; \
+		codesign --force --sign - "$$BIN_DIR/$$name" 2>/dev/null || true; \
 		built=$$((built + 1)); \
 	done; \
+	if [ $$built -eq 0 ]; then \
+		echo "No Go modules found under tools/ — nothing built" >&2; \
+		exit 1; \
+	fi; \
 	if [ $$built -eq 1 ]; then \
 		echo "Go binary: Built $$built module → bin/$$last_name"; \
 	else \
@@ -26,6 +44,10 @@ test:
 	./test.sh
 
 install: build
+	@# Defense in depth: `build` already exits non-zero on a compile failure,
+	@# but `make install` can be reached with a stale or absent bin/. Refuse
+	@# rather than install something that was never successfully built.
+	@[ -x bin/muxcode ] || { echo "bin/muxcode missing or not executable — refusing to install" >&2; exit 1; }
 	@install -d $(BINDIR) $(CONFIGDIR)/agents
 	@install -m 755 bin/muxcode $(BINDIR)/muxcode
 	@ln -sf muxcode $(BINDIR)/muxcode-agent-bus
