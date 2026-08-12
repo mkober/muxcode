@@ -134,14 +134,16 @@ func (ev *ToolEvent) responseText() string {
 }
 
 // HookOutcome returns "success", "failure", or "unknown" based on the exit code.
+// An absent exit code is "unknown", never "success" — a command that reported
+// no status is not a command that reported success.
 func HookOutcome(exitCode string) string {
 	switch {
 	case exitCode == "":
-		return "unknown"
+		return OutcomeUnknown
 	case exitCode == "0":
-		return "success"
+		return OutcomeSuccess
 	default:
-		return "failure"
+		return OutcomeFailure
 	}
 }
 
@@ -439,6 +441,14 @@ type HookHistoryEntry struct {
 	Errors      string `json:"errors,omitempty"`
 	Changes     string `json:"changes,omitempty"`
 	Summary     string `json:"summary,omitempty"`
+	// Action carries the bus action for synthesized entries. It exists so those
+	// entries can identify themselves without borrowing Command, which is
+	// reserved for shell commands that actually ran.
+	Action string `json:"action,omitempty"`
+	// Source is the entry's provenance — empty for the authoritative hook /
+	// self-logged path, SourceBusResponse for entries synthesized from a bus
+	// response payload. See history_provenance.go.
+	Source string `json:"source,omitempty"`
 }
 
 // WriteHookHistory appends a history entry to a JSONL file with file-level locking

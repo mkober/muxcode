@@ -463,6 +463,12 @@ func resolveWaitTimeout() int {
 // hooks to log history, and the daemon's checkNonHookTasks skips tasks that
 // are already completed by --wait. Without this, left-pane console views for
 // non-hook agents (e.g. review on Codex) remain empty.
+//
+// The entry records that a reply arrived — nothing more. It is not a verdict:
+// the payload reaching this function is the agent's reply text, which for a TUI
+// provider is often a launch banner or partial reasoning rather than a result.
+// See bus.NewBusResponseEntry for the invariants that keeps it from rendering
+// as a pass.
 func logWaitResponseToHistory(session, role, action, payload string) {
 	// Skip research — the research agent self-logs findings via `muxcode log`
 	// with richer metadata. The daemon also skips research in logTaskToConsoleHistory.
@@ -489,37 +495,13 @@ func logWaitResponseToHistory(session, role, action, payload string) {
 		return
 	}
 
-	// Build summary from payload — first line or truncated
-	summary := action
-	if len(payload) > 200 {
-		if idx := strings.Index(payload, "\n"); idx > 0 && idx < 200 {
-			summary = payload[:idx]
-		} else {
-			summary = payload[:200] + "..."
-		}
-	} else {
-		summary = payload
-	}
-
-	// Determine exit code heuristically from the action and payload
-	exitCode := "0"
-	if action == "error" || strings.Contains(strings.ToLower(payload), "failed") ||
-		strings.Contains(strings.ToLower(payload), "error:") {
-		exitCode = "1"
-	}
-
-	outcome := "success"
-	if exitCode != "0" {
-		outcome = "failure"
-	}
-
-	entry := bus.HookHistoryEntry{
-		TS:       time.Now().Unix(),
-		Command:  action,
-		ExitCode: exitCode,
-		Outcome:  outcome,
-		Output:   payload,
-		Summary:  summary,
+	// A response payload is not evidence that a command ran, so the entry is
+	// built as an unverified activity row: no exit code, no success verdict,
+	// and the action kept out of the command field. bus.NewBusResponseEntry is
+	// the single constructor for every synthesized path.
+	entry, ok := bus.NewBusResponseEntry(action, payload, false)
+	if !ok {
+		return
 	}
 
 	historyPath := bus.HistoryPath(session, role)

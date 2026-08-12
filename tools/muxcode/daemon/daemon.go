@@ -2467,10 +2467,13 @@ func (d *Daemon) checkTrackedTasks() {
 		fmt.Printf("  %s  Tracked task %s→%s:%s completed (response: %s)%s\n",
 			ts, task.From, task.To, task.Action, ds.ResponseID, suffix)
 
-		// Log to console history for the target role's left-pane view
+		// Log to console history for the target role's left-pane view.
+		// Shares logTaskToConsoleHistory with the other completion paths rather
+		// than mirroring it: this used to be a hand-copy, and every defect in
+		// the original lived here too until both were fixed at once.
 		if ds.ResponseID != "" {
 			if msg, ok := bus.FindMessageByID(d.session, ds.ResponseID); ok {
-				logTrackedTaskToHistory(d.session, task.To, task.Action, msg.Payload)
+				logTaskToConsoleHistory(d.session, task.To, task.Action, msg.Payload, false)
 			}
 		}
 
@@ -2479,48 +2482,6 @@ func (d *Daemon) checkTrackedTasks() {
 		// an already-idle sender would never see the reply.
 		_ = bus.Notify(d.session, task.From)
 	}
-}
-
-// logTrackedTaskToHistory writes a console history entry when a tracked task
-// completes. Mirrors the logic in cmd/send.go logWaitResponseToHistory.
-func logTrackedTaskToHistory(session, role, action, payload string) {
-	if role == "research" || payload == "" {
-		return
-	}
-
-	summary := action
-	if len(payload) > 200 {
-		if idx := strings.Index(payload, "\n"); idx > 0 && idx < 200 {
-			summary = payload[:idx]
-		} else {
-			summary = payload[:200] + "..."
-		}
-	} else {
-		summary = payload
-	}
-
-	exitCode := "0"
-	if action == "error" || strings.Contains(strings.ToLower(payload), "failed") ||
-		strings.Contains(strings.ToLower(payload), "error:") {
-		exitCode = "1"
-	}
-
-	outcome := "success"
-	if exitCode != "0" {
-		outcome = "failure"
-	}
-
-	entry := bus.HookHistoryEntry{
-		TS:       time.Now().Unix(),
-		Command:  action,
-		ExitCode: exitCode,
-		Outcome:  outcome,
-		Output:   payload,
-		Summary:  summary,
-	}
-
-	historyPath := bus.HistoryPath(session, role)
-	_ = bus.WriteHookHistory(historyPath, entry, 100)
 }
 
 // checkNonHookTasks monitors in-flight tasks targeting non-hook providers
@@ -3001,33 +2962,13 @@ func logTaskToConsoleHistory(session, role, action, output string, errored bool)
 		return
 	}
 
-	outcome := "success"
-	exitCode := "0"
-	if errored {
-		outcome = "failure"
-		exitCode = "1"
-	}
-
-	// Build a summary from the action (e.g. "review", "build", "test")
-	summary := action
-	if len(output) > 200 {
-		// Use first line as summary if output is long
-		if idx := strings.Index(output, "\n"); idx > 0 && idx < 200 {
-			summary = output[:idx]
-		} else if len(output) > 200 {
-			summary = output[:200] + "..."
-		}
-	} else if output != "" {
-		summary = output
-	}
-
-	entry := bus.HookHistoryEntry{
-		TS:       time.Now().Unix(),
-		Command:  action,
-		ExitCode: exitCode,
-		Outcome:  outcome,
-		Output:   output,
-		Summary:  summary,
+	// Detected task completion is not a verdict — the "output" here is scraped
+	// pane content, so it may be a launch banner or partial reasoning rather
+	// than a result. bus.NewBusResponseEntry records it as unverified activity
+	// and drops payloads that are plainly TUI chrome.
+	entry, ok := bus.NewBusResponseEntry(action, output, errored)
+	if !ok {
+		return
 	}
 
 	historyPath := bus.HistoryPath(session, role)

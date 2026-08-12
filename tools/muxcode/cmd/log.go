@@ -46,7 +46,10 @@ func runLog(args []string, stdin io.Reader) error {
 	summary := args[1]
 	remaining := args[2:]
 
-	exitCode := "0"
+	// No default exit code: a log call that carries no verdict records
+	// "unknown", not a pass. Roles that log observations rather than command
+	// results (watch, research) rely on this — an observation is not a success.
+	exitCode := ""
 	command := ""
 	output := ""
 	outputStdin := false
@@ -123,11 +126,9 @@ func runLog(args []string, stdin io.Reader) error {
 		output = strings.TrimRight(string(data), "\n")
 	}
 
-	// Derive outcome from exit code
-	outcome := "success"
-	if exitCode != "0" {
-		outcome = "failure"
-	}
+	// Derive outcome from exit code — shared with the hook path so both agree
+	// that an absent exit code means "unknown" rather than success.
+	outcome := bus.HookOutcome(exitCode)
 
 	session := bus.BusSession()
 	historyPath := bus.HistoryPath(session, role)

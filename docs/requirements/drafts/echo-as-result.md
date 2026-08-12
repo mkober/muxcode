@@ -62,6 +62,8 @@ Reliable classification of any console history entry, usable today by humans and
 
 **Second path — `--track` (scope wider than first documented)**: `logTrackedTaskToHistory` (`daemon/daemon.go:2486`, called from the tracked-task completion path at :2473) is a deliberate mirror of `logWaitResponseToHistory` — same hardcoded `exitCode := "0"`, same `"failed"`/`"error:"` keyword-absence scan, same `Command: action`. Every defect above exists twice. A fix that only touches the `--wait` path in `cmd/send.go` will not close this.
 
+**Third path (found during implementation)**: `logTaskToConsoleHistory` (`daemon/daemon.go`, called from the non-hook task-completion path and the idle-task-rescue path) carried the same hardcoded `exitCode := "0"` / `outcome := "success"` — `logTrackedTaskToHistory` was in fact a hand-copy of it. Scope: three synthesis paths, not two. See Technical approach for the resolution (single shared constructor).
+
 **Upstream contributor**: for non-hook TUIs the payload that reaches `--wait` is frequently pane-scraped intermediate text (launch banner, `Thought: 242ms`, partial reasoning) rather than a real result, because completion detection for those providers is heuristic. The input to the above is often not a result at all.
 
 **Same family, `cmd/log.go` `runLog`**: `exitCode` defaults to `"0"` (line 49) and `outcome` is derived as success unless the exit code is non-zero (lines 126-129). There is no `unknown` outcome in the model, so a log call carrying no verdict is recorded as a pass. The console reinforces this: `ConsoleEntry.IsPass()` (`bus/console.go:89`) counts an **empty** exit code as a pass.
@@ -72,14 +74,14 @@ Reliable classification of any console history entry, usable today by humans and
 
 Invariants any chosen design must satisfy:
 
-- [ ] A fabricated pass is **impossible to render as a pass** — not merely less likely. The console pass/fail counters are consumed by humans AND by agents reading panes
-- [ ] Success is never inferred from the absence of failure keywords — an entry with no real exit code can never read `outcome: "success"`
-- [ ] A bus action name can never be read as an executed shell command in console history
-- [ ] Every history entry's provenance is distinguishable: agent-self-logged (real command, real exit code) vs synthesized from a `--wait` response payload
-- [ ] Obviously-not-a-result payloads (launch banners, `Thought:` lines, TUI chrome, prompt lines) are never recorded as a verdict
-- [ ] The fix covers every synthesized-entry path — `logWaitResponseToHistory` (`--wait`, `cmd/send.go`) and its daemon mirror `logTrackedTaskToHistory` (`--track`, `daemon/daemon.go`) alike
-- [ ] The genuine agent-self-logged path stays intact and authoritative: `muxcode log <role> ... --command X --exit-code $code --output-file f` is the trustworthy source
-- [ ] Non-hook console panes do not regress to empty — the original purpose of `logWaitResponseToHistory` (visibility) is preserved in some form
+- [x] A fabricated pass is **impossible to render as a pass** — not merely less likely. The console pass/fail counters are consumed by humans AND by agents reading panes
+- [x] Success is never inferred from the absence of failure keywords — an entry with no real exit code can never read `outcome: "success"`
+- [x] A bus action name can never be read as an executed shell command in console history
+- [x] Every history entry's provenance is distinguishable: agent-self-logged (real command, real exit code) vs synthesized from a `--wait` response payload
+- [x] Obviously-not-a-result payloads (launch banners, `Thought:` lines, TUI chrome, prompt lines) are never recorded as a verdict
+- [x] The fix covers every synthesized-entry path — `logWaitResponseToHistory` (`--wait`, `cmd/send.go`), its daemon mirror `logTrackedTaskToHistory` (`--track`, deleted), and the third path found during implementation, `logTaskToConsoleHistory` (`daemon/daemon.go`) — all routed through one constructor
+- [x] The genuine agent-self-logged path stays intact and authoritative: `muxcode log <role> ... --command X --exit-code $code --output-file f` is the trustworthy source
+- [x] Non-hook console panes do not regress to empty — the original purpose of `logWaitResponseToHistory` (visibility) is preserved in some form
 
 ### Design directions to evaluate
 
@@ -92,6 +94,20 @@ Candidate directions — **no pre-commitment**; Phase 1 evaluates and records th
 | Stop writing bus action into `command` | Leave `command` empty on synthesized rows, or namespace it (e.g. `bus:review`) so it can never read as a shell command | Cheapest; fixes the "tell" but not the fabricated `success` |
 | Reject non-result payloads | Signature filter (launch banner, `Thought:`, TUI chrome, prompt lines) before logging | Heuristic — reduces but cannot eliminate; complements the above |
 | Activity row, not result row | `logWaitResponseToHistory` writes a dedicated "activity" row type that cannot carry a pass/fail verdict at all | Matches the function's stated purpose (stop panes looking empty); likely the cleanest invariant |
+
+### Technical approach (Phase 1 decision, 2026-08-12)
+
+Four of the five candidate directions were adopted together — they are complementary, not alternatives:
+
+- **Activity row, not result row** — synthesized entries can no longer carry a pass/fail verdict at all. This is the core invariant.
+- **`unknown` outcome** — adopted, with a correction to this spec's premise: the model ALREADY had an `unknown` outcome — `bus.HookOutcome()` has always returned `"unknown"` for an empty exit code. The defect was never a missing outcome value; it was a read/write asymmetry: the write side produced `unknown` correctly and the read side (`ConsoleEntry.IsPass()`) collapsed it into a pass. Same shape of bug as [answered-row-receipt](answered-row-receipt.md) — the write side honored an invariant the read side disagreed with.
+- **Provenance field** — `source: "bus-response"` on synthesized entries; empty means the authoritative hook / self-logged path (so legacy rows keep their verdict).
+- **Stop writing the bus action into `command`** — `command` is left empty and the action moves to a new `action` field, rendered as `bus:review` so it can never read as a shell command.
+- **Reject non-result payloads** — adopted as a complement, deliberately conservative: rejects only when the payload is empty, its FIRST line is chrome, or EVERY line is chrome. A real result that merely quotes a banner later is kept, because losing a real verdict is the costlier error.
+
+**Scope correction (found during implementation)**: there were THREE synthesis paths, not two. Besides `logWaitResponseToHistory` (`cmd/send.go`) and `logTrackedTaskToHistory` (`daemon/daemon.go`), a third — `logTaskToConsoleHistory` (`daemon/daemon.go`, called from the non-hook task-completion path and the idle-task-rescue path) — carried the same hardcoded `exitCode := "0"` / `outcome := "success"`. Resolution: `logTrackedTaskToHistory` was **deleted entirely** (it was a hand-copy of `logTaskToConsoleHistory`; its caller now calls the shared function), and all remaining paths construct entries through one constructor, `bus.NewBusResponseEntry()` (`bus/history_provenance.go`), so the duplication that let the same defect exist in three places cannot regrow.
+
+**Behavior change worth flagging**: `muxcode log <role> "<summary>"` **without** `--exit-code` now records `unknown` instead of a pass. This affects documented usage for the watch agent (`muxcode log watch "summary"`), which logs observations rather than command results. This is intended — an observation is not a success — but agent docs that show `muxcode log` without `--exit-code` may deserve a note that such entries appear as unverified.
 
 ### Constraints
 
@@ -113,33 +129,37 @@ Candidate directions — **no pre-commitment**; Phase 1 evaluates and records th
 
 Same underlying disease as the answered-row echo loop ([answered-row-receipt](answered-row-receipt.md)) and the review-echo incident: **pane text is being treated as evidence of work**. The broader effort to stop inferring state from pane scrapes is [remove-gated-pane-scrape-delivery](../backlog/remove-gated-pane-scrape-delivery.md) — this spec closes the console-history branch of that disease; that one closes the delivery branch.
 
+The pre-existing test `TestConsoleEntryIsPass` (`bus/console_test.go`) had a case pinning `nil exit code -> pass` — that case encoded the defect and was flipped to `false`, with a comment pointing at the new test file (`bus/history_provenance_test.go`).
+
 ## Implementation
 
 ### Phase 1: Design decision
 
-- [ ] Evaluate: `unknown`/`unverified` outcome in the entry model (never infer success from keyword absence)
-- [ ] Evaluate: provenance field (`source: agent-log | wait-response`) + distinct rendering + counter exclusion/segregation
-- [ ] Evaluate: stop writing bus action into `command` (empty vs namespaced)
-- [ ] Evaluate: non-result payload rejection (launch-banner/`Thought:`/TUI-chrome signatures)
-- [ ] Evaluate: whether `logWaitResponseToHistory` should write a result row at all — dedicated verdict-free "activity" row shape
-- [ ] Record the chosen combination in this spec's Technical approach and update Phase 2 steps to match
+- [x] Evaluate: `unknown`/`unverified` outcome in the entry model (never infer success from keyword absence)
+- [x] Evaluate: provenance field (`source: agent-log | wait-response`) + distinct rendering + counter exclusion/segregation
+- [x] Evaluate: stop writing bus action into `command` (empty vs namespaced)
+- [x] Evaluate: non-result payload rejection (launch-banner/`Thought:`/TUI-chrome signatures)
+- [x] Evaluate: whether `logWaitResponseToHistory` should write a result row at all — dedicated verdict-free "activity" row shape
+- [x] Record the chosen combination in this spec's Technical approach and update Phase 2 steps to match
 
 ### Phase 2: Fix the synthesized-entry paths (`cmd/send.go` + `daemon/daemon.go`)
 
-- [ ] Implement the chosen design in `logWaitResponseToHistory` — synthesized entries can no longer carry an unearned `success`
-- [ ] Apply the identical fix to the daemon mirror `logTrackedTaskToHistory` (`--track` path) — the mirror must not outlive the fix
-- [ ] Remove the keyword-absence heuristic (`"failed"` / `"error:"` scan) as a success/failure oracle — in both paths
-- [ ] Ensure a bus action is never rendered as a shell command in console history
-- [ ] Unit tests: launch-banner payload never records a pass (via `--wait` and `--track` paths); chat text never records a pass; real self-logged entries unaffected
+- [x] Implement the chosen design in `logWaitResponseToHistory` — synthesized entries can no longer carry an unearned `success`
+- [x] Apply the identical fix to the daemon mirror `logTrackedTaskToHistory` (`--track` path) — the mirror must not outlive the fix (resolved by deleting the mirror; its caller now uses the shared `logTaskToConsoleHistory`)
+- [x] Remove the keyword-absence heuristic (`"failed"` / `"error:"` scan) as a success/failure oracle — in both paths
+- [x] Ensure a bus action is never rendered as a shell command in console history
+- [x] Unit tests: launch-banner payload never records a pass (via `--wait` and `--track` paths); chat text never records a pass; real self-logged entries unaffected (`bus/history_provenance_test.go`)
 
 ### Phase 3: Fix the same family in `muxcode log` and the console model
 
-- [ ] `cmd/log.go` `runLog`: a log call carrying no verdict is not recorded as a pass (per the chosen outcome model)
-- [ ] `bus/console.go`: `IsPass()` / counters honor the chosen model — empty exit code is not silently a pass; synthesized/unverified rows excluded from or segregated in `pass`/`fail` counts
-- [ ] Console renderers visually distinguish provenance (per chosen design)
-- [ ] Unit tests: counter math over mixed real/synthesized/unknown histories
+- [x] `cmd/log.go` `runLog`: a log call carrying no verdict is not recorded as a pass (per the chosen outcome model) — `exit_code` no longer defaults to `"0"`; no verdict records `unknown`
+- [x] `bus/console.go`: `IsPass()` / counters honor the chosen model — `IsPass()` is strict; new `IsUnverified()` / `IsFail()` / `Label()` / `CountOutcomes()`; counters gained an `unverified` column shown only when non-zero
+- [x] Console renderers visually distinguish provenance (per chosen design) — all four renderers count three ways and render unverified rows dim with a `····` marker
+- [x] Unit tests: counter math over mixed real/synthesized/unknown histories
 
 ### Phase 4: Integration test
+
+> **Outstanding.** `scripts/test-echo-as-result.sh` was not written. End-to-end verification was instead performed live against a running session (see "Observed fix behavior" below) — the scripted test remains outstanding.
 
 - [ ] Create `scripts/test-echo-as-result.sh` with end-to-end verification (requires running muxcode session)
 - [ ] Test: simulate a `--wait` response whose payload is a launch banner → verify console history records no pass for it
@@ -150,6 +170,15 @@ Same underlying disease as the answered-row echo loop ([answered-row-receipt](an
 - [ ] Test: non-hook console pane is not empty after a `--wait` round-trip (visibility preserved)
 - [ ] Run the script and verify all checks pass
 
+### Observed fix behavior (2026-08-12 live verification)
+
+The bug reproduced live during implementation and the fix was verified against it in the same session:
+
+- A `--wait` send to `test` returned a payload of pure TUI chrome (`Thought: 912ms`, `LSPs are disabled`, partial reasoning). The new code **rejected it outright** — `test-history.jsonl` stayed empty. The old code would have written `command:"test", exit_code:"0", outcome:"success"`.
+- Two later replies whose first line was reasoning prose were recorded as `command:"", action:"test", source:"bus-response", exit_code:"", outcome:"unknown"` — visible in the console but counted as neither pass nor fail.
+- The review agent's chrome replies produced two unverified rows; under the old code the review console would have shown `clean 2`, i.e. two fabricated LGTMs.
+- The authoritative path was confirmed intact: a real self-logged `./test.sh` row (`exit_code:"0"`, no `source`) still renders as a pass, and a real failing run (`exit_code:"1"`) still renders as a fail.
+
 ## Status
 
-Draft
+In Progress

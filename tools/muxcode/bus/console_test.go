@@ -130,7 +130,12 @@ func TestConsoleEntryIsPass(t *testing.T) {
 		exitCode json.RawMessage
 		want     bool
 	}{
-		{nil, true},
+		// A missing exit code is NOT a pass. This case previously expected
+		// true, which is the defect itself: any entry that never ran a command
+		// — including a bus reply synthesized from an agent's launch banner —
+		// had no exit code and so rendered green. It is now unverified; see
+		// TestConsoleEntry_EmptyExitCodeIsNotPass in history_provenance_test.go.
+		{nil, false},
 		{json.RawMessage(`"0"`), true},
 		{json.RawMessage(`0`), true},
 		{json.RawMessage(`"1"`), false},

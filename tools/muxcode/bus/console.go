@@ -47,6 +47,9 @@ type ConsoleEntry struct {
 	Outcome     string          `json:"outcome"`
 	Output      string          `json:"output"`
 	Errors      string          `json:"errors"`
+	// Source is the entry's provenance — empty means the authoritative hook or
+	// self-logged path; SourceBusResponse means synthesized from a reply.
+	Source string `json:"source"`
 	// API-specific fields
 	Method       string `json:"method"`
 	URL          string `json:"url"`
@@ -86,10 +89,63 @@ func (e *ConsoleEntry) ExitCodeStr() string {
 	return s
 }
 
-// IsPass returns true if exit code is "0" or empty.
+// IsUnverified reports whether an entry carries no verdict — it is neither a
+// pass nor a fail, and must not be counted as either.
+//
+// Three things make an entry unverified: it was synthesized from a bus response
+// payload rather than an executed command; it explicitly recorded the "unknown"
+// outcome; or it has no exit code at all. The last case is why this exists —
+// an absent exit code used to read as a pass, so any entry that never ran a
+// command rendered green.
+func (e *ConsoleEntry) IsUnverified() bool {
+	return e.Source == SourceBusResponse ||
+		e.Outcome == OutcomeUnknown ||
+		e.ExitCodeStr() == ""
+}
+
+// IsPass returns true only for an entry that carries a real success verdict:
+// exit code "0" from a command that actually ran. Absence of failure is not
+// success, so an unverified entry is never a pass.
 func (e *ConsoleEntry) IsPass() bool {
-	ec := e.ExitCodeStr()
-	return ec == "0" || ec == ""
+	if e.IsUnverified() {
+		return false
+	}
+	return e.ExitCodeStr() == "0"
+}
+
+// IsFail returns true only for an entry that carries a real failure verdict.
+// Kept explicit so renderers can classify three ways rather than treating
+// "not a pass" as a failure, which would paint every unverified row red.
+func (e *ConsoleEntry) IsFail() bool {
+	return !e.IsPass() && !e.IsUnverified()
+}
+
+// Label returns the command that produced an entry, for display. Synthesized
+// entries have no command — they render their bus action namespaced as
+// "bus:review" so an action can never be read as a shell command someone ran.
+func (e *ConsoleEntry) Label() string {
+	if e.Command != "" {
+		return e.Command
+	}
+	if e.Source == SourceBusResponse && e.Action != "" {
+		return "bus:" + e.Action
+	}
+	return e.Action
+}
+
+// CountOutcomes classifies entries three ways for the console summary line.
+func CountOutcomes(entries []ConsoleEntry) (pass, fail, unverified int) {
+	for i := range entries {
+		switch {
+		case entries[i].IsPass():
+			pass++
+		case entries[i].IsUnverified():
+			unverified++
+		default:
+			fail++
+		}
+	}
+	return pass, fail, unverified
 }
 
 // ReadConsoleEntries reads and parses a JSONL file, returning the last `limit` entries.
@@ -429,14 +485,50 @@ func emptyBlock(msg string) string {
 	return fmt.Sprintf("%s%s%s%s\n", Pad, ColorDim, msg, ColorReset)
 }
 
-func summaryLine(total, pass, fail int) string {
-	return fmt.Sprintf("%s%stotal%s %s%d%s  %spass%s %s%d%s  %sfail%s %s%d%s\n",
+// summaryLine renders the total/pass/fail counters, plus an unverified count
+// when any entry carries no verdict. Unverified entries are segregated rather
+// than folded into either column: counting them as passes fabricates green,
+// and counting them as failures fabricates red.
+func summaryLine(total, pass, fail, unverified int) string {
+	line := fmt.Sprintf("%s%stotal%s %s%d%s  %spass%s %s%d%s  %sfail%s %s%d%s",
 		Pad, ColorDim, ColorReset,
 		ColorCyan, total, ColorReset,
 		ColorDim, ColorReset,
 		ColorGreen, pass, ColorReset,
 		ColorDim, ColorReset,
 		ColorRed, fail, ColorReset)
+	if unverified > 0 {
+		line += fmt.Sprintf("  %sunverified%s %s%d%s",
+			ColorDim, ColorReset,
+			ColorDim, unverified, ColorReset)
+	}
+	return line + "\n"
+}
+
+// renderEntryRow renders one history row, classified three ways. An unverified
+// row is visually distinct from both OK and FAIL so a reply that merely arrived
+// can never be mistaken — by a human or by an agent scraping the pane — for a
+// command that ran and succeeded.
+func renderEntryRow(e *ConsoleEntry, numLabel, ts string) string {
+	switch {
+	case e.IsUnverified():
+		return fmt.Sprintf("%s%s%s%s %s%s%s  %s····%s  %s%s%s\n",
+			ContPad, ColorDim, numLabel, ColorReset,
+			ColorDim, ts, ColorReset,
+			ColorDim, ColorReset,
+			ColorDim, e.Label(), ColorReset)
+	case e.IsPass():
+		return fmt.Sprintf("%s%s%s%s %s%s%s  %sOK%s    %s\n",
+			ContPad, ColorDim, numLabel, ColorReset,
+			ColorDim, ts, ColorReset,
+			ColorGreen, ColorReset, e.Label())
+	default:
+		return fmt.Sprintf("%s%s%s%s %s%s%s  %sFAIL%s  %s  %sexit %s%s\n",
+			ContPad, ColorDim, numLabel, ColorReset,
+			ColorDim, ts, ColorReset,
+			ColorRed, ColorReset, e.Label(),
+			ColorDim, e.ExitCodeStr(), ColorReset)
+	}
 }
 
 func calcContentWidth(paneWidth int) int {
@@ -472,15 +564,9 @@ func renderBuildTest(cfg *ConsoleConfig, session string, width int) string {
 	}
 
 	total := len(entries)
-	pass := 0
-	for _, e := range entries {
-		if e.IsPass() {
-			pass++
-		}
-	}
-	fail := total - pass
+	pass, fail, unverified := CountOutcomes(entries)
 
-	b.WriteString(summaryLine(total, pass, fail))
+	b.WriteString(summaryLine(total, pass, fail, unverified))
 	b.WriteString("\n")
 
 	// Recent entries
@@ -496,20 +582,8 @@ func renderBuildTest(cfg *ConsoleConfig, session string, width int) string {
 		num := offset + i + 1
 		ts := FormatTimestamp(e.TS)
 		numLabel := fmt.Sprintf("#%-3d", num)
-		ec := e.ExitCodeStr()
 
-		if e.IsPass() {
-			b.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %sOK%s    %s\n",
-				ContPad, ColorDim, numLabel, ColorReset,
-				ColorDim, ts, ColorReset,
-				ColorGreen, ColorReset, e.Command))
-		} else {
-			b.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %sFAIL%s  %s  %sexit %s%s\n",
-				ContPad, ColorDim, numLabel, ColorReset,
-				ColorDim, ts, ColorReset,
-				ColorRed, ColorReset, e.Command,
-				ColorDim, ec, ColorReset))
-		}
+		b.WriteString(renderEntryRow(&recent[i], numLabel, ts))
 
 		// Detail line: prefer changes (build) or description
 		detail := e.Changes
@@ -528,21 +602,31 @@ func renderBuildTest(cfg *ConsoleConfig, session string, width int) string {
 	last := entries[len(entries)-1]
 	lastEC := last.ExitCodeStr()
 	lastTS := FormatTimestamp(last.TS)
+	lastFailed := last.IsFail()
+	lastUnverified := last.IsUnverified()
 
 	displayOutput := last.Output
-	if lastEC != "0" && last.Errors != "" {
+	if lastFailed && last.Errors != "" {
 		displayOutput = last.Errors
 	}
 
-	if displayOutput != "" || lastEC != "0" {
-		if lastEC == "0" || lastEC == "" {
-			b.WriteString(fmt.Sprintf("%s%s⏺ %s completed successfully%s  %s%s%s\n\n",
-				Pad, ColorGreen, cfg.Title, ColorReset, ColorDim, lastTS, ColorReset))
-		} else {
+	if displayOutput != "" || lastFailed {
+		switch {
+		case lastUnverified:
+			// A reply arrived; nothing ran that we can vouch for. Say exactly
+			// that — the old code printed "completed successfully" here for any
+			// entry without an exit code, which is how launch banners became
+			// green builds.
+			b.WriteString(fmt.Sprintf("%s%s⏺ %s — reply received, no verdict%s  %s%s%s\n\n",
+				Pad, ColorDim, cfg.Title, ColorReset, ColorDim, lastTS, ColorReset))
+		case lastFailed:
 			b.WriteString(fmt.Sprintf("%s%s⏺ %s failed%s  %s%s%s\n",
 				Pad, ColorRed, cfg.Title, ColorReset, ColorDim, lastTS, ColorReset))
 			b.WriteString(fmt.Sprintf("%s%scmd%s  %s  %sexit %s%s\n\n",
-				ContPad, ColorDim, ColorReset, last.Command, ColorDim, lastEC, ColorReset))
+				ContPad, ColorDim, ColorReset, last.Label(), ColorDim, lastEC, ColorReset))
+		default:
+			b.WriteString(fmt.Sprintf("%s%s⏺ %s completed successfully%s  %s%s%s\n\n",
+				Pad, ColorGreen, cfg.Title, ColorReset, ColorDim, lastTS, ColorReset))
 		}
 
 		if displayOutput != "" {
@@ -553,19 +637,18 @@ func renderBuildTest(cfg *ConsoleConfig, session string, width int) string {
 				if oline == "" || strings.HasPrefix(oline, "Exit code:") {
 					continue
 				}
-				if lastEC != "0" {
+				switch {
+				case lastFailed:
 					for _, wline := range WordWrap(oline, wrapWidth) {
 						b.WriteString(fmt.Sprintf("%s%s- %s%s\n", ContPad, ColorRed, wline, ColorReset))
 					}
-				} else {
-					if lineCount == 0 {
-						for _, wline := range WordWrap(oline, cw) {
-							b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorCyan, wline, ColorReset))
-						}
-					} else {
-						for _, wline := range WordWrap(oline, wrapWidth) {
-							b.WriteString(fmt.Sprintf("%s%s- %s%s\n", ContPad, ColorDim, wline, ColorReset))
-						}
+				case lineCount == 0 && !lastUnverified:
+					for _, wline := range WordWrap(oline, cw) {
+						b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorCyan, wline, ColorReset))
+					}
+				default:
+					for _, wline := range WordWrap(oline, wrapWidth) {
+						b.WriteString(fmt.Sprintf("%s%s- %s%s\n", ContPad, ColorDim, wline, ColorReset))
 					}
 				}
 				lineCount++
@@ -573,21 +656,23 @@ func renderBuildTest(cfg *ConsoleConfig, session string, width int) string {
 					break
 				}
 			}
-			if lineCount == 0 && lastEC != "0" {
+			if lineCount == 0 && lastFailed {
 				b.WriteString(fmt.Sprintf("%s%s- No error details captured%s\n", ContPad, ColorDim, ColorReset))
 			}
 		}
-		if lastEC == "0" || lastEC == "" {
+		if !lastFailed && !lastUnverified {
 			b.WriteString(fmt.Sprintf("%s%s- No errors or warnings%s\n", ContPad, ColorDim, ColorReset))
 		}
 		b.WriteString("\n")
 	}
 
 	// Previous failure (when latest passed and there were failures)
-	if (lastEC == "0" || lastEC == "") && fail > 0 {
+	if !lastFailed && fail > 0 {
 		var prevFail *ConsoleEntry
 		for i := len(entries) - 2; i >= 0; i-- {
-			if !entries[i].IsPass() {
+			// IsFail, not !IsPass — an unverified row is not a past failure,
+			// and surfacing one here would report errors that never happened.
+			if entries[i].IsFail() {
 				prevFail = &entries[i]
 				break
 			}
@@ -603,7 +688,7 @@ func renderBuildTest(cfg *ConsoleConfig, session string, width int) string {
 			b.WriteString(fmt.Sprintf("%s%s⏺ Last errors%s  %s%s%s\n",
 				Pad, ColorYellow, ColorReset, ColorDim, pfTS, ColorReset))
 			b.WriteString(fmt.Sprintf("%s%scmd%s  %s  %sexit %s%s\n",
-				ContPad, ColorDim, ColorReset, prevFail.Command, ColorDim, pfEC, ColorReset))
+				ContPad, ColorDim, ColorReset, prevFail.Label(), ColorDim, pfEC, ColorReset))
 
 			if pfDisplay != "" {
 				pfLineCount := 0
@@ -644,21 +729,20 @@ func renderReview(cfg *ConsoleConfig, session string, width int) string {
 	}
 
 	total := len(entries)
-	clean := 0
-	for _, e := range entries {
-		if e.IsPass() {
-			clean++
-		}
-	}
-	issues := total - clean
+	clean, issues, unverified := CountOutcomes(entries)
 
-	b.WriteString(fmt.Sprintf("%s%stotal%s %s%d%s  %sclean%s %s%d%s  %sissues%s %s%d%s\n",
+	b.WriteString(fmt.Sprintf("%s%stotal%s %s%d%s  %sclean%s %s%d%s  %sissues%s %s%d%s",
 		Pad, ColorDim, ColorReset,
 		ColorCyan, total, ColorReset,
 		ColorDim, ColorReset,
 		ColorGreen, clean, ColorReset,
 		ColorDim, ColorReset,
 		ColorRed, issues, ColorReset))
+	if unverified > 0 {
+		b.WriteString(fmt.Sprintf("  %sunverified%s %s%d%s",
+			ColorDim, ColorReset, ColorDim, unverified, ColorReset))
+	}
+	b.WriteString("\n")
 	b.WriteString("\n")
 
 	// Recent reviews
@@ -679,7 +763,18 @@ func renderReview(cfg *ConsoleConfig, session string, width int) string {
 		ts := FormatTimestamp(e.TS)
 		numLabel := fmt.Sprintf("#%-3d", num)
 
-		if e.IsPass() {
+		if e.IsUnverified() {
+			// A review reply with no verdict is not a clean review. Render it
+			// dim and verdict-free rather than as an LGTM.
+			b.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %s····%s",
+				ContPad, ColorDim, numLabel, ColorReset,
+				ColorDim, ts, ColorReset,
+				ColorDim, ColorReset))
+			if e.Summary != "" {
+				b.WriteString(fmt.Sprintf("  %s%s%s", ColorDim, e.Summary, ColorReset))
+			}
+			b.WriteString("\n")
+		} else if e.IsPass() {
 			b.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %sOK%s",
 				ContPad, ColorDim, numLabel, ColorReset,
 				ColorDim, ts, ColorReset,
@@ -722,11 +817,13 @@ func renderReview(cfg *ConsoleConfig, session string, width int) string {
 	}
 
 	if displayOutput != "" {
-		lastEC := last.ExitCodeStr()
-		if lastEC == "0" || lastEC == "" {
-			b.WriteString(fmt.Sprintf("%s%s⏺ Review completed%s\n\n", Pad, ColorGreen, ColorReset))
-		} else {
+		switch {
+		case last.IsUnverified():
+			b.WriteString(fmt.Sprintf("%s%s⏺ Reply received, no review verdict%s\n\n", Pad, ColorDim, ColorReset))
+		case last.IsFail():
 			b.WriteString(fmt.Sprintf("%s%s⏺ Review found issues%s\n\n", Pad, ColorRed, ColorReset))
+		default:
+			b.WriteString(fmt.Sprintf("%s%s⏺ Review completed%s\n\n", Pad, ColorGreen, ColorReset))
 		}
 
 		lineCount := 0
@@ -938,15 +1035,9 @@ func renderDeployRunner(cfg *ConsoleConfig, session string, width int) string {
 	}
 
 	total := len(entries)
-	pass := 0
-	for _, e := range entries {
-		if e.IsPass() {
-			pass++
-		}
-	}
-	fail := total - pass
+	pass, fail, unverified := CountOutcomes(entries)
 
-	b.WriteString(summaryLine(total, pass, fail))
+	b.WriteString(summaryLine(total, pass, fail, unverified))
 	b.WriteString("\n")
 
 	if procSection != "" {
@@ -966,20 +1057,8 @@ func renderDeployRunner(cfg *ConsoleConfig, session string, width int) string {
 		num := offset + i + 1
 		ts := FormatTimestamp(e.TS)
 		numLabel := fmt.Sprintf("#%-3d", num)
-		ec := e.ExitCodeStr()
 
-		if e.IsPass() {
-			b.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %sOK%s    %s\n",
-				ContPad, ColorDim, numLabel, ColorReset,
-				ColorDim, ts, ColorReset,
-				ColorGreen, ColorReset, e.Command))
-		} else {
-			b.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %sFAIL%s  %s  %sexit %s%s\n",
-				ContPad, ColorDim, numLabel, ColorReset,
-				ColorDim, ts, ColorReset,
-				ColorRed, ColorReset, e.Command,
-				ColorDim, ec, ColorReset))
-		}
+		b.WriteString(renderEntryRow(&recent[i], numLabel, ts))
 
 		detail := e.Description
 		if detail != "" {
@@ -992,21 +1071,26 @@ func renderDeployRunner(cfg *ConsoleConfig, session string, width int) string {
 
 	// Last output — prefer errors field on failure
 	last := entries[len(entries)-1]
-	lastEC := last.ExitCodeStr()
+	lastFailed := last.IsFail()
+	lastUnverified := last.IsUnverified()
 	displayOutput := last.Output
-	if lastEC != "0" && lastEC != "" && last.Errors != "" {
+	if lastFailed && last.Errors != "" {
 		displayOutput = last.Errors
 	}
 	if displayOutput != "" {
-		if lastEC == "0" || lastEC == "" {
+		switch {
+		case lastUnverified:
+			b.WriteString(fmt.Sprintf("%s%s⏺ %s — reply received, no verdict%s\n\n",
+				Pad, ColorDim, cfg.Title, ColorReset))
+		case lastFailed:
+			failLabel := cfg.Title + " failed"
+			b.WriteString(fmt.Sprintf("%s%s⏺ %s%s\n\n", Pad, ColorRed, failLabel, ColorReset))
+		default:
 			successLabel := cfg.Title + " succeeded"
 			if cfg.Title == "Run" {
 				successLabel = "Execution completed"
 			}
 			b.WriteString(fmt.Sprintf("%s%s⏺ %s%s\n\n", Pad, ColorGreen, successLabel, ColorReset))
-		} else {
-			failLabel := cfg.Title + " failed"
-			b.WriteString(fmt.Sprintf("%s%s⏺ %s%s\n\n", Pad, ColorRed, failLabel, ColorReset))
 		}
 
 		lineCount := 0
@@ -1017,16 +1101,19 @@ func renderDeployRunner(cfg *ConsoleConfig, session string, width int) string {
 			}
 			if lineCount == 0 {
 				for _, wline := range WordWrap(oline, cw) {
-					if lastEC != "0" && lastEC != "" {
+					switch {
+					case lastFailed:
 						b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorRed, wline, ColorReset))
-					} else {
+					case lastUnverified:
+						b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorDim, wline, ColorReset))
+					default:
 						b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorCyan, wline, ColorReset))
 					}
 				}
 			} else {
 				wrapWidth := cw - len(ContPad) + len(Pad)
 				color := ColorDim
-				if lastEC != "0" && lastEC != "" {
+				if lastFailed {
 					color = ColorRed
 				}
 				for _, wline := range WordWrap(oline, wrapWidth) {
@@ -1080,15 +1167,9 @@ func renderCommit(cfg *ConsoleConfig, session string, width int) string {
 	}
 
 	total := len(entries)
-	pass := 0
-	for _, e := range entries {
-		if e.IsPass() {
-			pass++
-		}
-	}
-	fail := total - pass
+	pass, fail, unverified := CountOutcomes(entries)
 
-	b.WriteString(summaryLine(total, pass, fail))
+	b.WriteString(summaryLine(total, pass, fail, unverified))
 	b.WriteString("\n")
 
 	b.WriteString(fmt.Sprintf("%s%s%s%s\n", Pad, ColorCyan, cfg.RecentLabel, ColorReset))
@@ -1103,20 +1184,8 @@ func renderCommit(cfg *ConsoleConfig, session string, width int) string {
 		num := offset + i + 1
 		ts := FormatTimestamp(e.TS)
 		numLabel := fmt.Sprintf("#%-3d", num)
-		ec := e.ExitCodeStr()
 
-		if e.IsPass() {
-			b.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %sOK%s    %s\n",
-				ContPad, ColorDim, numLabel, ColorReset,
-				ColorDim, ts, ColorReset,
-				ColorGreen, ColorReset, e.Command))
-		} else {
-			b.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %sFAIL%s  %s  %sexit %s%s\n",
-				ContPad, ColorDim, numLabel, ColorReset,
-				ColorDim, ts, ColorReset,
-				ColorRed, ColorReset, e.Command,
-				ColorDim, ec, ColorReset))
-		}
+		b.WriteString(renderEntryRow(&recent[i], numLabel, ts))
 
 		// Prefer summary over description for commit role
 		detail := e.Summary
@@ -1139,12 +1208,14 @@ func renderCommit(cfg *ConsoleConfig, session string, width int) string {
 
 	// Last operation output
 	last := entries[len(entries)-1]
-	lastEC := last.ExitCodeStr()
 	if last.Output != "" {
-		if lastEC == "0" || lastEC == "" {
-			b.WriteString(fmt.Sprintf("%s%s⏺ Operation completed:%s\n\n", Pad, ColorGreen, ColorReset))
-		} else {
+		switch {
+		case last.IsUnverified():
+			b.WriteString(fmt.Sprintf("%s%s⏺ Reply received, no verdict:%s\n\n", Pad, ColorDim, ColorReset))
+		case last.IsFail():
 			b.WriteString(fmt.Sprintf("%s%s⏺ Operation failed:%s\n\n", Pad, ColorRed, ColorReset))
+		default:
+			b.WriteString(fmt.Sprintf("%s%s⏺ Operation completed:%s\n\n", Pad, ColorGreen, ColorReset))
 		}
 
 		firstLine := true
@@ -1174,10 +1245,10 @@ func renderCommit(cfg *ConsoleConfig, session string, width int) string {
 	}
 
 	// Last failure detail (no output captured)
-	if lastEC != "0" && lastEC != "" && last.Output == "" {
+	if last.IsFail() && last.Output == "" {
 		b.WriteString(fmt.Sprintf("%s%slast failure%s\n", Pad, ColorRed, ColorReset))
-		b.WriteString(fmt.Sprintf("%s%scmd%s   %s\n", ContPad, ColorDim, ColorReset, last.Command))
-		b.WriteString(fmt.Sprintf("%s%sexit%s  %s\n", ContPad, ColorDim, ColorReset, lastEC))
+		b.WriteString(fmt.Sprintf("%s%scmd%s   %s\n", ContPad, ColorDim, ColorReset, last.Label()))
+		b.WriteString(fmt.Sprintf("%s%sexit%s  %s\n", ContPad, ColorDim, ColorReset, last.ExitCodeStr()))
 	}
 
 	return b.String()
