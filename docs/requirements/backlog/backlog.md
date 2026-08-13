@@ -9,6 +9,9 @@
 | Feature | Spec | Status |
 |---------|------|--------|
 | Agent mode | [`docs/requirements/drafts/agent-mode.md`](../drafts/agent-mode.md) | In Progress — Phases 1-7 complete, all acceptance criteria checked |
+| Branch active-time tracking | [`docs/requirements/drafts/branch-time-tracking.md`](../drafts/branch-time-tracking.md) | In Progress — `--json` read path + verify-spec doc sink implemented (`seed`/`record` reconciliation); remaining: docs bullets + Phase 3 integration test |
+| Disk-pressure signal fix | [`docs/requirements/drafts/disk-pressure-wrong-filesystem.md`](../drafts/disk-pressure-wrong-filesystem.md) | In Progress — Phase 1 complete, integration test outstanding |
+| Lifecycle log test leak | [`docs/requirements/backlog/lifecycle-log-test-leak.md`](./lifecycle-log-test-leak.md) | In Progress — fix shipped, regression test outstanding |
 
 ## Top priorities
 
@@ -40,12 +43,19 @@
 | Medium | Structured agent metrics |
 | Medium | File integrity validation |
 | Medium | Tool-call doom loop detection |
+| High | `muxcode diagnose` false clean verdict on dead agents |
+| High | Verify-spec refires on stale unconsumed review message |
+| Medium | Disk-pressure check measures the wrong filesystem |
 | Low | Message delivery receipts |
 | Low | Bus audit trail |
 
 - **Structured agent metrics** — Track per-agent metrics (messages sent/received, tool calls, errors, avg response time) in `metrics.jsonl` — dashboard TUI shows metrics panel
 - **File integrity validation** — Timestamp-based change detection on file operations — detect external modifications between read and edit/write, warn agent of stale content before applying changes. Inspired by OpenCode's file integrity checks
 - **Tool-call doom loop detection** — Detect 3+ identical consecutive tool calls within a single agent turn (same tool, same args) — prompt user or abort. Complements existing message-level loop detection in `bus/guard.go`. Inspired by OpenCode's `doom_loop` permission
+- **`muxcode diagnose` false clean verdict on dead agents** — `diagnose` collects `AgentState.IsAlive` but no detector evaluates it: a dead agent's report prints `State: dead` yet concludes `✅ No issues detected` with exit 0, so automation gating on the exit code reads a dead agent as healthy. Fix: `checkAgentDead` registered first in `diagnosticChecks`, critical severity, remediation `muxcode agent-health --start <role>`. Spec: [`diagnose-false-clean-verdict`](./diagnose-false-clean-verdict.md)
+- **Verify-spec refires on stale unconsumed review message** — one review completion generated 4+ identical `verify-spec` requests to plan in ~2 min: `checkInboxes()` fires the reviewed-transition on **any** edit-inbox growth while **any** unconsumed review→edit message exists, and plan's mandated "reply to edit" is itself growth — a self-sustaining loop while edit is busy. Fix: fire once per actual completion (track last-seen review message ID or inspect the growth delta). Spec: [`verify-spec-stale-review-refire`](./verify-spec-stale-review-refire.md)
+- **Disk-pressure check measures the wrong filesystem** — **In progress** — The daemon's `/tmp` pressure watchdog reported boot-volume percent-used (`Statfs` on macOS's symlinked `/private/tmp`), fired perpetually on healthy 85–90%-full dev machines, and its cleanup freed 0 B. Now measures free-bytes headroom and muxcode footprint (`TmpPressure()`); integration test outstanding. Spec: [`disk-pressure-wrong-filesystem`](../drafts/disk-pressure-wrong-filesystem.md)
+- **Lifecycle log test leak** — **In progress** — `LifecycleLogDir()` resolved unconditionally to `~/.config/muxcode/logs`, so test runs deposited real per-session log files into the live install (41,789 stray `test-*.log` files, ~169 MB). Fixed via `MUXCODE_LIFECYCLE_LOG_DIR` override pinned by `TestMain`; automated regression test outstanding. Spec: [`lifecycle-log-test-leak`](./lifecycle-log-test-leak.md)
 - **Message delivery receipts** — ~~Agents ACK message consumption~~ **Delivered** via [`delivery-acknowledgement`](../drafts/delivery-acknowledgement.md) (Phases 1–6 committed): per-message receipts (`acked` for Claude/harness, verified-inject `delivered` for OpenCode/Codex), agent self-poll, and a `checkPollHealth` receipt-gap backstop replace pane-scrape delivery inference. Remaining follow-up: [`remove-gated-pane-scrape-delivery`](./remove-gated-pane-scrape-delivery.md) — physically delete the old machinery (currently gated OFF behind `MUXCODE_DELIVERY_ACK`) once the cutover is proven stable live
 - **Bus audit trail** — Append-only audit log separate from `log.jsonl` capturing all bus operations (send, consume, lock, unlock, cron fire, proc start/stop) with caller identity — post-session debugging. Partially addressed by lifecycle logging (`~/.config/muxcode/logs/`) which covers process lifecycle and watcher events
 
