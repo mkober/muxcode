@@ -9,6 +9,14 @@ tags: [debug, tmux, agents]
 
 Use these techniques to inspect what other agents are doing, verify message delivery, and diagnose stuck agents.
 
+### Scope — liveness, never results
+
+These techniques answer **"is that agent alive, idle, wedged, or crashed?"** They are never a way to read what an agent *concluded*. Results arrive as bus messages; read `muxcode inbox`.
+
+Scraping a pane for an expected result is actively wrong, not merely slow: your own request text is echoed in that pane, so a grep for the output you asked about matches the words you used to ask for it. Searching a pane for `No errors` or `Expect CDK 146` matches your own request and reports a false success.
+
+If you are reaching for `capture-pane` because a delegated result has not arrived, stop and check `muxcode inbox` and `muxcode tasks` first — a `--wait` that degraded at 90s returns with no result while delivery is still in flight.
+
 ### Prerequisites
 
 - `BUS_SESSION` env var (always exported in muxcode sessions)

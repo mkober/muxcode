@@ -138,7 +138,19 @@ Two modes for delegated sends:
 
 With `--track`, the daemon auto-completes the task when the response arrives and wakes you with "You have new messages". Check results via `muxcode inbox`.
 
-Never use `sleep`, manual `inbox` polling, or `capture-pane` as a substitute for `--wait` or `--track`.
+### Never poll for a delegated result
+
+Not with `sleep`, not with repeated `muxcode inbox`, not with `tmux capture-pane`. The result comes to you: both `--track` and a degraded `--wait` leave a tracked task that the daemon completes, waking you with "You have new messages".
+
+**The trap is the 90-second degrade.** `--wait` blocks only up to `MUXCODE_WAIT_DEGRADE_SECS` (default 90), then converts the send to a tracked task and **returns without the result**. That return is not a timeout and not a failure — delivery is still in flight, and the daemon will wake you. Treating it as "the agent didn't answer, so I must go look" is exactly how a session burns minutes scraping a pane for an answer already sitting in its inbox.
+
+When a delegated result seems missing, in this order:
+
+1. `muxcode inbox` — it is usually already there
+2. `muxcode tasks` — confirm the tracked task is still in flight
+3. `muxcode diagnose <role>` — only if the task is genuinely stalled
+
+**Never grep a pane for an expected result.** Your own request text is echoed in that pane, so a scrape for the output you asked about matches the words you used to ask. Grepping for `Expect CDK 146` or `No errors` hits your own request and reports a false success — a wrong answer, not just a slow one. A pane scrape can tell you whether an agent is *alive or wedged*; it can never tell you what an agent *concluded*. Conclusions arrive only as bus messages.
 
 ### Delegation command reference
 
