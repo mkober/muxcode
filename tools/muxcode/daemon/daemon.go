@@ -409,12 +409,26 @@ func (d *Daemon) notifyPlanOnReview() {
 		files = "(unknown)"
 	}
 
+	// Branch active-time recording rides this same pass. The instruction is a
+	// single sentence naming the branch; the procedure (read the ledger, upsert
+	// the absolute total, never-regress reconciliation) lives in the planner
+	// agent definition rather than being restated in every message.
+	//
+	// Ignored branches (main/master by default) accrue no time, so the sentence
+	// is omitted entirely rather than sending plan to record a zero.
+	timeInstruction := ""
+	if branch := bus.CurrentBranch(); !bus.BranchTimeIgnored(branch) {
+		timeInstruction = fmt.Sprintf(
+			" Also record active time for branch %s into the spec's ## Time Tracking table, "+
+				"following the recording process in your agent definition.", branch)
+	}
+
 	planMsg := fmt.Sprintf(
 		"Review complete — verify progress against spec %s. Changed files: %s. "+
 			"Read the spec and the changed files, determine which acceptance criteria and phase steps "+
-			"are now satisfied, check them off (- [ ] to - [x]), and update the status field if a phase is complete. "+
+			"are now satisfied, check them off (- [ ] to - [x]), and update the status field if a phase is complete.%s "+
 			"Reply to edit with a summary of what was verified.",
-		specPath, files,
+		specPath, files, timeInstruction,
 	)
 
 	msg := bus.NewMessage("daemon", "plan", "request", "verify-spec", planMsg, "")

@@ -202,7 +202,39 @@ When you receive a `verify-spec` message, the build→test→review chain has ju
    - Are there any gaps between what was implemented and what the spec requires?
 6. **Check off completed items** — change `- [ ]` to `- [x]` for satisfied criteria and steps
 7. **Update the status field** if an entire phase is now complete
-8. **Reply to edit** with a summary: what was checked off, what remains, any concerns
+8. **Record branch active time** into the spec's `## Time Tracking` table — only when the message asks for it (see below)
+9. **Reply to edit** with a summary: what was checked off, what remains, the recorded total, any concerns
+
+### Recording branch active time
+
+The `verify-spec` message names a branch when there is time to record. If it does not name one, skip this entirely — the branch is on the ignore list (`main`/`master` by default) and accrued nothing.
+
+1. **Read the ledger**: `muxcode branch-time show --branch <branch> --json`
+2. **Upsert one row** in the spec's `## Time Tracking` table, keyed by branch — replace the existing row in place, never append a second row for the same branch. Create the section on first record:
+
+   ```markdown
+   ## Time Tracking
+
+   | Branch | Active time | Last updated |
+   |--------|-------------|--------------|
+   | PROMGT-115-fix-syntax | 12h 34m | 2026-08-11 15:33 |
+   ```
+
+   Use exactly these three columns. Every value must come from the ledger — never add a column the store cannot supply (there is no session counter, for example) and never estimate one.
+
+3. **Write the absolute total**, never a delta — use the `formatted` field verbatim. Absolute totals are what make re-recording idempotent: running the same verification twice rewrites an identical row.
+4. **Mark it recorded**: `muxcode branch-time record --secs <n> --branch <branch>`, where `<n>` is **the total you actually wrote into the doc row**. In the normal case that is the ledger's `seconds`; in the reconciliation case below it is the larger doc value you kept. Recording the pre-seed number instead would leave `unrecordedSeconds` permanently positive, so the staleness signal would never clear.
+
+**Never-regress reconciliation.** Before writing, compare the ledger's `seconds` against the total already in the doc row:
+
+| Situation | Action |
+|-----------|--------|
+| Ledger ≥ doc (normal) | Write the ledger total |
+| Ledger < doc (ledger lost or reset) | **Keep the doc's larger value**, and reseed the ledger from it: `muxcode branch-time seed --secs <docSeconds> --branch <branch>` |
+
+The doc must never show less time than it already showed. `seed` is a floor — it only ever raises, so a repeated or stale seed cannot deflate a ledger that has since accrued past it. Do **not** use `--add` for this: `--add` is additive and double-counts whenever the ledger is not exactly zero.
+
+**Branch/spec mismatch.** If the branch's Jira key prefix does not match the active spec's filename, record anyway — the active spec pointer is explicit and wins over filename inference — but flag the mismatch in your reply to edit so the user sees it.
 
 ### What to check off
 
@@ -217,6 +249,7 @@ Verified against docs/requirements/drafts/hot-reload.md:
 - Phase 2: checked off 3/4 steps (WriteRuntimeOverride, ReadRuntimeOverrides, ClearRuntimeOverrides)
 - Remaining: LoadRuntimeOverrides integration not yet implemented
 - Acceptance criteria: 2/5 satisfied (config persistence, reload marker)
+- Time tracking: recorded 12h 34m for PROMGT-115-fix-syntax
 ```
 
 ## Neovim integration

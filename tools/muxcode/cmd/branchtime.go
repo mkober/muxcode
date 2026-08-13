@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -15,10 +16,16 @@ import (
 // Usage:
 //
 //	muxcode branch-time                 Current branch, formatted total
-//	muxcode branch-time --all           Table of all branches for this repo
+//	muxcode branch-time show [--branch <b>] [--json]
+//	                                    A single branch, human or machine-readable
+//	muxcode branch-time --all [--json]  All branches for this repo
 //	muxcode branch-time --status        Compact status-bar string (e.g. "⏱ 4h12m")
 //	muxcode branch-time --trailer       "Time-spent: <dur>" commit trailer line
 //	muxcode branch-time --add <secs>    Manually add time to the current branch
+//	muxcode branch-time record --secs <n> [--branch <b>]
+//	                                    Mark <n> seconds as recorded into a requirements doc
+//	muxcode branch-time seed --secs <n> [--branch <b>]
+//	                                    Raise a branch to at least <n> seconds (never lowers)
 //	muxcode branch-time reset [branch]  Zero a branch counter (default: current)
 //	muxcode branch-time log-jira [--dry-run]
 //	                                    Post the un-logged delta to the branch's Jira story
@@ -27,6 +34,12 @@ func BranchTime(args []string) {
 	if len(args) > 0 {
 		sub = args[0]
 	}
+	// args[1:] panics on an empty slice, and the bare "muxcode branch-time"
+	// form lands here with len(args) == 0.
+	var rest []string
+	if len(args) > 1 {
+		rest = args[1:]
+	}
 
 	switch sub {
 	case "--status":
@@ -34,20 +47,197 @@ func BranchTime(args []string) {
 	case "--trailer":
 		branchTimeTrailer()
 	case "--all":
-		branchTimeAll()
+		branchTimeAll(rest)
 	case "--add":
-		branchTimeAdd(args[1:])
+		branchTimeAdd(rest)
+	case "record":
+		branchTimeRecord(rest)
+	case "seed":
+		branchTimeSeed(rest)
 	case "reset":
-		branchTimeReset(args[1:])
+		branchTimeReset(rest)
 	case "log-jira":
-		branchTimeLogJira(args[1:])
+		branchTimeLogJira(rest)
 	case "", "show":
-		branchTimeShow()
+		branchTimeShow(rest)
+	case "--json", "--branch":
+		// Bare flag form: `branch-time --json` means `show --json`. This is the
+		// invocation automated consumers reach for first, so it must not fall
+		// through to the unknown-subcommand error. args[0] is itself a flag
+		// here, so the full slice is passed — not rest.
+		branchTimeShow(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown branch-time subcommand: %s\n", sub)
-		fmt.Fprintln(os.Stderr, "Usage: muxcode branch-time [--all|--status|--trailer|--add <secs>|reset [branch]|log-jira [--dry-run]]")
+		fmt.Fprintln(os.Stderr, "Usage: muxcode branch-time [show [--branch <b>] [--json]|--all [--json]|--status|--trailer|--add <secs>|record --secs <n>|seed --secs <n>|reset [branch]|log-jira [--dry-run]]")
 		os.Exit(1)
 	}
+}
+
+// branchTimeJSON is the stable machine-readable shape emitted by --json. It is
+// a presentation struct, deliberately separate from bus.BranchTimeEntry, so the
+// on-disk ledger can evolve without silently changing the CLI contract that the
+// plan agent parses.
+type branchTimeJSON struct {
+	RepoKey string `json:"repoKey"`
+	Branch  string `json:"branch"`
+	Seconds int64  `json:"seconds"`
+	// Formatted is the same total rendered for humans, so consumers writing a
+	// doc row never need to reimplement duration formatting.
+	Formatted string `json:"formatted"`
+	// UnrecordedSeconds is Seconds - LastRecordedSeconds, floored at 0. It is
+	// the staleness signal: 0 means the doc is already up to date.
+	UnrecordedSeconds     int64 `json:"unrecordedSeconds"`
+	LastRecordedSeconds   int64 `json:"lastRecordedSeconds"`
+	LastRecordedAt        int64 `json:"lastRecordedAt"`
+	LastJiraLoggedSeconds int64 `json:"lastJiraLoggedSeconds"`
+	Updated               int64 `json:"updated"`
+	Current               bool  `json:"current"`
+	Ignored               bool  `json:"ignored"`
+}
+
+// newBranchTimeJSON projects a ledger entry into the CLI's output shape.
+func newBranchTimeJSON(repoKey, branch string, e bus.BranchTimeEntry, current bool) branchTimeJSON {
+	unrecorded := e.Seconds - e.LastRecordedSeconds
+	if unrecorded < 0 {
+		// The doc is ahead of the ledger (lost/reset store). Report 0 rather
+		// than a negative: there is nothing new to record, and the never-regress
+		// reconciliation is `seed`'s job, not a negative delta's.
+		unrecorded = 0
+	}
+	return branchTimeJSON{
+		RepoKey:               repoKey,
+		Branch:                branch,
+		Seconds:               e.Seconds,
+		Formatted:             bus.FormatDuration(e.Seconds),
+		UnrecordedSeconds:     unrecorded,
+		LastRecordedSeconds:   e.LastRecordedSeconds,
+		LastRecordedAt:        e.LastRecordedAt,
+		LastJiraLoggedSeconds: e.LastJiraLoggedSeconds,
+		Updated:               e.Updated,
+		Current:               current,
+		Ignored:               bus.BranchTimeIgnored(branch),
+	}
+}
+
+// emitJSON writes v as indented JSON to stdout.
+func emitJSON(v any) {
+	out, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "json encode failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
+}
+
+// branchTimeFlags parses the small shared flag set used by the read and
+// watermark subcommands. An unrecognised flag is an error rather than silently
+// ignored, so a typo in an automated caller surfaces immediately.
+//
+// Flags that are valid here but irrelevant to a given subcommand (--secs on
+// show, --branch on --all) are accepted and ignored: the parser is shared, and
+// rejecting per-subcommand would need a table this small a surface does not
+// justify.
+func branchTimeFlags(args []string) (branch string, jsonOut bool, secs int64, secsSet bool) {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--json":
+			jsonOut = true
+		case "--branch":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "--branch requires a value")
+				os.Exit(1)
+			}
+			i++
+			branch = args[i]
+		case "--secs":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "--secs requires a value")
+				os.Exit(1)
+			}
+			i++
+			v, err := strconv.ParseInt(args[i], 10, 64)
+			if err != nil || v < 0 {
+				fmt.Fprintf(os.Stderr, "Invalid --secs %q (must be a non-negative integer)\n", args[i])
+				os.Exit(1)
+			}
+			secs, secsSet = v, true
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", args[i])
+			os.Exit(1)
+		}
+	}
+	return branch, jsonOut, secs, secsSet
+}
+
+// resolveBranchTimeTarget returns the repo key and the branch to operate on,
+// defaulting the branch to the current checkout. Exits with a message when
+// either cannot be determined.
+func resolveBranchTimeTarget(branch string) (string, string) {
+	if branch == "" {
+		branch = bus.CurrentBranch()
+	}
+	if branch == "" {
+		fmt.Fprintln(os.Stderr, "Not on a git branch (detached HEAD or not a repo) — pass --branch <b>")
+		os.Exit(1)
+	}
+	repoKey := bus.RepoKey()
+	if repoKey == "" {
+		fmt.Fprintln(os.Stderr, "Not in a git repository")
+		os.Exit(1)
+	}
+	return repoKey, branch
+}
+
+// branchTimeRecord marks a branch as recorded into a requirements doc at the
+// given total. Bookkeeping only — it never changes accumulated time.
+func branchTimeRecord(args []string) {
+	branch, jsonOut, secs, secsSet := branchTimeFlags(args)
+	if !secsSet {
+		fmt.Fprintln(os.Stderr, "Usage: muxcode branch-time record --secs <n> [--branch <b>]")
+		os.Exit(1)
+	}
+	repoKey, branch := resolveBranchTimeTarget(branch)
+	if err := bus.SetRecordedWatermark(repoKey, branch, secs); err != nil {
+		fmt.Fprintf(os.Stderr, "record failed: %v\n", err)
+		os.Exit(1)
+	}
+	e, _ := bus.BranchTimeGet(repoKey, branch)
+	if jsonOut {
+		emitJSON(newBranchTimeJSON(repoKey, branch, e, branch == bus.CurrentBranch()))
+		return
+	}
+	fmt.Printf("%s: recorded %s (total %s)\n", branch, bus.FormatDuration(secs), bus.FormatDuration(e.Seconds))
+}
+
+// branchTimeSeed raises a branch to at least the given total — the never-regress
+// reconciliation path for a lost or reset ledger.
+func branchTimeSeed(args []string) {
+	branch, jsonOut, secs, secsSet := branchTimeFlags(args)
+	// secs == 0 is rejected, not treated as a no-op: SeedBranchTime would
+	// short-circuit to a 0 total and the success line would read
+	// "seeded 5m -> 0m", claiming a reduction that never happened.
+	if !secsSet || secs == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: muxcode branch-time seed --secs <n> [--branch <b>]  (n must be > 0)")
+		os.Exit(1)
+	}
+	repoKey, branch := resolveBranchTimeTarget(branch)
+	before := bus.BranchTimeSeconds(repoKey, branch)
+	total, err := bus.SeedBranchTime(repoKey, branch, secs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "seed failed: %v\n", err)
+		os.Exit(1)
+	}
+	if jsonOut {
+		e, _ := bus.BranchTimeGet(repoKey, branch)
+		emitJSON(newBranchTimeJSON(repoKey, branch, e, branch == bus.CurrentBranch()))
+		return
+	}
+	if total == before {
+		fmt.Printf("%s: already at %s, not lowered to %s\n", branch,
+			bus.FormatDuration(before), bus.FormatDuration(secs))
+		return
+	}
+	fmt.Printf("%s: seeded %s -> %s\n", branch, bus.FormatDuration(before), bus.FormatDuration(total))
 }
 
 // branchTimeAdd manually adds seconds of time to the current branch. Useful for
@@ -122,33 +312,55 @@ func branchTimeTrailer() {
 	fmt.Printf("Time-spent: %s\n", bus.FormatDuration(secs))
 }
 
-// branchTimeShow prints the current branch's formatted total.
-func branchTimeShow() {
-	branch := bus.CurrentBranch()
-	if branch == "" {
-		fmt.Fprintln(os.Stderr, "Not on a git branch (detached HEAD or not a repo)")
-		os.Exit(1)
+// branchTimeShow prints one branch's total — the current checkout by default,
+// or --branch <b>. With --json it emits the machine-readable shape consumed by
+// the plan agent when recording time into a requirements doc.
+//
+// An untracked branch is not an error: it reports a zero total, so an automated
+// caller gets a well-formed object instead of having to special-case a failure.
+func branchTimeShow(args []string) {
+	branch, jsonOut, _, _ := branchTimeFlags(args)
+	repoKey, branch := resolveBranchTimeTarget(branch)
+	e, _ := bus.BranchTimeGet(repoKey, branch)
+	if jsonOut {
+		emitJSON(newBranchTimeJSON(repoKey, branch, e, branch == bus.CurrentBranch()))
+		return
 	}
-	repoKey := bus.RepoKey()
-	secs := bus.BranchTimeSeconds(repoKey, branch)
-	fmt.Printf("%s: %s\n", branch, bus.FormatDuration(secs))
+	fmt.Printf("%s: %s\n", branch, bus.FormatDuration(e.Seconds))
 }
 
 // branchTimeAll prints a table of all tracked branches for the current repo,
 // most-worked first.
-func branchTimeAll() {
+func branchTimeAll(args []string) {
+	_, jsonOut, _, _ := branchTimeFlags(args)
 	repoKey := bus.RepoKey()
 	if repoKey == "" {
 		fmt.Fprintln(os.Stderr, "Not in a git repository")
 		os.Exit(1)
 	}
+	// One ledger load, sorted locally. Loading it a second time to sort would
+	// let a daemon flush land between the reads and return a name absent from
+	// entries — a nil dereference on index.
 	entries := bus.AllBranchTimes(repoKey)
+	names := bus.SortBranchNames(entries)
+	current := bus.CurrentBranch()
+
+	if jsonOut {
+		// Always an array, empty included, so consumers can iterate without a
+		// nil check. MarshalIndent renders a nil slice as "null", hence the
+		// explicit non-nil initialisation.
+		rows := make([]branchTimeJSON, 0, len(names))
+		for _, name := range names {
+			rows = append(rows, newBranchTimeJSON(repoKey, name, *entries[name], name == current))
+		}
+		emitJSON(rows)
+		return
+	}
+
 	if len(entries) == 0 {
 		fmt.Println("No branch time tracked yet for this repo")
 		return
 	}
-	names := bus.SortedBranchNames(repoKey)
-	current := bus.CurrentBranch()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(w, "BRANCH\tTIME\tLOGGED")

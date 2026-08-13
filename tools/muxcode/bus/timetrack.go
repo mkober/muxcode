@@ -21,6 +21,18 @@ type BranchTimeEntry struct {
 	// LastJiraLoggedSeconds is the watermark of seconds already posted to the
 	// branch's Jira worklog, so log-jira only posts the un-logged delta.
 	LastJiraLoggedSeconds int64 `json:"lastJiraLoggedSeconds"`
+	// LastRecordedSeconds is the watermark of seconds already written into a
+	// requirements doc's Time Tracking table. Unlike the Jira watermark it does
+	// not gate the next write — doc rows carry absolute totals, so a re-record
+	// is idempotent by construction. It exists so staleness is inspectable:
+	// Seconds - LastRecordedSeconds is the time accrued since the last record.
+	//
+	// Omitted from JSON when zero so ledgers written before doc-recording
+	// existed round-trip unchanged.
+	LastRecordedSeconds int64 `json:"lastRecordedSeconds,omitempty"`
+	// LastRecordedAt is the unix timestamp of the last doc record, or 0 if the
+	// branch has never been recorded into a doc.
+	LastRecordedAt int64 `json:"lastRecordedAt,omitempty"`
 	// Updated is the unix timestamp of the last write to this entry.
 	Updated int64 `json:"updated"`
 }
@@ -360,7 +372,8 @@ func AllBranchTimes(repoKey string) map[string]*BranchTimeEntry {
 	return l[repoKey]
 }
 
-// ResetBranchTime zeroes the counters (and Jira watermark) for repoKey/branch.
+// ResetBranchTime zeroes the counters (Jira and doc-record watermarks included)
+// for repoKey/branch.
 func ResetBranchTime(repoKey, branch string) error {
 	return withBranchTimeLock(func() error {
 		l, err := LoadBranchTime()
@@ -371,11 +384,71 @@ func ResetBranchTime(repoKey, branch string) error {
 			if e := m[branch]; e != nil {
 				e.Seconds = 0
 				e.LastJiraLoggedSeconds = 0
+				e.LastRecordedSeconds = 0
+				e.LastRecordedAt = 0
 				e.Updated = time.Now().Unix()
 			}
 		}
 		return SaveBranchTime(l)
 	})
+}
+
+// SetRecordedWatermark marks repoKey/branch as recorded into a requirements doc
+// at the given total, stamping LastRecordedAt with the current time.
+//
+// This is bookkeeping for staleness only — it deliberately does NOT gate the
+// next doc write. Doc rows carry absolute cumulative totals, so re-recording an
+// unchanged branch rewrites an identical row; idempotency comes from the value
+// being absolute, not from this watermark.
+func SetRecordedWatermark(repoKey, branch string, seconds int64) error {
+	if repoKey == "" || branch == "" {
+		return nil
+	}
+	return withBranchTimeLock(func() error {
+		l, err := LoadBranchTime()
+		if err != nil {
+			return err
+		}
+		e := l.entry(repoKey, branch)
+		now := time.Now().Unix()
+		e.LastRecordedSeconds = seconds
+		e.LastRecordedAt = now
+		e.Updated = now
+		return SaveBranchTime(l)
+	})
+}
+
+// SeedBranchTime raises repoKey/branch to at least seconds, returning the total
+// after seeding. It is a floor, never a setter: if the stored total already
+// meets or exceeds seconds the entry is left untouched.
+//
+// This is the never-regress reconciliation path. When the ledger is lost or
+// reset but a requirements doc still shows a larger total, the doc is the
+// survivor — plan seeds the ledger back up from the doc's value so the two
+// re-converge without the doc ever displaying less time than it already did.
+// Because it only ever raises, a stale or duplicated seed cannot deflate a
+// ledger that has since accrued past the seeded value.
+func SeedBranchTime(repoKey, branch string, seconds int64) (int64, error) {
+	if repoKey == "" || branch == "" || seconds <= 0 {
+		return 0, nil
+	}
+	var total int64
+	err := withBranchTimeLock(func() error {
+		l, err := LoadBranchTime()
+		if err != nil {
+			return err
+		}
+		e := l.entry(repoKey, branch)
+		if e.Seconds >= seconds {
+			total = e.Seconds
+			return nil
+		}
+		e.Seconds = seconds
+		e.Updated = time.Now().Unix()
+		total = e.Seconds
+		return SaveBranchTime(l)
+	})
+	return total, err
 }
 
 // SetJiraWatermark advances the Jira-logged watermark for repoKey/branch to
@@ -393,16 +466,24 @@ func SetJiraWatermark(repoKey, branch string, seconds int64) error {
 	})
 }
 
-// SortedBranchNames returns the branch names for repoKey sorted by descending
-// accumulated time (most-worked first).
-func SortedBranchNames(repoKey string) []string {
-	m := AllBranchTimes(repoKey)
+// SortBranchNames returns the names in m sorted by descending accumulated time
+// (most-worked first), breaking ties by name so output is deterministic.
+//
+// It takes the ledger map rather than a repo key on purpose: a variant that
+// re-read the ledger from disk would have to be paired with a separate
+// AllBranchTimes load at the call site, and a daemon flush landing between the
+// two reads could return a name absent from the map — a nil dereference when
+// the caller indexes it.
+func SortBranchNames(m map[string]*BranchTimeEntry) []string {
 	names := make([]string, 0, len(m))
 	for name := range m {
 		names = append(names, name)
 	}
 	sort.Slice(names, func(i, j int) bool {
-		return m[names[i]].Seconds > m[names[j]].Seconds
+		if m[names[i]].Seconds != m[names[j]].Seconds {
+			return m[names[i]].Seconds > m[names[j]].Seconds
+		}
+		return names[i] < names[j]
 	})
 	return names
 }

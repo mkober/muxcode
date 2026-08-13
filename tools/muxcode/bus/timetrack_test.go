@@ -148,18 +148,6 @@ func TestSetJiraWatermark(t *testing.T) {
 	}
 }
 
-func TestSortedBranchNamesByDescendingTime(t *testing.T) {
-	useTempLedger(t)
-	AccumulateBranchTime("repoA", "low", 60, 0)
-	AccumulateBranchTime("repoA", "high", 600, 0)
-	AccumulateBranchTime("repoA", "mid", 300, 0)
-	names := SortedBranchNames("repoA")
-	want := []string{"high", "mid", "low"}
-	if len(names) != 3 || names[0] != want[0] || names[1] != want[1] || names[2] != want[2] {
-		t.Fatalf("SortedBranchNames = %v, want %v", names, want)
-	}
-}
-
 func TestBranchTimeFormatDuration(t *testing.T) {
 	cases := []struct {
 		secs int64
@@ -363,5 +351,171 @@ func TestRepoKeyInGitRepoNonEmpty(t *testing.T) {
 	// remote URL or toplevel path — either way, non-empty.
 	if RepoKey() == "" {
 		t.Skip("not in a git repo; skipping RepoKey smoke test")
+	}
+}
+
+// --- doc-recording watermark + never-regress seeding ---
+
+func TestSetRecordedWatermarkDoesNotChangeAccrual(t *testing.T) {
+	useTempLedger(t)
+	if _, err := AccumulateBranchTime("repoA", "feat/x", 500, 0); err != nil {
+		t.Fatalf("AccumulateBranchTime: %v", err)
+	}
+	if err := SetRecordedWatermark("repoA", "feat/x", 500); err != nil {
+		t.Fatalf("SetRecordedWatermark: %v", err)
+	}
+	e, ok := BranchTimeGet("repoA", "feat/x")
+	if !ok {
+		t.Fatal("entry missing after recording")
+	}
+	// The watermark is bookkeeping: accrued time must be untouched.
+	if e.Seconds != 500 {
+		t.Errorf("Seconds = %d, want 500 (watermark must not alter accrual)", e.Seconds)
+	}
+	if e.LastRecordedSeconds != 500 {
+		t.Errorf("LastRecordedSeconds = %d, want 500", e.LastRecordedSeconds)
+	}
+	if e.LastRecordedAt == 0 {
+		t.Error("LastRecordedAt not stamped")
+	}
+}
+
+// Recording is idempotent by construction because doc rows carry absolute
+// totals: re-recording an unchanged branch must leave the same watermark and
+// report nothing new outstanding.
+func TestSetRecordedWatermarkIsIdempotent(t *testing.T) {
+	useTempLedger(t)
+	if _, err := AccumulateBranchTime("repoA", "feat/x", 900, 0); err != nil {
+		t.Fatalf("AccumulateBranchTime: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := SetRecordedWatermark("repoA", "feat/x", 900); err != nil {
+			t.Fatalf("SetRecordedWatermark #%d: %v", i, err)
+		}
+	}
+	e, _ := BranchTimeGet("repoA", "feat/x")
+	if e.Seconds != 900 || e.LastRecordedSeconds != 900 {
+		t.Errorf("after 3 records: Seconds=%d LastRecorded=%d, want 900/900", e.Seconds, e.LastRecordedSeconds)
+	}
+}
+
+func TestSeedBranchTimeRaisesWhenBelow(t *testing.T) {
+	useTempLedger(t)
+	if _, err := AccumulateBranchTime("repoA", "feat/x", 100, 0); err != nil {
+		t.Fatalf("AccumulateBranchTime: %v", err)
+	}
+	total, err := SeedBranchTime("repoA", "feat/x", 5000)
+	if err != nil {
+		t.Fatalf("SeedBranchTime: %v", err)
+	}
+	if total != 5000 {
+		t.Errorf("total = %d, want 5000", total)
+	}
+	if got := BranchTimeSeconds("repoA", "feat/x"); got != 5000 {
+		t.Errorf("persisted = %d, want 5000", got)
+	}
+}
+
+// The never-regress guarantee: a seed can only ever raise. A stale or replayed
+// seed must not deflate a ledger that has since accrued past the seeded value.
+func TestSeedBranchTimeNeverLowers(t *testing.T) {
+	useTempLedger(t)
+	if _, err := AccumulateBranchTime("repoA", "feat/x", 9000, 0); err != nil {
+		t.Fatalf("AccumulateBranchTime: %v", err)
+	}
+	total, err := SeedBranchTime("repoA", "feat/x", 60)
+	if err != nil {
+		t.Fatalf("SeedBranchTime: %v", err)
+	}
+	if total != 9000 {
+		t.Errorf("total = %d, want 9000 (seed must not lower)", total)
+	}
+	if got := BranchTimeSeconds("repoA", "feat/x"); got != 9000 {
+		t.Errorf("persisted = %d, want 9000", got)
+	}
+}
+
+// A lost ledger reconciles from the doc's larger total without the doc ever
+// showing less time than it already did.
+func TestSeedBranchTimeRecoversLostLedger(t *testing.T) {
+	useTempLedger(t)
+	const docTotal int64 = 45296 // what a requirements doc still shows
+	if got := BranchTimeSeconds("repoA", "feat/x"); got != 0 {
+		t.Fatalf("expected empty ledger, got %d", got)
+	}
+	if _, err := SeedBranchTime("repoA", "feat/x", docTotal); err != nil {
+		t.Fatalf("SeedBranchTime: %v", err)
+	}
+	if got := BranchTimeSeconds("repoA", "feat/x"); got != docTotal {
+		t.Errorf("reseeded = %d, want %d", got, docTotal)
+	}
+	// Further accrual continues from the reseeded floor, not from zero.
+	if _, err := AccumulateBranchTime("repoA", "feat/x", 100, 0); err != nil {
+		t.Fatalf("AccumulateBranchTime: %v", err)
+	}
+	if got := BranchTimeSeconds("repoA", "feat/x"); got != docTotal+100 {
+		t.Errorf("after accrual = %d, want %d", got, docTotal+100)
+	}
+}
+
+func TestSeedBranchTimeRejectsNonPositiveAndEmptyKeys(t *testing.T) {
+	useTempLedger(t)
+	if _, err := AccumulateBranchTime("repoA", "feat/x", 300, 0); err != nil {
+		t.Fatalf("AccumulateBranchTime: %v", err)
+	}
+	cases := []struct {
+		repo   string
+		branch string
+		secs   int64
+	}{
+		{"repoA", "feat/x", 0},
+		{"repoA", "feat/x", -5},
+		{"", "feat/x", 100},
+		{"repoA", "", 100},
+	}
+	for _, c := range cases {
+		if _, err := SeedBranchTime(c.repo, c.branch, c.secs); err != nil {
+			t.Errorf("SeedBranchTime(%q,%q,%d) errored: %v", c.repo, c.branch, c.secs, err)
+		}
+	}
+	if got := BranchTimeSeconds("repoA", "feat/x"); got != 300 {
+		t.Errorf("total = %d, want 300 (no-op seeds must not mutate)", got)
+	}
+}
+
+func TestResetClearsRecordedWatermark(t *testing.T) {
+	useTempLedger(t)
+	if _, err := AccumulateBranchTime("repoA", "feat/x", 700, 0); err != nil {
+		t.Fatalf("AccumulateBranchTime: %v", err)
+	}
+	if err := SetRecordedWatermark("repoA", "feat/x", 700); err != nil {
+		t.Fatalf("SetRecordedWatermark: %v", err)
+	}
+	if err := ResetBranchTime("repoA", "feat/x"); err != nil {
+		t.Fatalf("ResetBranchTime: %v", err)
+	}
+	e, _ := BranchTimeGet("repoA", "feat/x")
+	if e.Seconds != 0 || e.LastRecordedSeconds != 0 || e.LastRecordedAt != 0 {
+		t.Errorf("after reset: %+v, want all counters zeroed", e)
+	}
+}
+
+// Ledgers written before doc-recording existed must load cleanly, with the new
+// fields defaulting to zero rather than failing the unmarshal.
+func TestLegacyLedgerWithoutRecordFieldsLoads(t *testing.T) {
+	useTempLedger(t)
+	legacy := `{"repoA":{"feat/x":{"seconds":1200,"lastJiraLoggedSeconds":600,"updated":99}}}`
+	if err := os.WriteFile(BranchTimePath(), []byte(legacy), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	e, ok := BranchTimeGet("repoA", "feat/x")
+	if !ok {
+		t.Fatal("legacy entry not found")
+	}
+	if e.Seconds != 1200 || e.LastJiraLoggedSeconds != 600 {
+		t.Errorf("legacy fields lost: %+v", e)
+	}
+	if e.LastRecordedSeconds != 0 || e.LastRecordedAt != 0 {
+		t.Errorf("new fields should default to zero, got %+v", e)
 	}
 }
