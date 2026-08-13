@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -343,6 +344,62 @@ func TestStripURLUserinfo(t *testing.T) {
 		if got := stripURLUserinfo(c.in); got != c.want {
 			t.Errorf("stripURLUserinfo(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// SessionRepoDir exists so long-lived processes never resolve git from their
+// own working directory. The daemon is relaunched by upgrade-daemons with an
+// inherited cwd, so a build in another repo would otherwise silently retarget
+// or stop every other session's time tracking.
+
+func TestSessionRepoDirPrefersEnvOverride(t *testing.T) {
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", "/tmp/some/repo")
+	if got := SessionRepoDir("any-session"); got != "/tmp/some/repo" {
+		t.Errorf("SessionRepoDir = %q, want the override", got)
+	}
+}
+
+func TestSessionRepoDirMajorityPanePathWins(t *testing.T) {
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", "")
+	orig := tmuxOutputRunner
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		// One agent has cd'd elsewhere; it must not outvote the session.
+		return "/repo/a\n/repo/a\n/repo/b\n/repo/a\n", nil
+	}
+	t.Cleanup(func() { tmuxOutputRunner = orig })
+
+	if got := SessionRepoDir("s"); got != "/repo/a" {
+		t.Errorf("SessionRepoDir = %q, want /repo/a", got)
+	}
+}
+
+// An unresolvable session yields "" so callers fall back to their own working
+// directory — the previous behaviour — rather than failing closed.
+func TestSessionRepoDirEmptyWhenTmuxFails(t *testing.T) {
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", "")
+	orig := tmuxOutputRunner
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		return "", fmt.Errorf("no server")
+	}
+	t.Cleanup(func() { tmuxOutputRunner = orig })
+
+	if got := SessionRepoDir("s"); got != "" {
+		t.Errorf("SessionRepoDir = %q, want empty", got)
+	}
+}
+
+// The regression this whole change exists for: resolving against an explicit
+// directory must not depend on the process working directory.
+func TestCurrentBranchInIgnoresProcessCwd(t *testing.T) {
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", "")
+	dir := t.TempDir()
+	// A directory that is not a git repo resolves to "" regardless of the fact
+	// that the test process itself is running inside the muxcode repo.
+	if got := CurrentBranchIn(dir); got != "" {
+		t.Errorf("CurrentBranchIn(non-repo) = %q, want empty — it leaked the process cwd", got)
+	}
+	if got := RepoKeyIn(dir); got != "" {
+		t.Errorf("RepoKeyIn(non-repo) = %q, want empty — it leaked the process cwd", got)
 	}
 }
 

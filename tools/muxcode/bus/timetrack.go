@@ -52,10 +52,23 @@ var branchTimeMu sync.Mutex
 // a remote URL (https://user:token@host/…) is stripped so credentials never land
 // in the on-disk ledger.
 func RepoKey() string {
-	if u := gitOutput("config", "--get", "remote.origin.url"); u != "" {
+	return RepoKeyIn("")
+}
+
+// RepoKeyIn is RepoKey resolved against an explicit directory. An empty dir
+// falls back to the process working directory.
+//
+// Long-lived processes must pass a directory. The daemon is relaunched by
+// `muxcode upgrade-daemons` via a detached exec that inherits the *caller's*
+// working directory — so a build run from another repo silently re-parents
+// every session's daemon into the building repo. Resolving git from the process
+// cwd then attributes one session's time to another repo, or drops it entirely
+// when the borrowed repo sits on an ignored branch.
+func RepoKeyIn(dir string) string {
+	if u := gitOutputIn(dir, "config", "--get", "remote.origin.url"); u != "" {
 		return stripURLUserinfo(u)
 	}
-	return gitOutput("rev-parse", "--show-toplevel")
+	return gitOutputIn(dir, "rev-parse", "--show-toplevel")
 }
 
 // stripURLUserinfo removes a "user:pass@" (or "user@") userinfo component from a
@@ -82,7 +95,14 @@ func stripURLUserinfo(remote string) string {
 // --abbrev-ref HEAD), or "" when not in a git repository. Exported wrapper so
 // callers outside the bus package (e.g. the daemon) can resolve the branch.
 func CurrentBranch() string {
-	b := gitOutput("rev-parse", "--abbrev-ref", "HEAD")
+	return CurrentBranchIn("")
+}
+
+// CurrentBranchIn is CurrentBranch resolved against an explicit directory. An
+// empty dir falls back to the process working directory. See RepoKeyIn for why
+// long-lived processes must pass one.
+func CurrentBranchIn(dir string) string {
+	b := gitOutputIn(dir, "rev-parse", "--abbrev-ref", "HEAD")
 	if b == "HEAD" {
 		// Detached HEAD — no branch to attribute time to.
 		return ""
@@ -224,13 +244,60 @@ func BranchTimeUserActive(idle, idleMax int64) bool {
 	return idle >= 0 && (idleMax <= 0 || idle <= idleMax)
 }
 
-// gitOutput runs a git command and returns trimmed stdout, or "" on error.
+// gitOutput runs a git command in the process working directory and returns
+// trimmed stdout, or "" on error.
 func gitOutput(args ...string) string {
-	out, err := exec.Command("git", args...).Output()
+	return gitOutputIn("", args...)
+}
+
+// gitOutputIn runs a git command in dir (process working directory when dir is
+// empty) and returns trimmed stdout, or "" on error.
+func gitOutputIn(dir string, args ...string) string {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// SessionRepoDir returns the working directory of a session's agents, so
+// callers can resolve git state for the session rather than for whatever
+// directory their own process happens to be running in.
+//
+// Resolution order:
+//
+//  1. MUXCODE_SESSION_REPO_DIR — explicit override, and the seam tests use.
+//  2. The session's tmux panes — authoritative, requires no persisted state,
+//     and works for sessions that were already running before this existed.
+//     The most common pane path wins, so one agent that has cd'd elsewhere
+//     cannot outvote the session.
+//  3. "" — caller falls back to its own working directory, preserving the
+//     previous behaviour rather than failing closed.
+func SessionRepoDir(session string) string {
+	if v := os.Getenv("MUXCODE_SESSION_REPO_DIR"); v != "" {
+		return v
+	}
+	out, err := TmuxOutput("list-panes", "-s", "-t", session, "-F", "#{pane_current_path}")
+	if err != nil {
+		return ""
+	}
+	counts := map[string]int{}
+	best, bestN := "", 0
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		p := strings.TrimSpace(line)
+		if p == "" {
+			continue
+		}
+		counts[p]++
+		// Ties resolve to the lexically smaller path so the result is
+		// deterministic rather than dependent on tmux's listing order.
+		if counts[p] > bestN || (counts[p] == bestN && p < best) {
+			best, bestN = p, counts[p]
+		}
+	}
+	return best
 }
 
 // LoadBranchTime reads and parses the ledger. A missing file yields an empty

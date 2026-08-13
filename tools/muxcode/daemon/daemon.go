@@ -392,6 +392,14 @@ func (d *Daemon) checkInboxes() {
 // notifyPlanOnReview sends a verification request to the plan agent after
 // review completion, if an active spec is set and the review chain is
 // configured to notify plan (NotifyPlanOn).
+//
+// Branch active-time recording rides this same pass as one extra sentence
+// naming the branch; the procedure it refers to lives in the planner agent
+// definition rather than being restated in every message. The sentence is
+// omitted for ignored branches (main/master by default), which accrue no time,
+// and when the session directory cannot be resolved — falling back to the
+// daemon's cwd there would name a foreign repo's branch and have plan record
+// time against the wrong one.
 func (d *Daemon) notifyPlanOnReview() {
 	if !bus.ChainShouldNotifyPlan("review", "success") {
 		return
@@ -409,15 +417,9 @@ func (d *Daemon) notifyPlanOnReview() {
 		files = "(unknown)"
 	}
 
-	// Branch active-time recording rides this same pass. The instruction is a
-	// single sentence naming the branch; the procedure (read the ledger, upsert
-	// the absolute total, never-regress reconciliation) lives in the planner
-	// agent definition rather than being restated in every message.
-	//
-	// Ignored branches (main/master by default) accrue no time, so the sentence
-	// is omitted entirely rather than sending plan to record a zero.
 	timeInstruction := ""
-	if branch := bus.CurrentBranch(); !bus.BranchTimeIgnored(branch) {
+	repoDir := bus.SessionRepoDir(d.session)
+	if branch := bus.CurrentBranchIn(repoDir); repoDir != "" && !bus.BranchTimeIgnored(branch) {
 		timeInstruction = fmt.Sprintf(
 			" Also record active time for branch %s into the spec's ## Time Tracking table, "+
 				"following the recording process in your agent definition.", branch)
@@ -3305,6 +3307,15 @@ func branchTimeIdleSecs() int64 {
 // or clock change cannot inject spurious hours, and a branch change flushes the
 // prior branch before resetting the baseline so time never bleeds across branches.
 //
+// Git state is resolved from the session's own directory, never the daemon's
+// process working directory: `muxcode upgrade-daemons` relaunches daemons with a
+// detached exec that inherits the caller's cwd, so a build run in another repo
+// leaves this daemon sitting in a foreign checkout — attributing time to the
+// wrong repo, or silently stopping when that checkout is on main. A tick is
+// skipped outright when the session directory cannot be resolved, rather than
+// falling back to cwd; pending time survives and the next delta stays bounded by
+// the clock-jump cap.
+//
 // Disable with MUXCODE_BRANCH_TIME_DISABLE=1.
 func (d *Daemon) checkBranchTime() {
 	if os.Getenv("MUXCODE_BRANCH_TIME_DISABLE") == "1" {
@@ -3328,7 +3339,11 @@ func (d *Daemon) checkBranchTime() {
 		return
 	}
 
-	branch := bus.CurrentBranch()
+	repoDir := bus.SessionRepoDir(d.session)
+	if repoDir == "" {
+		return // unresolvable session dir — never fall back to cwd, see doc comment
+	}
+	branch := bus.CurrentBranchIn(repoDir)
 	if bus.BranchTimeIgnored(branch) {
 		// Not in a git repo/detached HEAD, or on an ignored integration branch
 		// (main/master by default) — flush the prior branch's pending time and
@@ -3372,14 +3387,23 @@ func (d *Daemon) checkBranchTime() {
 
 // flushBranchTime writes the accrued in-memory branch time to the ledger,
 // attributing it to d.lastBranch, and resets the pending counter. A no-op when
-// nothing is pending. RepoKey is resolved once and cached.
+// nothing is pending.
+//
+// The repo key is resolved once and cached, and only ever from an explicitly
+// resolved session directory. RepoKeyIn("") would fall back to the process
+// working directory, and because the key is cached for the daemon's lifetime,
+// a single transient tmux failure would pin a foreign repo key permanently —
+// writing this session's time into an unrelated repo's ledger with no way to
+// self-correct. An unresolved key leaves the time pending for a later flush.
 func (d *Daemon) flushBranchTime() {
 	if d.branchTimePending <= 0 || d.lastBranch == "" {
 		d.branchTimePending = 0
 		return
 	}
 	if d.branchTimeRepoKey == "" {
-		d.branchTimeRepoKey = bus.RepoKey()
+		if dir := bus.SessionRepoDir(d.session); dir != "" {
+			d.branchTimeRepoKey = bus.RepoKeyIn(dir)
+		}
 	}
 	if d.branchTimeRepoKey == "" {
 		return // not resolvable as a repo — keep pending for a later flush

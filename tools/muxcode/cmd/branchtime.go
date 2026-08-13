@@ -96,12 +96,13 @@ type branchTimeJSON struct {
 }
 
 // newBranchTimeJSON projects a ledger entry into the CLI's output shape.
+//
+// UnrecordedSeconds floors at 0. A doc ahead of the ledger (lost or reset
+// store) has nothing new to record, and reconciling that gap is `seed`'s job —
+// a negative delta would invite a consumer to subtract time from a doc row.
 func newBranchTimeJSON(repoKey, branch string, e bus.BranchTimeEntry, current bool) branchTimeJSON {
 	unrecorded := e.Seconds - e.LastRecordedSeconds
 	if unrecorded < 0 {
-		// The doc is ahead of the ledger (lost/reset store). Report 0 rather
-		// than a negative: there is nothing new to record, and the never-regress
-		// reconciliation is `seed`'s job, not a negative delta's.
 		unrecorded = 0
 	}
 	return branchTimeJSON{
@@ -338,9 +339,8 @@ func branchTimeAll(args []string) {
 		fmt.Fprintln(os.Stderr, "Not in a git repository")
 		os.Exit(1)
 	}
-	// One ledger load, sorted locally. Loading it a second time to sort would
-	// let a daemon flush land between the reads and return a name absent from
-	// entries — a nil dereference on index.
+	// One load, sorted locally: a second read could race a daemon flush and
+	// return a name absent from entries — a nil dereference on index.
 	entries := bus.AllBranchTimes(repoKey)
 	names := bus.SortBranchNames(entries)
 	current := bus.CurrentBranch()

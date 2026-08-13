@@ -481,11 +481,25 @@ func killStaleProcesses(session string) {
 
 // startDetachedProcess starts a process in a new session (detached from terminal).
 func startDetachedProcess(name string, args ...string) (int, error) {
+	return startDetachedProcessIn("", name, args...)
+}
+
+// startDetachedProcessIn is startDetachedProcess with an explicit working
+// directory. An empty dir inherits the caller's, which is the historical
+// behaviour.
+//
+// Long-lived children must pass one. A detached child inherits the working
+// directory of whoever spawned it, so a daemon relaunched by
+// `muxcode upgrade-daemons` during a build in repo A ends up running in repo A
+// while supervising a session for repo B — and anything it resolves from cwd
+// (git branch, repo identity) then describes the wrong repository.
+func startDetachedProcessIn(dir, name string, args ...string) (int, error) {
 	binPath, err := exec.LookPath(name)
 	if err != nil {
 		return 0, err
 	}
 	cmd := exec.Command(binPath, args...)
+	cmd.Dir = dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdout = nil
 	cmd.Stderr = nil

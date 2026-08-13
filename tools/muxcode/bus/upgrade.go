@@ -153,8 +153,11 @@ func UpgradeDaemons(dryRun bool) ([]UpgradeResult, error) {
 			continue
 		}
 
+		// Relaunch in the session's own directory, not the repo being built.
+		sessionDir := SessionRepoDir(plan.Session)
+
 		if plan.DaemonPID != 0 {
-			if _, err := startDetachedProcess("muxcode", "watch", plan.Session); err != nil {
+			if _, err := startDetachedProcessIn(sessionDir, "muxcode", "watch", plan.Session); err != nil {
 				res.Err = fmt.Errorf("relaunch daemon: %w", err)
 				results = append(results, res)
 				continue
@@ -162,7 +165,7 @@ func UpgradeDaemons(dryRun bool) ([]UpgradeResult, error) {
 			res.DaemonRestarted = true
 		}
 		if plan.MonitorPID != 0 {
-			if _, err := startDetachedProcess("muxcode", "watch", "--monitor", plan.Session); err != nil {
+			if _, err := startDetachedProcessIn(sessionDir, "muxcode", "watch", "--monitor", plan.Session); err != nil {
 				res.Err = fmt.Errorf("relaunch monitor: %w", err)
 				results = append(results, res)
 				continue
