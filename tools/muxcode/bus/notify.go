@@ -180,6 +180,41 @@ func BuildCombinedNotification(msgs []Message) string {
 	return fmt.Sprintf("You have %d new messages: %s", len(msgs), strings.Join(parts, " | "))
 }
 
+// Non-hook providers (OpenCode/Codex) cannot run `muxcode inbox`, so their
+// wake-up IS the delivery: every pending payload is concatenated into a single
+// tmux send-keys argument. Unbounded, that argv grows with the inbox until the
+// exec fails outright ("command too long") — and because the inbox is only
+// consumed after a *confirmed* inject, a failed send leaves every message
+// pending, so the next cycle rebuilds the same oversized argv and fails
+// identically. That is a closed loop with no exit: one agent accumulated 239
+// advisory messages and became permanently undeliverable.
+//
+// Bounding the BATCH rather than truncating the string is what makes it
+// converge. Each cycle delivers and consumes a prefix, so a backlog drains
+// monotonically across cycles instead of being silently discarded — the
+// "so none are dropped" intent of the original concatenation, actually achieved.
+const (
+	wakeUpMaxMessages = 10
+	wakeUpMaxBytes    = 4000
+)
+
+// BoundWakeUpBatch returns the leading run of msgs that fits within a single
+// wake-up injection. The remainder stays in the inbox for the next cycle.
+//
+// The first message is always included, even when it alone exceeds the byte
+// budget: a single oversized payload must still make progress, or it wedges the
+// queue behind it forever — the exact failure this bound exists to prevent.
+func BoundWakeUpBatch(msgs []Message) []Message {
+	total := 0
+	for i, m := range msgs {
+		if i > 0 && (i >= wakeUpMaxMessages || total+len(m.Payload) > wakeUpMaxBytes) {
+			return msgs[:i]
+		}
+		total += len(m.Payload)
+	}
+	return msgs
+}
+
 // ownWakeUpPatterns match every string BuildCombinedNotification can produce:
 // the single-message form, and the "You have ..." family (empty, hard-capped,
 // and enumerated — the last wraps its "[from>action] ..." subjects in the same

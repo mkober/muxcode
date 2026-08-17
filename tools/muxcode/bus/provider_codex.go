@@ -187,7 +187,15 @@ func (p *CodexProvider) SendWakeUp(session, role string) error {
 		return nil // nothing to inject
 	}
 
-	// Build a combined prompt from ALL pending messages so none are dropped.
+	// Deliver a bounded batch so a large inbox cannot build an argv that
+	// send-keys rejects outright; the remainder drains on later cycles.
+	batch := BoundWakeUpBatch(msgs)
+	batchIDs := make(map[string]bool, len(batch))
+	for _, msg := range batch {
+		batchIDs[msg.ID] = true
+	}
+
+	// Build a combined prompt from the batch so none are dropped.
 	// Earlier implementations only used the last message and consumed the
 	// entire inbox, silently dropping earlier requests.
 	// Filter out self-addressed messages to prevent infinite loops where
@@ -196,7 +204,7 @@ func (p *CodexProvider) SendWakeUp(session, role string) error {
 	var parts []string
 	var lastFrom string
 	hasRequest := false
-	for _, msg := range msgs {
+	for _, msg := range batch {
 		// Skip messages from self — these are loop artifacts
 		if NormalizeBusRole(msg.From) == role {
 			continue
@@ -213,10 +221,10 @@ func (p *CodexProvider) SendWakeUp(session, role string) error {
 			hasRequest = true
 		}
 	}
-	// If all messages were self-addressed, consume and discard them (daemon path
+	// If the whole batch was self-addressed, consume and discard it (daemon path
 	// uses the delivered-kind consume; self-sends are ignored by receipt readers).
 	if len(parts) == 0 {
-		_, _ = ReceiveDelivered(session, role)
+		_, _ = ReceiveDeliveredIDs(session, role, batchIDs)
 		return nil
 	}
 	prompt := strings.Join(parts, " | ")
@@ -260,7 +268,7 @@ func (p *CodexProvider) SendWakeUp(session, role string) error {
 	// a verified-inject `delivered` receipt. If it can't be confirmed, the inbox is
 	// left for the daemon's next wake cycle — no drop on a dropped Enter, replacing
 	// the old fire-and-hope drain.
-	confirmInjectionAndConsume(session, role, target, injectionNeedle(prompt))
+	confirmInjectionAndConsume(session, role, target, injectionNeedle(prompt), batchIDs)
 	return nil
 }
 

@@ -140,7 +140,8 @@ func TestConfirmInjectionAndConsume_SubmittedWritesDeliveredReceipt(t *testing.T
 		t.Fatalf("Send: %v", err)
 	}
 
-	confirmInjectionAndConsume(session, "review", "s:review", "needle-xyz")
+	confirmInjectionAndConsume(session, "review", "s:review", "needle-xyz",
+		map[string]bool{msg.ID: true})
 
 	if HasMessages(session, "review") {
 		t.Error("inbox should be drained after a verified inject")
@@ -170,7 +171,8 @@ func TestConfirmInjectionAndConsume_ParkedLeavesInbox(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 
-	confirmInjectionAndConsume(session, "review", "s:review", "needle-xyz")
+	confirmInjectionAndConsume(session, "review", "s:review", "needle-xyz",
+		map[string]bool{msg.ID: true})
 
 	if !HasMessages(session, "review") {
 		t.Error("inbox must NOT be drained when injection is unconfirmed — message would be lost")

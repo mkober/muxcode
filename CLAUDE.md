@@ -185,7 +185,7 @@ Test: `cd tools/muxcode && go test ./...`
 | `bus/executor.go` | `ToolExecutor`, `Execute()` — bash/read/glob/grep/write/edit |
 | `bus/agent.go` | `AgentLoop()`, `AgentConfig`, `buildSystemPrompt()`, `processMessages()` |
 | `bus/health.go` | `CheckOllamaInference()`, `LocalLLMRoles()`, `RestartOllama()`, `RestartLocalAgent()` |
-| `bus/agent_health.go` | `IsAgentAlive()`, `IsAgentStopped()`, `StopAgent()`, `StartAgent()`, `CheckAgentHealth()`, `FormatAgentHealthAlert()` |
+| `bus/agent_health.go` | `IsAgentAlive()`, `IsAgentStopped()`, `MarkAgentStopped()`, `ClearAgentStopped()`, `IsAgentHealthExcluded()`, `RoleHasWindow()`, `FormatAgentHealthAlert()`, `AgentHealthAlertKey()` |
 | `bus/override.go` | `WriteRuntimeOverride()`, `ReadRuntimeOverrides()`, `LoadRuntimeOverrides()`, `ClearRuntimeOverrides()`, `RuntimeOverridePath()` — session-scoped runtime config overrides |
 | `bus/reload.go` | `ReloadAgent()`, `ReloadAll()`, `GracefulStop()`, `ReloadTarget()`, `ReloadMarkerPath()`, `IsReloading()`, `IsReloadMarkerStale()`, `CleanStaleReloadMarkers()` |
 | `bus/reload_batch.go` | `AgentReloadStatus`, `ActiveAgentStatuses()`, `ReloadableRoles()`, `ReloadResult`, `ReloadBatch()`, `AbbreviateModel()`, `FormatReloadResults()` |

@@ -180,6 +180,26 @@ func HasPendingInboxRequest(session, to, from, action, payload string) bool {
 	return false
 }
 
+// HasPendingAction reports whether a role's inbox already holds an unconsumed
+// message with the given sender and action, regardless of type or payload.
+//
+// This is the check a LEVEL-style advisory needs, and it is deliberately not
+// HasPendingInboxRequest: that one also compares payloads, so an advisory whose
+// text embeds a changing measurement (a byte count, a percentage) never matches
+// its own predecessor and appends a fresh copy every time.
+func HasPendingAction(session, to, from, action string) bool {
+	msgs, err := Peek(session, WindowForRole(to))
+	if err != nil {
+		return false
+	}
+	for _, m := range msgs {
+		if m.From == from && m.Action == action {
+			return true
+		}
+	}
+	return false
+}
+
 // HasInFlightTaskForRole checks if there is an in-flight task targeting
 // the given role and action. This indicates the agent has already consumed
 // the message and is actively working on it — sending another identical

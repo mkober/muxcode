@@ -130,6 +130,7 @@ On each record, plan compares the ledger total with the doc's existing row (if a
 | Working-marker detection imprecision skews measurement | Inherited from the shipped sampler — documented as approximate; this delta does not change measurement |
 | Store lost or corrupted | Never-regress reconciliation: doc keeps its total, ledger re-seeded via `seed` (floor) |
 | Daemon down → undercount | Accepted and stated (shipped behavior); at most ~60s lost on crash (flush cadence) |
+| Daemon relaunched from a foreign cwd (`upgrade-daemons` inherits the caller's directory) misattributes time to the wrong repo, or silently stops tracking when that repo sits on `main` | Fixed 2026-08-13: `checkBranchTime()`/`flushBranchTime()`/`notifyPlanOnReview()` resolve branch and repo key via `SessionRepoDir(session)` (`CurrentBranchIn`/`RepoKeyIn`), never the process cwd; an unresolvable session dir skips the tick / omits the instruction rather than falling back. Cause also closed at the source: `UpgradeDaemons` relaunches daemons/monitors in the session's own directory (`startDetachedProcessIn`) |
 | Work on branch B while active spec points at spec A | Recorded into the active spec (explicit pointer wins), mismatch flagged — the user sees it |
 | Doc table parse fails (hand-edited section) | Plan recreates the section from the ledger; rows replaced, never duplicated |
 

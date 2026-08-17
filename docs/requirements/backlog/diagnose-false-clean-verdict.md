@@ -37,6 +37,10 @@ A dead agent silently disqualifies the delivery detectors:
 
 The result is zero findings, which the formatter (~:955) renders as `✅ No issues detected`.
 
+### Field corroboration (2026-08-17)
+
+A second incident, different failure mode, same contradictory verdict: `muxcode diagnose build` printed `✅ No issues detected` while its own evidence showed `inbox-notify` with **no** subsequent idle-wake and `Notified IDs: 239 STALE`. The agent was alive but wedged, so `checkStaleNotifiedIDs`' opening `if !report.AgentState.IsIdle { return nil }` disqualified the one detector that had the evidence. Pane capture was the only reliable signal. This confirms the verdict-contradicts-evidence problem is a family (detectors self-disqualifying on the very states they should flag), not solely the missing dead-agent check — strengthening the "audit whether other detectors should be skipped or restructured once the agent's true state is known" consideration below.
+
 ### Impact
 
 1. **Exit code lies.** `cmd/diagnose.go` (~:61-64) exits non-zero only when a finding has `Severity == "critical"`. Zero findings means **exit 0** — so `muxcode diagnose <dead-agent>` reports success. Any automation or agent gating on the exit status concludes the agent is healthy.

@@ -211,24 +211,12 @@ func FindMessageByID(session, msgID string) (Message, bool) {
 // consume-ack receipt for each — the agent's OWN runtime read them (Claude via
 // `muxcode inbox`, the local harness's AgentLoop, or a caller draining its own
 // inbox). Uses atomic rename to avoid losing messages.
+//
+// A full drain is by definition an in-process read, so the receipt is always
+// ReceiptKindAck. A daemon pane injection is NOT an in-process read and must not
+// drain the inbox here: it consumes the bounded batch it actually delivered via
+// ReceiveDeliveredIDs, which records the weaker `delivered` kind.
 func Receive(session, role string) ([]Message, error) {
-	return receiveWithReceipt(session, role, ReceiptKindAck)
-}
-
-// ReceiveDelivered consumes a role's inbox like Receive but records a
-// verified-inject `delivered` receipt for each message instead of a true
-// consume-ack. Used by the daemon's non-hook (OpenCode/Codex) wake-up path once
-// it has confirmed the injected text landed in the TUI: the agent's runtime
-// never read the inbox in-process, so the receipt is `delivered`, not `acked`.
-func ReceiveDelivered(session, role string) ([]Message, error) {
-	return receiveWithReceipt(session, role, ReceiptKindDelivered)
-}
-
-// receiveWithReceipt is the shared consume core for Receive / ReceiveDelivered:
-// it atomically drains the inbox and writes a receipt of the given kind for each
-// consumed message. The kind is the caller's assertion of HOW the message was
-// received — a true in-process read (ack) vs a daemon verified-inject (delivered).
-func receiveWithReceipt(session, role, kind string) ([]Message, error) {
 	inbox := InboxPath(session, role)
 	consuming := inbox + ".consuming"
 
@@ -258,10 +246,9 @@ func receiveWithReceipt(session, role, kind string) ([]Message, error) {
 	_ = os.Remove(consuming)
 
 	// Write a receipt for each message — a positive signal of receipt keyed by
-	// message ID. Agent-side consumes pass ReceiptKindAck (advances status to
-	// acked); the daemon's verified-inject path passes ReceiptKindDelivered.
+	// message ID, advancing status to acked.
 	for _, m := range msgs {
-		WriteReceipt(session, m.ID, role, kind)
+		WriteReceipt(session, m.ID, role, ReceiptKindAck)
 	}
 
 	// Clear notification state — agent has consumed all messages, start fresh.
@@ -286,6 +273,41 @@ func ReceiveFrom(session, role, fromRole string) ([]Message, error) {
 // returns true, leaving other messages in the inbox. Used by --wait to
 // accept responses from both a hosted role and its host agent.
 func ReceiveFromFunc(session, role string, matchFn func(string) bool) ([]Message, error) {
+	return receiveMatching(session, role, ReceiptKindAck, func(m Message) bool {
+		return matchFn(m.From)
+	})
+}
+
+// ReceiveDeliveredIDs consumes only the messages whose IDs are in ids, leaving
+// every other message in the inbox, and records a verified-inject `delivered`
+// receipt for each: the agent's runtime never read them, the daemon just
+// confirmed they landed in its TUI.
+//
+// The daemon's non-hook (OpenCode/Codex) wake-up injects a bounded batch per
+// cycle (see BoundWakeUpBatch), so it must consume exactly the batch it
+// delivered: draining the whole inbox here would discard the remainder it never
+// showed the agent.
+func ReceiveDeliveredIDs(session, role string, ids map[string]bool) ([]Message, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return receiveMatching(session, role, ReceiptKindDelivered, func(m Message) bool {
+		return ids[m.ID]
+	})
+}
+
+// receiveMatching is the shared partial-consume core: it atomically claims the
+// inbox, consumes the messages match selects — writing a receipt of the given
+// kind for each — and writes the unmatched remainder back.
+//
+// The receipt kind is the caller's assertion of HOW the message was received:
+// ReceiptKindAck for a genuine in-process read (a --wait sender draining its
+// reply), ReceiptKindDelivered for the daemon's verified pane injection.
+//
+// Both partial-consume callers share this core deliberately. They were once
+// independent copies, which is exactly how a single oversized-message bug came
+// to live in two places and get fixed in only one.
+func receiveMatching(session, role, kind string, match func(Message) bool) ([]Message, error) {
 	inbox := InboxPath(session, role)
 	consuming := inbox + ".consuming"
 
@@ -311,19 +333,15 @@ func ReceiveFromFunc(session, role string, matchFn func(string) bool) ([]Message
 
 	var matched, rest []Message
 	for _, m := range all {
-		if matchFn(m.From) {
+		if match(m) {
 			matched = append(matched, m)
 		} else {
 			rest = append(rest, m)
 		}
 	}
 
-	// Write a true consume-ack receipt for each matched message — this role read
-	// them in-process (e.g. a --wait sender consuming its reply). The daemon's
-	// verified-inject path writes `delivered` receipts via ReceiveDelivered
-	// instead; this partial-consume path is always a genuine in-process read.
 	for _, m := range matched {
-		WriteReceipt(session, m.ID, role, ReceiptKindAck)
+		WriteReceipt(session, m.ID, role, kind)
 	}
 
 	// Mark consumed message IDs as notified (partial consumption —

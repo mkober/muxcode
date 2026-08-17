@@ -1322,6 +1322,17 @@ func (d *Daemon) checkCompaction() {
 	}
 
 	for _, alert := range fresh {
+		// "Context is high" is a LEVEL signal, not an edge event: while one
+		// advisory is still unread, a second tells the agent nothing new. The
+		// 600s cooldown only rate-limits — it never caps — and system actions are
+		// exempt from inbox dedup, so nothing else bounds this. Left unchecked the
+		// advisories accumulate for as long as the agent declines to act on them
+		// (observed: 239 copies over ~27h, which then wedged that agent's delivery
+		// path entirely). Skip while one is already pending.
+		if bus.HasPendingAction(d.session, alert.Role, "daemon", "compact-recommended") {
+			continue
+		}
+
 		ts := time.Now().Format("15:04:05")
 		fmt.Printf("  %s  Compact recommended: %s (total: %s)\n", ts, alert.Role, formatDaemonBytes(alert.TotalBytes))
 		bus.LogLifecycle(d.session, "warn", "daemon", "compact-alert",

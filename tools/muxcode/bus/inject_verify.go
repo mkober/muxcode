@@ -111,13 +111,17 @@ func verifyInjectionLanded(target, needle string) injectOutcome {
 }
 
 // confirmInjectionAndConsume finalizes a non-hook wake-up: it verifies the
-// injected prompt submitted and, only then, consumes the inbox with a
+// injected prompt submitted and, only then, consumes the delivered batch with a
 // verified-inject `delivered` receipt. If the text is still parked after bounded
 // Enter retries, it leaves the inbox UNCONSUMED so the daemon's next wake cycle
 // retries — no message is dropped on a dropped Enter. When verification is
 // impossible (capture failure or too-short prompt), it falls back to consuming so
 // behavior is never worse than the old fire-and-hope drain.
-func confirmInjectionAndConsume(session, role, target, needle string) {
+//
+// batchIDs is the set of messages actually injected (see BoundWakeUpBatch).
+// Consuming by ID rather than draining the inbox is what keeps a bounded batch
+// safe: anything the wake-up did not show the agent stays queued.
+func confirmInjectionAndConsume(session, role, target, needle string, batchIDs map[string]bool) {
 	switch verifyInjectionLanded(target, needle) {
 	case injectParked:
 		fmt.Fprintf(os.Stderr,
@@ -127,6 +131,6 @@ func confirmInjectionAndConsume(session, role, target, needle string) {
 	default:
 		// injectSubmitted (verified) or injectUnknown (unverifiable — preserve the
 		// old drain). Consume with a verified-inject `delivered` receipt.
-		_, _ = ReceiveDelivered(session, role)
+		_, _ = ReceiveDeliveredIDs(session, role, batchIDs)
 	}
 }
