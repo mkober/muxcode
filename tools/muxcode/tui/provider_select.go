@@ -243,11 +243,6 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact bool, roles []stri
 func (ui *ProviderSelectUI) startBatchReload(cli, model string) {
 	roles := ui.selectedAgentRoles()
 
-	// Persist provider/model choices to muxcode config before reloading.
-	// This makes the selection permanent for this subsession — agents will
-	// use these settings on any subsequent reload or restart.
-	persistToConfig(roles, cli, model)
-
 	ui.progressTotal = len(roles)
 	ui.progressResults = nil
 	ui.progressDone = false
@@ -256,6 +251,11 @@ func (ui *ProviderSelectUI) startBatchReload(cli, model string) {
 
 	go func() {
 		bus.ReloadBatch(ui.session, roles, cli, model, ui.compact, func(i int, r bus.ReloadResult) {
+			// Persist per agent, and only for the ones that actually
+			// reloaded — same ordering rule as the single-agent path above.
+			if r.Success {
+				persistToConfig([]string{r.Role}, cli, model)
+			}
 			ui.progressMu.Lock()
 			ui.progressResults = append(ui.progressResults, r)
 			ui.progressMu.Unlock()
@@ -947,14 +947,10 @@ func (ui *ProviderSelectUI) cleanup(restoreStty bool) {
 // ExecuteReload runs agent reload(s) directly as a subprocess so output
 // is visible in the popup.
 func ExecuteReload(session, role, cli, model string, compact bool, roles []string) error {
-	// Persist provider/model choices to muxcode config. This makes the
-	// selection permanent for this subsession — agents will use these
-	// settings on any subsequent reload or restart.
 	targetRoles := roles
 	if len(targetRoles) == 0 {
 		targetRoles = []string{role}
 	}
-	persistToConfig(targetRoles, cli, model)
 
 	// For multi-agent, roles were already handled by the TUI progress view
 	// This path is only for single-agent reload
@@ -986,7 +982,23 @@ func ExecuteReload(session, role, cli, model string, compact bool, roles []strin
 	cmd := exec.Command(exe, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	// Persisted only after the reload succeeds. Writing it first made the
+	// reload impossible: `muxcode reload` resolves the running agent's
+	// provider to decide how to stop it, and that resolution reads this
+	// config. Announcing the destination up front made a running OpenCode
+	// agent look like a Claude one, so the stop sent /exit to a TUI that
+	// ignores it and the reload timed out with "did not exit after 12
+	// seconds". ReloadAgent takes the same care with its runtime override,
+	// stopping the agent before writing it.
+	//
+	// Persisting after also keeps the config honest when a reload fails:
+	// the file keeps describing the agent that is actually running.
+	persistToConfig(targetRoles, cli, model)
+	return nil
 }
 
 // persistToConfig writes provider/model choices to the muxcode config file

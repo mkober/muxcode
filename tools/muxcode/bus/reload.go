@@ -80,6 +80,27 @@ func paneAwaitingExitConfirmation(target string) bool {
 	return PaneShowsExitConfirmation(out)
 }
 
+// pairedInterrupt sends C-c twice in quick succession.
+//
+// One press is not an exit. OpenCode's TUI treats the first C-c as "press
+// again to exit" and expires that prompt after a few seconds, so a lone press
+// only cancels the current turn. Sending the second press ~10s later — as the
+// stop sequence used to, via its fallback — lands after the prompt has expired
+// and merely opens a new confirmation, so the agent never exits and every
+// reload of an OpenCode agent failed with "did not exit after 12 seconds".
+//
+// The two presses are kept in one helper so a caller cannot fix the pairing at
+// one call site while the other quietly regrows the bug.
+func pairedInterrupt(target string) {
+	exec.Command("tmux", "send-keys", "-t", target, "C-c").Run()
+	time.Sleep(interruptPairDelay)
+	exec.Command("tmux", "send-keys", "-t", target, "C-c").Run()
+}
+
+// interruptPairDelay is short enough to land inside OpenCode's confirmation
+// window and long enough that the TUI processes the presses as two keys.
+const interruptPairDelay = 300 * time.Millisecond
+
 // GracefulStop stops an agent process gracefully:
 //  1. Optionally triggers context compaction before stopping (--compact flag)
 //  2. Sends provider-specific exit sequence:
@@ -117,8 +138,8 @@ func GracefulStop(session, role string, compact bool) error {
 		time.Sleep(200 * time.Millisecond)
 		exec.Command("tmux", "send-keys", "-t", target, "Enter").Run()
 	} else {
-		// OpenCode, Codex CLI, Local LLM: C-c interrupts and exits
-		exec.Command("tmux", "send-keys", "-t", target, "C-c").Run()
+		// OpenCode, Codex CLI, Local LLM: C-c interrupts and exits.
+		pairedInterrupt(target)
 	}
 
 	// Poll for process exit (max 10s)
@@ -144,16 +165,16 @@ func GracefulStop(session, role string, compact bool) error {
 		}
 	}
 
-	// Fallback: send C-c in case provider-specific exit didn't work
-	exec.Command("tmux", "send-keys", "-t", target, "C-c").Run()
+	// Fallback: interrupt again in case the provider-specific exit didn't work.
+	pairedInterrupt(target)
 	time.Sleep(1 * time.Second)
 
 	if !IsAgentAlive(session, role) {
 		return nil
 	}
 
-	// Last resort: second C-c
-	exec.Command("tmux", "send-keys", "-t", target, "C-c").Run()
+	// Last resort: interrupt once more before giving up.
+	pairedInterrupt(target)
 	time.Sleep(1 * time.Second)
 
 	if IsAgentAlive(session, role) {
