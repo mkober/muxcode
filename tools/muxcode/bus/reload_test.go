@@ -150,14 +150,8 @@ func TestReloadTarget_ModeCycledInactive(t *testing.T) {
 	os.MkdirAll(filepath.Dir(path), 0755)
 	os.WriteFile(path, append(data, '\n'), 0644)
 
-	// Inactive mode agent (edit) should target its hold window
-	// edit is index 0 with no HoldWindow, meaning it lives on the host window
-	// when auto is active. The host window IS edit's pane.
-	// Actually, looking at the mode.go defaults: edit has HoldWindow:"" (host), auto has HoldWindow:"auto".
-	// When auto is active (index 1), edit (index 0, no HoldWindow) is the inactive one.
-	// ReloadTarget checks Index != Current for inactive — edit is index 0, current is 1 → inactive.
-	// But edit has no HoldWindow → it falls through to standard PaneTarget for the host window.
-	// This is correct: the inactive edit agent's pane is the same edit window.
+	// edit hosts its mode group (no hold window), so it resolves to its own
+	// window whether or not auto is the showing mode.
 	target := ReloadTarget(session, "edit")
 	expected := PaneTarget(session, "edit")
 	if target != expected {
@@ -279,37 +273,52 @@ func TestCleanStaleReloadMarkers(t *testing.T) {
 }
 
 func TestReloadTarget_ModeCycledPlanResearch(t *testing.T) {
-	baseDir := t.TempDir()
-	SetBusDirBase(baseDir)
-	defer ResetBusDirBase()
+	// A mode agent keeps its own window in both mode states: modeSwitchTo uses
+	// swap-window, which trades indices only. Resolving an ACTIVE mode role to
+	// the host window pointed research at plan's pane, so reloading research
+	// sent /exit to plan — plan died and research was never signalled. Both
+	// mode states run because the old bug was invisible in one of them.
+	for _, tc := range []struct {
+		name    string
+		current int
+	}{
+		{"research active", 1},
+		{"plan active", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseDir := t.TempDir()
+			SetBusDirBase(baseDir)
+			defer ResetBusDirBase()
 
-	session := "test-session"
+			session := "test-session"
+			state := &ModeCycleState{
+				Window:  "plan",
+				Current: tc.current,
+				Agents: []ModeAgent{
+					{Index: 0, Mode: "plan", Role: "plan", HoldWindow: ""},
+					{Index: 1, Mode: "research", Role: "research", HoldWindow: "research"},
+				},
+			}
+			data, _ := json.MarshalIndent(state, "", "  ")
+			path := ModeCyclePath(session, "plan")
+			os.MkdirAll(filepath.Dir(path), 0755)
+			os.WriteFile(path, append(data, '\n'), 0644)
 
-	// Plan window with research active (index 1)
-	state := &ModeCycleState{
-		Window:  "plan",
-		Current: 1,
-		Agents: []ModeAgent{
-			{Index: 0, Mode: "plan", Role: "plan", HoldWindow: ""},
-			{Index: 1, Mode: "research", Role: "research", HoldWindow: "research"},
-		},
-	}
-	data, _ := json.MarshalIndent(state, "", "  ")
-	path := ModeCyclePath(session, "plan")
-	os.MkdirAll(filepath.Dir(path), 0755)
-	os.WriteFile(path, append(data, '\n'), 0644)
+			research := ReloadTarget(session, "research")
+			if want := session + ":research.1"; research != want {
+				t.Errorf("ReloadTarget(research) = %q, want %q", research, want)
+			}
 
-	// Research is active — should target the host window (plan's pane)
-	target := ReloadTarget(session, "research")
-	expected := PaneTarget(session, "plan")
-	if target != expected {
-		t.Errorf("ReloadTarget for active research = %q, want %q", target, expected)
-	}
+			plan := ReloadTarget(session, "plan")
+			if want := PaneTarget(session, "plan"); plan != want {
+				t.Errorf("ReloadTarget(plan) = %q, want %q", plan, want)
+			}
 
-	// Plan is inactive with no HoldWindow — should use standard PaneTarget
-	target = ReloadTarget(session, "plan")
-	expected = PaneTarget(session, "plan")
-	if target != expected {
-		t.Errorf("ReloadTarget for inactive plan = %q, want %q", target, expected)
+			// The defect in one line: two agents resolving to one pane means a
+			// reload of either sends its exit sequence to the other.
+			if research == plan {
+				t.Errorf("research and plan share target %q — reloading one would stop the other", research)
+			}
+		})
 	}
 }

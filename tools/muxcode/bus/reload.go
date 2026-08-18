@@ -46,26 +46,30 @@ func clearReloadMarker(session, role string) {
 //
 // For standard (non-mode-cycled) agents: uses PaneTarget.
 func ReloadTarget(session, role string) string {
-	// Check if role is in a mode cycle window (edit or plan)
+	// A mode-cycled agent lives in its hold window whether or not that mode is
+	// showing. modeSwitchTo swaps with swap-window, which exchanges window
+	// *indices* while every agent keeps its own panes — the reason bus targeting
+	// is by window name. Resolving an active mode role to the host window
+	// instead therefore addresses whichever agent occupies the host, not the one
+	// being reloaded: reloading research sent /exit to plan, killing plan and
+	// leaving research untouched, and the reload then timed out waiting for a
+	// process it never signalled ("did not exit after 12 seconds").
+	//
+	// Hold window rather than PaneTarget(role) because the two can differ — a
+	// mode agent may declare a hold window that is not its role name.
 	for _, window := range []string{"edit", "plan"} {
 		state, err := ReadModeCycleState(session, window)
 		if err != nil {
 			continue
 		}
 		for _, agent := range state.Agents {
-			if agent.Role == role {
-				if agent.Index == state.Current {
-					// Active — target the host window's agent pane
-					return PaneTarget(session, window)
-				}
-				if agent.HoldWindow != "" {
-					// Inactive — target the holding window's agent pane
-					return session + ":" + agent.HoldWindow + ".1"
-				}
+			if agent.Role == role && agent.HoldWindow != "" {
+				return session + ":" + agent.HoldWindow + ".1"
 			}
 		}
 	}
-	// Standard agent — use normal pane target
+	// Host-mode roles (no hold window) and standard agents live in the window
+	// that carries their own name.
 	return PaneTarget(session, role)
 }
 
