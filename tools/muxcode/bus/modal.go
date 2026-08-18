@@ -27,6 +27,69 @@ func PopupStyleArgs() []string {
 	return []string{"-b", PopupBorderStyle, "-S", PopupBorderColor}
 }
 
+// Popup chrome and auto-fit clamps. tmux display-popup has no content-fit
+// mode — -w/-h take only an absolute count or a percentage — so a popup that
+// should hug its content must be measured and clamped here before the size
+// reaches tmux.
+const (
+	PopupChromeCols = 2 // rounded border, one cell each side
+	PopupChromeRows = 2 // rounded border, one row top and bottom
+
+	defaultModalMinCols = 40
+	defaultModalMaxCols = 160
+	modalMinRows        = 10
+
+	// A popup never occupies more than this share of the client, so it always
+	// reads as an overlay rather than a replacement for the screen.
+	modalMaxClientPct = 90
+)
+
+// ModalMinCols returns the auto-fit width floor, overridable via
+// MUXCODE_MODAL_MIN_COLS.
+func ModalMinCols() int { return modalColsEnv("MUXCODE_MODAL_MIN_COLS", defaultModalMinCols) }
+
+// ModalMaxCols returns the auto-fit width cap, overridable via
+// MUXCODE_MODAL_MAX_COLS.
+func ModalMaxCols() int { return modalColsEnv("MUXCODE_MODAL_MAX_COLS", defaultModalMaxCols) }
+
+func modalColsEnv(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
+// FitSize converts a measured content size into popup dimensions: it adds the
+// border chrome, then applies the width floor/cap and the share-of-client
+// ceiling. The title floor is applied by the caller afterwards, against the
+// result, since FitSize has no view of the modal's title.
+//
+// Returns (0, 0) to mean "no auto-fit available" — when the client size could
+// not be resolved, or the measurer produced nothing. That sentinel is why the
+// clamps below never bottom out at zero for a client that did resolve: a
+// clamped-to-nothing result would be indistinguishable from an absent one and
+// would silently fall back to the percentage defaults.
+func FitSize(contentW, contentH, clientW, clientH int) (w, h int) {
+	if clientW <= 0 || clientH <= 0 || contentW <= 0 || contentH <= 0 {
+		return 0, 0
+	}
+
+	// Capping after the floor means an inverted range — a configured floor
+	// above the cap — resolves in favour of the cap, which is the bound that
+	// exists to prevent the overshoot.
+	w = min(max(contentW+PopupChromeCols, ModalMinCols()), ModalMaxCols())
+	h = max(contentH+PopupChromeRows, modalMinRows)
+
+	// The share-of-client ceiling is applied last so it outranks both floors —
+	// a popup must never be wider or taller than the terminal showing it. Each
+	// ceiling is itself floored at 1: a tiny client must not clamp the result
+	// down onto the (0, 0) sentinel.
+	return min(w, max(clientW*modalMaxClientPct/100, 1)),
+		min(h, max(clientH*modalMaxClientPct/100, 1))
+}
+
 // ModalConfig defines a modal window configuration.
 type ModalConfig struct {
 	Name    string               // unique identifier (e.g. "api", "logs", "memory")
@@ -37,6 +100,12 @@ type ModalConfig struct {
 	Split   *ModalSplit          // optional pane split
 	Sizes   map[string][2]string // size presets: "compact"->["60%","50%"], "full"->["95%","95%"]
 	Role    string               // bus role name for inbox routing (empty = no bus integration)
+
+	// Auto-sizing tier. A modal opts in explicitly: with neither field set it
+	// keeps the legacy percentage sizing, which is what lets existing configs
+	// and tests behave exactly as before.
+	Measurer ContentMeasurer // fit tier — measure the content it will render
+	AutoCap  bool            // cap tier — convert the percentage to absolute and clamp
 }
 
 // ModalSplit defines a pane split inside a modal.
@@ -130,36 +199,149 @@ func IsModalRole(role string) bool {
 	return false
 }
 
+// explicitSize resolves the tiers the user sets directly — CLI dimensions, a
+// named preset, then the per-modal env var. The bool is false when the user
+// expressed no preference, leaving the caller to auto-fit or fall back.
+func explicitSize(cfg ModalConfig, sizeFlag string) (string, string, bool) {
+	if sizeFlag != "" {
+		if w, h, ok := parseSizeWidthHeight(sizeFlag); ok {
+			return w, h, true
+		}
+		if dims, ok := cfg.Sizes[sizeFlag]; ok {
+			return dims[0], dims[1], true
+		}
+	}
+
+	envKey := "MUXCODE_MODAL_SIZE_" + strings.ToUpper(strings.ReplaceAll(cfg.Name, "-", "_"))
+	if envVal := os.Getenv(envKey); envVal != "" {
+		if w, h, ok := parseSizeWidthHeight(envVal); ok {
+			return w, h, true
+		}
+	}
+	return "", "", false
+}
+
 // ResolveSize resolves the modal size from the 4-tier priority:
 // 1. CLI --size WxH (explicit dimensions)
 // 2. CLI --size preset (named preset from Sizes map)
 // 3. MUXCODE_MODAL_SIZE_<NAME> env var (WxH)
 // 4. Config default (Width, Height)
 func ResolveSize(cfg ModalConfig, sizeFlag string) (width, height string) {
-	// 1. Explicit WxH (e.g. "80%x70%", "120x80")
-	if sizeFlag != "" {
-		if w, h, ok := parseSizeWidthHeight(sizeFlag); ok {
-			return w, h
-		}
+	if w, h, ok := explicitSize(cfg, sizeFlag); ok {
+		return w, h
 	}
-
-	// 2. Named preset
-	if sizeFlag != "" {
-		if dims, ok := cfg.Sizes[sizeFlag]; ok {
-			return dims[0], dims[1]
-		}
-	}
-
-	// 3. Environment variable
-	envKey := "MUXCODE_MODAL_SIZE_" + strings.ToUpper(strings.ReplaceAll(cfg.Name, "-", "_"))
-	if envVal := os.Getenv(envKey); envVal != "" {
-		if w, h, ok := parseSizeWidthHeight(envVal); ok {
-			return w, h
-		}
-	}
-
-	// 4. Config default
 	return cfg.Width, cfg.Height
+}
+
+// ResolveSizeIn is ResolveSize with the session needed by the auto-fit tier.
+// Auto-fit sits below the env var and above the config default: it must never
+// outrank a size the user asked for explicitly.
+func ResolveSizeIn(cfg ModalConfig, sizeFlag, session string) (width, height string) {
+	if w, h, ok := explicitSize(cfg, sizeFlag); ok {
+		return w, h
+	}
+	if w, h, ok := autoFitSize(cfg, session); ok {
+		return w, h
+	}
+	return cfg.Width, cfg.Height
+}
+
+// clientDimensions is the client-size source, overridable in tests so sizing
+// is deterministic whether or not the suite runs inside tmux.
+var clientDimensions = resolveClientDimensions
+
+// resolveClientDimensions reads MUXCODE_MODAL_CLIENT_SIZE ("317x80") before
+// asking tmux, so sizing can be exercised and debugged from a shell without an
+// attached client of that size.
+func resolveClientDimensions() (int, int, error) {
+	if v := os.Getenv("MUXCODE_MODAL_CLIENT_SIZE"); v != "" {
+		if ws, hs, ok := parseSizeWidthHeight(v); ok {
+			w, werr := strconv.Atoi(strings.TrimSuffix(ws, "%"))
+			h, herr := strconv.Atoi(strings.TrimSuffix(hs, "%"))
+			if werr == nil && herr == nil && w > 0 && h > 0 {
+				return w, h, nil
+			}
+		}
+	}
+	return TmuxClientDimensions()
+}
+
+// autoFitSize resolves the fit or cap tier to absolute dimensions. The bool is
+// false whenever auto-sizing cannot answer — the modal did not opt in, the
+// client size is unknown, or the measurer found nothing — leaving the caller
+// on the percentage default.
+func autoFitSize(cfg ModalConfig, session string) (string, string, bool) {
+	if cfg.Measurer == nil && !cfg.AutoCap {
+		return "", "", false
+	}
+
+	clientW, clientH, err := clientDimensions()
+	if err != nil || clientW <= 0 || clientH <= 0 {
+		return "", "", false
+	}
+
+	var w, h int
+	if cfg.Measurer != nil {
+		cols, rows := cfg.Measurer(session)
+		w, h = FitSize(cols, rows, clientW, clientH)
+	}
+	if w == 0 {
+		w, h = capSize(cfg, clientW, clientH)
+	}
+	if w == 0 || h == 0 {
+		return "", "", false
+	}
+
+	// The title renders inside the top border, so a popup narrower than its
+	// title would clip it. The client bound still wins over the title.
+	w = min(max(w, titleFloorCols(cfg.Title)), clientW)
+
+	return strconv.Itoa(w), strconv.Itoa(h), true
+}
+
+// capSize converts a percentage default into absolute dimensions and applies
+// the same cap as the fit tier, for modals whose content cannot be measured.
+func capSize(cfg ModalConfig, clientW, clientH int) (int, int) {
+	w := absDimension(cfg.Width, clientW)
+	h := absDimension(cfg.Height, clientH)
+	if w == 0 || h == 0 {
+		return 0, 0
+	}
+	// Same floors as the fit tier: a modal configured with a small percentage
+	// would otherwise open unusably small on a narrow client.
+	w = min(min(max(w, ModalMinCols()), ModalMaxCols()), max(clientW*modalMaxClientPct/100, 1))
+	h = min(max(h, modalMinRows), max(clientH*modalMaxClientPct/100, 1))
+	return w, h
+}
+
+// absDimension resolves "70%" against total, or a bare "120" as itself.
+// Returns 0 when the value is neither.
+func absDimension(dim string, total int) int {
+	if dim == "" {
+		return 0
+	}
+	if strings.HasSuffix(dim, "%") {
+		pct, err := strconv.Atoi(strings.TrimSuffix(dim, "%"))
+		if err != nil || pct <= 0 {
+			return 0
+		}
+		return max(total*pct/100, 1)
+	}
+	n, err := strconv.Atoi(dim)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+// titleFloorCols is the width a popup needs to show its title: the visible
+// title plus the two corner cells of the border.
+func titleFloorCols(title string) int {
+	if title == "" {
+		return 0
+	}
+	cols, _ := MeasureText(title)
+	return cols + 2
 }
 
 // tmuxVersionRunner is the function used to get the tmux version.
@@ -334,23 +516,26 @@ func BuildModalCommand(cfg ModalConfig) string {
 	)
 }
 
-// BuildPopupArgs builds the tmux display-popup argument list for a modal.
-// This is a pure function suitable for testing.
-func BuildPopupArgs(cfg ModalConfig, session, sizeFlag string) []string {
-	width, height := ResolveSize(cfg, sizeFlag)
-
+// popupFrameArgs builds the display-popup flags every popup shares: the
+// Dracula frame (tmux 3.3+), the resolved size, and the optional title.
+func popupFrameArgs(width, height, title string) []string {
 	args := []string{"display-popup", "-E", "-d", "#{pane_current_path}"}
-
-	// Dracula border on tmux 3.3+
 	if style := PopupStyleArgs(); style != nil {
 		args = append(args, style...)
 	}
-
 	args = append(args, "-w", width, "-h", height)
-
-	if cfg.Title != "" {
-		args = append(args, "-T", cfg.Title)
+	if title != "" {
+		args = append(args, "-T", title)
 	}
+	return args
+}
+
+// BuildPopupArgs builds the tmux display-popup argument list for a modal.
+// This is a pure function suitable for testing.
+func BuildPopupArgs(cfg ModalConfig, session, sizeFlag string) []string {
+	width, height := ResolveSizeIn(cfg, sizeFlag, session)
+
+	args := popupFrameArgs(width, height, cfg.Title)
 
 	// Set MUXCODE_MODAL=1 and track PID; clean up PID file on exit
 	pidPath := ModalPidPath(session, cfg.Name)

@@ -21,7 +21,7 @@ var knownSubcommands = map[string]bool{
 	"demo": true, "webhook": true, "subscribe": true, "agent": true,
 	"api": true, "agent-health": true, "lifecycle": true, "console": true,
 	"hook": true, "workflow": true, "pii-scrub": true, "atlassian": true,
-	"compact": true, "launch": true, "modal": true, "mode": true,
+	"compact": true, "launch": true, "modal": true, "mode": true, "popup": true,
 	"reload": true, "config": true, "provider-select": true,
 	"simulate": true, "track": true, "remote": true, "spec": true,
 	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true,
@@ -206,6 +206,8 @@ func main() {
 		cmd.Atlassian(args)
 	case "modal":
 		cmd.Modal(args)
+	case "popup":
+		cmd.Popup(args)
 	case "mode":
 		cmd.Mode(args)
 	case "resize":

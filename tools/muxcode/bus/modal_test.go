@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -821,6 +822,231 @@ func TestExtractDigits(t *testing.T) {
 		got := extractDigits(tt.input)
 		if got != tt.want {
 			t.Errorf("extractDigits(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestFitSize(t *testing.T) {
+	tests := []struct {
+		name               string
+		contentW, contentH int
+		clientW, clientH   int
+		wantW, wantH       int
+	}{
+		{"content plus chrome", 55, 20, 317, 80, 57, 22},
+		{"width floor raises tiny content", 5, 2, 317, 80, defaultModalMinCols, modalMinRows},
+		{"width cap holds on a wide client", 400, 20, 317, 80, defaultModalMaxCols, 22},
+		{"client ceiling outranks the floors", 5, 2, 30, 8, 27, 7},
+		{"unresolvable client width", 55, 20, 0, 80, 0, 0},
+		{"unresolvable client height", 55, 20, 317, 0, 0, 0},
+		{"no measured content", 0, 0, 317, 80, 0, 0},
+		{"negative measurement", -1, -1, 317, 80, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w, h := FitSize(tt.contentW, tt.contentH, tt.clientW, tt.clientH)
+			if w != tt.wantW || h != tt.wantH {
+				t.Errorf("FitSize(%d,%d,%d,%d) = %dx%d, want %dx%d",
+					tt.contentW, tt.contentH, tt.clientW, tt.clientH, w, h, tt.wantW, tt.wantH)
+			}
+		})
+	}
+}
+
+// The reported bug: a 60%-wide session picker on a 317-column terminal opened
+// at 190 columns for ~55 columns of paths.
+func TestFitSize_SessionPickerRegression(t *testing.T) {
+	const clientW = 317
+	w, _ := FitSize(55, 20, clientW, 80)
+
+	if pct := clientW * 60 / 100; w >= pct {
+		t.Errorf("fitted width %d did not improve on the old 60%% sizing (%d)", w, pct)
+	}
+	if w > 70 {
+		t.Errorf("fitted width %d is far wider than the 55-column content", w)
+	}
+}
+
+// (0, 0) means "no auto-fit available", so a resolvable client must never
+// clamp its way to zero — that would read as absent and fall back to the
+// percentage defaults.
+func TestFitSize_NeverZeroForResolvableClient(t *testing.T) {
+	for _, c := range [][2]int{{1, 1}, {2, 2}, {5, 3}} {
+		w, h := FitSize(50, 20, c[0], c[1])
+		if w < 1 || h < 1 {
+			t.Errorf("client %dx%d produced %dx%d, which collides with the unavailable sentinel",
+				c[0], c[1], w, h)
+		}
+		if w > c[0] || h > c[1] {
+			t.Errorf("client %dx%d produced oversized %dx%d", c[0], c[1], w, h)
+		}
+	}
+}
+
+// Each override gets its own scope — setting a floor above a cap already in
+// effect tests the inversion policy, not the override.
+func TestFitSize_EnvClampOverrides(t *testing.T) {
+	t.Run("max cap", func(t *testing.T) {
+		t.Setenv("MUXCODE_MODAL_MAX_COLS", "80")
+		if w, _ := FitSize(400, 20, 317, 80); w != 80 {
+			t.Errorf("expected max-cols override to cap width at 80, got %d", w)
+		}
+	})
+
+	t.Run("min floor", func(t *testing.T) {
+		t.Setenv("MUXCODE_MODAL_MIN_COLS", "100")
+		if w, _ := FitSize(5, 20, 317, 80); w != 100 {
+			t.Errorf("expected min-cols override to floor width at 100, got %d", w)
+		}
+	})
+}
+
+// Nothing stops a user setting a floor above the cap. The cap wins: exceeding
+// it is the outcome the cap exists to prevent.
+func TestFitSize_InvertedClampsCapWins(t *testing.T) {
+	t.Setenv("MUXCODE_MODAL_MIN_COLS", "200")
+	t.Setenv("MUXCODE_MODAL_MAX_COLS", "100")
+	if w, _ := FitSize(5, 20, 317, 80); w != 100 {
+		t.Errorf("expected inverted clamps to yield the cap 100, got %d", w)
+	}
+}
+
+func TestModalColsEnv_InvalidFallsBackToDefault(t *testing.T) {
+	for _, bad := range []string{"abc", "0", "-5", ""} {
+		t.Setenv("MUXCODE_MODAL_MAX_COLS", bad)
+		if got := ModalMaxCols(); got != defaultModalMaxCols {
+			t.Errorf("MUXCODE_MODAL_MAX_COLS=%q gave %d, want default %d", bad, got, defaultModalMaxCols)
+		}
+	}
+}
+
+// stubClient swaps the client-size source so sizing is deterministic whether
+// or not the suite runs inside tmux.
+var errStubNoClient = errors.New("no client")
+
+func stubClient(t *testing.T, w, h int) {
+	t.Helper()
+	prev := clientDimensions
+	clientDimensions = func() (int, int, error) { return w, h, nil }
+	t.Cleanup(func() { clientDimensions = prev })
+}
+
+func fixedMeasurer(cols, rows int) ContentMeasurer {
+	return func(string) (int, int) { return cols, rows }
+}
+
+// A modal that opts into neither tier keeps its percentage sizing — this is
+// what keeps every pre-existing config and test behaving as before.
+func TestResolveSizeIn_NoOptInKeepsPercentages(t *testing.T) {
+	stubClient(t, 317, 80)
+	cfg := ModalConfig{Name: "legacy", Width: "62%", Height: "62%"}
+	if w, h := ResolveSizeIn(cfg, "", "s"); w != "62%" || h != "62%" {
+		t.Errorf("expected 62%%x62%%, got %sx%s", w, h)
+	}
+}
+
+func TestResolveSizeIn_FitTierUsesMeasuredContent(t *testing.T) {
+	stubClient(t, 317, 80)
+	cfg := ModalConfig{Name: "picker", Width: "60%", Height: "50%", Measurer: fixedMeasurer(55, 20)}
+	w, h := ResolveSizeIn(cfg, "", "s")
+	if w != "57" { // 55 content + 2 chrome
+		t.Errorf("expected fitted width 57, got %s", w)
+	}
+	if h != "22" {
+		t.Errorf("expected fitted height 22, got %s", h)
+	}
+}
+
+func TestResolveSizeIn_CapTierConvertsAndClamps(t *testing.T) {
+	stubClient(t, 317, 80)
+	cfg := ModalConfig{Name: "editor", Width: "80%", Height: "80%", AutoCap: true}
+	w, _ := ResolveSizeIn(cfg, "", "s")
+	if w != "160" { // 80% of 317 = 253, clamped to the 160 cap
+		t.Errorf("expected capped width 160, got %s", w)
+	}
+}
+
+// Precedence: flag > preset > env > auto-fit > config default.
+func TestResolveSizeIn_ExplicitSizesOutrankAutoFit(t *testing.T) {
+	stubClient(t, 317, 80)
+	cfg := ModalConfig{
+		Name: "picker", Width: "60%", Height: "50%",
+		Sizes:    map[string][2]string{"compact": {"50%", "40%"}},
+		Measurer: fixedMeasurer(55, 20),
+	}
+
+	if w, _ := ResolveSizeIn(cfg, "90%x80%", "s"); w != "90%" {
+		t.Errorf("explicit flag should win, got %s", w)
+	}
+	if w, _ := ResolveSizeIn(cfg, "compact", "s"); w != "50%" {
+		t.Errorf("preset should win, got %s", w)
+	}
+
+	t.Setenv("MUXCODE_MODAL_SIZE_PICKER", "70%x60%")
+	if w, _ := ResolveSizeIn(cfg, "", "s"); w != "70%" {
+		t.Errorf("env var should outrank auto-fit, got %s", w)
+	}
+}
+
+// An unresolvable client must leave the modal on its percentage default rather
+// than sizing it to nothing.
+func TestResolveSizeIn_UnresolvableClientFallsBack(t *testing.T) {
+	prev := clientDimensions
+	clientDimensions = func() (int, int, error) { return 0, 0, errStubNoClient }
+	t.Cleanup(func() { clientDimensions = prev })
+
+	cfg := ModalConfig{Name: "picker", Width: "60%", Height: "50%", Measurer: fixedMeasurer(55, 20)}
+	if w, h := ResolveSizeIn(cfg, "", "s"); w != "60%" || h != "50%" {
+		t.Errorf("expected percentage fallback, got %sx%s", w, h)
+	}
+}
+
+// A measurer that finds nothing hands off to the cap tier rather than
+// returning a zero-width popup.
+func TestResolveSizeIn_EmptyMeasurementFallsBackToCap(t *testing.T) {
+	stubClient(t, 317, 80)
+	cfg := ModalConfig{Name: "picker", Width: "60%", Height: "50%", Measurer: fixedMeasurer(0, 0)}
+	w, _ := ResolveSizeIn(cfg, "", "s")
+	if w != "160" { // 60% of 317 = 190, clamped to 160
+		t.Errorf("expected cap-tier fallback 160, got %s", w)
+	}
+}
+
+// A popup narrower than its own title would clip it in the border.
+func TestResolveSizeIn_TitleFloor(t *testing.T) {
+	stubClient(t, 317, 80)
+	title := " New Session "
+	cfg := ModalConfig{
+		Name: "picker", Title: title, Width: "60%", Height: "50%",
+		Measurer: fixedMeasurer(3, 4),
+	}
+	w, _ := ResolveSizeIn(cfg, "", "s")
+	if w != "40" { // min-cols floor 40 already exceeds the title floor of 15
+		t.Errorf("expected 40, got %s", w)
+	}
+
+	t.Setenv("MUXCODE_MODAL_MIN_COLS", "5")
+	if w, _ := ResolveSizeIn(cfg, "", "s"); w != "15" { // 13 visible + 2 corners
+		t.Errorf("expected title floor 15, got %s", w)
+	}
+}
+
+func TestAbsDimension(t *testing.T) {
+	tests := []struct {
+		dim   string
+		total int
+		want  int
+	}{
+		{"70%", 300, 210},
+		{"120", 300, 120},
+		{"", 300, 0},
+		{"abc", 300, 0},
+		{"0%", 300, 0},
+		{"1%", 10, 1}, // never rounds down to zero
+	}
+	for _, tt := range tests {
+		if got := absDimension(tt.dim, tt.total); got != tt.want {
+			t.Errorf("absDimension(%q, %d) = %d, want %d", tt.dim, tt.total, got, tt.want)
 		}
 	}
 }
