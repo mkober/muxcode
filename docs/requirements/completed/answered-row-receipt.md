@@ -130,4 +130,4 @@ Coverage note: the script verifies these behaviours through the Go suite plus a 
 
 ## Status
 
-In Progress — implementation, verification, and docs complete; every phase and acceptance criterion checked. Both halves committed (7a6fb5c, 8e9078a); the choke-point relocation of the drain into `MarkResponded()`, `scripts/test-answered-row-receipt.sh`, and the CLAUDE.md nuance are in the working tree, **not yet committed**. Sole remaining step: commit of the working-tree changes (user-initiated) — then ready to move to `completed/`.
+Complete — implementation, verification, and docs complete; every phase and acceptance criterion checked. All work committed: both halves (7a6fb5c, 8e9078a), plus the choke-point relocation of the drain into `MarkResponded()`, `scripts/test-answered-row-receipt.sh`, and the CLAUDE.md nuance (verified in tree 2026-08-18).

@@ -1,185 +1,157 @@
 # Requirements Backlog
 
-## Completed
+Index of all pending requirement specs. Every planned feature with a written spec has a row
+in the [Spec index](#spec-index) below; ideas without a spec doc yet are collected in
+[Ideas without specs](#ideas-without-specs). 72 delivered specs live in
+[`completed/`](../completed/) — each with requirements, key files, and implementation notes.
 
-51 delivered feature specs live in [`completed/`](./completed/). Each file contains requirements, key files, and implementation notes.
+Spec lifecycle: `backlog/` (planned or parked) → `drafts/` (actively being designed or
+implemented) → `completed/` (implemented and verified).
 
-## In progress
+## GitHub tracking (MUX ids)
 
-| Feature | Spec | Status |
-|---------|------|--------|
-| Agent mode | [`docs/requirements/drafts/agent-mode.md`](../drafts/agent-mode.md) | In Progress — Phases 1-7 complete, all acceptance criteria checked |
-| Branch active-time tracking | [`docs/requirements/drafts/branch-time-tracking.md`](../drafts/branch-time-tracking.md) | In Progress — `--json` read path + verify-spec doc sink implemented (`seed`/`record` reconciliation); remaining: docs bullets + Phase 3 integration test |
-| Disk-pressure signal fix | [`docs/requirements/drafts/disk-pressure-wrong-filesystem.md`](../drafts/disk-pressure-wrong-filesystem.md) | In Progress — Phase 1 complete, integration test outstanding |
-| Lifecycle log test leak | [`docs/requirements/backlog/lifecycle-log-test-leak.md`](./lifecycle-log-test-leak.md) | In Progress — fix shipped, regression test outstanding |
-| Modal auto-size | [`docs/requirements/drafts/modal-auto-size.md`](../drafts/modal-auto-size.md) | Complete — all 6 phases verified; ready to move to `completed/` |
-| Run chain watch-scope allowlist | [`docs/requirements/backlog/run-chain-watch-overfire.md`](./run-chain-watch-overfire.md) | Complete — allowlist + unit tests + integration test 21/21; ready to move to `completed/` |
+Work on this repo is tracked through GitHub issues, branches, and pull requests. Each spec
+in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitHub artifacts:
 
-## Top priorities
+| Artifact | Convention | Example |
+|----------|-----------|---------|
+| Req doc (once work starts) | `MUX-NNN-<slug>.md` | `docs/requirements/drafts/MUX-011-gemini-cli-provider.md` |
+| GitHub issue title | `MUX-NNN: <summary>` | `MUX-011: Gemini CLI provider` |
+| Branch | `MUX-NNN-<slug>` | `MUX-011-gemini-cli-provider` |
+| PR title | `MUX-NNN: <summary>` | `MUX-011: Gemini CLI provider` |
 
-| Priority | Category | Feature |
-|----------|----------|---------|
-| Medium | Reliability | Structured agent metrics |
-| Medium | Reliability | File integrity validation |
-| High | Cost | Agent max steps / iteration limits |
-| Medium | Cost | On-demand agent spawning |
-| High | Workflow | Conditional chains |
-| Medium | Workflow | Pipeline definitions |
-| High | Intelligence | LSP integration for agent tools |
-| Medium | Intelligence | Memory tagging & expiry |
-| High | UX | Dashboard activity timeline |
-| Medium | UX | TUI theme system |
-| High | Integrations | GitHub Actions webhook bridge |
-| Medium | Integrations | Slack/Discord notifications |
-| High | Security | Secret scanning in commits |
-| Medium | Security | Agent sandbox levels |
-| High | Dev Experience | `muxcode init` wizard |
-| Medium | Dev Experience | Custom slash commands |
+- Ids are assigned in the Spec index below and never reused or renumbered — the index is
+  the registry.
+- The spec file gains its `MUX-NNN-` filename prefix when its GitHub issue is created
+  (rename + cross-link fixes handled by the plan agent); until then the id lives only in
+  the index.
+- `MUX-NNN` matches the `[A-Z][A-Z0-9]*-[0-9]+` key shape existing muxcode tooling expects
+  (story-lifecycle `{KEY}-*.md` spec lookup, branch-time key-prefix matching, branch-name
+  key extraction), so branches and specs named this way work with no code changes.
 
-## Planned
+## Spec index
 
-### Reliability & Observability
+### In progress
 
-| Priority | Feature |
-|----------|---------|
-| Medium | Structured agent metrics |
-| Medium | File integrity validation |
-| Medium | Tool-call doom loop detection |
-| High | `muxcode diagnose` false clean verdict on dead agents |
-| High | Verify-spec refires on stale unconsumed review message |
-| High | Unverified daemon auto-restart (fire-and-hope relaunch) |
-| High | Response payloads re-trigger chains on non-hook agents |
-| High | Run chain fires watch on every successful command |
-| Medium | Disk-pressure check measures the wrong filesystem |
-| Low | Message delivery receipts |
-| Low | Bus audit trail |
+| ID | Spec | Priority | Status |
+|----|------|----------|--------|
+| MUX-001 | [`branch-time-tracking.md`](./branch-time-tracking.md) | High | In Progress — read path + verify-spec doc sink done; remaining: docs bullets (`architecture.md`, `agent-bus.md`, `CLAUDE.md`) + Phase 3 test extensions |
+| MUX-002 | [`disk-pressure-wrong-filesystem.md`](./disk-pressure-wrong-filesystem.md) | Medium | In Progress — `TmpPressure()` headroom+footprint signals shipped; integration test outstanding |
+| MUX-003 | [`echo-as-result.md`](./echo-as-result.md) | High | In Progress — fix shipped via `bus.NewBusResponseEntry` provenance; Phase 4 test script (`scripts/test-echo-as-result.sh`) outstanding |
+| MUX-004 | [`lifecycle-log-test-leak.md`](./lifecycle-log-test-leak.md) | Medium | In Progress — `MUXCODE_LIFECYCLE_LOG_DIR` pin shipped; regression test outstanding |
+| MUX-005 | [`plan-diagrams.md`](./plan-diagrams.md) | Medium | In Progress — Phases 1–3 complete (render script, media store, req-doc embeds); Jira/Confluence embed phases remaining |
 
-- **Structured agent metrics** — Track per-agent metrics (messages sent/received, tool calls, errors, avg response time) in `metrics.jsonl` — dashboard TUI shows metrics panel
-- **File integrity validation** — Timestamp-based change detection on file operations — detect external modifications between read and edit/write, warn agent of stale content before applying changes. Inspired by OpenCode's file integrity checks
-- **Tool-call doom loop detection** — Detect 3+ identical consecutive tool calls within a single agent turn (same tool, same args) — prompt user or abort. Complements existing message-level loop detection in `bus/guard.go`. Inspired by OpenCode's `doom_loop` permission
-- **`muxcode diagnose` false clean verdict on dead agents** — `diagnose` collects `AgentState.IsAlive` but no detector evaluates it: a dead agent's report prints `State: dead` yet concludes `✅ No issues detected` with exit 0, so automation gating on the exit code reads a dead agent as healthy. Fix: `checkAgentDead` registered first in `diagnosticChecks`, critical severity, remediation `muxcode agent-health --start <role>`. Spec: [`diagnose-false-clean-verdict`](./diagnose-false-clean-verdict.md)
-- **Verify-spec refires on stale unconsumed review message** — one review completion generated 4+ identical `verify-spec` requests to plan in ~2 min: `checkInboxes()` fires the reviewed-transition on **any** edit-inbox growth while **any** unconsumed review→edit message exists, and plan's mandated "reply to edit" is itself growth — a self-sustaining loop while edit is busy. Fix: fire once per actual completion (track last-seen review message ID or inspect the growth delta). Spec: [`verify-spec-stale-review-refire`](./verify-spec-stale-review-refire.md)
-- **Unverified daemon auto-restart** — `RestartLocalAgent()` (`bus/health.go`) sends `C-c`, sleeps a fixed 500ms, sends the relaunch line, and returns `nil` unconditionally — no exit wait, no launch verification. A slow-exiting CLI swallows the launch line, the pane settles at a bare shell, and the daemon still emits `agent-recovered`; pane-based `IsAgentAlive` reads the swallowed launch text as alive indefinitely (field report: orphan `opencode --agent build` detached from its pane). Fix: bounded exit poll + post-relaunch verification (reuse `ReloadAgent()`'s 15s poll), failed restarts count toward the attempt cap, orphan detection. Spec: [`unverified-daemon-auto-restart`](./unverified-daemon-auto-restart.md)
-- **Response payloads re-trigger chains on non-hook agents** — non-hook `SendWakeUp` injects `type: response` payloads into the TUI composer as prompts, so an agent re-fires its chain on its own delegation's answer (observed: `build` re-sent `request:test` 5× in 3.5 min, 84.9K tokens burned on `test`). The existing echo guard suppresses only the reply *instruction*, not the *payload*. Secondary driver: answered-but-unconsumed requests keep counting as actionable, so the daemon re-wakes agents for finished work. Fix: never inject responses as prompts + requester-side responded-check in `HasActionableMessages`. Spec: [`response-echo-chain-retrigger`](./response-echo-chain-retrigger.md)
-- **Run chain fires watch on every successful command** — **Delivered** — the run agent's `OnSuccess` chain sent watch a "tail logs to verify deployed services" request for **any** successful command except `muxcode *` — a read-only `cat` triggered a bogus tail-logs request, storming `run→watch` until relay suppression capped it. Root cause: denylist gate on an allowlist-shaped trigger. Fixed via first-match-wins `command_match` allowlist of verification-run shapes (`runWatchActions()` in `bus/profile.go`, first-token-anchored patterns) + docs sync (condition-type list corrected 8 → 10); verified by `TestRunChainWatchAllowlist` and `scripts/test-run-chain-scope.sh` (21/21). Spec: [`run-chain-watch-overfire`](./run-chain-watch-overfire.md)
-- **Disk-pressure check measures the wrong filesystem** — **In progress** — The daemon's `/tmp` pressure watchdog reported boot-volume percent-used (`Statfs` on macOS's symlinked `/private/tmp`), fired perpetually on healthy 85–90%-full dev machines, and its cleanup freed 0 B. Now measures free-bytes headroom and muxcode footprint (`TmpPressure()`); integration test outstanding. Spec: [`disk-pressure-wrong-filesystem`](../drafts/disk-pressure-wrong-filesystem.md)
-- **Lifecycle log test leak** — **In progress** — `LifecycleLogDir()` resolved unconditionally to `~/.config/muxcode/logs`, so test runs deposited real per-session log files into the live install (41,789 stray `test-*.log` files, ~169 MB). Fixed via `MUXCODE_LIFECYCLE_LOG_DIR` override pinned by `TestMain`; automated regression test outstanding. Spec: [`lifecycle-log-test-leak`](./lifecycle-log-test-leak.md)
-- **Message delivery receipts** — ~~Agents ACK message consumption~~ **Delivered** via [`delivery-acknowledgement`](../drafts/delivery-acknowledgement.md) (Phases 1–6 committed): per-message receipts (`acked` for Claude/harness, verified-inject `delivered` for OpenCode/Codex), agent self-poll, and a `checkPollHealth` receipt-gap backstop replace pane-scrape delivery inference. Remaining follow-up: [`remove-gated-pane-scrape-delivery`](./remove-gated-pane-scrape-delivery.md) — physically delete the old machinery (currently gated OFF behind `MUXCODE_DELIVERY_ACK`) once the cutover is proven stable live
-- **Bus audit trail** — Append-only audit log separate from `log.jsonl` capturing all bus operations (send, consume, lock, unlock, cron fire, proc start/stop) with caller identity — post-session debugging. Partially addressed by lifecycle logging (`~/.config/muxcode/logs/`) which covers process lifecycle and watcher events
+### Reliability & observability
 
-### Performance & Cost
+| ID | Spec | Priority | Summary |
+|----|------|----------|---------|
+| MUX-006 | [`diagnose-false-clean-verdict.md`](./diagnose-false-clean-verdict.md) | High | `diagnose` collects `IsAlive` but no detector reads it — a dead agent gets "No issues detected" exit 0; add `checkAgentDead` first in `diagnosticChecks` |
+| MUX-007 | [`verify-spec-stale-review-refire.md`](./verify-spec-stale-review-refire.md) | High | `checkInboxes()` refires the reviewed-transition on any edit-inbox growth while an unconsumed review message exists — one review completion spawns unbounded `verify-spec` echoes |
+| MUX-008 | [`unverified-daemon-auto-restart.md`](./unverified-daemon-auto-restart.md) | High | `RestartLocalAgent()` fire-and-hope relaunch: no exit wait, no launch verification — add bounded exit poll + post-relaunch verification + orphan detection |
+| MUX-009 | [`response-echo-chain-retrigger.md`](./response-echo-chain-retrigger.md) | High | Non-hook `SendWakeUp` injects response payloads as prompts, re-firing chains on a delegation's own answer; never inject responses + responded-check in `HasActionableMessages` |
+| MUX-010 | [`delegation-message-hygiene.md`](./delegation-message-hygiene.md) | Medium | Agent-freeze auto-recovery + delegation hygiene: force-terminate for hung-but-alive agents, payload/format rules enforced at the bus |
+| MUX-012 | [`remove-gated-pane-scrape-delivery.md`](./remove-gated-pane-scrape-delivery.md) | Low | Physically delete the pane-scrape delivery machinery bypassed by the receipt cutover ([delivery-acknowledgement](../completed/delivery-acknowledgement.md)); gated on default-ON soak + backstop mis-fire fix |
+| MUX-013 | [`channels-message-transport.md`](./channels-message-transport.md) | Medium | Replace file-polling inbox transport with channel-based delivery |
 
-| Priority | Feature |
-|----------|---------|
-| High | Agent max steps / iteration limits |
-| Medium | On-demand agent spawning |
-| Medium | Smart context pruning |
-| Medium | Tiered model routing |
-| Low | Batch message coalescing |
+### Workflow & automation
 
-- **Agent max steps / iteration limits** — Per-role configurable maximum tool-call iterations per message — `MUXCODE_{ROLE}_MAX_STEPS` or profile field. Prevents runaway API costs from stuck agents. Harness circuit breaker handles local LLM; this extends to Claude Code agents via conversation turn counting. Inspired by OpenCode's `maxSteps` per agent
-- **On-demand agent spawning** — Convert runner, watch, and analyst from always-on to deferred launch on first message — tmux windows still created for left-pane pollers, agent process starts only when a bus message targets the role
-- **Smart context pruning** — Before hitting compaction threshold, auto-prune low-relevance memory entries (BM25-scored against recent activity) — more surgical than full session compact
-- **Tiered model routing** — Route simple/structured tasks (git status, build) to cheaper/faster models (Haiku) and complex tasks (review, analysis) to Opus — config-driven per-role model selection
-- **Batch message coalescing** — When multiple messages arrive in an agent's inbox between polls, coalesce into a single prompt rather than processing sequentially — reduces context overhead and API calls
+| ID | Spec | Priority | Summary |
+|----|------|----------|---------|
+| MUX-011 | [`opencode-plugin-hook-bridge.md`](./opencode-plugin-hook-bridge.md) | High | Muxcode TS plugin on OpenCode's `tool.execute.after`/`session.idle` events shells to `muxcode hook bash` — deterministic chains for OpenCode via narrow `SupportsChainEvents()`, root enabler fix for MUX-009 storms |
+| MUX-014 | [`graph-agent-orchestrator.md`](./graph-agent-orchestrator.md) | Medium | DAG control plane over bus/chains/spawns/tasks: 7 node types, outcome-keyed edges, joins, durable resumable runs (`muxcode graph run\|status\|cancel\|retry`); commit/Atlassian nodes require `wait_human`. Subsumes the "Pipeline definitions" idea |
 
-### Workflow & Automation
+### Agents & roles
 
-| Priority | Feature |
-|----------|---------|
-| High | Conditional chains |
-| High | OpenCode plugin hook bridge |
-| Medium | Pipeline definitions |
-| Medium | Retry with backoff |
-| Medium | Workspace checkpoints |
-| Medium | Undo/redo for agent file changes |
-| Low | Pre-commit hooks |
+| ID | Spec | Priority | Summary |
+|----|------|----------|---------|
+| MUX-015 | [`refactor-agent.md`](./refactor-agent.md) | Medium | F6 review ↔ refactor mode toggle: a write-capable refactoring specialist paired with the read-only reviewer |
+| MUX-016 | [`research-dual-provider.md`](./research-dual-provider.md) | Medium | Research window split into multiple provider panes (`research-N` bus identities) with broadcast/relay/synthesize across providers |
 
-- **Conditional chains** — Extend event chains with conditions beyond exit codes — file pattern matching (only run deploy chain if infra files changed), time-of-day gates, branch name filters
-- **OpenCode plugin hook bridge** — OpenCode has no shell hooks, but its plugin system exposes `tool.execute.after` / `session.idle` events: a muxcode-authored TS plugin auto-installed by `WriteAgentConfig()` shells out to `muxcode hook bash` on tool completion, restoring deterministic build→test→review chains for OpenCode agents (today chains are LLM-followed instructions — the root enabler of the [`response-echo-chain-retrigger`](./response-echo-chain-retrigger.md) storms). Narrow capability flag (`SupportsChainEvents()`), not a `SupportsHooks()` flip — guard stays on `DenyTools`. Targets the stable v1 event surface; v2's `Plugin.define` API is beta. Spec: [`opencode-plugin-hook-bridge`](./opencode-plugin-hook-bridge.md)
-- **Pipeline definitions** — User-defined multi-step pipelines as YAML/JSON files (e.g. `lint → build → test → security-scan → review`) — more flexible than hardcoded build→test→review chain
-- **Retry with backoff** — Configurable retry policy for failed chain steps — exponential backoff, max attempts, different behavior per step
-- **Workspace checkpoints** — Snapshot working directory state before risky operations (deploy, large refactor) — allows rollback via `muxcode checkpoint restore`, leverages `git stash` or worktrees internally
-- **Undo/redo for agent file changes** — Track file snapshots before each agent Write/Edit operation — `muxcode undo [steps]` restores previous state via git stash or shadow copies. Enables safe experimentation without manual git gymnastics. Inspired by OpenCode's `/undo` and `/redo` commands
-- **Pre-commit hooks** — Beyond the current safeguard (pending inbox check), run configurable checks before commit — lint, type-check, test subset — blocks commit until all pass
+### Integrations & providers
 
-### Intelligence & Context
+| ID | Spec | Priority | Summary |
+|----|------|----------|---------|
+| MUX-017 | [`gemini-cli-provider.md`](./gemini-cli-provider.md) | High | `GeminiProvider` with full hook support (`BeforeTool`/`AfterTool`) — first alternative provider that can run `SupportsHooks() = true`; fixes the silent Claude fall-through in `ResolveProvider()` |
+| MUX-018 | [`opencode-diff-preview-plugin.md`](./opencode-diff-preview-plugin.md) | Medium | OpenCode plugin restoring the nvim diff split preview that hook-less providers lose |
+| MUX-019 | [`github-user-stats.md`](./github-user-stats.md) | Medium | Per-user GitHub contribution stats surfaced through the bus/CLI |
 
-| Priority | Feature |
-|----------|---------|
-| High | LSP integration for agent tools |
-| Medium | Memory tagging & expiry |
-| Medium | Agent handoff protocol |
-| Medium | MCP protocol support |
-| Low | Semantic memory search |
+### UX & tooling
 
-- **LSP integration for agent tools** — Auto-manage LSP servers for project languages — inject diagnostics into edit/write tool results so agents see type errors and lint warnings immediately after file changes. Start with Go (`gopls`), TypeScript (`typescript-language-server`), Python (`pyright`). Auto-download LSP binaries on first use, disable via `MUXCODE_DISABLE_LSP`. Inspired by OpenCode's 30+ language LSP integration
-- **Memory tagging & expiry** — Tag memory entries with categories (bug-fix, convention, workaround) and optional TTL — auto-expire stale workarounds, improves signal-to-noise in memory search
-- **Agent handoff protocol** — Structured handoff when one agent needs another to continue its work — includes context bundle (relevant files, conversation excerpt, constraints), not just "send a message"
-- **MCP protocol support** — Model Context Protocol server integration for external resource access — databases, APIs, custom data sources. Configure MCP servers in `.muxcode/config` or `opencode.json`-compatible format. Agents access external resources via `mcp-read` tool. Inspired by OpenCode's MCP integration
-- **Semantic memory search** — Augment BM25 with embeddings (local via Ollama embedding models) for semantic similarity — falls back to BM25 when Ollama unavailable
+| ID | Spec | Priority | Summary |
+|----|------|----------|---------|
+| MUX-020 | [`cli-help-command.md`](./cli-help-command.md) | Low | `muxcode help` command: discoverable, grouped CLI reference |
+| MUX-021 | [`demo-mode-agent-coverage.md`](./demo-mode-agent-coverage.md) | Low | Refresh `bus/demo.go` scenarios to cover the current agent roster |
+| MUX-022 | [`design-mode.md`](./design-mode.md) | Low | Design mode for UI-centric sessions |
+| MUX-023 | [`modal-cron-manager.md`](./modal-cron-manager.md) | Low | Interactive cron schedule manager modal |
+| MUX-024 | [`modal-history-viewer.md`](./modal-history-viewer.md) | Low | Bus history browser modal with filtering |
+| MUX-025 | [`modal-log-viewer.md`](./modal-log-viewer.md) | Low | Lifecycle/log viewer modal |
+| MUX-026 | [`modal-memory-browser.md`](./modal-memory-browser.md) | Low | Memory browser modal with BM25 search |
+| MUX-027 | [`modal-webhook-monitor.md`](./modal-webhook-monitor.md) | Low | Live webhook request inspector modal with replay |
 
-### UX & Dashboard
+## Ideas without specs
 
-| Priority | Feature |
-|----------|---------|
-| High | Dashboard activity timeline |
-| Medium | TUI theme system |
-| Medium | Agent log viewer in TUI |
-| Low | Notification sound/bell |
-| Low | Session recording & replay |
+Curated ideas that have no requirements doc yet. Writing the spec (and giving it the next
+free MUX id) is the first step to promoting one.
 
-- **Dashboard activity timeline** — Visual timeline in TUI showing message flow between agents over time — like a sequence diagram but live — currently dashboard shows status tables but no temporal view
-- **TUI theme system** — Configurable color themes for the dashboard TUI and left-pane log scripts — ship built-in themes (Dracula default, Tokyo Night, Catppuccin, Nord, Gruvbox), support custom themes via JSON files in `~/.config/muxcode/themes/` or `.muxcode/themes/`. Theme applies to dashboard, log scripts, and tmux status bar. Inspired by OpenCode's theme system
-- **Agent log viewer in TUI** — Navigate and search `log.jsonl` from the dashboard — filter by role, action, time range — currently requires `muxcode history` CLI
-- **Notification sound/bell** — Optional terminal bell or macOS notification on important events (build failure, review complete, agent-down) — configurable per-event
-- **Session recording & replay** — Record all bus messages during a session for later replay/analysis — useful for demos, debugging, understanding multi-agent interactions — inverse of demo mode (record real sessions)
+### Reliability & observability
+
+- **Structured agent metrics** (Medium) — Track per-agent metrics (messages sent/received, tool calls, errors, avg response time) in `metrics.jsonl` — dashboard TUI shows metrics panel
+- **File integrity validation** (Medium) — Timestamp-based change detection on file operations — detect external modifications between read and edit/write, warn agent of stale content before applying changes. Inspired by OpenCode's file integrity checks
+- **Tool-call doom loop detection** (Medium) — Detect 3+ identical consecutive tool calls within a single agent turn (same tool, same args) — prompt user or abort. Complements existing message-level loop detection in `bus/guard.go`. Inspired by OpenCode's `doom_loop` permission
+- **Bus audit trail** (Low) — Append-only audit log separate from `log.jsonl` capturing all bus operations (send, consume, lock, unlock, cron fire, proc start/stop) with caller identity — post-session debugging. Partially addressed by lifecycle logging (`~/.config/muxcode/logs/`)
+
+### Performance & cost
+
+- **Agent max steps / iteration limits** (High) — Per-role configurable maximum tool-call iterations per message — `MUXCODE_{ROLE}_MAX_STEPS` or profile field. Prevents runaway API costs from stuck agents. Harness circuit breaker handles local LLM; this extends to Claude Code agents via conversation turn counting. Inspired by OpenCode's `maxSteps` per agent
+- **On-demand agent spawning** (Medium) — Convert runner, watch, and analyst from always-on to deferred launch on first message — tmux windows still created for left-pane pollers, agent process starts only when a bus message targets the role
+- **Smart context pruning** (Medium) — Before hitting compaction threshold, auto-prune low-relevance memory entries (BM25-scored against recent activity) — more surgical than full session compact
+- **Tiered model routing** (Medium) — Route simple/structured tasks (git status, build) to cheaper/faster models (Haiku) and complex tasks (review, analysis) to Opus — config-driven per-role model selection
+- **Batch message coalescing** (Low) — When multiple messages arrive in an agent's inbox between polls, coalesce into a single prompt rather than processing sequentially — reduces context overhead and API calls
+
+### Workflow & automation
+
+- **Retry with backoff** (Medium) — Configurable retry policy for failed chain steps — exponential backoff, max attempts, different behavior per step
+- **Workspace checkpoints** (Medium) — Snapshot working directory state before risky operations (deploy, large refactor) — allows rollback via `muxcode checkpoint restore`, leverages `git stash` or worktrees internally
+- **Undo/redo for agent file changes** (Medium) — Track file snapshots before each agent Write/Edit operation — `muxcode undo [steps]` restores previous state via git stash or shadow copies. Inspired by OpenCode's `/undo` and `/redo` commands
+- **Pre-commit hooks** (Low) — Beyond the current safeguard (pending inbox check), run configurable checks before commit — lint, type-check, test subset — blocks commit until all pass
+
+### Intelligence & context
+
+- **LSP integration for agent tools** (High) — Auto-manage LSP servers for project languages — inject diagnostics into edit/write tool results so agents see type errors and lint warnings immediately after file changes. Start with Go (`gopls`), TypeScript (`typescript-language-server`), Python (`pyright`). Auto-download LSP binaries on first use, disable via `MUXCODE_DISABLE_LSP`. Inspired by OpenCode's 30+ language LSP integration
+- **Memory tagging & expiry** (Medium) — Tag memory entries with categories (bug-fix, convention, workaround) and optional TTL — auto-expire stale workarounds, improves signal-to-noise in memory search
+- **Agent handoff protocol** (Medium) — Structured handoff when one agent needs another to continue its work — includes context bundle (relevant files, conversation excerpt, constraints), not just "send a message"
+- **MCP protocol support** (Medium) — Model Context Protocol server integration for external resource access — databases, APIs, custom data sources. Configure MCP servers in `.muxcode/config` or `opencode.json`-compatible format. Inspired by OpenCode's MCP integration
+- **Semantic memory search** (Low) — Augment BM25 with embeddings (local via Ollama embedding models) for semantic similarity — falls back to BM25 when Ollama unavailable
+
+### UX & dashboard
+
+- **Dashboard activity timeline** (High) — Visual timeline in TUI showing message flow between agents over time — like a sequence diagram but live — currently dashboard shows status tables but no temporal view
+- **TUI theme system** (Medium) — Configurable color themes for the dashboard TUI and left-pane log scripts — built-in themes (Dracula default, Tokyo Night, Catppuccin, Nord, Gruvbox), custom themes via JSON in `~/.config/muxcode/themes/` or `.muxcode/themes/`. Inspired by OpenCode's theme system
+- **Agent log viewer in TUI** (Medium) — Navigate and search `log.jsonl` from the dashboard — filter by role, action, time range — currently requires `muxcode history` CLI
+- **Notification sound/bell** (Low) — Optional terminal bell or macOS notification on important events (build failure, review complete, agent-down) — configurable per-event
+- **Session recording & replay** (Low) — Record all bus messages during a session for later replay/analysis — useful for demos, debugging, understanding multi-agent interactions — inverse of demo mode
 
 ### Integrations
 
-| Priority | Feature |
-|----------|---------|
-| High | Gemini CLI provider |
-| High | GitHub Actions webhook bridge |
-| Medium | Slack/Discord notifications |
-| Medium | IDE status bar |
-| Medium | GitHub App for comment-triggered agents |
-| Low | Linear/Jira bidirectional sync |
+- **GitHub Actions webhook bridge** (High) — Pre-built GitHub Actions workflow that POSTs to the webhook endpoint on PR events (opened, review submitted, CI status) — turns external events into agent actions
+- **Slack/Discord notifications** (Medium) — Forward important agent events (build failure, deploy complete, review findings) to a Slack/Discord channel via webhook URL — one-way, config-driven
+- **IDE status bar** (Medium) — Lightweight status indicator for VS Code / Neovim showing agent states and inbox counts — read-only, polls bus directory — for Neovim: a Lua plugin reading lock files
+- **GitHub App for comment-triggered agents** (Medium) — GitHub App + Actions workflow that triggers MuxCode agents from PR/issue comments — `/muxcode fix this`, `/muxcode review`, `/muxcode explain`. Agent runs in CI runner, posts results as PR comment. Inspired by OpenCode's `/opencode` GitHub integration
+- **Linear/Jira bidirectional sync** (Low) — Beyond current Jira description updates — auto-update issue status based on agent activity (e.g. move to "In Review" when review agent starts)
 
-- **Gemini CLI provider** — `MUXCODE_AGENT_CLI=gemini` silently falls through `ResolveProvider()`'s `default:` case to `ClaudeCodeProvider` and launches Claude; `install.sh` deliberately omits Gemini from its catalogue for this reason. Gemini CLI has a full hook system (`BeforeTool`/`AfterTool`, exit-code-2 blocking), making it the first alternative provider that can run `SupportsHooks() = true` — deterministic chains, diff preview, and edit guard without degradation. 7 phases: provider struct, `.gemini/settings.json` hook config, dual-format hook script adaptation, idle/wake-up, compaction, tool-name translation, integration test + installer catalogue entry. Spec: [`gemini-cli-provider`](./gemini-cli-provider.md)
-- **GitHub Actions webhook bridge** — Pre-built GitHub Actions workflow that POSTs to the webhook endpoint on PR events (opened, review submitted, CI status) — turns external events into agent actions
-- **Slack/Discord notifications** — Forward important agent events (build failure, deploy complete, review findings) to a Slack/Discord channel via webhook URL — one-way, config-driven
-- **IDE status bar** — Lightweight status indicator for VS Code / Neovim showing agent states and inbox counts — read-only, polls bus directory — for Neovim: a Lua plugin reading lock files
-- **GitHub App for comment-triggered agents** — GitHub App + Actions workflow that triggers MuxCode agents from PR/issue comments — `/muxcode fix this`, `/muxcode review`, `/muxcode explain`. Agent runs in CI runner, posts results as PR comment. Beyond current webhook bridge (inbound only). Inspired by OpenCode's `/opencode` GitHub integration
-- **Linear/Jira bidirectional sync** — Beyond current Jira description updates — auto-update issue status based on agent activity (e.g. move to "In Review" when review agent starts)
+### Security & isolation
 
-### Security & Isolation
+- **Secret scanning in commits** (High) — Pre-commit agent check scans staged diffs for patterns matching API keys, tokens, passwords — blocks commit and alerts edit. PII scrubbing (`bus/scrub.go`, `harness/scrub.go`) partially addresses this for tool output but not for commits
+- **Agent sandbox levels** (Medium) — Graduated trust levels — `read-only`, `project-scoped`, `unrestricted` — new agents start at read-only and escalate based on config, more granular than current tool profiles
+- **Webhook rate limiting** (Low) — Per-IP and global rate limits on the webhook endpoint — currently only has auth token + localhost binding, important if exposing via tunnel
 
-| Priority | Feature |
-|----------|---------|
-| High | Secret scanning in commits |
-| Medium | Agent sandbox levels |
-| Low | Webhook rate limiting |
+### Developer experience
 
-- **Secret scanning in commits** — Pre-commit agent check scans staged diffs for patterns matching API keys, tokens, passwords — blocks commit and alerts edit. PII scrubbing (`bus/scrub.go`, `harness/scrub.go`) partially addresses this for tool output but not for commits
-- **Agent sandbox levels** — Graduated trust levels — `read-only`, `project-scoped`, `unrestricted` — new agents start at read-only and escalate based on config, more granular than current tool profiles
-- **Webhook rate limiting** — Per-IP and global rate limits on the webhook endpoint — currently only has auth token + localhost binding, important if exposing via tunnel
-
-### Developer Experience
-
-| Priority | Feature |
-|----------|---------|
-| High | `muxcode init` wizard |
-| Medium | Agent definition linting |
-| Low | Skill marketplace |
-| Medium | Custom slash commands |
-| Low | Multi-repo sessions |
-
-- **`muxcode init` wizard** — Interactive project setup — detects project type, generates `.muxcode/config`, copies relevant agent overrides, suggests window layout
-- **Agent definition linting** — Validate agent markdown files — check frontmatter schema, verify referenced tools exist in profiles, warn about common mistakes — `muxcode agent lint`
-- **Skill marketplace** — Community-shared skills via a git-based registry — `muxcode skill install <url>` — each skill is a markdown file with frontmatter, already the right format
-- **Custom slash commands** — User-defined slash commands with argument interpolation — markdown files in `.muxcode/commands/` with `$ARGUMENTS`, `$1`/`$2` positional args, `` !`command` `` for bash output injection, `@file` for content inclusion. Override built-in commands by name. Extends current skills (passive injection) with active command triggers. Inspired by OpenCode's custom commands system
-- **Multi-repo sessions** — Support sessions spanning multiple related repos (monorepo-like) — each repo gets its own bus directory but agents can cross-reference
+- **`muxcode init` wizard** (High) — Interactive project setup — detects project type, generates `.muxcode/config`, copies relevant agent overrides, suggests window layout
+- **Agent definition linting** (Medium) — Validate agent markdown files — check frontmatter schema, verify referenced tools exist in profiles, warn about common mistakes — `muxcode agent lint`
+- **Custom slash commands** (Medium) — User-defined slash commands with argument interpolation — markdown files in `.muxcode/commands/` with `$ARGUMENTS`, positional args, bash output injection, `@file` inclusion. Inspired by OpenCode's custom commands system
+- **Skill marketplace** (Low) — Community-shared skills via a git-based registry — `muxcode skill install <url>` — each skill is a markdown file with frontmatter, already the right format
+- **Multi-repo sessions** (Low) — Support sessions spanning multiple related repos (monorepo-like) — each repo gets its own bus directory but agents can cross-reference
 
 ## Sources
 
@@ -187,4 +159,3 @@
 - [OpenClaw Architecture Overview](https://ppaolo.substack.com/p/openclaw-system-architecture-overview)
 - [OpenCode](https://opencode.ai/) — open source AI coding agent with LSP integration, MCP protocol, multi-provider support, theme system, GitHub App, custom commands
 - [OpenCode DeepWiki](https://deepwiki.com/anomalyco/opencode) — architecture analysis
-

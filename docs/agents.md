@@ -332,7 +332,7 @@ configured to run `muxcode inbox --poll` themselves — upgrading them to true r
 A daemon backstop (`checkPollHealth`) watches for a growing **receipt gap** (inbox messages
 with no receipt past a threshold), re-drives delivery, and alerts edit if the gap persists —
 detecting a dead self-poll loop or delivery sidecar via a positive signal rather than
-pane-scraping. See the [delivery-acknowledgement spec](requirements/drafts/delivery-acknowledgement.md).
+pane-scraping. See the [delivery-acknowledgement spec](requirements/completed/delivery-acknowledgement.md).
 
 ### CLI
 

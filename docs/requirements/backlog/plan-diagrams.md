@@ -265,7 +265,7 @@ All three requirements subdirectories (`drafts/`, `completed/`, `backlog/`) sit 
 `docs/requirements/`, so they share the **same** `../../media/` prefix — moving a spec between
 them does not change diagram links.
 
-**Worked example (rendered inline below).** This spec lives in `docs/requirements/drafts/`, so it
+**Worked example (rendered inline below).** This spec lives in `docs/requirements/backlog/`, so it
 embeds the committed `docs/media/sample-aws.svg` (rendered from `sample-aws.drawio` via
 `scripts/render-diagram.sh`) with a `../../media/` prefix:
 

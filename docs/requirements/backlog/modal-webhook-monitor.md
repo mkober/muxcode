@@ -116,3 +116,7 @@ bind W run-shell 'muxcode modal open webhook'
 - [ ] Persistent access log for history across modal opens
 - [ ] Dracula-themed color coding
 - [ ] Menu entry and keybinding registered
+
+## Status
+
+Backlog

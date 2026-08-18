@@ -123,3 +123,7 @@ bind c run-shell 'muxcode modal open cron'
 - [ ] Replaces existing static "Cron Jobs" menu entry
 - [ ] Dracula-themed color coding
 - [ ] Menu entry and keybinding registered
+
+## Status
+
+Backlog

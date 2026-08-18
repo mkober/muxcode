@@ -105,3 +105,7 @@ bind h run-shell 'muxcode modal open history'
 - [ ] Time range toggle with `t`
 - [ ] Dracula-themed color coding
 - [ ] Replaces existing static "Agent History" menu entry
+
+## Status
+
+Backlog

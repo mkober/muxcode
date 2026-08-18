@@ -100,3 +100,7 @@ bind L run-shell 'muxcode modal open logs'
 - [ ] `--filter` for inline grep
 - [ ] Menu entry and keybinding registered
 - [ ] Reuses watch agent history when available
+
+## Status
+
+Backlog

@@ -343,7 +343,7 @@ end-to-end. Document what requires a **live session / real providers** vs what i
 
 ## Status
 
-In Progress — **Phases 1–4 committed; Phase 5 committed as a gated cutover** (`e55a84a`);
+Complete (delivered; deferred follow-up tracked separately) — **Phases 1–4 committed; Phase 5 committed as a gated cutover** (`e55a84a`);
 **Phase 6 integration test committed and green** (`scripts/test-delivery-ack.sh`, `53b5b73`).
 All Phases 1–6 are now committed and pushed to `origin/main`, and **Phase 4 step 3**
 (user-facing provider-matrix docs) is done in `docs/agents.md`. The cutover default has now

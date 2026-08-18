@@ -108,3 +108,7 @@ bind M run-shell 'muxcode modal open memory'
 - [ ] Inline edit (`e`), delete (`d`), write (`w`) operations
 - [ ] Dracula-themed color coding
 - [ ] Menu entry and keybinding registered
+
+## Status
+
+Backlog

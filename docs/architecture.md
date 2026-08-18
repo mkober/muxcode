@@ -304,7 +304,7 @@ Core code: `bus/delivery.go`, `cmd/track.go`.
 
 #### Delivery receipts (delivery-acknowledgement)
 
-The [delivery-acknowledgement](requirements/drafts/delivery-acknowledgement.md) redesign replaces the daemon's pane-scrape "did it look idle?" delivery inference with a **positive receipt** — a per-message signal that an agent actually consumed a message — plus **agent self-poll**. A receipt's *kind* depends on whether the provider can consume its own inbox in-process:
+The [delivery-acknowledgement](requirements/completed/delivery-acknowledgement.md) redesign replaces the daemon's pane-scrape "did it look idle?" delivery inference with a **positive receipt** — a per-message signal that an agent actually consumed a message — plus **agent self-poll**. A receipt's *kind* depends on whether the provider can consume its own inbox in-process:
 
 | Provider | Receipt kind | Written by |
 |----------|--------------|-----------|
