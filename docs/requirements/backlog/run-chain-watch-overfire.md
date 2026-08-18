@@ -77,12 +77,12 @@ scoped to the commands that actually mean "a verification run completed".
 
 ### Acceptance criteria
 
-- [ ] A successful read-only or incidental command in the run window (`cat`, `ls`, `grep`, file inspection) does NOT fire a watch request
-- [ ] A post-deploy verification run (deploy-chain shapes, e.g. `aws *` invocations and `scripts/test-*.sh`) still fires the watch request
-- [ ] `muxcode *` commands still never fire the chain
-- [ ] No `run→watch` tuple reaches the relay-loop suppression threshold during a normal run-agent session
-- [ ] Condition-type documentation lists all 10 types including `command_match`/`command_not_match` (`CLAUDE.md`, `docs/hooks.md`)
-- [ ] Existing `bus/conditions_test.go` and `bus/profile.go` chain tests keep passing
+- [x] A successful read-only or incidental command in the run window (`cat`, `ls`, `grep`, file inspection) does NOT fire a watch request
+- [x] A post-deploy verification run (deploy-chain shapes, e.g. `aws *` invocations and `scripts/test-*.sh`) still fires the watch request
+- [x] `muxcode *` commands still never fire the chain
+- [x] No `run→watch` tuple reaches the relay-loop suppression threshold during a normal run-agent session
+- [x] Condition-type documentation lists all 10 types including `command_match`/`command_not_match` (`CLAUDE.md`, `docs/hooks.md`)
+- [x] Existing `bus/conditions_test.go` and `bus/profile.go` chain tests keep passing
 
 ### Technical approach
 
@@ -124,25 +124,44 @@ Invert the gate from denylist to allowlist using existing machinery:
 
 ### Phase 1: Scope the OnSuccess trigger
 
-- [ ] Replace the run chain's denylist gate with a first-match-wins allowlist of `command_match` actions in `bus/profile.go`
-- [ ] Decide and record the final allowlist patterns (verify against real run-agent traffic in `log.jsonl`)
-- [ ] Unit tests: `cat`/`ls`/`grep` resolve to no action; each allowlisted shape resolves to the watch action; `muxcode *` resolves to no action
-- [ ] Existing chain and condition tests pass unchanged
+- [x] Replace the run chain's denylist gate with a first-match-wins allowlist of `command_match` actions in `bus/profile.go`
+- [x] Decide and record the final allowlist patterns (verify against real run-agent traffic in `log.jsonl`)
+- [x] Unit tests: `cat`/`ls`/`grep` resolve to no action; each allowlisted shape resolves to the watch action; `muxcode *` resolves to no action
+- [x] Existing chain and condition tests pass unchanged
 
 ### Phase 2: Documentation sync
 
-- [ ] Update `CLAUDE.md` conditional-chains constraint: 10 condition types, naming `command_match`/`command_not_match`
-- [ ] Update `docs/hooks.md` condition-type reference to match
-- [ ] Note the run-chain allowlist behavior in `docs/hooks.md` chain documentation
+- [x] Update `CLAUDE.md` conditional-chains constraint: 10 condition types, naming `command_match`/`command_not_match`
+- [x] Update `docs/hooks.md` condition-type reference to match
+- [x] Note the run-chain allowlist behavior in `docs/hooks.md` chain documentation
 
 ### Phase 3: Integration test
 
-- [ ] Create `scripts/test-run-chain-scope.sh` with automated verification
-- [ ] Test: simulated hook success for `cat <file>` in the run window enqueues no watch message
-- [ ] Test: simulated hook success for an allowlisted verification command enqueues exactly one watch request
-- [ ] Test: simulated hook success for a `muxcode *` command enqueues nothing
-- [ ] Run the integration test and verify all checks pass
+- [x] Create `scripts/test-run-chain-scope.sh` with automated verification
+- [x] Test: simulated hook success for `cat <file>` in the run window enqueues no watch message
+- [x] Test: simulated hook success for an allowlisted verification command enqueues exactly one watch request
+- [x] Test: simulated hook success for a `muxcode *` command enqueues nothing
+- [x] Run the integration test and verify all checks pass
+
+### Implementation decisions (recorded 2026-08-18)
+
+- Final allowlist (`runWatchActions()` in `bus/profile.go`): `aws *`, plus
+  first-token-anchored script shapes — `bash *.sh` / `bash *.sh *`,
+  `sh *.sh` / `sh *.sh *`, `./*.sh` / `./*.sh *`, `/*.sh` / `/*.sh *`,
+  `scripts/*.sh` / `scripts/*.sh *`. Each action also keeps
+  `command_not_match: "muxcode *"` as documentation of intent.
+- **First-token anchoring is load-bearing**: `globMatch`'s `*` spans spaces,
+  so a bare `*.sh *` also matched `ls -la x.sh 2>&1` — a read of a script
+  path, not an execution. Every pattern must pin the interpreter prefix or
+  script path as the first token.
+- Verification: `TestRunChainWatchAllowlist` (`bus/conditions_test.go`)
+  pins 22 shapes incl. the observed `cat <task output>` overfire case;
+  `scripts/test-run-chain-scope.sh` drives the real resolver via
+  `muxcode chain run success --dry-run` and passed 21/21 against the
+  installed binary (run agent, 2026-08-18). Only legitimate `run→watch`
+  fire since the fix was the integration script's own execution — an
+  allowlisted `bash scripts/*.sh *` shape, as designed.
 
 ## Status
 
-Draft
+Complete

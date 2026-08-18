@@ -375,7 +375,7 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 
 ### Hook Chain Guarantee
 
-The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (8 condition types evaluated as AND logic) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
+The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (10 condition types evaluated as AND logic, including `command_match`/`command_not_match` on the triggering command) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
 
 ### Atlassian write authority
 

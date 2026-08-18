@@ -231,6 +231,8 @@ When a deploy-apply command succeeds, the hook triggers a run→watch chain:
 
 Preview commands (`cdk diff`, `terraform plan`) are logged to deploy history but do **not** trigger the chain. Deploy failures transition the workflow state to `deploy-failed`.
 
+The run→watch step is gated by a **`command_match` allowlist** — the run chain's `OnSuccess` is a first-match-wins action array (`runWatchActions()` in `bus/profile.go`) where each action carries one `command_match` condition for a verification-run shape (`aws *` invocations, first-token-anchored `.sh` script executions such as `bash *.sh`, `./*.sh`, `scripts/*.sh`). Commands matching no shape fire nothing, so incidental reads in the run window (`cat`, `ls`, `grep`) never trigger a watch request; `muxcode *` commands are additionally excluded via `command_not_match`. Patterns anchor the script to the first token because glob `*` spans spaces — a bare `*.sh *` would also match `ls -la x.sh`, a read of a script path rather than an execution. See [`run-chain-watch-overfire`](requirements/backlog/run-chain-watch-overfire.md); integration test: `scripts/test-run-chain-scope.sh`.
+
 ## Conditional chains
 
 Chain actions support condition expressions that control when they fire. Conditions are evaluated as AND logic — all conditions in an action must pass for it to fire.
@@ -243,6 +245,8 @@ Chain actions support condition expressions that control when they fire. Conditi
 | `files_not_match` | glob pattern | No changed file matches the pattern |
 | `branch_match` | regex | Current branch name matches |
 | `branch_not_match` | regex | Current branch name does not match |
+| `command_match` | glob pattern | The triggering command matches the pattern |
+| `command_not_match` | glob pattern | The triggering command does not match the pattern |
 | `env_set` | env var name | Environment variable is set and non-empty |
 | `env_equals` | `VAR=value` | Environment variable equals the specified value |
 | `output_contains` | substring | Command output contains the substring |
@@ -280,6 +284,7 @@ In this example, build success on a `release/*` branch sends to deploy; on any o
 
 - **Branch** — current git branch name
 - **ChangedFiles** — list of uncommitted changed files
+- **Command** — the triggering command line (evaluated by `command_match`/`command_not_match`)
 - **Output** — command stdout/stderr
 - **ExitCode** — command exit code
 
