@@ -833,9 +833,11 @@ func TestFitSize(t *testing.T) {
 		clientW, clientH   int
 		wantW, wantH       int
 	}{
-		{"content plus chrome", 55, 20, 317, 80, 57, 22},
+		{"content plus chrome and padding", 55, 20, 317, 80,
+			55 + PopupChromeCols + defaultModalPadCols, 20 + PopupChromeRows + defaultModalPadRows},
 		{"width floor raises tiny content", 5, 2, 317, 80, defaultModalMinCols, modalMinRows},
-		{"width cap holds on a wide client", 400, 20, 317, 80, defaultModalMaxCols, 22},
+		{"width cap holds on a wide client", 400, 20, 317, 80,
+			defaultModalMaxCols, 20 + PopupChromeRows + defaultModalPadRows},
 		{"client ceiling outranks the floors", 5, 2, 30, 8, 27, 7},
 		{"unresolvable client width", 55, 20, 0, 80, 0, 0},
 		{"unresolvable client height", 55, 20, 317, 0, 0, 0},
@@ -949,11 +951,13 @@ func TestResolveSizeIn_FitTierUsesMeasuredContent(t *testing.T) {
 	stubClient(t, 317, 80)
 	cfg := ModalConfig{Name: "picker", Width: "60%", Height: "50%", Measurer: fixedMeasurer(55, 20)}
 	w, h := ResolveSizeIn(cfg, "", "s")
-	if w != "57" { // 55 content + 2 chrome
-		t.Errorf("expected fitted width 57, got %s", w)
+	wantW := strconv.Itoa(55 + PopupChromeCols + defaultModalPadCols)
+	wantH := strconv.Itoa(20 + PopupChromeRows + defaultModalPadRows)
+	if w != wantW {
+		t.Errorf("expected fitted width %s, got %s", wantW, w)
 	}
-	if h != "22" {
-		t.Errorf("expected fitted height 22, got %s", h)
+	if h != wantH {
+		t.Errorf("expected fitted height %s, got %s", wantH, h)
 	}
 }
 

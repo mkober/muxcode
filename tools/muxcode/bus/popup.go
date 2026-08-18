@@ -36,8 +36,8 @@ func DefaultPopupConfigs() []ModalConfig {
 		{
 			Name: "switch-session", Title: " Switch Session ",
 			Width: "60%", Height: "50%",
-			Command: "muxcode-switch-session.sh",
-			AutoCap: true, // rendered by an external script
+			Command:  "muxcode-switch-session.sh",
+			Measurer: MeasureSwitchSession,
 		},
 		{
 			Name: "agent-status", Title: " Agent Status ",

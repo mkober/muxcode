@@ -35,6 +35,17 @@ const (
 	PopupChromeCols = 2 // rounded border, one cell each side
 	PopupChromeRows = 2 // rounded border, one row top and bottom
 
+	// Inner padding held between the content and the border. A popup sized to
+	// exactly its content leaves the longest line flush against the frame,
+	// which reads as truncated even when nothing is cut off. Content is
+	// left-aligned and tmux popups have no padding property, so the slack lands
+	// on the trailing edge - the edge the longest line actually reaches.
+	//
+	// Counted in cells, the only unit a terminal can size in: roughly a 10px
+	// gutter at a typical cell width, and one row below the last line.
+	defaultModalPadCols = 2
+	defaultModalPadRows = 1
+
 	defaultModalMinCols = 40
 	defaultModalMaxCols = 160
 	modalMinRows        = 10
@@ -51,6 +62,26 @@ func ModalMinCols() int { return modalColsEnv("MUXCODE_MODAL_MIN_COLS", defaultM
 // ModalMaxCols returns the auto-fit width cap, overridable via
 // MUXCODE_MODAL_MAX_COLS.
 func ModalMaxCols() int { return modalColsEnv("MUXCODE_MODAL_MAX_COLS", defaultModalMaxCols) }
+
+// ModalPadCols returns the inner horizontal padding, overridable via
+// MUXCODE_MODAL_PAD_COLS. Zero is honoured, for callers that want the content
+// flush against the border.
+func ModalPadCols() int { return modalPadEnv("MUXCODE_MODAL_PAD_COLS", defaultModalPadCols) }
+
+// ModalPadRows returns the inner vertical padding, overridable via
+// MUXCODE_MODAL_PAD_ROWS.
+func ModalPadRows() int { return modalPadEnv("MUXCODE_MODAL_PAD_ROWS", defaultModalPadRows) }
+
+// modalPadEnv differs from modalColsEnv in accepting zero: no padding is a
+// meaningful choice, whereas a zero width floor or cap is not.
+func modalPadEnv(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return def
+}
 
 func modalColsEnv(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
@@ -79,8 +110,8 @@ func FitSize(contentW, contentH, clientW, clientH int) (w, h int) {
 	// Capping after the floor means an inverted range — a configured floor
 	// above the cap — resolves in favour of the cap, which is the bound that
 	// exists to prevent the overshoot.
-	w = min(max(contentW+PopupChromeCols, ModalMinCols()), ModalMaxCols())
-	h = max(contentH+PopupChromeRows, modalMinRows)
+	w = min(max(contentW+PopupChromeCols+ModalPadCols(), ModalMinCols()), ModalMaxCols())
+	h = max(contentH+PopupChromeRows+ModalPadRows(), modalMinRows)
 
 	// The share-of-client ceiling is applied last so it outranks both floors —
 	// a popup must never be wider or taller than the terminal showing it. Each
@@ -144,7 +175,8 @@ func DefaultModalConfigs() []ModalConfig {
 				"compact": {"50%", "40%"},
 				"full":    {"95%", "95%"},
 			},
-			Role: "api",
+			Role:    "api",
+			AutoCap: true, // an interactive agent pane, its content is arbitrary
 		},
 		{
 			Name:    "provider",

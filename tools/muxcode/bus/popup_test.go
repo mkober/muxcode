@@ -1,6 +1,9 @@
 package bus
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 // Every popup must resolve to a real command and a tier, or the tmux binding
 // that routes through it silently opens an empty overlay.
@@ -53,8 +56,9 @@ func TestBuildPopupCommand_UsesAbsoluteSize(t *testing.T) {
 			width = args[i+1]
 		}
 	}
-	if width != "57" {
-		t.Errorf("expected absolute width 57, got %q (args: %v)", width, args)
+	wantW := strconv.Itoa(55 + PopupChromeCols + defaultModalPadCols)
+	if width != wantW {
+		t.Errorf("expected absolute width %s, got %q (args: %v)", wantW, width, args)
 	}
 	if args[len(args)-1] != "muxcode" {
 		t.Errorf("expected the command last, got %q", args[len(args)-1])
