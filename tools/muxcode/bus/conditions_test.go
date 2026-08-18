@@ -670,6 +670,67 @@ func TestRunChainSkipsMuxcodeCommands(t *testing.T) {
 	}
 }
 
+// TestRunChainWatchAllowlist pins the run OnSuccess allowlist: watch fires
+// only for verification-run shapes (AWS invocations, script executions) —
+// never for incidental reads or muxcode bus commands. Regression test for
+// the run→watch overfire storm (docs/requirements/backlog/run-chain-watch-overfire.md).
+func TestRunChainWatchAllowlist(t *testing.T) {
+	cfg := DefaultConfig()
+	SetConfig(cfg)
+	defer SetConfig(nil)
+
+	tests := []struct {
+		name       string
+		command    string
+		wantAction bool
+	}{
+		// Incidental reads in the run window — the exact shapes that
+		// caused the overfire storm (cat of a task output file was
+		// observed firing a bogus watch request).
+		{"cat task output", "cat /private/tmp/muxcode-bus-s/tasks/42.output 2>&1", false},
+		{"ls", "ls -la", false},
+		{"grep", "grep -rn foo .", false},
+		{"jq", "jq . /tmp/out.json", false},
+		// Reads of a .sh PATH are not executions — globMatch's * spans
+		// spaces, so only first-token-anchored patterns keep these out.
+		{"cat a sh file", "cat /tmp/x.sh", false},
+		{"ls sh with trailing arg", "ls -la scripts/test-run-chain-scope.sh 2>&1", false},
+		{"grep sh file", "grep -n foo scripts/x.sh", false},
+		{"echo about bash script", "echo bash x.sh", false},
+		// muxcode bus commands — never fire.
+		{"muxcode inbox", "muxcode inbox", false},
+		{"muxcode run script arg", "muxcode run something.sh", false},
+		{"muxcode send quoting sh", `muxcode send watch watch "bash /tmp/x.sh"`, false},
+		// Verification-run shapes — should fire.
+		{"aws lambda invoke", "aws lambda invoke --function-name test", true},
+		{"aws s3 cp", "aws s3 cp s3://bucket/a.json /tmp/a.json", true},
+		{"aws stepfunctions", "aws stepfunctions start-execution --state-machine arn:aws:states:x", true},
+		{"bash script no args", "bash scripts/test-install.sh", true},
+		{"sh script", "sh scripts/deploy.sh", true},
+		{"direct script invocation", "./scripts/test-modal-size.sh", true},
+		{"absolute script", "/tmp/verify.sh", true},
+		{"absolute script with args", "/tmp/verify.sh --flag x", true},
+		{"script with args", "scripts/deploy.sh prod", true},
+		{"script with redirection", "bash /tmp/verify.sh > /tmp/out.log 2>&1", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := &ChainContext{Command: tt.command, ExitCode: 0}
+			action := ResolveChain("run", "success", ctx)
+			if tt.wantAction && action == nil {
+				t.Errorf("run chain should fire for %q, got no action", tt.command)
+			}
+			if !tt.wantAction && action != nil {
+				t.Errorf("run chain should NOT fire for %q, got action: %+v", tt.command, action)
+			}
+			if tt.wantAction && action != nil && action.SendTo != "watch" {
+				t.Errorf("run chain should send to watch for %q, got %q", tt.command, action.SendTo)
+			}
+		})
+	}
+}
+
 // contains is a test helper for substring matching.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))

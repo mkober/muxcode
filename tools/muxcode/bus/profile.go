@@ -540,6 +540,28 @@ func GetAutoCC() map[string]bool {
 	return m
 }
 
+// runWatchActions builds the run chain's OnSuccess allowlist: one watch
+// action per command shape, evaluated first-match-wins. globMatch is
+// full-string, so every pattern must anchor the invocation to the first
+// token (interpreter prefix or script path) — a bare "*.sh *" also matched
+// `ls -la x.sh 2>&1`, an incidental read of a script path.
+func runWatchActions(patterns ...string) ChainActions {
+	actions := make(ChainActions, 0, len(patterns))
+	for _, p := range patterns {
+		actions = append(actions, ChainAction{
+			SendTo:  "watch",
+			Action:  "watch",
+			Message: "Run succeeded (${command}) — tail logs to verify deployed services are healthy and report findings to edit",
+			Type:    "request",
+			Conditions: map[string]any{
+				"command_match":     p,
+				"command_not_match": "muxcode *",
+			},
+		})
+	}
+	return actions
+}
+
 // DefaultConfig returns compiled-in defaults matching current bash/Go behavior.
 func DefaultConfig() *MuxcodeConfig {
 	return &MuxcodeConfig{
@@ -916,15 +938,22 @@ func DefaultConfig() *MuxcodeConfig {
 				NotifyAnalystOn: []string{"*"},
 			},
 			"run": {
-				OnSuccess: ChainActions{{
-					SendTo:  "watch",
-					Action:  "watch",
-					Message: "Run succeeded (${command}) — tail logs to verify deployed services are healthy and report findings to edit",
-					Type:    "request",
-					Conditions: map[string]any{
-						"command_not_match": "muxcode *",
-					},
-				}},
+				// Watch fires only for verification-run shapes. A denylist gate
+				// here fired watch on every successful command — including
+				// incidental cat/ls reads — storming run→watch until relay
+				// suppression capped it. Allowlist per the run-chain-watch-overfire
+				// spec. Patterns anchor the script to the FIRST token (interpreter
+				// prefix or script path): globMatch's * spans spaces, so a bare
+				// "*.sh *" also matched `ls -la x.sh 2>&1` — reads of a .sh path,
+				// not executions.
+				OnSuccess: runWatchActions(
+					"aws *",
+					"bash *.sh", "bash *.sh *",
+					"sh *.sh", "sh *.sh *",
+					"./*.sh", "./*.sh *",
+					"/*.sh", "/*.sh *",
+					"scripts/*.sh", "scripts/*.sh *",
+				),
 				OnFailure: ChainActions{{
 					SendTo:  "edit",
 					Action:  "notify",
