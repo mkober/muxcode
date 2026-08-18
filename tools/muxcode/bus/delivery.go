@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -327,6 +328,36 @@ func AckDeliveryOffMarkerPath(session string) string {
 func AckDeliveryToggledOff(session string) bool {
 	_, err := os.Stat(AckDeliveryOffMarkerPath(session))
 	return err == nil
+}
+
+// AckDeliveryActive reports whether receipt-based delivery (the delivery-ack
+// cutover) is the session's active delivery model. It is the single definition
+// shared by the daemon — which bypasses the pane-scrape machinery when this is
+// true — and by diagnose, which must read the resulting evidence the same way.
+//
+// Diagnose had no notion of the cutover at all, and that gap produced a
+// user-visible false verdict. `idle-wake` is emitted only by checkIdleAgents,
+// the very function the cutover bypasses, so under the default configuration
+// every inbox-notify looked like a wake that never came: the timeline rendered
+// a red "expected idle-wake, got none" line per notify on a perfectly healthy
+// session, while the findings list stayed empty and the exit code stayed 0.
+// Two readings of "how does delivery work" that could drift apart were the
+// defect; there is now one.
+//
+// Precedence matches the documented rollback valves: the env kill switch forces
+// the old path, an explicit env opt-in/out pins the choice, and the restart-free
+// runtime marker decides otherwise. Default is ON.
+func AckDeliveryActive(session string) bool {
+	if os.Getenv("MUXCODE_DELIVERY_ACK_DISABLE") != "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("MUXCODE_DELIVERY_ACK"))) {
+	case "0", "false", "no", "off":
+		return false
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return !AckDeliveryToggledOff(session)
 }
 
 // SetAckDeliveryOff creates (off=true) or removes (off=false) the runtime

@@ -37,6 +37,27 @@ func writeTestInbox(t *testing.T, session, role string, msgs []Message) {
 	os.WriteFile(path, lines, 0644)
 }
 
+// writeTestLifecycleLog writes lifecycle entries verbatim, preserving their
+// timestamps. LogLifecycle always stamps time.Now(), so gap analysis — which is
+// entirely about the spacing between events — cannot be exercised through it.
+func writeTestLifecycleLog(t *testing.T, session string, entries []LifecycleEntry) {
+	t.Helper()
+	path := LifecycleLogPath(session)
+	os.MkdirAll(filepath.Dir(path), 0755)
+	var buf []byte
+	for _, e := range entries {
+		data, err := json.Marshal(e)
+		if err != nil {
+			t.Fatalf("marshal lifecycle entry: %v", err)
+		}
+		buf = append(buf, data...)
+		buf = append(buf, '\n')
+	}
+	if err := os.WriteFile(path, buf, 0644); err != nil {
+		t.Fatalf("write lifecycle log: %v", err)
+	}
+}
+
 // writeTestKeepalive writes a keepalive timestamp for testing.
 func writeTestKeepalive(t *testing.T, session string, ageSeconds int64) {
 	t.Helper()
@@ -925,5 +946,516 @@ func TestPaneShowsRecoverableIdle_StaleThinkingInScrollbackIsRecoverable(t *test
 		t.Error("stale thinking text in scrollback must not block recovery when the " +
 			"live tail is a clean idle prompt — this is the plan-agent wedge the " +
 			"watchdog could not rescue")
+	}
+}
+
+// --- False-clean-verdict regression tests ---
+//
+// Each test below pairs the failing case with a negative control, because the
+// bug being fixed was itself a diagnostic that could not fail: the report
+// gathered evidence, rendered it red, and still concluded "No issues detected".
+// A regression test with no control would reproduce that same defect one level
+// up.
+
+// TestAckDeliveryActive_Precedence pins the rollback-valve order. Diagnose and
+// the daemon now share this one definition; if it drifts, diagnose starts
+// reading a healthy session through the wrong delivery model again.
+func TestAckDeliveryActive_Precedence(t *testing.T) {
+	session, cleanup := setupTestBusDir(t)
+	defer cleanup()
+
+	t.Run("DefaultOn", func(t *testing.T) {
+		if !AckDeliveryActive(session) {
+			t.Error("expected receipt-based delivery ON by default")
+		}
+	})
+
+	t.Run("RuntimeMarkerOff", func(t *testing.T) {
+		if err := SetAckDeliveryOff(session, true); err != nil {
+			t.Fatalf("SetAckDeliveryOff: %v", err)
+		}
+		defer SetAckDeliveryOff(session, false)
+		if AckDeliveryActive(session) {
+			t.Error("expected OFF with runtime rollback marker present")
+		}
+	})
+
+	t.Run("EnvKillSwitchBeatsDefault", func(t *testing.T) {
+		t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "1")
+		if AckDeliveryActive(session) {
+			t.Error("expected OFF with MUXCODE_DELIVERY_ACK_DISABLE set")
+		}
+	})
+
+	t.Run("EnvOptInBeatsRuntimeMarker", func(t *testing.T) {
+		if err := SetAckDeliveryOff(session, true); err != nil {
+			t.Fatalf("SetAckDeliveryOff: %v", err)
+		}
+		defer SetAckDeliveryOff(session, false)
+		t.Setenv("MUXCODE_DELIVERY_ACK", "on")
+		if !AckDeliveryActive(session) {
+			t.Error("expected explicit env opt-in to override the runtime marker")
+		}
+	})
+}
+
+// TestIsWakeEvent_CoversRealEmitters guards the name-mismatch that manufactured
+// the false evidence. Every name asserted here is one the daemon or mode
+// switcher actually emits; matching only the literal "idle-wake" scored all of
+// them as missed deliveries.
+func TestIsWakeEvent_CoversRealEmitters(t *testing.T) {
+	emitted := []string{
+		"idle-wake", "idle-response-wake", "idle-combined-wake",
+		"idle-task-retry", "idle-task-rescue",
+		"startup-wake", "startup-wake-full", "startup-wake-enter", "startup-wake-provider",
+		"wake-full", "wake-enter", "wake-provider",
+		"watchdog-force-deliver",
+	}
+	for _, ev := range emitted {
+		if !isWakeEvent(ev) {
+			t.Errorf("emitted wake event %q not recognized — notify would score as a miss", ev)
+		}
+	}
+	// Negative control: a non-delivery event must not satisfy a notify, or the
+	// gap analysis would never detect a real failure.
+	for _, ev := range []string{"inbox-notify", "idle-transition", "wake-failed", "agent-down"} {
+		if isWakeEvent(ev) {
+			t.Errorf("%q must not count as a successful wake", ev)
+		}
+	}
+}
+
+// TestAnnotateGaps_AcceptsCombinedWake is the direct regression for the
+// fabricated red lines: idle-combined-wake IS a delivery, so no gap should be
+// annotated after it.
+func TestAnnotateGaps_AcceptsCombinedWake(t *testing.T) {
+	events := []TimelineEvent{
+		{Timestamp: 100, Event: "inbox-notify", Detail: "commit"},
+		{Timestamp: 103, Event: "idle-combined-wake", Detail: "commit: 2 messages"},
+	}
+	annotateGaps(events, "commit")
+
+	if events[1].GapNote != "" {
+		t.Errorf("idle-combined-wake is a delivery — expected no gap note, got %q", events[1].GapNote)
+	}
+	if events[1].GapSecs != 3 {
+		t.Errorf("expected 3s gap recorded on the wake, got %d", events[1].GapSecs)
+	}
+}
+
+// TestBuildTimeline_NoFabricatedGapsUnderAckDelivery reproduces the reported
+// symptom end-to-end: a healthy session under the default delivery model must
+// not render "expected a wake" lines. Under the cutover no daemon wake follows
+// an inbox-notify at all, so annotating one per notify painted every healthy
+// session red.
+func TestBuildTimeline_NoFabricatedGapsUnderAckDelivery(t *testing.T) {
+	session, cleanup := setupTestBusDir(t)
+	defer cleanup()
+	// Own log dir so entries from other tests using this session name cannot
+	// bleed in and change the gap count under test.
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+
+	now := time.Now().Unix()
+	var entries []LifecycleEntry
+	for i := 0; i < 5; i++ {
+		entries = append(entries, LifecycleEntry{
+			TS: now - int64(300-i*30), Level: "info", Source: "daemon",
+			Session: session, Event: "inbox-notify", Detail: "commit",
+		})
+	}
+	writeTestLifecycleLog(t, session, entries)
+
+	t.Run("AckDeliveryOn_NoGapsAnnotated", func(t *testing.T) {
+		events := BuildTimeline(session, "commit", 20)
+		if len(events) == 0 {
+			t.Fatal("expected inbox-notify events in the timeline")
+		}
+		for _, ev := range events {
+			if ev.GapNote != "" {
+				t.Errorf("fabricated gap under receipt-based delivery: %q", ev.GapNote)
+			}
+		}
+	})
+
+	// Negative control: with the cutover rolled back, a daemon wake IS expected
+	// after each notify, so the same log must annotate gaps. Without this the
+	// test above would pass even if gap annotation were deleted outright.
+	t.Run("AckDeliveryOff_GapsStillAnnotated", func(t *testing.T) {
+		t.Setenv("MUXCODE_DELIVERY_ACK", "off")
+		events := BuildTimeline(session, "commit", 20)
+		gaps := 0
+		for _, ev := range events {
+			if ev.GapNote != "" {
+				gaps++
+			}
+		}
+		if gaps == 0 {
+			t.Error("expected gap annotation under pane-scrape delivery — control failed, annotation may be dead")
+		}
+	})
+}
+
+// TestCheckDaemonNotWaking_SilentUnderAckDelivery pins the other half: the
+// finding that consumed the fabricated evidence must not fire under a model
+// where no daemon wake is expected.
+func TestCheckDaemonNotWaking_SilentUnderAckDelivery(t *testing.T) {
+	timeline := []TimelineEvent{
+		{Timestamp: 100, Event: "inbox-notify", Detail: "commit"},
+		{Timestamp: 200, Event: "inbox-notify", Detail: "commit"},
+	}
+	base := func(ack bool) *DiagnosticReport {
+		return &DiagnosticReport{
+			Role:        "commit",
+			AgentState:  AgentStateEvidence{IsIdle: true, IsAlive: true},
+			InboxState:  InboxStateEvidence{MessageCount: 1, ActionableCount: 1},
+			NotifyState: NotifyStateEvidence{AckDelivery: ack},
+			Timeline:    timeline,
+		}
+	}
+	if f := checkDaemonNotWaking(base(true)); f != nil {
+		t.Errorf("expected silence under receipt-based delivery, got %s", f.FailureMode)
+	}
+	// Negative control: the check must still fire in the model it was written for.
+	if f := checkDaemonNotWaking(base(false)); f == nil {
+		t.Error("expected daemon-not-waking under pane-scrape delivery — control failed")
+	}
+}
+
+// TestCheckActiveWithStaleMessages_NotifiedButUnconsumed is the exact reported
+// state: an active agent holding old actionable messages that the daemon
+// already marked notified. UnnotifiedCount is 0 BY CONSTRUCTION once a notify
+// is recorded, and the old gate required it to be > 0 — so the one wedge this
+// check exists to catch was the one case it stayed silent for.
+func TestCheckActiveWithStaleMessages_NotifiedButUnconsumed(t *testing.T) {
+	report := &DiagnosticReport{
+		Role: "test",
+		AgentState: AgentStateEvidence{
+			IsIdle: false, IsAlive: true, WiderCaptureIdle: false,
+			Provider: "claude", SupportsHooks: true,
+		},
+		InboxState: InboxStateEvidence{
+			MessageCount: 2, ActionableCount: 2, OldestMessageAge: 900,
+		},
+		NotifyState: NotifyStateEvidence{
+			UnnotifiedCount: 0, // every message already marked notified
+			NotifiedIDCount: 2,
+			MarkerAge:       800,
+			IsMarkerStale:   true,
+			AckDelivery:     true,
+		},
+	}
+	finding := checkActiveWithStaleMessages(report)
+	if finding == nil {
+		t.Fatal("expected a finding: agent active, messages notified but never consumed")
+	}
+	if finding.FailureMode != "active-with-stale-messages" {
+		t.Errorf("expected active-with-stale-messages, got %s", finding.FailureMode)
+	}
+	if finding.Severity != "critical" {
+		t.Errorf("notified-but-unconsumed is confirmed stuck delivery, expected critical, got %s", finding.Severity)
+	}
+}
+
+// TestCheckActiveWithStaleMessages_QuietWhenFresh is the control: a busy agent
+// with a recently-arrived message is normal and must stay unreported.
+func TestCheckActiveWithStaleMessages_QuietWhenFresh(t *testing.T) {
+	report := &DiagnosticReport{
+		Role:       "test",
+		AgentState: AgentStateEvidence{IsIdle: false, IsAlive: true},
+		InboxState: InboxStateEvidence{MessageCount: 1, ActionableCount: 1, OldestMessageAge: 5},
+	}
+	if f := checkActiveWithStaleMessages(report); f != nil {
+		t.Errorf("expected silence for a freshly-delivered message, got %s", f.FailureMode)
+	}
+}
+
+func TestCheckAgentDown_Detected(t *testing.T) {
+	report := &DiagnosticReport{
+		Role:       "build",
+		AgentState: AgentStateEvidence{IsAlive: false, Provider: "claude"},
+		InboxState: InboxStateEvidence{MessageCount: 1, ActionableCount: 1},
+	}
+	finding := checkAgentDown(report)
+	if finding == nil {
+		t.Fatal("expected a finding for a dead agent")
+	}
+	if finding.Severity != "critical" {
+		t.Errorf("expected critical, got %s", finding.Severity)
+	}
+}
+
+// TestCheckAgentDown_ExpectedAbsences: a stopped or reloading agent is down on
+// purpose. Without these the check would fire during every hot reload.
+func TestCheckAgentDown_ExpectedAbsences(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state AgentStateEvidence
+	}{
+		{"Stopped", AgentStateEvidence{IsAlive: false, IsStopped: true}},
+		{"Reloading", AgentStateEvidence{IsAlive: false, IsReloading: true}},
+		{"Alive", AgentStateEvidence{IsAlive: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			report := &DiagnosticReport{Role: "build", AgentState: tc.state}
+			if f := checkAgentDown(report); f != nil {
+				t.Errorf("expected no finding, got %s", f.FailureMode)
+			}
+		})
+	}
+}
+
+func TestCheckReceiptGap(t *testing.T) {
+	mk := func(ack bool, count int, age int64) *DiagnosticReport {
+		return &DiagnosticReport{
+			Role:        "review",
+			AgentState:  AgentStateEvidence{IsAlive: true, SupportsHooks: true, Provider: "claude"},
+			NotifyState: NotifyStateEvidence{AckDelivery: ack, ReceiptGapCount: count, ReceiptGapAge: age},
+		}
+	}
+
+	t.Run("CriticalWhenOld", func(t *testing.T) {
+		f := checkReceiptGap(mk(true, 2, diagnoseStuckInboxSecs+10))
+		if f == nil {
+			t.Fatal("expected receipt-gap finding")
+		}
+		if f.Severity != "critical" {
+			t.Errorf("expected critical for a long gap, got %s", f.Severity)
+		}
+	})
+
+	t.Run("WarningWhenRecent", func(t *testing.T) {
+		f := checkReceiptGap(mk(true, 1, diagnoseReceiptGapSecs+1))
+		if f == nil {
+			t.Fatal("expected receipt-gap finding")
+		}
+		if f.Severity != "warning" {
+			t.Errorf("expected warning for a short gap, got %s", f.Severity)
+		}
+	})
+
+	t.Run("SilentWithoutCutover", func(t *testing.T) {
+		if f := checkReceiptGap(mk(false, 3, 999)); f != nil {
+			t.Error("receipts are not the delivery evidence under pane-scrape delivery")
+		}
+	})
+
+	t.Run("SilentWhenNoGap", func(t *testing.T) {
+		if f := checkReceiptGap(mk(true, 0, 0)); f != nil {
+			t.Error("expected silence with every message receipted")
+		}
+	})
+}
+
+// TestRunDiagnostics_NeverCleanWithStuckInbox is the invariant this whole fix
+// exists to establish, stated independently of any single detector: if an agent
+// is sitting on unconsumed actionable work, diagnose must NOT report a clean
+// bill of health. Three separate sessions produced a false clean from three
+// different missing detectors — so the guarantee has to be asserted at the
+// verdict, not at each pattern.
+func TestRunDiagnostics_NeverCleanWithStuckInbox(t *testing.T) {
+	// The reported state, verbatim: agent wedged active, marker stale, messages
+	// long unconsumed, daemon healthy.
+	report := &DiagnosticReport{
+		Role: "test",
+		AgentState: AgentStateEvidence{
+			IsIdle: false, IsAlive: true, Provider: "opencode", SupportsHooks: false,
+		},
+		InboxState: InboxStateEvidence{
+			MessageCount: 3, ActionableCount: 3, OldestMessageAge: 3600,
+		},
+		NotifyState: NotifyStateEvidence{
+			NotifiedIDCount: 3, UnnotifiedCount: 0,
+			MarkerAge: 3000, IsMarkerStale: true, AckDelivery: true,
+		},
+		DaemonState: DaemonStateEvidence{IsAlive: true, KeepaliveAge: 2},
+	}
+	RunDiagnostics(report)
+
+	if len(report.Findings) == 0 {
+		t.Fatal("false clean verdict: agent wedged with a stuck inbox and diagnose reported nothing")
+	}
+	hasCritical := false
+	for _, f := range report.Findings {
+		if f.Severity == "critical" {
+			hasCritical = true
+		}
+	}
+	// Exit code is derived from critical severity — a warning-only verdict would
+	// still exit 0 and read as success to any caller scripting against it.
+	if !hasCritical {
+		t.Errorf("expected a critical finding so diagnose exits non-zero; got %d non-critical finding(s)", len(report.Findings))
+	}
+}
+
+// TestCheckUnexplainedEvidence guards the backstop itself.
+func TestCheckUnexplainedEvidence(t *testing.T) {
+	stuck := func() *DiagnosticReport {
+		return &DiagnosticReport{
+			Role:       "run",
+			AgentState: AgentStateEvidence{IsAlive: true, IsIdle: true, Provider: "claude"},
+			InboxState: InboxStateEvidence{
+				MessageCount: 1, ActionableCount: 1,
+				OldestMessageAge: diagnoseStuckInboxSecs + 60,
+			},
+		}
+	}
+
+	t.Run("FiresWhenNothingElseExplains", func(t *testing.T) {
+		f := checkUnexplainedEvidence(stuck())
+		if f == nil {
+			t.Fatal("expected the backstop to fire on an unexplained stuck inbox")
+		}
+		if f.Severity != "critical" {
+			t.Errorf("expected critical so the verdict is not silently exit 0, got %s", f.Severity)
+		}
+	})
+
+	t.Run("DefersToAnExistingFinding", func(t *testing.T) {
+		r := stuck()
+		r.Findings = []DiagnosticFinding{{Severity: "warning", FailureMode: "some-known-mode"}}
+		if f := checkUnexplainedEvidence(r); f != nil {
+			t.Error("backstop must stay quiet once a real detector has explained the state")
+		}
+	})
+
+	t.Run("IgnoresInfoOnlyFindings", func(t *testing.T) {
+		r := stuck()
+		r.Findings = []DiagnosticFinding{{Severity: "info", FailureMode: "no-actionable-messages"}}
+		if f := checkUnexplainedEvidence(r); f == nil {
+			t.Error("an info note does not explain a stuck inbox — backstop should still fire")
+		}
+	})
+
+	t.Run("QuietOnHealthyAgent", func(t *testing.T) {
+		r := &DiagnosticReport{
+			Role:       "run",
+			AgentState: AgentStateEvidence{IsAlive: true, IsIdle: true},
+			InboxState: InboxStateEvidence{MessageCount: 0, ActionableCount: 0},
+		}
+		if f := checkUnexplainedEvidence(r); f != nil {
+			t.Errorf("backstop must not fire on a drained inbox, got %s", f.FailureMode)
+		}
+	})
+
+	t.Run("QuietWhenInboxIsFresh", func(t *testing.T) {
+		r := stuck()
+		r.InboxState.OldestMessageAge = 10
+		if f := checkUnexplainedEvidence(r); f != nil {
+			t.Error("a just-arrived message is not a wedge — backstop must stay quiet")
+		}
+	})
+}
+
+// TestDiagnosticChecks_BackstopRegisteredLast pins the wiring, not just the
+// function. checkUnexplainedEvidence reads the findings earlier checks produced,
+// so it is correct ONLY in last position — and a unit test that calls it
+// directly cannot see it being dropped from the registry or reordered.
+func TestDiagnosticChecks_BackstopRegisteredLast(t *testing.T) {
+	if len(diagnosticChecks) == 0 {
+		t.Fatal("no diagnostic checks registered")
+	}
+	last := diagnosticChecks[len(diagnosticChecks)-1]
+	// Compare behaviour, not pointers: a report the backstop fires on must be
+	// answered by whatever sits last.
+	stuck := &DiagnosticReport{
+		Role:       "run",
+		AgentState: AgentStateEvidence{IsAlive: true, IsIdle: true},
+		InboxState: InboxStateEvidence{
+			MessageCount: 1, ActionableCount: 1,
+			OldestMessageAge: diagnoseStuckInboxSecs + 60,
+		},
+	}
+	f := last(stuck)
+	if f == nil || f.FailureMode != "unexplained-stuck-inbox" {
+		t.Error("checkUnexplainedEvidence must be registered last — it reads prior findings")
+	}
+}
+
+// TestCheckPostRestartWakeGap_AcceptsCombinedWake covers the inverse of the
+// main defect: matching only the literal "idle-wake" made this check report a
+// gap after a delivery that actually happened under another name.
+func TestCheckPostRestartWakeGap_AcceptsCombinedWake(t *testing.T) {
+	report := &DiagnosticReport{
+		Role:        "commit",
+		AgentState:  AgentStateEvidence{IsIdle: true, IsAlive: true},
+		InboxState:  InboxStateEvidence{MessageCount: 1, ActionableCount: 1},
+		NotifyState: NotifyStateEvidence{AckDelivery: false},
+		Timeline: []TimelineEvent{
+			{Timestamp: 100, Event: "idle-transition", Detail: "commit"},
+			{Timestamp: 104, Event: "idle-combined-wake", Detail: "commit: 1 messages"},
+		},
+	}
+	if f := checkPostRestartWakeGap(report); f != nil {
+		t.Errorf("idle-combined-wake IS the wake — expected no gap finding, got %s", f.FailureMode)
+	}
+
+	// Negative control: with no wake of any name, the gap is real.
+	report.Timeline = []TimelineEvent{{Timestamp: 100, Event: "idle-transition", Detail: "commit"}}
+	if f := checkPostRestartWakeGap(report); f == nil {
+		t.Error("expected post-restart-wake-gap when no wake followed — control failed")
+	}
+}
+
+// TestCheckMissedSendKeys_AcceptsCombinedWake covers the same root cause where
+// it fails the other way: this check needs to FIND a wake, so an unrecognized
+// name made it silently under-report a genuine dropped injection.
+func TestCheckMissedSendKeys_AcceptsCombinedWake(t *testing.T) {
+	report := &DiagnosticReport{
+		Role:       "commit",
+		AgentState: AgentStateEvidence{IsIdle: true, IsAlive: true},
+		InboxState: InboxStateEvidence{MessageCount: 1, ActionableCount: 1},
+		Timeline: []TimelineEvent{
+			{Timestamp: 100, Event: "idle-combined-wake", Detail: "commit: 1 messages"},
+		},
+	}
+	if f := checkMissedSendKeys(report); f == nil {
+		t.Error("a logged idle-combined-wake with the message still queued is a missed injection")
+	}
+}
+
+// TestWakeEvents_AreTimelineRelevant pins the coupling between the two maps.
+//
+// A name in wakeEvents but missing from roleRelevantEvents is invisible: the
+// timeline filter drops it before annotateGaps ever runs, so the wake cannot
+// satisfy its inbox-notify and the gap is fabricated anyway — the original bug,
+// regenerated silently by an incomplete edit. The two lists must not drift.
+func TestWakeEvents_AreTimelineRelevant(t *testing.T) {
+	for ev := range wakeEvents {
+		if !roleRelevantEvents[ev] {
+			t.Errorf("wake event %q is not in roleRelevantEvents — it is filtered out of the timeline, so it can never satisfy an inbox-notify", ev)
+		}
+	}
+}
+
+// TestBuildTimeline_CombinedWakeSurvivesFilter proves the coupling end-to-end
+// rather than by inspection: a real wake must reach the timeline AND clear the
+// gap, through the same filter+annotate path the report uses.
+func TestBuildTimeline_CombinedWakeSurvivesFilter(t *testing.T) {
+	session, cleanup := setupTestBusDir(t)
+	defer cleanup()
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	t.Setenv("MUXCODE_DELIVERY_ACK", "off") // gap analysis only runs pre-cutover
+
+	now := time.Now().Unix()
+	writeTestLifecycleLog(t, session, []LifecycleEntry{
+		{TS: now - 100, Level: "info", Source: "daemon", Session: session,
+			Event: "inbox-notify", Detail: "commit"},
+		{TS: now - 97, Level: "info", Source: "daemon", Session: session,
+			Event: "idle-combined-wake", Detail: "commit: 2 messages"},
+	})
+
+	events := BuildTimeline(session, "commit", 20)
+
+	sawWake := false
+	for _, ev := range events {
+		if ev.Event == "idle-combined-wake" {
+			sawWake = true
+		}
+		if ev.GapNote != "" {
+			t.Errorf("wake was delivered 3s after notify — unexpected gap note %q", ev.GapNote)
+		}
+	}
+	if !sawWake {
+		t.Fatal("idle-combined-wake was filtered out of the timeline — it can never clear a gap")
 	}
 }

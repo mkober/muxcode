@@ -1702,20 +1702,7 @@ const (
 //
 // Absent all of these, the cutover is ON.
 func (d *Daemon) ackDeliveryActive() bool {
-	if os.Getenv("MUXCODE_DELIVERY_ACK_DISABLE") != "" {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("MUXCODE_DELIVERY_ACK"))) {
-	case "0", "false", "no", "off":
-		return false
-	case "1", "true", "yes", "on":
-		return true
-	}
-	// Runtime OFF marker: an instant, restart-free rollback to the old pane-scrape
-	// path (`muxcode delivery-ack off`), a stronger operational valve than the
-	// startup-only env var. The env kill switch above still hard-forces the old
-	// path regardless. Absent marker = the default (ON).
-	return !bus.AckDeliveryToggledOff(d.session)
+	return bus.AckDeliveryActive(d.session)
 }
 
 // checkPollHealth is the receipt-gap backstop that replaces pane-scrape wedge

@@ -58,6 +58,11 @@ type MessageSummary struct {
 }
 
 // NotifyStateEvidence captures the notification pipeline state for a role.
+//
+// AckDelivery and the receipt fields describe the delivery model actually in
+// force. Without them diagnose read every session through the pre-cutover
+// pane-scrape model and mistook its own blind spot for a fault — see
+// AckDeliveryActive.
 type NotifyStateEvidence struct {
 	NotifiedIDCount  int   `json:"notified_id_count"`
 	UnnotifiedCount  int   `json:"unnotified_count"`
@@ -66,6 +71,9 @@ type NotifyStateEvidence struct {
 	TriggerNotifyAge int64 `json:"trigger_notify_age_secs"`
 	IsPolling        bool  `json:"is_polling"`
 	IsWaiting        bool  `json:"is_waiting"`
+	AckDelivery      bool  `json:"ack_delivery_active"`
+	ReceiptGapCount  int   `json:"receipt_gap_count"`
+	ReceiptGapAge    int64 `json:"receipt_gap_oldest_secs"`
 }
 
 // DaemonStateEvidence captures daemon health from the keepalive file.
@@ -219,6 +227,22 @@ func CollectNotifyState(session, role string) NotifyStateEvidence {
 	ev.IsPolling = IsPolling(session, role)
 	ev.IsWaiting = IsWaiting(session, role)
 
+	// Receipt evidence — the positive delivery signal under the cutover. The
+	// notified-IDs marker above only records that the daemon TRIED; a receipt
+	// records that the agent actually got it. Reading only the marker is how a
+	// notified-but-never-consumed message registered as fully delivered.
+	ev.AckDelivery = AckDeliveryActive(session)
+	gap := ReceiptGap(session, role, diagnoseReceiptGapSecs*time.Second)
+	ev.ReceiptGapCount = len(gap)
+	if len(gap) > 0 {
+		now := time.Now().Unix()
+		for _, m := range gap {
+			if age := now - m.TS; age > ev.ReceiptGapAge {
+				ev.ReceiptGapAge = age
+			}
+		}
+	}
+
 	return ev
 }
 
@@ -260,11 +284,30 @@ func CollectEvidence(session, role string) DiagnosticReport {
 
 // roleRelevantEvents lists lifecycle event types that are relevant for
 // per-role diagnosis. Events must mention the role in their detail.
+//
+// Every wake-family name below must be one the code actually emits. The
+// original list carried "idle-wake" and "startup-wake" and nothing else from
+// that family, which left the successful-delivery events invisible to the
+// timeline while the failures stayed visible — the timeline could only ever
+// render a delivery pipeline that was losing.
 var roleRelevantEvents = map[string]bool{
 	"idle-wake":                true,
+	"idle-response-wake":       true,
+	"idle-combined-wake":       true,
+	"idle-task-retry":          true,
 	"idle-transition":          true,
 	"inbox-notify":             true,
 	"startup-wake":             true,
+	"startup-wake-full":        true,
+	"startup-wake-enter":       true,
+	"startup-wake-provider":    true,
+	"startup-wake-failed":      true,
+	"wake-full":                true,
+	"wake-enter":               true,
+	"wake-provider":            true,
+	"wake-failed":              true,
+	"watchdog-force-deliver":   true,
+	"delivery-gap":             true,
 	"idle-task-rescue":         true,
 	"agent-down":               true,
 	"agent-restarting":         true,
@@ -274,6 +317,33 @@ var roleRelevantEvents = map[string]bool{
 	"reload-complete":          true,
 	"permission-blocked":       true,
 	"permission-block-cleared": true,
+}
+
+// wakeEvents are the lifecycle events that count as "the agent was woken" when
+// resolving an inbox-notify. Delivery has more than one emitter — the idle
+// sweep, the combined deferred delivery, the startup path, the mode-switch
+// path, the force-deliver watchdog — and matching only the literal "idle-wake"
+// treated every one of the others as a miss.
+var wakeEvents = map[string]bool{
+	"idle-wake":              true,
+	"idle-response-wake":     true,
+	"idle-combined-wake":     true,
+	"idle-task-retry":        true,
+	"idle-task-rescue":       true,
+	"startup-wake":           true,
+	"startup-wake-full":      true,
+	"startup-wake-enter":     true,
+	"startup-wake-provider":  true,
+	"wake-full":              true,
+	"wake-enter":             true,
+	"wake-provider":          true,
+	"watchdog-force-deliver": true,
+}
+
+// isWakeEvent reports whether a timeline event represents a delivery to the
+// agent, satisfying a preceding inbox-notify.
+func isWakeEvent(event string) bool {
+	return wakeEvents[event]
 }
 
 // BuildTimeline reads recent lifecycle events for a role and annotates gaps
@@ -304,8 +374,14 @@ func BuildTimeline(session, role string, limit int) []TimelineEvent {
 		events = events[len(events)-limit:]
 	}
 
-	// Annotate gaps between expected event pairs
-	annotateGaps(events, role)
+	// Annotate gaps between expected event pairs. Skipped under the delivery-ack
+	// cutover: there, no daemon wake is EXPECTED to follow an inbox-notify at
+	// all (the agent pulls its own inbox and receipts are the delivery
+	// evidence), so every notify would be annotated as a failure on a healthy
+	// session. That is precisely the false evidence the report used to render.
+	if !AckDeliveryActive(session) {
+		annotateGaps(events, role)
+	}
 
 	return events
 }
@@ -330,14 +406,14 @@ func annotateGaps(events []TimelineEvent, role string) {
 		}
 		notifyTS := events[i].Timestamp
 
-		// Look for idle-wake within 10 seconds
+		// Look for a wake within 10 seconds
 		foundWake := false
 		for j := i + 1; j < len(events); j++ {
 			gap := events[j].Timestamp - notifyTS
 			if gap > 10 {
 				break // past the expected window
 			}
-			if events[j].Event == "idle-wake" {
+			if isWakeEvent(events[j].Event) {
 				foundWake = true
 				events[j].GapSecs = gap
 				break
@@ -349,17 +425,21 @@ func annotateGaps(events []TimelineEvent, role string) {
 			if i+1 < len(events) {
 				gap := events[i+1].Timestamp - notifyTS
 				events[i+1].GapSecs = gap
-				events[i+1].GapNote = fmt.Sprintf("expected idle-wake within 10s of inbox-notify, got %s after %ds", events[i+1].Event, gap)
+				events[i+1].GapNote = fmt.Sprintf("expected a wake within 10s of inbox-notify, got %s after %ds", events[i+1].Event, gap)
 			} else {
 				// No subsequent event at all
-				events[i].GapNote = "inbox-notify with no subsequent idle-wake"
+				events[i].GapNote = "inbox-notify with no subsequent wake"
 			}
 		}
 	}
 }
 
-// CountRepeatedFailures counts consecutive inbox-notify events without a
-// following idle-wake in the timeline. Used to quantify notification failures.
+// CountRepeatedFailures counts inbox-notify events with no following wake in
+// the timeline. Used to quantify notification failures.
+//
+// Only meaningful when a daemon wake is the expected delivery mechanism —
+// callers must gate on the delivery model (see checkDaemonNotWaking), or a
+// healthy post-cutover session reads as one failure per notify.
 func CountRepeatedFailures(events []TimelineEvent) int {
 	count := 0
 	for i := 0; i < len(events); i++ {
@@ -374,7 +454,7 @@ func CountRepeatedFailures(events []TimelineEvent) int {
 			if gap > 10 {
 				break
 			}
-			if events[j].Event == "idle-wake" {
+			if isWakeEvent(events[j].Event) {
 				foundWake = true
 				break
 			}
@@ -392,13 +472,29 @@ func CountRepeatedFailures(events []TimelineEvent) int {
 // if a known failure mode is detected. Returns nil if no issue found.
 type DiagnosticCheck func(report *DiagnosticReport) *DiagnosticFinding
 
+// diagnoseReceiptGapSecs is how long an inbox message may sit without a receipt
+// before diagnose counts it as un-delivered. Matches the daemon's own
+// pollHealthGapSecs so the two agree on what "stuck" means.
+const diagnoseReceiptGapSecs = 45
+
+// diagnoseStuckInboxSecs is the age past which an unconsumed actionable message
+// is treated as a hard anomaly that the report must explain. Deliberately well
+// above the receipt-gap threshold: an agent legitimately mid-turn will consume
+// its inbox long before this.
+const diagnoseStuckInboxSecs = 120
+
 // diagnosticChecks is the ordered list of failure-mode detectors.
 // They run in priority order — most critical first.
+//
+// checkUnexplainedEvidence MUST stay last: it is the verdict-consistency
+// backstop and reads the findings the earlier checks produced.
 var diagnosticChecks = []DiagnosticCheck{
 	checkDaemonDead,
+	checkAgentDown,
 	checkStaleNotifiedIDs,
 	checkMissedSendKeys,
 	checkIdleDetectionFailure,
+	checkReceiptGap,
 	checkDaemonNotWaking,
 	checkPostRestartWakeGap,
 	checkProviderMismatch,
@@ -406,6 +502,7 @@ var diagnosticChecks = []DiagnosticCheck{
 	checkPendingInputBlocking,
 	checkActiveWithStaleMessages,
 	checkNoActionableMessages,
+	checkUnexplainedEvidence,
 }
 
 // RunDiagnostics executes all diagnostic checks and populates report.Findings.
@@ -478,10 +575,10 @@ func checkMissedSendKeys(report *DiagnosticReport) *DiagnosticFinding {
 		return nil
 	}
 
-	// Look for recent idle-wake in timeline
+	// Look for a recent wake in the timeline
 	hasRecentWake := false
 	for _, ev := range report.Timeline {
-		if ev.Event == "idle-wake" {
+		if isWakeEvent(ev.Event) {
 			hasRecentWake = true
 			break
 		}
@@ -613,6 +710,12 @@ func checkIdleDetectionFailure(report *DiagnosticReport) *DiagnosticFinding {
 // checkDaemonNotWaking detects when inbox-notify fires but no idle-wake
 // follows within 10 seconds, and the agent is currently idle.
 func checkDaemonNotWaking(report *DiagnosticReport) *DiagnosticFinding {
+	// Under the delivery-ack cutover the daemon does not wake idle agents at
+	// all — they pull their own inboxes — so "inbox-notify with no wake after
+	// it" is the normal shape, not a fault. checkReceiptGap covers this model.
+	if report.NotifyState.AckDelivery {
+		return nil
+	}
 	if !report.AgentState.IsIdle {
 		return nil
 	}
@@ -645,6 +748,11 @@ func checkDaemonNotWaking(report *DiagnosticReport) *DiagnosticFinding {
 // checkPostRestartWakeGap detects when idle-transition is logged after a
 // restart but no subsequent idle-wake fires for pending messages.
 func checkPostRestartWakeGap(report *DiagnosticReport) *DiagnosticFinding {
+	// Same delivery-model gate as checkDaemonNotWaking: idle-transition is
+	// emitted only by the pane-scrape idle sweep, which the cutover bypasses.
+	if report.NotifyState.AckDelivery {
+		return nil
+	}
 	if !report.AgentState.IsIdle {
 		return nil
 	}
@@ -652,7 +760,10 @@ func checkPostRestartWakeGap(report *DiagnosticReport) *DiagnosticFinding {
 		return nil
 	}
 
-	// Look for idle-transition without subsequent idle-wake
+	// Look for idle-transition without a subsequent wake. Matching only the
+	// literal "idle-wake" here fails the opposite way to checkMissedSendKeys:
+	// a delivery under any other name reads as "no wake followed", so the check
+	// reports a gap that did not happen.
 	hasIdleTransition := false
 	hasSubsequentWake := false
 	for _, ev := range report.Timeline {
@@ -660,7 +771,7 @@ func checkPostRestartWakeGap(report *DiagnosticReport) *DiagnosticFinding {
 			hasIdleTransition = true
 			hasSubsequentWake = false // reset — look for wake after this transition
 		}
-		if hasIdleTransition && ev.Event == "idle-wake" {
+		if hasIdleTransition && isWakeEvent(ev.Event) {
 			hasSubsequentWake = true
 		}
 	}
@@ -804,10 +915,6 @@ func checkActiveWithStaleMessages(report *DiagnosticReport) *DiagnosticFinding {
 	if report.InboxState.ActionableCount == 0 {
 		return nil
 	}
-	// Only flag if oldest unnotified message is >60s old
-	if report.NotifyState.UnnotifiedCount == 0 {
-		return nil
-	}
 	if report.InboxState.OldestMessageAge < 60 {
 		return nil
 	}
@@ -816,20 +923,207 @@ func checkActiveWithStaleMessages(report *DiagnosticReport) *DiagnosticFinding {
 		return nil
 	}
 
+	// Notified-but-still-queued is the STRONGER signature, not a reason to stay
+	// quiet. This check used to require UnnotifiedCount > 0, which excluded
+	// exactly the wedge it exists to catch: once the daemon records a notify,
+	// the message leaves the unnotified set, so an agent that was notified and
+	// then never consumed the message scored zero and the check returned nil.
+	// The report rendered a stale marker in red and an "active" agent sitting on
+	// old messages, and still printed "No issues detected".
+	notified := report.InboxState.ActionableCount - report.NotifyState.UnnotifiedCount
+	if notified < 0 {
+		notified = 0
+	}
+
+	severity := "warning"
+	summary := fmt.Sprintf("Agent appears active with %d actionable message(s) unconsumed for %ds — delivery blocked",
+		report.InboxState.ActionableCount, report.InboxState.OldestMessageAge)
+	evidence := []string{
+		"IsAgentIdle: false (8-line and wide capture)",
+		fmt.Sprintf("%d actionable, %d unnotified, %d notified-but-unconsumed, oldest: %ds ago",
+			report.InboxState.ActionableCount, report.NotifyState.UnnotifiedCount, notified, report.InboxState.OldestMessageAge),
+		"Neither Notify() nor daemon checkIdleAgents delivers to non-idle agents",
+	}
+	if notified > 0 {
+		// The daemon believes it delivered; the inbox says otherwise.
+		severity = "critical"
+		evidence = append(evidence,
+			fmt.Sprintf("%d message(s) marked notified but still queued — the wake was recorded, not received", notified))
+		if report.NotifyState.IsMarkerStale {
+			evidence = append(evidence,
+				fmt.Sprintf("Notified-IDs marker is stale (%ds) — no delivery attempt since", report.NotifyState.MarkerAge))
+		}
+	}
+	if report.NotifyState.ReceiptGapCount > 0 {
+		severity = "critical"
+		evidence = append(evidence,
+			fmt.Sprintf("%d message(s) carry no delivery receipt (oldest %ds)",
+				report.NotifyState.ReceiptGapCount, report.NotifyState.ReceiptGapAge))
+	}
+
 	return &DiagnosticFinding{
-		Severity:    "warning",
+		Severity:    severity,
 		FailureMode: "active-with-stale-messages",
-		Summary:     fmt.Sprintf("Agent appears active with %d unnotified message(s) for %ds — delivery blocked", report.NotifyState.UnnotifiedCount, report.InboxState.OldestMessageAge),
-		Evidence: []string{
-			fmt.Sprintf("IsAgentIdle: false (8-line and 30-line capture)"),
-			fmt.Sprintf("%d actionable, %d unnotified, oldest: %ds ago", report.InboxState.ActionableCount, report.NotifyState.UnnotifiedCount, report.InboxState.OldestMessageAge),
-			"Neither Notify() nor daemon checkIdleAgents delivers to non-idle agents",
-		},
+		Summary:     summary,
+		Evidence:    evidence,
 		Remediation: []string{
-			"Agent may be genuinely busy — wait for it to finish",
+			"Agent may be genuinely busy — check the pane before forcing",
 			"If stuck, check pane for permission prompts or errors",
 			fmt.Sprintf("Force-deliver pending inbox: muxcode deliver %s --force", report.Role),
 			fmt.Sprintf("Restart: muxcode agent-health --start %s", report.Role),
+		},
+	}
+}
+
+// checkAgentDown detects an agent whose process is gone without an intentional
+// stop or an in-flight reload explaining it.
+//
+// There was no such check at all: every other detector either required IsIdle
+// (never true for a dead agent, since CollectAgentState only probes idle when
+// alive) or bailed out on !IsAlive. So `muxcode diagnose <role>` on a crashed
+// agent rendered "Health: dead" in red and then reported no issues, exit 0.
+func checkAgentDown(report *DiagnosticReport) *DiagnosticFinding {
+	if report.AgentState.IsAlive {
+		return nil
+	}
+	if report.AgentState.IsStopped {
+		return nil // intentionally stopped — not a fault
+	}
+	if report.AgentState.IsReloading {
+		return nil // expected gap in the stop→reconfigure→relaunch cycle
+	}
+
+	evidence := []string{
+		fmt.Sprintf("Agent process for %q is not running", report.Role),
+		fmt.Sprintf("Provider: %s", report.AgentState.Provider),
+	}
+	if report.InboxState.ActionableCount > 0 {
+		evidence = append(evidence, fmt.Sprintf(
+			"%d actionable message(s) waiting — undeliverable until the agent is back",
+			report.InboxState.ActionableCount))
+	}
+	if report.AgentState.PaneLastLine != "" {
+		evidence = append(evidence, fmt.Sprintf("Pane last line: %q", report.AgentState.PaneLastLine))
+	}
+
+	return &DiagnosticFinding{
+		Severity:    "critical",
+		FailureMode: "agent-down",
+		Summary:     "Agent process is not running and was not stopped or reloaded",
+		Evidence:    evidence,
+		Remediation: []string{
+			fmt.Sprintf("Restart: muxcode agent-health --start %s", report.Role),
+			"Check why it exited: muxcode lifecycle show --event agent-down",
+			"Inbox is on disk and survives — messages redeliver after restart",
+		},
+	}
+}
+
+// checkReceiptGap detects messages sitting in the inbox with no delivery
+// receipt under the delivery-ack cutover. This is the positive-signal
+// counterpart to the old wake-event timeline analysis: instead of inferring
+// delivery from a daemon log line, it reports what the agent actually
+// acknowledged. Mirrors the daemon's own checkPollHealth backstop.
+func checkReceiptGap(report *DiagnosticReport) *DiagnosticFinding {
+	if !report.NotifyState.AckDelivery {
+		return nil // receipts are not the delivery evidence in this mode
+	}
+	if report.NotifyState.ReceiptGapCount == 0 {
+		return nil
+	}
+	if !report.AgentState.IsAlive {
+		return nil // checkAgentDown owns this — a dead agent receipts nothing
+	}
+
+	severity := "warning"
+	if report.NotifyState.ReceiptGapAge >= diagnoseStuckInboxSecs {
+		severity = "critical"
+	}
+
+	evidence := []string{
+		fmt.Sprintf("%d message(s) un-receipted for over %ds (oldest: %ds)",
+			report.NotifyState.ReceiptGapCount, diagnoseReceiptGapSecs, report.NotifyState.ReceiptGapAge),
+		"A receipt records that the agent read the message — not that the daemon sent it",
+	}
+	if report.AgentState.SupportsHooks {
+		evidence = append(evidence,
+			"Hook provider: the agent's own `muxcode inbox --poll --loop` listener should have acked this")
+	} else {
+		evidence = append(evidence, fmt.Sprintf(
+			"Non-hook provider (%s): delivery relies on verified pane injection",
+			report.AgentState.Provider))
+	}
+
+	return &DiagnosticFinding{
+		Severity:    severity,
+		FailureMode: "receipt-gap",
+		Summary: fmt.Sprintf("%d message(s) carry no delivery receipt — self-poll or delivery sidecar may be down",
+			report.NotifyState.ReceiptGapCount),
+		Evidence: evidence,
+		Remediation: []string{
+			fmt.Sprintf("Force-deliver pending inbox: muxcode deliver %s --force", report.Role),
+			"Check the agent's background inbox listener is running",
+			"Inspect a specific message's receipt: muxcode track <msg-id>",
+		},
+	}
+}
+
+// checkUnexplainedEvidence is the verdict-consistency backstop, and it is the
+// reason this file can no longer produce a clean verdict over a broken agent.
+//
+// Every other check answers "is this specific failure mode present?". None
+// answered "does the state I just rendered actually add up to healthy?", so a
+// report could gather red evidence, print it, match no known pattern, and
+// conclude "No issues detected" with exit 0. That happened three sessions
+// running, each time from a different missing detector — which is the tell that
+// the bug was structural rather than one absent pattern.
+//
+// So this asserts the invariant directly: if the agent is holding actionable
+// work it has not consumed, SOMETHING is wrong, and diagnose must say so even
+// when it cannot name the mode. An honest "unexplained" beats a false clean —
+// the caller is asking whether to trust this agent, and "I don't know" and "all
+// good" are not the same answer.
+//
+// Deliberately narrow to stay quiet on healthy sessions: it fires only on
+// unconsumed actionable messages past diagnoseStuckInboxSecs, well beyond any
+// legitimate mid-turn window, and only when no earlier check spoke.
+func checkUnexplainedEvidence(report *DiagnosticReport) *DiagnosticFinding {
+	for _, f := range report.Findings {
+		if f.Severity == "critical" || f.Severity == "warning" {
+			return nil // the state is already explained
+		}
+	}
+	if report.InboxState.ActionableCount == 0 {
+		return nil
+	}
+	if report.InboxState.OldestMessageAge < diagnoseStuckInboxSecs {
+		return nil
+	}
+
+	evidence := []string{
+		fmt.Sprintf("%d actionable message(s) unconsumed, oldest %ds ago (threshold %ds)",
+			report.InboxState.ActionableCount, report.InboxState.OldestMessageAge, diagnoseStuckInboxSecs),
+		fmt.Sprintf("Agent state: alive=%s idle=%s provider=%s",
+			boolYesNo(report.AgentState.IsAlive), boolYesNo(report.AgentState.IsIdle),
+			report.AgentState.Provider),
+		"No known failure mode matched — diagnose cannot explain why these are still queued",
+	}
+	if report.NotifyState.ReceiptGapCount > 0 {
+		evidence = append(evidence, fmt.Sprintf("%d message(s) un-receipted", report.NotifyState.ReceiptGapCount))
+	}
+	if report.NotifyState.IsMarkerStale {
+		evidence = append(evidence, fmt.Sprintf("Notified-IDs marker stale (%ds)", report.NotifyState.MarkerAge))
+	}
+
+	return &DiagnosticFinding{
+		Severity:    "critical",
+		FailureMode: "unexplained-stuck-inbox",
+		Summary:     "Messages are stuck with no matching failure mode — diagnose has a coverage gap here",
+		Evidence:    evidence,
+		Remediation: []string{
+			fmt.Sprintf("Force-deliver pending inbox: muxcode deliver %s --force", report.Role),
+			fmt.Sprintf("Inspect raw evidence: muxcode diagnose %s --json", report.Role),
+			"Please report this state — a new detector is needed for it",
 		},
 	}
 }
@@ -899,16 +1193,31 @@ func FormatDiagnosticReport(report *DiagnosticReport) string {
 
 	// Notification state
 	b.WriteString(fmt.Sprintf("\n  %sNotification state:%s\n", diagColorComment, diagColorReset))
+	deliveryModel := "pane-scrape (delivery-ack rolled back)"
+	if report.NotifyState.AckDelivery {
+		deliveryModel = "receipt-ack + agent self-poll"
+	}
+	b.WriteString(fmt.Sprintf("    Delivery model: %s\n", deliveryModel))
 	markerAgeStr := "no marker"
 	if report.NotifyState.MarkerAge >= 0 {
 		markerAgeStr = fmt.Sprintf("%ds", report.NotifyState.MarkerAge)
-		if report.NotifyState.IsMarkerStale {
+		// Only red when staleness has a consequence. An old marker on a drained
+		// inbox just means nothing has needed delivering lately; painting that
+		// red taught readers to discount the colour on the reports where it
+		// mattered.
+		if report.NotifyState.IsMarkerStale && report.InboxState.ActionableCount > 0 {
 			markerAgeStr += fmt.Sprintf(" %s— STALE%s", diagColorRed, diagColorReset)
+		} else if report.NotifyState.IsMarkerStale {
+			markerAgeStr += fmt.Sprintf(" %s(stale, inbox drained)%s", diagColorComment, diagColorReset)
 		}
 	}
 	b.WriteString(fmt.Sprintf("    Notified IDs: %d (marker age: %s)\n",
 		report.NotifyState.NotifiedIDCount, markerAgeStr))
 	b.WriteString(fmt.Sprintf("    Unnotified: %d message(s)\n", report.NotifyState.UnnotifiedCount))
+	if report.NotifyState.ReceiptGapCount > 0 {
+		b.WriteString(fmt.Sprintf("    %sUn-receipted: %d message(s) (oldest %ds)%s\n",
+			diagColorRed, report.NotifyState.ReceiptGapCount, report.NotifyState.ReceiptGapAge, diagColorReset))
+	}
 	if report.NotifyState.TriggerNotifyAge >= 0 {
 		b.WriteString(fmt.Sprintf("    Trigger file: %ds ago\n", report.NotifyState.TriggerNotifyAge))
 	}
