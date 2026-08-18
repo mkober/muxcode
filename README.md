@@ -286,16 +286,29 @@ The tradeoff is clear: autonomous tools can handle more without you, but MuxCode
 
 ### Prerequisites
 
-- tmux >= 3.0
-- Go >= 1.22
-- At least one AI CLI provider:
-  - [Claude Code](https://claude.ai/code) CLI (`claude`) — recommended, full hook support
-  - [OpenCode](https://opencode.ai/) (`opencode`) — alternative, multi-provider LLM access
-  - [Codex CLI](https://github.com/openai/codex) (`codex`) — alternative, OpenAI models
-- jq
-- Neovim
-- fzf (optional, for interactive project picker)
-- [Ollama](https://ollama.com/) (optional, for local LLM agents)
+`install.sh` verifies each of these — including minimum versions — and offers to
+install anything missing via your system package manager (Homebrew, apt, dnf,
+pacman, or zypper). You do not need to install them by hand first.
+
+| Tool | Minimum | Why |
+| ---- | ------- | --- |
+| tmux | **3.3** | Popups use `display-popup -b/-S/-T`, which older tmux rejects |
+| Go | 1.22 | Builds the `muxcode` binary |
+| git | 2.0 | Branch and changed-file detection, commit-msg hook install |
+| make | — | Drives the build |
+| jq | — | Hook and settings JSON merging |
+| Neovim | 0.9 | Editor pane |
+| fzf | — | *Optional* — interactive project picker (`muxcode <path>` works without it) |
+
+Plus at least one AI CLI provider, which the installer can also install for you:
+
+- [Claude Code](https://claude.ai/code) (`claude`) — recommended, full hook support
+- [OpenCode](https://opencode.ai/) (`opencode`) — alternative, multi-provider LLM access
+- [Codex CLI](https://github.com/openai/codex) (`codex`) — alternative, OpenAI models
+
+Optional extras, all detected and offered during install:
+[Ollama](https://ollama.com/) (local LLM agents), Mermaid CLI and draw.io
+(plan-agent diagram rendering).
 
 ### Install
 
@@ -305,7 +318,31 @@ cd muxcode
 ./install.sh
 ```
 
-The installer checks prerequisites, builds the Go binary, and installs everything to `~/.local/bin/` and `~/.config/muxcode/`. It interactively detects and offers to install AI CLI providers (Claude Code, OpenCode, and/or Codex CLI), sets up the managed neovim config (via `NVIM_APPNAME=muxcode`), tmux integration, and Claude Code hooks (when Claude Code is selected). Your personal `~/.config/nvim/` is never modified.
+For a fully unattended install — every recommended default accepted and missing
+prerequisites installed without prompting:
+
+```bash
+./install.sh --yes
+```
+
+| Flag | Effect |
+| ---- | ------ |
+| `-y`, `--yes` | Non-interactive; accept defaults and install prerequisites. The multi-GB Ollama model pull is still declined |
+| `--no-deps` | Never install system prerequisites; report them and continue |
+| `--no-color` | Disable colored output (also honors `NO_COLOR`) |
+| `-h`, `--help` | Show usage |
+
+The installer also switches to non-interactive mode automatically when stdin is
+not a TTY, so piped and CI installs run to completion instead of stopping at the
+first prompt.
+
+It verifies prerequisites, builds the Go binary, and installs everything to
+`~/.local/bin/` and `~/.config/muxcode/` — adding `~/.local/bin` to your shell
+profile if it is missing from `PATH`. It detects and offers to install AI CLI
+providers, sets up the managed neovim config (via `NVIM_APPNAME=muxcode`), tmux
+integration, and Claude Code hooks (when Claude Code is selected), then runs a
+smoke test to confirm the binary works. Your personal `~/.config/nvim/` is never
+modified.
 
 For subsequent builds after pulling updates:
 

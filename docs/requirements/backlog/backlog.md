@@ -12,6 +12,7 @@
 | Branch active-time tracking | [`docs/requirements/drafts/branch-time-tracking.md`](../drafts/branch-time-tracking.md) | In Progress — `--json` read path + verify-spec doc sink implemented (`seed`/`record` reconciliation); remaining: docs bullets + Phase 3 integration test |
 | Disk-pressure signal fix | [`docs/requirements/drafts/disk-pressure-wrong-filesystem.md`](../drafts/disk-pressure-wrong-filesystem.md) | In Progress — Phase 1 complete, integration test outstanding |
 | Lifecycle log test leak | [`docs/requirements/backlog/lifecycle-log-test-leak.md`](./lifecycle-log-test-leak.md) | In Progress — fix shipped, regression test outstanding |
+| Modal auto-size | [`docs/requirements/drafts/modal-auto-size.md`](../drafts/modal-auto-size.md) | Complete — all 6 phases verified; ready to move to `completed/` |
 
 ## Top priorities
 
@@ -47,6 +48,7 @@
 | High | Verify-spec refires on stale unconsumed review message |
 | High | Unverified daemon auto-restart (fire-and-hope relaunch) |
 | High | Response payloads re-trigger chains on non-hook agents |
+| High | Run chain fires watch on every successful command |
 | Medium | Disk-pressure check measures the wrong filesystem |
 | Low | Message delivery receipts |
 | Low | Bus audit trail |
@@ -58,6 +60,7 @@
 - **Verify-spec refires on stale unconsumed review message** — one review completion generated 4+ identical `verify-spec` requests to plan in ~2 min: `checkInboxes()` fires the reviewed-transition on **any** edit-inbox growth while **any** unconsumed review→edit message exists, and plan's mandated "reply to edit" is itself growth — a self-sustaining loop while edit is busy. Fix: fire once per actual completion (track last-seen review message ID or inspect the growth delta). Spec: [`verify-spec-stale-review-refire`](./verify-spec-stale-review-refire.md)
 - **Unverified daemon auto-restart** — `RestartLocalAgent()` (`bus/health.go`) sends `C-c`, sleeps a fixed 500ms, sends the relaunch line, and returns `nil` unconditionally — no exit wait, no launch verification. A slow-exiting CLI swallows the launch line, the pane settles at a bare shell, and the daemon still emits `agent-recovered`; pane-based `IsAgentAlive` reads the swallowed launch text as alive indefinitely (field report: orphan `opencode --agent build` detached from its pane). Fix: bounded exit poll + post-relaunch verification (reuse `ReloadAgent()`'s 15s poll), failed restarts count toward the attempt cap, orphan detection. Spec: [`unverified-daemon-auto-restart`](./unverified-daemon-auto-restart.md)
 - **Response payloads re-trigger chains on non-hook agents** — non-hook `SendWakeUp` injects `type: response` payloads into the TUI composer as prompts, so an agent re-fires its chain on its own delegation's answer (observed: `build` re-sent `request:test` 5× in 3.5 min, 84.9K tokens burned on `test`). The existing echo guard suppresses only the reply *instruction*, not the *payload*. Secondary driver: answered-but-unconsumed requests keep counting as actionable, so the daemon re-wakes agents for finished work. Fix: never inject responses as prompts + requester-side responded-check in `HasActionableMessages`. Spec: [`response-echo-chain-retrigger`](./response-echo-chain-retrigger.md)
+- **Run chain fires watch on every successful command** — the run agent's `OnSuccess` chain (`bus/profile.go:918-941`) sends watch a "tail logs to verify deployed services" request for **any** successful command except `muxcode *` — a read-only `cat` triggers a bogus tail-logs request, and the daemon logged a `run→watch` loop 4× in 4m44s (capped only by relay suppression's 4-per-300s backstop). Root cause: denylist gate on an allowlist-shaped trigger. Fix: first-match-wins `command_match` allowlist of verification-run shapes; docs sync (condition-type list is stale at 8, actual 10). Spec: [`run-chain-watch-overfire`](./run-chain-watch-overfire.md)
 - **Disk-pressure check measures the wrong filesystem** — **In progress** — The daemon's `/tmp` pressure watchdog reported boot-volume percent-used (`Statfs` on macOS's symlinked `/private/tmp`), fired perpetually on healthy 85–90%-full dev machines, and its cleanup freed 0 B. Now measures free-bytes headroom and muxcode footprint (`TmpPressure()`); integration test outstanding. Spec: [`disk-pressure-wrong-filesystem`](../drafts/disk-pressure-wrong-filesystem.md)
 - **Lifecycle log test leak** — **In progress** — `LifecycleLogDir()` resolved unconditionally to `~/.config/muxcode/logs`, so test runs deposited real per-session log files into the live install (41,789 stray `test-*.log` files, ~169 MB). Fixed via `MUXCODE_LIFECYCLE_LOG_DIR` override pinned by `TestMain`; automated regression test outstanding. Spec: [`lifecycle-log-test-leak`](./lifecycle-log-test-leak.md)
 - **Message delivery receipts** — ~~Agents ACK message consumption~~ **Delivered** via [`delivery-acknowledgement`](../drafts/delivery-acknowledgement.md) (Phases 1–6 committed): per-message receipts (`acked` for Claude/harness, verified-inject `delivered` for OpenCode/Codex), agent self-poll, and a `checkPollHealth` receipt-gap backstop replace pane-scrape delivery inference. Remaining follow-up: [`remove-gated-pane-scrape-delivery`](./remove-gated-pane-scrape-delivery.md) — physically delete the old machinery (currently gated OFF behind `MUXCODE_DELIVERY_ACK`) once the cutover is proven stable live
@@ -84,6 +87,7 @@
 | Priority | Feature |
 |----------|---------|
 | High | Conditional chains |
+| High | OpenCode plugin hook bridge |
 | Medium | Pipeline definitions |
 | Medium | Retry with backoff |
 | Medium | Workspace checkpoints |
@@ -91,6 +95,7 @@
 | Low | Pre-commit hooks |
 
 - **Conditional chains** — Extend event chains with conditions beyond exit codes — file pattern matching (only run deploy chain if infra files changed), time-of-day gates, branch name filters
+- **OpenCode plugin hook bridge** — OpenCode has no shell hooks, but its plugin system exposes `tool.execute.after` / `session.idle` events: a muxcode-authored TS plugin auto-installed by `WriteAgentConfig()` shells out to `muxcode hook bash` on tool completion, restoring deterministic build→test→review chains for OpenCode agents (today chains are LLM-followed instructions — the root enabler of the [`response-echo-chain-retrigger`](./response-echo-chain-retrigger.md) storms). Narrow capability flag (`SupportsChainEvents()`), not a `SupportsHooks()` flip — guard stays on `DenyTools`. Targets the stable v1 event surface; v2's `Plugin.define` API is beta. Spec: [`opencode-plugin-hook-bridge`](./opencode-plugin-hook-bridge.md)
 - **Pipeline definitions** — User-defined multi-step pipelines as YAML/JSON files (e.g. `lint → build → test → security-scan → review`) — more flexible than hardcoded build→test→review chain
 - **Retry with backoff** — Configurable retry policy for failed chain steps — exponential backoff, max attempts, different behavior per step
 - **Workspace checkpoints** — Snapshot working directory state before risky operations (deploy, large refactor) — allows rollback via `muxcode checkpoint restore`, leverages `git stash` or worktrees internally
@@ -133,12 +138,14 @@
 
 | Priority | Feature |
 |----------|---------|
+| High | Gemini CLI provider |
 | High | GitHub Actions webhook bridge |
 | Medium | Slack/Discord notifications |
 | Medium | IDE status bar |
 | Medium | GitHub App for comment-triggered agents |
 | Low | Linear/Jira bidirectional sync |
 
+- **Gemini CLI provider** — `MUXCODE_AGENT_CLI=gemini` silently falls through `ResolveProvider()`'s `default:` case to `ClaudeCodeProvider` and launches Claude; `install.sh` deliberately omits Gemini from its catalogue for this reason. Gemini CLI has a full hook system (`BeforeTool`/`AfterTool`, exit-code-2 blocking), making it the first alternative provider that can run `SupportsHooks() = true` — deterministic chains, diff preview, and edit guard without degradation. 7 phases: provider struct, `.gemini/settings.json` hook config, dual-format hook script adaptation, idle/wake-up, compaction, tool-name translation, integration test + installer catalogue entry. Spec: [`gemini-cli-provider`](./gemini-cli-provider.md)
 - **GitHub Actions webhook bridge** — Pre-built GitHub Actions workflow that POSTs to the webhook endpoint on PR events (opened, review submitted, CI status) — turns external events into agent actions
 - **Slack/Discord notifications** — Forward important agent events (build failure, deploy complete, review findings) to a Slack/Discord channel via webhook URL — one-way, config-driven
 - **IDE status bar** — Lightweight status indicator for VS Code / Neovim showing agent states and inbox counts — read-only, polls bus directory — for Neovim: a Lua plugin reading lock files

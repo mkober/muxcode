@@ -13,6 +13,10 @@ Add Google Gemini CLI (`gemini`) as a fifth provider in muxcode's multi-provider
 | Codex CLI | `codex` | None | Prompt-based (degraded) | None | Prompt instructions | Heuristic (`>` / "Summarize") |
 | Local LLM | `local` | None | Prompt-based (degraded) | None | `IsToolAllowed()` in Go | Not supported (daemon-driven) |
 
+### Current failure mode
+
+Until this spec lands, `MUXCODE_AGENT_CLI=gemini` (or a per-role `MUXCODE_{ROLE}_CLI=gemini`) silently launches the wrong provider: `ResolveProvider()` in `bus/provider.go` recognizes only `opencode`, `codex`, and `local` — any other value falls through the `default:` case to `ClaudeCodeProvider`, so an agent configured for Gemini launches Claude Code with no warning. `install.sh` deliberately omits Gemini from its provider catalogue for exactly this reason (comment above `provider_label()`) — that omission and its comment are removed by this spec's installer phase.
+
 ### Gemini CLI capabilities
 
 | Aspect | Gemini CLI | Notes |
@@ -441,6 +445,15 @@ Updated files:
 | `docs/configuration.md` | Add `GEMINI_API_KEY`, `MUXCODE_{ROLE}_CLI=gemini` examples |
 | `docs/agent-bus.md` | Add Gemini notes to `reload` and `provider-select` sections |
 | `docs/architecture.md` | Add "Gemini CLI Agent Flow" section (like Codex CLI Agent Flow) |
+| `install.sh` | Add Gemini to the AI CLI provider catalogue (see below) |
+
+**Installer catalogue entry** — `install.sh` maintains a provider catalogue (`provider_label`, `provider_desc`, `provider_installed`, `install_provider` case blocks, `use_*` flags, and per-CLI detection rows). Gemini is currently excluded on purpose because the backend doesn't exist; once Phases 1–6 land:
+
+- [ ] Add `gemini` cases to `provider_label` ("Gemini CLI"), `provider_desc`, `provider_installed`, and `install_provider` (`npm install -g @google/gemini-cli`, Homebrew fallback `brew install gemini-cli`)
+- [ ] Add `use_gemini` flag and an installed-version detection row (`command -v gemini` + `gemini --version`)
+- [ ] Remove the "Gemini is deliberately absent from this catalogue" comment above `provider_label()`
+- [ ] Prompt for/mention `GEMINI_API_KEY` in the install flow notes (auth is required for first launch)
+- [ ] Verify `scripts/test-install.sh` passes with the new catalogue entry
 
 Success criteria:
 - [ ] Integration test passes: agent launches on Gemini, processes inbox message, replies
@@ -449,6 +462,7 @@ Success criteria:
 - [ ] Build→test→review chain fires via AfterTool hooks
 - [ ] Hot reload between Claude Code and Gemini preserves inbox/memory
 - [ ] Provider selector shows Gemini with correct models
+- [ ] `install.sh` offers Gemini in the provider catalogue and the deliberate-absence comment is gone
 - [ ] Documentation covers setup, auth, model selection, hook equivalence
 
 ## Configuration
@@ -512,6 +526,7 @@ muxcode config set build.model gemini-2.5-flash
 | `tools/muxcode/cmd/hook.go` | Guard and analyze hooks | Existing (needs dual-format JSON parsing) |
 | `config/tmux.conf` | No change needed | Existing |
 | `daemon/daemon.go` | Skips `checkNonHookEdits()` for hook providers | Existing (works — Gemini returns `SupportsHooks()=true`) |
+| `install.sh` | AI CLI provider catalogue | Existing (needs `gemini` catalogue entry; deliberate-absence comment removed) |
 
 ## Open questions
 
