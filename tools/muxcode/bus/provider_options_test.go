@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -44,7 +45,7 @@ func TestAvailableProviders_Defaults(t *testing.T) {
 		wantDef string
 	}{
 		{"claude", "claude-sonnet-5"},
-		{"opencode", "opencode-go/minimax-m2.7"},
+		{"opencode", "opencode-go/minimax-m3"},
 		{"codex", "gpt-5.5"},
 	}
 	for _, tt := range tests {
@@ -59,22 +60,30 @@ func TestAvailableProviders_Defaults(t *testing.T) {
 	}
 }
 
+// Asserted as properties rather than exact counts: AvailableProviders reads the
+// user's models.conf, so a count pinned here fails on any machine whose model
+// list has been edited — including every time the shipped list changes.
 func TestAvailableProviders_Models(t *testing.T) {
 	providers := AvailableProviders()
-	claude := ProviderByCLI(providers, "claude")
-	if claude == nil {
-		t.Fatal("claude provider not found")
-	}
-	if len(claude.Models) != 4 {
-		t.Errorf("claude models count = %d, want 4", len(claude.Models))
+	for _, cli := range []string{"claude", "opencode"} {
+		p := ProviderByCLI(providers, cli)
+		if p == nil {
+			t.Fatalf("%s provider not found", cli)
+		}
+		if len(p.Models) == 0 {
+			t.Errorf("%s offers no models", cli)
+		}
+		if p.Default == "" {
+			t.Errorf("%s has no default model", cli)
+		}
 	}
 
+	// OpenCode ids are meaningless to the CLI without their provider prefix.
 	opencode := ProviderByCLI(providers, "opencode")
-	if opencode == nil {
-		t.Fatal("opencode provider not found")
-	}
-	if len(opencode.Models) != 6 {
-		t.Errorf("opencode models count = %d, want 6", len(opencode.Models))
+	for _, m := range opencode.Models {
+		if !strings.Contains(m, "/") {
+			t.Errorf("opencode model %q is missing its provider prefix", m)
+		}
 	}
 }
 

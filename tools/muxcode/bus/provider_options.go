@@ -33,8 +33,31 @@ var hardcodedFallbackModels = map[string]ProviderModels{
 		Models:  []string{"claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"},
 	},
 	"opencode": {
-		Default: "opencode-go/minimax-m2.7",
-		Models:  []string{"opencode-go/minimax-m2.7", "opencode-go/minimax-m3", "opencode-go/mimo-v2.5", "opencode-go/qwen3.5-plus", "opencode-go/deepseek-v4-pro", "opencode-go/deepseek-v4-flash"},
+		// Latest version of each opencode-go family, verified against
+		// `opencode models`. Where a family ships parallel tiers at that same
+		// newest version they are all kept (deepseek pro/flash, mimo pro/base,
+		// qwen max/plus); superseded versions are not (glm 5.1/5.2, kimi
+		// k2.6/k2.7-code, minimax m2.7, qwen 3.6-plus/3.7-max).
+		//
+		// Every id here must exist in `opencode models`. The previous list
+		// carried opencode-go/qwen3.5-plus, which the catalog does not offer —
+		// an agent pointed at a phantom model still launches and looks healthy,
+		// then fails on its first request.
+		Default: "opencode-go/minimax-m3",
+		Models: []string{
+			"opencode-go/grok-4.5",
+			"opencode-go/gpt-5.6-luna",
+			"opencode-go/glm-5.3",
+			"opencode-go/kimi-k3",
+			"opencode-go/minimax-m3",
+			"opencode-go/mimo-v2.5-pro",
+			"opencode-go/mimo-v2.5",
+			"opencode-go/qwen3.8-max",
+			"opencode-go/qwen3.7-plus",
+			"opencode-go/deepseek-v4-pro",
+			"opencode-go/deepseek-v4-flash",
+			"opencode-go/hy3",
+		},
 	},
 	"codex": {
 		Default: "gpt-5.5",

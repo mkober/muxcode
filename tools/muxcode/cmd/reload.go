@@ -33,9 +33,9 @@ import (
 //
 //	muxcode reload build
 //	muxcode reload build --cli opencode --model opencode-go/deepseek-v4-pro
-//	muxcode reload build test review --cli opencode --model opencode-go/minimax-m2.5
-//	muxcode reload --all --cli opencode --model opencode-go/minimax-m2.5
-//	muxcode reload --all --provider claude --cli opencode --model opencode-go/minimax-m2.5
+//	muxcode reload build test review --cli opencode --model opencode-go/minimax-m3
+//	muxcode reload --all --cli opencode --model opencode-go/minimax-m3
+//	muxcode reload --all --provider claude --cli opencode --model opencode-go/minimax-m3
 func Reload(args []string) {
 	var cli, model, providerFilter string
 	compact := false

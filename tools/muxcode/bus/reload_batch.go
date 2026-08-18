@@ -119,10 +119,10 @@ func ReloadBatch(session string, roles []string, cli, model string, compact bool
 // AbbreviateModel shortens a model ID for compact display.
 //
 //	"claude-sonnet-5"          → "sonnet-5"
-//	"opencode-go/minimax-m2.5"   → "minimax-m2.5"
+//	"opencode-go/minimax-m3"   → "minimax-m3"
 //	"gpt-5.5"                    → "gpt-5.5" (already short)
 func AbbreviateModel(model string) string {
-	// Strip org/namespace prefix (e.g. "opencode-go/minimax-m2.5")
+	// Strip org/namespace prefix (e.g. "opencode-go/minimax-m3")
 	if i := strings.LastIndex(model, "/"); i >= 0 {
 		return model[i+1:]
 	}

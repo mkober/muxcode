@@ -219,20 +219,24 @@ func RoleClaudeModelDefault(role string) string {
 }
 
 // RoleOpenCodeModelDefault returns the default OpenCode model for a role.
-// OpenCode model IDs require the provider prefix (e.g. "opencode-go/").
-// review/analyze → Qwen 3.5 Plus (strong analytical model).
-// build/test/deploy/run/watch → MiniMax M2.5 (fast command execution).
+// OpenCode model IDs require the provider prefix (e.g. "opencode-go/") and
+// must exist in `opencode models` — an agent pointed at a model the catalog
+// does not offer still launches and shows a healthy pane, then fails on its
+// first request. qwen3.5-plus and minimax-m2.5 were both such phantoms.
+//
+// review/analyze → Qwen 3.7 Plus (strong analytical model).
+// build/test/deploy/run/watch → MiniMax M3 (fast command execution).
 // commit → MiniMax M2.7 (git operations).
 func RoleOpenCodeModelDefault(role string) string {
 	switch role {
 	case "edit":
 		return "opencode-go/deepseek-v4-pro"
 	case "review", "analyze", "analyst":
-		return "opencode-go/qwen3.5-plus"
+		return "opencode-go/qwen3.7-plus"
 	case "research":
 		return "opencode-go/deepseek-v4-pro"
 	case "build", "test", "deploy", "run", "runner", "watch", "serve":
-		return "opencode-go/minimax-m2.5"
+		return "opencode-go/minimax-m3"
 	case "commit", "git":
 		return "opencode-go/minimax-m2.7"
 	default:
