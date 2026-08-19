@@ -261,9 +261,24 @@ func TestCheckBashFileWriteGuard_NoclobberOverrideRedirect(t *testing.T) {
 		})
 	}
 
+	// Quoted target after `>|`: the two fixes interact. '>|' is one operator, so
+	// the '|' must not displace the '>' that marks redirect position — otherwise
+	// the quoted path is blanked as argument payload and the write is unexamined.
+	if d := CheckBashFileWriteGuard("edit", `echo x >| "bus/g.go"`); d == nil || !d.Blocked {
+		t.Error(`echo x >| "bus/g.go" must block — a quoted target after >| is still a target`)
+	}
+
 	// The scratch exemption still applies to the same operator.
 	if d := CheckBashFileWriteGuard("edit", "echo x >| /tmp/out.log"); d != nil && d.Blocked {
 		t.Error(">| to a scratch path must stay allowed")
+	}
+	if d := CheckBashFileWriteGuard("edit", `echo x >| "/tmp/out.log"`); d != nil && d.Blocked {
+		t.Error(">| to a quoted scratch path must stay allowed")
+	}
+	// A '|' that is NOT part of '>|' is a real pipe, and a quoted argument after
+	// it is payload, not a redirect target.
+	if d := CheckBashFileWriteGuard("edit", `cat f | grep "bus/g.go"`); d != nil && d.Blocked {
+		t.Error("a quoted arg after a genuine pipe is not a redirect target")
 	}
 	// A genuine pipe is unaffected — there is no '>' preceding it.
 	if d := CheckBashFileWriteGuard("edit", "cat bus/hook.go | grep -i func"); d != nil && d.Blocked {

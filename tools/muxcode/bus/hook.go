@@ -835,9 +835,17 @@ func stripQuotedSegments(command string) string {
 			continue
 		}
 		b.WriteByte(c)
-		if c != ' ' && c != '\t' {
-			lastSignificant = c
+		if c == ' ' || c == '\t' {
+			continue
 		}
+		// `>|` is one operator: the '|' must not displace the '>' that marks
+		// redirect position, or the quoted target in `echo x >| "repo.go"` is
+		// blanked as argument payload and the write goes unexamined. A '|' in
+		// any other position is a genuine pipe and does update the marker.
+		if c == '|' && lastSignificant == '>' {
+			continue
+		}
+		lastSignificant = c
 	}
 	return b.String()
 }
