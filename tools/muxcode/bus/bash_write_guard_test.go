@@ -199,6 +199,50 @@ func TestCheckBashFileWriteGuard_QuotedAngleBracketIsNotARedirect(t *testing.T) 
 	}
 }
 
+// Heredoc parsing has two failure modes, and one of them lets a real write
+// through — the reason these are pinned separately from the basic heredoc case.
+func TestCheckBashFileWriteGuard_HeredocDelimiterParsing(t *testing.T) {
+	// FALSE-ALLOW: with `<<EOF > target` ordering, taking the whole line as the
+	// delimiter meant nothing ever terminated the body, so every command after
+	// the real EOF was swallowed — including a repo-file edit.
+	trailing := "cat <<EOF > /tmp/plan.md\nsteps\nEOF\nsed -i 's/x/y/' bus/hook.go"
+	if d := CheckBashFileWriteGuard("edit", trailing); d == nil || !d.Blocked {
+		t.Error("a sed -i after a heredoc terminator must still block — it is not body")
+	}
+
+	// FALSE-BLOCK: locating the terminator by substring matched "EOF" inside an
+	// ordinary body line, cutting mid-body and leaking the rest back as syntax.
+	mentions := "cat > /tmp/notes.md <<EOF\nmentions EOF here\nsed -i stuff\nEOF"
+	if d := CheckBashFileWriteGuard("edit", mentions); d != nil && d.Blocked {
+		t.Error("a body line merely containing the delimiter must not terminate it")
+	}
+}
+
+// tee followed by a redirect: the '>' token was collected as a filename.
+func TestCheckBashFileWriteGuard_TeeStopsAtRedirect(t *testing.T) {
+	allowed := []string{
+		"muxcode console build --once | tee /tmp/c.log > /dev/null",
+		"echo x | tee /tmp/a.log 2>&1",
+	}
+	for _, cmd := range allowed {
+		t.Run(cmd, func(t *testing.T) {
+			if d := CheckBashFileWriteGuard("edit", cmd); d != nil && d.Blocked {
+				t.Errorf("CheckBashFileWriteGuard(edit, %q) = blocked, want allowed — "+
+					"'>' is a redirect operator, not a tee filename", cmd)
+			}
+		})
+	}
+}
+
+// Backgrounding is a command separator too; without it a later command's -i
+// bleeds into an earlier sed, exactly as it did across pipelines.
+func TestCheckBashFileWriteGuard_BackgroundSeparatorNoBleed(t *testing.T) {
+	cmd := "sed 's/a/b/' /tmp/f.txt & grep -i x notes.txt"
+	if d := CheckBashFileWriteGuard("edit", cmd); d != nil && d.Blocked {
+		t.Error("grep's -i after '&' is not sed's in-place flag")
+	}
+}
+
 // Only roles that own an editor pane are gated. The build and test agents are
 // expected to run shell commands that write files; blocking them would be wrong.
 func TestCheckBashFileWriteGuard_OnlyGuardedRoles(t *testing.T) {

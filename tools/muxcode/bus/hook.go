@@ -862,20 +862,38 @@ func stripHeredocBodies(command string) string {
 			// No body present (single-line command); keep what precedes it.
 			return command[:idx]
 		}
-		delim := strings.Trim(strings.TrimSpace(rest[:nl]), `"'`)
+		// Only the FIRST token is the delimiter. Taking the whole line broke the
+		// `cat <<EOF > out` ordering: the delimiter became "EOF > out", no body
+		// line ever matched it, and every command after the real terminator was
+		// swallowed as body — so a trailing `sed -i` on a repo file passed.
+		var delim string
+		if f := strings.Fields(rest[:nl]); len(f) > 0 {
+			delim = strings.Trim(f[0], `"'`)
+		}
 		head := command[:idx] + rest[:nl]
 		if delim == "" {
 			return head
 		}
 		body := rest[nl+1:]
 		end := len(body)
+		// Running offset, not strings.Index: searching for the terminator by
+		// content matched the delimiter as a *substring* of an earlier body line
+		// ("mentions EOF here"), cutting mid-body and leaking the remainder back
+		// into the command to be scanned as syntax.
+		off := 0
 		for _, line := range strings.SplitAfter(body, "\n") {
 			if strings.TrimSpace(line) == delim {
-				end = strings.Index(body, line) + len(line)
+				end = off + len(line)
 				break
 			}
+			off += len(line)
 		}
-		command = head + body[end:]
+		// Rejoin with a newline: the terminator line was consumed, so splicing
+		// directly would fuse the last token of the head onto the first token of
+		// the next command ("/tmp/plan.md" + "sed" -> "/tmp/plan.mdsed"). That
+		// single missing byte defeated both detectors at once — the fused path
+		// still looked /tmp-scratch, and sed was no longer segment-initial.
+		command = head + "\n" + body[end:]
 	}
 }
 
@@ -884,16 +902,17 @@ func stripHeredocBodies(command string) string {
 //
 // Without this, flag scanning bleeds across a pipeline: `sed -n '1p' f | grep -i x`
 // matched grep's -i and blocked a read as though it were an in-place edit.
+// Splitting on single '&' covers '&&' for free and also catches backgrounding
+// (`sed ... & grep -i x`), which is the same bleed in a rarer shape. Segments
+// feed only the flag and tee scanners — never redirect extraction — so tearing
+// "2>&1" into "2>" and "1" here is harmless.
 func commandSegments(command string) []string {
-	fields := strings.FieldsFunc(command, func(r rune) bool {
-		return r == '|' || r == ';' || r == '\n'
-	})
 	var out []string
-	for _, f := range fields {
-		for _, part := range strings.Split(f, "&&") {
-			if s := strings.TrimSpace(part); s != "" {
-				out = append(out, s)
-			}
+	for _, f := range strings.FieldsFunc(command, func(r rune) bool {
+		return r == '|' || r == ';' || r == '\n' || r == '&'
+	}) {
+		if s := strings.TrimSpace(f); s != "" {
+			out = append(out, s)
 		}
 	}
 	return out
@@ -1051,6 +1070,13 @@ func teeTargets(command string) []string {
 				continue
 			}
 			for _, arg := range fields[i+1:] {
+				// Stop at the redirect region: `tee /tmp/c.log > /dev/null`
+				// otherwise collects ">" itself as a filename, which is not a
+				// scratch path and blocked a legitimate scratch write.
+				// redirectTargets already polices what follows.
+				if strings.ContainsRune(arg, '>') {
+					break
+				}
 				if strings.HasPrefix(arg, "-") {
 					continue
 				}
