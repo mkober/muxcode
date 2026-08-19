@@ -243,6 +243,34 @@ func TestCheckBashFileWriteGuard_BackgroundSeparatorNoBleed(t *testing.T) {
 	}
 }
 
+// `>|` is bash's noclobber override and is still a file redirect. It extracted
+// no target at all, so a single operator variant bypassed the guard outright.
+// (Reported by Copilot on PR #28.)
+func TestCheckBashFileWriteGuard_NoclobberOverrideRedirect(t *testing.T) {
+	blocked := []string{
+		`echo x >| bus/hook.go`,
+		`echo x >|bus/hook.go`,
+		`printf pkg >| ./scripts/gen.sh`,
+	}
+	for _, cmd := range blocked {
+		t.Run(cmd, func(t *testing.T) {
+			if d := CheckBashFileWriteGuard("edit", cmd); d == nil || !d.Blocked {
+				t.Errorf("CheckBashFileWriteGuard(edit, %q) = allowed, want blocked — "+
+					">| is a file redirect, not a pipe", cmd)
+			}
+		})
+	}
+
+	// The scratch exemption still applies to the same operator.
+	if d := CheckBashFileWriteGuard("edit", "echo x >| /tmp/out.log"); d != nil && d.Blocked {
+		t.Error(">| to a scratch path must stay allowed")
+	}
+	// A genuine pipe is unaffected — there is no '>' preceding it.
+	if d := CheckBashFileWriteGuard("edit", "cat bus/hook.go | grep -i func"); d != nil && d.Blocked {
+		t.Error("an ordinary pipe must not be read as a redirect")
+	}
+}
+
 // Only roles that own an editor pane are gated. The build and test agents are
 // expected to run shell commands that write files; blocking them would be wrong.
 func TestCheckBashFileWriteGuard_OnlyGuardedRoles(t *testing.T) {

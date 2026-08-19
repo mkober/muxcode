@@ -960,6 +960,13 @@ func redirectTargets(command string) []string {
 		if j < len(command) && command[j] == '&' {
 			continue // fd duplication, not a file
 		}
+		// `>|` is the noclobber override — still a file redirect. Without this
+		// the '|' lands in the terminator set, the target scan advances zero
+		// bytes, and no target is extracted at all: `echo x >| repo.go` wrote a
+		// repo file and the guard saw nothing to check.
+		if j < len(command) && command[j] == '|' {
+			j++
+		}
 		for j < len(command) && (command[j] == ' ' || command[j] == '\t') {
 			j++
 		}
