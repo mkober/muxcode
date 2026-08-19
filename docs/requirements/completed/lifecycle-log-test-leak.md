@@ -16,7 +16,7 @@ Test runs deposited real lifecycle log files into the user's live install. `Life
 
 ### Cross-links
 
-Found while working on [disk-pressure-wrong-filesystem](disk-pressure-wrong-filesystem.md) — the same investigation into lifecycle-log health (disk-pressure spam had collapsed retained history) surfaced this second way the log directory degrades.
+Found while working on [disk-pressure-wrong-filesystem](../backlog/disk-pressure-wrong-filesystem.md) — the same investigation into lifecycle-log health (disk-pressure spam had collapsed retained history) surfaced this second way the log directory degrades.
 
 ## Requirements
 
