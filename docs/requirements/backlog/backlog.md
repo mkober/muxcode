@@ -35,7 +35,7 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 
 | ID | Spec | Priority | Status |
 |----|------|----------|--------|
-| MUX-001 | [`branch-time-tracking.md`](./branch-time-tracking.md) | High | In Progress — read path + verify-spec doc sink done; remaining: docs bullets (`architecture.md`, `agent-bus.md`, `CLAUDE.md`) + Phase 3 test extensions |
+| MUX-001 | [`branch-time-tracking.md`](./branch-time-tracking.md) | High | Complete — read path + verify-spec doc sink + docs bullets done; Phase 3 companion test (`scripts/test-branch-time-recording.sh`, 14/14 checks, hermetic) done; ready to move to `completed/` |
 | MUX-002 | [`disk-pressure-wrong-filesystem.md`](./disk-pressure-wrong-filesystem.md) | Medium | In Progress — `TmpPressure()` headroom+footprint signals shipped; integration test outstanding |
 | MUX-005 | [`plan-diagrams.md`](./plan-diagrams.md) | Medium | In Progress — Phases 1–3 complete (render script, media store, req-doc embeds); Jira/Confluence embed phases remaining |
 

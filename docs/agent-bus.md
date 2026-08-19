@@ -1620,6 +1620,38 @@ Status values: `sent`, `delivered`, `responded`, `expired`.
 
 Core code: `cmd/track.go`, `bus/delivery.go`.
 
+### `muxcode branch-time`
+
+Per-branch active working time, accumulated by the daemon sampler and read/reconciled via the CLI. See [Configuration → Branch time tracking](configuration.md#branch-time-tracking) for the env vars that control accumulation.
+
+```bash
+muxcode branch-time show [--branch <b>] [--json]   # one branch (default: current)
+muxcode branch-time --all [--json]                 # all tracked branches for this repo
+muxcode branch-time --status                       # tmux status bar snippet
+muxcode branch-time --trailer                      # commit trailer line
+muxcode branch-time seed --secs <n> [--branch <b>] # floor-reseed the ledger (never lowers)
+muxcode branch-time record --secs <n> [--branch <b>] # mark <n> seconds as recorded (staleness watermark)
+muxcode branch-time log-jira [--dry-run]           # Jira worklog with watermark
+```
+
+**`--json` output** — the machine-readable read path the plan agent consumes during `verify-spec`:
+
+| Field | Meaning |
+|-------|---------|
+| `repoKey` | Stable repo identity (origin URL or toplevel path) |
+| `branch` | Branch name |
+| `seconds` / `formatted` | Cumulative active time (absolute total) |
+| `unrecordedSeconds` / `lastRecordedSeconds` / `lastRecordedAt` | Staleness watermark set by `record` — how much has accrued since the last doc write |
+| `lastJiraLoggedSeconds` | Jira worklog watermark (`log-jira`) |
+| `updated` | Last accumulation timestamp |
+| `current` / `ignored` | Whether this is the checked-out branch / on the ignore list |
+
+A fresh or unknown branch returns `seconds: 0` rather than an error, so the plan agent's read never fails on a new branch.
+
+**Recording flow (verify-spec)**: when the build→test→review chain succeeds with an active spec set, the plan agent reads the ledger via `--json` and upserts a `## Time Tracking` row in that spec — keyed by branch, replaced in place, **absolute totals, never deltas** (which is what makes re-recording idempotent). **Never-regress reconciliation**: if the ledger reads lower than the doc row (lost or reset store), the doc's larger value is kept and the ledger is re-seeded from it via `seed` — a floor that only ever raises. Do not use `--add` for reconciliation: it is additive and double-counts whenever the ledger is not exactly zero. **Degrade-quietly**: branches with no active spec, and repos without `docs/requirements/`, accumulate time but write nothing.
+
+Core code: `cmd/branchtime.go`, `bus/timetrack.go` (ledger at `~/.config/muxcode/branch-time.json`), `daemon/daemon.go` (`checkBranchTime()` sampler, `notifyPlanOnReview()` recording instruction). Integration tests: `scripts/test-branch-time.sh` (accumulator/CLI), `scripts/test-branch-time-recording.sh` (recording sink — JSON shape, idempotent upsert, never-regress).
+
 ### `muxcode compact`
 
 Trigger conversation compression for an agent or all agents.
