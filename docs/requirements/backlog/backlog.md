@@ -37,8 +37,8 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 |----|------|----------|--------|
 | MUX-001 | [`branch-time-tracking.md`](./branch-time-tracking.md) | High | In Progress — read path + verify-spec doc sink done; remaining: docs bullets (`architecture.md`, `agent-bus.md`, `CLAUDE.md`) + Phase 3 test extensions |
 | MUX-002 | [`disk-pressure-wrong-filesystem.md`](./disk-pressure-wrong-filesystem.md) | Medium | In Progress — `TmpPressure()` headroom+footprint signals shipped; integration test outstanding |
-| MUX-003 | [`echo-as-result.md`](./echo-as-result.md) | High | In Progress — fix shipped via `bus.NewBusResponseEntry` provenance; Phase 4 test script (`scripts/test-echo-as-result.sh`) outstanding |
-| MUX-004 | [`lifecycle-log-test-leak.md`](./lifecycle-log-test-leak.md) | Medium | In Progress — `MUXCODE_LIFECYCLE_LOG_DIR` pin shipped; regression test outstanding |
+| MUX-003 | [`echo-as-result.md`](./echo-as-result.md) | High | Complete — fix shipped via `bus.NewBusResponseEntry` provenance; Phase 4 test script (`scripts/test-echo-as-result.sh`, 20/20 checks, no live session needed) done; ready to move to `completed/` |
+| MUX-004 | [`lifecycle-log-test-leak.md`](./lifecycle-log-test-leak.md) | Medium | Complete — `MUXCODE_LIFECYCLE_LOG_DIR` pin shipped; regression test (`scripts/test-lifecycle-log-leak.sh`, 7/7 checks, redirected-HOME design) + `tui/main_test.go` pin done; ready to move to `completed/` |
 | MUX-005 | [`plan-diagrams.md`](./plan-diagrams.md) | Medium | In Progress — Phases 1–3 complete (render script, media store, req-doc embeds); Jira/Confluence embed phases remaining |
 
 ### Reliability & observability

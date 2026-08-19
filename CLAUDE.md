@@ -51,6 +51,8 @@ tools/muxcode-llm-harness/    # Go module — standalone local LLM harness
 | `bash scripts/test-diff-split.sh` | Integration test for nvim diff split preview (requires running muxcode session) |
 | `bash scripts/test-hot-reload.sh` | Integration test for agent hot reload (requires running muxcode session) |
 | `bash scripts/test-resize-hook.sh` | Integration test for the `client-resized` window auto-refit hook (requires running muxcode session) |
+| `bash scripts/test-echo-as-result.sh` | Integration test for the echo-as-result fix — synthesized bus-response rows never render as a pass (isolated scratch session, no live session needed) |
+| `bash scripts/test-lifecycle-log-leak.sh` | Regression test that a full test run leaves `~/.config/muxcode/logs` untouched (runs the suite under a throwaway `HOME`) |
 
 Both Go modules have **no external dependencies** (stdlib only).
 
