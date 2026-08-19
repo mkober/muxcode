@@ -2,7 +2,7 @@
 
 Live modal for inspecting incoming webhook requests. Shows request stream in real time with detail drill-down, replay, and filtering.
 
-**Depends on:** [Modal Window Manager](modal-window-manager.md)
+**Depends on:** [Modal Window Manager](../completed/MUX-069-modal-window-manager.md)
 
 ## Use case
 

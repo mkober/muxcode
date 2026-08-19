@@ -123,15 +123,26 @@ Core code: `cmd/hook.go` (hook gating), `bus/prompt.go` (role-specific manual bu
 3. Bus delivers to /tmp/muxcode-bus-{s}/inbox/plan.jsonl
 4. Plan agent reads inbox, reads the target spec and relevant code/diffs
 5. Plan agent updates docs: checks off acceptance criteria, updates status fields
-6. Plan agent replies: muxcode send edit update-docs "Updated conditional-chains.md..." --type response --reply-to <id>
+6. Plan agent replies: muxcode send edit update-docs "Updated MUX-043-conditional-chains.md..." --type response --reply-to <id>
 7. --wait detects response, prints summary to edit's Bash tool result
 ```
 
 The plan agent (F1) is scoped exclusively to docs directories (`docs/`, `CLAUDE.md`, `README.md`). It maintains requirements specs, architecture docs, and planning artifacts. The `docs` hosted role is mapped to `plan` — messages to `docs` deliver to the plan agent's inbox.
 
-Actions: `update-docs`, `update-status`, `check-phase`, `add-decision`, `review-docs`, `create-spec`, `move-spec`. The plan agent does not participate in the build→test→review chain — it responds to explicit requests only.
+Actions: `update-docs`, `update-status`, `check-phase`, `add-decision`, `review-docs`, `create-spec`, `move-spec`, `verify-spec`. The plan agent responds to explicit requests — with one automated exception: the daemon's `verify-spec` notification when the build→test→review chain succeeds (see below).
 
 The F1 window also hosts a **research agent** via mode cycling (same mechanism as F2). Pressing F1 when already on the plan window toggles between plan and research modes. The research agent runs on **OpenCode with DeepSeek** and specializes in web searching API docs, platform references, and GitHub projects. It has its own independent inbox (`inbox/research.jsonl`) — not hosted on plan or edit. See [Agent mode (F1 cycling)](#agent-mode-f1-cycling) below.
+
+### Spec Verification and Branch-Time Recording (verify-spec)
+
+When the build→test→review chain finishes successfully and an active spec is set (`muxcode spec set <path>`), the daemon's `notifyPlanOnReview()` (`daemon/daemon.go`) sends the plan agent a `verify-spec` request naming the spec, the changed files, and — when the current branch is not on the branch-time ignore list — the branch to record time for. Gated by `NotifyPlanOn` in the review `EventChain` config (default `["success"]`).
+
+The plan agent then does two things in one pass:
+
+1. **Verify progress** — reads the spec and the changed code, checks off satisfied acceptance criteria and phase steps (`- [ ]` → `- [x]`), and updates the status field.
+2. **Record branch active time** — reads the ledger via `muxcode branch-time show --branch <b> --json` (a fresh branch returns `seconds: 0`, never an error) and upserts a `## Time Tracking` row in the active spec: keyed by branch, replaced in place, **absolute totals from the ledger, never deltas** — which is what makes re-recording idempotent. **Never-regress reconciliation**: if the ledger reads lower than the doc row (lost or reset store), the doc's larger value is kept and the ledger is re-seeded from it via `muxcode branch-time seed` — a floor that only ever raises (`--add` is never used for this; it double-counts on a non-zero ledger). The write is then watermarked via `muxcode branch-time record --secs <n>`.
+
+Branches with no active spec, and repos without a `docs/requirements/` structure, **degrade quietly**: time accumulates in the ledger but nothing is written to docs. Integration coverage: `scripts/test-branch-time-recording.sh` (JSON shape, idempotent upsert, never-regress reconciliation, no-active-spec degrade).
 
 ### Deploy-Run-Watch Chain
 
@@ -304,7 +315,7 @@ Core code: `bus/delivery.go`, `cmd/track.go`.
 
 #### Delivery receipts (delivery-acknowledgement)
 
-The [delivery-acknowledgement](requirements/completed/delivery-acknowledgement.md) redesign replaces the daemon's pane-scrape "did it look idle?" delivery inference with a **positive receipt** — a per-message signal that an agent actually consumed a message — plus **agent self-poll**. A receipt's *kind* depends on whether the provider can consume its own inbox in-process:
+The [delivery-acknowledgement](requirements/completed/MUX-050-delivery-acknowledgement.md) redesign replaces the daemon's pane-scrape "did it look idle?" delivery inference with a **positive receipt** — a per-message signal that an agent actually consumed a message — plus **agent self-poll**. A receipt's *kind* depends on whether the provider can consume its own inbox in-process:
 
 | Provider | Receipt kind | Written by |
 |----------|--------------|-----------|
@@ -313,7 +324,7 @@ The [delivery-acknowledgement](requirements/completed/delivery-acknowledgement.m
 
 A daemon backstop, **`checkPollHealth`**, watches for a growing **receipt gap** (inbox messages un-receipted past a threshold) — a positive signal a self-poll loop or delivery sidecar died — and re-drives delivery (`ForceDeliver` for self-pollers, `SendWakeUp` for non-hook TUIs), alerting edit with a `delivery-gap` event if the gap persists.
 
-**Rollout — default ON (soak):** the cutover is now the **default**. `ackDeliveryActive()` returns ON unless rolled back, in precedence order: `MUXCODE_DELIVERY_ACK_DISABLE=1` (env hard kill switch back to pane-scrape delivery, needs a daemon restart), `MUXCODE_DELIVERY_ACK=off` (env opt-out; `=on` pins it on), then the instant restart-free runtime marker `delivery-ack.off` written by `muxcode delivery-ack off` (the daemon re-reads it every poll loop; `on` clears it). While the cutover is active the receipt model is fully in charge and the pane-scrape delivery machinery above is **bypassed but still present** as a fallback — its physical removal is a soak-gated follow-up ([remove-gated-pane-scrape-delivery](requirements/backlog/remove-gated-pane-scrape-delivery.md)), still blocked until the receipt-gap backstop mis-fire is resolved. Core code: `bus/delivery.go` (`WriteReceipt`/`ReadReceipt`/`ReceiptGap`), `bus/inject_verify.go`, `daemon/daemon.go` (`checkPollHealth`, `ackDeliveryActive`).
+**Rollout — default ON (soak):** the cutover is now the **default**. `ackDeliveryActive()` returns ON unless rolled back, in precedence order: `MUXCODE_DELIVERY_ACK_DISABLE=1` (env hard kill switch back to pane-scrape delivery, needs a daemon restart), `MUXCODE_DELIVERY_ACK=off` (env opt-out; `=on` pins it on), then the instant restart-free runtime marker `delivery-ack.off` written by `muxcode delivery-ack off` (the daemon re-reads it every poll loop; `on` clears it). While the cutover is active the receipt model is fully in charge and the pane-scrape delivery machinery above is **bypassed but still present** as a fallback — its physical removal is a soak-gated follow-up ([remove-gated-pane-scrape-delivery](requirements/backlog/MUX-012-remove-gated-pane-scrape-delivery.md)), still blocked until the receipt-gap backstop mis-fire is resolved. Core code: `bus/delivery.go` (`WriteReceipt`/`ReadReceipt`/`ReceiptGap`), `bus/inject_verify.go`, `daemon/daemon.go` (`checkPollHealth`, `ackDeliveryActive`).
 
 ### Edit inbox polling (`--wait`)
 

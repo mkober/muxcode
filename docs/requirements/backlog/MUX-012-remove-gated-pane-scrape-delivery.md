@@ -2,7 +2,7 @@
 
 Physically delete the daemon's pane-scrape delivery machinery — the notified-IDs subsystem,
 churn-suppression, safety-net retries, and the active-with-stale-messages watchdog — now that
-receipt-based delivery ([delivery-acknowledgement](../completed/delivery-acknowledgement.md))
+receipt-based delivery ([delivery-acknowledgement](../completed/MUX-050-delivery-acknowledgement.md))
 supersedes it. That machinery is now **bypassed at runtime** behind `ackDeliveryActive()`
 (`MUXCODE_DELIVERY_ACK`, now **default ON**) but still **present in the tree** as a rollback
 fallback. This doc tracks the final step: removing the dead code once the default-ON cutover
@@ -65,7 +65,7 @@ un-consumed for benign reasons:
 A third — distinct and much cheaper — cause of the same symptom was found live: a request the
 agent **answered but never consumed** read as un-receipted forever (read/write asymmetry in the
 receipt model), keeping the gap permanently non-empty and re-driving delivery for finished work.
-That cause is fixed by [answered-row-receipt](../completed/answered-row-receipt.md), which removes a
+That cause is fixed by [answered-row-receipt](../completed/MUX-036-answered-row-receipt.md), which removes a
 large share of these mis-fires without any heartbeat work — but the busy-TUI and freshly-idle
 cases below remain, so this prerequisite is **partially unblocked, not resolved**.
 
@@ -136,7 +136,7 @@ Receipt delivery does not replace these — they are separate signals:
 | `tools/muxcode/daemon/daemon.go` | Delete gated idle/parked/pane-sweep delivery paths, churn-suppression, active-stale watchdog, `forceWakeCount`, and the `ackDeliveryActive()` gate plumbing |
 | `tools/muxcode/bus/notify.go` | Remove the notified-IDs subsystem; keep the `trigger-{role}.notify` write |
 | `tools/muxcode/daemon/poll_health_test.go` | Update cutover-gating tests that assert the old paths bypass (they become the only path) |
-| `docs/requirements/completed/delivery-acknowledgement.md` | Check off the "removed" AC + Phase 5 step 2 once this lands |
+| `docs/requirements/completed/MUX-050-delivery-acknowledgement.md` | Check off the "removed" AC + Phase 5 step 2 once this lands |
 
 ## Implementation
 
@@ -175,4 +175,4 @@ Receipt delivery does not replace these — they are separate signals:
 Backlog — the cutover default has been **flipped ON (soak)**; the gated machinery is deleted
 only after the default-ON soak proves stable live **and** the receipt-gap backstop mis-fire is
 resolved. Tracks the deferred "removed" acceptance criterion / Phase 5 step 2 of
-[delivery-acknowledgement](../completed/delivery-acknowledgement.md).
+[delivery-acknowledgement](../completed/MUX-050-delivery-acknowledgement.md).

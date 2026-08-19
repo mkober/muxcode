@@ -50,7 +50,7 @@ Diagrams are not editable in-place — changing a diagram means re-rendering the
   `flattenADF` in `tools/muxcode/bus/atlassian.go`.
 - Existing CLI: `muxcode atlassian confluence {read,update,search}` in
   `tools/muxcode/cmd/atlassian.go`.
-- Existing skill: `skills/confluence-update-page.md` (ADF reference, read+update flow).
+- Existing skill: `skills/MUX-044-confluence-update-page.md` (ADF reference, read+update flow).
 
 ## Requirements
 
@@ -303,7 +303,7 @@ embeds the committed `docs/media/sample-aws.svg` (rendered from `sample-aws.draw
 
 #### 6. Skill
 
-- Add `skills/plan-diagrams.md` (or extend `skills/confluence-update-page.md`) scoped to
+- Add `skills/MUX-005-plan-diagrams.md` (or extend `skills/MUX-044-confluence-update-page.md`) scoped to
   `[plan, edit]` documenting the author → render → store → embed workflow with a worked example
   for **each of the three surfaces**: (1) req-doc relative markdown link, (2) `jira attach` +
   ADF media in the issue description, (3) `confluence attach` + ADF/storage embed snippet. Cover
@@ -343,7 +343,7 @@ prompts; the feature degrades gracefully when they are declined or absent.
 | `tools/muxcode/bus/atlassian.go` | Add `ConfluenceUploadAttachment()` + `JiraUploadAttachment()` sharing one stdlib multipart helper; Confluence update-existing handling |
 | `tools/muxcode/cmd/atlassian.go` | Add `attach` subcommand to `atlassianConfluence()` **and** `atlassianJira()`; update both usage lines |
 | `tools/muxcode/bus/profile.go` | Add renderer `Bash(...)` perms to the `plan` profile |
-| `skills/plan-diagrams.md` (or extend `skills/confluence-update-page.md`) | Document author→render→store→embed workflow (3 surfaces) + AWS-icon example |
+| `skills/MUX-005-plan-diagrams.md` (or extend `skills/MUX-044-confluence-update-page.md`) | Document author→render→store→embed workflow (3 surfaces) + AWS-icon example |
 | `docs/agents.md`, `docs/configuration.md` | Note new capability + optional external dependency |
 | `scripts/test-plan-diagram-render.sh` | New (Phase 2) — render-only integration test: generates image files from every fixture, no upload/embed; CI-safe (no creds) |
 | `scripts/test-plan-diagram.sh` | New (Phase 6) — end-to-end integration test: upload + embed across req doc, Jira, Confluence |

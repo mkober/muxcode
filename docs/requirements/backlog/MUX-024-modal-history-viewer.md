@@ -2,7 +2,7 @@
 
 Full-screen modal for browsing agent command history with filtering, search, and detail expansion. Replaces the `muxcode history <role>` CLI output with an interactive navigable view.
 
-**Depends on:** [Modal Window Manager](modal-window-manager.md)
+**Depends on:** [Modal Window Manager](../completed/MUX-069-modal-window-manager.md)
 
 ## Use case
 

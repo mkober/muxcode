@@ -99,7 +99,7 @@ Tracking task 1779979541-edit-d2c7d769 — response will arrive in inbox
     generated bodies, anything you'd otherwise cram into one giant payload.
   - Prefer descriptive `/tmp/<name>.md` names; the receiving agent reads the file
     directly. (A future `muxcode send --payload-file` will formalize this — see
-    `docs/requirements/backlog/delegation-message-hygiene.md`.)
+    `docs/requirements/backlog/MUX-010-delegation-message-hygiene.md`.)
 - **Prefer `--track` for delegations.** Use `--track` for fire-and-forget /
   long-running work so the sender keeps working; reserve `--wait` for when the
   result is needed before the next step. A healthy `--wait` polls every 500ms and
@@ -143,7 +143,7 @@ Tracking task 1779979541-edit-d2c7d769 — response will arrive in inbox
 > every stop/restart path is keystroke- or marker-based and the startup wake is
 > unreliable. An automatic watchdog (detect freeze → kill → respawn → verify inbox
 > drained, with no user intervention) is tracked in
-> `docs/requirements/backlog/delegation-message-hygiene.md`.
+> `docs/requirements/backlog/MUX-010-delegation-message-hygiene.md`.
 
 ### `muxcode inbox`
 
@@ -349,7 +349,7 @@ Resolution order for whether the cutover is active:
 3. Runtime OFF marker (`muxcode delivery-ack off`) → OFF (no restart needed).
 4. Otherwise → **ON** (default).
 
-`status` prints the effective state (noting "default: ON"), the rollback-marker path (present/absent), and any relevant env. Physical removal of the bypassed pane-scrape machinery stays deferred behind the known receipt-gap-backstop limitation — see [`remove-gated-pane-scrape-delivery`](requirements/backlog/remove-gated-pane-scrape-delivery.md).
+`status` prints the effective state (noting "default: ON"), the rollback-marker path (present/absent), and any relevant env. Physical removal of the bypassed pane-scrape machinery stays deferred behind the known receipt-gap-backstop limitation — see [`remove-gated-pane-scrape-delivery`](requirements/backlog/MUX-012-remove-gated-pane-scrape-delivery.md).
 
 ### `muxcode cron`
 
@@ -1619,6 +1619,38 @@ Reads the delivery status file for the given message ID and prints its lifecycle
 Status values: `sent`, `delivered`, `responded`, `expired`.
 
 Core code: `cmd/track.go`, `bus/delivery.go`.
+
+### `muxcode branch-time`
+
+Per-branch active working time, accumulated by the daemon sampler and read/reconciled via the CLI. See [Configuration → Branch time tracking](configuration.md#branch-time-tracking) for the env vars that control accumulation.
+
+```bash
+muxcode branch-time show [--branch <b>] [--json]   # one branch (default: current)
+muxcode branch-time --all [--json]                 # all tracked branches for this repo
+muxcode branch-time --status                       # tmux status bar snippet
+muxcode branch-time --trailer                      # commit trailer line
+muxcode branch-time seed --secs <n> [--branch <b>] # floor-reseed the ledger (never lowers)
+muxcode branch-time record --secs <n> [--branch <b>] # mark <n> seconds as recorded (staleness watermark)
+muxcode branch-time log-jira [--dry-run]           # Jira worklog with watermark
+```
+
+**`--json` output** — the machine-readable read path the plan agent consumes during `verify-spec`:
+
+| Field | Meaning |
+|-------|---------|
+| `repoKey` | Stable repo identity (origin URL or toplevel path) |
+| `branch` | Branch name |
+| `seconds` / `formatted` | Cumulative active time (absolute total) |
+| `unrecordedSeconds` / `lastRecordedSeconds` / `lastRecordedAt` | Staleness watermark set by `record` — how much has accrued since the last doc write |
+| `lastJiraLoggedSeconds` | Jira worklog watermark (`log-jira`) |
+| `updated` | Last accumulation timestamp |
+| `current` / `ignored` | Whether this is the checked-out branch / on the ignore list |
+
+A fresh or unknown branch returns `seconds: 0` rather than an error, so the plan agent's read never fails on a new branch.
+
+**Recording flow (verify-spec)**: when the build→test→review chain succeeds with an active spec set, the plan agent reads the ledger via `--json` and upserts a `## Time Tracking` row in that spec — keyed by branch, replaced in place, **absolute totals, never deltas** (which is what makes re-recording idempotent). **Never-regress reconciliation**: if the ledger reads lower than the doc row (lost or reset store), the doc's larger value is kept and the ledger is re-seeded from it via `seed` — a floor that only ever raises. Do not use `--add` for reconciliation: it is additive and double-counts whenever the ledger is not exactly zero. **Degrade-quietly**: branches with no active spec, and repos without `docs/requirements/`, accumulate time but write nothing.
+
+Core code: `cmd/branchtime.go`, `bus/timetrack.go` (ledger at `~/.config/muxcode/branch-time.json`), `daemon/daemon.go` (`checkBranchTime()` sampler, `notifyPlanOnReview()` recording instruction). Integration tests: `scripts/test-branch-time.sh` (accumulator/CLI), `scripts/test-branch-time-recording.sh` (recording sink — JSON shape, idempotent upsert, never-regress).
 
 ### `muxcode compact`
 

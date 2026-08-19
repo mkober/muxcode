@@ -11,7 +11,7 @@ On non-hook providers (OpenCode, Codex), `SendWakeUp` injects `type: response` p
 - 26 messages reached the edit inbox in 3m30s; `test`'s context climbed to 84.9K tokens with real spend accruing per repeat
 - At drain time, `build`'s inbox held 5800 bytes of almost entirely `test [response:response]` payloads
 - Consuming the echoes stopped the loop immediately (5800 → 0 bytes; fleet-wide rate 0/60s thereafter)
-- Downstream amplification: the same storm's auto-CC traffic into a non-consuming edit inbox drove the sustained `verify-spec` echo burst documented in [`verify-spec-stale-review-refire`](./verify-spec-stale-review-refire.md) (impact item 5) — one echo bug feeding another
+- Downstream amplification: the same storm's auto-CC traffic into a non-consuming edit inbox drove the sustained `verify-spec` echo burst documented in [`verify-spec-stale-review-refire`](./MUX-007-verify-spec-stale-review-refire.md) (impact item 5) — one echo bug feeding another
 
 ### Mechanism
 
@@ -55,7 +55,7 @@ The stronger driver was a request `build` had already fulfilled: a `make build` 
 
 ### Design consideration
 
-Fourth instance in one day of the same root pattern — the non-hook wake-up path injecting content the hook path already learned not to: (1) unbounded wake-up argv (fixed — `BoundWakeUpBatch`), (2) unbounded `compact-recommended` accumulation (fixed — `HasPendingAction`), (3) unverified auto-restart (filed — [`unverified-daemon-auto-restart`](./unverified-daemon-auto-restart.md)), (4) this. Consider a single explicit policy for "what may become a prompt" in the non-hook wake-up path rather than continuing to patch cases individually.
+Fourth instance in one day of the same root pattern — the non-hook wake-up path injecting content the hook path already learned not to: (1) unbounded wake-up argv (fixed — `BoundWakeUpBatch`), (2) unbounded `compact-recommended` accumulation (fixed — `HasPendingAction`), (3) unverified auto-restart (filed — [`unverified-daemon-auto-restart`](./MUX-008-unverified-daemon-auto-restart.md)), (4) this. Consider a single explicit policy for "what may become a prompt" in the non-hook wake-up path rather than continuing to patch cases individually.
 
 ## Implementation
 

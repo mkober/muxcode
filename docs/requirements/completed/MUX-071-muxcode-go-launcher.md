@@ -493,7 +493,7 @@ TmuxSendEnter(pane)
 | ~~10~~ | ~~2~~ | ~~Project scanner + fzf picker in `bus/launcher.go`~~ | ~~done~~ |
 | ~~11~~ | ~~3~~ | ~~Status bar customization in `bus/launcher.go`~~ | ~~done~~ |
 | ~~12~~ | ~~4~~ | ~~Auto-accept loop + `--auto-accept` flag + `--resize` flag~~ | ~~done~~ |
-| 13 | — | Docs: update CLAUDE.md, architecture.md, shell-to-go-migration.md | ~100 |
+| 13 | — | Docs: update CLAUDE.md, architecture.md, MUX-089-shell-to-go-migration.md | ~100 |
 
 **Phase 0:** ✅ Complete — Go module directory renamed, internal Go refs updated, Makefile + .gitignore updated
 **Phase 1:** ✅ Complete — 1,381 lines of new Go code, ~900 string replacements, Go binary is `muxcode`, `muxcode.sh` retired

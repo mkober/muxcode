@@ -296,7 +296,7 @@ must be removed as delivery mechanisms:
 > stay open **by design** — physical deletion of the dead machinery is the last step, now
 > gated on the default-ON soak proving no regressions **and** the receipt-gap backstop
 > mis-fire being resolved. The deletion is tracked in the backlog:
-> [remove-gated-pane-scrape-delivery](../backlog/remove-gated-pane-scrape-delivery.md).
+> [remove-gated-pane-scrape-delivery](../backlog/MUX-012-remove-gated-pane-scrape-delivery.md).
 
 ### Phase 6: Integration test (required)
 
@@ -350,7 +350,7 @@ All Phases 1–6 are now committed and pushed to `origin/main`, and **Phase 4 st
 been **flipped to ON** (soak). The **only** remaining work is deferred by design: **physical
 removal** of the bypassed pane-scrape machinery, awaiting the default-ON soak proving no
 regressions **and** the receipt-gap backstop mis-fire being resolved. That removal is tracked
-in its own backlog doc — [remove-gated-pane-scrape-delivery](../backlog/remove-gated-pane-scrape-delivery.md)
+in its own backlog doc — [remove-gated-pane-scrape-delivery](../backlog/MUX-012-remove-gated-pane-scrape-delivery.md)
 — along with the open "removed" acceptance criterion + Phase 5 step 2.
 
 **Phase 1 (receipt store)**: `delivery.go` extended with

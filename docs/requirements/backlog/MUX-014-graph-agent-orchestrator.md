@@ -28,10 +28,10 @@ So: fixed lines + LLM scheduler + optional workers. Missing: an executable multi
 
    | Emerging need | Graph value |
    |---------------|-------------|
-   | Research dual-provider ([`backlog/research-dual-provider.md`](research-dual-provider.md)) | Fan-out → critique → join/synthesize |
+   | Research dual-provider ([`backlog/MUX-016-research-dual-provider.md`](MUX-016-research-dual-provider.md)) | Fan-out → critique → join/synthesize |
    | Auto story-lifecycle (skill) | Skill compiled to a DAG + human gates |
    | build→test→review | Reusable subgraph template |
-   | Spawn worktrees ([`completed/spawn-worktrees.md`](../completed/spawn-worktrees.md)) | Map nodes → parallel workers |
+   | Spawn worktrees ([`completed/MUX-091-spawn-worktrees.md`](../completed/MUX-091-spawn-worktrees.md)) | Map nodes → parallel workers |
    | `NotifyPlanOn` spec verify | Side-effect / parallel edge |
 
 7. **Observability** — DAG rendered in TUI/console; lifecycle events per edge. Clearer than reconstructing call order from inbox JSONL.
@@ -61,8 +61,8 @@ Templates: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`,
 ### Relationship to existing backlog items
 
 - **Subsumes** "Pipeline definitions" (user-defined YAML/JSON pipelines) — a linear pipeline is the degenerate single-path graph; this spec delivers that surface plus joins, branches, and durable runs.
-- **Complements** [`opencode-plugin-hook-bridge`](./opencode-plugin-hook-bridge.md) — outcome fidelity for non-hook providers determines how reliably graph edges can route on success/failure (see Open questions).
-- **Builds on** [`completed/conditional-chains.md`](../completed/conditional-chains.md) (condition engine), [`completed/workflow-state-machine.md`](../completed/workflow-state-machine.md) (telemetry stays as-is), [`completed/agent-spawn.md`](../completed/agent-spawn.md) + [`completed/spawn-worktrees.md`](../completed/spawn-worktrees.md) (map-node workers), [`completed/transactional-messaging-bus.md`](../completed/transactional-messaging-bus.md) (delivery semantics).
+- **Complements** [`opencode-plugin-hook-bridge`](./MUX-011-opencode-plugin-hook-bridge.md) — outcome fidelity for non-hook providers determines how reliably graph edges can route on success/failure (see Open questions).
+- **Builds on** [`completed/MUX-043-conditional-chains.md`](../completed/MUX-043-conditional-chains.md) (condition engine), [`completed/MUX-099-workflow-state-machine.md`](../completed/MUX-099-workflow-state-machine.md) (telemetry stays as-is), [`completed/MUX-033-agent-spawn.md`](../completed/MUX-033-agent-spawn.md) + [`completed/MUX-091-spawn-worktrees.md`](../completed/MUX-091-spawn-worktrees.md) (map-node workers), [`completed/MUX-094-transactional-messaging-bus.md`](../completed/MUX-094-transactional-messaging-bus.md) (delivery semantics).
 
 ## Requirements
 
@@ -159,7 +159,7 @@ Templates: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`,
 
 ## Open questions
 
-- **Outcome fidelity on non-hook providers** — hook providers give deterministic exit codes; OpenCode/Codex outcomes are inferred. Does the executor demand hook-grade outcomes for `failure`-routed edges, or accept `unknown` with an explicit `on_unknown` edge? Interacts with [`opencode-plugin-hook-bridge`](./opencode-plugin-hook-bridge.md).
+- **Outcome fidelity on non-hook providers** — hook providers give deterministic exit codes; OpenCode/Codex outcomes are inferred. Does the executor demand hook-grade outcomes for `failure`-routed edges, or accept `unknown` with an explicit `on_unknown` edge? Interacts with [`opencode-plugin-hook-bridge`](./MUX-011-opencode-plugin-hook-bridge.md).
 - **Who authors DAGs in v1** — hand-authored JSON + built-in templates only, or also an LLM planner (graph agent / edit) that compiles intent → DAG? Proposal: templates-only first; planner is a later, separate spec.
 - **Story-lifecycle template scope** — the full `story-lifecycle` skill includes Jira transitions and PR creation, all behind authority gates; the template must model those as `wait_human`-gated nodes, which may make it more documentation than automation until authorities are opted in.
 - **Concurrency limits** — per-run and global caps on simultaneously running nodes (map fan-out could spawn many worktrees); likely `MUXCODE_GRAPH_MAX_PARALLEL`.
@@ -169,7 +169,7 @@ Templates: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`,
 
 - `docs/architecture.md`, `docs/hooks.md`
 - `docs/requirements/completed/{conditional-chains,workflow-state-machine,agent-spawn,spawn-worktrees,agent-mode,transactional-messaging-bus}.md`
-- `docs/requirements/backlog/research-dual-provider.md`
+- `docs/requirements/backlog/MUX-016-research-dual-provider.md`
 - `tools/muxcode/bus/{profile,workflow,spawn,subscribe,task}.go`
 
 ## Provenance

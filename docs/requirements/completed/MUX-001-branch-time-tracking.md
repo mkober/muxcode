@@ -60,10 +60,10 @@ Satisfied by the shipped baseline (verified 2026-08-13):
 Remaining (this spec's delta):
 
 - [x] `muxcode branch-time --json` (current branch) and `--all --json` emit structured output plan can consume (branch, seconds, formatted duration, updated timestamp)
-- [ ] A successful build→test→review chain (with an active spec set) results in the branch's cumulative active time recorded in the active spec's `## Time Tracking` section
-- [ ] Re-running `verify-spec` for the same chain writes the same absolute total — no double-count, no duplicate rows (idempotent by construction: absolute totals, in-place row replace)
-- [ ] Recorded totals never regress: a lost/reset store can never cause a doc to show less time than it already showed (doc value kept, store re-seeded via `seed`)
-- [ ] Branches with no active spec, and repos without `docs/requirements/`, degrade to accumulate-only with no errors — stated behaviour, not emergent
+- [x] A successful build→test→review chain (with an active spec set) results in the branch's cumulative active time recorded in the active spec's `## Time Tracking` section
+- [x] Re-running `verify-spec` for the same chain writes the same absolute total — no double-count, no duplicate rows (idempotent by construction: absolute totals, in-place row replace)
+- [x] Recorded totals never regress: a lost/reset store can never cause a doc to show less time than it already showed (doc value kept, store re-seeded via `seed`)
+- [x] Branches with no active spec, and repos without `docs/requirements/`, degrade to accumulate-only with no errors — stated behaviour, not emergent
 - [x] Branch/spec mismatch (branch key prefix does not match the active spec's filename) still records into the active spec but is flagged in plan's reply to edit
 
 ### Technical approach
@@ -120,7 +120,8 @@ On each record, plan compares the ledger total with the doc's existing row (if a
 | `cmd/branchtime.go` | Add `--json` to `show` and `--all` |
 | `daemon/daemon.go` | One-sentence addition to `notifyPlanOnReview()` message |
 | `agents/planner.md` | `verify-spec` process gains the recording step: read `--json`, upsert the row, never-regress reconciliation, mismatch flag |
-| `scripts/test-branch-time.sh` | Extend with `--json` and doc-sink checks (or companion script) |
+| `scripts/test-branch-time.sh` | Unchanged — still covers accumulator + CLI; doc-sink checks landed in the companion script instead |
+| `scripts/test-branch-time-recording.sh` | New companion (Phase 3) — recording sink: `--json` shape, idempotent upsert, never-regress via `seed`, no-active-spec degrade (14 checks) |
 | `docs/architecture.md`, `docs/agent-bus.md`, `CLAUDE.md` | Document the JSON flag, the recording step, and reconciliation |
 
 ### Risks
@@ -146,17 +147,23 @@ On each record, plan compares the ledger total with the doc's existing row (if a
 
 - [x] `notifyPlanOnReview()` message gains the recording instruction (branch named only when not on the ignore list)
 - [x] `agents/planner.md`: verify-spec step — read `branch-time show --branch <b> --json`, upsert the `## Time Tracking` row (absolute totals, in-place replace keyed by branch), apply never-regress reconciliation (re-seed via `seed`), mark via `record`, flag branch/spec mismatch in the reply
-- [ ] Docs: `docs/architecture.md`, `docs/agent-bus.md`, `CLAUDE.md` bullets
+- [x] Docs: `docs/architecture.md` (new "Spec Verification and Branch-Time Recording" subsection + stale "plan does not participate in the chain" sentence corrected), `docs/agent-bus.md` (new `muxcode branch-time` CLI section with `--json` field table), `CLAUDE.md` (recording step folded into the Spec-verification constraint bullet + test-script table row)
 
 ### Phase 3: Integration test
 
-- [ ] Extend `scripts/test-branch-time.sh` (or add `scripts/test-branch-time-recording.sh`): `--json` output shape matches spec
-- [ ] Test: simulated `verify-spec` recording into a scratch spec → `## Time Tracking` row created with the ledger's absolute total
-- [ ] Test: re-run the same recording → identical row, no duplicate (idempotency)
-- [ ] Test: ledger total lower than doc row → doc value kept, ledger re-seeded via `--add` (never-regress)
-- [ ] Test: no active spec set → no doc write occurs, ledger still accumulates
-- [ ] Run the script and verify all checks pass
+> **Complete (2026-08-19).** `scripts/test-branch-time-recording.sh` created (executable, 14 checks, all passing, exit 0) as a **companion** to `scripts/test-branch-time.sh` rather than an extension — the existing script covers the accumulator and CLI, the new one covers the recording sink. (The spec offered either option.)
+
+- [x] Add `scripts/test-branch-time-recording.sh` (companion to `scripts/test-branch-time.sh`): `--json` output shape matches spec
+- [x] Test: simulated `verify-spec` recording into a scratch spec → `## Time Tracking` row created with the ledger's absolute total
+- [x] Test: re-run the same recording → identical row, no duplicate (idempotency)
+- [x] Test: ledger total lower than doc row → doc value kept, ledger re-seeded via `seed` (never-regress)
+- [x] Test: no active spec set → no doc write occurs, ledger still accumulates
+- [x] Run the script and verify all checks pass
+
+> **Checkbox correction (2026-08-19)**: the never-regress step originally read "re-seeded via `--add`" — stale text predating the 2026-08-13 reconciliation revision, contradicting Phase 2, the Status line, and `agents/planner.md` ("`--add` is additive and double-counts whenever the ledger is not exactly zero"). Implementing it literally would have enshrined the double-counting bug the design rejects. The test uses `seed`, and includes a dedicated assertion ("repeated reconciliation does not inflate the ledger") that fails if anyone swaps it back to `--add`.
+
+**Scope note — what the green result proves.** The script mechanizes the recording contract from `agents/planner.md` (read `--json`, compare, reconcile, upsert, `record`) because the real writer is an LLM agent that cannot be invoked deterministically from a script. It pins the contract and the CLI that supports it; it does **not** prove the agent follows the contract. Do not read the green result as broader than that.
 
 ## Status
 
-In Progress — Phase 1 complete (JSON read path + unit tests); Phase 2 sink steps 1–2 implemented (daemon instruction, planner recording process; reconciliation revised to `seed` floor + `record` watermark); remaining: Phase 2 docs bullets (`docs/architecture.md`, `docs/agent-bus.md`, `CLAUDE.md`) and Phase 3 integration test
+Complete — Phase 1 (JSON read path + unit tests), Phase 2 (daemon instruction, planner recording process with `seed`-floor reconciliation + `record` watermark, docs bullets in `docs/architecture.md` / `docs/agent-bus.md` / `CLAUDE.md`), Phase 3 (`scripts/test-branch-time-recording.sh`, 14/14 checks)

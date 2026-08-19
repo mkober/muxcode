@@ -6,7 +6,7 @@ General-purpose skill for the git-manager and edit agents to read a Jira issue's
 
 ## Requirements
 
-- Skill file at `skills/jira-update-description.md` with frontmatter: `name: jira-update-description`, `roles: [git, edit]`, `tags: [jira, integration, description, adf]`
+- Skill file at `skills/MUX-060-jira-update-description.md` with frontmatter: `name: jira-update-description`, `roles: [git, edit]`, `tags: [jira, integration, description, adf]`
 - Agents execute the skill when asked to read or update a Jira issue description
 - Two-path key identification: first scan request message for `[A-Z][A-Z0-9]*-[0-9]+`, then fall back to branch name extraction (`^` anchored); skip silently if neither yields a key
 - Read via `muxcode-jira.sh read <KEY>` — outputs summary, type, priority, status, assignee, and flattened description
@@ -17,7 +17,7 @@ General-purpose skill for the git-manager and edit agents to read a Jira issue's
 
 ## Changes
 
-### 1. Create `skills/jira-update-description.md`
+### 1. Create `skills/MUX-060-jira-update-description.md`
 
 New skill file with instructions:
 

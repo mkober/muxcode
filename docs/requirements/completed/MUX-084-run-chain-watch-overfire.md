@@ -99,7 +99,7 @@ Invert the gate from denylist to allowlist using existing machinery:
 3. Design option (out of scope here, cross-link if picked up): extend
    `ChainContext` with the triggering request's sender/action so
    deploy→run→watch fires as a true pipeline — see
-   [`conditional-chains`](../completed/conditional-chains.md) for the
+   [`conditional-chains`](../completed/MUX-043-conditional-chains.md) for the
    condition framework this would build on.
 
 ### Key files
@@ -117,8 +117,8 @@ Invert the gate from denylist to allowlist using existing machinery:
 
 | Dependency | Note |
 |------------|------|
-| [`conditional-chains`](../completed/conditional-chains.md) | Condition framework this fix uses |
-| [`response-echo-chain-retrigger`](./response-echo-chain-retrigger.md) | Sibling chain-noise defect on non-hook agents |
+| [`conditional-chains`](../completed/MUX-043-conditional-chains.md) | Condition framework this fix uses |
+| [`response-echo-chain-retrigger`](../backlog/MUX-009-response-echo-chain-retrigger.md) | Sibling chain-noise defect on non-hook agents |
 
 ## Implementation
 
