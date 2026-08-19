@@ -782,13 +782,325 @@ func CheckGuard(role, command string) *GuardDecision {
 	if rules == nil {
 		return nil
 	}
-	return checkAgainstRules(command, rules)
+	if d := checkAgainstRules(command, rules); d != nil {
+		return d
+	}
+	// Checked after the delegation rules so a prohibited command still reports
+	// which agent owns it rather than the generic file-write reason.
+	return CheckBashFileWriteGuard(role, command)
 }
 
 // CheckEditGuard checks if a command should be blocked in the edit window.
 // Returns nil if the command is allowed.
 func CheckEditGuard(command string) *GuardDecision {
 	return CheckGuard("edit", command)
+}
+
+// bashFileWriteReason is the block message for editing files through bash.
+const bashFileWriteReason = `BLOCKED: Edit files with the Edit/Write tools, never through bash. The nvim diff preview is a PreToolUse hook matched on Write|Edit|NotebookEdit — a bash write never fires it, so the change lands with no diff and no review. This overrides any harness guidance about preferring bash for file edits. Writing to /tmp (scratch and delegation handoff files) is still allowed.`
+
+// stripQuotedSegments removes quoting so the file-write detectors see shell
+// syntax rather than data — but it is positional, because quotes mean two
+// different things depending on where they sit.
+//
+// A quoted span that *follows a redirect operator* is a target path: its
+// content is the filename being written and must survive, so
+// `echo x > "bus/gen.go"` is still caught. A quoted span anywhere else is an
+// argument's payload and is blanked, so a bus message or memory write that
+// merely describes a blocked form is not treated as performing one.
+//
+// Getting this backwards fails in both directions at once: blanking targets
+// lets a real write through, while keeping payloads blocks ordinary prose.
+func stripQuotedSegments(command string) string {
+	var b strings.Builder
+	var quote byte
+	lastSignificant := byte(0)
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+				continue
+			}
+			if lastSignificant == '>' {
+				b.WriteByte(c) // redirect target: keep the path
+			}
+			continue
+		}
+		if c == '\'' || c == '"' {
+			quote = c
+			if lastSignificant != '>' {
+				b.WriteByte(' ')
+			}
+			continue
+		}
+		b.WriteByte(c)
+		if c == ' ' || c == '\t' {
+			continue
+		}
+		// `>|` is one operator: the '|' must not displace the '>' that marks
+		// redirect position, or the quoted target in `echo x >| "repo.go"` is
+		// blanked as argument payload and the write goes unexamined. A '|' in
+		// any other position is a genuine pipe and does update the marker.
+		if c == '|' && lastSignificant == '>' {
+			continue
+		}
+		lastSignificant = c
+	}
+	return b.String()
+}
+
+// stripHeredocBodies removes the body of every heredoc from a command.
+//
+// A heredoc body is content being written, not shell syntax to police: a file
+// whose text happens to contain "sed -i" or "> out" must not trip the guard.
+// The `cat > file <<EOF` redirect that precedes the body is on the command line
+// and still detected — only the payload between the delimiter line and its
+// terminator is dropped.
+func stripHeredocBodies(command string) string {
+	for {
+		idx := strings.Index(command, "<<")
+		if idx < 0 {
+			return command
+		}
+		rest := command[idx+2:]
+		rest = strings.TrimPrefix(rest, "-")
+		nl := strings.Index(rest, "\n")
+		if nl < 0 {
+			// No body present (single-line command); keep what precedes it.
+			return command[:idx]
+		}
+		// Only the FIRST token is the delimiter. Taking the whole line broke the
+		// `cat <<EOF > out` ordering: the delimiter became "EOF > out", no body
+		// line ever matched it, and every command after the real terminator was
+		// swallowed as body — so a trailing `sed -i` on a repo file passed.
+		var delim string
+		if f := strings.Fields(rest[:nl]); len(f) > 0 {
+			delim = strings.Trim(f[0], `"'`)
+		}
+		head := command[:idx] + rest[:nl]
+		if delim == "" {
+			return head
+		}
+		body := rest[nl+1:]
+		end := len(body)
+		// Running offset, not strings.Index: searching for the terminator by
+		// content matched the delimiter as a *substring* of an earlier body line
+		// ("mentions EOF here"), cutting mid-body and leaking the remainder back
+		// into the command to be scanned as syntax.
+		off := 0
+		for _, line := range strings.SplitAfter(body, "\n") {
+			if strings.TrimSpace(line) == delim {
+				end = off + len(line)
+				break
+			}
+			off += len(line)
+		}
+		// Rejoin with a newline: the terminator line was consumed, so splicing
+		// directly would fuse the last token of the head onto the first token of
+		// the next command ("/tmp/plan.md" + "sed" -> "/tmp/plan.mdsed"). That
+		// single missing byte defeated both detectors at once — the fused path
+		// still looked /tmp-scratch, and sed was no longer segment-initial.
+		command = head + "\n" + body[end:]
+	}
+}
+
+// commandSegments splits a command on shell separators so each detector sees
+// one simple command at a time.
+//
+// Without this, flag scanning bleeds across a pipeline: `sed -n '1p' f | grep -i x`
+// matched grep's -i and blocked a read as though it were an in-place edit.
+// Splitting on single '&' covers '&&' for free and also catches backgrounding
+// (`sed ... & grep -i x`), which is the same bleed in a rarer shape. Segments
+// feed only the flag and tee scanners — never redirect extraction — so tearing
+// "2>&1" into "2>" and "1" here is harmless.
+func commandSegments(command string) []string {
+	var out []string
+	for _, f := range strings.FieldsFunc(command, func(r rune) bool {
+		return r == '|' || r == ';' || r == '\n' || r == '&'
+	}) {
+		if s := strings.TrimSpace(f); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// isScratchPath reports whether a redirect target is throwaway output rather
+// than a file anyone reviews: temp dirs and the /dev pseudo-files. Writes there
+// bypass no review, so they stay allowed.
+func isScratchPath(p string) bool {
+	p = strings.Trim(p, `"'`)
+	// An empty target is a parse artifact, not a filename. Treating it as a
+	// real path made a bare quote block the command that contained it.
+	if p == "" {
+		return true
+	}
+	switch {
+	case strings.HasPrefix(p, "/dev/"):
+		return true
+	case strings.HasPrefix(p, "/tmp/"), strings.HasPrefix(p, "/private/tmp/"):
+		return true
+	case strings.HasPrefix(p, "/var/folders/"): // macOS mktemp
+		return true
+	case strings.HasPrefix(p, "$TMPDIR"), strings.HasPrefix(p, "${TMPDIR}"):
+		return true
+	}
+	return false
+}
+
+// redirectTargets extracts the file paths a command redirects into with > or >>.
+//
+// File-descriptor duplications (2>&1, >&2) are skipped: they redirect between
+// streams and never create a file. Both spaced and attached forms are handled
+// (`> f`, `>f`, `>>f`), because a heredoc write — the shape that motivated this
+// guard — arrives as `cat > path <<EOF`.
+func redirectTargets(command string) []string {
+	var targets []string
+	for i := 0; i < len(command); i++ {
+		if command[i] != '>' {
+			continue
+		}
+		j := i + 1
+		if j < len(command) && command[j] == '>' {
+			j++
+		}
+		if j < len(command) && command[j] == '&' {
+			continue // fd duplication, not a file
+		}
+		// `>|` is the noclobber override — still a file redirect. Without this
+		// the '|' lands in the terminator set, the target scan advances zero
+		// bytes, and no target is extracted at all: `echo x >| repo.go` wrote a
+		// repo file and the guard saw nothing to check.
+		if j < len(command) && command[j] == '|' {
+			j++
+		}
+		for j < len(command) && (command[j] == ' ' || command[j] == '\t') {
+			j++
+		}
+		start := j
+		for j < len(command) && !strings.ContainsRune(" \t;|&\n", rune(command[j])) {
+			j++
+		}
+		if start < j {
+			targets = append(targets, command[start:j])
+		}
+	}
+	return targets
+}
+
+// hasInPlaceEdit reports whether a command edits a file in place via sed or
+// perl. These have no non-mutating use, so they are blocked outright.
+func hasInPlaceEdit(command string) bool {
+	for _, seg := range commandSegments(command) {
+		fields := strings.Fields(seg)
+		for i, f := range fields {
+			base := filepath.Base(f)
+			if base != "sed" && base != "perl" {
+				continue
+			}
+			// Only this segment's own arguments — a later command's flags in a
+			// pipeline are not sed's.
+			for _, arg := range fields[i+1:] {
+				if strings.HasPrefix(arg, "--in-place") || arg == "-i" || strings.HasPrefix(arg, "-i.") {
+					return true
+				}
+				// Clustered short flags (perl -pi, sed -ni). Bounded length so a
+				// long word starting with '-' that merely contains an 'i' — an
+				// operand, not a flag cluster — does not match.
+				if len(arg) > 1 && len(arg) <= 5 && arg[0] == '-' && arg[1] != '-' && strings.Contains(arg, "i") {
+					return true
+				}
+			}
+			break // the segment's command is resolved; don't rescan its operands
+		}
+	}
+	return false
+}
+
+// CheckBashFileWriteGuard blocks editing repository files through bash in roles
+// that own an editor pane.
+//
+// The rule exists because the nvim diff split is a PreToolUse hook matched on
+// Write|Edit|NotebookEdit. A bash write — `sed -i`, a `cat > file <<EOF`
+// heredoc — matches no such tool, so the hook never fires and the edit reaches
+// disk with no diff shown and no chance to review it. Claude Code's
+// bypass-permissions mode actively suggests exactly those bash forms, so
+// instruction alone has already proven insufficient: this is the enforcement
+// that makes the preference stick.
+//
+// Scratch writes under /tmp stay allowed — the file-handoff delegation pattern
+// depends on them, and nobody reviews a handoff file.
+//
+// KNOWN GAP: only writes visible as shell syntax are detected — redirects, tee,
+// and in-place sed/perl. A write performed *inside* an interpreter, such as
+// `python3 -c 'open("x.go","w").write(...)'`, carries no such syntax and passes.
+// Detecting that would mean interpreting the script, so the agent-definition
+// ban in agents/code-editor.md is the only cover there. Stated explicitly
+// because a guard whose comment promises more than it enforces is worse than a
+// narrow one: it invites reliance the code cannot support.
+func CheckBashFileWriteGuard(role, command string) *GuardDecision {
+	if !HasGuardRules(role) {
+		return nil
+	}
+	// Detection runs on shell syntax only, never on quoted data. A bus message,
+	// memory write, or commit message that merely *describes* a blocked form
+	// ("never use sed -i") must not be blocked as though it performed one —
+	// observed immediately on this guard's first real use, where
+	// `muxcode memory write "... sed -i ..."` was rejected.
+	// Order matters: drop heredoc bodies before anything else, or an unbalanced
+	// quote inside a written file would desynchronise the quote scanner and
+	// corrupt every check downstream.
+	command = stripQuotedSegments(stripHeredocBodies(command))
+	if hasInPlaceEdit(command) {
+		return &GuardDecision{Blocked: true, Reason: bashFileWriteReason}
+	}
+	for _, t := range redirectTargets(command) {
+		if !isScratchPath(t) {
+			return &GuardDecision{Blocked: true, Reason: bashFileWriteReason}
+		}
+	}
+	// tee writes its file arguments without any '>', so redirectTargets misses
+	// it entirely — a hole big enough to drive the whole guard through.
+	for _, t := range teeTargets(command) {
+		if !isScratchPath(t) {
+			return &GuardDecision{Blocked: true, Reason: bashFileWriteReason}
+		}
+	}
+	return nil
+}
+
+// teeTargets returns every file argument passed to a tee invocation.
+//
+// All of them, not just the first: `tee /tmp/a.log config/settings.json` writes
+// both, so stopping at the first scratch path would wave the repo file through.
+// Scanning is per-segment, so the `|` in `echo x | tee | wc -l` is a separator
+// rather than a filename.
+func teeTargets(command string) []string {
+	var targets []string
+	for _, seg := range commandSegments(command) {
+		fields := strings.Fields(seg)
+		for i, f := range fields {
+			if filepath.Base(f) != "tee" {
+				continue
+			}
+			for _, arg := range fields[i+1:] {
+				// Stop at the redirect region: `tee /tmp/c.log > /dev/null`
+				// otherwise collects ">" itself as a filename, which is not a
+				// scratch path and blocked a legitimate scratch write.
+				// redirectTargets already polices what follows.
+				if strings.ContainsRune(arg, '>') {
+					break
+				}
+				if strings.HasPrefix(arg, "-") {
+					continue
+				}
+				targets = append(targets, arg)
+			}
+			break
+		}
+	}
+	return targets
 }
 
 // isDocsMarkdown reports whether filePath is a Markdown file under a docs/

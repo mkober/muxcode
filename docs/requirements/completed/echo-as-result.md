@@ -159,16 +159,27 @@ The pre-existing test `TestConsoleEntryIsPass` (`bus/console_test.go`) had a cas
 
 ### Phase 4: Integration test
 
-> **Outstanding.** `scripts/test-echo-as-result.sh` was not written. End-to-end verification was instead performed live against a running session (see "Observed fix behavior" below) — the scripted test remains outstanding.
+> **Complete (2026-08-19).** `scripts/test-echo-as-result.sh` written (executable, 20 checks, all passing, exit 0). Design correction to the original phase wording: the script does **not** require a running muxcode session — it runs in an isolated scratch `BUS_SESSION` under `/tmp` with `MUXCODE_LIFECYCLE_LOG_DIR` pinned, so it is deterministic, needs no live agents, never pollutes the real session's console history, and asserts before exit that `~/.config/muxcode/logs` was left untouched.
 
-- [ ] Create `scripts/test-echo-as-result.sh` with end-to-end verification (requires running muxcode session)
-- [ ] Test: simulate a `--wait` response whose payload is a launch banner → verify console history records no pass for it
-- [ ] Test: simulate a `--track` task completion whose payload is a launch banner → verify console history records no pass for it
-- [ ] Test: real `muxcode log --command ./test.sh --exit-code 0` → verify it still renders as a pass (authoritative path intact)
-- [ ] Test: real `muxcode log --exit-code 1` → verify it renders as a fail
-- [ ] Test: console summary counters over a mixed history count only verdict-carrying entries as pass/fail
-- [ ] Test: non-hook console pane is not empty after a `--wait` round-trip (visibility preserved)
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-echo-as-result.sh` with end-to-end verification (no running session required — isolated scratch `BUS_SESSION`)
+- [x] Test: simulate a `--wait` response whose payload is a launch banner → verify console history records no pass for it
+- [x] Test: simulate a `--track` task completion whose payload is a launch banner → verify console history records no pass for it (covered structurally — see note below)
+- [x] Test: real `muxcode log --command ./test.sh --exit-code 0` → verify it still renders as a pass (authoritative path intact)
+- [x] Test: real `muxcode log --exit-code 1` → verify it renders as a fail
+- [x] Test: console summary counters over a mixed history count only verdict-carrying entries as pass/fail
+- [x] Test: non-hook console pane is not empty after a `--wait` round-trip (visibility preserved)
+- [x] Run the script and verify all checks pass
+
+**Coverage nuance — `--wait` real, `--track` structural.** The `--wait` path is covered by a real end-to-end round-trip: the script sends with `--wait`, then answers it exactly as an agent does (responder reads the reply-to id from its own inbox and replies `--type response`), driving the genuine `logWaitResponseToHistory` path. The `--track` completion path lives in the daemon and cannot be driven without a live session — it is covered **structurally** instead, asserting the invariant this spec actually cared about ("the mirror must not outlive the fix"):
+
+- `cmd/send.go` routes through `bus.NewBusResponseEntry`
+- `daemon/daemon.go` routes through `bus.NewBusResponseEntry`
+- the deleted hand-copy mirror `logTrackedTaskToHistory` has not regrown
+- no keyword-absence success oracle exists in either synthesis path
+
+plus the `bus/` unit tests that cover the shared constructor directly. No live daemon round-trip was performed for `--track`.
+
+**Verification evidence (2026-08-19).** 20/20 checks pass. First run was 17/2 — both failures were assertion bugs in the script (it grepped build-renderer wording against the review renderer, which labels rows by summary and counts clean/issues rather than pass/fail); the product was correct in both cases and the assertions were fixed. Negative control performed: feeding the review console the old bug's exact row (`command:"review", exit_code:"0", outcome:"success"` for a launch-banner payload) makes it render `clean 1` with an `OK` verdict — the fabricated LGTM — and the script's `clean 0` assertion correctly fails on that input, so the check is sensitive, not vacuous.
 
 ### Observed fix behavior (2026-08-12 live verification)
 
@@ -181,4 +192,4 @@ The bug reproduced live during implementation and the fix was verified against i
 
 ## Status
 
-In Progress
+Complete

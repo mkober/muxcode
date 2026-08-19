@@ -2,7 +2,7 @@
 
 Index of all pending requirement specs. Every planned feature with a written spec has a row
 in the [Spec index](#spec-index) below; ideas without a spec doc yet are collected in
-[Ideas without specs](#ideas-without-specs). 72 delivered specs live in
+[Ideas without specs](#ideas-without-specs). 74 delivered specs live in
 [`completed/`](../completed/) — each with requirements, key files, and implementation notes.
 
 Spec lifecycle: `backlog/` (planned or parked) → `drafts/` (actively being designed or
@@ -37,8 +37,6 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 |----|------|----------|--------|
 | MUX-001 | [`branch-time-tracking.md`](./branch-time-tracking.md) | High | In Progress — read path + verify-spec doc sink done; remaining: docs bullets (`architecture.md`, `agent-bus.md`, `CLAUDE.md`) + Phase 3 test extensions |
 | MUX-002 | [`disk-pressure-wrong-filesystem.md`](./disk-pressure-wrong-filesystem.md) | Medium | In Progress — `TmpPressure()` headroom+footprint signals shipped; integration test outstanding |
-| MUX-003 | [`echo-as-result.md`](./echo-as-result.md) | High | In Progress — fix shipped via `bus.NewBusResponseEntry` provenance; Phase 4 test script (`scripts/test-echo-as-result.sh`) outstanding |
-| MUX-004 | [`lifecycle-log-test-leak.md`](./lifecycle-log-test-leak.md) | Medium | In Progress — `MUXCODE_LIFECYCLE_LOG_DIR` pin shipped; regression test outstanding |
 | MUX-005 | [`plan-diagrams.md`](./plan-diagrams.md) | Medium | In Progress — Phases 1–3 complete (render script, media store, req-doc embeds); Jira/Confluence embed phases remaining |
 
 ### Reliability & observability
@@ -87,6 +85,16 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 | MUX-025 | [`modal-log-viewer.md`](./modal-log-viewer.md) | Low | Lifecycle/log viewer modal |
 | MUX-026 | [`modal-memory-browser.md`](./modal-memory-browser.md) | Low | Memory browser modal with BM25 search |
 | MUX-027 | [`modal-webhook-monitor.md`](./modal-webhook-monitor.md) | Low | Live webhook request inspector modal with replay |
+
+### Completed (id registry)
+
+Delivered specs that carried a MUX id. Ids are never reused or renumbered — rows stay here
+permanently so the id remains claimed after the spec moves to [`completed/`](../completed/).
+
+| ID | Spec | Delivered |
+|----|------|-----------|
+| MUX-003 | [`echo-as-result.md`](../completed/echo-as-result.md) | `scripts/test-echo-as-result.sh` (20 checks) verifies synthesized bus-response rows can never render as a pass while the authoritative self-logged path still does; isolated scratch `BUS_SESSION`, no live session needed |
+| MUX-004 | [`lifecycle-log-test-leak.md`](../completed/lifecycle-log-test-leak.md) | `scripts/test-lifecycle-log-leak.sh` (7 checks) runs the suite under a throwaway `HOME` so a lost `MUXCODE_LIFECYCLE_LOG_DIR` pin is caught without writing to the real install; plus `tui/main_test.go` closing the last unpinned test package |
 
 ## Ideas without specs
 

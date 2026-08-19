@@ -1,0 +1,40 @@
+name: test
+
+# Runs the repo's own test script on every PR, so a change is gated by the same
+# command a developer runs locally rather than a CI-only reimplementation that
+# can drift from it.
+#
+# Deliberately does NOT run build.sh: that script runs `make install` and
+# `muxcode upgrade-daemons`, which install a binary into ~/.local/bin and restart
+# live session daemons. Those are developer-machine actions with no meaning on a
+# runner. test.sh already covers `go vet ./...` and `go test -v ./...` for every
+# module under tools/, which is the part that can actually fail a review.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to the same PR makes the in-flight run obsolete; cancel it rather
+# than paying for a result nobody will read.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Matches the `go 1.22` directive in both tools/*/go.mod.
+          go-version: '1.22'
+          # Both modules are stdlib-only and have no go.sum. setup-go's cache
+          # resolves its key from a dependency file and fails the step when none
+          # exists — and with no external deps there is nothing to cache anyway.
+          cache: false
+
+      - name: go vet + go test (all modules)
+        run: ./test.sh
