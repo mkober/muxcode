@@ -10,7 +10,7 @@ research mode, API testing, PR review, diagnostics).
 ## Context
 
 ### Origin
-The demo feature was specified in `docs/requirements/completed/demo-mode.md`
+The demo feature was specified in `docs/requirements/completed/MUX-051-demo-mode.md`
 (scripted scenarios with bus messages, window switching, and GIF capture). It
 shipped with a single built-in scenario and has not been revisited as the agent
 roster and chain system grew.
@@ -71,7 +71,7 @@ fails when an agent or chain is added).
 - [ ] A `--list`/`list` entry for each scenario includes a one-line description
       and estimated duration at 1.0x.
 - [ ] Docs updated: `docs/agent-bus.md` demo section and
-      `docs/requirements/completed/demo-mode.md` cross-link.
+      `docs/requirements/completed/MUX-051-demo-mode.md` cross-link.
 - [ ] A guard exists so adding a new default window without demo coverage is
       detectable (test or `list` annotation — see design phase).
 
@@ -130,7 +130,7 @@ tests, commits, or chain cascades. Options to evaluate in design:
 | `tools/muxcode/cmd/demo.go` | CLI handler (`run`/`list`, flag parsing) |
 | `tools/muxcode/bus/launch.go` | Source of truth for the default window list (drift baseline) |
 | `docs/agent-bus.md` | `muxcode demo` CLI reference + scenario table |
-| `docs/requirements/completed/demo-mode.md` | Original spec to cross-link |
+| `docs/requirements/completed/MUX-051-demo-mode.md` | Original spec to cross-link |
 | `tools/muxcode/bus/demo_test.go` | Unit tests for scenarios/step model (create if absent) |
 
 ## Implementation
@@ -161,7 +161,7 @@ tests, commits, or chain cascades. Options to evaluate in design:
 ### Phase 5: Docs
 - [ ] Update `docs/agent-bus.md` demo section with the new scenarios and any new
       flags.
-- [ ] Cross-link from `docs/requirements/completed/demo-mode.md`.
+- [ ] Cross-link from `docs/requirements/completed/MUX-051-demo-mode.md`.
 
 ### Phase 6: Integration test
 - [ ] Create `scripts/test-demo-coverage.sh` (runs inside a live muxcode

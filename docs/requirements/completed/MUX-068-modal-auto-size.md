@@ -181,7 +181,7 @@ iteration — height overshoot is far less visible than width overshoot.
 | Dependency | Note |
 |------------|------|
 | tmux >= 3.3 | Already required for popup styling (`PopupStyleArgs`, `config/tmux.conf` line 31) — do not regress |
-| [`modal-window-manager`](../completed/modal-window-manager.md) | The Go modal registry this feature extends |
+| [`modal-window-manager`](../completed/MUX-069-modal-window-manager.md) | The Go modal registry this feature extends |
 
 ## Implementation
 

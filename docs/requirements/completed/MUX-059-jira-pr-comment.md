@@ -6,7 +6,7 @@ When a PR is created via the git-manager agent, automatically post a comment on 
 
 ## Requirements
 
-- Skill file at `skills/jira-pr-comment.md` with frontmatter: `name: jira-pr-comment`, `roles: [git]`, `tags: [jira, github, pr, integration]`
+- Skill file at `skills/MUX-059-jira-pr-comment.md` with frontmatter: `name: jira-pr-comment`, `roles: [git]`, `tags: [jira, github, pr, integration]`
 - Git-manager agent executes the skill after `gh pr create`
 - Extract Jira key from branch name pattern `PROJ-123-desc` → `PROJ-123`; skip silently if no match
 - Gather PR metadata via `gh pr view --json number,title,body,url,additions,deletions,changedFiles`
@@ -17,7 +17,7 @@ When a PR is created via the git-manager agent, automatically post a comment on 
 
 ## Changes
 
-### 1. Create `skills/jira-pr-comment.md`
+### 1. Create `skills/MUX-059-jira-pr-comment.md`
 
 New skill file with instructions for the git-manager agent:
 

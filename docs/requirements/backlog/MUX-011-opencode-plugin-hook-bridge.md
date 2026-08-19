@@ -8,7 +8,7 @@ OpenCode has no Claude Code-style shell hooks, so muxcode treats it as a non-hoo
 
 - `OpenCodeProvider.SupportsHooks()` returns `false` (`bus/provider_opencode.go:241`) — no PreToolUse/PostToolUse, so `ProcessBashHook()` chain resolution never fires for OpenCode agents.
 - Three-layer graceful degradation substitutes for hooks: (1) `buildChainInstruction()` (`bus/provider.go`) injects natural-language chain instructions, (2) `adaptBodyForNonHookProvider()` (`bus/provider_opencode.go:590`) rewrites hook references in agent bodies, (3) `CheckSendPolicy()` bypass lets non-hook agents send chain messages manually.
-- The degradation is LLM-driven and therefore unreliable: see [`response-echo-chain-retrigger`](./response-echo-chain-retrigger.md) — `build` re-fired `request:test` 5× in 3.5 min (84.9K tokens burned) because chain decisions live in the model, not in deterministic code. The daemon also carries non-hook-only compensation paths (history synthesis at `daemon.go:2634-2982`, wake-up payload injection) that exist solely because no hook reports tool completion.
+- The degradation is LLM-driven and therefore unreliable: see [`response-echo-chain-retrigger`](./MUX-009-response-echo-chain-retrigger.md) — `build` re-fired `request:test` 5× in 3.5 min (84.9K tokens burned) because chain decisions live in the model, not in deterministic code. The daemon also carries non-hook-only compensation paths (history synthesis at `daemon.go:2634-2982`, wake-up payload injection) that exist solely because no hook reports tool completion.
 
 ### Research findings (2026-08-18)
 

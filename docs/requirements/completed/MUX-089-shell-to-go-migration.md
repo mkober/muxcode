@@ -226,8 +226,8 @@ Polls tmux for idle state, sends `/compact` via tmux send-keys. Idle detection (
 | File | Change |
 |------|--------|
 | `main.go` | Add `case "atlassian": cmd.Atlassian(args)` |
-| `skills/jira-update-description.md` | Update command from `muxcode-jira.sh` to `muxcode atlassian jira` |
-| `skills/confluence-update-page.md` | Update command from `muxcode-confluence.sh` to `muxcode atlassian confluence` |
+| `skills/MUX-060-jira-update-description.md` | Update command from `muxcode-jira.sh` to `muxcode atlassian jira` |
+| `skills/MUX-044-confluence-update-page.md` | Update command from `muxcode-confluence.sh` to `muxcode atlassian confluence` |
 | `Makefile` | Stop installing eliminated scripts |
 
 ### Scripts eliminated

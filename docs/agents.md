@@ -125,7 +125,7 @@ The plan agent maintains project documentation — requirements specs, architect
 ```bash
 muxcode send plan update-docs "Phase 1 complete — check off acceptance criteria"
 muxcode send plan create-spec "Create a draft spec for webhook retry logic"
-muxcode send plan move-spec "Move conditional-chains.md from drafts to completed"
+muxcode send plan move-spec "Move MUX-043-conditional-chains.md from drafts to completed"
 ```
 
 The plan agent is scoped to docs directories only — it can read source code for context but never writes outside `docs/`, `CLAUDE.md`, or `README.md`.
@@ -332,7 +332,7 @@ configured to run `muxcode inbox --poll` themselves — upgrading them to true r
 A daemon backstop (`checkPollHealth`) watches for a growing **receipt gap** (inbox messages
 with no receipt past a threshold), re-drives delivery, and alerts edit if the gap persists —
 detecting a dead self-poll loop or delivery sidecar via a positive signal rather than
-pane-scraping. See the [delivery-acknowledgement spec](requirements/completed/delivery-acknowledgement.md).
+pane-scraping. See the [delivery-acknowledgement spec](requirements/completed/MUX-050-delivery-acknowledgement.md).
 
 ### CLI
 

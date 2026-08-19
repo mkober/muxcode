@@ -99,7 +99,7 @@ Tracking task 1779979541-edit-d2c7d769 — response will arrive in inbox
     generated bodies, anything you'd otherwise cram into one giant payload.
   - Prefer descriptive `/tmp/<name>.md` names; the receiving agent reads the file
     directly. (A future `muxcode send --payload-file` will formalize this — see
-    `docs/requirements/backlog/delegation-message-hygiene.md`.)
+    `docs/requirements/backlog/MUX-010-delegation-message-hygiene.md`.)
 - **Prefer `--track` for delegations.** Use `--track` for fire-and-forget /
   long-running work so the sender keeps working; reserve `--wait` for when the
   result is needed before the next step. A healthy `--wait` polls every 500ms and
@@ -143,7 +143,7 @@ Tracking task 1779979541-edit-d2c7d769 — response will arrive in inbox
 > every stop/restart path is keystroke- or marker-based and the startup wake is
 > unreliable. An automatic watchdog (detect freeze → kill → respawn → verify inbox
 > drained, with no user intervention) is tracked in
-> `docs/requirements/backlog/delegation-message-hygiene.md`.
+> `docs/requirements/backlog/MUX-010-delegation-message-hygiene.md`.
 
 ### `muxcode inbox`
 
@@ -349,7 +349,7 @@ Resolution order for whether the cutover is active:
 3. Runtime OFF marker (`muxcode delivery-ack off`) → OFF (no restart needed).
 4. Otherwise → **ON** (default).
 
-`status` prints the effective state (noting "default: ON"), the rollback-marker path (present/absent), and any relevant env. Physical removal of the bypassed pane-scrape machinery stays deferred behind the known receipt-gap-backstop limitation — see [`remove-gated-pane-scrape-delivery`](requirements/backlog/remove-gated-pane-scrape-delivery.md).
+`status` prints the effective state (noting "default: ON"), the rollback-marker path (present/absent), and any relevant env. Physical removal of the bypassed pane-scrape machinery stays deferred behind the known receipt-gap-backstop limitation — see [`remove-gated-pane-scrape-delivery`](requirements/backlog/MUX-012-remove-gated-pane-scrape-delivery.md).
 
 ### `muxcode cron`
 

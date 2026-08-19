@@ -1,6 +1,6 @@
 # Echo As Result
 
-Stop pane-scrape echoes from being recorded as passing command results in console history. When a response from a non-hook provider (OpenCode/Codex) completes a send, a history entry is synthesized from the response payload and recorded as a **passing command** — by `logWaitResponseToHistory` (`cmd/send.go`) on the `--wait` path AND by its daemon mirror `logTrackedTaskToHistory` (`daemon/daemon.go`) when a `--track` task completes — even when the payload is a launch banner or TUI chrome, not a result. This **fabricates GREEN**: it is arguably higher severity than the answered-row bug ([answered-row-receipt](../completed/answered-row-receipt.md)), because that one produced redundant noise while this one produces false evidence that work succeeded.
+Stop pane-scrape echoes from being recorded as passing command results in console history. When a response from a non-hook provider (OpenCode/Codex) completes a send, a history entry is synthesized from the response payload and recorded as a **passing command** — by `logWaitResponseToHistory` (`cmd/send.go`) on the `--wait` path AND by its daemon mirror `logTrackedTaskToHistory` (`daemon/daemon.go`) when a `--track` task completes — even when the payload is a launch banner or TUI chrome, not a result. This **fabricates GREEN**: it is arguably higher severity than the answered-row bug ([answered-row-receipt](../completed/MUX-036-answered-row-receipt.md)), because that one produced redundant noise while this one produces false evidence that work succeeded.
 
 ## Context
 
@@ -100,7 +100,7 @@ Candidate directions — **no pre-commitment**; Phase 1 evaluates and records th
 Four of the five candidate directions were adopted together — they are complementary, not alternatives:
 
 - **Activity row, not result row** — synthesized entries can no longer carry a pass/fail verdict at all. This is the core invariant.
-- **`unknown` outcome** — adopted, with a correction to this spec's premise: the model ALREADY had an `unknown` outcome — `bus.HookOutcome()` has always returned `"unknown"` for an empty exit code. The defect was never a missing outcome value; it was a read/write asymmetry: the write side produced `unknown` correctly and the read side (`ConsoleEntry.IsPass()`) collapsed it into a pass. Same shape of bug as [answered-row-receipt](../completed/answered-row-receipt.md) — the write side honored an invariant the read side disagreed with.
+- **`unknown` outcome** — adopted, with a correction to this spec's premise: the model ALREADY had an `unknown` outcome — `bus.HookOutcome()` has always returned `"unknown"` for an empty exit code. The defect was never a missing outcome value; it was a read/write asymmetry: the write side produced `unknown` correctly and the read side (`ConsoleEntry.IsPass()`) collapsed it into a pass. Same shape of bug as [answered-row-receipt](../completed/MUX-036-answered-row-receipt.md) — the write side honored an invariant the read side disagreed with.
 - **Provenance field** — `source: "bus-response"` on synthesized entries; empty means the authoritative hook / self-logged path (so legacy rows keep their verdict).
 - **Stop writing the bus action into `command`** — `command` is left empty and the action moves to a new `action` field, rendered as `bus:review` so it can never read as a shell command.
 - **Reject non-result payloads** — adopted as a complement, deliberately conservative: rejects only when the payload is empty, its FIRST line is chrome, or EVERY line is chrome. A real result that merely quotes a banner later is kept, because losing a real verdict is the costlier error.
@@ -127,7 +127,7 @@ Four of the five candidate directions were adopted together — they are complem
 
 ### Cross-links
 
-Same underlying disease as the answered-row echo loop ([answered-row-receipt](../completed/answered-row-receipt.md)) and the review-echo incident: **pane text is being treated as evidence of work**. The broader effort to stop inferring state from pane scrapes is [remove-gated-pane-scrape-delivery](../backlog/remove-gated-pane-scrape-delivery.md) — this spec closes the console-history branch of that disease; that one closes the delivery branch.
+Same underlying disease as the answered-row echo loop ([answered-row-receipt](../completed/MUX-036-answered-row-receipt.md)) and the review-echo incident: **pane text is being treated as evidence of work**. The broader effort to stop inferring state from pane scrapes is [remove-gated-pane-scrape-delivery](../backlog/MUX-012-remove-gated-pane-scrape-delivery.md) — this spec closes the console-history branch of that disease; that one closes the delivery branch.
 
 The pre-existing test `TestConsoleEntryIsPass` (`bus/console_test.go`) had a case pinning `nil exit code -> pass` — that case encoded the defect and was flipped to `false`, with a comment pointing at the new test file (`bus/history_provenance_test.go`).
 

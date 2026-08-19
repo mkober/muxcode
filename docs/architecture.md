@@ -123,7 +123,7 @@ Core code: `cmd/hook.go` (hook gating), `bus/prompt.go` (role-specific manual bu
 3. Bus delivers to /tmp/muxcode-bus-{s}/inbox/plan.jsonl
 4. Plan agent reads inbox, reads the target spec and relevant code/diffs
 5. Plan agent updates docs: checks off acceptance criteria, updates status fields
-6. Plan agent replies: muxcode send edit update-docs "Updated conditional-chains.md..." --type response --reply-to <id>
+6. Plan agent replies: muxcode send edit update-docs "Updated MUX-043-conditional-chains.md..." --type response --reply-to <id>
 7. --wait detects response, prints summary to edit's Bash tool result
 ```
 
@@ -315,7 +315,7 @@ Core code: `bus/delivery.go`, `cmd/track.go`.
 
 #### Delivery receipts (delivery-acknowledgement)
 
-The [delivery-acknowledgement](requirements/completed/delivery-acknowledgement.md) redesign replaces the daemon's pane-scrape "did it look idle?" delivery inference with a **positive receipt** — a per-message signal that an agent actually consumed a message — plus **agent self-poll**. A receipt's *kind* depends on whether the provider can consume its own inbox in-process:
+The [delivery-acknowledgement](requirements/completed/MUX-050-delivery-acknowledgement.md) redesign replaces the daemon's pane-scrape "did it look idle?" delivery inference with a **positive receipt** — a per-message signal that an agent actually consumed a message — plus **agent self-poll**. A receipt's *kind* depends on whether the provider can consume its own inbox in-process:
 
 | Provider | Receipt kind | Written by |
 |----------|--------------|-----------|
@@ -324,7 +324,7 @@ The [delivery-acknowledgement](requirements/completed/delivery-acknowledgement.m
 
 A daemon backstop, **`checkPollHealth`**, watches for a growing **receipt gap** (inbox messages un-receipted past a threshold) — a positive signal a self-poll loop or delivery sidecar died — and re-drives delivery (`ForceDeliver` for self-pollers, `SendWakeUp` for non-hook TUIs), alerting edit with a `delivery-gap` event if the gap persists.
 
-**Rollout — default ON (soak):** the cutover is now the **default**. `ackDeliveryActive()` returns ON unless rolled back, in precedence order: `MUXCODE_DELIVERY_ACK_DISABLE=1` (env hard kill switch back to pane-scrape delivery, needs a daemon restart), `MUXCODE_DELIVERY_ACK=off` (env opt-out; `=on` pins it on), then the instant restart-free runtime marker `delivery-ack.off` written by `muxcode delivery-ack off` (the daemon re-reads it every poll loop; `on` clears it). While the cutover is active the receipt model is fully in charge and the pane-scrape delivery machinery above is **bypassed but still present** as a fallback — its physical removal is a soak-gated follow-up ([remove-gated-pane-scrape-delivery](requirements/backlog/remove-gated-pane-scrape-delivery.md)), still blocked until the receipt-gap backstop mis-fire is resolved. Core code: `bus/delivery.go` (`WriteReceipt`/`ReadReceipt`/`ReceiptGap`), `bus/inject_verify.go`, `daemon/daemon.go` (`checkPollHealth`, `ackDeliveryActive`).
+**Rollout — default ON (soak):** the cutover is now the **default**. `ackDeliveryActive()` returns ON unless rolled back, in precedence order: `MUXCODE_DELIVERY_ACK_DISABLE=1` (env hard kill switch back to pane-scrape delivery, needs a daemon restart), `MUXCODE_DELIVERY_ACK=off` (env opt-out; `=on` pins it on), then the instant restart-free runtime marker `delivery-ack.off` written by `muxcode delivery-ack off` (the daemon re-reads it every poll loop; `on` clears it). While the cutover is active the receipt model is fully in charge and the pane-scrape delivery machinery above is **bypassed but still present** as a fallback — its physical removal is a soak-gated follow-up ([remove-gated-pane-scrape-delivery](requirements/backlog/MUX-012-remove-gated-pane-scrape-delivery.md)), still blocked until the receipt-gap backstop mis-fire is resolved. Core code: `bus/delivery.go` (`WriteReceipt`/`ReadReceipt`/`ReceiptGap`), `bus/inject_verify.go`, `daemon/daemon.go` (`checkPollHealth`, `ackDeliveryActive`).
 
 ### Edit inbox polling (`--wait`)
 

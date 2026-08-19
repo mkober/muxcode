@@ -2,7 +2,7 @@
 
 On-demand modal for tailing and browsing logs. Opens as a modal window via the modal manager, replacing the need to switch to the watch agent window for quick log inspection.
 
-**Depends on:** [Modal Window Manager](modal-window-manager.md)
+**Depends on:** [Modal Window Manager](../completed/MUX-069-modal-window-manager.md)
 
 ## Use case
 

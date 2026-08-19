@@ -2,7 +2,7 @@
 
 Index of all pending requirement specs. Every planned feature with a written spec has a row
 in the [Spec index](#spec-index) below; ideas without a spec doc yet are collected in
-[Ideas without specs](#ideas-without-specs). 74 delivered specs live in
+[Ideas without specs](#ideas-without-specs). 75 delivered specs live in
 [`completed/`](../completed/) — each with requirements, key files, and implementation notes.
 
 Spec lifecycle: `backlog/` (planned or parked) → `drafts/` (actively being designed or
@@ -15,16 +15,17 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 
 | Artifact | Convention | Example |
 |----------|-----------|---------|
-| Req doc (once work starts) | `MUX-NNN-<slug>.md` | `docs/requirements/drafts/MUX-011-gemini-cli-provider.md` |
-| GitHub issue title | `MUX-NNN: <summary>` | `MUX-011: Gemini CLI provider` |
-| Branch | `MUX-NNN-<slug>` | `MUX-011-gemini-cli-provider` |
-| PR title | `MUX-NNN: <summary>` | `MUX-011: Gemini CLI provider` |
+| Req doc | `MUX-NNN-<slug>.md` | `docs/requirements/backlog/MUX-017-gemini-cli-provider.md` |
+| GitHub issue title | `MUX-NNN: <summary>` | `MUX-017: Gemini CLI provider` |
+| Branch | `MUX-NNN-<slug>` | `MUX-017-gemini-cli-provider` |
+| PR title | `MUX-NNN: <summary>` | `MUX-017: Gemini CLI provider` |
 
 - Ids are assigned in the Spec index below and never reused or renumbered — the index is
   the registry.
-- The spec file gains its `MUX-NNN-` filename prefix when its GitHub issue is created
-  (rename + cross-link fixes handled by the plan agent); until then the id lives only in
-  the index.
+- Every spec file in `backlog/` and `completed/` carries its `MUX-NNN-` filename prefix
+  (applied across both directories 2026-08-19; completed specs that predate GitHub tracking
+  were retroactively minted ids MUX-028–MUX-099 in alphabetical order). New specs are named
+  with their prefix from the start, using the next free id.
 - `MUX-NNN` matches the `[A-Z][A-Z0-9]*-[0-9]+` key shape existing muxcode tooling expects
   (story-lifecycle `{KEY}-*.md` spec lookup, branch-time key-prefix matching, branch-name
   key extraction), so branches and specs named this way work with no code changes.
@@ -35,66 +36,140 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 
 | ID | Spec | Priority | Status |
 |----|------|----------|--------|
-| MUX-001 | [`branch-time-tracking.md`](./branch-time-tracking.md) | High | Complete — read path + verify-spec doc sink + docs bullets done; Phase 3 companion test (`scripts/test-branch-time-recording.sh`, 14/14 checks, hermetic) done; ready to move to `completed/` |
-| MUX-002 | [`disk-pressure-wrong-filesystem.md`](./disk-pressure-wrong-filesystem.md) | Medium | In Progress — `TmpPressure()` headroom+footprint signals shipped; integration test outstanding |
-| MUX-005 | [`plan-diagrams.md`](./plan-diagrams.md) | Medium | In Progress — Phases 1–3 complete (render script, media store, req-doc embeds); Jira/Confluence embed phases remaining |
+| MUX-002 | [`MUX-002-disk-pressure-wrong-filesystem.md`](./MUX-002-disk-pressure-wrong-filesystem.md) | Medium | In Progress — `TmpPressure()` headroom+footprint signals shipped; integration test outstanding |
+| MUX-005 | [`MUX-005-plan-diagrams.md`](./MUX-005-plan-diagrams.md) | Medium | In Progress — Phases 1–3 complete (render script, media store, req-doc embeds); Jira/Confluence embed phases remaining |
 
 ### Reliability & observability
 
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
-| MUX-006 | [`diagnose-false-clean-verdict.md`](./diagnose-false-clean-verdict.md) | High | `diagnose` collects `IsAlive` but no detector reads it — a dead agent gets "No issues detected" exit 0; add `checkAgentDead` first in `diagnosticChecks` |
-| MUX-007 | [`verify-spec-stale-review-refire.md`](./verify-spec-stale-review-refire.md) | High | `checkInboxes()` refires the reviewed-transition on any edit-inbox growth while an unconsumed review message exists — one review completion spawns unbounded `verify-spec` echoes |
-| MUX-008 | [`unverified-daemon-auto-restart.md`](./unverified-daemon-auto-restart.md) | High | `RestartLocalAgent()` fire-and-hope relaunch: no exit wait, no launch verification — add bounded exit poll + post-relaunch verification + orphan detection |
-| MUX-009 | [`response-echo-chain-retrigger.md`](./response-echo-chain-retrigger.md) | High | Non-hook `SendWakeUp` injects response payloads as prompts, re-firing chains on a delegation's own answer; never inject responses + responded-check in `HasActionableMessages` |
-| MUX-010 | [`delegation-message-hygiene.md`](./delegation-message-hygiene.md) | Medium | Agent-freeze auto-recovery + delegation hygiene: force-terminate for hung-but-alive agents, payload/format rules enforced at the bus |
-| MUX-012 | [`remove-gated-pane-scrape-delivery.md`](./remove-gated-pane-scrape-delivery.md) | Low | Physically delete the pane-scrape delivery machinery bypassed by the receipt cutover ([delivery-acknowledgement](../completed/delivery-acknowledgement.md)); gated on default-ON soak + backstop mis-fire fix |
-| MUX-013 | [`channels-message-transport.md`](./channels-message-transport.md) | Medium | Replace file-polling inbox transport with channel-based delivery |
+| MUX-006 | [`MUX-006-diagnose-false-clean-verdict.md`](./MUX-006-diagnose-false-clean-verdict.md) | High | `diagnose` collects `IsAlive` but no detector reads it — a dead agent gets "No issues detected" exit 0; add `checkAgentDead` first in `diagnosticChecks` |
+| MUX-007 | [`MUX-007-verify-spec-stale-review-refire.md`](./MUX-007-verify-spec-stale-review-refire.md) | High | `checkInboxes()` refires the reviewed-transition on any edit-inbox growth while an unconsumed review message exists — one review completion spawns unbounded `verify-spec` echoes |
+| MUX-008 | [`MUX-008-unverified-daemon-auto-restart.md`](./MUX-008-unverified-daemon-auto-restart.md) | High | `RestartLocalAgent()` fire-and-hope relaunch: no exit wait, no launch verification — add bounded exit poll + post-relaunch verification + orphan detection |
+| MUX-009 | [`MUX-009-response-echo-chain-retrigger.md`](./MUX-009-response-echo-chain-retrigger.md) | High | Non-hook `SendWakeUp` injects response payloads as prompts, re-firing chains on a delegation's own answer; never inject responses + responded-check in `HasActionableMessages` |
+| MUX-010 | [`MUX-010-delegation-message-hygiene.md`](./MUX-010-delegation-message-hygiene.md) | Medium | Agent-freeze auto-recovery + delegation hygiene: force-terminate for hung-but-alive agents, payload/format rules enforced at the bus |
+| MUX-012 | [`MUX-012-remove-gated-pane-scrape-delivery.md`](./MUX-012-remove-gated-pane-scrape-delivery.md) | Low | Physically delete the pane-scrape delivery machinery bypassed by the receipt cutover ([delivery-acknowledgement](../completed/MUX-050-delivery-acknowledgement.md)); gated on default-ON soak + backstop mis-fire fix |
+| MUX-013 | [`MUX-013-channels-message-transport.md`](./MUX-013-channels-message-transport.md) | Medium | Replace file-polling inbox transport with channel-based delivery |
 
 ### Workflow & automation
 
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
-| MUX-011 | [`opencode-plugin-hook-bridge.md`](./opencode-plugin-hook-bridge.md) | High | Muxcode TS plugin on OpenCode's `tool.execute.after`/`session.idle` events shells to `muxcode hook bash` — deterministic chains for OpenCode via narrow `SupportsChainEvents()`, root enabler fix for MUX-009 storms |
-| MUX-014 | [`graph-agent-orchestrator.md`](./graph-agent-orchestrator.md) | Medium | DAG control plane over bus/chains/spawns/tasks: 7 node types, outcome-keyed edges, joins, durable resumable runs (`muxcode graph run\|status\|cancel\|retry`); commit/Atlassian nodes require `wait_human`. Subsumes the "Pipeline definitions" idea |
+| MUX-011 | [`MUX-011-opencode-plugin-hook-bridge.md`](./MUX-011-opencode-plugin-hook-bridge.md) | High | Muxcode TS plugin on OpenCode's `tool.execute.after`/`session.idle` events shells to `muxcode hook bash` — deterministic chains for OpenCode via narrow `SupportsChainEvents()`, root enabler fix for MUX-009 storms |
+| MUX-014 | [`MUX-014-graph-agent-orchestrator.md`](./MUX-014-graph-agent-orchestrator.md) | Medium | DAG control plane over bus/chains/spawns/tasks: 7 node types, outcome-keyed edges, joins, durable resumable runs (`muxcode graph run\|status\|cancel\|retry`); commit/Atlassian nodes require `wait_human`. Subsumes the "Pipeline definitions" idea |
 
 ### Agents & roles
 
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
-| MUX-015 | [`refactor-agent.md`](./refactor-agent.md) | Medium | F6 review ↔ refactor mode toggle: a write-capable refactoring specialist paired with the read-only reviewer |
-| MUX-016 | [`research-dual-provider.md`](./research-dual-provider.md) | Medium | Research window split into multiple provider panes (`research-N` bus identities) with broadcast/relay/synthesize across providers |
+| MUX-015 | [`MUX-015-refactor-agent.md`](./MUX-015-refactor-agent.md) | Medium | F6 review ↔ refactor mode toggle: a write-capable refactoring specialist paired with the read-only reviewer |
+| MUX-016 | [`MUX-016-research-dual-provider.md`](./MUX-016-research-dual-provider.md) | Medium | Research window split into multiple provider panes (`research-N` bus identities) with broadcast/relay/synthesize across providers |
 
 ### Integrations & providers
 
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
-| MUX-017 | [`gemini-cli-provider.md`](./gemini-cli-provider.md) | High | `GeminiProvider` with full hook support (`BeforeTool`/`AfterTool`) — first alternative provider that can run `SupportsHooks() = true`; fixes the silent Claude fall-through in `ResolveProvider()` |
-| MUX-018 | [`opencode-diff-preview-plugin.md`](./opencode-diff-preview-plugin.md) | Medium | OpenCode plugin restoring the nvim diff split preview that hook-less providers lose |
-| MUX-019 | [`github-user-stats.md`](./github-user-stats.md) | Medium | Per-user GitHub contribution stats surfaced through the bus/CLI |
+| MUX-017 | [`MUX-017-gemini-cli-provider.md`](./MUX-017-gemini-cli-provider.md) | High | `GeminiProvider` with full hook support (`BeforeTool`/`AfterTool`) — first alternative provider that can run `SupportsHooks() = true`; fixes the silent Claude fall-through in `ResolveProvider()` |
+| MUX-018 | [`MUX-018-opencode-diff-preview-plugin.md`](./MUX-018-opencode-diff-preview-plugin.md) | Medium | OpenCode plugin restoring the nvim diff split preview that hook-less providers lose |
+| MUX-019 | [`MUX-019-github-user-stats.md`](./MUX-019-github-user-stats.md) | Medium | Per-user GitHub contribution stats surfaced through the bus/CLI |
 
 ### UX & tooling
 
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
-| MUX-020 | [`cli-help-command.md`](./cli-help-command.md) | Low | `muxcode help` command: discoverable, grouped CLI reference |
-| MUX-021 | [`demo-mode-agent-coverage.md`](./demo-mode-agent-coverage.md) | Low | Refresh `bus/demo.go` scenarios to cover the current agent roster |
-| MUX-022 | [`design-mode.md`](./design-mode.md) | Low | Design mode for UI-centric sessions |
-| MUX-023 | [`modal-cron-manager.md`](./modal-cron-manager.md) | Low | Interactive cron schedule manager modal |
-| MUX-024 | [`modal-history-viewer.md`](./modal-history-viewer.md) | Low | Bus history browser modal with filtering |
-| MUX-025 | [`modal-log-viewer.md`](./modal-log-viewer.md) | Low | Lifecycle/log viewer modal |
-| MUX-026 | [`modal-memory-browser.md`](./modal-memory-browser.md) | Low | Memory browser modal with BM25 search |
-| MUX-027 | [`modal-webhook-monitor.md`](./modal-webhook-monitor.md) | Low | Live webhook request inspector modal with replay |
+| MUX-020 | [`MUX-020-cli-help-command.md`](./MUX-020-cli-help-command.md) | Low | `muxcode help` command: discoverable, grouped CLI reference |
+| MUX-021 | [`MUX-021-demo-mode-agent-coverage.md`](./MUX-021-demo-mode-agent-coverage.md) | Low | Refresh `bus/demo.go` scenarios to cover the current agent roster |
+| MUX-022 | [`MUX-022-design-mode.md`](./MUX-022-design-mode.md) | Low | Design mode for UI-centric sessions |
+| MUX-023 | [`MUX-023-modal-cron-manager.md`](./MUX-023-modal-cron-manager.md) | Low | Interactive cron schedule manager modal |
+| MUX-024 | [`MUX-024-modal-history-viewer.md`](./MUX-024-modal-history-viewer.md) | Low | Bus history browser modal with filtering |
+| MUX-025 | [`MUX-025-modal-log-viewer.md`](./MUX-025-modal-log-viewer.md) | Low | Lifecycle/log viewer modal |
+| MUX-026 | [`MUX-026-modal-memory-browser.md`](./MUX-026-modal-memory-browser.md) | Low | Memory browser modal with BM25 search |
+| MUX-027 | [`MUX-027-modal-webhook-monitor.md`](./MUX-027-modal-webhook-monitor.md) | Low | Live webhook request inspector modal with replay |
 
 ### Completed (id registry)
 
-Delivered specs that carried a MUX id. Ids are never reused or renumbered — rows stay here
+Delivered specs and their MUX ids. Ids are never reused or renumbered — rows stay here
 permanently so the id remains claimed after the spec moves to [`completed/`](../completed/).
+MUX-003/004 were delivered under GitHub tracking; MUX-028–MUX-099 are retroactive mints
+(alphabetical) from the 2026-08-19 prefix rollout, with the spec's title as the Delivered cell.
 
 | ID | Spec | Delivered |
 |----|------|-----------|
-| MUX-003 | [`echo-as-result.md`](../completed/echo-as-result.md) | `scripts/test-echo-as-result.sh` (20 checks) verifies synthesized bus-response rows can never render as a pass while the authoritative self-logged path still does; isolated scratch `BUS_SESSION`, no live session needed |
-| MUX-004 | [`lifecycle-log-test-leak.md`](../completed/lifecycle-log-test-leak.md) | `scripts/test-lifecycle-log-leak.sh` (7 checks) runs the suite under a throwaway `HOME` so a lost `MUXCODE_LIFECYCLE_LOG_DIR` pin is caught without writing to the real install; plus `tui/main_test.go` closing the last unpinned test package |
+| MUX-001 | [`MUX-001-branch-time-tracking.md`](../completed/MUX-001-branch-time-tracking.md) | Branch active-time recording delta on the [MUX-040](../completed/MUX-040-branch-time-tracking.md) baseline: `--json` read path, verify-spec doc sink with `seed`-floor never-regress reconciliation, `scripts/test-branch-time-recording.sh` (14 checks) |
+| MUX-003 | [`MUX-003-echo-as-result.md`](../completed/MUX-003-echo-as-result.md) | `scripts/test-echo-as-result.sh` (20 checks) verifies synthesized bus-response rows can never render as a pass while the authoritative self-logged path still does; isolated scratch `BUS_SESSION`, no live session needed |
+| MUX-004 | [`MUX-004-lifecycle-log-test-leak.md`](../completed/MUX-004-lifecycle-log-test-leak.md) | `scripts/test-lifecycle-log-leak.sh` (7 checks) runs the suite under a throwaway `HOME` so a lost `MUXCODE_LIFECYCLE_LOG_DIR` pin is caught without writing to the real install; plus `tui/main_test.go` closing the last unpinned test package |
+| MUX-028 | [`MUX-028-agent-debug-skill.md`](../completed/MUX-028-agent-debug-skill.md) | Agent Debug Skill |
+| MUX-029 | [`MUX-029-agent-diagnostic-command.md`](../completed/MUX-029-agent-diagnostic-command.md) | Agent diagnostic command |
+| MUX-030 | [`MUX-030-agent-health-monitoring.md`](../completed/MUX-030-agent-health-monitoring.md) | Agent Health Monitoring |
+| MUX-031 | [`MUX-031-agent-hot-reload.md`](../completed/MUX-031-agent-hot-reload.md) | Agent hot reload |
+| MUX-032 | [`MUX-032-agent-mode.md`](../completed/MUX-032-agent-mode.md) | Agent mode |
+| MUX-033 | [`MUX-033-agent-spawn.md`](../completed/MUX-033-agent-spawn.md) | Agent Spawn |
+| MUX-034 | [`MUX-034-agent-startup-inbox-wake.md`](../completed/MUX-034-agent-startup-inbox-wake.md) | Agent startup inbox wake-up |
+| MUX-035 | [`MUX-035-analyze-findings-log.md`](../completed/MUX-035-analyze-findings-log.md) | Analyze Findings Log |
+| MUX-036 | [`MUX-036-answered-row-receipt.md`](../completed/MUX-036-answered-row-receipt.md) | Answered-Row Receipt |
+| MUX-037 | [`MUX-037-api-testing-agent.md`](../completed/MUX-037-api-testing-agent.md) | API Testing Agent |
+| MUX-038 | [`MUX-038-auto-session-compaction.md`](../completed/MUX-038-auto-session-compaction.md) | Auto Session Compaction |
+| MUX-039 | [`MUX-039-bm25-memory-search.md`](../completed/MUX-039-bm25-memory-search.md) | BM25 Memory Search |
+| MUX-040 | [`MUX-040-branch-time-tracking.md`](../completed/MUX-040-branch-time-tracking.md) | Branch Time Tracking — the shipped July 2026 accumulator/CLI baseline; [MUX-001](../completed/MUX-001-branch-time-tracking.md) is the later recording-sink delta on top of it |
+| MUX-041 | [`MUX-041-build-test-error-extraction.md`](../completed/MUX-041-build-test-error-extraction.md) | Build/Test Error Extraction |
+| MUX-042 | [`MUX-042-codex-cli-compatibility.md`](../completed/MUX-042-codex-cli-compatibility.md) | Codex CLI compatibility |
+| MUX-043 | [`MUX-043-conditional-chains.md`](../completed/MUX-043-conditional-chains.md) | Conditional chains |
+| MUX-044 | [`MUX-044-confluence-update-page.md`](../completed/MUX-044-confluence-update-page.md) | Confluence Page Read+Update |
+| MUX-045 | [`MUX-045-context-directory.md`](../completed/MUX-045-context-directory.md) | Context Directory |
+| MUX-046 | [`MUX-046-cron-scheduling.md`](../completed/MUX-046-cron-scheduling.md) | Cron Scheduling |
+| MUX-047 | [`MUX-047-cross-session-memory.md`](../completed/MUX-047-cross-session-memory.md) | Cross-Session Memory |
+| MUX-048 | [`MUX-048-cross-session-window-resize.md`](../completed/MUX-048-cross-session-window-resize.md) | Cross-session window resize on client resize |
+| MUX-049 | [`MUX-049-daily-memory-rotation.md`](../completed/MUX-049-daily-memory-rotation.md) | Daily Memory Rotation |
+| MUX-050 | [`MUX-050-delivery-acknowledgement.md`](../completed/MUX-050-delivery-acknowledgement.md) | Delivery Acknowledgement (receipts + agent self-poll) |
+| MUX-051 | [`MUX-051-demo-mode.md`](../completed/MUX-051-demo-mode.md) | Demo Mode |
+| MUX-052 | [`MUX-052-deploy-verify.md`](../completed/MUX-052-deploy-verify.md) | Deploy Verification |
+| MUX-053 | [`MUX-053-dynamic-prompts.md`](../completed/MUX-053-dynamic-prompts.md) | Dynamic Prompts |
+| MUX-054 | [`MUX-054-edit-context-pressure.md`](../completed/MUX-054-edit-context-pressure.md) | Edit agent context pressure from notification storms |
+| MUX-055 | [`MUX-055-event-subscription.md`](../completed/MUX-055-event-subscription.md) | Event Subscription |
+| MUX-056 | [`MUX-056-git-manager-heredoc.md`](../completed/MUX-056-git-manager-heredoc.md) | Git Manager HEREDOC |
+| MUX-057 | [`MUX-057-go-native-launcher.md`](../completed/MUX-057-go-native-launcher.md) | Go native launcher |
+| MUX-058 | [`MUX-058-harness-circuit-breaker.md`](../completed/MUX-058-harness-circuit-breaker.md) | Harness Circuit Breaker |
+| MUX-059 | [`MUX-059-jira-pr-comment.md`](../completed/MUX-059-jira-pr-comment.md) | Jira PR Comment Skill |
+| MUX-060 | [`MUX-060-jira-update-description.md`](../completed/MUX-060-jira-update-description.md) | Jira Description Read+Update Skill |
+| MUX-061 | [`MUX-061-lifecycle-logging.md`](../completed/MUX-061-lifecycle-logging.md) | Lifecycle Logging |
+| MUX-062 | [`MUX-062-llm-harness.md`](../completed/MUX-062-llm-harness.md) | Local LLM Harness |
+| MUX-063 | [`MUX-063-local-llm-agent.md`](../completed/MUX-063-local-llm-agent.md) | Local LLM Agent for Commit Role via Ollama |
+| MUX-064 | [`MUX-064-log-tailing-delegation.md`](../completed/MUX-064-log-tailing-delegation.md) | Log Tailing Delegation |
+| MUX-065 | [`MUX-065-loop-detected-self-loop-fix.md`](../completed/MUX-065-loop-detected-self-loop-fix.md) | Loop-Detected Self-Loop Fix |
+| MUX-066 | [`MUX-066-loop-detection.md`](../completed/MUX-066-loop-detection.md) | Loop Detection |
+| MUX-067 | [`MUX-067-memory-search.md`](../completed/MUX-067-memory-search.md) | Memory Search |
+| MUX-068 | [`MUX-068-modal-auto-size.md`](../completed/MUX-068-modal-auto-size.md) | Modal Auto-Size |
+| MUX-069 | [`MUX-069-modal-window-manager.md`](../completed/MUX-069-modal-window-manager.md) | API Agent Modal Window |
+| MUX-070 | [`MUX-070-multi-agent-reload.md`](../completed/MUX-070-multi-agent-reload.md) | Multi-agent reload |
+| MUX-071 | [`MUX-071-muxcode-go-launcher.md`](../completed/MUX-071-muxcode-go-launcher.md) | MuxCode Go Launcher |
+| MUX-072 | [`MUX-072-notification-dedup-busy-agent.md`](../completed/MUX-072-notification-dedup-busy-agent.md) | Notification dedup and busy-agent suppression |
+| MUX-073 | [`MUX-073-ollama-health-monitoring.md`](../completed/MUX-073-ollama-health-monitoring.md) | Ollama Health Monitoring |
+| MUX-074 | [`MUX-074-opencode-compatibility.md`](../completed/MUX-074-opencode-compatibility.md) | OpenCode compatibility |
+| MUX-075 | [`MUX-075-opencode-deepseek-editor.md`](../completed/MUX-075-opencode-deepseek-editor.md) | OpenCode + DeepSeek V4 Pro as editor agent |
+| MUX-076 | [`MUX-076-pii-scrubbing.md`](../completed/MUX-076-pii-scrubbing.md) | PII Scrubbing |
+| MUX-077 | [`MUX-077-planner-agent.md`](../completed/MUX-077-planner-agent.md) | Planner agent |
+| MUX-078 | [`MUX-078-playwright-browser-monitoring.md`](../completed/MUX-078-playwright-browser-monitoring.md) | Playwright browser monitoring |
+| MUX-079 | [`MUX-079-preview-fold-fix.md`](../completed/MUX-079-preview-fold-fix.md) | Preview Fold Fix |
+| MUX-080 | [`MUX-080-process-management.md`](../completed/MUX-080-process-management.md) | Process Management |
+| MUX-081 | [`MUX-081-project-aware-context.md`](../completed/MUX-081-project-aware-context.md) | Project-Aware Context |
+| MUX-082 | [`MUX-082-research-mode.md`](../completed/MUX-082-research-mode.md) | Research mode |
+| MUX-083 | [`MUX-083-review-agent-permissions.md`](../completed/MUX-083-review-agent-permissions.md) | Review Agent Permissions |
+| MUX-084 | [`MUX-084-run-chain-watch-overfire.md`](../completed/MUX-084-run-chain-watch-overfire.md) | Run Chain Watch Overfire |
+| MUX-085 | [`MUX-085-runner-execution-history.md`](../completed/MUX-085-runner-execution-history.md) | Runner Execution History |
+| MUX-086 | [`MUX-086-session-compaction.md`](../completed/MUX-086-session-compaction.md) | Session Compaction |
+| MUX-087 | [`MUX-087-session-inspection.md`](../completed/MUX-087-session-inspection.md) | Session Inspection |
+| MUX-088 | [`MUX-088-session-reinit-purge.md`](../completed/MUX-088-session-reinit-purge.md) | Session Re-init Purge |
+| MUX-089 | [`MUX-089-shell-to-go-migration.md`](../completed/MUX-089-shell-to-go-migration.md) | Shell-to-Go Migration |
+| MUX-090 | [`MUX-090-skills-plugin.md`](../completed/MUX-090-skills-plugin.md) | Skills Plugin System |
+| MUX-091 | [`MUX-091-spawn-worktrees.md`](../completed/MUX-091-spawn-worktrees.md) | Spawn worktree isolation |
+| MUX-092 | [`MUX-092-token-reduction.md`](../completed/MUX-092-token-reduction.md) | Token Usage Reduction — Refactoring Plan |
+| MUX-093 | [`MUX-093-tool-profiles-and-chains.md`](../completed/MUX-093-tool-profiles-and-chains.md) | Tool Profiles and Event Chains |
+| MUX-094 | [`MUX-094-transactional-messaging-bus.md`](../completed/MUX-094-transactional-messaging-bus.md) | Transactional messaging bus |
+| MUX-095 | [`MUX-095-user-initiated-git-ops.md`](../completed/MUX-095-user-initiated-git-ops.md) | User-initiated Git Ops |
+| MUX-096 | [`MUX-096-vim-diff-preview-fix.md`](../completed/MUX-096-vim-diff-preview-fix.md) | Vim Diff Preview Fix |
+| MUX-097 | [`MUX-097-watchdog-churn-fix.md`](../completed/MUX-097-watchdog-churn-fix.md) | Watchdog Churn Fix |
+| MUX-098 | [`MUX-098-webhook-endpoint.md`](../completed/MUX-098-webhook-endpoint.md) | Webhook Endpoint |
+| MUX-099 | [`MUX-099-workflow-state-machine.md`](../completed/MUX-099-workflow-state-machine.md) | Workflow state machine |
 
 ## Ideas without specs
 

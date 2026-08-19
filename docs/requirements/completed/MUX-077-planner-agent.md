@@ -68,12 +68,12 @@ Documentation updates are handled by the edit agent alongside code changes. This
 | Action | Description | Example message |
 |--------|-------------|-----------------|
 | `update-docs` | Update docs based on implementation progress | `"Phase 1 of conditional-chains is complete — update the status and check off acceptance criteria"` |
-| `update-status` | Change a requirement spec's status field | `"Mark conditional-chains.md status as In Progress"` |
-| `check-phase` | Check off a completed phase in a spec | `"Check off Phase 2 in docs/requirements/drafts/conditional-chains.md"` |
+| `update-status` | Change a requirement spec's status field | `"Mark MUX-043-conditional-chains.md status as In Progress"` |
+| `check-phase` | Check off a completed phase in a spec | `"Check off Phase 2 in docs/requirements/drafts/MUX-043-conditional-chains.md"` |
 | `add-decision` | Record an implementation decision in a doc | `"Record decision: used AND-only conditions, deferred OR support"` |
 | `review-docs` | Review docs for accuracy against current code | `"Review architecture.md for accuracy after the daemon rename"` |
 | `create-spec` | Create a new requirements spec from a description | `"Create a draft spec for webhook retry logic"` |
-| `move-spec` | Move a spec between drafts/completed/backlog | `"Move conditional-chains.md from drafts to completed"` |
+| `move-spec` | Move a spec between drafts/completed/backlog | `"Move MUX-043-conditional-chains.md from drafts to completed"` |
 
 ### Edit agent integration
 

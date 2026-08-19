@@ -89,9 +89,9 @@ The helper `ConsumeByID(session, role, msgID)` (`bus/inbox.go`):
 
 ### Relationship to existing backlog
 
-[remove-gated-pane-scrape-delivery](../backlog/remove-gated-pane-scrape-delivery.md) lists a "receipt-gap mis-fire" prerequisite (its Known limitation section) that blames only busy non-hook TUIs and freshly-idle Claude agents, and prescribes a self-poll liveness heartbeat as the durable fix. The answered-row case documented here is a **distinct and much cheaper** cause of the same symptom. Fixing it removes a large share of those mis-fires without any heartbeat work, so it **partially unblocks** that prerequisite — but the busy-TUI case remains, so that prerequisite is not fully resolved by this spec.
+[remove-gated-pane-scrape-delivery](../backlog/MUX-012-remove-gated-pane-scrape-delivery.md) lists a "receipt-gap mis-fire" prerequisite (its Known limitation section) that blames only busy non-hook TUIs and freshly-idle Claude agents, and prescribes a self-poll liveness heartbeat as the durable fix. The answered-row case documented here is a **distinct and much cheaper** cause of the same symptom. Fixing it removes a large share of those mis-fires without any heartbeat work, so it **partially unblocks** that prerequisite — but the busy-TUI case remains, so that prerequisite is not fully resolved by this spec.
 
-Same disease family: [echo-as-result](echo-as-result.md) — pane-scrape echoes recorded as passing command results in console history. Both bugs treat pane/chat text as evidence of work; this one produced duplicate-response noise, that one fabricates false GREEN.
+Same disease family: [echo-as-result](MUX-003-echo-as-result.md) — pane-scrape echoes recorded as passing command results in console history. Both bugs treat pane/chat text as evidence of work; this one produced duplicate-response noise, that one fabricates false GREEN.
 
 ## Implementation
 
@@ -113,7 +113,7 @@ Same disease family: [echo-as-result](echo-as-result.md) — pane-scrape echoes 
 ### Phase 3: Verification and docs
 
 - [x] `./test.sh` passes (`go vet` + full `go test`) with the new tests — verified from console history: exit 0, go vet clean, 5/5 packages PASS, 0 failures
-- [x] Cross-link added in `docs/requirements/backlog/remove-gated-pane-scrape-delivery.md` Known limitation — answered-row cause fixed here, busy-TUI case remains, prerequisite NOT fully resolved
+- [x] Cross-link added in `docs/requirements/backlog/MUX-012-remove-gated-pane-scrape-delivery.md` Known limitation — answered-row cause fixed here, busy-TUI case remains, prerequisite NOT fully resolved
 - [x] Update the delivery-acknowledgement bullet in `CLAUDE.md` if the receipt-gap description needs the answered-row nuance — done by edit 2026-08-11: `hasReceipt` semantics and the `MarkResponded` choke point added to the bullet
 
 ### Phase 4: Integration test
