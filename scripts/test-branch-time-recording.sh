@@ -15,10 +15,13 @@
 # ledger and the real CLI. It does not prove the agent follows the contract;
 # it proves the contract itself holds and the CLI supports it.
 #
-# RECONCILIATION USES `seed`, NOT `--add`. The Phase 3 checkbox text still says
-# `--add`, but that predates the design revision recorded in the spec's Status
-# line and contradicted by planner.md: `--add` is additive and double-counts
-# whenever the ledger is non-zero. `seed` is a floor that only ever raises.
+# RECONCILIATION USES `seed`, NOT `--add`. The spec's Phase 3 checkbox used to
+# say `--add`; it was stale text left behind by the reconciliation revision and
+# is corrected to `seed` in the same change that added this script. The
+# distinction is load-bearing, not cosmetic: `--add` is additive and
+# double-counts whenever the ledger is non-zero, while `seed` is a floor that
+# only ever raises. The "repeated reconciliation does not inflate the ledger"
+# assertion below exists specifically to fail if anyone reintroduces `--add`.
 #
 # Hermetic: throwaway git repo, temp ledger (MUXCODE_BRANCH_TIME_FILE), scratch
 # BUS_SESSION, and a pinned MUXCODE_LIFECYCLE_LOG_DIR so the run cannot leak
