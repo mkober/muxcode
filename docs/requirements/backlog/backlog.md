@@ -84,6 +84,7 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 | MUX-025 | [`MUX-025-modal-log-viewer.md`](./MUX-025-modal-log-viewer.md) | Low | Lifecycle/log viewer modal |
 | MUX-026 | [`MUX-026-modal-memory-browser.md`](./MUX-026-modal-memory-browser.md) | Low | Memory browser modal with BM25 search |
 | MUX-027 | [`MUX-027-modal-webhook-monitor.md`](./MUX-027-modal-webhook-monitor.md) | Low | Live webhook request inspector modal with replay |
+| MUX-031 | [`MUX-031-graph-run-tui.md`](./MUX-031-graph-run-tui.md) | Medium | Interactive TUI for [MUX-014](./MUX-014-graph-agent-orchestrator.md) graph runs: run browser → layered live DAG with Dracula state colors → node detail; `wait_human` approve/cancel/retry from the view; `--render-once` scriptable frame; depends on MUX-014 Phase 2 run store |
 
 ### Completed (id registry)
 
@@ -101,7 +102,6 @@ MUX-003/004 were delivered under GitHub tracking; MUX-028–MUX-099 are retroact
 | MUX-028 | [`MUX-028-agent-debug-skill.md`](../completed/MUX-028-agent-debug-skill.md) | Agent Debug Skill |
 | MUX-029 | [`MUX-029-agent-diagnostic-command.md`](../completed/MUX-029-agent-diagnostic-command.md) | Agent diagnostic command |
 | MUX-030 | [`MUX-030-agent-health-monitoring.md`](../completed/MUX-030-agent-health-monitoring.md) | Agent Health Monitoring |
-| MUX-031 | [`MUX-031-agent-hot-reload.md`](../completed/MUX-031-agent-hot-reload.md) | Agent hot reload |
 | MUX-032 | [`MUX-032-agent-mode.md`](../completed/MUX-032-agent-mode.md) | Agent mode |
 | MUX-033 | [`MUX-033-agent-spawn.md`](../completed/MUX-033-agent-spawn.md) | Agent Spawn |
 | MUX-034 | [`MUX-034-agent-startup-inbox-wake.md`](../completed/MUX-034-agent-startup-inbox-wake.md) | Agent startup inbox wake-up |
@@ -170,6 +170,7 @@ MUX-003/004 were delivered under GitHub tracking; MUX-028–MUX-099 are retroact
 | MUX-097 | [`MUX-097-watchdog-churn-fix.md`](../completed/MUX-097-watchdog-churn-fix.md) | Watchdog Churn Fix |
 | MUX-098 | [`MUX-098-webhook-endpoint.md`](../completed/MUX-098-webhook-endpoint.md) | Webhook Endpoint |
 | MUX-099 | [`MUX-099-workflow-state-machine.md`](../completed/MUX-099-workflow-state-machine.md) | Workflow state machine |
+| MUX-101 | [`MUX-101-agent-hot-reload.md`](../completed/MUX-101-agent-hot-reload.md) | Agent hot reload (renumbered from MUX-031 to free the id for the graph run TUI's GitHub issue #31) |
 
 ## Ideas without specs
 

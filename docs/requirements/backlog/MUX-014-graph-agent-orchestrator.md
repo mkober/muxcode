@@ -38,6 +38,8 @@ So: fixed lines + LLM scheduler + optional workers. Missing: an executable multi
 
 7. **Observability** — DAG rendered in TUI/console; lifecycle events per edge. Clearer than reconstructing call order from inbox JSONL.
 
+8. **Write-parallel fan-out via worktrees** — map/worker nodes reuse `StartSpawn()`, which gives every worker its own git worktree by default ([`completed/MUX-091-spawn-worktrees.md`](../completed/MUX-091-spawn-worktrees.md)). Isolation upgrades fan-out from parallel readers to parallel *writers*: per-package migrations, parallel fix attempts on a red build, and tournament patterns (N independent attempts at the same task → join → a review node picks the winner — impossible in a shared tree, where attempts overwrite each other). A run works on an isolated HEAD snapshot, so it never collides with edit's live uncommitted work, and `graph cancel` discards worktrees without dirtying the main tree.
+
 ### What it does not replace
 
 - Tool profiles / authorities — edit≠git, plan owns docs + Jira/Confluence writes, **user-initiated commits stay user-initiated**
@@ -74,6 +76,7 @@ Templates: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`,
 - [ ] Async orchestration: `graph run` returns immediately (never blocks the caller's prompt); for a gate-free run, edit receives exactly one wake (run completion) — its involvement is O(`wait_human` gates), never O(nodes)
 - [ ] `muxcode graph run <template>|--file <path>` starts a run; the daemon executes edges deterministically (send/spawn) — no LLM decides node succession
 - [ ] Fan-out via `map` nodes (dynamic item list → parallel spawn/send) and fan-in via `join` nodes with `all`/`any`/`quorum` barrier semantics
+- [ ] Worktree workers have a defined output contract: a worker's diff is harvested into the run store *before* its worktree is cleaned up (MUX-091 deletes worktrees on spawn completion — uncommitted work dies with them), so join nodes consume harvested outputs, never live trees; resume treats a missing or purged worktree as re-run-the-node, never reattach
 - [ ] `condition` nodes reuse `EvaluateConditions()` and `ChainContext` verbatim — no second condition dialect
 - [ ] Per-run durable state under the bus dir (`graphs/<run-id>/`): node status, inputs/outputs, timestamps; a daemon restart resumes in-flight runs from persisted state
 - [ ] `graph status|cancel|retry <run-id> [--from <node>]` work against the run store; retry re-executes from the named node without re-running completed upstream nodes
@@ -146,7 +149,7 @@ Templates: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`,
 
 ### Phase 5: Observability
 
-- [ ] Console/TUI run view: node grid with Dracula state colors, active edges, run header (id, template, elapsed)
+- [ ] Console/TUI run view: node grid with Dracula state colors, active edges, run header (id, template, elapsed) — minimal status render only; the dedicated interactive DAG TUI (run browser, gate approval from the view) is [`MUX-031-graph-run-tui.md`](./MUX-031-graph-run-tui.md), buildable in parallel once Phase 2's run store lands
 - [ ] `graph status --json` for scripting
 - [ ] Docs: `docs/architecture.md` control-plane section, `docs/agent-bus.md` CLI reference, backlog cross-links
 
@@ -166,7 +169,8 @@ Templates: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`,
 - **Outcome fidelity on non-hook providers** — hook providers give deterministic exit codes; OpenCode/Codex outcomes are inferred. Does the executor demand hook-grade outcomes for `failure`-routed edges, or accept `unknown` with an explicit `on_unknown` edge? Interacts with [`opencode-plugin-hook-bridge`](./MUX-011-opencode-plugin-hook-bridge.md).
 - **Who authors DAGs in v1** — hand-authored JSON + built-in templates only, or also an LLM planner (graph agent / edit) that compiles intent → DAG? Proposal: templates-only first; planner is a later, separate spec.
 - **Story-lifecycle template scope** — the full `story-lifecycle` skill includes Jira transitions and PR creation, all behind authority gates; the template must model those as `wait_human`-gated nodes, which may make it more documentation than automation until authorities are opted in.
-- **Concurrency limits** — per-run and global caps on simultaneously running nodes (map fan-out could spawn many worktrees); likely `MUXCODE_GRAPH_MAX_PARALLEL`.
+- **Concurrency limits** — per-run and global caps on simultaneously running nodes (map fan-out could spawn many worktrees); likely `MUXCODE_GRAPH_MAX_PARALLEL`. N full checkouts under `/tmp/muxcode-spawn-*` also count toward the [MUX-002](../completed/MUX-002-disk-pressure-wrong-filesystem.md) disk-pressure footprint signal (1 GiB default) — a correct guard (worktrees are exactly what cleanup can free), but another reason to cap fan-out. Per-tree build caches are cold (`node_modules` absent; Go's user-level cache is shared), so tiny tasks may not pay for isolation.
+- **Dirty-tree baseline** — worktree workers see committed `HEAD` only (MUX-091 non-goal: no uncommitted state in worktrees). A run started mid-edit fans out workers blind to edit's uncommitted changes. At minimum a documented constraint; possibly `graph run`/`validate` warns when a write-shaped map starts on a dirty tree.
 - **Workflow SM interplay** — should the SM observe graph runs (e.g. surface "graph coding-pr: 4/9 nodes") or stay fully independent?
 
 ## Sources
