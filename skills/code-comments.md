@@ -7,6 +7,8 @@ tags: [style, comments, readability]
 
 ## Comment discipline
 
+> **When to apply this.** Before every `Edit`/`Write` that adds a comment, re-read your own added lines against the rules below — not the file's existing comments, the ones you just wrote. This is an authoring step, not only a review standard: the failure mode is knowing these rules and still writing a paragraph into a function body twenty tool calls into a task, because the rule was never checked at the moment of writing.
+
 The default is **no comment**. Code says what it does; a comment earns its place only by saying something the code cannot.
 
 Most comments are a net loss: they restate the line below, drift out of sync, and train readers to skip prose — so the one comment that mattered gets skipped too.
@@ -18,6 +20,7 @@ Most comments are a net loss: they restate the line below, drift out of sync, an
 - Rationale belongs on the **function or type doc comment**, not between statements
 - Inside a body: at most **one short line**, above a group of statements — never between tightly coupled lines
 - Never split a cohesive unit: a struct literal, `switch`, `if`/`else` chain, or argument list
+- **Never comment inside an expression.** Prose spliced into a multi-line string concatenation, argument list, chained call, or collection literal is worse than prose between statements: it breaks a single unit of meaning mid-thought, and the reader has to reassemble the expression around it. Put it above the statement, or at the boundary
 - **A multi-line comment inside a function is a smell.** Hoist it to the doc comment, or extract a named function and let the name carry it
 
 ```go
@@ -81,7 +84,9 @@ The first five are the habits that show up most in generated code. Check for the
 
 **Consumer-visible contracts** — a JSON shape, on-disk format, or CLI output another process parses, so a rename is understood as a breaking change.
 
-**Length scales with consequence.** A comment is as long as the damage it prevents: a bounds guard earns one line; a hazard that silently corrupts data earns a short paragraph — at the boundary, not in the body. Anything longer than the code it explains belongs in a doc comment or a spec.
+**Length scales with consequence.** A comment is as long as the damage it prevents: a bounds guard earns one line; a hazard that silently corrupts data earns a short paragraph. Anything longer than the code it explains belongs in a doc comment or a spec.
+
+**Length never buys you a place in the body.** Earning a paragraph earns it *at the boundary* — the function or type doc comment. The two decisions are independent: how much to write, and where it goes. Deciding a hazard deserves a paragraph is not permission to put that paragraph between statements. If it will not fit at the boundary, extract a named function so the boundary moves to it.
 
 ### Doc comments on exported API
 
@@ -105,6 +110,7 @@ Exported identifiers get a doc comment; unexported ones only when non-obvious. D
 |---------|----------|
 | Comment contradicts the code, or promises behaviour it lacks | should-fix |
 | Multi-line prose fragmenting a function body | should-fix |
+| Comment spliced inside an expression (string concat, argument list, literal) | should-fix |
 | Non-obvious guard, ordering rule, or consumer-visible contract undocumented | should-fix |
 | Restatement, narration, step-numbering, banner, commented-out code, unowned TODO | nit |
 | Exported identifier missing a doc comment | nit |

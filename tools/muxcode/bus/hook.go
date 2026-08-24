@@ -35,6 +35,9 @@ type ToolInput struct {
 	FilePath     string `json:"file_path,omitempty"`
 	NotebookPath string `json:"notebook_path,omitempty"`
 	NewString    string `json:"new_string,omitempty"`
+	// Content carries Write's whole-file payload. Edit sends NewString instead,
+	// so a check that reads only one of the two silently skips half the writes.
+	Content string `json:"content,omitempty"`
 }
 
 // ParseToolEvent parses a JSON tool event from raw bytes.

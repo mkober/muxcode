@@ -17,6 +17,8 @@ An explicit DAG control plane on top of the existing bus, specialist roles, line
 
 So: fixed lines + LLM scheduler + optional workers. Missing: an executable multi-node graph with joins and durable run history. There is no graph agent or spec in the repo today — the closest building blocks all exist and are reused below.
 
+**The wake-per-step tax.** `--track` already makes any *single* delegation non-blocking, but multi-step work still routes through edit: every completion wakes it, and it must hold the remaining plan in context and decide the next send. Edit's involvement in an N-step sequence is O(N) wakes — each one consuming attention, context, and a prompt turn — and the plan itself is only as durable as edit's context window. The graph moves that routing into the daemon so edit fires one `graph run` and is interrupted only at human gates and terminal states.
+
 ### What graph-agent orchestration provides
 
 1. **Explicit multi-agent DAGs** — nodes = roles/actions; edges = success/failure/custom outcomes. Not "edit decides the next send" or a single-successor chain.
@@ -69,6 +71,7 @@ Templates: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`,
 ### Acceptance criteria
 
 - [ ] Graph definitions are declarative JSON: nodes (typed), edges keyed by outcome (`success`/`failure`/custom), validated by `muxcode graph validate` — undefined node refs, unreachable nodes, and uncapped cycles are errors; loops only via explicit `max_iterations` on a loop edge
+- [ ] Async orchestration: `graph run` returns immediately (never blocks the caller's prompt); for a gate-free run, edit receives exactly one wake (run completion) — its involvement is O(`wait_human` gates), never O(nodes)
 - [ ] `muxcode graph run <template>|--file <path>` starts a run; the daemon executes edges deterministically (send/spawn) — no LLM decides node succession
 - [ ] Fan-out via `map` nodes (dynamic item list → parallel spawn/send) and fan-in via `join` nodes with `all`/`any`/`quorum` barrier semantics
 - [ ] `condition` nodes reuse `EvaluateConditions()` and `ChainContext` verbatim — no second condition dialect
@@ -152,6 +155,7 @@ Templates: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`,
 - [ ] Create `scripts/test-graph-orchestrator.sh` (requires running muxcode session)
 - [ ] Test: `graph validate` rejects an uncapped cycle and an ungated commit node; accepts all built-in templates
 - [ ] Test: run a 3-node linear graph (send→condition→send) → verify node statuses reach `done` and lifecycle events recorded
+- [ ] Test: gate-free linear run → `graph run` returns before any node executes, and edit's inbox shows exactly one graph wake (run completion), zero per-node wakes
 - [ ] Test: run a fan-out/join graph (map → 2 spawns → join all) → verify barrier held until both workers completed
 - [ ] Test: kill and restart the daemon mid-run → verify the run resumes and completes from persisted state
 - [ ] Test: `graph retry --from <node>` re-executes only downstream nodes
