@@ -54,6 +54,7 @@ tools/muxcode-llm-harness/    # Go module — standalone local LLM harness
 | `bash scripts/test-echo-as-result.sh` | Integration test for the echo-as-result fix — synthesized bus-response rows never render as a pass (isolated scratch session, no live session needed) |
 | `bash scripts/test-lifecycle-log-leak.sh` | Regression test that a full test run leaves `~/.config/muxcode/logs` untouched (runs the suite under a throwaway `HOME`) |
 | `bash scripts/test-branch-time-recording.sh` | Integration test for the branch-time requirements-doc sink — JSON read path, idempotent upsert, never-regress reconciliation (hermetic; no live session needed) |
+| `bash scripts/test-disk-pressure.sh` | Integration test for the disk-pressure signal and its alert cooldown — healthy machine stays silent, footprint/headroom breaches alert, alert fires once per window not every 60s cycle (safe: never invokes `CleanupStale`) |
 
 Both Go modules have **no external dependencies** (stdlib only).
 

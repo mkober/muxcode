@@ -3181,6 +3181,39 @@ func (d *Daemon) checkCleanup() {
 	}
 }
 
+// Disk-pressure alert cooldowns, in seconds.
+//
+// The two differ because an alert nobody can act on is pure noise: when cleanup
+// freed something, the condition is actionable and worth repeating sooner; when
+// it freed nothing, the operator can do nothing with a repeat, so it is held
+// back six times longer. Before any cooldown existed, an unactionable repeat
+// every 60s produced 813 of the last 1000 lifecycle entries and evicted the
+// history needed to diagnose overnight incidents.
+const (
+	diskPressureCooldownEffective   int64 = 600  // cleanup freed something
+	diskPressureCooldownIneffective int64 = 3600 // cleanup freed nothing
+)
+
+// shouldAlertDiskPressure decides whether a disk-pressure alert fires now.
+//
+// Extracted as a pure function so "alerts once, not every cycle" is testable
+// without calling CheckDiskPressure — which runs CleanupStale and would delete
+// other muxcode sessions' /tmp artifacts on the machine running the test.
+//
+// seen distinguishes "never alerted" from "alerted at epoch 0": with lastTS
+// defaulting to 0, an unseen key and a 1970 timestamp are indistinguishable,
+// and the first alert for a role must always fire.
+func shouldAlertDiskPressure(lastTS, now int64, seen, ineffective bool) bool {
+	if !seen {
+		return true
+	}
+	cooldown := diskPressureCooldownEffective
+	if ineffective {
+		cooldown = diskPressureCooldownIneffective
+	}
+	return now-lastTS >= cooldown
+}
+
 // checkDiskPressure checks /tmp for genuine pressure every 60 seconds and, when
 // found, runs progressive cleanup and alerts the edit agent.
 //
@@ -3224,20 +3257,10 @@ func (d *Daemon) checkDiskPressure() {
 		ts, formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
 		result.UsagePct, staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed))
 
-	// Alert edit agent with adaptive cooldown:
-	//  - 600s (10 min) when cleanup actually freed something
-	//  - 3600s (1 hour) when cleanup was ineffective (nothing to clean, usage unchanged)
-	// This prevents flooding the edit agent with repeated alerts it can't act on.
 	alertKey := "disk-pressure:/tmp"
-	cooldown := int64(600)
 	ineffective := staleCleaned == 0 && claudeCleaned == 0
-	if ineffective {
-		cooldown = 3600
-	}
-	alerting := false
-	if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= cooldown {
-		alerting = true
-	}
+	lastTS, seen := d.lastAlertKey[alertKey]
+	alerting := shouldAlertDiskPressure(lastTS, now, seen, ineffective)
 
 	// Write the lifecycle warn only when the condition is actionable or newly
 	// alerted. An unactionable repeat every 60s produced 813 of the last 1000

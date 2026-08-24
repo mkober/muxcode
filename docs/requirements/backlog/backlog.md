@@ -2,7 +2,7 @@
 
 Index of all pending requirement specs. Every planned feature with a written spec has a row
 in the [Spec index](#spec-index) below; ideas without a spec doc yet are collected in
-[Ideas without specs](#ideas-without-specs). 75 delivered specs live in
+[Ideas without specs](#ideas-without-specs). 76 delivered specs live in
 [`completed/`](../completed/) — each with requirements, key files, and implementation notes.
 
 Spec lifecycle: `backlog/` (planned or parked) → `drafts/` (actively being designed or
@@ -36,7 +36,6 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 
 | ID | Spec | Priority | Status |
 |----|------|----------|--------|
-| MUX-002 | [`MUX-002-disk-pressure-wrong-filesystem.md`](./MUX-002-disk-pressure-wrong-filesystem.md) | Medium | In Progress — `TmpPressure()` headroom+footprint signals shipped; integration test outstanding |
 | MUX-005 | [`MUX-005-plan-diagrams.md`](./MUX-005-plan-diagrams.md) | Medium | In Progress — Phases 1–3 complete (render script, media store, req-doc embeds); Jira/Confluence embed phases remaining |
 
 ### Reliability & observability
@@ -96,6 +95,7 @@ MUX-003/004 were delivered under GitHub tracking; MUX-028–MUX-099 are retroact
 | ID | Spec | Delivered |
 |----|------|-----------|
 | MUX-001 | [`MUX-001-branch-time-tracking.md`](../completed/MUX-001-branch-time-tracking.md) | Branch active-time recording delta on the [MUX-040](../completed/MUX-040-branch-time-tracking.md) baseline: `--json` read path, verify-spec doc sink with `seed`-floor never-regress reconciliation, `scripts/test-branch-time-recording.sh` (14 checks) |
+| MUX-002 | [`MUX-002-disk-pressure-wrong-filesystem.md`](../completed/MUX-002-disk-pressure-wrong-filesystem.md) | `TmpPressure()` replaces volume percent-used with absolute free-headroom + muxcode-footprint signals; adaptive alert cooldown (600s effective / 3600s ineffective) extracted as pure `shouldAlertDiskPressure` so cadence is testable without running `CleanupStale`; `scripts/test-disk-pressure.sh` (11 checks) with leak detection scoped to scratch-session log names — a whole-directory snapshot is a false-positive generator while a live daemon appends to the log dir |
 | MUX-003 | [`MUX-003-echo-as-result.md`](../completed/MUX-003-echo-as-result.md) | `scripts/test-echo-as-result.sh` (20 checks) verifies synthesized bus-response rows can never render as a pass while the authoritative self-logged path still does; isolated scratch `BUS_SESSION`, no live session needed |
 | MUX-004 | [`MUX-004-lifecycle-log-test-leak.md`](../completed/MUX-004-lifecycle-log-test-leak.md) | `scripts/test-lifecycle-log-leak.sh` (7 checks) runs the suite under a throwaway `HOME` so a lost `MUXCODE_LIFECYCLE_LOG_DIR` pin is caught without writing to the real install; plus `tui/main_test.go` closing the last unpinned test package |
 | MUX-028 | [`MUX-028-agent-debug-skill.md`](../completed/MUX-028-agent-debug-skill.md) | Agent Debug Skill |
