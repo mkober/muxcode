@@ -93,7 +93,7 @@ When an agent uses a non-hook provider (OpenCode, Codex CLI, or local LLM), hook
 - **Idle-based notifications**: daemon skips idle check for non-hook providers; uses display-message or 60s cooldown send-keys instead
 - **Send restrictions prompt**: the "Send Restrictions" section in the shared prompt (which tells Claude Code agents not to send to chain targets) is hidden for non-hook providers
 
-Core code: `cmd/hook.go` (hook gating), `bus/prompt.go` (role-specific manual bus messaging, send restriction gating), `bus/profile.go` (send policy bypass, `resolveRoleAlias()` for canonical role names), `bus/provider_opencode.go` (body adaptation), `bus/provider_codex.go` (shared agent config), `watcher/watcher.go` (daemon idle check skip, `HasActionableMessages()` filtering).
+Core code: `cmd/hook.go` (hook gating), `bus/prompt.go` (role-specific manual bus messaging, send restriction gating), `bus/profile.go` (send policy bypass, `resolveRoleAlias()` for canonical role names), `bus/provider_opencode.go` (body adaptation), `bus/provider_codex.go` (shared agent config), `daemon/daemon.go` (daemon idle check skip, `HasActionableMessages()` filtering).
 
 ## Data Flow
 
@@ -188,7 +188,7 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
 
 ### Daemon identity
 
-The bus daemon (implemented in `watcher/watcher.go`) uses `daemon` as its message bus identity — not `watcher`, which would collide with the `watch` agent (F9 window, the log-monitoring agent). This naming distinction prevents confusion in message routing, loop detection, and lifecycle logs.
+The bus daemon (implemented in `daemon/daemon.go`) uses `daemon` as its message bus identity — not `watcher`, which would collide with the `watch` agent (F9 window, the log-monitoring agent). This naming distinction prevents confusion in message routing, loop detection, and lifecycle logs.
 
 - **Bus messages**: the daemon sends messages with `from: daemon` (e.g. loop-detected, compact-recommended, agent-down alerts)
 - **Role normalization**: `NormalizeBusRole("daemon")` maps to `edit`, so reply instructions in daemon-originated messages point agents to reply to the edit agent (a valid interactive role) rather than to `daemon` (which has no inbox)
@@ -206,15 +206,37 @@ This means rapid consecutive edits (e.g. Claude writing multiple files) are coal
 
 ### Daemon watchdogs
 
-Beyond inbox delivery, the daemon runs three resilience watchdogs that detect and self-heal stuck agents. All are opt-out via env var and emit lifecycle events for auditing.
+Beyond inbox delivery, the daemon runs four resilience watchdogs that detect and self-heal stuck agents. All are opt-out via env var and emit lifecycle events for auditing.
 
 | Watchdog | Detects | Action | Tuning | Lifecycle event |
 |----------|---------|--------|--------|-----------------|
 | Long-active | An agent continuously active past the threshold (runaway think) | Queues a non-invasive advisory nudging it to summarize + escalate. Skips `--wait`/poll/reload/harness/non-hook agents | `MUXCODE_ACTIVE_WATCHDOG_SECS` (default 600; 0 disables) | `active-watchdog` (+ `long-active` bus event) |
 | Stuck-provider | A non-hook agent (OpenCode/Codex) wedged in a provider loop — signatures like `InternalError.Algo`, "repeated across multiple consecutive rounds", "No matching discriminator" — via two-sighting debounce | Auto-reloads the agent in place (cap 3/role, 180s cooldown); after the cap, sends an `agent-stuck` alert to edit | `MUXCODE_STUCK_RELOAD_DISABLE=1` disables | `stuck-provider-reload`, `stuck-provider-giveup` |
 | Task-timeout | A tracked task stuck `in-flight` (delivered while busy, never responded) past its timeout — would otherwise permanently block new `(to,action)` sends to that role | Times out the expired in-flight task so the dedup guard ignores it and the target receives messages again | Task timeout (default 600s) | `task-timeout` |
+| Permission-block | A **hook-provider (Claude Code)** agent wedged at a REJECTED permission prompt it cannot satisfy autonomously — it never responds, its request stays actionable, and idle-delivery re-wakes it endlessly. Detected via `PaneShowsPermissionBlock` gated on a pending request + two-sighting debounce | **Alert-only** — suppresses further re-waking (`d.permBlocked`) and sends one `permission-blocked` event to edit; suppression lifts once the signature clears, the request drains, or the agent dies | `MUXCODE_PERMBLOCK_WATCHDOG_DISABLE=1` disables | `permission-blocked` |
 
-Core code: `watcher/watcher.go` (`checkActiveWatchdog()`, `checkStuckProviders()`, `checkTrackedTasks()`), `bus/stuck.go` (`PaneShowsProviderLoop()`), `bus/task.go` (`TaskExpired()`), `bus/dedup.go` (`HasInFlightTaskForRole()`, `FindInFlightTask()` — both ignore expired tasks).
+Core code: `daemon/daemon.go` (`checkActiveWatchdog()`, `checkStuckProviders()`, `checkTrackedTasks()`, `checkStuckPermissions()`), `bus/stuck.go` (`PaneShowsProviderLoop()`, `PaneShowsPermissionBlock()`), `bus/task.go` (`TaskExpired()`), `bus/dedup.go` (`HasInFlightTaskForRole()`, `FindInFlightTask()` — both ignore expired tasks).
+
+### Auto-clear between tasks
+
+Compaction (`/compact`) summarizes a conversation to keep it under the context limit. Auto-clear is the complementary lever for **episodic** roles: rather than compressing accumulated context, it discards it entirely once the task that produced it is done. The two are exclusive per role — `edit` and `auto` hold the user conversation and loop state, so they are hard-excluded from auto-clear and keep `/compact`.
+
+The rationale is architectural rather than merely economical: each bus request is self-contained, and cross-task state already lives in `muxcode memory`. For a role that answers discrete requests, context carried between unrelated tasks is re-sent on every turn without informing anything.
+
+**Trigger** — `checkAutoClear()` runs on the daemon poll loop, throttled to a 15s tick (finer granularity buys nothing against a 60s default quiet window):
+
+1. Read enrolled roles (`MUXCODE_AUTO_CLEAR_ROLES`); return immediately when empty, which is the default.
+2. For each role, find the last task completion and compare it against the per-role marker and the quiet window (`AutoClearDue`).
+3. Evaluate the guard matrix (`AutoClearEligible`); a failing guard skips this cycle but leaves the trigger armed.
+4. Inject `/clear` via `ClearAgent()`, write the marker, log an `auto-clear` lifecycle event.
+
+**Completion detection** reads *both* stores, because neither alone covers every path: `bus/task.go` completed tasks carry `--wait`/`--track` delegations, while responded delivery statuses (`bus/delivery.go`) cover chain requests that never create a task. Each candidate is resolved back to the originating message so completions are attributed to the right window.
+
+**Exactly-once** is enforced by the marker `auto-clear-{role}.last` in the bus directory: only work completed *after* its timestamp can trigger another clear, so repeated poll cycles cannot re-clear the same task. The marker is written only after a successful injection — a failed inject logs `auto-clear-failed` and leaves the marker untouched, so the clear is retried rather than silently swallowed.
+
+**Delivery after a clear**: clearing does not detach the agent from the bus. The `Stop` hook relaunches the `muxcode inbox --poll --loop` listener on the next turn, and the daemon receipt-gap backstop covers the interval.
+
+Core code: `bus/clear.go` (`AutoClearRoles()`, `AutoClearQuietSecs()`, `AutoClearDue()`, `LastTaskCompletion()`, `AutoClearEligible()`, `ClearAgent()`), `daemon/daemon.go` (`checkAutoClear()`), `bus/config.go` (`AutoClearMarkerPath()`). Manual path: `muxcode clear <role>`. Env vars in [Configuration](configuration.md#auto-clear-between-tasks).
 
 ### Diff Preview Flow
 
@@ -532,7 +554,7 @@ The daemon fires a `heartbeat` action to the `agent` inbox at `MUXCODE_AGENT_HEA
 
 State file: `agent-last-heartbeat` in the bus directory. Set `MUXCODE_AGENT_HEARTBEAT=0` to disable.
 
-Core code: `bus/mode.go`, `cmd/mode.go`, `watcher/watcher.go` (`checkHeartbeat()`).
+Core code: `bus/mode.go`, `cmd/mode.go`, `daemon/daemon.go` (`checkHeartbeat()`).
 
 ## Agent mode (F1 cycling)
 
@@ -630,7 +652,7 @@ When a MuxCode session restarts with the same name, `Init()` in `bus/setup.go` d
 - **Preserved**: memory files (`.muxcode/memory/`, `~/.config/muxcode/memory/`) — persistent learnings survive re-init
 - **Daemon grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (60s) and compaction checks (120s) skip the first interval
 
-Core code: `bus/setup.go` (`Init()`, `resetFile()`, `purgeStaleFiles()`), `watcher/watcher.go` (`New()`)
+Core code: `bus/setup.go` (`Init()`, `resetFile()`, `purgeStaleFiles()`), `daemon/daemon.go` (`New()`)
 
 ## Workflow state machine
 
@@ -699,7 +721,7 @@ Persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record the full 
 | `AutoAccept()` | `auto-accept` | trust-prompt, bypass-prompt, agent-ready, complete |
 | `RunAgentLaunch()` | `agent` | launch (role + CLI type) |
 | `bus/setup.go` | `init` | init, re-init |
-| `watcher/watcher.go` | `daemon` | started, lock-failed, inbox-notify, startup-notify, trigger-route, cron-fire, proc/spawn-complete, loop/compact alerts, ollama/agent health |
+| `daemon/daemon.go` | `daemon` | started, lock-failed, inbox-notify, startup-notify, trigger-route, cron-fire, proc/spawn-complete, loop/compact alerts, ollama/agent health |
 | `cmd/watch.go` (`--monitor`) | `monitor` | session-gone, stale-detected, watcher-restart |
 | `bus/cleanup.go` | `cleanup` | session-cleanup |
 

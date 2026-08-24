@@ -25,7 +25,7 @@ var knownSubcommands = map[string]bool{
 	"reload": true, "config": true, "provider-select": true,
 	"simulate": true, "track": true, "remote": true, "spec": true,
 	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true,
-	"branch-time": true,
+	"branch-time": true, "clear": true,
 }
 
 var usage = `Usage: muxcode <command> [args...]
@@ -87,6 +87,7 @@ Commands:
   model         Manage provider models for hot reload (list, add, remove, default)
   provider-select  Interactive provider/model selector TUI (used by modal)
   compact       Wait for agent idle, then inject /compact via tmux
+  clear         Run the guarded auto-clear (/clear injection) for one role
   diagnose      Diagnose why an agent isn't responding (evidence + root cause)
   remote        Investigate agents in other muxcode sessions (TUI browser, or list/status/capture/inbox/diagnose)
   spec          Manage the active requirements spec for plan agent verification (set, get, clear)
@@ -222,6 +223,8 @@ func main() {
 		cmd.Simulate(args)
 	case "compact":
 		cmd.Compact(args)
+	case "clear":
+		cmd.Clear(args)
 	case "tasks":
 		cmd.Tasks(args)
 	case "track":
