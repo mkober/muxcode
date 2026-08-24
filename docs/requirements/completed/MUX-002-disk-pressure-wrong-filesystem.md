@@ -104,13 +104,17 @@ Pressure is `lowHeadroom || bigFootprint`, in a new `TmpPressure()` returning `(
 
 ### Phase 2: Integration test
 
-> **Outstanding.** `scripts/test-disk-pressure.sh` was not written. Verification was done live against the running session instead (see "Observed impact" above) — the scripted test remains outstanding.
+- [x] Create `scripts/test-disk-pressure.sh` with automated verification
+- [x] Test: on a healthy machine (high percent-used, large absolute headroom) → no alert fires
+- [x] Test: simulated footprint/headroom breach (env-injected threshold) → alert fires once, not every cycle
+- [x] Run the script and verify all checks pass
 
-- [ ] Create `scripts/test-disk-pressure.sh` with automated verification
-- [ ] Test: on a healthy machine (high percent-used, large absolute headroom) → no alert fires
-- [ ] Test: simulated footprint/headroom breach (env-injected threshold) → alert fires once, not every cycle
-- [ ] Run the script and verify all checks pass
+#### Phase 2 notes
+
+- **The test never calls `CheckDiskPressure` on the real `/tmp`.** That path runs `CleanupStale`, which would delete other muxcode sessions' artifacts on whatever machine runs the suite. Instead, the signal is exercised through `TmpPressure()` with the `/tmp` scan redirected to a temp dir via `busDirOverride`, and the alert cadence is exercised through `shouldAlertDiskPressure` — extracted as a pure function for exactly this reason.
+- **Leak detection is scoped to scratch-session log names, not a whole-directory snapshot.** A snapshot of `~/.config/muxcode/logs` is a false-positive generator: a live session's daemon appends there every poll cycle, so the directory legitimately changes mid-run. Observed during verification — `muxcode.log` grew 132939 → 133082 lines inside one run window, failing a name+size snapshot check the test had not caused.
+- **Verified by negative control.** With `shouldAlertDiskPressure` stubbed to always return true (reintroducing the per-cycle spam bug), the suite goes red on `TestShouldAlertDiskPressure_SuppressedWithinCooldown` and `..._FiresOncePerWindowNotEveryCycle` (10 passed, 1 failed, exit 1) while the signal tests stay green — confirming the assertions target the cadence specifically. Restored, the suite is 11 passed / 0 failed / exit 0.
 
 ## Status
 
-In Progress
+Complete

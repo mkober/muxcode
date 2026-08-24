@@ -58,6 +58,15 @@
             "async": true
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "muxcode hook comment-block"
+          }
+        ]
       }
     ],
     "Stop": [

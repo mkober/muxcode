@@ -4,9 +4,9 @@
 
 Muxcode uses Claude Code's hook system to integrate the AI agent with tmux and neovim. Hooks run before or after tool execution, receiving the tool event as JSON on stdin. Most hooks are implemented as subcommands of `muxcode hook` (Go binary); two remain as shell scripts for tmux/vim timing-sensitive operations.
 
-All hooks are **async** — they do not block the AI agent from continuing.
+Most hooks are **async** — they do not block the AI agent from continuing. Three are sync: `hook guard` (rejects prohibited commands before they run), `hook stop` (can block a turn's stop to re-launch the inbox listener), and `hook comment-block` (its PostToolUse block decision must reach the model).
 
-**Provider gating**: Hooks only fire for providers that support them (`provider.SupportsHooks() == true`). Currently only Claude Code supports hooks. OpenCode, Codex CLI, and local LLM agents skip hook processing entirely — all four hook functions (`hookBash`, `hookGuard`, `hookAnalyze`, `hookInboxPoll`) exit early when the provider is non-hook. For non-hook agents, three layers replace hooks: (1) role-specific manual bus messaging instructions in the system prompt, (2) agent body text adaptation (OpenCode: `adaptBodyForNonHookProvider()`, Codex CLI: shared `.codex/AGENTS.md`) that rewrites hook chain references to manual commands, (3) `CheckSendPolicy()` bypass that allows non-hook agents to send chain messages (build→test, test→review) that would be blocked for hook agents where chains fire automatically.
+**Provider gating**: Hooks only fire for providers that support them (`provider.SupportsHooks() == true`). Currently only Claude Code supports hooks. OpenCode, Codex CLI, and local LLM agents skip hook processing entirely — the hook functions (`hookBash`, `hookGuard`, `hookAnalyze`, `hookInboxPoll`, `hookStop`, `hookCommentBlock`) exit early when the provider is non-hook. For non-hook agents, three layers replace hooks: (1) role-specific manual bus messaging instructions in the system prompt, (2) agent body text adaptation (OpenCode: `adaptBodyForNonHookProvider()`, Codex CLI: shared `.codex/AGENTS.md`) that rewrites hook chain references to manual commands, (3) `CheckSendPolicy()` bypass that allows non-hook agents to send chain messages (build→test, test→review) that would be blocked for hook agents where chains fire automatically.
 
 ## Hook Configuration
 
@@ -37,6 +37,10 @@ Hooks are configured in `.claude/settings.json` in your project:
       {
         "matcher": "Bash",
         "hooks": [{"type": "command", "command": "muxcode hook bash", "async": true}]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [{"type": "command", "command": "muxcode hook comment-block"}]
       }
     ],
     "Stop": [
@@ -162,6 +166,22 @@ After the primary chain action, the hook fires event subscriptions — matching 
 **Error extraction:** For failed build and test commands, the hook extracts error-relevant lines from tool output into an `errors` field in the history JSONL. The regex matches common error patterns: `error:`, `ERR!`, `failed`, `fatal`, `panic`, `FAIL:`, `not found`, `undefined`, `syntax error`, `permission denied`, etc. Test patterns additionally match `assert` and `expect`. The left-pane log views prefer the `errors` field over raw `output` when displaying failures, surfacing diagnostic information instead of noise like "Exit code: 1".
 
 **JSON parsing:** Implemented in Go using `encoding/json` — no external dependencies (`jq`/`python3` not required). The preview hook (`muxcode-preview-hook.sh`) still uses `python3` for generating proposed file content; without it, no split diff appears in nvim.
+
+### hook comment-block (comment blocker)
+
+**Command:** `muxcode hook comment-block`
+**Phase:** PostToolUse
+**Trigger:** Write, Edit
+**Mode:** sync (block decision reaches the model)
+
+Enforces the code-comments skill: flags multi-line comment blocks written inside function bodies. Unlike the other PostToolUse hooks it carries no `async` flag — it runs synchronously so its block decision is fed back to the model, which sees the reason and can hoist the prose to a doc comment or extract a named function instead.
+
+- **Scans only what the edit introduced** — Edit's `new_string` or Write's `content`, never the whole file — so pre-existing comment blocks in a touched file are never flagged. Reported line numbers are relative to the edited fragment, not the file.
+- **Fires at 3+ consecutive comment lines at body indentation.** Column-zero runs (file headers, license blocks, package/module docs) are exempt by design — that boundary is where the skill tells authors to write. The threshold is deliberately looser than the skill's own rule (at most one short line in a body): two lines can be a wrapped sentence, three is a paragraph — the unambiguous case worth interrupting for.
+- **Exempt paths**: unsupported languages are never scanned (only mapped extensions are — `//` markers: `.go .ts .tsx .js .jsx .java .rs .c .cc .cpp .h`; `#` markers: `.py .sh .bash .rb`), and test files (`_test.go`, `.test.ts`, `.spec.js`, `test_*` prefix, `/tests/`, `/spec/`, …) are skipped — a test's comment often *is* the specification of the behavior under test. `#` lines inside Python docstrings are not counted.
+- **Provider-gated** like every hook — no-op for non-hook providers.
+
+Backed by `ScanCommentBlocks()` / `IsCommentBlockExempt()` / `FormatCommentBlockReason()` in `bus/comment_block.go` (`hookCommentBlock()` in `cmd/hook.go`).
 
 ### hook stop (self-poll re-launch)
 

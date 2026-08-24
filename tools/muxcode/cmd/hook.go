@@ -10,10 +10,10 @@ import (
 )
 
 // Hook handles the "muxcode hook" subcommand.
-// Usage: muxcode hook <bash|guard|analyze|inbox-poll|stop>
+// Usage: muxcode hook <bash|guard|analyze|inbox-poll|stop|comment-block>
 func Hook(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode hook <bash|guard|analyze|inbox-poll|stop>\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode hook <bash|guard|analyze|inbox-poll|stop|comment-block>\n")
 		os.Exit(1)
 	}
 
@@ -29,8 +29,10 @@ func Hook(args []string) {
 		hookInboxPoll()
 	case "stop":
 		hookStop()
+	case "comment-block":
+		hookCommentBlock()
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown hook: %s\nAvailable: bash, guard, analyze, inbox-poll, stop\n", subcmd)
+		fmt.Fprintf(os.Stderr, "Unknown hook: %s\nAvailable: bash, guard, analyze, inbox-poll, stop, comment-block\n", subcmd)
 		os.Exit(1)
 	}
 }
@@ -310,6 +312,53 @@ func hookAnalyze() {
 	}
 
 	bus.ProcessAnalyzeHook(session, window, ev)
+}
+
+// hookCommentBlock implements the PostToolUse Write|Edit hook that enforces the
+// code-comments skill's structural rule: rationale lives at the boundary, never
+// wedged between statements.
+//
+// It exists because the skill alone did not hold. Loaded once at session start,
+// it sat among thousands of tokens of standing instructions and was not in the
+// working set twenty tool calls into writing code — the rule was known and still
+// broken. A hook fires whether or not it is remembered, which is the only
+// property that matters here.
+//
+// Only the text the edit introduced is scanned, never the whole file, so an
+// author is told about the block they just wrote and never about pre-existing
+// ones in a file they merely touched.
+func hookCommentBlock() {
+	if bus.BusSession() == "" {
+		return
+	}
+
+	provider := bus.ResolveProvider(bus.BusRole())
+	if !provider.SupportsHooks() {
+		return
+	}
+
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	ev, err := bus.ParseToolEvent(data)
+	if err != nil {
+		return
+	}
+
+	// Edit carries the replacement in NewString; Write carries the whole file
+	// in Content.
+	text := ev.ToolInput.NewString
+	if text == "" {
+		text = ev.ToolInput.Content
+	}
+
+	findings := bus.ScanCommentBlocks(ev.ToolInput.FilePath, text)
+	if len(findings) == 0 {
+		return
+	}
+
+	fmt.Println(bus.FormatGuardBlock(bus.FormatCommentBlockReason(ev.ToolInput.FilePath, findings)))
 }
 
 // hookInboxPoll implements the PostToolUse Bash hook for inbox polling
