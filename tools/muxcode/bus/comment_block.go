@@ -54,7 +54,10 @@ func IsCommentBlockExempt(path string) bool {
 	}
 	lower := strings.ToLower(filepath.ToSlash(path))
 	base := filepath.Base(lower)
-	if strings.HasPrefix(base, "test_") {
+	// Both separators: Python uses test_foo.py, while this repo's own
+	// integration tests are scripts/test-foo.sh. Matching only the underscore
+	// left every test-*.sh unexempt.
+	if strings.HasPrefix(base, "test_") || strings.HasPrefix(base, "test-") {
 		return true
 	}
 	for _, m := range testPathMarkers {

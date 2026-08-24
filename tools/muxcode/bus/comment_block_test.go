@@ -114,6 +114,8 @@ func TestIsCommentBlockExempt(t *testing.T) {
 		{"app/service.ts", false},
 		{"daemon_test.go", true},
 		{"test_handler.py", true},
+		{"scripts/test-disk-pressure.sh", true},
+		{"scripts/test-hot-reload.sh", true},
 		{"src/__tests__/thing.ts", true},
 		{"app/thing.spec.ts", true},
 		{"README.md", true},

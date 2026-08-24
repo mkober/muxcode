@@ -52,11 +52,17 @@ cleanup() { rm -rf "$MUXCODE_LIFECYCLE_LOG_DIR"; }
 trap cleanup EXIT
 
 # gotest "label" <-run pattern> <min expected --- PASS lines> <package>
+#
 # -v is required: a -run pattern matching zero tests still exits 0 and still
 # prints "ok <pkg>", so only per-test PASS lines are evidence anything ran.
+#
+# The mktemp template must end in X's. BSD mktemp does not substitute them when
+# a suffix follows, so `...-XXXXXX.out` yields that literal path on macOS; two
+# runs would then share one file and clobber each other's go output, inside the
+# helper that decides pass/fail.
 gotest() {
   local label="$1" pattern="$2" min="$3" out ran
-  out="$(mktemp /tmp/disk-pressure-go-XXXXXX.out)"
+  out="$(mktemp /tmp/disk-pressure-go-XXXXXX)"
   if (cd "$MODULE" && go test "$4" -count=1 -v -run "$pattern") >"$out" 2>&1; then
     ran="$(grep -cE '^--- PASS:' "$out")"
     if grep -q 'no tests to run' "$out"; then

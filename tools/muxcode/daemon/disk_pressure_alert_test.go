@@ -7,7 +7,7 @@ import "testing"
 // 1000 lifecycle entries were unactionable repeats, evicting the history needed
 // to diagnose overnight incidents.
 //
-// These test shouldAlertDiskPressure directly rather than through
+// These tests exercise shouldAlertDiskPressure directly rather than through
 // checkDiskPressure, because that path calls CheckDiskPressure -> CleanupStale,
 // which deletes other muxcode sessions' /tmp artifacts on the machine running
 // the suite. The decision is the part with the logic; the deletion is not
