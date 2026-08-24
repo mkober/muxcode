@@ -46,6 +46,7 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 | MUX-007 | [`MUX-007-verify-spec-stale-review-refire.md`](./MUX-007-verify-spec-stale-review-refire.md) | High | `checkInboxes()` refires the reviewed-transition on any edit-inbox growth while an unconsumed review message exists — one review completion spawns unbounded `verify-spec` echoes |
 | MUX-008 | [`MUX-008-unverified-daemon-auto-restart.md`](./MUX-008-unverified-daemon-auto-restart.md) | High | `RestartLocalAgent()` fire-and-hope relaunch: no exit wait, no launch verification — add bounded exit poll + post-relaunch verification + orphan detection |
 | MUX-009 | [`MUX-009-response-echo-chain-retrigger.md`](./MUX-009-response-echo-chain-retrigger.md) | High | Non-hook `SendWakeUp` injects response payloads as prompts, re-firing chains on a delegation's own answer; never inject responses + responded-check in `HasActionableMessages` |
+| MUX-032 | [`MUX-032-loop-detector-granularity.md`](./MUX-032-loop-detector-granularity.md) | Medium | `DetectMessageLoop` fires on healthy edit↔commit traffic (3 false alerts, 0 real loops in one session): ping-pong counts correlated replies, tuple pass can't distinguish unrelated delegations on the overloaded `commit` action; fix = correlated-reply exemption + normalized-content repeat requirement, with storm negative controls |
 | MUX-010 | [`MUX-010-delegation-message-hygiene.md`](./MUX-010-delegation-message-hygiene.md) | Medium | Agent-freeze auto-recovery + delegation hygiene: force-terminate for hung-but-alive agents, payload/format rules enforced at the bus |
 | MUX-012 | [`MUX-012-remove-gated-pane-scrape-delivery.md`](./MUX-012-remove-gated-pane-scrape-delivery.md) | Low | Physically delete the pane-scrape delivery machinery bypassed by the receipt cutover ([delivery-acknowledgement](../completed/MUX-050-delivery-acknowledgement.md)); gated on default-ON soak + backstop mis-fire fix |
 | MUX-013 | [`MUX-013-channels-message-transport.md`](./MUX-013-channels-message-transport.md) | Medium | Replace file-polling inbox transport with channel-based delivery |
@@ -56,6 +57,7 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 |----|------|----------|---------|
 | MUX-011 | [`MUX-011-opencode-plugin-hook-bridge.md`](./MUX-011-opencode-plugin-hook-bridge.md) | High | Muxcode TS plugin on OpenCode's `tool.execute.after`/`session.idle` events shells to `muxcode hook bash` — deterministic chains for OpenCode via narrow `SupportsChainEvents()`, root enabler fix for MUX-009 storms |
 | MUX-014 | [`MUX-014-graph-agent-orchestrator.md`](./MUX-014-graph-agent-orchestrator.md) | Medium | DAG control plane over bus/chains/spawns/tasks: 7 node types, outcome-keyed edges, joins, durable resumable runs (`muxcode graph run\|status\|cancel\|retry`); commit/Atlassian nodes require `wait_human`. Subsumes the "Pipeline definitions" idea |
+| MUX-103 | [`MUX-103-auto-clear-between-tasks.md`](./MUX-103-auto-clear-between-tasks.md) | High | Daemon injects `/clear` into episodic Claude agents (review, plan, commit, run, api) after task completion — idle+quiet guards, edit/auto hard-excluded, off by default; keeps per-turn input tokens flat so premium models (Fable 5) don't compound limit burn |
 
 ### Agents & roles
 
@@ -102,7 +104,6 @@ MUX-003/004 were delivered under GitHub tracking; MUX-028–MUX-099 are retroact
 | MUX-028 | [`MUX-028-agent-debug-skill.md`](../completed/MUX-028-agent-debug-skill.md) | Agent Debug Skill |
 | MUX-029 | [`MUX-029-agent-diagnostic-command.md`](../completed/MUX-029-agent-diagnostic-command.md) | Agent diagnostic command |
 | MUX-030 | [`MUX-030-agent-health-monitoring.md`](../completed/MUX-030-agent-health-monitoring.md) | Agent Health Monitoring |
-| MUX-032 | [`MUX-032-agent-mode.md`](../completed/MUX-032-agent-mode.md) | Agent mode |
 | MUX-033 | [`MUX-033-agent-spawn.md`](../completed/MUX-033-agent-spawn.md) | Agent Spawn |
 | MUX-034 | [`MUX-034-agent-startup-inbox-wake.md`](../completed/MUX-034-agent-startup-inbox-wake.md) | Agent startup inbox wake-up |
 | MUX-035 | [`MUX-035-analyze-findings-log.md`](../completed/MUX-035-analyze-findings-log.md) | Analyze Findings Log |
@@ -171,6 +172,7 @@ MUX-003/004 were delivered under GitHub tracking; MUX-028–MUX-099 are retroact
 | MUX-098 | [`MUX-098-webhook-endpoint.md`](../completed/MUX-098-webhook-endpoint.md) | Webhook Endpoint |
 | MUX-099 | [`MUX-099-workflow-state-machine.md`](../completed/MUX-099-workflow-state-machine.md) | Workflow state machine |
 | MUX-101 | [`MUX-101-agent-hot-reload.md`](../completed/MUX-101-agent-hot-reload.md) | Agent hot reload (renumbered from MUX-031 to free the id for the graph run TUI's GitHub issue #31) |
+| MUX-102 | [`MUX-102-agent-mode.md`](../completed/MUX-102-agent-mode.md) | Agent mode (renumbered from MUX-032 to free the id for the loop-detector granularity spec) |
 
 ## Ideas without specs
 
