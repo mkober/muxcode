@@ -91,7 +91,7 @@ Commands:
   diagnose      Diagnose why an agent isn't responding (evidence + root cause)
   remote        Investigate agents in other muxcode sessions (TUI browser, or list/status/capture/inbox/diagnose)
   spec          Manage the active requirements spec for plan agent verification (set, get, clear)
-  graph         Graph-agent orchestrator: validate definitions, list templates (validate, list)
+  graph         Graph-agent orchestrator (run, validate, list, status, cancel, retry, approve)
 `
 
 func main() {

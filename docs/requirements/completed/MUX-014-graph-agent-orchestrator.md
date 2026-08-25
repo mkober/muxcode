@@ -51,7 +51,7 @@ So: fixed lines + LLM scheduler + optional workers. Missing: an executable multi
 
 ```bash
 muxcode graph run coding-pr "implement PBP1-4915"
-muxcode graph run custom --file my-dag.json
+muxcode graph run --file my-dag.json "implement PBP1-4915"
 muxcode graph status <run-id>
 muxcode graph cancel <run-id>
 muxcode graph retry <run-id> --from test

@@ -238,6 +238,12 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 
 	case NodeWaitHuman:
 		prompt := interpolateGraphMessage(n.Message, run.Intent, "")
+		// A fresh pass through a gate requires a fresh approval: purge any
+		// approved marker left by a previous pass (graph retry --from, or a
+		// loop edge re-arming the gate). Without this, harvestWaitingNode
+		// sees the stale marker and releases the gate instantly — a retried
+		// run would sail through its human gate with nobody approving.
+		_ = os.Remove(graphApprovalPath(session, run.ID, n.ID, "approved"))
 		// The pending marker is informational (surfaced by graph status);
 		// the release signal is the approved marker plus the edit
 		// notification below, so a marker write failure is logged but

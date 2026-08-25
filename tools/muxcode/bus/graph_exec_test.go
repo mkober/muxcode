@@ -404,6 +404,61 @@ func TestExecHumanGate(t *testing.T) {
 	}
 }
 
+// TestExecHumanGateRetryRequiresFreshApproval pins the stale-marker gate
+// bypass (PR #34 Copilot must-fix): after a gate was approved once, a
+// graph retry --from that gate must WAIT for a new approval — the old
+// approved marker must not auto-release the fresh pass.
+func TestExecHumanGateRetryRequiresFreshApproval(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{
+			{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "ship it"},
+		},
+		Edges: []Edge{{From: "a", To: "gate"}, {From: "gate", To: "c"}},
+	}
+	run := createTestRun(t, g)
+
+	// First pass: run to completion through an approved gate.
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "c", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	got, _ := ReadGraphRun(runTestSession, run.ID)
+	if got.State != GraphRunComplete {
+		t.Fatalf("run state %q, want complete", got.State)
+	}
+
+	// Retry from the gate: it must wait for a NEW approval.
+	if err := RetryGraphRun(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("gate state %q after retry, want waiting — stale approval must not auto-release", s)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodePending {
+		t.Fatalf("c state %q after retry, want pending", s)
+	}
+
+	// A fresh approval releases it.
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("re-approve: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeDone {
+		t.Errorf("gate state %q after fresh approval, want done", s)
+	}
+}
+
 func TestExecConditionNode(t *testing.T) {
 	g := &Graph{
 		Name:  "t",

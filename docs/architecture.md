@@ -288,6 +288,14 @@ write without passing a `wait_human` gate — `graph validate` rejects such a de
 outright, and `CheckCommitAuthority` / `CheckAtlassianAuthority` remain the runtime
 backstop. A graph cannot be used to launder an action around the rules that govern it.
 
+**Gate approval is single-use.** Every fresh pass through a `wait_human` node requires a
+fresh `muxcode graph approve`. Dispatching a gate purges any `approved` marker left by a
+previous pass, because a gate can be re-entered two ways — `graph retry --from` a node at or
+above it, and a capped loop edge re-arming it. Without the purge, `harvestWaitingNode` would
+find the stale marker and release the gate instantly, so a retried run would sail through
+its human gate with nobody approving and fire the commit node behind it. The approval is
+consent for *one* traversal, not a standing permission on the node.
+
 **Outcome model.** Outcome derivation honors the console-history provenance doctrine
 (`bus/history_provenance.go`): an **authoritative history row** (a real exit code) for the
 target role is the only evidence of *success*; a response with action `error`, or a task

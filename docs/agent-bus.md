@@ -1542,8 +1542,9 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 # Start a run from a built-in template, with intent interpolated into node messages
 muxcode graph run coding-pr "implement PBP1-4915"
 
-# Run a custom definition
-muxcode graph run custom --file my-dag.json
+# Run a custom definition — --file must be the first argument after `run`,
+# since a bare first arg is read as a template name
+muxcode graph run --file my-dag.json "implement PBP1-4915"
 
 # Watch it progress (Dracula-colored node grid), or script against it
 muxcode graph status <run-id>
