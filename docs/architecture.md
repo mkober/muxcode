@@ -238,6 +238,90 @@ The rationale is architectural rather than merely economical: each bus request i
 
 Core code: `bus/clear.go` (`AutoClearRoles()`, `AutoClearQuietSecs()`, `AutoClearDue()`, `LastTaskCompletion()`, `AutoClearEligible()`, `ClearAgent()`), `daemon/daemon.go` (`checkAutoClear()`), `bus/config.go` (`AutoClearMarkerPath()`). Manual path: `muxcode clear <role>`. Env vars in [Configuration](configuration.md#auto-clear-between-tasks).
 
+### Graph orchestration control plane
+
+An explicit DAG layer over the existing bus, added by MUX-014. Chains are linear and
+first-match; graphs add fan-out, join barriers, branches, capped loops, and durable
+multi-node runs that survive a daemon restart. Specialists are unchanged — a graph edge
+delivers an ordinary bus message or spawn, so tool profiles, delivery-ack receipts, PII
+scrub, and the watchdogs all still apply.
+
+**Why it exists — the wake-per-step tax.** `--track` makes a *single* delegation
+non-blocking, but multi-step work still routes through edit: every completion wakes it, and
+it must hold the remaining plan in context. Edit's involvement in an N-step sequence is
+O(N) wakes. The graph moves that routing into the daemon, so edit fires one `graph run` and
+is interrupted only at human gates and terminal states.
+
+| Node type | Behavior |
+|-----------|----------|
+| `send` | `SendNoCC` + tracked task for correlation |
+| `spawn` | `StartSpawn()` — ephemeral worker, own git worktree |
+| `map` | Dynamic fan-out: one spawn per item in the item list |
+| `join` | Fan-in barrier — `all` / `any` / `quorum` |
+| `condition` | Routes via `EvaluateConditions()` — the chain engine verbatim, no second dialect |
+| `wait_human` | Blocks until `muxcode graph approve` releases it |
+| `wait_event` | Parks at dispatch, released when the named bus event is observed |
+
+```
+1. muxcode graph run coding-pr "implement PBP1-4915"
+2. Template resolved (project > user > builtin), validated, run dir created
+   under BusDir()/graphs/<run-id>/  — run.json, graph.json, nodes/<id>.json
+3. Daemon poll loop: checkGraphRuns() -> bus.StepGraphRuns(session)
+   (runs right after checkTrackedTasks so completions correlated this tick
+    route their edges on the same tick)
+4. Ready nodes dispatch: send -> SendNoCC + CreateTask; spawn/map -> StartSpawn
+5. Completion harvested via task/receipt correlation; outcome extracted
+6. Outcome-keyed edge routed; join barriers evaluated; loop budgets decremented
+7. State persisted before and after every transition
+8. Terminal state -> run settled, edit notified once
+```
+
+**Resume is not a separate code path.** The executor tick is *stateless*: every
+`StepGraphRun` reads the run, its frozen graph definition, and all node statuses fresh from
+disk, so the first tick after a daemon restart **is** the resume scan.
+`ScanInFlightGraphRuns` merely enumerates runs still marked running, and a per-node `Routed`
+flag prevents a completion from being double-routed across a restart. There is no in-memory
+scheduler to rebuild.
+
+**Authority gates are unchanged.** No graph node may fire a git mutation or an Atlassian
+write without passing a `wait_human` gate — `graph validate` rejects such a definition
+outright, and `CheckCommitAuthority` / `CheckAtlassianAuthority` remain the runtime
+backstop. A graph cannot be used to launder an action around the rules that govern it.
+
+**Outcome model.** Outcome derivation honors the console-history provenance doctrine
+(`bus/history_provenance.go`): an **authoritative history row** (a real exit code) for the
+target role is the only evidence of *success*; a response with action `error`, or a task
+timeout, is a *failure*; anything else is `unknown`. An unknown outcome routes an explicit
+`unknown` edge when one is defined, and otherwise falls back to the success edge with a
+`graph-unknown-fallback` lifecycle note. That fallback is deliberate: non-hook providers
+rarely produce authoritative rows, so stalling every run on them would make graphs unusable
+outside Claude Code.
+
+**Join barriers count edge fires, not re-derived outcomes.** `joinBarrierMet` counts
+`run.EdgeFires` — the routing layer's own persisted decision record — rather than
+re-checking each upstream node's outcome. Re-deriving is precisely how fan-in once
+deadlocked on hookless providers: a branch finished `unknown`, routing fired its edge via
+the fallback above, but the barrier's independent outcome-equality check refused to count
+that fire, so the join never released. Routing decides; the barrier counts. One source of
+truth.
+
+**What edit actually receives** — exactly two bus actions, which is the O(gates)-not-O(nodes)
+property made concrete: `graph-approval` when a `wait_human` gate needs releasing, and
+`graph-complete` when a run reaches a terminal state. Per-node traffic never reaches edit;
+node dispatch goes to the target role via `SendNoCC`, so it is not auto-CC'd either.
+
+Lifecycle events per transition — ten in all: `graph-node-start`, `graph-node-done`,
+`graph-gate-pending`, `graph-run-complete`, `graph-run-failed`, `graph-run-canceled`,
+`graph-loop-exhausted`, `graph-unknown-fallback`, plus two warn-level events —
+`graph-gate-marker-error` (the gate marker write failed; the gate still holds, since the
+edit notification is the release signal) and `graph-step-error` (an executor tick errored
+for one run).
+
+Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (5 built-ins),
+`bus/graph_run.go` (durable store), `bus/graph_exec.go` (executor), `cmd/graph.go` (CLI),
+`daemon/daemon.go` (`checkGraphRuns()`). CLI reference:
+[Agent Bus CLI](agent-bus.md#muxcode-graph).
+
 ### Diff Preview Flow
 
 ```

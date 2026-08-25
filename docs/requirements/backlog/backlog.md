@@ -2,7 +2,7 @@
 
 Index of all pending requirement specs. Every planned feature with a written spec has a row
 in the [Spec index](#spec-index) below; ideas without a spec doc yet are collected in
-[Ideas without specs](#ideas-without-specs). 77 delivered specs live in
+[Ideas without specs](#ideas-without-specs). 78 delivered specs live in
 [`completed/`](../completed/) — each with requirements, key files, and implementation notes.
 
 Spec lifecycle: `backlog/` (planned or parked) → `drafts/` (actively being designed or
@@ -34,9 +34,7 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 
 ### In progress
 
-| ID | Spec | Priority | Status |
-|----|------|----------|--------|
-| MUX-005 | [`MUX-005-plan-diagrams.md`](./MUX-005-plan-diagrams.md) | Medium | In Progress — Phases 1–3 complete (render script, media store, req-doc embeds); Jira/Confluence embed phases remaining |
+_None — no spec is currently being implemented._
 
 ### Reliability & observability
 
@@ -56,12 +54,12 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
 | MUX-011 | [`MUX-011-opencode-plugin-hook-bridge.md`](./MUX-011-opencode-plugin-hook-bridge.md) | High | Muxcode TS plugin on OpenCode's `tool.execute.after`/`session.idle` events shells to `muxcode hook bash` — deterministic chains for OpenCode via narrow `SupportsChainEvents()`, root enabler fix for MUX-009 storms |
-| MUX-014 | [`MUX-014-graph-agent-orchestrator.md`](./MUX-014-graph-agent-orchestrator.md) | Medium | DAG control plane over bus/chains/spawns/tasks: 7 node types, outcome-keyed edges, joins, durable resumable runs (`muxcode graph run\|status\|cancel\|retry`); commit/Atlassian nodes require `wait_human`. Subsumes the "Pipeline definitions" idea |
 
 ### Agents & roles
 
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
+| MUX-005 | [`MUX-005-plan-diagrams.md`](./MUX-005-plan-diagrams.md) | Medium | Plan-agent diagram pipeline (render → store → embed) across req docs, Jira, and Confluence. **Parked mid-implementation**: Phases 1–3 shipped (`scripts/render-diagram.sh`, render-only integration test 14/14, Confluence + Jira attachment upload with `attach` CLI); Phases 4–6 remaining (embed across surfaces, profile/skill/docs, end-to-end test) |
 | MUX-015 | [`MUX-015-refactor-agent.md`](./MUX-015-refactor-agent.md) | Medium | F6 review ↔ refactor mode toggle: a write-capable refactoring specialist paired with the read-only reviewer |
 | MUX-016 | [`MUX-016-research-dual-provider.md`](./MUX-016-research-dual-provider.md) | Medium | Research window split into multiple provider panes (`research-N` bus identities) with broadcast/relay/synthesize across providers |
 
@@ -85,7 +83,7 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 | MUX-025 | [`MUX-025-modal-log-viewer.md`](./MUX-025-modal-log-viewer.md) | Low | Lifecycle/log viewer modal |
 | MUX-026 | [`MUX-026-modal-memory-browser.md`](./MUX-026-modal-memory-browser.md) | Low | Memory browser modal with BM25 search |
 | MUX-027 | [`MUX-027-modal-webhook-monitor.md`](./MUX-027-modal-webhook-monitor.md) | Low | Live webhook request inspector modal with replay |
-| MUX-031 | [`MUX-031-graph-run-tui.md`](./MUX-031-graph-run-tui.md) | Medium | Interactive TUI for [MUX-014](./MUX-014-graph-agent-orchestrator.md) graph runs: run browser → layered live DAG with Dracula state colors → node detail; `wait_human` approve/cancel/retry from the view; `--render-once` scriptable frame; depends on MUX-014 Phase 2 run store |
+| MUX-031 | [`MUX-031-graph-run-tui.md`](./MUX-031-graph-run-tui.md) | Medium | Interactive TUI for [MUX-014](../completed/MUX-014-graph-agent-orchestrator.md) graph runs: run browser → layered live DAG with Dracula state colors → node detail; `wait_human` approve/cancel/retry from the view; `--render-once` scriptable frame; depends on MUX-014 Phase 2 run store |
 
 ### Completed (id registry)
 
@@ -170,7 +168,7 @@ MUX-003/004 were delivered under GitHub tracking; MUX-028–MUX-099 are retroact
 | MUX-097 | [`MUX-097-watchdog-churn-fix.md`](../completed/MUX-097-watchdog-churn-fix.md) | Watchdog Churn Fix |
 | MUX-098 | [`MUX-098-webhook-endpoint.md`](../completed/MUX-098-webhook-endpoint.md) | Webhook Endpoint |
 | MUX-099 | [`MUX-099-workflow-state-machine.md`](../completed/MUX-099-workflow-state-machine.md) | Workflow state machine |
-| MUX-101 | [`MUX-101-agent-hot-reload.md`](../completed/MUX-101-agent-hot-reload.md) | Agent hot reload (renumbered from MUX-031 to free the id for the graph run TUI's GitHub issue #31) |
+| MUX-014 | [`MUX-014-graph-agent-orchestrator.md`](../completed/MUX-014-graph-agent-orchestrator.md) | Graph-agent orchestrator — DAG control plane over the bus: 7 node types, outcome-keyed edges, `all`/`any`/`quorum` join barriers, capped loops, `wait_human` gates, durable per-run store under `BusDir()/graphs/<run-id>/`, stateless executor tick (first tick after a daemon restart *is* the resume), 7-subcommand CLI, 5 builtin templates. `scripts/test-graph-orchestrator.sh` 29/29. **Closed at 31/32 steps and 11/15 criteria** — see "Known gaps at completion" in the spec; the open one that matters is verifying graph sends against dedup/relay-suppression/delivery-ack. The live run caught two defects every executor unit test passed over: graph sends were unreplyable (`From = "daemon"` rendered verbatim), and joins hung forever on unknown outcomes |
 | MUX-102 | [`MUX-102-agent-mode.md`](../completed/MUX-102-agent-mode.md) | Agent mode (renumbered from MUX-032 to free the id for the loop-detector granularity spec) |
 | MUX-103 | [`MUX-103-auto-clear-between-tasks.md`](../completed/MUX-103-auto-clear-between-tasks.md) | Daemon-injected `/clear` for episodic Claude roles after task completion — `bus/clear.go` guard matrix (idle, empty inbox, no live in-flight task, no reload marker, Claude-only, non-harness, not mode-cycled), `edit`/`auto` hard-excluded at both parse and guard, exactly-once via `auto-clear-{role}.last` marker written only on successful injection, dual completion stores (tasks + responded delivery statuses), `muxcode clear <role>` manual path; `scripts/test-auto-clear.sh` (22 checks, real scratch daemon + tmux). Post-clear delivery verified live rather than by the suite — a scratch pane has no Claude runtime and so no `Stop` hook to relaunch the inbox listener |
 

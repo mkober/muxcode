@@ -38,6 +38,36 @@ if size > prev && size > 0 {
 4. **Time-recording double exposure**: on a non-ignored branch each echo would also re-run the time-recording pass (harmless in value terms — absolute totals are idempotent — but each pass costs a ledger read/write cycle).
 5. **Plan silence does not stop it (observed 2026-08-24, 16:27–16:32)**: one MUX-103 review completion produced **7** `verify-spec` echoes. Plan replied to edit exactly once (the first, legitimate one) and stayed silent through the rest — echoes kept firing anyway, fed by chain auto-CC traffic alone. This falsifies the "one compliant plan" framing in the root cause above: plan's reply is *one* fuel source, not a necessary one, so instructing plan to reply less is not a mitigation. The two unconsumed review messages in edit's inbox were both `review→test` responses (`reply_to` a test task), never a review→edit report. Echo #6 and #7 named `docs/requirements/backlog/backlog.md` as the changed file — plan's own prior verification edit, fed back as the trigger.
 6. **Amplified by any edit-inbox storm (observed 2026-08-17, ~11:02)**: a build↔test chain loop pumped auto-CC copies into edit's inbox every ~7–8s (22 unconsumed messages, daemon `loop-detected` queued among them); with one stale review message in the pile, **every** CC re-fired `verify-spec` at plan at the same cadence — 7+ echoes in under a minute, sustained without plan sending anything. The refire bug turns any unrelated message storm into a verify-spec storm.
+7. **Changed-files can name paths outside the repo (observed 2026-08-25, 10:08)**: an echo
+   arrived whose `Changed files:` was `/tmp/tmux-layout-bindings.md` — a scratch delegation
+   handoff file the plan agent had just written for an unrelated tmux-config task, with no
+   connection to the active spec or even to the repository. So the refire does not merely
+   replay a stale *repo* diff; whatever file-write signal feeds the changed-files list is
+   picking up writes anywhere on disk, then asking plan to verify a Go orchestrator spec
+   against a markdown scratch file. Two consequences: the "is this an echo?" heuristic
+   cannot rely on the changed-files list being repo-scoped, and any agent writing to `/tmp`
+   (the documented pattern for long delegation payloads, see `CLAUDE.md` delegation
+   hygiene) becomes an echo trigger. Suggests the fix should also constrain changed-files
+   to repo-relative paths, independent of the refire cause.
+
+   **Reproducible, not a one-off**: it fired again at 10:15 the moment plan appended an
+   addendum to that same `/tmp` file. Two writes to one out-of-repo scratch file, two
+   echoes — so the trigger is the write itself, and any agent following the documented
+   `/tmp` handoff pattern will keep generating them.
+
+   And at 10:23 it fired against the MUX-014 spec naming `config/tmux.conf` — an *in-repo*
+   file from a completely unrelated task (a tmux keybinding fix). So the defect is not only
+   that paths escape the repo: **the changed-files list is never correlated with the active
+   spec at all.** Any write anywhere, by any agent, on any task, re-fires `verify-spec` at
+   whatever spec happens to be active. Constraining paths to the repo (above) is therefore
+   necessary but not sufficient — the fix also needs a relevance test, or `verify-spec`
+   will keep asking plan to verify a Go orchestrator against a tmux config.
+
+   Same session, 10:00–10:09: **~10 echoes from 3 genuine review completions.** One echo
+   was *not* a pure echo — `graph_run_test.go` appeared on disk between the notification
+   and the check, so a delta check against the working tree (not the message) is what
+   distinguishes a stale replay from a real change. Verifying on the message's file list
+   alone would have recorded "no run-store tests exist" while 13 of them existed.
 
 ## Requirements
 
