@@ -134,3 +134,19 @@ func TestNewMsgID_Unique(t *testing.T) {
 		ids[id] = true
 	}
 }
+
+// TestFormatMessageNormalizesReplyTarget pins that non-agent sender
+// identities render a sendable reply target: "muxcode send daemon ..."
+// fails with unknown role, so a daemon-originated request (graph executor
+// dispatch) must instruct responders to send to edit.
+func TestFormatMessageNormalizesReplyTarget(t *testing.T) {
+	m := Message{ID: "1-daemon-abcd1234", TS: 1, From: "daemon", To: "build",
+		Type: "request", Action: "build", Payload: "go"}
+	out := FormatMessage(m)
+	if !strings.Contains(out, "muxcode send edit ") {
+		t.Errorf("reply instruction not normalized to edit:\n%s", out)
+	}
+	if strings.Contains(out, "muxcode send daemon ") {
+		t.Errorf("reply instruction still names the unsendable daemon identity:\n%s", out)
+	}
+}

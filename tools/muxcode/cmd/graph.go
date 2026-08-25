@@ -1,0 +1,255 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/mkober/muxcode/tools/muxcode/bus"
+)
+
+// Graph handles the "muxcode graph" subcommand — the graph-agent
+// orchestrator control CLI (MUX-014).
+// Usage:
+//
+//	muxcode graph run <template>|--file <path> [intent...]
+//	muxcode graph validate <file.json|template-name>
+//	muxcode graph list
+//	muxcode graph status [--json] [run-id]
+//	muxcode graph cancel <run-id>
+//	muxcode graph retry <run-id> --from <node>
+//	muxcode graph approve <run-id> <node>
+func Graph(args []string) {
+	if len(args) == 0 {
+		graphUsage()
+		os.Exit(1)
+	}
+
+	switch args[0] {
+	case "run":
+		graphRun(args[1:])
+
+	case "validate":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: muxcode graph validate <file.json|template-name>")
+			os.Exit(1)
+		}
+		graphValidate(args[1])
+
+	case "list":
+		graphList()
+
+	case "status":
+		graphStatus(args[1:])
+
+	case "cancel":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: muxcode graph cancel <run-id>")
+			os.Exit(1)
+		}
+		if err := bus.CancelGraphRun(bus.BusSession(), args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Run %s canceled\n", args[1])
+
+	case "retry":
+		graphRetry(args[1:])
+
+	case "approve":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "Usage: muxcode graph approve <run-id> <node>")
+			os.Exit(1)
+		}
+		if err := bus.ApproveGraphGate(bus.BusSession(), args[1], args[2]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Gate %s approved on run %s — the daemon resumes it on its next tick\n", args[2], args[1])
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown graph subcommand: %s\n", args[0])
+		graphUsage()
+		os.Exit(1)
+	}
+}
+
+func graphUsage() {
+	fmt.Fprint(os.Stderr, `Usage: muxcode graph <command> [args]
+
+Commands:
+  run <template>|--file <path> [intent...]  Start a run (returns immediately; the daemon executes)
+  validate <file|template>                  Validate a graph definition file or template
+  list                                      List resolvable graph templates
+  status [--json] [run-id]                  Show a run's per-node state (no id: list all runs)
+  cancel <run-id>                           Cancel a run (unstarted nodes are skipped)
+  retry <run-id> --from <node>              Re-execute from a node, keeping upstream results
+  approve <run-id> <node>                   Release a wait_human gate
+`)
+}
+
+// graphRun starts a run from a template or definition file. It only
+// creates the run store — the daemon's next checkGraphRuns tick begins
+// execution, so this returns immediately and never blocks the caller.
+func graphRun(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: muxcode graph run <template>|--file <path> [intent...]")
+		os.Exit(1)
+	}
+
+	var g *bus.Graph
+	var template string
+	var err error
+	if args[0] == "--file" {
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: muxcode graph run --file <path> [intent...]")
+			os.Exit(1)
+		}
+		template = args[1]
+		g, err = bus.LoadGraphFile(template)
+		args = args[2:]
+	} else {
+		template = args[0]
+		g, _, err = bus.ResolveGraphTemplate(template)
+		args = args[1:]
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	intent := strings.Join(args, " ")
+	run, err := bus.CreateGraphRun(bus.BusSession(), g, template, intent)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Started run %s (%s)\n", run.ID, template)
+	fmt.Printf("Status: muxcode graph status %s\n", run.ID)
+}
+
+func graphRetry(args []string) {
+	var runID, from string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--from" && i+1 < len(args) {
+			from = args[i+1]
+			i++
+		} else if runID == "" {
+			runID = args[i]
+		}
+	}
+	if runID == "" || from == "" {
+		fmt.Fprintln(os.Stderr, "Usage: muxcode graph retry <run-id> --from <node>")
+		os.Exit(1)
+	}
+	if err := bus.RetryGraphRun(bus.BusSession(), runID, from); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Run %s retrying from %s — the daemon resumes it on its next tick\n", runID, from)
+}
+
+// graphValidate loads the target as a file when it exists on disk,
+// otherwise as a template name, then prints the validation report.
+func graphValidate(target string) {
+	var g *bus.Graph
+	var source string
+	var err error
+
+	if _, statErr := os.Stat(target); statErr == nil {
+		g, err = bus.LoadGraphFile(target)
+		source = "file"
+	} else {
+		g, source, err = bus.ResolveGraphTemplate(target)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	v := g.Validate()
+	fmt.Printf("Graph %q (%s, %d nodes, %d edges):\n", g.Name, source, len(g.Nodes), len(g.Edges))
+	fmt.Print(v.Format())
+	if !v.OK() {
+		os.Exit(1)
+	}
+}
+
+func graphList() {
+	infos := bus.ListGraphTemplates()
+	if len(infos) == 0 {
+		fmt.Println("No graph templates found")
+		return
+	}
+	fmt.Println("=== Graph Templates ===")
+	for _, t := range infos {
+		fmt.Printf("%-20s %-8s %s\n", t.Name, t.Source, t.Description)
+	}
+}
+
+// graphStatus shows one run's node grid, or lists all runs when no id
+// is given. --json emits the run, frozen graph, and node statuses as one
+// JSON object for scripting.
+func graphStatus(args []string) {
+	session := bus.BusSession()
+
+	var jsonOut bool
+	var runID string
+	for _, a := range args {
+		if a == "--json" {
+			jsonOut = true
+		} else if runID == "" {
+			runID = a
+		}
+	}
+
+	if runID == "" {
+		runs, err := bus.ListGraphRuns(session)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if jsonOut {
+			out, _ := json.MarshalIndent(runs, "", "  ")
+			fmt.Println(string(out))
+			return
+		}
+		if len(runs) == 0 {
+			fmt.Println("No graph runs")
+			return
+		}
+		fmt.Println("=== Graph Runs ===")
+		for _, r := range runs {
+			fmt.Printf("%-40s [%s]  template=%s\n", r.ID, r.State, r.Template)
+		}
+		return
+	}
+
+	run, err := bus.ReadGraphRun(session, runID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: unknown run %q: %v\n", runID, err)
+		os.Exit(1)
+	}
+	g, err := bus.ReadGraphRunGraph(session, runID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	statuses, err := bus.ReadAllNodeStatuses(session, runID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOut {
+		out, _ := json.MarshalIndent(map[string]any{
+			"run":   run,
+			"graph": g,
+			"nodes": statuses,
+		}, "", "  ")
+		fmt.Println(string(out))
+		return
+	}
+	fmt.Print(bus.FormatGraphRunColored(run, g, statuses))
+}

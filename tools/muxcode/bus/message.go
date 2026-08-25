@@ -64,6 +64,12 @@ func FormatMessage(m Message) string {
 	if m.ReplyTo != "" {
 		s += fmt.Sprintf("Reply to: %s\n", m.ReplyTo)
 	}
-	s += fmt.Sprintf("To reply: muxcode send %s <action> \"<message>\" --type response --reply-to %s\n", m.From, m.ID)
+	// The reply target is normalized because non-agent sender identities
+	// ("daemon" — graph executor dispatch, daemon requests) are not valid
+	// send targets: an agent that followed a raw "muxcode send daemon ..."
+	// instruction got "unknown role" and its response was never recorded.
+	// Response correlation runs on --reply-to, so routing the reply to the
+	// normalized role (daemon → edit) loses nothing.
+	s += fmt.Sprintf("To reply: muxcode send %s <action> \"<message>\" --type response --reply-to %s\n", NormalizeBusRole(m.From), m.ID)
 	return s
 }

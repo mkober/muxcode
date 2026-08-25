@@ -1,0 +1,571 @@
+package bus
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// Graph node types. Nodes are the units the daemon executor schedules;
+// edges route between them by outcome.
+const (
+	NodeSend      = "send"       // deliver a bus message to a role
+	NodeSpawn     = "spawn"      // start an ephemeral worker (StartSpawn)
+	NodeWaitHuman = "wait_human" // block until explicit user approval
+	NodeWaitEvent = "wait_event" // block until a named bus event
+	NodeJoin      = "join"       // fan-in barrier (all/any/quorum)
+	NodeCondition = "condition"  // route by EvaluateConditions() outcome
+	NodeMap       = "map"        // dynamic fan-out over an item list
+)
+
+// Join barrier policies for join nodes.
+const (
+	JoinAll    = "all"
+	JoinAny    = "any"
+	JoinQuorum = "quorum"
+)
+
+// Edge outcomes reuse the package-level OutcomeSuccess/OutcomeFailure
+// constants (history_provenance.go) — the same vocabulary as chains. An
+// empty Edge.Outcome means OutcomeSuccess; custom outcome strings are
+// allowed and the executor routes whatever outcome a node produces.
+
+// Node is one vertex of a graph definition. Which fields are required
+// depends on Type — see Validate() for the per-type rules.
+type Node struct {
+	ID         string         `json:"id"`
+	Type       string         `json:"type"`
+	Role       string         `json:"role,omitempty"`       // send/spawn/map: target role
+	Action     string         `json:"action,omitempty"`     // send: bus action
+	Message    string         `json:"message,omitempty"`    // send/spawn/map: message template (${intent} interpolated at run time)
+	Conditions map[string]any `json:"conditions,omitempty"` // condition: same dialect as chains (EvaluateConditions)
+	Join       string         `json:"join,omitempty"`       // join: all|any|quorum
+	Quorum     int            `json:"quorum,omitempty"`     // join: required count when policy is quorum
+	Items      string         `json:"items,omitempty"`      // map: item-list source expression
+	Event      string         `json:"event,omitempty"`      // wait_event: bus event name to wait for
+	TimeoutSec int            `json:"timeout_secs,omitempty"`
+}
+
+// Edge routes from one node to another when the source node produces the
+// given outcome. Multiple edges from the same node with the same outcome
+// fan out in parallel. MaxIterations marks an explicit loop edge: it caps
+// how many times the edge may fire in one run, and exempts the cycle it
+// closes from the DAG check — cycles without a capped edge are invalid.
+type Edge struct {
+	From          string `json:"from"`
+	To            string `json:"to"`
+	Outcome       string `json:"outcome,omitempty"` // empty means "success"
+	MaxIterations int    `json:"max_iterations,omitempty"`
+}
+
+// Graph is a declarative multi-agent orchestration definition.
+type Graph struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Start       string `json:"start"`
+	Nodes       []Node `json:"nodes"`
+	Edges       []Edge `json:"edges"`
+}
+
+// GraphValidation collects the outcome of Graph.Validate. Errors block
+// execution; warnings are advisory.
+type GraphValidation struct {
+	Errors   []string
+	Warnings []string
+}
+
+// OK reports whether the graph is executable (no errors).
+func (v *GraphValidation) OK() bool {
+	return len(v.Errors) == 0
+}
+
+func (v *GraphValidation) errf(format string, a ...any) {
+	v.Errors = append(v.Errors, fmt.Sprintf(format, a...))
+}
+
+func (v *GraphValidation) warnf(format string, a ...any) {
+	v.Warnings = append(v.Warnings, fmt.Sprintf(format, a...))
+}
+
+// Format renders the validation result for human-readable CLI output.
+func (v *GraphValidation) Format() string {
+	var b strings.Builder
+	for _, e := range v.Errors {
+		fmt.Fprintf(&b, "  ERROR: %s\n", e)
+	}
+	for _, w := range v.Warnings {
+		fmt.Fprintf(&b, "  WARN:  %s\n", w)
+	}
+	if v.OK() {
+		b.WriteString("  OK\n")
+	}
+	return b.String()
+}
+
+// knownNodeTypes lists all recognized node types.
+var knownNodeTypes = map[string]bool{
+	NodeSend:      true,
+	NodeSpawn:     true,
+	NodeWaitHuman: true,
+	NodeWaitEvent: true,
+	NodeJoin:      true,
+	NodeCondition: true,
+	NodeMap:       true,
+}
+
+// gatedAtlassianActions are the plan agent's Atlassian write actions from
+// the delegation protocol (reads like jira-read stay open). Nodes sending
+// these require an upstream wait_human gate, same as git mutations.
+var gatedAtlassianActions = map[string]bool{
+	"jira-write":       true,
+	"confluence-write": true,
+}
+
+// nodeRequiresGate reports whether a node fires a git mutation or an
+// Atlassian write and therefore must sit downstream of a wait_human gate.
+// Applies to every node type that delivers work to a role — send, spawn,
+// and map (whose fanned-out workers inherit its role). The commit role's
+// only read-shaped action is pr-read; everything else addressed to commit
+// is treated as a mutation. Authority gates (CheckCommitAuthority,
+// CheckAtlassianAuthority) remain the runtime backstop — this rule catches
+// the violation at validate time.
+func nodeRequiresGate(n *Node) bool {
+	if n.Type != NodeSend && n.Type != NodeSpawn && n.Type != NodeMap {
+		return false
+	}
+	role := NormalizeBusRole(n.Role)
+	if role == "commit" && n.Action != "pr-read" {
+		return true
+	}
+	return gatedAtlassianActions[n.Action]
+}
+
+// ParseGraph decodes a graph definition from JSON.
+func ParseGraph(data []byte) (*Graph, error) {
+	var g Graph
+	if err := json.Unmarshal(data, &g); err != nil {
+		return nil, fmt.Errorf("invalid graph JSON: %w", err)
+	}
+	return &g, nil
+}
+
+// LoadGraphFile reads and decodes a graph definition file.
+func LoadGraphFile(path string) (*Graph, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGraph(data)
+}
+
+// nodeByID returns a lookup map, reporting missing and duplicate ids into v.
+func (g *Graph) nodeByID(v *GraphValidation) map[string]*Node {
+	byID := make(map[string]*Node, len(g.Nodes))
+	for i := range g.Nodes {
+		n := &g.Nodes[i]
+		if n.ID == "" {
+			v.errf("node %d has no id", i)
+			continue
+		}
+		if _, dup := byID[n.ID]; dup {
+			v.errf("duplicate node id %q", n.ID)
+			continue
+		}
+		byID[n.ID] = n
+	}
+	return byID
+}
+
+// outgoing returns edge indices grouped by source node id.
+func (g *Graph) outgoing() map[string][]int {
+	out := make(map[string][]int)
+	for i, e := range g.Edges {
+		out[e.From] = append(out[e.From], i)
+	}
+	return out
+}
+
+// incoming returns edge indices grouped by target node id.
+func (g *Graph) incoming() map[string][]int {
+	in := make(map[string][]int)
+	for i, e := range g.Edges {
+		in[e.To] = append(in[e.To], i)
+	}
+	return in
+}
+
+// Validate performs full structural validation of a graph definition:
+// reference integrity, per-type field rules, reachability from start,
+// the capped-cycle DAG rule, join-policy sanity, and the wait_human gate
+// rule for git/Atlassian mutations.
+func (g *Graph) Validate() *GraphValidation {
+	v := &GraphValidation{}
+
+	if g.Name == "" {
+		v.errf("graph has no name")
+	}
+	if len(g.Nodes) == 0 {
+		v.errf("graph has no nodes")
+		return v
+	}
+
+	byID := g.nodeByID(v)
+
+	if g.Start == "" {
+		v.errf("graph has no start node")
+	} else if _, ok := byID[g.Start]; !ok {
+		v.errf("start node %q is not defined", g.Start)
+	}
+
+	for i := range g.Nodes {
+		g.validateNode(&g.Nodes[i], v)
+	}
+	g.validateEdges(byID, v)
+
+	// Structural passes need resolvable references to mean anything.
+	if !v.OK() {
+		return v
+	}
+
+	g.validateReachability(v)
+	g.validateAcyclic(v)
+	g.validateJoins(v)
+	g.validateGates(byID, v)
+	return v
+}
+
+// validateNode enforces per-type required fields and flags fields that
+// have no meaning for the node's type.
+func (g *Graph) validateNode(n *Node, v *GraphValidation) {
+	if n.ID == "" {
+		return // already reported by nodeByID
+	}
+	if !knownNodeTypes[n.Type] {
+		v.errf("node %q has unknown type %q", n.ID, n.Type)
+		return
+	}
+
+	requireRole := func() {
+		if n.Role == "" {
+			v.errf("%s node %q requires a role", n.Type, n.ID)
+		} else if !IsKnownRole(NormalizeBusRole(n.Role)) {
+			v.errf("%s node %q references unknown role %q", n.Type, n.ID, n.Role)
+		}
+	}
+	requireMessage := func() {
+		if n.Message == "" {
+			v.errf("%s node %q requires a message", n.Type, n.ID)
+		}
+	}
+
+	switch n.Type {
+	case NodeSend:
+		requireRole()
+		requireMessage()
+		if n.Action == "" {
+			v.errf("send node %q requires an action", n.ID)
+		}
+	case NodeSpawn:
+		requireRole()
+		requireMessage()
+	case NodeMap:
+		requireRole()
+		requireMessage()
+		if n.Items == "" {
+			v.errf("map node %q requires an items source", n.ID)
+		}
+	case NodeCondition:
+		if len(n.Conditions) == 0 {
+			v.errf("condition node %q has no conditions", n.ID)
+		}
+		for _, w := range ValidateConditions(n.Conditions) {
+			// Unknown condition types are warnings for chains (forward
+			// compatibility) but errors here: the executor routes edges on
+			// the evaluation result, so a typo would silently route failure.
+			v.errf("condition node %q: %s", n.ID, w)
+		}
+	case NodeJoin:
+		if n.Join == "" {
+			v.errf("join node %q requires a join policy (all|any|quorum)", n.ID)
+		}
+	case NodeWaitEvent:
+		if n.Event == "" {
+			v.errf("wait_event node %q requires an event name", n.ID)
+		}
+	case NodeWaitHuman:
+		// No required fields; Message is an optional approval prompt.
+	}
+
+	if n.Join != "" && n.Type != NodeJoin {
+		v.errf("node %q has a join policy but type %q", n.ID, n.Type)
+	}
+	if len(n.Conditions) > 0 && n.Type != NodeCondition {
+		v.warnf("node %q has conditions but type %q — they are ignored", n.ID, n.Type)
+	}
+	if n.TimeoutSec < 0 {
+		v.errf("node %q has negative timeout_secs", n.ID)
+	}
+}
+
+// validateEdges checks reference integrity and duplicate edges.
+func (g *Graph) validateEdges(byID map[string]*Node, v *GraphValidation) {
+	seen := make(map[string]bool)
+	for i, e := range g.Edges {
+		if e.From == "" || e.To == "" {
+			v.errf("edge %d is missing from/to", i)
+			continue
+		}
+		if _, ok := byID[e.From]; !ok {
+			v.errf("edge %d references undefined node %q", i, e.From)
+		}
+		if _, ok := byID[e.To]; !ok {
+			v.errf("edge %d references undefined node %q", i, e.To)
+		}
+		if e.MaxIterations < 0 {
+			v.errf("edge %s->%s has negative max_iterations", e.From, e.To)
+		}
+		key := e.From + "\x00" + e.To + "\x00" + edgeOutcome(e)
+		if seen[key] {
+			v.errf("duplicate edge %s->%s on outcome %q", e.From, e.To, edgeOutcome(e))
+		}
+		seen[key] = true
+	}
+}
+
+// edgeOutcome resolves the effective outcome of an edge (empty = success).
+func edgeOutcome(e Edge) string {
+	if e.Outcome == "" {
+		return OutcomeSuccess
+	}
+	return e.Outcome
+}
+
+// validateReachability requires every node to be reachable from start.
+func (g *Graph) validateReachability(v *GraphValidation) {
+	out := g.outgoing()
+	reached := map[string]bool{g.Start: true}
+	queue := []string{g.Start}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, i := range out[cur] {
+			to := g.Edges[i].To
+			if !reached[to] {
+				reached[to] = true
+				queue = append(queue, to)
+			}
+		}
+	}
+	for _, n := range g.Nodes {
+		if !reached[n.ID] {
+			v.errf("node %q is unreachable from start", n.ID)
+		}
+	}
+}
+
+// validateAcyclic runs a DFS cycle check over the graph with capped loop
+// edges (max_iterations > 0) removed. Any cycle that survives has no
+// iteration bound and would run forever, so it is an error.
+func (g *Graph) validateAcyclic(v *GraphValidation) {
+	out := make(map[string][]string)
+	for _, e := range g.Edges {
+		if e.MaxIterations > 0 {
+			continue
+		}
+		out[e.From] = append(out[e.From], e.To)
+	}
+
+	const (
+		white = 0 // unvisited
+		gray  = 1 // on the current DFS path
+		black = 2 // fully explored
+	)
+	color := make(map[string]int)
+
+	var visit func(id string) string
+	visit = func(id string) string {
+		color[id] = gray
+		for _, to := range out[id] {
+			switch color[to] {
+			case gray:
+				return to
+			case white:
+				if c := visit(to); c != "" {
+					return c
+				}
+			}
+		}
+		color[id] = black
+		return ""
+	}
+
+	for _, n := range g.Nodes {
+		if color[n.ID] == white {
+			if c := visit(n.ID); c != "" {
+				v.errf("uncapped cycle through node %q — loops require max_iterations on a loop edge", c)
+				return
+			}
+		}
+	}
+}
+
+// validateJoins enforces join-policy sanity against actual incoming edges.
+func (g *Graph) validateJoins(v *GraphValidation) {
+	in := g.incoming()
+	for i := range g.Nodes {
+		n := &g.Nodes[i]
+		if n.Type != NodeJoin {
+			if n.Quorum != 0 {
+				v.warnf("node %q has quorum but is not a join node", n.ID)
+			}
+			continue
+		}
+		inCount := len(in[n.ID])
+		switch n.Join {
+		case JoinAll, JoinAny:
+			if n.Quorum != 0 {
+				v.warnf("join node %q has quorum but policy %q", n.ID, n.Join)
+			}
+		case JoinQuorum:
+			if n.Quorum < 1 || n.Quorum > inCount {
+				v.errf("join node %q quorum %d out of range (1..%d incoming edges)", n.ID, n.Quorum, inCount)
+			}
+		case "":
+			// reported by validateNode
+		default:
+			v.errf("join node %q has unknown policy %q (want all|any|quorum)", n.ID, n.Join)
+		}
+		if inCount < 2 {
+			v.warnf("join node %q has %d incoming edge(s) — barrier has nothing to join", n.ID, inCount)
+		}
+	}
+}
+
+// validateGates enforces the wait_human gate rule: no git-mutation or
+// Atlassian-write node may be reachable from start without crossing a
+// wait_human node. Traversal stops at wait_human nodes — everything
+// beyond them is gated territory.
+func (g *Graph) validateGates(byID map[string]*Node, v *GraphValidation) {
+	out := g.outgoing()
+
+	ungated := map[string]bool{g.Start: true}
+	queue := []string{g.Start}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if n, ok := byID[cur]; ok && n.Type == NodeWaitHuman {
+			continue
+		}
+		for _, i := range out[cur] {
+			to := g.Edges[i].To
+			if !ungated[to] {
+				ungated[to] = true
+				queue = append(queue, to)
+			}
+		}
+	}
+
+	for i := range g.Nodes {
+		n := &g.Nodes[i]
+		if nodeRequiresGate(n) && ungated[n.ID] {
+			v.errf("node %q fires a git/Atlassian mutation without an upstream wait_human gate", n.ID)
+		}
+	}
+}
+
+// GraphTemplateInfo describes one resolvable template for graph list.
+type GraphTemplateInfo struct {
+	Name        string
+	Source      string // "project", "user", or "builtin"
+	Description string
+}
+
+// projectGraphDir is the project-local template directory (tier 1).
+const projectGraphDir = ".muxcode/graphs"
+
+// userGraphDir returns the user-level template directory (tier 2).
+func userGraphDir() string {
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".config", "muxcode", "graphs")
+}
+
+// ResolveGraphTemplate finds a graph template by name using the same
+// 3-tier precedence as agent files: project > user > builtin. Returns
+// the parsed graph and its source tier.
+func ResolveGraphTemplate(name string) (*Graph, string, error) {
+	p := filepath.Join(projectGraphDir, name+".json")
+	if _, err := os.Stat(p); err == nil {
+		g, err := LoadGraphFile(p)
+		return g, "project", err
+	}
+
+	if dir := userGraphDir(); dir != "" {
+		p = filepath.Join(dir, name+".json")
+		if _, err := os.Stat(p); err == nil {
+			g, err := LoadGraphFile(p)
+			return g, "user", err
+		}
+	}
+
+	if data, ok := builtinGraphJSON[name]; ok {
+		g, err := ParseGraph([]byte(data))
+		return g, "builtin", err
+	}
+
+	return nil, "", fmt.Errorf("unknown graph template: %q", name)
+}
+
+// ListGraphTemplates enumerates all resolvable templates across the three
+// tiers. A name appearing in multiple tiers is listed once at its highest
+// precedence, matching what ResolveGraphTemplate would load.
+func ListGraphTemplates() []GraphTemplateInfo {
+	seen := make(map[string]bool)
+	var infos []GraphTemplateInfo
+
+	addDir := func(dir, source string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			name := strings.TrimSuffix(e.Name(), ".json")
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			desc := ""
+			if g, err := LoadGraphFile(filepath.Join(dir, e.Name())); err == nil {
+				desc = g.Description
+			}
+			infos = append(infos, GraphTemplateInfo{Name: name, Source: source, Description: desc})
+		}
+	}
+
+	addDir(projectGraphDir, "project")
+	if dir := userGraphDir(); dir != "" {
+		addDir(dir, "user")
+	}
+	for name, data := range builtinGraphJSON {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		desc := ""
+		if g, err := ParseGraph([]byte(data)); err == nil {
+			desc = g.Description
+		}
+		infos = append(infos, GraphTemplateInfo{Name: name, Source: "builtin", Description: desc})
+	}
+
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+	return infos
+}

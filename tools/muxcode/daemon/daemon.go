@@ -314,6 +314,7 @@ func (d *Daemon) Run() error {
 		d.checkPollHealth()
 		d.checkNonHookTasks()
 		d.checkTrackedTasks()
+		d.checkGraphRuns()
 		d.checkNonHookEdits()
 		d.checkIdleTaskCompletion()
 		d.checkHeartbeat()
@@ -2632,6 +2633,15 @@ func (d *Daemon) checkNonHookTasks() {
 		// Notify the requester so they pick up the response
 		_ = bus.Notify(d.session, task.From)
 	}
+}
+
+// checkGraphRuns advances every in-flight graph run one executor tick
+// (MUX-014). Runs right after checkTrackedTasks so completions correlated
+// this poll route their edges on the same tick. All state lives in the
+// per-run store under BusDir()/graphs — the first tick after a daemon
+// restart IS the resume scan, no separate recovery path needed.
+func (d *Daemon) checkGraphRuns() {
+	bus.StepGraphRuns(d.session)
 }
 
 // idleTaskGracePeriod is how long a hook-provider agent must be idle with an

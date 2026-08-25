@@ -236,5 +236,12 @@ func writeTask(session string, t Task) error {
 	if err != nil {
 		return err
 	}
+	// Session init normally creates the tasks dir, but callers that write
+	// tasks outside a fully initialized session (graph executor dispatch,
+	// tests) must not lose the record silently — a missing task file later
+	// reads as a lost/failed task.
+	if err := os.MkdirAll(TaskDir(session), 0755); err != nil {
+		return err
+	}
 	return os.WriteFile(TaskPath(session, t.ID), data, 0644)
 }

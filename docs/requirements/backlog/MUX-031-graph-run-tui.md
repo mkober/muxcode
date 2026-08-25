@@ -1,6 +1,6 @@
 # Graph Run TUI
 
-An interactive Dracula-themed TUI that visualizes graph-orchestrator runs ([`MUX-014`](./MUX-014-graph-agent-orchestrator.md)) as a live DAG: run browser → layered node grid with state colors and active edges → node detail, with `wait_human` gate approval, cancel, and retry-from actions performed directly from the view.
+An interactive Dracula-themed TUI that visualizes graph-orchestrator runs ([`MUX-014`](../completed/MUX-014-graph-agent-orchestrator.md)) as a live DAG: run browser → layered node grid with state colors and active edges → node detail, with `wait_human` gate approval, cancel, and retry-from actions performed directly from the view.
 
 ## Context
 
@@ -106,7 +106,7 @@ Approving a `wait_human` gate from this TUI **is** the explicit user approval MU
 
 ## Sources
 
-- [`MUX-014-graph-agent-orchestrator.md`](./MUX-014-graph-agent-orchestrator.md) — run store, node states, gate semantics
+- [`MUX-014-graph-agent-orchestrator.md`](../completed/MUX-014-graph-agent-orchestrator.md) — run store, node states, gate semantics
 - [`../completed/MUX-069-modal-window-manager.md`](../completed/MUX-069-modal-window-manager.md) — modal conventions
 - `tools/muxcode/tui/{remote,model,provider_select}.go` — navigation, tick, confirm patterns
 

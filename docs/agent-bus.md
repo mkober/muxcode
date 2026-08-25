@@ -1522,6 +1522,59 @@ muxcode chain build success --files "src/main.go,src/util.go"
 muxcode chain deploy success --verbose
 ```
 
+### `muxcode graph`
+
+Declarative DAG orchestration over the bus (MUX-014). A graph is JSON: typed nodes, edges
+keyed by outcome. The daemon executes edges — no LLM decides node succession. See
+[Architecture](architecture.md#graph-orchestration-control-plane).
+
+| Subcommand | Purpose |
+|------------|---------|
+| `run <template>\|--file <path> [intent]` | Start a run; returns immediately with the run id |
+| `validate <file\|template>` | Structural validation — exits non-zero on errors |
+| `list` | List resolvable templates across all three tiers |
+| `status [--json] [run-id]` | Per-node state, timestamps, outcome; no id lists all runs |
+| `cancel <run-id>` | Stop scheduling; in-flight node work completes or times out |
+| `retry <run-id> --from <node>` | Re-execute from a node, keeping upstream results |
+| `approve <run-id> <node>` | Release a `wait_human` gate |
+
+```bash
+# Start a run from a built-in template, with intent interpolated into node messages
+muxcode graph run coding-pr "implement PBP1-4915"
+
+# Run a custom definition — --file must be the first argument after `run`,
+# since a bare first arg is read as a template name
+muxcode graph run --file my-dag.json "implement PBP1-4915"
+
+# Watch it progress (Dracula-colored node grid), or script against it
+muxcode graph status <run-id>
+muxcode graph status --json <run-id>
+
+# Validate before running — catches undefined refs, unreachable nodes, uncapped cycles
+muxcode graph validate my-dag.json
+
+# Release a human gate, or abandon the run
+muxcode graph approve <run-id> await-review
+muxcode graph cancel <run-id>
+
+# Re-run from a failed node without redoing completed upstream work
+muxcode graph retry <run-id> --from test
+```
+
+**Templates** resolve `project > user > builtin`, the same precedence as agent files:
+`.muxcode/graphs/<name>.json` > `~/.config/muxcode/graphs/<name>.json` > built-in. Five
+ship built in: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`, and a
+`build-test-review` subgraph.
+
+**Validation is strict by design.** Undefined node refs, unreachable nodes, and uncapped
+cycles are errors, not warnings — a loop is only legal via an explicit `max_iterations` on a
+loop edge. A node that commits or writes to Jira/Confluence is rejected unless it sits
+downstream of a `wait_human` gate.
+
+**Run state** lives under `/tmp/muxcode-bus-{session}/graphs/<run-id>/` — `run.json`,
+`graph.json`, and `nodes/<id>.json` per node, written atomically. Because every transition
+is persisted, a daemon restart resumes in-flight runs with no separate recovery step.
+
 ### `muxcode hook`
 
 Hook handlers for Claude Code's PreToolUse and PostToolUse events. Each subcommand reads the tool event as JSON on stdin.

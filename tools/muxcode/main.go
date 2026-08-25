@@ -25,7 +25,7 @@ var knownSubcommands = map[string]bool{
 	"reload": true, "config": true, "provider-select": true,
 	"simulate": true, "track": true, "remote": true, "spec": true,
 	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true,
-	"branch-time": true, "clear": true,
+	"branch-time": true, "clear": true, "graph": true,
 }
 
 var usage = `Usage: muxcode <command> [args...]
@@ -91,6 +91,7 @@ Commands:
   diagnose      Diagnose why an agent isn't responding (evidence + root cause)
   remote        Investigate agents in other muxcode sessions (TUI browser, or list/status/capture/inbox/diagnose)
   spec          Manage the active requirements spec for plan agent verification (set, get, clear)
+  graph         Graph-agent orchestrator (run, validate, list, status, cancel, retry, approve)
 `
 
 func main() {
@@ -237,6 +238,8 @@ func main() {
 		cmd.Remote(args)
 	case "spec":
 		cmd.Spec(args)
+	case "graph":
+		cmd.Graph(args)
 	case "upgrade-daemons":
 		cmd.UpgradeDaemons(args)
 	default:
