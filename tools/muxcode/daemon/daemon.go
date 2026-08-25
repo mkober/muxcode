@@ -52,6 +52,8 @@ type Daemon struct {
 	lastCleanupCheck int64 // 300s interval
 	// Disk pressure monitoring
 	lastDiskPressureCheck int64 // 60s interval
+	// Auto-clear between tasks (MUX-103)
+	lastAutoClearCheck int64 // autoClearCheckSecs interval
 	// Idle agent wake-up
 	lastIdleCheck        int64            // 5s interval
 	lastNonHookWake      map[string]int64 // cooldown: last wake time per non-hook role (60s)
@@ -318,6 +320,7 @@ func (d *Daemon) Run() error {
 		d.checkServeHealth()
 		d.checkCleanup()
 		d.checkDiskPressure()
+		d.checkAutoClear()
 		d.checkBranchTime()
 		time.Sleep(d.pollInterval)
 	}
@@ -3290,6 +3293,46 @@ func (d *Daemon) checkDiskPressure() {
 		// will see it next time it checks inbox. Notifying directly force-wakes
 		// the agent for something it can't fix, burning context repeatedly.
 		d.refreshInboxSizes()
+	}
+}
+
+// autoClearCheckSecs throttles the auto-clear scan; with a default 60s quiet
+// window, finer-grained checks buy nothing.
+const autoClearCheckSecs int64 = 15
+
+// checkAutoClear injects /clear into enrolled episodic agents once their work
+// completes (MUX-103). Enrollment is explicit via MUXCODE_AUTO_CLEAR_ROLES
+// (default empty = off). A clear fires exactly once per completed task: the
+// per-role marker written by ClearAgent gates re-fire across poll cycles, and
+// a failing guard in AutoClearEligible (pending inbox, in-flight task, reload,
+// busy pane) postpones to a later cycle rather than cancelling — the trigger
+// stays armed until the marker records a clear.
+func (d *Daemon) checkAutoClear() {
+	roles := bus.AutoClearRoles()
+	if len(roles) == 0 {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastAutoClearCheck < autoClearCheckSecs {
+		return
+	}
+	d.lastAutoClearCheck = now
+
+	quiet := bus.AutoClearQuietSecs()
+	for _, role := range roles {
+		due, completed := bus.AutoClearDue(d.session, role, now, quiet)
+		if !due {
+			continue
+		}
+		if ok, _ := bus.AutoClearEligible(d.session, role); !ok {
+			continue
+		}
+		trigger := fmt.Sprintf("task-completed-%ds-ago", now-completed)
+		if err := bus.ClearAgent(d.session, role, "daemon", trigger); err != nil {
+			fmt.Fprintf(os.Stderr, "  [auto-clear] %s: %v\n", role, err)
+			continue
+		}
+		fmt.Printf("  %s  Auto-clear: %s (%s)\n", time.Now().Format("15:04:05"), role, trigger)
 	}
 }
 

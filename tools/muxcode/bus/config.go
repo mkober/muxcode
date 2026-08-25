@@ -412,6 +412,13 @@ func AgentHeartbeatPath(session string) string {
 	return filepath.Join(BusDir(session), "agent-last-heartbeat")
 }
 
+// AutoClearMarkerPath returns the marker file recording the unix time of the
+// role's last auto-clear (MUX-103). Its timestamp gates re-fire: only work
+// completed after it can trigger another clear.
+func AutoClearMarkerPath(session, role string) string {
+	return filepath.Join(BusDir(session), "auto-clear-"+role+".last")
+}
+
 // AgentCurrentStoryPath returns the path to the file tracking the current Jira story.
 func AgentCurrentStoryPath(session string) string {
 	return filepath.Join(BusDir(session), "agent-current-story")

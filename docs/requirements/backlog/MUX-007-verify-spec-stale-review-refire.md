@@ -26,7 +26,7 @@ if size > prev && size > 0 {
 ```
 
 - The growth check (`size > prev`) is sender-agnostic: **any** message to edit trips it.
-- `HasNewMessageFrom()` (`bus/workflow.go` ~:350) just peeks for **any** unconsumed message from review — it has no notion of "new since last check".
+- `HasNewMessageFrom()` (`bus/workflow.go` ~:350) just peeks for **any** unconsumed message from review — it has no notion of "new since last check". It matches on `m.From` **alone**: it never checks `m.To` or `m.Type`, so an auto-CC'd `review→test` *response* — a message neither addressed to edit nor reporting review completion to anyone — fully satisfies the "review completed" test.
 - So the condition is really "edit got mail while a review message is still unconsumed", which stays true for as long as edit is busy — and every re-fire both re-transitions the workflow state and sends plan another `verify-spec`.
 - Plan's `verify-spec` instructions end with "Reply to edit with a summary" — that reply is the next inbox growth. One review completion + one busy edit + one compliant plan = self-sustaining loop.
 
@@ -36,7 +36,8 @@ if size > prev && size > 0 {
 2. **Workflow state churn**: `TransitionWorkflow(StateReviewed)` re-fires per echo, so the state log records review completions that never happened.
 3. **Self-amplifying under load**: the busier edit is, the longer the review message sits unconsumed, the more echoes fire — worst exactly when the session is busiest.
 4. **Time-recording double exposure**: on a non-ignored branch each echo would also re-run the time-recording pass (harmless in value terms — absolute totals are idempotent — but each pass costs a ledger read/write cycle).
-5. **Amplified by any edit-inbox storm (observed 2026-08-17, ~11:02)**: a build↔test chain loop pumped auto-CC copies into edit's inbox every ~7–8s (22 unconsumed messages, daemon `loop-detected` queued among them); with one stale review message in the pile, **every** CC re-fired `verify-spec` at plan at the same cadence — 7+ echoes in under a minute, sustained without plan sending anything. The refire bug turns any unrelated message storm into a verify-spec storm.
+5. **Plan silence does not stop it (observed 2026-08-24, 16:27–16:32)**: one MUX-103 review completion produced **7** `verify-spec` echoes. Plan replied to edit exactly once (the first, legitimate one) and stayed silent through the rest — echoes kept firing anyway, fed by chain auto-CC traffic alone. This falsifies the "one compliant plan" framing in the root cause above: plan's reply is *one* fuel source, not a necessary one, so instructing plan to reply less is not a mitigation. The two unconsumed review messages in edit's inbox were both `review→test` responses (`reply_to` a test task), never a review→edit report. Echo #6 and #7 named `docs/requirements/backlog/backlog.md` as the changed file — plan's own prior verification edit, fed back as the trigger.
+6. **Amplified by any edit-inbox storm (observed 2026-08-17, ~11:02)**: a build↔test chain loop pumped auto-CC copies into edit's inbox every ~7–8s (22 unconsumed messages, daemon `loop-detected` queued among them); with one stale review message in the pile, **every** CC re-fired `verify-spec` at plan at the same cadence — 7+ echoes in under a minute, sustained without plan sending anything. The refire bug turns any unrelated message storm into a verify-spec storm.
 
 ## Requirements
 

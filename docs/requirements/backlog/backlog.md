@@ -2,7 +2,7 @@
 
 Index of all pending requirement specs. Every planned feature with a written spec has a row
 in the [Spec index](#spec-index) below; ideas without a spec doc yet are collected in
-[Ideas without specs](#ideas-without-specs). 76 delivered specs live in
+[Ideas without specs](#ideas-without-specs). 77 delivered specs live in
 [`completed/`](../completed/) — each with requirements, key files, and implementation notes.
 
 Spec lifecycle: `backlog/` (planned or parked) → `drafts/` (actively being designed or
@@ -57,7 +57,6 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 |----|------|----------|---------|
 | MUX-011 | [`MUX-011-opencode-plugin-hook-bridge.md`](./MUX-011-opencode-plugin-hook-bridge.md) | High | Muxcode TS plugin on OpenCode's `tool.execute.after`/`session.idle` events shells to `muxcode hook bash` — deterministic chains for OpenCode via narrow `SupportsChainEvents()`, root enabler fix for MUX-009 storms |
 | MUX-014 | [`MUX-014-graph-agent-orchestrator.md`](./MUX-014-graph-agent-orchestrator.md) | Medium | DAG control plane over bus/chains/spawns/tasks: 7 node types, outcome-keyed edges, joins, durable resumable runs (`muxcode graph run\|status\|cancel\|retry`); commit/Atlassian nodes require `wait_human`. Subsumes the "Pipeline definitions" idea |
-| MUX-103 | [`MUX-103-auto-clear-between-tasks.md`](./MUX-103-auto-clear-between-tasks.md) | High | Daemon injects `/clear` into episodic Claude agents (review, plan, commit, run, api) after task completion — idle+quiet guards, edit/auto hard-excluded, off by default; keeps per-turn input tokens flat so premium models (Fable 5) don't compound limit burn |
 
 ### Agents & roles
 
@@ -173,6 +172,7 @@ MUX-003/004 were delivered under GitHub tracking; MUX-028–MUX-099 are retroact
 | MUX-099 | [`MUX-099-workflow-state-machine.md`](../completed/MUX-099-workflow-state-machine.md) | Workflow state machine |
 | MUX-101 | [`MUX-101-agent-hot-reload.md`](../completed/MUX-101-agent-hot-reload.md) | Agent hot reload (renumbered from MUX-031 to free the id for the graph run TUI's GitHub issue #31) |
 | MUX-102 | [`MUX-102-agent-mode.md`](../completed/MUX-102-agent-mode.md) | Agent mode (renumbered from MUX-032 to free the id for the loop-detector granularity spec) |
+| MUX-103 | [`MUX-103-auto-clear-between-tasks.md`](../completed/MUX-103-auto-clear-between-tasks.md) | Daemon-injected `/clear` for episodic Claude roles after task completion — `bus/clear.go` guard matrix (idle, empty inbox, no live in-flight task, no reload marker, Claude-only, non-harness, not mode-cycled), `edit`/`auto` hard-excluded at both parse and guard, exactly-once via `auto-clear-{role}.last` marker written only on successful injection, dual completion stores (tasks + responded delivery statuses), `muxcode clear <role>` manual path; `scripts/test-auto-clear.sh` (22 checks, real scratch daemon + tmux). Post-clear delivery verified live rather than by the suite — a scratch pane has no Claude runtime and so no `Stop` hook to relaunch the inbox listener |
 
 ## Ideas without specs
 

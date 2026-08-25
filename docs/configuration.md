@@ -255,6 +255,23 @@ MUXCODE_BRANCH_TIME_ACTIVITY_ROLES=edit,build
 MUXCODE_BRANCH_TIME_ACTIVITY_ROLES=
 ```
 
+### Auto-clear between tasks
+
+Episodic Claude agents (`review`, `plan`, `commit`, `run`, `api`) can have their conversation cleared automatically once a task completes. Each bus request is self-contained and cross-task state already lives in `muxcode memory`, so context retained between unrelated tasks is dead-weight input-token burn. **Off by default.** See the [auto-clear spec](requirements/completed/MUX-103-auto-clear-between-tasks.md).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_AUTO_CLEAR_ROLES` | (unset = feature off) | Comma-separated roles enrolled for auto-clear. `edit` and `auto` are **hard-excluded** even when listed |
+| `MUXCODE_AUTO_CLEAR_QUIET_SECS` | `60` | Seconds of quiet after the completing response before `/clear` is injected |
+
+Both follow the standard resolution chain (env → config file).
+
+**Hard exclusions**: `edit` and `auto` hold the user conversation and loop state, so they are filtered twice — once when parsing `MUXCODE_AUTO_CLEAR_ROLES` and again inside the eligibility guard — with both layers pinned by test. They keep `/compact` instead.
+
+**Guards** — every one must hold, and a failing guard *postpones* the clear to a later poll cycle rather than cancelling it: agent idle, no actionable inbox, no live in-flight task, no reload marker, resolved provider is Claude Code (`/clear` is a Claude Code built-in), not a harness pane, and the window not mode-cycled to another agent.
+
+**Manual path**: `muxcode clear <role>` runs the same guarded path on demand — useful for exercising the injection without waiting for the daemon.
+
 ### Integrations
 
 | Variable | Default | Description |
