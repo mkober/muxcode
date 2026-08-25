@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
 )
@@ -18,9 +19,14 @@ func Clear(args []string) {
 		fmt.Fprintln(os.Stderr, "Usage: muxcode clear <role>")
 		os.Exit(1)
 	}
+	// BusSession never returns "" — it falls back to "default" outside tmux —
+	// so the target session must be validated for real. Without this, a clear
+	// run outside any muxcode session walks the guard matrix against a
+	// nonexistent session and fails with a misleading "agent not idle". The
+	// "=" prefix forces exact-name matching (bare -t prefix-matches).
 	session := bus.BusSession()
-	if session == "" {
-		fmt.Fprintln(os.Stderr, "Error: no session (set BUS_SESSION)")
+	if exec.Command("tmux", "has-session", "-t", "="+session).Run() != nil {
+		fmt.Fprintf(os.Stderr, "Error: no tmux session %q — run inside a muxcode session or set BUS_SESSION\n", session)
 		os.Exit(1)
 	}
 	role := args[0]

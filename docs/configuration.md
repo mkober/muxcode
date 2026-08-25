@@ -257,7 +257,7 @@ MUXCODE_BRANCH_TIME_ACTIVITY_ROLES=
 
 ### Auto-clear between tasks
 
-Episodic Claude agents (`review`, `plan`, `commit`, `run`, `api`) can have their conversation cleared automatically once a task completes. Each bus request is self-contained and cross-task state already lives in `muxcode memory`, so context retained between unrelated tasks is dead-weight input-token burn. **Off by default.** See the [auto-clear spec](requirements/drafts/MUX-103-auto-clear-between-tasks.md).
+Episodic Claude agents (`review`, `plan`, `commit`, `run`, `api`) can have their conversation cleared automatically once a task completes. Each bus request is self-contained and cross-task state already lives in `muxcode memory`, so context retained between unrelated tasks is dead-weight input-token burn. **Off by default.** See the [auto-clear spec](requirements/completed/MUX-103-auto-clear-between-tasks.md).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
