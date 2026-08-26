@@ -59,11 +59,11 @@ on the switch working (it currently does not; see the verification notes).
 - [x] A killed control pane is respawned under the same supervision model as the left-pane pollers; a binary hot-reload restarts it
 - [x] The pane hosts **switchable surfaces**, with the graph UI as the first; adding a second surface must not require a second pane
 - [x] Tab and cycle order is **Launch Graph → Graph Runs → Pending Gates**, with the tab bar matching
-- [ ] Surface selection is **shared across all panes** via a `control-pane-surface` file: switching surface in one pane converges the others
-- [ ] Convergence is **one-way and non-destructive** — a pane drilled into a DAG, node detail, or intent prompt is never yanked out by another pane's switch
+- [x] Surface selection is **shared across all panes** via a `control-pane-surface` file: switching surface in one pane converges the others
+- [x] Convergence is **one-way and non-destructive** — a pane drilled into a DAG, node detail, or intent prompt is never yanked out by another pane's switch
 - [x] Each control pane pins `BUS_SESSION` in its own environment (`split-window -e`) rather than inheriting it from the tmux server
 - [x] The pane runs the **same** `muxcode graph ui` binary — no forked renderer. The existing height clamp and flat-list fallback already handle 14 rows (pinned by `TestRenderGraphFrame_DeepGraphFallsBack`)
-- [ ] On a window **with** a control pane, a newly-waiting gate switches it to the Pending Gates surface — **still failing live** (see notes); the popup half of this criterion is now moot, since no popup exists to suppress
+- [x] On a window **with** a control pane, a newly-waiting gate switches it to the Pending Gates surface — **now passing live** (`ok: pane switched to Pending Gates on a new gate`); I unchecked this when an earlier run contradicted my source-based check-off, and re-checked it only on the named passing assertion
 - [x] ~~On an **excluded** window (or with the feature disabled), auto-show popup behaviour is unchanged~~ — **superseded**: gate dispatch never opens a modal now, and `MUXCODE_GATE_AUTOSHOW_DISABLE` is gone. Nothing to preserve
 - [x] `pane-border-format` shows a title only for titled panes; border style is Dracula `colour141`
 - [x] Pane titles are **ALL CAPS**: pane 0 `" NVIM "`, pane 2 `" GRAPH "`
@@ -112,37 +112,37 @@ on the switch working (it currently does not; see the verification notes).
 ### Phase 2: Supervision
 
 - [x] Respawn a dead control pane under the poller supervision model
-- [ ] Binary hot-reload restarts the pane
-- [ ] Unit tests: respawn triggers on a missing pane; disabled/excluded windows never respawn
-- [ ] Measure supervision cost at 12 panes before assuming it is negligible
+- [x] Binary hot-reload restarts the pane
+- [x] Unit tests: respawn triggers on a missing pane; disabled/excluded windows never respawn
+- [ ] Measure supervision cost at 12 panes before assuming it is negligible — **not done**, carried to the gaps table below
 
 ### Phase 3: Gate interplay
 
-- [ ] Pane switches to Pending Gates when a gate becomes waiting (tick diff)
-- [ ] Auto-show popup suppressed where a control pane exists, retained on excluded windows
-- [ ] Unit tests: the switch fires once per new gate, not once per tick while it waits
+- [x] Pane switches to Pending Gates when a gate becomes waiting (tick diff)
+- [x] ~~Auto-show popup suppressed where a control pane exists, retained on excluded windows~~ — **moot**: the popup was removed outright, so there is nothing to suppress or retain
+- [x] Unit tests: the switch fires once per new gate, not once per tick while it waits
 
 ### Phase 4: Surface hosting
 
-- [ ] The pane's surface is selectable rather than hard-wired to the graph UI, so a second control surface needs no second pane
-- [ ] Unit tests: an unknown surface name degrades to the graph UI rather than an empty pane
+- [x] The pane's surface is selectable rather than hard-wired to the graph UI, so a second control surface needs no second pane
+- [x] Unit tests: an unknown surface name degrades to the graph UI rather than an empty pane
 
 ### Phase 5: Docs
 
-- [ ] `config/tmux.conf` and `README.md` cover the control pane, its config, and the popup fallback
-- [ ] `docs/tui-style.md` layout anatomy gains the control pane
+- [x] `config/tmux.conf` and `README.md` cover the control pane, its config, and the popup fallback
+- [x] `docs/tui-style.md` layout anatomy gains the control pane
 
 ### Phase 6: Integration test
 
-- [ ] Create `scripts/test-control-pane.sh` (scratch session)
-- [ ] Test: pane order is `0/1/2` on **every** window, and `AgentPane`-targeted delivery reaches the agent on each — the check that protects the delivery layer
-- [ ] Test: killing a control pane respawns it
-- [ ] Test: a gate appearing switches the pane to Pending Gates, verified by `capture-pane`
-- [ ] Test: **negative control** — with the feature disabled, no third pane exists anywhere and popup auto-show still fires
-- [ ] Test: **negative control** — an excluded window keeps two panes while a sibling has three
-- [ ] Test: pane titles render as ` NVIM ` / ` GRAPH `; pane 1's raw title is **not** set by the launcher, while its border displays uppercased
-- [ ] Test: a change to the CLI-managed pane-1 title still shows through the substitution — proving the transform is at display and does not pin the value
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-control-pane.sh` (scratch session)
+- [x] Test: pane order is `0/1/2` on **every** window, and `AgentPane`-targeted delivery reaches the agent on each — the check that protects the delivery layer
+- [x] Test: killing a control pane respawns it
+- [x] Test: a gate appearing switches the pane to Pending Gates, verified by `capture-pane`
+- [x] Test: **negative control** — with the feature disabled, no third pane exists anywhere (the popup half is moot; auto-show was removed)
+- [x] Test: **negative control** — an excluded window keeps two panes while a sibling has three
+- [x] Test: pane titles render as ` NVIM ` / ` GRAPH `; pane 1's raw title is **not** set by the launcher, while its border displays uppercased
+- [x] Test: a change to the CLI-managed pane-1 title still shows through the substitution — proving the transform is at display and does not pin the value
+- [x] Run the script and verify all checks pass
 
 ## Verification notes
 
