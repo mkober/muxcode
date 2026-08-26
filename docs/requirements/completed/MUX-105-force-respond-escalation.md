@@ -25,7 +25,7 @@ The build agent (OpenCode / DeepSeek V4 Flash) held an edit build request un-res
 |------|--------|
 | `muxcode reload build` | Cleared the wedged conversation, but not the delivery |
 | `muxcode deliver build --force` | **Skipped its own injection**: `[wakeup] skipping build injection — in-flight task build:… exists (121s old)` |
-| Wake injections | Separately failing with `command send-keys: invalid flag -` — now [`MUX-104`](../completed/MUX-104-send-keys-dash-payload.md); no fallback path existed |
+| Wake injections | Separately failing with `command send-keys: invalid flag -` — now [`MUX-104`](./MUX-104-send-keys-dash-payload.md); no fallback path existed |
 | Daemon receipt-gap backstop | Fired a `delivery-gap` event to edit; the agent stayed stuck |
 | Final recovery | A delayed `deliver --force` after the in-flight task expired |
 
@@ -58,7 +58,7 @@ The guard's own comment states the assumption that fails: *"The message was alre
 > closing the popup and reopening the `prefix + b` menu; applies to all three entry points
 > `g`/`G`/`a`, which currently open single-mode popups.
 
-Today the three [`MUX-031`](../completed/MUX-031-graph-run-tui.md) entries each launch a
+Today the three [`MUX-031`](./MUX-031-graph-run-tui.md) entries each launch a
 single-mode TUI with no way out but closing it:
 
 | Menu entry | Key | Command |
@@ -107,7 +107,7 @@ behind it before approving.
 ### Acceptance criteria — gate auto-show (addendum)
 
 Added 2026-08-26 by user decision. This **resolves the open question carried by
-[`MUX-031`](../completed/MUX-031-graph-run-tui.md)** — *"should the TUI's gate badge replace or
+[`MUX-031`](./MUX-031-graph-run-tui.md)** — *"should the TUI's gate badge replace or
 complement a status-bar flash?"* The answer is neither: surface the approval UI itself.
 
 - [x] Dispatching a `wait_human` node opens the Pending Gates popup
@@ -162,7 +162,7 @@ durable channel.
 - **Skip must be visible**: return a sentinel (`ErrInjectionSkipped`) rather than `nil`, so `checkPollHealth` can escalate instead of assuming success. This is the single highest-value change in the spec — it converts a silent failure into a signal the existing backstop can already act on.
 - **Ladder state**: per-role escalation state alongside the existing watchdog markers, with cooldown and a cap, following `checkStuckProviders()` conventions (two-sighting debounce, cap, cooldown, then alert and stop).
 - **TUI action**: `tui/model.go` agent row keybind → confirm → the shared force path. Reuse the `provider_select.go` confirm-flow pattern.
-- **MUX-104 dependency**: the ladder is only as good as the injection beneath it. [`MUX-104`](../completed/MUX-104-send-keys-dash-payload.md) must land first, or a dash-leading payload defeats every rung identically.
+- **MUX-104 dependency**: the ladder is only as good as the injection beneath it. [`MUX-104`](./MUX-104-send-keys-dash-payload.md) must land first, or a dash-leading payload defeats every rung identically.
 
 **Mode cycling** (independent of everything above):
 
@@ -220,13 +220,13 @@ durable channel.
 
 ### Phase 5: Integration test
 
-- [ ] Create `scripts/test-force-respond.sh` (hermetic — scratch bus + scratch daemon)
-- [ ] Test: agent with an un-responded request past threshold → ladder escalates through its rungs, lifecycle events recorded in order
-- [ ] Test: the in-flight task no longer blocks the recovery injection (the exact 2026-08-26 catch-22)
-- [ ] Test: **negative control** — an agent responding normally never escalates
-- [ ] Test: a skipped injection is not counted as a successful re-drive
-- [ ] Test: opt-out env var disables the ladder
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-force-respond.sh` (hermetic — scratch bus + scratch daemon)
+- [x] Test: agent with an un-responded request past threshold → ladder escalates through its rungs, lifecycle events recorded in order
+- [x] Test: the in-flight task no longer blocks the recovery injection (the exact 2026-08-26 catch-22)
+- [x] Test: **negative control** — an agent responding normally never escalates
+- [x] Test: a skipped injection is not counted as a successful re-drive
+- [x] Test: opt-out env var disables the ladder
+- [x] Run the script and verify all checks pass
 
 ### Phase 6: Graph TUI mode cycling
 
@@ -502,9 +502,9 @@ Mode cycling:
 
 - User request relayed via the edit agent, 2026-08-26, with incident evidence in `/tmp/mux-auto-force-respond-spec.md`
 - Incident observed live in this session; skip behaviour and `nil` return verified in `bus/provider_opencode.go:135-147` by the plan agent
-- [`MUX-104-send-keys-dash-payload.md`](../completed/MUX-104-send-keys-dash-payload.md) — the injection bug that co-occurred
+- [`MUX-104-send-keys-dash-payload.md`](./MUX-104-send-keys-dash-payload.md) — the injection bug that co-occurred
 - [Architecture — delivery tracking](../../architecture.md#delivery-tracking)
-- [`MUX-031-graph-run-tui.md`](../completed/MUX-031-graph-run-tui.md) — the three graph TUI surfaces and the `GraphUI` view model that Phases 6–7 extend
+- [`MUX-031-graph-run-tui.md`](./MUX-031-graph-run-tui.md) — the three graph TUI surfaces and the `GraphUI` view model that Phases 6–7 extend
 - `tools/muxcode/tui/graph_ui.go` (`handleKey`, `refresh`, the three constructors), `tools/muxcode/bus/popup.go`
 
 ## Provenance
@@ -521,8 +521,8 @@ ids, and a future spec taking `MUX-106` would collide with this history. Next fr
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-105-force-respond-escalation | 1h 14m | 2026-08-26 12:42 |
+| MUX-105-force-respond-escalation | 1h 31m | 2026-08-26 13:00 |
 
 ## Status
 
-In Progress
+Complete

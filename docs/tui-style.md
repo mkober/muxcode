@@ -153,4 +153,4 @@ Before merging a TUI change:
 
 - [Architecture](architecture.md) — modal and popup dispatch
 - [Agent Bus CLI](agent-bus.md#muxcode-graph) — the graph TUI surfaces and keys
-- [`MUX-031`](requirements/completed/MUX-031-graph-run-tui.md), [`MUX-105`](requirements/drafts/MUX-105-force-respond-escalation.md) — the specs these rules were extracted from
+- [`MUX-031`](requirements/completed/MUX-031-graph-run-tui.md), [`MUX-105`](requirements/completed/MUX-105-force-respond-escalation.md) — the specs these rules were extracted from

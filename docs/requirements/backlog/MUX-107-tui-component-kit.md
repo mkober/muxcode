@@ -101,7 +101,7 @@ This is a **refactor with pinning tests**, not a redesign. Rendered output shoul
 - [`docs/tui-style.md`](../../tui-style.md) — the conventions this spec makes enforceable
 - `tools/muxcode/tui/{styles,graph,graph_ui,remote,model}.go`
 - [`MUX-031`](../completed/MUX-031-graph-run-tui.md) — `height`-ignored defect, empty-state and negative-control lessons
-- [`MUX-105`](../drafts/MUX-105-force-respond-escalation.md) — selection-by-id, stale-title, and escape-sequence lessons
+- [`MUX-105`](../completed/MUX-105-force-respond-escalation.md) — selection-by-id, stale-title, and escape-sequence lessons
 
 ## Provenance
 
