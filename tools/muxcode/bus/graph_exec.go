@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -179,6 +180,31 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 		msg := interpolateGraphMessage(n.Message, run.Intent, "")
 		m := NewMessage(graphSender, n.Role, "request", n.Action, msg, "")
 		if err := SendNoCC(session, m); err != nil {
+			if errors.Is(err, ErrSendSuppressed) {
+				// The identical request is already queued or in flight (a
+				// loop re-entry or retry racing the prior pass) — adopt it
+				// instead of failing the node: the work the send would
+				// have queued already exists.
+				taskID := m.ID
+				if t, found := FindInFlightTask(session, n.Role, n.Action); found {
+					taskID = t.ID
+				} else if pm, found := FindPendingInboxRequest(session, m.To, m.From, m.Action, m.Payload); found {
+					// Adopt the queued duplicate's ID: the agent answers
+					// THAT id, so a task keyed to the unsent m.ID would
+					// sit in-flight forever (PR #38 Copilot finding).
+					adopted := m
+					adopted.ID = pm.ID
+					adopted.TS = pm.TS
+					taskID = pm.ID
+					_ = CreateTask(session, adopted, nodeTimeoutSecs(n))
+				} else {
+					_ = CreateTask(session, m, nodeTimeoutSecs(n))
+				}
+				_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeRunning, func(s *GraphNodeStatus) {
+					s.TaskID = taskID
+				})
+				return
+			}
 			finishNode(session, run, n, OutcomeFailure, "send failed: "+err.Error())
 			return
 		}
@@ -264,6 +290,9 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 				run.ID, n.ID, prompt, run.ID, n.ID), "")
 		_ = SendNoCC(session, gate)
 		_ = Notify(session, "edit")
+		// Gate surfacing is the control pane's job: it switches itself to
+		// Pending Gates on the next tick (MUX-108). The graph popups were
+		// removed with the pane's arrival — no modal fallback remains.
 
 	case NodeWaitEvent:
 		// Parked here; harvestWaitingNode releases it when a bus message

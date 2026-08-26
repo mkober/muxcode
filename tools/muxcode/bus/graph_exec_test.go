@@ -405,6 +405,81 @@ func TestExecHumanGate(t *testing.T) {
 }
 
 // TestExecHumanGateRetryRequiresFreshApproval pins the stale-marker gate
+// A suppressed re-dispatch with NO live task must adopt the QUEUED
+// duplicate's message id — the agent answers that id, so a task keyed to
+// the unsent fresh id would sit in-flight forever and time the node out
+// (PR #38 Copilot finding).
+func TestExecSuppressedDispatchAdoptsQueuedMessageID(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"}},
+		Edges: []Edge{},
+	}
+	run := createTestRun(t, g)
+	step(t, runTestSession, run.ID) // dispatch: message queued, task created
+
+	msgs, _ := Peek(runTestSession, "build")
+	if len(msgs) != 1 {
+		t.Fatalf("expected the dispatched message queued, got %d", len(msgs))
+	}
+	queuedID := msgs[0].ID
+
+	// Complete the first pass's task (no in-flight task remains), then
+	// re-arm the node — the loop/retry shape.
+	CompleteTask(runTestSession, queuedID, "resp-"+queuedID)
+	mustNodeTransition(t, run.ID, "a", GraphNodeDone)
+	mustNodeTransition(t, run.ID, "a", GraphNodeReady)
+
+	step(t, runTestSession, run.ID) // re-dispatch: suppressed by the queued duplicate
+
+	st, err := ReadNodeStatus(runTestSession, run.ID, "a")
+	if err != nil {
+		t.Fatalf("ReadNodeStatus: %v", err)
+	}
+	if st.TaskID != queuedID {
+		t.Errorf("suppressed dispatch must adopt the queued id %s, got %s", queuedID, st.TaskID)
+	}
+	task, err := ReadTask(runTestSession, queuedID)
+	if err != nil || task.Status != TaskInFlight {
+		t.Errorf("adopted task must be re-armed in-flight, got %+v err %v", task, err)
+	}
+}
+
+func mustNodeTransition(t *testing.T, runID, node, state string) {
+	t.Helper()
+	if err := TransitionGraphNode(runTestSession, runID, node, state, nil); err != nil {
+		t.Fatalf("transition %s -> %s: %v", node, state, err)
+	}
+}
+
+// Gate surfacing belongs to the control pane (MUX-108): dispatching a
+// wait_human never opens a popup — the graph modals were removed with
+// the pane's arrival, and the pane switches itself to Pending Gates.
+func TestExecHumanGateNeverPopsModal(t *testing.T) {
+	gated := &Graph{
+		Name: "t", Start: "gate",
+		Nodes: []Node{
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "b", Type: NodeSend, Role: "review", Action: "review", Message: "go"},
+		},
+		Edges: []Edge{{From: "gate", To: "b"}},
+	}
+
+	orig := tmuxRunner
+	var calls [][]string
+	tmuxRunner = func(args ...string) error { calls = append(calls, args); return nil }
+	t.Cleanup(func() { tmuxRunner = orig })
+
+	run := createTestRun(t, gated)
+	step(t, runTestSession, run.ID)
+	for _, c := range calls {
+		if strings.Contains(strings.Join(c, " "), "display-popup") {
+			t.Errorf("gate dispatch must never open a popup, calls: %v", calls)
+		}
+	}
+}
+
 // bypass (PR #34 Copilot must-fix): after a gate was approved once, a
 // graph retry --from that gate must WAIT for a new approval — the old
 // approved marker must not auto-release the fresh pass.

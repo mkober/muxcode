@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
+	"github.com/mkober/muxcode/tools/muxcode/tui"
 )
 
 // Graph handles the "muxcode graph" subcommand — the graph-agent
@@ -57,6 +58,9 @@ func Graph(args []string) {
 	case "retry":
 		graphRetry(args[1:])
 
+	case "ui":
+		graphUI(args[1:])
+
 	case "approve":
 		if len(args) < 3 {
 			fmt.Fprintln(os.Stderr, "Usage: muxcode graph approve <run-id> <node>")
@@ -86,6 +90,9 @@ Commands:
   cancel <run-id>                           Cancel a run (unstarted nodes are skipped)
   retry <run-id> --from <node>              Re-execute from a node, keeping upstream results
   approve <run-id> <node>                   Release a wait_human gate
+  ui [run-id] [--render-once] [--width N]   Interactive run browser / DAG view (MUX-031)
+  ui --templates                            Open the template launcher
+  ui --gates [--render-once]                Open the pending-gate approval queue
 `)
 }
 
@@ -148,6 +155,73 @@ func graphRetry(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("Run %s retrying from %s — the daemon resumes it on its next tick\n", runID, from)
+}
+
+// graphUI opens the interactive graph TUI (MUX-031), or prints a single
+// frame with --render-once — the scriptable seam for integration tests.
+// --width overrides the terminal width for deterministic frames in pipes.
+func graphUI(args []string) {
+	var renderOnce, launcher, gateQueue bool
+	var width int
+	var runID string
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--render-once":
+			renderOnce = true
+		case args[i] == "--templates":
+			launcher = true
+		case args[i] == "--gates":
+			gateQueue = true
+		case args[i] == "--width":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "Error: --width requires a value")
+				os.Exit(1)
+			}
+			if _, err := fmt.Sscanf(args[i+1], "%d", &width); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid --width %q\n", args[i+1])
+				os.Exit(1)
+			}
+			i++
+		case strings.HasPrefix(args[i], "-"):
+			fmt.Fprintf(os.Stderr, "Error: unknown flag %q for graph ui\n", args[i])
+			os.Exit(1)
+		case runID == "":
+			runID = args[i]
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unexpected argument %q\n", args[i])
+			os.Exit(1)
+		}
+	}
+	if launcher && renderOnce {
+		fmt.Fprintln(os.Stderr, "Error: --templates has no --render-once form")
+		os.Exit(1)
+	}
+
+	session := bus.BusSession()
+	if renderOnce {
+		var frame string
+		var err error
+		if gateQueue {
+			frame, err = tui.GateQueueRenderOnce(session, width)
+		} else {
+			frame, err = tui.GraphRenderOnce(session, runID, width)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(frame)
+		return
+	}
+	if launcher {
+		tui.NewGraphLauncherUI(session).Run()
+		return
+	}
+	if gateQueue {
+		tui.NewGraphGatesUI(session).Run()
+		return
+	}
+	tui.NewGraphUI(session, runID).Run()
 }
 
 // graphValidate loads the target as a file when it exists on disk,

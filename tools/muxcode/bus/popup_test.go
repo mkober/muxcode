@@ -68,7 +68,7 @@ func TestBuildPopupCommand_UsesAbsoluteSize(t *testing.T) {
 func TestBuildPopupCommand_ExpandsTitleAndCommand(t *testing.T) {
 	stubClient(t, 317, 80)
 	cfg := ModalConfig{
-		Name: "agent-history", Title: " History: {1} ", Width: "80%", Height: "70%",
+		Name: "fixture-history", Title: " History: {1} ", Width: "80%", Height: "70%",
 		Command: "muxcode history {1}", AutoCap: true,
 	}
 	args := BuildPopupCommand(cfg, "s", "", []string{"build"})
@@ -80,6 +80,16 @@ func TestBuildPopupCommand_ExpandsTitleAndCommand(t *testing.T) {
 	for i, a := range args {
 		if a == "-T" && args[i+1] != " History: build " {
 			t.Errorf("title not expanded: %q", args[i+1])
+		}
+	}
+}
+
+// The graph popups were removed with the control pane's arrival
+// (MUX-108) — the pane is the ambient graph surface on every window.
+func TestGraphPopupsRemoved(t *testing.T) {
+	for _, name := range []string{"graph-runs", "graph-launch", "graph-gates"} {
+		if _, ok := GetPopup(name); ok {
+			t.Errorf("popup %s must not be registered — the control pane replaced the graph modals", name)
 		}
 	}
 }

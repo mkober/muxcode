@@ -2,7 +2,7 @@
 
 Index of all pending requirement specs. Every planned feature with a written spec has a row
 in the [Spec index](#spec-index) below; ideas without a spec doc yet are collected in
-[Ideas without specs](#ideas-without-specs). 78 delivered specs live in
+[Ideas without specs](#ideas-without-specs). 82 delivered specs live in
 [`completed/`](../completed/) — each with requirements, key files, and implementation notes.
 
 Spec lifecycle: `backlog/` (planned or parked) → `drafts/` (actively being designed or
@@ -75,6 +75,7 @@ _None — no spec is currently being implemented._
 
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
+| MUX-107 | [`MUX-107-tui-component-kit.md`](./MUX-107-tui-component-kit.md) | Medium | Extract the tab bar, footer, list, confirm, and empty state duplicated across `graph_ui.go`/`remote.go`/`model.go` into a shared kit with **golden-frame pinning tests written before the refactor**. Makes [`docs/tui-style.md`](../../tui-style.md) structural rather than advisory — a `List` that renders its own empty state cannot omit one, and a component taking `height` cannot ignore it (the MUX-031 defect) |
 | MUX-020 | [`MUX-020-cli-help-command.md`](./MUX-020-cli-help-command.md) | Low | `muxcode help` command: discoverable, grouped CLI reference |
 | MUX-021 | [`MUX-021-demo-mode-agent-coverage.md`](./MUX-021-demo-mode-agent-coverage.md) | Low | Refresh `bus/demo.go` scenarios to cover the current agent roster |
 | MUX-022 | [`MUX-022-design-mode.md`](./MUX-022-design-mode.md) | Low | Design mode for UI-centric sessions |
@@ -83,7 +84,12 @@ _None — no spec is currently being implemented._
 | MUX-025 | [`MUX-025-modal-log-viewer.md`](./MUX-025-modal-log-viewer.md) | Low | Lifecycle/log viewer modal |
 | MUX-026 | [`MUX-026-modal-memory-browser.md`](./MUX-026-modal-memory-browser.md) | Low | Memory browser modal with BM25 search |
 | MUX-027 | [`MUX-027-modal-webhook-monitor.md`](./MUX-027-modal-webhook-monitor.md) | Low | Live webhook request inspector modal with replay |
-| MUX-031 | [`MUX-031-graph-run-tui.md`](./MUX-031-graph-run-tui.md) | Medium | Interactive TUI for [MUX-014](../completed/MUX-014-graph-agent-orchestrator.md) graph runs: run browser → layered live DAG with Dracula state colors → node detail; `wait_human` approve/cancel/retry from the view; `--render-once` scriptable frame; depends on MUX-014 Phase 2 run store |
+
+> `MUX-023`, `MUX-024`, and `MUX-026` each propose replacing a popup that
+> [`MUX-031`](../completed/MUX-031-graph-run-tui.md) retires. **`MUX-023` and `MUX-024` only**
+> carry a "Replaces existing static … menu entry" acceptance criterion, which needs rewording
+> to "adds" once MUX-031 lands; `MUX-026` has no menu criterion and needs no edit. See that
+> spec's *Interaction with three existing modal specs*.
 
 ### Completed (id registry)
 
@@ -170,6 +176,10 @@ MUX-003/004 were delivered under GitHub tracking; MUX-028–MUX-099 are retroact
 | MUX-099 | [`MUX-099-workflow-state-machine.md`](../completed/MUX-099-workflow-state-machine.md) | Workflow state machine |
 | MUX-014 | [`MUX-014-graph-agent-orchestrator.md`](../completed/MUX-014-graph-agent-orchestrator.md) | Graph-agent orchestrator — DAG control plane over the bus: 7 node types, outcome-keyed edges, `all`/`any`/`quorum` join barriers, capped loops, `wait_human` gates, durable per-run store under `BusDir()/graphs/<run-id>/`, stateless executor tick (first tick after a daemon restart *is* the resume), 7-subcommand CLI, 5 builtin templates. `scripts/test-graph-orchestrator.sh` 29/29. **Closed at 31/32 steps and 11/15 criteria** — see "Known gaps at completion" in the spec; the open one that matters is verifying graph sends against dedup/relay-suppression/delivery-ack. The live run caught two defects every executor unit test passed over: graph sends were unreplyable (`From = "daemon"` rendered verbatim), and joins hung forever on unknown outcomes |
 | MUX-102 | [`MUX-102-agent-mode.md`](../completed/MUX-102-agent-mode.md) | Agent mode (renumbered from MUX-032 to free the id for the loop-detector granularity spec) |
+| MUX-108 | [`MUX-108-control-pane.md`](../completed/MUX-108-control-pane.md) | **The muxcode control pane** — a permanent full-width pane on every agent window, the standing home for global TUIs. Replaced the graph popups and the `prefix + b` graph menu group outright: one always-present surface cannot disagree with itself the way two config-gated ones can. Created **last** on each window so `AgentPane()`'s hardcoded `"1"` delivery contract holds. Pane 1's title stays CLI-managed and is uppercased at *display* via `pane-border-format` substitution — the CLI keeps content, the launcher keeps presentation. `scripts/test-control-pane.sh` (14 checks, both negative controls, a coverage floor) **found a `BUS_SESSION` server-env leak no unit test could see**. Closed 44/45 — supervision cost at 12 panes never measured |
+| MUX-105 | [`MUX-105-force-respond-escalation.md`](../completed/MUX-105-force-respond-escalation.md) | Force-respond escalation + graph TUI mode cycling. The root cause was not a missing feature: `SendWakeUp`'s in-flight guard blocked the recovery injection with the very task being recovered **and returned `nil`**, so `checkPollHealth` recorded re-drives that never happened — fixed by an `ErrInjectionSkipped` sentinel, a force path across all four providers, and a 4-rung daemon ladder whose advancement is **receipt-based** (no command return ever marks a rung recovered). `f` in the remote TUI runs the same `bus.ForceDeliver` the ladder does. Also `Tab`/`Shift-Tab` surface cycling and `wait_human` gate auto-show. Unit 2014/0, `scripts/test-force-respond.sh` 15/0. Closed 56/58 — the two open items are one self-contradictory criterion of mine and its withdrawn step, left visible |
+| MUX-104 | [`MUX-104-send-keys-dash-payload.md`](../completed/MUX-104-send-keys-dash-payload.md) | `tmux send-keys` parsed a leading `-` in an injected payload as a flag, so bullet-formatted wake-ups died with `invalid flag -` and were retried forever. **`-l` alone does not fix it — only `--` does**, a distinction the originating report got wrong and the integration test now pins. Three vulnerable sites, not the two first reported: `provider_opencode.go`, `notify.go` (which already carried a misleading `-l` comment), and `provider_codex.go` (a raw `exec.Command`, outside the mockable runner, so no argv test could have caught it). All now route through `TmuxSendLiteral()`, which makes the safe form the default. `scripts/test-send-keys-dash.sh` (10 checks, hermetic scratch tmux) |
+| MUX-031 | [`MUX-031-graph-run-tui.md`](../completed/MUX-031-graph-run-tui.md) | Graph agent management TUIs for [MUX-014](../completed/MUX-014-graph-agent-orchestrator.md) — retired six low-value `prefix + b` popups (capability preserved on the CLI) and reallocated the slots to a run browser (list → layered DAG → node detail), a template launcher validating before it starts a run, and a cross-run `wait_human` gate queue flagging approvals that release git/Atlassian mutations. Gate approval calls `bus.ApproveGraphGate` directly with no bus-message path, and reuses the validator's own `NodeRequiresGate` predicate so the queue cannot drift from the gate rule. `scripts/test-graph-tui.sh` (42 checks, hermetic fixture run store). Closed at 58/60 with a documented *Deferred gaps* table — node detail lacks `EndedAt`/message-id/input-preview, and the removed-popup criterion's CLI half is verified only by hand |
 | MUX-103 | [`MUX-103-auto-clear-between-tasks.md`](../completed/MUX-103-auto-clear-between-tasks.md) | Daemon-injected `/clear` for episodic Claude roles after task completion — `bus/clear.go` guard matrix (idle, empty inbox, no live in-flight task, no reload marker, Claude-only, non-harness, not mode-cycled), `edit`/`auto` hard-excluded at both parse and guard, exactly-once via `auto-clear-{role}.last` marker written only on successful injection, dual completion stores (tasks + responded delivery statuses), `muxcode clear <role>` manual path; `scripts/test-auto-clear.sh` (22 checks, real scratch daemon + tmux). Post-clear delivery verified live rather than by the suite — a scratch pane has no Claude runtime and so no `Stop` hook to relaunch the inbox listener |
 
 ## Ideas without specs

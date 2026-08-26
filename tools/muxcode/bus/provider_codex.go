@@ -165,19 +165,19 @@ func (p *CodexProvider) AcceptStartup(session, pane string, state PaneState) boo
 // message stays in the inbox for retry on the next wake-up cycle. The message is
 // consumed — with a verified-inject `delivered` receipt — only after the text is
 // confirmed to have left the composer (see confirmInjectionAndConsume).
-func (p *CodexProvider) SendWakeUp(session, role string) error {
+func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	target := PaneTarget(session, role)
 
-	// Guard: skip injection if the agent already has an in-flight task.
-	// The message was already consumed and injected on a prior wake-up.
-	// Re-injecting would create duplicate prompts, wasting tokens and
-	// confusing the agent.
-	tasks, _ := ListTasks(session, TaskInFlight)
-	for _, t := range tasks {
-		if t.To == role && time.Now().Unix()-t.SentAt > 5 {
-			fmt.Fprintf(os.Stderr, "  [wakeup] skipping %s injection — in-flight task %s:%s exists (%ds old)\n",
-				role, t.Action, t.ID[:8], time.Now().Unix()-t.SentAt)
-			return nil
+	// Same skip contract as the OpenCode guard (see sentinel doc).
+	if !force {
+		tasks, _ := ListTasks(session, TaskInFlight)
+		for _, t := range tasks {
+			if t.To == role && time.Now().Unix()-t.SentAt > 5 {
+				age := time.Now().Unix() - t.SentAt
+				fmt.Fprintf(os.Stderr, "  [wakeup] skipping %s injection — in-flight task %s:%s exists (%ds old)\n",
+					role, t.Action, shortID(t.ID), age)
+				return fmt.Errorf("%s: in-flight task %s (%ds old): %w", role, shortID(t.ID), age, ErrInjectionSkipped)
+			}
 		}
 	}
 
@@ -247,16 +247,17 @@ func (p *CodexProvider) SendWakeUp(session, role string) error {
 		prompt += chainInstructionForRole(role)
 	}
 
-	// Send text first — do NOT consume inbox until both send-keys succeed
-	cmd := exec.Command("tmux", "send-keys", "-t", target, prompt)
-	if err := cmd.Run(); err != nil {
+	// Send text first — do NOT consume inbox until both send-keys succeed.
+	// TmuxSendLiteral: this payload is dynamic message text, so it needs
+	// the -l -- form or a dash-leading line is rejected (MUX-104).
+	if err := TmuxSendLiteral(target, prompt); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s/%s failed: %v\n", role, "codex", err)
 		return err
 	}
 	// Brief delay so the TUI registers the text before Enter
 	time.Sleep(150 * time.Millisecond)
 	// Send Enter
-	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
+	cmd := exec.Command("tmux", "send-keys", "-t", target, "Enter")
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s/%s failed: %v\n", role, "codex", err)
 		return err

@@ -360,6 +360,16 @@ func executeRemoteSelection(currentSession string, sel *tui.RemoteSelection) {
 		result = executeAllInboxes(sel.Session)
 	case tui.ActionDiagnoseAll:
 		result = executeDiagnoseAll(sel.Session)
+	case tui.ActionForceRespond:
+		// The daemon ladder's own override path — never a bus message.
+		res, err := bus.ForceDeliver(sel.Session, sel.Role, true)
+		if err != nil {
+			result = fmt.Sprintf("force-respond %s: %v", sel.Role, err)
+		} else if res.Delivered > 0 {
+			result = fmt.Sprintf("force-respond %s: woke with %d pending message(s)", sel.Role, res.Delivered)
+		} else {
+			result = fmt.Sprintf("force-respond %s: nothing delivered (%s)", sel.Role, res.Skipped)
+		}
 	}
 
 	if result == "" {

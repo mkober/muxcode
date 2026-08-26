@@ -1537,6 +1537,9 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 | `cancel <run-id>` | Stop scheduling; in-flight node work completes or times out |
 | `retry <run-id> --from <node>` | Re-execute from a node, keeping upstream results |
 | `approve <run-id> <node>` | Release a `wait_human` gate |
+| `ui [run-id] [--render-once] [--width N]` | Interactive run browser → layered DAG → node detail ([MUX-031](requirements/completed/MUX-031-graph-run-tui.md)) |
+| `ui --templates` | Template launcher — pick, validate, and start a run |
+| `ui --gates [--render-once]` | Pending `wait_human` approval queue across all in-flight runs |
 
 ```bash
 # Start a run from a built-in template, with intent interpolated into node messages
@@ -1559,7 +1562,40 @@ muxcode graph cancel <run-id>
 
 # Re-run from a failed node without redoing completed upstream work
 muxcode graph retry <run-id> --from test
+
+# Interactive surfaces (MUX-031)
+muxcode graph ui                          # run browser; Enter opens a run's DAG, then a node
+muxcode graph ui <run-id>                 # straight into one run's DAG view
+muxcode graph ui --templates              # pick a template, validated before it starts a run
+muxcode graph ui --gates                  # every wait_human gate awaiting approval
+
+# Scriptable single frames — no terminal required, stable width for diffing
+muxcode graph ui --render-once --width 100 <run-id>
+muxcode graph ui --gates --render-once
 ```
+
+Keys in the interactive views: `j`/`k` move, `Enter` descends, `q` goes back (quits from the
+top level), `R` forces a refresh, and `a` / `c` / `r` approve a gate, cancel the run, or retry
+from the selected node — each behind a confirm prompt.
+
+`Tab` cycles the three top-level surfaces in place — **Graph Runs → Pending Gates → Launch Graph**
+— and `Shift-Tab` cycles back, so switching modes never means closing the popup and reopening the
+menu. All three menu entries open the same TUI and differ only in where the cycle starts. A tab bar
+in the header shows the active surface; drill-ins (DAG, node detail, intent prompt) and open
+confirm prompts leave `Tab` inert, so it can never yank you out of a half-answered prompt. Each
+surface remembers its own selection across a cycle, restored by item id rather than row index, so
+a list that changed underneath falls back to the first row instead of pointing at the wrong thing.
+
+Three details worth knowing:
+
+- **`--templates` has no `--render-once` form** and exits non-zero if you combine them; the
+  launcher is interactive by definition. `--gates --render-once` *is* supported.
+- **Approving from the TUI is the human approval the gate exists to collect.** It calls the same
+  `bus.ApproveGraphGate` the `approve` subcommand does — there is no bus-message path into it, so
+  no agent can reach it. A confirm that would release a git or Atlassian mutation says so
+  explicitly before it accepts the keypress.
+- **Views re-read the run store on a 2s tick** and hold no daemon connection, so a graph TUI left
+  open costs nothing and survives a daemon restart.
 
 **Templates** resolve `project > user > builtin`, the same precedence as agent files:
 `.muxcode/graphs/<name>.json` > `~/.config/muxcode/graphs/<name>.json` > built-in. Five

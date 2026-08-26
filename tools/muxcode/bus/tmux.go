@@ -133,6 +133,19 @@ func TmuxSendEnter(target string) error {
 	return TmuxSendKeys(target, "Enter")
 }
 
+// TmuxSendLiteral injects text into a pane as literal characters:
+// `send-keys -t <target> -l -- <text>`. The two flags guard different
+// failure modes: -l stops key-name interpretation ("Enter" stays five
+// characters), while -- ends flag parsing — without it a payload whose
+// first character is a dash (a bullet line, a quoted CLI flag) is
+// rejected by tmux as `invalid flag -` and the message is never
+// delivered (MUX-104; -l alone does NOT prevent this). Every
+// dynamic-payload injection must go through here — TmuxSendKeys stays
+// for fixed key names like Enter and C-u, which must not be literal.
+func TmuxSendLiteral(target, text string) error {
+	return TmuxRun("send-keys", "-t", target, "-l", "--", text)
+}
+
 // TmuxSendEscape sends Escape to a tmux pane. Used before injecting a wake-up to
 // dismiss any Claude Code overlay (the periodic "How is Claude doing this
 // session?" feedback survey, autocomplete popups, etc.) that would otherwise

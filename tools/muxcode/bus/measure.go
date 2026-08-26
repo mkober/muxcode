@@ -67,34 +67,6 @@ func MeasureProjectPicker(string) (int, int) {
 // pickerHeaderRows covers the picker's prompt, "n/m" counter and hint line.
 const pickerHeaderRows = 3
 
-// MeasureAgentStatus sizes the agent status modal from its rendered table.
-func MeasureAgentStatus(session string) (int, int) {
-	return MeasureText(FormatStatusTable(GetAllAgentStatus(session)))
-}
-
-// MeasureProcList sizes the process modal from the proc and spawn lists it
-// concatenates.
-func MeasureProcList(session string) (int, int) {
-	procs, err := ReadProcEntries(session)
-	if err != nil {
-		return 0, 0
-	}
-	spawns, err := ReadSpawnEntries(session)
-	if err != nil {
-		return 0, 0
-	}
-	return MeasureText(FormatProcList(procs, false) + "\n" + FormatSpawnList(spawns, false))
-}
-
-// MeasureCronList sizes the cron modal from its rendered list.
-func MeasureCronList(session string) (int, int) {
-	entries, err := ReadCronEntries(session)
-	if err != nil {
-		return 0, 0
-	}
-	return MeasureText(FormatCronList(entries, false))
-}
-
 // MeasureMemoryContext sizes the memory modal from exactly what
 // `muxcode memory context` renders — ReadContextFull with the same role, day
 // window and global flag. Measuring a single role's memory instead would

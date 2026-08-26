@@ -360,6 +360,15 @@ func createWindowContent(cfg *LauncherConfig, session, win, projectDir, agentLau
 	// Per-window user option — follows the window object across swap-window operations.
 	TmuxSetWindowOption(target, "@display-name", CapitalizeWindow(win))
 
+	// Control pane (MUX-108) — created LAST so panes 0/1 keep their
+	// indices (AgentPane's delivery contract).
+	if ControlPaneEnabledFor(win) {
+		if win == "edit" || win == "plan" {
+			_ = TmuxRun("select-pane", "-t", target+".0", "-T", " NVIM ")
+		}
+		_ = CreateControlPane(session, win)
+	}
+
 	return nil
 }
 
@@ -679,7 +688,7 @@ func AutoAccept(session string, windows []string) {
 					// SendWakeUp() method which reads the inbox and injects
 					// the actual message content with explicit instructions.
 					if !provider.SupportsHooks() {
-						if err := provider.SendWakeUp(session, win); err != nil {
+						if err := provider.SendWakeUp(session, win, false); err != nil {
 							LogLifecycle(session, "warn", "auto-accept", "startup-wake-failed", win+": "+err.Error())
 						} else {
 							LogLifecycle(session, "info", "auto-accept", "startup-wake-provider", win)

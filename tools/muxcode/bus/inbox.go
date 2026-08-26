@@ -2,11 +2,21 @@ package bus
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 )
+
+// ErrSendSuppressed reports that a request was intentionally not
+// delivered by the duplicate/in-flight guard. It exists because the
+// guard's old nil return read as a successful send: the CLI printed
+// "Sent", created a tracked task for a message that never dispatched,
+// and that phantom task re-armed the guard for the next attempt — a
+// self-perpetuating jam observed live on 2026-08-26 (the send-side twin
+// of ErrInjectionSkipped). Match with errors.Is.
+var ErrSendSuppressed = errors.New("send suppressed as duplicate")
 
 // IsAutoCCRole returns true if messages from this role are auto-CC'd to edit.
 func IsAutoCCRole(role string) bool {
@@ -32,15 +42,27 @@ func shouldAutoCC(from string) bool {
 
 // Send appends a message to the recipient's inbox and the session log.
 // Messages from build, test, and review are automatically CC'd to edit.
+// A duplicate-suppressed request returns ErrSendSuppressed, never nil.
 func Send(session string, m Message) error {
-	return sendMessage(session, m, true)
+	return sendMessage(session, m, true, false)
 }
 
 // SendNoCC appends a message to the recipient's inbox and the session log
 // without auto-CC to edit. Use for chain intermediate messages, analyst
 // notifications, and subscription fan-out where CC would be redundant.
 func SendNoCC(session string, m Message) error {
-	return sendMessage(session, m, false)
+	return sendMessage(session, m, false, false)
+}
+
+// SendForce is Send with the duplicate/in-flight request guard bypassed —
+// the explicit-override path behind `muxcode send --force`, for exactly
+// the case the guard cannot see: the pending duplicate is stale and the
+// human knows it (a stuck request must never block the message that
+// would unstick it). It skips the window-dedup flock, so a concurrent
+// non-forced send can race it — acceptable for an explicit human
+// override.
+func SendForce(session string, m Message) error {
+	return sendMessage(session, m, true, true)
 }
 
 // isLoopingSelfSend reports whether a message is an accidental self-addressed
@@ -58,8 +80,9 @@ func isLoopingSelfSend(m Message) bool {
 	return m.From != "" && m.From == m.To && m.Action != "startup"
 }
 
-// sendMessage is the shared implementation for Send and SendNoCC.
-func sendMessage(session string, m Message, autoCC bool) error {
+// sendMessage is the shared implementation for Send, SendNoCC, and
+// SendForce.
+func sendMessage(session string, m Message, autoCC, bypassDupGuard bool) error {
 	// Drop accidental self-addressed messages at the source so the loop is
 	// impossible for all providers (non-hook providers already discarded these
 	// at wake-up time; Claude/hook agents had no such guard). The startup
@@ -116,16 +139,18 @@ func sendMessage(session string, m Message, autoCC bool) error {
 	//
 	// Skipped for system actions (loop-detected, compact-recommended, etc.)
 	// which naturally repeat and should never be suppressed.
-	if m.Type == "request" && !isSystemAction(m.Action) {
+	// Suppressions return ErrSendSuppressed, never nil — a silent skip
+	// reads as a delivery to every caller (see the sentinel's doc).
+	if m.Type == "request" && !isSystemAction(m.Action) && !bypassDupGuard {
 		if HasPendingInboxRequest(session, m.To, m.From, m.Action, m.Payload) {
 			fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate request %s→%s:%s (identical request already in inbox)\n",
 				m.From, m.To, m.Action)
-			return nil
+			return fmt.Errorf("%s→%s:%s identical request already in inbox: %w", m.From, m.To, m.Action, ErrSendSuppressed)
 		}
 		if HasInFlightTaskForRole(session, m.To, m.Action) {
 			fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate request %s→%s:%s (in-flight task exists)\n",
 				m.From, m.To, m.Action)
-			return nil
+			return fmt.Errorf("%s→%s:%s in-flight task exists: %w", m.From, m.To, m.Action, ErrSendSuppressed)
 		}
 	}
 

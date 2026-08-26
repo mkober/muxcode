@@ -842,7 +842,7 @@ func notifySendKeys(session, role string) error {
 	markNotified(session, role)
 
 	provider := ResolveProvider(role)
-	err := SendWakeUpWithText(session, role, provider, text)
+	err := SendWakeUpWithText(session, role, provider, text, false)
 
 	// No in-line delivery verification. Claude Code's TUI takes 1-3 seconds
 	// to process send-keys input — the old 500ms verifySendKeysDelivery()
@@ -857,11 +857,12 @@ func notifySendKeys(session, role string) error {
 // SendWakeUpWithText injects custom notification text into an agent's tmux pane.
 // For hook providers (Claude Code), injects the text directly via send-keys.
 // For non-hook providers, delegates to the provider's SendWakeUp (which reads
-// the inbox and builds its own message).
-func SendWakeUpWithText(session, role string, provider Provider, text string) error {
+// the inbox and builds its own message). force propagates to the provider's
+// suppression guards — recovery paths pass true, routine wake-ups false.
+func SendWakeUpWithText(session, role string, provider Provider, text string, force bool) error {
 	if !provider.SupportsHooks() {
 		// Non-hook providers build their own injection from inbox content
-		return provider.SendWakeUp(session, role)
+		return provider.SendWakeUp(session, role, force)
 	}
 
 	target := PaneTarget(session, role)
@@ -880,8 +881,9 @@ func SendWakeUpWithText(session, role string, provider Provider, text string) er
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Send text with -l (literal) to avoid tmux key interpretation
-	if err := TmuxRun("send-keys", "-t", target, "-l", text); err != nil {
+	// TmuxSendLiteral carries both -l (key-name interpretation) and the --
+	// separator — -l alone still fails on a dash-leading payload (MUX-104).
+	if err := TmuxSendLiteral(target, text); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s failed: %v\n", role, err)
 		return err
 	}

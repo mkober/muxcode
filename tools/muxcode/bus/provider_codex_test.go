@@ -613,7 +613,7 @@ func TestCodexWakeUp_NoTmux(t *testing.T) {
 	// SendWakeUp tries send-keys — should fail gracefully without tmux session
 	p := &CodexProvider{}
 	// Should not panic
-	_ = p.SendWakeUp("nonexistent-session", "review")
+	_ = p.SendWakeUp("nonexistent-session", "review", false)
 }
 
 // --- IsIdle ---
