@@ -7,7 +7,20 @@ tags: [style, comments, readability]
 
 ## Comment discipline
 
-> **When to apply this.** Before every `Edit`/`Write` that adds a comment, re-read your own added lines against the rules below — not the file's existing comments, the ones you just wrote. This is an authoring step, not only a review standard: the failure mode is knowing these rules and still writing a paragraph into a function body twenty tool calls into a task, because the rule was never checked at the moment of writing.
+> **The mechanical check — run it on every Edit/Write, no judgment involved.**
+> Scan only the lines you are ADDING: **two or more consecutive `//` lines
+> below a function's opening brace is a violation. Count them.** Not "is this
+> one justified?" — the answer at the moment of writing is always yes, which
+> is why the judgment version of this rule has failed repeatedly (verified
+> live 2026-08-26: a 7-line paragraph landed in a switch case one hour after
+> the author was corrected for the identical pattern). Move the prose to the
+> boundary doc or extract a function; leave at most one pointer line.
+>
+> **Boundary-first writing order.** The urge to explain a decision mid-body
+> is itself the trigger: jump to the function/type doc comment, write the
+> sentence THERE, come back, and add nothing — or one line referencing it.
+> Rationale typed at the decision point lands in the body by default; typed
+> boundary-first, it lands correctly by construction.
 
 The default is **no comment**. Code says what it does; a comment earns its place only by saying something the code cannot.
 

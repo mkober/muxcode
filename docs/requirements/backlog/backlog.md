@@ -77,6 +77,8 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
+| MUX-108 | [`MUX-108-graph-strip-pane.md`](./MUX-108-graph-strip-pane.md) | Medium | Persistent full-width graph TUI strip at the bottom of agent windows, replacing the popup — run state and waiting gates become ambient instead of something you must open. **Creation order is the contract**: the strip is always pane 2, created after 0/1, because `AgentPane()` is a hardcoded `"1"` that every delivery path resolves through. Pane titles ` NVIM ` / ` GRAPH `, pane 1 left untitled so the CLI can live-update its own state glyph. On strip windows the gate auto-show popup is replaced by the strip switching to Pending Gates |
+| MUX-107 | [`MUX-107-tui-component-kit.md`](./MUX-107-tui-component-kit.md) | Medium | Extract the tab bar, footer, list, confirm, and empty state duplicated across `graph_ui.go`/`remote.go`/`model.go` into a shared kit with **golden-frame pinning tests written before the refactor**. Makes [`docs/tui-style.md`](../../tui-style.md) structural rather than advisory — a `List` that renders its own empty state cannot omit one, and a component taking `height` cannot ignore it (the MUX-031 defect) |
 | MUX-020 | [`MUX-020-cli-help-command.md`](./MUX-020-cli-help-command.md) | Low | `muxcode help` command: discoverable, grouped CLI reference |
 | MUX-021 | [`MUX-021-demo-mode-agent-coverage.md`](./MUX-021-demo-mode-agent-coverage.md) | Low | Refresh `bus/demo.go` scenarios to cover the current agent roster |
 | MUX-022 | [`MUX-022-design-mode.md`](./MUX-022-design-mode.md) | Low | Design mode for UI-centric sessions |
