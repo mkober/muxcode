@@ -14,33 +14,37 @@ import (
 
 func TestCheckOllamaInference_Healthy(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
+		if r.URL.Path != "/api/generate" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Method != http.MethodPost {
 			t.Errorf("unexpected method: %s", r.Method)
 		}
 
-		// Verify request body
-		var req ChatRequest
+		// Verify request body: one token, thinking OFF — a thinking model
+		// reasons for 30-90s before its first token, which is exactly what
+		// the probe must not wait on.
+		var req struct {
+			Model   string         `json:"model"`
+			Prompt  string         `json:"prompt"`
+			Think   *bool          `json:"think"`
+			Options map[string]any `json:"options"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("failed to decode request: %v", err)
 		}
-		if req.MaxTokens != 1 {
-			t.Errorf("expected max_tokens=1, got %d", req.MaxTokens)
+		if req.Think == nil || *req.Think {
+			t.Error("probe must send think:false")
 		}
-		if len(req.Messages) != 1 || req.Messages[0].Content != "hi" {
-			t.Errorf("unexpected messages: %+v", req.Messages)
+		if np, ok := req.Options["num_predict"].(float64); !ok || np != 1 {
+			t.Errorf("expected options.num_predict=1, got %v", req.Options["num_predict"])
+		}
+		if req.Prompt != "hi" {
+			t.Errorf("unexpected prompt: %q", req.Prompt)
 		}
 
-		resp := ChatResponse{
-			ID: "test",
-			Choices: []ChatChoice{
-				{Message: ChatMessage{Role: "assistant", Content: "hello"}},
-			},
-		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		w.Write([]byte(`{"model":"test-model","response":"hello","done":true}`))
 	}))
 	defer server.Close()
 
@@ -330,5 +334,58 @@ func TestFormatOllamaAlert_UnknownStatus(t *testing.T) {
 	expected := fmt.Sprintf("ℹ OLLAMA DEGRADED\n  Affected roles: build\n  Slow responses\n")
 	if result != expected {
 		t.Errorf("expected:\n%s\ngot:\n%s", expected, result)
+	}
+}
+
+// TestOllamaModelLoaded pins the three states the restart ladder must
+// distinguish (MUX-109 cold-load guard): responsive+loaded, responsive+
+// warming, and dead server.
+func TestOllamaModelLoaded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/ps" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"models":[{"name":"qwen3:4b"}]}`))
+	}))
+
+	if responsive, loaded := OllamaModelLoaded(server.URL, "qwen3:4b", time.Second); !responsive || !loaded {
+		t.Errorf("loaded model: got responsive=%v loaded=%v, want true/true", responsive, loaded)
+	}
+	// A differently-tagged sibling must not count as loaded — the exact
+	// disease the installer's old prefix grep had.
+	if responsive, loaded := OllamaModelLoaded(server.URL, "qwen3:8b", time.Second); !responsive || loaded {
+		t.Errorf("sibling tag: got responsive=%v loaded=%v, want true/false", responsive, loaded)
+	}
+	// Untagged config matches any tag of the same base name.
+	if responsive, loaded := OllamaModelLoaded(server.URL, "qwen3", time.Second); !responsive || !loaded {
+		t.Errorf("untagged config: got responsive=%v loaded=%v, want true/true", responsive, loaded)
+	}
+
+	server.Close()
+	if responsive, _ := OllamaModelLoaded(server.URL, "qwen3:4b", time.Second); responsive {
+		t.Error("dead server must report responsive=false")
+	}
+}
+
+func TestOllamaWarmupGraceSecs(t *testing.T) {
+	t.Setenv("MUXCODE_OLLAMA_WARMUP_GRACE_SECS", "")
+	if got := OllamaWarmupGraceSecs(); got != 300 {
+		t.Errorf("default grace = %d, want 300", got)
+	}
+	t.Setenv("MUXCODE_OLLAMA_WARMUP_GRACE_SECS", "42")
+	if got := OllamaWarmupGraceSecs(); got != 42 {
+		t.Errorf("env grace = %d, want 42", got)
+	}
+}
+
+func TestOllamaProbeSecs(t *testing.T) {
+	t.Setenv("MUXCODE_OLLAMA_PROBE_SECS", "")
+	if got := OllamaProbeSecs(); got != OllamaProbeTimeout {
+		t.Errorf("default probe timeout = %v, want %v", got, OllamaProbeTimeout)
+	}
+	t.Setenv("MUXCODE_OLLAMA_PROBE_SECS", "30")
+	if got := OllamaProbeSecs(); got != 30*time.Second {
+		t.Errorf("env probe timeout = %v, want 30s", got)
 	}
 }

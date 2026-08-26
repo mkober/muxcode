@@ -54,6 +54,7 @@ type Daemon struct {
 	lastDiskPressureCheck int64
 	lastAutoClearCheck    int64
 	lastPromptAgentStart  int64
+	ollamaWarmingSince    int64
 
 	lastIdleCheck        int64
 	lastNonHookWake      map[string]int64 // role → last non-hook wake time (60s cooldown)
@@ -1390,8 +1391,8 @@ func (d *Daemon) checkOllama() {
 	}
 	d.lastOllamaCheck = now
 
-	// Run inference probe
-	err := bus.CheckOllamaInference(d.ollamaURL, d.ollamaModel, bus.OllamaProbeTimeout)
+	// Run inference probe (0 = env-configurable default, MUXCODE_OLLAMA_PROBE_SECS)
+	err := bus.CheckOllamaInference(d.ollamaURL, d.ollamaModel, 0)
 
 	// Also check for agent failure sentinels
 	hasSentinels := bus.HasOllamaFailSentinel(d.session)
@@ -1400,6 +1401,7 @@ func (d *Daemon) checkOllama() {
 
 	if err == nil && !hasSentinels {
 		// Healthy
+		d.ollamaWarmingSince = 0
 		if d.ollamaWasDown {
 			// Recovery detected
 			fmt.Printf("  %s  Ollama recovered — inference probe healthy\n", ts)
@@ -1415,6 +1417,27 @@ func (d *Daemon) checkOllama() {
 			d.refreshInboxSizes()
 		}
 		return
+	}
+
+	// Cold-load guard (MUX-109): a responsive server whose model is not in
+	// memory yet is warming, not stuck — a restart would discard the load
+	// in progress and the ladder would kill every attempt in a loop. Only
+	// within the grace window, and never when agent sentinels point at a
+	// real failure; past the grace a load that never finishes (OOM) walks
+	// the ladder like any other wedge.
+	if err != nil && !hasSentinels {
+		if responsive, loaded := bus.OllamaModelLoaded(d.ollamaURL, d.ollamaModel, 3*time.Second); responsive && !loaded {
+			if d.ollamaWarmingSince == 0 {
+				d.ollamaWarmingSince = now
+			}
+			warmingFor := now - d.ollamaWarmingSince
+			if warmingFor < bus.OllamaWarmupGraceSecs() {
+				fmt.Printf("  %s  Ollama warming: %s loading for %ds — probe failure not counted\n", ts, d.ollamaModel, warmingFor)
+				bus.LogLifecycle(d.session, "info", "daemon", "ollama-warming",
+					fmt.Sprintf("model %s loading for %ds", d.ollamaModel, warmingFor))
+				return
+			}
+		}
 	}
 
 	// Unhealthy
@@ -1512,8 +1535,13 @@ func (d *Daemon) checkOllama() {
 			}
 		}
 
-		// Reset fail count to let the next probe cycle detect recovery
+		// Reset fail count to let the next probe cycle detect recovery, and
+		// the warming clock with it — the restarted server cold-loads the
+		// model again, and a stale warmingSince would burn the fresh load's
+		// grace window before it started, reviving the kill loop for exactly
+		// the recovery path.
 		d.ollamaFailCount = 0
+		d.ollamaWarmingSince = 0
 	}
 }
 
