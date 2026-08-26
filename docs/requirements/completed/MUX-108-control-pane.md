@@ -22,7 +22,7 @@ Pane 2, with indices 0 (nvim) and 1 (agent) untouched **because the pane is crea
 
 ### Why a permanent pane rather than a popup
 
-A popup answers "what is happening?" only when you already suspect something is. The motivating failure for the gate auto-show ([`MUX-105`](../completed/MUX-105-force-respond-escalation.md)) was a gate sitting unnoticed for 37 minutes — the run had paused correctly and the notification had been sent; nobody was looking. Auto-show fixed *that* gate by forcing a popup open. A permanent pane removes the class: the surface is already on screen.
+A popup answers "what is happening?" only when you already suspect something is. The motivating failure for the gate auto-show ([`MUX-105`](./MUX-105-force-respond-escalation.md)) was a gate sitting unnoticed for 37 minutes — the run had paused correctly and the notification had been sent; nobody was looking. Auto-show fixed *that* gate by forcing a popup open. A permanent pane removes the class: the surface is already on screen.
 
 ### The pane-index contract is the load-bearing constraint
 
@@ -216,6 +216,16 @@ Phase 6 and the remaining integration-dependent criteria stay **unchecked** pend
 the gate-switch failure is still outstanding and is now the *only* path that surfaces a waiting
 gate, since the popup is gone.
 
+## Deferred gap at completion
+
+Closed at **44/45**. One criterion is knowingly unmet:
+
+| Gap | Why it matters | Evidence status |
+|-----|----------------|-----------------|
+| Supervision cost at 12 panes never measured | The daemon now sweeps 12 panes on every cycle and 12 `muxcode graph ui` processes run continuously. Each is cheap; twelve of anything is a claim, not an observation. The risk is not a crash but a slow session nobody attributes to this | Never measured. The integration suite proves *correctness* at 12 windows, not *cost* |
+
+Worth doing before the next feature adds a thirteenth pane, not after.
+
 ## Open questions
 
 - **Is 12 panes the right default?** The rollout was to all windows, so that is the spec'd default — but it means 12 `muxcode graph ui` processes, 12 supervised panes, and three panes competing for height on a small terminal. `MUXCODE_CONTROL_PANE_EXCLUDE` exists for that, though a default that many users immediately narrow is a default worth revisiting. Measure process and redraw cost before treating it as settled.
@@ -227,8 +237,8 @@ gate, since the popup is gone.
 
 - User request and live prototype, relayed by the edit agent, 2026-08-26, with the handoff at `/tmp/mux-graph-strip-spec.md` plus three addenda (border/title styling, per-pane titling, ALL-CAPS casing — the last superseding the initial mixed-case proposal)
 - Pane-index contract verified in `bus/config.go` (`AgentPane` returns a hardcoded `"1"`)
-- [`MUX-031`](../completed/MUX-031-graph-run-tui.md) — the graph TUI surfaces the pane hosts
-- [`MUX-105`](../completed/MUX-105-force-respond-escalation.md) — gate auto-show, whose popup this partially replaces
+- [`MUX-031`](./MUX-031-graph-run-tui.md) — the graph TUI surfaces the pane hosts
+- [`MUX-105`](./MUX-105-force-respond-escalation.md) — gate auto-show, whose popup this partially replaces
 - [`MUX-107`](../backlog/MUX-107-tui-component-kit.md) — the component kit the pane's surfaces should consume once extracted
 
 ## Provenance
@@ -239,8 +249,8 @@ Filed by the plan agent on 2026-08-26 from a user-requested feature prototyped l
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-108-control-pane | 25m | 2026-08-26 13:55 |
+| MUX-108-control-pane | 31m | 2026-08-26 14:01 |
 
 ## Status
 
-In Progress
+Complete

@@ -77,7 +77,7 @@ A key that mutates state is **always** confirm-gated. A key means the same thing
 ### Where a surface lives: the control pane
 
 Full-screen surfaces render inside the **control pane** — a permanent full-width pane at the bottom
-of every agent window ([`MUX-108`](requirements/drafts/MUX-108-control-pane.md)), created *after*
+of every agent window ([`MUX-108`](requirements/completed/MUX-108-control-pane.md)), created *after*
 panes 0 and 1 so `AgentPane()`'s hardcoded `"1"` delivery contract holds.
 
 Two consequences for anything rendered there:

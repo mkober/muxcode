@@ -513,7 +513,7 @@ The acceptance criterion *"Menu gains a graph group on freed keys"* sits in the 
 
 Filed by the plan agent on 2026-08-24 from a user request to visualize the graph-agent feature in a TUI. Rescoped 2026-08-25 on user request: the `prefix + b` menu's agent/process groups were judged low-value and are retired here, with their slots reallocated to graph management surfaces.
 
-> **Superseded 2026-08-26 by [`MUX-108`](../drafts/MUX-108-control-pane.md).** The three graph
+> **Superseded 2026-08-26 by [`MUX-108`](./MUX-108-control-pane.md).** The three graph
 > popups and the `prefix + b` graph menu group this spec added have since been **removed
 > entirely** — the control pane replaces every graph modal, and gate dispatch no longer opens a
 > popup at all. The menu-slot arc is worth noting: this spec retired six low-value popups and
