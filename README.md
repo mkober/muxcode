@@ -157,7 +157,7 @@ Any role can use any provider. Set `MUXCODE_{ROLE}_CLI` to `claude`, `opencode`,
 - `MUXCODE_{ROLE}_CLI=codex` — Codex CLI (OpenAI models, sandboxed — read-only roles only)
 - `MUXCODE_{ROLE}_CLI=local` — Local LLM via Ollama (free, structured commands)
 
-Per-role model selection is also supported via `MUXCODE_{ROLE}_CLAUDE_MODEL` (Claude Code), `MUXCODE_{ROLE}_CODEX_MODEL` (Codex CLI, default `gpt-5.5`), or `MUXCODE_{ROLE}_MODEL` (OpenCode/local, falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
+Per-role model selection is also supported via `MUXCODE_{ROLE}_CLAUDE_MODEL` (Claude Code), `MUXCODE_{ROLE}_CODEX_MODEL` (Codex CLI, default `gpt-5.5`), or `MUXCODE_{ROLE}_MODEL` (OpenCode/local, falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen3:4b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
 
 Each agent has constrained tool permissions — the build agent can run builds but can't edit files, the commit agent can run git but can't deploy infrastructure. This separation prevents agents from stepping on each other. Tool profiles are automatically translated to each provider's permission format (Claude Code's `--allowedTools`, OpenCode's `permission` blocks, or the harness's `IsToolAllowed()`).
 
@@ -301,6 +301,7 @@ pacman, or zypper). You do not need to install them by hand first.
 | make | — | Drives the build |
 | jq | — | Hook and settings JSON merging |
 | Neovim | 0.9 | Editor pane |
+| Ollama | — | Local LLM agents and the control pane's Prompt mode (the model itself downloads with consent, or lazily on first use) |
 | fzf | — | *Optional* — interactive project picker (`muxcode <path>` works without it) |
 
 Plus at least one AI CLI provider, which the installer can also install for you:
@@ -310,8 +311,7 @@ Plus at least one AI CLI provider, which the installer can also install for you:
 - [Codex CLI](https://github.com/openai/codex) (`codex`) — alternative, OpenAI models
 
 Optional extras, all detected and offered during install:
-[Ollama](https://ollama.com/) (local LLM agents), Mermaid CLI and draw.io
-(plan-agent diagram rendering).
+Mermaid CLI and draw.io (plan-agent diagram rendering).
 
 ### Install
 
@@ -505,7 +505,7 @@ Any agent role can run via a local LLM (Ollama) instead of Claude Code. This is 
    ```bash
    brew install ollama
    ollama serve
-   ollama pull qwen2.5-coder:7b
+   ollama pull qwen3:4b
    ```
 
 2. Set per-role overrides in `.muxcode/config`:
@@ -522,20 +522,19 @@ Any agent role can run via a local LLM (Ollama) instead of Claude Code. This is 
 | Variable               | Default                  | Description                                                 |
 | ---------------------- | ------------------------ | ----------------------------------------------------------- |
 | `MUXCODE_{ROLE}_CLI`   | (unset)                  | Set to `local` to use Ollama (e.g. `MUXCODE_COMMIT_CLI=local`) |
-| `MUXCODE_OLLAMA_MODEL` | `qwen2.5-coder:7b`       | Ollama model name                                           |
+| `MUXCODE_OLLAMA_MODEL` | `qwen3:4b`               | Ollama model name                                           |
 | `MUXCODE_OLLAMA_URL`   | `http://localhost:11434` | Ollama server URL                                           |
 
 ### Recommended models
 
 | Model                   | Size   | Best for                              | Notes                                                          |
 | ----------------------- | ------ | ------------------------------------- | -------------------------------------------------------------- |
-| `qwen2.5-coder:7b`      | 4.7 GB | Build, test, git, general agent tasks | Default model — strong code understanding at low resource cost |
-| `qwen2.5-coder:14b`     | 9.0 GB | Review, analysis, docs                | Better reasoning for tasks that need more nuance               |
+| `qwen3:4b`              | 2.5 GB | All local roles (single resident model) | Default — smallest credible tool-caller; one set of weights in memory regardless of how many local agents run |
+| `qwen3:8b`              | 5.2 GB | Escalation when 4B quality disappoints | Same family, so a swap changes capability without changing conventions |
 | `deepseek-coder-v2:16b` | 8.9 GB | Review, analysis, complex code tasks  | Strong at code review and multi-file reasoning                 |
-| `codellama:7b`          | 3.8 GB | Build, test, git                      | Lightweight alternative to Qwen for structured commands        |
 | `llama3.1:8b`           | 4.7 GB | General-purpose agent tasks           | Good all-rounder when code specialization isn't critical       |
 
-For most setups, `qwen2.5-coder:7b` is sufficient for command-execution roles (build, test, git, watch). Upgrade to a 14b+ model for roles that reason about code (review, analyze, docs).
+The default is deliberately a single small model shared by every local role — Ollama keeps each distinct model resident while in use, so per-role model pins multiply memory cost. Override globally via `MUXCODE_OLLAMA_MODEL`; per-role pins (`MUXCODE_{ROLE}_MODEL`) exist but reintroduce a second resident model.
 
 ### Health monitoring
 

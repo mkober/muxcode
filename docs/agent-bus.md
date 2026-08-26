@@ -1004,7 +1004,7 @@ muxcode agent run <role> [--model MODEL] [--url URL]
 ```
 
 - `<role>` — agent role to run (e.g. `git`, `build`, `runner`)
-- `--model MODEL` — Ollama model name (default: `MUXCODE_OLLAMA_MODEL` or `qwen2.5-coder:7b`)
+- `--model MODEL` — Ollama model name (default: `MUXCODE_OLLAMA_MODEL` or `qwen3:4b`)
 - `--url URL` — Ollama base URL (default: `MUXCODE_OLLAMA_URL` or `http://localhost:11434`)
 
 **Agentic loop:**

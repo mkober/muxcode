@@ -80,7 +80,7 @@ than that, the correct outcome is to inject it into the main agent, not to grow 
 - [ ] The surface renders as a pure function of a snapshot — no I/O in the renderer — and is reachable via `--render-once`
 - [ ] The surface clamps to the pane's `width` **and** `height`; a long prompt or a long reply degrades rather than overflowing
 - [ ] The empty state (no prompt typed, no history) is explicit and keeps header, tab bar, and footer
-- [ ] The prompt-agent runs **headless** — no tmux window, no harness TUI (no `--tui` flag)
+- [x] The prompt-agent runs **headless** — no tmux window, no harness TUI (no `--tui` flag)
 - [ ] Prompt results are displayed **in the Prompt surface**, read from a session-global transcript on `refresh()`
 - [ ] The surface **never blocks** on inference: with a prompt in flight, the pane still redraws and `Tab`/`Shift-Tab` still cycle away and back
 - [ ] Three states are visually distinct — *working*, *finished*, and *model unreachable* — so a slow answer is never mistaken for a broken one
@@ -88,11 +88,11 @@ than that, the correct outcome is to inject it into the main agent, not to grow 
 - [ ] Reading the transcript happens in `refresh()`, not in a render function — the renderer stays pure and `--render-once` still works
 - [ ] The footer advertises every key the surface accepts, including the inject/interpret toggle
 - [ ] The input line names its destination at all times — which agent an injected prompt would reach, or that it will be interpreted — so the mode is readable without color
-- [ ] A `prompt` bus role exists with its own inbox and is accepted by `IsKnownRole()`
-- [ ] The prompt-agent runs on the local harness (Ollama); it never launches Claude Code, OpenCode, or Codex
-- [ ] The model is chosen by configuration, not code — no model name is hardcoded in the role's path; the role inherits the global default `qwen3:4b` with `MUXCODE_PROMPT_MODEL` left unset (see [Model selection](#model-selection))
-- [ ] **One model resident:** every local role — prompt included — runs `qwen3:4b` with no per-role pin, so no combination of active agents can put a second set of weights in memory
-- [ ] Build, test, commit, and watch still complete their normal tasks on the smaller model, and the single-shot roles do not loop
+- [x] A `prompt` bus role exists with its own inbox and is accepted by `IsKnownRole()`
+- [x] The prompt-agent runs on the local harness (Ollama); it never launches Claude Code, OpenCode, or Codex
+- [x] The model is chosen by configuration, not code — no model name is hardcoded in the role's path; the role inherits the global default `qwen3:4b` with `MUXCODE_PROMPT_MODEL` left unset (see [Model selection](#model-selection))
+- [x] **One model resident:** every local role — prompt included — runs `qwen3:4b` with no per-role pin, so no combination of active agents can put a second set of weights in memory
+- [ ] Build, test, commit, and watch still complete their normal tasks on the smaller model, and the single-shot roles do not loop — **measured FALSE 2026-08-26**, not merely unverified; see [Phase 2 regression findings](#phase-2-regression-findings)
 - [ ] Its tool profile permits only `muxcode graph` subcommands, reads/writes under the two graph directories, and the injection path — verified by a **negative control** asserting a repo write and a git command are both denied
 - [ ] Intent: **launch** — a named or described graph resolves and starts via `muxcode graph run`, across all three scopes
 - [ ] Intent: **status** — questions about in-flight and completed runs answer from `graph list` / `graph status`
@@ -107,9 +107,9 @@ than that, the correct outcome is to inject it into the main agent, not to grow 
 - [ ] A dash-leading prompt injects intact, per [MUX-104](../completed/MUX-104-send-keys-dash-payload.md)
 - [ ] Ollama health monitoring covers the new role, and the surface states plainly when the model is unreachable rather than appearing to accept a prompt it cannot serve
 - [ ] `CheckCommitAuthority` and `CheckAtlassianAuthority` remain the runtime backstop, unchanged
-- [ ] The installer reports Ollama as **required**, not optional, and an install missing it is visibly incomplete
+- [x] The installer reports Ollama as **required**, not optional, and an install missing it is visibly incomplete
 - [ ] A user who declines the model pull still gets a working install — Prompt mode degrades to a stated "model not available" frame and the existing first-run auto-pull covers it
-- [ ] If `-y/--yes` behaviour around the pull changes at all, `install.sh`'s usage text and `README.md` change with it — no silently broken promise
+- [x] If `-y/--yes` behaviour around the pull changes at all, `install.sh`'s usage text and `README.md` change with it — no silently broken promise
 - [ ] `scripts/test-prompt-mode.sh` passes, and its assertions include the negative controls above
 
 ### Technical approach
@@ -256,6 +256,32 @@ Two things an implementer must not discover the hard way:
 - **The docs already misstate the default.** [`docs/agents.md`](../../agents.md) line 273 and
   [`README.md`](../../../README.md) line 160 both say `qwen2.5-coder:7b` while the code says
   `qwen2.5:7b`. Fix the drift in the same change rather than propagating a second inconsistent value.
+  *(Closed 2026-08-26 — all four doc sites now read `qwen3:4b`.)*
+
+> **Latent trap found while verifying Phase 2 — `MUXCODE_{ROLE}_MODEL` is overloaded.** The same env
+> var names the model for **both** OpenCode and local roles (`RoleModel()` → `roleModelEnvVar()`).
+> This project's `.muxcode/config` already sets per-role values for OpenCode/Claude providers —
+> `MUXCODE_BUILD_MODEL=opencode-go/deepseek-v4-flash`, `MUXCODE_TEST_MODEL=…`, and seven more. None
+> of those roles runs `local` today, so nothing is broken. But the moment a role is switched to
+> `MUXCODE_{ROLE}_CLI=local`, it inherits an **OpenCode model string as its Ollama model name** and
+> the pull fails on a name Ollama has never heard of. This is precisely the "no role pins a model of
+> its own" step, which is why that step is left unchecked: the config *does* pin, harmlessly for now,
+> in a way that turns harmful exactly when someone exercises the local path this spec depends on.
+> The regression check must therefore unset or override these vars, not merely flip the CLI var.
+>
+> **Fixed 2026-08-26.** `RoleModel()` on both sides — `bus/ollama.go:60` and
+> `harness/config.go` — now ignores a per-role pin in catalog form (`strings.Contains(v, "/")`) and
+> falls through to the Ollama default. Pinned by two-directional tests on both sides
+> (`TestRoleModel_SkipsOpenCodeCatalogPin` in `bus/prompt_agent_test.go:59` and
+> `harness/config_test.go:9`): a catalog pin yields `qwen3:4b`, **and** a plain pin like `qwen3:8b`
+> still wins — so the test cannot pass by ignoring every pin. `CLI=local` is now safe against the
+> nine `opencode-go/*` pins in this project's config, which is what closed the criterion above.
+>
+> **Residual limitation, narrow but silent:** the guard keys off `/`, and Ollama itself accepts
+> slash-bearing model references (e.g. `hf.co/{user}/{repo}`). Someone setting such a name as a
+> deliberate Ollama pin gets the default instead, with no warning. Low likelihood, but the failure
+> is *silent* — worth a log line when a pin is skipped, so an ignored setting is visible rather than
+> mysterious. Not blocking; recorded so it is a known trade rather than a surprise.
 
 **For Phase 5, the validator is load-bearing — not the model.** Validate-before-write with nothing
 written on failure means a mediocre composer is *safe*, merely sometimes unhelpful. So if
@@ -268,6 +294,58 @@ composition quality disappoints, escalate in this order, and reach for a larger 
 
 Rungs 1 and 2 are worth trying *before* rung 3 even if 8B is affordable: a schema-constrained 4B
 that cannot emit an invalid shape beats an unconstrained 8B that emits a plausible wrong one.
+
+### Phase 2 regression findings
+
+Run 2026-08-26 against a live session: build, test, commit, and watch reloaded to `--cli local` on
+`qwen3:4b` (runtime overrides, originals restored afterward). Exercises: commit = git status
+summary, build = `./build.sh`. **The test and watch exercises were never reached.**
+
+**Two defects found and fixed in this branch:**
+
+| Defect | Fix |
+|--------|-----|
+| **Cold-load kill loop.** The daemon's 10 s inference probe killed every model load in progress — a cold `qwen3:4b` load outlasts the probe, the restart discards the load, the next probe kills it again. The 3-attempt ladder looped indefinitely | Warming guard: `OllamaModelLoaded()` (`GET /api/ps`) distinguishes dead server / warming / loaded-but-wedged. Probe failures during warming are logged (`ollama-warming`) but not counted, bounded by `MUXCODE_OLLAMA_WARMUP_GRACE_SECS` (default 300) |
+| **Thinking-model probe latency.** qwen3 is a thinking model: warm first-token latency measured **31–94 s**, and the Ollama serve log showed the probe's ~10 s client aborts | Probe moved to `/api/generate` with `think:false` + `num_predict:1` (~1 s warm); timeout tunable via `MUXCODE_OLLAMA_PROBE_SECS` |
+
+Both fixes were **verified in the tree, not taken on report**: `OllamaModelLoaded()` at
+`bus/health.go:134` (`GET /api/ps`, returning `responsive, loaded`) is gated into the restart ladder
+at `daemon/daemon.go:1429` — `responsive && !loaded` logs `ollama-warming` and declines to count the
+failure. The probe at `bus/health.go:65`–`:77` sends `think:false` with `num_predict:1`, and its
+comment records the 30–90 s measurement that motivated it. Covered by `TestOllamaModelLoaded`,
+`TestOllamaWarmupGraceSecs`, and `TestOllamaProbeSecs`.
+
+**One thing the run confirmed positively:** build and test carried real
+`MUXCODE_{ROLE}_MODEL=opencode-go/deepseek-v4-flash` pins, and on `--cli local` the harness fell
+back to `qwen3:4b` — the catalog-pin guard verified live, not just in unit tests.
+
+**Three findings still open:**
+
+1. **Startup-message tool-loop exhaustion.** Both harnesses repeatedly burned `MaxTurns` on the
+   open-ended startup message ("review last saved context"), emitting *"(no response generated —
+   tool loop exhausted)"* every ~5 minutes. Single-shot covers real tasks; it does not cover
+   startup. Open-ended prompts are hostile to a 4B.
+2. **Reply mis-correlation re-drive loop.** Harness startup responses correlate to the *previous
+   response's* id rather than the original request, so the request never gains a receipt and the
+   delivery backstop re-drives it indefinitely. A self-addressed startup response echo was also
+   seen in the build agent's own inbox.
+3. **Interactive latency impractical.** With thinking enabled every harness turn pays 30–90 s.
+   The commit exercise ran ~17 minutes and the build exercise ~6 minutes without either returning
+   a completed task response.
+
+> **Verdict — this measurement contradicts part of a settled decision, and that is recorded rather
+> than smoothed over.** The one-model-resident rule *holds*: only `qwen3:4b` was ever loaded, and
+> the catalog-pin guard kept it that way. But "[accept the 4B everywhere](#decisions)" was taken on
+> the understanding that the cost was a capability reduction. The measured cost is larger:
+> **build, test, commit, and watch are not currently viable interactively on `qwen3:4b` with
+> thinking enabled** — not degraded, not slower, but not completing.
+>
+> This does not invalidate the prompt-agent's own design, which is single-shot with closed intents
+> and one CLI call per turn — a materially easier shape than an open-ended coding turn. It does mean
+> the "everywhere" half of the decision rests on an assumption now measured false, and should be
+> re-decided **after** the think-mode work, not before. Findings 1 and 2 are general harness and
+> delivery defects that predate this spec's scope and warrant their own backlog ids rather than
+> being absorbed here.
 
 ### Provisioning: Ollama moves from optional to required
 
@@ -328,7 +406,7 @@ free-text box, which is the least predictable input in the system.
 | Boundary | Rule |
 |----------|------|
 | Gate approval | Only when the user's typed prompt **names** the gate or run. The agent never originates an approval, never infers one from context, and never approves in bulk |
-| Graph writes | Only under `.muxcode/graphs/` (project, default) or `~/.config/muxcode/graphs/` (user, only when the user says global). Never `docs/`, never source, never builtin |
+| Graph writes | Only under `.muxcode/graphs/` (project, default) or `~/.config/muxcode/graphs/` (user, only when the user says global). Never `docs/`, never source, never builtin. **Tightened in implementation (2026-08-26):** the `prompt` profile grants **no write tool at all** — definitions are written only through `muxcode graph`, whose path is `WriteGraphDefinition`. Validate-before-write is therefore unbypassable by the model rather than merely required of it |
 | Validation | `Validate()` runs before any write. The commit/Atlassian-behind-`wait_human` rule applies to prompt-composed graphs identically — a graph cannot be laundered around it by asking nicely |
 | Runtime backstop | `CheckCommitAuthority` / `CheckAtlassianAuthority` unchanged. The prompt path adds no new authority and holds none |
 | Injection | Forwards text to a main agent. It does not execute, and it does not compose the text on the user's behalf |
@@ -360,23 +438,49 @@ An unsafe-name guard (`/`, `\`, leading `.`) was added beyond what this phase as
 
 ### Phase 2: Prompt bus role and harness agent
 
-- [ ] **Installer:** re-tier Ollama from "Optional components" to required, so an install without it reports as incomplete rather than as fine
-- [ ] **Global default:** move `qwen2.5:7b` → `qwen3:4b` at `harness/config.go:28`, `bus/ollama.go:35`, and `install.sh:580`; fix the `qwen2.5-coder:7b` drift in `docs/agents.md:273` and `README.md:160` in the same change
-- [ ] **Installer:** tighten the readiness check at `install.sh:584` — the `${OLLAMA_MODEL%%:*}` prefix grep must not report "ready" on a differently-sized sibling of the required model
-- [ ] **Regression check on the roles that inherit the change:** exercise build, test, commit, and watch under `MUXCODE_{ROLE}_CLI=local` on `qwen3:4b` and confirm each still completes its normal task
-- [ ] Specifically confirm the **single-shot** roles (build, test) do not loop on the smaller model — `isSingleShotRole()` exists because small models re-run commands, and 4B is smaller than what prompted it
-- [ ] Confirm no role pins a model of its own, so exactly one set of weights can ever be resident
-- [ ] **Installer:** keep the multi-GB pull behind its existing consent gate; preserve the lazy "auto-pulls on first local agent run" fallback for the declined case
-- [ ] **Installer:** update the `-y/--yes` usage text and [`README.md`](../../../README.md) in the *same* change if the pull's non-interactive behaviour is altered at all
-- [ ] Locally: `ollama pull <model>` and confirm `ollama serve` is reachable — nothing below is exercisable until the model store is non-empty (see [Model selection](#model-selection))
-- [ ] Add the `prompt` role — `KnownRoles`, inbox path, window/pane mapping
-- [ ] Add `agents/harness/prompt-agent.md` — short, directive, closed intent set
-- [ ] Launch the agent **headless**: no window, no `--tui` (the harness's default path, `LogSink`); decide and document who owns the process lifecycle — daemon-supervised alongside the other long-lived processes is the natural fit
-- [ ] Add the transcript path helper (`BusDir()/prompt-history.jsonl`) in `bus/config.go` beside the other path helpers, and purge it on session re-init like other per-session state
-- [ ] Add the narrow `prompt` tool profile
-- [ ] Confirm `LocalLLMRoles()` picks the role up from `MUXCODE_PROMPT_CLI=local`; extend only if it does not
-- [ ] Confirm `MUXCODE_PROMPT_MODEL` resolves via `roleModelEnvVar()`'s `default` arm — expected to need no code change
-- [ ] Negative-control test: the profile denies a repo write and denies a git command
+- [x] **Installer:** re-tier Ollama from "Optional components" to required, so an install without it reports as incomplete rather than as fine
+- [x] **Global default:** move `qwen2.5:7b` → `qwen3:4b` at `harness/config.go:28`, `bus/ollama.go:35`, and `install.sh:580`; fix the `qwen2.5-coder:7b` drift in `docs/agents.md:273` and `README.md:160` in the same change
+- [x] **Installer:** tighten the readiness check at `install.sh:584` — the `${OLLAMA_MODEL%%:*}` prefix grep must not report "ready" on a differently-sized sibling of the required model
+- [x] **Regression check on the roles that inherit the change — EXERCISED** 2026-08-26 on a live session: build, test, commit, watch reloaded to `--cli local` on `qwen3:4b`, originals restored afterward
+- [ ] …and confirm each still completes its normal task — **NOT MET.** No exercise returned a completed task response. See [Phase 2 regression findings](#phase-2-regression-findings)
+- [ ] Specifically confirm the **single-shot** roles (build, test) do not loop on the smaller model — **partially met and partially refuted:** single-shot covers real tasks, but neither role survived its *startup* message, which is open-ended and outside single-shot's reach
+- [ ] Follow-up from the regression: disable thinking (`think:false`) for the harness's own chat calls, or move to structured outputs — escalation-ladder rungs 1–2, before any model-size change
+- [ ] Re-run the regression once think-mode handling lands, and re-decide "4B everywhere" on the new measurement
+- [x] Confirm no role pins a model of its own, so exactly one set of weights can ever be resident
+- [x] **Installer:** keep the multi-GB pull behind its existing consent gate; preserve the lazy "auto-pulls on first local agent run" fallback for the declined case
+- [x] **Installer:** update the `-y/--yes` usage text and [`README.md`](../../../README.md) in the *same* change if the pull's non-interactive behaviour is altered at all
+- [x] Locally: `ollama pull <model>` and confirm `ollama serve` is reachable — nothing below is exercisable until the model store is non-empty (see [Model selection](#model-selection))
+- [x] Add the `prompt` role — `KnownRoles`, inbox path, window/pane mapping
+- [x] Add `agents/harness/prompt-agent.md` — short, directive, closed intent set
+- [x] Launch the agent **headless**: no window, no `--tui` (the harness's default path, `LogSink`); decide and document who owns the process lifecycle — daemon-supervised alongside the other long-lived processes is the natural fit
+- [x] Add the transcript path helper (`BusDir()/prompt-history.jsonl`) in `bus/config.go` beside the other path helpers, and purge it on session re-init like other per-session state
+- [x] Add the narrow `prompt` tool profile
+- [x] Confirm `LocalLLMRoles()` picks the role up from `MUXCODE_PROMPT_CLI=local`; extend only if it does not
+- [x] Confirm `MUXCODE_PROMPT_MODEL` resolves via `roleModelEnvVar()`'s `default` arm — expected to need no code change
+- [x] Negative-control test: the profile denies a repo write and denies a git command
+
+**Phase 2: 14/17.** Verified evidence, not assertions:
+
+| Item | Evidence |
+|------|----------|
+| Ollama required | `PREREQS` now carries `ollama\|\|1\|ollama --version` (required tier); the not-found row reads `✗ … (required — Prompt mode and local agents)` |
+| Default moved | `harness/config.go:16,28`, `bus/ollama.go:24,35`, `install.sh:25,588`; docs drift closed in `configuration.md:124`, `agent-bus.md:1007`, `agents.md:273,280` |
+| Readiness check | Family-prefix grep replaced with exact match `grep -qxE "${OLLAMA_MODEL}(:latest)?"`, with the old bug named in a comment |
+| `--yes` contract | Behaviour **unchanged** — usage text still reads "Large optional downloads (the Ollama model) are still declined" |
+| Model present | `qwen3:4b` pulled (2.5 GB) and `ollama list` responding |
+| Headless launch | `bus/prompt_agent.go` (`StartPromptAgent`, detached process group, own log since it has no pane), supervised from `daemon.go:3418`; opt-out `MUXCODE_PROMPT_AGENT_DISABLE=1` |
+| Transcript purge | `PromptHistoryPath()` returns `HistoryPath(session, "prompt")`, and `prompt` is a `KnownRole` — so `purgeStaleFiles()` truncates it with every other role history, no special case needed |
+| Health coverage | Resolved via the step's own "extend only if it does not" branch: `LocalLLMRoles()` keys off `MUXCODE_*_CLI=local`, which nothing sets for `prompt`, so `daemon.go:154` appends the role whenever `PromptAgentEnabled()` — harness-always, no provider switch |
+| Negative control | `TestPromptProfileDeniesRepoWriteAndGit` denies `write_file`, `edit_file`, `git commit`, and `muxcode atlassian jira update` — through the real `IsToolAllowed`, and **with a positive control first** so a deny-everything profile cannot pass it vacuously |
+| Harness wiring | `isSingleShotRole()` now returns true for `prompt` (`harness/loop.go`) — most intents are one tool call and done, which is the shape that guard exists for; `harness/prompt.go` maps the role to the `prompt-agent` definition |
+| Config surface | `muxcode.conf.example` documents the `qwen3:4b` default **and** warns that a per-role pin puts a second model in memory — the one-model rule stated where someone would go to break it |
+
+**The profile came out narrower than this spec asked for**, and the change is an improvement worth
+recording: it grants **no write tool at all**. Graph definitions are written only through
+`muxcode graph`, whose path is `WriteGraphDefinition` — so validate-before-write is unbypassable by
+the model rather than merely expected of it. The [Authority boundaries](#authority-boundaries)
+wording ("reads/writes under the two graph directories") is now looser than the implementation and
+should be tightened to match, not the other way round.
 
 ### Phase 3: Prompt surface in the control pane
 
@@ -441,13 +545,13 @@ the rejected option would have cost.
 | ~~Inject vs. interpret selection — toggle key vs. prompt prefix~~ | **Decided: explicit toggle with a persistent destination label** | A prefix fails silently when forgotten, and both failure directions are bad: a message meant for Edit gets executed as a graph op, or a graph op lands as text in Edit's composer. A visible mode that names its destination makes the mistake unavailable rather than merely unlikely |
 | ~~Should `-y/--yes` now accept the multi-GB model pull?~~ | **Decided: no — keep it declined; the lazy first-run pull covers it** | `install.sh:588` calls this "the one thing `--yes` will not accept on the user's behalf", and `install.sh:17` plus [`README.md`](../../../README.md) line 333 both promise it in writing. Scripted and CI installs must not silently download gigabytes. The `qwen3:4b` decision softens the cost anyway: 2.5 GB on first run rather than 5+ |
 | ~~Does the prompt role share the global default model, or pin its own?~~ | **Decided: share — the global default moves to `qwen3:4b`** | Resolved in [Model selection](#model-selection). Only one model may be resident at a time, so a per-role pin was rejected: it would put two models in memory whenever both roles were active, and add a second mandatory download for a required feature. `MUXCODE_PROMPT_MODEL` stays unset |
-| ~~Do existing local roles accept the 4B, or keep a 7B pin?~~ | **Decided: accept the 4B everywhere — no per-role pins** | One model resident, for every local role, with no exceptions. This keeps the memory rule absolute rather than eroding it one pin at a time. The cost is accepted knowingly: build/test/commit/watch were tuned against a 7B and now run a 4B, so Phase 2 carries a regression check rather than an assumption |
+| ~~Do existing local roles accept the 4B, or keep a 7B pin?~~ | **Decided: accept the 4B everywhere — no per-role pins.** ⚠️ **Premise since measured false — needs re-deciding** | One model resident, for every local role, with no exceptions. The cost was accepted as a *capability reduction*. The [regression check](#phase-2-regression-findings) measured something worse: with thinking enabled those roles do not complete tasks at all. The memory rule itself held perfectly. Re-decide after the think-mode follow-up — this row stays as written so the decision and its refutation sit together |
 
 ## Time Tracking
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-109-prompt-mode-graph-control-pane | 9m | 2026-08-26 15:56 |
+| MUX-109-prompt-mode-graph-control-pane | 48m | 2026-08-26 16:50 |
 
 ## Status
 

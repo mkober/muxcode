@@ -121,7 +121,7 @@ MUXCODE_TEST_CLAUDE_MODEL=claude-haiku-4-5
 |----------|---------|-------------|
 | `MUXCODE_{ROLE}_CLI` | (unset) | Set to `local` to run a role via Ollama instead of Claude Code (e.g. `MUXCODE_COMMIT_CLI=local`) |
 | `MUXCODE_{ROLE}_MODEL` | (unset) | Per-role Ollama model override (e.g. `MUXCODE_COMMIT_MODEL=llama3.1:8b`). Takes precedence over `MUXCODE_OLLAMA_MODEL`. |
-| `MUXCODE_OLLAMA_MODEL` | `qwen2.5-coder:7b` | Default Ollama model for local LLM agents |
+| `MUXCODE_OLLAMA_MODEL` | `qwen3:4b` | Default Ollama model for local LLM agents. One model serves **every** local role — no role pins its own, so at most one set of weights is ever resident |
 | `MUXCODE_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
 
 ### Multi-CLI providers
