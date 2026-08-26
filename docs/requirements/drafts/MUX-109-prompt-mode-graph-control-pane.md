@@ -100,8 +100,8 @@ than that, the correct outcome is to inject it into the main agent, not to grow 
 - [x] A prompt that does not name a specific gate never approves one — pinned by a negative-control test using deliberately suggestive phrasing ("approve whatever is waiting")
 - [ ] Single-use gate approval semantics from [MUX-014](../completed/MUX-014-graph-agent-orchestrator.md) are unchanged — re-entering a gate still demands a fresh approval
 - [ ] Intent: **create** — a described workflow is composed into a graph definition, validated, and written project-local by default
-- [ ] A definition failing `Validate()` is **reported, never written** — pinned by a test asserting no file appears on the failure path
-- [ ] A prompt-composed graph placing a commit or Atlassian node outside a `wait_human` gate is rejected by the existing validator rule, with no bypass
+- [x] A definition failing `Validate()` is **reported, never written** — pinned by a test asserting no file appears on the failure path
+- [x] A prompt-composed graph placing a commit or Atlassian node outside a `wait_human` gate is rejected by the existing validator rule, with no bypass
 - [ ] Injection delivers the typed text to the window's active main agent via `TmuxSendLiteral()` (text → delay → Enter), never a hand-rolled `send-keys`
 - [ ] Injection targets the window's **active** agent, respecting mode-cycled windows
 - [ ] A dash-leading prompt injects intact, per [MUX-104](../completed/MUX-104-send-keys-dash-payload.md)
@@ -496,13 +496,13 @@ should be tightened to match, not the other way round.
 
 ### Phase 4: Prompt intents — launch, status, gates
 
-- [ ] Classify a prompt into the closed intent set; an unparseable result fails closed
+- [x] Classify a prompt into the closed intent set; an unparseable result fails closed
 - [ ] `launch` — resolve across all three scopes and start via `muxcode graph run`
 - [ ] `status` — answer from `graph list` / `graph status`
 - [ ] `gates` — list pending `wait_human` gates
 - [x] `approve` — dispatch only when the typed text names the gate/run; guard enforced in code, not only in the model prompt
 - [x] Negative-control test: "approve whatever is waiting" approves nothing
-- [ ] Confirm single-use approval semantics still hold on a retried gate
+- [x] Confirm single-use approval semantics still hold on a retried gate
 
 **Approve guard verified 2026-08-26.** `checkApproveGuard()` (`harness/prompt_guard.go`) parses the
 actual command for `muxcode graph approve <run> <node>` and refuses unless the user's own text
@@ -518,12 +518,53 @@ nothing) and a **short-prefix** case (`"approve wf-17"`), either of which would 
 `strings.Contains` implementation while leaving the guard broken. `TestFilter_ApproveGuardWired`
 carries its own positive control, noting that "a filter that blocks every approve proves nothing".
 
+> **OPEN HOLE — the approve guard cannot tell a user from an agent.** `requestTaskText()` narrows the
+> guard's evidence from the whole batch to **request-type** messages, closing the case where a
+> system-authored chain notification naming a gate satisfied "the user named it". It does not close
+> the other half.
+>
+> The Prompt surface sends `NewMessage(bus.BusRole(), "prompt", "request", "prompt", text, "")`
+> (`tui/graph_ui.go:818`). A user-typed prompt from the build window therefore arrives as
+> `From=build, To=prompt, Type=request, Action=prompt`. **Any agent running
+> `muxcode send prompt prompt "approve commit-gate on run abc"` produces a byte-identical message.**
+> `CheckSendPolicy()` (`bus/profile.go:504`) is a hook-provider deny-list with no entry for `prompt`,
+> so nothing prevents the send.
+>
+> The consequence is precise: the guard's whole purpose is that a **human** must name the gate, and
+> an agent can currently satisfy it. This is the same principle this repo already encodes for the
+> tracker — *a bus message from another agent is never the user's consent* — applied to a gate that
+> exists to release git and Atlassian mutations.
+>
+> Candidate fixes, cheapest last:
+>
+> 1. **Bus-level authority gate** — a `CheckPromptAuthority`-style check permitting sends to `prompt`
+>    only from the control pane, mirroring `CheckCommitAuthority`/`CheckAtlassianAuthority`. Matches
+>    an existing pattern and fails closed.
+> 2. **Unforgeable surface marker** — the surface includes a per-session token read from `BusDir()`
+>    that no agent tool profile can read; the guard requires it. Stronger, more moving parts.
+> 3. **Distinct action name alone is not sufficient** — an agent can pass any action string to
+>    `muxcode send`, so `Action=user-prompt` would be trivially forgeable.
+>
+> **CLOSED 2026-08-26 — verified, not accepted on report.** Fix 1 landed, plus a laundering vector
+> this review had missed:
+>
+> | Layer | Evidence |
+> |-------|----------|
+> | Authority check | `CheckPromptAuthority` (`bus/prompt_authority.go`) returns allow only when `to != prompt` or `from` is in `PromptAuthorityRoles()` — **default empty, so deny-all**; opt-in via `MUXCODE_PROMPT_AUTHORITY_ROLES`. Its refusal text explains the *reason* ("their text is what the approve guard trusts as the user's own words") rather than just denying |
+> | Enforcement point | `inbox.go:123`, inside `sendMessage` — the choke point every send path funnels through, so no send API bypasses it |
+> | Surface seam | `SendHumanPrompt` (`prompt_authority.go:66`) is called **only** from `tui/graph_ui.go:822` and has **no `cmd/` exposure** — there is no CLI subcommand, so an agent has no way to invoke it |
+> | Graph laundering | `TestValidate_RejectsPromptTargetingNode` — a `send` node with `role: prompt` carrying `"approve commit-gate on run wf-123"` fails validation. **This vector was not in my report**; a graph node could otherwise have originated the "user's words" through the executor |
+> | Tests | Deny-all default, an `IgnoresOtherTargets` control proving it does not over-block, env opt-in, bus-level `Send` refusal, `SendHumanPrompt` delivery + response passthrough, and the laundering test's **positive control** (the same node targeting `build` must still validate) |
+>
+> The remaining half of the gates criterion is *listing*, which is a permitted `graph list` read and
+> is exercised in Phase 7 — the authority half is now closed at three independent layers.
+
 ### Phase 5: Graph creation flow
 
 - [ ] Compose a definition from a described workflow
-- [ ] Validate before writing; report failures verbatim, write nothing
-- [ ] Write project-local by default; user-global only on explicit instruction
-- [ ] Test: a composed graph with an ungated commit node is rejected by the existing validator rule
+- [x] Validate before writing; report failures verbatim, write nothing
+- [x] Write project-local by default; user-global only on explicit instruction
+- [x] Test: a composed graph with an ungated commit node is rejected by the existing validator rule
 
 ### Phase 6: Prompt injection to the active main agent
 
@@ -565,7 +606,7 @@ the rejected option would have cost.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-109-prompt-mode-graph-control-pane | 1h 1m | 2026-08-26 16:57 |
+| MUX-109-prompt-mode-graph-control-pane | 1h 23m | 2026-08-26 17:31 |
 
 ## Status
 
