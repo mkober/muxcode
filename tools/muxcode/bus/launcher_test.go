@@ -115,6 +115,27 @@ func TestIsSplitLeftWindow(t *testing.T) {
 	}
 }
 
+// Pane 0 runs processes that never set a title, so the launcher names
+// it by function — without this the border shows the hostname.
+func TestPaneZeroTitle(t *testing.T) {
+	cfg := DefaultLauncherConfig()
+	tests := []struct {
+		win  string
+		want string
+	}{
+		{"edit", " NVIM "},
+		{"plan", " NVIM "},
+		{"build", " CONSOLE "},
+		{"watch", " CONSOLE "},
+		{"custom", " TERMINAL "},
+	}
+	for _, tt := range tests {
+		if got := paneZeroTitle(cfg, tt.win); got != tt.want {
+			t.Errorf("paneZeroTitle(%q) = %q, want %q", tt.win, got, tt.want)
+		}
+	}
+}
+
 func TestHasConsoleView(t *testing.T) {
 	for _, w := range []string{"build", "test", "review", "deploy", "run", "watch", "commit", "api", "serve"} {
 		if !HasConsoleView(w) {

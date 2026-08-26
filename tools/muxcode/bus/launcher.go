@@ -118,6 +118,23 @@ func HasConsoleView(window string) bool {
 	return false
 }
 
+// paneZeroTitle names pane 0 by its function (" NVIM ", " CONSOLE ",
+// " TERMINAL " — border titles are ALL CAPS). The CLI in pane 1 manages
+// its own title, but pane 0 processes (nvim, the console renderer, a
+// plain shell) never set one — without an explicit title the border
+// shows the tmux default, the hostname (user-reported 2026-08-26).
+// Mirrors the createWindowContent branch structure so the label always
+// matches what the pane runs.
+func paneZeroTitle(cfg *LauncherConfig, win string) string {
+	switch {
+	case win == "edit" || win == "plan":
+		return " NVIM "
+	case cfg.IsSplitLeftWindow(win) && HasConsoleView(win):
+		return " CONSOLE "
+	}
+	return " TERMINAL "
+}
+
 // CapitalizeWindow capitalizes the first letter of a window name.
 func CapitalizeWindow(name string) string {
 	if name == "" {
@@ -235,10 +252,13 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	// Ensure Ollama if needed
 	EnsureOllama()
 
-	// Capture client dimensions when inside tmux
+	// Client dimensions: tmux client if inside tmux, else the terminal
+	// itself minus the status line (see TerminalDimensions for why).
 	var clientW, clientH int
 	if IsInsideTmux() {
 		clientW, clientH, _ = TmuxClientDimensions()
+	} else if w, h, err := TerminalDimensions(); err == nil {
+		clientW, clientH = w, h-1
 	}
 
 	// Create tmux session with first window
@@ -358,14 +378,19 @@ func createWindowContent(cfg *LauncherConfig, session, win, projectDir, agentLau
 
 	// Set display name for the status bar label (used by #{@display-name} format).
 	// Per-window user option — follows the window object across swap-window operations.
+	// The -upper variant feeds pane-border-format: border titles are ALL
+	// CAPS while the status bar stays capitalized, and tmux formats have
+	// no case-conversion modifier to derive one from the other.
 	TmuxSetWindowOption(target, "@display-name", CapitalizeWindow(win))
+	TmuxSetWindowOption(target, "@display-name-upper", strings.ToUpper(win))
+
+	// Pane 0 border title — pane 1's comes from its CLI, substituted at
+	// display time in pane-border-format (never pinned here).
+	_ = TmuxRun("select-pane", "-t", target+".0", "-T", paneZeroTitle(cfg, win))
 
 	// Control pane (MUX-108) — created LAST so panes 0/1 keep their
 	// indices (AgentPane's delivery contract).
 	if ControlPaneEnabledFor(win) {
-		if win == "edit" || win == "plan" {
-			_ = TmuxRun("select-pane", "-t", target+".0", "-T", " NVIM ")
-		}
 		_ = CreateControlPane(session, win)
 	}
 
@@ -610,6 +635,7 @@ func ResizeWindows(session string) {
 	}
 	for _, idx := range indices {
 		TmuxResizeWindow(session + ":" + idx)
+		ClampControlPane(session, idx)
 	}
 }
 

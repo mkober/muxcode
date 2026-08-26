@@ -152,6 +152,62 @@ func TestResizeAllWindows_SessionNameWithColon(t *testing.T) {
 	}
 }
 
+// A window refit rescales panes proportionally, so the fixed-height
+// control pane must be re-clamped after each resize — the attached (-A)
+// and detached (explicit size) paths alike. The clamp-free negative is
+// the resizeStub-based tests above, whose window listings never report
+// a control pane; ClampControlPane's own test covers the foreign-pane
+// negative.
+func TestResizeAllWindows_ClampsControlPanes(t *testing.T) {
+	unsetEnvForTest(t, "MUXCODE_CONTROL_PANE_HEIGHT")
+	origRun := tmuxRunner
+	origOutput := tmuxOutputRunner
+	var calls [][]string
+	tmuxRunner = func(args ...string) error {
+		calls = append(calls, args)
+		return nil
+	}
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "list-panes"):
+			return "0:bash\n1:claude\n2:muxcode", nil
+		case strings.Contains(joined, "window_width"):
+			return "200\t48", nil
+		}
+		return "main\t0\t1\nsub\t1\t0", nil
+	}
+	t.Cleanup(func() {
+		tmuxRunner = origRun
+		tmuxOutputRunner = origOutput
+	})
+
+	if err := ResizeAllWindows(); err != nil {
+		t.Fatalf("ResizeAllWindows: %v", err)
+	}
+
+	var clamps []string
+	for _, c := range calls {
+		if len(c) > 0 && c[0] == "resize-pane" {
+			clamps = append(clamps, strings.Join(c, " "))
+		}
+	}
+	if len(clamps) != 2 {
+		t.Fatalf("expected one clamp per window, got %v", clamps)
+	}
+	for _, want := range []string{"main:0.2", "sub:1.2"} {
+		found := false
+		for _, c := range clamps {
+			if strings.Contains(c, want) && strings.Contains(c, "-y 14") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected a -y 14 clamp for %s, got %v", want, clamps)
+		}
+	}
+}
+
 // flagValue returns the argument immediately following flag in args.
 func flagValue(args []string, flag string) (string, bool) {
 	for i := 0; i < len(args)-1; i++ {

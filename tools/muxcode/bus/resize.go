@@ -93,10 +93,13 @@ func ResizeAllWindows() error {
 
 	// Pass 1: refit windows in attached sessions to their client (-A) and
 	// remember the first attached window so we can read its fit size back.
+	// Each refit rescales panes proportionally, so the fixed-height
+	// control pane is re-clamped right after (see ClampControlPane).
 	var fitTarget string
 	for _, e := range entries {
 		if e.attached {
 			TmuxResizeWindow(e.target())
+			ClampControlPane(e.session, e.index)
 			if fitTarget == "" {
 				fitTarget = e.target()
 			}
@@ -119,6 +122,7 @@ func ResizeAllWindows() error {
 	for _, e := range entries {
 		if !e.attached {
 			TmuxResizeWindowToSize(e.target(), fw, fh)
+			ClampControlPane(e.session, e.index)
 		}
 	}
 	return nil

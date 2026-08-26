@@ -265,6 +265,41 @@ func TmuxClientDimensions() (width, height int, err error) {
 	return w, h, nil
 }
 
+// TerminalDimensions returns the size of the controlling terminal via
+// `stty size` on /dev/tty. It exists for launches from a plain terminal
+// (no tmux client yet): without real dimensions, new-session falls back
+// to tmux's 80x24 default, and the first attach then rescales every
+// pane proportionally — a fixed 14-row control pane split from a 24-row
+// window opens at over half the real screen (user-reported 2026-08-26).
+func TerminalDimensions() (width, height int, err error) {
+	tty, err := os.Open("/dev/tty")
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tty.Close()
+	cmd := exec.Command("stty", "size")
+	cmd.Stdin = tty
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0, err
+	}
+	return parseSttySize(string(out))
+}
+
+// parseSttySize parses `stty size` output ("rows cols") into (width, height).
+func parseSttySize(out string) (width, height int, err error) {
+	fields := strings.Fields(strings.TrimSpace(out))
+	if len(fields) != 2 {
+		return 0, 0, fmt.Errorf("unexpected stty size output %q", out)
+	}
+	rows, err1 := strconv.Atoi(fields[0])
+	cols, err2 := strconv.Atoi(fields[1])
+	if err1 != nil || err2 != nil || rows <= 0 || cols <= 0 {
+		return 0, 0, fmt.Errorf("unexpected stty size output %q", out)
+	}
+	return cols, rows, nil
+}
+
 // TmuxShowOption returns the value of a tmux option.
 // scope is "-g" for global or "-t <target>" for session-level.
 func TmuxShowOption(scope, key string) (string, error) {
