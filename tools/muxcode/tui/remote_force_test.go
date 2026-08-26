@@ -49,6 +49,28 @@ func TestRemoteForceRespond_GatedOnConfirm(t *testing.T) {
 	}
 }
 
+// An escape SEQUENCE (arrow key, Shift-Tab) must not cancel the
+// confirm — only a bare Escape does (PR #38 Copilot finding).
+func TestRemoteForceRespond_ArrowKeysDoNotCancelConfirm(t *testing.T) {
+	ui := forceRespondTestUI(t)
+	ui.keyCh = make(chan byte, 4)
+	ui.handleKey('f')
+
+	ui.keyCh <- '['
+	ui.keyCh <- 'A' // arrow-up sequence tail
+	if got := ui.handleKey(27); got != "" || ui.confirmPending == nil {
+		t.Fatalf("an arrow sequence must not cancel the confirm, got %q pending %v", got, ui.confirmPending)
+	}
+	if len(ui.keyCh) != 0 {
+		t.Errorf("sequence bytes must be swallowed, %d left queued", len(ui.keyCh))
+	}
+
+	// Bare Escape (no queued sequence bytes) cancels after the timeout.
+	if got := ui.handleKey(27); got != "" || ui.confirmPending != nil {
+		t.Errorf("bare Escape must cancel, got %q pending %v", got, ui.confirmPending)
+	}
+}
+
 // While the confirm is up, other action keys must not fire.
 func TestRemoteForceRespond_ConfirmSwallowsOtherKeys(t *testing.T) {
 	ui := forceRespondTestUI(t)

@@ -160,8 +160,24 @@ func (ui *RemoteUI) handleKey(key byte) string {
 			ui.result = ui.confirmPending
 			ui.confirmPending = nil
 			return "selected"
-		case 'n', 'q', 27:
+		case 'n', 'q':
 			ui.confirmPending = nil
+		case 27:
+			// Bare Escape cancels; an escape SEQUENCE (arrow key,
+			// Shift-Tab) is swallowed whole — a stray arrow press must
+			// not cancel a destructive-action confirm and leak sequence
+			// bytes into the list handler (PR #38 Copilot finding).
+			select {
+			case b := <-ui.keyCh:
+				if b == '[' {
+					select {
+					case <-ui.keyCh: // consume the final sequence byte
+					case <-time.After(50 * time.Millisecond):
+					}
+				}
+			case <-time.After(50 * time.Millisecond):
+				ui.confirmPending = nil
+			}
 		}
 		return ""
 	}

@@ -166,18 +166,27 @@ func SendNoCCIfNotDuplicate(session string, m Message) (bool, error) {
 // suppressed — only true duplicates (exact same payload) are caught.
 // Only checks request-type messages — responses and events are never deduped.
 func HasPendingInboxRequest(session, to, from, action, payload string) bool {
+	_, ok := FindPendingInboxRequest(session, to, from, action, payload)
+	return ok
+}
+
+// FindPendingInboxRequest returns the queued duplicate itself — a caller
+// that adopts an existing request (the graph executor's suppressed
+// dispatch) needs its ID, not just its existence: the agent answers the
+// queued message's ID, so a task keyed to anything else never completes.
+func FindPendingInboxRequest(session, to, from, action, payload string) (Message, bool) {
 	// Resolve hosted roles to their host inbox
 	inboxRole := WindowForRole(to)
 	msgs, err := Peek(session, inboxRole)
-	if err != nil || len(msgs) == 0 {
-		return false
+	if err != nil {
+		return Message{}, false
 	}
 	for _, m := range msgs {
 		if m.Type == "request" && m.From == from && m.Action == action && m.Payload == payload {
-			return true
+			return m, true
 		}
 	}
-	return false
+	return Message{}, false
 }
 
 // HasPendingAction reports whether a role's inbox already holds an unconsumed

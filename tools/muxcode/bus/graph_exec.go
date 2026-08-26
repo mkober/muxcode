@@ -188,10 +188,16 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 				taskID := m.ID
 				if t, found := FindInFlightTask(session, n.Role, n.Action); found {
 					taskID = t.ID
+				} else if pm, found := FindPendingInboxRequest(session, m.To, m.From, m.Action, m.Payload); found {
+					// Adopt the queued duplicate's ID: the agent answers
+					// THAT id, so a task keyed to the unsent m.ID would
+					// sit in-flight forever (PR #38 Copilot finding).
+					adopted := m
+					adopted.ID = pm.ID
+					adopted.TS = pm.TS
+					taskID = pm.ID
+					_ = CreateTask(session, adopted, nodeTimeoutSecs(n))
 				} else {
-					// No live task to adopt (the duplicate is an unconsumed
-					// inbox message) — create one for this node so harvest
-					// has a record, as the pre-sentinel path always did.
 					_ = CreateTask(session, m, nodeTimeoutSecs(n))
 				}
 				_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeRunning, func(s *GraphNodeStatus) {
