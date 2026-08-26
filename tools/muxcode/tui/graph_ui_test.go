@@ -641,7 +641,7 @@ func TestGraphUI_TabCyclesSurfacesForwardAndBack(t *testing.T) {
 	ui := NewGraphUI(session, "")
 	ui.refresh()
 
-	want := []graphView{viewGraphGates, viewGraphTemplates, viewGraphRuns}
+	want := []graphView{viewGraphGates, viewGraphPrompt, viewGraphTemplates, viewGraphRuns}
 	for _, w := range want {
 		ui.handleKey(9) // Tab
 		if ui.view != w {
@@ -694,7 +694,7 @@ func TestGraphUI_SelectionSurvivesFullCycle(t *testing.T) {
 	ui.runIdx = 1 // the older run (newest lists first)
 	selected := ui.rows[1].ID
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < len(graphSurfaces); i++ {
 		ui.handleKey(9)
 	}
 	if ui.view != viewGraphRuns {
@@ -722,7 +722,7 @@ func TestGraphUI_RemovedSelectionFallsBackToFirstRow(t *testing.T) {
 	ui.runIdx = 1 // select the older run, then delete it mid-cycle
 	os.RemoveAll(bus.GraphRunDir(session, ui.rows[1].ID))
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < len(graphSurfaces); i++ {
 		ui.handleKey(9)
 	}
 	if ui.runIdx != 0 {

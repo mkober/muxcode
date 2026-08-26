@@ -75,19 +75,19 @@ than that, the correct outcome is to inject it into the main agent, not to grow 
 
 ### Acceptance criteria
 
-- [ ] A **Prompt** surface joins the control pane's `Tab`/`Shift-Tab` cycle, and the tab bar names it
-- [ ] `MUXCODE_CONTROL_PANE_SURFACE=prompt` starts the pane on it; an unknown value still degrades to the run list
-- [ ] The surface renders as a pure function of a snapshot — no I/O in the renderer — and is reachable via `--render-once`
-- [ ] The surface clamps to the pane's `width` **and** `height`; a long prompt or a long reply degrades rather than overflowing
-- [ ] The empty state (no prompt typed, no history) is explicit and keeps header, tab bar, and footer
+- [x] A **Prompt** surface joins the control pane's `Tab`/`Shift-Tab` cycle, and the tab bar names it
+- [x] `MUXCODE_CONTROL_PANE_SURFACE=prompt` starts the pane on it; an unknown value still degrades to the run list
+- [x] The surface renders as a pure function of a snapshot — no I/O in the renderer — and is reachable via `--render-once`
+- [x] The surface clamps to the pane's `width` **and** `height`; a long prompt or a long reply degrades rather than overflowing
+- [x] The empty state (no prompt typed, no history) is explicit and keeps header, tab bar, and footer
 - [x] The prompt-agent runs **headless** — no tmux window, no harness TUI (no `--tui` flag)
-- [ ] Prompt results are displayed **in the Prompt surface**, read from a session-global transcript on `refresh()`
+- [x] Prompt results are displayed **in the Prompt surface**, read from a session-global transcript on `refresh()`
 - [ ] The surface **never blocks** on inference: with a prompt in flight, the pane still redraws and `Tab`/`Shift-Tab` still cycle away and back
-- [ ] Three states are visually distinct — *working*, *finished*, and *model unreachable* — so a slow answer is never mistaken for a broken one
+- [x] Three states are visually distinct — *working*, *finished*, and *model unreachable* — so a slow answer is never mistaken for a broken one
 - [ ] A result raised on one window's pane is visible on every window's pane, since the transcript is session-global
-- [ ] Reading the transcript happens in `refresh()`, not in a render function — the renderer stays pure and `--render-once` still works
-- [ ] The footer advertises every key the surface accepts, including the inject/interpret toggle
-- [ ] The input line names its destination at all times — which agent an injected prompt would reach, or that it will be interpreted — so the mode is readable without color
+- [x] Reading the transcript happens in `refresh()`, not in a render function — the renderer stays pure and `--render-once` still works
+- [x] The footer advertises every key the surface accepts, including the inject/interpret toggle
+- [x] The input line names its destination at all times — which agent an injected prompt would reach, or that it will be interpreted — so the mode is readable without color
 - [x] A `prompt` bus role exists with its own inbox and is accepted by `IsKnownRole()`
 - [x] The prompt-agent runs on the local harness (Ollama); it never launches Claude Code, OpenCode, or Codex
 - [x] The model is chosen by configuration, not code — no model name is hardcoded in the role's path; the role inherits the global default `qwen3:4b` with `MUXCODE_PROMPT_MODEL` left unset (see [Model selection](#model-selection))
@@ -484,15 +484,15 @@ should be tightened to match, not the other way round.
 
 ### Phase 3: Prompt surface in the control pane
 
-- [ ] Append the Prompt view to `graphSurfaces`; add `surfaceName()` and tab-bar entries
-- [ ] Add the `prompt` case to `controlPaneCommand()`; unknown surfaces still degrade to the run list
+- [x] Append the Prompt view to `graphSurfaces`; add `surfaceName()` and tab-bar entries
+- [x] Add the `prompt` case to `controlPaneCommand()`; unknown surfaces still degrade to the run list
 - [ ] Generalise the `viewGraphIntent` line editor for reuse; keep Escape/`ESC [ Z` disambiguation intact
-- [ ] Render: header, tab bar, input line with destination label, reply/history body, footer
-- [ ] Read the transcript in `refresh()` (never in a render function) and render the latest exchanges, oldest-clamped to the pane height
-- [ ] Distinct *working* / *finished* / *model-unreachable* states, each readable without color
+- [x] Render: header, tab bar, input line with destination label, reply/history body, footer — the footer is composed by the **outer** frame at `tui/graph_ui.go:1010`, not by `RenderPromptFrame`, matching how the other surfaces work (`promptChromeLines` reserves a row for it)
+- [x] Read the transcript in `refresh()` (never in a render function) and render the latest exchanges, oldest-clamped to the pane height
+- [x] Distinct *working* / *finished* / *model-unreachable* states, each readable without color
 - [ ] Verify the pane still redraws and cycles surfaces while a prompt is in flight — no blocking on inference
-- [ ] Explicit empty state; clamp to `width` and `height`; reachable via `--render-once`
-- [ ] Frame tests including a **negative control** for clamping (a fixture that actually overflows)
+- [x] Explicit empty state; clamp to `width` and `height`; reachable via `--render-once`
+- [x] Frame tests including a **negative control** for clamping (a fixture that actually overflows)
 
 ### Phase 4: Prompt intents — launch, status, gates
 
@@ -551,7 +551,7 @@ the rejected option would have cost.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-109-prompt-mode-graph-control-pane | 48m | 2026-08-26 16:50 |
+| MUX-109-prompt-mode-graph-control-pane | 1h 1m | 2026-08-26 16:57 |
 
 ## Status
 

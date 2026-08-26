@@ -24,6 +24,7 @@ const (
 	viewGraphIntent
 	viewGraphGates
 	viewGraphConfirm
+	viewGraphPrompt
 )
 
 // graphTickInterval is the store re-read cadence — the spec requires a
@@ -268,6 +269,14 @@ type GraphUI struct {
 	tmplSelID  string
 	gateSelKey string // runID + "/" + nodeID
 
+	// Prompt surface (MUX-109). The input buffer lives here, not in the
+	// view, so Tab-ing away and back never discards a half-typed prompt.
+	promptInput       []rune
+	promptInject      bool
+	promptExchanges   []PromptExchange
+	promptUnreachable string
+	directPrompt      bool // opened in prompt mode — q/Esc from it quits
+
 	// Gates already seen waiting — a NEW one switches the UI to the
 	// Pending Gates surface (the strip's ambient-attention contract).
 	knownWaiting map[string]bool
@@ -277,14 +286,16 @@ type GraphUI struct {
 	now     func() time.Time
 }
 
-// graphSurfaces is the Tab cycle order over the three top-level views —
-// it must match the tab bar's visual order (renderSurfaceTabs).
-var graphSurfaces = []graphView{viewGraphTemplates, viewGraphRuns, viewGraphGates}
+// graphSurfaces is the Tab cycle order over the top-level views — it
+// must match the tab bar's visual order (renderSurfaceTabs).
+var graphSurfaces = []graphView{viewGraphPrompt, viewGraphTemplates, viewGraphRuns, viewGraphGates}
 
 // surfaceName maps a view to its tab-bar name; drill-ins highlight their
 // parent surface so the bar stays static across every frame.
 func surfaceName(v graphView) string {
 	switch v {
+	case viewGraphPrompt:
+		return "Prompt"
 	case viewGraphGates:
 		return "Pending Gates"
 	case viewGraphTemplates, viewGraphIntent:
@@ -298,6 +309,8 @@ func surfaceName(v graphView) string {
 // on-disk surface selection and back.
 func surfaceKey(v graphView) string {
 	switch v {
+	case viewGraphPrompt:
+		return "prompt"
 	case viewGraphGates:
 		return "gates"
 	case viewGraphTemplates:
@@ -309,6 +322,8 @@ func surfaceKey(v graphView) string {
 
 func surfaceForKey(k string) (graphView, bool) {
 	switch k {
+	case "prompt":
+		return viewGraphPrompt, true
 	case "gates":
 		return viewGraphGates, true
 	case "launcher":
@@ -328,7 +343,8 @@ func (ui *GraphUI) shareSurface() {
 // syncSharedSurface adopts the shared selection — top-level views only,
 // never a drill-in, and adopting never writes back (one-way convergence).
 func (ui *GraphUI) syncSharedSurface() {
-	topLevel := ui.view == viewGraphRuns || ui.view == viewGraphTemplates || ui.view == viewGraphGates
+	topLevel := ui.view == viewGraphRuns || ui.view == viewGraphTemplates ||
+		ui.view == viewGraphGates || ui.view == viewGraphPrompt
 	if !topLevel {
 		return
 	}
@@ -352,6 +368,12 @@ func NewGraphLauncherUI(session string) *GraphUI {
 // pending-gate queue — the `Pending Gates` menu surface.
 func NewGraphGatesUI(session string) *GraphUI {
 	return &GraphUI{session: session, view: viewGraphGates, directGates: true, now: time.Now}
+}
+
+// NewGraphPromptUI creates the graph TUI opening straight into the
+// Prompt surface (MUX-109).
+func NewGraphPromptUI(session string) *GraphUI {
+	return &GraphUI{session: session, view: viewGraphPrompt, directPrompt: true, now: time.Now}
 }
 
 // NewGraphUI creates the graph TUI. A non-empty runID opens straight
@@ -395,6 +417,9 @@ func (ui *GraphUI) refresh() {
 		if ui.gateIdx < 0 {
 			ui.gateIdx = 0
 		}
+	case viewGraphPrompt:
+		ui.promptExchanges = LoadPromptExchanges(ui.session, promptTranscriptLimit)
+		ui.promptUnreachable = PromptUnreachable(ui.session)
 	case viewGraphDAG, viewGraphNode:
 		snap, err := LoadGraphSnapshot(ui.session, ui.runID)
 		ui.loadErr = err
@@ -431,6 +456,9 @@ func (ui *GraphUI) handleKey(key byte) string {
 	}
 	if ui.view == viewGraphConfirm {
 		return ui.handleConfirmKey(key)
+	}
+	if ui.view == viewGraphPrompt {
+		return ui.handlePromptKey(key)
 	}
 	ui.notice = "" // a receipt survives ticks, not the next keypress
 	switch key {
@@ -690,6 +718,23 @@ func (ui *GraphUI) executeAction() {
 	ui.refresh()
 }
 
+// editLine applies one keypress to a line buffer: printable ASCII
+// appends, backspace deletes. Returns the new buffer and whether the key
+// was consumed — the shared editor behind the ${intent} prompt and the
+// Prompt surface, so the two never drift on byte handling.
+func editLine(buf []rune, key byte) ([]rune, bool) {
+	switch {
+	case key == 127 || key == 8: // Backspace
+		if len(buf) > 0 {
+			buf = buf[:len(buf)-1]
+		}
+		return buf, true
+	case key >= 32 && key < 127: // printable ASCII
+		return append(buf, rune(key)), true
+	}
+	return buf, false
+}
+
 // handleIntentKey edits the ${intent} argument prompt: printable bytes
 // append, backspace deletes, Enter launches, Escape returns to the picker.
 func (ui *GraphUI) handleIntentKey(key byte) string {
@@ -699,14 +744,83 @@ func (ui *GraphUI) handleIntentKey(key byte) string {
 		ui.intentInput = nil
 	case key == 10 || key == 13: // Enter
 		ui.launchGraph(ui.pendingGraph, ui.pendingTemplate, string(ui.intentInput))
-	case key == 127 || key == 8: // Backspace
-		if len(ui.intentInput) > 0 {
-			ui.intentInput = ui.intentInput[:len(ui.intentInput)-1]
-		}
-	case key >= 32 && key < 127: // printable ASCII
-		ui.intentInput = append(ui.intentInput, rune(key))
+	default:
+		ui.intentInput, _ = editLine(ui.intentInput, key)
 	}
 	return ""
+}
+
+// handlePromptKey drives the Prompt surface. Unlike the modal intent
+// prompt, this is a top-level surface: Tab and Shift-Tab still cycle
+// away (the input buffer survives the round trip), and the surface never
+// blocks on the model — Enter sends a bus request and returns to
+// rendering immediately.
+func (ui *GraphUI) handlePromptKey(key byte) string {
+	switch {
+	case key == 9: // Tab
+		ui.cycleSurface(1)
+	case key == 27:
+		return ui.handlePromptEscape()
+	case key == 10 || key == 13: // Enter
+		ui.submitPrompt()
+	case key == 20: // Ctrl-T — inject/interpret toggle
+		ui.promptInject = !ui.promptInject
+	default:
+		ui.promptInput, _ = editLine(ui.promptInput, key)
+	}
+	return ""
+}
+
+// handlePromptEscape mirrors handleEscapeSequence for the Prompt surface:
+// ESC [ Z (Shift-Tab) cycles backward, arrows are inert (no selection
+// here), and a bare Escape clears a non-empty input before it means
+// "back" — so one stray Escape never both wipes the text and exits.
+func (ui *GraphUI) handlePromptEscape() string {
+	select {
+	case b1 := <-ui.keyCh:
+		if b1 == '[' {
+			select {
+			case b2 := <-ui.keyCh:
+				if b2 == 'Z' { // Shift-Tab
+					ui.cycleSurface(-1)
+				}
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	case <-time.After(50 * time.Millisecond):
+		if len(ui.promptInput) > 0 {
+			ui.promptInput = nil
+			return ""
+		}
+		return ui.goBack()
+	}
+	return ""
+}
+
+// submitPrompt dispatches the typed text. Interpret mode sends an
+// ordinary bus request to the prompt role (SendNoCC — a prompt typed on
+// the build window must not CC edit's inbox) and returns to rendering;
+// the reply arrives through the transcript on a later refresh, so the
+// pane never waits on inference. Inject delivery is Phase 6.
+func (ui *GraphUI) submitPrompt() {
+	text := strings.TrimSpace(string(ui.promptInput))
+	if text == "" {
+		return
+	}
+	if ui.promptInject {
+		ui.notice = "inject delivery lands in Phase 6 — Ctrl-T back to interpret to run a graph op"
+		return
+	}
+	from := bus.BusRole()
+	if from == "" {
+		from = "edit"
+	}
+	if err := bus.SendNoCC(ui.session, bus.NewMessage(from, "prompt", "request", "prompt", text, "")); err != nil {
+		ui.notice = "send failed: " + err.Error()
+		return
+	}
+	ui.promptInput = nil
+	ui.refresh() // the sent question renders as the working exchange
 }
 
 // launchGraph validates and starts a run, then transitions into its DAG
@@ -761,6 +875,12 @@ func (ui *GraphUI) goBack() string {
 		ui.refresh()
 	case viewGraphGates:
 		if ui.directGates {
+			return "quit"
+		}
+		ui.view = viewGraphRuns
+		ui.refresh()
+	case viewGraphPrompt:
+		if ui.directPrompt {
 			return "quit"
 		}
 		ui.view = viewGraphRuns
@@ -875,11 +995,25 @@ func (ui *GraphUI) render() string {
 		frame = RenderGateQueueFrame(ui.gates, ui.resolvedGates, W, ui.gateIdx)
 		footer = fmt.Sprintf("  %s↑↓/jk%s Navigate  %sEnter/a%s Approve  %sR%s Refresh  %sq/Esc%s Back",
 			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
+	case viewGraphPrompt:
+		st := PromptSurfaceState{
+			Exchanges:   ui.promptExchanges,
+			Input:       string(ui.promptInput),
+			Inject:      ui.promptInject,
+			Destination: promptDestinationLabel(ui.promptInject),
+			Unreachable: ui.promptUnreachable,
+		}
+		if n := len(st.Exchanges); n > 0 && !st.Exchanges[n-1].Answered {
+			st.Working = true
+		}
+		frame = RenderPromptFrame(st, W, H)
+		footer = fmt.Sprintf("  %sEnter%s Send  %sCtrl-T%s Inject/Interpret  %sBksp%s Delete  %sEsc%s Clear/Back",
+			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 	case viewGraphConfirm:
 		if ui.pending != nil {
 			// Static tab bar for the surface the confirm returns to,
 			// then the prompt (which carries its own y/n hint).
-			frame = renderSurfaceTabs(surfaceName(ui.confirmReturn)) +
+			frame = renderSurfaceTabs(surfaceName(ui.confirmReturn), W) +
 				RenderConfirmFrame(*ui.pending, W, ui.actionErr)
 		}
 	}
@@ -934,7 +1068,10 @@ func (ui *GraphUI) Run() {
 // becomes newly waiting — once per gate, never from a drill-in (DAG,
 // node detail, intent, confirm), which would discard the user's context.
 func (ui *GraphUI) checkGateSwitch() {
-	topLevel := ui.view == viewGraphRuns || ui.view == viewGraphTemplates || ui.view == viewGraphGates
+	// The Prompt surface counts as top-level: switching away does not
+	// discard context, because the input buffer lives on the UI struct.
+	topLevel := ui.view == viewGraphRuns || ui.view == viewGraphTemplates ||
+		ui.view == viewGraphGates || ui.view == viewGraphPrompt
 	gates := LoadPendingGates(ui.session, ui.now())
 	fresh := false
 	seen := make(map[string]bool, len(gates))

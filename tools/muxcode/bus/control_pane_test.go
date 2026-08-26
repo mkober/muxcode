@@ -119,6 +119,10 @@ func TestControlPaneSurfaceSelectable(t *testing.T) {
 	if c := controlPaneCommand(); c != "muxcode graph ui --templates" {
 		t.Errorf("launcher surface = %q", c)
 	}
+	t.Setenv("MUXCODE_CONTROL_PANE_SURFACE", "prompt")
+	if c := controlPaneCommand(); c != "muxcode graph ui --prompt" {
+		t.Errorf("prompt surface = %q", c)
+	}
 	t.Setenv("MUXCODE_CONTROL_PANE_SURFACE", "no-such-surface")
 	if c := controlPaneCommand(); c != "muxcode graph ui" {
 		t.Errorf("unknown surface must degrade to the graph UI, got %q", c)

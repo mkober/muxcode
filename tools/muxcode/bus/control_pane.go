@@ -33,6 +33,8 @@ const controlPaneBaseCmd = "muxcode graph ui"
 // graph UI rather than an empty pane.
 func controlPaneCommand() string {
 	switch strings.TrimSpace(os.Getenv("MUXCODE_CONTROL_PANE_SURFACE")) {
+	case "prompt":
+		return controlPaneBaseCmd + " --prompt"
 	case "gates":
 		return controlPaneBaseCmd + " --gates"
 	case "launcher", "templates":

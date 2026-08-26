@@ -93,6 +93,7 @@ Commands:
   ui [run-id] [--render-once] [--width N]   Interactive run browser / DAG view (MUX-031)
   ui --templates                            Open the template launcher
   ui --gates [--render-once]                Open the pending-gate approval queue
+  ui --prompt [--render-once]               Open the Prompt surface (MUX-109)
 `)
 }
 
@@ -161,7 +162,7 @@ func graphRetry(args []string) {
 // frame with --render-once — the scriptable seam for integration tests.
 // --width overrides the terminal width for deterministic frames in pipes.
 func graphUI(args []string) {
-	var renderOnce, launcher, gateQueue bool
+	var renderOnce, launcher, gateQueue, promptSurface bool
 	var width int
 	var runID string
 	for i := 0; i < len(args); i++ {
@@ -172,6 +173,8 @@ func graphUI(args []string) {
 			launcher = true
 		case args[i] == "--gates":
 			gateQueue = true
+		case args[i] == "--prompt":
+			promptSurface = true
 		case args[i] == "--width":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "Error: --width requires a value")
@@ -201,9 +204,12 @@ func graphUI(args []string) {
 	if renderOnce {
 		var frame string
 		var err error
-		if gateQueue {
+		switch {
+		case promptSurface:
+			frame, err = tui.PromptRenderOnce(session, width)
+		case gateQueue:
 			frame, err = tui.GateQueueRenderOnce(session, width)
-		} else {
+		default:
 			frame, err = tui.GraphRenderOnce(session, runID, width)
 		}
 		if err != nil {
@@ -211,6 +217,10 @@ func graphUI(args []string) {
 			os.Exit(1)
 		}
 		fmt.Print(frame)
+		return
+	}
+	if promptSurface {
+		tui.NewGraphPromptUI(session).Run()
 		return
 	}
 	if launcher {

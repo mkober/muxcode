@@ -351,7 +351,7 @@ func RenderGraphFrame(snap GraphSnapshot, width, height int, selection string, n
 		headerLines++
 	}
 	if gridW > width || gridH+skipLanes+headerLines > height {
-		return renderGraphHeader(snap, now) + renderGraphFallback(snap, width)
+		return renderGraphHeader(snap, now, width) + renderGraphFallback(snap, width)
 	}
 
 	c := newCanvas(gridW+2, gridH+skipLanes+1)
@@ -391,7 +391,7 @@ func RenderGraphFrame(snap GraphSnapshot, width, height int, selection string, n
 		}
 	}
 
-	return renderGraphHeader(snap, now) + c.String()
+	return renderGraphHeader(snap, now, width) + c.String()
 }
 
 // writeCursorAndLabel places the selection cursor and the node label.
@@ -468,7 +468,7 @@ func (s GraphSnapshot) edgeActive(e bus.Edge) bool {
 // static surface tab bar (a DAG is a drill-in of Graph Runs). Elapsed
 // time freezes at UpdatedAt for finished runs so post-mortem views are
 // stable.
-func renderGraphHeader(snap GraphSnapshot, now time.Time) string {
+func renderGraphHeader(snap GraphSnapshot, now time.Time, width int) string {
 	run := snap.Run
 	end := now.Unix()
 	if run.State != bus.GraphRunRunning {
@@ -497,7 +497,7 @@ func renderGraphHeader(snap GraphSnapshot, now time.Time) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(renderSurfaceTabs("Graph Runs"))
+	b.WriteString(renderSurfaceTabs("Graph Runs", width))
 	fmt.Fprintf(&b, "  %s%s%s%s  %s[%s]%s  %s%s  %d/%d done  %s%s\n",
 		Purple, Bold, run.ID, RST,
 		stateColor, run.State, RST,
@@ -532,10 +532,12 @@ func fitWidth(line string, width int) string {
 }
 
 // renderSurfaceTabs renders the surface tab bar every top-level frame
-// shares: all three surfaces named, the active one highlighted, then the
-// cycle hint.
-func renderSurfaceTabs(active string) string {
-	names := []string{"Launch Graph", "Graph Runs", "Pending Gates"}
+// shares: all surfaces named, the active one highlighted, then the cycle
+// hint. Width-clamped like every other frame line — at four surfaces the
+// bar outgrows a narrow pane, and an unclamped bar wraps and shifts the
+// whole frame down a row.
+func renderSurfaceTabs(active string, width int) string {
+	names := []string{"Prompt", "Launch Graph", "Graph Runs", "Pending Gates"}
 	parts := make([]string, 0, len(names))
 	for _, n := range names {
 		if n == active {
@@ -547,7 +549,8 @@ func renderSurfaceTabs(active string) string {
 	// One blank row above the bar for breathing room under the popup
 	// border. Safe against the scroll-shift bug: clampLines guarantees a
 	// frame never prints past the pane, so this row cannot be eaten.
-	return "\n  " + strings.Join(parts, Comment+" / "+RST) + Comment + "   ⇥ Tab: next surface" + RST + "\n"
+	bar := "  " + strings.Join(parts, Comment+" / "+RST) + Comment + "   ⇥ Tab: next surface" + RST
+	return "\n" + fitWidth(bar, width) + "\n"
 }
 
 // ── Run list ───────────────────────────────────────────────
@@ -568,7 +571,7 @@ type RunListRow struct {
 // waits. Empty state renders explicitly — never a blank frame.
 func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 	var b strings.Builder
-	b.WriteString(renderSurfaceTabs("Graph Runs"))
+	b.WriteString(renderSurfaceTabs("Graph Runs", width))
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 
 	if len(rows) == 0 {
@@ -618,7 +621,7 @@ func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 // picker stays.
 func RenderTemplateListFrame(infos []bus.GraphTemplateInfo, width, sel int, errMsg string) string {
 	var b strings.Builder
-	b.WriteString(renderSurfaceTabs("Launch Graph"))
+	b.WriteString(renderSurfaceTabs("Launch Graph", width))
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 
 	if len(infos) == 0 {
@@ -654,7 +657,7 @@ func RenderTemplateListFrame(infos []bus.GraphTemplateInfo, width, sel int, errM
 // template's messages interpolate ${intent}.
 func RenderIntentPromptFrame(template, input string, width int) string {
 	var b strings.Builder
-	b.WriteString(renderSurfaceTabs("Launch Graph"))
+	b.WriteString(renderSurfaceTabs("Launch Graph", width))
 	fmt.Fprintf(&b, "  %s%sLaunch %s%s\n", Purple, Bold, template, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 	fmt.Fprintf(&b, "  %sThis template interpolates ${intent} — describe the work:%s\n\n", Comment, RST)
@@ -778,7 +781,7 @@ type ResolvedGate struct {
 // explicit — never a blank frame.
 func RenderGateQueueFrame(gates []PendingGate, resolved []ResolvedGate, width, sel int) string {
 	var b strings.Builder
-	b.WriteString(renderSurfaceTabs("Pending Gates"))
+	b.WriteString(renderSurfaceTabs("Pending Gates", width))
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 
 	if len(gates) == 0 {
@@ -923,7 +926,7 @@ func RenderNodeDetailFrame(snap GraphSnapshot, nodeID string, width int) string 
 	glyph, color := nodeGlyph(node.Type, state)
 
 	var b strings.Builder
-	b.WriteString(renderSurfaceTabs("Graph Runs"))
+	b.WriteString(renderSurfaceTabs("Graph Runs", width))
 	fmt.Fprintf(&b, "  %s%s%s %s%s  %s%s%s\n", color, glyph, RST, Bold+node.ID, RST, color, state, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 
