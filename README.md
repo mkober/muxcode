@@ -624,7 +624,7 @@ Useful keybindings for navigating your MuxCode session:
 | `Prefix + a` | Cycle edit-window agents from any window |
 | `Prefix + R` | Open provider selector (hot reload) |
 | `Prefix + i` | Open API testing modal |
-| `Prefix + b` | Open MuxCode quick menu |
+| `Prefix + b` | Open MuxCode quick menu — graph group: `Graph Runs (g)`, `Launch Graph (G)`, `Pending Gates (a)` |
 | `Prefix + C` | New MuxCode session (project picker) |
 | `Prefix + z` | Zoom current pane to full screen |
 | `Prefix + [` | Enter scroll/copy mode |

@@ -143,6 +143,14 @@ func nodeRequiresGate(n *Node) bool {
 	return gatedAtlassianActions[n.Action]
 }
 
+// NodeRequiresGate reports whether a node fires a git mutation or an
+// Atlassian write. Exported for the gate queue (MUX-031), which must flag
+// approvals releasing such nodes with the same predicate the validator's
+// gate rule applies — a second implementation would drift.
+func NodeRequiresGate(n *Node) bool {
+	return nodeRequiresGate(n)
+}
+
 // ParseGraph decodes a graph definition from JSON.
 func ParseGraph(data []byte) (*Graph, error) {
 	var g Graph

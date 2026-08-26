@@ -68,7 +68,7 @@ func TestBuildPopupCommand_UsesAbsoluteSize(t *testing.T) {
 func TestBuildPopupCommand_ExpandsTitleAndCommand(t *testing.T) {
 	stubClient(t, 317, 80)
 	cfg := ModalConfig{
-		Name: "agent-history", Title: " History: {1} ", Width: "80%", Height: "70%",
+		Name: "fixture-history", Title: " History: {1} ", Width: "80%", Height: "70%",
 		Command: "muxcode history {1}", AutoCap: true,
 	}
 	args := BuildPopupCommand(cfg, "s", "", []string{"build"})

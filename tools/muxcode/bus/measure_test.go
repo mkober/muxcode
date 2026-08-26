@@ -62,9 +62,6 @@ func TestMeasureLines_Empty(t *testing.T) {
 // ResolveSize falls back to percentage defaults rather than sizing to nothing.
 func TestMeasurers_UnknownSessionYieldsSentinel(t *testing.T) {
 	measurers := map[string]ContentMeasurer{
-		"agent status":    MeasureAgentStatus,
-		"proc list":       MeasureProcList,
-		"cron list":       MeasureCronList,
 		"remote sessions": MeasureRemoteSessions,
 	}
 	for name, m := range measurers {

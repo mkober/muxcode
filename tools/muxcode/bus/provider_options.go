@@ -45,7 +45,7 @@ var hardcodedFallbackModels = map[string]ProviderModels{
 		// then fails on its first request.
 		Default: "opencode-go/minimax-m3",
 		Models: []string{
-			"opencode-go/grok-4.5",
+			"opencode-go/grok-4.6",
 			"opencode-go/gpt-5.6-luna",
 			"opencode-go/glm-5.3",
 			"opencode-go/kimi-k3",

@@ -325,8 +325,19 @@ Lifecycle events per transition — ten in all: `graph-node-start`, `graph-node-
 edit notification is the release signal) and `graph-step-error` (an executor tick errored
 for one run).
 
+**Observing a run.** `graph status` flattens the DAG back into a list, which is exactly the
+shape the graph exists to escape. The interactive surfaces — `muxcode graph ui` — render the run
+as a layered node grid with per-state glyphs, active edges, and loop badges, plus a template
+launcher and a cross-run `wait_human` approval queue
+([MUX-031](requirements/completed/MUX-031-graph-run-tui.md)). They are **pure readers** of the run
+store on a 2s tick with no daemon coupling, so they cost nothing when idle and survive a daemon
+restart; `--render-once` emits a single frame for scripts and tests. Gate approval from the TUI
+calls `bus.ApproveGraphGate` directly — the same path as the CLI, with no bus-message route into
+it, preserving the rule that a human at the keyboard is the only thing that releases a gate.
+
 Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (5 built-ins),
 `bus/graph_run.go` (durable store), `bus/graph_exec.go` (executor), `cmd/graph.go` (CLI),
+`tui/graph.go` + `tui/graph_ui.go` (interactive surfaces),
 `daemon/daemon.go` (`checkGraphRuns()`). CLI reference:
 [Agent Bus CLI](agent-bus.md#muxcode-graph).
 

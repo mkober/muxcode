@@ -2,7 +2,7 @@
 
 Index of all pending requirement specs. Every planned feature with a written spec has a row
 in the [Spec index](#spec-index) below; ideas without a spec doc yet are collected in
-[Ideas without specs](#ideas-without-specs). 78 delivered specs live in
+[Ideas without specs](#ideas-without-specs). 79 delivered specs live in
 [`completed/`](../completed/) — each with requirements, key files, and implementation notes.
 
 Spec lifecycle: `backlog/` (planned or parked) → `drafts/` (actively being designed or
@@ -83,7 +83,12 @@ _None — no spec is currently being implemented._
 | MUX-025 | [`MUX-025-modal-log-viewer.md`](./MUX-025-modal-log-viewer.md) | Low | Lifecycle/log viewer modal |
 | MUX-026 | [`MUX-026-modal-memory-browser.md`](./MUX-026-modal-memory-browser.md) | Low | Memory browser modal with BM25 search |
 | MUX-027 | [`MUX-027-modal-webhook-monitor.md`](./MUX-027-modal-webhook-monitor.md) | Low | Live webhook request inspector modal with replay |
-| MUX-031 | [`MUX-031-graph-run-tui.md`](./MUX-031-graph-run-tui.md) | Medium | Interactive TUI for [MUX-014](../completed/MUX-014-graph-agent-orchestrator.md) graph runs: run browser → layered live DAG with Dracula state colors → node detail; `wait_human` approve/cancel/retry from the view; `--render-once` scriptable frame; depends on MUX-014 Phase 2 run store |
+
+> `MUX-023`, `MUX-024`, and `MUX-026` each propose replacing a popup that
+> [`MUX-031`](../completed/MUX-031-graph-run-tui.md) retires. **`MUX-023` and `MUX-024` only**
+> carry a "Replaces existing static … menu entry" acceptance criterion, which needs rewording
+> to "adds" once MUX-031 lands; `MUX-026` has no menu criterion and needs no edit. See that
+> spec's *Interaction with three existing modal specs*.
 
 ### Completed (id registry)
 
@@ -170,6 +175,7 @@ MUX-003/004 were delivered under GitHub tracking; MUX-028–MUX-099 are retroact
 | MUX-099 | [`MUX-099-workflow-state-machine.md`](../completed/MUX-099-workflow-state-machine.md) | Workflow state machine |
 | MUX-014 | [`MUX-014-graph-agent-orchestrator.md`](../completed/MUX-014-graph-agent-orchestrator.md) | Graph-agent orchestrator — DAG control plane over the bus: 7 node types, outcome-keyed edges, `all`/`any`/`quorum` join barriers, capped loops, `wait_human` gates, durable per-run store under `BusDir()/graphs/<run-id>/`, stateless executor tick (first tick after a daemon restart *is* the resume), 7-subcommand CLI, 5 builtin templates. `scripts/test-graph-orchestrator.sh` 29/29. **Closed at 31/32 steps and 11/15 criteria** — see "Known gaps at completion" in the spec; the open one that matters is verifying graph sends against dedup/relay-suppression/delivery-ack. The live run caught two defects every executor unit test passed over: graph sends were unreplyable (`From = "daemon"` rendered verbatim), and joins hung forever on unknown outcomes |
 | MUX-102 | [`MUX-102-agent-mode.md`](../completed/MUX-102-agent-mode.md) | Agent mode (renumbered from MUX-032 to free the id for the loop-detector granularity spec) |
+| MUX-031 | [`MUX-031-graph-run-tui.md`](../completed/MUX-031-graph-run-tui.md) | Graph agent management TUIs for [MUX-014](../completed/MUX-014-graph-agent-orchestrator.md) — retired six low-value `prefix + b` popups (capability preserved on the CLI) and reallocated the slots to a run browser (list → layered DAG → node detail), a template launcher validating before it starts a run, and a cross-run `wait_human` gate queue flagging approvals that release git/Atlassian mutations. Gate approval calls `bus.ApproveGraphGate` directly with no bus-message path, and reuses the validator's own `NodeRequiresGate` predicate so the queue cannot drift from the gate rule. `scripts/test-graph-tui.sh` (42 checks, hermetic fixture run store). Closed at 58/60 with a documented *Deferred gaps* table — node detail lacks `EndedAt`/message-id/input-preview, and the removed-popup criterion's CLI half is verified only by hand |
 | MUX-103 | [`MUX-103-auto-clear-between-tasks.md`](../completed/MUX-103-auto-clear-between-tasks.md) | Daemon-injected `/clear` for episodic Claude roles after task completion — `bus/clear.go` guard matrix (idle, empty inbox, no live in-flight task, no reload marker, Claude-only, non-harness, not mode-cycled), `edit`/`auto` hard-excluded at both parse and guard, exactly-once via `auto-clear-{role}.last` marker written only on successful injection, dual completion stores (tasks + responded delivery statuses), `muxcode clear <role>` manual path; `scripts/test-auto-clear.sh` (22 checks, real scratch daemon + tmux). Post-clear delivery verified live rather than by the suite — a scratch pane has no Claude runtime and so no `Stop` hook to relaunch the inbox listener |
 
 ## Ideas without specs

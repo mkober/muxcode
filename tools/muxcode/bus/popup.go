@@ -40,40 +40,22 @@ func DefaultPopupConfigs() []ModalConfig {
 			Measurer: MeasureSwitchSession,
 		},
 		{
-			Name: "agent-status", Title: " Agent Status ",
+			Name: "graph-runs", Title: " Graph Runs ",
+			Width: "85%", Height: "75%",
+			Command: "muxcode graph ui",
+			AutoCap: true, // interactive TUI sizes itself to whatever it is given
+		},
+		{
+			Name: "graph-launch", Title: " Launch Graph ",
 			Width: "70%", Height: "60%",
-			Command:  "muxcode status" + pressAnyKey,
-			Measurer: MeasureAgentStatus,
+			Command: "muxcode graph ui --templates",
+			AutoCap: true, // interactive TUI sizes itself to whatever it is given
 		},
 		{
-			Name: "agent-history", Title: " History: {1} ",
-			Width: "80%", Height: "70%",
-			Command: "muxcode history {1}" + pressAnyKey,
-			AutoCap: true, // arbitrary history payloads
-		},
-		{
-			Name: "memory-context", Title: " Memory ",
-			Width: "80%", Height: "70%",
-			Command:  "muxcode memory context" + pressAnyKey,
-			Measurer: MeasureMemoryContext,
-		},
-		{
-			Name: "spawn-agent", Title: " Spawn: {1} ",
-			Width: "70%", Height: "50%",
-			Command: `muxcode spawn start {1} "{2}"` + pressAnyKey,
-			AutoCap: true, // arbitrary spawn output
-		},
-		{
-			Name: "proc-list", Title: " Processes ",
-			Width: "70%", Height: "50%",
-			Command:  `muxcode proc list; echo; echo "---"; muxcode spawn list` + pressAnyKey,
-			Measurer: MeasureProcList,
-		},
-		{
-			Name: "cron-list", Title: " Cron Jobs ",
-			Width: "70%", Height: "50%",
-			Command:  "muxcode cron list" + pressAnyKey,
-			Measurer: MeasureCronList,
+			Name: "graph-gates", Title: " Pending Gates ",
+			Width: "80%", Height: "60%",
+			Command: "muxcode graph ui --gates",
+			AutoCap: true, // interactive TUI sizes itself to whatever it is given
 		},
 		{
 			Name: "remote-sessions", Title: " Sessions ",

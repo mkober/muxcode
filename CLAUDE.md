@@ -57,6 +57,7 @@ tools/muxcode-llm-harness/    # Go module — standalone local LLM harness
 | `bash scripts/test-disk-pressure.sh` | Integration test for the disk-pressure signal and its alert cooldown — healthy machine stays silent, footprint/headroom breaches alert, alert fires once per window not every 60s cycle (safe: never invokes `CleanupStale`) |
 | `bash scripts/test-auto-clear.sh` | Integration test for auto-clear between tasks (MUX-103) — a scratch daemon fires `/clear` exactly once per completed task into an enrolled idle pane, guards hold (pending inbox, edit hard-exclusion, unenrolled role), manual `muxcode clear` path works (isolated scratch bus + scratch tmux session; requires the installed binary to include MUX-103) |
 | `bash scripts/test-graph-orchestrator.sh` | Integration test for the graph-agent orchestrator (MUX-014) — validation gates (uncapped cycle, ungated commit, builtin templates), async `graph run`, linear send→condition→send execution with lifecycle events, single completion wake, fan-out/join barrier, daemon kill/restart resume, `graph retry --from` (isolated scratch bus + scratch daemon; requires the installed binary to include MUX-014) |
+| `bash scripts/test-graph-tui.sh` | Integration test for the graph TUI (MUX-031) — `graph ui --render-once` DAG frames (fan-out/join glyphs, waiting-gate prominence, run-list gate badge), cross-run gate queue with commit-downstream flagging, wide-graph flat fallback ordering, completed-run post-mortem, six removed popups unknown while their CLI commands still succeed (hermetic fixture run store under a scratch `BUS_SESSION`; requires the installed binary to include MUX-031) |
 
 Both Go modules have **no external dependencies** (stdlib only).
 
@@ -260,4 +261,4 @@ Test: `cd tools/muxcode-llm-harness && go test ./...`
 - [Agents](docs/agents.md) — roles, permissions, local LLM, tool profiles, Ollama health, LLM harness
 - [Hooks](docs/hooks.md) — hook system, chain behavior, customization
 - [Configuration](docs/configuration.md) — env vars, directory structure, examples
-- [Backlog](docs/requirements/backlog.md) — planned features
+- [Backlog](docs/requirements/backlog/backlog.md) — planned features

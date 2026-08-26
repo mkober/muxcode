@@ -237,7 +237,14 @@ Templates: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`,
 
 ### Phase 5: Observability
 
-- [x] Console/TUI run view: node grid with Dracula state colors, active edges, run header (id, template, elapsed) — minimal status render only; the dedicated interactive DAG TUI (run browser, gate approval from the view) is [`MUX-031-graph-run-tui.md`](../backlog/MUX-031-graph-run-tui.md), buildable in parallel once Phase 2's run store lands
+- [x] Console/TUI run view: node grid with Dracula state colors, active edges, run header (id, template, elapsed) — minimal status render only; the dedicated interactive DAG TUI (run browser, gate approval from the view) is [`MUX-031-graph-run-tui.md`](./MUX-031-graph-run-tui.md), buildable in parallel once Phase 2's run store lands
+
+  > **Update 2026-08-26:** MUX-031 has since delivered that surface — `muxcode graph ui` provides
+  > the run browser, layered DAG, node detail, template launcher, and cross-run gate queue in
+  > `tui/graph.go` + `tui/graph_ui.go`. This checkbox's original scope note stands: the render
+  > reached from `cmd/graph.go` is still `graph status` only, and `bus/console.go` still contains
+  > zero graph references. The **"TUI/console can render a run"** criterion listed under *Known
+  > gaps at completion* is now met by MUX-031's `tui/` package, not by anything in MUX-014.
 - [x] `graph status --json` for scripting
 - [x] Docs: `docs/architecture.md` control-plane section, `docs/agent-bus.md` CLI reference, backlog cross-links
 
@@ -255,7 +262,7 @@ Templates: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`,
 > `cmd/graph.go:254` — i.e. the render is delivered by `graph status`, **not** wired into
 > `bus/console.go` or the `tui/` package, neither of which references graphs. That matches
 > this step's "minimal status render only" scoping, with the interactive DAG surface left to
-> [`MUX-031-graph-run-tui.md`](../backlog/MUX-031-graph-run-tui.md) — but nobody should read
+> [`MUX-031-graph-run-tui.md`](./MUX-031-graph-run-tui.md) — but nobody should read
 > this checkbox as "the console shows graph runs".
 
 ### Phase 6: Integration test
@@ -358,7 +365,7 @@ not misrepresent itself.
 | Phase 4 step 4 — verify graph sends pass dedup / relay-suppression / delivery-ack | A wide `map` fan-out or capped retry loop issues repeated same-`(from,to,action)` sends to one role, which trips relay-suppression at 4 within 300s. Plausible silent false positive in production | **Zero** references to dedup, relay-suppression, or delivery-ack in `graph_exec_test.go` *or* `scripts/test-graph-orchestrator.sh` |
 | Criterion: specialists unchanged (guards apply to graph traffic) | Same root as above | Same — no test exercises it |
 | Criterion: worktree output contract (harvest diff before cleanup) | MUX-091 deletes worktrees on spawn completion; uncommitted worker output would die with them | No harvest-before-cleanup implementation found in `graph_exec.go` |
-| Criterion: TUI/console can render a run | `graph status` renders a colored node grid, but from `cmd/graph.go` — `bus/console.go` and `tui/` contain **zero** graph references | Factually unmet as written; the criterion may simply be broader than intended (see [`MUX-031`](../backlog/MUX-031-graph-run-tui.md)) |
+| Criterion: TUI/console can render a run | `graph status` renders a colored node grid, but from `cmd/graph.go` — `bus/console.go` and `tui/` contain **zero** graph references | Factually unmet as written; the criterion may simply be broader than intended (see [`MUX-031`](./MUX-031-graph-run-tui.md)) |
 | Criterion: existing chain/subscription/spawn/daemon tests still pass | The graph layer touches `main.go`, `message.go`, `task.go`, `daemon.go` — not purely additive | No full `go test ./...` run observed by the verifying agent |
 
 **If this spec is reopened, start with the first row.** It is the only one that could hide a
