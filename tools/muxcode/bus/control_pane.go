@@ -125,6 +125,20 @@ func controlPaneStatus(session, win string) (present, isPane bool) {
 	return false, false
 }
 
+// ClampControlPane re-applies the fixed height to a window's control
+// pane. Window refits (resize-window on attach or a terminal resize)
+// rescale panes PROPORTIONALLY, so the fixed-height strip drifts with
+// every geometry change — a pane split at 14 rows of an 80x24 detached
+// window opens at over half the attached screen. Callers run this after
+// any resize. A pane 2 that is not ours is never touched, and win may
+// be a window index as well as a name.
+func ClampControlPane(session, win string) {
+	if present, isPane := controlPaneStatus(session, win); present && isPane {
+		_ = TmuxRun("resize-pane", "-t", session+":"+win+".2",
+			"-y", strconv.Itoa(ControlPaneHeight()))
+	}
+}
+
 // EnsureControlPane respawns a missing control pane and, with recycle,
 // kills a live one to relaunch on the freshly-installed binary (the
 // daemon recycles once per start, and every install restarts the

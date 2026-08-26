@@ -145,3 +145,30 @@ func TestEnsureControlPane(t *testing.T) {
 		t.Errorf("a foreign pane 2 must never be touched:\n%s", j)
 	}
 }
+
+// The clamp re-applies the fixed height, and only to a pane that is
+// ours — a foreign pane 2 (or no pane 2) is never resized.
+func TestClampControlPane(t *testing.T) {
+	unsetEnvForTest(t, "MUXCODE_CONTROL_PANE_HEIGHT")
+
+	calls := stubPaneList(t, "0:nvim\n1:claude\n2:muxcode")
+	ClampControlPane("s", "edit")
+	j := joinCalls(calls)
+	for _, want := range []string{"resize-pane", "-t s:edit.2", "-y 14"} {
+		if !strings.Contains(j, want) {
+			t.Errorf("clamp missing %q:\n%s", want, j)
+		}
+	}
+
+	calls = stubPaneList(t, "0:nvim\n1:claude\n2:htop")
+	ClampControlPane("s", "edit")
+	if j := joinCalls(calls); strings.Contains(j, "resize-pane") {
+		t.Errorf("a foreign pane 2 must never be resized:\n%s", j)
+	}
+
+	calls = stubPaneList(t, "0:nvim\n1:claude")
+	ClampControlPane("s", "edit")
+	if j := joinCalls(calls); strings.Contains(j, "resize-pane") {
+		t.Errorf("a missing pane 2 must not be resized:\n%s", j)
+	}
+}
