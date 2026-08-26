@@ -34,7 +34,9 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 
 ### In progress
 
-_None — no spec is currently being implemented._
+| ID | Spec | Priority | Summary |
+|----|------|----------|---------|
+| MUX-109 | [`MUX-109-prompt-mode-graph-control-pane.md`](../drafts/MUX-109-prompt-mode-graph-control-pane.md) | Medium | **Prompt** surface on the [control pane](../completed/MUX-108-control-pane.md) plus a headless local-harness prompt-agent whose results render back into the surface: name a graph to launch it, ask after runs, approve a **named** gate, or compose a project-local graph (validate-before-write, never written on failure) — or toggle to inject the typed text into the window's active main agent via `TmuxSendLiteral()`. Three-scope graph resolution already exists (`ResolveGraphTemplate`/`ListGraphTemplates`); the real gap is the write path. Moves the single local-model default to `qwen3:4b` for **all** local roles — one model resident at a time |
 
 ### Reliability & observability
 
@@ -75,7 +77,6 @@ _None — no spec is currently being implemented._
 
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
-| MUX-109 | [`MUX-109-prompt-mode-graph-control-pane.md`](./MUX-109-prompt-mode-graph-control-pane.md) | Medium | **Prompt** surface on the [control pane](../completed/MUX-108-control-pane.md) plus a local-harness prompt-agent: name a graph to launch it, ask after runs, approve a **named** gate, or compose a project-local graph (validate-before-write, never written on failure) — or toggle to inject the typed text into the window's active main agent via `TmuxSendLiteral()`. Three-scope graph resolution already exists (`ResolveGraphTemplate`/`ListGraphTemplates`); the real gap is the write path. Authority is unchanged — no gate is approved unless the user's prompt names it |
 | MUX-107 | [`MUX-107-tui-component-kit.md`](./MUX-107-tui-component-kit.md) | Medium | Extract the tab bar, footer, list, confirm, and empty state duplicated across `graph_ui.go`/`remote.go`/`model.go` into a shared kit with **golden-frame pinning tests written before the refactor**. Makes [`docs/tui-style.md`](../../tui-style.md) structural rather than advisory — a `List` that renders its own empty state cannot omit one, and a component taking `height` cannot ignore it (the MUX-031 defect) |
 | MUX-020 | [`MUX-020-cli-help-command.md`](./MUX-020-cli-help-command.md) | Low | `muxcode help` command: discoverable, grouped CLI reference |
 | MUX-021 | [`MUX-021-demo-mode-agent-coverage.md`](./MUX-021-demo-mode-agent-coverage.md) | Low | Refresh `bus/demo.go` scenarios to cover the current agent roster |
