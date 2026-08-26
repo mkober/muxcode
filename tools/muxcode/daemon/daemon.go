@@ -111,6 +111,8 @@ type Daemon struct {
 
 	lastAgentDefsCheck int64
 	lastPaneSupervise  int64
+	paneRecycleDone    bool  // recycle-on-install decided (once per daemon start)
+	startedAt          int64 // daemon start time — recycle only panes that predate it
 
 	lastPollHealthCheck int64
 	pollGapSince        map[string]int64 // role → when a receipt gap first appeared (0 = none)
@@ -199,6 +201,8 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		permBlocked:           make(map[string]bool),
 		permBlockAlerted:      make(map[string]bool),
 		lastAgentDefsCheck:    now, // skip first interval — lets stamps settle on startup
+		lastPaneSupervise:     now, // skip first interval — the launcher owns launch-time pane creation; a sweep mid-launch sees half-built windows as pane-less and double-creates
+		startedAt:             now,
 		pollGapSince:          make(map[string]int64),
 		pollGapAlerted:        make(map[string]bool),
 		pollGapRecovered:      make(map[string]bool),

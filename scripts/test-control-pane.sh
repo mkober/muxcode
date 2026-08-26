@@ -28,6 +28,10 @@ WORK=$(mktemp -d /tmp/control-pane-XXXXXX)
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 export MUXCODE_AGENT_CLI=claude MUXCODE_RUN_CLI=claude
 export MUXCODE_TMP_CLEANUP_THRESHOLD=0
+# Compress supervisor time: the first sweep runs one interval after
+# daemon start (the launcher owns launch-time creation), so the default
+# 60s would stall every daemon-restart check below.
+export MUXCODE_CONTROL_PANE_CHECK_SECS=2
 unset MUXCODE_CONTROL_PANE_DISABLE MUXCODE_CONTROL_PANE_EXCLUDE 2>/dev/null || true
 BUSDIR="/tmp/muxcode-bus-$SESSION"
 MUX=$(command -v muxcode)
@@ -66,7 +70,7 @@ echo "-- pane creation"
 pkill -f "watch $SESSION" 2>/dev/null || true
 "$MUX" watch "$SESSION" --poll 2 >"$WORK/daemon.log" 2>&1 &
 DPID=$!
-sleep 4 # first sweep runs at startup
+sleep 4 # first sweep runs one (compressed) interval after start
 
 for w in edit build run; do
   layout=$(panes_of "$w")
@@ -103,8 +107,9 @@ done
 
 echo "-- respawn"
 tmux kill-pane -t "$SESSION:build.2"
-# Restart the daemon: its startup sweep respawns immediately (the same
-# path that recycles panes onto a fresh binary after an install).
+# Restart the daemon: its first sweep (one compressed interval in)
+# respawns the pane — the same path that recycles panes onto a fresh
+# binary after an install.
 kill "$DPID" 2>/dev/null || true
 wait "$DPID" 2>/dev/null || true
 "$MUX" watch "$SESSION" --poll 2 >>"$WORK/daemon.log" 2>&1 &
@@ -114,6 +119,21 @@ if panes_of build | grep -q "^2:muxcode"; then
   ok "killed pane respawned by the supervision sweep"
 else
   fail "killed pane respawned (got: $(panes_of build | tr '\n' ' '))"
+fi
+
+# ── 3b. A duplicate control pane converges to one ────────────
+# The 2026-08-26 incident: two creators racing at launch left a second,
+# untitled graph pane on the window. The sweep must kill the extra and
+# keep exactly one.
+
+echo "-- duplicate dedupe"
+tmux split-window -vf -d -l 5 -t "$SESSION:run" "muxcode graph ui"
+sleep 5 # two sweep intervals — the running daemon dedupes in place
+dup_count=$(panes_of run | grep -c ":muxcode$" || true)
+if [ "$dup_count" = "1" ]; then
+  ok "duplicate control pane killed, one survivor"
+else
+  fail "duplicate control pane killed (got $dup_count muxcode panes: $(panes_of run | tr '\n' ' '))"
 fi
 
 # ── 4. A new gate switches the pane to Pending Gates ─────────

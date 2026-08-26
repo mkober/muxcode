@@ -171,7 +171,7 @@ func TestResizeAllWindows_ClampsControlPanes(t *testing.T) {
 		joined := strings.Join(args, " ")
 		switch {
 		case strings.Contains(joined, "list-panes"):
-			return "0:bash\n1:claude\n2:muxcode", nil
+			return "%0:0:\n%1:1:\n%2:2:muxcode graph ui", nil
 		case strings.Contains(joined, "window_width"):
 			return "200\t48", nil
 		}
@@ -195,15 +195,10 @@ func TestResizeAllWindows_ClampsControlPanes(t *testing.T) {
 	if len(clamps) != 2 {
 		t.Fatalf("expected one clamp per window, got %v", clamps)
 	}
-	for _, want := range []string{"main:0.2", "sub:1.2"} {
-		found := false
-		for _, c := range clamps {
-			if strings.Contains(c, want) && strings.Contains(c, "-y 14") {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("expected a -y 14 clamp for %s, got %v", want, clamps)
+	for _, c := range clamps {
+		// The clamp targets the scanned pane id, not an assumed index.
+		if !strings.Contains(c, "-t %2") || !strings.Contains(c, "-y 14") {
+			t.Errorf("clamp must target the pane id at -y 14: %s", c)
 		}
 	}
 }

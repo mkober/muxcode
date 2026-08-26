@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The control pane (MUX-108) is a fixed full-width pane at the bottom of
@@ -20,6 +21,12 @@ import (
 
 const controlPaneDefaultHeight = 14
 
+// controlPaneBaseCmd is the identity of a control pane: every surface
+// variant starts with it, and scanControlPanes matches panes by their
+// tmux start command against this prefix. Old-binary panes were split
+// with the same command, so identification is retroactive.
+const controlPaneBaseCmd = "muxcode graph ui"
+
 // controlPaneCommand returns what the pane runs. The surface is
 // selectable via MUXCODE_CONTROL_PANE_SURFACE so a second control
 // surface never needs a second pane; an unknown name degrades to the
@@ -27,11 +34,11 @@ const controlPaneDefaultHeight = 14
 func controlPaneCommand() string {
 	switch strings.TrimSpace(os.Getenv("MUXCODE_CONTROL_PANE_SURFACE")) {
 	case "gates":
-		return "muxcode graph ui --gates"
+		return controlPaneBaseCmd + " --gates"
 	case "launcher", "templates":
-		return "muxcode graph ui --templates"
+		return controlPaneBaseCmd + " --templates"
 	default:
-		return "muxcode graph ui"
+		return controlPaneBaseCmd
 	}
 }
 
@@ -71,18 +78,28 @@ func ControlPaneEnabledFor(win string) bool {
 // CreateControlPane creates the control pane on a window: a detached
 // full-width bottom split running the graph UI, titled. Call only after
 // panes 0 and 1 exist.
+//
+// -e pins the session: the pane inherits the tmux SERVER environment,
+// where another session's BUS_SESSION can leak in — a scratch-session
+// pane then watches the wrong bus dir and never sees its own gates
+// (found by the integration script's first live run). -P -F prints the
+// new pane's id so the title lands on the pane just created — titling
+// ".2" by assumption is how a racing second creator once titled
+// somebody else's pane and left its own on the hostname default
+// (2026-08-26 duplicate-pane incident).
 func CreateControlPane(session, win string) error {
 	target := session + ":" + win
-	// -e pins the session: the pane inherits the tmux SERVER environment,
-	// where another session's BUS_SESSION can leak in — a scratch-session
-	// pane then watches the wrong bus dir and never sees its own gates
-	// (found by the integration script's first live run).
-	if err := TmuxRun("split-window", "-vf", "-d", "-l", strconv.Itoa(ControlPaneHeight()),
-		"-e", "BUS_SESSION="+session,
-		"-t", target, controlPaneCommand()); err != nil {
+	out, err := tmuxOutputRunner("split-window", "-vf", "-d", "-l", strconv.Itoa(ControlPaneHeight()),
+		"-e", "BUS_SESSION="+session, "-P", "-F", "#{pane_id}",
+		"-t", target, controlPaneCommand())
+	if err != nil {
 		return err
 	}
-	return TmuxRun("select-pane", "-t", target+".2", "-T", " GRAPH ")
+	id := strings.TrimSpace(out)
+	if id == "" {
+		id = target + ".2"
+	}
+	return TmuxRun("select-pane", "-t", id, "-T", " GRAPH ")
 }
 
 // The selected surface is shared across every control pane: each pane is
@@ -110,19 +127,70 @@ func ReadControlPaneSurface(session string) (string, bool) {
 	return s, s != ""
 }
 
-// controlPaneStatus reports whether a window's pane 2 exists and
-// whether it runs the control pane binary.
-func controlPaneStatus(session, win string) (present, isPane bool) {
-	out, err := tmuxOutputRunner("list-panes", "-t", session+":"+win, "-F", "#{pane_index}:#{pane_current_command}")
+// The ready marker records when the launcher finished building this
+// session's windows and control panes. The daemon's recycle-on-install
+// consults it: panes are recycled onto a fresh binary only when they
+// PREDATE the daemon's own start. Without that distinction a daemon
+// started mid-launch treated half-built windows as pane-less and
+// created its own — the duplicate-control-pane incident (2026-08-26).
+func controlPaneReadyMarker(session string) string {
+	return filepath.Join(BusDir(session), "control-panes-ready")
+}
+
+// WriteControlPaneReadyMarker stamps the marker with the current time.
+func WriteControlPaneReadyMarker(session string) {
+	_ = os.WriteFile(controlPaneReadyMarker(session),
+		[]byte(strconv.FormatInt(time.Now().Unix(), 10)), 0644)
+}
+
+// ControlPanesPredate reports whether the session's control panes were
+// built before the given unix time. A missing or unreadable marker
+// reads as predating — recycling a fresh pane is a flicker, skipping a
+// stale one leaves an old binary running.
+func ControlPanesPredate(session string, t int64) bool {
+	data, err := os.ReadFile(controlPaneReadyMarker(session))
 	if err != nil {
-		return false, false
+		return true
+	}
+	ts, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return true
+	}
+	return ts < t
+}
+
+// controlPaneScan is one window's control-pane census. Panes are
+// identified by tmux start command (prefix controlPaneBaseCmd) at index
+// 2 or higher — never by assuming index 2 is ours, which cannot see a
+// duplicate that landed at index 3.
+type controlPaneScan struct {
+	ours     []string // pane ids of control panes, ascending index
+	foreign2 bool     // a pane 2 exists that is not ours (a user's split)
+}
+
+func scanControlPanes(session, win string) (controlPaneScan, error) {
+	var scan controlPaneScan
+	out, err := tmuxOutputRunner("list-panes", "-t", session+":"+win,
+		"-F", "#{pane_id}:#{pane_index}:#{pane_start_command}")
+	if err != nil {
+		return scan, err
 	}
 	for _, ln := range strings.Split(strings.TrimSpace(out), "\n") {
-		if strings.HasPrefix(ln, "2:") {
-			return true, strings.TrimPrefix(ln, "2:") == "muxcode"
+		parts := strings.SplitN(ln, ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		idx, err := strconv.Atoi(parts[1])
+		if err != nil || idx < 2 {
+			continue
+		}
+		if strings.HasPrefix(parts[2], controlPaneBaseCmd) {
+			scan.ours = append(scan.ours, parts[0])
+		} else if idx == 2 {
+			scan.foreign2 = true
 		}
 	}
-	return false, false
+	return scan, nil
 }
 
 // ClampControlPane re-applies the fixed height to a window's control
@@ -130,29 +198,43 @@ func controlPaneStatus(session, win string) (present, isPane bool) {
 // rescale panes PROPORTIONALLY, so the fixed-height strip drifts with
 // every geometry change — a pane split at 14 rows of an 80x24 detached
 // window opens at over half the attached screen. Callers run this after
-// any resize. A pane 2 that is not ours is never touched, and win may
-// be a window index as well as a name.
+// any resize. A pane that is not ours is never touched, and win may be
+// a window index as well as a name.
 func ClampControlPane(session, win string) {
-	if present, isPane := controlPaneStatus(session, win); present && isPane {
-		_ = TmuxRun("resize-pane", "-t", session+":"+win+".2",
-			"-y", strconv.Itoa(ControlPaneHeight()))
+	scan, err := scanControlPanes(session, win)
+	if err != nil || len(scan.ours) == 0 {
+		return
 	}
+	_ = TmuxRun("resize-pane", "-t", scan.ours[0],
+		"-y", strconv.Itoa(ControlPaneHeight()))
 }
 
-// EnsureControlPane respawns a missing control pane and, with recycle,
-// kills a live one to relaunch on the freshly-installed binary (the
-// daemon recycles once per start, and every install restarts the
-// daemon). A pane 2 running something other than the control pane is
-// NEVER touched — it is a user's own split, not ours to kill.
+// EnsureControlPane converges a window to exactly one control pane:
+// duplicates beyond the lowest-index pane are killed (two creators
+// racing at session launch once left a second, untitled graph pane on
+// the window — 2026-08-26), a missing pane respawns, and with recycle
+// the survivor is killed and relaunched on the freshly-installed
+// binary. A foreign pane 2 (the user's own split) is NEVER touched and
+// suppresses creation.
 func EnsureControlPane(session, win string, recycle bool) error {
-	present, isPane := controlPaneStatus(session, win)
+	scan, err := scanControlPanes(session, win)
+	if err != nil {
+		return err
+	}
+	if len(scan.ours) > 1 {
+		for _, id := range scan.ours[1:] {
+			if err := TmuxRun("kill-pane", "-t", id); err != nil {
+				return err
+			}
+		}
+	}
 	switch {
-	case present && !isPane:
+	case len(scan.ours) == 0 && scan.foreign2:
 		return nil
-	case present && isPane && !recycle:
+	case len(scan.ours) > 0 && !recycle:
 		return nil
-	case present && isPane && recycle:
-		if err := TmuxRun("kill-pane", "-t", session+":"+win+".2"); err != nil {
+	case len(scan.ours) > 0:
+		if err := TmuxRun("kill-pane", "-t", scan.ours[0]); err != nil {
 			return err
 		}
 	}

@@ -289,6 +289,11 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 		}
 	}
 
+	// Windows and control panes are complete — stamp the ready marker so
+	// the daemon's recycle-on-install can tell these fresh panes from
+	// stale-binary ones (see ControlPanesPredate).
+	WriteControlPaneReadyMarker(session)
+
 	// Select edit window and agent pane
 	if err := TmuxSelectWindow(session, "edit"); err != nil {
 		TmuxSelectWindow(session, firstWin) // fallback
@@ -389,9 +394,11 @@ func createWindowContent(cfg *LauncherConfig, session, win, projectDir, agentLau
 	_ = TmuxRun("select-pane", "-t", target+".0", "-T", paneZeroTitle(cfg, win))
 
 	// Control pane (MUX-108) — created LAST so panes 0/1 keep their
-	// indices (AgentPane's delivery contract).
+	// indices (AgentPane's delivery contract). Ensure, not Create: it
+	// no-ops (and dedupes) if a pane already exists, so a concurrent
+	// creator cannot leave two.
 	if ControlPaneEnabledFor(win) {
-		_ = CreateControlPane(session, win)
+		_ = EnsureControlPane(session, win, false)
 	}
 
 	return nil
