@@ -97,7 +97,7 @@ than that, the correct outcome is to inject it into the main agent, not to grow 
 - [ ] Intent: **launch** — a named or described graph resolves and starts via `muxcode graph run`, across all three scopes
 - [ ] Intent: **status** — questions about in-flight and completed runs answer from `graph list` / `graph status`
 - [ ] Intent: **gates** — pending `wait_human` gates can be listed, and approved **only** when the user's prompt names the gate or run
-- [ ] A prompt that does not name a specific gate never approves one — pinned by a negative-control test using deliberately suggestive phrasing ("approve whatever is waiting")
+- [x] A prompt that does not name a specific gate never approves one — pinned by a negative-control test using deliberately suggestive phrasing ("approve whatever is waiting")
 - [ ] Single-use gate approval semantics from [MUX-014](../completed/MUX-014-graph-agent-orchestrator.md) are unchanged — re-entering a gate still demands a fresh approval
 - [ ] Intent: **create** — a described workflow is composed into a graph definition, validated, and written project-local by default
 - [ ] A definition failing `Validate()` is **reported, never written** — pinned by a test asserting no file appears on the failure path
@@ -500,9 +500,23 @@ should be tightened to match, not the other way round.
 - [ ] `launch` — resolve across all three scopes and start via `muxcode graph run`
 - [ ] `status` — answer from `graph list` / `graph status`
 - [ ] `gates` — list pending `wait_human` gates
-- [ ] `approve` — dispatch only when the typed text names the gate/run; guard enforced in code, not only in the model prompt
-- [ ] Negative-control test: "approve whatever is waiting" approves nothing
+- [x] `approve` — dispatch only when the typed text names the gate/run; guard enforced in code, not only in the model prompt
+- [x] Negative-control test: "approve whatever is waiting" approves nothing
 - [ ] Confirm single-use approval semantics still hold on a retried gate
+
+**Approve guard verified 2026-08-26.** `checkApproveGuard()` (`harness/prompt_guard.go`) parses the
+actual command for `muxcode graph approve <run> <node>` and refuses unless the user's own text
+contains an exact token match of the run or node id — case-insensitive, with a run-id prefix
+accepted only at ≥8 characters. Wired into the real `Filter.Check()` path at `harness/filter.go:80`,
+not merely available as a helper. The refusal text instructs the model to ask the user to name the
+target rather than approving on inference, so the authority boundary is enforced **outside** the
+model exactly as this spec requires.
+
+The tests go beyond what was asked. Alongside the specified `"approve whatever is waiting"` case
+they include **substring bait** (`"approve the gate"` — `gate` occurs inside `commit-gate` but names
+nothing) and a **short-prefix** case (`"approve wf-17"`), either of which would pass a naive
+`strings.Contains` implementation while leaving the guard broken. `TestFilter_ApproveGuardWired`
+carries its own positive control, noting that "a filter that blocks every approve proves nothing".
 
 ### Phase 5: Graph creation flow
 

@@ -14,6 +14,7 @@ type Filter struct {
 	Role       string
 	CallCounts map[string]int // command hash → count per batch
 	MaxRepeat  int            // max times same command can repeat (default 3)
+	TaskText   string         // this batch's user text — the approve guard checks ids against it (MUX-109)
 }
 
 // NewFilter creates a new filter for the given role.
@@ -72,7 +73,15 @@ func (f *Filter) Check(tc ToolCall) FilterResult {
 		}
 	}
 
-	// Rule 3: Block repetition (same command hash 3+ times)
+	// Rule 3 (MUX-109): the prompt role approves a gate only when the
+	// user's typed text names it — enforced here, outside the model, and
+	// before the repetition rule so a re-attempted approve reports the
+	// named-target refusal rather than a generic loop message.
+	if reason := checkApproveGuard(f.Role, f.TaskText, command); reason != "" {
+		return FilterResult{Blocked: true, Reason: reason}
+	}
+
+	// Rule 4: Block repetition (same command hash 3+ times)
 	hash := commandHash(command)
 	f.CallCounts[hash]++
 	if f.CallCounts[hash] >= f.MaxRepeat {
