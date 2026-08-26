@@ -527,3 +527,56 @@ func TestWriteGraphDefinitionUnknownScope(t *testing.T) {
 		t.Error("expected error for non-writable scope")
 	}
 }
+
+// TestWriteGraphDefinitionUngatedCommitRejected pins the Phase 5 (MUX-109)
+// authority criterion: a composed graph placing a commit node outside a
+// wait_human gate is rejected by the existing validator rule on the write
+// path — no file appears, and there is no bypass. The gated variant is
+// the positive control proving the rule rejects the missing gate, not
+// commit nodes as such.
+func TestWriteGraphDefinitionUngatedCommitRejected(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	ungated := &Graph{
+		Name:  "bad-commit",
+		Start: "c",
+		Nodes: []Node{{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "commit it"}},
+	}
+	_, v, err := WriteGraphDefinition(ungated, GraphScopeProject)
+	if err == nil {
+		t.Fatal("ungated commit node must be rejected")
+	}
+	if v == nil || v.OK() {
+		t.Fatal("expected validation errors")
+	}
+	found := false
+	for _, e := range v.Errors {
+		if strings.Contains(e, "wait_human") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("rejection must cite the gate rule: %v", v.Errors)
+	}
+	if _, statErr := os.Stat(projectGraphDir); !os.IsNotExist(statErr) {
+		t.Error("rejected graph left the directory behind")
+	}
+
+	gated := &Graph{
+		Name:  "gated-commit",
+		Start: "g",
+		Nodes: []Node{
+			{ID: "g", Type: NodeWaitHuman},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "commit it"},
+		},
+		Edges: []Edge{{From: "g", To: "c"}},
+	}
+	if _, _, err := WriteGraphDefinition(gated, GraphScopeProject); err != nil {
+		t.Fatalf("gated commit graph must write: %v", err)
+	}
+}

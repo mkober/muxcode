@@ -55,6 +55,9 @@ func Graph(args []string) {
 		}
 		fmt.Printf("Run %s canceled\n", args[1])
 
+	case "create":
+		graphCreate(args[1:])
+
 	case "retry":
 		graphRetry(args[1:])
 
@@ -85,6 +88,9 @@ func graphUsage() {
 Commands:
   run <template>|--file <path> [intent...]  Start a run (returns immediately; the daemon executes)
   validate <file|template>                  Validate a graph definition file or template
+  create --json '<json>'|<file> [--scope project|user]
+                                            Validate a definition and write it as a template
+                                            (project: .muxcode/graphs/, user: ~/.config/muxcode/graphs/)
   list                                      List resolvable graph templates
   status [--json] [run-id]                  Show a run's per-node state (no id: list all runs)
   cancel <run-id>                           Cancel a run (unstarted nodes are skipped)
@@ -258,6 +264,76 @@ func graphValidate(target string) {
 	if !v.OK() {
 		os.Exit(1)
 	}
+}
+
+// graphCreate validates a composed definition and writes it as a
+// template through WriteGraphDefinition — the Prompt surface's create
+// intent lands here (MUX-109), which is why the JSON can arrive inline:
+// the prompt-agent has no file tools, so the validating CLI is its only
+// write path. A failing definition prints its validation report verbatim
+// and writes nothing; the gate rule (commit/Atlassian behind wait_human)
+// applies to composed graphs identically.
+func graphCreate(args []string) {
+	scope := bus.GraphScopeProject
+	var jsonStr, path string
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--json":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "Error: --json requires a value")
+				os.Exit(1)
+			}
+			jsonStr = args[i+1]
+			i++
+		case args[i] == "--scope":
+			if i+1 >= len(args) || (args[i+1] != bus.GraphScopeProject && args[i+1] != bus.GraphScopeUser) {
+				fmt.Fprintln(os.Stderr, "Error: --scope requires project or user")
+				os.Exit(1)
+			}
+			scope = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "-"):
+			fmt.Fprintf(os.Stderr, "Error: unknown flag %q for graph create\n", args[i])
+			os.Exit(1)
+		case path == "":
+			path = args[i]
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unexpected argument %q\n", args[i])
+			os.Exit(1)
+		}
+	}
+
+	var g *bus.Graph
+	var err error
+	switch {
+	case jsonStr != "" && path != "":
+		fmt.Fprintln(os.Stderr, "Error: give either --json or a file, not both")
+		os.Exit(1)
+	case jsonStr != "":
+		g, err = bus.ParseGraph([]byte(jsonStr))
+	case path != "":
+		g, err = bus.LoadGraphFile(path)
+	default:
+		fmt.Fprintln(os.Stderr, "Usage: muxcode graph create --json '<json>'|<file> [--scope project|user]")
+		os.Exit(1)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	written, v, err := bus.WriteGraphDefinition(g, scope)
+	if err != nil {
+		if v != nil && !v.OK() {
+			fmt.Print(v.Format())
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	for _, w := range v.Warnings {
+		fmt.Printf("  WARN: %s\n", w)
+	}
+	fmt.Printf("Created %s graph %q at %s — launch it with: muxcode graph run %s\n", scope, g.Name, written, g.Name)
 }
 
 func graphList() {
