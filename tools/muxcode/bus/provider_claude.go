@@ -339,7 +339,7 @@ func (p *ClaudeCodeProvider) AcceptStartup(session, pane string, state PaneState
 // No Escape/C-u preamble — stale buffer text is handled by the daemon's
 // notifyRetryInterval (15s). The multi-command preamble was the primary
 // cause of dropped injections during TUI redraws.
-func (p *ClaudeCodeProvider) SendWakeUp(session, role string) error {
+func (p *ClaudeCodeProvider) SendWakeUp(session, role string, force bool) error {
 	target := PaneTarget(session, role)
 	// Send text with -l (literal) to avoid tmux key interpretation
 	cmd := exec.Command("tmux", "send-keys", "-t", target, "-l", "You have new messages")

@@ -447,7 +447,7 @@ func TestLoadPendingGates_CrossRunAndFlags(t *testing.T) {
 		t.Errorf("expected the node's approval prompt, got %q", byRun[benignRun.ID].Prompt)
 	}
 
-	frame := StripAnsi(RenderGateQueueFrame(gates, 120, 0))
+	frame := StripAnsi(RenderGateQueueFrame(gates, nil, 120, 0))
 	for _, want := range []string{"gate", "⚠ mutates", "approval releases:"} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("queue frame missing %q:\n%s", want, frame)
@@ -471,9 +471,33 @@ func TestLoadPendingGates_IgnoresFinishedRuns(t *testing.T) {
 }
 
 func TestRenderGateQueueFrame_EmptyState(t *testing.T) {
-	frame := StripAnsi(RenderGateQueueFrame(nil, 100, 0))
+	frame := StripAnsi(RenderGateQueueFrame(nil, nil, 100, 0))
 	if !strings.Contains(frame, "No gates waiting") {
 		t.Errorf("expected explicit empty state:\n%s", frame)
+	}
+}
+
+// Resolved gates stay visible as history — approved and skipped alike —
+// even when nothing is currently waiting.
+func TestGateQueue_ResolvedHistoryVisible(t *testing.T) {
+	session := scratchGraphSession(t)
+	run := mustCreateRun(t, session, gateGraph())
+	mustTransition(t, session, run.ID, "review", bus.GraphNodeRunning, bus.GraphNodeDone)
+	mustTransition(t, session, run.ID, "gate", bus.GraphNodeReady, bus.GraphNodeWaiting, bus.GraphNodeDone)
+
+	canceled := mustCreateRun(t, session, nonMutatingGateGraph())
+	mustTransition(t, session, canceled.ID, "gate", bus.GraphNodeReady, bus.GraphNodeSkipped)
+
+	resolved := LoadResolvedGates(session, time.Now().Add(30*time.Second), 10)
+	if len(resolved) != 2 {
+		t.Fatalf("expected 2 resolved gates, got %+v", resolved)
+	}
+
+	frame := StripAnsi(RenderGateQueueFrame(nil, resolved, 140, 0))
+	for _, want := range []string{"recent gates", "✓ approved", "○ skipped", "No gates waiting"} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("history frame missing %q:\n%s", want, frame)
+		}
 	}
 }
 
@@ -605,6 +629,119 @@ func TestGraphUI_CancelAndRetryFlow(t *testing.T) {
 	}, 100, ""))
 	if !strings.Contains(frame, "re-arms gate gate") || !strings.Contains(frame, "fresh approval") {
 		t.Errorf("retry confirm must warn about re-armed gates:\n%s", frame)
+	}
+}
+
+// ── Surface cycling (MUX-105 Phases 6–7) ───────────────────
+
+func TestGraphUI_TabCyclesSurfacesForwardAndBack(t *testing.T) {
+	session := scratchGraphSession(t)
+	mustCreateRun(t, session, linearGraph())
+
+	ui := NewGraphUI(session, "")
+	ui.refresh()
+
+	want := []graphView{viewGraphGates, viewGraphTemplates, viewGraphRuns}
+	for _, w := range want {
+		ui.handleKey(9) // Tab
+		if ui.view != w {
+			t.Fatalf("Tab should cycle to view %d, got %d", w, ui.view)
+		}
+	}
+
+	ui.cycleSurface(-1) // Shift-Tab path
+	if ui.view != viewGraphTemplates {
+		t.Errorf("backward cycle from runs should reach the launcher, got %d", ui.view)
+	}
+}
+
+// Tab is inert in every drill-in view — cycling out mid-task would
+// discard context.
+func TestGraphUI_TabInertInGuardedViews(t *testing.T) {
+	session := scratchGraphSession(t)
+	run := mustCreateRun(t, session, linearGraph())
+
+	ui := NewGraphUI(session, run.ID)
+	ui.refresh()
+
+	guarded := []graphView{viewGraphDAG, viewGraphNode, viewGraphIntent, viewGraphConfirm}
+	for _, v := range guarded {
+		ui.view = v
+		if v == viewGraphConfirm {
+			ui.pending = &GraphAction{Kind: "cancel", RunID: run.ID}
+		}
+		ui.handleKey(9)
+		if ui.view != v {
+			t.Errorf("Tab must be inert in view %d, moved to %d", v, ui.view)
+		}
+	}
+}
+
+func TestGraphUI_SelectionSurvivesFullCycle(t *testing.T) {
+	session := scratchGraphSession(t)
+	first := mustCreateRun(t, session, linearGraph())
+	second := mustCreateRun(t, session, fanOutJoinGraph())
+	first.CreatedAt = 100
+	second.CreatedAt = 200
+	for _, r := range []*bus.GraphRun{first, second} {
+		if err := bus.WriteGraphRun(session, r); err != nil {
+			t.Fatalf("WriteGraphRun: %v", err)
+		}
+	}
+
+	ui := NewGraphUI(session, "")
+	ui.refresh()
+	ui.runIdx = 1 // the older run (newest lists first)
+	selected := ui.rows[1].ID
+
+	for i := 0; i < 3; i++ {
+		ui.handleKey(9)
+	}
+	if ui.view != viewGraphRuns {
+		t.Fatalf("expected a full cycle back to runs, got %d", ui.view)
+	}
+	if ui.rows[ui.runIdx].ID != selected {
+		t.Errorf("selection must survive a full cycle: want %s, got %s", selected, ui.rows[ui.runIdx].ID)
+	}
+}
+
+func TestGraphUI_RemovedSelectionFallsBackToFirstRow(t *testing.T) {
+	session := scratchGraphSession(t)
+	first := mustCreateRun(t, session, linearGraph())
+	second := mustCreateRun(t, session, fanOutJoinGraph())
+	first.CreatedAt = 100
+	second.CreatedAt = 200
+	for _, r := range []*bus.GraphRun{first, second} {
+		if err := bus.WriteGraphRun(session, r); err != nil {
+			t.Fatalf("WriteGraphRun: %v", err)
+		}
+	}
+
+	ui := NewGraphUI(session, "")
+	ui.refresh()
+	ui.runIdx = 1 // select the older run, then delete it mid-cycle
+	os.RemoveAll(bus.GraphRunDir(session, ui.rows[1].ID))
+
+	for i := 0; i < 3; i++ {
+		ui.handleKey(9)
+	}
+	if ui.runIdx != 0 {
+		t.Errorf("a removed selection must degrade to the first row, got idx %d", ui.runIdx)
+	}
+}
+
+// Every surface header names itself and carries the cycle hint — the
+// scriptable seam Phase 7 asserts on.
+func TestSurfaceHeadersCarryCycleHint(t *testing.T) {
+	frames := map[string]string{
+		"Graph Runs":    StripAnsi(RenderRunListFrame(nil, 100, -1)),
+		"Launch Graph":  StripAnsi(RenderTemplateListFrame(nil, 100, 0, "")),
+		"Pending Gates": StripAnsi(RenderGateQueueFrame(nil, nil, 100, 0)),
+	}
+	for name, frame := range frames {
+		if !strings.Contains(frame, name) || !strings.Contains(frame, "Tab: next surface") {
+			t.Errorf("%s header must carry the surface name and cycle hint:\n%s", name, frame)
+		}
 	}
 }
 

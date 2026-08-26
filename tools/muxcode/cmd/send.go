@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -198,9 +199,25 @@ func Send(args []string) {
 
 	msg := bus.NewMessage(from, to, msgType, action, payload, replyTo)
 
-	// Atomic dedup check + send under file lock to avoid TOCTOU race
-	sent, err := bus.SendIfNotDuplicate(session, msg)
+	// Atomic dedup check + send under file lock to avoid TOCTOU race.
+	// --force routes through SendForce, bypassing both the window dedup
+	// and the in-flight request guard — the explicit-override contract.
+	var sent bool
+	var err error
+	if force {
+		err = bus.SendForce(session, msg)
+		sent = err == nil
+	} else {
+		sent, err = bus.SendIfNotDuplicate(session, msg)
+	}
 	if err != nil {
+		if errors.Is(err, bus.ErrSendSuppressed) {
+			// A suppressed send is NOT a sent one: no "Sent" line, no
+			// tracked task (a task for an undelivered message re-arms the
+			// guard and jams every retry), non-zero exit.
+			fmt.Printf("NOT SENT — %v\nRe-send with --force to deliver anyway.\n", err)
+			os.Exit(1)
+		}
 		fmt.Fprintf(os.Stderr, "Error sending message: %v\n", err)
 		os.Exit(1)
 	}

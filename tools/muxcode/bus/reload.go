@@ -429,7 +429,7 @@ func wakeAfterReload(session, role string) {
 	if !provider.SupportsHooks() {
 		time.Sleep(2 * time.Second)
 		ClearNotifiedIDs(session, role)
-		_ = provider.SendWakeUp(session, role)
+		_ = provider.SendWakeUp(session, role, false)
 		return
 	}
 
@@ -468,7 +468,7 @@ func wakeAfterReload(session, role string) {
 		_ = TmuxClearInput(target)
 		time.Sleep(100 * time.Millisecond)
 	}
-	_ = SendWakeUpWithText(session, role, provider, text)
+	_ = SendWakeUpWithText(session, role, provider, text, false)
 }
 
 // restartConsole kills the existing console process in the left pane of a

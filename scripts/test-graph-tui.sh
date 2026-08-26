@@ -251,7 +251,20 @@ assert_contains "post-mortem shows final node states" "$post" "✓ review"
 completed_list=$(muxcode graph ui --render-once --width 200 | plain)
 assert_contains "run list includes the completed run" "$completed_list" "$DONE_RUN"
 
-# ── 6. Removed popups gone, CLI capabilities intact ──────────
+# ── 6. Surface headers carry name + cycle hint (MUX-105) ─────
+
+echo "-- surface headers"
+# The pre-existing checks above double as the byte-stability proof: node
+# names, glyphs, badges, and ordering are asserted against the same
+# frames, so the only header change the cycling work made is the hint.
+listframe=$(muxcode graph ui --render-once --width 200 | plain)
+assert_contains "run list header names its surface" "$listframe" "Graph Runs"
+assert_contains "run list header carries the cycle hint" "$listframe" "Tab: next surface"
+queue=$(muxcode graph ui --gates --render-once --width 200 | plain)
+assert_contains "gate queue header names its surface" "$queue" "Pending Gates"
+assert_contains "gate queue header carries the cycle hint" "$queue" "Tab: next surface"
+
+# ── 7. Removed popups gone, CLI capabilities intact ──────────
 
 echo "-- menu reclamation"
 for popup in agent-status agent-history memory-context spawn-agent proc-list cron-list; do
@@ -281,6 +294,6 @@ done
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
-[ "$PASS" -ge 30 ] || { echo "FAIL: coverage floor not met ($PASS < 30) — checks did not run"; exit 1; }
+[ "$PASS" -ge 34 ] || { echo "FAIL: coverage floor not met ($PASS < 34) — checks did not run"; exit 1; }
 [ "$FAIL" -eq 0 ] || exit 1
 echo "OK"

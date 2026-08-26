@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,129 +36,107 @@ type Daemon struct {
 	hasRunningSpawns bool
 	lastProcSize     int64
 	lastSpawnSize    int64
-	// Ollama health monitoring
-	ollamaRoles     []string // populated once in New()
-	lastOllamaCheck int64    // 30s interval
-	ollamaFailCount int      // consecutive probe failures
-	ollamaWasDown   bool     // for recovery detection
-	ollamaRestarts  int      // cap at 3 to prevent restart loops
-	ollamaURL       string   // Ollama base URL
-	ollamaModel     string   // Ollama model name
-	// Agent health monitoring
-	lastAgentHealthCheck int64           // 30s interval
-	agentFailCounts      map[string]int  // consecutive failures per role
-	agentRestarts        map[string]int  // restart count per role (cap at 3)
-	agentWasDown         map[string]bool // for recovery detection
-	// Delivery/task cleanup
-	lastCleanupCheck int64 // 300s interval
-	// Disk pressure monitoring
-	lastDiskPressureCheck int64 // 60s interval
-	// Auto-clear between tasks (MUX-103)
-	lastAutoClearCheck int64 // autoClearCheckSecs interval
-	// Idle agent wake-up
-	lastIdleCheck        int64            // 5s interval
-	lastNonHookWake      map[string]int64 // cooldown: last wake time per non-hook role (60s)
-	lastIdleState        map[string]bool  // per-role idle state from last check (for transition detection)
-	activeUnnotifiedSeen map[string]int64 // role -> unix time when unnotified msgs first seen while agent "active"
-	forceWakeCount       map[string]int   // role -> consecutive recoverable-idle force-deliveries this episode (churn cap)
-	churnSuppressed      map[string]bool  // role -> force-delivery suppressed until the agent idles / inbox drains
-	// Non-hook task completion detection
-	lastTaskCheck       int64             // 5s interval
-	taskDeliveredAt     map[string]int64  // msgID -> unix time when message was delivered (wake-up sent)
-	taskLastPaneContent map[string]string // role -> last pane hash to avoid re-processing identical content
-	// Hook-provider idle task detection (safety net for dropped responses)
-	lastIdleTaskCheck int64            // 10s interval
-	idleTaskFirstSeen map[string]int64 // taskID -> unix time when first observed idle with in-flight task
-	idleTaskRetried   map[string]bool  // taskID -> true if we already re-queued the request
-	// Agent heartbeat
-	lastHeartbeatCheck int64 // tracks last heartbeat fire time
-	heartbeatInterval  int   // seconds between heartbeats (0 = disabled)
-	// Non-hook edit file change detection
-	lastEditDiffCheck int64  // 10s debounce interval
-	lastEditDiffHash  string // last observed git diff --stat hash
-	// Tracked task completion (--track sends)
-	lastTrackedTaskCheck int64 // 5s interval
-	// Safety net retry cap — prevents notification storm when agent can't process
-	safetyNetRetries map[string]int   // role -> consecutive safety-net clears
-	safetyNetLast    map[string]int64 // role -> unix time of last safety-net clear
-	// Pane hygiene sweep — proactive parked-input detection across all agent panes
-	lastPaneSweep int64             // 30s interval
-	parkedSeen    map[string]string // role -> parked prompt text observed last sweep
-	// Fast parked-input recovery — resubmits a dropped wake-up (Enter eaten by a
-	// TUI redraw/overlay) on the fast poll cycle instead of waiting for the slow
-	// 30s pane sweep. Escalates to clear+re-deliver if resubmit doesn't take.
-	lastParkedCheck int64          // fast interval (msgCheckSecs)
-	parkedResubmits map[string]int // role -> consecutive resubmit attempts
-	// Serve health monitoring (browser checks via Playwright)
-	lastServeCheck    int64            // 60s interval
-	serveCheckSentFor map[string]int64 // url -> unix time of last browser-check sent
-	// Event dedup for edit inbox — suppress repeated informational events
-	lastEventSent map[string]int64 // "action:key" -> unix time of last send (5-min window)
-	// Notification budget — caps messages delivered to edit per 5-minute window
-	editNotifyCount int   // messages sent to edit in current window
-	editWindowStart int64 // unix time when current budget window started
-	// Long-active watchdog — nudges an agent that has been continuously active
-	// (e.g. a runaway multi-minute think) toward escalating to the user.
-	lastActiveWatchdogCheck int64            // 60s interval
-	activeSince             map[string]int64 // role -> unix time agent went active (0 = idle)
-	lastActiveNudge         map[string]int64 // role -> unix time of last nudge sent
-	activeNudgeCount        map[string]int   // role -> nudges sent this active-episode (capped; reset on idle)
-	// Stuck-provider watchdog — auto-reloads non-hook agents (OpenCode/Codex)
-	// wedged in a provider-side loop their process can't recover from.
-	lastStuckCheck  int64            // 60s interval
-	stuckSeen       map[string]int   // role -> consecutive sightings of a provider-loop signature
-	stuckReloads    map[string]int   // role -> auto-reload count (cap to avoid reload storms)
-	lastStuckReload map[string]int64 // role -> unix time of last auto-reload
-	stuckGaveUp     map[string]bool  // role -> alerted once after hitting the reload cap
-	// Permission-block watchdog — breaks the re-notification loop that forms when
-	// a hook-provider (Claude Code) agent is wedged at a REJECTED permission
-	// prompt it cannot satisfy autonomously (e.g. ./build.sh denied with no human
-	// to approve). Unlike the stuck-provider watchdog (non-hook, auto-reload),
-	// this only alerts + suppresses re-delivery; it never reloads or fabricates a
-	// response.
-	lastPermBlockCheck int64           // permBlockCheckSecs interval
-	permBlockSeen      map[string]int  // role -> consecutive sightings of a permission-block signature
-	permBlocked        map[string]bool // role -> currently suppressed from re-notification
-	permBlockAlerted   map[string]bool // role -> alerted edit once for the current block
-	// Agent-definition watchdog — auto-reloads a running agent when its resolved
-	// definition file changes on disk, so editing/reinstalling a definition takes
-	// effect without a manual `muxcode reload`. State lives in per-session stamp
-	// files (see bus/agentdefs.go) so it survives daemon restarts.
-	lastAgentDefsCheck int64 // 10s interval
-	// Delivery-ack poll-health backstop (Phase 5, gated by ackDeliveryActive).
-	// The positive-signal replacement for pane-scrape wedge detection: a growing
-	// receipt gap (inbox messages with no receipt past a threshold) means the
-	// agent's self-poll / delivery sidecar stopped consuming. Inert unless the
-	// receipt-based cutover is activated.
-	lastPollHealthCheck int64            // pollHealthIntervalSecs interval
-	pollGapSince        map[string]int64 // role -> unix time a receipt gap first appeared (0 = none)
-	pollGapAlerted      map[string]bool  // role -> alerted edit once for the current gap
-	pollGapRecovered    map[string]bool  // role -> re-drive attempted once for the current gap
-	// agentAlive gates the poll-health backstop to live agents. Injectable so
-	// unit tests can drive liveness deterministically: provider.IsAlive
-	// fail-safes to "alive" when it cannot capture a pane, so it can't be forced
-	// to false without a real tmux session. Defaults to bus.IsAgentAlive.
-	agentAlive func(session, role string) bool
-	// windowNames lists the session's tmux window names, used to gate work at a
-	// role that has no window at all (never launched in this session).
-	// agentAlive cannot express that: it fail-safes to "alive" for an
-	// uncapturable pane, so a phantom role reads as live. Fetched once per
-	// sweep rather than per role, so a full KnownRoles pass costs one tmux call
-	// instead of ~17. Injectable for the same reason as agentAlive. Defaults to
-	// bus.TmuxListWindowNames.
+
+	ollamaRoles     []string
+	lastOllamaCheck int64
+	ollamaFailCount int  // consecutive probe failures
+	ollamaWasDown   bool // set while down, so recovery can be announced once
+	ollamaRestarts  int  // capped at 3 to prevent restart loops
+	ollamaURL       string
+	ollamaModel     string
+
+	lastAgentHealthCheck int64
+	agentFailCounts      map[string]int  // role → consecutive liveness failures
+	agentRestarts        map[string]int  // role → restart count (capped at 3)
+	agentWasDown         map[string]bool // set while down, so recovery can be announced once
+
+	lastCleanupCheck      int64
+	lastDiskPressureCheck int64
+	lastAutoClearCheck    int64
+
+	lastIdleCheck        int64
+	lastNonHookWake      map[string]int64 // role → last non-hook wake time (60s cooldown)
+	lastIdleState        map[string]bool  // role → idle state last check, for transition detection
+	activeUnnotifiedSeen map[string]int64 // role → when unnotified msgs first seen while "active"
+	forceWakeCount       map[string]int   // role → force-deliveries this episode (churn cap)
+	churnSuppressed      map[string]bool  // role → force-delivery suppressed until idle / drained
+
+	lastTaskCheck       int64
+	taskDeliveredAt     map[string]int64  // msgID → when its wake-up was sent
+	taskLastPaneContent map[string]string // role → last pane hash, skips identical re-processing
+
+	lastIdleTaskCheck int64
+	idleTaskFirstSeen map[string]int64 // taskID → when first observed idle with in-flight task
+	idleTaskRetried   map[string]bool  // taskID → request already re-queued once
+
+	lastHeartbeatCheck int64
+	heartbeatInterval  int // seconds; 0 = disabled
+
+	lastEditDiffCheck int64
+	lastEditDiffHash  string // last observed `git diff --stat` hash
+
+	lastTrackedTaskCheck int64
+
+	safetyNetRetries map[string]int   // role → consecutive safety-net clears (storm cap)
+	safetyNetLast    map[string]int64 // role → last safety-net clear
+
+	lastPaneSweep   int64
+	parkedSeen      map[string]string // role → parked prompt text observed last sweep
+	lastParkedCheck int64
+	parkedResubmits map[string]int // role → consecutive Enter-resubmit attempts
+
+	lastServeCheck    int64
+	serveCheckSentFor map[string]int64 // url → last browser-check sent
+
+	lastEventSent map[string]int64 // "action:key" → last send (5-min dedup window)
+
+	editNotifyCount int   // messages sent to edit in the current budget window
+	editWindowStart int64 // when the current budget window started
+
+	lastActiveWatchdogCheck int64
+	activeSince             map[string]int64 // role → when agent went active (0 = idle)
+	lastActiveNudge         map[string]int64 // role → last long-active nudge
+	activeNudgeCount        map[string]int   // role → nudges this episode (capped; reset on idle)
+
+	lastStuckCheck  int64
+	stuckSeen       map[string]int   // role → consecutive provider-loop sightings (debounce)
+	stuckReloads    map[string]int   // role → auto-reload count (capped)
+	lastStuckReload map[string]int64 // role → last auto-reload (cooldown)
+	stuckGaveUp     map[string]bool  // role → alerted once after hitting the reload cap
+
+	lastPermBlockCheck int64
+	permBlockSeen      map[string]int  // role → consecutive permission-block sightings (debounce)
+	permBlocked        map[string]bool // role → re-notification suppressed while blocked
+	permBlockAlerted   map[string]bool // role → alerted edit once for the current block
+
+	lastAgentDefsCheck int64
+
+	lastPollHealthCheck int64
+	pollGapSince        map[string]int64 // role → when a receipt gap first appeared (0 = none)
+	pollGapAlerted      map[string]bool  // role → alerted edit once for the current gap
+	pollGapRecovered    map[string]bool  // role → re-drive attempted for the current gap
+
+	lastForceRespondCheck int64
+	frRung                map[string]int      // role → next escalation rung to fire
+	frLastFire            map[string]int64    // role → when the last rung fired (cooldown)
+	frPostponed           map[string]int      // role → override postponements this episode (capped)
+	frHistory             map[string][]string // role → fired-rung history for the final alert
+
+	// Injectable seams — tests drive these without tmux or provider resolution.
+	frNotify    func(session, role string) error
+	frDeliver   func(session, role string, force bool) error
+	frIsIdle    func(session, role string) bool
+	frPaneGated func(role string) bool
+	agentAlive  func(session, role string) bool
 	windowNames func(session string) ([]string, error)
-	// Branch time-tracking accumulator — adds active working time to the current
-	// git branch while a client is attached. To avoid a disk write + git/tmux
-	// process spawn on every fast poll, time is accrued in memory
-	// (branchTimePending, attributed to lastBranch) and flushed to the ledger at
-	// most every branchTimeFlushSecs, on a branch change, or on pause.
-	lastBranchTick      int64  // unix time of last per-tick sample
-	lastBranch          string // branch the pending time belongs to
-	branchTimePending   int64  // accrued, un-flushed seconds
-	branchTimeRepoKey   string // cached RepoKey() (stable per repo)
-	lastBranchFlush     int64  // unix time of last ledger flush
-	branchTimeInit      bool   // whether first-tracking lifecycle event was logged
-	branchTimeErrLogged bool   // whether the current flush-error state was logged
+
+	lastBranchTick      int64
+	lastBranch          string // branch the pending seconds belong to
+	branchTimePending   int64  // accrued seconds not yet flushed to the ledger
+	branchTimeRepoKey   string // cached RepoKey (stable per repo)
+	lastBranchFlush     int64
+	branchTimeInit      bool // first-tracking lifecycle event already logged
+	branchTimeErrLogged bool // current flush-error state already logged
 }
 
 // New creates a new Daemon for the given session.
@@ -222,8 +201,23 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		pollGapSince:          make(map[string]int64),
 		pollGapAlerted:        make(map[string]bool),
 		pollGapRecovered:      make(map[string]bool),
-		agentAlive:            bus.IsAgentAlive,
-		windowNames:           bus.TmuxListWindowNames,
+		frRung:                make(map[string]int),
+		frLastFire:            make(map[string]int64),
+		frPostponed:           make(map[string]int),
+		frHistory:             make(map[string][]string),
+		frNotify:              bus.Notify,
+		frDeliver: func(session, role string, force bool) error {
+			_, err := bus.ForceDeliver(session, role, force)
+			return err
+		},
+		frIsIdle: func(session, role string) bool {
+			return bus.ResolveProvider(role).IsIdle(session, role)
+		},
+		frPaneGated: func(role string) bool {
+			return bus.ResolveProvider(role).SupportsHooks()
+		},
+		agentAlive:  bus.IsAgentAlive,
+		windowNames: bus.TmuxListWindowNames,
 	}
 }
 
@@ -312,6 +306,7 @@ func (d *Daemon) Run() error {
 		d.checkParkedInput()
 		d.checkPaneSweep()
 		d.checkPollHealth()
+		d.checkForceRespond()
 		d.checkNonHookTasks()
 		d.checkTrackedTasks()
 		d.checkGraphRuns()
@@ -1742,6 +1737,16 @@ func roleHasWindow(names []string, role string) bool {
 	return bus.RoleHasWindow(names, role)
 }
 
+// checkPollHealth is the delivery-ack receipt-gap backstop — the
+// positive-signal replacement for pane-scrape wedge detection. A growing
+// receipt gap (actionable inbox messages with no receipt past a
+// threshold) means the agent's self-poll or delivery sidecar stopped
+// consuming; the backstop re-drives delivery once per gap episode, then
+// alerts edit if the gap persists. A re-drive whose injection was
+// skipped (ErrInjectionSkipped) does not count as attempted — the
+// episode stays open so later polls retry (MUX-105). Inert unless the
+// receipt-based cutover is active, and gated to live roles that have a
+// window in this session.
 func (d *Daemon) checkPollHealth() {
 	if !d.ackDeliveryActive() {
 		return
@@ -1825,9 +1830,17 @@ func (d *Daemon) checkPollHealth() {
 						fmt.Sprintf("%s: force-deliver failed during receipt-gap recovery: %v", role, err))
 				}
 			} else {
-				if err := provider.SendWakeUp(d.session, role); err != nil {
-					bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
-						fmt.Sprintf("%s: wake-up failed during receipt-gap recovery: %v", role, err))
+				if err := provider.SendWakeUp(d.session, role, false); err != nil {
+					if errors.Is(err, bus.ErrInjectionSkipped) {
+						// A skip is not a re-drive — keep the episode open so
+						// later polls retry (see doc comment).
+						d.pollGapRecovered[role] = false
+						bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap-skip",
+							fmt.Sprintf("%s: recovery injection skipped, will retry: %v", role, err))
+					} else {
+						bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
+							fmt.Sprintf("%s: wake-up failed during receipt-gap recovery: %v", role, err))
+					}
 				}
 			}
 		}
@@ -1972,7 +1985,7 @@ func (d *Daemon) checkIdleAgents() {
 						ids = append(ids, m.ID)
 					}
 					bus.AddNotifiedIDs(d.session, role, ids)
-					_ = bus.SendWakeUpWithText(d.session, role, provider, text)
+					_ = bus.SendWakeUpWithText(d.session, role, provider, text, false)
 					fmt.Printf("  %s  Delivered combined notification to %s (%d messages)\n", ts, role, len(unnotified))
 					bus.LogLifecycle(d.session, "info", "daemon", "idle-combined-wake",
 						fmt.Sprintf("%s: %d messages", role, len(unnotified)))
@@ -2075,7 +2088,7 @@ func (d *Daemon) checkIdleAgents() {
 			// Cooldown: once per 60s per role to avoid spam.
 			if now-d.lastNonHookWake[role] >= 60 {
 				d.lastNonHookWake[role] = now
-				_ = provider.SendWakeUp(d.session, role)
+				_ = provider.SendWakeUp(d.session, role, false)
 			}
 			continue
 		}
@@ -2185,7 +2198,7 @@ func (d *Daemon) checkIdleAgents() {
 		}
 		fmt.Printf("  %s  Waking idle agent %s (%d unnotified messages, %s)\n", ts, role, len(unnotified), event)
 		bus.LogLifecycle(d.session, "info", "daemon", event, role)
-		_ = bus.SendWakeUpWithText(d.session, role, provider, text)
+		_ = bus.SendWakeUpWithText(d.session, role, provider, text, false)
 	}
 }
 

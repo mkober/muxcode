@@ -84,6 +84,21 @@ func TestBuildPopupCommand_ExpandsTitleAndCommand(t *testing.T) {
 	}
 }
 
+// The three graph popups share one neutral title: Tab cycles surfaces
+// inside a single popup (MUX-105), so a per-surface title would
+// mislabel every cycled-to frame.
+func TestGraphPopupTitlesNeutral(t *testing.T) {
+	for _, name := range []string{"graph-runs", "graph-launch", "graph-gates"} {
+		cfg, ok := GetPopup(name)
+		if !ok {
+			t.Fatalf("popup %s not registered", name)
+		}
+		if cfg.Title != " Graph " {
+			t.Errorf("popup %s title %q — must be the neutral \" Graph \"", name, cfg.Title)
+		}
+	}
+}
+
 func TestGetPopup_Unknown(t *testing.T) {
 	if _, ok := GetPopup("no-such-popup"); ok {
 		t.Error("expected unknown popup to report not found")

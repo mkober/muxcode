@@ -206,6 +206,44 @@ func TestCheckPollHealth_RecoversOncePerGap(t *testing.T) {
 	}
 }
 
+// A skipped injection is not a re-drive: when the recovery wake-up is
+// suppressed by the in-flight-task guard (ErrInjectionSkipped), the
+// episode must stay un-recovered so later polls retry — once the blocking
+// task expires the injection lands. Recording the skip as a re-drive is
+// how a wedged agent stayed stuck ~20 minutes on 2026-08-26 (MUX-105).
+func TestCheckPollHealth_SkipIsNotARedrive(t *testing.T) {
+	session := testSession(t)
+	d := New(session, 5, 8)
+	t.Setenv("MUXCODE_DELIVERY_ACK", "1")
+	t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "")
+	t.Setenv(bus.RoleCLIEnvVar("build"), "opencode") // non-hook recovery branch
+	d.agentAlive = allAlive
+
+	// Stale un-receipted request → a receipt gap for build.
+	msg := bus.NewMessage("edit", "build", "request", "build", "build it", "")
+	msg.TS = time.Now().Unix() - (pollHealthGapSecs + 30)
+	if err := bus.Send(session, msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	// Aged in-flight task → the SendWakeUp guard skips the recovery injection.
+	aged := bus.NewMessage("edit", "build", "request", "build", "prior work", "")
+	aged.TS = time.Now().Unix() - 60
+	if err := bus.CreateTask(session, aged, 600); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	d.lastPollHealthCheck = 0
+	d.checkPollHealth()
+
+	if d.pollGapSince["build"] == 0 {
+		t.Fatal("expected a recorded gap for build")
+	}
+	if d.pollGapRecovered["build"] {
+		t.Error("a skipped injection must not count as a recovery — the episode must stay un-recovered so later polls retry")
+	}
+}
+
 // TestCheckPollHealth_SkipsNonLiveOrNonActionable guards the fix for the
 // false-alarm churn found in live testing: the backstop must not flag (a) a role
 // with no running agent (modal-only / unstarted roles like api/auto/webhook), nor

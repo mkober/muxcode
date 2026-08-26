@@ -24,11 +24,12 @@ const (
 type RemoteAction string
 
 const (
-	ActionCapture     RemoteAction = "capture"
-	ActionInbox       RemoteAction = "inbox"
-	ActionDiagnose    RemoteAction = "diagnose"
-	ActionAllInboxes  RemoteAction = "all-inboxes"
-	ActionDiagnoseAll RemoteAction = "diagnose-all"
+	ActionCapture      RemoteAction = "capture"
+	ActionInbox        RemoteAction = "inbox"
+	ActionDiagnose     RemoteAction = "diagnose"
+	ActionAllInboxes   RemoteAction = "all-inboxes"
+	ActionDiagnoseAll  RemoteAction = "diagnose-all"
+	ActionForceRespond RemoteAction = "force-respond"
 )
 
 // RemoteSelection is the result returned when the user picks an action.
@@ -55,6 +56,10 @@ type RemoteUI struct {
 
 	// Result — set when user picks an action
 	result *RemoteSelection
+
+	// Force-respond confirm: a destructive action parked behind a y/n
+	// prompt. Nothing dispatches without the confirm keypress (MUX-105).
+	confirmPending *RemoteSelection
 
 	keyCh chan byte
 }
@@ -149,6 +154,17 @@ func (ui *RemoteUI) refreshDetail() {
 // handleKey processes a keypress and returns an action string.
 // Returns "quit" to exit, "selected" when an action is chosen, "" otherwise.
 func (ui *RemoteUI) handleKey(key byte) string {
+	if ui.confirmPending != nil {
+		switch key {
+		case 'y':
+			ui.result = ui.confirmPending
+			ui.confirmPending = nil
+			return "selected"
+		case 'n', 'q', 27:
+			ui.confirmPending = nil
+		}
+		return ""
+	}
 	switch key {
 	case 'q':
 		if ui.view == viewSessionList {
@@ -183,6 +199,14 @@ func (ui *RemoteUI) handleKey(key byte) string {
 	case 'd': // diagnose
 		if ui.view == viewSessionDetail && len(ui.agents) > 0 {
 			return ui.selectAction(ActionDiagnose)
+		}
+	case 'f': // force-respond — confirm-gated (MUX-105)
+		if ui.view == viewSessionDetail && len(ui.agents) > 0 {
+			ui.confirmPending = &RemoteSelection{
+				Session: ui.detailSession,
+				Role:    ui.agents[ui.agentIdx].Role,
+				Action:  ActionForceRespond,
+			}
 		}
 	case 'I': // all inboxes
 		if ui.view == viewSessionDetail {
@@ -302,6 +326,9 @@ func (ui *RemoteUI) handleEnter() string {
 
 // render builds the frame for the current view.
 func (ui *RemoteUI) render() string {
+	if ui.confirmPending != nil {
+		return ui.renderForceRespondConfirm()
+	}
 	switch ui.view {
 	case viewSessionList:
 		return ui.renderSessionList()
@@ -310,6 +337,28 @@ func (ui *RemoteUI) render() string {
 	default:
 		return ""
 	}
+}
+
+// renderForceRespondConfirm renders the confirm prompt for a pending
+// force-respond, showing what the daemon's ladder already tried so the
+// user knows where recovery stands before overriding.
+func (ui *RemoteUI) renderForceRespondConfirm() string {
+	sel := ui.confirmPending
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n  %s%sForce-respond %s%s on %s?\n", Yellow, Bold, sel.Role, RST, sel.Session)
+	fmt.Fprintf(&b, "  %sInjects the pending inbox with force — bypasses the idle gate and the in-flight-task skip.%s\n\n", Comment, RST)
+
+	if st, ok := bus.ReadForceRespondState(sel.Session, sel.Role); ok {
+		fmt.Fprintf(&b, "  %sthe daemon's escalation already tried:%s\n", Comment, RST)
+		for _, h := range st.History {
+			fmt.Fprintf(&b, "    %s%s%s\n", Comment, h, RST)
+		}
+	} else {
+		fmt.Fprintf(&b, "  %sNo escalation episode recorded — this is a manual recovery.%s\n", Comment, RST)
+	}
+
+	fmt.Fprintf(&b, "\n  %sy%s Confirm  %sn/Esc%s Cancel\n", Yellow, RST, Yellow, RST)
+	return b.String()
 }
 
 // renderSessionList renders the session list view.
@@ -485,6 +534,10 @@ func (ui *RemoteUI) renderSessionDetail() string {
 			}
 			activity = fmt.Sprintf("%s %s %s:%s", t, arrow, s.LastPeer, s.LastAction)
 		}
+		// Surface an open escalation episode (MUX-105).
+		if st, ok := bus.ReadForceRespondState(ui.detailSession, s.Role); ok {
+			activity = fmt.Sprintf("⚡esc r%d  %s", st.Rung, activity)
+		}
 
 		provider := s.Provider
 		if provider == "" {
@@ -531,8 +584,8 @@ func (ui *RemoteUI) renderSessionDetail() string {
 
 	// Footer
 	hrLine()
-	footer1 := fmt.Sprintf("  %s↑↓%s Navigate  %sEnter/c%s Capture  %si%s Inbox  %sd%s Diagnose",
-		Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
+	footer1 := fmt.Sprintf("  %s↑↓%s Navigate  %sEnter/c%s Capture  %si%s Inbox  %sd%s Diagnose  %sf%s Force-respond",
+		Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 	writeLine(footer1)
 	footer2 := fmt.Sprintf("  %sI%s All Inboxes  %sD%s Diagnose All  %sr%s Refresh  %sq/Esc%s Back",
 		Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)

@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -352,11 +353,13 @@ func TestSendMessage_SuppressesDuplicateInboxRequest(t *testing.T) {
 		t.Fatalf("expected 1 message in inbox, got %d", len(msgs))
 	}
 
-	// Second send with same (from, to, action, type, payload) should be suppressed
+	// Second send with same (from, to, action, type, payload) is suppressed
+	// and must SAY so — the nil return here once read as a successful send
+	// and jammed retries on phantom tasks (ErrSendSuppressed, MUX-105).
 	m2 := NewMessage("edit", "deploy", "request", "deploy", "Run cdk deploy", "")
 	err = Send(session, m2)
-	if err != nil {
-		t.Fatalf("second send should not error: %v", err)
+	if !errors.Is(err, ErrSendSuppressed) {
+		t.Fatalf("second send must return ErrSendSuppressed, got %v", err)
 	}
 
 	// Verify still only 1 message in inbox (duplicate suppressed)
@@ -399,11 +402,12 @@ func TestSendMessage_SuppressesDuplicateWithInFlightTask(t *testing.T) {
 	// Consume the inbox (simulating SendWakeUp consuming after injection)
 	Receive(session, "deploy")
 
-	// Second send: inbox is empty but task is in-flight → should be suppressed
+	// Second send: inbox is empty but task is in-flight → suppressed, and
+	// the suppression must be visible (ErrSendSuppressed, MUX-105).
 	m2 := NewMessage("edit", "deploy", "request", "deploy", "Run cdk deploy retry", "")
 	err = Send(session, m2)
-	if err != nil {
-		t.Fatalf("second send should not error: %v", err)
+	if !errors.Is(err, ErrSendSuppressed) {
+		t.Fatalf("second send must return ErrSendSuppressed, got %v", err)
 	}
 
 	// Verify inbox is still empty (suppressed)

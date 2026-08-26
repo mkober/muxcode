@@ -39,20 +39,23 @@ func DefaultPopupConfigs() []ModalConfig {
 			Command:  "muxcode-switch-session.sh",
 			Measurer: MeasureSwitchSession,
 		},
+		// The three graph popups share the neutral title " Graph ": Tab
+		// cycles surfaces inside one popup (MUX-105), so a specific title
+		// would mislabel every cycled-to frame.
 		{
-			Name: "graph-runs", Title: " Graph Runs ",
+			Name: "graph-runs", Title: " Graph ",
 			Width: "85%", Height: "75%",
 			Command: "muxcode graph ui",
 			AutoCap: true, // interactive TUI sizes itself to whatever it is given
 		},
 		{
-			Name: "graph-launch", Title: " Launch Graph ",
+			Name: "graph-launch", Title: " Graph ",
 			Width: "70%", Height: "60%",
 			Command: "muxcode graph ui --templates",
 			AutoCap: true, // interactive TUI sizes itself to whatever it is given
 		},
 		{
-			Name: "graph-gates", Title: " Pending Gates ",
+			Name: "graph-gates", Title: " Graph ",
 			Width: "80%", Height: "60%",
 			Command: "muxcode graph ui --gates",
 			AutoCap: true, // interactive TUI sizes itself to whatever it is given
@@ -82,6 +85,12 @@ func DefaultPopupConfigs() []ModalConfig {
 func GetPopup(name string) (ModalConfig, bool) {
 	cfg, ok := popupRegistry[name]
 	return cfg, ok
+}
+
+// RegisterPopup replaces a popup config — the seam cmd uses to attach
+// measurers whose renderers live in tui (bus cannot import tui).
+func RegisterPopup(cfg ModalConfig) {
+	popupRegistry[cfg.Name] = cfg
 }
 
 // PopupNames returns the registered popup names, sorted.

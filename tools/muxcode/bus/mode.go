@@ -483,7 +483,7 @@ func modeAutoAcceptAndWake(session string, agent *ModeAgent) {
 			ClearNotifiedIDs(session, agent.Role)
 
 			if !provider.SupportsHooks() {
-				if err := provider.SendWakeUp(session, agent.Role); err != nil {
+				if err := provider.SendWakeUp(session, agent.Role, false); err != nil {
 					LogLifecycle(session, "warn", "mode-accept", "wake-failed",
 						agent.Role+": "+err.Error())
 				} else {

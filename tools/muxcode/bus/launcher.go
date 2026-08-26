@@ -679,7 +679,7 @@ func AutoAccept(session string, windows []string) {
 					// SendWakeUp() method which reads the inbox and injects
 					// the actual message content with explicit instructions.
 					if !provider.SupportsHooks() {
-						if err := provider.SendWakeUp(session, win); err != nil {
+						if err := provider.SendWakeUp(session, win, false); err != nil {
 							LogLifecycle(session, "warn", "auto-accept", "startup-wake-failed", win+": "+err.Error())
 						} else {
 							LogLifecycle(session, "info", "auto-accept", "startup-wake-provider", win)

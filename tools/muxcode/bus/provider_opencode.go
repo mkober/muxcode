@@ -129,20 +129,20 @@ func (p *OpenCodeProvider) AcceptStartup(session, pane string, state PaneState) 
 // the composer (writing a `delivered` receipt), not merely after send-keys
 // returned no error. If the injection can't be confirmed the inbox is left for
 // the daemon's next wake cycle — see confirmInjectionAndConsume.
-func (p *OpenCodeProvider) SendWakeUp(session, role string) error {
+func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 	target := PaneTarget(session, role)
 
-	// Guard: skip injection if the agent already has an in-flight task.
-	// The message was already consumed and injected on a prior wake-up.
-	// Re-injecting would create duplicate prompts in the TUI, wasting
-	// tokens and confusing the agent. The daemon's checkNonHookTasks()
-	// handles completion detection for the existing task.
-	tasks, _ := ListTasks(session, TaskInFlight)
-	for _, t := range tasks {
-		if t.To == role && time.Now().Unix()-t.SentAt > 5 {
-			fmt.Fprintf(os.Stderr, "  [wakeup] skipping %s injection — in-flight task %s:%s exists (%ds old)\n",
-				role, t.Action, t.ID[:8], time.Now().Unix()-t.SentAt)
-			return nil
+	// In-flight task → skip (ErrInjectionSkipped, see sentinel doc);
+	// force bypasses so a recovery is never blocked by the stuck task.
+	if !force {
+		tasks, _ := ListTasks(session, TaskInFlight)
+		for _, t := range tasks {
+			if t.To == role && time.Now().Unix()-t.SentAt > 5 {
+				age := time.Now().Unix() - t.SentAt
+				fmt.Fprintf(os.Stderr, "  [wakeup] skipping %s injection — in-flight task %s:%s exists (%ds old)\n",
+					role, t.Action, shortID(t.ID), age)
+				return fmt.Errorf("%s: in-flight task %s (%ds old): %w", role, shortID(t.ID), age, ErrInjectionSkipped)
+			}
 		}
 	}
 

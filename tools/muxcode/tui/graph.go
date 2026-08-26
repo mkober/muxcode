@@ -346,7 +346,7 @@ func RenderGraphFrame(snap GraphSnapshot, width, height int, selection string, n
 
 	// Wider or deeper than the pane degrades to the flat list — the grid
 	// has no scroll, so an overflowing canvas would render clipped.
-	headerLines := 3
+	headerLines := 5 // leading blank, tab bar, run line, trailing blank, + margin
 	if snap.Run.Intent != "" {
 		headerLines++
 	}
@@ -464,8 +464,10 @@ func (s GraphSnapshot) edgeActive(e bus.Edge) bool {
 	return false
 }
 
-// renderGraphHeader renders the run summary above the grid. Elapsed time
-// freezes at UpdatedAt for finished runs so post-mortem views are stable.
+// renderGraphHeader renders the run summary above the grid, under the
+// static surface tab bar (a DAG is a drill-in of Graph Runs). Elapsed
+// time freezes at UpdatedAt for finished runs so post-mortem views are
+// stable.
 func renderGraphHeader(snap GraphSnapshot, now time.Time) string {
 	run := snap.Run
 	end := now.Unix()
@@ -495,7 +497,8 @@ func renderGraphHeader(snap GraphSnapshot, now time.Time) string {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n  %s%s%s%s  %s[%s]%s  %s%s  %d/%d done  %s%s\n",
+	b.WriteString(renderSurfaceTabs("Graph Runs"))
+	fmt.Fprintf(&b, "  %s%s%s%s  %s[%s]%s  %s%s  %d/%d done  %s%s\n",
 		Purple, Bold, run.ID, RST,
 		stateColor, run.State, RST,
 		Comment, run.Template, done, total, elapsed.String(), RST)
@@ -528,6 +531,25 @@ func fitWidth(line string, width int) string {
 	return line
 }
 
+// renderSurfaceTabs renders the surface tab bar every top-level frame
+// shares: all three surfaces named, the active one highlighted, then the
+// cycle hint.
+func renderSurfaceTabs(active string) string {
+	names := []string{"Graph Runs", "Pending Gates", "Launch Graph"}
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		if n == active {
+			parts = append(parts, Purple+Bold+n+RST)
+		} else {
+			parts = append(parts, Comment+n+RST)
+		}
+	}
+	// One blank row above the bar for breathing room under the popup
+	// border. Safe against the scroll-shift bug: clampLines guarantees a
+	// frame never prints past the pane, so this row cannot be eaten.
+	return "\n  " + strings.Join(parts, Comment+" / "+RST) + Comment + "   ⇥ Tab: next surface" + RST + "\n"
+}
+
 // ── Run list ───────────────────────────────────────────────
 
 // RunListRow is one run's summary for the run browser — precomputed by
@@ -546,11 +568,13 @@ type RunListRow struct {
 // waits. Empty state renders explicitly — never a blank frame.
 func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n  %s%sGraph Runs%s\n", Purple, Bold, RST)
+	b.WriteString(renderSurfaceTabs("Graph Runs"))
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 
 	if len(rows) == 0 {
-		fmt.Fprintf(&b, "  %sNo graph runs%s\n", Comment, RST)
+		fmt.Fprintf(&b, "  %sNo graph runs yet in this session.%s\n", Comment, RST)
+		fmt.Fprintf(&b, "  %sStart one: muxcode graph run <template> [intent…] — or Tab to the launcher.%s\n", Comment, RST)
+		fmt.Fprintf(&b, "  %sTemplates: muxcode graph list%s\n", Comment, RST)
 		return b.String()
 	}
 
@@ -594,7 +618,7 @@ func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 // picker stays.
 func RenderTemplateListFrame(infos []bus.GraphTemplateInfo, width, sel int, errMsg string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n  %s%sLaunch Graph%s\n", Purple, Bold, RST)
+	b.WriteString(renderSurfaceTabs("Launch Graph"))
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 
 	if len(infos) == 0 {
@@ -630,7 +654,8 @@ func RenderTemplateListFrame(infos []bus.GraphTemplateInfo, width, sel int, errM
 // template's messages interpolate ${intent}.
 func RenderIntentPromptFrame(template, input string, width int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n  %s%sLaunch %s%s\n", Purple, Bold, template, RST)
+	b.WriteString(renderSurfaceTabs("Launch Graph"))
+	fmt.Fprintf(&b, "  %s%sLaunch %s%s\n", Purple, Bold, template, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 	fmt.Fprintf(&b, "  %sThis template interpolates ${intent} — describe the work:%s\n\n", Comment, RST)
 	fmt.Fprintf(&b, "  %sintent:%s %s%s█%s\n", Comment, RST, FG, input, RST)
@@ -737,17 +762,30 @@ func GatesRearmedByRetry(g *bus.Graph, fromNode string) []string {
 	return gates
 }
 
+// ResolvedGate is a wait_human node that already reached a terminal
+// state — the queue's history section, so past approvals stay visible.
+type ResolvedGate struct {
+	RunID  string
+	NodeID string
+	State  string // done (approved) or skipped (run canceled / branch not taken)
+	Age    time.Duration
+}
+
 // RenderGateQueueFrame renders the cross-run pending-gate queue. The
 // selected gate expands to show what its approval releases; gates whose
 // downstream mutates git or Atlassian are flagged in the list itself.
-// Empty state is explicit — never a blank frame.
-func RenderGateQueueFrame(gates []PendingGate, width, sel int) string {
+// Resolved gates render as a dimmed history section. Empty state is
+// explicit — never a blank frame.
+func RenderGateQueueFrame(gates []PendingGate, resolved []ResolvedGate, width, sel int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n  %s%sPending Gates%s\n", Purple, Bold, RST)
+	b.WriteString(renderSurfaceTabs("Pending Gates"))
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 
 	if len(gates) == 0 {
-		fmt.Fprintf(&b, "  %sNo gates waiting%s\n", Comment, RST)
+		fmt.Fprintf(&b, "  %sNo gates waiting.%s\n", Comment, RST)
+		fmt.Fprintf(&b, "  %sA gate appears here when an in-flight run reaches a wait_human node%s\n", Comment, RST)
+		fmt.Fprintf(&b, "  %sand needs your approval before firing what is behind it.%s\n", Comment, RST)
+		b.WriteString(renderResolvedGates(resolved, width))
 		return b.String()
 	}
 
@@ -778,6 +816,25 @@ func RenderGateQueueFrame(gates []PendingGate, width, sel int) string {
 		for _, imp := range gate.Downstream {
 			b.WriteString("        " + formatGateImpact(imp) + "\n")
 		}
+	}
+	b.WriteString(renderResolvedGates(resolved, width))
+	return b.String()
+}
+
+// renderResolvedGates renders the dimmed gate-history section.
+func renderResolvedGates(resolved []ResolvedGate, width int) string {
+	if len(resolved) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n  %srecent gates%s\n", Cyan, RST)
+	for _, g := range resolved {
+		verdict := "✓ approved"
+		if g.State == bus.GraphNodeSkipped {
+			verdict = "○ skipped"
+		}
+		line := fmt.Sprintf("  %s%-11s %-16s %-9s %s%s", Comment, verdict, g.NodeID, g.Age.String(), g.RunID, RST)
+		b.WriteString(fitWidth(line, width) + "\n")
 	}
 	return b.String()
 }
@@ -866,7 +923,8 @@ func RenderNodeDetailFrame(snap GraphSnapshot, nodeID string, width int) string 
 	glyph, color := nodeGlyph(node.Type, state)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n  %s%s%s %s%s  %s%s%s\n", color, glyph, RST, Bold+node.ID, RST, color, state, RST)
+	b.WriteString(renderSurfaceTabs("Graph Runs"))
+	fmt.Fprintf(&b, "  %s%s%s %s%s  %s%s%s\n", color, glyph, RST, Bold+node.ID, RST, color, state, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 
 	row := func(label, value string) {

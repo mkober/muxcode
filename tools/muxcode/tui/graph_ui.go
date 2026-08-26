@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -156,6 +157,65 @@ func LoadPendingGates(session string, now time.Time) []PendingGate {
 	return gates
 }
 
+// LoadResolvedGates collects wait_human nodes that reached a terminal
+// state across ALL runs (finished ones included) — the queue's history
+// section. Newest resolutions first, capped at limit.
+func LoadResolvedGates(session string, now time.Time, limit int) []ResolvedGate {
+	runs, err := bus.ListGraphRuns(session)
+	if err != nil {
+		return nil
+	}
+	type stamped struct {
+		gate ResolvedGate
+		at   int64
+	}
+	var all []stamped
+	for _, run := range runs {
+		g, err := bus.ReadGraphRunGraph(session, run.ID)
+		if err != nil {
+			continue
+		}
+		statuses, err := bus.ReadAllNodeStatuses(session, run.ID)
+		if err != nil {
+			continue
+		}
+		for i := range g.Nodes {
+			n := &g.Nodes[i]
+			if n.Type != bus.NodeWaitHuman {
+				continue
+			}
+			st := statuses[n.ID]
+			if st == nil || (st.State != bus.GraphNodeDone && st.State != bus.GraphNodeSkipped) {
+				continue
+			}
+			at := st.DoneAt
+			if at == 0 {
+				at = st.UpdatedAt
+			}
+			var age time.Duration
+			if at > 0 && now.Unix() > at {
+				age = time.Duration(now.Unix()-at) * time.Second
+			}
+			all = append(all, stamped{
+				gate: ResolvedGate{RunID: run.ID, NodeID: n.ID, State: st.State, Age: age},
+				at:   at,
+			})
+		}
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].at > all[j].at })
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	out := make([]ResolvedGate, len(all))
+	for i, s := range all {
+		out[i] = s.gate
+	}
+	return out
+}
+
+// resolvedGateHistoryLimit caps the queue's history section.
+const resolvedGateHistoryLimit = 10
+
 // GateQueueRenderOnce renders the pending-gate queue as a single frame —
 // the scriptable seam for integration tests. The first gate is selected
 // so its downstream impact is visible in the frame.
@@ -163,7 +223,9 @@ func GateQueueRenderOnce(session string, width int) (string, error) {
 	if width <= 0 {
 		width = termWidth()
 	}
-	return RenderGateQueueFrame(LoadPendingGates(session, time.Now()), width, 0), nil
+	now := time.Now()
+	return RenderGateQueueFrame(LoadPendingGates(session, now),
+		LoadResolvedGates(session, now, resolvedGateHistoryLimit), width, 0), nil
 }
 
 // GraphUI is the interactive graph-run browser: run list → DAG → node
@@ -192,15 +254,40 @@ type GraphUI struct {
 
 	// Gate queue and action confirm
 	gates         []PendingGate
+	resolvedGates []ResolvedGate
 	gateIdx       int
 	directGates   bool         // opened in gate-queue mode — q from gates quits
 	pending       *GraphAction // action awaiting its confirm keypress
 	confirmReturn graphView    // view to restore after confirm/abandon
 	actionErr     string       // action failure rendered in the confirm frame
+	notice        string       // success confirmation shown after an action lands
+
+	// Last-selected item ids per surface, so a selection survives a full
+	// Tab cycle; a removed item degrades to the first row.
+	runSelID   string
+	tmplSelID  string
+	gateSelKey string // runID + "/" + nodeID
 
 	loadErr error
 	keyCh   chan byte
 	now     func() time.Time
+}
+
+// graphSurfaces is the Tab cycle order over the three top-level views —
+// it must match the tab bar's visual order (renderSurfaceTabs).
+var graphSurfaces = []graphView{viewGraphRuns, viewGraphGates, viewGraphTemplates}
+
+// surfaceName maps a view to its tab-bar name; drill-ins highlight their
+// parent surface so the bar stays static across every frame.
+func surfaceName(v graphView) string {
+	switch v {
+	case viewGraphGates:
+		return "Pending Gates"
+	case viewGraphTemplates, viewGraphIntent:
+		return "Launch Graph"
+	default: // runs, DAG, node detail
+		return "Graph Runs"
+	}
 }
 
 // NewGraphLauncherUI creates the graph TUI opening straight into the
@@ -249,6 +336,7 @@ func (ui *GraphUI) refresh() {
 		}
 	case viewGraphGates:
 		ui.gates = LoadPendingGates(ui.session, ui.now())
+		ui.resolvedGates = LoadResolvedGates(ui.session, ui.now(), resolvedGateHistoryLimit)
 		if ui.gateIdx >= len(ui.gates) {
 			ui.gateIdx = len(ui.gates) - 1
 		}
@@ -292,6 +380,7 @@ func (ui *GraphUI) handleKey(key byte) string {
 	if ui.view == viewGraphConfirm {
 		return ui.handleConfirmKey(key)
 	}
+	ui.notice = "" // a receipt survives ticks, not the next keypress
 	switch key {
 	case 'q':
 		return ui.goBack()
@@ -303,6 +392,8 @@ func (ui *GraphUI) handleKey(key byte) string {
 		ui.moveSelection(-1)
 	case 10, 13: // Enter
 		ui.enter()
+	case 9: // Tab — cycle the top-level surfaces; inert everywhere else
+		ui.cycleSurface(1)
 	case 'L':
 		if ui.view == viewGraphRuns {
 			ui.view = viewGraphTemplates
@@ -329,9 +420,10 @@ func (ui *GraphUI) handleKey(key byte) string {
 }
 
 // handleEscapeSequence distinguishes arrow keys (ESC [ A/B — navigate)
-// from a bare Escape (go back), the same way RemoteUI does. The footers
-// advertise ↑↓, so an arrow press must never read as "back". With no key
-// channel (unit tests), the timeout path makes 27 behave as bare Escape.
+// and Shift-Tab (ESC [ Z — cycle backward) from a bare Escape (go back),
+// the same way RemoteUI does. The footers advertise ↑↓, so an arrow press
+// must never read as "back". With no key channel (unit tests), the
+// timeout path makes 27 behave as bare Escape.
 func (ui *GraphUI) handleEscapeSequence() string {
 	select {
 	case b1 := <-ui.keyCh:
@@ -343,6 +435,8 @@ func (ui *GraphUI) handleEscapeSequence() string {
 					ui.moveSelection(-1)
 				case 'B': // Down
 					ui.moveSelection(1)
+				case 'Z': // Shift-Tab
+					ui.cycleSurface(-1)
 				}
 			case <-time.After(50 * time.Millisecond):
 			}
@@ -351,6 +445,74 @@ func (ui *GraphUI) handleEscapeSequence() string {
 		return ui.goBack()
 	}
 	return ""
+}
+
+// cycleSurface moves to the next/previous top-level surface. Inert in
+// every non-surface view (DAG, node detail, intent prompt, confirm) —
+// those are drill-ins, and Tab yanking the user out of one mid-task
+// would discard context.
+func (ui *GraphUI) cycleSurface(delta int) {
+	cur := -1
+	for i, s := range graphSurfaces {
+		if ui.view == s {
+			cur = i
+		}
+	}
+	if cur < 0 {
+		return
+	}
+	ui.saveSelection()
+	next := (cur + delta + len(graphSurfaces)) % len(graphSurfaces)
+	ui.view = graphSurfaces[next]
+	ui.tmplErr = ""
+	ui.refresh()
+	ui.restoreSelection()
+}
+
+// saveSelection records the current surface's selected item by id.
+func (ui *GraphUI) saveSelection() {
+	switch ui.view {
+	case viewGraphRuns:
+		if ui.runIdx >= 0 && ui.runIdx < len(ui.rows) {
+			ui.runSelID = ui.rows[ui.runIdx].ID
+		}
+	case viewGraphTemplates:
+		if ui.tmplIdx >= 0 && ui.tmplIdx < len(ui.templates) {
+			ui.tmplSelID = ui.templates[ui.tmplIdx].Name
+		}
+	case viewGraphGates:
+		if ui.gateIdx >= 0 && ui.gateIdx < len(ui.gates) {
+			ui.gateSelKey = ui.gates[ui.gateIdx].RunID + "/" + ui.gates[ui.gateIdx].NodeID
+		}
+	}
+}
+
+// restoreSelection re-finds the surface's last-selected item by id after
+// a refresh; a removed item degrades to the first row.
+func (ui *GraphUI) restoreSelection() {
+	switch ui.view {
+	case viewGraphRuns:
+		ui.runIdx = 0
+		for i, r := range ui.rows {
+			if r.ID == ui.runSelID {
+				ui.runIdx = i
+			}
+		}
+	case viewGraphTemplates:
+		ui.tmplIdx = 0
+		for i, t := range ui.templates {
+			if t.Name == ui.tmplSelID {
+				ui.tmplIdx = i
+			}
+		}
+	case viewGraphGates:
+		ui.gateIdx = 0
+		for i, g := range ui.gates {
+			if g.RunID+"/"+g.NodeID == ui.gateSelKey {
+				ui.gateIdx = i
+			}
+		}
+	}
 }
 
 // handleConfirmKey resolves a pending action: y executes, n/Esc/q
@@ -454,6 +616,18 @@ func (ui *GraphUI) executeAction() {
 	if err != nil {
 		ui.actionErr = err.Error()
 		return
+	}
+	// A visible receipt: the gate vanishes from the queue on the next
+	// tick, and without this line a successful approval is
+	// indistinguishable from a press that did nothing (user-reported
+	// 2026-08-26 — repeated approvals of an already-released gate).
+	switch act.Kind {
+	case "approve":
+		ui.notice = fmt.Sprintf("✓ approved %s — downstream released (run %s)", act.NodeID, act.RunID)
+	case "cancel":
+		ui.notice = fmt.Sprintf("✓ canceled run %s", act.RunID)
+	case "retry":
+		ui.notice = fmt.Sprintf("✓ retrying run %s from %s", act.RunID, act.NodeID)
 	}
 	ui.pending = nil
 	ui.actionErr = ""
@@ -643,13 +817,19 @@ func (ui *GraphUI) render() string {
 		frame = RenderIntentPromptFrame(ui.pendingTemplate, string(ui.intentInput), W)
 		footer = fmt.Sprintf("  %sEnter%s Launch  %sEsc%s Cancel", Yellow, RST, Yellow, RST)
 	case viewGraphGates:
-		frame = RenderGateQueueFrame(ui.gates, W, ui.gateIdx)
+		frame = RenderGateQueueFrame(ui.gates, ui.resolvedGates, W, ui.gateIdx)
 		footer = fmt.Sprintf("  %s↑↓/jk%s Navigate  %sEnter/a%s Approve  %sR%s Refresh  %sq/Esc%s Back",
 			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 	case viewGraphConfirm:
 		if ui.pending != nil {
-			frame = RenderConfirmFrame(*ui.pending, W, ui.actionErr) // carries its own y/n hint
+			// Static tab bar for the surface the confirm returns to,
+			// then the prompt (which carries its own y/n hint).
+			frame = renderSurfaceTabs(surfaceName(ui.confirmReturn)) +
+				RenderConfirmFrame(*ui.pending, W, ui.actionErr)
 		}
+	}
+	if ui.notice != "" {
+		frame += "\n  " + Green + ui.notice + RST + "\n"
 	}
 	return frame + "\n" + Comment + HLine('─', W) + RST + "\n" + footer + "\n"
 }
@@ -675,7 +855,9 @@ func (ui *GraphUI) Run() {
 
 	for {
 		fmt.Print("\033[H")
-		fmt.Print(ClearFrame(ui.render()))
+		// Clamp to the pane height: printing past the last row scrolls
+		// the popup, shifting the tab bar up — the header must be static.
+		fmt.Print(ClearFrame(clampLines(ui.render(), termHeight()-1)))
 		fmt.Print("\033[J")
 
 		select {
@@ -689,6 +871,18 @@ func (ui *GraphUI) Run() {
 			ui.refresh()
 		}
 	}
+}
+
+// clampLines truncates a frame to at most h lines.
+func clampLines(s string, h int) string {
+	if h < 1 {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > h {
+		lines = lines[:h]
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 // readKeys reads single bytes from stdin in a loop.

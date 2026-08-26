@@ -1,10 +1,29 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 )
+
+// ErrInjectionSkipped reports that a wake-up injection was intentionally
+// not performed — e.g. an in-flight task suggests the message was already
+// injected on a prior wake-up. It exists because a skip that returns nil
+// is indistinguishable from a delivery: the receipt-gap backstop once
+// recorded phantom re-drives against a wedged agent and left it stuck for
+// ~20 minutes (the 2026-08-26 incident behind MUX-105). Callers must
+// never read a skip as success; match with errors.Is.
+var ErrInjectionSkipped = errors.New("wake-up injection skipped")
+
+// shortID abbreviates an id for log lines without panicking on ids
+// shorter than the display width.
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
 
 // Provider abstracts the AI CLI backend used by an agent role.
 // Each provider implements CLI-specific behavior for launching,
@@ -34,7 +53,11 @@ type Provider interface {
 	AcceptStartup(session, pane string, state PaneState) bool
 
 	// SendWakeUp injects a wake-up message into an idle agent's pane.
-	SendWakeUp(session, role string) error
+	// force bypasses provider-side suppression guards (the non-hook
+	// in-flight-task skip) — recovery paths use it so a stuck request can
+	// never block its own re-delivery (MUX-105); routine wake-ups pass
+	// false. A skipped injection returns ErrInjectionSkipped, never nil.
+	SendWakeUp(session, role string, force bool) error
 
 	// Compact triggers context compaction for the agent.
 	Compact(session, role, target string) error
@@ -287,7 +310,7 @@ func (p *LocalProvider) IsIdle(_, _ string) bool                     { return fa
 func (p *LocalProvider) IsAlive(session, role string) bool           { return IsHarnessActive(session, role) }
 func (p *LocalProvider) ClassifyPane(_ string) PaneState             { return PaneNotReady }
 func (p *LocalProvider) AcceptStartup(_, _ string, _ PaneState) bool { return false }
-func (p *LocalProvider) SendWakeUp(_, _ string) error                { return nil }
+func (p *LocalProvider) SendWakeUp(_, _ string, _ bool) error        { return nil }
 func (p *LocalProvider) Compact(_, _, _ string) error                { return nil }
 func (p *LocalProvider) SupportsHooks() bool                         { return false }
 func (p *LocalProvider) IdlePromptChar() string                      { return "" }

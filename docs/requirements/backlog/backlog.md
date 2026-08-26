@@ -34,14 +34,15 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 
 ### In progress
 
-_None — no spec is currently being implemented._
+| ID | Spec | Priority | Summary |
+|----|------|----------|---------|
+| MUX-105 | [`MUX-105-force-respond-escalation.md`](../drafts/MUX-105-force-respond-escalation.md) | High | Daemon escalation ladder + TUI force-respond for an agent holding an un-responded request. Root cause is not a missing feature: `SendWakeUp`'s in-flight-task guard blocks the recovery injection with the very task being recovered, and returns `nil`, so `checkPollHealth` records a re-drive that never happened. Cost a live session ~20 min and two manual interventions on 2026-08-26. **Also carries** (Phases 6–7, independent) `Tab`/`Shift-Tab` cycling of the [MUX-031](../completed/MUX-031-graph-run-tui.md) graph TUI between its runs / templates / gates surfaces — the three are already one `*GraphUI` differing only by initial view, so it is a key handler plus per-surface selection, inert in drill-down and confirm views |
 
 ### Reliability & observability
 
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
 | MUX-006 | [`MUX-006-diagnose-false-clean-verdict.md`](./MUX-006-diagnose-false-clean-verdict.md) | High | `diagnose` collects `IsAlive` but no detector reads it — a dead agent gets "No issues detected" exit 0; add `checkAgentDead` first in `diagnosticChecks` |
-| MUX-105 | [`MUX-105-force-respond-escalation.md`](./MUX-105-force-respond-escalation.md) | High | Daemon escalation ladder + TUI force-respond for an agent holding an un-responded request. Root cause is not a missing feature: `SendWakeUp`'s in-flight-task guard blocks the recovery injection with the very task being recovered, and returns `nil`, so `checkPollHealth` records a re-drive that never happened. Cost a live session ~20 min and two manual interventions on 2026-08-26. **Also carries** (Phases 6–7, independent) `Tab`/`Shift-Tab` cycling of the [MUX-031](../completed/MUX-031-graph-run-tui.md) graph TUI between its runs / templates / gates surfaces — the three are already one `*GraphUI` differing only by initial view, so it is a key handler plus per-surface selection, inert in drill-down and confirm views |
 | MUX-007 | [`MUX-007-verify-spec-stale-review-refire.md`](./MUX-007-verify-spec-stale-review-refire.md) | High | `checkInboxes()` refires the reviewed-transition on any edit-inbox growth while an unconsumed review message exists — one review completion spawns unbounded `verify-spec` echoes |
 | MUX-008 | [`MUX-008-unverified-daemon-auto-restart.md`](./MUX-008-unverified-daemon-auto-restart.md) | High | `RestartLocalAgent()` fire-and-hope relaunch: no exit wait, no launch verification — add bounded exit poll + post-relaunch verification + orphan detection |
 | MUX-009 | [`MUX-009-response-echo-chain-retrigger.md`](./MUX-009-response-echo-chain-retrigger.md) | High | Non-hook `SendWakeUp` injects response payloads as prompts, re-firing chains on a delegation's own answer; never inject responses + responded-check in `HasActionableMessages` |

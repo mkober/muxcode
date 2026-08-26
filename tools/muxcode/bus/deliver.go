@@ -83,7 +83,7 @@ func ForceDeliver(session, role string, force bool) (DeliverResult, error) {
 		ids = append(ids, m.ID)
 	}
 	AddNotifiedIDs(session, role, ids)
-	if err := SendWakeUpWithText(session, role, provider, text); err != nil {
+	if err := SendWakeUpWithText(session, role, provider, text, force); err != nil {
 		// Roll back the notified markers so a later attempt can retry.
 		ClearNotifiedIDs(session, role)
 		return res, fmt.Errorf("deliver to %s: %w", role, err)

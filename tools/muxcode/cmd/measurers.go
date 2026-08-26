@@ -18,4 +18,12 @@ func init() {
 		cfg.Measurer = tui.MeasureProviderSelect
 		bus.RegisterModal(cfg)
 	}
+	// One measurer for all three graph popups: Tab cycles the surfaces
+	// inside a single popup, so each is sized for the widest of them.
+	for _, name := range []string{"graph-runs", "graph-launch", "graph-gates"} {
+		if cfg, ok := bus.GetPopup(name); ok {
+			cfg.Measurer = tui.MeasureGraphUI
+			bus.RegisterPopup(cfg)
+		}
+	}
 }

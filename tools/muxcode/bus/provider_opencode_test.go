@@ -628,7 +628,7 @@ func TestOpenCodeWakeUp_DisplayMessage(t *testing.T) {
 	// In test environment without tmux, it will fail gracefully.
 	p := &OpenCodeProvider{}
 	// We only verify it doesn't panic; the tmux command will error in CI.
-	_ = p.SendWakeUp("test-session", "build")
+	_ = p.SendWakeUp("test-session", "build", false)
 }
 
 // --- DetectTaskCompletion ---

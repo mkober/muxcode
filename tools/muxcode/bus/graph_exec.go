@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -179,6 +180,25 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 		msg := interpolateGraphMessage(n.Message, run.Intent, "")
 		m := NewMessage(graphSender, n.Role, "request", n.Action, msg, "")
 		if err := SendNoCC(session, m); err != nil {
+			if errors.Is(err, ErrSendSuppressed) {
+				// The identical request is already queued or in flight (a
+				// loop re-entry or retry racing the prior pass) — adopt it
+				// instead of failing the node: the work the send would
+				// have queued already exists.
+				taskID := m.ID
+				if t, found := FindInFlightTask(session, n.Role, n.Action); found {
+					taskID = t.ID
+				} else {
+					// No live task to adopt (the duplicate is an unconsumed
+					// inbox message) — create one for this node so harvest
+					// has a record, as the pre-sentinel path always did.
+					_ = CreateTask(session, m, nodeTimeoutSecs(n))
+				}
+				_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeRunning, func(s *GraphNodeStatus) {
+					s.TaskID = taskID
+				})
+				return
+			}
 			finishNode(session, run, n, OutcomeFailure, "send failed: "+err.Error())
 			return
 		}
@@ -264,6 +284,13 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 				run.ID, n.ID, prompt, run.ID, n.ID), "")
 		_ = SendNoCC(session, gate)
 		_ = Notify(session, "edit")
+		// Auto-surface the approval UI: a gate exists to collect a human
+		// decision, and a message buried in an inbox left a run waiting
+		// unnoticed for 37 minutes (user-requested 2026-08-26). Best
+		// effort — no attached client, no popup.
+		if os.Getenv("MUXCODE_GATE_AUTOSHOW_DISABLE") != "1" {
+			_ = OpenPopup(session, "graph-gates", "", nil)
+		}
 
 	case NodeWaitEvent:
 		// Parked here; harvestWaitingNode releases it when a bus message

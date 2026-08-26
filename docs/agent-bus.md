@@ -1578,6 +1578,14 @@ Keys in the interactive views: `j`/`k` move, `Enter` descends, `q` goes back (qu
 top level), `R` forces a refresh, and `a` / `c` / `r` approve a gate, cancel the run, or retry
 from the selected node — each behind a confirm prompt.
 
+`Tab` cycles the three top-level surfaces in place — **Graph Runs → Pending Gates → Launch Graph**
+— and `Shift-Tab` cycles back, so switching modes never means closing the popup and reopening the
+menu. All three menu entries open the same TUI and differ only in where the cycle starts. A tab bar
+in the header shows the active surface; drill-ins (DAG, node detail, intent prompt) and open
+confirm prompts leave `Tab` inert, so it can never yank you out of a half-answered prompt. Each
+surface remembers its own selection across a cycle, restored by item id rather than row index, so
+a list that changed underneath falls back to the first row instead of pointing at the wrong thing.
+
 Three details worth knowing:
 
 - **`--templates` has no `--render-once` form** and exits non-zero if you combine them; the

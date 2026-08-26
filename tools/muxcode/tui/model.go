@@ -133,19 +133,14 @@ func (d *Dashboard) cleanup(restoreStty bool) {
 	fmt.Print("\033[H")    // move to top
 }
 
-// termHeight returns the terminal height, defaulting to 24.
+// termHeight returns the terminal height, defaulting to 24. stty (an
+// ioctl on the actual tty) is consulted before tput, which trusts a
+// LINES/COLUMNS env that display-popups inherit stale from the session —
+// sizing the TUI to the wrong surface (MUX-105).
 func termHeight() int {
-	out, err := exec.Command("tput", "lines").Output()
-	if err == nil {
-		s := strings.TrimSpace(string(out))
-		if h, err := strconv.Atoi(s); err == nil && h > 0 {
-			return h
-		}
-	}
-
 	cmd := exec.Command("stty", "size")
 	cmd.Stdin = os.Stdin
-	out, err = cmd.Output()
+	out, err := cmd.Output()
 	if err == nil {
 		parts := strings.Fields(strings.TrimSpace(string(out)))
 		if len(parts) == 2 {
@@ -155,30 +150,37 @@ func termHeight() int {
 		}
 	}
 
-	return 24
-}
-
-// termWidth returns the terminal width, defaulting to 62.
-func termWidth() int {
-	// Try tput cols first
-	out, err := exec.Command("tput", "cols").Output()
+	out, err = exec.Command("tput", "lines").Output()
 	if err == nil {
 		s := strings.TrimSpace(string(out))
-		if w, err := strconv.Atoi(s); err == nil && w > 0 {
-			return w
+		if h, err := strconv.Atoi(s); err == nil && h > 0 {
+			return h
 		}
 	}
 
-	// Fallback: stty size (returns "rows cols")
+	return 24
+}
+
+// termWidth returns the terminal width, defaulting to 62. stty before
+// tput for the same reason as termHeight.
+func termWidth() int {
 	cmd := exec.Command("stty", "size")
 	cmd.Stdin = os.Stdin
-	out, err = cmd.Output()
+	out, err := cmd.Output()
 	if err == nil {
 		parts := strings.Fields(strings.TrimSpace(string(out)))
 		if len(parts) == 2 {
 			if w, err := strconv.Atoi(parts[1]); err == nil && w > 0 {
 				return w
 			}
+		}
+	}
+
+	out, err = exec.Command("tput", "cols").Output()
+	if err == nil {
+		s := strings.TrimSpace(string(out))
+		if w, err := strconv.Atoi(s); err == nil && w > 0 {
+			return w
 		}
 	}
 

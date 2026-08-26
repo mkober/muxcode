@@ -405,6 +405,52 @@ func TestExecHumanGate(t *testing.T) {
 }
 
 // TestExecHumanGateRetryRequiresFreshApproval pins the stale-marker gate
+// A run parking at a wait_human gate auto-opens the Pending Gates popup:
+// a notification buried in an inbox left a live gate waiting 37 minutes
+// unnoticed (2026-08-26). Opt-out via MUXCODE_GATE_AUTOSHOW_DISABLE.
+func TestExecHumanGateAutoShowsGatesPopup(t *testing.T) {
+	gated := func() *Graph {
+		return &Graph{
+			Name: "t", Start: "gate",
+			Nodes: []Node{
+				{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+				{ID: "b", Type: NodeSend, Role: "review", Action: "review", Message: "go"},
+			},
+			Edges: []Edge{{From: "gate", To: "b"}},
+		}
+	}
+
+	t.Setenv("MUXCODE_GATE_AUTOSHOW_DISABLE", "")
+	orig := tmuxRunner
+	var calls [][]string
+	tmuxRunner = func(args ...string) error { calls = append(calls, args); return nil }
+	t.Cleanup(func() { tmuxRunner = orig })
+
+	run := createTestRun(t, gated())
+	step(t, runTestSession, run.ID)
+
+	saw := false
+	for _, c := range calls {
+		j := strings.Join(c, " ")
+		if strings.Contains(j, "display-popup") && strings.Contains(j, "graph ui --gates") {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Errorf("expected the gates popup auto-opened on gate dispatch, calls: %v", calls)
+	}
+
+	t.Setenv("MUXCODE_GATE_AUTOSHOW_DISABLE", "1")
+	calls = nil
+	run2 := createTestRun(t, gated())
+	step(t, runTestSession, run2.ID)
+	for _, c := range calls {
+		if strings.Contains(strings.Join(c, " "), "display-popup") {
+			t.Errorf("opt-out must suppress the popup, calls: %v", calls)
+		}
+	}
+}
+
 // bypass (PR #34 Copilot must-fix): after a gate was approved once, a
 // graph retry --from that gate must WAIT for a new approval — the old
 // approved marker must not auto-release the fresh pass.
