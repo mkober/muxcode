@@ -34,36 +34,49 @@ A popup answers "what is happening?" only when you already suspect something is.
 
 > **Related unfiled lesson.** The handoff cites this as "the MUX-104 rotate-window lesson", but MUX-104 is the `send-keys` dash-payload bug — the rotate-window finding is **not filed in any spec**. It was established during the tmux-bindings work: `select-layout` preserves pane indices, but `rotate-window` does **not** (it flips pane 1 from the agent to nvim, breaking `PaneTarget`/`Notify`/`ClearAgent`/`deliver`). That is why `rotate` was never bound. It survives only in agent memory, which is a poor home for a constraint this load-bearing — **this spec should either carry it or a follow-up should file it**, because the next person to add a layout binding will not know.
 
-### Interplay with gate auto-show
+### Interplay with gate auto-show — resolved by removing the popup
 
-On a window **with** a control pane, forcing a popup open is redundant and intrusive. Instead the pane should **switch itself to the Pending Gates surface** when a new gate appears — a tick observing a waiting gate absent from the previous tick. The popup path remains the fallback for excluded windows and detached sessions.
+Initially the control pane was to *suppress* the gate auto-show popup on windows that had one,
+leaving the popup as a fallback elsewhere. **That halfway position is gone (user decision,
+2026-08-26): the graph popups and the `prefix + b` graph menu group are removed outright, gate
+dispatch never opens a modal, and `MUXCODE_GATE_AUTOSHOW_DISABLE` no longer exists.**
+
+This is the cleaner end state and worth stating plainly: two mechanisms that surface the same
+information, gated on a config flag, is a design that has to be kept in agreement forever. One
+surface that is always present cannot disagree with itself. The pane still switches to Pending
+Gates when a new gate appears — that is now the *only* gate-surfacing path, which raises the stakes
+on the switch working (it currently does not; see the verification notes).
 
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] `LaunchSession` creates the control pane on **every** agent window, **always after panes 0 and 1**, so `AgentPane() == "1"` holds everywhere
-- [ ] Default is **on for all windows**; `MUXCODE_CONTROL_PANE_EXCLUDE` names windows to opt out (empty = all windows get one)
-- [ ] `MUXCODE_CONTROL_PANE_DISABLE=1` turns the feature off wholesale, restoring the two-pane layout and the popup workflow
-- [ ] Height via `MUXCODE_CONTROL_PANE_HEIGHT` (default 14)
-- [ ] Border styling is set **globally** in `config/tmux.conf` (`pane-border-status top`, `pane-border-format`, `pane-border-style`), not per-window at creation — 12 windows must not each re-apply it
-- [ ] A killed control pane is respawned under the same supervision model as the left-pane pollers; a binary hot-reload restarts it
-- [ ] The pane hosts **switchable surfaces**, with the graph UI as the first; adding a second surface must not require a second pane
-- [ ] The pane runs the **same** `muxcode graph ui` binary — no forked renderer. The existing height clamp and flat-list fallback already handle 14 rows (pinned by `TestRenderGraphFrame_DeepGraphFallsBack`)
-- [ ] On a window **with** a control pane, a newly-waiting gate switches it to the Pending Gates surface and the auto-show popup does **not** also fire
-- [ ] On an **excluded** window (or with the feature disabled), auto-show popup behaviour is unchanged
-- [ ] `pane-border-format` shows a title only for titled panes; border style is Dracula `colour141`
-- [ ] Pane titles are **ALL CAPS**: pane 0 `" NVIM "`, pane 2 `" GRAPH "`
-- [ ] **Pane 1's title is never set by the launcher** — the agent CLI self-manages it, live-updating a state glyph (observed on the prototype). Writing a title there would overwrite a live signal
-- [ ] The agent pane nonetheless *displays* in the same ALL-CAPS style, via a `pane-border-format` substitution (`s/code-editor/CODE-EDITOR/`) that transforms the CLI's raw title **at render time only**
+- [x] `LaunchSession` creates the control pane on **every** agent window, **always after panes 0 and 1**, so `AgentPane() == "1"` holds everywhere
+- [x] Default is **on for all windows**; `MUXCODE_CONTROL_PANE_EXCLUDE` names windows to opt out (empty = all windows get one)
+- [x] `MUXCODE_CONTROL_PANE_DISABLE=1` turns the feature off wholesale, restoring the two-pane layout and the popup workflow
+- [x] Height via `MUXCODE_CONTROL_PANE_HEIGHT` (default 14)
+- [x] Border styling is set **globally** in `config/tmux.conf` (`pane-border-status top`, `pane-border-format`, `pane-border-style`), not per-window at creation — 12 windows must not each re-apply it
+- [x] A killed control pane is respawned under the same supervision model as the left-pane pollers; a binary hot-reload restarts it
+- [x] The pane hosts **switchable surfaces**, with the graph UI as the first; adding a second surface must not require a second pane
+- [x] Tab and cycle order is **Launch Graph → Graph Runs → Pending Gates**, with the tab bar matching
+- [ ] Surface selection is **shared across all panes** via a `control-pane-surface` file: switching surface in one pane converges the others
+- [ ] Convergence is **one-way and non-destructive** — a pane drilled into a DAG, node detail, or intent prompt is never yanked out by another pane's switch
+- [x] Each control pane pins `BUS_SESSION` in its own environment (`split-window -e`) rather than inheriting it from the tmux server
+- [x] The pane runs the **same** `muxcode graph ui` binary — no forked renderer. The existing height clamp and flat-list fallback already handle 14 rows (pinned by `TestRenderGraphFrame_DeepGraphFallsBack`)
+- [ ] On a window **with** a control pane, a newly-waiting gate switches it to the Pending Gates surface — **still failing live** (see notes); the popup half of this criterion is now moot, since no popup exists to suppress
+- [x] ~~On an **excluded** window (or with the feature disabled), auto-show popup behaviour is unchanged~~ — **superseded**: gate dispatch never opens a modal now, and `MUXCODE_GATE_AUTOSHOW_DISABLE` is gone. Nothing to preserve
+- [x] `pane-border-format` shows a title only for titled panes; border style is Dracula `colour141`
+- [x] Pane titles are **ALL CAPS**: pane 0 `" NVIM "`, pane 2 `" GRAPH "`
+- [x] **Pane 1's title is never set by the launcher** — the agent CLI self-manages it, live-updating a state glyph (observed on the prototype). Writing a title there would overwrite a live signal
+- [x] The agent pane nonetheless *displays* in the same ALL-CAPS style, via a `pane-border-format` substitution (`s/code-editor/CODE-EDITOR/`) that transforms the CLI's raw title **at render time only**
 
   > This is the right shape for the problem. The launcher and the CLI both want to own that
   > title; a launcher that sets it wins briefly and then loses every state update, while
   > leaving it raw breaks the visual convention the other two panes establish. Transforming at
   > display keeps the CLI authoritative over content and the launcher authoritative over
   > presentation — neither has to yield, and the live glyph survives.
-- [ ] `prefix + b` graph popups keep working for excluded windows and disabled sessions
-- [ ] `config/tmux.conf` and `README.md` document the control pane, its config, and the popup fallback
+- [x] ~~`prefix + b` graph popups keep working for excluded windows and disabled sessions~~ — **superseded 2026-08-26**: the graph popups and the `prefix + b` graph menu group are **removed entirely**. The control pane replaces every graph modal; there is no popup fallback left to keep working
+- [x] `config/tmux.conf` and `README.md` document the control pane, its config, and the popup fallback
 
 ### Technical approach
 
@@ -90,15 +103,15 @@ On a window **with** a control pane, forcing a popup open is redundant and intru
 
 ### Phase 1: Pane creation and configuration
 
-- [ ] `ControlPaneEnabled()` / `ControlPaneExclude()` / `ControlPaneHeight()` accessors with defaults (on, none excluded, 14)
-- [ ] `LaunchSession` creates the pane after panes 0/1 on every non-excluded window
-- [ ] Pane titles (` NVIM `, ` GRAPH `); pane 1's title never written by the launcher
-- [ ] Global border status/format/style in `config/tmux.conf`, including the `s/code-editor/CODE-EDITOR/` display substitution
-- [ ] Unit tests: pane-order assertion **per window**; `MUXCODE_CONTROL_PANE_DISABLE=1` creates no pane anywhere; an excluded window keeps two panes while its siblings get three
+- [x] `ControlPaneEnabled()` / `ControlPaneExclude()` / `ControlPaneHeight()` accessors with defaults (on, none excluded, 14)
+- [x] `LaunchSession` creates the pane after panes 0/1 on every non-excluded window
+- [x] Pane titles (` NVIM `, ` GRAPH `); pane 1's title never written by the launcher
+- [x] Global border status/format/style in `config/tmux.conf`, including the `s/code-editor/CODE-EDITOR/` display substitution
+- [x] Unit tests: pane-order assertion **per window**; `MUXCODE_CONTROL_PANE_DISABLE=1` creates no pane anywhere; an excluded window keeps two panes while its siblings get three
 
 ### Phase 2: Supervision
 
-- [ ] Respawn a dead control pane under the poller supervision model
+- [x] Respawn a dead control pane under the poller supervision model
 - [ ] Binary hot-reload restarts the pane
 - [ ] Unit tests: respawn triggers on a missing pane; disabled/excluded windows never respawn
 - [ ] Measure supervision cost at 12 panes before assuming it is negligible
@@ -131,6 +144,78 @@ On a window **with** a control pane, forcing a popup open is redundant and intru
 - [ ] Test: a change to the CLI-managed pane-1 title still shows through the substitution — proving the transform is at display and does not pin the value
 - [ ] Run the script and verify all checks pass
 
+## Verification notes
+
+### 2026-08-26 — 21/41 on source evidence; the integration script has **not been run**
+
+Unit suite: **2021 PASS / 0 FAIL**.
+
+| Claim | Evidence |
+|-------|----------|
+| Creation order | `launcher.go:365-369` calls `CreateControlPane` at the **end** of window setup, with the contract cited in-comment: *"created LAST so panes 0/1 keep their indices (AgentPane's delivery contract)"* |
+| Config | `ControlPaneHeight()` (default 14), `ControlPanesEnabled()`, `ControlPaneEnabledFor(win)` — matching the spec's env names |
+| Global borders | `tmux.conf:91-93` — `pane-border-status top`, a format carrying `s/code-editor/CODE-EDITOR/`, `colour141` style |
+| Titles | ` NVIM ` on pane 0 for `edit`/`plan` only (the windows that have an nvim pane); ` GRAPH ` on pane 2; pane 1 never written |
+| Supervision | `daemon/control_pane.go` `checkControlPanes()` → `bus.EnsureControlPane(…, recycle)`, called from `daemon.go:311` |
+| Popup suppression | `graph_exec.go:293` gates auto-show on `!ControlPanesEnabled()` |
+| Gate switch | `graph_ui.go` `checkGateSwitch()` diffs a seen-set so only a **new** gate switches the surface |
+| Surfaces | `MUXCODE_CONTROL_PANE_SURFACE` selects `runs`/`gates`/`launcher` from one binary |
+| Popup fallback | the three graph entries remain in `tmux.conf` |
+| Docs | `README.md:629`, `CLAUDE.md:60` |
+
+#### The integration script ran and is **red**: 12 passed, 2 failed, exit 1
+
+It executed at 13:14 (my note above, written minutes earlier, said it never had — corrected here).
+Two substantive failures:
+
+**1. `FAIL: delivery reaches run pane 1`** — capture shows only bare prompts (`❯   ❯`). The sibling
+assertion `delivery reaches build pane 1` **passed**.
+
+This is the criterion that protects the delivery layer, so it is the one failure that must not be
+waved through. An obvious hypothesis — that `run` lacks an nvim pane and so puts its agent at a
+different index — is **disproven**: `AgentPane()` returns `"1"` for every window because
+`LaunchSession` always splits horizontally, and live `build` and `run` windows both show three
+panes. Whatever the cause, it is not a layout difference between the two windows.
+
+I am not offering a second diagnosis. Earlier today I called a `test-force-respond.sh` failure a
+daemon race, was specific and confident, and was wrong; the real flaw was a silenced setup step.
+The facts here are: same layout, same assertion shape, one window passes and the other does not.
+That asymmetry is where to start.
+
+**2. `FAIL: pane switched to Pending Gates`** — the capture shows the pane still rendering the run
+list (`RUN / STATE / PROGRESS / ELAPSED / TEMPLATE`) rather than the gate queue. `checkGateSwitch()`
+exists in `graph_ui.go` and diffs a seen-set, so this is a live-path gap rather than missing code —
+the same shape as MUX-014, where the executor's unit tests all passed while the live path hung.
+
+**3. `FAIL: coverage floor not met (12 < 13)`** is derived, not independent — it is the script
+asserting a minimum number of passing checks, which the two real failures push it below.
+
+Worth crediting: that coverage floor is exactly the guard this project has needed twice. A suite
+that can silently run fewer checks than intended is how `test-graph-tui.sh` returned `exit 0`
+having executed **nothing**. This script cannot do that.
+
+#### The `run` pane-1 failure was a real bug, and the integration script is what found it
+
+The delivery failure I declined to guess at has a cause: **the control pane inherited `BUS_SESSION`
+from the tmux server environment** rather than carrying its own. `CreateControlPane` now pins it
+explicitly (`control_pane.go:81`, `split-window -e BUS_SESSION=<session>`).
+
+That explains the asymmetry cleanly — a leaked server-level value resolves correctly for whichever
+session set it and wrongly for the others, so one window passes and another fails with no layout
+difference between them. It is also precisely the class of defect that **only** a live run can
+surface: every unit test builds its session explicitly, so none of them can observe an environment
+leak. `TestCreateControlPane_Argv` pins the tmux argv and would have kept passing throughout.
+
+This is the third time on this project that an integration run has found what the unit suite
+structurally could not — MUX-014's two live-path executor bugs, MUX-031's stale-binary skip, and
+now this. It is the strongest argument in the repo for writing the integration phase first and
+running it early, and it is worth remembering that the run was **red twice** before it was useful:
+a failing integration test that nobody reads is indistinguishable from one that does not exist.
+
+Phase 6 and the remaining integration-dependent criteria stay **unchecked** pending a green run —
+the gate-switch failure is still outstanding and is now the *only* path that surfaces a waiting
+gate, since the popup is gone.
+
 ## Open questions
 
 - **Is 12 panes the right default?** The rollout was to all windows, so that is the spec'd default — but it means 12 `muxcode graph ui` processes, 12 supervised panes, and three panes competing for height on a small terminal. `MUXCODE_CONTROL_PANE_EXCLUDE` exists for that, though a default that many users immediately narrow is a default worth revisiting. Measure process and redraw cost before treating it as settled.
@@ -149,6 +234,12 @@ On a window **with** a control pane, forcing a popup open is redundant and intru
 ## Provenance
 
 Filed by the plan agent on 2026-08-26 from a user-requested feature prototyped live in this session. The handoff attributed the pane-index lesson to MUX-104; that attribution is corrected above — the rotate-window finding is unfiled and should be captured before it is lost.
+
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-108-control-pane | 25m | 2026-08-26 13:55 |
 
 ## Status
 

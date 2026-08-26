@@ -47,7 +47,7 @@ Other glyphs in use: `↺ ×N` (capped loop edge), `⇥` (Tab affordance), `─ 
 Every full-screen surface renders in the same four bands, top to bottom:
 
 ```
-  Graph Runs / Pending Gates / Launch Graph   ⇥ Tab: next surface     ← tab bar (multi-surface only)
+  Launch Graph / Graph Runs / Pending Gates   ⇥ Tab: next surface     ← tab bar (multi-surface only)
   Run abc123  coding-pr  running  4/9 done  2m14s                     ← header: what am I looking at
   ────────────────────────────────────────────────────────────────
   ● build      ✓ test       ⚑ await-review                            ← body
@@ -73,6 +73,27 @@ Every full-screen surface renders in the same four bands, top to bottom:
 | `y` / `n` | Confirm / cancel | Confirm views swallow all other keys |
 
 A key that mutates state is **always** confirm-gated. A key means the same thing in every surface, or it gets a different key.
+
+### Where a surface lives: the control pane
+
+Full-screen surfaces render inside the **control pane** — a permanent full-width pane at the bottom
+of every agent window ([`MUX-108`](requirements/drafts/MUX-108-control-pane.md)), created *after*
+panes 0 and 1 so `AgentPane()`'s hardcoded `"1"` delivery contract holds.
+
+Two consequences for anything rendered there:
+
+- **The height is small and fixed** (14 rows by default). A surface that needs more must degrade,
+  not scroll off — this is rule 2 with teeth, and it is why the graph DAG shows its flat-list
+  fallback in the pane far more often than in a full-screen popup.
+- **The pane is ambient, not summoned.** It is on screen whether or not anyone asked, so a surface
+  must be readable at a glance and must not demand attention it has not earned. The graph popups
+  it replaced could afford to be busy because you opened them deliberately; a permanent pane
+  cannot.
+
+Surface selection is shared across panes through a `control-pane-surface` file, so switching in one
+converges the rest — **one-way and non-destructive**: a pane drilled into a DAG or a half-entered
+prompt is never yanked out by another pane's switch. That asymmetry is the whole design: converge
+the idle, never interrupt the engaged.
 
 ## Structural rules
 

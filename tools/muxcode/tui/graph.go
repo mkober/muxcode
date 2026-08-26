@@ -535,7 +535,7 @@ func fitWidth(line string, width int) string {
 // shares: all three surfaces named, the active one highlighted, then the
 // cycle hint.
 func renderSurfaceTabs(active string) string {
-	names := []string{"Graph Runs", "Pending Gates", "Launch Graph"}
+	names := []string{"Launch Graph", "Graph Runs", "Pending Gates"}
 	parts := make([]string, 0, len(names))
 	for _, n := range names {
 		if n == active {

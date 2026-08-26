@@ -267,18 +267,14 @@ assert_contains "gate queue header carries the cycle hint" "$queue" "Tab: next s
 # ── 7. Removed popups gone, CLI capabilities intact ──────────
 
 echo "-- menu reclamation"
-for popup in agent-status agent-history memory-context spawn-agent proc-list cron-list; do
+# The six MUX-031 removals plus the three graph popups retired by the
+# control pane (MUX-108) — all must be unknown.
+for popup in agent-status agent-history memory-context spawn-agent proc-list cron-list graph-runs graph-launch graph-gates; do
   if out=$(muxcode popup "$popup" 2>&1); then
     fail "popup $popup must be unknown"
   else
     assert_contains "popup $popup is unknown" "$out" "unknown popup"
   fi
-done
-# The unknown-popup error lists the registry — the three graph surfaces
-# must be in it, proving their registration without opening a popup.
-reg=$(muxcode popup no-such-popup 2>&1 || true)
-for popup in graph-runs graph-launch graph-gates; do
-  assert_contains "popup $popup is registered" "$reg" "$popup"
 done
 
 for cli in "status" "history build" "memory context" "proc list" "spawn list" "cron list"; do

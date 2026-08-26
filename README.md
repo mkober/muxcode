@@ -624,7 +624,10 @@ Useful keybindings for navigating your MuxCode session:
 | `Prefix + a` | Cycle edit-window agents from any window |
 | `Prefix + R` | Open provider selector (hot reload) |
 | `Prefix + i` | Open API testing modal |
-| `Prefix + b` | Open MuxCode quick menu — graph group: `Graph Runs (g)`, `Launch Graph (G)`, `Pending Gates (a)` |
+| `Prefix + b` | Open MuxCode quick menu |
+
+Every agent window also carries the **control pane** — a fixed full-width strip at the bottom hosting the graph TUI (launcher, runs, pending gates; `Tab` cycles, and the selected surface stays consistent across all windows). It is on by default; `MUXCODE_CONTROL_PANE_EXCLUDE` names windows to opt out, `MUXCODE_CONTROL_PANE_DISABLE=1` turns it off wholesale, `MUXCODE_CONTROL_PANE_HEIGHT` sets its rows (default 14), and `MUXCODE_CONTROL_PANE_SURFACE` picks the starting surface (`runs`/`gates`/`launcher`). A waiting `wait_human` gate switches every pane to Pending Gates by itself; the daemon respawns a killed pane and recycles panes onto a freshly installed binary. The graph popups and menu entries were retired with the pane's arrival — `muxcode graph ui` remains for ad-hoc use.
+
 | `Prefix + C` | New MuxCode session (project picker) |
 | `Prefix + z` | Zoom current pane to full screen |
 | `Prefix + [` | Enter scroll/copy mode |

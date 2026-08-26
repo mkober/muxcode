@@ -405,48 +405,29 @@ func TestExecHumanGate(t *testing.T) {
 }
 
 // TestExecHumanGateRetryRequiresFreshApproval pins the stale-marker gate
-// A run parking at a wait_human gate auto-opens the Pending Gates popup:
-// a notification buried in an inbox left a live gate waiting 37 minutes
-// unnoticed (2026-08-26). Opt-out via MUXCODE_GATE_AUTOSHOW_DISABLE.
-func TestExecHumanGateAutoShowsGatesPopup(t *testing.T) {
-	gated := func() *Graph {
-		return &Graph{
-			Name: "t", Start: "gate",
-			Nodes: []Node{
-				{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
-				{ID: "b", Type: NodeSend, Role: "review", Action: "review", Message: "go"},
-			},
-			Edges: []Edge{{From: "gate", To: "b"}},
-		}
+// Gate surfacing belongs to the control pane (MUX-108): dispatching a
+// wait_human never opens a popup — the graph modals were removed with
+// the pane's arrival, and the pane switches itself to Pending Gates.
+func TestExecHumanGateNeverPopsModal(t *testing.T) {
+	gated := &Graph{
+		Name: "t", Start: "gate",
+		Nodes: []Node{
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "b", Type: NodeSend, Role: "review", Action: "review", Message: "go"},
+		},
+		Edges: []Edge{{From: "gate", To: "b"}},
 	}
 
-	t.Setenv("MUXCODE_GATE_AUTOSHOW_DISABLE", "")
 	orig := tmuxRunner
 	var calls [][]string
 	tmuxRunner = func(args ...string) error { calls = append(calls, args); return nil }
 	t.Cleanup(func() { tmuxRunner = orig })
 
-	run := createTestRun(t, gated())
+	run := createTestRun(t, gated)
 	step(t, runTestSession, run.ID)
-
-	saw := false
-	for _, c := range calls {
-		j := strings.Join(c, " ")
-		if strings.Contains(j, "display-popup") && strings.Contains(j, "graph ui --gates") {
-			saw = true
-		}
-	}
-	if !saw {
-		t.Errorf("expected the gates popup auto-opened on gate dispatch, calls: %v", calls)
-	}
-
-	t.Setenv("MUXCODE_GATE_AUTOSHOW_DISABLE", "1")
-	calls = nil
-	run2 := createTestRun(t, gated())
-	step(t, runTestSession, run2.ID)
 	for _, c := range calls {
 		if strings.Contains(strings.Join(c, " "), "display-popup") {
-			t.Errorf("opt-out must suppress the popup, calls: %v", calls)
+			t.Errorf("gate dispatch must never open a popup, calls: %v", calls)
 		}
 	}
 }

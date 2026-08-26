@@ -110,6 +110,7 @@ type Daemon struct {
 	permBlockAlerted   map[string]bool // role → alerted edit once for the current block
 
 	lastAgentDefsCheck int64
+	lastPaneSupervise  int64
 
 	lastPollHealthCheck int64
 	pollGapSince        map[string]int64 // role → when a receipt gap first appeared (0 = none)
@@ -307,6 +308,7 @@ func (d *Daemon) Run() error {
 		d.checkPaneSweep()
 		d.checkPollHealth()
 		d.checkForceRespond()
+		d.checkControlPanes()
 		d.checkNonHookTasks()
 		d.checkTrackedTasks()
 		d.checkGraphRuns()

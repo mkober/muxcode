@@ -360,6 +360,15 @@ func createWindowContent(cfg *LauncherConfig, session, win, projectDir, agentLau
 	// Per-window user option — follows the window object across swap-window operations.
 	TmuxSetWindowOption(target, "@display-name", CapitalizeWindow(win))
 
+	// Control pane (MUX-108) — created LAST so panes 0/1 keep their
+	// indices (AgentPane's delivery contract).
+	if ControlPaneEnabledFor(win) {
+		if win == "edit" || win == "plan" {
+			_ = TmuxRun("select-pane", "-t", target+".0", "-T", " NVIM ")
+		}
+		_ = CreateControlPane(session, win)
+	}
+
 	return nil
 }
 

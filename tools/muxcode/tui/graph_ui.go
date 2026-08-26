@@ -268,6 +268,10 @@ type GraphUI struct {
 	tmplSelID  string
 	gateSelKey string // runID + "/" + nodeID
 
+	// Gates already seen waiting — a NEW one switches the UI to the
+	// Pending Gates surface (the strip's ambient-attention contract).
+	knownWaiting map[string]bool
+
 	loadErr error
 	keyCh   chan byte
 	now     func() time.Time
@@ -275,7 +279,7 @@ type GraphUI struct {
 
 // graphSurfaces is the Tab cycle order over the three top-level views —
 // it must match the tab bar's visual order (renderSurfaceTabs).
-var graphSurfaces = []graphView{viewGraphRuns, viewGraphGates, viewGraphTemplates}
+var graphSurfaces = []graphView{viewGraphTemplates, viewGraphRuns, viewGraphGates}
 
 // surfaceName maps a view to its tab-bar name; drill-ins highlight their
 // parent surface so the bar stays static across every frame.
@@ -287,6 +291,54 @@ func surfaceName(v graphView) string {
 		return "Launch Graph"
 	default: // runs, DAG, node detail
 		return "Graph Runs"
+	}
+}
+
+// surfaceKey and surfaceForKey translate top-level views to the shared
+// on-disk surface selection and back.
+func surfaceKey(v graphView) string {
+	switch v {
+	case viewGraphGates:
+		return "gates"
+	case viewGraphTemplates:
+		return "launcher"
+	default:
+		return "runs"
+	}
+}
+
+func surfaceForKey(k string) (graphView, bool) {
+	switch k {
+	case "gates":
+		return viewGraphGates, true
+	case "launcher":
+		return viewGraphTemplates, true
+	case "runs":
+		return viewGraphRuns, true
+	}
+	return viewGraphRuns, false
+}
+
+// shareSurface persists a user-driven surface change so every other
+// control pane follows (they sync on tick).
+func (ui *GraphUI) shareSurface() {
+	bus.WriteControlPaneSurface(ui.session, surfaceKey(ui.view))
+}
+
+// syncSharedSurface adopts the shared selection — top-level views only,
+// never a drill-in, and adopting never writes back (one-way convergence).
+func (ui *GraphUI) syncSharedSurface() {
+	topLevel := ui.view == viewGraphRuns || ui.view == viewGraphTemplates || ui.view == viewGraphGates
+	if !topLevel {
+		return
+	}
+	k, ok := bus.ReadControlPaneSurface(ui.session)
+	if !ok {
+		return
+	}
+	if v, valid := surfaceForKey(k); valid && v != ui.view {
+		ui.view = v
+		ui.refresh()
 	}
 }
 
@@ -399,11 +451,13 @@ func (ui *GraphUI) handleKey(key byte) string {
 			ui.view = viewGraphTemplates
 			ui.tmplErr = ""
 			ui.refresh()
+			ui.shareSurface()
 		}
 	case 'g':
 		if ui.view == viewGraphRuns {
 			ui.view = viewGraphGates
 			ui.refresh()
+			ui.shareSurface()
 		}
 	case 'a':
 		ui.requestApprove()
@@ -467,6 +521,7 @@ func (ui *GraphUI) cycleSurface(delta int) {
 	ui.tmplErr = ""
 	ui.refresh()
 	ui.restoreSelection()
+	ui.shareSurface()
 }
 
 // saveSelection records the current surface's selected item by id.
@@ -868,8 +923,34 @@ func (ui *GraphUI) Run() {
 				return
 			}
 		case <-time.After(graphTickInterval):
+			ui.syncSharedSurface()
+			ui.checkGateSwitch()
 			ui.refresh()
 		}
+	}
+}
+
+// checkGateSwitch switches to the Pending Gates surface when a gate
+// becomes newly waiting — once per gate, never from a drill-in (DAG,
+// node detail, intent, confirm), which would discard the user's context.
+func (ui *GraphUI) checkGateSwitch() {
+	topLevel := ui.view == viewGraphRuns || ui.view == viewGraphTemplates || ui.view == viewGraphGates
+	gates := LoadPendingGates(ui.session, ui.now())
+	fresh := false
+	seen := make(map[string]bool, len(gates))
+	for _, g := range gates {
+		k := g.RunID + "/" + g.NodeID
+		seen[k] = true
+		if !ui.knownWaiting[k] {
+			fresh = true
+		}
+	}
+	ui.knownWaiting = seen
+	if fresh && topLevel && ui.view != viewGraphGates {
+		ui.view = viewGraphGates
+		ui.notice = "⚑ new gate waiting"
+		ui.refresh()
+		ui.shareSurface() // every pane follows the gate
 	}
 }
 

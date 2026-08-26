@@ -284,13 +284,9 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 				run.ID, n.ID, prompt, run.ID, n.ID), "")
 		_ = SendNoCC(session, gate)
 		_ = Notify(session, "edit")
-		// Auto-surface the approval UI: a gate exists to collect a human
-		// decision, and a message buried in an inbox left a run waiting
-		// unnoticed for 37 minutes (user-requested 2026-08-26). Best
-		// effort — no attached client, no popup.
-		if os.Getenv("MUXCODE_GATE_AUTOSHOW_DISABLE") != "1" {
-			_ = OpenPopup(session, "graph-gates", "", nil)
-		}
+		// Gate surfacing is the control pane's job: it switches itself to
+		// Pending Gates on the next tick (MUX-108). The graph popups were
+		// removed with the pane's arrival — no modal fallback remains.
 
 	case NodeWaitEvent:
 		// Parked here; harvestWaitingNode releases it when a bus message

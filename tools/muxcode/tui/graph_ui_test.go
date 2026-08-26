@@ -745,6 +745,92 @@ func TestSurfaceHeadersCarryCycleHint(t *testing.T) {
 	}
 }
 
+// ── Gate ambient switch (MUX-108) ──────────────────────────
+
+// A newly-waiting gate switches the UI to the gates surface — once per
+// gate, and never out of a drill-in view.
+func TestGraphUI_NewGateSwitchesToGatesSurface(t *testing.T) {
+	session := scratchGraphSession(t)
+	run := mustCreateRun(t, session, gateGraph())
+
+	ui := NewGraphUI(session, "")
+	ui.refresh()
+	ui.checkGateSwitch() // no gate waiting yet — no switch
+	if ui.view != viewGraphRuns {
+		t.Fatalf("no gate: view must stay runs, got %d", ui.view)
+	}
+
+	mustTransition(t, session, run.ID, "review", bus.GraphNodeRunning, bus.GraphNodeDone)
+	mustTransition(t, session, run.ID, "gate", bus.GraphNodeReady, bus.GraphNodeWaiting)
+
+	ui.checkGateSwitch()
+	if ui.view != viewGraphGates {
+		t.Fatalf("new gate must switch to the gates surface, got %d", ui.view)
+	}
+	if !strings.Contains(ui.notice, "new gate") {
+		t.Errorf("expected a new-gate notice, got %q", ui.notice)
+	}
+
+	// The same gate on the next tick must not re-switch after the user
+	// navigates away.
+	ui.view = viewGraphRuns
+	ui.checkGateSwitch()
+	if ui.view != viewGraphRuns {
+		t.Errorf("a known gate must not re-switch, got view %d", ui.view)
+	}
+}
+
+func TestGraphUI_GateSwitchNeverYanksDrillIns(t *testing.T) {
+	session := scratchGraphSession(t)
+	run := mustCreateRun(t, session, gateGraph())
+	mustTransition(t, session, run.ID, "review", bus.GraphNodeRunning, bus.GraphNodeDone)
+	mustTransition(t, session, run.ID, "gate", bus.GraphNodeReady, bus.GraphNodeWaiting)
+
+	ui := NewGraphUI(session, run.ID) // DAG drill-in
+	ui.refresh()
+	ui.checkGateSwitch()
+	if ui.view != viewGraphDAG {
+		t.Errorf("a drill-in must never be yanked to gates, got %d", ui.view)
+	}
+}
+
+// ── Shared surface (MUX-108) ───────────────────────────────
+
+// The selected surface is shared: one pane's switch is adopted by every
+// other pane on its tick — but adoption never yanks a drill-in.
+func TestGraphUI_SurfaceSharedAcrossPanes(t *testing.T) {
+	session := scratchGraphSession(t)
+	mustCreateRun(t, session, linearGraph())
+
+	a := NewGraphUI(session, "")
+	a.refresh()
+	b := NewGraphUI(session, "")
+	b.refresh()
+
+	a.cycleSurface(1) // runs → gates (writes the shared selection)
+	if a.view != viewGraphGates {
+		t.Fatalf("cycle order: expected gates, got %d", a.view)
+	}
+	b.syncSharedSurface()
+	if b.view != viewGraphGates {
+		t.Errorf("pane B must adopt pane A's surface, got %d", b.view)
+	}
+
+	run := mustCreateRun(t, session, fanOutJoinGraph())
+	c := NewGraphUI(session, run.ID) // DAG drill-in
+	c.refresh()
+	c.syncSharedSurface()
+	if c.view != viewGraphDAG {
+		t.Errorf("adoption must never yank a drill-in, got %d", c.view)
+	}
+
+	// Adoption is one-way: B adopting must not have rewritten the file.
+	k, ok := bus.ReadControlPaneSurface(session)
+	if !ok || k != "gates" {
+		t.Errorf("shared selection must remain gates, got %q ok=%v", k, ok)
+	}
+}
+
 // ── Node detail ────────────────────────────────────────────
 
 func TestRenderNodeDetailFrame_FieldsAndWorktree(t *testing.T) {
