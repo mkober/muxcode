@@ -13,7 +13,7 @@ type Config struct {
 	BusRole     string        // bus identity role (commit, build, etc.) — for inbox, lock, send, history
 	Session     string        // bus session name
 	OllamaURL   string        // default http://localhost:11434
-	OllamaModel string        // default qwen2.5:7b (must support tool calling)
+	OllamaModel string        // default qwen3:4b (must support tool calling)
 	MaxTurns    int           // max tool-calling turns per batch (default 10)
 	BusDir      string        // /tmp/muxcode-bus-{session}/
 	BusBin      string        // path to muxcode binary
@@ -25,7 +25,7 @@ type Config struct {
 func DefaultConfig() Config {
 	cfg := Config{
 		OllamaURL:   "http://localhost:11434",
-		OllamaModel: "qwen2.5:7b",
+		OllamaModel: "qwen3:4b",
 		MaxTurns:    10,
 	}
 
@@ -70,9 +70,17 @@ func DefaultConfig() Config {
 // RoleModel returns the Ollama model for a specific role, checking
 // per-role env vars before falling back to the global default.
 // Resolution order: MUXCODE_{ROLE}_MODEL → MUXCODE_OLLAMA_MODEL → default.
+//
+// MUXCODE_{ROLE}_MODEL is overloaded: OpenCode reads the same variable
+// for its catalog models (provider/model form, e.g. opencode-go/foo), so
+// a role pinned for OpenCode and later flipped to CLI=local would hand
+// Ollama a model name it can never pull. Catalog-form values are
+// therefore skipped here — they belong to the other provider. An Ollama
+// model that genuinely contains "/" (user namespaces) can only be set
+// via MUXCODE_OLLAMA_MODEL. Mirrored in bus/ollama.go.
 func RoleModel(role string) string {
 	envVar := roleModelEnvVar(role)
-	if v := os.Getenv(envVar); v != "" {
+	if v := os.Getenv(envVar); v != "" && !strings.Contains(v, "/") {
 		return v
 	}
 	// Fall through to global env / default

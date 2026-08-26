@@ -44,7 +44,7 @@ var logTag = "harness"
 // endlessly re-running the same command.
 func isSingleShotRole(role string) bool {
 	switch role {
-	case "build", "test":
+	case "build", "test", "prompt":
 		return true
 	}
 	return false

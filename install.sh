@@ -22,7 +22,7 @@ Options:
 Environment:
   MUXCODE_INSTALL_YES=1  Same as --yes.
   NO_COLOR=1             Same as --no-color.
-  MUXCODE_OLLAMA_MODEL   Model pulled for the local LLM agent (default qwen2.5:7b).
+  MUXCODE_OLLAMA_MODEL   Model pulled for the local LLM agents (default qwen3:4b).
 USAGE
 }
 
@@ -238,6 +238,7 @@ pkg_name_for() {
     *:jq)        echo jq ;;
     *:fzf)       echo fzf ;;
     *:git)       echo git ;;
+    brew:ollama) echo ollama ;;
   esac
 }
 
@@ -256,12 +257,18 @@ step "Prerequisites"
 #
 # fzf is optional — it backs the interactive project picker, but `muxcode <path>`
 # works without it. It is still offered for install alongside the required set.
+#
+# ollama is required, not optional (MUX-109): the control pane's Prompt mode
+# runs a local model through the harness, so an install without Ollama is
+# incomplete. The multi-GB model pull stays consent-gated below — only the
+# binary is required here.
 PREREQS="tmux|3.3|1|tmux -V
 go|1.22|1|go version
 git|2.0|1|git --version
 make||1|make --version
 jq||1|jq --version
 nvim|0.9|1|nvim --version
+ollama||1|ollama --version
 fzf||0|fzf --version"
 
 missing=()
@@ -575,13 +582,17 @@ ok "Default provider: ${C_KEY}${default_cli}${NC}"
 step "Optional components"
 # ─────────────────────────────────────────────────────────────────────────────
 
-# --- Ollama (local LLM agent) ---
+# --- Ollama model (required feature, consent-gated download — MUX-109) ---
+# The binary itself is checked in PREREQS; this block only handles the model.
 if command -v ollama >/dev/null 2>&1; then
-  OLLAMA_MODEL="${MUXCODE_OLLAMA_MODEL:-qwen2.5:7b}"
+  OLLAMA_MODEL="${MUXCODE_OLLAMA_MODEL:-qwen3:4b}"
   if ! ollama list >/dev/null 2>&1; then
     row "$C_WARN" "!" "ollama" "installed but not running (ollama serve)"
     note "model auto-pulls on first local agent run"
-  elif ollama list | grep -q "${OLLAMA_MODEL%%:*}"; then
+  # Exact-name match (":latest" tolerated for an untagged config value): the
+  # old family-prefix grep reported "ready" when any same-family sibling of a
+  # different size was pulled.
+  elif ollama list | awk '{print $1}' | grep -qxE "${OLLAMA_MODEL}(:latest)?"; then
     row "$C_OK" "✓" "ollama" "$OLLAMA_MODEL ready"
   else
     row "$C_OK" "✓" "ollama" "installed — $OLLAMA_MODEL not pulled"
@@ -599,7 +610,9 @@ if command -v ollama >/dev/null 2>&1; then
     fi
   fi
 else
-  row "$C_DIM" "·" "ollama" "not found (optional — local LLM agents)"
+  # Reachable only when the required-prereq install was declined above.
+  row "$C_ERR" "✗" "ollama" "not found (required — Prompt mode and local agents)"
+  note "install ollama and re-run; Prompt mode degrades until then"
 fi
 
 # --- Diagram renderers (plan-agent diagram authoring) ---

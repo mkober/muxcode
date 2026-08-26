@@ -21,7 +21,7 @@ var ErrModelNotFound = errors.New("model not found")
 // OllamaConfig holds configuration for connecting to Ollama's API.
 type OllamaConfig struct {
 	BaseURL     string  // default "http://localhost:11434"
-	Model       string  // default "qwen2.5:7b" (must support tool calling)
+	Model       string  // default "qwen3:4b" (must support tool calling)
 	Temperature float64 // default 0.1
 	Timeout     int     // seconds, default 120
 	MaxTokens   int     // default 4096
@@ -32,7 +32,7 @@ type OllamaConfig struct {
 func DefaultOllamaConfig() OllamaConfig {
 	cfg := OllamaConfig{
 		BaseURL:     "http://localhost:11434",
-		Model:       "qwen2.5:7b",
+		Model:       "qwen3:4b",
 		Temperature: 0.1,
 		Timeout:     120,
 		MaxTokens:   4096,
@@ -49,9 +49,17 @@ func DefaultOllamaConfig() OllamaConfig {
 // RoleModel returns the Ollama model for a specific role, checking
 // per-role env vars before falling back to the default config model.
 // Resolution order: MUXCODE_{ROLE}_MODEL → MUXCODE_OLLAMA_MODEL → default.
+//
+// MUXCODE_{ROLE}_MODEL is overloaded: OpenCode reads the same variable
+// for its catalog models (provider/model form, e.g. opencode-go/foo), so
+// a role pinned for OpenCode and later flipped to CLI=local would hand
+// Ollama a model name it can never pull. Catalog-form values are
+// therefore skipped here — they belong to the other provider. An Ollama
+// model that genuinely contains "/" (user namespaces) can only be set
+// via MUXCODE_OLLAMA_MODEL. Mirrored in harness/config.go.
 func RoleModel(role string) string {
 	envVar := roleModelEnvVar(role)
-	if v := os.Getenv(envVar); v != "" {
+	if v := os.Getenv(envVar); v != "" && !strings.Contains(v, "/") {
 		return v
 	}
 	return DefaultOllamaConfig().Model

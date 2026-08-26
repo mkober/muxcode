@@ -53,6 +53,7 @@ type Daemon struct {
 	lastCleanupCheck      int64
 	lastDiskPressureCheck int64
 	lastAutoClearCheck    int64
+	lastPromptAgentStart  int64
 
 	lastIdleCheck        int64
 	lastNonHookWake      map[string]int64 // role → last non-hook wake time (60s cooldown)
@@ -148,6 +149,22 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 
 	// Discover which roles use local LLM
 	ollamaRoles := bus.LocalLLMRoles()
+	// The prompt role is harness-always (MUX-109) — no provider switch
+	// exists for it — so it joins Ollama health coverage whenever its
+	// supervision is enabled, without requiring a MUXCODE_PROMPT_CLI env
+	// var that nothing sets by default.
+	if bus.PromptAgentEnabled() {
+		found := false
+		for _, r := range ollamaRoles {
+			if r == "prompt" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			ollamaRoles = append(ollamaRoles, "prompt")
+		}
+	}
 
 	// Read Ollama config for health probes
 	ollamaCfg := bus.DefaultOllamaConfig()
@@ -323,6 +340,7 @@ func (d *Daemon) Run() error {
 		d.checkCleanup()
 		d.checkDiskPressure()
 		d.checkAutoClear()
+		d.checkPromptAgent()
 		d.checkBranchTime()
 		time.Sleep(d.pollInterval)
 	}
@@ -1476,6 +1494,14 @@ func (d *Daemon) checkOllama() {
 
 		// Relaunch affected agents
 		for _, role := range d.ollamaRoles {
+			if role == "prompt" {
+				// Headless (MUX-109) — no pane to send-keys into; bounce the
+				// process and let checkPromptAgent relaunch it this cycle.
+				_ = bus.StopPromptAgent(d.session)
+				d.lastPromptAgentStart = 0
+				fmt.Printf("  %s  Restarting headless prompt-agent\n", ts)
+				continue
+			}
 			if restartErr := bus.RestartLocalAgent(d.session, role); restartErr != nil {
 				fmt.Fprintf(os.Stderr, "  [ollama] failed to restart agent %s: %v\n", role, restartErr)
 			} else {
@@ -3363,6 +3389,40 @@ func (d *Daemon) checkAutoClear() {
 		}
 		fmt.Printf("  %s  Auto-clear: %s (%s)\n", time.Now().Format("15:04:05"), role, trigger)
 	}
+}
+
+// promptAgentRestartCoolSecs gates prompt-agent (re)starts. The harness
+// writes its own PID marker only once its loop is up, so a liveness probe
+// right after a start reads "dead" and would double-launch; the cooldown
+// covers that gap, and also stops a crash loop (e.g. Ollama down) from
+// spawning a fresh process every poll tick.
+const promptAgentRestartCoolSecs int64 = 60
+
+// checkPromptAgent supervises the headless prompt-agent (MUX-109). No
+// pane hosts it, so none of the pane-based machinery sees it — the daemon
+// owns start and restart. Alert-free by design: start failures go to the
+// lifecycle log and retry after the cooldown instead of paging edit every
+// tick; a persistent failure surfaces through Ollama health, not here.
+func (d *Daemon) checkPromptAgent() {
+	if !bus.PromptAgentEnabled() {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastPromptAgentStart < promptAgentRestartCoolSecs {
+		return
+	}
+	if bus.PromptAgentAlive(d.session) {
+		return
+	}
+	d.lastPromptAgentStart = now
+	pid, err := bus.StartPromptAgent(d.session)
+	if err != nil {
+		bus.LogLifecycle(d.session, "warn", "daemon", "prompt-agent-start-failed", err.Error())
+		return
+	}
+	bus.LogLifecycle(d.session, "info", "daemon", "prompt-agent-start",
+		fmt.Sprintf("headless prompt-agent started (pid %d)", pid))
+	fmt.Printf("  %s  Prompt-agent started (pid %d)\n", time.Now().Format("15:04:05"), pid)
 }
 
 // branchTimeFlushSecs is how often accrued in-memory branch time is written to

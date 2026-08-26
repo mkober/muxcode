@@ -914,6 +914,16 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(git log *)", "Bash(git rev-parse *)",
 				},
 			},
+			// Deliberately minimal — no includes, no Write/Edit. Rationale in
+			// bus/prompt_agent.go's doc comment; pinned by the profile test.
+			"prompt": {
+				CdPrefix: true,
+				Tools: []string{
+					"Bash(muxcode graph *)",
+					"Bash(muxcode send *)", "Bash(muxcode inbox*)",
+					"Read(.muxcode/graphs/*)",
+				},
+			},
 		},
 		EventChains: map[string]EventChain{
 			"deploy": {

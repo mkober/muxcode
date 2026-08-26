@@ -274,6 +274,8 @@ func AgentFileName(role string) string {
 		return "pr-reader"
 	case "auto":
 		return "autonomous-agent"
+	case "prompt":
+		return "prompt-agent"
 	default:
 		return role
 	}

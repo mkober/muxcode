@@ -47,11 +47,13 @@
 # Route a role to the local LLM harness instead of Claude Code
 # MUXCODE_BUILD_CLI=local
 
-# Ollama model for local agents (default: qwen2.5-coder:7b)
-# MUXCODE_OLLAMA_MODEL="qwen2.5-coder:7b"
+# Ollama model for local agents (default: qwen3:4b — one model shared by every
+# local role so only one set of weights is ever resident)
+# MUXCODE_OLLAMA_MODEL="qwen3:4b"
 
-# Per-role model override (takes precedence over MUXCODE_OLLAMA_MODEL)
-# MUXCODE_BUILD_MODEL="qwen2.5-coder:7b"
+# Per-role model override (takes precedence over MUXCODE_OLLAMA_MODEL).
+# Note: a per-role pin puts a second model in memory whenever both roles run.
+# MUXCODE_BUILD_MODEL="qwen3:8b"
 
 # Ollama API URL (default: http://localhost:11434)
 # MUXCODE_OLLAMA_URL="http://localhost:11434"
