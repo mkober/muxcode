@@ -139,7 +139,9 @@ func TestEnsureControlPane(t *testing.T) {
 		t.Errorf("missing pane must respawn:\n%s", j)
 	}
 
-	calls = stubPaneList(t, "%0:0:\n%1:1:\n%2:2:muxcode graph ui --gates")
+	// tmux re-quotes commands containing spaces — the live form is
+	// `"muxcode graph ui"`, quotes included. Surface variants count too.
+	calls = stubPaneList(t, "%0:0:\n%1:1:\n%2:2:\"muxcode graph ui --gates\"")
 	if err := EnsureControlPane("s", "edit", false); err != nil {
 		t.Fatalf("EnsureControlPane: %v", err)
 	}
@@ -147,6 +149,8 @@ func TestEnsureControlPane(t *testing.T) {
 		t.Errorf("healthy pane without recycle must be untouched:\n%s", j)
 	}
 
+	// A bare (unquoted) start command must identify as well — quoting
+	// is tmux's, not part of the contract.
 	calls = stubPaneList(t, "%0:0:\n%1:1:\n%2:2:muxcode graph ui")
 	if err := EnsureControlPane("s", "edit", true); err != nil {
 		t.Fatalf("EnsureControlPane recycle: %v", err)
@@ -171,7 +175,7 @@ func TestEnsureControlPane(t *testing.T) {
 func TestEnsureControlPane_DedupesDuplicates(t *testing.T) {
 	unsetEnvForTest(t, "MUXCODE_CONTROL_PANE_HEIGHT")
 
-	calls := stubPaneList(t, "%0:0:\n%1:1:\n%2:2:muxcode graph ui\n%3:3:muxcode graph ui")
+	calls := stubPaneList(t, "%0:0:\n%1:1:\n%2:2:\"muxcode graph ui\"\n%3:3:\"muxcode graph ui\"")
 	if err := EnsureControlPane("s", "edit", false); err != nil {
 		t.Fatalf("EnsureControlPane dup: %v", err)
 	}
@@ -183,7 +187,7 @@ func TestEnsureControlPane_DedupesDuplicates(t *testing.T) {
 		t.Errorf("survivor must be untouched and nothing respawned:\n%s", j)
 	}
 
-	calls = stubPaneList(t, "%0:0:\n%1:1:\n%2:2:muxcode graph ui\n%3:3:muxcode graph ui")
+	calls = stubPaneList(t, "%0:0:\n%1:1:\n%2:2:\"muxcode graph ui\"\n%3:3:\"muxcode graph ui\"")
 	if err := EnsureControlPane("s", "edit", true); err != nil {
 		t.Fatalf("EnsureControlPane dup recycle: %v", err)
 	}
@@ -200,7 +204,7 @@ func TestEnsureControlPane_DedupesDuplicates(t *testing.T) {
 func TestClampControlPane(t *testing.T) {
 	unsetEnvForTest(t, "MUXCODE_CONTROL_PANE_HEIGHT")
 
-	calls := stubPaneList(t, "%0:0:\n%1:1:\n%2:2:muxcode graph ui")
+	calls := stubPaneList(t, "%0:0:\n%1:1:\n%2:2:\"muxcode graph ui\"")
 	ClampControlPane("s", "edit")
 	j := joinCalls(calls)
 	for _, want := range []string{"resize-pane", "-t %2", "-y 14"} {

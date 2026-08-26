@@ -184,7 +184,12 @@ func scanControlPanes(session, win string) (controlPaneScan, error) {
 		if err != nil || idx < 2 {
 			continue
 		}
-		if strings.HasPrefix(parts[2], controlPaneBaseCmd) {
+		// tmux re-quotes the stored command when it contains spaces:
+		// #{pane_start_command} reports `"muxcode graph ui"`, literal
+		// quotes included (verified live — the unquoted assumption made
+		// every control pane scan as foreign and no-op'd the dedupe).
+		start := strings.Trim(parts[2], `"'`)
+		if strings.HasPrefix(start, controlPaneBaseCmd) {
 			scan.ours = append(scan.ours, parts[0])
 		} else if idx == 2 {
 			scan.foreign2 = true

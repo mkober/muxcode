@@ -171,7 +171,7 @@ func TestResizeAllWindows_ClampsControlPanes(t *testing.T) {
 		joined := strings.Join(args, " ")
 		switch {
 		case strings.Contains(joined, "list-panes"):
-			return "%0:0:\n%1:1:\n%2:2:muxcode graph ui", nil
+			return "%0:0:\n%1:1:\n%2:2:\"muxcode graph ui\"", nil
 		case strings.Contains(joined, "window_width"):
 			return "200\t48", nil
 		}

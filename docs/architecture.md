@@ -571,6 +571,41 @@ When a spec change implies a Jira change, the plan agent still reports it rather
 └─────────────────────────────────────────┘
 ```
 
+### Control pane
+
+Every agent window carries a third pane at the bottom hosting the global muxcode TUIs ([`MUX-108`](requirements/completed/MUX-108-control-pane.md)). The rendering side — surfaces, height budget, shared selection — is covered in [TUI Style Guide → Where a surface lives](tui-style.md#where-a-surface-lives-the-control-pane); this section covers creation and supervision.
+
+```
+┌────────────────────┬────────────────────┐
+│   Tool             │   AI Agent         │
+│   (pane 0)         │   (pane 1)         │
+├────────────────────┴────────────────────┤
+│   Control pane — graph TUI (pane 2)     │
+└─────────────────────────────────────────┘
+```
+
+**Creation order is the delivery contract.** `AgentPane()` returns a hardcoded `"1"` and `PaneTarget()` composes `session:window.1`, so everything that reaches an agent — `Notify`, `ClearAgent`, `deliver`, wake-up injection, the mode cycler — resolves through pane 1. The control pane is therefore created **last**, after panes 0 and 1 exist, on every window. A pane created earlier, or a layout operation that renumbers panes, silently repoints every agent message at the wrong pane — and the symptom is not a crash but messages typing into an nvim buffer. (`select-layout` preserves pane indices; `rotate-window` does not, which is why no rotate binding exists.)
+
+**One pane per window, converged not assumed.** `EnsureControlPane()` is the single entry point for both the launcher and the daemon, and it converges a window to exactly one control pane rather than trusting a count:
+
+| Situation | Action |
+|-----------|--------|
+| No control pane | Create one |
+| Exactly one, no recycle | No-op |
+| Exactly one, recycle requested | Kill it and recreate on the fresh binary |
+| More than one | Kill every control pane above the lowest index |
+| A foreign pane 2 (the user's own split), no control pane | Create nothing, touch nothing |
+
+Panes are identified by their tmux **start command** (`pane_start_command` prefixed `muxcode graph ui`) at index 2 or higher — never by assuming index 2 is ours, which cannot see a duplicate that landed at index 3. Because every surface variant shares that command prefix, identification is retroactive: panes split by an older binary are recognised too.
+
+Titling reads back the **new pane's id** (`split-window -P -F '#{pane_id}'`) rather than addressing `.2` by assumption. A racing second creator once titled somebody else's pane and left its own on the hostname default (2026-08-26).
+
+**Supervision timing.** `checkControlPanes()` (`daemon/control_pane.go`) sweeps every non-excluded window on an interval — `MUXCODE_CONTROL_PANE_CHECK_SECS`, default 60s — respawning what is missing and deduping what is doubled. The first sweep is deliberately skipped: `lastPaneSupervise` is seeded to the daemon's start time, so supervision begins a full interval in. The launcher owns launch-time creation, and a sweep landing mid-launch sees half-built windows as pane-less and creates a second pane on each — the 2026-08-26 duplicate-pane incident.
+
+**Recycle is gated on a ready marker.** When a binary install restarts the daemon under a live session, the panes still run the old binary and must be recycled; but a daemon that started *during* a launch must not recycle panes the launcher just built. The launcher stamps `control-panes-ready` in the bus dir once windows and panes are complete, and `ControlPanesPredate()` compares it against the daemon's start time. The recycle decision is made **once per daemon start** and fires only for panes that predate it. A missing or unreadable marker reads as *predating* — recycling a fresh pane costs a flicker, while skipping a stale one leaves an old binary running.
+
+**Height is re-clamped after resize.** Window refits rescale panes proportionally, so a fixed-height strip drifts with every geometry change — a pane split at 14 rows of an 80×24 detached window reopens at over half an attached screen. `ClampControlPane()` re-applies the configured height after each refit pass; a pane that is not ours is never resized.
+
 ### OpenCode TUI Agent Flow
 
 ```

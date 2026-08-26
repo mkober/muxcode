@@ -44,6 +44,18 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 
 **Auto-refit on resize**: `config/tmux.conf` registers a `client-resized` hook (tmux 3.0+) that runs `muxcode resize` to re-fit every window in **every session** — including detached subsessions — to the attached client whenever the terminal changes size (monitor resolution change, tile, or reattach). Attached sessions are refit with `resize-window -A`; detached sessions (where `-A` is a no-op) get the fit size read from an attached window and pushed explicitly. This prevents any session from being clipped at its old geometry without needing a restart. See [Architecture → Window Resize Flow](architecture.md#window-resize-flow) for the two-pass `muxcode resize` design and the cross-session reasons it replaced the old single-session xargs one-liner.
 
+### Control pane
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_CONTROL_PANE_DISABLE` | (unset) | `1` turns the control pane off wholesale — no pane on any window, and the daemon never sweeps |
+| `MUXCODE_CONTROL_PANE_EXCLUDE` | (empty) | Comma-separated window names that opt out; their siblings still get a pane |
+| `MUXCODE_CONTROL_PANE_HEIGHT` | `14` | Pane height in rows, re-applied after every window refit |
+| `MUXCODE_CONTROL_PANE_SURFACE` | `runs` | Starting surface: `runs`, `gates`, or `launcher`/`templates`. An unknown name degrades to the graph run list rather than an empty pane |
+| `MUXCODE_CONTROL_PANE_CHECK_SECS` | `60` | Daemon supervision sweep interval in seconds. Exists mainly so hermetic tests can compress supervisor time |
+
+The pane is created **last** on each window so panes 0 and 1 keep their indices — `AgentPane()` is a hardcoded `"1"` and every delivery path resolves through it. The daemon converges each window to exactly one pane (respawning a killed one, killing duplicates, leaving a user's own pane-2 split alone) and **skips its first sweep** so it cannot double-create against a launch still in progress. Panes are recycled onto a freshly installed binary only when they predate the running daemon, decided from the launcher's `control-panes-ready` marker. See [Architecture → Control pane](architecture.md#control-pane).
+
 ### Hook Configuration
 
 | Variable | Default | Description |
