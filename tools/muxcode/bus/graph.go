@@ -261,6 +261,12 @@ func (g *Graph) validateNode(n *Node, v *GraphValidation) {
 			v.errf("%s node %q requires a role", n.Type, n.ID)
 		} else if !IsKnownRole(NormalizeBusRole(n.Role)) {
 			v.errf("%s node %q references unknown role %q", n.Type, n.ID, n.Role)
+		} else if NormalizeBusRole(n.Role) == "prompt" {
+			// Prompt requests carry a human's typed words — the approve
+			// guard trusts them as such — so a graph cannot dispatch one.
+			// CheckPromptAuthority also refuses at runtime; failing here
+			// beats a run dying mid-flight (see bus/prompt_authority.go).
+			v.errf("%s node %q targets the prompt role — prompt requests are human-initiated and cannot be dispatched by a graph", n.Type, n.ID)
 		}
 	}
 	requireMessage := func() {

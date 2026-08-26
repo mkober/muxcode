@@ -44,14 +44,14 @@ func shouldAutoCC(from string) bool {
 // Messages from build, test, and review are automatically CC'd to edit.
 // A duplicate-suppressed request returns ErrSendSuppressed, never nil.
 func Send(session string, m Message) error {
-	return sendMessage(session, m, true, false)
+	return sendMessage(session, m, true, false, false)
 }
 
 // SendNoCC appends a message to the recipient's inbox and the session log
 // without auto-CC to edit. Use for chain intermediate messages, analyst
 // notifications, and subscription fan-out where CC would be redundant.
 func SendNoCC(session string, m Message) error {
-	return sendMessage(session, m, false, false)
+	return sendMessage(session, m, false, false, false)
 }
 
 // SendForce is Send with the duplicate/in-flight request guard bypassed —
@@ -62,7 +62,7 @@ func SendNoCC(session string, m Message) error {
 // non-forced send can race it — acceptable for an explicit human
 // override.
 func SendForce(session string, m Message) error {
-	return sendMessage(session, m, true, true)
+	return sendMessage(session, m, true, true, false)
 }
 
 // isLoopingSelfSend reports whether a message is an accidental self-addressed
@@ -80,9 +80,10 @@ func isLoopingSelfSend(m Message) bool {
 	return m.From != "" && m.From == m.To && m.Action != "startup"
 }
 
-// sendMessage is the shared implementation for Send, SendNoCC, and
-// SendForce.
-func sendMessage(session string, m Message, autoCC, bypassDupGuard bool) error {
+// sendMessage is the shared implementation for Send, SendNoCC,
+// SendForce, and SendHumanPrompt. humanPrompt marks the one sanctioned
+// origin for prompt-role requests — the Prompt surface's own process.
+func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt bool) error {
 	// Drop accidental self-addressed messages at the source so the loop is
 	// impossible for all providers (non-hook providers already discarded these
 	// at wake-up time; Claude/hook agents had no such guard). The startup
@@ -109,6 +110,19 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard bool) error {
 		if deny := CheckCommitAuthority(m.From, m.To, m.Action); deny != "" {
 			fmt.Fprintf(os.Stderr, "  [send] REFUSED %s→%s:%s — %s\n", m.From, m.To, m.Action, deny)
 			LogLifecycle(session, "warn", "bus", "commit-authority-refused", m.From)
+			return fmt.Errorf("%s", deny)
+		}
+	}
+
+	// Prompt requests are human-initiated for the same reason commits are
+	// user-initiated — see prompt_authority.go. Enforced here so every
+	// send path is covered; only SendHumanPrompt (the surface's own
+	// process) carries the humanPrompt mark. Self-sends surviving the
+	// loop guard above are the prompt role's own startup bootstrap.
+	if m.Type == "request" && !humanPrompt && m.From != m.To {
+		if deny := CheckPromptAuthority(m.From, m.To); deny != "" {
+			fmt.Fprintf(os.Stderr, "  [send] REFUSED %s→%s:%s — %s\n", m.From, m.To, m.Action, deny)
+			LogLifecycle(session, "warn", "bus", "prompt-authority-refused", m.From)
 			return fmt.Errorf("%s", deny)
 		}
 	}

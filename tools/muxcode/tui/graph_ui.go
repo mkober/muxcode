@@ -815,7 +815,11 @@ func (ui *GraphUI) submitPrompt() {
 	if from == "" {
 		from = "edit"
 	}
-	if err := bus.SendNoCC(ui.session, bus.NewMessage(from, "prompt", "request", "prompt", text, "")); err != nil {
+	// SendHumanPrompt is the surface's sanctioned path: prompt requests
+	// are refused from every bus identity (CheckPromptAuthority) because
+	// their text is what the approve guard trusts as human words — only
+	// this in-process seam, which a human's keystrokes just fed, may send.
+	if err := bus.SendHumanPrompt(ui.session, from, text); err != nil {
 		ui.notice = "send failed: " + err.Error()
 		return
 	}
