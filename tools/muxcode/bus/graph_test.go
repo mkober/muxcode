@@ -416,3 +416,114 @@ func TestListGraphTemplatesIncludesBuiltins(t *testing.T) {
 		}
 	}
 }
+
+// writableTestGraph returns a minimal graph that passes Validate().
+func writableTestGraph(name string) *Graph {
+	return &Graph{
+		Name:  name,
+		Start: "a",
+		Nodes: []Node{{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"}},
+	}
+}
+
+func TestWriteGraphDefinitionFreshCheckout(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	path, v, err := WriteGraphDefinition(writableTestGraph("my-graph"), GraphScopeProject)
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if !v.OK() {
+		t.Fatalf("unexpected validation errors: %v", v.Errors)
+	}
+	if path != filepath.Join(projectGraphDir, "my-graph.json") {
+		t.Errorf("unexpected path %q", path)
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Error("tmp file left behind")
+	}
+
+	g, source, err := ResolveGraphTemplate("my-graph")
+	if err != nil {
+		t.Fatalf("resolve written graph: %v", err)
+	}
+	if source != "project" || g.Name != "my-graph" {
+		t.Errorf("round-trip: got source %q name %q", source, g.Name)
+	}
+}
+
+func TestWriteGraphDefinitionInvalidWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	bad := writableTestGraph("bad-graph")
+	bad.Start = "missing"
+	_, v, err := WriteGraphDefinition(bad, GraphScopeProject)
+	if err == nil {
+		t.Fatal("expected error for invalid graph")
+	}
+	if v == nil || v.OK() {
+		t.Error("expected validation errors to be returned")
+	}
+	if _, statErr := os.Stat(projectGraphDir); !os.IsNotExist(statErr) {
+		t.Error("failure path created the graph directory")
+	}
+}
+
+func TestWriteGraphDefinitionUnsafeNameWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	for _, name := range []string{"../escape", "a/b", `a\b`, ".hidden"} {
+		if _, _, err := WriteGraphDefinition(writableTestGraph(name), GraphScopeProject); err == nil {
+			t.Errorf("name %q: expected error", name)
+		}
+	}
+	if _, err := os.Stat(projectGraphDir); !os.IsNotExist(err) {
+		t.Error("unsafe-name path created the graph directory")
+	}
+}
+
+func TestWriteGraphDefinitionUserScope(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+	t.Setenv("HOME", dir)
+
+	path, _, err := WriteGraphDefinition(writableTestGraph("user-graph"), GraphScopeUser)
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	want := filepath.Join(dir, ".config", "muxcode", "graphs", "user-graph.json")
+	if path != want {
+		t.Errorf("path %q, want %q", path, want)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("written file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, projectGraphDir)); !os.IsNotExist(err) {
+		t.Error("user-scope write touched the project directory")
+	}
+}
+
+func TestWriteGraphDefinitionUnknownScope(t *testing.T) {
+	if _, _, err := WriteGraphDefinition(writableTestGraph("g"), "builtin"); err == nil {
+		t.Error("expected error for non-writable scope")
+	}
+}

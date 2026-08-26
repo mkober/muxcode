@@ -132,6 +132,13 @@ func atomicWriteJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
+	return atomicWriteFile(path, data)
+}
+
+// atomicWriteFile writes data via tmp-file + rename. Shared by the run
+// store and the template write path (WriteGraphDefinition), so both get
+// the same crash-safety guarantee from one implementation.
+func atomicWriteFile(path string, data []byte) error {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
 		return err

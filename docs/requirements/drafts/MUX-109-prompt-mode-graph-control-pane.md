@@ -337,11 +337,26 @@ free-text box, which is the least predictable input in the system.
 
 ### Phase 1: Graph definition scopes — verify, then add the write path
 
-- [ ] Confirm `ResolveGraphTemplate()` / `ListGraphTemplates()` cover project, user, and builtin (expected: already true — record the evidence rather than re-implementing)
-- [ ] Confirm `graph run`, `graph validate`, `graph list`, and the TUI launcher all resolve through those helpers
-- [ ] Add a graph-definition write helper: `MkdirAll` the target dir, validate, then write atomically
-- [ ] Unit test: writing to a fresh checkout with no `.muxcode/graphs/` succeeds and creates the directory
-- [ ] Unit test: a definition failing `Validate()` leaves **no file behind**
+- [x] Confirm `ResolveGraphTemplate()` / `ListGraphTemplates()` cover project, user, and builtin (expected: already true — record the evidence rather than re-implementing)
+- [x] Confirm `graph run`, `graph validate`, `graph list`, and the TUI launcher all resolve through those helpers
+- [x] Add a graph-definition write helper: `MkdirAll` the target dir, validate, then write atomically
+- [x] Unit test: writing to a fresh checkout with no `.muxcode/graphs/` succeeds and creates the directory
+- [x] Unit test: a definition failing `Validate()` leaves **no file behind**
+
+**Phase 1 complete.** `WriteGraphDefinition(g, scope)` (`bus/graph.go:613`) validates *before* touching
+the filesystem, so a rejected definition leaves neither file nor directory; writes go through
+`atomicWriteFile` (tmp + rename), extracted in `graph_run.go:139` so the template path and the run
+store share one crash-safety implementation. Scope constants `GraphScopeProject`/`GraphScopeUser`
+with `graphScopeDir()` resolve the two writable tiers. Five tests added, and they are not vacuous:
+the fresh-checkout case `chdir`s into a `t.TempDir()` so `.muxcode/graphs/` genuinely does not exist,
+asserts no `.tmp` residue, and **round-trips the written file back through `ResolveGraphTemplate`**
+asserting `source == "project"` — wiring checked at both ends. The failure case asserts the graph
+*directory* was never created, which is strictly stronger than "no file" and pins validation ordering.
+An unsafe-name guard (`/`, `\`, leading `.`) was added beyond what this phase asked for.
+
+> **Not yet wired.** `WriteGraphDefinition` currently has **no non-test caller** — its consumer is the
+> Phase 5 create flow. Tracked here so it is not mistaken for dead code later, the way
+> `ComputeReadyNodes` was in [MUX-014](../completed/MUX-014-graph-agent-orchestrator.md).
 
 ### Phase 2: Prompt bus role and harness agent
 
@@ -427,6 +442,12 @@ the rejected option would have cost.
 | ~~Should `-y/--yes` now accept the multi-GB model pull?~~ | **Decided: no — keep it declined; the lazy first-run pull covers it** | `install.sh:588` calls this "the one thing `--yes` will not accept on the user's behalf", and `install.sh:17` plus [`README.md`](../../../README.md) line 333 both promise it in writing. Scripted and CI installs must not silently download gigabytes. The `qwen3:4b` decision softens the cost anyway: 2.5 GB on first run rather than 5+ |
 | ~~Does the prompt role share the global default model, or pin its own?~~ | **Decided: share — the global default moves to `qwen3:4b`** | Resolved in [Model selection](#model-selection). Only one model may be resident at a time, so a per-role pin was rejected: it would put two models in memory whenever both roles were active, and add a second mandatory download for a required feature. `MUXCODE_PROMPT_MODEL` stays unset |
 | ~~Do existing local roles accept the 4B, or keep a 7B pin?~~ | **Decided: accept the 4B everywhere — no per-role pins** | One model resident, for every local role, with no exceptions. This keeps the memory rule absolute rather than eroding it one pin at a time. The cost is accepted knowingly: build/test/commit/watch were tuned against a 7B and now run a 4B, so Phase 2 carries a regression check rather than an assumption |
+
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-109-prompt-mode-graph-control-pane | 9m | 2026-08-26 15:56 |
 
 ## Status
 
