@@ -86,12 +86,18 @@ func TestForceDeliver_ForceInjectsAndMarksNotified(t *testing.T) {
 		t.Fatalf("expected 1 delivered, got %d (%+v)", res.Delivered, res)
 	}
 
-	// A send-keys text injection should have happened.
+	// A send-keys text injection should have happened, in the dash-safe
+	// form: `-l -- <payload>`. The -- separator is asserted at argv level
+	// because MUX-104's failure was tmux flag parsing — a dash-leading
+	// payload without -- is rejected as `invalid flag -`.
 	sawText := false
 	for _, c := range *calls {
 		j := strings.Join(c, " ")
 		if strings.Contains(j, "send-keys") && strings.Contains(j, "-l") {
 			sawText = true
+			if len(c) < 2 || c[len(c)-2] != "--" {
+				t.Errorf("text injection lacks the -- separator before the payload: %v", c)
+			}
 		}
 	}
 	if !sawText {

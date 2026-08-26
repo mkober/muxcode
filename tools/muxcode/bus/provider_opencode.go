@@ -210,7 +210,7 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string) error {
 	// Send text first — do NOT consume inbox until both send-keys succeed.
 	// Route through TmuxRun (the mockable tmuxRunner) rather than exec.Command
 	// directly, so unit tests can stub tmux without a live session.
-	if err := TmuxRun("send-keys", "-t", target, prompt); err != nil {
+	if err := TmuxSendLiteral(target, prompt); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s/%s failed: %v\n", role, "opencode", err)
 		return err
 	}

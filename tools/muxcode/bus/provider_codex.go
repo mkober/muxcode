@@ -247,16 +247,17 @@ func (p *CodexProvider) SendWakeUp(session, role string) error {
 		prompt += chainInstructionForRole(role)
 	}
 
-	// Send text first — do NOT consume inbox until both send-keys succeed
-	cmd := exec.Command("tmux", "send-keys", "-t", target, prompt)
-	if err := cmd.Run(); err != nil {
+	// Send text first — do NOT consume inbox until both send-keys succeed.
+	// TmuxSendLiteral: this payload is dynamic message text, so it needs
+	// the -l -- form or a dash-leading line is rejected (MUX-104).
+	if err := TmuxSendLiteral(target, prompt); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s/%s failed: %v\n", role, "codex", err)
 		return err
 	}
 	// Brief delay so the TUI registers the text before Enter
 	time.Sleep(150 * time.Millisecond)
 	// Send Enter
-	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
+	cmd := exec.Command("tmux", "send-keys", "-t", target, "Enter")
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s/%s failed: %v\n", role, "codex", err)
 		return err

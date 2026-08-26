@@ -880,8 +880,9 @@ func SendWakeUpWithText(session, role string, provider Provider, text string) er
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Send text with -l (literal) to avoid tmux key interpretation
-	if err := TmuxRun("send-keys", "-t", target, "-l", text); err != nil {
+	// TmuxSendLiteral carries both -l (key-name interpretation) and the --
+	// separator — -l alone still fails on a dash-leading payload (MUX-104).
+	if err := TmuxSendLiteral(target, text); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s failed: %v\n", role, err)
 		return err
 	}
