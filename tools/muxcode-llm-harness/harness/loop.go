@@ -233,12 +233,9 @@ func Run(ctx context.Context, cfg Config, sink EventSink) error {
 			if len(msgs) > 0 {
 				filter.Reset()
 				// The approve guard checks tool calls against the user's
-				// own words — hand the filter this batch's text (MUX-109).
-				var payloads []string
-				for _, m := range msgs {
-					payloads = append(payloads, m.Payload)
-				}
-				filter.TaskText = strings.Join(payloads, "\n")
+				// own words — request payloads only, never system-authored
+				// responses/events in the same batch (MUX-109).
+				filter.TaskText = requestTaskText(msgs)
 
 				// Run batch with timeout
 				batchCtx, batchCancel := context.WithTimeout(ctx, BatchTimeout)

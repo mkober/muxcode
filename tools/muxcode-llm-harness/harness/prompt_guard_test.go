@@ -84,3 +84,21 @@ func TestFilter_ApproveGuardWired(t *testing.T) {
 		t.Errorf("named approve must pass through Check: %+v", res)
 	}
 }
+
+// TestRequestTaskText pins the review catch: only request payloads are
+// user-authored — a system event in the same batch that names a gate id
+// must not let the guard treat that id as user-named.
+func TestRequestTaskText(t *testing.T) {
+	msgs := []Message{
+		{Type: "request", Payload: "approve whatever is waiting"},
+		{Type: "event", Payload: "gate commit-gate waiting on run " + guardRun},
+		{Type: "response", Payload: "previous answer mentioning " + guardRun},
+	}
+	text := requestTaskText(msgs)
+	if text != "approve whatever is waiting" {
+		t.Fatalf("system payloads leaked into the guard text: %q", text)
+	}
+	if reason := checkApproveGuard("prompt", text, guardCmd); reason == "" {
+		t.Error("an event-named gate must still refuse — the user never named it")
+	}
+}

@@ -49,6 +49,21 @@ func checkApproveGuard(role, taskText, command string) string {
 	return fmt.Sprintf("BLOCKED: approval requires the user to NAME the gate or run — neither %q nor %q appears in the request. Respond asking the user to name what to approve; never approve on inference.", runID, nodeID)
 }
 
+// requestTaskText joins the payloads of request-type messages — the only
+// text the approve guard may treat as user-authored. Responses and
+// events riding in the same batch are system-authored: a chain
+// notification that happens to name a gate must not count as the user
+// naming it (review catch, 2026-08-26).
+func requestTaskText(msgs []Message) string {
+	var payloads []string
+	for _, m := range msgs {
+		if m.Type == "request" {
+			payloads = append(payloads, m.Payload)
+		}
+	}
+	return strings.Join(payloads, "\n")
+}
+
 // textTokens splits free text into candidate id tokens, stripping the
 // punctuation that quotes and sentence structure wrap around ids.
 func textTokens(text string) []string {
