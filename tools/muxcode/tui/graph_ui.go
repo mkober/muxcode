@@ -296,6 +296,7 @@ type GraphUI struct {
 	promptInjectTouched bool     // user toggled Ctrl-T — keyless default stands down
 	promptWindow        string   // host window (resolved once — tmux call)
 	promptActiveRole    string   // window's active agent, mode-cycle aware
+	paneWindow          string   // this pane's tmux window (focused-pane authority)
 	directPrompt        bool     // opened in prompt mode — q/Esc from it quits
 
 	// Gates already seen waiting — a NEW one switches the UI to the
@@ -326,9 +327,14 @@ func surfaceName(v graphView) string {
 	}
 }
 
-// surfaceKey and surfaceForKey translate top-level views to the shared
-// on-disk surface selection and back.
-func surfaceKey(v graphView) string {
+// surfaceKey and surfaceForKey translate navigation state to the shared
+// on-disk selection and back. Drill-ins share too — "run:<id>" carries
+// the DAG view (node detail shares its run), so switching tmux windows
+// lands on the SAME frame everywhere (user catch, 2026-08-27: F10's
+// pane sat in a run DAG while F2's had gate-switched — every window
+// change looked like the pane changing). Confirm and intent are active
+// input flows and are never shared.
+func surfaceKey(v graphView, runID string) string {
 	switch v {
 	case viewGraphPrompt:
 		return "prompt"
@@ -336,47 +342,83 @@ func surfaceKey(v graphView) string {
 		return "gates"
 	case viewGraphTemplates:
 		return "launcher"
+	case viewGraphDAG, viewGraphNode:
+		if runID != "" {
+			return "run:" + runID
+		}
+		return "runs"
+	case viewGraphConfirm, viewGraphIntent:
+		return ""
 	default:
 		return "runs"
 	}
 }
 
-func surfaceForKey(k string) (graphView, bool) {
+func surfaceForKey(k string) (graphView, string, bool) {
+	if strings.HasPrefix(k, "run:") {
+		if id := strings.TrimPrefix(k, "run:"); id != "" {
+			return viewGraphDAG, id, true
+		}
+		return viewGraphRuns, "", true
+	}
 	switch k {
 	case "prompt":
-		return viewGraphPrompt, true
+		return viewGraphPrompt, "", true
 	case "gates":
-		return viewGraphGates, true
+		return viewGraphGates, "", true
 	case "launcher":
-		return viewGraphTemplates, true
+		return viewGraphTemplates, "", true
 	case "runs":
-		return viewGraphRuns, true
+		return viewGraphRuns, "", true
 	}
-	return viewGraphRuns, false
+	return viewGraphRuns, "", false
 }
 
-// shareSurface persists a user-driven surface change so every other
-// control pane follows (they sync on tick).
+// shareSurface persists a navigation change so every other control pane
+// follows (they sync on tick). Unshareable views (confirm, intent) keep
+// the previous shared value.
 func (ui *GraphUI) shareSurface() {
-	bus.WriteControlPaneSurface(ui.session, surfaceKey(ui.view))
+	if k := surfaceKey(ui.view, ui.runID); k != "" {
+		bus.WriteControlPaneSurface(ui.session, k)
+	}
 }
 
-// syncSharedSurface adopts the shared selection — top-level views only,
-// never a drill-in, and adopting never writes back (one-way convergence).
+// paneFocused reports whether this pane's tmux window is the active one
+// — the focused pane is authoritative (the human is driving it) and
+// never adopts; every unfocused pane converges to what it shares.
+func (ui *GraphUI) paneFocused() bool {
+	if ui.paneWindow == "" {
+		if ui.paneWindow = bus.BusRole(); ui.paneWindow == "" {
+			return false
+		}
+	}
+	return bus.IsWindowFocused(ui.session, ui.paneWindow)
+}
+
+// syncSharedSurface adopts the shared selection on unfocused panes —
+// drill-ins included — so a window switch shows the frame the user was
+// just looking at. Never adopts mid-input (confirm/intent), and
+// adopting never writes back (one-way convergence).
 func (ui *GraphUI) syncSharedSurface() {
-	topLevel := ui.view == viewGraphRuns || ui.view == viewGraphTemplates ||
-		ui.view == viewGraphGates || ui.view == viewGraphPrompt
-	if !topLevel {
+	if ui.view == viewGraphConfirm || ui.view == viewGraphIntent {
+		return
+	}
+	if ui.paneFocused() {
 		return
 	}
 	k, ok := bus.ReadControlPaneSurface(ui.session)
 	if !ok {
 		return
 	}
-	if v, valid := surfaceForKey(k); valid && v != ui.view {
-		ui.view = v
-		ui.refresh()
+	v, runID, valid := surfaceForKey(k)
+	if !valid || (v == ui.view && (runID == "" || runID == ui.runID)) {
+		return
 	}
+	ui.view = v
+	if runID != "" {
+		ui.runID = runID
+	}
+	ui.refresh()
 }
 
 // NewGraphLauncherUI creates the graph TUI opening straight into the
@@ -1155,8 +1197,15 @@ func (ui *GraphUI) Run() {
 		case <-sigCh:
 			return
 		case key := <-ui.keyCh:
+			prevView, prevRun := ui.view, ui.runID
 			if ui.handleKey(key) == "quit" {
 				return
+			}
+			// Every key-driven navigation shares — window switches must
+			// land on the frame the user just navigated to, drill-ins
+			// included.
+			if ui.view != prevView || ui.runID != prevRun {
+				ui.shareSurface()
 			}
 		case <-time.After(graphTickInterval):
 			ui.syncSharedSurface()

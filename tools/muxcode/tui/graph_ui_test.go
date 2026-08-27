@@ -835,8 +835,10 @@ func TestGraphUI_GateSwitchNeverYanksDrillIns(t *testing.T) {
 
 // ── Shared surface (MUX-108) ───────────────────────────────
 
-// The selected surface is shared: one pane's switch is adopted by every
-// other pane on its tick — but adoption never yanks a drill-in.
+// The full navigation state is shared: one pane's switch — drill-ins
+// included — is adopted by every other pane on its tick, so a tmux
+// window change lands on the same frame everywhere (user catch,
+// 2026-08-27). Confirm/intent input flows are never adopted away from.
 func TestGraphUI_SurfaceSharedAcrossPanes(t *testing.T) {
 	session := scratchGraphSession(t)
 	mustCreateRun(t, session, linearGraph())
@@ -855,15 +857,32 @@ func TestGraphUI_SurfaceSharedAcrossPanes(t *testing.T) {
 		t.Errorf("pane B must adopt pane A's surface, got %d", b.view)
 	}
 
+	// A drill-in adopts too — that IS the window-switch fix: the pane on
+	// another window converges to the run DAG the user is studying.
 	run := mustCreateRun(t, session, fanOutJoinGraph())
-	c := NewGraphUI(session, run.ID) // DAG drill-in
+	c := NewGraphUI(session, run.ID) // DAG drill-in, local state
 	c.refresh()
 	c.syncSharedSurface()
-	if c.view != viewGraphDAG {
-		t.Errorf("adoption must never yank a drill-in, got %d", c.view)
+	if c.view != viewGraphGates {
+		t.Errorf("an unfocused drill-in must converge to the shared surface, got %d", c.view)
 	}
 
-	// Adoption is one-way: B adopting must not have rewritten the file.
+	// And a shared drill-in propagates: B follows into the run's DAG.
+	bus.WriteControlPaneSurface(session, "run:"+run.ID)
+	b.syncSharedSurface()
+	if b.view != viewGraphDAG || b.runID != run.ID {
+		t.Errorf("pane B must adopt the shared drill-in, got view %d run %q", b.view, b.runID)
+	}
+
+	// Mid-input views are never adopted away from.
+	b.view = viewGraphConfirm
+	bus.WriteControlPaneSurface(session, "gates")
+	b.syncSharedSurface()
+	if b.view != viewGraphConfirm {
+		t.Errorf("confirm must never be adopted away from, got %d", b.view)
+	}
+
+	// Adoption is one-way: adopting panes never rewrite the file.
 	k, ok := bus.ReadControlPaneSurface(session)
 	if !ok || k != "gates" {
 		t.Errorf("shared selection must remain gates, got %q ok=%v", k, ok)

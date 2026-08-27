@@ -520,11 +520,21 @@ func TestPromptSurfaceInCycle(t *testing.T) {
 	if surfaceName(viewGraphPrompt) != "Prompt" {
 		t.Errorf("surfaceName = %q", surfaceName(viewGraphPrompt))
 	}
-	if surfaceKey(viewGraphPrompt) != "prompt" {
-		t.Errorf("surfaceKey = %q", surfaceKey(viewGraphPrompt))
+	if surfaceKey(viewGraphPrompt, "") != "prompt" {
+		t.Errorf("surfaceKey = %q", surfaceKey(viewGraphPrompt, ""))
 	}
-	if v, ok := surfaceForKey("prompt"); !ok || v != viewGraphPrompt {
+	if v, _, ok := surfaceForKey("prompt"); !ok || v != viewGraphPrompt {
 		t.Errorf("surfaceForKey(prompt) = %v, %v", v, ok)
+	}
+	// Drill-ins share as run:<id>; confirm/intent never share.
+	if surfaceKey(viewGraphDAG, "r-1") != "run:r-1" {
+		t.Errorf("DAG surfaceKey = %q", surfaceKey(viewGraphDAG, "r-1"))
+	}
+	if v, id, ok := surfaceForKey("run:r-1"); !ok || v != viewGraphDAG || id != "r-1" {
+		t.Errorf("surfaceForKey(run:r-1) = %v, %q, %v", v, id, ok)
+	}
+	if surfaceKey(viewGraphConfirm, "r-1") != "" {
+		t.Error("confirm must never share — it is an active input flow")
 	}
 	if !strings.Contains(renderSurfaceTabs("Prompt", 100), "Prompt") {
 		t.Error("tab bar must name the Prompt surface")
