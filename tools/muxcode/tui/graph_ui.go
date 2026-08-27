@@ -125,7 +125,7 @@ func GraphRenderOnce(session, runID string, width int) (string, error) {
 		width = termWidth()
 	}
 	if runID == "" {
-		return RenderRunListFrame(LoadRunListRows(session, time.Now()), width, -1), nil
+		return RenderRunListFrameH(LoadRunListRows(session, time.Now()), width, termHeight(), -1), nil
 	}
 	snap, err := LoadGraphSnapshot(session, runID)
 	if err != nil {
@@ -229,8 +229,9 @@ func LoadResolvedGates(session string, now time.Time, limit int) []ResolvedGate 
 	return out
 }
 
-// resolvedGateHistoryLimit caps the queue's history section.
-const resolvedGateHistoryLimit = 10
+// resolvedGateHistoryLimit caps the queue's history section — the
+// section scrolls, so the cap bounds the load, not the pane.
+const resolvedGateHistoryLimit = 50
 
 // GateQueueRenderOnce renders the pending-gate queue as a single frame —
 // the scriptable seam for integration tests. The first gate is selected
@@ -263,20 +264,22 @@ type GraphUI struct {
 	templates       []bus.GraphTemplateInfo
 	tmplIdx         int
 	tmplErr         string     // validation error rendered in place
+	tmplTypeahead   string     // typed prefix — selection jumps to the match
 	pendingTemplate string     // template awaiting its ${intent} argument
 	pendingGraph    *bus.Graph // parsed graph of pendingTemplate
 	intentInput     []rune
 	directLaunch    bool // opened in launcher mode — q from templates quits
 
 	// Gate queue and action confirm
-	gates         []PendingGate
-	resolvedGates []ResolvedGate
-	gateIdx       int
-	directGates   bool         // opened in gate-queue mode — q from gates quits
-	pending       *GraphAction // action awaiting its confirm keypress
-	confirmReturn graphView    // view to restore after confirm/abandon
-	actionErr     string       // action failure rendered in the confirm frame
-	notice        string       // success confirmation shown after an action lands
+	gates          []PendingGate
+	resolvedGates  []ResolvedGate
+	gateIdx        int
+	gateHistScroll int          // resolved-history scroll; ↑↓ drive it when no gate is pending
+	directGates    bool         // opened in gate-queue mode — q from gates quits
+	pending        *GraphAction // action awaiting its confirm keypress
+	confirmReturn  graphView    // view to restore after confirm/abandon
+	actionErr      string       // action failure rendered in the confirm frame
+	notice         string       // success confirmation shown after an action lands
 
 	// Last-selected item ids per surface, so a selection survives a full
 	// Tab cycle; a removed item degrades to the first row.
@@ -291,12 +294,14 @@ type GraphUI struct {
 	promptExchanges     []PromptExchange
 	promptUnreachable   string
 	promptActivity      []string // headless agent's log tail — live working detail
-	promptScroll        int      // transcript rows scrolled up from the tail (0 = pinned)
+	promptScroll        int      // left-column transcript rows scrolled up from the tail (0 = pinned)
+	promptActScroll     int      // right-column output/log scroll, independent of the left (PgUp/PgDn)
 	promptCursor        int      // rune index into promptInput (len = end)
 	promptInjectTouched bool     // user toggled Ctrl-T — keyless default stands down
 	promptWindow        string   // host window (resolved once — tmux call)
 	promptActiveRole    string   // window's active agent, mode-cycle aware
 	paneWindow          string   // this pane's tmux window (focused-pane authority)
+	promptVocab         []string // template names for input completion (lazy)
 	directPrompt        bool     // opened in prompt mode — q/Esc from it quits
 
 	// Gates already seen waiting — a NEW one switches the UI to the
@@ -480,6 +485,7 @@ func (ui *GraphUI) refresh() {
 		if ui.gateIdx < 0 {
 			ui.gateIdx = 0
 		}
+		ui.gateHistScroll = clamp(ui.gateHistScroll, 0, len(ui.resolvedGates)-1)
 	case viewGraphPrompt:
 		ui.promptExchanges = LoadPromptExchanges(ui.session, promptTranscriptLimit)
 		ui.promptUnreachable = PromptUnreachable(ui.session)
@@ -543,6 +549,9 @@ func (ui *GraphUI) handleKey(key byte) string {
 		return ui.handlePromptKey(key)
 	}
 	ui.notice = "" // a receipt survives ticks, not the next keypress
+	if ui.view == viewGraphTemplates && ui.handleTemplateTypeahead(key) {
+		return ""
+	}
 	switch key {
 	case 'q':
 		return ui.goBack()
@@ -575,12 +584,74 @@ func (ui *GraphUI) handleKey(key byte) string {
 		if ui.view == viewGraphDAG && ui.snap != nil {
 			ui.confirm(&GraphAction{Kind: "cancel", RunID: ui.runID})
 		}
+		if ui.view == viewGraphRuns && ui.runIdx < len(ui.rows) {
+			if r := ui.rows[ui.runIdx]; r.State == bus.GraphRunRunning {
+				ui.confirm(&GraphAction{Kind: "cancel", RunID: r.ID})
+			}
+		}
 	case 'r':
 		ui.requestRetry()
 	case 'R':
 		ui.refresh()
 	}
 	return ""
+}
+
+// promptSuggestion computes the ghost completion for the prompt input:
+// only at the end of the input, against template names then verbs.
+func (ui *GraphUI) promptSuggestion() string {
+	if ui.promptCursor != len(ui.promptInput) {
+		return ""
+	}
+	if len(ui.promptVocab) == 0 {
+		for _, t := range bus.ListGraphTemplates() {
+			ui.promptVocab = append(ui.promptVocab, t.Name)
+		}
+	}
+	return PromptSuggest(string(ui.promptInput), ui.promptVocab)
+}
+
+// handleTemplateTypeahead jumps the launcher selection to the first
+// template matching the typed prefix ("story" lands on story-lifecycle).
+// j/k/q stay navigation keys — no template name begins with them — and a
+// char with no match is dropped. Reports whether the key was consumed.
+func (ui *GraphUI) handleTemplateTypeahead(key byte) bool {
+	if key == 127 || key == 8 {
+		if ui.tmplTypeahead == "" {
+			return false
+		}
+		ui.tmplTypeahead = ui.tmplTypeahead[:len(ui.tmplTypeahead)-1]
+		ui.jumpToTypeahead()
+		return true
+	}
+	isChar := (key >= 'a' && key <= 'z') || (key >= '0' && key <= '9') || key == '-'
+	if !isChar || key == 'j' || key == 'k' || key == 'q' {
+		return false
+	}
+	next := ui.tmplTypeahead + string(rune(key))
+	names := make([]string, len(ui.templates))
+	for i, t := range ui.templates {
+		names[i] = t.Name
+	}
+	if i := TypeaheadIndex(names, next); i >= 0 {
+		ui.tmplTypeahead = next
+		ui.tmplIdx = i
+	}
+	return true
+}
+
+// jumpToTypeahead re-applies the current prefix after a backspace.
+func (ui *GraphUI) jumpToTypeahead() {
+	if ui.tmplTypeahead == "" {
+		return
+	}
+	names := make([]string, len(ui.templates))
+	for i, t := range ui.templates {
+		names[i] = t.Name
+	}
+	if i := TypeaheadIndex(names, ui.tmplTypeahead); i >= 0 {
+		ui.tmplIdx = i
+	}
 }
 
 // handleEscapeSequence distinguishes arrow keys (ESC [ A/B — navigate)
@@ -612,15 +683,19 @@ func (ui *GraphUI) handleEscapeSequence() string {
 			}
 		}
 	case <-time.After(50 * time.Millisecond):
+		if ui.view == viewGraphTemplates && ui.tmplTypeahead != "" {
+			ui.tmplTypeahead = ""
+			return ""
+		}
 		return ui.goBack()
 	}
 	return ""
 }
 
-// cycleSurface moves to the next/previous top-level surface. Inert in
-// every non-surface view (DAG, node detail, intent prompt, confirm) —
-// those are drill-ins, and Tab yanking the user out of one mid-task
-// would discard context.
+// cycleSurface moves to the next/previous top-level surface. From a DAG
+// or node drill-in it backs out to the run list's slot and advances from
+// there — one Tab, no Esc first. Inert only in confirm and the intent
+// prompt, which are mid-input.
 func (ui *GraphUI) cycleSurface(delta int) {
 	cur := -1
 	for i, s := range graphSurfaces {
@@ -629,7 +704,15 @@ func (ui *GraphUI) cycleSurface(delta int) {
 		}
 	}
 	if cur < 0 {
-		return
+		if ui.view != viewGraphDAG && ui.view != viewGraphNode {
+			return
+		}
+		ui.runID = ""
+		for i, s := range graphSurfaces {
+			if s == viewGraphRuns {
+				cur = i
+			}
+		}
 	}
 	ui.saveSelection()
 	next := (cur + delta + len(graphSurfaces)) % len(graphSurfaces)
@@ -893,9 +976,22 @@ func (ui *GraphUI) handlePromptEscape() string {
 					if ui.promptScroll > 0 {
 						ui.promptScroll--
 					}
-				case 'C': // Right — cursor toward the end
+				case '5', '6': // PgUp/PgDn — the right column scrolls on its own
+					select { // consume the trailing '~' so it never types into the input
+					case <-ui.keyCh:
+					case <-time.After(50 * time.Millisecond):
+					}
+					if b2 == '5' {
+						ui.promptActScroll++
+					} else if ui.promptActScroll > 0 {
+						ui.promptActScroll--
+					}
+				case 'C': // Right — cursor toward the end; at the end, accept the ghost suggestion
 					if ui.promptCursor < len(ui.promptInput) {
 						ui.promptCursor++
+					} else if s := ui.promptSuggestion(); s != "" {
+						ui.promptInput = append(ui.promptInput, []rune(s)...)
+						ui.promptCursor = len(ui.promptInput)
 					}
 				case 'D': // Left — cursor toward the start
 					if ui.promptCursor > 0 {
@@ -964,8 +1060,9 @@ func (ui *GraphUI) submitPrompt() {
 	}
 	ui.promptInput = nil
 	ui.promptCursor = 0
-	ui.promptScroll = 0 // a new question pins the view back to the tail
-	ui.refresh()        // the sent question renders as the working exchange
+	ui.promptScroll = 0 // a new question pins both columns back to the tail
+	ui.promptActScroll = 0
+	ui.refresh() // the sent question renders as the working exchange
 }
 
 // launchGraph validates and starts a run, then transitions into its DAG
@@ -1044,6 +1141,10 @@ func (ui *GraphUI) moveSelection(delta int) {
 	case viewGraphTemplates:
 		ui.tmplIdx = clamp(ui.tmplIdx+delta, 0, len(ui.templates)-1)
 	case viewGraphGates:
+		if len(ui.gates) == 0 {
+			ui.gateHistScroll = clamp(ui.gateHistScroll+delta, 0, len(ui.resolvedGates)-1)
+			return
+		}
 		ui.gateIdx = clamp(ui.gateIdx+delta, 0, len(ui.gates)-1)
 	}
 }
@@ -1111,9 +1212,9 @@ func (ui *GraphUI) render() string {
 	var frame, footer string
 	switch ui.view {
 	case viewGraphRuns:
-		frame = RenderRunListFrame(ui.rows, W, ui.runIdx)
-		footer = fmt.Sprintf("  %s↑↓/jk%s Navigate  %sEnter%s Open  %sL%s Launch  %sR%s Refresh  %sq%s Quit",
-			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
+		frame = RenderRunListFrameH(ui.rows, W, H, ui.runIdx)
+		footer = fmt.Sprintf("  %s↑↓/jk%s Navigate  %sEnter%s Open  %sL%s Launch  %sc%s Cancel  %sR%s Refresh  %sq%s Quit",
+			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 	case viewGraphDAG:
 		if ui.snap == nil {
 			frame = fmt.Sprintf("\n  %sCannot load run %s: %v%s\n", Red, ui.runID, ui.loadErr, RST)
@@ -1130,14 +1231,17 @@ func (ui *GraphUI) render() string {
 		}
 		footer = fmt.Sprintf("  %sq/Esc%s Back", Yellow, RST)
 	case viewGraphTemplates:
-		frame = RenderTemplateListFrame(ui.templates, W, ui.tmplIdx, ui.tmplErr)
-		footer = fmt.Sprintf("  %s↑↓/jk%s Navigate  %sEnter%s Launch  %sq/Esc%s Back",
-			Yellow, RST, Yellow, RST, Yellow, RST)
+		frame = RenderTemplateListFrameH(ui.templates, W, H, ui.tmplIdx, ui.tmplErr)
+		if ui.tmplTypeahead != "" {
+			frame += fmt.Sprintf("  %stype:%s %s%s█%s\n", Comment, RST, FG, ui.tmplTypeahead, RST)
+		}
+		footer = fmt.Sprintf("  %stype%s Jump  %s↑↓/jk%s Navigate  %sEnter%s Launch  %sq/Esc%s Back",
+			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 	case viewGraphIntent:
 		frame = RenderIntentPromptFrame(ui.pendingTemplate, string(ui.intentInput), W)
 		footer = fmt.Sprintf("  %sEnter%s Launch  %sEsc%s Cancel", Yellow, RST, Yellow, RST)
 	case viewGraphGates:
-		frame = RenderGateQueueFrame(ui.gates, ui.resolvedGates, W, ui.gateIdx)
+		frame = RenderGateQueueFrameH(ui.gates, ui.resolvedGates, W, H, ui.gateIdx, ui.gateHistScroll)
 		footer = fmt.Sprintf("  %s↑↓/jk%s Navigate  %sEnter/a%s Approve  %sR%s Refresh  %sq/Esc%s Back",
 			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 	case viewGraphPrompt:
@@ -1145,18 +1249,20 @@ func (ui *GraphUI) render() string {
 			Exchanges:   ui.promptExchanges,
 			Input:       string(ui.promptInput),
 			Cursor:      ui.promptCursor,
+			Suggest:     ui.promptSuggestion(),
 			Inject:      ui.promptInject,
 			Destination: promptDestinationLabel(ui.promptInject, ui.promptActiveRole),
 			Unreachable: ui.promptUnreachable,
 			Activity:    ui.promptActivity,
 			Scroll:      ui.promptScroll,
+			ActScroll:   ui.promptActScroll,
 		}
 		if n := len(st.Exchanges); n > 0 && !st.Exchanges[n-1].Answered {
 			st.Working = true
 		}
 		frame = RenderPromptFrame(st, W, H)
-		footer = fmt.Sprintf("  %sEnter%s Send  %sCtrl-T%s Inject/Interpret  %s↑↓%s Scroll  %s←→%s Cursor  %sBksp%s Delete  %sEsc%s Clear/Back",
-			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
+		footer = fmt.Sprintf("  %sEnter%s Send  %sCtrl-T%s Inject/Interpret  %s↑↓%s Scroll·L  %sPgUp/Dn%s Scroll·R  %s←→%s Cursor  %sBksp%s Delete  %sEsc%s Clear/Back",
+			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 		backend, model := bus.PromptBackendInfo(ui.session)
 		footer = PromptFooterStatus(footer, backend, model, W)
 	case viewGraphConfirm:
@@ -1170,6 +1276,7 @@ func (ui *GraphUI) render() string {
 	if ui.notice != "" {
 		frame += "\n  " + Green + ui.notice + RST + "\n"
 	}
+	frame = padLines(frame, H-3)
 	return frame + "\n" + Comment + HLine('─', W) + RST + "\n" + footer + "\n"
 }
 
@@ -1258,6 +1365,23 @@ func clampLines(s string, h int) string {
 		lines = lines[:h]
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// padLines truncates or blank-pads a frame to exactly h lines. Fixing
+// the body height pins the divider and footer to the pane's last rows
+// so the key hints never move vertically as surfaces or content change.
+func padLines(s string, h int) string {
+	if h < 1 {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > h {
+		lines = lines[:h]
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // readKeys reads single bytes from stdin in a loop.

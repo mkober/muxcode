@@ -88,6 +88,32 @@ if size > prev && size > 0 {
    distinguishes a stale replay from a real change. Verifying on the message's file list
    alone would have recorded "no run-store tests exist" while 13 of them existed.
 
+9. **The payload shape varies within one burst, so it is not a genuineness signal (observed
+   2026-08-27, 17:49–17:53)** — four `verify-spec` messages in ~4 minutes against the MUX-109
+   spec, in three different shapes:
+
+   | Time | `Changed files:` | Tree actually changed? |
+   |------|------------------|------------------------|
+   | 17:49 | `tui/prompt.go` | **Yes** — `prompt.go` written 17:49:22 |
+   | 17:52:27 | `tui/graph_ui.go` | **Yes** — `graph_ui.go` written 17:51:57 |
+   | 17:52:47 | `tui/graph_ui.go` | No — same file, same mtime, 20 s later |
+   | 17:53:39 | *(field absent entirely)* | No |
+
+   Two points, and the second is the one that constrains the fix:
+
+   - **The list under-reports even when genuine.** Both real fires named a single file while
+     **15 files** were modified in the working tree. An agent verifying from the message would
+     have missed the `graph_ui.go` wiring on the first pass and the `prompt.go` work on the
+     second — reinforcing item 8's closing note that the working-tree delta, not the message,
+     is the source of truth.
+   - **A receiving agent cannot filter echoes cheaply.** Half of this burst was genuine, so
+     "ignore repeat verify-spec messages" would have dropped real work; and the shapes are not
+     separable — the duplicate carried the *same* well-formed file list as the genuine fire,
+     while the fourth carried none. Any correct plan-side heuristic reduces to re-deriving the
+     tree delta on every fire, which is the cost the fix is supposed to remove. **This belongs
+     in the daemon**, per the once-per-completion gate below; there is no cheap receiver-side
+     mitigation to fall back on in the meantime.
+
 ## Requirements
 
 ### Proposed fix

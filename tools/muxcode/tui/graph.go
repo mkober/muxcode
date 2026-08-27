@@ -716,6 +716,13 @@ func resultsCellColor(results string) string {
 // state, node progress, elapsed, and a gate badge where a wait_human node
 // waits. Empty state renders explicitly — never a blank frame.
 func RenderRunListFrame(rows []RunListRow, width, sel int) string {
+	return RenderRunListFrameH(rows, width, 0, sel)
+}
+
+// RenderRunListFrameH is RenderRunListFrame with a height budget: the
+// list scrolls vertically in a window that follows the selection, with
+// ↑/↓ overflow indicators. height <= 0 renders every row.
+func RenderRunListFrameH(rows []RunListRow, width, height, sel int) string {
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Graph Runs", width))
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
@@ -727,9 +734,31 @@ func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 		return b.String()
 	}
 
+	anyMark := false
+	for _, r := range rows {
+		if strings.Contains(r.Results, "?") {
+			anyMark = true
+			break
+		}
+	}
+
+	// Window the rows to the pane, keeping the selection visible.
+	start, end := 0, len(rows)
+	if height > 0 {
+		avail := height - 8
+		if anyMark {
+			avail--
+		}
+		start, end = scrollWindow(len(rows), avail, sel)
+	}
+
 	fmt.Fprintf(&b, "  %s   %-40s %-10s %-9s %-9s %-28s %s%s\n",
 		Comment, "RUN", "STATE", "PROGRESS", "ELAPSED", "TEMPLATE", "RESULTS", RST)
-	for i, r := range rows {
+	if start > 0 {
+		fmt.Fprintf(&b, "  %s↑ %d more%s\n", Comment, start, RST)
+	}
+	for i, r := range rows[start:end] {
+		i += start
 		cursor := " "
 		idColor := FG
 		if i == sel {
@@ -761,12 +790,12 @@ func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 			resultsCellColor(results), results, RST, badge)
 		b.WriteString(fitWidth(line, width) + "\n")
 	}
+	if end < len(rows) {
+		fmt.Fprintf(&b, "  %s↓ %d more%s\n", Comment, len(rows)-end, RST)
+	}
 	// The ? explainer renders once as a legend, never per-cell
-	for _, r := range rows {
-		if strings.Contains(r.Results, "?") {
-			fmt.Fprintf(&b, "  %s? = completion inferred (no exit-code proof)%s\n", Comment, RST)
-			break
-		}
+	if anyMark {
+		fmt.Fprintf(&b, "  %s? = completion inferred (no exit-code proof)%s\n", Comment, RST)
 	}
 	return b.String()
 }
@@ -778,6 +807,36 @@ func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 // failure renders in place under the list — the launch is refused, the
 // picker stays.
 func RenderTemplateListFrame(infos []bus.GraphTemplateInfo, width, sel int, errMsg string) string {
+	return RenderTemplateListFrameH(infos, width, 0, sel, errMsg)
+}
+
+// scrollWindow computes a selection-following [start, end) row window:
+// visible rows within avail (minus the two overflow indicator lines,
+// floored at min 5), centered on sel. avail >= total means no window.
+func scrollWindow(total, avail, sel int) (int, int) {
+	if avail <= 0 || total <= avail {
+		return 0, total
+	}
+	visible := avail - 2
+	if visible < 5 {
+		visible = 5
+	}
+	if visible > total {
+		visible = total
+	}
+	start := sel - visible/2
+	if start < 0 {
+		start = 0
+	}
+	if start > total-visible {
+		start = total - visible
+	}
+	return start, start + visible
+}
+
+// RenderTemplateListFrameH is RenderTemplateListFrame with a height
+// budget — the picker scrolls the same way the run list does.
+func RenderTemplateListFrameH(infos []bus.GraphTemplateInfo, width, height, sel int, errMsg string) string {
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Launch Graph", width))
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
@@ -785,7 +844,15 @@ func RenderTemplateListFrame(infos []bus.GraphTemplateInfo, width, sel int, errM
 	if len(infos) == 0 {
 		fmt.Fprintf(&b, "  %sNo graph templates found%s\n", Comment, RST)
 	}
-	for i, t := range infos {
+	start, end := 0, len(infos)
+	if height > 0 {
+		start, end = scrollWindow(len(infos), height-7, sel)
+	}
+	if start > 0 {
+		fmt.Fprintf(&b, "  %s↑ %d more%s\n", Comment, start, RST)
+	}
+	for i, t := range infos[start:end] {
+		i += start
 		cursor := " "
 		nameColor := FG
 		if i == sel {
@@ -802,6 +869,9 @@ func RenderTemplateListFrame(infos []bus.GraphTemplateInfo, width, sel int, errM
 			cursor, nameColor, t.Name, RST, tierColor, t.Source, RST, Comment, t.Description, RST)
 		b.WriteString(fitWidth(line, width) + "\n")
 	}
+	if end < len(infos) {
+		fmt.Fprintf(&b, "  %s↓ %d more%s\n", Comment, len(infos)-end, RST)
+	}
 	if errMsg != "" {
 		fmt.Fprintf(&b, "\n  %svalidation failed:%s\n", Red+Bold, RST)
 		for _, ln := range strings.Split(strings.TrimRight(errMsg, "\n"), "\n") {
@@ -809,6 +879,18 @@ func RenderTemplateListFrame(infos []bus.GraphTemplateInfo, width, sel int, errM
 		}
 	}
 	return b.String()
+}
+
+// TypeaheadIndex returns the first index whose name starts with the
+// case-insensitive prefix, or -1.
+func TypeaheadIndex(names []string, prefix string) int {
+	p := strings.ToLower(prefix)
+	for i, n := range names {
+		if strings.HasPrefix(strings.ToLower(n), p) {
+			return i
+		}
+	}
+	return -1
 }
 
 // RenderIntentPromptFrame renders the argument prompt shown when a
@@ -938,6 +1020,14 @@ type ResolvedGate struct {
 // Resolved gates render as a dimmed history section. Empty state is
 // explicit — never a blank frame.
 func RenderGateQueueFrame(gates []PendingGate, resolved []ResolvedGate, width, sel int) string {
+	return RenderGateQueueFrameH(gates, resolved, width, 0, sel, 0)
+}
+
+// RenderGateQueueFrameH is RenderGateQueueFrame with a height budget:
+// the pending section keeps priority, and the resolved history scrolls
+// in the rows that remain (histScroll, ↑/↓ overflow indicators). height
+// <= 0 renders everything.
+func RenderGateQueueFrameH(gates []PendingGate, resolved []ResolvedGate, width, height, sel, histScroll int) string {
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Pending Gates", width))
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
@@ -946,7 +1036,7 @@ func RenderGateQueueFrame(gates []PendingGate, resolved []ResolvedGate, width, s
 		fmt.Fprintf(&b, "  %sNo gates waiting.%s\n", Comment, RST)
 		fmt.Fprintf(&b, "  %sA gate appears here when an in-flight run reaches a wait_human node%s\n", Comment, RST)
 		fmt.Fprintf(&b, "  %sand needs your approval before firing what is behind it.%s\n", Comment, RST)
-		b.WriteString(renderResolvedGates(resolved, width))
+		b.WriteString(renderResolvedGatesH(resolved, width, historyBudget(height, &b), histScroll))
 		return b.String()
 	}
 
@@ -978,24 +1068,67 @@ func RenderGateQueueFrame(gates []PendingGate, resolved []ResolvedGate, width, s
 			b.WriteString("        " + formatGateImpact(imp) + "\n")
 		}
 	}
-	b.WriteString(renderResolvedGates(resolved, width))
+	b.WriteString(renderResolvedGatesH(resolved, width, historyBudget(height, &b), histScroll))
 	return b.String()
 }
 
-// renderResolvedGates renders the dimmed gate-history section.
-func renderResolvedGates(resolved []ResolvedGate, width int) string {
-	if len(resolved) == 0 {
+// historyBudget returns the rows left for the gate history after the
+// pending section already in b. The body budget is height-3 (divider,
+// footer, clamp margin); height <= 0 means unbudgeted.
+func historyBudget(height int, b *strings.Builder) int {
+	if height <= 0 {
+		return 0
+	}
+	avail := height - 3 - strings.Count(b.String(), "\n")
+	if avail < 0 {
+		avail = 0
+	}
+	return avail
+}
+
+// renderResolvedGatesH renders the dimmed gate-history section within
+// avail rows, windowed at scroll with ↑/↓ overflow indicators. avail
+// <= 0 renders every row.
+func renderResolvedGatesH(resolved []ResolvedGate, width, avail, scroll int) string {
+	total := len(resolved)
+	if total == 0 {
 		return ""
+	}
+	visible := total
+	if avail > 0 {
+		rows := avail - 2 // blank + "recent gates" header
+		if rows < 3 {
+			rows = 3
+		}
+		if total > rows {
+			visible = rows - 2 // ↑/↓ indicator rows
+			if visible < 1 {
+				visible = 1
+			}
+		}
+	}
+	maxScroll := total - visible
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	if scroll < 0 {
+		scroll = 0
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n  %srecent gates%s\n", Cyan, RST)
-	for _, g := range resolved {
+	if scroll > 0 {
+		fmt.Fprintf(&b, "  %s↑ %d more%s\n", Comment, scroll, RST)
+	}
+	for _, g := range resolved[scroll : scroll+visible] {
 		verdict := "✓ approved"
 		if g.State == bus.GraphNodeSkipped {
 			verdict = "○ skipped"
 		}
 		line := fmt.Sprintf("  %s%-11s %-16s %-9s %s%s", Comment, verdict, g.NodeID, g.Age.String(), g.RunID, RST)
 		b.WriteString(fitWidth(line, width) + "\n")
+	}
+	if rest := total - scroll - visible; rest > 0 {
+		fmt.Fprintf(&b, "  %s↓ %d more%s\n", Comment, rest, RST)
 	}
 	return b.String()
 }

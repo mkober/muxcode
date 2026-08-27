@@ -566,13 +566,35 @@ should be tightened to match, not the other way round.
 
 - [x] Append the Prompt view to `graphSurfaces`; add `surfaceName()` and tab-bar entries
 - [x] Add the `prompt` case to `controlPaneCommand()`; unknown surfaces still degrade to the run list
-- [ ] Generalise the `viewGraphIntent` line editor for reuse; keep Escape/`ESC [ Z` disambiguation intact
+- [x] Generalise the `viewGraphIntent` line editor for reuse; keep Escape/`ESC [ Z` disambiguation intact — `editLineAt` (`tui/graph_ui.go:900`) is the single cursor-aware implementation and `editLine` (`:892`) is now a thin end-anchored wrapper over it, so the `${intent}` prompt (`:928`) and the Prompt surface (`:950`) cannot drift on byte handling. Disambiguation intact in both handlers (`:674`, `:966`); pinned by `TestEditLineAt`
 - [x] Render: header, tab bar, input line with destination label, reply/history body, footer — the footer is composed by the **outer** frame at `tui/graph_ui.go:1010`, not by `RenderPromptFrame`, matching how the other surfaces work (`promptChromeLines` reserves a row for it)
 - [x] Read the transcript in `refresh()` (never in a render function) and render the latest exchanges, oldest-clamped to the pane height
 - [x] Distinct *working* / *finished* / *model-unreachable* states, each readable without color
 - [ ] Verify the pane still redraws and cycles surfaces while a prompt is in flight — no blocking on inference
 - [x] Explicit empty state; clamp to `width` and `height`; reachable via `--render-once`
 - [x] Frame tests including a **negative control** for clamping (a fixture that actually overflows)
+
+#### Phase 3 refinements after first use (uncommitted, verified 2026-08-27)
+
+Behaviour beyond what this phase originally specified, added once the surface was driven in anger:
+
+| Refinement | Why it was needed |
+|------------|-------------------|
+| **Independent column scroll** — `Scroll` windows the question column, new `ActScroll` the output/log column (`scrollTail` serves both) | A long log dragged the question column with it, so the prompt being answered scrolled out of view |
+| **Working marker is pinned** — if the right-hand tail window drops it, it retakes the window's first row (`containsLine` guard) | A pane whose marker had scrolled away read as stuck, which is the exact state this phase exists to distinguish |
+| **Ghost completion** — `PromptSuggest` completes the last word (templates before verbs), rendered dim after the cursor block; `→` accepts | Template names are long and exact-match; typing them blind was the main input friction |
+| **Activity load raised 20 → 100 lines** | The cap previously bounded the *visible* window; with an independently scrolling column it only needs to bound the load |
+| **Run-list vertical scroll** with `↑`/`↓` overflow indicators | The list silently truncated past the pane height |
+| **Template typeahead** — a typed prefix jumps the launcher selection (`TypeaheadIndex`, shared with the ghost) | Same friction as the ghost, on the other input surface |
+| **PgUp/PgDn disambiguation** — the trailing `~` of `ESC [ 5 ~` / `ESC [ 6 ~` is consumed on a 50 ms timeout | Without it the `~` types itself into the prompt input |
+
+Each carries a negative control: the ghost must **not** render mid-string, and a run list that fits
+must show **no** indicators — assertions a renderer that always suggested, or always flagged
+overflow, would fail. The footer advertises the new keys (`PgUp/Dn Scroll·R`, `←→ Cursor`), per the
+rule that a surface names every key it accepts.
+
+Two open items are untouched by this work and stay open: the in-flight redraw check below (a runtime
+property, and `scripts/test-prompt-mode.sh` has no assertion for it), and all of Phase 4.
 
 ### Phase 4: Prompt intents — launch, status, gates
 
@@ -815,7 +837,7 @@ the rejected option would have cost.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-109-prompt-mode-graph-control-pane | 5h 43m | 2026-08-27 13:52 |
+| MUX-109-prompt-mode-graph-control-pane | 7h 23m | 2026-08-27 17:53 |
 
 ## Status
 

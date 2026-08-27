@@ -317,7 +317,7 @@ func TestValidateGateRuleMixedPaths(t *testing.T) {
 }
 
 func TestBuiltinGraphTemplatesValidate(t *testing.T) {
-	want := []string{"build-test-review", "commit-pr-review-loop", "deploy-verify", "pr-local-review", "req-code-pr", "review-spec-docs", "story-lifecycle", "story-to-spec"}
+	want := []string{"build-test-review", "commit-pr-review-loop", "deploy-verify", "pr-local-review", "req-code-pr", "story-lifecycle", "story-to-spec", "update-spec-docs"}
 	if len(builtinGraphJSON) != len(want) {
 		t.Errorf("expected %d builtin templates, got %d", len(want), len(builtinGraphJSON))
 	}

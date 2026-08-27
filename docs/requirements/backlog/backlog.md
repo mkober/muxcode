@@ -80,6 +80,7 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
+| MUX-113 | [`MUX-113-graph-template-delete-rename.md`](./MUX-113-graph-template-delete-rename.md) | Medium | The graph surface can `create` and `export` a template but never remove or move one, so every supersede leaves the old definition resolvable — and `project > user > builtin` means the **superseded** name keeps winning. Found live when the prompt-agent renamed a template and correctly reported it could not delete the original. Sharpest consequence: the `prompt` profile grants no `Write` by design, so a correctly-sandboxed agent has no path to undo its own `create` |
 | MUX-107 | [`MUX-107-tui-component-kit.md`](./MUX-107-tui-component-kit.md) | Medium | Extract the tab bar, footer, list, confirm, and empty state duplicated across `graph_ui.go`/`remote.go`/`model.go` into a shared kit with **golden-frame pinning tests written before the refactor**. Makes [`docs/tui-style.md`](../../tui-style.md) structural rather than advisory — a `List` that renders its own empty state cannot omit one, and a component taking `height` cannot ignore it (the MUX-031 defect) |
 | MUX-020 | [`MUX-020-cli-help-command.md`](./MUX-020-cli-help-command.md) | Low | `muxcode help` command: discoverable, grouped CLI reference |
 | MUX-021 | [`MUX-021-demo-mode-agent-coverage.md`](./MUX-021-demo-mode-agent-coverage.md) | Low | Refresh `bus/demo.go` scenarios to cover the current agent roster |

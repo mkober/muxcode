@@ -197,8 +197,8 @@ func TestResizeAllWindows_ClampsControlPanes(t *testing.T) {
 	}
 	for _, c := range clamps {
 		// The clamp targets the scanned pane id, not an assumed index.
-		if !strings.Contains(c, "-t %2") || !strings.Contains(c, "-y 14") {
-			t.Errorf("clamp must target the pane id at -y 14: %s", c)
+		if !strings.Contains(c, "-t %2") || !strings.Contains(c, "-y 18") {
+			t.Errorf("clamp must target the pane id at -y 18: %s", c)
 		}
 	}
 }

@@ -148,18 +148,20 @@ var builtinGraphJSON = map[string]string{
   ]
 }`,
 
-	"review-spec-docs": `{
-  "name": "review-spec-docs",
-  "description": "Review branch changes, verify requirements-spec alignment, update spec/architecture docs and README as needed",
-  "start": "review",
+	"update-spec-docs": `{
+  "name": "update-spec-docs",
+  "description": "Verify requirements-spec alignment, update spec/architecture docs and README, then human-gated commit",
+  "start": "spec",
   "nodes": [
-    {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review all current changes in the repo on this branch and report findings"},
     {"id": "spec", "type": "send", "role": "plan", "action": "verify-spec", "message": "Verify the current branch changes align with the active requirements spec; update the spec doc if needed (check off completed items, adjust status)"},
-    {"id": "docs", "type": "send", "role": "plan", "action": "update-docs", "message": "Update architecture documentation and README if the reviewed changes require it; report what changed or why nothing did"}
+    {"id": "docs", "type": "send", "role": "plan", "action": "update-docs", "message": "Update architecture documentation and README if the reviewed changes require it; report what changed or why nothing did"},
+    {"id": "gate", "type": "wait_human", "prompt": "Approve committing the spec/doc updates"},
+    {"id": "commit", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the spec and documentation updates on the current branch"}
   ],
   "edges": [
-    {"from": "review", "to": "spec"},
-    {"from": "spec", "to": "docs"}
+    {"from": "spec", "to": "docs"},
+    {"from": "docs", "to": "gate"},
+    {"from": "gate", "to": "commit"}
   ]
 }`,
 

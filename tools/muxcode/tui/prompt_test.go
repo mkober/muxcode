@@ -376,6 +376,41 @@ func TestRenderPromptFrame_Scroll(t *testing.T) {
 	}
 }
 
+// TestRenderPromptFrame_IndependentScroll pins the two-column contract:
+// Scroll lifts only the left (questions) window, ActScroll only the
+// right (output/log), and each indicator names its own key.
+func TestRenderPromptFrame_IndependentScroll(t *testing.T) {
+	var ex []PromptExchange
+	for i := 0; i < 30; i++ {
+		ex = append(ex, PromptExchange{
+			Question: fmt.Sprintf("q-%02d", i),
+			Answer:   fmt.Sprintf("a-%02d", i),
+			Answered: true,
+		})
+	}
+	base := PromptSurfaceState{Exchanges: ex, Destination: "prompt-agent"}
+
+	leftUp := base
+	leftUp.Scroll = 20
+	frame := StripAnsi(RenderPromptFrame(leftUp, 100, 14))
+	if strings.Contains(frame, "q-29") || !strings.Contains(frame, "a-29") {
+		t.Errorf("Scroll must lift only the left column:\n%s", frame)
+	}
+	if !strings.Contains(frame, "▼ scrolled — ↓ for newer") {
+		t.Errorf("left indicator must name ↓:\n%s", frame)
+	}
+
+	rightUp := base
+	rightUp.ActScroll = 20
+	frame = StripAnsi(RenderPromptFrame(rightUp, 100, 14))
+	if strings.Contains(frame, "a-29") || !strings.Contains(frame, "q-29") {
+		t.Errorf("ActScroll must lift only the right column:\n%s", frame)
+	}
+	if !strings.Contains(frame, "▼ scrolled — PgDn for newer") {
+		t.Errorf("right indicator must name PgDn:\n%s", frame)
+	}
+}
+
 // TestPromptFooterStatus pins the provider·model badge: right-aligned
 // two columns off the edge when it fits, dropped entirely when the
 // width can't hold it (the keys win — negative control).
@@ -419,6 +454,49 @@ func TestRenderPromptFrame_InputWraps(t *testing.T) {
 	if strings.Count(frame, "\n") != strings.Count(short, "\n") {
 		t.Errorf("wrapped input rows must come out of the transcript budget, not grow the frame: %d vs %d lines",
 			strings.Count(frame, "\n"), strings.Count(short, "\n"))
+	}
+}
+
+// TestPromptSuggestAndTypeahead pins the two completion helpers: the
+// ghost completes the last word (templates before verbs, none after a
+// trailing space or full match), and TypeaheadIndex jumps to the first
+// case-insensitive prefix match.
+func TestPromptSuggestAndTypeahead(t *testing.T) {
+	tmpl := []string{"build-test-review", "story-lifecycle", "story-to-spec"}
+	if got := PromptSuggest("run sto", tmpl); got != "ry-lifecycle" {
+		t.Errorf("suggest = %q", got)
+	}
+	if got := PromptSuggest("run story-lifecycle", tmpl); got != "" {
+		t.Errorf("a full match must suggest nothing, got %q", got)
+	}
+	if got := PromptSuggest("run ", tmpl); got != "" {
+		t.Errorf("trailing space must suggest nothing, got %q", got)
+	}
+	if got := PromptSuggest("app", nil); got != "rove" {
+		t.Errorf("verbs complete too, got %q", got)
+	}
+
+	if i := TypeaheadIndex(tmpl, "story"); i != 1 {
+		t.Errorf("typeahead jump = %d, want 1", i)
+	}
+	if i := TypeaheadIndex(tmpl, "zzz"); i != -1 {
+		t.Errorf("no match must be -1, got %d", i)
+	}
+}
+
+// TestRenderPromptFrame_GhostSuggestion pins the ghost render: it shows
+// dim after the cursor block at end-of-input, and never mid-string
+// (negative control).
+func TestRenderPromptFrame_GhostSuggestion(t *testing.T) {
+	st := PromptSurfaceState{Input: "run sto", Cursor: 7, Suggest: "ry-lifecycle", Destination: "prompt-agent"}
+	frame := StripAnsi(RenderPromptFrame(st, 100, 20))
+	if !strings.Contains(frame, "run sto█ry-lifecycle") {
+		t.Errorf("ghost must render after the cursor block:\n%s", frame)
+	}
+	st.Cursor = 2
+	frame = StripAnsi(RenderPromptFrame(st, 100, 20))
+	if strings.Contains(frame, "ry-lifecycle") {
+		t.Error("a mid-string cursor must render no ghost (negative control)")
 	}
 }
 
@@ -514,6 +592,32 @@ func TestRenderRunListFrame_ResultsColumn(t *testing.T) {
 	}
 	if strings.Count(withLegend, "completion inferred") != 1 {
 		t.Error("the legend renders exactly once, never per row")
+	}
+}
+
+// TestRenderRunListFrameH_Scrolls pins the vertical scroll window: the
+// selection stays visible with ↑/↓ overflow indicators, and a list that
+// fits renders whole with no indicators (negative control).
+func TestRenderRunListFrameH_Scrolls(t *testing.T) {
+	var rows []RunListRow
+	for i := 0; i < 20; i++ {
+		rows = append(rows, RunListRow{ID: fmt.Sprintf("run-%02d", i), Template: "t", State: bus.GraphRunComplete, Results: "✓ done"})
+	}
+
+	frame := StripAnsi(RenderRunListFrameH(rows, 200, 16, 15))
+	if !strings.Contains(frame, "run-15") {
+		t.Errorf("the selected row must be visible:\n%s", frame)
+	}
+	if !strings.Contains(frame, "↑ ") || !strings.Contains(frame, "↓ ") {
+		t.Errorf("a mid-list window must show both overflow indicators:\n%s", frame)
+	}
+	if strings.Contains(frame, "run-00") {
+		t.Error("rows above the window must be hidden")
+	}
+
+	all := StripAnsi(RenderRunListFrameH(rows[:3], 200, 40, 0))
+	if strings.Contains(all, "more") {
+		t.Error("a list that fits must render whole with no indicators")
 	}
 }
 

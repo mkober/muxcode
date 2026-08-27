@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -200,6 +201,30 @@ func TestLoadGraphSnapshot_PostMortem(t *testing.T) {
 		if !strings.Contains(frame, want) {
 			t.Errorf("post-mortem frame missing %q:\n%s", want, frame)
 		}
+	}
+}
+
+// TestPadLines pins the fixed-body invariant behind the pinned footer:
+// short frames pad, tall frames truncate, exact frames pass through.
+func TestPadLines(t *testing.T) {
+	cases := []struct {
+		in   string
+		h    int
+		want int
+	}{
+		{"a\nb", 5, 5},
+		{"a\nb\nc\nd\ne\nf", 4, 4},
+		{"a\nb\nc", 3, 3},
+		{"a\nb\n\n", 4, 4},
+	}
+	for _, c := range cases {
+		got := strings.Split(padLines(c.in, c.h), "\n")
+		if len(got) != c.want {
+			t.Errorf("padLines(%q, %d) = %d lines, want %d", c.in, c.h, len(got), c.want)
+		}
+	}
+	if padLines("a\nb", 0) != "" {
+		t.Error("h < 1 must return empty")
 	}
 }
 
@@ -501,6 +526,81 @@ func TestGateQueue_ResolvedHistoryVisible(t *testing.T) {
 	}
 }
 
+// TestGateQueue_HistoryScrolls pins vertical scrolling of the resolved
+// history: a height budget windows the rows with ↑/↓ indicators, the
+// scroll offset moves the window, and height 0 renders everything.
+func TestGateQueue_HistoryScrolls(t *testing.T) {
+	resolved := make([]ResolvedGate, 20)
+	for i := range resolved {
+		resolved[i] = ResolvedGate{
+			RunID:  fmt.Sprintf("run-%02d", i),
+			NodeID: fmt.Sprintf("gate-%02d", i),
+			State:  bus.GraphNodeDone,
+			Age:    time.Duration(i) * time.Minute,
+		}
+	}
+
+	frame := StripAnsi(RenderGateQueueFrameH(nil, resolved, 140, 18, 0, 0))
+	if !strings.Contains(frame, "↓") || !strings.Contains(frame, "more") {
+		t.Errorf("budgeted frame missing overflow indicator:\n%s", frame)
+	}
+	if strings.Contains(frame, "gate-19") {
+		t.Errorf("tail row must be windowed out at scroll 0:\n%s", frame)
+	}
+
+	// Over-scrolling clamps to the last full window — the tail row shows.
+	scrolled := StripAnsi(RenderGateQueueFrameH(nil, resolved, 140, 18, 0, 99))
+	if !strings.Contains(scrolled, "↑") {
+		t.Errorf("scrolled frame missing ↑ indicator:\n%s", scrolled)
+	}
+	if !strings.Contains(scrolled, "gate-19") {
+		t.Errorf("scrolling must reach the tail rows:\n%s", scrolled)
+	}
+
+	full := StripAnsi(RenderGateQueueFrameH(nil, resolved, 140, 0, 0, 0))
+	for i := range resolved {
+		if !strings.Contains(full, fmt.Sprintf("gate-%02d", i)) {
+			t.Fatalf("unbudgeted frame missing row %d:\n%s", i, full)
+		}
+	}
+}
+
+// TestGraphUI_CancelFromRunList pins the run-list cancel: 'c' on a
+// running run parks a confirm, 'y' cancels it; a completed run is inert.
+func TestGraphUI_CancelFromRunList(t *testing.T) {
+	session := scratchGraphSession(t)
+	run := mustCreateRun(t, session, gateGraph())
+
+	ui := NewGraphUI(session, "")
+	ui.refresh()
+	if len(ui.rows) != 1 {
+		t.Fatalf("expected 1 run row, got %d", len(ui.rows))
+	}
+
+	ui.handleKey('c')
+	if ui.view != viewGraphConfirm || ui.pending == nil || ui.pending.Kind != "cancel" || ui.pending.RunID != run.ID {
+		t.Fatalf("c should park a cancel confirm for the selected run, got view %d pending %+v", ui.view, ui.pending)
+	}
+	ui.handleKey('y')
+	if ui.view != viewGraphRuns {
+		t.Fatalf("confirmed cancel should return to the run list, got view %d", ui.view)
+	}
+	st, err := bus.ReadGraphRun(session, run.ID)
+	if err != nil {
+		t.Fatalf("ReadGraphRun: %v", err)
+	}
+	if st.State != bus.GraphRunCanceled {
+		t.Fatalf("run state = %s, want canceled", st.State)
+	}
+
+	// Negative control: 'c' on a non-running run parks nothing.
+	ui.refresh()
+	ui.handleKey('c')
+	if ui.view == viewGraphConfirm || ui.pending != nil {
+		t.Fatal("c on a canceled run must be inert")
+	}
+}
+
 // Nothing dispatches without the confirm keypress: 'a' only parks the
 // action, 'n' abandons it, and only 'y' writes the approval marker.
 func TestGraphUI_ApproveGatedOnConfirm(t *testing.T) {
@@ -671,6 +771,33 @@ func TestRenderConfirmFrameH_ConfirmKeysSurviveShortPane(t *testing.T) {
 	}
 }
 
+// TestGraphUI_TabBacksOutOfDrillIn pins the one-Tab exit: from a DAG
+// drill-in, Tab backs out to the run list's slot and advances — no Esc
+// needed. The confirm view stays inert (negative control).
+func TestGraphUI_TabBacksOutOfDrillIn(t *testing.T) {
+	session := scratchGraphSession(t)
+	run := mustCreateRun(t, session, linearGraph())
+
+	ui := NewGraphUI(session, run.ID)
+	ui.refresh()
+	if ui.view != viewGraphDAG {
+		t.Fatalf("expected DAG drill-in, got %d", ui.view)
+	}
+	ui.handleKey(9)
+	if ui.view != viewGraphGates {
+		t.Errorf("Tab from a drill-in must advance past the run list's slot, got %d", ui.view)
+	}
+	if ui.runID != "" {
+		t.Error("backing out must clear the drilled run")
+	}
+
+	ui.view = viewGraphConfirm
+	ui.handleKey(9)
+	if ui.view != viewGraphConfirm {
+		t.Error("Tab must stay inert mid-confirm (negative control)")
+	}
+}
+
 // ── Surface cycling (MUX-105 Phases 6–7) ───────────────────
 
 func TestGraphUI_TabCyclesSurfacesForwardAndBack(t *testing.T) {
@@ -696,6 +823,8 @@ func TestGraphUI_TabCyclesSurfacesForwardAndBack(t *testing.T) {
 
 // Tab is inert in every drill-in view — cycling out mid-task would
 // discard context.
+// Tab stays inert only where the user is mid-input; drill-ins back out
+// and advance (see TestGraphUI_TabBacksOutOfDrillIn).
 func TestGraphUI_TabInertInGuardedViews(t *testing.T) {
 	session := scratchGraphSession(t)
 	run := mustCreateRun(t, session, linearGraph())
@@ -703,7 +832,7 @@ func TestGraphUI_TabInertInGuardedViews(t *testing.T) {
 	ui := NewGraphUI(session, run.ID)
 	ui.refresh()
 
-	guarded := []graphView{viewGraphDAG, viewGraphNode, viewGraphIntent, viewGraphConfirm}
+	guarded := []graphView{viewGraphIntent, viewGraphConfirm}
 	for _, v := range guarded {
 		ui.view = v
 		if v == viewGraphConfirm {
