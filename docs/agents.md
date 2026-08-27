@@ -270,14 +270,16 @@ Set per-role CLI override in `.muxcode/config`:
 
 ```bash
 MUXCODE_COMMIT_CLI=local           # commit agent uses local LLM
-MUXCODE_OLLAMA_MODEL=qwen2.5-coder:7b  # global default model
+MUXCODE_OLLAMA_MODEL=qwen3:4b  # global default model (all local roles share it)
 MUXCODE_COMMIT_MODEL=llama3.1:8b   # per-role model override
 MUXCODE_OLLAMA_URL=http://localhost:11434  # Ollama URL (default)
 ```
 
 The variable format is `MUXCODE_{ROLE}_CLI=local` where `{ROLE}` is the uppercase canonical role name (e.g. `COMMIT` for the commit agent, `BUILD` for the build agent, `ANALYZE` for the analyze agent).
 
-**Per-role model selection:** Each role can use a different model via `MUXCODE_{ROLE}_MODEL`. Resolution order: per-role env var → `MUXCODE_OLLAMA_MODEL` → default (`qwen2.5:7b`).
+**Per-role model selection:** Each role can use a different model via `MUXCODE_{ROLE}_MODEL`. Resolution order: per-role env var → `MUXCODE_OLLAMA_MODEL` → default (`qwen3:4b`).
+
+The mechanism exists, but **no role sets it by default, and that is deliberate**: two roles on two different models means two models resident at once. The default configuration keeps exactly one set of weights in memory across every local role. Pin a per-role model only if you are willing to pay for a second resident model.
 
 ### How it works
 
@@ -711,9 +713,36 @@ For Claude Code agents in the same roles, `muxcode pii-scrub` provides equivalen
 
 ### Single-shot auto-complete
 
-Build and test roles are designated as "single-shot" via `isSingleShotRole()`. After one successful tool execution, the harness breaks out of the tool-calling loop and forces a text-only Ollama call to generate the response summary. This prevents small models (e.g. gemma4, qwen2.5-coder) from endlessly re-running the same command.
+Build and test roles are designated as "single-shot" via `isSingleShotRole()`. After one successful tool execution, the harness breaks out of the tool-calling loop and forces a text-only Ollama call to generate the response summary. This prevents small models from endlessly re-running the same command — a failure observed with gemma4 and qwen2.5-coder. It matters more since the default moved to `qwen3:4b`: the guard was written against 7B-class models, and the default is now smaller than what prompted it.
 
 Flow: tool executes → single-shot detected → loop breaks → summary call (no tools) → response sent.
+
+### False-success guard
+
+A small model will sometimes report success for a command that was **refused**. Two captured live on 2026-08-27, minutes apart, from `qwen3:4b` on the prompt role:
+
+```
+BLOCKED: Error: command not allowed by tool profile: make build
+         — model summary: succeeded: Requirements PR created for review
+
+BLOCKED: Error: command not allowed by tool profile: muxcli status
+         — model summary: succeeded: Requirements doc moved to completed
+           directory and Jira story transitioned to Done
+```
+
+The second claims a spec move and a Jira transition to Done. Neither happened; the second command was a hallucinated binary. **The tool profile held perfectly — what failed was the reporting layer.** A guard on what an agent may *do* does not constrain what it *claims*, and the two need separate defences.
+
+`processBatch` therefore captures a denial line from every tool result (`firstDenialLine` — matches `not allowed`, `blocked`, `denied`, `refused`, or a leading `error`), and `enforceDenialPrefix` rewrites the final response when one is present:
+
+| Condition | Result |
+|-----------|--------|
+| No denial in tool output | Response passes through untouched |
+| Denial present, response already starts `BLOCKED:` | Untouched — the model reported honestly |
+| Denial present, anything else | Force-prefixed `BLOCKED: <denial> — model summary: <original>` |
+
+The rule is deliberately a **prefix check, not a keyword search**. An earlier version asked whether the response "admitted failure" by looking for words like `error` or `failed` — which a negation defeats: *"completed with no errors"* contains `error`, so the guard would stand down exactly when it was needed. Pinned by a test using that phrasing.
+
+The agent definition also instructs the model to lead with `BLOCKED:`. That instruction shapes phrasing; the harness check provides the guarantee. This is the same division as the prompt role's approve guard (`checkApproveGuard`, which refuses a gate approval unless the user's own text names the gate) — an instruction is not enforcement, and here the measurement proved it.
 
 ### Harness agent definitions
 

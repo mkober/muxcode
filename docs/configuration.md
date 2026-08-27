@@ -50,8 +50,8 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 |----------|---------|-------------|
 | `MUXCODE_CONTROL_PANE_DISABLE` | (unset) | `1` turns the control pane off wholesale — no pane on any window, and the daemon never sweeps |
 | `MUXCODE_CONTROL_PANE_EXCLUDE` | (empty) | Comma-separated window names that opt out; their siblings still get a pane |
-| `MUXCODE_CONTROL_PANE_HEIGHT` | `14` | Pane height in rows, re-applied after every window refit |
-| `MUXCODE_CONTROL_PANE_SURFACE` | `runs` | Starting surface: `runs`, `gates`, or `launcher`/`templates`. An unknown name degrades to the graph run list rather than an empty pane |
+| `MUXCODE_CONTROL_PANE_HEIGHT` | `18` | Pane height in rows, re-applied after every window refit |
+| `MUXCODE_CONTROL_PANE_SURFACE` | `runs` | Starting surface: `runs`, `gates`, `prompt`, or `launcher`/`templates`. An unknown name degrades to the graph run list rather than an empty pane |
 | `MUXCODE_CONTROL_PANE_CHECK_SECS` | `60` | Daemon supervision sweep interval in seconds. Exists mainly so hermetic tests can compress supervisor time |
 
 The pane is created **last** on each window so panes 0 and 1 keep their indices — `AgentPane()` is a hardcoded `"1"` and every delivery path resolves through it. The daemon converges each window to exactly one pane (respawning a killed one, killing duplicates, leaving a user's own pane-2 split alone) and **skips its first sweep** so it cannot double-create against a launch still in progress. Panes are recycled onto a freshly installed binary only when they predate the running daemon, decided from the launcher's `control-panes-ready` marker. See [Architecture → Control pane](architecture.md#control-pane).
@@ -121,8 +121,22 @@ MUXCODE_TEST_CLAUDE_MODEL=claude-haiku-4-5
 |----------|---------|-------------|
 | `MUXCODE_{ROLE}_CLI` | (unset) | Set to `local` to run a role via Ollama instead of Claude Code (e.g. `MUXCODE_COMMIT_CLI=local`) |
 | `MUXCODE_{ROLE}_MODEL` | (unset) | Per-role Ollama model override (e.g. `MUXCODE_COMMIT_MODEL=llama3.1:8b`). Takes precedence over `MUXCODE_OLLAMA_MODEL`. |
-| `MUXCODE_OLLAMA_MODEL` | `qwen2.5-coder:7b` | Default Ollama model for local LLM agents |
+| `MUXCODE_OLLAMA_MODEL` | `qwen3:4b` | Default Ollama model for local LLM agents. One model serves **every** local role — no role pins its own, so at most one set of weights is ever resident |
 | `MUXCODE_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
+
+**Per-role pins and the catalog form.** `MUXCODE_{ROLE}_MODEL` is shared with OpenCode, so its value may be a catalog name (`provider/model`). Against local Ollama that name is unpullable, so `RoleModel()` ignores slash-form pins and falls back to `MUXCODE_OLLAMA_MODEL` — this is what keeps a role switched to `CLI=local` from handing Ollama an `opencode-go/*` name. When the endpoint is a **hosted gateway**, `provider/model` is the correct form and the guard stands down.
+
+### Prompt-agent backend
+
+The [prompt-agent](requirements/drafts/MUX-109-prompt-mode-graph-control-pane.md) runs against a hosted gateway by default, or local Ollama by opt-in. The gateway is the default because a local `qwen3:4b` measured 39–82 s per call (with thinking disabled) and fabricated success summaries for commands that had failed — and because keeping a model resident is costly on a machine already running a multi-agent session.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_PROMPT_BACKEND` | `opencode` | `opencode` routes to the OpenCode Zen gateway; `ollama` runs the headless local harness instead. Only the literal `ollama` selects local — any other value resolves to the gateway |
+| `MUXCODE_OPENCODE_API_KEY` | (unset) | API key for the Zen gateway (`https://opencode.ai/zen/v1`). Read from the environment first, then the config file. **Required for the default backend** — `install.sh` prompts for it interactively (silently, never echoed), skips the prompt under `-y/--yes`, and `chmod 600`s the config after writing. An assignment with an empty value counts as unset, so the prompt still fires |
+| `MUXCODE_PROMPT_MODEL` | (unset) | Per-role model override. Unset by default so the role inherits the backend's default — `deepseek-v4-flash` on the gateway, `qwen3:4b` locally. **Gateway ids are bare**, not OpenCode catalog form: `opencode-go/deepseek-v4-flash` is rejected with a 401 |
+
+On the default backend the prompt-agent loads **no local weights and starts no local process** — the daemon only launches the headless harness when the backend is `ollama`. Ollama is therefore an *optional* prerequisite: install it only if you intend to opt in.
 
 ### Multi-CLI providers
 

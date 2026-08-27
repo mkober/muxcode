@@ -38,6 +38,12 @@ type ReloadProgress func(index int, result ReloadResult)
 func ActiveAgentStatuses(session string) []AgentReloadStatus {
 	var statuses []AgentReloadStatus
 	for _, role := range ReloadableRoles() {
+		// The prompt-agent is headless (no window, no F-key) and its
+		// provider/model live in the backend setting, not a launch config.
+		if role == promptAgentRole {
+			statuses = append(statuses, promptAgentStatus(session))
+			continue
+		}
 		window := WindowForRole(role)
 		cli := ResolveProviderCLI(role)
 		rc := EffectiveConfig(role)
@@ -55,6 +61,23 @@ func ActiveAgentStatuses(session string) []AgentReloadStatus {
 		})
 	}
 	return statuses
+}
+
+// promptAgentStatus builds the selector row for the headless prompt
+// role, translating its backend into the selector's CLI vocabulary
+// (opencode ↔ gateway, local ↔ ollama).
+func promptAgentStatus(session string) AgentReloadStatus {
+	backend, model := PromptBackendInfo(session)
+	cli := "opencode"
+	if backend == "ollama" {
+		cli = "local"
+	}
+	return AgentReloadStatus{
+		Role:  promptAgentRole,
+		CLI:   cli,
+		Model: model,
+		Alive: PromptAgentAlive(session),
+	}
 }
 
 // ReloadableRoles returns roles eligible for reload.
@@ -88,6 +111,23 @@ func ReloadBatch(session string, roles []string, cli, model string, compact bool
 		}
 
 		start := time.Now()
+		var result ReloadResult
+		if role == promptAgentRole {
+			old := promptAgentStatus(session)
+			err := ReloadPromptAgent(session, cli, model)
+			now := promptAgentStatus(session)
+			result = ReloadResult{
+				Role: role, Success: err == nil, Error: err,
+				OldCLI: old.CLI, OldModel: old.Model,
+				NewCLI: now.CLI, NewModel: now.Model,
+				Duration: time.Since(start),
+			}
+			results = append(results, result)
+			if progress != nil {
+				progress(i, result)
+			}
+			continue
+		}
 		oldCLI := ResolveProviderCLI(role)
 		oldRC := EffectiveConfig(role)
 
@@ -97,7 +137,7 @@ func ReloadBatch(session string, roles []string, cli, model string, compact bool
 		newCLI := ResolveProviderCLI(role)
 		newRC := EffectiveConfig(role)
 
-		result := ReloadResult{
+		result = ReloadResult{
 			Role:     role,
 			Success:  err == nil,
 			Error:    err,

@@ -50,6 +50,25 @@ if size > prev && size > 0 {
    hygiene) becomes an echo trigger. Suggests the fix should also constrain changed-files
    to repo-relative paths, independent of the refire cause.
 
+8. **Changed-files named the user's credentials file (observed 2026-08-27, 09:54)** — this
+   raises item 7 from untidy to a disclosure concern. An echo arrived whose `Changed files:`
+   was `/Users/<user>/.config/muxcode/config`: the muxcode config, which by design holds
+   `JIRA_API_TOKEN` and now `MUXCODE_OPENCODE_API_KEY`. The verify-spec instruction reads
+   *"Read the spec and the changed files"*, so the message is a standing invitation for a
+   receiving agent to open a secrets file and pull its contents into an LLM context — and,
+   via the normal reply path, potentially into a bus message or a doc.
+
+   Nothing leaked here: the agent that received it recognised the path and declined to read
+   it. But that is a judgement call standing in for a control, and it will not hold for every
+   agent on every pass. Two requirements follow, and the second is the one that matters:
+
+   - **Scope changed-files to the repository** — the fix already proposed in item 7, which
+     would have prevented this instance.
+   - **Never instruct an agent to read a path outside the repo, credentials or not.** Path
+     scoping fixes the observed case; it does not fix the general one, since a repo-relative
+     path can also be sensitive. The instruction itself should not name arbitrary files as
+     required reading.
+
    **Reproducible, not a one-off**: it fired again at 10:15 the moment plan appended an
    addendum to that same `/tmp` file. Two writes to one out-of-repo scratch file, two
    echoes — so the trigger is the write itself, and any agent following the documented
@@ -68,6 +87,32 @@ if size > prev && size > 0 {
    and the check, so a delta check against the working tree (not the message) is what
    distinguishes a stale replay from a real change. Verifying on the message's file list
    alone would have recorded "no run-store tests exist" while 13 of them existed.
+
+9. **The payload shape varies within one burst, so it is not a genuineness signal (observed
+   2026-08-27, 17:49–17:53)** — four `verify-spec` messages in ~4 minutes against the MUX-109
+   spec, in three different shapes:
+
+   | Time | `Changed files:` | Tree actually changed? |
+   |------|------------------|------------------------|
+   | 17:49 | `tui/prompt.go` | **Yes** — `prompt.go` written 17:49:22 |
+   | 17:52:27 | `tui/graph_ui.go` | **Yes** — `graph_ui.go` written 17:51:57 |
+   | 17:52:47 | `tui/graph_ui.go` | No — same file, same mtime, 20 s later |
+   | 17:53:39 | *(field absent entirely)* | No |
+
+   Two points, and the second is the one that constrains the fix:
+
+   - **The list under-reports even when genuine.** Both real fires named a single file while
+     **15 files** were modified in the working tree. An agent verifying from the message would
+     have missed the `graph_ui.go` wiring on the first pass and the `prompt.go` work on the
+     second — reinforcing item 8's closing note that the working-tree delta, not the message,
+     is the source of truth.
+   - **A receiving agent cannot filter echoes cheaply.** Half of this burst was genuine, so
+     "ignore repeat verify-spec messages" would have dropped real work; and the shapes are not
+     separable — the duplicate carried the *same* well-formed file list as the genuine fire,
+     while the fourth carried none. Any correct plan-side heuristic reduces to re-deriving the
+     tree delta on every fire, which is the cost the fix is supposed to remove. **This belongs
+     in the daemon**, per the once-per-completion gate below; there is no cheap receiver-side
+     mitigation to fall back on in the meantime.
 
 ## Requirements
 

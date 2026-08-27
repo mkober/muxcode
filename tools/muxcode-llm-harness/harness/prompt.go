@@ -274,9 +274,23 @@ func AgentFileName(role string) string {
 		return "pr-reader"
 	case "auto":
 		return "autonomous-agent"
+	case "prompt":
+		return "prompt-agent"
 	default:
 		return role
 	}
+}
+
+// applyNoThink plants qwen3's /no_think soft switch at the end of the
+// system prompt when thinking is disabled. This is the half of the
+// no-think pair guaranteed to work today: the ChatRequest think:false
+// field depends on the Ollama version honoring it on the OpenAI-compat
+// endpoint, while the prompt-level switch acts at the chat template.
+func applyNoThink(systemPrompt string, noThink bool) string {
+	if !noThink {
+		return systemPrompt
+	}
+	return systemPrompt + "\n/no_think"
 }
 
 // StripFrontmatter removes YAML frontmatter (--- delimited) from markdown.

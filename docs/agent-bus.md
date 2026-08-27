@@ -1004,7 +1004,7 @@ muxcode agent run <role> [--model MODEL] [--url URL]
 ```
 
 - `<role>` — agent role to run (e.g. `git`, `build`, `runner`)
-- `--model MODEL` — Ollama model name (default: `MUXCODE_OLLAMA_MODEL` or `qwen2.5-coder:7b`)
+- `--model MODEL` — Ollama model name (default: `MUXCODE_OLLAMA_MODEL` or `qwen3:4b`)
 - `--url URL` — Ollama base URL (default: `MUXCODE_OLLAMA_URL` or `http://localhost:11434`)
 
 **Agentic loop:**
@@ -1543,7 +1543,7 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 
 ```bash
 # Start a run from a built-in template, with intent interpolated into node messages
-muxcode graph run coding-pr "implement PBP1-4915"
+muxcode graph run req-code-pr "implement PBP1-4915"
 
 # Run a custom definition — --file must be the first argument after `run`,
 # since a bare first arg is read as a template name
@@ -1568,6 +1568,7 @@ muxcode graph ui                          # run browser; Enter opens a run's DAG
 muxcode graph ui <run-id>                 # straight into one run's DAG view
 muxcode graph ui --templates              # pick a template, validated before it starts a run
 muxcode graph ui --gates                  # every wait_human gate awaiting approval
+muxcode graph ui --prompt                 # the Prompt surface (MUX-109)
 
 # Scriptable single frames — no terminal required, stable width for diffing
 muxcode graph ui --render-once --width 100 <run-id>
@@ -1578,9 +1579,17 @@ Keys in the interactive views: `j`/`k` move, `Enter` descends, `q` goes back (qu
 top level), `R` forces a refresh, and `a` / `c` / `r` approve a gate, cancel the run, or retry
 from the selected node — each behind a confirm prompt.
 
-`Tab` cycles the three top-level surfaces in place — **Graph Runs → Pending Gates → Launch Graph**
-— and `Shift-Tab` cycles back, so switching modes never means closing the popup and reopening the
-menu. All three menu entries open the same TUI and differ only in where the cycle starts. A tab bar
+In a **running** run's DAG the cursor follows the active node by itself, so the view tracks progress
+without keypresses. Moving the selection by hand pauses that, and it re-arms only once the node you
+parked on finishes — and only if it was still live when you parked, so inspecting an already-settled
+node holds the cursor there indefinitely. A run that is no longer running never moves the cursor,
+which keeps post-mortem browsing stable.
+
+`Tab` cycles the four top-level surfaces in place — **Prompt → Launch Graph → Graph Runs → Pending
+Gates** — and `Shift-Tab` cycles back, so switching modes never means leaving the view you are in.
+The flags above differ only in where the cycle starts. (The popups and menu entries this originally
+described were retired when the control pane arrived; `muxcode graph ui` remains for ad-hoc use.)
+A tab bar
 in the header shows the active surface; drill-ins (DAG, node detail, intent prompt) and open
 confirm prompts leave `Tab` inert, so it can never yank you out of a half-answered prompt. Each
 surface remembers its own selection across a cycle, restored by item id rather than row index, so
@@ -1598,9 +1607,18 @@ Three details worth knowing:
   open costs nothing and survives a daemon restart.
 
 **Templates** resolve `project > user > builtin`, the same precedence as agent files:
-`.muxcode/graphs/<name>.json` > `~/.config/muxcode/graphs/<name>.json` > built-in. Five
-ship built in: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`, and a
-`build-test-review` subgraph.
+`.muxcode/graphs/<name>.json` > `~/.config/muxcode/graphs/<name>.json` > built-in.
+
+**Run `muxcode graph list` for the built-in set** — it prints each name with its description, and
+is the authority. This page deliberately does not enumerate them: the list changed three times in
+one afternoon (2026-08-27) and went stale within minutes on each occasion, twice while being
+actively maintained. A hand-copied set is a standing liability, and the command that answers the
+question correctly already exists.
+
+Broadly they follow a story's life — derive a spec from the branch, implement it, review, commit and
+PR, deploy — plus a `build-test-review` subgraph the others compose. Every builtin is pinned by
+`TestBuiltinGraphTemplatesValidate`, so one violating the gate rule fails the suite rather than
+shipping.
 
 **Validation is strict by design.** Undefined node refs, unreachable nodes, and uncapped
 cycles are errors, not warnings — a loop is only legal via an explicit `max_iterations` on a

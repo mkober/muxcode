@@ -14,7 +14,7 @@ var KnownRoles = []string{
 	"plan", "edit", "build", "test", "review",
 	"deploy", "run", "commit", "analyze",
 	"docs", "research", "watch", "pr-read",
-	"webhook", "api", "auto", "serve",
+	"webhook", "api", "auto", "serve", "prompt",
 }
 
 // splitLeftWindows lists windows that have a dedicated tool in the left pane.
@@ -231,6 +231,14 @@ func TestHistoryPath(session string) string {
 // HistoryPath returns the history JSONL file path for any role in a session.
 func HistoryPath(session, role string) string {
 	return filepath.Join(BusDir(session), role+"-history.jsonl")
+}
+
+// PromptHistoryPath returns the prompt-agent transcript JSONL path — the
+// session-global record the control pane's Prompt surface renders from
+// (MUX-109). Truncated on session re-init like every role history, since
+// "prompt" is a KnownRole.
+func PromptHistoryPath(session string) string {
+	return HistoryPath(session, "prompt")
 }
 
 // SkillsDir returns the project-local skills directory path.

@@ -61,7 +61,7 @@ A typical workflow looks like this:
 
 The entire build-test-review chain is **hook-driven** — Go hooks check exit codes and fire the next step. No tokens are spent on routing decisions, and the chain runs at the speed of your tools, not your LLM. Chain actions support conditional expressions — route builds to deploy on release branches, to test on feature branches — all config-driven with first-match-wins semantics.
 
-For multi-step work beyond a linear chain, **graph orchestration** moves the routing into the daemon: `muxcode graph run coding-pr "implement X"` executes a declarative DAG — implement, build/test with a capped fix loop, review, then a human approval gate before any commit — waking the edit agent only at gates and completion instead of once per step. Runs persist to disk and resume across daemon restarts.
+For multi-step work beyond a linear chain, **graph orchestration** moves the routing into the daemon: `muxcode graph run req-code-pr "implement X"` executes a declarative DAG — implement, build/test with a capped fix loop, review, then a human approval gate before any commit — waking the edit agent only at gates and completion instead of once per step. Runs persist to disk and resume across daemon restarts.
 
 The `muxcode tui` command launches a live dashboard showing which agents are busy, idle, or waiting on messages, so you always know what's happening across the session. You can add a dashboard window by including `status` in your `MUXCODE_WINDOWS` list.
 
@@ -157,7 +157,7 @@ Any role can use any provider. Set `MUXCODE_{ROLE}_CLI` to `claude`, `opencode`,
 - `MUXCODE_{ROLE}_CLI=codex` — Codex CLI (OpenAI models, sandboxed — read-only roles only)
 - `MUXCODE_{ROLE}_CLI=local` — Local LLM via Ollama (free, structured commands)
 
-Per-role model selection is also supported via `MUXCODE_{ROLE}_CLAUDE_MODEL` (Claude Code), `MUXCODE_{ROLE}_CODEX_MODEL` (Codex CLI, default `gpt-5.5`), or `MUXCODE_{ROLE}_MODEL` (OpenCode/local, falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen2.5-coder:7b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
+Per-role model selection is also supported via `MUXCODE_{ROLE}_CLAUDE_MODEL` (Claude Code), `MUXCODE_{ROLE}_CODEX_MODEL` (Codex CLI, default `gpt-5.5`), or `MUXCODE_{ROLE}_MODEL` (OpenCode/local, falls back to `MUXCODE_OLLAMA_MODEL`, default `qwen3:4b`). If Ollama is unreachable at launch, affected agents fall back to Claude Code automatically.
 
 Each agent has constrained tool permissions — the build agent can run builds but can't edit files, the commit agent can run git but can't deploy infrastructure. This separation prevents agents from stepping on each other. Tool profiles are automatically translated to each provider's permission format (Claude Code's `--allowedTools`, OpenCode's `permission` blocks, or the harness's `IsToolAllowed()`).
 
@@ -203,7 +203,7 @@ Claude vs OpenCode, role by role:
 - **Hook-driven automation chains** — Build→test→review and deploy→run→watch chains fire via bash exit codes. Deterministic, fast, zero token cost for routing
 - **Conditional chain actions** — Chain actions support 10 condition types (`files_match`, `branch_match`, `command_match`, `env_set`, `output_contains`, etc.) with first-match-wins on action arrays. Route builds to deploy on release branches, to test on feature branches — all config-driven
 - **Event subscriptions** — Fan-out after chain execution. Subscribe any agent to build/test/deploy/run/watch events with outcome and condition filtering
-- **Graph orchestration** — Declarative multi-agent DAGs executed by the daemon: fan-out/fan-in with `all`/`any`/`quorum` join barriers, outcome-keyed branching, capped fix loops, human approval gates, and durable per-run state that survives a daemon restart. `muxcode graph run coding-pr "implement X"` returns immediately; the orchestrator is interrupted only at human gates and completion instead of once per step. Git mutations and Atlassian writes are rejected at `graph validate` unless downstream of a `wait_human` gate. Ships 5 built-in templates (`coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`, `build-test-review`) with project/user overrides, plus `graph status|cancel|retry --from|approve` for run control
+- **Graph orchestration** — Declarative multi-agent DAGs executed by the daemon: fan-out/fan-in with `all`/`any`/`quorum` join barriers, outcome-keyed branching, capped fix loops, human approval gates, and durable per-run state that survives a daemon restart. `muxcode graph run req-code-pr "implement X"` returns immediately; the orchestrator is interrupted only at human gates and completion instead of once per step. Git mutations and Atlassian writes are rejected at `graph validate` unless downstream of a `wait_human` gate. Ships 8 built-in templates (`req-code-pr` — requires an active requirements spec, `story-lifecycle`, `story-to-spec`, `commit-pr-review-loop`, `pr-local-review`, `update-spec-docs`, `deploy-verify`, `build-test-review`) with project/user overrides, plus `graph status|cancel|retry --from|approve` for run control
 - **Spawned agents** — Create temporary agents for one-off tasks in their own tmux window. Results collected automatically on completion
 - **Modal windows** — On-demand overlay windows for specialized tasks. API testing opens via `prefix + i` or `muxcode modal open api`. Declarative config with size presets and optional pane splits
 - **Pre-commit safeguards** — Commit delegation blocked when other agents have pending work, preventing incomplete commits
@@ -301,6 +301,7 @@ pacman, or zypper). You do not need to install them by hand first.
 | make | — | Drives the build |
 | jq | — | Hook and settings JSON merging |
 | Neovim | 0.9 | Editor pane |
+| Ollama | — | *Optional* — local LLM agents and the Prompt mode's `MUXCODE_PROMPT_BACKEND=ollama` opt-in (the default Prompt backend is the OpenCode gateway and needs `MUXCODE_OPENCODE_API_KEY` instead) |
 | fzf | — | *Optional* — interactive project picker (`muxcode <path>` works without it) |
 
 Plus at least one AI CLI provider, which the installer can also install for you:
@@ -310,8 +311,7 @@ Plus at least one AI CLI provider, which the installer can also install for you:
 - [Codex CLI](https://github.com/openai/codex) (`codex`) — alternative, OpenAI models
 
 Optional extras, all detected and offered during install:
-[Ollama](https://ollama.com/) (local LLM agents), Mermaid CLI and draw.io
-(plan-agent diagram rendering).
+Mermaid CLI and draw.io (plan-agent diagram rendering).
 
 ### Install
 
@@ -505,7 +505,7 @@ Any agent role can run via a local LLM (Ollama) instead of Claude Code. This is 
    ```bash
    brew install ollama
    ollama serve
-   ollama pull qwen2.5-coder:7b
+   ollama pull qwen3:4b
    ```
 
 2. Set per-role overrides in `.muxcode/config`:
@@ -522,20 +522,19 @@ Any agent role can run via a local LLM (Ollama) instead of Claude Code. This is 
 | Variable               | Default                  | Description                                                 |
 | ---------------------- | ------------------------ | ----------------------------------------------------------- |
 | `MUXCODE_{ROLE}_CLI`   | (unset)                  | Set to `local` to use Ollama (e.g. `MUXCODE_COMMIT_CLI=local`) |
-| `MUXCODE_OLLAMA_MODEL` | `qwen2.5-coder:7b`       | Ollama model name                                           |
+| `MUXCODE_OLLAMA_MODEL` | `qwen3:4b`               | Ollama model name                                           |
 | `MUXCODE_OLLAMA_URL`   | `http://localhost:11434` | Ollama server URL                                           |
 
 ### Recommended models
 
 | Model                   | Size   | Best for                              | Notes                                                          |
 | ----------------------- | ------ | ------------------------------------- | -------------------------------------------------------------- |
-| `qwen2.5-coder:7b`      | 4.7 GB | Build, test, git, general agent tasks | Default model — strong code understanding at low resource cost |
-| `qwen2.5-coder:14b`     | 9.0 GB | Review, analysis, docs                | Better reasoning for tasks that need more nuance               |
+| `qwen3:4b`              | 2.5 GB | All local roles (single resident model) | Default — smallest credible tool-caller; one set of weights in memory regardless of how many local agents run |
+| `qwen3:8b`              | 5.2 GB | Escalation when 4B quality disappoints | Same family, so a swap changes capability without changing conventions |
 | `deepseek-coder-v2:16b` | 8.9 GB | Review, analysis, complex code tasks  | Strong at code review and multi-file reasoning                 |
-| `codellama:7b`          | 3.8 GB | Build, test, git                      | Lightweight alternative to Qwen for structured commands        |
 | `llama3.1:8b`           | 4.7 GB | General-purpose agent tasks           | Good all-rounder when code specialization isn't critical       |
 
-For most setups, `qwen2.5-coder:7b` is sufficient for command-execution roles (build, test, git, watch). Upgrade to a 14b+ model for roles that reason about code (review, analyze, docs).
+The default is deliberately a single small model shared by every local role — Ollama keeps each distinct model resident while in use, so per-role model pins multiply memory cost. Override globally via `MUXCODE_OLLAMA_MODEL`; per-role pins (`MUXCODE_{ROLE}_MODEL`) exist but reintroduce a second resident model.
 
 ### Health monitoring
 
@@ -626,7 +625,7 @@ Useful keybindings for navigating your MuxCode session:
 | `Prefix + i` | Open API testing modal |
 | `Prefix + b` | Open MuxCode quick menu |
 
-Every agent window also carries the **control pane** — a fixed full-width strip at the bottom hosting the graph TUI (launcher, runs, pending gates; `Tab` cycles, and the selected surface stays consistent across all windows). It is on by default; `MUXCODE_CONTROL_PANE_EXCLUDE` names windows to opt out, `MUXCODE_CONTROL_PANE_DISABLE=1` turns it off wholesale, `MUXCODE_CONTROL_PANE_HEIGHT` sets its rows (default 14), and `MUXCODE_CONTROL_PANE_SURFACE` picks the starting surface (`runs`/`gates`/`launcher`). A waiting `wait_human` gate switches every pane to Pending Gates by itself; the daemon respawns a killed pane and recycles panes onto a freshly installed binary. The graph popups and menu entries were retired with the pane's arrival — `muxcode graph ui` remains for ad-hoc use.
+Every agent window also carries the **control pane** — a fixed full-width strip at the bottom hosting the graph TUI (prompt, launcher, runs, pending gates; `Tab` cycles, and the selected surface stays consistent across all windows). It is on by default; `MUXCODE_CONTROL_PANE_EXCLUDE` names windows to opt out, `MUXCODE_CONTROL_PANE_DISABLE=1` turns it off wholesale, `MUXCODE_CONTROL_PANE_HEIGHT` sets its rows (default 18), and `MUXCODE_CONTROL_PANE_SURFACE` picks the starting surface (`runs`/`gates`/`prompt`/`launcher`). A waiting `wait_human` gate switches every pane to Pending Gates by itself; the daemon respawns a killed pane and recycles panes onto a freshly installed binary. The graph popups and menu entries were retired with the pane's arrival — `muxcode graph ui` remains for ad-hoc use.
 
 | `Prefix + C` | New MuxCode session (project picker) |
 | `Prefix + z` | Zoom current pane to full screen |

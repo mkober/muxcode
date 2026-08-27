@@ -90,7 +90,7 @@ func TestCreateControlPane_Argv(t *testing.T) {
 		t.Fatalf("expected split + title calls, got %v", *calls)
 	}
 	split := strings.Join((*calls)[0], " ")
-	for _, want := range []string{"split-window", "-vf", "-d", "-l 14", "-t s:edit", "muxcode graph ui", "-e BUS_SESSION=s", "-P -F #{pane_id}"} {
+	for _, want := range []string{"split-window", "-vf", "-d", "-l 18", "-t s:edit", "muxcode graph ui", "-e BUS_SESSION=s", "-P -F #{pane_id}"} {
 		if !strings.Contains(split, want) {
 			t.Errorf("split call missing %q: %s", want, split)
 		}
@@ -118,6 +118,10 @@ func TestControlPaneSurfaceSelectable(t *testing.T) {
 	t.Setenv("MUXCODE_CONTROL_PANE_SURFACE", "launcher")
 	if c := controlPaneCommand(); c != "muxcode graph ui --templates" {
 		t.Errorf("launcher surface = %q", c)
+	}
+	t.Setenv("MUXCODE_CONTROL_PANE_SURFACE", "prompt")
+	if c := controlPaneCommand(); c != "muxcode graph ui --prompt" {
+		t.Errorf("prompt surface = %q", c)
 	}
 	t.Setenv("MUXCODE_CONTROL_PANE_SURFACE", "no-such-surface")
 	if c := controlPaneCommand(); c != "muxcode graph ui" {
@@ -207,7 +211,7 @@ func TestClampControlPane(t *testing.T) {
 	calls := stubPaneList(t, "%0:0:\n%1:1:\n%2:2:\"muxcode graph ui\"")
 	ClampControlPane("s", "edit")
 	j := joinCalls(calls)
-	for _, want := range []string{"resize-pane", "-t %2", "-y 14"} {
+	for _, want := range []string{"resize-pane", "-t %2", "-y 18"} {
 		if !strings.Contains(j, want) {
 			t.Errorf("clamp missing %q:\n%s", want, j)
 		}

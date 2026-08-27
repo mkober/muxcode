@@ -138,6 +138,23 @@ func nodeGlyph(nodeType, state string) (glyph string, color string) {
 	return glyph, stateColor(state)
 }
 
+// nodeWho names who runs a node — the label suffix that makes a DAG of
+// terse ids readable: a bare "a → b → c" says nothing about which agent
+// is active (user catch, 2026-08-27). Shared by the grid labels and the
+// detail panel so the two never disagree.
+func nodeWho(n *bus.Node) string {
+	switch n.Type {
+	case bus.NodeSend:
+		return n.Role + ":" + n.Action
+	case bus.NodeSpawn, bus.NodeMap:
+		return n.Type + " " + n.Role
+	case bus.NodeWaitHuman:
+		return "human gate"
+	default:
+		return n.Type
+	}
+}
+
 func stateColor(state string) string {
 	switch state {
 	case bus.GraphNodeDone:
@@ -307,7 +324,15 @@ func RenderGraphFrame(snap GraphSnapshot, width, height int, selection string, n
 		n := &snap.Graph.Nodes[i]
 		types[n.ID] = n.Type
 		glyph, _ := nodeGlyph(n.Type, snap.nodeState(n.ID))
-		labels[n.ID] = glyph + " " + n.ID + loopAnnotation(snap.Run, grid.Loops, n.ID)
+		label := glyph + " " + n.ID
+		// Terse ids say nothing about which agent is active (a bare
+		// "a → b → c" was unreadable live; user catch, 2026-08-27) — send
+		// and worker nodes carry who runs them. Gates keep their glyph.
+		switch n.Type {
+		case bus.NodeSend, bus.NodeSpawn, bus.NodeMap:
+			label += " " + nodeWho(n)
+		}
+		labels[n.ID] = label + loopAnnotation(snap.Run, grid.Loops, n.ID)
 	}
 
 	// Column geometry: each layer block is as wide as its widest label.
@@ -351,7 +376,7 @@ func RenderGraphFrame(snap GraphSnapshot, width, height int, selection string, n
 		headerLines++
 	}
 	if gridW > width || gridH+skipLanes+headerLines > height {
-		return renderGraphHeader(snap, now) + renderGraphFallback(snap, width)
+		return renderGraphHeader(snap, now, width) + renderGraphFallback(snap, width)
 	}
 
 	c := newCanvas(gridW+2, gridH+skipLanes+1)
@@ -385,19 +410,84 @@ func RenderGraphFrame(snap GraphSnapshot, width, height int, selection string, n
 		for _, id := range layerIDs {
 			_, color := nodeGlyph(types[id], snap.nodeState(id))
 			if id == selection {
-				color = Cyan + Bold
+				color = Yellow + Bold
 			}
 			writeCursorAndLabel(c, colX[i], nodeY(id), id == selection, labels[id], color)
 		}
 	}
 
-	return renderGraphHeader(snap, now) + c.String()
+	frame := renderGraphHeader(snap, now, width) + c.String()
+	// The per-node detail panel renders only when it fits under the grid —
+	// the grid is the load-bearing view and must never be pushed past the
+	// pane clamp for the sake of detail rows.
+	if gridH+skipLanes+headerLines+len(snap.Graph.Nodes)+1 <= height {
+		frame += RenderNodeDetails(snap, width, now)
+	}
+	return frame
+}
+
+// RenderNodeDetails lists every node with who runs it, its timing, and
+// what it is doing — the run view's answer to "what is actually
+// happening": a running node shows the instruction it dispatched, a
+// finished node the first line of its harvested result, a waiting gate
+// its approval command.
+func RenderNodeDetails(snap GraphSnapshot, width int, now time.Time) string {
+	var b strings.Builder
+	b.WriteString("\n")
+	for i := range snap.Graph.Nodes {
+		n := &snap.Graph.Nodes[i]
+		st := snap.Statuses[n.ID]
+		state := snap.nodeState(n.ID)
+		glyph, color := nodeGlyph(n.Type, state)
+
+		who := nodeWho(n)
+
+		timing := ""
+		if st != nil && st.StartedAt > 0 {
+			end := now.Unix()
+			if st.DoneAt > 0 {
+				end = st.DoneAt
+			}
+			if end > st.StartedAt {
+				timing = (time.Duration(end-st.StartedAt) * time.Second).String()
+			}
+		}
+
+		detail, detailColor := "", FG
+		msg := strings.ReplaceAll(n.Message, "${intent}", snap.Run.Intent)
+		switch state {
+		case bus.GraphNodeRunning:
+			detail = msg
+		case bus.GraphNodeWaiting:
+			detail = "waiting for approval — muxcode graph approve " + snap.Run.ID + " " + n.ID
+			if n.Type != bus.NodeWaitHuman {
+				detail = msg
+			}
+			detailColor = Yellow
+		case bus.GraphNodeDone, bus.GraphNodeFailed:
+			if st != nil {
+				detail = strings.TrimSpace(st.Output)
+				if nl := strings.IndexByte(detail, '\n'); nl >= 0 {
+					detail = strings.TrimSpace(detail[:nl])
+				}
+			}
+			if state == bus.GraphNodeFailed {
+				detailColor = Red
+			}
+		}
+
+		line := fmt.Sprintf("  %s%s %-10s%s %s%-20s%s %-8s %s%s%s",
+			color, glyph, n.ID, RST, Comment, who, RST, timing,
+			detailColor, detail, RST)
+		b.WriteString(fitWidth(line, width) + "\n")
+	}
+	return b.String()
 }
 
 // writeCursorAndLabel places the selection cursor and the node label.
 func writeCursorAndLabel(c *canvas, x, y int, selected bool, label, color string) {
 	if selected {
-		c.writeText(x, y, "▸", Yellow)
+		c.writeText(x, y, "▶", Yellow+Bold)
 	}
 	c.writeText(x+2, y, label, color)
 }
@@ -468,7 +558,7 @@ func (s GraphSnapshot) edgeActive(e bus.Edge) bool {
 // static surface tab bar (a DAG is a drill-in of Graph Runs). Elapsed
 // time freezes at UpdatedAt for finished runs so post-mortem views are
 // stable.
-func renderGraphHeader(snap GraphSnapshot, now time.Time) string {
+func renderGraphHeader(snap GraphSnapshot, now time.Time, width int) string {
 	run := snap.Run
 	end := now.Unix()
 	if run.State != bus.GraphRunRunning {
@@ -497,7 +587,7 @@ func renderGraphHeader(snap GraphSnapshot, now time.Time) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(renderSurfaceTabs("Graph Runs"))
+	b.WriteString(renderSurfaceTabs("Graph Runs", width))
 	fmt.Fprintf(&b, "  %s%s%s%s  %s[%s]%s  %s%s  %d/%d done  %s%s\n",
 		Purple, Bold, run.ID, RST,
 		stateColor, run.State, RST,
@@ -532,10 +622,12 @@ func fitWidth(line string, width int) string {
 }
 
 // renderSurfaceTabs renders the surface tab bar every top-level frame
-// shares: all three surfaces named, the active one highlighted, then the
-// cycle hint.
-func renderSurfaceTabs(active string) string {
-	names := []string{"Launch Graph", "Graph Runs", "Pending Gates"}
+// shares: all surfaces named, the active one highlighted, then the cycle
+// hint. Width-clamped like every other frame line — at four surfaces the
+// bar outgrows a narrow pane, and an unclamped bar wraps and shifts the
+// whole frame down a row.
+func renderSurfaceTabs(active string, width int) string {
+	names := []string{"Prompt", "Launch Graph", "Graph Runs", "Pending Gates"}
 	parts := make([]string, 0, len(names))
 	for _, n := range names {
 		if n == active {
@@ -547,7 +639,8 @@ func renderSurfaceTabs(active string) string {
 	// One blank row above the bar for breathing room under the popup
 	// border. Safe against the scroll-shift bug: clampLines guarantees a
 	// frame never prints past the pane, so this row cannot be eaten.
-	return "\n  " + strings.Join(parts, Comment+" / "+RST) + Comment + "   ⇥ Tab: next surface" + RST + "\n"
+	bar := "  " + strings.Join(parts, Comment+" / "+RST) + Comment + "   ⇥ Tab: next surface" + RST
+	return "\n" + fitWidth(bar, width) + "\n"
 }
 
 // ── Run list ───────────────────────────────────────────────
@@ -560,15 +653,78 @@ type RunListRow struct {
 	State       string
 	Done, Total int
 	Elapsed     time.Duration
-	GateWaiting bool // a wait_human node is waiting on this run
+	GateWaiting bool   // a wait_human node is waiting on this run
+	Results     string // one-line outcome: issues first, else what completed
+}
+
+// SummarizeRunResults compresses a run's node outcomes into one results
+// cell: issues win (first failed node and why), otherwise the completed
+// node chain. Success cells are built from node IDs, never node output —
+// harvested output is multi-line prose whose first line lands
+// mid-sentence and reads as text flowing across rows. A done id may
+// carry a trailing "?": that completion was inferred with no exit-code
+// proof (the run list renders the legend once). The glyph prefix
+// carries identity — the renderer colors by it, and the cell stays
+// readable through StripAnsi.
+func SummarizeRunResults(runState string, failed []string, failedOut string, done []string) string {
+	firstLine := func(s string) string {
+		s = strings.TrimSpace(s)
+		if i := strings.IndexByte(s, '\n'); i >= 0 {
+			s = strings.TrimSpace(s[:i])
+		}
+		return s
+	}
+	chain := strings.Join(done, " → ")
+	switch {
+	case len(failed) > 0:
+		msg := "✗ " + failed[0]
+		if len(failed) > 1 {
+			msg += fmt.Sprintf(" +%d", len(failed)-1)
+		}
+		if out := firstLine(failedOut); out != "" {
+			msg += ": " + out
+		}
+		return msg
+	case runState == bus.GraphRunComplete:
+		if chain != "" {
+			return "✓ " + chain
+		}
+		return "✓ complete"
+	case runState == bus.GraphRunCanceled:
+		return "canceled"
+	default:
+		if chain != "" {
+			return chain + " ⋯" // in flight — what has finished so far
+		}
+		return ""
+	}
+}
+
+// resultsCellColor maps a results cell to its color by glyph prefix.
+func resultsCellColor(results string) string {
+	switch {
+	case strings.HasPrefix(results, "✗"):
+		return Red
+	case strings.HasPrefix(results, "✓"):
+		return Green
+	default:
+		return Comment
+	}
 }
 
 // RenderRunListFrame renders the run browser: all runs newest first, with
 // state, node progress, elapsed, and a gate badge where a wait_human node
 // waits. Empty state renders explicitly — never a blank frame.
 func RenderRunListFrame(rows []RunListRow, width, sel int) string {
+	return RenderRunListFrameH(rows, width, 0, sel)
+}
+
+// RenderRunListFrameH is RenderRunListFrame with a height budget: the
+// list scrolls vertically in a window that follows the selection, with
+// ↑/↓ overflow indicators. height <= 0 renders every row.
+func RenderRunListFrameH(rows []RunListRow, width, height, sel int) string {
 	var b strings.Builder
-	b.WriteString(renderSurfaceTabs("Graph Runs"))
+	b.WriteString(renderSurfaceTabs("Graph Runs", width))
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 
 	if len(rows) == 0 {
@@ -578,9 +734,31 @@ func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 		return b.String()
 	}
 
-	fmt.Fprintf(&b, "  %s   %-40s %-10s %-9s %-9s %s%s\n",
-		Comment, "RUN", "STATE", "PROGRESS", "ELAPSED", "TEMPLATE", RST)
-	for i, r := range rows {
+	anyMark := false
+	for _, r := range rows {
+		if strings.Contains(r.Results, "?") {
+			anyMark = true
+			break
+		}
+	}
+
+	// Window the rows to the pane, keeping the selection visible.
+	start, end := 0, len(rows)
+	if height > 0 {
+		avail := height - 8
+		if anyMark {
+			avail--
+		}
+		start, end = scrollWindow(len(rows), avail, sel)
+	}
+
+	fmt.Fprintf(&b, "  %s   %-40s %-10s %-9s %-9s %-28s %s%s\n",
+		Comment, "RUN", "STATE", "PROGRESS", "ELAPSED", "TEMPLATE", "RESULTS", RST)
+	if start > 0 {
+		fmt.Fprintf(&b, "  %s↑ %d more%s\n", Comment, start, RST)
+	}
+	for i, r := range rows[start:end] {
+		i += start
 		cursor := " "
 		idColor := FG
 		if i == sel {
@@ -600,12 +778,24 @@ func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 		if r.GateWaiting {
 			badge = "  " + Yellow + Bold + "⚑ gate" + RST
 		}
-		line := fmt.Sprintf("  %s %s%-40s%s %s%-10s%s %d/%-7d %-9s %s%s%s%s",
+		results := r.Results
+		if len([]rune(results)) > 90 {
+			results = string([]rune(results)[:89]) + "…"
+		}
+		line := fmt.Sprintf("  %s %s%-40s%s %s%-10s%s %d/%-7d %-9s %s%-28s%s %s%s%s%s",
 			cursor, idColor, r.ID, RST,
 			stateColor, r.State, RST,
 			r.Done, r.Total, r.Elapsed.String(),
-			Comment, r.Template, RST, badge)
+			Comment, r.Template, RST,
+			resultsCellColor(results), results, RST, badge)
 		b.WriteString(fitWidth(line, width) + "\n")
+	}
+	if end < len(rows) {
+		fmt.Fprintf(&b, "  %s↓ %d more%s\n", Comment, len(rows)-end, RST)
+	}
+	// The ? explainer renders once as a legend, never per-cell
+	if anyMark {
+		fmt.Fprintf(&b, "  %s? = completion inferred (no exit-code proof)%s\n", Comment, RST)
 	}
 	return b.String()
 }
@@ -617,14 +807,52 @@ func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 // failure renders in place under the list — the launch is refused, the
 // picker stays.
 func RenderTemplateListFrame(infos []bus.GraphTemplateInfo, width, sel int, errMsg string) string {
+	return RenderTemplateListFrameH(infos, width, 0, sel, errMsg)
+}
+
+// scrollWindow computes a selection-following [start, end) row window:
+// visible rows within avail (minus the two overflow indicator lines,
+// floored at min 5), centered on sel. avail >= total means no window.
+func scrollWindow(total, avail, sel int) (int, int) {
+	if avail <= 0 || total <= avail {
+		return 0, total
+	}
+	visible := avail - 2
+	if visible < 5 {
+		visible = 5
+	}
+	if visible > total {
+		visible = total
+	}
+	start := sel - visible/2
+	if start < 0 {
+		start = 0
+	}
+	if start > total-visible {
+		start = total - visible
+	}
+	return start, start + visible
+}
+
+// RenderTemplateListFrameH is RenderTemplateListFrame with a height
+// budget — the picker scrolls the same way the run list does.
+func RenderTemplateListFrameH(infos []bus.GraphTemplateInfo, width, height, sel int, errMsg string) string {
 	var b strings.Builder
-	b.WriteString(renderSurfaceTabs("Launch Graph"))
+	b.WriteString(renderSurfaceTabs("Launch Graph", width))
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 
 	if len(infos) == 0 {
 		fmt.Fprintf(&b, "  %sNo graph templates found%s\n", Comment, RST)
 	}
-	for i, t := range infos {
+	start, end := 0, len(infos)
+	if height > 0 {
+		start, end = scrollWindow(len(infos), height-7, sel)
+	}
+	if start > 0 {
+		fmt.Fprintf(&b, "  %s↑ %d more%s\n", Comment, start, RST)
+	}
+	for i, t := range infos[start:end] {
+		i += start
 		cursor := " "
 		nameColor := FG
 		if i == sel {
@@ -641,6 +869,9 @@ func RenderTemplateListFrame(infos []bus.GraphTemplateInfo, width, sel int, errM
 			cursor, nameColor, t.Name, RST, tierColor, t.Source, RST, Comment, t.Description, RST)
 		b.WriteString(fitWidth(line, width) + "\n")
 	}
+	if end < len(infos) {
+		fmt.Fprintf(&b, "  %s↓ %d more%s\n", Comment, len(infos)-end, RST)
+	}
 	if errMsg != "" {
 		fmt.Fprintf(&b, "\n  %svalidation failed:%s\n", Red+Bold, RST)
 		for _, ln := range strings.Split(strings.TrimRight(errMsg, "\n"), "\n") {
@@ -650,11 +881,23 @@ func RenderTemplateListFrame(infos []bus.GraphTemplateInfo, width, sel int, errM
 	return b.String()
 }
 
+// TypeaheadIndex returns the first index whose name starts with the
+// case-insensitive prefix, or -1.
+func TypeaheadIndex(names []string, prefix string) int {
+	p := strings.ToLower(prefix)
+	for i, n := range names {
+		if strings.HasPrefix(strings.ToLower(n), p) {
+			return i
+		}
+	}
+	return -1
+}
+
 // RenderIntentPromptFrame renders the argument prompt shown when a
 // template's messages interpolate ${intent}.
 func RenderIntentPromptFrame(template, input string, width int) string {
 	var b strings.Builder
-	b.WriteString(renderSurfaceTabs("Launch Graph"))
+	b.WriteString(renderSurfaceTabs("Launch Graph", width))
 	fmt.Fprintf(&b, "  %s%sLaunch %s%s\n", Purple, Bold, template, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 	fmt.Fprintf(&b, "  %sThis template interpolates ${intent} — describe the work:%s\n\n", Comment, RST)
@@ -777,15 +1020,23 @@ type ResolvedGate struct {
 // Resolved gates render as a dimmed history section. Empty state is
 // explicit — never a blank frame.
 func RenderGateQueueFrame(gates []PendingGate, resolved []ResolvedGate, width, sel int) string {
+	return RenderGateQueueFrameH(gates, resolved, width, 0, sel, 0)
+}
+
+// RenderGateQueueFrameH is RenderGateQueueFrame with a height budget:
+// the pending section keeps priority, and the resolved history scrolls
+// in the rows that remain (histScroll, ↑/↓ overflow indicators). height
+// <= 0 renders everything.
+func RenderGateQueueFrameH(gates []PendingGate, resolved []ResolvedGate, width, height, sel, histScroll int) string {
 	var b strings.Builder
-	b.WriteString(renderSurfaceTabs("Pending Gates"))
+	b.WriteString(renderSurfaceTabs("Pending Gates", width))
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 
 	if len(gates) == 0 {
 		fmt.Fprintf(&b, "  %sNo gates waiting.%s\n", Comment, RST)
 		fmt.Fprintf(&b, "  %sA gate appears here when an in-flight run reaches a wait_human node%s\n", Comment, RST)
 		fmt.Fprintf(&b, "  %sand needs your approval before firing what is behind it.%s\n", Comment, RST)
-		b.WriteString(renderResolvedGates(resolved, width))
+		b.WriteString(renderResolvedGatesH(resolved, width, historyBudget(height, &b), histScroll))
 		return b.String()
 	}
 
@@ -817,24 +1068,67 @@ func RenderGateQueueFrame(gates []PendingGate, resolved []ResolvedGate, width, s
 			b.WriteString("        " + formatGateImpact(imp) + "\n")
 		}
 	}
-	b.WriteString(renderResolvedGates(resolved, width))
+	b.WriteString(renderResolvedGatesH(resolved, width, historyBudget(height, &b), histScroll))
 	return b.String()
 }
 
-// renderResolvedGates renders the dimmed gate-history section.
-func renderResolvedGates(resolved []ResolvedGate, width int) string {
-	if len(resolved) == 0 {
+// historyBudget returns the rows left for the gate history after the
+// pending section already in b. The body budget is height-3 (divider,
+// footer, clamp margin); height <= 0 means unbudgeted.
+func historyBudget(height int, b *strings.Builder) int {
+	if height <= 0 {
+		return 0
+	}
+	avail := height - 3 - strings.Count(b.String(), "\n")
+	if avail < 0 {
+		avail = 0
+	}
+	return avail
+}
+
+// renderResolvedGatesH renders the dimmed gate-history section within
+// avail rows, windowed at scroll with ↑/↓ overflow indicators. avail
+// <= 0 renders every row.
+func renderResolvedGatesH(resolved []ResolvedGate, width, avail, scroll int) string {
+	total := len(resolved)
+	if total == 0 {
 		return ""
+	}
+	visible := total
+	if avail > 0 {
+		rows := avail - 2 // blank + "recent gates" header
+		if rows < 3 {
+			rows = 3
+		}
+		if total > rows {
+			visible = rows - 2 // ↑/↓ indicator rows
+			if visible < 1 {
+				visible = 1
+			}
+		}
+	}
+	maxScroll := total - visible
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	if scroll < 0 {
+		scroll = 0
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n  %srecent gates%s\n", Cyan, RST)
-	for _, g := range resolved {
+	if scroll > 0 {
+		fmt.Fprintf(&b, "  %s↑ %d more%s\n", Comment, scroll, RST)
+	}
+	for _, g := range resolved[scroll : scroll+visible] {
 		verdict := "✓ approved"
 		if g.State == bus.GraphNodeSkipped {
 			verdict = "○ skipped"
 		}
 		line := fmt.Sprintf("  %s%-11s %-16s %-9s %s%s", Comment, verdict, g.NodeID, g.Age.String(), g.RunID, RST)
 		b.WriteString(fitWidth(line, width) + "\n")
+	}
+	if rest := total - scroll - visible; rest > 0 {
+		fmt.Fprintf(&b, "  %s↓ %d more%s\n", Comment, rest, RST)
 	}
 	return b.String()
 }
@@ -872,15 +1166,43 @@ type GraphAction struct {
 // Approval of a gate releasing a commit/Atlassian node says so here —
 // this prompt is the consent the gate exists to collect.
 func RenderConfirmFrame(act GraphAction, width int, errMsg string) string {
+	return RenderConfirmFrameH(act, width, 0, errMsg)
+}
+
+// RenderConfirmFrameH is RenderConfirmFrame with a height budget: the
+// downstream-impact list is what gets truncated ("… +N more"), NEVER the
+// y/n confirm line — in a short control pane the full list pushed the
+// confirm keys past the clamp and the user faced a question with no
+// visible way to answer it (live, 2026-08-27). height <= 0 = unbudgeted.
+func RenderConfirmFrameH(act GraphAction, width, height int, errMsg string) string {
+	releases := act.Releases
+	// Rows outside the list: tabs(2) + blanks/question/header(4) +
+	// warning(2) + err(2) + confirm(2) + outer rule+footer(3).
+	if height > 0 && len(releases) > 0 {
+		budget := height - 15
+		if budget < 1 {
+			budget = 1
+		}
+		if len(releases) > budget {
+			keep := budget - 1 // the "… +N more" line spends one row
+			if keep < 0 {
+				keep = 0
+			}
+			releases = releases[:keep]
+		}
+	}
 	var b strings.Builder
 	b.WriteString("\n")
 	switch act.Kind {
 	case "approve":
 		fmt.Fprintf(&b, "  %s%sApprove gate %s%s on run %s?\n", Yellow, Bold, act.NodeID, RST, act.RunID)
-		if len(act.Releases) > 0 {
+		if len(releases) > 0 {
 			fmt.Fprintf(&b, "\n  %sapproval releases:%s\n", Comment, RST)
-			for _, imp := range act.Releases {
+			for _, imp := range releases {
 				b.WriteString("    " + formatGateImpact(imp) + "\n")
+			}
+			if hidden := len(act.Releases) - len(releases); hidden > 0 {
+				fmt.Fprintf(&b, "    %s… +%d more%s\n", Comment, hidden, RST)
 			}
 		}
 		if act.Mutating {
@@ -923,7 +1245,7 @@ func RenderNodeDetailFrame(snap GraphSnapshot, nodeID string, width int) string 
 	glyph, color := nodeGlyph(node.Type, state)
 
 	var b strings.Builder
-	b.WriteString(renderSurfaceTabs("Graph Runs"))
+	b.WriteString(renderSurfaceTabs("Graph Runs", width))
 	fmt.Fprintf(&b, "  %s%s%s %s%s  %s%s%s\n", color, glyph, RST, Bold+node.ID, RST, color, state, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 

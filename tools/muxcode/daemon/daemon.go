@@ -53,6 +53,8 @@ type Daemon struct {
 	lastCleanupCheck      int64
 	lastDiskPressureCheck int64
 	lastAutoClearCheck    int64
+	lastPromptAgentStart  int64
+	ollamaWarmingSince    int64
 
 	lastIdleCheck        int64
 	lastNonHookWake      map[string]int64 // role → last non-hook wake time (60s cooldown)
@@ -119,6 +121,10 @@ type Daemon struct {
 	pollGapAlerted      map[string]bool  // role → alerted edit once for the current gap
 	pollGapRecovered    map[string]bool  // role → re-drive attempted for the current gap
 
+	lastStallCheck int64
+	taskStallSeen  map[string]int // task id → consecutive stall sightings (debounce)
+	taskRedrives   map[string]int // task id → redrive count (capped)
+
 	lastForceRespondCheck int64
 	frRung                map[string]int      // role → next escalation rung to fire
 	frLastFire            map[string]int64    // role → when the last rung fired (cooldown)
@@ -146,7 +152,11 @@ type Daemon struct {
 func New(session string, pollSecs, debounceSecs int) *Daemon {
 	now := time.Now().Unix()
 
-	// Discover which roles use local LLM
+	// Discover which roles use local LLM. The prompt role is NOT baked in
+	// here: its backend is runtime-switchable via the shell config, so
+	// its membership is evaluated per tick in effectiveOllamaRoles — a
+	// New()-time snapshot went stale the moment the user flipped
+	// MUXCODE_PROMPT_BACKEND mid-session (review catch, 2026-08-27).
 	ollamaRoles := bus.LocalLLMRoles()
 
 	// Read Ollama config for health probes
@@ -206,6 +216,8 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		pollGapSince:          make(map[string]int64),
 		pollGapAlerted:        make(map[string]bool),
 		pollGapRecovered:      make(map[string]bool),
+		taskStallSeen:         make(map[string]int),
+		taskRedrives:          make(map[string]int),
 		frRung:                make(map[string]int),
 		frLastFire:            make(map[string]int64),
 		frPostponed:           make(map[string]int),
@@ -315,6 +327,7 @@ func (d *Daemon) Run() error {
 		d.checkControlPanes()
 		d.checkNonHookTasks()
 		d.checkTrackedTasks()
+		d.checkStalledTasks()
 		d.checkGraphRuns()
 		d.checkNonHookEdits()
 		d.checkIdleTaskCompletion()
@@ -323,6 +336,7 @@ func (d *Daemon) Run() error {
 		d.checkCleanup()
 		d.checkDiskPressure()
 		d.checkAutoClear()
+		d.checkPromptAgent()
 		d.checkBranchTime()
 		time.Sleep(d.pollInterval)
 	}
@@ -1358,11 +1372,32 @@ func (d *Daemon) checkCompaction() {
 	d.refreshInboxSizes()
 }
 
+// effectiveOllamaRoles returns the roles under Ollama health right now:
+// the launch-time env snapshot plus — evaluated per call — the prompt
+// role while its supervision is enabled and its backend is local Ollama.
+// The prompt backend is runtime-switchable (PromptBackend reads the
+// shell config on every call), so membership must be too. The helper
+// only ever ADDS prompt: an explicit MUXCODE_PROMPT_CLI=local in the
+// snapshot alongside backend=opencode is contradictory config, and
+// removing snapshot entries here would silently mask it.
+func (d *Daemon) effectiveOllamaRoles() []string {
+	if !bus.PromptAgentEnabled() || bus.PromptBackend(d.session) != "ollama" {
+		return d.ollamaRoles
+	}
+	for _, r := range d.ollamaRoles {
+		if r == "prompt" {
+			return d.ollamaRoles
+		}
+	}
+	return append(append([]string{}, d.ollamaRoles...), "prompt")
+}
+
 // checkOllama runs Ollama health probes every 30 seconds for roles using local LLM.
 // Detection timeline: 30s first probe, 60s alert, 90s restart attempt.
 // Caps automatic restarts at 3 to prevent restart loops.
 func (d *Daemon) checkOllama() {
-	if len(d.ollamaRoles) == 0 {
+	roles := d.effectiveOllamaRoles()
+	if len(roles) == 0 {
 		return
 	}
 
@@ -1372,8 +1407,8 @@ func (d *Daemon) checkOllama() {
 	}
 	d.lastOllamaCheck = now
 
-	// Run inference probe
-	err := bus.CheckOllamaInference(d.ollamaURL, d.ollamaModel, bus.OllamaProbeTimeout)
+	// Run inference probe (0 = env-configurable default, MUXCODE_OLLAMA_PROBE_SECS)
+	err := bus.CheckOllamaInference(d.ollamaURL, d.ollamaModel, 0)
 
 	// Also check for agent failure sentinels
 	hasSentinels := bus.HasOllamaFailSentinel(d.session)
@@ -1382,6 +1417,7 @@ func (d *Daemon) checkOllama() {
 
 	if err == nil && !hasSentinels {
 		// Healthy
+		d.ollamaWarmingSince = 0
 		if d.ollamaWasDown {
 			// Recovery detected
 			fmt.Printf("  %s  Ollama recovered — inference probe healthy\n", ts)
@@ -1389,7 +1425,7 @@ func (d *Daemon) checkOllama() {
 			d.ollamaWasDown = false
 			d.ollamaFailCount = 0
 
-			alert := bus.FormatOllamaAlert("recovered", d.ollamaRoles, "Ollama is responsive again")
+			alert := bus.FormatOllamaAlert("recovered", roles, "Ollama is responsive again")
 			msg := bus.NewMessage("daemon", "edit", "event", "ollama-recovered", alert, "")
 			if sendErr := bus.Send(d.session, msg); sendErr != nil {
 				fmt.Fprintf(os.Stderr, "  [ollama] failed to send recovery alert: %v\n", sendErr)
@@ -1397,6 +1433,38 @@ func (d *Daemon) checkOllama() {
 			d.refreshInboxSizes()
 		}
 		return
+	}
+
+	// Not-confirmed-dead grace (MUX-109): a probe timeout against a server
+	// that still answers /api/ps is not proof of a wedge. Two live states
+	// produce it — WARMING (model not in memory yet; a restart discards
+	// the load in progress and the ladder kills every attempt in a loop)
+	// and STRAINED (model loaded, single completion slot saturated by
+	// long thinking completions; observed live 2026-08-27 when the ladder
+	// killed Ollama twice under the integration script's load, destroying
+	// in-flight work each time). Both get the same bounded grace before
+	// failures count; a truly dead or hung server fails the /api/ps probe
+	// and walks the ladder immediately, and agent fail sentinels always
+	// count. The cost is a real loaded-but-wedged inference waiting out
+	// the grace before recovery — minutes of delay against the false
+	// kill's guaranteed destruction of live work.
+	if err != nil && !hasSentinels {
+		if responsive, loaded := bus.OllamaModelLoaded(d.ollamaURL, d.ollamaModel, 3*time.Second); responsive {
+			state, detail := "warming", "model loading"
+			if loaded {
+				state, detail = "strained", "model loaded, completion queue saturated"
+			}
+			if d.ollamaWarmingSince == 0 {
+				d.ollamaWarmingSince = now
+			}
+			graceFor := now - d.ollamaWarmingSince
+			if graceFor < bus.OllamaWarmupGraceSecs() {
+				fmt.Printf("  %s  Ollama %s: %s (%s, %ds) — probe failure not counted\n", ts, state, d.ollamaModel, detail, graceFor)
+				bus.LogLifecycle(d.session, "info", "daemon", "ollama-"+state,
+					fmt.Sprintf("model %s: %s for %ds", d.ollamaModel, detail, graceFor))
+				return
+			}
+		}
 	}
 
 	// Unhealthy
@@ -1425,7 +1493,7 @@ func (d *Daemon) checkOllama() {
 		alertKey := bus.OllamaHealthAlertKey("down")
 		if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
 			d.lastAlertKey[alertKey] = now
-			alert := bus.FormatOllamaAlert("down", d.ollamaRoles, errMsg)
+			alert := bus.FormatOllamaAlert("down", roles, errMsg)
 			msg := bus.NewMessage("daemon", "edit", "event", "ollama-down", alert, "")
 			if sendErr := bus.Send(d.session, msg); sendErr != nil {
 				fmt.Fprintf(os.Stderr, "  [ollama] failed to send down alert: %v\n", sendErr)
@@ -1441,7 +1509,7 @@ func (d *Daemon) checkOllama() {
 			alertKey := bus.OllamaHealthAlertKey("down")
 			if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
 				d.lastAlertKey[alertKey] = now
-				alert := bus.FormatOllamaAlert("down", d.ollamaRoles,
+				alert := bus.FormatOllamaAlert("down", roles,
 					fmt.Sprintf("Restart cap (3) reached. %s. Manual intervention required.", errMsg))
 				msg := bus.NewMessage("daemon", "edit", "event", "ollama-down", alert, "")
 				_ = bus.Send(d.session, msg)
@@ -1456,7 +1524,7 @@ func (d *Daemon) checkOllama() {
 		d.ollamaRestarts++
 
 		// Send restarting alert
-		alert := bus.FormatOllamaAlert("restarting", d.ollamaRoles,
+		alert := bus.FormatOllamaAlert("restarting", roles,
 			fmt.Sprintf("Attempt %d/3 — killing and restarting ollama serve", d.ollamaRestarts))
 		msg := bus.NewMessage("daemon", "edit", "event", "ollama-restarting", alert, "")
 		_ = bus.Send(d.session, msg)
@@ -1475,7 +1543,15 @@ func (d *Daemon) checkOllama() {
 		fmt.Printf("  %s  Ollama restarted successfully, relaunching agents...\n", ts)
 
 		// Relaunch affected agents
-		for _, role := range d.ollamaRoles {
+		for _, role := range roles {
+			if role == "prompt" {
+				// Headless (MUX-109) — no pane to send-keys into; bounce the
+				// process and let checkPromptAgent relaunch it this cycle.
+				_ = bus.StopPromptAgent(d.session)
+				d.lastPromptAgentStart = 0
+				fmt.Printf("  %s  Restarting headless prompt-agent\n", ts)
+				continue
+			}
 			if restartErr := bus.RestartLocalAgent(d.session, role); restartErr != nil {
 				fmt.Fprintf(os.Stderr, "  [ollama] failed to restart agent %s: %v\n", role, restartErr)
 			} else {
@@ -1486,8 +1562,13 @@ func (d *Daemon) checkOllama() {
 			}
 		}
 
-		// Reset fail count to let the next probe cycle detect recovery
+		// Reset fail count to let the next probe cycle detect recovery, and
+		// the warming clock with it — the restarted server cold-loads the
+		// model again, and a stale warmingSince would burn the fresh load's
+		// grace window before it started, reviving the kill loop for exactly
+		// the recovery path.
 		d.ollamaFailCount = 0
+		d.ollamaWarmingSince = 0
 	}
 }
 
@@ -2663,6 +2744,87 @@ func (d *Daemon) checkGraphRuns() {
 	bus.StepGraphRuns(d.session)
 }
 
+// checkStalledTasks is the automatic form of the graph-priority rule
+// (user, 2026-08-27): an agent that CONSUMED a request (receipt written)
+// but whose turn never started owes a response no other watchdog sees —
+// the receipt-gap backstop trusts the receipt, and the task timeout
+// waits out its full 600s. Detection: an in-flight task past the stall
+// threshold (graph-dispatched tasks stall at half of it) while the
+// target pane rests at an idle prompt or holds parked input; a busy
+// spinner clears the sighting, so an agent genuinely thinking is never
+// interrupted. Two sightings → ForceDeliver with force, whose redrive
+// path re-injects the consumed request. Two redrives per task, then one
+// give-up log — the task timeout owns final failure. Opt out with
+// MUXCODE_TASK_STALL_DISABLE=1; threshold via MUXCODE_TASK_STALL_SECS.
+func (d *Daemon) checkStalledTasks() {
+	if bus.TaskStallDisabled() {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastStallCheck < 30 {
+		return
+	}
+	d.lastStallCheck = now
+
+	tasks, err := bus.ListTasks(d.session, bus.TaskInFlight)
+	if err != nil {
+		return
+	}
+	live := make(map[string]bool, len(tasks))
+	for _, t := range tasks {
+		live[t.ID] = true
+		if !bus.TaskStalled(t, now, bus.TaskStallSecs()) {
+			continue
+		}
+		role := bus.WindowForRole(t.To)
+		// Harness roles consume in-process (no pane to read); reloads are
+		// mid-cycle by design.
+		if bus.IsHarnessActive(d.session, role) || bus.IsReloading(d.session, role) {
+			continue
+		}
+		content, err := bus.TmuxCapturePaneLines(bus.PaneTarget(d.session, role), 30)
+		if err != nil {
+			continue
+		}
+		if !bus.PaneHasIdlePrompt(content) && !bus.HasPendingInput(d.session, role) {
+			delete(d.taskStallSeen, t.ID) // busy — actually working on it
+			continue
+		}
+		d.taskStallSeen[t.ID]++
+		if d.taskStallSeen[t.ID] < 2 {
+			continue
+		}
+		delete(d.taskStallSeen, t.ID)
+		if d.taskRedrives[t.ID] >= 2 {
+			if d.taskRedrives[t.ID] == 2 {
+				d.taskRedrives[t.ID]++ // log the give-up exactly once
+				bus.LogLifecycle(d.session, "warn", "daemon", "task-stall-giveup",
+					fmt.Sprintf("%s→%s:%s still stalled after 2 redrives — task timeout owns it", t.From, t.To, t.Action))
+			}
+			continue
+		}
+		d.taskRedrives[t.ID]++
+		if res, err := bus.ForceDeliver(d.session, role, true); err == nil && res.Delivered > 0 {
+			ts := time.Now().Format("15:04:05")
+			fmt.Printf("  %s  Task %s→%s:%s stalled (consumed, agent idle) — re-driven (%d/2)\n",
+				ts, t.From, t.To, t.Action, d.taskRedrives[t.ID])
+			bus.LogLifecycle(d.session, "info", "daemon", "task-stall-redrive",
+				fmt.Sprintf("%s→%s:%s redrive %d/2", t.From, t.To, t.Action, d.taskRedrives[t.ID]))
+		}
+	}
+	// Drop bookkeeping for tasks that completed or timed out.
+	for id := range d.taskStallSeen {
+		if !live[id] {
+			delete(d.taskStallSeen, id)
+		}
+	}
+	for id := range d.taskRedrives {
+		if !live[id] {
+			delete(d.taskRedrives, id)
+		}
+	}
+}
+
 // idleTaskGracePeriod is how long a hook-provider agent must be idle with an
 // in-flight task before the daemon sends a synthetic response. This gives the
 // agent time to send its own response via the Bash tool before the safety net
@@ -2828,6 +2990,26 @@ func (d *Daemon) resetChurnGuard(role string) {
 	delete(d.churnSuppressed, role)
 }
 
+// idleRescueExcluded reports roles exempt from the idle-task rescue.
+// The run role is excluded by default: its job is long scripts driven
+// from background shells, so its pane legitimately rests at the prompt
+// mid-work and the pane-scrape idle read is guaranteed wrong there —
+// the rescue fabricated nine reports that way (MUX-112). Excluded tasks
+// still resolve via the task timeout. Override the list with
+// MUXCODE_IDLE_RESCUE_EXCLUDE (comma-separated; empty disables).
+func idleRescueExcluded(role string) bool {
+	list := "run"
+	if v, ok := os.LookupEnv("MUXCODE_IDLE_RESCUE_EXCLUDE"); ok {
+		list = v
+	}
+	for _, r := range strings.Split(list, ",") {
+		if strings.TrimSpace(r) == role {
+			return true
+		}
+	}
+	return false
+}
+
 // checkIdleTaskCompletion is a safety net for hook-provider agents (Claude Code)
 // that go idle without having responded to an in-flight task. This catches the
 // failure mode where an agent composes a `muxcode send` command as text output
@@ -2868,6 +3050,10 @@ func (d *Daemon) checkIdleTaskCompletion() {
 		provider := bus.ResolveProvider(task.To)
 		// Only handle hook providers — non-hook providers are covered by checkNonHookTasks
 		if !provider.SupportsHooks() {
+			continue
+		}
+
+		if idleRescueExcluded(bus.WindowForRole(task.To)) {
 			continue
 		}
 
@@ -3363,6 +3549,40 @@ func (d *Daemon) checkAutoClear() {
 		}
 		fmt.Printf("  %s  Auto-clear: %s (%s)\n", time.Now().Format("15:04:05"), role, trigger)
 	}
+}
+
+// promptAgentRestartCoolSecs gates prompt-agent (re)starts. The harness
+// writes its own PID marker only once its loop is up, so a liveness probe
+// right after a start reads "dead" and would double-launch; the cooldown
+// covers that gap, and also stops a crash loop (e.g. Ollama down) from
+// spawning a fresh process every poll tick.
+const promptAgentRestartCoolSecs int64 = 60
+
+// checkPromptAgent supervises the headless prompt-agent (MUX-109). No
+// pane hosts it, so none of the pane-based machinery sees it — the daemon
+// owns start and restart. Alert-free by design: start failures go to the
+// lifecycle log and retry after the cooldown instead of paging edit every
+// tick; a persistent failure surfaces through Ollama health, not here.
+func (d *Daemon) checkPromptAgent() {
+	if !bus.PromptAgentEnabled() {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastPromptAgentStart < promptAgentRestartCoolSecs {
+		return
+	}
+	if bus.PromptAgentAlive(d.session) {
+		return
+	}
+	d.lastPromptAgentStart = now
+	pid, err := bus.StartPromptAgent(d.session)
+	if err != nil {
+		bus.LogLifecycle(d.session, "warn", "daemon", "prompt-agent-start-failed", err.Error())
+		return
+	}
+	bus.LogLifecycle(d.session, "info", "daemon", "prompt-agent-start",
+		fmt.Sprintf("headless prompt-agent started (pid %d)", pid))
+	fmt.Printf("  %s  Prompt-agent started (pid %d)\n", time.Now().Format("15:04:05"), pid)
 }
 
 // branchTimeFlushSecs is how often accrued in-memory branch time is written to

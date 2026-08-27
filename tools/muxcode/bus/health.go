@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -31,23 +32,49 @@ type OllamaHealthStatus struct {
 	ProbeTime int64    `json:"probe_time_ms"`
 }
 
-// CheckOllamaInference sends a minimal chat completion to distinguish
-// "process alive but stuck" from "process healthy". Uses a fresh HTTP client
-// with a short timeout to avoid sharing the agent's long-timeout client.
+// OllamaProbeSecs returns the inference probe timeout. Configurable via
+// MUXCODE_OLLAMA_PROBE_SECS; default is OllamaProbeTimeout (10s). The
+// probe blocks the daemon poll loop, so raising this trades slower
+// daemon ticks for tolerance of slower hardware.
+func OllamaProbeSecs() time.Duration {
+	if v := os.Getenv("MUXCODE_OLLAMA_PROBE_SECS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return OllamaProbeTimeout
+}
+
+// CheckOllamaInference sends a minimal generation to distinguish "process
+// alive but stuck" from "process healthy". Uses a fresh HTTP client with a
+// short timeout to avoid sharing the agent's long-timeout client.
+//
+// The probe uses /api/generate with think:false rather than the OpenAI
+// chat endpoint: thinking models (qwen3) reason for 30-90s before their
+// first token even when warm, so a chat probe capped at 10s declared a
+// healthy server down every cycle and the ladder killed it (observed live
+// 2026-08-26). With thinking off, a warm one-token generation answers in
+// ~1s; servers predating the think parameter ignore the unknown field.
 func CheckOllamaInference(baseURL, model string, timeout time.Duration) error {
 	if timeout == 0 {
-		timeout = OllamaProbeTimeout
+		timeout = OllamaProbeSecs()
 	}
 
 	client := &http.Client{Timeout: timeout}
 
-	req := ChatRequest{
-		Model: model,
-		Messages: []ChatMessage{
-			{Role: "user", Content: "hi"},
-		},
-		Stream:    false,
-		MaxTokens: 1,
+	think := false
+	req := struct {
+		Model   string         `json:"model"`
+		Prompt  string         `json:"prompt"`
+		Stream  bool           `json:"stream"`
+		Think   *bool          `json:"think"`
+		Options map[string]any `json:"options"`
+	}{
+		Model:   model,
+		Prompt:  "hi",
+		Stream:  false,
+		Think:   &think,
+		Options: map[string]any{"num_predict": 1},
 	}
 
 	body, err := json.Marshal(req)
@@ -55,7 +82,7 @@ func CheckOllamaInference(baseURL, model string, timeout time.Duration) error {
 		return fmt.Errorf("encoding probe request: %w", err)
 	}
 
-	url := baseURL + "/v1/chat/completions"
+	url := baseURL + "/api/generate"
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -79,6 +106,61 @@ func CheckOllamaInference(baseURL, model string, timeout time.Duration) error {
 	}
 
 	return nil
+}
+
+// OllamaWarmupGraceSecs returns how long a responsive-but-still-loading
+// Ollama is tolerated before the restart ladder treats it as stuck.
+// Loading several GB of weights routinely outlasts the 10s inference
+// probe, and a restart discards the load in progress — so without this
+// grace the ladder kills every load attempt and loops (observed live
+// 2026-08-26, first cold start after qwen3:4b became the default).
+// Configurable via MUXCODE_OLLAMA_WARMUP_GRACE_SECS; default 300.
+func OllamaWarmupGraceSecs() int64 {
+	if v := os.Getenv("MUXCODE_OLLAMA_WARMUP_GRACE_SECS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 300
+}
+
+// OllamaModelLoaded reports (via GET /api/ps) whether the server responds
+// and whether the model currently occupies memory. The pair distinguishes
+// the three states the restart ladder must treat differently: dead server
+// (false, false — ladder), loaded-but-wedged inference (true, true — the
+// original disease, ladder), and warming (true, false — tolerate).
+// Matching mirrors CheckHealth: exact, or base-name when the configured
+// model has no explicit tag.
+func OllamaModelLoaded(baseURL, model string, timeout time.Duration) (responsive, loaded bool) {
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Get(baseURL + "/api/ps")
+	if err != nil {
+		return false, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, false
+	}
+
+	var ps struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&ps); err != nil {
+		return true, false
+	}
+	for _, m := range ps.Models {
+		if m.Name == model {
+			return true, true
+		}
+		if !strings.Contains(model, ":") && strings.Contains(m.Name, ":") {
+			if strings.SplitN(m.Name, ":", 2)[0] == model {
+				return true, true
+			}
+		}
+	}
+	return true, false
 }
 
 // roleEnvMap maps MUXCODE_{NAME}_CLI env var names to agent roles.

@@ -317,7 +317,7 @@ func TestValidateGateRuleMixedPaths(t *testing.T) {
 }
 
 func TestBuiltinGraphTemplatesValidate(t *testing.T) {
-	want := []string{"build-test-review", "coding-pr", "deploy-verify", "research-critique", "story-lifecycle"}
+	want := []string{"build-test-review", "commit-pr-review-loop", "deploy-verify", "pr-local-review", "req-code-pr", "story-lifecycle", "story-to-spec", "update-spec-docs"}
 	if len(builtinGraphJSON) != len(want) {
 		t.Errorf("expected %d builtin templates, got %d", len(want), len(builtinGraphJSON))
 	}
@@ -414,5 +414,274 @@ func TestListGraphTemplatesIncludesBuiltins(t *testing.T) {
 		if info.Description == "" {
 			t.Errorf("template %q has no description", info.Name)
 		}
+	}
+}
+
+// TestCancelGraphRunExpiresTasks pins the zombie-redrive fix: canceling
+// a run times out its nodes' correlated in-flight tasks, so the stall
+// watchdog cannot re-drive requests nobody wants anymore (observed live
+// 2026-08-27: a canceled loop's edit node re-driven repeatedly). An
+// in-flight task the run does NOT reference must survive — cancel kills
+// only its own (negative control).
+func TestCancelGraphRunExpiresTasks(t *testing.T) {
+	session := "graph-cancel-expiry-test"
+	t.Cleanup(func() { _ = os.RemoveAll(BusDir(session)) })
+	if err := os.MkdirAll(BusDir(session), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := CreateGraphRun(session, writableTestGraph("cancelable"), "cancelable", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateTask(session, Message{ID: "zombie-1", From: "daemon", To: "edit", Action: "edit", Payload: "p"}, 600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateTask(session, Message{ID: "bystander-1", From: "edit", To: "run", Action: "run", Payload: "p"}, 600); err != nil {
+		t.Fatal(err)
+	}
+	if err := MutateNodeStatus(session, run.ID, "a", func(st *GraphNodeStatus) {
+		st.State = GraphNodeRunning
+		st.TaskID = "zombie-1"
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CancelGraphRun(session, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	zombie, err := ReadTask(session, "zombie-1")
+	if err != nil || zombie.Status != TaskTimedOut {
+		t.Errorf("cancel must time out the node's in-flight task, got %+v err %v", zombie, err)
+	}
+	bystander, err := ReadTask(session, "bystander-1")
+	if err != nil || bystander.Status != TaskInFlight {
+		t.Errorf("an unrelated in-flight task must survive the cancel (negative control), got %+v err %v", bystander, err)
+	}
+}
+
+// TestCreateGraphRunRequiresSpec pins the requires_spec gate at the
+// run-creation chokepoint: a spec-driven graph refuses to start with no
+// active requirements spec, and starts once one is set (negative
+// control). req-code-pr carries the flag builtin.
+func TestCreateGraphRunRequiresSpec(t *testing.T) {
+	session := "graph-requires-spec-test"
+	t.Cleanup(func() { _ = os.RemoveAll(BusDir(session)) })
+
+	g := writableTestGraph("spec-driven")
+	g.RequiresSpec = true
+	if _, err := CreateGraphRun(session, g, "spec-driven", "x"); err == nil {
+		t.Fatal("a requires_spec graph must refuse to run with no active spec")
+	}
+
+	if err := os.MkdirAll(BusDir(session), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(session, "docs/requirements/drafts/some-spec.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateGraphRun(session, g, "spec-driven", "x"); err != nil {
+		t.Fatalf("with an active spec set the run must start: %v", err)
+	}
+
+	tpl, _, err := ResolveGraphTemplate("req-code-pr")
+	if err != nil {
+		t.Fatalf("req-code-pr builtin missing: %v", err)
+	}
+	if !tpl.RequiresSpec {
+		t.Error("req-code-pr must carry requires_spec — implementing against no spec is the case the gate exists for")
+	}
+}
+
+// writableTestGraph returns a minimal graph that passes Validate() and
+// the write-time description requirement.
+func writableTestGraph(name string) *Graph {
+	return &Graph{
+		Name:        name,
+		Description: "test graph",
+		Start:       "a",
+		Nodes:       []Node{{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"}},
+	}
+}
+
+// TestWriteGraphDefinitionRequiresDescription pins the creation
+// chokepoint: a new template without a description is refused and no
+// file is written — the launcher lists templates by description, and an
+// unlabeled row helps nobody. Running existing description-less files
+// stays legal (the rule lives in the write path, not Validate()).
+func TestWriteGraphDefinitionRequiresDescription(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	bare := writableTestGraph("no-desc")
+	bare.Description = "  "
+	if _, _, err := WriteGraphDefinition(bare, GraphScopeProject); err == nil {
+		t.Fatal("a description-less graph must be refused at write time")
+	}
+	if _, err := os.Stat(filepath.Join(projectGraphDir, "no-desc.json")); err == nil {
+		t.Error("the refused graph must leave no file behind")
+	}
+	if bare.Validate().OK() != true {
+		t.Error("negative control: the same graph still VALIDATES — only the write path requires a description")
+	}
+}
+
+func TestWriteGraphDefinitionFreshCheckout(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	path, v, err := WriteGraphDefinition(writableTestGraph("my-graph"), GraphScopeProject)
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if !v.OK() {
+		t.Fatalf("unexpected validation errors: %v", v.Errors)
+	}
+	if path != filepath.Join(projectGraphDir, "my-graph.json") {
+		t.Errorf("unexpected path %q", path)
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Error("tmp file left behind")
+	}
+
+	g, source, err := ResolveGraphTemplate("my-graph")
+	if err != nil {
+		t.Fatalf("resolve written graph: %v", err)
+	}
+	if source != "project" || g.Name != "my-graph" {
+		t.Errorf("round-trip: got source %q name %q", source, g.Name)
+	}
+}
+
+func TestWriteGraphDefinitionInvalidWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	bad := writableTestGraph("bad-graph")
+	bad.Start = "missing"
+	_, v, err := WriteGraphDefinition(bad, GraphScopeProject)
+	if err == nil {
+		t.Fatal("expected error for invalid graph")
+	}
+	if v == nil || v.OK() {
+		t.Error("expected validation errors to be returned")
+	}
+	if _, statErr := os.Stat(projectGraphDir); !os.IsNotExist(statErr) {
+		t.Error("failure path created the graph directory")
+	}
+}
+
+func TestWriteGraphDefinitionUnsafeNameWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	for _, name := range []string{"../escape", "a/b", `a\b`, ".hidden"} {
+		if _, _, err := WriteGraphDefinition(writableTestGraph(name), GraphScopeProject); err == nil {
+			t.Errorf("name %q: expected error", name)
+		}
+	}
+	if _, err := os.Stat(projectGraphDir); !os.IsNotExist(err) {
+		t.Error("unsafe-name path created the graph directory")
+	}
+}
+
+func TestWriteGraphDefinitionUserScope(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+	t.Setenv("HOME", dir)
+
+	path, _, err := WriteGraphDefinition(writableTestGraph("user-graph"), GraphScopeUser)
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	want := filepath.Join(dir, ".config", "muxcode", "graphs", "user-graph.json")
+	if path != want {
+		t.Errorf("path %q, want %q", path, want)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("written file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, projectGraphDir)); !os.IsNotExist(err) {
+		t.Error("user-scope write touched the project directory")
+	}
+}
+
+func TestWriteGraphDefinitionUnknownScope(t *testing.T) {
+	if _, _, err := WriteGraphDefinition(writableTestGraph("g"), "builtin"); err == nil {
+		t.Error("expected error for non-writable scope")
+	}
+}
+
+// TestWriteGraphDefinitionUngatedCommitRejected pins the Phase 5 (MUX-109)
+// authority criterion: a composed graph placing a commit node outside a
+// wait_human gate is rejected by the existing validator rule on the write
+// path — no file appears, and there is no bypass. The gated variant is
+// the positive control proving the rule rejects the missing gate, not
+// commit nodes as such.
+func TestWriteGraphDefinitionUngatedCommitRejected(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	ungated := &Graph{
+		Name:  "bad-commit",
+		Start: "c",
+		Nodes: []Node{{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "commit it"}},
+	}
+	_, v, err := WriteGraphDefinition(ungated, GraphScopeProject)
+	if err == nil {
+		t.Fatal("ungated commit node must be rejected")
+	}
+	if v == nil || v.OK() {
+		t.Fatal("expected validation errors")
+	}
+	found := false
+	for _, e := range v.Errors {
+		if strings.Contains(e, "wait_human") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("rejection must cite the gate rule: %v", v.Errors)
+	}
+	if _, statErr := os.Stat(projectGraphDir); !os.IsNotExist(statErr) {
+		t.Error("rejected graph left the directory behind")
+	}
+
+	gated := &Graph{
+		Name:        "gated-commit",
+		Description: "human-gated commit",
+		Start:       "g",
+		Nodes: []Node{
+			{ID: "g", Type: NodeWaitHuman},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "commit it"},
+		},
+		Edges: []Edge{{From: "g", To: "c"}},
+	}
+	if _, _, err := WriteGraphDefinition(gated, GraphScopeProject); err != nil {
+		t.Fatalf("gated commit graph must write: %v", err)
 	}
 }

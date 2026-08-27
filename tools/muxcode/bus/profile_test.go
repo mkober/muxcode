@@ -1085,3 +1085,45 @@ func TestMergeConfigs_DenyTools_PreservesBase(t *testing.T) {
 		t.Errorf("DenyTools = %v, want [git commit* curl*]", profile.DenyTools)
 	}
 }
+
+// TestPromptProfileDeniesRepoWriteAndGit is the MUX-109 negative control:
+// the prompt role sits behind a free-text input, so its profile must deny
+// everything outside the graph surface — checked through the same
+// IsToolAllowed the harness executor calls, not by inspecting patterns.
+func TestPromptProfileDeniesRepoWriteAndGit(t *testing.T) {
+	cfg := DefaultConfig()
+	profile, ok := cfg.ToolProfiles["prompt"]
+	if !ok {
+		t.Fatal("prompt profile missing from default config")
+	}
+	tools := resolveProfile(cfg, profile)
+
+	// Positive control first — a profile that denies everything would pass
+	// the negative checks below without proving anything.
+	if !IsToolAllowed("bash", "muxcode graph list", tools) {
+		t.Error("muxcode graph list should be allowed")
+	}
+	if !IsToolAllowed("bash", "muxcode send edit response \"done\"", tools) {
+		t.Error("bus reply path should be allowed")
+	}
+	// The gateway-era widening (2026-08-27): introspection and Jira reads.
+	if !IsToolAllowed("bash", "muxcode status", tools) {
+		t.Error("muxcode status should be allowed on the widened profile")
+	}
+	if !IsToolAllowed("bash", "muxcode atlassian jira read PROJ-1", tools) {
+		t.Error("jira read should be allowed on the widened profile")
+	}
+
+	if IsToolAllowed("write_file", "bus/graph.go", tools) {
+		t.Error("repo write must be denied — any Write pattern unlocks write_file everywhere (hasToolPattern does not path-match)")
+	}
+	if IsToolAllowed("edit_file", "bus/graph.go", tools) {
+		t.Error("repo edit must be denied")
+	}
+	if IsToolAllowed("bash", "git commit -m msg", tools) {
+		t.Error("git command must be denied")
+	}
+	if IsToolAllowed("bash", "muxcode atlassian jira update PROJ-1 /tmp/p.json", tools) {
+		t.Error("atlassian write must be denied — profile grants graph/send/inbox only")
+	}
+}

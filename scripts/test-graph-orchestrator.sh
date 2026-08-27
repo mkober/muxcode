@@ -130,10 +130,10 @@ else
 fi
 
 builtin_fail=0
-for tpl in build-test-review coding-pr story-lifecycle research-critique deploy-verify; do
+for tpl in build-test-review req-code-pr story-lifecycle story-to-spec commit-pr-review-loop pr-local-review update-spec-docs deploy-verify; do
   "$MUX" graph validate "$tpl" >/dev/null 2>&1 || { builtin_fail=1; bad "builtin template $tpl failed validation"; }
 done
-[ "$builtin_fail" -eq 0 ] && ok "all 5 builtin templates validate"
+[ "$builtin_fail" -eq 0 ] && ok "all 8 builtin templates validate"
 
 # --- 2. Async start: graph run returns before any node executes ------------
 # Daemon not started yet, so nothing can execute behind our back.

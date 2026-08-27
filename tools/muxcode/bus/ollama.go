@@ -21,7 +21,7 @@ var ErrModelNotFound = errors.New("model not found")
 // OllamaConfig holds configuration for connecting to Ollama's API.
 type OllamaConfig struct {
 	BaseURL     string  // default "http://localhost:11434"
-	Model       string  // default "qwen2.5:7b" (must support tool calling)
+	Model       string  // default "qwen3:4b" (must support tool calling)
 	Temperature float64 // default 0.1
 	Timeout     int     // seconds, default 120
 	MaxTokens   int     // default 4096
@@ -32,7 +32,7 @@ type OllamaConfig struct {
 func DefaultOllamaConfig() OllamaConfig {
 	cfg := OllamaConfig{
 		BaseURL:     "http://localhost:11434",
-		Model:       "qwen2.5:7b",
+		Model:       "qwen3:4b",
 		Temperature: 0.1,
 		Timeout:     120,
 		MaxTokens:   4096,
@@ -49,12 +49,31 @@ func DefaultOllamaConfig() OllamaConfig {
 // RoleModel returns the Ollama model for a specific role, checking
 // per-role env vars before falling back to the default config model.
 // Resolution order: MUXCODE_{ROLE}_MODEL → MUXCODE_OLLAMA_MODEL → default.
+//
+// MUXCODE_{ROLE}_MODEL is overloaded: OpenCode reads the same variable
+// for its catalog models (provider/model form, e.g. opencode-go/foo), so
+// a role pinned for OpenCode and later flipped to CLI=local would hand
+// Ollama a model name it can never pull. Catalog-form values are
+// therefore skipped — but ONLY while the endpoint is local Ollama. A
+// remote gateway defines its own model namespace, so pins pass through
+// VERBATIM: some gateways use slashed ids (OpenRouter), others bare ids
+// (OpenCode Zen rejected the opencode-go/ prefix live, 2026-08-27).
+// Rewriting would silently mangle ids valid elsewhere; a wrong pin
+// fails loudly with the gateway's own error. Mirrored in
+// harness/config.go.
 func RoleModel(role string) string {
 	envVar := roleModelEnvVar(role)
-	if v := os.Getenv(envVar); v != "" {
+	if v := os.Getenv(envVar); v != "" && (!strings.Contains(v, "/") || remoteEndpointConfigured()) {
 		return v
 	}
 	return DefaultOllamaConfig().Model
+}
+
+// remoteEndpointConfigured reports whether the inference endpoint is a
+// non-local gateway rather than the default local Ollama.
+func remoteEndpointConfigured() bool {
+	u := os.Getenv("MUXCODE_OLLAMA_URL")
+	return u != "" && u != "http://localhost:11434" && !strings.Contains(u, "localhost") && !strings.Contains(u, "127.0.0.1")
 }
 
 // roleModelEnvVar returns the per-role model env var name.

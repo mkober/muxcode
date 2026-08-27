@@ -44,13 +44,25 @@ var logTag = "harness"
 // endlessly re-running the same command.
 func isSingleShotRole(role string) bool {
 	switch role {
-	case "build", "test":
+	case "build", "test", "prompt":
 		return true
 	}
 	return false
 }
 
 // capitalize returns s with the first letter uppercased.
+// endpointKind names the inference endpoint truthfully for every log
+// line that mentions it: a bearer key means a hosted gateway, and
+// "calling Ollama" on a gateway fault sends whoever debugs it off to
+// check a local daemon that isn't involved (plan's catch, 2026-08-27;
+// the per-turn line repeated it, user's catch same day).
+func endpointKind(cfg Config) string {
+	if cfg.APIKey != "" {
+		return "gateway"
+	}
+	return "Ollama"
+}
+
 func capitalize(s string) string {
 	if s == "" {
 		return s
@@ -123,16 +135,25 @@ func Run(ctx context.Context, cfg Config, sink EventSink) error {
 		sink.Emit(Event{Kind: EventStartup, Time: time.Now(), Message: fmt.Sprintf("PII scrubbing enabled for role %s", cfg.Role)})
 	}
 
-	// Initialize Ollama client
+	// Initialize the inference client (local Ollama or, with an API key,
+	// a hosted OpenAI-compatible gateway — same dialect either way).
 	ollama := NewOllamaClient(cfg.OllamaURL, cfg.OllamaModel)
+	ollama.NoThink = cfg.NoThink
+	ollama.APIKey = cfg.APIKey
 
-	// Verify Ollama connectivity
-	healthCtx, healthCancel := context.WithTimeout(ctx, 5*time.Second)
-	err = ollama.CheckHealth(healthCtx)
-	healthCancel()
+	if cfg.APIKey == "" {
+		// Verify Ollama connectivity — /api/tags is Ollama-specific, so a
+		// gateway backend skips it (the first real call surfaces auth or
+		// connectivity failures with a better error anyway).
+		healthCtx, healthCancel := context.WithTimeout(ctx, 5*time.Second)
+		err = ollama.CheckHealth(healthCtx)
+		healthCancel()
 
-	if err != nil {
-		return fmt.Errorf("Ollama health check failed: %w", err)
+		if err != nil {
+			return fmt.Errorf("Ollama health check failed: %w", err)
+		}
+	} else {
+		sink.Emit(Event{Kind: EventStartup, Time: time.Now(), Message: "Gateway mode — skipping local Ollama model check"})
 	}
 
 	// Set log prefix to the model name so the LogSink identifies the LLM
@@ -141,14 +162,14 @@ func Run(ctx context.Context, cfg Config, sink EventSink) error {
 		ls.Tag = logTag
 	}
 
-	sink.Emit(Event{Kind: EventStartup, Time: time.Now(), Message: fmt.Sprintf("Connected to Ollama (%s)", cfg.OllamaURL)})
+	sink.Emit(Event{Kind: EventStartup, Time: time.Now(), Message: fmt.Sprintf("Connected to %s (%s)", endpointKind(cfg), cfg.OllamaURL)})
 	sink.Emit(Event{Kind: EventStartup, Time: time.Now(), Message: fmt.Sprintf("Tools: %d patterns, %d tool defs", len(patterns), len(tools))})
 
 	// Build system prompt once at startup
 	agentDef := ReadAgentDefinition(cfg.Role)
 	skills, _ := bus.SkillPrompt()
 	contextPrompt, _ := bus.ContextPrompt()
-	systemPrompt := BuildSystemPrompt(cfg.Role, agentDef, skills, contextPrompt)
+	systemPrompt := applyNoThink(BuildSystemPrompt(cfg.Role, agentDef, skills, contextPrompt), cfg.NoThink)
 
 	// Resolve bus identity — the window name used for inbox/lock/send
 	busRole := cfg.BusRole
@@ -232,6 +253,10 @@ func Run(ctx context.Context, cfg Config, sink EventSink) error {
 
 			if len(msgs) > 0 {
 				filter.Reset()
+				// The approve guard checks tool calls against the user's
+				// own words — request payloads only, never system-authored
+				// responses/events in the same batch (MUX-109).
+				filter.TaskText = requestTaskText(msgs)
 
 				// Run batch with timeout
 				batchCtx, batchCancel := context.WithTimeout(ctx, BatchTimeout)
@@ -296,6 +321,7 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 
 	// Tool-calling loop
 	var finalResponse string
+	var denials denialTracker // false-success guard: latches a refusal, clears on same-command recovery (MUX-109)
 	batchSuccess := false
 	toolsExecuted := false
 	consecutiveAllBlocked := 0
@@ -318,15 +344,15 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 		if actionLabel == "" {
 			actionLabel = "Task"
 		}
-		sink.Emit(Event{Kind: EventOllamaCall, Time: time.Now(), Message: fmt.Sprintf("%s %d/%d — calling Ollama...", actionLabel, turn+1, maxTurns)})
+		sink.Emit(Event{Kind: EventOllamaCall, Time: time.Now(), Message: fmt.Sprintf("%s %d/%d — calling %s...", actionLabel, turn+1, maxTurns, endpointKind(cfg))})
 		ollamaStart := time.Now()
 		resp, err := ollama.ChatComplete(ctx, conversation, tools)
 		ollamaDur := time.Since(ollamaStart)
 		if err != nil {
 			if ctx.Err() != nil {
-				finalResponse = "Error: batch timed out during Ollama call"
+				finalResponse = fmt.Sprintf("Error: batch timed out during %s call", endpointKind(cfg))
 			} else {
-				finalResponse = fmt.Sprintf("Error calling Ollama: %v", err)
+				finalResponse = fmt.Sprintf("Error calling %s: %v", endpointKind(cfg), err)
 			}
 			break
 		}
@@ -417,6 +443,8 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 				}
 			}
 
+			denials.observe(tc, toolOutput)
+
 			// Add tool result to conversation
 			conversation = append(conversation, ChatMessage{
 				Role:       "tool",
@@ -445,7 +473,11 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 			// This prevents small models from looping endlessly.
 			// Only triggers on success (exit 0) — failed commands let the
 			// model retry with fallback commands.
-			if isSingleShotRole(cfg.Role) && toolsExecuted && lastToolSucceeded {
+			// Gateway-backed agents (APIKey set) keep their full turn
+			// budget: the brake exists for small local models, and it
+			// truncates legitimate two-step intents (check `graph list`,
+			// then launch) that a hosted model executes correctly.
+			if isSingleShotRole(cfg.Role) && cfg.APIKey == "" && toolsExecuted && lastToolSucceeded {
 				sink.Emit(Event{Kind: EventOllamaResponse, Time: time.Now(), Message: "Single-shot role — auto-completing after tool execution"})
 				break
 			}
@@ -468,6 +500,20 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 			finalResponse = resp.Choices[0].Message.Content
 			batchSuccess = true
 		}
+	}
+
+	// False-success guard (MUX-109): a refused command must never read as
+	// success. The prompt role sits behind a free-text box, and its
+	// answers land in the Prompt surface as the outcome of what the user
+	// asked — "succeeded" over a denied command makes them believe a
+	// graph ran. The agent definition instructs the model to lead with
+	// BLOCKED, but a small model told not to report false success still
+	// sometimes does (observed live twice, 2026-08-27) — this is the
+	// guard outside the model, same reasoning as the approve guard.
+	// Prompt role only: build/test outcomes are decided by exit codes and
+	// hooks, never by summary text.
+	if cfg.busRole() == "prompt" {
+		finalResponse = enforceDenialPrefix(finalResponse, denials.line)
 	}
 
 	// Mark success if tools executed and we got a real response

@@ -55,6 +55,33 @@ func Graph(args []string) {
 		}
 		fmt.Printf("Run %s canceled\n", args[1])
 
+	case "create":
+		graphCreate(args[1:])
+
+	case "export":
+		// Print a resolved template's full JSON — the read-back half of
+		// modify-via-shadow: export a builtin, adjust the JSON, and
+		// `graph create` it as a project-tier template that shadows the
+		// builtin (project > user > builtin resolution). Without this,
+		// builtins were write-only for the prompt-agent (user-requested,
+		// 2026-08-27).
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: muxcode graph export <template-name>")
+			os.Exit(1)
+		}
+		g, source, err := bus.ResolveGraphTemplate(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		data, err := json.MarshalIndent(g, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "# source: %s\n", source)
+		fmt.Println(string(data))
+
 	case "retry":
 		graphRetry(args[1:])
 
@@ -85,7 +112,11 @@ func graphUsage() {
 Commands:
   run <template>|--file <path> [intent...]  Start a run (returns immediately; the daemon executes)
   validate <file|template>                  Validate a graph definition file or template
+  create --json '<json>'|<file> [--scope project|user]
+                                            Validate a definition and write it as a template
+                                            (project: .muxcode/graphs/, user: ~/.config/muxcode/graphs/)
   list                                      List resolvable graph templates
+  export <template>                         Print a resolved template's JSON (modify + create = shadow a builtin)
   status [--json] [run-id]                  Show a run's per-node state (no id: list all runs)
   cancel <run-id>                           Cancel a run (unstarted nodes are skipped)
   retry <run-id> --from <node>              Re-execute from a node, keeping upstream results
@@ -93,6 +124,7 @@ Commands:
   ui [run-id] [--render-once] [--width N]   Interactive run browser / DAG view (MUX-031)
   ui --templates                            Open the template launcher
   ui --gates [--render-once]                Open the pending-gate approval queue
+  ui --prompt [--render-once]               Open the Prompt surface (MUX-109)
 `)
 }
 
@@ -161,7 +193,7 @@ func graphRetry(args []string) {
 // frame with --render-once — the scriptable seam for integration tests.
 // --width overrides the terminal width for deterministic frames in pipes.
 func graphUI(args []string) {
-	var renderOnce, launcher, gateQueue bool
+	var renderOnce, launcher, gateQueue, promptSurface bool
 	var width int
 	var runID string
 	for i := 0; i < len(args); i++ {
@@ -172,6 +204,8 @@ func graphUI(args []string) {
 			launcher = true
 		case args[i] == "--gates":
 			gateQueue = true
+		case args[i] == "--prompt":
+			promptSurface = true
 		case args[i] == "--width":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "Error: --width requires a value")
@@ -201,9 +235,12 @@ func graphUI(args []string) {
 	if renderOnce {
 		var frame string
 		var err error
-		if gateQueue {
+		switch {
+		case promptSurface:
+			frame, err = tui.PromptRenderOnce(session, width)
+		case gateQueue:
 			frame, err = tui.GateQueueRenderOnce(session, width)
-		} else {
+		default:
 			frame, err = tui.GraphRenderOnce(session, runID, width)
 		}
 		if err != nil {
@@ -211,6 +248,10 @@ func graphUI(args []string) {
 			os.Exit(1)
 		}
 		fmt.Print(frame)
+		return
+	}
+	if promptSurface {
+		tui.NewGraphPromptUI(session).Run()
 		return
 	}
 	if launcher {
@@ -248,6 +289,76 @@ func graphValidate(target string) {
 	if !v.OK() {
 		os.Exit(1)
 	}
+}
+
+// graphCreate validates a composed definition and writes it as a
+// template through WriteGraphDefinition — the Prompt surface's create
+// intent lands here (MUX-109), which is why the JSON can arrive inline:
+// the prompt-agent has no file tools, so the validating CLI is its only
+// write path. A failing definition prints its validation report verbatim
+// and writes nothing; the gate rule (commit/Atlassian behind wait_human)
+// applies to composed graphs identically.
+func graphCreate(args []string) {
+	scope := bus.GraphScopeProject
+	var jsonStr, path string
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--json":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "Error: --json requires a value")
+				os.Exit(1)
+			}
+			jsonStr = args[i+1]
+			i++
+		case args[i] == "--scope":
+			if i+1 >= len(args) || (args[i+1] != bus.GraphScopeProject && args[i+1] != bus.GraphScopeUser) {
+				fmt.Fprintln(os.Stderr, "Error: --scope requires project or user")
+				os.Exit(1)
+			}
+			scope = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "-"):
+			fmt.Fprintf(os.Stderr, "Error: unknown flag %q for graph create\n", args[i])
+			os.Exit(1)
+		case path == "":
+			path = args[i]
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unexpected argument %q\n", args[i])
+			os.Exit(1)
+		}
+	}
+
+	var g *bus.Graph
+	var err error
+	switch {
+	case jsonStr != "" && path != "":
+		fmt.Fprintln(os.Stderr, "Error: give either --json or a file, not both")
+		os.Exit(1)
+	case jsonStr != "":
+		g, err = bus.ParseGraph([]byte(jsonStr))
+	case path != "":
+		g, err = bus.LoadGraphFile(path)
+	default:
+		fmt.Fprintln(os.Stderr, "Usage: muxcode graph create --json '<json>'|<file> [--scope project|user]")
+		os.Exit(1)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	written, v, err := bus.WriteGraphDefinition(g, scope)
+	if err != nil {
+		if v != nil && !v.OK() {
+			fmt.Print(v.Format())
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	for _, w := range v.Warnings {
+		fmt.Printf("  WARN: %s\n", w)
+	}
+	fmt.Printf("Created %s graph %q at %s — launch it with: muxcode graph run %s\n", scope, g.Name, written, g.Name)
 }
 
 func graphList() {

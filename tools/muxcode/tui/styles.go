@@ -21,6 +21,12 @@ const (
 	Comment = "\033[38;5;103m"
 	BG      = "\033[48;5;236m"
 
+	// Reverse / NoReverse bracket a single glyph in reverse-video — the
+	// in-text cursor for line editors. Both are m-terminated, so
+	// StripAnsi and VisibleWidth already account for them.
+	Reverse   = "\033[7m"
+	NoReverse = "\033[27m"
+
 	// ClearEOL erases from cursor to end of line.
 	ClearEOL = "\033[K"
 )

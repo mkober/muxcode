@@ -65,9 +65,12 @@ type Edge struct {
 type Graph struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	Start       string `json:"start"`
-	Nodes       []Node `json:"nodes"`
-	Edges       []Edge `json:"edges"`
+	// RequiresSpec gates run creation on an active requirements spec
+	// (muxcode spec set) — for graphs whose nodes implement against it.
+	RequiresSpec bool   `json:"requires_spec,omitempty"`
+	Start        string `json:"start"`
+	Nodes        []Node `json:"nodes"`
+	Edges        []Edge `json:"edges"`
 }
 
 // GraphValidation collects the outcome of Graph.Validate. Errors block
@@ -261,6 +264,12 @@ func (g *Graph) validateNode(n *Node, v *GraphValidation) {
 			v.errf("%s node %q requires a role", n.Type, n.ID)
 		} else if !IsKnownRole(NormalizeBusRole(n.Role)) {
 			v.errf("%s node %q references unknown role %q", n.Type, n.ID, n.Role)
+		} else if NormalizeBusRole(n.Role) == "prompt" {
+			// Prompt requests carry a human's typed words — the approve
+			// guard trusts them as such — so a graph cannot dispatch one.
+			// CheckPromptAuthority also refuses at runtime; failing here
+			// beats a run dying mid-flight (see bus/prompt_authority.go).
+			v.errf("%s node %q targets the prompt role — prompt requests are human-initiated and cannot be dispatched by a graph", n.Type, n.ID)
 		}
 	}
 	requireMessage := func() {
@@ -491,6 +500,13 @@ type GraphTemplateInfo struct {
 	Description string
 }
 
+// Writable graph template scopes. Builtins are read-only — there is
+// deliberately no scope naming them.
+const (
+	GraphScopeProject = "project"
+	GraphScopeUser    = "user"
+)
+
 // projectGraphDir is the project-local template directory (tier 1).
 const projectGraphDir = ".muxcode/graphs"
 
@@ -576,4 +592,62 @@ func ListGraphTemplates() []GraphTemplateInfo {
 
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
 	return infos
+}
+
+// graphScopeDir maps a writable scope to its template directory.
+func graphScopeDir(scope string) (string, error) {
+	switch scope {
+	case GraphScopeProject:
+		return projectGraphDir, nil
+	case GraphScopeUser:
+		dir := userGraphDir()
+		if dir == "" {
+			return "", fmt.Errorf("cannot resolve user graph directory: no home directory")
+		}
+		return dir, nil
+	}
+	return "", fmt.Errorf("unknown graph scope %q (want %q or %q)", scope, GraphScopeProject, GraphScopeUser)
+}
+
+// WriteGraphDefinition validates g and writes it as <name>.json into the
+// scope's template directory, creating the directory on first write so a
+// fresh checkout with no .muxcode/graphs/ works. Validation runs before
+// anything touches the filesystem: a failing definition leaves no file
+// and no directory behind, and the returned GraphValidation carries the
+// errors for the caller to report. The write itself is atomic (tmp +
+// rename, like the run store) so a crash cannot leave a half-written
+// template that ResolveGraphTemplate would later load. The graph name
+// doubles as the filename, so names that would escape the directory or
+// hide the file are rejected.
+func WriteGraphDefinition(g *Graph, scope string) (string, *GraphValidation, error) {
+	dir, err := graphScopeDir(scope)
+	if err != nil {
+		return "", nil, err
+	}
+	v := g.Validate()
+	if !v.OK() {
+		return "", v, fmt.Errorf("graph %q failed validation; not written", g.Name)
+	}
+	if strings.ContainsAny(g.Name, `/\`) || strings.HasPrefix(g.Name, ".") {
+		return "", v, fmt.Errorf("graph name %q is not usable as a template filename", g.Name)
+	}
+	// Required at the creation chokepoint only — not in Validate(), which
+	// also gates RUNNING existing description-less template files. The
+	// launcher lists every template with its description; a new graph
+	// without one is an unlabeled row nobody can tell apart later.
+	if strings.TrimSpace(g.Description) == "" {
+		return "", v, fmt.Errorf("graph %q has no description — add a one-line \"description\" field; the launcher lists templates by it", g.Name)
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", v, err
+	}
+	data, err := json.MarshalIndent(g, "", "  ")
+	if err != nil {
+		return "", v, err
+	}
+	path := filepath.Join(dir, g.Name+".json")
+	if err := atomicWriteFile(path, append(data, '\n')); err != nil {
+		return "", v, err
+	}
+	return path, v, nil
 }

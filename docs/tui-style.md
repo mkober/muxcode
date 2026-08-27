@@ -47,8 +47,8 @@ Other glyphs in use: `↺ ×N` (capped loop edge), `⇥` (Tab affordance), `─ 
 Every full-screen surface renders in the same four bands, top to bottom:
 
 ```
-  Launch Graph / Graph Runs / Pending Gates   ⇥ Tab: next surface     ← tab bar (multi-surface only)
-  Run abc123  coding-pr  running  4/9 done  2m14s                     ← header: what am I looking at
+  Prompt / Launch Graph / Graph Runs / Pending Gates  ⇥ Tab: next     ← tab bar (multi-surface only)
+  Run abc123  req-code-pr  running  4/9 done  2m14s                     ← header: what am I looking at
   ────────────────────────────────────────────────────────────────
   ● build      ✓ test       ⚑ await-review                            ← body
   · deploy
@@ -141,7 +141,7 @@ When a list is re-read, restore the cursor by matching the previously selected i
 
 A tmux popup title is fixed once opened. If a surface can change what it shows, the title must be generic and the *frame* must name the surface.
 
-**Why (MUX-105):** with `Tab` cycling, a popup opened as `Graph Runs` could be displaying the gate queue. All three graph popups are now titled ` Graph `, with the tab bar naming the live surface.
+**Why (MUX-105):** with `Tab` cycling, a popup opened as `Graph Runs` could be displaying the gate queue. The graph popups were all retitled ` Graph `, leaving the tab bar to name the live surface. Those popups have since been retired for the control pane ([MUX-108](requirements/completed/MUX-108-control-pane.md)), which is why the rule now reads on the pane's own tab bar — and it carries more weight there, since one pane cycles four surfaces and is switched by a gate arriving rather than by the user.
 
 ### 8. Mutating actions confirm, and re-check at execution
 

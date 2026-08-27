@@ -19,7 +19,7 @@ import (
 // exists.) Border styling is global in config/tmux.conf, not applied
 // here — 12 windows must not each re-apply it.
 
-const controlPaneDefaultHeight = 14
+const controlPaneDefaultHeight = 18
 
 // controlPaneBaseCmd is the identity of a control pane: every surface
 // variant starts with it, and scanControlPanes matches panes by their
@@ -33,6 +33,8 @@ const controlPaneBaseCmd = "muxcode graph ui"
 // graph UI rather than an empty pane.
 func controlPaneCommand() string {
 	switch strings.TrimSpace(os.Getenv("MUXCODE_CONTROL_PANE_SURFACE")) {
+	case "prompt":
+		return controlPaneBaseCmd + " --prompt"
 	case "gates":
 		return controlPaneBaseCmd + " --gates"
 	case "launcher", "templates":

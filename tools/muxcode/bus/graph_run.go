@@ -132,6 +132,13 @@ func atomicWriteJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
+	return atomicWriteFile(path, data)
+}
+
+// atomicWriteFile writes data via tmp-file + rename. Shared by the run
+// store and the template write path (WriteGraphDefinition), so both get
+// the same crash-safety guarantee from one implementation.
+func atomicWriteFile(path string, data []byte) error {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
 		return err
@@ -150,6 +157,13 @@ func atomicWriteJSON(path string, v any) error {
 func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRun, error) {
 	if v := g.Validate(); !v.OK() {
 		return nil, fmt.Errorf("graph %q is invalid: %s", g.Name, strings.Join(v.Errors, "; "))
+	}
+	// The run-creation chokepoint covers every launch road (CLI, launcher
+	// surface, prompt-agent) — a spec-driven graph must not start against
+	// nothing (req-code-pr implements per the active requirements spec;
+	// with none set its implement node would freewheel).
+	if g.RequiresSpec && strings.TrimSpace(ReadActiveSpec(session)) == "" {
+		return nil, fmt.Errorf("graph %q requires an active requirements spec — set one first: muxcode spec set <path>", g.Name)
 	}
 
 	run := &GraphRun{

@@ -46,6 +46,43 @@ func TestStartupSelfSendStillDelivered(t *testing.T) {
 	}
 }
 
+// TestSelfAddressedReplyRecordsCorrelation pins the graph-node fix: a
+// self-addressed RESPONSE with a ReplyTo is a completion record — it is
+// logged and correlated (MarkResponded) but delivered to no inbox.
+// Without it, edit answering a daemon-dispatched graph node (the reply
+// target normalizes back to edit) lost the correlation and the node sat
+// running until its task timed out (live 2026-08-27, commit-pr-review-
+// loop node c). A reply-less self-send stays fully dropped (negative
+// control).
+func TestSelfAddressedReplyRecordsCorrelation(t *testing.T) {
+	session := testSession(t)
+
+	req := NewMessage("daemon", "edit", "request", "edit", "address the comments", "")
+	if err := CreateDeliveryStatus(session, req); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := NewMessage("edit", "edit", "response", "response", "nothing to address", req.ID)
+	if err := SendNoCC(session, resp); err != nil {
+		t.Fatalf("SendNoCC: %v", err)
+	}
+	if msgs, _ := Peek(session, "edit"); len(msgs) != 0 {
+		t.Errorf("self-addressed reply must not be delivered, inbox has %d", len(msgs))
+	}
+	ds, err := ReadDeliveryStatus(session, req.ID)
+	if err != nil || ds.Status != StatusResponded {
+		t.Errorf("the correlation must be recorded as responded, got %+v err %v", ds, err)
+	}
+
+	noise := NewMessage("edit", "edit", "response", "response", "no reply-to", "")
+	if err := SendNoCC(session, noise); err != nil {
+		t.Fatalf("SendNoCC: %v", err)
+	}
+	if msgs, _ := Peek(session, "edit"); len(msgs) != 0 {
+		t.Error("a reply-less self-send must stay fully dropped (negative control)")
+	}
+}
+
 func TestSelfAddressedFilteredFromActionableAndUnnotified(t *testing.T) {
 	session := testSession(t)
 	// Simulate a self-message already in the inbox (e.g. queued before the fix).

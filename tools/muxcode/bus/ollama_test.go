@@ -18,8 +18,8 @@ func TestDefaultOllamaConfig(t *testing.T) {
 	if cfg.BaseURL != "http://localhost:11434" {
 		t.Errorf("BaseURL = %q, want http://localhost:11434", cfg.BaseURL)
 	}
-	if cfg.Model != "qwen2.5:7b" {
-		t.Errorf("Model = %q, want qwen2.5:7b", cfg.Model)
+	if cfg.Model != "qwen3:4b" {
+		t.Errorf("Model = %q, want qwen3:4b", cfg.Model)
 	}
 	if cfg.Temperature != 0.1 {
 		t.Errorf("Temperature = %f, want 0.1", cfg.Temperature)
@@ -450,8 +450,8 @@ func TestRoleModel_Default(t *testing.T) {
 	t.Setenv("MUXCODE_OLLAMA_MODEL", "")
 	t.Setenv("MUXCODE_GIT_MODEL", "")
 	model := RoleModel("commit")
-	if model != "qwen2.5:7b" {
-		t.Errorf("RoleModel(commit) = %q, want qwen2.5:7b", model)
+	if model != "qwen3:4b" {
+		t.Errorf("RoleModel(commit) = %q, want qwen3:4b", model)
 	}
 }
 
