@@ -286,13 +286,17 @@ type GraphUI struct {
 
 	// Prompt surface (MUX-109). The input buffer lives here, not in the
 	// view, so Tab-ing away and back never discards a half-typed prompt.
-	promptInput       []rune
-	promptInject      bool
-	promptExchanges   []PromptExchange
-	promptUnreachable string
-	promptWindow      string // host window (resolved once — tmux call)
-	promptActiveRole  string // window's active agent, mode-cycle aware
-	directPrompt      bool   // opened in prompt mode — q/Esc from it quits
+	promptInput         []rune
+	promptInject        bool
+	promptExchanges     []PromptExchange
+	promptUnreachable   string
+	promptActivity      []string // headless agent's log tail — live working detail
+	promptScroll        int      // transcript rows scrolled up from the tail (0 = pinned)
+	promptCursor        int      // rune index into promptInput (len = end)
+	promptInjectTouched bool     // user toggled Ctrl-T — keyless default stands down
+	promptWindow        string   // host window (resolved once — tmux call)
+	promptActiveRole    string   // window's active agent, mode-cycle aware
+	directPrompt        bool     // opened in prompt mode — q/Esc from it quits
 
 	// Gates already seen waiting — a NEW one switches the UI to the
 	// Pending Gates surface (the strip's ambient-attention contract).
@@ -437,6 +441,12 @@ func (ui *GraphUI) refresh() {
 	case viewGraphPrompt:
 		ui.promptExchanges = LoadPromptExchanges(ui.session, promptTranscriptLimit)
 		ui.promptUnreachable = PromptUnreachable(ui.session)
+		ui.promptActivity = LoadPromptActivity(ui.session, promptActivityLimit)
+		// Keyless gateway: interpret cannot deliver, so the toggle
+		// defaults to inject — but a deliberate Ctrl-T stands.
+		if PromptKeyless(ui.session) && !ui.promptInjectTouched {
+			ui.promptInject = true
+		}
 		// Destination resolution is I/O (tmux + mode state), so it lives
 		// here, never in the renderer. The window is stable; the active
 		// role re-resolves each refresh because mode cycling can change
@@ -751,18 +761,32 @@ func (ui *GraphUI) executeAction() {
 // editLine applies one keypress to a line buffer: printable ASCII
 // appends, backspace deletes. Returns the new buffer and whether the key
 // was consumed — the shared editor behind the ${intent} prompt and the
-// Prompt surface, so the two never drift on byte handling.
+// Prompt surface, so the two never drift on byte handling. End-anchored;
+// the Prompt surface uses the cursor-aware editLineAt underneath.
 func editLine(buf []rune, key byte) ([]rune, bool) {
+	out, _, ok := editLineAt(buf, len(buf), key)
+	return out, ok
+}
+
+// editLineAt is the cursor-aware editor: printable ASCII inserts at the
+// cursor, backspace deletes before it. An out-of-range cursor clamps to
+// the end, so end-anchored callers never need to track one.
+func editLineAt(buf []rune, cursor int, key byte) ([]rune, int, bool) {
+	if cursor < 0 || cursor > len(buf) {
+		cursor = len(buf)
+	}
 	switch {
 	case key == 127 || key == 8: // Backspace
-		if len(buf) > 0 {
-			buf = buf[:len(buf)-1]
+		if cursor > 0 {
+			buf = append(buf[:cursor-1], buf[cursor:]...)
+			cursor--
 		}
-		return buf, true
+		return buf, cursor, true
 	case key >= 32 && key < 127: // printable ASCII
-		return append(buf, rune(key)), true
+		buf = append(buf[:cursor], append([]rune{rune(key)}, buf[cursor:]...)...)
+		return buf, cursor + 1, true
 	}
-	return buf, false
+	return buf, cursor, false
 }
 
 // handleIntentKey edits the ${intent} argument prompt: printable bytes
@@ -795,8 +819,9 @@ func (ui *GraphUI) handlePromptKey(key byte) string {
 		ui.submitPrompt()
 	case key == 20: // Ctrl-T — inject/interpret toggle
 		ui.promptInject = !ui.promptInject
+		ui.promptInjectTouched = true // a deliberate choice outranks the keyless default
 	default:
-		ui.promptInput, _ = editLine(ui.promptInput, key)
+		ui.promptInput, ui.promptCursor, _ = editLineAt(ui.promptInput, ui.promptCursor, key)
 	}
 	return ""
 }
@@ -811,8 +836,23 @@ func (ui *GraphUI) handlePromptEscape() string {
 		if b1 == '[' {
 			select {
 			case b2 := <-ui.keyCh:
-				if b2 == 'Z' { // Shift-Tab
+				switch b2 {
+				case 'Z': // Shift-Tab
 					ui.cycleSurface(-1)
+				case 'A': // Up — scroll to older transcript rows
+					ui.promptScroll++
+				case 'B': // Down — back toward the newest
+					if ui.promptScroll > 0 {
+						ui.promptScroll--
+					}
+				case 'C': // Right — cursor toward the end
+					if ui.promptCursor < len(ui.promptInput) {
+						ui.promptCursor++
+					}
+				case 'D': // Left — cursor toward the start
+					if ui.promptCursor > 0 {
+						ui.promptCursor--
+					}
 				}
 			case <-time.After(50 * time.Millisecond):
 			}
@@ -820,6 +860,7 @@ func (ui *GraphUI) handlePromptEscape() string {
 	case <-time.After(50 * time.Millisecond):
 		if len(ui.promptInput) > 0 {
 			ui.promptInput = nil
+			ui.promptCursor = 0
 			return ""
 		}
 		return ui.goBack()
@@ -855,6 +896,12 @@ func (ui *GraphUI) submitPrompt() {
 		ui.notice = fmt.Sprintf("⇒ injected to %s", role)
 		return
 	}
+	// Interpret cannot deliver without a gateway key — refuse loudly
+	// instead of sending into a 401ing harness; the typed text survives.
+	if PromptKeyless(ui.session) {
+		ui.notice = "interpret needs a gateway key — add MUXCODE_OPENCODE_API_KEY to ~/.config/muxcode/config (Ctrl-T injects instead)"
+		return
+	}
 	from := bus.BusRole()
 	if from == "" {
 		from = "edit"
@@ -868,7 +915,9 @@ func (ui *GraphUI) submitPrompt() {
 		return
 	}
 	ui.promptInput = nil
-	ui.refresh() // the sent question renders as the working exchange
+	ui.promptCursor = 0
+	ui.promptScroll = 0 // a new question pins the view back to the tail
+	ui.refresh()        // the sent question renders as the working exchange
 }
 
 // launchGraph validates and starts a run, then transitions into its DAG
@@ -1047,22 +1096,27 @@ func (ui *GraphUI) render() string {
 		st := PromptSurfaceState{
 			Exchanges:   ui.promptExchanges,
 			Input:       string(ui.promptInput),
+			Cursor:      ui.promptCursor,
 			Inject:      ui.promptInject,
 			Destination: promptDestinationLabel(ui.promptInject, ui.promptActiveRole),
 			Unreachable: ui.promptUnreachable,
+			Activity:    ui.promptActivity,
+			Scroll:      ui.promptScroll,
 		}
 		if n := len(st.Exchanges); n > 0 && !st.Exchanges[n-1].Answered {
 			st.Working = true
 		}
 		frame = RenderPromptFrame(st, W, H)
-		footer = fmt.Sprintf("  %sEnter%s Send  %sCtrl-T%s Inject/Interpret  %sBksp%s Delete  %sEsc%s Clear/Back",
-			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
+		footer = fmt.Sprintf("  %sEnter%s Send  %sCtrl-T%s Inject/Interpret  %s↑↓%s Scroll  %s←→%s Cursor  %sBksp%s Delete  %sEsc%s Clear/Back",
+			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
+		backend, model := bus.PromptBackendInfo(ui.session)
+		footer = PromptFooterStatus(footer, backend, model, W)
 	case viewGraphConfirm:
 		if ui.pending != nil {
 			// Static tab bar for the surface the confirm returns to,
 			// then the prompt (which carries its own y/n hint).
 			frame = renderSurfaceTabs(surfaceName(ui.confirmReturn), W) +
-				RenderConfirmFrame(*ui.pending, W, ui.actionErr)
+				RenderConfirmFrameH(*ui.pending, W, H, ui.actionErr)
 		}
 	}
 	if ui.notice != "" {
