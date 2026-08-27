@@ -148,24 +148,12 @@ type Daemon struct {
 func New(session string, pollSecs, debounceSecs int) *Daemon {
 	now := time.Now().Unix()
 
-	// Discover which roles use local LLM
+	// Discover which roles use local LLM. The prompt role is NOT baked in
+	// here: its backend is runtime-switchable via the shell config, so
+	// its membership is evaluated per tick in effectiveOllamaRoles — a
+	// New()-time snapshot went stale the moment the user flipped
+	// MUXCODE_PROMPT_BACKEND mid-session (review catch, 2026-08-27).
 	ollamaRoles := bus.LocalLLMRoles()
-	// The prompt role is harness-always (MUX-109) — no provider switch
-	// exists for it — so it joins Ollama health coverage whenever its
-	// supervision is enabled, without requiring a MUXCODE_PROMPT_CLI env
-	// var that nothing sets by default.
-	if bus.PromptAgentEnabled() {
-		found := false
-		for _, r := range ollamaRoles {
-			if r == "prompt" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			ollamaRoles = append(ollamaRoles, "prompt")
-		}
-	}
 
 	// Read Ollama config for health probes
 	ollamaCfg := bus.DefaultOllamaConfig()
@@ -1377,11 +1365,32 @@ func (d *Daemon) checkCompaction() {
 	d.refreshInboxSizes()
 }
 
+// effectiveOllamaRoles returns the roles under Ollama health right now:
+// the launch-time env snapshot plus — evaluated per call — the prompt
+// role while its supervision is enabled and its backend is local Ollama.
+// The prompt backend is runtime-switchable (PromptBackend reads the
+// shell config on every call), so membership must be too. The helper
+// only ever ADDS prompt: an explicit MUXCODE_PROMPT_CLI=local in the
+// snapshot alongside backend=opencode is contradictory config, and
+// removing snapshot entries here would silently mask it.
+func (d *Daemon) effectiveOllamaRoles() []string {
+	if !bus.PromptAgentEnabled() || bus.PromptBackend(d.session) != "ollama" {
+		return d.ollamaRoles
+	}
+	for _, r := range d.ollamaRoles {
+		if r == "prompt" {
+			return d.ollamaRoles
+		}
+	}
+	return append(append([]string{}, d.ollamaRoles...), "prompt")
+}
+
 // checkOllama runs Ollama health probes every 30 seconds for roles using local LLM.
 // Detection timeline: 30s first probe, 60s alert, 90s restart attempt.
 // Caps automatic restarts at 3 to prevent restart loops.
 func (d *Daemon) checkOllama() {
-	if len(d.ollamaRoles) == 0 {
+	roles := d.effectiveOllamaRoles()
+	if len(roles) == 0 {
 		return
 	}
 
@@ -1409,7 +1418,7 @@ func (d *Daemon) checkOllama() {
 			d.ollamaWasDown = false
 			d.ollamaFailCount = 0
 
-			alert := bus.FormatOllamaAlert("recovered", d.ollamaRoles, "Ollama is responsive again")
+			alert := bus.FormatOllamaAlert("recovered", roles, "Ollama is responsive again")
 			msg := bus.NewMessage("daemon", "edit", "event", "ollama-recovered", alert, "")
 			if sendErr := bus.Send(d.session, msg); sendErr != nil {
 				fmt.Fprintf(os.Stderr, "  [ollama] failed to send recovery alert: %v\n", sendErr)
@@ -1466,7 +1475,7 @@ func (d *Daemon) checkOllama() {
 		alertKey := bus.OllamaHealthAlertKey("down")
 		if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
 			d.lastAlertKey[alertKey] = now
-			alert := bus.FormatOllamaAlert("down", d.ollamaRoles, errMsg)
+			alert := bus.FormatOllamaAlert("down", roles, errMsg)
 			msg := bus.NewMessage("daemon", "edit", "event", "ollama-down", alert, "")
 			if sendErr := bus.Send(d.session, msg); sendErr != nil {
 				fmt.Fprintf(os.Stderr, "  [ollama] failed to send down alert: %v\n", sendErr)
@@ -1482,7 +1491,7 @@ func (d *Daemon) checkOllama() {
 			alertKey := bus.OllamaHealthAlertKey("down")
 			if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
 				d.lastAlertKey[alertKey] = now
-				alert := bus.FormatOllamaAlert("down", d.ollamaRoles,
+				alert := bus.FormatOllamaAlert("down", roles,
 					fmt.Sprintf("Restart cap (3) reached. %s. Manual intervention required.", errMsg))
 				msg := bus.NewMessage("daemon", "edit", "event", "ollama-down", alert, "")
 				_ = bus.Send(d.session, msg)
@@ -1497,7 +1506,7 @@ func (d *Daemon) checkOllama() {
 		d.ollamaRestarts++
 
 		// Send restarting alert
-		alert := bus.FormatOllamaAlert("restarting", d.ollamaRoles,
+		alert := bus.FormatOllamaAlert("restarting", roles,
 			fmt.Sprintf("Attempt %d/3 — killing and restarting ollama serve", d.ollamaRestarts))
 		msg := bus.NewMessage("daemon", "edit", "event", "ollama-restarting", alert, "")
 		_ = bus.Send(d.session, msg)
@@ -1516,7 +1525,7 @@ func (d *Daemon) checkOllama() {
 		fmt.Printf("  %s  Ollama restarted successfully, relaunching agents...\n", ts)
 
 		// Relaunch affected agents
-		for _, role := range d.ollamaRoles {
+		for _, role := range roles {
 			if role == "prompt" {
 				// Headless (MUX-109) — no pane to send-keys into; bounce the
 				// process and let checkPromptAgent relaunch it this cycle.

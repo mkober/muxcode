@@ -57,3 +57,15 @@
 
 # Ollama API URL (default: http://localhost:11434)
 # MUXCODE_OLLAMA_URL="http://localhost:11434"
+
+# --- Prompt agent backend (MUX-109) ---
+# The control pane's prompt-agent runs on OpenCode's hosted Zen gateway
+# by default (metered — bills your OpenCode subscription; needs the key
+# below). Set the backend to "ollama" for the local, unmetered opt-in.
+# MUXCODE_PROMPT_BACKEND="opencode"
+# MUXCODE_OPENCODE_API_KEY="sk-..."
+# Optional overrides (defaults: the Zen gateway and DeepSeek V4 Flash).
+# Gateway model ids are BARE (no opencode-go/ prefix) — list them with
+# GET https://opencode.ai/zen/v1/models; deepseek-v4-flash-free exists.
+# MUXCODE_OPENCODE_API_URL="https://opencode.ai/zen/v1"
+# MUXCODE_PROMPT_MODEL="deepseek-v4-flash"

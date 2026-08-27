@@ -258,17 +258,17 @@ step "Prerequisites"
 # fzf is optional — it backs the interactive project picker, but `muxcode <path>`
 # works without it. It is still offered for install alongside the required set.
 #
-# ollama is required, not optional (MUX-109): the control pane's Prompt mode
-# runs a local model through the harness, so an install without Ollama is
-# incomplete. The multi-GB model pull stays consent-gated below — only the
-# binary is required here.
+# ollama went required → optional and back (MUX-109): the Prompt mode's
+# default backend is now OpenCode's hosted gateway, so the default path
+# never touches Ollama — a required-tier prereq the default never uses
+# is wrong. Local Ollama remains the MUXCODE_PROMPT_BACKEND=ollama
+# opt-in, checked in the optional section below.
 PREREQS="tmux|3.3|1|tmux -V
 go|1.22|1|go version
 git|2.0|1|git --version
 make||1|make --version
 jq||1|jq --version
 nvim|0.9|1|nvim --version
-ollama||1|ollama --version
 fzf||0|fzf --version"
 
 missing=()
@@ -582,8 +582,10 @@ ok "Default provider: ${C_KEY}${default_cli}${NC}"
 step "Optional components"
 # ─────────────────────────────────────────────────────────────────────────────
 
-# --- Ollama model (required feature, consent-gated download — MUX-109) ---
-# The binary itself is checked in PREREQS; this block only handles the model.
+# --- Ollama model (optional local backend, consent-gated download) ---
+# The Prompt mode's default backend is the OpenCode gateway (MUX-109);
+# local Ollama is the MUXCODE_PROMPT_BACKEND=ollama opt-in and the local
+# LLM agents' engine.
 if command -v ollama >/dev/null 2>&1; then
   OLLAMA_MODEL="${MUXCODE_OLLAMA_MODEL:-qwen3:4b}"
   if ! ollama list >/dev/null 2>&1; then
@@ -610,9 +612,59 @@ if command -v ollama >/dev/null 2>&1; then
     fi
   fi
 else
-  # Reachable only when the required-prereq install was declined above.
-  row "$C_ERR" "✗" "ollama" "not found (required — Prompt mode and local agents)"
-  note "install ollama and re-run; Prompt mode degrades until then"
+  row "$C_DIM" "·" "ollama" "not found (optional — local LLM agents, MUXCODE_PROMPT_BACKEND=ollama)"
+fi
+
+# --- OpenCode gateway key (Prompt mode's default backend — MUX-109) ---
+# The check the required-Ollama tier turned into: the default Prompt
+# backend needs a Zen gateway key, not a local model. Prompt for it when
+# missing — interactive only: a scripted install must never pause for a
+# secret, so --yes and non-TTY fall through to the warning. The read is
+# silent (a key echoed into scrollback outlives the install) and the key
+# never rides argv (ps exposes argv to other local users). Blank = skip.
+CONFIG_FILE="$HOME/.config/muxcode/config"
+if [ -n "${MUXCODE_OPENCODE_API_KEY:-}" ] || grep -q '^MUXCODE_OPENCODE_API_KEY="..*"' "$CONFIG_FILE" 2>/dev/null; then
+  row "$C_OK" "✓" "opencode-key" "gateway key configured (Prompt mode ready)"
+else
+  okey=""
+  if $INTERACTIVE; then
+    printf "  %s?%s OpenCode Zen API key (blank to skip — or set MUXCODE_PROMPT_BACKEND=ollama to run locally): " "$C_KEY" "$NC"
+    read -rs okey || okey=""
+    echo ""
+  fi
+  if [ -n "$okey" ]; then
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    touch "$CONFIG_FILE"
+    if grep -q '^MUXCODE_OPENCODE_API_KEY=' "$CONFIG_FILE" 2>/dev/null; then
+      # Replace the existing (empty/commented-out-value) assignment —
+      # appending a second one means the last silently wins.
+      awk -v k="$okey" '/^MUXCODE_OPENCODE_API_KEY=/{print "MUXCODE_OPENCODE_API_KEY=\"" k "\""; next} {print}' \
+        "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+    else
+      {
+        echo ""
+        echo "# OpenCode Zen gateway key — the Prompt mode's default backend (MUX-109)"
+        echo "MUXCODE_OPENCODE_API_KEY=\"$okey\""
+      } >> "$CONFIG_FILE"
+    fi
+    chmod 600 "$CONFIG_FILE"
+    row "$C_OK" "✓" "opencode-key" "gateway key saved to ~/.config/muxcode/config (chmod 600)"
+  else
+    row "$C_WARN" "!" "opencode-key" "no MUXCODE_OPENCODE_API_KEY — Prompt mode needs one (or MUXCODE_PROMPT_BACKEND=ollama)"
+    note "add MUXCODE_OPENCODE_API_KEY=sk-... to ~/.config/muxcode/config"
+  fi
+fi
+
+# One-time permissions tighten — independent of the prompt above: the
+# config can hold JIRA_API_TOKEN and the gateway key, and it was found
+# live at 644 (world-readable) with both (2026-08-27). Secrets present +
+# group/other read bits => tighten and say so.
+if [ -f "$CONFIG_FILE" ] && grep -qE '^[A-Z_]*(_TOKEN|_KEY)="..*"' "$CONFIG_FILE" 2>/dev/null; then
+  cfg_perms=$(stat -f %Lp "$CONFIG_FILE" 2>/dev/null || stat -c %a "$CONFIG_FILE" 2>/dev/null || echo "600")
+  if [ "${cfg_perms#?}" != "00" ]; then
+    chmod 600 "$CONFIG_FILE"
+    row "$C_OK" "✓" "config-perms" "tightened ~/.config/muxcode/config to 600 (held secrets group/other-readable)"
+  fi
 fi
 
 # --- Diagram renderers (plan-agent diagram authoring) ---
