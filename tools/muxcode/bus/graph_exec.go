@@ -77,6 +77,15 @@ func CancelGraphRun(session, runID string) error {
 		case GraphNodePending, GraphNodeReady, GraphNodeWaiting:
 			_ = TransitionGraphNode(session, runID, id, GraphNodeSkipped, nil)
 		}
+		// Expire the node's correlated task: a canceled run's in-flight
+		// task otherwise lingers, and the stall watchdog re-drives its
+		// request into an agent for work nobody wants anymore (observed
+		// live 2026-08-27: the canceled loop's edit node re-driven).
+		if st.TaskID != "" {
+			if task, err := ReadTask(session, st.TaskID); err == nil && task.Status == TaskInFlight {
+				TimeoutTask(session, st.TaskID)
+			}
+		}
 	}
 	LogLifecycle(session, "info", "daemon", "graph-run-canceled", runID)
 	return nil

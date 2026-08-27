@@ -121,6 +121,10 @@ type Daemon struct {
 	pollGapAlerted      map[string]bool  // role → alerted edit once for the current gap
 	pollGapRecovered    map[string]bool  // role → re-drive attempted for the current gap
 
+	lastStallCheck int64
+	taskStallSeen  map[string]int // task id → consecutive stall sightings (debounce)
+	taskRedrives   map[string]int // task id → redrive count (capped)
+
 	lastForceRespondCheck int64
 	frRung                map[string]int      // role → next escalation rung to fire
 	frLastFire            map[string]int64    // role → when the last rung fired (cooldown)
@@ -212,6 +216,8 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		pollGapSince:          make(map[string]int64),
 		pollGapAlerted:        make(map[string]bool),
 		pollGapRecovered:      make(map[string]bool),
+		taskStallSeen:         make(map[string]int),
+		taskRedrives:          make(map[string]int),
 		frRung:                make(map[string]int),
 		frLastFire:            make(map[string]int64),
 		frPostponed:           make(map[string]int),
@@ -321,6 +327,7 @@ func (d *Daemon) Run() error {
 		d.checkControlPanes()
 		d.checkNonHookTasks()
 		d.checkTrackedTasks()
+		d.checkStalledTasks()
 		d.checkGraphRuns()
 		d.checkNonHookEdits()
 		d.checkIdleTaskCompletion()
@@ -2735,6 +2742,87 @@ func (d *Daemon) checkNonHookTasks() {
 // restart IS the resume scan, no separate recovery path needed.
 func (d *Daemon) checkGraphRuns() {
 	bus.StepGraphRuns(d.session)
+}
+
+// checkStalledTasks is the automatic form of the graph-priority rule
+// (user, 2026-08-27): an agent that CONSUMED a request (receipt written)
+// but whose turn never started owes a response no other watchdog sees —
+// the receipt-gap backstop trusts the receipt, and the task timeout
+// waits out its full 600s. Detection: an in-flight task past the stall
+// threshold (graph-dispatched tasks stall at half of it) while the
+// target pane rests at an idle prompt or holds parked input; a busy
+// spinner clears the sighting, so an agent genuinely thinking is never
+// interrupted. Two sightings → ForceDeliver with force, whose redrive
+// path re-injects the consumed request. Two redrives per task, then one
+// give-up log — the task timeout owns final failure. Opt out with
+// MUXCODE_TASK_STALL_DISABLE=1; threshold via MUXCODE_TASK_STALL_SECS.
+func (d *Daemon) checkStalledTasks() {
+	if bus.TaskStallDisabled() {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastStallCheck < 30 {
+		return
+	}
+	d.lastStallCheck = now
+
+	tasks, err := bus.ListTasks(d.session, bus.TaskInFlight)
+	if err != nil {
+		return
+	}
+	live := make(map[string]bool, len(tasks))
+	for _, t := range tasks {
+		live[t.ID] = true
+		if !bus.TaskStalled(t, now, bus.TaskStallSecs()) {
+			continue
+		}
+		role := bus.WindowForRole(t.To)
+		// Harness roles consume in-process (no pane to read); reloads are
+		// mid-cycle by design.
+		if bus.IsHarnessActive(d.session, role) || bus.IsReloading(d.session, role) {
+			continue
+		}
+		content, err := bus.TmuxCapturePaneLines(bus.PaneTarget(d.session, role), 30)
+		if err != nil {
+			continue
+		}
+		if !bus.PaneHasIdlePrompt(content) && !bus.HasPendingInput(d.session, role) {
+			delete(d.taskStallSeen, t.ID) // busy — actually working on it
+			continue
+		}
+		d.taskStallSeen[t.ID]++
+		if d.taskStallSeen[t.ID] < 2 {
+			continue
+		}
+		delete(d.taskStallSeen, t.ID)
+		if d.taskRedrives[t.ID] >= 2 {
+			if d.taskRedrives[t.ID] == 2 {
+				d.taskRedrives[t.ID]++ // log the give-up exactly once
+				bus.LogLifecycle(d.session, "warn", "daemon", "task-stall-giveup",
+					fmt.Sprintf("%s→%s:%s still stalled after 2 redrives — task timeout owns it", t.From, t.To, t.Action))
+			}
+			continue
+		}
+		d.taskRedrives[t.ID]++
+		if res, err := bus.ForceDeliver(d.session, role, true); err == nil && res.Delivered > 0 {
+			ts := time.Now().Format("15:04:05")
+			fmt.Printf("  %s  Task %s→%s:%s stalled (consumed, agent idle) — re-driven (%d/2)\n",
+				ts, t.From, t.To, t.Action, d.taskRedrives[t.ID])
+			bus.LogLifecycle(d.session, "info", "daemon", "task-stall-redrive",
+				fmt.Sprintf("%s→%s:%s redrive %d/2", t.From, t.To, t.Action, d.taskRedrives[t.ID]))
+		}
+	}
+	// Drop bookkeeping for tasks that completed or timed out.
+	for id := range d.taskStallSeen {
+		if !live[id] {
+			delete(d.taskStallSeen, id)
+		}
+	}
+	for id := range d.taskRedrives {
+		if !live[id] {
+			delete(d.taskRedrives, id)
+		}
+	}
 }
 
 // idleTaskGracePeriod is how long a hook-provider agent must be idle with an

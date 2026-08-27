@@ -2,6 +2,8 @@ package bus
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"time"
 )
 
@@ -52,6 +54,19 @@ func ForceDeliver(session, role string, force bool) (DeliverResult, error) {
 		unnotified = UnnotifiedMessages(session, role)
 	}
 	if len(unnotified) == 0 {
+		// With force, a role can be wedged on work it already CONSUMED: the
+		// inbox row is gone (receipt recorded), an in-flight task remains,
+		// and the pane sits at a prompt with parked input — the turn never
+		// started (live 2026-08-27: plan consumed a graph verify-spec node,
+		// froze for 9m, diagnose reported clean). Re-drive those tasks'
+		// requests as a fresh injection so the work restarts — graph runs
+		// take delivery priority and must not wait out the task timeout.
+		if force {
+			if n := redriveInFlightTasks(session, role, provider); n > 0 {
+				res.Delivered = n
+				return res, nil
+			}
+		}
 		res.Skipped = "no pending messages"
 		return res, nil
 	}
@@ -93,4 +108,78 @@ func ForceDeliver(session, role string, force bool) (DeliverResult, error) {
 		fmt.Sprintf("%s: %d messages", role, len(unnotified)))
 	res.Delivered = len(unnotified)
 	return res, nil
+}
+
+// redriveInFlightTasks re-injects the requests behind a role's live
+// in-flight tasks — the recovery for consumed-but-never-started work,
+// which no inbox-based path can reach (the rows are already drained).
+// Returns how many requests were re-driven.
+func redriveInFlightTasks(session, role string, provider Provider) int {
+	tasks, err := ListTasks(session, TaskInFlight)
+	if err != nil {
+		return 0
+	}
+	msgs := redriveMessages(tasks, role, time.Now().Unix())
+	if len(msgs) == 0 {
+		return 0
+	}
+	if HasPendingInput(session, role) && !IsWindowFocused(session, role) {
+		if err := TmuxClearInput(PaneTarget(session, role)); err == nil {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	text := "Re-drive (consumed but never completed): " + BuildCombinedNotification(msgs)
+	if err := SendWakeUpWithText(session, role, provider, text, true); err != nil {
+		return 0
+	}
+	LogLifecycle(session, "info", "deliver", "force-redrive",
+		fmt.Sprintf("%s: %d in-flight task(s)", role, len(msgs)))
+	return len(msgs)
+}
+
+// TaskStallSecs is how long an in-flight task may sit un-responded
+// before the daemon's stall watchdog suspects a consumed-but-never-
+// started turn. Graph-dispatched tasks (From == "daemon") use half this
+// — graph runs take delivery priority (user rule, 2026-08-27).
+func TaskStallSecs() int {
+	if v := os.Getenv("MUXCODE_TASK_STALL_SECS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 90
+}
+
+// TaskStallDisabled reports the stall watchdog opt-out.
+func TaskStallDisabled() bool {
+	return os.Getenv("MUXCODE_TASK_STALL_DISABLE") == "1"
+}
+
+// TaskStalled reports whether an in-flight task is old enough to suspect
+// a stall. Expired tasks are the timeout path's business, not a stall's;
+// graph-dispatched tasks stall at half the threshold (priority rule).
+func TaskStalled(t Task, now int64, stallSecs int) bool {
+	if t.Status != TaskInFlight || TaskExpired(t, now) {
+		return false
+	}
+	if t.From == "daemon" {
+		stallSecs /= 2
+	}
+	return now-t.SentAt >= int64(stallSecs)
+}
+
+// redriveMessages maps a role's live in-flight tasks back to injectable
+// request messages — the pure seam under redriveInFlightTasks.
+func redriveMessages(tasks []Task, role string, now int64) []Message {
+	var msgs []Message
+	for _, t := range tasks {
+		if WindowForRole(t.To) != role || TaskExpired(t, now) {
+			continue
+		}
+		msgs = append(msgs, Message{
+			ID: t.ID, TS: t.SentAt, From: t.From, To: t.To,
+			Type: "request", Action: t.Action, Payload: t.Payload,
+		})
+	}
+	return msgs
 }
