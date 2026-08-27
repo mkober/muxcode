@@ -321,6 +321,7 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 
 	// Tool-calling loop
 	var finalResponse string
+	var denials denialTracker // false-success guard: latches a refusal, clears on same-command recovery (MUX-109)
 	batchSuccess := false
 	toolsExecuted := false
 	consecutiveAllBlocked := 0
@@ -442,6 +443,8 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 				}
 			}
 
+			denials.observe(tc, toolOutput)
+
 			// Add tool result to conversation
 			conversation = append(conversation, ChatMessage{
 				Role:       "tool",
@@ -497,6 +500,20 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 			finalResponse = resp.Choices[0].Message.Content
 			batchSuccess = true
 		}
+	}
+
+	// False-success guard (MUX-109): a refused command must never read as
+	// success. The prompt role sits behind a free-text box, and its
+	// answers land in the Prompt surface as the outcome of what the user
+	// asked — "succeeded" over a denied command makes them believe a
+	// graph ran. The agent definition instructs the model to lead with
+	// BLOCKED, but a small model told not to report false success still
+	// sometimes does (observed live twice, 2026-08-27) — this is the
+	// guard outside the model, same reasoning as the approve guard.
+	// Prompt role only: build/test outcomes are decided by exit codes and
+	// hooks, never by summary text.
+	if cfg.busRole() == "prompt" {
+		finalResponse = enforceDenialPrefix(finalResponse, denials.line)
 	}
 
 	// Mark success if tools executed and we got a real response

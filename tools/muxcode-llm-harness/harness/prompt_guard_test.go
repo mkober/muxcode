@@ -2,6 +2,7 @@ package harness
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -82,6 +83,72 @@ func TestFilter_ApproveGuardWired(t *testing.T) {
 	f.TaskText = "approve commit-gate on the coding run"
 	if res := f.Check(mkCall(guardCmd)); res.Blocked {
 		t.Errorf("named approve must pass through Check: %+v", res)
+	}
+}
+
+// TestFalseSuccessGuardHelpers pins the code-level backstop plan asked
+// for: a denied tool result is detected, an honest failure response is
+// left alone, and a success-shaped summary over a denial would be
+// rewritten (observed live: qwen3:4b answered "succeeded" for a
+// profile-denied command, twice).
+func TestFalseSuccessGuardHelpers(t *testing.T) {
+	denied := "Error: command not allowed by tool profile: date"
+	if got := firstDenialLine("some output\n" + denied + "\nmore"); got != denied {
+		t.Errorf("firstDenialLine = %q, want the denial line", got)
+	}
+	if got := firstDenialLine("run wf-1 complete\n3 nodes done"); got != "" {
+		t.Errorf("clean output must carry no denial, got %q", got)
+	}
+	if got := enforceDenialPrefix("succeeded", denied); !strings.HasPrefix(got, "BLOCKED:") {
+		t.Errorf("a success-shaped summary over a denial must be rewritten, got %q", got)
+	}
+	// The negation bait (plan's catch): "no errors" defeated the old
+	// substring heuristic — the prefix rule must rewrite it too.
+	if got := enforceDenialPrefix("launched, completed with no errors", denied); !strings.HasPrefix(got, "BLOCKED:") {
+		t.Errorf("negation wording must not suppress the guard, got %q", got)
+	}
+	honest := "BLOCKED: approval requires a named gate"
+	if got := enforceDenialPrefix(honest, denied); got != honest {
+		t.Errorf("an honest BLOCKED response must pass untouched, got %q", got)
+	}
+	clean := "started run wf-123"
+	if got := enforceDenialPrefix(clean, ""); got != clean {
+		t.Errorf("no denial means no rewrite, got %q", got)
+	}
+}
+
+// TestDenialTrackerRecovery pins the recovery rule: a denial latches,
+// a clean re-run of the SAME command shape clears it, and a clean run
+// of a DIFFERENT command clears nothing (live 2026-08-27: graph create
+// failed validation, the fixed retry succeeded, and the answer still
+// wore the stale BLOCKED banner).
+func TestDenialTrackerRecovery(t *testing.T) {
+	bash := func(cmd string) ToolCall {
+		return ToolCall{Function: FunctionCall{
+			Name:      "bash",
+			Arguments: json.RawMessage(`{"command":` + strconv.Quote(cmd) + `}`),
+		}}
+	}
+	create := "muxcode graph create --json '{...}'"
+
+	var d denialTracker
+	d.observe(bash(create), "Error: graph \"x\" failed validation; not written")
+	if d.line == "" {
+		t.Fatal("a validation failure must latch the denial")
+	}
+	d.observe(bash("ls -la"), "total 8")
+	if d.line == "" {
+		t.Error("an unrelated success must NOT clear the denial — ls after a denied commit is not recovery")
+	}
+	d.observe(bash(create), `Created project graph "x" at .muxcode/graphs/x.json`)
+	if d.line != "" {
+		t.Errorf("a clean re-run of the denied command must clear the latch, still holds %q", d.line)
+	}
+
+	// A recovered batch can latch a NEW denial afterward.
+	d.observe(bash("muxcode graph run x"), "REFUSED: prompt role lacks authority")
+	if d.line == "" {
+		t.Error("a fresh denial after recovery must latch again")
 	}
 }
 

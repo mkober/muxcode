@@ -717,6 +717,33 @@ Build and test roles are designated as "single-shot" via `isSingleShotRole()`. A
 
 Flow: tool executes → single-shot detected → loop breaks → summary call (no tools) → response sent.
 
+### False-success guard
+
+A small model will sometimes report success for a command that was **refused**. Two captured live on 2026-08-27, minutes apart, from `qwen3:4b` on the prompt role:
+
+```
+BLOCKED: Error: command not allowed by tool profile: make build
+         — model summary: succeeded: Requirements PR created for review
+
+BLOCKED: Error: command not allowed by tool profile: muxcli status
+         — model summary: succeeded: Requirements doc moved to completed
+           directory and Jira story transitioned to Done
+```
+
+The second claims a spec move and a Jira transition to Done. Neither happened; the second command was a hallucinated binary. **The tool profile held perfectly — what failed was the reporting layer.** A guard on what an agent may *do* does not constrain what it *claims*, and the two need separate defences.
+
+`processBatch` therefore captures a denial line from every tool result (`firstDenialLine` — matches `not allowed`, `blocked`, `denied`, `refused`, or a leading `error`), and `enforceDenialPrefix` rewrites the final response when one is present:
+
+| Condition | Result |
+|-----------|--------|
+| No denial in tool output | Response passes through untouched |
+| Denial present, response already starts `BLOCKED:` | Untouched — the model reported honestly |
+| Denial present, anything else | Force-prefixed `BLOCKED: <denial> — model summary: <original>` |
+
+The rule is deliberately a **prefix check, not a keyword search**. An earlier version asked whether the response "admitted failure" by looking for words like `error` or `failed` — which a negation defeats: *"completed with no errors"* contains `error`, so the guard would stand down exactly when it was needed. Pinned by a test using that phrasing.
+
+The agent definition also instructs the model to lead with `BLOCKED:`. That instruction shapes phrasing; the harness check provides the guarantee. This is the same division as the prompt role's approve guard (`checkApproveGuard`, which refuses a gate approval unless the user's own text names the gate) — an instruction is not enforcement, and here the measurement proved it.
+
 ### Harness agent definitions
 
 The `agents/harness/` directory contains simplified agent definitions for local LLMs. These are shorter and more directive than the standard definitions — they avoid bus messaging instructions, multi-step discovery sequences, and other patterns that confuse smaller models.

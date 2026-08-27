@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -62,6 +63,82 @@ func requestTaskText(msgs []Message) string {
 		}
 	}
 	return strings.Join(payloads, "\n")
+}
+
+// firstDenialLine returns the first line of a tool result that carries a
+// refusal signature — the executor's profile denial, the filter's
+// BLOCKED reasons, the bus authority REFUSED/denied messages, or a CLI
+// Error: line — or "" when the output shows no refusal.
+func firstDenialLine(out string) string {
+	for _, ln := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(ln)
+		lower := strings.ToLower(trimmed)
+		if strings.Contains(lower, "not allowed") ||
+			strings.Contains(lower, "blocked") ||
+			strings.Contains(lower, "denied") ||
+			strings.Contains(lower, "refused") ||
+			strings.HasPrefix(lower, "error") {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// commandVerb identifies a tool call's command shape for the denial
+// guard's recovery rule — bash commands by their first three tokens
+// ("muxcode graph create"), other tools by tool name.
+func commandVerb(tc ToolCall) string {
+	if tc.Function.Name != "bash" {
+		return tc.Function.Name
+	}
+	var args struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(tc.Function.Arguments, &args) != nil || args.Command == "" {
+		return "bash"
+	}
+	fields := strings.Fields(args.Command)
+	if len(fields) > 3 {
+		fields = fields[:3]
+	}
+	return strings.Join(fields, " ")
+}
+
+// denialTracker is the false-success guard's per-batch state. A denial
+// latches until the SAME command shape re-runs cleanly — that is a
+// recovery (the model fixed its input), not a fabrication, and the final
+// answer must not wear BLOCKED for a failure that no longer stands
+// (live 2026-08-27: graph create failed validation, the model fixed the
+// JSON, attempt 2 wrote the graph, and the answer still led with the
+// stale validation error). A success of a DIFFERENT command clears
+// nothing — running `ls` after a denied commit is not recovery.
+type denialTracker struct{ line, verb string }
+
+func (d *denialTracker) observe(tc ToolCall, out string) {
+	if d.line == "" {
+		if l := firstDenialLine(out); l != "" {
+			d.line, d.verb = l, commandVerb(tc)
+		}
+		return
+	}
+	if commandVerb(tc) == d.verb && firstDenialLine(out) == "" && !toolHasNonZeroExit(out) {
+		d.line, d.verb = "", ""
+	}
+}
+
+// enforceDenialPrefix rewrites a final response that does not lead with
+// BLOCKED: when a tool result was refused this batch. No wording
+// heuristic decides whether the response "admits" the failure — an
+// earlier substring version read "completed with no errors" as an
+// admission because it contains "error" (negation bait, plan's catch,
+// 2026-08-27). The rule is the one the agent definition already states:
+// a denial demands a response that STARTS with BLOCKED:, and anything
+// else gets the denial prepended with the model's text preserved.
+func enforceDenialPrefix(resp, denialLine string) string {
+	if denialLine == "" || strings.HasPrefix(resp, "BLOCKED:") {
+		return resp
+	}
+	return "BLOCKED: " + denialLine + " — model summary: " + resp
 }
 
 // textTokens splits free text into candidate id tokens, stripping the

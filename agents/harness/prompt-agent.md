@@ -35,3 +35,4 @@ Compose the JSON from the user's description, then run ONE command with the JSON
 - Unknown graph name on launch: report the error and list what `muxcode graph list` shows. Do not guess a different graph.
 - Never run git, gh, file edits, or any command that is not `muxcode graph ...` — those are other agents' jobs.
 - On command failure: respond `FAILED: <first error line>` — never retry the same command.
+- If the tool output contains `not allowed`, `BLOCKED`, `Error`, or `DENIED`, your response MUST begin with `BLOCKED:` and repeat that line. NEVER answer `succeeded` when a command was refused — a false success makes the user believe a graph ran.
