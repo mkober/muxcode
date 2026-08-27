@@ -259,6 +259,13 @@ type GraphUI struct {
 	order     []string // layer-major node order for j/k selection
 	nodeIdx   int
 	directDAG bool // launched with a run id — q from the DAG quits
+	// The cursor follows a running run to its active node (user-requested:
+	// a done stage must not keep the selection parked). A manual move
+	// pauses following; it re-arms when the node the user parked on —
+	// live at park time — completes, never while they inspect a node
+	// that was already settled.
+	nodeFollow  bool
+	parkedState string // selected node's state at the moment of a manual move
 
 	// Template launcher
 	templates       []bus.GraphTemplateInfo
@@ -447,7 +454,7 @@ func NewGraphPromptUI(session string) *GraphUI {
 // NewGraphUI creates the graph TUI. A non-empty runID opens straight
 // into that run's DAG view.
 func NewGraphUI(session, runID string) *GraphUI {
-	ui := &GraphUI{session: session, now: time.Now}
+	ui := &GraphUI{session: session, now: time.Now, nodeFollow: true}
 	if runID != "" {
 		ui.runID = runID
 		ui.directDAG = true
@@ -526,7 +533,48 @@ func (ui *GraphUI) refresh() {
 		if ui.nodeIdx < 0 {
 			ui.nodeIdx = 0
 		}
+		ui.followRunProgress()
 	}
+}
+
+// followRunProgress advances the DAG cursor to the run's active node.
+// Only a running run moves the cursor — completed runs stay stable for
+// post-mortem browsing. A pause re-arms once the parked node (live when
+// parked) settles as done or skipped; a failed node keeps the cursor.
+func (ui *GraphUI) followRunProgress() {
+	if ui.snap == nil || ui.snap.Run == nil || ui.snap.Run.State != bus.GraphRunRunning {
+		return
+	}
+	if !ui.nodeFollow {
+		parkedLive := ui.parkedState == bus.GraphNodeReady ||
+			ui.parkedState == bus.GraphNodeRunning || ui.parkedState == bus.GraphNodeWaiting
+		cur := ui.nodeState(ui.selectedNode())
+		if parkedLive && (cur == bus.GraphNodeDone || cur == bus.GraphNodeSkipped) {
+			ui.nodeFollow = true
+		}
+	}
+	if !ui.nodeFollow {
+		return
+	}
+	for _, want := range []string{bus.GraphNodeWaiting, bus.GraphNodeRunning, bus.GraphNodeReady} {
+		for i, id := range ui.order {
+			if ui.nodeState(id) == want {
+				ui.nodeIdx = i
+				return
+			}
+		}
+	}
+}
+
+// nodeState returns a node's run state, or "" when unknown.
+func (ui *GraphUI) nodeState(id string) string {
+	if ui.snap == nil || id == "" {
+		return ""
+	}
+	if st, ok := ui.snap.Statuses[id]; ok && st != nil {
+		return st.State
+	}
+	return ""
 }
 
 // selectedNode returns the node id under the cursor in the DAG view.
@@ -976,7 +1024,7 @@ func (ui *GraphUI) handlePromptEscape() string {
 					if ui.promptScroll > 0 {
 						ui.promptScroll--
 					}
-				case '5', '6': // PgUp/PgDn — the right column scrolls on its own
+				case '5', '6': // PgUp/PgDn — right-column scroll alias
 					select { // consume the trailing '~' so it never types into the input
 					case <-ui.keyCh:
 					case <-time.After(50 * time.Millisecond):
@@ -984,6 +1032,23 @@ func (ui *GraphUI) handlePromptEscape() string {
 					if b2 == '5' {
 						ui.promptActScroll++
 					} else if ui.promptActScroll > 0 {
+						ui.promptActScroll--
+					}
+				case '1': // Shift-arrows (ESC [ 1 ; 2 A/B) — right-column scroll
+					final := byte(0)
+					for final == 0 {
+						select {
+						case c := <-ui.keyCh:
+							if (c >= 'A' && c <= 'Z') || c == '~' {
+								final = c
+							}
+						case <-time.After(50 * time.Millisecond):
+							final = '~' // incomplete sequence — inert
+						}
+					}
+					if final == 'A' {
+						ui.promptActScroll++
+					} else if final == 'B' && ui.promptActScroll > 0 {
 						ui.promptActScroll--
 					}
 				case 'C': // Right — cursor toward the end; at the end, accept the ghost suggestion
@@ -1091,6 +1156,8 @@ func (ui *GraphUI) launchGraph(g *bus.Graph, template, intent string) {
 	ui.pendingTemplate = ""
 	ui.runID = run.ID
 	ui.nodeIdx = 0
+	ui.nodeFollow = true
+	ui.parkedState = ""
 	ui.view = viewGraphDAG
 	ui.refresh()
 }
@@ -1138,6 +1205,8 @@ func (ui *GraphUI) moveSelection(delta int) {
 		ui.runIdx = clamp(ui.runIdx+delta, 0, len(ui.rows)-1)
 	case viewGraphDAG:
 		ui.nodeIdx = clamp(ui.nodeIdx+delta, 0, len(ui.order)-1)
+		ui.nodeFollow = false
+		ui.parkedState = ui.nodeState(ui.selectedNode())
 	case viewGraphTemplates:
 		ui.tmplIdx = clamp(ui.tmplIdx+delta, 0, len(ui.templates)-1)
 	case viewGraphGates:
@@ -1171,6 +1240,8 @@ func (ui *GraphUI) enter() {
 		}
 		ui.runID = ui.rows[ui.runIdx].ID
 		ui.nodeIdx = 0
+		ui.nodeFollow = true
+		ui.parkedState = ""
 		ui.view = viewGraphDAG
 		ui.refresh()
 	case viewGraphDAG:
@@ -1261,7 +1332,7 @@ func (ui *GraphUI) render() string {
 			st.Working = true
 		}
 		frame = RenderPromptFrame(st, W, H)
-		footer = fmt.Sprintf("  %sEnter%s Send  %sCtrl-T%s Inject/Interpret  %s↑↓%s Scroll·L  %sPgUp/Dn%s Scroll·R  %s←→%s Cursor  %sBksp%s Delete  %sEsc%s Clear/Back",
+		footer = fmt.Sprintf("  %sEnter%s Send  %sCtrl-T%s Inject/Interpret  %s↑↓%s Scroll·L  %sShift↑↓%s Scroll·R  %s←→%s Cursor  %sBksp%s Delete  %sEsc%s Clear/Back",
 			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 		backend, model := bus.PromptBackendInfo(ui.session)
 		footer = PromptFooterStatus(footer, backend, model, W)

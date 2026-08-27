@@ -565,6 +565,46 @@ func TestGateQueue_HistoryScrolls(t *testing.T) {
 	}
 }
 
+// TestGraphUI_CursorFollowsRunProgress pins the DAG auto-advance: the
+// cursor tracks the active node of a running run (waiting > running >
+// ready), a manual move pauses following, the pause re-arms when the
+// parked live node settles, a park on an already-done node holds, and
+// a run that stops running freezes the cursor for post-mortem browsing.
+func TestGraphUI_CursorFollowsRunProgress(t *testing.T) {
+	session := scratchGraphSession(t)
+	run := mustCreateRun(t, session, gateGraph())
+	mustTransition(t, session, run.ID, "review", bus.GraphNodeRunning, bus.GraphNodeDone)
+	mustTransition(t, session, run.ID, "gate", bus.GraphNodeReady, bus.GraphNodeWaiting)
+
+	ui := NewGraphUI(session, run.ID)
+	ui.refresh()
+	if got := ui.selectedNode(); got != "gate" {
+		t.Fatalf("follow should land on the waiting gate, got %q", got)
+	}
+
+	ui.moveSelection(-1) // park on review (already done)
+	ui.refresh()
+	if got := ui.selectedNode(); got != "review" {
+		t.Fatalf("a park on a settled node must hold, got %q", got)
+	}
+
+	ui.moveSelection(1) // park on gate while it is live (waiting)
+	mustTransition(t, session, run.ID, "gate", bus.GraphNodeDone)
+	mustTransition(t, session, run.ID, "ship", bus.GraphNodeReady)
+	ui.refresh()
+	if got := ui.selectedNode(); got != "ship" {
+		t.Fatalf("follow must re-arm when the parked live node settles, got %q", got)
+	}
+
+	if err := bus.CancelGraphRun(session, run.ID); err != nil {
+		t.Fatalf("CancelGraphRun: %v", err)
+	}
+	ui.refresh()
+	if got := ui.selectedNode(); got != "ship" {
+		t.Fatalf("a non-running run must not move the cursor, got %q", got)
+	}
+}
+
 // TestGraphUI_CancelFromRunList pins the run-list cancel: 'c' on a
 // running run parks a confirm, 'y' cancels it; a completed run is inert.
 func TestGraphUI_CancelFromRunList(t *testing.T) {

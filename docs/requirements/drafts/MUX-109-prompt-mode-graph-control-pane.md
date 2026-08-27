@@ -586,12 +586,21 @@ Behaviour beyond what this phase originally specified, added once the surface wa
 | **Activity load raised 20 → 100 lines** | The cap previously bounded the *visible* window; with an independently scrolling column it only needs to bound the load |
 | **Run-list vertical scroll** with `↑`/`↓` overflow indicators | The list silently truncated past the pane height |
 | **Template typeahead** — a typed prefix jumps the launcher selection (`TypeaheadIndex`, shared with the ghost) | Same friction as the ghost, on the other input surface |
-| **PgUp/PgDn disambiguation** — the trailing `~` of `ESC [ 5 ~` / `ESC [ 6 ~` is consumed on a 50 ms timeout | Without it the `~` types itself into the prompt input |
+| **Right-column scroll on Shift-arrows** (`ESC [ 1 ; 2 A/B`), with PgUp/PgDn kept as an alias | Shift-arrows pair naturally with the plain arrows already scrolling the left column |
+| **Escape-sequence disambiguation** — the trailing `~` of `ESC [ 5 ~` / `ESC [ 6 ~` is consumed on a 50 ms timeout, and the Shift-arrow reader discards intermediates until a final byte or timeout (incomplete sequences go inert) | Without it the sequence's tail types itself into the prompt input |
 
 Each carries a negative control: the ghost must **not** render mid-string, and a run list that fits
 must show **no** indicators — assertions a renderer that always suggested, or always flagged
-overflow, would fail. The footer advertises the new keys (`PgUp/Dn Scroll·R`, `←→ Cursor`), per the
-rule that a surface names every key it accepts.
+overflow, would fail. The footer advertises the new keys (`Shift↑↓ Scroll·R`, `←→ Cursor`), per the
+rule that a surface names every key it accepts — PgUp/PgDn still work as an unadvertised alias.
+
+Landing alongside these, on the same branch but belonging to the **graph DAG view**
+([`MUX-031`](../completed/MUX-031-graph-run-tui.md)'s surface, not this spec's): the DAG cursor now follows a
+*running* run to its active node (waiting > running > ready), pausing when the user moves the selection by hand
+and re-arming only once the node they parked on — live at the moment they parked — settles. A completed run never
+moves the cursor, so post-mortem browsing stays stable. Recorded here because the branch is MUX-109's and the work
+would otherwise go unlogged; it closes no item in this spec. `TestGraphUI_CursorFollowsRunProgress` pins all four
+behaviours, including the two that keep the cursor still.
 
 Two open items are untouched by this work and stay open: the in-flight redraw check below (a runtime
 property, and `scripts/test-prompt-mode.sh` has no assertion for it), and all of Phase 4.
@@ -837,7 +846,7 @@ the rejected option would have cost.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-109-prompt-mode-graph-control-pane | 7h 23m | 2026-08-27 17:53 |
+| MUX-109-prompt-mode-graph-control-pane | 7h 32m | 2026-08-27 18:03 |
 
 ## Status
 

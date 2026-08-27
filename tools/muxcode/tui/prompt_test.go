@@ -406,8 +406,8 @@ func TestRenderPromptFrame_IndependentScroll(t *testing.T) {
 	if strings.Contains(frame, "a-29") || !strings.Contains(frame, "q-29") {
 		t.Errorf("ActScroll must lift only the right column:\n%s", frame)
 	}
-	if !strings.Contains(frame, "▼ scrolled — PgDn for newer") {
-		t.Errorf("right indicator must name PgDn:\n%s", frame)
+	if !strings.Contains(frame, "▼ scrolled — Shift↓ for newer") {
+		t.Errorf("right indicator must name Shift↓:\n%s", frame)
 	}
 }
 

@@ -1568,6 +1568,7 @@ muxcode graph ui                          # run browser; Enter opens a run's DAG
 muxcode graph ui <run-id>                 # straight into one run's DAG view
 muxcode graph ui --templates              # pick a template, validated before it starts a run
 muxcode graph ui --gates                  # every wait_human gate awaiting approval
+muxcode graph ui --prompt                 # the Prompt surface (MUX-109)
 
 # Scriptable single frames — no terminal required, stable width for diffing
 muxcode graph ui --render-once --width 100 <run-id>
@@ -1578,9 +1579,17 @@ Keys in the interactive views: `j`/`k` move, `Enter` descends, `q` goes back (qu
 top level), `R` forces a refresh, and `a` / `c` / `r` approve a gate, cancel the run, or retry
 from the selected node — each behind a confirm prompt.
 
-`Tab` cycles the three top-level surfaces in place — **Graph Runs → Pending Gates → Launch Graph**
-— and `Shift-Tab` cycles back, so switching modes never means closing the popup and reopening the
-menu. All three menu entries open the same TUI and differ only in where the cycle starts. A tab bar
+In a **running** run's DAG the cursor follows the active node by itself, so the view tracks progress
+without keypresses. Moving the selection by hand pauses that, and it re-arms only once the node you
+parked on finishes — and only if it was still live when you parked, so inspecting an already-settled
+node holds the cursor there indefinitely. A run that is no longer running never moves the cursor,
+which keeps post-mortem browsing stable.
+
+`Tab` cycles the four top-level surfaces in place — **Prompt → Launch Graph → Graph Runs → Pending
+Gates** — and `Shift-Tab` cycles back, so switching modes never means leaving the view you are in.
+The flags above differ only in where the cycle starts. (The popups and menu entries this originally
+described were retired when the control pane arrived; `muxcode graph ui` remains for ad-hoc use.)
+A tab bar
 in the header shows the active surface; drill-ins (DAG, node detail, intent prompt) and open
 confirm prompts leave `Tab` inert, so it can never yank you out of a half-answered prompt. Each
 surface remembers its own selection across a cycle, restored by item id rather than row index, so

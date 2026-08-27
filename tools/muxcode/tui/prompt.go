@@ -360,7 +360,7 @@ func renderPromptSplit(b *strings.Builder, st PromptSurfaceState, width, budget 
 			leftRows[n-1] = Comment + "▼ scrolled — ↓ for newer" + RST
 		}
 		if rightScrolled {
-			rightRows[n-1] = Comment + "▼ scrolled — PgDn for newer" + RST
+			rightRows[n-1] = Comment + "▼ scrolled — Shift↓ for newer" + RST
 		}
 	}
 
