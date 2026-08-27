@@ -162,6 +162,12 @@ func TestRenderGraphFrame_ContainsEveryNode(t *testing.T) {
 			t.Errorf("frame missing node %q:\n%s", id, frame)
 		}
 	}
+	// Grid labels name who runs each node — terse ids alone are unreadable.
+	for _, who := range []string{"build:build", "test:test", "review:review"} {
+		if !strings.Contains(frame, who) {
+			t.Errorf("grid label missing agent:task %q:\n%s", who, frame)
+		}
+	}
 	if strings.Contains(frame, "flat view") {
 		t.Errorf("wide pane must render the grid, not the fallback:\n%s", frame)
 	}
@@ -309,6 +315,60 @@ func TestRenderGraphFrame_FallbackContainsEveryNode(t *testing.T) {
 
 // Missing status files (store mid-creation) must render as pending, not
 // crash or vanish.
+// TestRenderGraphFrame_NodeDetails pins the "what is actually being
+// done" panel under the grid: a running node shows its dispatched
+// instruction (intent expanded), a done node the FIRST line of its
+// harvested result with its duration, every row names who runs it —
+// and a pane too short for the panel drops it while the grid still
+// renders (negative control).
+func TestRenderGraphFrame_NodeDetails(t *testing.T) {
+	g := linearGraph()
+	g.Nodes[0].Message = "Run ./build.sh and report results"
+	g.Nodes[1].Message = "Run tests for ${intent}"
+	snap := snapshot(g, map[string]string{
+		"build": bus.GraphNodeDone, "test": bus.GraphNodeRunning,
+	})
+	snap.Run.Intent = "MUX-109"
+	snap.Statuses["build"].Output = "Build succeeded: exit 0\nnoise"
+	snap.Statuses["build"].StartedAt = 1000
+	snap.Statuses["build"].DoneAt = 1038
+	snap.Statuses["test"].StartedAt = 1050
+
+	frame := StripAnsi(RenderGraphFrame(snap, 160, 40, "", frameClock))
+	if !strings.Contains(frame, "Build succeeded: exit 0") || strings.Contains(frame, "noise") {
+		t.Errorf("done node must show its result's first line only:\n%s", frame)
+	}
+	if !strings.Contains(frame, "Run tests for MUX-109") {
+		t.Errorf("running node must show its dispatched instruction, intent expanded:\n%s", frame)
+	}
+	if !strings.Contains(frame, "build:build") || !strings.Contains(frame, "test:test") {
+		t.Errorf("each detail row must name who runs the node:\n%s", frame)
+	}
+	if !strings.Contains(frame, "38s") {
+		t.Errorf("done node must show its duration:\n%s", frame)
+	}
+
+	short := StripAnsi(RenderGraphFrame(snap, 160, 12, "", frameClock))
+	if strings.Contains(short, "Run tests for MUX-109") {
+		t.Error("panel must be dropped when the pane cannot fit it")
+	}
+	if !strings.Contains(short, "build") {
+		t.Errorf("grid must still render without the panel:\n%s", short)
+	}
+}
+
+// TestRenderGraphFrame_GateApproveHint pins the waiting gate's detail
+// row: it hands the user the exact approve command.
+func TestRenderGraphFrame_GateApproveHint(t *testing.T) {
+	snap := snapshot(gateGraph(), map[string]string{
+		"review": bus.GraphNodeDone, "gate": bus.GraphNodeWaiting,
+	})
+	frame := StripAnsi(RenderGraphFrame(snap, 160, 40, "", frameClock))
+	if !strings.Contains(frame, "muxcode graph approve run-1 gate") {
+		t.Errorf("waiting gate must show its approve command:\n%s", frame)
+	}
+}
+
 func TestRenderGraphFrame_MissingStatusIsPending(t *testing.T) {
 	snap := snapshot(linearGraph(), nil)
 	snap.Statuses = map[string]*bus.GraphNodeStatus{} // no files at all

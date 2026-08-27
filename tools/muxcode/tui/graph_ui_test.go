@@ -632,6 +632,45 @@ func TestGraphUI_CancelAndRetryFlow(t *testing.T) {
 	}
 }
 
+// TestRenderConfirmFrameH_ConfirmKeysSurviveShortPane pins the clamp
+// rule for the approval confirm: in a short pane the impact LIST is what
+// truncates ("… +N more"), never the y/n line — a question with no
+// visible way to answer it is how the live incident looked (2026-08-27).
+// A tall pane keeps the full list (negative control).
+func TestRenderConfirmFrameH_ConfirmKeysSurviveShortPane(t *testing.T) {
+	act := GraphAction{
+		Kind: "approve", RunID: "r1", NodeID: "gate1", Mutating: true,
+		Releases: []GateImpact{
+			{NodeID: "a", Type: "send", Role: "commit", Action: "commit", Mutating: true},
+			{NodeID: "b", Type: "send", Role: "commit", Action: "pr-read"},
+			{NodeID: "gate2", Type: "wait_human"},
+			{NodeID: "c", Type: "send", Role: "edit", Action: "edit"},
+			{NodeID: "d", Type: "send", Role: "commit", Action: "comment", Mutating: true},
+		},
+	}
+
+	short := StripAnsi(RenderConfirmFrameH(act, 100, 17, ""))
+	if !strings.Contains(short, "y") || !strings.Contains(short, "Confirm") {
+		t.Errorf("the confirm keys must survive a short pane:\n%s", short)
+	}
+	if !strings.Contains(short, "more") {
+		t.Errorf("a truncated impact list must say how much is hidden:\n%s", short)
+	}
+	if lines := strings.Count(short, "\n"); lines > 14 {
+		t.Errorf("short-pane confirm must fit its budget, got %d lines:\n%s", lines, short)
+	}
+
+	tall := StripAnsi(RenderConfirmFrameH(act, 100, 40, ""))
+	for _, id := range []string{"a", "b", "gate2", "c", "d"} {
+		if !strings.Contains(tall, id) {
+			t.Errorf("tall pane must list every released node, missing %q:\n%s", id, tall)
+		}
+	}
+	if strings.Contains(tall, "more") {
+		t.Error("tall pane must not truncate (negative control)")
+	}
+}
+
 // ── Surface cycling (MUX-105 Phases 6–7) ───────────────────
 
 func TestGraphUI_TabCyclesSurfacesForwardAndBack(t *testing.T) {

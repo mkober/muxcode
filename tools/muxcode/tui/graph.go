@@ -138,6 +138,23 @@ func nodeGlyph(nodeType, state string) (glyph string, color string) {
 	return glyph, stateColor(state)
 }
 
+// nodeWho names who runs a node — the label suffix that makes a DAG of
+// terse ids readable: a bare "a → b → c" says nothing about which agent
+// is active (user catch, 2026-08-27). Shared by the grid labels and the
+// detail panel so the two never disagree.
+func nodeWho(n *bus.Node) string {
+	switch n.Type {
+	case bus.NodeSend:
+		return n.Role + ":" + n.Action
+	case bus.NodeSpawn, bus.NodeMap:
+		return n.Type + " " + n.Role
+	case bus.NodeWaitHuman:
+		return "human gate"
+	default:
+		return n.Type
+	}
+}
+
 func stateColor(state string) string {
 	switch state {
 	case bus.GraphNodeDone:
@@ -307,7 +324,15 @@ func RenderGraphFrame(snap GraphSnapshot, width, height int, selection string, n
 		n := &snap.Graph.Nodes[i]
 		types[n.ID] = n.Type
 		glyph, _ := nodeGlyph(n.Type, snap.nodeState(n.ID))
-		labels[n.ID] = glyph + " " + n.ID + loopAnnotation(snap.Run, grid.Loops, n.ID)
+		label := glyph + " " + n.ID
+		// Terse ids say nothing about which agent is active (a bare
+		// "a → b → c" was unreadable live; user catch, 2026-08-27) — send
+		// and worker nodes carry who runs them. Gates keep their glyph.
+		switch n.Type {
+		case bus.NodeSend, bus.NodeSpawn, bus.NodeMap:
+			label += " " + nodeWho(n)
+		}
+		labels[n.ID] = label + loopAnnotation(snap.Run, grid.Loops, n.ID)
 	}
 
 	// Column geometry: each layer block is as wide as its widest label.
@@ -391,7 +416,72 @@ func RenderGraphFrame(snap GraphSnapshot, width, height int, selection string, n
 		}
 	}
 
-	return renderGraphHeader(snap, now, width) + c.String()
+	frame := renderGraphHeader(snap, now, width) + c.String()
+	// The per-node detail panel renders only when it fits under the grid —
+	// the grid is the load-bearing view and must never be pushed past the
+	// pane clamp for the sake of detail rows.
+	if gridH+skipLanes+headerLines+len(snap.Graph.Nodes)+1 <= height {
+		frame += RenderNodeDetails(snap, width, now)
+	}
+	return frame
+}
+
+// RenderNodeDetails lists every node with who runs it, its timing, and
+// what it is doing — the run view's answer to "what is actually
+// happening": a running node shows the instruction it dispatched, a
+// finished node the first line of its harvested result, a waiting gate
+// its approval command.
+func RenderNodeDetails(snap GraphSnapshot, width int, now time.Time) string {
+	var b strings.Builder
+	b.WriteString("\n")
+	for i := range snap.Graph.Nodes {
+		n := &snap.Graph.Nodes[i]
+		st := snap.Statuses[n.ID]
+		state := snap.nodeState(n.ID)
+		glyph, color := nodeGlyph(n.Type, state)
+
+		who := nodeWho(n)
+
+		timing := ""
+		if st != nil && st.StartedAt > 0 {
+			end := now.Unix()
+			if st.DoneAt > 0 {
+				end = st.DoneAt
+			}
+			if end > st.StartedAt {
+				timing = (time.Duration(end-st.StartedAt) * time.Second).String()
+			}
+		}
+
+		detail, detailColor := "", FG
+		msg := strings.ReplaceAll(n.Message, "${intent}", snap.Run.Intent)
+		switch state {
+		case bus.GraphNodeRunning:
+			detail = msg
+		case bus.GraphNodeWaiting:
+			detail = "waiting for approval — muxcode graph approve " + snap.Run.ID + " " + n.ID
+			if n.Type != bus.NodeWaitHuman {
+				detail = msg
+			}
+			detailColor = Yellow
+		case bus.GraphNodeDone, bus.GraphNodeFailed:
+			if st != nil {
+				detail = strings.TrimSpace(st.Output)
+				if nl := strings.IndexByte(detail, '\n'); nl >= 0 {
+					detail = strings.TrimSpace(detail[:nl])
+				}
+			}
+			if state == bus.GraphNodeFailed {
+				detailColor = Red
+			}
+		}
+
+		line := fmt.Sprintf("  %s%s %-10s%s %s%-20s%s %-8s %s%s%s",
+			color, glyph, n.ID, RST, Comment, who, RST, timing,
+			detailColor, detail, RST)
+		b.WriteString(fitWidth(line, width) + "\n")
+	}
+	return b.String()
 }
 
 // writeCursorAndLabel places the selection cursor and the node label.
@@ -563,7 +653,76 @@ type RunListRow struct {
 	State       string
 	Done, Total int
 	Elapsed     time.Duration
-	GateWaiting bool // a wait_human node is waiting on this run
+	GateWaiting bool   // a wait_human node is waiting on this run
+	Results     string // one-line outcome: issues first, else what completed
+}
+
+// SummarizeRunResults compresses a run's node outcomes into one results
+// cell: issues win (first failed node and why), otherwise the completed
+// node chain. Success cells are built from node IDS, never node output —
+// harvested output is multi-line agent prose whose first line lands
+// mid-sentence, and four such fragments stacked in the run list read as
+// one message flowing across rows (user's catch, 2026-08-27). A done id
+// may carry a trailing "?" — that node's completion was INFERRED (its
+// non-hook provider gave no exit-code proof), and the cell explains the
+// mark inline instead of a bare count nobody could interpret (user's
+// second catch, same day). The glyph prefix carries identity — the
+// renderer colors by it, and the cell stays readable through StripAnsi.
+func SummarizeRunResults(runState string, failed []string, failedOut string, done []string) string {
+	firstLine := func(s string) string {
+		s = strings.TrimSpace(s)
+		if i := strings.IndexByte(s, '\n'); i >= 0 {
+			s = strings.TrimSpace(s[:i])
+		}
+		return s
+	}
+	chain := strings.Join(done, " → ")
+	inferred := false
+	for _, d := range done {
+		if strings.HasSuffix(d, "?") {
+			inferred = true
+			break
+		}
+	}
+	switch {
+	case len(failed) > 0:
+		msg := "✗ " + failed[0]
+		if len(failed) > 1 {
+			msg += fmt.Sprintf(" +%d", len(failed)-1)
+		}
+		if out := firstLine(failedOut); out != "" {
+			msg += ": " + out
+		}
+		return msg
+	case runState == bus.GraphRunComplete:
+		msg := "✓ complete"
+		if chain != "" {
+			msg = "✓ " + chain
+		}
+		if inferred {
+			msg += "  (? = completion inferred, no exit-code proof)"
+		}
+		return msg
+	case runState == bus.GraphRunCanceled:
+		return "canceled"
+	default:
+		if chain != "" {
+			return chain + " ⋯" // in flight — what has finished so far
+		}
+		return ""
+	}
+}
+
+// resultsCellColor maps a results cell to its color by glyph prefix.
+func resultsCellColor(results string) string {
+	switch {
+	case strings.HasPrefix(results, "✗"):
+		return Red
+	case strings.HasPrefix(results, "✓"):
+		return Green
+	default:
+		return Comment
+	}
 }
 
 // RenderRunListFrame renders the run browser: all runs newest first, with
@@ -581,8 +740,8 @@ func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 		return b.String()
 	}
 
-	fmt.Fprintf(&b, "  %s   %-40s %-10s %-9s %-9s %s%s\n",
-		Comment, "RUN", "STATE", "PROGRESS", "ELAPSED", "TEMPLATE", RST)
+	fmt.Fprintf(&b, "  %s   %-40s %-10s %-9s %-9s %-28s %s%s\n",
+		Comment, "RUN", "STATE", "PROGRESS", "ELAPSED", "TEMPLATE", "RESULTS", RST)
 	for i, r := range rows {
 		cursor := " "
 		idColor := FG
@@ -603,11 +762,16 @@ func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 		if r.GateWaiting {
 			badge = "  " + Yellow + Bold + "⚑ gate" + RST
 		}
-		line := fmt.Sprintf("  %s %s%-40s%s %s%-10s%s %d/%-7d %-9s %s%s%s%s",
+		results := r.Results
+		if len([]rune(results)) > 90 {
+			results = string([]rune(results)[:89]) + "…"
+		}
+		line := fmt.Sprintf("  %s %s%-40s%s %s%-10s%s %d/%-7d %-9s %s%-28s%s %s%s%s%s",
 			cursor, idColor, r.ID, RST,
 			stateColor, r.State, RST,
 			r.Done, r.Total, r.Elapsed.String(),
-			Comment, r.Template, RST, badge)
+			Comment, r.Template, RST,
+			resultsCellColor(results), results, RST, badge)
 		b.WriteString(fitWidth(line, width) + "\n")
 	}
 	return b.String()
@@ -875,15 +1039,43 @@ type GraphAction struct {
 // Approval of a gate releasing a commit/Atlassian node says so here —
 // this prompt is the consent the gate exists to collect.
 func RenderConfirmFrame(act GraphAction, width int, errMsg string) string {
+	return RenderConfirmFrameH(act, width, 0, errMsg)
+}
+
+// RenderConfirmFrameH is RenderConfirmFrame with a height budget: the
+// downstream-impact list is what gets truncated ("… +N more"), NEVER the
+// y/n confirm line — in a short control pane the full list pushed the
+// confirm keys past the clamp and the user faced a question with no
+// visible way to answer it (live, 2026-08-27). height <= 0 = unbudgeted.
+func RenderConfirmFrameH(act GraphAction, width, height int, errMsg string) string {
+	releases := act.Releases
+	// Rows outside the list: tabs(2) + blanks/question/header(4) +
+	// warning(2) + err(2) + confirm(2) + outer rule+footer(3).
+	if height > 0 && len(releases) > 0 {
+		budget := height - 15
+		if budget < 1 {
+			budget = 1
+		}
+		if len(releases) > budget {
+			keep := budget - 1 // the "… +N more" line spends one row
+			if keep < 0 {
+				keep = 0
+			}
+			releases = releases[:keep]
+		}
+	}
 	var b strings.Builder
 	b.WriteString("\n")
 	switch act.Kind {
 	case "approve":
 		fmt.Fprintf(&b, "  %s%sApprove gate %s%s on run %s?\n", Yellow, Bold, act.NodeID, RST, act.RunID)
-		if len(act.Releases) > 0 {
+		if len(releases) > 0 {
 			fmt.Fprintf(&b, "\n  %sapproval releases:%s\n", Comment, RST)
-			for _, imp := range act.Releases {
+			for _, imp := range releases {
 				b.WriteString("    " + formatGateImpact(imp) + "\n")
+			}
+			if hidden := len(act.Releases) - len(releases); hidden > 0 {
+				fmt.Fprintf(&b, "    %s… +%d more%s\n", Comment, hidden, RST)
 			}
 		}
 		if act.Mutating {

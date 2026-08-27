@@ -77,19 +77,34 @@ func LoadRunListRows(session string, now time.Time) []RunListRow {
 		}
 		statuses, _ := bus.ReadAllNodeStatuses(session, r.ID)
 		row := RunListRow{ID: r.ID, Template: r.Template, State: r.State, Total: len(g.Nodes)}
+		var failedNodes, doneNodes []string
+		var failedOut string
 		for j := range g.Nodes {
 			n := &g.Nodes[j]
 			state := bus.GraphNodePending
-			if st := statuses[n.ID]; st != nil {
-				state = st.State
+			var st *bus.GraphNodeStatus
+			if s := statuses[n.ID]; s != nil {
+				st, state = s, s.State
 			}
 			if state == bus.GraphNodeDone {
 				row.Done++
+				id := n.ID
+				if st.Outcome == bus.OutcomeUnknown {
+					id += "?" // completion inferred — the cell explains the mark
+				}
+				doneNodes = append(doneNodes, id)
+			}
+			if state == bus.GraphNodeFailed {
+				failedNodes = append(failedNodes, n.ID)
+				if failedOut == "" {
+					failedOut = st.Output
+				}
 			}
 			if n.Type == bus.NodeWaitHuman && state == bus.GraphNodeWaiting {
 				row.GateWaiting = true
 			}
 		}
+		row.Results = SummarizeRunResults(r.State, failedNodes, failedOut, doneNodes)
 		end := now.Unix()
 		if r.State != bus.GraphRunRunning {
 			end = r.UpdatedAt
