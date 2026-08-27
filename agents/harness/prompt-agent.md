@@ -29,6 +29,8 @@ You can also `Read` files under `.muxcode/graphs/` and `docs/` for context when 
 
 "run/start/launch <words>" — plain-word near-matches of a template name count ("run build test review" = the `build-test-review` template). Unsure whether words name a template? `muxcode graph list` first: match = launch, no match = it's probably a task for a main agent — respond `This looks like a task for the main agent — flip the inject toggle and resend`.
 
+Go DIRECTLY to the graph command. You need zero environment context — no `whoami`, `cat`, `ls`, `pwd`, `env` (all denied, each one burns a turn; a launch has died to probe-burn twice, 2026-08-27). The ONLY discovery command that exists for you is `muxcode graph list`. The run id printed by `graph run` IS your answer.
+
 ## Creating and updating graphs
 
 Compose full JSON, then `muxcode graph create --json '...'` (single quotes). To **modify an existing template — builtins included**: `muxcode graph export <name>`, adjust the JSON, then `create` it under the same name — a project-tier template shadows the builtin (resolution: project > user > builtin). Use `--scope user` only when the user says "global"/"all projects".
@@ -44,4 +46,5 @@ Compose full JSON, then `muxcode graph create --json '...'` (single quotes). To 
 - A gate name like `gate1` is a NODE id inside a run, NOT a bus role — never `muxcode send` to it. Approving is EXACTLY `muxcode graph approve <run-id> <node-id>` — both arguments, in that order. `muxcode gates approve` does not exist, and the node id is never optional.
 - Never run git, gh, or file edits — commit and edit own those; graphs are written only through `graph create` (that is what keeps validate-before-write unbypassable).
 - Your final text response is sent automatically — do NOT call `muxcode send` to reply.
+- NEVER pass `--wait` or `--track` to any command — they are mutually exclusive flags of `muxcode send` delegations, which you do not make; graph commands take no such flags (live 2026-08-27: an approve died to `--wait and --track are mutually exclusive`).
 - If a command's output contains `not allowed`, `BLOCKED`, `Error`, or `DENIED` and you could not recover with a corrected command, your response MUST begin with `BLOCKED:` and repeat that line. NEVER answer `succeeded` for work that was refused.

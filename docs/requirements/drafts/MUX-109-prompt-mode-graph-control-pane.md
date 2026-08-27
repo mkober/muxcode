@@ -113,7 +113,7 @@ assertion.
 - [ ] Intent: **gates** — pending `wait_human` gates can be listed, and approved **only** when the user's prompt names the gate or run
 - [x] A prompt that does not name a specific gate never approves one — pinned by a negative-control test using deliberately suggestive phrasing ("approve whatever is waiting")
 - [ ] Single-use gate approval semantics from [MUX-014](../completed/MUX-014-graph-agent-orchestrator.md) are unchanged — re-entering a gate still demands a fresh approval
-- [ ] Intent: **create** — a described workflow is composed into a graph definition, validated, and written project-local by default
+- [x] Intent: **create** — a described workflow is composed into a graph definition, validated, and written project-local by default
 - [x] A definition failing `Validate()` is **reported, never written** — pinned by a test asserting no file appears on the failure path
 - [x] A prompt-composed graph placing a commit or Atlassian node outside a `wait_human` gate is rejected by the existing validator rule, with no bypass
 - [x] Injection delivers the typed text to the window's active main agent via `TmuxSendLiteral()` (text → delay → Enter), never a hand-rolled `send-keys`
@@ -660,7 +660,7 @@ carries its own positive control, noting that "a filter that blocks every approv
 
 ### Phase 5: Graph creation flow
 
-- [ ] Compose a definition from a described workflow
+- [x] Compose a definition from a described workflow
 - [x] Validate before writing; report failures verbatim, write nothing
 - [x] Write project-local by default; user-global only on explicit instruction
 - [x] Test: a composed graph with an ungated commit node is rejected by the existing validator rule
@@ -681,10 +681,46 @@ carries its own positive control, noting that "a filter that blocks every approv
 - [ ] Launch intent starts a run against a scratch graph dir; run appears in `graph list`
 - [x] Status intent reports that run
 - [ ] Named-gate approval releases the gate; unnamed "approve whatever is waiting" does **not**
-- [ ] Create intent writes a valid definition into the scratch project dir; an invalid one writes nothing
+- [x] Create intent writes a valid definition into the scratch project dir; an invalid one writes nothing
 - [x] Injection delivers a dash-leading payload intact into a scratch pane
 - [x] Ollama dependency: skip-with-reason when Ollama is absent, and assert the model-unreachable frame still renders — the test must never pass **vacuously** by skipping everything silently
 - [x] Guard the skip path with a **coverage floor**: assert a minimum number of non-skipped checks, so a machine with no model pulled reports "skipped" loudly rather than green. This is not hypothetical — it is the current state of the development machine, so the skip branch will be the *first* branch exercised
+
+### Phase 7 after the fixes — 26 passed, 2 failed, 1 skipped (stable ×3)
+
+Re-run 2026-08-27 on the gateway backend, identical across logs 7, 8 and 9 — verified by reading all
+three, not by one sample. Every fix from the first run is demonstrably working:
+
+| Fix | Evidence |
+|-----|----------|
+| Gateway backend | **0.8–1.6 s** per call, against 39–82 s on `qwen3:4b`. The timeout hypothesis is dead |
+| Gated negative control | Reports `SKIP: unnamed-approve negative control undetermined — positive control failed` instead of falsely passing. Firing on precisely the case it was built for |
+| `live_diag` | Fires on failure and its output identified the real cause |
+| `create` intent | Now **passes** — composed and wrote a valid definition |
+| Approve guard, both spellings | Verified after the alias gap was closed |
+
+**The two remaining failures share one cause, and it is not capability.** Run 9 shows **four**
+`not allowed by tool profile` rejections and the loop reaching `Prompt 10/10`: the model spends its
+turn budget on probes the profile denies, and never reaches the required command. Run 8 shows the
+same behaviour in a different costume — a malformed `muxcode send --wait --track` (mutually
+exclusive) burning a turn.
+
+So `launch` and `named approve` fail for a **model habit**, not a product defect and not a limit of
+the gateway model. The agent definition already carries a "never probe" instruction; it is not
+sufficient on its own — the same instruction-versus-enforcement split this spec has hit repeatedly.
+
+Candidate fixes, on the maintainer's decision:
+
+1. A **first-tool-call-must-be-the-command** rule in the agent definition — narrower and more
+   checkable than "never probe".
+2. **Raise the prompt harness turn budget** — cheap, but treats the symptom; a model that probes
+   four times will probe six.
+
+Rung 1 is the better first move for the same reason the escalation ladder prefers constraint over
+capacity: a bigger budget makes the failure rarer without making it wrong less often.
+
+*(One thing I initially misread: the `can't find window: build` line in the daemon log is scratch-session
+noise, not part of the failure path. Recorded because it looked causal and was not.)*
 
 ### Phase 7 first run — 25 passed, 3 failed, 0 skipped
 
