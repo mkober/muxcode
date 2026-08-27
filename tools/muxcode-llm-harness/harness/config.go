@@ -17,6 +17,8 @@ type Config struct {
 	MaxTurns    int           // max tool-calling turns per batch (default 10)
 	BusDir      string        // /tmp/muxcode-bus-{session}/
 	BusBin      string        // path to muxcode binary
+	NoThink     bool          // disable the model's thinking phase (MUXCODE_HARNESS_NOTHINK=1)
+	APIKey      string        // bearer key for a hosted OpenAI-compatible endpoint (MUXCODE_HARNESS_API_KEY)
 	TUI         bool          // enable TUI mode (live activity display)
 	UserInput   <-chan string // user-submitted chat messages (TUI mode only)
 }
@@ -61,6 +63,15 @@ func DefaultConfig() Config {
 		cfg.OllamaModel = v
 	}
 
+	// Thinking off: qwen3-class models spend 30-90s reasoning before their
+	// first token — latency the harness's structured tasks rarely need.
+	cfg.NoThink = os.Getenv("MUXCODE_HARNESS_NOTHINK") == "1"
+
+	// A bearer key switches the endpoint from local Ollama to a hosted
+	// OpenAI-compatible gateway (MUX-109: the prompt-agent on OpenCode's
+	// Zen gateway) — same client, same dialect, plus Authorization.
+	cfg.APIKey = os.Getenv("MUXCODE_HARNESS_API_KEY")
+
 	cfg.BusDir = "/tmp/muxcode-bus-" + cfg.Session
 	cfg.BusBin = findBusBin()
 
@@ -75,17 +86,29 @@ func DefaultConfig() Config {
 // for its catalog models (provider/model form, e.g. opencode-go/foo), so
 // a role pinned for OpenCode and later flipped to CLI=local would hand
 // Ollama a model name it can never pull. Catalog-form values are
-// therefore skipped here — they belong to the other provider. An Ollama
-// model that genuinely contains "/" (user namespaces) can only be set
-// via MUXCODE_OLLAMA_MODEL. Mirrored in bus/ollama.go.
+// therefore skipped — but ONLY while the endpoint is local Ollama. A
+// remote gateway defines its own model namespace, so the guard stands
+// down and pins pass through VERBATIM: some gateways use slashed ids
+// (OpenRouter's deepseek/deepseek-chat), others bare ids (OpenCode Zen —
+// opencode-go/deepseek-v4-flash 401'd there, live 2026-08-27). Stripping
+// or rewriting would silently mangle ids valid elsewhere; a wrong pin
+// fails loudly with the gateway's own error, which is the better
+// teacher. Mirrored in bus/ollama.go.
 func RoleModel(role string) string {
 	envVar := roleModelEnvVar(role)
-	if v := os.Getenv(envVar); v != "" && !strings.Contains(v, "/") {
+	if v := os.Getenv(envVar); v != "" && (!strings.Contains(v, "/") || remoteEndpointConfigured()) {
 		return v
 	}
 	// Fall through to global env / default
 	cfg := DefaultConfig()
 	return cfg.OllamaModel
+}
+
+// remoteEndpointConfigured reports whether the inference endpoint is a
+// non-local gateway rather than the default local Ollama.
+func remoteEndpointConfigured() bool {
+	u := os.Getenv("MUXCODE_OLLAMA_URL")
+	return u != "" && u != "http://localhost:11434" && !strings.Contains(u, "localhost") && !strings.Contains(u, "127.0.0.1")
 }
 
 // roleModelEnvVar returns the per-role model env var name.

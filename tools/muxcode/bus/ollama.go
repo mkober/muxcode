@@ -54,15 +54,26 @@ func DefaultOllamaConfig() OllamaConfig {
 // for its catalog models (provider/model form, e.g. opencode-go/foo), so
 // a role pinned for OpenCode and later flipped to CLI=local would hand
 // Ollama a model name it can never pull. Catalog-form values are
-// therefore skipped here — they belong to the other provider. An Ollama
-// model that genuinely contains "/" (user namespaces) can only be set
-// via MUXCODE_OLLAMA_MODEL. Mirrored in harness/config.go.
+// therefore skipped — but ONLY while the endpoint is local Ollama. A
+// remote gateway defines its own model namespace, so pins pass through
+// VERBATIM: some gateways use slashed ids (OpenRouter), others bare ids
+// (OpenCode Zen rejected the opencode-go/ prefix live, 2026-08-27).
+// Rewriting would silently mangle ids valid elsewhere; a wrong pin
+// fails loudly with the gateway's own error. Mirrored in
+// harness/config.go.
 func RoleModel(role string) string {
 	envVar := roleModelEnvVar(role)
-	if v := os.Getenv(envVar); v != "" && !strings.Contains(v, "/") {
+	if v := os.Getenv(envVar); v != "" && (!strings.Contains(v, "/") || remoteEndpointConfigured()) {
 		return v
 	}
 	return DefaultOllamaConfig().Model
+}
+
+// remoteEndpointConfigured reports whether the inference endpoint is a
+// non-local gateway rather than the default local Ollama.
+func remoteEndpointConfigured() bool {
+	u := os.Getenv("MUXCODE_OLLAMA_URL")
+	return u != "" && u != "http://localhost:11434" && !strings.Contains(u, "localhost") && !strings.Contains(u, "127.0.0.1")
 }
 
 // roleModelEnvVar returns the per-role model env var name.

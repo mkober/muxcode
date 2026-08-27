@@ -84,6 +84,13 @@ type ChatRequest struct {
 	Stream      bool          `json:"stream"`
 	Temperature float64       `json:"temperature"`
 	MaxTokens   int           `json:"max_tokens,omitempty"`
+	// Think disables (false) or requests (true) the model's reasoning
+	// phase on Ollama versions that honor it here; older compat layers
+	// ignore the unknown field, which is why applyNoThink additionally
+	// plants qwen3's /no_think soft switch in the system prompt
+	// (MUX-109: thinking is 30-90s of latency per round that closed-set
+	// intent classification does not need).
+	Think *bool `json:"think,omitempty"`
 }
 
 // ChatResponse is the response from Ollama's OpenAI-compatible API.
@@ -114,12 +121,15 @@ type OllamaError struct {
 	Type    string `json:"type"`
 }
 
-// OllamaClient wraps HTTP calls to Ollama's OpenAI-compatible API.
+// OllamaClient wraps HTTP calls to an OpenAI-compatible chat endpoint —
+// local Ollama by default, or a hosted gateway when APIKey is set.
 type OllamaClient struct {
 	BaseURL     string
 	Model       string
 	Temperature float64
 	MaxTokens   int
+	NoThink     bool   // send think:false with every request (MUX-109)
+	APIKey      string // bearer token for hosted gateways (empty for local Ollama)
 	HTTP        *http.Client
 }
 
@@ -147,13 +157,22 @@ func (c *OllamaClient) ChatComplete(ctx context.Context, messages []ChatMessage,
 		Temperature: c.Temperature,
 		MaxTokens:   c.MaxTokens,
 	}
+	if c.NoThink {
+		f := false
+		req.Think = &f
+	}
 
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("encoding request: %w", err)
 	}
 
+	// Hosted gateway bases conventionally already end in /v1 (e.g.
+	// https://opencode.ai/zen/v1) — blind concatenation would double it.
 	url := c.BaseURL + "/v1/chat/completions"
+	if strings.HasSuffix(c.BaseURL, "/v1") {
+		url = c.BaseURL + "/chat/completions"
+	}
 	var lastErr error
 	backoff := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
 
@@ -171,6 +190,9 @@ func (c *OllamaClient) ChatComplete(ctx context.Context, messages []ChatMessage,
 			return nil, fmt.Errorf("creating request: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
+		if c.APIKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+		}
 
 		resp, err := c.HTTP.Do(httpReq)
 		if err != nil {
