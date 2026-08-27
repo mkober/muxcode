@@ -230,8 +230,8 @@ func TestRenderGraphFrame_GateProminent(t *testing.T) {
 func TestRenderGraphFrame_SelectionCursor(t *testing.T) {
 	snap := snapshot(linearGraph(), nil)
 	frame := StripAnsi(RenderGraphFrame(snap, 120, 40, "test", frameClock))
-	if !strings.Contains(frame, "▸") {
-		t.Errorf("expected selection cursor ▸:\n%s", frame)
+	if !strings.Contains(frame, "▶") {
+		t.Errorf("expected selection cursor ▶:\n%s", frame)
 	}
 }
 

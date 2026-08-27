@@ -410,7 +410,7 @@ func RenderGraphFrame(snap GraphSnapshot, width, height int, selection string, n
 		for _, id := range layerIDs {
 			_, color := nodeGlyph(types[id], snap.nodeState(id))
 			if id == selection {
-				color = Cyan + Bold
+				color = Yellow + Bold
 			}
 			writeCursorAndLabel(c, colX[i], nodeY(id), id == selection, labels[id], color)
 		}
@@ -487,7 +487,7 @@ func RenderNodeDetails(snap GraphSnapshot, width int, now time.Time) string {
 // writeCursorAndLabel places the selection cursor and the node label.
 func writeCursorAndLabel(c *canvas, x, y int, selected bool, label, color string) {
 	if selected {
-		c.writeText(x, y, "▸", Yellow)
+		c.writeText(x, y, "▶", Yellow+Bold)
 	}
 	c.writeText(x+2, y, label, color)
 }
