@@ -50,6 +50,25 @@ if size > prev && size > 0 {
    hygiene) becomes an echo trigger. Suggests the fix should also constrain changed-files
    to repo-relative paths, independent of the refire cause.
 
+8. **Changed-files named the user's credentials file (observed 2026-08-27, 09:54)** — this
+   raises item 7 from untidy to a disclosure concern. An echo arrived whose `Changed files:`
+   was `/Users/<user>/.config/muxcode/config`: the muxcode config, which by design holds
+   `JIRA_API_TOKEN` and now `MUXCODE_OPENCODE_API_KEY`. The verify-spec instruction reads
+   *"Read the spec and the changed files"*, so the message is a standing invitation for a
+   receiving agent to open a secrets file and pull its contents into an LLM context — and,
+   via the normal reply path, potentially into a bus message or a doc.
+
+   Nothing leaked here: the agent that received it recognised the path and declined to read
+   it. But that is a judgement call standing in for a control, and it will not hold for every
+   agent on every pass. Two requirements follow, and the second is the one that matters:
+
+   - **Scope changed-files to the repository** — the fix already proposed in item 7, which
+     would have prevented this instance.
+   - **Never instruct an agent to read a path outside the repo, credentials or not.** Path
+     scoping fixes the observed case; it does not fix the general one, since a repo-relative
+     path can also be sensitive. The instruction itself should not name arbitrary files as
+     required reading.
+
    **Reproducible, not a one-off**: it fired again at 10:15 the moment plan appended an
    addendum to that same `/tmp` file. Two writes to one out-of-repo scratch file, two
    echoes — so the trigger is the write itself, and any agent following the documented
