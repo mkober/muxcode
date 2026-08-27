@@ -1428,22 +1428,33 @@ func (d *Daemon) checkOllama() {
 		return
 	}
 
-	// Cold-load guard (MUX-109): a responsive server whose model is not in
-	// memory yet is warming, not stuck — a restart would discard the load
-	// in progress and the ladder would kill every attempt in a loop. Only
-	// within the grace window, and never when agent sentinels point at a
-	// real failure; past the grace a load that never finishes (OOM) walks
-	// the ladder like any other wedge.
+	// Not-confirmed-dead grace (MUX-109): a probe timeout against a server
+	// that still answers /api/ps is not proof of a wedge. Two live states
+	// produce it — WARMING (model not in memory yet; a restart discards
+	// the load in progress and the ladder kills every attempt in a loop)
+	// and STRAINED (model loaded, single completion slot saturated by
+	// long thinking completions; observed live 2026-08-27 when the ladder
+	// killed Ollama twice under the integration script's load, destroying
+	// in-flight work each time). Both get the same bounded grace before
+	// failures count; a truly dead or hung server fails the /api/ps probe
+	// and walks the ladder immediately, and agent fail sentinels always
+	// count. The cost is a real loaded-but-wedged inference waiting out
+	// the grace before recovery — minutes of delay against the false
+	// kill's guaranteed destruction of live work.
 	if err != nil && !hasSentinels {
-		if responsive, loaded := bus.OllamaModelLoaded(d.ollamaURL, d.ollamaModel, 3*time.Second); responsive && !loaded {
+		if responsive, loaded := bus.OllamaModelLoaded(d.ollamaURL, d.ollamaModel, 3*time.Second); responsive {
+			state, detail := "warming", "model loading"
+			if loaded {
+				state, detail = "strained", "model loaded, completion queue saturated"
+			}
 			if d.ollamaWarmingSince == 0 {
 				d.ollamaWarmingSince = now
 			}
-			warmingFor := now - d.ollamaWarmingSince
-			if warmingFor < bus.OllamaWarmupGraceSecs() {
-				fmt.Printf("  %s  Ollama warming: %s loading for %ds — probe failure not counted\n", ts, d.ollamaModel, warmingFor)
-				bus.LogLifecycle(d.session, "info", "daemon", "ollama-warming",
-					fmt.Sprintf("model %s loading for %ds", d.ollamaModel, warmingFor))
+			graceFor := now - d.ollamaWarmingSince
+			if graceFor < bus.OllamaWarmupGraceSecs() {
+				fmt.Printf("  %s  Ollama %s: %s (%s, %ds) — probe failure not counted\n", ts, state, d.ollamaModel, detail, graceFor)
+				bus.LogLifecycle(d.session, "info", "daemon", "ollama-"+state,
+					fmt.Sprintf("model %s: %s for %ds", d.ollamaModel, detail, graceFor))
 				return
 			}
 		}
