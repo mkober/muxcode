@@ -164,7 +164,7 @@ func PromptRenderOnce(session string, width int) (string, error) {
 	}
 	st := PromptSurfaceState{
 		Exchanges:   LoadPromptExchanges(session, promptTranscriptLimit),
-		Destination: promptDestinationLabel(false),
+		Destination: promptDestinationLabel(false, ""),
 		Unreachable: PromptUnreachable(session),
 	}
 	if n := len(st.Exchanges); n > 0 && !st.Exchanges[n-1].Answered {
@@ -173,16 +173,15 @@ func PromptRenderOnce(session string, width int) (string, error) {
 	return RenderPromptFrame(st, width, termHeight()), nil
 }
 
-// promptDestinationLabel names where a submitted prompt goes. Interpret
-// always routes to the prompt-agent; inject targets the window's agent
-// (the window role until Phase 6 wires active-mode resolution).
-func promptDestinationLabel(inject bool) string {
+// promptDestinationLabel names where a submitted prompt goes. Pure
+// formatting — the active role is resolved by refresh() (mode-cycle
+// aware), never here.
+func promptDestinationLabel(inject bool, activeRole string) string {
 	if !inject {
 		return "prompt-agent"
 	}
-	role := bus.BusRole()
-	if role == "" {
-		role = "edit"
+	if activeRole == "" {
+		activeRole = "edit"
 	}
-	return role + " agent (delivery lands in Phase 6)"
+	return activeRole + " agent"
 }

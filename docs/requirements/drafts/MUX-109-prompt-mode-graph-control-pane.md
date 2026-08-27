@@ -102,9 +102,9 @@ than that, the correct outcome is to inject it into the main agent, not to grow 
 - [ ] Intent: **create** — a described workflow is composed into a graph definition, validated, and written project-local by default
 - [x] A definition failing `Validate()` is **reported, never written** — pinned by a test asserting no file appears on the failure path
 - [x] A prompt-composed graph placing a commit or Atlassian node outside a `wait_human` gate is rejected by the existing validator rule, with no bypass
-- [ ] Injection delivers the typed text to the window's active main agent via `TmuxSendLiteral()` (text → delay → Enter), never a hand-rolled `send-keys`
-- [ ] Injection targets the window's **active** agent, respecting mode-cycled windows
-- [ ] A dash-leading prompt injects intact, per [MUX-104](../completed/MUX-104-send-keys-dash-payload.md)
+- [x] Injection delivers the typed text to the window's active main agent via `TmuxSendLiteral()` (text → delay → Enter), never a hand-rolled `send-keys`
+- [x] Injection targets the window's **active** agent, respecting mode-cycled windows
+- [x] A dash-leading prompt injects intact, per [MUX-104](../completed/MUX-104-send-keys-dash-payload.md)
 - [ ] Ollama health monitoring covers the new role, and the surface states plainly when the model is unreachable rather than appearing to accept a prompt it cannot serve
 - [ ] `CheckCommitAuthority` and `CheckAtlassianAuthority` remain the runtime backstop, unchanged
 - [x] The installer reports Ollama as **required**, not optional, and an install missing it is visibly incomplete
@@ -568,11 +568,11 @@ carries its own positive control, noting that "a filter that blocks every approv
 
 ### Phase 6: Prompt injection to the active main agent
 
-- [ ] Resolve the window's active agent, respecting mode-cycled windows
-- [ ] Deliver via `TmuxSendLiteral()` — text → delay → Enter; no hand-rolled `send-keys`
-- [ ] Inject/interpret selection via an explicit toggle, with the destination always visible in the input line
-- [ ] Test: a dash-leading prompt injects intact (MUX-104 regression shape)
-- [ ] Test: with the window mode-cycled, injection reaches the *active* agent, not the default role
+- [x] Resolve the window's active agent, respecting mode-cycled windows
+- [x] Deliver via `TmuxSendLiteral()` — text → delay → Enter; no hand-rolled `send-keys`
+- [x] Inject/interpret selection via an explicit toggle, with the destination always visible in the input line
+- [x] Test: a dash-leading prompt injects intact (MUX-104 regression shape)
+- [x] Test: with the window mode-cycled, injection reaches the *active* agent, not the default role
 
 ### Phase 7: Integration test
 

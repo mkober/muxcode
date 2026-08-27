@@ -108,7 +108,7 @@ func TestRenderPromptFrame_StatesDistinctWithoutColor(t *testing.T) {
 }
 
 func TestRenderPromptFrame_InjectModeLabeled(t *testing.T) {
-	st := PromptSurfaceState{Inject: true, Destination: "edit agent (delivery lands in Phase 6)"}
+	st := PromptSurfaceState{Inject: true, Destination: promptDestinationLabel(true, "edit")}
 	frame := RenderPromptFrame(st, 100, 20)
 	if !strings.Contains(frame, "inject") || !strings.Contains(frame, "edit agent") {
 		t.Error("inject mode must name its destination in the input line")
@@ -243,14 +243,17 @@ func TestHandlePromptKey(t *testing.T) {
 		t.Errorf("empty Enter must be inert, got %q", out)
 	}
 
-	// Inject-mode Enter parks a notice instead of dispatching (Phase 6).
+	// Inject-mode Enter dispatches for real (Phase 6). In a unit test the
+	// tmux target cannot exist, so the failure path runs: a notice must
+	// surface, and the input must survive — retyping is the one cost a
+	// failed inject must not add.
 	ui.promptInput = []rune("do the thing")
 	ui.promptInject = true
 	ui.handlePromptKey(13)
 	if ui.notice == "" {
-		t.Error("inject-mode Enter must surface the Phase 6 notice")
+		t.Error("inject-mode Enter must surface an outcome notice")
 	}
 	if len(ui.promptInput) == 0 {
-		t.Error("inject-mode Enter must not consume the input")
+		t.Error("a failed inject must not consume the input")
 	}
 }

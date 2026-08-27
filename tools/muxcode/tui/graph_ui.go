@@ -275,7 +275,9 @@ type GraphUI struct {
 	promptInject      bool
 	promptExchanges   []PromptExchange
 	promptUnreachable string
-	directPrompt      bool // opened in prompt mode — q/Esc from it quits
+	promptWindow      string // host window (resolved once — tmux call)
+	promptActiveRole  string // window's active agent, mode-cycle aware
+	directPrompt      bool   // opened in prompt mode — q/Esc from it quits
 
 	// Gates already seen waiting — a NEW one switches the UI to the
 	// Pending Gates surface (the strip's ambient-attention contract).
@@ -420,6 +422,19 @@ func (ui *GraphUI) refresh() {
 	case viewGraphPrompt:
 		ui.promptExchanges = LoadPromptExchanges(ui.session, promptTranscriptLimit)
 		ui.promptUnreachable = PromptUnreachable(ui.session)
+		// Destination resolution is I/O (tmux + mode state), so it lives
+		// here, never in the renderer. The window is stable; the active
+		// role re-resolves each refresh because mode cycling can change
+		// it under a live pane.
+		if ui.promptWindow == "" {
+			if ui.promptWindow = bus.BusRole(); ui.promptWindow == "" {
+				ui.promptWindow = "edit"
+			}
+		}
+		ui.promptActiveRole = ui.promptWindow
+		if active, err := bus.ActiveModeRole(ui.session, ui.promptWindow); err == nil && active != "" {
+			ui.promptActiveRole = active
+		}
 	case viewGraphDAG, viewGraphNode:
 		snap, err := LoadGraphSnapshot(ui.session, ui.runID)
 		ui.loadErr = err
@@ -808,7 +823,21 @@ func (ui *GraphUI) submitPrompt() {
 		return
 	}
 	if ui.promptInject {
-		ui.notice = "inject delivery lands in Phase 6 — Ctrl-T back to interpret to run a graph op"
+		window := ui.promptWindow
+		if window == "" {
+			if window = bus.BusRole(); window == "" {
+				window = "edit"
+			}
+		}
+		role, err := bus.InjectPromptText(ui.session, window, text)
+		if err != nil {
+			// Input survives a failed inject — retyping is the one cost
+			// the failure must not add.
+			ui.notice = "inject failed: " + err.Error()
+			return
+		}
+		ui.promptInput = nil
+		ui.notice = fmt.Sprintf("⇒ injected to %s", role)
 		return
 	}
 	from := bus.BusRole()
@@ -1004,7 +1033,7 @@ func (ui *GraphUI) render() string {
 			Exchanges:   ui.promptExchanges,
 			Input:       string(ui.promptInput),
 			Inject:      ui.promptInject,
-			Destination: promptDestinationLabel(ui.promptInject),
+			Destination: promptDestinationLabel(ui.promptInject, ui.promptActiveRole),
 			Unreachable: ui.promptUnreachable,
 		}
 		if n := len(st.Exchanges); n > 0 && !st.Exchanges[n-1].Answered {
