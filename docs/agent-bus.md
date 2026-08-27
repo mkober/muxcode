@@ -1598,12 +1598,18 @@ Three details worth knowing:
   open costs nothing and survives a daemon restart.
 
 **Templates** resolve `project > user > builtin`, the same precedence as agent files:
-`.muxcode/graphs/<name>.json` > `~/.config/muxcode/graphs/<name>.json` > built-in. Seven
-ship built in: `story-to-spec`, `req-code-pr`, `story-lifecycle`, `commit-pr-review-loop`,
-`review-spec-docs`, `deploy-verify`, and a `build-test-review` subgraph — roughly the order of a
-story's life, from deriving a spec off the branch to deploying it. Every builtin is pinned to
-validate by `TestBuiltinGraphTemplatesValidate`, so one that violates the gate rule fails the
-suite rather than shipping.
+`.muxcode/graphs/<name>.json` > `~/.config/muxcode/graphs/<name>.json` > built-in.
+
+**Run `muxcode graph list` for the built-in set** — it prints each name with its description, and
+is the authority. This page deliberately does not enumerate them: the list changed three times in
+one afternoon (2026-08-27) and went stale within minutes on each occasion, twice while being
+actively maintained. A hand-copied set is a standing liability, and the command that answers the
+question correctly already exists.
+
+Broadly they follow a story's life — derive a spec from the branch, implement it, review, commit and
+PR, deploy — plus a `build-test-review` subgraph the others compose. Every builtin is pinned by
+`TestBuiltinGraphTemplatesValidate`, so one violating the gate rule fails the suite rather than
+shipping.
 
 **Validation is strict by design.** Undefined node refs, unreachable nodes, and uncapped
 cycles are errors, not warnings — a loop is only legal via an explicit `max_iterations` on a
