@@ -699,6 +699,26 @@ three, not by one sample. Every fix from the first run is demonstrably working:
 | `create` intent | Now **passes** — composed and wrote a valid definition |
 | Approve guard, both spellings | Verified after the alias gap was closed |
 
+> **Run 10 (2026-08-27, after the probe-burn hardening in `765ec06`) — the diagnosis below is
+> incomplete.** Result: **26/2/1 again**, the fourth consecutive identical outcome, with the same two
+> checks failing. The hardening measurably worked at what it targeted and did not move the result:
+>
+> | | Run 9 | Run 10 |
+> |---|---|---|
+> | `not allowed by tool profile` rejections | 4 | **3** |
+> | Turn exhaustion (`Prompt 10/10`) | 1 | **2** |
+> | Result | 26/2/1 | 26/2/1 |
+>
+> Fewer probes, *more* exhaustion, same failures. So probe-burn is a **contributing factor, not the
+> sole cause** — something else is consuming the turn budget before the required command. Four fix
+> attempts have now produced identical results (tool-profile widening, approve alias,
+> `--wait`/`--track` flag fix, probe-burn hardening), which is itself the finding: **the next step is
+> to instrument where the turns actually go, not to guess at another cause.** A per-turn dump of what
+> the model called would settle in one run what four attempts have not.
+>
+> *(The run agent's first report of this run was a MUX-112 fabrication — a login banner. The numbers
+> here come from the log, and its later correction independently matched.)*
+
 **The two remaining failures share one cause, and it is not capability.** Run 9 shows **four**
 `not allowed by tool profile` rejections and the loop reaching `Prompt 10/10`: the model spends its
 turn budget on probes the profile denies, and never reaches the required command. Run 8 shows the

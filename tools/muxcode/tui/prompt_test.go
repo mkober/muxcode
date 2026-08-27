@@ -470,8 +470,8 @@ func TestSummarizeRunResults(t *testing.T) {
 	if got := SummarizeRunResults(bus.GraphRunFailed, []string{"review", "deploy"}, "tests failed: 2\nnoise", []string{"build"}); got != "✗ review +1: tests failed: 2" {
 		t.Errorf("failure summary = %q", got)
 	}
-	if got := SummarizeRunResults(bus.GraphRunComplete, nil, "", []string{"build", "test", "review?"}); got != "✓ build → test → review?  (? = completion inferred, no exit-code proof)" {
-		t.Errorf("the inferred node must be named and the mark explained, got %q", got)
+	if got := SummarizeRunResults(bus.GraphRunComplete, nil, "", []string{"build", "test", "review?"}); got != "✓ build → test → review?" {
+		t.Errorf("the inferred node keeps its ? mark, explainer lives in the list legend — got %q", got)
 	}
 	if got := SummarizeRunResults(bus.GraphRunComplete, nil, "", []string{"build", "test", "review"}); got != "✓ build → test → review" {
 		t.Errorf("a fully proven chain must carry no explainer, got %q", got)
@@ -502,6 +502,18 @@ func TestRenderRunListFrame_ResultsColumn(t *testing.T) {
 	}
 	if !strings.Contains(frame, Red+"✗ review: tests failed") {
 		t.Error("a failure cell must render red")
+	}
+	if strings.Contains(plain, "completion inferred") {
+		t.Error("no ? marks — the legend must not render (negative control)")
+	}
+
+	marked := []RunListRow{{ID: "r3", Template: "bt", State: bus.GraphRunComplete, Results: "✓ build → test?"}}
+	withLegend := StripAnsi(RenderRunListFrame(marked, 200, 0))
+	if !strings.Contains(withLegend, "? = completion inferred") {
+		t.Error("a ? mark anywhere must render the one-line legend")
+	}
+	if strings.Count(withLegend, "completion inferred") != 1 {
+		t.Error("the legend renders exactly once, never per row")
 	}
 }
 

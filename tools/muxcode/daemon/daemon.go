@@ -2990,6 +2990,26 @@ func (d *Daemon) resetChurnGuard(role string) {
 	delete(d.churnSuppressed, role)
 }
 
+// idleRescueExcluded reports roles exempt from the idle-task rescue.
+// The run role is excluded by default: its job is long scripts driven
+// from background shells, so its pane legitimately rests at the prompt
+// mid-work and the pane-scrape idle read is guaranteed wrong there —
+// the rescue fabricated nine reports that way (MUX-112). Excluded tasks
+// still resolve via the task timeout. Override the list with
+// MUXCODE_IDLE_RESCUE_EXCLUDE (comma-separated; empty disables).
+func idleRescueExcluded(role string) bool {
+	list := "run"
+	if v, ok := os.LookupEnv("MUXCODE_IDLE_RESCUE_EXCLUDE"); ok {
+		list = v
+	}
+	for _, r := range strings.Split(list, ",") {
+		if strings.TrimSpace(r) == role {
+			return true
+		}
+	}
+	return false
+}
+
 // checkIdleTaskCompletion is a safety net for hook-provider agents (Claude Code)
 // that go idle without having responded to an in-flight task. This catches the
 // failure mode where an agent composes a `muxcode send` command as text output
@@ -3030,6 +3050,10 @@ func (d *Daemon) checkIdleTaskCompletion() {
 		provider := bus.ResolveProvider(task.To)
 		// Only handle hook providers — non-hook providers are covered by checkNonHookTasks
 		if !provider.SupportsHooks() {
+			continue
+		}
+
+		if idleRescueExcluded(bus.WindowForRole(task.To)) {
 			continue
 		}
 

@@ -51,6 +51,48 @@ Worth preserving in any fix — these are not the defect:
 
 The bug is not that the daemon reports pane content. It is that it **closes the task** on it.
 
+### Second reproduction, same day — the rescue answered *for* an agent running an integration test
+
+Independent of the graph case below, and on a different role. Plan delegated
+`scripts/test-prompt-mode.sh` to the run agent — a multi-minute script, the canonical "live
+background work" shape. Thirty-one seconds later:
+
+```
+warn  daemon  idle-task-rescue  run idle with unresponded task run from plan
+                                (idle 31s, retry exhausted)
+```
+
+What arrived in plan's inbox as the run agent's *answer*:
+
+```
+[daemon: run went idle without responding (retried once) — pane content follows]
+muxcode agent launch run
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+…
+```
+
+The same macOS login banner, this time standing in for a test report. The script was **still
+executing** while its result was being fabricated — later lines (`ok: status intent produced a
+response`, `FAIL: launch intent started a run`) were written to the log after the rescue had already
+"answered".
+
+Three points this adds:
+
+1. **Two roles, same 31 seconds.** Plan (composing a reply) and run (executing a script) are
+   different kinds of busy, and the grace period cannot tell either from wedged. This is not a
+   plan-agent quirk.
+2. **The delegating agent is the victim.** Plan asked a question, got a login banner presented as the
+   answer, and would have reported it as the test result had it not recognised the shape. An agent
+   that trusts its inbox has no way to tell this from a real reply.
+3. **The `run` role is the worst case.** Its entire purpose is executing long scripts and
+   verification runs. Every one of those is 31 seconds from being force-answered.
+
+That last point suggests a cheap interim mitigation while the proper fix lands: exclude `run` (and
+any role whose normal work is long-running) from the rescue, or raise its threshold specifically —
+the current default is guaranteed to misfire on the role most likely to be doing real work.
+
 ### Live reproduction, 2026-08-27 — a graph run reported `[complete]` on a node that never ran
 
 Caught first-hand hours after this spec was filed, and it is worse than the reported case because

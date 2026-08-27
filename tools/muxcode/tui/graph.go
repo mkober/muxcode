@@ -659,15 +659,13 @@ type RunListRow struct {
 
 // SummarizeRunResults compresses a run's node outcomes into one results
 // cell: issues win (first failed node and why), otherwise the completed
-// node chain. Success cells are built from node IDS, never node output —
-// harvested output is multi-line agent prose whose first line lands
-// mid-sentence, and four such fragments stacked in the run list read as
-// one message flowing across rows (user's catch, 2026-08-27). A done id
-// may carry a trailing "?" — that node's completion was INFERRED (its
-// non-hook provider gave no exit-code proof), and the cell explains the
-// mark inline instead of a bare count nobody could interpret (user's
-// second catch, same day). The glyph prefix carries identity — the
-// renderer colors by it, and the cell stays readable through StripAnsi.
+// node chain. Success cells are built from node IDs, never node output —
+// harvested output is multi-line prose whose first line lands
+// mid-sentence and reads as text flowing across rows. A done id may
+// carry a trailing "?": that completion was inferred with no exit-code
+// proof (the run list renders the legend once). The glyph prefix
+// carries identity — the renderer colors by it, and the cell stays
+// readable through StripAnsi.
 func SummarizeRunResults(runState string, failed []string, failedOut string, done []string) string {
 	firstLine := func(s string) string {
 		s = strings.TrimSpace(s)
@@ -677,13 +675,6 @@ func SummarizeRunResults(runState string, failed []string, failedOut string, don
 		return s
 	}
 	chain := strings.Join(done, " → ")
-	inferred := false
-	for _, d := range done {
-		if strings.HasSuffix(d, "?") {
-			inferred = true
-			break
-		}
-	}
 	switch {
 	case len(failed) > 0:
 		msg := "✗ " + failed[0]
@@ -695,14 +686,10 @@ func SummarizeRunResults(runState string, failed []string, failedOut string, don
 		}
 		return msg
 	case runState == bus.GraphRunComplete:
-		msg := "✓ complete"
 		if chain != "" {
-			msg = "✓ " + chain
+			return "✓ " + chain
 		}
-		if inferred {
-			msg += "  (? = completion inferred, no exit-code proof)"
-		}
-		return msg
+		return "✓ complete"
 	case runState == bus.GraphRunCanceled:
 		return "canceled"
 	default:
@@ -773,6 +760,13 @@ func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 			Comment, r.Template, RST,
 			resultsCellColor(results), results, RST, badge)
 		b.WriteString(fitWidth(line, width) + "\n")
+	}
+	// The ? explainer renders once as a legend, never per-cell
+	for _, r := range rows {
+		if strings.Contains(r.Results, "?") {
+			fmt.Fprintf(&b, "  %s? = completion inferred (no exit-code proof)%s\n", Comment, RST)
+			break
+		}
 	}
 	return b.String()
 }
