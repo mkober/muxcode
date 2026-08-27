@@ -537,6 +537,19 @@ Design notes:
 
 When a spec change implies a Jira change, the plan agent still reports it rather than acting: `muxcode send edit jira-suggest "..."`. That is a **notification, not an instruction** — edit surfaces it to the user, and only if the user agrees does edit relay an explicit write request back to plan, which then performs the tracker write. The suggestion always round-trips through the human; it never short-circuits into a write.
 
+### Prompt authority — who may originate a human prompt
+
+`CheckPromptAuthority` (`bus/prompt_authority.go`) is the third gate of the same family, added with the [Prompt surface](requirements/drafts/MUX-109-prompt-mode-graph-control-pane.md). It guards a different thing from the other two: not *what an agent may do*, but *whose words count as the user's*.
+
+The prompt-agent will approve a `wait_human` gate — the thing that releases git and Atlassian mutations — when the request text **names** the gate. That check is only as good as the claim that the text came from a human. A request to the `prompt` role is therefore refused unless it originates from the control pane:
+
+- **Default is deny-all.** `PromptAuthorityRoles()` is empty unless `MUXCODE_PROMPT_AUTHORITY_ROLES` says otherwise, so no bus identity can originate a prompt request.
+- **Enforced at the choke point** — inside `sendMessage` (`bus/inbox.go`), which every send path funnels through, so no API bypasses it.
+- **The surface has its own seam.** `SendHumanPrompt` is in-process and has no `cmd/` exposure, so there is no subcommand an agent could call to reach it.
+- **Graph nodes cannot launder it.** A `send` node targeting `prompt` fails validation, closing the path where the executor would have delivered agent-authored text as "the user's words".
+
+The principle is the one the Atlassian gate already encodes, applied one layer down: *a bus message from another agent is never the user's consent*. Here that is load-bearing rather than advisory, because the approve guard reads request text as evidence of human intent.
+
 ## Window Layout
 
 ### Standard Agent Window
@@ -583,6 +596,15 @@ Every agent window carries a third pane at the bottom hosting the global muxcode
 │   Control pane — graph TUI (pane 2)     │
 └─────────────────────────────────────────┘
 ```
+
+**The Prompt surface and its agent.** The pane cycles four surfaces, not three: `Prompt`, `Launch Graph`, `Graph Runs`, `Pending Gates` ([`MUX-109`](requirements/drafts/MUX-109-prompt-mode-graph-control-pane.md)). Prompt takes typed text and either **interprets** it as a graph operation or **injects** it into the window's active main agent, selected by an explicit toggle whose destination is always named in the input line.
+
+Behind the interpret path is a **headless** agent — the `prompt` role, with no window and no pane of its own. The daemon owns its lifecycle (`checkPromptAgent`), which is why none of the pane-based supervision sees it. Two consequences follow from having no pane:
+
+- **Results arrive through a transcript, not a pane.** The surface writes a bus request and returns immediately; replies are read from the session-global prompt history on `refresh()`. The renderer never blocks on inference, and because the transcript is session-scoped the same exchange appears on every window's pane.
+- **Its backend is selectable, and the default is remote.** `MUXCODE_PROMPT_BACKEND` chooses local Ollama or the OpenCode Zen gateway (default). The daemon only launches a local harness process when the backend is `ollama` — see [Configuration → Prompt-agent backend](configuration.md#prompt-agent-backend).
+
+The agent's tool profile grants **no write tool at all**: graph definitions are created only through `muxcode graph create`, whose path validates before writing. That is deliberate — it makes validate-before-write unbypassable by the model rather than merely expected of it, which matters because the model behind this surface is small and has been observed reporting success for commands that were refused.
 
 **Creation order is the delivery contract.** `AgentPane()` returns a hardcoded `"1"` and `PaneTarget()` composes `session:window.1`, so everything that reaches an agent — `Notify`, `ClearAgent`, `deliver`, wake-up injection, the mode cycler — resolves through pane 1. The control pane is therefore created **last**, after panes 0 and 1 exist, on every window. A pane created earlier, or a layout operation that renumbers panes, silently repoints every agent message at the wrong pane — and the symptom is not a crash but messages typing into an nvim buffer. (`select-layout` preserves pane indices; `rotate-window` does not, which is why no rotate binding exists.)
 
