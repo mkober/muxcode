@@ -914,14 +914,23 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(git log *)", "Bash(git rev-parse *)",
 				},
 			},
-			// Deliberately minimal — no includes, no Write/Edit. Rationale in
-			// bus/prompt_agent.go's doc comment; pinned by the profile test.
+			// The muxcode command surface plus read-only context — widened from
+			// graph-only once the role moved to a capable gateway model
+			// (user-requested, 2026-08-27). Still no Write/Edit (graph writes go
+			// through the validated `graph create` path — raw file writes would
+			// bypass validate-before-write), no git/gh (commit's job), and no
+			// Atlassian writes (plan's authority); pinned by the profile test.
 			"prompt": {
 				CdPrefix: true,
 				Tools: []string{
 					"Bash(muxcode graph *)",
 					"Bash(muxcode send *)", "Bash(muxcode inbox*)",
-					"Read(.muxcode/graphs/*)",
+					"Bash(muxcode status*)", "Bash(muxcode tasks*)",
+					"Bash(muxcode spec *)", "Bash(muxcode workflow*)",
+					"Bash(muxcode history *)", "Bash(muxcode memory *)",
+					"Bash(muxcode diagnose *)", "Bash(muxcode lifecycle *)",
+					"Bash(muxcode atlassian jira read *)", "Bash(muxcode atlassian jira search *)",
+					"Read(.muxcode/graphs/*)", "Read(docs/*)",
 				},
 			},
 		},

@@ -1106,6 +1106,13 @@ func TestPromptProfileDeniesRepoWriteAndGit(t *testing.T) {
 	if !IsToolAllowed("bash", "muxcode send edit response \"done\"", tools) {
 		t.Error("bus reply path should be allowed")
 	}
+	// The gateway-era widening (2026-08-27): introspection and Jira reads.
+	if !IsToolAllowed("bash", "muxcode status", tools) {
+		t.Error("muxcode status should be allowed on the widened profile")
+	}
+	if !IsToolAllowed("bash", "muxcode atlassian jira read PROJ-1", tools) {
+		t.Error("jira read should be allowed on the widened profile")
+	}
 
 	if IsToolAllowed("write_file", "bus/graph.go", tools) {
 		t.Error("repo write must be denied — any Write pattern unlocks write_file everywhere (hasToolPattern does not path-match)")

@@ -58,6 +58,30 @@ func Graph(args []string) {
 	case "create":
 		graphCreate(args[1:])
 
+	case "export":
+		// Print a resolved template's full JSON — the read-back half of
+		// modify-via-shadow: export a builtin, adjust the JSON, and
+		// `graph create` it as a project-tier template that shadows the
+		// builtin (project > user > builtin resolution). Without this,
+		// builtins were write-only for the prompt-agent (user-requested,
+		// 2026-08-27).
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: muxcode graph export <template-name>")
+			os.Exit(1)
+		}
+		g, source, err := bus.ResolveGraphTemplate(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		data, err := json.MarshalIndent(g, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "# source: %s\n", source)
+		fmt.Println(string(data))
+
 	case "retry":
 		graphRetry(args[1:])
 
@@ -92,6 +116,7 @@ Commands:
                                             Validate a definition and write it as a template
                                             (project: .muxcode/graphs/, user: ~/.config/muxcode/graphs/)
   list                                      List resolvable graph templates
+  export <template>                         Print a resolved template's JSON (modify + create = shadow a builtin)
   status [--json] [run-id]                  Show a run's per-node state (no id: list all runs)
   cancel <run-id>                           Cancel a run (unstarted nodes are skipped)
   retry <run-id> --from <node>              Re-execute from a node, keeping upstream results

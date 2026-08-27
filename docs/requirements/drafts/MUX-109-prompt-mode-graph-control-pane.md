@@ -66,10 +66,24 @@ force-respond work, so a change there sits next to escalation code it has nothin
 
 ### Scope boundary
 
-The prompt-agent **interprets and dispatches**; it does not implement. It has no repo write access,
-no git, no Atlassian, and no ability to edit source. Its entire useful surface is a handful of
-`muxcode graph` subcommands plus writing graph JSON into two directories. If a request needs more
-than that, the correct outcome is to inject it into the main agent, not to grow the prompt-agent.
+The prompt-agent **interprets and dispatches**; it does not implement. If a request needs more than
+that, the correct outcome is to inject it into the main agent, not to grow the prompt-agent.
+
+**Widened 2026-08-27 (user-requested), once the role moved to a capable gateway model.** The profile
+was originally graph-only because a 4B could not use more; it now covers the `muxcode` command set
+plus read-only context (`status`, `tasks`, `spec`, `history`, `memory`, and Atlassian **reads**).
+The denials that were doing real work are unchanged, and each still has its reason:
+
+| Still denied | Reason |
+|--------------|--------|
+| `Write` / `Edit` | Graph definitions are written only through `muxcode graph create`, whose path validates first — a raw file write would bypass validate-before-write |
+| `git` / `gh` | Commit's job |
+| Atlassian **writes** | Plan's authority (`CheckAtlassianAuthority`) |
+
+Narrowness was never the point in itself; the point is that specific capabilities are gated for
+stated reasons. When the reason for one expired, that gate opened deliberately — the rest hold.
+Pinned on both sides by the profile test: `jira read` allowed, `jira update` denied, in the same
+assertion.
 
 ## Requirements
 
@@ -456,7 +470,7 @@ must not silently download gigabytes, and the promise is made in writing in thre
 | `bus/launch.go` / daemon | Launch the prompt-agent headless — no window, no `--tui`; supervise it like the other long-lived processes |
 | `bus/profile.go` | Narrow `prompt` tool profile — `muxcode graph *`, graph-dir read/write, injection; nothing else |
 | `bus/health.go` | Confirm `LocalLLMRoles()` picks up the role from `MUXCODE_PROMPT_CLI=local` (env-driven — may need no change) |
-| `agents/harness/prompt-agent.md` | New harness agent definition — short, directive, closed intent set |
+| `agents/harness/prompt-agent.md` | Harness agent definition — conversational operator over the `muxcode` command surface (was a closed-intent classifier while the backend was a 4B) |
 | `cmd/graph.go` | Reuse for create/validate paths if a subcommand seam is cleaner than a library call |
 | `harness/config.go:28`, `bus/ollama.go:35` | Global default `qwen2.5:7b` → `qwen3:4b` |
 | `install.sh` | Re-tier Ollama as required (`PREREQS` table or a distinct tier); default `qwen3:4b` (`:580`); tighten the prefix-grep readiness check (`:584`); keep the pull consent-gated at `:588`; keep the lazy-pull fallback |
@@ -517,7 +531,7 @@ An unsafe-name guard (`/`, `\`, leading `.`) was added beyond what this phase as
 - [x] **Installer:** update the `-y/--yes` usage text and [`README.md`](../../../README.md) in the *same* change if the pull's non-interactive behaviour is altered at all
 - [x] Locally: `ollama pull <model>` and confirm `ollama serve` is reachable — nothing below is exercisable until the model store is non-empty (see [Model selection](#model-selection))
 - [x] Add the `prompt` role — `KnownRoles`, inbox path, window/pane mapping
-- [x] Add `agents/harness/prompt-agent.md` — short, directive, closed intent set
+- [x] Add `agents/harness/prompt-agent.md` — rewritten 2026-08-27 for the gateway model: a conversational operator with a command-surface table, multi-command tasks, and the approve/authority guards retained verbatim
 - [x] Launch the agent **headless**: no window, no `--tui` (the harness's default path, `LogSink`); decide and document who owns the process lifecycle — daemon-supervised alongside the other long-lived processes is the natural fit
 - [x] Add the transcript path helper (`BusDir()/prompt-history.jsonl`) in `bus/config.go` beside the other path helpers, and purge it on session re-init like other per-session state
 - [x] Add the narrow `prompt` tool profile
@@ -562,7 +576,7 @@ should be tightened to match, not the other way round.
 
 ### Phase 4: Prompt intents — launch, status, gates
 
-- [x] Classify a prompt into the closed intent set; an unparseable result fails closed
+- [ ] Classify a prompt into the closed intent set; an unparseable result fails closed — **RE-OPENED 2026-08-27**: the agent definition was rewritten for the gateway model into a conversational operator that may run several commands per task (*"check, then act, then verify"*), replacing "pick exactly one intent, else do nothing". That was the correct call for a capable model, but it retires the fail-closed default this step recorded. Re-specify what the new failure mode is before re-checking
 - [ ] `launch` — resolve across all three scopes and start via `muxcode graph run`
 - [ ] `status` — answer from `graph list` / `graph status`
 - [ ] `gates` — list pending `wait_human` gates
@@ -726,7 +740,7 @@ the rejected option would have cost.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-109-prompt-mode-graph-control-pane | 4h 22m | 2026-08-27 11:40 |
+| MUX-109-prompt-mode-graph-control-pane | 5h 22m | 2026-08-27 12:30 |
 
 ## Status
 

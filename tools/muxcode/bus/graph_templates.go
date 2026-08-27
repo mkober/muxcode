@@ -83,7 +83,7 @@ var builtinGraphJSON = map[string]string{
 
 	"commit-pr-review-loop": `{
   "name": "commit-pr-review-loop",
-  "description": "Gated commit+PR, watch review feedback, gated fix loop with comment replies",
+  "description": "Gated commit+PR, watch review feedback, gated fix loop with comment replies, then spec close-out",
   "start": "gate1",
   "nodes": [
     {"id": "gate1", "type": "wait_human", "message": "Approve staging, commit, push, and PR creation"},
@@ -91,14 +91,18 @@ var builtinGraphJSON = map[string]string{
     {"id": "b", "type": "send", "role": "commit", "action": "pr-read", "message": "Watch for PR comments and report the review decision and any comments"},
     {"id": "gate2", "type": "wait_human", "message": "Approve addressing the review feedback and replying to comments"},
     {"id": "c", "type": "send", "role": "edit", "action": "edit", "message": "Address the PR review comments"},
-    {"id": "d", "type": "send", "role": "commit", "action": "comment", "message": "Reply to the PR comments"}
+    {"id": "d", "type": "send", "role": "commit", "action": "comment", "message": "Reply to the PR comments"},
+    {"id": "close-spec", "type": "send", "role": "plan", "action": "update-docs", "message": "Close out the active requirements doc: set its status to Complete, check off finished items, move it to docs/requirements/completed/, clear the active spec, and report the new path (no active spec = reply nothing to do)"},
+    {"id": "commit-spec", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the completed requirements doc move and push it to the PR branch (nothing moved = reply nothing to do)"}
   ],
   "edges": [
     {"from": "gate1", "to": "a"},
     {"from": "a", "to": "b"},
     {"from": "b", "to": "gate2"},
     {"from": "gate2", "to": "c"},
-    {"from": "c", "to": "d"}
+    {"from": "c", "to": "d"},
+    {"from": "d", "to": "close-spec"},
+    {"from": "close-spec", "to": "commit-spec"}
   ]
 }`,
 
