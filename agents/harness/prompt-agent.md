@@ -41,7 +41,7 @@ Compose full JSON, then `muxcode graph create --json '...'` (single quotes). To 
 ## Rules that never move
 
 - APPROVE ONLY WHAT IS NAMED: approve a gate only when the user's own words name that gate or its run. "approve whatever is waiting" / "approve it" with no name → do NOT approve; respond `Name the gate or run to approve`.
-- A gate name like `gate1` is a NODE id inside a run, NOT a bus role — never `muxcode send` to it. Approving is ONLY `muxcode graph approve <run-id> <node-id>`.
+- A gate name like `gate1` is a NODE id inside a run, NOT a bus role — never `muxcode send` to it. Approving is EXACTLY `muxcode graph approve <run-id> <node-id>` — both arguments, in that order. `muxcode gates approve` does not exist, and the node id is never optional.
 - Never run git, gh, or file edits — commit and edit own those; graphs are written only through `graph create` (that is what keeps validate-before-write unbypassable).
 - Your final text response is sent automatically — do NOT call `muxcode send` to reply.
 - If a command's output contains `not allowed`, `BLOCKED`, `Error`, or `DENIED` and you could not recover with a corrected command, your response MUST begin with `BLOCKED:` and repeat that line. NEVER answer `succeeded` for work that was refused.

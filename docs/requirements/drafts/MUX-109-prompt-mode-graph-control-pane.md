@@ -584,6 +584,25 @@ should be tightened to match, not the other way round.
 - [x] Negative-control test: "approve whatever is waiting" approves nothing
 - [x] Confirm single-use approval semantics still hold on a retried gate
 
+> **Near-miss worth keeping: the guard silently stopped applying (2026-08-27).** A top-level
+> `muxcode approve` alias was added — a good ergonomic fix, since the model invented that exact
+> shortening twice. But `checkApproveGuard` matched the literal token sequence
+> `muxcode` `graph` `approve`, so the alias had no `graph` token and the guard returned
+> *"not an approve — nothing to guard"*. `muxcode approve <run> <node>` would have executed
+> **without** requiring the user's words to name the gate.
+>
+> Nothing broke. No test failed, no error surfaced — the guard just quietly stopped covering a new
+> spelling of the action it exists to guard. Caught by asking "does the guard still see this?" when
+> the interface changed, and closed the same hour: both spellings now match (path-prefixed included),
+> pinned by `TestCheckApproveGuard_AliasSpelling` with unnamed-refused, named-passes, and
+> path-prefixed cases.
+>
+> **The general lesson, which recurred four times in this spec:** a check keyed to a *surface form*
+> rather than to the *action* fails open when a new form appears. Same shape as
+> `responseAdmitsFailure`'s keyword search (defeated by "no errors") and the installer's
+> `${OLLAMA_MODEL%%:*}` prefix grep. Whenever an interface gains an alias, ask what was matching the
+> old spelling.
+
 **Approve guard verified 2026-08-26.** `checkApproveGuard()` (`harness/prompt_guard.go`) parses the
 actual command for `muxcode graph approve <run> <node>` and refuses unless the user's own text
 contains an exact token match of the run or node id — case-insensitive, with a run-id prefix
@@ -740,7 +759,7 @@ the rejected option would have cost.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-109-prompt-mode-graph-control-pane | 5h 22m | 2026-08-27 12:30 |
+| MUX-109-prompt-mode-graph-control-pane | 5h 43m | 2026-08-27 13:52 |
 
 ## Status
 

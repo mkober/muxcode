@@ -923,7 +923,7 @@ func DefaultConfig() *MuxcodeConfig {
 			"prompt": {
 				CdPrefix: true,
 				Tools: []string{
-					"Bash(muxcode graph *)",
+					"Bash(muxcode graph *)", "Bash(muxcode approve *)",
 					"Bash(muxcode send *)", "Bash(muxcode inbox*)",
 					"Bash(muxcode status*)", "Bash(muxcode tasks*)",
 					"Bash(muxcode spec *)", "Bash(muxcode workflow*)",

@@ -24,10 +24,23 @@ func checkApproveGuard(role, taskText, command string) string {
 	if role != "prompt" {
 		return ""
 	}
+	// Both spellings guard: `muxcode graph approve` and the top-level
+	// `muxcode approve` alias. The alias initially matched nothing here —
+	// "not an approve, nothing to guard" — which silently retired the one
+	// guard between a free-text surface and a gate releasing git/Atlassian
+	// mutations, in exactly the shape the model already invents (plan's
+	// catch, 2026-08-27, minutes after the alias landed).
 	fields := strings.Fields(command)
 	idx := -1
-	for i := 0; i+2 < len(fields); i++ {
-		if strings.HasSuffix(fields[i], "muxcode") && fields[i+1] == "graph" && fields[i+2] == "approve" {
+	for i := 0; i+1 < len(fields); i++ {
+		if !strings.HasSuffix(fields[i], "muxcode") {
+			continue
+		}
+		if fields[i+1] == "approve" {
+			idx = i + 2
+			break
+		}
+		if i+2 < len(fields) && fields[i+1] == "graph" && fields[i+2] == "approve" {
 			idx = i + 3
 			break
 		}

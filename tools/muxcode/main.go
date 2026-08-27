@@ -240,6 +240,13 @@ func main() {
 		cmd.Spec(args)
 	case "graph":
 		cmd.Graph(args)
+	case "approve":
+		// Forgiving alias for `muxcode graph approve <run> <node>` — the
+		// natural shortening every model (and human) reaches for. The
+		// close-out validation recorded the prompt-agent inventing
+		// `muxcode approve <run>` twice (2026-08-27); an alias beats
+		// re-teaching the long form forever.
+		cmd.Graph(append([]string{"approve"}, args...))
 	case "upgrade-daemons":
 		cmd.UpgradeDaemons(args)
 	default:

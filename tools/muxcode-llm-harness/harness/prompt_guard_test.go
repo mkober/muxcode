@@ -43,6 +43,26 @@ func TestCheckApproveGuard_UnnamedRefused(t *testing.T) {
 	}
 }
 
+// TestCheckApproveGuard_AliasSpelling pins BOTH approve spellings: the
+// top-level `muxcode approve` alias initially matched nothing in the
+// guard — "not an approve, nothing to guard" — silently retiring the
+// named-consent rule in exactly the shape the model invents (plan's
+// catch, 2026-08-27). An unnamed approve must refuse through the alias,
+// and a named one must pass (positive control).
+func TestCheckApproveGuard_AliasSpelling(t *testing.T) {
+	alias := "muxcode approve " + guardRun + " commit-gate"
+	if reason := checkApproveGuard("prompt", "approve whatever is waiting", alias); reason == "" {
+		t.Error("the alias spelling must be guarded — unnamed approve refused")
+	}
+	if reason := checkApproveGuard("prompt", "approve commit-gate", alias); reason != "" {
+		t.Errorf("a named approve through the alias must pass, got: %s", reason)
+	}
+	pathAlias := "/usr/local/bin/muxcode approve " + guardRun + " commit-gate"
+	if reason := checkApproveGuard("prompt", "approve everything", pathAlias); reason == "" {
+		t.Error("a path-prefixed alias approve must still be guarded")
+	}
+}
+
 func TestCheckApproveGuard_ScopeLimits(t *testing.T) {
 	// Non-approve graph commands pass untouched.
 	if r := checkApproveGuard("prompt", "what is waiting", "muxcode graph list"); r != "" {
