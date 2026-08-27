@@ -22,12 +22,13 @@ var builtinGraphJSON = map[string]string{
   ]
 }`,
 
-	"coding-pr": `{
-  "name": "coding-pr",
-  "description": "Implement, build/test with capped fix loop, review, then human-gated commit and PR",
+	"req-code-pr": `{
+  "name": "req-code-pr",
+  "description": "Implement per the active requirements spec, build/test with capped fix loop, review, then human-gated commit and PR",
+  "requires_spec": true,
   "start": "implement",
   "nodes": [
-    {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement: ${intent}"},
+    {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement per the active requirements spec: ${intent}"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
     {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build or test failure for: ${intent}"},
@@ -80,25 +81,81 @@ var builtinGraphJSON = map[string]string{
   ]
 }`,
 
-	"research-critique": `{
-  "name": "research-critique",
-  "description": "Fan out two independent research drafts, join, critique, synthesize",
-  "start": "outline",
+	"commit-pr-review-loop": `{
+  "name": "commit-pr-review-loop",
+  "description": "Gated commit+PR, watch review feedback, gated fix loop with comment replies",
+  "start": "gate1",
   "nodes": [
-    {"id": "outline", "type": "send", "role": "research", "action": "research", "message": "Outline research angles for: ${intent}"},
-    {"id": "draft-a", "type": "spawn", "role": "research", "message": "Draft answer A for: ${intent}"},
-    {"id": "draft-b", "type": "spawn", "role": "research", "message": "Draft answer B from an independent angle for: ${intent}"},
-    {"id": "gather", "type": "join", "join": "all"},
-    {"id": "critique", "type": "send", "role": "review", "action": "review", "message": "Critique the two research drafts for: ${intent}"},
-    {"id": "synthesize", "type": "send", "role": "research", "action": "research", "message": "Synthesize the drafts and critique into a final answer for: ${intent}"}
+    {"id": "gate1", "type": "wait_human", "message": "Approve staging, commit, push, and PR creation"},
+    {"id": "a", "type": "send", "role": "commit", "action": "commit", "message": "Stage all unstaged files, commit, push, and create a PR"},
+    {"id": "b", "type": "send", "role": "commit", "action": "pr-read", "message": "Watch for PR comments and report the review decision and any comments"},
+    {"id": "gate2", "type": "wait_human", "message": "Approve addressing the review feedback and replying to comments"},
+    {"id": "c", "type": "send", "role": "edit", "action": "edit", "message": "Address the PR review comments"},
+    {"id": "d", "type": "send", "role": "commit", "action": "comment", "message": "Reply to the PR comments"}
   ],
   "edges": [
-    {"from": "outline", "to": "draft-a"},
-    {"from": "outline", "to": "draft-b"},
-    {"from": "draft-a", "to": "gather"},
-    {"from": "draft-b", "to": "gather"},
-    {"from": "gather", "to": "critique"},
-    {"from": "critique", "to": "synthesize"}
+    {"from": "gate1", "to": "a"},
+    {"from": "a", "to": "b"},
+    {"from": "b", "to": "gate2"},
+    {"from": "gate2", "to": "c"},
+    {"from": "c", "to": "d"}
+  ]
+}`,
+
+	"story-to-spec": `{
+  "name": "story-to-spec",
+  "description": "Derive the Jira/GitHub id from the branch, read its requirements, draft a requirements doc and set it active, then human-gated tracker update",
+  "start": "derive",
+  "nodes": [
+    {"id": "derive", "type": "send", "role": "plan", "action": "story-read", "message": "Derive the story key from the current branch name (git branch --show-current; key pattern like MUX-109). If it is a Jira story, read it with muxcode jira read <id> and report the id, title, and requirement text; if this repo tracks GitHub issues, report the issue number — the gated fetch node reads it"},
+    {"id": "fetch-gate", "type": "wait_human", "message": "Approve the tracker read (gh) and requirements drafting"},
+    {"id": "fetch", "type": "send", "role": "commit", "action": "story-read", "message": "If the derived id is a GitHub issue, read it (gh issue view <n> --json title,body) and report the requirement text; if it is a Jira story, reply nothing to do — plan already read it"},
+    {"id": "draft", "type": "send", "role": "plan", "action": "update-docs", "message": "From the story/issue requirements reported upstream, create a requirements doc at docs/requirements/drafts/<ID>-<slug>.md (status field, acceptance criteria as checkboxes, phased plan ending in an integration test phase), then set it as the active spec with: muxcode spec set <path> — report the path"},
+    {"id": "update-gate", "type": "wait_human", "message": "Approve updating the tracker (Jira story / GitHub issue) to reference the new requirements doc"},
+    {"id": "jira-update", "type": "send", "role": "plan", "action": "jira-write", "message": "The user approved the tracker update: if this branch tracks a Jira story, update it to reference the new requirements doc; if it tracks a GitHub issue instead, reply nothing to do — commit handles it"},
+    {"id": "issue-update", "type": "send", "role": "commit", "action": "issue-update", "message": "The user approved the tracker update: if this branch tracks a GitHub issue, comment on it (gh issue comment) referencing the new requirements doc; if it tracks a Jira story instead, reply nothing to do"}
+  ],
+  "edges": [
+    {"from": "derive", "to": "fetch-gate"},
+    {"from": "fetch-gate", "to": "fetch"},
+    {"from": "fetch", "to": "draft"},
+    {"from": "draft", "to": "update-gate"},
+    {"from": "update-gate", "to": "jira-update"},
+    {"from": "update-gate", "to": "issue-update"}
+  ]
+}`,
+
+	"pr-local-review": `{
+  "name": "pr-local-review",
+  "description": "Prompt for a PR id, gated checkout of main+rebase and the PR branch, local diff, review with an issue list, then branch restore",
+  "start": "gate",
+  "nodes": [
+    {"id": "gate", "type": "wait_human", "message": "Approve switching branches to review PR #${intent} (checkout main, rebase origin/main, gh pr checkout)"},
+    {"id": "prepare", "type": "send", "role": "commit", "action": "pr-checkout", "message": "Check out main, pull origin main with rebase, then check out the branch for PR #${intent} (gh pr checkout ${intent}); report the branch name"},
+    {"id": "diff", "type": "send", "role": "commit", "action": "pr-diff", "message": "Diff the PR branch against main locally (git diff main...HEAD --stat, then the notable hunks) and report a file-by-file summary of the changes in PR #${intent}"},
+    {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the local diff of PR #${intent}: report the list of changes and any issues that need to be addressed, ranked by severity"},
+    {"id": "restore", "type": "send", "role": "commit", "action": "checkout", "message": "Return the repo to the branch it was on before the PR review (git checkout -) and report the branch"}
+  ],
+  "edges": [
+    {"from": "gate", "to": "prepare"},
+    {"from": "prepare", "to": "diff"},
+    {"from": "diff", "to": "review"},
+    {"from": "review", "to": "restore"}
+  ]
+}`,
+
+	"review-spec-docs": `{
+  "name": "review-spec-docs",
+  "description": "Review branch changes, verify requirements-spec alignment, update spec/architecture docs and README as needed",
+  "start": "review",
+  "nodes": [
+    {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review all current changes in the repo on this branch and report findings"},
+    {"id": "spec", "type": "send", "role": "plan", "action": "verify-spec", "message": "Verify the current branch changes align with the active requirements spec; update the spec doc if needed (check off completed items, adjust status)"},
+    {"id": "docs", "type": "send", "role": "plan", "action": "update-docs", "message": "Update architecture documentation and README if the reviewed changes require it; report what changed or why nothing did"}
+  ],
+  "edges": [
+    {"from": "review", "to": "spec"},
+    {"from": "spec", "to": "docs"}
   ]
 }`,
 

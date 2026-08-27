@@ -263,7 +263,7 @@ is interrupted only at human gates and terminal states.
 | `wait_event` | Parks at dispatch, released when the named bus event is observed |
 
 ```
-1. muxcode graph run coding-pr "implement PBP1-4915"
+1. muxcode graph run req-code-pr "implement PBP1-4915"
 2. Template resolved (project > user > builtin), validated, run dir created
    under BusDir()/graphs/<run-id>/  — run.json, graph.json, nodes/<id>.json
 3. Daemon poll loop: checkGraphRuns() -> bus.StepGraphRuns(session)

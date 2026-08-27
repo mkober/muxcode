@@ -1543,7 +1543,7 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 
 ```bash
 # Start a run from a built-in template, with intent interpolated into node messages
-muxcode graph run coding-pr "implement PBP1-4915"
+muxcode graph run req-code-pr "implement PBP1-4915"
 
 # Run a custom definition — --file must be the first argument after `run`,
 # since a bare first arg is read as a template name
@@ -1598,9 +1598,12 @@ Three details worth knowing:
   open costs nothing and survives a daemon restart.
 
 **Templates** resolve `project > user > builtin`, the same precedence as agent files:
-`.muxcode/graphs/<name>.json` > `~/.config/muxcode/graphs/<name>.json` > built-in. Five
-ship built in: `coding-pr`, `story-lifecycle`, `research-critique`, `deploy-verify`, and a
-`build-test-review` subgraph.
+`.muxcode/graphs/<name>.json` > `~/.config/muxcode/graphs/<name>.json` > built-in. Seven
+ship built in: `story-to-spec`, `req-code-pr`, `story-lifecycle`, `commit-pr-review-loop`,
+`review-spec-docs`, `deploy-verify`, and a `build-test-review` subgraph — roughly the order of a
+story's life, from deriving a spec off the branch to deploying it. Every builtin is pinned to
+validate by `TestBuiltinGraphTemplatesValidate`, so one that violates the gate rule fails the
+suite rather than shipping.
 
 **Validation is strict by design.** Undefined node refs, unreachable nodes, and uncapped
 cycles are errors, not warnings — a loop is only legal via an explicit `max_iterations` on a

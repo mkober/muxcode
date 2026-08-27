@@ -65,9 +65,12 @@ type Edge struct {
 type Graph struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	Start       string `json:"start"`
-	Nodes       []Node `json:"nodes"`
-	Edges       []Edge `json:"edges"`
+	// RequiresSpec gates run creation on an active requirements spec
+	// (muxcode spec set) — for graphs whose nodes implement against it.
+	RequiresSpec bool   `json:"requires_spec,omitempty"`
+	Start        string `json:"start"`
+	Nodes        []Node `json:"nodes"`
+	Edges        []Edge `json:"edges"`
 }
 
 // GraphValidation collects the outcome of Graph.Validate. Errors block
@@ -627,6 +630,13 @@ func WriteGraphDefinition(g *Graph, scope string) (string, *GraphValidation, err
 	}
 	if strings.ContainsAny(g.Name, `/\`) || strings.HasPrefix(g.Name, ".") {
 		return "", v, fmt.Errorf("graph name %q is not usable as a template filename", g.Name)
+	}
+	// Required at the creation chokepoint only — not in Validate(), which
+	// also gates RUNNING existing description-less template files. The
+	// launcher lists every template with its description; a new graph
+	// without one is an unlabeled row nobody can tell apart later.
+	if strings.TrimSpace(g.Description) == "" {
+		return "", v, fmt.Errorf("graph %q has no description — add a one-line \"description\" field; the launcher lists templates by it", g.Name)
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", v, err

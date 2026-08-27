@@ -10,7 +10,7 @@ Classify the prompt into ONE of: `launch`, `status`, `gates`, `approve`, `create
 
 | Intent | When | Command |
 |--------|------|---------|
-| launch | "run/start/launch <graph>" | `muxcode graph run <name>` |
+| launch | "run/start/launch <graph>" — including plain-word near-matches of a template name ("run build test review" means the `build-test-review` graph) | `muxcode graph run <name>` (when unsure whether words name a template, check `muxcode graph list` first — a match means launch, no match means inject) |
 | status | "how is / what happened to / list runs" | `muxcode graph list` or `muxcode graph status <run-id>` |
 | gates | "what is waiting / pending approvals" | `muxcode graph list` (the run list marks waiting gates); for one run's detail use `muxcode graph status <run-id>` instead |
 | approve | user names a specific gate or run to approve | `muxcode graph approve <run-id> <node-id>` |
@@ -21,8 +21,9 @@ Classify the prompt into ONE of: `launch`, `status`, `gates`, `approve`, `create
 
 Compose the JSON from the user's description, then run ONE command with the JSON in single quotes:
 
-`muxcode graph create --json '{"name":"my-flow","start":"a","nodes":[{"id":"a","type":"send","role":"build","action":"build","message":"run the build"},{"id":"b","type":"send","role":"test","action":"test","message":"run tests"}],"edges":[{"from":"a","to":"b"}]}'`
+`muxcode graph create --json '{"name":"my-flow","description":"build then test","start":"a","nodes":[{"id":"a","type":"send","role":"build","action":"build","message":"run the build"},{"id":"b","type":"send","role":"test","action":"test","message":"run tests"}],"edges":[{"from":"a","to":"b"}]}'`
 
+- ALWAYS include a one-line `"description"` summarizing what the graph does — the create command refuses a graph without one.
 - Default scope is the project. Add `--scope user` ONLY if the user said "global" or "all projects".
 - Node types: `send` (needs role+action+message), `wait_human` (needs only id). Use just these unless the user asks for fan-out (`join`) or conditions.
 - Any node sending to the commit role, or with action `jira-write`/`confluence-write`, MUST have a `wait_human` node upstream — validation rejects it otherwise. Add the gate; never drop the rule.

@@ -48,7 +48,7 @@ Every full-screen surface renders in the same four bands, top to bottom:
 
 ```
   Launch Graph / Graph Runs / Pending Gates   ⇥ Tab: next surface     ← tab bar (multi-surface only)
-  Run abc123  coding-pr  running  4/9 done  2m14s                     ← header: what am I looking at
+  Run abc123  req-code-pr  running  4/9 done  2m14s                     ← header: what am I looking at
   ────────────────────────────────────────────────────────────────
   ● build      ✓ test       ⚑ await-review                            ← body
   · deploy

@@ -317,7 +317,7 @@ func TestValidateGateRuleMixedPaths(t *testing.T) {
 }
 
 func TestBuiltinGraphTemplatesValidate(t *testing.T) {
-	want := []string{"build-test-review", "coding-pr", "deploy-verify", "research-critique", "story-lifecycle"}
+	want := []string{"build-test-review", "commit-pr-review-loop", "deploy-verify", "pr-local-review", "req-code-pr", "review-spec-docs", "story-lifecycle", "story-to-spec"}
 	if len(builtinGraphJSON) != len(want) {
 		t.Errorf("expected %d builtin templates, got %d", len(want), len(builtinGraphJSON))
 	}
@@ -417,12 +417,116 @@ func TestListGraphTemplatesIncludesBuiltins(t *testing.T) {
 	}
 }
 
-// writableTestGraph returns a minimal graph that passes Validate().
+// TestCancelGraphRunExpiresTasks pins the zombie-redrive fix: canceling
+// a run times out its nodes' correlated in-flight tasks, so the stall
+// watchdog cannot re-drive requests nobody wants anymore (observed live
+// 2026-08-27: a canceled loop's edit node re-driven repeatedly). An
+// in-flight task the run does NOT reference must survive — cancel kills
+// only its own (negative control).
+func TestCancelGraphRunExpiresTasks(t *testing.T) {
+	session := "graph-cancel-expiry-test"
+	t.Cleanup(func() { _ = os.RemoveAll(BusDir(session)) })
+	if err := os.MkdirAll(BusDir(session), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := CreateGraphRun(session, writableTestGraph("cancelable"), "cancelable", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateTask(session, Message{ID: "zombie-1", From: "daemon", To: "edit", Action: "edit", Payload: "p"}, 600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateTask(session, Message{ID: "bystander-1", From: "edit", To: "run", Action: "run", Payload: "p"}, 600); err != nil {
+		t.Fatal(err)
+	}
+	if err := MutateNodeStatus(session, run.ID, "a", func(st *GraphNodeStatus) {
+		st.State = GraphNodeRunning
+		st.TaskID = "zombie-1"
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CancelGraphRun(session, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	zombie, err := ReadTask(session, "zombie-1")
+	if err != nil || zombie.Status != TaskTimedOut {
+		t.Errorf("cancel must time out the node's in-flight task, got %+v err %v", zombie, err)
+	}
+	bystander, err := ReadTask(session, "bystander-1")
+	if err != nil || bystander.Status != TaskInFlight {
+		t.Errorf("an unrelated in-flight task must survive the cancel (negative control), got %+v err %v", bystander, err)
+	}
+}
+
+// TestCreateGraphRunRequiresSpec pins the requires_spec gate at the
+// run-creation chokepoint: a spec-driven graph refuses to start with no
+// active requirements spec, and starts once one is set (negative
+// control). req-code-pr carries the flag builtin.
+func TestCreateGraphRunRequiresSpec(t *testing.T) {
+	session := "graph-requires-spec-test"
+	t.Cleanup(func() { _ = os.RemoveAll(BusDir(session)) })
+
+	g := writableTestGraph("spec-driven")
+	g.RequiresSpec = true
+	if _, err := CreateGraphRun(session, g, "spec-driven", "x"); err == nil {
+		t.Fatal("a requires_spec graph must refuse to run with no active spec")
+	}
+
+	if err := os.MkdirAll(BusDir(session), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(session, "docs/requirements/drafts/some-spec.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateGraphRun(session, g, "spec-driven", "x"); err != nil {
+		t.Fatalf("with an active spec set the run must start: %v", err)
+	}
+
+	tpl, _, err := ResolveGraphTemplate("req-code-pr")
+	if err != nil {
+		t.Fatalf("req-code-pr builtin missing: %v", err)
+	}
+	if !tpl.RequiresSpec {
+		t.Error("req-code-pr must carry requires_spec — implementing against no spec is the case the gate exists for")
+	}
+}
+
+// writableTestGraph returns a minimal graph that passes Validate() and
+// the write-time description requirement.
 func writableTestGraph(name string) *Graph {
 	return &Graph{
-		Name:  name,
-		Start: "a",
-		Nodes: []Node{{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"}},
+		Name:        name,
+		Description: "test graph",
+		Start:       "a",
+		Nodes:       []Node{{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"}},
+	}
+}
+
+// TestWriteGraphDefinitionRequiresDescription pins the creation
+// chokepoint: a new template without a description is refused and no
+// file is written — the launcher lists templates by description, and an
+// unlabeled row helps nobody. Running existing description-less files
+// stays legal (the rule lives in the write path, not Validate()).
+func TestWriteGraphDefinitionRequiresDescription(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	bare := writableTestGraph("no-desc")
+	bare.Description = "  "
+	if _, _, err := WriteGraphDefinition(bare, GraphScopeProject); err == nil {
+		t.Fatal("a description-less graph must be refused at write time")
+	}
+	if _, err := os.Stat(filepath.Join(projectGraphDir, "no-desc.json")); err == nil {
+		t.Error("the refused graph must leave no file behind")
+	}
+	if bare.Validate().OK() != true {
+		t.Error("negative control: the same graph still VALIDATES — only the write path requires a description")
 	}
 }
 
@@ -568,8 +672,9 @@ func TestWriteGraphDefinitionUngatedCommitRejected(t *testing.T) {
 	}
 
 	gated := &Graph{
-		Name:  "gated-commit",
-		Start: "g",
+		Name:        "gated-commit",
+		Description: "human-gated commit",
+		Start:       "g",
 		Nodes: []Node{
 			{ID: "g", Type: NodeWaitHuman},
 			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "commit it"},

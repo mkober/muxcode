@@ -158,6 +158,13 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 	if v := g.Validate(); !v.OK() {
 		return nil, fmt.Errorf("graph %q is invalid: %s", g.Name, strings.Join(v.Errors, "; "))
 	}
+	// The run-creation chokepoint covers every launch road (CLI, launcher
+	// surface, prompt-agent) — a spec-driven graph must not start against
+	// nothing (req-code-pr implements per the active requirements spec;
+	// with none set its implement node would freewheel).
+	if g.RequiresSpec && strings.TrimSpace(ReadActiveSpec(session)) == "" {
+		return nil, fmt.Errorf("graph %q requires an active requirements spec — set one first: muxcode spec set <path>", g.Name)
+	}
 
 	run := &GraphRun{
 		ID:        NewGraphRunID(g.Name),
