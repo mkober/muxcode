@@ -82,16 +82,16 @@ than that, the correct outcome is to inject it into the main agent, not to grow 
 - [x] The empty state (no prompt typed, no history) is explicit and keeps header, tab bar, and footer
 - [x] The prompt-agent runs **headless** — no tmux window, no harness TUI (no `--tui` flag)
 - [x] Prompt results are displayed **in the Prompt surface**, read from a session-global transcript on `refresh()`
-- [ ] The surface **never blocks** on inference: with a prompt in flight, the pane still redraws and `Tab`/`Shift-Tab` still cycle away and back
+- [x] The surface **never blocks** on inference: with a prompt in flight, the pane still redraws and `Tab`/`Shift-Tab` still cycle away and back
 - [x] Three states are visually distinct — *working*, *finished*, and *model unreachable* — so a slow answer is never mistaken for a broken one
-- [ ] A result raised on one window's pane is visible on every window's pane, since the transcript is session-global
+- [x] A result raised on one window's pane is visible on every window's pane, since the transcript is session-global
 - [x] Reading the transcript happens in `refresh()`, not in a render function — the renderer stays pure and `--render-once` still works
 - [x] The footer advertises every key the surface accepts, including the inject/interpret toggle
 - [x] The input line names its destination at all times — which agent an injected prompt would reach, or that it will be interpreted — so the mode is readable without color
 - [x] A `prompt` bus role exists with its own inbox and is accepted by `IsKnownRole()`
-- [x] The prompt-agent runs on the local harness (Ollama); it never launches Claude Code, OpenCode, or Codex
-- [x] The model is chosen by configuration, not code — no model name is hardcoded in the role's path; the role inherits the global default `qwen3:4b` with `MUXCODE_PROMPT_MODEL` left unset (see [Model selection](#model-selection))
-- [x] **One model resident:** every local role — prompt included — runs `qwen3:4b` with no per-role pin, so no combination of active agents can put a second set of weights in memory
+- [x] The prompt-agent runs on the muxcode harness; it never launches Claude Code's CLI, the OpenCode TUI, or Codex — **wording updated 2026-08-27**: the harness now serves either local Ollama or the hosted gateway, and the default is the gateway. What the criterion actually guards — no second coding-agent CLI — still holds
+- [x] The model is chosen by configuration, not code — no model name is hardcoded in the role's path; the role inherits the **backend's** default with `MUXCODE_PROMPT_MODEL` left unset: `deepseek-v4-flash` on the gateway, `qwen3:4b` locally (see [Backend selection](#backend-selection--revised-2026-08-27-premise-overturned-by-measurement))
+- [x] **One model resident:** every *local* role runs `qwen3:4b` with no per-role pin, so no combination of active agents can put a second set of weights in memory. **Strengthened by the backend switch** — on the gateway default the prompt-agent loads no local weights at all, so the rule now holds with one fewer resident model, not more
 - [ ] Build, test, commit, and watch still complete their normal tasks on the smaller model, and the single-shot roles do not loop — **measured FALSE 2026-08-26**, not merely unverified; see [Phase 2 regression findings](#phase-2-regression-findings)
 - [ ] Its tool profile permits only `muxcode graph` subcommands, reads/writes under the two graph directories, and the injection path — verified by a **negative control** asserting a repo write and a git command are both denied
 - [ ] Intent: **launch** — a named or described graph resolves and starts via `muxcode graph run`, across all three scopes
@@ -176,6 +176,72 @@ Three properties this buys, each of which is a requirement rather than a nicety:
 into. The surface has to show that a prompt is working — and distinguish *working* from *finished*
 from *the model is unreachable*. A surface that looks identical while thinking and while broken is
 the failure mode to design out; on a 4B doing a Phase 5 composition, that gap will not be brief.
+
+### Backend selection — revised 2026-08-27, premise overturned by measurement
+
+**The prompt-agent's backend is selectable, and the hosted gateway is now the default**
+(user-initiated, 2026-08-27 — *"ollama … too resource intensive"*). This supersedes the local-only
+assumption running through the sections below. They are kept as written rather than rewritten: the
+reasoning that led to a local-first design was sound given what was known, and a reader who cannot
+see it will re-derive it.
+
+| Setting | Value |
+|---------|-------|
+| `MUXCODE_PROMPT_BACKEND` | `opencode` (**default**) or `ollama` — `PromptBackend()`, `bus/prompt_agent.go:57`, env then config file. Anything other than the literal `ollama` resolves to the gateway |
+| Gateway | OpenCode Zen, `https://opencode.ai/zen/v1` (`opencodeGatewayURL`, `:43`) |
+| Key | `MUXCODE_OPENCODE_API_KEY`, env or config (`:72`) |
+| Default remote model | `deepseek-v4-flash` — **bare id, not catalog form.** The first gateway request 401'd on `opencode-go/deepseek-v4-flash`; Zen wants the id without the provider prefix |
+| Local harness launch | Gated on the backend — the daemon starts the headless local harness only when the backend is `ollama`, so the default path launches no local process at all |
+| Installer | Ollama is **optional again** (removed from `PREREQS`; `install.sh:261` records why). The installer **prompts** for `MUXCODE_OPENCODE_API_KEY` instead (`:626`–`:656`) — silent `read -rs`, never in argv, skipped under `-y/--yes`, blank means skip, an existing assignment is rewritten rather than duplicated, and the config is `chmod 600`'d on write. The presence check requires a **non-empty** value, so an empty `KEY=""` still prompts |
+
+**Why the premise fell.** This spec opened by arguing the scope was "exactly the shape a local model
+can serve… keeps the feature off the metered providers." Measurement contradicted it on two counts:
+
+1. **39–82 s per call** — and this was *with* `think:false`, so it is not the thinking-mode overhead
+   the [Phase 2 regression](#phase-2-regression-findings) identified. The latency survives the fix
+   that was supposed to remove it.
+2. **Fabricated success summaries** — the model reported success for commands that did not succeed.
+
+Two captured live on 2026-08-27, minutes apart, both caught by `enforceDenialPrefix`:
+
+```
+BLOCKED: Error: command not allowed by tool profile: make build
+         — model summary: succeeded: Requirements PR created for review
+
+BLOCKED: Error: command not allowed by tool profile: muxcli status
+         — model summary: succeeded: Requirements doc moved to completed
+           directory and Jira story transitioned to Done
+```
+
+Read what the second one claims. The command was a hallucinated binary (`muxcli`, not `muxcode`),
+it was refused, and the model reported having **moved a spec to `completed/` and transitioned a Jira
+story to Done** — two of the most tightly gated actions in this repo, neither of which occurred.
+
+The danger is not that the model emits noise; it is that the confabulation is **contextually
+plausible**. It names this project's real workflows in this project's real vocabulary, so an
+unprefixed summary would read as a credible report of work that never happened. The authority
+boundaries held perfectly — the tool profile refused both commands — but *the reporting layer would
+have lied about them*. A guard on what the agent may **do** does not constrain what it **claims**,
+and these two failure surfaces need separate defences.
+
+The second finding is the more serious one, and it settles an argument this spec had already been
+having with itself. The false-success guard was first added as a **model instruction**, then moved
+into harness code because an instruction is not a guarantee. This measurement is that reasoning
+confirmed against the actual model: `qwen3:4b` does fabricate success, so `enforceDenialPrefix` is
+load-bearing rather than defensive. It also means a 4B failing an intent is not always visible as a
+failure — which is exactly what makes the [Phase 7](#phase-7-first-run--25-passed-3-failed-0-skipped)
+live-intent results hard to read.
+
+**Consequence for the catalog-pin guard.** `RoleModel()` skips slash-form pins because
+`provider/model` is an OpenCode catalog name that Ollama cannot pull. Against a hosted gateway that
+form is *correct*, so the guard now stands down when a remote endpoint is configured
+(`harness/config.go:95`, mirrored in `bus/ollama.go`). The guard still protects the local path,
+which is the case it was written for.
+
+**Consequence for the one-model-resident rule.** Unchanged and, if anything, easier to hold: on the
+`opencode` backend the prompt-agent loads **no local weights at all**. The
+["4B everywhere" decision](#decisions) for the *other* local roles is untouched by this and still
+rests on the premise the regression measured false.
 
 ### Model selection
 
@@ -576,16 +642,68 @@ carries its own positive control, noting that "a filter that blocks every approv
 
 ### Phase 7: Integration test
 
-- [ ] Create `scripts/test-prompt-mode.sh` — hermetic where possible: scratch `BUS_SESSION`, scratch tmux session, scratch graph dirs
-- [ ] Surface appears in the `Tab` cycle and `MUXCODE_CONTROL_PANE_SURFACE=prompt` starts on it (`capture-pane`)
-- [ ] `--render-once` frames: empty state, clamped long prompt, unreachable-model state
+- [x] Create `scripts/test-prompt-mode.sh` — hermetic where possible: scratch `BUS_SESSION`, scratch tmux session, scratch graph dirs
+- [x] Surface appears in the `Tab` cycle and `MUXCODE_CONTROL_PANE_SURFACE=prompt` starts on it (`capture-pane`)
+- [x] `--render-once` frames: empty state, clamped long prompt, unreachable-model state
 - [ ] Launch intent starts a run against a scratch graph dir; run appears in `graph list`
-- [ ] Status intent reports that run
+- [x] Status intent reports that run
 - [ ] Named-gate approval releases the gate; unnamed "approve whatever is waiting" does **not**
 - [ ] Create intent writes a valid definition into the scratch project dir; an invalid one writes nothing
-- [ ] Injection delivers a dash-leading payload intact into a scratch pane
-- [ ] Ollama dependency: skip-with-reason when Ollama is absent, and assert the model-unreachable frame still renders — the test must never pass **vacuously** by skipping everything silently
-- [ ] Guard the skip path with a **coverage floor**: assert a minimum number of non-skipped checks, so a machine with no model pulled reports "skipped" loudly rather than green. This is not hypothetical — it is the current state of the development machine, so the skip branch will be the *first* branch exercised
+- [x] Injection delivers a dash-leading payload intact into a scratch pane
+- [x] Ollama dependency: skip-with-reason when Ollama is absent, and assert the model-unreachable frame still renders — the test must never pass **vacuously** by skipping everything silently
+- [x] Guard the skip path with a **coverage floor**: assert a minimum number of non-skipped checks, so a machine with no model pulled reports "skipped" loudly rather than green. This is not hypothetical — it is the current state of the development machine, so the skip branch will be the *first* branch exercised
+
+### Phase 7 first run — 25 passed, 3 failed, 0 skipped
+
+Run 2026-08-27 (`/tmp/test-prompt-mode-2.log`). The script itself is sound: 349 lines, a real coverage
+floor (`PASS >= 18` against 20 mechanical checks), granular skip-with-reason, and a guard that skips
+the approve checks when the gate never reaches `waiting`. **0 skipped means the live section actually
+ran** — Ollama and `qwen3:4b` were present, so these are genuine live results, not deferrals.
+
+Everything mechanical passed: the authority gate refuses an unauthorized request and explains the
+rule, all four `--render-once` frames, the 40-column clamp, the full graph-create matrix
+(valid accepted, written project-local, resolves at project tier, ungated commit rejected citing the
+rule, rejection wrote nothing), the live surface (pane opens on Prompt, `Ctrl-T` flips to inject
+naming the active agent, dash-leading payload injected intact, receipt shown, `Tab` cycles).
+
+**Three failures, all live-model intents, all timeouts:** launch (3 min), named approve (3 min),
+create (4 min).
+
+> **The negative control is currently vacuous — this is the finding that matters.** The run recorded
+> `ok: unnamed approve released nothing (negative control)` alongside
+> `FAIL: named approve released the gate (3min timeout)`. Nothing released the gate *at all*, so the
+> control passed because the whole approve path was inert, not because the guard discriminated. **A
+> negative control whose paired positive case fails proves nothing.**
+>
+> **Fixed 2026-08-27, verified in the script.** The control is now gated on its positive control:
+> it reports `ok … (negative control, validated by the positive control)` only when the named
+> approve passed, and otherwise `skip "unnamed-approve negative control undetermined — positive
+> control failed"`. Reporting it as a **skip** rather than silently dropping it means the coverage
+> floor still counts it, so an undetermined control cannot quietly inflate the pass total. The
+> failure path also now calls `live_diag`, dumping the harness log tail so "tool call emitted late"
+> and "never emitted" become distinguishable — the ambiguity that made the first run's three
+> failures unreadable.
+>
+> Note what this means about the recorded 25/3/0: **that run's pass count was already wrong in the
+> reassuring direction**, because it included an `ok` for a control that had proven nothing.
+>
+> This is [MUX-014](../completed/MUX-014-graph-agent-orchestrator.md)'s trap repeating: there,
+> "join barrier held" and "z held back" both passed in the 15/22 run because nothing had dispatched.
+> The script already guards the *gate-never-waiting* case (line 301) but not this one — the gate
+> **was** waiting and nothing could act on it. **Fix: make the unnamed-approve control conditional on
+> the named-approve check having passed**, so it can only report a pass when it had something to
+> discriminate against.
+
+**On "latency, not a code defect":** plausible, but not established by this run. `status intent
+produced a response` shows the model replies, but not that it emitted and executed a *tool call* —
+which is what the three failing intents all require and status alone may not. The two hypotheses
+(slow tool calls vs. unreliable tool-call emission at 4B) are not yet distinguished. Distinguish them
+before choosing a fix: the escalation ladder's rungs 1–2 (structured output, template-fill) address
+the second, while think-mode work addresses the first. The 4-minute create failure carries the
+script's own hint — *"escalation ladder territory if this persists"*.
+
+This corroborates the [Phase 2 regression findings](#phase-2-regression-findings): the same 30–90 s
+per-turn cost that made build/test/commit/watch non-viable is the leading explanation here.
 - [ ] Run the script and confirm all checks pass
 
 ## Decisions
@@ -600,13 +718,15 @@ the rejected option would have cost.
 | ~~Inject vs. interpret selection — toggle key vs. prompt prefix~~ | **Decided: explicit toggle with a persistent destination label** | A prefix fails silently when forgotten, and both failure directions are bad: a message meant for Edit gets executed as a graph op, or a graph op lands as text in Edit's composer. A visible mode that names its destination makes the mistake unavailable rather than merely unlikely |
 | ~~Should `-y/--yes` now accept the multi-GB model pull?~~ | **Decided: no — keep it declined; the lazy first-run pull covers it** | `install.sh:588` calls this "the one thing `--yes` will not accept on the user's behalf", and `install.sh:17` plus [`README.md`](../../../README.md) line 333 both promise it in writing. Scripted and CI installs must not silently download gigabytes. The `qwen3:4b` decision softens the cost anyway: 2.5 GB on first run rather than 5+ |
 | ~~Does the prompt role share the global default model, or pin its own?~~ | **Decided: share — the global default moves to `qwen3:4b`** | Resolved in [Model selection](#model-selection). Only one model may be resident at a time, so a per-role pin was rejected: it would put two models in memory whenever both roles were active, and add a second mandatory download for a required feature. `MUXCODE_PROMPT_MODEL` stays unset |
+| Which backend serves the prompt-agent? | **Decided 2026-08-27 (user-initiated): selectable, with `opencode` (Zen gateway) as the default; `ollama` opt-in** | The spec's "a local model is the right shape for this scope" premise was overturned by measurement: 39–82 s per call *with* `think:false`, plus fabricated success summaries — see [Backend selection](#backend-selection--revised-2026-08-27-premise-overturned-by-measurement). Landed in two steps: selectable first, then the default flipped on the resource cost. Local inference is preserved as an opt-in, not removed |
+| Should Ollama stay a required installer prereq? | **Decided: no — optional again** | It was promoted to required *because* Prompt mode needed a local model. With the gateway as default, the default path never touches Ollama, so a required-tier prereq would demand a multi-GB dependency most installs never use. The installer checks `MUXCODE_OPENCODE_API_KEY` instead |
 | ~~Do existing local roles accept the 4B, or keep a 7B pin?~~ | **Decided: accept the 4B everywhere — no per-role pins.** ⚠️ **Premise since measured false — needs re-deciding** | One model resident, for every local role, with no exceptions. The cost was accepted as a *capability reduction*. The [regression check](#phase-2-regression-findings) measured something worse: with thinking enabled those roles do not complete tasks at all. The memory rule itself held perfectly. Re-decide after the think-mode follow-up — this row stays as written so the decision and its refutation sit together |
 
 ## Time Tracking
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-109-prompt-mode-graph-control-pane | 1h 23m | 2026-08-26 17:31 |
+| MUX-109-prompt-mode-graph-control-pane | 4h 22m | 2026-08-27 11:40 |
 
 ## Status
 
