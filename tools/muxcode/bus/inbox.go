@@ -80,6 +80,35 @@ func isLoopingSelfSend(m Message) bool {
 	return m.From != "" && m.From == m.To && m.Action != "startup"
 }
 
+// recordUndeliveredReply logs a self-addressed reply and fires its
+// correlation — delivery status plus MarkResponded, exactly what a
+// delivered reply triggers — without writing to any inbox. The
+// completion record for edit answering a graph node whose reply path
+// normalizes back to edit.
+func recordUndeliveredReply(session string, m Message) error {
+	// Same duplicate-reply guard as the delivered path: a late reply to
+	// an already-completed task must not overwrite the recorded outcome.
+	if t, err := ReadTask(session, m.ReplyTo); err == nil && t.Status == TaskCompleted {
+		fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate reply to already-completed task %s from %s\n", m.ReplyTo, m.From)
+		return nil
+	}
+	data, err := EncodeMessage(m)
+	if err != nil {
+		return err
+	}
+	line := append(data[:len(data):len(data)], '\n')
+	if err := CreateDeliveryStatus(session, m); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: delivery status creation failed: %v\n", err)
+	}
+	MarkResponded(session, m.ReplyTo, m.ID)
+	logDir := filepath.Dir(LogPath(session))
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "  [send] self-addressed reply recorded for correlation %s (not delivered)\n", m.ReplyTo)
+	return appendToFile(LogPath(session), line)
+}
+
 // sendMessage is the shared implementation for Send, SendNoCC,
 // SendForce, and SendHumanPrompt. humanPrompt marks the one sanctioned
 // origin for prompt-role requests — the Prompt surface's own process.
@@ -89,6 +118,18 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 	// at wake-up time; Claude/hook agents had no such guard). The startup
 	// bootstrap self-send is exempt — see isLoopingSelfSend.
 	if isLoopingSelfSend(m) {
+		// A self-addressed RESPONSE carrying a correlation id is not a
+		// loop — it is a completion record. This happens legitimately
+		// when edit answers a daemon-dispatched graph node: the reply
+		// target (daemon) normalizes to edit, so the reply comes back
+		// self-addressed. Fully dropping it lost the correlation and the
+		// node sat "running" until its task timed out (live 2026-08-27:
+		// commit-pr-review-loop node c). Record the reply — log line,
+		// delivery status, MarkResponded — but deliver nothing: no inbox
+		// row, no CC, no wake.
+		if m.Type == "response" && m.ReplyTo != "" {
+			return recordUndeliveredReply(session, m)
+		}
 		fmt.Fprintf(os.Stderr, "  [send] dropping self-addressed message %s→%s:%s (self-sends are not delivered)\n",
 			m.From, m.To, m.Action)
 		return nil
