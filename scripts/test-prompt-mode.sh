@@ -254,13 +254,25 @@ fi
 # ── 5. Live model (skip-with-reason) ─────────────────────────
 
 echo "-- live model intents"
+# Gate on the precondition of the backend that will actually RUN — the
+# default is the opencode gateway, and gating on ollama there let a
+# gateway-only machine skip the very path it defaults to and still read
+# OK-with-skips (plan's catch, 2026-08-27).
 live_reason=""
 command -v muxcode-llm-harness >/dev/null 2>&1 || live_reason="muxcode-llm-harness not installed"
-if [ -z "$live_reason" ]; then
+backend="${MUXCODE_PROMPT_BACKEND:-opencode}"
+if [ -z "$live_reason" ] && [ "$backend" = "ollama" ]; then
   command -v ollama >/dev/null 2>&1 || live_reason="ollama not installed"
+  if [ -z "$live_reason" ]; then
+    ollama list 2>/dev/null | awk '{print $1}' | grep -qx "qwen3:4b" || live_reason="qwen3:4b not pulled (ollama list)"
+  fi
 fi
-if [ -z "$live_reason" ]; then
-  ollama list 2>/dev/null | awk '{print $1}' | grep -qx "qwen3:4b" || live_reason="qwen3:4b not pulled (ollama list)"
+if [ -z "$live_reason" ] && [ "$backend" != "ollama" ]; then
+  key="${MUXCODE_OPENCODE_API_KEY:-}"
+  if [ -z "$key" ] && [ -f "$HOME/.config/muxcode/config" ]; then
+    key="$(sed -n 's/^MUXCODE_OPENCODE_API_KEY=//p' "$HOME/.config/muxcode/config" | head -1)"
+  fi
+  [ -n "$key" ] || live_reason="gateway backend with no MUXCODE_OPENCODE_API_KEY (env or ~/.config/muxcode/config)"
 fi
 
 if [ -n "$live_reason" ]; then
