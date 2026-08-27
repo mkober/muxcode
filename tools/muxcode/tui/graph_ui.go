@@ -599,6 +599,12 @@ func (ui *GraphUI) handleEscapeSequence() string {
 					ui.moveSelection(-1)
 				case 'B': // Down
 					ui.moveSelection(1)
+				case 'C': // Right — the DAG reads left-to-right, so ←/→
+					// walk the selection the way the graph is drawn
+					// (user-requested, 2026-08-27)
+					ui.moveSelection(1)
+				case 'D': // Left
+					ui.moveSelection(-1)
 				case 'Z': // Shift-Tab
 					ui.cycleSurface(-1)
 				}
@@ -1114,7 +1120,7 @@ func (ui *GraphUI) render() string {
 		} else {
 			frame = RenderGraphFrame(*ui.snap, W, H, ui.selectedNode(), ui.now())
 		}
-		footer = fmt.Sprintf("  %sjk%s Select  %sEnter%s Detail  %sa%s Approve gate  %sc%s Cancel  %sr%s Retry  %sq/Esc%s Back",
+		footer = fmt.Sprintf("  %s←→/jk%s Select  %sEnter%s Detail  %sa%s Approve gate  %sc%s Cancel  %sr%s Retry  %sq/Esc%s Back",
 			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 	case viewGraphNode:
 		if ui.snap == nil {
