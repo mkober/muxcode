@@ -623,7 +623,12 @@ fi
 # silent (a key echoed into scrollback outlives the install) and the key
 # never rides argv (ps exposes argv to other local users). Blank = skip.
 CONFIG_FILE="$HOME/.config/muxcode/config"
-if [ -n "${MUXCODE_OPENCODE_API_KEY:-}" ] || grep -q '^MUXCODE_OPENCODE_API_KEY="..*"' "$CONFIG_FILE" 2>/dev/null; then
+# Presence check tolerates every assignment shape the shell accepts —
+# optional `export ` prefix, quoted or unquoted, single or double quotes
+# (Copilot review catch, PR #40: the quoted-only match caused a false
+# re-prompt for `export MUXCODE_OPENCODE_API_KEY=sk-...`).
+existing_okey="$(sed -n -E 's/^(export )?MUXCODE_OPENCODE_API_KEY=//p' "$CONFIG_FILE" 2>/dev/null | head -1 | tr -d "\"'")"
+if [ -n "${MUXCODE_OPENCODE_API_KEY:-}" ] || [ -n "$existing_okey" ]; then
   row "$C_OK" "✓" "opencode-key" "gateway key configured (Prompt mode ready)"
 else
   okey=""
@@ -635,10 +640,11 @@ else
   if [ -n "$okey" ]; then
     mkdir -p "$(dirname "$CONFIG_FILE")"
     touch "$CONFIG_FILE"
-    if grep -q '^MUXCODE_OPENCODE_API_KEY=' "$CONFIG_FILE" 2>/dev/null; then
+    if grep -Eq '^(export )?MUXCODE_OPENCODE_API_KEY=' "$CONFIG_FILE" 2>/dev/null; then
       # Replace the existing (empty/commented-out-value) assignment —
-      # appending a second one means the last silently wins.
-      awk -v k="$okey" '/^MUXCODE_OPENCODE_API_KEY=/{print "MUXCODE_OPENCODE_API_KEY=\"" k "\""; next} {print}' \
+      # appending a second one means the last silently wins. The match
+      # tolerates an `export ` prefix like the presence check above.
+      awk -v k="$okey" '/^(export )?MUXCODE_OPENCODE_API_KEY=/{print "MUXCODE_OPENCODE_API_KEY=\"" k "\""; next} {print}' \
         "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
     else
       {

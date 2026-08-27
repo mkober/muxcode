@@ -150,6 +150,14 @@ func TestTaskStalled(t *testing.T) {
 	if TaskStalled(expired, now, 90) {
 		t.Error("an expired task is the timeout path's business, never a stall")
 	}
+	// Copilot catch (PR #40): halving a threshold of 1 must clamp to 1,
+	// not truncate to 0 (which would stall every graph task instantly).
+	if TaskStalled(mk("daemon", 0), now, 1) {
+		t.Error("a zero-age graph task must not stall at a clamped 1s threshold")
+	}
+	if !TaskStalled(mk("daemon", 1), now, 1) {
+		t.Error("the clamped 1s threshold must still fire at age 1")
+	}
 	done := mk("edit", 200)
 	done.Status = TaskCompleted
 	if TaskStalled(done, now, 90) {

@@ -163,7 +163,12 @@ func TaskStalled(t Task, now int64, stallSecs int) bool {
 		return false
 	}
 	if t.From == "daemon" {
-		stallSecs /= 2
+		// Clamp: integer halving of a small configured threshold can hit
+		// 0, which would make every graph task stall instantly
+		// (Copilot review catch, PR #40).
+		if stallSecs /= 2; stallSecs < 1 {
+			stallSecs = 1
+		}
 	}
 	return now-t.SentAt >= int64(stallSecs)
 }
