@@ -10,10 +10,10 @@ import (
 
 // ProviderSelect handles the "muxcode provider-select" subcommand.
 //
-// Launches an interactive TUI that lets the user pick a CLI provider
-// and model for the currently active agent window. On confirmation,
-// writes a reload trigger file that the modal wrapper executes after
-// the TUI exits.
+// Launches an interactive TUI that lets the user pick a CLI provider and
+// model. On confirmation the TUI performs the reload itself inside its
+// progress view — single agent or batch alike — so nothing executes
+// after it exits.
 //
 // Usage:
 //
@@ -63,18 +63,7 @@ func ProviderSelect(args []string) {
 	}
 
 	ui := tui.NewProviderSelectUI(session, role, window)
-	cli, model, compact, roles, cancelled := ui.Run()
-
-	if cancelled {
-		return
-	}
-
-	// Multi-agent reloads are handled by the TUI progress view — nothing to do here.
-	// Single-agent reloads still use ExecuteReload for subprocess output visibility.
-	if len(roles) <= 1 {
-		if err := tui.ExecuteReload(session, role, cli, model, compact, roles); err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing reload trigger: %v\n", err)
-			os.Exit(1)
-		}
-	}
+	// Every reload — single or batch — runs inside the TUI progress view
+	// (user request 2026-08-28), so nothing remains to execute here.
+	ui.Run()
 }
