@@ -288,6 +288,30 @@ write without passing a `wait_human` gate — `graph validate` rejects such a de
 outright, and `CheckCommitAuthority` / `CheckAtlassianAuthority` remain the runtime
 backstop. A graph cannot be used to launder an action around the rules that govern it.
 
+**Dispatch-time node guards.** A `send` or `spawn` node may declare a `guard` — a predicate the
+executor evaluates in `dispatchNode()` *before* the message is sent, so a declined node never
+reaches its agent. Unknown guard names are a `Validate()` error, so a typo fails loudly rather
+than silently not guarding.
+
+| Guard | Blocks dispatch when |
+|-------|----------------------|
+| `spec-complete` | The active spec still has unchecked `- [ ]` items — `SpecOpenItems()` counts them and the decline names the count plus the first few open items |
+
+`spec-complete` exists because the builtin `commit-pr-review-loop`'s `close-spec` node told plan to
+mark the active spec **Complete** guarded only by *"no active spec = nothing to do"* — it asked
+whether a pointer existed, never whether the work was done, and `commit-spec` downstream would have
+**pushed** the false claim to the PR branch. Rewording the node to say "only if complete" was the
+interim fix and left the decision with a model; the guard moves it into the mechanism, which is the
+point — the defect existed *because* the design trusted wording. See
+[`MUX-114`](requirements/completed/MUX-114-close-spec-node-has-no-completion-check.md).
+
+Three behaviours keep the guard from becoming a defect of its own: **no active spec passes through**
+(blocking there would make the node inert), **an unreadable spec declines loudly** (closing out
+against a spec that cannot be read is as wrong as closing an open one), and **an unresolvable repo
+dir postpones** — the node stays `ready` for the next tick rather than failing, which is why
+`ready → failed` is a legal transition: a guard decline fails the node *without ever running* it,
+and routing through `running` would stamp a start that never happened.
+
 **Gate approval is single-use.** Every fresh pass through a `wait_human` node requires a
 fresh `muxcode graph approve`. Dispatching a gate purges any `approved` marker left by a
 previous pass, because a gate can be re-entered two ways — `graph retry --from` a node at or
