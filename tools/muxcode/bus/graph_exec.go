@@ -285,10 +285,13 @@ func phaseProgressGuardAllows(session string, run *GraphRun, g *Graph, n *Node) 
 			fmt.Sprintf("phase-progress guard: cannot read active spec: %v", err))
 		return false
 	}
+	// max, not sum: every success edge fires together on one completion,
+	// so summing counts each shipped commit once per edge and a fan-out
+	// commit node would overstate its history (PR #50 Copilot).
 	prior := 0
 	for _, e := range g.Edges {
 		if e.From == n.ID && edgeOutcome(e) == OutcomeSuccess {
-			prior += run.EdgeFires[EdgeFireKey(e)]
+			prior = max(prior, run.EdgeFires[EdgeFireKey(e)])
 		}
 	}
 	if completed < prior+1 {

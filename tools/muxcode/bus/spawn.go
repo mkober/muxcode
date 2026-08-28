@@ -179,9 +179,7 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 
 	// Worker console in pane 0 — view only, a failure must not block the spawn
 	_ = exec.Command("tmux", "select-pane", "-t", session+":"+spawnRole+".0", "-T", "CONSOLE").Run()
-	consoleCmd := exec.Command("tmux", "send-keys", "-t", session+":"+spawnRole+".0",
-		fmt.Sprintf("%s console %s", launcher, spawnRole), "Enter")
-	_ = consoleCmd.Run()
+	sendKeysThenEnter(session+":"+spawnRole+".0", fmt.Sprintf("%s console %s", launcher, spawnRole))
 
 	// Launch agent in pane 1 — cd into worktree if set.
 	// AGENT_ROLE must be the spawn-specific role (e.g. "spawn-edit-1") so the
@@ -192,8 +190,7 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 	} else {
 		launchStr = fmt.Sprintf("AGENT_ROLE=%s %s agent launch %s", spawnRole, launcher, role)
 	}
-	launchCmd := exec.Command("tmux", "send-keys", "-t", session+":"+spawnRole+".1", launchStr, "Enter")
-	if err := launchCmd.Run(); err != nil {
+	if err := sendKeysThenEnter(session+":"+spawnRole+".1", launchStr); err != nil {
 		return SpawnEntry{}, fmt.Errorf("launching agent: %v", err)
 	}
 
@@ -210,6 +207,17 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 	}
 
 	return entry, nil
+}
+
+// sendKeysThenEnter types text and presses Enter as two pty writes with a
+// settle delay — text and Enter in one write is the documented
+// dropped-Enter pitfall (PR #50 Copilot flagged the one-call form here).
+func sendKeysThenEnter(target, text string) error {
+	if err := exec.Command("tmux", "send-keys", "-t", target, "-l", "--", text).Run(); err != nil {
+		return err
+	}
+	time.Sleep(100 * time.Millisecond)
+	return exec.Command("tmux", "send-keys", "-t", target, "Enter").Run()
 }
 
 // wakeSpawnedAgent delivers a spawned agent's first turn: a fresh agent
