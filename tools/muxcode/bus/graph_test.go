@@ -587,6 +587,42 @@ func TestValidateGateTextWarnsUnnamedMutation(t *testing.T) {
 	}
 }
 
+// TestValidateGateTextIgnoresGateFailureEdges pins the sweep origin rule
+// (PR #49 Copilot): a wait_human node only ever produces success, so a
+// mutation behind the gate's failure edge never fires from that approval
+// and must not warn — while the success-path mutation still does.
+func TestValidateGateTextIgnoresGateFailureEdges(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "gate",
+		Nodes: []Node{
+			{ID: "gate", Type: NodeWaitHuman, Message: "Approve commit and push"},
+			{ID: "ship", Type: NodeSend, Role: "commit", Action: "commit", Message: "commit it"},
+			{ID: "dead", Type: NodeSend, Role: "commit", Action: "comment", Message: "never fires"},
+		},
+		Edges: []Edge{
+			{From: "gate", To: "ship"},
+			{From: "gate", To: "dead", Outcome: OutcomeFailure},
+		},
+	}
+	for _, w := range g.Validate().Warnings {
+		if strings.Contains(w, `node "dead"`) {
+			t.Errorf("mutation behind a gate failure edge must not warn: %s", w)
+		}
+	}
+
+	g.Nodes[0].Message = "Approve the thing"
+	found := false
+	for _, w := range g.Validate().Warnings {
+		if strings.Contains(w, `node "ship"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("success-path mutation must still warn when unnamed (negative control)")
+	}
+}
+
 // TestValidateUngatedDeployWarns pins the deploy advisory: an ungated
 // deploy node warns, a gated one does not (negative control).
 func TestValidateUngatedDeployWarns(t *testing.T) {

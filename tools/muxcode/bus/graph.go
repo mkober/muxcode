@@ -593,10 +593,13 @@ func (g *Graph) validateGateText(byID map[string]*Node, v *GraphValidation) {
 				}
 			}
 			for _, ei := range out[cur] {
-				to := g.Edges[ei].To
-				if !seen[to] {
-					seen[to] = true
-					queue = append(queue, to)
+				e := g.Edges[ei]
+				if cur == gate.ID && edgeOutcome(e) != OutcomeSuccess {
+					continue // a gate only produces success — its other edges never fire (PR #49 Copilot)
+				}
+				if !seen[e.To] {
+					seen[e.To] = true
+					queue = append(queue, e.To)
 				}
 			}
 		}
