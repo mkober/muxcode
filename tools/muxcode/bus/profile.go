@@ -23,10 +23,18 @@ type SendPolicy struct {
 }
 
 // ToolProfile defines allowed tools for a role.
+//
+// DenyTools patterns are emitted as deny rules for non-hook providers
+// (OpenCode); on Claude Code enforcement runs through the PreToolUse
+// guard instead, so the list exists to survive a provider switch. A deny
+// is not redundant with the allowlist when an Include group grants a
+// broader pattern (the "bus" group's Bash(muxcode *) covers every
+// atlassian subcommand). Trailing space in a pattern is load-bearing:
+// "comment *" must not match "comments".
 type ToolProfile struct {
 	Include     []string `json:"include,omitempty"`
 	Tools       []string `json:"tools,omitempty"`
-	DenyTools   []string `json:"deny_tools,omitempty"` // prohibited command patterns (for non-hook providers)
+	DenyTools   []string `json:"deny_tools,omitempty"`
 	CdPrefix    bool     `json:"cd_prefix,omitempty"`
 	BashTimeout int      `json:"bash_timeout,omitempty"` // seconds, 0 = default (60s)
 }
@@ -599,6 +607,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(git rev-parse*)",
 					"Bash(python3*)", "Bash(jq*)",
 					"Bash(tree *)",
+					"Bash(mv docs/*)",
 					// Atlassian: plan OWNS this integration — reads for spec context
 					// and writes, because plan is the one role that
 					// CheckAtlassianAuthority authorizes (bus/atlassian_authority.go).
@@ -683,23 +692,6 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(tmux capture-pane *)", "Bash(tmux display-message *)",
 				},
 				DenyTools: []string{
-					// Atlassian writes (delegated to the plan agent, which holds the
-					// authority — bus/atlassian_authority.go). Edit stays the consent
-					// boundary: it talks to the user and relays their request to plan,
-					// but it does not perform the write itself.
-					//
-					// Only consumed by non-hook providers (OpenCode), which emit these
-					// as bash deny rules; Claude Code enforcement runs through the
-					// PreToolUse guard instead. Present so the rule survives a
-					// `muxcode reload edit --cli opencode`.
-					//
-					// NOT redundant with the Tools allowlist: the "bus" include group
-					// grants `Bash(muxcode *)`, which already matches every atlassian
-					// subcommand, so without an explicit deny the narrowing does
-					// nothing. Reads are deliberately left open.
-					//
-					// Trailing space matters — "comment *" must not match "comments",
-					// and "transition *" must not match "transitions".
 					"muxcode atlassian jira update *",
 					"muxcode atlassian jira comment *",
 					"muxcode atlassian jira link *",
@@ -709,29 +701,21 @@ func DefaultConfig() *MuxcodeConfig {
 					"muxcode atlassian jira attach *",
 					"muxcode atlassian confluence update *",
 					"muxcode atlassian confluence attach *",
-					// Git write operations (read-only delegated to commit agent)
 					"git commit*", "git push*", "git pull*", "git rebase*",
 					"git checkout*", "git branch*", "git merge*", "git stash*",
 					"git tag*", "git reset*", "git cherry-pick*", "git revert*",
 					"git am*", "git add*", "git rm*", "git mv*", "git restore*",
-					// GitHub CLI (all operations delegated to commit agent)
 					"gh *",
-					// Build commands (delegated to build agent)
 					"./build.sh*", "pnpm build*", "pnpm run build*", "make*",
 					"go build*", "cargo build*",
-					// Test commands (delegated to test agent)
 					"pnpm test*", "pnpm run test*", "jest*", "pytest*",
 					"go test*", "cargo test*",
-					// Deploy commands (delegated to deploy agent)
 					"cdk synth*", "cdk diff*", "cdk deploy*",
-					// Log tailing (delegated to watch agent)
 					"aws logs*", "tail -f*", "kubectl logs*", "docker logs*", "stern*",
-					// AWS operations (delegated to run agent)
 					"aws lambda*", "aws stepfunctions*", "aws s3*", "aws s3api*",
 					"aws glue*", "aws dynamodb*", "aws kinesis*", "aws firehose*",
 					"aws events*", "aws sqs*", "aws sns*", "aws ssm*", "aws ecs*",
 					"aws secretsmanager*", "aws cloudformation*", "aws appflow*",
-					// API requests (delegated to api agent)
 					"curl*",
 				},
 			},
