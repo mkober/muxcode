@@ -692,6 +692,47 @@ func TestBuiltinGateTextClean(t *testing.T) {
 	}
 }
 
+// TestShipTemplatesUpdateSpecBeforeGate pins the user requirement
+// (2026-08-28): req-code-pr and story-lifecycle update the spec DURING
+// the run — an update-spec node feeds the ship gate — and their commit
+// nodes carry the phase-complete guard, not spec-complete, which would
+// block every partial-phase ship.
+func TestShipTemplatesUpdateSpecBeforeGate(t *testing.T) {
+	for _, name := range []string{"req-code-pr", "story-lifecycle"} {
+		tpl, _, err := ResolveGraphTemplate(name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		nodes := map[string]*Node{}
+		for i := range tpl.Nodes {
+			nodes[tpl.Nodes[i].ID] = &tpl.Nodes[i]
+		}
+		us := nodes["update-spec"]
+		if us == nil || NormalizeBusRole(us.Role) != "plan" || us.Action != "verify-spec" {
+			t.Errorf("%s: update-spec node missing or misrouted: %+v", name, us)
+		}
+		if c := nodes["commit"]; c == nil || c.Guard != GuardPhaseComplete {
+			t.Errorf("%s: commit node must carry the phase-complete guard, got %+v", name, c)
+		}
+		hasEdge := func(from, to string) bool {
+			for _, e := range tpl.Edges {
+				if e.From == from && e.To == to {
+					return true
+				}
+			}
+			return false
+		}
+		if !hasEdge("review", "update-spec") || !hasEdge("update-spec", "ship-gate") {
+			t.Errorf("%s: update-spec must sit between review and ship-gate", name)
+		}
+		// Negative control (plan finding): update-spec must be the ONLY
+		// path — a direct review->ship-gate edge would silently bypass it.
+		if hasEdge("review", "ship-gate") {
+			t.Errorf("%s: direct review->ship-gate edge bypasses update-spec", name)
+		}
+	}
+}
+
 // writableTestGraph returns a minimal graph that passes Validate() and
 // the write-time description requirement.
 func writableTestGraph(name string) *Graph {

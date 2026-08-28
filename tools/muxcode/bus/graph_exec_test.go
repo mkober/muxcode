@@ -817,6 +817,66 @@ func TestExecSpecGuardResolvesRelativeSpecPath(t *testing.T) {
 	}
 }
 
+// phaseGuardGraph returns a one-node graph whose send carries the
+// phase-complete guard.
+func phaseGuardGraph() *Graph {
+	return &Graph{
+		Name:  "g",
+		Start: "ship",
+		Nodes: []Node{{ID: "ship", Type: NodeSend, Role: "plan", Action: "update-docs",
+			Message: "commit the phase", Guard: GuardPhaseComplete}},
+	}
+}
+
+// TestExecPhaseGuard pins the phase-scoped guard: the intent's phase with
+// open items declines; the same phase fully checked dispatches even while
+// OTHER phases are open (the discriminator against spec-complete); no
+// phase in the intent passes through.
+func TestExecPhaseGuard(t *testing.T) {
+	spec := "# S\n### Phase 1: Now\n- [ ] open one\n### Phase 2: Later\n- [ ] later work\n"
+
+	run := createTestRun(t, phaseGuardGraph())
+	writeSpecFixture(t, spec)
+	mutateRunIntent(t, run.ID, "Ship — Phase 1: Now")
+	step(t, runTestSession, run.ID)
+	st, err := ReadNodeStatus(runTestSession, run.ID, "ship")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "Phase 1 has 1 open items") {
+		t.Fatalf("open phase must decline, got state %q output %q", st.State, st.Output)
+	}
+
+	run2 := createTestRun(t, phaseGuardGraph())
+	writeSpecFixture(t, "# S\n### Phase 1: Now\n- [x] done\n### Phase 2: Later\n- [ ] later work\n")
+	mutateRunIntent(t, run2.ID, "Ship — Phase 1: Now")
+	step(t, runTestSession, run2.ID)
+	if s := nodeState(t, runTestSession, run2.ID, "ship"); s != GraphNodeRunning {
+		t.Fatalf("checked phase must dispatch despite open later phases, got %q", s)
+	}
+
+	run3 := createTestRun(t, phaseGuardGraph())
+	writeSpecFixture(t, spec)
+	mutateRunIntent(t, run3.ID, "no phase named")
+	step(t, runTestSession, run3.ID)
+	if s := nodeState(t, runTestSession, run3.ID, "ship"); s != GraphNodeRunning {
+		t.Fatalf("intent without a phase must pass through, got %q", s)
+	}
+}
+
+// mutateRunIntent rewrites a run's intent in the store.
+func mutateRunIntent(t *testing.T, runID, intent string) {
+	t.Helper()
+	run, err := ReadGraphRun(runTestSession, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Intent = intent
+	if err := WriteGraphRun(runTestSession, run); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestExecSpecGuardPostponesWhenRepoDirUnknown(t *testing.T) {
 	t.Setenv("MUXCODE_SESSION_REPO_DIR", "")
 	run := createTestRun(t, specGuardGraph())

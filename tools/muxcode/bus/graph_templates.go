@@ -33,8 +33,9 @@ var builtinGraphJSON = map[string]string{
     {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build or test failure for: ${intent}"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch"},
+    {"id": "update-spec", "type": "send", "role": "plan", "action": "verify-spec", "message": "Verify the implemented changes against the active requirements spec and check off completed criteria and phase steps for: ${intent} — the human sign-off gate follows, so the spec must reflect reality before it"},
     {"id": "ship-gate", "type": "wait_human", "message": "Approve commit, push, and PR creation for: ${intent}"},
-    {"id": "commit", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the changes for: ${intent}"},
+    {"id": "commit", "type": "send", "role": "commit", "action": "commit", "guard": "phase-complete", "message": "Stage and commit the changes for: ${intent}"},
     {"id": "pr", "type": "send", "role": "commit", "action": "commit", "message": "Create a PR for the current branch"}
   ],
   "edges": [
@@ -44,7 +45,8 @@ var builtinGraphJSON = map[string]string{
     {"from": "test", "to": "review"},
     {"from": "test", "to": "fix", "outcome": "failure"},
     {"from": "fix", "to": "build", "max_iterations": 3},
-    {"from": "review", "to": "ship-gate"},
+    {"from": "review", "to": "update-spec"},
+    {"from": "update-spec", "to": "ship-gate"},
     {"from": "ship-gate", "to": "commit"},
     {"from": "commit", "to": "pr"}
   ]
@@ -62,8 +64,9 @@ var builtinGraphJSON = map[string]string{
     {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build or test failure"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the changes on this branch"},
+    {"id": "update-spec", "type": "send", "role": "plan", "action": "verify-spec", "message": "Verify the implemented changes against the active requirements spec and check off completed criteria and phase steps for: ${intent} — the human sign-off gate follows, so the spec must reflect reality before it"},
     {"id": "ship-gate", "type": "wait_human", "message": "Approve commit, push, and PR for: ${intent}"},
-    {"id": "commit", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit: ${intent}"},
+    {"id": "commit", "type": "send", "role": "commit", "action": "commit", "guard": "phase-complete", "message": "Stage and commit: ${intent}"},
     {"id": "pr", "type": "send", "role": "commit", "action": "commit", "message": "Create a PR for the current branch"}
   ],
   "edges": [
@@ -75,7 +78,8 @@ var builtinGraphJSON = map[string]string{
     {"from": "test", "to": "review"},
     {"from": "test", "to": "fix", "outcome": "failure"},
     {"from": "fix", "to": "build", "max_iterations": 3},
-    {"from": "review", "to": "ship-gate"},
+    {"from": "review", "to": "update-spec"},
+    {"from": "update-spec", "to": "ship-gate"},
     {"from": "ship-gate", "to": "commit"},
     {"from": "commit", "to": "pr"}
   ]

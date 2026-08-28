@@ -166,42 +166,103 @@ func StepGraphRun(session, runID string) error {
 	return nil
 }
 
-// specCompleteGuardAllows evaluates the spec-complete dispatch guard:
-// true means dispatch proceeds. A decline finishes the node as failed with
-// the reason, so the run stops before any downstream mutation; a
-// transiently unresolvable repo dir leaves the node ready for the next
-// tick. No active spec passes through — blocking there would make the
-// node inert (MUX-114 criterion). A set-but-unreadable spec declines
-// loudly: closing out against an unreadable spec is as wrong as closing
-// an open one. Why guards are daemon-side: see knownNodeGuards.
-func specCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
+// guardAllowsDispatch evaluates a node's dispatch-time guard: true means
+// dispatch proceeds; a decline finishes the node as failed so the run
+// stops before any downstream mutation. Why guards are daemon-side: see
+// knownNodeGuards.
+func guardAllowsDispatch(session string, run *GraphRun, n *Node) bool {
+	switch n.Guard {
+	case GuardSpecComplete:
+		return specCompleteGuardAllows(session, run, n)
+	case GuardPhaseComplete:
+		return phaseCompleteGuardAllows(session, run, n)
+	}
+	return true
+}
+
+// activeSpecFile resolves the active spec pointer to an absolute path.
+// ok=false with transient=true means the repo dir was unresolvable this
+// tick (caller leaves the node ready to retry); ok=false otherwise means
+// no active spec is set.
+func activeSpecFile(session string) (path string, ok, transient bool) {
 	specRel := ReadActiveSpec(session)
 	if specRel == "" {
-		return true
+		return "", false, false
 	}
-	path := specRel
-	if !filepath.IsAbs(path) {
-		repo := SessionRepoDir(session)
-		if repo == "" {
-			return false // transient: repo dir unresolvable — node stays ready, retried next tick
-		}
-		path = filepath.Join(repo, path)
+	if filepath.IsAbs(specRel) {
+		return specRel, true, false
+	}
+	repo := SessionRepoDir(session)
+	if repo == "" {
+		return "", false, true
+	}
+	return filepath.Join(repo, specRel), true, false
+}
+
+// specCompleteGuardAllows blocks dispatch while the active spec has ANY
+// open checkbox items. No active spec passes through — blocking there
+// would make the node inert (MUX-114 criterion). A set-but-unreadable
+// spec declines loudly: closing out against an unreadable spec is as
+// wrong as closing an open one.
+func specCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
+	path, ok, transient := activeSpecFile(session)
+	if transient {
+		return false // node stays ready, retried next tick
+	}
+	if !ok {
+		return true
 	}
 	count, names, err := SpecOpenItems(path)
 	if err != nil {
 		finishNode(session, run, n, OutcomeFailure,
-			fmt.Sprintf("spec-complete guard: cannot read active spec %s: %v", specRel, err))
+			fmt.Sprintf("spec-complete guard: cannot read active spec: %v", err))
 		return false
 	}
 	if count > 0 {
-		detail := fmt.Sprintf("spec-complete guard declined: %d open items in %s: %s",
-			count, specRel, summarizeOpenItems(names, 5))
-		LogLifecycle(session, "warn", "daemon", "graph-guard-declined",
-			fmt.Sprintf("%s: %s — %s", run.ID, n.ID, detail))
-		finishNode(session, run, n, OutcomeFailure, detail)
+		declineGuard(session, run, n, fmt.Sprintf("spec-complete guard declined: %d open items: %s",
+			count, summarizeOpenItems(names, 5)))
 		return false
 	}
 	return true
+}
+
+// phaseCompleteGuardAllows blocks dispatch while the phase named in the
+// run's intent still has open items in the active spec. No phase in the
+// intent, or no active spec, passes through — the guard scopes a ship to
+// what the run claimed to deliver, nothing more (user decision
+// 2026-08-28: a full-spec guard would block every partial-phase ship).
+func phaseCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
+	phase := IntentPhase(run.Intent)
+	if phase == 0 {
+		return true
+	}
+	path, ok, transient := activeSpecFile(session)
+	if transient {
+		return false // node stays ready, retried next tick
+	}
+	if !ok {
+		return true
+	}
+	count, names, err := SpecPhaseOpenItems(path, phase)
+	if err != nil {
+		finishNode(session, run, n, OutcomeFailure,
+			fmt.Sprintf("phase-complete guard: cannot read active spec: %v", err))
+		return false
+	}
+	if count > 0 {
+		declineGuard(session, run, n, fmt.Sprintf("phase-complete guard declined: Phase %d has %d open items: %s",
+			phase, count, summarizeOpenItems(names, 5)))
+		return false
+	}
+	return true
+}
+
+// declineGuard records a guard decline: lifecycle event plus the failed
+// node carrying the reason.
+func declineGuard(session string, run *GraphRun, n *Node, detail string) {
+	LogLifecycle(session, "warn", "daemon", "graph-guard-declined",
+		fmt.Sprintf("%s: %s — %s", run.ID, n.ID, detail))
+	finishNode(session, run, n, OutcomeFailure, detail)
 }
 
 // summarizeOpenItems joins item names for a decline message, truncating
@@ -235,7 +296,7 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 	if n == nil {
 		return
 	}
-	if n.Guard == GuardSpecComplete && !specCompleteGuardAllows(session, run, n) {
+	if !guardAllowsDispatch(session, run, n) {
 		return
 	}
 	LogLifecycle(session, "info", "daemon", "graph-node-start",

@@ -54,11 +54,18 @@ type Node struct {
 // declare. GuardSpecComplete blocks dispatch while the active spec has open
 // checkbox items — the mechanism is daemon-side (MUX-114) because an
 // instruction to the receiving agent is exactly the guard style that defect
-// showed fails open.
-const GuardSpecComplete = "spec-complete"
+// showed fails open. GuardPhaseComplete blocks only while the phase named
+// in the run's intent ("Phase 1: …") has open items — a full-spec guard on
+// a ship gate would block every legitimate partial-phase ship (user
+// decision 2026-08-28); with no phase in the intent it passes through.
+const (
+	GuardSpecComplete  = "spec-complete"
+	GuardPhaseComplete = "phase-complete"
+)
 
 var knownNodeGuards = map[string]bool{
-	GuardSpecComplete: true,
+	GuardSpecComplete:  true,
+	GuardPhaseComplete: true,
 }
 
 // Edge routes from one node to another when the source node produces the
@@ -334,7 +341,7 @@ func (g *Graph) validateNode(n *Node, v *GraphValidation) {
 	}
 	if n.Guard != "" {
 		if !knownNodeGuards[n.Guard] {
-			v.errf("node %q has unknown guard %q (known: %s)", n.ID, n.Guard, GuardSpecComplete)
+			v.errf("node %q has unknown guard %q (known: %s, %s)", n.ID, n.Guard, GuardSpecComplete, GuardPhaseComplete)
 		}
 		if n.Type != NodeSend && n.Type != NodeSpawn {
 			v.errf("node %q has a guard but type %q — guards are dispatch-time and only apply to send/spawn nodes", n.ID, n.Type)
