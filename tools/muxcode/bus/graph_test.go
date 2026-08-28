@@ -340,6 +340,9 @@ func TestBuiltinGraphTemplatesValidate(t *testing.T) {
 			t.Errorf("template %q has validation errors: %v", name, v.Errors)
 		}
 		for _, w := range v.Warnings {
+			if name == "deploy-verify" && strings.Contains(w, "launching the run is its only approval") {
+				continue // recorded deliberate trade — presence pinned by TestBuiltinGateTextClean
+			}
 			t.Errorf("template %q has validation warning: %s", name, w)
 		}
 	}
@@ -490,6 +493,166 @@ func TestCreateGraphRunRequiresSpec(t *testing.T) {
 	}
 	if !tpl.RequiresSpec {
 		t.Error("req-code-pr must carry requires_spec — implementing against no spec is the case the gate exists for")
+	}
+}
+
+// TestValidateNodeGuard pins the guard field rules: unknown values and
+// non-dispatch node types are errors; a guarded send validates clean.
+func TestValidateNodeGuard(t *testing.T) {
+	g := linearGraph()
+	g.Nodes[0].Guard = "no-such-guard"
+	assertErrorContains(t, g.Validate(), "unknown guard")
+
+	g = linearGraph()
+	g.Nodes = append(g.Nodes, Node{ID: "gate", Type: NodeWaitHuman, Guard: GuardSpecComplete})
+	g.Edges = append(g.Edges, Edge{From: "b", To: "gate"})
+	assertErrorContains(t, g.Validate(), "guards are dispatch-time")
+
+	g = linearGraph()
+	g.Nodes[0].Guard = GuardSpecComplete
+	if v := g.Validate(); !v.OK() {
+		t.Errorf("guard on a send node must validate: %v", v.Errors)
+	}
+}
+
+// TestCommitPRReviewLoopCloseSpecGuarded pins the builtin's close-spec
+// node to the daemon-side spec-complete guard (MUX-114): the node's
+// wording alone is an instruction to a model, not a control.
+func TestCommitPRReviewLoopCloseSpecGuarded(t *testing.T) {
+	tpl, _, err := ResolveGraphTemplate("commit-pr-review-loop")
+	if err != nil {
+		t.Fatalf("commit-pr-review-loop builtin missing: %v", err)
+	}
+	for _, n := range tpl.Nodes {
+		if n.ID == "close-spec" {
+			if n.Guard != GuardSpecComplete {
+				t.Errorf("close-spec guard %q, want %q", n.Guard, GuardSpecComplete)
+			}
+			return
+		}
+	}
+	t.Error("commit-pr-review-loop has no close-spec node")
+}
+
+// TestBuiltinGateMessagesNonEmpty pins that every builtin wait_human gate
+// carries approval text. A human approving a blank gate cannot see what
+// the approval releases — found live in update-spec-docs, whose gate used
+// a "prompt" key that json silently dropped (MUX-114 Phase 2).
+func TestBuiltinGateMessagesNonEmpty(t *testing.T) {
+	for name, raw := range builtinGraphJSON {
+		g, err := ParseGraph([]byte(raw))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, n := range g.Nodes {
+			if n.Type == NodeWaitHuman && strings.TrimSpace(n.Message) == "" {
+				t.Errorf("%s: gate %q has no message — the approval text must state what it releases", name, n.ID)
+			}
+		}
+	}
+}
+
+// TestValidateGateTextWarnsUnnamedMutation pins the gate-text heuristic:
+// a gate releasing a commit node without naming the mutation warns; the
+// same gate naming it does not (negative control).
+func TestValidateGateTextWarnsUnnamedMutation(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "gate",
+		Nodes: []Node{
+			{ID: "gate", Type: NodeWaitHuman, Message: "Approve the thing"},
+			{ID: "ship", Type: NodeSend, Role: "commit", Action: "commit", Message: "commit it"},
+		},
+		Edges: []Edge{{From: "gate", To: "ship"}},
+	}
+	v := g.Validate()
+	if !v.OK() {
+		t.Fatalf("unexpected errors: %v", v.Errors)
+	}
+	found := false
+	for _, w := range v.Warnings {
+		if strings.Contains(w, "does not name the mutation") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("unnamed mutation must warn, got %v", v.Warnings)
+	}
+
+	g.Nodes[0].Message = "Approve commit and push"
+	for _, w := range g.Validate().Warnings {
+		if strings.Contains(w, "does not name the mutation") {
+			t.Errorf("named mutation must not warn: %s", w)
+		}
+	}
+}
+
+// TestValidateUngatedDeployWarns pins the deploy advisory: an ungated
+// deploy node warns, a gated one does not (negative control).
+func TestValidateUngatedDeployWarns(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "deploy",
+		Nodes: []Node{{ID: "deploy", Type: NodeSend, Role: "deploy", Action: "deploy", Message: "go"}},
+	}
+	found := false
+	for _, w := range g.Validate().Warnings {
+		if strings.Contains(w, "launching the run is its only approval") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("ungated deploy node must warn")
+	}
+
+	gated := &Graph{
+		Name:  "t",
+		Start: "gate",
+		Nodes: []Node{
+			{ID: "gate", Type: NodeWaitHuman, Message: "Approve the deployment"},
+			{ID: "deploy", Type: NodeSend, Role: "deploy", Action: "deploy", Message: "go"},
+		},
+		Edges: []Edge{{From: "gate", To: "deploy"}},
+	}
+	for _, w := range gated.Validate().Warnings {
+		if strings.Contains(w, "launching the run is its only approval") {
+			t.Errorf("gated deploy must not warn: %s", w)
+		}
+	}
+}
+
+// TestBuiltinGateTextClean holds shipped templates to zero gate-text
+// warnings, and pins deploy-verify's ungated-deploy warning as the one
+// recorded deliberate trade — asserted present so the check cannot go
+// inert.
+func TestBuiltinGateTextClean(t *testing.T) {
+	for name, raw := range builtinGraphJSON {
+		g, err := ParseGraph([]byte(raw))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, w := range g.Validate().Warnings {
+			if strings.Contains(w, "does not name the mutation") {
+				t.Errorf("%s: %s", name, w)
+			}
+			if strings.Contains(w, "launching the run is its only approval") && name != "deploy-verify" {
+				t.Errorf("%s: unexpected ungated-deploy warning: %s", name, w)
+			}
+		}
+	}
+
+	g, err := ParseGraph([]byte(builtinGraphJSON["deploy-verify"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range g.Validate().Warnings {
+		if strings.Contains(w, "launching the run is its only approval") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("deploy-verify must carry the ungated-deploy warning — the deliberate trade is recorded, not silent")
 	}
 }
 

@@ -65,10 +65,12 @@ type GraphNodeStatus struct {
 // legalNodeTransitions defines the allowed node state machine. done/failed/
 // skipped → ready re-arms a node for loop edges and retry --from; every
 // other terminal-to-anything move is rejected so a crashed executor cannot
-// corrupt run history on resume.
+// corrupt run history on resume. ready → failed is a dispatch-time guard
+// decline (MUX-114): the node fails without ever running, so routing it
+// through running would stamp a start that never happened.
 var legalNodeTransitions = map[string]map[string]bool{
 	GraphNodePending: {GraphNodeReady: true, GraphNodeSkipped: true},
-	GraphNodeReady:   {GraphNodeRunning: true, GraphNodeWaiting: true, GraphNodeSkipped: true},
+	GraphNodeReady:   {GraphNodeRunning: true, GraphNodeWaiting: true, GraphNodeSkipped: true, GraphNodeFailed: true},
 	GraphNodeRunning: {GraphNodeDone: true, GraphNodeFailed: true},
 	GraphNodeWaiting: {GraphNodeRunning: true, GraphNodeDone: true, GraphNodeFailed: true, GraphNodeSkipped: true},
 	GraphNodeDone:    {GraphNodeReady: true},
@@ -476,6 +478,10 @@ func formatGraphRun(run *GraphRun, g *Graph, statuses map[string]*GraphNodeStatu
 			row += fmt.Sprintf("  took=%ds", st.DoneAt-st.StartedAt)
 		}
 		b.WriteString(row + "\n")
+		if st.State == GraphNodeFailed && st.Output != "" {
+			// a decline's count+names must be operator-visible (MUX-114)
+			fmt.Fprintf(&b, "  %-16s ↳ %s\n", "", truncate(st.Output, 200))
+		}
 	}
 	return b.String()
 }

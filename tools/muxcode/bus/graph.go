@@ -46,7 +46,19 @@ type Node struct {
 	Quorum     int            `json:"quorum,omitempty"`     // join: required count when policy is quorum
 	Items      string         `json:"items,omitempty"`      // map: item-list source expression
 	Event      string         `json:"event,omitempty"`      // wait_event: bus event name to wait for
+	Guard      string         `json:"guard,omitempty"`      // send/spawn: dispatch-time predicate evaluated by the daemon (see knownNodeGuards)
 	TimeoutSec int            `json:"timeout_secs,omitempty"`
+}
+
+// knownNodeGuards lists the dispatch-time predicates a send/spawn node may
+// declare. GuardSpecComplete blocks dispatch while the active spec has open
+// checkbox items — the mechanism is daemon-side (MUX-114) because an
+// instruction to the receiving agent is exactly the guard style that defect
+// showed fails open.
+const GuardSpecComplete = "spec-complete"
+
+var knownNodeGuards = map[string]bool{
+	GuardSpecComplete: true,
 }
 
 // Edge routes from one node to another when the source node produces the
@@ -245,6 +257,7 @@ func (g *Graph) Validate() *GraphValidation {
 	g.validateAcyclic(v)
 	g.validateJoins(v)
 	g.validateGates(byID, v)
+	g.validateGateText(byID, v)
 	return v
 }
 
@@ -318,6 +331,14 @@ func (g *Graph) validateNode(n *Node, v *GraphValidation) {
 
 	if n.Join != "" && n.Type != NodeJoin {
 		v.errf("node %q has a join policy but type %q", n.ID, n.Type)
+	}
+	if n.Guard != "" {
+		if !knownNodeGuards[n.Guard] {
+			v.errf("node %q has unknown guard %q (known: %s)", n.ID, n.Guard, GuardSpecComplete)
+		}
+		if n.Type != NodeSend && n.Type != NodeSpawn {
+			v.errf("node %q has a guard but type %q — guards are dispatch-time and only apply to send/spawn nodes", n.ID, n.Type)
+		}
 	}
 	if len(n.Conditions) > 0 && n.Type != NodeCondition {
 		v.warnf("node %q has conditions but type %q — they are ignored", n.ID, n.Type)
@@ -489,6 +510,104 @@ func (g *Graph) validateGates(byID map[string]*Node, v *GraphValidation) {
 		n := &g.Nodes[i]
 		if nodeRequiresGate(n) && ungated[n.ID] {
 			v.errf("node %q fires a git/Atlassian mutation without an upstream wait_human gate", n.ID)
+		}
+		if isDeployNode(n) && ungated[n.ID] {
+			v.warnf("deploy node %q has no upstream wait_human gate — launching the run is its only approval", n.ID)
+		}
+	}
+}
+
+// isDeployNode reports whether a node delivers work to the deploy role —
+// an infrastructure mutation outside the git/Atlassian gate rule, flagged
+// as a warning rather than gated (MUX-114 Phase 3).
+func isDeployNode(n *Node) bool {
+	if n.Type != NodeSend && n.Type != NodeSpawn && n.Type != NodeMap {
+		return false
+	}
+	return NormalizeBusRole(n.Role) == "deploy"
+}
+
+// Gate-text keyword classes (MUX-114 Phase 3). A gate message "names" a
+// dominated mutation when it carries at least one term of the mutation's
+// class, matched on word boundaries — plain substring would let "Approve"
+// satisfy "pr". Prefix matching covers inflections (commit/committing,
+// push/pushing, reply/replying). A heuristic, so violations are warnings:
+// user graphs must not be blocked by vocabulary, while the builtin pin
+// test holds shipped templates to zero warnings.
+var gateTextGitExact = map[string]bool{"pr": true, "gh": true, "git": true}
+
+var gateTextGitPrefixes = []string{
+	"commit", "push", "stag", "checkout", "branch", "rebase",
+	"merge", "tag", "release", "issue", "comment", "repl",
+}
+
+var gateTextAtlassianPrefixes = []string{
+	"jira", "confluence", "tracker", "story", "issue", "comment",
+}
+
+// gateNamesMutation reports whether a gate message names the mutation
+// class of a dominated node.
+func gateNamesMutation(msg string, n *Node) bool {
+	tokens := strings.FieldsFunc(strings.ToLower(msg), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	git := NormalizeBusRole(n.Role) == "commit"
+	prefixes := gateTextAtlassianPrefixes
+	if git {
+		prefixes = gateTextGitPrefixes
+	}
+	for _, t := range tokens {
+		if git && gateTextGitExact[t] {
+			return true
+		}
+		for _, p := range prefixes {
+			if strings.HasPrefix(t, p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// validateGateText warns when a wait_human gate's message fails to name a
+// mutation its approval releases. The territory a gate releases is
+// everything reachable from it without crossing another gate — the
+// nearest-gate principle: a later gate re-states what it dominates, so an
+// earlier one need not (MUX-114: gate2 said "review feedback" while three
+// nodes later a spec move was pushed).
+func (g *Graph) validateGateText(byID map[string]*Node, v *GraphValidation) {
+	out := g.outgoing()
+	for i := range g.Nodes {
+		gate := &g.Nodes[i]
+		if gate.Type != NodeWaitHuman {
+			continue
+		}
+		seen := map[string]bool{gate.ID: true}
+		queue := []string{gate.ID}
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			if cur != gate.ID {
+				if n, ok := byID[cur]; ok && n.Type == NodeWaitHuman {
+					continue
+				}
+			}
+			for _, ei := range out[cur] {
+				to := g.Edges[ei].To
+				if !seen[to] {
+					seen[to] = true
+					queue = append(queue, to)
+				}
+			}
+		}
+		for j := range g.Nodes {
+			n := &g.Nodes[j]
+			if n.ID == gate.ID || !seen[n.ID] || !nodeRequiresGate(n) {
+				continue
+			}
+			if !gateNamesMutation(gate.Message, n) {
+				v.warnf("gate %q releases mutation node %q but its message does not name the mutation — the approval must state its consequence", gate.ID, n.ID)
+			}
 		}
 	}
 }

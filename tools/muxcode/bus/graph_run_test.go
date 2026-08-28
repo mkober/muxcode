@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 const runTestSession = "graphtest"
@@ -201,6 +202,28 @@ func TestFormatGraphRun(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("FormatGraphRun output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestFormatGraphRunShowsFailedNodeReason pins the operator-facing decline
+// visibility (MUX-114): a failed node's output renders under its row, a
+// done node's output does not (negative control — done outputs are
+// harvested payloads, not failure reasons).
+func TestFormatGraphRunShowsFailedNodeReason(t *testing.T) {
+	g := linearGraph()
+	run := &GraphRun{ID: "r1", Template: "t", State: GraphRunFailed, CreatedAt: time.Now().Unix()}
+	statuses := map[string]*GraphNodeStatus{
+		"a": {NodeID: "a", State: GraphNodeFailed, Outcome: OutcomeFailure,
+			Output: "spec-complete guard declined: 2 open items in spec.md: one; two"},
+		"b": {NodeID: "b", State: GraphNodeDone, Outcome: OutcomeSuccess,
+			Output: "harvested response payload"},
+	}
+	out := FormatGraphRun(run, g, statuses)
+	if !strings.Contains(out, "2 open items") || !strings.Contains(out, "one; two") {
+		t.Errorf("failed node reason not rendered:\n%s", out)
+	}
+	if strings.Contains(out, "harvested response payload") {
+		t.Errorf("done node output must not render:\n%s", out)
 	}
 }
 
