@@ -52,7 +52,7 @@ func TestProcessBatch_SimpleResponse(t *testing.T) {
 
 	// This will fail on bus.Send because echo isn't the real bus binary,
 	// but we can verify the conversation logic works
-	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{})
+	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{}, nil)
 
 	// If we got here without panic, the conversation loop worked
 }
@@ -116,7 +116,7 @@ func TestProcessBatch_WithToolCall(t *testing.T) {
 		{ID: "1", From: "edit", To: "commit", Action: "test", Payload: "Run echo hello"},
 	}
 
-	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{})
+	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{}, nil)
 
 	if callCount != 2 {
 		t.Errorf("expected 2 Ollama calls, got %d", callCount)
@@ -180,7 +180,7 @@ func TestProcessBatch_FilterBlocksInbox(t *testing.T) {
 		{ID: "1", From: "edit", To: "commit", Action: "status", Payload: "Show status"},
 	}
 
-	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{})
+	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{}, nil)
 
 	// Should have called Ollama twice: once with tool call, once after block
 	if callCount < 2 {
@@ -430,7 +430,7 @@ func TestProcessBatch_NarrationRecovery(t *testing.T) {
 		{ID: "1", From: "edit", To: "build", Action: "build", Payload: "Run build"},
 	}
 
-	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{})
+	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{}, nil)
 
 	// Build is a single-shot role: after successful tool execution, the loop
 	// breaks and fires one summary call. That's 2 calls total (tool + summary).
@@ -506,7 +506,7 @@ func TestProcessBatch_NarrationRecovery_NonSingleShot(t *testing.T) {
 		{ID: "1", From: "edit", To: "review", Action: "review", Payload: "Run review"},
 	}
 
-	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{})
+	processBatch(context.Background(), cfg, bus, ollama, executor, tools, "system prompt", filter, msgs, &mockEventSink{}, nil)
 
 	// Non-single-shot role: 3 calls — tool + narration + summary recovery
 	if callCount != 3 {

@@ -52,13 +52,13 @@ already carries a "never probe" instruction, and the instruction is not self-enf
 
 ### Acceptance criteria
 
-- [ ] A per-turn trace of the prompt-agent's harness loop records, for each turn: the tool called, the arguments, the outcome (accepted / rejected-by-profile / error), and the turn index
-- [ ] The trace is readable after a failed run without re-running it — written to a file, not only to the pane
+- [x] A per-turn trace of the prompt-agent's harness loop records, for each turn: the tool called, the arguments, the outcome (accepted / rejected-by-profile / error), and the turn index
+- [x] The trace is readable after a failed run without re-running it — written to a file, not only to the pane
 - [ ] Running `scripts/test-prompt-mode.sh` with the trace enabled attributes all 10 turns of a failing `launch` intent to named causes
 - [ ] The same attribution is produced for the failing named-`approve` intent
-- [ ] The trace distinguishes *turns spent on rejected probes* from *turns spent on any other cause* — the specific split that four fix attempts could not observe
-- [ ] Tracing is opt-in and off by default; a normal prompt-agent run is unchanged when it is off
-- [ ] The trace redacts through the existing PII scrub path — it captures tool arguments, which can carry user prompt text
+- [x] The trace distinguishes *turns spent on rejected probes* from *turns spent on any other cause* — the specific split that four fix attempts could not observe
+- [x] Tracing is opt-in and off by default; a normal prompt-agent run is unchanged when it is off
+- [x] The trace redacts through the existing PII scrub path — it captures tool arguments, which can carry user prompt text
 - [ ] A fix is chosen **from the trace**, not from the candidate list, and the candidate list is updated with what the trace refuted
 - [ ] After the chosen fix lands, `scripts/test-prompt-mode.sh` returns a result **other than 26/2/1** — a changed number is the minimum bar for believing any fix worked
 - [ ] `launch` intent: a named or described graph resolves and starts via `muxcode graph run`
@@ -98,14 +98,42 @@ makes the failure rarer without making it wrong less often. Neither is establish
 
 ## Implementation
 
-### Phase 1: Turn trace
+### Phase 1: Turn trace — complete
 
-- [ ] Add a turn-trace event carrying turn index, tool name, arguments, and outcome
-- [ ] Route it through the existing scrub path
-- [ ] Gate it behind an opt-in env var, default off
-- [ ] Write it to a file readable after the run
-- [ ] Unit test: a rejected tool call and an accepted one produce distinguishable trace entries
-- [ ] Negative control: with tracing off, no trace file is produced and the loop's behaviour is unchanged
+> **Built in spawn worktree `spawn-045c97da`, harvested onto this branch 2026-08-28 ~14:27.**
+> Harvest fidelity verified by hash: `trace.go`, `trace_test.go`, `config.go`, `loop.go` are
+> byte-identical to the worktree originals. Files: new `harness/trace.go` + `harness/trace_test.go`,
+> modified `config.go`, `loop.go`, `loop_test.go` (the last only threading a `nil` tracer through
+> `processBatch` call sites).
+>
+> Checked off against **passing tests**, not inspection: `TestTurnTracer_ScrubsPII`,
+> `TestConfig_TurnTraceEnvGate`, `TestConfig_TurnTracePath`,
+> `TestProcessBatch_TraceDistinguishesRejectedFromAccepted`, plus `TestTurnTracer_NilSafe`,
+> `TestClassifyToolOutcome`, `TestProcessBatch_TraceNamesExhaustion` — 7 green, vet clean.
+>
+> **The negative control nearly shipped unverified, and the near-miss is worth recording.** The
+> `-run` filter used for that run was `Trace|TurnTrace|ClassifyToolOutcome|TurnTracePath`, which
+> **cannot match `TestProcessBatch_TracingOffNoFile`** — `Tracing` does not contain the substring
+> `Trace`. The run reported a clean **7/7** and the eighth test simply never executed; it was caught
+> only by comparing the reported count against the file's actual test inventory. The graph's `test`
+> node then reported the full suite green but `cached`, which is not independent confirmation
+> either. Settled by a `-count=1` run: `=== RUN TestProcessBatch_TracingOffNoFile` visible, passed in
+> 0.01s, `ok 3.875s`, exit 0, 0 FAIL. **Lesson: never delegate a `-run` pattern — run the package;
+> and a green count proves nothing until it is checked against the test inventory.**
+
+- [x] Add a turn-trace event carrying turn index, tool name, arguments, and outcome — `TraceEntry`
+      (`trace.go`), emitted from `processBatch` at every turn outcome
+- [x] Route it through the existing scrub path — `ScrubPII` (`trace.go:149`), applied **before**
+      truncation so a secret cannot be split past its redaction pattern; `TestTurnTracer_ScrubsPII` ✅
+- [x] Gate it behind an opt-in env var, default off — `MUXCODE_HARNESS_TURN_TRACE`
+      (`config.go:82`); `TestConfig_TurnTraceEnvGate` ✅
+- [x] Write it to a file readable after the run — per-row `O_CREATE|O_APPEND|O_WRONLY`
+      (`trace.go:137`), so the trace survives a killed run; `TestConfig_TurnTracePath` ✅
+- [x] Unit test: a rejected tool call and an accepted one produce distinguishable trace entries —
+      `TestProcessBatch_TraceDistinguishesRejectedFromAccepted` ✅
+- [x] Negative control: with tracing off, no trace file is produced and the loop's behaviour is
+      unchanged — `TestProcessBatch_TracingOffNoFile` ✅ **confirmed executing, not cached**: a
+      `-count=1` run (exit 0, `ok 3.875s`, 0 FAIL) shows `=== RUN` for it and a 0.01s pass
 
 ### Phase 2: Attribute the failure
 
@@ -135,7 +163,7 @@ makes the failure rarer without making it wrong less often. Neither is establish
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-115-prompt-agent-turn-budget-exhaustion | 14m | 2026-08-28 14:12 |
+| MUX-115-prompt-agent-turn-budget-exhaustion | 35m | 2026-08-28 14:38 |
 
 ## Status
 

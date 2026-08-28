@@ -21,6 +21,13 @@ type Config struct {
 	APIKey      string        // bearer key for a hosted OpenAI-compatible endpoint (MUXCODE_HARNESS_API_KEY)
 	TUI         bool          // enable TUI mode (live activity display)
 	UserInput   <-chan string // user-submitted chat messages (TUI mode only)
+
+	// TurnTrace enables the opt-in per-turn trace of the batch loop
+	// (MUX-115, MUXCODE_HARNESS_TURN_TRACE=1); default off. TurnTraceFile
+	// overrides the trace path (MUXCODE_HARNESS_TURN_TRACE_FILE), which
+	// defaults to {BusDir}/{role}-turn-trace.jsonl next to the history file.
+	TurnTrace     bool
+	TurnTraceFile string
 }
 
 // DefaultConfig returns a Config with sensible defaults, reading from env vars.
@@ -71,6 +78,9 @@ func DefaultConfig() Config {
 	// OpenAI-compatible gateway (MUX-109: the prompt-agent on OpenCode's
 	// Zen gateway) — same client, same dialect, plus Authorization.
 	cfg.APIKey = os.Getenv("MUXCODE_HARNESS_API_KEY")
+
+	cfg.TurnTrace = os.Getenv("MUXCODE_HARNESS_TURN_TRACE") == "1"
+	cfg.TurnTraceFile = os.Getenv("MUXCODE_HARNESS_TURN_TRACE_FILE")
 
 	cfg.BusDir = "/tmp/muxcode-bus-" + cfg.Session
 	cfg.BusBin = findBusBin()
@@ -155,6 +165,15 @@ func (c Config) InboxPath() string {
 // HistoryPath returns the history JSONL file path for this role's bus identity.
 func (c Config) HistoryPath() string {
 	return filepath.Join(c.BusDir, c.busRole()+"-history.jsonl")
+}
+
+// TurnTracePath returns the turn-trace JSONL file path, honoring the
+// TurnTraceFile override.
+func (c Config) TurnTracePath() string {
+	if c.TurnTraceFile != "" {
+		return c.TurnTraceFile
+	}
+	return filepath.Join(c.BusDir, c.busRole()+"-turn-trace.jsonl")
 }
 
 // findBusBin locates the muxcode binary.
