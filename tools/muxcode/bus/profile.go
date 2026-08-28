@@ -756,6 +756,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(jq*)", "Bash(yq*)",
 					"Bash(python*)", "Bash(node*)", "Bash(bash*)",
 					"Bash(bash scripts/test-*.sh*)", "Bash(bash ./scripts/test-*.sh*)",
+					"Bash(cd * && bash scripts/test-*.sh*)", "Bash(cd * && bash ./scripts/test-*.sh*)",
 					"Bash(ssh *)", "Bash(scp *)", "Bash(rsync *)",
 					"Bash(nc *)", "Bash(dig *)", "Bash(nslookup *)",
 					"Bash(ping *)", "Bash(telnet *)", "Bash(openssl *)",
