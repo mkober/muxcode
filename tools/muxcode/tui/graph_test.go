@@ -173,6 +173,31 @@ func TestRenderGraphFrame_ContainsEveryNode(t *testing.T) {
 	}
 }
 
+// TestRunListClampsOverlongRunID pins column alignment: a run id longer
+// than the RUN column truncates with … instead of shoving every later
+// column right (user catch 2026-08-28 — a 41-rune id broke the row).
+func TestRunListClampsOverlongRunID(t *testing.T) {
+	rows := []RunListRow{
+		{ID: "short-run", State: bus.GraphRunRunning, Template: "t", Total: 1},
+		{ID: strings.Repeat("x", 55), State: bus.GraphRunComplete, Template: strings.Repeat("y", 40), Total: 1},
+	}
+	frame := StripAnsi(RenderRunListFrame(rows, 200, 0))
+	var cols []int
+	for _, ln := range strings.Split(frame, "\n") {
+		for _, marker := range []string{"running", "complete"} {
+			if idx := strings.Index(ln, marker); idx >= 0 {
+				cols = append(cols, idx)
+			}
+		}
+	}
+	if len(cols) != 2 || cols[0] != cols[1] {
+		t.Errorf("STATE column misaligned across rows (offsets %v):\n%s", cols, frame)
+	}
+	if !strings.Contains(frame, "…") {
+		t.Errorf("overlong id must truncate with a marker:\n%s", frame)
+	}
+}
+
 // TestRenderNodeDetails_WrapAndScroll pins the wrapped detail panel: long
 // results wrap onto continuation lines instead of clipping, a small
 // window hides the tail behind a ↓ marker (negative control), and

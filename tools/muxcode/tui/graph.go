@@ -799,6 +799,17 @@ func resultsCellColor(results string) string {
 	}
 }
 
+// clampCol truncates s to w runes with a … marker — an overlong value in
+// a %-Ns cell shoves every later column right (user catch 2026-08-28: a
+// 41-rune run id broke the whole row's alignment).
+func clampCol(s string, w int) string {
+	r := []rune(s)
+	if len(r) <= w {
+		return s
+	}
+	return string(r[:w-1]) + "…"
+}
+
 // RenderRunListFrame renders the run browser: all runs newest first, with
 // state, node progress, elapsed, and a gate badge where a wait_human node
 // waits. Empty state renders explicitly — never a blank frame.
@@ -865,15 +876,12 @@ func RenderRunListFrameH(rows []RunListRow, width, height, sel int) string {
 		if r.GateWaiting {
 			badge = "  " + Yellow + Bold + "⚑ gate" + RST
 		}
-		results := r.Results
-		if len([]rune(results)) > 90 {
-			results = string([]rune(results)[:89]) + "…"
-		}
+		results := clampCol(r.Results, 90)
 		line := fmt.Sprintf("  %s %s%-40s%s %s%-10s%s %d/%-7d %-9s %s%-28s%s %s%s%s%s",
-			cursor, idColor, r.ID, RST,
+			cursor, idColor, clampCol(r.ID, 40), RST,
 			stateColor, r.State, RST,
 			r.Done, r.Total, r.Elapsed.String(),
-			Comment, r.Template, RST,
+			Comment, clampCol(r.Template, 28), RST,
 			resultsCellColor(results), results, RST, badge)
 		b.WriteString(fitWidth(line, width) + "\n")
 	}
