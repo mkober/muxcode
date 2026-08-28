@@ -1160,6 +1160,9 @@ func (ui *GraphUI) launchGraph(g *bus.Graph, template, intent string) {
 		ui.view = viewGraphTemplates
 		return
 	}
+	if full, ok := bus.ExpandIntentKeyFor(ui.session, intent); ok {
+		intent = full // "115" / "mux-115" → key + spec title + first open phase
+	}
 	if v := g.Validate(); !v.OK() {
 		ui.tmplErr = v.Format()
 		ui.view = viewGraphTemplates
