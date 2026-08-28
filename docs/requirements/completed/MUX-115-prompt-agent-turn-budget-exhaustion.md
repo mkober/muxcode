@@ -165,6 +165,69 @@ makes the failure rarer without making it wrong less often. Neither is establish
 |--------|-------------|--------------|
 | MUX-115-prompt-agent-turn-budget-exhaustion | 2h 4m | 2026-08-28 16:18 |
 
+## Known gaps at close-out
+
+Closed at **11 of 32 items** by explicit maintainer decision (2026-08-28), on the
+[MUX-109](../completed/MUX-109-prompt-mode-graph-control-pane.md) pattern: accepted debt, recorded
+rather than ticked. The 21 open items are left unchecked on purpose.
+
+**The instrument was built. It was never pointed at the problem.**
+
+| Phase | State |
+|-------|-------|
+| 1 — Turn trace | **6/6 done**, verified by execution |
+| 2 — Attribute the failure | **0/5** |
+| 3 — Fix, chosen from evidence | **0/4** |
+| 4 — Integration test | **0/6** |
+
+### What was delivered
+
+`harness/trace.go` + `harness/trace_test.go` (committed `ae39804`): a per-turn JSONL trace carrying
+turn index, tool, arguments and outcome; `ScrubPII` applied **before** truncation so a secret cannot
+be split past its redaction pattern; a nil tracer that no-ops so the loop is instrumented
+unconditionally and behaves identically when off; per-row open/append/close so the trace survives a
+killed run; gated on `MUXCODE_HARNESS_TURN_TRACE`, default off. `TraceOutcomeRejectedProfile` gives
+the probe-vs-other split this spec was written to obtain.
+
+Verified by a cache-bypassing `-count=1` run, not by inspection — including
+`TestProcessBatch_TracingOffNoFile`, the negative control that a `-run` filter had silently skipped
+in an earlier 7/7 "green" run.
+
+### What was not
+
+**The failure this spec exists to fix is unfixed.** `scripts/test-prompt-mode.sh` still returns
+**26 / 2 / 1** — the same plateau as all four prior attempts — and the `launch` and named-`approve`
+intents still fail. No trace was ever captured from a failing run, so the probe-vs-other split the
+tracer was built to measure remains unmeasured, and none of the four prior hypotheses has been
+refuted by evidence.
+
+Six acceptance criteria are open, including the spec's own bar: *"`scripts/test-prompt-mode.sh`
+returns a result **other than 26/2/1** — a changed number is the minimum bar for believing any fix
+worked."*
+
+### Carried forward
+
+| Carried to | Covers |
+|-----------|--------|
+| [MUX-122](../backlog/MUX-122-prompt-agent-turn-attribution-and-fix.md) | Phases 2–4 in full: the attribution run against a failing intent, the fix chosen *from* that attribution, and the integration bar of moving `scripts/test-prompt-mode.sh` off 26/2/1 |
+
+This carrier was filed **because the close-out initially had none**. MUX-109 named its successors
+when it closed; this one did not, and "carried-forward debt" with nowhere to carry it is just dropped
+work under a kinder name. The distinction is recorded rather than quietly fixed, because the gap was
+in the close-out plan itself, not in the spec.
+
+MUX-122 starts from a strong position: the tracer is the expensive part and it is already built and
+verified, so the next attempt begins by **running** it rather than building anything.
+
+The standing instruction at the top of this spec still applies to whoever picks it up: **do not open
+by implementing candidate fix 1 or 2.** Four plausible guesses have each been implemented and each
+refuted by the same number. The tracer now exists precisely so the fifth attempt need not be a fifth
+guess — one run with `MUXCODE_HARNESS_TURN_TRACE=1` against a failing intent would settle what four
+attempts could not.
+
 ## Status
 
-In Progress
+Complete — closed on the [known gaps](#known-gaps-at-close-out) above, 2026-08-28
+
+Closed at **11 of 32**, as accepted debt. Phase 1 shipped and is verified; the problem it was built
+to diagnose remains open.

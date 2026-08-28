@@ -101,9 +101,10 @@ var builtinGraphJSON = map[string]string{
     {"id": "gate1", "type": "wait_human", "message": "Approve staging, commit, push, and PR creation"},
     {"id": "a", "type": "send", "role": "commit", "action": "commit", "message": "Stage all unstaged files, commit, push, and create a PR"},
     {"id": "b", "type": "send", "role": "commit", "action": "pr-read", "message": "Watch for PR comments and report the review decision and any comments"},
-    {"id": "gate2", "type": "wait_human", "message": "Approve addressing the review feedback, replying to comments, and the spec close-out with its commit and push that follow"},
+    {"id": "gate2", "type": "wait_human", "message": "Approve addressing the review feedback and replying to comments"},
     {"id": "c", "type": "send", "role": "edit", "action": "edit", "message": "Address the PR review comments"},
     {"id": "d", "type": "send", "role": "commit", "action": "comment", "message": "Reply to the PR comments"},
+    {"id": "close-gate", "type": "wait_human", "message": "Approve the spec close-out: status Complete, move to completed/, then its commit and push (the guard declines while any item is open)"},
     {"id": "close-spec", "type": "send", "role": "plan", "action": "update-docs", "guard": "spec-complete", "message": "Close out the active requirements doc ONLY if every acceptance criterion and phase step is checked complete: set status Complete, move it to docs/requirements/completed/, clear the active spec, report the new path. Any item still open = refuse and report the open count (no active spec = reply nothing to do)"},
     {"id": "commit-spec", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the completed requirements doc move and push it to the PR branch (nothing moved = reply nothing to do)"}
   ],
@@ -113,7 +114,8 @@ var builtinGraphJSON = map[string]string{
     {"from": "b", "to": "gate2"},
     {"from": "gate2", "to": "c"},
     {"from": "c", "to": "d"},
-    {"from": "d", "to": "close-spec"},
+    {"from": "d", "to": "close-gate"},
+    {"from": "close-gate", "to": "close-spec"},
     {"from": "close-spec", "to": "commit-spec"}
   ]
 }`,

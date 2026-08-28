@@ -516,22 +516,35 @@ func TestValidateNodeGuard(t *testing.T) {
 }
 
 // TestCommitPRReviewLoopCloseSpecGuarded pins the builtin's close-spec
-// node to the daemon-side spec-complete guard (MUX-114): the node's
-// wording alone is an instruction to a model, not a control.
+// controls: the daemon-side spec-complete guard (MUX-114 — wording alone
+// is an instruction to a model, not a control) and the dedicated
+// close-gate (user request 2026-08-28: the close-out is its own local
+// approval, not a clause riding gate2's tail).
 func TestCommitPRReviewLoopCloseSpecGuarded(t *testing.T) {
 	tpl, _, err := ResolveGraphTemplate("commit-pr-review-loop")
 	if err != nil {
 		t.Fatalf("commit-pr-review-loop builtin missing: %v", err)
 	}
+	found := false
 	for _, n := range tpl.Nodes {
 		if n.ID == "close-spec" {
+			found = true
 			if n.Guard != GuardSpecComplete {
 				t.Errorf("close-spec guard %q, want %q", n.Guard, GuardSpecComplete)
 			}
-			return
 		}
 	}
-	t.Error("commit-pr-review-loop has no close-spec node")
+	if !found {
+		t.Fatal("commit-pr-review-loop has no close-spec node")
+	}
+	if !templateEdge(tpl, "close-gate", "close-spec") {
+		t.Error("close-spec must sit behind its own close-gate")
+	}
+	for _, e := range tpl.Edges {
+		if e.To == "close-spec" && e.From != "close-gate" {
+			t.Errorf("close-spec reachable around its gate via %s", e.From)
+		}
+	}
 }
 
 // TestBuiltinGateMessagesNonEmpty pins that every builtin wait_human gate
