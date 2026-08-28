@@ -885,8 +885,39 @@ the rejected option would have cost.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-109-prompt-mode-graph-control-pane | 7h 40m | 2026-08-27 18:12 |
+| MUX-109-prompt-mode-graph-control-pane | 7h 51m | 2026-08-28 12:00 |
 
 ## Status
 
-In Progress
+Complete — closed on the [known-gaps table](#known-gaps-at-close-out), 2026-08-28
+
+Closed at **75 of 97 checkboxes**, by explicit maintainer decision with the full gap set in view.
+The 22 open items are **left unchecked on purpose**: this spec records what it did not deliver
+rather than ticking boxes to look finished. Six of those gaps are *measured failing*, not merely
+unverified — including the spec's own test gate, `scripts/test-prompt-mode.sh`, stable at 26/2/1.
+
+**The feature shipped** — the code merged to `main` in PR #40 (`94b8521`). What did not close is the
+specification, and the distinction is the point of this close-out.
+
+**How this decision was reached, because the sequence matters.** An earlier close-out request
+described the remainder as *"2 failing live intents"*. The gaps table was written first, and the
+real figure was 22 items across 17 rows. On those numbers the maintainer **declined** to close.
+It was closed only afterwards, deliberately, with the table as the record — informed acceptance of
+documented debt, not a claim of completion.
+
+Follow-up work is tracked, not abandoned:
+
+| Carried to | Covers |
+|-----------|--------|
+| [MUX-115](../backlog/MUX-115-prompt-agent-turn-budget-exhaustion.md) | The two failing live intents (`launch`, named-`approve`) — instrument the turn budget before attempting a fifth fix |
+| [MUX-113](../backlog/MUX-113-graph-template-delete-rename.md) | Graph templates can be created but never removed or renamed |
+
+**Not carried anywhere, and the one to watch:** the 4B regression criterion is measured **FALSE** —
+build, test, commit and watch do not complete their tasks on `qwen3:4b` with thinking enabled. The
+gateway default means the shipped path never triggers it, which is *mitigation, not repair*. Anyone
+re-enabling the local backend inherits a broken configuration. See
+[Phase 2 regression findings](#phase-2-regression-findings).
+
+**If this spec is reopened, start with [MUX-115](../backlog/MUX-115-prompt-agent-turn-budget-exhaustion.md)** —
+two of the failing rows collapse into it, and four fix attempts have already been spent guessing at
+that cause.
