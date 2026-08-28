@@ -166,6 +166,9 @@ func graphRun(args []string) {
 	}
 	fmt.Printf("Started run %s (%s)\n", run.ID, template)
 	fmt.Printf("Status: muxcode graph status %s\n", run.ID)
+	if w := bus.UnscopedPhaseGuardWarning(g, intent); w != "" {
+		fmt.Printf("Warning: %s\n", w)
+	}
 }
 
 func graphRetry(args []string) {

@@ -1183,6 +1183,9 @@ func (ui *GraphUI) launchGraph(g *bus.Graph, template, intent string) {
 	ui.nodeFollow = true
 	ui.parkedState = ""
 	ui.dagScroll = 0
+	if w := bus.UnscopedPhaseGuardWarning(g, intent); w != "" {
+		ui.notice = "⚠ " + w
+	}
 	ui.view = viewGraphDAG
 	ui.refresh()
 }
