@@ -166,6 +166,53 @@ func StepGraphRun(session, runID string) error {
 	return nil
 }
 
+// specCompleteGuardAllows evaluates the spec-complete dispatch guard:
+// true means dispatch proceeds. A decline finishes the node as failed with
+// the reason, so the run stops before any downstream mutation; a
+// transiently unresolvable repo dir leaves the node ready for the next
+// tick. No active spec passes through — blocking there would make the
+// node inert (MUX-114 criterion). A set-but-unreadable spec declines
+// loudly: closing out against an unreadable spec is as wrong as closing
+// an open one. Why guards are daemon-side: see knownNodeGuards.
+func specCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
+	specRel := ReadActiveSpec(session)
+	if specRel == "" {
+		return true
+	}
+	path := specRel
+	if !filepath.IsAbs(path) {
+		repo := SessionRepoDir(session)
+		if repo == "" {
+			return false // transient: repo dir unresolvable — node stays ready, retried next tick
+		}
+		path = filepath.Join(repo, path)
+	}
+	count, names, err := SpecOpenItems(path)
+	if err != nil {
+		finishNode(session, run, n, OutcomeFailure,
+			fmt.Sprintf("spec-complete guard: cannot read active spec %s: %v", specRel, err))
+		return false
+	}
+	if count > 0 {
+		detail := fmt.Sprintf("spec-complete guard declined: %d open items in %s: %s",
+			count, specRel, summarizeOpenItems(names, 5))
+		LogLifecycle(session, "warn", "daemon", "graph-guard-declined",
+			fmt.Sprintf("%s: %s — %s", run.ID, n.ID, detail))
+		finishNode(session, run, n, OutcomeFailure, detail)
+		return false
+	}
+	return true
+}
+
+// summarizeOpenItems joins item names for a decline message, truncating
+// past limit so the detail line stays bounded.
+func summarizeOpenItems(names []string, limit int) string {
+	if len(names) <= limit {
+		return strings.Join(names, "; ")
+	}
+	return strings.Join(names[:limit], "; ") + fmt.Sprintf("; … +%d more", len(names)-limit)
+}
+
 // interpolateGraphMessage expands run/worker placeholders in a node
 // message template.
 func interpolateGraphMessage(msg, intent, item string) string {
@@ -177,8 +224,18 @@ func interpolateGraphMessage(msg, intent, item string) string {
 }
 
 // dispatchNode fires a ready node's work and moves it to running/waiting.
+//
+// A suppressed send means the identical request is already queued or in
+// flight (loop re-entry or a retry racing the prior pass), so the node
+// adopts the existing work instead of failing. The adopted task must be
+// keyed to the QUEUED duplicate's message ID, not the unsent one — the
+// agent answers the queued id, and a task keyed to the unsent id sits
+// in-flight forever (PR #38 Copilot finding).
 func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 	if n == nil {
+		return
+	}
+	if n.Guard == GuardSpecComplete && !specCompleteGuardAllows(session, run, n) {
 		return
 	}
 	LogLifecycle(session, "info", "daemon", "graph-node-start",
@@ -190,18 +247,11 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 		m := NewMessage(graphSender, n.Role, "request", n.Action, msg, "")
 		if err := SendNoCC(session, m); err != nil {
 			if errors.Is(err, ErrSendSuppressed) {
-				// The identical request is already queued or in flight (a
-				// loop re-entry or retry racing the prior pass) — adopt it
-				// instead of failing the node: the work the send would
-				// have queued already exists.
-				taskID := m.ID
+				taskID := m.ID // suppressed = duplicate exists; adopt it — see doc comment
 				if t, found := FindInFlightTask(session, n.Role, n.Action); found {
 					taskID = t.ID
 				} else if pm, found := FindPendingInboxRequest(session, m.To, m.From, m.Action, m.Payload); found {
-					// Adopt the queued duplicate's ID: the agent answers
-					// THAT id, so a task keyed to the unsent m.ID would
-					// sit in-flight forever (PR #38 Copilot finding).
-					adopted := m
+					adopted := m // keyed to the queued duplicate's id — see doc comment
 					adopted.ID = pm.ID
 					adopted.TS = pm.TS
 					taskID = pm.ID

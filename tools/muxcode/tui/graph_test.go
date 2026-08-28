@@ -173,6 +173,30 @@ func TestRenderGraphFrame_ContainsEveryNode(t *testing.T) {
 	}
 }
 
+// TestRenderNodeDetails_WrapAndScroll pins the wrapped detail panel: long
+// results wrap onto continuation lines instead of clipping, a small
+// window hides the tail behind a ↓ marker (negative control), and
+// overscroll clamps to the tail behind a ↑ marker without panicking.
+func TestRenderNodeDetails_WrapAndScroll(t *testing.T) {
+	snap := snapshot(linearGraph(), map[string]string{"build": bus.GraphNodeDone})
+	snap.Statuses["build"].Output = strings.Repeat("head ", 30) + "TAIL-MARKER"
+
+	full := StripAnsi(RenderNodeDetails(snap, 80, 0, frameClock, 0))
+	if !strings.Contains(full, "TAIL-MARKER") {
+		t.Errorf("unbounded panel must carry the wrapped tail:\n%s", full)
+	}
+
+	top := StripAnsi(RenderNodeDetails(snap, 80, 3, frameClock, 0))
+	if strings.Contains(top, "TAIL-MARKER") || !strings.Contains(top, "↓") {
+		t.Errorf("scroll 0 must show the head with a ↓ overflow marker:\n%s", top)
+	}
+
+	tail := StripAnsi(RenderNodeDetails(snap, 80, 3, frameClock, 5000))
+	if !strings.Contains(tail, "TAIL-MARKER") || !strings.Contains(tail, "↑") {
+		t.Errorf("overscroll must clamp to the tail with a ↑ marker:\n%s", tail)
+	}
+}
+
 func TestRenderGraphFrame_StateGlyphs(t *testing.T) {
 	snap := snapshot(linearGraph(), map[string]string{
 		"build": bus.GraphNodeDone, "test": bus.GraphNodeFailed, "review": bus.GraphNodePending,
@@ -348,9 +372,15 @@ func TestRenderGraphFrame_NodeDetails(t *testing.T) {
 		t.Errorf("done node must show its duration:\n%s", frame)
 	}
 
-	short := StripAnsi(RenderGraphFrame(snap, 160, 12, "", frameClock))
+	// Wrap+scroll contract: a tight pane windows the panel instead of
+	// dropping it; only under a 3-line budget does it drop entirely.
+	windowed := StripAnsi(RenderGraphFrame(snap, 160, 12, "", frameClock))
+	if !strings.Contains(windowed, "Build succeeded: exit 0") {
+		t.Errorf("a tight pane must window the panel, not drop it:\n%s", windowed)
+	}
+	short := StripAnsi(RenderGraphFrame(snap, 160, 9, "", frameClock))
 	if strings.Contains(short, "Run tests for MUX-109") {
-		t.Error("panel must be dropped when the pane cannot fit it")
+		t.Error("panel must be dropped when fewer than 3 lines remain")
 	}
 	if !strings.Contains(short, "build") {
 		t.Errorf("grid must still render without the panel:\n%s", short)

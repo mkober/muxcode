@@ -316,6 +316,14 @@ const (
 // the clock is a parameter. Graphs whose grid is wider than width fall
 // back to the flat list ordered by state.
 func RenderGraphFrame(snap GraphSnapshot, width, height int, selection string, now time.Time) string {
+	return RenderGraphFrameH(snap, width, height, selection, now, 0)
+}
+
+// RenderGraphFrameH is RenderGraphFrame with a vertical scroll offset for
+// the node-detail panel — long results wrap to the pane width and the
+// panel windows vertically (user request 2026-08-28: wrap + scroll, the
+// tail of a result must be readable without a wider pane).
+func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, now time.Time, scroll int) string {
 	grid := LayoutGraph(snap.Graph)
 
 	labels := make(map[string]string, len(snap.Graph.Nodes))
@@ -416,12 +424,17 @@ func RenderGraphFrame(snap GraphSnapshot, width, height int, selection string, n
 		}
 	}
 
-	frame := renderGraphHeader(snap, now, width) + c.String()
-	// The per-node detail panel renders only when it fits under the grid —
-	// the grid is the load-bearing view and must never be pushed past the
-	// pane clamp for the sake of detail rows.
-	if gridH+skipLanes+headerLines+len(snap.Graph.Nodes)+1 <= height {
-		frame += RenderNodeDetails(snap, width, now)
+	// Trailing blank canvas rows are dead space between grid and details
+	// (user catch 2026-08-28) — trim them; the panel brings its own
+	// separator line.
+	top := strings.TrimRight(renderGraphHeader(snap, now, width)+c.String(), "\n") + "\n"
+	usedLines := strings.Count(top, "\n")
+	// The grid is the load-bearing view; the detail panel gets whatever
+	// height remains and windows vertically inside it.
+	detailBudget := height - usedLines - 3 // separator + ↑/↓ overflow markers
+	frame := top
+	if detailBudget >= 3 {
+		frame += RenderNodeDetails(snap, width, detailBudget, now, scroll)
 	}
 	return frame
 }
@@ -430,10 +443,12 @@ func RenderGraphFrame(snap GraphSnapshot, width, height int, selection string, n
 // what it is doing — the run view's answer to "what is actually
 // happening": a running node shows the instruction it dispatched, a
 // finished node the first line of its harvested result, a waiting gate
-// its approval command.
-func RenderNodeDetails(snap GraphSnapshot, width int, now time.Time) string {
-	var b strings.Builder
-	b.WriteString("\n")
+// its approval command. Detail text wraps onto indented continuation
+// lines instead of clipping at the pane edge; maxLines windows the panel
+// vertically at scroll with ↑/↓ overflow markers, clamped so overscroll
+// parks on the tail rather than a blank panel.
+func RenderNodeDetails(snap GraphSnapshot, width, maxLines int, now time.Time, scroll int) string {
+	var lines []string
 	for i := range snap.Graph.Nodes {
 		n := &snap.Graph.Nodes[i]
 		st := snap.Statuses[n.ID]
@@ -476,12 +491,84 @@ func RenderNodeDetails(snap GraphSnapshot, width int, now time.Time) string {
 			}
 		}
 
-		line := fmt.Sprintf("  %s%s %-10s%s %s%-20s%s %-8s %s%s%s",
+		const detailCol = 45 // rune width of the fixed columns before the detail text
+		segs := wrapRunes(detail, maxInt(10, width-detailCol))
+		if len(segs) == 0 {
+			segs = []string{""}
+		}
+		first := fmt.Sprintf("  %s%s %-10s%s %s%-20s%s %-8s %s%s%s",
 			color, glyph, n.ID, RST, Comment, who, RST, timing,
-			detailColor, detail, RST)
-		b.WriteString(fitWidth(line, width) + "\n")
+			detailColor, segs[0], RST)
+		lines = append(lines, fitWidth(first, width))
+		indent := strings.Repeat(" ", detailCol)
+		for _, s := range segs[1:] {
+			lines = append(lines, fitWidth(indent+detailColor+s+RST, width))
+		}
+	}
+
+	if maxLines <= 0 {
+		maxLines = len(lines)
+	}
+	start := scroll
+	if start > len(lines)-maxLines {
+		start = len(lines) - maxLines
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxLines
+	if end > len(lines) {
+		end = len(lines)
+	}
+
+	var b strings.Builder
+	b.WriteString("\n")
+	if start > 0 {
+		fmt.Fprintf(&b, "  %s↑ %d more%s\n", Comment, start, RST)
+	}
+	for _, ln := range lines[start:end] {
+		b.WriteString(ln + "\n")
+	}
+	if end < len(lines) {
+		fmt.Fprintf(&b, "  %s↓ %d more%s\n", Comment, len(lines)-end, RST)
 	}
 	return b.String()
+}
+
+// wrapRunes greedily wraps s into segments of at most w runes, breaking
+// on spaces where one falls in the back half of the segment.
+func wrapRunes(s string, w int) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	r := []rune(s)
+	for len(r) > 0 {
+		if len(r) <= w {
+			out = append(out, string(r))
+			break
+		}
+		cut := w
+		for i := w; i > w/2; i-- {
+			if r[i] == ' ' {
+				cut = i
+				break
+			}
+		}
+		out = append(out, strings.TrimRight(string(r[:cut]), " "))
+		r = r[cut:]
+		for len(r) > 0 && r[0] == ' ' {
+			r = r[1:]
+		}
+	}
+	return out
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // writeCursorAndLabel places the selection cursor and the node label.

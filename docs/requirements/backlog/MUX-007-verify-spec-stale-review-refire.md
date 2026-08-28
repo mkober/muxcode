@@ -114,6 +114,48 @@ if size > prev && size > 0 {
      in the daemon**, per the once-per-completion gate below; there is no cheap receiver-side
      mitigation to fall back on in the meantime.
 
+10. **The loop closes on the verifying agent's own doc edit (observed 2026-08-28, 11:02–11:04)** —
+    a genuine `verify-spec` fired at 11:02:57 against MUX-114 naming `bus/graph_test.go`
+    (written 11:01:43 — real). Plan did the verification pass, editing the spec at ~11:03.
+    **90 seconds later a second `verify-spec` arrived naming that spec file itself** as the
+    changed file. The only thing that had changed on disk was plan's own verification output.
+
+    This is item 5's mechanism observed end to end in a single cycle, and it makes the shape
+    concrete: **the act of verifying a spec produces the write that requests verifying it again.**
+    Left unbroken by an agent that re-records or re-replies, it is a closed loop rather than a
+    decaying echo — every pass generates its own next trigger.
+
+    Two things distinguish this instance from item 9's burst, and both matter to the fix:
+
+    - **It *was* cheaply separable, unlike item 9.** The changed-files list named exactly one
+      path, that path was the active spec itself, and no source file had changed since the prior
+      pass. A daemon-side rule — *never fire `verify-spec` when the only changed file is the
+      active spec* — would have suppressed it with no risk of dropping real work. That is a
+      narrower and cheaper gate than the once-per-completion fix, and it is complementary to it,
+      not a substitute: it closes the self-feeding loop specifically.
+    - **Correct handling costs a full delta check anyway.** Plan still had to stat every `.go`
+      file to prove nothing had landed, because item 8's closing note stands — an echo-looking
+      message is not proof the world is unchanged. The receiver-side cost item 9 identified is
+      unchanged; what is new is that *this* sub-case has a trivial daemon-side test.
+
+    Handling applied (and worth pinning as the documented behaviour until the fix lands):
+    consume silently, **do not reply** (a reply grows edit's inbox and re-arms the trigger),
+    **do not re-record branch time**, and **do not re-edit the spec** — since re-recording writes
+    the spec file and thereby manufactures the next echo. Note the mild conflict this creates
+    with the standing instruction to record time whenever the message asks: on an echo the right
+    move is to skip, and let the unrecorded seconds settle on the next genuine pass.
+
+    **Controlled follow-up, same session (11:08–11:12): silence is not sufficient.** After the
+    echo above, plan made *no write and no reply of any kind* for 3.5 minutes — and a further
+    `verify-spec` fired at 11:12 anyway, again naming the spec file whose mtime was still
+    11:08:27. This is item 5's finding reproduced under a cleaner control (there, plan had at
+    least replied once; here it did nothing at all), and it settles the relationship between the
+    two mechanisms: **plan's own writes are a fuel source, not the fuel source.** Correct
+    receiver-side handling stops the loop from being *self*-amplifying; it does not stop the
+    echoes, because other traffic keeps re-arming the trigger. Tally for the burst: six fires in
+    ten minutes, two genuine, four echoes. Nothing a receiving agent can do is a mitigation —
+    only the daemon-side gate below is.
+
 ## Requirements
 
 ### Proposed fix
@@ -133,6 +175,8 @@ Option 1 or 2 also fixes the workflow-state churn; option 3 alone does not.
 - [ ] `TransitionWorkflow(StateReviewed)` fires once per actual review completion
 - [ ] A genuine second review completion (new review→edit message) still fires a new `verify-spec`
 - [ ] Existing daemon and workflow tests still pass
+- [ ] **No `verify-spec` fires when the only changed file is the active spec itself** — the self-feeding loop in item 10, where the verification pass's own doc edit requests the next verification. Cheap and separable, and worth landing even if the once-per-completion gate slips
+- [ ] **Negative control:** a genuine review completion that changes source files *and* touches the active spec still fires — a fix that suppresses on "spec was touched" rather than "spec was the *only* change" cannot pass
 
 ### Key files
 

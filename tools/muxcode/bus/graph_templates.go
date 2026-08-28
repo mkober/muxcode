@@ -33,7 +33,7 @@ var builtinGraphJSON = map[string]string{
     {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build or test failure for: ${intent}"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch"},
-    {"id": "ship-gate", "type": "wait_human", "message": "Approve commit and PR creation for: ${intent}"},
+    {"id": "ship-gate", "type": "wait_human", "message": "Approve commit, push, and PR creation for: ${intent}"},
     {"id": "commit", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the changes for: ${intent}"},
     {"id": "pr", "type": "send", "role": "commit", "action": "commit", "message": "Create a PR for the current branch"}
   ],
@@ -62,7 +62,7 @@ var builtinGraphJSON = map[string]string{
     {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build or test failure"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the changes on this branch"},
-    {"id": "ship-gate", "type": "wait_human", "message": "Approve commit and PR for: ${intent}"},
+    {"id": "ship-gate", "type": "wait_human", "message": "Approve commit, push, and PR for: ${intent}"},
     {"id": "commit", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit: ${intent}"},
     {"id": "pr", "type": "send", "role": "commit", "action": "commit", "message": "Create a PR for the current branch"}
   ],
@@ -89,10 +89,10 @@ var builtinGraphJSON = map[string]string{
     {"id": "gate1", "type": "wait_human", "message": "Approve staging, commit, push, and PR creation"},
     {"id": "a", "type": "send", "role": "commit", "action": "commit", "message": "Stage all unstaged files, commit, push, and create a PR"},
     {"id": "b", "type": "send", "role": "commit", "action": "pr-read", "message": "Watch for PR comments and report the review decision and any comments"},
-    {"id": "gate2", "type": "wait_human", "message": "Approve addressing the review feedback and replying to comments"},
+    {"id": "gate2", "type": "wait_human", "message": "Approve addressing the review feedback, replying to comments, and the spec close-out with its commit and push that follow"},
     {"id": "c", "type": "send", "role": "edit", "action": "edit", "message": "Address the PR review comments"},
     {"id": "d", "type": "send", "role": "commit", "action": "comment", "message": "Reply to the PR comments"},
-    {"id": "close-spec", "type": "send", "role": "plan", "action": "update-docs", "message": "Close out the active requirements doc: set its status to Complete, check off finished items, move it to docs/requirements/completed/, clear the active spec, and report the new path (no active spec = reply nothing to do)"},
+    {"id": "close-spec", "type": "send", "role": "plan", "action": "update-docs", "guard": "spec-complete", "message": "Close out the active requirements doc ONLY if every acceptance criterion and phase step is checked complete: set status Complete, move it to docs/requirements/completed/, clear the active spec, report the new path. Any item still open = refuse and report the open count (no active spec = reply nothing to do)"},
     {"id": "commit-spec", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the completed requirements doc move and push it to the PR branch (nothing moved = reply nothing to do)"}
   ],
   "edges": [
@@ -155,7 +155,7 @@ var builtinGraphJSON = map[string]string{
   "nodes": [
     {"id": "spec", "type": "send", "role": "plan", "action": "verify-spec", "message": "Verify the current branch changes align with the active requirements spec; update the spec doc if needed (check off completed items, adjust status)"},
     {"id": "docs", "type": "send", "role": "plan", "action": "update-docs", "message": "Update architecture documentation and README if the reviewed changes require it; report what changed or why nothing did"},
-    {"id": "gate", "type": "wait_human", "prompt": "Approve committing the spec/doc updates"},
+    {"id": "gate", "type": "wait_human", "message": "Approve committing the spec and documentation updates on the current branch"},
     {"id": "commit", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the spec and documentation updates on the current branch"}
   ],
   "edges": [

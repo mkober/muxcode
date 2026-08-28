@@ -3,7 +3,7 @@
 The startup message every agent receives is open-ended prose. A Claude-class model treats it as a
 cue to read memory and stop; a small local model treats it as a task with no terminal condition and
 burns every available turn on it, emitting `(no response generated — tool loop exhausted)` and
-never answering. Found during the [MUX-109](../drafts/MUX-109-prompt-mode-graph-control-pane.md) Phase 2
+never answering. Found during the [MUX-109](../completed/MUX-109-prompt-mode-graph-control-pane.md) Phase 2
 regression check, where build and test repeated this roughly every five minutes.
 
 ## Context

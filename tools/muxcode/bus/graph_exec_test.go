@@ -2,6 +2,8 @@ package bus
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -692,5 +694,143 @@ func TestExecMapNodeFansOutPerItem(t *testing.T) {
 	step(t, runTestSession, run.ID)
 	if s := nodeState(t, runTestSession, run.ID, "m"); s != GraphNodeDone {
 		t.Errorf("map state %q, want done once all workers completed", s)
+	}
+}
+
+// specGuardGraph returns a one-node graph whose send carries the
+// spec-complete guard (MUX-114).
+func specGuardGraph() *Graph {
+	return &Graph{
+		Name:  "g",
+		Start: "close",
+		Nodes: []Node{{ID: "close", Type: NodeSend, Role: "plan", Action: "update-docs",
+			Message: "close out the spec", Guard: GuardSpecComplete}},
+	}
+}
+
+// writeSpecFixture writes a spec file and points the active-spec marker at
+// it (absolute path, so no repo-dir resolution is involved).
+func writeSpecFixture(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "spec.md")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(runTestSession, path); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestExecSpecGuardDeclinesOpenSpec(t *testing.T) {
+	run := createTestRun(t, specGuardGraph())
+	writeSpecFixture(t, "# S\n- [x] done\n- [ ] open item one\n- [ ] open item two\n")
+
+	step(t, runTestSession, run.ID)
+
+	st, err := ReadNodeStatus(runTestSession, run.ID, "close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != GraphNodeFailed || st.Outcome != OutcomeFailure {
+		t.Fatalf("close state %q outcome %q, want failed/failure", st.State, st.Outcome)
+	}
+	if !strings.Contains(st.Output, "2 open items") || !strings.Contains(st.Output, "open item one") {
+		t.Errorf("decline must name the count and the open items, got %q", st.Output)
+	}
+	msgs, _ := Peek(runTestSession, "plan")
+	if len(msgs) != 0 {
+		t.Errorf("declined dispatch must never send — plan inbox: %+v", msgs)
+	}
+
+	// Failure routing runs on the next tick; with no failure edge it fails the run.
+	step(t, runTestSession, run.ID)
+	got, _ := ReadGraphRun(runTestSession, run.ID)
+	if got.State != GraphRunFailed {
+		t.Errorf("run state %q, want failed — the chain must stop before any downstream mutation", got.State)
+	}
+}
+
+// TestExecSpecGuardAllowsCompleteSpec is the negative control: a guard
+// that simply never closes anything cannot pass it.
+func TestExecSpecGuardAllowsCompleteSpec(t *testing.T) {
+	run := createTestRun(t, specGuardGraph())
+	writeSpecFixture(t, "# S\n- [x] done\n- [X] loudly done\n")
+
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "close"); s != GraphNodeRunning {
+		t.Fatalf("close state %q, want running — a fully-checked spec must dispatch", s)
+	}
+	msgs, _ := Peek(runTestSession, "plan")
+	if len(msgs) != 1 {
+		t.Errorf("plan inbox has %d messages, want the close-out send", len(msgs))
+	}
+}
+
+func TestExecSpecGuardNoActiveSpecDispatches(t *testing.T) {
+	run := createTestRun(t, specGuardGraph())
+
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "close"); s != GraphNodeRunning {
+		t.Fatalf("close state %q, want running — no active spec is the node's own nothing-to-do path", s)
+	}
+}
+
+func TestExecSpecGuardUnreadableSpecDeclines(t *testing.T) {
+	run := createTestRun(t, specGuardGraph())
+	if err := WriteActiveSpec(runTestSession, filepath.Join(t.TempDir(), "absent.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	step(t, runTestSession, run.ID)
+
+	st, err := ReadNodeStatus(runTestSession, run.ID, "close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "cannot read active spec") {
+		t.Errorf("unreadable spec must decline loudly, got state %q output %q", st.State, st.Output)
+	}
+}
+
+func TestExecSpecGuardResolvesRelativeSpecPath(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "spec.md"), []byte("- [ ] open\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	run := createTestRun(t, specGuardGraph())
+	if err := WriteActiveSpec(runTestSession, "spec.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	step(t, runTestSession, run.ID)
+
+	st, err := ReadNodeStatus(runTestSession, run.ID, "close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "1 open items") {
+		t.Errorf("relative spec path must resolve against the session repo dir, got state %q output %q", st.State, st.Output)
+	}
+}
+
+func TestExecSpecGuardPostponesWhenRepoDirUnknown(t *testing.T) {
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", "")
+	run := createTestRun(t, specGuardGraph())
+	if err := WriteActiveSpec(runTestSession, "docs/requirements/drafts/spec.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "close"); s != GraphNodeReady {
+		t.Fatalf("close state %q, want ready — an unresolvable repo dir is transient, not a decline", s)
+	}
+	msgs, _ := Peek(runTestSession, "plan")
+	if len(msgs) != 0 {
+		t.Errorf("postponed dispatch must not send — plan inbox: %+v", msgs)
 	}
 }

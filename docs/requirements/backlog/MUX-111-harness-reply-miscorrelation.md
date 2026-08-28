@@ -3,7 +3,7 @@
 The local harness answers a whole inbox batch with a single reply addressed to — and correlated
 with — `msgs[len(msgs)-1]`. When the last message in the batch is not the request being answered,
 the request is never marked responded, never gains a receipt, and the delivery backstop re-drives it
-indefinitely. Found during the [MUX-109](../drafts/MUX-109-prompt-mode-graph-control-pane.md) Phase 2
+indefinitely. Found during the [MUX-109](../completed/MUX-109-prompt-mode-graph-control-pane.md) Phase 2
 regression check.
 
 ## Context
