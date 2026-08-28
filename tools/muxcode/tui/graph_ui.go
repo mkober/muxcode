@@ -266,6 +266,7 @@ type GraphUI struct {
 	// that was already settled.
 	nodeFollow  bool
 	parkedState string // selected node's state at the moment of a manual move
+	dagScroll   int    // vertical offset of the wrapped detail panel (, . keys)
 
 	// Template launcher
 	templates       []bus.GraphTemplateInfo
@@ -641,9 +642,21 @@ func (ui *GraphUI) handleKey(key byte) string {
 		ui.requestRetry()
 	case 'R':
 		ui.refresh()
+	case '>', '.':
+		if ui.view == viewGraphDAG {
+			ui.dagScroll += dagScrollStep
+		}
+	case '<', ',':
+		if ui.view == viewGraphDAG {
+			ui.dagScroll = max(0, ui.dagScroll-dagScrollStep)
+		}
 	}
 	return ""
 }
+
+// dagScrollStep is how many wrapped lines one , or . press scrolls the
+// detail panel. The renderer clamps overscroll to the panel tail.
+const dagScrollStep = 3
 
 // promptSuggestion computes the ghost completion for the prompt input:
 // only at the end of the input, against template names then verbs.
@@ -714,10 +727,18 @@ func (ui *GraphUI) handleEscapeSequence() string {
 			select {
 			case b2 := <-ui.keyCh:
 				switch b2 {
-				case 'A': // Up
-					ui.moveSelection(-1)
+				case 'A': // Up — in the DAG view the panel scrolls (user-requested, 2026-08-28)
+					if ui.view == viewGraphDAG {
+						ui.dagScroll = max(0, ui.dagScroll-dagScrollStep)
+					} else {
+						ui.moveSelection(-1)
+					}
 				case 'B': // Down
-					ui.moveSelection(1)
+					if ui.view == viewGraphDAG {
+						ui.dagScroll += dagScrollStep
+					} else {
+						ui.moveSelection(1)
+					}
 				case 'C': // Right — the DAG reads left-to-right, so ←/→
 					// walk the selection the way the graph is drawn
 					// (user-requested, 2026-08-27)
@@ -1158,6 +1179,7 @@ func (ui *GraphUI) launchGraph(g *bus.Graph, template, intent string) {
 	ui.nodeIdx = 0
 	ui.nodeFollow = true
 	ui.parkedState = ""
+	ui.dagScroll = 0
 	ui.view = viewGraphDAG
 	ui.refresh()
 }
@@ -1242,6 +1264,7 @@ func (ui *GraphUI) enter() {
 		ui.nodeIdx = 0
 		ui.nodeFollow = true
 		ui.parkedState = ""
+		ui.dagScroll = 0
 		ui.view = viewGraphDAG
 		ui.refresh()
 	case viewGraphDAG:
@@ -1290,10 +1313,10 @@ func (ui *GraphUI) render() string {
 		if ui.snap == nil {
 			frame = fmt.Sprintf("\n  %sCannot load run %s: %v%s\n", Red, ui.runID, ui.loadErr, RST)
 		} else {
-			frame = RenderGraphFrame(*ui.snap, W, H, ui.selectedNode(), ui.now())
+			frame = RenderGraphFrameH(*ui.snap, W, H, ui.selectedNode(), ui.now(), ui.dagScroll)
 		}
-		footer = fmt.Sprintf("  %s←→/jk%s Select  %sEnter%s Detail  %sa%s Approve gate  %sc%s Cancel  %sr%s Retry  %sq/Esc%s Back",
-			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
+		footer = fmt.Sprintf("  %s←→/jk%s Select  %s↑↓%s Scroll  %sEnter%s Detail  %sa%s Approve gate  %sc%s Cancel  %sr%s Retry  %sq/Esc%s Back",
+			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 	case viewGraphNode:
 		if ui.snap == nil {
 			frame = fmt.Sprintf("\n  %sCannot load run %s: %v%s\n", Red, ui.runID, ui.loadErr, RST)
