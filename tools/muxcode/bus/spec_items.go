@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -54,9 +55,122 @@ func IntentPhase(intent string) int {
 	if m == nil {
 		return 0
 	}
-	n := 0
-	fmt.Sscanf(m[1], "%d", &n)
+	n, _ := strconv.Atoi(m[1])
 	return n
+}
+
+// SpecPhase is one `### Phase N` section of a requirements spec: its
+// number, title text, and the names of checkbox items still open inside
+// it.
+type SpecPhase struct {
+	Number int
+	Title  string // full heading text after "### ", e.g. "Phase 2: Attribution"
+	Items  []string
+}
+
+// phaseHeadingRe extracts the number from a phase heading line.
+var phaseHeadingRe = regexp.MustCompile(`^### (Phase ([0-9]+)\b.*)$`)
+
+// SpecPhases scans a spec once and returns every phase section in file
+// order with its open-item count. This is the single primitive behind
+// stateless phase derivation (MUX-121 decision 1): the current phase is
+// always recomputed from the spec, never stored, so it cannot drift and
+// an already-complete phase can never be re-implemented — the failure
+// observed three times on 2026-08-28.
+func SpecPhases(path string) ([]SpecPhase, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var phases []SpecPhase
+	inFence := false
+	cur := -1
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			cur = -1
+			if m := phaseHeadingRe.FindStringSubmatch(trimmed); m != nil {
+				n, _ := strconv.Atoi(m[2])
+				phases = append(phases, SpecPhase{Number: n, Title: m[1]})
+				cur = len(phases) - 1
+			}
+			continue
+		}
+		if cur < 0 {
+			continue
+		}
+		if m := openItemRe.FindStringSubmatch(line); m != nil {
+			name := strings.TrimSpace(m[1])
+			if name == "" {
+				name = "(unnamed item)"
+			}
+			phases[cur].Items = append(phases[cur].Items, name)
+		}
+	}
+	return phases, nil
+}
+
+// SpecCurrentPhase returns the lowest-numbered phase with open items, or
+// the zero SpecPhase (Number 0) when every phase is complete or the spec
+// has no phases.
+func SpecCurrentPhase(path string) (SpecPhase, error) {
+	phases, err := SpecPhases(path)
+	if err != nil {
+		return SpecPhase{}, err
+	}
+	best := SpecPhase{}
+	for _, p := range phases {
+		if len(p.Items) > 0 && (best.Number == 0 || p.Number < best.Number) {
+			best = p
+		}
+	}
+	return best, nil
+}
+
+// SpecJustCompletedPhase returns the completion frontier: the last phase
+// in file order with zero open items before the first open one (or the
+// last complete phase overall when none are open). This is the phase a
+// per-phase commit ships — ${current_phase} at commit time already points
+// at the NEXT phase, because update-spec closed this one before the
+// commit dispatched (found live by test-multi-phase-graph.sh: every
+// commit was labeled one phase ahead, the last "(no open phase)").
+func SpecJustCompletedPhase(path string) (SpecPhase, error) {
+	phases, err := SpecPhases(path)
+	if err != nil {
+		return SpecPhase{}, err
+	}
+	last := SpecPhase{}
+	for _, p := range phases {
+		if len(p.Items) > 0 {
+			break
+		}
+		last = p
+	}
+	return last, nil
+}
+
+// SpecCompletedPhaseCount returns how many phases have zero open items —
+// the progress signal MUX-121's stuck-phase gate compares against loop
+// iterations (completed < iterations = the last loop closed nothing).
+func SpecCompletedPhaseCount(path string) (int, error) {
+	phases, err := SpecPhases(path)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, p := range phases {
+		if len(p.Items) == 0 {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // UnscopedPhaseGuardWarning reports why a run's phase-complete guard will
@@ -77,42 +191,19 @@ func UnscopedPhaseGuardWarning(g *Graph, intent string) string {
 }
 
 // SpecPhaseOpenItems counts the unchecked checkbox items inside one phase
-// section of a spec — the lines between `### Phase N` and the next
-// heading. Fenced code blocks are skipped as in SpecOpenItems. A phase
-// heading that does not exist reports zero items — an intent naming a
-// phase the spec lacks is not the guard's problem to solve.
+// section, derived from the single SpecPhases scan. A phase the spec
+// lacks reports zero items — an intent naming a missing phase is not the
+// guard's problem to solve. A spec with the same phase number twice sums
+// the sections.
 func SpecPhaseOpenItems(path string, phase int) (int, []string, error) {
-	data, err := os.ReadFile(path)
+	phases, err := SpecPhases(path)
 	if err != nil {
 		return 0, nil, err
 	}
 	var names []string
-	inFence, inPhase := false, false
-	want := fmt.Sprintf("### Phase %d", phase)
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			inFence = !inFence
-			continue
-		}
-		if inFence {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "#") {
-			rest, matched := strings.CutPrefix(trimmed, want)
-			// digit boundary: "### Phase 1" must not match "### Phase 10"
-			inPhase = matched && (rest == "" || rest[0] < '0' || rest[0] > '9')
-			continue
-		}
-		if !inPhase {
-			continue
-		}
-		if m := openItemRe.FindStringSubmatch(line); m != nil {
-			name := strings.TrimSpace(m[1])
-			if name == "" {
-				name = "(unnamed item)"
-			}
-			names = append(names, name)
+	for _, p := range phases {
+		if p.Number == phase {
+			names = append(names, p.Items...)
 		}
 	}
 	return len(names), names, nil

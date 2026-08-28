@@ -32,16 +32,17 @@ type ConditionResult struct {
 
 // knownConditionTypes lists all recognized condition keys for validation.
 var knownConditionTypes = map[string]bool{
-	"files_match":       true,
-	"files_not_match":   true,
-	"branch_match":      true,
-	"branch_not_match":  true,
-	"command_match":     true,
-	"command_not_match": true,
-	"env_set":           true,
-	"env_equals":        true,
-	"output_contains":   true,
-	"exit_code":         true,
+	"files_match":           true,
+	"files_not_match":       true,
+	"branch_match":          true,
+	"branch_not_match":      true,
+	"command_match":         true,
+	"command_not_match":     true,
+	"env_set":               true,
+	"env_equals":            true,
+	"output_contains":       true,
+	"exit_code":             true,
+	"spec_phases_remaining": true,
 }
 
 // IsKnownCondition returns true if the condition type is recognized.
@@ -105,6 +106,8 @@ func evaluateCondition(condType string, value any, ctx *ChainContext) ConditionR
 		return evalOutputContains(value, ctx)
 	case "exit_code":
 		return evalExitCode(value, ctx)
+	case "spec_phases_remaining":
+		return evalSpecPhasesRemaining(value, ctx)
 	default:
 		return ConditionResult{
 			Type:   condType,
@@ -321,6 +324,36 @@ func evalExitCode(value any, ctx *ChainContext) ConditionResult {
 	} else {
 		result.Detail = fmt.Sprintf("exit code %d, want %d", ctx.ExitCode, expected)
 	}
+	return result
+}
+
+// evalSpecPhasesRemaining tests whether the active spec still has a phase
+// with open checkbox items (MUX-121 loop termination — the predicate the
+// close-spec guard already uses, exposed to the one condition dialect).
+// Value true passes while a phase remains (the loop-continue edge); false
+// passes when none do (the termination edge). No active spec, or an
+// unreadable one, counts as nothing remaining — a loop must terminate,
+// not spin, when its spec disappears. A transiently unresolvable repo dir
+// counts as remaining: wrongly terminating loses work, wrongly continuing
+// costs one bounded iteration.
+func evalSpecPhasesRemaining(value any, ctx *ChainContext) ConditionResult {
+	result := ConditionResult{Type: "spec_phases_remaining"}
+	want, ok := value.(bool)
+	if !ok {
+		result.Detail = fmt.Sprintf("spec_phases_remaining must be true or false, got %T", value)
+		return result
+	}
+	result.Pattern = strconv.FormatBool(want)
+
+	path, okSpec, transient := activeSpecFile(ctx.Session)
+	has := transient
+	if okSpec {
+		if p, err := SpecCurrentPhase(path); err == nil && p.Number != 0 {
+			has = true
+		}
+	}
+	result.Passed = has == want
+	result.Detail = fmt.Sprintf("open phase remaining=%v", has)
 	return result
 }
 

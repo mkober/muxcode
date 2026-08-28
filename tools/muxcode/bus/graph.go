@@ -58,14 +58,19 @@ type Node struct {
 // in the run's intent ("Phase 1: …") has open items — a full-spec guard on
 // a ship gate would block every legitimate partial-phase ship (user
 // decision 2026-08-28); with no phase in the intent it passes through.
+// GuardPhaseProgress blocks a per-phase commit whose loop iteration did
+// not complete its phase (completed phases must reach iterations+1) —
+// the trigger for the multi-phase stuck gate (MUX-121 decision 4).
 const (
 	GuardSpecComplete  = "spec-complete"
 	GuardPhaseComplete = "phase-complete"
+	GuardPhaseProgress = "phase-progress"
 )
 
 var knownNodeGuards = map[string]bool{
 	GuardSpecComplete:  true,
 	GuardPhaseComplete: true,
+	GuardPhaseProgress: true,
 }
 
 // Edge routes from one node to another when the source node produces the
@@ -73,11 +78,16 @@ var knownNodeGuards = map[string]bool{
 // fan out in parallel. MaxIterations marks an explicit loop edge: it caps
 // how many times the edge may fire in one run, and exempts the cycle it
 // closes from the DAG check — cycles without a capped edge are invalid.
+// MaxIterationsFromSpec derives the cap from the active spec's phase
+// count at run creation (MUX-121: a fixed cap silently truncates a long
+// spec or over-allows a short one); CreateGraphRun resolves it into
+// MaxIterations on the frozen copy, so the executor sees only numbers.
 type Edge struct {
-	From          string `json:"from"`
-	To            string `json:"to"`
-	Outcome       string `json:"outcome,omitempty"` // empty means "success"
-	MaxIterations int    `json:"max_iterations,omitempty"`
+	From                  string `json:"from"`
+	To                    string `json:"to"`
+	Outcome               string `json:"outcome,omitempty"` // empty means "success"
+	MaxIterations         int    `json:"max_iterations,omitempty"`
+	MaxIterationsFromSpec bool   `json:"max_iterations_from_spec,omitempty"`
 }
 
 // Graph is a declarative multi-agent orchestration definition.
@@ -341,7 +351,7 @@ func (g *Graph) validateNode(n *Node, v *GraphValidation) {
 	}
 	if n.Guard != "" {
 		if !knownNodeGuards[n.Guard] {
-			v.errf("node %q has unknown guard %q (known: %s, %s)", n.ID, n.Guard, GuardSpecComplete, GuardPhaseComplete)
+			v.errf("node %q has unknown guard %q (known: %s, %s, %s)", n.ID, n.Guard, GuardSpecComplete, GuardPhaseComplete, GuardPhaseProgress)
 		}
 		if n.Type != NodeSend && n.Type != NodeSpawn {
 			v.errf("node %q has a guard but type %q — guards are dispatch-time and only apply to send/spawn nodes", n.ID, n.Type)
@@ -371,6 +381,9 @@ func (g *Graph) validateEdges(byID map[string]*Node, v *GraphValidation) {
 		}
 		if e.MaxIterations < 0 {
 			v.errf("edge %s->%s has negative max_iterations", e.From, e.To)
+		}
+		if e.MaxIterationsFromSpec && e.MaxIterations > 0 {
+			v.errf("edge %s->%s sets both max_iterations and max_iterations_from_spec — choose one", e.From, e.To)
 		}
 		key := e.From + "\x00" + e.To + "\x00" + edgeOutcome(e)
 		if seen[key] {
@@ -412,12 +425,13 @@ func (g *Graph) validateReachability(v *GraphValidation) {
 }
 
 // validateAcyclic runs a DFS cycle check over the graph with capped loop
-// edges (max_iterations > 0) removed. Any cycle that survives has no
+// edges removed — explicitly capped (max_iterations > 0) or spec-derived
+// (resolved to a number at run creation). Any cycle that survives has no
 // iteration bound and would run forever, so it is an error.
 func (g *Graph) validateAcyclic(v *GraphValidation) {
 	out := make(map[string][]string)
 	for _, e := range g.Edges {
-		if e.MaxIterations > 0 {
+		if e.MaxIterations > 0 || e.MaxIterationsFromSpec {
 			continue
 		}
 		out[e.From] = append(out[e.From], e.To)

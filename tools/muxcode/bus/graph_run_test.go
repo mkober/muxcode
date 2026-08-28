@@ -2,6 +2,7 @@ package bus
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -224,6 +225,51 @@ func TestFormatGraphRunShowsFailedNodeReason(t *testing.T) {
 	}
 	if strings.Contains(out, "harvested response payload") {
 		t.Errorf("done node output must not render:\n%s", out)
+	}
+}
+
+// TestCreateGraphRunDerivesLoopCap pins spec-derived caps (MUX-121): the
+// frozen definition carries cap = phase count, and a derived-cap graph
+// with no active spec refuses to start rather than guessing a bound.
+func TestCreateGraphRunDerivesLoopCap(t *testing.T) {
+	g := linearGraph()
+	g.Edges = append(g.Edges, Edge{From: "b", To: "a", Outcome: OutcomeFailure, MaxIterationsFromSpec: true})
+
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	spec := filepath.Join(t.TempDir(), "spec.md")
+	content := "### Phase 1: A\n- [ ] a\n### Phase 2: B\n- [ ] b\n### Phase 3: C\n- [ ] c\n"
+	if err := os.WriteFile(spec, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(runTestSession, spec); err != nil {
+		t.Fatal(err)
+	}
+	run, err := CreateGraphRun(runTestSession, g, "t", "x")
+	if err != nil {
+		t.Fatalf("derived-cap run must start with an active spec: %v", err)
+	}
+	frozen, err := ReadGraphRunGraph(runTestSession, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotCap := 0
+	for _, e := range frozen.Edges {
+		if e.From == "b" && e.To == "a" {
+			gotCap = e.MaxIterations
+		}
+	}
+	if gotCap != 3 {
+		t.Errorf("frozen loop cap = %d, want 3 (spec phase count)", gotCap)
+	}
+
+	if err := ClearActiveSpec(runTestSession); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateGraphRun(runTestSession, g, "t", "x"); err == nil {
+		t.Error("derived-cap graph with no active spec must refuse to start")
 	}
 }
 

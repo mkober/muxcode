@@ -864,6 +864,196 @@ func TestExecPhaseGuard(t *testing.T) {
 	}
 }
 
+// TestExecCurrentPhaseInterpolation pins ${current_phase} resolution at
+// dispatch: the message carries the spec's lowest OPEN phase, not the
+// frozen intent's — the mechanism that stops a loop re-implementing a
+// completed phase (MUX-121).
+func TestExecCurrentPhaseInterpolation(t *testing.T) {
+	g := &Graph{
+		Name:  "g",
+		Start: "impl",
+		Nodes: []Node{{ID: "impl", Type: NodeSend, Role: "build", Action: "build",
+			Message: "Implement ${current_phase}"}},
+	}
+	run := createTestRun(t, g)
+	writeSpecFixture(t, "# S\n### Phase 1: Done\n- [x] a\n### Phase 2: Attribution\n- [ ] b\n")
+	mutateRunIntent(t, run.ID, "MUX-115 — Phase 1: Turn trace")
+
+	step(t, runTestSession, run.ID)
+
+	msgs, _ := Peek(runTestSession, "build")
+	if len(msgs) != 1 {
+		t.Fatalf("build inbox: %+v", msgs)
+	}
+	if !strings.Contains(msgs[0].Payload, "Phase 2: Attribution") ||
+		strings.Contains(msgs[0].Payload, "Phase 1") {
+		t.Errorf("dispatch must carry the derived open phase, not the frozen intent's: %q", msgs[0].Payload)
+	}
+}
+
+// TestSpecPhasesRemainingCondition pins the loop-termination condition
+// (MUX-121): true passes while an open phase remains, false passes once
+// none do, and a missing spec counts as nothing remaining so a loop
+// terminates rather than spins.
+func TestSpecPhasesRemainingCondition(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	spec := filepath.Join(t.TempDir(), "spec.md")
+	if err := os.WriteFile(spec, []byte("### Phase 1: A\n- [ ] open\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(runTestSession, spec); err != nil {
+		t.Fatal(err)
+	}
+	ctx := &ChainContext{Session: runTestSession}
+
+	if ok, _ := EvaluateConditions(map[string]any{"spec_phases_remaining": true}, ctx); !ok {
+		t.Error("open phase: remaining=true must pass")
+	}
+	if ok, _ := EvaluateConditions(map[string]any{"spec_phases_remaining": false}, ctx); ok {
+		t.Error("open phase: remaining=false must fail (negative control)")
+	}
+
+	if err := os.WriteFile(spec, []byte("### Phase 1: A\n- [x] done\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := EvaluateConditions(map[string]any{"spec_phases_remaining": false}, ctx); !ok {
+		t.Error("all complete: remaining=false must pass — the termination edge")
+	}
+
+	if err := ClearActiveSpec(runTestSession); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := EvaluateConditions(map[string]any{"spec_phases_remaining": false}, ctx); !ok {
+		t.Error("no active spec must count as nothing remaining — a loop must terminate, not spin")
+	}
+}
+
+// TestExecPhaseProgressGuard pins the per-phase commit guard (MUX-121):
+// each commit must ship one newly-completed phase, counted against the
+// guard node's own prior successful fires — fix-loop and retry fires
+// must never distort the math (review catch 2026-08-28).
+func TestExecPhaseProgressGuard(t *testing.T) {
+	guardGraph := func() *Graph {
+		return &Graph{Name: "g", Start: "commit",
+			Nodes: []Node{
+				{ID: "commit", Type: NodeSend, Role: "plan", Action: "update-docs",
+					Message: "commit the phase", Guard: GuardPhaseProgress},
+				{ID: "next", Type: NodeCondition, Conditions: map[string]any{"spec_phases_remaining": true}},
+			},
+			Edges: []Edge{{From: "commit", To: "next"}}}
+	}
+	seedFires := func(runID string, fires map[string]int) {
+		run, err := ReadGraphRun(runTestSession, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run.EdgeFires = fires
+		if err := WriteGraphRun(runTestSession, run); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// First commit, one phase complete — ships, and heavy fix-loop fires
+	// must not inflate the requirement (the review-found bug).
+	run := createTestRun(t, guardGraph())
+	writeSpecFixture(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
+	seedFires(run.ID, map[string]int{"fix->build:success": 3})
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "commit"); s != GraphNodeRunning {
+		t.Fatalf("first commit with its phase complete must ship despite fix-loop fires, got %q", s)
+	}
+
+	// Second commit (one prior success fire) with no second phase closed:
+	// decline toward the stuck gate, naming the counts.
+	run2 := createTestRun(t, guardGraph())
+	writeSpecFixture(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
+	seedFires(run2.ID, map[string]int{"commit->next:success": 1})
+	step(t, runTestSession, run2.ID)
+	st, err := ReadNodeStatus(runTestSession, run2.ID, "commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "1 commits shipped but only 1 phases complete") {
+		t.Errorf("no-progress commit must decline with counts, got %q %q", st.State, st.Output)
+	}
+
+	// No active spec: decline, never commit blind.
+	run3 := createTestRun(t, guardGraph())
+	step(t, runTestSession, run3.ID)
+	st3, err := ReadNodeStatus(runTestSession, run3.ID, "commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st3.State != GraphNodeFailed || !strings.Contains(st3.Output, "no active spec") {
+		t.Errorf("no-spec commit must decline, got %q %q", st3.State, st3.Output)
+	}
+}
+
+// TestExecHumanGateLoopReArmRequiresFreshApproval covers the loop path
+// the multi-phase template lives on (plan coverage gap 2026-08-28): a
+// gate approved on iteration 1 and re-armed by a loop edge must WAIT
+// again — without the dispatch purge, approving Phase 1's commit would
+// silently release every later phase's commit.
+func TestExecHumanGateLoopReArmRequiresFreshApproval(t *testing.T) {
+	g := &Graph{Name: "g", Start: "gate",
+		Nodes: []Node{
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve the commit"},
+			{ID: "work", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+		},
+		Edges: []Edge{
+			{From: "gate", To: "work"},
+			{From: "work", To: "gate", MaxIterations: 2},
+		}}
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("gate state %q, want waiting", s)
+	}
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatal(err)
+	}
+	step(t, runTestSession, run.ID) // approval releases work
+	completeSendNode(t, runTestSession, run.ID, "work", OutcomeSuccess)
+	step(t, runTestSession, run.ID) // loop edge re-arms the gate
+	step(t, runTestSession, run.ID) // gate re-dispatches
+
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("re-armed gate state %q, want waiting — the loop pass must demand a fresh approval", s)
+	}
+	msgs, _ := Peek(runTestSession, "build")
+	if len(msgs) != 1 {
+		t.Errorf("work dispatched %d times, want 1 — the stale approval must not release iteration 2", len(msgs))
+	}
+}
+
+// TestExecLoopExhaustionFailsRunLoudly pins the MUX-121 plan finding: a
+// SUCCESS outcome whose only edge is an exhausted loop edge must fail the
+// run — a cap shortfall must never settle as a run that looks complete.
+func TestExecLoopExhaustionFailsRunLoudly(t *testing.T) {
+	g := linearGraph()
+	g.Edges = []Edge{{From: "a", To: "b"}, {From: "b", To: "a", MaxIterations: 1}}
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "b", OutcomeSuccess)
+	step(t, runTestSession, run.ID) // b succeeds, loop edge fires (1/1), a re-arms
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "b", OutcomeSuccess)
+	step(t, runTestSession, run.ID) // b succeeds again, loop edge exhausted
+
+	got, _ := ReadGraphRun(runTestSession, run.ID)
+	if got.State != GraphRunFailed {
+		t.Errorf("run state %q, want failed — exhaustion suppressed b's only edge", got.State)
+	}
+}
+
 // mutateRunIntent rewrites a run's intent in the store.
 func mutateRunIntent(t *testing.T, runID, intent string) {
 	t.Helper()

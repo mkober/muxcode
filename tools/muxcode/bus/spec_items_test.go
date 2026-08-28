@@ -3,6 +3,7 @@ package bus
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -118,6 +119,86 @@ func TestUnscopedPhaseGuardWarning(t *testing.T) {
 	unguarded := &Graph{Nodes: []Node{{ID: "commit"}}}
 	if w := UnscopedPhaseGuardWarning(unguarded, "free-text intent"); w != "" {
 		t.Errorf("unguarded graph must not warn: %s", w)
+	}
+}
+
+// TestSpecCurrentPhase pins stateless phase derivation (MUX-121): the
+// current phase is the lowest-numbered one with open items, so a
+// completed phase can never be derived again — the re-implementation
+// failure observed three times on 2026-08-28.
+func TestSpecCurrentPhase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spec.md")
+	content := "# T\n\n" +
+		"### Phase 1: Done\n- [x] finished\n\n" +
+		"### Phase 3: Later\n- [ ] future work\n\n" +
+		"### Phase 2: Next\n- [ ] open step\n- [x] done step\n\n" +
+		"```markdown\n### Phase 9: fenced\n- [ ] not real\n```\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	phases, err := SpecPhases(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(phases) != 3 {
+		t.Fatalf("phases = %d, want 3 (fenced heading must not count): %+v", len(phases), phases)
+	}
+
+	cur, err := SpecCurrentPhase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Lowest OPEN phase wins even when headings are out of file order.
+	if cur.Number != 2 || !strings.Contains(cur.Title, "Phase 2: Next") {
+		t.Errorf("current = %+v, want Phase 2 (never the completed Phase 1)", cur)
+	}
+
+	done, err := SpecCompletedPhaseCount(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done != 1 {
+		t.Errorf("completed phases = %d, want 1", done)
+	}
+
+	// All phases complete derives the zero phase.
+	if err := os.WriteFile(path, []byte("### Phase 1: X\n- [x] a\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cur, err = SpecCurrentPhase(path)
+	if err != nil || cur.Number != 0 {
+		t.Errorf("fully-complete spec must derive phase 0, got %+v err %v", cur, err)
+	}
+}
+
+// TestSpecJustCompletedPhase pins the completion frontier — the phase a
+// per-phase commit ships (found live: ${current_phase} at commit time was
+// one phase ahead).
+func TestSpecJustCompletedPhase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spec.md")
+	write := func(content string) {
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write("### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n### Phase 3: C\n- [ ] c\n")
+	p, err := SpecJustCompletedPhase(path)
+	if err != nil || p.Number != 1 {
+		t.Errorf("mid-walk frontier = %+v, want Phase 1", p)
+	}
+
+	write("### Phase 1: A\n- [x] a\n### Phase 2: B\n- [x] b\n")
+	p, _ = SpecJustCompletedPhase(path)
+	if p.Number != 2 {
+		t.Errorf("all-complete frontier = %+v, want Phase 2 (the last)", p)
+	}
+
+	write("### Phase 1: A\n- [ ] a\n")
+	p, _ = SpecJustCompletedPhase(path)
+	if p.Number != 0 {
+		t.Errorf("nothing-complete frontier = %+v, want zero phase", p)
 	}
 }
 

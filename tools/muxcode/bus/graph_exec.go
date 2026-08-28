@@ -158,7 +158,7 @@ func StepGraphRun(session, runID string) error {
 	}
 	for id, st := range statuses {
 		if st.State == GraphNodeReady {
-			dispatchNode(session, run, byID[id], st)
+			dispatchNode(session, run, g, byID[id], st)
 		}
 	}
 
@@ -170,12 +170,14 @@ func StepGraphRun(session, runID string) error {
 // dispatch proceeds; a decline finishes the node as failed so the run
 // stops before any downstream mutation. Why guards are daemon-side: see
 // knownNodeGuards.
-func guardAllowsDispatch(session string, run *GraphRun, n *Node) bool {
+func guardAllowsDispatch(session string, run *GraphRun, g *Graph, n *Node) bool {
 	switch n.Guard {
 	case GuardSpecComplete:
 		return specCompleteGuardAllows(session, run, n)
 	case GuardPhaseComplete:
 		return phaseCompleteGuardAllows(session, run, n)
+	case GuardPhaseProgress:
+		return phaseProgressGuardAllows(session, run, g, n)
 	}
 	return true
 }
@@ -257,6 +259,46 @@ func phaseCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
 	return true
 }
 
+// phaseProgressGuardAllows blocks a per-phase commit that would ship no
+// newly-completed phase: completed phases must exceed the node's own
+// prior successful fires (each past commit shipped one phase; this one
+// must too). Counting the guard node's success edges — not loop
+// iterations — keeps fix-loop and stuck-gate retries out of the math: a
+// phase that needed two build fixes or a gate-approved retry still
+// commits once its phase closes (review catch 2026-08-28: an
+// iteration-max count inflated by the fix loop declined healthy phases).
+// The failure edge routes to the stuck gate, so a decline is the
+// gate-and-ask trigger, not a dead end (MUX-121 decision 4). No active
+// spec declines — never commit blind; transient repo-dir postpones.
+func phaseProgressGuardAllows(session string, run *GraphRun, g *Graph, n *Node) bool {
+	path, ok, transient := activeSpecFile(session)
+	if transient {
+		return false // node stays ready, retried next tick
+	}
+	if !ok {
+		declineGuard(session, run, n, "phase-progress guard declined: no active spec to verify the phase against")
+		return false
+	}
+	completed, err := SpecCompletedPhaseCount(path)
+	if err != nil {
+		finishNode(session, run, n, OutcomeFailure,
+			fmt.Sprintf("phase-progress guard: cannot read active spec: %v", err))
+		return false
+	}
+	prior := 0
+	for _, e := range g.Edges {
+		if e.From == n.ID && edgeOutcome(e) == OutcomeSuccess {
+			prior += run.EdgeFires[EdgeFireKey(e)]
+		}
+	}
+	if completed < prior+1 {
+		declineGuard(session, run, n, fmt.Sprintf(
+			"phase-progress guard declined: %d commits shipped but only %d phases complete — this commit's phase is still open", prior, completed))
+		return false
+	}
+	return true
+}
+
 // declineGuard records a guard decline: lifecycle event plus the failed
 // node carrying the reason.
 func declineGuard(session string, run *GraphRun, n *Node, detail string) {
@@ -275,13 +317,58 @@ func summarizeOpenItems(names []string, limit int) string {
 }
 
 // interpolateGraphMessage expands run/worker placeholders in a node
-// message template.
-func interpolateGraphMessage(msg, intent, item string) string {
+// message template. ${current_phase} resolves from the active spec at
+// dispatch time, not from the frozen intent — the frozen "Phase N" string
+// is what made three runs re-implement a completed phase (MUX-121).
+func interpolateGraphMessage(session, msg, intent, item string) string {
 	msg = strings.ReplaceAll(msg, "${intent}", intent)
 	if item != "" {
 		msg = strings.ReplaceAll(msg, "${item}", item)
 	}
+	if strings.Contains(msg, "${current_phase}") {
+		msg = strings.ReplaceAll(msg, "${current_phase}", resolveCurrentPhaseText(session))
+	}
+	if strings.Contains(msg, "${completed_phase}") {
+		msg = strings.ReplaceAll(msg, "${completed_phase}", resolveCompletedPhaseText(session))
+	}
 	return msg
+}
+
+// resolveCompletedPhaseText expands ${completed_phase}: the completion
+// frontier the commit ships — see SpecJustCompletedPhase for why the
+// commit must not use ${current_phase}.
+func resolveCompletedPhaseText(session string) string {
+	path, ok, transient := activeSpecFile(session)
+	if transient {
+		return "(completed phase unresolved — repo dir unavailable this tick)"
+	}
+	if !ok {
+		return "(no completed phase)"
+	}
+	p, err := SpecJustCompletedPhase(path)
+	if err != nil || p.Number == 0 {
+		return "(no completed phase)"
+	}
+	return p.Title
+}
+
+// resolveCurrentPhaseText expands ${current_phase}: the active spec's
+// lowest open phase heading, or explicit degradation text — honest words
+// beat a leftover placeholder in an agent-facing message, and a transient
+// repo-dir failure must not masquerade as "no open phase".
+func resolveCurrentPhaseText(session string) string {
+	path, ok, transient := activeSpecFile(session)
+	if transient {
+		return "(current phase unresolved — repo dir unavailable this tick)"
+	}
+	if !ok {
+		return "(no open phase)"
+	}
+	p, err := SpecCurrentPhase(path)
+	if err != nil || p.Number == 0 {
+		return "(no open phase)"
+	}
+	return p.Title
 }
 
 // dispatchNode fires a ready node's work and moves it to running/waiting.
@@ -292,11 +379,11 @@ func interpolateGraphMessage(msg, intent, item string) string {
 // keyed to the QUEUED duplicate's message ID, not the unsent one — the
 // agent answers the queued id, and a task keyed to the unsent id sits
 // in-flight forever (PR #38 Copilot finding).
-func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
+func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNodeStatus) {
 	if n == nil {
 		return
 	}
-	if !guardAllowsDispatch(session, run, n) {
+	if !guardAllowsDispatch(session, run, g, n) {
 		return
 	}
 	LogLifecycle(session, "info", "daemon", "graph-node-start",
@@ -304,7 +391,7 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 
 	switch n.Type {
 	case NodeSend:
-		msg := interpolateGraphMessage(n.Message, run.Intent, "")
+		msg := interpolateGraphMessage(session, n.Message, run.Intent, "")
 		m := NewMessage(graphSender, n.Role, "request", n.Action, msg, "")
 		if err := SendNoCC(session, m); err != nil {
 			if errors.Is(err, ErrSendSuppressed) {
@@ -334,7 +421,7 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 		})
 
 	case NodeSpawn:
-		msg := interpolateGraphMessage(n.Message, run.Intent, "")
+		msg := interpolateGraphMessage(session, n.Message, run.Intent, "")
 		spawnID, err := graphSpawnFn(session, n.Role, msg, graphSender)
 		if err != nil {
 			finishNode(session, run, n, OutcomeFailure, "spawn failed: "+err.Error())
@@ -354,7 +441,7 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 		}
 		var ids []string
 		for _, item := range items {
-			msg := interpolateGraphMessage(n.Message, run.Intent, item)
+			msg := interpolateGraphMessage(session, n.Message, run.Intent, item)
 			spawnID, err := graphSpawnFn(session, n.Role, msg, graphSender)
 			if err != nil {
 				finishNode(session, run, n, OutcomeFailure, "map spawn failed: "+err.Error())
@@ -383,7 +470,7 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 		finishNode(session, run, n, OutcomeSuccess, "")
 
 	case NodeWaitHuman:
-		prompt := interpolateGraphMessage(n.Message, run.Intent, "")
+		prompt := interpolateGraphMessage(session, n.Message, run.Intent, "")
 		// A fresh pass through a gate requires a fresh approval: purge any
 		// approved marker left by a previous pass (graph retry --from, or a
 		// loop edge re-arming the gate). Without this, harvestWaitingNode
@@ -633,11 +720,12 @@ func routeFinishedNodes(session string, run *GraphRun, g *Graph, byID map[string
 			}
 		}
 
-		fired := 0
+		fired, exhausted := 0, 0
 		for _, e := range matching {
 			key := EdgeFireKey(e)
 			if e.MaxIterations > 0 && run.EdgeFires[key] >= e.MaxIterations {
-				LogLifecycle(session, "info", "daemon", "graph-loop-exhausted",
+				exhausted++
+				LogLifecycle(session, "warn", "daemon", "graph-loop-exhausted",
 					fmt.Sprintf("%s: edge %s exhausted after %d iterations", run.ID, key, e.MaxIterations))
 				continue
 			}
@@ -650,14 +738,20 @@ func routeFinishedNodes(session string, run *GraphRun, g *Graph, byID map[string
 		}
 		_ = WriteGraphRun(session, run)
 
-		// A failure with nowhere to route (no failure edge, or the loop
-		// edge exhausted) fails the run. A success with no edges is a
-		// normal terminal path.
-		if fired == 0 && st.Outcome == OutcomeFailure {
+		// A failure with nowhere to route fails the run; a success with no
+		// edges is a normal terminal path — UNLESS an exhausted cap is what
+		// suppressed the route. A cap shortfall must be a loud failure,
+		// never a run that looks complete with work unattempted (MUX-121
+		// plan finding: gate-retries silently costing the last phase).
+		if fired == 0 && (st.Outcome == OutcomeFailure || exhausted > 0) {
 			run.State = GraphRunFailed
 			_ = WriteGraphRun(session, run)
+			reason := "failed with no live edge"
+			if st.Outcome != OutcomeFailure {
+				reason = "loop cap exhausted with its edge suppressed — remaining work never attempted"
+			}
 			LogLifecycle(session, "warn", "daemon", "graph-run-failed",
-				fmt.Sprintf("%s: node %s failed with no live edge", run.ID, id))
+				fmt.Sprintf("%s: node %s %s", run.ID, id, reason))
 		}
 
 		_ = MutateNodeStatus(session, run.ID, id, func(s *GraphNodeStatus) {
