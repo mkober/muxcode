@@ -156,6 +156,28 @@ if size > prev && size > 0 {
     ten minutes, two genuine, four echoes. Nothing a receiving agent can do is a mitigation —
     only the daemon-side gate below is.
 
+### Related: a dangling pointer after an automated spec move
+
+Observed live 2026-08-28 17:12. When commit performs a spec's `drafts/` → `completed/` move (as in
+`4c3adeb`), the **active-spec pointer is not cleared** — it still names the old `drafts/` path. The
+next `close-spec` guard then reports *"cannot read active spec"* and fails its run.
+
+**The guard behaved correctly**: failing loudly on an unreadable spec is exactly what
+[MUX-114](../completed/MUX-114-close-spec-node-has-no-completion-check.md) built it to do, and it is
+far better than proceeding on a spec it cannot read. The defect is upstream — the pointer outlives
+the file it points at.
+
+This belongs here rather than with the guard because a dangling pointer is a *pointer-driven daemon
+behaviour* problem: the same stale path also makes `verify-spec` fire at a nonexistent file on every
+review, which is this spec's subject. It was previously hit manually (MUX-103, 2026-08-25) and the
+cleanup was a documented manual step; now that the move is automated, **the manual step has no
+owner**. Cleared by hand again on 2026-08-28.
+
+- [ ] Clearing (or repointing) the active-spec pointer is part of whatever performs the move, not a
+      step a human is expected to remember
+- [ ] A pointer naming a path that no longer exists is detected and reported, rather than surfacing
+      only as a downstream guard failure
+
 ## Requirements
 
 ### Proposed fix
