@@ -165,6 +165,11 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 	if err := createCmd.Run(); err != nil {
 		return SpawnEntry{}, fmt.Errorf("creating tmux window: %v", err)
 	}
+	// Status-bar label: the spawn id says nothing to a human scanning tabs
+	// (user request 2026-08-28) — the window keeps its id name for
+	// targeting while the bar reads "Worker".
+	TmuxSetWindowOption(session+":"+spawnRole, "@display-name", "Worker")
+	TmuxSetWindowOption(session+":"+spawnRole, "@display-name-upper", "WORKER")
 
 	// Split horizontally (agent in pane 1, consistent with all windows)
 	splitCmd := exec.Command("tmux", "split-window", "-h", "-t", session+":"+spawnRole)
@@ -185,6 +190,18 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 	if err := launchCmd.Run(); err != nil {
 		return SpawnEntry{}, fmt.Errorf("launching agent: %v", err)
 	}
+
+	// First-turn wake: a freshly spawned agent never types by itself, so
+	// the seeded task sits in an inbox nothing delivers (live gap
+	// 2026-08-28 — a graph worker idled 4.5min until a manual deliver
+	// --force). Mirrors LaunchSession's prompt-ready startup wake; async
+	// because the daemon's map fan-out must not stall the keepalive past
+	// the monitor threshold. Callers that exit immediately (CLI spawn)
+	// may cut the goroutine short — the receipt-gap backstop covers them.
+	go func() {
+		LogLifecycle(session, "info", "daemon", "spawn-wake", spawnRole)
+		wakeAfterReload(session, spawnRole)
+	}()
 
 	// Persist entry
 	entries, err := ReadSpawnEntries(session)
