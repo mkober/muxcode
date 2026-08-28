@@ -826,6 +826,45 @@ This corroborates the [Phase 2 regression findings](#phase-2-regression-findings
 per-turn cost that made build/test/commit/watch non-viable is the leading explanation here.
 - [ ] Run the script and confirm all checks pass
 
+## Known gaps at close-out
+
+Recorded 2026-08-28. **26 of 36 acceptance criteria and 49 of 61 implementation steps are met** —
+22 checkboxes remain open. No box above was ticked without evidence, and nothing below is checked
+off to make the spec read better than it is.
+
+The rows are ordered by evidence status, because the distinction matters more than the count:
+**measured failing** means the behaviour was exercised and did not work; **unverified** means no
+test exercises it either way. Six of these were measured, not merely skipped.
+
+| Unmet | Why it matters | Evidence status |
+|-------|----------------|-----------------|
+| Intent: **launch** — resolve across scopes and start via `graph run` (criteria + Phase 4 + Phase 7 steps) | A core intent of the feature. The pane can be told to launch a graph and will not | **Measured failing.** Timed out ×4 consecutive runs; turn budget exhausted before the command. Tracked as [MUX-115](../backlog/MUX-115-prompt-agent-turn-budget-exhaustion.md) |
+| Intent: **named gate approval** releases the gate (criteria + Phase 7 step) | The gate path is the authority-sensitive one; a gate that cannot be approved by name is not usable | **Measured failing.** Same exhaustion signature, same 4 runs. [MUX-115](../backlog/MUX-115-prompt-agent-turn-budget-exhaustion.md) |
+| Paired **unnamed-approve negative control** | Its positive control fails, so it can only report `skip` — it has nothing to discriminate against | **Undetermined by design.** Correctly reports skip rather than a vacuous pass (the fix made after run 1) |
+| Criterion: build, test, commit, watch still complete on the smaller model; single-shot roles do not loop | This is a **regression to roles outside this feature**, not a gap in it. The 4B could not complete tasks at all with thinking enabled | **Measured FALSE 2026-08-26.** See [Phase 2 regression findings](#phase-2-regression-findings). Mitigated in practice by the gateway default, but the criterion as written is refuted |
+| Phase 2: confirm each exercised role completes its normal task | Same root as above | **Not met.** No exercise returned a completed task response |
+| Phase 2: confirm single-shot roles do not loop | Partially refuted — single-shot covers real tasks, but neither role survived its *startup* message, which is open-ended and outside single-shot's reach | **Partially met, partially refuted.** Startup-message defect tracked as [MUX-110](../backlog/MUX-110-harness-startup-tool-loop-exhaustion.md) |
+| Phase 4: classify a prompt into the closed intent set; unparseable fails closed | **Re-opened deliberately 2026-08-27.** The agent definition was rewritten for the gateway model into a conversational operator that may run several commands per task, retiring the "pick exactly one intent, else do nothing" default | **Superseded, not failed.** The new failure mode is unspecified — re-specify before re-checking |
+| Criterion + Phase 7: `scripts/test-prompt-mode.sh` passes | The spec's own test gate. It does not pass | **26 passed / 2 failed / 1 skipped**, stable across 4 runs |
+| Intent: **status** answers from `graph list` / `graph status` | Partial evidence only | **Unverified as written.** `status intent produced a response` is recorded, but not that it emitted and executed a *tool call* — which is the part the failing intents need |
+| Intent: **gates** — list pending `wait_human` gates | Listing is the read half of the gate path | **Unverified.** No check exercises the list path independently of approval |
+| Criterion: tool profile permits only the intended surface, with a negative control denying a repo write and a git command | This is the sandbox claim. It is asserted in the profile test but not by the integration suite's negative control as the criterion words it | **Partially verified.** Profile test pins `jira read` allowed / `jira update` denied; the repo-write and git denials are not exercised end-to-end |
+| Criterion: single-use gate approval semantics from MUX-014 unchanged | A regression here would let a retried run pass a gate nobody approved — the exact defect `TestExecHumanGateRetryRequiresFreshApproval` exists to prevent | **Unverified for the prompt path.** MUX-014's own test still passes; no check covers approval *arriving via the prompt-agent* |
+| Criterion: `CheckCommitAuthority` / `CheckAtlassianAuthority` remain the runtime backstop | The whole authority argument rests on these being unbypassable from the new surface | **Unverified from this surface.** The guards are unchanged in code; no test drives them *through* the prompt-agent |
+| Criterion: Ollama health monitoring covers the new role; surface states plainly when the model is unreachable | With the gateway default the local path is opt-in, so this is now a secondary path — but the criterion is still unmet | **Unverified.** The unreachable-model frame renders (`--render-once`); health-monitor coverage of the role is not exercised |
+| Criterion: a user who declines the model pull still gets a working install | Install-path promise made in `install.sh` and `README.md` | **Unverified.** No install-path test exercises the declined-pull degradation |
+| Phase 3: pane still redraws and cycles surfaces while a prompt is in flight | The non-blocking claim. Asserted by construction (async transcript read in `refresh()`), not by a test | **Unverified.** The design makes blocking structurally unlikely; nothing measures it |
+| Phase 2 follow-ups: disable thinking / structured outputs, then re-run the regression and re-decide "4B everywhere" | The decision row for "4B everywhere" is recorded with its premise already refuted | **Not started.** Escalation-ladder rungs 1–2 |
+
+**If this spec is reopened, start with [MUX-115](../backlog/MUX-115-prompt-agent-turn-budget-exhaustion.md).**
+Two of the failing rows collapse into it, and its first phase is instrumentation precisely because
+four fix attempts have already been spent guessing at this cause.
+
+**The row most likely to be misread is the 4B regression.** It is not a gap in Prompt mode — it is a
+measured regression to build, test, commit and watch, recorded here only because this spec is what
+moved the default model. The gateway backend means the default path no longer triggers it, which is
+mitigation, not repair.
+
 ## Decisions
 
 Every open question raised while drafting this spec has been settled. Resolved rows are struck
@@ -846,7 +885,7 @@ the rejected option would have cost.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-109-prompt-mode-graph-control-pane | 7h 32m | 2026-08-27 18:03 |
+| MUX-109-prompt-mode-graph-control-pane | 7h 40m | 2026-08-27 18:12 |
 
 ## Status
 
