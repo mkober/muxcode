@@ -365,6 +365,39 @@ Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (5 buil
 `daemon/daemon.go` (`checkGraphRuns()`). CLI reference:
 [Agent Bus CLI](agent-bus.md#muxcode-graph).
 
+#### Sequential multi-phase runs (design)
+
+`req-code-pr` originally shipped **one phase per run**. The design recorded in
+[MUX-121](requirements/completed/MUX-121-multi-phase-sequential-graph.md) walks a spec's phases in
+order within a single run: implement a phase → build/test → review → `update-spec` → a `wait_human`
+the user approves → commit the work **and** its spec update → loop to the next phase, with one final
+gate covering push and PR.
+
+Two properties are worth stating because they were chosen against plausible alternatives.
+
+**The current phase is derived, not stored.** At each `implement` dispatch it is the
+lowest-numbered phase in the active spec with open checkbox items. There is no `run.CurrentPhase`
+field: derivation cannot drift from the spec, and a phase re-opened during review is picked up on
+the next iteration for free. The run `Intent` is immutable (`CreateGraphRun` sets it once), so the
+intent string is deliberately *not* the carrier of phase state.
+
+**Per-commit approval keeps the authority rule intact.** `nodeRequiresGate` treats every send to the
+`commit` role (except `pr-read`) as requiring an upstream `wait_human`, and it does **not**
+distinguish a local commit from a push. Because the user approves each phase's commit, every commit
+node is gate-dominated and the rule needs no relaxation — the alternative, teaching the validator
+that "local commits are safe", would trade a safety invariant for convenience the design does not
+need.
+
+**Loop safety has a known sharp edge.** Loops are bounded — `run.EdgeFires` is persisted per edge
+and `max_iterations` is enforced before an edge fires — so a phase that never completes cannot spin
+forever. But exhausting a loop edge leaves `fired == 0`, and the executor fails a run on that
+condition *only when the last node's outcome was a failure*; a success with no live edge is treated
+as a normal terminal path. A run whose middle phase never completes therefore burns its cap and ends
+**looking successful**, with later phases never attempted. Detecting the stall requires comparing
+progress across iterations — `EdgeFires` on the loop edge versus the count of completed phases —
+which is what turns the "gate and ask" behaviour from an intention into something that actually
+fires.
+
 ### Diff Preview Flow
 
 ```
@@ -535,7 +568,7 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 
 ### Hook Chain Guarantee
 
-The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (10 condition types evaluated as AND logic, including `command_match`/`command_not_match` on the triggering command) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
+The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (11 condition types evaluated as AND logic, including `command_match`/`command_not_match` on the triggering command and `spec_phases_remaining` for spec-driven loops) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
 
 ### Atlassian write authority
 

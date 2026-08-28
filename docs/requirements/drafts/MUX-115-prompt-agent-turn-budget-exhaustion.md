@@ -163,7 +163,7 @@ makes the failure rarer without making it wrong less often. Neither is establish
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-115-prompt-agent-turn-budget-exhaustion | 35m | 2026-08-28 14:38 |
+| MUX-115-prompt-agent-turn-budget-exhaustion | 2h 4m | 2026-08-28 16:18 |
 
 ## Status
 
