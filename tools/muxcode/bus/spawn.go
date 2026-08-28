@@ -177,6 +177,12 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 		return SpawnEntry{}, fmt.Errorf("splitting window: %v", err)
 	}
 
+	// Worker console in pane 0 — view only, a failure must not block the spawn
+	_ = exec.Command("tmux", "select-pane", "-t", session+":"+spawnRole+".0", "-T", "CONSOLE").Run()
+	consoleCmd := exec.Command("tmux", "send-keys", "-t", session+":"+spawnRole+".0",
+		fmt.Sprintf("%s console %s", launcher, spawnRole), "Enter")
+	_ = consoleCmd.Run()
+
 	// Launch agent in pane 1 — cd into worktree if set.
 	// AGENT_ROLE must be the spawn-specific role (e.g. "spawn-edit-1") so the
 	// agent reads from its own inbox, not the base role's inbox.
@@ -191,17 +197,7 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 		return SpawnEntry{}, fmt.Errorf("launching agent: %v", err)
 	}
 
-	// First-turn wake: a freshly spawned agent never types by itself, so
-	// the seeded task sits in an inbox nothing delivers (live gap
-	// 2026-08-28 — a graph worker idled 4.5min until a manual deliver
-	// --force). Mirrors LaunchSession's prompt-ready startup wake; async
-	// because the daemon's map fan-out must not stall the keepalive past
-	// the monitor threshold. Callers that exit immediately (CLI spawn)
-	// may cut the goroutine short — the receipt-gap backstop covers them.
-	go func() {
-		LogLifecycle(session, "info", "daemon", "spawn-wake", spawnRole)
-		wakeAfterReload(session, spawnRole)
-	}()
+	go wakeSpawnedAgent(session, spawnRole)
 
 	// Persist entry
 	entries, err := ReadSpawnEntries(session)
@@ -213,13 +209,24 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 		return SpawnEntry{}, err
 	}
 
-	// Async: wait 2s then notify spawn to read inbox
-	go func() {
-		time.Sleep(2 * time.Second)
-		_ = Notify(session, spawnRole)
-	}()
-
 	return entry, nil
+}
+
+// wakeSpawnedAgent delivers a spawned agent's first turn: a fresh agent
+// never types by itself, so the seeded task sits in an inbox nothing
+// delivers (live gap, MUX-120 — a graph worker idled 4.5min until a
+// manual deliver --force). Reuses wakeAfterReload's prompt-ready wait;
+// async because the daemon's map fan-out must not stall the keepalive
+// past the monitor threshold. A caller that exits immediately (CLI
+// spawn) cuts the goroutine short and no daemon backstop covers spawn
+// roles — checkPollHealth iterates static KnownRoles — so that path
+// remains open and is tracked in MUX-120. This replaced a fixed 2s Notify
+// which fired while the agent was still initializing: that fell to the
+// displayMessage path and poisoned the notified dedup for 30s, actively
+// suppressing later wakes.
+func wakeSpawnedAgent(session, spawnRole string) {
+	LogLifecycle(session, "info", "daemon", "spawn-wake", spawnRole)
+	wakeAfterReload(session, spawnRole)
 }
 
 // StopSpawn kills the tmux window for a spawn, cleans up the worktree, and marks it stopped.

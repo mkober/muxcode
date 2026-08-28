@@ -26,6 +26,42 @@ func printWithLineClears(text string) {
 	}
 }
 
+// consoleLoop drives the home-and-overwrite refresh shared by every
+// console variant: clear once, then per tick render a preamble (may be
+// empty) and a body truncated to the remaining height. Extracted because
+// the Worker console duplicated this loop line for line.
+func consoleLoop(title string, interval int, once bool, render func(width int) (preamble, body string)) {
+	fmt.Print("\033[2J\033[H")
+	for {
+		width := bus.TerminalWidth()
+		height := bus.TerminalHeight()
+		header := bus.ConsoleHeader(title, interval, width)
+		preamble, body := render(width)
+		used := strings.Count(header, "\n") + strings.Count(preamble, "\n")
+		body = bus.TruncateToHeight(body, max(5, height-used))
+		fmt.Print("\033[H")
+		printWithLineClears(header)
+		if preamble != "" {
+			printWithLineClears(preamble)
+		}
+		printWithLineClears(body)
+		fmt.Print("\033[J")
+		if once {
+			return
+		}
+		time.Sleep(time.Duration(interval) * time.Second)
+	}
+}
+
+// runSpawnConsole drives the Worker console: spawn task + status with the
+// owning graph run's per-node state underneath.
+func runSpawnConsole(spawnRole string, interval int, once bool) {
+	session := bus.BusSession()
+	consoleLoop("Worker", interval, once, func(width int) (string, string) {
+		return "", bus.RenderSpawnConsole(session, spawnRole, width)
+	})
+}
+
 // Console handles the "muxcode console" subcommand.
 // Usage: muxcode console <role> [--interval N] [--once]
 //
@@ -75,9 +111,15 @@ func Console(args []string) {
 		}
 	}
 
-	// Validate role
+	// Validate role. Spawn roles get the Worker console — spawn windows
+	// are created at run time, so they can never appear in the static
+	// config map.
 	configs := bus.DefaultConsoleConfigs()
 	if _, ok := configs[role]; !ok {
+		if strings.HasPrefix(role, "spawn-") {
+			runSpawnConsole(role, interval, once)
+			return
+		}
 		roles := bus.ConsoleRoles()
 		sort.Strings(roles)
 		fmt.Fprintf(os.Stderr, "Error: unknown role %q\nAvailable: %s\n", role, strings.Join(roles, ", "))
@@ -85,18 +127,7 @@ func Console(args []string) {
 	}
 
 	session := bus.BusSession()
-
-	// Initial clear to remove shell startup content
-	fmt.Print("\033[2J\033[H")
-
-	for {
-		width := bus.TerminalWidth()
-		height := bus.TerminalHeight()
-
-		// Build header
-		header := bus.ConsoleHeader(configs[role].Title, interval, width)
-
-		// Workflow state line
+	consoleLoop(configs[role].Title, interval, once, func(width int) (string, string) {
 		wfEntry := bus.ReadWorkflowState(session)
 		wfLine := ""
 		if wfEntry.State != bus.StateIdle || wfEntry.Since > 0 {
@@ -104,35 +135,6 @@ func Console(args []string) {
 				bus.Pad, bus.ColorDim, bus.ColorReset,
 				bus.FormatWorkflowStateCompact(wfEntry, width))
 		}
-
-		// Build body
-		body := bus.RenderConsole(role, session, width)
-
-		// Count header + workflow lines to determine remaining space for body.
-		headerLines := strings.Count(header, "\n")
-		wfLines := strings.Count(wfLine, "\n")
-		bodyBudget := height - headerLines - wfLines
-		if bodyBudget < 5 {
-			bodyBudget = 5
-		}
-		body = bus.TruncateToHeight(body, bodyBudget)
-
-		// Move cursor to home and overwrite in place (no full clear).
-		// This keeps the header visually fixed — no flicker between refreshes.
-		// Each line gets \033[K (clear-to-EOL) to remove stale characters when
-		// content shrinks. \033[J after the body clears any stale trailing lines.
-		fmt.Print("\033[H")
-		printWithLineClears(header)
-		if wfLine != "" {
-			printWithLineClears(wfLine)
-		}
-		printWithLineClears(body)
-		fmt.Print("\033[J")
-
-		if once {
-			return
-		}
-
-		time.Sleep(time.Duration(interval) * time.Second)
-	}
+		return wfLine, bus.RenderConsole(role, session, width)
+	})
 }

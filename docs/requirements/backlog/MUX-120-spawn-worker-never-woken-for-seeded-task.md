@@ -4,12 +4,54 @@ A graph `spawn`/`map` node seeds the worker's inbox and launches its agent, but 
 instead of starting. Observed live 2026-08-28: the `req-code-pr` `implement` worker idled **4.5
 minutes** with its task already in its inbox, until `muxcode deliver --force` was run by hand.
 
-The reported cause was *"nothing wakes the fresh agent"*. Measurement shows something more specific,
-and the difference changes the fix: **a wake does exist, it is just fired on a fixed 2-second timer
-with no readiness check — and spawn roles are structurally invisible to both daemon delivery loops,
-so nothing ever retries.**
+The reported cause was *"nothing wakes the fresh agent"*. Measurement showed something more
+specific: a wake **did** exist, fired on a fixed 2-second timer with no readiness check, **and**
+spawn roles are structurally invisible to both daemon delivery loops, so nothing retried.
+
+**A fix for the first half landed while this spec was being written** (`1356694`, 2026-08-28 14:16).
+It is a good fix. This spec is therefore **narrowed to the half that remains** — and that half is now
+*more* urgent, not less, because the shipped fix explicitly leans on a fallback that does not exist.
 
 Tracking: _(no GitHub issue yet)_
+
+## What already landed, and the gap it leaves
+
+`1356694` added a proper readiness-gated wake to `StartSpawn`:
+
+```go
+go func() {
+    LogLifecycle(session, "info", "daemon", "spawn-wake", spawnRole)
+    wakeAfterReload(session, spawnRole)
+}()
+```
+
+`wakeAfterReload` (`bus/reload.go:424`) is the right mechanism, and it is careful: it polls for the
+idle prompt up to 15 s at 500 ms intervals with a wide-capture fallback for a `❯` hidden behind
+status-bar overlays, **always** sends the wake (on detection *or* timeout, letting the text buffer in
+the PTY), calls `ClearNotifiedIDs` first so stale markers cannot suppress it, and clears pending
+input before injecting. It also handles non-hook providers via `SendWakeUp`.
+
+Two observations, one minor and one that keeps this spec open:
+
+**Minor — the original 2 s notify was not removed.** `spawn.go:216-218` still runs
+`time.Sleep(2 * time.Second); Notify(...)` alongside the new wake. It is *probably* harmless because
+`wakeAfterReload` calls `ClearNotifiedIDs` before rebuilding the notification, so prematurely-set
+markers get reset. But it is a redundant early wake whose error is still discarded, and it should be
+removed or justified rather than left as an accident.
+
+**The one that matters — the fix's stated fallback does not cover spawns.** Its own comment reads:
+
+> *Callers that exit immediately (CLI spawn) may cut the goroutine short — the receipt-gap backstop
+> covers them.*
+
+**Measured: it does not.** `checkPollHealth` iterates `for _, role := range bus.KnownRoles`
+(`daemon.go:~1851`), and `bus.KnownRoles` (`config.go:13`) is a static slice that never contains a
+dynamic `spawn-<8hex>` role. The same is true of `checkInboxes` (`daemon.go:368`).
+
+So the acknowledged failure mode — a short-lived caller cutting the goroutine before it wakes — lands
+in exactly the same stranded state as the original defect, with no backstop. The fix is sound for the
+daemon-driven path (long-lived process, goroutine survives); it is the **CLI spawn path** that still
+has no net.
 
 ## Context
 
@@ -76,6 +118,46 @@ at once, each racing the same 2 s timer on a machine that is now busier — so t
 likely exactly when the graph is doing the most work. A join barrier downstream then waits on
 workers that never started.
 
+## Third gap: completion is window-death, and it deletes the evidence
+
+Observed live 2026-08-28: a graph `implement` node sat at `running` for **8 minutes after its worker
+reported done**, and was only released by killing the window by hand.
+
+`RefreshSpawnStatus` (`spawn.go:277`) decides completion by one signal — `CheckSpawnWindow` returning
+false, i.e. **the tmux window is gone**. A Claude worker finishes its task and returns to its prompt;
+it does not exit. The window lives, so the spawn stays `running` forever and any downstream join
+waits on it indefinitely. Callers are automatic and frequent: `graph_exec.go:431` on every executor
+tick for spawn/map nodes, and `daemon.go:734` in the poll loop.
+
+**The part that changes sequencing — and corrects an earlier claim of mine.** On detecting
+window-gone, the same function immediately calls `removeSpawnWorktree(e.Worktree)` (`spawn.go:300`).
+Worktree deletion is therefore **automatic on completion detection**, not a manual-only action.
+
+I previously told the edit agent that a spawn worktree "persists after the node completes — only
+`spawn stop` / `spawn clean` destroy it." **That was wrong.** It came from grepping `graph_exec.go`
+for `StopSpawn`/`CleanFinishedSpawns` and finding none, without reading what the status refresh
+itself does. Searching for cleanup-shaped *names* instead of reading the cleanup *behaviour* is the
+same form-over-substance error this repo keeps producing.
+
+The consequence is a real ordering hazard:
+
+> **The stall bug is currently the only thing preserving the harvest window.** Because workers never
+> exit, their worktrees are never auto-removed, which is why MUX-115's Phase 1 work survived long
+> enough to be harvested. Fix the stall — make workers exit on done — **without** first implementing
+> harvest-before-cleanup, and the worktree is deleted on the very tick the worker exits. The harvest
+> path that just worked would stop working, and the failure would be silent.
+
+This ties directly to [MUX-014](../completed/MUX-014-graph-agent-orchestrator.md)'s known gap,
+*"worktree harvest-before-cleanup contract"*, which closed with no implementation.
+
+- [ ] **Sequencing requirement**: harvest-before-cleanup lands **before**, or with, any fix that
+      makes workers exit on completion
+- [ ] Completion signal moves off window-death — candidate: correlate the spawn task's reply, which
+      is positive evidence the work finished, rather than inferring it from a dead window
+- [ ] A worker that finishes without exiting still completes its node within a bounded time
+- [ ] Worktree removal does not race the harvest — deletion happens only after the work is claimed
+      or explicitly abandoned
+
 ## Open decisions
 
 - [ ] **Fix at the source, the daemon, or both?** Source = readiness-gated wake in `StartSpawn`.
@@ -101,7 +183,9 @@ workers that never started.
 - [ ] A missed or failed wake is **retried**, not swallowed — the current `_ =` discard is removed
       and failures emit a lifecycle event
 - [ ] Live spawn roles are visible to the daemon's delivery backstop, so a missed wake recovers
-      within the normal receipt-gap window
+      within the normal receipt-gap window — **the specific claim `1356694` already relies on**
+- [ ] A **CLI spawn** whose process exits before the wake goroutine completes still gets its worker
+      started — this is the acknowledged hole the shipped fix leaves uncovered
 - [ ] A **wide `map` fan-out** starts every worker — the many-workers-at-once case, which is when
       the race is worst
 - [ ] Non-hook providers (OpenCode/Codex) are covered — they use `SendWakeUp`, not text injection
@@ -140,12 +224,13 @@ that would have capped the incident at ~45 s regardless of the timer.
 - [ ] Confirm from lifecycle logs that the notify fires and is lost, rather than never firing
 - [ ] Record the current worst-case latency as the baseline the fix must beat
 
-### Phase 2: Readiness-gated wake
+### Phase 2: Readiness-gated wake — **landed in `1356694`**
 
-- [ ] Extract or reuse `LaunchSession`'s prompt-ready detection
-- [ ] Replace the fixed 2 s sleep with it
-- [ ] Confirm the wake landed; retry on failure
-- [ ] Replace the discarded error with a lifecycle event
+- [x] Extract or reuse `LaunchSession`'s prompt-ready detection — `wakeAfterReload` (`reload.go:424`)
+- [x] Replace the fixed 2 s sleep with it — *added alongside; see cleanup step below*
+- [x] Confirm the wake landed; retry on failure — always-send on detect-or-timeout, PTY buffering
+- [x] Replace the discarded error with a lifecycle event — `spawn-wake` lifecycle row
+- [ ] **Cleanup**: remove the now-redundant 2 s `Notify` at `spawn.go:216-218`, or record why it stays
 
 ### Phase 3: Daemon net
 
