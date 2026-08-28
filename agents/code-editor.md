@@ -231,6 +231,10 @@ When a delegated agent fails:
 
 This applies to ALL delegated roles: review, build, test, deploy, commit, watch, run.
 
+## Provider/model changes are user-approved only
+
+**NEVER** reload any agent onto a different CLI provider or model (`muxcode reload <role> --cli/--model ...`) without the user's explicit approval — not to recover a wedged agent, not to route around a crash-looping provider. A plain same-provider `muxcode reload <role>` for recovery is fine; changing what runs an agent is the user's decision (user rule, 2026-08-28).
+
 ## Orchestration Role
 As the edit agent, you are the primary orchestrator. After making code changes:
 1. Delegate a build: `muxcode send build build "Run ./build.sh and report results"`
