@@ -173,6 +173,33 @@ func TestRenderGraphFrame_ContainsEveryNode(t *testing.T) {
 	}
 }
 
+// TestRenderGraphFrame_WrapsWideChain pins the width-overflow behavior
+// (user request 2026-08-28): a single-row chain wider than the pane wraps
+// at node boundaries — every node still visible as a glyph chain, a
+// trailing arrow marking continuation — while a multi-row overflow keeps
+// the flat fallback (negative control: a 2D canvas cannot wrap).
+func TestRenderGraphFrame_WrapsWideChain(t *testing.T) {
+	snap := snapshot(linearGraph(), map[string]string{"build": bus.GraphNodeDone})
+	frame := StripAnsi(RenderGraphFrame(snap, 40, 40, "", frameClock))
+	for _, id := range []string{"build", "test", "review"} {
+		if !strings.Contains(frame, id) {
+			t.Errorf("wrapped chain missing node %q:\n%s", id, frame)
+		}
+	}
+	if strings.Contains(frame, "flat view") {
+		t.Errorf("narrow single-row chain must wrap, not fall back:\n%s", frame)
+	}
+	if !strings.Contains(frame, "─→\n") && !strings.Contains(frame, "─→ \n") {
+		t.Errorf("wrapped line must end with a continuation arrow:\n%s", frame)
+	}
+
+	wide := snapshot(fanOutJoinGraph(), map[string]string{})
+	fb := StripAnsi(RenderGraphFrame(wide, 30, 40, "", frameClock))
+	if !strings.Contains(fb, "flat view") {
+		t.Errorf("multi-row overflow must keep the flat fallback:\n%s", fb)
+	}
+}
+
 // TestRunListClampsOverlongRunID pins column alignment: a run id longer
 // than the RUN column truncates with … instead of shoving every later
 // column right (user catch 2026-08-28 — a 41-rune id broke the row).
@@ -313,18 +340,22 @@ func TestRenderGraphFrame_PostMortemElapsedFrozen(t *testing.T) {
 
 // ── Fallback flat list ─────────────────────────────────────
 
+// Narrow single-row chains now WRAP instead of falling back (wrap
+// contract, 2026-08-28) — the fallback and its state-ordering are pinned
+// on a multi-row graph, which is the only shape that still degrades on
+// width overflow.
 func TestRenderGraphFrame_NarrowPaneFallsBack(t *testing.T) {
-	snap := snapshot(linearGraph(), map[string]string{
-		"build": bus.GraphNodeDone, "test": bus.GraphNodeFailed, "review": bus.GraphNodeWaiting,
+	snap := snapshot(fanOutJoinGraph(), map[string]string{
+		"start": bus.GraphNodeDone, "worker-a": bus.GraphNodeFailed, "worker-b": bus.GraphNodeWaiting,
 	})
 	frame := StripAnsi(RenderGraphFrame(snap, 30, 40, "", frameClock))
 	if !strings.Contains(frame, "flat view") {
-		t.Fatalf("expected fallback marker on a narrow pane:\n%s", frame)
+		t.Fatalf("expected fallback marker on a narrow multi-row pane:\n%s", frame)
 	}
 	// Failed and waiting nodes must list before done ones.
-	iFailed := strings.Index(frame, "test")
-	iWaiting := strings.Index(frame, "review")
-	iDone := strings.Index(frame, "build")
+	iFailed := strings.Index(frame, "worker-a")
+	iWaiting := strings.Index(frame, "worker-b")
+	iDone := strings.Index(frame, "start")
 	if iFailed > iDone || iWaiting > iDone {
 		t.Errorf("expected failed/waiting before done in fallback order:\n%s", frame)
 	}
