@@ -21,6 +21,13 @@ tags: [style, comments, readability]
 > sentence THERE, come back, and add nothing — or one line referencing it.
 > Rationale typed at the decision point lands in the body by default; typed
 > boundary-first, it lands correctly by construction.
+>
+> **Existing violations are not grandfathered.** When an edit touches a
+> function or literal that already contains a violating comment — body
+> prose, labels interleaved through a collection literal — clean it up in
+> the same edit: hoist what earns its place to the boundary, delete the
+> rest. Seeing a violation and leaving it teaches the next reader that the
+> pattern is acceptable.
 
 The default is **no comment**. Code says what it does; a comment earns its place only by saying something the code cannot.
 
@@ -114,6 +121,7 @@ Exported identifiers get a doc comment; unexported ones only when non-obvious. D
 
 - Do not comment unchanged lines just because you are nearby
 - If a comment beside your change is now wrong, fix or delete it — stale is worse than absent
+- Existing comments that break these rules get cleaned up when your edit reaches them: hoist or delete, never preserve a violation because you didn't write it (removal is not "commenting nearby lines")
 - A comment promising behaviour the code lacks is a bug; correct it in the same change
 - When unsure a comment earns its place, delete it and reread the code
 
