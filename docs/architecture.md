@@ -388,15 +388,23 @@ node is gate-dominated and the rule needs no relaxation — the alternative, tea
 that "local commits are safe", would trade a safety invariant for convenience the design does not
 need.
 
-**Loop safety has a known sharp edge.** Loops are bounded — `run.EdgeFires` is persisted per edge
-and `max_iterations` is enforced before an edge fires — so a phase that never completes cannot spin
-forever. But exhausting a loop edge leaves `fired == 0`, and the executor fails a run on that
-condition *only when the last node's outcome was a failure*; a success with no live edge is treated
-as a normal terminal path. A run whose middle phase never completes therefore burns its cap and ends
-**looking successful**, with later phases never attempted. Detecting the stall requires comparing
-progress across iterations — `EdgeFires` on the loop edge versus the count of completed phases —
-which is what turns the "gate and ask" behaviour from an intention into something that actually
-fires.
+**Loop safety: bounded, and loud when it gives up.** Loops are bounded — `run.EdgeFires` is
+persisted per edge and `max_iterations` is enforced before an edge fires — so a phase that never
+completes cannot spin forever. Being bounded is not sufficient on its own: an exhausted loop edge
+leaves `fired == 0`, and the executor originally failed a run on that condition *only* when the last
+node's outcome was a failure, so a success with no live edge settled as a normal terminal path. A run
+whose middle phase never completed would then burn its cap and end **looking successful**, with later
+phases never attempted.
+
+Both halves of that are now closed. Cap exhaustion fails the run explicitly —
+`fired == 0 && (outcome == failure || exhausted > 0)`, reported as *"loop cap exhausted with its edge
+suppressed — remaining work never attempted"*. And the stall is detected rather than inferred: the
+`phase-progress` guard compares progress across iterations — commits already shipped (success-edge
+fires out of the commit node) against completed phases in the spec — and withholds a commit whose
+phase did not close, routing it to the stuck gate. That comparison is what turns "gate and ask" from
+an intention into something that actually fires; without it the guard has no trigger, because
+"lowest phase with open items" returns the same phase forever and cannot tell iteration 5 from
+iteration 1.
 
 ### Diff Preview Flow
 

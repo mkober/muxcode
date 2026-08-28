@@ -33,11 +33,14 @@ input before injecting. It also handles non-hook providers via `SendWakeUp`.
 
 Two observations, one minor and one that keeps this spec open:
 
-**Minor — the original 2 s notify was not removed.** `spawn.go:216-218` still runs
-`time.Sleep(2 * time.Second); Notify(...)` alongside the new wake. It is *probably* harmless because
-`wakeAfterReload` calls `ClearNotifiedIDs` before rebuilding the notification, so prematurely-set
-markers get reset. But it is a redundant early wake whose error is still discarded, and it should be
-removed or justified rather than left as an accident.
+**Minor — the original 2 s notify was left in place alongside the new wake, and has since been
+removed** (2026-08-28 16:31). For the record: `spawn.go:216-218` ran
+`time.Sleep(2 * time.Second); Notify(...)` next to `wakeAfterReload` for about two hours. It was
+*probably* harmless — `wakeAfterReload` calls `ClearNotifiedIDs` before rebuilding the notification,
+so prematurely-set markers got reset — but it was a redundant early wake whose error was discarded,
+and leaving it would have meant two wake paths where one is authoritative. `wakeAfterReload` is now
+the sole, readiness-gated wake; verified by absence (`Sleep(2 *` and a bare
+`Notify(session, spawnRole)` are both gone from `spawn.go`).
 
 **The one that matters — the fix's stated fallback does not cover spawns.** Its own comment reads:
 
@@ -230,7 +233,7 @@ that would have capped the incident at ~45 s regardless of the timer.
 - [x] Replace the fixed 2 s sleep with it — *added alongside; see cleanup step below*
 - [x] Confirm the wake landed; retry on failure — always-send on detect-or-timeout, PTY buffering
 - [x] Replace the discarded error with a lifecycle event — `spawn-wake` lifecycle row
-- [ ] **Cleanup**: remove the now-redundant 2 s `Notify` at `spawn.go:216-218`, or record why it stays
+- [x] **Cleanup**: remove the now-redundant 2 s `Notify` — removed 2026-08-28 16:31; `wakeAfterReload` remains as the sole, readiness-gated wake (verified: no `Sleep(2 *` or bare `Notify(session, spawnRole)` left in `spawn.go`)
 
 ### Phase 3: Daemon net
 
