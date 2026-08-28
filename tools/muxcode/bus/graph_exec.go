@@ -575,7 +575,9 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 		default:
 			if TaskExpired(task, now) {
 				finishNode(session, run, n, OutcomeFailure, "task expired")
+				return
 			}
+			redriveStalledDispatch(session, run, n, st, task, now)
 		}
 
 	case NodeSpawn, NodeMap:
@@ -583,8 +585,119 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 		outcome, done := spawnGroupOutcome(session, st.TaskID)
 		if done {
 			finishNode(session, run, n, outcome, "")
+			return
+		}
+		redriveStalledSpawns(session, run, n, st, now)
+	}
+}
+
+// redriveStalledSpawns covers the spawn/map side of executor stall
+// resolution (review 2026-08-28: send nodes got it, spawns — whose
+// first-wake gap is MUX-120's founding defect — did not). A worker whose
+// seeded spawn-task still sits unconsumed past the stall threshold gets
+// re-woken through the prompt-ready path; the same persisted bookkeeping
+// and cap apply, and cap exhaustion with workers still stalled FAILS the
+// node — default spawn nodes carry no timeout, so a never-waking worker
+// would otherwise run forever (review must-fix).
+func redriveStalledSpawns(session string, run *GraphRun, n *Node, st *GraphNodeStatus, now int64) {
+	stall := int64(TaskStallSecs() / 2)
+	if st.StartedAt == 0 || now-st.StartedAt < stall || now-st.LastRedrive < 60 {
+		return
+	}
+	stalled := stalledSpawnWorkers(session, st.TaskID)
+	if len(stalled) == 0 {
+		return
+	}
+	if st.Redrives >= graphRedriveMax {
+		finishNode(session, run, n, OutcomeFailure, fmt.Sprintf(
+			"undeliverable: spawn worker(s) %s never consumed their task after %d redrives",
+			strings.Join(stalled, ","), graphRedriveMax))
+		return
+	}
+	for _, id := range stalled {
+		go wakeSpawnedAgent(session, id)
+	}
+	_ = MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) {
+		s.Redrives++
+		s.LastRedrive = now
+	})
+	st.Redrives++
+	st.LastRedrive = now
+	LogLifecycle(session, "warn", "daemon", "graph-stall-redrive",
+		fmt.Sprintf("%s: %s re-woke %d stalled spawn worker(s) — redrive %d/%d",
+			run.ID, n.ID, len(stalled), st.Redrives, graphRedriveMax))
+}
+
+// stalledSpawnWorkers lists the spawn roles whose seeded task still sits
+// unconsumed in their inbox.
+func stalledSpawnWorkers(session, taskIDs string) []string {
+	var out []string
+	for _, id := range strings.Split(taskIDs, ",") {
+		if HasActionableMessages(session, id) {
+			out = append(out, id)
 		}
 	}
+	return out
+}
+
+// graphRedriveMax caps executor stall redrives per dispatch before the
+// node fails as undeliverable — waiting out the 600s task timeout would
+// disguise a delivery failure as slowness.
+const graphRedriveMax = 3
+
+// redriveStalledDispatch is the executor-owned form of the graph-priority
+// rule (MUX-123): a dispatch in flight with NO delivery receipt past the
+// stall threshold is redriven via ForceDeliver from the harvest tick
+// itself. Receipt absence is the trigger — a positive signal, not a pane
+// scrape — and the bookkeeping lives in the node status, so it survives
+// the daemon restarts that reset the watchdog's in-memory debounce (the
+// suspected cause of the three live stalls this design replaces). After
+// graphRedriveMax attempts the node fails loudly as undeliverable.
+func redriveStalledDispatch(session string, run *GraphRun, n *Node, st *GraphNodeStatus, task Task, now int64) {
+	if !TaskStalled(task, now, TaskStallSecs()) {
+		return
+	}
+	if _, received := ReadReceipt(session, task.ID); received {
+		return // the agent has it — genuinely working, not stalled
+	}
+	if now-st.LastRedrive < 60 {
+		return
+	}
+	role := NormalizeBusRole(n.Role)
+	if st.Redrives >= graphRedriveMax {
+		finishNode(session, run, n, OutcomeFailure, fmt.Sprintf(
+			"undeliverable: %s never received the dispatch after %d redrives", role, graphRedriveMax))
+		return
+	}
+	_ = MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) {
+		s.Redrives++
+		s.LastRedrive = now
+	})
+	st.Redrives++
+	st.LastRedrive = now
+	delivered := graphRedriveFn(session, role, task)
+	LogLifecycle(session, "warn", "daemon", "graph-stall-redrive",
+		fmt.Sprintf("%s: %s dispatch to %s un-receipted %ds — redrive %d/%d (delivered %d)",
+			run.ID, n.ID, role, now-task.SentAt, st.Redrives, graphRedriveMax, delivered))
+}
+
+// graphRedriveFn performs the redelivery for one stalled dispatch:
+// pending inbox rows deliver in bulk (undelivered work duplicates
+// nothing), while the consumed case uses the TARGETED RedriveTask — the
+// role-wide redrive re-injected unrelated in-flight work (review
+// must-fix 2026-08-28). Package variable so tests observe delivery
+// attempts rather than just bookkeeping counters.
+var graphRedriveFn = func(session, role string, task Task) int {
+	if HasActionableMessages(session, role) {
+		if res, err := ForceDeliver(session, role, true); err == nil {
+			return res.Delivered
+		}
+		return 0
+	}
+	if RedriveTask(session, task) {
+		return 1
+	}
+	return 0
 }
 
 // spawnGroupOutcome inspects the comma-separated spawn ids of a spawn or

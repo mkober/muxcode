@@ -137,6 +137,32 @@ func redriveInFlightTasks(session, role string, provider Provider) int {
 	return len(msgs)
 }
 
+// RedriveTask re-injects ONE consumed-but-never-started task's request
+// into its role's pane — the graph executor's per-dispatch redrive.
+// ForceDeliver's force path redrives EVERY in-flight task for the role,
+// which would duplicate unrelated work the agent legitimately holds
+// (review must-fix 2026-08-28); a graph node owns only its own dispatch.
+func RedriveTask(session string, t Task) bool {
+	role := WindowForRole(t.To)
+	provider := ResolveProvider(role)
+	msgs := redriveMessages([]Task{t}, role, time.Now().Unix())
+	if len(msgs) == 0 {
+		return false
+	}
+	if HasPendingInput(session, role) && !IsWindowFocused(session, role) {
+		if err := TmuxClearInput(PaneTarget(session, role)); err == nil {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	text := "Re-drive (consumed but never completed): " + BuildCombinedNotification(msgs)
+	if err := SendWakeUpWithText(session, role, provider, text, true); err != nil {
+		return false
+	}
+	LogLifecycle(session, "info", "deliver", "force-redrive",
+		fmt.Sprintf("%s: task %s (targeted)", role, t.ID))
+	return true
+}
+
 // TaskStallSecs is how long an in-flight task may sit un-responded
 // before the daemon's stall watchdog suspects a consumed-but-never-
 // started turn. Graph-dispatched tasks (From == "daemon") use half this

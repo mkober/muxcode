@@ -51,15 +51,20 @@ type GraphRun struct {
 // so a tick (or a resume after a crash) never routes the same completion
 // twice.
 type GraphNodeStatus struct {
-	NodeID    string `json:"node_id"`
-	State     string `json:"state"`
-	Outcome   string `json:"outcome,omitempty"` // success/failure/custom, set when finished
-	Output    string `json:"output,omitempty"`  // harvested response payload
-	TaskID    string `json:"task_id,omitempty"` // correlated tracked task or spawn id(s)
-	Routed    bool   `json:"routed,omitempty"`
-	StartedAt int64  `json:"started_at,omitempty"`
-	DoneAt    int64  `json:"done_at,omitempty"`
-	UpdatedAt int64  `json:"updated_at"`
+	NodeID  string `json:"node_id"`
+	State   string `json:"state"`
+	Outcome string `json:"outcome,omitempty"` // success/failure/custom, set when finished
+	Output  string `json:"output,omitempty"`  // harvested response payload
+	TaskID  string `json:"task_id,omitempty"` // correlated tracked task or spawn id(s)
+	Routed  bool   `json:"routed,omitempty"`
+	// Stall-redrive bookkeeping (MUX-123): persisted here so it survives
+	// daemon restarts — the watchdog's in-memory debounce reset on every
+	// build-triggered restart, which is how live stalls outlived it.
+	Redrives    int   `json:"redrives,omitempty"`
+	LastRedrive int64 `json:"last_redrive,omitempty"`
+	StartedAt   int64 `json:"started_at,omitempty"`
+	DoneAt      int64 `json:"done_at,omitempty"`
+	UpdatedAt   int64 `json:"updated_at"`
 }
 
 // legalNodeTransitions defines the allowed node state machine. done/failed/
@@ -383,6 +388,8 @@ func TransitionGraphNode(session, runID, nodeID, newState string, mutate func(*G
 		st.Routed = false
 		st.StartedAt = 0
 		st.DoneAt = 0
+		st.Redrives = 0
+		st.LastRedrive = 0
 	}
 	if mutate != nil {
 		mutate(st)

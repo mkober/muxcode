@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1051,6 +1052,102 @@ func TestExecLoopExhaustionFailsRunLoudly(t *testing.T) {
 	got, _ := ReadGraphRun(runTestSession, run.ID)
 	if got.State != GraphRunFailed {
 		t.Errorf("run state %q, want failed — exhaustion suppressed b's only edge", got.State)
+	}
+}
+
+// TestExecRedriveStalledDispatch pins executor-owned stall resolution
+// (MUX-123): an un-receipted in-flight dispatch past the stall threshold
+// is redriven with persisted bookkeeping, rate-limited between attempts,
+// and fails loudly as undeliverable after the cap; a receipted task is
+// never touched (negative control — receipt means genuinely working).
+func TestExecRedriveStalledDispatch(t *testing.T) {
+	oneNode := func() *Graph {
+		return &Graph{Name: "g", Start: "a",
+			Nodes: []Node{{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"}}}
+	}
+	backdateTask := func(id string, secs int64) {
+		task, err := ReadTask(runTestSession, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task.SentAt -= secs
+		if err := writeTask(runTestSession, task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nodeStatus := func(runID string) *GraphNodeStatus {
+		st, err := ReadNodeStatus(runTestSession, runID, "a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+
+	// Observe DELIVERIES through the seam, not just counters (review
+	// should-fix: a counter test proves bookkeeping, not behavior).
+	var driven []string
+	origRedrive := graphRedriveFn
+	graphRedriveFn = func(session, role string, task Task) int {
+		driven = append(driven, role+":"+task.ID)
+		return 1
+	}
+	t.Cleanup(func() { graphRedriveFn = origRedrive })
+
+	run := createTestRun(t, oneNode())
+	step(t, runTestSession, run.ID)
+	st := nodeStatus(run.ID)
+	if st.State != GraphNodeRunning || st.Redrives != 0 {
+		t.Fatalf("fresh dispatch: state %q redrives %d", st.State, st.Redrives)
+	}
+
+	// Fresh task: no redrive even on another tick.
+	step(t, runTestSession, run.ID)
+	if st = nodeStatus(run.ID); st.Redrives != 0 || len(driven) != 0 {
+		t.Fatalf("un-stalled task must not redrive, got %d (%v)", st.Redrives, driven)
+	}
+
+	// Stalled + un-receipted: one real delivery attempt, bookkeeping persisted.
+	backdateTask(st.TaskID, 120)
+	step(t, runTestSession, run.ID)
+	if st = nodeStatus(run.ID); st.Redrives != 1 || st.LastRedrive == 0 || len(driven) != 1 {
+		t.Fatalf("stalled dispatch must redrive once, got %d (%v)", st.Redrives, driven)
+	}
+
+	// Rate limit: an immediate tick delivers nothing further.
+	step(t, runTestSession, run.ID)
+	if st = nodeStatus(run.ID); st.Redrives != 1 || len(driven) != 1 {
+		t.Fatalf("redrive must rate-limit, got %d (%v)", st.Redrives, driven)
+	}
+
+	// Walk to the cap, then the node fails as undeliverable.
+	for i := 0; i < 3; i++ {
+		if err := MutateNodeStatus(runTestSession, run.ID, "a", func(s *GraphNodeStatus) {
+			s.LastRedrive -= 61
+		}); err != nil {
+			t.Fatal(err)
+		}
+		step(t, runTestSession, run.ID)
+	}
+	st = nodeStatus(run.ID)
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "undeliverable") {
+		t.Fatalf("capped redrives must fail undeliverable, got %q %q (redrives %d)", st.State, st.Output, st.Redrives)
+	}
+
+	// Negative control: a receipted task is working, never redriven.
+	run2 := createTestRun(t, oneNode())
+	step(t, runTestSession, run2.ID)
+	st2 := nodeStatus(run2.ID)
+	backdateTask(st2.TaskID, 120)
+	if err := os.MkdirAll(filepath.Dir(DeliveryPath(runTestSession, st2.TaskID)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(DeliveryStatus{ID: st2.TaskID, AckedAt: time.Now().Unix()})
+	if err := os.WriteFile(DeliveryPath(runTestSession, st2.TaskID), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	step(t, runTestSession, run2.ID)
+	if st2 = nodeStatus(run2.ID); st2.Redrives != 0 {
+		t.Fatalf("receipted task must never redrive, got %d", st2.Redrives)
 	}
 }
 
