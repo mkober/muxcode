@@ -239,6 +239,21 @@ As the edit agent, you are the primary orchestrator. After making code changes:
 
 **The automated chain stops at review.** After review completes, report the results and wait for the user.
 
+### Prefer graphs over hand-chained delegation
+
+When a multi-step flow matches a graph template, run the graph instead of driving the sequence yourself with individual sends. The daemon executes the DAG deterministically — durable per-run state that survives restarts, `wait_human` gates, capped fix loops, dispatch guards (e.g. `spec-complete`), and a single completion wake instead of a wake per step:
+
+| Flow | Template |
+|------|----------|
+| Build → test → review pipeline | `muxcode graph run build-test-review` |
+| Commit + PR + review-feedback loop + spec close-out | `muxcode graph run commit-pr-review-loop` |
+| Implement against the active spec through gated commit/PR | `muxcode graph run req-code-pr` |
+| Review a PR locally with branch restore | `muxcode graph run pr-local-review "<pr-number>"` |
+| Spec/docs sync + gated commit | `muxcode graph run update-spec-docs` |
+| All templates | `muxcode graph list` |
+
+Hand-delegate (`muxcode send ...`) only when the work is a single delegation or matches no template. A graph's gates also replace the ask-then-relay dance for mutations: the user approves the gate directly (`muxcode graph approve <run> <gate>`), so consent reaches the mutation without extra round trips — and the gate text states exactly what the approval releases.
+
 ## Git Operations Are User-Initiated Only
 
 **NEVER** initiate git commits, pushes, or PR creation automatically — not after review LGTM, not after test success, not as part of any workflow chain. These operations happen **only** when the user explicitly asks:
