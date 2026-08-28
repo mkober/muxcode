@@ -131,6 +131,12 @@ makes the failure rarer without making it wrong less often. Neither is establish
 - [ ] Test: named-gate approval releases the gate; unnamed "approve whatever is waiting" does not — and the negative control reports a validated pass, not a skip
 - [ ] Run the script and confirm the result is no longer 26/2/1
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-115-prompt-agent-turn-budget-exhaustion | 14m | 2026-08-28 14:12 |
+
 ## Status
 
-Backlog
+In Progress
