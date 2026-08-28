@@ -563,7 +563,7 @@ When a spec change implies a Jira change, the plan agent still reports it rather
 
 ### Prompt authority — who may originate a human prompt
 
-`CheckPromptAuthority` (`bus/prompt_authority.go`) is the third gate of the same family, added with the [Prompt surface](requirements/drafts/MUX-109-prompt-mode-graph-control-pane.md). It guards a different thing from the other two: not *what an agent may do*, but *whose words count as the user's*.
+`CheckPromptAuthority` (`bus/prompt_authority.go`) is the third gate of the same family, added with the [Prompt surface](requirements/completed/MUX-109-prompt-mode-graph-control-pane.md). It guards a different thing from the other two: not *what an agent may do*, but *whose words count as the user's*.
 
 The prompt-agent will approve a `wait_human` gate — the thing that releases git and Atlassian mutations — when the request text **names** the gate. That check is only as good as the claim that the text came from a human. A request to the `prompt` role is therefore refused unless it originates from the control pane:
 
@@ -621,7 +621,7 @@ Every agent window carries a third pane at the bottom hosting the global muxcode
 └─────────────────────────────────────────┘
 ```
 
-**The Prompt surface and its agent.** The pane cycles four surfaces, not three: `Prompt`, `Launch Graph`, `Graph Runs`, `Pending Gates` ([`MUX-109`](requirements/drafts/MUX-109-prompt-mode-graph-control-pane.md)). Prompt takes typed text and either **interprets** it as a graph operation or **injects** it into the window's active main agent, selected by an explicit toggle whose destination is always named in the input line.
+**The Prompt surface and its agent.** The pane cycles four surfaces, not three: `Prompt`, `Launch Graph`, `Graph Runs`, `Pending Gates` ([`MUX-109`](requirements/completed/MUX-109-prompt-mode-graph-control-pane.md)). Prompt takes typed text and either **interprets** it as a graph operation or **injects** it into the window's active main agent, selected by an explicit toggle whose destination is always named in the input line.
 
 Behind the interpret path is a **headless** agent — the `prompt` role, with no window and no pane of its own. The daemon owns its lifecycle (`checkPromptAgent`), which is why none of the pane-based supervision sees it. Two consequences follow from having no pane:
 

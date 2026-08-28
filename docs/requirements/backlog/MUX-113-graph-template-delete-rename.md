@@ -5,7 +5,7 @@ supersede operation therefore leaves the old definition resolvable — and becau
 `project > user > builtin`, the superseded name can keep **winning** over its replacement.
 
 Found by the prompt-agent hitting the wall live (2026-08-27) while doing exactly the work the
-[Prompt surface](../drafts/MUX-109-prompt-mode-graph-control-pane.md) exists for.
+[Prompt surface](../completed/MUX-109-prompt-mode-graph-control-pane.md) exists for.
 
 ## Context
 

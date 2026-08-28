@@ -128,7 +128,7 @@ MUXCODE_TEST_CLAUDE_MODEL=claude-haiku-4-5
 
 ### Prompt-agent backend
 
-The [prompt-agent](requirements/drafts/MUX-109-prompt-mode-graph-control-pane.md) runs against a hosted gateway by default, or local Ollama by opt-in. The gateway is the default because a local `qwen3:4b` measured 39–82 s per call (with thinking disabled) and fabricated success summaries for commands that had failed — and because keeping a model resident is costly on a machine already running a multi-agent session.
+The [prompt-agent](requirements/completed/MUX-109-prompt-mode-graph-control-pane.md) runs against a hosted gateway by default, or local Ollama by opt-in. The gateway is the default because a local `qwen3:4b` measured 39–82 s per call (with thinking disabled) and fabricated success summaries for commands that had failed — and because keeping a model resident is costly on a machine already running a multi-agent session.
 
 | Variable | Default | Description |
 |----------|---------|-------------|

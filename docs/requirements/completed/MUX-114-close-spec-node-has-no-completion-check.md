@@ -4,7 +4,7 @@ The builtin `commit-pr-review-loop` template ends by telling the plan agent to s
 status to `Complete`, move it to `completed/`, and clear the pointer — with **no predicate on the
 spec's actual state**. The node then feeds a commit node that pushes the move to the PR branch.
 
-Fired live on 2026-08-27 against [MUX-109](../drafts/MUX-109-prompt-mode-graph-control-pane.md),
+Fired live on 2026-08-27 against [MUX-109](../completed/MUX-109-prompt-mode-graph-control-pane.md),
 which was at **75 done / 22 open** with two acceptance criteria measured *failing* and its
 integration test not passing. Plan refused on the evidence; nothing in the template would have
 stopped it.

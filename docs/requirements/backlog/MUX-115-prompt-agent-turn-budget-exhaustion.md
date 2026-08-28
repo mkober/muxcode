@@ -5,7 +5,7 @@ The prompt-agent's `launch` and named-`approve` intents fail because the model e
 identical results.** This spec's first deliverable is therefore not a fix — it is the
 instrumentation that would tell us where the turns actually go.
 
-Split out of [MUX-109](../drafts/MUX-109-prompt-mode-graph-control-pane.md) at close-out, where
+Split out of [MUX-109](../completed/MUX-109-prompt-mode-graph-control-pane.md) at close-out, where
 these two intents are recorded as unmet in the Known Gaps table.
 
 ## Context
