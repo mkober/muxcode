@@ -141,3 +141,7 @@ Add a note about the `NotifyAnalystOn` config field and `SendNoCC` function to t
    - Review results still reach edit directly
    - Subscription fan-out does not CC edit
 4. Verify watcher logs show 60s loop check interval (not 30s)
+
+## Status
+
+Complete

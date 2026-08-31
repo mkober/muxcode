@@ -19,3 +19,7 @@ Automatic detection of repetitive agent patterns with escalation to edit agent.
 | `bus/guard.go` | `ReadHistory()`, `DetectCommandLoop()`, `DetectMessageLoop()`, `CheckLoops()`, `CheckAllLoops()` |
 | `watcher/watcher.go` | Periodic loop check integration |
 | `bus/inbox.go` | `isSystemAction()` exclusion filter |
+
+## Status
+
+Complete

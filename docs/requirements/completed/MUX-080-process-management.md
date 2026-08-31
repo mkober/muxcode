@@ -19,3 +19,7 @@ Background process lifecycle tracking with auto-notification on completion.
 | `bus/proc.go` | `StartProc()`, `StopProc()`, `CheckProcAlive()`, `RefreshProcStatus()`, `CleanFinished()` |
 | `watcher/watcher.go` | Periodic process status polling |
 | `bus/config.go` | Path helpers for proc data files |
+
+## Status
+
+Complete

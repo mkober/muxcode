@@ -16,3 +16,7 @@ HTTP listener converting POST requests into bus messages for external integratio
 | File | Purpose |
 |------|---------|
 | `bus/webhook.go` | `ServeWebhook()`, `WriteWebhookPid()`, `ReadWebhookPid()`, `IsWebhookRunning()`, `StopWebhookProcess()` |
+
+## Status
+
+Complete

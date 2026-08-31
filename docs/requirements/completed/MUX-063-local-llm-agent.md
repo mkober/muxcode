@@ -153,3 +153,7 @@ Remove `MUXCODE_GIT_CLI=local` from config to permanently revert.
 5. Verify commit agent reads inbox, calls Ollama, executes `git status`, sends response to edit
 6. Full flow: `muxcode send commit commit "Commit current changes"` — verify git add + commit + response
 7. Kill Ollama, restart session — verify fallback to Claude Code
+
+## Status
+
+Complete

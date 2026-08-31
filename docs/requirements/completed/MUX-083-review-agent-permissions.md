@@ -14,3 +14,7 @@ Expanded review agent tool profile to support process substitution diffs and dat
 | File | Purpose |
 |------|---------|
 | `bus/profile.go` | Review role `Tools` list with `diff <(*)`, `python3`, `jq` entries |
+
+## Status
+
+Complete

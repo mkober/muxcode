@@ -267,3 +267,7 @@ Requires adding `session` parameter to `ConsoleHeader` (one signature change, on
 - **Regression simplicity**: Numeric state ordering makes "should we regress?" a trivial integer comparison.
 - **Lifecycle integration**: Every transition calls `LogLifecycle()` for audit trail.
 - **Backwards-compatible**: Existing chains work unchanged; state machine is purely additive.
+
+## Status
+
+Complete

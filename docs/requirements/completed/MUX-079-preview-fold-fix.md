@@ -15,3 +15,7 @@ Persistent `foldlevel=99` in nvim diff previews replacing one-shot `zR`.
 | File | Purpose |
 |------|---------|
 | `scripts/muxcode-preview-hook.sh` | Preview hook with persistent foldlevel setting |
+
+## Status
+
+Complete

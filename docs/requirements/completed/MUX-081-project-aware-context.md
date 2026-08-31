@@ -16,3 +16,7 @@ Auto-detect project type and inject convention snippets into all agent prompts.
 | File | Purpose |
 |------|---------|
 | `bus/detect.go` | `DetectProject()`, `AutoContextFiles()`, `conventionText()`, `FormatDetectOutput()` |
+
+## Status
+
+Complete

@@ -16,3 +16,7 @@ Three-layer stuck protection preventing runaway Ollama calls in the LLM harness.
 |------|---------|
 | `harness/loop.go` | `Run()`, `processBatch()`, batch timeout, cross-batch cooldown logic |
 | `harness/filter.go` | `Filter`, `Check()`, within-turn dedup, `commandHash()` |
+
+## Status
+
+Complete

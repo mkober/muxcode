@@ -18,3 +18,7 @@ Bash hooks extract error-relevant lines from failed build/test output into struc
 | `scripts/muxcode-test-hook.sh` | Test hook with error line extraction |
 | `scripts/muxcode-build-log.sh` | Build left-pane log with error-preferred display |
 | `scripts/muxcode-test-log.sh` | Test left-pane log with error-preferred display |
+
+## Status
+
+Complete

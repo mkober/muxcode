@@ -13,3 +13,7 @@ System action exclusion and increased dedup cooldown prevent false-positive mess
 | File | Purpose |
 |------|---------|
 | `bus/guard.go` | `isSystemAction()`, `DetectMessageLoop()` with cooldown and exclusion logic |
+
+## Status
+
+Complete

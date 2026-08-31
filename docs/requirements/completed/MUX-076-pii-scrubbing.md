@@ -19,3 +19,7 @@ Automatic PII and secret redaction for tool output in api, runner, and watch rol
 | `bus/scrub.go` | `ScrubPII()`, `IsPIISensitiveRole()`, regex patterns (canonical — mirrored in harness) |
 | `harness/scrub.go` | `ScrubPII()`, `IsPIISensitiveRole()`, regex patterns (mirror of bus/scrub.go) |
 | `cmd/scrub.go` | CLI handler: `pii-scrub` (stdin → stdout pipe) |
+
+## Status
+
+Complete

@@ -285,3 +285,7 @@ The existing `agent run` command in the bus binary remains for backward compatib
 3. `cd tools/muxcode && go test ./...` — existing tests still pass (nothing changed)
 4. `make install` — both binaries installed
 5. Manual test: start Ollama, send `muxcode send commit status "Show git status"` → harness should run `git status` and reply (not loop on inbox)
+
+## Status
+
+Complete

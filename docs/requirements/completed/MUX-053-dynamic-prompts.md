@@ -20,3 +20,7 @@ Go-based system prompt composition with role-specific sections.
 | `harness/prompt.go` | `BuildSystemPrompt()`, `ReadAgentDefinition()` for harness agents |
 | `bus/context.go` | `ContextFilesForRole()`, `FormatContextPrompt()` |
 | `bus/detect.go` | `DetectProject()`, `AutoContextFiles()` for project-aware context |
+
+## Status
+
+Complete

@@ -288,3 +288,7 @@ Global memory adds a new section to every agent's system prompt. To manage token
 - Compaction alerts (`compact-recommended`) include global memory size in the total
 - `--no-global` provides an escape hatch if context is too large
 - Agents should be selective about what they write to global memory — universal patterns only
+
+## Status
+
+Complete

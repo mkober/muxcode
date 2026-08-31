@@ -56,3 +56,7 @@ JIRA_API_TOKEN="your-atlassian-api-token"
 - On a branch without a Jira key prefix, the skill skips silently without breaking PR creation
 - `muxcode-jira.sh comment PROJ-123 /tmp/payload.json` posts comment without triggering permission prompts
 - Missing env vars cause script error (non-zero exit), skill reports failure gracefully
+
+## Status
+
+Complete

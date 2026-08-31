@@ -345,3 +345,7 @@ The modal manager is designed to support additional features beyond the API agen
 - Persistent modal sessions (modals are ephemeral by design)
 - API agent changes (tool profile, agent definition, history format all unchanged)
 - Implementing future modal candidates (listed for context only)
+
+## Status
+
+Complete

@@ -358,4 +358,4 @@ Build the interactive TUI for modal mode and wire into the tmux main menu.
 
 ## Status
 
-Draft
+Backlog

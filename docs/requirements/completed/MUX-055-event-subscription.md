@@ -16,3 +16,7 @@ JSONL-persisted subscription table enabling event fan-out to interested agents.
 | File | Purpose |
 |------|---------|
 | `bus/subscribe.go` | `AddSubscription()`, `MatchSubscriptions()`, `FireSubscriptions()`, `ExpandSubscriptionMessage()` |
+
+## Status
+
+Complete

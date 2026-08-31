@@ -18,3 +18,7 @@ Watcher-triggered compaction alerts when agent context approaches limits.
 |------|---------|
 | `bus/compact.go` | `CheckCompaction()`, `CheckRoleCompaction()`, `FormatCompactAlert()`, `FilterNewCompactAlerts()` |
 | `watcher/watcher.go` | Periodic compaction check integration |
+
+## Status
+
+Complete

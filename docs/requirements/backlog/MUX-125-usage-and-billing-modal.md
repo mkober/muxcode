@@ -8,11 +8,29 @@ account pages rather than approximating them. That rules out a locally-derived e
 primary source, and makes *"which endpoint returns the website's numbers, and can this machine reach
 it?"* the first question to answer.
 
-**It is not yet known that such an endpoint exists for a Claude subscription.** No endpoint is named
-in this spec, because none has been verified — inventing one is how this feature ships confidently
-wrong numbers.
+**No endpoint is named in this spec, because none has been verified** — inventing one is how this
+feature ships confidently wrong numbers. Whether a Claude subscription-usage endpoint exists is
+Phase 1's question; either answer is workable, because the fallback order below is already decided.
 
 Tracking: _(no GitHub issue yet)_
+
+## Source resolution order (decided)
+
+Per provider, and per figure, in this order — **decided 2026-08-28, not an open question**:
+
+1. **Provider API**, when a verified endpoint exists and the available credential authenticates.
+   This is the goal state: the modal agrees with the account page.
+2. **Local estimate**, otherwise — Claude Code's per-message `usage` transcripts.
+
+Three rules make the fallback safe rather than quietly misleading:
+
+- **Resolution is per provider.** Claude may fall back while OpenCode uses its API, in the same
+  frame. Neither drags the other down.
+- **The fallback is automatic, never silent.** Every figure states its source, and an estimate is
+  visibly marked as *this machine's sessions*, not the account total.
+- **Degrading is not failing.** A missing endpoint produces a labelled estimate, not an error or an
+  empty panel.
+
 
 ## Context
 
@@ -148,9 +166,12 @@ A new modal is a registry entry plus a renderer, not new plumbing.
       unknown the modal says so rather than showing a plausible wrong number
 - [ ] OpenCode is either reported from a **verified** endpoint, or its absence is stated explicitly
       in the modal — never silently omitted
-- [ ] If no subscription-usage endpoint exists for Claude, the modal says so plainly; a local
-      estimate, if shown at all, is **visibly labelled** as this machine's sessions rather than the
-      account's total
+- [ ] Source resolution follows the decided order **per provider**: API when available, labelled
+      local estimate otherwise — and one provider falling back does not affect the other
+- [ ] A local estimate is **visibly labelled** as this machine's sessions rather than the account
+      total, and never renders identically to an API-sourced figure
+- [ ] A missing endpoint **degrades to the estimate**; it never produces an error state or an empty
+      panel
 - [ ] Usage is shown **against the plan in force**, with remaining headroom and the reset-window
       countdown — the useful view on a flat subscription
 - [ ] Plan tier, limit, and overage rule are **configured or fetched from a verified source**, never
@@ -195,9 +216,10 @@ frames are testable without tmux.
       the OpenCode dashboard
 - [ ] For each endpoint found: record auth method, scope, rate limits, and the exact fields that
       correspond to the website's displayed numbers
-- [ ] **If no subscription endpoint exists**, present the options — admin-key path (different
-      account object) vs. labelled local estimate — and get an explicit decision before Phase 2
-- [ ] Confirm the transcript schema, only if the fallback is chosen
+- [ ] **If no subscription endpoint exists**, record that and proceed — the resolution order above
+      already decides it: fall back to a labelled local estimate. Do **not** substitute the Admin
+      API, which measures a different account object
+- [ ] Confirm the transcript schema (the fallback path is in scope regardless, since any provider may resolve to it)
 - [ ] Decide the scope and pricing questions above
 - [ ] Verify no `ANTHROPIC_API_KEY` path exists that would change the Claude conclusion
 - [ ] Establish, from an authoritative source, what the subscription plan meters, what its limits and
@@ -230,8 +252,14 @@ frames are testable without tmux.
       modal cannot invent a tier
 - [ ] **Negative control**: on a block-at-limit plan the modal shows "paused until <reset>" and
       **never** an accrued fee — the fabricated-charge case, asserted directly
-- [ ] **Negative control**: no network call is made (run with networking unavailable and assert
-      identical output)
+- [ ] Test: with a working API stub, figures are API-sourced and labelled as such
+- [ ] Test: with the API unreachable, the same provider **degrades to a labelled estimate** — not an
+      error, not an empty panel
+- [ ] Test: **mixed resolution** — one provider on API, the other on estimate, in one frame, each
+      labelled correctly
+- [ ] **Negative control**: an estimate never renders identically to an API-sourced figure (assert
+      the label is present, so a regression that drops it fails)
+- [ ] **Negative control**: the Admin API is never called as a substitute for subscription usage
 - [ ] **Negative control**: a fixture that would trip the conflated-input bug fails if the code
       regresses to summing one field
 - [ ] Coverage floor itemized against the actual check count
@@ -254,4 +282,4 @@ frames are testable without tmux.
 
 ## Status
 
-Draft
+Backlog

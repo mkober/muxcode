@@ -319,3 +319,7 @@ Once all agents use polling, remove the send-keys path entirely.
 3. **Harness agents**: The LLM harness already polls inbox directly (`harness/bus.go:ConsumeInbox()`). No changes needed for harness-based agents -- the trigger file is an additional signal they can optionally watch.
 
 4. **Edit agent user input**: When the human types at the edit agent's prompt, a `--poll` running as a Bash tool would still be "active" (the poll command is the current tool). The human's typed text goes to Claude Code's input, not to the Bash tool. This should work naturally but needs testing.
+
+## Status
+
+Complete
