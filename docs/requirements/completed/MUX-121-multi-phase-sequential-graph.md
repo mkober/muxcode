@@ -248,7 +248,7 @@ exist.**
 `resolveCompletedPhaseText` (`graph_exec.go:340`) reads the **live active spec at dispatch** and calls
 `SpecJustCompletedPhase`, which walks phases in order and breaks at the first one holding open items,
 returning the phase before it (`spec_items.go:144`). At the time of the report,
-[MUX-117](../backlog/MUX-117-pane-targeting-by-identity.md) Phase 4 held **one open item** —
+[MUX-117](./MUX-117-pane-targeting-by-identity.md) Phase 4 held **one open item** —
 delivery-reaches-agents, left open deliberately because `clear` and `compact` cannot be exercised
 without side effects on a live agent. So Phase 3 *was* the last fully-completed phase, and the
 message was accurate.

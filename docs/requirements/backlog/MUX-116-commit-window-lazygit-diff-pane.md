@@ -1,14 +1,14 @@
 # Lazygit Diff Pane on the Commit Window
 
 **Tracking:** [#42](https://github.com/mkober/muxcode/issues/42) · blocked by
-[#41](https://github.com/mkober/muxcode/issues/41) ([MUX-117](./MUX-117-pane-targeting-by-identity.md))
+[#41](https://github.com/mkober/muxcode/issues/41) ([MUX-117](../completed/MUX-117-pane-targeting-by-identity.md))
 
 The commit console lists changed files but cannot show what changed in one. Add a **lazygit** view
 to the commit window's left column so the user can cycle through modified and untracked files and
 read the diff of the selected one, without leaving the window or asking the commit agent to print a
 diff into its pane.
 
-> **Depends on [MUX-117](./MUX-117-pane-targeting-by-identity.md).** The dedicated pane cannot be
+> **Depends on [MUX-117](../completed/MUX-117-pane-targeting-by-identity.md).** The dedicated pane cannot be
 > added while pane targeting is index-based — see
 > [the hazard](#the-hazard-that-governs-the-design-pane-indices-are-load-bearing).
 
@@ -102,7 +102,7 @@ first, not an edge case.
 
 ### Technical approach
 
-**Decided: a dedicated pane, gated behind [MUX-117](./MUX-117-pane-targeting-by-identity.md)**
+**Decided: a dedicated pane, gated behind [MUX-117](../completed/MUX-117-pane-targeting-by-identity.md)**
 (user decision, 2026-08-28). The left column splits — console on top, lazygit below — so the diff is
 glanceable rather than summoned.
 
@@ -158,7 +158,7 @@ the installed path is what live and new sessions load.
 
 ## Implementation
 
-### Phase 0: Prerequisite — [MUX-117](./MUX-117-pane-targeting-by-identity.md)
+### Phase 0: Prerequisite — [MUX-117](../completed/MUX-117-pane-targeting-by-identity.md)
 
 **Unblocked 2026-08-31 — MUX-117 is complete (33/33).** Pane targeting now resolves by identity, so
 this window can gain a fourth pane. Phase 1 may start.

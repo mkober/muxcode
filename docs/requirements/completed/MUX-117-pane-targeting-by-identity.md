@@ -1,14 +1,14 @@
 # Resolve Panes by Identity, Not by Index
 
 **Tracking:** [#41](https://github.com/mkober/muxcode/issues/41) · blocks
-[#42](https://github.com/mkober/muxcode/issues/42) ([MUX-116](./MUX-116-commit-window-lazygit-diff-pane.md))
+[#42](https://github.com/mkober/muxcode/issues/42) ([MUX-116](../backlog/MUX-116-commit-window-lazygit-diff-pane.md))
 
 Every path that reaches an agent resolves through a **hardcoded pane index**. `AgentPane()` returns
 the literal `"1"` for every window, and a second set of call sites bypasses even that helper and
 builds `session:window.0` / `.1` target strings by hand. Any change to a window's pane layout
 therefore breaks delivery silently, which is why no feature has been allowed to add a pane.
 
-Prerequisite for [MUX-116](./MUX-116-commit-window-lazygit-diff-pane.md), which adds a dedicated
+Prerequisite for [MUX-116](../backlog/MUX-116-commit-window-lazygit-diff-pane.md), which adds a dedicated
 lazygit pane to the commit window and cannot be built safely until this lands.
 
 ## Context
@@ -418,7 +418,7 @@ find because it builds its target from `AgentPane(window)`, is included; and a c
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-117-pane-targeting-by-identity | 1h 54m | 2026-08-31 15:53 |
+| MUX-117-pane-targeting-by-identity | 2h 26m | 2026-08-31 16:31 |
 
 Every figure here is the ledger's actual value, not a placeholder — but the total **undercounts the
 work**, and the shortfall is structural rather than a recording miss. Phase 1 was carried out on
@@ -486,7 +486,7 @@ Still uncommitted: `pane.go` and `pane_test.go` remain untracked, so a clean che
 still produces neither.
 
 **The graph run died rather than routing to its fix node** — a template defect, not a property of
-this work, now filed as [MUX-127](./MUX-127-review-completion-routing.md) Defect A. The must-fixes
+this work, now filed as [MUX-127](../backlog/MUX-127-review-completion-routing.md) Defect A. The must-fixes
 above were applied *despite* the run failing, not because of it: nothing routed them. Run
 `1788195259-req-code-pr-3fbcc7da` ended `failed` at 13:48:50 — `node review failed with no live
 edge`. The frozen `req-code-pr` definition has `build → fix` and `test → fix`, but `review` has

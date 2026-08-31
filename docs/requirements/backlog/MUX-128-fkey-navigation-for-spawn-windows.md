@@ -14,7 +14,7 @@ Tracking: _(no GitHub issue yet)_
 ### Why an index binding is the wrong shape
 
 The obvious implementation — `bind -n F11 select-window -t:11` — is wrong for the same reason
-[MUX-117](./MUX-117-pane-targeting-by-identity.md) exists. Spawn windows are **dynamic**: they are
+[MUX-117](../completed/MUX-117-pane-targeting-by-identity.md) exists. Spawn windows are **dynamic**: they are
 created and destroyed as work is delegated, there is no cap on how many exist, and the index a given
 worker occupies depends on how many preceded it. Within one session today the spawn window has
 already been `spawn-a279185a` and then `spawn-ea720538`, both at index 11.
