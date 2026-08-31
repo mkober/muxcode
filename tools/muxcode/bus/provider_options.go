@@ -3,6 +3,8 @@ package bus
 import (
 	"fmt"
 	"os/exec"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -178,16 +180,48 @@ func ResolveActiveAgentWindow(session string) (window, role string, err error) {
 	return window, role, nil
 }
 
-// WindowFKey returns the F-key label for a window based on its position.
-// Returns empty string if the window is not found.
+// WindowFKey returns the F-key label for a window, derived from what
+// the bindings actually select: F1–F10 map to window_index 1–10
+// (bind -n F<N> → select-window -t:<N>), and F11/F12 map to the first
+// and second spawn window by ascending index (MUX-128's slot order in
+// NthSpawnWindowIndex). List position diverges from window_index
+// whenever a window occupies index 0 (the research hold window), which
+// put every label one too high and advertised commit as the then-
+// unbound F11. Anything else — index 0, a third-or-later spawn, an
+// 11+ non-spawn window — has no binding and returns "", the documented
+// not-found value.
 func WindowFKey(session, window string) string {
-	out, err := exec.Command("tmux", "list-windows", "-t", session, "-F", "#W").Output()
+	out, err := TmuxOutput("list-windows", "-t", session, "-F", "#{window_index}:#W")
 	if err != nil {
 		return ""
 	}
-	for i, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if strings.TrimSpace(line) == window {
-			return fmt.Sprintf("F%d", i+1) // 1-indexed
+	matchIdx := -1
+	var spawnIdxs []int
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		idx, name, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if !ok {
+			continue
+		}
+		n, convErr := strconv.Atoi(idx)
+		if convErr != nil {
+			continue
+		}
+		if strings.HasPrefix(name, "spawn-") {
+			spawnIdxs = append(spawnIdxs, n)
+		}
+		if name == window {
+			matchIdx = n
+		}
+	}
+	if matchIdx >= 1 && matchIdx <= 10 {
+		return fmt.Sprintf("F%d", matchIdx)
+	}
+	if matchIdx > 10 && strings.HasPrefix(window, "spawn-") {
+		sort.Ints(spawnIdxs)
+		for slot, idx := range spawnIdxs {
+			if idx == matchIdx && slot < 2 {
+				return fmt.Sprintf("F%d", 11+slot)
+			}
 		}
 	}
 	return ""

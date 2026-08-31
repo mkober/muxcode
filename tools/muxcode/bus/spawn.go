@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -216,6 +218,37 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 	}
 
 	return entry, nil
+}
+
+// NthSpawnWindowIndex returns the window_index of the nth live spawn
+// window (1-based), ordered by index ascending. Spawn windows are
+// resolved by the spawn- name prefix, never by a fixed index — they are
+// dynamic, and the index a worker occupies shifts as earlier workers
+// exit (MUX-128). false means the slot is empty, which callers treat as
+// a clean no-op.
+func NthSpawnWindowIndex(session string, n int) (int, bool) {
+	if n < 1 {
+		return 0, false
+	}
+	out, err := TmuxOutput("list-windows", "-t", session, "-F", "#{window_index}:#{window_name}")
+	if err != nil {
+		return 0, false
+	}
+	var idxs []int
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		idx, name, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if !ok || !strings.HasPrefix(name, "spawn-") {
+			continue
+		}
+		if v, convErr := strconv.Atoi(idx); convErr == nil {
+			idxs = append(idxs, v)
+		}
+	}
+	sort.Ints(idxs)
+	if n > len(idxs) {
+		return 0, false
+	}
+	return idxs[n-1], true
 }
 
 // sendKeysThenEnter types text and presses Enter as two pty writes with a
