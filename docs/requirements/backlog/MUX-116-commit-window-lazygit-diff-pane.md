@@ -160,10 +160,15 @@ the installed path is what live and new sessions load.
 
 ### Phase 0: Prerequisite — [MUX-117](./MUX-117-pane-targeting-by-identity.md)
 
-**Blocked until MUX-117 lands.** Pane targeting must resolve by identity before this window gains a
-fourth pane. Do not start Phase 1 by working around the index problem locally.
+**Unblocked 2026-08-31 — MUX-117 is complete (33/33).** Pane targeting now resolves by identity, so
+this window can gain a fourth pane. Phase 1 may start.
 
-- [ ] MUX-117 complete: panes resolve by identity, `AgentPane()` is no longer a constant, and the shell hooks no longer hardcode indices
+- [x] MUX-117 complete: panes resolve by identity, `AgentPane()` is no longer a constant, and the shell hooks no longer hardcode indices — *each of the three conditions verified directly against the tree, not inherited from MUX-117's checkboxes: `AgentPane()` has zero non-test references (the surviving `grep` hits are `testModeVerifyAgentPanes`, a different identifier that merely contains the substring); the three shell hooks carry no pane-index literals; and `bus/pane.go` is committed and clean, not merely present in the working tree*
+
+> **Note for Phase 1.** MUX-117's resolver is committed, but its integration test
+> (`scripts/test-pane-targeting.sh`) is **not yet committed**. Phase 1's negative control below is
+> the same shape as that script's — when writing it, extend the existing script rather than starting
+> a second one.
 
 ### Phase 1: Add the pane
 

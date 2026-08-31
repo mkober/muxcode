@@ -53,11 +53,19 @@ open items against the active spec.
 
 ### In progress
 
-[`MUX-117`](./MUX-117-pane-targeting-by-identity.md) — **Phase 1 complete** (tmux behaviour measured,
-`@muxcode_pane` tag mechanism chosen, fallback semantics defined, all 31 pane-addressing sites
-enumerated); Phases 2-5 open. Its row stays in [Reliability & observability](#reliability--observability)
-below rather than moving here, because the spec file is still in `backlog/` — relocating the row
-before the file moves would leave a broken link.
+[`MUX-117`](./MUX-117-pane-targeting-by-identity.md) — **Complete, all five phases, 33/33 items.**
+Panes now resolve by `@muxcode_pane` identity rather than index; `AgentPane()` is gone, all 31
+enumerated pane-addressing sites (Go and the three shell hooks) route through the shared resolver,
+untagged sessions fall back through a throttled logged path, and an unresolvable pane fails loudly
+instead of defaulting to an index. Closed 2026-08-31 15:44 by `scripts/test-pane-targeting.sh` —
+**22 passed, 0 failed**, floor 22 — whose negative control inserts a pane *before* the agent and
+asserts both that the agent still receives the message and that the interloper at its old index
+receives nothing. **Unblocks [MUX-116](./MUX-116-commit-window-lazygit-diff-pane.md).** Two
+carry-forwards: the integration script and its `CLAUDE.md` row are **uncommitted**, so a clean
+checkout has no test; and the spec file is still in `backlog/` pending a user-decided move. Its row
+stays in [Reliability & observability](#reliability--observability) below rather than moving here or
+to the completed registry, because the spec file is still in `backlog/` — relocating the row before
+the file moves would leave a broken link.
 
 ### Defects — prioritized
 
@@ -73,7 +81,7 @@ corrupts it. Full summaries stay in the topic sections below; this table is the 
 | 3 | [`MUX-112`](./MUX-112-idle-task-rescue-closes-live-work.md) | Idle-task rescue closes tasks still running | High | Silently wrong: marks live work complete, so the result is never awaited |
 | 4 | [`MUX-120`](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Spawned workers never receive their seeded task | High | Blocks every graph `spawn`/`map`; CLI path still has no recovery net |
 | 5 | [`MUX-124`](./MUX-124-lifecycle-since-truncated-by-limit.md) | `lifecycle show --since` answers the wrong question | High | The investigation tool lies — already caused MUX-123 to be nearly mis-filed |
-| 6 | [`MUX-117`](./MUX-117-pane-targeting-by-identity.md) | Panes resolved by index, not identity | High | Misdelivers keystrokes into whatever pane took the index — an editor or a git TUI — reporting success |
+| 6 | [`MUX-117`](./MUX-117-pane-targeting-by-identity.md) | ~~Panes resolved by index, not identity~~ **FIXED 2026-08-31** | High | Misdelivered keystrokes into whatever pane took the index — an editor or a git TUI — reporting success. Panes now resolve by `@muxcode_pane` identity; unresolvable panes fail loudly instead of falling back to an index. Row stays until the spec file moves out of `backlog/` |
 | 7 | [`MUX-006`](./MUX-006-diagnose-false-clean-verdict.md) | Diagnose reports a clean verdict over a wedged agent | High | Same class as MUX-124: the diagnostic itself is the thing that misleads |
 | 8 | [`MUX-123`](./MUX-123-stall-watchdog-selective-misses.md) | Stall watchdog fires routinely, still misses live stalls | High | Selective misses need a human with `deliver --force`; also now carries the false-positive direction |
 | 9 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Harness reply correlates to the batch's last message | High | Silently wrong: answers are attributed to the wrong request |

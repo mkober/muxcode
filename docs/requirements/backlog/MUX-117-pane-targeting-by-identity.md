@@ -94,16 +94,19 @@ happens to be running. tmux pane **ids** (`%N`) are similarly stable and could b
 
 ### Acceptance criteria
 
-- [ ] A pane's role is resolved by **identity**, not by position — adding, removing, or reordering panes on a window does not change which pane an agent message reaches
+- [x] A pane's role is resolved by **identity**, not by position — adding, removing, or reordering panes on a window does not change which pane an agent message reaches — *closed 15:44 by the integration run, not by inspection: the resolver returns a pane **id** (`%5`) rather than an index, and after a pane is inserted before the agent it still returns `%5` and delivery still lands there*
 - [x] `AgentPane()` no longer returns a constant, or is removed in favour of an identity-based resolver — *removed outright; zero non-test references remain in the tree*
 - [x] Every hand-built pane target listed above resolves through the shared helper — no Go call site constructs `session:window.N` by hand — *grep gate run independently; only surviving hit is a **comment** in `control_pane.go:88`*
 - [x] The three shell hooks resolve panes through the same mechanism rather than hardcoded literals — *all three converted; remaining `\.[012]` hits are `sleep 0.1`/`0.2`*
 - [x] Resolution has an explicit, logged fallback when a pane carries no identity — sessions launched by an older binary must keep working — *`legacyPaneIndex()` gated on the `@muxcode_tagged` window marker, never on tag absence; pinned by `TestResolvePane_LegacyFallbackLogsOnce`, `TestResolvePane_NoCensusIsSilentLegacy`, `TestTagWindowPanes_UnsupportedTmuxDegradesLegacy`*
 - [x] **A failed resolution fails loudly** — it never silently falls back to an index that might host an editor or a git TUI — *closed 15:01 after being opened at 14:28 and held through three passes. Every failure state now resolves loudly rather than by index: sentinel (`TestPaneTarget_SentinelNeverAnIndex`), adversarial tag failure, total failure, marked-but-untagged (`TestCreationPaneTarget_IndexFallbackOnBrokenWindow` — index at **creation**, sentinel on **delivery**), and finally **marker-write failure** (`TestTagWindowPanes_MarkerWriteFailureFailsClosed`). That last one was the hole: because the failing operation is the tmux write itself, the fix records brokenness **on disk** (`markWindowBroken` under `BusDir`) rather than in the option that just failed to write. The test asserts `ResolvePane` **errors** instead of returning `.0`/`.1`, and carries a recovery half (`failMarker = false` → record clears → normal resolution) so a resolver that always errored could not pass. Verified green, not asserted: `./test.sh` → **2175 PASS / 0 FAIL / 1 SKIP**, exit 0, with this test named*
-- [ ] **Negative control:** a test inserts a pane *before* the agent and proves delivery still reaches the agent — a fix that merely re-hardcodes a different index cannot pass
+- [x] **Negative control:** a test inserts a pane *before* the agent and proves delivery still reaches the agent — a fix that merely re-hardcodes a different index cannot pass — *the control is genuinely discriminating because it asserts **both** halves: the agent received the message at its new position, **and** the interloper now standing at the agent's old index received nothing. The second assertion is what an index-based fix fails*
 - [x] Control-pane identification and its dedupe sweep still work, including for panes created by an older binary (retroactive identification is a property MUX-108 deliberately has) — *`TestEnsureControlPane_DedupesDuplicates` and `TestControlPanesPredate` (the retroactive property) both PASS in the 2179/0 suite*
 - [x] Mode-cycled windows (plan/research, edit/auto) still resolve the *active* agent correctly — *`TestModeCycledWindowResolvesActiveAgent` (out-of-order pane ids; asserts the **id** `%11`, and that the target contains no `"."` so an index resolver fails) and `TestModeRoleResolutionIndependentOfCycleState`. Both PASS in `./test.sh` → 2179 PASS / 0 FAIL*
-- [ ] `scripts/test-pane-targeting.sh` passes
+- [x] `scripts/test-pane-targeting.sh` passes — ***22 passed, 0 failed***, exit 0, floor 22 met. Log
+      verified against the script rather than taken at face value: all 22 labels match the script's
+      own check strings, the only three differences being shell variables expanded to their runtime
+      values (`$resolved`→`%5`, `$BUILD_AGENT`→`%5`, `$NEW_CTL`→`%16`)
 
 ### Technical approach
 
@@ -355,18 +358,30 @@ find because it builds its target from `AgentPane(window)`, is included; and a c
 
 ### Phase 5: Integration test
 
-- [ ] Create `scripts/test-pane-targeting.sh` — hermetic: isolated tmux socket, scratch session
-- [ ] Delivery reaches the agent on a normal three-pane window
-- [ ] **Insert a pane before the agent; delivery still reaches the agent** (the negative control — an index-based fix fails here)
-- [ ] Kill and respawn the control pane; it is re-identified and not duplicated
-- [ ] An untagged (old-binary-style) session still resolves, and logs the fallback
-- [ ] An unresolvable pane fails loudly rather than defaulting to an index
-- [ ] `clear` and `compact` reach the right agent — *split out of Phase 4 on 2026-08-31. Both mutate
+- [x] Create `scripts/test-pane-targeting.sh` — hermetic: isolated tmux socket, scratch session —
+      *private tmux server (`TMUX_TMPDIR` under `mktemp -d`, `TMUX` unset), scratch `BUS_SESSION`s,
+      `MUXCODE_LIFECYCLE_LOG_DIR` pinned to a temp dir, `trap cleanup EXIT`. No live session touched*
+- [x] Delivery reaches the agent on a normal three-pane window
+- [x] **Insert a pane before the agent; delivery still reaches the agent** (the negative control — an index-based fix fails here) —
+      *three checks, and the discriminating one is the third: the interloper standing at the agent's
+      **old index** received nothing. A fix that re-hardcodes a different index fails there*
+- [x] Kill and respawn the control pane; it is re-identified and not duplicated — *respawned pane
+      re-tagged `control` and resolvable (`%16`); a displaced pre-made pane is recognized rather than
+      duplicated, and a deliberate duplicate converges to one survivor*
+- [x] An untagged (old-binary-style) session still resolves, and logs the fallback — *resolves via
+      the legacy index, emits exactly one `pane-fallback` event, and the once-per-window throttle is
+      asserted separately from the emission*
+- [x] An unresolvable pane fails loudly rather than defaulting to an index — *resolver exits
+      non-zero, logs `pane-resolve-failed`, `deliver` errors, and — the check that makes this
+      meaningful — **nothing was delivered to the index the fallback would have hit***
+- [x] `clear` and `compact` reach the right agent — *split out of Phase 4 on 2026-08-31. Both mutate
       a live agent's conversation, so neither can be fired ad hoc to close a checkbox; they need this
       script's scratch session. The other four delivery mechanisms were verified live and closed
-      under Phase 4*
-- [ ] Coverage floor so a skipped run cannot report green
-- [ ] Run the script and confirm all checks pass
+      under Phase 4. Each is paired with an interloper negative control (no `/clear`, no `/compact`)*
+- [x] Coverage floor so a skipped run cannot report green — *`[ "$PASS" -ge 22 ]`. The three
+      preconditions (tmux, muxcode, binary predates MUX-117) `exit 2`, so a skipped run cannot
+      report green either*
+- [x] Run the script and confirm all checks pass — ***22 passed, 0 failed***, exit 0, 15:44
 
 > ### Verification state, 15:01
 >
@@ -403,21 +418,46 @@ find because it builds its target from `AgentPane(window)`, is included; and a c
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-117-pane-targeting-by-identity | 1h 16m | 2026-08-31 15:09 |
+| MUX-117-pane-targeting-by-identity | 1h 54m | 2026-08-31 15:53 |
 
-The near-zero total is the ledger's actual value, not a placeholder. Phase 1 was carried out on `main`, and the
-branch was created at 13:22:33 to receive the commit — so no active time accrued against it. The
-work's real duration is not recoverable from the ledger: `main` is on the ignore list (`ignored:
+Every figure here is the ledger's actual value, not a placeholder — but the total **undercounts the
+work**, and the shortfall is structural rather than a recording miss. Phase 1 was carried out on
+`main`, and the branch was created at 13:22:33 only to receive the commit, so no active time accrued
+against it during that phase. That time is not recoverable: `main` is on the ignore list (`ignored:
 true`), and its 3h 11m is stale accumulation from earlier sessions, not this work. Recording that
 figure here would have attributed unrelated time to this branch. This is the per-branch/per-spec
-attribution gap; time recorded from here forward will be genuine.
+attribution gap. Time from 13:22 forward — Phases 2 through 5 — is genuine.
 
 ## Status
 
-In Progress — **Phases 1 and 2 complete**; Phases 3-5 open. Spec file still lives in `backlog/`;
-moving it to `drafts/` is a separate user-decided step.
+Complete — **all five phases closed, 33/33 items**, acceptance criteria included. Closed 15:44 by
+`scripts/test-pane-targeting.sh` → **22 passed, 0 failed**, exit 0, coverage floor 22 met.
 
-Phase 2 work has **landed in the working tree but is not yet committed or checked off**. Spawn
+The two criteria that had been deliberately held open to the end — *resolution by identity, not
+position* and the *insert-a-pane-before-the-agent negative control* — are closed by the integration
+run rather than by inspection. The negative control asserts both halves: the agent receives the
+message at its new position, **and** the interloper standing at the agent's old index receives
+nothing. That second assertion is what an index-based fix fails, and it is the reason this spec was
+worth a live-tmux test rather than unit coverage.
+
+**Two carry-forward items, neither of which reopens the work:**
+
+1. **The integration script is uncommitted.** `scripts/test-pane-targeting.sh` is untracked and the
+   `CLAUDE.md` row describing it is a modification — so a *clean* checkout of this branch has no
+   integration test. This is the same landed-but-uncommitted pattern Phase 2 hit below, and it is
+   the one thing standing between "verified here" and "verified in the repo".
+2. **The dirty tree is mixed.** `config/tmux.conf`, `backlog.md`, the untracked `MUX-128` spec, and
+   five Go files (`bus/spawn.go`, `cmd/spawn.go`, `bus/provider_options.go` and their tests) are
+   **MUX-128** work — `NthSpawnWindowIndex`, `muxcode spawn select`, `WindowFKey`. Checked, not
+   assumed: those five files carry **zero** pane-related diff lines. A commit staged by spec name
+   would mix two specs; MUX-117's own artifacts are only the script, the `CLAUDE.md` row, and this
+   file.
+
+Spec file still lives in `backlog/`; moving it to `completed/` is a separate user-decided step.
+
+### Phase 2 record
+
+Phase 2 work had **landed in the working tree but was not yet committed or checked off**. Spawn
 `spawn-3017de3d` harvested it out of its worktree at 13:45–13:46: `bus/pane.go` and
 `bus/pane_test.go` are now untracked files in the repo, alongside modifications to `config.go`,
 `control_pane.go`, `control_pane_test.go`, `launcher.go`, `mode.go`, and `spawn.go`. A *clean*
