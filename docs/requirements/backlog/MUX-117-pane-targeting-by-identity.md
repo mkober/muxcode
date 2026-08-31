@@ -47,24 +47,11 @@ window.
 | Resolves through `PaneTarget()` / `AgentPane()` | ~40 across `bus/`, `cmd/`, `daemon/`, `tui/` | **Fine as written** — these are the payoff of having the indirection; fixing the helper fixes all of them at once |
 | Builds a target string by hand, bypassing the helper | See table below | **The actual work** |
 
-Bypass sites found in the tree:
-
-| Location | Literal | Note |
-|----------|---------|------|
-| `bus/launcher.go:301` | `session + ":edit.1"` | Select agent pane at launch |
-| `bus/launcher.go:341`–`:373` | `target + ".1"`, `target + ".0"` | Per-window launch: agent send, left-pane select |
-| `bus/reload.go:67` | `session + ":" + HoldWindow + ".1"` | Mode-cycled hold window |
-| `bus/reload.go:478` | `session + ":" + window + ".0"` | Left pane |
-| `bus/hook.go:1405` | `session + ":edit.0"` | Hook targeting the editor pane |
-| `bus/prompt_inject.go:30` | `session + ":" + window + "." + AgentPane(window)` | Re-implements `PaneTarget()` inline |
-| `scripts/muxcode-compact.sh:15` | `${session}:${role}.1` | Shell, outside the Go helper entirely |
-| `scripts/muxcode-diff-cleanup.sh:14` | `$SESSION:edit.0` | Shell |
-| `scripts/muxcode-preview-hook.sh:24` | `$SESSION:edit.0` | Shell |
-
-This table was the first pass and is **superseded** — it missed live production sites in `spawn.go`,
-`mode.go`, `launcher.go`, and `daemon/daemon.go`. The authoritative, verified enumeration is
-[Phase 1 findings](#pane-addressing-site-enumeration-verified-against-the-tree-2026-08-31) below;
-use that one. Kept here only so the shape of the original claim stays readable.
+Bypass sites are enumerated authoritatively in
+[Phase 1 findings](#pane-addressing-site-enumeration-verified-against-the-tree-2026-08-31) below.
+An earlier draft of this section carried its own table; it was removed rather than annotated,
+because it under-reported the site set (it missed `spawn.go`, `mode.go`, and `daemon/daemon.go`
+entirely) and a reader landing here would have taken it as the scope of the work.
 
 The shell hooks matter as much as the Go: they are not reachable by any refactor of `AgentPane()`,
 so a Go-only fix would leave three live paths still index-addressed and produce a false sense that
@@ -194,29 +181,49 @@ Canonical tag values: `agent`, `left`, `control` (Phase 2 may extend, e.g. `lazy
 
 #### Fallback semantics: untagged legacy vs resolution failure
 
-Resolution for `(window, role-pane)` is a three-way outcome, decided mechanically by how many
-panes on the window carry any `@muxcode_pane` tag:
+Resolution for `(window, role-pane)` is a three-way outcome. The discriminator **must not be
+"how many panes carry a tag"**: absence of tags is ambiguous between *this window predates tagging*
+and *tagging was attempted and failed*, and those demand opposite responses. Inferring "legacy" from
+absence means a broken tagging path silently degrades into the index fallback — delivering keystrokes
+to whatever occupies that index, which is precisely the failure this spec exists to remove, now
+re-introduced through the safety valve.
 
-1. **Tag match** — a pane on the window carries the requested tag: resolve to its pane id. Normal path.
-2. **Untagged window (legacy fallback)** — zero panes on the window carry any tag: the window was
-   created by an older binary. Fall back to today's index convention (`.0`/`.1`) and log a
-   `pane-fallback` lifecycle event, once per window per session (not per message — no log flood).
-   Only old binaries produce this state, so the creation-order contract is a safe assumption there.
-3. **Resolution failure (loud)** — the window has at least one tagged pane but the requested tag is
-   absent, or two panes claim the same tag: return an error. Never fall back to an index in a tagged
-   session — the index may host an editor or a git TUI, and silent misdelivery is the exact failure
-   this spec removes. Duplicate-tag convergence is the control-pane sweep's job, not the resolver's.
+Absence is therefore never read as evidence. The launch path stamps a **window-level marker**
+(`@muxcode_tagged`) *after* it has tagged that window's panes and read at least one back. The marker
+is a positive record that tagging completed, and it is what the resolver branches on:
 
-The two non-normal outcomes must not share a code path: (2) is expected compatibility, (3) is a
-broken contract.
+| Window marker | Requested tag | Outcome |
+|---------------|---------------|---------|
+| present | found | **Tag match** — resolve to the pane id. Normal path |
+| **absent** | — | **Legacy fallback** — window predates tagging. Use the index convention and log one `pane-fallback` lifecycle event per window per session (not per message) |
+| present | **absent, or claimed twice** | **Resolution failure (loud)** — return an error, never an index |
+
+The third row is the case the original formulation would have mishandled: a window that *should*
+carry tags but doesn't is a broken contract, not a legacy window, and the index it would fall back to
+may host an editor or a git TUI. Duplicate-tag convergence remains the control-pane sweep's job, not
+the resolver's.
+
+The two non-normal outcomes must not share a code path: legacy fallback is expected compatibility,
+resolution failure is a broken contract. Phase 2 must pin **both** with tests, including the
+adversarial case — panes present, tagging deliberately made to fail, assert a loud error and
+**not** an index fallback.
 
 #### Pane-addressing site enumeration (verified against the tree, 2026-08-31)
 
+**Reconciling the counts.** Four numbers appear in this section and they are not competing estimates
+of one quantity — each measures a different set. Stated once, authoritatively:
+
+| Count | What it measures |
+|-------|------------------|
+| **98** | All tmux invocations taking `-t` in non-test Go — the superset, including session- and window-scoped targets (`has-session`, `list-windows`, `select-window`, `set-hook`) that address no pane at all |
+| **42** | References to `PaneTarget()`/`AgentPane()`, excluding the two function definitions |
+| **39** | **Class A** — external consumers of the resolver. 42 minus `config.go:73` (`PaneTarget` calling `AgentPane` internally) minus `prompt_inject.go` and `control_pane.go`, both of which are Class B rather than A |
+| **31** | **Class B** — hand-built pane-target literals, the actual work |
+
 Class A — resolves through `PaneTarget()`/`AgentPane()` (fine as written; fixed wholesale by the
 resolver): 39 non-test call sites across `bus/` (clear, deliver, diagnose, health, notify,
-prompt_inject via `AgentPane`, providers claude/codex/opencode, reload, remote, timetrack),
-`cmd/` (compact, simulate), `daemon/daemon.go` (10 sites), `tui/` (model.go via the
-`tui/agents.go` wrapper).
+providers claude/codex/opencode, reload, remote, timetrack), `cmd/` (compact, simulate),
+`daemon/daemon.go` (10 sites), `tui/` (model.go via the `tui/agents.go` wrapper).
 
 Class B — hand-built pane targets in non-test Go (the actual work):
 
@@ -330,7 +337,61 @@ find because it builds its target from `AgentPane(window)`, is included; and a c
 - [ ] Coverage floor so a skipped run cannot report green
 - [ ] Run the script and confirm all checks pass
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-117-pane-targeting-by-identity | 12m | 2026-08-31 13:44 |
+
+The near-zero total is the ledger's actual value, not a placeholder. Phase 1 was carried out on `main`, and the
+branch was created at 13:22:33 to receive the commit — so no active time accrued against it. The
+work's real duration is not recoverable from the ledger: `main` is on the ignore list (`ignored:
+true`), and its 3h 11m is stale accumulation from earlier sessions, not this work. Recording that
+figure here would have attributed unrelated time to this branch. This is the per-branch/per-spec
+attribution gap; time recorded from here forward will be genuine.
+
 ## Status
 
 In Progress — Phase 1 complete (contract established); Phases 2-5 open. Spec file still lives in
 `backlog/`; moving it to `drafts/` is a separate user-decided step.
+
+Phase 2 work has **landed in the working tree but is not yet committed or checked off**. Spawn
+`spawn-3017de3d` harvested it out of its worktree at 13:45–13:46: `bus/pane.go` and
+`bus/pane_test.go` are now untracked files in the repo, alongside modifications to `config.go`,
+`control_pane.go`, `control_pane_test.go`, `launcher.go`, `mode.go`, and `spawn.go`. A *clean*
+checkout of this branch still produces no `pane.go` — the code is present but uncommitted.
+
+The checkboxes stay open because **review rejected the work**. The `implement` node finished
+`success` (1505 s) at 13:48:08 and tests passed, but review reported **2 must-fix, 2 should-fix, 1
+nit** — specifically *propagate pane-tagging failures* and *fail closed on unknown worktree status
+before cleanup*. The first lands squarely on acceptance criterion "a failed resolution fails loudly",
+so Phase 2 is not done. Evidence inventory below is for whichever pass closes it **after** the
+must-fixes land:
+
+| Phase 2 step | Evidence in the working tree |
+|--------------|------------------------------|
+| Tag panes at creation | `TagPane()`, `@muxcode_pane` stamping, launcher/mode/control-pane edits |
+| Identity resolution behind `PaneTarget()` | `pane.go` resolver, `@muxcode_tagged` window marker, `unresolvedPaneSentinel` |
+| Logged fallback vs loud failure | `legacyPaneIndex()` fallback + sentinel that tmux rejects rather than an index |
+| Unit tests, each pinned separately | `TestResolvePane_{ByTag,LegacyFallbackLogsOnce,MissingTagFailsLoud,DuplicateTagFailsLoud,NoCensusIsSilentLegacy}`, `TestPaneTarget_SentinelNeverAnIndex`, `TestTagWindowPanes_{StampsTagsThenMarker,AdversarialFailureIsLoudNotFallback,NoReadBackLeavesUnmarked}` |
+
+Tests passing is confirmed by review's own report, not merely inferred from the 13:47:31 task row.
+
+**The graph run died rather than routing to its fix node**, and that is a template defect, not a
+property of this work. Run `1788195259-req-code-pr-3fbcc7da` ended `failed` at 13:48:50 —
+`node review failed with no live edge`. The frozen `req-code-pr` definition has `build → fix` and
+`test → fix`, but `review` has exactly one outgoing edge, `review → update-spec`:
+
+```
+build  -> test        build -> fix
+test   -> review      test  -> fix
+review -> update-spec          (no review -> fix)
+```
+
+So a build or test failure is repairable in-loop, while a *review* failure — the one outcome that
+carries reasoned must-fix findings — kills the run and strands `fix` as unreachable-`pending`. Worth
+filing separately against the template; it will recur on every spec that uses `req-code-pr`.
+
+Also note `build` and `test` both returned `outcome=unknown` and were routed via the success edge
+(`graph-unknown-fallback`), so neither gate actually asserted anything here. Review was the only node
+that returned an authoritative outcome — and it is the one with nowhere to send it.
