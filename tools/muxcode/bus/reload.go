@@ -38,11 +38,8 @@ func clearReloadMarker(session, role string) {
 // ReloadTarget resolves the correct tmux pane target for a role,
 // accounting for mode-cycled agents (edit↔auto on F2, plan↔research on F1).
 //
-// For active mode agents: targets the host window's agent pane
-// (e.g. "session:edit.1" for the active edit mode).
-//
-// For inactive mode agents: targets the holding window's agent pane
-// (e.g. "session:auto.1" for the inactive auto mode).
+// For mode-cycled agents (active or inactive): targets the hold
+// window's agent pane, resolved by identity.
 //
 // For standard (non-mode-cycled) agents: uses PaneTarget.
 func ReloadTarget(session, role string) string {
@@ -64,7 +61,7 @@ func ReloadTarget(session, role string) string {
 		}
 		for _, agent := range state.Agents {
 			if agent.Role == role && agent.HoldWindow != "" {
-				return session + ":" + agent.HoldWindow + ".1"
+				return PaneTargetForWindow(session, agent.HoldWindow, PaneTagAgent)
 			}
 		}
 	}
@@ -475,7 +472,7 @@ func wakeAfterReload(session, role string) {
 // split-left window and relaunches it. This ensures a clean console state
 // after an agent reload (e.g. provider change may affect rendering).
 func restartConsole(session, window string) {
-	leftPane := session + ":" + window + ".0"
+	leftPane := PaneTargetForWindow(session, window, PaneTagLeft)
 	// Send C-c to stop the current console process
 	exec.Command("tmux", "send-keys", "-t", leftPane, "C-c").Run()
 	time.Sleep(500 * time.Millisecond)

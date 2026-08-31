@@ -178,8 +178,8 @@ func ModeSwitch(session, window, mode string) error {
 
 // modeSwitchTo performs a window swap from current to targetIdx.
 // Uses swap-window instead of swap-pane so each window keeps its own panes
-// intact. This preserves bus targeting (agents reference window names like
-// "edit.1") and avoids layout/size mismatches between windows.
+// intact. This preserves bus targeting (panes are resolved within their
+// window by identity) and avoids layout/size mismatches between windows.
 //
 // The swap and focus selection are batched into a single tmux command chain
 // (one server event loop iteration, one redraw). Per-window format overrides
@@ -329,8 +329,8 @@ func modeCreateAgent(session string, agent *ModeAgent) error {
 	tmuxRun("set-option", "-w", "-t", session+":"+agent.HoldWindow,
 		"window-status-current-format", "")
 
-	// Set up console viewer in left pane (pane 0).
-	tmuxRun("send-keys", "-t", session+":"+agent.HoldWindow+".0",
+	// Console viewer — pre-split the window has one pane, so the bare window target addresses it.
+	tmuxRun("send-keys", "-t", session+":"+agent.HoldWindow,
 		fmt.Sprintf("muxcode console %s", agent.Role), "Enter")
 
 	// Split horizontally for agent pane (pane 1).
@@ -345,8 +345,12 @@ func modeCreateAgent(session string, agent *ModeAgent) error {
 		fmt.Fprintf(os.Stderr, "Warning: pane tagging failed for %s — window marked broken, deliveries error rather than risk index misdelivery: %v\n", agent.HoldWindow, terr)
 	}
 
-	// Launch the agent in pane 1.
-	tmuxRun("send-keys", "-t", session+":"+agent.HoldWindow+".1",
+	// Launch the agent in the identity-resolved agent pane.
+	agentPane, rerr := ResolvePane(session, agent.HoldWindow, PaneTagAgent)
+	if rerr != nil {
+		return fmt.Errorf("resolving agent pane for %s: %w", agent.HoldWindow, rerr)
+	}
+	tmuxRun("send-keys", "-t", agentPane,
 		fmt.Sprintf("muxcode agent launch %s", agent.Role), "Enter")
 
 	// Start background auto-accept + wake-up for the new agent.
@@ -365,7 +369,7 @@ func modeCreateAgent(session string, agent *ModeAgent) error {
 func modeProjectDir(session string) string {
 	// Try the edit window's Neovim pane (always in the project dir).
 	out, err := exec.Command("tmux", "display-message",
-		"-t", session+":edit.0", "-p", "#{pane_current_path}").Output()
+		"-t", PaneTargetForWindow(session, "edit", PaneTagLeft), "-p", "#{pane_current_path}").Output()
 	if err == nil {
 		if dir := strings.TrimSpace(string(out)); dir != "" {
 			return dir
@@ -450,7 +454,7 @@ func tmuxRunErr(args ...string) error {
 // them. Without this, the agent launches, reaches ❯, and sits idle — never
 // waking to process the startup message that PreLaunchSetup wrote to its inbox.
 func modeAutoAcceptAndWake(session string, agent *ModeAgent) {
-	pane := session + ":" + agent.HoldWindow + ".1"
+	pane := PaneTargetForWindow(session, agent.HoldWindow, PaneTagAgent)
 	provider := ResolveProvider(agent.Role)
 
 	for attempt := 0; attempt < 30; attempt++ {

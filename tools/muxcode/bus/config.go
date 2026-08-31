@@ -59,14 +59,6 @@ func IsSplitLeft(window string) bool {
 	return splitLeftWindows[window]
 }
 
-// AgentPane returns the legacy creation-order pane index for a window's
-// agent ("1"). Retained only for the remaining hand-built pane targets
-// slated for MUX-117 Phase 3 — identity-based resolution lives in
-// ResolvePane (bus/pane.go), which PaneTarget routes through.
-func AgentPane(window string) string {
-	return "1"
-}
-
 // PaneTarget returns the tmux pane target string for a role's agent,
 // resolved by identity (see ResolvePane) rather than by index. Hosted
 // roles resolve to their host window (e.g. "docs" → "edit"). On
@@ -75,11 +67,7 @@ func AgentPane(window string) string {
 // keystrokes into whatever pane occupies an index. Callers that need
 // the error itself use ResolvePaneTarget.
 func PaneTarget(session, role string) string {
-	target, err := ResolvePaneTarget(session, role)
-	if err != nil {
-		return session + ":" + WindowForRole(role) + "." + unresolvedPaneSentinel
-	}
-	return target
+	return PaneTargetForWindow(session, WindowForRole(role), PaneTagAgent)
 }
 
 // BusSession returns the current bus session name.

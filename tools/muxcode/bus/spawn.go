@@ -174,7 +174,7 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 	TmuxSetWindowOption(session+":"+spawnRole, "@display-name", "Worker")
 	TmuxSetWindowOption(session+":"+spawnRole, "@display-name-upper", "WORKER")
 
-	// Split horizontally (agent in pane 1, consistent with all windows)
+	// Split horizontally (console left, agent right — consistent with all windows)
 	splitCmd := exec.Command("tmux", "split-window", "-h", "-t", session+":"+spawnRole)
 	if err := splitCmd.Run(); err != nil {
 		return SpawnEntry{}, fmt.Errorf("splitting window: %v", err)
@@ -184,21 +184,22 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 	if terr := TagWindowPanes(session, spawnRole); terr != nil && !errors.Is(terr, ErrPaneTagUnsupported) {
 		fmt.Fprintf(os.Stderr, "Warning: pane tagging failed for %s — window marked broken, deliveries error rather than risk index misdelivery: %v\n", spawnRole, terr)
 	}
+	// Creation-instant: launch survives tag failure — see CreationPaneTarget.
+	agentPane := CreationPaneTarget(session, spawnRole, PaneTagAgent)
 
-	// Worker console in pane 0 — view only, a failure must not block the spawn
-	_ = exec.Command("tmux", "select-pane", "-t", session+":"+spawnRole+".0", "-T", "CONSOLE").Run()
-	sendKeysThenEnter(session+":"+spawnRole+".0", fmt.Sprintf("%s console %s", launcher, spawnRole))
+	// Worker console in the left pane — view only, a failure must not block the spawn
+	consolePane := PaneTargetForWindow(session, spawnRole, PaneTagLeft)
+	_ = exec.Command("tmux", "select-pane", "-t", consolePane, "-T", "CONSOLE").Run()
+	sendKeysThenEnter(consolePane, fmt.Sprintf("%s console %s", launcher, spawnRole))
 
-	// Launch agent in pane 1 — cd into worktree if set.
-	// AGENT_ROLE must be the spawn-specific role (e.g. "spawn-edit-1") so the
-	// agent reads from its own inbox, not the base role's inbox.
+	// AGENT_ROLE is the spawn-specific role so the agent reads its own inbox, not the base role's.
 	var launchStr string
 	if entry.Worktree != "" {
 		launchStr = fmt.Sprintf("cd %s && AGENT_ROLE=%s %s agent launch %s", entry.Worktree, spawnRole, launcher, role)
 	} else {
 		launchStr = fmt.Sprintf("AGENT_ROLE=%s %s agent launch %s", spawnRole, launcher, role)
 	}
-	if err := sendKeysThenEnter(session+":"+spawnRole+".1", launchStr); err != nil {
+	if err := sendKeysThenEnter(agentPane, launchStr); err != nil {
 		return SpawnEntry{}, fmt.Errorf("launching agent: %v", err)
 	}
 

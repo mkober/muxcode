@@ -11,8 +11,11 @@ if [ -z "$session" ]; then
   exit 0
 fi
 
-# Resolve pane target — agent runs in pane 1 (right pane)
-target="${session}:${role}.1"
+# Resolve the agent pane by identity (MUX-117) — same three-way semantics
+# as the Go resolver. No resolution, no injection: never guess an index
+# that may host an editor or a git TUI.
+target=$(BUS_SESSION="$session" muxcode pane "$role" agent 2>/dev/null)
+[ -z "$target" ] && exit 0
 
 # Wait for the agent to reach idle (❯ prompt), max 30 seconds
 for i in $(seq 1 30); do

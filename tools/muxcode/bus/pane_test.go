@@ -37,11 +37,12 @@ func stubCensus(t *testing.T, census string, outErr error) *[][]string {
 // SAME evolving state — the adversarial spec case is a sequence, not a
 // single stubbed reply.
 type fakeTmuxWindow struct {
-	ids     []string          // pane ids in index order
-	tags    map[string]string // pane id → @muxcode_pane value
-	marker  bool              // window-level @muxcode_tagged
-	failTag map[string]bool   // index-target suffix (".0", ".1") whose tag write fails
-	calls   [][]string
+	ids        []string          // pane ids in index order
+	tags       map[string]string // pane id → @muxcode_pane value
+	marker     bool              // window-level @muxcode_tagged
+	failTag    map[string]bool   // index-target suffix (".0", ".1") whose tag write fails
+	failMarker bool              // the set-option -w marker write itself fails
+	calls      [][]string
 }
 
 func installFakeWindow(t *testing.T, w *fakeTmuxWindow) {
@@ -70,6 +71,9 @@ func installFakeWindow(t *testing.T, w *fakeTmuxWindow) {
 			return nil
 		}
 		if len(args) >= 6 && args[0] == "set-option" && args[1] == "-w" && args[4] == windowTaggedOption {
+			if w.failMarker {
+				return errors.New("set-option -w failed")
+			}
 			w.marker = true
 		}
 		return nil
@@ -237,6 +241,92 @@ func TestPaneTarget_SentinelNeverAnIndex(t *testing.T) {
 		if strings.HasSuffix(target, idx) {
 			t.Errorf("failed resolution fell back to index %s: %q", idx, target)
 		}
+	}
+}
+
+// PaneTargetForWindow is the window+tag variant the Phase 3 conversions
+// lean on: tag match yields the pane id, a failed resolution yields the
+// same non-index sentinel as PaneTarget, and an unmarked window falls
+// back to the legacy index for the requested tag.
+func TestPaneTargetForWindow(t *testing.T) {
+	stubCensus(t, "%0:left:1\n%1:agent:1", nil)
+	if target := PaneTargetForWindow("s", "edit", PaneTagLeft); target != "%0" {
+		t.Errorf("left target = %q, want %%0", target)
+	}
+	if target := PaneTargetForWindow("s", "edit", PaneTagControl); target != "s:edit."+unresolvedPaneSentinel {
+		t.Errorf("missing tag on tagged window = %q, want sentinel target", target)
+	}
+
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	session := "test-pane-target-window"
+	if err := os.MkdirAll(BusDir(session), 0755); err != nil {
+		t.Fatal(err)
+	}
+	stubCensus(t, "%0::\n%1::", nil)
+	if target := PaneTargetForWindow(session, "build", PaneTagLeft); target != session+":build.0" {
+		t.Errorf("legacy left target = %q, want %s:build.0", target, session)
+	}
+}
+
+// The marker-write double failure: tags land but the tmux marker write
+// fails, so the window would read as pre-tagging legacy forever. The
+// on-disk broken record makes later delivery fail closed while the
+// creation-instant path still launches by index — and a subsequent
+// successful tagging clears the record (negative control).
+func TestTagWindowPanes_MarkerWriteFailureFailsClosed(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	session := "test-pane-marker-fail"
+	if err := os.MkdirAll(BusDir(session), 0755); err != nil {
+		t.Fatal(err)
+	}
+	w := &fakeTmuxWindow{ids: []string{"%0", "%1"}, failMarker: true}
+	installFakeWindow(t, w)
+
+	if err := TagWindowPanes(session, "edit"); err == nil {
+		t.Fatal("marker write failure must surface an error")
+	}
+	if w.marker {
+		t.Fatal("fake stamped the marker despite failMarker")
+	}
+
+	// Delivery fails closed — never legacy .0/.1.
+	target, rerr := ResolvePane(session, "edit", PaneTagAgent)
+	if rerr == nil {
+		t.Fatalf("delivery on disk-broken window resolved to %q, want error", target)
+	}
+	// Creation-instant path still launches by index.
+	if target := CreationPaneTarget(session, "edit", PaneTagAgent); target != session+":edit.1" {
+		t.Errorf("creation target = %q, want %s:edit.1", target, session)
+	}
+
+	// Recovery: marker write succeeds on a later pass — broken record
+	// clears and tag resolution works normally.
+	w.failMarker = false
+	if err := TagWindowPanes(session, "edit"); err != nil {
+		t.Fatalf("recovered tagging pass: %v", err)
+	}
+	if windowMarkedBroken(session, "edit") {
+		t.Error("broken record not cleared after successful marker write")
+	}
+	if target, err := ResolvePane(session, "edit", PaneTagAgent); err != nil || target != "%1" {
+		t.Errorf("post-recovery resolution = %q, %v, want %%1", target, err)
+	}
+}
+
+// A broken window (marked, tags missing) must not cost the launch: the
+// creation-instant resolver falls back to the just-created index where
+// the delivery resolver returns the sentinel — the contrast is the
+// review must-fix (createWindowContent silently launched nothing).
+func TestCreationPaneTarget_IndexFallbackOnBrokenWindow(t *testing.T) {
+	stubCensus(t, "%0::1\n%1::1", nil)
+
+	if target := CreationPaneTarget("s", "edit", PaneTagAgent); target != "s:edit.1" {
+		t.Errorf("creation target on broken window = %q, want s:edit.1", target)
+	}
+	if target := PaneTargetForWindow("s", "edit", PaneTagAgent); target != "s:edit."+unresolvedPaneSentinel {
+		t.Errorf("delivery target on broken window = %q, want sentinel", target)
 	}
 }
 

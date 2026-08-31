@@ -299,7 +299,9 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	if err := TmuxSelectWindow(session, "edit"); err != nil {
 		TmuxSelectWindow(session, firstWin) // fallback
 	}
-	TmuxSelectPane(session + ":edit.1") // ignore error
+	if pane, err := ResolvePane(session, "edit", PaneTagAgent); err == nil {
+		TmuxSelectPane(pane) // ignore error
+	}
 
 	fmt.Printf("  Session '%s' ready\n\n", session)
 
@@ -329,62 +331,61 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	return AttachToSession(session)
 }
 
-// createWindowContent sets up the content (panes) for a window.
+// createWindowContent sets up the content (panes) for a window: pane 0
+// content first (addressed by the bare window target while it is the
+// only pane), then the split, then TagWindowPanes while creation-order
+// indices still hold (MUX-117). Everything after the tagging addresses
+// panes by identity — on a broken window the sentinel targets make the
+// sends error rather than fire keystrokes at an index.
 func createWindowContent(cfg *LauncherConfig, session, win, projectDir, agentLauncher string) error {
 	target := session + ":" + win
 	role := cfg.AgentRole(win)
 
-	if win == "edit" {
+	sendInit(cfg, target)
+	var openedDoc string
+	launchRole := role
+	switch {
+	case win == "edit":
 		// Edit window: editor (left) + agent (right)
-		sendInit(cfg, target)
 		sendEditorCommand(cfg, target)
-		TmuxSplitWindow(target, projectDir)
-		sendInit(cfg, target+".1")
-		sendCommand(target+".1", agentLauncher+" edit")
-		TmuxSelectPane(target + ".0")
-	} else if win == "plan" {
+		launchRole = "edit"
+	case win == "plan":
 		// Plan window: Neovim with last-edited doc (left) + agent (right)
-		sendInit(cfg, target)
-		openedDoc := sendPlanEditorCommand(cfg, target, projectDir)
-		TmuxSplitWindow(target, projectDir)
-		sendInit(cfg, target+".1")
-		sendCommand(target+".1", agentLauncher+" plan")
-		TmuxSelectPane(target + ".0")
-
-		// Send startup context message so agent reads the opened doc
-		if openedDoc != "" {
-			_ = SendNoCC(session, Message{
-				ID:      NewMsgID("launcher"),
-				TS:      time.Now().Unix(),
-				From:    "launcher",
-				To:      "plan",
-				Type:    "request",
-				Action:  "context",
-				Payload: "Read " + openedDoc + " for initial context — this file is open in Neovim in the left pane.",
-			})
-		}
-	} else if cfg.IsSplitLeftWindow(win) {
+		openedDoc = sendPlanEditorCommand(cfg, target, projectDir)
+		launchRole = "plan"
+	case cfg.IsSplitLeftWindow(win) && HasConsoleView(win):
 		// Split-left: console (left) + agent (right)
-		sendInit(cfg, target)
-		if HasConsoleView(win) {
-			sendCommand(target, "muxcode console "+win)
-		}
-		TmuxSplitWindow(target, projectDir)
-		sendInit(cfg, target+".1")
-		sendCommand(target+".1", agentLauncher+" "+role)
-		TmuxSelectPane(target + ".1")
-	} else {
-		// Standard: terminal (left) + agent (right)
-		sendInit(cfg, target)
-		TmuxSplitWindow(target, projectDir)
-		sendInit(cfg, target+".1")
-		sendCommand(target+".1", agentLauncher+" "+role)
-		TmuxSelectPane(target + ".1")
+		sendCommand(target, "muxcode console "+win)
 	}
+
+	TmuxSplitWindow(target, projectDir)
 
 	// Stamp pane identity while creation-order indices still hold (MUX-117).
 	if terr := TagWindowPanes(session, win); terr != nil && !errors.Is(terr, ErrPaneTagUnsupported) {
 		fmt.Fprintf(os.Stderr, "Warning: pane tagging failed for %s — window marked broken, deliveries error rather than risk index misdelivery: %v\n", win, terr)
+	}
+	agentPane := CreationPaneTarget(session, win, PaneTagAgent)
+	leftPane := CreationPaneTarget(session, win, PaneTagLeft)
+
+	sendInit(cfg, agentPane)
+	sendCommand(agentPane, agentLauncher+" "+launchRole)
+	if win == "edit" || win == "plan" {
+		TmuxSelectPane(leftPane)
+	} else {
+		TmuxSelectPane(agentPane)
+	}
+
+	// Send startup context message so the plan agent reads the opened doc
+	if openedDoc != "" {
+		_ = SendNoCC(session, Message{
+			ID:      NewMsgID("launcher"),
+			TS:      time.Now().Unix(),
+			From:    "launcher",
+			To:      "plan",
+			Type:    "request",
+			Action:  "context",
+			Payload: "Read " + openedDoc + " for initial context — this file is open in Neovim in the left pane.",
+		})
 	}
 
 	// Set display name for the status bar label (used by #{@display-name} format).
@@ -395,14 +396,11 @@ func createWindowContent(cfg *LauncherConfig, session, win, projectDir, agentLau
 	TmuxSetWindowOption(target, "@display-name", CapitalizeWindow(win))
 	TmuxSetWindowOption(target, "@display-name-upper", strings.ToUpper(win))
 
-	// Pane 0 border title — pane 1's comes from its CLI, substituted at
-	// display time in pane-border-format (never pinned here).
-	_ = TmuxRun("select-pane", "-t", target+".0", "-T", paneZeroTitle(cfg, win))
+	// Left pane border title — the agent pane's comes from its CLI,
+	// substituted at display time in pane-border-format (never pinned here).
+	_ = TmuxRun("select-pane", "-t", leftPane, "-T", paneZeroTitle(cfg, win))
 
-	// Control pane (MUX-108) — created LAST so panes 0/1 keep their
-	// indices (AgentPane's delivery contract). Ensure, not Create: it
-	// no-ops (and dedupes) if a pane already exists, so a concurrent
-	// creator cannot leave two.
+	// Control pane (MUX-108) — created last, after tagging; Ensure dedupes so a concurrent creator cannot leave two.
 	if ControlPaneEnabledFor(win) {
 		_ = EnsureControlPane(session, win, false)
 	}
@@ -691,7 +689,11 @@ func AutoAccept(session string, windows []string) {
 				continue
 			}
 
-			pane := session + ":" + win + ".1"
+			pane, rerr := ResolvePane(session, win, PaneTagAgent)
+			if rerr != nil {
+				allDone = false
+				continue
+			}
 			content, err := TmuxCapturePaneLines(pane, 50)
 			if err != nil {
 				allDone = false
