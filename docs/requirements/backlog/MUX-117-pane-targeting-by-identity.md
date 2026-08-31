@@ -95,14 +95,14 @@ happens to be running. tmux pane **ids** (`%N`) are similarly stable and could b
 ### Acceptance criteria
 
 - [ ] A pane's role is resolved by **identity**, not by position — adding, removing, or reordering panes on a window does not change which pane an agent message reaches
-- [ ] `AgentPane()` no longer returns a constant, or is removed in favour of an identity-based resolver
+- [x] `AgentPane()` no longer returns a constant, or is removed in favour of an identity-based resolver — *removed outright; zero non-test references remain in the tree*
 - [x] Every hand-built pane target listed above resolves through the shared helper — no Go call site constructs `session:window.N` by hand — *grep gate run independently; only surviving hit is a **comment** in `control_pane.go:88`*
 - [x] The three shell hooks resolve panes through the same mechanism rather than hardcoded literals — *all three converted; remaining `\.[012]` hits are `sleep 0.1`/`0.2`*
 - [x] Resolution has an explicit, logged fallback when a pane carries no identity — sessions launched by an older binary must keep working — *`legacyPaneIndex()` gated on the `@muxcode_tagged` window marker, never on tag absence; pinned by `TestResolvePane_LegacyFallbackLogsOnce`, `TestResolvePane_NoCensusIsSilentLegacy`, `TestTagWindowPanes_UnsupportedTmuxDegradesLegacy`*
-- [ ] **A failed resolution fails loudly** — it never silently falls back to an index that might host an editor or a git TUI — ***close, but one state still falls through.** Covered now: sentinel path (`TestPaneTarget_SentinelNeverAnIndex`), adversarial tag failure, total failure marking broken, and — new and a genuinely good distinction — `TestCreationPaneTarget_IndexFallbackOnBrokenWindow`, which pins that a **marked-but-untagged** window may use an index at *creation* (creation-order holds by construction at that instant) yet **sentinels on delivery**. All 12 pass. **The remaining hole is a different state**: not *marked-and-broken* but *never marked*, because the marker write itself errored — that window takes `legacyPaneIndex()` and delivers by index. Still unreachable by test: the stub (`pane_test.go:72`) sets `w.marker = true` unconditionally on `set-option -w` and has no failure path. Closing this needs a stub that can fail the marker write*
+- [x] **A failed resolution fails loudly** — it never silently falls back to an index that might host an editor or a git TUI — *closed 15:01 after being opened at 14:28 and held through three passes. Every failure state now resolves loudly rather than by index: sentinel (`TestPaneTarget_SentinelNeverAnIndex`), adversarial tag failure, total failure, marked-but-untagged (`TestCreationPaneTarget_IndexFallbackOnBrokenWindow` — index at **creation**, sentinel on **delivery**), and finally **marker-write failure** (`TestTagWindowPanes_MarkerWriteFailureFailsClosed`). That last one was the hole: because the failing operation is the tmux write itself, the fix records brokenness **on disk** (`markWindowBroken` under `BusDir`) rather than in the option that just failed to write. The test asserts `ResolvePane` **errors** instead of returning `.0`/`.1`, and carries a recovery half (`failMarker = false` → record clears → normal resolution) so a resolver that always errored could not pass. Verified green, not asserted: `./test.sh` → **2175 PASS / 0 FAIL / 1 SKIP**, exit 0, with this test named*
 - [ ] **Negative control:** a test inserts a pane *before* the agent and proves delivery still reaches the agent — a fix that merely re-hardcodes a different index cannot pass
-- [ ] Control-pane identification and its dedupe sweep still work, including for panes created by an older binary (retroactive identification is a property MUX-108 deliberately has)
-- [ ] Mode-cycled windows (plan/research, edit/auto) still resolve the *active* agent correctly
+- [x] Control-pane identification and its dedupe sweep still work, including for panes created by an older binary (retroactive identification is a property MUX-108 deliberately has) — *`TestEnsureControlPane_DedupesDuplicates` and `TestControlPanesPredate` (the retroactive property) both PASS in the 2179/0 suite*
+- [x] Mode-cycled windows (plan/research, edit/auto) still resolve the *active* agent correctly — *`TestModeCycledWindowResolvesActiveAgent` (out-of-order pane ids; asserts the **id** `%11`, and that the target contains no `"."` so an index resolver fails) and `TestModeRoleResolutionIndependentOfCycleState`. Both PASS in `./test.sh` → 2179 PASS / 0 FAIL*
 - [ ] `scripts/test-pane-targeting.sh` passes
 
 ### Technical approach
@@ -336,14 +336,25 @@ find because it builds its target from `AgentPane(window)`, is included; and a c
 - [x] Control-pane identification and dedupe still work, including retroactively for old-binary panes
       — *`TestEnsureControlPane_DedupesDuplicates` and `TestControlPanesPredate` (the retroactive
       MUX-108 property) both pass in a green `go test ./bus/` run*
-- [ ] Mode-cycled windows resolve the active agent — **not verified; no test covers it.** `mode.go`
-      is converted and calls `TagWindowPanes` at `:344`, but `mode_test.go` exercises only cycle
-      *state* (`TestCurrentModeAgent`, `TestNextModeIndex`, read/write). Nothing connects a cycled
-      window to pane **resolution**, and neither `mode_test.go` nor `control_pane_test.go` references
-      `ResolvePane`/`PaneTargetInWindow`. The green suite is not evidence for this line
-- [ ] Delivery-ack, notify, deliver, clear, compact, and diagnose all still reach agents — *unit
-      suite is green, but "reach agents" is a live-delivery claim that unit tests cannot make. Owned
-      by Phase 5*
+- [x] Mode-cycled windows resolve the active agent — *closed 15:08. `mode_test.go` now carries 4
+      pane-resolver references where it previously had **zero**; both new tests PASS in a green
+      2179/0 suite*
+- [ ] Delivery-ack, notify, deliver, clear, compact, and diagnose all still reach agents — **4 of 6
+      evidenced live, 2 deliberately not tested.** The running daemon *is* the identity-resolver
+      build: installed binary `15:09:46` is newer than `pane.go` `15:03:37`, and the daemon restarted
+      onto it at `15:09:47` (pid 89297). Since that restart, on this session:
+
+      | Mechanism | Live evidence on the current binary |
+      |-----------|-------------------------------------|
+      | notify | `inbox-notify plan` 15:09:47, `review` 15:10:06, `plan` 15:10:17 |
+      | deliver | requests arrived and were consumed at 15:09:51, 15:10:04, 15:10:15 |
+      | delivery-ack | replies marked responded; `cleanup delivery=2 tasks=1` |
+      | diagnose | `muxcode diagnose plan` → renders, `✅ No issues detected` |
+
+      **`clear` and `compact` are not exercised**, and should not be fired ad hoc to close a
+      checkbox: both have real side effects on another agent's conversation. They belong in the
+      hermetic Phase 5 script with a scratch session. The criterion stays open on that basis — the
+      evidence above is strong for the delivery path but is not the whole claim*
 
 ### Phase 5: Integration test
 
@@ -356,11 +367,42 @@ find because it builds its target from `AgentPane(window)`, is included; and a c
 - [ ] Coverage floor so a skipped run cannot report green
 - [ ] Run the script and confirm all checks pass
 
+> ### Verification state, 15:01
+>
+> `./build.sh` → gofmt/vet clean, 2 modules built, exit 0. `./test.sh` → **2175 PASS / 0 FAIL / 1
+> SKIP**, exit 0. Both delegated rather than run here: the plan window now blocks build commands, so
+> this spec's check-offs rest on the build and test agents' reports, not on self-verification.
+>
+> A build break at 14:57 (`pane.go:185,187` calling `markWindowBroken`/`clearWindowBroken` before
+> either existed) resolved at 14:59 when the helpers landed at `:213`/`:225`. Recorded because the
+> spec carried a "build passes" note through the window in which it was false.
+>
+> **Phase 3 is committed** as `e94506b MUX-117 Phase 3: Retire the remaining pane-targeting bypass
+> sites`. Working tree is clean apart from this spec.
+>
+> **Mode-cycle tests have landed in the repo** (15:07, uncommitted) and genuinely exercise pane
+> resolution — 4 references to the resolvers, where the repo's previous `mode_test.go` had **zero**.
+> `TestModeCycledWindowResolvesActiveAgent` stubs the `auto` window with pane ids deliberately out of
+> creation order (`%11:agent` listed before `%10:left`), asserts resolution to the **pane id** `%11`,
+> and asserts the target contains no `"."` — so an index-based resolver fails it. It also checks the
+> displaced default (`PaneTarget(session,"edit")` → `%1`).
+> `TestModeRoleResolutionIndependentOfCycleState` pins that cycle position never changes where a role
+> delivers, preventing a mid-flight redirect when the user cycles.
+>
+> **Not checked off yet** — a test run is delegated (`1788203272-plan-ced2f65d`) and the criterion
+> waits on it. `pane.go` (+38/−9) and `pane_test.go` (+43, now 15 tests) also changed in the same
+> window, so the last green run at 15:01 no longer covers this tree.
+>
+> A caution for the next pass: grepping `mode_test.go` for the union of new and old test names
+> returns hits from pre-existing `TestActiveModeRole_*` cases (commit `09d9745`, unrelated to
+> MUX-117) which resolve the active **role**, not a **pane**. The discriminating check is a grep for
+> the pane resolvers themselves.
+
 ## Time Tracking
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-117-pane-targeting-by-identity | 1h 4m | 2026-08-31 14:53 |
+| MUX-117-pane-targeting-by-identity | 1h 16m | 2026-08-31 15:09 |
 
 The near-zero total is the ledger's actual value, not a placeholder. Phase 1 was carried out on `main`, and the
 branch was created at 13:22:33 to receive the commit — so no active time accrued against it. The

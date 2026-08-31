@@ -182,7 +182,9 @@ func TagWindowPanes(session, window string) error {
 	}
 	if merr := TmuxRun("set-option", "-w", "-t", target, windowTaggedOption, "1"); merr != nil {
 		failures = append(failures, "marker: "+merr.Error())
-		markWindowBroken(session, window)
+		if perr := markWindowBroken(session, window); perr != nil {
+			failures = append(failures, "broken-record persist: "+perr.Error())
+		}
 	} else {
 		clearWindowBroken(session, window)
 	}
@@ -208,15 +210,21 @@ func brokenWindowMarkerPath(session, window string) string {
 	return filepath.Join(BusDir(session), "pane-broken-"+window+".marker")
 }
 
-// markWindowBroken persists the broken-window record; best-effort — a
-// session without a bus dir has nothing to protect.
-func markWindowBroken(session, window string) {
+// markWindowBroken persists the broken-window record. A persistence
+// failure is returned, never swallowed: with neither the tmux marker
+// nor the disk record written, the window WILL resolve as legacy, and
+// the caller's error is the only remaining trace of that exposure.
+func markWindowBroken(session, window string) error {
 	f, err := os.OpenFile(brokenWindowMarkerPath(session, window), os.O_CREATE|os.O_WRONLY, 0644)
-	if err == nil {
-		f.Close()
+	if err != nil {
+		LogLifecycle(session, "error", "pane", "pane-marker-write-failed",
+			fmt.Sprintf("window %s: tmux marker write failed AND broken-record persist failed (%v) — window may resolve as legacy", window, err))
+		return err
 	}
+	f.Close()
 	LogLifecycle(session, "error", "pane", "pane-marker-write-failed",
 		fmt.Sprintf("window %s: tmux marker write failed — broken state persisted on disk, deliveries fail closed", window))
+	return nil
 }
 
 // clearWindowBroken removes a stale broken record once a marker write
@@ -249,16 +257,28 @@ func windowMarkedBroken(session, window string) bool {
 // unparseable output) resolves to the legacy index silently: there is
 // no evidence to branch on, and the follow-up tmux command fails loudly
 // on its own when the window is genuinely absent.
+//
+// The disk-broken record guards EVERY road to a legacy index — the
+// unmarked-window branch and the no-census branch alike. Checking it
+// only past a successful census left the exact window most likely to
+// misbehave (broken tagging) falling back to indices whenever its
+// census also failed (review must-fix, 2026-08-31).
 func ResolvePane(session, window, tag string) (string, error) {
+	brokenErr := func() error {
+		err := fmt.Errorf("window %s:%s marked broken on disk — its tmux marker write failed at tagging; refusing index fallback", session, window)
+		logPaneEventOnce(session, window, "error", "pane-resolve-failed", err.Error())
+		return err
+	}
 	entries, err := listWindowPanes(session, window)
 	if err != nil || len(entries) == 0 {
+		if windowMarkedBroken(session, window) {
+			return "", brokenErr()
+		}
 		return session + ":" + window + "." + legacyPaneIndex(tag), nil
 	}
 	if !entries[0].tagged {
 		if windowMarkedBroken(session, window) {
-			err := fmt.Errorf("window %s:%s marked broken on disk — its tmux marker write failed at tagging; refusing index fallback", session, window)
-			logPaneEventOnce(session, window, "error", "pane-resolve-failed", err.Error())
-			return "", err
+			return "", brokenErr()
 		}
 		logPaneEventOnce(session, window, "warn", "pane-fallback",
 			fmt.Sprintf("window %s carries no %s marker — resolving by legacy index convention", window, windowTaggedOption))

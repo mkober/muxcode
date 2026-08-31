@@ -315,6 +315,49 @@ func TestTagWindowPanes_MarkerWriteFailureFailsClosed(t *testing.T) {
 	}
 }
 
+// The broken record must guard the no-census road too: a broken window
+// whose census also fails must error, not legacy-fall-back — while the
+// same census failure without a record keeps the documented silent
+// legacy behavior (negative control).
+func TestResolvePane_CensusErrorHonorsBrokenRecord(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	session := "test-pane-census-broken"
+	if err := os.MkdirAll(BusDir(session), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := markWindowBroken(session, "edit"); err != nil {
+		t.Fatalf("markWindowBroken: %v", err)
+	}
+	stubCensus(t, "", errors.New("no server running"))
+
+	if target, err := ResolvePane(session, "edit", PaneTagAgent); err == nil {
+		t.Fatalf("census-error on disk-broken window resolved to %q, want error", target)
+	}
+
+	clearWindowBroken(session, "edit")
+	if target, err := ResolvePane(session, "edit", PaneTagAgent); err != nil || target != session+":edit.1" {
+		t.Errorf("census-error without record = %q, %v, want legacy index", target, err)
+	}
+}
+
+// When the broken record itself cannot persist (no bus dir), the
+// failure must ride the returned error — with neither tmux marker nor
+// disk record, the caller's error is the only trace of the exposure.
+func TestTagWindowPanes_BrokenRecordPersistFailureSurfaced(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	session := "test-pane-persist-fail"
+	// BusDir(session) deliberately not created — the record write fails.
+	w := &fakeTmuxWindow{ids: []string{"%0", "%1"}, failMarker: true}
+	installFakeWindow(t, w)
+
+	err := TagWindowPanes(session, "edit")
+	if err == nil || !strings.Contains(err.Error(), "broken-record persist") {
+		t.Fatalf("persist failure not surfaced in error: %v", err)
+	}
+}
+
 // A broken window (marked, tags missing) must not cost the launch: the
 // creation-instant resolver falls back to the just-created index where
 // the delivery resolver returns the sentinel — the contrast is the

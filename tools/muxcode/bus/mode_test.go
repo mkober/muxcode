@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -523,5 +524,114 @@ func TestActiveModeRole_UnknownWindow(t *testing.T) {
 	_, err := ActiveModeRole("nonexistent", "build")
 	if err == nil {
 		t.Error("expected error for unknown window")
+	}
+}
+
+// stubWindowCensus answers list-panes per window target, so windows can
+// carry different pane censuses in one test — the shape mode cycling
+// produces, where the host window and the hold window each keep their
+// own panes and tags across swap-window. Unknown targets error so a
+// mistargeted resolution fails the test instead of resolving as a
+// silent legacy fallback.
+func stubWindowCensus(t *testing.T, censusByTarget map[string]string) {
+	t.Helper()
+	origRun := tmuxRunner
+	origOut := tmuxOutputRunner
+	tmuxRunner = func(args ...string) error { return nil }
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		if len(args) >= 3 && args[0] == "list-panes" && args[1] == "-t" {
+			if census, ok := censusByTarget[args[2]]; ok {
+				return census, nil
+			}
+		}
+		return "", errors.New("stubWindowCensus: no census for " + strings.Join(args, " "))
+	}
+	t.Cleanup(func() {
+		tmuxRunner = origRun
+		tmuxOutputRunner = origOut
+	})
+}
+
+// A mode-cycled window resolves the ACTIVE agent by identity (MUX-117
+// Phase 4). Mode cycling swaps window indices (swap-window), never
+// window names or pane contents, so each mode role must resolve inside
+// its own named window: auto's census below lists the agent pane FIRST
+// — the order a swap-and-renumber produces — so an index-convention
+// read (agent at .1) would return the left pane, and only tag-based
+// resolution passes.
+func TestModeCycledWindowResolvesActiveAgent(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	session := "test-mode-resolve"
+	if err := os.MkdirAll(BusDir(session), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	state := DefaultModeCycleState()
+	state.Current = 1
+	if err := WriteModeCycleState(session, state); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	stubWindowCensus(t, map[string]string{
+		session + ":edit": "%0:left:1\n%1:agent:1",
+		session + ":auto": "%11:agent:1\n%10:left:1",
+	})
+
+	role, err := ActiveModeRole(session, "edit")
+	if err != nil {
+		t.Fatalf("ActiveModeRole: %v", err)
+	}
+	if role != "auto" {
+		t.Fatalf("active role = %q, want auto", role)
+	}
+
+	target, err := ResolvePaneTarget(session, role)
+	if err != nil {
+		t.Fatalf("ResolvePaneTarget(%s): %v", role, err)
+	}
+	if target != "%11" {
+		t.Errorf("active agent target = %q, want %%11 (auto window's agent pane id)", target)
+	}
+	if strings.Contains(target, ".") {
+		t.Errorf("active agent resolved to an index target, not a pane id: %q", target)
+	}
+
+	if target := PaneTarget(session, "edit"); target != "%1" {
+		t.Errorf("displaced default agent target = %q, want %%1 (edit window's agent pane id)", target)
+	}
+}
+
+// Cycle position never changes where a role delivers: with plan active
+// or research active, each role resolves its own window's agent pane —
+// delivery targets follow the role, not the cycle state. Pins that
+// resolution must never couple to the active mode, which would redirect
+// a delivery mid-flight when the user cycles.
+func TestModeRoleResolutionIndependentOfCycleState(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	session := "test-mode-cycle-independent"
+	if err := os.MkdirAll(BusDir(session), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stubWindowCensus(t, map[string]string{
+		session + ":plan":     "%2:left:1\n%3:agent:1",
+		session + ":research": "%21:agent:1\n%20:left:1",
+	})
+
+	for _, current := range []int{0, 1} {
+		state := DefaultPlanModeCycleState()
+		state.Current = current
+		if err := WriteModeCycleState(session, state); err != nil {
+			t.Fatalf("write state (current=%d): %v", current, err)
+		}
+
+		if target, err := ResolvePaneTarget(session, "plan"); err != nil || target != "%3" {
+			t.Errorf("current=%d: plan target = %q, %v, want %%3", current, target, err)
+		}
+		if target, err := ResolvePaneTarget(session, "research"); err != nil || target != "%21" {
+			t.Errorf("current=%d: research target = %q, %v, want %%21", current, target, err)
+		}
 	}
 }
