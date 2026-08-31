@@ -101,6 +101,12 @@ func CreateControlPane(session, win string) error {
 	if id == "" {
 		id = target + ".2"
 	}
+	// Identity tag (MUX-117) — resolution failure is logged, not fatal:
+	// start-command matching still identifies the pane retroactively.
+	if err := TagPane(id, PaneTagControl); err != nil {
+		LogLifecycle(session, "error", "pane", "pane-tag-failed",
+			"control pane "+id+" on "+win+": "+err.Error())
+	}
 	return TmuxRun("select-pane", "-t", id, "-T", " GRAPH ")
 }
 
