@@ -2,6 +2,7 @@ package bus
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -338,6 +339,11 @@ func modeCreateAgent(session string, agent *ModeAgent) error {
 		splitArgs = append(splitArgs, "-c", projectDir)
 	}
 	tmuxRun(splitArgs...)
+
+	// Stamp pane identity while creation-order indices still hold (MUX-117).
+	if terr := TagWindowPanes(session, agent.HoldWindow); terr != nil && !errors.Is(terr, ErrPaneTagUnsupported) {
+		fmt.Fprintf(os.Stderr, "Warning: pane tagging failed for %s — window marked broken, deliveries error rather than risk index misdelivery: %v\n", agent.HoldWindow, terr)
+	}
 
 	// Launch the agent in pane 1.
 	tmuxRun("send-keys", "-t", session+":"+agent.HoldWindow+".1",

@@ -348,6 +348,28 @@ func TestBuiltinGraphTemplatesValidate(t *testing.T) {
 	}
 }
 
+// A review failure must route to the fix worker, not kill the run —
+// the missing edge failed a live req-code-pr at its review node
+// (2026-08-31, run 1788195259) while build/test failures routed fine.
+func TestReviewFailureRoutesToFix(t *testing.T) {
+	for _, name := range []string{"req-code-pr", "story-lifecycle"} {
+		g, err := ParseGraph([]byte(builtinGraphJSON[name]))
+		if err != nil {
+			t.Fatalf("template %q: parse: %v", name, err)
+		}
+		found := false
+		for _, e := range g.Edges {
+			if e.From == "review" && e.To == "fix" && e.Outcome == OutcomeFailure {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("template %q lacks a review -[failure]-> fix edge", name)
+		}
+	}
+}
+
 func TestResolveGraphTemplateBuiltin(t *testing.T) {
 	g, source, err := ResolveGraphTemplate("build-test-review")
 	if err != nil {

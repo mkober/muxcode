@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,6 +27,7 @@ type SpawnEntry struct {
 	Notified    bool   `json:"notified"`
 	Worktree    string `json:"worktree,omitempty"`     // worktree directory path
 	WorktreeRef string `json:"worktree_ref,omitempty"` // git ref used (commit SHA)
+	SeedMsgID   string `json:"seed_msg_id,omitempty"`  // ID of the seeded spawn-task request
 }
 
 // ReadSpawnEntries reads all spawn entries from the spawn JSONL file.
@@ -153,6 +155,7 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 	if err := Send(session, msg); err != nil {
 		return SpawnEntry{}, fmt.Errorf("seeding inbox: %v", err)
 	}
+	entry.SeedMsgID = msg.ID
 
 	// Find the muxcode binary (agent launch is now native Go)
 	launcher, err := findMuxcodeBinary()
@@ -175,6 +178,11 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 	splitCmd := exec.Command("tmux", "split-window", "-h", "-t", session+":"+spawnRole)
 	if err := splitCmd.Run(); err != nil {
 		return SpawnEntry{}, fmt.Errorf("splitting window: %v", err)
+	}
+
+	// Stamp pane identity while creation-order indices still hold (MUX-117).
+	if terr := TagWindowPanes(session, spawnRole); terr != nil && !errors.Is(terr, ErrPaneTagUnsupported) {
+		fmt.Fprintf(os.Stderr, "Warning: pane tagging failed for %s — window marked broken, deliveries error rather than risk index misdelivery: %v\n", spawnRole, terr)
 	}
 
 	// Worker console in pane 0 — view only, a failure must not block the spawn
@@ -280,8 +288,42 @@ func CheckSpawnWindow(session, window string) bool {
 	return false
 }
 
+// Seams for RefreshSpawnStatus so unit tests can simulate live windows
+// and observe kills without tmux.
+var (
+	spawnWindowExistsFn = CheckSpawnWindow
+	spawnKillWindowFn   = func(session, window string) error {
+		return exec.Command("tmux", "kill-window", "-t", session+":"+window).Run()
+	}
+)
+
+// spawnHasResponded reports whether the worker answered its seeded
+// spawn-task, read from the delivery store — the same responded status
+// hasReceipt trusts. Entries that predate SeedMsgID keep the
+// window-gone-only lifecycle.
+func spawnHasResponded(session string, e SpawnEntry) bool {
+	if e.SeedMsgID == "" {
+		return false
+	}
+	ds, err := ReadDeliveryStatus(session, e.SeedMsgID)
+	if err != nil {
+		return false
+	}
+	return ds.Status == StatusResponded
+}
+
 // RefreshSpawnStatus checks all running spawns and updates their status.
 // Returns the list of entries that transitioned from running to completed.
+//
+// A spawn completes two ways: its window is gone, or it answered its
+// seeded task — a reply implies completion, mirroring hasReceipt. The
+// second path exists because a Claude worker never exits on its own: it
+// reports and idles at its prompt, so a window-gone-only lifecycle left
+// every live graph spawn node running forever (MUX-117 Phase 1 stalled
+// ~20min until a manual kill-window). Responded workers are reaped —
+// window killed, then the shared completion path below. A failed kill
+// leaves the entry running for the next cycle: completing anyway would
+// tear down the worktree under a still-live worker.
 func RefreshSpawnStatus(session string) ([]SpawnEntry, error) {
 	entries, err := ReadSpawnEntries(session)
 	if err != nil {
@@ -296,11 +338,16 @@ func RefreshSpawnStatus(session string) ([]SpawnEntry, error) {
 			continue
 		}
 
-		if CheckSpawnWindow(session, e.Window) {
-			continue
+		if spawnWindowExistsFn(session, e.Window) {
+			if !spawnHasResponded(session, e) {
+				continue
+			}
+			if err := spawnKillWindowFn(session, e.Window); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: reap kill-window failed for %s: %v\n", e.SpawnRole, err)
+				continue
+			}
 		}
 
-		// Window is gone — mark completed and clean up worktree
 		entries[i].Status = "completed"
 		entries[i].FinishedAt = time.Now().Unix()
 		changed = true
@@ -470,10 +517,39 @@ func createSpawnWorktree(session, spawnRole string) (string, string, error) {
 	return wtPath, ref, nil
 }
 
+// worktreeRemovable reports whether the worktree may be destroyed.
+// A path carrying a .git entry is judged by `git status --porcelain`:
+// clean → removable; dirty or undeterminable → preserved. Refusing on
+// unknown is deliberate — a status failure must not read as permission
+// to delete possibly-unharvested work. A path with no .git entry is not
+// a worktree and stays removable (and is never probed via a walked-up
+// parent repo's status).
+func worktreeRemovable(worktreePath string) bool {
+	if _, err := os.Stat(filepath.Join(worktreePath, ".git")); err != nil {
+		return true
+	}
+	out, err := exec.Command("git", "-C", worktreePath, "status", "--porcelain").Output()
+	return err == nil && len(bytes.TrimSpace(out)) == 0
+}
+
 // removeSpawnWorktree cleans up a spawn's git worktree.
 // Returns nil if worktreePath is empty (no worktree to remove).
+//
+// Dirty or undeterminable worktrees are preserved, never removed: a
+// worker's reply proves it answered, not that its work reached a branch
+// (MUX-120 fifth gap),
+// and every removal path — reap, stop, finished-clean, orphan prune —
+// funnels through here, so this is the one guard that keeps unharvested
+// work off the --force/RemoveAll path. Preserved worktrees cost disk
+// until a human harvests or deletes them; the disk-pressure signal
+// covers the leak.
 func removeSpawnWorktree(worktreePath string) error {
 	if worktreePath == "" {
+		return nil
+	}
+
+	if !worktreeRemovable(worktreePath) {
+		fmt.Fprintf(os.Stderr, "Warning: preserving spawn worktree %s — dirty or undeterminable, unharvested work may be present\n", worktreePath)
 		return nil
 	}
 

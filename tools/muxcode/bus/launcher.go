@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -379,6 +380,11 @@ func createWindowContent(cfg *LauncherConfig, session, win, projectDir, agentLau
 		sendInit(cfg, target+".1")
 		sendCommand(target+".1", agentLauncher+" "+role)
 		TmuxSelectPane(target + ".1")
+	}
+
+	// Stamp pane identity while creation-order indices still hold (MUX-117).
+	if terr := TagWindowPanes(session, win); terr != nil && !errors.Is(terr, ErrPaneTagUnsupported) {
+		fmt.Fprintf(os.Stderr, "Warning: pane tagging failed for %s — window marked broken, deliveries error rather than risk index misdelivery: %v\n", win, terr)
 	}
 
 	// Set display name for the status bar label (used by #{@display-name} format).

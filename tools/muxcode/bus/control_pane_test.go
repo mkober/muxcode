@@ -86,8 +86,8 @@ func TestCreateControlPane_Argv(t *testing.T) {
 	if err := CreateControlPane("s", "edit"); err != nil {
 		t.Fatalf("CreateControlPane: %v", err)
 	}
-	if len(*calls) != 2 {
-		t.Fatalf("expected split + title calls, got %v", *calls)
+	if len(*calls) != 3 {
+		t.Fatalf("expected split + tag + title calls, got %v", *calls)
 	}
 	split := strings.Join((*calls)[0], " ")
 	for _, want := range []string{"split-window", "-vf", "-d", "-l 18", "-t s:edit", "muxcode graph ui", "-e BUS_SESSION=s", "-P -F #{pane_id}"} {
@@ -95,7 +95,16 @@ func TestCreateControlPane_Argv(t *testing.T) {
 			t.Errorf("split call missing %q: %s", want, split)
 		}
 	}
-	title := strings.Join((*calls)[1], " ")
+	tag := strings.Join((*calls)[1], " ")
+	for _, want := range []string{"set-option", "-p", "-t %9", "@muxcode_pane control"} {
+		if !strings.Contains(tag, want) {
+			t.Errorf("tag call missing %q: %s", want, tag)
+		}
+	}
+	if strings.Contains(tag, "s:edit.2") {
+		t.Errorf("tag must not assume index 2: %s", tag)
+	}
+	title := strings.Join((*calls)[2], " ")
 	if !strings.Contains(title, "select-pane") || !strings.Contains(title, " GRAPH ") || !strings.Contains(title, "%9") {
 		t.Errorf("title must target the printed pane id: %s", title)
 	}
