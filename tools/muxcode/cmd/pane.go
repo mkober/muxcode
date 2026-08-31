@@ -12,8 +12,12 @@ import (
 // intended consumer — they cannot reach the Go resolver directly, and
 // this keeps them on the same three-way semantics (tag match / legacy
 // fallback / loud failure) instead of a private index convention.
-// Exits non-zero on resolution failure so callers can skip rather than
-// fire keystrokes at an index that may host an editor or a git TUI.
+// Exits non-zero ONLY on the loud-failure branch (marked window with a
+// missing or duplicated tag, or an on-disk broken record) so callers
+// can skip rather than fire keystrokes at an index that may host an
+// editor or a git TUI. The legacy-fallback branch prints an index
+// target and exits zero — for an unmarked window that is the documented
+// outcome, not a failure (PR #54 review clarification).
 //
 // Usage: muxcode pane <role> [agent|left|control] [--session <name>]
 func Pane(args []string) {

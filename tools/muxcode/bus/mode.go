@@ -345,11 +345,8 @@ func modeCreateAgent(session string, agent *ModeAgent) error {
 		fmt.Fprintf(os.Stderr, "Warning: pane tagging failed for %s — window marked broken, deliveries error rather than risk index misdelivery: %v\n", agent.HoldWindow, terr)
 	}
 
-	// Launch the agent in the identity-resolved agent pane.
-	agentPane, rerr := ResolvePane(session, agent.HoldWindow, PaneTagAgent)
-	if rerr != nil {
-		return fmt.Errorf("resolving agent pane for %s: %w", agent.HoldWindow, rerr)
-	}
+	// Creation-instant: launch survives tag failure — see CreationPaneTarget.
+	agentPane := CreationPaneTarget(session, agent.HoldWindow, PaneTagAgent)
 	tmuxRun("send-keys", "-t", agentPane,
 		fmt.Sprintf("muxcode agent launch %s", agent.Role), "Enter")
 
