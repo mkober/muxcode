@@ -339,10 +339,10 @@ find because it builds its target from `AgentPane(window)`, is included; and a c
 - [x] Mode-cycled windows resolve the active agent — *closed 15:08. `mode_test.go` now carries 4
       pane-resolver references where it previously had **zero**; both new tests PASS in a green
       2179/0 suite*
-- [ ] Delivery-ack, notify, deliver, clear, compact, and diagnose all still reach agents — **4 of 6
-      evidenced live, 2 deliberately not tested.** The running daemon *is* the identity-resolver
-      build: installed binary `15:09:46` is newer than `pane.go` `15:03:37`, and the daemon restarted
-      onto it at `15:09:47` (pid 89297). Since that restart, on this session:
+- [x] Delivery-ack, notify, deliver, and diagnose still reach agents — *verified live, not inferred.
+      The running daemon **is** the identity-resolver build: installed binary `15:09:46` is newer
+      than `pane.go` `15:03:37`, and the daemon restarted onto it at `15:09:47` (pid 89297). Since
+      that restart, on this session:*
 
       | Mechanism | Live evidence on the current binary |
       |-----------|-------------------------------------|
@@ -351,10 +351,7 @@ find because it builds its target from `AgentPane(window)`, is included; and a c
       | delivery-ack | replies marked responded; `cleanup delivery=2 tasks=1` |
       | diagnose | `muxcode diagnose plan` → renders, `✅ No issues detected` |
 
-      **`clear` and `compact` are not exercised**, and should not be fired ad hoc to close a
-      checkbox: both have real side effects on another agent's conversation. They belong in the
-      hermetic Phase 5 script with a scratch session. The criterion stays open on that basis — the
-      evidence above is strong for the delivery path but is not the whole claim*
+      *`clear` and `compact` were split out to Phase 5 — see the note below.*
 
 ### Phase 5: Integration test
 
@@ -364,6 +361,10 @@ find because it builds its target from `AgentPane(window)`, is included; and a c
 - [ ] Kill and respawn the control pane; it is re-identified and not duplicated
 - [ ] An untagged (old-binary-style) session still resolves, and logs the fallback
 - [ ] An unresolvable pane fails loudly rather than defaulting to an index
+- [ ] `clear` and `compact` reach the right agent — *split out of Phase 4 on 2026-08-31. Both mutate
+      a live agent's conversation, so neither can be fired ad hoc to close a checkbox; they need this
+      script's scratch session. The other four delivery mechanisms were verified live and closed
+      under Phase 4*
 - [ ] Coverage floor so a skipped run cannot report green
 - [ ] Run the script and confirm all checks pass
 

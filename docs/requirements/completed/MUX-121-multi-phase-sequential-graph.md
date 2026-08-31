@@ -238,9 +238,40 @@ The distinction matters and is the reason this row exists rather than a tick: th
 implies it" is exactly the reasoning that produced the defect
 [MUX-114](../completed/MUX-114-close-spec-node-has-no-completion-check.md) was written to fix.
 
+## Post-close observation (2026-08-31): `${completed_phase}` is correct, the divergence is real
+
+A follow-up was reported as *"`${completed_phase}` interpolates stale on loop re-entry — second pass
+still said Phase 3 after Phase 4 completed"* (run `1788200907-req-code-pr-34c9a0d1`). **The
+interpolation is not stale, and filing it as such would send someone after a bug that does not
+exist.**
+
+`resolveCompletedPhaseText` (`graph_exec.go:340`) reads the **live active spec at dispatch** and calls
+`SpecJustCompletedPhase`, which walks phases in order and breaks at the first one holding open items,
+returning the phase before it (`spec_items.go:144`). At the time of the report,
+[MUX-117](../backlog/MUX-117-pane-targeting-by-identity.md) Phase 4 held **one open item** —
+delivery-reaches-agents, left open deliberately because `clear` and `compact` cannot be exercised
+without side effects on a live agent. So Phase 3 *was* the last fully-completed phase, and the
+message was accurate.
+
+What is real is the divergence underneath the report: **the graph's notion of "Phase 4 done" and the
+spec's can disagree.** The run had looped past its Phase 4 work (`implement` running a second pass,
+`commit`/`loop-check` done from the first) while the spec still showed Phase 4 open. Worth pinning:
+
+- [ ] Confirm whether the `phase-progress` guard fires when the loop advances past a phase the spec
+      still shows open — this is the case it exists for
+- [ ] Decide the intended semantics when the two disagree: does the graph defer to the spec, or is a
+      deliberately-open item a legitimate reason to hold the loop?
+- [ ] If they may legitimately diverge, the gate message should say so rather than naming a phase
+      number that reads as a mistake
+
+Recorded here rather than as a new defect spec because the reported symptom is correct behaviour;
+the underlying question belongs to this spec's loop semantics.
+
 ## Status
 
-Complete — closed on the [known gap](#known-gap-at-close-out) above, 2026-08-28
+Complete — closed on the [known gap](#known-gap-at-close-out) above, 2026-08-28. One
+[post-close observation](#post-close-observation-2026-08-31-completed_phase-is-correct-the-divergence-is-real)
+added 2026-08-31; it does not reopen the spec.
 
 Closed at **36 of 37 items**. The single open criterion is unverifiable by the test harness that
 covers the rest, not merely untested; the note above records what would settle it.
