@@ -216,6 +216,55 @@ trigger for consumed-but-wedged workers**, not an absence of the delivery mechan
 - [ ] The detector distinguishes *wedged* from *legitimately working* — a long-running worker must
       not be redriven mid-task (the MUX-112 failure mode: reading "at the prompt" as "finished")
 
+## Fifth gap: the predicted harvest hazard has now landed in code
+
+The third gap above warned that the stall bug was *the only thing preserving the harvest window*, and
+that fixing completion detection without a harvest contract would delete the worktree on the tick the
+worker finishes. **That is no longer a prediction.** The reply-implies-completion reap is now in the
+tree (uncommitted as of 2026-08-31), and it closes the stall exactly as anticipated — with no harvest
+contract in front of it.
+
+What changed, verified in `bus/spawn.go`:
+
+| | Before | After |
+|---|---|---|
+| Reap trigger | window gone (`CheckSpawnWindow` false) | window gone **or** `spawnHasResponded` true (`:336`) |
+| Live window | left running | **killed** (`spawnKillWindowFn`, `:338`) |
+| Worktree | removed on window-death only | removed on either path (`removeSpawnWorktree`, `:349`) |
+
+`spawnHasResponded` (`:298`) reads the delivery store for `StatusResponded` on the seeded task — the
+same signal `hasReceipt` trusts. And `removeSpawnWorktree` (`:516`) runs
+`git worktree remove --force`, falling back to `os.RemoveAll`.
+
+**The `--force` flag is the whole problem.** Plain `git worktree remove` *refuses* to remove a
+worktree with uncommitted changes; that refusal is git's built-in protection against exactly this
+loss, and `--force` deliberately overrides it. The `os.RemoveAll` fallback then destroys the
+directory unconditionally even when git declines.
+
+So the destructive sequence is now reachable by a worker doing nothing wrong:
+
+1. Worker does its work in the worktree, leaves it uncommitted
+2. Worker replies to its seeded task — a reply is the *correct* protocol behaviour
+3. `spawnHasResponded` → true; the live window is killed
+4. `removeSpawnWorktree` force-removes the worktree — **the work is gone**
+
+**A reply is not evidence of a harvest.** "Responded" proves the worker answered; it says nothing
+about whether its output reached a branch. Borrowing `hasReceipt`'s semantics is right for *delivery*
+and wrong for *destruction* — delivery is idempotent, deletion is not. This is not hypothetical for
+this repo: MUX-115's Phase 1 was built inside `spawn-045c97da`'s worktree and had to be harvested by
+hand afterwards. Under this code, a reply before that harvest would have destroyed it.
+
+- [ ] Reap must not force-remove a **dirty** worktree — drop `--force` so git's own refusal is
+      honoured, or check `git status --porcelain` in the worktree before removing
+- [ ] Decide the dirty-worktree policy explicitly: refuse-and-alert, or salvage (commit to a rescue
+      branch / archive the diff) before removal — silence is the one unacceptable option
+- [ ] The `os.RemoveAll` fallback must be gated by the same dirty check; it currently destroys
+      unconditionally when git declines, which inverts the protection
+- [ ] Harvest-before-cleanup contract lands **before** or **with** the reap, not after — the reap is
+      the change that removes the accidental safety the stall was providing
+- [ ] Negative control: a spawn with uncommitted worktree changes that has responded is **not**
+      reaped-and-deleted; assert the changes still exist afterwards
+
 ## Open decisions
 
 - [ ] **Fix at the source, the daemon, or both?** Source = readiness-gated wake in `StartSpawn`.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -584,5 +585,199 @@ func TestFindMuxcodeBinary_NotFound(t *testing.T) {
 	}
 	if p == "" {
 		t.Error("expected non-empty path from os.Executable() fallback")
+	}
+}
+
+// stubSpawnWindow fakes a live window and records kills; returns the
+// kill log and restores both seams on cleanup.
+func stubSpawnWindow(t *testing.T) *[]string {
+	t.Helper()
+	origExists, origKill := spawnWindowExistsFn, spawnKillWindowFn
+	t.Cleanup(func() { spawnWindowExistsFn, spawnKillWindowFn = origExists, origKill })
+	spawnWindowExistsFn = func(string, string) bool { return true }
+	var killed []string
+	spawnKillWindowFn = func(_, window string) error {
+		killed = append(killed, window)
+		return nil
+	}
+	return &killed
+}
+
+func TestRefreshSpawnStatus_ReapsRespondedWorker(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+	killed := stubSpawnWindow(t)
+
+	seed := NewMessage("daemon", "spawn-aaaa1111", "request", "spawn-task", "implement phase", "")
+	if err := CreateDeliveryStatus(session, seed); err != nil {
+		t.Fatalf("CreateDeliveryStatus: %v", err)
+	}
+	MarkResponded(session, seed.ID, "resp-1")
+
+	entries := []SpawnEntry{{
+		ID: "s1", Role: "edit", SpawnRole: "spawn-aaaa1111", Window: "spawn-aaaa1111",
+		Owner: "daemon", Status: "running", StartedAt: time.Now().Unix(), SeedMsgID: seed.ID,
+	}}
+	if err := WriteSpawnEntries(session, entries); err != nil {
+		t.Fatalf("WriteSpawnEntries: %v", err)
+	}
+
+	completed, err := RefreshSpawnStatus(session)
+	if err != nil {
+		t.Fatalf("RefreshSpawnStatus: %v", err)
+	}
+	if len(completed) != 1 || completed[0].Status != "completed" {
+		t.Fatalf("expected 1 completed entry, got %+v", completed)
+	}
+	if len(*killed) != 1 || (*killed)[0] != "spawn-aaaa1111" {
+		t.Errorf("expected window spawn-aaaa1111 killed, got %v", *killed)
+	}
+	got, err := ReadSpawnEntries(session)
+	if err != nil || len(got) != 1 || got[0].Status != "completed" {
+		t.Errorf("persisted status = %+v, err=%v, want completed", got, err)
+	}
+}
+
+func TestRefreshSpawnStatus_LiveUnansweredWorkerNotReaped(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+	killed := stubSpawnWindow(t)
+
+	seed := NewMessage("daemon", "spawn-bbbb2222", "request", "spawn-task", "implement phase", "")
+	if err := CreateDeliveryStatus(session, seed); err != nil {
+		t.Fatalf("CreateDeliveryStatus: %v", err)
+	}
+
+	entries := []SpawnEntry{{
+		ID: "s1", Role: "edit", SpawnRole: "spawn-bbbb2222", Window: "spawn-bbbb2222",
+		Owner: "daemon", Status: "running", StartedAt: time.Now().Unix(), SeedMsgID: seed.ID,
+	}}
+	if err := WriteSpawnEntries(session, entries); err != nil {
+		t.Fatalf("WriteSpawnEntries: %v", err)
+	}
+
+	completed, err := RefreshSpawnStatus(session)
+	if err != nil {
+		t.Fatalf("RefreshSpawnStatus: %v", err)
+	}
+	if len(completed) != 0 {
+		t.Errorf("unanswered worker reaped: %+v", completed)
+	}
+	if len(*killed) != 0 {
+		t.Errorf("unanswered worker's window killed: %v", *killed)
+	}
+	got, _ := ReadSpawnEntries(session)
+	if len(got) != 1 || got[0].Status != "running" {
+		t.Errorf("persisted status = %+v, want running", got)
+	}
+}
+
+func TestRefreshSpawnStatus_KillFailureLeavesRunning(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+
+	origExists, origKill := spawnWindowExistsFn, spawnKillWindowFn
+	t.Cleanup(func() { spawnWindowExistsFn, spawnKillWindowFn = origExists, origKill })
+	spawnWindowExistsFn = func(string, string) bool { return true }
+	spawnKillWindowFn = func(string, string) error { return fmt.Errorf("tmux exited 1") }
+
+	seed := NewMessage("daemon", "spawn-dddd4444", "request", "spawn-task", "implement phase", "")
+	if err := CreateDeliveryStatus(session, seed); err != nil {
+		t.Fatalf("CreateDeliveryStatus: %v", err)
+	}
+	MarkResponded(session, seed.ID, "resp-1")
+
+	wt := t.TempDir()
+	entries := []SpawnEntry{{
+		ID: "s1", Role: "edit", SpawnRole: "spawn-dddd4444", Window: "spawn-dddd4444",
+		Owner: "daemon", Status: "running", StartedAt: time.Now().Unix(),
+		SeedMsgID: seed.ID, Worktree: wt,
+	}}
+	if err := WriteSpawnEntries(session, entries); err != nil {
+		t.Fatalf("WriteSpawnEntries: %v", err)
+	}
+
+	completed, err := RefreshSpawnStatus(session)
+	if err != nil {
+		t.Fatalf("RefreshSpawnStatus: %v", err)
+	}
+	if len(completed) != 0 {
+		t.Errorf("kill-failed worker marked completed: %+v", completed)
+	}
+	got, _ := ReadSpawnEntries(session)
+	if len(got) != 1 || got[0].Status != "running" {
+		t.Errorf("persisted status = %+v, want running", got)
+	}
+	if _, statErr := os.Stat(wt); statErr != nil {
+		t.Errorf("worktree removed despite failed kill: %v", statErr)
+	}
+}
+
+func TestRemoveSpawnWorktree_PreservesDirty(t *testing.T) {
+	dir := t.TempDir()
+	if err := exec.Command("git", "init", "-q", dir).Run(); err != nil {
+		t.Skipf("git init unavailable: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "work.go"), []byte("package x\n"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := removeSpawnWorktree(dir); err != nil {
+		t.Fatalf("removeSpawnWorktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "work.go")); err != nil {
+		t.Errorf("dirty worktree destroyed: %v", err)
+	}
+}
+
+func TestRemoveSpawnWorktree_PreservesUnknownState(t *testing.T) {
+	dir := t.TempDir()
+	// A .git file with a dangling gitdir pointer makes `git status` fail:
+	// cleanliness is unknowable, and unknown must refuse cleanup.
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: /nonexistent/nowhere\n"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := removeSpawnWorktree(dir); err != nil {
+		t.Fatalf("removeSpawnWorktree: %v", err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("unknown-state worktree destroyed: %v", err)
+	}
+}
+
+func TestRemoveSpawnWorktree_RemovesClean(t *testing.T) {
+	dir := t.TempDir()
+	if err := exec.Command("git", "init", "-q", dir).Run(); err != nil {
+		t.Skipf("git init unavailable: %v", err)
+	}
+
+	if err := removeSpawnWorktree(dir); err != nil {
+		t.Fatalf("removeSpawnWorktree: %v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("clean worktree not removed (stat err: %v)", err)
+	}
+}
+
+func TestRefreshSpawnStatus_LegacyEntryKeepsWindowGoneLifecycle(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+	killed := stubSpawnWindow(t)
+
+	entries := []SpawnEntry{{
+		ID: "s1", Role: "edit", SpawnRole: "spawn-cccc3333", Window: "spawn-cccc3333",
+		Owner: "daemon", Status: "running", StartedAt: time.Now().Unix(),
+	}}
+	if err := WriteSpawnEntries(session, entries); err != nil {
+		t.Fatalf("WriteSpawnEntries: %v", err)
+	}
+
+	completed, err := RefreshSpawnStatus(session)
+	if err != nil {
+		t.Fatalf("RefreshSpawnStatus: %v", err)
+	}
+	if len(completed) != 0 || len(*killed) != 0 {
+		t.Errorf("legacy entry with live window was reaped: completed=%+v killed=%v", completed, *killed)
 	}
 }
