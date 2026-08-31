@@ -165,12 +165,21 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 	if err := createCmd.Run(); err != nil {
 		return SpawnEntry{}, fmt.Errorf("creating tmux window: %v", err)
 	}
+	// Status-bar label: the spawn id says nothing to a human scanning tabs
+	// (user request 2026-08-28) — the window keeps its id name for
+	// targeting while the bar reads "Worker".
+	TmuxSetWindowOption(session+":"+spawnRole, "@display-name", "Worker")
+	TmuxSetWindowOption(session+":"+spawnRole, "@display-name-upper", "WORKER")
 
 	// Split horizontally (agent in pane 1, consistent with all windows)
 	splitCmd := exec.Command("tmux", "split-window", "-h", "-t", session+":"+spawnRole)
 	if err := splitCmd.Run(); err != nil {
 		return SpawnEntry{}, fmt.Errorf("splitting window: %v", err)
 	}
+
+	// Worker console in pane 0 — view only, a failure must not block the spawn
+	_ = exec.Command("tmux", "select-pane", "-t", session+":"+spawnRole+".0", "-T", "CONSOLE").Run()
+	sendKeysThenEnter(session+":"+spawnRole+".0", fmt.Sprintf("%s console %s", launcher, spawnRole))
 
 	// Launch agent in pane 1 — cd into worktree if set.
 	// AGENT_ROLE must be the spawn-specific role (e.g. "spawn-edit-1") so the
@@ -181,10 +190,11 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 	} else {
 		launchStr = fmt.Sprintf("AGENT_ROLE=%s %s agent launch %s", spawnRole, launcher, role)
 	}
-	launchCmd := exec.Command("tmux", "send-keys", "-t", session+":"+spawnRole+".1", launchStr, "Enter")
-	if err := launchCmd.Run(); err != nil {
+	if err := sendKeysThenEnter(session+":"+spawnRole+".1", launchStr); err != nil {
 		return SpawnEntry{}, fmt.Errorf("launching agent: %v", err)
 	}
+
+	go wakeSpawnedAgent(session, spawnRole)
 
 	// Persist entry
 	entries, err := ReadSpawnEntries(session)
@@ -196,13 +206,35 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 		return SpawnEntry{}, err
 	}
 
-	// Async: wait 2s then notify spawn to read inbox
-	go func() {
-		time.Sleep(2 * time.Second)
-		_ = Notify(session, spawnRole)
-	}()
-
 	return entry, nil
+}
+
+// sendKeysThenEnter types text and presses Enter as two pty writes with a
+// settle delay — text and Enter in one write is the documented
+// dropped-Enter pitfall (PR #50 Copilot flagged the one-call form here).
+func sendKeysThenEnter(target, text string) error {
+	if err := exec.Command("tmux", "send-keys", "-t", target, "-l", "--", text).Run(); err != nil {
+		return err
+	}
+	time.Sleep(100 * time.Millisecond)
+	return exec.Command("tmux", "send-keys", "-t", target, "Enter").Run()
+}
+
+// wakeSpawnedAgent delivers a spawned agent's first turn: a fresh agent
+// never types by itself, so the seeded task sits in an inbox nothing
+// delivers (live gap, MUX-120 — a graph worker idled 4.5min until a
+// manual deliver --force). Reuses wakeAfterReload's prompt-ready wait;
+// async because the daemon's map fan-out must not stall the keepalive
+// past the monitor threshold. A caller that exits immediately (CLI
+// spawn) cuts the goroutine short and no daemon backstop covers spawn
+// roles — checkPollHealth iterates static KnownRoles — so that path
+// remains open and is tracked in MUX-120. This replaced a fixed 2s Notify
+// which fired while the agent was still initializing: that fell to the
+// displayMessage path and poisoned the notified dedup for 30s, actively
+// suppressing later wakes.
+func wakeSpawnedAgent(session, spawnRole string) {
+	LogLifecycle(session, "info", "daemon", "spawn-wake", spawnRole)
+	wakeAfterReload(session, spawnRole)
 }
 
 // StopSpawn kills the tmux window for a spawn, cleans up the worktree, and marks it stopped.

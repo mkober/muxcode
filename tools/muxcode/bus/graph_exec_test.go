@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -814,6 +815,432 @@ func TestExecSpecGuardResolvesRelativeSpecPath(t *testing.T) {
 	}
 	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "1 open items") {
 		t.Errorf("relative spec path must resolve against the session repo dir, got state %q output %q", st.State, st.Output)
+	}
+}
+
+// phaseGuardGraph returns a one-node graph whose send carries the
+// phase-complete guard.
+func phaseGuardGraph() *Graph {
+	return &Graph{
+		Name:  "g",
+		Start: "ship",
+		Nodes: []Node{{ID: "ship", Type: NodeSend, Role: "plan", Action: "update-docs",
+			Message: "commit the phase", Guard: GuardPhaseComplete}},
+	}
+}
+
+// TestExecPhaseGuard pins the phase-scoped guard: the intent's phase with
+// open items declines; the same phase fully checked dispatches even while
+// OTHER phases are open (the discriminator against spec-complete); no
+// phase in the intent passes through.
+func TestExecPhaseGuard(t *testing.T) {
+	spec := "# S\n### Phase 1: Now\n- [ ] open one\n### Phase 2: Later\n- [ ] later work\n"
+
+	run := createTestRun(t, phaseGuardGraph())
+	writeSpecFixture(t, spec)
+	mutateRunIntent(t, run.ID, "Ship — Phase 1: Now")
+	step(t, runTestSession, run.ID)
+	st, err := ReadNodeStatus(runTestSession, run.ID, "ship")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "Phase 1 has 1 open items") {
+		t.Fatalf("open phase must decline, got state %q output %q", st.State, st.Output)
+	}
+
+	run2 := createTestRun(t, phaseGuardGraph())
+	writeSpecFixture(t, "# S\n### Phase 1: Now\n- [x] done\n### Phase 2: Later\n- [ ] later work\n")
+	mutateRunIntent(t, run2.ID, "Ship — Phase 1: Now")
+	step(t, runTestSession, run2.ID)
+	if s := nodeState(t, runTestSession, run2.ID, "ship"); s != GraphNodeRunning {
+		t.Fatalf("checked phase must dispatch despite open later phases, got %q", s)
+	}
+
+	run3 := createTestRun(t, phaseGuardGraph())
+	writeSpecFixture(t, spec)
+	mutateRunIntent(t, run3.ID, "no phase named")
+	step(t, runTestSession, run3.ID)
+	if s := nodeState(t, runTestSession, run3.ID, "ship"); s != GraphNodeRunning {
+		t.Fatalf("intent without a phase must pass through, got %q", s)
+	}
+}
+
+// TestExecCurrentPhaseInterpolation pins ${current_phase} resolution at
+// dispatch: the message carries the spec's lowest OPEN phase, not the
+// frozen intent's — the mechanism that stops a loop re-implementing a
+// completed phase (MUX-121).
+func TestExecCurrentPhaseInterpolation(t *testing.T) {
+	g := &Graph{
+		Name:  "g",
+		Start: "impl",
+		Nodes: []Node{{ID: "impl", Type: NodeSend, Role: "build", Action: "build",
+			Message: "Implement ${current_phase}"}},
+	}
+	run := createTestRun(t, g)
+	writeSpecFixture(t, "# S\n### Phase 1: Done\n- [x] a\n### Phase 2: Attribution\n- [ ] b\n")
+	mutateRunIntent(t, run.ID, "MUX-115 — Phase 1: Turn trace")
+
+	step(t, runTestSession, run.ID)
+
+	msgs, _ := Peek(runTestSession, "build")
+	if len(msgs) != 1 {
+		t.Fatalf("build inbox: %+v", msgs)
+	}
+	if !strings.Contains(msgs[0].Payload, "Phase 2: Attribution") ||
+		strings.Contains(msgs[0].Payload, "Phase 1") {
+		t.Errorf("dispatch must carry the derived open phase, not the frozen intent's: %q", msgs[0].Payload)
+	}
+}
+
+// TestSpecPhasesRemainingCondition pins the loop-termination condition
+// (MUX-121): true passes while an open phase remains, false passes once
+// none do, and a missing spec counts as nothing remaining so a loop
+// terminates rather than spins.
+func TestSpecPhasesRemainingCondition(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	spec := filepath.Join(t.TempDir(), "spec.md")
+	if err := os.WriteFile(spec, []byte("### Phase 1: A\n- [ ] open\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(runTestSession, spec); err != nil {
+		t.Fatal(err)
+	}
+	ctx := &ChainContext{Session: runTestSession}
+
+	if ok, _ := EvaluateConditions(map[string]any{"spec_phases_remaining": true}, ctx); !ok {
+		t.Error("open phase: remaining=true must pass")
+	}
+	if ok, _ := EvaluateConditions(map[string]any{"spec_phases_remaining": false}, ctx); ok {
+		t.Error("open phase: remaining=false must fail (negative control)")
+	}
+
+	if err := os.WriteFile(spec, []byte("### Phase 1: A\n- [x] done\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := EvaluateConditions(map[string]any{"spec_phases_remaining": false}, ctx); !ok {
+		t.Error("all complete: remaining=false must pass — the termination edge")
+	}
+
+	if err := ClearActiveSpec(runTestSession); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := EvaluateConditions(map[string]any{"spec_phases_remaining": false}, ctx); !ok {
+		t.Error("no active spec must count as nothing remaining — a loop must terminate, not spin")
+	}
+}
+
+// TestExecPhaseProgressGuard pins the per-phase commit guard (MUX-121):
+// each commit must ship one newly-completed phase, counted against the
+// guard node's own prior successful fires — fix-loop and retry fires
+// must never distort the math (review catch 2026-08-28).
+func TestExecPhaseProgressGuard(t *testing.T) {
+	guardGraph := func() *Graph {
+		return &Graph{Name: "g", Start: "commit",
+			Nodes: []Node{
+				{ID: "commit", Type: NodeSend, Role: "plan", Action: "update-docs",
+					Message: "commit the phase", Guard: GuardPhaseProgress},
+				{ID: "next", Type: NodeCondition, Conditions: map[string]any{"spec_phases_remaining": true}},
+			},
+			Edges: []Edge{{From: "commit", To: "next"}}}
+	}
+	seedFires := func(runID string, fires map[string]int) {
+		run, err := ReadGraphRun(runTestSession, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run.EdgeFires = fires
+		if err := WriteGraphRun(runTestSession, run); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// First commit, one phase complete — ships, and heavy fix-loop fires
+	// must not inflate the requirement (the review-found bug).
+	run := createTestRun(t, guardGraph())
+	writeSpecFixture(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
+	seedFires(run.ID, map[string]int{"fix->build:success": 3})
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "commit"); s != GraphNodeRunning {
+		t.Fatalf("first commit with its phase complete must ship despite fix-loop fires, got %q", s)
+	}
+
+	// Second commit (one prior success fire) with no second phase closed:
+	// decline toward the stuck gate, naming the counts.
+	run2 := createTestRun(t, guardGraph())
+	writeSpecFixture(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
+	seedFires(run2.ID, map[string]int{"commit->next:success": 1})
+	step(t, runTestSession, run2.ID)
+	st, err := ReadNodeStatus(runTestSession, run2.ID, "commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "1 commits shipped but only 1 phases complete") {
+		t.Errorf("no-progress commit must decline with counts, got %q %q", st.State, st.Output)
+	}
+
+	// No active spec: decline, never commit blind.
+	run3 := createTestRun(t, guardGraph())
+	step(t, runTestSession, run3.ID)
+	st3, err := ReadNodeStatus(runTestSession, run3.ID, "commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st3.State != GraphNodeFailed || !strings.Contains(st3.Output, "no active spec") {
+		t.Errorf("no-spec commit must decline, got %q %q", st3.State, st3.Output)
+	}
+}
+
+// TestExecHumanGateLoopReArmRequiresFreshApproval covers the loop path
+// the multi-phase template lives on (plan coverage gap 2026-08-28): a
+// gate approved on iteration 1 and re-armed by a loop edge must WAIT
+// again — without the dispatch purge, approving Phase 1's commit would
+// silently release every later phase's commit.
+func TestExecHumanGateLoopReArmRequiresFreshApproval(t *testing.T) {
+	g := &Graph{Name: "g", Start: "gate",
+		Nodes: []Node{
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve the commit"},
+			{ID: "work", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+		},
+		Edges: []Edge{
+			{From: "gate", To: "work"},
+			{From: "work", To: "gate", MaxIterations: 2},
+		}}
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("gate state %q, want waiting", s)
+	}
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatal(err)
+	}
+	step(t, runTestSession, run.ID) // approval releases work
+	completeSendNode(t, runTestSession, run.ID, "work", OutcomeSuccess)
+	step(t, runTestSession, run.ID) // loop edge re-arms the gate
+	step(t, runTestSession, run.ID) // gate re-dispatches
+
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("re-armed gate state %q, want waiting — the loop pass must demand a fresh approval", s)
+	}
+	msgs, _ := Peek(runTestSession, "build")
+	if len(msgs) != 1 {
+		t.Errorf("work dispatched %d times, want 1 — the stale approval must not release iteration 2", len(msgs))
+	}
+}
+
+// TestExecLoopExhaustionFailsRunLoudly pins the MUX-121 plan finding: a
+// SUCCESS outcome whose only edge is an exhausted loop edge must fail the
+// run — a cap shortfall must never settle as a run that looks complete.
+func TestExecLoopExhaustionFailsRunLoudly(t *testing.T) {
+	g := linearGraph()
+	g.Edges = []Edge{{From: "a", To: "b"}, {From: "b", To: "a", MaxIterations: 1}}
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "b", OutcomeSuccess)
+	step(t, runTestSession, run.ID) // b succeeds, loop edge fires (1/1), a re-arms
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "b", OutcomeSuccess)
+	step(t, runTestSession, run.ID) // b succeeds again, loop edge exhausted
+
+	got, _ := ReadGraphRun(runTestSession, run.ID)
+	if got.State != GraphRunFailed {
+		t.Errorf("run state %q, want failed — exhaustion suppressed b's only edge", got.State)
+	}
+}
+
+// TestExecRedriveStalledDispatch pins executor-owned stall resolution
+// (MUX-123): an un-receipted in-flight dispatch past the stall threshold
+// is redriven with persisted bookkeeping, rate-limited between attempts,
+// and fails loudly as undeliverable after the cap; a receipted task is
+// never touched (negative control — receipt means genuinely working).
+func TestExecRedriveStalledDispatch(t *testing.T) {
+	oneNode := func() *Graph {
+		return &Graph{Name: "g", Start: "a",
+			Nodes: []Node{{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"}}}
+	}
+	backdateTask := func(id string, secs int64) {
+		task, err := ReadTask(runTestSession, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task.SentAt -= secs
+		if err := writeTask(runTestSession, task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nodeStatus := func(runID string) *GraphNodeStatus {
+		st, err := ReadNodeStatus(runTestSession, runID, "a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+
+	// Observe DELIVERIES through the seam, not just counters (review
+	// should-fix: a counter test proves bookkeeping, not behavior).
+	var driven []string
+	origRedrive := graphRedriveFn
+	graphRedriveFn = func(session, role string, task Task) int {
+		driven = append(driven, role+":"+task.ID)
+		return 1
+	}
+	t.Cleanup(func() { graphRedriveFn = origRedrive })
+
+	run := createTestRun(t, oneNode())
+	step(t, runTestSession, run.ID)
+	st := nodeStatus(run.ID)
+	if st.State != GraphNodeRunning || st.Redrives != 0 {
+		t.Fatalf("fresh dispatch: state %q redrives %d", st.State, st.Redrives)
+	}
+
+	// Fresh task: no redrive even on another tick.
+	step(t, runTestSession, run.ID)
+	if st = nodeStatus(run.ID); st.Redrives != 0 || len(driven) != 0 {
+		t.Fatalf("un-stalled task must not redrive, got %d (%v)", st.Redrives, driven)
+	}
+
+	// Stalled + un-receipted: one real delivery attempt, bookkeeping persisted.
+	backdateTask(st.TaskID, 120)
+	step(t, runTestSession, run.ID)
+	if st = nodeStatus(run.ID); st.Redrives != 1 || st.LastRedrive == 0 || len(driven) != 1 {
+		t.Fatalf("stalled dispatch must redrive once, got %d (%v)", st.Redrives, driven)
+	}
+
+	// Rate limit: an immediate tick delivers nothing further.
+	step(t, runTestSession, run.ID)
+	if st = nodeStatus(run.ID); st.Redrives != 1 || len(driven) != 1 {
+		t.Fatalf("redrive must rate-limit, got %d (%v)", st.Redrives, driven)
+	}
+
+	// Walk to the cap, then the node fails as undeliverable.
+	for i := 0; i < 3; i++ {
+		if err := MutateNodeStatus(runTestSession, run.ID, "a", func(s *GraphNodeStatus) {
+			s.LastRedrive -= 61
+		}); err != nil {
+			t.Fatal(err)
+		}
+		step(t, runTestSession, run.ID)
+	}
+	st = nodeStatus(run.ID)
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "undeliverable") {
+		t.Fatalf("capped redrives must fail undeliverable, got %q %q (redrives %d)", st.State, st.Output, st.Redrives)
+	}
+
+	// Negative control: a receipted task is working, never redriven.
+	run2 := createTestRun(t, oneNode())
+	step(t, runTestSession, run2.ID)
+	st2 := nodeStatus(run2.ID)
+	backdateTask(st2.TaskID, 120)
+	if err := os.MkdirAll(filepath.Dir(DeliveryPath(runTestSession, st2.TaskID)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(DeliveryStatus{ID: st2.TaskID, AckedAt: time.Now().Unix()})
+	if err := os.WriteFile(DeliveryPath(runTestSession, st2.TaskID), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	step(t, runTestSession, run2.ID)
+	if st2 = nodeStatus(run2.ID); st2.Redrives != 0 {
+		t.Fatalf("receipted task must never redrive, got %d", st2.Redrives)
+	}
+}
+
+// TestExecRedriveStalledSpawns pins the spawn/map side of stall
+// resolution: a worker whose seeded task sits unconsumed past the stall
+// threshold is re-woken with persisted bookkeeping, and cap exhaustion
+// FAILS the node — default spawn nodes carry no timeout, so a
+// never-waking worker would otherwise leave the node running forever
+// (review must-fix 2026-08-28). A drained inbox is the negative control.
+func TestExecRedriveStalledSpawns(t *testing.T) {
+	var woken []string
+	origWake := graphSpawnWakeFn
+	graphSpawnWakeFn = func(_, spawnRole string) { woken = append(woken, spawnRole) }
+	t.Cleanup(func() { graphSpawnWakeFn = origWake })
+
+	g := &Graph{Name: "g", Start: "w",
+		Nodes: []Node{{ID: "w", Type: NodeSpawn, Role: "build", Message: "go"}}}
+	run := createTestRun(t, g)
+	n := &g.Nodes[0]
+	now := time.Now().Unix()
+
+	startWorker := func(runID, spawnRole string, seedInbox bool) {
+		if err := TransitionGraphNode(runTestSession, runID, "w", GraphNodeRunning, func(s *GraphNodeStatus) {
+			s.TaskID = spawnRole
+			s.StartedAt = now - 120
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if seedInbox {
+			if err := SendNoCC(runTestSession, NewMessage("daemon", spawnRole, "request", "task", "go", "")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	status := func(runID string) *GraphNodeStatus {
+		st, err := ReadNodeStatus(runTestSession, runID, "w")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+
+	startWorker(run.ID, "spawn-w1", true)
+
+	// Stalled + unconsumed: one wake, bookkeeping persisted.
+	redriveStalledSpawns(runTestSession, run, n, status(run.ID), now)
+	st := status(run.ID)
+	if st.Redrives != 1 || st.LastRedrive == 0 || len(woken) != 1 || woken[0] != "spawn-w1" {
+		t.Fatalf("stalled worker must re-wake once, got %d (%v)", st.Redrives, woken)
+	}
+
+	// Rate limit: an immediate retry does nothing.
+	redriveStalledSpawns(runTestSession, run, n, st, now)
+	if st = status(run.ID); st.Redrives != 1 || len(woken) != 1 {
+		t.Fatalf("spawn redrive must rate-limit, got %d (%v)", st.Redrives, woken)
+	}
+
+	// Walk to the cap; the still-stalled worker then fails the node.
+	for i := 0; i < 3; i++ {
+		if err := MutateNodeStatus(runTestSession, run.ID, "w", func(s *GraphNodeStatus) {
+			s.LastRedrive -= 61
+		}); err != nil {
+			t.Fatal(err)
+		}
+		redriveStalledSpawns(runTestSession, run, n, status(run.ID), now)
+	}
+	st = status(run.ID)
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "undeliverable") {
+		t.Fatalf("capped spawn redrives must fail undeliverable, got %q %q (redrives %d)", st.State, st.Output, st.Redrives)
+	}
+
+	// Negative control: a drained inbox means the worker consumed its
+	// task and is working — never woken, never failed.
+	woken = nil
+	run2 := createTestRun(t, g)
+	startWorker(run2.ID, "spawn-w2", false)
+	redriveStalledSpawns(runTestSession, run2, n, status(run2.ID), now)
+	st = status(run2.ID)
+	if st.State != GraphNodeRunning || st.Redrives != 0 || len(woken) != 0 {
+		t.Fatalf("working spawn must be untouched, got %q redrives %d (%v)", st.State, st.Redrives, woken)
+	}
+}
+
+// mutateRunIntent rewrites a run's intent in the store.
+func mutateRunIntent(t *testing.T, runID, intent string) {
+	t.Helper()
+	run, err := ReadGraphRun(runTestSession, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Intent = intent
+	if err := WriteGraphRun(runTestSession, run); err != nil {
+		t.Fatal(err)
 	}
 }
 

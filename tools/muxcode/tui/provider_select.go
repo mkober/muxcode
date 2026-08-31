@@ -227,8 +227,8 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact bool, roles []stri
 				}
 				roles = ui.selectedAgentRoles()
 
-				// Multi-agent: transition to progress view
-				if len(roles) > 1 {
+				// single and batch share the progress view (user request 2026-08-28)
+				if len(roles) >= 1 {
 					ui.startBatchReload(cli, model)
 					continue
 				}
@@ -239,7 +239,11 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact bool, roles []stri
 	}
 }
 
-// startBatchReload kicks off the background batch reload and switches to progress view.
+// startBatchReload kicks off the background batch reload and switches to
+// progress view. Config is persisted per agent only after it actually
+// reloaded — announcing the destination up front once made a running
+// OpenCode agent look like a Claude one, so the stop sent /exit to a TUI
+// that ignores it and the reload timed out.
 func (ui *ProviderSelectUI) startBatchReload(cli, model string) {
 	roles := ui.selectedAgentRoles()
 
@@ -251,8 +255,7 @@ func (ui *ProviderSelectUI) startBatchReload(cli, model string) {
 
 	go func() {
 		bus.ReloadBatch(ui.session, roles, cli, model, ui.compact, func(i int, r bus.ReloadResult) {
-			// Persist per agent, and only for the ones that actually
-			// reloaded — same ordering rule as the single-agent path above.
+			// only after a real reload — see doc comment
 			if r.Success {
 				persistToConfig([]string{r.Role}, cli, model)
 			}
@@ -829,8 +832,12 @@ func (ui *ProviderSelectUI) renderProgress() string {
 
 	// Header
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("  %s%sReloading %d agents%s → %s\n",
-		Bold, Purple, total, RST, p.CLI))
+	noun := "agents"
+	if total == 1 {
+		noun = "agent"
+	}
+	b.WriteString(fmt.Sprintf("  %s%sReloading %d %s%s → %s\n",
+		Bold, Purple, total, noun, RST, p.CLI))
 	b.WriteString(fmt.Sprintf("  %sModel:%s %s\n", Dim, RST, bus.AbbreviateModel(model)))
 	b.WriteString("\n")
 
@@ -942,63 +949,6 @@ func (ui *ProviderSelectUI) cleanup(restoreStty bool) {
 	fmt.Print(RST)
 	fmt.Print("\033[2J")
 	fmt.Print("\033[H")
-}
-
-// ExecuteReload runs agent reload(s) directly as a subprocess so output
-// is visible in the popup.
-func ExecuteReload(session, role, cli, model string, compact bool, roles []string) error {
-	targetRoles := roles
-	if len(targetRoles) == 0 {
-		targetRoles = []string{role}
-	}
-
-	// For multi-agent, roles were already handled by the TUI progress view
-	// This path is only for single-agent reload
-	targetRole := role
-	if len(roles) == 1 {
-		targetRole = roles[0]
-	}
-
-	// Build reload command args
-	args := []string{"reload", targetRole}
-	if cli != "" {
-		args = append(args, "--cli", cli)
-	}
-	if model != "" {
-		args = append(args, "--model", model)
-	}
-	if compact {
-		args = append(args, "--compact")
-	}
-
-	// Resolve our own binary path
-	exe, err := os.Executable()
-	if err != nil {
-		exe = "muxcode"
-	}
-
-	// Run reload directly — stdout/stderr visible in the popup
-	fmt.Printf("\nReloading %s (cli=%s, model=%s)...\n", targetRole, cli, model)
-	cmd := exec.Command(exe, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-
-	// Persisted only after the reload succeeds. Writing it first made the
-	// reload impossible: `muxcode reload` resolves the running agent's
-	// provider to decide how to stop it, and that resolution reads this
-	// config. Announcing the destination up front made a running OpenCode
-	// agent look like a Claude one, so the stop sent /exit to a TUI that
-	// ignores it and the reload timed out with "did not exit after 12
-	// seconds". ReloadAgent takes the same care with its runtime override,
-	// stopping the agent before writing it.
-	//
-	// Persisting after also keeps the config honest when a reload fails:
-	// the file keeps describing the agent that is actually running.
-	persistToConfig(targetRoles, cli, model)
-	return nil
 }
 
 // persistToConfig writes provider/model choices to the muxcode config file

@@ -51,15 +51,20 @@ type GraphRun struct {
 // so a tick (or a resume after a crash) never routes the same completion
 // twice.
 type GraphNodeStatus struct {
-	NodeID    string `json:"node_id"`
-	State     string `json:"state"`
-	Outcome   string `json:"outcome,omitempty"` // success/failure/custom, set when finished
-	Output    string `json:"output,omitempty"`  // harvested response payload
-	TaskID    string `json:"task_id,omitempty"` // correlated tracked task or spawn id(s)
-	Routed    bool   `json:"routed,omitempty"`
-	StartedAt int64  `json:"started_at,omitempty"`
-	DoneAt    int64  `json:"done_at,omitempty"`
-	UpdatedAt int64  `json:"updated_at"`
+	NodeID  string `json:"node_id"`
+	State   string `json:"state"`
+	Outcome string `json:"outcome,omitempty"` // success/failure/custom, set when finished
+	Output  string `json:"output,omitempty"`  // harvested response payload
+	TaskID  string `json:"task_id,omitempty"` // correlated tracked task or spawn id(s)
+	Routed  bool   `json:"routed,omitempty"`
+	// Stall-redrive bookkeeping (MUX-123): persisted here so it survives
+	// daemon restarts — the watchdog's in-memory debounce reset on every
+	// build-triggered restart, which is how live stalls outlived it.
+	Redrives    int   `json:"redrives,omitempty"`
+	LastRedrive int64 `json:"last_redrive,omitempty"`
+	StartedAt   int64 `json:"started_at,omitempty"`
+	DoneAt      int64 `json:"done_at,omitempty"`
+	UpdatedAt   int64 `json:"updated_at"`
 }
 
 // legalNodeTransitions defines the allowed node state machine. done/failed/
@@ -167,6 +172,10 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 	if g.RequiresSpec && strings.TrimSpace(ReadActiveSpec(session)) == "" {
 		return nil, fmt.Errorf("graph %q requires an active requirements spec — set one first: muxcode spec set <path>", g.Name)
 	}
+	g, err := resolveDerivedLoopCaps(session, g)
+	if err != nil {
+		return nil, err
+	}
 
 	run := &GraphRun{
 		ID:        NewGraphRunID(g.Name),
@@ -197,6 +206,49 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 		return nil, err
 	}
 	return run, nil
+}
+
+// resolveDerivedLoopCaps rewrites max_iterations_from_spec edges into
+// concrete caps on a copy of the graph before it is frozen: cap = the
+// active spec's phase count (MUX-121 decision 2 — a fixed cap silently
+// truncates a long spec). A derived cap that cannot be computed is a
+// creation error, not a silent default: a loop with a guessed bound is
+// the failure the derivation exists to prevent. The cap resolution is
+// logged so the bound is visible before the run ever loops.
+func resolveDerivedLoopCaps(session string, g *Graph) (*Graph, error) {
+	needs := false
+	for _, e := range g.Edges {
+		if e.MaxIterationsFromSpec {
+			needs = true
+			break
+		}
+	}
+	if !needs {
+		return g, nil
+	}
+	path, ok, _ := activeSpecFile(session)
+	if !ok {
+		return nil, fmt.Errorf("graph %q derives a loop cap from the spec but no active spec is set", g.Name)
+	}
+	phases, err := SpecPhases(path)
+	if err != nil {
+		return nil, fmt.Errorf("graph %q: cannot read active spec for loop cap: %v", g.Name, err)
+	}
+	if len(phases) == 0 {
+		return nil, fmt.Errorf("graph %q derives a loop cap but the active spec has no phase sections", g.Name)
+	}
+	resolved := *g
+	resolved.Edges = append([]Edge(nil), g.Edges...)
+	for i := range resolved.Edges {
+		if resolved.Edges[i].MaxIterationsFromSpec {
+			resolved.Edges[i].MaxIterations = len(phases)
+			resolved.Edges[i].MaxIterationsFromSpec = false // frozen copy carries only the number
+			LogLifecycle(session, "info", "daemon", "graph-loop-cap-derived",
+				fmt.Sprintf("%s: edge %s->%s capped at %d (spec phase count)",
+					g.Name, resolved.Edges[i].From, resolved.Edges[i].To, len(phases)))
+		}
+	}
+	return &resolved, nil
 }
 
 // ReadGraphRun reads a run's metadata.
@@ -336,6 +388,8 @@ func TransitionGraphNode(session, runID, nodeID, newState string, mutate func(*G
 		st.Routed = false
 		st.StartedAt = 0
 		st.DoneAt = 0
+		st.Redrives = 0
+		st.LastRedrive = 0
 	}
 	if mutate != nil {
 		mutate(st)

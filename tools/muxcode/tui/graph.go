@@ -377,11 +377,18 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 		}
 	}
 
-	// Wider or deeper than the pane degrades to the flat list — the grid
-	// has no scroll, so an overflowing canvas would render clipped.
+	// Wider than the pane: a single-row chain WRAPS at node boundaries —
+	// the user wants the chain shape, not the flat list, when only width
+	// overflows (user request 2026-08-28). Multi-row grids cannot wrap (a
+	// 2D canvas has no line boundaries), and height overflow still
+	// degrades to the flat list.
 	headerLines := 5 // leading blank, tab bar, run line, trailing blank, + margin
 	if snap.Run.Intent != "" {
 		headerLines++
+	}
+	if gridW > width && maxRows == 1 && skipLanes == 0 && headerLines+4 <= height {
+		top := renderGraphHeader(snap, now, width) + renderWrappedChain(grid.Layers, labels, types, snap, selection, width)
+		return frameWithDetails(top, snap, width, height, now, scroll)
 	}
 	if gridW > width || gridH+skipLanes+headerLines > height {
 		return renderGraphHeader(snap, now, width) + renderGraphFallback(snap, width)
@@ -424,19 +431,57 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 		}
 	}
 
-	// Trailing blank canvas rows are dead space between grid and details
-	// (user catch 2026-08-28) — trim them; the panel brings its own
-	// separator line.
-	top := strings.TrimRight(renderGraphHeader(snap, now, width)+c.String(), "\n") + "\n"
-	usedLines := strings.Count(top, "\n")
-	// The grid is the load-bearing view; the detail panel gets whatever
-	// height remains and windows vertically inside it.
-	detailBudget := height - usedLines - 3 // separator + ↑/↓ overflow markers
-	frame := top
+	return frameWithDetails(renderGraphHeader(snap, now, width)+c.String(), snap, width, height, now, scroll)
+}
+
+// frameWithDetails appends the vertically-windowed detail panel to a
+// rendered grid or wrapped chain. Trailing blank rows are trimmed (dead
+// space — user catch 2026-08-28) and the panel gets whatever height
+// remains; the grid stays the load-bearing view.
+func frameWithDetails(top string, snap GraphSnapshot, width, height int, now time.Time, scroll int) string {
+	top = strings.TrimRight(top, "\n") + "\n"
+	detailBudget := height - strings.Count(top, "\n") - 3 // separator + ↑/↓ markers
 	if detailBudget >= 3 {
-		frame += RenderNodeDetails(snap, width, detailBudget, now, scroll)
+		top += RenderNodeDetails(snap, width, detailBudget, now, scroll)
 	}
-	return frame
+	return top
+}
+
+// renderWrappedChain renders a single-row DAG wider than the pane as a
+// glyph chain wrapped at node boundaries; a trailing arrow marks the
+// continuation. The chain keeps glyphs, colors, selection, and loop
+// badges — everything the flat fallback loses.
+func renderWrappedChain(layers [][]string, labels map[string]string, types map[string]string, snap GraphSnapshot, selection string, width int) string {
+	const arrow = " ─→ "
+	var b strings.Builder
+	b.WriteString("\n")
+	line, plain := "  ", 2
+	for li, layerIDs := range layers {
+		id := layerIDs[0]
+		_, color := nodeGlyph(types[id], snap.nodeState(id))
+		lbl := labels[id]
+		seg := color + lbl + RST
+		segPlain := len([]rune(lbl))
+		if id == selection {
+			seg = Yellow + Bold + "▶ " + lbl + RST
+			segPlain += 2
+		}
+		arrowPlain := 0
+		if li > 0 {
+			arrowPlain = len([]rune(arrow))
+		}
+		if li > 0 && plain+arrowPlain+segPlain > width-2 {
+			b.WriteString(line + Comment + " ─→" + RST + "\n")
+			line, plain = "    ", 4
+		} else if li > 0 {
+			line += Comment + arrow + RST
+			plain += arrowPlain
+		}
+		line += seg
+		plain += segPlain
+	}
+	b.WriteString(line + "\n")
+	return b.String()
 }
 
 // RenderNodeDetails lists every node with who runs it, its timing, and
@@ -799,6 +844,17 @@ func resultsCellColor(results string) string {
 	}
 }
 
+// clampCol truncates s to w runes with a … marker — an overlong value in
+// a %-Ns cell shoves every later column right (user catch 2026-08-28: a
+// 41-rune run id broke the whole row's alignment).
+func clampCol(s string, w int) string {
+	r := []rune(s)
+	if len(r) <= w {
+		return s
+	}
+	return string(r[:w-1]) + "…"
+}
+
 // RenderRunListFrame renders the run browser: all runs newest first, with
 // state, node progress, elapsed, and a gate badge where a wait_human node
 // waits. Empty state renders explicitly — never a blank frame.
@@ -865,15 +921,12 @@ func RenderRunListFrameH(rows []RunListRow, width, height, sel int) string {
 		if r.GateWaiting {
 			badge = "  " + Yellow + Bold + "⚑ gate" + RST
 		}
-		results := r.Results
-		if len([]rune(results)) > 90 {
-			results = string([]rune(results)[:89]) + "…"
-		}
+		results := clampCol(r.Results, 90)
 		line := fmt.Sprintf("  %s %s%-40s%s %s%-10s%s %d/%-7d %-9s %s%-28s%s %s%s%s%s",
-			cursor, idColor, r.ID, RST,
+			cursor, idColor, clampCol(r.ID, 40), RST,
 			stateColor, r.State, RST,
 			r.Done, r.Total, r.Elapsed.String(),
-			Comment, r.Template, RST,
+			Comment, clampCol(r.Template, 28), RST,
 			resultsCellColor(results), results, RST, badge)
 		b.WriteString(fitWidth(line, width) + "\n")
 	}

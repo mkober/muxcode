@@ -135,6 +135,14 @@ func Run(ctx context.Context, cfg Config, sink EventSink) error {
 		sink.Emit(Event{Kind: EventStartup, Time: time.Now(), Message: fmt.Sprintf("PII scrubbing enabled for role %s", cfg.Role)})
 	}
 
+	// Opt-in per-turn trace (MUX-115) — nil when off, and every tracer
+	// method no-ops on nil, so the batch loop is unchanged by default.
+	var tracer *TurnTracer
+	if cfg.TurnTrace {
+		tracer = NewTurnTracer(cfg.TurnTracePath())
+		sink.Emit(Event{Kind: EventStartup, Time: time.Now(), Message: fmt.Sprintf("Turn trace enabled: %s", tracer.Path)})
+	}
+
 	// Initialize the inference client (local Ollama or, with an API key,
 	// a hosted OpenAI-compatible gateway — same dialect either way).
 	ollama := NewOllamaClient(cfg.OllamaURL, cfg.OllamaModel)
@@ -260,7 +268,7 @@ func Run(ctx context.Context, cfg Config, sink EventSink) error {
 
 				// Run batch with timeout
 				batchCtx, batchCancel := context.WithTimeout(ctx, BatchTimeout)
-				success := processBatch(batchCtx, cfg, bus, ollama, executor, tools, systemPrompt, filter, msgs, sink)
+				success := processBatch(batchCtx, cfg, bus, ollama, executor, tools, systemPrompt, filter, msgs, sink, tracer)
 				batchCancel()
 
 				if success {
@@ -296,7 +304,7 @@ func Run(ctx context.Context, cfg Config, sink EventSink) error {
 // processBatch handles a batch of inbox messages through the Ollama conversation loop.
 // Returns true if the batch produced a meaningful response, false if it exhausted
 // turns, timed out, or was blocked — used for cross-batch stuck detection.
-func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *OllamaClient, executor *Executor, tools []ToolDef, systemPrompt string, filter *Filter, msgs []Message, sink EventSink) bool {
+func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *OllamaClient, executor *Executor, tools []ToolDef, systemPrompt string, filter *Filter, msgs []Message, sink EventSink, tracer *TurnTracer) bool {
 	// Find last message for reply routing
 	lastMsg := msgs[len(msgs)-1]
 
@@ -329,13 +337,19 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 	if maxTurns <= 0 {
 		maxTurns = 10
 	}
+	tracer.BatchStart(lastMsg.ID, lastMsg.Action, maxTurns)
 
-	for turn := 0; turn < maxTurns; turn++ {
+	// turn is hoisted so the post-loop exhaustion check can see it:
+	// natural loop completion (turn == maxTurns) is the budget-exhausted
+	// path the trace must name (MUX-115).
+	var turn int
+	for turn = 0; turn < maxTurns; turn++ {
 		// Check context (batch timeout or parent cancellation)
 		select {
 		case <-ctx.Done():
 			finalResponse = "Error: batch timed out"
 			sink.Emit(Event{Kind: EventError, Time: time.Now(), Message: fmt.Sprintf("Batch context cancelled: %v", ctx.Err())})
+			tracer.TurnEvent(turn+1, TraceOutcomeError, fmt.Sprintf("batch context cancelled: %v", ctx.Err()))
 			goto sendResponse
 		default:
 		}
@@ -354,11 +368,13 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 			} else {
 				finalResponse = fmt.Sprintf("Error calling %s: %v", endpointKind(cfg), err)
 			}
+			tracer.TurnEvent(turn+1, TraceOutcomeModelError, finalResponse)
 			break
 		}
 
 		if len(resp.Choices) == 0 {
 			finalResponse = "Error: empty response from Ollama"
+			tracer.TurnEvent(turn+1, TraceOutcomeModelError, finalResponse)
 			break
 		}
 
@@ -393,12 +409,14 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 				// the LLM is likely hallucinating results instead of executing.
 				// Inject a corrective message and retry.
 				sink.Emit(Event{Kind: EventForceToolUse, Time: time.Now(), Message: "No tool calls on first turn — forcing tool use"})
+				tracer.TurnEvent(turn+1, TraceOutcomeForced, "no tool calls on first turn — corrective prompt injected")
 				conversation = append(conversation, ChatMessage{
 					Role:    "user",
 					Content: "You did NOT execute any commands. You MUST use the bash tool to run the actual commands before responding. Do NOT describe results from memory — call the bash tool now to execute the task.",
 				})
 				continue
 			}
+			tracer.TurnEvent(turn+1, TraceOutcomeText, text)
 			finalResponse = choice.Message.Content
 			batchSuccess = true
 			break
@@ -418,6 +436,7 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 			if result.Blocked {
 				toolOutput = result.Reason
 				sink.Emit(Event{Kind: EventToolBlocked, Time: time.Now(), Message: fmt.Sprintf("BLOCKED: %s", result.Reason)})
+				tracer.ToolCall(turn+1, tc.Function.Name, string(tc.Function.Arguments), TraceOutcomeBlockedFilter, result.Reason)
 			} else {
 				allBlocked = false
 				toolsExecuted = true
@@ -428,6 +447,7 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 				// Log completion with timing and brief result
 				exitInfo := toolExitInfo(tc, toolOutput)
 				sink.Emit(Event{Kind: EventToolComplete, Time: time.Now(), Message: fmt.Sprintf("%s (%.1fs%s)", tc.Function.Name, toolDur.Seconds(), exitInfo)})
+				tracer.ToolCall(turn+1, tc.Function.Name, string(tc.Function.Arguments), classifyToolOutcome(toolOutput), toolOutputPreview(toolOutput))
 
 				// Track success for single-shot auto-complete
 				lastToolSucceeded = !toolHasNonZeroExit(toolOutput)
@@ -458,6 +478,7 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 			consecutiveAllBlocked++
 			if consecutiveAllBlocked >= MaxAllBlockedTurns {
 				sink.Emit(Event{Kind: EventAllBlocked, Time: time.Now(), Message: fmt.Sprintf("%d consecutive all-blocked turns — breaking out", consecutiveAllBlocked)})
+				tracer.TurnEvent(turn+1, TraceOutcomeAllBlocked, fmt.Sprintf("%d consecutive all-blocked turns", consecutiveAllBlocked))
 				finalResponse = "(all tool calls blocked — agent stuck in loop)"
 				break
 			}
@@ -479,9 +500,14 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 			// then launch) that a hosted model executes correctly.
 			if isSingleShotRole(cfg.Role) && cfg.APIKey == "" && toolsExecuted && lastToolSucceeded {
 				sink.Emit(Event{Kind: EventOllamaResponse, Time: time.Now(), Message: "Single-shot role — auto-completing after tool execution"})
+				tracer.TurnEvent(turn+1, TraceOutcomeSingleShot, "single-shot auto-complete after successful tool execution")
 				break
 			}
 		}
+	}
+
+	if turn >= maxTurns {
+		tracer.TurnEvent(maxTurns, TraceOutcomeExhausted, "turn budget exhausted before a final response")
 	}
 
 	// If tools were executed but no text response was produced (e.g. single-shot
@@ -533,6 +559,7 @@ sendResponse:
 	}
 
 	sink.Emit(Event{Kind: EventBatchComplete, Time: time.Now(), Message: fmt.Sprintf("Response (%d bytes, success=%v) → %s", len(finalResponse), batchSuccess, lastMsg.From)})
+	tracer.BatchEnd(batchSuccess, fmt.Sprintf("response_bytes=%d", len(finalResponse)))
 
 	if err := bus.Send(lastMsg.From, lastMsg.Action, finalResponse, "response", lastMsg.ID); err != nil {
 		sink.Emit(Event{Kind: EventError, Time: time.Now(), Message: fmt.Sprintf("send error: %v", err)})

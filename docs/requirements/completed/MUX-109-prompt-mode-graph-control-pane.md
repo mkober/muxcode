@@ -838,8 +838,8 @@ test exercises it either way. Six of these were measured, not merely skipped.
 
 | Unmet | Why it matters | Evidence status |
 |-------|----------------|-----------------|
-| Intent: **launch** — resolve across scopes and start via `graph run` (criteria + Phase 4 + Phase 7 steps) | A core intent of the feature. The pane can be told to launch a graph and will not | **Measured failing.** Timed out ×4 consecutive runs; turn budget exhausted before the command. Tracked as [MUX-115](../backlog/MUX-115-prompt-agent-turn-budget-exhaustion.md) |
-| Intent: **named gate approval** releases the gate (criteria + Phase 7 step) | The gate path is the authority-sensitive one; a gate that cannot be approved by name is not usable | **Measured failing.** Same exhaustion signature, same 4 runs. [MUX-115](../backlog/MUX-115-prompt-agent-turn-budget-exhaustion.md) |
+| Intent: **launch** — resolve across scopes and start via `graph run` (criteria + Phase 4 + Phase 7 steps) | A core intent of the feature. The pane can be told to launch a graph and will not | **Measured failing.** Timed out ×4 consecutive runs; turn budget exhausted before the command. Tracked as [MUX-115](../completed/MUX-115-prompt-agent-turn-budget-exhaustion.md) |
+| Intent: **named gate approval** releases the gate (criteria + Phase 7 step) | The gate path is the authority-sensitive one; a gate that cannot be approved by name is not usable | **Measured failing.** Same exhaustion signature, same 4 runs. [MUX-115](../completed/MUX-115-prompt-agent-turn-budget-exhaustion.md) |
 | Paired **unnamed-approve negative control** | Its positive control fails, so it can only report `skip` — it has nothing to discriminate against | **Undetermined by design.** Correctly reports skip rather than a vacuous pass (the fix made after run 1) |
 | Criterion: build, test, commit, watch still complete on the smaller model; single-shot roles do not loop | This is a **regression to roles outside this feature**, not a gap in it. The 4B could not complete tasks at all with thinking enabled | **Measured FALSE 2026-08-26.** See [Phase 2 regression findings](#phase-2-regression-findings). Mitigated in practice by the gateway default, but the criterion as written is refuted |
 | Phase 2: confirm each exercised role completes its normal task | Same root as above | **Not met.** No exercise returned a completed task response |
@@ -856,7 +856,7 @@ test exercises it either way. Six of these were measured, not merely skipped.
 | Phase 3: pane still redraws and cycles surfaces while a prompt is in flight | The non-blocking claim. Asserted by construction (async transcript read in `refresh()`), not by a test | **Unverified.** The design makes blocking structurally unlikely; nothing measures it |
 | Phase 2 follow-ups: disable thinking / structured outputs, then re-run the regression and re-decide "4B everywhere" | The decision row for "4B everywhere" is recorded with its premise already refuted | **Not started.** Escalation-ladder rungs 1–2 |
 
-**If this spec is reopened, start with [MUX-115](../backlog/MUX-115-prompt-agent-turn-budget-exhaustion.md).**
+**If this spec is reopened, start with [MUX-115](../completed/MUX-115-prompt-agent-turn-budget-exhaustion.md).**
 Two of the failing rows collapse into it, and its first phase is instrumentation precisely because
 four fix attempts have already been spent guessing at this cause.
 
@@ -909,7 +909,7 @@ Follow-up work is tracked, not abandoned:
 
 | Carried to | Covers |
 |-----------|--------|
-| [MUX-115](../backlog/MUX-115-prompt-agent-turn-budget-exhaustion.md) | The two failing live intents (`launch`, named-`approve`) — instrument the turn budget before attempting a fifth fix |
+| [MUX-115](../completed/MUX-115-prompt-agent-turn-budget-exhaustion.md) | The two failing live intents (`launch`, named-`approve`) — instrument the turn budget before attempting a fifth fix |
 | [MUX-113](../backlog/MUX-113-graph-template-delete-rename.md) | Graph templates can be created but never removed or renamed |
 
 **Not carried anywhere, and the one to watch:** the 4B regression criterion is measured **FALSE** —
@@ -918,6 +918,6 @@ gateway default means the shipped path never triggers it, which is *mitigation, 
 re-enabling the local backend inherits a broken configuration. See
 [Phase 2 regression findings](#phase-2-regression-findings).
 
-**If this spec is reopened, start with [MUX-115](../backlog/MUX-115-prompt-agent-turn-budget-exhaustion.md)** —
+**If this spec is reopened, start with [MUX-115](../completed/MUX-115-prompt-agent-turn-budget-exhaustion.md)** —
 two of the failing rows collapse into it, and four fix attempts have already been spent guessing at
 that cause.

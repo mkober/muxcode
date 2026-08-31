@@ -516,22 +516,35 @@ func TestValidateNodeGuard(t *testing.T) {
 }
 
 // TestCommitPRReviewLoopCloseSpecGuarded pins the builtin's close-spec
-// node to the daemon-side spec-complete guard (MUX-114): the node's
-// wording alone is an instruction to a model, not a control.
+// controls: the daemon-side spec-complete guard (MUX-114 — wording alone
+// is an instruction to a model, not a control) and the dedicated
+// close-gate (user request 2026-08-28: the close-out is its own local
+// approval, not a clause riding gate2's tail).
 func TestCommitPRReviewLoopCloseSpecGuarded(t *testing.T) {
 	tpl, _, err := ResolveGraphTemplate("commit-pr-review-loop")
 	if err != nil {
 		t.Fatalf("commit-pr-review-loop builtin missing: %v", err)
 	}
+	found := false
 	for _, n := range tpl.Nodes {
 		if n.ID == "close-spec" {
+			found = true
 			if n.Guard != GuardSpecComplete {
 				t.Errorf("close-spec guard %q, want %q", n.Guard, GuardSpecComplete)
 			}
-			return
 		}
 	}
-	t.Error("commit-pr-review-loop has no close-spec node")
+	if !found {
+		t.Fatal("commit-pr-review-loop has no close-spec node")
+	}
+	if !templateEdge(tpl, "close-gate", "close-spec") {
+		t.Error("close-spec must sit behind its own close-gate")
+	}
+	for _, e := range tpl.Edges {
+		if e.To == "close-spec" && e.From != "close-gate" {
+			t.Errorf("close-spec reachable around its gate via %s", e.From)
+		}
+	}
 }
 
 // TestBuiltinGateMessagesNonEmpty pins that every builtin wait_human gate
@@ -690,6 +703,135 @@ func TestBuiltinGateTextClean(t *testing.T) {
 	if !found {
 		t.Error("deploy-verify must carry the ungated-deploy warning — the deliberate trade is recorded, not silent")
 	}
+}
+
+// TestValidateDerivedLoopCap pins the max_iterations_from_spec edge: it
+// exempts its cycle from the DAG check like a numeric cap, setting both
+// forms is an error, and an uncapped cycle still fails (negative
+// control).
+func TestValidateDerivedLoopCap(t *testing.T) {
+	g := linearGraph()
+	g.Edges = append(g.Edges, Edge{From: "b", To: "a", Outcome: OutcomeFailure, MaxIterationsFromSpec: true})
+	if v := g.Validate(); !v.OK() {
+		t.Errorf("spec-derived loop cap must satisfy the cycle rule: %v", v.Errors)
+	}
+
+	g.Edges[len(g.Edges)-1].MaxIterations = 3
+	assertErrorContains(t, g.Validate(), "choose one")
+
+	g2 := linearGraph()
+	g2.Edges = append(g2.Edges, Edge{From: "b", To: "a", Outcome: OutcomeFailure})
+	if v := g2.Validate(); v.OK() {
+		t.Error("uncapped cycle must still fail validation (negative control)")
+	}
+}
+
+// templateEdge reports whether a template has a from->to edge.
+func templateEdge(g *Graph, from, to string) bool {
+	for _, e := range g.Edges {
+		if e.From == from && e.To == to {
+			return true
+		}
+	}
+	return false
+}
+
+// TestShipTemplatesUpdateSpecBeforeGate pins the user requirement
+// (2026-08-28): both ship templates update the spec DURING the run, on
+// the ONLY path to their commit gate (a direct review->gate edge would
+// silently bypass it — plan finding).
+func TestShipTemplatesUpdateSpecBeforeGate(t *testing.T) {
+	for name, gate := range map[string]string{"req-code-pr": "phase-gate", "story-lifecycle": "ship-gate"} {
+		tpl, _, err := ResolveGraphTemplate(name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var us *Node
+		for i := range tpl.Nodes {
+			if tpl.Nodes[i].ID == "update-spec" {
+				us = &tpl.Nodes[i]
+			}
+		}
+		if us == nil || NormalizeBusRole(us.Role) != "plan" || us.Action != "verify-spec" {
+			t.Errorf("%s: update-spec node missing or misrouted: %+v", name, us)
+		}
+		if !templateEdge(tpl, "review", "update-spec") || !templateEdge(tpl, "update-spec", gate) {
+			t.Errorf("%s: update-spec must sit between review and %s", name, gate)
+		}
+		if templateEdge(tpl, "review", gate) {
+			t.Errorf("%s: direct review->%s edge bypasses update-spec", name, gate)
+		}
+	}
+}
+
+// TestReqCodePRMultiPhaseLoop pins the MUX-121 Phase 4 shape: per-phase
+// gated commit with the phase-progress guard, spec-derived loop caps on
+// both loop-closing edges, gate-and-ask on a stuck phase via the commit
+// failure edge, termination to a final gate that alone releases push+PR.
+func TestReqCodePRMultiPhaseLoop(t *testing.T) {
+	tpl, _, err := ResolveGraphTemplate("req-code-pr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := map[string]*Node{}
+	for i := range tpl.Nodes {
+		nodes[tpl.Nodes[i].ID] = &tpl.Nodes[i]
+	}
+	if c := nodes["commit"]; c == nil || c.Guard != GuardPhaseProgress {
+		t.Errorf("commit must carry the phase-progress guard, got %+v", c)
+	} else if !strings.Contains(c.Message, "${completed_phase}") {
+		t.Error("commit must name ${completed_phase} — ${current_phase} is one ahead by commit time")
+	}
+	if pg := nodes["phase-gate"]; pg == nil || !strings.Contains(pg.Message, "${completed_phase}") {
+		t.Error("phase-gate must name ${completed_phase} so the human approves the right phase")
+	}
+	if !strings.Contains(nodes["implement"].Message, "${current_phase}") {
+		t.Error("implement must target the derived ${current_phase}, not the frozen intent")
+	}
+	for _, loop := range [][2]string{{"loop-check", "implement"}, {"stuck-gate", "implement"}} {
+		found := false
+		for _, e := range tpl.Edges {
+			if e.From == loop[0] && e.To == loop[1] && e.MaxIterationsFromSpec {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("loop edge %s->%s must derive its cap from the spec", loop[0], loop[1])
+		}
+	}
+	if !templateEdge(tpl, "commit", "stuck-gate") {
+		t.Error("a declined commit must route to the stuck gate (gate-and-ask), not dead-end")
+	}
+	if !templateEdge(tpl, "loop-check", "final-gate") || !templateEdge(tpl, "final-gate", "push-pr") {
+		t.Error("termination must run through the final gate before push+PR")
+	}
+	// Negative control: nothing reaches push-pr except through final-gate.
+	for _, e := range tpl.Edges {
+		if e.To == "push-pr" && e.From != "final-gate" {
+			t.Errorf("push-pr reachable around the final gate via %s", e.From)
+		}
+	}
+	if v := tpl.Validate(); !v.OK() {
+		t.Errorf("multi-phase req-code-pr must validate: %v", v.Errors)
+	}
+}
+
+// TestStoryLifecycleCommitGuard pins story-lifecycle's single-phase
+// contract: its commit keeps the intent-scoped phase-complete guard.
+func TestStoryLifecycleCommitGuard(t *testing.T) {
+	tpl, _, err := ResolveGraphTemplate("story-lifecycle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range tpl.Nodes {
+		if tpl.Nodes[i].ID == "commit" {
+			if tpl.Nodes[i].Guard != GuardPhaseComplete {
+				t.Errorf("story-lifecycle commit guard = %q, want phase-complete", tpl.Nodes[i].Guard)
+			}
+			return
+		}
+	}
+	t.Error("story-lifecycle has no commit node")
 }
 
 // writableTestGraph returns a minimal graph that passes Validate() and

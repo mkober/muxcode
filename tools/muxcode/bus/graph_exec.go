@@ -158,7 +158,7 @@ func StepGraphRun(session, runID string) error {
 	}
 	for id, st := range statuses {
 		if st.State == GraphNodeReady {
-			dispatchNode(session, run, byID[id], st)
+			dispatchNode(session, run, g, byID[id], st)
 		}
 	}
 
@@ -166,42 +166,148 @@ func StepGraphRun(session, runID string) error {
 	return nil
 }
 
-// specCompleteGuardAllows evaluates the spec-complete dispatch guard:
-// true means dispatch proceeds. A decline finishes the node as failed with
-// the reason, so the run stops before any downstream mutation; a
-// transiently unresolvable repo dir leaves the node ready for the next
-// tick. No active spec passes through — blocking there would make the
-// node inert (MUX-114 criterion). A set-but-unreadable spec declines
-// loudly: closing out against an unreadable spec is as wrong as closing
-// an open one. Why guards are daemon-side: see knownNodeGuards.
-func specCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
+// guardAllowsDispatch evaluates a node's dispatch-time guard: true means
+// dispatch proceeds; a decline finishes the node as failed so the run
+// stops before any downstream mutation. Why guards are daemon-side: see
+// knownNodeGuards.
+func guardAllowsDispatch(session string, run *GraphRun, g *Graph, n *Node) bool {
+	switch n.Guard {
+	case GuardSpecComplete:
+		return specCompleteGuardAllows(session, run, n)
+	case GuardPhaseComplete:
+		return phaseCompleteGuardAllows(session, run, n)
+	case GuardPhaseProgress:
+		return phaseProgressGuardAllows(session, run, g, n)
+	}
+	return true
+}
+
+// activeSpecFile resolves the active spec pointer to an absolute path.
+// ok=false with transient=true means the repo dir was unresolvable this
+// tick (caller leaves the node ready to retry); ok=false otherwise means
+// no active spec is set.
+func activeSpecFile(session string) (path string, ok, transient bool) {
 	specRel := ReadActiveSpec(session)
 	if specRel == "" {
-		return true
+		return "", false, false
 	}
-	path := specRel
-	if !filepath.IsAbs(path) {
-		repo := SessionRepoDir(session)
-		if repo == "" {
-			return false // transient: repo dir unresolvable — node stays ready, retried next tick
-		}
-		path = filepath.Join(repo, path)
+	if filepath.IsAbs(specRel) {
+		return specRel, true, false
+	}
+	repo := SessionRepoDir(session)
+	if repo == "" {
+		return "", false, true
+	}
+	return filepath.Join(repo, specRel), true, false
+}
+
+// specCompleteGuardAllows blocks dispatch while the active spec has ANY
+// open checkbox items. No active spec passes through — blocking there
+// would make the node inert (MUX-114 criterion). A set-but-unreadable
+// spec declines loudly: closing out against an unreadable spec is as
+// wrong as closing an open one.
+func specCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
+	path, ok, transient := activeSpecFile(session)
+	if transient {
+		return false // node stays ready, retried next tick
+	}
+	if !ok {
+		return true
 	}
 	count, names, err := SpecOpenItems(path)
 	if err != nil {
 		finishNode(session, run, n, OutcomeFailure,
-			fmt.Sprintf("spec-complete guard: cannot read active spec %s: %v", specRel, err))
+			fmt.Sprintf("spec-complete guard: cannot read active spec: %v", err))
 		return false
 	}
 	if count > 0 {
-		detail := fmt.Sprintf("spec-complete guard declined: %d open items in %s: %s",
-			count, specRel, summarizeOpenItems(names, 5))
-		LogLifecycle(session, "warn", "daemon", "graph-guard-declined",
-			fmt.Sprintf("%s: %s — %s", run.ID, n.ID, detail))
-		finishNode(session, run, n, OutcomeFailure, detail)
+		declineGuard(session, run, n, fmt.Sprintf("spec-complete guard declined: %d open items: %s",
+			count, summarizeOpenItems(names, 5)))
 		return false
 	}
 	return true
+}
+
+// phaseCompleteGuardAllows blocks dispatch while the phase named in the
+// run's intent still has open items in the active spec. No phase in the
+// intent, or no active spec, passes through — the guard scopes a ship to
+// what the run claimed to deliver, nothing more (user decision
+// 2026-08-28: a full-spec guard would block every partial-phase ship).
+func phaseCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
+	phase := IntentPhase(run.Intent)
+	if phase == 0 {
+		return true
+	}
+	path, ok, transient := activeSpecFile(session)
+	if transient {
+		return false // node stays ready, retried next tick
+	}
+	if !ok {
+		return true
+	}
+	count, names, err := SpecPhaseOpenItems(path, phase)
+	if err != nil {
+		finishNode(session, run, n, OutcomeFailure,
+			fmt.Sprintf("phase-complete guard: cannot read active spec: %v", err))
+		return false
+	}
+	if count > 0 {
+		declineGuard(session, run, n, fmt.Sprintf("phase-complete guard declined: Phase %d has %d open items: %s",
+			phase, count, summarizeOpenItems(names, 5)))
+		return false
+	}
+	return true
+}
+
+// phaseProgressGuardAllows blocks a per-phase commit that would ship no
+// newly-completed phase: completed phases must exceed the node's own
+// prior successful fires (each past commit shipped one phase; this one
+// must too). Counting the guard node's success edges — not loop
+// iterations — keeps fix-loop and stuck-gate retries out of the math: a
+// phase that needed two build fixes or a gate-approved retry still
+// commits once its phase closes (review catch 2026-08-28: an
+// iteration-max count inflated by the fix loop declined healthy phases).
+// The failure edge routes to the stuck gate, so a decline is the
+// gate-and-ask trigger, not a dead end (MUX-121 decision 4). No active
+// spec declines — never commit blind; transient repo-dir postpones.
+func phaseProgressGuardAllows(session string, run *GraphRun, g *Graph, n *Node) bool {
+	path, ok, transient := activeSpecFile(session)
+	if transient {
+		return false // node stays ready, retried next tick
+	}
+	if !ok {
+		declineGuard(session, run, n, "phase-progress guard declined: no active spec to verify the phase against")
+		return false
+	}
+	completed, err := SpecCompletedPhaseCount(path)
+	if err != nil {
+		finishNode(session, run, n, OutcomeFailure,
+			fmt.Sprintf("phase-progress guard: cannot read active spec: %v", err))
+		return false
+	}
+	// max, not sum: every success edge fires together on one completion,
+	// so summing counts each shipped commit once per edge and a fan-out
+	// commit node would overstate its history (PR #50 Copilot).
+	prior := 0
+	for _, e := range g.Edges {
+		if e.From == n.ID && edgeOutcome(e) == OutcomeSuccess {
+			prior = max(prior, run.EdgeFires[EdgeFireKey(e)])
+		}
+	}
+	if completed < prior+1 {
+		declineGuard(session, run, n, fmt.Sprintf(
+			"phase-progress guard declined: %d commits shipped but only %d phases complete — this commit's phase is still open", prior, completed))
+		return false
+	}
+	return true
+}
+
+// declineGuard records a guard decline: lifecycle event plus the failed
+// node carrying the reason.
+func declineGuard(session string, run *GraphRun, n *Node, detail string) {
+	LogLifecycle(session, "warn", "daemon", "graph-guard-declined",
+		fmt.Sprintf("%s: %s — %s", run.ID, n.ID, detail))
+	finishNode(session, run, n, OutcomeFailure, detail)
 }
 
 // summarizeOpenItems joins item names for a decline message, truncating
@@ -214,13 +320,58 @@ func summarizeOpenItems(names []string, limit int) string {
 }
 
 // interpolateGraphMessage expands run/worker placeholders in a node
-// message template.
-func interpolateGraphMessage(msg, intent, item string) string {
+// message template. ${current_phase} resolves from the active spec at
+// dispatch time, not from the frozen intent — the frozen "Phase N" string
+// is what made three runs re-implement a completed phase (MUX-121).
+func interpolateGraphMessage(session, msg, intent, item string) string {
 	msg = strings.ReplaceAll(msg, "${intent}", intent)
 	if item != "" {
 		msg = strings.ReplaceAll(msg, "${item}", item)
 	}
+	if strings.Contains(msg, "${current_phase}") {
+		msg = strings.ReplaceAll(msg, "${current_phase}", resolveCurrentPhaseText(session))
+	}
+	if strings.Contains(msg, "${completed_phase}") {
+		msg = strings.ReplaceAll(msg, "${completed_phase}", resolveCompletedPhaseText(session))
+	}
 	return msg
+}
+
+// resolveCompletedPhaseText expands ${completed_phase}: the completion
+// frontier the commit ships — see SpecJustCompletedPhase for why the
+// commit must not use ${current_phase}.
+func resolveCompletedPhaseText(session string) string {
+	path, ok, transient := activeSpecFile(session)
+	if transient {
+		return "(completed phase unresolved — repo dir unavailable this tick)"
+	}
+	if !ok {
+		return "(no completed phase)"
+	}
+	p, err := SpecJustCompletedPhase(path)
+	if err != nil || p.Number == 0 {
+		return "(no completed phase)"
+	}
+	return p.Title
+}
+
+// resolveCurrentPhaseText expands ${current_phase}: the active spec's
+// lowest open phase heading, or explicit degradation text — honest words
+// beat a leftover placeholder in an agent-facing message, and a transient
+// repo-dir failure must not masquerade as "no open phase".
+func resolveCurrentPhaseText(session string) string {
+	path, ok, transient := activeSpecFile(session)
+	if transient {
+		return "(current phase unresolved — repo dir unavailable this tick)"
+	}
+	if !ok {
+		return "(no open phase)"
+	}
+	p, err := SpecCurrentPhase(path)
+	if err != nil || p.Number == 0 {
+		return "(no open phase)"
+	}
+	return p.Title
 }
 
 // dispatchNode fires a ready node's work and moves it to running/waiting.
@@ -231,11 +382,11 @@ func interpolateGraphMessage(msg, intent, item string) string {
 // keyed to the QUEUED duplicate's message ID, not the unsent one — the
 // agent answers the queued id, and a task keyed to the unsent id sits
 // in-flight forever (PR #38 Copilot finding).
-func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
+func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNodeStatus) {
 	if n == nil {
 		return
 	}
-	if n.Guard == GuardSpecComplete && !specCompleteGuardAllows(session, run, n) {
+	if !guardAllowsDispatch(session, run, g, n) {
 		return
 	}
 	LogLifecycle(session, "info", "daemon", "graph-node-start",
@@ -243,7 +394,7 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 
 	switch n.Type {
 	case NodeSend:
-		msg := interpolateGraphMessage(n.Message, run.Intent, "")
+		msg := interpolateGraphMessage(session, n.Message, run.Intent, "")
 		m := NewMessage(graphSender, n.Role, "request", n.Action, msg, "")
 		if err := SendNoCC(session, m); err != nil {
 			if errors.Is(err, ErrSendSuppressed) {
@@ -273,7 +424,7 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 		})
 
 	case NodeSpawn:
-		msg := interpolateGraphMessage(n.Message, run.Intent, "")
+		msg := interpolateGraphMessage(session, n.Message, run.Intent, "")
 		spawnID, err := graphSpawnFn(session, n.Role, msg, graphSender)
 		if err != nil {
 			finishNode(session, run, n, OutcomeFailure, "spawn failed: "+err.Error())
@@ -293,7 +444,7 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 		}
 		var ids []string
 		for _, item := range items {
-			msg := interpolateGraphMessage(n.Message, run.Intent, item)
+			msg := interpolateGraphMessage(session, n.Message, run.Intent, item)
 			spawnID, err := graphSpawnFn(session, n.Role, msg, graphSender)
 			if err != nil {
 				finishNode(session, run, n, OutcomeFailure, "map spawn failed: "+err.Error())
@@ -322,7 +473,7 @@ func dispatchNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 		finishNode(session, run, n, OutcomeSuccess, "")
 
 	case NodeWaitHuman:
-		prompt := interpolateGraphMessage(n.Message, run.Intent, "")
+		prompt := interpolateGraphMessage(session, n.Message, run.Intent, "")
 		// A fresh pass through a gate requires a fresh approval: purge any
 		// approved marker left by a previous pass (graph retry --from, or a
 		// loop edge re-arming the gate). Without this, harvestWaitingNode
@@ -424,7 +575,9 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 		default:
 			if TaskExpired(task, now) {
 				finishNode(session, run, n, OutcomeFailure, "task expired")
+				return
 			}
+			redriveStalledDispatch(session, run, n, st, task, now)
 		}
 
 	case NodeSpawn, NodeMap:
@@ -432,8 +585,124 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 		outcome, done := spawnGroupOutcome(session, st.TaskID)
 		if done {
 			finishNode(session, run, n, outcome, "")
+			return
+		}
+		redriveStalledSpawns(session, run, n, st, now)
+	}
+}
+
+// redriveStalledSpawns is the spawn/map side of executor stall
+// resolution: a worker whose seeded task sits unconsumed past the stall
+// threshold is re-woken, with the same persisted bookkeeping and cap as
+// the send path. Cap exhaustion with workers still stalled fails the
+// node — default spawn nodes carry no timeout, so a never-waking worker
+// would otherwise run forever.
+func redriveStalledSpawns(session string, run *GraphRun, n *Node, st *GraphNodeStatus, now int64) {
+	stall := int64(TaskStallSecs() / 2)
+	if st.StartedAt == 0 || now-st.StartedAt < stall || now-st.LastRedrive < 60 {
+		return
+	}
+	stalled := stalledSpawnWorkers(session, st.TaskID)
+	if len(stalled) == 0 {
+		return
+	}
+	if st.Redrives >= graphRedriveMax {
+		finishNode(session, run, n, OutcomeFailure, fmt.Sprintf(
+			"undeliverable: spawn worker(s) %s never consumed their task after %d redrives",
+			strings.Join(stalled, ","), graphRedriveMax))
+		return
+	}
+	for _, id := range stalled {
+		graphSpawnWakeFn(session, id)
+	}
+	_ = MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) {
+		s.Redrives++
+		s.LastRedrive = now
+	})
+	st.Redrives++
+	st.LastRedrive = now
+	LogLifecycle(session, "warn", "daemon", "graph-stall-redrive",
+		fmt.Sprintf("%s: %s re-woke %d stalled spawn worker(s) — redrive %d/%d",
+			run.ID, n.ID, len(stalled), st.Redrives, graphRedriveMax))
+}
+
+// graphSpawnWakeFn re-wakes one stalled spawn worker; a seam so tests
+// observe wake attempts instead of spinning prompt-wait goroutines
+// against a session that does not exist.
+var graphSpawnWakeFn = func(session, spawnRole string) {
+	go wakeSpawnedAgent(session, spawnRole)
+}
+
+// stalledSpawnWorkers lists the spawn roles whose seeded task still sits
+// unconsumed in their inbox.
+func stalledSpawnWorkers(session, taskIDs string) []string {
+	var out []string
+	for _, id := range strings.Split(taskIDs, ",") {
+		if HasActionableMessages(session, id) {
+			out = append(out, id)
 		}
 	}
+	return out
+}
+
+// graphRedriveMax caps executor stall redrives per dispatch before the
+// node fails as undeliverable — waiting out the 600s task timeout would
+// disguise a delivery failure as slowness.
+const graphRedriveMax = 3
+
+// redriveStalledDispatch is the executor-owned form of the graph-priority
+// rule (MUX-123): a dispatch in flight with NO delivery receipt past the
+// stall threshold is redriven via ForceDeliver from the harvest tick
+// itself. Receipt absence is the trigger — a positive signal, not a pane
+// scrape — and the bookkeeping lives in the node status, so it survives
+// the daemon restarts that reset the watchdog's in-memory debounce (the
+// suspected cause of the three live stalls this design replaces). After
+// graphRedriveMax attempts the node fails loudly as undeliverable.
+func redriveStalledDispatch(session string, run *GraphRun, n *Node, st *GraphNodeStatus, task Task, now int64) {
+	if !TaskStalled(task, now, TaskStallSecs()) {
+		return
+	}
+	if _, received := ReadReceipt(session, task.ID); received {
+		return // the agent has it — genuinely working, not stalled
+	}
+	if now-st.LastRedrive < 60 {
+		return
+	}
+	role := NormalizeBusRole(n.Role)
+	if st.Redrives >= graphRedriveMax {
+		finishNode(session, run, n, OutcomeFailure, fmt.Sprintf(
+			"undeliverable: %s never received the dispatch after %d redrives", role, graphRedriveMax))
+		return
+	}
+	_ = MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) {
+		s.Redrives++
+		s.LastRedrive = now
+	})
+	st.Redrives++
+	st.LastRedrive = now
+	delivered := graphRedriveFn(session, role, task)
+	LogLifecycle(session, "warn", "daemon", "graph-stall-redrive",
+		fmt.Sprintf("%s: %s dispatch to %s un-receipted %ds — redrive %d/%d (delivered %d)",
+			run.ID, n.ID, role, now-task.SentAt, st.Redrives, graphRedriveMax, delivered))
+}
+
+// graphRedriveFn performs the redelivery for one stalled dispatch:
+// pending inbox rows deliver in bulk (undelivered work duplicates
+// nothing), while the consumed case uses the TARGETED RedriveTask — the
+// role-wide redrive re-injected unrelated in-flight work (review
+// must-fix 2026-08-28). Package variable so tests observe delivery
+// attempts rather than just bookkeeping counters.
+var graphRedriveFn = func(session, role string, task Task) int {
+	if HasActionableMessages(session, role) {
+		if res, err := ForceDeliver(session, role, true); err == nil {
+			return res.Delivered
+		}
+		return 0
+	}
+	if RedriveTask(session, task) {
+		return 1
+	}
+	return 0
 }
 
 // spawnGroupOutcome inspects the comma-separated spawn ids of a spawn or
@@ -572,11 +841,12 @@ func routeFinishedNodes(session string, run *GraphRun, g *Graph, byID map[string
 			}
 		}
 
-		fired := 0
+		fired, exhausted := 0, 0
 		for _, e := range matching {
 			key := EdgeFireKey(e)
 			if e.MaxIterations > 0 && run.EdgeFires[key] >= e.MaxIterations {
-				LogLifecycle(session, "info", "daemon", "graph-loop-exhausted",
+				exhausted++
+				LogLifecycle(session, "warn", "daemon", "graph-loop-exhausted",
 					fmt.Sprintf("%s: edge %s exhausted after %d iterations", run.ID, key, e.MaxIterations))
 				continue
 			}
@@ -589,14 +859,20 @@ func routeFinishedNodes(session string, run *GraphRun, g *Graph, byID map[string
 		}
 		_ = WriteGraphRun(session, run)
 
-		// A failure with nowhere to route (no failure edge, or the loop
-		// edge exhausted) fails the run. A success with no edges is a
-		// normal terminal path.
-		if fired == 0 && st.Outcome == OutcomeFailure {
+		// A failure with nowhere to route fails the run; a success with no
+		// edges is a normal terminal path — UNLESS an exhausted cap is what
+		// suppressed the route. A cap shortfall must be a loud failure,
+		// never a run that looks complete with work unattempted (MUX-121
+		// plan finding: gate-retries silently costing the last phase).
+		if fired == 0 && (st.Outcome == OutcomeFailure || exhausted > 0) {
 			run.State = GraphRunFailed
 			_ = WriteGraphRun(session, run)
+			reason := "failed with no live edge"
+			if st.Outcome != OutcomeFailure {
+				reason = "loop cap exhausted with its edge suppressed — remaining work never attempted"
+			}
 			LogLifecycle(session, "warn", "daemon", "graph-run-failed",
-				fmt.Sprintf("%s: node %s failed with no live edge", run.ID, id))
+				fmt.Sprintf("%s: node %s %s", run.ID, id, reason))
 		}
 
 		_ = MutateNodeStatus(session, run.ID, id, func(s *GraphNodeStatus) {
