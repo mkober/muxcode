@@ -44,3 +44,7 @@ Add row to the Implemented table in `docs/requirements/backlog.md`.
 - Explicit key in request message (`"update PROJ-456 description"`) takes priority over branch name
 - Missing env vars cause script error (non-zero exit), skill reports failure gracefully
 - No Jira key causes silent skip, not an error
+
+## Status
+
+Complete

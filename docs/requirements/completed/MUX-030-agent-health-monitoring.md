@@ -222,3 +222,7 @@ Agent health monitoring follows the same 3-strike pattern as Ollama health (`bus
 | System actions | `ollama-down`, `ollama-recovered`, `ollama-restarting` | `agent-down`, `agent-recovered`, `agent-restarting` |
 
 The two systems are independent — Ollama health monitors the inference server, agent health monitors individual agent processes. An agent using Ollama could trigger both if the Ollama server dies (Ollama health detects the server failure, agent health detects the agent crashing after repeated `ChatComplete` errors).
+
+## Status
+
+Complete

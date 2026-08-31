@@ -252,4 +252,12 @@ Implementation steps:
 
 ## Status
 
-Draft
+Complete — status corrected 2026-08-31 during a backlog/completed sync audit. The spec was moved
+into `completed/` without its Status field being updated, so a shipped feature read as unstarted.
+Verified against the tree rather than inferred from the directory: `StartSpawn(session, role, task,
+owner string, useWorktree bool)` and `createSpawnWorktree()` (`bus/spawn.go:112`, `:132`), the
+`Worktree`/`WorktreeRef` entry fields (`:27-28`), `removeSpawnWorktree()` on completion detection
+(`:300`), and the `--no-worktree` opt-out in `cmd/spawn.go:41`.
+
+Phase steps below are recorded as plain bullets, predating the checkbox convention; they are left
+as written rather than retroactively ticked, since no evidence was gathered per step.

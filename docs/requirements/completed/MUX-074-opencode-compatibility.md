@@ -977,3 +977,7 @@ Version check runs at agent launch time (in `ResolveLaunchConfig`), not at insta
 This complexity has no clear use case — the provider choice is a session configuration decision, not a runtime toggle. The env var pattern (`MUXCODE_DESIGNER_CLI=opencode`) is set before `muxcode.sh` launches and applies for the session lifetime.
 
 If a user wants to change providers, they restart the session with updated env vars. This is consistent with how `MUXCODE_{ROLE}_CLAUDE_MODEL` works today.
+
+## Status
+
+Complete

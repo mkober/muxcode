@@ -45,4 +45,4 @@ Per-role tool permissions and event-driven automation chains were hardcoded in b
 
 ## Status
 
-Implemented
+Complete

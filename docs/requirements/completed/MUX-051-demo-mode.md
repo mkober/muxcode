@@ -17,3 +17,7 @@ Scripted demo scenarios with bus messages, window switching, and GIF capture.
 |------|---------|
 | `bus/demo.go` | `RunDemo()`, `BuiltinScenarios()`, `ScaleDelay()` |
 | `cmd/demo.go` | CLI handler for demo subcommand |
+
+## Status
+
+Complete

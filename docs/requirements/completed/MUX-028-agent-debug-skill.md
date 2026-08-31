@@ -15,3 +15,7 @@ Edit-agent skill for diagnosing other agents via tmux pane inspection.
 | File | Purpose |
 |------|---------|
 | `skills/agent-debug.md` | Skill definition with diagnostic procedures and troubleshooting table |
+
+## Status
+
+Complete

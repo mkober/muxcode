@@ -19,3 +19,7 @@ General-purpose Confluence GET+PUT skill for reading and updating pages via the 
 |------|---------|
 | `skills/MUX-044-confluence-update-page.md` | Skill definition with ADF examples, conflict handling, and wrapper script usage |
 | `scripts/muxcode-confluence.sh` | Wrapper script handling config sourcing, curl+auth, and API calls (read/update/search) |
+
+## Status
+
+Complete

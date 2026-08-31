@@ -15,3 +15,7 @@ Left-pane poller for the analyze window displaying filtered analyst findings fro
 | File | Purpose |
 |------|---------|
 | `scripts/muxcode-analyze-log.sh` | Left-pane poller script for analyze window |
+
+## Status
+
+Complete

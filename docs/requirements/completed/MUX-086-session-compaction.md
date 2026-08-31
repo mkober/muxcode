@@ -20,3 +20,7 @@ Manual session summary save/restore for context preservation across restarts.
 | `bus/config.go` | Path helpers for `.muxcode/memory/` directory |
 | `bus/agent.go` | `buildSystemPrompt()` injects session resume context |
 | `harness/prompt.go` | `BuildSystemPrompt()` injects session resume for harness agents |
+
+## Status
+
+Complete

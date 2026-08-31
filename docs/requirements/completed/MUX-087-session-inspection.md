@@ -18,3 +18,7 @@ Agent status overview and message history querying.
 | `bus/inspect.go` | `GetAgentStatus()`, `GetAllAgentStatus()`, `ReadLogHistory()`, `PreCommitCheck()` |
 | `cmd/inspect.go` | CLI handler for inspect subcommands |
 | `bus/config.go` | `PaneTarget()`, `AgentPane()` for tmux pane resolution |
+
+## Status
+
+Complete

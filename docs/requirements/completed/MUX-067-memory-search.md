@@ -29,4 +29,4 @@ Agents write learnings to persistent memory but have no way to query them later 
 
 ## Status
 
-Implemented
+Complete

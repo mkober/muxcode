@@ -297,3 +297,7 @@ Polls tmux for idle state, sends `/compact` via tmux send-keys. Idle detection (
 | **Total** | **20** | **~4,812** | | |
 
 **Deferred:** `muxcode.sh` (543 lines) — evaluate Go port after Phase 5 experience with `muxcode-agent.sh`
+
+## Status
+
+Complete

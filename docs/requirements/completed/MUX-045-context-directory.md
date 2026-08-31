@@ -15,3 +15,7 @@ Per-agent drop-in context files injected into agent prompts via `context.d/` dir
 | File | Purpose |
 |------|---------|
 | `bus/context.go` | `ContextFilesForRole()`, `AllContextFilesForRole()`, `FormatContextPrompt()`, `FormatContextList()` |
+
+## Status
+
+Complete

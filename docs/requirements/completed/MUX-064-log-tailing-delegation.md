@@ -18,3 +18,7 @@ Route `aws logs`, `tail -f`, `kubectl logs`, etc. to the watch agent via edit gu
 | `scripts/muxcode-edit-guard.sh` | Pre-tool-use hook blocking log commands in edit |
 | `agents/code-editor.md` | Edit agent instructions with watch delegation pattern |
 | `agents/log-watcher.md` | Watch agent definition with log tool permissions |
+
+## Status
+
+Complete

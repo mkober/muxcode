@@ -161,6 +161,61 @@ This ties directly to [MUX-014](../completed/MUX-014-graph-agent-orchestrator.md
 - [ ] Worktree removal does not race the harvest — deletion happens only after the work is claimed
       or explicitly abandoned
 
+## Fourth gap: no redrive path for a *consumed-but-wedged* spawn
+
+The executor gained a spawn-side redrive, `redriveStalledSpawns` (`graph_exec.go:600`), and it
+closes the original defect well: a spawn whose seeded task is **still sitting unread** gets woken,
+up to `graphRedriveMax`, then fails the node with a named reason.
+
+**But its trigger is inbox occupancy, not progress.** `stalledSpawnWorkers` selects a worker only
+when `HasActionableMessages(session, id)` is true:
+
+```go
+func stalledSpawnWorkers(session, taskIDs string) []string {
+	var out []string
+	for _, id := range strings.Split(taskIDs, ",") {
+		if HasActionableMessages(session, id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+```
+
+So a worker that **consumed** its task and then wedged — inbox drained, nothing produced — is
+invisible: `len(stalled) == 0`, and the function returns before any redrive. The node then waits out
+its timeout with no intervention.
+
+This is the same shape as the send path, whose trigger is receipt *absence*: both mechanisms detect
+**"the work was never picked up"** and neither detects **"the work was picked up and then stopped."**
+That second failure is the one that produced the 8-minute `implement` stall recorded above, where
+the worker reported done and the node stayed `running`.
+
+### Correction: `deliver --force` **does** cover spawn roles
+
+This gap was reported alongside the claim that *"manual `deliver --force` does not cover `spawn-*`
+roles either."* **That is not the case.** `ForceDeliver` gates on `IsKnownRole`, which special-cases
+spawn roles explicitly:
+
+```go
+func IsKnownRole(role string) bool {
+	if IsSpawnRole(role) {
+		return true
+	}
+	...
+}
+```
+
+and `PaneTarget` resolves `spawn-<hex>` to its own window, which `StartSpawn` creates. So
+`muxcode deliver --force spawn-<hex>` is accepted and targets the right pane — the manual escape
+hatch works. Recorded because the distinction matters: the gap is the **absence of an automatic
+trigger for consumed-but-wedged workers**, not an absence of the delivery mechanism itself.
+
+- [ ] A spawn worker that consumed its task and then stopped producing is detected and redriven, not
+      only one that never consumed
+- [ ] The detector distinguishes *wedged* from *legitimately working* — a long-running worker must
+      not be redriven mid-task (the MUX-112 failure mode: reading "at the prompt" as "finished")
+
 ## Open decisions
 
 - [ ] **Fix at the source, the daemon, or both?** Source = readiness-gated wake in `StartSpawn`.

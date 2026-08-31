@@ -15,3 +15,7 @@ Correct `sil!` usage in vim pipe chains and separate jump-to-line timing for rel
 | File | Purpose |
 |------|---------|
 | `scripts/muxcode-preview-hook.sh` | Diff preview hook with corrected `sil!` chains and delayed jump |
+
+## Status
+
+Complete

@@ -16,3 +16,7 @@ Left-pane poller for run window showing command history, exit codes, and output.
 | File | Purpose |
 |------|---------|
 | `scripts/muxcode-runner-log.sh` | Left-pane poller script for runner execution history |
+
+## Status
+
+Complete

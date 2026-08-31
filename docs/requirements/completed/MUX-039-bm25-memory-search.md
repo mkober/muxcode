@@ -16,3 +16,7 @@ Okapi BM25 ranking replaces keyword counting as the default memory search mode.
 | File | Purpose |
 |------|---------|
 | `bus/search.go` | `tokenize()`, `stem()`, `buildCorpus()`, `bm25Score()`, `SearchMemoryBM25()`, `SearchMemoryWithOptions()` |
+
+## Status
+
+Complete

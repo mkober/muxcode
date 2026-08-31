@@ -15,3 +15,7 @@ Lazy daily rotation archives previous day's memory file on first write of the ne
 | File | Purpose |
 |------|---------|
 | `bus/rotation.go` | `NeedsRotation()`, `RotateMemory()`, `PurgeOldArchives()`, `ReadMemoryWithHistory()`, `AllMemoryEntriesWithArchives()` |
+
+## Status
+
+Complete

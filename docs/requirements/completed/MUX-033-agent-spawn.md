@@ -19,3 +19,7 @@ Create temporary agent sessions for one-off tasks, collect result, tear down.
 | `bus/spawn.go` | `StartSpawn()`, `StopSpawn()`, `GetSpawnResult()`, `RefreshSpawnStatus()`, `CleanFinishedSpawns()` |
 | `watcher/watcher.go` | Spawn status polling and completion detection |
 | `bus/config.go` | Path helpers for spawn data files |
+
+## Status
+
+Complete

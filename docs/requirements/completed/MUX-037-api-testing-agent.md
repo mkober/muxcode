@@ -203,3 +203,7 @@ muxcode api collection list
 8. `muxcode tools api` shows the expected tool profile
 9. Launch `muxcode` — "api" window appears with split-left layout and agent running
 10. From edit agent: `muxcode send api request "GET https://httpbin.org/get"` executes and reports back
+
+## Status
+
+Complete

@@ -31,4 +31,4 @@ Agent definitions are static markdown files with no runtime extensibility. There
 
 ## Status
 
-Implemented
+Complete

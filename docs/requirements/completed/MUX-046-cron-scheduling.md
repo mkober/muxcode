@@ -19,3 +19,7 @@ Interval-based scheduled tasks with watcher integration and execution history.
 | `watcher/watcher.go` | Polls cron schedule and fires due jobs |
 | `cmd/cron.go` | CLI handler for cron subcommands |
 | `bus/config.go` | Path helpers for cron data files |
+
+## Status
+
+Complete

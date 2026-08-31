@@ -479,3 +479,7 @@ Use `codex exec resume --last` to continue previous sessions for multi-turn work
 **Decision**: TUI mode for agents (pane content heuristics), JSONL parsing available for programmatic use.
 
 **Rationale**: Agents run in TUI mode where task completion is detected via pane content heuristics (`DetectTaskCompletion`). JSONL event parsing (`codex_events.go`) is implemented for `RunCodexExec()` — a programmatic entry point for non-interactive exec-mode use. Both paths coexist: TUI for persistent agents, exec+JSONL for one-shot programmatic invocations.
+
+## Status
+
+Complete

@@ -14,3 +14,7 @@ Commit agent uses HEREDOC syntax for multi-line commit messages instead of tempo
 | File | Purpose |
 |------|---------|
 | `agents/git-manager.md` | Agent definition with HEREDOC commit message instructions |
+
+## Status
+
+Complete

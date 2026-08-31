@@ -18,3 +18,7 @@ Chain stops at review -- commits, pushes, and PRs require explicit user action.
 | `agents/code-editor.md` | Edit agent instructions prohibiting auto-commit |
 | `bus/inspect.go` | `PreCommitCheck()` pre-commit safeguard |
 | `cmd/send.go` | `--force` flag to bypass pre-commit agent-idle check |
+
+## Status
+
+Complete

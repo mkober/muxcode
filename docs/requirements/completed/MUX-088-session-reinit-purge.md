@@ -17,3 +17,7 @@ Stale data cleanup on session restart -- preserves memory, purges ephemeral file
 |------|---------|
 | `bus/setup.go` | `Init()`, `resetFile()`, `purgeStaleFiles()` |
 | `bus/config.go` | Path definitions for all bus directory files |
+
+## Status
+
+Complete

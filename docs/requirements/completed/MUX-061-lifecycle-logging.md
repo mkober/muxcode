@@ -17,3 +17,7 @@ Persistent JSONL logs recording session-level events that survive session cleanu
 |------|---------|
 | `bus/lifecycle.go` | `LogLifecycle()`, `ReadLifecycleLog()`, `FilterLifecycleLog()`, `PurgeLifecycleLogs()` |
 | `cmd/lifecycle.go` | CLI subcommand handler for `lifecycle show` and `lifecycle purge` |
+
+## Status
+
+Complete

@@ -16,3 +16,7 @@ Watcher-integrated inference probes detect and recover stuck Ollama instances.
 | File | Purpose |
 |------|---------|
 | `bus/health.go` | `CheckOllamaInference()`, `RestartOllama()`, `RestartLocalAgent()`, `LocalLLMRoles()` |
+
+## Status
+
+Complete
