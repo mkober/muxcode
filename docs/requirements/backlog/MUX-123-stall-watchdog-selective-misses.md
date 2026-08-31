@@ -57,6 +57,41 @@ single most promising lead — one of the three missed stalls was a spawn task.
 Gate 6 compounds it: two sightings at a 30 s throttle means **no redrive before ~60–90 s**, and any
 transient failure of gate 4 or 5 resets nothing but delays everything.
 
+### The inverse failure: redriving a demonstrably live worker
+
+The spec above is framed entirely around **false negatives** — stalls the watchdog missed. A
+2026-08-31 incident on run `1788195259-req-code-pr-3fbcc7da` shows the **false positive** direction,
+and it is the same root confusion seen from the other side.
+
+The `implement` node's spawn worker was redriven as stalled while it was **actively working and
+answering on the bus**. The redrive escalated to its cap:
+
+```
+13:44:27  spawn-wake           spawn-3017de3d
+13:44:27  graph-stall-redrive  ...: implement re-woke 1 stalled spawn worker(s) — redrive 3/3
+```
+
+The worker was not stalled. Minutes later it completed a test task (`13:47:31 task-detected test task
+test from spawn-3017de3d: succeeded`) and harvested `bus/pane.go` and `bus/pane_test.go` into the
+repo. What it had *not* done was consume its seed message — so no receipt existed.
+
+**The detector treats receipt-absence as stall, and ignores contrary liveness evidence.** An agent
+that answers messages, completes tasks, and writes files is demonstrably alive; "has not consumed the
+seed" is one signal among several, and it is currently the only one that counts. `hasReceipt()` is
+the right definition of *received*, but it is being used as a proxy for *alive*, which it is not.
+
+Two things worth recording precisely, because the incident was initially understood differently:
+
+- The redrive **reached 3/3**; it was not defused below the cap. An operator instruction to the
+  worker to drain its inbox was issued around the same time, but the log shows the cap was hit.
+- **Reaching 3/3 did not fail the node.** `implement` remained `running` and the worker stayed
+  productive. So either the cap does not fail a node the way it is assumed to, or the failure is
+  deferred — worth pinning, since the assumed consequence drove the operator response.
+
+Any fix that makes the watchdog fire *more* readily to close the misses above must not widen this
+direction. A liveness signal — recent bus activity, task completion, or file writes attributable to
+the role — belongs in the gating chain alongside the receipt check.
+
 ### Why "move it into the executor" is a design option, not the requirement
 
 The original request proposed moving stall resolution into `harvestRunningNode`, which sees every

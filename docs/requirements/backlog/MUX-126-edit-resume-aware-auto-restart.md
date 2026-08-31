@@ -24,6 +24,41 @@ Tracking: [#51](https://github.com/mkober/muxcode/issues/51)
 
 ## Context
 
+### Recurrence: a second simultaneous death, same day
+
+The opening incident is **not a one-off**. At `13:42:31` the same day, three Claude Code agents —
+`plan`, `run`, `commit` — failed their health check *in the same second*. OpenCode agents were again
+unaffected. Cause remains unknown.
+
+Timeline as recorded in the lifecycle log (not reconstructed from memory):
+
+| Time | Event |
+|------|-------|
+| 13:42:31 | `agent-health-fail` ×3 — `plan`, `run`, `commit` failure #1, same second |
+| 13:43:02 | failure #2, all three |
+| 13:43:33–34 | failure #3 → `agent-restart` **attempt 1/3** each → `agent launch cli=claude` |
+| 13:43:50 | `force-deliver plan: 2 messages` |
+| 13:44:03 | `agent-recovered` ×3 |
+| 13:44:06 | `force-deliver run: 1`, `commit: 1` |
+
+Two counters are easy to conflate and are distinct: the restart fires on the **third failed health
+check**, and the restart itself then succeeded on **attempt 1 of 3**. Recovery took ~92 s end to end,
+~30 s from restart to recovered. No work was lost — `plan`'s pending messages were force-delivered
+and processed.
+
+What this recurrence contributes to this spec:
+
+- **The premise is durable.** A simultaneous multi-agent Claude death has now happened twice in one
+  day, so the recovery path this spec changes is exercised in practice, not hypothetically.
+- **The non-edit path worked exactly as designed** — full launch flags, fresh conversation, recovered
+  in ~30 s. That is the half of the table this spec wants to preserve while adding the other half.
+- **`edit` survived this time**, so the gap this spec exists to close was *not* exercised. Had `edit`
+  been in the set, it would once again have come back without `--dangerously-skip-permissions`. The
+  spec's value is unchanged; this incident simply did not happen to demonstrate it.
+- **Root cause is still open** (see Risks). Three Claude processes dying in the same second while
+  OpenCode agents in the same session are untouched points at something Claude-specific or
+  environmental rather than at any one agent's workload.
+
 ### Why `edit` is excluded today
 
 `agentHealthExcludedRoles` (`bus/agent_health.go:13`) is a two-entry map with a one-line rationale:
@@ -204,6 +239,7 @@ excluded throughout.
 | Fallback masks a broken scrape | Every run "succeeds" via fresh start; the feature is inert | Negative control distinguishes resumed from fresh |
 | `--continue` used instead of `--resume` | Resolves to the wrong session when `auto` runs Claude in the same repo | Criterion pins `--resume <id>` |
 | Un-exclusion applied only in the daemon | Two other call sites diverge | Phase 4 audits all three |
+| Underlying cause of simultaneous Claude death is unknown | This spec improves *recovery* and does nothing about *frequency*; two multi-agent deaths in one day means the path will keep being exercised | Out of scope here — needs its own root-cause investigation once the current run settles. Evidence so far: both events hit only Claude Code agents, OpenCode agents in the same session survived both, and the deaths land within the same second across unrelated roles |
 
 ## Status
 

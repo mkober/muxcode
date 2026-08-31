@@ -98,8 +98,8 @@ happens to be running. tmux pane **ids** (`%N`) are similarly stable and could b
 - [ ] `AgentPane()` no longer returns a constant, or is removed in favour of an identity-based resolver
 - [ ] Every hand-built pane target listed above resolves through the shared helper — no Go call site constructs `session:window.N` by hand
 - [ ] The three shell hooks resolve panes through the same mechanism rather than hardcoded literals
-- [ ] Resolution has an explicit, logged fallback when a pane carries no identity — sessions launched by an older binary must keep working
-- [ ] **A failed resolution fails loudly** — it never silently falls back to an index that might host an editor or a git TUI
+- [x] Resolution has an explicit, logged fallback when a pane carries no identity — sessions launched by an older binary must keep working — *`legacyPaneIndex()` gated on the `@muxcode_tagged` window marker, never on tag absence; pinned by `TestResolvePane_LegacyFallbackLogsOnce`, `TestResolvePane_NoCensusIsSilentLegacy`, `TestTagWindowPanes_UnsupportedTmuxDegradesLegacy`*
+- [x] **A failed resolution fails loudly** — it never silently falls back to an index that might host an editor or a git TUI — *`unresolvedPaneSentinel` is deliberately not an index, so tmux errors instead of delivering; pinned by `TestPaneTarget_SentinelNeverAnIndex` and `TestTagWindowPanes_AdversarialFailureIsLoudNotFallback`*
 - [ ] **Negative control:** a test inserts a pane *before* the agent and proves delivery still reaches the agent — a fix that merely re-hardcodes a different index cannot pass
 - [ ] Control-pane identification and its dedupe sweep still work, including for panes created by an older binary (retroactive identification is a property MUX-108 deliberately has)
 - [ ] Mode-cycled windows (plan/research, edit/auto) still resolve the *active* agent correctly
@@ -309,10 +309,17 @@ find because it builds its target from `AgentPane(window)`, is included; and a c
 
 ### Phase 2: Resolver and tagging
 
-- [ ] Tag panes with their role at creation in the launch path
-- [ ] Implement identity-based resolution behind `PaneTarget()`
-- [ ] Logged fallback for untagged panes; loud failure for unresolvable ones in tagged sessions
-- [ ] Unit tests: resolution by tag, fallback path, failure path — each pinned separately
+- [x] Tag panes with their role at creation in the launch path — *`TagWindowPanes()` called from all
+      three window-creation paths: `launcher.go:386`, `spawn.go:184`, `mode.go:344`, each treating
+      `ErrPaneTagUnsupported` as expected degradation and any other error as a real failure*
+- [x] Implement identity-based resolution behind `PaneTarget()` — *`bus/pane.go`; `@muxcode_pane` tag
+      per pane, `@muxcode_tagged` window marker as the positive record that tagging completed*
+- [x] Logged fallback for untagged panes; loud failure for unresolvable ones in tagged sessions —
+      *`legacyPaneIndex()` for unmarked windows; `unresolvedPaneSentinel` (`{unresolved}`) for tagged
+      windows, which tmux rejects rather than delivering to whatever pane holds an index*
+- [x] Unit tests: resolution by tag, fallback path, failure path — each pinned separately — *10 tests,
+      run and confirmed passing (`go test ./bus/ -run 'TestResolvePane|TestTagWindowPanes|TestPaneTarget'`
+      → `ok`, 0.225s) against the post-must-fix code, not inherited from an earlier task row*
 
 ### Phase 3: Retire the bypass sites
 
@@ -341,7 +348,7 @@ find because it builds its target from `AgentPane(window)`, is included; and a c
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-117-pane-targeting-by-identity | 12m | 2026-08-31 13:44 |
+| MUX-117-pane-targeting-by-identity | 28m | 2026-08-31 14:02 |
 
 The near-zero total is the ledger's actual value, not a placeholder. Phase 1 was carried out on `main`, and the
 branch was created at 13:22:33 to receive the commit — so no active time accrued against it. The
@@ -352,8 +359,8 @@ attribution gap; time recorded from here forward will be genuine.
 
 ## Status
 
-In Progress — Phase 1 complete (contract established); Phases 2-5 open. Spec file still lives in
-`backlog/`; moving it to `drafts/` is a separate user-decided step.
+In Progress — **Phases 1 and 2 complete**; Phases 3-5 open. Spec file still lives in `backlog/`;
+moving it to `drafts/` is a separate user-decided step.
 
 Phase 2 work has **landed in the working tree but is not yet committed or checked off**. Spawn
 `spawn-3017de3d` harvested it out of its worktree at 13:45–13:46: `bus/pane.go` and
@@ -368,19 +375,27 @@ before cleanup*. The first lands squarely on acceptance criterion "a failed reso
 so Phase 2 is not done. Evidence inventory below is for whichever pass closes it **after** the
 must-fixes land:
 
-| Phase 2 step | Evidence in the working tree |
-|--------------|------------------------------|
-| Tag panes at creation | `TagPane()`, `@muxcode_pane` stamping, launcher/mode/control-pane edits |
-| Identity resolution behind `PaneTarget()` | `pane.go` resolver, `@muxcode_tagged` window marker, `unresolvedPaneSentinel` |
-| Logged fallback vs loud failure | `legacyPaneIndex()` fallback + sentinel that tmux rejects rather than an index |
-| Unit tests, each pinned separately | `TestResolvePane_{ByTag,LegacyFallbackLogsOnce,MissingTagFailsLoud,DuplicateTagFailsLoud,NoCensusIsSilentLegacy}`, `TestPaneTarget_SentinelNeverAnIndex`, `TestTagWindowPanes_{StampsTagsThenMarker,AdversarialFailureIsLoudNotFallback,NoReadBackLeavesUnmarked}` |
+**Both must-fixes landed at 13:55–13:56 and Phase 2 is now closed 4/4.** Verified rather than
+inherited:
 
-Tests passing is confirmed by review's own report, not merely inferred from the 13:47:31 task row.
+| Must-fix | Where it landed |
+|----------|-----------------|
+| Propagate pane-tagging failures | `TagWindowPanes()` returns `error`, accumulating per-tag, read-back and marker failures; `ErrPaneTagUnsupported` distinguishes "tmux lacks per-pane options" from a real failure. All three call sites branch on that distinction |
+| Fail closed on unknown worktree status before cleanup | `spawn.go` reads `git status --porcelain` and `removeSpawnWorktree` **preserves** dirty *or undeterminable* worktrees rather than deleting them — the unknown case is treated as unsafe, not as clean |
 
-**The graph run died rather than routing to its fix node**, and that is a template defect, not a
-property of this work. Run `1788195259-req-code-pr-3fbcc7da` ended `failed` at 13:48:50 —
-`node review failed with no live edge`. The frozen `req-code-pr` definition has `build → fix` and
-`test → fix`, but `review` has exactly one outgoing edge, `review → update-spec`:
+Two new tests came with the fixes (`TestTagWindowPanes_TotalFailureMarksBroken`,
+`TestTagWindowPanes_UnsupportedTmuxDegradesLegacy`), taking the file to 10. The suite was **run
+directly against this code** — `ok, 0.225s` — not inferred from a task row that predated the edits.
+
+Still uncommitted: `pane.go` and `pane_test.go` remain untracked, so a clean checkout of this branch
+still produces neither.
+
+**The graph run died rather than routing to its fix node** — a template defect, not a property of
+this work, now filed as [MUX-127](./MUX-127-review-completion-routing.md) Defect A. The must-fixes
+above were applied *despite* the run failing, not because of it: nothing routed them. Run
+`1788195259-req-code-pr-3fbcc7da` ended `failed` at 13:48:50 — `node review failed with no live
+edge`. The frozen `req-code-pr` definition has `build → fix` and `test → fix`, but `review` has
+exactly one outgoing edge, `review → update-spec`:
 
 ```
 build  -> test        build -> fix
