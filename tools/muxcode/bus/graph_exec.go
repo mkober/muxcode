@@ -457,7 +457,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		})
 
 	case NodeCondition:
-		ctx := &ChainContext{Session: session}
+		ctx := &ChainContext{Session: session, Output: predecessorOutput(session, run, g, n.ID)}
 		passed, _ := EvaluateConditions(n.Conditions, ctx)
 		outcome := OutcomeFailure
 		if passed {
@@ -534,6 +534,30 @@ func nodeTimeoutSecs(n *Node) int {
 // finishNode records a terminal transition with an outcome. The outcome
 // must never be empty — an empty outcome matches no edge in
 // routeFinishedNodes, which would stall the subtree.
+// predecessorOutput joins the harvested outputs of a node's direct
+// predecessors so a condition node can branch on what the prior step
+// actually reported (output_contains). Without it a condition sees an
+// empty context and a pipeline sails past a step that answered
+// "nothing happened" — live incident 2026-08-31: the commit agent
+// declined PR creation, pr-read reported no PR, and the run still
+// reached its close gate.
+func predecessorOutput(session string, run *GraphRun, g *Graph, nodeID string) string {
+	statuses, err := ReadAllNodeStatuses(session, run.ID)
+	if err != nil {
+		return ""
+	}
+	var parts []string
+	for _, e := range g.Edges {
+		if e.To != nodeID {
+			continue
+		}
+		if st, ok := statuses[e.From]; ok && st.Output != "" {
+			parts = append(parts, st.Output)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 func finishNode(session string, run *GraphRun, n *Node, outcome, output string) {
 	terminal := GraphNodeDone
 	if outcome == OutcomeFailure {

@@ -102,6 +102,8 @@ var builtinGraphJSON = map[string]string{
   "nodes": [
     {"id": "gate1", "type": "wait_human", "message": "Approve staging, commit, push, and PR creation"},
     {"id": "a", "type": "send", "role": "commit", "action": "commit", "message": "Stage all unstaged files, commit, push, and create a PR"},
+    {"id": "verify-pr", "type": "send", "role": "commit", "action": "pr-read", "message": "Confirm an open PR exists for the current branch. Your reply MUST contain the literal token PR-CONFIRMED followed by its URL if one exists, or the literal token NO-PR-FOUND if none does — no other phrasing for that verdict"},
+    {"id": "pr-check", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
     {"id": "b", "type": "send", "role": "commit", "action": "pr-read", "message": "Watch for PR comments and report the review decision and any comments"},
     {"id": "gate2", "type": "wait_human", "message": "Approve addressing the review feedback and replying to comments"},
     {"id": "c", "type": "send", "role": "edit", "action": "edit", "message": "Address the PR review comments"},
@@ -112,7 +114,10 @@ var builtinGraphJSON = map[string]string{
   ],
   "edges": [
     {"from": "gate1", "to": "a"},
-    {"from": "a", "to": "b"},
+    {"from": "a", "to": "verify-pr"},
+    {"from": "verify-pr", "to": "pr-check"},
+    {"from": "pr-check", "to": "b"},
+    {"from": "pr-check", "to": "a", "outcome": "failure", "max_iterations": 3},
     {"from": "b", "to": "gate2"},
     {"from": "gate2", "to": "c"},
     {"from": "c", "to": "d"},

@@ -370,6 +370,42 @@ func TestReviewFailureRoutesToFix(t *testing.T) {
 	}
 }
 
+// The commit-pr-review-loop must CONFIRM the PR exists before watching
+// it: a live run (2026-08-31, is-advising-gateway) reached its close
+// gate with no PR because the commit node's decline derived
+// unknown→success. verify-pr demands a literal token, pr-check branches
+// on it, and the failure edge loops back to the commit node — capped.
+func TestCommitPrReviewLoopVerifiesPr(t *testing.T) {
+	g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var check *Node
+	for i := range g.Nodes {
+		if g.Nodes[i].ID == "pr-check" {
+			check = &g.Nodes[i]
+		}
+	}
+	if check == nil || check.Type != NodeCondition {
+		t.Fatal("pr-check condition node missing")
+	}
+	if v, ok := check.Conditions["output_contains"]; !ok || v != "PR-CONFIRMED" {
+		t.Errorf("pr-check conditions = %v, want output_contains PR-CONFIRMED", check.Conditions)
+	}
+	var success, cappedRetry bool
+	for _, e := range g.Edges {
+		if e.From == "pr-check" && e.To == "b" && e.Outcome == "" {
+			success = true
+		}
+		if e.From == "pr-check" && e.To == "a" && e.Outcome == OutcomeFailure && e.MaxIterations > 0 {
+			cappedRetry = true
+		}
+	}
+	if !success || !cappedRetry {
+		t.Errorf("pr-check edges incomplete: success=%v cappedRetry=%v", success, cappedRetry)
+	}
+}
+
 func TestResolveGraphTemplateBuiltin(t *testing.T) {
 	g, source, err := ResolveGraphTemplate("build-test-review")
 	if err != nil {

@@ -136,6 +136,78 @@ func TestExecLinearRun(t *testing.T) {
 	}
 }
 
+// conditionOutputGraph is a send → condition(output_contains PR-CONFIRMED)
+// fan: success routes to b, failure to fail-note.
+func conditionOutputGraph() *Graph {
+	return &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{
+			{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "chk", Type: NodeCondition, Conditions: map[string]any{"output_contains": "PR-CONFIRMED"}},
+			{ID: "b", Type: NodeSend, Role: "test", Action: "test", Message: "go"},
+			{ID: "fail-note", Type: NodeSend, Role: "build", Action: "build", Message: "retry"},
+		},
+		Edges: []Edge{
+			{From: "a", To: "chk"},
+			{From: "chk", To: "b"},
+			{From: "chk", To: "fail-note", Outcome: OutcomeFailure},
+		},
+	}
+}
+
+// completeSendNodeWithPayload answers a running send node with a real
+// response message so the node's harvested Output carries the payload.
+func completeSendNodeWithPayload(t *testing.T, session, runID, nodeID, payload string) {
+	t.Helper()
+	resp := NewMessage("build", "edit", "response", "response", payload, "")
+	if err := Send(session, resp); err != nil {
+		t.Fatal(err)
+	}
+	st, err := ReadNodeStatus(session, runID, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	CompleteTask(session, st.TaskID, resp.ID)
+	row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: "./fake.sh",
+		ExitCode: "0", Outcome: OutcomeSuccess}
+	if err := WriteHookHistory(HistoryPath(session, "build"), row, 100); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A condition node must see its predecessor's harvested output — the
+// live 2026-08-31 incident had a run sail past a declined PR creation
+// because conditions evaluated against an empty context.
+func TestExecConditionSeesPredecessorOutput(t *testing.T) {
+	run := createTestRun(t, conditionOutputGraph())
+	step(t, runTestSession, run.ID)
+	completeSendNodeWithPayload(t, runTestSession, run.ID, "a", "PR-CONFIRMED https://github.com/x/y/pull/1")
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodeRunning {
+		t.Fatalf("b state %q, want running — condition did not see predecessor output", s)
+	}
+}
+
+// Negative control: without the token the condition fails and routes the
+// failure edge — a condition that always passes cannot survive this.
+func TestExecConditionFailsWithoutToken(t *testing.T) {
+	run := createTestRun(t, conditionOutputGraph())
+	step(t, runTestSession, run.ID)
+	completeSendNodeWithPayload(t, runTestSession, run.ID, "a", "NO-PR-FOUND for this branch")
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "fail-note"); s != GraphNodeRunning {
+		t.Fatalf("fail-note state %q, want running — failure edge not routed", s)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "b"); s == GraphNodeRunning {
+		t.Fatal("b dispatched despite missing confirmation token")
+	}
+}
+
 func TestExecFailureRoutesFailureEdge(t *testing.T) {
 	g := linearGraph()
 	g.Nodes = append(g.Nodes, Node{ID: "fix", Type: NodeSpawn, Role: "edit", Message: "fix it"})
