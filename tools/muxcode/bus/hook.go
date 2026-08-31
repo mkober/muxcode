@@ -1402,7 +1402,7 @@ func ProcessAnalyzeHook(session, windowName string, ev *ToolEvent) AnalyzeHookRe
 // cleanupDiffPreview sends tmux commands to clean up the nvim diff preview.
 func cleanupDiffPreview(session string, ev *ToolEvent, filePath string) {
 	tempFile := fmt.Sprintf("/tmp/muxcode-preview-%s.tmp", session)
-	paneTarget := session + ":edit.0"
+	paneTarget := PaneTargetForWindow(session, "edit", PaneTagLeft)
 
 	line := "1"
 	if needle := firstNonEmptyLine(ev.ToolInput.NewString); needle != "" {

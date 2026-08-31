@@ -2903,11 +2903,12 @@ func (d *Daemon) checkNonHookEdits() {
 	}
 }
 
-// showEditInNeovim reloads a changed file in the Neovim edit pane (pane 0)
-// so the user can see what a non-hook edit agent (OpenCode, Codex) changed.
-// When withDiff is true, it opens a git diff split showing HEAD vs current.
+// showEditInNeovim reloads a changed file in the Neovim edit pane (the
+// edit window's left pane, resolved by identity) so the user can see
+// what a non-hook edit agent (OpenCode, Codex) changed. When withDiff
+// is true, it opens a git diff split showing HEAD vs current.
 func showEditInNeovim(session, file string, withDiff bool) {
-	pane := session + ":edit.0"
+	pane := bus.PaneTargetForWindow(session, "edit", bus.PaneTagLeft)
 
 	// Escape single quotes for vimscript single-quoted strings.
 	// fnameescape() handles all other special chars (%, #, |, spaces, etc).

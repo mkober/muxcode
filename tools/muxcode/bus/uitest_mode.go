@@ -111,15 +111,15 @@ func testModeVerifyAgentPanes(ctx *UITestContext) {
 	// Brief pause for the agent launch command to render in the pane.
 	ctx.Sleep(500 * time.Millisecond)
 
-	// auto window (now at index 2) pane 1 should have the autonomous agent.
-	content := ctx.TmuxCapturePane(ctx.Session+":auto.1", 30)
+	// auto window's agent pane should have the autonomous agent.
+	content := ctx.TmuxCapturePane(PaneTargetForWindow(ctx.Session, "auto", PaneTagAgent), 30)
 	hasAgent := strings.Contains(content, "autonomous-agent") ||
 		strings.Contains(content, "launch auto")
-	ctx.AssertTrue(hasAgent, "auto.1 has autonomous agent")
+	ctx.AssertTrue(hasAgent, "auto agent pane has autonomous agent")
 
-	// edit window (swapped to auto's old index) pane 1 should still have the edit agent.
-	content = ctx.TmuxCapturePane(ctx.Session+":edit.1", 30)
-	ctx.AssertContains(content, "code-editor", "edit.1 still has edit agent")
+	// edit window's agent pane should still have the edit agent.
+	content = ctx.TmuxCapturePane(PaneTargetForWindow(ctx.Session, "edit", PaneTagAgent), 30)
+	ctx.AssertContains(content, "code-editor", "edit agent pane still has edit agent")
 }
 
 // testModeCycleAgentToEdit cycles back from agent to edit (the critical round-trip).
@@ -141,15 +141,15 @@ func testModeCycleAgentToEdit(ctx *UITestContext) {
 
 // testModeVerifyEditRestored checks that the edit agent is back in the edit window.
 func testModeVerifyEditRestored(ctx *UITestContext) {
-	// Edit window pane 1 should have the edit agent again.
-	content := ctx.TmuxCapturePane(ctx.Session+":edit.1", 30)
-	ctx.AssertContains(content, "code-editor", "edit.1 has edit agent after round-trip")
+	// Edit window's agent pane should have the edit agent again.
+	content := ctx.TmuxCapturePane(PaneTargetForWindow(ctx.Session, "edit", PaneTagAgent), 30)
+	ctx.AssertContains(content, "code-editor", "edit agent pane has edit agent after round-trip")
 
-	// Auto pane 1 should have the autonomous agent.
-	content = ctx.TmuxCapturePane(ctx.Session+":auto.1", 30)
+	// Auto window's agent pane should have the autonomous agent.
+	content = ctx.TmuxCapturePane(PaneTargetForWindow(ctx.Session, "auto", PaneTagAgent), 30)
 	hasAgent := strings.Contains(content, "autonomous-agent") ||
 		strings.Contains(content, "launch auto")
-	ctx.AssertTrue(hasAgent, "auto.1 has autonomous agent after round-trip")
+	ctx.AssertTrue(hasAgent, "auto agent pane has autonomous agent after round-trip")
 }
 
 // testModeDirectSwitchToAgent tests the direct switch command.

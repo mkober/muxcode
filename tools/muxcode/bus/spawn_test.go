@@ -565,6 +565,73 @@ func TestInit_CreatesSpawnFile(t *testing.T) {
 	}
 }
 
+// NthSpawnWindowIndex resolves by the spawn- name prefix ordered by
+// window_index — the non-contiguous case is the negative control a
+// hardcoded -t:11/-t:12 implementation cannot pass (MUX-128).
+func TestNthSpawnWindowIndex(t *testing.T) {
+	stub := func(census string) {
+		orig := tmuxOutputRunner
+		t.Cleanup(func() { tmuxOutputRunner = orig })
+		tmuxOutputRunner = func(args ...string) (string, error) {
+			return census, nil
+		}
+	}
+
+	// Zero spawns: every slot empty.
+	stub("0:research\n1:plan\n2:edit")
+	if _, ok := NthSpawnWindowIndex("s", 1); ok {
+		t.Error("slot 1 resolved with zero spawn windows")
+	}
+
+	// One spawn: slot 1 filled, slot 2 empty.
+	stub("0:research\n1:plan\n11:spawn-aaaa1111")
+	if idx, ok := NthSpawnWindowIndex("s", 1); !ok || idx != 11 {
+		t.Errorf("slot 1 = %d,%v, want 11,true", idx, ok)
+	}
+	if _, ok := NthSpawnWindowIndex("s", 2); ok {
+		t.Error("slot 2 resolved with one spawn window")
+	}
+
+	// Three spawns at non-contiguous indices: order by index, not by
+	// listing position, and never a hardcoded 11/12.
+	stub("1:plan\n14:spawn-cccc3333\n11:spawn-aaaa1111\n17:spawn-dddd4444")
+	if idx, ok := NthSpawnWindowIndex("s", 1); !ok || idx != 11 {
+		t.Errorf("slot 1 = %d,%v, want 11,true", idx, ok)
+	}
+	if idx, ok := NthSpawnWindowIndex("s", 2); !ok || idx != 14 {
+		t.Errorf("slot 2 = %d,%v, want 14,true", idx, ok)
+	}
+	if idx, ok := NthSpawnWindowIndex("s", 3); !ok || idx != 17 {
+		t.Errorf("slot 3 = %d,%v, want 17,true", idx, ok)
+	}
+
+	// n < 1 is never valid.
+	if _, ok := NthSpawnWindowIndex("s", 0); ok {
+		t.Error("slot 0 must not resolve")
+	}
+}
+
+// The census must be scoped to the session the caller named — an
+// ambient-session query is exactly how F11 could select another
+// session's spawn window (review must-fix behind the --session flag).
+func TestNthSpawnWindowIndex_QueriesGivenSession(t *testing.T) {
+	orig := tmuxOutputRunner
+	t.Cleanup(func() { tmuxOutputRunner = orig })
+	var gotArgs []string
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		gotArgs = args
+		return "11:spawn-aaaa1111", nil
+	}
+
+	if idx, ok := NthSpawnWindowIndex("other-session", 1); !ok || idx != 11 {
+		t.Fatalf("resolve = %d,%v, want 11,true", idx, ok)
+	}
+	joined := strings.Join(gotArgs, " ")
+	if !strings.Contains(joined, "-t other-session") {
+		t.Errorf("census not scoped to the given session: %v", gotArgs)
+	}
+}
+
 func TestFindMuxcodeBinary_NotFound(t *testing.T) {
 	// Save and clear PATH to test not-found case
 	origPath := os.Getenv("PATH")

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
@@ -31,11 +32,50 @@ func Spawn(args []string) {
 		spawnStop(subArgs)
 	case "clean":
 		spawnClean(subArgs)
+	case "select":
+		spawnSelect(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown spawn subcommand: %s\n", subcmd)
-		fmt.Fprintf(os.Stderr, "Usage: muxcode spawn <start|list|status|result|stop|clean> [args...]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode spawn <start|list|status|result|stop|clean|select> [args...]\n")
 		os.Exit(1)
 	}
+}
+
+// spawnSelect handles: spawn select <n> [--session <s>] — selects the
+// nth live spawn window (1-based, by ascending window_index). An empty
+// slot is a clean no-op: the F11/F12 bindings run this on every press,
+// and a missing worker must produce no error popup and no status-line
+// noise (MUX-128). The bindings pass --session '#{session_name}'
+// because run-shell does not carry BUS_SESSION — without it the env
+// fallback could select a spawn window in a different session.
+func spawnSelect(args []string) {
+	session := ""
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--session" && i+1 < len(args) {
+			session = args[i+1]
+			i++
+			continue
+		}
+		rest = append(rest, args[i])
+	}
+	if len(rest) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: muxcode spawn select <n> [--session <s>]\n")
+		os.Exit(1)
+	}
+	n, err := strconv.Atoi(rest[0])
+	if err != nil || n < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: muxcode spawn select <n> [--session <s>] (n >= 1)\n")
+		os.Exit(1)
+	}
+	if session == "" {
+		session = bus.BusSession()
+	}
+	idx, ok := bus.NthSpawnWindowIndex(session, n)
+	if !ok {
+		return
+	}
+	_ = bus.TmuxRunQuiet("select-window", "-t", fmt.Sprintf("%s:%d", session, idx))
 }
 
 // spawnStart handles: spawn start <role> "<task>" [--no-worktree]

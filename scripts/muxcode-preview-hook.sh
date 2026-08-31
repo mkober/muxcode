@@ -21,7 +21,11 @@ for pat in $SKIP_PATTERNS; do
 done
 
 TEMP_FILE="/tmp/muxcode-preview-${SESSION}.tmp"
-PANE="$SESSION:edit.0"
+
+# Resolve the editor pane by identity (MUX-117); skip if unresolvable —
+# never guess an index that may host something other than nvim.
+PANE=$(BUS_SESSION="$SESSION" muxcode pane edit left 2>/dev/null)
+[ -z "$PANE" ] && exit 0
 
 # Dismiss any pending "Press ENTER" prompt and ensure normal mode
 tmux send-keys -t "$PANE" Enter 2>/dev/null

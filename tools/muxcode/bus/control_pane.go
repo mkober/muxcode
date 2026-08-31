@@ -10,14 +10,14 @@ import (
 
 // The control pane (MUX-108) is a fixed full-width pane at the bottom of
 // agent windows hosting global muxcode TUIs — currently the graph UI.
-// It is ALWAYS created after panes 0 and 1: AgentPane() is a hardcoded
-// "1" and every path that reaches an agent resolves through PaneTarget,
-// so creation order is the delivery contract — and a slip here breaks
-// every agent's delivery at once, with messages typing into an nvim
-// buffer rather than crashing. (Related: select-layout preserves pane
-// indices; rotate-window does not, which is why no rotate binding
-// exists.) Border styling is global in config/tmux.conf, not applied
-// here — 12 windows must not each re-apply it.
+// It is created after the window's left and agent panes. Since MUX-117
+// panes are resolved by identity (@muxcode_pane), not creation order —
+// but windows launched by an older binary still resolve by the legacy
+// index convention, so creation order stays the compatibility contract
+// for them. (Related: select-layout preserves pane indices;
+// rotate-window does not, which is why no rotate binding exists.)
+// Border styling is global in config/tmux.conf, not applied here — 12
+// windows must not each re-apply it.
 
 const controlPaneDefaultHeight = 18
 
@@ -86,9 +86,9 @@ func ControlPaneEnabledFor(win string) bool {
 // pane then watches the wrong bus dir and never sees its own gates
 // (found by the integration script's first live run). -P -F prints the
 // new pane's id so the title lands on the pane just created — titling
-// ".2" by assumption is how a racing second creator once titled
-// somebody else's pane and left its own on the hostname default
-// (2026-08-26 duplicate-pane incident).
+// the legacy control index by assumption is how a racing second
+// creator once titled somebody else's pane and left its own on the
+// hostname default (2026-08-26 duplicate-pane incident).
 func CreateControlPane(session, win string) error {
 	target := session + ":" + win
 	out, err := tmuxOutputRunner("split-window", "-vf", "-d", "-l", strconv.Itoa(ControlPaneHeight()),
@@ -99,7 +99,7 @@ func CreateControlPane(session, win string) error {
 	}
 	id := strings.TrimSpace(out)
 	if id == "" {
-		id = target + ".2"
+		id = target + "." + legacyPaneIndex(PaneTagControl)
 	}
 	// Identity tag (MUX-117) — resolution failure is logged, not fatal:
 	// start-command matching still identifies the pane retroactively.

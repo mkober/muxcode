@@ -139,3 +139,54 @@ func TestIsProviderInstalled_Local(t *testing.T) {
 	installed := isProviderInstalled("local")
 	_ = installed
 }
+
+// stubWindowList answers list-windows with the given index:name census.
+func stubWindowList(t *testing.T, census string) {
+	t.Helper()
+	orig := tmuxOutputRunner
+	t.Cleanup(func() { tmuxOutputRunner = orig })
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		return census, nil
+	}
+}
+
+// WindowFKey must derive labels from what the bindings select —
+// window_index for F1–F10, spawn slot order for F11/F12 — never list
+// position: with the research hold window at index 0, position-derived
+// labels were all one too high and advertised commit as F11 before that
+// key existed. Spawn slots follow ascending index (non-contiguous here,
+// so a hardcoded 11/12 mapping is caught), and a third spawn has no key.
+func TestWindowFKey_ByIndexNotPosition(t *testing.T) {
+	stubWindowList(t, "0:research\n1:plan\n2:edit\n3:build\n10:commit\n14:spawn-bbb22222\n11:spawn-aaa11111\n17:spawn-ccc33333")
+
+	tests := []struct {
+		window, want string
+	}{
+		{"research", ""},          // index 0 — no binding
+		{"plan", "F1"},            // was F2 under position derivation
+		{"edit", "F2"},            // was F3
+		{"commit", "F10"},         // was mislabeled F11
+		{"spawn-aaa11111", "F11"}, // first spawn slot (lowest index)
+		{"spawn-bbb22222", "F12"}, // second slot despite later listing
+		{"spawn-ccc33333", ""},    // third spawn — no binding
+		{"nonexistent-win", ""},   // documented not-found value
+	}
+	for _, tt := range tests {
+		if got := WindowFKey("s", tt.window); got != tt.want {
+			t.Errorf("WindowFKey(%q) = %q, want %q", tt.window, got, tt.want)
+		}
+	}
+}
+
+// Negative control: with no index-0 window the mapping is identity, so
+// a fix that merely subtracted one from position would be caught here.
+func TestWindowFKey_NoHoldWindow(t *testing.T) {
+	stubWindowList(t, "1:plan\n2:edit\n3:build")
+
+	if got := WindowFKey("s", "plan"); got != "F1" {
+		t.Errorf("plan = %q, want F1", got)
+	}
+	if got := WindowFKey("s", "build"); got != "F3" {
+		t.Errorf("build = %q, want F3", got)
+	}
+}

@@ -25,7 +25,7 @@ var knownSubcommands = map[string]bool{
 	"reload": true, "config": true, "provider-select": true,
 	"simulate": true, "track": true, "remote": true, "spec": true,
 	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true,
-	"branch-time": true, "clear": true, "graph": true,
+	"branch-time": true, "clear": true, "graph": true, "pane": true,
 }
 
 var usage = `Usage: muxcode <command> [args...]
@@ -76,6 +76,7 @@ Commands:
   mode          Cycle between agent modes on a window (cycle, status, switch, list)
   resize        Resize every window in every session to fit the connected client
   deliver       Force-deliver an agent's pending inbox into its pane (--force)
+  pane          Resolve a role's tmux pane target by identity and print it
   upgrade-daemons  Restart all running session daemons on the installed binary (--dry-run)
   uitest        Run integration tests in a live tmux session (--list, --verbose)
   tasks         List delegated tasks tracked via --wait (--all, --status)
@@ -212,6 +213,8 @@ func main() {
 		cmd.Popup(args)
 	case "mode":
 		cmd.Mode(args)
+	case "pane":
+		cmd.Pane(args)
 	case "resize":
 		cmd.Resize(args)
 	case "deliver":

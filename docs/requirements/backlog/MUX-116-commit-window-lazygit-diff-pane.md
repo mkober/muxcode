@@ -1,14 +1,14 @@
 # Lazygit Diff Pane on the Commit Window
 
 **Tracking:** [#42](https://github.com/mkober/muxcode/issues/42) · blocked by
-[#41](https://github.com/mkober/muxcode/issues/41) ([MUX-117](./MUX-117-pane-targeting-by-identity.md))
+[#41](https://github.com/mkober/muxcode/issues/41) ([MUX-117](../completed/MUX-117-pane-targeting-by-identity.md))
 
 The commit console lists changed files but cannot show what changed in one. Add a **lazygit** view
 to the commit window's left column so the user can cycle through modified and untracked files and
 read the diff of the selected one, without leaving the window or asking the commit agent to print a
 diff into its pane.
 
-> **Depends on [MUX-117](./MUX-117-pane-targeting-by-identity.md).** The dedicated pane cannot be
+> **Depends on [MUX-117](../completed/MUX-117-pane-targeting-by-identity.md).** The dedicated pane cannot be
 > added while pane targeting is index-based — see
 > [the hazard](#the-hazard-that-governs-the-design-pane-indices-are-load-bearing).
 
@@ -102,7 +102,7 @@ first, not an edge case.
 
 ### Technical approach
 
-**Decided: a dedicated pane, gated behind [MUX-117](./MUX-117-pane-targeting-by-identity.md)**
+**Decided: a dedicated pane, gated behind [MUX-117](../completed/MUX-117-pane-targeting-by-identity.md)**
 (user decision, 2026-08-28). The left column splits — console on top, lazygit below — so the diff is
 glanceable rather than summoned.
 
@@ -158,12 +158,17 @@ the installed path is what live and new sessions load.
 
 ## Implementation
 
-### Phase 0: Prerequisite — [MUX-117](./MUX-117-pane-targeting-by-identity.md)
+### Phase 0: Prerequisite — [MUX-117](../completed/MUX-117-pane-targeting-by-identity.md)
 
-**Blocked until MUX-117 lands.** Pane targeting must resolve by identity before this window gains a
-fourth pane. Do not start Phase 1 by working around the index problem locally.
+**Unblocked 2026-08-31 — MUX-117 is complete (33/33).** Pane targeting now resolves by identity, so
+this window can gain a fourth pane. Phase 1 may start.
 
-- [ ] MUX-117 complete: panes resolve by identity, `AgentPane()` is no longer a constant, and the shell hooks no longer hardcode indices
+- [x] MUX-117 complete: panes resolve by identity, `AgentPane()` is no longer a constant, and the shell hooks no longer hardcode indices — *each of the three conditions verified directly against the tree, not inherited from MUX-117's checkboxes: `AgentPane()` has zero non-test references (the surviving `grep` hits are `testModeVerifyAgentPanes`, a different identifier that merely contains the substring); the three shell hooks carry no pane-index literals; and `bus/pane.go` is committed and clean, not merely present in the working tree*
+
+> **Note for Phase 1.** MUX-117's resolver is committed, but its integration test
+> (`scripts/test-pane-targeting.sh`) is **not yet committed**. Phase 1's negative control below is
+> the same shape as that script's — when writing it, extend the existing script rather than starting
+> a second one.
 
 ### Phase 1: Add the pane
 
