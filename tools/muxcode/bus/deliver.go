@@ -139,9 +139,9 @@ func redriveInFlightTasks(session, role string, provider Provider) int {
 
 // RedriveTask re-injects ONE consumed-but-never-started task's request
 // into its role's pane — the graph executor's per-dispatch redrive.
-// ForceDeliver's force path redrives EVERY in-flight task for the role,
-// which would duplicate unrelated work the agent legitimately holds
-// (review must-fix 2026-08-28); a graph node owns only its own dispatch.
+// ForceDeliver's force path redrives every in-flight task for the role,
+// which would duplicate unrelated work the agent legitimately holds; a
+// graph node owns only its own dispatch.
 func RedriveTask(session string, t Task) bool {
 	role := WindowForRole(t.To)
 	provider := ResolveProvider(role)

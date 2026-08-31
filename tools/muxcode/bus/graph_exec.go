@@ -591,14 +591,12 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 	}
 }
 
-// redriveStalledSpawns covers the spawn/map side of executor stall
-// resolution (review 2026-08-28: send nodes got it, spawns — whose
-// first-wake gap is MUX-120's founding defect — did not). A worker whose
-// seeded spawn-task still sits unconsumed past the stall threshold gets
-// re-woken through the prompt-ready path; the same persisted bookkeeping
-// and cap apply, and cap exhaustion with workers still stalled FAILS the
+// redriveStalledSpawns is the spawn/map side of executor stall
+// resolution: a worker whose seeded task sits unconsumed past the stall
+// threshold is re-woken, with the same persisted bookkeeping and cap as
+// the send path. Cap exhaustion with workers still stalled fails the
 // node — default spawn nodes carry no timeout, so a never-waking worker
-// would otherwise run forever (review must-fix).
+// would otherwise run forever.
 func redriveStalledSpawns(session string, run *GraphRun, n *Node, st *GraphNodeStatus, now int64) {
 	stall := int64(TaskStallSecs() / 2)
 	if st.StartedAt == 0 || now-st.StartedAt < stall || now-st.LastRedrive < 60 {
@@ -615,7 +613,7 @@ func redriveStalledSpawns(session string, run *GraphRun, n *Node, st *GraphNodeS
 		return
 	}
 	for _, id := range stalled {
-		go wakeSpawnedAgent(session, id)
+		graphSpawnWakeFn(session, id)
 	}
 	_ = MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) {
 		s.Redrives++
@@ -626,6 +624,13 @@ func redriveStalledSpawns(session string, run *GraphRun, n *Node, st *GraphNodeS
 	LogLifecycle(session, "warn", "daemon", "graph-stall-redrive",
 		fmt.Sprintf("%s: %s re-woke %d stalled spawn worker(s) — redrive %d/%d",
 			run.ID, n.ID, len(stalled), st.Redrives, graphRedriveMax))
+}
+
+// graphSpawnWakeFn re-wakes one stalled spawn worker; a seam so tests
+// observe wake attempts instead of spinning prompt-wait goroutines
+// against a session that does not exist.
+var graphSpawnWakeFn = func(session, spawnRole string) {
+	go wakeSpawnedAgent(session, spawnRole)
 }
 
 // stalledSpawnWorkers lists the spawn roles whose seeded task still sits

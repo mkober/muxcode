@@ -239,7 +239,11 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact bool, roles []stri
 	}
 }
 
-// startBatchReload kicks off the background batch reload and switches to progress view.
+// startBatchReload kicks off the background batch reload and switches to
+// progress view. Config is persisted per agent only after it actually
+// reloaded — announcing the destination up front once made a running
+// OpenCode agent look like a Claude one, so the stop sent /exit to a TUI
+// that ignores it and the reload timed out.
 func (ui *ProviderSelectUI) startBatchReload(cli, model string) {
 	roles := ui.selectedAgentRoles()
 
@@ -251,10 +255,7 @@ func (ui *ProviderSelectUI) startBatchReload(cli, model string) {
 
 	go func() {
 		bus.ReloadBatch(ui.session, roles, cli, model, ui.compact, func(i int, r bus.ReloadResult) {
-			// Persist per agent, only after it actually reloaded —
-			// announcing the destination up front once made a running
-			// OpenCode agent look like a Claude one, so the stop sent
-			// /exit to a TUI that ignores it and the reload timed out.
+			// only after a real reload — see doc comment
 			if r.Success {
 				persistToConfig([]string{r.Role}, cli, model)
 			}

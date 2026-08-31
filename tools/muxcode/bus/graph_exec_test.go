@@ -1151,6 +1151,86 @@ func TestExecRedriveStalledDispatch(t *testing.T) {
 	}
 }
 
+// TestExecRedriveStalledSpawns pins the spawn/map side of stall
+// resolution: a worker whose seeded task sits unconsumed past the stall
+// threshold is re-woken with persisted bookkeeping, and cap exhaustion
+// FAILS the node — default spawn nodes carry no timeout, so a
+// never-waking worker would otherwise leave the node running forever
+// (review must-fix 2026-08-28). A drained inbox is the negative control.
+func TestExecRedriveStalledSpawns(t *testing.T) {
+	var woken []string
+	origWake := graphSpawnWakeFn
+	graphSpawnWakeFn = func(_, spawnRole string) { woken = append(woken, spawnRole) }
+	t.Cleanup(func() { graphSpawnWakeFn = origWake })
+
+	g := &Graph{Name: "g", Start: "w",
+		Nodes: []Node{{ID: "w", Type: NodeSpawn, Role: "build", Message: "go"}}}
+	run := createTestRun(t, g)
+	n := &g.Nodes[0]
+	now := time.Now().Unix()
+
+	startWorker := func(runID, spawnRole string, seedInbox bool) {
+		if err := TransitionGraphNode(runTestSession, runID, "w", GraphNodeRunning, func(s *GraphNodeStatus) {
+			s.TaskID = spawnRole
+			s.StartedAt = now - 120
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if seedInbox {
+			if err := SendNoCC(runTestSession, NewMessage("daemon", spawnRole, "request", "task", "go", "")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	status := func(runID string) *GraphNodeStatus {
+		st, err := ReadNodeStatus(runTestSession, runID, "w")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+
+	startWorker(run.ID, "spawn-w1", true)
+
+	// Stalled + unconsumed: one wake, bookkeeping persisted.
+	redriveStalledSpawns(runTestSession, run, n, status(run.ID), now)
+	st := status(run.ID)
+	if st.Redrives != 1 || st.LastRedrive == 0 || len(woken) != 1 || woken[0] != "spawn-w1" {
+		t.Fatalf("stalled worker must re-wake once, got %d (%v)", st.Redrives, woken)
+	}
+
+	// Rate limit: an immediate retry does nothing.
+	redriveStalledSpawns(runTestSession, run, n, st, now)
+	if st = status(run.ID); st.Redrives != 1 || len(woken) != 1 {
+		t.Fatalf("spawn redrive must rate-limit, got %d (%v)", st.Redrives, woken)
+	}
+
+	// Walk to the cap; the still-stalled worker then fails the node.
+	for i := 0; i < 3; i++ {
+		if err := MutateNodeStatus(runTestSession, run.ID, "w", func(s *GraphNodeStatus) {
+			s.LastRedrive -= 61
+		}); err != nil {
+			t.Fatal(err)
+		}
+		redriveStalledSpawns(runTestSession, run, n, status(run.ID), now)
+	}
+	st = status(run.ID)
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "undeliverable") {
+		t.Fatalf("capped spawn redrives must fail undeliverable, got %q %q (redrives %d)", st.State, st.Output, st.Redrives)
+	}
+
+	// Negative control: a drained inbox means the worker consumed its
+	// task and is working — never woken, never failed.
+	woken = nil
+	run2 := createTestRun(t, g)
+	startWorker(run2.ID, "spawn-w2", false)
+	redriveStalledSpawns(runTestSession, run2, n, status(run2.ID), now)
+	st = status(run2.ID)
+	if st.State != GraphNodeRunning || st.Redrives != 0 || len(woken) != 0 {
+		t.Fatalf("working spawn must be untouched, got %q redrives %d (%v)", st.State, st.Redrives, woken)
+	}
+}
+
 // mutateRunIntent rewrites a run's intent in the store.
 func mutateRunIntent(t *testing.T, runID, intent string) {
 	t.Helper()
