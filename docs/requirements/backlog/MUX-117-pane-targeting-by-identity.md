@@ -61,6 +61,11 @@ Bypass sites found in the tree:
 | `scripts/muxcode-diff-cleanup.sh:14` | `$SESSION:edit.0` | Shell |
 | `scripts/muxcode-preview-hook.sh:24` | `$SESSION:edit.0` | Shell |
 
+This table was the first pass and is **superseded** — it missed live production sites in `spawn.go`,
+`mode.go`, `launcher.go`, and `daemon/daemon.go`. The authoritative, verified enumeration is
+[Phase 1 findings](#pane-addressing-site-enumeration-verified-against-the-tree-2026-08-31) below;
+use that one. Kept here only so the shape of the original claim stays readable.
+
 The shell hooks matter as much as the Go: they are not reachable by any refactor of `AgentPane()`,
 so a Go-only fix would leave three live paths still index-addressed and produce a false sense that
 the problem is solved.
@@ -136,6 +141,133 @@ Points to settle:
 **Do not skip the shell hooks.** They are three lines each and are the most likely thing to be
 declared out of scope and then forgotten, leaving the invariant half-true.
 
+### Phase 1 findings
+
+#### Empirical tmux index behaviour (tmux 3.6a, clean config, pane-base-index 0)
+
+Measured on an isolated socket with the repo's launch layout (left=idx0, agent=idx1), 2026-08-31.
+**Independently reproduced by the plan agent on a second isolated socket the same day** — every row
+below was observed twice, by two separately-constructed probes:
+
+| Operation | index<->pane binding | pane id (%N) | @muxcode_pane tag |
+|-----------|----------------------|--------------|-------------------|
+| `split-window -h` (launch convention) | new pane appended at next index; existing unchanged | stable | new pane untagged (empty) |
+| `split-window -hb` before the agent | **agent renumbered 1 -> 2** — the failure this spec exists for | stable | follows pane |
+| `kill-pane` | surviving indices compact/heal | stable | follows pane |
+| `select-layout` (main-vertical, even-horizontal) | **preserved** — geometry changes only | stable | follows pane |
+| `rotate-window` | **broken** — pane ids move across indices | stable | follows pane |
+| `swap-pane` | **broken** — same as rotate | stable | follows pane |
+| `respawn-pane -k` | unchanged | **same id kept** | **survives** |
+
+Reproduction detail for the two rows the design leans on hardest: inserting a pane before the agent
+moved it from index 1 to index 2 while pane id `%1` retained its `agent` tag; `select-layout` left
+the index->id mapping at `0:%2 1:%0 2:%1`, and `rotate-window` then changed it to `0:%0 1:%1 2:%2`.
+
+- Confirms `control_pane.go`'s recorded distinction: `select-layout` is safe, `rotate-window` is not.
+  The earlier false claim that rotate-window preserves indices is now empirically refuted.
+- Pane ids are stable for the pane's lifetime and directly addressable
+  (`send-keys -t %N`, `display-message -p -t %N '#{@muxcode_pane}'`).
+- An unset pane user option renders as the empty string in formats — clean untagged detection.
+
+#### Decision: tag mechanism = per-pane user option `@muxcode_pane`
+
+Chosen over a `BusDir()` registry keyed by pane id, because:
+
+- The tag rides the pane entity itself — verified surviving rotate-window, swap-pane,
+  insert-before, and `respawn-pane -k`. It cannot dangle: state lives where the panes live,
+  so there is no registry<->tmux reconciliation problem (a registry row keyed by `%N` goes
+  stale the moment a pane is killed and recreated with a new id).
+- Survives daemon restarts for free — the tmux server holds it.
+- Readable from the shell hooks with the same one-liner as Go
+  (`tmux list-panes -t <win> -F '#{pane_id} #{@muxcode_pane}'` + match), which a JSON
+  registry under `BusDir()` would not give shell without a parser.
+- Complements, not replaces, control-pane start-command matching: retroactive identification
+  of old-binary panes (the MUX-108 property) still needs the command-prefix scan; the sweep
+  can then stamp `@muxcode_pane` on panes it identifies (self-healing migration).
+
+> **Open, and not closed by either probe:** both measurements ran on **tmux 3.6a**. `set-option -p`
+> is documented since the repo's declared 3.0 floor, but neither run verified it there. Phase 2 must
+> either probe the version at runtime or verify on 3.0 before relying on the mechanism — a second
+> measurement on the same version is not evidence about a different one.
+
+Canonical tag values: `agent`, `left`, `control` (Phase 2 may extend, e.g. `lazygit` for MUX-116).
+
+#### Fallback semantics: untagged legacy vs resolution failure
+
+Resolution for `(window, role-pane)` is a three-way outcome, decided mechanically by how many
+panes on the window carry any `@muxcode_pane` tag:
+
+1. **Tag match** — a pane on the window carries the requested tag: resolve to its pane id. Normal path.
+2. **Untagged window (legacy fallback)** — zero panes on the window carry any tag: the window was
+   created by an older binary. Fall back to today's index convention (`.0`/`.1`) and log a
+   `pane-fallback` lifecycle event, once per window per session (not per message — no log flood).
+   Only old binaries produce this state, so the creation-order contract is a safe assumption there.
+3. **Resolution failure (loud)** — the window has at least one tagged pane but the requested tag is
+   absent, or two panes claim the same tag: return an error. Never fall back to an index in a tagged
+   session — the index may host an editor or a git TUI, and silent misdelivery is the exact failure
+   this spec removes. Duplicate-tag convergence is the control-pane sweep's job, not the resolver's.
+
+The two non-normal outcomes must not share a code path: (2) is expected compatibility, (3) is a
+broken contract.
+
+#### Pane-addressing site enumeration (verified against the tree, 2026-08-31)
+
+Class A — resolves through `PaneTarget()`/`AgentPane()` (fine as written; fixed wholesale by the
+resolver): 39 non-test call sites across `bus/` (clear, deliver, diagnose, health, notify,
+prompt_inject via `AgentPane`, providers claude/codex/opencode, reload, remote, timetrack),
+`cmd/` (compact, simulate), `daemon/daemon.go` (10 sites), `tui/` (model.go via the
+`tui/agents.go` wrapper).
+
+Class B — hand-built pane targets in non-test Go (the actual work):
+
+| Location | Literal | Purpose |
+|----------|---------|---------|
+| `bus/launcher.go:301` | `session + ":edit.1"` | select agent pane at launch |
+| `bus/launcher.go:341-343` | `target+".1"`, `target+".0"` | edit window launch: init, agent launch, left select |
+| `bus/launcher.go:349-351` | `target+".1"`, `target+".0"` | plan window launch |
+| `bus/launcher.go:372-374` | `target+".1"` | serve window launch |
+| `bus/launcher.go:379-381` | `target+".1"` | remaining windows launch |
+| `bus/launcher.go:394` | `target+".0"` | left-pane title |
+| `bus/launcher.go:688` | `session+":"+win+".1"` | startup acceptance capture loop |
+| `bus/reload.go:67` | `HoldWindow+".1"` | mode-cycled hold window |
+| `bus/reload.go:478` | `window+".0"` | left pane during reload |
+| `bus/hook.go:1405` | `session+":edit.0"` | preview hook -> editor pane |
+| `bus/prompt_inject.go:30` | inline `PaneTarget()` re-implementation | prompt injection |
+| `bus/mode.go:332` | `HoldWindow+".0"` | mode-cycle left pane |
+| `bus/mode.go:343` | `HoldWindow+".1"` | mode-cycle agent pane |
+| `bus/mode.go:362` | `session+":edit.0"` | `pane_current_path` query |
+| `bus/mode.go:447` | `HoldWindow+".1"` | mode-cycle target |
+| `bus/spawn.go:183-184` | `spawnRole+".0"` | spawn console pane |
+| `bus/spawn.go:195` | `spawnRole+".1"` | spawn agent pane |
+| `bus/uitest_mode.go:115,121,145,149` | `":edit.1"`, `":auto.1"` | uitest capture (test infra living in bus/) |
+| `daemon/daemon.go:2910` | `session+":edit.0"` | `showEditInNeovim` (non-hook edit review) |
+| `bus/control_pane.go:102` | `target+".2"` | deliberate legacy-compat dedupe match — keep, with comment |
+
+Class C — shell hooks (unreachable by any Go refactor):
+
+| Location | Literal |
+|----------|---------|
+| `scripts/muxcode-compact.sh:15` | `${session}:${role}.1` |
+| `scripts/muxcode-diff-cleanup.sh:14` | `$SESSION:edit.0` |
+| `scripts/muxcode-preview-hook.sh:24` | `$SESSION:edit.0` |
+
+> **Line numbers are a snapshot; the expressions are authoritative.** They already drifted once —
+> unrelated MUX-120 work in `spawn.go` shifted its three sites by two lines within a day of this
+> table being written. Locate sites by the literal expression, and treat a number that no longer
+> matches as drift rather than as a site that disappeared.
+
+No `fmt.Sprintf`-style pane construction exists (grep for `:%s.`/`.%d` variants came back clean).
+`scripts/test-*.sh` fixtures build their own scratch sessions and are out of scope per the Phase 3
+grep gate ("outside tests").
+
+**How this list was closed to the standard the Phase 1 step demands.** A pattern count was explicitly
+not sufficient, so three independent methods were made to agree: two separately-constructed literal
+sweeps converged on the same 31 index literals; `prompt_inject.go:30`, which no literal pattern can
+find because it builds its target from `AgentPane(window)`, is included; and a call-site trace of all
+98 target-taking tmux invocations in non-test Go accounts for every one as Class A (42
+`PaneTarget`/`AgentPane` references), Class B, or a session/window-scoped target
+(`has-session`, `list-windows`, `select-window`, `set-hook`) that addresses no pane at all.
+
 ### Key files
 
 | File | Change |
@@ -146,6 +278,9 @@ declared out of scope and then forgotten, leaving the invariant half-true.
 | `tools/muxcode/bus/reload.go` | Hold-window and left-pane literals |
 | `tools/muxcode/bus/hook.go` | `edit.0` literal |
 | `tools/muxcode/bus/prompt_inject.go` | Inline re-implementation of `PaneTarget()` |
+| `tools/muxcode/bus/spawn.go` | Spawn worker console/agent pane literals |
+| `tools/muxcode/bus/mode.go` | Hold-window and `edit.0` literals across mode cycling |
+| `tools/muxcode/bus/uitest_mode.go` | Test-scope `:edit.1` / `:auto.1` captures — update in lockstep |
 | `scripts/muxcode-compact.sh`, `muxcode-diff-cleanup.sh`, `muxcode-preview-hook.sh` | Shell-side resolution |
 | `scripts/test-pane-targeting.sh` | New — identity, insertion, and fallback checks |
 | `docs/architecture.md` | Document the pane identity contract, replacing the creation-order one |
@@ -154,10 +289,16 @@ declared out of scope and then forgotten, leaving the invariant half-true.
 
 ### Phase 1: Establish the contract
 
-- [ ] Empirically determine tmux index behaviour on split, kill, and `select-layout` for this repo's layouts — record results rather than reasoning from memory
-- [ ] Choose the tag mechanism (pane user option vs pane-id registry) and record the reasoning
-- [ ] Define fallback semantics for untagged panes, distinct from resolution failure
-- [ ] Enumerate every pane-addressing site (Go and shell) and record the list in this spec
+- [x] Empirically determine tmux index behaviour on split, kill, and `select-layout` for this repo's layouts — record results rather than reasoning from memory — *measured on an isolated socket and independently re-measured by a second probe; both runs on tmux 3.6a, so the 3.0-floor question stays open and is recorded as such in the findings*
+- [x] Choose the tag mechanism (pane user option vs pane-id registry) and record the reasoning — *`@muxcode_pane` per-pane user option; the survival properties the choice rests on (tag follows the pane across renumbering, survives `respawn-pane -k`, untagged reads empty) were each observed directly*
+- [x] Define fallback semantics for untagged panes, distinct from resolution failure — *three-way outcome: tag match / untagged-window legacy fallback with a once-per-window `pane-fallback` event / loud error, with the requirement that the two non-normal outcomes never share a code path*
+- [x] Enumerate every pane-addressing site (Go and shell) and record the list in this spec — closed
+  against a resolution-based check, not a pattern count. This bar was set because the first sweep was
+  **grep-derived and provably incomplete**: it missed `prompt_inject.go:30`, which builds its target as
+  `... + AgentPane(window)` and matches no literal `.0`/`.1` pattern. It is met by three agreeing
+  methods — two independently-constructed literal sweeps converging on the same 31 sites, explicit
+  inclusion of the non-literal site, and a trace of all 98 target-taking tmux calls in non-test Go
+  showing every one is Class A, Class B, or session/window-scoped and addresses no pane
 
 ### Phase 2: Resolver and tagging
 
@@ -191,4 +332,5 @@ declared out of scope and then forgotten, leaving the invariant half-true.
 
 ## Status
 
-Backlog
+In Progress — Phase 1 complete (contract established); Phases 2-5 open. Spec file still lives in
+`backlog/`; moving it to `drafts/` is a separate user-decided step.
