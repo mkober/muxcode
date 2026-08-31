@@ -259,5 +259,5 @@ owner string, useWorktree bool)` and `createSpawnWorktree()` (`bus/spawn.go:112`
 `Worktree`/`WorktreeRef` entry fields (`:27-28`), `removeSpawnWorktree()` on completion detection
 (`:300`), and the `--no-worktree` opt-out in `cmd/spawn.go:41`.
 
-Phase steps below are recorded as plain bullets, predating the checkbox convention; they are left
-as written rather than retroactively ticked, since no evidence was gathered per step.
+The phase steps above are recorded as plain bullets, predating the checkbox convention; they are
+left as written rather than retroactively ticked, since no evidence was gathered per step.

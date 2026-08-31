@@ -20,7 +20,7 @@ has:
 
 This spec makes one path that keeps both.
 
-Tracking: _(no GitHub issue yet)_
+Tracking: [#51](https://github.com/mkober/muxcode/issues/51)
 
 ## Context
 
