@@ -138,10 +138,33 @@ windows generally; this is the label half specifically.
 
 ### Phase 4: Negative controls
 
-- [ ] Indices 1–10 unchanged
-- [ ] Spawn cleanup re-labels remaining spawns
-- [ ] Beyond-F12 window renders the honest fallback
-- [ ] Confirm each control fails when its fix is reverted
+- [x] Indices 1–10 unchanged — `TestWindowFKey_ByIndexNotPosition` pins F1/F2/F5/F10 across the
+      common range (its stub parks `build` at index 3 but asserts no key for it — **F3 is pinned by
+      `TestWindowFKey_NoHoldWindow`**, not here), which also pins the identity mapping when no index-0
+      hold window exists (catching a fix that merely subtracted one from position), and
+      `TestRefreshWindowFKeyLabels_DiffsOnly` asserts the already-correct `plan` window at F1 is
+      **never rewritten** — the no-churn half of "unchanged", which a value-only assertion misses
+- [x] Spawn cleanup re-labels remaining spawns — `TestRefreshWindowFKeyLabels_SlotShiftAfterCleanup`
+      (survivor shifts F12→F11) plus the `DiffsOnly` census, where `research` clears its stale F11 in
+      the same pass that the spawn gains it
+- [x] Beyond-F12 window renders the honest fallback — `DiffsOnly` stubs `13:F13:my:notes`, a window
+      past the last binding **carrying a lying F13**, and asserts it is cleared to `""`; with the
+      option empty the conditional's empty arm renders the name alone. `assertFKeyLabelFormat` also
+      pins that the arms carry no `#[]` styles, which is what keeps tmux parsing the empty arm at all.
+      **Boundary:** this is option-level and format-level evidence. The tmux *render* itself is not
+      executed by any unit test — that is Phase 5's job, and the honest fallback is only fully proven
+      there
+- [x] Confirm each control fails when its fix is reverted — three-round mutation run in worktree
+      `spawn-c413916e`: (A) raw-index labels → 4 pins fail including spawn@12 = F12 want F11; (B)
+      diff-check dropped → only the no-churn assertions fail while the value assertions stay green;
+      (C) `F#I` restored in both formats → both format tests fail. The mutations were restored and a
+      full uncached run returned to green. **How this was verified:** the experiment is transient and
+      unreproducible from the repo, so each leg was checked *structurally* against the assertions that
+      would catch it — `RawIndexDivergence` errors on `got == "F12"` (A); `DiffsOnly` carries exactly
+      two no-churn assertions plus an `n != 4` count check, separate from its value map (B); and
+      `assertFKeyLabelFormat`, shared by both format tests, errors on `F#I` being present (C). Result
+      (B) is the discriminating one: predicting that the value assertions survive while only the
+      no-churn ones fire matches the test's structure precisely
 
 ### Phase 5: Integration test
 
@@ -170,7 +193,7 @@ sites now render `#{?@muxcode_fkey,…}` fed by a diff-only daemon sweep, pinned
 | 1 · Pin the divergence | **2/2** | `TestWindowFKey_RawIndexDivergence` (new) + `TestWindowFKey_ByIndexNotPosition` (existing) |
 | 2 · Carry the key to the status bar | **3/3** | Both `F#I` sites replaced; absence asserted, not just presence of the conditional |
 | 3 · Keep it fresh | **2/2** | Sole writer proven by repo-wide grep; slot-shift F12→F11 pinned with a diff-only negative control |
-| 4 · Negative controls | 0/4 | |
+| 4 · Negative controls | **4/4** | Controls pinned by existing tests; revert-confirmation verified structurally against the catching assertions |
 | 5 · Integration test | 0/5 | |
 
 Phase 1 was closed 2026-09-01 against a `-count=1` run of `./bus/` **in the main checkout** — 1825
@@ -193,4 +216,32 @@ one new test should produce; that delta is the check that catches a test which s
 it is recorded rather than the bare "0 failed". The spawn's own `2073 pass` figure ran inside
 worktree `spawn-c413916e` and is again not the basis for the close.
 
-Open: Phase 4 (4), Phase 5 (5), plus all 7 acceptance criteria.
+Phase 4 added **no code and no tests** — `git status tools/` was empty and all four relevant files were
+byte-identical to the worktree's, so the phase is confirmation only and the 1826-pass run above still
+covers this exact tree (Phase 3 landed as `aefcd05`). No fresh run was requested for it, deliberately:
+re-running an unchanged tree would have produced a green number that proved nothing new.
+
+The revert-confirmation deserves its caveat. Mutation testing is transient by nature — the mutations
+existed only inside worktree `spawn-c413916e` and cannot be inspected from the repo. Rather than accept
+a reported pass/fail count, each of the three legs was checked against the assertion that would catch
+it, so what is recorded is the *mechanism*, not a tally.
+
+Phase 4's ticks were **re-verified independently** rather than accepted. The graph run that requested
+this update (`req-code-pr-9c76e908`) never delivered its `update-spec` dispatch — that node failed
+`undeliverable: plan never received the dispatch after 3 redrives` — yet the ticks were already on disk
+when plan restarted, so their authorship could not be assumed. Each was rechecked against the repo, not
+the prose: all six named tests exist, `git status tools/` is clean at `aefcd05`, and the structural
+claims hold (`RawIndexDivergence` errors on `got == "F12"`; `DiffsOnly` carries exactly two no-churn
+assertions plus an `n != 4` count check; `assertFKeyLabelFormat` is shared by both format tests and
+errors on `F#I`). One attribution was wrong and is corrected above — `ByIndexNotPosition` does **not**
+pin F3; `TestWindowFKey_NoHoldWindow` does. **Phase 4 is not committed**: its commit gate never fired,
+because the run died at the undelivered node.
+
+Phase 5 stays **0/5** deliberately. A `verify-spec` pass at 17:26 (run `req-code-pr-9c76e908`, retried
+`--from update-spec`) asked for Phase 5 to be closed; the retry skips the `implement` node, so no Phase 5
+work was ever produced, and the repo confirms it — no `scripts/test-*.sh` mentions `@muxcode_fkey`,
+`WindowFKey` or the F-key label, and the working tree holds no new files. Nothing was ticked. The
+behavioural criterion (**send the labelled key, assert the labelled window activates**) remains the one
+that actually retires this defect, and it is still unwritten.
+
+Open: Phase 5 (5), plus all 7 acceptance criteria.
