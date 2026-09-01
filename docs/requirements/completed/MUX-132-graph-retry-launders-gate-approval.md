@@ -11,7 +11,7 @@ Tracking: _(no GitHub issue yet)_
 ### Observed 2026-08-31 — caught before it ran
 
 Run `1788225109-req-code-pr-deb2914a` failed at `commit` (the `phase-progress` guard declined a
-doc-only tree, correctly — see [`MUX-131`](./MUX-131-spawn-implement-output-never-ported.md)). The
+doc-only tree, correctly — see [`MUX-131`](../drafts/MUX-131-spawn-implement-output-never-ported.md)). The
 proposed recovery was:
 
 ```
@@ -55,7 +55,7 @@ govern it** — `graph validate` rejects a commit or Atlassian node not dominate
 definition* and on *who* is acting. Neither asks whether the approval being consumed was granted for
 *this content*.
 
-Same class as [`MUX-114`](../completed/MUX-114-close-spec-node-has-no-completion-check.md): the check
+Same class as [`MUX-114`](./MUX-114-close-spec-node-has-no-completion-check.md): the check
 exists and is correct, but there is a path that never reaches it.
 
 ### Scope
@@ -143,7 +143,7 @@ the output, never silent** — the run visibly resumes at the gate.
 - [x] Decide what happens to nodes **between** the gate and the original target — they are downstream of
       the gate, so a naive reset re-runs them. In the incident the gate sits directly before `commit` so
       the question does not arise; it will in other templates. Re-running an `implement` spawn to reach a
-      commit would be expensive and is exactly the waste [`MUX-131`](./MUX-131-spawn-implement-output-never-ported.md)
+      commit would be expensive and is exactly the waste [`MUX-131`](../drafts/MUX-131-spawn-implement-output-never-ported.md)
       Defect B describes
 - [x] Surface the outcome in `graph status` and a lifecycle event
 
@@ -187,44 +187,20 @@ the output, never silent** — the run visibly resumes at the gate.
 
 ## Status
 
-In Progress — moved to `drafts/` 2026-08-31 on branch `MUX-132-graph-retry-launders-gate-approval`.
-Sequenced first because the defect it describes sits on the recovery path for the failed run
-`1788225109-req-code-pr-deb2914a`: recovering that run via `graph retry` is exactly the operation that
-can consume a stale approval.
+Complete — closed 2026-09-01 at **25/25**, all four phases, zero open items.
 
-**Phase 1 complete, 2/2** — the hole is pinned by a characterization test that is green *before* the
-fix, alongside the existing gate-retry test, proving the two are different code paths. Verified from
-the primary artifact (`go test -count=1 -v ./...`, exit 0, **2455 PASS / 0 FAIL**) with verbatim
-`--- PASS:` lines for both.
+Delivered: `graph retry --from` no longer consumes a stale human approval. A target dominated by a
+satisfied `wait_human` re-arms that gate and resumes there, naming the gate and its original approval
+time in the CLI, the run's `RetryNote`, and a `graph-retry-regated` lifecycle event.
 
-Worth recording: an **earlier full-suite run in the same minute reported exit 0 and 2454 PASS with the
-new test absent from its output entirely** — green, and proving nothing about the test in question.
-The 2454 → 2455 delta is the only thing that distinguishes them. A pass count is not coverage; the
-delta matching the one added test is what makes it evidence.
+Verified end to end: unit suite in the **main checkout** at exit 0, and
+`bash scripts/test-graph-orchestrator.sh` at **47 passed / 0 failed / exit 0** — a floor that equals the
+maximum achievable, so a green run proves every check executed rather than merely that none failed.
 
-**Phase 2 complete, 7/7** — `gateDominates` (true dominance on the shared `reachableStoppingAt`
-primitive, the per-gate form of the `validateGates` rule) re-arms the dominating gate and resumes
-there, naming the gate and its original approval time in the CLI, the `RetryNote`, and a
-`graph-retry-regated` lifecycle event. Refined during implementation: strict dominance re-arms
-*neither* gate on parallel branches, so the **cut** form is used.
+Two things worth carrying forward:
 
-**Phase 3 complete, 4/4** — all three negative controls plus the revert-check. Committed `a20b2c3`.
-
-**Phase 4 complete, 4/4** — the integration test exercises the full incident shape end to end:
-approve a gate, fail the node behind it, retry from that node, and assert the gate re-arms, the marker
-is purged, the gated node does **not** fire on the stale approval, a **fresh** `graph-approval` reaches
-edit (inbox drained first, so the count is provably new), and the run completes only after a fresh
-approval. Run 2026-08-31 23:39:05: **47 passed, 0 failed, exit 0**.
-
-**All four phases are complete.** The spec is ready to close and move to `completed/` — that move is
-the user's call.
-
-Two evidence notes worth keeping, both about how nearly-convincing false green appears:
-
-- The Phase 3 work was written but **stranded in spawn worktree `spawn-242ab323`** and never reached
-  the branch, so the `phase-progress` guard correctly declined the commit — the third instance in one
-  session of [`MUX-131`](./MUX-131-spawn-implement-output-never-ported.md) Defect A. It was
-  closed only after proving tree-equivalence (identical HEAD `1c47948`, byte-identical file, one
-  modified file each), which makes the worktree's passing run valid evidence for the branch.
-- A full suite run **inside a worktree** reported exit 0 with the test under test absent from its
-  output. Always check *where* a run executed, not just its exit code.
+- The characterization test that pinned the hole was **inverted, not deleted**, so the defect cannot
+  return unnoticed.
+- `gateDominates` is true dominance built on the shared `reachableStoppingAt` primitive — the same walk
+  `validateGates` uses — so retry-time and validation-time notions of "what a gate covers" cannot drift
+  apart.
