@@ -100,10 +100,15 @@ windows generally; this is the label half specifically.
 
 ### Phase 1: Pin the divergence
 
-- [ ] Reproduce: park a non-spawn window at index ≥ 11, start one spawn, assert the rendered label and
-      the working key disagree
-- [ ] Unit-pin `WindowFKey` for the divergent shape (non-contiguous spawn indices) so the intended
-      answer is fixed before the renderer changes
+- [x] Reproduce: park a non-spawn window at index ≥ 11, start one spawn, assert the rendered label and
+      the working key disagree — `TestWindowFKey_RawIndexDivergence`
+      (`provider_options_test.go:187`) stubs `research` at 11 with the sole spawn at 12 and asserts
+      the raw-index answer `F12` is **not** returned, so the divergence itself stays pinned rather
+      than only the corrected `F11`; the non-spawn at 11 must render empty, since a label there lies
+- [x] Unit-pin `WindowFKey` for the divergent shape (non-contiguous spawn indices) so the intended
+      answer is fixed before the renderer changes — `TestWindowFKey_ByIndexNotPosition`
+      (`provider_options_test.go:159`) covers spawns at 14/11/17 listed out of order, pinning
+      F11/F12/empty by ascending index, which is what catches a hardcoded 11/12 mapping
 
 ### Phase 2: Carry the computed key to the status bar
 
@@ -140,13 +145,37 @@ windows generally; this is the label half specifically.
 - [ ] Coverage floor set to the achievable maximum so a skipped section cannot report green
 - [ ] Run it and record passed/failed/exit code here
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-132-graph-retry-launders-gate-approval | 8h 31m | 2026-09-01 16:57 |
+
 ## Status
 
 In Progress — moved to `drafts/` 2026-09-01. **Implementation landed the same night**: both format
 sites now render `#{?@muxcode_fkey,…}` fed by a diff-only daemon sweep, pinned by tests that assert
 `F#I` is absent rather than merely that the conditional is present.
 
-Phases 4 (remaining negative controls) and 5 (integration test) are open. The integration criterion
-that matters is **send the labelled key and assert the labelled window activates** — because the
-bindings end `>/dev/null 2>&1 || true`, a format-string assertion alone would pass while the reported
-symptom (a keypress doing nothing) survived untouched.
+| Phase | | Evidence |
+|---|---|---|
+| 1 · Pin the divergence | **2/2** | `TestWindowFKey_RawIndexDivergence` (new) + `TestWindowFKey_ByIndexNotPosition` (existing) |
+| 2 · Carry the key to the status bar | **3/3** | Both `F#I` sites replaced; absence asserted, not just presence of the conditional |
+| 3 · Keep it fresh | 1/2 | Diff-only sweep covers cleanup; the stale-option path is unconfirmed |
+| 4 · Negative controls | 0/4 | |
+| 5 · Integration test | 0/5 | |
+
+Phase 1 was closed 2026-09-01 against a `-count=1` run of `./bus/` **in the main checkout** — 1825
+passed / 0 failed, `--- PASS: TestWindowFKey_RawIndexDivergence`. The work reached the branch as an
+uncommitted harvest from spawn worktree `spawn-c413916e`; the repo copy of `provider_options_test.go`
+was confirmed byte-identical to the worktree's before anything was ticked, because a checkbox here
+describes the repo, never a worktree. An earlier `2243 pass` figure for the same work is **not** the
+basis for this close: it was a *cached* run, and the uncached one is the only evidence that binds.
+
+**No acceptance criterion is ticked yet, deliberately.** Every criterion describes rendered or pressed
+behaviour, while Phases 1–2 so far prove the *derivation*. The criterion that matters — **send the
+labelled key and assert the labelled window activates** — is Phase 5 work: because the bindings end
+`>/dev/null 2>&1 || true`, a format-string assertion alone would pass while the reported symptom (a
+keypress doing nothing) survived untouched.
+
+Open: Phase 3 (1), Phase 4 (4), Phase 5 (5), plus all 7 acceptance criteria.

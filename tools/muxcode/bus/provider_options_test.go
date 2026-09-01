@@ -179,6 +179,26 @@ func TestWindowFKey_ByIndexNotPosition(t *testing.T) {
 	}
 }
 
+// Phase-1 reproduction pin for the observed 2026-09-01 layout: a
+// non-spawn window parked at index 11 with the session's only spawn at
+// 12. The raw-index F#I label ("F12") and the key that actually selects
+// the spawn ("F11") disagree — asserted explicitly so the divergence
+// itself stays pinned, not just the corrected mapping (MUX-134).
+func TestWindowFKey_RawIndexDivergence(t *testing.T) {
+	stubWindowList(t, "0:auto\n1:plan\n2:edit\n11:research\n12:spawn-aaa11111")
+
+	got := WindowFKey("s", "spawn-aaa11111")
+	if got == "F12" {
+		t.Error("spawn at index 12 labelled F12 — the raw-index F#I divergence is back; F12's binding selects nothing here")
+	}
+	if got != "F11" {
+		t.Errorf("spawn at index 12 = %q, want F11 (sole spawn, first slot)", got)
+	}
+	if got := WindowFKey("s", "research"); got != "" {
+		t.Errorf("non-spawn at index 11 = %q, want empty — no binding selects it, a key label would lie", got)
+	}
+}
+
 // RefreshWindowFKeyLabels must reconcile @muxcode_fkey to what the
 // bindings select, touching only drifted windows: a stale F11 on a
 // non-spawn window at index 11 is CLEARED (the lying-label case, user
