@@ -69,16 +69,16 @@ writes as the commit gates do for git.
 
 ### Acceptance criteria
 
-- [ ] A retry whose `--from` target is dominated by a satisfied `wait_human` gate **re-arms that gate and
+- [x] A retry whose `--from` target is dominated by a satisfied `wait_human` gate **re-arms that gate and
       resumes there**, naming the gate and its original approval time in the output — it must never
       consume the prior approval, and never re-target silently
-- [ ] `TestExecRetryBelowGateConsumesStaleApproval`'s assertions are **inverted** by this phase: the gate
+- [x] `TestExecRetryBelowGateConsumesStaleApproval`'s assertions are **inverted** by this phase (the test now reads `TestExecRetryBelowGateRearmsGate` after two renames — same test, inverted, never deleted): the gate
       re-arms, the `approved` marker is gone, the gated node does **not** re-fire unapproved, and edit
       receives a **second** `graph-approval` request. The characterization test is the fix's acceptance
       test read backwards — update it rather than deleting it, so the hole cannot silently return
-- [ ] Re-arming purges the `approved` marker exactly as a normal gate dispatch does, so a fresh
+- [x] Re-arming purges the `approved` marker exactly as a normal gate dispatch does, so a fresh
       `graph approve` is required
-- [ ] The refusal/re-arm decision is visible in `graph status` and in a lifecycle event, not only on
+- [x] The refusal/re-arm decision is visible in `graph status` and in a lifecycle event, not only on
       stderr
 - [ ] **Negative control:** a retry whose target is *not* downstream of any gate still works unchanged —
       the fix must not make every retry demand an approval that was never part of the run
@@ -86,7 +86,7 @@ writes as the commit gates do for git.
       `TestExecHumanGateRetryRequiresFreshApproval` asserts — that path must not regress
 - [ ] **Negative control:** a run whose gate was never approved at all is unaffected — this is about
       stale approvals, not missing ones
-- [ ] Dominance is computed from the graph, not hardcoded to `phase-gate`/`commit` — templates differ
+- [x] Dominance is computed from the graph, not hardcoded to `phase-gate`/`commit` — templates differ
       and new ones will be added
 
 ### Key files
@@ -95,7 +95,7 @@ writes as the commit gates do for git.
 |------|---------|
 | `tools/muxcode/bus/graph_run.go` | `RetryGraphRun` — the downstream-only reset |
 | `tools/muxcode/bus/graph_exec.go` | Gate dispatch and the `approved` purge (:482); `graphApprovalPath` |
-| `tools/muxcode/bus/graph.go` | `nodeRequiresGate` — existing dominance logic to reuse, not reimplement |
+| `tools/muxcode/bus/graph.go` | `reachableStoppingAt` (the shared primitive), `gateDominates` (per-gate form of the `validateGates` rule), `nodeRequiresGate` (node predicate only — it holds **no** dominance logic; the original criterion naming it was wrong) |
 | `tools/muxcode/cmd/graph.go` | `retry` subcommand — where a refusal surfaces to the user |
 | `scripts/test-graph-orchestrator.sh` | Integration coverage for `graph retry --from` |
 
@@ -105,7 +105,7 @@ writes as the commit gates do for git.
 
 - [x] Test asserting the **current** behaviour: retry from a node below a satisfied gate re-executes it
       with no fresh approval — a characterization test, green before the fix.
-      `TestExecRetryBelowGateConsumesStaleApproval` (`bus/graph_exec_test.go:623`) builds the incident
+      `TestExecRetryBelowGateConsumesStaleApproval` — since renamed `TestExecRetryBelowGateRearmsGate` when Phase 2 inverted it — builds the incident
       shape (`a → gate → c`, approve, fail `c`, retry from `c`) and asserts the gate stays `done`, the
       `approved` marker **survives**, `c` re-fires on it, and **edit receives exactly one**
       `graph-approval` request — the retry never asks again. Its comment states Phase 2 must invert
@@ -124,26 +124,35 @@ command they have to know to type.
 The cost is that `--from` no longer starts exactly where asked, so **the re-targeting must be stated in
 the output, never silent** — the run visibly resumes at the gate.
 
-- [ ] Compute which `wait_human` gates dominate the `--from` target, reusing the dominance logic behind
+- [x] Compute which `wait_human` gates dominate the `--from` target, reusing the dominance logic behind
       `nodeRequiresGate` rather than writing a second one
-- [ ] Re-target the retry to the dominating gate: reset from the gate, purge its `approved` marker, and
+- [x] Re-target the retry to the dominating gate: reset from the gate, purge its `approved` marker, and
       let normal dispatch re-request approval
-- [ ] **Say so in the output** — name the gate and its original approval time, as in the decision above.
+- [x] **Say so in the output** — name the gate and its original approval time, as in the decision above.
       A silent re-target trades one surprise for another
-- [ ] Resolve **which** gate when several dominate: nearest to the target, or outermost. Nearest is the
+- [x] **Refined during implementation:** strict dominance re-arms *neither* gate when two sit on
+      parallel branches (neither is on *every* start→target path), so the implementation uses the **cut**
+      form — every satisfied gate whose territory the target sits behind re-arms, pinned by
+      `TestExecRetryBelowParallelGateCutRearmsAll` ("a dominator-only check re-arms neither")
+- [x] Resolve **which** gate when several dominate: nearest to the target, or outermost. Nearest is the
       minimum re-work; outermost is the most conservative. Record the choice and why
-- [ ] Decide what happens to nodes **between** the gate and the original target — they are downstream of
+- [x] Decide what happens to nodes **between** the gate and the original target — they are downstream of
       the gate, so a naive reset re-runs them. In the incident the gate sits directly before `commit` so
       the question does not arise; it will in other templates. Re-running an `implement` spawn to reach a
       commit would be expensive and is exactly the waste [`MUX-131`](../backlog/MUX-131-spawn-implement-output-never-ported.md)
       Defect B describes
-- [ ] Surface the outcome in `graph status` and a lifecycle event
+- [x] Surface the outcome in `graph status` and a lifecycle event
 
 ### Phase 3: Negative controls
 
-- [ ] Retry not downstream of any gate — unchanged
-- [ ] Retry re-entering the gate — unchanged
-- [ ] Never-approved gate — unaffected
+- [x] Retry not downstream of any gate — unchanged: `TestRetryGraphRunFromNode`
+      (`bus/graph_exec_test.go:830`) asserts `len(res.Rearmed) == 0` and `res.From == requested`
+      ("an ungated retry must not re-target"), plus upstream preserved. This is the control that
+      catches the fix over-reaching into every retry
+- [x] Retry re-entering the gate — unchanged: `TestExecHumanGateRetryRequiresFreshApproval` still passes
+      alongside the new tests, so the pre-existing path did not regress
+- [ ] Never-approved gate — unaffected. **No test exists**: `staleApprovalGate` skips gates that are
+      not `done`, but nothing pins it, so a change making re-arm unconditional would pass the suite
 - [ ] Confirm each control fails when the fix is reverted
 
 ### Phase 4: Integration test
@@ -153,6 +162,12 @@ the output, never silent** — the run visibly resumes at the gate.
 - [ ] Assert the un-gated retry path still completes without prompting
 - [ ] Coverage floor so a skipped run cannot report green
 - [ ] Run it and record passed/failed/exit code here
+
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-132-graph-retry-launders-gate-approval | 35m | 2026-08-31 22:43 |
 
 ## Status
 

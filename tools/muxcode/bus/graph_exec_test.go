@@ -587,7 +587,7 @@ func TestExecHumanGateRetryRequiresFreshApproval(t *testing.T) {
 	}
 
 	// Retry from the gate: it must wait for a NEW approval.
-	if err := RetryGraphRun(runTestSession, run.ID, "gate"); err != nil {
+	if _, err := RetryGraphRun(runTestSession, run.ID, "gate"); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 	step(t, runTestSession, run.ID)
@@ -609,18 +609,18 @@ func TestExecHumanGateRetryRequiresFreshApproval(t *testing.T) {
 	}
 }
 
-// TestExecRetryBelowGateConsumesStaleApproval is the MUX-132 Phase 1
-// characterization test: it pins the CURRENT hole and is green BEFORE the
-// fix. RetryGraphRun resets only the downstream set, and the approval
-// purge lives in the gate's dispatch path — so a retry whose --from
-// target sits below a satisfied wait_human gate never re-arms the gate,
-// and the mutating node re-fires on an approval granted for different
-// content (observed 2026-08-31: retry --from commit after the tree
-// changed post-approval). TestExecHumanGateRetryRequiresFreshApproval
-// covers the retry that re-enters the gate itself; this is the sibling
-// path that test cannot see. The Phase 2 dominance check must invert
-// these assertions: re-arm the gate (or refuse the retry) instead.
-func TestExecRetryBelowGateConsumesStaleApproval(t *testing.T) {
+// TestExecRetryBelowGateRearmsGate is the MUX-132 Phase 2 acceptance
+// test — the Phase 1 characterization test
+// (TestExecRetryBelowGateConsumesStaleApproval) with its assertions
+// inverted, updated rather than deleted so the hole cannot silently
+// return. A retry whose --from target sits below a satisfied wait_human
+// gate must re-target to the gate: re-arm it, purge the stale approval,
+// leave the gated node un-fired, and ask edit for a SECOND approval —
+// never resume on an approval granted for different content (observed
+// 2026-08-31: retry --from commit after the tree changed post-approval).
+// TestExecHumanGateRetryRequiresFreshApproval covers the retry that
+// re-enters the gate itself; this is the sibling path below it.
+func TestExecRetryBelowGateRearmsGate(t *testing.T) {
 	g := &Graph{
 		Name:  "t",
 		Start: "a",
@@ -637,6 +637,15 @@ func TestExecRetryBelowGateConsumesStaleApproval(t *testing.T) {
 	step(t, runTestSession, run.ID)
 	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
 	step(t, runTestSession, run.ID)
+	// Edit consumes the approval request before the human approves — the
+	// live sequence. Left pending, the inbox dedup guard would rightly
+	// suppress the identical re-ask (the pending one still asks for it).
+	edit, _ := Peek(runTestSession, "edit")
+	for _, m := range edit {
+		if m.Action == "graph-approval" {
+			_, _ = ConsumeByID(runTestSession, "edit", m.ID)
+		}
+	}
 	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
@@ -648,34 +657,128 @@ func TestExecRetryBelowGateConsumesStaleApproval(t *testing.T) {
 		t.Fatalf("run state %q, want failed after c fails", got.State)
 	}
 
-	// Retry from c — below the gate, so the gate is never reset.
-	if err := RetryGraphRun(runTestSession, run.ID, "c"); err != nil {
+	// Retry from c — below the gate: the retry must re-target to the gate.
+	res, err := RetryGraphRun(runTestSession, run.ID, "c")
+	if err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeDone {
-		t.Fatalf("gate state %q after retry below it, want done — upstream is never reset", s)
+	if len(res.Rearmed) != 1 || res.Rearmed[0].Gate != "gate" || res.From != "gate" || res.Requested != "c" {
+		t.Fatalf("retry result rearmed=%+v from=%q requested=%q, want re-target to the gate", res.Rearmed, res.From, res.Requested)
 	}
-	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "gate", "approved")); err != nil {
-		t.Fatalf("approved marker gone (%v) — the purge only runs on gate dispatch", err)
+	if res.Rearmed[0].ApprovedAt <= 0 {
+		t.Errorf("retry result carries no original approval time — the re-target must name it")
+	}
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeReady {
+		t.Fatalf("gate state %q after retry below it, want ready — the gate re-arms", s)
+	}
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "gate", "approved")); !os.IsNotExist(err) {
+		t.Fatalf("approved marker still present (err=%v) — the stale approval must be purged at retry time", err)
+	}
+	got, _ = ReadGraphRun(runTestSession, run.ID)
+	if !strings.Contains(got.RetryNote, `"gate"`) {
+		t.Errorf("run RetryNote %q does not name the re-armed gate — the decision must be visible in graph status", got.RetryNote)
 	}
 
-	// Next tick: the gated node re-fires with nobody approving.
+	// Next tick: the gate dispatches and waits; the gated node must NOT fire.
 	step(t, runTestSession, run.ID)
-	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodeRunning {
-		t.Fatalf("c state %q after tick, want running — the hole re-fires it on the stale approval", s)
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("gate state %q after tick, want waiting", s)
 	}
-	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeDone {
-		t.Fatalf("gate state %q after tick, want done — it never re-arms", s)
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodePending {
+		t.Fatalf("c state %q after tick, want pending — it must not re-fire on the stale approval", s)
 	}
-	edit, _ := Peek(runTestSession, "edit")
+	// The session log records every send: the re-armed gate must have
+	// asked edit a SECOND time.
+	logged, _ := readMessages(LogPath(runTestSession))
 	var approvals int
-	for _, m := range edit {
+	for _, m := range logged {
 		if m.Action == "graph-approval" && strings.Contains(m.Payload, run.ID) {
 			approvals++
 		}
 	}
-	if approvals != 1 {
-		t.Fatalf("edit received %d graph-approval requests for this run, want exactly 1 — the retry never asks again", approvals)
+	if approvals != 2 {
+		t.Fatalf("edit received %d graph-approval requests for this run, want exactly 2 — the retry must ask again", approvals)
+	}
+
+	// Only a fresh approval releases the gated node.
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("re-approve: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodeRunning {
+		t.Fatalf("c state %q after fresh approval, want running", s)
+	}
+}
+
+// TestExecRetryBelowParallelGateCutRearmsAll pins the cut form of the
+// re-arm (review finding, 2026-08-31): with the target fed by two
+// parallel branches each behind its own satisfied gate, NO single gate
+// dominates every path — a dominator-only check finds nothing and both
+// stale approvals stay usable. The re-arm set must be the nearest-gate
+// cut: every satisfied gate whose territory contains the target, all
+// re-armed, all markers purged, target left pending.
+func TestExecRetryBelowParallelGateCutRearmsAll(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "s",
+		Nodes: []Node{
+			{ID: "s", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "g1", Type: NodeWaitHuman, Message: "approve branch one commit"},
+			{ID: "g2", Type: NodeWaitHuman, Message: "approve branch two commit"},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "ship it"},
+		},
+		Edges: []Edge{
+			{From: "s", To: "g1"}, {From: "s", To: "g2"},
+			{From: "g1", To: "c"}, {From: "g2", To: "c"},
+		},
+	}
+	run := createTestRun(t, g)
+
+	// Drive both branches through their gates, then fail the target.
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "s", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	if err := ApproveGraphGate(runTestSession, run.ID, "g1"); err != nil {
+		t.Fatalf("approve g1: %v", err)
+	}
+	if err := ApproveGraphGate(runTestSession, run.ID, "g2"); err != nil {
+		t.Fatalf("approve g2: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "c", OutcomeFailure)
+	step(t, runTestSession, run.ID)
+	got, _ := ReadGraphRun(runTestSession, run.ID)
+	if got.State != GraphRunFailed {
+		t.Fatalf("run state %q, want failed after c fails", got.State)
+	}
+
+	res, err := RetryGraphRun(runTestSession, run.ID, "c")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	rearmed := map[string]bool{}
+	for _, r := range res.Rearmed {
+		rearmed[r.Gate] = true
+	}
+	if len(res.Rearmed) != 2 || !rearmed["g1"] || !rearmed["g2"] {
+		t.Fatalf("rearmed=%+v, want both parallel gates — a dominator-only check re-arms neither", res.Rearmed)
+	}
+	for _, gate := range []string{"g1", "g2"} {
+		if s := nodeState(t, runTestSession, run.ID, gate); s != GraphNodeReady {
+			t.Errorf("%s state %q after retry, want ready", gate, s)
+		}
+		if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, gate, "approved")); !os.IsNotExist(err) {
+			t.Errorf("%s approved marker still present (err=%v) — its stale approval remains usable", gate, err)
+		}
+	}
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodePending {
+		t.Fatalf("c state %q after retry, want pending — it must not fire on either stale approval", s)
+	}
+	got, _ = ReadGraphRun(runTestSession, run.ID)
+	if !strings.Contains(got.RetryNote, `"g1"`) || !strings.Contains(got.RetryNote, `"g2"`) {
+		t.Errorf("run RetryNote %q does not name both re-armed gates", got.RetryNote)
 	}
 }
 
@@ -720,8 +823,12 @@ func TestRetryGraphRunFromNode(t *testing.T) {
 		t.Fatalf("run state %q, want complete", got.State)
 	}
 
-	if err := RetryGraphRun(runTestSession, run.ID, "b"); err != nil {
+	res, err := RetryGraphRun(runTestSession, run.ID, "b")
+	if err != nil {
 		t.Fatalf("retry: %v", err)
+	}
+	if len(res.Rearmed) != 0 || res.From != "b" {
+		t.Fatalf("retry result rearmed=%+v from=%q — an ungated retry must not re-target", res.Rearmed, res.From)
 	}
 	// Upstream a keeps its result; b is re-armed; run is running again.
 	if s := nodeState(t, runTestSession, run.ID, "a"); s != GraphNodeDone {
@@ -743,7 +850,7 @@ func TestRetryGraphRunFromNode(t *testing.T) {
 
 func TestRetryGraphRunRefusesRunningRun(t *testing.T) {
 	run := createTestRun(t, linearGraph())
-	if err := RetryGraphRun(runTestSession, run.ID, "b"); err == nil {
+	if _, err := RetryGraphRun(runTestSession, run.ID, "b"); err == nil {
 		t.Error("retry must refuse a running run")
 	}
 }
@@ -769,7 +876,7 @@ func TestRetryGraphRunResetsLoopBudget(t *testing.T) {
 	}
 
 	// Retry from a: the loop edge budget resets with the subtree.
-	if err := RetryGraphRun(runTestSession, run.ID, "a"); err != nil {
+	if _, err := RetryGraphRun(runTestSession, run.ID, "a"); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 	fresh, _ := ReadGraphRun(runTestSession, run.ID)
