@@ -80,11 +80,15 @@ writes as the commit gates do for git.
       `graph approve` is required
 - [x] The refusal/re-arm decision is visible in `graph status` and in a lifecycle event, not only on
       stderr
-- [ ] **Negative control:** a retry whose target is *not* downstream of any gate still works unchanged —
+- [x] **Negative control:** a retry whose target is *not* downstream of any gate still works unchanged —
+      unit: `TestRetryGraphRunFromNode` (`len(res.Rearmed)==0`, resumes at the requested node);
+      integration: ungated retry carries no re-arm note and demands **0** approvals across the path —
       the fix must not make every retry demand an approval that was never part of the run
-- [ ] **Negative control:** a retry that re-enters the gate itself still behaves as
+- [x] **Negative control:** a retry that re-enters the gate itself still behaves as
       `TestExecHumanGateRetryRequiresFreshApproval` asserts — that path must not regress
-- [ ] **Negative control:** a run whose gate was never approved at all is unaffected — this is about
+- [x] **Negative control:** a run whose gate was never approved at all is unaffected
+      (`TestExecRetryBelowNeverApprovedGateUnaffected`, pinning `staleApprovalGates`' done/success check —
+      without it a re-arm-unconditional mutant passed the whole suite) — this is about
       stale approvals, not missing ones
 - [x] Dominance is computed from the graph, not hardcoded to `phase-gate`/`commit` — templates differ
       and new ones will be added
@@ -162,17 +166,24 @@ the output, never silent** — the run visibly resumes at the gate.
 
 ### Phase 4: Integration test
 
-- [ ] Extend `scripts/test-graph-orchestrator.sh`: approve a gate, fail the node behind it, change the
+- [x] Extend `scripts/test-graph-orchestrator.sh`: approve a gate, fail the node behind it, change the
       tree, then retry from the failed node — assert a fresh approval is demanded before it fires
-- [ ] Assert the un-gated retry path still completes without prompting
-- [ ] Coverage floor so a skipped run cannot report green
-- [ ] Run it and record passed/failed/exit code here
+- [x] Assert the un-gated retry path still completes without prompting — retry output carries no re-arm
+      note and resumes at the requested node, and `graph-approval` count in edit's inbox is **0** across
+      the entire ungated path
+- [x] Coverage floor so a skipped run cannot report green — `FLOOR=47`, verified **strict**: 45 `ok`
+      sites, one inside a 3-iteration loop, so 44+3 = 47 is the *maximum* achievable. The floor sits
+      exactly at max, so any skipped section fails it
+- [x] Run it and record passed/failed/exit code here — `bash scripts/test-graph-orchestrator.sh`
+      2026-08-31 23:39:05: **47 passed, 0 failed, exit 0**. Passing count equals the floor *and* the
+      maximum, so every check executed. (Trailing `Terminated: 15` on the background `muxcode watch` is
+      the script's own teardown, not a failure.)
 
 ## Time Tracking
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-132-graph-retry-launders-gate-approval | 35m | 2026-08-31 22:43 |
+| MUX-132-graph-retry-launders-gate-approval | 1h 12m | 2026-08-31 23:40 |
 
 ## Status
 
@@ -191,4 +202,29 @@ new test absent from its output entirely** — green, and proving nothing about 
 The 2454 → 2455 delta is the only thing that distinguishes them. A pass count is not coverage; the
 delta matching the one added test is what makes it evidence.
 
-Phases 2–4 remain open.
+**Phase 2 complete, 7/7** — `gateDominates` (true dominance on the shared `reachableStoppingAt`
+primitive, the per-gate form of the `validateGates` rule) re-arms the dominating gate and resumes
+there, naming the gate and its original approval time in the CLI, the `RetryNote`, and a
+`graph-retry-regated` lifecycle event. Refined during implementation: strict dominance re-arms
+*neither* gate on parallel branches, so the **cut** form is used.
+
+**Phase 3 complete, 4/4** — all three negative controls plus the revert-check. Committed `a20b2c3`.
+
+**Phase 4 complete, 4/4** — the integration test exercises the full incident shape end to end:
+approve a gate, fail the node behind it, retry from that node, and assert the gate re-arms, the marker
+is purged, the gated node does **not** fire on the stale approval, a **fresh** `graph-approval` reaches
+edit (inbox drained first, so the count is provably new), and the run completes only after a fresh
+approval. Run 2026-08-31 23:39:05: **47 passed, 0 failed, exit 0**.
+
+**All four phases are complete.** The spec is ready to close and move to `completed/` — that move is
+the user's call.
+
+Two evidence notes worth keeping, both about how nearly-convincing false green appears:
+
+- The Phase 3 work was written but **stranded in spawn worktree `spawn-242ab323`** and never reached
+  the branch, so the `phase-progress` guard correctly declined the commit — the third instance in one
+  session of [`MUX-131`](../backlog/MUX-131-spawn-implement-output-never-ported.md) Defect A. It was
+  closed only after proving tree-equivalence (identical HEAD `1c47948`, byte-identical file, one
+  modified file each), which makes the worktree's passing run valid evidence for the branch.
+- A full suite run **inside a worktree** reported exit 0 with the test under test absent from its
+  output. Always check *where* a run executed, not just its exit code.

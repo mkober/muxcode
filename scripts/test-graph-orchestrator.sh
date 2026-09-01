@@ -7,7 +7,11 @@
 # --reply-to). Covers: validation (uncapped cycle, ungated commit, builtin
 # templates), async run start, a linear send→condition→send run with
 # lifecycle events, the single-completion-wake guarantee, fan-out/join
-# barrier semantics, daemon kill/restart resume, and retry --from.
+# barrier semantics, daemon kill/restart resume, retry --from, and the
+# MUX-132 stale-approval re-arm: a retry below a satisfied wait_human
+# gate resumes AT the gate with the old approval purged and a fresh
+# graph-approval demanded, while an ungated retry never prompts. A
+# coverage floor at the end keeps a skipped section from reporting green.
 #
 # DEVIATION from the spec checklist: the fan-out/join graph uses two send
 # nodes rather than spawn workers — StartSpawn launches real agent tmux
@@ -94,11 +98,45 @@ wait_for_request() {
   return 1
 }
 
+# fail_role <role> — consume like answer_role but reply with action
+# "error", which deriveSendOutcome maps to a failure outcome, failing
+# the node.
+fail_role() {
+  local role="$1" out rid target
+  out="$(AGENT_ROLE="$role" "$MUX" inbox 2>/dev/null || true)"
+  rid="$(printf '%s' "$out" | grep -o -- '--reply-to [A-Za-z0-9-]*' | tail -1 | awk '{print $2}')"
+  target="$(printf '%s' "$out" | grep -o 'muxcode send [a-z-]*' | tail -1 | awk '{print $3}')"
+  [ -z "$rid" ] && return 1
+  AGENT_ROLE="$role" "$MUX" send "${target:-edit}" error "step failed" --type response --reply-to "$rid" >/dev/null 2>&1
+}
+
 # Run state comes from the plain header line "Run <id>  [state]  ..." —
 # the --json object nests node "state" fields before the run's in marshal
 # order, so a first-match JSON grep would read a node instead.
 run_state()  { "$MUX" graph status "$1" 2>/dev/null | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' | head -1 | sed 's/.*\[\([a-z]*\)\].*/\1/'; }
 node_state() { "$MUX" graph status "$1" 2>/dev/null | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' | awk -v n="$2" '$1==n {print $2}'; }
+
+# wait_node_state <run> <node> <state> / wait_run_state <run> <state> —
+# poll the run store up to 20s.
+wait_node_state() {
+  local i
+  for i in $(seq 1 40); do
+    [ "$(node_state "$1" "$2")" = "$3" ] && return 0
+    sleep 0.5
+  done
+  return 1
+}
+wait_run_state() {
+  local i
+  for i in $(seq 1 40); do
+    [ "$(run_state "$1")" = "$2" ] && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+# approval_count — graph-approval requests sitting in edit's inbox.
+approval_count() { AGENT_ROLE=edit "$MUX" inbox --peek 2>/dev/null | grep -c 'Action: graph-approval' || true; }
 
 # --- 1. Validation ---------------------------------------------------------
 cat > "$WORK/uncapped-cycle.json" <<'EOF'
@@ -287,11 +325,18 @@ done
 [ "$resumed" -eq 1 ] && ok "resumed run reached complete" || bad "resumed run state: $(run_state "$RID3")"
 
 # --- 7. retry --from re-executes only downstream ---------------------------
-if "$MUX" graph retry "$RID3" --from cond >/dev/null 2>&1; then
+if retry7_out="$("$MUX" graph retry "$RID3" --from cond 2>&1)"; then
   ok "retry --from cond accepted on a complete run"
 else
-  bad "retry --from cond refused"
+  bad "retry --from cond refused: $retry7_out"
 fi
+# Ungated negative control (MUX-132): the linear graph has no gate, so
+# the retry must resume at the requested node with no re-arm note.
+case "$retry7_out" in
+  *re-armed*) bad "ungated retry re-targeted: $retry7_out" ;;
+  *"retrying from cond"*) ok "ungated retry resumed at the requested node" ;;
+  *) bad "ungated retry output unexpected: $retry7_out" ;;
+esac
 [ "$(node_state "$RID3" a)" = "done" ] && ok "upstream node a preserved by retry" \
   || bad "retry reset upstream node a: $(node_state "$RID3" a)"
 
@@ -312,6 +357,113 @@ done
 build_reqs="$(AGENT_ROLE=build "$MUX" inbox --peek 2>/dev/null | grep -c 'Type: request' || true)"
 [ "$build_reqs" -eq 0 ] && ok "no re-dispatch to build after retry" \
   || bad "build received $build_reqs new requests after retry"
+
+# No graph ran so far has a gate — nothing may have prompted edit.
+[ "$(approval_count)" -eq 0 ] && ok "no graph-approval demanded anywhere on the ungated path" \
+  || bad "graph-approval reached edit during ungated runs: $(approval_count)"
+
+# --- 8. Gated retry re-arms the gate, never consumes a stale approval ------
+# (MUX-132) The 2026-08-31 incident shape: approve the gate, fail the
+# node behind it, change the tree, retry --from the failed node. The
+# retry must resume AT the gate with the old approval purged and demand
+# a fresh one — never fire the gated node on an approval granted for
+# different content.
+cat > "$WORK/gated.json" <<'EOF'
+{"name": "gated", "start": "a",
+ "nodes": [
+   {"id": "a", "type": "send", "role": "build", "action": "build", "message": "pre-gate work"},
+   {"id": "gate", "type": "wait_human", "message": "approve the gated step"},
+   {"id": "c", "type": "send", "role": "test", "action": "test", "message": "gated step"}],
+ "edges": [
+   {"from": "a", "to": "gate"},
+   {"from": "gate", "to": "c"}]}
+EOF
+RID4="$("$MUX" graph run --file "$WORK/gated.json" 2>&1 | grep -o 'Started run [^ ]*' | awk '{print $3}')"
+[ -n "$RID4" ] && ok "gated run started: $RID4" || bad "gated run failed to start"
+
+wait_for_request build && answer_role build || bad "gated run node a never dispatched"
+wait_node_state "$RID4" gate waiting && ok "gate reached waiting" \
+  || bad "gate state $(node_state "$RID4" gate), want waiting"
+[ "$(approval_count)" -eq 1 ] && ok "edit received the first graph-approval request" \
+  || bad "graph-approval count $(approval_count), want 1"
+
+# Consume edit's inbox as the real edit agent does when acting on the
+# gate. Left pending, the first request would make the bus's duplicate
+# guard (HasPendingInboxRequest) suppress the re-armed gate's identical
+# second request — and it also makes the later count a proof that a
+# FRESH request arrived, not a stale leftover.
+AGENT_ROLE=edit "$MUX" inbox >/dev/null 2>&1
+
+"$MUX" graph approve "$RID4" gate >/dev/null 2>&1 || bad "graph approve failed"
+wait_for_request test && ok "approval released the gate — c dispatched" \
+  || bad "c never dispatched after approval"
+fail_role test || bad "could not fail c"
+wait_run_state "$RID4" failed && ok "run failed at c behind the satisfied gate" \
+  || bad "run state $(run_state "$RID4"), want failed"
+
+# The tree changes between approval and retry — the incident's essence.
+# The re-arm decision is content-independent (the executor never reads
+# the tree); the step keeps the scenario honest to the incident shape.
+echo "post-approval change" >> "$WORK/tree-change"
+
+APPROVED_MARKER="$BD/graphs/$RID4/approvals/gate.approved"
+[ -e "$APPROVED_MARKER" ] || bad "precondition: approved marker missing before retry"
+retry8_out="$("$MUX" graph retry "$RID4" --from c 2>&1)" || bad "gated retry refused: $retry8_out"
+case "$retry8_out" in
+  *'satisfied human gate "gate"'*'re-armed'*) ok "retry announced the re-arm, naming the gate" ;;
+  *) bad "retry output missing the re-arm note: $retry8_out" ;;
+esac
+case "$retry8_out" in
+  *'(approved '[0-9]*) ok "retry names the original approval time" ;;
+  *) bad "retry output missing the approval time: $retry8_out" ;;
+esac
+case "$retry8_out" in
+  *"retrying from gate"*) ok "run visibly resumes at the gate, not the requested node" ;;
+  *) bad "retry did not re-target to the gate: $retry8_out" ;;
+esac
+[ ! -e "$APPROVED_MARKER" ] && ok "stale approved marker purged by retry" \
+  || bad "approved marker survived the retry"
+
+wait_node_state "$RID4" gate waiting && ok "re-armed gate dispatched back to waiting" \
+  || bad "gate state $(node_state "$RID4" gate) after retry, want waiting"
+
+# Give a broken implementation every chance to mis-fire c on the stale
+# approval before asserting it did not (two-plus daemon ticks).
+sleep 5
+if AGENT_ROLE=test "$MUX" inbox --peek 2>/dev/null | grep -q 'Type: request'; then
+  bad "c fired without fresh approval — stale approval consumed"
+else
+  ok "c held back until fresh approval"
+fi
+# The inbox was drained above, so exactly one graph-approval here is a
+# fresh post-retry request — the re-armed gate asked again.
+[ "$(approval_count)" -eq 1 ] && ok "edit received a second, fresh graph-approval request" \
+  || bad "fresh graph-approval count $(approval_count) after re-arm, want 1"
+
+"$MUX" graph status "$RID4" 2>/dev/null | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' | grep -q 'Retry: .*re-armed at gate' \
+  && ok "graph status shows the re-target decision" \
+  || bad "graph status missing the retry note"
+grep -q '"event":"graph-retry-regated"' "$LIFELOG" \
+  && ok "lifecycle records graph-retry-regated" \
+  || bad "no graph-retry-regated lifecycle row"
+
+"$MUX" graph approve "$RID4" gate >/dev/null 2>&1 || bad "second graph approve failed"
+if wait_for_request test; then
+  ok "fresh approval releases the gate — c re-dispatched"
+  answer_role test
+else
+  bad "c never dispatched after fresh approval"
+fi
+wait_run_state "$RID4" complete && ok "gated run completed after fresh approval" \
+  || bad "gated run state $(run_state "$RID4"), want complete"
+
+# --- Coverage floor --------------------------------------------------------
+# A full run produces exactly this many passing checks. Fewer means a
+# section was skipped or short-circuited — a partial run must not report
+# green (MUX-132 Phase 4).
+FLOOR=47
+[ "$pass" -ge "$FLOOR" ] \
+  || bad "coverage floor: $pass checks passed, floor $FLOOR — a skipped section cannot report green"
 
 # --- Summary ---------------------------------------------------------------
 echo ""
