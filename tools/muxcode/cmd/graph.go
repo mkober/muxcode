@@ -436,6 +436,14 @@ func graphStatus(args []string) {
 	}
 
 	if jsonOut {
+		// Annotate condition branch-takers so machine consumers do not
+		// repeat the red-failed mistake — see GraphNodeStatus.Branched.
+		for i := range g.Nodes {
+			n := &g.Nodes[i]
+			if st := statuses[n.ID]; st != nil && bus.ConditionTookBranch(n.Type, st.State) {
+				st.Branched = true
+			}
+		}
 		out, _ := json.MarshalIndent(map[string]any{
 			"run":   run,
 			"graph": g,

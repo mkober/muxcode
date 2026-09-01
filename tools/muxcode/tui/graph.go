@@ -119,6 +119,9 @@ func nodeGlyph(nodeType, state string) (glyph string, color string) {
 		}
 		return "⚑", stateColor(state)
 	}
+	if bus.ConditionTookBranch(nodeType, state) {
+		return "◇", Comment // false branch taken — control flow, not a failure
+	}
 	switch state {
 	case bus.GraphNodeDone:
 		glyph = "✓"
@@ -531,7 +534,7 @@ func RenderNodeDetails(snap GraphSnapshot, width, maxLines int, now time.Time, s
 					detail = strings.TrimSpace(detail[:nl])
 				}
 			}
-			if state == bus.GraphNodeFailed {
+			if state == bus.GraphNodeFailed && !bus.ConditionTookBranch(n.Type, state) {
 				detailColor = Red
 			}
 		}

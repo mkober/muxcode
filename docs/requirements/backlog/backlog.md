@@ -56,6 +56,8 @@ open items against the active spec.
 | ID | Spec | Since | State |
 |----|------|-------|-------|
 | MUX-007 | [`MUX-007-verify-spec-stale-review-refire.md`](../drafts/MUX-007-verify-spec-stale-review-refire.md) | 2026-08-31 | Phase 1 complete (4/4) — once-per-completion gate, fail-closed on marker-write failure. Phase 2 (integration test) open |
+| MUX-133 | [`MUX-133-condition-false-branch-renders-as-failure.md`](../drafts/MUX-133-condition-false-branch-renders-as-failure.md) | Medium | A `condition` node that evaluates correctly and takes its **false** edge is persisted as `GraphNodeFailed` with `outcome=failure`, so `graph status` prints it red as `failed` and the TUI DAG draws a red ✗ between green checks — a branch selector choosing a branch, rendered as a broken node. Verified chain: `graph_exec.go:459` sets `OutcomeFailure` unless the predicate passes, `finishNode` maps that outcome to the `GraphNodeFailed` **state**, and `GraphNodeStateColor` (:618) paints `failed` red. **Not purely a display bug** — the state written to `nodes/<id>.json` really is `failed`; the renderers are faithful to it, and `NodeCondition` appears **zero** times in either `bus/graph_run.go` or `tui/graph_ui.go`, so neither surface can tell a branch selector from a broken node even in principle. The failure outcome is **load-bearing**: it is the routing key `edgeOutcome` matches, so the false edge only fires because the node "failed" — "just stop setting failure" breaks every capped loop. Hence an open A/B decision: display-level (safe, partial, leaves the persisted state wrong for JSON consumers) vs model-level (correct at source, but the run-failure invariant must be re-verified). Matters because this session produced a real `commit` failure and a routine `loop-check` false branch minutes apart, **visually identical** |
+| MUX-133 | [`MUX-133-condition-false-branch-renders-as-failure.md`](../drafts/MUX-133-condition-false-branch-renders-as-failure.md) | 2026-09-01 | Option A (display-level) implemented and pinned by a two-direction test; `--json` coherence and the `tui-style.md` glyph entry still open. Option B (model-level) not started |
 | MUX-132 | [`MUX-132-graph-retry-launders-gate-approval.md`](../drafts/MUX-132-graph-retry-launders-gate-approval.md) | 2026-08-31 | Branch `MUX-132-graph-retry-launders-gate-approval`. Sequenced first: it sits on the recovery path for failed run `1788225109` — recovering that run via `graph retry` is the operation that can consume a stale approval. Phase 1 complete (2/2): the hole is pinned by a characterization test green *before* the fix. Phases 2–4 open |
 
 Both keep their rows in [Defects](#defects--prioritized) (ranks 2 and 3) and
@@ -87,23 +89,24 @@ corrupts it. Full summaries stay in the topic sections below; this table is the 
 | 6 | [`MUX-131`](./MUX-131-spawn-implement-output-never-ported.md) | Spawn output never ported; worker rebuilt every iteration | High | Sibling of MUX-120. Killed run `1788225109` after burning 4 nodes **and a human gate approval**; 3 workers/3 worktrees in one run, each losing context and re-paying startup |
 | 7 | [`MUX-124`](./MUX-124-lifecycle-since-truncated-by-limit.md) | `lifecycle show --since` answers the wrong question | High | The investigation tool lies — already caused MUX-123 to be nearly mis-filed |
 | 8 | [`MUX-006`](./MUX-006-diagnose-false-clean-verdict.md) | Diagnose reports a clean verdict over a wedged agent | High | Same class as MUX-124: the diagnostic itself is the thing that misleads |
-| 9 | [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) | Spec phase parsing: two definitions of complete, matched document-wide | High | Silently weakens the `phase-progress` commit guard; disagrees on **8 of 76** real specs |
-| 10 | [`MUX-123`](./MUX-123-stall-watchdog-selective-misses.md) | Stall watchdog fires routinely, still misses live stalls | High | Selective misses need a human with `deliver --force`; also now carries the false-positive direction |
-| 11 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Harness reply correlates to the batch's last message | High | Silently wrong: answers are attributed to the wrong request |
-| 12 | [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) | Edit resumes without its launch flags | High | Interactive agent silently loses permission mode and tool profile; **recurred twice in one day** |
-| 13 | [`MUX-110`](./MUX-110-harness-startup-tool-loop-exhaustion.md) | Harness startup message exhausts the tool loop | High | Agent burns its budget before doing work |
-| 14 | [`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md) | Daemon auto-restart is unverified | High | Restart reported without confirming the agent came back |
-| 15 | [`MUX-009`](./MUX-009-response-echo-chain-retrigger.md) | Response echo re-triggers the chain | High | Same shape as MUX-127 Defect B on non-hook providers |
-| 16 | [`MUX-122`](./MUX-122-prompt-agent-turn-attribution-and-fix.md) | Prompt-agent turn budget exhaustion | High | Stuck at 26/2/1 across four attempts; instrument built but never pointed at it |
-| 17 | [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | No force-terminate for a hung-but-alive agent | Medium | Recovery requires killing the OS process by hand |
-| 18 | [`MUX-032`](./MUX-032-loop-detector-granularity.md) | Loop detector too coarse to act on | Medium | Governs whether the detector that flagged MUX-127 can do anything about it |
+| 9 | [`MUX-133`](../drafts/MUX-133-condition-false-branch-renders-as-failure.md) | Condition false branch renders as a failure | Medium | The loop-terminating branch shows red `failed` / ✗ — same glyph as a genuinely broken node, minutes apart in one run |
+| 10 | [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) | Spec phase parsing: two definitions of complete, matched document-wide | High | Silently weakens the `phase-progress` commit guard; disagrees on **8 of 76** real specs |
+| 11 | [`MUX-123`](./MUX-123-stall-watchdog-selective-misses.md) | Stall watchdog fires routinely, still misses live stalls | High | Selective misses need a human with `deliver --force`; also now carries the false-positive direction |
+| 12 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Harness reply correlates to the batch's last message | High | Silently wrong: answers are attributed to the wrong request |
+| 13 | [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) | Edit resumes without its launch flags | High | Interactive agent silently loses permission mode and tool profile; **recurred twice in one day** |
+| 14 | [`MUX-110`](./MUX-110-harness-startup-tool-loop-exhaustion.md) | Harness startup message exhausts the tool loop | High | Agent burns its budget before doing work |
+| 15 | [`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md) | Daemon auto-restart is unverified | High | Restart reported without confirming the agent came back |
+| 16 | [`MUX-009`](./MUX-009-response-echo-chain-retrigger.md) | Response echo re-triggers the chain | High | Same shape as MUX-127 Defect B on non-hook providers |
+| 17 | [`MUX-122`](./MUX-122-prompt-agent-turn-attribution-and-fix.md) | Prompt-agent turn budget exhaustion | High | Stuck at 26/2/1 across four attempts; instrument built but never pointed at it |
+| 18 | [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | No force-terminate for a hung-but-alive agent | Medium | Recovery requires killing the OS process by hand |
+| 19 | [`MUX-032`](./MUX-032-loop-detector-granularity.md) | Loop detector too coarse to act on | Medium | Governs whether the detector that flagged MUX-127 can do anything about it |
 
-**Clustering worth noting.** Items 1, 2, 12 and 16 are one family — *a message or response re-entering
-the pipeline that produced it*; items 7, 8, 9 and 10 are another — *the mechanism built to catch a
-mistake is the one that stops catching it*; and items 5 and 6 are a third — *spawn workers the graph
-executor mismanages*. Item 3 belongs to the second family by shape — a satisfied gate that stops
-gating — but is ranked above it because nothing catches it. Fixing any one family together is likely
-cheaper than fixing its members one at a time.
+**Clustering worth noting.** Items 1, 2, 13 and 17 are one family — *a message or response re-entering
+the pipeline that produced it*; items 7, 8, 9, 10 and 11 are another — *the instrument misreports its
+own subject, or the mechanism built to catch a mistake stops catching it*; and items 5 and 6 are a
+third — *spawn workers the graph executor mismanages*. Item 3 belongs to the second family by shape —
+a satisfied gate that stops gating — but is ranked above it because nothing catches it. Fixing any one
+family together is likely cheaper than fixing its members one at a time.
 
 ### Reliability & observability
 

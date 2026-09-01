@@ -37,8 +37,21 @@ The graph node vocabulary, from `nodeGlyph()`:
 | skipped | `○` | Comment |
 | pending | `·` | Comment |
 | `wait_human` gate | `⚑` | Yellow + Bold when waiting |
+| `condition` took its false branch | `◇` | Comment |
 
 Note `skipped` and `pending` share `Comment` — both mean "not active", and the **glyph** is what distinguishes them. That is the rule working as intended, not an oversight.
+
+**The branch-taken form is not a failure state.** A `condition` node that evaluates correctly and takes its false edge is persisted as `failed` with `outcome=failure`, because that outcome is the routing key the false edge matches ([MUX-133](requirements/drafts/MUX-133-condition-false-branch-renders-as-failure.md)). Rendering it red made ordinary control flow look identical to a broken node. Every surface therefore branches on `bus.ConditionTookBranch(nodeType, state)` — one shared predicate, so the surfaces cannot drift:
+
+| Surface | Form |
+|---------|------|
+| TUI DAG / run-list | `◇` in Comment, and excluded from the failed cell |
+| `graph status` | the word `branched` in dim, in place of `failed` |
+| `graph status --json` | `"branched": true` on the node status |
+
+Red `✗` stays reserved for genuine dispatch or execution errors — including a condition whose *evaluation* actually errors.
+
+**Watch the fill.** `◆` (ready, Purple) and `◇` (branched, Comment) differ only by fill once color is stripped. That is thinner than the rest of this vocabulary and is worth revisiting if a third diamond is ever needed.
 
 Other glyphs in use: `↺ ×N` (capped loop edge), `⇥` (Tab affordance), `─ │ ┌ ┐ └ ┘` (box drawing), `→ ←` (direction).
 

@@ -228,6 +228,47 @@ func TestFormatGraphRunShowsFailedNodeReason(t *testing.T) {
 	}
 }
 
+// TestFormatGraphRunConditionBranchNeutral pins the condition-node
+// display rule (ConditionTookBranch): a condition that took its false
+// branch renders "branched", never "failed" — a red failure row on a
+// completed run read as a broken pipeline. The negative control keeps
+// the rule from over-reaching: a genuinely failed send node must keep
+// "failed" and never gain "branched".
+func TestFormatGraphRunConditionBranchNeutral(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "cond",
+		Nodes: []Node{
+			{ID: "cond", Type: NodeCondition, Conditions: map[string]any{"env_set": "X"}},
+			{ID: "b", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+		},
+		Edges: []Edge{{From: "cond", To: "b", Outcome: OutcomeFailure}},
+	}
+	run := &GraphRun{ID: "r2", Template: "t", State: GraphRunComplete, CreatedAt: time.Now().Unix()}
+
+	out := FormatGraphRun(run, g, map[string]*GraphNodeStatus{
+		"cond": {NodeID: "cond", State: GraphNodeFailed, Outcome: OutcomeFailure},
+		"b":    {NodeID: "b", State: GraphNodeDone, Outcome: OutcomeSuccess},
+	})
+	if !strings.Contains(out, "branched") {
+		t.Errorf("condition false branch not rendered as branched:\n%s", out)
+	}
+	if strings.Contains(out, "failed") {
+		t.Errorf("condition false branch rendered as failed:\n%s", out)
+	}
+
+	out = FormatGraphRun(run, g, map[string]*GraphNodeStatus{
+		"cond": {NodeID: "cond", State: GraphNodeDone, Outcome: OutcomeSuccess},
+		"b":    {NodeID: "b", State: GraphNodeFailed, Outcome: OutcomeFailure, Output: "build broke"},
+	})
+	if !strings.Contains(out, "failed") {
+		t.Errorf("failed send node lost its failed rendering:\n%s", out)
+	}
+	if strings.Contains(out, "branched") {
+		t.Errorf("failed send node rendered as branched:\n%s", out)
+	}
+}
+
 // TestCreateGraphRunDerivesLoopCap pins spec-derived caps (MUX-121): the
 // frozen definition carries cap = phase count, and a derived-cap graph
 // with no active spec refuses to start rather than guessing a bound.

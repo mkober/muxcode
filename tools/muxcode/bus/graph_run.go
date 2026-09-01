@@ -72,6 +72,9 @@ type GraphNodeStatus struct {
 	StartedAt   int64 `json:"started_at,omitempty"`
 	DoneAt      int64 `json:"done_at,omitempty"`
 	UpdatedAt   int64 `json:"updated_at"`
+	// Branched marks a condition's false branch for JSON consumers —
+	// render-time only, never persisted; see ConditionTookBranch.
+	Branched bool `json:"branched,omitempty"`
 }
 
 // legalNodeTransitions defines the allowed node state machine. done/failed/
@@ -613,6 +616,18 @@ func FormatApprovalTime(t int64) string {
 	return time.Unix(t, 0).Format("2006-01-02 15:04:05")
 }
 
+// ConditionTookBranch reports whether a node's terminal state is a
+// condition node's false branch. A condition's "failure" outcome is a
+// branch selector — control flow, never an error: the executor swallows
+// evaluation errors and finishes false conditions with no failure text,
+// so every condition failure IS a branch selection. Renderers must show
+// it neutrally; a red "failed" here made a successfully completed run
+// read as broken mid-pipeline (user report, 2026-09-01). Shared by the
+// CLI formatter and the TUI so the two surfaces cannot drift.
+func ConditionTookBranch(nodeType, state string) bool {
+	return nodeType == NodeCondition && state == GraphNodeFailed
+}
+
 // GraphNodeStateColor returns the Dracula color for a node run state,
 // matching the console palette.
 func GraphNodeStateColor(state string) string {
@@ -662,9 +677,13 @@ func formatGraphRun(run *GraphRun, g *Graph, statuses map[string]*GraphNodeStatu
 			fmt.Fprintf(&b, "  %-16s %-10s (no status)\n", n.ID, "?")
 			continue
 		}
-		state := fmt.Sprintf("%-10s", st.State)
+		stateWord, stateColor := st.State, GraphNodeStateColor(st.State)
+		if ConditionTookBranch(n.Type, st.State) {
+			stateWord, stateColor = "branched", ColorDim
+		}
+		state := fmt.Sprintf("%-10s", stateWord)
 		if colored {
-			state = GraphNodeStateColor(st.State) + state + ColorReset
+			state = stateColor + state + ColorReset
 		}
 		row := fmt.Sprintf("  %-16s %s %s", n.ID, state, n.Type)
 		if st.Outcome != "" {
