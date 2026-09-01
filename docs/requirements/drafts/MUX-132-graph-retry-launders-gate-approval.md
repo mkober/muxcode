@@ -151,9 +151,14 @@ the output, never silent** — the run visibly resumes at the gate.
       catches the fix over-reaching into every retry
 - [x] Retry re-entering the gate — unchanged: `TestExecHumanGateRetryRequiresFreshApproval` still passes
       alongside the new tests, so the pre-existing path did not regress
-- [ ] Never-approved gate — unaffected. **No test exists**: `staleApprovalGate` skips gates that are
-      not `done`, but nothing pins it, so a change making re-arm unconditional would pass the suite
-- [ ] Confirm each control fails when the fix is reverted
+- [x] Never-approved gate — unaffected: `TestExecRetryBelowNeverApprovedGateUnaffected` pins
+      `staleApprovalGates`' done/success check (`graph_run.go:577`). Without it, a mutant making re-arm
+      unconditional passed the entire suite — the vacuum this control closes
+- [x] Confirm each control fails when the fix is reverted — mutation table recorded per control with
+      verbatim failure text; all mutants reverted, proven by `git diff --stat` being exactly the one
+      test file. One honest nuance recorded: `TestExecRetryBelowGateRearmsGate` **survives** the
+      dispatch-purge mutant because the retry path purges independently — two distinct purge sites,
+      each separately pinned, which is defense in depth rather than a gap
 
 ### Phase 4: Integration test
 

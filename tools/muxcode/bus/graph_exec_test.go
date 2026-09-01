@@ -782,6 +782,71 @@ func TestExecRetryBelowParallelGateCutRearmsAll(t *testing.T) {
 	}
 }
 
+// TestExecRetryBelowNeverApprovedGateUnaffected is the MUX-132 Phase 3
+// negative control for the re-arm's precondition: the cut re-arms gates
+// whose STALE approval a retry would consume — a gate that never reached
+// done holds no approval to go stale, so a retry below it must not
+// re-target, must leave the gate untouched, and must not demand an
+// approval that was never part of the run. This is the only assertion on
+// staleApprovalGates' done/success check: without it a re-arm-
+// unconditional mutant passes the rest of the suite.
+func TestExecRetryBelowNeverApprovedGateUnaffected(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{
+			{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "ship it"},
+		},
+		Edges: []Edge{{From: "a", To: "gate"}, {From: "gate", To: "c"}},
+	}
+	run := createTestRun(t, g)
+
+	// Drive to the gate and leave it waiting — no approval ever granted.
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("gate state %q before cancel, want waiting", s)
+	}
+	// Cancel: the only way a run stalled at an unanswered gate stops running.
+	if err := CancelGraphRun(runTestSession, run.ID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+
+	res, err := RetryGraphRun(runTestSession, run.ID, "c")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if len(res.Rearmed) != 0 || res.From != "c" {
+		t.Fatalf("retry result rearmed=%+v from=%q — a never-approved gate must not re-arm (stale approvals, not missing ones)", res.Rearmed, res.From)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeSkipped {
+		t.Fatalf("gate state %q after retry, want skipped (untouched) — the retry must not reset a gate that holds no approval", s)
+	}
+	got, _ := ReadGraphRun(runTestSession, run.ID)
+	if got.RetryNote != "" {
+		t.Errorf("RetryNote %q on a retry with no stale approval, want empty", got.RetryNote)
+	}
+
+	// The retry resumes where asked; no second approval request is sent.
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodeRunning {
+		t.Fatalf("c state %q after tick, want running — the retry must proceed unaffected", s)
+	}
+	logged, _ := readMessages(LogPath(runTestSession))
+	var approvals int
+	for _, m := range logged {
+		if m.Action == "graph-approval" && strings.Contains(m.Payload, run.ID) {
+			approvals++
+		}
+	}
+	if approvals != 1 {
+		t.Fatalf("edit received %d graph-approval requests for this run, want exactly 1 (the original dispatch) — the retry must not re-ask a never-approved gate", approvals)
+	}
+}
+
 func TestExecConditionNode(t *testing.T) {
 	g := &Graph{
 		Name:  "t",
