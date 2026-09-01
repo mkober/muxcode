@@ -65,6 +65,40 @@ file order, and phase 7 three times. `SpecJustCompletedPhase` walks **file order
 `SpecCurrentPhase` (`:123`) picks the **lowest number**, so with duplicates the two disagree about
 what ordering even means.
 
+### Defect D — `Number 0` doubles as the "unset" sentinel, so a real Phase 0 is invisible
+
+Found 2026-09-01 while verifying [`MUX-131`](../drafts/MUX-131-spawn-implement-output-never-ported.md),
+which numbers its phases from **0**.
+
+Both predicates use the zero value of `SpecPhase` as "none found", and `SpecPhase.Number` is `0` in that
+zero value — so a genuine `### Phase 0` is indistinguishable from *no phase*:
+
+| Predicate | Code | Consequence |
+|---|---|---|
+| `SpecCurrentPhase` | `if len(p.Items) > 0 && (best.Number == 0 \|\| p.Number < best.Number)` | A Phase 0 selected as `best` has `Number == 0`, which still reads as "unset", so **any later open phase overwrites it**. Phase 0 can never be reported as the current phase while a later phase is also open. |
+| `SpecJustCompletedPhase` | returns `last := SpecPhase{}` when nothing qualifies | `resolveCompletedPhaseText` (`graph_exec.go`) treats `p.Number == 0` as `(no completed phase)`. If **only** Phase 0 is complete, the gate message says nothing is complete while Phase 0 genuinely is. |
+
+**It did not bite MUX-131 only by luck**: Phase 1 closed in the same pass, so `SpecJustCompletedPhase`
+returned Phase 1 and the gate rendered correctly. Had Phase 0 closed alone — the ordinary case for a
+spec that starts at 0 — the human gate would have been asked to approve a commit labelled
+`(no completed phase)`.
+
+The fix is to stop overloading the value: carry an explicit "found" boolean, or use a sentinel outside
+the valid phase range. Contiguous-prefix semantics (decision 1) do not resolve this — the prefix length
+would be correct while the *named* phase is still wrong.
+
+### Invariant worth stating: phase order is *file order*, never edit order
+
+All four predicates walk `SpecPhases`, which appends in the order headings appear in the file. Nothing
+records when a checkbox was ticked, so **the sequence in which phases are completed cannot affect any
+of them.** A spec whose Phase 1 is closed before its Phase 0 reads identically to one closed in order.
+
+Stated because it is the natural worry when phases close out of sequence (asked during MUX-131's
+Phase 0/1 close-out, 2026-09-01), and because it bounds this spec's scope: every defect here is a
+property of *how the file is parsed*, not of *when it was edited*. The one thing that does depend on
+file order is `SpecJustCompletedPhase`'s prefix walk — which is why Defect C (non-monotonic numbering)
+is a real problem while out-of-order *completion* is not.
+
 ### Why this matters: the guard fails permissive
 
 `phaseProgressGuardAllows` declines when `completed < prior+1` — "commits shipped must not exceed
@@ -173,6 +207,11 @@ Still open. These change the shape of the fix and should be settled before Phase
       `## Verification notes` section naming phases does not inflate the phase count
 - [ ] `SpecPhases` on `completed/MUX-031-graph-run-tui.md` returns **7** phases, not 15
 - [ ] Duplicate or non-monotonic phase numbers are surfaced, not silently accepted
+- [ ] A spec numbering phases from **0** behaves correctly: Phase 0 can be the reported current phase,
+      and a spec with only Phase 0 complete names it rather than rendering `(no completed phase)`
+- [ ] **Negative control:** the genuine "no phases complete" and "no open phase" cases still render
+      their honest empty text — the fix must distinguish *absent* from *zero*, not conflate them the
+      other way
 - [ ] `phaseProgressGuardAllows` compares against a count that cannot exceed the spec's real phase
       count
 - [ ] A spec whose verification section names phases cannot weaken the guard — pinned by a negative

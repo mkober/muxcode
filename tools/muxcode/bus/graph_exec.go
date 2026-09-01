@@ -27,15 +27,44 @@ import (
 // daemon-originated traffic.
 const graphSender = "daemon"
 
-// graphSpawnFn dispatches a worker for spawn/map nodes. Package variable
-// so unit tests can run graphs without tmux — StartSpawn creates real
-// tmux windows.
-var graphSpawnFn = func(session, role, task, owner string) (string, error) {
+// graphSpawnFn starts a FRESH worker for spawn/map nodes and stamps it
+// with the run+node reuse key. Package variable so unit tests can run
+// graphs without tmux — StartSpawn creates real tmux windows. Reuse of an
+// existing worker is acquireSpawnWorker's job, deliberately outside this
+// seam so tests that stub it still exercise the reuse decision. The key
+// is stamped after StartSpawn returns so its CLI-shared signature stays
+// put; a failed stamp only disables reuse for this one worker, degrading
+// to the pre-MUX-131 fresh-start-per-iteration behavior.
+var graphSpawnFn = func(session, role, task, owner, runID, nodeID string) (string, error) {
 	entry, err := StartSpawn(session, role, task, owner, true)
 	if err != nil {
 		return "", err
 	}
+	_ = UpdateSpawnEntry(session, entry.ID, func(e *SpawnEntry) {
+		e.RunID = runID
+		e.NodeID = nodeID
+	})
 	return entry.SpawnRole, nil
+}
+
+// acquireSpawnWorker reuses the run+node's live worker when one exists,
+// falling back to a fresh spawn (MUX-131 Defect B: an unconditional
+// StartSpawn built a new worker per loop re-entry — three workers, one
+// task, one run — discarding each predecessor's context and re-paying
+// boot cost). A reseed failure also falls back: a fresh worker beats a
+// wedged node.
+func acquireSpawnWorker(session, runID, nodeID, role, task string) (string, error) {
+	if entry, ok := FindLiveSpawn(session, runID, nodeID); ok {
+		_, err := ReseedSpawn(session, entry, task)
+		if err == nil {
+			LogLifecycle(session, "info", "daemon", "graph-spawn-reuse",
+				fmt.Sprintf("%s: %s reused worker %s", runID, nodeID, entry.SpawnRole))
+			return entry.SpawnRole, nil
+		}
+		LogLifecycle(session, "warn", "daemon", "graph-spawn-reuse-failed",
+			fmt.Sprintf("%s: %s reseed of %s failed (%v) — starting fresh", runID, nodeID, entry.SpawnRole, err))
+	}
+	return graphSpawnFn(session, role, task, graphSender, runID, nodeID)
 }
 
 // graphApprovalsDir holds wait_human gate markers for a run:
@@ -425,7 +454,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 
 	case NodeSpawn:
 		msg := interpolateGraphMessage(session, n.Message, run.Intent, "")
-		spawnID, err := graphSpawnFn(session, n.Role, msg, graphSender)
+		spawnID, err := acquireSpawnWorker(session, run.ID, n.ID, n.Role, msg)
 		if err != nil {
 			finishNode(session, run, n, OutcomeFailure, "spawn failed: "+err.Error())
 			return
@@ -435,17 +464,16 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		})
 
 	case NodeMap:
-		// v1 item source: a comma-separated literal list. One worker per
-		// item, ${item} interpolated into each worker's message.
+		// One worker per literal item; reuse keyed per item index so distinct members never share a worker.
 		items := splitMapItems(n.Items)
 		if len(items) == 0 {
 			finishNode(session, run, n, OutcomeFailure, "map node has no items")
 			return
 		}
 		var ids []string
-		for _, item := range items {
+		for i, item := range items {
 			msg := interpolateGraphMessage(session, n.Message, run.Intent, item)
-			spawnID, err := graphSpawnFn(session, n.Role, msg, graphSender)
+			spawnID, err := acquireSpawnWorker(session, run.ID, fmt.Sprintf("%s#%d", n.ID, i), n.Role, msg)
 			if err != nil {
 				finishNode(session, run, n, OutcomeFailure, "map spawn failed: "+err.Error())
 				return
@@ -731,7 +759,11 @@ var graphRedriveFn = func(session, role string, task Task) int {
 
 // spawnGroupOutcome inspects the comma-separated spawn ids of a spawn or
 // map node. done is true when no worker is still running; the outcome is
-// success only when every worker completed.
+// success only when every worker completed. A persistent (graph-keyed)
+// worker is never reaped while its run is in flight, so for it a running
+// entry whose CURRENT seed is responded IS this iteration's completion —
+// ReseedSpawn moves SeedMsgID before the next iteration starts, so a
+// prior pass's reply can never satisfy a new dispatch.
 func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 	entries, err := ReadSpawnEntries(session)
 	if err != nil {
@@ -751,6 +783,9 @@ func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 		}
 		switch e.Status {
 		case "running":
+			if e.RunID != "" && spawnHasResponded(session, e) {
+				continue // persistent worker, iteration answered — see doc comment
+			}
 			return "", false
 		case "completed":
 			// success — no change

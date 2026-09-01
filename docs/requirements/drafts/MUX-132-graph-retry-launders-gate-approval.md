@@ -11,7 +11,7 @@ Tracking: _(no GitHub issue yet)_
 ### Observed 2026-08-31 — caught before it ran
 
 Run `1788225109-req-code-pr-deb2914a` failed at `commit` (the `phase-progress` guard declined a
-doc-only tree, correctly — see [`MUX-131`](../backlog/MUX-131-spawn-implement-output-never-ported.md)). The
+doc-only tree, correctly — see [`MUX-131`](./MUX-131-spawn-implement-output-never-ported.md)). The
 proposed recovery was:
 
 ```
@@ -143,7 +143,7 @@ the output, never silent** — the run visibly resumes at the gate.
 - [x] Decide what happens to nodes **between** the gate and the original target — they are downstream of
       the gate, so a naive reset re-runs them. In the incident the gate sits directly before `commit` so
       the question does not arise; it will in other templates. Re-running an `implement` spawn to reach a
-      commit would be expensive and is exactly the waste [`MUX-131`](../backlog/MUX-131-spawn-implement-output-never-ported.md)
+      commit would be expensive and is exactly the waste [`MUX-131`](./MUX-131-spawn-implement-output-never-ported.md)
       Defect B describes
 - [x] Surface the outcome in `graph status` and a lifecycle event
 
@@ -223,7 +223,7 @@ Two evidence notes worth keeping, both about how nearly-convincing false green a
 
 - The Phase 3 work was written but **stranded in spawn worktree `spawn-242ab323`** and never reached
   the branch, so the `phase-progress` guard correctly declined the commit — the third instance in one
-  session of [`MUX-131`](../backlog/MUX-131-spawn-implement-output-never-ported.md) Defect A. It was
+  session of [`MUX-131`](./MUX-131-spawn-implement-output-never-ported.md) Defect A. It was
   closed only after proving tree-equivalence (identical HEAD `1c47948`, byte-identical file, one
   modified file each), which makes the worktree's passing run valid evidence for the branch.
 - A full suite run **inside a worktree** reported exit 0 with the test under test absent from its

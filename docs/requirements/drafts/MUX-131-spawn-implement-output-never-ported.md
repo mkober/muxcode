@@ -40,6 +40,53 @@ Interaction with Defect A: a **reused** worker holds its worktree across iterati
 diverging further from the branch each pass makes the eventual port harder, not easier. Sequence the
 fixes accordingly.
 
+## Update 2026-09-01: two further failure modes, observed in one run
+
+Run `1788228263-req-code-pr-a93ae921` (MUX-132, four phases) exercised both defects repeatedly and
+surfaced **two modes this spec did not previously describe**. Both are worse than the filed symptom.
+
+### A2 — the defect fabricates verification, it does not only lose work
+
+A full `go test -count=1 -v ./...` executed **inside a spawn worktree** reported **exit 0, 2455 passing,
+zero failures** — while the test it was run to verify was **absent from its output entirely**. The same
+suite in the main checkout **failed**.
+
+Losing work is recoverable once noticed. A green suite from a tree that does not contain the code under
+test is *evidence that is confidently wrong*, and it is indistinguishable from a real pass unless the
+reader checks **where** the run executed. Any acceptance criterion satisfied by such a run is false.
+
+### B2 — worker churn produces duplicate work, not just wasted startup
+
+Two workers independently implemented **the same Phase 3 negative control** under different names —
+`TestExecRetryBelowNeverApprovedGateNoRearm` (`spawn-2adb4438`) and
+`TestExecRetryBelowNeverApprovedGateUnaffected` (harvested to the branch). Neither knew of the other.
+
+So Defect B's cost is not only re-paid startup and lost context: **the same work gets built twice** and
+someone must then reconcile which copy is authoritative.
+
+### Scale in a single run
+
+Six spawn worktrees for one run, five still holding uncommitted trees at differing HEADs afterwards:
+
+| Worktree | HEAD | Uncommitted | Disposition |
+|---|---|---|---|
+| `spawn-3bd8bf91` | `d8a36cf` | 0 | — |
+| `spawn-0ef7d4b4` | `706a335` | 1 file | superseded (pre-inversion test) |
+| `spawn-8782c2da` | `4fdd32c` | 5 files | harvested (Phase 2) |
+| `spawn-242ab323` | `1c47948` | 1 file | harvested (Phase 3) |
+| `spawn-2adb4438` | `1c47948` | 1 file | duplicate of Phase 3 (B2) |
+| `spawn-a0d10c42` | `a20b2c3` | 1 file | harvested (Phase 4) |
+
+Establishing that nothing was *lost* required diffing every worktree against the branch — the reason
+"is the work safe?" is expensive to answer at all is this defect.
+
+### What this implies for the fix order
+
+A2 argues for treating **Defect A as the higher priority**: while it stands, any test evidence produced
+by a spawn is untrustworthy, so verification of the spawn machinery itself cannot be relied on. The
+current spec sequences B (worker reuse) as Phase 0 because reuse changes what porting means — that
+ordering still holds for *implementation*, but A's blast radius is larger and worth stating plainly.
+
 ## Defect A — spawn output never reaches the branch
 
 `req-code-pr`'s `implement` node is a **spawn**, which runs in an isolated git worktree. Nothing in the
@@ -87,7 +134,7 @@ are what held. Neither is a structural fix.
 - A human approved a gate for a commit that could never have succeeded
 - Continued `verify-spec` traffic against a **terminal** run afterwards — every fire answered was
   against a run that had already failed and could not proceed (the same shape as
-  [`MUX-127`](./MUX-127-review-completion-routing.md) census fires 12–14)
+  [`MUX-127`](../backlog/MUX-127-review-completion-routing.md) census fires 12–14)
 
 ### Scope
 
@@ -96,7 +143,7 @@ produces artifacts consumed by a later node has this gap — the spawn contract 
 step at all, so this is not a one-template typo.
 
 Related: [`MUX-091`](../completed/MUX-091-spawn-worktrees.md) added worktree isolation;
-[`MUX-120`](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) covers spawn wake-up. Neither
+[`MUX-120`](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md) covers spawn wake-up. Neither
 addresses harvesting a spawn's work.
 
 ## Requirements
@@ -149,18 +196,56 @@ addresses harvesting a spawn's work.
 
 ### Phase 0: Worker reuse (Defect B)
 
-- [ ] Key spawn workers per run+node so `dispatchNode` looks one up before starting a new one
-- [ ] Liveness check with a fresh-start fallback when the worker is gone
-- [ ] Verify a multi-phase run creates one `implement` worker by counting spawns for the run
-- [ ] Negative controls: dead worker → fresh start; distinct nodes → distinct workers
+- [x] Key spawn workers per run+node so `dispatchNode` looks one up before starting a new one —
+      `acquireSpawnWorker` (`graph_exec.go:56`): reuse lookup → reseed → fresh-start fallback, with
+      `SpawnEntry.RunID`/`NodeID` as the key and `graph-spawn-reuse` lifecycle events
+- [x] Liveness check with a fresh-start fallback when the worker is gone — `FindLiveSpawn` gates on the
+      **window** being alive, so a corpse entry can never wedge a run
+      (`TestAcquireSpawnWorkerDeadWorkerFreshStart`)
+- [x] Verify a multi-phase run creates one `implement` worker by counting spawns for the run —
+      `TestExecSpawnLoopReusesWorker` asserts **spawn count == 1 across two iterations, counted from the
+      store**. That is the assertion that would have caught the three-worker run
+- [x] Negative controls: dead worker → fresh start; distinct nodes → distinct workers — both pinned,
+      and `map` members key per item index (`node#i`) so fan-out members never share a worker
 
 ### Phase 1: Decide the porting model
 
-- [ ] Choose: (a) `implement` runs without worktree isolation, (b) an explicit port node between
-      `implement` and `build`, or (c) `StartSpawn` harvests on completion
-- [ ] Record the trade: worktree isolation exists so parallel spawns do not collide — option (a) gives
-      that up for `map` fan-out, so decide what `map` does before changing `implement`
-- [ ] Decide conflict semantics when the branch moved while the spawn ran
+**Decision 2026-09-01: option (c), executor-side harvest at iteration completion.**
+
+- **(a) drop isolation — rejected.** Isolation exists so parallel `map` members do not collide. A mode
+  split (implement shared, map isolated) forks the spawn contract, and a shared-tree `implement` also
+  collides with the edit agent or a human working in the main checkout, and with any concurrent run.
+- **(b) explicit port node per template — rejected.** This spec's own finding is that *the spawn
+  contract has no porting step at all*, so a template-authored fix re-creates the omission class for
+  every future template — and makes porting LLM-mediated where it should be deterministic git mechanics.
+- **(c) harvest on completion — chosen.** Structural (covers every spawn node in every template),
+  deterministic (the daemon does the git, no model in the loop), and sited exactly where
+  `spawnGroupOutcome` derives success — so **"produced changes but failed to port → the node fails"**
+  falls out naturally, and a stranded-output run fails **at the spawn node, before `build`**. That
+  directly satisfies the criterion that the guard must no longer be the first thing to notice.
+
+Reuse-aware mechanics carried into Phase 2 (reuse means one persistent worktree per run):
+
+1. Harvest fires **per iteration** (current seed responded), not per worker lifetime: diff the worktree,
+   land it on the branch, then advance the worktree to the new branch tip so it tracks the branch
+   instead of diverging further each phase — the divergence hazard recorded above.
+2. **Conflict** (branch moved while the spawn ran): the apply fails, the node fails with the conflicting
+   paths named, and neither side is auto-resolved. The worktree is left intact.
+3. **No-op iteration** (verify-only pass, phase already complete): empty diff succeeds without porting —
+   "nothing to port" must never become a failure.
+4. **Map fan-out**: same harvest per member at completion, landing sequentially in completion order, so
+   parallel collisions surface as explicit conflicts on the later member rather than racing a shared tree.
+5. **Landing mechanism**: prefer committing in the worktree and advancing the branch ref over mutating
+   the main checkout's working tree, so a human mid-edit is never clobbered.
+
+
+- [x] Choose: (a) `implement` runs without worktree isolation, (b) an explicit port node between
+      `implement` and `build`, or (c) `StartSpawn` harvests on completion — **(c) chosen**, see above
+- [x] Record the trade: isolation exists so parallel spawns do not collide — (a) rejected for exactly
+      that reason, and `map` is settled ahead of `implement`: same harvest per member, landing in
+      completion order so collisions surface as conflicts rather than a race
+- [x] Decide conflict semantics when the branch moved while the spawn ran — the apply fails, the node
+      fails naming the conflicting paths, neither side is auto-resolved, worktree left intact
 
 ### Phase 2: Implement porting
 
@@ -185,6 +270,34 @@ addresses harvesting a spawn's work.
 - [ ] Coverage floor so a skipped run cannot report green
 - [ ] Run it and record passed/failed/exit code here
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-132-graph-retry-launders-gate-approval | 2h 10m | 2026-09-01 00:42 |
+
+**Attribution caveat.** The branch is `MUX-132-…`, not a MUX-131 branch: this spec became the active
+spec while work continued on the MUX-132 branch, so the recorded total covers MUX-132, MUX-133 and
+MUX-134 work as well. The ledger is keyed by **branch**, not by spec, so it cannot separate them — the
+row is kept honest by naming the branch rather than implying the time was spent here.
+
 ## Status
 
-Backlog
+In Progress — moved to `drafts/` 2026-09-01. **Phases 0 and 1 complete.**
+
+**Phase 0 (worker reuse, Defect B)** — `acquireSpawnWorker` reuses a live worker per run+node, with
+window-liveness gating and a fresh-start fallback. Verified from the primary artifact:
+`go test -count=1 -v ./...` in the **main checkout**, exit 0, **2463 PASS / 0 FAIL**, with verbatim
+`--- PASS:` lines for all four new tests. The load-bearing one is `TestExecSpawnLoopReusesWorker`,
+which counts spawns **from the store** across two iterations and asserts exactly one — the assertion
+whose absence let a single run create six workers.
+
+**Phase 1 (porting model, Defect A)** — option (c), executor-side harvest at iteration completion.
+
+Phases 2–4 open.
+
+Sequencing note recorded before implementation starts: **A2 makes Defect A the higher-priority defect**,
+because while it stands, any test evidence produced by a spawn is untrustworthy — including evidence
+about the spawn machinery itself. The phase order below still runs B (worker reuse) first, since reuse
+changes what "port the output" means, but the verification of *either* fix must not rely on a
+spawn-produced run until A is closed.

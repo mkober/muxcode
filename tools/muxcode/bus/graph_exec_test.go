@@ -18,12 +18,13 @@ func fakeSpawns(t *testing.T, session string) *[]string {
 	var tasks []string
 	orig := graphSpawnFn
 	n := 0
-	graphSpawnFn = func(sess, role, task, owner string) (string, error) {
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
 		n++
 		id := fmt.Sprintf("spawn-fake%04d", n)
 		tasks = append(tasks, role+": "+task)
 		entry := SpawnEntry{ID: id, Role: role, SpawnRole: id, Owner: owner,
-			Task: task, Status: "completed", StartedAt: time.Now().Unix()}
+			Task: task, Status: "completed", StartedAt: time.Now().Unix(),
+			RunID: runID, NodeID: nodeID}
 		if err := appendSpawnEntry(sess, entry); err != nil {
 			t.Fatalf("append spawn entry: %v", err)
 		}
@@ -1573,5 +1574,256 @@ func TestExecSpecGuardPostponesWhenRepoDirUnknown(t *testing.T) {
 	msgs, _ := Peek(runTestSession, "plan")
 	if len(msgs) != 0 {
 		t.Errorf("postponed dispatch must not send — plan inbox: %+v", msgs)
+	}
+}
+
+// --- MUX-131 Defect B: spawn worker reuse ---
+
+// liveSpawnFake mirrors the real graphSpawnFn closely enough for the
+// reuse tests: a fresh worker gets a RUNNING entry, a real seeded inbox
+// message, and the run+node stamp, so FindLiveSpawn, ReseedSpawn, and
+// spawnGroupOutcome run their live paths without tmux. Windows listed in
+// deadWindows read as gone; kill attempts are recorded.
+type liveSpawnFake struct {
+	fresh       int
+	killed      []string
+	deadWindows map[string]bool
+}
+
+func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
+	t.Helper()
+	if err := os.MkdirAll(DeliveryDir(runTestSession), 0755); err != nil {
+		t.Fatalf("delivery dir: %v", err)
+	}
+	f := &liveSpawnFake{deadWindows: map[string]bool{}}
+	origSpawn, origExists, origKill, origWake := graphSpawnFn, spawnWindowExistsFn, spawnKillWindowFn, graphSpawnWakeFn
+	t.Cleanup(func() {
+		graphSpawnFn, spawnWindowExistsFn, spawnKillWindowFn, graphSpawnWakeFn = origSpawn, origExists, origKill, origWake
+	})
+	graphSpawnWakeFn = func(string, string) {}
+	spawnWindowExistsFn = func(_, w string) bool { return !f.deadWindows[w] }
+	spawnKillWindowFn = func(_, w string) error { f.killed = append(f.killed, w); return nil }
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
+		f.fresh++
+		id := fmt.Sprintf("spawn-live%04d", f.fresh)
+		msg := NewMessage(owner, id, "request", "spawn-task", task, "")
+		if err := Send(sess, msg); err != nil {
+			t.Fatalf("seed send: %v", err)
+		}
+		entry := SpawnEntry{ID: id, Role: role, SpawnRole: id, Owner: owner, Task: task,
+			Status: "running", Window: id, StartedAt: time.Now().Unix(),
+			SeedMsgID: msg.ID, RunID: runID, NodeID: nodeID}
+		if err := appendSpawnEntry(sess, entry); err != nil {
+			t.Fatalf("append spawn entry: %v", err)
+		}
+		return id, nil
+	}
+	return f
+}
+
+// answerSpawn fakes the worker replying to its CURRENT seed — the same
+// MarkResponded a real reply drives, which spawnHasResponded reads.
+func answerSpawn(t *testing.T, session, spawnRole string) {
+	t.Helper()
+	entries, _ := ReadSpawnEntries(session)
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].SpawnRole != spawnRole {
+			continue
+		}
+		if entries[i].SeedMsgID == "" {
+			t.Fatalf("worker %s has no seed", spawnRole)
+		}
+		MarkResponded(session, entries[i].SeedMsgID, "resp-"+entries[i].SeedMsgID)
+		return
+	}
+	t.Fatalf("no spawn entry for %s", spawnRole)
+}
+
+func spawnCountForRun(t *testing.T, session, runID string) int {
+	t.Helper()
+	entries, err := ReadSpawnEntries(session)
+	if err != nil {
+		t.Fatalf("read spawn entries: %v", err)
+	}
+	n := 0
+	for _, e := range entries {
+		if e.RunID == runID {
+			n++
+		}
+	}
+	return n
+}
+
+// TestAcquireSpawnWorkerReusesLiveWorker pins the reuse core: a second
+// acquire for the same run+node reseeds the live worker instead of
+// starting a fresh one, and the entry's SeedMsgID moves to the new seed.
+func TestAcquireSpawnWorkerReusesLiveWorker(t *testing.T) {
+	useTempBusDir(t)
+	f := fakeLiveSpawns(t)
+
+	id1, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "phase 1")
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	if f.fresh != 1 {
+		t.Fatalf("first acquire must start fresh, got %d", f.fresh)
+	}
+	answerSpawn(t, runTestSession, id1)
+	seed1, _ := GetSpawnEntry(runTestSession, id1)
+
+	id2, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "phase 2")
+	if err != nil {
+		t.Fatalf("second acquire: %v", err)
+	}
+	if id2 != id1 {
+		t.Fatalf("re-entry must reuse the live worker: got %s, want %s", id2, id1)
+	}
+	if f.fresh != 1 {
+		t.Fatalf("re-entry must not start a fresh worker, got %d starts", f.fresh)
+	}
+	e, err := GetSpawnEntry(runTestSession, id1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.SeedMsgID == "" || e.SeedMsgID == seed1.SeedMsgID {
+		t.Fatalf("reseed must move SeedMsgID to the new iteration, got %q (was %q)", e.SeedMsgID, seed1.SeedMsgID)
+	}
+	if e.Task != "phase 2" {
+		t.Fatalf("reseed must update the task, got %q", e.Task)
+	}
+	msgs, _ := Peek(runTestSession, id1)
+	if len(msgs) != 1 || msgs[0].Payload != "phase 2" || msgs[0].ID != e.SeedMsgID {
+		t.Fatalf("new seed must be the one pending row in the worker inbox: %+v", msgs)
+	}
+}
+
+// TestAcquireSpawnWorkerDeadWorkerFreshStart is the spec's negative
+// control: reuse must never wedge a run behind a corpse — a gone window
+// falls back to a fresh worker.
+func TestAcquireSpawnWorkerDeadWorkerFreshStart(t *testing.T) {
+	useTempBusDir(t)
+	f := fakeLiveSpawns(t)
+
+	id1, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "phase 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	answerSpawn(t, runTestSession, id1)
+	f.deadWindows[id1] = true
+
+	id2, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "phase 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id2 == id1 || f.fresh != 2 {
+		t.Fatalf("dead worker must trigger a fresh start: got %s after %s, %d starts", id2, id1, f.fresh)
+	}
+}
+
+// TestAcquireSpawnWorkerDistinctNodesDistinctWorkers is the spec's other
+// negative control: reuse is keyed per run+node, never global — a second
+// node (and a second run) must not adopt the first node's worker.
+func TestAcquireSpawnWorkerDistinctNodesDistinctWorkers(t *testing.T) {
+	useTempBusDir(t)
+	f := fakeLiveSpawns(t)
+
+	id1, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "task a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idOtherNode, err := acquireSpawnWorker(runTestSession, "run-1", "fanout#0", "edit", "task b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idOtherRun, err := acquireSpawnWorker(runTestSession, "run-2", "implement", "edit", "task c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id1 == idOtherNode || id1 == idOtherRun || idOtherNode == idOtherRun {
+		t.Fatalf("distinct nodes/runs must get distinct workers: %s %s %s", id1, idOtherNode, idOtherRun)
+	}
+	if f.fresh != 3 {
+		t.Fatalf("expected 3 fresh workers, got %d", f.fresh)
+	}
+}
+
+// TestExecSpawnLoopReusesWorker walks a loop over a spawn node end to end:
+// one worker serves both iterations (the assertion that would have caught
+// the three-worker run in the MUX-131 report), the worker survives
+// RefreshSpawnStatus mid-run, and is released by it once the run is
+// terminal.
+func TestExecSpawnLoopReusesWorker(t *testing.T) {
+	g := &Graph{Name: "spawn-loop", Start: "w",
+		Nodes: []Node{
+			{ID: "w", Type: NodeSpawn, Role: "edit", Message: "implement"},
+			{ID: "b", Type: NodeSend, Role: "build", Action: "build", Message: "build it"},
+		},
+		Edges: []Edge{
+			{From: "w", To: "b"},
+			{From: "b", To: "w", Outcome: OutcomeFailure, MaxIterations: 2},
+		}}
+	run := createTestRun(t, g)
+	f := fakeLiveSpawns(t)
+
+	// Iteration 1: worker starts fresh, answers, node completes.
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "w")
+	worker := st.TaskID
+	if worker == "" || f.fresh != 1 {
+		t.Fatalf("fresh worker expected on first dispatch: task %q, %d starts", worker, f.fresh)
+	}
+	answerSpawn(t, runTestSession, worker)
+
+	// Mid-run persistence: the responded worker is NOT reaped while its
+	// run is in flight — reaping here is exactly what forced a fresh
+	// worker per iteration.
+	if _, err := RefreshSpawnStatus(runTestSession); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := GetSpawnEntry(runTestSession, worker); e.Status != "running" {
+		t.Fatalf("responded worker of an in-flight run must stay running, got %q", e.Status)
+	}
+	if len(f.killed) != 0 {
+		t.Fatalf("responded worker of an in-flight run must not be killed: %v", f.killed)
+	}
+
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "w"); s != GraphNodeDone {
+		t.Fatalf("w state %q, want done after worker answered", s)
+	}
+
+	// Build fails -> loop edge re-arms the spawn node.
+	completeSendNode(t, runTestSession, run.ID, "b", OutcomeFailure)
+	step(t, runTestSession, run.ID)
+
+	// Iteration 2: same worker, no fresh start.
+	st, _ = ReadNodeStatus(runTestSession, run.ID, "w")
+	if st.State != GraphNodeRunning || st.TaskID != worker {
+		t.Fatalf("re-entry must reuse worker %s: state %q task %q", worker, st.State, st.TaskID)
+	}
+	if f.fresh != 1 {
+		t.Fatalf("re-entry started a fresh worker: %d starts", f.fresh)
+	}
+	answerSpawn(t, runTestSession, worker)
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "b", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+
+	if r, _ := ReadGraphRun(runTestSession, run.ID); r.State != GraphRunComplete {
+		t.Fatalf("run state %q, want complete", r.State)
+	}
+	// THE Defect B assertion: one worker for the whole multi-iteration
+	// run, counted from the spawn store, not read off the code.
+	if n := spawnCountForRun(t, runTestSession, run.ID); n != 1 {
+		t.Fatalf("run must have exactly 1 spawn worker, got %d", n)
+	}
+
+	// Run terminal: the normal reap path now releases the worker.
+	if _, err := RefreshSpawnStatus(runTestSession); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := GetSpawnEntry(runTestSession, worker)
+	if e.Status != "completed" || len(f.killed) != 1 || f.killed[0] != worker {
+		t.Fatalf("terminal run must release the worker: status %q killed %v", e.Status, f.killed)
 	}
 }

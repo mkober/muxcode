@@ -29,7 +29,9 @@ type SpawnEntry struct {
 	Notified    bool   `json:"notified"`
 	Worktree    string `json:"worktree,omitempty"`     // worktree directory path
 	WorktreeRef string `json:"worktree_ref,omitempty"` // git ref used (commit SHA)
-	SeedMsgID   string `json:"seed_msg_id,omitempty"`  // ID of the seeded spawn-task request
+	SeedMsgID   string `json:"seed_msg_id,omitempty"`  // ID of the seeded spawn-task request (latest iteration for reused workers)
+	RunID       string `json:"run_id,omitempty"`       // graph run key half — set on graph-dispatched workers (MUX-131 reuse)
+	NodeID      string `json:"node_id,omitempty"`      // graph node key half — with RunID, the per-run+node reuse key
 }
 
 // ReadSpawnEntries reads all spawn entries from the spawn JSONL file.
@@ -331,6 +333,73 @@ var (
 	}
 )
 
+// FindLiveSpawn returns the newest running spawn entry keyed to a graph
+// run+node whose window is still alive — the reuse lookup for MUX-131
+// Defect B. Liveness is the window check, not the entry status alone: a
+// crashed worker's entry can still read "running", and reuse must never
+// wedge a run behind a corpse — a dead worker falls back to a fresh start.
+func FindLiveSpawn(session, runID, nodeID string) (SpawnEntry, bool) {
+	if runID == "" || nodeID == "" {
+		return SpawnEntry{}, false
+	}
+	entries, err := ReadSpawnEntries(session)
+	if err != nil {
+		return SpawnEntry{}, false
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		if e.Status == "running" && e.RunID == runID && e.NodeID == nodeID &&
+			spawnWindowExistsFn(session, e.Window) {
+			return e, true
+		}
+	}
+	return SpawnEntry{}, false
+}
+
+// ReseedSpawn seeds a new iteration's task into an existing live worker's
+// inbox and wakes it, instead of building a fresh worker (MUX-131 Defect
+// B: three workers, one task, one run). The entry's SeedMsgID moves to
+// the new seed BEFORE the wake so no reader can mistake the previous
+// iteration's responded seed for this one's completion. A dedup-suppressed
+// send adopts the already-pending identical seed (retry --from racing an
+// unconsumed seed) — same adopt rule as the NodeSend dispatch path;
+// falling back to a fresh worker there would strand the pending seed AND
+// rebuild the worker the suppression proves is already tasked.
+func ReseedSpawn(session string, entry SpawnEntry, task string) (string, error) {
+	msg := NewMessage(entry.Owner, entry.SpawnRole, "request", "spawn-task", task, "")
+	if err := Send(session, msg); err != nil {
+		if !errors.Is(err, ErrSendSuppressed) {
+			return "", fmt.Errorf("reseeding inbox: %v", err)
+		}
+		if pm, found := FindPendingInboxRequest(session, msg.To, msg.From, msg.Action, msg.Payload); found {
+			msg.ID = pm.ID
+		}
+	}
+	if err := UpdateSpawnEntry(session, entry.ID, func(e *SpawnEntry) {
+		e.SeedMsgID = msg.ID
+		e.Task = task
+	}); err != nil {
+		return "", err
+	}
+	graphSpawnWakeFn(session, entry.SpawnRole)
+	return msg.ID, nil
+}
+
+// spawnPersistent reports whether a responded worker must be kept alive
+// for reuse: graph-owned (RunID set) with its run still in flight. A
+// missing or terminal run releases the worker to the normal reap path —
+// which is also how a run's workers are accounted for at the end.
+func spawnPersistent(session string, e SpawnEntry) bool {
+	if e.RunID == "" {
+		return false
+	}
+	run, err := ReadGraphRun(session, e.RunID)
+	if err != nil {
+		return false
+	}
+	return run.State == GraphRunRunning
+}
+
 // spawnHasResponded reports whether the worker answered its seeded
 // spawn-task, read from the delivery store — the same responded status
 // hasReceipt trusts. Entries that predate SeedMsgID keep the
@@ -358,6 +427,13 @@ func spawnHasResponded(session string, e SpawnEntry) bool {
 // window killed, then the shared completion path below. A failed kill
 // leaves the entry running for the next cycle: completing anyway would
 // tear down the worktree under a still-live worker.
+//
+// Persistent exception (MUX-131 Defect B): a graph-owned worker whose run
+// is still in flight is NOT reaped on respond — its iterations complete
+// via per-seed delivery receipts (spawnGroupOutcome) and the next node
+// re-entry reseeds the same worker. Once its run turns terminal the
+// respond-reap path releases it like any other worker, worktree
+// dirty-preservation guard included.
 func RefreshSpawnStatus(session string) ([]SpawnEntry, error) {
 	entries, err := ReadSpawnEntries(session)
 	if err != nil {
@@ -375,6 +451,9 @@ func RefreshSpawnStatus(session string) ([]SpawnEntry, error) {
 		if spawnWindowExistsFn(session, e.Window) {
 			if !spawnHasResponded(session, e) {
 				continue
+			}
+			if spawnPersistent(session, e) {
+				continue // held for reuse — see doc comment
 			}
 			if err := spawnKillWindowFn(session, e.Window); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: reap kill-window failed for %s: %v\n", e.SpawnRole, err)
