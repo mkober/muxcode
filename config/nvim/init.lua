@@ -33,6 +33,16 @@ vim.opt.list = true
 vim.opt.listchars = { tab = '» ', trail = '·', nbsp = '␣' }
 vim.opt.swapfile = false
 
+-- Reload buffers edited outside nvim (agents edit docs via Bash/python,
+-- which no PostToolUse Write|Edit hook ever sees — a timer catches every
+-- path). checktime skips buffers with unsaved local modifications, so
+-- in-progress hand edits are never clobbered; autoread is required or
+-- checktime prompts instead of reloading.
+vim.opt.autoread = true
+vim.fn.timer_start(1000, function()
+  vim.cmd('silent! checktime')
+end, { ['repeat'] = -1 })
+
 -- Auto-equalize splits on resize (essential for tiling WMs / tmux resizes)
 vim.api.nvim_create_autocmd('VimResized', {
   callback = function()
