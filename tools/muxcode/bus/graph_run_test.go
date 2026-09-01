@@ -231,9 +231,14 @@ func TestFormatGraphRunShowsFailedNodeReason(t *testing.T) {
 // TestFormatGraphRunConditionBranchNeutral pins the condition-node
 // display rule (ConditionTookBranch): a condition that took its false
 // branch renders "branched", never "failed" — a red failure row on a
-// completed run read as a broken pipeline. The negative control keeps
-// the rule from over-reaching: a genuinely failed send node must keep
-// "failed" and never gain "branched".
+// completed run read as a broken pipeline. Under MUX-133 option B a
+// branch-taker is state=done with outcome=failure, the failure outcome
+// being the routing key the false edge matches.
+//
+// Two negative controls keep the rule from over-reaching: a genuinely
+// failed send node must keep "failed" and never gain "branched", and a
+// condition that genuinely failed to evaluate (state=failed) must also
+// render "failed" — the distinction option B exists to make.
 func TestFormatGraphRunConditionBranchNeutral(t *testing.T) {
 	g := &Graph{
 		Name:  "t",
@@ -247,7 +252,7 @@ func TestFormatGraphRunConditionBranchNeutral(t *testing.T) {
 	run := &GraphRun{ID: "r2", Template: "t", State: GraphRunComplete, CreatedAt: time.Now().Unix()}
 
 	out := FormatGraphRun(run, g, map[string]*GraphNodeStatus{
-		"cond": {NodeID: "cond", State: GraphNodeFailed, Outcome: OutcomeFailure},
+		"cond": {NodeID: "cond", State: GraphNodeDone, Outcome: OutcomeFailure},
 		"b":    {NodeID: "b", State: GraphNodeDone, Outcome: OutcomeSuccess},
 	})
 	if !strings.Contains(out, "branched") {
@@ -266,6 +271,19 @@ func TestFormatGraphRunConditionBranchNeutral(t *testing.T) {
 	}
 	if strings.Contains(out, "branched") {
 		t.Errorf("failed send node rendered as branched:\n%s", out)
+	}
+
+	// A condition that could not be evaluated is a real error, not a
+	// branch selection — the state carries the distinction.
+	out = FormatGraphRun(run, g, map[string]*GraphNodeStatus{
+		"cond": {NodeID: "cond", State: GraphNodeFailed, Outcome: OutcomeFailure, Output: "condition evaluation error: unknown condition type bogus"},
+		"b":    {NodeID: "b", State: GraphNodeDone, Outcome: OutcomeSuccess},
+	})
+	if !strings.Contains(out, "failed") {
+		t.Errorf("unevaluatable condition lost its failed rendering:\n%s", out)
+	}
+	if strings.Contains(out, "branched") {
+		t.Errorf("unevaluatable condition rendered as branched — a broken predicate must not read as control flow:\n%s", out)
 	}
 }
 

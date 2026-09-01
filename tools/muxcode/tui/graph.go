@@ -112,14 +112,14 @@ func LayoutGraph(g *bus.Graph) *GraphGrid {
 // nodeGlyph returns the state glyph and Dracula color for a node. A
 // wait_human gate keeps its distinct flag glyph in every state so gates
 // stay visually prominent in the DAG, per the MUX-031 authority note.
-func nodeGlyph(nodeType, state string) (glyph string, color string) {
+func nodeGlyph(nodeType, state, outcome string) (glyph string, color string) {
 	if nodeType == bus.NodeWaitHuman {
 		if state == bus.GraphNodeWaiting {
 			return "⚑", Yellow + Bold
 		}
 		return "⚑", stateColor(state)
 	}
-	if bus.ConditionTookBranch(nodeType, state) {
+	if bus.ConditionTookBranch(nodeType, state, outcome) {
 		return "◇", Comment // false branch taken — control flow, not a failure
 	}
 	switch state {
@@ -182,6 +182,16 @@ func (s GraphSnapshot) nodeState(id string) string {
 		return st.State
 	}
 	return bus.GraphNodePending
+}
+
+// nodeOutcome returns a node's recorded outcome, "" when it has no
+// status yet. Paired with nodeState because a condition's branch-vs-break
+// distinction needs both (MUX-133).
+func (s GraphSnapshot) nodeOutcome(id string) string {
+	if st, ok := s.Statuses[id]; ok && st != nil {
+		return st.Outcome
+	}
+	return ""
 }
 
 // loopAnnotation renders the capped-loop badge for edges leaving a node:
@@ -334,7 +344,7 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 	for i := range snap.Graph.Nodes {
 		n := &snap.Graph.Nodes[i]
 		types[n.ID] = n.Type
-		glyph, _ := nodeGlyph(n.Type, snap.nodeState(n.ID))
+		glyph, _ := nodeGlyph(n.Type, snap.nodeState(n.ID), snap.nodeOutcome(n.ID))
 		label := glyph + " " + n.ID
 		// Terse ids say nothing about which agent is active (a bare
 		// "a → b → c" was unreadable live; user catch, 2026-08-27) — send
@@ -426,7 +436,7 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 	// Node labels.
 	for i, layerIDs := range grid.Layers {
 		for _, id := range layerIDs {
-			_, color := nodeGlyph(types[id], snap.nodeState(id))
+			_, color := nodeGlyph(types[id], snap.nodeState(id), snap.nodeOutcome(id))
 			if id == selection {
 				color = Yellow + Bold
 			}
@@ -461,7 +471,7 @@ func renderWrappedChain(layers [][]string, labels map[string]string, types map[s
 	line, plain := "  ", 2
 	for li, layerIDs := range layers {
 		id := layerIDs[0]
-		_, color := nodeGlyph(types[id], snap.nodeState(id))
+		_, color := nodeGlyph(types[id], snap.nodeState(id), snap.nodeOutcome(id))
 		lbl := labels[id]
 		seg := color + lbl + RST
 		segPlain := len([]rune(lbl))
@@ -501,7 +511,7 @@ func RenderNodeDetails(snap GraphSnapshot, width, maxLines int, now time.Time, s
 		n := &snap.Graph.Nodes[i]
 		st := snap.Statuses[n.ID]
 		state := snap.nodeState(n.ID)
-		glyph, color := nodeGlyph(n.Type, state)
+		glyph, color := nodeGlyph(n.Type, state, snap.nodeOutcome(n.ID))
 
 		who := nodeWho(n)
 
@@ -534,7 +544,8 @@ func RenderNodeDetails(snap GraphSnapshot, width, maxLines int, now time.Time, s
 					detail = strings.TrimSpace(detail[:nl])
 				}
 			}
-			if state == bus.GraphNodeFailed && !bus.ConditionTookBranch(n.Type, state) {
+			// Branch-takers are done, so failed here is always genuine.
+			if state == bus.GraphNodeFailed {
 				detailColor = Red
 			}
 		}
@@ -1385,7 +1396,7 @@ func RenderNodeDetailFrame(snap GraphSnapshot, nodeID string, width int) string 
 	}
 	st := snap.Statuses[nodeID]
 	state := snap.nodeState(nodeID)
-	glyph, color := nodeGlyph(node.Type, state)
+	glyph, color := nodeGlyph(node.Type, state, snap.nodeOutcome(nodeID))
 
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Graph Runs", width))
@@ -1441,13 +1452,13 @@ func RenderNodeDetailFrame(snap GraphSnapshot, nodeID string, width int) string 
 // wider than the pane: one row per node, failed/waiting first.
 func renderGraphFallback(snap GraphSnapshot, width int) string {
 	type row struct {
-		id, typ, state string
-		defIdx         int
+		id, typ, state, outcome string
+		defIdx                  int
 	}
 	rows := make([]row, 0, len(snap.Graph.Nodes))
 	for i := range snap.Graph.Nodes {
 		n := &snap.Graph.Nodes[i]
-		rows = append(rows, row{id: n.ID, typ: n.Type, state: snap.nodeState(n.ID), defIdx: i})
+		rows = append(rows, row{id: n.ID, typ: n.Type, state: snap.nodeState(n.ID), outcome: snap.nodeOutcome(n.ID), defIdx: i})
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		oi, oj := fallbackStateOrder[rows[i].state], fallbackStateOrder[rows[j].state]
@@ -1460,7 +1471,7 @@ func renderGraphFallback(snap GraphSnapshot, width int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "  %s(graph wider than pane — flat view)%s\n", Comment, RST)
 	for _, r := range rows {
-		glyph, color := nodeGlyph(r.typ, r.state)
+		glyph, color := nodeGlyph(r.typ, r.state, r.outcome)
 		line := fmt.Sprintf("  %s%s %-24s%s %s%-10s %s%s", color, glyph, r.id, RST, Comment, r.state, r.typ, RST)
 		if st := snap.Statuses[r.id]; st != nil && st.Outcome != "" {
 			line += fmt.Sprintf("  %soutcome=%s%s", Comment, st.Outcome, RST)

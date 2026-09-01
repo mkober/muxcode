@@ -622,16 +622,17 @@ func FormatApprovalTime(t int64) string {
 	return time.Unix(t, 0).Format("2006-01-02 15:04:05")
 }
 
-// ConditionTookBranch reports whether a node's terminal state is a
-// condition node's false branch. A condition's "failure" outcome is a
-// branch selector — control flow, never an error: the executor swallows
-// evaluation errors and finishes false conditions with no failure text,
-// so every condition failure IS a branch selection. Renderers must show
-// it neutrally; a red "failed" here made a successfully completed run
-// read as broken mid-pipeline (user report, 2026-09-01). Shared by the
-// CLI formatter and the TUI so the two surfaces cannot drift.
-func ConditionTookBranch(nodeType, state string) bool {
-	return nodeType == NodeCondition && state == GraphNodeFailed
+// ConditionTookBranch reports whether a node finished by selecting its
+// false branch. A condition's failure OUTCOME is the routing key that
+// edgeOutcome matches, so it is retained; what distinguishes a branch
+// from a break is the terminal STATE, which a branch-taking condition
+// leaves as done (MUX-133 option B). Keying on outcome alone would
+// re-classify a genuine evaluation error as a branch, and keying on
+// state alone would match every completed condition including the true
+// branch — both halves are load-bearing. Shared by the CLI formatter,
+// the TUI and the JSON surface so they cannot drift.
+func ConditionTookBranch(nodeType, state, outcome string) bool {
+	return nodeType == NodeCondition && state == GraphNodeDone && outcome == OutcomeFailure
 }
 
 // GraphNodeStateColor returns the Dracula color for a node run state,
@@ -684,7 +685,7 @@ func formatGraphRun(run *GraphRun, g *Graph, statuses map[string]*GraphNodeStatu
 			continue
 		}
 		stateWord, stateColor := st.State, GraphNodeStateColor(st.State)
-		if ConditionTookBranch(n.Type, st.State) {
+		if ConditionTookBranch(n.Type, st.State, st.Outcome) {
 			stateWord, stateColor = "branched", ColorDim
 		}
 		state := fmt.Sprintf("%-10s", stateWord)

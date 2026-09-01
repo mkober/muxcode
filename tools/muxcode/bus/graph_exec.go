@@ -513,13 +513,19 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 
 	case NodeCondition:
 		ctx := &ChainContext{Session: session, Output: predecessorOutput(session, run, g, n.ID)}
-		passed, _ := EvaluateConditions(n.Conditions, ctx)
+		passed, results := EvaluateConditions(n.Conditions, ctx)
+		_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeRunning, nil)
+		// See unevaluatableCondition: a broken predicate is not a branch.
+		if detail := unevaluatableCondition(results); detail != "" {
+			finishNode(session, run, n, OutcomeFailure, detail)
+			return
+		}
 		outcome := OutcomeFailure
 		if passed {
 			outcome = OutcomeSuccess
 		}
-		_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeRunning, nil)
-		finishNode(session, run, n, outcome, "")
+		// See finishCondition: a branch selection finishes done.
+		finishCondition(session, run, n, outcome)
 
 	case NodeJoin:
 		// The barrier was satisfied when the node was armed; a join
@@ -611,6 +617,34 @@ func predecessorOutput(session string, run *GraphRun, g *Graph, nodeID string) s
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+// unevaluatableCondition returns a detail string when a predicate could
+// not be interpreted, or "" when every predicate was genuinely tested.
+// EvaluateConditions has no error return: an uninterpretable predicate
+// arrives as a ConditionResult carrying "unknown condition type" and
+// Passed false, otherwise identical to an honest false. That is the only
+// error signal available, so it bounds what any caller can distinguish.
+func unevaluatableCondition(results []ConditionResult) string {
+	for _, r := range results {
+		if r.Detail == "unknown condition type" {
+			return "condition evaluation error: unknown condition type " + r.Type
+		}
+	}
+	return ""
+}
+
+// finishCondition finishes a condition node that evaluated cleanly. It
+// always lands on GraphNodeDone — a condition is a branch selector, and
+// choosing the false branch is not a failure — while still recording the
+// outcome that edge matching keys on. Genuine evaluation errors go
+// through finishNode instead and keep the failed state (MUX-133).
+func finishCondition(session string, run *GraphRun, n *Node, outcome string) {
+	_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeDone, func(s *GraphNodeStatus) {
+		s.Outcome = outcome
+	})
+	LogLifecycle(session, "info", "daemon", "graph-node-done",
+		fmt.Sprintf("%s: %s -> %s", run.ID, n.ID, outcome))
 }
 
 func finishNode(session string, run *GraphRun, n *Node, outcome, output string) {

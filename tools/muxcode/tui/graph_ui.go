@@ -94,7 +94,8 @@ func LoadRunListRows(session string, now time.Time) []RunListRow {
 				}
 				doneNodes = append(doneNodes, id)
 			}
-			if state == bus.GraphNodeFailed && !bus.ConditionTookBranch(n.Type, state) {
+			// Branch-takers are done, so failed here is always genuine.
+			if state == bus.GraphNodeFailed {
 				failedNodes = append(failedNodes, n.ID)
 				if failedOut == "" {
 					failedOut = st.Output

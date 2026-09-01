@@ -463,3 +463,56 @@ func TestRenderGraphFrame_MissingStatusIsPending(t *testing.T) {
 		t.Errorf("expected missing statuses to render pending:\n%s", frame)
 	}
 }
+
+// TestRenderGraphFrame_ConditionBranchGlyph pins the DAG half of the
+// MUX-133 rule. Three readings must stay distinct in one vocabulary: a
+// condition that chose its false branch (done + failure outcome) draws
+// the neutral ◇, a condition that could not be evaluated at all (failed)
+// keeps the ✗ every broken node wears, and a condition that passed draws
+// the ordinary ✓. Asserted on the stripped frame so the distinction
+// survives without colour.
+func TestRenderGraphFrame_ConditionBranchGlyph(t *testing.T) {
+	condGraph := func() *bus.Graph {
+		return &bus.Graph{
+			Name: "cond-graph", Start: "cond",
+			Nodes: []bus.Node{
+				{ID: "cond", Type: bus.NodeCondition, Conditions: map[string]any{"env_set": "X"}},
+				{ID: "after", Type: bus.NodeSend, Role: "test", Action: "test", Message: "go"},
+			},
+			Edges: []bus.Edge{{From: "cond", To: "after", Outcome: bus.OutcomeFailure}},
+		}
+	}
+
+	frameWith := func(state, outcome string) string {
+		snap := snapshot(condGraph(), map[string]string{"cond": state})
+		snap.Statuses["cond"].Outcome = outcome
+		return StripAnsi(RenderGraphFrame(snap, 120, 40, "", frameClock))
+	}
+
+	branched := frameWith(bus.GraphNodeDone, bus.OutcomeFailure)
+	if !strings.Contains(branched, "◇ cond") {
+		t.Errorf("false branch missing the ◇ branch glyph:\n%s", branched)
+	}
+	if strings.Contains(branched, "✗ cond") {
+		t.Errorf("false branch still wears the failure glyph — the MUX-133 defect:\n%s", branched)
+	}
+
+	// Negative control: a condition that genuinely failed to evaluate is
+	// a broken node and must stay readable as one.
+	broken := frameWith(bus.GraphNodeFailed, bus.OutcomeFailure)
+	if !strings.Contains(broken, "✗ cond") {
+		t.Errorf("unevaluatable condition lost its failure glyph:\n%s", broken)
+	}
+	if strings.Contains(broken, "◇ cond") {
+		t.Errorf("unevaluatable condition drawn as a branch — a broken predicate must not read as control flow:\n%s", broken)
+	}
+
+	// Negative control: the true branch is an ordinary success.
+	passed := frameWith(bus.GraphNodeDone, bus.OutcomeSuccess)
+	if !strings.Contains(passed, "✓ cond") {
+		t.Errorf("passing condition lost its success glyph:\n%s", passed)
+	}
+	if strings.Contains(passed, "◇ cond") {
+		t.Errorf("passing condition drawn as a branch — ◇ marks the false branch only:\n%s", passed)
+	}
+}

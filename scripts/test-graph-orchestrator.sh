@@ -86,6 +86,18 @@ answer_role() {
   AGENT_ROLE="$role" "$MUX" send "${target:-edit}" response "done" --type response --reply-to "$rid" >/dev/null 2>&1
 }
 
+# answer_role_with <role> <text> — answer like answer_role but control the
+# reply body, so a downstream output_contains condition can be steered
+# per iteration (MUX-133 section 10).
+answer_role_with() {
+  local role="$1" text="$2" out rid target
+  out="$(AGENT_ROLE="$role" "$MUX" inbox 2>/dev/null || true)"
+  rid="$(printf '%s' "$out" | grep -o -- '--reply-to [A-Za-z0-9-]*' | tail -1 | awk '{print $2}')"
+  target="$(printf '%s' "$out" | grep -o 'muxcode send [a-z-]*' | tail -1 | awk '{print $3}')"
+  [ -z "$rid" ] && return 1
+  AGENT_ROLE="$role" "$MUX" send "${target:-edit}" response "$text" --type response --reply-to "$rid" >/dev/null 2>&1
+}
+
 # wait_for_request <role> — poll until the role's inbox holds a request.
 wait_for_request() {
   local role="$1" i
@@ -457,11 +469,144 @@ fi
 wait_run_state "$RID4" complete && ok "gated run completed after fresh approval" \
   || bad "gated run state $(run_state "$RID4"), want complete"
 
+# --- 9. Condition false branch renders as a branch, not a failure (MUX-133) -
+# One frame must carry both readings at once: a condition that chose its
+# false edge, and a node that genuinely failed. Before option B they were
+# the same red "failed" row, so an operator scanning for trouble could
+# not tell control flow from breakage.
+cat > "$WORK/branchview.json" <<'EOF'
+{"name": "branchview", "start": "a",
+ "nodes": [
+   {"id": "a", "type": "send", "role": "build", "action": "build", "message": "go"},
+   {"id": "cond", "type": "condition", "conditions": {"env_set": "MUXCODE_GRAPH_TEST_ABSENT"}},
+   {"id": "yes", "type": "send", "role": "deploy", "action": "deploy", "message": "true branch"},
+   {"id": "no", "type": "send", "role": "test", "action": "test", "message": "false branch"},
+   {"id": "recover", "type": "send", "role": "run", "action": "run", "message": "recover"}],
+ "edges": [
+   {"from": "a", "to": "cond"},
+   {"from": "cond", "to": "yes", "outcome": "success"},
+   {"from": "cond", "to": "no", "outcome": "failure"},
+   {"from": "no", "to": "recover", "outcome": "failure"}]}
+EOF
+RUN5="$("$MUX" graph run --file "$WORK/branchview.json" branch view 2>&1)"
+RID5="$(printf '%s' "$RUN5" | grep -o 'Started run [^ ]*' | awk '{print $3}')"
+[ -n "$RID5" ] || bad "branchview run produced no id: $RUN5"
+
+wait_for_request build && answer_role build || bad "branchview: node a never dispatched"
+
+# The false edge must still route — the routing key is unchanged by the split.
+if wait_for_request test; then
+  ok "condition false edge still routes after the state/outcome split"
+  fail_role test || bad "could not fail node no"
+else
+  bad "false edge never fired — the split broke condition routing"
+fi
+
+# The true branch must not have fired.
+if [ "$(node_state "$RID5" yes)" = "pending" ]; then
+  ok "true branch never dispatched on a false predicate"
+else
+  bad "node yes state $(node_state "$RID5" yes), want pending"
+fi
+
+wait_for_request run && answer_role run || bad "branchview: recover never dispatched"
+wait_run_state "$RID5" complete \
+  && ok "run completes with a branched condition and a recovered failure" \
+  || bad "branchview run state $(run_state "$RID5"), want complete"
+
+# --- The single frame carrying both readings ---
+FRAME="$("$MUX" graph status "$RID5" 2>/dev/null | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g')"
+COND_WORD="$(printf '%s' "$FRAME" | awk '$1=="cond" {print $2}')"
+NO_WORD="$(printf '%s' "$FRAME" | awk '$1=="no" {print $2}')"
+
+[ "$COND_WORD" = "branched" ] \
+  && ok "condition false branch renders as 'branched'" \
+  || bad "condition rendered as '$COND_WORD', want 'branched'"
+[ "$COND_WORD" != "failed" ] \
+  && ok "condition false branch is not rendered as a failure" \
+  || bad "condition still renders as failed — the MUX-133 defect"
+[ "$NO_WORD" = "failed" ] \
+  && ok "a genuinely failed node still renders 'failed' in the same frame" \
+  || bad "failed node rendered as '$NO_WORD', want 'failed' — the fix must not make failures unreadable"
+
+# --- The run store must agree with the frame (the point of option B) ---
+COND_JSON="$BD/graphs/$RID5/nodes/cond.json"
+if [ -f "$COND_JSON" ]; then
+  grep -q '"state"[ ]*:[ ]*"done"' "$COND_JSON" \
+    && ok "run store persists the branched condition as done, not failed" \
+    || bad "run store still persists state=failed: $(cat "$COND_JSON")"
+  grep -q '"outcome"[ ]*:[ ]*"failure"' "$COND_JSON" \
+    && ok "run store retains outcome=failure — the routing key is intact" \
+    || bad "run store lost outcome=failure — capped loops would stop terminating"
+else
+  bad "run store node file missing: $COND_JSON"
+fi
+
+# --- The JSON surface must agree too ---
+JSON_OUT="$("$MUX" graph status "$RID5" --json 2>/dev/null)"
+printf '%s' "$JSON_OUT" | grep -q '"branched"[ ]*:[ ]*true' \
+  && ok "graph status --json marks the condition branched" \
+  || bad "--json missing branched:true — machine consumers still read a bare failure"
+
+# --- 10. Capped-loop terminating condition renders as a branch (MUX-133) ---
+# The loop-check shape from req-code-pr: a condition whose TRUE edge loops
+# back and whose FALSE edge ends the loop. The false branch is how a
+# capped loop is supposed to finish, so rendering it red made every
+# normal termination look like a break. Driven through a real iteration
+# so the check is about the exiting pass, not a loop that never ran.
+cat > "$WORK/loopbranch.json" <<'EOF'
+{"name": "loopbranch", "start": "work",
+ "nodes": [
+   {"id": "work", "type": "send", "role": "build", "action": "build", "message": "iterate"},
+   {"id": "again", "type": "condition", "conditions": {"output_contains": "AGAIN"}},
+   {"id": "finish", "type": "send", "role": "test", "action": "test", "message": "wrap up"}],
+ "edges": [
+   {"from": "work", "to": "again"},
+   {"from": "again", "to": "work", "outcome": "success", "max_iterations": 3},
+   {"from": "again", "to": "finish", "outcome": "failure"}]}
+EOF
+RUN6="$("$MUX" graph run --file "$WORK/loopbranch.json" loop branch 2>&1)"
+RID6="$(printf '%s' "$RUN6" | grep -o 'Started run [^ ]*' | awk '{print $3}')"
+[ -n "$RID6" ] || bad "loopbranch run produced no id: $RUN6"
+
+# Iteration 1: reply AGAIN so the condition takes its TRUE edge and loops.
+wait_for_request build && answer_role_with build "AGAIN please" \
+  || bad "loopbranch: work never dispatched on iteration 1"
+
+# Iteration 2: work must be re-dispatched by the loop edge.
+if wait_for_request build; then
+  ok "capped loop iterated — the true edge re-armed the loop body"
+  answer_role_with build "STOP now" || bad "could not answer iteration 2"
+else
+  bad "loop never iterated — the condition's true edge did not re-arm work"
+fi
+
+# Now the condition goes false and must END the loop via its false edge.
+wait_for_request test && answer_role test \
+  || bad "loop never terminated — the false edge did not route to finish"
+wait_run_state "$RID6" complete \
+  && ok "capped loop terminated via its false edge and the run completed" \
+  || bad "loopbranch run state $(run_state "$RID6"), want complete"
+
+LOOP_WORD="$("$MUX" graph status "$RID6" 2>/dev/null | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' | awk '$1=="again" {print $2}')"
+[ "$LOOP_WORD" = "branched" ] \
+  && ok "loop-terminating condition renders 'branched' on the exiting pass" \
+  || bad "loop-terminating condition rendered '$LOOP_WORD', want 'branched' — a normal loop exit must not read as a break"
+
+AGAIN_JSON="$BD/graphs/$RID6/nodes/again.json"
+if [ -f "$AGAIN_JSON" ]; then
+  grep -q '"state"[ ]*:[ ]*"done"' "$AGAIN_JSON" \
+    && ok "loop condition persists state=done after terminating the loop" \
+    || bad "loop condition persisted as failed: $(cat "$AGAIN_JSON")"
+else
+  bad "run store node file missing: $AGAIN_JSON"
+fi
+
 # --- Coverage floor --------------------------------------------------------
 # A full run produces exactly this many passing checks. Fewer means a
 # section was skipped or short-circuited — a partial run must not report
 # green (MUX-132 Phase 4).
-FLOOR=47
+FLOOR=60
 [ "$pass" -ge "$FLOOR" ] \
   || bad "coverage floor: $pass checks passed, floor $FLOOR — a skipped section cannot report green"
 

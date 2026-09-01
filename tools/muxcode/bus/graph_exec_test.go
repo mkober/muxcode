@@ -875,6 +875,120 @@ func TestExecConditionNode(t *testing.T) {
 	}
 }
 
+// TestExecConditionFalseBranchIsNotAFailure pins the state/outcome split
+// for a condition that takes its false branch (MUX-133 option B). The
+// node is a branch selector choosing a branch, so its terminal STATE is
+// done; the failure OUTCOME is retained because it is the routing key
+// edgeOutcome matches, and every capped loop's terminating edge depends
+// on it. Before option B this asserted GraphNodeFailed — the diff of
+// this assertion is the model change.
+func TestExecConditionFalseBranchIsNotAFailure(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "cond",
+		Nodes: []Node{
+			{ID: "cond", Type: NodeCondition, Conditions: map[string]any{"env_set": "MUXCODE_GRAPH_TEST_UNSET_ENV"}},
+			{ID: "yes", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "no", Type: NodeSend, Role: "test", Action: "test", Message: "go"},
+		},
+		Edges: []Edge{
+			{From: "cond", To: "yes", Outcome: OutcomeSuccess},
+			{From: "cond", To: "no", Outcome: OutcomeFailure},
+		},
+	}
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+
+	st, err := ReadNodeStatus(runTestSession, run.ID, "cond")
+	if err != nil {
+		t.Fatalf("read cond: %v", err)
+	}
+	if st.State != GraphNodeDone {
+		t.Errorf("cond state %q, want %q — a false branch is control flow, not a broken node",
+			st.State, GraphNodeDone)
+	}
+	if st.Outcome != OutcomeFailure {
+		t.Fatalf("cond outcome %q, want %q — the failure outcome is the routing key the false edge matches; changing it breaks every capped loop",
+			st.Outcome, OutcomeFailure)
+	}
+
+	// The routing invariant: the false edge must still have fired.
+	if s := nodeState(t, runTestSession, run.ID, "no"); s != GraphNodeRunning {
+		t.Errorf("no state %q, want running — the false edge must still route after the split", s)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "yes"); s != GraphNodePending {
+		t.Errorf("yes state %q, want pending", s)
+	}
+
+	// The run must not be marked failed by a routine branch.
+	got, err := ReadGraphRun(runTestSession, run.ID)
+	if err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	if got.State == GraphRunFailed {
+		t.Errorf("run state %q — a condition taking its false branch must never fail the run", got.State)
+	}
+}
+
+// TestExecConditionUnevaluatableIsAFailure is the negative control for
+// the split: a predicate that cannot be evaluated at all is a genuine
+// error and must still persist GraphNodeFailed, so option B does not
+// make every condition look done.
+//
+// Graph.Validate rejects an unknown condition type, so this state is
+// unreachable through graph run|validate — it is reachable only by
+// replaying a definition frozen before the rule existed, which is what
+// this test constructs by rewriting the run's frozen graph.json. That
+// is precisely why the executor branch is worth having: the run store
+// replays frozen definitions without re-validating them.
+func TestExecConditionUnevaluatableIsAFailure(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "cond",
+		Nodes: []Node{
+			{ID: "cond", Type: NodeCondition, Conditions: map[string]any{"env_set": "MUXCODE_GRAPH_TEST_UNSET_ENV"}},
+			{ID: "no", Type: NodeSend, Role: "test", Action: "test", Message: "go"},
+		},
+		Edges: []Edge{
+			{From: "cond", To: "no", Outcome: OutcomeFailure},
+		},
+	}
+	run := createTestRun(t, g)
+
+	// Freeze a definition the validator would now reject, as an older
+	// binary could have written.
+	frozen := *g
+	frozen.Nodes = append([]Node(nil), g.Nodes...)
+	frozen.Nodes[0].Conditions = map[string]any{"bogus_condition_type": "x"}
+	blob, err := json.MarshalIndent(&frozen, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal frozen graph: %v", err)
+	}
+	if err := os.WriteFile(graphDefPath(runTestSession, run.ID), blob, 0o644); err != nil {
+		t.Fatalf("rewrite frozen graph: %v", err)
+	}
+
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+
+	st, err := ReadNodeStatus(runTestSession, run.ID, "cond")
+	if err != nil {
+		t.Fatalf("read cond: %v", err)
+	}
+	if st.State != GraphNodeFailed {
+		t.Errorf("cond state %q, want %q — an unevaluatable predicate is a real error, not a branch",
+			st.State, GraphNodeFailed)
+	}
+	if st.Output == "" {
+		t.Error("cond output empty — a genuine evaluation error must say what went wrong")
+	}
+	if ConditionTookBranch(NodeCondition, st.State, st.Outcome) {
+		t.Error("ConditionTookBranch true for an unevaluatable predicate — it must render as a failure, not a branch")
+	}
+}
+
 func TestRetryGraphRunFromNode(t *testing.T) {
 	run := createTestRun(t, linearGraph())
 

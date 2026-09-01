@@ -1084,3 +1084,97 @@ func TestRenderNodeDetailFrame_UnknownNode(t *testing.T) {
 		t.Errorf("expected unknown-node message:\n%s", frame)
 	}
 }
+
+// condBranchGraph is a linear run whose middle node is a condition, used
+// to check how a branch-taker is summarized in the run list.
+func condBranchGraph() *bus.Graph {
+	return &bus.Graph{
+		Name: "cond-branch", Start: "a",
+		Nodes: []bus.Node{
+			{ID: "a", Type: bus.NodeSend, Role: "build", Action: "build", Message: "m"},
+			{ID: "cond", Type: bus.NodeCondition, Conditions: map[string]any{"env_set": "X"}},
+			{ID: "b", Type: bus.NodeSend, Role: "test", Action: "test", Message: "m"},
+		},
+		Edges: []bus.Edge{
+			{From: "a", To: "cond"},
+			{From: "cond", To: "b", Outcome: bus.OutcomeFailure},
+		},
+	}
+}
+
+// TestLoadRunListRows_BranchedConditionIsNotAFailureCell pins the run-list
+// half of MUX-133. The run list has no per-node glyph: SummarizeRunResults
+// renders "✗ <node>" when anything failed and "✓ <done chain>" otherwise.
+// Before option B a branch-taking condition was state=failed, so a run
+// that completed exactly as designed summarized as "✗ cond" — a green run
+// wearing a failure in the list. The branch-taker must land in the done
+// chain instead, while a condition that genuinely failed still fills the
+// failure cell.
+func TestLoadRunListRows_BranchedConditionIsNotAFailureCell(t *testing.T) {
+	session := scratchGraphSession(t)
+	run := mustCreateRun(t, session, condBranchGraph())
+
+	finish := func(nodeID, outcome string) {
+		t.Helper()
+		if cur, err := bus.ReadNodeStatus(session, run.ID, nodeID); err == nil && cur.State == bus.GraphNodePending {
+			mustTransition(t, session, run.ID, nodeID, bus.GraphNodeReady)
+		}
+		mustTransition(t, session, run.ID, nodeID, bus.GraphNodeRunning)
+		state := bus.GraphNodeDone
+		if outcome == bus.OutcomeFailure && nodeID != "cond" {
+			state = bus.GraphNodeFailed
+		}
+		if err := bus.TransitionGraphNode(session, run.ID, nodeID, state,
+			func(s *bus.GraphNodeStatus) { s.Outcome = outcome }); err != nil {
+			t.Fatalf("finish %s: %v", nodeID, err)
+		}
+	}
+	finish("a", bus.OutcomeSuccess)
+	finish("cond", bus.OutcomeFailure) // branch taken: done + failure outcome
+	finish("b", bus.OutcomeSuccess)
+
+	run.State = bus.GraphRunComplete
+	if err := bus.WriteGraphRun(session, run); err != nil {
+		t.Fatalf("WriteGraphRun: %v", err)
+	}
+
+	rowByID := func(sess, id string) RunListRow {
+		t.Helper()
+		for _, r := range LoadRunListRows(sess, time.Now()) {
+			if r.ID == id {
+				return r
+			}
+		}
+		t.Fatalf("run %s missing from the run list", id)
+		return RunListRow{}
+	}
+	got := rowByID(session, run.ID)
+	if strings.Contains(got.Results, "✗") {
+		t.Errorf("completed run with a branched condition summarized as a failure: %q", got.Results)
+	}
+	if !strings.Contains(got.Results, "cond") {
+		t.Errorf("branched condition missing from the done chain: %q", got.Results)
+	}
+	if got.Done != 3 {
+		t.Errorf("done count %d, want 3 — a branch-taker counts as done", got.Done)
+	}
+
+	// Negative control: a condition that genuinely failed to evaluate must
+	// still fill the failure cell, or real breakage becomes invisible.
+	session2 := session
+	run2 := mustCreateRun(t, session2, condBranchGraph())
+	if cur, err := bus.ReadNodeStatus(session2, run2.ID, "cond"); err == nil && cur.State == bus.GraphNodePending {
+		mustTransition(t, session2, run2.ID, "cond", bus.GraphNodeReady)
+	}
+	mustTransition(t, session2, run2.ID, "cond", bus.GraphNodeRunning)
+	if err := bus.TransitionGraphNode(session2, run2.ID, "cond", bus.GraphNodeFailed,
+		func(s *bus.GraphNodeStatus) {
+			s.Outcome = bus.OutcomeFailure
+			s.Output = "condition evaluation error: unknown condition type bogus"
+		}); err != nil {
+		t.Fatalf("fail cond: %v", err)
+	}
+	if res := rowByID(session2, run2.ID).Results; !strings.Contains(res, "✗ cond") {
+		t.Errorf("unevaluatable condition lost its failure cell: %q", res)
+	}
+}

@@ -440,7 +440,7 @@ func graphStatus(args []string) {
 		// repeat the red-failed mistake — see GraphNodeStatus.Branched.
 		for i := range g.Nodes {
 			n := &g.Nodes[i]
-			if st := statuses[n.ID]; st != nil && bus.ConditionTookBranch(n.Type, st.State) {
+			if st := statuses[n.ID]; st != nil && bus.ConditionTookBranch(n.Type, st.State, st.Outcome) {
 				st.Branched = true
 			}
 		}
