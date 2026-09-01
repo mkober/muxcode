@@ -11,7 +11,7 @@ Tracking: _(no GitHub issue yet)_
 ### Observed 2026-08-31 — caught before it ran
 
 Run `1788225109-req-code-pr-deb2914a` failed at `commit` (the `phase-progress` guard declined a
-doc-only tree, correctly — see [`MUX-131`](./MUX-131-spawn-implement-output-never-ported.md)). The
+doc-only tree, correctly — see [`MUX-131`](../backlog/MUX-131-spawn-implement-output-never-ported.md)). The
 proposed recovery was:
 
 ```
@@ -69,8 +69,13 @@ writes as the commit gates do for git.
 
 ### Acceptance criteria
 
-- [ ] A retry whose `--from` target is dominated by a satisfied `wait_human` gate either re-arms that
-      gate or refuses, naming the gate — it must never consume the prior approval silently
+- [ ] A retry whose `--from` target is dominated by a satisfied `wait_human` gate **re-arms that gate and
+      resumes there**, naming the gate and its original approval time in the output — it must never
+      consume the prior approval, and never re-target silently
+- [ ] `TestExecRetryBelowGateConsumesStaleApproval`'s assertions are **inverted** by this phase: the gate
+      re-arms, the `approved` marker is gone, the gated node does **not** re-fire unapproved, and edit
+      receives a **second** `graph-approval` request. The characterization test is the fix's acceptance
+      test read backwards — update it rather than deleting it, so the hole cannot silently return
 - [ ] Re-arming purges the `approved` marker exactly as a normal gate dispatch does, so a fresh
       `graph approve` is required
 - [ ] The refusal/re-arm decision is visible in `graph status` and in a lifecycle event, not only on
@@ -98,17 +103,40 @@ writes as the commit gates do for git.
 
 ### Phase 1: Pin the hole
 
-- [ ] Test asserting the **current** behaviour: retry from a node below a satisfied gate re-executes it
-      with no fresh approval — a characterization test, green before the fix
-- [ ] Confirm `TestExecHumanGateRetryRequiresFreshApproval` still passes alongside it, demonstrating the
-      two cases are genuinely different paths
+- [x] Test asserting the **current** behaviour: retry from a node below a satisfied gate re-executes it
+      with no fresh approval — a characterization test, green before the fix.
+      `TestExecRetryBelowGateConsumesStaleApproval` (`bus/graph_exec_test.go:623`) builds the incident
+      shape (`a → gate → c`, approve, fail `c`, retry from `c`) and asserts the gate stays `done`, the
+      `approved` marker **survives**, `c` re-fires on it, and **edit receives exactly one**
+      `graph-approval` request — the retry never asks again. Its comment states Phase 2 must invert
+      these assertions, so it cannot be mistaken for desired behaviour
+- [x] Confirm `TestExecHumanGateRetryRequiresFreshApproval` still passes alongside it, demonstrating the
+      two cases are genuinely different paths — both PASS in the same run
 
 ### Phase 2: Dominance check on retry
 
+**Decision (maintainer, 2026-08-31): re-arm the gate and resume there.** A retry whose `--from` target
+is dominated by a satisfied `wait_human` does not start at the target — it re-dispatches the gate,
+purging the approval, and waits for a fresh one before anything downstream fires. Chosen over refusing
+because the user cannot accidentally skip the gate: the safe path is the default path, not a second
+command they have to know to type.
+
+The cost is that `--from` no longer starts exactly where asked, so **the re-targeting must be stated in
+the output, never silent** — the run visibly resumes at the gate.
+
 - [ ] Compute which `wait_human` gates dominate the `--from` target, reusing the dominance logic behind
       `nodeRequiresGate` rather than writing a second one
-- [ ] Decide and record: re-arm the gate automatically, or refuse and tell the user which node to retry
-      from instead
+- [ ] Re-target the retry to the dominating gate: reset from the gate, purge its `approved` marker, and
+      let normal dispatch re-request approval
+- [ ] **Say so in the output** — name the gate and its original approval time, as in the decision above.
+      A silent re-target trades one surprise for another
+- [ ] Resolve **which** gate when several dominate: nearest to the target, or outermost. Nearest is the
+      minimum re-work; outermost is the most conservative. Record the choice and why
+- [ ] Decide what happens to nodes **between** the gate and the original target — they are downstream of
+      the gate, so a naive reset re-runs them. In the incident the gate sits directly before `commit` so
+      the question does not arise; it will in other templates. Re-running an `implement` spawn to reach a
+      commit would be expensive and is exactly the waste [`MUX-131`](../backlog/MUX-131-spawn-implement-output-never-ported.md)
+      Defect B describes
 - [ ] Surface the outcome in `graph status` and a lifecycle event
 
 ### Phase 3: Negative controls
@@ -128,4 +156,19 @@ writes as the commit gates do for git.
 
 ## Status
 
-Backlog
+In Progress — moved to `drafts/` 2026-08-31 on branch `MUX-132-graph-retry-launders-gate-approval`.
+Sequenced first because the defect it describes sits on the recovery path for the failed run
+`1788225109-req-code-pr-deb2914a`: recovering that run via `graph retry` is exactly the operation that
+can consume a stale approval.
+
+**Phase 1 complete, 2/2** — the hole is pinned by a characterization test that is green *before* the
+fix, alongside the existing gate-retry test, proving the two are different code paths. Verified from
+the primary artifact (`go test -count=1 -v ./...`, exit 0, **2455 PASS / 0 FAIL**) with verbatim
+`--- PASS:` lines for both.
+
+Worth recording: an **earlier full-suite run in the same minute reported exit 0 and 2454 PASS with the
+new test absent from its output entirely** — green, and proving nothing about the test in question.
+The 2454 → 2455 delta is the only thing that distinguishes them. A pass count is not coverage; the
+delta matching the one added test is what makes it evidence.
+
+Phases 2–4 remain open.

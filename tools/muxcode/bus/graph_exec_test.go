@@ -609,6 +609,76 @@ func TestExecHumanGateRetryRequiresFreshApproval(t *testing.T) {
 	}
 }
 
+// TestExecRetryBelowGateConsumesStaleApproval is the MUX-132 Phase 1
+// characterization test: it pins the CURRENT hole and is green BEFORE the
+// fix. RetryGraphRun resets only the downstream set, and the approval
+// purge lives in the gate's dispatch path — so a retry whose --from
+// target sits below a satisfied wait_human gate never re-arms the gate,
+// and the mutating node re-fires on an approval granted for different
+// content (observed 2026-08-31: retry --from commit after the tree
+// changed post-approval). TestExecHumanGateRetryRequiresFreshApproval
+// covers the retry that re-enters the gate itself; this is the sibling
+// path that test cannot see. The Phase 2 dominance check must invert
+// these assertions: re-arm the gate (or refuse the retry) instead.
+func TestExecRetryBelowGateConsumesStaleApproval(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{
+			{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "ship it"},
+		},
+		Edges: []Edge{{From: "a", To: "gate"}, {From: "gate", To: "c"}},
+	}
+	run := createTestRun(t, g)
+
+	// First pass: gate approved, then the gated node fails (the incident shape).
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "c", OutcomeFailure)
+	step(t, runTestSession, run.ID)
+	got, _ := ReadGraphRun(runTestSession, run.ID)
+	if got.State != GraphRunFailed {
+		t.Fatalf("run state %q, want failed after c fails", got.State)
+	}
+
+	// Retry from c — below the gate, so the gate is never reset.
+	if err := RetryGraphRun(runTestSession, run.ID, "c"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeDone {
+		t.Fatalf("gate state %q after retry below it, want done — upstream is never reset", s)
+	}
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "gate", "approved")); err != nil {
+		t.Fatalf("approved marker gone (%v) — the purge only runs on gate dispatch", err)
+	}
+
+	// Next tick: the gated node re-fires with nobody approving.
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodeRunning {
+		t.Fatalf("c state %q after tick, want running — the hole re-fires it on the stale approval", s)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeDone {
+		t.Fatalf("gate state %q after tick, want done — it never re-arms", s)
+	}
+	edit, _ := Peek(runTestSession, "edit")
+	var approvals int
+	for _, m := range edit {
+		if m.Action == "graph-approval" && strings.Contains(m.Payload, run.ID) {
+			approvals++
+		}
+	}
+	if approvals != 1 {
+		t.Fatalf("edit received %d graph-approval requests for this run, want exactly 1 — the retry never asks again", approvals)
+	}
+}
+
 func TestExecConditionNode(t *testing.T) {
 	g := &Graph{
 		Name:  "t",
