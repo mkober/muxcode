@@ -244,11 +244,11 @@ Option 1 or 2 also fixes the workflow-state churn; option 3 alone does not.
 
 ### Acceptance criteria
 
-- [ ] One review completion produces exactly one `verify-spec` request to plan, regardless of how many other messages edit receives before draining its inbox
-- [ ] Plan replying to edit while a review message sits unconsumed does not re-fire the transition or `notifyPlanOnReview()`
-- [ ] `TransitionWorkflow(StateReviewed)` fires once per actual review completion
-- [ ] A genuine second review completion (new review→edit message) still fires a new `verify-spec`
-- [ ] Existing daemon and workflow tests still pass
+- [x] One review completion produces exactly one `verify-spec` request to plan, regardless of how many other messages edit receives before draining its inbox — pinned end-to-end: *"exactly one verify-spec fired for one review completion"*
+- [x] Plan replying to edit while a review message sits unconsumed does not re-fire the transition or `notifyPlanOnReview()` — *"plan's reply to edit did not re-fire verify-spec"*
+- [x] `TransitionWorkflow(StateReviewed)` fires once per actual review completion — *"one plan-verify lifecycle row"* after the first completion, *"two plan-verify lifecycle rows — one transition per completion"* after the second
+- [x] A genuine second review completion (new review→edit message) still fires a new `verify-spec` — *"second review completion fired exactly one more verify-spec"*, with the reviewed marker rotated to the new ID. This is the control that stops the gate from being satisfied by never firing
+- [x] Existing daemon and workflow tests still pass — suite green in the main checkout
 - [ ] **No `verify-spec` fires when nothing moved** — the self-feeding loop in item 10, where the verification pass's own doc edit requests the next verification. Cheap and separable, and worth landing even if the once-per-completion gate slips. **Amended 2026-08-31:** this was originally written as *"when the only changed file is the active spec itself."* The fire-11 case refutes that shape — see [New evidence](#this-constrains-an-existing-acceptance-criterion). Suppression must key on **state movement**, not filename shape
 - [ ] **Negative control:** a genuine review completion that changes source files *and* touches the active spec still fires — a fix that suppresses on "spec was touched" rather than "nothing moved" cannot pass
 - [ ] **Negative control (fire-11 shape):** a fire whose only changed file is the active spec but where the **graph run state changed** still fires. A working-tree fingerprint alone fails this; run state must be part of the comparison
@@ -293,10 +293,10 @@ Option 1 or 2 also fixes the workflow-state churn; option 3 alone does not.
 
 ### Phase 2: Integration test
 
-- [ ] Create `scripts/test-verify-spec-refire.sh` (or extend an existing daemon integration script)
-- [ ] Test: seed edit's inbox with one review response, send two unrelated messages to edit → assert exactly one `verify-spec` lands in plan's inbox
-- [ ] Test: append a second review response → assert a second `verify-spec` fires
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-verify-spec-refire.sh` (or extend an existing daemon integration script)
+- [x] Test: seed edit's inbox with one review response, send two unrelated messages to edit → assert exactly one `verify-spec` lands in plan's inbox — plus a check that the daemon **observably processed** the unrelated growth, so the assertion cannot pass by that growth never being seen
+- [x] Test: append a second review response → assert a second `verify-spec` fires
+- [x] Run the script and verify all checks pass — 2026-09-01 11:35:40: **20 passed / 0 failed / exit 0**, floor met at 19 checks executed (19 content checks + the floor's own, so the floor equals the achievable maximum). The run invoked `/tmp/test-verify-spec-refire.sh`, verified **byte-identical** to the repo copy, so it covers the committed script
 
 ## Deferred — minor, not phase-scoped
 
@@ -321,15 +321,30 @@ Found by the plan agent on 2026-08-13 while receiving the echo storm first-hand 
 
 ## Status
 
-In Progress — moved to `drafts/` 2026-08-31 and folded in
-[`MUX-127`](../backlog/MUX-127-review-completion-routing.md) Defect B as new evidence; the fire-11 case
-amended one acceptance criterion and added three.
+In Progress — **Phase 1 and Phase 2 both complete; 7 items remain.**
 
-**Phase 1 complete, 4/4** (2026-08-31). The once-per-completion gate is built, fail-closed on its
-marker-write error path, and covered by a negative control with both withhold and recovery halves.
-Verified against the primary artifact — `./test.sh` **exit 0**, **2652 assertions passing, 0 failing**,
-with verbatim `--- PASS:` lines for all six MUX-007 tests — not from an agent's summary. The gate's
-own error path had shipped a defect past a fully green suite; that is now closed and pinned.
+The once-per-completion gate works and is proven end-to-end. `scripts/test-verify-spec-refire.sh` ran
+2026-09-01 11:35:40 at **20 passed / 0 failed / exit 0**, floor met at 19 checks executed — 19 content
+checks plus the floor's own, so the floor equals the achievable maximum. The run invoked
+`/tmp/test-verify-spec-refire.sh`, verified **byte-identical** to the repo copy, so it covers the
+committed script.
 
-Phase 2 (integration test) remains open. One minor item is [deferred](#deferred--minor-not-phase-scoped)
-outside the phase checkboxes.
+Its load-bearing assertions: exactly one `verify-spec` per completion; plan's own reply does **not**
+re-fire it; an auto-CC'd `review→test` response fires nothing (the addressee filter); unrelated inbox
+growth that the daemon **observably processed** still fires nothing; and a genuine second completion
+fires exactly once more with the marker rotated — the control that stops the gate passing by never
+firing at all.
+
+**What remains — and it is a different defect from the one now fixed.** Phase 1 closed the
+*refire* loop. Four open criteria concern the **changed-files list**, which is still uncorrelated with
+the active spec:
+
+- no fire when nothing moved (needs a state-movement discriminator, not a filename test — see the
+  fire-11 case, which a filename rule would have suppressed);
+- the two negative controls that keep such a rule from over-suppressing;
+- changed-files paths provenance-checked to the repo — the criterion behind impact item 8, where an
+  echo named the user's credentials file and the receiving agent declined to read it *by judgement*,
+  which is not a control.
+
+Two further items concern the active-spec pointer after an automated move, and one deferred minor
+(`reviewed-transition.last` is not cleared by `purgeStaleFiles`).
