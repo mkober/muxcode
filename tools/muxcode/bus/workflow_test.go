@@ -203,28 +203,83 @@ func TestWorkflowStateJSON(t *testing.T) {
 	}
 }
 
-func TestHasNewMessageFrom(t *testing.T) {
+// appendInboxMessage writes a message straight into a role's inbox file,
+// bypassing Send so tests control exactly what sits unconsumed.
+func appendInboxMessage(t *testing.T, session, role string, m Message) {
+	t.Helper()
+	data, err := EncodeMessage(m)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	f, err := os.OpenFile(InboxPath(session, role), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open inbox: %v", err)
+	}
+	defer f.Close()
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		t.Fatalf("write inbox: %v", err)
+	}
+}
+
+func TestNewestMessageIDFrom(t *testing.T) {
 	useTempBusDir(t)
-	session := "test-has-msg"
+	session := "test-newest-msg"
 	os.MkdirAll(filepath.Join(BusDir(session), "inbox"), 0755)
 	os.MkdirAll(filepath.Join(BusDir(session), "lock"), 0755)
 
-	// No messages — should return false
-	if HasNewMessageFrom(session, "edit", "review") {
-		t.Error("expected false with empty inbox")
+	if id := NewestMessageIDFrom(session, "edit", "review"); id != "" {
+		t.Errorf("expected empty ID with empty inbox, got %q", id)
 	}
 
-	// Add a message from review
-	msg := NewMessage("review", "edit", "response", "review", "LGTM", "req-1")
-	data, _ := EncodeMessage(msg)
-	os.WriteFile(InboxPath(session, "edit"), append(data, '\n'), 0644)
-
-	if !HasNewMessageFrom(session, "edit", "review") {
-		t.Error("expected true with review message in inbox")
+	// A CC copy (review→test) in edit's inbox is not a completion report
+	cc := NewMessage("review", "test", "response", "review", "review of test task", "test-req-1")
+	appendInboxMessage(t, session, "edit", cc)
+	if id := NewestMessageIDFrom(session, "edit", "review"); id != "" {
+		t.Errorf("CC copy addressed to test must not match, got %q", id)
 	}
 
-	// Check for message from a different sender
-	if HasNewMessageFrom(session, "edit", "build") {
-		t.Error("expected false for build sender")
+	m1 := NewMessage("review", "edit", "response", "review", "LGTM", "req-1")
+	appendInboxMessage(t, session, "edit", m1)
+	if id := NewestMessageIDFrom(session, "edit", "review"); id != m1.ID {
+		t.Errorf("expected %q, got %q", m1.ID, id)
+	}
+
+	// A second completion supersedes the first
+	m2 := NewMessage("review", "edit", "response", "review", "LGTM again", "req-2")
+	appendInboxMessage(t, session, "edit", m2)
+	if id := NewestMessageIDFrom(session, "edit", "review"); id != m2.ID {
+		t.Errorf("expected newest %q, got %q", m2.ID, id)
+	}
+
+	// Later mail from another sender does not change the newest review ID
+	b := NewMessage("build", "edit", "response", "build", "Build OK", "req-3")
+	appendInboxMessage(t, session, "edit", b)
+	if id := NewestMessageIDFrom(session, "edit", "review"); id != m2.ID {
+		t.Errorf("unrelated sender changed result: expected %q, got %q", m2.ID, id)
+	}
+	if id := NewestMessageIDFrom(session, "edit", "deploy"); id != "" {
+		t.Errorf("expected empty ID for sender with no messages, got %q", id)
+	}
+}
+
+func TestReviewedMarkerRoundtrip(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-reviewed-marker"
+	os.MkdirAll(BusDir(session), 0755)
+
+	if got := ReadReviewedMarker(session); got != "" {
+		t.Errorf("expected empty marker before first write, got %q", got)
+	}
+	if err := WriteReviewedMarker(session, "12345-review-abcd1234"); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	if got := ReadReviewedMarker(session); got != "12345-review-abcd1234" {
+		t.Errorf("expected marker roundtrip, got %q", got)
+	}
+	if err := WriteReviewedMarker(session, "12399-review-ffff0000"); err != nil {
+		t.Fatalf("overwrite marker: %v", err)
+	}
+	if got := ReadReviewedMarker(session); got != "12399-review-ffff0000" {
+		t.Errorf("expected overwritten marker, got %q", got)
 	}
 }

@@ -156,6 +156,58 @@ if size > prev && size > 0 {
     ten minutes, two genuine, four echoes. Nothing a receiving agent can do is a mitigation —
     only the daemon-side gate below is.
 
+### New evidence (2026-08-31): a 14-fire census, and the case that rules out the cheap fix
+
+Folded in from [`MUX-127`](../backlog/MUX-127-review-completion-routing.md) Defect B, which was found
+independently and then recognised as this defect. MUX-127 records it as **new evidence for MUX-007,
+not a new defect**, and names these two specs as probable merge targets.
+
+**The census: 14 `verify-spec` fires in ~50 minutes, 2 genuine.** The daemon's own loop detector
+flagged it twice (`loop-detected plan type=message` at 13:20:51 and 13:51:37).
+
+| Fire | Named changed file | Genuine? |
+|------|--------------------|----------|
+| 1 | `bus/pane_test.go` — inside a spawn worktree under `$TMPDIR`, **absent from the repo** | Partly — real work existed, but not at the named path |
+| 2–4 | `bus/spawn.go`, `bus/spawn_test.go` — MUX-120 work, unrelated to the active spec | No |
+| 5–10 | plan's own edits to MUX-117 / MUX-123 / MUX-126 | No |
+| 11 | MUX-117 doc edit — but the graph run had transitioned to `failed` underneath | **Yes** |
+| 12–14 | plan's own MUX-117 edit, run already terminal, code tree byte-identical | No |
+
+**This census confirms the root cause above rather than competing with it.** Fires 13–14 arrived
+*after* plan stopped writing docs — the cycle does not need continuous input to sustain itself, which
+is exactly what "fires on any growth of edit's inbox while any unconsumed review→edit message exists"
+predicts. The 2026-08-13 mechanism explains the 2026-08-31 observation.
+
+Two things the census adds that this spec did not previously have:
+
+**B1 — the changed-files list is provenance-blind.** Fire 1 named an absolute path inside a spawn's
+detached-HEAD worktree (`$TMPDIR/muxcode-spawn-muxcode/spawn-<hex>/…`). Read literally, it asserted a
+file the branch did not contain. **A verifier that trusted it would have checked off a phase against
+code absent from the repo** — the failure mode is a false `- [x]`, not merely a wasted fire.
+
+**B2 — plan's own writes are indistinguishable from implementation progress.** Nothing marks a changed
+file as *"the verifier wrote this in response to the last fire."* The signal that work progressed and
+the signal that plan responded are the same signal.
+
+#### This constrains an existing acceptance criterion
+
+The criterion below — *"No `verify-spec` fires when the only changed file is the active spec itself"* —
+**would have suppressed fire 11**, the one fire in fourteen that mattered. Fire 11 named a doc edit as
+its only change, yet was genuine: the graph run had transitioned to `failed` underneath it, and that
+fire is how MUX-127's Defect A was discovered at all.
+
+So filename shape is the wrong discriminator. Suppression must key on **state movement**. The
+discriminator fitting all 14 fires: every echo had a **byte-identical code tree**; the genuine one did
+not. Note that fire 11's movement was a *graph run state* transition rather than a file edit, so a
+working-tree fingerprint alone is insufficient — run state must be part of the comparison.
+
+#### Secondary cost: suppressed time recording
+
+Each fire also asks plan to record branch active time — itself a doc write, and therefore more fuel.
+Plan began declining that write on echo fires, so the ledger drifted from the recorded value (17m vs
+12m in the doc). Correct behaviour and loop-avoiding behaviour are in direct conflict, which indicates
+the gate is misplaced rather than that the agent is choosing badly.
+
 ### Related: a dangling pointer after an automated spec move
 
 Observed live 2026-08-28 17:12. When commit performs a spec's `drafts/` → `completed/` move (as in
@@ -197,8 +249,10 @@ Option 1 or 2 also fixes the workflow-state churn; option 3 alone does not.
 - [ ] `TransitionWorkflow(StateReviewed)` fires once per actual review completion
 - [ ] A genuine second review completion (new review→edit message) still fires a new `verify-spec`
 - [ ] Existing daemon and workflow tests still pass
-- [ ] **No `verify-spec` fires when the only changed file is the active spec itself** — the self-feeding loop in item 10, where the verification pass's own doc edit requests the next verification. Cheap and separable, and worth landing even if the once-per-completion gate slips
-- [ ] **Negative control:** a genuine review completion that changes source files *and* touches the active spec still fires — a fix that suppresses on "spec was touched" rather than "spec was the *only* change" cannot pass
+- [ ] **No `verify-spec` fires when nothing moved** — the self-feeding loop in item 10, where the verification pass's own doc edit requests the next verification. Cheap and separable, and worth landing even if the once-per-completion gate slips. **Amended 2026-08-31:** this was originally written as *"when the only changed file is the active spec itself."* The fire-11 case refutes that shape — see [New evidence](#this-constrains-an-existing-acceptance-criterion). Suppression must key on **state movement**, not filename shape
+- [ ] **Negative control:** a genuine review completion that changes source files *and* touches the active spec still fires — a fix that suppresses on "spec was touched" rather than "nothing moved" cannot pass
+- [ ] **Negative control (fire-11 shape):** a fire whose only changed file is the active spec but where the **graph run state changed** still fires. A working-tree fingerprint alone fails this; run state must be part of the comparison
+- [ ] **Changed-files paths are provenance-checked (B1)** — a path outside the repo working tree (e.g. inside a spawn worktree under `$TMPDIR`) is never presented to the verifier as a repo file. A verifier must not be able to check off a phase against code absent from the branch
 
 ### Key files
 
@@ -212,8 +266,30 @@ Option 1 or 2 also fixes the workflow-state churn; option 3 alone does not.
 
 ### Phase 1: Once-per-completion gate
 
-- [ ] Implement the chosen gate (last-seen review message ID or growth-delta inspection)
-- [ ] Unit tests: unrelated inbox growth does not re-fire; a new review message does; state transitions once per completion
+- [x] Implement the chosen gate (last-seen review message ID or growth-delta inspection) — **option 1
+      built**: `NewestMessageIDFrom` (with an `m.To == role` addressee filter that kills the auto-CC
+      false trigger) + on-disk `reviewed-transition.last` written via `atomicWriteFile`, wired at
+      `daemon.go:381`, zero orphaned `HasNewMessageFrom` callers
+- [x] Unit tests: unrelated inbox growth does not re-fire; a new review message does; state transitions
+      once per completion — all three covered and passing (`TestCheckInboxes_VerifySpecOncePerReviewCompletion`
+      asserts all three in sequence, including the *positive* control that a genuine second completion
+      fires; plus `TestCheckInboxes_ReviewCCDoesNotFire`, `TestCheckInboxes_ReviewedMarkerSurvivesDaemonRestart`,
+      `TestNewestMessageIDFrom`, `TestReviewedMarkerRoundtrip`). Verified green 2026-08-31: `tools/muxcode`
+      **2027 PASS / 0 FAIL / 1 SKIP**, exit 0, all 4 packages
+- [x] **Must-fix resolved — the gate was defeated on its own error path.** Found by review and
+      confirmed independently: `WriteReviewedMarker` failure logged to stderr and **fell through**,
+      firing `TransitionWorkflow` + `notifyPlanOnReview` anyway, leaving the marker stale so every
+      subsequent poll re-fired — this spec's own storm, resurrected. Now **fail-closed**: the
+      transition sits in an `else`, so it runs only on a successful write, and the write is atomic
+      (tmp+rename). A withheld completion is retried on the next inbox growth once writable
+- [x] **Negative control for the above** — `TestCheckInboxes_MarkerWriteFailureWithholdsTransition`
+      injects a real failure (a directory at the marker path defeats the rename) and asserts **both**
+      halves: zero transitions and zero `verify-spec` while broken, then exactly one fire and
+      `StateReviewed` after recovery — triggered by *unrelated* growth, proving the withheld completion
+      is retried rather than lost. The recovery half is load-bearing: a withhold-only test passes just
+      as well on a gate that is permanently stuck, trading a storm for silent deafness.
+      **Its absence is why a 2652-assertion green suite still shipped the defect** — every prior test
+      exercised the happy path, so the error path had no coverage at all
 
 ### Phase 2: Integration test
 
@@ -222,10 +298,38 @@ Option 1 or 2 also fixes the workflow-state churn; option 3 alone does not.
 - [ ] Test: append a second review response → assert a second `verify-spec` fires
 - [ ] Run the script and verify all checks pass
 
+## Deferred — minor, not phase-scoped
+
+Tracked for close-out but deliberately outside the phase checkboxes: these sit under an `##` heading,
+so `SpecPhases` assigns them to no phase and they cannot block a per-phase commit, while `SpecOpenItems`
+still counts them so the spec cannot close with them open.
+
+- [ ] `reviewed-transition.last` is not cleared by `purgeStaleFiles` (`bus/setup.go:150`). Low severity —
+      message IDs are unique, so a surviving marker cannot suppress a legitimate transition — but it is
+      stale session data outliving its session. Raised during Phase 1 verification; orthogonal to the
+      once-per-completion gate, so blocking Phase 1 on it would be over-strict
+
 ## Provenance
 
 Found by the plan agent on 2026-08-13 while receiving the echo storm first-hand during branch-time-tracking verification; confirmed via `muxcode diagnose review` (idle/empty during the storm) and reading `checkInboxes()` + `HasNewMessageFrom()`. The bug is in committed code — today's working-tree change to `notifyPlanOnReview()` only touched the message body.
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-007-verify-spec-stale-review-refire | 29m | 2026-08-31 21:41 |
+
 ## Status
 
-Backlog
+In Progress — moved to `drafts/` 2026-08-31 and folded in
+[`MUX-127`](../backlog/MUX-127-review-completion-routing.md) Defect B as new evidence; the fire-11 case
+amended one acceptance criterion and added three.
+
+**Phase 1 complete, 4/4** (2026-08-31). The once-per-completion gate is built, fail-closed on its
+marker-write error path, and covered by a negative control with both withhold and recovery halves.
+Verified against the primary artifact — `./test.sh` **exit 0**, **2652 assertions passing, 0 failing**,
+with verbatim `--- PASS:` lines for all six MUX-007 tests — not from an agent's summary. The gate's
+own error path had shipped a defect past a fully green suite; that is now closed and pinned.
+
+Phase 2 (integration test) remains open. One minor item is [deferred](#deferred--minor-not-phase-scoped)
+outside the phase checkboxes.

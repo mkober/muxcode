@@ -202,7 +202,7 @@ Test: `cd tools/muxcode && go test ./...`
 | `bus/proc.go` | `StartProc()`, `CheckProcAlive()`, `RefreshProcStatus()`, `StopProc()`, `CleanFinished()` |
 | `bus/spawn.go` | `StartSpawn()`, `StopSpawn()`, `RefreshSpawnStatus()`, `GetSpawnResult()`, `CleanFinishedSpawns()` |
 | `bus/webhook.go` | `ServeWebhook()`, `WriteWebhookPid()`, `ReadWebhookPid()`, `IsWebhookRunning()`, `StopWebhookProcess()` |
-| `bus/workflow.go` | `WorkflowState` (16 states including `StateRunning`, `StateRunFail`, `StateWatching`, `StateWatchFail`), `WorkflowStateEntry`, `ReadWorkflowState()`, `TransitionWorkflow()`, `WithFiles()`, `WithOutcome()`, `FormatWorkflowState()`, `FormatWorkflowStateCompact()`, `WorkflowStateColor()`, `HasNewMessageFrom()` |
+| `bus/workflow.go` | `WorkflowState` (16 states including `StateRunning`, `StateRunFail`, `StateWatching`, `StateWatchFail`), `WorkflowStateEntry`, `ReadWorkflowState()`, `TransitionWorkflow()`, `WithFiles()`, `WithOutcome()`, `FormatWorkflowState()`, `FormatWorkflowStateCompact()`, `WorkflowStateColor()`, `NewestMessageIDFrom()`, `ReadReviewedMarker()`/`WriteReviewedMarker()` (once-per-completion reviewed gate, MUX-007) |
 | `bus/subscribe.go` | `Subscription` (with `Conditions` map), `AddSubscription()`, `MatchSubscriptions()` (accepts `*ChainContext` for condition evaluation), `FireSubscriptions()` (accepts `*ChainContext`), `ExpandSubscriptionMessage()` (supports `${branch}`/`${changed_files}`) |
 | `bus/context.go` | `ContextFilesForRole()`, `AllContextFilesForRole()`, `FormatContextPrompt()`, `FormatContextList()` |
 | `bus/detect.go` | `DetectProject()`, `AutoContextFiles()`, `conventionText()`, `FormatDetectOutput()` |

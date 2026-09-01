@@ -377,13 +377,20 @@ func (d *Daemon) checkInboxes() {
 		prev := d.inboxSizes[role]
 
 		if size > prev && size > 0 {
-			// Workflow: detect review→edit messages for reviewed transition
-			if role == "edit" && bus.HasNewMessageFrom(d.session, "edit", "review") {
-				bus.TransitionWorkflow(d.session, bus.StateReviewed, "daemon:review-complete",
-					bus.WithOutcome("review", "complete"))
+			// Reviewed transition: once per review completion (MUX-007) — see WriteReviewedMarker
+			if role == "edit" {
+				if id := bus.NewestMessageIDFrom(d.session, "edit", "review"); id != "" && id != bus.ReadReviewedMarker(d.session) {
+					if err := bus.WriteReviewedMarker(d.session, id); err != nil {
+						// fail closed — see WriteReviewedMarker
+						fmt.Fprintf(os.Stderr, "  [daemon] reviewed marker write failed — transition withheld: %v\n", err)
+					} else {
+						bus.TransitionWorkflow(d.session, bus.StateReviewed, "daemon:review-complete",
+							bus.WithOutcome("review", "complete"))
 
-				// Notify plan agent to verify progress against active spec
-				d.notifyPlanOnReview()
+						// Notify plan agent to verify progress against active spec
+						d.notifyPlanOnReview()
+					}
+				}
 			}
 
 			// Only notify if the inbox has actionable (request-type) messages.

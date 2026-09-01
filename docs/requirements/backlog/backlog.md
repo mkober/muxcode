@@ -53,7 +53,13 @@ open items against the active spec.
 
 ### In progress
 
-None.
+| ID | Spec | Since | State |
+|----|------|-------|-------|
+| MUX-007 | [`MUX-007-verify-spec-stale-review-refire.md`](../drafts/MUX-007-verify-spec-stale-review-refire.md) | 2026-08-31 | Moved to `drafts/`; [`MUX-127`](./MUX-127-review-completion-routing.md) Defect B folded in as evidence. No implementation phase started |
+
+Its rows remain in [Defects](#defects--prioritized) (rank 2) and
+[Reliability & observability](#reliability--observability) with `../drafts/` paths, rather than moving
+to the completed registry — the spec is in flight, not delivered.
 
 [`MUX-117`](../completed/MUX-117-pane-targeting-by-identity.md) closed and moved to
 [`completed/`](../completed/) on 2026-08-31 — 33/33 items, all five phases, verified by
@@ -73,7 +79,7 @@ corrupts it. Full summaries stay in the topic sections below; this table is the 
 | # | ID | Defect | Sev | Why here |
 |---|----|--------|-----|----------|
 | 1 | [`MUX-127`](./MUX-127-review-completion-routing.md) | Review failure routes nowhere; review success loops | High | Actively killing runs **now** — discarded 2 must-fix findings and buried the notice in 12 echoes |
-| 2 | [`MUX-007`](./MUX-007-verify-spec-stale-review-refire.md) | Verify-spec stale review refire | High | Same loop as MUX-127 Defect B, filed 2026-08-13 with the sharper mechanism. **Likely merge target** |
+| 2 | [`MUX-007`](../drafts/MUX-007-verify-spec-stale-review-refire.md) | Verify-spec stale review refire | High | **In progress** — MUX-127 Defect B folded in as evidence 2026-08-31. Filed 2026-08-13 with the sharper mechanism. **Likely merge target** |
 | 3 | [`MUX-112`](./MUX-112-idle-task-rescue-closes-live-work.md) | Idle-task rescue closes tasks still running | High | Silently wrong: marks live work complete, so the result is never awaited |
 | 4 | [`MUX-120`](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Spawned workers never receive their seeded task | High | Blocks every graph `spawn`/`map`; CLI path still has no recovery net |
 | 5 | [`MUX-124`](./MUX-124-lifecycle-since-truncated-by-limit.md) | `lifecycle show --since` answers the wrong question | High | The investigation tool lies — already caused MUX-123 to be nearly mis-filed |
@@ -107,7 +113,7 @@ subject*. Fixing either family together is likely cheaper than fixing its member
 | MUX-111 | [`MUX-111-harness-reply-miscorrelation.md`](./MUX-111-harness-reply-miscorrelation.md) | High | Harness answers a whole batch with one reply correlated to `msgs[len(msgs)-1]` (`harness/loop.go:276`, `:491`) — recipient, action, and correlation id all come from whatever arrived **last**. When that is a response rather than the request, `MarkResponded` never fires, the request never gains a receipt, and the backstop re-drives it forever; a self-addressed reply echo was also observed. Fix = select the answered request, filter self-addressed messages, define multi-request behaviour |
 | MUX-110 | [`MUX-110-harness-startup-tool-loop-exhaustion.md`](./MUX-110-harness-startup-tool-loop-exhaustion.md) | High | The open-ended startup message (`bus/launch.go:747`) has no completion predicate, so a 4B burns all `MaxTurns` and emits `(no response generated — tool loop exhausted)`; `isSingleShotRole()` never arms because it needs one *successful* tool execution. A prompt-shape defect, not a model-quality one — raising `MaxTurns` buys a longer loop, not a completion. **Multiplies with [MUX-111](./MUX-111-harness-reply-miscorrelation.md)**: that one makes the retry infinite, this one makes each retry cost a full budget |
 | MUX-006 | [`MUX-006-diagnose-false-clean-verdict.md`](./MUX-006-diagnose-false-clean-verdict.md) | High | `diagnose` collects `IsAlive` but no detector reads it — a dead agent gets "No issues detected" exit 0; add `checkAgentDead` first in `diagnosticChecks` |
-| MUX-007 | [`MUX-007-verify-spec-stale-review-refire.md`](./MUX-007-verify-spec-stale-review-refire.md) | High | `checkInboxes()` refires the reviewed-transition on any edit-inbox growth while an unconsumed review message exists — one review completion spawns unbounded `verify-spec` echoes |
+| MUX-007 | [`MUX-007-verify-spec-stale-review-refire.md`](../drafts/MUX-007-verify-spec-stale-review-refire.md) | High | `checkInboxes()` refires the reviewed-transition on any edit-inbox growth while an unconsumed review message exists — one review completion spawns unbounded `verify-spec` echoes |
 | MUX-008 | [`MUX-008-unverified-daemon-auto-restart.md`](./MUX-008-unverified-daemon-auto-restart.md) | High | `RestartLocalAgent()` fire-and-hope relaunch: no exit wait, no launch verification — add bounded exit poll + post-relaunch verification + orphan detection |
 | MUX-009 | [`MUX-009-response-echo-chain-retrigger.md`](./MUX-009-response-echo-chain-retrigger.md) | High | Non-hook `SendWakeUp` injects response payloads as prompts, re-firing chains on a delegation's own answer; never inject responses + responded-check in `HasActionableMessages` |
 | MUX-032 | [`MUX-032-loop-detector-granularity.md`](./MUX-032-loop-detector-granularity.md) | Medium | `DetectMessageLoop` fires on healthy edit↔commit traffic (3 false alerts, 0 real loops in one session): ping-pong counts correlated replies, tuple pass can't distinguish unrelated delegations on the overloaded `commit` action; fix = correlated-reply exemption + normalized-content repeat requirement, with storm negative controls |
