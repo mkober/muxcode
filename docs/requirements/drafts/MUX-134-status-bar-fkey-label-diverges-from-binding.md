@@ -126,7 +126,15 @@ windows generally; this is the label half specifically.
 
 - [x] Refresh the option when spawn membership changes — the daemon sweep re-derives every window's
       label each pass and writes only differences, so cleanup re-labels the survivors
-- [ ] Confirm no path leaves a stale `@muxcode_fkey` on a window whose slot changed
+- [x] Confirm no path leaves a stale `@muxcode_fkey` on a window whose slot changed — two independent
+      legs. **Sole writer:** the only `set-option … @muxcode_fkey` in the repo is
+      `provider_options.go:280`, inside `RefreshWindowFKeyLabels`; every other occurrence is a read
+      site (`launcher.go:950,959`, `tmux.conf:131,133`) or a comment, so no second path can strand a
+      label. **Slot change, not just a lost key:**
+      `TestRefreshWindowFKeyLabels_SlotShiftAfterCleanup` (`provider_options_test.go:246`) stubs a
+      surviving spawn at index 12 still carrying a stale `F12` and asserts it is rewritten to `F11`,
+      with `n == 1` and the already-correct `plan` window untouched — a sweep that blindly rewrote
+      every window would fail that second assertion
 
 ### Phase 4: Negative controls
 
@@ -161,7 +169,7 @@ sites now render `#{?@muxcode_fkey,…}` fed by a diff-only daemon sweep, pinned
 |---|---|---|
 | 1 · Pin the divergence | **2/2** | `TestWindowFKey_RawIndexDivergence` (new) + `TestWindowFKey_ByIndexNotPosition` (existing) |
 | 2 · Carry the key to the status bar | **3/3** | Both `F#I` sites replaced; absence asserted, not just presence of the conditional |
-| 3 · Keep it fresh | 1/2 | Diff-only sweep covers cleanup; the stale-option path is unconfirmed |
+| 3 · Keep it fresh | **2/2** | Sole writer proven by repo-wide grep; slot-shift F12→F11 pinned with a diff-only negative control |
 | 4 · Negative controls | 0/4 | |
 | 5 · Integration test | 0/5 | |
 
@@ -178,4 +186,11 @@ labelled key and assert the labelled window activates** — is Phase 5 work: bec
 `>/dev/null 2>&1 || true`, a format-string assertion alone would pass while the reported symptom (a
 keypress doing nothing) survived untouched.
 
-Open: Phase 3 (1), Phase 4 (4), Phase 5 (5), plus all 7 acceptance criteria.
+Phase 3 was closed the same day on the same standard: `go vet` clean and an uncached `-count=1 ./bus/`
+**in the main checkout** — 1826 passed / 0 failed, `--- PASS:
+TestRefreshWindowFKeyLabels_SlotShiftAfterCleanup`. The count moved 1825 → 1826, exactly the +1 the
+one new test should produce; that delta is the check that catches a test which silently never runs, so
+it is recorded rather than the bare "0 failed". The spawn's own `2073 pass` figure ran inside
+worktree `spawn-c413916e` and is again not the basis for the close.
+
+Open: Phase 4 (4), Phase 5 (5), plus all 7 acceptance criteria.

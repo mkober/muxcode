@@ -179,11 +179,7 @@ func TestWindowFKey_ByIndexNotPosition(t *testing.T) {
 	}
 }
 
-// Phase-1 reproduction pin for the observed 2026-09-01 layout: a
-// non-spawn window parked at index 11 with the session's only spawn at
-// 12. The raw-index F#I label ("F12") and the key that actually selects
-// the spawn ("F11") disagree — asserted explicitly so the divergence
-// itself stays pinned, not just the corrected mapping (MUX-134).
+// Observed 2026-09-01 (MUX-134): the spawn at index 12 is selected by F11, not the raw-index F12.
 func TestWindowFKey_RawIndexDivergence(t *testing.T) {
 	stubWindowList(t, "0:auto\n1:plan\n2:edit\n11:research\n12:spawn-aaa11111")
 
@@ -242,6 +238,39 @@ func TestRefreshWindowFKeyLabels_DiffsOnly(t *testing.T) {
 	}
 	if _, touched := set["s:0"]; touched {
 		t.Error("auto has no binding and no stale label but was written")
+	}
+}
+
+// A cleanup that shifts a surviving spawn's slot (second→first) must
+// rewrite its stale F12 to F11 — a slot CHANGE, not just a lost key (MUX-134 Phase 3).
+func TestRefreshWindowFKeyLabels_SlotShiftAfterCleanup(t *testing.T) {
+	stubWindowList(t, "1:F1:plan\n12:F12:spawn-bbb22222")
+	var calls [][]string
+	origRun := tmuxRunner
+	t.Cleanup(func() { tmuxRunner = origRun })
+	tmuxRunner = func(args ...string) error {
+		calls = append(calls, args)
+		return nil
+	}
+
+	n, err := RefreshWindowFKeyLabels("s")
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("changed = %d, want 1 (surviving spawn shifts F12→F11); calls: %v", n, calls)
+	}
+	set := map[string]string{}
+	for _, c := range calls {
+		if len(c) >= 6 && c[0] == "set-option" {
+			set[c[3]] = c[5]
+		}
+	}
+	if got, ok := set["s:12"]; !ok || got != "F11" {
+		t.Errorf("set-option for s:12 = %q (present=%v), want F11", got, ok)
+	}
+	if _, touched := set["s:1"]; touched {
+		t.Error("plan already correct at F1 but was rewritten — sweep must stay diff-only")
 	}
 }
 
