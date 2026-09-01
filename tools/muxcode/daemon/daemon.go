@@ -423,9 +423,17 @@ func (d *Daemon) checkInboxes() {
 //
 // Three Phase 3 controls gate the send (MUX-007):
 //
-//   - A pointer naming a missing spec withholds the fire — asking plan to
+//   - The spec pointer is presented only when it provably resolves inside
+//     the repo. The pointer is agent-written data like the changed-files
+//     list, and the message instructs a read of it — so an unprovable
+//     pointer (external path, or repoDir unavailable this tick) withholds
+//     the fire rather than passing the raw string through (review
+//     must-fix 2026-09-01: the old code only checked resolvABLE pointers,
+//     so an absolute external pointer sailed past when repoDir was "").
+//     A pointer naming a missing spec likewise withholds — asking plan to
 //     verify a file that is not there is the confusing downstream failure
-//     checkActiveSpec exists to report properly.
+//     checkActiveSpec exists to report properly. The movement marker is
+//     not written on a withheld fire, so the next completion retries.
 //   - The movement gate suppresses the fire when the state fingerprint is
 //     unchanged since the last one: nothing moved, so there is nothing to
 //     verify. Suppression requires positive evidence (a non-empty
@@ -454,11 +462,15 @@ func (d *Daemon) notifyPlanOnReview() {
 
 	repoDir := bus.SessionRepoDir(d.session)
 
-	if resolved := bus.ResolveSpecPath(repoDir, specPath); resolved != "" {
-		if _, err := os.Stat(resolved); err != nil {
-			bus.LogLifecycle(d.session, "warn", "daemon", "plan-verify-skipped", "spec missing: "+specPath)
-			return
-		}
+	resolved := bus.ResolveSpecPath(repoDir, specPath)
+	if resolved == "" {
+		bus.LogLifecycle(d.session, "warn", "daemon", "plan-verify-skipped",
+			"active spec pointer not provably inside the repo: "+specPath)
+		return
+	}
+	if _, err := os.Stat(resolved); err != nil {
+		bus.LogLifecycle(d.session, "warn", "daemon", "plan-verify-skipped", "spec missing: "+specPath)
+		return
 	}
 
 	fp := bus.VerifyMovementFingerprint(d.session, repoDir)

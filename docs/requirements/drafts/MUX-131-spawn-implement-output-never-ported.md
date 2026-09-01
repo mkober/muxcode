@@ -154,7 +154,7 @@ addresses harvesting a spawn's work.
       an explicit port step that lands its output before any downstream node runs
 - [x] A spawn that produced changes but failed to port them **fails the node** — it must not report
       `success` while its output is stranded
-- [ ] `req-code-pr` and `story-lifecycle` both walk a phase end-to-end with the work reaching the branch
+- [x] `req-code-pr` and `story-lifecycle` both walk a phase end-to-end with the work reaching the branch — both templates exercised in the one harness; `story-lifecycle` has 10 dedicated checks where it previously had none
       **NOT covered:** only `req-code-pr` is exercised end-to-end; `story-lifecycle`'s spawn `implement` has no test.
 - [x] No downstream node ever sees a branch missing the `implement` output
 - [x] **Negative control:** a spawn that legitimately produces no changes (verify-only pass, phase
@@ -171,7 +171,7 @@ addresses harvesting a spawn's work.
 - [x] Re-entering a spawn node reuses the **same** worker when it is alive, rather than starting a new one
 - [x] A full multi-phase run creates **one** `implement` worker, not one per iteration — asserted by
       counting spawns for the run, not by reading the code
-- [ ] The reused worker retains its conversation across iterations (no re-boot cost per phase)
+- [x] The reused worker retains its conversation across iterations (no re-boot cost per phase) — *"worker process retained across iterations — conversation kept, no re-boot"*, with the replacement control proving the observable distinguishes reuse from replacement
       **NOT asserted:** retention follows structurally from reusing the same process, but nothing pins it — and avoiding re-boot cost is the entire point of reuse.
 - [x] **Negative control:** when the previous worker is genuinely dead or unreachable, a fresh one is
       started — reuse must not wedge the run behind a corpse
@@ -435,14 +435,14 @@ and this phase is the same remedy applied to MUX-131 that Phase 3 was for MUX-00
       `req-code-pr` are exercised by one harness and cannot drift apart
 - [x] Raise the coverage floor to the new achievable maximum, and verify floor **equals** max so a — implemented as **equality** (`-eq 63`), stronger than asked: a `>=` floor lets newly added checks raise max above it, so a partially short-circuited run could still report green. Itemisation sums exactly to 63
       short-circuited run cannot report green
-- [ ] Run it and record passed/failed/exit code here — from the **main checkout**, not a spawn
+- [x] Run it and record passed/failed/exit code here — from the **main checkout**, not a spawn — `bash scripts/test-multi-phase-graph.sh` 2026-09-01 15:44:01 from the **main checkout**: **64 passed / 0 failed / exit 0**, *"coverage floor met and equals max (63 checks executed)"*. Script mtime 14:49:07 predates the run, so it covers the current script
       worktree (per A2, a run inside the tree under test proves nothing about the branch)
 
 ## Time Tracking
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-132-graph-retry-launders-gate-approval | 3h 0m | 2026-09-01 01:54 |
+| MUX-132-graph-retry-launders-gate-approval | 7h 34m | 2026-09-01 14:59 |
 
 **Attribution caveat.** The branch is `MUX-132-…`, not a MUX-131 branch: this spec became the active
 spec while work continued on the MUX-132 branch, so the recorded total covers MUX-132, MUX-133 and
@@ -451,53 +451,33 @@ row is kept honest by naming the branch rather than implying the time was spent 
 
 ## Status
 
-In Progress — **phases 0–4 complete; Phase 5 added 2026-09-01 and is 0/6.** Defect A (output
-never ported) and Defect B (worker rebuilt per iteration) are both fixed, verified at unit level and
-end-to-end.
+Complete — closed 2026-09-01 at **zero open items**, all six phases (0–5).
 
-| Phase | | Evidence |
+Both defects fixed and proven end-to-end.
+
+| Defect | Fix | Proof |
 |---|---|---|
-| 0 · Worker reuse (Defect B) | **4/4** | `acquireSpawnWorker`, window-liveness gating, fresh-start fallback |
-| 1 · Porting model (Defect A) | **3/3** | Option (c) harvest, amended on authority grounds to land uncommitted |
-| 2 · Implement porting | **9/9** | Reopened for the containment defect, then re-closed |
-| 3 · Negative controls | **7/7** | Blob-hash self-port guard, mutation-confirmed per control |
-| 4 · Integration test | **6/6** | `bash scripts/test-multi-phase-graph.sh` 10:34:02 in the **main checkout**, **47 passed / 0 failed / exit 0**, floor met at 46 executed |
+| **B** — worker rebuilt every iteration | `acquireSpawnWorker` reuses a live worker per run+node, window-liveness gated, fresh-start fallback | *"multi-phase run created ONE implement worker total"* — counted from the store, not inferred |
+| **A** — output never reaches the branch | executor-side harvest at iteration completion, landing **uncommitted** so the gated `commit` node stays the only commit creator | *"stranded output failed the spawn node itself"*, *"build never dispatched — failure landed before build, not at commit"* |
 
-The end-to-end proof that matters, verbatim from that run:
+Final verification: `bash scripts/test-multi-phase-graph.sh` 2026-09-01 15:44:01 from the **main
+checkout** — **64 passed / 0 failed / exit 0**, *"coverage floor met and equals max (63 checks
+executed)"*. The floor is strict equality, not `>=`, so a green run proves every check executed and
+newly added checks cannot silently raise max above the floor.
 
-```
-PASS  multi-phase run created ONE implement worker total (Defect B end-to-end)
-PASS  stranded output failed the spawn node itself
-PASS  build never dispatched — failure landed before build, not at commit
-PASS  human's checkout edit preserved byte-identical
-PASS  worker's copy preserved in its worktree after the refusal
-```
+Three things worth carrying forward:
 
-A 10:14 run of the same script is **not** counted: its command used an absolute path into a spawn
-worktree. Per A2, a run inside the tree under test proves nothing about the branch.
+- **The landing mechanism was withdrawn on authority grounds mid-implementation.** The original plan had
+  the daemon commit and advance the branch ref; `CheckCommitAuthority` guards only the message paths, so
+  daemon-side git would have run where the check does not exist. Landing uncommitted keeps the gated
+  `commit` node as the sole commit creator.
+- **`worktreeContentEqualsTip` tested equality where containment was required**, permanently refusing
+  auto-advance on any stale-based worktree. It failed *closed* — stuck, never lossy — which is why it
+  surfaced as a phantom block rather than data loss.
+- **The fix-loop limitation was lifted deliberately, not discovered.** Its pin
+  (`…OwnPortFixLoopRefusalIsExpected`) was **removed** when the blob-hash guard landed, rather than left
+  contradicting the new behaviour.
 
-**The containment defect and its re-close.** `worktreeContentEqualsTip` tested equality where
-containment was required — my ruling's wording ("contained in … diff-vs-tip empty") reads naturally as
-equality, and the stricter predicate shipped, permanently refusing auto-advance on any stale-based
-worktree. `worktreeContainedInTip` now compares only paths the worktree's staged content **touches**.
-The equality function is gone rather than bypassed, and the fail-safe (`err → false`) is preserved.
-
-**Phase 5 exists because those two criteria had no phase.** They sit under `## Requirements`, so every
-phase predicate was blind to them: `SpecCurrentPhase` returned `(no open phase)` while the close-spec
-guard still counted 2. That is [`MUX-130`](../backlog/MUX-130-spec-phase-parsing-semantics.md) Defect E,
-and phasing them is the same remedy MUX-007's Phase 3 received. `SpecCurrentPhase` now returns
-**Phase 5**.
-
-The two remain genuinely uncovered:
-
-- `story-lifecycle` is never exercised. The integration test covers `req-code-pr` only, yet both
-  templates use a spawn `implement`, so half of Defect A's stated scope is unproven.
-- Conversation retention across iterations is never asserted. It follows structurally from reusing the
-  same process, but nothing pins it — and avoiding re-boot cost is the entire point of reuse. Phase 5
-  adds a negative control so the pin cannot pass vacuously on a worker that was actually replaced.
-
-`graph_port.go` and `graph_port_test.go` remain **uncommitted**.
-
-**Sequencing note, still true:** A2 makes Defect A the higher-priority defect — while it stood, any
-test evidence produced by a spawn was untrustworthy, including evidence about the spawn machinery
-itself.
+Related: [`MUX-135`](../backlog/MUX-135-spawn-seed-record-gc-strands-completion.md) raises exposure to a
+separate defect — persistent workers mean longer iterations, and an iteration outliving the one-hour
+delivery-record retention becomes permanently uncompletable. That is filed separately and unfixed.

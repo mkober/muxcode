@@ -236,7 +236,13 @@ func resolveDerivedLoopCaps(session string, g *Graph) (*Graph, error) {
 	if !needs {
 		return g, nil
 	}
-	path, ok, _ := activeSpecFile(session)
+	path, ok, transient, refused := activeSpecFile(session)
+	if refused {
+		return nil, fmt.Errorf("graph %q: active spec pointer resolves outside the repo — refusing to read it for a loop cap", g.Name)
+	}
+	if transient {
+		return nil, fmt.Errorf("graph %q derives a loop cap from the spec but the repo dir is unresolvable — retry", g.Name)
+	}
 	if !ok {
 		return nil, fmt.Errorf("graph %q derives a loop cap from the spec but no active spec is set", g.Name)
 	}

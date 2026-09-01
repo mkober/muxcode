@@ -209,6 +209,62 @@ func TestNotifyPlan_DanglingSpecWithholdsFire(t *testing.T) {
 	}
 }
 
+// TestNotifyPlan_ExternalSpecPointerWithheld pins the fail-closed pointer
+// boundary on the verify-spec send (review must-fix 2026-09-01): the old
+// code only guarded pointers that DID resolve, so an absolute external
+// pointer sailed into the message with a "read the spec" instruction
+// whenever repoDir was unavailable — the credentials-file shape. Both
+// unprovable cases must withhold the fire; the in-repo repair firing
+// afterwards proves the zeros were refusals, not broken seeding.
+func TestNotifyPlan_ExternalSpecPointerWithheld(t *testing.T) {
+	t.Setenv("MUXCODE_DEDUP_WINDOW", "0")
+	session := testSession(t)
+	d := New(session, 5, 2)
+
+	outside := t.TempDir()
+	ext := filepath.Join(outside, "config")
+	if err := os.WriteFile(ext, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.WriteActiveSpec(session, ext); err != nil {
+		t.Fatal(err)
+	}
+
+	// The reported escape: repoDir unavailable, pointer absolute external.
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", "")
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM", "req-1"))
+	d.checkInboxes()
+	if got := countVerifySpec(t, session); got != 0 {
+		t.Errorf("repoDir unavailable: external pointer fired %d verify-spec, want 0", got)
+	}
+
+	// Same pointer with the repo dir known: refused by containment.
+	repo := t.TempDir()
+	specRel := "docs/requirements/drafts/test-spec.md"
+	if err := os.MkdirAll(filepath.Join(repo, "docs/requirements/drafts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, specRel), []byte("# Test Spec\n\n- [ ] item\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM 2", "req-2"))
+	d.checkInboxes()
+	if got := countVerifySpec(t, session); got != 0 {
+		t.Errorf("repoDir known: external pointer fired %d verify-spec, want 0", got)
+	}
+
+	// Positive control: the repaired in-repo pointer fires.
+	if err := bus.WriteActiveSpec(session, specRel); err != nil {
+		t.Fatal(err)
+	}
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM 3", "req-3"))
+	d.checkInboxes()
+	if got := countVerifySpec(t, session); got != 1 {
+		t.Errorf("in-repo pointer fired %d verify-spec, want 1 — the refusal cases may be vacuous", got)
+	}
+}
+
 func TestCheckActiveSpec_FollowsCloseOutMove(t *testing.T) {
 	session := testSession(t)
 	repo := seedRepoSpec(t, session)

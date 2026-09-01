@@ -1024,11 +1024,16 @@ func specGuardGraph() *Graph {
 	}
 }
 
-// writeSpecFixture writes a spec file and points the active-spec marker at
-// it (absolute path, so no repo-dir resolution is involved).
+// writeSpecFixture writes a spec file inside a scratch repo dir, pins the
+// session repo dir to it, and points the active-spec marker at the spec's
+// absolute path. The pointer must live inside the pinned repo: every
+// pointer, absolute included, now resolves through the containment
+// boundary (review must-fix 2026-09-01).
 func writeSpecFixture(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "spec.md")
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	path := filepath.Join(repo, "spec.md")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1096,7 +1101,9 @@ func TestExecSpecGuardNoActiveSpecDispatches(t *testing.T) {
 
 func TestExecSpecGuardUnreadableSpecDeclines(t *testing.T) {
 	run := createTestRun(t, specGuardGraph())
-	if err := WriteActiveSpec(runTestSession, filepath.Join(t.TempDir(), "absent.md")); err != nil {
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	if err := WriteActiveSpec(runTestSession, filepath.Join(repo, "absent.md")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1130,6 +1137,84 @@ func TestExecSpecGuardResolvesRelativeSpecPath(t *testing.T) {
 	}
 	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "1 open items") {
 		t.Errorf("relative spec path must resolve against the session repo dir, got state %q output %q", st.State, st.Output)
+	}
+}
+
+// TestExecSpecGuardRefusesExternalPointer pins the pointer boundary at
+// the guard (review must-fix 2026-09-01): an active-spec pointer
+// resolving outside the repo fails the node loudly — it must NOT read as
+// "no active spec", which would pass the guard through and close out
+// against nothing (the inert-guard hazard), and the daemon must never
+// read the external file.
+func TestExecSpecGuardRefusesExternalPointer(t *testing.T) {
+	run := createTestRun(t, specGuardGraph())
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	ext := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(ext, []byte("- [x] not a spec\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(runTestSession, ext); err != nil {
+		t.Fatal(err)
+	}
+
+	step(t, runTestSession, run.ID)
+
+	st, err := ReadNodeStatus(runTestSession, run.ID, "close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "outside the repo") {
+		t.Fatalf("external pointer must fail the node, got state %q output %q", st.State, st.Output)
+	}
+	msgs, _ := Peek(runTestSession, "plan")
+	if len(msgs) != 0 {
+		t.Errorf("refused dispatch must never send — plan inbox: %+v", msgs)
+	}
+}
+
+// TestActiveSpecFileBoundary pins the four pointer states as distinct.
+// The one that must never collapse: an external pointer is refused, not
+// unset — and with the repo dir unresolvable, containment is unprovable
+// for EVERY pointer shape, absolute included, so all postpone as
+// transient (the old code followed absolute pointers unconditionally).
+func TestActiveSpecFileBoundary(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+
+	if _, ok, transient, refused := activeSpecFile(runTestSession); ok || transient || refused {
+		t.Errorf("unset: ok=%v transient=%v refused=%v, want all false", ok, transient, refused)
+	}
+
+	spec := filepath.Join(repo, "spec.md")
+	if err := os.WriteFile(spec, []byte("# s\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(runTestSession, spec); err != nil {
+		t.Fatal(err)
+	}
+	if path, ok, _, _ := activeSpecFile(runTestSession); !ok || path == "" {
+		t.Errorf("in-repo absolute pointer: ok=%v path=%q, want resolved", ok, path)
+	}
+
+	ext := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(ext, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(runTestSession, ext); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok, transient, refused := activeSpecFile(runTestSession); !refused || ok || transient || p != "" {
+		t.Errorf("external pointer: ok=%v transient=%v refused=%v path=%q, want refused only", ok, transient, refused, p)
+	}
+
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", "")
+	if _, ok, transient, refused := activeSpecFile(runTestSession); !transient || ok || refused {
+		t.Errorf("no repo dir with absolute pointer: ok=%v transient=%v refused=%v, want transient only", ok, transient, refused)
 	}
 }
 
@@ -1216,7 +1301,9 @@ func TestSpecPhasesRemainingCondition(t *testing.T) {
 	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
 		t.Fatal(err)
 	}
-	spec := filepath.Join(t.TempDir(), "spec.md")
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	spec := filepath.Join(repo, "spec.md")
 	if err := os.WriteFile(spec, []byte("### Phase 1: A\n- [ ] open\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

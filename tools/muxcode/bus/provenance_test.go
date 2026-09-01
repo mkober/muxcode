@@ -270,6 +270,15 @@ func TestResolveSpecPathRefusesExternal(t *testing.T) {
 	if got := ResolveSpecPath(repo, ext); got != "" {
 		t.Fatalf("external absolute pointer must refuse, got %q", got)
 	}
+	// No repo dir: containment is unprovable for every pointer shape, so
+	// nothing resolves — the escape the 2026-09-01 must-fix closed rode an
+	// absolute pointer past a caller that only checked resolvABLE ones.
+	if got := ResolveSpecPath("", ext); got != "" {
+		t.Fatalf("no repo dir: absolute pointer must refuse, got %q", got)
+	}
+	if got := ResolveSpecPath("", "docs/spec.md"); got != "" {
+		t.Fatalf("no repo dir: relative pointer must refuse, got %q", got)
+	}
 	if got := ResolveSpecPath(repo, "../escape.md"); got != "" {
 		t.Fatalf("relative escape must refuse, got %q", got)
 	}

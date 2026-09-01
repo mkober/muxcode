@@ -280,7 +280,9 @@ func TestCreateGraphRunDerivesLoopCap(t *testing.T) {
 	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
 		t.Fatal(err)
 	}
-	spec := filepath.Join(t.TempDir(), "spec.md")
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	spec := filepath.Join(repo, "spec.md")
 	content := "### Phase 1: A\n- [ ] a\n### Phase 2: B\n- [ ] b\n### Phase 3: C\n- [ ] c\n"
 	if err := os.WriteFile(spec, []byte(content), 0644); err != nil {
 		t.Fatal(err)

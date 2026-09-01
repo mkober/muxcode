@@ -60,7 +60,35 @@ definition, four consumers, no mirrored logic: the CLI formatter (`graph_run.go:
 `branched` in `ColorDim`), the TUI glyph (`tui/graph.go:122`, `◇` in `Comment`), the run-list
 failed-cell exclusion (`tui/graph.go:537`), and `tui/graph_ui.go:97`.
 
-## Open decision (maintainer)
+## Decision (maintainer, 2026-09-01): option B — decouple state from routing key
+
+**B is chosen.** A condition node finishes as `GraphNodeDone` while still emitting `failure` as its
+**outcome**, so the persisted state stops lying while edge matching is unchanged. This fixes every
+consumer at source — `nodes/<id>.json`, `graph status --json`, `diagnose`, and any future tooling —
+rather than requiring each to re-implement the `ConditionTookBranch` exemption.
+
+Option A stays in place. It is not wasted: it remains the correct rendering vocabulary, and it keeps the
+surfaces right during and after the model change.
+
+### The risk, and the gate on it
+
+`finishNode` currently derives state **from** outcome:
+
+```go
+terminal := GraphNodeDone
+if outcome == OutcomeFailure { terminal = GraphNodeFailed }
+```
+
+Splitting them is exactly where a capped loop can silently stop terminating — the false edge fires
+*because* the node "failed", so anything keying run-level failure off node **state** where it means
+**outcome** breaks quietly, and the symptom (`req-code-pr` hanging at `loop-check`) looks like a graph
+bug rather than a rendering change.
+
+**Therefore Phase 1's enumeration is the gate, not a formality.** Implement B only after every consumer
+of state-vs-outcome is enumerated. If that enumeration comes back tangled, stop and re-open the
+decision — A alone is a defensible resting point; a half-migrated model is not.
+
+## Superseded decision record
 
 | Option | Change | Trade |
 |---|---|---|
@@ -85,8 +113,17 @@ before implementation** — B done carelessly silently breaks every capped loop 
       the fix must not make failures unreadable, which would be a strictly worse outcome
 - [ ] **Negative control:** a capped loop still terminates via its false edge, and a fan-out/join graph
       still completes — pinned end to end, not by inspection
-- [ ] If option B is chosen: nothing keys run-level failure off node **state** where it means outcome —
-      enumerated, not asserted
+- [ ] **Nothing keys run-level failure off node `state` where it means `outcome`** — enumerated, not
+      asserted. Option B is chosen, so this is now a live requirement rather than a conditional one
+- [ ] **A condition's false edge still fires after the split** — re-proven end-to-end, not inferred from
+      the outcome value being unchanged
+- [ ] **Negative control:** a capped loop still terminates via its false edge, and a run that should
+      fail still fails. If B silently broke routing, `req-code-pr` would hang at `loop-check` and the
+      symptom would read as a graph bug rather than as this change
+- [ ] **Negative control:** a node that genuinely fails still persists `GraphNodeFailed` — the split
+      must not make *every* node look done
+- [ ] `graph status --json`, `diagnose`, and the run store agree with the rendered surfaces after the
+      split — the whole point of B over A
 
 ### Key files
 
@@ -105,7 +142,8 @@ before implementation** — B done carelessly silently breaks every capped loop 
       first**, B still open (see Decision above)
 - [ ] Characterization test: a condition taking its false branch is `GraphNodeFailed` /
       `outcome=failure` today — green before the fix, so the change is visible in the diff
-- [ ] Enumerate every consumer of node **state** vs node **outcome** (renderers, `graph status --json`,
+- [ ] **GATE for option B — do not implement before this is complete.** Enumerate every consumer of
+      node **state** vs node **outcome** (renderers, `graph status --json`,
       TUI, diagnose, any JSON reader) — the list decides whether B is safe
 
 ### Phase 2: Glyph and label vocabulary

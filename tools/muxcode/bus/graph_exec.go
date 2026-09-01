@@ -209,23 +209,35 @@ func guardAllowsDispatch(session string, run *GraphRun, g *Graph, n *Node) bool 
 	return true
 }
 
-// activeSpecFile resolves the active spec pointer to an absolute path.
-// ok=false with transient=true means the repo dir was unresolvable this
-// tick (caller leaves the node ready to retry); ok=false otherwise means
-// no active spec is set.
-func activeSpecFile(session string) (path string, ok, transient bool) {
+// activeSpecFile resolves the active spec pointer to an absolute path
+// through ResolveSpecPath, the single pointer boundary — the pointer is
+// agent-written data, and every caller here goes on to read the file it
+// names, so a pointer that cannot be proven inside the repo must never
+// resolve (review must-fix 2026-09-01: absolute pointers used to be
+// followed unconditionally, bypassing the boundary entirely).
+//
+// The four states are distinct and none may collapse into another:
+// ok=true resolves; transient=true means the repo dir was unresolvable
+// this tick, so containment is unprovable either way (caller postpones —
+// the node stays ready to retry); refused=true means the repo dir IS
+// known and the pointer resolves outside it (caller fails loudly — a
+// refused pointer reading as "unset" would make the close-spec guard
+// pass through and close out against nothing); all-false means no
+// active spec is set.
+func activeSpecFile(session string) (path string, ok, transient, refused bool) {
 	specRel := ReadActiveSpec(session)
 	if specRel == "" {
-		return "", false, false
-	}
-	if filepath.IsAbs(specRel) {
-		return specRel, true, false
+		return "", false, false, false
 	}
 	repo := SessionRepoDir(session)
 	if repo == "" {
-		return "", false, true
+		return "", false, true, false
 	}
-	return filepath.Join(repo, specRel), true, false
+	full := ResolveSpecPath(repo, specRel)
+	if full == "" {
+		return "", false, false, true
+	}
+	return full, true, false, false
 }
 
 // specCompleteGuardAllows blocks dispatch while the active spec has ANY
@@ -234,9 +246,14 @@ func activeSpecFile(session string) (path string, ok, transient bool) {
 // spec declines loudly: closing out against an unreadable spec is as
 // wrong as closing an open one.
 func specCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
-	path, ok, transient := activeSpecFile(session)
+	path, ok, transient, refused := activeSpecFile(session)
 	if transient {
 		return false // node stays ready, retried next tick
+	}
+	if refused {
+		finishNode(session, run, n, OutcomeFailure,
+			"spec-complete guard: active spec pointer resolves outside the repo — refusing to read it")
+		return false
 	}
 	if !ok {
 		return true
@@ -265,9 +282,14 @@ func phaseCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
 	if phase == 0 {
 		return true
 	}
-	path, ok, transient := activeSpecFile(session)
+	path, ok, transient, refused := activeSpecFile(session)
 	if transient {
 		return false // node stays ready, retried next tick
+	}
+	if refused {
+		finishNode(session, run, n, OutcomeFailure,
+			"phase-complete guard: active spec pointer resolves outside the repo — refusing to read it")
+		return false
 	}
 	if !ok {
 		return true
@@ -298,9 +320,14 @@ func phaseCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
 // gate-and-ask trigger, not a dead end (MUX-121 decision 4). No active
 // spec declines — never commit blind; transient repo-dir postpones.
 func phaseProgressGuardAllows(session string, run *GraphRun, g *Graph, n *Node) bool {
-	path, ok, transient := activeSpecFile(session)
+	path, ok, transient, refused := activeSpecFile(session)
 	if transient {
 		return false // node stays ready, retried next tick
+	}
+	if refused {
+		finishNode(session, run, n, OutcomeFailure,
+			"phase-progress guard: active spec pointer resolves outside the repo — refusing to read it")
+		return false
 	}
 	if !ok {
 		declineGuard(session, run, n, "phase-progress guard declined: no active spec to verify the phase against")
@@ -368,11 +395,12 @@ func interpolateGraphMessage(session, msg, intent, item string) string {
 // frontier the commit ships — see SpecJustCompletedPhase for why the
 // commit must not use ${current_phase}.
 func resolveCompletedPhaseText(session string) string {
-	path, ok, transient := activeSpecFile(session)
+	path, ok, transient, _ := activeSpecFile(session)
 	if transient {
 		return "(completed phase unresolved — repo dir unavailable this tick)"
 	}
 	if !ok {
+		// refused folds in: a pointer outside the repo yields no phase text.
 		return "(no completed phase)"
 	}
 	p, err := SpecJustCompletedPhase(path)
@@ -387,11 +415,12 @@ func resolveCompletedPhaseText(session string) string {
 // beat a leftover placeholder in an agent-facing message, and a transient
 // repo-dir failure must not masquerade as "no open phase".
 func resolveCurrentPhaseText(session string) string {
-	path, ok, transient := activeSpecFile(session)
+	path, ok, transient, _ := activeSpecFile(session)
 	if transient {
 		return "(current phase unresolved — repo dir unavailable this tick)"
 	}
 	if !ok {
+		// refused folds in: a pointer outside the repo yields no phase text.
 		return "(no open phase)"
 	}
 	p, err := SpecCurrentPhase(path)

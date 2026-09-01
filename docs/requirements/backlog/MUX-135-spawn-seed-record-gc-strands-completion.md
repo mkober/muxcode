@@ -21,6 +21,34 @@ Verified against the tree, not inferred:
 | 2 | `CleanExpiredDeliveries(d.session, 1*time.Hour)` (`daemon/daemon.go:3407`) | deletes records older than an hour, with no check for a live spawn |
 | 3 | seed `1788278591-daemon-f81a5c8b` | **no status file on disk** — confirmed absent |
 
+### Second occurrence 2026-09-01 16:05 — recurring, not a one-off
+
+Verified independently against the delivery store, not taken from the report:
+
+| | |
+|---|---|
+| Worker seed | `1788288792` — **14:53:12** |
+| Reply | ~72 minutes later |
+| Seed record on disk | **absent** |
+| Oldest surviving record | `1788291401` — **15:36:41** |
+| Node state | `implement` stranded `running` for 29+ minutes |
+| Recovery | `graph cancel` + `retry --from update-spec` |
+
+The seed predates the oldest surviving record by 43 minutes, so it was collected while its worker was
+still live — exactly the mechanism above, now with a second independent instance and a measurable GC
+boundary.
+
+**Two occurrences in one afternoon on ordinary work.** The first was 83 minutes, this one 72. Both
+crossed the one-hour line simply by being substantial pieces of work, which is the population this
+defect selects for.
+
+Note the recovery here was safe by luck of topology: `update-spec` sits **upstream** of `phase-gate` in
+`req-code-pr`, so `retry --from update-spec` re-enters the gate rather than skipping it. Had the stranded
+node been downstream of a satisfied gate, that recovery would have hit
+[`MUX-132`](../completed/MUX-132-graph-retry-launders-gate-approval.md)'s stale-approval path — now
+fixed, but worth noting that recovering from *this* defect routinely means retrying, which is exactly
+the operation that one governed.
+
 ### Why it is permanent, not transient
 
 Nothing rewrites the record. `MarkResponded` fires once, when the reply lands; if the record is deleted

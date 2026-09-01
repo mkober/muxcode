@@ -13,20 +13,13 @@ import (
 
 // Changed-files provenance and the verify-movement gate (MUX-007 Phase 3).
 //
-// The verify-spec request sent after a review completion used to forward
-// whatever paths the file-write signal had collected — writes anywhere on
-// disk, by any agent, on any task. Live fires named a /tmp handoff file, a
-// spawn-worktree path absent from the repo, and once the user's
-// ~/.config/muxcode/config (which holds credentials). Two controls replace
-// the receiving agent's judgement:
-//
-//   - RepoScopedFiles proves containment before a path is presented, so the
-//     message can never instruct a read outside the repo working tree.
-//   - VerifyMovementFingerprint separates echoes from progress by state
-//     movement rather than filename shape: every echo in the 2026-08-31
-//     census had a byte-identical code tree, while the one genuine doc-only
-//     fire carried a graph-run state transition — so the fingerprint covers
-//     both the non-docs working tree and graph run/node states.
+// Verify-spec requests used to forward raw file-write paths — live fires
+// named /tmp handoffs, spawn-worktree paths, and once the user's
+// credentials file. Two controls replace the receiving agent's judgement:
+// RepoScopedFiles proves containment before a path is presented, and
+// VerifyMovementFingerprint separates echoes from progress by state
+// movement (non-docs tree + graph run/node states) rather than filename
+// shape.
 
 // RepoScopedFiles filters raw changed-file paths down to the ones provably
 // inside repoDir and returns them repo-relative, deduped, in input order.

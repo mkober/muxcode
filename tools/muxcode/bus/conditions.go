@@ -345,7 +345,9 @@ func evalSpecPhasesRemaining(value any, ctx *ChainContext) ConditionResult {
 	}
 	result.Pattern = strconv.FormatBool(want)
 
-	path, okSpec, transient := activeSpecFile(ctx.Session)
+	// A refused pointer (outside the repo) counts as nothing remaining,
+	// same as an unreadable spec — the loop terminates rather than spins.
+	path, okSpec, transient, _ := activeSpecFile(ctx.Session)
 	has := transient
 	if okSpec {
 		if p, err := SpecCurrentPhase(path); err == nil && p.Number != 0 {
