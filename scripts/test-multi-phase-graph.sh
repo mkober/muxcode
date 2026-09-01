@@ -28,6 +28,15 @@
 # after the gated commit, and a clobber conflict failing the spawn node
 # itself — before build, not at commit after a human gate.
 #
+# Sections 9-10 (MUX-131 Phase 5) extend the SAME harness rather than
+# forking a second script, so the two spawn templates cannot drift:
+# story-lifecycle — the other builtin whose implement is a spawn — walks
+# end to end with its worktree output ported to the checkout before build
+# dispatches, and a replacement control kills the worker between
+# iterations to prove the retention observable (the worker window's pane
+# PIDs) distinguishes a reused worker from a replaced one — without that
+# control, the section-7 retention pin could pass vacuously.
+#
 # ISOLATION: scratch BUS_SESSION, scratch repo dir via
 # MUXCODE_SESSION_REPO_DIR, lifecycle log in a temp dir, empty config.
 #
@@ -64,7 +73,7 @@ dump_diag() {
   DUMPED=1
   echo "  --- diagnostic dump (first failure) ---"
   local rid
-  for rid in ${RID:-} ${RID2:-} ${RID3:-} ${RID_S:-} ${RID_B:-}; do
+  for rid in ${RID:-} ${RID2:-} ${RID3:-} ${RID_S:-} ${RID_B:-} ${RID_L:-} ${RID_R:-}; do
     "$MUX" graph status "$rid" 2>/dev/null | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g'
   done
   "$MUX" tasks 2>/dev/null | head -12
@@ -173,6 +182,7 @@ wait_and_answer() {
 # caller's worktree assertion cannot false-pass.
 SPAWN_ROLE=""
 SPAWN_WT=""
+SPAWN_WIN=""
 spawn_for_run() {
   local rid="$1" i line
   for i in $(seq 1 60); do
@@ -180,11 +190,21 @@ spawn_for_run() {
     if [ -n "$line" ]; then
       SPAWN_ROLE="$(printf '%s' "$line" | grep -o '"spawn_role":"[^"]*"' | cut -d'"' -f4)"
       SPAWN_WT="$(printf '%s' "$line" | grep -o '"worktree":"[^"]*"' | cut -d'"' -f4)"
+      SPAWN_WIN="$(printf '%s' "$line" | grep -o '"window":"[^"]*"' | cut -d'"' -f4)"
       [ -n "$SPAWN_ROLE" ] && return 0
     fi
     sleep 0.5
   done
   return 1
+}
+
+# worker_pane_pids <window> — the worker window's pane PIDs, sorted. The
+# retention observable (MUX-131 Phase 5): a reused worker keeps its shell
+# processes across a reseed, so the PIDs are stable; ANY replacement — a
+# fresh window or a respawned pane — changes them. Empty when the window
+# is gone.
+worker_pane_pids() {
+  tmux list-panes -t "$BUS_SESSION:$1" -F '#{pane_pid}' 2>/dev/null | sort | tr '\n' ' '
 }
 
 # run_spawn_count <run-id> — worker entries the store holds for a run.
@@ -279,6 +299,10 @@ EOF
 "$MUX" graph validate req-code-pr >/dev/null 2>&1 \
   && ok "real req-code-pr builtin validates" \
   || bad "req-code-pr builtin failed validation"
+
+"$MUX" graph validate story-lifecycle >/dev/null 2>&1 \
+  && ok "real story-lifecycle builtin validates" \
+  || bad "story-lifecycle builtin failed validation"
 
 sed 's/"guard": "phase-progress", //; s/{"id": "phase-gate", "type": "wait_human".*/{"id": "phase-gate", "type": "send", "role": "review", "action": "review", "message": "not a gate"},/' \
   "$WORK/multiphase.json" > "$WORK/ungated.json"
@@ -432,6 +456,7 @@ else
   bad "iteration-1 seed never arrived in $SPAWN_ROLE inbox"
 fi
 SEED1="$REQ_ID"
+PIDS_IT1="$(worker_pane_pids "$SPAWN_WIN")"
 
 # The worker's phase-1 output goes only to the isolated worktree — before
 # MUX-131 exactly the work that never reached the branch.
@@ -484,6 +509,16 @@ if wait_request "$SPAWN_ROLE" spawn-task "$SEED1"; then
   ok "iteration 2 reseeded into the SAME worker"
 else
   bad "iteration-2 seed never arrived — worker not reused"
+fi
+# Retention pin (MUX-131 Phase 5): reuse is only worth having if the
+# process survives — a silent per-iteration restart would keep the spawn
+# count at 1 while re-paying boot and losing the conversation. Section 10
+# proves this observable changes when a worker really is replaced.
+PIDS_IT2="$(worker_pane_pids "$SPAWN_WIN")"
+if [ -n "$PIDS_IT1" ] && [ "$PIDS_IT1" = "$PIDS_IT2" ]; then
+  ok "worker process retained across iterations — conversation kept, no re-boot"
+else
+  bad "worker process changed across iterations ('$PIDS_IT1' vs '$PIDS_IT2') — reuse without retention"
 fi
 [ "$(run_spawn_count "$RID_S")" = "1" ] \
   && ok "one worker across iterations (spawn count from the store == 1)" \
@@ -579,19 +614,177 @@ done
   && ok "worker's copy preserved in its worktree after the refusal" \
   || bad "worktree copy lost after the refused port"
 
-# --- Coverage floor --------------------------------------------------------
-# A clean full pass emits exactly 46 checks: 4 validation + daemon +
-# headline start + 3 per-phase implement targets + 3 ordered commits +
-# 4 termination/push + start-at-2 + 2 stuck-phase, plus the MUX-131
-# spawn sections: 1 fixture + 17 spawn-run + 9 conflict-control. The
-# floor guards against a short-circuited run, not an imagined larger
-# count (run 4/5 postmortem: a floor of 25 failed every genuinely
-# complete run).
-total=$((pass + fail))
-if [ "$total" -ge 46 ]; then
-  ok "coverage floor met ($total checks executed)"
+# --- 9. story-lifecycle: the second spawn template, end to end -------------
+# Both builtins with a spawn implement are in Defect A's stated scope, but
+# only req-code-pr was exercised — half the scope was unproven. Same
+# deviation as the base fixture: the builtin's shape with g-* namespaced
+# send nodes, the implement spawn REAL. The run intent names Phase 1 so
+# the commit node's phase-complete guard is genuinely evaluated, not
+# passed through on a phase-less intent.
+cat > "$WORK/storylife.json" <<'EOF'
+{"name": "storylife", "start": "requirements",
+ "nodes": [
+   {"id": "requirements", "type": "send", "role": "plan", "action": "g-req", "message": "Draft requirements for: ${intent}"},
+   {"id": "req-gate", "type": "wait_human", "message": "Approve the requirements before implementation starts"},
+   {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement per the requirements doc: ${intent}"},
+   {"id": "build", "type": "send", "role": "build", "action": "g-build", "message": "build"},
+   {"id": "test", "type": "send", "role": "test", "action": "g-test", "message": "test"},
+   {"id": "fix", "type": "send", "role": "edit", "action": "g-edit", "message": "fix"},
+   {"id": "review", "type": "send", "role": "review", "action": "g-review", "message": "review"},
+   {"id": "update-spec", "type": "send", "role": "plan", "action": "g-verify", "message": "Check off the completed work"},
+   {"id": "ship-gate", "type": "wait_human", "message": "Approve commit, push, and PR"},
+   {"id": "commit", "type": "send", "role": "commit", "action": "g-commit", "guard": "phase-complete", "message": "Commit the story work"},
+   {"id": "pr", "type": "send", "role": "commit", "action": "g-commit", "message": "Open the PR"}],
+ "edges": [
+   {"from": "requirements", "to": "req-gate"},
+   {"from": "req-gate", "to": "implement"},
+   {"from": "implement", "to": "build"},
+   {"from": "build", "to": "test"},
+   {"from": "build", "to": "fix", "outcome": "failure"},
+   {"from": "test", "to": "review"},
+   {"from": "test", "to": "fix", "outcome": "failure"},
+   {"from": "fix", "to": "build", "max_iterations": 3},
+   {"from": "review", "to": "update-spec"},
+   {"from": "review", "to": "fix", "outcome": "failure"},
+   {"from": "update-spec", "to": "ship-gate"},
+   {"from": "ship-gate", "to": "commit"},
+   {"from": "commit", "to": "pr"}]}
+EOF
+"$MUX" graph validate "$WORK/storylife.json" >/dev/null 2>&1 \
+  && ok "story-lifecycle spawn fixture validates (builtin shape, real spawn implement)" \
+  || bad "story-lifecycle fixture failed validation"
+
+write_spawn_spec " " " "
+RID_L="$("$MUX" graph run --file "$WORK/storylife.json" "story lifecycle walk of Phase 1" 2>&1 | grep -o 'Started run [^ ]*' | awk '{print $3}')"
+[ -n "$RID_L" ] && ok "story-lifecycle run started: $RID_L" || bad "story-lifecycle run failed to start"
+
+if wait_and_answer plan g-req; then
+  ok "requirements dispatched to plan before any implementation"
 else
-  bad "coverage floor NOT met — only $total checks executed, want >= 46 (a skipped run must not report green)"
+  bad "story-lifecycle: requirements never dispatched"
+fi
+wait_node_state "$RID_L" req-gate waiting || bad "story-lifecycle: req-gate never waited"
+"$MUX" graph approve "$RID_L" req-gate >/dev/null 2>&1 || bad "story-lifecycle: req-gate approve failed"
+
+if spawn_for_run "$RID_L" && [ -n "$SPAWN_WT" ]; then
+  ok "story-lifecycle worker created with an isolated worktree ($SPAWN_ROLE)"
+else
+  bad "story-lifecycle worker or worktree never appeared for $RID_L"
+fi
+seeded=0
+if wait_request "$SPAWN_ROLE" spawn-task; then
+  case "$CAPTURED" in *"story lifecycle walk of Phase 1"*) seeded=1 ;; esac
+fi
+[ "$seeded" -eq 1 ] && ok "implement seeded with the expanded intent" \
+  || bad "story-lifecycle: seed missing or intent not expanded: ${CAPTURED:-<none>}"
+
+echo "story implementation" > "$SPAWN_WT/story-impl.txt"
+answer_request "$SPAWN_ROLE" "implemented the story"
+
+if wait_and_answer build g-build; then
+  ok "story-lifecycle: build dispatched after the harvest"
+else
+  bad "story-lifecycle: build never dispatched"
+fi
+[ "$(cat "$REPO/story-impl.txt" 2>/dev/null)" = "story implementation" ] \
+  && ok "story-lifecycle: implement output reached the branch before build (Defect A, second template)" \
+  || bad "story-lifecycle: spawn output stranded — ported file missing from checkout"
+
+wait_and_answer test g-test || bad "story-lifecycle: test never dispatched"
+wait_and_answer review g-review || bad "story-lifecycle: review never dispatched"
+complete_current_phase
+wait_and_answer plan g-verify || bad "story-lifecycle: update-spec never dispatched"
+wait_node_state "$RID_L" ship-gate waiting || bad "story-lifecycle: ship-gate never waited"
+"$MUX" graph approve "$RID_L" ship-gate >/dev/null 2>&1 || bad "story-lifecycle: ship-gate approve failed"
+if wait_and_answer commit g-commit; then
+  ok "phase-complete guard passed and the gated commit dispatched"
+else
+  bad "story-lifecycle: commit never dispatched"
+fi
+if wait_and_answer commit g-commit; then
+  ok "PR node dispatched after the gated commit"
+else
+  bad "story-lifecycle: pr never dispatched"
+fi
+
+done_ok=0
+for i in $(seq 1 40); do
+  [ "$(run_state "$RID_L")" = "complete" ] && done_ok=1 && break
+  sleep 0.5
+done
+[ "$done_ok" -eq 1 ] && ok "story-lifecycle walked end-to-end with the work on the branch" \
+  || bad "story-lifecycle run state: $(run_state "$RID_L")"
+
+# --- 10. Replacement control: a dead worker must not read as retained ------
+# The vacuity control for section 7's retention pin: kill the worker
+# between iterations, so re-entry falls back to a fresh start. The same
+# pane-PID observable must now read DIFFERENT — an observable that reads
+# equal for a genuinely replaced worker would make the retention pin pass
+# vacuously forever.
+write_spawn_spec " " " "
+RID_R="$("$MUX" graph run --file "$WORK/spawnphase.json" "replacement control" 2>&1 | grep -o 'Started run [^ ]*' | awk '{print $3}')"
+[ -n "$RID_R" ] && ok "replacement-control run started: $RID_R" || bad "replacement-control run failed to start"
+
+spawn_for_run "$RID_R" || bad "replacement-control worker never appeared"
+WIN_R1="$SPAWN_WIN"; ROLE_R1="$SPAWN_ROLE"
+if wait_request "$ROLE_R1" spawn-task; then
+  PIDS_R1="$(worker_pane_pids "$WIN_R1")"
+  ok "replacement-control worker seeded (pane pids captured)"
+else
+  bad "replacement-control seed never arrived"
+fi
+# Iteration 1 is a verify-only pass; the chain walks to its gated commit.
+answer_request "$ROLE_R1" "phase already covered — nothing to implement"
+wait_and_answer build g-build || bad "replacement-control: build never dispatched"
+wait_and_answer test g-test || bad "replacement-control: test never dispatched"
+wait_and_answer review g-review || bad "replacement-control: review never dispatched"
+complete_current_phase
+wait_and_answer plan g-verify || bad "replacement-control: update-spec never dispatched"
+wait_node_state "$RID_R" phase-gate waiting || bad "replacement-control: gate never waited"
+"$MUX" graph approve "$RID_R" phase-gate >/dev/null 2>&1 || bad "replacement-control: approve failed"
+wait_request commit g-commit || bad "replacement-control: commit never dispatched"
+# Kill the worker BEFORE the commit answer releases the loop back into
+# implement: re-entry then deterministically finds a dead worker.
+tmux kill-window -t "$BUS_SESSION:$WIN_R1" 2>/dev/null
+answer_request commit "committed"
+
+fresh=0
+for i in $(seq 1 60); do
+  [ "$(run_spawn_count "$RID_R")" = "2" ] && fresh=1 && break
+  sleep 0.5
+done
+spawn_for_run "$RID_R"   # newest store entry = the fresh worker
+if [ "$fresh" -eq 1 ] && [ "$SPAWN_WIN" != "$WIN_R1" ] && wait_request "$SPAWN_ROLE" spawn-task; then
+  ok "dead worker fell back to a fresh start — iteration-2 seed reached a new worker"
+else
+  bad "no fresh worker after the kill: count=$(run_spawn_count "$RID_R") win=$SPAWN_WIN"
+fi
+[ "$(run_spawn_count "$RID_R")" = "2" ] \
+  && ok "replacement is real: the store shows two workers for the run" \
+  || bad "spawn store shows $(run_spawn_count "$RID_R") workers — replacement did not happen"
+PIDS_R2="$(worker_pane_pids "$SPAWN_WIN")"
+if [ -n "$PIDS_R1" ] && [ -n "$PIDS_R2" ] && [ "$PIDS_R1" != "$PIDS_R2" ]; then
+  ok "replaced worker does NOT read as retained — the observable distinguishes reuse from replacement"
+else
+  bad "vacuity: replaced worker pane pids read equal ('$PIDS_R1' vs '$PIDS_R2')"
+fi
+"$MUX" graph cancel "$RID_R" >/dev/null 2>&1
+
+# --- Coverage floor --------------------------------------------------------
+# Floor == max (MUX-131 Phase 5): a clean full pass emits EXACTLY 63
+# checks: 5 validation + daemon + headline start + 3 per-phase implement
+# targets + 3 ordered commits + 4 termination/push + start-at-2 +
+# 2 stuck-phase + 1 spawn fixture + 18 spawn-run + 9 conflict-control +
+# 10 story-lifecycle + 5 replacement-control. Equality, not >=: a floor
+# below max lets newly added checks silently raise max above the floor,
+# and a partially short-circuited run can then still report green. It
+# counts checks EXECUTED (pass + fail); a failing run exits 1 regardless
+# of this check, so equality only ever gates green runs.
+total=$((pass + fail))
+if [ "$total" -eq 63 ]; then
+  ok "coverage floor met and equals max ($total checks executed)"
+else
+  bad "coverage floor mismatch — $total checks executed, want exactly 63 (floor == max; a skipped or drifted run must not report green)"
 fi
 
 # --- Summary ---------------------------------------------------------------

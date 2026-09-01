@@ -413,6 +413,31 @@ refusal itself is a known cost until the blob-hash guard lands.
       output failed the spawn node itself"*, *"build never dispatched — failure landed before build,
       not at commit"*
 
+### Phase 5: Close-out coverage
+
+Added 2026-09-01. Phases 0–4 are complete, but two acceptance criteria remained **unscoped** — they sit
+under `## Requirements`, an `##` heading, so `SpecPhases` assigns them to no phase and the graph
+machinery cannot drive them. `SpecCurrentPhase` was returning `(no open phase)` while the close-spec
+guard still counted 2. That is [`MUX-130`](../backlog/MUX-130-spec-phase-parsing-semantics.md) Defect E,
+and this phase is the same remedy applied to MUX-131 that Phase 3 was for MUX-007.
+
+- [x] **Exercise `story-lifecycle` end-to-end** with the work reaching the branch. `req-code-pr` is — 10 dedicated checks in `scripts/test-multi-phase-graph.sh`
+      covered by `scripts/test-multi-phase-graph.sh`; `story-lifecycle` uses a spawn `implement` too and
+      is exercised **nowhere**, so half the stated scope of Defect A is unproven
+- [x] **Pin conversation retention across iterations.** Retention follows structurally from reusing the — *"worker process retained across iterations — conversation kept, no re-boot"*
+      same process, but nothing asserts it — and avoiding re-boot cost is the entire point of the
+      Defect B fix. Without a pin, a future change that silently restarts the worker per iteration
+      would keep every existing test green while removing the benefit
+- [x] **Negative control:** a worker that is genuinely replaced (dead → fresh start) does **not** report — *"replaced worker does NOT read as retained — the observable distinguishes reuse from replacement"*, 5 replacement-control checks
+      retained conversation — the assertion must distinguish reuse from replacement, or it passes
+      vacuously
+- [x] Extend the integration coverage rather than adding a parallel script, so `story-lifecycle` and — both templates live in the one harness
+      `req-code-pr` are exercised by one harness and cannot drift apart
+- [x] Raise the coverage floor to the new achievable maximum, and verify floor **equals** max so a — implemented as **equality** (`-eq 63`), stronger than asked: a `>=` floor lets newly added checks raise max above it, so a partially short-circuited run could still report green. Itemisation sums exactly to 63
+      short-circuited run cannot report green
+- [ ] Run it and record passed/failed/exit code here — from the **main checkout**, not a spawn
+      worktree (per A2, a run inside the tree under test proves nothing about the branch)
+
 ## Time Tracking
 
 | Branch | Active time | Last updated |
@@ -426,7 +451,7 @@ row is kept honest by naming the branch rather than implying the time was spent 
 
 ## Status
 
-In Progress — **all five phases complete (0–4); 2 acceptance criteria remain open.** Defect A (output
+In Progress — **phases 0–4 complete; Phase 5 added 2026-09-01 and is 0/6.** Defect A (output
 never ported) and Defect B (worker rebuilt per iteration) are both fixed, verified at unit level and
 end-to-end.
 
@@ -457,12 +482,19 @@ equality, and the stricter predicate shipped, permanently refusing auto-advance 
 worktree. `worktreeContainedInTip` now compares only paths the worktree's staged content **touches**.
 The equality function is gone rather than bypassed, and the fail-safe (`err → false`) is preserved.
 
-**What blocks close-out — 2 criteria, both genuinely uncovered:**
+**Phase 5 exists because those two criteria had no phase.** They sit under `## Requirements`, so every
+phase predicate was blind to them: `SpecCurrentPhase` returned `(no open phase)` while the close-spec
+guard still counted 2. That is [`MUX-130`](../backlog/MUX-130-spec-phase-parsing-semantics.md) Defect E,
+and phasing them is the same remedy MUX-007's Phase 3 received. `SpecCurrentPhase` now returns
+**Phase 5**.
+
+The two remain genuinely uncovered:
 
 - `story-lifecycle` is never exercised. The integration test covers `req-code-pr` only, yet both
-  templates use a spawn `implement`, so the second is unproven.
+  templates use a spawn `implement`, so half of Defect A's stated scope is unproven.
 - Conversation retention across iterations is never asserted. It follows structurally from reusing the
-  same process, but nothing pins it — and avoiding re-boot cost is the entire point of reuse.
+  same process, but nothing pins it — and avoiding re-boot cost is the entire point of reuse. Phase 5
+  adds a negative control so the pin cannot pass vacuously on a worker that was actually replaced.
 
 `graph_port.go` and `graph_port_test.go` remain **uncommitted**.
 
