@@ -215,7 +215,7 @@ Observed live 2026-08-28 17:12. When commit performs a spec's `drafts/` → `com
 next `close-spec` guard then reports *"cannot read active spec"* and fails its run.
 
 **The guard behaved correctly**: failing loudly on an unreadable spec is exactly what
-[MUX-114](../completed/MUX-114-close-spec-node-has-no-completion-check.md) built it to do, and it is
+[MUX-114](./MUX-114-close-spec-node-has-no-completion-check.md) built it to do, and it is
 far better than proceeding on a spec it cannot read. The defect is upstream — the pointer outlives
 the file it points at.
 
@@ -225,10 +225,6 @@ review, which is this spec's subject. It was previously hit manually (MUX-103, 2
 cleanup was a documented manual step; now that the move is automated, **the manual step has no
 owner**. Cleared by hand again on 2026-08-28.
 
-- [ ] Clearing (or repointing) the active-spec pointer is part of whatever performs the move, not a
-      step a human is expected to remember
-- [ ] A pointer naming a path that no longer exists is detected and reported, rather than surfacing
-      only as a downstream guard failure
 
 ## Requirements
 
@@ -249,10 +245,10 @@ Option 1 or 2 also fixes the workflow-state churn; option 3 alone does not.
 - [x] `TransitionWorkflow(StateReviewed)` fires once per actual review completion — *"one plan-verify lifecycle row"* after the first completion, *"two plan-verify lifecycle rows — one transition per completion"* after the second
 - [x] A genuine second review completion (new review→edit message) still fires a new `verify-spec` — *"second review completion fired exactly one more verify-spec"*, with the reviewed marker rotated to the new ID. This is the control that stops the gate from being satisfied by never firing
 - [x] Existing daemon and workflow tests still pass — suite green in the main checkout
-- [ ] **No `verify-spec` fires when nothing moved** — the self-feeding loop in item 10, where the verification pass's own doc edit requests the next verification. Cheap and separable, and worth landing even if the once-per-completion gate slips. **Amended 2026-08-31:** this was originally written as *"when the only changed file is the active spec itself."* The fire-11 case refutes that shape — see [New evidence](#this-constrains-an-existing-acceptance-criterion). Suppression must key on **state movement**, not filename shape
-- [ ] **Negative control:** a genuine review completion that changes source files *and* touches the active spec still fires — a fix that suppresses on "spec was touched" rather than "nothing moved" cannot pass
-- [ ] **Negative control (fire-11 shape):** a fire whose only changed file is the active spec but where the **graph run state changed** still fires. A working-tree fingerprint alone fails this; run state must be part of the comparison
-- [ ] **Changed-files paths are provenance-checked (B1)** — a path outside the repo working tree (e.g. inside a spawn worktree under `$TMPDIR`) is never presented to the verifier as a repo file. A verifier must not be able to check off a phase against code absent from the branch
+- [x] **No `verify-spec` fires when nothing moved** — the self-feeding loop in item 10, where the verification pass's own doc edit requests the next verification. Cheap and separable, and worth landing even if the once-per-completion gate slips. **Amended 2026-08-31:** this was originally written as *"when the only changed file is the active spec itself."* The fire-11 case refutes that shape — see [New evidence](#this-constrains-an-existing-acceptance-criterion). Suppression must key on **state movement**, not filename shape — `VerifyMovementFingerprint` + marker; pinned by *"no verify-spec when nothing moved"* and *"verifier's own spec edit is not movement"*, with the suppression visible as a `plan-verify-suppressed` lifecycle row
+- [x] **Negative control:** a genuine review completion that changes source files *and* touches the active spec still fires — a fix that suppresses on "spec was touched" rather than "nothing moved" cannot pass — pinned
+- [x] **Negative control (fire-11 shape):** a fire whose only changed file is the active spec but where the **graph run state changed** still fires. A working-tree fingerprint alone fails this; run state must be part of the comparison — pinned as *"run-state transition fired despite a docs-only file change (fire-11 shape)"*, the control that would have caught a naive filename rule
+- [x] **Changed-files paths are provenance-checked (B1)** — a path outside the repo working tree (e.g. inside a spawn worktree under `$TMPDIR`) is never presented to the verifier as a repo file. A verifier must not be able to check off a phase against code absent from the branch — `RepoScopedFiles`; pinned three ways: out-of-repo path never presented, spawn-worktree path rejected, and the **same relative path from inside the repo still presented**, proving the scoping keys on location rather than name
 
 ### Key files
 
@@ -298,16 +294,47 @@ Option 1 or 2 also fixes the workflow-state churn; option 3 alone does not.
 - [x] Test: append a second review response → assert a second `verify-spec` fires
 - [x] Run the script and verify all checks pass — 2026-09-01 11:35:40: **20 passed / 0 failed / exit 0**, floor met at 19 checks executed (19 content checks + the floor's own, so the floor equals the achievable maximum). The run invoked `/tmp/test-verify-spec-refire.sh`, verified **byte-identical** to the repo copy, so it covers the committed script
 
-## Deferred — minor, not phase-scoped
+### Phase 3: Changed-files provenance and relevance
 
-Tracked for close-out but deliberately outside the phase checkboxes: these sit under an `##` heading,
-so `SpecPhases` assigns them to no phase and they cannot block a per-phase commit, while `SpecOpenItems`
-still counts them so the spec cannot close with them open.
+Added 2026-09-01. Phases 1–2 closed the **refire** loop; this phase closes the **changed-files** defect,
+which is separate and untouched by that work. It exists as a phase — rather than as loose criteria —
+because unscoped items are invisible to every phase predicate, so the graph machinery cannot drive
+them ([`MUX-130`](../backlog/MUX-130-spec-phase-parsing-semantics.md) Defect E).
 
-- [ ] `reviewed-transition.last` is not cleared by `purgeStaleFiles` (`bus/setup.go:150`). Low severity —
-      message IDs are unique, so a surviving marker cannot suppress a legitimate transition — but it is
-      stale session data outliving its session. Raised during Phase 1 verification; orthogonal to the
-      once-per-completion gate, so blocking Phase 1 on it would be over-strict
+- [x] **Scope changed-files to the repository.** A path outside the repo working tree is never
+      presented to the verifier as a repo file. This is the fix for impact item 8, where an echo named
+      the user's `~/.config/muxcode/config` — a file holding `JIRA_API_TOKEN` — and the receiving agent
+      declined to read it *by judgement*. A judgement call is not a control
+- [x] **Never instruct an agent to read a path outside the repo**, credentials or not. Path scoping
+      fixes the observed case; it does not fix the general one, since a repo-relative path can also be
+      sensitive
+- [x] **Correlate changed-files with the active spec.** Repo-scoping is necessary but not sufficient:
+      the 10:23 echo named `config/tmux.conf` — an *in-repo* file from an unrelated tmux task — against
+      the MUX-014 spec. Any write, by any agent, on any task, currently re-fires at whatever spec is
+      active
+- [x] **Suppress on state movement, not on filename shape.** The discriminator that fits all 14 census
+      fires: every echo had a byte-identical code tree, the one real fire did not. Note fire 11's
+      movement was a **graph run state transition**, not a file edit, so a working-tree fingerprint
+      alone is insufficient
+- [x] **Negative control:** a genuine completion that changes source files *and* touches the active
+      spec still fires — a rule keying on "spec was touched" rather than "nothing moved" cannot pass
+- [x] **Negative control (fire-11 shape):** a fire whose only changed file is the active spec, but
+      where the graph run state changed, **still fires**. This is the control that would have caught
+      the naive filename rule; fire 11 is how Defect A was discovered at all
+- [x] **Negative control:** a path inside a spawn worktree is rejected, while the same relative path
+      inside the repo is accepted — proving the scoping keys on location, not on name
+- [x] Clear or repoint the active-spec pointer as part of whatever performs a `drafts/` → `completed/`
+      move, rather than leaving it naming the old path
+- [x] A pointer naming a path that no longer exists is detected and reported, rather than surfacing as
+      a confusing downstream failure
+- [x] `reviewed-transition.last` is cleared by `purgeStaleFiles` (`bus/setup.go:150`) — folded in from
+      the deferred minor, since this phase already touches session-scoped state
+- [x] **Integration:** extend `scripts/test-verify-spec-refire.sh` — assert an out-of-repo path is
+      never presented; assert an unrelated in-repo write does not fire against the active spec; assert
+      the fire-11 shape (spec-only change + run-state movement) **does** fire
+- [x] Raise the coverage floor to the new achievable maximum, and confirm floor **equals** max so a
+      short-circuited run cannot report green
+- [x] Run it and record passed/failed/exit code here — `bash scripts/test-verify-spec-refire.sh` 2026-09-01 13:50:11 in the **main checkout**: **43 passed / 0 failed / exit 0**, floor met at 42 checks executed (42 content + the floor's own, so floor equals achievable maximum)
 
 ## Provenance
 
@@ -317,34 +344,42 @@ Found by the plan agent on 2026-08-13 while receiving the echo storm first-hand 
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-007-verify-spec-stale-review-refire | 29m | 2026-08-31 21:41 |
+| MUX-007-verify-spec-stale-review-refire | 45m | 2026-09-01 13:11 |
+| MUX-132-graph-retry-launders-gate-approval | 6h 27m | 2026-09-01 13:11 |
+
+**Two branches, both kept.** Rows are keyed by branch, so the original `MUX-007-…` branch keeps its own
+total (raised 29m → 45m from the ledger, never lowered) rather than being replaced. The
+`MUX-132-…` branch is shared by MUX-007, MUX-131, MUX-133 and MUX-134 — the ledger is keyed by
+**branch**, not by spec, so that total covers all four. The row names the branch rather than implying
+the time was spent on this spec alone.
 
 ## Status
 
-In Progress — **Phase 1 and Phase 2 both complete; 7 items remain.**
+Complete — closed 2026-09-01 at **zero open items**, all three phases.
 
-The once-per-completion gate works and is proven end-to-end. `scripts/test-verify-spec-refire.sh` ran
-2026-09-01 11:35:40 at **20 passed / 0 failed / exit 0**, floor met at 19 checks executed — 19 content
-checks plus the floor's own, so the floor equals the achievable maximum. The run invoked
-`/tmp/test-verify-spec-refire.sh`, verified **byte-identical** to the repo copy, so it covers the
-committed script.
+Two distinct defects fixed. **Phases 1–2** closed the *refire loop*: a once-per-completion gate keyed on
+the review message ID, fail-closed on marker write, with an addressee filter so an auto-CC'd
+`review→test` response can no longer read as a completion. **Phase 3** closed the *changed-files*
+defect: paths are repo-scoped, correlated with the active spec, and suppression keys on **state
+movement** rather than filename shape.
 
-Its load-bearing assertions: exactly one `verify-spec` per completion; plan's own reply does **not**
-re-fire it; an auto-CC'd `review→test` response fires nothing (the addressee filter); unrelated inbox
-growth that the daemon **observably processed** still fires nothing; and a genuine second completion
-fires exactly once more with the marker rotated — the control that stops the gate passing by never
-firing at all.
+Verified end to end by `scripts/test-verify-spec-refire.sh` in the **main checkout**:
+**43 passed / 0 failed / exit 0**, floor met at 42 checks executed — 42 content checks plus the floor's
+own, so the floor equals the achievable maximum and a green run proves every check executed.
 
-**What remains — and it is a different defect from the one now fixed.** Phase 1 closed the
-*refire* loop. Four open criteria concern the **changed-files list**, which is still uncorrelated with
-the active spec:
+The controls worth keeping, because each one guards against a plausible wrong fix:
 
-- no fire when nothing moved (needs a state-movement discriminator, not a filename test — see the
-  fire-11 case, which a filename rule would have suppressed);
-- the two negative controls that keep such a rule from over-suppressing;
-- changed-files paths provenance-checked to the repo — the criterion behind impact item 8, where an
-  echo named the user's credentials file and the receiving agent declined to read it *by judgement*,
-  which is not a control.
+- *"run-state transition fired despite a docs-only file change (fire-11 shape)"* — the naive rule
+  ("only the spec changed, so suppress") would have swallowed fire 11, the one fire in fourteen that
+  mattered and the one that revealed the routing defect at all.
+- *"same relative path from inside the repo presented"* — proves repo-scoping keys on **location**, not
+  on name, so it cannot degrade into a filename blocklist.
+- *"daemon observably re-evaluated the gate on growth"* — stops the suppression assertions passing
+  because the growth was never seen.
+- *"dangling alert fired once, not per poll"* — the reporting fix does not become its own storm, which
+  would be a fitting way to fail this particular spec.
 
-Two further items concern the active-spec pointer after an automated move, and one deferred minor
-(`reviewed-transition.last` is not cleared by `purgeStaleFiles`).
+The security item behind impact item 8 is closed by a control rather than by judgement: an out-of-repo
+path is never presented to the verifier, and a spawn-worktree path is rejected outright. Previously an
+echo named the user's `~/.config/muxcode/config` — holding `JIRA_API_TOKEN` — and was declined only
+because the receiving agent recognised it.

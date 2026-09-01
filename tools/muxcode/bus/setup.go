@@ -261,6 +261,10 @@ func purgeStaleFiles(session string) error {
 	// Remove active spec marker
 	_ = os.Remove(ActiveSpecPath(session))
 
+	// Remove MUX-007 gate markers (reviewed transition, verify movement)
+	_ = os.Remove(ReviewedMarkerPath(session))
+	_ = os.Remove(VerifyMovementMarkerPath(session))
+
 	// Remove Ollama health state file
 	_ = os.Remove(OllamaHealthPath(session))
 

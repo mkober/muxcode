@@ -15,6 +15,18 @@
 #     review→edit response fires a second verify-spec and rotates the marker
 #     to the new message ID
 #
+# Phase 3 sections (changed-files provenance and relevance):
+#   - out-of-repo paths (a credentials-shaped config, a spawn-worktree copy
+#     of a repo file) are never presented to the verifier, while the repo's
+#     own copy of the same relative path is — scoping keys on location
+#   - the movement gate: no fire when nothing moved; the verifier's own spec
+#     edit is not movement; a run-state transition with a docs-only file
+#     change still fires (fire-11); a source change touching the spec still
+#     fires; an unrelated in-repo write alone never fires
+#   - the active-spec pointer follows a drafts/ → completed/ move, and a
+#     dangling pointer is detected and reported to edit exactly once
+#   - re-init purges both MUX-007 gate markers
+#
 # Fire counts are read from the append-only bus log (log.jsonl), which no
 # delivery machinery ever consumes; plan's inbox proves delivery; lifecycle
 # plan-verify rows stand in 1:1 for TransitionWorkflow(StateReviewed), which
@@ -259,12 +271,202 @@ fi
   && ok "two plan-verify lifecycle rows — one transition per completion" \
   || bad "plan-verify lifecycle rows: $(pv_count), want 2"
 
+# ===========================================================================
+# Phase 3: changed-files provenance, the movement gate, and the active-spec
+# pointer (MUX-007 Phase 3). Sections 1-4 ran against a non-git repo — no
+# movement evidence, so the gate fails open and their behavior is unchanged.
+# From here the repo is a git repo and a graph-run fixture exists, so every
+# fire carries a fingerprint and suppression has evidence to key on.
+# ===========================================================================
+
+# --- 5. Provenance: only repo files are ever presented ---------------------
+# The graph run is created in a TERMINAL state so the executor never steps
+# it, and BEFORE the next fire so its state is part of the recorded
+# fingerprint (section 7 then moves only that state).
+git init -q "$REPO" 2>/dev/null
+mkdir -p "$REPO/bus" "$REPO/config"
+printf 'package bus\n' > "$REPO/bus/pane_test.go"
+printf 'package bus\n' > "$REPO/bus/keep.go"
+printf '# tmux fixture\n' > "$REPO/config/tmux.conf"
+git -C "$REPO" add -A 2>/dev/null
+git -C "$REPO" -c user.email=t@t -c user.name=t commit -q -m base 2>/dev/null
+git -C "$REPO" rev-parse -q HEAD >/dev/null 2>&1 \
+  && ok "fixture repo committed — movement evidence exists from here" \
+  || bad "fixture repo failed to commit"
+
+mkdir -p "$BD/graphs/fixture-run"
+cat > "$BD/graphs/fixture-run/run.json" <<'EOF'
+{"id":"fixture-run","template":"t","state":"complete","created_at":1,"updated_at":1}
+EOF
+
+# The raw changed-files signal carries writes from anywhere on disk: a
+# credentials-shaped config, a spawn-worktree copy of a file the repo also
+# contains (census B1), and the repo's own copy of that same relative path.
+mkdir -p "$WORK/outside" "$WORK/spawnwt/bus"
+printf 'JIRA_API_TOKEN=fake\n' > "$WORK/outside/muxcode-config"
+printf 'package bus\n' > "$WORK/spawnwt/bus/pane_test.go"
+cat > "$BD/workflow-state.json" <<EOF
+{"state":"editing","prev_state":"idle","since":1,"updated":1,"trigger":"seed","files_changed":3,"last_files":["$WORK/outside/muxcode-config","$WORK/spawnwt/bus/pane_test.go","$REPO/bus/pane_test.go"]}
+EOF
+
+AGENT_ROLE=plan "$MUX" inbox >/dev/null 2>&1
+grep -q '"action":"verify-spec"' "$BD/inbox/plan.jsonl" 2>/dev/null \
+  && bad "plan's inbox still holds a verify-spec before the provenance fire" \
+  || ok "plan's inbox drained before the provenance fire"
+
+AGENT_ROLE=review "$MUX" send edit review-result "Review complete: third pass" --type response >/dev/null 2>&1
+wait_vs_count 3 \
+  && ok "completion with movement evidence fired (first fingerprinted fire)" \
+  || bad "no fire with movement evidence: $(tail -3 "$WORK/daemon.log" 2>/dev/null)"
+sleep 1
+
+last_vs="$(grep '"action":"verify-spec"' "$BD/log.jsonl" 2>/dev/null | tail -1)"
+echo "$last_vs" | grep -q "$WORK/outside" \
+  && bad "out-of-repo credentials-shaped path presented to the verifier" \
+  || ok "out-of-repo path never presented to the verifier"
+echo "$last_vs" | grep -q "spawnwt" \
+  && bad "spawn-worktree path presented to the verifier" \
+  || ok "spawn-worktree path rejected"
+echo "$last_vs" | grep -q "bus/pane_test.go" \
+  && ok "same relative path from inside the repo presented — scoping keys on location, not name" \
+  || bad "repo's own copy of the file missing from the message"
+
+# --- 6. Movement gate: nothing moved → no fire ------------------------------
+AGENT_ROLE=plan "$MUX" inbox >/dev/null 2>&1
+grep -q '"action":"verify-spec"' "$BD/inbox/plan.jsonl" 2>/dev/null \
+  && bad "plan's inbox not drained before the suppression checks" \
+  || ok "plan's inbox drained before the suppression checks"
+
+AGENT_ROLE=review "$MUX" send edit review-result "Review complete: fourth pass, nothing changed since" --type response >/dev/null 2>&1
+sleep 3
+[ "$(vs_count)" -eq 3 ] \
+  && ok "no verify-spec when nothing moved" \
+  || bad "fired with a byte-identical tree and unchanged run state (count $(vs_count), want 3)"
+grep -q '"event":"plan-verify-suppressed"' "$LIFELOG" 2>/dev/null \
+  && ok "suppression visible as a plan-verify-suppressed lifecycle row" \
+  || bad "no plan-verify-suppressed lifecycle row"
+
+# Item 10's closed loop: the verifier's own spec edit must not read as
+# movement — re-verifying it would manufacture the next echo.
+echo "- [x] checked by plan" >> "$REPO/$SPEC"
+AGENT_ROLE=review "$MUX" send edit review-result "Review complete: fifth pass after spec edit" --type response >/dev/null 2>&1
+sleep 3
+[ "$(vs_count)" -eq 3 ] \
+  && ok "verifier's own spec edit is not movement" \
+  || bad "spec-only edit re-fired verify-spec (count $(vs_count), want 3)"
+
+# --- 7. Fire-11 shape: spec-only file change + run-state movement fires -----
+cat > "$BD/graphs/fixture-run/run.json" <<'EOF'
+{"id":"fixture-run","template":"t","state":"failed","created_at":1,"updated_at":2}
+EOF
+echo "- [ ] reopened" >> "$REPO/$SPEC"
+AGENT_ROLE=review "$MUX" send edit review-result "Review complete: sixth pass after run failure" --type response >/dev/null 2>&1
+wait_vs_count 4 \
+  && ok "run-state transition fired despite a docs-only file change (fire-11 shape)" \
+  || bad "fire-11 shape suppressed — a filename or tree-only rule cannot pass this"
+sleep 1
+
+# --- 8. Negative control: source change + spec touch fires ------------------
+AGENT_ROLE=plan "$MUX" inbox >/dev/null 2>&1
+echo "// change" >> "$REPO/bus/keep.go"
+echo "- [x] closed" >> "$REPO/$SPEC"
+AGENT_ROLE=review "$MUX" send edit review-result "Review complete: seventh pass with source change" --type response >/dev/null 2>&1
+wait_vs_count 5 \
+  && ok "genuine completion changing source and touching the spec fired" \
+  || bad "suppressed on 'spec was touched' rather than 'nothing moved'"
+sleep 1
+
+# --- 9. An unrelated in-repo write alone never fires ------------------------
+# The 10:23 echo shape: a write to an in-repo file from an unrelated task,
+# plus edit-inbox growth, with the last review message still unconsumed.
+#
+# The gate re-check and the edit inbox-notify row share one growth branch in
+# checkInboxes, so a NEW edit row proves the gate re-evaluated this growth —
+# without it the no-fire assertion passes vacuously. Two delivery hazards
+# make this send non-trivial: bare requests default to --track, so section
+# 3's build-status left a 600s in-flight task and every later send of that
+# tuple is "already tracking" — suppressed, no growth (found live in this
+# test); and a message landing between checkInboxes and a later same-tick
+# inbox refresh is absorbed rowlessly. --force bypasses the first; the
+# retry loop covers the second.
+echo "# tweak" >> "$REPO/config/tmux.conf"
+edit_notify_count() { grep '"event":"inbox-notify"' "$LIFELOG" 2>/dev/null | grep -c '"edit"'; }
+notify_before="$(edit_notify_count)"
+observed=0
+: > "$WORK/send9.log"
+for attempt in 1 2 3 4 5; do
+  AGENT_ROLE=build "$MUX" send edit build-status "Unrelated request ${attempt}: tmux config tweaked" --force >>"$WORK/send9.log" 2>&1
+  echo "attempt ${attempt} exit=$?" >>"$WORK/send9.log"
+  for i in $(seq 1 6); do
+    if [ "$(edit_notify_count)" -gt "${notify_before:-0}" ]; then observed=1; break; fi
+    sleep 0.5
+  done
+  [ "$observed" -eq 1 ] && break
+done
+[ "$observed" -eq 1 ] \
+  && ok "daemon observably re-evaluated the gate on growth after the unrelated write" \
+  || bad "unrelated growth never observed (no new edit inbox-notify row): $(tr '\n' ' ' < "$WORK/send9.log" | tail -c 500)"
+sleep 2
+[ "$(vs_count)" -eq 5 ] \
+  && ok "unrelated in-repo write did not fire against the active spec" \
+  || bad "unrelated in-repo write fired (count $(vs_count), want 5) — the 10:23 echo shape"
+
+# --- 10. Active-spec pointer: follows the close-out move; dangles loudly ----
+mkdir -p "$REPO/docs/requirements/completed"
+mv "$REPO/$SPEC" "$REPO/docs/requirements/completed/refire-fixture-spec.md"
+for i in $(seq 1 30); do
+  grep -q "completed/refire-fixture-spec.md" "$BD/active-spec" 2>/dev/null && break
+  sleep 0.5
+done
+grep -q "completed/refire-fixture-spec.md" "$BD/active-spec" 2>/dev/null \
+  && ok "pointer followed the drafts→completed move" \
+  || bad "pointer still names the old path: $(cat "$BD/active-spec" 2>/dev/null)"
+grep -q '"event":"spec-repoint"' "$LIFELOG" 2>/dev/null \
+  && ok "repoint visible as a spec-repoint lifecycle row" \
+  || bad "no spec-repoint lifecycle row"
+
+# A pointer with no counterpart anywhere is detected and reported, once.
+printf 'docs/requirements/drafts/never-existed.md\n' > "$BD/active-spec"
+for i in $(seq 1 30); do
+  grep -q '"event":"spec-dangling"' "$LIFELOG" 2>/dev/null && break
+  sleep 0.5
+done
+grep -q '"event":"spec-dangling"' "$LIFELOG" 2>/dev/null \
+  && ok "dangling pointer detected (spec-dangling lifecycle row)" \
+  || bad "dangling pointer never detected"
+grep -q '"action":"spec-dangling"' "$BD/log.jsonl" 2>/dev/null \
+  && ok "dangling pointer reported to edit" \
+  || bad "no spec-dangling alert reached the bus"
+sleep 3
+[ "$(grep -c '"action":"spec-dangling"' "$BD/log.jsonl" 2>/dev/null)" -eq 1 ] \
+  && ok "dangling alert fired once, not per poll" \
+  || bad "dangling alert spammed: $(grep -c '"action":"spec-dangling"' "$BD/log.jsonl" 2>/dev/null) rows"
+
+# --- 11. Re-init purges the MUX-007 gate markers ----------------------------
+# Daemon stopped first: re-init truncates the very files it polls.
+kill "$DPID" 2>/dev/null
+wait "$DPID" 2>/dev/null
+DPID=""
+[ -f "$MARKER" ] \
+  && ok "reviewed marker present before re-init" \
+  || bad "reviewed marker missing before re-init"
+[ -f "$BD/verify-movement.last" ] \
+  && ok "verify-movement marker present before re-init" \
+  || bad "verify-movement marker missing before re-init"
+"$MUX" init >/dev/null 2>&1
+[ ! -f "$MARKER" ] \
+  && ok "re-init purged the reviewed marker" \
+  || bad "reviewed marker survived re-init"
+[ ! -f "$BD/verify-movement.last" ] \
+  && ok "re-init purged the verify-movement marker" \
+  || bad "verify-movement marker survived re-init"
+
 # --- Coverage floor --------------------------------------------------------
 total=$((pass + fail))
-if [ "$total" -ge 19 ]; then
+if [ "$total" -ge 42 ]; then
   ok "coverage floor met ($total checks executed)"
 else
-  bad "coverage floor NOT met — only $total checks executed, want >= 19 (a skipped run must not report green)"
+  bad "coverage floor NOT met — only $total checks executed, want >= 42 (a skipped run must not report green)"
 fi
 
 # --- Summary ---------------------------------------------------------------

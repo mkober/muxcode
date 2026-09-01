@@ -64,9 +64,7 @@ func drainPlanInbox(t *testing.T, session string) {
 func TestCheckInboxes_VerifySpecOncePerReviewCompletion(t *testing.T) {
 	t.Setenv("MUXCODE_DEDUP_WINDOW", "0")
 	session := testSession(t)
-	if err := bus.WriteActiveSpec(session, "docs/requirements/drafts/test-spec.md"); err != nil {
-		t.Fatalf("write active spec: %v", err)
-	}
+	seedRepoSpec(t, session)
 	d := New(session, 5, 2)
 
 	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM", "req-1"))
@@ -110,9 +108,7 @@ func TestCheckInboxes_VerifySpecOncePerReviewCompletion(t *testing.T) {
 func TestCheckInboxes_ReviewCCDoesNotFire(t *testing.T) {
 	t.Setenv("MUXCODE_DEDUP_WINDOW", "0")
 	session := testSession(t)
-	if err := bus.WriteActiveSpec(session, "docs/requirements/drafts/test-spec.md"); err != nil {
-		t.Fatalf("write active spec: %v", err)
-	}
+	seedRepoSpec(t, session)
 	d := New(session, 5, 2)
 
 	// An auto-CC'd review→test response in edit's inbox — the observed false
@@ -136,9 +132,7 @@ func TestCheckInboxes_ReviewCCDoesNotFire(t *testing.T) {
 func TestCheckInboxes_MarkerWriteFailureWithholdsTransition(t *testing.T) {
 	t.Setenv("MUXCODE_DEDUP_WINDOW", "0")
 	session := testSession(t)
-	if err := bus.WriteActiveSpec(session, "docs/requirements/drafts/test-spec.md"); err != nil {
-		t.Fatalf("write active spec: %v", err)
-	}
+	seedRepoSpec(t, session)
 	d := New(session, 5, 2)
 
 	// A directory at the marker path makes the atomic rename fail.
@@ -173,9 +167,7 @@ func TestCheckInboxes_MarkerWriteFailureWithholdsTransition(t *testing.T) {
 func TestCheckInboxes_ReviewedMarkerSurvivesDaemonRestart(t *testing.T) {
 	t.Setenv("MUXCODE_DEDUP_WINDOW", "0")
 	session := testSession(t)
-	if err := bus.WriteActiveSpec(session, "docs/requirements/drafts/test-spec.md"); err != nil {
-		t.Fatalf("write active spec: %v", err)
-	}
+	seedRepoSpec(t, session)
 
 	d := New(session, 5, 2)
 	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM", "req-1"))

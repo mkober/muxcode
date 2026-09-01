@@ -77,7 +77,7 @@ This is a property of the **template**, not of MUX-117's work. It will recur on 
 ## Defect B — verify-spec fires on the plan agent's own doc writes
 
 > **Prior art: this defect was already filed as
-> [MUX-007](../drafts/MUX-007-verify-spec-stale-review-refire.md) on 2026-08-13**, and MUX-007 names the
+> [MUX-007](../completed/MUX-007-verify-spec-stale-review-refire.md) on 2026-08-13**, and MUX-007 names the
 > mechanism more precisely than the 2026-08-31 observation did: the daemon fires the
 > reviewed-transition on **any growth of edit's inbox** while **any unconsumed review→edit message
 > exists** — and plan's mandated reply to edit *is* that growth, so plan's own compliance sustains
@@ -150,7 +150,7 @@ the gate is misplaced rather than that the agent is choosing badly.
 
 ### Open question: merge with MUX-007?
 
-[MUX-007](../drafts/MUX-007-verify-spec-stale-review-refire.md) covers the same loop with a sharper
+[MUX-007](../completed/MUX-007-verify-spec-stale-review-refire.md) covers the same loop with a sharper
 mechanism; this section adds B1 (provenance) and the fire-11 negative control. Carrying both risks
 two half-specs of one defect. The likely resolution is to **fold B into MUX-007** and leave this spec
 scoped to Defect A alone — but that is a filing decision for the user, not one to make silently.
