@@ -267,6 +267,14 @@ spec's can disagree.** The run had looped past its Phase 4 work (`implement` run
 Recorded here rather than as a new defect spec because the reported symptom is correct behaviour;
 the underlying question belongs to this spec's loop semantics.
 
+**Tracked 2026-08-31 as [`MUX-130`](../backlog/MUX-130-spec-phase-parsing-semantics.md).** The three
+items above were living only inside a spec marked Complete, so nothing surfaced them. Investigating
+them found the divergence is **not** the authority judgement this note assumed: `SpecCompletedPhaseCount`
+and `SpecJustCompletedPhase` define "complete" incompatibly, and phase headings are matched
+document-wide — so a `## Verification notes` section naming phases inflates the count that the
+`phase-progress` guard compares against. This spec's own file is unaffected; the analysis above of
+`${completed_phase}` being correct still stands.
+
 ## Status
 
 Complete — closed on the [known gap](#known-gap-at-close-out) above, 2026-08-28. One
