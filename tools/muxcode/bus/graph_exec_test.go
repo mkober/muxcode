@@ -1654,6 +1654,28 @@ func spawnCountForRun(t *testing.T, session, runID string) int {
 	return n
 }
 
+// TestReseedSpawnIdentityFirstFailClosed pins the reseed ordering (review
+// must-fix, 2026-09-01): SeedMsgID persists BEFORE the seed is sent, so a
+// failure between the two leaves an id whose message does not exist — a
+// state that can never read as responded — rather than a sent seed whose
+// entry still carries the previous iteration's responded id (a false
+// completion). The discriminator: a failing entry update must mean NO
+// seed reaches the worker's inbox; send-first ordering delivers one.
+func TestReseedSpawnIdentityFirstFailClosed(t *testing.T) {
+	useTempBusDir(t)
+
+	bogus := SpawnEntry{ID: "spawn-doesnotexist", SpawnRole: "spawn-doesnotexist", Owner: "daemon"}
+	if _, err := ReseedSpawn(runTestSession, bogus, "phase 2"); err == nil {
+		t.Fatal("reseed of a missing entry must error")
+	}
+	msgs, _ := Peek(runTestSession, "spawn-doesnotexist")
+	for _, m := range msgs {
+		if m.Action == "spawn-task" {
+			t.Fatalf("seed was sent despite the entry update failing — identity must persist first, got %q", m.Payload)
+		}
+	}
+}
+
 // TestAcquireSpawnWorkerReusesLiveWorker pins the reuse core: a second
 // acquire for the same run+node reseeds the live worker instead of
 // starting a fresh one, and the entry's SeedMsgID moves to the new seed.

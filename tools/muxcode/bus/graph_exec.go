@@ -36,14 +36,12 @@ const graphSender = "daemon"
 // put; a failed stamp only disables reuse for this one worker, degrading
 // to the pre-MUX-131 fresh-start-per-iteration behavior.
 var graphSpawnFn = func(session, role, task, owner, runID, nodeID string) (string, error) {
-	entry, err := StartSpawn(session, role, task, owner, true)
+	// Ownership rides the entry from birth (StartSpawnOwned) — a
+	// post-creation stamp had a race window and a swallowed error path.
+	entry, err := StartSpawnOwned(session, role, task, owner, true, runID, nodeID)
 	if err != nil {
 		return "", err
 	}
-	_ = UpdateSpawnEntry(session, entry.ID, func(e *SpawnEntry) {
-		e.RunID = runID
-		e.NodeID = nodeID
-	})
 	return entry.SpawnRole, nil
 }
 
@@ -602,7 +600,11 @@ func finishNode(session string, run *GraphRun, n *Node, outcome, output string) 
 }
 
 // harvestRunningNode checks whether a dispatched node's work completed
-// and, if so, finishes the node with a derived outcome.
+// and, if so, finishes the node with a derived outcome. A spawn or map
+// success is finished only after portSpawnGroup lands the worktree
+// output uncommitted into the checkout working tree (MUX-131 Defect A,
+// graph_port.go) — a port failure fails the node here, before any
+// downstream node runs, and no porting path ever creates a commit.
 func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 	now := time.Now().Unix()
 	if n.TimeoutSec > 0 && st.StartedAt > 0 && now-st.StartedAt > int64(n.TimeoutSec) {
@@ -635,11 +637,25 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 	case NodeSpawn, NodeMap:
 		_, _ = RefreshSpawnStatus(session)
 		outcome, done := spawnGroupOutcome(session, st.TaskID)
-		if done {
-			finishNode(session, run, n, outcome, "")
+		if !done {
+			redriveStalledSpawns(session, run, n, st, now)
 			return
 		}
-		redriveStalledSpawns(session, run, n, st, now)
+		output := ""
+		if outcome == OutcomeSuccess {
+			summary, perr := portSpawnGroup(session, st.TaskID)
+			if errors.Is(perr, errPortTransient) {
+				return // node stays running, harvest retried next tick
+			}
+			if perr != nil {
+				finishNode(session, run, n, OutcomeFailure, "harvest: "+perr.Error())
+				return
+			}
+			output = summary
+			LogLifecycle(session, "info", "daemon", "graph-harvest",
+				fmt.Sprintf("%s: %s — %s", run.ID, n.ID, summary))
+		}
+		finishNode(session, run, n, outcome, output)
 	}
 }
 

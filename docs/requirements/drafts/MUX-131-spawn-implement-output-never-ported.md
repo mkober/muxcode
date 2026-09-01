@@ -235,8 +235,25 @@ Reuse-aware mechanics carried into Phase 2 (reuse means one persistent worktree 
    "nothing to port" must never become a failure.
 4. **Map fan-out**: same harvest per member at completion, landing sequentially in completion order, so
    parallel collisions surface as explicit conflicts on the later member rather than racing a shared tree.
-5. **Landing mechanism**: prefer committing in the worktree and advancing the branch ref over mutating
-   the main checkout's working tree, so a human mid-edit is never clobbered.
+5. **Landing mechanism — AMENDED 2026-09-01 on authority grounds.** The original wording ("commit in
+   the worktree and advance the branch ref") is **withdrawn**: it would have the daemon create commits,
+   which is exactly the laundering shape the authority model exists to prevent.
+
+   The point is sharper than "it bypasses `CheckCommitAuthority`". That function is called from only two
+   sites — `cmd/send.go:133` and `bus/inbox.go:151`, **both message paths**. It governs who may *request*
+   a commit over the bus. Daemon-side git does not bypass the check; it runs **where the check does not
+   exist**. No `wait_human` dominates it, and no runtime backstop would catch it.
+
+   **Amended mechanism: land the work UNCOMMITTED.** Apply the diff into the branch's working tree
+   (`cherry-pick --no-commit` / `git apply`), leaving the **existing gated `commit` node as the only
+   thing that ever creates a commit.** Defect A is still fixed — `build`, `test`, `review` and the
+   `phase-progress` guard all see the work, because they read the working tree — while the consent
+   invariant is untouched.
+
+   **The cost, stated rather than glossed:** the original wording's rationale was clobber-avoidance.
+   Landing uncommitted into the checkout working tree **restores that hazard**, so the amendment is only
+   safe with an explicit guard — refuse to apply when the working tree carries modifications in the
+   affected paths, and fail the node naming them, exactly as the conflict semantics in (2) do.
 
 
 - [x] Choose: (a) `implement` runs without worktree isolation, (b) an explicit port node between
@@ -249,14 +266,103 @@ Reuse-aware mechanics carried into Phase 2 (reuse means one persistent worktree 
 
 ### Phase 2: Implement porting
 
-- [ ] Implement the chosen model
-- [ ] A spawn with unported changes fails rather than reporting success
-- [ ] Conflicts surface as a node failure with the conflicting paths named
+- [x] Implement the chosen model — landing **uncommitted** per the amended mechanism 5
+      (`graph_port.go`; `TestPortSpawnWorktreeLandsChangesUncommitted` shows the files present in the
+      checkout with `status --porcelain` reporting them uncommitted)
+- [x] **The daemon never creates a commit** — verified two ways: no `commit`/`merge`/`cherry-pick`
+      call exists anywhere in `graph_port.go` (only `reset --hard`, which creates nothing), and
+      `rev-parse HEAD` is asserted unchanged across success **and** refusal paths (19 `rev-parse`
+      assertions in the port tests)
+- [x] **Clobber guard** — `checkoutDirtyIn` refuses on any affected path `git status --porcelain`
+      reports dirty, failing the node and naming the paths
+      (`TestPortSpawnWorktreeDirtyCheckoutRefusalNamesPaths`, human edit byte-identical after)
+- [x] A spawn with unported changes fails rather than reporting success —
+      `TestExecSpawnHarvestConflictFailsNodeBeforeBuild`: node FAILED, `build` never dispatched
+- [x] Conflicts surface as a node failure with the conflicting paths named —
+      `TestPortSpawnWorktreeConflictFailsNamingPaths`; checkout untouched, HEAD unmoved
+
+### Phase 2b decision (2026-09-01): do not discard the worktree copy while a port is uncommitted
+
+The uncommitted-landing amendment has a fix-loop consequence the worker surfaced: after iteration 1
+ports, `portSpawnWorktree` does `reset --hard`, so at reseed the worktree is **clean** and
+`advanceSpawnWorktree` moves it to the branch tip — **a tip that does not contain the port**, because
+the port created no commit. The fix pass then works without its own prior output, and its harvest is
+clobber-refused against the run's own earlier port.
+
+Two options were offered: (a) reseed re-applies the checkout's uncommitted delta into the worktree, or
+(b) the guard recognises self-ported content by blob hash.
+
+**Adjudication: (b), plus the root fix — stop discarding the worktree's copy.** Option (a) is a
+workaround for having thrown the copy away in the first place. Instead:
+
+1. **Do not `reset --hard` or advance the worktree while this run has an uncommitted port outstanding.**
+   The fix pass then retains its own prior output naturally, with nothing to re-apply.
+2. **Advance at reseed only when no uncommitted port is outstanding** — i.e. after the gated `commit`
+   node has landed the work, which is exactly when the branch tip does contain it.
+3. **The clobber guard must distinguish foreign edits from this run's own ported content** (option b).
+   Its purpose is protecting a *human's* in-progress edit; content this run itself ported is not a
+   clobber. Track it by path + blob hash.
+
+**This also closes the durability window** edit flagged: between port and gated commit, the checkout's
+uncommitted state would otherwise be the work's **sole copy** — one `git checkout`, `stash`, or failed
+operation from losing it, with the worktree already reset. Keeping the worktree copy until the commit
+lands means there are always two.
+
+The cost is that the worktree diverges from the branch for the duration of one phase. That divergence
+is precisely the run's own uncommitted work, so it is compatible by construction — unlike the
+open-ended divergence the original spec warned about, which came from *never* advancing.
+
+#### Scheduling ruling (2026-09-01): durability slice pulled into Phase 2, blob-hash guard stays Phase 3
+
+Review holds a must-fix on ruling item 1 (the sole-copy window), which was scoped to Phase 3. The
+durability slice is **approved for Phase 2**:
+
+- a successful port keeps the worktree **dirty** — no `reset --hard`;
+- at reseed, advance only when the worktree's content is **contained in the tip** (diff-vs-tip empty
+  ⇒ the gated commit landed ⇒ `reset --hard` to tip is safe).
+
+That test is a sound proxy: unported work, a failed port, or an outstanding uncommitted port all leave
+a non-empty diff and correctly refuse to advance. It errs conservative — extra uncommitted work merely
+delays an advance — which is the safe direction.
+
+**Known limitation this leaves open, recorded deliberately.** Without the blob-hash guard, a fix loop's
+**second** harvest is still clobber-refused against the run's *own* first port: `checkoutDirtyIn` blocks
+any affected path that `git status --porcelain` reports dirty, **regardless of who dirtied it**, and
+iteration 1's port is exactly what dirtied them.
+
+Blessed anyway because it is **strictly better than the status quo**, not because it is complete:
+
+| | Before Phase 2 | With this slice |
+|---|---|---|
+| First iteration | work stranded **silently**, spawn reports success | ported |
+| Fix-loop iteration | work stranded silently | node **fails loudly**, naming paths, routed to the stuck gate |
+
+Defect A's core harm is the *silence*. Converting a silent strand into a loud refusal is the win; the
+refusal itself is a known cost until the blob-hash guard lands.
+
+**Conditions on this ruling:**
+
+- [x] The fix-loop refusal fails **loudly** and is test-pinned as expected behaviour —
+      `TestPortSpawnWorktreeOwnPortFixLoopRefusalIsExpected`, whose comment states it pins *"a RECORDED
+      LIMITATION, not a defect ... so the limitation is lifted deliberately, not discovered in
+      production"*. Condition satisfied as written
+- [ ] The blob-hash guard lands before MUX-131 closes; a permanently-refusing fix loop is not an
+      acceptable end state, only an acceptable intermediate one
 
 ### Phase 3: Negative controls
 
+- [ ] **Fix-loop control:** iteration 1 ports, build fails, the fix pass re-enters — the worktree still
+      contains iteration 1's output, and the second harvest succeeds rather than being clobber-refused
+      against the run's own port
+- [ ] **Durability control:** between a successful port and the gated commit, the work exists in **two**
+      places (checkout working tree and worktree) — assert the worktree copy is not discarded
 - [ ] No-op spawn (nothing to port) still succeeds
 - [ ] Conflicting branch change surfaces loudly, does not silently pick a side
+- [ ] **Negative control:** a porting run leaves the branch ref and commit graph **unchanged** — assert
+      `git rev-parse HEAD` is identical before and after a successful port, so a future refactor cannot
+      quietly reintroduce daemon-side committing
+- [ ] **Negative control:** a dirty working tree in the affected paths fails the node rather than being
+      overwritten
 - [ ] Confirm each control fails when its fix is reverted
 
 ### Phase 4: Integration test
@@ -274,7 +380,7 @@ Reuse-aware mechanics carried into Phase 2 (reuse means one persistent worktree 
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-132-graph-retry-launders-gate-approval | 2h 10m | 2026-09-01 00:42 |
+| MUX-132-graph-retry-launders-gate-approval | 3h 0m | 2026-09-01 01:54 |
 
 **Attribution caveat.** The branch is `MUX-132-…`, not a MUX-131 branch: this spec became the active
 spec while work continued on the MUX-132 branch, so the recorded total covers MUX-132, MUX-133 and
@@ -292,7 +398,20 @@ window-liveness gating and a fresh-start fallback. Verified from the primary art
 which counts spawns **from the store** across two iterations and asserts exactly one — the assertion
 whose absence let a single run create six workers.
 
-**Phase 1 (porting model, Defect A)** — option (c), executor-side harvest at iteration completion.
+**Phase 1 (porting model, Defect A)** — option (c), executor-side harvest at iteration completion,
+**amended on authority grounds** to land uncommitted.
+
+**Phase 2 (implement porting) complete, 5/5** — `graph_port.go` lands the diff into the checkout working
+tree and never creates a commit. Verified two ways: no `commit`/`merge`/`cherry-pick` call exists in the
+porting path, and `rev-parse HEAD` is asserted unchanged across both success and refusal paths. The
+durability slice is in: `worktreeContentEqualsTip` gates the reset, and any error reads as *"not
+equal"* — unknown never authorizes discarding the worktree copy. Evidence: `go test -count=1 -v ./...`
+in the **main checkout**, exit 0, **2475 PASS / 0 FAIL**.
+
+One limitation is deliberately live and pinned: a fix loop's second harvest is refused against the
+run's own first port, because the clobber guard cannot yet tell self-ported content from a human edit.
+`TestPortSpawnWorktreeOwnPortFixLoopRefusalIsExpected` records it as expected behaviour so it is lifted
+deliberately rather than discovered. **The blob-hash guard must land before this spec closes.**
 
 Phases 2–4 open.
 

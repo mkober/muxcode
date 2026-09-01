@@ -116,6 +116,16 @@ func UpdateSpawnEntry(session, id string, fn func(*SpawnEntry)) error {
 // an agent. When useWorktree is true, the spawn gets its own git worktree at
 // the current HEAD commit for filesystem isolation. Returns the SpawnEntry.
 func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry, error) {
+	return StartSpawnOwned(session, role, task, owner, useWorktree, "", "")
+}
+
+// StartSpawnOwned is StartSpawn with graph ownership (run+node, the reuse
+// key) stamped into the entry at birth. A post-creation stamp left a
+// window — and a swallowed error path — where a fast reply or failed
+// update produced a permanently unowned worker: never reused, never
+// persistent, reaped as an ordinary spawn (review must-fix, 2026-09-01).
+// Empty ids mean an unowned CLI spawn, the previous behavior exactly.
+func StartSpawnOwned(session, role, task, owner string, useWorktree bool, runID, nodeID string) (SpawnEntry, error) {
 	// Generate spawn ID and extract 8-hex suffix for compact window name
 	fullID := NewMsgID("spawn")
 	parts := strings.Split(fullID, "-")
@@ -131,6 +141,8 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 		Status:    "running",
 		Window:    spawnRole,
 		StartedAt: time.Now().Unix(),
+		RunID:     runID,
+		NodeID:    nodeID,
 	}
 
 	// Create worktree if requested
@@ -358,28 +370,43 @@ func FindLiveSpawn(session, runID, nodeID string) (SpawnEntry, bool) {
 
 // ReseedSpawn seeds a new iteration's task into an existing live worker's
 // inbox and wakes it, instead of building a fresh worker (MUX-131 Defect
-// B: three workers, one task, one run). The entry's SeedMsgID moves to
-// the new seed BEFORE the wake so no reader can mistake the previous
-// iteration's responded seed for this one's completion. A dedup-suppressed
-// send adopts the already-pending identical seed (retry --from racing an
-// unconsumed seed) — same adopt rule as the NodeSend dispatch path;
-// falling back to a fresh worker there would strand the pending seed AND
-// rebuild the worker the suppression proves is already tasked.
+// B: three workers, one task, one run). The worktree advances to the
+// branch tip first (advanceSpawnWorktree) — reseed is where a reused
+// worker picks up what the gated commit node shipped between iterations.
+// The entry's SeedMsgID moves to
+// the new seed's id BEFORE the seed is sent — the reviewed-marker
+// ordering (MUX-007): identity first, then the thing it identifies. Sent
+// first, a window exists where spawnGroupOutcome reads the OLD id, whose
+// previous-iteration reply is already responded, and falsely completes
+// the new iteration; identity-first fails closed instead — an id whose
+// message does not exist yet can never read as responded, and a send
+// failure leaves a stalled node for the watchdogs, not a phantom
+// completion. A dedup-suppressed send adopts the already-pending
+// identical seed (retry --from racing an unconsumed seed) — same adopt
+// rule as the NodeSend dispatch path; falling back to a fresh worker
+// there would strand the pending seed AND rebuild the worker the
+// suppression proves is already tasked.
 func ReseedSpawn(session string, entry SpawnEntry, task string) (string, error) {
+	advanceSpawnWorktree(session, entry)
 	msg := NewMessage(entry.Owner, entry.SpawnRole, "request", "spawn-task", task, "")
+	if err := UpdateSpawnEntry(session, entry.ID, func(e *SpawnEntry) {
+		e.SeedMsgID = msg.ID
+		e.Task = task
+	}); err != nil {
+		return "", err
+	}
 	if err := Send(session, msg); err != nil {
 		if !errors.Is(err, ErrSendSuppressed) {
 			return "", fmt.Errorf("reseeding inbox: %v", err)
 		}
 		if pm, found := FindPendingInboxRequest(session, msg.To, msg.From, msg.Action, msg.Payload); found {
 			msg.ID = pm.ID
+			if err := UpdateSpawnEntry(session, entry.ID, func(e *SpawnEntry) {
+				e.SeedMsgID = msg.ID
+			}); err != nil {
+				return "", err
+			}
 		}
-	}
-	if err := UpdateSpawnEntry(session, entry.ID, func(e *SpawnEntry) {
-		e.SeedMsgID = msg.ID
-		e.Task = task
-	}); err != nil {
-		return "", err
 	}
 	graphSpawnWakeFn(session, entry.SpawnRole)
 	return msg.ID, nil
