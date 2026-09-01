@@ -461,10 +461,7 @@ func TestWindowStatusFormat_ContainsDraculaColors(t *testing.T) {
 	if !strings.Contains(got, "@display-name") {
 		t.Error("expected @display-name user option for window labels")
 	}
-	// Must NOT use #{?} conditional — breaks when #[] escapes contain commas
-	if strings.Contains(got, "#{?") {
-		t.Error("must not use #{?} conditional (breaks with commas in style escapes)")
-	}
+	assertFKeyLabelFormat(t, got, "#{?@muxcode_fkey,#{@muxcode_fkey} ,}")
 }
 
 func TestWindowStatusCurrentFormat_ContainsGreenHighlight(t *testing.T) {
@@ -475,11 +472,30 @@ func TestWindowStatusCurrentFormat_ContainsGreenHighlight(t *testing.T) {
 	if !strings.Contains(got, "bold") {
 		t.Error("expected bold for current window")
 	}
-	if !strings.Contains(got, "F#I*") {
-		t.Error("expected F#I* (function key + asterisk) for current window")
+	assertFKeyLabelFormat(t, got, "#{?@muxcode_fkey,#{@muxcode_fkey}* ,}")
+}
+
+// assertFKeyLabelFormat pins the MUX-134 label rule: the F-key comes from
+// @muxcode_fkey (WindowFKey's resolution), never the raw window index —
+// F#I advertised keys the bindings do not select. The conditional is safe
+// only while its arms carry no #[] style escapes (commas in styles break
+// tmux's arm parsing), so that constraint is pinned too.
+func assertFKeyLabelFormat(t *testing.T, got, wantConditional string) {
+	t.Helper()
+	if !strings.Contains(got, wantConditional) {
+		t.Errorf("expected @muxcode_fkey label conditional %q in %q", wantConditional, got)
 	}
-	if strings.Contains(got, "#{?") {
-		t.Error("must not use #{?} conditional (breaks with commas in style escapes)")
+	if strings.Contains(got, "F#I") {
+		t.Error("raw F#I label present — the index lies when it diverges from the bindings (MUX-134)")
+	}
+	if start := strings.Index(got, "#{?"); start >= 0 {
+		if end := strings.Index(got[start:], "}"); end >= 0 {
+			// The arm text runs to the conditional's closing brace; the
+			// nested #{@muxcode_fkey} ends before any style could start.
+			if arm := got[start : start+end]; strings.Contains(arm, "#[") {
+				t.Errorf("conditional arms must hold no #[] styles, got %q", arm)
+			}
+		}
 	}
 }
 

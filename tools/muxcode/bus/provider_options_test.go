@@ -157,7 +157,7 @@ func stubWindowList(t *testing.T, census string) {
 // key existed. Spawn slots follow ascending index (non-contiguous here,
 // so a hardcoded 11/12 mapping is caught), and a third spawn has no key.
 func TestWindowFKey_ByIndexNotPosition(t *testing.T) {
-	stubWindowList(t, "0:research\n1:plan\n2:edit\n3:build\n10:commit\n14:spawn-bbb22222\n11:spawn-aaa11111\n17:spawn-ccc33333")
+	stubWindowList(t, "0:research\n1:plan\n2:edit\n3:build\n5:my:notes\n10:commit\n14:spawn-bbb22222\n11:spawn-aaa11111\n17:spawn-ccc33333")
 
 	tests := []struct {
 		window, want string
@@ -165,6 +165,7 @@ func TestWindowFKey_ByIndexNotPosition(t *testing.T) {
 		{"research", ""},          // index 0 — no binding
 		{"plan", "F1"},            // was F2 under position derivation
 		{"edit", "F2"},            // was F3
+		{"my:notes", "F5"},        // colon in the name survives the census parse
 		{"commit", "F10"},         // was mislabeled F11
 		{"spawn-aaa11111", "F11"}, // first spawn slot (lowest index)
 		{"spawn-bbb22222", "F12"}, // second slot despite later listing
@@ -175,6 +176,52 @@ func TestWindowFKey_ByIndexNotPosition(t *testing.T) {
 		if got := WindowFKey("s", tt.window); got != tt.want {
 			t.Errorf("WindowFKey(%q) = %q, want %q", tt.window, got, tt.want)
 		}
+	}
+}
+
+// RefreshWindowFKeyLabels must reconcile @muxcode_fkey to what the
+// bindings select, touching only drifted windows: a stale F11 on a
+// non-spawn window at index 11 is CLEARED (the lying-label case, user
+// report 2026-09-01), a spawn past index 10 gains its slot label, and
+// windows already correct get no set-option at all — the sweep runs
+// every poll, so a stable layout must cost one read and zero writes.
+func TestRefreshWindowFKeyLabels_DiffsOnly(t *testing.T) {
+	// Census fields are index:label:name — name LAST because it may
+	// contain colons (my:notes pins that a colon name parses intact).
+	stubWindowList(t, "0::auto\n1:F1:plan\n2::edit\n11:F11:research\n12::spawn-aaa11111\n13:F13:my:notes")
+	var calls [][]string
+	origRun := tmuxRunner
+	t.Cleanup(func() { tmuxRunner = origRun })
+	tmuxRunner = func(args ...string) error {
+		calls = append(calls, args)
+		return nil
+	}
+
+	n, err := RefreshWindowFKeyLabels("s")
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if n != 4 {
+		t.Errorf("changed = %d, want 4 (edit gains F2, research clears F11, spawn gains F11, colon-named window clears F13); calls: %v", n, calls)
+	}
+	set := map[string]string{}
+	for _, c := range calls {
+		if len(c) >= 6 && c[0] == "set-option" {
+			set[c[3]] = c[5]
+		}
+	}
+	want := map[string]string{"s:2": "F2", "s:11": "", "s:12": "F11", "s:13": ""}
+	for target, label := range want {
+		got, ok := set[target]
+		if !ok || got != label {
+			t.Errorf("set-option for %s = %q (present=%v), want %q", target, got, ok, label)
+		}
+	}
+	if _, touched := set["s:1"]; touched {
+		t.Error("plan already correct at F1 but was rewritten — the sweep must be diff-only")
+	}
+	if _, touched := set["s:0"]; touched {
+		t.Error("auto has no binding and no stale label but was written")
 	}
 }
 

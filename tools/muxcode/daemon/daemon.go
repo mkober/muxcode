@@ -325,6 +325,7 @@ func (d *Daemon) Run() error {
 		d.checkPollHealth()
 		d.checkForceRespond()
 		d.checkControlPanes()
+		d.checkWindowFKeyLabels()
 		d.checkNonHookTasks()
 		d.checkTrackedTasks()
 		d.checkStalledTasks()
@@ -2606,6 +2607,17 @@ func (d *Daemon) checkTrackedTasks() {
 		// are non-actionable for checkIdleAgents, so without an explicit wake
 		// an already-idle sender would never see the reply.
 		_ = bus.Notify(d.session, task.From)
+	}
+}
+
+// checkWindowFKeyLabels keeps status-bar F-key labels honest as spawn
+// windows come and go — see bus.RefreshWindowFKeyLabels. One list-windows
+// per poll; set-option fires only on drift, so a stable layout costs a
+// single read.
+func (d *Daemon) checkWindowFKeyLabels() {
+	if n, err := bus.RefreshWindowFKeyLabels(d.session); err == nil && n > 0 {
+		bus.LogLifecycle(d.session, "info", "daemon", "fkey-labels",
+			fmt.Sprintf("%d window label(s) updated", n))
 	}
 }
 

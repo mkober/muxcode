@@ -195,34 +195,92 @@ func WindowFKey(session, window string) string {
 	if err != nil {
 		return ""
 	}
-	matchIdx := -1
+	return windowFKeyLabels(out)[window]
+}
+
+// windowFKeyLabels computes every window's label from one list-windows
+// census (lines of "index:name", where the name keeps any colons it
+// contains) — the single slot computation behind WindowFKey and
+// RefreshWindowFKeyLabels. Unbound windows map to "".
+func windowFKeyLabels(census string) map[string]string {
+	type win struct {
+		idx  int
+		name string
+	}
+	var wins []win
 	var spawnIdxs []int
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(census), "\n") {
 		idx, name, ok := strings.Cut(strings.TrimSpace(line), ":")
 		if !ok {
 			continue
 		}
-		n, convErr := strconv.Atoi(idx)
-		if convErr != nil {
+		n, err := strconv.Atoi(idx)
+		if err != nil {
 			continue
 		}
+		wins = append(wins, win{n, name})
 		if strings.HasPrefix(name, "spawn-") {
 			spawnIdxs = append(spawnIdxs, n)
 		}
-		if name == window {
-			matchIdx = n
+	}
+	sort.Ints(spawnIdxs)
+	slot := make(map[int]int, len(spawnIdxs))
+	for s, idx := range spawnIdxs {
+		slot[idx] = s
+	}
+	labels := make(map[string]string, len(wins))
+	for _, w := range wins {
+		label := ""
+		switch {
+		case w.idx >= 1 && w.idx <= 10:
+			label = fmt.Sprintf("F%d", w.idx)
+		case w.idx > 10 && strings.HasPrefix(w.name, "spawn-"):
+			if s, ok := slot[w.idx]; ok && s < 2 {
+				label = fmt.Sprintf("F%d", 11+s)
+			}
 		}
+		labels[w.name] = label
 	}
-	if matchIdx >= 1 && matchIdx <= 10 {
-		return fmt.Sprintf("F%d", matchIdx)
+	return labels
+}
+
+// RefreshWindowFKeyLabels reconciles every window's @muxcode_fkey option
+// with the label its binding actually selects, setting only windows whose
+// stored value differs — including clearing when a window loses its key
+// (a spawn exits and the slots shift). The status bar renders this option
+// instead of the raw index: F#I lies whenever list position and bindings
+// diverge (observed 2026-09-01 — the research hold window occupied index
+// 11, the sole spawn landed at 12, and its tab advertised the empty F12
+// slot while F11 was the key that selected it). Returns how many window
+// labels were updated.
+func RefreshWindowFKeyLabels(session string) (int, error) {
+	// Field order is load-bearing: the window name goes LAST because it
+	// may itself contain colons, while index and label never do.
+	out, err := TmuxOutput("list-windows", "-t", session, "-F", "#{window_index}:#{@muxcode_fkey}:#W")
+	if err != nil {
+		return 0, err
 	}
-	if matchIdx > 10 && strings.HasPrefix(window, "spawn-") {
-		sort.Ints(spawnIdxs)
-		for slot, idx := range spawnIdxs {
-			if idx == matchIdx && slot < 2 {
-				return fmt.Sprintf("F%d", 11+slot)
+	var censusLines []string
+	type row struct {
+		idx, current, name string
+	}
+	var rows []row
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), ":", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		rows = append(rows, row{parts[0], parts[1], parts[2]})
+		censusLines = append(censusLines, parts[0]+":"+parts[2])
+	}
+	labels := windowFKeyLabels(strings.Join(censusLines, "\n"))
+	changed := 0
+	for _, r := range rows {
+		if want := labels[r.name]; want != r.current {
+			if err := TmuxRun("set-option", "-w", "-t", session+":"+r.idx, "@muxcode_fkey", want); err == nil {
+				changed++
 			}
 		}
 	}
-	return ""
+	return changed, nil
 }
