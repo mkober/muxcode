@@ -70,6 +70,7 @@ func commitOnBranch(t *testing.T, repo, msg string) string {
 }
 
 func TestPortSpawnWorktreeLandsChangesUncommitted(t *testing.T) {
+	useTempBusDir(t)
 	repo := initPortRepo(t)
 	wt := addPortWorktree(t, repo)
 	base := portRepoGit(t, wt, "rev-parse", "HEAD")
@@ -113,15 +114,56 @@ func TestPortSpawnWorktreeLandsChangesUncommitted(t *testing.T) {
 	}
 }
 
-// TestPortSpawnWorktreeOwnPortFixLoopRefusalIsExpected pins a RECORDED
-// LIMITATION, not a defect: after an iteration ports (uncommitted) and
-// the loop re-enters without a commit, the next harvest of the same
-// paths is refused by the clobber guard — it cannot distinguish our own
-// earlier port from a human edit. This stays the documented behaviour
-// until the Phase-3 blob-hash guard learns to recognize self-ported
-// content; the pin exists so the limitation is lifted deliberately, not
-// discovered in production.
-func TestPortSpawnWorktreeOwnPortFixLoopRefusalIsExpected(t *testing.T) {
+// TestPortSpawnFixLoopSecondHarvestSucceedsOverOwnPort is the Phase 3
+// fix-loop control: iteration 1 ports, the loop re-enters without a
+// commit, the fix pass reworks the same file AND reverts a file it had
+// added — and the second harvest succeeds over the run's own port
+// instead of being clobber-refused. The port record's blob hashes prove
+// the checkout state is ours; the previous patch is reversed and the
+// new one applied, so the reverted file disappears rather than
+// lingering from iteration 1.
+func TestPortSpawnFixLoopSecondHarvestSucceedsOverOwnPort(t *testing.T) {
+	useTempBusDir(t)
+	repo := initPortRepo(t)
+	wt := addPortWorktree(t, repo)
+	headBefore := portRepoGit(t, repo, "rev-parse", "HEAD")
+	writePortFile(t, wt, "base.txt", "spawn version\n")
+	writePortFile(t, wt, "extra.go", "package extra\n")
+
+	ported, err := portSpawnWorktree("port-test", repo, portEntry("spawn-pt", wt))
+	if err != nil || !ported {
+		t.Fatalf("first port must land: ported=%v err=%v", ported, err)
+	}
+
+	// Fix-loop pass: rework base.txt, revert the extra file, no commit.
+	writePortFile(t, wt, "base.txt", "spawn version 2\n")
+	if rerr := os.Remove(filepath.Join(wt, "extra.go")); rerr != nil {
+		t.Fatal(rerr)
+	}
+	ported, err = portSpawnWorktree("port-test", repo, portEntry("spawn-pt", wt))
+	if err != nil || !ported {
+		t.Fatalf("second harvest must succeed over the run's own port: ported=%v err=%v", ported, err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(repo, "base.txt")); string(got) != "spawn version 2\n" {
+		t.Fatalf("fix pass content must replace the earlier port, got %q", got)
+	}
+	if _, serr := os.Stat(filepath.Join(repo, "extra.go")); !os.IsNotExist(serr) {
+		t.Fatalf("file the fix pass reverted must not linger from iteration 1 (stat err: %v)", serr)
+	}
+	if head := portRepoGit(t, repo, "rev-parse", "HEAD"); head != headBefore {
+		t.Fatalf("re-port must not move HEAD: %s vs %s", head, headBefore)
+	}
+	if s := portRepoGit(t, wt, "status", "--porcelain"); s == "" {
+		t.Fatal("worktree must stay dirty after the re-port — it is the durability copy")
+	}
+}
+
+// TestPortSelfPortGuardRefusesTamperedPort keeps the lifted limitation
+// from going inert: a ported file a human has since edited no longer
+// hashes to the port record, so the re-port still refuses naming it —
+// the record authorizes overwriting OUR content, never theirs.
+func TestPortSelfPortGuardRefusesTamperedPort(t *testing.T) {
+	useTempBusDir(t)
 	repo := initPortRepo(t)
 	wt := addPortWorktree(t, repo)
 	writePortFile(t, wt, "base.txt", "spawn version\n")
@@ -131,21 +173,48 @@ func TestPortSpawnWorktreeOwnPortFixLoopRefusalIsExpected(t *testing.T) {
 		t.Fatalf("first port must land: ported=%v err=%v", ported, err)
 	}
 
-	// Fix-loop pass: same worker reworks the same file, no commit between.
+	// A human edits the ported file before the fix pass re-ports.
+	writePortFile(t, repo, "base.txt", "human tampered\n")
 	writePortFile(t, wt, "base.txt", "spawn version 2\n")
 	ported, err = portSpawnWorktree("port-test", repo, portEntry("spawn-pt", wt))
 	if err == nil || ported {
-		t.Fatalf("own-port refusal is the recorded limitation — expected a refusal, got ported=%v err=%v", ported, err)
+		t.Fatalf("tampered port must refuse, got ported=%v err=%v", ported, err)
 	}
 	if !strings.Contains(err.Error(), "port refused") || !strings.Contains(err.Error(), "base.txt") {
 		t.Fatalf("refusal must name the path, got: %v", err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(repo, "base.txt")); string(got) != "spawn version\n" {
-		t.Fatalf("first port's landing must be untouched by the refusal, got %q", got)
+	if got, _ := os.ReadFile(filepath.Join(repo, "base.txt")); string(got) != "human tampered\n" {
+		t.Fatalf("the human's edit must never be clobbered, got %q", got)
+	}
+}
+
+// TestPortDurabilityWorkHeldInTwoPlaces is the Phase 3 durability
+// control: between a successful port and the gated commit the work
+// exists in BOTH the checkout working tree and the worktree — the
+// worktree copy must not be discarded, or the checkout's uncommitted
+// state becomes the sole copy of the iteration.
+func TestPortDurabilityWorkHeldInTwoPlaces(t *testing.T) {
+	useTempBusDir(t)
+	repo := initPortRepo(t)
+	wt := addPortWorktree(t, repo)
+	writePortFile(t, wt, "feature.go", "package x\n")
+
+	ported, err := portSpawnWorktree("port-test", repo, portEntry("spawn-pt", wt))
+	if err != nil || !ported {
+		t.Fatalf("port must land: ported=%v err=%v", ported, err)
+	}
+	for _, place := range []string{repo, wt} {
+		if got, rerr := os.ReadFile(filepath.Join(place, "feature.go")); rerr != nil || string(got) != "package x\n" {
+			t.Fatalf("work missing from %s: %v %q", place, rerr, got)
+		}
+	}
+	if s := portRepoGit(t, wt, "status", "--porcelain"); s == "" {
+		t.Fatal("worktree copy discarded — durability requires the second copy until the commit ships")
 	}
 }
 
 func TestPortSpawnWorktreeBranchMovedCleanApply(t *testing.T) {
+	useTempBusDir(t)
 	repo := initPortRepo(t)
 	wt := addPortWorktree(t, repo)
 	writePortFile(t, wt, "feature.go", "package x\n")
@@ -170,6 +239,7 @@ func TestPortSpawnWorktreeBranchMovedCleanApply(t *testing.T) {
 }
 
 func TestPortSpawnWorktreeConflictFailsNamingPaths(t *testing.T) {
+	useTempBusDir(t)
 	repo := initPortRepo(t)
 	wt := addPortWorktree(t, repo)
 	writePortFile(t, wt, "base.txt", "spawn version\n")
@@ -204,6 +274,7 @@ func TestPortSpawnWorktreeConflictFailsNamingPaths(t *testing.T) {
 }
 
 func TestPortSpawnWorktreeDirtyCheckoutRefusalNamesPaths(t *testing.T) {
+	useTempBusDir(t)
 	repo := initPortRepo(t)
 	wt := addPortWorktree(t, repo)
 	headBefore := portRepoGit(t, repo, "rev-parse", "HEAD")
@@ -230,6 +301,7 @@ func TestPortSpawnWorktreeDirtyCheckoutRefusalNamesPaths(t *testing.T) {
 }
 
 func TestPortSpawnWorktreeNoOpSucceedsWithoutAdvance(t *testing.T) {
+	useTempBusDir(t)
 	repo := initPortRepo(t)
 	wt := addPortWorktree(t, repo)
 	base := portRepoGit(t, wt, "rev-parse", "HEAD")

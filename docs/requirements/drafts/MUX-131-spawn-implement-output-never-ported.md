@@ -351,29 +351,36 @@ refusal itself is a known cost until the blob-hash guard lands.
 
 ### Phase 3: Negative controls
 
-- [ ] **Fix-loop control:** iteration 1 ports, build fails, the fix pass re-enters — the worktree still
+- [x] **Fix-loop control:** iteration 1 ports, build fails, the fix pass re-enters — the worktree still
       contains iteration 1's output, and the second harvest succeeds rather than being clobber-refused
       against the run's own port
-- [ ] **Durability control:** between a successful port and the gated commit, the work exists in **two**
+- [x] **Durability control:** between a successful port and the gated commit, the work exists in **two**
       places (checkout working tree and worktree) — assert the worktree copy is not discarded
-- [ ] No-op spawn (nothing to port) still succeeds
-- [ ] Conflicting branch change surfaces loudly, does not silently pick a side
-- [ ] **Negative control:** a porting run leaves the branch ref and commit graph **unchanged** — assert
+- [x] No-op spawn (nothing to port) still succeeds
+- [x] Conflicting branch change surfaces loudly, does not silently pick a side
+- [x] **Negative control:** a porting run leaves the branch ref and commit graph **unchanged** — assert
       `git rev-parse HEAD` is identical before and after a successful port, so a future refactor cannot
       quietly reintroduce daemon-side committing
-- [ ] **Negative control:** a dirty working tree in the affected paths fails the node rather than being
+- [x] **Negative control:** a dirty working tree in the affected paths fails the node rather than being
       overwritten
-- [ ] Confirm each control fails when its fix is reverted
+- [x] Confirm each control fails when its fix is reverted — mutation-confirmed per control (C3–C7),
+      including reintroducing a daemon-side commit, which the HEAD-unchanged assertions caught
 
 ### Phase 4: Integration test
 
-- [ ] Extend `scripts/test-multi-phase-graph.sh`: a spawn-backed `implement` whose output must appear
+- [x] Extend `scripts/test-multi-phase-graph.sh`: a spawn-backed `implement` whose output must appear
       on the branch before `build` runs
 - [ ] Assert `build` sees the ported files — pin the actual failure mode, not just a green run
-- [ ] Assert the no-op spawn path still completes
-- [ ] **Assert spawn count for a multi-phase run is 1, not one-per-phase** (Defect B end-to-end) — this
+      *(assertion written; **not yet executed** — an unrun assertion verifies nothing)*
+- [ ] Assert the no-op spawn path still completes *(written, not yet executed)*
+- [ ] **Assert spawn count for a multi-phase run is 1, not one-per-phase** (Defect B end-to-end)
+      *(written via the `run_spawn_count` store helper; **not yet executed**)* — this
       is the check that would have caught the three-worker run
-- [ ] Coverage floor so a skipped run cannot report green
+- [x] Coverage floor so a skipped run cannot report green — `>= 46`, and the itemisation sums exactly
+      (4 validation + daemon + headline + 3 implement + 3 commits + 4 termination + start-at-2 +
+      2 stuck-phase + 1 fixture + 17 spawn-run + 9 conflict-control). It counts checks **executed**
+      (`pass + fail`) rather than passed, with the exit code handling failures separately — so it
+      catches a short-circuited run without failing a complete one
 - [ ] Run it and record passed/failed/exit code here
 
 ## Time Tracking
@@ -389,34 +396,35 @@ row is kept honest by naming the branch rather than implying the time was spent 
 
 ## Status
 
-In Progress — moved to `drafts/` 2026-09-01. **Phases 0 and 1 complete.**
+In Progress — moved to `drafts/` 2026-09-01. **Phases 0–3 complete; Phase 4 is 2/6.**
+Both Defect A (output never ported) and Defect B (worker rebuilt per iteration) are fixed and
+unit-verified. What remains is end-to-end proof.
 
-**Phase 0 (worker reuse, Defect B)** — `acquireSpawnWorker` reuses a live worker per run+node, with
-window-liveness gating and a fresh-start fallback. Verified from the primary artifact:
-`go test -count=1 -v ./...` in the **main checkout**, exit 0, **2463 PASS / 0 FAIL**, with verbatim
-`--- PASS:` lines for all four new tests. The load-bearing one is `TestExecSpawnLoopReusesWorker`,
-which counts spawns **from the store** across two iterations and asserts exactly one — the assertion
-whose absence let a single run create six workers.
+| Phase | State | Evidence |
+|---|---|---|
+| 0 · Worker reuse (Defect B) | **4/4** | `acquireSpawnWorker` with window-liveness gating and fresh-start fallback. `TestExecSpawnLoopReusesWorker` counts spawns **from the store** across two iterations and asserts exactly one — the assertion whose absence let one run create six workers. Main checkout, exit 0, 2463 PASS / 0 FAIL |
+| 1 · Porting model (Defect A) | **3/3** | Option (c), executor-side harvest, **amended on authority grounds** to land uncommitted |
+| 2 · Implement porting | **5/5** | `graph_port.go` never creates a commit — no `commit`/`merge`/`cherry-pick` in the path, and `rev-parse HEAD` asserted unchanged across success *and* refusal. `worktreeContentEqualsTip` gates the reset; any error reads as "not equal", so uncertainty never authorises discarding the worktree copy. 2475 PASS / 0 FAIL |
+| 3 · Negative controls | **7/7** | Blob-hash self-port guard; mutation-confirmed per control. 2477 PASS / 0 FAIL — a delta of exactly +2 (three tests added, one removed) |
+| 4 · Integration test | **2/6** | Script written; **never executed** |
 
-**Phase 1 (porting model, Defect A)** — option (c), executor-side harvest at iteration completion,
-**amended on authority grounds** to land uncommitted.
+**The standing condition is discharged.** The blob-hash guard landed, so the fix-loop limitation is
+lifted rather than carried — and `TestPortSpawnWorktreeOwnPortFixLoopRefusalIsExpected` was **removed**
+rather than left contradicting the new behaviour, which is exactly what that pin existed to force.
 
-**Phase 2 (implement porting) complete, 5/5** — `graph_port.go` lands the diff into the checkout working
-tree and never creates a commit. Verified two ways: no `commit`/`merge`/`cherry-pick` call exists in the
-porting path, and `rev-parse HEAD` is asserted unchanged across both success and refusal paths. The
-durability slice is in: `worktreeContentEqualsTip` gates the reset, and any error reads as *"not
-equal"* — unknown never authorizes discarding the worktree copy. Evidence: `go test -count=1 -v ./...`
-in the **main checkout**, exit 0, **2475 PASS / 0 FAIL**.
+The guard is narrow, not permissive: a dirty path is allowed only if its content **hashes to the
+recorded port**; a human edit over our own ported file still refuses; partial presence of a prior port
+refuses rather than auto-resolving; and a record-write failure degrades back to the conservative
+refusal. Every failure mode goes safe.
 
-One limitation is deliberately live and pinned: a fix loop's second harvest is refused against the
-run's own first port, because the clobber guard cannot yet tell self-ported content from a human edit.
-`TestPortSpawnWorktreeOwnPortFixLoopRefusalIsExpected` records it as expected behaviour so it is lifted
-deliberately rather than discovered. **The blob-hash guard must land before this spec closes.**
+**What is genuinely open.** Phase 4's script exists (coverage floor `>= 46`, itemisation sums, counts
+checks *executed* rather than passed) but **has never run**. Its unrun assertions verify nothing — the
+[`MUX-031`](../completed/MUX-031-graph-run-tui.md) Phase 7 shape, where a spec closed over a script that
+had never executed. The assertion most at stake is **spawn count == 1**, the Defect B end-to-end proof.
 
-Phases 2–4 open.
+`graph_port.go` and `graph_port_test.go` are also still **uncommitted**, so Phase 3's work is not yet in
+a commit.
 
-Sequencing note recorded before implementation starts: **A2 makes Defect A the higher-priority defect**,
-because while it stands, any test evidence produced by a spawn is untrustworthy — including evidence
-about the spawn machinery itself. The phase order below still runs B (worker reuse) first, since reuse
-changes what "port the output" means, but the verification of *either* fix must not rely on a
-spawn-produced run until A is closed.
+**Sequencing note, still true:** A2 makes Defect A the higher-priority defect — while it stood, any
+test evidence produced by a spawn was untrustworthy, including evidence about the spawn machinery
+itself. Verification of either fix must not rely on a spawn-produced run.
