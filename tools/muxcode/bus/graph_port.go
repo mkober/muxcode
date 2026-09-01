@@ -47,8 +47,8 @@ import (
 // branch tip at RESEED time (see advanceSpawnWorktree), not after a
 // port: a port moves no ref, so there is nothing to advance to until
 // the gated commit ships the phase — and advancing a dirty worktree is
-// allowed exactly when its content equals the tip, the proof the commit
-// landed it.
+// allowed exactly when its own changes are contained in the tip, the
+// proof the commit landed them.
 //
 // A fix-loop pass re-enters without a commit, so its harvest meets a
 // checkout still dirty with the run's OWN previous port. The port
@@ -274,7 +274,7 @@ func portSpawnWorktree(session, repoDir string, e SpawnEntry) (bool, error) {
 		return false, fmt.Errorf("%s: cannot diff worktree: %v", e.SpawnRole, err)
 	}
 	if len(bytes.TrimSpace(patch)) == 0 {
-		if tip, terr := portGit(repoDir, "rev-parse", "HEAD"); terr == nil && worktreeContentEqualsTip(e.Worktree, tip) {
+		if tip, terr := portGit(repoDir, "rev-parse", "HEAD"); terr == nil && worktreeContainedInTip(e.Worktree, tip) {
 			resetPortWorktree(session, e, tip)
 		}
 		return false, nil
@@ -377,21 +377,39 @@ func nonEmptyPaths(in []string) []string {
 	return out
 }
 
-// worktreeContentEqualsTip reports whether the worktree's staged content
-// is byte-identical to the branch tip — the proof that the gated commit
-// has landed everything the worktree holds, so resetting to the tip
-// loses nothing. Callers must have staged the worktree (`add -A`) first.
-// Any error reads as "not equal": unknown must never authorize a reset.
-func worktreeContentEqualsTip(worktree, tip string) bool {
+// worktreeContainedInTip reports whether the branch tip already holds
+// everything the worktree's own staged changes contain — the proof that
+// resetting to the tip loses nothing. The safety question is
+// ONE-directional: a full `diff --cached <tip>` is bidirectional, so a
+// stale-based worktree reported tip-only files as deletions and the
+// equality form never held even for a worktree the tip subsumed —
+// permanently refusing the advance (phantom-block, found live
+// 2026-09-01; the spec ruling's "contained" shipped as "equal"). Instead
+// each path of the worktree's OWN diff (staged vs its base) is compared
+// against the tip: any difference there — including a deliberate
+// deletion of a file the tip still has — means the worktree holds
+// something the tip lacks, and refuses. Callers must have staged the
+// worktree (`add -A`) first. Any error reads as "not contained":
+// unknown must never authorize a reset.
+func worktreeContainedInTip(worktree, tip string) bool {
 	if tip == "" {
 		return false
 	}
-	diff, err := portGitRaw(worktree, "diff", "--cached", tip)
-	return err == nil && len(bytes.TrimSpace(diff)) == 0
+	names, err := portGitRaw(worktree, "diff", "--cached", "--name-only")
+	if err != nil {
+		return false
+	}
+	for _, p := range nonEmptyPaths(strings.Split(string(names), "\n")) {
+		diff, derr := portGitRaw(worktree, "diff", "--cached", tip, "--", p)
+		if derr != nil || len(bytes.TrimSpace(diff)) != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // resetPortWorktree hard-resets a worktree to the branch tip. Only
-// reachable behind worktreeContentEqualsTip, so it can never destroy
+// reachable behind worktreeContainedInTip, so it can never destroy
 // unshipped work — which is also why the port record clears here: the
 // equality proof means the recorded port's referent (uncommitted
 // checkout state) no longer exists. A failed reset is logged, not fatal
@@ -479,7 +497,7 @@ func advanceSpawnWorktree(session string, e SpawnEntry) {
 		if _, aerr := portGit(e.Worktree, "add", "-A"); aerr != nil {
 			return
 		}
-		if !worktreeContentEqualsTip(e.Worktree, tip) {
+		if !worktreeContainedInTip(e.Worktree, tip) {
 			return // conservative refusal — unshipped content stays put
 		}
 	}

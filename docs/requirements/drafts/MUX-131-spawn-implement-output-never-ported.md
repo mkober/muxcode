@@ -150,32 +150,34 @@ addresses harvesting a spawn's work.
 
 ### Acceptance criteria
 
-- [ ] A spawn node whose work must reach the branch either runs **without** worktree isolation, or has
+- [x] A spawn node whose work must reach the branch either runs **without** worktree isolation, or has
       an explicit port step that lands its output before any downstream node runs
-- [ ] A spawn that produced changes but failed to port them **fails the node** — it must not report
+- [x] A spawn that produced changes but failed to port them **fails the node** — it must not report
       `success` while its output is stranded
 - [ ] `req-code-pr` and `story-lifecycle` both walk a phase end-to-end with the work reaching the branch
-- [ ] No downstream node ever sees a branch missing the `implement` output
-- [ ] **Negative control:** a spawn that legitimately produces no changes (verify-only pass, phase
+      **NOT covered:** only `req-code-pr` is exercised end-to-end; `story-lifecycle`'s spawn `implement` has no test.
+- [x] No downstream node ever sees a branch missing the `implement` output
+- [x] **Negative control:** a spawn that legitimately produces no changes (verify-only pass, phase
       already complete) still completes `success` — the fix must not turn "nothing to port" into a
       failure, since `implement`'s own message tells it to verify rather than re-implement when the
       phase is done
-- [ ] **Negative control:** the port step does not silently overwrite branch changes made while the
+- [x] **Negative control:** the port step does not silently overwrite branch changes made while the
       spawn ran; a conflict surfaces loudly rather than resolving to either side
-- [ ] The guard is no longer the first thing to notice — a stranded-output run fails at or before
+- [x] The guard is no longer the first thing to notice — a stranded-output run fails at or before
       `build`, not at `commit` after a human gate
 
 ### Acceptance criteria — Defect B
 
-- [ ] Re-entering a spawn node reuses the **same** worker when it is alive, rather than starting a new one
-- [ ] A full multi-phase run creates **one** `implement` worker, not one per iteration — asserted by
+- [x] Re-entering a spawn node reuses the **same** worker when it is alive, rather than starting a new one
+- [x] A full multi-phase run creates **one** `implement` worker, not one per iteration — asserted by
       counting spawns for the run, not by reading the code
 - [ ] The reused worker retains its conversation across iterations (no re-boot cost per phase)
-- [ ] **Negative control:** when the previous worker is genuinely dead or unreachable, a fresh one is
+      **NOT asserted:** retention follows structurally from reusing the same process, but nothing pins it — and avoiding re-boot cost is the entire point of reuse.
+- [x] **Negative control:** when the previous worker is genuinely dead or unreachable, a fresh one is
       started — reuse must not wedge the run behind a corpse
-- [ ] **Negative control:** two *different* spawn nodes (e.g. `implement` and a `map` fan-out member)
+- [x] **Negative control:** two *different* spawn nodes (e.g. `implement` and a `map` fan-out member)
       still get distinct workers — reuse is keyed per node, never global
-- [ ] Worktrees do not accumulate one-per-iteration; a run's spawn worktrees are accounted for at the
+- [x] Worktrees do not accumulate one-per-iteration; a run's spawn worktrees are accounted for at the
       end (`graph_exec` currently never calls `StopSpawn`/`CleanFinishedSpawns`, so they persist —
       confirm before changing, this was observed 2026-08-28 and not re-verified here)
 
@@ -276,6 +278,29 @@ Reuse-aware mechanics carried into Phase 2 (reuse means one persistent worktree 
 - [x] **Clobber guard** — `checkoutDirtyIn` refuses on any affected path `git status --porcelain`
       reports dirty, failing the node and naming the paths
       (`TestPortSpawnWorktreeDirtyCheckoutRefusalNamesPaths`, human edit byte-identical after)
+- [x] **REOPENED and RE-CLOSED 2026-09-01 — `worktreeContentEqualsTip` tested equality where containment is required.**
+      Found live by worker `e1e3790b`. `git diff --cached <tip>` is **bidirectional**, so a worktree based
+      on an older commit reports tip-only files as *deletions* and the diff is never empty — even when the
+      worktree holds nothing the tip lacks. Auto-advance then refuses permanently and the worker
+      phantom-blocks.
+
+      **My ruling's wording is the root cause and I own it**: I wrote "advance only when the worktree's
+      content is *contained in* the tip (diff-vs-tip empty)", which reads naturally as equality. Those
+      are not the same predicate, and the stricter one shipped. The safety question is one-directional:
+      *does the worktree hold anything the tip lacks?* A worktree merely **missing** tip content loses
+      nothing on reset.
+
+      **It failed in the safe direction** — stuck, never lossy — which is why it surfaced as a block
+      rather than as data loss. That is the fail-closed design working; it is still a bug.
+- [x] Fix landed: `worktreeContainedInTip` (`graph_port.go:394`) lists only paths the worktree's staged
+      content **touches** and compares each against tip, so tip-only files can no longer register as
+      deletions. Both advance sites use it; `err → false` preserves the fail-safe. The equality function
+      is gone, not merely bypassed. Scoped to paths the worktree's staged content touches, so deletions of
+      untouched tip-only files never count against it (or advance the base first, then compare)
+- [x] **Negative control:** a stale-based worktree whose content is a strict subset of the tip **does**
+      advance — `TestReseedAdvanceStaleBaseSubsetWorktree`, the phantom-block pin
+- [x] **Negative control:** a worktree holding content the tip lacks still **refuses** to advance,
+      including the deliberate-deletion case — the relaxation did not become "always advance"
 - [x] A spawn with unported changes fails rather than reporting success —
       `TestExecSpawnHarvestConflictFailsNodeBeforeBuild`: node FAILED, `build` never dispatched
 - [x] Conflicts surface as a node failure with the conflicting paths named —
@@ -346,7 +371,7 @@ refusal itself is a known cost until the blob-hash guard lands.
       `TestPortSpawnWorktreeOwnPortFixLoopRefusalIsExpected`, whose comment states it pins *"a RECORDED
       LIMITATION, not a defect ... so the limitation is lifted deliberately, not discovered in
       production"*. Condition satisfied as written
-- [ ] The blob-hash guard lands before MUX-131 closes; a permanently-refusing fix loop is not an
+- [x] The blob-hash guard lands before MUX-131 closes; a permanently-refusing fix loop is not an
       acceptable end state, only an acceptable intermediate one
 
 ### Phase 3: Negative controls
@@ -370,18 +395,23 @@ refusal itself is a known cost until the blob-hash guard lands.
 
 - [x] Extend `scripts/test-multi-phase-graph.sh`: a spawn-backed `implement` whose output must appear
       on the branch before `build` runs
-- [ ] Assert `build` sees the ported files — pin the actual failure mode, not just a green run
-      *(assertion written; **not yet executed** — an unrun assertion verifies nothing)*
-- [ ] Assert the no-op spawn path still completes *(written, not yet executed)*
-- [ ] **Assert spawn count for a multi-phase run is 1, not one-per-phase** (Defect B end-to-end)
-      *(written via the `run_spawn_count` store helper; **not yet executed**)* — this
+- [x] Assert `build` sees the ported files — pin the actual failure mode, not just a green run
+     
+- [x] Assert the no-op spawn path still completes
+- [x] **Assert spawn count for a multi-phase run is 1, not one-per-phase** (Defect B end-to-end)
+      — `run_spawn_count` store helper — this
       is the check that would have caught the three-worker run
 - [x] Coverage floor so a skipped run cannot report green — `>= 46`, and the itemisation sums exactly
       (4 validation + daemon + headline + 3 implement + 3 commits + 4 termination + start-at-2 +
       2 stuck-phase + 1 fixture + 17 spawn-run + 9 conflict-control). It counts checks **executed**
       (`pass + fail`) rather than passed, with the exit code handling failures separately — so it
       catches a short-circuited run without failing a complete one
-- [ ] Run it and record passed/failed/exit code here
+- [x] Run it and record passed/failed/exit code here — `bash scripts/test-multi-phase-graph.sh`
+      2026-09-01 10:34:02 in the **main checkout** (a 10:14 run used an absolute worktree path and is
+      not counted): **47 passed, 0 failed, exit 0**, floor met at 46 checks executed. Verbatim among
+      them: *"multi-phase run created ONE implement worker total (Defect B end-to-end)"*, *"stranded
+      output failed the spawn node itself"*, *"build never dispatched — failure landed before build,
+      not at commit"*
 
 ## Time Tracking
 
@@ -396,35 +426,46 @@ row is kept honest by naming the branch rather than implying the time was spent 
 
 ## Status
 
-In Progress — moved to `drafts/` 2026-09-01. **Phases 0–3 complete; Phase 4 is 2/6.**
-Both Defect A (output never ported) and Defect B (worker rebuilt per iteration) are fixed and
-unit-verified. What remains is end-to-end proof.
+In Progress — **all five phases complete (0–4); 2 acceptance criteria remain open.** Defect A (output
+never ported) and Defect B (worker rebuilt per iteration) are both fixed, verified at unit level and
+end-to-end.
 
-| Phase | State | Evidence |
+| Phase | | Evidence |
 |---|---|---|
-| 0 · Worker reuse (Defect B) | **4/4** | `acquireSpawnWorker` with window-liveness gating and fresh-start fallback. `TestExecSpawnLoopReusesWorker` counts spawns **from the store** across two iterations and asserts exactly one — the assertion whose absence let one run create six workers. Main checkout, exit 0, 2463 PASS / 0 FAIL |
-| 1 · Porting model (Defect A) | **3/3** | Option (c), executor-side harvest, **amended on authority grounds** to land uncommitted |
-| 2 · Implement porting | **5/5** | `graph_port.go` never creates a commit — no `commit`/`merge`/`cherry-pick` in the path, and `rev-parse HEAD` asserted unchanged across success *and* refusal. `worktreeContentEqualsTip` gates the reset; any error reads as "not equal", so uncertainty never authorises discarding the worktree copy. 2475 PASS / 0 FAIL |
-| 3 · Negative controls | **7/7** | Blob-hash self-port guard; mutation-confirmed per control. 2477 PASS / 0 FAIL — a delta of exactly +2 (three tests added, one removed) |
-| 4 · Integration test | **2/6** | Script written; **never executed** |
+| 0 · Worker reuse (Defect B) | **4/4** | `acquireSpawnWorker`, window-liveness gating, fresh-start fallback |
+| 1 · Porting model (Defect A) | **3/3** | Option (c) harvest, amended on authority grounds to land uncommitted |
+| 2 · Implement porting | **9/9** | Reopened for the containment defect, then re-closed |
+| 3 · Negative controls | **7/7** | Blob-hash self-port guard, mutation-confirmed per control |
+| 4 · Integration test | **6/6** | `bash scripts/test-multi-phase-graph.sh` 10:34:02 in the **main checkout**, **47 passed / 0 failed / exit 0**, floor met at 46 executed |
 
-**The standing condition is discharged.** The blob-hash guard landed, so the fix-loop limitation is
-lifted rather than carried — and `TestPortSpawnWorktreeOwnPortFixLoopRefusalIsExpected` was **removed**
-rather than left contradicting the new behaviour, which is exactly what that pin existed to force.
+The end-to-end proof that matters, verbatim from that run:
 
-The guard is narrow, not permissive: a dirty path is allowed only if its content **hashes to the
-recorded port**; a human edit over our own ported file still refuses; partial presence of a prior port
-refuses rather than auto-resolving; and a record-write failure degrades back to the conservative
-refusal. Every failure mode goes safe.
+```
+PASS  multi-phase run created ONE implement worker total (Defect B end-to-end)
+PASS  stranded output failed the spawn node itself
+PASS  build never dispatched — failure landed before build, not at commit
+PASS  human's checkout edit preserved byte-identical
+PASS  worker's copy preserved in its worktree after the refusal
+```
 
-**What is genuinely open.** Phase 4's script exists (coverage floor `>= 46`, itemisation sums, counts
-checks *executed* rather than passed) but **has never run**. Its unrun assertions verify nothing — the
-[`MUX-031`](../completed/MUX-031-graph-run-tui.md) Phase 7 shape, where a spec closed over a script that
-had never executed. The assertion most at stake is **spawn count == 1**, the Defect B end-to-end proof.
+A 10:14 run of the same script is **not** counted: its command used an absolute path into a spawn
+worktree. Per A2, a run inside the tree under test proves nothing about the branch.
 
-`graph_port.go` and `graph_port_test.go` are also still **uncommitted**, so Phase 3's work is not yet in
-a commit.
+**The containment defect and its re-close.** `worktreeContentEqualsTip` tested equality where
+containment was required — my ruling's wording ("contained in … diff-vs-tip empty") reads naturally as
+equality, and the stricter predicate shipped, permanently refusing auto-advance on any stale-based
+worktree. `worktreeContainedInTip` now compares only paths the worktree's staged content **touches**.
+The equality function is gone rather than bypassed, and the fail-safe (`err → false`) is preserved.
+
+**What blocks close-out — 2 criteria, both genuinely uncovered:**
+
+- `story-lifecycle` is never exercised. The integration test covers `req-code-pr` only, yet both
+  templates use a spawn `implement`, so the second is unproven.
+- Conversation retention across iterations is never asserted. It follows structurally from reusing the
+  same process, but nothing pins it — and avoiding re-boot cost is the entire point of reuse.
+
+`graph_port.go` and `graph_port_test.go` remain **uncommitted**.
 
 **Sequencing note, still true:** A2 makes Defect A the higher-priority defect — while it stood, any
 test evidence produced by a spawn was untrustworthy, including evidence about the spawn machinery
-itself. Verification of either fix must not rely on a spawn-produced run.
+itself.

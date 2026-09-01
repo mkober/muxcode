@@ -87,6 +87,31 @@ The fix is to stop overloading the value: carry an explicit "found" boolean, or 
 the valid phase range. Contiguous-prefix semantics (decision 1) do not resolve this — the prefix length
 would be correct while the *named* phase is still wrong.
 
+### Defect E — the phase view can say "done" while the close guard says "not done"
+
+Observed live 2026-09-01 on [`MUX-131`](../drafts/MUX-131-spawn-implement-output-never-ported.md): all
+five phases were complete while **two acceptance criteria remained open**, because those criteria live
+under `## Requirements` — an `##` heading, so `SpecPhases` assigns them to no phase.
+
+The two mechanisms then disagree about the same spec:
+
+| Predicate | Answer | Consumer |
+|---|---|---|
+| `SpecCurrentPhase` | `(no open phase)` | `${current_phase}` in gate messages |
+| `SpecOpenItems` | **2** | the close-spec guard ([MUX-114](../completed/MUX-114-close-spec-node-has-no-completion-check.md)) |
+
+Both are internally correct — phase predicates answer *"which phase is open"*, `SpecOpenItems` answers
+*"is anything open"*. The defect is what a **human** is shown: a `wait_human` gate rendered
+`… steps of (no open phase)`, which reads as *the spec is finished* at the exact moment the close guard
+would refuse to close it.
+
+This is the concrete form of the question [MUX-121](../completed/MUX-121-multi-phase-sequential-graph.md)
+left open — *"the gate message should say so rather than naming a phase number that reads as a
+mistake"* — now with a live instance and a named cause.
+
+Note this is **not** fixed by the contiguous-prefix decision, and not by Defect D's sentinel fix either:
+both concern phases. Unscoped items are invisible to every phase predicate by construction.
+
 ### Invariant worth stating: phase order is *file order*, never edit order
 
 All four predicates walk `SpecPhases`, which appends in the order headings appear in the file. Nothing
@@ -207,6 +232,10 @@ Still open. These change the shape of the fix and should be settled before Phase
       `## Verification notes` section naming phases does not inflate the phase count
 - [ ] `SpecPhases` on `completed/MUX-031-graph-run-tui.md` returns **7** phases, not 15
 - [ ] Duplicate or non-monotonic phase numbers are surfaced, not silently accepted
+- [ ] A gate message never implies completeness while `SpecOpenItems` is non-zero — either the phase
+      text accounts for unscoped items, or it states plainly that items remain outside the phases
+- [ ] **Negative control:** a spec that genuinely has nothing open still renders its honest completion
+      text — the fix must not make every finished spec look unfinished
 - [ ] A spec numbering phases from **0** behaves correctly: Phase 0 can be the reported current phase,
       and a spec with only Phase 0 complete names it rather than rendering `(no completed phase)`
 - [ ] **Negative control:** the genuine "no phases complete" and "no open phase" cases still render

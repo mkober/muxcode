@@ -432,6 +432,69 @@ func TestReseedSpawnAdvancesWorktreeToBranchTip(t *testing.T) {
 	}
 }
 
+// TestReseedAdvanceStaleBaseSubsetWorktree pins the phantom-block fix
+// (Phase 2 reopened, 2026-09-01): a worktree whose base is BEHIND the tip
+// by unrelated files, holding one dirty file byte-identical to the tip,
+// is subsumed by the tip and must advance — the bidirectional equality
+// form saw the tip-only files as deletions and refused forever, wedging
+// the worker behind a supervised reset. The negative control keeps the
+// relaxation from becoming "always advance": a deliberate DELETION of a
+// file the tip still has is content the tip lacks, and must refuse.
+func TestReseedAdvanceStaleBaseSubsetWorktree(t *testing.T) {
+	useTempBusDir(t)
+	repo := initPortRepo(t)
+	wt := addPortWorktree(t, repo) // base: tip before the commits below
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	origWake := graphSpawnWakeFn
+	graphSpawnWakeFn = func(string, string) {}
+	t.Cleanup(func() { graphSpawnWakeFn = origWake })
+
+	e := portEntry("spawn-ss", wt)
+	if err := os.MkdirAll(DeliveryDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(SpawnPath(runTestSession)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSpawnEntries(runTestSession, []SpawnEntry{e}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The tip moves past the worktree's base by an unrelated file AND
+	// ships the exact content the worktree holds dirty — the live case.
+	writePortFile(t, repo, "unrelated.txt", "landed by another phase\n")
+	writePortFile(t, repo, "feature.go", "package x\n")
+	tip := commitOnBranch(t, repo, "ships the port + unrelated work")
+	writePortFile(t, wt, "feature.go", "package x\n")
+
+	if _, err := ReseedSpawn(runTestSession, e, "next phase"); err != nil {
+		t.Fatalf("reseed: %v", err)
+	}
+	if head := portRepoGit(t, wt, "rev-parse", "HEAD"); head != tip {
+		t.Fatalf("tip-subsumed stale-base worktree must advance: %s vs %s (phantom-block)", head, tip)
+	}
+	if s := portRepoGit(t, wt, "status", "--porcelain"); s != "" {
+		t.Fatalf("advanced worktree must read clean, got %q", s)
+	}
+
+	// Negative control: deleting a file the tip still has is a change the
+	// tip lacks — refuse, preserving the deletion as unshipped work.
+	if err := os.Remove(filepath.Join(wt, "base.txt")); err != nil {
+		t.Fatal(err)
+	}
+	writePortFile(t, repo, "shipped3.txt", "another phase\n")
+	commitOnBranch(t, repo, "tip moves again")
+	if _, err := ReseedSpawn(runTestSession, e, "next phase again"); err != nil {
+		t.Fatalf("reseed: %v", err)
+	}
+	if head := portRepoGit(t, wt, "rev-parse", "HEAD"); head != tip {
+		t.Fatalf("worktree with a deliberate deletion must not advance: %s vs %s", head, tip)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "base.txt")); !os.IsNotExist(err) {
+		t.Fatalf("the deliberate deletion must survive the refused advance (stat err: %v)", err)
+	}
+}
+
 // spawnPortGraph is the two-node fixture the executor harvest tests
 // share: a spawn implement node feeding a build send node.
 func spawnPortGraph() *Graph {
