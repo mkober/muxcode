@@ -24,7 +24,7 @@
 # temp dir, empty MUXCODE_CONFIG, disk-pressure cleanup disabled. No live
 # muxcode session is needed.
 #
-# REQUIRES: the installed muxcode binary must include MUX-014 (run
+# REQUIRES: installed muxcode >= v0.1.0, which shipped MUX-014 (run
 # ./build.sh first), and tmux must be available.
 #
 # Usage: bash scripts/test-graph-orchestrator.sh
@@ -40,6 +40,8 @@ if ! command -v tmux >/dev/null 2>&1; then
   echo "  FAIL  tmux not available"
   exit 1
 fi
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+require_muxcode_version "$MUX" v0.1.0 MUX-014 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
 pass=0; fail=0

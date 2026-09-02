@@ -14,7 +14,7 @@
 # MUXCODE_LIFECYCLE_LOG_DIR pinned to a temp dir, MUXCODE_CONFIG pointed
 # at an empty file, and dedup/branch-time/cleanup machinery disabled.
 #
-# REQUIRES: tmux, and an installed muxcode binary that includes MUX-117
+# REQUIRES: tmux, and installed muxcode >= v0.1.0, which shipped MUX-117
 # (run ./build.sh first).
 #
 # Usage: bash scripts/test-pane-targeting.sh
@@ -28,10 +28,8 @@ fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux is required"; exit 2; }
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
 MUX=$(command -v muxcode)
-if ! grep -q "@muxcode_pane" "$MUX" 2>/dev/null || ! "$MUX" pane -h >/dev/null 2>&1; then
-  echo "SKIP: installed muxcode lacks MUX-117 pane identity — run ./build.sh"
-  exit 2
-fi
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+require_muxcode_version "$MUX" v0.1.0 MUX-117 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 SESSION="pane-id-test-$$"
 LEGACY="pane-legacy-test-$$"

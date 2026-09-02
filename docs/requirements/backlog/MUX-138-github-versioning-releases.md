@@ -160,29 +160,65 @@ Cadence: tag when a spec cluster closes (roughly every 3–6 merged PRs), never 
 ### Phase 3: Release workflow and first tag
 
 - [x] `.github/workflows/release.yml` — test → matrix build → checksums → `gh release create --generate-notes`
-- [ ] `.github/release.yml` categories, and the matching labels created on the repo
-- [ ] Tag `v0.1.0` on the Phase 1 landing commit (**user-approved**, via the commit agent)
-- [ ] Verify the release published with generated notes, 4 binaries and `sha256sums.txt`
+- [x] `.github/release.yml` categories, and the matching labels created on the repo
+- [x] Tag `v0.1.0` on the **release-workflow commit** (`6a05bc8`), not the Phase 1 landing commit (**user-approved**, via the commit agent) — see the correction below
+- [x] Verify the release published with generated notes, 4 binaries and `sha256sums.txt`
 
-Verification 2026-09-02 (plan, `verify-spec`). Step 1 checked off against the file: `test` job, `build`
-needing it across a 4-target matrix (`darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`),
-`sha256sum muxcode-* > sha256sums.txt` (:126), and `gh release create "$TAG" --verify-tag
---generate-notes` (:134-138). Both files are **untracked** — the work exists in the tree, not in
-history.
+**Correction to this phase's own wording.** Step 3 originally read *"Tag `v0.1.0` on the Phase 1
+landing commit"*. That instruction was self-defeating and was correctly not followed:
+`.github/workflows/release.yml` does not exist at the Phase 1 commit (`git cat-file -e
+13bec9d:.github/workflows/release.yml` → absent), and the workflow triggers on `push: tags: ['v*']`.
+Tagging there would have fired **no workflow and produced no release**. The tag belongs at or after
+the commit that introduces the workflow; `6a05bc8` is that commit. Wording fixed to match what must
+happen, rather than checking off an item against something that did not occur.
 
-The other three are deliberately **not** checked off:
+Verification 2026-09-02 (plan, `verify-spec`), with provenance stated because half of this phase is
+only observable through `gh`, which this role must not run.
 
-| Step | Why it stays open |
-|------|-------------------|
-| `.github/release.yml` categories + labels | The file exists with its category buckets, but the criterion also requires **the matching labels created on the repo**. That half needs `gh label list`, which this role must not run — half-verified is not done |
-| Tag `v0.1.0` | `git tag` is **empty**. Also user-approved by its own wording |
-| Verify the release published | Unreachable until the tag exists |
+| Fact | How established |
+|------|-----------------|
+| Workflow shape: `test` → `build` on a 4-target matrix (`darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`), `sha256sum muxcode-* > sha256sums.txt` (:126), `gh release create "$TAG" --verify-tag --generate-notes` (:134-138) | **Directly verified** — read from the file |
+| Tag `v0.1.0` exists, is **annotated** (`git cat-file -t` → `tag`), and points at `6a05bc8` | **Directly verified** — read-only git |
+| `6a05bc8` = *"MUX-138 Add Phase 3 release workflow (tag-triggered) and label script"*; both `.github` files now tracked | **Directly verified** — the files were untracked at the previous pass |
+| `scripts/release-labels.sh` creates exactly **4** labels — `breaking`, `type:feature`, `type:defect`, `docs` — matching the non-default buckets in `.github/release.yml`, idempotently via `--force` | **Directly verified** — read from the script |
+| Labels actually created on the repo; workflow run `33667352101` green; release `v0.1.0` published with 4 binaries, `sha256sums.txt` and generated notes | **Relayed** by the commit agent (the role authorized for `gh`), user-approved. Not independently checked here |
+
+**Small gap, not blocking.** `.github/release.yml` excludes PRs labelled `skip-changelog`, but
+`scripts/release-labels.sh` does not create that label and it is not a GitHub default. The exclusion
+simply never matches until someone creates it by hand — harmless for notes correctness, but the
+"suppress this PR from the notes" affordance is unavailable as shipped.
 
 ### Phase 4: Enforce script preconditions
 
-- [ ] The 10 integration scripts assert `muxcode version --at-least <version that shipped their MUX>`
-- [ ] `install.sh` smoke test switched to `muxcode version`
-- [ ] CLAUDE.md build table: replace "requires the installed binary to include MUX-xxx" with the minimum version
+- [x] The 10 integration scripts assert `muxcode version --at-least <version that shipped their MUX>`
+- [x] `install.sh` smoke test switched to `muxcode version`
+- [x] CLAUDE.md build table: replace "requires the installed binary to include MUX-xxx" with the minimum version
+
+Verification 2026-09-02 (plan, `verify-spec`), all three **directly verified**:
+
+| Step | Evidence |
+|------|----------|
+| Script preconditions | `scripts/lib/muxcode-version.sh` defines `require_muxcode_version`, and **exactly 10** integration scripts invoke it — each with its own feature id (MUX-007/014/031/103/105/108/114/117/121/134), not merely sourcing the helper |
+| `install.sh` | `:940` — `elif installed=$(muxcode version 2>/dev/null); then`, replacing the `config list` workaround the Context section cites |
+| CLAUDE.md | **0** occurrences of "requires the installed binary to include" remain; **10** rows now read "requires installed muxcode >= v0.1.0" |
+
+The helper's tri-state handling is worth recording, because it is the part that could have gone wrong
+quietly: `muxcode version --at-least` exits 0 / 1 / 2, and exit **2** (uncomparable — an untagged dev
+build has no semver rank) returns 0 with a note rather than failing. Treating 2 as failure would block
+every developer running a tree-built binary between tags, i.e. the exact loop that produces the code
+under test. A binary predating MUX-138 has no `version` verb at all, routes the word to the launcher
+as a project path, and exits 1 — correctly read as "older".
+
+All of this is **uncommitted** (`scripts/lib/` untracked; `CLAUDE.md`, `install.sh` and 10 scripts
+modified).
+
+**Flagged, not a blocker.** The 10 call sites split across two conventions for the same condition:
+five `exit 1` with `FAIL  binary precondition not met`, five `exit 2` with `SKIP: binary precondition
+not met`. A stale binary is therefore a *failure* in half the suite and a *skip* in the other half,
+which a CI harness distinguishing the two exit codes would report inconsistently. It may be
+deliberate — the SKIP scripts are largely those needing a live session — but the binary precondition
+itself is identical in both, so the split is worth a deliberate ruling rather than being left to
+whichever script was edited first.
 
 ### Phase 5: Integration test
 
@@ -214,8 +250,9 @@ figure for effort spent on this spec.
 
 ## Status
 
-In Progress — Phases 1 and 2 complete (13/13 steps, 8 acceptance criteria); Phase 3 is 1/4, the
-release workflow written but untagged and unreleased. 22/45 items overall.
+In Progress — Phases 1–4 complete; `v0.1.0` is tagged (`6a05bc8`) and released, and the 10
+integration scripts now enforce their binary precondition. 28/45 items overall. **Phase 5 (integration
+test) is the only phase still open.**
 
 The file still sits in `backlog/` while reading `In Progress`, the same deliberate exception the
 index records for [`MUX-005`](./MUX-005-plan-diagrams.md). Moving it to `drafts/` is a `git mv`,

@@ -937,12 +937,10 @@ verify_failed=false
 if ! command -v muxcode >/dev/null 2>&1; then
   warn "muxcode not found on PATH — open a new shell, or source your profile"
   verify_failed=true
-# A bare `muxcode` launches the interactive project picker and `muxcode --version`
-# is parsed as a project path, so the smoke test uses a real read-only subcommand.
-elif muxcode config list >/dev/null 2>&1; then
-  ok "muxcode runs correctly"
+elif installed=$(muxcode version 2>/dev/null); then
+  ok "muxcode runs correctly: $installed"
 else
-  warn "muxcode is on PATH but 'muxcode config list' failed"
+  warn "muxcode is on PATH but 'muxcode version' failed"
   verify_failed=true
 fi
 

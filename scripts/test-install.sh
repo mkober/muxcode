@@ -119,9 +119,9 @@ grep -q "muxcode/tmux.conf" "$SANDBOX/.tmux.conf" 2>/dev/null \
   && ok ".tmux.conf sources muxcode config" || bad ".tmux.conf not wired up"
 
 # The installed binary must actually run. A bare `muxcode` opens the project
-# picker, so probe with a read-only subcommand instead.
-"$SANDBOX/.local/bin/muxcode" config list >/dev/null 2>&1
-check "$?" "0" "installed binary runs (config list)"
+# picker, so probe with the read-only `version` subcommand instead.
+"$SANDBOX/.local/bin/muxcode" version >/dev/null 2>&1
+check "$?" "0" "installed binary runs (version)"
 
 grep -q "Installation complete" "$SANDBOX/install-1.log" \
   && ok "reported success" || bad "did not report success"

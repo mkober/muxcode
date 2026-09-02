@@ -25,7 +25,7 @@
 # driver client), scratch BUS_SESSION, lifecycle log and repo dir in a
 # temp dir. No live muxcode session is touched.
 #
-# REQUIRES: tmux, and the installed muxcode binary to include MUX-134
+# REQUIRES: tmux, and installed muxcode >= v0.1.0, which shipped MUX-134
 # (run ./build.sh first).
 #
 # Usage: bash scripts/test-fkey-labels.sh
@@ -40,11 +40,9 @@ command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux is required"; exit 2; }
 MUX="${MUXCODE_BIN:-muxcode}"
 MUX="$(command -v "$MUX" 2>/dev/null || echo "$MUX")"
 [ -x "$MUX" ] || { echo "SKIP: muxcode not installed — set MUXCODE_BIN"; exit 2; }
-if ! grep -aq "@muxcode_fkey" "$MUX"; then
-  echo "SKIP: installed muxcode lacks MUX-134 F-key labels — run ./build.sh"
-  exit 2
-fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$ROOT/scripts/lib/muxcode-version.sh"
+require_muxcode_version "$MUX" v0.1.0 MUX-134 || { echo "  FAIL  binary precondition not met"; exit 1; }
 CONF="$ROOT/config/tmux.conf"
 [ -f "$CONF" ] || { echo "SKIP: $CONF not found"; exit 2; }
 

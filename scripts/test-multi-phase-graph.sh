@@ -39,7 +39,7 @@
 # ISOLATION: scratch BUS_SESSION, scratch repo dir via
 # MUXCODE_SESSION_REPO_DIR, lifecycle log in a temp dir, empty config.
 #
-# REQUIRES: the installed muxcode binary must include MUX-121 and the
+# REQUIRES: installed muxcode >= v0.1.0, which shipped MUX-121 and the
 # MUX-131 spawn-harvest machinery (worker reuse + port-on-completion —
 # run ./build.sh first), and tmux must be available.
 #
@@ -56,6 +56,8 @@ if ! command -v tmux >/dev/null 2>&1; then
   echo "  FAIL  tmux not available"
   exit 1
 fi
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+require_muxcode_version "$MUX" v0.1.0 MUX-121 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
 pass=0; fail=0
