@@ -327,6 +327,47 @@ func TestExtractFrontmatter_Fields(t *testing.T) {
 			t.Errorf("Fields carries %q: %v", k, fm.Fields)
 		}
 	}
+	if len(fm.Nested) != 1 || fm.Nested[0] != "hooks" {
+		t.Errorf("Nested = %v, want [hooks] — the block list under skills: is a list, not a nested map", fm.Nested)
+	}
+}
+
+// MUX-136 Phase 3: a definition whose restrictions include a nested block the
+// forwarder cannot carry is refused, not forwarded reduced — hooks as a YAML
+// block or an inline flow map, mcpServers likewise. Negative control: a nested
+// key Claude does not read is muxcode-side metadata and drops like any unknown
+// scalar, so the refusal cannot spread to harmless frontmatter.
+func TestBuildAgentsJSON_RefusesNestedKeys(t *testing.T) {
+	cases := []struct {
+		name   string
+		fm     AgentFrontmatter
+		refuse string // key the error must name; "" means the definition must forward
+	}{
+		{"hooks block", AgentFrontmatter{Description: "Docs", Nested: []string{"hooks"}}, "hooks"},
+		{"hooks inline map", AgentFrontmatter{Description: "Docs", Fields: map[string]string{"hooks": "{PreToolUse: []}"}}, "hooks"},
+		{"mcpServers block", AgentFrontmatter{Description: "Docs", Nested: []string{"mcpServers"}}, "mcpServers"},
+		{"unknown nested key forwards", AgentFrontmatter{Description: "Docs", Nested: []string{"metadata"}, Fields: map[string]string{"tools": "Read"}}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			jsonStr, err := BuildAgentsJSON("planner", tc.fm, "Docs only.")
+			if tc.refuse == "" {
+				if err != nil {
+					t.Fatalf("forwardable definition refused: %v", err)
+				}
+				if !strings.Contains(jsonStr, `"tools":["Read"]`) || strings.Contains(jsonStr, "metadata") {
+					t.Fatalf("json = %s", jsonStr)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("reduced definition forwarded: %s", jsonStr)
+			}
+			if jsonStr != "" || !strings.Contains(err.Error(), "frontmatter "+tc.refuse) {
+				t.Fatalf("json=%q err=%v, want empty JSON and an error naming %s", jsonStr, err, tc.refuse)
+			}
+		})
+	}
 }
 
 // MUX-136: every restriction a definition declares reaches the --agents JSON
@@ -1270,5 +1311,41 @@ func TestRunAgentLaunch_LaunchesWithDefinition(t *testing.T) {
 	}
 	if !ArgsCarryDefinition(*argv) {
 		t.Fatalf("launch without the bound flag pair: %v", *argv)
+	}
+}
+
+// MUX-136 Phase 3: a project-tier definition that declares hooks: — which the
+// --agents forwarder cannot carry — is refused with the cause named, at the
+// config (AgentJSONErr, no bound pair) and at the launch (no exec, no startup
+// message, agent-definitionless event naming the key). Before this the file
+// launched with its hooks silently stripped: less constrained than written.
+func TestRunAgentLaunch_RefusesUncarriableDefinition(t *testing.T) {
+	session := "test-refuse-uncarriable"
+	_, argv := launchSandbox(t, session)
+	writeFile(t, filepath.Join(".claude", "agents", "planner.md"),
+		"---\ndescription: Docs\ntools: Read, Edit\nhooks:\n  PreToolUse:\n    - matcher: Bash\n---\nDocs only.\n")
+
+	cfg := ResolveLaunchConfig("plan")
+	if cfg.AgentFile == "" || cfg.AgentName != "" || cfg.AgentJSON != "" || cfg.AgentJSONErr == nil {
+		t.Fatalf("config: file=%q name=%q json=%q err=%v — want a resolved file, no bound pair, a cause", cfg.AgentFile, cfg.AgentName, cfg.AgentJSON, cfg.AgentJSONErr)
+	}
+
+	err := RunAgentLaunch("plan")
+	if err == nil || !strings.Contains(err.Error(), "refusing to launch") || !strings.Contains(err.Error(), "hooks") {
+		t.Fatalf("err = %v, want a refusal naming hooks", err)
+	}
+	if len(*argv) != 0 {
+		t.Fatalf("exec ran with a reduced definition: %v", *argv)
+	}
+	edit, _ := Peek(session, "edit")
+	named := false
+	for _, m := range edit {
+		named = named || (m.Action == "agent-definitionless" && strings.Contains(m.Payload, "hooks"))
+	}
+	if !named {
+		t.Fatalf("edit's inbox lacks an agent-definitionless event naming hooks: %+v", edit)
+	}
+	if plan, _ := Peek(session, "plan"); len(plan) != 0 {
+		t.Fatalf("startup message seeded for an agent that never came up: %v", plan)
 	}
 }

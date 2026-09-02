@@ -397,6 +397,41 @@ func TestClaudeConfigureLaunch_ProjectTierRestrictionsSurvive(t *testing.T) {
 	}
 }
 
+// MUX-136 Phase 3: a launcher-built Claude launch always carries the listener
+// protocol in its shared prompt alongside the bound definition, so a restart
+// through `muxcode agent launch` restores `muxcode inbox --poll --loop` by
+// construction; a bare resume carries neither, which is why receipts stopped
+// on 2026-09-01.
+func TestClaudeLaunchCarriesListenerProtocol(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MUXCODE_INSTALL_DIR", t.TempDir())
+	t.Setenv("MUXCODE_PLAN_CLI", "claude")
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("BUS_SESSION", "")
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+	chdir(t, t.TempDir())
+	writeFile(t, filepath.Join(home, ".config", "muxcode", "agents", "planner.md"),
+		"---\ndescription: Docs\n---\nMaintain docs.\n")
+
+	cfg := ResolveLaunchConfig("plan")
+	_, args := cfg.BuildExecArgs()
+
+	if !ArgsCarryDefinition(args) {
+		t.Fatalf("launch without the bound definition: %v", args)
+	}
+	listener := false
+	for i, a := range args {
+		if a == "--append-system-prompt" && i+1 < len(args) && strings.Contains(args[i+1], "muxcode inbox --poll --loop") {
+			listener = true
+		}
+	}
+	if !listener {
+		t.Fatalf("launch carries no listener protocol in its shared prompt: %v", args)
+	}
+}
+
 // --- Phase 3: graceful degradation ---
 
 func TestSupportsHooks_ClaudeOnly(t *testing.T) {

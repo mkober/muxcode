@@ -17,8 +17,26 @@ has:
 |------|--------------|--------------|
 | Daemon restart (`plan`/`run`/`commit`) | ✗ lost | ✓ full |
 | Manual bare `claude --resume` (`edit`) | ✓ kept | ✗ lost |
+| Manual bare `claude --resume` (**`plan`**) — *added 2026-09-02* | ✓ kept | ✗ lost |
 
 This spec makes one path that keeps both.
+
+**The third row is not a duplicate of the second — it is the reason this spec must widen beyond
+`edit`.** [`MUX-136`](./MUX-136-restart-resume-loses-agent-definition.md)'s Phase 1 finding established
+that the definition-less `plan` agent of 2026-09-01 was a bare resume typed in its pane, not the daemon
+restart it was originally filed as. Any daemon-managed Claude role can be resumed by hand, and the
+consequence is worse for a role whose safety model *is* its definition: the persisted agent name cannot
+be resolved, because Claude reads `.claude/agents/` and `~/.claude/agents/` and never
+`~/.config/muxcode/agents/`, so the session continues **with default tools**.
+
+The **daemon-restart row above is consistent with that evidence and stays as written** — an earlier
+draft of MUX-136 claimed it was contradicted, and that claim has been retracted there. The daemon path
+did not produce the downgrade.
+
+Until this spec's fix lands, MUX-136's definition watchdog is the backstop: it refuses a bare resume on
+daemon-managed roles (capped same-provider reload) and **alerts only** on `edit` — precisely because
+this spec documents the bare resume on `edit` as current practice. See MUX-136 "Phase 1 finding" and
+"Phase 2".
 
 Tracking: [#51](https://github.com/mkober/muxcode/issues/51)
 
@@ -58,6 +76,56 @@ What this recurrence contributes to this spec:
 - **Root cause is still open** (see Risks). Three Claude processes dying in the same second while
   OpenCode agents in the same session are untouched points at something Claude-specific or
   environmental rather than at any one agent's workload.
+
+### Fifth and sixth occurrences (2026-09-02) — and what they do to the upgrade hypothesis
+
+Occurrences three and four are recorded in
+[`MUX-136`](./MUX-136-restart-resume-loses-agent-definition.md) (2026-09-01). Two more the next day,
+same signature: the Claude trio failing health checks **in the same second** while every OpenCode agent
+and `edit` survived. Times are **local** (the machine runs UTC-4); read from
+`~/.config/muxcode/logs/muxcode.log`, snapshotted before rotation.
+
+| | Occurrence 5 | Occurrence 6 |
+|---|---|---|
+| health-fail #1 | 13:36:01 `plan`/`run`/`commit`, same second | 15:15:04 `plan`/`run`/`commit`, same second |
+| #2 | 13:36:31 | 15:15:35 |
+| #3 | 13:37:02–03 | 15:16:06–07 — **`run`/`commit` only** |
+| restart | attempt **1/3**, then still failing → **2/3** at 13:40:36–37 | attempt **1/3** |
+| recovered | 13:37:32, then 13:41:08 | 15:16:38 |
+
+Two details the raw counts would hide:
+
+- **Occurrence 5 is one incident, not two.** The 13:40 restart is **attempt 2/3** — the counter did not
+  reset, so the 13:36 and 13:39 failure runs are the same unresolved incident restarting twice.
+- **`plan` did not need restarting in occurrence 6.** It failed twice and recovered before a third
+  failure, so only `run` and `commit` were restarted. "The trio dies together" is right about the
+  *failure* signature and wrong about the *restart* set — worth keeping straight, since a fix that
+  reasons about restarts would have seen two agents here, not three.
+
+#### The daemon-upgrade correlation is weaker than it first looks
+
+Occurrence 6 began **30 s** after the last of three back-to-back `daemon-upgraded` events — a tight,
+suggestive gap. But the full day's data does not support upgrade-implies-death:
+
+| `daemon-upgraded` | Gap to next health-fail |
+|---|---|
+| 13:27:25 | 8m36s |
+| 13:53:42 | none |
+| 14:40:58 | 34m06s (better attributed to the 15:14:34 upgrade below) |
+| 15:12:49 / 15:13:43 / **15:14:34** | 2m15s / 1m21s / **0m30s** |
+| 16:23:51 | none |
+| 16:55:45 | none |
+| 17:17:01 | none |
+
+**Two of seven upgrade bursts were followed by an incident, and only one tightly.** Four bursts —
+including two consecutive ones late in the day — produced nothing at all. So the upgrade is at most a
+*trigger under some other condition*, not a cause. MUX-136's Phase 4 should treat "reproduce by running
+`upgrade-daemons` against a live session" as a test that is **expected to fail most of the time**, and
+size its repetitions accordingly; a single clean run proves nothing.
+
+One evidence-shape note for whoever investigates: today's waves are recorded as `agent-health-fail` →
+`agent-restart` → `agent-recovered`. There are **zero `agent-down` events in the entire log**, so a
+query built on `agent-down` (as the 2026-09-01 write-up used) will find none of these.
 
 ### Why `edit` is excluded today
 
@@ -244,3 +312,17 @@ excluded throughout.
 ## Status
 
 Backlog
+
+**Scope amendment (2026-09-02, from [`MUX-136`](./MUX-136-restart-resume-loses-agent-definition.md)
+Phase 3 item 4).** The title and the acceptance criteria are written for `edit`, on the premise that
+`edit` is the only role recovered by a bare `claude --resume`. That premise is now false: the
+2026-09-01 `plan` incident was a bare resume on a **daemon-managed** role. The fix — scrape the session
+id, relaunch with `--resume <id>` **plus** the full flag set — must apply to every Claude role, not
+only `edit`.
+
+Two live occurrences were added above (fifth and sixth), and they **weaken** the daemon-upgrade
+hypothesis rather than strengthen it: two of seven upgrade bursts were followed by an incident, only
+one tightly. Phase 4 of MUX-136 should be sized for a reproduction that usually does not fire.
+
+Not yet reflected in this spec's own title, acceptance criteria, or phases — that is a rewrite, not an
+annotation, and it awaits the user.

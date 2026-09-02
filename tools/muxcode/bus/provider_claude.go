@@ -31,15 +31,8 @@ func (p *ClaudeCodeProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 	if agentName != "" {
 		agentFile, _ := ResolveAgentFile(agentName, installDir)
 		cfg.AgentFile = agentFile
-		if data, err := os.ReadFile(agentFile); agentFile != "" && err == nil {
-			fm, body := ExtractFrontmatter(string(data))
-			if fm.Description == "" {
-				fm.Description = agentName
-			}
-			if agentJSON, jsonErr := BuildAgentsJSON(agentName, fm, body); jsonErr == nil {
-				cfg.AgentName = agentName
-				cfg.AgentJSON = agentJSON
-			}
+		if agentFile != "" {
+			cfg.AgentName, cfg.AgentJSON, cfg.AgentJSONErr = boundDefinition(agentName, agentFile)
 		}
 	}
 
@@ -60,6 +53,26 @@ func (p *ClaudeCodeProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 
 	// Shared prompt
 	cfg.SharedPrompt = BuildSharedPrompt(role)
+}
+
+// boundDefinition reads a resolved definition file into the --agent/--agents
+// pair. Any failure — unreadable file, or a frontmatter key the forwarder
+// cannot carry — leaves both empty and returns why, so refuseWithoutDefinition
+// names the cause instead of the launcher falling back to a bare name or a
+// reduced JSON.
+func boundDefinition(agentName, agentFile string) (name, agentJSON string, err error) {
+	data, err := os.ReadFile(agentFile)
+	if err != nil {
+		return "", "", err
+	}
+	fm, body := ExtractFrontmatter(string(data))
+	if fm.Description == "" {
+		fm.Description = agentName
+	}
+	if agentJSON, err = BuildAgentsJSON(agentName, fm, body); err != nil {
+		return "", "", err
+	}
+	return agentName, agentJSON, nil
 }
 
 // BuildExecArgs constructs Claude Code CLI arguments.

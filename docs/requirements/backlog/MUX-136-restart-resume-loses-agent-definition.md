@@ -174,7 +174,7 @@ notice was a line of prose inside a pane nobody was reading. Same family as
       lifecycle event, never a silent fallback to default tools
 - [ ] A restarted agent never runs with fewer restrictions than its definition grants — if the
       definition cannot be applied, the agent does not come up at all
-- [ ] The restart path is verified to restore the inbox listener, so receipts resume and no
+- [x] The restart path is verified to restore the inbox listener, so receipts resume and no
       `delivery-gap` follows a "successful" restart
 - [x] `agent-recovered` is emitted only when the agent came back **with** its definition — a
       recovery event must not describe a downgraded agent
@@ -214,6 +214,12 @@ an eliminated one. For a role whose entire safety model is scope restriction, th
 "never" and "for about a minute" is worth a human decision rather than a checkbox — either the
 criterion is reworded to state the bound, or the window is closed. Flagged to the user; not resolved
 here.
+
+**A second, independent reason criterion 3 stays unchecked (added after Phase 3):** nested frontmatter
+keys (`hooks:`, `mcpServers:`) are still not carried into the agents JSON, so a project-tier definition
+declaring them launches without them. That is a concrete "fewer restrictions than its definition
+grants" case at tier 1, distinct from the timing window above, and it has its own open decision (see
+the Phase 3 results). Both must close before this criterion can be ticked.
 
 ### Key files
 
@@ -304,16 +310,16 @@ Non-Claude providers pass through (no argv contract).
 
 ### Phase 3: Fix the resolution
 
-- [ ] Bind `--agent` to `--agents` so neither can be emitted alone
-- [ ] Confirm no remaining path can launch a role by bare name — repo-wide, a **sole-caller** proof
+- [x] Bind `--agent` to `--agents` so neither can be emitted alone
+- [x] Confirm no remaining path can launch a role by bare name — repo-wide, a **sole-caller** proof
       rather than a spot check
-- [ ] Verify the inbox listener returns after a restart (receipts resume, no `delivery-gap`)
-- [ ] ~~Reconcile MUX-126's path table, which records daemon restart as preserving full launch flags —
+- [x] Verify the inbox listener returns after a restart (receipts resume, no `delivery-gap`)
+- [x] ~~Reconcile MUX-126's path table, which records daemon restart as preserving full launch flags —
       this incident contradicts it~~ **Revised 2026-09-02:** re-read this incident in
       [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) as a **bare resume on `plan`**, and widen
       that spec's resume-aware fix beyond `edit`. Its daemon-restart row is **consistent** with the
       Phase 1 evidence — leave it alone
-- [ ] **Carry the full key set into the agents JSON — this is a regression the Phase 1 guard
+- [x] **Carry the full key set into the agents JSON — this is a regression the Phase 1 guard
       introduced, not a pre-existing gap.** `BuildAgentsJSON()` (`bus/launch.go:358`) forwards only
       `description` + `prompt`. Before Phase 1, tier 1 (`.claude/agents/`) launched **name-only** and
       Claude read the project file itself, honouring its `tools:`/`model:`/`permissionMode:`. Phase 1
@@ -331,10 +337,14 @@ Non-Claude providers pass through (no argv contract).
 > (`bus/launch.go:407`) now forwards an allowlist with Claude's own types — `agentJSONKeys`
 > (`launch.go:388`): `tools`/`disallowedTools`/`skills` → arrays (comma, inline `[a, b]`, or a YAML
 > block list), `maxTurns` → int, `background` → bool, and `model`/`permissionMode`/`memory`/`effort`/
-> `isolation`/`color`/`initialPrompt` → strings. Nested maps (`hooks:`, `mcpServers:`) are **not**
-> carried, documented on the type. Unknown keys are dropped deliberately: forwarding one risks the
-> whole launch against an unknown schema strictness. Pinned by `TestBuildAgentsJSON_CarriesRestrictions`
-> and `TestClaudeConfigureLaunch_ProjectTierRestrictionsSurvive`.
+> `isolation`/`color`/`initialPrompt` → strings. Unknown **scalar** keys are dropped deliberately:
+> forwarding one risks the whole launch against an unknown schema strictness. Pinned by
+> `TestBuildAgentsJSON_CarriesRestrictions` and `TestClaudeConfigureLaunch_ProjectTierRestrictionsSurvive`.
+>
+> **Nested keys — amended in the fix-loop pass (2026-09-02).** `hooks:`, `mcpServers:` and
+> `experimental:` are still **not carried**, but a definition declaring one is now **refused at launch**
+> rather than launched with the key stripped. That closes the review must-fix by *refusal*, not by
+> forwarding.
 >
 > *Verified directly here:* the allowlist, its type coercion, and the doc comment — all read in
 > `launch.go:388-435`. The regression window was one commit wide (`658c305` → the Phase 2 tree).
@@ -351,6 +361,82 @@ Non-Claude providers pass through (no argv contract).
 > The box is deliberately left unchecked here: this pass was scoped to Phase 1, and item 1 should be
 > ticked by the verify pass that covers Phase 3 on its own evidence.
 
+#### Phase 3 results (2026-09-02)
+
+Two of the five items were delivered by earlier phases and are **verified, not re-implemented**.
+
+| Item | Outcome |
+|------|---------|
+| 1 — bind the flags | Landed with Phase 1; nothing changed this pass |
+| 2 — sole-caller proof | **New:** `TestClaudeAgentFlagSoleEmitter` (`bus/sole_emitter_test.go`) |
+| 3 — listener returns | Verified three ways (below) |
+| 4 — MUX-126 reconciliation | **Applied to [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md)** — third path row, scope amendment, occurrences 5 and 6 |
+| 5 — full key set | Landed with Phase 2; nothing changed this pass |
+
+**Item 2 is a repo-walking pin, not a spot check.** It resolves the module root from its own file,
+walks every non-test `.go` file, and requires the literal `"--agent"` to appear only in an allowlist of
+three files with a stated reason each: `bus/provider_claude.go` (**the emitter** — exactly one hit, and
+that line must also contain `"--agents"`), `bus/provider_opencode.go` (OpenCode's own CLI), and
+`bus/definition.go` (the probe, which reads argv). It then scans `scripts/`, `config/` (minus
+`config/nvim`), `agents/`, `skills/` and the root build scripts for `--agent[ =]` and requires zero
+hits. **Coverage floors** — the walk must reach the emitter, and the non-Go scan must cover ≥ 20 files —
+so a mis-resolved root cannot pass vacuously. That floor is the part worth keeping: a repo-walking test
+that silently walks nothing is the classic green-but-empty pass.
+
+**Item 3, three ways.** (a) *By construction* — `TestClaudeLaunchCarriesListenerProtocol`: a
+`ResolveLaunchConfig`-built Claude launch carries the bound definition **and** an
+`--append-system-prompt` containing `muxcode inbox --poll --loop` (`bus/prompt.go:109`, emitted for
+every hook provider); `RestartLocalAgent` relaunches through `muxcode agent launch`, so a daemon restart
+always carries it. A bare `claude --resume` carries **neither** — which is precisely why receipts
+stopped and `delivery-gap` fired on 2026-09-01. (b) *Kept alive* — the Stop hook
+(`bus.DecideStopHook`, pinned by `TestDecideStopHook`) blocks a turn's stop and demands a relaunch
+whenever a request is pending with no listener running. (c) *Live evidence* — **zero `delivery-gap`
+events in the whole of 2026-09-02**, across two restart waves; receipts resumed after every launcher
+restart.
+
+**Strengthened in the fix-loop pass:** review flagged (a) as a mere prompt-string check — asserting the
+launch *mentions* the command, not that the command does anything. `TestRestartLaunchRestoresListenerProtocol`
+(`bus/listener_restore_test.go`) closes the loop: the launch a **restart** produces carries the bound
+definition and instructs exactly `muxcode inbox --poll --loop`, and that command's polling marker
+(`SetPolling`) is what the Stop hook's liveness read (`IsPolling || IsWaiting`) consults — so a live
+listener is left alone, while with the marker gone and work pending `DecideStopHook` blocks with
+`StopHookPollReason` naming the same command. The string and the mechanism are now tied together.
+Live-pane verification remains Phase 5's.
+
+> **Timestamp correction (verified here).** The handoff dated the live evidence at 17:40 and 19:16;
+> those are **UTC printed as local**, and both were still in the future when the claim was written. The
+> machine runs **UTC-4** — provable from the log itself, where the `13:27:25` row records a daemon
+> `built 2026-09-02T17:24:49Z`. Real local times: waves at **13:37 / 13:40** and **15:16**. The events
+> and the correlation are real; only the clock was wrong. Corrected times are what went into MUX-126.
+> `edit` reached the same conclusion independently from the raw `ts` values, our messages crossing.
+> The zero-`delivery-gap` claim was checked directly and holds.
+
+**Open decision for the user — nested frontmatter keys.** `hooks:` and `mcpServers:` are still not
+carried, so a project-tier definition declaring them launches without them: an AC3 gap at tier 1, for
+that shape only (no shipped definition uses nested keys). Two fix shapes:
+
+- **(a) Refuse on an uncarriable key** — `ExtractFrontmatter` records dropped nested keys and the
+  launcher refuses. Small, and consistent with the Phase 2 *refuse* decision.
+- **(b) Forward nested YAML into the JSON** — needs a YAML-subset parser in a stdlib-only module, and
+  re-exposes the `--agents` schema-strictness question the allowlist was built to sidestep.
+
+**Resolved as (a) in the fix-loop pass (2026-09-02) — shape decision: refuse-on-uncarriable-key.**
+Consistent with the Phase 2 "refuse, not quarantine" decision and with AC3's "if the definition cannot
+be applied, the agent does not come up at all". Implementation, verified in the spawn worktree:
+`agentJSONNestedKeys` = `hooks`/`mcpServers`/`experimental`; `AgentFrontmatter.uncarriableKey()`
+catches **both** the YAML-block and the inline `{...}` flow-map shape; a new `LaunchConfig.AgentJSONErr`
+carries *why* the JSON is empty although the file resolved, so `refuseWithoutDefinition` can emit a
+distinct "cannot be applied … refusing to launch with a reduced definition" message instead of the
+misleading "resolved at no tier". Nested keys outside that set stay muxcode-side metadata and drop.
+
+Option (b) remains open for the user to choose later; it is a *widening*, not a correction, and it
+still depends on the `--agents` schema strictness Phase 5 has not established.
+
+> **Provenance caveat.** That the option was *implemented* is verified. That the **user chose** it is
+> **not** something this agent can establish — the choice was recorded as awaiting the user, and the
+> next pass arrived with (a) built. Recorded as an implemented shape decision rather than as a
+> user ruling.
+
 ### Phase 4: Investigate Defect A (corroborates MUX-126)
 
 - [ ] Reproduce the mass exit; test the daemon-upgrade hypothesis directly by running
@@ -359,9 +445,33 @@ Non-Claude providers pass through (no argv contract).
 - [ ] If not reproducible, record that explicitly rather than closing it against the 17:19 incident
 - [ ] Raise the lifecycle rotation cap or snapshot on `agent-down`, so the next occurrence is not
       eaten by the 1000-entry limit as the 16:42 one was
-- [ ] Fold the findings into [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) rather than
+- [x] Fold the findings into [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) rather than
       duplicating them here — this phase exists to add its third and fourth occurrences, not to own
       the mass-death defect
+
+**Phase 4 status: 1 of 5 — investigation, largely NOT started (2026-09-02).** Only the fold-into-MUX-126
+item is done. Recording this explicitly because a commit gate followed this verification, and a gate
+arriving is not evidence that investigation happened.
+
+| Item | State |
+|------|-------|
+| 1 — reproduce / test the upgrade hypothesis | **Not deliberately executed.** Substantial *incidental* evidence exists (below), which narrows the work but is not the designed experiment the item asks for |
+| 2 — explain why only Claude agents die | **Not started.** No hypothesis has been offered, let alone tested |
+| 3 — record not-reproducible if so | **Not reached** — conditional on item 1 |
+| 4 — raise the rotation cap / snapshot on `agent-down` | **Not done in code.** A one-off manual snapshot of the current 1000-row window was saved to scratchpad during this session, which protects *today's* evidence but is not the durable change |
+| 5 — fold into MUX-126 | **Done** — third path row, scope amendment, occurrences 5 and 6, correlation table |
+
+**Incidental evidence that materially advances item 1.** `upgrade-daemons` ran against a live session
+**nine times** on 2026-09-02 with the Claude trio under observation the whole time. Two of seven bursts
+were followed by a trio health-failure; only one tightly (30 s). Four bursts, including two consecutive
+late in the day, produced nothing. This is not a reproduction — nobody set out to trigger a death — but
+it is a real negative result, and it means item 1's deliberate run should be **sized for repetition**:
+a single clean `upgrade-daemons` proves nothing, because most of them are clean.
+
+The item-4 gap is the one that compounds. Every occurrence so far has been reconstructed from a log
+that rotates at 1000 entries; the 2026-09-01 16:42 incident was already lost that way, and today's
+window survives only because it was snapshotted by hand. Until rotation is raised or `agent-down`
+snapshots, each new occurrence is a race against the cap.
 
 ### Phase 5: Integration test
 
@@ -389,7 +499,7 @@ so these three are only ever exercised here:
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-136-restart-resume-loses-agent-definition | 19m | 2026-09-02 16:55 |
+| MUX-136-restart-resume-loses-agent-definition | 32m | 2026-09-02 17:22 |
 
 ## Status
 
@@ -402,6 +512,12 @@ early** by teaching `BuildAgentsJSON` the full key allowlist. The regression the
 `658c305` and the Phase 2 tree and no longer does. (For the record, and because it stopped mattering
 quickly: whether the defer was considered or the fix-now question simply went unanswered was never
 determinable from here.)
+
+**Phase 3 complete 2026-09-02** — items 1 and 5 verified from earlier phases, item 2 added the
+repo-walking sole-emitter pin, item 3 verified the listener three ways, and item 4 was applied to
+[`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) (third path row, scope amendment beyond `edit`,
+occurrences 5 and 6). **Phases 1–3 are now done; Phase 4 (Defect A) and Phase 5 (integration test)
+remain**, and Phase 4 got harder rather than easier — see below.
 
 **Phase 2 work is complete in the working tree, uncommitted** — `bus/definition.go`,
 `daemon/definition_watchdog.go` and their tests are new; `launch.go`, `provider_claude.go`,
@@ -418,8 +534,16 @@ Where the risk now sits, in order:
 3. **The "drop unknown keys" choice is unvalidated** — it sidesteps Claude's schema strictness rather
    than establishing it.
 
-Criteria 2, 5, 6 and 7 are claimed satisfied by the Phase 2 layers, and 3 by the launcher refusal plus
-the restored JSON; they are checked off by the verify pass against the code, not from this narrative.
+Criteria 1, 2, 4, 5, 6 and 7 are checked. **Criterion 3 remains open on two independent counts** — the
+~60s detection window and the uncarried nested keys — and **criterion 8 belongs to Phase 4**.
+
+**Phase 4 is now a harder problem than when it was written.** The two occurrences added to MUX-126
+weaken rather than strengthen the daemon-upgrade hypothesis: across 2026-09-02, only **two of seven**
+upgrade bursts were followed by an incident, and only one tightly (30s); four bursts, including two
+consecutive late in the day, produced nothing. Phase 4's "run `upgrade-daemons` against a live session"
+step should therefore be sized as a reproduction **expected to fail most of the time** — a single clean
+run proves nothing. Its sibling instruction to raise the lifecycle rotation cap is now the more
+valuable half.
 
 Phase 1 changed the story. Defect B's mechanism is real code — `--agent <name>` was emitted
 unconditionally while `--agents <definition>` was conditional — and it is now **guarded and pinned**.

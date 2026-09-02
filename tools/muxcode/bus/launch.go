@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -29,9 +30,10 @@ type LaunchConfig struct {
 	ToolFlags    []string // --allowedTools flags
 	SharedPrompt string   // Combined append-system-prompt content
 
-	// For launch_agent_from_file (agent file outside .claude/agents/)
-	AgentName string // Agent name for --agent flag
-	AgentJSON string // JSON for --agents flag
+	// Bound --agent/--agents pair: set together or not at all (MUX-136)
+	AgentName    string // Agent name for --agent flag
+	AgentJSON    string // JSON for --agents flag
+	AgentJSONErr error  // why AgentJSON is empty although AgentFile resolved
 
 	// Local LLM
 	HarnessArgs []string // Args for muxcode-llm-harness or bus agent run
@@ -44,11 +46,14 @@ type LaunchConfig struct {
 // Description is the one field muxcode reads itself; Fields carries every other
 // top-level key as its raw scalar (`tools: Read, Edit`, `model: opus`; a block
 // list is joined with commas) so BuildAgentsJSON can forward the definition's
-// restrictions unreduced. Nested maps (`hooks:`, `mcpServers:`) are not
-// carried.
+// restrictions unreduced. Nested lists the keys whose value is a YAML block of
+// maps (`hooks:`, `mcpServers:`), in file order: no forwarder parses those, so
+// BuildAgentsJSON refuses a definition that depends on one rather than
+// launching it reduced.
 type AgentFrontmatter struct {
 	Description string
 	Fields      map[string]string
+	Nested      []string
 }
 
 // AgentFileName maps role names to agent definition filenames (without .md).
@@ -312,8 +317,9 @@ func ExtractFrontmatter(content string) (AgentFrontmatter, string) {
 		if line != strings.TrimLeft(line, " \t") {
 			if item, ok := strings.CutPrefix(strings.TrimSpace(line), "- "); ok && current != "" {
 				fm.Fields[current] = strings.Trim(fm.Fields[current]+","+strings.TrimSpace(item), ",")
-			} else {
-				current = "" // a nested map — its items belong to no forwarded key
+			} else if current != "" {
+				fm.Nested = append(fm.Nested, current)
+				current = ""
 			}
 			continue
 		}
@@ -400,11 +406,36 @@ var agentJSONKeys = map[string]string{
 	"initialPrompt":   "string",
 }
 
+// agentJSONNestedKeys are the keys Claude Code accepts only as nested objects.
+// ExtractFrontmatter does not parse nested YAML, so a definition declaring one
+// cannot be forwarded whole — and forwarding it without the key would launch
+// the agent with fewer restrictions than its file grants, the MUX-136
+// downgrade in a new shape. Such a definition is refused, never reduced;
+// nested keys outside this set are muxcode-side metadata and drop like any
+// unknown scalar.
+var agentJSONNestedKeys = []string{"hooks", "mcpServers", "experimental"}
+
+// uncarriableKey returns the first Claude nested-object key the definition
+// declares — as a YAML block (Nested) or an inline flow map (Fields) — or ""
+// when the whole definition is forwardable.
+func (fm AgentFrontmatter) uncarriableKey() string {
+	for _, key := range agentJSONNestedKeys {
+		if _, inline := fm.Fields[key]; inline || slices.Contains(fm.Nested, key) {
+			return key
+		}
+	}
+	return ""
+}
+
 // BuildAgentsJSON constructs the JSON value for Claude Code's --agents flag
 // from a definition file's frontmatter and body, carrying every restriction
 // the file declares so the launched agent is never less constrained than its
-// definition.
+// definition. A definition the forwarder cannot carry whole is an error, not
+// a reduced JSON — see agentJSONNestedKeys.
 func BuildAgentsJSON(name string, fm AgentFrontmatter, prompt string) (string, error) {
+	if key := fm.uncarriableKey(); key != "" {
+		return "", fmt.Errorf("frontmatter %s: nested definitions are not carried into --agents JSON, and launching without it would drop a restriction", key)
+	}
 	def := map[string]any{"description": fm.Description, "prompt": prompt}
 	for key, raw := range fm.Fields {
 		switch agentJSONKeys[key] {
@@ -866,23 +897,31 @@ func PreLaunchSetup(role, session, cli string) {
 }
 
 // refuseWithoutDefinition is the launcher half of MUX-136's refuse-to-come-up
-// decision: a Claude Code role whose definition resolved at no tier is not
-// launched on the inline fallback prompt — that is a privileged name with
-// default tools, the downgrade the spec exists to prevent. The refusal is loud
-// (lifecycle `launch-refused`, `agent-definitionless` event to edit) and leaves
-// the pane at a shell prompt, which the daemon's health sweep reports as
-// agent-down. Roles with no mapped definition file (cfg.Agent == "") keep the
-// fallback prompt — nothing was promised for them.
+// decision: a Claude Code role whose definition cannot be applied — resolved at
+// no tier, unreadable, or declaring a key the --agents forwarder cannot carry
+// (AgentJSONErr) — is launched neither on the inline fallback prompt nor on a
+// reduced JSON. Either is a privileged name with fewer restrictions than its
+// file grants, the downgrade the spec exists to prevent. The refusal is loud
+// (lifecycle `launch-refused`, `agent-definitionless` event to edit naming the
+// cause) and leaves the pane at a shell prompt, which the daemon's health sweep
+// reports as agent-down. Roles with no mapped definition file (cfg.Agent == "")
+// keep the fallback prompt — nothing was promised for them.
 func refuseWithoutDefinition(session string, cfg *LaunchConfig) error {
 	if cfg.Provider == nil || !cfg.Provider.SupportsHooks() || cfg.Agent == "" || cfg.AgentJSON != "" {
 		return nil
 	}
 	detail := fmt.Sprintf("%s: definition %q resolved at no tier (.claude/agents/, ~/.config/muxcode/agents/, install dir) — refusing to launch without it",
 		cfg.Role, cfg.Agent)
+	remedy := "Restore the definition (make install)"
+	if cfg.AgentFile != "" {
+		detail = fmt.Sprintf("%s: definition %s cannot be applied (%v) — refusing to launch with a reduced definition",
+			cfg.Role, cfg.AgentFile, cfg.AgentJSONErr)
+		remedy = "Fix the definition file"
+	}
 	if session != "" {
 		LogLifecycle(session, "error", "launch", "launch-refused", detail)
 		m := NewMessage(NormalizeBusRole(cfg.Role), "edit", "event", "agent-definitionless",
-			detail+". Restore the definition (make install) and relaunch: muxcode agent launch "+cfg.Role, "")
+			detail+". "+remedy+" and relaunch: muxcode agent launch "+cfg.Role, "")
 		_ = SendNoCC(session, m)
 	}
 	return errors.New(detail)
