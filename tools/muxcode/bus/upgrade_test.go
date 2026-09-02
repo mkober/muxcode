@@ -68,6 +68,24 @@ func TestParseDaemonProcs_SkipsNoSession(t *testing.T) {
 	}
 }
 
+func TestFilterDaemonProcs(t *testing.T) {
+	procs := []DaemonProc{
+		{PID: 1, Session: "alpha"},
+		{PID: 2, Session: "alpha", Monitor: true},
+		{PID: 3, Session: "beta"},
+	}
+	if got := FilterDaemonProcs(procs, ""); len(got) != 3 {
+		t.Errorf("empty session should keep every proc, got %d", len(got))
+	}
+	got := FilterDaemonProcs(procs, "alpha")
+	if len(got) != 2 || got[0].PID != 1 || got[1].PID != 2 {
+		t.Errorf("alpha should keep its daemon and monitor only, got %+v", got)
+	}
+	if got := FilterDaemonProcs(procs, "gamma"); len(got) != 0 {
+		t.Errorf("unknown session should keep nothing, got %+v", got)
+	}
+}
+
 // noDaemonBuild stands in for ReadDaemonVersion when a test is not about
 // version awareness: every daemon reads as unstamped.
 func noDaemonBuild(string) (Info, bool) { return Info{}, false }

@@ -31,8 +31,9 @@ type UpgradePlan struct {
 
 // UpgradeOptions controls UpgradeDaemons.
 type UpgradeOptions struct {
-	DryRun bool // report the plan without touching any process
-	Force  bool // cycle daemons already on the installed build too
+	DryRun  bool   // report the plan without touching any process
+	Force   bool   // cycle daemons already on the installed build too
+	Session string // act on this session's daemon only; empty means every session
 }
 
 // UpgradeResult records the outcome of cycling one session's daemon.
@@ -116,6 +117,24 @@ func parseDaemonProcs(psOutput string) []DaemonProc {
 	return procs
 }
 
+// FilterDaemonProcs keeps the processes that belong to session, or all of
+// them when session is empty. It is what scopes a rollout to one session:
+// the version integration test cycles a scratch daemon from a scratch
+// binary, and without the filter that run would restart every stale daemon
+// on the machine, live sessions included.
+func FilterDaemonProcs(procs []DaemonProc, session string) []DaemonProc {
+	if session == "" {
+		return procs
+	}
+	var kept []DaemonProc
+	for _, p := range procs {
+		if p.Session == session {
+			kept = append(kept, p)
+		}
+	}
+	return kept
+}
+
 // PlanUpgrades groups discovered processes by session, marks sessions whose
 // tmux session no longer exists as orphans (their daemons are killed without
 // relaunch), and marks sessions whose daemon already runs the installed
@@ -158,13 +177,14 @@ func PlanUpgrades(procs []DaemonProc, sessionExists func(string) bool, daemonBui
 // daemon mid-cycle), then the daemon, then both are relaunched from the
 // binary currently on PATH. A daemon whose recorded build matches this
 // binary (see Info.SameBuild) is skipped unless Force is set; orphan daemons
-// (tmux session gone) are killed without relaunch regardless.
+// (tmux session gone) are killed without relaunch regardless. Session, when
+// set, restricts all of this to that one session.
 func UpgradeDaemons(opts UpgradeOptions) ([]UpgradeResult, error) {
 	procs, err := ListDaemonProcs()
 	if err != nil {
 		return nil, err
 	}
-	plans := PlanUpgrades(procs, TmuxHasSession, ReadDaemonVersion, BuildInfo())
+	plans := PlanUpgrades(FilterDaemonProcs(procs, opts.Session), TmuxHasSession, ReadDaemonVersion, BuildInfo())
 
 	var results []UpgradeResult
 	for _, plan := range plans {

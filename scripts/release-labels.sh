@@ -10,6 +10,7 @@ labels=(
   "type:feature|0e8a16|New capability — a MUX spec, CLI verb, flag or env var"
   "type:defect|e4e669|Defect fix from the ranked-defect table"
   "docs|0075ca|Documentation only"
+  "skip-changelog|ededed|Exclude this PR from generated release notes"
 )
 
 for entry in "${labels[@]}"; do

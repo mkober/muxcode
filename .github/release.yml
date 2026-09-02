@@ -4,7 +4,8 @@
 #
 # Each bucket also accepts the matching GitHub default label (bug, enhancement,
 # documentation) so a PR labelled either way lands in the right section.
-# scripts/release-labels.sh creates the type:* / breaking / docs labels.
+# scripts/release-labels.sh creates the type:* / breaking / docs labels and
+# the skip-changelog exclusion label.
 changelog:
   exclude:
     labels:

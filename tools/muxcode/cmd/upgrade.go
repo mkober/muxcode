@@ -15,25 +15,34 @@ import (
 // rolls out to all live sessions. Each line names the daemon's recorded
 // build against the installed one, so a stale session is visible at a glance.
 //
-// Usage: muxcode upgrade-daemons [--dry-run] [--force]
+// Usage: muxcode upgrade-daemons [--dry-run] [--force] [--session <name>]
 //
-//	--dry-run  list what would happen per session without touching any process
-//	--force    restart daemons already on the installed build too
+//	--dry-run         list what would happen per session without touching any process
+//	--force           restart daemons already on the installed build too
+//	--session <name>  act on that session's daemon only (default: every session)
 func UpgradeDaemons(args []string) {
 	var opts bus.UpgradeOptions
-	for _, a := range args {
-		switch a {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--dry-run", "-n":
 			opts.DryRun = true
 		case "--force", "-f":
 			opts.Force = true
+		case "--session":
+			if i+1 >= len(args) || args[i+1] == "" || args[i+1][0] == '-' {
+				fmt.Fprintln(os.Stderr, "Usage: muxcode upgrade-daemons [--dry-run] [--force] [--session <name>]")
+				os.Exit(1)
+			}
+			opts.Session = args[i+1]
+			i++
 		case "-h", "--help":
-			fmt.Println("Usage: muxcode upgrade-daemons [--dry-run] [--force]")
+			fmt.Println("Usage: muxcode upgrade-daemons [--dry-run] [--force] [--session <name>]")
 			fmt.Println("  Restart running session daemons so they pick up the installed binary.")
 			fmt.Println("  Daemons already on the installed build are skipped; orphan daemons")
 			fmt.Println("  (tmux session gone) are killed without relaunch.")
-			fmt.Println("  --dry-run  list what would happen per session without touching any process")
-			fmt.Println("  --force    restart daemons already on the installed build too")
+			fmt.Println("  --dry-run         list what would happen per session without touching any process")
+			fmt.Println("  --force           restart daemons already on the installed build too")
+			fmt.Println("  --session <name>  act on that session's daemon only (default: every session)")
 			return
 		}
 	}
@@ -44,6 +53,10 @@ func UpgradeDaemons(args []string) {
 		os.Exit(1)
 	}
 	if len(results) == 0 {
+		if opts.Session != "" {
+			fmt.Printf("upgrade-daemons: no running daemon found for session %s\n", opts.Session)
+			return
+		}
 		fmt.Println("upgrade-daemons: no running daemons found")
 		return
 	}

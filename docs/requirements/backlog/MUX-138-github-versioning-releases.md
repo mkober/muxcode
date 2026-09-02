@@ -37,7 +37,7 @@ here. (`completed/MUX-030` also carries them, correctly, as a historical record.
 
 - **D1 — Start at `v0.1.0`, not `v1.0.0`.** Delivery-ack is still a soak with three rollback valves,
   [`MUX-012`](./MUX-012-remove-gated-pane-scrape-delivery.md) has not removed the bypassed
-  pane-scrape path, 16 High defects are open, and no compatibility contract exists anywhere. `0.x`
+  pane-scrape path, 17 High defects are open, and no compatibility contract exists anywhere. `0.x`
   lets MINOR bumps carry breaking changes honestly. The written 1.0 gate below replaces a feeling
   with a checklist.
 - **D2 — GitHub-generated release notes from PR titles; no hand-maintained `CHANGELOG.md`.** PR
@@ -81,11 +81,28 @@ Cadence: tag when a spec cluster closes (roughly every 3–6 merged PRs), never 
 - [x] The daemon records its version at startup; `muxcode status` shows a version column per session
 - [x] `muxcode upgrade-daemons` skips daemons already on the installed version, cycles stale ones, and `--dry-run` reports `session X: daemon vA → installed vB` per session
 - [x] `muxcode diagnose` reports a `binary-daemon-version-mismatch` finding when daemon and installed binary differ
-- [ ] `.github/workflows/release.yml` runs on `v*` tag push, depends on `./test.sh` passing, builds darwin/arm64, darwin/amd64, linux/amd64 and linux/arm64 with version ldflags, attaches binaries plus `sha256sums.txt`, and publishes with generated notes
-- [ ] `.github/release.yml` categorises notes by label (`type:defect`, `type:feature`, `breaking`, `docs`)
-- [ ] The 10 integration scripts carrying a documented binary precondition assert it with `muxcode version --at-least`; `install.sh`'s smoke test uses `muxcode version`
-- [ ] `v0.1.0` tagged on the Phase 1 landing commit, with a published GitHub release
-- [ ] Docs updated: `CLAUDE.md` (build table, key constraints), `README.md`, `docs/agent-bus.md` (`version`, `upgrade-daemons`), `docs/configuration.md`
+- [x] `.github/workflows/release.yml` runs on `v*` tag push, depends on `./test.sh` passing, builds darwin/arm64, darwin/amd64, linux/amd64 and linux/arm64 with version ldflags, attaches binaries plus `sha256sums.txt`, and publishes with generated notes
+- [x] `.github/release.yml` categorises notes by label (`type:defect`, `type:feature`, `breaking`, `docs`)
+- [x] The 10 integration scripts carrying a documented binary precondition assert it with `muxcode version --at-least`; `install.sh`'s smoke test uses `muxcode version`
+- [x] `v0.1.0` tagged on the **release-workflow commit** (`6a05bc8`), not the Phase 1 landing commit, with a published GitHub release — same wording correction as [Phase 3](#phase-3-release-workflow-and-first-tag)
+- [x] Docs updated: `CLAUDE.md` (build table, key constraints), `README.md`, `docs/agent-bus.md` (`version`, `upgrade-daemons`), `docs/configuration.md`
+
+The acceptance criteria above had fallen behind their phases — Phases 3 and 4 were checked off while
+the four criteria they satisfy stayed open. Reconciled 2026-09-02:
+
+| Target | Content |
+|--------|---------|
+| `CLAUDE.md` | Build table rows for `version`, `upgrade-daemons` (with `--session`), the tag-push release flow and `release-labels.sh`, plus the precondition-helper bullet under Bash scripts |
+| `docs/agent-bus.md` | `muxcode version` section — identity line, `--json` six-field contract, the `--at-least` tri-state, `routeFor()` interception, stamping and fallback — and `upgrade-daemons` extended with `--force`, `--session` and version-awareness |
+| `README.md` | New **Versions and releases** subsection under Install: the verb, the deliberate `0.x` stance, tag-push releases, honest dev-build strings, `--at-least` with its three exits, and `upgrade-daemons` for live sessions |
+| `docs/configuration.md` | New **Versioning and builds** subsection: the `VERSION` make variable and `MUXCODE_BIN`, cross-linked to the CLI reference rather than restating the verb |
+
+**A scope note on `docs/configuration.md`.** The request named the same four topics for both files, but
+versioning has **no runtime environment variables** — the identity is fixed at build time. Restating
+the `version` verb in a file about env vars and directory structure would have duplicated
+`agent-bus.md` rather than documenting configuration, so that section covers only what is genuinely
+configurable and links out for the rest. That turned up a real gap worth having: **`MUXCODE_BIN` is
+read by 14 integration scripts and was documented nowhere.**
 
 ### Technical approach
 
@@ -180,13 +197,14 @@ only observable through `gh`, which this role must not run.
 | Workflow shape: `test` → `build` on a 4-target matrix (`darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`), `sha256sum muxcode-* > sha256sums.txt` (:126), `gh release create "$TAG" --verify-tag --generate-notes` (:134-138) | **Directly verified** — read from the file |
 | Tag `v0.1.0` exists, is **annotated** (`git cat-file -t` → `tag`), and points at `6a05bc8` | **Directly verified** — read-only git |
 | `6a05bc8` = *"MUX-138 Add Phase 3 release workflow (tag-triggered) and label script"*; both `.github` files now tracked | **Directly verified** — the files were untracked at the previous pass |
-| `scripts/release-labels.sh` creates exactly **4** labels — `breaking`, `type:feature`, `type:defect`, `docs` — matching the non-default buckets in `.github/release.yml`, idempotently via `--force` | **Directly verified** — read from the script |
+| `scripts/release-labels.sh` creates **5** labels — `breaking`, `type:feature`, `type:defect`, `docs`, `skip-changelog` — covering every non-default name `.github/release.yml` references, idempotently via `--force` | **Directly verified** — read from the script |
 | Labels actually created on the repo; workflow run `33667352101` green; release `v0.1.0` published with 4 binaries, `sha256sums.txt` and generated notes | **Relayed** by the commit agent (the role authorized for `gh`), user-approved. Not independently checked here |
 
-**Small gap, not blocking.** `.github/release.yml` excludes PRs labelled `skip-changelog`, but
-`scripts/release-labels.sh` does not create that label and it is not a GitHub default. The exclusion
-simply never matches until someone creates it by hand — harmless for notes correctness, but the
-"suppress this PR from the notes" affordance is unavailable as shipped.
+**Gap closed 2026-09-02.** An earlier pass of this verification recorded that `.github/release.yml`
+excluded PRs labelled `skip-changelog` while `scripts/release-labels.sh` never created it — leaving an
+exclusion that could not match and a "suppress this PR from the notes" affordance that did not exist.
+`skip-changelog` has since been added to the script (5 labels), so every non-default label the
+config references is now created. Re-verified against the script.
 
 ### Phase 4: Enforce script preconditions
 
@@ -222,14 +240,46 @@ whichever script was edited first.
 
 ### Phase 5: Integration test
 
-- [ ] Create `scripts/test-version.sh` covering the below, hermetic (scratch bus plus tmux session)
-- [ ] Stamped build reports itself; `--json` round-trips the same fields
-- [ ] `--version` and `-v` exit 0 and **never** create a tmux session or touch a project dir
-- [ ] `--at-least` truth table: lower, equal, higher, describe-suffix, pre-release
-- [ ] Scratch daemon launched from a binary stamped `v0.0.1-test` while installed reports higher → `upgrade-daemons --dry-run` names the mismatch, a real run cycles it, a second run skips it
-- [ ] `diagnose` shows the mismatch finding before, and none after
-- [ ] Coverage floor keeps a skipped section from reporting green
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-version.sh` covering the below, hermetic (scratch bus plus tmux session)
+- [x] Stamped build reports itself; `--json` round-trips the same fields
+- [x] `--version` and `-v` exit 0 and **never** create a tmux session or touch a project dir
+- [x] `--at-least` truth table: lower, equal, higher, describe-suffix, pre-release
+- [x] Scratch daemon launched from a binary stamped `v0.0.1-test` while installed reports higher → `upgrade-daemons --dry-run` names the mismatch, a real run cycles it, a second run skips it
+- [x] `diagnose` shows the mismatch finding before, and none after
+- [x] Coverage floor keeps a skipped section from reporting green
+- [x] Run the script and verify all checks pass
+
+**Run 2026-09-02 15:20 (run agent): `40 passed, 0 failed`, exit 0** — log `/tmp/test-version-phase5.log`,
+verified here by reading it (40 `ok:` lines, zero `FAIL`), not taken from the report alone.
+
+The count is the point: **40 is the coverage floor and also the achievable maximum** (28 single-fire
+sites + 10 `row` cases + 2 loop iterations). A run landing exactly on the maximum proves every
+assertion executed — no section was skipped, and the floor could not have been satisfied by a partial
+run. Had the two figures differed, a green result would have been compatible with skipped work.
+
+Verification 2026-09-02 (plan, `verify-spec`). Seven steps checked off by **reading the script**; the
+eighth is deliberately left open — see below.
+
+| Step | Evidence in `scripts/test-version.sh` |
+|------|----------------------------------------|
+| Hermetic | `mktemp -d` work dir (:35), private tmux server via `TMUX_TMPDIR` (:36), scratch `BUS_SESSION` (:39), redirected `MUXCODE_LIFECYCLE_LOG_DIR` (:41) — and a closing assertion that the real lifecycle log dir is untouched (:221) |
+| Stamped identity + `--json` | :85 reports itself, :90 round-trips the same fields, :92 pins the field set as exactly the documented six |
+| `--version` / `-v` | :102 (both flags, exit 0 and exact line), plus three negative assertions — cwd gained nothing (:105), no bus dir created (:106), no tmux server started (:111) |
+| `--at-least` truth table | Ten `row` cases covering lower, equal, higher patch, higher major, describe-suffix on both sides of its tag, pre-release below its release and above the previous patch, and **both** uncomparable directions → exit 2; :133 pins that the older verdict names both versions on stderr |
+| Daemon rollout | dry-run names both builds (:172) and leaves the pid unchanged (:175), real run cycles with a new pid (:195-199), old pid gone (:201), second run skips (:207) with the pid untouched (:208); `daemon-upgraded` (:202) and `daemon-current` (:209) lifecycle rows asserted |
+| `diagnose` before/after | mismatch present (:185) with both builds in evidence (:188) and severity `warning` (:190); absent after (:216) — **with the daemon asserted alive in both reports** (:183, :214) so the absence is not vacuous |
+| Coverage floor | `[ "$PASS" -ge 40 ]` (:227) |
+
+**The floor is the achievable maximum, which is what makes it meaningful.** A first count of `ok "`
+call sites reads 30 and looks short of 40 — but two sites multiply: `row()` (:120) is invoked **10**
+times and the `--version`/`-v` site (:102) runs **twice**. So 28 single-fire sites + 10 + 2 = **40
+exactly**. Floor equal to maximum means a green run proves no section was skipped; a floor even one
+below that would let a skipped assertion still report green.
+
+**Why the last step stays open.** Nothing here is evidence the script was *executed*: the file is
+untracked, unmodified since 15:12, and no run output exists. Running `scripts/test-*.sh` is the **run**
+agent's job, not plan's, so this step needs a real run reported back before it can be checked. The
+seven above assert the script *contains* its coverage; only the eighth asserts it *passes*.
 
 ## Related
 
@@ -241,18 +291,28 @@ whichever script was edited first.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-138-github-versioning-releases | 1h 3m | 2026-09-02 13:29 |
+| MUX-138-github-versioning-releases | 1h 49m | 2026-09-02 14:48 |
 
 The branch carries more than this spec: the `req-code-pr` → `spec-to-pr` rename, the
-`story-lifecycle` template removal, and the branch-derived-intent work, alongside MUX-138 Phase 1.
+`story-lifecycle` template removal, and the branch-derived-intent work, alongside MUX-138 Phases 1-4
+and the filing of MUX-139, MUX-140 and MUX-141.
 The row records what the **branch** accrued, which is what the ledger measures — it is not a
 figure for effort spent on this spec.
 
 ## Status
 
-In Progress — Phases 1–4 complete; `v0.1.0` is tagged (`6a05bc8`) and released, and the 10
-integration scripts now enforce their binary precondition. 28/45 items overall. **Phase 5 (integration
-test) is the only phase still open.**
+**Complete — 41/45 items.** All five phases and every acceptance criterion are done: the binary is
+stamped and self-describing, the daemon records its build, `v0.1.0` is tagged (`6a05bc8`) and
+released, the 10 integration scripts enforce their binary precondition, the docs are written, and
+`scripts/test-version.sh` passes **40/40** — its floor and its achievable maximum, so the green run
+proves nothing was skipped.
+
+The 4 remaining items are the **`1.0 gate`**, which is deliberately future work rather than this
+spec's scope: [`MUX-012`](./MUX-012-remove-gated-pane-scrape-delivery.md) landing, High-ranked defects
+at zero or explicitly accepted, a written compatibility contract, and the
+`muxcode-agent-bus` back-compat symlink. They gate a `v1.0.0`, not this spec.
+
+Moving the file to `completed/` is a `git mv`, which is user-gated — flagged, not done.
 
 The file still sits in `backlog/` while reading `In Progress`, the same deliberate exception the
 index records for [`MUX-005`](./MUX-005-plan-diagrams.md). Moving it to `drafts/` is a `git mv`,

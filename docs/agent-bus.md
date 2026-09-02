@@ -251,19 +251,66 @@ When the daemon detects a change in the trigger file, it starts debouncing. Afte
 
 Per-file routing to specific agents (test/deploy/build) is handled earlier by `hook analyze` at edit time — the daemon only handles the aggregate analyst notification.
 
+### `muxcode version`
+
+Print the binary's stamped build identity.
+
+```bash
+muxcode version                      # the identity line
+muxcode version --json               # the same facts as JSON
+muxcode version --at-least v0.1.0    # precondition check, by exit code
+muxcode --version                    # same line as `muxcode version`
+muxcode -v                           # same line as `muxcode version`
+```
+
+```
+muxcode v0.1.0 (a1b2c3d, 2026-09-02, go1.22.0 darwin/arm64)
+```
+
+- `--json` carries exactly six fields — `version`, `commit`, `date`, `go`, `os`, `arch` — the same facts as the line. The field set is a documented contract, pinned by `scripts/test-version.sh`.
+- **`--version` and `-v` never reach the launcher.** `routeFor()` (`main.go`) intercepts them ahead of the path fallback that would otherwise treat an unrecognised first argument as a project directory — so they print the line, exit 0, and create no tmux session, no bus dir, and nothing in the working directory.
+- `--at-least vX.Y.Z` exits by **comparison outcome, not success/failure** — the tri-state is the point:
+
+  | Exit | Meaning |
+  |------|---------|
+  | `0` | at or past the requested version |
+  | `1` | older — the message names both versions on stderr |
+  | `2` | **uncomparable** — an untagged dev build reports a bare commit, which has no SemVer rank |
+
+  Exit `2` is not an error. Treating it as failure would block every developer running a tree-built binary between tags; treating it as success would let a genuinely stale binary through. Scripts should branch on all three — `scripts/lib/muxcode-version.sh` does, and is the shared way to assert a precondition:
+
+  ```bash
+  . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+  require_muxcode_version "$MUX" v0.1.0 MUX-103 || exit 1
+  ```
+
+  A binary predating the `version` verb routes the word to the launcher as a project path and exits 1, which reads correctly as "older".
+
+- Comparison follows SemVer 2.0 (`bus/version.go` `CompareSemver`): a describe suffix `-N-g<sha>` sorts **after** its tag but below the next patch, a pre-release sorts **before** its release, and `-dirty` is ignored.
+- **Stamping**: `make build` is the single definition of the ldflags, setting `Version`/`Commit`/`BuildDate` via `-X` from `git describe --tags --always --dirty`. An unstamped source build falls back to Go's embedded VCS info (`debug.ReadBuildInfo`), then to `devel` — it never prints an empty version.
+
+The daemon records this same identity to `daemon.version` at startup, which is what makes
+[`upgrade-daemons`](#muxcode-upgrade-daemons) version-aware and what `muxcode diagnose` compares to
+raise `binary-daemon-version-mismatch`.
+
 ### `muxcode upgrade-daemons`
 
 Restart all running session daemons so they pick up the freshly installed binary.
 
 ```bash
-muxcode upgrade-daemons [--dry-run]
+muxcode upgrade-daemons [--dry-run] [--force] [--session <name>]
 ```
 
 - Long-lived daemons keep executing the code loaded at their launch — a `make install` that fixes daemon behavior does not reach already-running sessions until they cycle. This command discovers every running `muxcode watch` daemon and monitor process (across all sessions on the machine via `ps`) and re-launches each from the binary currently on `PATH`.
 - Per session, the **monitor is killed first** (so it cannot resurrect the old daemon mid-cycle), then the daemon, then both are relaunched. Kills use `SIGTERM` with a 2s grace period, escalating to `SIGKILL`.
 - **Orphan cleanup**: daemons whose tmux session no longer exists are killed without relaunch (logged as `daemon-orphan-killed`). Successful upgrades log `daemon-upgraded`.
 - `--dry-run` (`-n`) — list the daemons that would be restarted (and orphans that would be killed) without touching any process.
+- **Version-aware**: each daemon records its build identity in `daemon.version` at startup, and one already on this binary's build (version, commit **and** build date, so a dirty-tree rebuild still cycles) is **skipped**. `--dry-run` names both sides per session (`daemon vA → installed vB`), so a stale session is visible at a glance.
+- `--force` — cycle every discovered daemon even when its recorded build already matches the installed one.
+- `--session <name>` — **scope the rollout to one session's daemon.** Without it the command cycles every stale daemon on the machine, which is rarely what you want from inside a test or a script touching one session. Backed by `FilterDaemonProcs` (`bus/upgrade.go:125`), which returns every process when the session is empty and otherwise keeps only matching ones. A name that matches nothing prints `upgrade-daemons: no running daemon found for session <name>`.
 - Exits non-zero if any session's relaunch fails. Prints `no running daemons found` when none are discovered.
+
+Integration test: `scripts/test-version.sh` — covers the stamped identity, `version --json`/`--at-least` exit codes, and the version-aware rollout. It relies on `--session` to confine its daemon cycling to its own scratch session.
 
 `build.sh` calls `muxcode upgrade-daemons` after `make install`, so every install automatically rolls the new binary out to all live sessions.
 

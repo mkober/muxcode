@@ -353,6 +353,50 @@ For subsequent builds after pulling updates:
 ./build.sh
 ```
 
+`build.sh` also rolls the new binary out to any sessions already running. Long-lived session daemons
+keep executing the code they launched with, so an install alone would not reach them — see
+[Versions and releases](#versions-and-releases).
+
+### Versions and releases
+
+Check what you are running:
+
+```bash
+muxcode version          # muxcode v0.1.0 (a1b2c3d, 2026-09-02, go1.22.0 darwin/arm64)
+muxcode version --json   # same facts as JSON
+```
+
+Releases are SemVer-tagged, and MuxCode is **`0.x` deliberately** — the compatibility contract is not
+written yet, so MINOR bumps may carry breaking changes. Pushing a `v*` tag builds darwin and linux
+binaries for amd64 and arm64, attaches `sha256sums.txt`, and publishes a GitHub release with notes
+generated from PR labels.
+
+A build from a working tree describes itself honestly rather than claiming a release —
+`v0.1.0-3-gabc1234-dirty` — and a source build with no version stamp falls back to Go's embedded VCS
+info, then to `devel`. It never prints an empty version.
+
+Scripts can assert a minimum:
+
+```bash
+muxcode version --at-least v0.1.0
+```
+
+Exit `0` means at or past it, `1` means older, and `2` means **uncomparable** — an untagged dev build
+has no version to rank. That third state is why the check is not a plain pass/fail: failing on it
+would block the tree-built binary you run between tags, and passing on it would let a genuinely stale
+binary through. The repo's integration tests branch on all three via
+`scripts/lib/muxcode-version.sh`.
+
+After upgrading, running sessions pick up the new binary with:
+
+```bash
+muxcode upgrade-daemons                      # every session on the machine
+muxcode upgrade-daemons --session <name>     # just one
+muxcode upgrade-daemons --dry-run            # show what would cycle
+```
+
+Daemons already on the installed build are skipped, so this is safe to re-run.
+
 ### Launch
 
 ```bash

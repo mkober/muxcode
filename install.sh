@@ -627,7 +627,10 @@ CONFIG_FILE="$HOME/.config/muxcode/config"
 # optional `export ` prefix, quoted or unquoted, single or double quotes
 # (Copilot review catch, PR #40: the quoted-only match caused a false
 # re-prompt for `export MUXCODE_OPENCODE_API_KEY=sk-...`).
-existing_okey="$(sed -n -E 's/^(export )?MUXCODE_OPENCODE_API_KEY=//p' "$CONFIG_FILE" 2>/dev/null | head -1 | tr -d "\"'")"
+# `|| true`: on a fresh box the config file does not exist yet, sed exits 1,
+# and under pipefail+errexit that killed the install silently at step 4/9
+# (test-install.sh 13/13 failures, introduced 2affb51). Missing = no key.
+existing_okey="$(sed -n -E 's/^(export )?MUXCODE_OPENCODE_API_KEY=//p' "$CONFIG_FILE" 2>/dev/null | head -1 | tr -d "\"'" || true)"
 if [ -n "${MUXCODE_OPENCODE_API_KEY:-}" ] || [ -n "$existing_okey" ]; then
   row "$C_OK" "✓" "opencode-key" "gateway key configured (Prompt mode ready)"
 else
