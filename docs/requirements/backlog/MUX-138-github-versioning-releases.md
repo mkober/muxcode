@@ -1,6 +1,6 @@
 # MUX-138: GitHub versioning & releases
 
-**Tracking:** (GitHub issue not yet created)
+**Tracking:** [mkober/muxcode#70](https://github.com/mkober/muxcode/issues/70) — PR [#68](https://github.com/mkober/muxcode/pull/68) closes it
 
 ## Context
 
