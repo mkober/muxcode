@@ -32,7 +32,7 @@ Two pieces combine:
 1. **`RetryGraphRun` (`bus/graph_run.go`) resets only the downstream set** — it walks outgoing edges
    from `fromNode` and resets those, plus `fromNode` itself. Upstream nodes keep their state, so a
    satisfied `phase-gate` upstream of `commit` stays `done / success`.
-2. **The approval purge lives in the gate's dispatch path** (`bus/graph_exec.go:482`) — it removes the
+2. **The approval purge lives in the gate's dispatch path** (`bus/graph_exec.go:543`) — it removes the
    `approved` marker when a `wait_human` node is *dispatched*. A gate that is never re-dispatched is
    never re-armed.
 
@@ -97,8 +97,8 @@ writes as the commit gates do for git.
 
 | File | Purpose |
 |------|---------|
-| `tools/muxcode/bus/graph_run.go` | `RetryGraphRun` — the downstream-only reset |
-| `tools/muxcode/bus/graph_exec.go` | Gate dispatch and the `approved` purge (:482); `graphApprovalPath` |
+| `tools/muxcode/bus/graph_run.go` | `RetryGraphRun` — the downstream-only reset, and the retry-path `approved` purge (:525), which fails closed |
+| `tools/muxcode/bus/graph_exec.go` | Gate dispatch and the dispatch-path `approved` purge (:543); `harvestWaitingNode` reads the marker (:919); `graphApprovalPath` |
 | `tools/muxcode/bus/graph.go` | `reachableStoppingAt` (the shared primitive), `gateDominates` (per-gate form of the `validateGates` rule), `nodeRequiresGate` (node predicate only — it holds **no** dominance logic; the original criterion naming it was wrong) |
 | `tools/muxcode/cmd/graph.go` | `retry` subcommand — where a refusal surfaces to the user |
 | `scripts/test-graph-orchestrator.sh` | Integration coverage for `graph retry --from` |
@@ -204,3 +204,23 @@ Two things worth carrying forward:
 - `gateDominates` is true dominance built on the shared `reachableStoppingAt` primitive — the same walk
   `validateGates` uses — so retry-time and validation-time notions of "what a gate covers" cannot drift
   apart.
+
+### Post-close hardening (2026-09-02, commit `3fffed4`)
+
+PR #56 Copilot review landed one change to this mechanism **after** the 25/25 close. It does not reopen
+any item; recorded here so the spec keeps describing the shipped code.
+
+The retry-path purge (`graph_run.go:525`) now **fails closed**: an unexpected `os.Remove` error aborts
+the retry instead of being swallowed by `_ =`. Swallowing it was not cosmetic — the marker would
+survive to satisfy the re-armed gate while the CLI, `RetryNote`, and the `graph-retry-regated`
+lifecycle event all still claimed "stale approval purged", reinstating this spec's defect through a
+path that reports success. Safe to abort because the purge runs before any store write, so a refusal
+leaves the run untouched. Pinned by `TestExecRetryPurgeFailureFailsClosed`.
+
+**The asymmetry this leaves is worth carrying forward.** Phase 3 recorded *two distinct purge sites*;
+only the retry one was hardened. The dispatch-path purge (`graph_exec.go:543`) is still
+`_ = os.Remove(...)`, and `harvestWaitingNode` (`:919`) decides a gate is satisfied by `os.Stat`-ing
+that same marker — so a failed removal there yields the same laundered approval, on the path a capped
+loop re-enters a gate through. Failing closed mid-dispatch is genuinely harder than at retry (there is
+no "before any store write" moment to retreat to), so this is a noted gap rather than an oversight —
+but it is undocumented in the code and untested. Not filed as a spec; flagged to edit 2026-09-02.

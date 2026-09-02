@@ -924,7 +924,7 @@ else
 
 # Per-role overrides (uncomment to customize):
 # MUXCODE_REVIEW_CLI=codex
-# MUXCODE_BUILD_MODEL=anthropic/claude-sonnet-4-5
+# MUXCODE_BUILD_MODEL=anthropic/claude-sonnet-5
 EOF
   ok "Created config at ~/.config/muxcode/config"
 fi

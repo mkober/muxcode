@@ -414,7 +414,7 @@ func resolveOpenCodeModel(role string) string {
 		return ""
 	}
 
-	// Translate: claude-sonnet-4-5 -> anthropic/claude-sonnet-4-5
+	// Translate: claude-sonnet-5 -> anthropic/claude-sonnet-5
 	if !strings.Contains(claudeModel, "/") {
 		return "anthropic/" + claudeModel
 	}

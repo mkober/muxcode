@@ -208,7 +208,7 @@ func RoleCodexModelDefault(role string) string {
 func RoleClaudeModelDefault(role string) string {
 	switch role {
 	case "edit", "auto":
-		return "claude-fable-5"
+		return "claude-fable-5-1"
 	case "plan", "planner", "review", "analyze", "analyst":
 		return "claude-opus-5"
 	case "build", "test", "api", "deploy", "run", "runner", "watch", "commit", "git", "serve":
