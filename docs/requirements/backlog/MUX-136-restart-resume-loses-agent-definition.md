@@ -168,22 +168,52 @@ notice was a line of prose inside a pane nobody was reading. Same family as
 
 ### Acceptance criteria
 
-- [ ] `--agent` is **never passed without `--agents`** — the name and the definition travel together
+- [x] `--agent` is **never passed without `--agents`** — the name and the definition travel together
       or neither is sent, so a dropped definition can no longer degrade into a name-only launch
-- [ ] An agent that cannot resolve its definition **fails loudly**: an alert to `edit` plus a
+- [x] An agent that cannot resolve its definition **fails loudly**: an alert to `edit` plus a
       lifecycle event, never a silent fallback to default tools
 - [ ] A restarted agent never runs with fewer restrictions than its definition grants — if the
       definition cannot be applied, the agent does not come up at all
 - [ ] The restart path is verified to restore the inbox listener, so receipts resume and no
       `delivery-gap` follows a "successful" restart
-- [ ] `agent-recovered` is emitted only when the agent came back **with** its definition — a
+- [x] `agent-recovered` is emitted only when the agent came back **with** its definition — a
       recovery event must not describe a downgraded agent
-- [ ] **Negative control:** a genuinely missing definition file still produces the loud failure, not
+- [x] **Negative control:** a genuinely missing definition file still produces the loud failure, not
       a hang and not a default-tools launch
-- [ ] **Negative control:** a normal healthy restart is unchanged — no extra alerts, no added latency
+- [x] **Negative control:** a normal healthy restart is unchanged — no extra alerts, no added latency
       on the common path
 - [ ] Defect A reproduced (or explicitly recorded as not-reproducible) before any fix is attributed
       to it — the two incidents may not share a cause
+
+**Criterion 1 checked 2026-09-02** (commit `658c305`): the guard is in `BuildExecArgs`, pinned by
+`TestClaudeBuildExecArgs_NoBareAgentFlag`, and `provider_claude.go:77` is the sole Claude `--agent`
+emitter. Scope caveat: it constrains what **muxcode passes**. A bare `claude --resume` in a pane —
+the thing that actually caused this incident — never goes through `BuildExecArgs` at all, so this
+criterion cannot cover it. Phase 2's detector is what covers that.
+
+~~**Criterion 3 is currently going backwards, not forwards.** Phase 1 landed as-is with the reduced
+JSON, so at tier 1 a definition now grants *fewer* restrictions than before…~~
+
+**Closed 2026-09-02 in the Phase 2 pass** — the regression window lasted one commit. `BuildAgentsJSON`
+now takes the parsed frontmatter and forwards an allowlist of Claude's subagent keys, so a project-tier
+`tools:`/`model:`/`permissionMode:` file survives into the JSON that overrides it. Criterion 3 is no
+longer regressing; it is now gated on the *refusal* half rather than on the JSON.
+
+**Criteria 2, 5, 6, 7 checked 2026-09-02** against the Phase 2 working tree — `refuseWithoutDefinition`
+(`launch.go:876`, lifecycle + event verified in the body), `definitionApplied` gating recovery
+(`daemon.go:1745`), and the named pins read on disk including the two positive/negative controls
+(`TestRunAgentLaunch_RefusesWithoutDefinition` with `…LaunchesWithDefinition`,
+`TestCheckDefinitionlessHealthyAndDisabled`).
+
+**Criterion 3 deliberately left unchecked**, and it is the one genuine judgement call in this pass.
+The *launcher* half is met — a definition-less Claude role is refused, not started. The criterion as
+written says "**never** runs with fewer restrictions", and the daemon half does not deliver that: a
+bare-resumed agent runs unconstrained for up to one 30s sweep plus a two-sighting debounce (~60s, the
+cost the Phase 2 decision explicitly accepts) before it is reloaded. That is a *bounded* exposure, not
+an eliminated one. For a role whose entire safety model is scope restriction, the difference between
+"never" and "for about a minute" is worth a human decision rather than a checkbox — either the
+criterion is reworded to state the bound, or the window is closed. Flagged to the user; not resolved
+here.
 
 ### Key files
 
@@ -240,11 +270,37 @@ because the launcher never produced that launch.
 
 ### Phase 2: Make an unresolvable definition loud
 
-- [ ] Detect a definition-less launch (banner signature and/or a positive capability probe) and
+- [x] Detect a definition-less launch (banner signature and/or a positive capability probe) and
       surface it as an alert to `edit` plus a lifecycle event
-- [ ] Decide and record the failure mode: refuse to come up vs. come up quarantined. A privileged
+- [x] Decide and record the failure mode: refuse to come up vs. come up quarantined. A privileged
       role must not run unconstrained either way
-- [ ] Ensure `agent-recovered` is withheld when the definition did not apply
+- [x] Ensure `agent-recovered` is withheld when the definition did not apply
+
+#### Decision (item 2, 2026-09-02): refuse at two layers — quarantine rejected
+
+A role's whole safety model *is* its definition. A quarantined-but-running privileged agent is still
+unconstrained for whoever types into it, so the definition-less instance is **refused, not isolated**.
+
+| Layer | Mechanism | Loudness |
+|-------|-----------|----------|
+| **Launcher** — `refuseWithoutDefinition` (`bus/launch.go:876`) | A Claude role whose definition resolves at **no** tier is not launched on the inline fallback: error returned, no exec, no startup message seeded. Roles with no mapped file (`cfg.Agent == ""`) keep the fallback — nothing was promised for them. The pane stays at a shell prompt, so the health sweep reports `agent-down`; capped restarts hit the same refusal, then alert-only | lifecycle `launch-refused` (error) + `agent-definitionless` to edit |
+| **Daemon** — `checkDefinitionless` (`daemon/definition_watchdog.go:47`, 30s sweep) | **Positive argv probe first**: `ProbeAgentDefinition` reads `#{pane_pid}` → `ps` → first `claude` descendant → argv must carry `--agent` **and** `--agents`. The startup banner is only a fallback when no process can be attributed, and **never overrides a positive probe** — an agent *discussing this bug* prints the banner text. Two-sighting debounce → same-provider reload in place (recovery, not a provider change), cap 3/role, 180s cooldown, alert-only at the cap. Roles the daemon never restarts (`edit`) are **alerted, not reloaded** | lifecycle `agent-definitionless` / `definition-reload` / `definition-reload-giveup` / `definition-restored` |
+
+**Cost accepted:** a bare-resumed session in a daemon-managed pane loses its resumed context ~60s
+later. That is the deliberate trade — an unconstrained privileged agent is the worse outcome, and the
+alert names the cause. [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) is where a resume
+learns to *carry* the definition; until then this is a blunt instrument by choice. Opt-out:
+`MUXCODE_DEFINITION_WATCHDOG_DISABLE=1`.
+
+**Why the probe leads and the banner follows** is the sharpest detail here: banner-matching alone
+would flag any pane whose scrollback quotes the banner — including this spec's own reviewers. The
+argv probe is positive evidence about the *process*, so it outranks pane text.
+
+**Item 3 — `agent-recovered` withheld.** `checkAgentHealth`'s recovery branch now requires
+`definitionApplied(role)` (`daemon/daemon.go:1745`): a Claude role counts as recovered only on
+**positive** `DefinitionPresent` evidence. `DefinitionUnknown` (launcher pre-exec, probe failure)
+*defers* the announcement rather than asserting recovery — the 2026-09-01 event did exactly that.
+Non-Claude providers pass through (no argv contract).
 
 ### Phase 3: Fix the resolution
 
@@ -271,14 +327,24 @@ because the launcher never produced that launch.
       `initialPrompt`, plus nested `hooks`/`mcpServers`/`experimental` — so the fix is to populate it.
       Add a pin that a `tools:`-bearing project-tier definition survives into the JSON
 
-> **Provenance (2026-09-02).** Two halves, established differently. *Directly verified here:*
-> `ConfigureLaunch` is tier-agnostic — it builds JSON from whatever `ResolveAgentFile` returns,
-> tier 1 included (`provider_claude.go:31-45`, `launch.go:333`) — so tier 1 did change from name-only
-> to JSON. *Relayed, not verified here:* that `--agents` outranks `.claude/agents/`, and the accepted
-> key list; both come from `edit`'s background check, reaching plan as a daemon pane-scrape after
-> `edit` went idle without replying. The regression follows only if that precedence holds — confirm it
-> before acting. No live impact on the 18 shipped definitions (all `description:`-only, and resolved
-> at tiers 2/3); the exposure is a user's own project-tier file.
+> **Done early, in the Phase 2 pass (2026-09-02).** `BuildAgentsJSON(name, fm AgentFrontmatter, prompt)`
+> (`bus/launch.go:407`) now forwards an allowlist with Claude's own types — `agentJSONKeys`
+> (`launch.go:388`): `tools`/`disallowedTools`/`skills` → arrays (comma, inline `[a, b]`, or a YAML
+> block list), `maxTurns` → int, `background` → bool, and `model`/`permissionMode`/`memory`/`effort`/
+> `isolation`/`color`/`initialPrompt` → strings. Nested maps (`hooks:`, `mcpServers:`) are **not**
+> carried, documented on the type. Unknown keys are dropped deliberately: forwarding one risks the
+> whole launch against an unknown schema strictness. Pinned by `TestBuildAgentsJSON_CarriesRestrictions`
+> and `TestClaudeConfigureLaunch_ProjectTierRestrictionsSurvive`.
+>
+> *Verified directly here:* the allowlist, its type coercion, and the doc comment — all read in
+> `launch.go:388-435`. The regression window was one commit wide (`658c305` → the Phase 2 tree).
+>
+> **Review false-positive worth remembering:** the reviewer re-reported this item as still open
+> *after* it was fixed, because it read the **main checkout at the Phase 1 commit** while the fix sat
+> in the spawn worktree awaiting harvest. Same family as the changed-files provenance problem
+> [`MUX-007`](../completed/MUX-007-verify-spec-stale-review-refire.md) closed: a reviewer reading a
+> different tree than the one under review reports confidently and wrongly. Check *which tree* before
+> trusting a re-report.
 
 > **Phase 3 item 1 note (2026-09-02).** The `--agent`/`--agents` binding already landed *with* the
 > Phase 1 pins — a red tree cannot pass the phase's commit gate, so pin and guard shipped as one unit.
@@ -309,10 +375,51 @@ because the launcher never produced that launch.
 - [ ] Coverage floor set to the achievable maximum so a skipped section cannot report green
 - [ ] Run it and record passed/failed/exit code here
 
+**Carried in from Phase 2 as explicitly not-verified-live** — the unit tests inject `ps`/tmux output,
+so these three are only ever exercised here:
+
+- [ ] The real `ProbeAgentDefinition` against a **live pane** — the unit pins inject `ps` and tmux
+      output, so the probe has never run against a real process tree
+- [ ] `ps -axo command=` on **Linux** (procps accepts `command` as an alias of `args`; only macOS has
+      been exercised)
+- [ ] Claude's `--agents` schema strictness on **unknown keys** — the allowlist sidesteps it rather
+      than establishing it, so the assumption behind "drop unknown keys" is untested
+
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-136-restart-resume-loses-agent-definition | 19m | 2026-09-02 16:55 |
+
 ## Status
 
-**In Progress** — filed 2026-09-01 from two live incidents the same afternoon; **Phase 1 complete
-2026-09-02**. Still filed under `backlog/`; the move to `drafts/` is a `git mv` and awaits the user.
+**In Progress** — filed 2026-09-01 from two live incidents the same afternoon; **Phase 1 complete and
+committed 2026-09-02** (`658c305`, 4 files). Still filed under `backlog/`; the move to `drafts/` is a
+`git mv` and awaits the user.
+
+Phase 1 landed **as-is**, carrying a one-commit tier-1 restriction loss; the **Phase 2 pass closed it
+early** by teaching `BuildAgentsJSON` the full key allowlist. The regression therefore existed between
+`658c305` and the Phase 2 tree and no longer does. (For the record, and because it stopped mattering
+quickly: whether the defer was considered or the fix-now question simply went unanswered was never
+determinable from here.)
+
+**Phase 2 work is complete in the working tree, uncommitted** — `bus/definition.go`,
+`daemon/definition_watchdog.go` and their tests are new; `launch.go`, `provider_claude.go`,
+`daemon.go`, `diagnose.go`, `guard.go` modified. The decision recorded above is **refuse, not
+quarantine**, at launcher and daemon, with a positive argv probe leading and the banner as fallback.
+
+Where the risk now sits, in order:
+
+1. **Nothing has run against a live pane.** Every probe pin injects `ps`/tmux output. The watchdog
+   reloads agents on a 30s sweep, so a probe that misreads a real process tree would cycle healthy
+   agents — the failure mode is noisy and self-inflicted rather than silent, but it is Phase 5 that
+   establishes it does not happen.
+2. **Linux is unexercised** (`ps -axo command=`), and the daemon runs wherever the user runs it.
+3. **The "drop unknown keys" choice is unvalidated** — it sidesteps Claude's schema strictness rather
+   than establishing it.
+
+Criteria 2, 5, 6 and 7 are claimed satisfied by the Phase 2 layers, and 3 by the launcher refusal plus
+the restored JSON; they are checked off by the verify pass against the code, not from this narrative.
 
 Phase 1 changed the story. Defect B's mechanism is real code — `--agent <name>` was emitted
 unconditionally while `--agents <definition>` was conditional — and it is now **guarded and pinned**.

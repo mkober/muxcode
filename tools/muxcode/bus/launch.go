@@ -3,10 +3,12 @@ package bus
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -39,8 +41,14 @@ type LaunchConfig struct {
 }
 
 // AgentFrontmatter holds extracted YAML frontmatter fields from an agent file.
+// Description is the one field muxcode reads itself; Fields carries every other
+// top-level key as its raw scalar (`tools: Read, Edit`, `model: opus`; a block
+// list is joined with commas) so BuildAgentsJSON can forward the definition's
+// restrictions unreduced. Nested maps (`hooks:`, `mcpServers:`) are not
+// carried.
 type AgentFrontmatter struct {
 	Description string
+	Fields      map[string]string
 }
 
 // AgentFileName maps role names to agent definition filenames (without .md).
@@ -296,13 +304,32 @@ func ExtractFrontmatter(content string) (AgentFrontmatter, string) {
 		return fm, content
 	}
 
-	// Parse frontmatter fields
-	fmBlock := rest[:idx]
-	scanner := bufio.NewScanner(strings.NewReader(fmBlock))
+	fm.Fields = map[string]string{}
+	current := ""
+	scanner := bufio.NewScanner(strings.NewReader(rest[:idx]))
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "description:") {
-			fm.Description = strings.TrimSpace(strings.TrimPrefix(line, "description:"))
+		if line != strings.TrimLeft(line, " \t") {
+			if item, ok := strings.CutPrefix(strings.TrimSpace(line), "- "); ok && current != "" {
+				fm.Fields[current] = strings.Trim(fm.Fields[current]+","+strings.TrimSpace(item), ",")
+			} else {
+				current = "" // a nested map — its items belong to no forwarded key
+			}
+			continue
+		}
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		current = key
+		if key == "description" {
+			fm.Description = value
+		} else if value != "" {
+			fm.Fields[key] = value
 		}
 	}
 
@@ -353,26 +380,72 @@ func ResolveAgentFile(name, installDir string) (string, int) {
 	return "", 0
 }
 
-// BuildAgentsJSON constructs the JSON value for Claude Code's --agents flag.
-// This is used when the agent file is outside .claude/agents/ (tiers 2 and 3).
-func BuildAgentsJSON(name, description, prompt string) (string, error) {
-	type agentDef struct {
-		Description string `json:"description"`
-		Prompt      string `json:"prompt"`
+// agentJSONKeys maps the frontmatter keys Claude Code accepts on a subagent
+// definition to how the --agents JSON types them. Keys outside this set stay
+// muxcode-side: forwarding an unknown key would risk the whole launch on the
+// schema's strictness, while dropping a known one silently strips a
+// restriction — the tier-1 regression Phase 1 introduced (MUX-136).
+var agentJSONKeys = map[string]string{
+	"tools":           "list",
+	"disallowedTools": "list",
+	"skills":          "list",
+	"maxTurns":        "int",
+	"background":      "bool",
+	"model":           "string",
+	"permissionMode":  "string",
+	"memory":          "string",
+	"effort":          "string",
+	"isolation":       "string",
+	"color":           "string",
+	"initialPrompt":   "string",
+}
+
+// BuildAgentsJSON constructs the JSON value for Claude Code's --agents flag
+// from a definition file's frontmatter and body, carrying every restriction
+// the file declares so the launched agent is never less constrained than its
+// definition.
+func BuildAgentsJSON(name string, fm AgentFrontmatter, prompt string) (string, error) {
+	def := map[string]any{"description": fm.Description, "prompt": prompt}
+	for key, raw := range fm.Fields {
+		switch agentJSONKeys[key] {
+		case "list":
+			def[key] = splitFrontmatterList(raw)
+		case "int":
+			n, err := strconv.Atoi(raw)
+			if err != nil {
+				return "", fmt.Errorf("frontmatter %s: %w", key, err)
+			}
+			def[key] = n
+		case "bool":
+			b, err := strconv.ParseBool(raw)
+			if err != nil {
+				return "", fmt.Errorf("frontmatter %s: %w", key, err)
+			}
+			def[key] = b
+		case "string":
+			def[key] = strings.Trim(raw, `"'`)
+		}
 	}
 
-	agents := map[string]agentDef{
-		name: {
-			Description: description,
-			Prompt:      prompt,
-		},
-	}
-
-	data, err := json.Marshal(agents)
+	data, err := json.Marshal(map[string]any{name: def})
 	if err != nil {
 		return "", fmt.Errorf("marshal agents JSON: %w", err)
 	}
 	return string(data), nil
+}
+
+// splitFrontmatterList parses the comma-separated form Claude documents
+// (`tools: Read, Edit`), an inline YAML list (`[Read, Edit]`), or a block list
+// already joined by ExtractFrontmatter.
+func splitFrontmatterList(raw string) []string {
+	raw = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(raw), "["), "]")
+	items := []string{}
+	for _, item := range strings.Split(raw, ",") {
+		if item = strings.Trim(strings.TrimSpace(item), `"'`); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }
 
 // ResolveVenv finds an active Python venv directory.
@@ -792,6 +865,29 @@ func PreLaunchSetup(role, session, cli string) {
 	}
 }
 
+// refuseWithoutDefinition is the launcher half of MUX-136's refuse-to-come-up
+// decision: a Claude Code role whose definition resolved at no tier is not
+// launched on the inline fallback prompt — that is a privileged name with
+// default tools, the downgrade the spec exists to prevent. The refusal is loud
+// (lifecycle `launch-refused`, `agent-definitionless` event to edit) and leaves
+// the pane at a shell prompt, which the daemon's health sweep reports as
+// agent-down. Roles with no mapped definition file (cfg.Agent == "") keep the
+// fallback prompt — nothing was promised for them.
+func refuseWithoutDefinition(session string, cfg *LaunchConfig) error {
+	if cfg.Provider == nil || !cfg.Provider.SupportsHooks() || cfg.Agent == "" || cfg.AgentJSON != "" {
+		return nil
+	}
+	detail := fmt.Sprintf("%s: definition %q resolved at no tier (.claude/agents/, ~/.config/muxcode/agents/, install dir) — refusing to launch without it",
+		cfg.Role, cfg.Agent)
+	if session != "" {
+		LogLifecycle(session, "error", "launch", "launch-refused", detail)
+		m := NewMessage(NormalizeBusRole(cfg.Role), "edit", "event", "agent-definitionless",
+			detail+". Restore the definition (make install) and relaunch: muxcode agent launch "+cfg.Role, "")
+		_ = SendNoCC(session, m)
+	}
+	return errors.New(detail)
+}
+
 // ActivateVenv sets PATH and VIRTUAL_ENV environment variables to activate
 // a Python venv. This is equivalent to `source <venv>/bin/activate`.
 // Returns an error if the venv directory path cannot be resolved.
@@ -837,6 +933,11 @@ func RunAgentLaunch(role string) error {
 	// Resolve all launch configuration
 	cfg := ResolveLaunchConfig(role)
 
+	session := BusSession()
+	if err := refuseWithoutDefinition(session, cfg); err != nil {
+		return err
+	}
+
 	// Pre-launch: generate agent config for non-Claude providers
 	if cfg.Provider != nil {
 		if err := cfg.Provider.WriteAgentConfig(role); err != nil {
@@ -845,7 +946,6 @@ func RunAgentLaunch(role string) error {
 	}
 
 	// Pre-launch: startup inbox message + lifecycle log
-	session := BusSession()
 	binary, launchArgs := cfg.BuildExecArgs()
 	PreLaunchSetup(role, session, binary)
 

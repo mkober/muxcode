@@ -371,6 +371,32 @@ func TestClaudeConfigureLaunch_NameAndDefinitionPaired(t *testing.T) {
 	}
 }
 
+// A project-tier definition's restrictions survive into the --agents JSON.
+// Before Phase 1 the project tier launched name-only and Claude read the
+// file's `tools:`/`model:`/`permissionMode:` itself; --agents outranks
+// .claude/agents/, so a reduced JSON would strip them (review must-fix).
+func TestClaudeConfigureLaunch_ProjectTierRestrictionsSurvive(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MUXCODE_INSTALL_DIR", t.TempDir())
+	t.Setenv("MUXCODE_PLAN_CLI", "")
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+	chdir(t, project)
+	writeFile(t, filepath.Join(project, ".claude", "agents", "planner.md"),
+		"---\ndescription: Docs\ntools: Read, Edit\nmodel: claude-opus-5\npermissionMode: plan\n---\nDocs only.\n")
+
+	cfg := &LaunchConfig{Role: "plan"}
+	(&ClaudeCodeProvider{}).ConfigureLaunch(cfg, "plan")
+
+	for _, want := range []string{`"tools":["Read","Edit"]`, `"model":"claude-opus-5"`, `"permissionMode":"plan"`, `"prompt":"Docs only.\n"`} {
+		if !strings.Contains(cfg.AgentJSON, want) {
+			t.Errorf("AgentJSON missing %s: %s", want, cfg.AgentJSON)
+		}
+	}
+}
+
 // --- Phase 3: graceful degradation ---
 
 func TestSupportsHooks_ClaudeOnly(t *testing.T) {

@@ -111,6 +111,13 @@ type Daemon struct {
 	permBlocked        map[string]bool // role → re-notification suppressed while blocked
 	permBlockAlerted   map[string]bool // role → alerted edit once for the current block
 
+	lastDefinitionCheck  int64
+	definitionSeen       map[string]int   // role → consecutive definition-less sightings (debounce)
+	definitionless       map[string]bool  // role → flagged as running without its definition
+	definitionReloads    map[string]int   // role → refuse-reloads so far (capped)
+	lastDefinitionReload map[string]int64 // role → last refuse-reload (cooldown)
+	definitionGaveUp     map[string]bool  // role → alerted once after hitting the reload cap
+
 	lastAgentDefsCheck int64
 	lastPaneSupervise  int64
 	paneRecycleDone    bool  // recycle-on-install decided (once per daemon start)
@@ -138,6 +145,10 @@ type Daemon struct {
 	frPaneGated func(role string) bool
 	agentAlive  func(session, role string) bool
 	windowNames func(session string) ([]string, error)
+
+	probeDefinition func(session, role string) bus.DefinitionProbe
+	capturePane     func(target string, lines int) (string, error)
+	reloadAgent     func(session, role string) error
 
 	lastBranchTick      int64
 	lastBranch          string // branch the pending seconds belong to
@@ -210,6 +221,12 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		permBlockSeen:         make(map[string]int),
 		permBlocked:           make(map[string]bool),
 		permBlockAlerted:      make(map[string]bool),
+		lastDefinitionCheck:   now, // skip first interval — launch-time panes are still pre-exec
+		definitionSeen:        make(map[string]int),
+		definitionless:        make(map[string]bool),
+		definitionReloads:     make(map[string]int),
+		lastDefinitionReload:  make(map[string]int64),
+		definitionGaveUp:      make(map[string]bool),
 		lastAgentDefsCheck:    now, // skip first interval — lets stamps settle on startup
 		lastPaneSupervise:     now, // skip first interval — the launcher owns launch-time pane creation; a sweep mid-launch sees half-built windows as pane-less and double-creates
 		startedAt:             now,
@@ -233,8 +250,13 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		frPaneGated: func(role string) bool {
 			return bus.ResolveProvider(role).SupportsHooks()
 		},
-		agentAlive:  bus.IsAgentAlive,
-		windowNames: bus.TmuxListWindowNames,
+		agentAlive:      bus.IsAgentAlive,
+		windowNames:     bus.TmuxListWindowNames,
+		probeDefinition: bus.ProbeAgentDefinition,
+		capturePane:     bus.TmuxCapturePaneLines,
+		reloadAgent: func(session, role string) error {
+			return bus.ReloadAgent(session, role, "", "", false)
+		},
 	}
 }
 
@@ -321,6 +343,7 @@ func (d *Daemon) Run() error {
 		d.checkActiveWatchdog()
 		d.checkStuckProviders()
 		d.checkStuckPermissions()
+		d.checkDefinitionless()
 		d.checkAgentDefs()
 		d.checkCompaction()
 		d.checkOllama()
@@ -1719,6 +1742,9 @@ func (d *Daemon) checkAgentHealth() {
 		if alive {
 			// Recovery detection
 			if d.agentWasDown[role] {
+				if !d.definitionApplied(role) {
+					continue // alive, but not with its definition — see definitionApplied
+				}
 				fmt.Printf("  %s  Agent %s recovered\n", ts, role)
 				bus.LogLifecycle(d.session, "info", "daemon", "agent-recovered", role)
 				d.agentWasDown[role] = false

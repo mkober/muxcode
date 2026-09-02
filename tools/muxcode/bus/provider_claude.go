@@ -33,11 +33,10 @@ func (p *ClaudeCodeProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 		cfg.AgentFile = agentFile
 		if data, err := os.ReadFile(agentFile); agentFile != "" && err == nil {
 			fm, body := ExtractFrontmatter(string(data))
-			desc := fm.Description
-			if desc == "" {
-				desc = agentName
+			if fm.Description == "" {
+				fm.Description = agentName
 			}
-			if agentJSON, jsonErr := BuildAgentsJSON(agentName, desc, body); jsonErr == nil {
+			if agentJSON, jsonErr := BuildAgentsJSON(agentName, fm, body); jsonErr == nil {
 				cfg.AgentName = agentName
 				cfg.AgentJSON = agentJSON
 			}
