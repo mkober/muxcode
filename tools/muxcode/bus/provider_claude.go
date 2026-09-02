@@ -16,30 +16,30 @@ func (p *ClaudeCodeProvider) Name() string { return "claude" }
 
 // ConfigureLaunch populates Claude Code-specific fields in the LaunchConfig:
 // agent file resolution, model flags, permission flags, tool profiles, shared prompt.
+//
+// AgentName and AgentJSON are set together or not at all (MUX-136). Every
+// resolved tier is read and forwarded as --agents JSON — including a
+// project-local .claude/agents/ file Claude could resolve by name on its own,
+// which used to travel as a bare name. Claude resolves a bare name against
+// the project dir and its own ~/.claude/agents/, never against muxcode's
+// user tier, so a name without its definition comes up with default tools.
 func (p *ClaudeCodeProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
-	// Agent file resolution
 	agentName := AgentFileName(role)
 	cfg.Agent = agentName
 	installDir := resolveInstallDir()
 
 	if agentName != "" {
-		agentFile, tier := ResolveAgentFile(agentName, installDir)
+		agentFile, _ := ResolveAgentFile(agentName, installDir)
 		cfg.AgentFile = agentFile
-		if tier == 1 {
-			cfg.AgentName = agentName
-		} else if tier >= 2 && agentFile != "" {
-			data, err := os.ReadFile(agentFile)
-			if err == nil {
-				fm, body := ExtractFrontmatter(string(data))
-				desc := fm.Description
-				if desc == "" {
-					desc = agentName
-				}
-				agentJSON, jsonErr := BuildAgentsJSON(agentName, desc, body)
-				if jsonErr == nil {
-					cfg.AgentName = agentName
-					cfg.AgentJSON = agentJSON
-				}
+		if data, err := os.ReadFile(agentFile); agentFile != "" && err == nil {
+			fm, body := ExtractFrontmatter(string(data))
+			desc := fm.Description
+			if desc == "" {
+				desc = agentName
+			}
+			if agentJSON, jsonErr := BuildAgentsJSON(agentName, desc, body); jsonErr == nil {
+				cfg.AgentName = agentName
+				cfg.AgentJSON = agentJSON
 			}
 		}
 	}
@@ -64,35 +64,29 @@ func (p *ClaudeCodeProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 }
 
 // BuildExecArgs constructs Claude Code CLI arguments.
+//
+// --agent <name> is emitted only alongside --agents <json>. A config carrying
+// a name without its definition is launched as definition-less — inline
+// fallback prompt, no agent flags — never as a bare name for Claude to resolve
+// on its own (MUX-136; pinned by TestClaudeBuildExecArgs_NoBareAgentFlag).
 func (p *ClaudeCodeProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 	var args []string
 
-	// Agent selection
-	if cfg.AgentName != "" {
-		args = append(args, "--agent", cfg.AgentName)
-		if cfg.AgentJSON != "" {
-			args = append(args, "--agents", cfg.AgentJSON)
-		}
+	hasDefinition := cfg.AgentName != "" && cfg.AgentJSON != ""
+	if hasDefinition {
+		args = append(args, "--agent", cfg.AgentName, "--agents", cfg.AgentJSON)
 	}
 
-	// Model flags
 	args = append(args, cfg.ModelFlags...)
-
-	// Permission flags
 	args = append(args, cfg.PermFlags...)
-
-	// Tool flags
 	args = append(args, cfg.ToolFlags...)
 
-	// Shared prompt
 	if cfg.SharedPrompt != "" {
 		args = append(args, "--append-system-prompt", cfg.SharedPrompt)
 	}
 
-	// If no agent file found, use inline fallback prompt
-	if cfg.AgentName == "" {
-		prompt := InlineFallbackPrompt(cfg.Role)
-		if prompt != "" {
+	if !hasDefinition {
+		if prompt := InlineFallbackPrompt(cfg.Role); prompt != "" {
 			args = append(args, "--append-system-prompt", prompt)
 		}
 	}

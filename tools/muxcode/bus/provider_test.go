@@ -1,6 +1,8 @@
 package bus
 
 import (
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -207,6 +209,7 @@ func TestClaudeBuildExecArgs(t *testing.T) {
 		Role:         "build",
 		CLI:          "claude",
 		AgentName:    "code-builder",
+		AgentJSON:    `{"code-builder":{"description":"Build","prompt":"Do builds."}}`,
 		ModelFlags:   []string{"--model", "claude-sonnet-5"},
 		PermFlags:    []string{"--dangerously-skip-permissions"},
 		ToolFlags:    []string{"--allowedTools", "Bash(make*)"},
@@ -260,6 +263,111 @@ func TestClaudeBuildExecArgs_FallbackPrompt(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected fallback prompt in args: %v", args)
+	}
+}
+
+// --- MUX-136 Phase 1: pin the downgrade ---
+
+// hasFlagValue reports whether args carries flag immediately followed by value.
+func hasFlagValue(args []string, flag, value string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+// A name without its definition must never reach Claude as a bare --agent:
+// Claude resolves a bare name against the project dir and, finding nothing,
+// continues with default tools. The name-only config is launched as
+// definition-less instead — no agent flags at all, inline fallback prompt.
+func TestClaudeBuildExecArgs_NoBareAgentFlag(t *testing.T) {
+	p := &ClaudeCodeProvider{}
+	cfg := &LaunchConfig{Role: "plan", CLI: "claude", AgentName: "planner", AgentJSON: ""}
+
+	_, args := p.BuildExecArgs(cfg)
+
+	for i, a := range args {
+		if a == "--agent" || a == "--agents" {
+			t.Fatalf("name-only config emitted %s at args[%d]: %v", a, i, args)
+		}
+	}
+	if !hasFlagValue(args, "--append-system-prompt", InlineFallbackPrompt("plan")) {
+		t.Errorf("definition-less launch missing the inline fallback prompt: %v", args)
+	}
+}
+
+// The name and the definition travel as one unit — --agent <name> immediately
+// followed by --agents <json> — and no shape of launch carries a resume flag:
+// the launcher only ever starts fresh sessions, so a resumed session found in
+// an agent pane is by construction not a launcher product.
+func TestClaudeBuildExecArgs_AgentFlagsTravelTogether(t *testing.T) {
+	p := &ClaudeCodeProvider{}
+	json := `{"planner":{"description":"Docs","prompt":"Maintain docs."}}`
+	cfg := &LaunchConfig{Role: "plan", CLI: "claude", AgentName: "planner", AgentJSON: json}
+
+	_, args := p.BuildExecArgs(cfg)
+
+	want := []string{"--agent", "planner", "--agents", json}
+	idx := slices.Index(args, "--agent")
+	if idx < 0 || idx+len(want) > len(args) || !slices.Equal(args[idx:idx+len(want)], want) {
+		t.Fatalf("agent flags not paired as %v in %v", want, args)
+	}
+	if hasFlagValue(args, "--append-system-prompt", InlineFallbackPrompt("plan")) {
+		t.Errorf("definition present but the fallback prompt was emitted: %v", args)
+	}
+
+	shapes := []*LaunchConfig{
+		cfg,
+		{Role: "plan", CLI: "claude", AgentName: "planner"},
+		{Role: "plan", CLI: "claude"},
+	}
+	for _, shape := range shapes {
+		_, a := p.BuildExecArgs(shape)
+		for _, flag := range []string{"--resume", "-r", "--continue", "-c"} {
+			if slices.Contains(a, flag) {
+				t.Errorf("launch carries resume flag %s: %v", flag, a)
+			}
+		}
+	}
+}
+
+// ConfigureLaunch sets the name and the definition together or not at all, at
+// every tier. The user tier is the live layout (no .claude/agents/ in the
+// project); the project tier is the shape that used to be name-only, on the
+// grounds that Claude could resolve the file itself.
+func TestClaudeConfigureLaunch_NameAndDefinitionPaired(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MUXCODE_INSTALL_DIR", t.TempDir())
+	t.Setenv("MUXCODE_PLAN_CLI", "")
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+	chdir(t, project)
+
+	p := &ClaudeCodeProvider{}
+	configure := func() *LaunchConfig {
+		cfg := &LaunchConfig{Role: "plan"}
+		p.ConfigureLaunch(cfg, "plan")
+		return cfg
+	}
+
+	if cfg := configure(); cfg.AgentName != "" || cfg.AgentJSON != "" {
+		t.Fatalf("no definition anywhere, got AgentName=%q AgentJSON=%q", cfg.AgentName, cfg.AgentJSON)
+	}
+
+	writeFile(t, filepath.Join(home, ".config", "muxcode", "agents", "planner.md"),
+		"---\ndescription: Docs\n---\nUser-tier body.\n")
+	if cfg := configure(); cfg.AgentName != "planner" || !strings.Contains(cfg.AgentJSON, "User-tier body") {
+		t.Fatalf("user tier: got AgentName=%q AgentJSON=%q", cfg.AgentName, cfg.AgentJSON)
+	}
+
+	writeFile(t, filepath.Join(project, ".claude", "agents", "planner.md"),
+		"---\ndescription: Project docs\n---\nProject-tier body.\n")
+	if cfg := configure(); cfg.AgentName != "planner" || !strings.Contains(cfg.AgentJSON, "Project-tier body") {
+		t.Fatalf("project tier: got AgentName=%q AgentJSON=%q — name-only launch", cfg.AgentName, cfg.AgentJSON)
 	}
 }
 

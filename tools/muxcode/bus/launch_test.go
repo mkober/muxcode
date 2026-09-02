@@ -226,6 +226,75 @@ func TestResolveAgentFile_ThreeTier(t *testing.T) {
 	}
 }
 
+// chdir switches the working directory for the rest of the test.
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir %s: %v", dir, err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+}
+
+// writeFile writes content to path, creating parent directories.
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// claudeAgentLookup lists where Claude Code resolves an agent name from disk:
+// the project's .claude/agents/ and the user's ~/.claude/agents/. muxcode's
+// user tier, ~/.config/muxcode/agents/, is not on that list.
+func claudeAgentLookup(name string) []string {
+	home, _ := os.UserHomeDir()
+	return []string{
+		filepath.Join(".claude", "agents", name+".md"),
+		filepath.Join(home, ".claude", "agents", name+".md"),
+	}
+}
+
+// MUX-136 Phase 1: on the live layout ResolveAgentFile finds planner in the
+// user tier while Claude's own lookup finds nothing, so the two resolutions
+// disagree. A launch that keeps the name and drops the --agents JSON — or a
+// bare resume in the pane — lands on Claude's lookup and comes up with
+// default tools. The positive control shows the disagreement is specific to
+// the user tier: a project-local copy is visible to both.
+func TestResolveAgentFile_UserTierInvisibleToClaudeLookup(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	chdir(t, project)
+
+	userFile := filepath.Join(home, ".config", "muxcode", "agents", "planner.md")
+	writeFile(t, userFile, "---\ndescription: Docs\n---\nbody\n")
+
+	path, tier := ResolveAgentFile("planner", "")
+	if tier != 2 || path != userFile {
+		t.Fatalf("ResolveAgentFile = (%q, %d), want (%q, 2)", path, tier, userFile)
+	}
+	for _, claudePath := range claudeAgentLookup("planner") {
+		if _, err := os.Stat(claudePath); err == nil {
+			t.Fatalf("Claude-side lookup found %s — the tiers do not disagree", claudePath)
+		}
+	}
+
+	projectFile := filepath.Join(project, ".claude", "agents", "planner.md")
+	writeFile(t, projectFile, "body")
+	if _, tier = ResolveAgentFile("planner", ""); tier != 1 {
+		t.Fatalf("project-local copy: ResolveAgentFile tier = %d, want 1", tier)
+	}
+	if _, err := os.Stat(claudeAgentLookup("planner")[0]); err != nil {
+		t.Fatalf("project-local copy invisible to Claude's lookup: %v", err)
+	}
+}
+
 func TestBuildAgentsJSON(t *testing.T) {
 	jsonStr, err := BuildAgentsJSON("test-agent", "A test agent", "Do testing stuff.")
 	if err != nil {
@@ -421,6 +490,7 @@ func TestBuildExecArgs_Claude(t *testing.T) {
 		Role:         "build",
 		CLI:          "claude",
 		AgentName:    "code-builder",
+		AgentJSON:    `{"code-builder":{"description":"Build","prompt":"Do builds."}}`,
 		ModelFlags:   []string{"--model", "claude-sonnet-5"},
 		PermFlags:    []string{"--dangerously-skip-permissions"},
 		ToolFlags:    []string{"--allowedTools", "Bash(make*)"},
