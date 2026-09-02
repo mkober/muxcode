@@ -70,6 +70,16 @@ func BuildVersion() string {
 	return BuildInfo().Version
 }
 
+// SameBuild reports whether o is the same build as i. Version alone cannot
+// tell two builds apart: a dirty-tree rebuild keeps its describe string
+// while carrying new code, and a build outside a checkout reads "devel" on
+// both sides. Commit and build date close that gap, so a rebuild always
+// reads as a different build — upgrade-daemons cycles the dev loop
+// correctly and skips only a daemon that truly runs this binary.
+func (i Info) SameBuild(o Info) bool {
+	return i.Version == o.Version && i.Commit == o.Commit && i.Date == o.Date
+}
+
 // fillFromVCS fills the fields ldflags left empty from Go's embedded VCS
 // settings. An unstamped build mirrors what `git describe --always --dirty`
 // produces with no tag in reach — the short revision plus a -dirty marker —

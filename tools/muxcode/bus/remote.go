@@ -10,12 +10,13 @@ import (
 
 // RemoteSession describes a discovered muxcode session with its state.
 type RemoteSession struct {
-	Name       string `json:"name"`
-	BusDir     string `json:"bus_dir"`
-	TmuxAlive  bool   `json:"tmux_alive"`
-	AgentCount int    `json:"agent_count"` // number of inbox files found
-	LogSize    int64  `json:"log_size"`
-	ProjectDir string `json:"project_dir"` // from session meta, if available
+	Name          string `json:"name"`
+	BusDir        string `json:"bus_dir"`
+	TmuxAlive     bool   `json:"tmux_alive"`
+	AgentCount    int    `json:"agent_count"` // number of inbox files found
+	LogSize       int64  `json:"log_size"`
+	ProjectDir    string `json:"project_dir"`    // from session meta, if available
+	DaemonVersion string `json:"daemon_version"` // recorded by the daemon at startup; "" when never stamped
 }
 
 // DiscoverSessions finds all muxcode bus directories in /tmp and checks
@@ -66,6 +67,10 @@ func DiscoverSessions(currentSession string, excludeSelf bool) ([]RemoteSession,
 			rs.LogSize = info.Size()
 		}
 
+		if build, ok := ReadDaemonVersion(sessionName); ok {
+			rs.DaemonVersion = build.Version
+		}
+
 		// Project dir from tmux session start directory
 		if rs.TmuxAlive {
 			if dir, err := TmuxOutput("display-message", "-t", sessionName, "-p", "#{session_path}"); err == nil && dir != "" {
@@ -87,9 +92,9 @@ func FormatSessionList(sessions []RemoteSession, currentSession string) string {
 
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("\n  %-25s %-8s %-8s %-10s %s\n",
-		"SESSION", "STATUS", "AGENTS", "LOG SIZE", "PROJECT"))
-	b.WriteString("  " + strings.Repeat("─", 75) + "\n")
+	b.WriteString(fmt.Sprintf("\n  %-25s %-8s %-8s %-10s %-22s %s\n",
+		"SESSION", "STATUS", "AGENTS", "LOG SIZE", "DAEMON", "PROJECT"))
+	b.WriteString("  " + strings.Repeat("─", 98) + "\n")
 
 	for _, s := range sessions {
 		status := "dead"
@@ -104,6 +109,11 @@ func FormatSessionList(sessions []RemoteSession, currentSession string) string {
 
 		logSize := formatBytes(s.LogSize)
 
+		daemon := s.DaemonVersion
+		if daemon == "" {
+			daemon = "—"
+		}
+
 		project := s.ProjectDir
 		if project == "" {
 			project = "—"
@@ -113,8 +123,8 @@ func FormatSessionList(sessions []RemoteSession, currentSession string) string {
 			project = strings.Replace(project, home, "~", 1)
 		}
 
-		b.WriteString(fmt.Sprintf(" %s%-25s %-8s %-8d %-10s %s\n",
-			marker, s.Name, status, s.AgentCount, logSize, project))
+		b.WriteString(fmt.Sprintf(" %s%-25s %-8s %-8d %-10s %-22s %s\n",
+			marker, s.Name, status, s.AgentCount, logSize, daemon, project))
 	}
 	b.WriteByte('\n')
 
@@ -220,6 +230,9 @@ func RemoteOverview(session string) string {
 		b.WriteString("  Status:  alive\n")
 	} else {
 		b.WriteString("  Status:  dead (bus data available)\n")
+	}
+	if build, ok := ReadDaemonVersion(session); ok {
+		b.WriteString(fmt.Sprintf("  Daemon:  %s\n", build.Version))
 	}
 	b.WriteString("\n")
 

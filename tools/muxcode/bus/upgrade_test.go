@@ -68,13 +68,17 @@ func TestParseDaemonProcs_SkipsNoSession(t *testing.T) {
 	}
 }
 
+// noDaemonBuild stands in for ReadDaemonVersion when a test is not about
+// version awareness: every daemon reads as unstamped.
+func noDaemonBuild(string) (Info, bool) { return Info{}, false }
+
 func TestPlanUpgrades_GroupsBySessionAndSorts(t *testing.T) {
 	procs := []DaemonProc{
 		{PID: 20, Session: "beta", Monitor: false},
 		{PID: 21, Session: "beta", Monitor: true},
 		{PID: 10, Session: "alpha", Monitor: false},
 	}
-	plans := PlanUpgrades(procs, func(string) bool { return true })
+	plans := PlanUpgrades(procs, func(string) bool { return true }, noDaemonBuild, Info{})
 	if len(plans) != 2 {
 		t.Fatalf("expected 2 plans, got %d: %+v", len(plans), plans)
 	}
@@ -94,7 +98,7 @@ func TestPlanUpgrades_MarksOrphans(t *testing.T) {
 		{PID: 10, Session: "alive", Monitor: false},
 		{PID: 20, Session: "dead", Monitor: false},
 	}
-	plans := PlanUpgrades(procs, func(s string) bool { return s == "alive" })
+	plans := PlanUpgrades(procs, func(s string) bool { return s == "alive" }, noDaemonBuild, Info{})
 	if len(plans) != 2 {
 		t.Fatalf("expected 2 plans, got %d", len(plans))
 	}
@@ -103,5 +107,67 @@ func TestPlanUpgrades_MarksOrphans(t *testing.T) {
 	}
 	if plans[1].Session != "dead" || !plans[1].Orphan {
 		t.Errorf("dead session should be orphan: %+v", plans[1])
+	}
+}
+
+// TestPlanUpgrades_VersionAwareness pins the staleness decision per session:
+// only a daemon on the very same build is current; a same-version rebuild,
+// an older version, and an unstamped daemon all cycle; an orphan is never
+// current even when its build matches, because it is killed regardless.
+func TestPlanUpgrades_VersionAwareness(t *testing.T) {
+	installed := Info{Version: "v0.2.0", Commit: "def5678", Date: "2026-09-02T13:00:00Z"}
+	builds := map[string]Info{
+		"current":       installed,
+		"stale-version": {Version: "v0.1.0", Commit: "abc1234", Date: "2026-09-01T10:00:00Z"},
+		"stale-rebuild": {Version: "v0.2.0", Commit: "def5678", Date: "2026-09-02T12:00:00Z"},
+		"orphan":        installed,
+	}
+	procs := []DaemonProc{
+		{PID: 1, Session: "current"},
+		{PID: 2, Session: "stale-version"},
+		{PID: 3, Session: "stale-rebuild"},
+		{PID: 4, Session: "unstamped"},
+		{PID: 5, Session: "orphan"},
+	}
+	plans := PlanUpgrades(procs,
+		func(s string) bool { return s != "orphan" },
+		func(s string) (Info, bool) { b, ok := builds[s]; return b, ok },
+		installed)
+	if len(plans) != len(procs) {
+		t.Fatalf("expected %d plans, got %d", len(procs), len(plans))
+	}
+	byName := map[string]UpgradePlan{}
+	for _, p := range plans {
+		byName[p.Session] = p
+	}
+
+	cases := []struct {
+		session string
+		current bool
+		delta   string
+	}{
+		{"current", true, "daemon v0.2.0 → installed v0.2.0 (current)"},
+		{"stale-version", false, "daemon v0.1.0 → installed v0.2.0"},
+		{"stale-rebuild", false, "daemon v0.2.0 (built 2026-09-02T12:00:00Z) → installed v0.2.0 (built 2026-09-02T13:00:00Z)"},
+		{"unstamped", false, "daemon (unstamped) → installed v0.2.0"},
+		{"orphan", false, ""},
+	}
+	for _, c := range cases {
+		p, ok := byName[c.session]
+		if !ok {
+			t.Fatalf("no plan for %s", c.session)
+		}
+		if p.Current != c.current {
+			t.Errorf("%s: Current=%v, want %v (%+v)", c.session, p.Current, c.current, p)
+		}
+		if p.Installed != installed {
+			t.Errorf("%s: installed identity not carried on the plan", c.session)
+		}
+		if c.delta != "" && p.VersionDelta() != c.delta {
+			t.Errorf("%s: VersionDelta()=%q, want %q", c.session, p.VersionDelta(), c.delta)
+		}
+	}
+	if !byName["orphan"].Orphan {
+		t.Error("orphan session should be marked orphan")
 	}
 }

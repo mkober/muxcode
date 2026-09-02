@@ -78,9 +78,9 @@ Cadence: tag when a spec cluster closes (roughly every 3–6 merged PRs), never 
 - [x] Dev builds self-describe via `git describe --tags --always --dirty` (e.g. `v0.1.0-3-gabc1234-dirty`)
 - [x] A source build with no ldflags falls back to `debug.ReadBuildInfo()` (`vcs.revision`, `vcs.modified`) and never prints an empty version
 - [x] `muxcode version --at-least vX.Y.Z` exits 0/1 by stdlib semver comparison, handling pre-release and `-N-g<sha>` describe suffixes
-- [ ] The daemon records its version at startup; `muxcode status` shows a version column per session
-- [ ] `muxcode upgrade-daemons` skips daemons already on the installed version, cycles stale ones, and `--dry-run` reports `session X: daemon vA → installed vB` per session
-- [ ] `muxcode diagnose` reports a `binary-daemon-version-mismatch` finding when daemon and installed binary differ
+- [x] The daemon records its version at startup; `muxcode status` shows a version column per session
+- [x] `muxcode upgrade-daemons` skips daemons already on the installed version, cycles stale ones, and `--dry-run` reports `session X: daemon vA → installed vB` per session
+- [x] `muxcode diagnose` reports a `binary-daemon-version-mismatch` finding when daemon and installed binary differ
 - [ ] `.github/workflows/release.yml` runs on `v*` tag push, depends on `./test.sh` passing, builds darwin/arm64, darwin/amd64, linux/amd64 and linux/arm64 with version ldflags, attaches binaries plus `sha256sums.txt`, and publishes with generated notes
 - [ ] `.github/release.yml` categorises notes by label (`type:defect`, `type:feature`, `breaking`, `docs`)
 - [ ] The 10 integration scripts carrying a documented binary precondition assert it with `muxcode version --at-least`; `install.sh`'s smoke test uses `muxcode version`
@@ -150,12 +150,12 @@ Cadence: tag when a spec cluster closes (roughly every 3–6 merged PRs), never 
 
 ### Phase 2: Daemon version awareness
 
-- [ ] Daemon writes `daemon.version` at startup; helpers in `bus/daemon_health.go` plus tests
-- [ ] `muxcode status` version column
-- [ ] `upgrade-daemons`: skip current, cycle stale, `--force`, `--dry-run` naming both versions
-- [ ] Unit tests on the plan builder (current vs stale vs orphan)
-- [ ] `diagnose`: `binary-daemon-version-mismatch` pattern plus test
-- [ ] Negative control: matching versions produce **no** finding
+- [x] Daemon writes `daemon.version` at startup; helpers in `bus/daemon_health.go` plus tests
+- [x] `muxcode status` version column
+- [x] `upgrade-daemons`: skip current, cycle stale, `--force`, `--dry-run` naming both versions
+- [x] Unit tests on the plan builder (current vs stale vs orphan)
+- [x] `diagnose`: `binary-daemon-version-mismatch` pattern plus test
+- [x] Negative control: matching versions produce **no** finding
 
 ### Phase 3: Release workflow and first tag
 
@@ -191,7 +191,7 @@ Cadence: tag when a spec cluster closes (roughly every 3–6 merged PRs), never 
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-138-github-versioning-releases | 42m | 2026-09-02 12:36 |
+| MUX-138-github-versioning-releases | 1h 3m | 2026-09-02 13:29 |
 
 The branch carries more than this spec: the `req-code-pr` → `spec-to-pr` rename, the
 `story-lifecycle` template removal, and the branch-derived-intent work, alongside MUX-138 Phase 1.
@@ -200,7 +200,7 @@ figure for effort spent on this spec.
 
 ## Status
 
-In Progress — Phase 1 complete (7/7 steps, 5 acceptance criteria), 12/45 items overall.
+In Progress — Phases 1 and 2 complete (13/13 steps, 8 acceptance criteria), 21/45 items overall.
 
 The file still sits in `backlog/` while reading `In Progress`, the same deliberate exception the
 index records for [`MUX-005`](./MUX-005-plan-diagrams.md). Moving it to `drafts/` is a `git mv`,

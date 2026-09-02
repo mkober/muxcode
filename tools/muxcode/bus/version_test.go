@@ -173,3 +173,31 @@ func TestInfoJSONFields(t *testing.T) {
 		}
 	}
 }
+
+// A same-version rebuild (dirty tree, or "devel" on both sides) must read as
+// a different build, or upgrade-daemons would skip the daemon that most
+// needs cycling. Toolchain and platform fields are deliberately not part of
+// the identity.
+func TestInfoSameBuild(t *testing.T) {
+	base := Info{Version: "v0.1.0-3-gabc1234-dirty", Commit: "abc1234", Date: "2026-09-02T12:00:00Z", GoVersion: "go1.22.5", OS: "darwin", Arch: "arm64"}
+	cases := []struct {
+		name string
+		mut  func(Info) Info
+		want bool
+	}{
+		{"identical", func(i Info) Info { return i }, true},
+		{"toolchain differs", func(i Info) Info { i.GoVersion = "go1.23.0"; return i }, true},
+		{"version differs", func(i Info) Info { i.Version = "v0.1.1"; return i }, false},
+		{"commit differs", func(i Info) Info { i.Commit = "def5678"; return i }, false},
+		{"rebuilt later", func(i Info) Info { i.Date = "2026-09-02T12:30:00Z"; return i }, false},
+	}
+	for _, c := range cases {
+		if got := base.SameBuild(c.mut(base)); got != c.want {
+			t.Errorf("%s: SameBuild = %v, want %v", c.name, got, c.want)
+		}
+	}
+	devel := Info{Version: "devel", Commit: "unknown", Date: "unknown"}
+	if !devel.SameBuild(devel) {
+		t.Error("an unstamped build is still the same build as itself")
+	}
+}

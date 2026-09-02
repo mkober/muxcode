@@ -287,11 +287,16 @@ func (d *Daemon) Run() error {
 	}
 	defer unlock()
 
+	build := bus.BuildInfo()
 	bus.LogLifecycleWithPID(d.session, "info", "daemon", "started",
-		fmt.Sprintf("Poll: %ds, Debounce: %ds", int(d.pollInterval.Seconds()), d.debounceSecs),
+		fmt.Sprintf("Poll: %ds, Debounce: %ds, Version: %s", int(d.pollInterval.Seconds()), d.debounceSecs, build.Version),
 		os.Getpid())
+	if err := bus.WriteDaemonVersion(d.session, build); err != nil {
+		bus.LogLifecycle(d.session, "warn", "daemon", "version-write-failed", err.Error())
+	}
 
 	fmt.Println("  Agent Bus Daemon")
+	fmt.Printf("  Version: %s\n", build.Version)
 	fmt.Printf("  Session: %s\n", d.session)
 	fmt.Printf("  Bus: %s\n", busDir)
 	fmt.Printf("  Trigger: %s\n", d.triggerFile)

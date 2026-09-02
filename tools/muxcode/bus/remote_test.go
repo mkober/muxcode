@@ -106,7 +106,7 @@ func TestGetRemoteInbox(t *testing.T) {
 
 func TestFormatSessionList(t *testing.T) {
 	sessions := []RemoteSession{
-		{Name: "project-a", TmuxAlive: true, AgentCount: 5, LogSize: 2048},
+		{Name: "project-a", TmuxAlive: true, AgentCount: 5, LogSize: 2048, DaemonVersion: "v0.1.0-3-gabc1234"},
 		{Name: "project-b", TmuxAlive: false, AgentCount: 3, LogSize: 1024*1024 + 512*1024},
 	}
 
@@ -114,9 +114,21 @@ func TestFormatSessionList(t *testing.T) {
 	if output == "" {
 		t.Error("expected non-empty output")
 	}
-	// Current session should be marked
-	if len(output) == 0 {
-		t.Error("output should contain session info")
+	if !strings.Contains(output, "DAEMON") {
+		t.Error("missing DAEMON column header")
+	}
+	if !strings.Contains(output, "v0.1.0-3-gabc1234") {
+		t.Error("stamped session should show its daemon version")
+	}
+	lines := strings.Split(output, "\n")
+	var unstamped string
+	for _, l := range lines {
+		if strings.Contains(l, "project-b") {
+			unstamped = l
+		}
+	}
+	if unstamped == "" || !strings.Contains(unstamped, "—") {
+		t.Errorf("unstamped session should render a dash in the DAEMON column, got %q", unstamped)
 	}
 }
 

@@ -76,11 +76,15 @@ type NotifyStateEvidence struct {
 	ReceiptGapAge    int64 `json:"receipt_gap_oldest_secs"`
 }
 
-// DaemonStateEvidence captures daemon health from the keepalive file.
+// DaemonStateEvidence captures daemon health from the keepalive file, plus
+// the build identity the daemon recorded at startup set against the binary
+// running diagnose. DaemonBuild is nil when the daemon never recorded one.
 type DaemonStateEvidence struct {
 	IsAlive          bool  `json:"is_alive"`
 	KeepaliveAge     int64 `json:"keepalive_age_secs"`
 	IsKeepaliveStale bool  `json:"is_keepalive_stale"`
+	DaemonBuild      *Info `json:"daemon_build,omitempty"`
+	InstalledBuild   Info  `json:"installed_build"`
 }
 
 // DiagnosticFinding describes a detected issue with severity and remediation.
@@ -262,6 +266,11 @@ func CollectDaemonState(session string) DaemonStateEvidence {
 			ev.KeepaliveAge = time.Now().Unix() - ts
 			ev.IsKeepaliveStale = ev.KeepaliveAge > 30
 		}
+	}
+
+	ev.InstalledBuild = BuildInfo()
+	if build, ok := ReadDaemonVersion(session); ok {
+		ev.DaemonBuild = &build
 	}
 
 	return ev
@@ -502,6 +511,7 @@ var diagnosticChecks = []DiagnosticCheck{
 	checkPendingInputBlocking,
 	checkActiveWithStaleMessages,
 	checkNoActionableMessages,
+	checkDaemonVersionMismatch,
 	checkUnexplainedEvidence,
 }
 
@@ -1068,6 +1078,56 @@ func checkReceiptGap(report *DiagnosticReport) *DiagnosticFinding {
 	}
 }
 
+// failureModeVersionMismatch names the finding raised when the session
+// daemon runs a different build from the binary diagnosing it.
+const failureModeVersionMismatch = "binary-daemon-version-mismatch"
+
+// checkDaemonVersionMismatch detects a live daemon running a different build
+// from this binary — the state every session is in between `make install`
+// and `upgrade-daemons`, and the one a session stays in when that rollout
+// fails or is skipped: fixes in the installed binary are not live for it. A
+// daemon that recorded no identity predates the stamp and is reported the
+// same way. Warning, not critical — the daemon is running, just old. Silent
+// when the daemon is down (daemon-dead owns that) or when no installed
+// identity was collected (a report built without CollectDaemonState).
+func checkDaemonVersionMismatch(report *DiagnosticReport) *DiagnosticFinding {
+	ds := report.DaemonState
+	if !ds.IsAlive || ds.InstalledBuild.Version == "" {
+		return nil
+	}
+	if ds.DaemonBuild != nil && ds.DaemonBuild.SameBuild(ds.InstalledBuild) {
+		return nil
+	}
+
+	installed := ds.InstalledBuild
+	evidence := []string{
+		fmt.Sprintf("Installed binary: %s (%s, built %s)", installed.Version, installed.Commit, installed.Date),
+	}
+	var summary string
+	switch {
+	case ds.DaemonBuild == nil:
+		summary = fmt.Sprintf("Daemon recorded no version — it predates the stamped binary %s", installed.Version)
+		evidence = append(evidence, "No daemon.version file — the daemon was launched from a binary older than the version stamp")
+	case ds.DaemonBuild.Version == installed.Version:
+		summary = fmt.Sprintf("Daemon runs a different build of %s than the installed binary", installed.Version)
+		evidence = append(evidence, fmt.Sprintf("Daemon build: %s (%s, built %s)", ds.DaemonBuild.Version, ds.DaemonBuild.Commit, ds.DaemonBuild.Date))
+	default:
+		summary = fmt.Sprintf("Daemon runs %s but the installed binary is %s — this session is not on the current code", ds.DaemonBuild.Version, installed.Version)
+		evidence = append(evidence, fmt.Sprintf("Daemon build: %s (%s, built %s)", ds.DaemonBuild.Version, ds.DaemonBuild.Commit, ds.DaemonBuild.Date))
+	}
+
+	return &DiagnosticFinding{
+		Severity:    "warning",
+		FailureMode: failureModeVersionMismatch,
+		Summary:     summary,
+		Evidence:    evidence,
+		Remediation: []string{
+			"Roll the installed binary out to running daemons: muxcode upgrade-daemons",
+			"Or rebuild and roll out in one step: ./build.sh",
+		},
+	}
+}
+
 // checkUnexplainedEvidence is the verdict-consistency backstop, and it is the
 // reason this file can no longer produce a clean verdict over a broken agent.
 //
@@ -1087,8 +1147,16 @@ func checkReceiptGap(report *DiagnosticReport) *DiagnosticFinding {
 // Deliberately narrow to stay quiet on healthy sessions: it fires only on
 // unconsumed actionable messages past diagnoseStuckInboxSecs, well beyond any
 // legitimate mid-turn window, and only when no earlier check spoke.
+//
+// A version-mismatch warning does not count as having spoken. It is true of
+// every session between an install and its rollout, so letting it satisfy
+// this check would reopen the false-clean hole for exactly the window in
+// which stale daemon code is the likeliest cause of a stuck inbox.
 func checkUnexplainedEvidence(report *DiagnosticReport) *DiagnosticFinding {
 	for _, f := range report.Findings {
+		if f.FailureMode == failureModeVersionMismatch {
+			continue
+		}
 		if f.Severity == "critical" || f.Severity == "warning" {
 			return nil // the state is already explained
 		}
@@ -1237,8 +1305,12 @@ func FormatDiagnosticReport(report *DiagnosticReport) string {
 	if report.DaemonState.KeepaliveAge >= 0 {
 		keepaliveStr = fmt.Sprintf("%ds ago", report.DaemonState.KeepaliveAge)
 	}
-	b.WriteString(fmt.Sprintf("\n  %sDaemon:%s %s (keepalive: %s)\n",
-		diagColorComment, diagColorReset, daemonStr, keepaliveStr))
+	versionStr := ""
+	if report.DaemonState.DaemonBuild != nil {
+		versionStr = ", version: " + report.DaemonState.DaemonBuild.Version
+	}
+	b.WriteString(fmt.Sprintf("\n  %sDaemon:%s %s (keepalive: %s%s)\n",
+		diagColorComment, diagColorReset, daemonStr, keepaliveStr, versionStr))
 
 	// Timeline section
 	if len(report.Timeline) > 0 {
