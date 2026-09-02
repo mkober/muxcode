@@ -27,7 +27,7 @@ Muxcode creates a tmux session with multiple windows, each running an independen
 │       │     ├── subscriptions.jsonl                             │
 │       │     ├── delivery/{msg-id}.status                        │
 │       │     ├── dedup.lock                                      │
-│       │     ├── watcher.keepalive                               │
+│       │     ├── daemon.keepalive                                │
 │       │     └── webhook.pid                                     │
 │  ─────┼───────────┼───────────┼───────────┼──────────────────── │
 │       │           │           │           │                     │
@@ -942,12 +942,12 @@ Persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record the full 
 
 | Component | Source | Key events |
 |-----------|--------|------------|
-| `LaunchSession()` | `launcher` | session-start, bus-init, stale-kill, watcher-start, monitor-start, session-create, session-ready |
+| `LaunchSession()` | `launcher` | session-start, bus-init, stale-kill, daemon-start, monitor-start, session-create, session-ready |
 | `AutoAccept()` | `auto-accept` | trust-prompt, bypass-prompt, agent-ready, complete |
 | `RunAgentLaunch()` | `agent` | launch (role + CLI type) |
 | `bus/setup.go` | `init` | init, re-init |
 | `daemon/daemon.go` | `daemon` | started, lock-failed, inbox-notify, startup-notify, trigger-route, cron-fire, proc/spawn-complete, loop/compact alerts, ollama/agent health |
-| `cmd/watch.go` (`--monitor`) | `monitor` | session-gone, stale-detected, watcher-restart |
+| `cmd/watch.go` (`--monitor`) | `monitor` | session-gone, stale-detected, daemon-restart |
 | `bus/cleanup.go` | `cleanup` | session-cleanup |
 
 **Dual-writer pattern:** Go code calls `bus.LogLifecycle()` directly (using source `daemon` for the bus daemon). Bash scripts call `muxcode lifecycle log` (CLI wrapper) which handles JSON formatting and flock-protected writes. Both converge on the same JSONL file.

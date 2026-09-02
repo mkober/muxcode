@@ -26,6 +26,39 @@ var knownSubcommands = map[string]bool{
 	"simulate": true, "track": true, "remote": true, "spec": true,
 	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true,
 	"branch-time": true, "clear": true, "graph": true, "pane": true,
+	"version": true,
+}
+
+// route is where argv goes. The order routeFor checks them in is pinned by
+// TestRouteFor: the version flag comes before the launcher's path fallback,
+// which otherwise treats "--version" as a project directory and starts a
+// tmux session.
+type route int
+
+const (
+	routeUsage route = iota
+	routeVersion
+	routeLauncher
+	routeSubcommand
+)
+
+// routeFor classifies args (argv without the program name) for the binary
+// invoked as base. Only the "muxcode" name routes unknown args to the
+// launcher; the muxcode-agent-bus symlink dispatches subcommands only.
+func routeFor(base string, args []string) route {
+	if len(args) >= 1 && (args[0] == "--version" || args[0] == "-v") {
+		return routeVersion
+	}
+	if base == "muxcode" {
+		if len(args) == 0 || !knownSubcommands[args[0]] {
+			return routeLauncher
+		}
+		return routeSubcommand
+	}
+	if len(args) == 0 {
+		return routeUsage
+	}
+	return routeSubcommand
 }
 
 var usage = `Usage: muxcode <command> [args...]
@@ -93,34 +126,25 @@ Commands:
   remote        Investigate agents in other muxcode sessions (TUI browser, or list/status/capture/inbox/diagnose)
   spec          Manage the active requirements spec for plan agent verification (set, get, clear)
   graph         Graph-agent orchestrator (run, validate, list, status, cancel, retry, approve)
+  version       Print the binary's version (--json, --at-least vX.Y.Z); also --version / -v
 `
 
 func main() {
-	base := filepath.Base(os.Args[0])
-
-	// When invoked as "muxcode" (not via "muxcode <subcommand>"), route to launcher
-	// unless the first arg is a known subcommand.
-	if base == "muxcode" {
-		if len(os.Args) < 2 {
-			// Bare "muxcode" → interactive project picker
-			cmd.RunLauncher(nil)
-			return
-		}
-		if !knownSubcommands[os.Args[1]] {
-			// "muxcode <path> [<name>]" → launch with path
-			cmd.RunLauncher(os.Args[1:])
-			return
-		}
-	}
-
-	// Standard subcommand dispatch
-	if len(os.Args) < 2 {
+	args := os.Args[1:]
+	switch routeFor(filepath.Base(os.Args[0]), args) {
+	case routeVersion:
+		cmd.Version(nil)
+		return
+	case routeLauncher:
+		cmd.RunLauncher(args)
+		return
+	case routeUsage:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(1)
 	}
 
-	subcmd := os.Args[1]
-	args := os.Args[2:]
+	subcmd := args[0]
+	args = args[1:]
 
 	switch subcmd {
 	case "launch":
@@ -252,6 +276,8 @@ func main() {
 		cmd.Graph(append([]string{"approve"}, args...))
 	case "upgrade-daemons":
 		cmd.UpgradeDaemons(args)
+	case "version":
+		cmd.Version(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

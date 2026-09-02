@@ -22,6 +22,14 @@ in the index carries a stable **`MUX-NNN`** id that ties the req doc to its GitH
 
 - Ids are assigned in the Spec index below and never reused or renumbered — the index is
   the registry.
+- **Retired ids — never reuse.** Two ids have no spec file in any directory and must stay
+  unassigned, because a future spec taking one would collide with the history that already
+  refers to it: **`MUX-106`**, withdrawn when its scope was merged into
+  [`MUX-105`](../completed/MUX-105-force-respond-escalation.md) before any work began
+  (recorded under that spec's `## Provenance`); and **`MUX-100`**, whose reason is **not
+  recorded anywhere** — the gap is real and verified (no file, no index row, no mention in
+  any spec), but why it was skipped is unknown, and this line documents the hole rather
+  than inventing a cause for it.
 - Every spec file in `backlog/` and `completed/` carries its `MUX-NNN-` filename prefix
   (applied across both directories 2026-08-19; completed specs that predate GitHub tracking
   were retroactively minted ids MUX-028–MUX-099 in alphabetical order). New specs are named
@@ -151,6 +159,7 @@ original member, the verify-spec refire loop.
 
 | ID | Spec | Priority | Summary |
 |----|------|----------|---------|
+| MUX-138 | [`MUX-138-github-versioning-releases.md`](./MUX-138-github-versioning-releases.md) | Medium | 612 commits and 92 delivered specs with **no version identity beyond the MUX id** — 0 tags, 0 releases, no tracked `CHANGELOG`/`VERSION`, and the binary cannot report what it is. Three consequences, each verified: `muxcode --version` has no `version` in `knownSubcommands` so it falls through `main.go:108` to the launcher **as a project path** (`install.sh:942` documents the workaround, smoke-testing with `config list`); `UpgradeDaemons` (`upgrade.go:125`) cycles every daemon unconditionally because **no staleness test exists** to compare against; and the "requires the installed binary to include MUX-xxx" precondition appears **10× in CLAUDE.md and 0× in `scripts/`** — documentation-only, so a script can run against a stale binary and report green either way, the same can't-tell-the-states-apart shape as [MUX-137](./MUX-137-test-bus-dir-leak.md). Introduces SemVer tagging, an ldflags-stamped binary with `version`/`--json`/`--at-least`, daemon version awareness (`daemon.version` beside `daemon.keepalive`, a `status` column, a `diagnose` mismatch finding), and a tag-triggered release workflow. **Decisions taken, each flippable before Phase 1**: start at `v0.1.0` not `v1.0.0` (delivery-ack still soaking, [MUX-012](./MUX-012-remove-gated-pane-scrape-delivery.md) open, 14 High defects, and **no compatibility contract stated anywhere** — `0.x` lets MINOR carry breaks honestly, and a written 1.0 gate replaces the feeling with a checklist); GitHub-generated notes over a hand-maintained CHANGELOG since PR titles are already MUX-keyed; hand-rolled workflow over GoReleaser since a bare binary is not a full install; root tags only, deferring the nested-module `tools/muxcode/vX.Y.Z` prefix `go install` would need. Filed here rather than under Reliability because four of five phases are release engineering — the stale-daemon detection is Phase 2's payoff, not the spec's subject |
 | MUX-011 | [`MUX-011-opencode-plugin-hook-bridge.md`](./MUX-011-opencode-plugin-hook-bridge.md) | High | Muxcode TS plugin on OpenCode's `tool.execute.after`/`session.idle` events shells to `muxcode hook bash` — deterministic chains for OpenCode via narrow `SupportsChainEvents()`, root enabler fix for MUX-009 storms |
 
 ### Agents & roles
