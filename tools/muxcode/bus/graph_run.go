@@ -481,6 +481,11 @@ type GateRearm struct {
 //
 // A running run must be canceled first — resetting nodes under a live
 // executor would race it.
+//
+// Purging a stale gate approval fails CLOSED (PR #56 review): claiming
+// "purged" while os.Remove failed would leave the marker to satisfy the
+// re-armed gate — the laundered approval MUX-132 closed. The purge runs
+// before any store write, so refusing leaves the run untouched.
 func RetryGraphRun(session, runID, fromNode string) (*GraphRetryResult, error) {
 	run, err := ReadGraphRun(session, runID)
 	if err != nil {
@@ -516,7 +521,10 @@ func RetryGraphRun(session, runID, fromNode string) (*GraphRetryResult, error) {
 			for id := range retryDownstream(g, r.Gate) {
 				downstream[id] = true
 			}
-			_ = os.Remove(graphApprovalPath(session, runID, r.Gate, "approved"))
+			// Purge must fail closed — see the doc comment.
+			if err := os.Remove(graphApprovalPath(session, runID, r.Gate, "approved")); err != nil && !os.IsNotExist(err) {
+				return nil, fmt.Errorf("retry --from %s: cannot purge stale approval for gate %q: %w", fromNode, r.Gate, err)
+			}
 			LogLifecycle(session, "warn", "daemon", "graph-retry-regated",
 				fmt.Sprintf("%s: --from %s is covered by satisfied gate %s (approved %s) — re-armed the gate, stale approval purged",
 					runID, res.Requested, r.Gate, FormatApprovalTime(r.ApprovedAt)))

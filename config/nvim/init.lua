@@ -39,7 +39,12 @@ vim.opt.swapfile = false
 -- in-progress hand edits are never clobbered; autoread is required or
 -- checktime prompts instead of reloading.
 vim.opt.autoread = true
-vim.fn.timer_start(1000, function()
+-- Stop the previous timer on re-source: timers outlive the config, so an
+-- unguarded start accumulates one firing per reload (PR #56 review).
+if vim.g.muxcode_checktime_timer then
+  vim.fn.timer_stop(vim.g.muxcode_checktime_timer)
+end
+vim.g.muxcode_checktime_timer = vim.fn.timer_start(1000, function()
   vim.cmd('silent! checktime')
 end, { ['repeat'] = -1 })
 

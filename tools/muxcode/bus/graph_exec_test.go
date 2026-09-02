@@ -712,6 +712,73 @@ func TestExecRetryBelowGateRearmsGate(t *testing.T) {
 	}
 }
 
+// TestExecRetryPurgeFailureFailsClosed pins the purge's error contract
+// (PR #56 review): when the stale approval marker cannot be removed, the
+// retry must REFUSE — an error return, marker still on disk, gate not
+// re-armed — never proceed while logging "purged". A silent failure
+// leaves the marker to satisfy the re-armed gate: the laundered
+// approval MUX-132 closed, reintroduced through the filesystem.
+func TestExecRetryPurgeFailureFailsClosed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root — directory permissions cannot block os.Remove")
+	}
+	g := &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{
+			{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "ship it"},
+		},
+		Edges: []Edge{{From: "a", To: "gate"}, {From: "gate", To: "c"}},
+	}
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "c", OutcomeFailure)
+	step(t, runTestSession, run.ID)
+
+	// Make the marker un-removable: unlinking needs write on the parent.
+	approvals := graphApprovalsDir(runTestSession, run.ID)
+	if err := os.Chmod(approvals, 0555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(approvals, 0755) })
+
+	if _, err := RetryGraphRun(runTestSession, run.ID, "c"); err == nil {
+		t.Fatal("retry succeeded with an un-removable stale approval — must fail closed")
+	}
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "gate", "approved")); err != nil {
+		t.Fatalf("approved marker missing after refused retry (err=%v) — refusal must leave state untouched", err)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s == GraphNodeReady {
+		t.Fatal("gate re-armed despite the refused purge — the retry must leave the run untouched")
+	}
+
+	// Positive control: with the permission restored the same retry
+	// purges and re-arms — the refusal above was the chmod, not a
+	// broken re-arm path.
+	if err := os.Chmod(approvals, 0755); err != nil {
+		t.Fatalf("restore chmod: %v", err)
+	}
+	res, err := RetryGraphRun(runTestSession, run.ID, "c")
+	if err != nil {
+		t.Fatalf("retry after restore: %v", err)
+	}
+	if len(res.Rearmed) != 1 || res.Rearmed[0].Gate != "gate" {
+		t.Fatalf("rearmed=%+v, want the gate — positive control", res.Rearmed)
+	}
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "gate", "approved")); !os.IsNotExist(err) {
+		t.Fatalf("approved marker survived the successful retry (err=%v)", err)
+	}
+}
+
 // TestExecRetryBelowParallelGateCutRearmsAll pins the cut form of the
 // re-arm (review finding, 2026-08-31): with the target fed by two
 // parallel branches each behind its own satisfied gate, NO single gate
