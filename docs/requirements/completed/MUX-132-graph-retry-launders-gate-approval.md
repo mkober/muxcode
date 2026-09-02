@@ -11,7 +11,7 @@ Tracking: _(no GitHub issue yet)_
 ### Observed 2026-08-31 — caught before it ran
 
 Run `1788225109-req-code-pr-deb2914a` failed at `commit` (the `phase-progress` guard declined a
-doc-only tree, correctly — see [`MUX-131`](../drafts/MUX-131-spawn-implement-output-never-ported.md)). The
+doc-only tree, correctly — see [`MUX-131`](../completed/MUX-131-spawn-implement-output-never-ported.md)). The
 proposed recovery was:
 
 ```
@@ -143,7 +143,7 @@ the output, never silent** — the run visibly resumes at the gate.
 - [x] Decide what happens to nodes **between** the gate and the original target — they are downstream of
       the gate, so a naive reset re-runs them. In the incident the gate sits directly before `commit` so
       the question does not arise; it will in other templates. Re-running an `implement` spawn to reach a
-      commit would be expensive and is exactly the waste [`MUX-131`](../drafts/MUX-131-spawn-implement-output-never-ported.md)
+      commit would be expensive and is exactly the waste [`MUX-131`](../completed/MUX-131-spawn-implement-output-never-ported.md)
       Defect B describes
 - [x] Surface the outcome in `graph status` and a lifecycle event
 

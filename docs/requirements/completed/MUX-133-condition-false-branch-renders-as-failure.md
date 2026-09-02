@@ -250,8 +250,8 @@ Two findings the enumeration produced:
 - [x] Keep `graph status --json` coherent with the rendered surfaces — `cmd/graph.go:443` sets
       `GraphNodeStatus.Branched` for branch-takers, so machine consumers no longer read a bare `failed`
 
-**Option B landed 2026-09-01** (uncommitted at time of writing — 7 files in the working tree). What it
-changed, at source rather than at the renderers:
+**Option B landed 2026-09-01**, committed as `4964f66`. What it changed, at source rather than at the
+renderers:
 
 | File | Change |
 |---|---|
@@ -268,7 +268,7 @@ rendered surfaces, which is what option B was chosen over A to achieve.
 **Verification provenance:** the implementing agent reported `go build`/`go vet`/`go test ./...` green
 (4/4 packages); the **test agent independently reported the suite green at 19:43**, after option B
 landed. This pass verified the *code and assertions* directly in the working tree, not a run — no
-uncached run in the main checkout is recorded here, and the work is still uncommitted.
+uncached run in the main checkout is recorded here. The work is committed as `4964f66`.
 
 ### Phase 4: Negative controls
 
@@ -311,9 +311,10 @@ uncached run in the main checkout is recorded here, and the work is still uncomm
 
 ## Status
 
-In Progress — moved to `drafts/` 2026-09-01. **Both options have now landed.** Option A
-(display-level) shipped first and is pinned by a two-direction test; **option B (model-level) landed
-2026-09-01** and is the change that makes a branched condition stop being `failed` at the source.
+Complete — closed 2026-09-01 at 11/11 acceptance criteria and 5/5 phases, against commit `4964f66`.
+**Both options landed.** Option A (display-level) shipped first and is pinned by a two-direction test;
+**option B (model-level)** is the change that makes a branched condition stop being `failed` at the
+source, which is why B was chosen over A.
 
 Both gaps flagged at the first verification are now closed: `graph status --json` sets
 `GraphNodeStatus.Branched` (`cmd/graph.go:443`), and the `◇` vocabulary is recorded in
@@ -325,7 +326,7 @@ Both gaps flagged at the first verification are now closed: `graph status --json
 | 2 · Glyph and label vocabulary | **3/3** | |
 | 3 · Implement | **2/2** | Option B landed — see the change table above |
 | 4 · Negative controls | **4/4** | Genuine evaluation error pinned at executor, CLI **and** TUI |
-| 5 · Integration test | **5/5** | `scripts/test-graph-orchestrator.sh` section 9; floor 47 → 56 |
+| 5 · Integration test | **5/5** | `scripts/test-graph-orchestrator.sh` sections 9 **and 10**; floor 47 → 56 → **60**, equal to the achievable maximum |
 
 **All five phases and all eleven acceptance criteria are now closed — zero open checkboxes.** They
 closed in three rounds, and the sequence is worth keeping, because each decline named a *specific
@@ -357,8 +358,16 @@ maximum, so a **failing** check also trips it. `fail` is counted separately and 
 verdict stays correct — but the floor can no longer distinguish a skipped section from a failing one,
 which was its original purpose.
 
-**Still not marked Complete, deliberately.** Nothing is open, but the work is **uncommitted** — 7 Go
-files plus `tui/graph_test.go`, `tui/graph_ui_test.go` and `scripts/test-graph-orchestrator.sh` — and
-every figure above describes a working tree, not a commit. The spec is *ready* to close on the user's
-say-so; closing it against an uncommitted tree would be the MUX-114 failure in a new form, asserting
-done-ness against something no commit records.
+**Complete.** The last thing holding this open was that every figure above described a *working tree*
+rather than a commit. That is discharged: the work landed as **`4964f66`** ("MUX-133: condition false
+branch renders branched, not failed") on 2026-09-01, 11 files including this spec, the Go changes, the
+two new TUI tests, and the expanded `scripts/test-graph-orchestrator.sh`. Verified at close: the
+commit carries **no MUX-134 material** (the two streams shared a working tree and had to be separated),
+and this spec file was clean against it **at the time of the close** (it then lived at
+`docs/requirements/drafts/`) — so the ticks above describe committed content, not an editor buffer.
+
+Moved to [`completed/`](../completed/) on 2026-09-02 on the user's word, with its four inbound links
+rewritten in the same pass.
+
+**Not yet pushed** as of the move. The branch held four unpushed commits at that point (`4964f66`,
+`1470fe3`, `aefcd05`, `73209b4`) plus `4e26589`; this spec is complete, the branch delivery is separate.

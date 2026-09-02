@@ -67,7 +67,7 @@ what ordering even means.
 
 ### Defect D — `Number 0` doubles as the "unset" sentinel, so a real Phase 0 is invisible
 
-Found 2026-09-01 while verifying [`MUX-131`](../drafts/MUX-131-spawn-implement-output-never-ported.md),
+Found 2026-09-01 while verifying [`MUX-131`](../completed/MUX-131-spawn-implement-output-never-ported.md),
 which numbers its phases from **0**.
 
 Both predicates use the zero value of `SpecPhase` as "none found", and `SpecPhase.Number` is `0` in that
@@ -89,7 +89,7 @@ would be correct while the *named* phase is still wrong.
 
 ### Defect E — the phase view can say "done" while the close guard says "not done"
 
-Observed live 2026-09-01 on [`MUX-131`](../drafts/MUX-131-spawn-implement-output-never-ported.md): all
+Observed live 2026-09-01 on [`MUX-131`](../completed/MUX-131-spawn-implement-output-never-ported.md): all
 five phases were complete while **two acceptance criteria remained open**, because those criteria live
 under `## Requirements` — an `##` heading, so `SpecPhases` assigns them to no phase.
 
@@ -111,6 +111,25 @@ mistake"* — now with a live instance and a named cause.
 
 Note this is **not** fixed by the contiguous-prefix decision, and not by Defect D's sentinel fix either:
 both concern phases. Unscoped items are invisible to every phase predicate by construction.
+
+**Second occurrence, 2026-09-02 on [`MUX-134`](../completed/MUX-134-status-bar-fkey-label-diverges-from-binding.md)** —
+and it sharpens the diagnosis. A `verify-spec` dispatch rendered:
+
+> Verify the implemented changes against the active requirements spec and check off completed criteria
+> and steps of **(no open phase)** — the commit gate follows, so the spec must reflect reality before it
+
+Here the placeholder was **factually accurate**: MUX-134 really had zero open items (23 ticked, 0 open).
+That is what makes it the stronger example. The first occurrence could be read as a *parsing* bug —
+open criteria hidden from the phase predicates. This one has nothing hidden and the sentence is still
+malformed, because `${current_phase}` is interpolated into a slot that assumes a phase **name**, so a
+sentinel meaning *"there is no phase"* lands where a noun belongs. The message instructs an agent to
+check off "the steps of (no open phase)", which names no work and cannot be acted on.
+
+So the fix is not only "make the predicates agree". A **sentinel value must never be interpolated into
+prose as if it were a name** — the gate needs a distinct message for the no-open-phase case, chosen
+before substitution rather than papered over by making the sentinel read better. Verified at the time
+of observation: the spec was genuinely closed, the script backing it was still untracked, and nothing
+needed ticking — so the dispatch was not merely ugly, it was asking for work that did not exist.
 
 ### Invariant worth stating: phase order is *file order*, never edit order
 

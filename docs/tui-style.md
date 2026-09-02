@@ -41,7 +41,7 @@ The graph node vocabulary, from `nodeGlyph()`:
 
 Note `skipped` and `pending` share `Comment` — both mean "not active", and the **glyph** is what distinguishes them. That is the rule working as intended, not an oversight.
 
-**The branch-taken form is not a failure state.** A `condition` node that evaluates correctly and takes its false edge is persisted as `failed` with `outcome=failure`, because that outcome is the routing key the false edge matches ([MUX-133](requirements/drafts/MUX-133-condition-false-branch-renders-as-failure.md)). Rendering it red made ordinary control flow look identical to a broken node. Every surface therefore branches on `bus.ConditionTookBranch(nodeType, state)` — one shared predicate, so the surfaces cannot drift:
+**The branch-taken form is not a failure state.** A `condition` node that evaluates correctly and takes its false edge is persisted as **`done`** with **`outcome=failure`** — the *state* says it finished normally, while the *outcome* stays `failure` because that is the routing key the false edge matches ([MUX-133](requirements/completed/MUX-133-condition-false-branch-renders-as-failure.md)). Rendering it red made ordinary control flow look identical to a broken node. Every surface therefore branches on `bus.ConditionTookBranch(nodeType, state, outcome)` — one shared predicate, so the surfaces cannot drift:
 
 | Surface | Form |
 |---------|------|

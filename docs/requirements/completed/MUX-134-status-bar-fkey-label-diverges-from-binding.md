@@ -215,9 +215,11 @@ could only prove the *derivation*. See the deliberate refusal recorded in Status
 
 ## Status
 
-In Progress — moved to `drafts/` 2026-09-01. **Implementation landed the same night**: both format
-sites now render `#{?@muxcode_fkey,…}` fed by a diff-only daemon sweep, pinned by tests that assert
-`F#I` is absent rather than merely that the conditional is present.
+Complete — closed 2026-09-02 at **5/5 phases and 7/7 acceptance criteria**, against `4e26589`.
+Implementation landed 2026-09-01: both format sites render `#{?@muxcode_fkey,…}` fed by a diff-only
+daemon sweep, pinned by tests that assert `F#I` is **absent** rather than merely that the conditional
+is present. The behavioural half — that the labelled key actually selects the labelled window —
+landed 2026-09-02 with the integration test.
 
 | Phase | | Evidence |
 |---|---|---|
@@ -290,8 +292,8 @@ acceptance criteria with it.
 
 **Open: nothing.** Every phase and criterion is closed.
 
-**Not marked Complete.** `scripts/test-fkey-labels.sh` is **untracked** — the evidence for all seven
-criteria lives in a file no commit records, and the spec's own standard is that a checkbox describes
-the repo. The phases and criteria are ticked because the script exists and was verified in the working
-tree; the *status* waits on the script being committed, and the move to `completed/` waits on the user
-regardless.
+**Complete.** The one condition held back for was that `scripts/test-fkey-labels.sh` was **untracked** —
+the evidence for all seven criteria lived in a file no commit recorded, against this spec's own
+standard that a checkbox describes the repo. That is discharged: the script landed in
+**`4e26589`** ("MUX-134 Phase 5: Integration test", 279 lines) together with this spec and the
+`CLAUDE.md` table row. The ticks now describe committed content.

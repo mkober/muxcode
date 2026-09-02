@@ -66,7 +66,7 @@ the failure looks like the worker's fault rather than a GC artifact.
 
 ### It compounds with the worker-reuse fix
 
-[`MUX-131`](../drafts/MUX-131-spawn-implement-output-never-ported.md) Phase 0 makes workers **persist
+[`MUX-131`](../completed/MUX-131-spawn-implement-output-never-ported.md) Phase 0 makes workers **persist
 across iterations** rather than being rebuilt each pass. Longer-lived workers mean longer iterations,
 which means **more** of them cross the one-hour line. The reuse fix is correct and should stay — but it
 raises exposure to this defect, so the two want fixing together.
