@@ -918,7 +918,7 @@ else
 
 # Default AI CLI provider — overrides built-in role defaults.
 # Built-in defaults: edit/review/analyze/api → claude,
-#   build/test/deploy/run/watch/commit → opencode (MiniMax M2.5 Free).
+#   build/test/deploy/run/watch/commit → opencode (MiniMax M3).
 # Uncomment to force all roles to a single provider:
 # MUXCODE_AGENT_CLI=$default_cli
 

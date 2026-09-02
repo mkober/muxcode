@@ -322,9 +322,9 @@ func TestResolveOpenCodeModel_CommitDefault(t *testing.T) {
 
 	model := resolveOpenCodeModel("commit")
 
-	// Commit role defaults to MiniMax M2.7
-	if model != "opencode-go/minimax-m2.7" {
-		t.Errorf("model = %q, want opencode-go/minimax-m2.7", model)
+	// Commit role defaults to MiniMax M3
+	if model != "opencode-go/minimax-m3" {
+		t.Errorf("model = %q, want opencode-go/minimax-m3", model)
 	}
 }
 

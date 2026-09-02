@@ -85,7 +85,7 @@ if [ "$ORIG_BUILD_CLI" = "opencode" ]; then
   TARGET_MODEL="claude-sonnet-5"
 else
   TARGET_CLI="opencode"
-  TARGET_MODEL="opencode-go/minimax-m2.5"
+  TARGET_MODEL="opencode-go/minimax-m3"
 fi
 
 echo "  Reloading build + test: → $TARGET_CLI ($TARGET_MODEL)"
@@ -160,7 +160,7 @@ echo "--- Phase 5: --all with --provider filter ---"
 RESTORE_CLI="$ORIG_BUILD_CLI"
 RESTORE_MODEL="$ORIG_BUILD_MODEL"
 if [ -z "$RESTORE_MODEL" ]; then
-  RESTORE_MODEL="opencode-go/minimax-m2.5"
+  RESTORE_MODEL="opencode-go/minimax-m3"
 fi
 
 echo "  Reloading --all --provider $TARGET_CLI → $RESTORE_CLI"

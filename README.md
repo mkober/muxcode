@@ -104,8 +104,7 @@ Out of the box, MuxCode uses Claude Code for orchestration roles and OpenCode fo
 | edit                                             | Claude Code | `claude-fable-5-1`             |
 | plan                                             | Claude Code | `claude-opus-5`               |
 | review, analyze                                  | OpenCode    | `opencode-go/qwen3.7-plus`     |
-| build, test, serve, deploy, run, watch           | OpenCode    | `opencode-go/minimax-m3`       |
-| commit                                           | OpenCode    | `opencode-go/minimax-m2.7`     |
+| build, test, serve, deploy, run, watch, commit   | OpenCode    | `opencode-go/minimax-m3`       |
 | api                                              | Claude Code | `claude-sonnet-5`              |
 
 OpenCode Go models are available through [OpenCode Go](https://opencode.ai/go). Override the model per role with `MUXCODE_{ROLE}_MODEL` for OpenCode roles (e.g. `MUXCODE_BUILD_MODEL=opencode-go/minimax-m3`) or `MUXCODE_{ROLE}_CLAUDE_MODEL` for Claude Code roles. Override the CLI provider per role with `MUXCODE_{ROLE}_CLI`.
@@ -130,13 +129,13 @@ This gives you:
 | Role     | Provider    | Model              | Why                                                      |
 | -------- | ----------- | ------------------ | -------------------------------------------------------- |
 | edit     | Claude Code | Opus 5             | Full hook support, orchestration, code editing            |
-| commit   | OpenCode    | MiniMax M2.7       | Git operations — prompt-instructed chains                |
-| build    | OpenCode    | MiniMax M2.7       | Runs `./build.sh` — structured commands, no hooks needed |
-| test     | OpenCode    | MiniMax M2.7       | Runs `./test.sh` — structured commands, no hooks needed  |
-| serve    | OpenCode    | MiniMax M2.7       | Dev server lifecycle — start, monitor, restart            |
-| deploy   | OpenCode    | MiniMax M2.7       | Runs CDK/terraform — command execution role              |
-| run      | OpenCode    | MiniMax M2.7       | Ad-hoc commands — capable free model                     |
-| watch    | OpenCode    | MiniMax M2.7       | Log tailing — lightweight, read-only                     |
+| commit   | OpenCode    | MiniMax M3         | Git operations — prompt-instructed chains                |
+| build    | OpenCode    | MiniMax M3         | Runs `./build.sh` — structured commands, no hooks needed |
+| test     | OpenCode    | MiniMax M3         | Runs `./test.sh` — structured commands, no hooks needed  |
+| serve    | OpenCode    | MiniMax M3         | Dev server lifecycle — start, monitor, restart            |
+| deploy   | OpenCode    | MiniMax M3         | Runs CDK/terraform — command execution role              |
+| run      | OpenCode    | MiniMax M3         | Ad-hoc commands — capable free model                     |
+| watch    | OpenCode    | MiniMax M3         | Log tailing — lightweight, read-only                     |
 | review   | Codex CLI   | gpt-5.5      | Deep code reasoning, thorough diff analysis              |
 | analyze  | Codex CLI   | gpt-5.5      | Codebase-wide analysis, pattern detection                |
 
@@ -176,13 +175,13 @@ Claude vs OpenCode, role by role:
 | review        | Claude `opus` or OpenCode `deepseek-v4-pro` | Correctness matters most; DeepSeek V4 Pro closes most of the gap at lower cost |
 | plan / docs   | Claude `sonnet` or OpenCode `deepseek-v4-pro` | Spec writing benefits from structure; low frequency tolerates lower quota |
 | research      | OpenCode `deepseek-v4-pro` or `kimi-k2.6` | Web/doc digestion — no hook need; long-context helps                          |
-| build / test  | OpenCode `minimax-m2.7` / `mimo-v2.5` | Single-shot, exit-code driven — spend the cheapest high-quota tokens            |
+| build / test  | OpenCode `minimax-m3` / `mimo-v2.5` | Single-shot, exit-code driven — spend the cheapest high-quota tokens            |
 | serve         | OpenCode `minimax-m3`  | Dev-server lifecycle — capable enough to parse logs, not in any chain                  |
 | deploy / run  | OpenCode `minimax-m3` or Claude | Deploy benefits from Claude's git/push reliability + hooks; run is command exec   |
 | watch         | OpenCode `mimo-v2.5`   | Log tailing — cheapest/highest-quota; output is PII-scrubbed before the model         |
 | commit        | OpenCode `minimax-m3` or Claude | Git operations — either works; Claude if you want hook-driven chain hygiene       |
 
-**Rough quality ranking:** `opus` ≳ `sonnet` ≈ `deepseek-v4-pro` > `minimax-m3` ≈ `qwen3.x-plus` > `minimax-m2.7` > `haiku` ≈ `mimo-v2.5`. Claude's top end edges out OpenCode's, but DeepSeek V4 Pro is competitive at the workhorse tier.
+**Rough quality ranking:** `opus` ≳ `sonnet` ≈ `deepseek-v4-pro` > `minimax-m3` ≈ `qwen3.x-plus` > `haiku` ≈ `mimo-v2.5`. Claude's top end edges out OpenCode's, but DeepSeek V4 Pro is competitive at the workhorse tier.
 
 **The real tradeoff is hooks vs. cost, not raw capability.** Claude Code gives native deterministic chains (build→test→review by exit code) and hook-enforced guards; OpenCode gives cheaper high-volume throughput via prompt-instructed chains, at the price of graceful-degradation fragility (mitigated by the daemon's stuck-provider auto-reload watchdog). For never-exiting processes (serve's `pnpm dev`, watch's `tail -f`), the dominant reliability factor is the agent staying deliverable (run them as background `muxcode proc`), which is independent of model choice — so pick those roles purely on cost.
 
