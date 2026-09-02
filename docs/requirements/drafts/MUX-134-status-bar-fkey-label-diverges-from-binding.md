@@ -72,20 +72,35 @@ windows generally; this is the label half specifically.
 
 ### Acceptance criteria
 
-- [ ] The status-bar label for a window names the key that actually selects it, for every window
-      including spawns at non-contiguous indices
-- [ ] The label is derived from the **same** logic as the binding — one source of truth, not a second
-      implementation that can drift from `WindowFKey`
-- [ ] Both `F#I` sites are fixed together (`config/tmux.conf` **and** `bus/launcher.go`
-      `WindowStatusFormat`); fixing one leaves the other authoritative in some launch paths
-- [ ] A window with no valid F-key (e.g. a third spawn, beyond F12) renders an honest fallback rather
-      than a key that does nothing
-- [ ] **Negative control:** windows at indices 1–10 keep their existing labels unchanged — the fix must
-      not churn the common case where index and key already coincide
-- [ ] **Negative control:** a spawn cleaned up mid-session re-labels the remaining spawns correctly,
-      rather than leaving a stale option value behind
-- [ ] Pressing the labelled key selects the labelled window — verified by actually sending the key, not
-      by reading the format string
+All seven closed 2026-09-02 by `scripts/test-fkey-labels.sh` (19/0, exit 0), which is what made them
+tickable: every one describes **rendered or pressed** behaviour, and until that test existed the repo
+could only prove the *derivation*. See the deliberate refusal recorded in Status.
+
+- [x] The status-bar label for a window names the key that actually selects it, for every window
+      including spawns at non-contiguous indices — spawn@12 renders `F11` and `F11` selects it, in the
+      same run
+- [x] The label is derived from the **same** logic as the binding — one source of truth, not a second
+      implementation that can drift from `WindowFKey` — the sole-writer proof (Phase 3): the only
+      `set-option … @muxcode_fkey` in the repo is inside `RefreshWindowFKeyLabels`, which calls
+      `WindowFKey`; every other occurrence is a read site
+- [x] Both `F#I` sites are fixed together (`config/tmux.conf` **and** `bus/launcher.go`
+      `WindowStatusFormat`); fixing one leaves the other authoritative in some launch paths —
+      `launcher_test.go` asserts `F#I` is **absent** from both formats, and the integration test
+      renders through the shipped `config/tmux.conf` format, covering the other site live
+- [x] A window with no valid F-key (e.g. a third spawn, beyond F12) renders an honest fallback rather
+      than a key that does nothing — notes@13, seeded with a lying `F13`, is cleared and renders its
+      name alone. **This discharges Phase 4's recorded boundary**, which stated the tmux render itself
+      was not executed by any unit test and was Phase 5's job
+- [x] **Negative control:** windows at indices 1–10 keep their existing labels unchanged — the fix must
+      not churn the common case where index and key already coincide — first@1 holds `F1`, third@3
+      renders `F3`, and `F3` still selects window 3
+- [x] **Negative control:** a spawn cleaned up mid-session re-labels the remaining spawns correctly,
+      rather than leaving a stale option value behind — spawn@12 is killed, replacement spawn-beta@14
+      picks up `F11` within one sweep, and `F11` then selects **it**
+- [x] Pressing the labelled key selects the labelled window — verified by actually sending the key, not
+      by reading the format string — the criterion this spec was written around, and the one held open
+      through four passes. Closed by a real keypress through an attached client, with **F12 asserted
+      as a no-op**: the defect is retired against its own symptom, not against a format string
 
 ### Key files
 
@@ -168,19 +183,35 @@ windows generally; this is the label half specifically.
 
 ### Phase 5: Integration test
 
-- [ ] Add to a `scripts/test-*.sh`: construct the divergent layout (non-spawn window at index ≥ 11 plus
-      one spawn), assert the rendered label matches `WindowFKey`
-- [ ] **Send the labelled key and assert the labelled window becomes active** — the format string
-      matching is necessary but not sufficient; the reported symptom is a keypress doing nothing
-- [ ] Assert the 1–10 case is untouched
-- [ ] Coverage floor set to the achievable maximum so a skipped section cannot report green
-- [ ] Run it and record passed/failed/exit code here
+- [x] Add to a `scripts/test-*.sh`: construct the divergent layout (non-spawn window at index ≥ 11 plus
+      one spawn), assert the rendered label matches `WindowFKey` — `scripts/test-fkey-labels.sh`
+      builds hold@0, first@1, third@3, parked@11 (non-spawn past F10), the sole spawn@12 and notes@13
+      (beyond F12), seeds spawn@12 with a **lying `F12`**, and lets a real `muxcode watch` daemon
+      sweep reconcile it to `F11`. Rendered through the **actual shipped** `window-status-format`
+      from `config/tmux.conf`, not a copy of it
+- [x] **Send the labelled key and assert the labelled window becomes active** — the format string
+      matching is necessary but not sufficient; the reported symptom is a keypress doing nothing.
+      Done as a **real keypress**: the script attaches a nested client
+      (`tmux -L $OUTSOCK new-session … "tmux attach -t $SESSION"`) and presses keys into that
+      client's pane, because `send-keys` to a pane bypasses the root key-table and only a client
+      exercises `bind -n`. **F11 selects spawn@12**, and — the sharpest assertion in the file —
+      **F12 is a no-op with the active window unchanged**, which is the reported symptom itself
+      rather than a proxy for it
+- [x] Assert the 1–10 case is untouched — first@1 holds `F1` across every sweep, third@3 renders `F3`,
+      and an **F3 keypress still selects window 3**: the common case is pinned by option, by render
+      and by press
+- [x] Coverage floor set to the achievable maximum so a skipped section cannot report green —
+      `[ "$PASS" -ge 19 ]` (`:277`), equal to the achievable maximum
+- [x] Run it and record passed/failed/exit code here — **19 passed / 0 failed, exit 0** (2026-09-02,
+      run agent, main checkout). **Provenance:** this pass verified the script's mechanism directly —
+      the nested-client attach, the `press` target, the floor, the F12-no-op assertion — but did not
+      execute it; running integration scripts is the run agent's role
 
 ## Time Tracking
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-132-graph-retry-launders-gate-approval | 8h 31m | 2026-09-01 16:57 |
+| MUX-132-graph-retry-launders-gate-approval | 9h 34m | 2026-09-01 19:38 |
 
 ## Status
 
@@ -194,7 +225,13 @@ sites now render `#{?@muxcode_fkey,…}` fed by a diff-only daemon sweep, pinned
 | 2 · Carry the key to the status bar | **3/3** | Both `F#I` sites replaced; absence asserted, not just presence of the conditional |
 | 3 · Keep it fresh | **2/2** | Sole writer proven by repo-wide grep; slot-shift F12→F11 pinned with a diff-only negative control |
 | 4 · Negative controls | **4/4** | Controls pinned by existing tests; revert-confirmation verified structurally against the catching assertions |
-| 5 · Integration test | 0/5 | |
+| 5 · Integration test | **5/5** | `scripts/test-fkey-labels.sh` — 19/0, exit 0, floor 19 = achievable max; real keypress through an attached client |
+
+**All phases and all seven acceptance criteria are now closed.** The criteria stayed at 0/7 through
+four passes on purpose, and closed in one step for a single reason: every one of them describes
+rendered or pressed behaviour, so none could be earned until an integration test drove the real tmux
+render and a real keypress. That refusal is recorded below and is the point — holding them open was
+not caution, it was the difference between proving the derivation and proving the fix.
 
 Phase 1 was closed 2026-09-01 against a `-count=1` run of `./bus/` **in the main checkout** — 1825
 passed / 0 failed, `--- PASS: TestWindowFKey_RawIndexDivergence`. The work reached the branch as an
@@ -203,11 +240,13 @@ was confirmed byte-identical to the worktree's before anything was ticked, becau
 describes the repo, never a worktree. An earlier `2243 pass` figure for the same work is **not** the
 basis for this close: it was a *cached* run, and the uncached one is the only evidence that binds.
 
-**No acceptance criterion is ticked yet, deliberately.** Every criterion describes rendered or pressed
-behaviour, while Phases 1–2 so far prove the *derivation*. The criterion that matters — **send the
-labelled key and assert the labelled window activates** — is Phase 5 work: because the bindings end
-`>/dev/null 2>&1 || true`, a format-string assertion alone would pass while the reported symptom (a
-keypress doing nothing) survived untouched.
+**No acceptance criterion was ticked until Phase 5 landed, deliberately** — and that refusal held
+across four separate passes. Every criterion describes rendered or pressed behaviour, while Phases 1–4
+proved only the *derivation*. The criterion that mattered — **send the labelled key and assert the
+labelled window activates** — was Phase 5 work: because the bindings end `>/dev/null 2>&1 || true`, a
+format-string assertion alone would have passed while the reported symptom (a keypress doing nothing)
+survived untouched. `scripts/test-fkey-labels.sh` closed it on 2026-09-02 by pressing the key through
+an attached client and asserting **F12 does nothing** — the symptom itself.
 
 Phase 3 was closed the same day on the same standard: `go vet` clean and an uncached `-count=1 ./bus/`
 **in the main checkout** — 1826 passed / 0 failed, `--- PASS:
@@ -234,14 +273,25 @@ the prose: all six named tests exist, `git status tools/` is clean at `aefcd05`,
 claims hold (`RawIndexDivergence` errors on `got == "F12"`; `DiffsOnly` carries exactly two no-churn
 assertions plus an `n != 4` count check; `assertFKeyLabelFormat` is shared by both format tests and
 errors on `F#I`). One attribution was wrong and is corrected above — `ByIndexNotPosition` does **not**
-pin F3; `TestWindowFKey_NoHoldWindow` does. **Phase 4 is not committed**: its commit gate never fired,
-because the run died at the undelivered node.
+pin F3; `TestWindowFKey_NoHoldWindow` does. Phase 4 landed as **`1470fe3`** once the run was retried
+and its gate approved — correctly labelled `MUX-134 Phase 4: Negative controls`, since the gate text
+interpolates `${completed_phase}` rather than the derived current phase.
 
-Phase 5 stays **0/5** deliberately. A `verify-spec` pass at 17:26 (run `req-code-pr-9c76e908`, retried
-`--from update-spec`) asked for Phase 5 to be closed; the retry skips the `implement` node, so no Phase 5
-work was ever produced, and the repo confirms it — no `scripts/test-*.sh` mentions `@muxcode_fkey`,
-`WindowFKey` or the F-key label, and the working tree holds no new files. Nothing was ticked. The
-behavioural criterion (**send the labelled key, assert the labelled window activates**) remains the one
-that actually retires this defect, and it is still unwritten.
+Phase 5 was held at **0/5** through a `verify-spec` pass at 17:26 on 2026-09-01 (run
+`req-code-pr-9c76e908`, retried `--from update-spec`). That retry skips the `implement` node, so no
+Phase 5 work could have been produced, and the repo confirmed it: no `scripts/test-*.sh` mentioned
+`@muxcode_fkey`, `WindowFKey` or the F-key label, and the working tree held no new files. Nothing was
+ticked. **The refusal was the right call and the record of it is kept deliberately** — the phase was
+asked for before the work existed, and ticking it would have put a fabricated integration test behind
+a commit gate.
 
-Open: Phase 5 (5), plus all 7 acceptance criteria.
+Phase 5 landed on 2026-09-02 as `scripts/test-fkey-labels.sh` and closed 5/5, taking all seven
+acceptance criteria with it.
+
+**Open: nothing.** Every phase and criterion is closed.
+
+**Not marked Complete.** `scripts/test-fkey-labels.sh` is **untracked** — the evidence for all seven
+criteria lives in a file no commit records, and the spec's own standard is that a checkbox describes
+the repo. The phases and criteria are ticked because the script exists and was verified in the working
+tree; the *status* waits on the script being committed, and the move to `completed/` waits on the user
+regardless.
