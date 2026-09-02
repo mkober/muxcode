@@ -10,7 +10,7 @@
 # ungated commit and an uncapped loop edge still fail validation.
 #
 # DEVIATION from the spec checklist: the fixture graph mirrors the builtin
-# req-code-pr's exact shape with SEND nodes in place of its two spawns —
+# spec-to-pr's exact shape with SEND nodes in place of its two spawns —
 # StartSpawn launches real agent windows and AI CLIs, which a hermetic
 # script must not do (same deviation as test-graph-orchestrator.sh). The
 # builtin's own shape is pinned by TestReqCodePRMultiPhaseLoop, and this
@@ -28,14 +28,13 @@
 # after the gated commit, and a clobber conflict failing the spawn node
 # itself — before build, not at commit after a human gate.
 #
-# Sections 9-10 (MUX-131 Phase 5) extend the SAME harness rather than
-# forking a second script, so the two spawn templates cannot drift:
-# story-lifecycle — the other builtin whose implement is a spawn — walks
-# end to end with its worktree output ported to the checkout before build
-# dispatches, and a replacement control kills the worker between
+# Section 9 (MUX-131 Phase 5) extends the SAME harness rather than
+# forking a second script: a replacement control kills the worker between
 # iterations to prove the retention observable (the worker window's pane
 # PIDs) distinguishes a reused worker from a replaced one — without that
-# control, the section-7 retention pin could pass vacuously.
+# control, the section-7 retention pin could pass vacuously. (The former
+# section 9 walked story-lifecycle, the other spawn builtin; that template
+# was removed 2026-09-02 as a duplicate of spec-to-pr's arc.)
 #
 # ISOLATION: scratch BUS_SESSION, scratch repo dir via
 # MUXCODE_SESSION_REPO_DIR, lifecycle log in a temp dir, empty config.
@@ -296,13 +295,9 @@ EOF
   && ok "multi-phase fixture graph validates" \
   || bad "fixture graph failed validation"
 
-"$MUX" graph validate req-code-pr >/dev/null 2>&1 \
-  && ok "real req-code-pr builtin validates" \
-  || bad "req-code-pr builtin failed validation"
-
-"$MUX" graph validate story-lifecycle >/dev/null 2>&1 \
-  && ok "real story-lifecycle builtin validates" \
-  || bad "story-lifecycle builtin failed validation"
+"$MUX" graph validate spec-to-pr >/dev/null 2>&1 \
+  && ok "real spec-to-pr builtin validates" \
+  || bad "spec-to-pr builtin failed validation"
 
 sed 's/"guard": "phase-progress", //; s/{"id": "phase-gate", "type": "wait_human".*/{"id": "phase-gate", "type": "send", "role": "review", "action": "review", "message": "not a gate"},/' \
   "$WORK/multiphase.json" > "$WORK/ungated.json"
@@ -614,108 +609,7 @@ done
   && ok "worker's copy preserved in its worktree after the refusal" \
   || bad "worktree copy lost after the refused port"
 
-# --- 9. story-lifecycle: the second spawn template, end to end -------------
-# Both builtins with a spawn implement are in Defect A's stated scope, but
-# only req-code-pr was exercised — half the scope was unproven. Same
-# deviation as the base fixture: the builtin's shape with g-* namespaced
-# send nodes, the implement spawn REAL. The run intent names Phase 1 so
-# the commit node's phase-complete guard is genuinely evaluated, not
-# passed through on a phase-less intent.
-cat > "$WORK/storylife.json" <<'EOF'
-{"name": "storylife", "start": "requirements",
- "nodes": [
-   {"id": "requirements", "type": "send", "role": "plan", "action": "g-req", "message": "Draft requirements for: ${intent}"},
-   {"id": "req-gate", "type": "wait_human", "message": "Approve the requirements before implementation starts"},
-   {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement per the requirements doc: ${intent}"},
-   {"id": "build", "type": "send", "role": "build", "action": "g-build", "message": "build"},
-   {"id": "test", "type": "send", "role": "test", "action": "g-test", "message": "test"},
-   {"id": "fix", "type": "send", "role": "edit", "action": "g-edit", "message": "fix"},
-   {"id": "review", "type": "send", "role": "review", "action": "g-review", "message": "review"},
-   {"id": "update-spec", "type": "send", "role": "plan", "action": "g-verify", "message": "Check off the completed work"},
-   {"id": "ship-gate", "type": "wait_human", "message": "Approve commit, push, and PR"},
-   {"id": "commit", "type": "send", "role": "commit", "action": "g-commit", "guard": "phase-complete", "message": "Commit the story work"},
-   {"id": "pr", "type": "send", "role": "commit", "action": "g-commit", "message": "Open the PR"}],
- "edges": [
-   {"from": "requirements", "to": "req-gate"},
-   {"from": "req-gate", "to": "implement"},
-   {"from": "implement", "to": "build"},
-   {"from": "build", "to": "test"},
-   {"from": "build", "to": "fix", "outcome": "failure"},
-   {"from": "test", "to": "review"},
-   {"from": "test", "to": "fix", "outcome": "failure"},
-   {"from": "fix", "to": "build", "max_iterations": 3},
-   {"from": "review", "to": "update-spec"},
-   {"from": "review", "to": "fix", "outcome": "failure"},
-   {"from": "update-spec", "to": "ship-gate"},
-   {"from": "ship-gate", "to": "commit"},
-   {"from": "commit", "to": "pr"}]}
-EOF
-"$MUX" graph validate "$WORK/storylife.json" >/dev/null 2>&1 \
-  && ok "story-lifecycle spawn fixture validates (builtin shape, real spawn implement)" \
-  || bad "story-lifecycle fixture failed validation"
-
-write_spawn_spec " " " "
-RID_L="$("$MUX" graph run --file "$WORK/storylife.json" "story lifecycle walk of Phase 1" 2>&1 | grep -o 'Started run [^ ]*' | awk '{print $3}')"
-[ -n "$RID_L" ] && ok "story-lifecycle run started: $RID_L" || bad "story-lifecycle run failed to start"
-
-if wait_and_answer plan g-req; then
-  ok "requirements dispatched to plan before any implementation"
-else
-  bad "story-lifecycle: requirements never dispatched"
-fi
-wait_node_state "$RID_L" req-gate waiting || bad "story-lifecycle: req-gate never waited"
-"$MUX" graph approve "$RID_L" req-gate >/dev/null 2>&1 || bad "story-lifecycle: req-gate approve failed"
-
-if spawn_for_run "$RID_L" && [ -n "$SPAWN_WT" ]; then
-  ok "story-lifecycle worker created with an isolated worktree ($SPAWN_ROLE)"
-else
-  bad "story-lifecycle worker or worktree never appeared for $RID_L"
-fi
-seeded=0
-if wait_request "$SPAWN_ROLE" spawn-task; then
-  case "$CAPTURED" in *"story lifecycle walk of Phase 1"*) seeded=1 ;; esac
-fi
-[ "$seeded" -eq 1 ] && ok "implement seeded with the expanded intent" \
-  || bad "story-lifecycle: seed missing or intent not expanded: ${CAPTURED:-<none>}"
-
-echo "story implementation" > "$SPAWN_WT/story-impl.txt"
-answer_request "$SPAWN_ROLE" "implemented the story"
-
-if wait_and_answer build g-build; then
-  ok "story-lifecycle: build dispatched after the harvest"
-else
-  bad "story-lifecycle: build never dispatched"
-fi
-[ "$(cat "$REPO/story-impl.txt" 2>/dev/null)" = "story implementation" ] \
-  && ok "story-lifecycle: implement output reached the branch before build (Defect A, second template)" \
-  || bad "story-lifecycle: spawn output stranded — ported file missing from checkout"
-
-wait_and_answer test g-test || bad "story-lifecycle: test never dispatched"
-wait_and_answer review g-review || bad "story-lifecycle: review never dispatched"
-complete_current_phase
-wait_and_answer plan g-verify || bad "story-lifecycle: update-spec never dispatched"
-wait_node_state "$RID_L" ship-gate waiting || bad "story-lifecycle: ship-gate never waited"
-"$MUX" graph approve "$RID_L" ship-gate >/dev/null 2>&1 || bad "story-lifecycle: ship-gate approve failed"
-if wait_and_answer commit g-commit; then
-  ok "phase-complete guard passed and the gated commit dispatched"
-else
-  bad "story-lifecycle: commit never dispatched"
-fi
-if wait_and_answer commit g-commit; then
-  ok "PR node dispatched after the gated commit"
-else
-  bad "story-lifecycle: pr never dispatched"
-fi
-
-done_ok=0
-for i in $(seq 1 40); do
-  [ "$(run_state "$RID_L")" = "complete" ] && done_ok=1 && break
-  sleep 0.5
-done
-[ "$done_ok" -eq 1 ] && ok "story-lifecycle walked end-to-end with the work on the branch" \
-  || bad "story-lifecycle run state: $(run_state "$RID_L")"
-
-# --- 10. Replacement control: a dead worker must not read as retained ------
+# --- 9. Replacement control: a dead worker must not read as retained -------
 # The vacuity control for section 7's retention pin: kill the worker
 # between iterations, so re-entry falls back to a fresh start. The same
 # pane-PID observable must now read DIFFERENT — an observable that reads
@@ -771,20 +665,20 @@ fi
 "$MUX" graph cancel "$RID_R" >/dev/null 2>&1
 
 # --- Coverage floor --------------------------------------------------------
-# Floor == max (MUX-131 Phase 5): a clean full pass emits EXACTLY 63
-# checks: 5 validation + daemon + headline start + 3 per-phase implement
+# Floor == max (MUX-131 Phase 5): a clean full pass emits EXACTLY 52
+# checks: 4 validation + daemon + headline start + 3 per-phase implement
 # targets + 3 ordered commits + 4 termination/push + start-at-2 +
 # 2 stuck-phase + 1 spawn fixture + 18 spawn-run + 9 conflict-control +
-# 10 story-lifecycle + 5 replacement-control. Equality, not >=: a floor
+# 5 replacement-control. Equality, not >=: a floor
 # below max lets newly added checks silently raise max above the floor,
 # and a partially short-circuited run can then still report green. It
 # counts checks EXECUTED (pass + fail); a failing run exits 1 regardless
 # of this check, so equality only ever gates green runs.
 total=$((pass + fail))
-if [ "$total" -eq 63 ]; then
+if [ "$total" -eq 52 ]; then
   ok "coverage floor met and equals max ($total checks executed)"
 else
-  bad "coverage floor mismatch — $total checks executed, want exactly 63 (floor == max; a skipped or drifted run must not report green)"
+  bad "coverage floor mismatch — $total checks executed, want exactly 52 (floor == max; a skipped or drifted run must not report green)"
 fi
 
 # --- Summary ---------------------------------------------------------------

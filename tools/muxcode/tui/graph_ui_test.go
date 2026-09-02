@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -362,6 +364,265 @@ func TestGraphUI_IntentPromptFlow(t *testing.T) {
 	}
 	if ui.snap == nil || ui.snap.Run.Intent != "go" {
 		t.Errorf("expected intent 'go' on the run, got %+v", ui.snap.Run)
+	}
+}
+
+// specBranchRepo builds a git checkout on branch with one spec under
+// docs/requirements/<dir>/ and points the session repo dir at it.
+func specBranchRepo(t *testing.T, branch, dir, name, content string) string {
+	t.Helper()
+	root := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		base := []string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@example.com",
+			"-c", "commit.gpgsign=false", "-c", "core.hooksPath="}
+		if out, err := exec.Command("git", append(base, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("checkout", "-q", "-b", branch)
+	specDir := filepath.Join(root, "docs", "requirements", dir)
+	if err := os.MkdirAll(specDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(specDir, name), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-q", "-m", "spec")
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", root)
+	return root
+}
+
+// scratchGraphSessionDir is scratchGraphSession with the bus dir created:
+// the spec confirm writes the active-spec pointer there, which a live
+// session's init provides but a scratch one must.
+func scratchGraphSessionDir(t *testing.T) string {
+	t.Helper()
+	session := scratchGraphSession(t)
+	if err := os.MkdirAll(bus.BusDir(session), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return session
+}
+
+func TestRenderSpecConfirmFrame_States(t *testing.T) {
+	spec := bus.BranchSpec{Branch: "MUX-7-x", Key: "MUX-7", Dir: "backlog",
+		Path: "docs/requirements/backlog/MUX-7-x.md", Intent: "MUX-7 Seven — Phase 1: Go"}
+
+	unset := StripAnsi(RenderSpecConfirmFrame("spec-to-pr", spec, bus.ActiveSpecRelation{}, "", 100))
+	for _, want := range []string{"spec-to-pr", "MUX-7-x", spec.Path, spec.Intent, "(unset)", "sets it"} {
+		if !strings.Contains(unset, want) {
+			t.Errorf("unset frame missing %q:\n%s", want, unset)
+		}
+	}
+	for _, absent := range []string{"switch", "completed/", "✗"} {
+		if strings.Contains(unset, absent) {
+			t.Errorf("unset frame must not show %q:\n%s", absent, unset)
+		}
+	}
+
+	match := StripAnsi(RenderSpecConfirmFrame("t", spec, bus.ActiveSpecRelation{Current: spec.Path, Matches: true}, "", 100))
+	if !strings.Contains(match, "unchanged") || strings.Contains(match, "switch") {
+		t.Errorf("matching pointer must read unchanged, never switch:\n%s", match)
+	}
+
+	other := "docs/requirements/drafts/MUX-3-y.md"
+	diff := StripAnsi(RenderSpecConfirmFrame("t", spec, bus.ActiveSpecRelation{Current: other}, "", 100))
+	if !strings.Contains(diff, other) || !strings.Contains(diff, "switch") {
+		t.Errorf("differing pointer must name the current spec and say it switches:\n%s", diff)
+	}
+
+	done := spec
+	done.Dir = "completed"
+	if f := StripAnsi(RenderSpecConfirmFrame("t", done, bus.ActiveSpecRelation{}, "", 100)); !strings.Contains(f, "completed/") || !strings.Contains(f, "verify") {
+		t.Errorf("completed spec must be flagged:\n%s", f)
+	}
+
+	if f := StripAnsi(RenderSpecConfirmFrame("t", spec, bus.ActiveSpecRelation{}, "boom", 100)); !strings.Contains(f, "boom") {
+		t.Errorf("error must render:\n%s", f)
+	}
+}
+
+func TestRenderIntentPromptFrame_Hint(t *testing.T) {
+	reason := "branch main carries no spec key"
+	if f := StripAnsi(RenderIntentPromptFrame("linear", "", reason, 100)); !strings.Contains(f, reason) {
+		t.Errorf("hint must render:\n%s", f)
+	}
+	if f := StripAnsi(RenderIntentPromptFrame("linear", "", "", 100)); strings.Contains(f, "carries") || !strings.Contains(f, "intent:") {
+		t.Errorf("no hint means no reason line, prompt intact:\n%s", f)
+	}
+}
+
+// No branch spec → the free-text prompt opens WITH the reason. A blank
+// fallback would leave the user guessing why the branch was not used.
+func TestGraphUI_BeginIntentFallsBackWithReason(t *testing.T) {
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", t.TempDir()) // not a git checkout
+	session := scratchGraphSession(t)
+	ui := NewGraphLauncherUI(session)
+	ui.beginIntent("linear", linearGraph())
+	if ui.view != viewGraphIntent {
+		t.Fatalf("expected the intent prompt, got view %d", ui.view)
+	}
+	if ui.intentHint == "" {
+		t.Error("fallback must say why the branch derivation did not apply")
+	}
+	if n := countRunDirs(t, session); n != 0 {
+		t.Errorf("beginIntent must not create a run, found %d", n)
+	}
+}
+
+// The branch names a spec: Escape cancels without touching anything, e
+// edits the derived intent, Enter sets the pointer and launches, and a
+// differing pointer is switched only on confirm.
+func TestGraphUI_SpecConfirmFlow(t *testing.T) {
+	specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
+	session := scratchGraphSessionDir(t)
+	ui := NewGraphLauncherUI(session)
+	want := filepath.Join("docs", "requirements", "backlog", "MUX-7-x.md")
+
+	ui.beginIntent("linear", linearGraph())
+	if ui.view != viewGraphSpecConfirm || ui.pendingSpec.Path != want {
+		t.Fatalf("expected the spec confirm for %s, got view %d spec %+v", want, ui.view, ui.pendingSpec)
+	}
+	if ui.pendingActive.Current != "" {
+		t.Fatalf("pointer starts unset, got %+v", ui.pendingActive)
+	}
+
+	ui.handleKey(27) // Escape
+	if ui.view != viewGraphTemplates || countRunDirs(t, session) != 0 || bus.ReadActiveSpec(session) != "" {
+		t.Fatalf("cancel must return to the picker, create no run, leave the pointer unset (view %d, pointer %q)", ui.view, bus.ReadActiveSpec(session))
+	}
+
+	ui.beginIntent("linear", linearGraph())
+	ui.handleKey('e')
+	if ui.view != viewGraphIntent || !strings.Contains(string(ui.intentInput), "MUX-7 Seven") || !strings.Contains(string(ui.intentInput), "Phase 1") {
+		t.Fatalf("e must open the editor pre-filled with the derived intent, got view %d input %q", ui.view, string(ui.intentInput))
+	}
+
+	ui.beginIntent("linear", linearGraph())
+	ui.handleKey(13) // Enter
+	if ui.view != viewGraphDAG {
+		t.Fatalf("Enter must launch, got view %d", ui.view)
+	}
+	if ui.snap == nil || !strings.Contains(ui.snap.Run.Intent, "MUX-7 Seven — Phase 1: Go") {
+		t.Fatalf("run must carry the derived intent, got %+v", ui.snap)
+	}
+	if got := bus.ReadActiveSpec(session); got != want {
+		t.Fatalf("confirm must set the active spec, got %q", got)
+	}
+
+	other := "docs/requirements/drafts/MUX-3-y.md"
+	if err := bus.WriteActiveSpec(session, other); err != nil {
+		t.Fatal(err)
+	}
+	ui.beginIntent("linear", linearGraph())
+	if ui.pendingActive.Current != other || ui.pendingActive.Matches {
+		t.Fatalf("frame must show the differing pointer, got %+v", ui.pendingActive)
+	}
+	ui.handleKey('y')
+	if ui.view != viewGraphDAG || bus.ReadActiveSpec(session) != want {
+		t.Fatalf("confirming must switch the pointer to the branch spec, got view %d pointer %q", ui.view, bus.ReadActiveSpec(session))
+	}
+	if n := countRunDirs(t, session); n != 2 {
+		t.Errorf("expected two runs, found %d", n)
+	}
+}
+
+// The edit key must not be a bypass: an intent edited after the branch
+// confirm still sets the active spec the frame promised, and the editor
+// says so. Escape from the editor drops the branch spec, so a later plain
+// launch sets nothing (negative control).
+func TestGraphUI_SpecConfirmEditPathSetsPointer(t *testing.T) {
+	specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
+	session := scratchGraphSessionDir(t)
+	ui := NewGraphLauncherUI(session)
+	want := filepath.Join("docs", "requirements", "backlog", "MUX-7-x.md")
+
+	ui.beginIntent("linear", linearGraph())
+	ui.handleKey('e')
+	if !strings.Contains(ui.intentHint, want) {
+		t.Fatalf("editor must state the pointer consequence, hint %q", ui.intentHint)
+	}
+	for _, k := range []byte(" plus") {
+		ui.handleKey(k)
+	}
+	ui.handleKey(13)
+	if ui.view != viewGraphDAG || ui.snap == nil || !strings.HasSuffix(ui.snap.Run.Intent, "Phase 1: Go plus") {
+		t.Fatalf("edited intent must launch, got view %d run %+v", ui.view, ui.snap)
+	}
+	if got := bus.ReadActiveSpec(session); got != want {
+		t.Fatalf("edit path must still set the active spec, got %q", got)
+	}
+
+	if err := bus.ClearActiveSpec(session); err != nil {
+		t.Fatal(err)
+	}
+	ui.beginIntent("linear", linearGraph())
+	ui.handleKey('e')
+	ui.handleKey(27)
+	if ui.pendingSpec.Path != "" {
+		t.Fatal("Escape from the editor must drop the branch spec")
+	}
+	ui.pendingGraph = linearGraph()
+	ui.pendingTemplate = "linear"
+	ui.view = viewGraphIntent
+	for _, k := range []byte{'g', 'o', 13} {
+		ui.handleKey(k)
+	}
+	if ui.view != viewGraphDAG || bus.ReadActiveSpec(session) != "" {
+		t.Fatalf("a plain launch after cancel must set nothing, got view %d pointer %q", ui.view, bus.ReadActiveSpec(session))
+	}
+}
+
+// The confirm re-checks the branch at the keypress: a checkout that moved
+// after the frame was drawn must not launch against the stale spec.
+func TestGraphUI_SpecConfirmRechecksBranchAtKeypress(t *testing.T) {
+	root := specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
+	session := scratchGraphSessionDir(t)
+	ui := NewGraphLauncherUI(session)
+	ui.beginIntent("linear", linearGraph())
+	if ui.view != viewGraphSpecConfirm {
+		t.Fatalf("expected the spec confirm, got view %d", ui.view)
+	}
+
+	if out, err := exec.Command("git", "-C", root, "checkout", "-q", "-b", "main").CombinedOutput(); err != nil {
+		t.Fatalf("git checkout: %v\n%s", err, out)
+	}
+	ui.handleKey(13)
+	if ui.view != viewGraphIntent || ui.intentHint == "" {
+		t.Fatalf("a branch that lost its spec must drop to the prompt with a reason, got view %d hint %q", ui.view, ui.intentHint)
+	}
+	if countRunDirs(t, session) != 0 || bus.ReadActiveSpec(session) != "" {
+		t.Error("stale confirm must neither launch nor set the pointer")
+	}
+}
+
+// The confirm also re-checks the active pointer: one that changed under
+// the frame re-renders with the new consequence and asks again — the
+// stale "(unset) → sets it" must not silently become a switch.
+func TestGraphUI_SpecConfirmRechecksPointerAtKeypress(t *testing.T) {
+	specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
+	session := scratchGraphSessionDir(t)
+	ui := NewGraphLauncherUI(session)
+	ui.beginIntent("linear", linearGraph())
+
+	other := "docs/requirements/drafts/MUX-3-y.md"
+	if err := bus.WriteActiveSpec(session, other); err != nil {
+		t.Fatal(err)
+	}
+	ui.handleKey(13)
+	if ui.view != viewGraphSpecConfirm || ui.specErr == "" || ui.pendingActive.Current != other {
+		t.Fatalf("changed pointer must re-render the confirm with the new consequence, got view %d err %q active %+v", ui.view, ui.specErr, ui.pendingActive)
+	}
+	if countRunDirs(t, session) != 0 || bus.ReadActiveSpec(session) != other {
+		t.Fatal("stale confirm must neither launch nor rewrite the pointer")
+	}
+
+	ui.handleKey(13) // the frame now holds — proceeds and switches
+	if ui.view != viewGraphDAG || bus.ReadActiveSpec(session) != filepath.Join("docs", "requirements", "backlog", "MUX-7-x.md") {
+		t.Fatalf("re-confirm must launch and switch, got view %d pointer %q", ui.view, bus.ReadActiveSpec(session))
 	}
 }
 

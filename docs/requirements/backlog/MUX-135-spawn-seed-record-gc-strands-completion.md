@@ -43,7 +43,7 @@ crossed the one-hour line simply by being substantial pieces of work, which is t
 defect selects for.
 
 Note the recovery here was safe by luck of topology: `update-spec` sits **upstream** of `phase-gate` in
-`req-code-pr`, so `retry --from update-spec` re-enters the gate rather than skipping it. Had the stranded
+`spec-to-pr`, so `retry --from update-spec` re-enters the gate rather than skipping it. Had the stranded
 node been downstream of a satisfied gate, that recovery would have hit
 [`MUX-132`](../completed/MUX-132-graph-retry-launders-gate-approval.md)'s stale-approval path — now
 fixed, but worth noting that recovering from *this* defect routinely means retrying, which is exactly

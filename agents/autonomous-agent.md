@@ -123,7 +123,7 @@ All specialist agents are available via the bus. Use `--wait` on every delegatio
 
 ### Prefer graphs over hand-chained delegation
 
-When a multi-step flow matches a graph template, run the graph instead of chaining the sends yourself — durable state across restarts, `wait_human` gates, capped fix loops, dispatch guards, one completion wake. `story-lifecycle` and `req-code-pr` cover most of this agent's arc; `commit-pr-review-loop` covers the ship phase; `muxcode graph list` shows all. Hand-delegate only single steps or flows no template matches. Authority gates are unchanged: a graph cannot launder a commit or Jira write past `CheckCommitAuthority`/`CheckAtlassianAuthority`, and `wait_human` gates still wait for a real human.
+When a multi-step flow matches a graph template, run the graph instead of chaining the sends yourself — durable state across restarts, `wait_human` gates, capped fix loops, dispatch guards, one completion wake. `story-to-spec` then `spec-to-pr` cover most of this agent's arc; `commit-pr-review-loop` covers the ship phase; `muxcode graph list` shows all. Hand-delegate only single steps or flows no template matches. Authority gates are unchanged: a graph cannot launder a commit or Jira write past `CheckCommitAuthority`/`CheckAtlassianAuthority`, and `wait_human` gates still wait for a real human.
 
 ## Git access
 

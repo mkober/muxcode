@@ -462,11 +462,11 @@ func TestRenderPromptFrame_InputWraps(t *testing.T) {
 // trailing space or full match), and TypeaheadIndex jumps to the first
 // case-insensitive prefix match.
 func TestPromptSuggestAndTypeahead(t *testing.T) {
-	tmpl := []string{"build-test-review", "story-lifecycle", "story-to-spec"}
-	if got := PromptSuggest("run sto", tmpl); got != "ry-lifecycle" {
+	tmpl := []string{"build-test-review", "spec-to-pr", "story-to-spec"}
+	if got := PromptSuggest("run sto", tmpl); got != "ry-to-spec" {
 		t.Errorf("suggest = %q", got)
 	}
-	if got := PromptSuggest("run story-lifecycle", tmpl); got != "" {
+	if got := PromptSuggest("run spec-to-pr", tmpl); got != "" {
 		t.Errorf("a full match must suggest nothing, got %q", got)
 	}
 	if got := PromptSuggest("run ", tmpl); got != "" {
@@ -476,8 +476,8 @@ func TestPromptSuggestAndTypeahead(t *testing.T) {
 		t.Errorf("verbs complete too, got %q", got)
 	}
 
-	if i := TypeaheadIndex(tmpl, "story"); i != 1 {
-		t.Errorf("typeahead jump = %d, want 1", i)
+	if i := TypeaheadIndex(tmpl, "story"); i != 2 {
+		t.Errorf("typeahead jump = %d, want 2", i)
 	}
 	if i := TypeaheadIndex(tmpl, "zzz"); i != -1 {
 		t.Errorf("no match must be -1, got %d", i)
@@ -488,14 +488,14 @@ func TestPromptSuggestAndTypeahead(t *testing.T) {
 // dim after the cursor block at end-of-input, and never mid-string
 // (negative control).
 func TestRenderPromptFrame_GhostSuggestion(t *testing.T) {
-	st := PromptSurfaceState{Input: "run sto", Cursor: 7, Suggest: "ry-lifecycle", Destination: "prompt-agent"}
+	st := PromptSurfaceState{Input: "run sto", Cursor: 7, Suggest: "ry-to-spec", Destination: "prompt-agent"}
 	frame := StripAnsi(RenderPromptFrame(st, 100, 20))
-	if !strings.Contains(frame, "run sto█ry-lifecycle") {
+	if !strings.Contains(frame, "run sto█ry-to-spec") {
 		t.Errorf("ghost must render after the cursor block:\n%s", frame)
 	}
 	st.Cursor = 2
 	frame = StripAnsi(RenderPromptFrame(st, 100, 20))
-	if strings.Contains(frame, "ry-lifecycle") {
+	if strings.Contains(frame, "ry-to-spec") {
 		t.Error("a mid-string cursor must render no ghost (negative control)")
 	}
 }

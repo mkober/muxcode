@@ -22,8 +22,8 @@ var builtinGraphJSON = map[string]string{
   ]
 }`,
 
-	"req-code-pr": `{
-  "name": "req-code-pr",
+	"spec-to-pr": `{
+  "name": "spec-to-pr",
   "description": "Walk the active spec phase by phase in one run: implement, build/test, review, update the spec, gated per-phase commit, loop; stuck phases gate-and-ask; final gate covers push and PR",
   "requires_spec": true,
   "start": "implement",
@@ -58,40 +58,6 @@ var builtinGraphJSON = map[string]string{
     {"from": "loop-check", "to": "implement", "max_iterations_from_spec": true},
     {"from": "loop-check", "to": "final-gate", "outcome": "failure"},
     {"from": "final-gate", "to": "push-pr"}
-  ]
-}`,
-
-	"story-lifecycle": `{
-  "name": "story-lifecycle",
-  "description": "Requirements draft, human approval, implement with fix loop, review, human-gated commit and PR",
-  "start": "requirements",
-  "nodes": [
-    {"id": "requirements", "type": "send", "role": "plan", "action": "update-docs", "message": "Draft a requirements doc for: ${intent}"},
-    {"id": "req-gate", "type": "wait_human", "message": "Approve the requirements before implementation starts"},
-    {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement per the requirements doc: ${intent}"},
-    {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
-    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
-    {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build, test, or review failure"},
-    {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the changes on this branch"},
-    {"id": "update-spec", "type": "send", "role": "plan", "action": "verify-spec", "message": "Verify the implemented changes against the active requirements spec and check off completed criteria and phase steps for: ${intent} — the human sign-off gate follows, so the spec must reflect reality before it"},
-    {"id": "ship-gate", "type": "wait_human", "message": "Approve commit, push, and PR for: ${intent}"},
-    {"id": "commit", "type": "send", "role": "commit", "action": "commit", "guard": "phase-complete", "message": "Stage and commit: ${intent}"},
-    {"id": "pr", "type": "send", "role": "commit", "action": "commit", "message": "Create a PR for the current branch"}
-  ],
-  "edges": [
-    {"from": "requirements", "to": "req-gate"},
-    {"from": "req-gate", "to": "implement"},
-    {"from": "implement", "to": "build"},
-    {"from": "build", "to": "test"},
-    {"from": "build", "to": "fix", "outcome": "failure"},
-    {"from": "test", "to": "review"},
-    {"from": "test", "to": "fix", "outcome": "failure"},
-    {"from": "fix", "to": "build", "max_iterations": 3},
-    {"from": "review", "to": "update-spec"},
-    {"from": "review", "to": "fix", "outcome": "failure"},
-    {"from": "update-spec", "to": "ship-gate"},
-    {"from": "ship-gate", "to": "commit"},
-    {"from": "commit", "to": "pr"}
   ]
 }`,
 

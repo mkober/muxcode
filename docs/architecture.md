@@ -263,7 +263,7 @@ is interrupted only at human gates and terminal states.
 | `wait_event` | Parks at dispatch, released when the named bus event is observed |
 
 ```
-1. muxcode graph run req-code-pr "implement PBP1-4915"
+1. muxcode graph run spec-to-pr "implement PBP1-4915"
 2. Template resolved (project > user > builtin), validated, run dir created
    under BusDir()/graphs/<run-id>/  — run.json, graph.json, nodes/<id>.json
 3. Daemon poll loop: checkGraphRuns() -> bus.StepGraphRuns(session)
@@ -359,7 +359,7 @@ restart; `--render-once` emits a single frame for scripts and tests. Gate approv
 calls `bus.ApproveGraphGate` directly — the same path as the CLI, with no bus-message route into
 it, preserving the rule that a human at the keyboard is the only thing that releases a gate.
 
-Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (5 built-ins),
+Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (7 built-ins),
 `bus/graph_run.go` (durable store), `bus/graph_exec.go` (executor), `cmd/graph.go` (CLI),
 `tui/graph.go` + `tui/graph_ui.go` (interactive surfaces),
 `daemon/daemon.go` (`checkGraphRuns()`). CLI reference:
@@ -367,7 +367,8 @@ Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (5 buil
 
 #### Sequential multi-phase runs (design)
 
-`req-code-pr` originally shipped **one phase per run**. The design recorded in
+`spec-to-pr` (named `req-code-pr` until 2026-09-02, the name completed specs and run ids still
+carry) originally shipped **one phase per run**. The design recorded in
 [MUX-121](requirements/completed/MUX-121-multi-phase-sequential-graph.md) walks a spec's phases in
 order within a single run: implement a phase → build/test → review → `update-spec` → a `wait_human`
 the user approves → commit the work **and** its spec update → loop to the next phase, with one final

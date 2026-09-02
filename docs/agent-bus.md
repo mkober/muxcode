@@ -1543,7 +1543,10 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 
 ```bash
 # Start a run from a built-in template, with intent interpolated into node messages
-muxcode graph run req-code-pr "implement PBP1-4915"
+muxcode graph run spec-to-pr "implement PBP1-4915"
+
+# Omit the intent and it is derived from the branch's spec
+muxcode graph run spec-to-pr
 
 # Run a custom definition — --file must be the first argument after `run`,
 # since a bare first arg is read as a template name
@@ -1574,6 +1577,47 @@ muxcode graph ui --prompt                 # the Prompt surface (MUX-109)
 muxcode graph ui --render-once --width 100 <run-id>
 muxcode graph ui --gates --render-once
 ```
+
+#### Branch-derived intent
+
+`muxcode graph run <template>` with **no intent** derives one from the branch. A branch whose
+leading path segment starts with a tracking key — `MUX-138-github-versioning-releases`, bare
+`MUX-138`, or `feature/MUX-138-slug` — resolves to that spec and builds the intent from it: the
+key, the spec's H1 title, and the first phase heading that still has open checkboxes. The key must
+*lead* its segment, so a slug that merely mentions another spec (`fix-MUX-12-typo`) never resolves
+to it.
+
+Specs resolve by key across three directories in order — **`drafts/` → `backlog/` → `completed/`**
+— work in flight beating planned beating shipped.
+
+The active-spec pointer is handled explicitly, because deriving an intent is also a decision about
+what the run is *about*:
+
+| Pointer state | What happens |
+|---------------|--------------|
+| Unset | Set to the branch's spec; the CLI prints `Active spec set: <path>` |
+| Already the branch's spec | Used as-is, nothing written |
+| Names a **different** spec | **Refused** — `ErrActiveSpecMismatch`, exit 1. Pass an explicit intent, or run `muxcode spec set` first |
+| Branch names no spec | Old behaviour — empty intent, with the reason on stderr as a warning |
+
+The refusal exists because silently repointing the active spec would change what a later
+`update-spec` writes to and what the close-spec guard evaluates, on nothing more than a branch
+name. Switching is a decision the user makes, not a side effect of launching a run.
+
+In the graph launcher (`muxcode graph ui --templates`), a branch that names a spec turns the
+free-text intent prompt into a **confirm frame** showing the branch, the spec, the derived intent,
+and the active-spec consequence:
+
+| Key | Action |
+|-----|--------|
+| `Enter` / `y` | Confirm and start the run |
+| `e` | Edit the derived intent as free text first |
+| `n` / `q` / `Esc` | Cancel |
+
+The frame **re-checks both the branch and the pointer at the keypress**, not just when it was
+drawn — between rendering a confirm and pressing a key, a checkout or a `spec set` elsewhere can
+make the frame describe a world that no longer exists. When the branch names no spec, the ordinary
+free-text prompt appears and states the reason it could not derive one.
 
 Keys in the interactive views: `j`/`k` move, `Enter` descends, `q` goes back (quits from the
 top level), `R` forces a refresh, and `a` / `c` / `r` approve a gate, cancel the run, or retry
