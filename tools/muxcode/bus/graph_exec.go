@@ -430,6 +430,21 @@ func resolveCurrentPhaseText(session string) string {
 	return p.Title
 }
 
+// purgeStaleApproval removes a gate's approved marker left by a previous
+// pass (graph retry --from, or a loop edge re-arming the gate) so a fresh
+// pass demands a fresh approval — a surviving marker would let
+// harvestWaitingNode release the gate instantly, a retried run sailing
+// through its human gate with nobody approving (MUX-132). Fails closed
+// like RetryGraphRun's purge: on an unremovable marker the caller must
+// fail the node, never arm a gate the stale approval can release.
+func purgeStaleApproval(session, runID, nodeID string) error {
+	err := os.Remove(graphApprovalPath(session, runID, nodeID, "approved"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // dispatchNode fires a ready node's work and moves it to running/waiting.
 //
 // A suppressed send means the identical request is already queued or in
@@ -528,23 +543,18 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		finishCondition(session, run, n, outcome)
 
 	case NodeJoin:
-		// The barrier was satisfied when the node was armed; a join
-		// completes immediately.
+		// The barrier was satisfied at arming — a join completes immediately.
 		_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeRunning, nil)
 		finishNode(session, run, n, OutcomeSuccess, "")
 
 	case NodeWaitHuman:
 		prompt := interpolateGraphMessage(session, n.Message, run.Intent, "")
-		// A fresh pass through a gate requires a fresh approval: purge any
-		// approved marker left by a previous pass (graph retry --from, or a
-		// loop edge re-arming the gate). Without this, harvestWaitingNode
-		// sees the stale marker and releases the gate instantly — a retried
-		// run would sail through its human gate with nobody approving.
-		_ = os.Remove(graphApprovalPath(session, run.ID, n.ID, "approved"))
-		// The pending marker is informational (surfaced by graph status);
-		// the release signal is the approved marker plus the edit
-		// notification below, so a marker write failure is logged but
-		// does not block the gate.
+		if err := purgeStaleApproval(session, run.ID, n.ID); err != nil {
+			finishNode(session, run, n, OutcomeFailure,
+				fmt.Sprintf("cannot purge stale approval for gate %q: %v", n.ID, err))
+			return
+		}
+		// The pending marker is informational — a write failure logs, never blocks the gate.
 		if err := os.MkdirAll(graphApprovalsDir(session, run.ID), 0755); err != nil {
 			LogLifecycle(session, "warn", "daemon", "graph-gate-marker-error",
 				fmt.Sprintf("%s: %s: %v", run.ID, n.ID, err))
@@ -561,13 +571,10 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 				run.ID, n.ID, prompt, run.ID, n.ID), "")
 		_ = SendNoCC(session, gate)
 		_ = Notify(session, "edit")
-		// Gate surfacing is the control pane's job: it switches itself to
-		// Pending Gates on the next tick (MUX-108). The graph popups were
-		// removed with the pane's arrival — no modal fallback remains.
+		// Gate surfacing is the control pane's job (MUX-108) — no modal fallback remains.
 
 	case NodeWaitEvent:
-		// Parked here; harvestWaitingNode releases it when a bus message
-		// with the node's event action is observed.
+		// Parked — harvestWaitingNode releases it on the node's event action.
 		_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeWaiting, nil)
 	}
 }

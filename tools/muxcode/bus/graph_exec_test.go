@@ -779,6 +779,72 @@ func TestExecRetryPurgeFailureFailsClosed(t *testing.T) {
 	}
 }
 
+// TestExecDispatchPurgeFailureFailsClosed pins the dispatch-time purge's
+// error contract (MUX-132 post-close finding): when a stale approved
+// marker cannot be removed as the gate arms, the node must FAIL — never
+// reach waiting, where harvestWaitingNode would release it on the
+// surviving marker and relaunder the approval through the dispatch door.
+func TestExecDispatchPurgeFailureFailsClosed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root — directory permissions cannot block os.Remove")
+	}
+	g := &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{
+			{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "ship it"},
+		},
+		Edges: []Edge{{From: "a", To: "gate"}, {From: "gate", To: "c"}},
+	}
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+
+	// Plant a stale marker, then make it un-removable before the gate dispatches.
+	approvals := graphApprovalsDir(runTestSession, run.ID)
+	if err := os.MkdirAll(approvals, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(graphApprovalPath(runTestSession, run.ID, "gate", "approved"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	if err := os.Chmod(approvals, 0555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(approvals, 0755) })
+
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeFailed {
+		t.Fatalf("gate state %q after failed purge, want failed — never waiting on a stale approval", s)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodePending {
+		t.Fatalf("c state %q, want pending — the gated node must not fire", s)
+	}
+	step(t, runTestSession, run.ID)
+	got, _ := ReadGraphRun(runTestSession, run.ID)
+	if got.State != GraphRunFailed {
+		t.Fatalf("run state %q, want failed — the refused purge must surface loudly", got.State)
+	}
+
+	// Positive control: restored permission → retry re-arms, dispatch purges and waits.
+	if err := os.Chmod(approvals, 0755); err != nil {
+		t.Fatalf("restore chmod: %v", err)
+	}
+	if _, err := RetryGraphRun(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("gate state %q after restore, want waiting — positive control", s)
+	}
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "gate", "approved")); !os.IsNotExist(err) {
+		t.Fatalf("approved marker survived dispatch (err=%v) — the purge must remove it", err)
+	}
+}
+
 // TestExecRetryBelowParallelGateCutRearmsAll pins the cut form of the
 // re-arm (review finding, 2026-08-31): with the target fed by two
 // parallel branches each behind its own satisfied gate, NO single gate
