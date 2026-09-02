@@ -103,12 +103,12 @@ Out of the box, MuxCode uses Claude Code for orchestration roles and OpenCode fo
 | ------------------------------------------------ | ----------- | ------------------------------- |
 | edit                                             | Claude Code | `claude-fable-5-1`             |
 | plan                                             | Claude Code | `claude-opus-5`               |
-| review                                           | OpenCode    | `opencode-go/mimo-v2.5-pro`    |
-| analyze                                          | OpenCode    | `opencode-go/qwen3.6-plus`     |
-| build, test, serve, deploy, run, watch, commit   | OpenCode    | `opencode-go/minimax-m2.7`     |
+| review, analyze                                  | OpenCode    | `opencode-go/qwen3.7-plus`     |
+| build, test, serve, deploy, run, watch           | OpenCode    | `opencode-go/minimax-m3`       |
+| commit                                           | OpenCode    | `opencode-go/minimax-m2.7`     |
 | api                                              | Claude Code | `claude-sonnet-5`              |
 
-OpenCode Go models are available through [OpenCode Go](https://opencode.ai/go). Override the model per role with `MUXCODE_{ROLE}_MODEL` for OpenCode roles (e.g. `MUXCODE_BUILD_MODEL=opencode-go/minimax-m2.7`) or `MUXCODE_{ROLE}_CLAUDE_MODEL` for Claude Code roles. Override the CLI provider per role with `MUXCODE_{ROLE}_CLI`.
+OpenCode Go models are available through [OpenCode Go](https://opencode.ai/go). Override the model per role with `MUXCODE_{ROLE}_MODEL` for OpenCode roles (e.g. `MUXCODE_BUILD_MODEL=opencode-go/minimax-m3`) or `MUXCODE_{ROLE}_CLAUDE_MODEL` for Claude Code roles. Override the CLI provider per role with `MUXCODE_{ROLE}_CLI`.
 
 ### Recommended multi-provider configuration
 

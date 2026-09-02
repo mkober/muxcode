@@ -1811,13 +1811,13 @@ Examples:
 
 ```bash
 # Switch 3 agents to OpenCode
-muxcode reload build test review --cli opencode --model opencode-go/minimax-m2.5
+muxcode reload build test review --cli opencode --model opencode-go/minimax-m3
 
 # Switch ALL agents to OpenCode
-muxcode reload --all --cli opencode --model opencode-go/minimax-m2.5
+muxcode reload --all --cli opencode --model opencode-go/minimax-m3
 
 # Switch only Claude agents to OpenCode (leaves OpenCode agents untouched)
-muxcode reload --all --provider claude --cli opencode --model opencode-go/minimax-m2.5
+muxcode reload --all --provider claude --cli opencode --model opencode-go/minimax-m3
 ```
 
 Core code: `bus/reload.go`, `bus/reload_batch.go`, `cmd/reload.go`.
