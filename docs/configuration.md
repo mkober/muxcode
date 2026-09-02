@@ -95,9 +95,13 @@ Built-in defaults by role:
 
 | Roles | Default model |
 |-------|---------------|
-| `edit`, `review` | `claude-opus-5` |
-| `api`, `deploy`, `run`, `watch`, `commit` | `claude-sonnet-4-5` |
-| all others (`build`, `test`, `docs`, `research`, …) | claude CLI default |
+| `edit`, `auto` | `claude-fable-5-1` (flagship) |
+| `plan`/`planner`, `review`, `analyze`/`analyst` | `claude-opus-5` |
+| `build`, `test`, `api`, `deploy`, `run`/`runner`, `watch`, `commit`/`git`, `serve` | `claude-sonnet-5` |
+| any other role | claude CLI default (no `--model` passed) |
+
+Source of truth: `RoleClaudeModelDefault()` in `bus/launch.go`, pinned per role by
+`TestRoleClaudeModelDefault`.
 
 Override with env vars (resolution order: per-role → global → built-in default):
 
@@ -110,7 +114,7 @@ Example — downgrade review to Sonnet, use Haiku for build/test:
 
 ```bash
 # ~/.config/muxcode/config
-MUXCODE_REVIEW_CLAUDE_MODEL=claude-sonnet-4-5
+MUXCODE_REVIEW_CLAUDE_MODEL=claude-sonnet-5
 MUXCODE_BUILD_CLAUDE_MODEL=claude-haiku-4-5
 MUXCODE_TEST_CLAUDE_MODEL=claude-haiku-4-5
 ```

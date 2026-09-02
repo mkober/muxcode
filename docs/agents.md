@@ -114,7 +114,7 @@ Key differences from the Claude Code edit agent:
 | Workflow state transitions | PostToolUse hooks | Daemon-side `checkNonHookEdits()` via `git diff --stat` polling |
 | Compact | `/compact` slash command | OpenCode auto-compaction + `muxcode session compact` |
 | Startup context | Self-addressed inbox message | Memory context appended to SharedPrompt |
-| Model | `claude-opus-5` | `opencode-go/deepseek-v4-pro` (configurable via `MUXCODE_EDIT_MODEL`) |
+| Model | `claude-fable-5-1` | `opencode-go/deepseek-v4-pro` (configurable via `MUXCODE_EDIT_MODEL`) |
 
 All delegation rules, bus messaging, and agent coordination remain identical — only the enforcement mechanism changes.
 
@@ -495,10 +495,10 @@ muxcode reload edit --model claude-opus-5 --compact
 muxcode reload --all
 
 # Reload multiple specific agents with provider/model override
-muxcode reload build test review --cli opencode --model opencode-go/minimax-m2.5
+muxcode reload build test review --cli opencode --model opencode-go/minimax-m3
 
 # Reload all agents currently on Claude, switching them to OpenCode
-muxcode reload --all --provider claude --cli opencode --model opencode-go/minimax-m2.5
+muxcode reload --all --provider claude --cli opencode --model opencode-go/minimax-m3
 ```
 
 ### Bulk reload
@@ -510,7 +510,7 @@ Switch multiple agents to a different provider/model in a single operation — u
 Pass multiple role names as positional arguments. All agents are reloaded sequentially (3s gap) with the same `--cli`/`--model` overrides:
 
 ```bash
-muxcode reload build test review --cli opencode --model opencode-go/minimax-m2.5
+muxcode reload build test review --cli opencode --model opencode-go/minimax-m3
 ```
 
 Per-agent results are printed as each completes. Failed agents don't abort the batch — all agents are attempted. Exit code is non-zero if any agent failed.
@@ -521,7 +521,7 @@ Combined with `--all`, the `--provider` flag limits the reload to agents current
 
 ```bash
 # Only switch Claude agents to OpenCode (OpenCode agents are untouched)
-muxcode reload --all --provider claude --cli opencode --model opencode-go/minimax-m2.5
+muxcode reload --all --provider claude --cli opencode --model opencode-go/minimax-m3
 ```
 
 `--provider` requires `--all` and is rejected without it.
@@ -531,7 +531,7 @@ muxcode reload --all --provider claude --cli opencode --model opencode-go/minima
 `--all` now accepts `--cli` and `--model` flags — applies the same override to every active agent:
 
 ```bash
-muxcode reload --all --cli opencode --model opencode-go/minimax-m2.5
+muxcode reload --all --cli opencode --model opencode-go/minimax-m3
 ```
 
 Core code: `bus/reload_batch.go` (`ReloadBatch()`, `ReloadResult`, `ActiveAgentStatuses()`).

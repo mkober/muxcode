@@ -106,7 +106,7 @@ func ResolveProvider(role string) Provider {
 // constructing a full Provider. Used for logging and configuration.
 // Resolution: runtime override → per-role env → global env → role default.
 // Command-execution roles (build, test, deploy, run, watch, commit)
-// default to "opencode" (MiniMax M2.5 Free via OpenCode Zen).
+// default to "opencode" (MiniMax M3 via OpenCode Zen).
 //
 // This function reads runtime overrides without mutating process env vars
 // (no os.Setenv). Callers that need env-side-effects for downstream model
@@ -137,7 +137,7 @@ func ResolveProviderCLI(role string) string {
 }
 
 // roleDefaultCLI returns the built-in default CLI for a role.
-// Command-execution roles default to OpenCode (MiniMax M2.5 Free).
+// Command-execution roles default to OpenCode (MiniMax M3).
 // All other roles default to Claude Code (hook support, orchestration).
 func roleDefaultCLI(role string) string {
 	switch role {

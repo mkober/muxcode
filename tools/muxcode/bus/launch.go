@@ -208,7 +208,7 @@ func RoleCodexModelDefault(role string) string {
 func RoleClaudeModelDefault(role string) string {
 	switch role {
 	case "edit", "auto":
-		return "claude-fable-5"
+		return "claude-fable-5-1"
 	case "plan", "planner", "review", "analyze", "analyst":
 		return "claude-opus-5"
 	case "build", "test", "api", "deploy", "run", "runner", "watch", "commit", "git", "serve":
@@ -225,8 +225,7 @@ func RoleClaudeModelDefault(role string) string {
 // first request. qwen3.5-plus and minimax-m2.5 were both such phantoms.
 //
 // review/analyze → Qwen 3.7 Plus (strong analytical model).
-// build/test/deploy/run/watch → MiniMax M3 (fast command execution).
-// commit → MiniMax M2.7 (git operations).
+// build/test/deploy/run/watch/commit → MiniMax M3 (fast command execution and git).
 func RoleOpenCodeModelDefault(role string) string {
 	switch role {
 	case "edit":
@@ -235,10 +234,8 @@ func RoleOpenCodeModelDefault(role string) string {
 		return "opencode-go/qwen3.7-plus"
 	case "research":
 		return "opencode-go/deepseek-v4-pro"
-	case "build", "test", "deploy", "run", "runner", "watch", "serve":
+	case "build", "test", "deploy", "run", "runner", "watch", "serve", "commit", "git":
 		return "opencode-go/minimax-m3"
-	case "commit", "git":
-		return "opencode-go/minimax-m2.7"
 	default:
 		return ""
 	}

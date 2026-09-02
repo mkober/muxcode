@@ -918,13 +918,13 @@ else
 
 # Default AI CLI provider — overrides built-in role defaults.
 # Built-in defaults: edit/review/analyze/api → claude,
-#   build/test/deploy/run/watch/commit → opencode (MiniMax M2.5 Free).
+#   build/test/deploy/run/watch/commit → opencode (MiniMax M3).
 # Uncomment to force all roles to a single provider:
 # MUXCODE_AGENT_CLI=$default_cli
 
 # Per-role overrides (uncomment to customize):
 # MUXCODE_REVIEW_CLI=codex
-# MUXCODE_BUILD_MODEL=anthropic/claude-sonnet-4-5
+# MUXCODE_BUILD_MODEL=anthropic/claude-sonnet-5
 EOF
   ok "Created config at ~/.config/muxcode/config"
 fi

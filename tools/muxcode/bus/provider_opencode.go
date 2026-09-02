@@ -400,7 +400,7 @@ func resolveOpenCodeModel(role string) string {
 		return model
 	}
 
-	// OpenCode role default (MiniMax M2.5 Free for command-execution roles)
+	// OpenCode role default (MiniMax M3 for command-execution roles)
 	if model := RoleOpenCodeModelDefault(role); model != "" {
 		return model
 	}
@@ -414,7 +414,7 @@ func resolveOpenCodeModel(role string) string {
 		return ""
 	}
 
-	// Translate: claude-sonnet-4-5 -> anthropic/claude-sonnet-4-5
+	// Translate: claude-sonnet-5 -> anthropic/claude-sonnet-5
 	if !strings.Contains(claudeModel, "/") {
 		return "anthropic/" + claudeModel
 	}
