@@ -27,15 +27,42 @@ import (
 // daemon-originated traffic.
 const graphSender = "daemon"
 
-// graphSpawnFn dispatches a worker for spawn/map nodes. Package variable
-// so unit tests can run graphs without tmux — StartSpawn creates real
-// tmux windows.
-var graphSpawnFn = func(session, role, task, owner string) (string, error) {
-	entry, err := StartSpawn(session, role, task, owner, true)
+// graphSpawnFn starts a FRESH worker for spawn/map nodes and stamps it
+// with the run+node reuse key. Package variable so unit tests can run
+// graphs without tmux — StartSpawn creates real tmux windows. Reuse of an
+// existing worker is acquireSpawnWorker's job, deliberately outside this
+// seam so tests that stub it still exercise the reuse decision. The key
+// is stamped after StartSpawn returns so its CLI-shared signature stays
+// put; a failed stamp only disables reuse for this one worker, degrading
+// to the pre-MUX-131 fresh-start-per-iteration behavior.
+var graphSpawnFn = func(session, role, task, owner, runID, nodeID string) (string, error) {
+	// Ownership rides the entry from birth (StartSpawnOwned) — a
+	// post-creation stamp had a race window and a swallowed error path.
+	entry, err := StartSpawnOwned(session, role, task, owner, true, runID, nodeID)
 	if err != nil {
 		return "", err
 	}
 	return entry.SpawnRole, nil
+}
+
+// acquireSpawnWorker reuses the run+node's live worker when one exists,
+// falling back to a fresh spawn (MUX-131 Defect B: an unconditional
+// StartSpawn built a new worker per loop re-entry — three workers, one
+// task, one run — discarding each predecessor's context and re-paying
+// boot cost). A reseed failure also falls back: a fresh worker beats a
+// wedged node.
+func acquireSpawnWorker(session, runID, nodeID, role, task string) (string, error) {
+	if entry, ok := FindLiveSpawn(session, runID, nodeID); ok {
+		_, err := ReseedSpawn(session, entry, task)
+		if err == nil {
+			LogLifecycle(session, "info", "daemon", "graph-spawn-reuse",
+				fmt.Sprintf("%s: %s reused worker %s", runID, nodeID, entry.SpawnRole))
+			return entry.SpawnRole, nil
+		}
+		LogLifecycle(session, "warn", "daemon", "graph-spawn-reuse-failed",
+			fmt.Sprintf("%s: %s reseed of %s failed (%v) — starting fresh", runID, nodeID, entry.SpawnRole, err))
+	}
+	return graphSpawnFn(session, role, task, graphSender, runID, nodeID)
 }
 
 // graphApprovalsDir holds wait_human gate markers for a run:
@@ -182,23 +209,35 @@ func guardAllowsDispatch(session string, run *GraphRun, g *Graph, n *Node) bool 
 	return true
 }
 
-// activeSpecFile resolves the active spec pointer to an absolute path.
-// ok=false with transient=true means the repo dir was unresolvable this
-// tick (caller leaves the node ready to retry); ok=false otherwise means
-// no active spec is set.
-func activeSpecFile(session string) (path string, ok, transient bool) {
+// activeSpecFile resolves the active spec pointer to an absolute path
+// through ResolveSpecPath, the single pointer boundary — the pointer is
+// agent-written data, and every caller here goes on to read the file it
+// names, so a pointer that cannot be proven inside the repo must never
+// resolve (review must-fix 2026-09-01: absolute pointers used to be
+// followed unconditionally, bypassing the boundary entirely).
+//
+// The four states are distinct and none may collapse into another:
+// ok=true resolves; transient=true means the repo dir was unresolvable
+// this tick, so containment is unprovable either way (caller postpones —
+// the node stays ready to retry); refused=true means the repo dir IS
+// known and the pointer resolves outside it (caller fails loudly — a
+// refused pointer reading as "unset" would make the close-spec guard
+// pass through and close out against nothing); all-false means no
+// active spec is set.
+func activeSpecFile(session string) (path string, ok, transient, refused bool) {
 	specRel := ReadActiveSpec(session)
 	if specRel == "" {
-		return "", false, false
-	}
-	if filepath.IsAbs(specRel) {
-		return specRel, true, false
+		return "", false, false, false
 	}
 	repo := SessionRepoDir(session)
 	if repo == "" {
-		return "", false, true
+		return "", false, true, false
 	}
-	return filepath.Join(repo, specRel), true, false
+	full := ResolveSpecPath(repo, specRel)
+	if full == "" {
+		return "", false, false, true
+	}
+	return full, true, false, false
 }
 
 // specCompleteGuardAllows blocks dispatch while the active spec has ANY
@@ -207,9 +246,14 @@ func activeSpecFile(session string) (path string, ok, transient bool) {
 // spec declines loudly: closing out against an unreadable spec is as
 // wrong as closing an open one.
 func specCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
-	path, ok, transient := activeSpecFile(session)
+	path, ok, transient, refused := activeSpecFile(session)
 	if transient {
 		return false // node stays ready, retried next tick
+	}
+	if refused {
+		finishNode(session, run, n, OutcomeFailure,
+			"spec-complete guard: active spec pointer resolves outside the repo — refusing to read it")
+		return false
 	}
 	if !ok {
 		return true
@@ -238,9 +282,14 @@ func phaseCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
 	if phase == 0 {
 		return true
 	}
-	path, ok, transient := activeSpecFile(session)
+	path, ok, transient, refused := activeSpecFile(session)
 	if transient {
 		return false // node stays ready, retried next tick
+	}
+	if refused {
+		finishNode(session, run, n, OutcomeFailure,
+			"phase-complete guard: active spec pointer resolves outside the repo — refusing to read it")
+		return false
 	}
 	if !ok {
 		return true
@@ -271,9 +320,14 @@ func phaseCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
 // gate-and-ask trigger, not a dead end (MUX-121 decision 4). No active
 // spec declines — never commit blind; transient repo-dir postpones.
 func phaseProgressGuardAllows(session string, run *GraphRun, g *Graph, n *Node) bool {
-	path, ok, transient := activeSpecFile(session)
+	path, ok, transient, refused := activeSpecFile(session)
 	if transient {
 		return false // node stays ready, retried next tick
+	}
+	if refused {
+		finishNode(session, run, n, OutcomeFailure,
+			"phase-progress guard: active spec pointer resolves outside the repo — refusing to read it")
+		return false
 	}
 	if !ok {
 		declineGuard(session, run, n, "phase-progress guard declined: no active spec to verify the phase against")
@@ -341,11 +395,12 @@ func interpolateGraphMessage(session, msg, intent, item string) string {
 // frontier the commit ships — see SpecJustCompletedPhase for why the
 // commit must not use ${current_phase}.
 func resolveCompletedPhaseText(session string) string {
-	path, ok, transient := activeSpecFile(session)
+	path, ok, transient, _ := activeSpecFile(session)
 	if transient {
 		return "(completed phase unresolved — repo dir unavailable this tick)"
 	}
 	if !ok {
+		// refused folds in: a pointer outside the repo yields no phase text.
 		return "(no completed phase)"
 	}
 	p, err := SpecJustCompletedPhase(path)
@@ -360,11 +415,12 @@ func resolveCompletedPhaseText(session string) string {
 // beat a leftover placeholder in an agent-facing message, and a transient
 // repo-dir failure must not masquerade as "no open phase".
 func resolveCurrentPhaseText(session string) string {
-	path, ok, transient := activeSpecFile(session)
+	path, ok, transient, _ := activeSpecFile(session)
 	if transient {
 		return "(current phase unresolved — repo dir unavailable this tick)"
 	}
 	if !ok {
+		// refused folds in: a pointer outside the repo yields no phase text.
 		return "(no open phase)"
 	}
 	p, err := SpecCurrentPhase(path)
@@ -425,7 +481,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 
 	case NodeSpawn:
 		msg := interpolateGraphMessage(session, n.Message, run.Intent, "")
-		spawnID, err := graphSpawnFn(session, n.Role, msg, graphSender)
+		spawnID, err := acquireSpawnWorker(session, run.ID, n.ID, n.Role, msg)
 		if err != nil {
 			finishNode(session, run, n, OutcomeFailure, "spawn failed: "+err.Error())
 			return
@@ -435,17 +491,16 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		})
 
 	case NodeMap:
-		// v1 item source: a comma-separated literal list. One worker per
-		// item, ${item} interpolated into each worker's message.
+		// One worker per literal item; reuse keyed per item index so distinct members never share a worker.
 		items := splitMapItems(n.Items)
 		if len(items) == 0 {
 			finishNode(session, run, n, OutcomeFailure, "map node has no items")
 			return
 		}
 		var ids []string
-		for _, item := range items {
+		for i, item := range items {
 			msg := interpolateGraphMessage(session, n.Message, run.Intent, item)
-			spawnID, err := graphSpawnFn(session, n.Role, msg, graphSender)
+			spawnID, err := acquireSpawnWorker(session, run.ID, fmt.Sprintf("%s#%d", n.ID, i), n.Role, msg)
 			if err != nil {
 				finishNode(session, run, n, OutcomeFailure, "map spawn failed: "+err.Error())
 				return
@@ -458,13 +513,19 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 
 	case NodeCondition:
 		ctx := &ChainContext{Session: session, Output: predecessorOutput(session, run, g, n.ID)}
-		passed, _ := EvaluateConditions(n.Conditions, ctx)
+		passed, results := EvaluateConditions(n.Conditions, ctx)
+		_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeRunning, nil)
+		// See unevaluatableCondition: a broken predicate is not a branch.
+		if detail := unevaluatableCondition(results); detail != "" {
+			finishNode(session, run, n, OutcomeFailure, detail)
+			return
+		}
 		outcome := OutcomeFailure
 		if passed {
 			outcome = OutcomeSuccess
 		}
-		_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeRunning, nil)
-		finishNode(session, run, n, outcome, "")
+		// See finishCondition: a branch selection finishes done.
+		finishCondition(session, run, n, outcome)
 
 	case NodeJoin:
 		// The barrier was satisfied when the node was armed; a join
@@ -558,6 +619,34 @@ func predecessorOutput(session string, run *GraphRun, g *Graph, nodeID string) s
 	return strings.Join(parts, "\n")
 }
 
+// unevaluatableCondition returns a detail string when a predicate could
+// not be interpreted, or "" when every predicate was genuinely tested.
+// EvaluateConditions has no error return: an uninterpretable predicate
+// arrives as a ConditionResult carrying "unknown condition type" and
+// Passed false, otherwise identical to an honest false. That is the only
+// error signal available, so it bounds what any caller can distinguish.
+func unevaluatableCondition(results []ConditionResult) string {
+	for _, r := range results {
+		if r.Detail == "unknown condition type" {
+			return "condition evaluation error: unknown condition type " + r.Type
+		}
+	}
+	return ""
+}
+
+// finishCondition finishes a condition node that evaluated cleanly. It
+// always lands on GraphNodeDone — a condition is a branch selector, and
+// choosing the false branch is not a failure — while still recording the
+// outcome that edge matching keys on. Genuine evaluation errors go
+// through finishNode instead and keep the failed state (MUX-133).
+func finishCondition(session string, run *GraphRun, n *Node, outcome string) {
+	_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeDone, func(s *GraphNodeStatus) {
+		s.Outcome = outcome
+	})
+	LogLifecycle(session, "info", "daemon", "graph-node-done",
+		fmt.Sprintf("%s: %s -> %s", run.ID, n.ID, outcome))
+}
+
 func finishNode(session string, run *GraphRun, n *Node, outcome, output string) {
 	terminal := GraphNodeDone
 	if outcome == OutcomeFailure {
@@ -574,7 +663,11 @@ func finishNode(session string, run *GraphRun, n *Node, outcome, output string) 
 }
 
 // harvestRunningNode checks whether a dispatched node's work completed
-// and, if so, finishes the node with a derived outcome.
+// and, if so, finishes the node with a derived outcome. A spawn or map
+// success is finished only after portSpawnGroup lands the worktree
+// output uncommitted into the checkout working tree (MUX-131 Defect A,
+// graph_port.go) — a port failure fails the node here, before any
+// downstream node runs, and no porting path ever creates a commit.
 func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 	now := time.Now().Unix()
 	if n.TimeoutSec > 0 && st.StartedAt > 0 && now-st.StartedAt > int64(n.TimeoutSec) {
@@ -607,11 +700,25 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 	case NodeSpawn, NodeMap:
 		_, _ = RefreshSpawnStatus(session)
 		outcome, done := spawnGroupOutcome(session, st.TaskID)
-		if done {
-			finishNode(session, run, n, outcome, "")
+		if !done {
+			redriveStalledSpawns(session, run, n, st, now)
 			return
 		}
-		redriveStalledSpawns(session, run, n, st, now)
+		output := ""
+		if outcome == OutcomeSuccess {
+			summary, perr := portSpawnGroup(session, st.TaskID)
+			if errors.Is(perr, errPortTransient) {
+				return // node stays running, harvest retried next tick
+			}
+			if perr != nil {
+				finishNode(session, run, n, OutcomeFailure, "harvest: "+perr.Error())
+				return
+			}
+			output = summary
+			LogLifecycle(session, "info", "daemon", "graph-harvest",
+				fmt.Sprintf("%s: %s — %s", run.ID, n.ID, summary))
+		}
+		finishNode(session, run, n, outcome, output)
 	}
 }
 
@@ -731,7 +838,11 @@ var graphRedriveFn = func(session, role string, task Task) int {
 
 // spawnGroupOutcome inspects the comma-separated spawn ids of a spawn or
 // map node. done is true when no worker is still running; the outcome is
-// success only when every worker completed.
+// success only when every worker completed. A persistent (graph-keyed)
+// worker is never reaped while its run is in flight, so for it a running
+// entry whose CURRENT seed is responded IS this iteration's completion —
+// ReseedSpawn moves SeedMsgID before the next iteration starts, so a
+// prior pass's reply can never satisfy a new dispatch.
 func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 	entries, err := ReadSpawnEntries(session)
 	if err != nil {
@@ -751,6 +862,9 @@ func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 		}
 		switch e.Status {
 		case "running":
+			if e.RunID != "" && spawnHasResponded(session, e) {
+				continue // persistent worker, iteration answered — see doc comment
+			}
 			return "", false
 		case "completed":
 			// success — no change

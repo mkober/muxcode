@@ -11,7 +11,7 @@ On non-hook providers (OpenCode, Codex), `SendWakeUp` injects `type: response` p
 - 26 messages reached the edit inbox in 3m30s; `test`'s context climbed to 84.9K tokens with real spend accruing per repeat
 - At drain time, `build`'s inbox held 5800 bytes of almost entirely `test [response:response]` payloads
 - Consuming the echoes stopped the loop immediately (5800 → 0 bytes; fleet-wide rate 0/60s thereafter)
-- Downstream amplification: the same storm's auto-CC traffic into a non-consuming edit inbox drove the sustained `verify-spec` echo burst documented in [`verify-spec-stale-review-refire`](./MUX-007-verify-spec-stale-review-refire.md) (impact item 5) — one echo bug feeding another
+- Downstream amplification: the same storm's auto-CC traffic into a non-consuming edit inbox drove the sustained `verify-spec` echo burst documented in [`verify-spec-stale-review-refire`](../completed/MUX-007-verify-spec-stale-review-refire.md) (impact item 5) — one echo bug feeding another
 
 ### Mechanism
 

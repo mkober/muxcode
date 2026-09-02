@@ -18,12 +18,13 @@ func fakeSpawns(t *testing.T, session string) *[]string {
 	var tasks []string
 	orig := graphSpawnFn
 	n := 0
-	graphSpawnFn = func(sess, role, task, owner string) (string, error) {
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
 		n++
 		id := fmt.Sprintf("spawn-fake%04d", n)
 		tasks = append(tasks, role+": "+task)
 		entry := SpawnEntry{ID: id, Role: role, SpawnRole: id, Owner: owner,
-			Task: task, Status: "completed", StartedAt: time.Now().Unix()}
+			Task: task, Status: "completed", StartedAt: time.Now().Unix(),
+			RunID: runID, NodeID: nodeID}
 		if err := appendSpawnEntry(sess, entry); err != nil {
 			t.Fatalf("append spawn entry: %v", err)
 		}
@@ -587,7 +588,7 @@ func TestExecHumanGateRetryRequiresFreshApproval(t *testing.T) {
 	}
 
 	// Retry from the gate: it must wait for a NEW approval.
-	if err := RetryGraphRun(runTestSession, run.ID, "gate"); err != nil {
+	if _, err := RetryGraphRun(runTestSession, run.ID, "gate"); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 	step(t, runTestSession, run.ID)
@@ -606,6 +607,311 @@ func TestExecHumanGateRetryRequiresFreshApproval(t *testing.T) {
 	step(t, runTestSession, run.ID)
 	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeDone {
 		t.Errorf("gate state %q after fresh approval, want done", s)
+	}
+}
+
+// TestExecRetryBelowGateRearmsGate is the MUX-132 Phase 2 acceptance
+// test — the Phase 1 characterization test
+// (TestExecRetryBelowGateConsumesStaleApproval) with its assertions
+// inverted, updated rather than deleted so the hole cannot silently
+// return. A retry whose --from target sits below a satisfied wait_human
+// gate must re-target to the gate: re-arm it, purge the stale approval,
+// leave the gated node un-fired, and ask edit for a SECOND approval —
+// never resume on an approval granted for different content (observed
+// 2026-08-31: retry --from commit after the tree changed post-approval).
+// TestExecHumanGateRetryRequiresFreshApproval covers the retry that
+// re-enters the gate itself; this is the sibling path below it.
+func TestExecRetryBelowGateRearmsGate(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{
+			{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "ship it"},
+		},
+		Edges: []Edge{{From: "a", To: "gate"}, {From: "gate", To: "c"}},
+	}
+	run := createTestRun(t, g)
+
+	// First pass: gate approved, then the gated node fails (the incident shape).
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	// Edit consumes the approval request before the human approves — the
+	// live sequence. Left pending, the inbox dedup guard would rightly
+	// suppress the identical re-ask (the pending one still asks for it).
+	edit, _ := Peek(runTestSession, "edit")
+	for _, m := range edit {
+		if m.Action == "graph-approval" {
+			_, _ = ConsumeByID(runTestSession, "edit", m.ID)
+		}
+	}
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "c", OutcomeFailure)
+	step(t, runTestSession, run.ID)
+	got, _ := ReadGraphRun(runTestSession, run.ID)
+	if got.State != GraphRunFailed {
+		t.Fatalf("run state %q, want failed after c fails", got.State)
+	}
+
+	// Retry from c — below the gate: the retry must re-target to the gate.
+	res, err := RetryGraphRun(runTestSession, run.ID, "c")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if len(res.Rearmed) != 1 || res.Rearmed[0].Gate != "gate" || res.From != "gate" || res.Requested != "c" {
+		t.Fatalf("retry result rearmed=%+v from=%q requested=%q, want re-target to the gate", res.Rearmed, res.From, res.Requested)
+	}
+	if res.Rearmed[0].ApprovedAt <= 0 {
+		t.Errorf("retry result carries no original approval time — the re-target must name it")
+	}
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeReady {
+		t.Fatalf("gate state %q after retry below it, want ready — the gate re-arms", s)
+	}
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "gate", "approved")); !os.IsNotExist(err) {
+		t.Fatalf("approved marker still present (err=%v) — the stale approval must be purged at retry time", err)
+	}
+	got, _ = ReadGraphRun(runTestSession, run.ID)
+	if !strings.Contains(got.RetryNote, `"gate"`) {
+		t.Errorf("run RetryNote %q does not name the re-armed gate — the decision must be visible in graph status", got.RetryNote)
+	}
+
+	// Next tick: the gate dispatches and waits; the gated node must NOT fire.
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("gate state %q after tick, want waiting", s)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodePending {
+		t.Fatalf("c state %q after tick, want pending — it must not re-fire on the stale approval", s)
+	}
+	// The session log records every send: the re-armed gate must have
+	// asked edit a SECOND time.
+	logged, _ := readMessages(LogPath(runTestSession))
+	var approvals int
+	for _, m := range logged {
+		if m.Action == "graph-approval" && strings.Contains(m.Payload, run.ID) {
+			approvals++
+		}
+	}
+	if approvals != 2 {
+		t.Fatalf("edit received %d graph-approval requests for this run, want exactly 2 — the retry must ask again", approvals)
+	}
+
+	// Only a fresh approval releases the gated node.
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("re-approve: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodeRunning {
+		t.Fatalf("c state %q after fresh approval, want running", s)
+	}
+}
+
+// TestExecRetryPurgeFailureFailsClosed pins the purge's error contract
+// (PR #56 review): when the stale approval marker cannot be removed, the
+// retry must REFUSE — an error return, marker still on disk, gate not
+// re-armed — never proceed while logging "purged". A silent failure
+// leaves the marker to satisfy the re-armed gate: the laundered
+// approval MUX-132 closed, reintroduced through the filesystem.
+func TestExecRetryPurgeFailureFailsClosed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root — directory permissions cannot block os.Remove")
+	}
+	g := &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{
+			{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "ship it"},
+		},
+		Edges: []Edge{{From: "a", To: "gate"}, {From: "gate", To: "c"}},
+	}
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "c", OutcomeFailure)
+	step(t, runTestSession, run.ID)
+
+	// Make the marker un-removable: unlinking needs write on the parent.
+	approvals := graphApprovalsDir(runTestSession, run.ID)
+	if err := os.Chmod(approvals, 0555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(approvals, 0755) })
+
+	if _, err := RetryGraphRun(runTestSession, run.ID, "c"); err == nil {
+		t.Fatal("retry succeeded with an un-removable stale approval — must fail closed")
+	}
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "gate", "approved")); err != nil {
+		t.Fatalf("approved marker missing after refused retry (err=%v) — refusal must leave state untouched", err)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s == GraphNodeReady {
+		t.Fatal("gate re-armed despite the refused purge — the retry must leave the run untouched")
+	}
+
+	// Positive control: with the permission restored the same retry
+	// purges and re-arms — the refusal above was the chmod, not a
+	// broken re-arm path.
+	if err := os.Chmod(approvals, 0755); err != nil {
+		t.Fatalf("restore chmod: %v", err)
+	}
+	res, err := RetryGraphRun(runTestSession, run.ID, "c")
+	if err != nil {
+		t.Fatalf("retry after restore: %v", err)
+	}
+	if len(res.Rearmed) != 1 || res.Rearmed[0].Gate != "gate" {
+		t.Fatalf("rearmed=%+v, want the gate — positive control", res.Rearmed)
+	}
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "gate", "approved")); !os.IsNotExist(err) {
+		t.Fatalf("approved marker survived the successful retry (err=%v)", err)
+	}
+}
+
+// TestExecRetryBelowParallelGateCutRearmsAll pins the cut form of the
+// re-arm (review finding, 2026-08-31): with the target fed by two
+// parallel branches each behind its own satisfied gate, NO single gate
+// dominates every path — a dominator-only check finds nothing and both
+// stale approvals stay usable. The re-arm set must be the nearest-gate
+// cut: every satisfied gate whose territory contains the target, all
+// re-armed, all markers purged, target left pending.
+func TestExecRetryBelowParallelGateCutRearmsAll(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "s",
+		Nodes: []Node{
+			{ID: "s", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "g1", Type: NodeWaitHuman, Message: "approve branch one commit"},
+			{ID: "g2", Type: NodeWaitHuman, Message: "approve branch two commit"},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "ship it"},
+		},
+		Edges: []Edge{
+			{From: "s", To: "g1"}, {From: "s", To: "g2"},
+			{From: "g1", To: "c"}, {From: "g2", To: "c"},
+		},
+	}
+	run := createTestRun(t, g)
+
+	// Drive both branches through their gates, then fail the target.
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "s", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	if err := ApproveGraphGate(runTestSession, run.ID, "g1"); err != nil {
+		t.Fatalf("approve g1: %v", err)
+	}
+	if err := ApproveGraphGate(runTestSession, run.ID, "g2"); err != nil {
+		t.Fatalf("approve g2: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "c", OutcomeFailure)
+	step(t, runTestSession, run.ID)
+	got, _ := ReadGraphRun(runTestSession, run.ID)
+	if got.State != GraphRunFailed {
+		t.Fatalf("run state %q, want failed after c fails", got.State)
+	}
+
+	res, err := RetryGraphRun(runTestSession, run.ID, "c")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	rearmed := map[string]bool{}
+	for _, r := range res.Rearmed {
+		rearmed[r.Gate] = true
+	}
+	if len(res.Rearmed) != 2 || !rearmed["g1"] || !rearmed["g2"] {
+		t.Fatalf("rearmed=%+v, want both parallel gates — a dominator-only check re-arms neither", res.Rearmed)
+	}
+	for _, gate := range []string{"g1", "g2"} {
+		if s := nodeState(t, runTestSession, run.ID, gate); s != GraphNodeReady {
+			t.Errorf("%s state %q after retry, want ready", gate, s)
+		}
+		if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, gate, "approved")); !os.IsNotExist(err) {
+			t.Errorf("%s approved marker still present (err=%v) — its stale approval remains usable", gate, err)
+		}
+	}
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodePending {
+		t.Fatalf("c state %q after retry, want pending — it must not fire on either stale approval", s)
+	}
+	got, _ = ReadGraphRun(runTestSession, run.ID)
+	if !strings.Contains(got.RetryNote, `"g1"`) || !strings.Contains(got.RetryNote, `"g2"`) {
+		t.Errorf("run RetryNote %q does not name both re-armed gates", got.RetryNote)
+	}
+}
+
+// TestExecRetryBelowNeverApprovedGateUnaffected is the MUX-132 Phase 3
+// negative control for the re-arm's precondition: the cut re-arms gates
+// whose STALE approval a retry would consume — a gate that never reached
+// done holds no approval to go stale, so a retry below it must not
+// re-target, must leave the gate untouched, and must not demand an
+// approval that was never part of the run. This is the only assertion on
+// staleApprovalGates' done/success check: without it a re-arm-
+// unconditional mutant passes the rest of the suite.
+func TestExecRetryBelowNeverApprovedGateUnaffected(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{
+			{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "ship it"},
+		},
+		Edges: []Edge{{From: "a", To: "gate"}, {From: "gate", To: "c"}},
+	}
+	run := createTestRun(t, g)
+
+	// Drive to the gate and leave it waiting — no approval ever granted.
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("gate state %q before cancel, want waiting", s)
+	}
+	// Cancel: the only way a run stalled at an unanswered gate stops running.
+	if err := CancelGraphRun(runTestSession, run.ID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+
+	res, err := RetryGraphRun(runTestSession, run.ID, "c")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if len(res.Rearmed) != 0 || res.From != "c" {
+		t.Fatalf("retry result rearmed=%+v from=%q — a never-approved gate must not re-arm (stale approvals, not missing ones)", res.Rearmed, res.From)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeSkipped {
+		t.Fatalf("gate state %q after retry, want skipped (untouched) — the retry must not reset a gate that holds no approval", s)
+	}
+	got, _ := ReadGraphRun(runTestSession, run.ID)
+	if got.RetryNote != "" {
+		t.Errorf("RetryNote %q on a retry with no stale approval, want empty", got.RetryNote)
+	}
+
+	// The retry resumes where asked; no second approval request is sent.
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodeRunning {
+		t.Fatalf("c state %q after tick, want running — the retry must proceed unaffected", s)
+	}
+	logged, _ := readMessages(LogPath(runTestSession))
+	var approvals int
+	for _, m := range logged {
+		if m.Action == "graph-approval" && strings.Contains(m.Payload, run.ID) {
+			approvals++
+		}
+	}
+	if approvals != 1 {
+		t.Fatalf("edit received %d graph-approval requests for this run, want exactly 1 (the original dispatch) — the retry must not re-ask a never-approved gate", approvals)
 	}
 }
 
@@ -636,6 +942,120 @@ func TestExecConditionNode(t *testing.T) {
 	}
 }
 
+// TestExecConditionFalseBranchIsNotAFailure pins the state/outcome split
+// for a condition that takes its false branch (MUX-133 option B). The
+// node is a branch selector choosing a branch, so its terminal STATE is
+// done; the failure OUTCOME is retained because it is the routing key
+// edgeOutcome matches, and every capped loop's terminating edge depends
+// on it. Before option B this asserted GraphNodeFailed — the diff of
+// this assertion is the model change.
+func TestExecConditionFalseBranchIsNotAFailure(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "cond",
+		Nodes: []Node{
+			{ID: "cond", Type: NodeCondition, Conditions: map[string]any{"env_set": "MUXCODE_GRAPH_TEST_UNSET_ENV"}},
+			{ID: "yes", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "no", Type: NodeSend, Role: "test", Action: "test", Message: "go"},
+		},
+		Edges: []Edge{
+			{From: "cond", To: "yes", Outcome: OutcomeSuccess},
+			{From: "cond", To: "no", Outcome: OutcomeFailure},
+		},
+	}
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+
+	st, err := ReadNodeStatus(runTestSession, run.ID, "cond")
+	if err != nil {
+		t.Fatalf("read cond: %v", err)
+	}
+	if st.State != GraphNodeDone {
+		t.Errorf("cond state %q, want %q — a false branch is control flow, not a broken node",
+			st.State, GraphNodeDone)
+	}
+	if st.Outcome != OutcomeFailure {
+		t.Fatalf("cond outcome %q, want %q — the failure outcome is the routing key the false edge matches; changing it breaks every capped loop",
+			st.Outcome, OutcomeFailure)
+	}
+
+	// The routing invariant: the false edge must still have fired.
+	if s := nodeState(t, runTestSession, run.ID, "no"); s != GraphNodeRunning {
+		t.Errorf("no state %q, want running — the false edge must still route after the split", s)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "yes"); s != GraphNodePending {
+		t.Errorf("yes state %q, want pending", s)
+	}
+
+	// The run must not be marked failed by a routine branch.
+	got, err := ReadGraphRun(runTestSession, run.ID)
+	if err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	if got.State == GraphRunFailed {
+		t.Errorf("run state %q — a condition taking its false branch must never fail the run", got.State)
+	}
+}
+
+// TestExecConditionUnevaluatableIsAFailure is the negative control for
+// the split: a predicate that cannot be evaluated at all is a genuine
+// error and must still persist GraphNodeFailed, so option B does not
+// make every condition look done.
+//
+// Graph.Validate rejects an unknown condition type, so this state is
+// unreachable through graph run|validate — it is reachable only by
+// replaying a definition frozen before the rule existed, which is what
+// this test constructs by rewriting the run's frozen graph.json. That
+// is precisely why the executor branch is worth having: the run store
+// replays frozen definitions without re-validating them.
+func TestExecConditionUnevaluatableIsAFailure(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "cond",
+		Nodes: []Node{
+			{ID: "cond", Type: NodeCondition, Conditions: map[string]any{"env_set": "MUXCODE_GRAPH_TEST_UNSET_ENV"}},
+			{ID: "no", Type: NodeSend, Role: "test", Action: "test", Message: "go"},
+		},
+		Edges: []Edge{
+			{From: "cond", To: "no", Outcome: OutcomeFailure},
+		},
+	}
+	run := createTestRun(t, g)
+
+	// Freeze a definition the validator would now reject, as an older
+	// binary could have written.
+	frozen := *g
+	frozen.Nodes = append([]Node(nil), g.Nodes...)
+	frozen.Nodes[0].Conditions = map[string]any{"bogus_condition_type": "x"}
+	blob, err := json.MarshalIndent(&frozen, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal frozen graph: %v", err)
+	}
+	if err := os.WriteFile(graphDefPath(runTestSession, run.ID), blob, 0o644); err != nil {
+		t.Fatalf("rewrite frozen graph: %v", err)
+	}
+
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+
+	st, err := ReadNodeStatus(runTestSession, run.ID, "cond")
+	if err != nil {
+		t.Fatalf("read cond: %v", err)
+	}
+	if st.State != GraphNodeFailed {
+		t.Errorf("cond state %q, want %q — an unevaluatable predicate is a real error, not a branch",
+			st.State, GraphNodeFailed)
+	}
+	if st.Output == "" {
+		t.Error("cond output empty — a genuine evaluation error must say what went wrong")
+	}
+	if ConditionTookBranch(NodeCondition, st.State, st.Outcome) {
+		t.Error("ConditionTookBranch true for an unevaluatable predicate — it must render as a failure, not a branch")
+	}
+}
+
 func TestRetryGraphRunFromNode(t *testing.T) {
 	run := createTestRun(t, linearGraph())
 
@@ -650,8 +1070,12 @@ func TestRetryGraphRunFromNode(t *testing.T) {
 		t.Fatalf("run state %q, want complete", got.State)
 	}
 
-	if err := RetryGraphRun(runTestSession, run.ID, "b"); err != nil {
+	res, err := RetryGraphRun(runTestSession, run.ID, "b")
+	if err != nil {
 		t.Fatalf("retry: %v", err)
+	}
+	if len(res.Rearmed) != 0 || res.From != "b" {
+		t.Fatalf("retry result rearmed=%+v from=%q — an ungated retry must not re-target", res.Rearmed, res.From)
 	}
 	// Upstream a keeps its result; b is re-armed; run is running again.
 	if s := nodeState(t, runTestSession, run.ID, "a"); s != GraphNodeDone {
@@ -673,7 +1097,7 @@ func TestRetryGraphRunFromNode(t *testing.T) {
 
 func TestRetryGraphRunRefusesRunningRun(t *testing.T) {
 	run := createTestRun(t, linearGraph())
-	if err := RetryGraphRun(runTestSession, run.ID, "b"); err == nil {
+	if _, err := RetryGraphRun(runTestSession, run.ID, "b"); err == nil {
 		t.Error("retry must refuse a running run")
 	}
 }
@@ -699,7 +1123,7 @@ func TestRetryGraphRunResetsLoopBudget(t *testing.T) {
 	}
 
 	// Retry from a: the loop edge budget resets with the subtree.
-	if err := RetryGraphRun(runTestSession, run.ID, "a"); err != nil {
+	if _, err := RetryGraphRun(runTestSession, run.ID, "a"); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 	fresh, _ := ReadGraphRun(runTestSession, run.ID)
@@ -781,11 +1205,16 @@ func specGuardGraph() *Graph {
 	}
 }
 
-// writeSpecFixture writes a spec file and points the active-spec marker at
-// it (absolute path, so no repo-dir resolution is involved).
+// writeSpecFixture writes a spec file inside a scratch repo dir, pins the
+// session repo dir to it, and points the active-spec marker at the spec's
+// absolute path. The pointer must live inside the pinned repo: every
+// pointer, absolute included, now resolves through the containment
+// boundary (review must-fix 2026-09-01).
 func writeSpecFixture(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "spec.md")
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	path := filepath.Join(repo, "spec.md")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -853,7 +1282,9 @@ func TestExecSpecGuardNoActiveSpecDispatches(t *testing.T) {
 
 func TestExecSpecGuardUnreadableSpecDeclines(t *testing.T) {
 	run := createTestRun(t, specGuardGraph())
-	if err := WriteActiveSpec(runTestSession, filepath.Join(t.TempDir(), "absent.md")); err != nil {
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	if err := WriteActiveSpec(runTestSession, filepath.Join(repo, "absent.md")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -887,6 +1318,84 @@ func TestExecSpecGuardResolvesRelativeSpecPath(t *testing.T) {
 	}
 	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "1 open items") {
 		t.Errorf("relative spec path must resolve against the session repo dir, got state %q output %q", st.State, st.Output)
+	}
+}
+
+// TestExecSpecGuardRefusesExternalPointer pins the pointer boundary at
+// the guard (review must-fix 2026-09-01): an active-spec pointer
+// resolving outside the repo fails the node loudly — it must NOT read as
+// "no active spec", which would pass the guard through and close out
+// against nothing (the inert-guard hazard), and the daemon must never
+// read the external file.
+func TestExecSpecGuardRefusesExternalPointer(t *testing.T) {
+	run := createTestRun(t, specGuardGraph())
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	ext := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(ext, []byte("- [x] not a spec\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(runTestSession, ext); err != nil {
+		t.Fatal(err)
+	}
+
+	step(t, runTestSession, run.ID)
+
+	st, err := ReadNodeStatus(runTestSession, run.ID, "close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "outside the repo") {
+		t.Fatalf("external pointer must fail the node, got state %q output %q", st.State, st.Output)
+	}
+	msgs, _ := Peek(runTestSession, "plan")
+	if len(msgs) != 0 {
+		t.Errorf("refused dispatch must never send — plan inbox: %+v", msgs)
+	}
+}
+
+// TestActiveSpecFileBoundary pins the four pointer states as distinct.
+// The one that must never collapse: an external pointer is refused, not
+// unset — and with the repo dir unresolvable, containment is unprovable
+// for EVERY pointer shape, absolute included, so all postpone as
+// transient (the old code followed absolute pointers unconditionally).
+func TestActiveSpecFileBoundary(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+
+	if _, ok, transient, refused := activeSpecFile(runTestSession); ok || transient || refused {
+		t.Errorf("unset: ok=%v transient=%v refused=%v, want all false", ok, transient, refused)
+	}
+
+	spec := filepath.Join(repo, "spec.md")
+	if err := os.WriteFile(spec, []byte("# s\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(runTestSession, spec); err != nil {
+		t.Fatal(err)
+	}
+	if path, ok, _, _ := activeSpecFile(runTestSession); !ok || path == "" {
+		t.Errorf("in-repo absolute pointer: ok=%v path=%q, want resolved", ok, path)
+	}
+
+	ext := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(ext, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(runTestSession, ext); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok, transient, refused := activeSpecFile(runTestSession); !refused || ok || transient || p != "" {
+		t.Errorf("external pointer: ok=%v transient=%v refused=%v path=%q, want refused only", ok, transient, refused, p)
+	}
+
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", "")
+	if _, ok, transient, refused := activeSpecFile(runTestSession); !transient || ok || refused {
+		t.Errorf("no repo dir with absolute pointer: ok=%v transient=%v refused=%v, want transient only", ok, transient, refused)
 	}
 }
 
@@ -973,7 +1482,9 @@ func TestSpecPhasesRemainingCondition(t *testing.T) {
 	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
 		t.Fatal(err)
 	}
-	spec := filepath.Join(t.TempDir(), "spec.md")
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	spec := filepath.Join(repo, "spec.md")
 	if err := os.WriteFile(spec, []byte("### Phase 1: A\n- [ ] open\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1331,5 +1842,278 @@ func TestExecSpecGuardPostponesWhenRepoDirUnknown(t *testing.T) {
 	msgs, _ := Peek(runTestSession, "plan")
 	if len(msgs) != 0 {
 		t.Errorf("postponed dispatch must not send — plan inbox: %+v", msgs)
+	}
+}
+
+// --- MUX-131 Defect B: spawn worker reuse ---
+
+// liveSpawnFake mirrors the real graphSpawnFn closely enough for the
+// reuse tests: a fresh worker gets a RUNNING entry, a real seeded inbox
+// message, and the run+node stamp, so FindLiveSpawn, ReseedSpawn, and
+// spawnGroupOutcome run their live paths without tmux. Windows listed in
+// deadWindows read as gone; kill attempts are recorded.
+type liveSpawnFake struct {
+	fresh       int
+	killed      []string
+	deadWindows map[string]bool
+}
+
+func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
+	t.Helper()
+	if err := os.MkdirAll(DeliveryDir(runTestSession), 0755); err != nil {
+		t.Fatalf("delivery dir: %v", err)
+	}
+	f := &liveSpawnFake{deadWindows: map[string]bool{}}
+	origSpawn, origExists, origKill, origWake := graphSpawnFn, spawnWindowExistsFn, spawnKillWindowFn, graphSpawnWakeFn
+	t.Cleanup(func() {
+		graphSpawnFn, spawnWindowExistsFn, spawnKillWindowFn, graphSpawnWakeFn = origSpawn, origExists, origKill, origWake
+	})
+	graphSpawnWakeFn = func(string, string) {}
+	spawnWindowExistsFn = func(_, w string) bool { return !f.deadWindows[w] }
+	spawnKillWindowFn = func(_, w string) error { f.killed = append(f.killed, w); return nil }
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
+		f.fresh++
+		id := fmt.Sprintf("spawn-live%04d", f.fresh)
+		msg := NewMessage(owner, id, "request", "spawn-task", task, "")
+		if err := Send(sess, msg); err != nil {
+			t.Fatalf("seed send: %v", err)
+		}
+		entry := SpawnEntry{ID: id, Role: role, SpawnRole: id, Owner: owner, Task: task,
+			Status: "running", Window: id, StartedAt: time.Now().Unix(),
+			SeedMsgID: msg.ID, RunID: runID, NodeID: nodeID}
+		if err := appendSpawnEntry(sess, entry); err != nil {
+			t.Fatalf("append spawn entry: %v", err)
+		}
+		return id, nil
+	}
+	return f
+}
+
+// answerSpawn fakes the worker replying to its CURRENT seed — the same
+// MarkResponded a real reply drives, which spawnHasResponded reads.
+func answerSpawn(t *testing.T, session, spawnRole string) {
+	t.Helper()
+	entries, _ := ReadSpawnEntries(session)
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].SpawnRole != spawnRole {
+			continue
+		}
+		if entries[i].SeedMsgID == "" {
+			t.Fatalf("worker %s has no seed", spawnRole)
+		}
+		MarkResponded(session, entries[i].SeedMsgID, "resp-"+entries[i].SeedMsgID)
+		return
+	}
+	t.Fatalf("no spawn entry for %s", spawnRole)
+}
+
+func spawnCountForRun(t *testing.T, session, runID string) int {
+	t.Helper()
+	entries, err := ReadSpawnEntries(session)
+	if err != nil {
+		t.Fatalf("read spawn entries: %v", err)
+	}
+	n := 0
+	for _, e := range entries {
+		if e.RunID == runID {
+			n++
+		}
+	}
+	return n
+}
+
+// TestReseedSpawnIdentityFirstFailClosed pins the reseed ordering (review
+// must-fix, 2026-09-01): SeedMsgID persists BEFORE the seed is sent, so a
+// failure between the two leaves an id whose message does not exist — a
+// state that can never read as responded — rather than a sent seed whose
+// entry still carries the previous iteration's responded id (a false
+// completion). The discriminator: a failing entry update must mean NO
+// seed reaches the worker's inbox; send-first ordering delivers one.
+func TestReseedSpawnIdentityFirstFailClosed(t *testing.T) {
+	useTempBusDir(t)
+
+	bogus := SpawnEntry{ID: "spawn-doesnotexist", SpawnRole: "spawn-doesnotexist", Owner: "daemon"}
+	if _, err := ReseedSpawn(runTestSession, bogus, "phase 2"); err == nil {
+		t.Fatal("reseed of a missing entry must error")
+	}
+	msgs, _ := Peek(runTestSession, "spawn-doesnotexist")
+	for _, m := range msgs {
+		if m.Action == "spawn-task" {
+			t.Fatalf("seed was sent despite the entry update failing — identity must persist first, got %q", m.Payload)
+		}
+	}
+}
+
+// TestAcquireSpawnWorkerReusesLiveWorker pins the reuse core: a second
+// acquire for the same run+node reseeds the live worker instead of
+// starting a fresh one, and the entry's SeedMsgID moves to the new seed.
+func TestAcquireSpawnWorkerReusesLiveWorker(t *testing.T) {
+	useTempBusDir(t)
+	f := fakeLiveSpawns(t)
+
+	id1, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "phase 1")
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	if f.fresh != 1 {
+		t.Fatalf("first acquire must start fresh, got %d", f.fresh)
+	}
+	answerSpawn(t, runTestSession, id1)
+	seed1, _ := GetSpawnEntry(runTestSession, id1)
+
+	id2, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "phase 2")
+	if err != nil {
+		t.Fatalf("second acquire: %v", err)
+	}
+	if id2 != id1 {
+		t.Fatalf("re-entry must reuse the live worker: got %s, want %s", id2, id1)
+	}
+	if f.fresh != 1 {
+		t.Fatalf("re-entry must not start a fresh worker, got %d starts", f.fresh)
+	}
+	e, err := GetSpawnEntry(runTestSession, id1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.SeedMsgID == "" || e.SeedMsgID == seed1.SeedMsgID {
+		t.Fatalf("reseed must move SeedMsgID to the new iteration, got %q (was %q)", e.SeedMsgID, seed1.SeedMsgID)
+	}
+	if e.Task != "phase 2" {
+		t.Fatalf("reseed must update the task, got %q", e.Task)
+	}
+	msgs, _ := Peek(runTestSession, id1)
+	if len(msgs) != 1 || msgs[0].Payload != "phase 2" || msgs[0].ID != e.SeedMsgID {
+		t.Fatalf("new seed must be the one pending row in the worker inbox: %+v", msgs)
+	}
+}
+
+// TestAcquireSpawnWorkerDeadWorkerFreshStart is the spec's negative
+// control: reuse must never wedge a run behind a corpse — a gone window
+// falls back to a fresh worker.
+func TestAcquireSpawnWorkerDeadWorkerFreshStart(t *testing.T) {
+	useTempBusDir(t)
+	f := fakeLiveSpawns(t)
+
+	id1, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "phase 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	answerSpawn(t, runTestSession, id1)
+	f.deadWindows[id1] = true
+
+	id2, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "phase 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id2 == id1 || f.fresh != 2 {
+		t.Fatalf("dead worker must trigger a fresh start: got %s after %s, %d starts", id2, id1, f.fresh)
+	}
+}
+
+// TestAcquireSpawnWorkerDistinctNodesDistinctWorkers is the spec's other
+// negative control: reuse is keyed per run+node, never global — a second
+// node (and a second run) must not adopt the first node's worker.
+func TestAcquireSpawnWorkerDistinctNodesDistinctWorkers(t *testing.T) {
+	useTempBusDir(t)
+	f := fakeLiveSpawns(t)
+
+	id1, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "task a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idOtherNode, err := acquireSpawnWorker(runTestSession, "run-1", "fanout#0", "edit", "task b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idOtherRun, err := acquireSpawnWorker(runTestSession, "run-2", "implement", "edit", "task c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id1 == idOtherNode || id1 == idOtherRun || idOtherNode == idOtherRun {
+		t.Fatalf("distinct nodes/runs must get distinct workers: %s %s %s", id1, idOtherNode, idOtherRun)
+	}
+	if f.fresh != 3 {
+		t.Fatalf("expected 3 fresh workers, got %d", f.fresh)
+	}
+}
+
+// TestExecSpawnLoopReusesWorker walks a loop over a spawn node end to end:
+// one worker serves both iterations (the assertion that would have caught
+// the three-worker run in the MUX-131 report), the worker survives
+// RefreshSpawnStatus mid-run, and is released by it once the run is
+// terminal.
+func TestExecSpawnLoopReusesWorker(t *testing.T) {
+	g := &Graph{Name: "spawn-loop", Start: "w",
+		Nodes: []Node{
+			{ID: "w", Type: NodeSpawn, Role: "edit", Message: "implement"},
+			{ID: "b", Type: NodeSend, Role: "build", Action: "build", Message: "build it"},
+		},
+		Edges: []Edge{
+			{From: "w", To: "b"},
+			{From: "b", To: "w", Outcome: OutcomeFailure, MaxIterations: 2},
+		}}
+	run := createTestRun(t, g)
+	f := fakeLiveSpawns(t)
+
+	// Iteration 1: worker starts fresh, answers, node completes.
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "w")
+	worker := st.TaskID
+	if worker == "" || f.fresh != 1 {
+		t.Fatalf("fresh worker expected on first dispatch: task %q, %d starts", worker, f.fresh)
+	}
+	answerSpawn(t, runTestSession, worker)
+
+	// Mid-run persistence: the responded worker is NOT reaped while its
+	// run is in flight — reaping here is exactly what forced a fresh
+	// worker per iteration.
+	if _, err := RefreshSpawnStatus(runTestSession); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := GetSpawnEntry(runTestSession, worker); e.Status != "running" {
+		t.Fatalf("responded worker of an in-flight run must stay running, got %q", e.Status)
+	}
+	if len(f.killed) != 0 {
+		t.Fatalf("responded worker of an in-flight run must not be killed: %v", f.killed)
+	}
+
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "w"); s != GraphNodeDone {
+		t.Fatalf("w state %q, want done after worker answered", s)
+	}
+
+	// Build fails -> loop edge re-arms the spawn node.
+	completeSendNode(t, runTestSession, run.ID, "b", OutcomeFailure)
+	step(t, runTestSession, run.ID)
+
+	// Iteration 2: same worker, no fresh start.
+	st, _ = ReadNodeStatus(runTestSession, run.ID, "w")
+	if st.State != GraphNodeRunning || st.TaskID != worker {
+		t.Fatalf("re-entry must reuse worker %s: state %q task %q", worker, st.State, st.TaskID)
+	}
+	if f.fresh != 1 {
+		t.Fatalf("re-entry started a fresh worker: %d starts", f.fresh)
+	}
+	answerSpawn(t, runTestSession, worker)
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "b", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+
+	if r, _ := ReadGraphRun(runTestSession, run.ID); r.State != GraphRunComplete {
+		t.Fatalf("run state %q, want complete", r.State)
+	}
+	// THE Defect B assertion: one worker for the whole multi-iteration
+	// run, counted from the spawn store, not read off the code.
+	if n := spawnCountForRun(t, runTestSession, run.ID); n != 1 {
+		t.Fatalf("run must have exactly 1 spawn worker, got %d", n)
+	}
+
+	// Run terminal: the normal reap path now releases the worker.
+	if _, err := RefreshSpawnStatus(runTestSession); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := GetSpawnEntry(runTestSession, worker)
+	if e.Status != "completed" || len(f.killed) != 1 || f.killed[0] != worker {
+		t.Fatalf("terminal run must release the worker: status %q killed %v", e.Status, f.killed)
 	}
 }

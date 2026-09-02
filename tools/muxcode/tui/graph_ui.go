@@ -94,6 +94,7 @@ func LoadRunListRows(session string, now time.Time) []RunListRow {
 				}
 				doneNodes = append(doneNodes, id)
 			}
+			// Branch-takers are done, so failed here is always genuine.
 			if state == bus.GraphNodeFailed {
 				failedNodes = append(failedNodes, n.ID)
 				if failedOut == "" {
@@ -919,6 +920,7 @@ func (ui *GraphUI) executeAction() {
 		return
 	}
 	var err error
+	var retryRes *bus.GraphRetryResult
 	switch act.Kind {
 	case "approve":
 		// The confirm promised a waiting gate — refuse if the node moved
@@ -934,7 +936,7 @@ func (ui *GraphUI) executeAction() {
 	case "cancel":
 		err = bus.CancelGraphRun(ui.session, act.RunID)
 	case "retry":
-		err = bus.RetryGraphRun(ui.session, act.RunID, act.NodeID)
+		retryRes, err = bus.RetryGraphRun(ui.session, act.RunID, act.NodeID)
 	}
 	if err != nil {
 		ui.actionErr = err.Error()
@@ -950,7 +952,16 @@ func (ui *GraphUI) executeAction() {
 	case "cancel":
 		ui.notice = fmt.Sprintf("✓ canceled run %s", act.RunID)
 	case "retry":
-		ui.notice = fmt.Sprintf("✓ retrying run %s from %s", act.RunID, act.NodeID)
+		if retryRes != nil && len(retryRes.Rearmed) > 0 {
+			var parts []string
+			for _, r := range retryRes.Rearmed {
+				parts = append(parts, fmt.Sprintf("%s (approved %s)", r.Gate, bus.FormatApprovalTime(r.ApprovedAt)))
+			}
+			ui.notice = fmt.Sprintf("✓ retrying run %s — re-armed gate(s) %s, stale approvals purged; approve again",
+				act.RunID, strings.Join(parts, ", "))
+		} else {
+			ui.notice = fmt.Sprintf("✓ retrying run %s from %s", act.RunID, act.NodeID)
+		}
 	}
 	ui.pending = nil
 	ui.actionErr = ""

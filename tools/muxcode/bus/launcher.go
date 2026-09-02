@@ -935,20 +935,29 @@ func BranchTimeStatusSegment() string {
 
 // WindowStatusFormat returns the Dracula-themed window-status-format string.
 // Uses #{@display-name} (per-window user option) instead of #() shell commands
-// for instant synchronous rendering. No #{?} conditional — index 0 hiding is
-// handled by per-window format overrides in mode.go.
-// (tmux #{?} conditionals break when #[] style escapes contain commas.)
+// for instant synchronous rendering. Index 0 hiding is handled by per-window
+// format overrides in mode.go.
+//
+// The F-key label is #{@muxcode_fkey} (set by the daemon sweep from
+// WindowFKey), never the raw F#I: index and binding diverge — a spawn at
+// index 12 behind a research window at 11 is selected by F11 while F#I
+// advertised the empty F12 slot (MUX-134, user report 2026-09-01). tmux
+// #{?} conditionals break when their ARMS contain #[] style escapes with
+// commas; the label arm holds only the option text, so all styles stay
+// outside the conditional. Unbound windows show no label at all.
 func WindowStatusFormat() string {
 	return "#[fg=#282a36,bg=#44475a]" + pwrLeft +
-		"#[fg=#f8f8f2,bg=#44475a] F#I #{@display-name} " +
+		"#[fg=#f8f8f2,bg=#44475a] #{?@muxcode_fkey,#{@muxcode_fkey} ,}#{@display-name} " +
 		"#[fg=#44475a,bg=#282a36]" + pwrLeft
 }
 
-// WindowStatusCurrentFormat returns the Dracula-themed window-status-current-format string.
+// WindowStatusCurrentFormat returns the Dracula-themed
+// window-status-current-format string — same label rule as
+// WindowStatusFormat.
 func WindowStatusCurrentFormat() string {
 	return "#[fg=#282a36,bg=#50fa7b]" + pwrLeft +
-		"#[fg=#282a36,bg=#50fa7b] F#I*" +
-		"#[fg=#282a36,bg=#50fa7b,bold] #{@display-name} " +
+		"#[fg=#282a36,bg=#50fa7b] #{?@muxcode_fkey,#{@muxcode_fkey}* ,}" +
+		"#[fg=#282a36,bg=#50fa7b,bold]#{@display-name} " +
 		"#[fg=#50fa7b,bg=#282a36]" + pwrLeft
 }
 

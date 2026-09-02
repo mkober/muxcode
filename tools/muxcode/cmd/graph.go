@@ -185,11 +185,16 @@ func graphRetry(args []string) {
 		fmt.Fprintln(os.Stderr, "Usage: muxcode graph retry <run-id> --from <node>")
 		os.Exit(1)
 	}
-	if err := bus.RetryGraphRun(bus.BusSession(), runID, from); err != nil {
+	res, err := bus.RetryGraphRun(bus.BusSession(), runID, from)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Run %s retrying from %s — the daemon resumes it on its next tick\n", runID, from)
+	for _, r := range res.Rearmed {
+		fmt.Printf("Note: %q sits below satisfied human gate %q (approved %s) — the gate was re-armed and its stale approval purged; approve it again before downstream work fires\n",
+			res.Requested, r.Gate, bus.FormatApprovalTime(r.ApprovedAt))
+	}
+	fmt.Printf("Run %s retrying from %s — the daemon resumes it on its next tick\n", runID, res.From)
 }
 
 // graphUI opens the interactive graph TUI (MUX-031), or prints a single
@@ -431,6 +436,14 @@ func graphStatus(args []string) {
 	}
 
 	if jsonOut {
+		// Annotate condition branch-takers so machine consumers do not
+		// repeat the red-failed mistake — see GraphNodeStatus.Branched.
+		for i := range g.Nodes {
+			n := &g.Nodes[i]
+			if st := statuses[n.ID]; st != nil && bus.ConditionTookBranch(n.Type, st.State, st.Outcome) {
+				st.Branched = true
+			}
+		}
 		out, _ := json.MarshalIndent(map[string]any{
 			"run":   run,
 			"graph": g,

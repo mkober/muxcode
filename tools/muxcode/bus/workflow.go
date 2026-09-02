@@ -345,17 +345,56 @@ func workflowDuration(d time.Duration) string {
 	}
 }
 
-// HasNewMessageFrom checks if there are unread messages from a specific sender
-// in a role's inbox. Used by the daemon to detect review→edit transitions.
-func HasNewMessageFrom(session, role, from string) bool {
+// NewestMessageIDFrom returns the ID of the newest unconsumed message in
+// role's inbox that was sent by from AND addressed to role, or "" if none.
+//
+// The addressee filter is load-bearing (MUX-007): auto-CC copies keep their
+// original To, so a review→test response CC'd into edit's inbox must never
+// read as "review reported completion to edit". Matching on From alone is
+// what let any stale review CC satisfy the reviewed-transition check.
+// Inboxes are append-only, so the last matching entry is the newest.
+func NewestMessageIDFrom(session, role, from string) string {
 	msgs, err := Peek(session, role)
-	if err != nil || len(msgs) == 0 {
-		return false
+	if err != nil {
+		return ""
 	}
+	newest := ""
 	for _, m := range msgs {
-		if m.From == from {
-			return true
+		if m.From == from && m.To == role {
+			newest = m.ID
 		}
 	}
-	return false
+	return newest
+}
+
+// ReviewedMarkerPath returns the file recording the ID of the review
+// completion message that last fired the reviewed transition.
+func ReviewedMarkerPath(session string) string {
+	return filepath.Join(BusDir(session), "reviewed-transition.last")
+}
+
+// ReadReviewedMarker returns the message ID recorded by WriteReviewedMarker,
+// or "" if no reviewed transition has fired yet.
+func ReadReviewedMarker(session string) string {
+	data, err := os.ReadFile(ReviewedMarkerPath(session))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// WriteReviewedMarker records id as the review completion that fired the
+// reviewed transition, making the daemon's gate once-per-completion (MUX-007):
+// unrelated inbox growth re-observes the same ID and does not re-fire, while a
+// genuine new completion carries a new ID. On disk rather than in daemon
+// memory so a daemon restart mid-storm cannot replay a stale completion.
+//
+// Written atomically (tmp+rename) so a crash mid-write can never leave a
+// truncated ID that matches no real message and re-fires forever. On error
+// the caller must withhold the transition: firing with the marker unrecorded
+// replays the same completion on the next inbox growth — the storm itself.
+// Withholding is safe because the unconsumed completion is re-observed and
+// retried on a later growth once the write succeeds.
+func WriteReviewedMarker(session, id string) error {
+	return atomicWriteFile(ReviewedMarkerPath(session), []byte(id+"\n"))
 }

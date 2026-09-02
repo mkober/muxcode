@@ -36,6 +36,12 @@ const (
 // EdgeFires counts how many times each edge has fired (keyed by
 // EdgeFireKey) so capped loop edges stop at max_iterations across
 // daemon restarts.
+//
+// RetryNote records the most recent retry's re-targeting decision
+// (MUX-132): set when a retry aimed below a satisfied human gate was
+// re-armed at the gate instead, cleared by a retry that needed no
+// re-target. Surfaced by graph status so the decision stays visible
+// after the CLI output scrolls away.
 type GraphRun struct {
 	ID        string         `json:"id"`
 	Template  string         `json:"template"`
@@ -44,6 +50,7 @@ type GraphRun struct {
 	CreatedAt int64          `json:"created_at"`
 	UpdatedAt int64          `json:"updated_at"`
 	EdgeFires map[string]int `json:"edge_fires,omitempty"`
+	RetryNote string         `json:"retry_note,omitempty"` // last retry's re-target decision — see GraphRun doc
 }
 
 // GraphNodeStatus is the persisted per-node execution state of a run.
@@ -65,6 +72,9 @@ type GraphNodeStatus struct {
 	StartedAt   int64 `json:"started_at,omitempty"`
 	DoneAt      int64 `json:"done_at,omitempty"`
 	UpdatedAt   int64 `json:"updated_at"`
+	// Branched marks a condition's false branch for JSON consumers —
+	// render-time only, never persisted; see ConditionTookBranch.
+	Branched bool `json:"branched,omitempty"`
 }
 
 // legalNodeTransitions defines the allowed node state machine. done/failed/
@@ -226,7 +236,13 @@ func resolveDerivedLoopCaps(session string, g *Graph) (*Graph, error) {
 	if !needs {
 		return g, nil
 	}
-	path, ok, _ := activeSpecFile(session)
+	path, ok, transient, refused := activeSpecFile(session)
+	if refused {
+		return nil, fmt.Errorf("graph %q: active spec pointer resolves outside the repo — refusing to read it for a loop cap", g.Name)
+	}
+	if transient {
+		return nil, fmt.Errorf("graph %q derives a loop cap from the spec but the repo dir is unresolvable — retry", g.Name)
+	}
 	if !ok {
 		return nil, fmt.Errorf("graph %q derives a loop cap from the spec but no active spec is set", g.Name)
 	}
@@ -411,6 +427,23 @@ func MutateNodeStatus(session, runID, nodeID string, mutate func(*GraphNodeStatu
 	return atomicWriteJSON(graphNodePath(session, runID, nodeID), st)
 }
 
+// GraphRetryResult reports what a retry actually did: the node the
+// caller asked to resume from, where the run actually resumes, and —
+// when the two differ — the satisfied wait_human gate(s) whose stale
+// approvals forced the re-target, each with its original approval time.
+type GraphRetryResult struct {
+	Requested string      // --from node the caller named
+	From      string      // where the run actually resumes (comma-joined when several gates re-arm)
+	Rearmed   []GateRearm // the re-armed gates, empty on a plain retry
+}
+
+// GateRearm is one re-armed gate: its id and the purged approval's
+// original grant time (unix; 0 when unreadable).
+type GateRearm struct {
+	Gate       string
+	ApprovedAt int64
+}
+
 // RetryGraphRun re-executes a run from the named node: the node re-arms
 // to ready, every node downstream of it resets to pending with its
 // previous pass cleared, and edge-fire counts inside the retried subtree
@@ -420,25 +453,112 @@ func MutateNodeStatus(session, runID, nodeID string, mutate func(*GraphNodeStatu
 // administrative reset spanning states the legality gate rightly forbids
 // during execution.
 //
+// Stale-approval cut (MUX-132): a target covered by satisfied wait_human
+// gates outside the reset set does not start there — the retry re-targets
+// to those gates, purges their stale approvals, and normal dispatch
+// demands fresh ones before anything downstream fires. Without this,
+// retry --from below a gate consumed an approval granted for different
+// content (observed 2026-08-31: the tree changed between approval and
+// retry). Re-arming beats refusing because the safe path is then the
+// default path, not a second command; the re-target is never silent —
+// it is named in the result, a lifecycle event, and the run's RetryNote.
+// The re-arm set is the NEAREST-GATE CUT — every satisfied gate whose
+// gate-free territory contains the target (gateTerritory, the walk
+// validateGateText shares). Single-dominator selection is not enough:
+// on parallel gated branches no one gate dominates every path, yet each
+// branch's approval covers the target — skipping the cut leaves every
+// one of those stale approvals usable (review finding, 2026-08-31).
+// Territory membership makes each re-armed gate the last gate on some
+// path to the target, so nearer gates never hide behind outer ones and
+// outer gates never re-run work an inner approval already covers. Nodes
+// between a gate and the original target reset with everything else
+// downstream of the gate: they are territory the purged approval
+// covered, and routing re-arms finished targets when the gate's edges
+// re-fire regardless — preserving them would take a cached-result node
+// semantic that does not exist. In shipped templates gates sit directly
+// before their mutations and expensive spawns sit above the gates, so
+// nothing costly re-runs.
+//
 // A running run must be canceled first — resetting nodes under a live
 // executor would race it.
-func RetryGraphRun(session, runID, fromNode string) error {
+//
+// Purging a stale gate approval fails CLOSED (PR #56 review): claiming
+// "purged" while os.Remove failed would leave the marker to satisfy the
+// re-armed gate — the laundered approval MUX-132 closed. The purge runs
+// before any store write, so refusing leaves the run untouched.
+func RetryGraphRun(session, runID, fromNode string) (*GraphRetryResult, error) {
 	run, err := ReadGraphRun(session, runID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if run.State == GraphRunRunning {
-		return fmt.Errorf("run %s is still running — cancel it before retrying", runID)
+		return nil, fmt.Errorf("run %s is still running — cancel it before retrying", runID)
 	}
 	g, err := ReadGraphRunGraph(session, runID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := ReadNodeStatus(session, runID, fromNode); err != nil {
-		return fmt.Errorf("unknown node %q: %w", fromNode, err)
+		return nil, fmt.Errorf("unknown node %q: %w", fromNode, err)
 	}
 
-	// Downstream set: everything reachable from fromNode, itself included.
+	res := &GraphRetryResult{Requested: fromNode, From: fromNode}
+	byID := make(map[string]*Node, len(g.Nodes))
+	for i := range g.Nodes {
+		byID[g.Nodes[i].ID] = &g.Nodes[i]
+	}
+	downstream := retryDownstream(g, fromNode)
+
+	resume := map[string]bool{fromNode: true}
+	if rearms := staleApprovalGates(session, runID, g, byID, fromNode, downstream); len(rearms) > 0 {
+		res.Rearmed = rearms
+		resume = map[string]bool{}
+		var names, noted []string
+		for _, r := range rearms {
+			resume[r.Gate] = true
+			names = append(names, r.Gate)
+			noted = append(noted, fmt.Sprintf("%q (approved %s)", r.Gate, FormatApprovalTime(r.ApprovedAt)))
+			for id := range retryDownstream(g, r.Gate) {
+				downstream[id] = true
+			}
+			// Purge must fail closed — see the doc comment.
+			if err := os.Remove(graphApprovalPath(session, runID, r.Gate, "approved")); err != nil && !os.IsNotExist(err) {
+				return nil, fmt.Errorf("retry --from %s: cannot purge stale approval for gate %q: %w", fromNode, r.Gate, err)
+			}
+			LogLifecycle(session, "warn", "daemon", "graph-retry-regated",
+				fmt.Sprintf("%s: --from %s is covered by satisfied gate %s (approved %s) — re-armed the gate, stale approval purged",
+					runID, res.Requested, r.Gate, FormatApprovalTime(r.ApprovedAt)))
+		}
+		res.From = strings.Join(names, ",")
+		run.RetryNote = fmt.Sprintf("retry --from %s re-armed at gate(s) %s — the approvals predate the retry; fresh approval required",
+			res.Requested, strings.Join(noted, ", "))
+	} else {
+		run.RetryNote = ""
+	}
+
+	now := time.Now().Unix()
+	for id := range downstream {
+		state := GraphNodePending
+		if resume[id] {
+			state = GraphNodeReady
+		}
+		st := &GraphNodeStatus{NodeID: id, State: state, UpdatedAt: now}
+		if err := atomicWriteJSON(graphNodePath(session, runID, id), st); err != nil {
+			return nil, err
+		}
+	}
+	for _, e := range g.Edges {
+		if downstream[e.From] {
+			delete(run.EdgeFires, EdgeFireKey(e))
+		}
+	}
+	run.State = GraphRunRunning
+	return res, WriteGraphRun(session, run)
+}
+
+// retryDownstream returns everything reachable from fromNode, itself
+// included — the reset set of a retry.
+func retryDownstream(g *Graph, fromNode string) map[string]bool {
 	out := g.outgoing()
 	downstream := map[string]bool{fromNode: true}
 	queue := []string{fromNode}
@@ -453,25 +573,74 @@ func RetryGraphRun(session, runID, fromNode string) error {
 			}
 		}
 	}
+	return downstream
+}
 
-	now := time.Now().Unix()
-	for id := range downstream {
-		state := GraphNodePending
-		if id == fromNode {
-			state = GraphNodeReady
+// staleApprovalGates finds every wait_human gate whose prior approval a
+// retry from target would silently consume: satisfied (done/success),
+// outside the reset set (a gate inside it re-arms naturally), and with
+// the target inside its gate-free territory — the nearest-gate cut.
+// Territory membership, not single-gate dominance: on parallel gated
+// branches no one gate dominates every path, yet each branch's stale
+// approval covers the target — see RetryGraphRun.
+func staleApprovalGates(session, runID string, g *Graph, byID map[string]*Node, target string, reset map[string]bool) []GateRearm {
+	var rearms []GateRearm
+	for i := range g.Nodes {
+		n := &g.Nodes[i]
+		if n.Type != NodeWaitHuman || reset[n.ID] {
+			continue
 		}
-		st := &GraphNodeStatus{NodeID: id, State: state, UpdatedAt: now}
-		if err := atomicWriteJSON(graphNodePath(session, runID, id), st); err != nil {
-			return err
+		st, err := ReadNodeStatus(session, runID, n.ID)
+		if err != nil || st.State != GraphNodeDone || st.Outcome != OutcomeSuccess {
+			continue
+		}
+		if g.gateTerritory(byID, n.ID)[target] {
+			rearms = append(rearms, GateRearm{Gate: n.ID, ApprovedAt: gateApprovalTime(session, runID, n.ID)})
 		}
 	}
-	for _, e := range g.Edges {
-		if downstream[e.From] {
-			delete(run.EdgeFires, EdgeFireKey(e))
+	return rearms
+}
+
+// gateApprovalTime reads a satisfied gate's original approval time: the
+// approved marker's grant timestamp, falling back to the node's DoneAt
+// when the marker is unreadable.
+func gateApprovalTime(session, runID, gateID string) int64 {
+	if data, err := os.ReadFile(graphApprovalPath(session, runID, gateID, "approved")); err == nil {
+		var m struct {
+			ApprovedAt int64 `json:"approved_at"`
+		}
+		if json.Unmarshal(data, &m) == nil && m.ApprovedAt > 0 {
+			return m.ApprovedAt
 		}
 	}
-	run.State = GraphRunRunning
-	return WriteGraphRun(session, run)
+	if st, err := ReadNodeStatus(session, runID, gateID); err == nil {
+		return st.DoneAt
+	}
+	return 0
+}
+
+// FormatApprovalTime renders an approval unix time for user-facing
+// retry output, degrading honestly when the time is unknown. Exported
+// for the retry CLI and TUI notices, which state the re-target with
+// the same wording the run store logs.
+func FormatApprovalTime(t int64) string {
+	if t <= 0 {
+		return "unknown time"
+	}
+	return time.Unix(t, 0).Format("2006-01-02 15:04:05")
+}
+
+// ConditionTookBranch reports whether a node finished by selecting its
+// false branch. A condition's failure OUTCOME is the routing key that
+// edgeOutcome matches, so it is retained; what distinguishes a branch
+// from a break is the terminal STATE, which a branch-taking condition
+// leaves as done (MUX-133 option B). Keying on outcome alone would
+// re-classify a genuine evaluation error as a branch, and keying on
+// state alone would match every completed condition including the true
+// branch — both halves are load-bearing. Shared by the CLI formatter,
+// the TUI and the JSON surface so they cannot drift.
+func ConditionTookBranch(nodeType, state, outcome string) bool {
+	return nodeType == NodeCondition && state == GraphNodeDone && outcome == OutcomeFailure
 }
 
 // GraphNodeStateColor returns the Dracula color for a node run state,
@@ -514,15 +683,22 @@ func formatGraphRun(run *GraphRun, g *Graph, statuses map[string]*GraphNodeStatu
 	if run.Intent != "" {
 		fmt.Fprintf(&b, "Intent: %s\n", run.Intent)
 	}
+	if run.RetryNote != "" {
+		fmt.Fprintf(&b, "Retry: %s\n", run.RetryNote)
+	}
 	for _, n := range g.Nodes {
 		st := statuses[n.ID]
 		if st == nil {
 			fmt.Fprintf(&b, "  %-16s %-10s (no status)\n", n.ID, "?")
 			continue
 		}
-		state := fmt.Sprintf("%-10s", st.State)
+		stateWord, stateColor := st.State, GraphNodeStateColor(st.State)
+		if ConditionTookBranch(n.Type, st.State, st.Outcome) {
+			stateWord, stateColor = "branched", ColorDim
+		}
+		state := fmt.Sprintf("%-10s", stateWord)
 		if colored {
-			state = GraphNodeStateColor(st.State) + state + ColorReset
+			state = stateColor + state + ColorReset
 		}
 		row := fmt.Sprintf("  %-16s %s %s", n.ID, state, n.Type)
 		if st.Outcome != "" {

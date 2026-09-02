@@ -62,7 +62,10 @@ than engineering away.
       implementation ordering by listing position*
 - [x] Behaviour is correct when a spawn window exists at an index other than 11 (e.g. after a window
       is closed and indices shift) — *covered by the same 11/14/17 case; slot 2 → 14, slot 3 → 17*
-- [ ] F11 is confirmed to actually reach tmux in the user's terminal, or the key choice is revised
+- [x] F11 is confirmed to actually reach tmux in the user's terminal, or the key choice is revised —
+      **confirmed empirically by the user 2026-09-01**: with a research window at index 11 and the sole
+      spawn at 12, F11 selected the spawn. The environmental risk (terminals binding F11 to fullscreen)
+      did not materialise in this setup; it remains a per-terminal caveat, not a code problem
       and this criterion updated to name the key actually used
 - [x] The `# --- F-key window switching (F1-F10) ---` header comment is updated — it is stale the
       moment this lands — *now `(F1-F12)`, with the terminal-fullscreen caveat noted inline*
@@ -143,7 +146,8 @@ with** this change, not after.
       >/dev/null 2>&1 || true"`, F12 selects slot 2*
 - [x] Update the stale `(F1-F10)` header comment — *now `(F1-F12)`, and carries the fullscreen
       caveat inline*
-- [ ] Verify F11 actually arrives in the user's terminal; revise the key choice if it does not —
+- [x] Verify F11 actually arrives in the user's terminal; revise the key choice if it does not —
+      confirmed 2026-09-01, no revision needed —
       **outstanding, and only the user can close it.** Requires `tmux source-file` on the updated
       config, then pressing F11 with a spawn window live. If the terminal claims the key for
       fullscreen, everything above is correct and inert, and the fallback (F12 + a chord) applies

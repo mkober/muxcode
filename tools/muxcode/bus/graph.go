@@ -503,29 +503,73 @@ func (g *Graph) validateJoins(v *GraphValidation) {
 	}
 }
 
+// reachableStoppingAt returns the node ids reachable from start without
+// crossing any node for which stop returns true. Stopped nodes are
+// entered (present in the set) but their outgoing edges are not
+// followed — territory beyond them is unreachable by this walk. Backs
+// the validate-time gate rule; the retry re-arm cut uses gateTerritory,
+// the per-gate walk, for the same stop-at-gates semantics.
+func (g *Graph) reachableStoppingAt(byID map[string]*Node, stop func(*Node) bool) map[string]bool {
+	out := g.outgoing()
+	seen := map[string]bool{g.Start: true}
+	queue := []string{g.Start}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if n, ok := byID[cur]; ok && stop(n) {
+			continue
+		}
+		for _, i := range out[cur] {
+			to := g.Edges[i].To
+			if !seen[to] {
+				seen[to] = true
+				queue = append(queue, to)
+			}
+		}
+	}
+	return seen
+}
+
+// gateTerritory returns the set of nodes a gate releases: everything
+// reachable from gateID without crossing another wait_human node, with
+// only success edges followed on the first hop (a gate only produces
+// success — its other edges never fire; PR #49 Copilot). The single
+// implementation of gate-territory semantics, shared by validateGateText
+// and the retry re-arm cut (staleApprovalGates, MUX-132): a node in a
+// gate's territory has that gate as the LAST gate on at least one path,
+// so the gate's approval is one of the consents that released it.
+func (g *Graph) gateTerritory(byID map[string]*Node, gateID string) map[string]bool {
+	out := g.outgoing()
+	seen := map[string]bool{gateID: true}
+	queue := []string{gateID}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if cur != gateID {
+			if n, ok := byID[cur]; ok && n.Type == NodeWaitHuman {
+				continue
+			}
+		}
+		for _, ei := range out[cur] {
+			e := g.Edges[ei]
+			if cur == gateID && edgeOutcome(e) != OutcomeSuccess {
+				continue
+			}
+			if !seen[e.To] {
+				seen[e.To] = true
+				queue = append(queue, e.To)
+			}
+		}
+	}
+	return seen
+}
+
 // validateGates enforces the wait_human gate rule: no git-mutation or
 // Atlassian-write node may be reachable from start without crossing a
 // wait_human node. Traversal stops at wait_human nodes — everything
 // beyond them is gated territory.
 func (g *Graph) validateGates(byID map[string]*Node, v *GraphValidation) {
-	out := g.outgoing()
-
-	ungated := map[string]bool{g.Start: true}
-	queue := []string{g.Start}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		if n, ok := byID[cur]; ok && n.Type == NodeWaitHuman {
-			continue
-		}
-		for _, i := range out[cur] {
-			to := g.Edges[i].To
-			if !ungated[to] {
-				ungated[to] = true
-				queue = append(queue, to)
-			}
-		}
-	}
+	ungated := g.reachableStoppingAt(byID, func(n *Node) bool { return n.Type == NodeWaitHuman })
 
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
@@ -597,33 +641,12 @@ func gateNamesMutation(msg string, n *Node) bool {
 // earlier one need not (MUX-114: gate2 said "review feedback" while three
 // nodes later a spec move was pushed).
 func (g *Graph) validateGateText(byID map[string]*Node, v *GraphValidation) {
-	out := g.outgoing()
 	for i := range g.Nodes {
 		gate := &g.Nodes[i]
 		if gate.Type != NodeWaitHuman {
 			continue
 		}
-		seen := map[string]bool{gate.ID: true}
-		queue := []string{gate.ID}
-		for len(queue) > 0 {
-			cur := queue[0]
-			queue = queue[1:]
-			if cur != gate.ID {
-				if n, ok := byID[cur]; ok && n.Type == NodeWaitHuman {
-					continue
-				}
-			}
-			for _, ei := range out[cur] {
-				e := g.Edges[ei]
-				if cur == gate.ID && edgeOutcome(e) != OutcomeSuccess {
-					continue // a gate only produces success — its other edges never fire (PR #49 Copilot)
-				}
-				if !seen[e.To] {
-					seen[e.To] = true
-					queue = append(queue, e.To)
-				}
-			}
-		}
+		seen := g.gateTerritory(byID, gate.ID)
 		for j := range g.Nodes {
 			n := &g.Nodes[j]
 			if n.ID == gate.ID || !seen[n.ID] || !nodeRequiresGate(n) {

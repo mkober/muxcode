@@ -30,7 +30,7 @@ The relay-suppression guard (`CountRecentRequestTuple`, wired in `cmd/send.go`) 
 
 ### Why it matters
 
-A detector that is almost always wrong trains the operator to dismiss it. The genuine failure modes it exists for are real and have happened — response-echo chain retriggers ([`MUX-009`](./MUX-009-response-echo-chain-retrigger.md)), task-redrive re-execution storms ([`MUX-007`](./MUX-007-verify-spec-stale-review-refire.md)) — and the next one will arrive wrapped in the same alert text as three false positives.
+A detector that is almost always wrong trains the operator to dismiss it. The genuine failure modes it exists for are real and have happened — response-echo chain retriggers ([`MUX-009`](./MUX-009-response-echo-chain-retrigger.md)), task-redrive re-execution storms ([`MUX-007`](../completed/MUX-007-verify-spec-stale-review-refire.md)) — and the next one will arrive wrapped in the same alert text as three false positives.
 
 ## Requirements
 
@@ -98,7 +98,7 @@ A detector that is almost always wrong trains the operator to dismiss it. The ge
 
 - `tools/muxcode/bus/guard.go` — `DetectMessageLoop`, `CountRecentRequestTuple`
 - `tools/muxcode/bus/delivery.go` — `hasReceipt()` reply-implies-receipt semantics
-- [`MUX-009-response-echo-chain-retrigger.md`](./MUX-009-response-echo-chain-retrigger.md), [`MUX-007-verify-spec-stale-review-refire.md`](./MUX-007-verify-spec-stale-review-refire.md) — the genuine storm shapes the detector must keep catching
+- [`MUX-009-response-echo-chain-retrigger.md`](./MUX-009-response-echo-chain-retrigger.md), [`MUX-007-verify-spec-stale-review-refire.md`](../completed/MUX-007-verify-spec-stale-review-refire.md) — the genuine storm shapes the detector must keep catching
 
 ## Provenance
 

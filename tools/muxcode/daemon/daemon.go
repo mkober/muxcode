@@ -306,6 +306,7 @@ func (d *Daemon) Run() error {
 
 	for {
 		d.touchKeepalive()
+		d.checkActiveSpec()
 		d.checkInboxes()
 		d.checkTrigger()
 		d.checkCron()
@@ -325,6 +326,7 @@ func (d *Daemon) Run() error {
 		d.checkPollHealth()
 		d.checkForceRespond()
 		d.checkControlPanes()
+		d.checkWindowFKeyLabels()
 		d.checkNonHookTasks()
 		d.checkTrackedTasks()
 		d.checkStalledTasks()
@@ -377,13 +379,20 @@ func (d *Daemon) checkInboxes() {
 		prev := d.inboxSizes[role]
 
 		if size > prev && size > 0 {
-			// Workflow: detect review→edit messages for reviewed transition
-			if role == "edit" && bus.HasNewMessageFrom(d.session, "edit", "review") {
-				bus.TransitionWorkflow(d.session, bus.StateReviewed, "daemon:review-complete",
-					bus.WithOutcome("review", "complete"))
+			// Reviewed transition: once per review completion (MUX-007) — see WriteReviewedMarker
+			if role == "edit" {
+				if id := bus.NewestMessageIDFrom(d.session, "edit", "review"); id != "" && id != bus.ReadReviewedMarker(d.session) {
+					if err := bus.WriteReviewedMarker(d.session, id); err != nil {
+						// fail closed — see WriteReviewedMarker
+						fmt.Fprintf(os.Stderr, "  [daemon] reviewed marker write failed — transition withheld: %v\n", err)
+					} else {
+						bus.TransitionWorkflow(d.session, bus.StateReviewed, "daemon:review-complete",
+							bus.WithOutcome("review", "complete"))
 
-				// Notify plan agent to verify progress against active spec
-				d.notifyPlanOnReview()
+						// Notify plan agent to verify progress against active spec
+						d.notifyPlanOnReview()
+					}
+				}
 			}
 
 			// Only notify if the inbox has actionable (request-type) messages.
@@ -412,6 +421,28 @@ func (d *Daemon) checkInboxes() {
 // review completion, if an active spec is set and the review chain is
 // configured to notify plan (NotifyPlanOn).
 //
+// Three Phase 3 controls gate the send (MUX-007):
+//
+//   - The spec pointer is presented only when it provably resolves inside
+//     the repo. The pointer is agent-written data like the changed-files
+//     list, and the message instructs a read of it — so an unprovable
+//     pointer (external path, or repoDir unavailable this tick) withholds
+//     the fire rather than passing the raw string through (review
+//     must-fix 2026-09-01: the old code only checked resolvABLE pointers,
+//     so an absolute external pointer sailed past when repoDir was "").
+//     A pointer naming a missing spec likewise withholds — asking plan to
+//     verify a file that is not there is the confusing downstream failure
+//     checkActiveSpec exists to report properly. The movement marker is
+//     not written on a withheld fire, so the next completion retries.
+//   - The movement gate suppresses the fire when the state fingerprint is
+//     unchanged since the last one: nothing moved, so there is nothing to
+//     verify. Suppression requires positive evidence (a non-empty
+//     fingerprint) — with none the fire proceeds as before.
+//   - The changed-files list is repo-scoped before it is presented, so the
+//     message only ever names repo-relative paths and never instructs a
+//     read outside the repo (a live echo once named the user's credentials
+//     file; the receiving agent declining by judgement was not a control).
+//
 // Branch active-time recording rides this same pass as one extra sentence
 // naming the branch; the procedure it refers to lives in the planner agent
 // definition rather than being restated in every message. The sentence is
@@ -429,15 +460,32 @@ func (d *Daemon) notifyPlanOnReview() {
 		return
 	}
 
-	// Get changed files from workflow state
+	repoDir := bus.SessionRepoDir(d.session)
+
+	resolved := bus.ResolveSpecPath(repoDir, specPath)
+	if resolved == "" {
+		bus.LogLifecycle(d.session, "warn", "daemon", "plan-verify-skipped",
+			"active spec pointer not provably inside the repo: "+specPath)
+		return
+	}
+	if _, err := os.Stat(resolved); err != nil {
+		bus.LogLifecycle(d.session, "warn", "daemon", "plan-verify-skipped", "spec missing: "+specPath)
+		return
+	}
+
+	fp := bus.VerifyMovementFingerprint(d.session, repoDir)
+	if fp != "" && fp == bus.ReadVerifyMovementMarker(d.session) {
+		bus.LogLifecycle(d.session, "info", "daemon", "plan-verify-suppressed", "nothing moved since last verify-spec")
+		return
+	}
+
 	wf := bus.ReadWorkflowState(d.session)
-	files := strings.Join(wf.LastFiles, ", ")
+	files := strings.Join(bus.RepoScopedFiles(repoDir, wf.LastFiles), ", ")
 	if files == "" {
-		files = "(unknown)"
+		files = "(none verified in the repo working tree)"
 	}
 
 	timeInstruction := ""
-	repoDir := bus.SessionRepoDir(d.session)
 	if branch := bus.CurrentBranchIn(repoDir); repoDir != "" && !bus.BranchTimeIgnored(branch) {
 		timeInstruction = fmt.Sprintf(
 			" Also record active time for branch %s into the spec's ## Time Tracking table, "+
@@ -445,8 +493,9 @@ func (d *Daemon) notifyPlanOnReview() {
 	}
 
 	planMsg := fmt.Sprintf(
-		"Review complete — verify progress against spec %s. Changed files: %s. "+
-			"Read the spec and the changed files, determine which acceptance criteria and phase steps "+
+		"Review complete — verify progress against spec %s. Changed files (repo-relative): %s. "+
+			"Read the spec and those repo files — the repo working tree is the source of truth for what changed — "+
+			"determine which acceptance criteria and phase steps "+
 			"are now satisfied, check them off (- [ ] to - [x]), and update the status field if a phase is complete.%s "+
 			"Reply to edit with a summary of what was verified.",
 		specPath, files, timeInstruction,
@@ -458,11 +507,46 @@ func (d *Daemon) notifyPlanOnReview() {
 		return
 	}
 
+	if fp != "" {
+		if err := bus.WriteVerifyMovementMarker(d.session, fp); err != nil {
+			// fire anyway — see WriteVerifyMovementMarker
+			fmt.Fprintf(os.Stderr, "  [daemon] verify-movement marker write failed: %v\n", err)
+		}
+	}
+
 	ts := time.Now().Format("15:04:05")
 	fmt.Printf("  %s  Review complete — notifying plan to verify spec\n", ts)
 	bus.LogLifecycle(d.session, "info", "daemon", "plan-verify", specPath)
 	_ = bus.Notify(d.session, "plan")
 	d.refreshInboxSizes()
+}
+
+// checkActiveSpec keeps the active-spec pointer honest (MUX-007 Phase 3):
+// the close-out move to completed/ is followed automatically, and a pointer
+// whose file is simply gone is reported to edit instead of surfacing later
+// as a failed close-spec guard or a verify-spec against a nonexistent path.
+// shouldSendEvent's per-key cooldown keeps a persistently dangling pointer
+// from alerting every poll.
+func (d *Daemon) checkActiveSpec() {
+	res := bus.ReconcileActiveSpec(d.session, bus.SessionRepoDir(d.session))
+	switch res.Outcome {
+	case bus.SpecPointerRepointed:
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Active spec followed its close-out move: %s\n", ts, res.NewPath)
+		bus.LogLifecycle(d.session, "info", "daemon", "spec-repoint",
+			fmt.Sprintf("%s -> %s", res.Path, res.NewPath))
+	case bus.SpecPointerDangling:
+		if d.shouldSendEvent("spec-dangling", res.Path) {
+			bus.LogLifecycle(d.session, "warn", "daemon", "spec-dangling", res.Path)
+			if d.shouldNotifyEdit("event") {
+				msg := bus.NewMessage("daemon", "edit", "event", "spec-dangling",
+					fmt.Sprintf("Active spec pointer names a missing file: %s — repoint it with 'muxcode spec set <path>' or clear it with 'muxcode spec clear'.", res.Path), "")
+				if err := bus.Send(d.session, msg); err == nil {
+					d.refreshInboxSizes()
+				}
+			}
+		}
+	}
 }
 
 // checkTrigger monitors the trigger file for file-edit events with debouncing.
@@ -2599,6 +2683,17 @@ func (d *Daemon) checkTrackedTasks() {
 		// are non-actionable for checkIdleAgents, so without an explicit wake
 		// an already-idle sender would never see the reply.
 		_ = bus.Notify(d.session, task.From)
+	}
+}
+
+// checkWindowFKeyLabels keeps status-bar F-key labels honest as spawn
+// windows come and go — see bus.RefreshWindowFKeyLabels. One list-windows
+// per poll; set-option fires only on drift, so a stable layout costs a
+// single read.
+func (d *Daemon) checkWindowFKeyLabels() {
+	if n, err := bus.RefreshWindowFKeyLabels(d.session); err == nil && n > 0 {
+		bus.LogLifecycle(d.session, "info", "daemon", "fkey-labels",
+			fmt.Sprintf("%d window label(s) updated", n))
 	}
 }
 
