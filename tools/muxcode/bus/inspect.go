@@ -68,6 +68,43 @@ func GetAllAgentStatus(session string) []AgentStatus {
 	return statuses
 }
 
+// DaemonVersionSummary is the session daemon's build set against the binary
+// running `muxcode status`.
+type DaemonVersionSummary struct {
+	Alive     bool
+	Recorded  bool // the daemon wrote a version file at startup
+	Daemon    Info
+	Installed Info
+}
+
+// CollectDaemonVersion reads the daemon build state for a session.
+func CollectDaemonVersion(session string) DaemonVersionSummary {
+	s := DaemonVersionSummary{
+		Alive:     IsDaemonAlive(session, 30),
+		Installed: BuildInfo(),
+	}
+	s.Daemon, s.Recorded = ReadDaemonVersion(session)
+	return s
+}
+
+// FormatDaemonVersionLine renders the version line `muxcode status` prints
+// above the agent table. It is a line of its own rather than a column on
+// the agent rows because the daemon, not the agents, is the versioned
+// process — and because the JSON form of status is an array of agents that
+// scripts index into, which a session-level field would break.
+func FormatDaemonVersionLine(s DaemonVersionSummary) string {
+	const label = "DAEMON"
+	switch {
+	case !s.Alive:
+		return fmt.Sprintf("%-12s down (installed %s)\n", label, s.Installed.Version)
+	case !s.Recorded:
+		return fmt.Sprintf("%-12s unstamped — predates %s, run: muxcode upgrade-daemons\n", label, s.Installed.Version)
+	case s.Daemon.SameBuild(s.Installed):
+		return fmt.Sprintf("%-12s %s (current)\n", label, s.Daemon.Version)
+	}
+	return fmt.Sprintf("%-12s %s — installed %s, run: muxcode upgrade-daemons\n", label, s.Daemon.Version, s.Installed.Version)
+}
+
 // FormatStatusTable formats agent statuses as a human-readable table.
 func FormatStatusTable(statuses []AgentStatus) string {
 	var b strings.Builder

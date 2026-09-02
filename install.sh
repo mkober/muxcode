@@ -627,7 +627,10 @@ CONFIG_FILE="$HOME/.config/muxcode/config"
 # optional `export ` prefix, quoted or unquoted, single or double quotes
 # (Copilot review catch, PR #40: the quoted-only match caused a false
 # re-prompt for `export MUXCODE_OPENCODE_API_KEY=sk-...`).
-existing_okey="$(sed -n -E 's/^(export )?MUXCODE_OPENCODE_API_KEY=//p' "$CONFIG_FILE" 2>/dev/null | head -1 | tr -d "\"'")"
+# `|| true`: on a fresh box the config file does not exist yet, sed exits 1,
+# and under pipefail+errexit that killed the install silently at step 4/9
+# (test-install.sh 13/13 failures, introduced 2affb51). Missing = no key.
+existing_okey="$(sed -n -E 's/^(export )?MUXCODE_OPENCODE_API_KEY=//p' "$CONFIG_FILE" 2>/dev/null | head -1 | tr -d "\"'" || true)"
 if [ -n "${MUXCODE_OPENCODE_API_KEY:-}" ] || [ -n "$existing_okey" ]; then
   row "$C_OK" "✓" "opencode-key" "gateway key configured (Prompt mode ready)"
 else
@@ -937,12 +940,10 @@ verify_failed=false
 if ! command -v muxcode >/dev/null 2>&1; then
   warn "muxcode not found on PATH — open a new shell, or source your profile"
   verify_failed=true
-# A bare `muxcode` launches the interactive project picker and `muxcode --version`
-# is parsed as a project path, so the smoke test uses a real read-only subcommand.
-elif muxcode config list >/dev/null 2>&1; then
-  ok "muxcode runs correctly"
+elif installed=$(muxcode version 2>/dev/null); then
+  ok "muxcode runs correctly: $installed"
 else
-  warn "muxcode is on PATH but 'muxcode config list' failed"
+  warn "muxcode is on PATH but 'muxcode version' failed"
   verify_failed=true
 fi
 

@@ -41,7 +41,7 @@ The run then died:
 
 ### The structural cause
 
-The frozen `req-code-pr` definition wires a repair path from build and test, but not from review:
+The frozen `spec-to-pr` definition wires a repair path from build and test, but not from review:
 
 ```
 build  -> test        build -> fix
@@ -71,8 +71,8 @@ today those gates can pass silently while the one gate that speaks is fatal.
 ### Scope
 
 This is a property of the **template**, not of MUX-117's work. It will recur on every spec that runs
-`req-code-pr`. Whether sibling templates (`story-lifecycle`, `commit-pr-review-loop`,
-`build-test-review`) share the gap is unverified and part of Phase 1.
+`spec-to-pr`. Whether sibling templates (`commit-pr-review-loop`, `build-test-review`) share the
+gap is unverified and part of Phase 1.
 
 ## Defect B — verify-spec fires on the plan agent's own doc writes
 
@@ -216,7 +216,7 @@ template fix repairs one template; a validation rule prevents the class.
 
 | File | Purpose |
 |------|---------|
-| `bus/graph_templates.go` | `req-code-pr` definition — the missing `review → fix` edge |
+| `bus/graph_templates.go` | `spec-to-pr` definition — the missing `review → fix` edge |
 | `bus/graph.go` | `Validate()` — candidate home for a "review needs a failure route" rule |
 | `bus/graph_exec.go` | Edge routing, `graph-unknown-fallback`, `graph-run-failed` |
 | `daemon/daemon.go` | `plan-verify` emission; analyze-route and review-complete handling |
@@ -235,7 +235,7 @@ template fix repairs one template; a validation rule prevents the class.
 
 ### Phase 2: Route review failures
 
-- [ ] Add the repair route from `review` in `req-code-pr` (and any sibling found in Phase 1)
+- [ ] Add the repair route from `review` in `spec-to-pr` (and any sibling found in Phase 1)
 - [ ] Decide and implement whether `Validate()` rejects a review node with no failure route
 - [ ] Ensure a genuinely unrepairable review failure still fails loudly
 

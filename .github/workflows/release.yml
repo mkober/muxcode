@@ -1,0 +1,138 @@
+name: release
+
+# Publishes a GitHub release for a vX.Y.Z tag: the test gate first, then a
+# cross-compile matrix stamped with the tag through the Makefile's ldflags,
+# then checksums and `gh release create --generate-notes`. Notes are bucketed
+# by .github/release.yml; GitHub attaches the source tarball itself.
+#
+# Hand-rolled on first-party actions only (MUX-138 D3): a bare binary is not a
+# full install — agents, skills, configs and nvim ship via `make install` — so
+# install.sh stays the install path and this publishes prebuilt binaries only.
+#
+# The version is taken from the tag name rather than `git describe` so the
+# stamped binary reports exactly the tag that was pushed, which is what the
+# smoke-test step asserts.
+#
+# workflow_dispatch exists for a tag that predates this file — a push-triggered
+# workflow only runs when it is present at the tagged commit — and for
+# re-publishing after a failed run without deleting and re-pushing the tag.
+# The tag must already be on the remote; --verify-tag refuses otherwise.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing vX.Y.Z tag to publish (must already be pushed)'
+        required: true
+        type: string
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Same gate as test.yml — ./test.sh, never build.sh (see that file for why).
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - name: go vet + go test (all modules)
+        run: ./test.sh
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      # `make build` is the single definition of the version ldflags; the
+      # harness it also builds is not published (install.sh builds it locally).
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+        run: |
+          make build VERSION="$TAG"
+          mkdir -p dist
+          mv bin/muxcode "dist/muxcode-${GOOS}-${GOARCH}"
+
+      - name: Smoke test the native binary
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          bin="dist/muxcode-${GOOS}-${GOARCH}"
+          "$bin" version
+          got="$("$bin" version | awk '{print $2}')"
+          if [ "$got" != "$TAG" ]; then
+            echo "binary reports '$got', expected '$TAG'" >&2
+            exit 1
+          fi
+          "$bin" version --at-least "$TAG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: muxcode-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/muxcode-${{ matrix.goos }}-${{ matrix.goarch }}
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: muxcode-*
+          path: dist
+          merge-multiple: true
+
+      # `sha256sum -c sha256sums.txt` verifies a download from inside dist/.
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum muxcode-* > sha256sums.txt
+          cat sha256sums.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          flags=(--verify-tag --generate-notes --title "$TAG")
+          case "$TAG" in
+            *-*) flags+=(--prerelease) ;;
+          esac
+          gh release create "$TAG" "${flags[@]}" dist/*

@@ -317,7 +317,7 @@ func TestValidateGateRuleMixedPaths(t *testing.T) {
 }
 
 func TestBuiltinGraphTemplatesValidate(t *testing.T) {
-	want := []string{"build-test-review", "commit-pr-review-loop", "deploy-verify", "pr-local-review", "req-code-pr", "story-lifecycle", "story-to-spec", "update-spec-docs"}
+	want := []string{"build-test-review", "commit-pr-review-loop", "deploy-verify", "pr-local-review", "spec-to-pr", "story-to-spec", "update-spec-docs"}
 	if len(builtinGraphJSON) != len(want) {
 		t.Errorf("expected %d builtin templates, got %d", len(want), len(builtinGraphJSON))
 	}
@@ -349,10 +349,10 @@ func TestBuiltinGraphTemplatesValidate(t *testing.T) {
 }
 
 // A review failure must route to the fix worker, not kill the run —
-// the missing edge failed a live req-code-pr at its review node
+// the missing edge failed a live spec-to-pr at its review node
 // (2026-08-31, run 1788195259) while build/test failures routed fine.
 func TestReviewFailureRoutesToFix(t *testing.T) {
-	for _, name := range []string{"req-code-pr", "story-lifecycle"} {
+	for _, name := range []string{"spec-to-pr"} {
 		g, err := ParseGraph([]byte(builtinGraphJSON[name]))
 		if err != nil {
 			t.Fatalf("template %q: parse: %v", name, err)
@@ -524,7 +524,7 @@ func TestCancelGraphRunExpiresTasks(t *testing.T) {
 // TestCreateGraphRunRequiresSpec pins the requires_spec gate at the
 // run-creation chokepoint: a spec-driven graph refuses to start with no
 // active requirements spec, and starts once one is set (negative
-// control). req-code-pr carries the flag builtin.
+// control). spec-to-pr carries the flag builtin.
 func TestCreateGraphRunRequiresSpec(t *testing.T) {
 	session := "graph-requires-spec-test"
 	t.Cleanup(func() { _ = os.RemoveAll(BusDir(session)) })
@@ -545,12 +545,12 @@ func TestCreateGraphRunRequiresSpec(t *testing.T) {
 		t.Fatalf("with an active spec set the run must start: %v", err)
 	}
 
-	tpl, _, err := ResolveGraphTemplate("req-code-pr")
+	tpl, _, err := ResolveGraphTemplate("spec-to-pr")
 	if err != nil {
-		t.Fatalf("req-code-pr builtin missing: %v", err)
+		t.Fatalf("spec-to-pr builtin missing: %v", err)
 	}
 	if !tpl.RequiresSpec {
-		t.Error("req-code-pr must carry requires_spec — implementing against no spec is the case the gate exists for")
+		t.Error("spec-to-pr must carry requires_spec — implementing against no spec is the case the gate exists for")
 	}
 }
 
@@ -795,11 +795,11 @@ func templateEdge(g *Graph, from, to string) bool {
 }
 
 // TestShipTemplatesUpdateSpecBeforeGate pins the user requirement
-// (2026-08-28): both ship templates update the spec DURING the run, on
-// the ONLY path to their commit gate (a direct review->gate edge would
+// (2026-08-28): the ship template updates the spec DURING the run, on
+// the ONLY path to its commit gate (a direct review->gate edge would
 // silently bypass it — plan finding).
 func TestShipTemplatesUpdateSpecBeforeGate(t *testing.T) {
-	for name, gate := range map[string]string{"req-code-pr": "phase-gate", "story-lifecycle": "ship-gate"} {
+	for name, gate := range map[string]string{"spec-to-pr": "phase-gate"} {
 		tpl, _, err := ResolveGraphTemplate(name)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -827,7 +827,7 @@ func TestShipTemplatesUpdateSpecBeforeGate(t *testing.T) {
 // both loop-closing edges, gate-and-ask on a stuck phase via the commit
 // failure edge, termination to a final gate that alone releases push+PR.
 func TestReqCodePRMultiPhaseLoop(t *testing.T) {
-	tpl, _, err := ResolveGraphTemplate("req-code-pr")
+	tpl, _, err := ResolveGraphTemplate("spec-to-pr")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -870,26 +870,8 @@ func TestReqCodePRMultiPhaseLoop(t *testing.T) {
 		}
 	}
 	if v := tpl.Validate(); !v.OK() {
-		t.Errorf("multi-phase req-code-pr must validate: %v", v.Errors)
+		t.Errorf("multi-phase spec-to-pr must validate: %v", v.Errors)
 	}
-}
-
-// TestStoryLifecycleCommitGuard pins story-lifecycle's single-phase
-// contract: its commit keeps the intent-scoped phase-complete guard.
-func TestStoryLifecycleCommitGuard(t *testing.T) {
-	tpl, _, err := ResolveGraphTemplate("story-lifecycle")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := range tpl.Nodes {
-		if tpl.Nodes[i].ID == "commit" {
-			if tpl.Nodes[i].Guard != GuardPhaseComplete {
-				t.Errorf("story-lifecycle commit guard = %q, want phase-complete", tpl.Nodes[i].Guard)
-			}
-			return
-		}
-	}
-	t.Error("story-lifecycle has no commit node")
 }
 
 // writableTestGraph returns a minimal graph that passes Validate() and

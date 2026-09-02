@@ -251,7 +251,7 @@ When a multi-step flow matches a graph template, run the graph instead of drivin
 |------|----------|
 | Build → test → review pipeline | `muxcode graph run build-test-review` |
 | Commit + PR + review-feedback loop + spec close-out | `muxcode graph run commit-pr-review-loop` |
-| Implement against the active spec through gated commit/PR | `muxcode graph run req-code-pr` |
+| Implement against the active spec through gated commit/PR | `muxcode graph run spec-to-pr` |
 | Review a PR locally with branch restore | `muxcode graph run pr-local-review "<pr-number>"` |
 | Spec/docs sync + gated commit | `muxcode graph run update-spec-docs` |
 | All templates | `muxcode graph list` |

@@ -19,10 +19,8 @@ target `edit`, but **they do not behave alike**:
 
 | Node | Template | Type | Occupies the interactive edit agent? |
 |------|----------|------|--------------------------------------|
-| `implement` | `req-code-pr` | `spawn` | ❌ No — isolated |
-| `fix` | `req-code-pr` | `spawn` | ❌ No — isolated |
-| `implement` | `story-lifecycle` | `spawn` | ❌ No — isolated |
-| `fix` | `story-lifecycle` | `spawn` | ❌ No — isolated |
+| `implement` | `spec-to-pr` | `spawn` | ❌ No — isolated |
+| `fix` | `spec-to-pr` | `spawn` | ❌ No — isolated |
 | `c` | `commit-pr-review-loop` | **`send`** | ✅ **Yes — this one blocks** |
 
 `spawn` nodes call `StartSpawn()` (`bus/spawn.go:112`), which creates a **new tmux window**

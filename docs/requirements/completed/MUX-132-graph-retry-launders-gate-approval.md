@@ -32,7 +32,7 @@ Two pieces combine:
 1. **`RetryGraphRun` (`bus/graph_run.go`) resets only the downstream set** — it walks outgoing edges
    from `fromNode` and resets those, plus `fromNode` itself. Upstream nodes keep their state, so a
    satisfied `phase-gate` upstream of `commit` stays `done / success`.
-2. **The approval purge lives in the gate's dispatch path** (`bus/graph_exec.go:543`) — it removes the
+2. **The approval purge lives in the gate's dispatch path** (`bus/graph_exec.go:552`) — it removes the
    `approved` marker when a `wait_human` node is *dispatched*. A gate that is never re-dispatched is
    never re-armed.
 
@@ -98,7 +98,7 @@ writes as the commit gates do for git.
 | File | Purpose |
 |------|---------|
 | `tools/muxcode/bus/graph_run.go` | `RetryGraphRun` — the downstream-only reset, and the retry-path `approved` purge (:525), which fails closed |
-| `tools/muxcode/bus/graph_exec.go` | Gate dispatch and the dispatch-path `approved` purge (:543); `harvestWaitingNode` reads the marker (:919); `graphApprovalPath` |
+| `tools/muxcode/bus/graph_exec.go` | Gate dispatch and the dispatch-path `approved` purge — `purgeStaleApproval` (:440), called at :552, both fail closed; `harvestWaitingNode` reads the marker (:923); `graphApprovalPath` |
 | `tools/muxcode/bus/graph.go` | `reachableStoppingAt` (the shared primitive), `gateDominates` (per-gate form of the `validateGates` rule), `nodeRequiresGate` (node predicate only — it holds **no** dominance logic; the original criterion naming it was wrong) |
 | `tools/muxcode/cmd/graph.go` | `retry` subcommand — where a refusal surfaces to the user |
 | `scripts/test-graph-orchestrator.sh` | Integration coverage for `graph retry --from` |
@@ -217,10 +217,20 @@ lifecycle event all still claimed "stale approval purged", reinstating this spec
 path that reports success. Safe to abort because the purge runs before any store write, so a refusal
 leaves the run untouched. Pinned by `TestExecRetryPurgeFailureFailsClosed`.
 
-**The asymmetry this leaves is worth carrying forward.** Phase 3 recorded *two distinct purge sites*;
-only the retry one was hardened. The dispatch-path purge (`graph_exec.go:543`) is still
-`_ = os.Remove(...)`, and `harvestWaitingNode` (`:919`) decides a gate is satisfied by `os.Stat`-ing
-that same marker — so a failed removal there yields the same laundered approval, on the path a capped
-loop re-enters a gate through. Failing closed mid-dispatch is genuinely harder than at retry (there is
-no "before any store write" moment to retreat to), so this is a noted gap rather than an oversight —
-but it is undocumented in the code and untested. Not filed as a spec; flagged to edit 2026-09-02.
+**The asymmetry is closed** (`65deae9`, 2026-09-02). Phase 3 recorded *two distinct purge sites*;
+the dispatch-path purge is now hardened to match the retry one. `purgeStaleApproval`
+(`graph_exec.go:440`) is extracted with the fail-closed contract in its doc comment, and the gate
+dispatch call site (`:552`) fails the node on an unremovable marker instead of reaching `waiting` —
+so `harvestWaitingNode` (`:923`) can no longer `os.Stat` a survivor into a laundered approval on the
+path a capped loop re-enters a gate through. Pinned by `TestExecDispatchPurgeFailureFailsClosed`,
+which carries a positive control confirming a restored permission still re-arms and purges on retry.
+
+**Correcting this note's own earlier wording.** When the gap was first recorded here it was called
+"a noted gap rather than an oversight", reasoning that failing closed mid-dispatch is genuinely
+harder than at retry because there is no "before any store write" moment to retreat to. **That was
+wrong, and it flattered the omission.** The fix is ~24 net lines: extract a 7-line helper, check its
+error, `finishNode(..., OutcomeFailure, ...)` and return — a control-flow shape `dispatchNode`
+already used for other failure branches, needing no retreat point at all. The difficulty claim was an
+inference offered without testing it against the code, and it made an untested, undocumented gap read
+as a considered decision. Worth keeping visible: a plausible-sounding reason why something is hard is
+the easiest way to launder an omission past review — including one's own.

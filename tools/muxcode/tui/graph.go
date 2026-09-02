@@ -1048,15 +1048,68 @@ func TypeaheadIndex(names []string, prefix string) int {
 }
 
 // RenderIntentPromptFrame renders the argument prompt shown when a
-// template's messages interpolate ${intent}.
-func RenderIntentPromptFrame(template, input string, width int) string {
+// template's messages interpolate ${intent}. hint, when set, is why the
+// branch derivation did not apply — the prompt then says why it is
+// asking instead of presenting an unexplained blank.
+func RenderIntentPromptFrame(template, input, hint string, width int) string {
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Launch Graph", width))
 	fmt.Fprintf(&b, "  %s%sLaunch %s%s\n", Purple, Bold, template, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
-	fmt.Fprintf(&b, "  %sThis template interpolates ${intent} — describe the work:%s\n\n", Comment, RST)
-	fmt.Fprintf(&b, "  %sintent:%s %s%s█%s\n", Comment, RST, FG, input, RST)
+	fmt.Fprintf(&b, "  %sThis template interpolates ${intent} — describe the work, or type a spec id:%s\n", Comment, RST)
+	if hint != "" {
+		fmt.Fprintf(&b, "  %s(%s)%s\n", Comment, hint, RST)
+	}
+	fmt.Fprintf(&b, "\n  %sintent:%s %s%s█%s\n", Comment, RST, FG, input, RST)
 	return b.String()
+}
+
+// RenderSpecConfirmFrame renders the branch-derived launch confirm: the
+// branch, the spec it names, the intent the run will carry, and what
+// confirming does to the active-spec pointer — stated before any key is
+// accepted, because a launch that silently re-points the session's spec
+// is the surprise this frame exists to prevent. A spec found only under
+// completed/ is flagged: the run would verify, not implement.
+func RenderSpecConfirmFrame(template string, spec bus.BranchSpec, active bus.ActiveSpecRelation, errMsg string, width int) string {
+	var b strings.Builder
+	b.WriteString(renderSurfaceTabs("Launch Graph", width))
+	fmt.Fprintf(&b, "  %s%sLaunch %s%s\n", Purple, Bold, template, RST)
+	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
+	fmt.Fprintf(&b, "  %sBranch %s names a spec — work through it?%s\n\n", Comment, spec.Branch, RST)
+	fmt.Fprintf(&b, "  %sbranch:%s  %s%s%s\n", Comment, RST, FG, spec.Branch, RST)
+	fmt.Fprintf(&b, "  %sspec:%s    %s%s%s\n", Comment, RST, FG, spec.Path, RST)
+	fmt.Fprintf(&b, "  %sintent:%s  %s%s%s\n", Comment, RST, FG, spec.Intent, RST)
+	fmt.Fprintf(&b, "  %sactive:%s  %s\n", Comment, RST, describeActiveSpecChange(active))
+	if spec.Dir == "completed" {
+		fmt.Fprintf(&b, "\n  %s⚠ spec is under completed/ — the run will verify, not implement%s\n", Yellow, RST)
+	}
+	if errMsg != "" {
+		fmt.Fprintf(&b, "\n  %s✗ %s%s\n", Red, errMsg, RST)
+	}
+	return b.String()
+}
+
+// plainActiveSpecChange is the pointer consequence without color, for the
+// intent editor's hint line when the editor is entered from the confirm.
+func plainActiveSpecChange(active bus.ActiveSpecRelation, path string) string {
+	switch {
+	case active.Current == "":
+		return "launch sets the active spec to " + path
+	case active.Matches:
+		return "active spec unchanged: " + path
+	}
+	return "launch switches the active spec from " + active.Current + " to " + path
+}
+
+// describeActiveSpecChange words the pointer consequence of confirming.
+func describeActiveSpecChange(active bus.ActiveSpecRelation) string {
+	switch {
+	case active.Current == "":
+		return fmt.Sprintf("%s(unset) → confirming sets it to this spec%s", Comment, RST)
+	case active.Matches:
+		return fmt.Sprintf("%smatches — unchanged%s", Green, RST)
+	}
+	return fmt.Sprintf("%s%s%s → confirming %s%sswitches%s it to this spec", FG, active.Current, RST, Yellow, Bold, RST)
 }
 
 // TemplateNeedsIntent reports whether any node message or action of a

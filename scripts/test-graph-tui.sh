@@ -6,7 +6,7 @@
 # muxcode session and no daemon needed. Frames come from the scriptable
 # seam `muxcode graph ui --render-once`.
 #
-# Requires the installed binary to include MUX-031 (run ./build.sh first).
+# Requires installed muxcode >= v0.1.0, which shipped MUX-031 (run ./build.sh first).
 set -euo pipefail
 
 PASS=0
@@ -17,16 +17,8 @@ ESC=$(printf '\033')
 # as PASS (exit 1 = checks failed, exit 2 = could not run).
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq is required"; exit 2; }
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
-
-# Binary must carry the graph ui subcommand. Capture first: `muxcode
-# graph` itself exits 1 (usage), and under pipefail that poisons the
-# pipeline status even when grep matches — piping directly false-SKIPs
-# every run (found live by the run agent on 2026-08-26).
-graph_usage=$(muxcode graph 2>&1 || true)
-if ! printf '%s' "$graph_usage" | grep -q ' ui '; then
-  echo "SKIP: installed muxcode lacks MUX-031 graph ui — run ./build.sh"
-  exit 2
-fi
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+require_muxcode_version "$(command -v muxcode)" v0.1.0 MUX-031 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 SESSION="graph-tui-test-$$"
 export BUS_SESSION="$SESSION"

@@ -61,7 +61,7 @@ A typical workflow looks like this:
 
 The entire build-test-review chain is **hook-driven** — Go hooks check exit codes and fire the next step. No tokens are spent on routing decisions, and the chain runs at the speed of your tools, not your LLM. Chain actions support conditional expressions — route builds to deploy on release branches, to test on feature branches — all config-driven with first-match-wins semantics.
 
-For multi-step work beyond a linear chain, **graph orchestration** moves the routing into the daemon: `muxcode graph run req-code-pr "implement X"` executes a declarative DAG — implement, build/test with a capped fix loop, review, then a human approval gate before any commit — waking the edit agent only at gates and completion instead of once per step. Runs persist to disk and resume across daemon restarts.
+For multi-step work beyond a linear chain, **graph orchestration** moves the routing into the daemon: `muxcode graph run spec-to-pr "implement X"` executes a declarative DAG — implement, build/test with a capped fix loop, review, then a human approval gate before any commit — waking the edit agent only at gates and completion instead of once per step. Runs persist to disk and resume across daemon restarts.
 
 The `muxcode tui` command launches a live dashboard showing which agents are busy, idle, or waiting on messages, so you always know what's happening across the session. You can add a dashboard window by including `status` in your `MUXCODE_WINDOWS` list.
 
@@ -203,7 +203,7 @@ Claude vs OpenCode, role by role:
 - **Hook-driven automation chains** — Build→test→review and deploy→run→watch chains fire via bash exit codes. Deterministic, fast, zero token cost for routing
 - **Conditional chain actions** — Chain actions support 11 condition types (`files_match`, `branch_match`, `command_match`, `env_set`, `output_contains`, `spec_phases_remaining`, etc.) with first-match-wins on action arrays. Route builds to deploy on release branches, to test on feature branches — all config-driven
 - **Event subscriptions** — Fan-out after chain execution. Subscribe any agent to build/test/deploy/run/watch events with outcome and condition filtering
-- **Graph orchestration** — Declarative multi-agent DAGs executed by the daemon: fan-out/fan-in with `all`/`any`/`quorum` join barriers, outcome-keyed branching, capped fix loops, human approval gates, and durable per-run state that survives a daemon restart. `muxcode graph run req-code-pr "implement X"` returns immediately; the orchestrator is interrupted only at human gates and completion instead of once per step. Git mutations and Atlassian writes are rejected at `graph validate` unless downstream of a `wait_human` gate. Ships 8 built-in templates (`req-code-pr` — requires an active requirements spec, `story-lifecycle`, `story-to-spec`, `commit-pr-review-loop`, `pr-local-review`, `update-spec-docs`, `deploy-verify`, `build-test-review`) with project/user overrides, plus `graph status|cancel|retry --from|approve` for run control
+- **Graph orchestration** — Declarative multi-agent DAGs executed by the daemon: fan-out/fan-in with `all`/`any`/`quorum` join barriers, outcome-keyed branching, capped fix loops, human approval gates, and durable per-run state that survives a daemon restart. `muxcode graph run spec-to-pr "implement X"` returns immediately; the orchestrator is interrupted only at human gates and completion instead of once per step. Git mutations and Atlassian writes are rejected at `graph validate` unless downstream of a `wait_human` gate. Ships 7 built-in templates (`spec-to-pr` — requires an active requirements spec, `story-to-spec`, `commit-pr-review-loop`, `pr-local-review`, `update-spec-docs`, `deploy-verify`, `build-test-review`) with project/user overrides, plus `graph status|cancel|retry --from|approve` for run control
 - **Spawned agents** — Create temporary agents for one-off tasks in their own tmux window. Results collected automatically on completion
 - **Modal windows** — On-demand overlay windows for specialized tasks. API testing opens via `prefix + i` or `muxcode modal open api`. Declarative config with size presets and optional pane splits
 - **Pre-commit safeguards** — Commit delegation blocked when other agents have pending work, preventing incomplete commits
@@ -352,6 +352,50 @@ For subsequent builds after pulling updates:
 ```bash
 ./build.sh
 ```
+
+`build.sh` also rolls the new binary out to any sessions already running. Long-lived session daemons
+keep executing the code they launched with, so an install alone would not reach them — see
+[Versions and releases](#versions-and-releases).
+
+### Versions and releases
+
+Check what you are running:
+
+```bash
+muxcode version          # muxcode v0.1.0 (a1b2c3d, 2026-09-02, go1.22.0 darwin/arm64)
+muxcode version --json   # same facts as JSON
+```
+
+Releases are SemVer-tagged, and MuxCode is **`0.x` deliberately** — the compatibility contract is not
+written yet, so MINOR bumps may carry breaking changes. Pushing a `v*` tag builds darwin and linux
+binaries for amd64 and arm64, attaches `sha256sums.txt`, and publishes a GitHub release with notes
+generated from PR labels.
+
+A build from a working tree describes itself honestly rather than claiming a release —
+`v0.1.0-3-gabc1234-dirty` — and a source build with no version stamp falls back to Go's embedded VCS
+info, then to `devel`. It never prints an empty version.
+
+Scripts can assert a minimum:
+
+```bash
+muxcode version --at-least v0.1.0
+```
+
+Exit `0` means at or past it, `1` means older, and `2` means **uncomparable** — an untagged dev build
+has no version to rank. That third state is why the check is not a plain pass/fail: failing on it
+would block the tree-built binary you run between tags, and passing on it would let a genuinely stale
+binary through. The repo's integration tests branch on all three via
+`scripts/lib/muxcode-version.sh`.
+
+After upgrading, running sessions pick up the new binary with:
+
+```bash
+muxcode upgrade-daemons                      # every session on the machine
+muxcode upgrade-daemons --session <name>     # just one
+muxcode upgrade-daemons --dry-run            # show what would cycle
+```
+
+Daemons already on the installed build are skipped, so this is safe to re-run.
 
 ### Launch
 

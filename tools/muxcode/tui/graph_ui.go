@@ -25,6 +25,7 @@ const (
 	viewGraphGates
 	viewGraphConfirm
 	viewGraphPrompt
+	viewGraphSpecConfirm
 )
 
 // graphTickInterval is the store re-read cadence — the spec requires a
@@ -277,7 +278,11 @@ type GraphUI struct {
 	pendingTemplate string     // template awaiting its ${intent} argument
 	pendingGraph    *bus.Graph // parsed graph of pendingTemplate
 	intentInput     []rune
-	directLaunch    bool // opened in launcher mode — q from templates quits
+	intentHint      string                 // why the branch derivation did not apply
+	pendingSpec     bus.BranchSpec         // branch-derived spec awaiting confirm
+	pendingActive   bus.ActiveSpecRelation // active-spec pointer vs pendingSpec at frame time
+	specErr         string                 // last failure in the spec confirm flow
+	directLaunch    bool                   // opened in launcher mode — q from templates quits
 
 	// Gate queue and action confirm
 	gates          []PendingGate
@@ -334,7 +339,7 @@ func surfaceName(v graphView) string {
 		return "Prompt"
 	case viewGraphGates:
 		return "Pending Gates"
-	case viewGraphTemplates, viewGraphIntent:
+	case viewGraphTemplates, viewGraphIntent, viewGraphSpecConfirm:
 		return "Launch Graph"
 	default: // runs, DAG, node detail
 		return "Graph Runs"
@@ -361,7 +366,7 @@ func surfaceKey(v graphView, runID string) string {
 			return "run:" + runID
 		}
 		return "runs"
-	case viewGraphConfirm, viewGraphIntent:
+	case viewGraphConfirm, viewGraphIntent, viewGraphSpecConfirm:
 		return ""
 	default:
 		return "runs"
@@ -414,7 +419,7 @@ func (ui *GraphUI) paneFocused() bool {
 // just looking at. Never adopts mid-input (confirm/intent), and
 // adopting never writes back (one-way convergence).
 func (ui *GraphUI) syncSharedSurface() {
-	if ui.view == viewGraphConfirm || ui.view == viewGraphIntent {
+	if ui.view == viewGraphConfirm || ui.view == viewGraphIntent || ui.view == viewGraphSpecConfirm {
 		return
 	}
 	if ui.paneFocused() {
@@ -592,6 +597,9 @@ func (ui *GraphUI) handleKey(key byte) string {
 	if ui.view == viewGraphIntent {
 		return ui.handleIntentKey(key)
 	}
+	if ui.view == viewGraphSpecConfirm {
+		return ui.handleSpecConfirmKey(key)
+	}
 	if ui.view == viewGraphConfirm {
 		return ui.handleConfirmKey(key)
 	}
@@ -674,7 +682,7 @@ func (ui *GraphUI) promptSuggestion() string {
 }
 
 // handleTemplateTypeahead jumps the launcher selection to the first
-// template matching the typed prefix ("story" lands on story-lifecycle).
+// template matching the typed prefix ("story" lands on story-to-spec).
 // j/k/q stay navigation keys — no template name begins with them — and a
 // char with no match is dropped. Reports whether the key was consumed.
 func (ui *GraphUI) handleTemplateTypeahead(key byte) bool {
@@ -764,8 +772,8 @@ func (ui *GraphUI) handleEscapeSequence() string {
 
 // cycleSurface moves to the next/previous top-level surface. From a DAG
 // or node drill-in it backs out to the run list's slot and advances from
-// there — one Tab, no Esc first. Inert only in confirm and the intent
-// prompt, which are mid-input.
+// there — one Tab, no Esc first. Inert in the mid-input views (confirm,
+// intent prompt, spec confirm).
 func (ui *GraphUI) cycleSurface(delta int) {
 	cur := -1
 	for i, s := range graphSurfaces {
@@ -1002,17 +1010,102 @@ func editLineAt(buf []rune, cursor int, key byte) ([]rune, int, bool) {
 
 // handleIntentKey edits the ${intent} argument prompt: printable bytes
 // append, backspace deletes, Enter launches, Escape returns to the picker.
+// An editor opened from the spec confirm (pendingSpec set) launches
+// through the same confirm path, so an edited intent still sets the
+// active spec the frame promised — the edit key must not be a bypass.
 func (ui *GraphUI) handleIntentKey(key byte) string {
 	switch {
 	case key == 27: // Escape
 		ui.view = viewGraphTemplates
 		ui.intentInput = nil
+		ui.intentHint = ""
+		ui.pendingSpec = bus.BranchSpec{}
 	case key == 10 || key == 13: // Enter
+		if ui.pendingSpec.Path != "" {
+			ui.confirmBranchSpec(string(ui.intentInput))
+			return ""
+		}
 		ui.launchGraph(ui.pendingGraph, ui.pendingTemplate, string(ui.intentInput))
 	default:
 		ui.intentInput, _ = editLine(ui.intentInput, key)
 	}
 	return ""
+}
+
+// beginIntent opens the argument flow for a template that interpolates
+// ${intent}. When the session's branch names a spec the user confirms
+// it — branch, spec, derived intent, active-spec consequence — instead of
+// retyping what the branch already says; otherwise the free-text prompt
+// opens carrying the reason, never an unexplained blank.
+func (ui *GraphUI) beginIntent(name string, g *bus.Graph) {
+	ui.pendingTemplate = name
+	ui.pendingGraph = g
+	ui.intentInput = nil
+	ui.specErr = ""
+	spec, err := bus.ResolveBranchSpec(ui.session)
+	if err != nil {
+		ui.intentHint = err.Error()
+		ui.view = viewGraphIntent
+		return
+	}
+	ui.pendingSpec = spec
+	ui.pendingActive = bus.ActiveSpecRelationFor(ui.session, spec)
+	ui.view = viewGraphSpecConfirm
+}
+
+// handleSpecConfirmKey resolves the branch-derived launch: Enter/y
+// confirms, e edits the derived intent in the free-text prompt (whose
+// launch still runs the confirm path and whose hint states the pointer
+// consequence), n/Esc/q cancels to the picker.
+func (ui *GraphUI) handleSpecConfirmKey(key byte) string {
+	switch key {
+	case 'n', 'q', 27:
+		ui.pendingSpec = bus.BranchSpec{}
+		ui.specErr = ""
+		ui.view = viewGraphTemplates
+	case 'e':
+		if len(ui.intentInput) == 0 {
+			ui.intentInput = []rune(ui.pendingSpec.Intent)
+		}
+		ui.intentHint = plainActiveSpecChange(ui.pendingActive, ui.pendingSpec.Path)
+		ui.specErr = ""
+		ui.view = viewGraphIntent
+	case 'y', 10, 13:
+		ui.confirmBranchSpec(ui.pendingSpec.Intent)
+	}
+	return ""
+}
+
+// confirmBranchSpec re-resolves the branch and the active pointer before
+// acting: the checkout or the pointer can change between the frame and
+// the keypress, and a stale confirm must never launch — or re-point the
+// session's spec — against what it no longer describes. A changed world
+// returns to the confirm frame and asks again; only a frame that still
+// holds proceeds, launching with intent (derived, or as edited).
+func (ui *GraphUI) confirmBranchSpec(intent string) {
+	spec, err := bus.ResolveBranchSpec(ui.session)
+	if err != nil {
+		ui.intentHint = err.Error()
+		ui.pendingSpec = bus.BranchSpec{}
+		ui.view = viewGraphIntent
+		return
+	}
+	active := bus.ActiveSpecRelationFor(ui.session, spec)
+	if spec.Path != ui.pendingSpec.Path || active.Current != ui.pendingActive.Current {
+		ui.pendingSpec = spec
+		ui.pendingActive = active
+		ui.specErr = "branch or active spec changed since this frame was drawn — confirm again"
+		ui.view = viewGraphSpecConfirm
+		return
+	}
+	if !active.Matches {
+		if err := bus.WriteActiveSpec(ui.session, spec.Path); err != nil {
+			ui.specErr = "cannot set active spec: " + err.Error()
+			ui.view = viewGraphSpecConfirm
+			return
+		}
+	}
+	ui.launchGraph(ui.pendingGraph, ui.pendingTemplate, intent)
 }
 
 // handlePromptKey drives the Prompt surface. Unlike the modal intent
@@ -1187,8 +1280,12 @@ func (ui *GraphUI) launchGraph(g *bus.Graph, template, intent string) {
 	}
 	ui.tmplErr = ""
 	ui.intentInput = nil
+	ui.intentHint = ""
 	ui.pendingGraph = nil
 	ui.pendingTemplate = ""
+	ui.pendingSpec = bus.BranchSpec{}
+	ui.pendingActive = bus.ActiveSpecRelation{}
+	ui.specErr = ""
 	ui.runID = run.ID
 	ui.nodeIdx = 0
 	ui.nodeFollow = true
@@ -1303,10 +1400,7 @@ func (ui *GraphUI) enter() {
 			return
 		}
 		if TemplateNeedsIntent(g) {
-			ui.pendingTemplate = name
-			ui.pendingGraph = g
-			ui.intentInput = nil
-			ui.view = viewGraphIntent
+			ui.beginIntent(name, g)
 			return
 		}
 		ui.launchGraph(g, name, "")
@@ -1349,8 +1443,11 @@ func (ui *GraphUI) render() string {
 		footer = fmt.Sprintf("  %stype%s Jump  %s↑↓/jk%s Navigate  %sEnter%s Launch  %sq/Esc%s Back",
 			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 	case viewGraphIntent:
-		frame = RenderIntentPromptFrame(ui.pendingTemplate, string(ui.intentInput), W)
+		frame = RenderIntentPromptFrame(ui.pendingTemplate, string(ui.intentInput), ui.intentHint, W)
 		footer = fmt.Sprintf("  %sEnter%s Launch  %sEsc%s Cancel", Yellow, RST, Yellow, RST)
+	case viewGraphSpecConfirm:
+		frame = RenderSpecConfirmFrame(ui.pendingTemplate, ui.pendingSpec, ui.pendingActive, ui.specErr, W)
+		footer = fmt.Sprintf("  %sEnter/y%s Yes  %se%s Edit intent  %sn/Esc%s Cancel", Yellow, RST, Yellow, RST, Yellow, RST)
 	case viewGraphGates:
 		frame = RenderGateQueueFrameH(ui.gates, ui.resolvedGates, W, H, ui.gateIdx, ui.gateHistScroll)
 		footer = fmt.Sprintf("  %s↑↓/jk%s Navigate  %sEnter/a%s Approve  %sR%s Refresh  %sq/Esc%s Back",

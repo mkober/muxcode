@@ -251,19 +251,66 @@ When the daemon detects a change in the trigger file, it starts debouncing. Afte
 
 Per-file routing to specific agents (test/deploy/build) is handled earlier by `hook analyze` at edit time — the daemon only handles the aggregate analyst notification.
 
+### `muxcode version`
+
+Print the binary's stamped build identity.
+
+```bash
+muxcode version                      # the identity line
+muxcode version --json               # the same facts as JSON
+muxcode version --at-least v0.1.0    # precondition check, by exit code
+muxcode --version                    # same line as `muxcode version`
+muxcode -v                           # same line as `muxcode version`
+```
+
+```
+muxcode v0.1.0 (a1b2c3d, 2026-09-02, go1.22.0 darwin/arm64)
+```
+
+- `--json` carries exactly six fields — `version`, `commit`, `date`, `go`, `os`, `arch` — the same facts as the line. The field set is a documented contract, pinned by `scripts/test-version.sh`.
+- **`--version` and `-v` never reach the launcher.** `routeFor()` (`main.go`) intercepts them ahead of the path fallback that would otherwise treat an unrecognised first argument as a project directory — so they print the line, exit 0, and create no tmux session, no bus dir, and nothing in the working directory.
+- `--at-least vX.Y.Z` exits by **comparison outcome, not success/failure** — the tri-state is the point:
+
+  | Exit | Meaning |
+  |------|---------|
+  | `0` | at or past the requested version |
+  | `1` | older — the message names both versions on stderr |
+  | `2` | **uncomparable** — an untagged dev build reports a bare commit, which has no SemVer rank |
+
+  Exit `2` is not an error. Treating it as failure would block every developer running a tree-built binary between tags; treating it as success would let a genuinely stale binary through. Scripts should branch on all three — `scripts/lib/muxcode-version.sh` does, and is the shared way to assert a precondition:
+
+  ```bash
+  . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+  require_muxcode_version "$MUX" v0.1.0 MUX-103 || exit 1
+  ```
+
+  A binary predating the `version` verb routes the word to the launcher as a project path and exits 1, which reads correctly as "older".
+
+- Comparison follows SemVer 2.0 (`bus/version.go` `CompareSemver`): a describe suffix `-N-g<sha>` sorts **after** its tag but below the next patch, a pre-release sorts **before** its release, and `-dirty` is ignored.
+- **Stamping**: `make build` is the single definition of the ldflags, setting `Version`/`Commit`/`BuildDate` via `-X` from `git describe --tags --always --dirty`. An unstamped source build falls back to Go's embedded VCS info (`debug.ReadBuildInfo`), then to `devel` — it never prints an empty version.
+
+The daemon records this same identity to `daemon.version` at startup, which is what makes
+[`upgrade-daemons`](#muxcode-upgrade-daemons) version-aware and what `muxcode diagnose` compares to
+raise `binary-daemon-version-mismatch`.
+
 ### `muxcode upgrade-daemons`
 
 Restart all running session daemons so they pick up the freshly installed binary.
 
 ```bash
-muxcode upgrade-daemons [--dry-run]
+muxcode upgrade-daemons [--dry-run] [--force] [--session <name>]
 ```
 
 - Long-lived daemons keep executing the code loaded at their launch — a `make install` that fixes daemon behavior does not reach already-running sessions until they cycle. This command discovers every running `muxcode watch` daemon and monitor process (across all sessions on the machine via `ps`) and re-launches each from the binary currently on `PATH`.
 - Per session, the **monitor is killed first** (so it cannot resurrect the old daemon mid-cycle), then the daemon, then both are relaunched. Kills use `SIGTERM` with a 2s grace period, escalating to `SIGKILL`.
 - **Orphan cleanup**: daemons whose tmux session no longer exists are killed without relaunch (logged as `daemon-orphan-killed`). Successful upgrades log `daemon-upgraded`.
 - `--dry-run` (`-n`) — list the daemons that would be restarted (and orphans that would be killed) without touching any process.
+- **Version-aware**: each daemon records its build identity in `daemon.version` at startup, and one already on this binary's build (version, commit **and** build date, so a dirty-tree rebuild still cycles) is **skipped**. `--dry-run` names both sides per session (`daemon vA → installed vB`), so a stale session is visible at a glance.
+- `--force` — cycle every discovered daemon even when its recorded build already matches the installed one.
+- `--session <name>` — **scope the rollout to one session's daemon.** Without it the command cycles every stale daemon on the machine, which is rarely what you want from inside a test or a script touching one session. Backed by `FilterDaemonProcs` (`bus/upgrade.go:125`), which returns every process when the session is empty and otherwise keeps only matching ones. A name that matches nothing prints `upgrade-daemons: no running daemon found for session <name>`.
 - Exits non-zero if any session's relaunch fails. Prints `no running daemons found` when none are discovered.
+
+Integration test: `scripts/test-version.sh` — covers the stamped identity, `version --json`/`--at-least` exit codes, and the version-aware rollout. It relies on `--session` to confine its daemon cycling to its own scratch session.
 
 `build.sh` calls `muxcode upgrade-daemons` after `make install`, so every install automatically rolls the new binary out to all live sessions.
 
@@ -1543,7 +1590,10 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 
 ```bash
 # Start a run from a built-in template, with intent interpolated into node messages
-muxcode graph run req-code-pr "implement PBP1-4915"
+muxcode graph run spec-to-pr "implement PBP1-4915"
+
+# Omit the intent and it is derived from the branch's spec
+muxcode graph run spec-to-pr
 
 # Run a custom definition — --file must be the first argument after `run`,
 # since a bare first arg is read as a template name
@@ -1574,6 +1624,47 @@ muxcode graph ui --prompt                 # the Prompt surface (MUX-109)
 muxcode graph ui --render-once --width 100 <run-id>
 muxcode graph ui --gates --render-once
 ```
+
+#### Branch-derived intent
+
+`muxcode graph run <template>` with **no intent** derives one from the branch. A branch whose
+leading path segment starts with a tracking key — `MUX-138-github-versioning-releases`, bare
+`MUX-138`, or `feature/MUX-138-slug` — resolves to that spec and builds the intent from it: the
+key, the spec's H1 title, and the first phase heading that still has open checkboxes. The key must
+*lead* its segment, so a slug that merely mentions another spec (`fix-MUX-12-typo`) never resolves
+to it.
+
+Specs resolve by key across three directories in order — **`drafts/` → `backlog/` → `completed/`**
+— work in flight beating planned beating shipped.
+
+The active-spec pointer is handled explicitly, because deriving an intent is also a decision about
+what the run is *about*:
+
+| Pointer state | What happens |
+|---------------|--------------|
+| Unset | Set to the branch's spec; the CLI prints `Active spec set: <path>` |
+| Already the branch's spec | Used as-is, nothing written |
+| Names a **different** spec | **Refused** — `ErrActiveSpecMismatch`, exit 1. Pass an explicit intent, or run `muxcode spec set` first |
+| Branch names no spec | Old behaviour — empty intent, with the reason on stderr as a warning |
+
+The refusal exists because silently repointing the active spec would change what a later
+`update-spec` writes to and what the close-spec guard evaluates, on nothing more than a branch
+name. Switching is a decision the user makes, not a side effect of launching a run.
+
+In the graph launcher (`muxcode graph ui --templates`), a branch that names a spec turns the
+free-text intent prompt into a **confirm frame** showing the branch, the spec, the derived intent,
+and the active-spec consequence:
+
+| Key | Action |
+|-----|--------|
+| `Enter` / `y` | Confirm and start the run |
+| `e` | Edit the derived intent as free text first |
+| `n` / `q` / `Esc` | Cancel |
+
+The frame **re-checks both the branch and the pointer at the keypress**, not just when it was
+drawn — between rendering a confirm and pressing a key, a checkout or a `spec set` elsewhere can
+make the frame describe a world that no longer exists. When the branch names no spec, the ordinary
+free-text prompt appears and states the reason it could not derive one.
 
 Keys in the interactive views: `j`/`k` move, `Enter` descends, `q` goes back (quits from the
 top level), `R` forces a refresh, and `a` / `c` / `r` approve a gate, cancel the run, or retry

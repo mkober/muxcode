@@ -34,6 +34,7 @@ func Status(args []string) {
 		}
 		fmt.Println(out)
 	} else {
+		fmt.Print(bus.FormatDaemonVersionLine(bus.CollectDaemonVersion(session)))
 		fmt.Print(bus.FormatStatusTable(statuses))
 	}
 }

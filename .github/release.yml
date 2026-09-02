@@ -1,0 +1,31 @@
+# Buckets for GitHub-generated release notes (MUX-138 D2). PR titles already
+# carry `MUX-NNN: summary`, so every line is MUX-keyed without a hand-kept
+# CHANGELOG; the completed-specs index remains the long-form changelog.
+#
+# Each bucket also accepts the matching GitHub default label (bug, enhancement,
+# documentation) so a PR labelled either way lands in the right section.
+# scripts/release-labels.sh creates the type:* / breaking / docs labels and
+# the skip-changelog exclusion label.
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+  categories:
+    - title: Breaking changes
+      labels:
+        - breaking
+    - title: Features
+      labels:
+        - type:feature
+        - enhancement
+    - title: Defect fixes
+      labels:
+        - type:defect
+        - bug
+    - title: Documentation
+      labels:
+        - docs
+        - documentation
+    - title: Other changes
+      labels:
+        - '*'

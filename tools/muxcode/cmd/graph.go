@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -110,7 +111,7 @@ func graphUsage() {
 	fmt.Fprint(os.Stderr, `Usage: muxcode graph <command> [args]
 
 Commands:
-  run <template>|--file <path> [intent...]  Start a run (returns immediately; the daemon executes)
+  run <template>|--file <path> [intent...]  Start a run (returns immediately; the daemon executes); an omitted intent derives from the branch's spec
   validate <file|template>                  Validate a graph definition file or template
   create --json '<json>'|<file> [--scope project|user]
                                             Validate a definition and write it as a template
@@ -159,6 +160,9 @@ func graphRun(args []string) {
 	}
 
 	intent := strings.Join(args, " ")
+	if intent == "" && tui.TemplateNeedsIntent(g) {
+		intent = intentFromBranch(bus.BusSession())
+	}
 	run, err := bus.CreateGraphRun(bus.BusSession(), g, template, intent)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -169,6 +173,29 @@ func graphRun(args []string) {
 	if w := bus.UnscopedPhaseGuardWarning(g, intent); w != "" {
 		fmt.Printf("Warning: %s\n", w)
 	}
+}
+
+// intentFromBranch derives the run intent from the branch's spec when the
+// caller gave none, the way the launcher's confirm does; the printed
+// lines are the CLI's confirmation. Nothing derivable keeps the old
+// behaviour (an empty intent) and says why on stderr. A branch naming a
+// different spec than the active pointer is fatal — see
+// bus.LaunchIntentFromBranch.
+func intentFromBranch(session string) string {
+	spec, set, err := bus.LaunchIntentFromBranch(session)
+	if errors.Is(err, bus.ErrActiveSpecMismatch) {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: no intent given and none derived from the branch: %v\n", err)
+		return ""
+	}
+	if set {
+		fmt.Printf("Active spec set: %s\n", spec.Path)
+	}
+	fmt.Printf("Intent from branch %s: %s\n", spec.Branch, spec.Intent)
+	return spec.Intent
 }
 
 func graphRetry(args []string) {

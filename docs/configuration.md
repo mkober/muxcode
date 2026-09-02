@@ -311,6 +311,30 @@ Both follow the standard resolution chain (env → config file).
 | `JIRA_API_TOKEN` | (unset) | Atlassian API token ([create one here](https://id.atlassian.com/manage-profile/security/api-tokens)) |
 | `CONFLUENCE_BASE_URL` | (unset) | Override Confluence base URL if different from `JIRA_BASE_URL`. Falls back to `JIRA_BASE_URL` if unset. |
 
+### Versioning and builds
+
+Versioning has **no runtime environment variables** — the binary's identity is fixed at build time, so
+the knobs are a build variable and a script-side override. For the `muxcode version` verb itself
+(`--json`, `--at-least`, exit codes), see [Agent Bus CLI](agent-bus.md#muxcode-version).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VERSION` | `git describe --tags --always --dirty`, else `devel` | **Make variable, not an env var.** Sets the version stamped into the binary via `-X` ldflags. `make build` is the single definition of those flags; the release workflow passes the tag as `make build VERSION="$TAG"` so a released binary reports the tag rather than a describe string |
+| `MUXCODE_BIN` | `muxcode` (resolved on `PATH`) | Which binary the **integration scripts** exercise (14 of them read it). Point it at `bin/muxcode` to test a tree build without installing, or at an older binary to reproduce a version-precondition failure. Read only by `scripts/`, never by the Go code |
+
+```bash
+# Stamp an explicit version instead of the describe string
+make build VERSION=v0.1.0
+
+# Run an integration test against a tree build rather than the installed binary
+MUXCODE_BIN=./bin/muxcode bash scripts/test-graph-orchestrator.sh
+```
+
+A build with no stamp is not broken: `bus/version.go` falls back to Go's embedded VCS info
+(`debug.ReadBuildInfo`) and then to `devel`, so the version is never empty. Such a build is
+**unrankable** by `--at-least`, which exits `2` rather than `1` — see
+`scripts/lib/muxcode-version.sh` for the shared way integration scripts handle that third state.
+
 ## Claude Code Permissions
 
 The `config/settings.json` template includes pre-approved permissions for common CLI commands. These are merged into `~/.claude/settings.json` during `install.sh` so agents can run standard commands without triggering interactive approval prompts.

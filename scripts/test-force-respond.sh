@@ -8,7 +8,7 @@
 # proof), then enabled (the full ladder walk, the in-flight catch-22, the
 # responding-agent negative control, and the skip-is-not-a-redrive event).
 #
-# Requires the installed binary to include MUX-105 (run ./build.sh first).
+# Requires installed muxcode >= v0.1.0, which shipped MUX-105 (run ./build.sh first).
 set -euo pipefail
 
 PASS=0
@@ -16,12 +16,9 @@ FAIL=0
 
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux is required"; exit 2; }
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
-
-# Binary must carry the ladder — probe the installed binary's strings.
-if ! grep -q "force-respond-notify" "$(command -v muxcode)" 2>/dev/null; then
-  echo "SKIP: installed muxcode lacks MUX-105 force-respond — run ./build.sh"
-  exit 2
-fi
+MUX=$(command -v muxcode)
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+require_muxcode_version "$MUX" v0.1.0 MUX-105 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 SESSION="force-respond-test-$$"
 export BUS_SESSION="$SESSION"
@@ -33,7 +30,6 @@ export MUXCODE_FORCE_RESPOND_SECS=3
 export MUXCODE_FORCE_RESPOND_RUNG_SECS=3
 export MUXCODE_TMP_CLEANUP_THRESHOLD=0
 BUSDIR="/tmp/muxcode-bus-$SESSION"
-MUX=$(command -v muxcode)
 
 DPID=""
 cleanup() {

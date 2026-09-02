@@ -708,7 +708,19 @@ func ResolveGraphTemplate(name string) (*Graph, string, error) {
 		return g, "builtin", err
 	}
 
+	if current, ok := renamedGraphTemplates[name]; ok {
+		return nil, "", fmt.Errorf("unknown graph template: %q (renamed to %q)", name, current)
+	}
 	return nil, "", fmt.Errorf("unknown graph template: %q", name)
+}
+
+// renamedGraphTemplates maps retired builtin names to their current ones.
+// A retired name fails loudly naming its successor rather than resolving
+// as an alias — the rename exists so the name says what the template
+// does, and an alias would keep the old one in circulation.
+var renamedGraphTemplates = map[string]string{
+	"req-code-pr":     "spec-to-pr",
+	"story-lifecycle": "spec-to-pr", // removed — spec-to-pr covers the same arc
 }
 
 // ListGraphTemplates enumerates all resolvable templates across the three

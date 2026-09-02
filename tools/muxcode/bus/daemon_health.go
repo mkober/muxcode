@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,6 +37,41 @@ func IsDaemonAlive(session string, maxAgeSecs int64) bool {
 
 	age := time.Now().Unix() - ts
 	return age <= maxAgeSecs
+}
+
+// DaemonVersionPath returns the path of the file holding the build identity
+// the session's daemon recorded at startup.
+func DaemonVersionPath(session string) string {
+	return filepath.Join(BusDir(session), "daemon.version")
+}
+
+// WriteDaemonVersion records info as the session daemon's build identity.
+// The daemon calls it once after winning the instance lock, so an
+// upgrade-daemons relaunch refreshes the file simply by starting the new
+// process. The content is the same JSON object `muxcode version --json`
+// prints.
+func WriteDaemonVersion(session string, info Info) error {
+	data, err := json.Marshal(info)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(DaemonVersionPath(session), data, 0644)
+}
+
+// ReadDaemonVersion returns the build identity the session's daemon
+// recorded. ok is false when nothing usable is on disk: no daemon has
+// started for the session, or the running one predates the stamp and never
+// wrote the file.
+func ReadDaemonVersion(session string) (Info, bool) {
+	data, err := os.ReadFile(DaemonVersionPath(session))
+	if err != nil {
+		return Info{}, false
+	}
+	var info Info
+	if err := json.Unmarshal(data, &info); err != nil || info.Version == "" {
+		return Info{}, false
+	}
+	return info, true
 }
 
 // RestartDaemon kills any existing daemon process for the session and starts

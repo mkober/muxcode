@@ -12,6 +12,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) >= 2 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Println(harness.VersionLine())
+		return
+	}
 	if len(os.Args) < 3 || os.Args[1] != "run" {
 		fmt.Fprintf(os.Stderr, "Usage: muxcode-llm-harness run <role> [--model MODEL] [--url URL] [--max-turns N] [--tui]\n")
 		os.Exit(1)
@@ -61,8 +65,7 @@ func main() {
 	}()
 
 	if cfg.TUI {
-		// TUI mode: render loop on main goroutine, harness in background.
-		// errCh communicates the harness exit status without a data race.
+		// TUI on the main goroutine, harness behind it; errCh carries its exit status race-free.
 		tui := harness.NewTUISink(cfg.Role, cfg.OllamaModel)
 		cfg.UserInput = tui.SubmitCh() // wire TUI input → harness loop
 		errCh := make(chan error, 1)
@@ -78,10 +81,7 @@ func main() {
 
 		tui.RunLoop(ctx)
 
-		// RunLoop exited — either ctx was cancelled (signal), harness
-		// closed the TUI (fatal error), or user quit (Ctrl+C/Ctrl+D).
-		// Cancel ctx so harness.Run stops and writes to errCh.
-		cancel()
+		cancel() // RunLoop exited (signal, fatal error, or user quit) — stop harness.Run so errCh is written
 
 		if err := <-errCh; err != nil {
 			os.Exit(1)

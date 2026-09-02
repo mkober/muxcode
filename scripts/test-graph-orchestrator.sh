@@ -24,7 +24,7 @@
 # temp dir, empty MUXCODE_CONFIG, disk-pressure cleanup disabled. No live
 # muxcode session is needed.
 #
-# REQUIRES: the installed muxcode binary must include MUX-014 (run
+# REQUIRES: installed muxcode >= v0.1.0, which shipped MUX-014 (run
 # ./build.sh first), and tmux must be available.
 #
 # Usage: bash scripts/test-graph-orchestrator.sh
@@ -40,6 +40,8 @@ if ! command -v tmux >/dev/null 2>&1; then
   echo "  FAIL  tmux not available"
   exit 1
 fi
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+require_muxcode_version "$MUX" v0.1.0 MUX-014 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
 pass=0; fail=0
@@ -180,10 +182,10 @@ else
 fi
 
 builtin_fail=0
-for tpl in build-test-review req-code-pr story-lifecycle story-to-spec commit-pr-review-loop pr-local-review update-spec-docs deploy-verify; do
+for tpl in build-test-review spec-to-pr story-to-spec commit-pr-review-loop pr-local-review update-spec-docs deploy-verify; do
   "$MUX" graph validate "$tpl" >/dev/null 2>&1 || { builtin_fail=1; bad "builtin template $tpl failed validation"; }
 done
-[ "$builtin_fail" -eq 0 ] && ok "all 8 builtin templates validate"
+[ "$builtin_fail" -eq 0 ] && ok "all 7 builtin templates validate"
 
 # --- 2. Async start: graph run returns before any node executes ------------
 # Daemon not started yet, so nothing can execute behind our back.
@@ -549,7 +551,7 @@ printf '%s' "$JSON_OUT" | grep -q '"branched"[ ]*:[ ]*true' \
   || bad "--json missing branched:true — machine consumers still read a bare failure"
 
 # --- 10. Capped-loop terminating condition renders as a branch (MUX-133) ---
-# The loop-check shape from req-code-pr: a condition whose TRUE edge loops
+# The loop-check shape from spec-to-pr: a condition whose TRUE edge loops
 # back and whose FALSE edge ends the loop. The false branch is how a
 # capped loop is supposed to finish, so rendering it red made every
 # normal termination look like a break. Driven through a real iteration

@@ -4,6 +4,20 @@ CONFIGDIR ?= $(HOME)/.config/muxcode
 NVIM_CONFIGDIR ?= $(HOME)/.config/muxcode/nvim
 NVIM_PLUGIN_DIR ?= $(HOME)/.local/share/nvim/site/plugin
 
+# Build identity stamped into both binaries (tools/muxcode/bus/version.go,
+# tools/muxcode-llm-harness/harness/version.go). `git describe` yields the
+# tag, or the tag plus distance and commit past it, with -dirty for a modified
+# tree; a build outside a checkout reads "devel". One flag set serves both
+# modules because the linker ignores a -X target that is not linked in.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+BUS_MODULE := github.com/mkober/muxcode/tools/muxcode
+HARNESS_MODULE := muxcode-llm-harness
+LDFLAGS := -s -w \
+	-X $(BUS_MODULE)/bus.Version=$(VERSION) -X $(BUS_MODULE)/bus.Commit=$(COMMIT) -X $(BUS_MODULE)/bus.BuildDate=$(DATE) \
+	-X $(HARNESS_MODULE)/harness.Version=$(VERSION) -X $(HARNESS_MODULE)/harness.Commit=$(COMMIT) -X $(HARNESS_MODULE)/harness.BuildDate=$(DATE)
+
 .PHONY: build test install clean
 
 # The whole recipe is one shell command, so without `set -e` a failing
@@ -18,7 +32,7 @@ build:
 	for moddir in "$$REPO_DIR"/tools/*/; do \
 		[ -f "$$moddir/go.mod" ] || continue; \
 		name="$$(basename "$$moddir")"; \
-		if ! (cd "$$moddir" && go build -ldflags="-s -w" -o "$$BIN_DIR/$$name" .); then \
+		if ! (cd "$$moddir" && go build -ldflags="$(LDFLAGS)" -o "$$BIN_DIR/$$name" .); then \
 			echo "Go build FAILED for module $$name — not installing" >&2; \
 			exit 1; \
 		fi; \
@@ -35,9 +49,9 @@ build:
 		exit 1; \
 	fi; \
 	if [ $$built -eq 1 ]; then \
-		echo "Go binary: Built $$built module → bin/$$last_name"; \
+		echo "Go binary: Built $$built module → bin/$$last_name ($(VERSION))"; \
 	else \
-		echo "Go binary: Built $$built modules → bin/"; \
+		echo "Go binary: Built $$built modules → bin/ ($(VERSION))"; \
 	fi
 
 test:

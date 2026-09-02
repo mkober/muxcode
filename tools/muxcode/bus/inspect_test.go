@@ -145,6 +145,38 @@ func TestFormatStatusTable_SentArrow(t *testing.T) {
 	}
 }
 
+func TestFormatDaemonVersionLine(t *testing.T) {
+	installed := Info{Version: "v0.2.0", Commit: "def5678", Date: "2026-09-02T13:00:00Z"}
+	older := Info{Version: "v0.1.0", Commit: "abc1234", Date: "2026-09-01T10:00:00Z"}
+	cases := []struct {
+		name    string
+		summary DaemonVersionSummary
+		want    []string
+		absent  string
+	}{
+		{"current", DaemonVersionSummary{Alive: true, Recorded: true, Daemon: installed, Installed: installed}, []string{"DAEMON", "v0.2.0 (current)"}, "upgrade-daemons"},
+		{"stale", DaemonVersionSummary{Alive: true, Recorded: true, Daemon: older, Installed: installed}, []string{"v0.1.0", "installed v0.2.0", "muxcode upgrade-daemons"}, "current"},
+		{"unstamped", DaemonVersionSummary{Alive: true, Recorded: false, Installed: installed}, []string{"unstamped", "v0.2.0", "muxcode upgrade-daemons"}, "current"},
+		{"down", DaemonVersionSummary{Alive: false, Recorded: true, Daemon: older, Installed: installed}, []string{"down", "installed v0.2.0"}, "upgrade-daemons"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			line := FormatDaemonVersionLine(c.summary)
+			if !strings.HasSuffix(line, "\n") || strings.Count(line, "\n") != 1 {
+				t.Errorf("expected exactly one line, got %q", line)
+			}
+			for _, w := range c.want {
+				if !strings.Contains(line, w) {
+					t.Errorf("missing %q in %q", w, line)
+				}
+			}
+			if strings.Contains(line, c.absent) {
+				t.Errorf("unexpected %q in %q", c.absent, line)
+			}
+		})
+	}
+}
+
 func TestReadLogHistory(t *testing.T) {
 	session := testSession(t)
 

@@ -8,7 +8,7 @@
 # creation-order slip types agent messages into an nvim buffer on every
 # window at once.
 #
-# Requires the installed binary to include MUX-108 (run ./build.sh first).
+# Requires installed muxcode >= v0.1.0, which shipped MUX-108 (run ./build.sh first).
 set -euo pipefail
 
 PASS=0
@@ -16,10 +16,9 @@ FAIL=0
 
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux is required"; exit 2; }
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
-if ! grep -q "MUXCODE_CONTROL_PANE_EXCLUDE" "$(command -v muxcode)" 2>/dev/null; then
-  echo "SKIP: installed muxcode lacks MUX-108 control pane — run ./build.sh"
-  exit 2
-fi
+MUX=$(command -v muxcode)
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+require_muxcode_version "$MUX" v0.1.0 MUX-108 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 SESSION="control-pane-test-$$"
 export BUS_SESSION="$SESSION"
@@ -34,7 +33,6 @@ export MUXCODE_TMP_CLEANUP_THRESHOLD=0
 export MUXCODE_CONTROL_PANE_CHECK_SECS=2
 unset MUXCODE_CONTROL_PANE_DISABLE MUXCODE_CONTROL_PANE_EXCLUDE 2>/dev/null || true
 BUSDIR="/tmp/muxcode-bus-$SESSION"
-MUX=$(command -v muxcode)
 
 DPID=""
 cleanup() {

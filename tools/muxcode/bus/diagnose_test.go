@@ -201,6 +201,29 @@ func TestCollectDaemonState_Missing(t *testing.T) {
 	}
 }
 
+func TestCollectDaemonState_ReadsRecordedBuild(t *testing.T) {
+	session, cleanup := setupTestBusDir(t)
+	defer cleanup()
+	writeTestKeepalive(t, session, 2)
+
+	ev := CollectDaemonState(session)
+	if ev.DaemonBuild != nil {
+		t.Errorf("expected no daemon build before the daemon records one, got %+v", *ev.DaemonBuild)
+	}
+	if ev.InstalledBuild.Version == "" {
+		t.Error("installed build must always be collected")
+	}
+
+	recorded := Info{Version: "v0.0.1-test", Commit: "0000000", Date: "2026-01-01T00:00:00Z"}
+	if err := WriteDaemonVersion(session, recorded); err != nil {
+		t.Fatal(err)
+	}
+	ev = CollectDaemonState(session)
+	if ev.DaemonBuild == nil || *ev.DaemonBuild != recorded {
+		t.Errorf("expected recorded build %+v, got %+v", recorded, ev.DaemonBuild)
+	}
+}
+
 // --- Phase 2: Timeline tests ---
 
 func TestBuildTimeline_AnnotatesGaps(t *testing.T) {
@@ -295,6 +318,83 @@ func TestCheckDaemonDead_Alive(t *testing.T) {
 	finding := checkDaemonDead(report)
 	if finding != nil {
 		t.Error("expected no finding for alive daemon")
+	}
+}
+
+// TestCheckDaemonVersionMismatch covers the three stale shapes and, as
+// negative controls, the three states in which the finding must stay quiet —
+// a detector that always fires would pass the positive cases alone.
+func TestCheckDaemonVersionMismatch(t *testing.T) {
+	installed := Info{Version: "v0.2.0", Commit: "def5678", Date: "2026-09-02T13:00:00Z"}
+	older := Info{Version: "v0.1.0", Commit: "abc1234", Date: "2026-09-01T10:00:00Z"}
+	rebuilt := Info{Version: "v0.2.0", Commit: "def5678", Date: "2026-09-02T12:00:00Z"}
+	same := installed
+
+	cases := []struct {
+		name       string
+		state      DaemonStateEvidence
+		want       bool
+		summaryHas string
+	}{
+		{"stale version", DaemonStateEvidence{IsAlive: true, DaemonBuild: &older, InstalledBuild: installed}, true, "v0.1.0 but the installed binary is v0.2.0"},
+		{"same version different build", DaemonStateEvidence{IsAlive: true, DaemonBuild: &rebuilt, InstalledBuild: installed}, true, "different build of v0.2.0"},
+		{"unstamped daemon", DaemonStateEvidence{IsAlive: true, InstalledBuild: installed}, true, "recorded no version"},
+		{"same build", DaemonStateEvidence{IsAlive: true, DaemonBuild: &same, InstalledBuild: installed}, false, ""},
+		{"daemon dead", DaemonStateEvidence{IsAlive: false, IsKeepaliveStale: true, DaemonBuild: &older, InstalledBuild: installed}, false, ""},
+		{"no installed evidence", DaemonStateEvidence{IsAlive: true, DaemonBuild: &older}, false, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := checkDaemonVersionMismatch(&DiagnosticReport{Role: "build", DaemonState: c.state})
+			if !c.want {
+				if f != nil {
+					t.Fatalf("expected no finding, got %s: %s", f.FailureMode, f.Summary)
+				}
+				return
+			}
+			if f == nil {
+				t.Fatal("expected a finding")
+			}
+			if f.FailureMode != "binary-daemon-version-mismatch" {
+				t.Errorf("failure mode %q", f.FailureMode)
+			}
+			if f.Severity != "warning" {
+				t.Errorf("severity %q, want warning — the daemon is running, just old", f.Severity)
+			}
+			if !strings.Contains(f.Summary, c.summaryHas) {
+				t.Errorf("summary %q lacks %q", f.Summary, c.summaryHas)
+			}
+			if !strings.Contains(strings.Join(f.Remediation, "\n"), "muxcode upgrade-daemons") {
+				t.Errorf("remediation should name upgrade-daemons: %v", f.Remediation)
+			}
+		})
+	}
+}
+
+// TestRunDiagnostics_VersionMismatchOnly runs the full check list over a
+// healthy agent under a stale daemon (exactly the mismatch warning) and the
+// identical report under a current daemon (nothing) — the negative control.
+func TestRunDiagnostics_VersionMismatchOnly(t *testing.T) {
+	installed := Info{Version: "v0.2.0", Commit: "def5678", Date: "2026-09-02T13:00:00Z"}
+	older := Info{Version: "v0.1.0", Commit: "abc1234", Date: "2026-09-01T10:00:00Z"}
+	healthy := func(build Info) *DiagnosticReport {
+		return &DiagnosticReport{
+			Role:        "commit",
+			AgentState:  AgentStateEvidence{IsIdle: true, IsAlive: true},
+			DaemonState: DaemonStateEvidence{IsAlive: true, KeepaliveAge: 3, DaemonBuild: &build, InstalledBuild: installed},
+		}
+	}
+
+	stale := healthy(older)
+	RunDiagnostics(stale)
+	if len(stale.Findings) != 1 || stale.Findings[0].FailureMode != "binary-daemon-version-mismatch" {
+		t.Errorf("expected exactly the mismatch finding, got %+v", stale.Findings)
+	}
+
+	current := healthy(installed)
+	RunDiagnostics(current)
+	if len(current.Findings) != 0 {
+		t.Errorf("matching builds must produce no finding, got %+v", current.Findings)
 	}
 }
 
@@ -1315,6 +1415,35 @@ func TestCheckUnexplainedEvidence(t *testing.T) {
 		r.Findings = []DiagnosticFinding{{Severity: "warning", FailureMode: "some-known-mode"}}
 		if f := checkUnexplainedEvidence(r); f != nil {
 			t.Error("backstop must stay quiet once a real detector has explained the state")
+		}
+	})
+
+	t.Run("VersionMismatchDoesNotExplain", func(t *testing.T) {
+		r := stuck()
+		r.Findings = []DiagnosticFinding{{Severity: "warning", FailureMode: "binary-daemon-version-mismatch"}}
+		if f := checkUnexplainedEvidence(r); f == nil {
+			t.Error("a stale daemon is not an account of a stuck inbox — backstop must still fire")
+		}
+	})
+
+	// End to end through the registry: a stuck inbox under a stale daemon
+	// yields BOTH findings, so the warning never buys a false-clean verdict.
+	t.Run("BothFindingsThroughRunDiagnostics", func(t *testing.T) {
+		installed := Info{Version: "v0.2.0", Commit: "def5678", Date: "2026-09-02T13:00:00Z"}
+		older := Info{Version: "v0.1.0", Commit: "abc1234", Date: "2026-09-01T10:00:00Z"}
+		r := stuck()
+		r.AgentState.SupportsHooks = true
+		r.DaemonState = DaemonStateEvidence{IsAlive: true, KeepaliveAge: 2, DaemonBuild: &older, InstalledBuild: installed}
+		RunDiagnostics(r)
+		modes := map[string]string{}
+		for _, f := range r.Findings {
+			modes[f.FailureMode] = f.Severity
+		}
+		if modes["binary-daemon-version-mismatch"] != "warning" {
+			t.Errorf("expected the mismatch warning, got %+v", r.Findings)
+		}
+		if modes["unexplained-stuck-inbox"] != "critical" {
+			t.Errorf("expected the critical backstop alongside the mismatch, got %+v", r.Findings)
 		}
 	})
 
