@@ -37,7 +37,7 @@ here. (`completed/MUX-030` also carries them, correctly, as a historical record.
 
 - **D1 — Start at `v0.1.0`, not `v1.0.0`.** Delivery-ack is still a soak with three rollback valves,
   [`MUX-012`](./MUX-012-remove-gated-pane-scrape-delivery.md) has not removed the bypassed
-  pane-scrape path, 14 High defects are open, and no compatibility contract exists anywhere. `0.x`
+  pane-scrape path, 16 High defects are open, and no compatibility contract exists anywhere. `0.x`
   lets MINOR bumps carry breaking changes honestly. The written 1.0 gate below replaces a feeling
   with a checklist.
 - **D2 — GitHub-generated release notes from PR titles; no hand-maintained `CHANGELOG.md`.** PR
@@ -159,10 +159,24 @@ Cadence: tag when a spec cluster closes (roughly every 3–6 merged PRs), never 
 
 ### Phase 3: Release workflow and first tag
 
-- [ ] `.github/workflows/release.yml` — test → matrix build → checksums → `gh release create --generate-notes`
+- [x] `.github/workflows/release.yml` — test → matrix build → checksums → `gh release create --generate-notes`
 - [ ] `.github/release.yml` categories, and the matching labels created on the repo
 - [ ] Tag `v0.1.0` on the Phase 1 landing commit (**user-approved**, via the commit agent)
 - [ ] Verify the release published with generated notes, 4 binaries and `sha256sums.txt`
+
+Verification 2026-09-02 (plan, `verify-spec`). Step 1 checked off against the file: `test` job, `build`
+needing it across a 4-target matrix (`darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`),
+`sha256sum muxcode-* > sha256sums.txt` (:126), and `gh release create "$TAG" --verify-tag
+--generate-notes` (:134-138). Both files are **untracked** — the work exists in the tree, not in
+history.
+
+The other three are deliberately **not** checked off:
+
+| Step | Why it stays open |
+|------|-------------------|
+| `.github/release.yml` categories + labels | The file exists with its category buckets, but the criterion also requires **the matching labels created on the repo**. That half needs `gh label list`, which this role must not run — half-verified is not done |
+| Tag `v0.1.0` | `git tag` is **empty**. Also user-approved by its own wording |
+| Verify the release published | Unreachable until the tag exists |
 
 ### Phase 4: Enforce script preconditions
 
@@ -200,7 +214,8 @@ figure for effort spent on this spec.
 
 ## Status
 
-In Progress — Phases 1 and 2 complete (13/13 steps, 8 acceptance criteria), 21/45 items overall.
+In Progress — Phases 1 and 2 complete (13/13 steps, 8 acceptance criteria); Phase 3 is 1/4, the
+release workflow written but untagged and unreleased. 22/45 items overall.
 
 The file still sits in `backlog/` while reading `In Progress`, the same deliberate exception the
 index records for [`MUX-005`](./MUX-005-plan-diagrams.md). Moving it to `drafts/` is a `git mv`,

@@ -49,6 +49,8 @@ tools/muxcode-llm-harness/    # Go module — standalone local LLM harness
 | `make install` | Build + install binary to `~/.local/bin/`, agents, skills, configs to `~/.config/muxcode/` |
 | `make clean` | Remove `bin/` directory |
 | `./install.sh` | First-time setup — checks prereqs, builds, configures tmux and Claude Code hooks |
+| `git push origin vX.Y.Z` | A `v*` tag push runs `.github/workflows/release.yml`: `./test.sh` gate → darwin/linux × amd64/arm64 build stamped with the tag via `make build VERSION=<tag>` → `sha256sums.txt` → `gh release create --generate-notes` bucketed by `.github/release.yml`. `gh workflow run release.yml -f tag=vX.Y.Z` publishes an already-pushed tag (one that predates the workflow, or a failed run). Tagging is user-approved, via the commit agent |
+| `bash scripts/release-labels.sh` | Creates the four labels that `.github/release.yml` uses to bucket release notes — `breaking`, `type:feature`, `type:defect`, `docs` — idempotently (`gh label create --force`); a GitHub mutation, so routed through the commit agent |
 | `bash scripts/test-diff-split.sh` | Integration test for nvim diff split preview (requires running muxcode session) |
 | `bash scripts/test-hot-reload.sh` | Integration test for agent hot reload (requires running muxcode session) |
 | `bash scripts/test-resize-hook.sh` | Integration test for the `client-resized` window auto-refit hook (requires running muxcode session) |
