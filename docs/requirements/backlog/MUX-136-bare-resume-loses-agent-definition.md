@@ -364,8 +364,10 @@ Non-Claude providers pass through (no argv contract).
 > (`bus/launch.go:407`) now forwards an allowlist with Claude's own types — `agentJSONKeys`
 > (`launch.go:388`): `tools`/`disallowedTools`/`skills` → arrays (comma, inline `[a, b]`, or a YAML
 > block list), `maxTurns` → int, `background` → bool, and `model`/`permissionMode`/`memory`/`effort`/
-> `isolation`/`color`/`initialPrompt` → strings. Unknown **scalar** keys are dropped deliberately:
-> forwarding one risks the whole launch against an unknown schema strictness. Pinned by
+> `isolation`/`color`/`initialPrompt` → strings. Unknown **scalar** keys are dropped deliberately —
+> ~~forwarding one risks the whole launch against an unknown schema strictness~~ *(that rationale was
+> tested and withdrawn in Phase 5: 2.1.258 accepts unknown keys; the real reason is that forwarding one
+> buys nothing)*. Pinned by
 > `TestBuildAgentsJSON_CarriesRestrictions` and `TestClaudeConfigureLaunch_ProjectTierRestrictionsSurvive`.
 >
 > **Nested keys — amended in the fix-loop pass (2026-09-02).** `hooks:`, `mcpServers:` and
@@ -428,7 +430,8 @@ definition and instructs exactly `muxcode inbox --poll --loop`, and that command
 (`SetPolling`) is what the Stop hook's liveness read (`IsPolling || IsWaiting`) consults — so a live
 listener is left alone, while with the marker gone and work pending `DecideStopHook` blocks with
 `StopHookPollReason` naming the same command. The string and the mechanism are now tied together.
-Live-pane verification remains Phase 5's.
+Live-pane verification was Phase 5's, and it **landed** — the listener is asserted live (marker naming
+a running pid) in Phase 5 sections A and B.
 
 > **Timestamp correction (verified here).** The handoff dated the live evidence at 17:40 and 19:16;
 > those are **UTC printed as local**, and both were still in the future when the claim was written. The
@@ -438,14 +441,17 @@ Live-pane verification remains Phase 5's.
 > `edit` reached the same conclusion independently from the raw `ts` values, our messages crossing.
 > The zero-`delivery-gap` claim was checked directly and holds.
 
-**Open decision for the user — nested frontmatter keys.** `hooks:` and `mcpServers:` are still not
+**Nested frontmatter keys — shape implemented as (a), user ratification still pending.** *(Shipped in
+`6426d4f`, Phase 3. The two shapes below are kept because they are what the decision was between, and
+because option (b) remains available as a later widening.)* `hooks:` and `mcpServers:` are still not
 carried, so a project-tier definition declaring them launches without them: an AC3 gap at tier 1, for
 that shape only (no shipped definition uses nested keys). Two fix shapes:
 
 - **(a) Refuse on an uncarriable key** — `ExtractFrontmatter` records dropped nested keys and the
   launcher refuses. Small, and consistent with the Phase 2 *refuse* decision.
-- **(b) Forward nested YAML into the JSON** — needs a YAML-subset parser in a stdlib-only module, and
-  re-exposes the `--agents` schema-strictness question the allowlist was built to sidestep.
+- **(b) Forward nested YAML into the JSON** — needs a YAML-subset parser in a stdlib-only module.
+  (*It was also said to re-expose the `--agents` schema-strictness question; Phase 5 tested that and
+  found no strictness, so this objection to (b) no longer stands — the parser cost does.*)
 
 **Resolved as (a) in the fix-loop pass (2026-09-02) — shape decision: refuse-on-uncarriable-key.**
 Consistent with the Phase 2 "refuse, not quarantine" decision and with AC3's "if the definition cannot
@@ -456,8 +462,9 @@ carries *why* the JSON is empty although the file resolved, so `refuseWithoutDef
 distinct "cannot be applied … refusing to launch with a reduced definition" message instead of the
 misleading "resolved at no tier". Nested keys outside that set stay muxcode-side metadata and drop.
 
-Option (b) remains open for the user to choose later; it is a *widening*, not a correction, and it
-still depends on the `--agents` schema strictness Phase 5 has not established.
+Option (b) remains open for the user to choose later; it is a *widening*, not a correction. Its cost is
+now purely the stdlib YAML-subset parser — Phase 5 established there is no `--agents` schema strictness
+to fear.
 
 > **Provenance caveat.** That the option was *implemented* is verified. That the **user chose** it is
 > **not** something this agent can establish — the choice was recorded as awaiting the user, and the
@@ -549,37 +556,136 @@ Verified on disk: `snapshot.go:46`, `daemon.go:152/261/1779` (injectable seam + 
 event), `lifecycle.go:67`. The daemon suite now pins `MUXCODE_LIFECYCLE_LOG_DIR` to a temp dir, so
 tests can no longer touch the real logs.
 
+A later pass added `TestCheckAgentHealthLogsPartialSnapshot`: when capture is incomplete the bundle is
+logged at **warn**, naming what is missing, rather than as an `info` row advertising a path that does
+not hold the evidence. Worth keeping — the whole point of the snapshot is that someone trusts it later,
+and a bundle that silently lacks `pane.txt` (where Claude's exit banner lives) is worse than none.
+
+**Hardened the same pass.** The bundle is private (dir `0700`, files `0600`) and **every text in it is
+PII-scrubbed** before writing — pane, process listing, *and* the lifecycle log. This closes a gap the
+snapshot design itself opened: Phase 4 added persistent capture of exactly the surfaces muxcode already
+scrubs elsewhere, and unlike a live pane the bundle outlives them. `MkdirAll` also cannot tighten a
+parent directory an earlier build created `0755`, so the dir is explicitly `Chmod`ed — an upgrade-path
+detail that a fresh-install test would never catch.
+
+> ~~*Earlier note here:* `lifecycle.log` is copied verbatim, which is deliberate and safe — structured
+> events, and the `0600` copy is more protected than the `0644` original.~~ **Wrong, and corrected
+> within the hour.** The perms argument holds, but it answered the wrong question: I checked event
+> *types* and never read the *detail* strings. **87 detail fields in the live log contain
+> `/Users/<name>/…`** — absolute paths carrying the username. Scrubbing the log too is correct.
+
 **What Phase 4 still owes:** item 3's mechanism, which is outside muxcode's control and awaits the
 user's decision on the discriminating experiment. Item 1 is answered in the negative and item 2 is
 answered by reframing; neither needs more work.
 
 ### Phase 5: Integration test
 
-- [ ] Create `scripts/test-restart-definition.sh` — hermetic (scratch bus + tmux session)
-- [ ] Kill a Claude agent's process, let the daemon restart it, assert the agent comes back **with**
+- [x] Create `scripts/test-restart-definition.sh` — hermetic (scratch bus + tmux session)
+- [x] Kill a Claude agent's process, let the daemon restart it, assert the agent comes back **with**
       its definition (tool restrictions enforced, listener running)
-- [ ] Negative control: with the definition unresolvable, assert the loud failure fires and the agent
+- [x] Negative control: with the definition unresolvable, assert the loud failure fires and the agent
       does **not** come up unrestricted
-- [ ] Negative control: a healthy restart emits no downgrade alert — the detector must not fire on
+- [x] Negative control: a healthy restart emits no downgrade alert — the detector must not fire on
       the common path
-- [ ] Coverage floor set to the achievable maximum so a skipped section cannot report green
-- [ ] Run it and record passed/failed/exit code here
+- [x] Coverage floor set to the achievable maximum so a skipped section cannot report green
+      — ~~*not satisfied: floor 27 against an achievable maximum of 30, letting three checks vanish
+      and still report green*~~ **raised to 30 the same day.** Every check sits in an `if`/`else`
+      calling `ok` or `fail`, and the prerequisite guards `exit 2` *before* any check runs, so a
+      completed run always executes all 30 — floor now **equals** observed max, the `MUX-131`
+      standard. Both the condition and its failure message were updated, so a partial fix cannot
+      leave the message lying about the threshold
+- [x] Run it and record passed/failed/exit code here — **run 6, 2026-09-02 21:03 local: 30 passed,
+      0 failed, exit 0**
 
 **Carried in from Phase 2 as explicitly not-verified-live** — the unit tests inject `ps`/tmux output,
 so these three are only ever exercised here:
 
-- [ ] The real `ProbeAgentDefinition` against a **live pane** — the unit pins inject `ps` and tmux
+- [x] The real `ProbeAgentDefinition` against a **live pane** — the unit pins inject `ps` and tmux
       output, so the probe has never run against a real process tree
+      — *done: all four script sections read a real process tree*
 - [ ] `ps -axo command=` on **Linux** (procps accepts `command` as an alias of `args`; only macOS has
-      been exercised)
-- [ ] Claude's `--agents` schema strictness on **unknown keys** — the allowlist sidesteps it rather
+      been exercised) — *still open: the script uses the real probe, so a Linux run exercises the flag,
+      but nobody has run it on Linux. CI is the natural home*
+- [x] Claude's `--agents` schema strictness on **unknown keys** — the allowlist sidesteps it rather
       than establishing it, so the assumption behind "drop unknown keys" is untested
+      — *answered: **Claude Code 2.1.258 accepts an unknown key**. See the correction below*
+
+#### Phase 5 results (2026-09-02) — recorded run: **30 passed, 0 failed, exit 0**
+
+`scripts/test-restart-definition.sh` — hermetic: private tmux server (`TMUX_TMPDIR`, `TMUX` unset),
+scratch bus + daemon, scratch `HOME` (empty user tier) and `MUXCODE_INSTALL_DIR` (tier 3 holds the
+scratch definitions). It **builds its own muxcode from this tree**, so the installed binary is never
+run and the script works from a worktree before harvest. Sweeps compressed via two new knobs,
+`MUXCODE_AGENT_HEALTH_CHECK_SECS` and `MUXCODE_DEFINITION_CHECK_SECS` (same precedent as
+`MUXCODE_CONTROL_PANE_CHECK_SECS`). **Coverage floor 30 — equal to the achievable maximum**, so a
+section that fails to run cannot report green (raised from an initial 27 at verification).
+
+`scripts/fixtures/claude-stub` is a **Go program, not a shell script** — and that detail is the whole
+fixture. The probe requires `argv[0] == claude`, and a script's process is its *interpreter*, so a
+shell stub could never be probed correctly. It supervises a real `muxcode inbox --poll --loop`, prints
+Claude's resume banner on a bare `--resume`, and tears its screen down on exit the way Claude's TUI
+does.
+
+`muxcode agent definition <role>` exposes the live probe (present / missing / unknown; exit 0/1/2) for
+humans and for the test. It **rejects an unrecognised role up front** (`definitionRole()`: a known
+window role or a spawn worker) rather than probing it — otherwise a typo would come back `unknown`,
+which reads as a *verdict about a real agent* instead of "no such agent". Pinned by
+`TestDefinitionRole`. That is the same distinction this spec turns on: not-found and
+found-to-be-broken must never render identically.
+
+| Section | Proves |
+|---------|--------|
+| **A launch** | stub up with the bound flag pair; the **real `ProbeAgentDefinition` reads a real process tree** as `present`; `tools: [Read, Edit]` from the definition file survives into the exec'd JSON; listener running (marker names a live pid); no downgrade alert |
+| **B kill** (SIGTERM) | strike-2 `agent-down-snapshot` **before** the relaunch, bundle holds pane + log + processes; relaunch goes through the launcher; `agent-recovered` only *after*; new process probes `present`; listener re-established; detector silent (negative control) |
+| **C bare resume** | banner printed; probe `missing`; `agent-definitionless` raised; edit alerted; `definition-reload` fired; back to `present`; `definition-restored` |
+| **D unresolvable** | definition deleted: `launch-refused`; refusal visible in the pane; no process (probe `unknown`); `agent-recovered` **withheld**; edit alerted |
+
+> **Correction — the allowlist's stated rationale was wrong, including as I recorded it above.** The
+> Phase 3 note said unknown keys are dropped because "forwarding one risks the whole launch against an
+> unknown schema strictness". Tested directly: Claude Code 2.1.258 **accepts** an unknown key
+> (`{"probe":{…,"bogusKey":1}}` replied "OK", exit 0, with a positive control). There is no strictness
+> risk. The allowlist is still right, for a weaker and more honest reason: **forwarding an unknown key
+> buys nothing.** The rationale is withdrawn in the `agentJSONKeys` doc comment too.
+
+##### Two liveness blind spots the harness surfaced — real behaviour, not test artefacts
+
+Building the fixture exposed the pane-scrape liveness heuristic reading **alive** for agents that are
+dead. Both are the spec's own theme — *the system reporting health it does not have*
+([`MUX-006`](./MUX-006-diagnose-false-clean-verdict.md)) — arriving from a new direction:
+
+1. **The heuristic reads only the pane's last rows.** A dead agent whose shell prompt sits *mid-screen*
+   with blank rows below it — a pane that never filled — reads as "assume alive", and the health sweep
+   never fires. Real Claude renders inline, so a long-lived pane's exit lands on the bottom row and is
+   caught; **an agent that dies early is invisible.** `GracefulStop`'s "did it exit" wait shares the
+   blind spot.
+2. **A SIGKILLed Claude leaves its `❯` glyph on the pane** and the sweep reads it as alive. Only a
+   *clean TUI teardown* registers as death — precisely the case a crash is not.
+
+**Pid-based liveness — what the definition probe already does — has neither gap.** That is the shape of
+the fix, and it is a follow-up rather than something to change here: it touches
+[`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md)'s territory (verifying a restart *actually*
+restored something) and would want its own negative controls. Filing it is the user's call.
+
+Two operational notes also worth carrying, both discovered the hard way during the iterations:
+
+- **`RunAgentLaunch` respects a pre-set `AGENT_ROLE`** (the spawn contract). A scratch tmux server
+  started from an edit-identity shell hands every pane `AGENT_ROLE=edit`, and a launched agent's
+  listener then polls **edit's** inbox. The script sets the role per pane; the launcher docs should
+  say so.
+- **`pgrep -f "inbox --poll"` matches every live Claude agent**, because their ~100 KB argv contains
+  the string. Never use it for listener discovery.
+
+*Six iterations to green, and the failures were informative rather than noise:* run 1 died because the
+listener ran as `edit` (note above); run 2's strike-2 snapshot never fired because SIGKILL left the
+glyph (blind spot 2); run 3 hit the mid-screen prompt (blind spot 1); run 4 exposed the stub lacking a
+relaunch loop; runs 5–6 a teardown race. **Three of the six failures were the harness discovering real
+defects, not fixture bugs.**
 
 ## Time Tracking
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-136-restart-resume-loses-agent-definition | 32m | 2026-09-02 17:22 |
+| MUX-136-restart-resume-loses-agent-definition | 1h 37m | 2026-09-02 21:56 |
 
 ## Status
 
@@ -593,11 +699,27 @@ early** by teaching `BuildAgentsJSON` the full key allowlist. The regression the
 quickly: whether the defer was considered or the fix-now question simply went unanswered was never
 determinable from here.)
 
+**Phase 5 complete 2026-09-02** — `scripts/test-restart-definition.sh` (hermetic, builds its own
+muxcode, coverage floor 30/30) plus a Go `claude-stub` fixture and `muxcode agent definition <role>`.
+Recorded run **30 passed, 0 failed, exit 0**, covering launch / kill / bare-resume / unresolvable. Two
+carried items closed (real probe live; unknown-key strictness answered), **Linux left open**, and two
+new liveness blind spots surfaced for a follow-up. **Harvested into the main checkout** (script,
+`scripts/fixtures/claude-stub`, `muxcode agent definition`, the `MUXCODE_AGENT_HEALTH_CHECK_SECS` /
+`MUXCODE_DEFINITION_CHECK_SECS` knobs, CLAUDE.md row) — uncommitted.
+
+**Phase 5 is fully satisfied** — the one gap found at verification (coverage floor 27 against an
+achievable maximum of 30) was raised to 30 the same day, so floor equals observed max. `CLAUDE.md`
+carries the script's row.
+
+**Phases 1–5 all complete.** What remains is not phase work: acceptance criterion 3 awaits a user
+ruling on its bound, and the Linux `ps -axo command=` path is unexercised (the script uses the real
+probe, so one Linux run settles it — CI is the natural home).
+
 **Phase 3 complete 2026-09-02** — items 1 and 5 verified from earlier phases, item 2 added the
 repo-walking sole-emitter pin, item 3 verified the listener three ways, and item 4 was applied to
 [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) (third path row, scope amendment beyond `edit`,
-occurrences 5 and 6). **Phases 1–3 are now done; Phase 4 (Defect A) and Phase 5 (integration test)
-remain**, and Phase 4 got harder rather than easier — see below.
+occurrences 5 and 6). *(Written when Phases 4 and 5 were still outstanding; both have since completed —
+see the Phase 4 and Phase 5 entries above.)*
 
 **Phase 2 work is complete in the working tree, uncommitted** — `bus/definition.go`,
 `daemon/definition_watchdog.go` and their tests are new; `launch.go`, `provider_claude.go`,
@@ -606,16 +728,21 @@ quarantine**, at launcher and daemon, with a positive argv probe leading and the
 
 Where the risk now sits, in order:
 
-1. **Nothing has run against a live pane.** Every probe pin injects `ps`/tmux output. The watchdog
-   reloads agents on a 30s sweep, so a probe that misreads a real process tree would cycle healthy
-   agents — the failure mode is noisy and self-inflicted rather than silent, but it is Phase 5 that
-   establishes it does not happen.
-2. **Linux is unexercised** (`ps -axo command=`), and the daemon runs wherever the user runs it.
-3. **The "drop unknown keys" choice is unvalidated** — it sidesteps Claude's schema strictness rather
-   than establishing it.
+1. ~~**Nothing has run against a live pane.**~~ **Closed by Phase 5** — all four script sections read a
+   real process tree, on a real daemon, through the real launcher; recorded run 30/0, exit 0.
+2. **Linux is still unexercised** (`ps -axo command=`), and the daemon runs wherever the user runs it.
+   The script uses the real probe, so a Linux run of it settles this; CI is the natural home.
+3. ~~**The "drop unknown keys" choice is unvalidated.**~~ **Answered by Phase 5** — 2.1.258 accepts
+   unknown keys, so there is no strictness to sidestep; the allowlist stays because forwarding buys
+   nothing.
+4. **New: the pane-scrape liveness heuristic reads dead agents as alive** in two cases (mid-screen
+   prompt, SIGKILL leaving the `❯` glyph). See "Two liveness blind spots" above — a follow-up, and the
+   sharpest thing Phase 5 turned up, because it is this spec's own failure mode in a different guise.
 
-Criteria 1, 2, 4, 5, 6 and 7 are checked. **Criterion 3 remains open on two independent counts** — the
-~60s detection window and the uncarried nested keys — and **criterion 8 belongs to Phase 4**.
+Criteria 1, 2, 4, 5, 6, 7 **and 8** are checked. **Criterion 3 is the only one open**, and on a single
+count now: the bounded-not-eliminated detection window, plus its two by-design exceptions (`edit`
+alert-only, and alert-only past the reload cap). ~~The second count, uncarried nested keys, was closed
+when they became a launch refusal rather than a silent strip.~~
 
 **Phase 4 is now a harder problem than when it was written.** The two occurrences added to MUX-126
 weaken rather than strengthen the daemon-upgrade hypothesis: across 2026-09-02, only **two of seven**

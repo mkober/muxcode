@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -109,6 +110,122 @@ func TestSnapshotAgentDown_ReportsWriteFailure(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "procs.txt")); statErr != nil {
 		t.Errorf("files that could be written were not kept: %v", statErr)
+	}
+}
+
+// The bundle outlives the pane and the process, so it is private and scrubbed:
+// a planted key never reaches disk, and nothing in it is world-readable.
+func TestSnapshotAgentDown_ProtectsBundle(t *testing.T) {
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	const key = "AKIAIOSFODNN7EXAMPLE"
+	origCapture, origProcs := snapshotPaneCapture, snapshotProcList
+	snapshotPaneCapture = func(string, int) (string, error) {
+		return "export AWS_ACCESS_KEY_ID=" + key + "\nmail me at someone@example.com\n", nil
+	}
+	snapshotProcList = func() (string, error) {
+		return "  200 100 Wed Sep 2 15:56:44 2026 claude --agent planner --token " + key + "\n", nil
+	}
+	t.Cleanup(func() { snapshotPaneCapture, snapshotProcList = origCapture, origProcs })
+	os.MkdirAll(AgentDownSnapshotDir(), 0755)
+	LogLifecycle("snap-private", "info", "daemon", "agent-health-fail", "plan failure #2 key="+key)
+
+	dir, err := SnapshotAgentDown("snap-private", "plan")
+	if err != nil {
+		t.Fatalf("SnapshotAgentDown: %v", err)
+	}
+	for _, path := range []string{AgentDownSnapshotDir(), dir} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if mode := info.Mode().Perm(); mode != 0700 {
+			t.Errorf("%s mode = %o, want 0700", path, mode)
+		}
+	}
+	for _, name := range []string{"lifecycle.log", "pane.txt", "procs.txt"} {
+		path := filepath.Join(dir, name)
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("%s missing from bundle: %v", name, err)
+		}
+		if mode := info.Mode().Perm(); mode != 0600 {
+			t.Errorf("%s mode = %o, want 0600", name, mode)
+		}
+		data, _ := os.ReadFile(path)
+		if strings.Contains(string(data), key) || strings.Contains(string(data), "someone@example.com") {
+			t.Errorf("%s carries unscrubbed secrets:\n%s", name, data)
+		}
+	}
+	procs, _ := os.ReadFile(filepath.Join(dir, "procs.txt"))
+	if !strings.Contains(string(procs), "claude --agent planner") {
+		t.Errorf("scrubbing removed the process line itself:\n%s", procs)
+	}
+	log, _ := os.ReadFile(filepath.Join(dir, "lifecycle.log"))
+	for _, line := range strings.Split(strings.TrimSpace(string(log)), "\n") {
+		if !json.Valid([]byte(line)) {
+			t.Errorf("lifecycle.log line is not JSON after scrubbing: %q", line)
+		}
+	}
+	if !strings.Contains(string(log), "agent-health-fail") {
+		t.Errorf("scrubbing removed the lifecycle event itself:\n%s", log)
+	}
+}
+
+// A file created wider than 0600 — an earlier build's bundle, or a writer
+// that ignores the mode — is tightened after the write.
+func TestSnapshotAgentDown_TightensExistingFiles(t *testing.T) {
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	origCapture, origProcs, origWrite := snapshotPaneCapture, snapshotProcList, snapshotWriteFile
+	snapshotPaneCapture = func(string, int) (string, error) { return "", nil }
+	snapshotProcList = func() (string, error) { return "", nil }
+	snapshotWriteFile = func(name string, data []byte, _ os.FileMode) error {
+		return os.WriteFile(name, data, 0644)
+	}
+	t.Cleanup(func() {
+		snapshotPaneCapture, snapshotProcList, snapshotWriteFile = origCapture, origProcs, origWrite
+	})
+
+	dir, err := SnapshotAgentDown("snap-loose", "plan")
+	if err != nil {
+		t.Fatalf("SnapshotAgentDown: %v", err)
+	}
+	for _, name := range []string{"lifecycle.log", "pane.txt", "procs.txt"} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("%s missing: %v", name, err)
+		}
+		if mode := info.Mode().Perm(); mode != 0600 {
+			t.Errorf("%s written 0644 was not tightened: mode = %o", name, mode)
+		}
+	}
+}
+
+// A chmod that fails is reported like a file that could not be written: the
+// path still comes back, and the error names what stayed open.
+func TestSnapshotAgentDown_ReportsChmodFailure(t *testing.T) {
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	origCapture, origProcs, origChmod := snapshotPaneCapture, snapshotProcList, snapshotChmod
+	snapshotPaneCapture = func(string, int) (string, error) { return "", nil }
+	snapshotProcList = func() (string, error) { return "", nil }
+	snapshotChmod = func(name string, mode os.FileMode) error {
+		if filepath.Base(name) == "snapshots" {
+			return errors.New("operation not permitted")
+		}
+		return os.Chmod(name, mode)
+	}
+	t.Cleanup(func() {
+		snapshotPaneCapture, snapshotProcList, snapshotChmod = origCapture, origProcs, origChmod
+	})
+
+	dir, err := SnapshotAgentDown("snap-chmod", "plan")
+	if err == nil {
+		t.Fatal("chmod failure not reported")
+	}
+	if dir == "" {
+		t.Fatal("dir withheld on a chmod failure — partial evidence beats none")
+	}
+	if !strings.Contains(err.Error(), "chmod snapshots") || !strings.Contains(err.Error(), "not permitted") {
+		t.Errorf("error does not name the path that stayed open: %v", err)
 	}
 }
 

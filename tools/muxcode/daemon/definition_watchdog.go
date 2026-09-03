@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
@@ -33,7 +34,17 @@ import (
 // MUX-126 documents it as current practice. Opt out with
 // MUXCODE_DEFINITION_WATCHDOG_DISABLE=1.
 
-const definitionCheckSecs int64 = 30
+// definitionCheckSecs is the sweep interval; the env override exists for
+// hermetic tests that compress supervisor time.
+func definitionCheckSecs() int64 {
+	if v := os.Getenv("MUXCODE_DEFINITION_CHECK_SECS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 30
+}
+
 const definitionDebounce = 2
 const definitionReloadCap = 3
 const definitionReloadCooldownSecs int64 = 180
@@ -49,7 +60,7 @@ func (d *Daemon) checkDefinitionless() {
 		return
 	}
 	now := time.Now().Unix()
-	if now-d.lastDefinitionCheck < definitionCheckSecs {
+	if now-d.lastDefinitionCheck < definitionCheckSecs() {
 		return
 	}
 	d.lastDefinitionCheck = now

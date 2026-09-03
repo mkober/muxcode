@@ -388,9 +388,10 @@ func ResolveAgentFile(name, installDir string) (string, int) {
 
 // agentJSONKeys maps the frontmatter keys Claude Code accepts on a subagent
 // definition to how the --agents JSON types them. Keys outside this set stay
-// muxcode-side: forwarding an unknown key would risk the whole launch on the
-// schema's strictness, while dropping a known one silently strips a
-// restriction — the tier-1 regression Phase 1 introduced (MUX-136).
+// muxcode-side: an unknown key does nothing in Claude (2.1.258 accepts one
+// without complaint — verified live in MUX-136 Phase 5), so forwarding it
+// buys nothing, while dropping a known one silently strips a restriction —
+// the tier-1 regression Phase 1 introduced.
 var agentJSONKeys = map[string]string{
 	"tools":           "list",
 	"disallowedTools": "list",

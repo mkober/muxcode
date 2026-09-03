@@ -13,7 +13,7 @@ import (
 // Agent handles the "muxcode agent" subcommand.
 func Agent(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode agent <run|launch|config|status> [flags]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode agent <run|launch|config|status|definition> [flags]\n")
 		os.Exit(1)
 	}
 
@@ -29,10 +29,42 @@ func Agent(args []string) {
 		agentStatus(subArgs)
 	case "config":
 		agentConfig(subArgs)
+	case "definition":
+		agentDefinition(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown agent subcommand: %s\n", subcmd)
-		fmt.Fprintf(os.Stderr, "Usage: muxcode agent <run|launch|config|status> [flags]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode agent <run|launch|config|status|definition> [flags]\n")
 		os.Exit(1)
+	}
+}
+
+// definitionRole accepts the roles the probe can attribute a pane to: a known
+// window role or a spawn worker. Anything else is rejected up front, because
+// the probe would otherwise answer a typo with "unknown" and that reads like
+// a verdict about a real agent.
+func definitionRole(role string) bool {
+	return bus.IsKnownRole(role) || bus.IsSpawnRole(role)
+}
+
+// agentDefinition prints the live definition probe for a role — present,
+// missing, or unknown (MUX-136): does the claude process in the role's pane
+// carry `--agent` and `--agents`? The same positive check the daemon's
+// definition watchdog runs, exposed for humans and the integration test.
+// Exit 0 present, 1 missing, 2 unknown.
+func agentDefinition(args []string) {
+	if len(args) < 1 || !definitionRole(args[0]) {
+		fmt.Fprintf(os.Stderr, "Usage: muxcode agent definition <role>  (a known role or spawn-<id>)\n")
+		os.Exit(2)
+	}
+	verdict := bus.ProbeAgentDefinition(bus.BusSession(), args[0])
+	fmt.Println(verdict)
+	switch verdict {
+	case bus.DefinitionPresent:
+		os.Exit(0)
+	case bus.DefinitionMissing:
+		os.Exit(1)
+	default:
+		os.Exit(2)
 	}
 }
 

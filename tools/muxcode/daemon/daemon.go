@@ -1693,12 +1693,24 @@ func (d *Daemon) touchKeepalive() {
 	bus.TouchKeepaliveDaemon(d.session)
 }
 
+// agentHealthCheckSecs is the liveness sweep interval. The env override
+// exists for hermetic tests that compress supervisor time
+// (scripts/test-restart-definition.sh walks the full 3-strike restart).
+func agentHealthCheckSecs() int64 {
+	if v := os.Getenv("MUXCODE_AGENT_HEALTH_CHECK_SECS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 30
+}
+
 // checkAgentHealth probes agent liveness every 30 seconds using a 3-strike
 // escalation pattern: log → alert edit → restart (capped at 3 restarts).
 // Excludes edit and webhook roles. Respects intentional stop markers.
 func (d *Daemon) checkAgentHealth() {
 	now := time.Now().Unix()
-	if now-d.lastAgentHealthCheck < 30 {
+	if now-d.lastAgentHealthCheck < agentHealthCheckSecs() {
 		return
 	}
 	d.lastAgentHealthCheck = now

@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
@@ -37,5 +39,47 @@ func TestCheckAgentHealthSnapshotsAtStrikeTwo(t *testing.T) {
 	d.checkAgentHealth()
 	if got := snapshots["plan"]; got != 1 {
 		t.Fatalf("plan snapshots after strike 3 = %d, want still 1", got)
+	}
+}
+
+// A partial bundle is logged as a warning naming what is missing, never as
+// an info row advertising a path that does not hold the evidence.
+func TestCheckAgentHealthLogsPartialSnapshot(t *testing.T) {
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	session := testSession(t)
+	d := New(session, 5, 8)
+	d.agentAlive = allDead
+	d.windowNames = ownWindows
+	d.probeDefinition = func(_, _ string) bus.DefinitionProbe { return bus.DefinitionPresent }
+	d.snapshotAgentDown = func(_, role string) (string, error) {
+		return "/snap/" + role, errors.New("snapshot /snap/" + role + " incomplete: pane.txt: disk full")
+	}
+
+	for i := 0; i < 2; i++ {
+		d.lastAgentHealthCheck = 0
+		d.checkAgentHealth()
+	}
+
+	entries, err := bus.ReadLifecycleLog(session)
+	if err != nil {
+		t.Fatalf("ReadLifecycleLog: %v", err)
+	}
+	var infos, warns int
+	for _, e := range entries {
+		if e.Event != "agent-down-snapshot" || !strings.HasPrefix(e.Detail, "plan: ") {
+			continue
+		}
+		switch e.Level {
+		case "info":
+			infos++
+		case "warn":
+			if !strings.Contains(e.Detail, "incomplete") || !strings.Contains(e.Detail, "pane.txt") {
+				t.Errorf("warn row does not name the missing file: %q", e.Detail)
+			}
+			warns++
+		}
+	}
+	if infos != 0 || warns != 1 {
+		t.Fatalf("partial snapshot rows: info=%d warn=%d, want info=0 warn=1", infos, warns)
 	}
 }

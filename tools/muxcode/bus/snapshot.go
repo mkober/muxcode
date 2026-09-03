@@ -26,8 +26,9 @@ const agentDownSnapshotKeep = 20
 // the exit banner and the turns before it, not the whole history.
 const agentDownSnapshotPaneLines = 300
 
-// snapshotPaneCapture and snapshotProcList are the two live reads and
-// snapshotWriteFile the bundle write; tests replace them.
+// snapshotPaneCapture and snapshotProcList are the two live reads;
+// snapshotWriteFile and snapshotChmod are the bundle writes. Tests replace
+// them.
 var snapshotPaneCapture = TmuxCapturePaneLines
 
 var snapshotProcList = func() (string, error) {
@@ -36,6 +37,8 @@ var snapshotProcList = func() (string, error) {
 }
 
 var snapshotWriteFile = os.WriteFile
+
+var snapshotChmod = os.Chmod
 
 // AgentDownSnapshotDir is where a session's snapshots live.
 func AgentDownSnapshotDir() string {
@@ -48,30 +51,51 @@ func AgentDownSnapshotDir() string {
 // none. A file the bundle could not write is different: the directory is
 // still returned, but with an error naming every missing file, so the caller
 // never logs the path as evidence it does not hold.
+//
+// The bundle is private — 0700 directories and 0600 files, re-applied to
+// paths an earlier build or an earlier bundle created wider — and every text
+// in it is PII-scrubbed before it is written: a pane holds whatever the agent
+// printed, an argv can carry a token, a lifecycle detail names home-directory
+// paths, and the bundle outlives all three. The lifecycle log is scrubbed in
+// place without the notice banner, which would break the JSONL a reader
+// parses. A chmod that fails is reported like a file that could not be
+// written — the bundle is then not the private artifact its path implies.
 func SnapshotAgentDown(session, role string) (string, error) {
 	dir := filepath.Join(AgentDownSnapshotDir(),
 		fmt.Sprintf("%s-%s-%d", session, role, time.Now().Unix()))
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
 
 	var missing []string
-	write := func(name string, data []byte) {
-		if err := snapshotWriteFile(filepath.Join(dir, name), data, 0644); err != nil {
-			missing = append(missing, name+": "+err.Error())
+	private := func(path string, mode os.FileMode) {
+		if err := snapshotChmod(path, mode); err != nil {
+			missing = append(missing, "chmod "+filepath.Base(path)+": "+err.Error())
 		}
 	}
+	write := func(name string, data []byte) {
+		path := filepath.Join(dir, name)
+		if err := snapshotWriteFile(path, data, 0600); err != nil {
+			missing = append(missing, name+": "+err.Error())
+			return
+		}
+		private(path, 0600)
+	}
+	private(AgentDownSnapshotDir(), 0700)
+	private(dir, 0700)
 
 	log, err := os.ReadFile(LifecycleLogPath(session))
 	if err != nil {
 		log = []byte("(lifecycle log unreadable: " + err.Error() + ")")
 	}
-	write("lifecycle.log", log)
+	scrubbedLog, _ := ScrubPII(string(log))
+	write("lifecycle.log", []byte(scrubbedLog))
 
 	pane, err := snapshotPaneCapture(PaneTarget(session, role), agentDownSnapshotPaneLines)
 	if err != nil {
 		pane = "(pane capture failed: " + err.Error() + ")"
 	}
+	pane, _ = ScrubPIIWithNotice(pane)
 	write("pane.txt", []byte(pane))
 
 	procs, err := snapshotProcList()
@@ -80,6 +104,7 @@ func SnapshotAgentDown(session, role string) (string, error) {
 	} else {
 		procs = agentProcLines(procs)
 	}
+	procs, _ = ScrubPIIWithNotice(procs)
 	write("procs.txt", []byte(procs))
 
 	pruneAgentDownSnapshots(session, agentDownSnapshotKeep)
