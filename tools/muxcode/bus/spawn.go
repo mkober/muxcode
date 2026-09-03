@@ -689,6 +689,14 @@ func removeSpawnWorktree(worktreePath string) error {
 	}
 
 	if !worktreeRemovable(worktreePath) {
+		// A preserved worktree keeps its build output forever; the source is
+		// what must survive, not the regenerable artifacts beside it.
+		if !ArtifactPurgeDisabled() {
+			if res, err := PurgeBuildArtifacts(worktreePath, false); err == nil && len(res.Paths) > 0 {
+				fmt.Fprintf(os.Stderr, "  reclaimed %s of build artifacts from preserved worktree %s\n",
+					formatBytes(res.BytesFreed), worktreePath)
+			}
+		}
 		fmt.Fprintf(os.Stderr, "Warning: preserving spawn worktree %s — dirty or undeterminable, unharvested work may be present\n", worktreePath)
 		return nil
 	}

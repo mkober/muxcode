@@ -95,6 +95,7 @@ func CancelGraphRun(session, runID string) error {
 	if err := UpdateGraphRunState(session, runID, GraphRunCanceled); err != nil {
 		return err
 	}
+	PurgeSessionArtifacts(session, "graph run "+runID+" canceled")
 	statuses, err := ReadAllNodeStatuses(session, runID)
 	if err != nil {
 		return err
@@ -1061,6 +1062,7 @@ func routeFinishedNodes(session string, run *GraphRun, g *Graph, byID map[string
 		if fired == 0 && (st.Outcome == OutcomeFailure || exhausted > 0) {
 			run.State = GraphRunFailed
 			_ = WriteGraphRun(session, run)
+			PurgeSessionArtifacts(session, "graph run "+run.ID+" failed")
 			reason := "failed with no live edge"
 			if st.Outcome != OutcomeFailure {
 				reason = "loop cap exhausted with its edge suppressed — remaining work never attempted"
@@ -1155,6 +1157,7 @@ func settleRun(session string, run *GraphRun) {
 	fresh.State = GraphRunComplete
 	_ = WriteGraphRun(session, fresh)
 	LogLifecycle(session, "info", "daemon", "graph-run-complete", run.ID)
+	PurgeSessionArtifacts(session, "graph run "+run.ID+" complete")
 
 	// The single completion wake the acceptance criteria promise edit.
 	done := NewMessage(graphSender, "edit", "request", "graph-complete",
