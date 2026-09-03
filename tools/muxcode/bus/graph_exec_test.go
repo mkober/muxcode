@@ -2217,6 +2217,37 @@ func TestExecSpawnTaskNamesOwnedRoles(t *testing.T) {
 	}
 }
 
+// TestExecSpawnTaskNamesOnlyReachableRoles pins the reachability narrowing: a
+// send the worker's node can never reach is not its succession, so claiming it
+// would forbid a delegation nothing was going to duplicate.
+func TestExecSpawnTaskNamesOnlyReachableRoles(t *testing.T) {
+	// A branch node fans to two arms: only the worker's own arm is its
+	// succession. Both arms stay reachable from start, so the graph is valid.
+	g := &Graph{
+		Name:  "t",
+		Start: "fork",
+		Nodes: []Node{
+			{ID: "fork", Type: NodeCondition, Conditions: map[string]any{"env_set": "HOME"}},
+			{ID: "impl", Type: NodeSpawn, Role: "edit", Message: "work"},
+			{ID: "build", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "other", Type: NodeSend, Role: "deploy", Action: "deploy", Message: "go"},
+		},
+		Edges: []Edge{
+			{From: "fork", To: "impl"},
+			{From: "fork", To: "other", Outcome: OutcomeFailure},
+			{From: "impl", To: "build"},
+		},
+	}
+
+	roles := graphOwnedRoles(g, "impl")
+	if len(roles) != 1 || roles[0] != "build" {
+		t.Errorf("worker at impl owns only its downstream build, got %v", roles)
+	}
+	if forkRoles := graphOwnedRoles(g, "fork"); len(forkRoles) != 2 {
+		t.Errorf("both arms are downstream of the fork, got %v", forkRoles)
+	}
+}
+
 // TestExecSpawnTaskUnprefixedWithoutSendNodes is the negative control: a graph
 // that dispatches nothing but workers owns no delegations, so the worker's
 // task must arrive verbatim. An implementation that always prefixed would pass

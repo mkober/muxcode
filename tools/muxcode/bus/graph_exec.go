@@ -392,17 +392,23 @@ func interpolateGraphMessage(session, msg, intent, item string) string {
 	return msg
 }
 
-// graphOwnedRoles lists the roles the run's own send nodes drive, in node
-// order and de-duplicated, so a worker can be told which delegations the
-// graph already owns.
-func graphOwnedRoles(g *Graph) []string {
+// graphOwnedRoles lists the send-node roles reachable from the worker's node,
+// in node order and de-duplicated, so a worker is told which delegations the
+// graph will make on its behalf.
+//
+// Reachability rather than the whole graph: only nodes downstream of this
+// worker are its succession. A send on a branch the worker can never reach is
+// not work the graph is about to do for it, and naming it would forbid a
+// delegation nothing was going to duplicate.
+func graphOwnedRoles(g *Graph, fromNode string) []string {
 	if g == nil {
 		return nil
 	}
+	reachable := reachableNodes(g, fromNode)
 	seen := map[string]bool{}
 	var roles []string
 	for _, n := range g.Nodes {
-		if n.Type != NodeSend || n.Role == "" || seen[n.Role] {
+		if n.Type != NodeSend || n.Role == "" || seen[n.Role] || !reachable[n.ID] {
 			continue
 		}
 		seen[n.Role] = true
@@ -411,22 +417,39 @@ func graphOwnedRoles(g *Graph) []string {
 	return roles
 }
 
+// reachableNodes returns the set of node ids reachable from start by following
+// edges, excluding start itself.
+func reachableNodes(g *Graph, start string) map[string]bool {
+	out := map[string][]string{}
+	for _, e := range g.Edges {
+		out[e.From] = append(out[e.From], e.To)
+	}
+	seen := map[string]bool{}
+	queue := append([]string{}, out[start]...)
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		queue = append(queue, out[id]...)
+	}
+	return seen
+}
+
 // graphWorkerTask prefixes a spawn worker's task with the graph's ownership
 // of the surrounding nodes.
 //
-// A spawn worker launches on its base role's definition — for role "edit"
-// that is code-editor.md, whose "Orchestration Role" section instructs every
-// edit-shaped agent to delegate build, then test, then review after making
-// changes. Nothing else in the launch tells the worker it is a graph node:
-// StartSpawnOwned stamps run/node ownership into the spawn registry, which
-// the worker never reads. So the worker followed its definition and drove a
-// second, ungated pipeline beside the graph's own parked build/test/review
-// nodes — observed live on run 1788405573-spec-to-pr-8281a147, where those
-// three nodes sat pending while the worker's chain ran in the wrong working
-// directory. The preamble is the only channel that reaches the worker's
-// context, so the contradiction has to be stated there.
+// A worker launches on its base role's definition, which for "edit" tells it
+// to delegate build→test→review after making changes, and nothing in the
+// launch says it is a graph node — run ownership lives in the spawn registry,
+// which the worker never reads. It therefore drove a second ungated pipeline
+// beside the graph's parked nodes (live: run 1788405573-spec-to-pr-8281a147).
+// The task message is the only channel into the worker's context, so the
+// contradiction is stated there. CheckGraphNodeAuthority enforces it.
 func graphWorkerTask(g *Graph, runID, nodeID, msg string) string {
-	roles := graphOwnedRoles(g)
+	roles := graphOwnedRoles(g, nodeID)
 	if len(roles) == 0 {
 		return msg
 	}
@@ -563,7 +586,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		var ids []string
 		for i, item := range items {
 			nodeKey := fmt.Sprintf("%s#%d", n.ID, i)
-			msg := graphWorkerTask(g, run.ID, nodeKey,
+			msg := graphWorkerTask(g, run.ID, n.ID,
 				interpolateGraphMessage(session, n.Message, run.Intent, item))
 			spawnID, err := acquireSpawnWorker(session, run.ID, nodeKey, n.Role, msg)
 			if err != nil {

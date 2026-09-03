@@ -3619,13 +3619,20 @@ func (d *Daemon) checkDiskPressure() {
 		claudeCleaned = len(result.ClaudeResult.Sessions)
 		claudeFreed = result.ClaudeResult.BytesFreed
 	}
+	artifactCleaned := 0
+	artifactFreed := int64(0)
+	if result.ArtifactResult != nil {
+		artifactCleaned = len(result.ArtifactResult.Paths)
+		artifactFreed = result.ArtifactResult.BytesFreed
+	}
+	totalFreed := claudeFreed + artifactFreed
 
-	fmt.Printf("  %s  Disk pressure: /tmp free %s, muxcode footprint %s (volume %d%%) — cleaned %d stale, %d Claude sessions (%s)\n",
+	fmt.Printf("  %s  Disk pressure: /tmp free %s, muxcode footprint %s (volume %d%%) — cleaned %d stale, %d Claude sessions, %d build artifact(s) (%s)\n",
 		ts, formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
-		result.UsagePct, staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed))
+		result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned, formatDaemonBytes(totalFreed))
 
 	alertKey := "disk-pressure:/tmp"
-	ineffective := staleCleaned == 0 && claudeCleaned == 0
+	ineffective := staleCleaned == 0 && claudeCleaned == 0 && artifactCleaned == 0
 	lastTS, seen := d.lastAlertKey[alertKey]
 	alerting := shouldAlertDiskPressure(lastTS, now, seen, ineffective)
 
@@ -3635,18 +3642,20 @@ func (d *Daemon) checkDiskPressure() {
 	// the very history needed to diagnose overnight incidents.
 	if alerting || !ineffective {
 		bus.LogLifecycle(d.session, "warn", "daemon", "disk-pressure",
-			fmt.Sprintf("/tmp free=%s footprint=%s volume=%d%% stale=%d claude=%d freed=%s",
+			fmt.Sprintf("/tmp free=%s footprint=%s volume=%d%% stale=%d claude=%d artifacts=%d freed=%s",
 				formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
-				result.UsagePct, staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed)))
+				result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned,
+				formatDaemonBytes(totalFreed)))
 	}
 
 	if alerting {
 		d.lastAlertKey[alertKey] = now
 
 		payload := fmt.Sprintf(
-			"/tmp disk pressure: %s free, muxcode footprint %s (volume %d%% used). Cleaned: %d muxcode artifact(s), %d Claude Code session(s) (%s freed).",
+			"/tmp disk pressure: %s free, muxcode footprint %s (volume %d%% used). Cleaned: %d muxcode artifact(s), %d Claude Code session(s), %d build artifact dir(s) (%s freed).",
 			formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
-			result.UsagePct, staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed),
+			result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned,
+			formatDaemonBytes(totalFreed),
 		)
 		msg := bus.NewMessage("daemon", "edit", "event", "disk-pressure", payload, "")
 		if err := bus.Send(d.session, msg); err != nil {
