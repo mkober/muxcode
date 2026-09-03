@@ -689,9 +689,12 @@ defects, not fixture bugs.**
 
 ## Status
 
-**In Progress** — filed 2026-09-01 from two live incidents the same afternoon; **Phase 1 complete and
-committed 2026-09-02** (`658c305`, 4 files). Still filed under `backlog/`; the move to `drafts/` is a
-`git mv` and awaits the user.
+**In Progress** — filed 2026-09-01 from two live incidents the same afternoon; **Phases 1–5 all
+complete and committed 2026-09-02** (`658c305`, `bcd6209`, `6426d4f`, `8aa18fb`, `49caf7c`), each
+phase's detail preserved in the entries below. Two items remain open and **neither is phase work**:
+acceptance criterion 3 awaits a user ruling on its bound, and the Linux `ps -axo command=` path is
+deferred on environment. Still filed under `backlog/`; because no phase is outstanding the move is now
+to `completed/` rather than `drafts/`, and it is a `git mv` that awaits the user.
 
 Phase 1 landed **as-is**, carrying a one-commit tier-1 restriction loss; the **Phase 2 pass closed it
 early** by teaching `BuildAgentsJSON` the full key allowlist. The regression therefore existed between
