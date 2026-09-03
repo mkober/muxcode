@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1033,24 +1034,43 @@ func (ui *GraphUI) handleIntentKey(key byte) string {
 }
 
 // beginIntent opens the argument flow for a template that interpolates
-// ${intent}. When the session's branch names a spec the user confirms
-// it — branch, spec, derived intent, active-spec consequence — instead of
-// retyping what the branch already says; otherwise the free-text prompt
-// opens carrying the reason, never an unexplained blank.
+// ${intent}. The active spec supplies it — the same file
+// ${current_phase} resolves against, so the run picks up wherever the doc
+// says it is — and the user confirms rather than retyping it. With no
+// pointer set the free-text prompt opens listing the specs to choose
+// from, never an unexplained blank.
 func (ui *GraphUI) beginIntent(name string, g *bus.Graph) {
 	ui.pendingTemplate = name
 	ui.pendingGraph = g
 	ui.intentInput = nil
 	ui.specErr = ""
-	spec, err := bus.ResolveBranchSpec(ui.session)
+	spec, err := bus.ActiveSpecIntent(ui.session)
 	if err != nil {
-		ui.intentHint = err.Error()
+		ui.intentHint = specChoiceHint(ui.session, err)
 		ui.view = viewGraphIntent
 		return
 	}
 	ui.pendingSpec = spec
 	ui.pendingActive = bus.ActiveSpecRelationFor(ui.session, spec)
 	ui.view = viewGraphSpecConfirm
+}
+
+// specChoiceHint explains an unusable pointer and, when none is set,
+// names the specs available so the choice can be made without leaving
+// the launcher to go hunting for paths.
+func specChoiceHint(session string, cause error) string {
+	if !errors.Is(cause, bus.ErrNoActiveSpec) {
+		return cause.Error()
+	}
+	choices, err := bus.ListSpecChoices(session)
+	if err != nil {
+		return "no active spec set, and none to choose from: " + err.Error()
+	}
+	paths := make([]string, 0, len(choices))
+	for _, c := range choices {
+		paths = append(paths, c.Path)
+	}
+	return "no active spec set — `muxcode spec set <path>` with one of: " + strings.Join(paths, ", ")
 }
 
 // handleSpecConfirmKey resolves the branch-derived launch: Enter/y
@@ -1076,34 +1096,26 @@ func (ui *GraphUI) handleSpecConfirmKey(key byte) string {
 	return ""
 }
 
-// confirmBranchSpec re-resolves the branch and the active pointer before
-// acting: the checkout or the pointer can change between the frame and
-// the keypress, and a stale confirm must never launch — or re-point the
-// session's spec — against what it no longer describes. A changed world
-// returns to the confirm frame and asks again; only a frame that still
-// holds proceeds, launching with intent (derived, or as edited).
+// confirmBranchSpec re-resolves the active spec before acting: the
+// pointer can change between the frame and the keypress, and a stale
+// confirm must never launch against what it no longer describes. A
+// changed world returns to the confirm frame and asks again; only a
+// frame that still holds proceeds, launching with intent (derived, or as
+// edited).
 func (ui *GraphUI) confirmBranchSpec(intent string) {
-	spec, err := bus.ResolveBranchSpec(ui.session)
+	spec, err := bus.ActiveSpecIntent(ui.session)
 	if err != nil {
-		ui.intentHint = err.Error()
+		ui.intentHint = specChoiceHint(ui.session, err)
 		ui.pendingSpec = bus.BranchSpec{}
 		ui.view = viewGraphIntent
 		return
 	}
-	active := bus.ActiveSpecRelationFor(ui.session, spec)
-	if spec.Path != ui.pendingSpec.Path || active.Current != ui.pendingActive.Current {
+	if spec.Path != ui.pendingSpec.Path {
 		ui.pendingSpec = spec
-		ui.pendingActive = active
-		ui.specErr = "branch or active spec changed since this frame was drawn — confirm again"
+		ui.pendingActive = bus.ActiveSpecRelationFor(ui.session, spec)
+		ui.specErr = "active spec changed since this frame was drawn — confirm again"
 		ui.view = viewGraphSpecConfirm
 		return
-	}
-	if !active.Matches {
-		if err := bus.WriteActiveSpec(ui.session, spec.Path); err != nil {
-			ui.specErr = "cannot set active spec: " + err.Error()
-			ui.view = viewGraphSpecConfirm
-			return
-		}
 	}
 	ui.launchGraph(ui.pendingGraph, ui.pendingTemplate, intent)
 }

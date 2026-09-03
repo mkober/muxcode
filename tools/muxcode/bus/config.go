@@ -101,6 +101,31 @@ func BusRole() string {
 	return NormalizeBusRole(role)
 }
 
+// ActorUser is the actor BusActor reports for a human at a shell.
+const ActorUser = "user"
+
+// BusActor names who initiated a command, distinguishing an agent process from
+// a human at a shell.
+//
+// Unlike BusRole it deliberately does not fall back to the tmux window name.
+// Agent identity is always set explicitly — LaunchConfig exports AGENT_ROLE for
+// every launched agent (bus/launch.go), the harness sets it on every tool exec
+// (harness/bus.go), and spawn roles set it in the launch string (bus/spawn.go) —
+// so a process without it is a person, even when their shell sits inside an
+// agent's window. Reporting that window is the misattribution this exists to
+// avoid: it files a user's manual command under whichever agent happens to own
+// the pane they typed in, which is the opposite of the attribution the caller
+// asked for.
+func BusActor() string {
+	if v := os.Getenv("AGENT_ROLE"); v != "" {
+		return NormalizeBusRole(v)
+	}
+	if v := os.Getenv("BUS_ROLE"); v != "" {
+		return NormalizeBusRole(v)
+	}
+	return ActorUser
+}
+
 // busDirOverride, when non-empty, replaces the default /tmp base for BusDir.
 // Used by tests to isolate bus directories in t.TempDir() instead of polluting
 // the real /tmp/muxcode-bus-* namespace. Set via SetBusDirBase / ResetBusDirBase.

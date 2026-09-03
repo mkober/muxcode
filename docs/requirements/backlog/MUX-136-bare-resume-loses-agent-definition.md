@@ -598,14 +598,14 @@ answered by reframing; neither needs more work.
       0 failed, exit 0**
 
 **Carried in from Phase 2 as explicitly not-verified-live** — the unit tests inject `ps`/tmux output,
-so these three are only ever exercised here:
+so these three are only ever exercised here. Two are closed below; the third (`ps -axo command=` on
+**Linux**) is **not phase work** — only CI can run it — and is tracked under
+[Deferred](#deferred) in Status rather than as an open phase item, so it does not hold
+`spec_phases_remaining` true and re-spawn a worker for something no worker can do:
 
 - [x] The real `ProbeAgentDefinition` against a **live pane** — the unit pins inject `ps` and tmux
       output, so the probe has never run against a real process tree
       — *done: all four script sections read a real process tree*
-- [ ] `ps -axo command=` on **Linux** (procps accepts `command` as an alias of `args`; only macOS has
-      been exercised) — *still open: the script uses the real probe, so a Linux run exercises the flag,
-      but nobody has run it on Linux. CI is the natural home*
 - [x] Claude's `--agents` schema strictness on **unknown keys** — the allowlist sidesteps it rather
       than establishing it, so the assumption behind "drop unknown keys" is untested
       — *answered: **Claude Code 2.1.258 accepts an unknown key**. See the correction below*
@@ -705,7 +705,7 @@ Recorded run **30 passed, 0 failed, exit 0**, covering launch / kill / bare-resu
 carried items closed (real probe live; unknown-key strictness answered), **Linux left open**, and two
 new liveness blind spots surfaced for a follow-up. **Harvested into the main checkout** (script,
 `scripts/fixtures/claude-stub`, `muxcode agent definition`, the `MUXCODE_AGENT_HEALTH_CHECK_SECS` /
-`MUXCODE_DEFINITION_CHECK_SECS` knobs, CLAUDE.md row) — uncommitted.
+`MUXCODE_DEFINITION_CHECK_SECS` knobs, CLAUDE.md row) — committed as `49caf7c`.
 
 **Phase 5 is fully satisfied** — the one gap found at verification (coverage floor 27 against an
 achievable maximum of 30) was raised to 30 the same day, so floor equals observed max. `CLAUDE.md`
@@ -721,7 +721,7 @@ repo-walking sole-emitter pin, item 3 verified the listener three ways, and item
 occurrences 5 and 6). *(Written when Phases 4 and 5 were still outstanding; both have since completed —
 see the Phase 4 and Phase 5 entries above.)*
 
-**Phase 2 work is complete in the working tree, uncommitted** — `bus/definition.go`,
+**Phase 2 complete and committed 2026-09-02** (`bcd6209`) — `bus/definition.go`,
 `daemon/definition_watchdog.go` and their tests are new; `launch.go`, `provider_claude.go`,
 `daemon.go`, `diagnose.go`, `guard.go` modified. The decision recorded above is **refuse, not
 quarantine**, at launcher and daemon, with a positive argv probe leading and the banner as fallback.
@@ -731,7 +731,8 @@ Where the risk now sits, in order:
 1. ~~**Nothing has run against a live pane.**~~ **Closed by Phase 5** — all four script sections read a
    real process tree, on a real daemon, through the real launcher; recorded run 30/0, exit 0.
 2. **Linux is still unexercised** (`ps -axo command=`), and the daemon runs wherever the user runs it.
-   The script uses the real probe, so a Linux run of it settles this; CI is the natural home.
+   The script uses the real probe, so a Linux run of it settles this; CI is the natural home. Tracked
+   under [Deferred](#deferred) below — blocked on environment, not closed.
 3. ~~**The "drop unknown keys" choice is unvalidated.**~~ **Answered by Phase 5** — 2.1.258 accepts
    unknown keys, so there is no strictness to sidestep; the allowlist stays because forwarding buys
    nothing.
@@ -799,3 +800,19 @@ investigation, not a fix.
 
 Scoping note: filed as one spec on request. If the work is split, Phases 1–3 are the standalone unit —
 Phase 4 belongs to MUX-126.
+
+### Deferred
+
+Tracked, not abandoned — carried out of the phase list because **no worker in this session can close
+them**. They keep checkboxes so they stay visible and countable by hand, but they sit under a
+non-`Phase` heading, which `SpecPhases()` (`bus/spec_items.go:97-107`) resets on: only items beneath a
+`### Phase N` heading feed `spec_phases_remaining`. So these do not hold the spec open or re-spawn a
+worker for work that needs a different machine.
+
+- [ ] `ps -axo command=` exercised on **Linux** (procps accepts `command` as an alias of `args`; only
+      macOS has been run). `scripts/test-restart-definition.sh` uses the real probe, so a single Linux
+      run of the existing script settles it — **CI is the natural home**; it needs no new test code,
+      only a runner that is not macOS
+
+Moving an item here is a claim that it is *blocked on environment*, not that it is unimportant —
+item 2 of the risk list above still names Linux as live, unmitigated risk.

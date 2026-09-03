@@ -47,6 +47,7 @@ type GraphRun struct {
 	Template  string         `json:"template"`
 	Intent    string         `json:"intent,omitempty"`
 	State     string         `json:"state"`
+	CreatedBy string         `json:"created_by,omitempty"` // BusActor at creation — see announceGraphAction
 	CreatedAt int64          `json:"created_at"`
 	UpdatedAt int64          `json:"updated_at"`
 	EdgeFires map[string]int `json:"edge_fires,omitempty"`
@@ -187,11 +188,13 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 		return nil, err
 	}
 
+	actor := BusActor()
 	run := &GraphRun{
 		ID:        NewGraphRunID(g.Name),
 		Template:  template,
 		Intent:    intent,
 		State:     GraphRunRunning,
+		CreatedBy: actor,
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
 		EdgeFires: map[string]int{},
@@ -215,7 +218,29 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 	if err := atomicWriteJSON(graphRunPath(session, run.ID), run); err != nil {
 		return nil, err
 	}
+	announceGraphAction(session, actor, "graph-run-created",
+		fmt.Sprintf("Graph run %s (%s) started by %s", run.ID, template, actor))
 	return run, nil
+}
+
+// announceGraphAction records a control-plane action and tells edit about it
+// unless edit is the one that took it.
+//
+// Edit is the only agent in conversation with the user, so it is the agent that
+// has to reconcile "a run is doing things" against "did anyone ask for this?".
+// With nothing announced it can only infer intent from timing, which makes a
+// manual approval indistinguishable from an unauthorized gate release — that is
+// how a legitimate user-started run was cancelled as a suspected exploit on
+// 2026-09-03, its gate having gone from pending to done in two seconds with no
+// approver recorded anywhere. Edit's own actions are deliberately not
+// announced: it already knows, and echoing them would put noise in the inbox on
+// every run it starts itself.
+func announceGraphAction(session, actor, event, detail string) {
+	LogLifecycle(session, "info", actor, event, detail)
+	if NormalizeBusRole(actor) == "edit" {
+		return
+	}
+	_ = SendNoCC(session, NewMessage(graphSender, "edit", "event", event, detail, ""))
 }
 
 // resolveDerivedLoopCaps rewrites max_iterations_from_spec edges into
@@ -739,6 +764,9 @@ func formatGraphRun(run *GraphRun, g *Graph, statuses map[string]*GraphNodeStatu
 	var b strings.Builder
 	elapsed := time.Since(time.Unix(run.CreatedAt, 0)).Round(time.Second)
 	fmt.Fprintf(&b, "Run %s  [%s]  template=%s  elapsed=%s\n", run.ID, run.State, run.Template, elapsed)
+	if run.CreatedBy != "" {
+		fmt.Fprintf(&b, "Started by: %s\n", run.CreatedBy)
+	}
 	if run.Intent != "" {
 		fmt.Fprintf(&b, "Intent: %s\n", run.Intent)
 	}

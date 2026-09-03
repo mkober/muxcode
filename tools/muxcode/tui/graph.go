@@ -527,7 +527,8 @@ func RenderNodeDetails(snap GraphSnapshot, width, maxLines int, now time.Time, s
 		}
 
 		detail, detailColor := "", FG
-		msg := strings.ReplaceAll(n.Message, "${intent}", snap.Run.Intent)
+		msg := strings.ReplaceAll(n.Message, "${spec}", snap.Run.Intent)
+		msg = strings.ReplaceAll(msg, "${intent}", snap.Run.Intent)
 		switch state {
 		case bus.GraphNodeRunning:
 			detail = msg
@@ -1056,11 +1057,11 @@ func RenderIntentPromptFrame(template, input, hint string, width int) string {
 	b.WriteString(renderSurfaceTabs("Launch Graph", width))
 	fmt.Fprintf(&b, "  %s%sLaunch %s%s\n", Purple, Bold, template, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
-	fmt.Fprintf(&b, "  %sThis template interpolates ${intent} — describe the work, or type a spec id:%s\n", Comment, RST)
+	fmt.Fprintf(&b, "  %sThis template needs a spec — describe the work, or type a spec id:%s\n", Comment, RST)
 	if hint != "" {
 		fmt.Fprintf(&b, "  %s(%s)%s\n", Comment, hint, RST)
 	}
-	fmt.Fprintf(&b, "\n  %sintent:%s %s%s█%s\n", Comment, RST, FG, input, RST)
+	fmt.Fprintf(&b, "\n  %sspec:%s %s%s█%s\n", Comment, RST, FG, input, RST)
 	return b.String()
 }
 
@@ -1078,7 +1079,7 @@ func RenderSpecConfirmFrame(template string, spec bus.BranchSpec, active bus.Act
 	fmt.Fprintf(&b, "  %sBranch %s names a spec — work through it?%s\n\n", Comment, spec.Branch, RST)
 	fmt.Fprintf(&b, "  %sbranch:%s  %s%s%s\n", Comment, RST, FG, spec.Branch, RST)
 	fmt.Fprintf(&b, "  %sspec:%s    %s%s%s\n", Comment, RST, FG, spec.Path, RST)
-	fmt.Fprintf(&b, "  %sintent:%s  %s%s%s\n", Comment, RST, FG, spec.Intent, RST)
+	fmt.Fprintf(&b, "  %sderived:%s %s%s%s\n", Comment, RST, FG, spec.Intent, RST)
 	fmt.Fprintf(&b, "  %sactive:%s  %s\n", Comment, RST, describeActiveSpecChange(active))
 	if spec.Dir == "completed" {
 		fmt.Fprintf(&b, "\n  %s⚠ spec is under completed/ — the run will verify, not implement%s\n", Yellow, RST)
@@ -1113,12 +1114,14 @@ func describeActiveSpecChange(active bus.ActiveSpecRelation) string {
 }
 
 // TemplateNeedsIntent reports whether any node message or action of a
-// graph interpolates ${intent} — those templates prompt for it in the
-// launcher instead of failing after launch.
+// graph interpolates ${spec} (or its former name ${intent}) — those
+// templates resolve it in the launcher instead of failing after launch.
 func TemplateNeedsIntent(g *bus.Graph) bool {
 	for i := range g.Nodes {
-		if strings.Contains(g.Nodes[i].Message, "${intent}") || strings.Contains(g.Nodes[i].Action, "${intent}") {
-			return true
+		for _, ph := range []string{"${spec}", "${intent}"} {
+			if strings.Contains(g.Nodes[i].Message, ph) || strings.Contains(g.Nodes[i].Action, ph) {
+				return true
+			}
 		}
 	}
 	return false

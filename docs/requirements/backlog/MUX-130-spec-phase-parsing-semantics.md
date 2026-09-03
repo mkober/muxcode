@@ -9,6 +9,16 @@ decline.
 
 Tracking: _(no GitHub issue yet)_
 
+> **Adjacent spec — keep separate.**
+> [`MUX-143`](./MUX-143-run-carries-two-phase-identities.md) covers a run carrying **two unreconciled
+> phase identities** (live `SpecCurrentPhase` vs frozen `IntentPhase`). That is **not** a parsing bug:
+> in the case it documents both parses are *correct*, and the defect is that two correct parses of
+> different things are used interchangeably. This spec owns how a phase is **read**; MUX-143 owns which
+> phase a run **means**. They meet in one place worth watching — MUX-143's Defect A (a human-parked
+> checkbox pinning derivation forever) proposes touching `SpecPhases()` item recognition, which is this
+> spec's parser, so **sequence MUX-143's Phase 3 after this spec's parser work** or resolve the overlap
+> deliberately.
+
 ## Context
 
 ### Where this came from

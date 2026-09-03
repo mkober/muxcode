@@ -120,6 +120,38 @@ detector flagged it twice — `loop-detected plan type=message` at 13:20:51 and 
 Fires 13 and 14 arrived *after* plan stopped writing, so the cycle does not need continuous input to
 keep running.
 
+### Second census, 2026-09-02 (MUX-136) — the shape persists, with a new twist
+
+**16 `verify-spec` fires to `plan` over ~5.5 h (16:24–21:54); 7 of the 16 replies were "nothing new to
+check off".** Counted from the bus log (`action=verify-spec`, `to=plan`), not from recollection.
+
+| Changed-files list on the fire | Count |
+|---|---|
+| Phase-gate style (no changed-files list — "the commit gate follows") | 5 |
+| Included real code | 7 |
+| `(none verified in the repo working tree)` | 3 |
+| **Only plan-authored docs** | **1** |
+
+Three things this census adds beyond the first:
+
+1. **The cycle is self-perpetuating through the time ledger.** A `verify-spec` instructs plan to record
+   branch time into the spec's `## Time Tracking` table. That edit *is* a plan-authored doc write, so
+   answering a fire can produce the input for the next one. The 2026-08-31 census showed the cycle
+   surviving without input; this shows it able to **feed itself**.
+2. **An empty changed-files list is not a clean tree.** All 3 `(none verified…)` fires arrived while
+   the working tree held 8–10 modified files. The review found nothing it could *attribute* — a
+   different state from "nothing changed", and conflating them is how a reviewer concludes a tree full
+   of changes contains none.
+3. **The pure B shape was rarer than it felt.** Only **1** of 16 fires had exclusively plan-authored
+   docs as its changed files. The relayed report of this incident said "7+ times on plan's own spec
+   writes"; 7 is the count of *"nothing new" replies*, not of docs-only fires. Worth recording because
+   a fix aimed only at "skip fires whose changed files are all plan docs" would have suppressed **one**
+   of these 16 — the volume problem is the *phase-gate* and *code* fires re-firing on refinements to
+   an already-complete phase, which that fix does not touch.
+
+That third point argues for the debounce option over the provenance filter, or for both: the filter is
+correct but narrow, and on this evidence it is not where the noise comes from.
+
 ### Two sub-defects
 
 **B1. The changed-files list is provenance-blind.** Fire 1 named an absolute path inside a spawn's

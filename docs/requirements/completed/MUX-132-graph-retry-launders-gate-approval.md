@@ -234,3 +234,27 @@ already used for other failure branches, needing no retreat point at all. The di
 inference offered without testing it against the code, and it made an untested, undocumented gap read
 as a considered decision. Worth keeping visible: a plausible-sounding reason why something is hard is
 the easiest way to launder an omission past review — including one's own.
+
+---
+
+### Post-close note — 2026-09-03: the adjacent hole, and why this fix is not implicated
+
+[`MUX-144`](../backlog/MUX-144-wait-human-gate-openable-by-any-agent.md) records a live incident in
+which a `wait_human` gate released four seconds after opening, with no human involved, and a commit
+node behind it dispatched a stage/commit/push/PR.
+
+**This spec's fix is sound and is not the gap.** MUX-132 closed *stale-marker reuse* — a retried or
+looped run inheriting a previous pass's approval — and the purge it added
+(`TestExecHumanGateRetryRequiresFreshApproval`) worked exactly as designed in that incident: the
+approval involved was **fresh**, written at the moment of release.
+
+The two guard different steps, and the distinction is worth keeping precise:
+
+| Question | Guarded by |
+|----------|------------|
+| Is this approval **current**? | MUX-132 — closed |
+| Is this approval **human**? | nothing — MUX-144 |
+
+A fresh approval nobody made passes this spec's check correctly, because currency was all it ever
+claimed to establish. No revision needed here; the pointer exists so a reader who finds MUX-132 while
+investigating a gate bypass does not mistake it for the relevant control.

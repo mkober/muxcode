@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
@@ -134,7 +136,7 @@ Commands:
 // execution, so this returns immediately and never blocks the caller.
 func graphRun(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: muxcode graph run <template>|--file <path> [intent...]")
+		fmt.Fprintln(os.Stderr, "Usage: muxcode graph run <template>|--file <path> [spec...]")
 		os.Exit(1)
 	}
 
@@ -143,7 +145,7 @@ func graphRun(args []string) {
 	var err error
 	if args[0] == "--file" {
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: muxcode graph run --file <path> [intent...]")
+			fmt.Fprintln(os.Stderr, "Usage: muxcode graph run --file <path> [spec...]")
 			os.Exit(1)
 		}
 		template = args[1]
@@ -161,7 +163,8 @@ func graphRun(args []string) {
 
 	intent := strings.Join(args, " ")
 	if intent == "" && tui.TemplateNeedsIntent(g) {
-		intent = intentFromBranch(bus.BusSession())
+		intent = intentFromActiveSpec(bus.BusSession())
+		requireIntent(template, intent)
 	}
 	run, err := bus.CreateGraphRun(bus.BusSession(), g, template, intent)
 	if err != nil {
@@ -175,27 +178,85 @@ func graphRun(args []string) {
 	}
 }
 
-// intentFromBranch derives the run intent from the branch's spec when the
-// caller gave none, the way the launcher's confirm does; the printed
-// lines are the CLI's confirmation. Nothing derivable keeps the old
-// behaviour (an empty intent) and says why on stderr. A branch naming a
-// different spec than the active pointer is fatal — see
-// bus.LaunchIntentFromBranch.
-func intentFromBranch(session string) string {
-	spec, set, err := bus.LaunchIntentFromBranch(session)
-	if errors.Is(err, bus.ErrActiveSpecMismatch) {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+// requireIntent stops a run whose template interpolates ${intent} when
+// none was resolved. An empty intent drives the wrong work rather than
+// none: the phase guard scopes to the intent's phase, so an empty one
+// leaves it unscoped and the commit ships whatever the tree happens to
+// hold. Refusing beats warning and starting anyway — which is what a
+// declined picker, or an underivable intent, used to do.
+func requireIntent(template, intent string) {
+	if intent != "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Error: %s needs an intent and none was resolved — set one with `muxcode spec set <path>`, or pass it: muxcode graph run %s <intent>\n", template, template)
+	os.Exit(1)
+}
+
+// intentFromActiveSpec derives the run intent from the active spec when
+// the caller gave none, and offers a picker when no pointer is set. The
+// printed lines are the CLI's confirmation of what the run will drive.
+//
+// The active spec is the single source: the same file ${current_phase}
+// resolves against, so the intent and the work cannot name different
+// phases. A run therefore picks up wherever the doc says it is, on any
+// branch.
+func intentFromActiveSpec(session string) string {
+	spec, err := bus.ActiveSpecIntent(session)
+	if errors.Is(err, bus.ErrNoActiveSpec) {
+		return intentFromSpecChoice(session)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: no intent given and none derived from the branch: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: no intent given and none derived from the active spec: %v\n", err)
 		return ""
 	}
-	if set {
-		fmt.Printf("Active spec set: %s\n", spec.Path)
-	}
-	fmt.Printf("Intent from branch %s: %s\n", spec.Branch, spec.Intent)
+	fmt.Printf("Active spec: %s\n", spec.Path)
+	fmt.Printf("Intent: %s\n", spec.Intent)
 	return spec.Intent
+}
+
+// intentFromSpecChoice prompts for a spec when no pointer is set, sets it
+// active, and returns its intent. A non-interactive caller cannot be
+// asked, so it gets the same list as an error and picks with `spec set`.
+func intentFromSpecChoice(session string) string {
+	choices, err := bus.ListSpecChoices(session)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: no active spec set and none to choose from: %v\n", err)
+		return ""
+	}
+	fmt.Fprintln(os.Stderr, "No active spec is set. Choose the spec this run should drive:")
+	for i, c := range choices {
+		fmt.Fprintf(os.Stderr, "  %2d) [%s] %s\n", i+1, c.Dir, c.Intent)
+	}
+	if !stdinIsTerminal() {
+		fmt.Fprintln(os.Stderr, "Not a terminal — run `muxcode spec set <path>` and start the run again.")
+		return ""
+	}
+	fmt.Fprint(os.Stderr, "Number (Enter to cancel): ")
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return ""
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || n < 1 || n > len(choices) {
+		fmt.Fprintln(os.Stderr, "No spec selected — start the run again once one is set.")
+		return ""
+	}
+	pick := choices[n-1]
+	if err := bus.WriteActiveSpec(session, pick.Path); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot set active spec: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Active spec set: %s\n", pick.Path)
+	fmt.Printf("Intent: %s\n", pick.Intent)
+	return pick.Intent
+}
+
+// stdinIsTerminal reports whether a human can answer the picker. A graph
+// run started by an agent or the daemon has no one at stdin, and must
+// print the list and stop rather than block forever on a read.
+func stdinIsTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 func graphRetry(args []string) {

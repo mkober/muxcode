@@ -38,7 +38,7 @@ const graphSender = "daemon"
 var graphSpawnFn = func(session, role, task, owner, runID, nodeID string) (string, error) {
 	// Ownership rides the entry from birth (StartSpawnOwned) — a
 	// post-creation stamp had a race window and a swallowed error path.
-	entry, err := StartSpawnOwned(session, role, task, owner, true, runID, nodeID)
+	entry, err := StartSpawnOwned(session, role, task, owner, false, runID, nodeID)
 	if err != nil {
 		return "", err
 	}
@@ -51,6 +51,16 @@ var graphSpawnFn = func(session, role, task, owner, runID, nodeID string) (strin
 // task, one run — discarding each predecessor's context and re-paying
 // boot cost). A reseed failure also falls back: a fresh worker beats a
 // wedged node.
+//
+// Graph workers are never isolated in their own worktree. Worktrees are
+// cut with `git worktree add --detach HEAD`, so a fix node — whose whole
+// job is repairing what the previous node just wrote — was handed a tree
+// that could not contain that work, the phase commit being several nodes
+// downstream. Observed live 2026-09-03: a fix worker found the file it
+// was spawned to repair absent from its own worktree, while build ran in
+// a third tree again. Workers run in the session checkout instead, the
+// one tree build, test, review and commit already operate on, which is
+// what removes the need to harvest anything between nodes.
 func acquireSpawnWorker(session, runID, nodeID, role, task string) (string, error) {
 	if entry, ok := FindLiveSpawn(session, runID, nodeID); ok {
 		_, err := ReseedSpawn(session, entry, task)
@@ -77,6 +87,17 @@ func graphApprovalPath(session, runID, nodeID, state string) string {
 
 // ApproveGraphGate releases a wait_human gate. The next executor tick
 // moves the node from waiting to done.
+//
+// The grant records who made it and is announced, so a release is attributable
+// after the fact rather than appearing as an unexplained state change. That is
+// visibility, NOT authorization: every role reaching this function still opens
+// the gate, and approved_by reports the calling process's own environment, so
+// an agent presenting no agent identity is recorded as a person. Never read a
+// populated approved_by as proof a human approved — enforcing that is MUX-144,
+// and until it lands a gate stays a scheduling pause, not a security boundary.
+//
+// approved_by is additive: gateApprovalTime reads only approved_at, so markers
+// written before this field existed still parse.
 func ApproveGraphGate(session, runID, nodeID string) error {
 	if _, err := ReadNodeStatus(session, runID, nodeID); err != nil {
 		return fmt.Errorf("unknown run/node: %w", err)
@@ -84,8 +105,14 @@ func ApproveGraphGate(session, runID, nodeID string) error {
 	if err := os.MkdirAll(graphApprovalsDir(session, runID), 0755); err != nil {
 		return err
 	}
-	return atomicWriteJSON(graphApprovalPath(session, runID, nodeID, "approved"),
-		map[string]int64{"approved_at": time.Now().Unix()})
+	actor := BusActor()
+	if err := atomicWriteJSON(graphApprovalPath(session, runID, nodeID, "approved"),
+		map[string]any{"approved_at": time.Now().Unix(), "approved_by": actor}); err != nil {
+		return err
+	}
+	announceGraphAction(session, actor, "graph-gate-approved",
+		fmt.Sprintf("Graph run %s gate %q approved by %s", runID, nodeID, actor))
+	return nil
 }
 
 // CancelGraphRun marks a run canceled and skips every node that has not
@@ -378,7 +405,12 @@ func summarizeOpenItems(names []string, limit int) string {
 // message template. ${current_phase} resolves from the active spec at
 // dispatch time, not from the frozen intent — the frozen "Phase N" string
 // is what made three runs re-implement a completed phase (MUX-121).
+//
+// ${spec} is the current name for what the run is driving; ${intent}
+// remains accepted so templates written against the old name keep
+// working, including any saved outside this repo.
 func interpolateGraphMessage(session, msg, intent, item string) string {
+	msg = strings.ReplaceAll(msg, "${spec}", intent)
 	msg = strings.ReplaceAll(msg, "${intent}", intent)
 	if item != "" {
 		msg = strings.ReplaceAll(msg, "${item}", item)

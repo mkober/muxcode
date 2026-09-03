@@ -4,8 +4,13 @@ package bus
 // These are tier 3 of template resolution (project > user > builtin) and
 // every entry must pass Graph.Validate() — pinned by TestBuiltinGraphTemplatesValidate.
 //
-// ${intent} in node messages is replaced with the graph run's intent
-// argument at execution time (Phase 4).
+// ${spec} in node messages is replaced at execution time with what the
+// run is driving — for spec-driven templates that is the active spec and
+// its current phase. ${intent} is the former name and still expands, so
+// templates saved against it keep working.
+//
+// pr-local-review deliberately keeps ${intent}: there the argument is a
+// PR number, not a spec, and ${spec} would misname it.
 var builtinGraphJSON = map[string]string{
 	"build-test-review": `{
   "name": "build-test-review",
@@ -28,10 +33,10 @@ var builtinGraphJSON = map[string]string{
   "requires_spec": true,
   "start": "implement",
   "nodes": [
-    {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement the active requirements spec's ${current_phase} (run: ${intent}). The phase is derived from the spec — if it is already complete, verify and report rather than re-implementing"},
+    {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement the active requirements spec's ${current_phase} (run: ${spec}). The phase is derived from the spec — if it is already complete, verify and report rather than re-implementing"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
     {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
-    {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build, test, or review failure in ${current_phase} (run: ${intent})"},
+    {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build, test, or review failure in ${current_phase} (run: ${spec})"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch"},
     {"id": "update-spec", "type": "send", "role": "plan", "action": "verify-spec", "message": "Verify the implemented changes against the active requirements spec and check off completed criteria and steps of ${current_phase} — the commit gate follows, so the spec must reflect reality before it"},
     {"id": "phase-gate", "type": "wait_human", "message": "Approve committing ${completed_phase}: the phase's work plus its spec update (commit only — push and PR wait for the final gate)"},
@@ -39,7 +44,7 @@ var builtinGraphJSON = map[string]string{
     {"id": "loop-check", "type": "condition", "conditions": {"spec_phases_remaining": true}},
     {"id": "stuck-gate", "type": "wait_human", "message": "The current phase did not complete this iteration — approve retrying it (its commit was withheld); cancel the run to stop instead"},
     {"id": "final-gate", "type": "wait_human", "message": "All phases complete — approve pushing the branch and creating the PR"},
-    {"id": "push-pr", "type": "send", "role": "commit", "action": "commit", "message": "Push the branch and create a PR for: ${intent}"}
+    {"id": "push-pr", "type": "send", "role": "commit", "action": "commit", "message": "Push the branch and create a PR for: ${spec}"}
   ],
   "edges": [
     {"from": "implement", "to": "build"},
