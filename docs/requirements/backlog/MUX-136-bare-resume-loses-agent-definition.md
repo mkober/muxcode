@@ -171,8 +171,11 @@ notice was a line of prose inside a pane nobody was reading. Same family as
       or neither is sent, so a dropped definition can no longer degrade into a name-only launch
 - [x] An agent that cannot resolve its definition **fails loudly**: an alert to `edit` plus a
       lifecycle event, never a silent fallback to default tools
-- [ ] An agent never runs with fewer restrictions than its definition grants, **bounded as follows**
-      (*reworded 2026-09-02 by user ruling — state the bound rather than close the window*):
+- [x] An agent never runs with fewer restrictions than its definition grants, **bounded as follows**
+      (*reworded 2026-09-02 by user ruling — state the bound rather than close the window;
+      **accepted and closed 2026-09-03 by user decision at spec close-out** — the bound below is
+      the shipped behaviour, verified in Phase 5, and closing this box records acceptance of that
+      bound, not the elimination of the window*):
       - **Launcher — absolute.** A definition that cannot be applied (resolved at no tier, or
         declaring an uncarriable nested key) is refused **before exec**. The agent does not come up.
       - **Daemon — bounded.** A bare-resumed agent that the launcher never saw runs unconstrained for
@@ -689,12 +692,39 @@ defects, not fixture bugs.**
 
 ## Status
 
-**In Progress** — filed 2026-09-01 from two live incidents the same afternoon; **Phases 1–5 all
-complete and committed 2026-09-02** (`658c305`, `bcd6209`, `6426d4f`, `8aa18fb`, `49caf7c`), each
-phase's detail preserved in the entries below. Two items remain open and **neither is phase work**:
-acceptance criterion 3 awaits a user ruling on its bound, and the Linux `ps -axo command=` path is
-deferred on environment. Still filed under `backlog/`; because no phase is outstanding the move is now
-to `completed/` rather than `drafts/`, and it is a `git mv` that awaits the user.
+**Complete — closed at 32/33 on 2026-09-03 by user decision; see [Known gaps](#known-gaps-carried-into-completed).**
+
+Filed 2026-09-01 from two live incidents the same afternoon; **Phases 1–5 all complete and committed
+2026-09-02** (`658c305`, `bcd6209`, `6426d4f`, `8aa18fb`, `49caf7c`), each phase's detail preserved in
+the entries below.
+
+**How it closed.** Of the two items open at close-out, **neither was phase work**:
+
+| Item | Disposition |
+|------|-------------|
+| Acceptance criterion 3 (bounded-not-eliminated window) | **Closed by acceptance, not by new work.** Reworded 2026-09-02 by user ruling to *state* the bound; the bound it describes is the shipped, Phase 5-verified behaviour. Ticking it records the user accepting that bound on 2026-09-03 — the window is bounded, not eliminated, and Exceptions A and B below remain true of the running system |
+| Linux `ps -axo command=` unexercised | **Not closed — carried as a known gap.** Genuinely unrun; blocked on a non-macOS runner, needs no new test code |
+
+Phase 1 landed **as-is**, carrying a one-commit tier-1 restriction loss; the **Phase 2 pass closed it
+early** by teaching `BuildAgentsJSON` the full key allowlist. The regression therefore existed between
+`658c305` and the Phase 2 tree and no longer does. (For the record, and because it stopped mattering
+quickly: whether the defer was considered or the fix-now question simply went unanswered was never
+determinable from here.)
+
+### Known gaps carried into `completed/`
+
+Closing this spec does **not** assert these are resolved:
+
+1. **`ps -axo command=` has never run on Linux.** `scripts/test-restart-definition.sh` uses the real
+   probe, so a single Linux run of the existing script settles it — CI is the natural home. Item 2 of
+   the risk list above still names Linux as live, unmitigated risk.
+2. **The unconstrained window is bounded, not eliminated.** A bare-resumed agent runs unconstrained
+   for ~60 s before the watchdog flags it; `edit` is unbounded by design (Exception A), and after
+   `definitionReloadCap`=3 the watchdog gives up and the agent runs unconstrained **indefinitely**
+   until a human acts (Exception B).
+3. **Two liveness blind spots surfaced during Phase 5** and were left for a follow-up: the pane-scrape
+   heuristic reads only a pane's last rows, so an agent that dies early reads as alive; and a
+   SIGKILLed Claude leaves its glyph behind, so only a clean TUI teardown registers as death.
 
 Phase 1 landed **as-is**, carrying a one-commit tier-1 restriction loss; the **Phase 2 pass closed it
 early** by teaching `BuildAgentsJSON` the full key allowlist. The regression therefore existed between

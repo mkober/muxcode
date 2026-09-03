@@ -419,6 +419,136 @@ func TestExecUnverifiedHoldRefusesWhenAncestryUnreadable(t *testing.T) {
 	}
 }
 
+// gateSuccessorGraph sends into a human gate, the shape every read-only node
+// feeding an approval takes (commit-pr-review-loop's b -> gate2).
+func gateSuccessorGraph() *Graph {
+	return &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{
+			{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+		},
+		Edges: []Edge{{From: "a", To: "gate"}},
+	}
+}
+
+// Holding a node whose only successor is a human gate charges two approvals to
+// reach one decision, with nothing mutable in between. The gate is the hold.
+func TestExecUnverifiedHoldExemptWhenNextIsHumanGate(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, gateSuccessorGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Errorf("gate state %q, want waiting — an unknown node feeding a gate must route without its own approval", s)
+	}
+}
+
+// Negative control for the exemption: the same unknown outcome one node earlier
+// in a chain that ends in a send still holds. Without this a helper that always
+// exempted would pass the test above and silently restore unknown-as-success.
+func TestExecUnverifiedHoldAppliesWhenNextIsSend(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, linearGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodePending {
+		t.Errorf("b state %q, want pending — a send successor is not a human gate", s)
+	}
+}
+
+// A gate among the successors is not a gate on all of them: the send branch
+// would advance unverified while the person was still looking at the gate.
+func TestExecUnverifiedHoldAppliesWhenGateIsNotTheOnlySuccessor(t *testing.T) {
+	pinActor(t, "")
+	g := gateSuccessorGraph()
+	g.Nodes = append(g.Nodes, Node{ID: "c", Type: NodeSend, Role: "test", Action: "test", Message: "go"})
+	g.Edges = append(g.Edges, Edge{From: "a", To: "c"})
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodePending {
+		t.Errorf("c state %q, want pending — a mixed fan-out must hold, not advance its send branch", s)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodePending {
+		t.Errorf("gate state %q, want pending — the gate branch waits on the hold too", s)
+	}
+}
+
+// Pins the `found` flag: a node with no success edge at all vacuously satisfies
+// "every success edge lands on a gate". Exempting it would route nothing and end
+// the run without a word, so it is held instead — asking beats stalling silently.
+func TestExecUnverifiedHoldAppliesWhenNoSuccessEdge(t *testing.T) {
+	pinActor(t, "")
+	g := gateSuccessorGraph()
+	g.Edges = []Edge{{From: "a", To: "gate", Outcome: OutcomeFailure}}
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "a", "pending")); err != nil {
+		t.Errorf("no pending hold marker for a: %v — a node with no success edge must ask, not vanish", err)
+	}
+}
+
+// The hold parks a send node in Done, so a queue built from node type and state
+// finds nothing to approve and the run stalls behind an empty screen. Listing
+// the markers is what makes it reachable.
+func TestListUnverifiedHolds(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, linearGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	holds := ListUnverifiedHolds(runTestSession, run.ID)
+	if len(holds) != 1 || holds[0].NodeID != "a" {
+		t.Fatalf("holds = %+v, want exactly node a", holds)
+	}
+	if holds[0].Message == "" {
+		t.Error("a hold with no message leaves the queue nothing to explain")
+	}
+
+	if err := ApproveGraphGate(runTestSession, run.ID, "a"); err != nil {
+		t.Fatalf("ApproveGraphGate: %v", err)
+	}
+	if h := ListUnverifiedHolds(runTestSession, run.ID); len(h) != 0 {
+		t.Errorf("holds = %+v after approval, want none — a released hold must leave the queue", h)
+	}
+}
+
+// Negative control: a wait_human gate writes a pending marker of its own, and
+// the queue already lists those by node type. Counting them here would show
+// every gate twice. The exemption also means node a raises no hold at all.
+func TestListUnverifiedHoldsExcludesWaitHumanGate(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, gateSuccessorGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("gate state %q — the fixture never armed a gate, so its marker cannot be tested", s)
+	}
+	if h := ListUnverifiedHolds(runTestSession, run.ID); len(h) != 0 {
+		t.Errorf("holds = %+v, want none — a wait_human pending marker is not an unverified hold", h)
+	}
+}
+
 // An explicit unknown edge is the graph author saying what unknown means here,
 // so it routes directly and never holds.
 func TestExecUnknownEdgeSkipsHold(t *testing.T) {

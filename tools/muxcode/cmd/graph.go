@@ -163,8 +163,11 @@ func graphRun(args []string) {
 
 	intent := strings.Join(args, " ")
 	if intent == "" && tui.TemplateNeedsIntent(g) {
-		intent = intentFromActiveSpec(bus.BusSession())
-		requireIntent(template, intent)
+		isSpec := tui.TemplateIntentIsSpec(g)
+		if isSpec {
+			intent = intentFromActiveSpec(bus.BusSession())
+		}
+		requireIntent(template, intent, isSpec)
 	}
 	run, err := bus.CreateGraphRun(bus.BusSession(), g, template, intent)
 	if err != nil {
@@ -178,17 +181,25 @@ func graphRun(args []string) {
 	}
 }
 
-// requireIntent stops a run whose template interpolates ${intent} when
-// none was resolved. An empty intent drives the wrong work rather than
-// none: the phase guard scopes to the intent's phase, so an empty one
-// leaves it unscoped and the commit ships whatever the tree happens to
-// hold. Refusing beats warning and starting anyway — which is what a
-// declined picker, or an underivable intent, used to do.
-func requireIntent(template, intent string) {
+// requireIntent stops a run whose template interpolates ${spec} or
+// ${intent} when none was resolved. An empty intent drives the wrong work
+// rather than none: the phase guard scopes to the intent's phase, so an
+// empty one leaves it unscoped and the commit ships whatever the tree
+// happens to hold. Refusing beats warning and starting anyway — which is
+// what a declined picker, or an underivable intent, used to do.
+//
+// isSpec picks the remedy. `muxcode spec set` is the wrong advice for a
+// template whose argument is a PR number, and following it there sets a
+// session pointer that still does not supply one.
+func requireIntent(template, intent string, isSpec bool) {
 	if intent != "" {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "Error: %s needs an intent and none was resolved — set one with `muxcode spec set <path>`, or pass it: muxcode graph run %s <intent>\n", template, template)
+	remedy := fmt.Sprintf("needs an argument — pass it: muxcode graph run %s <argument>", template)
+	if isSpec {
+		remedy = fmt.Sprintf("needs a spec and none was resolved — set one with `muxcode spec set <path>`, or pass it: muxcode graph run %s <spec>", template)
+	}
+	fmt.Fprintf(os.Stderr, "Error: %s %s\n", template, remedy)
 	os.Exit(1)
 }
 

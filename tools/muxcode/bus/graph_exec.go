@@ -90,6 +90,58 @@ func graphApprovalPath(session, runID, nodeID, state string) string {
 	return filepath.Join(graphApprovalsDir(session, runID), nodeID+"."+state)
 }
 
+// UnverifiedHold is a node parked by the unverified hold: finished with an
+// unknown outcome, no unknown edge, waiting on a person.
+type UnverifiedHold struct {
+	NodeID  string
+	Message string
+	Since   int64 // unix time the hold was raised
+}
+
+// ListUnverifiedHolds returns the nodes of a run parked by the unverified
+// hold, ordered by node id — os.ReadDir sorts by filename, so the caller
+// sorts if it wants them by age.
+//
+// These are ordinary send nodes, not wait_human gates, and they sit in Done
+// rather than Waiting. A queue built from node type and state therefore lists
+// none of them, which is how the hold shipped unapprovable from the UI: the
+// run stalls with nothing on screen to approve. The reason field is what
+// separates them from a wait_human pending marker, which carries no reason.
+func ListUnverifiedHolds(session, runID string) []UnverifiedHold {
+	entries, err := os.ReadDir(graphApprovalsDir(session, runID))
+	if err != nil {
+		return nil
+	}
+	var holds []UnverifiedHold
+	for _, e := range entries {
+		nodeID := strings.TrimSuffix(e.Name(), ".pending")
+		if nodeID == e.Name() {
+			continue
+		}
+		data, err := os.ReadFile(graphApprovalPath(session, runID, nodeID, "pending"))
+		if err != nil {
+			continue
+		}
+		var m struct {
+			Message string `json:"message"`
+			Reason  string `json:"reason"`
+		}
+		if json.Unmarshal(data, &m) != nil || m.Reason != unverifiedHoldReason {
+			continue
+		}
+		// An approved marker the daemon has not consumed yet is already released.
+		if _, err := os.Stat(graphApprovalPath(session, runID, nodeID, "approved")); err == nil {
+			continue
+		}
+		hold := UnverifiedHold{NodeID: nodeID, Message: m.Message}
+		if info, err := e.Info(); err == nil {
+			hold.Since = info.ModTime().Unix()
+		}
+		holds = append(holds, hold)
+	}
+	return holds
+}
+
 // runProvenance says who started a run, for the gate requests an agent reads
 // before deciding whether to raise an approval with a person.
 //
@@ -1178,6 +1230,32 @@ func eventObservedSince(session, action string, since int64) bool {
 	return false
 }
 
+// successorsAllHumanGates reports whether every success edge out of nodeID
+// lands on a wait_human node, there being at least one such edge.
+//
+// It exempts a node from the unverified hold. The hold exists to stop unproven
+// work advancing a pipeline into irreversible actions; when every success edge
+// lands on a human gate, that person is already the next step, so holding
+// charges a second approval to reach the first and both carry the same
+// decision. Nothing mutates in between, so the guarantee is unchanged.
+//
+// A node with no success edge is not exempt: releasing it would route nothing,
+// and ending the run silently is worse than asking.
+func successorsAllHumanGates(g *Graph, byID map[string]*Node, nodeID string) bool {
+	found := false
+	for _, e := range g.Edges {
+		if e.From != nodeID || edgeOutcome(e) != OutcomeSuccess {
+			continue
+		}
+		n, ok := byID[e.To]
+		if !ok || n.Type != NodeWaitHuman {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
 // routeFinishedNodes fires the outgoing edges of every finished node not
 // yet routed, arming targets (and re-arming finished loop targets). A
 // failure outcome with no live edge fails the whole run.
@@ -1194,9 +1272,9 @@ func routeFinishedNodes(session string, run *GraphRun, g *Graph, byID map[string
 			}
 		}
 		// Unknown outcome with no explicit unknown edge: held for approval
-		// rather than assumed successful (see the outcome-model comment).
+		// rather than assumed successful, unless a human gate is next anyway.
 		if len(matching) == 0 && st.Outcome == OutcomeUnknown {
-			if !unverifiedHoldReleased(session, run, id) {
+			if !successorsAllHumanGates(g, byID, id) && !unverifiedHoldReleased(session, run, id) {
 				continue
 			}
 			for _, e := range g.Edges {

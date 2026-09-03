@@ -1049,19 +1049,27 @@ func TypeaheadIndex(names []string, prefix string) int {
 }
 
 // RenderIntentPromptFrame renders the argument prompt shown when a
-// template's messages interpolate ${intent}. hint, when set, is why the
-// branch derivation did not apply — the prompt then says why it is
+// template's messages interpolate ${spec} or ${intent}. hint, when set, is
+// why the branch derivation did not apply — the prompt then says why it is
 // asking instead of presenting an unexplained blank.
-func RenderIntentPromptFrame(template, input, hint string, width int) string {
+//
+// isSpec picks the wording. A template whose argument is not a spec was still
+// asked for one by name, telling the person launching pr-local-review to type
+// a spec id where a PR number goes.
+func RenderIntentPromptFrame(template, input, hint string, isSpec bool, width int) string {
+	ask, label := "This template needs an argument — type it:", "argument:"
+	if isSpec {
+		ask, label = "This template needs a spec — describe the work, or type a spec id:", "spec:"
+	}
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Launch Graph", width))
 	fmt.Fprintf(&b, "  %s%sLaunch %s%s\n", Purple, Bold, template, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
-	fmt.Fprintf(&b, "  %sThis template needs a spec — describe the work, or type a spec id:%s\n", Comment, RST)
+	fmt.Fprintf(&b, "  %s%s%s\n", Comment, ask, RST)
 	if hint != "" {
 		fmt.Fprintf(&b, "  %s(%s)%s\n", Comment, hint, RST)
 	}
-	fmt.Fprintf(&b, "\n  %sspec:%s %s%s█%s\n", Comment, RST, FG, input, RST)
+	fmt.Fprintf(&b, "\n  %s%s%s %s%s█%s\n", Comment, label, RST, FG, input, RST)
 	return b.String()
 }
 
@@ -1117,8 +1125,30 @@ func describeActiveSpecChange(active bus.ActiveSpecRelation) string {
 // graph interpolates ${spec} (or its former name ${intent}) — those
 // templates resolve it in the launcher instead of failing after launch.
 func TemplateNeedsIntent(g *bus.Graph) bool {
+	return templateInterpolates(g, "${spec}", "${intent}")
+}
+
+// TemplateIntentIsSpec reports whether the argument a template needs is a
+// requirements spec, which is what makes deriving it from the active spec
+// pointer correct rather than merely convenient.
+//
+// ${spec} names a spec. ${intent} is the former name for the same slot and
+// promises nothing about its content — pr-local-review deliberately uses it
+// for a PR number. Deriving on TemplateNeedsIntent instead, which only asks
+// whether an argument is wanted at all, handed that template the active spec
+// id and ran `gh pr checkout <spec-id>`.
+//
+// A template using only the legacy name is asked for rather than derived. That
+// costs a prompt for any older template that did mean a spec, and refusing to
+// guess beats driving the wrong work — the reasoning requireIntent already
+// applies to an unresolved argument.
+func TemplateIntentIsSpec(g *bus.Graph) bool {
+	return templateInterpolates(g, "${spec}")
+}
+
+func templateInterpolates(g *bus.Graph, placeholders ...string) bool {
 	for i := range g.Nodes {
-		for _, ph := range []string{"${spec}", "${intent}"} {
+		for _, ph := range placeholders {
 			if strings.Contains(g.Nodes[i].Message, ph) || strings.Contains(g.Nodes[i].Action, ph) {
 				return true
 			}
@@ -1139,7 +1169,8 @@ type GateImpact struct {
 	Mutating bool // fires a git mutation or Atlassian write
 }
 
-// PendingGate is one waiting wait_human node, across all in-flight runs.
+// PendingGate is one node awaiting a person, across all in-flight runs:
+// a waiting wait_human gate, or a node parked by the unverified hold.
 type PendingGate struct {
 	RunID      string
 	NodeID     string
@@ -1147,6 +1178,7 @@ type PendingGate struct {
 	Waiting    time.Duration
 	Downstream []GateImpact
 	Mutating   bool // any downstream node is a commit/Atlassian mutation
+	Unverified bool // parked by the unverified hold, not a declared gate
 }
 
 // GateDownstream computes what approving a gate releases: every node
@@ -1243,9 +1275,9 @@ func RenderGateQueueFrameH(gates []PendingGate, resolved []ResolvedGate, width, 
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
 
 	if len(gates) == 0 {
-		fmt.Fprintf(&b, "  %sNo gates waiting.%s\n", Comment, RST)
-		fmt.Fprintf(&b, "  %sA gate appears here when an in-flight run reaches a wait_human node%s\n", Comment, RST)
-		fmt.Fprintf(&b, "  %sand needs your approval before firing what is behind it.%s\n", Comment, RST)
+		fmt.Fprintf(&b, "  %sNo approvals waiting.%s\n", Comment, RST)
+		fmt.Fprintf(&b, "  %sA row appears here when an in-flight run reaches a wait_human node, or%s\n", Comment, RST)
+		fmt.Fprintf(&b, "  %sparks one nothing proved succeeded — both need you before it continues.%s\n", Comment, RST)
 		b.WriteString(renderResolvedGatesH(resolved, width, historyBudget(height, &b), histScroll))
 		return b.String()
 	}
@@ -1261,8 +1293,14 @@ func RenderGateQueueFrameH(gates []PendingGate, resolved []ResolvedGate, width, 
 		if gate.Mutating {
 			flag = "  " + Red + Bold + "⚠ mutates" + RST
 		}
-		line := fmt.Sprintf("  %s %s⚑ %-16s%s %swaiting %-9s%s %s%s%s%s",
-			cursor, nameColor, gate.NodeID, RST,
+		// Glyph, not colour, separates a declared gate from an unverified hold.
+		glyph := "⚑"
+		if gate.Unverified {
+			glyph = "?"
+			flag = "  " + Comment + "unverified" + RST + flag
+		}
+		line := fmt.Sprintf("  %s %s%s %-16s%s %swaiting %-9s%s %s%s%s%s",
+			cursor, nameColor, glyph, gate.NodeID, RST,
 			Yellow, gate.Waiting.String(), RST,
 			Comment, gate.RunID, RST, flag)
 		b.WriteString(fitWidth(line, width) + "\n")
