@@ -109,6 +109,14 @@ func hookBash() {
 
 // triggerChain fires the event chain and analyst notifications.
 // This mirrors the logic in cmd/chain.go but called inline.
+//
+// A graph run that owns this role's work suppresses the chain entirely: the
+// chain routes succession off the bash exit code alone, blind to who asked,
+// so a graph's build node used to detonate a second ungated build→test→review
+// beside the graph's own parked nodes — the chain's test running in whatever
+// tree the agent sat in rather than the run's worktree. See
+// bus.GraphOwnsRunningSendNode for why the firing role, not the chain's
+// target, is the right provenance key.
 func triggerChain(session, from, eventType, outcome, exitCode, command string, ctx *bus.ChainContext) {
 	// Workflow guard: prevent re-triggering when already in or past target state.
 	// This breaks the test→review→test loop where review completion causes the
@@ -131,6 +139,12 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string, c
 		if outcome == "success" && state == bus.StateWatching {
 			return
 		}
+	}
+
+	if runID, nodeID, owned := bus.GraphOwnsRunningSendNode(session, from); owned {
+		bus.LogLifecycle(session, "info", "hook", "chain-suppressed",
+			fmt.Sprintf("%s chain not fired — graph run %s owns %s as node %s", eventType, runID, from, nodeID))
+		return
 	}
 
 	action := bus.ResolveChain(eventType, outcome, ctx)

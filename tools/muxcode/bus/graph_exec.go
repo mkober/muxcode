@@ -391,6 +391,52 @@ func interpolateGraphMessage(session, msg, intent, item string) string {
 	return msg
 }
 
+// graphOwnedRoles lists the roles the run's own send nodes drive, in node
+// order and de-duplicated, so a worker can be told which delegations the
+// graph already owns.
+func graphOwnedRoles(g *Graph) []string {
+	if g == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var roles []string
+	for _, n := range g.Nodes {
+		if n.Type != NodeSend || n.Role == "" || seen[n.Role] {
+			continue
+		}
+		seen[n.Role] = true
+		roles = append(roles, n.Role)
+	}
+	return roles
+}
+
+// graphWorkerTask prefixes a spawn worker's task with the graph's ownership
+// of the surrounding nodes.
+//
+// A spawn worker launches on its base role's definition — for role "edit"
+// that is code-editor.md, whose "Orchestration Role" section instructs every
+// edit-shaped agent to delegate build, then test, then review after making
+// changes. Nothing else in the launch tells the worker it is a graph node:
+// StartSpawnOwned stamps run/node ownership into the spawn registry, which
+// the worker never reads. So the worker followed its definition and drove a
+// second, ungated pipeline beside the graph's own parked build/test/review
+// nodes — observed live on run 1788405573-spec-to-pr-8281a147, where those
+// three nodes sat pending while the worker's chain ran in the wrong working
+// directory. The preamble is the only channel that reaches the worker's
+// context, so the contradiction has to be stated there.
+func graphWorkerTask(g *Graph, runID, nodeID, msg string) string {
+	roles := graphOwnedRoles(g)
+	if len(roles) == 0 {
+		return msg
+	}
+	owned := strings.Join(roles, ", ")
+	return fmt.Sprintf(
+		"[graph run %s · node %s] The graph owns the rest of this pipeline: %s run as separate nodes AFTER you report. "+
+			"Do NOT delegate them (no `muxcode send %s ...`) — a self-delegated chain races the graph and runs in the wrong working directory. "+
+			"Do the work below, reply to the requester, and stop.\n\n%s",
+		runID, nodeID, owned, strings.Join(roles, "|"), msg)
+}
+
 // resolveCompletedPhaseText expands ${completed_phase}: the completion
 // frontier the commit ships — see SpecJustCompletedPhase for why the
 // commit must not use ${current_phase}.
@@ -495,7 +541,8 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		})
 
 	case NodeSpawn:
-		msg := interpolateGraphMessage(session, n.Message, run.Intent, "")
+		msg := graphWorkerTask(g, run.ID, n.ID,
+			interpolateGraphMessage(session, n.Message, run.Intent, ""))
 		spawnID, err := acquireSpawnWorker(session, run.ID, n.ID, n.Role, msg)
 		if err != nil {
 			finishNode(session, run, n, OutcomeFailure, "spawn failed: "+err.Error())
@@ -514,8 +561,10 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		}
 		var ids []string
 		for i, item := range items {
-			msg := interpolateGraphMessage(session, n.Message, run.Intent, item)
-			spawnID, err := acquireSpawnWorker(session, run.ID, fmt.Sprintf("%s#%d", n.ID, i), n.Role, msg)
+			nodeKey := fmt.Sprintf("%s#%d", n.ID, i)
+			msg := graphWorkerTask(g, run.ID, nodeKey,
+				interpolateGraphMessage(session, n.Message, run.Intent, item))
+			spawnID, err := acquireSpawnWorker(session, run.ID, nodeKey, n.Role, msg)
 			if err != nil {
 				finishNode(session, run, n, OutcomeFailure, "map spawn failed: "+err.Error())
 				return

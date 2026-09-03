@@ -341,6 +341,65 @@ func ScanInFlightGraphRuns(session string) []GraphRun {
 	return inflight
 }
 
+// GraphOwnsRunningSendNode reports whether an in-flight run is currently
+// driving this role through one of its own send nodes, naming the run and
+// node when it is.
+//
+// It is the provenance test the hook-driven EventChain lacked. The chain
+// fires build→test→review off the bash exit code alone, blind to who asked,
+// so a graph's own build node detonated a second ungated pipeline beside the
+// graph's parked test and review nodes — the chain's test run executing in
+// whatever tree the build agent sat in rather than the run's worktree.
+// Keying on the *firing* role rather than the chain's target is deliberate:
+// it asks "was this work graph-dispatched", so a graph that owns build but
+// declares no test node correctly gets no test, and an ordinary build while
+// some unrelated run holds a test node still chains normally.
+func GraphOwnsRunningSendNode(session, role string) (runID, nodeID string, ok bool) {
+	if role == "" {
+		return "", "", false
+	}
+	for _, run := range ScanInFlightGraphRuns(session) {
+		g, err := ReadGraphRunGraph(session, run.ID)
+		if err != nil {
+			continue
+		}
+		statuses, err := ReadAllNodeStatuses(session, run.ID)
+		if err != nil {
+			continue
+		}
+		for _, n := range g.Nodes {
+			if n.Type != NodeSend || n.Role != role {
+				continue
+			}
+			st, found := statuses[n.ID]
+			if found && st.State == GraphNodeRunning && nodeWorkStillInFlight(session, st) {
+				return run.ID, n.ID, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// nodeWorkStillInFlight reports whether the dispatch a running node is waiting
+// on is genuinely outstanding, narrowing ownership from "a node is running" to
+// "the agent is busy with this node right now".
+//
+// The node state alone lingers: it stays running from dispatch until the
+// executor correlates the reply on a later tick, and in that window an
+// ordinary build the human asked for would have its chain suppressed by a run
+// that is already finished with the agent. A node whose task record is gone is
+// still treated as owned — losing the record is not evidence the work ended.
+func nodeWorkStillInFlight(session string, st *GraphNodeStatus) bool {
+	if st.TaskID == "" {
+		return true
+	}
+	task, err := ReadTask(session, st.TaskID)
+	if err != nil {
+		return true
+	}
+	return task.Status == TaskInFlight && !TaskExpired(task, time.Now().Unix())
+}
+
 // ReadNodeStatus reads one node's persisted status.
 func ReadNodeStatus(session, runID, nodeID string) (*GraphNodeStatus, error) {
 	data, err := os.ReadFile(graphNodePath(session, runID, nodeID))

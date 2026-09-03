@@ -168,6 +168,15 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 		}
 	}
 
+	// Requests only — a worker's response to its requester is its job.
+	if m.Type == "request" {
+		if deny := CheckGraphNodeAuthority(session, m.From, m.To, m.Action); deny != "" {
+			fmt.Fprintf(os.Stderr, "  [send] REFUSED %s→%s:%s — %s\n", m.From, m.To, m.Action, deny)
+			LogLifecycle(session, "warn", "bus", "graph-authority-refused", m.From)
+			return fmt.Errorf("%s", deny)
+		}
+	}
+
 	data, err := EncodeMessage(m)
 	if err != nil {
 		return err

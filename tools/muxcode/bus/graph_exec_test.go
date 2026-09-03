@@ -2183,3 +2183,87 @@ func TestExecSpawnLoopReusesWorker(t *testing.T) {
 		t.Fatalf("terminal run must release the worker: status %q killed %v", e.Status, f.killed)
 	}
 }
+
+// TestExecSpawnTaskNamesOwnedRoles pins the ownership preamble a graph-owned
+// worker receives. Without it the worker runs on its base definition alone,
+// whose Orchestration Role section tells every edit-shaped agent to delegate
+// build/test/review — a second pipeline racing the graph's own parked nodes.
+func TestExecSpawnTaskNamesOwnedRoles(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "impl",
+		Nodes: []Node{
+			{ID: "impl", Type: NodeSpawn, Role: "edit", Message: "Implement phase 4"},
+			{ID: "build", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "test", Type: NodeSend, Role: "test", Action: "test", Message: "go"},
+		},
+		Edges: []Edge{{From: "impl", To: "build"}, {From: "build", To: "test"}},
+	}
+	run := createTestRun(t, g)
+	tasks := fakeSpawns(t, runTestSession)
+	step(t, runTestSession, run.ID)
+
+	if len(*tasks) != 1 {
+		t.Fatalf("expected 1 spawned worker, got %d: %v", len(*tasks), *tasks)
+	}
+	task := (*tasks)[0]
+	for _, want := range []string{"build, test", "Do NOT delegate", run.ID, "node impl", "Implement phase 4"} {
+		if !strings.Contains(task, want) {
+			t.Errorf("worker task missing %q:\n%s", want, task)
+		}
+	}
+	if strings.Contains(task, "muxcode send edit") {
+		t.Errorf("preamble must not claim the graph owns the worker's own role:\n%s", task)
+	}
+}
+
+// TestExecSpawnTaskUnprefixedWithoutSendNodes is the negative control: a graph
+// that dispatches nothing but workers owns no delegations, so the worker's
+// task must arrive verbatim. An implementation that always prefixed would pass
+// the positive case above and fail here.
+func TestExecSpawnTaskUnprefixedWithoutSendNodes(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "impl",
+		Nodes: []Node{{ID: "impl", Type: NodeSpawn, Role: "edit", Message: "Just do it"}},
+	}
+	run := createTestRun(t, g)
+	tasks := fakeSpawns(t, runTestSession)
+	step(t, runTestSession, run.ID)
+
+	if len(*tasks) != 1 {
+		t.Fatalf("expected 1 spawned worker, got %d: %v", len(*tasks), *tasks)
+	}
+	if got := (*tasks)[0]; got != "edit: Just do it" {
+		t.Errorf("task %q, want the message verbatim — no send nodes means nothing is owned", got)
+	}
+}
+
+// TestExecMapTaskCarriesOwnership covers the second call site: map fans out
+// through its own dispatch path, which regresses independently of NodeSpawn.
+func TestExecMapTaskCarriesOwnership(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "fan",
+		Nodes: []Node{
+			{ID: "fan", Type: NodeMap, Role: "edit", Items: "one,two", Message: "Handle ${item}"},
+			{ID: "review", Type: NodeSend, Role: "review", Action: "review", Message: "go"},
+		},
+		Edges: []Edge{{From: "fan", To: "review"}},
+	}
+	run := createTestRun(t, g)
+	tasks := fakeSpawns(t, runTestSession)
+	step(t, runTestSession, run.ID)
+
+	if len(*tasks) != 2 {
+		t.Fatalf("expected 2 map workers, got %d: %v", len(*tasks), *tasks)
+	}
+	for i, task := range *tasks {
+		if !strings.Contains(task, "review") || !strings.Contains(task, "Do NOT delegate") {
+			t.Errorf("map worker %d missing ownership preamble:\n%s", i, task)
+		}
+	}
+	if !strings.Contains((*tasks)[0], "Handle one") || !strings.Contains((*tasks)[1], "Handle two") {
+		t.Errorf("preamble must not displace per-item interpolation: %v", *tasks)
+	}
+}
