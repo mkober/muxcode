@@ -3625,14 +3625,21 @@ func (d *Daemon) checkDiskPressure() {
 		artifactCleaned = len(result.ArtifactResult.Paths)
 		artifactFreed = result.ArtifactResult.BytesFreed
 	}
-	totalFreed := claudeFreed + artifactFreed
+	goCacheCleaned := 0
+	goCacheFreed := int64(0)
+	if result.GoCacheResult != nil {
+		goCacheCleaned = len(result.GoCacheResult.Paths)
+		goCacheFreed = result.GoCacheResult.BytesFreed
+	}
+	totalFreed := claudeFreed + artifactFreed + goCacheFreed
 
-	fmt.Printf("  %s  Disk pressure: /tmp free %s, muxcode footprint %s (volume %d%%) — cleaned %d stale, %d Claude sessions, %d build artifact(s) (%s)\n",
+	fmt.Printf("  %s  Disk pressure: /tmp free %s, muxcode footprint %s (volume %d%%) — cleaned %d stale, %d Claude sessions, %d build artifact(s), %d Go cache (%s)\n",
 		ts, formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
-		result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned, formatDaemonBytes(totalFreed))
+		result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned, goCacheCleaned,
+		formatDaemonBytes(totalFreed))
 
 	alertKey := "disk-pressure:/tmp"
-	ineffective := staleCleaned == 0 && claudeCleaned == 0 && artifactCleaned == 0
+	ineffective := staleCleaned == 0 && claudeCleaned == 0 && artifactCleaned == 0 && goCacheCleaned == 0
 	lastTS, seen := d.lastAlertKey[alertKey]
 	alerting := shouldAlertDiskPressure(lastTS, now, seen, ineffective)
 
@@ -3642,9 +3649,9 @@ func (d *Daemon) checkDiskPressure() {
 	// the very history needed to diagnose overnight incidents.
 	if alerting || !ineffective {
 		bus.LogLifecycle(d.session, "warn", "daemon", "disk-pressure",
-			fmt.Sprintf("/tmp free=%s footprint=%s volume=%d%% stale=%d claude=%d artifacts=%d freed=%s",
+			fmt.Sprintf("/tmp free=%s footprint=%s volume=%d%% stale=%d claude=%d artifacts=%d gocache=%d freed=%s",
 				formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
-				result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned,
+				result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned, goCacheCleaned,
 				formatDaemonBytes(totalFreed)))
 	}
 
@@ -3652,9 +3659,9 @@ func (d *Daemon) checkDiskPressure() {
 		d.lastAlertKey[alertKey] = now
 
 		payload := fmt.Sprintf(
-			"/tmp disk pressure: %s free, muxcode footprint %s (volume %d%% used). Cleaned: %d muxcode artifact(s), %d Claude Code session(s), %d build artifact dir(s) (%s freed).",
+			"/tmp disk pressure: %s free, muxcode footprint %s (volume %d%% used). Cleaned: %d muxcode artifact(s), %d Claude Code session(s), %d build artifact dir(s), %d Go build cache (%s freed).",
 			formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
-			result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned,
+			result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned, goCacheCleaned,
 			formatDaemonBytes(totalFreed),
 		)
 		msg := bus.NewMessage("daemon", "edit", "event", "disk-pressure", payload, "")

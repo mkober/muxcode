@@ -2,6 +2,8 @@ package bus
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -357,6 +359,28 @@ func pinActor(t *testing.T, actor string) {
 	t.Helper()
 	t.Setenv("AGENT_ROLE", actor)
 	t.Setenv("BUS_ROLE", "")
+	pinProcessTable(t, fmt.Sprintf("%d 1 /bin/bash\n", os.Getpid()), nil)
+}
+
+// pinProcessTable replaces the table agentRuntimeAncestor walks. Every actor
+// test pins one: the suite is itself run by an agent, so reading the real tree
+// would resolve an identity-less actor to whichever runtime ran the tests.
+func pinProcessTable(t *testing.T, out string, err error) {
+	t.Helper()
+	orig := psListRunner
+	psListRunner = func() (string, error) { return out, err }
+	t.Cleanup(func() { psListRunner = orig })
+}
+
+// pinAgentAncestry presents the bypass being defended against: an agent whose
+// environment carries no identity but whose ancestry still names its runtime.
+func pinAgentAncestry(t *testing.T, command string) {
+	t.Helper()
+	t.Setenv("AGENT_ROLE", "")
+	t.Setenv("BUS_ROLE", "")
+	const ancestorPID = 424242
+	pinProcessTable(t, fmt.Sprintf("%d %d /bin/bash\n%d 1 %s\n",
+		os.Getpid(), ancestorPID, ancestorPID, command), nil)
 }
 
 // editEventCount counts one action's events in edit's inbox mentioning runID.
@@ -393,6 +417,53 @@ func TestBusActorReportsUserWithoutAgentIdentity(t *testing.T) {
 	pinActor(t, "edit")
 	if got := BusActor(); got != "edit" {
 		t.Errorf("BusActor() = %q, want edit", got)
+	}
+}
+
+// The bypass the ancestry check exists to close: BusActor reads a missing
+// AGENT_ROLE as a person, so `env -u AGENT_ROLE` would otherwise launder an
+// agent into one.
+func TestBusActorVerifiedCatchesStrippedIdentity(t *testing.T) {
+	for _, cmd := range []string{"/usr/local/bin/claude", "/opt/homebrew/bin/opencode", "codex"} {
+		pinAgentAncestry(t, cmd)
+		if got := BusActor(); got != ActorUser {
+			t.Fatalf("BusActor() = %q, want %q — the premise is that env alone reads as a person", got, ActorUser)
+		}
+		want := filepath.Base(cmd)
+		if got := BusActorVerified(); got != want {
+			t.Errorf("BusActorVerified() under %s = %q, want %q — ancestry must overrule a stripped environment", cmd, got, want)
+		}
+	}
+}
+
+// Negative control for TestBusActorVerifiedCatchesStrippedIdentity: without
+// this, a BusActorVerified that returned an agent name unconditionally would
+// pass that test while locking every real person out of their own gates.
+func TestBusActorVerifiedKeepsGenuineUser(t *testing.T) {
+	pinActor(t, "")
+	if got := BusActorVerified(); got != ActorUser {
+		t.Errorf("BusActorVerified() = %q, want %q — a shell with no agent above it is a person", got, ActorUser)
+	}
+}
+
+// ps is resolved through PATH, so an agent does not need to break the probe —
+// only to supply one that fails. Reading that as a person would hand back the
+// entire bypass, so an unreadable table must be its own answer.
+func TestBusActorVerifiedFailsClosedOnUnreadableProcessTable(t *testing.T) {
+	pinActor(t, "")
+	pinProcessTable(t, "", errors.New("ps unavailable"))
+	if got := BusActorVerified(); got != ActorUnknown {
+		t.Errorf("BusActorVerified() with an unreadable process table = %q, want %q — a probe that cannot tell must not answer %q", got, ActorUnknown, ActorUser)
+	}
+}
+
+// A set identity is believed as given: ancestry is consulted only to overrule a
+// claim of humanness, never to relabel an agent that already named itself.
+func TestBusActorVerifiedTrustsDeclaredIdentity(t *testing.T) {
+	pinAgentAncestry(t, "/usr/local/bin/claude")
+	t.Setenv("AGENT_ROLE", "review")
+	if got := BusActorVerified(); got != "review" {
+		t.Errorf("BusActorVerified() = %q, want review", got)
 	}
 }
 

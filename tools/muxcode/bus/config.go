@@ -104,6 +104,11 @@ func BusRole() string {
 // ActorUser is the actor BusActor reports for a human at a shell.
 const ActorUser = "user"
 
+// ActorUnknown is what BusActorVerified reports when it cannot establish who is
+// acting. It is deliberately not ActorUser: callers gating on humanness must
+// refuse it.
+const ActorUnknown = "unknown"
+
 // BusActor names who initiated a command, distinguishing an agent process from
 // a human at a shell.
 //
@@ -124,6 +129,87 @@ func BusActor() string {
 		return NormalizeBusRole(v)
 	}
 	return ActorUser
+}
+
+// agentRuntimeNames are the argv[0] basenames that mean "an agent runtime",
+// used to recognize an agent by ancestry when its environment claims it is not.
+var agentRuntimeNames = map[string]bool{
+	"claude":              true,
+	"opencode":            true,
+	"codex":               true,
+	"muxcode-llm-harness": true,
+}
+
+// BusActorVerified names who initiated a command for decisions that turn on the
+// answer, as opposed to BusActor which records it.
+//
+// BusActor reads a missing AGENT_ROLE as a person. That is right for
+// attribution and inverted for authorization: it makes absence of evidence into
+// evidence, so `env -u AGENT_ROLE muxcode ...` presents an agent as a human.
+// This consults the process ancestry, which a process cannot rewrite for
+// itself — an agent's tool call runs under its own CLI, so the chain names it
+// even when the environment does not.
+//
+// Ancestry is only ever used to overrule a claim of humanness; a set
+// AGENT_ROLE is believed as given. A person's shell does not descend from an
+// agent runtime — an agent's pane is busy running that agent — so this does not
+// reintroduce the pane misattribution BusActor exists to avoid.
+//
+// It fails closed: when the process table cannot be read the answer is
+// ActorUnknown, never ActorUser. Reading a failed probe as a person would hand
+// back the whole bypass, because `ps` is resolved through PATH — an agent need
+// not break the probe, only supply one that fails. A stuck gate is recoverable;
+// an agent releasing its own unverified work is not.
+//
+// This is a cost, not a boundary. Anything that can run a shell can write the
+// approval marker it guards directly; what it removes is the cheap shortcut,
+// leaving forgery, which the tool-profile guard is the thing that denies.
+func BusActorVerified() string {
+	if actor := BusActor(); actor != ActorUser {
+		return actor
+	}
+	name, err := agentRuntimeAncestor()
+	if err != nil {
+		return ActorUnknown
+	}
+	if name != "" {
+		return name
+	}
+	return ActorUser
+}
+
+// agentRuntimeAncestor returns the name of the nearest agent runtime among this
+// process's ancestors, or "" when there is none. An unreadable process table is
+// an error rather than an absence: the caller must not read "could not tell"
+// as "no agent above me".
+func agentRuntimeAncestor() (string, error) {
+	out, err := psListRunner()
+	if err != nil {
+		return "", err
+	}
+	parent := map[int]int{}
+	name := map[int]string{}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 {
+			continue
+		}
+		pid, err1 := strconv.Atoi(f[0])
+		ppid, err2 := strconv.Atoi(f[1])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		parent[pid] = ppid
+		name[pid] = filepath.Base(f[2])
+	}
+	// Hop cap: a corrupt table can describe a cycle, and this runs on a path
+	// that must not hang.
+	for pid, hops := os.Getpid(), 0; pid > 1 && hops < 64; pid, hops = parent[pid], hops+1 {
+		if agentRuntimeNames[name[pid]] {
+			return name[pid], nil
+		}
+	}
+	return "", nil
 }
 
 // busDirOverride, when non-empty, replaces the default /tmp base for BusDir.

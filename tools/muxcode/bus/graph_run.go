@@ -188,7 +188,7 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 		return nil, err
 	}
 
-	actor := BusActor()
+	actor := BusActorVerified()
 	run := &GraphRun{
 		ID:        NewGraphRunID(g.Name),
 		Template:  template,

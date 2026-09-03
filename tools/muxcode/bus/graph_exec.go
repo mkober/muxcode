@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -75,6 +76,10 @@ func acquireSpawnWorker(session, runID, nodeID, role, task string) (string, erro
 	return graphSpawnFn(session, role, task, graphSender, runID, nodeID)
 }
 
+// unverifiedHoldReason marks a pending approval that an unknown outcome
+// parked, distinguishing it from a wait_human gate the graph author declared.
+const unverifiedHoldReason = "unverified"
+
 // graphApprovalsDir holds wait_human gate markers for a run:
 // <node>.pending while the gate blocks, <node>.approved once released.
 func graphApprovalsDir(session, runID string) string {
@@ -85,16 +90,42 @@ func graphApprovalPath(session, runID, nodeID, state string) string {
 	return filepath.Join(graphApprovalsDir(session, runID), nodeID+"."+state)
 }
 
+// runProvenance says who started a run, for the gate requests an agent reads
+// before deciding whether to raise an approval with a person.
+//
+// A gate message that omits this leaves the reader to infer it, and the
+// cautious inference — that a run it did not start was launched autonomously —
+// is wrong precisely when a person launched it by hand and is waiting on their
+// own gate. Observed 2026-09-03: an agent refused a gate as an "auto-launched
+// run" that the user had started a minute earlier.
+func runProvenance(run *GraphRun) string {
+	switch run.CreatedBy {
+	case "":
+		return "launched by: unrecorded"
+	case ActorUnknown:
+		return "launched by: could not be established"
+	case ActorUser:
+		return "launched by: the user, by hand"
+	default:
+		return "launched by: " + run.CreatedBy + " (autonomous)"
+	}
+}
+
 // ApproveGraphGate releases a wait_human gate. The next executor tick
 // moves the node from waiting to done.
 //
 // The grant records who made it and is announced, so a release is attributable
 // after the fact rather than appearing as an unexplained state change. That is
 // visibility, NOT authorization: every role reaching this function still opens
-// the gate, and approved_by reports the calling process's own environment, so
-// an agent presenting no agent identity is recorded as a person. Never read a
-// populated approved_by as proof a human approved — enforcing that is MUX-144,
-// and until it lands a gate stays a scheduling pause, not a security boundary.
+// the gate. Enforcing authority here is MUX-144, and until it lands a gate is a
+// scheduling pause, not a security boundary.
+//
+// approved_by comes from BusActorVerified, so an agent that strips AGENT_ROLE
+// is still recorded by its ancestry rather than promoted to a person. It
+// remains forgeable by writing this marker directly, so read approved_by as
+// evidence proportional to that: good enough to refuse a self-release
+// (unverifiedHoldReleased), not good enough to be the only thing standing
+// between an agent and an irreversible action.
 //
 // approved_by is additive: gateApprovalTime reads only approved_at, so markers
 // written before this field existed still parse.
@@ -105,7 +136,7 @@ func ApproveGraphGate(session, runID, nodeID string) error {
 	if err := os.MkdirAll(graphApprovalsDir(session, runID), 0755); err != nil {
 		return err
 	}
-	actor := BusActor()
+	actor := BusActorVerified()
 	if err := atomicWriteJSON(graphApprovalPath(session, runID, nodeID, "approved"),
 		map[string]any{"approved_at": time.Now().Unix(), "approved_by": actor}); err != nil {
 		return err
@@ -547,6 +578,91 @@ func purgeStaleApproval(session, runID, nodeID string) error {
 	return nil
 }
 
+// approvalGrantedBy reads an approval marker's recorded approver, returning ""
+// when the marker is malformed or predates the field — an unattributable grant,
+// which callers gating on identity must treat as not-a-person.
+func approvalGrantedBy(data []byte) string {
+	var m struct {
+		ApprovedBy string `json:"approved_by"`
+	}
+	if json.Unmarshal(data, &m) != nil {
+		return ""
+	}
+	return m.ApprovedBy
+}
+
+// unverifiedHoldReleased reports whether an unknown-outcome node may take its
+// success edges, parking it for human approval the first time it may not.
+//
+// Only a person can release one. The hold exists because no authoritative row
+// proved the node succeeded, and the agents in a position to approve it are the
+// very ones whose unverified output raised it — `muxcode graph approve` carries
+// no authority check (MUX-144), so without this an autonomous run would clear
+// its own holds and unknown would pass as success again wearing an approval.
+// The check reads the grant's recorded approver rather than gating the CLI,
+// because the marker is the only artifact the daemon sees.
+//
+// The approver is resolved by BusActorVerified, so unsetting AGENT_ROLE does
+// not launder an agent into a person — ancestry still names it. A process that
+// writes the marker file itself defeats this; that is forgery rather than a
+// shortcut, and the tool-profile guard is what denies it.
+//
+// An unknown outcome means no authoritative row proved the node succeeded. On
+// non-hook providers (OpenCode, Codex) that is the ordinary case, so it is not
+// evidence of failure either — which is why these nodes used to route straight
+// down the success edges. That assumption is how a spec-to-pr run shipped a
+// commit behind build, test and review nodes that had each recorded nothing
+// (2026-09-03): the nodes never claimed success, the router claimed it for
+// them, and the human gate downstream was approved on that false signal.
+// Holding costs one approval per unverified node, frequent on non-hook
+// providers; the alternative is unverified work advancing a pipeline into
+// irreversible actions, which is the more expensive mistake.
+//
+// The release is single-use like a wait_human gate: a node re-entered by a
+// loop edge or a retry must be approved again, and a marker that cannot be
+// purged holds the node rather than releasing it twice.
+func unverifiedHoldReleased(session string, run *GraphRun, nodeID string) bool {
+	if data, err := os.ReadFile(graphApprovalPath(session, run.ID, nodeID, "approved")); err == nil {
+		if by := approvalGrantedBy(data); by != ActorUser {
+			LogLifecycle(session, "warn", "daemon", "graph-unverified-self-approval",
+				fmt.Sprintf("%s: %s approval by %q refused — an unverified hold needs a person", run.ID, nodeID, by))
+			return false
+		}
+		// Consumed, not discarded: the grant is spent here so a re-entry asks again.
+		if perr := purgeStaleApproval(session, run.ID, nodeID); perr != nil {
+			LogLifecycle(session, "warn", "daemon", "graph-unverified-purge-failed",
+				fmt.Sprintf("%s: %s: %v", run.ID, nodeID, perr))
+			return false
+		}
+		_ = os.Remove(graphApprovalPath(session, run.ID, nodeID, "pending"))
+		LogLifecycle(session, "info", "daemon", "graph-unverified-released",
+			fmt.Sprintf("%s: %s approved despite no authoritative result", run.ID, nodeID))
+		return true
+	}
+	if _, err := os.Stat(graphApprovalPath(session, run.ID, nodeID, "pending")); err == nil {
+		return false
+	}
+	if err := os.MkdirAll(graphApprovalsDir(session, run.ID), 0755); err != nil {
+		LogLifecycle(session, "warn", "daemon", "graph-gate-marker-error",
+			fmt.Sprintf("%s: %s: %v", run.ID, nodeID, err))
+		return false
+	}
+	prompt := fmt.Sprintf("Node %q finished with no authoritative result — nothing proves it succeeded", nodeID)
+	if err := atomicWriteJSON(graphApprovalPath(session, run.ID, nodeID, "pending"),
+		map[string]string{"message": prompt, "reason": unverifiedHoldReason}); err != nil {
+		LogLifecycle(session, "warn", "daemon", "graph-gate-marker-error",
+			fmt.Sprintf("%s: %s: %v", run.ID, nodeID, err))
+		return false
+	}
+	LogLifecycle(session, "warn", "daemon", "graph-unverified-hold",
+		fmt.Sprintf("%s: %s held — unknown outcome, no unknown edge", run.ID, nodeID))
+	_ = SendNoCC(session, NewMessage(graphSender, "edit", "request", "graph-approval",
+		fmt.Sprintf("Graph run %s (%s): %s — approve to continue: muxcode graph approve %s %s",
+			run.ID, runProvenance(run), prompt, run.ID, nodeID), ""))
+	_ = Notify(session, "edit")
+	return false
+}
+
 // dispatchNode fires a ready node's work and moves it to running/waiting.
 //
 // A suppressed send means the identical request is already queued or in
@@ -672,8 +788,8 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		LogLifecycle(session, "info", "daemon", "graph-gate-pending",
 			fmt.Sprintf("%s: %s", run.ID, n.ID))
 		gate := NewMessage(graphSender, "edit", "request", "graph-approval",
-			fmt.Sprintf("Graph run %s is waiting at human gate %q: %s — approve with: muxcode graph approve %s %s",
-				run.ID, n.ID, prompt, run.ID, n.ID), "")
+			fmt.Sprintf("Graph run %s (%s) is waiting at human gate %q: %s — approve with: muxcode graph approve %s %s",
+				run.ID, runProvenance(run), n.ID, prompt, run.ID, n.ID), "")
 		_ = SendNoCC(session, gate)
 		_ = Notify(session, "edit")
 		// Gate surfacing is the control pane's job (MUX-108) — no modal fallback remains.
@@ -1077,17 +1193,16 @@ func routeFinishedNodes(session string, run *GraphRun, g *Graph, byID map[string
 				matching = append(matching, e)
 			}
 		}
-		// Unknown outcome with no explicit unknown edge: fall back to the
-		// success edges (see the outcome-model comment at the top).
+		// Unknown outcome with no explicit unknown edge: held for approval
+		// rather than assumed successful (see the outcome-model comment).
 		if len(matching) == 0 && st.Outcome == OutcomeUnknown {
+			if !unverifiedHoldReleased(session, run, id) {
+				continue
+			}
 			for _, e := range g.Edges {
 				if e.From == id && edgeOutcome(e) == OutcomeSuccess {
 					matching = append(matching, e)
 				}
-			}
-			if len(matching) > 0 {
-				LogLifecycle(session, "info", "daemon", "graph-unknown-fallback",
-					fmt.Sprintf("%s: %s routed unknown outcome via success edge", run.ID, id))
 			}
 		}
 
