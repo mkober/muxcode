@@ -113,3 +113,104 @@ func TestPurgeSessionArtifacts_PurgesWhenEnabled(t *testing.T) {
 		t.Error("cdk.out must be gone")
 	}
 }
+
+// fakeGoCache points GOCACHE at a temp dir holding one file of the given size
+// and PROVES the redirect took effect before any test acts on it. Without that
+// proof a test calling the live purge path would run `go clean -cache` against
+// the developer's real multi-GB cache.
+func fakeGoCache(t *testing.T, size int) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "blob"), make([]byte, size), 0644); err != nil {
+		t.Fatalf("seeding cache: %v", err)
+	}
+	t.Setenv("GOCACHE", dir)
+	t.Setenv("MUXCODE_GOCACHE_PURGE_DISABLE", "")
+	if got := goCacheDir(); got != dir {
+		t.Skipf("GOCACHE redirect did not take (go env reports %q) — refusing to touch the real cache", got)
+	}
+	return dir
+}
+
+func TestPurgeGoBuildCacheDryRunMeasuresWithoutDeleting(t *testing.T) {
+	t.Setenv("MUXCODE_GOCACHE_FLOOR_MB", "0")
+	dir := fakeGoCache(t, 4096)
+
+	res, err := PurgeGoBuildCache(true)
+	if err != nil {
+		t.Fatalf("PurgeGoBuildCache: %v", err)
+	}
+	if len(res.Paths) != 1 || res.BytesFreed < 4096 {
+		t.Fatalf("dry run reported %+v, want the cache dir and its size", res)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "blob")); err != nil {
+		t.Error("dry run must not delete cache contents")
+	}
+}
+
+// Negative control: without a floor check a purge would clear tiny caches,
+// paying a full rebuild to reclaim nothing.
+func TestPurgeGoBuildCacheRespectsFloor(t *testing.T) {
+	t.Setenv("MUXCODE_GOCACHE_FLOOR_MB", "64")
+	fakeGoCache(t, 4096)
+
+	res, err := PurgeGoBuildCache(true)
+	if err != nil {
+		t.Fatalf("PurgeGoBuildCache: %v", err)
+	}
+	if len(res.Paths) != 0 {
+		t.Fatalf("cache below the floor must be left alone, got %+v", res)
+	}
+}
+
+// Negative control for the opt-out: a disabled purge must report nothing even
+// when the cache is far above the floor.
+func TestPurgeGoBuildCacheDisabledOptOut(t *testing.T) {
+	t.Setenv("MUXCODE_GOCACHE_FLOOR_MB", "0")
+	fakeGoCache(t, 4096)
+	t.Setenv("MUXCODE_GOCACHE_PURGE_DISABLE", "1")
+
+	res, err := PurgeGoBuildCache(false)
+	if err != nil {
+		t.Fatalf("PurgeGoBuildCache: %v", err)
+	}
+	if len(res.Paths) != 0 {
+		t.Fatalf("disabled purge must do nothing, got %+v", res)
+	}
+}
+
+func TestSameDeviceMatchesAndRejects(t *testing.T) {
+	dir := t.TempDir()
+	if !sameDevice(dir, dir) {
+		t.Error("a path must share a device with itself")
+	}
+	// Negative control: an unstattable path must answer false, never inherit a
+	// match — the caller purges on a true.
+	if sameDevice(filepath.Join(dir, "no-such-path"), dir) {
+		t.Error("a missing path must not report a shared device")
+	}
+}
+
+// A Go cache on another filesystem cannot relieve /tmp pressure, so the ladder
+// must not count it. Proven via the GOCACHE redirect rather than a real second
+// volume, which a test cannot portably create.
+func TestGoCacheRelievesTmpFalseWhenUnresolvable(t *testing.T) {
+	t.Setenv("GOCACHE", filepath.Join(t.TempDir(), "absent"))
+	if goCacheDir() == "" {
+		t.Skip("go env GOCACHE unavailable")
+	}
+	if GoCacheRelievesTmp() {
+		t.Error("an unstattable cache dir must not claim it can relieve /tmp")
+	}
+}
+
+func TestGoCacheFloorBytesDefaultAndOverride(t *testing.T) {
+	t.Setenv("MUXCODE_GOCACHE_FLOOR_MB", "")
+	if got := GoCacheFloorBytes(); got != goCacheFloorDefault {
+		t.Errorf("default floor = %d, want %d", got, goCacheFloorDefault)
+	}
+	t.Setenv("MUXCODE_GOCACHE_FLOOR_MB", "2048")
+	if got := GoCacheFloorBytes(); got != 2048<<20 {
+		t.Errorf("override floor = %d, want %d", got, int64(2048)<<20)
+	}
+}

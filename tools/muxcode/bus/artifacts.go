@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 )
 
 // buildArtifactDirs names the regenerable build output PurgeBuildArtifacts may
@@ -89,8 +91,120 @@ func PurgeSessionArtifacts(session, reason string) *ArtifactPurgeResult {
 	return result
 }
 
+// sameDevice reports whether two paths live on the same filesystem. An
+// unstattable path answers false: an unknown device must not be assumed to
+// match, since the caller acts on a true.
+func sameDevice(a, b string) bool {
+	var sa, sb syscall.Stat_t
+	if err := syscall.Stat(a, &sa); err != nil {
+		return false
+	}
+	if err := syscall.Stat(b, &sb); err != nil {
+		return false
+	}
+	return sa.Dev == sb.Dev
+}
+
 // gitIgnores reports whether git considers path ignored in repoDir.
 func gitIgnores(repoDir, path string) bool {
 	cmd := exec.Command("git", "-C", repoDir, "check-ignore", "-q", path)
 	return cmd.Run() == nil
+}
+
+// goCacheFloorDefault is the size a Go build cache must exceed before pressure
+// purging will clear it. Below this the rebuild cost buys back too little to
+// be worth paying.
+const goCacheFloorDefault = 1 << 30 // 1 GiB
+
+// maxGoCacheFloorMB caps the MUXCODE_GOCACHE_FLOOR_MB override at 1 TiB,
+// keeping the megabyte-to-byte shift inside int64.
+const maxGoCacheFloorMB = 1 << 20
+
+// GoCachePurgeDisabled reports whether the Go build cache is exempt.
+func GoCachePurgeDisabled() bool {
+	return os.Getenv("MUXCODE_GOCACHE_PURGE_DISABLE") == "1"
+}
+
+// GoCacheFloorBytes is the cache size above which pressure purging applies,
+// overridable via MUXCODE_GOCACHE_FLOOR_MB (0 disables the floor entirely).
+//
+// The override is bounded because an unbounded shift overflows int64 into a
+// negative floor, which every cache compares as "above" — purging exactly what
+// the floor was set to protect. An out-of-range value falls back to the default
+// rather than clamping: a floor nobody can express is a typo, not an intent.
+func GoCacheFloorBytes() int64 {
+	if v := os.Getenv("MUXCODE_GOCACHE_FLOOR_MB"); v != "" {
+		if mb, err := strconv.ParseInt(v, 10, 64); err == nil && mb >= 0 && mb <= maxGoCacheFloorMB {
+			return mb << 20
+		}
+	}
+	return goCacheFloorDefault
+}
+
+// GoCacheRelievesTmp reports whether clearing the Go build cache could
+// actually relieve pressure on /tmp, which is true only when the two share a
+// filesystem.
+//
+// They usually do on macOS, where /tmp and ~/Library/Caches sit on one APFS
+// volume. They routinely do not on Linux, where /tmp is a tmpfs in RAM while
+// the Go cache is on disk. Purging there would free gigabytes that do nothing
+// for the pressure being responded to, then report the cycle effective — which
+// suppresses the alert saying /tmp is still full. A cleanup that lies about
+// what it relieved is worse than one that declines.
+func GoCacheRelievesTmp() bool {
+	dir := goCacheDir()
+	if dir == "" {
+		return false
+	}
+	return sameDevice(dir, os.TempDir())
+}
+
+// goCacheDir returns the Go build cache path, or "" when Go is absent or
+// reports none — either way there is nothing here to purge.
+func goCacheDir() string {
+	out, err := exec.Command("go", "env", "GOCACHE").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// PurgeGoBuildCache clears the Go build cache, returning what it freed. A dry
+// run measures without deleting.
+//
+// The cache is pure derived state — Go refills it on the next build — but it
+// is unbounded, and a machine driving repeated build/test chains grows it
+// without limit: 9.9 GB on the box this was written for, the single largest
+// consumer there and enough to fill the volume to 100% mid-session, which is
+// how it was found. Go's own five-day trimming never reclaimed it because the
+// entries kept being touched.
+//
+// This runs last in the pressure ladder because its blast radius is the widest
+// stage: unlike the repo-scoped stages it slows the next build of every Go
+// project on the machine, not just this session's. Sizing walks the whole
+// cache, which is why the walk happens only under sustained pressure.
+func PurgeGoBuildCache(dryRun bool) (*ArtifactPurgeResult, error) {
+	result := &ArtifactPurgeResult{}
+	if GoCachePurgeDisabled() {
+		return result, nil
+	}
+	dir := goCacheDir()
+	if dir == "" {
+		return result, nil
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return result, nil
+	}
+	size := dirSize(dir)
+	if size < GoCacheFloorBytes() {
+		return result, nil
+	}
+	if !dryRun {
+		if out, err := exec.Command("go", "clean", "-cache").CombinedOutput(); err != nil {
+			return result, fmt.Errorf("go clean -cache: %v (%s)", err, strings.TrimSpace(string(out)))
+		}
+	}
+	result.Paths = append(result.Paths, dir)
+	result.BytesFreed = size
+	return result, nil
 }
