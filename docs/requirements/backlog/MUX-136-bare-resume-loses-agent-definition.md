@@ -1,17 +1,20 @@
-# Auto-Restart Resumes an Agent Without Its Definition
+# A Bare Resume Loses the Agent Definition
 
-A daemon auto-restart brought the `plan` agent back **with no agent definition** — default tools, no
-role restrictions, no inbox listener — and nothing said so except a banner inside the pane. The agent
-kept its privileged identity (docs owner, sole Atlassian write authority) while losing every
-constraint that identity depends on, and ran that way for ~37 minutes.
+The `plan` agent came back **with no agent definition** — default tools, no role restrictions, no
+inbox listener — and nothing said so except a banner inside the pane. The agent kept its privileged
+identity (docs owner, sole Atlassian write authority) while losing every constraint that identity
+depends on, and ran that way for ~37 minutes.
 
-> **Correction (2026-09-02, Phase 1 item 3).** The trigger was **not** the auto-restart. The banner
-> quoted below is emitted only by Claude's *session-resume* agent resolver, and muxcode's launcher
-> never passes `--resume`, so the definition-less agent was a bare `claude --resume` typed in the
-> pane outside the launcher — [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md)'s shape on
-> `plan` rather than `edit`. The H1 and the filename predate that finding and now overstate the
-> restart's role. Everything below about the **consequences** of a definition-less privileged agent
-> stands unchanged; the **cause** is restated in "Phase 1 finding" below.
+The cause is a **bare `claude --resume` typed in the pane, outside the launcher** — this spec's shape of
+[`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md), on `plan` rather than `edit`. Evidence and
+reasoning in "Phase 1 finding" below.
+
+> **Filed under a different name (2026-09-01 → renamed 2026-09-02).** This spec was originally titled
+> *"Auto-Restart Resumes an Agent Without Its Definition"* and filed at
+> `MUX-136-restart-resume-loses-agent-definition.md`, because the incident was first read as a daemon
+> auto-restart. Phase 1 item 3 established otherwise; the title and filename were corrected on the
+> user's instruction. The **consequences** described throughout were always accurate — only the cause
+> moved. Full evidence in "Phase 1 finding" below.
 
 Tracking: _(no GitHub issue yet)_
 
@@ -102,14 +105,10 @@ that day and notes "muxcode exonerated by logs (every kill/reload path logs, non
 **hand-resumed sessions survive** — a separate observer reaching the same launcher-not-in-the-loop
 conclusion from different evidence.
 
-What this changes:
-
-- **Defect B's stated mechanism was real code but not the cause.** It is now closed as *hardening*
-  rather than as the fix for this incident.
-- **Phase 2's detector becomes the primary mitigation,** not a secondary one: a banner signature (or
-  a positive capability probe) catches a bare resume regardless of who typed it, which is the only
-  control that would have caught what actually happened.
-- **MUX-126 is corroborated, not contradicted** — see the retraction in the table below.
+What this changes: **Defect B's stated mechanism was real code but not the cause** — it is now closed
+as *hardening* rather than as the fix for this incident. The two knock-on consequences (Phase 2 becomes
+the load-bearing phase; MUX-126 is corroborated rather than contradicted) are set out once in
+[Status](#status), with the retraction itself in the table below.
 
 ### Relationship to existing specs
 
@@ -172,8 +171,19 @@ notice was a line of prose inside a pane nobody was reading. Same family as
       or neither is sent, so a dropped definition can no longer degrade into a name-only launch
 - [x] An agent that cannot resolve its definition **fails loudly**: an alert to `edit` plus a
       lifecycle event, never a silent fallback to default tools
-- [ ] A restarted agent never runs with fewer restrictions than its definition grants — if the
-      definition cannot be applied, the agent does not come up at all
+- [ ] An agent never runs with fewer restrictions than its definition grants, **bounded as follows**
+      (*reworded 2026-09-02 by user ruling — state the bound rather than close the window*):
+      - **Launcher — absolute.** A definition that cannot be applied (resolved at no tier, or
+        declaring an uncarriable nested key) is refused **before exec**. The agent does not come up.
+      - **Daemon — bounded.** A bare-resumed agent that the launcher never saw runs unconstrained for
+        at most **two 30 s sweeps** (`definitionCheckSecs`=30 × `definitionDebounce`=2, so ~60 s to
+        flag) plus one reload, then comes back with its definition.
+      - **Exception A — `edit` is unbounded by design.** `IsAgentHealthExcluded` roles are *alerted,
+        never reloaded*, because MUX-126 documents the bare resume on `edit` as current practice.
+      - **Exception B — after the cap, unbounded.** At `definitionReloadCap`=3 (with a 180 s cooldown
+        between attempts) the watchdog gives up and alerts; its own message says the agent "is running
+        unconstrained". Worst case before give-up is ~60 s + 3 reloads + 2×180 s cooldown, and
+        **thereafter indefinite** until a human acts.
 - [x] The restart path is verified to restore the inbox listener, so receipts resume and no
       `delivery-gap` follows a "successful" restart
 - [x] `agent-recovered` is emitted only when the agent came back **with** its definition — a
@@ -182,7 +192,7 @@ notice was a line of prose inside a pane nobody was reading. Same family as
       a hang and not a default-tools launch
 - [x] **Negative control:** a normal healthy restart is unchanged — no extra alerts, no added latency
       on the common path
-- [ ] Defect A reproduced (or explicitly recorded as not-reproducible) before any fix is attributed
+- [x] Defect A reproduced (or explicitly recorded as not-reproducible) before any fix is attributed
       to it — the two incidents may not share a cause
 
 **Criterion 1 checked 2026-09-02** (commit `658c305`): the guard is in `BuildExecArgs`, pinned by
@@ -215,11 +225,28 @@ an eliminated one. For a role whose entire safety model is scope restriction, th
 criterion is reworded to state the bound, or the window is closed. Flagged to the user; not resolved
 here.
 
-**A second, independent reason criterion 3 stays unchecked (added after Phase 3):** nested frontmatter
-keys (`hooks:`, `mcpServers:`) are still not carried into the agents JSON, so a project-tier definition
-declaring them launches without them. That is a concrete "fewer restrictions than its definition
-grants" case at tier 1, distinct from the timing window above, and it has its own open decision (see
-the Phase 3 results). Both must close before this criterion can be ticked.
+~~**A second, independent reason criterion 3 stays unchecked (added after Phase 3):** nested
+frontmatter keys are still not carried…~~ **Closed in the fix-loop pass** — a definition declaring
+`hooks:`/`mcpServers:`/`experimental:` is now *refused at launch* rather than launched reduced, which
+folds that case into the launcher's absolute half above.
+
+**Status of criterion 3 after the user ruling (2026-09-02).** The ruling — reword to state the bound,
+do not close the window — is applied above, and the tick was conditioned on "the code meets the bound
+as written". It does for the launcher and for the normal daemon path. It does **not** for the two
+exceptions, which the ruling did not mention and which are **unbounded, not merely longer**:
+
+| | Bound | Meets the ruling's ~60s? |
+|---|---|---|
+| Launcher refusal | absolute — no exec | n/a (stronger) |
+| Daemon, normal path | ~60 s + one reload | **Yes** |
+| `edit` (health-excluded) | alert only, never reloaded | **No — unbounded** |
+| Any role past `definitionReloadCap`=3 | alert only; watchdog states it "is running unconstrained" | **No — unbounded** |
+
+Left **unchecked** pending one clarification: whether the ruling's bound was meant to hold *with* these
+two by-design exceptions written into it (in which case the criterion as reworded is met and can be
+ticked), or whether an exception-free bound was intended (in which case Exception B in particular is a
+gap to close — a privileged role that fails three reloads currently stays up unconstrained
+indefinitely). Ticking on the narrower reading would certify a guarantee the system does not make.
 
 ### Key files
 
@@ -439,39 +466,92 @@ still depends on the `--agents` schema strictness Phase 5 has not established.
 
 ### Phase 4: Investigate Defect A (corroborates MUX-126)
 
-- [ ] Reproduce the mass exit; test the daemon-upgrade hypothesis directly by running
+- [x] Reproduce the mass exit; test the daemon-upgrade hypothesis directly by running
       `muxcode upgrade-daemons` against a live session and observing the Claude-provider agents
-- [ ] Explain why only daemon-managed **Claude** agents die while OpenCode agents and `edit` survive
-- [ ] If not reproducible, record that explicitly rather than closing it against the 17:19 incident
-- [ ] Raise the lifecycle rotation cap or snapshot on `agent-down`, so the next occurrence is not
-      eaten by the 1000-entry limit as the 16:42 one was
+      — *hypothesis refuted from the timeline; the proposed live run was deliberately **not** done
+      because wave 2's deaths precede the upgrade, so it would buy nothing. The mass exit itself was
+      not reproduced — that is recorded under the item below, which exists for exactly this case*
+- [x] Explain why only daemon-managed **Claude** agents die while OpenCode agents and `edit` survive
+      — *the premise was wrong and is corrected: it is **idle Claude sessions machine-wide**, and the
+      discriminator is idle-vs-mid-turn plus binary, not daemon-managed-vs-not*
+- [x] If not reproducible, record that explicitly rather than closing it against the 17:19 incident
+- [x] Raise the lifecycle rotation cap or snapshot on `agent-down`, so the next occurrence is not
+      eaten by the 1000-entry limit as the 16:42 one was — *both: cap 1000 → 5000 **and**
+      `SnapshotAgentDown()` at strike 2*
 - [x] Fold the findings into [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) rather than
       duplicating them here — this phase exists to add its third and fourth occurrences, not to own
       the mass-death defect
 
-**Phase 4 status: 1 of 5 — investigation, largely NOT started (2026-09-02).** Only the fold-into-MUX-126
-item is done. Recording this explicitly because a commit gate followed this verification, and a gate
-arriving is not evidence that investigation happened.
+**Phase 4 was first assessed at 1 of 5 — untouched investigation — while a commit gate was already
+armed.** Recorded once, because the lesson outlives the snapshot: *a gate arriving is not evidence that
+investigation happened.* The per-item state at that moment is superseded by "Phase 4 results" below.
 
-| Item | State |
-|------|-------|
-| 1 — reproduce / test the upgrade hypothesis | **Not deliberately executed.** Substantial *incidental* evidence exists (below), which narrows the work but is not the designed experiment the item asks for |
-| 2 — explain why only Claude agents die | **Not started.** No hypothesis has been offered, let alone tested |
-| 3 — record not-reproducible if so | **Not reached** — conditional on item 1 |
-| 4 — raise the rotation cap / snapshot on `agent-down` | **Not done in code.** A one-off manual snapshot of the current 1000-row window was saved to scratchpad during this session, which protects *today's* evidence but is not the durable change |
-| 5 — fold into MUX-126 | **Done** — third path row, scope amendment, occurrences 5 and 6, correlation table |
+~~**Incidental evidence that materially advances item 1.** `upgrade-daemons` ran against a live session
+nine times… two of seven bursts were followed by a trio health-failure; only one tightly (30 s)…~~
 
-**Incidental evidence that materially advances item 1.** `upgrade-daemons` ran against a live session
-**nine times** on 2026-09-02 with the Claude trio under observation the whole time. Two of seven bursts
-were followed by a trio health-failure; only one tightly (30 s). Four bursts, including two consecutive
-late in the day, produced nothing. This is not a reproduction — nobody set out to trigger a death — but
-it is a real negative result, and it means item 1's deliberate run should be **sized for repetition**:
-a single clean `upgrade-daemons` proves nothing, because most of them are clean.
+**Superseded the same day — and my measurement was the weaker one.** That correlation used
+`agent-health-fail` as the death proxy. Health-fail is a **lagging** indicator: it fires when the
+daemon's sweep notices, not when the session exits. Reading the Claude **transcripts** (file mtimes and
+last entries) gives the true instant, and for wave 2 it *inverts the causality* — see item 1 below.
+Recorded because the lesson generalises: when a detector's timestamp is the only evidence, what you are
+measuring is detection latency, not the event.
 
-The item-4 gap is the one that compounds. Every occurrence so far has been reconstructed from a log
-that rotates at 1000 entries; the 2026-09-01 16:42 incident was already lost that way, and today's
-window survives only because it was snapshotted by hand. Until rotation is raised or `agent-down`
-snapshots, each new occurrence is a race against the cap.
+#### Phase 4 results (2026-09-02) — hypothesis refuted, mechanism still open
+
+All times **UTC** (machine local = UTC−4).
+
+**Item 1 — the daemon-upgrade hypothesis is REFUTED.** No live experiment was needed; the timeline
+answers it.
+
+| Wave | Deaths (transcripts stop) | Nearest daemon upgrade | Verdict |
+|------|---------------------------|------------------------|---------|
+| 1 | **17:35:49.65–.82Z** (6 sessions), again ~17:39:2xZ | 17:27:25Z before, 17:53:41Z after — none within ±8 min; the only build in the window came **after** the first death | not the upgrade |
+| 2 | **19:14:16.41–.46Z** (5 sessions) | 19:14:34Z — **18 s after the deaths** (`upgrade-daemons` is the last step of `build.sh`) | not the upgrade |
+
+Wave 2 is decisive: the upgrade cannot have caused deaths that **precede** it. The proposed live
+`upgrade-daemons` experiment was therefore **not run**, and should not be — it would buy nothing.
+
+Also refuted: that `make install` kills running muxcode processes. A hermetic test with a copy of the
+real Go binary shows the process **survives** `install` over its path (new inode), and live `muxcode
+console` processes predate the install. **A false positive worth not repeating:** a first hermetic test
+using a copied `/bin/sleep` *did* die — that is macOS launch constraints on a copied platform binary,
+not replacement semantics. The `claude` binary itself was unchanged (`autoUpdates: false`), and no
+muxcode `pkill` pattern matches a Claude argv.
+
+**Item 2 — the selectivity was mis-framed.** It is not "daemon-managed Claude agents":
+
+- **Every idle Claude Code session on the machine died in the same ~200 ms window**, both waves —
+  three tmux sessions, three repos (muxcode, is-advising-gateway, is-operations-gateway), one instant.
+- **Survivors:** every OpenCode agent (a different binary), and Claude sessions that were **mid-turn**.
+- **The exits are Claude-initiated clean shutdowns, not external kills.** Each dead transcript ends
+  with Claude's own shutdown bookkeeping (a `cost-state` write, or its "background command … was
+  stopped" notice). No crash reports, no unified-log signal events, no muxcode kills.
+
+So the real signature is **idle Claude sessions vs everything else**, machine-wide — which is why no
+per-session or muxcode-side cause was ever going to explain it.
+
+**Item 3 — the mechanism is explicitly NOT reproduced.** What is bounded: a machine-wide, same-instant
+broadcast inside Claude Code that makes *idle* sessions exit cleanly while mid-turn sessions defer.
+Two candidates, neither confirmable from outside: a **bridge-side teardown/reconnect** (every session
+here is bridge-attached) is strongest; a **SIGWINCH broadcast** from the `client-resized` hook's
+`muxcode resize` (which refits every window in every session) is the other. `muxcode resize` logs
+nothing and Claude's debug dir is empty, so discriminating them needs a deliberate experiment — one
+scratch Claude session exposed in turn to `muxcode resize`, a settings touch, and a bridge disconnect.
+That costs a live Claude session, so it is **the user's call**, not something to run unasked.
+
+**Item 4 — evidence no longer rots.** The lifecycle log rotated past **both** waves within ~2 h, and
+wave 1 was gone before Phase 3 finished reading it. Now: `bus/snapshot.go`'s `SnapshotAgentDown()`
+writes a bundle (`lifecycle.log`, `pane.txt` 300 lines — where Claude's exit banner lives — and
+`procs.txt`) under `logs/snapshots/`, bounded at 20 per session, capture failures recorded inside the
+bundle rather than fatal. The daemon takes it at **strike 2** — after `agent-down` fires, *before*
+strike 3's relaunch types over the pane. `MUXCODE_LIFECYCLE_LOG_MAX` default raised **1000 → 5000**.
+Verified on disk: `snapshot.go:46`, `daemon.go:152/261/1779` (injectable seam + `agent-down-snapshot`
+event), `lifecycle.go:67`. The daemon suite now pins `MUXCODE_LIFECYCLE_LOG_DIR` to a temp dir, so
+tests can no longer touch the real logs.
+
+**What Phase 4 still owes:** item 3's mechanism, which is outside muxcode's control and awaits the
+user's decision on the discriminating experiment. Item 1 is answered in the negative and item 2 is
+answered by reframing; neither needs more work.
 
 ### Phase 5: Integration test
 

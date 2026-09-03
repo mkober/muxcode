@@ -35,7 +35,7 @@ The cause being external is what makes this spec worth filing: muxcode cannot pr
 
 The user hand-resumed the Phase 3 worker with `claude --resume`. Claude Code reported agent
 `code-editor` **unavailable and continued with DEFAULT tools** — restrictions gone. That is
-[MUX-136](./MUX-136-restart-resume-loses-agent-definition.md) reproducing on the manual path.
+[MUX-136](./MUX-136-bare-resume-loses-agent-definition.md) reproducing on the manual path.
 
 **This governs the whole spec.** Automating resume without carrying the role's definition would not
 inherit MUX-136, it would *industrialise* it: today one hand-resume produced one unrestricted agent;
@@ -90,7 +90,7 @@ operator opened the menu. Reusing `ReloadAll` unchanged would produce a control 
 
 ### Sequencing constraint
 
-- [ ] **MUX-139 does not ship before [MUX-136](./MUX-136-restart-resume-loses-agent-definition.md) is fixed and pinned.** Auto-resume multiplies MUX-136's blast radius from one hand-resumed agent to every Claude role on the machine; the definition-carrying criterion above is the guard, and MUX-136 is where that guard is built
+- [ ] **MUX-139 does not ship before [MUX-136](./MUX-136-bare-resume-loses-agent-definition.md) is fixed and pinned.** Auto-resume multiplies MUX-136's blast radius from one hand-resumed agent to every Claude role on the machine; the definition-carrying criterion above is the guard, and MUX-136 is where that guard is built
 - [ ] Confirm the interaction with [MUX-126](./MUX-126-edit-resume-aware-auto-restart.md): that spec is `edit`'s bare `--resume` losing all launch flags. This spec **adds** automatic `--resume` for edit, so MUX-126's defect becomes reachable automatically — its flag-preserving fix must land with or before Phase 2
 
 ### Technical approach
@@ -210,7 +210,7 @@ Therefore:
 
 | Spec | Relationship |
 |------|--------------|
-| [MUX-136](./MUX-136-restart-resume-loses-agent-definition.md) | **Blocking.** Resume must carry the agent file; reproduced live on the manual path during this incident |
+| [MUX-136](./MUX-136-bare-resume-loses-agent-definition.md) | **Blocking.** Resume must carry the agent file; reproduced live on the manual path during this incident |
 | [MUX-126](./MUX-126-edit-resume-aware-auto-restart.md) | Edit's bare `--resume` loses all launch flags — this spec makes that path automatic, so the fix must land with or before Phase 2 |
 | [MUX-008](./MUX-008-unverified-daemon-auto-restart.md) | Restart reported without confirming the agent came back; the definition-verification criterion here is the same shape |
 | [MUX-131](../completed/MUX-131-spawn-implement-output-never-ported.md) | Worker reuse — dead-worker fallback semantics |

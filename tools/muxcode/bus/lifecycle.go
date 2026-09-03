@@ -54,13 +54,17 @@ func LifecycleLogPath(session string) string {
 
 // lifecycleMaxEntries is the default max entries before rotation.
 // Override via MUXCODE_LIFECYCLE_LOG_MAX env var.
+//
+// 5000, up from 1000: at the 2026-09-02 write rate a 1000-entry log rotated
+// past both mass-death waves within ~2 hours of each, before anyone read it
+// (MUX-136 Phase 4). 5000 entries is roughly a working day at ~150 bytes each.
 func lifecycleMaxEntries() int {
 	if v := os.Getenv("MUXCODE_LIFECYCLE_LOG_MAX"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
 	}
-	return 1000
+	return 5000
 }
 
 // LogLifecycle appends a lifecycle event to the persistent log.

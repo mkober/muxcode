@@ -331,6 +331,7 @@ var roleRelevantEvents = map[string]bool{
 	"definition-reload-giveup": true,
 	"definition-restored":      true,
 	"launch-refused":           true,
+	"agent-down-snapshot":      true,
 }
 
 // wakeEvents are the lifecycle events that count as "the agent was woken" when

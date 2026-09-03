@@ -146,9 +146,10 @@ type Daemon struct {
 	agentAlive  func(session, role string) bool
 	windowNames func(session string) ([]string, error)
 
-	probeDefinition func(session, role string) bus.DefinitionProbe
-	capturePane     func(target string, lines int) (string, error)
-	reloadAgent     func(session, role string) error
+	probeDefinition   func(session, role string) bus.DefinitionProbe
+	capturePane       func(target string, lines int) (string, error)
+	reloadAgent       func(session, role string) error
+	snapshotAgentDown func(session, role string) (string, error)
 
 	lastBranchTick      int64
 	lastBranch          string // branch the pending seconds belong to
@@ -257,6 +258,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		reloadAgent: func(session, role string) error {
 			return bus.ReloadAgent(session, role, "", "", false)
 		},
+		snapshotAgentDown: bus.SnapshotAgentDown,
 	}
 }
 
@@ -1771,6 +1773,14 @@ func (d *Daemon) checkAgentHealth() {
 		// Strike 2 (60s) — alert edit
 		if count == 2 {
 			d.agentWasDown[role] = true
+
+			// Evidence first: strike 3's relaunch types over the pane that
+			// holds the exit message (MUX-136 Phase 4).
+			if dir, err := d.snapshotAgentDown(d.session, role); err == nil {
+				bus.LogLifecycle(d.session, "info", "daemon", "agent-down-snapshot", role+": "+dir)
+			} else {
+				bus.LogLifecycle(d.session, "warn", "daemon", "agent-down-snapshot", role+": "+err.Error())
+			}
 
 			alertKey := bus.AgentHealthAlertKey(role, "down")
 			if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
