@@ -525,7 +525,7 @@ func TestRenderGraphFallback_HeldNodeLeadsAndIsMarked(t *testing.T) {
 	held := g.Nodes[len(g.Nodes)-1].ID // last in definition order: ranking alone must lift it
 
 	plain := snapshot(g, map[string]string{held: bus.GraphNodeDone})
-	base := StripAnsi(renderGraphFallback(plain, 120, 0))
+	base := StripAnsi(renderGraphFallback(plain, 120, 0, ""))
 	if strings.Contains(base, "held") {
 		t.Errorf("negative control: an unheld done node must not read as held:\n%s", base)
 	}
@@ -535,7 +535,7 @@ func TestRenderGraphFallback_HeldNodeLeadsAndIsMarked(t *testing.T) {
 
 	snap := snapshot(g, map[string]string{held: bus.GraphNodeDone})
 	snap.Held = map[string]bool{held: true}
-	frame := StripAnsi(renderGraphFallback(snap, 120, 0))
+	frame := StripAnsi(renderGraphFallback(snap, 120, 0, ""))
 	if !strings.Contains(frame, "held") {
 		t.Errorf("a held node must say so, not read as done:\n%s", frame)
 	}
@@ -556,7 +556,7 @@ func TestRenderGraphFallback_ClampsToBudgetKeepingBlocker(t *testing.T) {
 	snap.Held = map[string]bool{held: true}
 
 	const budget = 4 // header + 2 rows + notice: fewer than the 4 nodes, so it must truncate
-	frame := StripAnsi(renderGraphFallback(snap, 120, budget))
+	frame := StripAnsi(renderGraphFallback(snap, 120, budget, ""))
 
 	if n := strings.Count(frame, "\n"); n > budget {
 		t.Errorf("emitted %d lines on a budget of %d:\n%s", n, budget, frame)
@@ -568,9 +568,58 @@ func TestRenderGraphFallback_ClampsToBudgetKeepingBlocker(t *testing.T) {
 		t.Errorf("truncation dropped the blocker %q — the sort must keep it:\n%s", held, frame)
 	}
 
-	full := StripAnsi(renderGraphFallback(snap, 120, 0))
+	full := StripAnsi(renderGraphFallback(snap, 120, 0, ""))
 	if strings.Contains(full, "more") {
 		t.Errorf("negative control: an unbudgeted list must not claim truncation:\n%s", full)
+	}
+}
+
+// Truncation keeps the most urgent rows, so a selection ranked below the cut
+// vanished while staying selected — the confirm then named a node the list did
+// not show, and you approved something off-screen (review catch 2026-09-04).
+func TestRenderGraphFallback_KeepsSelectionVisible(t *testing.T) {
+	g := fanOutJoinGraph()
+	sel := g.Nodes[len(g.Nodes)-1].ID // ranks last: pending, latest defIdx
+
+	snap := snapshot(g, map[string]string{g.Nodes[0].ID: bus.GraphNodeRunning})
+	const budget = 4
+
+	cut := StripAnsi(renderGraphFallback(snap, 120, budget, ""))
+	if strings.Contains(cut, sel) {
+		t.Fatalf("fixture must drop %q when unselected, else nothing here is tested:\n%s", sel, cut)
+	}
+
+	frame := StripAnsi(renderGraphFallback(snap, 120, budget, sel))
+	if !strings.Contains(frame, sel) {
+		t.Errorf("selected row %q was truncated away — the cursor must stay on screen:\n%s", sel, frame)
+	}
+	if n := strings.Count(frame, "\n"); n > budget {
+		t.Errorf("keeping the selection blew the budget: %d lines > %d:\n%s", n, budget, frame)
+	}
+	if !strings.Contains(frame, "more") {
+		t.Errorf("rows were still dropped, so the notice must remain:\n%s", frame)
+	}
+}
+
+// The smallest budget that shows anything leaves room for one line. Reserving
+// it for the "+N more" count dropped every node row, hiding the cursor again at
+// the boundary — the first fix guarded on shown>0 (review catch 2026-09-04).
+func TestRenderGraphFallback_KeepsSelectionAtMinimumBudget(t *testing.T) {
+	g := fanOutJoinGraph()
+	sel := g.Nodes[len(g.Nodes)-1].ID
+
+	snap := snapshot(g, map[string]string{g.Nodes[0].ID: bus.GraphNodeRunning})
+	const budget = 2 // header + exactly one more line
+	frame := StripAnsi(renderGraphFallback(snap, 120, budget, sel))
+
+	if !strings.Contains(frame, sel) {
+		t.Errorf("selected row %q lost at the minimum budget:\n%s", sel, frame)
+	}
+	if n := strings.Count(frame, "\n"); n > budget {
+		t.Errorf("emitted %d lines on a budget of %d:\n%s", n, budget, frame)
+	}
+	if strings.Contains(frame, "more") {
+		t.Errorf("the notice must yield its line to the cursor, not share it:\n%s", frame)
 	}
 }
 

@@ -913,10 +913,13 @@ func (ui *GraphUI) requestApprove() {
 		nodeID := ui.selectedNode()
 		for i := range ui.snap.Graph.Nodes {
 			n := &ui.snap.Graph.Nodes[i]
-			if n.ID != nodeID || n.Type != bus.NodeWaitHuman {
+			if n.ID != nodeID {
 				continue
 			}
-			if ui.snap.nodeState(nodeID) != bus.GraphNodeWaiting {
+			// A held node is a send in Done, so gate-shaped tests reject the
+			// very node stopping the run.
+			gate := n.Type == bus.NodeWaitHuman && ui.snap.nodeState(nodeID) == bus.GraphNodeWaiting
+			if !gate && !ui.snap.isHeld(nodeID) {
 				return
 			}
 			releases, mutating := GateDownstream(ui.snap.Graph, nodeID)

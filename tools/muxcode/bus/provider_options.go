@@ -29,6 +29,11 @@ var providerDisplayName = map[string]string{
 var providerOrder = []string{"claude", "opencode", "codex", "local"}
 
 // hardcodedFallbackModels provides built-in defaults when no config file exists.
+//
+// Only the opencode ids are verifiable: `opencode models` lists a catalog, and
+// TestOpenCodeModelsExistInCatalog checks every entry against it. The codex CLI
+// offers no such command, so a typo there surfaces only when an agent makes its
+// first request — the phantom-model failure with no test to catch it.
 var hardcodedFallbackModels = map[string]ProviderModels{
 	"claude": {
 		Default: "claude-sonnet-5",
@@ -55,7 +60,6 @@ var hardcodedFallbackModels = map[string]ProviderModels{
 			"opencode-go/minimax-m3",
 			"opencode-go/mimo-v2.5-pro",
 			"opencode-go/mimo-v2.5",
-			"opencode-go/muse-spark-1.3-contributor",
 			"opencode-go/qwen3.8-max",
 			"opencode-go/qwen3.7-plus",
 			"opencode-go/deepseek-v4-pro",
@@ -63,9 +67,10 @@ var hardcodedFallbackModels = map[string]ProviderModels{
 			"opencode-go/hy3",
 		},
 	},
+	// Unverifiable ids — see the note on hardcodedFallbackModels.
 	"codex": {
 		Default: "gpt-5.5",
-		Models:  []string{"gpt-5.5", "gpt-5.4-mini", "gpt-5.3-codex-spark"},
+		Models:  []string{"gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini", "gpt-5.3-codex-spark"},
 	},
 }
 

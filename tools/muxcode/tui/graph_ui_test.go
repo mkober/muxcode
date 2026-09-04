@@ -1238,6 +1238,32 @@ func TestGraphUI_DAGApproveOnlyOnWaitingGate(t *testing.T) {
 	}
 }
 
+// The DAG view's approve tested for a waiting wait_human node, so pressing a on
+// a held node — a send in Done — did nothing at all, on the one node stopping
+// the run (user report 2026-09-04, with the row visible on screen).
+func TestGraphUI_DAGApproveAcceptsHeldNode(t *testing.T) {
+	session := scratchGraphSession(t)
+	run := mustCreateRun(t, session, gateGraph())
+	mustTransition(t, session, run.ID, "review", bus.GraphNodeRunning, bus.GraphNodeDone)
+
+	ui := NewGraphUI(session, run.ID)
+	ui.refresh()
+	ui.nodeIdx = 0 // review: done, and not a gate
+
+	ui.handleKey('a')
+	if ui.view == viewGraphConfirm {
+		t.Fatalf("negative control: a done node with no hold must not be approvable")
+	}
+
+	writeUnverifiedHold(t, session, run.ID, "review")
+	ui.refresh()
+	ui.nodeIdx = 0
+	ui.handleKey('a')
+	if ui.view != viewGraphConfirm || ui.pending == nil || ui.pending.NodeID != "review" {
+		t.Fatalf("a on a held node must open the approve confirm, got view %d", ui.view)
+	}
+}
+
 // Cancel and retry run behind confirms and call the MUX-014 paths.
 func TestGraphUI_CancelAndRetryFlow(t *testing.T) {
 	session := scratchGraphSession(t)
