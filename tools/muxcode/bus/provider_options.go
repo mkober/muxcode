@@ -37,8 +37,8 @@ var hardcodedFallbackModels = map[string]ProviderModels{
 	"opencode": {
 		// Latest version of each opencode-go family, verified against
 		// `opencode models`. Where a family ships parallel tiers at that same
-		// newest version they are all kept (deepseek pro/flash, mimo pro/base,
-		// qwen max/plus); superseded versions are not (glm 5.1/5.2, kimi
+		// newest version they are all kept (deepseek pro/flash, glm base/flash,
+		// mimo pro/base, qwen max/plus); superseded versions are not (glm 5.1/5.2, kimi
 		// k2.6/k2.7-code, minimax m2.7, qwen 3.6-plus/3.7-max).
 		//
 		// Every id here must exist in `opencode models`. The previous list
@@ -50,10 +50,12 @@ var hardcodedFallbackModels = map[string]ProviderModels{
 			"opencode-go/grok-4.6",
 			"opencode-go/gpt-5.6-luna",
 			"opencode-go/glm-5.3",
+			"opencode-go/glm-5.3-flash",
 			"opencode-go/kimi-k3",
 			"opencode-go/minimax-m3",
 			"opencode-go/mimo-v2.5-pro",
 			"opencode-go/mimo-v2.5",
+			"opencode-go/muse-spark-1.3-contributor",
 			"opencode-go/qwen3.8-max",
 			"opencode-go/qwen3.7-plus",
 			"opencode-go/deepseek-v4-pro",

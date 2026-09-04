@@ -34,7 +34,8 @@ const (
 const graphTickInterval = 2 * time.Second
 
 // LoadGraphSnapshot reads one run's store: metadata, frozen definition,
-// node statuses, and the spawn-worktree enrichment for worker nodes.
+// node statuses, unverified-hold marks, and the spawn-worktree enrichment
+// for worker nodes.
 func LoadGraphSnapshot(session, runID string) (GraphSnapshot, error) {
 	run, err := bus.ReadGraphRun(session, runID)
 	if err != nil {
@@ -49,6 +50,12 @@ func LoadGraphSnapshot(session, runID string) (GraphSnapshot, error) {
 		return GraphSnapshot{}, err
 	}
 	snap := GraphSnapshot{Run: run, Graph: g, Statuses: statuses}
+	for _, h := range bus.ListUnverifiedHolds(session, runID) {
+		if snap.Held == nil {
+			snap.Held = make(map[string]bool)
+		}
+		snap.Held[h.NodeID] = true
+	}
 	if entries, err := bus.ReadSpawnEntries(session); err == nil {
 		for _, e := range entries {
 			if e.Worktree == "" {

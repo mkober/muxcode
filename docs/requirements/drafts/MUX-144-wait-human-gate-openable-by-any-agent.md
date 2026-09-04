@@ -199,13 +199,18 @@ made.
 - [ ] Approving a gate **requires authority**; the permitted roles are configurable and default to
       something narrower than "every agent"
 - [ ] An autonomous agent **cannot approve a gate on a run it created**
-- [ ] Gate approval emits a lifecycle event **naming the approver**, and the marker records approver
-      identity, not just a timestamp
-- [ ] Graph **run creation** emits a lifecycle event naming its creator
+- [x] Gate approval emits a lifecycle event **naming the approver**, and the marker records approver
+      identity, not just a timestamp — `ApproveGraphGate` writes `approved_by` from `BusActorVerified`
+      (`graph_exec.go:193`) and `announceGraphAction` calls `LogLifecycle` with the actor
+      (`graph_run.go:238-239`). *Landed in `16f2027`, merged 2026-09-04.*
+- [x] Graph **run creation** emits a lifecycle event naming its creator — `CreatedBy` recorded at
+      `graph_run.go:197`, `graph-run-created` emitted at `:221`
 - [ ] A graph-dispatched git mutation is **distinguishable** from an edit-originated one at
       `CheckCommitAuthority`, and is judged on the gate's approval rather than on the normalized sender
-- [ ] `CLAUDE.md`'s "Authority gates are not bypassable" paragraph is corrected to describe what is
-      actually enforced
+- [x] `CLAUDE.md`'s "Authority gates are not bypassable" paragraph is corrected to describe what is
+      actually enforced — rewritten to *"Authority gates are only as strong as the gate, and today
+      that is weak (MUX-144)"*, naming both verified gaps and instructing readers to treat
+      `wait_human` as a scheduling pause, not a security boundary, until this spec lands
 - [ ] **Negative control:** a genuine user approval at the CLI still releases the gate with no extra
       friction, and the run proceeds exactly as today
 - [ ] **Negative control:** the daemon's own legitimate non-git sends are unaffected by any change to
@@ -237,16 +242,22 @@ made.
 ### Phase 2: Authority and identity on approval
 
 - [ ] Add an approver-authority check to `graph approve`, with a configurable role list
-- [ ] Record approver identity in the marker; keep it backward-compatible with existing markers or
-      migrate them deliberately
+- [x] Record approver identity in the marker; keep it backward-compatible with existing markers or
+      migrate them deliberately — `approved_by` is **additive**: `gateApprovalTime` reads only
+      `approved_at`, so markers written before the field existed still parse (`graph_exec.go:182-183`)
 - [ ] Refuse self-approval: an agent may not approve a gate on a run it created
 - [ ] Negative control: an authorized human approval path is unchanged
 
 ### Phase 3: Audit the control plane
 
-- [ ] Emit `graph-run-created` naming the creator
-- [ ] Emit `graph-gate-approved` naming the approver
-- [ ] Verify an incident of this exact shape is now attributable from the lifecycle log alone
+- [x] Emit `graph-run-created` naming the creator — `graph_run.go:221`
+- [x] Emit `graph-gate-approved` naming the approver — `announceGraphAction` → `LogLifecycle`
+- [x] Verify an incident of this exact shape is now attributable from the lifecycle log alone —
+      confirmed live 2026-09-04 against run `1788457453-commit-pr-review-loop`: the log carries
+      `graph-run-created … started by user` plus three `graph-gate-approved … approved by user`
+      rows. An agent-created or agent-approved run would name the agent instead.
+      **Note:** the 2026-09-03 00:48 incident that motivated this spec remains **permanently
+      unattributable** — it predates these events, and the fix is not retroactive
 
 ### Phase 4: Make the runtime backstop real
 
@@ -269,9 +280,29 @@ made.
 - [ ] Coverage floor so a skipped section cannot report green
 - [ ] Run the script and verify all checks pass
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-144-wait-human-gate-openable-by-any-agent | 13m | 2026-09-04 10:40 |
+
 ## Status
 
-**Backlog** — filed 2026-09-03 from an incident **four minutes old at filing**, observed live in this
+**In Progress — 7/32, Phase 3 complete.** Moved to `drafts/` and set as the **active spec**
+2026-09-04.
+
+**Verified 2026-09-04.** The audit half landed ahead of the authority half, via `16f2027` — a commit
+carrying a `MUX-136` prefix on that branch and merged here in PR #72, so `git log` by prefix does not
+show it as MUX-144 work. **Phase 3 (Audit the control plane) is complete**: run creation and gate
+approval both emit lifecycle events naming their actor, confirmed live in the log, and the marker
+records `approved_by` backward-compatibly (Phase 2 step 2).
+
+**The authority half is untouched.** `graph approve` still has no authority check, self-approval is
+still unrefused (`runProvenance` is a *display* string, not enforcement), and `CheckCommitAuthority`
+still normalizes `daemon` → `edit`. Phases 1, 4 and 5 are at 0. The gate remains a scheduling pause,
+not a security boundary — the incident is now **attributable**, not **prevented**.
+
+Filed 2026-09-03 from an incident **four minutes old at filing**, observed live in this
 session. Unlike most entries here, the evidence was not relayed: plan read the lifecycle log, the
 frozen `graph.json`, the approval marker on disk, and the git state directly. Every source claim in
 the tables above was verified against this repo.

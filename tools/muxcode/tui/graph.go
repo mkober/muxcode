@@ -13,15 +13,18 @@ import (
 // graph definition, and per-node statuses. Layout and rendering are pure
 // functions of a snapshot, so every frame is unit-testable without a
 // terminal and `--render-once` is exactly one snapshot → one frame.
+//
+// Worktrees and Held are optional enrichment — loaders fill them, fixtures
+// may leave nil. Held cannot be derived from state: a held node sits in Done.
 type GraphSnapshot struct {
-	Run      *bus.GraphRun
-	Graph    *bus.Graph
-	Statuses map[string]*bus.GraphNodeStatus
-	// Worktrees maps a spawn id to its worktree path, so worker-node detail
-	// can show where the work happened. Optional enrichment — loaders fill
-	// it, fixtures may leave it nil.
+	Run       *bus.GraphRun
+	Graph     *bus.Graph
+	Statuses  map[string]*bus.GraphNodeStatus
 	Worktrees map[string]string
+	Held      map[string]bool
 }
+
+func (s GraphSnapshot) isHeld(id string) bool { return s.Held[id] }
 
 // GraphGrid is the layered layout of a graph: layer index = column,
 // nodes within a layer stacked in definition order.
@@ -112,7 +115,12 @@ func LayoutGraph(g *bus.Graph) *GraphGrid {
 // nodeGlyph returns the state glyph and Dracula color for a node. A
 // wait_human gate keeps its distinct flag glyph in every state so gates
 // stay visually prominent in the DAG, per the MUX-031 authority note.
-func nodeGlyph(nodeType, state, outcome string) (glyph string, color string) {
+// held outranks state: a held node is in Done, so it would otherwise render
+// green with a tick. Everything waiting on a person gets the same yellow flag.
+func nodeGlyph(nodeType, state, outcome string, held bool) (glyph string, color string) {
+	if held {
+		return "⚑", Yellow + Bold
+	}
 	if nodeType == bus.NodeWaitHuman {
 		if state == bus.GraphNodeWaiting {
 			return "⚑", Yellow + Bold
@@ -344,7 +352,7 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 	for i := range snap.Graph.Nodes {
 		n := &snap.Graph.Nodes[i]
 		types[n.ID] = n.Type
-		glyph, _ := nodeGlyph(n.Type, snap.nodeState(n.ID), snap.nodeOutcome(n.ID))
+		glyph, _ := nodeGlyph(n.Type, snap.nodeState(n.ID), snap.nodeOutcome(n.ID), snap.isHeld(n.ID))
 		label := glyph + " " + n.ID
 		// Terse ids say nothing about which agent is active (a bare
 		// "a → b → c" was unreadable live; user catch, 2026-08-27) — send
@@ -404,7 +412,7 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 		return frameWithDetails(top, snap, width, height, now, scroll)
 	}
 	if gridW > width || gridH+skipLanes+headerLines > height {
-		return renderGraphHeader(snap, now, width) + renderGraphFallback(snap, width)
+		return renderGraphHeader(snap, now, width) + renderGraphFallback(snap, width, height-headerLines)
 	}
 
 	c := newCanvas(gridW+2, gridH+skipLanes+1)
@@ -436,7 +444,7 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 	// Node labels.
 	for i, layerIDs := range grid.Layers {
 		for _, id := range layerIDs {
-			_, color := nodeGlyph(types[id], snap.nodeState(id), snap.nodeOutcome(id))
+			_, color := nodeGlyph(types[id], snap.nodeState(id), snap.nodeOutcome(id), snap.isHeld(id))
 			if id == selection {
 				color = Yellow + Bold
 			}
@@ -471,7 +479,7 @@ func renderWrappedChain(layers [][]string, labels map[string]string, types map[s
 	line, plain := "  ", 2
 	for li, layerIDs := range layers {
 		id := layerIDs[0]
-		_, color := nodeGlyph(types[id], snap.nodeState(id), snap.nodeOutcome(id))
+		_, color := nodeGlyph(types[id], snap.nodeState(id), snap.nodeOutcome(id), snap.isHeld(id))
 		lbl := labels[id]
 		seg := color + lbl + RST
 		segPlain := len([]rune(lbl))
@@ -511,7 +519,7 @@ func RenderNodeDetails(snap GraphSnapshot, width, maxLines int, now time.Time, s
 		n := &snap.Graph.Nodes[i]
 		st := snap.Statuses[n.ID]
 		state := snap.nodeState(n.ID)
-		glyph, color := nodeGlyph(n.Type, state, snap.nodeOutcome(n.ID))
+		glyph, color := nodeGlyph(n.Type, state, snap.nodeOutcome(n.ID), snap.isHeld(n.ID))
 
 		who := nodeWho(n)
 
@@ -758,6 +766,16 @@ var fallbackStateOrder = map[string]int{
 	bus.GraphNodePending: 4,
 	bus.GraphNodeDone:    5,
 	bus.GraphNodeSkipped: 6,
+}
+
+// fallbackRank ranks a row for the flat list. A held node ranks with a waiting
+// gate — both are the run stopped on a person — rather than with Done, which
+// sorted the blocker below every pending node and off the bottom of the pane.
+func fallbackRank(state string, held bool) int {
+	if held {
+		return fallbackStateOrder[bus.GraphNodeWaiting]
+	}
+	return fallbackStateOrder[state]
 }
 
 // fitWidth truncates a rendered line to the pane width, ANSI-preserving.
@@ -1490,7 +1508,7 @@ func RenderNodeDetailFrame(snap GraphSnapshot, nodeID string, width int) string 
 	}
 	st := snap.Statuses[nodeID]
 	state := snap.nodeState(nodeID)
-	glyph, color := nodeGlyph(node.Type, state, snap.nodeOutcome(nodeID))
+	glyph, color := nodeGlyph(node.Type, state, snap.nodeOutcome(nodeID), snap.isHeld(nodeID))
 
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Graph Runs", width))
@@ -1543,34 +1561,55 @@ func RenderNodeDetailFrame(snap GraphSnapshot, nodeID string, width int) string 
 }
 
 // renderGraphFallback renders the flat node list used when the grid is
-// wider than the pane: one row per node, failed/waiting first.
-func renderGraphFallback(snap GraphSnapshot, width int) string {
+// wider than the pane: one row per node, failed/waiting/held first.
+//
+// budget is the rows available below the header; <= 0 means unbudgeted. The
+// list is truncated from the bottom because it is sorted by what needs eyes,
+// so an overflow drops the least urgent rows and never the blocker.
+func renderGraphFallback(snap GraphSnapshot, width, budget int) string {
 	type row struct {
 		id, typ, state, outcome string
+		held                    bool
 		defIdx                  int
 	}
 	rows := make([]row, 0, len(snap.Graph.Nodes))
 	for i := range snap.Graph.Nodes {
 		n := &snap.Graph.Nodes[i]
-		rows = append(rows, row{id: n.ID, typ: n.Type, state: snap.nodeState(n.ID), outcome: snap.nodeOutcome(n.ID), defIdx: i})
+		rows = append(rows, row{id: n.ID, typ: n.Type, state: snap.nodeState(n.ID),
+			outcome: snap.nodeOutcome(n.ID), held: snap.isHeld(n.ID), defIdx: i})
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
-		oi, oj := fallbackStateOrder[rows[i].state], fallbackStateOrder[rows[j].state]
+		oi, oj := fallbackRank(rows[i].state, rows[i].held), fallbackRank(rows[j].state, rows[j].held)
 		if oi != oj {
 			return oi < oj
 		}
 		return rows[i].defIdx < rows[j].defIdx
 	})
 
+	// The header line and the "+N more" notice each cost a row of the budget.
+	hidden := 0
+	if rowBudget := budget - 1; rowBudget > 0 && len(rows) > rowBudget {
+		shown := rowBudget - 1
+		hidden = len(rows) - shown
+		rows = rows[:shown]
+	}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "  %s(graph wider than pane — flat view)%s\n", Comment, RST)
 	for _, r := range rows {
-		glyph, color := nodeGlyph(r.typ, r.state, r.outcome)
-		line := fmt.Sprintf("  %s%s %-24s%s %s%-10s %s%s", color, glyph, r.id, RST, Comment, r.state, r.typ, RST)
+		glyph, color := nodeGlyph(r.typ, r.state, r.outcome, r.held)
+		state := r.state
+		if r.held {
+			state = "held"
+		}
+		line := fmt.Sprintf("  %s%s %-24s%s %s%-10s %s%s", color, glyph, r.id, RST, Comment, state, r.typ, RST)
 		if st := snap.Statuses[r.id]; st != nil && st.Outcome != "" {
 			line += fmt.Sprintf("  %soutcome=%s%s", Comment, st.Outcome, RST)
 		}
 		b.WriteString(fitWidth(line, width) + "\n")
+	}
+	if hidden > 0 {
+		fmt.Fprintf(&b, "  %s… +%d more%s\n", Comment, hidden, RST)
 	}
 	return b.String()
 }

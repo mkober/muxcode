@@ -516,3 +516,83 @@ func TestRenderGraphFrame_ConditionBranchGlyph(t *testing.T) {
 		t.Errorf("passing condition drawn as a branch — ◇ marks the false branch only:\n%s", passed)
 	}
 }
+
+// A held node is Done, so state alone paints the run's blocker as its most
+// finished node: green tick, ranked below every pending row, clipped off a
+// short pane. The user could not find what stopped the run (2026-09-04).
+func TestRenderGraphFallback_HeldNodeLeadsAndIsMarked(t *testing.T) {
+	g := fanOutJoinGraph()
+	held := g.Nodes[len(g.Nodes)-1].ID // last in definition order: ranking alone must lift it
+
+	plain := snapshot(g, map[string]string{held: bus.GraphNodeDone})
+	base := StripAnsi(renderGraphFallback(plain, 120, 0))
+	if strings.Contains(base, "held") {
+		t.Errorf("negative control: an unheld done node must not read as held:\n%s", base)
+	}
+	if rows := flatRows(base); len(rows) == 0 || strings.Contains(rows[0], held) {
+		t.Errorf("negative control: a done node must not lead the list:\n%s", base)
+	}
+
+	snap := snapshot(g, map[string]string{held: bus.GraphNodeDone})
+	snap.Held = map[string]bool{held: true}
+	frame := StripAnsi(renderGraphFallback(snap, 120, 0))
+	if !strings.Contains(frame, "held") {
+		t.Errorf("a held node must say so, not read as done:\n%s", frame)
+	}
+	rows := flatRows(frame)
+	if len(rows) == 0 || !strings.Contains(rows[0], held) {
+		t.Errorf("held node must lead the list, first row was %q:\n%s", firstRowOr(rows), frame)
+	}
+}
+
+// The renderer took no height at all, so a graph taller than the pane spilled
+// and the terminal kept whichever rows fit — the bottom ones, which the sort
+// has already ranked least urgent.
+func TestRenderGraphFallback_ClampsToBudgetKeepingBlocker(t *testing.T) {
+	g := fanOutJoinGraph()
+	held := g.Nodes[len(g.Nodes)-1].ID
+
+	snap := snapshot(g, map[string]string{held: bus.GraphNodeDone})
+	snap.Held = map[string]bool{held: true}
+
+	const budget = 4 // header + 2 rows + notice: fewer than the 4 nodes, so it must truncate
+	frame := StripAnsi(renderGraphFallback(snap, 120, budget))
+
+	if n := strings.Count(frame, "\n"); n > budget {
+		t.Errorf("emitted %d lines on a budget of %d:\n%s", n, budget, frame)
+	}
+	if !strings.Contains(frame, "+2 more") {
+		t.Errorf("a truncated list must name how many rows were dropped:\n%s", frame)
+	}
+	if !strings.Contains(frame, held) {
+		t.Errorf("truncation dropped the blocker %q — the sort must keep it:\n%s", held, frame)
+	}
+
+	full := StripAnsi(renderGraphFallback(snap, 120, 0))
+	if strings.Contains(full, "more") {
+		t.Errorf("negative control: an unbudgeted list must not claim truncation:\n%s", full)
+	}
+}
+
+// flatRows returns the node rows of a flat-view frame, in render order.
+func flatRows(frame string) []string {
+	var rows []string
+	seen := false
+	for _, line := range strings.Split(frame, "\n") {
+		if strings.Contains(line, "flat view") {
+			seen = true
+			continue
+		}
+		if seen && strings.TrimSpace(line) != "" {
+			rows = append(rows, line)
+		}
+	}
+	return rows
+}
+
+func firstRowOr(rows []string) string {
+	if len(rows) == 0 {
+		return "<none>"
+	}
+	return rows[0]
+}
