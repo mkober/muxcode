@@ -1,6 +1,9 @@
 package bus
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -346,5 +349,192 @@ func TestAtomicWriteLeavesNoTmp(t *testing.T) {
 	path := graphNodePath(runTestSession, run.ID, "a")
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
 		t.Error("tmp file left behind after atomic write")
+	}
+}
+
+// pinActor fixes what BusActor reports for one test. The suite itself runs
+// inside an agent pane that already exports AGENT_ROLE, so a test reading the
+// ambient value would assert against whichever agent happened to run it.
+func pinActor(t *testing.T, actor string) {
+	t.Helper()
+	t.Setenv("AGENT_ROLE", actor)
+	t.Setenv("BUS_ROLE", "")
+	pinProcessTable(t, fmt.Sprintf("%d 1 /bin/bash\n", os.Getpid()), nil)
+}
+
+// pinProcessTable replaces the table agentRuntimeAncestor walks. Every actor
+// test pins one: the suite is itself run by an agent, so reading the real tree
+// would resolve an identity-less actor to whichever runtime ran the tests.
+func pinProcessTable(t *testing.T, out string, err error) {
+	t.Helper()
+	orig := psListRunner
+	psListRunner = func() (string, error) { return out, err }
+	t.Cleanup(func() { psListRunner = orig })
+}
+
+// pinAgentAncestry presents the bypass being defended against: an agent whose
+// environment carries no identity but whose ancestry still names its runtime.
+func pinAgentAncestry(t *testing.T, command string) {
+	t.Helper()
+	t.Setenv("AGENT_ROLE", "")
+	t.Setenv("BUS_ROLE", "")
+	const ancestorPID = 424242
+	pinProcessTable(t, fmt.Sprintf("%d %d /bin/bash\n%d 1 %s\n",
+		os.Getpid(), ancestorPID, ancestorPID, command), nil)
+}
+
+// editEventCount counts one action's events in edit's inbox mentioning runID.
+func editEventCount(t *testing.T, action, runID string) int {
+	t.Helper()
+	msgs, _ := Peek(runTestSession, "edit")
+	var n int
+	for _, m := range msgs {
+		if m.Action == action && strings.Contains(m.Payload, runID) {
+			n++
+		}
+	}
+	return n
+}
+
+func actorGateGraph() *Graph {
+	return &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{
+			{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "c", Type: NodeSend, Role: "commit", Action: "commit", Message: "ship"},
+		},
+		Edges: []Edge{{From: "a", To: "gate"}, {From: "gate", To: "c"}},
+	}
+}
+
+func TestBusActorReportsUserWithoutAgentIdentity(t *testing.T) {
+	pinActor(t, "")
+	if got := BusActor(); got != ActorUser {
+		t.Errorf("BusActor() = %q, want %q — a shell carrying no agent identity is a person", got, ActorUser)
+	}
+	pinActor(t, "edit")
+	if got := BusActor(); got != "edit" {
+		t.Errorf("BusActor() = %q, want edit", got)
+	}
+}
+
+// The bypass the ancestry check exists to close: BusActor reads a missing
+// AGENT_ROLE as a person, so `env -u AGENT_ROLE` would otherwise launder an
+// agent into one.
+func TestBusActorVerifiedCatchesStrippedIdentity(t *testing.T) {
+	for _, cmd := range []string{"/usr/local/bin/claude", "/opt/homebrew/bin/opencode", "codex"} {
+		pinAgentAncestry(t, cmd)
+		if got := BusActor(); got != ActorUser {
+			t.Fatalf("BusActor() = %q, want %q — the premise is that env alone reads as a person", got, ActorUser)
+		}
+		want := filepath.Base(cmd)
+		if got := BusActorVerified(); got != want {
+			t.Errorf("BusActorVerified() under %s = %q, want %q — ancestry must overrule a stripped environment", cmd, got, want)
+		}
+	}
+}
+
+// Negative control for TestBusActorVerifiedCatchesStrippedIdentity: without
+// this, a BusActorVerified that returned an agent name unconditionally would
+// pass that test while locking every real person out of their own gates.
+func TestBusActorVerifiedKeepsGenuineUser(t *testing.T) {
+	pinActor(t, "")
+	if got := BusActorVerified(); got != ActorUser {
+		t.Errorf("BusActorVerified() = %q, want %q — a shell with no agent above it is a person", got, ActorUser)
+	}
+}
+
+// ps is resolved through PATH, so an agent does not need to break the probe —
+// only to supply one that fails. Reading that as a person would hand back the
+// entire bypass, so an unreadable table must be its own answer.
+func TestBusActorVerifiedFailsClosedOnUnreadableProcessTable(t *testing.T) {
+	pinActor(t, "")
+	pinProcessTable(t, "", errors.New("ps unavailable"))
+	if got := BusActorVerified(); got != ActorUnknown {
+		t.Errorf("BusActorVerified() with an unreadable process table = %q, want %q — a probe that cannot tell must not answer %q", got, ActorUnknown, ActorUser)
+	}
+}
+
+// A set identity is believed as given: ancestry is consulted only to overrule a
+// claim of humanness, never to relabel an agent that already named itself.
+func TestBusActorVerifiedTrustsDeclaredIdentity(t *testing.T) {
+	pinAgentAncestry(t, "/usr/local/bin/claude")
+	t.Setenv("AGENT_ROLE", "review")
+	if got := BusActorVerified(); got != "review" {
+		t.Errorf("BusActorVerified() = %q, want review", got)
+	}
+}
+
+func TestCreateGraphRunAnnouncesManualLaunch(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, linearGraph())
+
+	if run.CreatedBy != ActorUser {
+		t.Errorf("run.CreatedBy = %q, want %q", run.CreatedBy, ActorUser)
+	}
+	if n := editEventCount(t, "graph-run-created", run.ID); n != 1 {
+		t.Fatalf("edit received %d graph-run-created events, want 1 — a manual launch must announce itself", n)
+	}
+}
+
+// Negative control for TestCreateGraphRunAnnouncesManualLaunch: without this a
+// helper that announced unconditionally would pass the test above.
+func TestCreateGraphRunSilentWhenEditLaunches(t *testing.T) {
+	pinActor(t, "edit")
+	run := createTestRun(t, linearGraph())
+
+	if run.CreatedBy != "edit" {
+		t.Errorf("run.CreatedBy = %q, want edit", run.CreatedBy)
+	}
+	if n := editEventCount(t, "graph-run-created", run.ID); n != 0 {
+		t.Fatalf("edit received %d graph-run-created events for a launch it made itself, want 0", n)
+	}
+}
+
+func TestApproveGraphGateRecordsAndAnnouncesApprover(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, actorGateGraph())
+
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("ApproveGraphGate: %v", err)
+	}
+
+	data, err := os.ReadFile(graphApprovalPath(runTestSession, run.ID, "gate", "approved"))
+	if err != nil {
+		t.Fatalf("read approval marker: %v", err)
+	}
+	var marker struct {
+		ApprovedAt int64  `json:"approved_at"`
+		ApprovedBy string `json:"approved_by"`
+	}
+	if err := json.Unmarshal(data, &marker); err != nil {
+		t.Fatalf("unmarshal marker: %v", err)
+	}
+	if marker.ApprovedBy != ActorUser {
+		t.Errorf("approved_by = %q, want %q — a release must be attributable", marker.ApprovedBy, ActorUser)
+	}
+	if marker.ApprovedAt <= 0 {
+		t.Error("approved_at missing — the added field must not displace the timestamp")
+	}
+	if got := gateApprovalTime(runTestSession, run.ID, "gate"); got != marker.ApprovedAt {
+		t.Errorf("gateApprovalTime = %d, want %d — approved_by must stay additive", got, marker.ApprovedAt)
+	}
+	if n := editEventCount(t, "graph-gate-approved", run.ID); n != 1 {
+		t.Fatalf("edit received %d graph-gate-approved events, want 1", n)
+	}
+}
+
+// Negative control for TestApproveGraphGateRecordsAndAnnouncesApprover.
+func TestApproveGraphGateSilentWhenEditApproves(t *testing.T) {
+	pinActor(t, "edit")
+	run := createTestRun(t, actorGateGraph())
+
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("ApproveGraphGate: %v", err)
+	}
+	if n := editEventCount(t, "graph-gate-approved", run.ID); n != 0 {
+		t.Fatalf("edit received %d graph-gate-approved events for an approval it made itself, want 0", n)
 	}
 }

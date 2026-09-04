@@ -2,6 +2,14 @@
 
 **Tracking:** [mkober/muxcode#67](https://github.com/mkober/muxcode/issues/67)
 
+> **Compounds with [`MUX-144`](./MUX-144-wait-human-gate-openable-by-any-agent.md) — read them
+> together.** This spec supplies the *source* of unrequested runs; MUX-144 supplies the reason one can
+> reach a push. Alone, this spec's runs stop harmlessly at a `wait_human` gate — that gate is the
+> mitigation this spec has been leaning on. MUX-144 establishes (live, 2026-09-03) that the gate is
+> **openable by any agent and unaudited**, so the mitigation does not hold: the two together form an
+> unattended path from an external process exit to a pushed branch and an open PR. Neither subsumes the
+> other, and fixing this one alone does not close that path.
+
 ## Context
 
 Every launch of the `auto` agent — **including a restore or a daemon auto-restart, not just a fresh

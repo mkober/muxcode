@@ -2,6 +2,7 @@ package bus
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -244,7 +245,10 @@ func TestExecFailureWithNoEdgeFailsRun(t *testing.T) {
 	}
 }
 
-func TestExecUnknownFallsBackToSuccessEdge(t *testing.T) {
+// An unknown outcome is no proof of success, so it must not advance the graph
+// on its own. This replaces the old fall-back-to-success contract, under which
+// a run shipped a commit behind build/test/review nodes that recorded nothing.
+func TestExecUnknownHoldsForApproval(t *testing.T) {
 	run := createTestRun(t, linearGraph())
 
 	step(t, runTestSession, run.ID)
@@ -256,8 +260,311 @@ func TestExecUnknownFallsBackToSuccessEdge(t *testing.T) {
 	if st.Outcome != OutcomeUnknown {
 		t.Errorf("a outcome %q, want unknown", st.Outcome)
 	}
+	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodePending {
+		t.Errorf("b state %q, want pending — unknown must not pass as success", s)
+	}
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "a", "pending")); err != nil {
+		t.Error("held node must leave a pending approval marker")
+	}
+	var alerts int
+	msgs, _ := Peek(runTestSession, "edit")
+	for _, m := range msgs {
+		if m.Action == "graph-approval" && strings.Contains(m.Payload, "a") {
+			alerts++
+		}
+	}
+	if alerts == 0 {
+		t.Error("holding a node must alert edit — a silent hold is a stalled run")
+	}
+}
+
+// gateRequestPayloads returns every graph-approval request edit received for a
+// run.
+func gateRequestPayloads(t *testing.T, runID string) []string {
+	t.Helper()
+	msgs, _ := Peek(runTestSession, "edit")
+	var out []string
+	for _, m := range msgs {
+		if m.Action == "graph-approval" && strings.Contains(m.Payload, runID) {
+			out = append(out, m.Payload)
+		}
+	}
+	return out
+}
+
+// An agent deciding whether to raise a gate with a person reads only this
+// message. Leaving the launcher out of it is what made one refuse a gate as an
+// "auto-launched run" the user had started by hand a minute earlier.
+func TestExecGateRequestNamesLauncher(t *testing.T) {
+	gated := &Graph{
+		Name: "t", Start: "gate",
+		Nodes: []Node{
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "b", Type: NodeSend, Role: "review", Action: "review", Message: "go"},
+		},
+		Edges: []Edge{{From: "gate", To: "b"}},
+	}
+	cases := []struct {
+		name  string
+		actor string
+		want  string
+	}{
+		{"manual launch", "", "launched by: the user, by hand"},
+		// Negative control: without it, a runProvenance hardcoded to the manual
+		// string would pass the case above and mislabel every autonomous run.
+		{"autonomous launch", "auto", "launched by: auto (autonomous)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pinActor(t, tc.actor)
+			run := createTestRun(t, gated)
+			step(t, runTestSession, run.ID)
+
+			payloads := gateRequestPayloads(t, run.ID)
+			if len(payloads) == 0 {
+				t.Fatal("no graph-approval request reached edit")
+			}
+			for _, p := range payloads {
+				if !strings.Contains(p, tc.want) {
+					t.Errorf("gate request %q does not carry %q", p, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestExecUnknownRoutesAfterApproval(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, linearGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if err := ApproveGraphGate(runTestSession, run.ID, "a"); err != nil {
+		t.Fatalf("ApproveGraphGate: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+
 	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodeRunning {
-		t.Errorf("b state %q, want running — unknown must fall back to the success edge", s)
+		t.Errorf("b state %q, want running — approval must release the held node", s)
+	}
+	// Single-use, like a wait_human gate.
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "a", "approved")); !os.IsNotExist(err) {
+		t.Error("approval marker must be purged on release so a re-entry asks again")
+	}
+}
+
+// The hold is only worth having if the agents that raised it cannot clear it:
+// `graph approve` has no authority check, so an autonomous run could otherwise
+// approve its own unverified work and unknown would pass as success again.
+func TestExecUnverifiedHoldRefusesAgentApproval(t *testing.T) {
+	pinActor(t, "build")
+	run := createTestRun(t, linearGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if err := ApproveGraphGate(runTestSession, run.ID, "a"); err != nil {
+		t.Fatalf("ApproveGraphGate: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodePending {
+		t.Errorf("b state %q, want pending — an agent must not release its own unverified hold", s)
+	}
+}
+
+// The refusal above turns on AGENT_ROLE, which the agent itself controls, so it
+// alone would be satisfied by `env -u AGENT_ROLE muxcode graph approve`. The
+// approver is resolved by ancestry for exactly this case.
+func TestExecUnverifiedHoldRefusesStrippedIdentityApproval(t *testing.T) {
+	pinAgentAncestry(t, "/usr/local/bin/claude")
+	run := createTestRun(t, linearGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if err := ApproveGraphGate(runTestSession, run.ID, "a"); err != nil {
+		t.Fatalf("ApproveGraphGate: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodePending {
+		t.Errorf("b state %q, want pending — stripping AGENT_ROLE must not launder an agent into a person", s)
+	}
+}
+
+// The ancestry check runs `ps` off PATH, so the cheapest attack on it is not
+// breaking the probe but supplying a failing one. Failing open there would
+// restore the whole bypass behind a check that looks present.
+func TestExecUnverifiedHoldRefusesWhenAncestryUnreadable(t *testing.T) {
+	pinActor(t, "")
+	pinProcessTable(t, "", errors.New("ps unavailable"))
+	run := createTestRun(t, linearGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if err := ApproveGraphGate(runTestSession, run.ID, "a"); err != nil {
+		t.Fatalf("ApproveGraphGate: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodePending {
+		t.Errorf("b state %q, want pending — an unreadable process table must not release a hold", s)
+	}
+}
+
+// gateSuccessorGraph sends into a human gate, the shape every read-only node
+// feeding an approval takes (commit-pr-review-loop's b -> gate2).
+func gateSuccessorGraph() *Graph {
+	return &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{
+			{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+		},
+		Edges: []Edge{{From: "a", To: "gate"}},
+	}
+}
+
+// Holding a node whose only successor is a human gate charges two approvals to
+// reach one decision, with nothing mutable in between. The gate is the hold.
+func TestExecUnverifiedHoldExemptWhenNextIsHumanGate(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, gateSuccessorGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Errorf("gate state %q, want waiting — an unknown node feeding a gate must route without its own approval", s)
+	}
+}
+
+// Negative control for the exemption: the same unknown outcome one node earlier
+// in a chain that ends in a send still holds. Without this a helper that always
+// exempted would pass the test above and silently restore unknown-as-success.
+func TestExecUnverifiedHoldAppliesWhenNextIsSend(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, linearGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodePending {
+		t.Errorf("b state %q, want pending — a send successor is not a human gate", s)
+	}
+}
+
+// A gate among the successors is not a gate on all of them: the send branch
+// would advance unverified while the person was still looking at the gate.
+func TestExecUnverifiedHoldAppliesWhenGateIsNotTheOnlySuccessor(t *testing.T) {
+	pinActor(t, "")
+	g := gateSuccessorGraph()
+	g.Nodes = append(g.Nodes, Node{ID: "c", Type: NodeSend, Role: "test", Action: "test", Message: "go"})
+	g.Edges = append(g.Edges, Edge{From: "a", To: "c"})
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodePending {
+		t.Errorf("c state %q, want pending — a mixed fan-out must hold, not advance its send branch", s)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodePending {
+		t.Errorf("gate state %q, want pending — the gate branch waits on the hold too", s)
+	}
+}
+
+// Pins the `found` flag: a node with no success edge at all vacuously satisfies
+// "every success edge lands on a gate". Exempting it would route nothing and end
+// the run without a word, so it is held instead — asking beats stalling silently.
+func TestExecUnverifiedHoldAppliesWhenNoSuccessEdge(t *testing.T) {
+	pinActor(t, "")
+	g := gateSuccessorGraph()
+	g.Edges = []Edge{{From: "a", To: "gate", Outcome: OutcomeFailure}}
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "a", "pending")); err != nil {
+		t.Errorf("no pending hold marker for a: %v — a node with no success edge must ask, not vanish", err)
+	}
+}
+
+// The hold parks a send node in Done, so a queue built from node type and state
+// finds nothing to approve and the run stalls behind an empty screen. Listing
+// the markers is what makes it reachable.
+func TestListUnverifiedHolds(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, linearGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	holds := ListUnverifiedHolds(runTestSession, run.ID)
+	if len(holds) != 1 || holds[0].NodeID != "a" {
+		t.Fatalf("holds = %+v, want exactly node a", holds)
+	}
+	if holds[0].Message == "" {
+		t.Error("a hold with no message leaves the queue nothing to explain")
+	}
+
+	if err := ApproveGraphGate(runTestSession, run.ID, "a"); err != nil {
+		t.Fatalf("ApproveGraphGate: %v", err)
+	}
+	if h := ListUnverifiedHolds(runTestSession, run.ID); len(h) != 0 {
+		t.Errorf("holds = %+v after approval, want none — a released hold must leave the queue", h)
+	}
+}
+
+// Negative control: a wait_human gate writes a pending marker of its own, and
+// the queue already lists those by node type. Counting them here would show
+// every gate twice. The exemption also means node a raises no hold at all.
+func TestListUnverifiedHoldsExcludesWaitHumanGate(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, gateSuccessorGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("gate state %q — the fixture never armed a gate, so its marker cannot be tested", s)
+	}
+	if h := ListUnverifiedHolds(runTestSession, run.ID); len(h) != 0 {
+		t.Errorf("holds = %+v, want none — a wait_human pending marker is not an unverified hold", h)
+	}
+}
+
+// An explicit unknown edge is the graph author saying what unknown means here,
+// so it routes directly and never holds.
+func TestExecUnknownEdgeSkipsHold(t *testing.T) {
+	g := linearGraph()
+	g.Edges = []Edge{{From: "a", To: "b", Outcome: OutcomeUnknown}}
+	run := createTestRun(t, g)
+
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "a", "")
+	step(t, runTestSession, run.ID)
+
+	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodeRunning {
+		t.Errorf("b state %q, want running — an explicit unknown edge must route without approval", s)
+	}
+	if _, err := os.Stat(graphApprovalPath(runTestSession, run.ID, "a", "pending")); !os.IsNotExist(err) {
+		t.Error("an explicitly routed unknown outcome must not be held")
 	}
 }
 
@@ -342,7 +649,8 @@ func TestExecJoinQuorumBarrier(t *testing.T) {
 // (no authoritative history rows), route via the unknown→success
 // fallback, and the join barrier must count those fires and release —
 // not re-derive outcomes and deadlock.
-func TestExecJoinReleasesOnUnknownOutcomes(t *testing.T) {
+func TestExecJoinHoldsUntilUnknownMembersApproved(t *testing.T) {
+	pinActor(t, "")
 	g := &Graph{
 		Name:  "t",
 		Start: "a",
@@ -366,13 +674,29 @@ func TestExecJoinReleasesOnUnknownOutcomes(t *testing.T) {
 	step(t, runTestSession, run.ID)
 	completeSendNode(t, runTestSession, run.ID, "a", "") // unknown outcome
 	step(t, runTestSession, run.ID)
+	if err := ApproveGraphGate(runTestSession, run.ID, "a"); err != nil {
+		t.Fatalf("approve a: %v", err)
+	}
+	step(t, runTestSession, run.ID)
 	completeSendNode(t, runTestSession, run.ID, "b1", "")
 	completeSendNode(t, runTestSession, run.ID, "b2", "")
+	step(t, runTestSession, run.ID)
+
+	// The barrier must not release on unverified members alone.
+	if s := nodeState(t, runTestSession, run.ID, "j"); s == GraphNodeDone {
+		t.Error("join released while both members were unverified — unknown must not satisfy a barrier by itself")
+	}
+
+	for _, id := range []string{"b1", "b2"} {
+		if err := ApproveGraphGate(runTestSession, run.ID, id); err != nil {
+			t.Fatalf("approve %s: %v", id, err)
+		}
+	}
 	step(t, runTestSession, run.ID)
 	step(t, runTestSession, run.ID)
 
 	if s := nodeState(t, runTestSession, run.ID, "j"); s != GraphNodeDone {
-		t.Errorf("join state %q, want done — unknown-outcome fires must count toward the barrier", s)
+		t.Errorf("join state %q, want done — approved unknown members must count toward the barrier", s)
 	}
 	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodeRunning {
 		t.Errorf("c state %q, want running after join release", s)
@@ -2181,5 +2505,120 @@ func TestExecSpawnLoopReusesWorker(t *testing.T) {
 	e, _ := GetSpawnEntry(runTestSession, worker)
 	if e.Status != "completed" || len(f.killed) != 1 || f.killed[0] != worker {
 		t.Fatalf("terminal run must release the worker: status %q killed %v", e.Status, f.killed)
+	}
+}
+
+// TestExecSpawnTaskNamesOwnedRoles pins the ownership preamble a graph-owned
+// worker receives. Without it the worker runs on its base definition alone,
+// whose Orchestration Role section tells every edit-shaped agent to delegate
+// build/test/review — a second pipeline racing the graph's own parked nodes.
+func TestExecSpawnTaskNamesOwnedRoles(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "impl",
+		Nodes: []Node{
+			{ID: "impl", Type: NodeSpawn, Role: "edit", Message: "Implement phase 4"},
+			{ID: "build", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "test", Type: NodeSend, Role: "test", Action: "test", Message: "go"},
+		},
+		Edges: []Edge{{From: "impl", To: "build"}, {From: "build", To: "test"}},
+	}
+	run := createTestRun(t, g)
+	tasks := fakeSpawns(t, runTestSession)
+	step(t, runTestSession, run.ID)
+
+	if len(*tasks) != 1 {
+		t.Fatalf("expected 1 spawned worker, got %d: %v", len(*tasks), *tasks)
+	}
+	task := (*tasks)[0]
+	for _, want := range []string{"build, test", "Do NOT delegate", run.ID, "node impl", "Implement phase 4"} {
+		if !strings.Contains(task, want) {
+			t.Errorf("worker task missing %q:\n%s", want, task)
+		}
+	}
+	if strings.Contains(task, "muxcode send edit") {
+		t.Errorf("preamble must not claim the graph owns the worker's own role:\n%s", task)
+	}
+}
+
+// TestExecSpawnTaskNamesOnlyReachableRoles pins the reachability narrowing: a
+// send the worker's node can never reach is not its succession, so claiming it
+// would forbid a delegation nothing was going to duplicate.
+func TestExecSpawnTaskNamesOnlyReachableRoles(t *testing.T) {
+	// A branch node fans to two arms: only the worker's own arm is its
+	// succession. Both arms stay reachable from start, so the graph is valid.
+	g := &Graph{
+		Name:  "t",
+		Start: "fork",
+		Nodes: []Node{
+			{ID: "fork", Type: NodeCondition, Conditions: map[string]any{"env_set": "HOME"}},
+			{ID: "impl", Type: NodeSpawn, Role: "edit", Message: "work"},
+			{ID: "build", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "other", Type: NodeSend, Role: "deploy", Action: "deploy", Message: "go"},
+		},
+		Edges: []Edge{
+			{From: "fork", To: "impl"},
+			{From: "fork", To: "other", Outcome: OutcomeFailure},
+			{From: "impl", To: "build"},
+		},
+	}
+
+	roles := graphOwnedRoles(g, "impl")
+	if len(roles) != 1 || roles[0] != "build" {
+		t.Errorf("worker at impl owns only its downstream build, got %v", roles)
+	}
+	if forkRoles := graphOwnedRoles(g, "fork"); len(forkRoles) != 2 {
+		t.Errorf("both arms are downstream of the fork, got %v", forkRoles)
+	}
+}
+
+// TestExecSpawnTaskUnprefixedWithoutSendNodes is the negative control: a graph
+// that dispatches nothing but workers owns no delegations, so the worker's
+// task must arrive verbatim. An implementation that always prefixed would pass
+// the positive case above and fail here.
+func TestExecSpawnTaskUnprefixedWithoutSendNodes(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "impl",
+		Nodes: []Node{{ID: "impl", Type: NodeSpawn, Role: "edit", Message: "Just do it"}},
+	}
+	run := createTestRun(t, g)
+	tasks := fakeSpawns(t, runTestSession)
+	step(t, runTestSession, run.ID)
+
+	if len(*tasks) != 1 {
+		t.Fatalf("expected 1 spawned worker, got %d: %v", len(*tasks), *tasks)
+	}
+	if got := (*tasks)[0]; got != "edit: Just do it" {
+		t.Errorf("task %q, want the message verbatim — no send nodes means nothing is owned", got)
+	}
+}
+
+// TestExecMapTaskCarriesOwnership covers the second call site: map fans out
+// through its own dispatch path, which regresses independently of NodeSpawn.
+func TestExecMapTaskCarriesOwnership(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "fan",
+		Nodes: []Node{
+			{ID: "fan", Type: NodeMap, Role: "edit", Items: "one,two", Message: "Handle ${item}"},
+			{ID: "review", Type: NodeSend, Role: "review", Action: "review", Message: "go"},
+		},
+		Edges: []Edge{{From: "fan", To: "review"}},
+	}
+	run := createTestRun(t, g)
+	tasks := fakeSpawns(t, runTestSession)
+	step(t, runTestSession, run.ID)
+
+	if len(*tasks) != 2 {
+		t.Fatalf("expected 2 map workers, got %d: %v", len(*tasks), *tasks)
+	}
+	for i, task := range *tasks {
+		if !strings.Contains(task, "review") || !strings.Contains(task, "Do NOT delegate") {
+			t.Errorf("map worker %d missing ownership preamble:\n%s", i, task)
+		}
+	}
+	if !strings.Contains((*tasks)[0], "Handle one") || !strings.Contains((*tasks)[1], "Handle two") {
+		t.Errorf("preamble must not displace per-item interpolation: %v", *tasks)
 	}
 }

@@ -334,6 +334,33 @@ func TestTemplateNeedsIntent(t *testing.T) {
 	}
 }
 
+// specTemplateGraph is linearGraph carrying the placeholder that sends a
+// template down the spec-derivation path. beginIntent is only reached in
+// production when a template interpolates one (see the TemplateNeedsIntent
+// guard at its call site), so a fixture without it tests an unreachable state.
+func specTemplateGraph() *bus.Graph {
+	g := linearGraph()
+	g.Nodes[0].Message = "implement ${spec}"
+	return g
+}
+
+// Needing an argument and that argument being a spec are different questions.
+// Answering the second with the first is what fed pr-local-review a spec id.
+func TestTemplateIntentIsSpec(t *testing.T) {
+	g := linearGraph()
+	g.Nodes[0].Message = "check out PR #${intent}"
+	if !TemplateNeedsIntent(g) {
+		t.Error("${intent} must still demand an argument")
+	}
+	if TemplateIntentIsSpec(g) {
+		t.Error("${intent} promises nothing about content — pr-local-review uses it for a PR number")
+	}
+	g.Nodes[0].Message = "implement ${spec}"
+	if !TemplateIntentIsSpec(g) {
+		t.Error("${spec} names a spec and must drive derivation")
+	}
+}
+
 // The intent prompt edits with printable keys and backspace, launches on
 // Enter, and cancels back to the picker on Escape.
 func TestGraphUI_IntentPromptFlow(t *testing.T) {
@@ -446,87 +473,184 @@ func TestRenderSpecConfirmFrame_States(t *testing.T) {
 }
 
 func TestRenderIntentPromptFrame_Hint(t *testing.T) {
-	reason := "branch main carries no spec key"
-	if f := StripAnsi(RenderIntentPromptFrame("linear", "", reason, 100)); !strings.Contains(f, reason) {
+	reason := "no active spec set"
+	if f := StripAnsi(RenderIntentPromptFrame("linear", "", reason, true, 100)); !strings.Contains(f, reason) {
 		t.Errorf("hint must render:\n%s", f)
 	}
-	if f := StripAnsi(RenderIntentPromptFrame("linear", "", "", 100)); strings.Contains(f, "carries") || !strings.Contains(f, "intent:") {
+	if f := StripAnsi(RenderIntentPromptFrame("linear", "", "", true, 100)); strings.Contains(f, "no active spec") || !strings.Contains(f, "spec:") {
 		t.Errorf("no hint means no reason line, prompt intact:\n%s", f)
 	}
 }
 
-// No branch spec → the free-text prompt opens WITH the reason. A blank
-// fallback would leave the user guessing why the branch was not used.
+// A template whose argument is a PR number must not be asked for a spec by
+// name. The negative half is the point: the spec wording has to be absent,
+// not merely the generic wording present.
+func TestRenderIntentPromptFrame_NonSpecWording(t *testing.T) {
+	f := StripAnsi(RenderIntentPromptFrame("pr-local-review", "", "", false, 100))
+	if !strings.Contains(f, "argument:") {
+		t.Errorf("non-spec prompt must label the field generically:\n%s", f)
+	}
+	if strings.Contains(f, "spec:") || strings.Contains(f, "needs a spec") {
+		t.Errorf("non-spec prompt must not ask for a spec:\n%s", f)
+	}
+}
+
+// No active spec → the free-text prompt opens WITH the reason. A blank
+// fallback would leave the user guessing why nothing was derived.
 func TestGraphUI_BeginIntentFallsBackWithReason(t *testing.T) {
-	t.Setenv("MUXCODE_SESSION_REPO_DIR", t.TempDir()) // not a git checkout
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", t.TempDir()) // no specs, no pointer
 	session := scratchGraphSession(t)
 	ui := NewGraphLauncherUI(session)
-	ui.beginIntent("linear", linearGraph())
+	ui.beginIntent("linear", specTemplateGraph())
 	if ui.view != viewGraphIntent {
-		t.Fatalf("expected the intent prompt, got view %d", ui.view)
+		t.Fatalf("expected the spec prompt, got view %d", ui.view)
 	}
 	if ui.intentHint == "" {
-		t.Error("fallback must say why the branch derivation did not apply")
+		t.Error("fallback must say why nothing was derived")
 	}
 	if n := countRunDirs(t, session); n != 0 {
 		t.Errorf("beginIntent must not create a run, found %d", n)
 	}
 }
 
-// The branch names a spec: Escape cancels without touching anything, e
-// edits the derived intent, Enter sets the pointer and launches, and a
-// differing pointer is switched only on confirm.
+// A template whose argument is not a spec must never be offered the active spec
+// to confirm: accepting there runs `gh pr checkout` on a spec id. The pointer is
+// deliberately set, so a fix that only fell back when none existed fails here.
+func TestGraphUI_BeginIntentSkipsSpecConfirmForNonSpecTemplate(t *testing.T) {
+	specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
+	session := scratchGraphSessionDir(t)
+	if err := bus.WriteActiveSpec(session, filepath.Join("docs", "requirements", "backlog", "MUX-7-x.md")); err != nil {
+		t.Fatal(err)
+	}
+	g := linearGraph()
+	g.Nodes[0].Message = "check out PR #${intent}"
+
+	ui := NewGraphLauncherUI(session)
+	ui.beginIntent("pr-local-review", g)
+
+	if ui.view != viewGraphIntent {
+		t.Fatalf("view %d, want the argument prompt — a non-spec template must not confirm the active spec", ui.view)
+	}
+	if ui.intentHint != "" {
+		t.Errorf("hint %q — nothing failed to derive, so there is nothing to explain", ui.intentHint)
+	}
+}
+
+// Negative control for the skip: the same pointer, and a spec-driven template
+// still derives and confirms it.
+func TestGraphUI_BeginIntentConfirmsSpecForSpecTemplate(t *testing.T) {
+	specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
+	session := scratchGraphSessionDir(t)
+	if err := bus.WriteActiveSpec(session, filepath.Join("docs", "requirements", "backlog", "MUX-7-x.md")); err != nil {
+		t.Fatal(err)
+	}
+	g := linearGraph()
+	g.Nodes[0].Message = "implement ${spec}"
+
+	ui := NewGraphLauncherUI(session)
+	ui.beginIntent("spec-to-pr", g)
+
+	if ui.view != viewGraphSpecConfirm {
+		t.Fatalf("view %d, want the spec confirm — spec templates must still derive", ui.view)
+	}
+}
+
+// A spec confirm abandoned mid-launch must not arm the next one. pendingSpec.Path
+// gates the prompt's launch path, so a leftover would hand a spec id to a template
+// whose argument is a PR number — the early return skips the assignment that used
+// to overwrite it.
+func TestGraphUI_BeginIntentClearsStaleSpecOnNonSpecTemplate(t *testing.T) {
+	specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
+	session := scratchGraphSessionDir(t)
+	if err := bus.WriteActiveSpec(session, filepath.Join("docs", "requirements", "backlog", "MUX-7-x.md")); err != nil {
+		t.Fatal(err)
+	}
+	ui := NewGraphLauncherUI(session)
+
+	ui.beginIntent("spec-to-pr", specTemplateGraph())
+	if ui.pendingSpec.Path == "" {
+		t.Fatal("fixture never armed a spec confirm — the staleness this pins cannot arise")
+	}
+
+	g := linearGraph()
+	g.Nodes[0].Message = "check out PR #${intent}"
+	ui.beginIntent("pr-local-review", g)
+
+	if ui.pendingSpec.Path != "" {
+		t.Errorf("pendingSpec %q survived into a non-spec launch", ui.pendingSpec.Path)
+	}
+	if ui.pendingActive.Current != "" {
+		t.Errorf("pendingActive %q survived into a non-spec launch", ui.pendingActive.Current)
+	}
+}
+
+// The active spec supplies the launch: Escape cancels without touching
+// anything, e edits the derived text, Enter launches with it. The branch
+// is not consulted — the fixture's branch names MUX-7 while the pointer
+// names MUX-3, and the run must follow the pointer.
 func TestGraphUI_SpecConfirmFlow(t *testing.T) {
 	specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
 	session := scratchGraphSessionDir(t)
 	ui := NewGraphLauncherUI(session)
 	want := filepath.Join("docs", "requirements", "backlog", "MUX-7-x.md")
+	if err := bus.WriteActiveSpec(session, want); err != nil {
+		t.Fatal(err)
+	}
 
-	ui.beginIntent("linear", linearGraph())
+	ui.beginIntent("linear", specTemplateGraph())
 	if ui.view != viewGraphSpecConfirm || ui.pendingSpec.Path != want {
 		t.Fatalf("expected the spec confirm for %s, got view %d spec %+v", want, ui.view, ui.pendingSpec)
 	}
-	if ui.pendingActive.Current != "" {
-		t.Fatalf("pointer starts unset, got %+v", ui.pendingActive)
-	}
 
 	ui.handleKey(27) // Escape
-	if ui.view != viewGraphTemplates || countRunDirs(t, session) != 0 || bus.ReadActiveSpec(session) != "" {
-		t.Fatalf("cancel must return to the picker, create no run, leave the pointer unset (view %d, pointer %q)", ui.view, bus.ReadActiveSpec(session))
+	if ui.view != viewGraphTemplates || countRunDirs(t, session) != 0 || bus.ReadActiveSpec(session) != want {
+		t.Fatalf("cancel must return to the picker, create no run, leave the pointer alone (view %d, pointer %q)", ui.view, bus.ReadActiveSpec(session))
 	}
 
-	ui.beginIntent("linear", linearGraph())
+	ui.beginIntent("linear", specTemplateGraph())
 	ui.handleKey('e')
 	if ui.view != viewGraphIntent || !strings.Contains(string(ui.intentInput), "MUX-7 Seven") || !strings.Contains(string(ui.intentInput), "Phase 1") {
-		t.Fatalf("e must open the editor pre-filled with the derived intent, got view %d input %q", ui.view, string(ui.intentInput))
+		t.Fatalf("e must open the editor pre-filled with the derived text, got view %d input %q", ui.view, string(ui.intentInput))
 	}
 
-	ui.beginIntent("linear", linearGraph())
+	ui.beginIntent("linear", specTemplateGraph())
 	ui.handleKey(13) // Enter
 	if ui.view != viewGraphDAG {
 		t.Fatalf("Enter must launch, got view %d", ui.view)
 	}
 	if ui.snap == nil || !strings.Contains(ui.snap.Run.Intent, "MUX-7 Seven — Phase 1: Go") {
-		t.Fatalf("run must carry the derived intent, got %+v", ui.snap)
+		t.Fatalf("run must carry the spec-derived text, got %+v", ui.snap)
 	}
 	if got := bus.ReadActiveSpec(session); got != want {
-		t.Fatalf("confirm must set the active spec, got %q", got)
+		t.Fatalf("launching must leave the pointer as-is, got %q", got)
 	}
+}
 
-	other := "docs/requirements/drafts/MUX-3-y.md"
+// The pointer, not the branch, decides. The fixture's branch names MUX-7
+// throughout; pointing the session at a different spec must move the run
+// with it — the branch-derived launcher could not do this, and refused
+// instead (MUX-143).
+func TestGraphUI_SpecConfirmFollowsPointerNotBranch(t *testing.T) {
+	root := specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
+	other := filepath.Join("docs", "requirements", "drafts", "MUX-3-y.md")
+	if err := os.MkdirAll(filepath.Join(root, "docs", "requirements", "drafts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, other), []byte("# Three\n### Phase 2: Other\n- [ ] step\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	session := scratchGraphSessionDir(t)
 	if err := bus.WriteActiveSpec(session, other); err != nil {
 		t.Fatal(err)
 	}
-	ui.beginIntent("linear", linearGraph())
-	if ui.pendingActive.Current != other || ui.pendingActive.Matches {
-		t.Fatalf("frame must show the differing pointer, got %+v", ui.pendingActive)
+	ui := NewGraphLauncherUI(session)
+	ui.beginIntent("linear", specTemplateGraph())
+	if ui.view != viewGraphSpecConfirm || ui.pendingSpec.Path != other {
+		t.Fatalf("confirm must name the pointer's spec %s, got view %d spec %+v", other, ui.view, ui.pendingSpec)
 	}
-	ui.handleKey('y')
-	if ui.view != viewGraphDAG || bus.ReadActiveSpec(session) != want {
-		t.Fatalf("confirming must switch the pointer to the branch spec, got view %d pointer %q", ui.view, bus.ReadActiveSpec(session))
-	}
-	if n := countRunDirs(t, session); n != 2 {
-		t.Errorf("expected two runs, found %d", n)
+	ui.handleKey(13)
+	if ui.snap == nil || !strings.Contains(ui.snap.Run.Intent, "MUX-3 Three — Phase 2: Other") {
+		t.Fatalf("run must follow the pointer, not the branch, got %+v", ui.snap)
 	}
 }
 
@@ -534,68 +658,70 @@ func TestGraphUI_SpecConfirmFlow(t *testing.T) {
 // confirm still sets the active spec the frame promised, and the editor
 // says so. Escape from the editor drops the branch spec, so a later plain
 // launch sets nothing (negative control).
-func TestGraphUI_SpecConfirmEditPathSetsPointer(t *testing.T) {
+func TestGraphUI_SpecConfirmEditPathKeepsPointer(t *testing.T) {
 	specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
 	session := scratchGraphSessionDir(t)
 	ui := NewGraphLauncherUI(session)
 	want := filepath.Join("docs", "requirements", "backlog", "MUX-7-x.md")
-
-	ui.beginIntent("linear", linearGraph())
-	ui.handleKey('e')
-	if !strings.Contains(ui.intentHint, want) {
-		t.Fatalf("editor must state the pointer consequence, hint %q", ui.intentHint)
+	if err := bus.WriteActiveSpec(session, want); err != nil {
+		t.Fatal(err)
 	}
+
+	ui.beginIntent("linear", specTemplateGraph())
+	ui.handleKey('e')
 	for _, k := range []byte(" plus") {
 		ui.handleKey(k)
 	}
 	ui.handleKey(13)
 	if ui.view != viewGraphDAG || ui.snap == nil || !strings.HasSuffix(ui.snap.Run.Intent, "Phase 1: Go plus") {
-		t.Fatalf("edited intent must launch, got view %d run %+v", ui.view, ui.snap)
+		t.Fatalf("edited text must launch, got view %d run %+v", ui.view, ui.snap)
 	}
 	if got := bus.ReadActiveSpec(session); got != want {
-		t.Fatalf("edit path must still set the active spec, got %q", got)
+		t.Fatalf("edit path must leave the active spec intact, got %q", got)
 	}
 
+	// Negative control: with the pointer cleared there is nothing to
+	// confirm, so the launcher must fall to the prompt rather than
+	// resurrecting the branch spec.
 	if err := bus.ClearActiveSpec(session); err != nil {
 		t.Fatal(err)
 	}
-	ui.beginIntent("linear", linearGraph())
-	ui.handleKey('e')
-	ui.handleKey(27)
-	if ui.pendingSpec.Path != "" {
-		t.Fatal("Escape from the editor must drop the branch spec")
+	ui.beginIntent("linear", specTemplateGraph())
+	if ui.view != viewGraphIntent || ui.pendingSpec.Path != "" {
+		t.Fatalf("a cleared pointer must drop to the prompt with no spec, got view %d spec %+v", ui.view, ui.pendingSpec)
 	}
-	ui.pendingGraph = linearGraph()
-	ui.pendingTemplate = "linear"
-	ui.view = viewGraphIntent
 	for _, k := range []byte{'g', 'o', 13} {
 		ui.handleKey(k)
 	}
 	if ui.view != viewGraphDAG || bus.ReadActiveSpec(session) != "" {
-		t.Fatalf("a plain launch after cancel must set nothing, got view %d pointer %q", ui.view, bus.ReadActiveSpec(session))
+		t.Fatalf("a plain launch must set nothing, got view %d pointer %q", ui.view, bus.ReadActiveSpec(session))
 	}
 }
 
 // The confirm re-checks the branch at the keypress: a checkout that moved
 // after the frame was drawn must not launch against the stale spec.
-func TestGraphUI_SpecConfirmRechecksBranchAtKeypress(t *testing.T) {
-	root := specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
+func TestGraphUI_SpecConfirmRechecksPointerClearedAtKeypress(t *testing.T) {
+	specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
 	session := scratchGraphSessionDir(t)
+	want := filepath.Join("docs", "requirements", "backlog", "MUX-7-x.md")
+	if err := bus.WriteActiveSpec(session, want); err != nil {
+		t.Fatal(err)
+	}
 	ui := NewGraphLauncherUI(session)
-	ui.beginIntent("linear", linearGraph())
+	ui.beginIntent("linear", specTemplateGraph())
 	if ui.view != viewGraphSpecConfirm {
 		t.Fatalf("expected the spec confirm, got view %d", ui.view)
 	}
 
-	if out, err := exec.Command("git", "-C", root, "checkout", "-q", "-b", "main").CombinedOutput(); err != nil {
-		t.Fatalf("git checkout: %v\n%s", err, out)
+	if err := bus.ClearActiveSpec(session); err != nil {
+		t.Fatal(err)
 	}
 	ui.handleKey(13)
 	if ui.view != viewGraphIntent || ui.intentHint == "" {
-		t.Fatalf("a branch that lost its spec must drop to the prompt with a reason, got view %d hint %q", ui.view, ui.intentHint)
+		t.Fatalf("a pointer cleared under the frame must drop to the prompt with a reason, got view %d hint %q", ui.view, ui.intentHint)
 	}
 	if countRunDirs(t, session) != 0 || bus.ReadActiveSpec(session) != "" {
-		t.Error("stale confirm must neither launch nor set the pointer")
+		t.Error("stale confirm must neither launch nor re-set the pointer")
 	}
 }
 
@@ -603,26 +729,39 @@ func TestGraphUI_SpecConfirmRechecksBranchAtKeypress(t *testing.T) {
 // the frame re-renders with the new consequence and asks again — the
 // stale "(unset) → sets it" must not silently become a switch.
 func TestGraphUI_SpecConfirmRechecksPointerAtKeypress(t *testing.T) {
-	specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
+	root := specBranchRepo(t, "MUX-7-x", "backlog", "MUX-7-x.md", "# Seven\n### Phase 1: Go\n- [ ] step\n")
+	first := filepath.Join("docs", "requirements", "backlog", "MUX-7-x.md")
+	other := filepath.Join("docs", "requirements", "drafts", "MUX-3-y.md")
+	if err := os.MkdirAll(filepath.Join(root, "docs", "requirements", "drafts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, other), []byte("# Three\n### Phase 2: Other\n- [ ] step\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	session := scratchGraphSessionDir(t)
+	if err := bus.WriteActiveSpec(session, first); err != nil {
+		t.Fatal(err)
+	}
 	ui := NewGraphLauncherUI(session)
-	ui.beginIntent("linear", linearGraph())
+	ui.beginIntent("linear", specTemplateGraph())
 
-	other := "docs/requirements/drafts/MUX-3-y.md"
 	if err := bus.WriteActiveSpec(session, other); err != nil {
 		t.Fatal(err)
 	}
 	ui.handleKey(13)
-	if ui.view != viewGraphSpecConfirm || ui.specErr == "" || ui.pendingActive.Current != other {
-		t.Fatalf("changed pointer must re-render the confirm with the new consequence, got view %d err %q active %+v", ui.view, ui.specErr, ui.pendingActive)
+	if ui.view != viewGraphSpecConfirm || ui.specErr == "" || ui.pendingSpec.Path != other {
+		t.Fatalf("changed pointer must re-render the confirm against the new spec, got view %d err %q spec %+v", ui.view, ui.specErr, ui.pendingSpec)
 	}
 	if countRunDirs(t, session) != 0 || bus.ReadActiveSpec(session) != other {
 		t.Fatal("stale confirm must neither launch nor rewrite the pointer")
 	}
 
-	ui.handleKey(13) // the frame now holds — proceeds and switches
-	if ui.view != viewGraphDAG || bus.ReadActiveSpec(session) != filepath.Join("docs", "requirements", "backlog", "MUX-7-x.md") {
-		t.Fatalf("re-confirm must launch and switch, got view %d pointer %q", ui.view, bus.ReadActiveSpec(session))
+	ui.handleKey(13) // the frame now holds — proceeds against the new spec
+	if ui.view != viewGraphDAG || bus.ReadActiveSpec(session) != other {
+		t.Fatalf("re-confirm must launch and leave the pointer, got view %d pointer %q", ui.view, bus.ReadActiveSpec(session))
+	}
+	if ui.snap == nil || !strings.Contains(ui.snap.Run.Intent, "MUX-3 Three") {
+		t.Fatalf("re-confirm must launch against the NEW spec, got %+v", ui.snap)
 	}
 }
 
@@ -665,7 +804,11 @@ func nonMutatingGateGraph() *bus.Graph {
 }
 
 func approvalMarkerPath(session, runID string) string {
-	return bus.GraphRunDir(session, runID) + "/approvals/gate.approved"
+	return nodeApprovalMarkerPath(session, runID, "gate")
+}
+
+func nodeApprovalMarkerPath(session, runID, nodeID string) string {
+	return bus.GraphRunDir(session, runID) + "/approvals/" + nodeID + ".approved"
 }
 
 func TestGateDownstream_ImpactAndMutationFlag(t *testing.T) {
@@ -741,6 +884,105 @@ func TestLoadPendingGates_CrossRunAndFlags(t *testing.T) {
 	}
 }
 
+// writeUnverifiedHold plants the marker the executor writes when it parks a
+// node. The shape is pinned against production by bus.TestListUnverifiedHolds,
+// which drives a real hold; this only needs one to exist.
+func writeUnverifiedHold(t *testing.T, session, runID, nodeID string) {
+	t.Helper()
+	dir := filepath.Join(bus.GraphRunDir(session, runID), "approvals")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"message":"Node ` + nodeID + ` finished with no authoritative result","reason":"unverified"}`
+	if err := os.WriteFile(filepath.Join(dir, nodeID+".pending"), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A node parked by the unverified hold must reach the queue. It is a send node
+// sitting in Done, so the wait_human type and state tests both skip it, and the
+// run stalls with an empty approval surface — pressing Approve does nothing
+// because there is no row to act on (user-reported 2026-09-03).
+func TestLoadPendingGates_IncludesUnverifiedHold(t *testing.T) {
+	session := scratchGraphSession(t)
+	run := mustCreateRun(t, session, gateGraph())
+	mustTransition(t, session, run.ID, "review", bus.GraphNodeRunning, bus.GraphNodeDone)
+
+	// Negative control: Done alone must not queue the node.
+	if gates := LoadPendingGates(session, time.Now()); len(gates) != 0 {
+		t.Fatalf("gates = %+v before the hold, want none", gates)
+	}
+
+	writeUnverifiedHold(t, session, run.ID, "review")
+
+	gates := LoadPendingGates(session, time.Now().Add(30*time.Second))
+	if len(gates) != 1 {
+		t.Fatalf("gates = %+v, want the held node", gates)
+	}
+	if gates[0].NodeID != "review" || !gates[0].Unverified {
+		t.Errorf("gate = %+v, want node review flagged unverified", gates[0])
+	}
+	frame := StripAnsi(RenderGateQueueFrame(gates, nil, 120, 0))
+	if !strings.Contains(frame, "unverified") {
+		t.Errorf("frame must name the hold kind so the two are told apart:\n%s", frame)
+	}
+}
+
+// The confirm's re-check must accept both approvable shapes. Testing only for
+// Waiting refused every unverified hold, which is Done by construction: the
+// queue offered the row and the confirm then answered "not waiting — nothing to
+// approve" (user-reported 2026-09-03, with the row on screen).
+func TestApprovableNow(t *testing.T) {
+	session := scratchGraphSession(t)
+	run := mustCreateRun(t, session, gateGraph())
+	mustTransition(t, session, run.ID, "review", bus.GraphNodeRunning, bus.GraphNodeDone)
+
+	st, err := bus.ReadNodeStatus(session, run.ID, "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approvableNow(session, run.ID, "review", st) {
+		t.Error("a done node with nothing pending must not be approvable")
+	}
+
+	writeUnverifiedHold(t, session, run.ID, "review")
+	if !approvableNow(session, run.ID, "review", st) {
+		t.Error("a held node must be approvable despite being Done")
+	}
+
+	mustTransition(t, session, run.ID, "gate", bus.GraphNodeReady, bus.GraphNodeWaiting)
+	gst, err := bus.ReadNodeStatus(session, run.ID, "gate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !approvableNow(session, run.ID, "gate", gst) {
+		t.Error("a waiting wait_human gate must stay approvable")
+	}
+}
+
+// A row the queue offers must be approvable by pressing the key, not merely by
+// the helper returning true. The refusal that blocked these rows lived in
+// executeAction, so a test that stops at approvableNow would have passed
+// throughout the window the UI was refusing every hold on screen.
+func TestGraphUI_ApproveUnverifiedHoldFromQueue(t *testing.T) {
+	session := scratchGraphSession(t)
+	run := mustCreateRun(t, session, gateGraph())
+	mustTransition(t, session, run.ID, "review", bus.GraphNodeRunning, bus.GraphNodeDone)
+	writeUnverifiedHold(t, session, run.ID, "review")
+
+	ui := NewGraphGatesUI(session)
+	ui.refresh()
+	ui.confirm(&GraphAction{Kind: "approve", RunID: run.ID, NodeID: "review"})
+	ui.handleKey('y')
+
+	if ui.actionErr != "" {
+		t.Fatalf("approving a queued hold failed: %s", ui.actionErr)
+	}
+	if _, err := os.Stat(nodeApprovalMarkerPath(session, run.ID, "review")); err != nil {
+		t.Errorf("a confirmed approve must write the marker the daemon reads: %v", err)
+	}
+}
+
 // A completed run's gates never appear — the queue scans in-flight only.
 func TestLoadPendingGates_IgnoresFinishedRuns(t *testing.T) {
 	session := scratchGraphSession(t)
@@ -758,7 +1000,7 @@ func TestLoadPendingGates_IgnoresFinishedRuns(t *testing.T) {
 
 func TestRenderGateQueueFrame_EmptyState(t *testing.T) {
 	frame := StripAnsi(RenderGateQueueFrame(nil, nil, 100, 0))
-	if !strings.Contains(frame, "No gates waiting") {
+	if !strings.Contains(frame, "No approvals waiting") {
 		t.Errorf("expected explicit empty state:\n%s", frame)
 	}
 }
@@ -780,7 +1022,7 @@ func TestGateQueue_ResolvedHistoryVisible(t *testing.T) {
 	}
 
 	frame := StripAnsi(RenderGateQueueFrame(nil, resolved, 140, 0))
-	for _, want := range []string{"recent gates", "✓ approved", "○ skipped", "No gates waiting"} {
+	for _, want := range []string{"recent gates", "✓ approved", "○ skipped", "No approvals waiting"} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("history frame missing %q:\n%s", want, frame)
 		}
@@ -951,7 +1193,8 @@ func TestGraphUI_ApproveGatedOnConfirm(t *testing.T) {
 	}
 }
 
-// The confirm promised a waiting gate — a node in any other state refuses.
+// The confirm promised something approvable — a node that is neither a waiting
+// gate nor a pending hold refuses.
 func TestGraphUI_ApproveRefusedOnNonWaitingNode(t *testing.T) {
 	session := scratchGraphSession(t)
 	run := mustCreateRun(t, session, gateGraph()) // gate still pending
@@ -961,8 +1204,8 @@ func TestGraphUI_ApproveRefusedOnNonWaitingNode(t *testing.T) {
 	ui.confirm(&GraphAction{Kind: "approve", RunID: run.ID, NodeID: "gate"})
 	ui.handleKey('y')
 
-	if !strings.Contains(ui.actionErr, "not waiting") {
-		t.Errorf("expected a not-waiting refusal, got %q", ui.actionErr)
+	if !strings.Contains(ui.actionErr, "nothing to approve") {
+		t.Errorf("expected a nothing-to-approve refusal, got %q", ui.actionErr)
 	}
 	if ui.view != viewGraphConfirm {
 		t.Errorf("a failed action must stay on the confirm with its error, got view %d", ui.view)

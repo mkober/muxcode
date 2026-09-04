@@ -5,6 +5,8 @@ bin/
 *.dylib
 tools/muxcode/muxcode
 tools/muxcode-llm-harness/muxcode-llm-harness
+# Built by scripts/test-restart-definition.sh from the fixture source beside it.
+scripts/fixtures/claude-stub/claude-stub
 .DS_Store
 .muxcode/
 .muxcoder/

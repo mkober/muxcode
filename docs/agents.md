@@ -18,8 +18,33 @@ If no agent file is found, a built-in inline prompt is used as fallback.
 
 The `RunAgentLaunch()` function in `bus/launch.go` handles agent file loading:
 
-- **Project-local files** (`.claude/agents/<name>.md`): launched natively via `claude --agent <name>` — Claude Code resolves the file automatically.
-- **External files** (`~/.config/muxcode/agents/` or install dir): the file is read, YAML frontmatter is extracted by `ExtractFrontmatter()`, and the prompt body and metadata are passed to Claude Code via `--agents <JSON>` (via `BuildAgentsJSON()`).
+**Every resolved tier is forwarded the same way** — project-local, user config, and install dir alike. The file is read, its YAML frontmatter is extracted by `ExtractFrontmatter()`, and the body plus restrictions are passed as `--agents <JSON>` (via `BuildAgentsJSON()`) **bound to** `--agent <name>`. The pair travels as one unit or neither is sent; a bare `--agent <name>` is never emitted, and that is pinned impossible (`TestClaudeBuildExecArgs_NoBareAgentFlag`, `TestClaudeAgentFlagSoleEmitter`).
+
+Two facts make the binding load-bearing rather than cosmetic (`MUX-136`):
+
+- Claude resolves a **bare name** only against `.claude/agents/` and `~/.claude/agents/` — never muxcode's user tier. A name sent without its definition silently falls back to default tools.
+- `--agents` **outranks** `.claude/agents/`, so even for a project-local file the JSON must carry that file's restrictions, or a tier-1 definition loses them to the JSON that overrides it.
+
+Keys carried, with Claude's own types (`agentJSONKeys` in `bus/launch.go`):
+
+| Type | Keys |
+|------|------|
+| List | `tools`, `disallowedTools`, `skills` |
+| Int | `maxTurns` |
+| Bool | `background` |
+| String | `model`, `permissionMode`, `memory`, `effort`, `isolation`, `color`, `initialPrompt` |
+
+Unknown **scalar** keys are dropped — they are muxcode-side metadata.
+
+**Nested-object keys are refused, not silently stripped.** `hooks:`, `mcpServers:` and `experimental:` (`agentJSONNestedKeys`) are the keys Claude accepts only as nested objects, and `ExtractFrontmatter()` does not parse nested YAML. A definition declaring one — as a YAML block **or** an inline `{...}` flow map — is **refused at launch** rather than launched with the key stripped, because launching reduced would drop a restriction the file declares:
+
+```
+<role>: definition <path> cannot be applied (frontmatter hooks: nested definitions are not
+carried into --agents JSON, and launching without it would drop a restriction) — refusing to
+launch with a reduced definition
+```
+
+The refusal is loud — lifecycle `launch-refused` plus an `agent-definitionless` event to `edit` — and shares the path with a definition that resolves at no tier, which keeps its own "resolved at no tier … Restore the definition (`make install`)" wording. Nested keys *outside* that set are muxcode-side metadata and drop like any other unknown key. Pinned by `TestBuildAgentsJSON_RefusesNestedKeys` and `TestRunAgentLaunch_RefusesUncarriableDefinition`.
 
 The three-tier search (project-local → user config → install default) runs in `ResolveAgentFile()` after resolving the agent filename via `AgentFileName()`.
 

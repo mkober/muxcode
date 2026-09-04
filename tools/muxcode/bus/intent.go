@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -210,6 +211,93 @@ func LaunchIntentFromBranch(session string) (spec BranchSpec, set bool, err erro
 		return BranchSpec{}, false, fmt.Errorf("cannot set active spec: %w", err)
 	}
 	return spec, true, nil
+}
+
+// ErrNoActiveSpec reports that no active-spec pointer is set, so the
+// caller must offer a choice rather than guess — the CLI prints its list,
+// the TUI opens its picker.
+var ErrNoActiveSpec = errors.New("no active spec set")
+
+// ActiveSpecIntent derives a run intent from the session's active spec.
+// The pointer names the spec; the phase is read from the file at launch,
+// so a run picks up wherever the doc actually is.
+//
+// The branch is deliberately not consulted. Branch derivation
+// (LaunchIntentFromBranch) refuses whenever branch and pointer disagree,
+// which made a run unstartable on any branch not named for its spec —
+// and one spec is worked from many branches. It also gave the run an
+// intent from a different source than ${current_phase}, so the two named
+// different phases and the commit guard scoped a ship to a phase the
+// worker was never given (MUX-143).
+func ActiveSpecIntent(session string) (BranchSpec, error) {
+	root := intentRoot(session)
+	rel := ReadActiveSpec(session)
+	if rel == "" {
+		return BranchSpec{}, ErrNoActiveSpec
+	}
+	full := ResolveSpecPath(root, rel)
+	if full == "" {
+		return BranchSpec{}, fmt.Errorf("active spec %s does not resolve to a file inside the repo", rel)
+	}
+	key := specKeyFromFile(full)
+	return BranchSpec{
+		Branch: CurrentBranchIn(root),
+		Key:    key,
+		Path:   rel,
+		Intent: describeSpecIntent(full, key),
+	}, nil
+}
+
+// specKeyFromFile reads the tracking key out of a spec's filename, empty
+// when it carries none — a spec pointed at by hand need not be named for
+// a key, and an empty key simply drops out of the intent line.
+func specKeyFromFile(path string) string {
+	if m := specFileKeyRe.FindStringSubmatch(filepath.Base(path)); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// SpecChoice is one selectable spec offered when no pointer is set.
+type SpecChoice struct {
+	Key    string
+	Dir    string // drafts | backlog
+	Path   string // repo-relative
+	Intent string
+}
+
+// ListSpecChoices returns the specs a run can be pointed at, drafts
+// before backlog. Completed specs are excluded: pointing a run at one
+// would derive "no open phase" and drive an immediately vacuous run.
+func ListSpecChoices(session string) ([]SpecChoice, error) {
+	root := intentRoot(session)
+	var out []SpecChoice
+	for _, dir := range []string{"drafts", "backlog"} {
+		full := filepath.Join(root, "docs", "requirements", dir)
+		entries, err := os.ReadDir(full)
+		if err != nil {
+			continue
+		}
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				names = append(names, e.Name())
+			}
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			rel := filepath.Join("docs", "requirements", dir, name)
+			key := specKeyFromFile(name)
+			out = append(out, SpecChoice{
+				Key: key, Dir: dir, Path: rel,
+				Intent: describeSpecIntent(filepath.Join(root, rel), key),
+			})
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no specs found under %s", filepath.Join("docs", "requirements"))
+	}
+	return out, nil
 }
 
 // intentRoot is the repo dir spec lookups resolve against: the session's

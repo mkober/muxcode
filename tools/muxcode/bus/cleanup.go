@@ -358,6 +358,8 @@ type DiskPressureResult struct {
 	FootprintBytes int64                // muxcode's own /tmp footprint before cleanup
 	StaleResult    *CleanupResult       // muxcode artifact cleanup result
 	ClaudeResult   *ClaudeCleanupResult // Claude Code session cleanup result (nil if first stage was sufficient)
+	ArtifactResult *ArtifactPurgeResult // repo build output reclaimed (nil unless the earlier stages were insufficient)
+	GoCacheResult  *ArtifactPurgeResult // Go build cache reclaimed (nil unless every earlier stage was insufficient)
 	PostUsagePct   int                  // /tmp volume % used after cleanup
 }
 
@@ -446,6 +448,7 @@ func TmpPressure() (bool, int64, int64) {
 // runs progressive cleanup:
 //  1. Removes stale muxcode session artifacts (current session is preserved)
 //  2. If still pressured, removes old Claude Code /tmp session dirs (>7d)
+//  3. If still pressured, purges the session repo's regenerable build output
 //
 // Returns nil when disabled (MUXCODE_TMP_CLEANUP_THRESHOLD=0) or when /tmp is
 // healthy. Pressure is decided by TmpPressure — absolute free headroom and
@@ -453,6 +456,11 @@ func TmpPressure() (bool, int64, int64) {
 // still reported for context, but triggering on it meant a dev box at a normal
 // 90% full ran cleanup every 60 seconds forever, freed 0 B every time, and
 // buried the lifecycle log in warnings that could never be acted on.
+// Stage 3 reaches outside muxcode's own files, so it runs last and only while
+// pressure persists — but it is the stage that matters by orders of magnitude.
+// Stages 1 and 2 reported "cleaned 0 muxcode artifact(s) (0 B freed)" on a
+// machine with 366 MB left, because muxcode's whole footprint was 348 KB while
+// 34 GB of regenerable cdk.out sat in the repos the session drives.
 func CheckDiskPressure(session string) (*DiskPressureResult, error) {
 	threshold := TmpCleanupThreshold()
 	if threshold == 0 {
@@ -493,6 +501,26 @@ func CheckDiskPressure(session string) (*DiskPressureResult, error) {
 		if claudeErr != nil {
 			result.PostUsagePct = pct
 			return result, claudeErr
+		}
+	}
+
+	// Stage 3: the session repo's regenerable build output.
+	if stillPressured, _, _ := TmpPressure(); stillPressured {
+		result.ArtifactResult = PurgeSessionArtifacts(session, "disk pressure")
+	}
+
+	// Stage 4: the Go build cache — widest blast radius, so it goes last, and
+	// only when it shares a filesystem with /tmp (see GoCacheRelievesTmp).
+	if stillPressured, _, _ := TmpPressure(); stillPressured && GoCacheRelievesTmp() {
+		goResult, goErr := PurgeGoBuildCache(false)
+		result.GoCacheResult = goResult
+		if goErr != nil {
+			LogLifecycle(session, "warn", "daemon", "gocache-purge-failed",
+				fmt.Sprintf("disk pressure: %v", goErr))
+		} else if len(goResult.Paths) > 0 {
+			LogLifecycle(session, "info", "daemon", "gocache-purge",
+				fmt.Sprintf("disk pressure: freed %s (%s)",
+					formatBytes(goResult.BytesFreed), goResult.Paths[0]))
 		}
 	}
 

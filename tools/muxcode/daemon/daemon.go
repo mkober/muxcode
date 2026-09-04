@@ -111,6 +111,13 @@ type Daemon struct {
 	permBlocked        map[string]bool // role → re-notification suppressed while blocked
 	permBlockAlerted   map[string]bool // role → alerted edit once for the current block
 
+	lastDefinitionCheck  int64
+	definitionSeen       map[string]int   // role → consecutive definition-less sightings (debounce)
+	definitionless       map[string]bool  // role → flagged as running without its definition
+	definitionReloads    map[string]int   // role → refuse-reloads so far (capped)
+	lastDefinitionReload map[string]int64 // role → last refuse-reload (cooldown)
+	definitionGaveUp     map[string]bool  // role → alerted once after hitting the reload cap
+
 	lastAgentDefsCheck int64
 	lastPaneSupervise  int64
 	paneRecycleDone    bool  // recycle-on-install decided (once per daemon start)
@@ -138,6 +145,11 @@ type Daemon struct {
 	frPaneGated func(role string) bool
 	agentAlive  func(session, role string) bool
 	windowNames func(session string) ([]string, error)
+
+	probeDefinition   func(session, role string) bus.DefinitionProbe
+	capturePane       func(target string, lines int) (string, error)
+	reloadAgent       func(session, role string) error
+	snapshotAgentDown func(session, role string) (string, error)
 
 	lastBranchTick      int64
 	lastBranch          string // branch the pending seconds belong to
@@ -210,6 +222,12 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		permBlockSeen:         make(map[string]int),
 		permBlocked:           make(map[string]bool),
 		permBlockAlerted:      make(map[string]bool),
+		lastDefinitionCheck:   now, // skip first interval — launch-time panes are still pre-exec
+		definitionSeen:        make(map[string]int),
+		definitionless:        make(map[string]bool),
+		definitionReloads:     make(map[string]int),
+		lastDefinitionReload:  make(map[string]int64),
+		definitionGaveUp:      make(map[string]bool),
 		lastAgentDefsCheck:    now, // skip first interval — lets stamps settle on startup
 		lastPaneSupervise:     now, // skip first interval — the launcher owns launch-time pane creation; a sweep mid-launch sees half-built windows as pane-less and double-creates
 		startedAt:             now,
@@ -233,8 +251,14 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		frPaneGated: func(role string) bool {
 			return bus.ResolveProvider(role).SupportsHooks()
 		},
-		agentAlive:  bus.IsAgentAlive,
-		windowNames: bus.TmuxListWindowNames,
+		agentAlive:      bus.IsAgentAlive,
+		windowNames:     bus.TmuxListWindowNames,
+		probeDefinition: bus.ProbeAgentDefinition,
+		capturePane:     bus.TmuxCapturePaneLines,
+		reloadAgent: func(session, role string) error {
+			return bus.ReloadAgent(session, role, "", "", false)
+		},
+		snapshotAgentDown: bus.SnapshotAgentDown,
 	}
 }
 
@@ -321,6 +345,7 @@ func (d *Daemon) Run() error {
 		d.checkActiveWatchdog()
 		d.checkStuckProviders()
 		d.checkStuckPermissions()
+		d.checkDefinitionless()
 		d.checkAgentDefs()
 		d.checkCompaction()
 		d.checkOllama()
@@ -1668,12 +1693,24 @@ func (d *Daemon) touchKeepalive() {
 	bus.TouchKeepaliveDaemon(d.session)
 }
 
+// agentHealthCheckSecs is the liveness sweep interval. The env override
+// exists for hermetic tests that compress supervisor time
+// (scripts/test-restart-definition.sh walks the full 3-strike restart).
+func agentHealthCheckSecs() int64 {
+	if v := os.Getenv("MUXCODE_AGENT_HEALTH_CHECK_SECS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 30
+}
+
 // checkAgentHealth probes agent liveness every 30 seconds using a 3-strike
 // escalation pattern: log → alert edit → restart (capped at 3 restarts).
 // Excludes edit and webhook roles. Respects intentional stop markers.
 func (d *Daemon) checkAgentHealth() {
 	now := time.Now().Unix()
-	if now-d.lastAgentHealthCheck < 30 {
+	if now-d.lastAgentHealthCheck < agentHealthCheckSecs() {
 		return
 	}
 	d.lastAgentHealthCheck = now
@@ -1719,6 +1756,9 @@ func (d *Daemon) checkAgentHealth() {
 		if alive {
 			// Recovery detection
 			if d.agentWasDown[role] {
+				if !d.definitionApplied(role) {
+					continue // alive, but not with its definition — see definitionApplied
+				}
 				fmt.Printf("  %s  Agent %s recovered\n", ts, role)
 				bus.LogLifecycle(d.session, "info", "daemon", "agent-recovered", role)
 				d.agentWasDown[role] = false
@@ -1745,6 +1785,14 @@ func (d *Daemon) checkAgentHealth() {
 		// Strike 2 (60s) — alert edit
 		if count == 2 {
 			d.agentWasDown[role] = true
+
+			// Evidence first: strike 3's relaunch types over the pane that
+			// holds the exit message (MUX-136 Phase 4).
+			if dir, err := d.snapshotAgentDown(d.session, role); err == nil {
+				bus.LogLifecycle(d.session, "info", "daemon", "agent-down-snapshot", role+": "+dir)
+			} else {
+				bus.LogLifecycle(d.session, "warn", "daemon", "agent-down-snapshot", role+": "+err.Error())
+			}
 
 			alertKey := bus.AgentHealthAlertKey(role, "down")
 			if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
@@ -3571,13 +3619,27 @@ func (d *Daemon) checkDiskPressure() {
 		claudeCleaned = len(result.ClaudeResult.Sessions)
 		claudeFreed = result.ClaudeResult.BytesFreed
 	}
+	artifactCleaned := 0
+	artifactFreed := int64(0)
+	if result.ArtifactResult != nil {
+		artifactCleaned = len(result.ArtifactResult.Paths)
+		artifactFreed = result.ArtifactResult.BytesFreed
+	}
+	goCacheCleaned := 0
+	goCacheFreed := int64(0)
+	if result.GoCacheResult != nil {
+		goCacheCleaned = len(result.GoCacheResult.Paths)
+		goCacheFreed = result.GoCacheResult.BytesFreed
+	}
+	totalFreed := claudeFreed + artifactFreed + goCacheFreed
 
-	fmt.Printf("  %s  Disk pressure: /tmp free %s, muxcode footprint %s (volume %d%%) — cleaned %d stale, %d Claude sessions (%s)\n",
+	fmt.Printf("  %s  Disk pressure: /tmp free %s, muxcode footprint %s (volume %d%%) — cleaned %d stale, %d Claude sessions, %d build artifact(s), %d Go cache (%s)\n",
 		ts, formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
-		result.UsagePct, staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed))
+		result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned, goCacheCleaned,
+		formatDaemonBytes(totalFreed))
 
 	alertKey := "disk-pressure:/tmp"
-	ineffective := staleCleaned == 0 && claudeCleaned == 0
+	ineffective := staleCleaned == 0 && claudeCleaned == 0 && artifactCleaned == 0 && goCacheCleaned == 0
 	lastTS, seen := d.lastAlertKey[alertKey]
 	alerting := shouldAlertDiskPressure(lastTS, now, seen, ineffective)
 
@@ -3587,18 +3649,20 @@ func (d *Daemon) checkDiskPressure() {
 	// the very history needed to diagnose overnight incidents.
 	if alerting || !ineffective {
 		bus.LogLifecycle(d.session, "warn", "daemon", "disk-pressure",
-			fmt.Sprintf("/tmp free=%s footprint=%s volume=%d%% stale=%d claude=%d freed=%s",
+			fmt.Sprintf("/tmp free=%s footprint=%s volume=%d%% stale=%d claude=%d artifacts=%d gocache=%d freed=%s",
 				formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
-				result.UsagePct, staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed)))
+				result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned, goCacheCleaned,
+				formatDaemonBytes(totalFreed)))
 	}
 
 	if alerting {
 		d.lastAlertKey[alertKey] = now
 
 		payload := fmt.Sprintf(
-			"/tmp disk pressure: %s free, muxcode footprint %s (volume %d%% used). Cleaned: %d muxcode artifact(s), %d Claude Code session(s) (%s freed).",
+			"/tmp disk pressure: %s free, muxcode footprint %s (volume %d%% used). Cleaned: %d muxcode artifact(s), %d Claude Code session(s), %d build artifact dir(s), %d Go build cache (%s freed).",
 			formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
-			result.UsagePct, staleCleaned, claudeCleaned, formatDaemonBytes(claudeFreed),
+			result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned, goCacheCleaned,
+			formatDaemonBytes(totalFreed),
 		)
 		msg := bus.NewMessage("daemon", "edit", "event", "disk-pressure", payload, "")
 		if err := bus.Send(d.session, msg); err != nil {

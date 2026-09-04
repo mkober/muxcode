@@ -1,6 +1,8 @@
 package bus
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -226,8 +228,189 @@ func TestResolveAgentFile_ThreeTier(t *testing.T) {
 	}
 }
 
+// chdir switches the working directory for the rest of the test.
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir %s: %v", dir, err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+}
+
+// writeFile writes content to path, creating parent directories.
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// claudeAgentLookup lists where Claude Code resolves an agent name from disk:
+// the project's .claude/agents/ and the user's ~/.claude/agents/. muxcode's
+// user tier, ~/.config/muxcode/agents/, is not on that list.
+func claudeAgentLookup(name string) []string {
+	home, _ := os.UserHomeDir()
+	return []string{
+		filepath.Join(".claude", "agents", name+".md"),
+		filepath.Join(home, ".claude", "agents", name+".md"),
+	}
+}
+
+// MUX-136 Phase 1: on the live layout ResolveAgentFile finds planner in the
+// user tier while Claude's own lookup finds nothing, so the two resolutions
+// disagree. A launch that keeps the name and drops the --agents JSON — or a
+// bare resume in the pane — lands on Claude's lookup and comes up with
+// default tools. The positive control shows the disagreement is specific to
+// the user tier: a project-local copy is visible to both.
+func TestResolveAgentFile_UserTierInvisibleToClaudeLookup(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	chdir(t, project)
+
+	userFile := filepath.Join(home, ".config", "muxcode", "agents", "planner.md")
+	writeFile(t, userFile, "---\ndescription: Docs\n---\nbody\n")
+
+	path, tier := ResolveAgentFile("planner", "")
+	if tier != 2 || path != userFile {
+		t.Fatalf("ResolveAgentFile = (%q, %d), want (%q, 2)", path, tier, userFile)
+	}
+	for _, claudePath := range claudeAgentLookup("planner") {
+		if _, err := os.Stat(claudePath); err == nil {
+			t.Fatalf("Claude-side lookup found %s — the tiers do not disagree", claudePath)
+		}
+	}
+
+	projectFile := filepath.Join(project, ".claude", "agents", "planner.md")
+	writeFile(t, projectFile, "body")
+	if _, tier = ResolveAgentFile("planner", ""); tier != 1 {
+		t.Fatalf("project-local copy: ResolveAgentFile tier = %d, want 1", tier)
+	}
+	if _, err := os.Stat(claudeAgentLookup("planner")[0]); err != nil {
+		t.Fatalf("project-local copy invisible to Claude's lookup: %v", err)
+	}
+}
+
+func TestExtractFrontmatter_Fields(t *testing.T) {
+	content := "---\n" +
+		"name: planner\n" +
+		"description: Docs\n" +
+		"# a comment\n" +
+		"tools: Read, Edit\n" +
+		"skills:\n  - docs-management\n  - jira-manage-issues\n" +
+		"hooks:\n  PreToolUse:\n    - matcher: Bash\n" +
+		"model: 'claude-opus-5'\n" +
+		"---\nBody.\n"
+	fm, body := ExtractFrontmatter(content)
+	if body != "Body.\n" || fm.Description != "Docs" {
+		t.Fatalf("body=%q description=%q", body, fm.Description)
+	}
+	want := map[string]string{
+		"name":   "planner",
+		"tools":  "Read, Edit",
+		"skills": "docs-management,jira-manage-issues",
+		"model":  "'claude-opus-5'",
+	}
+	for k, v := range want {
+		if fm.Fields[k] != v {
+			t.Errorf("Fields[%s] = %q, want %q", k, fm.Fields[k], v)
+		}
+	}
+	for _, k := range []string{"hooks", "PreToolUse", "description", "# a comment"} {
+		if _, ok := fm.Fields[k]; ok {
+			t.Errorf("Fields carries %q: %v", k, fm.Fields)
+		}
+	}
+	if len(fm.Nested) != 1 || fm.Nested[0] != "hooks" {
+		t.Errorf("Nested = %v, want [hooks] — the block list under skills: is a list, not a nested map", fm.Nested)
+	}
+}
+
+// MUX-136 Phase 3: a definition whose restrictions include a nested block the
+// forwarder cannot carry is refused, not forwarded reduced — hooks as a YAML
+// block or an inline flow map, mcpServers likewise. Negative control: a nested
+// key Claude does not read is muxcode-side metadata and drops like any unknown
+// scalar, so the refusal cannot spread to harmless frontmatter.
+func TestBuildAgentsJSON_RefusesNestedKeys(t *testing.T) {
+	cases := []struct {
+		name   string
+		fm     AgentFrontmatter
+		refuse string // key the error must name; "" means the definition must forward
+	}{
+		{"hooks block", AgentFrontmatter{Description: "Docs", Nested: []string{"hooks"}}, "hooks"},
+		{"hooks inline map", AgentFrontmatter{Description: "Docs", Fields: map[string]string{"hooks": "{PreToolUse: []}"}}, "hooks"},
+		{"mcpServers block", AgentFrontmatter{Description: "Docs", Nested: []string{"mcpServers"}}, "mcpServers"},
+		{"unknown nested key forwards", AgentFrontmatter{Description: "Docs", Nested: []string{"metadata"}, Fields: map[string]string{"tools": "Read"}}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			jsonStr, err := BuildAgentsJSON("planner", tc.fm, "Docs only.")
+			if tc.refuse == "" {
+				if err != nil {
+					t.Fatalf("forwardable definition refused: %v", err)
+				}
+				if !strings.Contains(jsonStr, `"tools":["Read"]`) || strings.Contains(jsonStr, "metadata") {
+					t.Fatalf("json = %s", jsonStr)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("reduced definition forwarded: %s", jsonStr)
+			}
+			if jsonStr != "" || !strings.Contains(err.Error(), "frontmatter "+tc.refuse) {
+				t.Fatalf("json=%q err=%v, want empty JSON and an error naming %s", jsonStr, err, tc.refuse)
+			}
+		})
+	}
+}
+
+// MUX-136: every restriction a definition declares reaches the --agents JSON
+// with Claude's types; keys Claude does not accept stay behind.
+func TestBuildAgentsJSON_CarriesRestrictions(t *testing.T) {
+	fm := AgentFrontmatter{Description: "Docs", Fields: map[string]string{
+		"tools":           "Read, Edit",
+		"disallowedTools": "[Bash, \"Write\"]",
+		"model":           "'claude-opus-5'",
+		"permissionMode":  "plan",
+		"maxTurns":        "5",
+		"background":      "true",
+		"name":            "planner",
+		"tags":            "muxcode",
+	}}
+	jsonStr, err := BuildAgentsJSON("planner", fm, "Maintain docs.")
+	if err != nil {
+		t.Fatalf("BuildAgentsJSON: %v", err)
+	}
+	var agents map[string]map[string]any
+	if err := json.Unmarshal([]byte(jsonStr), &agents); err != nil {
+		t.Fatalf("invalid JSON %s: %v", jsonStr, err)
+	}
+	def := agents["planner"]
+	got := fmt.Sprintf("%v %v %v %v %v %v %v", def["tools"], def["disallowedTools"], def["model"], def["permissionMode"], def["maxTurns"], def["background"], def["prompt"])
+	want := "[Read Edit] [Bash Write] claude-opus-5 plan 5 true Maintain docs."
+	if got != want {
+		t.Errorf("typed fields\n got %s\nwant %s\n(json %s)", got, want, jsonStr)
+	}
+	for _, k := range []string{"name", "tags"} {
+		if _, ok := def[k]; ok {
+			t.Errorf("non-schema key %q forwarded: %s", k, jsonStr)
+		}
+	}
+
+	fm.Fields["maxTurns"] = "five"
+	if _, err := BuildAgentsJSON("planner", fm, ""); err == nil {
+		t.Error("malformed maxTurns accepted")
+	}
+}
+
 func TestBuildAgentsJSON(t *testing.T) {
-	jsonStr, err := BuildAgentsJSON("test-agent", "A test agent", "Do testing stuff.")
+	jsonStr, err := BuildAgentsJSON("test-agent", AgentFrontmatter{Description: "A test agent"}, "Do testing stuff.")
 	if err != nil {
 		t.Fatalf("BuildAgentsJSON error: %v", err)
 	}
@@ -421,6 +604,7 @@ func TestBuildExecArgs_Claude(t *testing.T) {
 		Role:         "build",
 		CLI:          "claude",
 		AgentName:    "code-builder",
+		AgentJSON:    `{"code-builder":{"description":"Build","prompt":"Do builds."}}`,
 		ModelFlags:   []string{"--model", "claude-sonnet-5"},
 		PermFlags:    []string{"--dangerously-skip-permissions"},
 		ToolFlags:    []string{"--allowedTools", "Bash(make*)"},
@@ -1052,5 +1236,116 @@ func TestRunAgentLaunch_PresetAgentRolePreserved(t *testing.T) {
 	got := os.Getenv("AGENT_ROLE")
 	if got != "spawn-edit-1" {
 		t.Errorf("AGENT_ROLE = %q, want spawn-edit-1 (pre-set value should be preserved)", got)
+	}
+}
+
+// launchSandbox isolates RunAgentLaunch from the machine: temp HOME (so the
+// user tier is whatever the test writes), empty install dir, temp project,
+// scratch bus, exec captured. Returns the temp HOME and the captured argv.
+func launchSandbox(t *testing.T, session string) (home string, argv *[]string) {
+	t.Helper()
+	home = t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MUXCODE_INSTALL_DIR", t.TempDir())
+	t.Setenv("AGENT_ROLE", "")
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("MUXCODE_PLAN_CLI", "claude")
+	t.Setenv("BUS_SESSION", session)
+	base := t.TempDir()
+	SetBusDirBase(base)
+	t.Cleanup(ResetBusDirBase)
+	Init(session, base)
+	chdir(t, t.TempDir())
+
+	captured := &[]string{}
+	origExec := execSyscall
+	execSyscall = func(_ string, args []string, _ []string) error {
+		*captured = args
+		return nil
+	}
+	t.Cleanup(func() { execSyscall = origExec })
+	return home, captured
+}
+
+// MUX-136: a Claude role whose definition resolves at no tier is refused
+// loudly — no exec, no startup message seeded, an agent-definitionless event
+// in edit's inbox — instead of coming up on the inline fallback prompt.
+func TestRunAgentLaunch_RefusesWithoutDefinition(t *testing.T) {
+	session := "test-refuse-launch"
+	_, argv := launchSandbox(t, session)
+
+	err := RunAgentLaunch("plan")
+	if err == nil || !strings.Contains(err.Error(), "refusing to launch") {
+		t.Fatalf("err = %v, want a refusal", err)
+	}
+	if len(*argv) != 0 {
+		t.Fatalf("exec ran for a definition-less Claude launch: %v", *argv)
+	}
+	edit, _ := Peek(session, "edit")
+	loud := false
+	for _, m := range edit {
+		loud = loud || m.Action == "agent-definitionless"
+	}
+	if !loud {
+		t.Fatal("refusal did not reach edit's inbox")
+	}
+	if plan, _ := Peek(session, "plan"); len(plan) != 0 {
+		t.Fatalf("startup message seeded for an agent that never came up: %v", plan)
+	}
+}
+
+// Positive control for the refusal: with the definition at the user tier the
+// same launch execs claude with the bound flag pair.
+func TestRunAgentLaunch_LaunchesWithDefinition(t *testing.T) {
+	session := "test-launch-with-definition"
+	home, argv := launchSandbox(t, session)
+	writeFile(t, filepath.Join(home, ".config", "muxcode", "agents", "planner.md"),
+		"---\ndescription: Docs\n---\nMaintain docs.\n")
+
+	err := RunAgentLaunch("plan")
+	if err != nil {
+		if strings.Contains(err.Error(), "cannot find") {
+			return // no claude binary on this machine — the refusal gate was still passed
+		}
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ArgsCarryDefinition(*argv) {
+		t.Fatalf("launch without the bound flag pair: %v", *argv)
+	}
+}
+
+// MUX-136 Phase 3: a project-tier definition that declares hooks: — which the
+// --agents forwarder cannot carry — is refused with the cause named, at the
+// config (AgentJSONErr, no bound pair) and at the launch (no exec, no startup
+// message, agent-definitionless event naming the key). Before this the file
+// launched with its hooks silently stripped: less constrained than written.
+func TestRunAgentLaunch_RefusesUncarriableDefinition(t *testing.T) {
+	session := "test-refuse-uncarriable"
+	_, argv := launchSandbox(t, session)
+	writeFile(t, filepath.Join(".claude", "agents", "planner.md"),
+		"---\ndescription: Docs\ntools: Read, Edit\nhooks:\n  PreToolUse:\n    - matcher: Bash\n---\nDocs only.\n")
+
+	cfg := ResolveLaunchConfig("plan")
+	if cfg.AgentFile == "" || cfg.AgentName != "" || cfg.AgentJSON != "" || cfg.AgentJSONErr == nil {
+		t.Fatalf("config: file=%q name=%q json=%q err=%v — want a resolved file, no bound pair, a cause", cfg.AgentFile, cfg.AgentName, cfg.AgentJSON, cfg.AgentJSONErr)
+	}
+
+	err := RunAgentLaunch("plan")
+	if err == nil || !strings.Contains(err.Error(), "refusing to launch") || !strings.Contains(err.Error(), "hooks") {
+		t.Fatalf("err = %v, want a refusal naming hooks", err)
+	}
+	if len(*argv) != 0 {
+		t.Fatalf("exec ran with a reduced definition: %v", *argv)
+	}
+	edit, _ := Peek(session, "edit")
+	named := false
+	for _, m := range edit {
+		named = named || (m.Action == "agent-definitionless" && strings.Contains(m.Payload, "hooks"))
+	}
+	if !named {
+		t.Fatalf("edit's inbox lacks an agent-definitionless event naming hooks: %+v", edit)
+	}
+	if plan, _ := Peek(session, "plan"); len(plan) != 0 {
+		t.Fatalf("startup message seeded for an agent that never came up: %v", plan)
 	}
 }

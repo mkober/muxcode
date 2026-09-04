@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -136,10 +137,14 @@ func GraphRenderOnce(session, runID string, width int) (string, error) {
 	return RenderGraphFrame(snap, width, termHeight(), "", time.Now()), nil
 }
 
-// LoadPendingGates scans every in-flight run for wait_human nodes in the
-// waiting state — the cross-run approval queue. Downstream impact comes
-// from each run's frozen definition, never the template file. Newest
-// gates (shortest wait) list first.
+// LoadPendingGates scans every in-flight run for anything awaiting a person —
+// the cross-run approval queue. Downstream impact comes from each run's frozen
+// definition, never the template file. Newest gates (shortest wait) list first.
+//
+// Two kinds qualify, and listing only the first left runs stalled with an empty
+// queue on screen: wait_human nodes in the waiting state, and nodes parked by
+// the unverified hold, which are send nodes sitting in Done and so match
+// neither the type nor the state test.
 func LoadPendingGates(session string, now time.Time) []PendingGate {
 	var gates []PendingGate
 	for _, run := range bus.ScanInFlightGraphRuns(session) {
@@ -168,6 +173,18 @@ func LoadPendingGates(session string, now time.Time) []PendingGate {
 			gates = append(gates, PendingGate{
 				RunID: run.ID, NodeID: n.ID, Prompt: n.Message,
 				Waiting: waiting, Downstream: downstream, Mutating: mutating,
+			})
+		}
+		for _, h := range bus.ListUnverifiedHolds(session, run.ID) {
+			downstream, mutating := GateDownstream(g, h.NodeID)
+			var waiting time.Duration
+			if h.Since > 0 && now.Unix() > h.Since {
+				waiting = time.Duration(now.Unix()-h.Since) * time.Second
+			}
+			gates = append(gates, PendingGate{
+				RunID: run.ID, NodeID: h.NodeID, Prompt: h.Message,
+				Waiting: waiting, Downstream: downstream, Mutating: mutating,
+				Unverified: true,
 			})
 		}
 	}
@@ -917,6 +934,26 @@ func (ui *GraphUI) requestRetry() {
 		Rearms: GatesRearmedByRetry(ui.snap.Graph, nodeID)})
 }
 
+// approvableNow reports whether the node the confirm named can still be
+// approved: a wait_human gate still waiting, or a node whose unverified hold is
+// still pending. Both are re-read at the keypress, so a gate the daemon
+// released or a hold it consumed since the frame rendered is refused rather
+// than approved against a promise the screen no longer keeps.
+//
+// Testing only for Waiting rejected every unverified hold, which sits in Done
+// by construction — the queue listed the row and the confirm then refused it.
+func approvableNow(session, runID, nodeID string, st *bus.GraphNodeStatus) bool {
+	if st.State == bus.GraphNodeWaiting {
+		return true
+	}
+	for _, h := range bus.ListUnverifiedHolds(session, runID) {
+		if h.NodeID == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
 // executeAction runs the confirmed action through the same bus functions
 // the CLI handlers call — never an exec of the CLI, never a bus message,
 // so approving here is indistinguishable from the user typing
@@ -931,13 +968,11 @@ func (ui *GraphUI) executeAction() {
 	var retryRes *bus.GraphRetryResult
 	switch act.Kind {
 	case "approve":
-		// The confirm promised a waiting gate — refuse if the node moved
-		// on between render and keypress.
 		st, rerr := bus.ReadNodeStatus(ui.session, act.RunID, act.NodeID)
 		if rerr != nil {
 			err = rerr
-		} else if st.State != bus.GraphNodeWaiting {
-			err = fmt.Errorf("gate %s is %s, not waiting — nothing to approve", act.NodeID, st.State)
+		} else if !approvableNow(ui.session, act.RunID, act.NodeID, st) {
+			err = fmt.Errorf("nothing to approve: %s is %s and holds no pending approval", act.NodeID, st.State)
 		} else {
 			err = bus.ApproveGraphGate(ui.session, act.RunID, act.NodeID)
 		}
@@ -1033,24 +1068,59 @@ func (ui *GraphUI) handleIntentKey(key byte) string {
 }
 
 // beginIntent opens the argument flow for a template that interpolates
-// ${intent}. When the session's branch names a spec the user confirms
-// it — branch, spec, derived intent, active-spec consequence — instead of
-// retyping what the branch already says; otherwise the free-text prompt
-// opens carrying the reason, never an unexplained blank.
+// ${spec} or ${intent}. The active spec supplies it — the same file
+// ${current_phase} resolves against, so the run picks up wherever the doc
+// says it is — and the user confirms rather than retyping it. With no
+// pointer set the free-text prompt opens listing the specs to choose
+// from, never an unexplained blank.
+//
+// Only a spec-driven template takes that path. One whose argument is not a
+// spec goes straight to the prompt: the active spec cannot supply a PR
+// number, and offering it to confirm invites accepting it.
+//
+// Every per-launch field is reset on entry, pendingSpec included. A spec left
+// from an abandoned launch is otherwise read as this one's — pendingSpec.Path
+// gates the prompt's launch path — so a cancelled spec confirm would go on to
+// supply the spec for a PR template.
 func (ui *GraphUI) beginIntent(name string, g *bus.Graph) {
 	ui.pendingTemplate = name
 	ui.pendingGraph = g
 	ui.intentInput = nil
 	ui.specErr = ""
-	spec, err := bus.ResolveBranchSpec(ui.session)
+	ui.pendingSpec = bus.BranchSpec{}
+	ui.pendingActive = bus.ActiveSpecRelation{}
+	if !TemplateIntentIsSpec(g) {
+		ui.intentHint = ""
+		ui.view = viewGraphIntent
+		return
+	}
+	spec, err := bus.ActiveSpecIntent(ui.session)
 	if err != nil {
-		ui.intentHint = err.Error()
+		ui.intentHint = specChoiceHint(ui.session, err)
 		ui.view = viewGraphIntent
 		return
 	}
 	ui.pendingSpec = spec
 	ui.pendingActive = bus.ActiveSpecRelationFor(ui.session, spec)
 	ui.view = viewGraphSpecConfirm
+}
+
+// specChoiceHint explains an unusable pointer and, when none is set,
+// names the specs available so the choice can be made without leaving
+// the launcher to go hunting for paths.
+func specChoiceHint(session string, cause error) string {
+	if !errors.Is(cause, bus.ErrNoActiveSpec) {
+		return cause.Error()
+	}
+	choices, err := bus.ListSpecChoices(session)
+	if err != nil {
+		return "no active spec set, and none to choose from: " + err.Error()
+	}
+	paths := make([]string, 0, len(choices))
+	for _, c := range choices {
+		paths = append(paths, c.Path)
+	}
+	return "no active spec set — `muxcode spec set <path>` with one of: " + strings.Join(paths, ", ")
 }
 
 // handleSpecConfirmKey resolves the branch-derived launch: Enter/y
@@ -1076,34 +1146,26 @@ func (ui *GraphUI) handleSpecConfirmKey(key byte) string {
 	return ""
 }
 
-// confirmBranchSpec re-resolves the branch and the active pointer before
-// acting: the checkout or the pointer can change between the frame and
-// the keypress, and a stale confirm must never launch — or re-point the
-// session's spec — against what it no longer describes. A changed world
-// returns to the confirm frame and asks again; only a frame that still
-// holds proceeds, launching with intent (derived, or as edited).
+// confirmBranchSpec re-resolves the active spec before acting: the
+// pointer can change between the frame and the keypress, and a stale
+// confirm must never launch against what it no longer describes. A
+// changed world returns to the confirm frame and asks again; only a
+// frame that still holds proceeds, launching with intent (derived, or as
+// edited).
 func (ui *GraphUI) confirmBranchSpec(intent string) {
-	spec, err := bus.ResolveBranchSpec(ui.session)
+	spec, err := bus.ActiveSpecIntent(ui.session)
 	if err != nil {
-		ui.intentHint = err.Error()
+		ui.intentHint = specChoiceHint(ui.session, err)
 		ui.pendingSpec = bus.BranchSpec{}
 		ui.view = viewGraphIntent
 		return
 	}
-	active := bus.ActiveSpecRelationFor(ui.session, spec)
-	if spec.Path != ui.pendingSpec.Path || active.Current != ui.pendingActive.Current {
+	if spec.Path != ui.pendingSpec.Path {
 		ui.pendingSpec = spec
-		ui.pendingActive = active
-		ui.specErr = "branch or active spec changed since this frame was drawn — confirm again"
+		ui.pendingActive = bus.ActiveSpecRelationFor(ui.session, spec)
+		ui.specErr = "active spec changed since this frame was drawn — confirm again"
 		ui.view = viewGraphSpecConfirm
 		return
-	}
-	if !active.Matches {
-		if err := bus.WriteActiveSpec(ui.session, spec.Path); err != nil {
-			ui.specErr = "cannot set active spec: " + err.Error()
-			ui.view = viewGraphSpecConfirm
-			return
-		}
 	}
 	ui.launchGraph(ui.pendingGraph, ui.pendingTemplate, intent)
 }
@@ -1443,7 +1505,8 @@ func (ui *GraphUI) render() string {
 		footer = fmt.Sprintf("  %stype%s Jump  %s↑↓/jk%s Navigate  %sEnter%s Launch  %sq/Esc%s Back",
 			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 	case viewGraphIntent:
-		frame = RenderIntentPromptFrame(ui.pendingTemplate, string(ui.intentInput), ui.intentHint, W)
+		frame = RenderIntentPromptFrame(ui.pendingTemplate, string(ui.intentInput), ui.intentHint,
+			TemplateIntentIsSpec(ui.pendingGraph), W)
 		footer = fmt.Sprintf("  %sEnter%s Launch  %sEsc%s Cancel", Yellow, RST, Yellow, RST)
 	case viewGraphSpecConfirm:
 		frame = RenderSpecConfirmFrame(ui.pendingTemplate, ui.pendingSpec, ui.pendingActive, ui.specErr, W)
