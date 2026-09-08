@@ -303,7 +303,7 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 		TmuxSelectPane(pane) // ignore error
 	}
 
-	fmt.Printf("  Session '%s' ready\n\n", session)
+	fmt.Printf("  %s✓ Session '%s' ready%s\n\n", ColorGreen, session, ColorReset)
 
 	// Configure status bar
 	ConfigureStatusBar(session)

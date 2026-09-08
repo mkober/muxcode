@@ -269,6 +269,10 @@ type SpecChoice struct {
 // ListSpecChoices returns the specs a run can be pointed at, drafts
 // before backlog. Completed specs are excluded: pointing a run at one
 // would derive "no open phase" and drive an immediately vacuous run.
+//
+// A file carrying no spec key is excluded for the same reason it cannot
+// be run: the key is what an intent expands from. Without this, the
+// backlog index (backlog.md) was offered as a selectable spec.
 func ListSpecChoices(session string) ([]SpecChoice, error) {
 	root := intentRoot(session)
 	var out []SpecChoice
@@ -286,8 +290,11 @@ func ListSpecChoices(session string) ([]SpecChoice, error) {
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			rel := filepath.Join("docs", "requirements", dir, name)
 			key := specKeyFromFile(name)
+			if key == "" {
+				continue
+			}
+			rel := filepath.Join("docs", "requirements", dir, name)
 			out = append(out, SpecChoice{
 				Key: key, Dir: dir, Path: rel,
 				Intent: describeSpecIntent(filepath.Join(root, rel), key),

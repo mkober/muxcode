@@ -482,6 +482,277 @@ func TestRenderIntentPromptFrame_Hint(t *testing.T) {
 	}
 }
 
+// Every value in the confirm frame is unbounded — a branch name, two
+// repo paths, a derived intent — so all of them must wrap inside a
+// narrow pane rather than running off the frame.
+func TestRenderSpecConfirmFrame_ClampsToWidth(t *testing.T) {
+	const width = 46
+	spec := bus.BranchSpec{
+		Branch: "MUX-144-wait-human-gate-openable-by-any-agent",
+		Key:    "MUX-144", Dir: "drafts",
+		Path:   "docs/requirements/drafts/MUX-144-wait-human-gate-openable-by-any-agent.md",
+		Intent: "MUX-144 A `wait_human` Gate Is Openable by Any Agent, Unaudited — Phase 1: Pin the bypass",
+	}
+	active := bus.ActiveSpecRelation{Current: "docs/requirements/drafts/MUX-3-some-other-long-spec-name.md"}
+	f := StripAnsi(RenderSpecConfirmFrame("spec-to-pr", spec, active, "a fairly long error message about a stale frame", width))
+	for _, line := range strings.Split(f, "\n") {
+		if len([]rune(line)) > width {
+			t.Errorf("line overflows width %d (%d cols): %q", width, len([]rune(line)), line)
+		}
+	}
+	for _, want := range []string{"branch:", "spec:", "derived:", "active:", "switch"} {
+		if !strings.Contains(f, want) {
+			t.Errorf("clamped frame lost %q:\n%s", want, f)
+		}
+	}
+}
+
+// The footer is appended outside the caller's padding, so "Enter/y Yes"
+// survives a clamp that eats the frame. The pointer consequence, the
+// completed/ warning and the error must survive it too — a confirm that
+// invites a keypress without showing what confirming does is the exact
+// surprise this frame exists to prevent.
+func TestRenderSpecConfirmFrameH_KeepsConsequenceInShortPane(t *testing.T) {
+	const h = 14
+	spec := bus.BranchSpec{
+		Branch: "MUX-144-wait-human-gate-openable-by-any-agent",
+		Key:    "MUX-144", Dir: "completed",
+		Path:   "docs/requirements/completed/MUX-144-wait-human-gate-openable-by-any-agent.md",
+		Intent: "MUX-144 A `wait_human` Gate Is Openable by Any Agent, Unaudited — Phase 1: Pin the bypass",
+	}
+	active := bus.ActiveSpecRelation{Current: "docs/requirements/drafts/MUX-3-some-other-long-spec.md"}
+	f := RenderSpecConfirmFrameH("spec-to-pr", spec, active, "stale frame — confirm again", 60, h)
+	clamped := StripAnsi(padLines(f, h-3))
+	for _, want := range []string{"active:", "switch", "completed/", "stale frame"} {
+		if !strings.Contains(clamped, want) {
+			t.Errorf("height clamp dropped consequence %q:\n%s", want, clamped)
+		}
+	}
+}
+
+// The case review named: at 46x14 the consequence block alone exceeds
+// the body, so compacting context is not enough — the consequence must
+// compact too rather than be truncated away.
+func TestRenderSpecConfirmFrameH_ConsequenceSurvivesNarrowShortPane(t *testing.T) {
+	const w, h = 46, 14
+	spec := bus.BranchSpec{
+		Branch: "MUX-144-wait-human-gate-openable-by-any-agent",
+		Key:    "MUX-144", Dir: "completed",
+		Path:   "docs/requirements/completed/MUX-144-wait-human-gate-openable-by-any-agent.md",
+		Intent: "MUX-144 A `wait_human` Gate Is Openable by Any Agent, Unaudited — Phase 1: Pin the bypass",
+	}
+	active := bus.ActiveSpecRelation{Current: "docs/requirements/drafts/MUX-3-another-long-spec-name.md"}
+	f := RenderSpecConfirmFrameH("spec-to-pr", spec, active, "stale frame — confirm again", w, h)
+	clamped := StripAnsi(padLines(f, h-3))
+	for _, line := range strings.Split(clamped, "\n") {
+		if len([]rune(line)) > w {
+			t.Errorf("line overflows width %d: %q", w, line)
+		}
+	}
+	for _, want := range []string{"switches", "completed/", "stale frame"} {
+		if !strings.Contains(clamped, want) {
+			t.Errorf("consequence %q lost at %dx%d:\n%s", want, w, h, clamped)
+		}
+	}
+}
+
+// When even the compacted consequence cannot fit, the frame must say so
+// rather than render a confirm that looks complete — the footer's
+// "Enter/y Yes" is drawn outside this frame and stays visible.
+func TestRenderSpecConfirmFrameH_TooShortSaysSo(t *testing.T) {
+	spec := bus.BranchSpec{Branch: "b", Key: "MUX-7", Dir: "completed",
+		Path: "docs/backlog/MUX-7-x.md", Intent: "MUX-7 Seven"}
+	f := StripAnsi(RenderSpecConfirmFrameH("t", spec, bus.ActiveSpecRelation{Current: "docs/other.md"},
+		"boom", 46, 8))
+	if !strings.Contains(f, "too short") {
+		t.Errorf("a pane that cannot show the consequence must say so:\n%s", f)
+	}
+}
+
+// specConfirmUI builds a confirm-view UI at a fixed pane size, with a
+// spec whose consequence cannot fit a short pane.
+func specConfirmUI(w, h int) *GraphUI {
+	return &GraphUI{
+		view:            viewGraphSpecConfirm,
+		pendingTemplate: "spec-to-pr",
+		pendingSpec: bus.BranchSpec{
+			Branch: "MUX-144-wait-human-gate-openable-by-any-agent",
+			Key:    "MUX-144", Dir: "completed",
+			Path:   "docs/requirements/completed/MUX-144-wait-human-gate-openable-by-any-agent.md",
+			Intent: "MUX-144 A `wait_human` Gate Is Openable by Any Agent — Phase 1: Pin the bypass",
+		},
+		pendingActive: bus.ActiveSpecRelation{Current: "docs/requirements/drafts/MUX-3-another-long-spec.md"},
+		size:          func() (int, int) { return w, h },
+		now:           time.Now,
+	}
+}
+
+// When the consequence cannot be shown, bare Enter must not launch — it
+// is the keystroke already under the finger from the previous frame.
+// An explicit y still launches, so a small pane is not a hard block.
+func TestSpecConfirmEnterRefusedWhenConsequenceHidden(t *testing.T) {
+	ui := specConfirmUI(46, 8)
+	if !ui.specConfirmTruncated() {
+		t.Fatal("fixture must be too short, or the test proves nothing")
+	}
+	ui.handleSpecConfirmKey(13)
+	if ui.view != viewGraphSpecConfirm {
+		t.Errorf("bare Enter must not leave the confirm when the consequence is hidden, view=%v", ui.view)
+	}
+	if !strings.Contains(ui.specErr, "press y") {
+		t.Errorf("refusal must name the way through, got %q", ui.specErr)
+	}
+}
+
+// Control for the refusal: at a size that shows the consequence, bare
+// Enter must still be acted on. Without this, a handler that refused
+// Enter always would pass the test above.
+//
+// The assertion is that the view LEAVES the confirm — a no-op handler
+// leaves it in place and fails. The session has no active spec, so
+// confirmBranchSpec re-resolves, finds none, and routes to the intent
+// prompt; that transition is the observable proof Enter was acted on.
+func TestSpecConfirmEnterAcceptedWhenConsequenceVisible(t *testing.T) {
+	ui := specConfirmUI(100, 40)
+	ui.session = "spec-confirm-control-" + t.Name()
+	if ui.specConfirmTruncated() {
+		t.Fatal("fixture must fit, or the control proves nothing")
+	}
+	ui.handleSpecConfirmKey(13)
+	if ui.view == viewGraphSpecConfirm {
+		t.Errorf("Enter must be acted on when the consequence is visible, view unchanged (specErr=%q)", ui.specErr)
+	}
+	if ui.view != viewGraphIntent {
+		t.Errorf("no active spec must route to the intent prompt, got view=%v", ui.view)
+	}
+}
+
+// Negative control for the budget: an unbudgeted frame must keep the
+// wrapped context rows in full. Without this, a frame that always
+// compacted would pass the test above.
+func TestRenderSpecConfirmFrameH_UnbudgetedKeepsContext(t *testing.T) {
+	spec := bus.BranchSpec{Branch: "MUX-7-x", Key: "MUX-7", Dir: "backlog",
+		Path: "docs/backlog/MUX-7-x.md", Intent: "MUX-7 Seven"}
+	f := StripAnsi(RenderSpecConfirmFrameH("t", spec, bus.ActiveSpecRelation{}, "", 100, 0))
+	if strings.Contains(f, "…") {
+		t.Errorf("unbudgeted frame must not compact:\n%s", f)
+	}
+	if !strings.Contains(f, "names a spec") {
+		t.Errorf("unbudgeted frame must keep the question:\n%s", f)
+	}
+}
+
+// Negative control for the wrap: values that fit must stay on their own
+// single row, unbroken. Without this, a frame that wrapped everything to
+// a narrow column would pass the clamp test above.
+func TestRenderSpecConfirmFrame_ShortValuesDoNotWrap(t *testing.T) {
+	spec := bus.BranchSpec{Branch: "MUX-7-x", Key: "MUX-7", Dir: "backlog",
+		Path: "docs/backlog/MUX-7-x.md", Intent: "MUX-7 Seven"}
+	f := StripAnsi(RenderSpecConfirmFrame("t", spec, bus.ActiveSpecRelation{}, "", 100))
+	for _, whole := range []string{spec.Path, spec.Intent, spec.Branch} {
+		if !strings.Contains(f, whole) {
+			t.Errorf("value that fits must render unbroken, lost %q:\n%s", whole, f)
+		}
+	}
+}
+
+// The hint is built from repo contents, so its length is unbounded. A
+// long one must wrap inside the pane and leave the input field intact —
+// the live failure was a screen-wide path list running off the frame.
+func TestRenderIntentPromptFrame_HintClampsToWidth(t *testing.T) {
+	const width = 60
+	var long strings.Builder
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&long, "docs/requirements/backlog/MUX-%d-some-slug.md, ", 100+i)
+	}
+	f := StripAnsi(RenderIntentPromptFrame("spec-to-pr", "", long.String(), true, width))
+	for _, line := range strings.Split(f, "\n") {
+		if len([]rune(line)) > width {
+			t.Errorf("line overflows width %d (%d cols): %q", width, len([]rune(line)), line)
+		}
+	}
+	if !strings.Contains(f, "spec:") {
+		t.Errorf("input field must survive a long hint:\n%s", f)
+	}
+}
+
+// Negative control for the wrap: a hint that fits must stay on one line.
+// Without this, a renderer that wrapped everything to a narrow column
+// would pass the clamp test above.
+func TestRenderIntentPromptFrame_ShortHintDoesNotWrap(t *testing.T) {
+	hint := "no active spec set"
+	f := StripAnsi(RenderIntentPromptFrame("spec-to-pr", "", hint, true, 100))
+	var found int
+	for _, line := range strings.Split(f, "\n") {
+		if strings.Contains(line, "no active spec") {
+			found++
+		}
+	}
+	if found != 1 {
+		t.Errorf("short hint must occupy exactly one line, got %d:\n%s", found, f)
+	}
+	if !strings.Contains(f, hint) {
+		t.Errorf("short hint must render unbroken:\n%s", f)
+	}
+}
+
+// The caller pads from the bottom, so an overlong hint costs the input
+// field first — a prompt with no visible way to answer it. The frame is
+// clamped exactly as GraphUI.render clamps it.
+func TestRenderIntentPromptFrameH_KeepsInputInShortPane(t *testing.T) {
+	const h = 14
+	var long strings.Builder
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&long, "docs/requirements/backlog/MUX-%d-some-slug.md, ", 100+i)
+	}
+	f := RenderIntentPromptFrameH("spec-to-pr", "", long.String(), true, 60, h)
+	clamped := StripAnsi(padLines(f, h-3))
+	if !strings.Contains(clamped, "spec:") {
+		t.Errorf("input field must survive the height clamp:\n%s", clamped)
+	}
+	if !strings.Contains(clamped, "more") {
+		t.Errorf("elided hint must name what it dropped:\n%s", clamped)
+	}
+}
+
+// Negative control for the budget: unbudgeted (height <= 0) must elide
+// nothing. Without this, a frame that always elided would pass the
+// clamp test above.
+func TestRenderIntentPromptFrameH_UnbudgetedKeepsWholeHint(t *testing.T) {
+	hint := "in progress: MUX-144\nbacklog: MUX-008  MUX-010"
+	f := StripAnsi(RenderIntentPromptFrameH("spec-to-pr", "", hint, true, 100, 0))
+	for _, want := range []string{"MUX-144", "MUX-008", "MUX-010"} {
+		if !strings.Contains(f, want) {
+			t.Errorf("unbudgeted frame dropped %s:\n%s", want, f)
+		}
+	}
+	if strings.Contains(f, "more") {
+		t.Errorf("unbudgeted frame must not elide:\n%s", f)
+	}
+}
+
+// specGroupLine must name the elided count: a truncated list that looks
+// complete sends the reader hunting for an id that is not shown.
+func TestSpecGroupLineCapsAndNamesRemainder(t *testing.T) {
+	keys := make([]string, specSuggestLimit+5)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("MUX-%d", 100+i)
+	}
+	line := specGroupLine("backlog", keys)
+	if !strings.Contains(line, "(+5 more)") {
+		t.Errorf("elided count must be named: %q", line)
+	}
+	if strings.Contains(line, keys[specSuggestLimit]) {
+		t.Errorf("capped list must not render past the limit: %q", line)
+	}
+	if !strings.Contains(line, keys[0]) || !strings.Contains(line, "backlog:") {
+		t.Errorf("group must render its label and first id: %q", line)
+	}
+	if specGroupLine("backlog", nil) != "" {
+		t.Errorf("empty group must render nothing")
+	}
+}
+
 // A template whose argument is a PR number must not be asked for a spec by
 // name. The negative half is the point: the spec wording has to be absent,
 // not merely the generic wording present.

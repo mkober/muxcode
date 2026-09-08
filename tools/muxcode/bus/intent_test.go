@@ -230,3 +230,30 @@ func TestLaunchIntentFromBranch(t *testing.T) {
 		t.Errorf("refusal must name both paths: %v", err)
 	}
 }
+
+// A file with no spec key cannot be run — the key is what an intent
+// expands from — so it must not be offered as a choice. The positive
+// half is the control: excluding keyless files must not exclude specs.
+func TestListSpecChoicesExcludesKeylessFiles(t *testing.T) {
+	root := t.TempDir()
+	writeIntentSpec(t, root, "backlog", "backlog.md", "# Backlog Index\n")
+	writeIntentSpec(t, root, "backlog", "README.md", "# Notes\n")
+	writeIntentSpec(t, root, "drafts", "MUX-144-real.md", "# Real Spec\n")
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", root)
+
+	choices, err := ListSpecChoices("no-such-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(choices) != 1 {
+		t.Fatalf("only the keyed spec is selectable, got %d: %+v", len(choices), choices)
+	}
+	if choices[0].Key != "MUX-144" {
+		t.Errorf("key = %q, want MUX-144", choices[0].Key)
+	}
+	for _, c := range choices {
+		if strings.HasSuffix(c.Path, "backlog.md") {
+			t.Errorf("backlog index offered as a spec: %s", c.Path)
+		}
+	}
+}

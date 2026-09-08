@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -1113,20 +1114,79 @@ func TypeaheadIndex(names []string, prefix string) int {
 // asked for one by name, telling the person launching pr-local-review to type
 // a spec id where a PR number goes.
 func RenderIntentPromptFrame(template, input, hint string, isSpec bool, width int) string {
+	return RenderIntentPromptFrameH(template, input, hint, isSpec, width, 0)
+}
+
+// RenderIntentPromptFrameH is RenderIntentPromptFrame with a height
+// budget: the hint is elided so the input field always renders.
+//
+// The caller pads the frame from the bottom, so the field — the last row
+// — is the first thing an overlong hint costs, leaving a prompt with no
+// visible way to answer it. That is the failure RenderConfirmFrameH
+// already exists to prevent (live, 2026-08-27); wrapping the hint to the
+// pane width made it reachable here, since a hint that used to be one
+// overflowing line is now many. height <= 0 = unbudgeted.
+func RenderIntentPromptFrameH(template, input, hint string, isSpec bool, width, height int) string {
 	ask, label := "This template needs an argument — type it:", "argument:"
 	if isSpec {
 		ask, label = "This template needs a spec — describe the work, or type a spec id:", "spec:"
+	}
+	askRows := promptTextLines(ask, width)
+	hintRows := promptTextLines(hint, width)
+	if height > 0 {
+		hintRows = elideRows(hintRows, intentHintBudget(height, len(askRows)))
 	}
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Launch Graph", width))
 	fmt.Fprintf(&b, "  %s%sLaunch %s%s\n", Purple, Bold, template, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
-	fmt.Fprintf(&b, "  %s%s%s\n", Comment, ask, RST)
-	if hint != "" {
-		fmt.Fprintf(&b, "  %s(%s)%s\n", Comment, hint, RST)
+	for _, line := range append(askRows, hintRows...) {
+		fmt.Fprintf(&b, "  %s%s%s\n", Comment, line, RST)
 	}
 	fmt.Fprintf(&b, "\n  %s%s%s %s%s█%s\n", Comment, label, RST, FG, input, RST)
 	return b.String()
+}
+
+// intentHintBudget is the rows the intent prompt can spend on its hint:
+// the pane height less the caller's three-row margin, the two-row tab
+// bar, the title and divider, and the blank and input rows the field
+// occupies.
+func intentHintBudget(height, askRows int) int {
+	return height - 3 - (askRows + 6)
+}
+
+// elideRows caps rows to budget, spending the last kept row on a count
+// of what was dropped so a truncated list never reads as complete.
+func elideRows(rows []string, budget int) []string {
+	if budget <= 0 {
+		return nil
+	}
+	if len(rows) <= budget {
+		return rows
+	}
+	out := make([]string, 0, budget)
+	out = append(out, rows[:budget-1]...)
+	return append(out, fmt.Sprintf("… +%d more", len(rows)-(budget-1)))
+}
+
+// promptTextLines wraps one of the frame's prose rows to its two-column
+// indent, returning nothing for an empty string so the caller emits no
+// line at all.
+//
+// The wrap is the structural guarantee, not a nicety: the hint is built
+// from repo contents, so its length is unbounded. Rendered on one line
+// it ran a screen-wide list of spec paths off the pane, taking the
+// input field with it. The fixed ask line overflowed a 60-column pane on
+// its own, so it is wrapped by the same path rather than trusted to fit.
+func promptTextLines(s string, width int) []string {
+	if s == "" {
+		return nil
+	}
+	avail := width - 4
+	if avail < 8 {
+		avail = 8
+	}
+	return wrapPlain(s, avail)
 }
 
 // RenderSpecConfirmFrame renders the branch-derived launch confirm: the
@@ -1136,22 +1196,172 @@ func RenderIntentPromptFrame(template, input, hint string, isSpec bool, width in
 // is the surprise this frame exists to prevent. A spec found only under
 // completed/ is flagged: the run would verify, not implement.
 func RenderSpecConfirmFrame(template string, spec bus.BranchSpec, active bus.ActiveSpecRelation, errMsg string, width int) string {
+	return RenderSpecConfirmFrameH(template, spec, active, errMsg, width, 0)
+}
+
+// RenderSpecConfirmFrameH is RenderSpecConfirmFrame with a height budget.
+//
+// The caller pads from the bottom while the footer is appended after the
+// padding, so a short pane truncates the pointer consequence, the
+// completed/ warning and the error while "Enter/y Yes" stays visible —
+// the confirm would invite a keypress with the very thing it exists to
+// state cut off. Those rows are therefore never elided: a tight budget
+// compacts the context rows above them instead, and drops them from the
+// bottom only once compacting is not enough. height <= 0 = unbudgeted.
+func RenderSpecConfirmFrameH(template string, spec bus.BranchSpec, active bus.ActiveSpecRelation, errMsg string, width, height int) string {
+	context, consequence, _ := specConfirmBody(spec, active, errMsg, width, height)
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Launch Graph", width))
 	fmt.Fprintf(&b, "  %s%sLaunch %s%s\n", Purple, Bold, template, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
-	fmt.Fprintf(&b, "  %sBranch %s names a spec — work through it?%s\n\n", Comment, spec.Branch, RST)
-	fmt.Fprintf(&b, "  %sbranch:%s  %s%s%s\n", Comment, RST, FG, spec.Branch, RST)
-	fmt.Fprintf(&b, "  %sspec:%s    %s%s%s\n", Comment, RST, FG, spec.Path, RST)
-	fmt.Fprintf(&b, "  %sderived:%s %s%s%s\n", Comment, RST, FG, spec.Intent, RST)
-	fmt.Fprintf(&b, "  %sactive:%s  %s\n", Comment, RST, describeActiveSpecChange(active))
-	if spec.Dir == "completed" {
-		fmt.Fprintf(&b, "\n  %s⚠ spec is under completed/ — the run will verify, not implement%s\n", Yellow, RST)
-	}
-	if errMsg != "" {
-		fmt.Fprintf(&b, "\n  %s✗ %s%s\n", Red, errMsg, RST)
+	for _, line := range append(context, consequence...) {
+		b.WriteString(line + "\n")
 	}
 	return b.String()
+}
+
+// specConfirmChrome is the rows the confirm frame spends before its body:
+// the two-row tab bar, the title and the divider.
+const specConfirmChrome = 4
+
+// specConfirmBody fits the confirm's rows to the pane, reporting whether
+// the consequence had to be replaced by the too-short notice.
+//
+// The renderer and the key handler both read that flag, from this one
+// function: if they computed it apart they could disagree, and a frame
+// showing the consequence while the handler refused the key — or worse,
+// the reverse — is the drift this exists to prevent.
+func specConfirmBody(spec bus.BranchSpec, active bus.ActiveSpecRelation, errMsg string, width, height int) (context, consequence []string, tooShort bool) {
+	consequence = specConfirmConsequence(spec, active, errMsg, width, false)
+	context = specConfirmContext(spec, width, false)
+	if height <= 0 {
+		return context, consequence, false
+	}
+	body := height - 3 - specConfirmChrome
+	if len(consequence)+len(context) > body {
+		context = specConfirmContext(spec, width, true)
+	}
+	if len(consequence)+len(context) > body {
+		consequence = specConfirmConsequence(spec, active, errMsg, width, true)
+	}
+	for len(context) > 0 && len(consequence)+len(context) > body {
+		context = context[:len(context)-1]
+	}
+	if len(consequence) > body {
+		return nil, specConfirmTooShort(width, body), true
+	}
+	return context, consequence, false
+}
+
+// SpecConfirmTooShort reports whether the pane is too short to show what
+// confirming does. The key handler calls it at the keypress rather than
+// trusting the drawn frame: the pane can be resized in between.
+func SpecConfirmTooShort(spec bus.BranchSpec, active bus.ActiveSpecRelation, errMsg string, width, height int) bool {
+	_, _, tooShort := specConfirmBody(spec, active, errMsg, width, height)
+	return tooShort
+}
+
+// specConfirmContext renders the rows that orient the reader — the
+// question and the branch, spec and derived values. compact fits each
+// value onto one line instead of wrapping it, the first thing given up
+// when the pane is too short to show everything.
+func specConfirmContext(spec bus.BranchSpec, width int, compact bool) []string {
+	out := colorLines("Branch "+spec.Branch+" names a spec — work through it?", Comment, width)
+	out = append(out, "")
+	out = append(out, labeledRowLines("branch:", spec.Branch, FG, width, compact)...)
+	out = append(out, labeledRowLines("spec:", spec.Path, FG, width, compact)...)
+	return append(out, labeledRowLines("derived:", spec.Intent, FG, width, compact)...)
+}
+
+// specConfirmConsequence renders what a person must see before pressing a
+// key: what confirming does to the active-spec pointer, the completed/
+// flag, and any error. compact holds each to a single line, bounding the
+// block so a short pane cannot truncate it away.
+func specConfirmConsequence(spec bus.BranchSpec, active bus.ActiveSpecRelation, errMsg string, width int, compact bool) []string {
+	text, color := activeSpecChange(active, compact)
+	out := labeledRowLines("active:", text, color, width, compact)
+	if spec.Dir == "completed" {
+		out = append(out, "")
+		out = append(out, noticeLines("⚠ spec is under completed/ — the run will verify, not implement", Yellow, width, compact)...)
+	}
+	if errMsg != "" {
+		out = append(out, "")
+		out = append(out, noticeLines("✗ "+errMsg, Red, width, compact)...)
+	}
+	return out
+}
+
+// noticeLines renders one notice, wrapped or held to a single fitted
+// line when the pane cannot afford the wrapped form.
+func noticeLines(text, color string, width int, compact bool) []string {
+	if compact {
+		return []string{fmt.Sprintf("  %s%s%s", color, fitOneLine(text, width-4), RST)}
+	}
+	return colorLines(text, color, width)
+}
+
+// specConfirmTooShort is the last resort when the pane cannot show even
+// the compacted consequence. The footer is drawn outside this frame, so
+// "Enter/y Yes" stays on screen regardless — saying plainly that the
+// consequence is not visible beats rendering a confirm that looks
+// complete and is not.
+func specConfirmTooShort(width, body int) []string {
+	lines := colorLines("⚠ pane too short to show what confirming does — resize before answering", Yellow, width)
+	if body > 0 && len(lines) > body {
+		lines = lines[:body]
+	}
+	return lines
+}
+
+// colorLines wraps text to the pane at the frame's two-column indent,
+// every line carrying the same colour.
+func colorLines(text, color string, width int) []string {
+	var out []string
+	for _, line := range promptTextLines(text, width) {
+		out = append(out, fmt.Sprintf("  %s%s%s", color, line, RST))
+	}
+	return out
+}
+
+// specConfirmLabelCol is the column values start at, after the frame's
+// two-space indent: the widest label plus a trailing space.
+const specConfirmLabelCol = 9
+
+// labeledRowLines renders one "label:  value" row, wrapping the value to
+// the pane with continuation lines aligned under the value column.
+//
+// Every value here is unbounded — a branch name, two repo paths and a
+// derived intent — so an unwrapped row runs off the frame on any pane
+// narrower than the longest of them. compact fits the value onto a
+// single line instead, trading the tail for height.
+func labeledRowLines(label, value, color string, width int, compact bool) []string {
+	avail := width - 2 - specConfirmLabelCol
+	if avail < 8 {
+		avail = 8
+	}
+	rows := wrapPlain(value, avail)
+	if compact {
+		rows = []string{fitOneLine(value, avail)}
+	}
+	out := make([]string, 0, len(rows))
+	for i, line := range rows {
+		lead := Comment + Pad(label, specConfirmLabelCol) + RST
+		if i > 0 {
+			lead = strings.Repeat(" ", specConfirmLabelCol)
+		}
+		out = append(out, fmt.Sprintf("  %s%s%s%s", lead, color, line, RST))
+	}
+	return out
+}
+
+// fitOneLine truncates s to w columns, marking the cut so a shortened
+// value is never read as the whole one.
+func fitOneLine(s string, w int) string {
+	r := []rune(s)
+	if len(r) <= w || w < 2 {
+		return s
+	}
+	return string(r[:w-1]) + "…"
 }
 
 // plainActiveSpecChange is the pointer consequence without color, for the
@@ -1166,15 +1376,24 @@ func plainActiveSpecChange(active bus.ActiveSpecRelation, path string) string {
 	return "launch switches the active spec from " + active.Current + " to " + path
 }
 
-// describeActiveSpecChange words the pointer consequence of confirming.
-func describeActiveSpecChange(active bus.ActiveSpecRelation) string {
+// activeSpecChange words the pointer consequence of confirming, as plain
+// text plus the colour carrying its urgency.
+//
+// The text is returned uncoloured because the caller wraps it, and
+// wrapPlain measures runes — an escape sequence is runes, so a
+// pre-coloured string wraps at the wrong column. The switch case is
+// coloured whole rather than emphasising one word mid-string, for the
+// same reason.
+func activeSpecChange(active bus.ActiveSpecRelation, compact bool) (string, string) {
 	switch {
 	case active.Current == "":
-		return fmt.Sprintf("%s(unset) → confirming sets it to this spec%s", Comment, RST)
+		return "(unset) → confirming sets it to this spec", Comment
 	case active.Matches:
-		return fmt.Sprintf("%smatches — unchanged%s", Green, RST)
+		return "matches — unchanged", Green
+	case compact:
+		return "switches from " + filepath.Base(active.Current) + " to this spec", Yellow
 	}
-	return fmt.Sprintf("%s%s%s → confirming %s%sswitches%s it to this spec", FG, active.Current, RST, Yellow, Bold, RST)
+	return active.Current + " → confirming switches it to this spec", Yellow
 }
 
 // TemplateNeedsIntent reports whether any node message or action of a
