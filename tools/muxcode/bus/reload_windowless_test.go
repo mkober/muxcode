@@ -80,12 +80,22 @@ func TestRoleWindowMissing(t *testing.T) {
 		}
 	})
 
-	// A mode-cycled role lives in its host window, so presence is decided by
-	// WindowForRole rather than the role name.
-	t.Run("mode-cycled role resolves via its host window", func(t *testing.T) {
+	// A mode-cycled role is judged on its HOLD window, not the window it shares.
+	// Testing the host window instead made research read as present while the
+	// reload addressed a `research` window that had never been created.
+	t.Run("mode role without its hold window is refused", func(t *testing.T) {
 		stubTmuxWindowList(t, "plan", "edit")
+		if err := RoleWindowMissing("sess", "research"); err == nil {
+			t.Fatal("research has no hold window yet — reloading it can only time out")
+		}
+	})
+
+	// Negative control: once the hold window exists the role is reloadable again,
+	// so the rule above cannot harden into "mode roles are never reloadable".
+	t.Run("mode role with its hold window passes", func(t *testing.T) {
+		stubTmuxWindowList(t, "plan", "edit", "research")
 		if err := RoleWindowMissing("sess", "research"); err != nil {
-			t.Fatalf("research is hosted on the plan window: %v", err)
+			t.Fatalf("research has a hold window and must be reloadable: %v", err)
 		}
 	})
 }
@@ -123,16 +133,30 @@ func TestActiveAgentStatusesMarksWindowlessRoles(t *testing.T) {
 		t.Error("build has a window and must not be marked Windowless")
 	}
 
-	// Mode-cycled roles live in a host window under a different name. The
-	// selector greyed research out as "(no window)" when it carried its own
-	// copy of the presence rule without the mode clause.
+	// Mode roles whose hold window has never been created have no pane and no
+	// process, so they are windowless in the sense that matters: configurable,
+	// not reloadable. The window list above carries no research/auto window.
 	for _, role := range []string{"research", "auto"} {
 		s, ok := byRole[role]
 		if !ok {
 			t.Fatalf("%s should be listed", role)
 		}
-		if s.Windowless {
-			t.Errorf("%s is mode-cycled onto a host window and must not be marked Windowless", role)
+		if !s.Windowless {
+			t.Errorf("%s has no hold window and must be marked Windowless", role)
+		}
+	}
+}
+
+// Negative control for the rule above: a mode role IS reloadable once its hold
+// window exists, so "mode role" must not become a synonym for "windowless".
+func TestActiveAgentStatusesModeRoleWithHoldWindow(t *testing.T) {
+	_, cleanup := setupTestBusDir(t)
+	defer cleanup()
+	stubTmuxWindowList(t, "plan", "edit", "build", "research")
+
+	for _, s := range ActiveAgentStatuses("sess") {
+		if s.Role == "research" && s.Windowless {
+			t.Error("research has a hold window and must not be marked Windowless")
 		}
 	}
 }
@@ -197,7 +221,9 @@ func TestConfigOnlyRole(t *testing.T) {
 	}{
 		{"windowless role is config-only", "analyze", true, true},
 		{"windowed role still reloads", "build", true, false},
-		{"mode-cycled role still reloads", "research", true, false},
+		// research holds on a `research` window that is not created until that
+		// mode is first cycled to, and the list above has none.
+		{"mode role without its hold window is config-only", "research", true, true},
 		{"headless prompt role is not config-only", promptAgentRole, true, false},
 		{"unreadable window list falls back to reload", "analyze", false, false},
 	}

@@ -286,28 +286,36 @@ func RoleWindowMissing(session, role string) error {
 
 // RoleWindowPresent reports whether role has somewhere to run in the session.
 //
-// Mode-cycled roles need the second clause: modeRoles maps research and auto to
-// THEMSELVES rather than to the window they share, so RoleHasWindow alone hunts
-// a window named "research" that never exists. Every caller deciding "does this
-// role exist here" must use this predicate — the reload guard and the selector
-// each grew their own copy of the rule, one gained the mode clause and the other
-// did not, and the selector greyed out research as "(no window)" (2026-09-08).
+// Presence must be decided against the window a reload actually ADDRESSES, which
+// for a mode-cycled role is its hold window, not the window it shares. The host
+// window is the wrong test and briefly shipped as one: `research` holds on the
+// plan window, plan exists, so research read as present — while ReloadTarget
+// addressed the `research` hold window, which is not created until that mode is
+// cycled to for the first time. The reload then fired keystrokes at a window
+// that was not there and failed with the same misleading "did not exit after 12
+// seconds" this predicate exists to prevent (2026-09-08).
+//
+// A mode role that has never been cycled to therefore reads as absent, which is
+// correct: it has no pane and no process, so it is configurable but not
+// reloadable, exactly like a role missing from MUXCODE_WINDOWS.
 func RoleWindowPresent(names []string, role string) bool {
-	return RoleHasWindow(names, role) || ModeRoleHasHostWindow(names, role)
+	return RoleHasWindow(names, ReloadWindowForRole(role))
 }
 
-// ModeRoleHasHostWindow reports whether a mode-cycled role is registered under
-// a host window that exists in the session. The role's hold window may not exist
-// until that mode has been cycled to at least once.
-func ModeRoleHasHostWindow(names []string, role string) bool {
+// ReloadWindowForRole returns the window name a reload of role addresses: the
+// hold window for a mode-cycled role, otherwise the role's own window.
+//
+// Read from the static mode defaults rather than the session's state file so the
+// answer is available before any bus dir exists, and so tests need no fixture.
+func ReloadWindowForRole(role string) string {
 	for _, state := range []*ModeCycleState{DefaultModeCycleState(), DefaultPlanModeCycleState()} {
 		for _, agent := range state.Agents {
-			if agent.Role == role {
-				return RoleHasWindow(names, state.Window)
+			if agent.Role == role && agent.HoldWindow != "" {
+				return agent.HoldWindow
 			}
 		}
 	}
-	return false
+	return WindowForRole(role)
 }
 
 // ReloadAgent orchestrates the full stop→reconfigure→relaunch cycle:
