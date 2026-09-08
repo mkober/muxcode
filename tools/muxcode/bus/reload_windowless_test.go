@@ -145,7 +145,13 @@ func TestReloadBatchConfiguresWindowlessRole(t *testing.T) {
 	cfg := stubConfigFile(t)
 	stubTmuxWindowList(t, "plan", "edit", "build")
 
-	results := ReloadBatch("sess", []string{"analyze"}, "opencode", "some/model-x", false, nil)
+	// Mirrors the live report: analyze is switched to codex while the session's
+	// exported env still says opencode.
+	t.Setenv("BUS_SESSION", "sess")
+	t.Setenv(RoleCLIEnvVar("analyze"), "opencode")
+	t.Setenv(RoleModelEnvVar("analyze"), "stale/env-model")
+
+	results := ReloadBatch("sess", []string{"analyze"}, "codex", "some/model-x", false, nil)
 	if len(results) != 1 {
 		t.Fatalf("want 1 result, got %d", len(results))
 	}
@@ -156,15 +162,22 @@ func TestReloadBatchConfiguresWindowlessRole(t *testing.T) {
 	if !r.Success {
 		t.Fatalf("config-only apply failed: %v", r.Error)
 	}
-	if r.NewModel != "some/model-x" {
-		t.Errorf("result must report the persisted model, got %q", r.NewModel)
+
+	if got := ResolveProviderCLI("analyze"); got != "codex" {
+		t.Errorf("CLI must resolve to the new value despite the stale env var, got %q", got)
+	}
+	if got := EffectiveConfig("analyze").Model; got != "some/model-x" {
+		t.Errorf("model must resolve to the new value despite the stale env var, got %q", got)
+	}
+	if r.NewCLI != "codex" {
+		t.Errorf("result row must show the new CLI, got %q", r.NewCLI)
 	}
 
 	data, err := os.ReadFile(cfg)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	// The whole point is that it outlives the session, so it has to reach disk.
+	// And it must also outlive the session, so it has to reach disk.
 	for _, want := range []string{"MUXCODE_ANALYZE_MODEL", "some/model-x"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("config missing %q:\n%s", want, data)

@@ -34,26 +34,37 @@ type ReloadResult struct {
 	ConfigOnly bool
 }
 
-// ConfigureWindowlessRole persists a role's CLI and model without stopping or
-// relaunching anything.
+// ConfigureWindowlessRole sets a role's CLI and model without stopping or
+// relaunching anything, writing BOTH config stores.
 //
-// A windowless role has no process to reload, but it is still configurable: the
-// setting has to survive until something does launch it. That rules out the
-// runtime override ReloadAgent writes, which lives in the session's bus dir and
-// dies with the session — so this writes the shell config instead, the same
-// store `muxcode config set` uses.
-func ConfigureWindowlessRole(role, cli, model string) error {
-	if cli != "" {
-		if err := SetShellConfigValue(RoleCLIEnvVar(role), cli); err != nil {
-			return fmt.Errorf("persist CLI for %s: %w", role, err)
+// Each store alone is insufficient, and picking one was the original bug. The
+// shell config survives the session but is never consulted by
+// ResolveProviderCLI — it reaches a role only by being sourced into the
+// environment at launch, so a write to it is invisible for the whole current
+// session, and worse, is outranked by the value the session already exported.
+// The runtime override is read directly and outranks that stale env, so it is
+// what makes the change real now — but it lives in the session's bus dir and
+// dies with it.
+//
+// So: the override makes the setting take effect and show up immediately, the
+// shell config carries it to the next session.
+func ConfigureWindowlessRole(session, role, cli, model string) error {
+	set := func(key, value string) error {
+		if value == "" {
+			return nil
 		}
-	}
-	if model != "" {
-		if err := SetShellConfigValue(RoleModelEnvVar(role), model); err != nil {
-			return fmt.Errorf("persist model for %s: %w", role, err)
+		if err := SetShellConfigValue(key, value); err != nil {
+			return fmt.Errorf("persist %s for %s: %w", key, role, err)
 		}
+		if err := WriteRuntimeOverride(session, role, key, value); err != nil {
+			return fmt.Errorf("override %s for %s: %w", key, role, err)
+		}
+		return nil
 	}
-	return nil
+	if err := set(RoleCLIEnvVar(role), cli); err != nil {
+		return err
+	}
+	return set(RoleModelEnvVar(role), model)
 }
 
 // ReloadProgress is called during ReloadBatch to report per-agent progress.
@@ -155,27 +166,6 @@ func ConfigOnlyRole(windows []string, windowsKnown bool, role string) bool {
 	return !RoleWindowPresent(windows, role)
 }
 
-// persistedPair reports the CLI and model a config-only apply has left in
-// effect, falling back to the old values for anything unset or on failure.
-//
-// It reports what was WRITTEN rather than what the process now resolves: the
-// session exported these vars at launch, and an inherited env value shadows the
-// config file in the resolution chain, so re-reading would show the old value
-// and the result row would claim nothing changed.
-func persistedPair(oldCLI, oldModel, cli, model string, err error) (string, string) {
-	if err != nil {
-		return oldCLI, oldModel
-	}
-	newCLI, newModel := oldCLI, oldModel
-	if cli != "" {
-		newCLI = cli
-	}
-	if model != "" {
-		newModel = model
-	}
-	return newCLI, newModel
-}
-
 // ReloadBatch reloads multiple agents sequentially with CLI/model overrides.
 // Returns per-agent results. Continues on individual failures (failure isolation).
 // The optional progress callback is invoked after each agent completes.
@@ -202,8 +192,8 @@ func ReloadBatch(session string, roles []string, cli, model string, compact bool
 		if configOnly {
 			oldCLI := ResolveProviderCLI(role)
 			oldRC := EffectiveConfig(role)
-			err := ConfigureWindowlessRole(role, cli, model)
-			newCLI, newModel := persistedPair(oldCLI, oldRC.Model, cli, model, err)
+			err := ConfigureWindowlessRole(session, role, cli, model)
+			newCLI, newModel := ResolveProviderCLI(role), EffectiveConfig(role).Model
 			result = ReloadResult{
 				Role: role, Success: err == nil, Error: err, ConfigOnly: true,
 				OldCLI: oldCLI, OldModel: oldRC.Model,

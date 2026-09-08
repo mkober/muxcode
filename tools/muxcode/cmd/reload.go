@@ -129,6 +129,9 @@ func Reload(args []string) {
 	if len(roles) == 1 {
 		// Single role — use ReloadAgent directly (existing behavior)
 		role := roles[0]
+		if configureIfWindowless(session, role, cli, model) {
+			return
+		}
 		if err := bus.ReloadAgent(session, role, cli, model, compact); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -181,4 +184,30 @@ func Reload(args []string) {
 	if failed > 0 {
 		os.Exit(1)
 	}
+}
+
+// configureIfWindowless applies a role's CLI/model as config when the role has
+// no window, reporting whether it handled the request.
+//
+// The CLI and the provider modal must agree on this: the modal routes windowless
+// roles to a config-only apply, and without the same branch here `muxcode reload
+// analyze --cli codex` refused work the modal performs — the same request
+// answered two different ways depending on which road it arrived by, which is
+// the MUX-142 shape.
+func configureIfWindowless(session, role, cli, model string) bool {
+	windows, err := bus.TmuxListWindowNames(session)
+	if !bus.ConfigOnlyRole(windows, err == nil && len(windows) > 0, role) {
+		return false
+	}
+	if cli == "" && model == "" {
+		fmt.Fprintf(os.Stderr, "Error: %s has no window — nothing to reload; pass --cli or --model to set its config\n", role)
+		os.Exit(1)
+	}
+	if err := bus.ConfigureWindowlessRole(session, role, cli, model); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("✓ %s configured — CLI: %s, Model: %s (no window: saved, not reloaded)\n",
+		role, bus.ResolveProviderCLI(role), bus.EffectiveConfig(role).Model)
+	return true
 }
