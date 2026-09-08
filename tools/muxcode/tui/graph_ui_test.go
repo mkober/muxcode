@@ -21,13 +21,27 @@ func scratchGraphSession(t *testing.T) string {
 	// because BusActorVerified checks ancestry for literal "user" claims, and
 	// this suite may run under an agent runtime.
 	t.Setenv("AGENT_ROLE", "tui-approver")
-	// Gate authority is read from the config file, never the environment, so an
-	// env var here would be ignored exactly as a self-authorizing agent's would.
-	authCfg := filepath.Join(t.TempDir(), "config")
-	if err := os.WriteFile(authCfg, []byte("MUXCODE_GATE_AUTHORITY_ROLES=tui-approver\n"), 0644); err != nil {
+	// Gate authority is read from fixed config paths — never the environment,
+	// and never $MUXCODE_CONFIG, since a caller-chosen path is a caller-chosen
+	// answer. So grant the approver by writing a REAL consulted path
+	// (`.muxcode/config`, relative to the working directory) inside a scratch
+	// directory, which also exercises the resolution production uses.
+	// os.Chdir rather than t.Chdir: the module targets go1.22. The directory is
+	// process-wide, so these tests must not run in parallel.
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("chdir to scratch: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+	if err := os.MkdirAll(".muxcode", 0755); err != nil {
+		t.Fatalf("create scratch .muxcode: %v", err)
+	}
+	if err := os.WriteFile(".muxcode/config", []byte("MUXCODE_GATE_AUTHORITY_ROLES=tui-approver\n"), 0644); err != nil {
 		t.Fatalf("seed gate authority config: %v", err)
 	}
-	t.Setenv("MUXCODE_CONFIG", authCfg)
 	session := "tui-graph-" + strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':

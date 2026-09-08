@@ -3,6 +3,7 @@ package bus
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -63,7 +64,35 @@ func GateApprovalAuthority() []string {
 // exists to ignore, and routing through it would let a caller suppress the
 // configured value simply by exporting the same name.
 func GateAuthorityConfigured() (string, bool) {
-	data, err := os.ReadFile(ResolveConfigPath())
+	for _, path := range gateAuthorityConfigPaths() {
+		if v, ok := readGateAuthorityFile(path); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// gateAuthorityConfigPaths lists, in precedence order, the files that may carry
+// the gate authority. It is a variable only so tests can point it at a scratch
+// file; nothing in production reassigns it.
+//
+// Deliberately NOT ResolveConfigPath: that honours $MUXCODE_CONFIG, so the file
+// consulted is chosen by the caller's environment. An agent refused a gate could
+// write its own config and re-run with `MUXCODE_CONFIG=/tmp/x muxcode graph
+// approve …` — the same self-authorization the env read allowed, one step
+// removed. The path must be fixed for the value to mean anything.
+var gateAuthorityConfigPaths = defaultGateAuthorityConfigPaths
+
+func defaultGateAuthorityConfigPaths() []string {
+	paths := []string{".muxcode/config"}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		paths = append(paths, filepath.Join(home, ".config", "muxcode", "config"))
+	}
+	return paths
+}
+
+func readGateAuthorityFile(path string) (string, bool) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", false
 	}

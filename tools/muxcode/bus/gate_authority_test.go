@@ -180,8 +180,11 @@ func TestApproveGraphGateHonorsConfiguredAuthority(t *testing.T) {
 	assertNoApproval(t, shut.ID, "gate")
 }
 
-// pinGateAuthorityConfig writes the gate authority into a scratch config file,
-// which is the only store GateApprovalAuthority reads.
+// pinGateAuthorityConfig points the authority read at a scratch config file.
+//
+// It overrides the path list directly rather than setting $MUXCODE_CONFIG: the
+// production reader deliberately ignores that variable, because honouring it
+// would let a caller choose which file the check consults.
 func pinGateAuthorityConfig(t *testing.T, value string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config")
@@ -189,7 +192,43 @@ func pinGateAuthorityConfig(t *testing.T, value string) {
 	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	t.Setenv("MUXCODE_CONFIG", path)
+	orig := gateAuthorityConfigPaths
+	gateAuthorityConfigPaths = func() []string { return []string{path} }
+	t.Cleanup(func() { gateAuthorityConfigPaths = orig })
+}
+
+// The second half of the P1: closing the environment READ left the config
+// PATH env-derived, so an agent could point the check at a file it wrote —
+// `MUXCODE_CONFIG=/tmp/x muxcode graph approve …`. The authority read must
+// ignore that variable entirely.
+func TestGateAuthorityIgnoresConfigPathOverride(t *testing.T) {
+	pinCompiledAuthorities(t)
+
+	planted := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(planted, []byte("MUXCODE_GATE_AUTHORITY_ROLES=user,build\n"), 0644); err != nil {
+		t.Fatalf("write planted config: %v", err)
+	}
+	t.Setenv("MUXCODE_CONFIG", planted)
+
+	for _, actor := range GateApprovalAuthority() {
+		if NormalizeBusRole(actor) == "build" {
+			t.Fatal("a planted config reached the authority via $MUXCODE_CONFIG — the path must be fixed")
+		}
+	}
+
+	// Negative control: the same file DOES grant when it is a path the reader
+	// actually consults, so the test above is about the env var and not about
+	// the file being ignored outright.
+	pinGateAuthorityConfig(t, "user,build")
+	found := false
+	for _, actor := range GateApprovalAuthority() {
+		if NormalizeBusRole(actor) == "build" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a config on a consulted path must still grant authority")
+	}
 }
 
 // The P1 this closes: the authority was read from the caller's own environment,
