@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // A wait_human gate is the only control standing between a graph run and an
@@ -46,11 +47,75 @@ var gateApprovalAuthorityDefault = []string{ActorUser}
 // only thing standing in the way, and CLAUDE.md names it anyway — obscurity, not
 // a control. A config file is a persistent, visible, auditable edit rather than
 // a per-invocation prefix, so the opt-in stays where it belongs: with the user.
+//
+// In a SEALED process the answer is the sealed list intersected with the
+// configured one, so the authority may be narrowed while the daemon runs but
+// never widened. Locking gates down must take effect at once; opening them up
+// is the move an agent would make, and it needs a daemon restart — itself a
+// logged event. See SealGateAuthority for why the seal, not this read, is the
+// control.
 func GateApprovalAuthority() []string {
+	current := configuredGateAuthority()
+	gateSealMu.RLock()
+	sealed, isSealed := sealedGateRoles, gateAuthoritySealed
+	gateSealMu.RUnlock()
+	if !isSealed {
+		return current
+	}
+	return intersectRoles(sealed, current)
+}
+
+// configuredGateAuthority resolves the list as the config files currently say.
+func configuredGateAuthority() []string {
 	if v, ok := GateAuthorityConfigured(); ok {
 		return splitTrimmed(v)
 	}
 	return gateApprovalAuthorityDefault
+}
+
+// A sealed list, and whether one was ever sealed — a sealed-empty list denies
+// everyone and must not read as "never sealed".
+var (
+	gateSealMu          sync.RWMutex
+	sealedGateRoles     []string
+	gateAuthoritySealed bool
+)
+
+// SealGateAuthority freezes the gate authority for this process's lifetime and
+// returns what it sealed. The daemon calls it once at startup, before its poll
+// loop; every other process leaves it unsealed and reads the config directly.
+//
+// Sealing is what turns the authority from a setting into a control. Every
+// input configuredGateAuthority reads is reachable by the agent being checked:
+// it can edit .muxcode/config, and os.UserHomeDir consults $HOME, so
+// `HOME=/tmp/mine muxcode graph approve …` still selects a file the agent wrote
+// — the same shape as the $MUXCODE_CONFIG hole closed in 31a2ca4, one variable
+// over. No same-uid process can be denied that, so the answer is not a file the
+// agent cannot reach but a read the agent cannot influence: the daemon resolves
+// the list once, in a process it did not launch and whose environment it did not
+// supply, and gateApprovalHolds decides the release on that.
+func SealGateAuthority() []string {
+	roles := configuredGateAuthority()
+	gateSealMu.Lock()
+	sealedGateRoles, gateAuthoritySealed = roles, true
+	gateSealMu.Unlock()
+	return append([]string(nil), roles...)
+}
+
+// intersectRoles keeps the sealed spelling of every role the current list also
+// grants, comparing normalized so an alias is not mistaken for a second grant.
+func intersectRoles(sealed, current []string) []string {
+	granted := make(map[string]bool, len(current))
+	for _, r := range current {
+		granted[NormalizeBusRole(r)] = true
+	}
+	out := []string{}
+	for _, r := range sealed {
+		if granted[NormalizeBusRole(r)] {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // GateAuthorityConfigured reads the gate authority override from the muxcode

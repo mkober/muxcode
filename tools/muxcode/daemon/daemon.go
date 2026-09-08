@@ -318,6 +318,7 @@ func (d *Daemon) Run() error {
 	if err := bus.WriteDaemonVersion(d.session, build); err != nil {
 		bus.LogLifecycle(d.session, "warn", "daemon", "version-write-failed", err.Error())
 	}
+	d.sealGateAuthority()
 
 	fmt.Println("  Agent Bus Daemon")
 	fmt.Printf("  Version: %s\n", build.Version)
@@ -2881,6 +2882,22 @@ func (d *Daemon) checkNonHookTasks() {
 		// Notify the requester so they pick up the response
 		_ = bus.Notify(d.session, task.From)
 	}
+}
+
+// sealGateAuthority freezes who may release a wait_human gate for this daemon's
+// lifetime and records the answer (MUX-144 Phase 2).
+//
+// It runs once, at startup, because every input to the list is a file the agents
+// can write: sealing here is what stops one from widening the authority
+// mid-session and then approving its own gate. Narrowing still takes effect
+// live; widening waits for the next daemon start, which this event dates.
+func (d *Daemon) sealGateAuthority() {
+	sealed := "no actor"
+	if roles := bus.SealGateAuthority(); len(roles) > 0 {
+		sealed = strings.Join(roles, ", ")
+	}
+	bus.LogLifecycle(d.session, "info", "daemon", "gate-authority-sealed",
+		"wait_human gates may be released by: "+sealed)
 }
 
 // checkGraphRuns advances every in-flight graph run one executor tick

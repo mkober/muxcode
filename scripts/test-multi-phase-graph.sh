@@ -67,7 +67,8 @@ bad() { echo "  ${RED}FAIL${NC}  $*"; fail=$((fail + 1)); dump_diag; }
 # Releasing a gate needs an authorized actor that did not create the run
 # (MUX-144). This stands in for the human at the CLI, under an identity no agent
 # can hold, so the self-approval rule cannot collide with whoever runs the script.
-export MUXCODE_GATE_AUTHORITY_ROLES=test-approver
+# The opt-in itself goes into a scratch HOME below, not this environment: the
+# authority is read from the config file, and the daemon seals it at startup.
 approve_gate() { AGENT_ROLE=test-approver "$MUX" graph approve "$@"; }
 
 # dump_diag — on the FIRST failure, dump every run's node states and the
@@ -93,6 +94,9 @@ BD="/tmp/muxcode-bus-${BUS_SESSION}"
 WORK="/tmp/multiphase-work-$$"
 REPO="$WORK/repo"
 mkdir -p "$REPO/docs/requirements/drafts"
+export HOME="$WORK/home"
+mkdir -p "$HOME/.config/muxcode"
+echo "MUXCODE_GATE_AUTHORITY_ROLES=test-approver" > "$HOME/.config/muxcode/config"
 # The fixture repo is a REAL git repo: spawn nodes cut worktrees from the
 # daemon's CWD repo, and the harvest diffs/applies between worktree and
 # checkout. Worktrees land under the OS temp dir (SpawnWorktreeBase).

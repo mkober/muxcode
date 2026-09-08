@@ -46,6 +46,7 @@ func pinCompiledAuthorities(t *testing.T) {
 	origPaths := gateAuthorityConfigPaths
 	gateAuthorityConfigPaths = func() []string { return []string{empty} }
 	t.Cleanup(func() { gateAuthorityConfigPaths = origPaths })
+	unsealGateAuthority(t)
 }
 
 // TestGraphCommitDispatchPassesCommitAuthority pins Defect C: a graph send node

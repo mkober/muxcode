@@ -2,6 +2,7 @@ package bus
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -277,6 +278,128 @@ func TestExecUnknownHoldsForApproval(t *testing.T) {
 	}
 }
 
+// completeSendNodeSentinel completes a node with a response payload and
+// leaves NO authoritative history row, reproducing a non-hook provider
+// (Codex, OpenCode) where the sentinel is the only verdict.
+//
+// The role's history is truncated first: these tests share one session, so a
+// row written by an earlier test within the same second would otherwise
+// outrank the sentinel and decide the outcome instead.
+func completeSendNodeSentinel(t *testing.T, session, runID, nodeID, payload string) {
+	t.Helper()
+	g, err := ReadGraphRunGraph(session, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range g.Nodes {
+		if n.ID == nodeID {
+			if err := os.Remove(HistoryPath(session, NormalizeBusRole(n.Role))); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+		}
+	}
+	resp := NewMessage("build", "edit", "response", "response", payload, "")
+	if err := Send(session, resp); err != nil {
+		t.Fatal(err)
+	}
+	st, err := ReadNodeStatus(session, runID, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	CompleteTask(session, st.TaskID, resp.ID)
+}
+
+func TestParseExitSentinel(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+		want    string
+		found   bool
+	}{
+		{"zero is success", "EXIT=0", OutcomeSuccess, true},
+		{"nonzero is failure", "EXIT=1", OutcomeFailure, true},
+		{"padded zero is success", "EXIT=00", OutcomeSuccess, true},
+		{"trailing prose", "Build green. EXIT=0", OutcomeSuccess, true},
+		{"last sentinel wins", "report EXIT=0 when done\nEXIT=1", OutcomeFailure, true},
+
+		// Negative controls. Without these a parser that always claims a
+		// verdict — the very failure this replaces — would pass every case
+		// above.
+		{"empty", "", "", false},
+		{"status line echo", "• Working (9s • esc to interrupt)", "", false},
+		{"unfilled placeholder", "report the code as EXIT=<n>", "", false},
+		{"not at word boundary", "PREEXIT=0", "", false},
+		{"digits run into text", "EXIT=0abc", "", false},
+		{"prose verdict only", "Build succeeded; all checks passed", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseExitSentinel(tc.payload)
+			if ok != tc.found {
+				t.Fatalf("found=%v, want %v (payload %q)", ok, tc.found, tc.payload)
+			}
+			if got != tc.want {
+				t.Errorf("outcome %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The user-facing fix: a build/test node on a non-hook provider must advance
+// on its own exit code. Before the sentinel every such node derived "unknown"
+// and stalled the run on a human approval no work node should ever need.
+func TestExecSentinelAdvancesWithoutApproval(t *testing.T) {
+	run := createTestRun(t, linearGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNodeSentinel(t, runTestSession, run.ID, "a", "Build succeeded. EXIT=0")
+	step(t, runTestSession, run.ID)
+
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+	if st.Outcome != OutcomeSuccess {
+		t.Errorf("a outcome %q, want success — sentinel is the verdict with no hook row", st.Outcome)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodeRunning {
+		t.Errorf("b state %q, want running — a sentinel must advance the graph unattended", s)
+	}
+	for _, p := range gateRequestPayloads(t, run.ID) {
+		t.Errorf("work node asked for approval: %q", p)
+	}
+}
+
+func TestExecSentinelFailureRoutesFailure(t *testing.T) {
+	run := createTestRun(t, linearGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNodeSentinel(t, runTestSession, run.ID, "a", "compile error\nEXIT=2")
+	step(t, runTestSession, run.ID)
+
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+	if st.Outcome != OutcomeFailure {
+		t.Errorf("a outcome %q, want failure — a nonzero sentinel must not pass as success", st.Outcome)
+	}
+}
+
+// Precedence: a hook-recorded row is authoritative, a sentinel is only
+// self-reported. Reordering the two checks must fail here.
+func TestAuthoritativeRowOutranksSentinel(t *testing.T) {
+	run := createTestRun(t, linearGraph())
+
+	step(t, runTestSession, run.ID)
+	completeSendNodeSentinel(t, runTestSession, run.ID, "a", "all good EXIT=0")
+	row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: "./build.sh",
+		ExitCode: "1", Outcome: OutcomeFailure}
+	if err := WriteHookHistory(HistoryPath(runTestSession, "build"), row, 100); err != nil {
+		t.Fatal(err)
+	}
+	step(t, runTestSession, run.ID)
+
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+	if st.Outcome != OutcomeFailure {
+		t.Errorf("a outcome %q, want failure — the hook row outranks a self-reported sentinel", st.Outcome)
+	}
+}
+
 // gateRequestPayloads returns every graph-approval request edit received for a
 // run.
 func gateRequestPayloads(t *testing.T, runID string) []string {
@@ -421,11 +544,11 @@ func TestExecUnverifiedHoldRefusesWhenAncestryUnreadable(t *testing.T) {
 
 // Negative control for the three above, and specifically for the helper they
 // share: a forgeApproval that wrote nothing readable would leave every one of
-// them passing on a node that was never approved at all. The same forged marker
-// naming a person must release the hold.
+// them passing on a node that was never approved at all. A forged marker naming
+// a person must not release the hold either.
 func TestExecUnverifiedHoldReleasedByUser(t *testing.T) {
-	if s := refuseForgedHold(t, ActorUser); s != GraphNodeRunning {
-		t.Errorf("b state %q, want running — a person's approval must release the hold", s)
+	if s := refuseForgedHold(t, ActorUser); s != GraphNodePending {
+		t.Errorf("b state %q, want pending — a forged person's marker must not release the hold", s)
 	}
 }
 

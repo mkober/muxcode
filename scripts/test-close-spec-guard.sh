@@ -46,7 +46,8 @@ bad() { echo "  ${RED}FAIL${NC}  $*"; fail=$((fail + 1)); }
 # Releasing a gate needs an authorized actor that did not create the run
 # (MUX-144). This stands in for the human at the CLI, under an identity no agent
 # can hold, so the self-approval rule cannot collide with whoever runs the script.
-export MUXCODE_GATE_AUTHORITY_ROLES=test-approver
+# The opt-in itself goes into a scratch HOME below, not this environment: the
+# authority is read from the config file, and the daemon seals it at startup.
 approve_gate() { AGENT_ROLE=test-approver "$MUX" graph approve "$@"; }
 
 # --- Isolation -------------------------------------------------------------
@@ -55,6 +56,9 @@ BD="/tmp/muxcode-bus-${BUS_SESSION}"
 WORK="/tmp/close-guard-work-$$"
 REPO="$WORK/repo"
 mkdir -p "$REPO/docs/requirements/drafts"
+export HOME="$WORK/home"
+mkdir -p "$HOME/.config/muxcode"
+echo "MUXCODE_GATE_AUTHORITY_ROLES=test-approver" > "$HOME/.config/muxcode/config"
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 : > "$WORK/empty-config"
 export MUXCODE_CONFIG="$WORK/empty-config"

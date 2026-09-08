@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // MUX-144 Phase 2 — the authority half of the gate.
@@ -195,6 +196,176 @@ func pinGateAuthorityConfig(t *testing.T, value string) {
 	orig := gateAuthorityConfigPaths
 	gateAuthorityConfigPaths = func() []string { return []string{path} }
 	t.Cleanup(func() { gateAuthorityConfigPaths = orig })
+}
+
+// unsealGateAuthority drops any seal, in this test and after it. The seal is
+// process-wide by design, so one test sealing it would otherwise decide what
+// every later test reads.
+func unsealGateAuthority(t *testing.T) {
+	t.Helper()
+	clear := func() {
+		gateSealMu.Lock()
+		sealedGateRoles, gateAuthoritySealed = nil, false
+		gateSealMu.Unlock()
+	}
+	clear()
+	t.Cleanup(clear)
+}
+
+// restoreProductionAuthorityPaths puts the shipped path resolution back, for a
+// test whose subject is the paths themselves rather than the value on them.
+func restoreProductionAuthorityPaths(t *testing.T) {
+	t.Helper()
+	orig := gateAuthorityConfigPaths
+	gateAuthorityConfigPaths = defaultGateAuthorityConfigPaths
+	t.Cleanup(func() { gateAuthorityConfigPaths = orig })
+}
+
+// TestSealedGateAuthorityIgnoresLaterWidening covers what the config-file read
+// could not: the file is agent-writable, so an agent refused a gate can edit the
+// list and try again. The daemon seals the list at startup and never re-reads it
+// upward, so that edit buys nothing until someone restarts the daemon.
+func TestSealedGateAuthorityIgnoresLaterWidening(t *testing.T) {
+	pinCompiledAuthorities(t)
+
+	SealGateAuthority()
+	pinGateAuthorityConfig(t, "user,build")
+
+	if deny := CheckGateApprovalAuthority("build", nil); deny == "" {
+		t.Error("a config edited after the seal widened the authority — the seal must hold for the daemon's lifetime")
+	}
+	if deny := CheckGateApprovalAuthority(ActorUser, nil); deny != "" {
+		t.Errorf("the sealed authority stopped admitting the user (%q) — sealing freezes the list, it does not empty it", deny)
+	}
+
+	// Negative control: the same widened config DOES admit build unsealed, so the
+	// refusal above is the seal at work and not the file being ignored outright.
+	unsealGateAuthority(t)
+	if deny := CheckGateApprovalAuthority("build", nil); deny != "" {
+		t.Errorf("unsealed, a config granting build refused it (%q)", deny)
+	}
+}
+
+// TestSealedGateAuthorityHonorsLaterNarrowing pins the asymmetry. A seal that
+// froze the list in both directions would make an emergency lockdown wait for a
+// daemon restart, and shutting gates is never the move an agent wants.
+func TestSealedGateAuthorityHonorsLaterNarrowing(t *testing.T) {
+	pinCompiledAuthorities(t)
+	pinGateAuthorityConfig(t, "user,build")
+	SealGateAuthority()
+
+	if deny := CheckGateApprovalAuthority("build", nil); deny != "" {
+		t.Fatalf("the sealed list refused a role it sealed (%q) — the premise of the narrowing below", deny)
+	}
+
+	pinGateAuthorityConfig(t, "user")
+	if deny := CheckGateApprovalAuthority("build", nil); deny == "" {
+		t.Error("narrowing the config left build authorized — a lockdown must not wait for a daemon restart")
+	}
+	if deny := CheckGateApprovalAuthority(ActorUser, nil); deny != "" {
+		t.Errorf("narrowing refused the user too (%q) — it must remove only what it removed", deny)
+	}
+}
+
+// TestSealedGateAuthorityIgnoresHomeSelectedConfig pins the last
+// caller-reachable input to the authority read, and that sealing is what closes
+// it.
+//
+// gateAuthorityConfigPaths stopped honouring $MUXCODE_CONFIG in 31a2ca4, but its
+// second entry sits under os.UserHomeDir — which is $HOME — so an UNSEALED read
+// is still steered by `HOME=/tmp/mine muxcode graph approve …`, the same hole one
+// variable over. The control half below asserts that; if a later change closes
+// it, invert that half rather than deleting it.
+func TestSealedGateAuthorityIgnoresHomeSelectedConfig(t *testing.T) {
+	pinCompiledAuthorities(t)
+	SealGateAuthority()
+	restoreProductionAuthorityPaths(t)
+
+	home := t.TempDir()
+	dir := filepath.Join(home, ".config", "muxcode")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir planted config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte("MUXCODE_GATE_AUTHORITY_ROLES=user,build\n"), 0644); err != nil {
+		t.Fatalf("write planted config: %v", err)
+	}
+	t.Setenv("HOME", home)
+
+	if deny := CheckGateApprovalAuthority("build", nil); deny == "" {
+		t.Error("a config under a planted $HOME widened a sealed authority — the seal must not re-read the caller's paths")
+	}
+
+	// Control: unsealed, the planted $HOME does reach the read. It records the
+	// residual hole this seal exists to cover, and proves the assertion above is
+	// about sealing rather than about the file never being consulted. It assumes
+	// no ./.muxcode/config in the package directory shadows the $HOME entry.
+	unsealGateAuthority(t)
+	if deny := CheckGateApprovalAuthority("build", nil); deny != "" {
+		t.Errorf("unsealed, a planted $HOME did not reach the authority read (%q) — that hole is closed; invert this control", deny)
+	}
+}
+
+// armGate drives actorGateGraph's send node to success so its gate is waiting.
+func armGate(t *testing.T, runID string) {
+	t.Helper()
+	step(t, runTestSession, runID)
+	completeSendNode(t, runTestSession, runID, "a", OutcomeSuccess)
+	step(t, runTestSession, runID)
+	if s := nodeState(t, runTestSession, runID, "gate"); s != GraphNodeWaiting {
+		t.Fatalf("gate state %q, want waiting before approval", s)
+	}
+}
+
+// TestHarvestWaitHumanRefusesUnauthorizedApproval is the daemon-side half of the
+// authority: ApproveGraphGate's refusal runs in the approver's own process, so a
+// marker written straight to disk never meets it. The executor re-decides on the
+// recorded approver, and refuses the release rather than trusting the file.
+//
+// The unattributed case is a deliberate departure from "approved_by is
+// additive": a grant naming nobody cannot be checked against anyone, and the
+// markers that predate the field live only in a session's /tmp bus directory.
+func TestHarvestWaitHumanRefusesUnauthorizedApproval(t *testing.T) {
+	pinCompiledAuthorities(t)
+	pinActor(t, "")
+
+	for _, tc := range []struct {
+		name   string
+		marker map[string]any
+	}{
+		{"an agent naming itself", map[string]any{"approved_at": time.Now().Unix(), "approved_by": "build"}},
+		{"a forged user approval", map[string]any{"approved_at": time.Now().Unix(), "approved_by": ActorUser}},
+		{"an unattributed grant", map[string]any{"approved_at": time.Now().Unix()}},
+	} {
+		run := createTestRun(t, actorGateGraph())
+		armGate(t, run.ID)
+		if err := atomicWriteJSON(graphApprovalPath(runTestSession, run.ID, "gate", "approved"), tc.marker); err != nil {
+			t.Fatalf("%s: write marker: %v", tc.name, err)
+		}
+
+		step(t, runTestSession, run.ID)
+		if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeWaiting {
+			t.Errorf("%s: gate state %q, want waiting — the daemon honoured a grant it would have refused", tc.name, s)
+		}
+		if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodePending {
+			t.Errorf("%s: commit node state %q, want pending", tc.name, s)
+		}
+		assertNoApproval(t, run.ID, "gate")
+	}
+
+	// Negative control: a person's grant opens the same gate, so the refusals
+	// above are about the approver and not about gates that never open.
+	run := createTestRun(t, actorGateGraph())
+	armGate(t, run.ID)
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("a person's approval was refused: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "gate"); s != GraphNodeDone {
+		t.Errorf("gate state %q after a person's approval, want done", s)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodeRunning {
+		t.Errorf("commit node state %q, want running", s)
+	}
 }
 
 // The second half of the P1: closing the environment READ left the config
