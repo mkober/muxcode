@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -517,6 +518,61 @@ func TestRenderGraphFrame_ConditionBranchGlyph(t *testing.T) {
 	}
 }
 
+// Completed nodes rank last, so a short pane dropped them with no way
+// back: the flat branch never received the scroll offset the DAG view
+// already had (user report 2026-09-08). Scrolling must reach them.
+func TestRenderGraphFallback_ScrollReachesCompletedNodes(t *testing.T) {
+	g := fanOutJoinGraph()
+	done := g.Nodes[0].ID
+	snap := snapshot(g, map[string]string{done: bus.GraphNodeDone})
+
+	const budget = 3 // header + a row + a notice: far fewer than the nodes
+	top := StripAnsi(renderGraphFallback(snap, 120, budget, "", 0))
+	if strings.Contains(top, done) {
+		t.Fatalf("fixture must push the done node out of view, or scrolling proves nothing:\n%s", top)
+	}
+	if !strings.Contains(top, "↓") {
+		t.Errorf("rows below the window must be announced:\n%s", top)
+	}
+
+	var reached bool
+	for scroll := 1; scroll < len(g.Nodes)+2; scroll++ {
+		f := StripAnsi(renderGraphFallback(snap, 120, budget, "", scroll))
+		if strings.Contains(f, done) {
+			reached = true
+			if !strings.Contains(f, "↑") {
+				t.Errorf("rows above the window must be announced at scroll %d:\n%s", scroll, f)
+			}
+			break
+		}
+	}
+	if !reached {
+		t.Errorf("no scroll offset revealed the completed node %q", done)
+	}
+}
+
+// The window must follow the cursor: a selection outside it pulls it
+// back, so moving the cursor never hides the row it points at.
+func TestFlatWindowFollowsSelection(t *testing.T) {
+	rows := make([]fallbackRow, 8)
+	for i := range rows {
+		rows[i] = fallbackRow{id: fmt.Sprintf("n%d", i), defIdx: i}
+	}
+	win, above, _ := flatWindow(rows, 3, 0, "n7")
+	if len(win) == 0 {
+		t.Fatal("window must not be empty")
+	}
+	if rowIndexOf(win, "n7") < 0 {
+		t.Errorf("selection must be pulled into view, window=%v above=%d", win, above)
+	}
+
+	// Negative control: with no selection the window stays at the offset.
+	win2, above2, _ := flatWindow(rows, 3, 0, "")
+	if above2 != 0 || rowIndexOf(win2, "n0") < 0 {
+		t.Errorf("unselected window must start at the top, got above=%d window=%v", above2, win2)
+	}
+}
+
 // A held node is Done, so state alone paints the run's blocker as its most
 // finished node: green tick, ranked below every pending row, clipped off a
 // short pane. The user could not find what stopped the run (2026-09-04).
@@ -525,7 +581,7 @@ func TestRenderGraphFallback_HeldNodeLeadsAndIsMarked(t *testing.T) {
 	held := g.Nodes[len(g.Nodes)-1].ID // last in definition order: ranking alone must lift it
 
 	plain := snapshot(g, map[string]string{held: bus.GraphNodeDone})
-	base := StripAnsi(renderGraphFallback(plain, 120, 0, ""))
+	base := StripAnsi(renderGraphFallback(plain, 120, 0, "", 0))
 	if strings.Contains(base, "held") {
 		t.Errorf("negative control: an unheld done node must not read as held:\n%s", base)
 	}
@@ -535,7 +591,7 @@ func TestRenderGraphFallback_HeldNodeLeadsAndIsMarked(t *testing.T) {
 
 	snap := snapshot(g, map[string]string{held: bus.GraphNodeDone})
 	snap.Held = map[string]bool{held: true}
-	frame := StripAnsi(renderGraphFallback(snap, 120, 0, ""))
+	frame := StripAnsi(renderGraphFallback(snap, 120, 0, "", 0))
 	if !strings.Contains(frame, "held") {
 		t.Errorf("a held node must say so, not read as done:\n%s", frame)
 	}
@@ -556,7 +612,7 @@ func TestRenderGraphFallback_ClampsToBudgetKeepingBlocker(t *testing.T) {
 	snap.Held = map[string]bool{held: true}
 
 	const budget = 4 // header + 2 rows + notice: fewer than the 4 nodes, so it must truncate
-	frame := StripAnsi(renderGraphFallback(snap, 120, budget, ""))
+	frame := StripAnsi(renderGraphFallback(snap, 120, budget, "", 0))
 
 	if n := strings.Count(frame, "\n"); n > budget {
 		t.Errorf("emitted %d lines on a budget of %d:\n%s", n, budget, frame)
@@ -568,7 +624,7 @@ func TestRenderGraphFallback_ClampsToBudgetKeepingBlocker(t *testing.T) {
 		t.Errorf("truncation dropped the blocker %q — the sort must keep it:\n%s", held, frame)
 	}
 
-	full := StripAnsi(renderGraphFallback(snap, 120, 0, ""))
+	full := StripAnsi(renderGraphFallback(snap, 120, 0, "", 0))
 	if strings.Contains(full, "more") {
 		t.Errorf("negative control: an unbudgeted list must not claim truncation:\n%s", full)
 	}
@@ -584,12 +640,12 @@ func TestRenderGraphFallback_KeepsSelectionVisible(t *testing.T) {
 	snap := snapshot(g, map[string]string{g.Nodes[0].ID: bus.GraphNodeRunning})
 	const budget = 4
 
-	cut := StripAnsi(renderGraphFallback(snap, 120, budget, ""))
+	cut := StripAnsi(renderGraphFallback(snap, 120, budget, "", 0))
 	if strings.Contains(cut, sel) {
 		t.Fatalf("fixture must drop %q when unselected, else nothing here is tested:\n%s", sel, cut)
 	}
 
-	frame := StripAnsi(renderGraphFallback(snap, 120, budget, sel))
+	frame := StripAnsi(renderGraphFallback(snap, 120, budget, sel, 0))
 	if !strings.Contains(frame, sel) {
 		t.Errorf("selected row %q was truncated away — the cursor must stay on screen:\n%s", sel, frame)
 	}
@@ -610,7 +666,7 @@ func TestRenderGraphFallback_KeepsSelectionAtMinimumBudget(t *testing.T) {
 
 	snap := snapshot(g, map[string]string{g.Nodes[0].ID: bus.GraphNodeRunning})
 	const budget = 2 // header + exactly one more line
-	frame := StripAnsi(renderGraphFallback(snap, 120, budget, sel))
+	frame := StripAnsi(renderGraphFallback(snap, 120, budget, sel, 0))
 
 	if !strings.Contains(frame, sel) {
 		t.Errorf("selected row %q lost at the minimum budget:\n%s", sel, frame)

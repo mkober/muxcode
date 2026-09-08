@@ -16,6 +16,12 @@ import (
 // and removes it afterwards — nothing lands in a real session's store.
 func scratchGraphSession(t *testing.T) string {
 	t.Helper()
+	// TUI actions represent the person at the keyboard, regardless of the
+	// agent identity inherited by the test process. Use a named test approver
+	// because BusActorVerified checks ancestry for literal "user" claims, and
+	// this suite may run under an agent runtime.
+	t.Setenv("AGENT_ROLE", "tui-approver")
+	t.Setenv("MUXCODE_GATE_AUTHORITY_ROLES", "tui-approver")
 	session := "tui-graph-" + strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
@@ -30,6 +36,15 @@ func scratchGraphSession(t *testing.T) string {
 
 func mustCreateRun(t *testing.T, session string, g *bus.Graph) *bus.GraphRun {
 	t.Helper()
+	oldAgent, hadAgent := os.LookupEnv("AGENT_ROLE")
+	os.Setenv("AGENT_ROLE", "tui-fixture")
+	defer func() {
+		if hadAgent {
+			os.Setenv("AGENT_ROLE", oldAgent)
+		} else {
+			os.Unsetenv("AGENT_ROLE")
+		}
+	}()
 	run, err := bus.CreateGraphRun(session, g, g.Name, "test intent")
 	if err != nil {
 		t.Fatalf("CreateGraphRun: %v", err)

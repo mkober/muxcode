@@ -413,7 +413,7 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 		return frameWithDetails(top, snap, width, height, now, scroll)
 	}
 	if gridW > width || gridH+skipLanes+headerLines > height {
-		return renderGraphHeader(snap, now, width) + renderGraphFallback(snap, width, height-headerLines, selection)
+		return renderGraphHeader(snap, now, width) + renderGraphFallback(snap, width, height-headerLines, selection, scroll)
 	}
 
 	c := newCanvas(gridW+2, gridH+skipLanes+1)
@@ -774,37 +774,6 @@ type fallbackRow struct {
 	id, typ, state, outcome string
 	held                    bool
 	defIdx                  int
-}
-
-// keepWithinBudget trims rows to shown, returning the kept rows and how many
-// were dropped. The list is sorted by urgency, so trimming from the bottom
-// drops the least urgent.
-//
-// The selected row is always kept, displacing the last row that would fit. A
-// cursor scrolled off-screen is worse than a missing row: the confirm names a
-// node the list does not show, so you approve something you cannot see — the
-// same class of defect as the held node this view already hid once.
-func keepWithinBudget(rows []fallbackRow, shown int, selection string) ([]fallbackRow, int) {
-	if shown < 0 {
-		shown = 0
-	}
-	kept := rows[:shown]
-	if selection != "" {
-		for i := shown; i < len(rows); i++ {
-			if rows[i].id != selection {
-				continue
-			}
-			// At shown==0 the selected row takes the notice's line: one row the
-			// cursor is on beats a count of rows you cannot see.
-			if shown == 0 {
-				kept = rows[i : i+1]
-			} else {
-				kept = append(rows[:shown-1:shown-1], rows[i])
-			}
-			break
-		}
-	}
-	return kept, len(rows) - len(kept)
 }
 
 // fallbackRank ranks a row for the flat list. A held node ranks with a waiting
@@ -1823,7 +1792,7 @@ func RenderNodeDetailFrame(snap GraphSnapshot, nodeID string, width int) string 
 // budget is the rows available below the header; <= 0 means unbudgeted. The
 // list is truncated from the bottom because it is sorted by what needs eyes,
 // so an overflow drops the least urgent rows and never the blocker.
-func renderGraphFallback(snap GraphSnapshot, width, budget int, selection string) string {
+func renderGraphFallback(snap GraphSnapshot, width, budget int, selection string, scroll int) string {
 	rows := make([]fallbackRow, 0, len(snap.Graph.Nodes))
 	for i := range snap.Graph.Nodes {
 		n := &snap.Graph.Nodes[i]
@@ -1838,15 +1807,17 @@ func renderGraphFallback(snap GraphSnapshot, width, budget int, selection string
 		return rows[i].defIdx < rows[j].defIdx
 	})
 
-	// The header line and the "+N more" notice each cost a row of the budget.
-	hidden := 0
-	if rowBudget := budget - 1; rowBudget > 0 && len(rows) > rowBudget {
-		rows, hidden = keepWithinBudget(rows, rowBudget-1, selection)
+	window, above, below := rows, 0, 0
+	if budget > 0 {
+		window, above, below = flatWindow(rows, budget-1, scroll, selection)
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "  %s(graph wider than pane — flat view)%s\n", Comment, RST)
-	for _, r := range rows {
+	if above > 0 {
+		fmt.Fprintf(&b, "  %s↑ +%d more%s\n", Comment, above, RST)
+	}
+	for _, r := range window {
 		glyph, color := nodeGlyph(r.typ, r.state, r.outcome, r.held)
 		state := r.state
 		if r.held {
@@ -1863,8 +1834,70 @@ func renderGraphFallback(snap GraphSnapshot, width, budget int, selection string
 		}
 		b.WriteString(fitWidth(line, width) + "\n")
 	}
-	if hidden > 0 && (budget <= 0 || len(rows)+1 < budget) {
-		fmt.Fprintf(&b, "  %s… +%d more%s\n", Comment, hidden, RST)
+	if below > 0 {
+		fmt.Fprintf(&b, "  %s↓ +%d more%s\n", Comment, below, RST)
 	}
 	return b.String()
+}
+
+// flatWindow is the slice of rows visible at a scroll offset, with the
+// counts hidden above and below; each notice costs a row of the budget.
+//
+// The list used to keep the top rows by rank and drop the rest, so
+// completed nodes fell off with no way to reach them — scrolling was
+// wired to the detail panel only. A selection outside the window pulls
+// it back into view, so moving the cursor still follows it.
+func flatWindow(rows []fallbackRow, capacity, scroll int, selection string) (window []fallbackRow, above, below int) {
+	if capacity < 1 || len(rows) == 0 {
+		return nil, 0, len(rows)
+	}
+	for avail := capacity; avail >= 1; avail-- {
+		start, end := windowBounds(rows, avail, scroll, selection)
+		a, b := start, len(rows)-end
+		need := avail
+		if a > 0 {
+			need++
+		}
+		if b > 0 {
+			need++
+		}
+		if need <= capacity {
+			return rows[start:end], a, b
+		}
+		if avail == 1 {
+			// One line left and notices will not fit beside it: the row the
+			// cursor is on beats a count of rows you cannot see.
+			return rows[start:end], 0, 0
+		}
+	}
+	return nil, 0, len(rows)
+}
+
+// windowBounds is the row range shown for a given size, pulled to keep the
+// selection inside it and clamped to the ends of the list.
+func windowBounds(rows []fallbackRow, avail, scroll int, selection string) (start, end int) {
+	start = clamp(scroll, 0, len(rows)-1)
+	if sel := rowIndexOf(rows, selection); sel >= 0 {
+		if sel < start {
+			start = sel
+		} else if sel >= start+avail {
+			start = sel - avail + 1
+		}
+	}
+	end = start + avail
+	if end > len(rows) {
+		end = len(rows)
+		start = max(0, end-avail)
+	}
+	return start, end
+}
+
+// rowIndexOf is the position of id in rows, or -1.
+func rowIndexOf(rows []fallbackRow, id string) int {
+	for i := range rows {
+		if rows[i].id == id {
+			return i
+		}
+	}
+	return -1
 }
