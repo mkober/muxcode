@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +12,7 @@ import (
 )
 
 func TestCheckOllamaInference_Healthy(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHealthPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/generate" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
@@ -57,7 +56,7 @@ func TestCheckOllamaInference_Healthy(t *testing.T) {
 func TestCheckOllamaInference_Timeout(t *testing.T) {
 	// Server that hangs until test completes — done channel unblocks on close
 	done := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHealthPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-done
 	}))
 	defer func() {
@@ -75,7 +74,7 @@ func TestCheckOllamaInference_Timeout(t *testing.T) {
 }
 
 func TestCheckOllamaInference_ServerError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHealthPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("internal server error"))
 	}))
@@ -304,7 +303,7 @@ func TestFormatOllamaAlert_NoMessage(t *testing.T) {
 
 func TestCheckOllamaInference_ZeroTimeout(t *testing.T) {
 	// Verify default timeout is used when 0 is passed
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHealthPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := ChatResponse{
 			ID:      "test",
 			Choices: []ChatChoice{{Message: ChatMessage{Role: "assistant", Content: "ok"}}},
@@ -341,7 +340,7 @@ func TestFormatOllamaAlert_UnknownStatus(t *testing.T) {
 // distinguish (MUX-109 cold-load guard): responsive+loaded, responsive+
 // warming, and dead server.
 func TestOllamaModelLoaded(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHealthPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/ps" {
 			http.NotFound(w, r)
 			return

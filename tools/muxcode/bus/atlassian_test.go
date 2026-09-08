@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,7 +144,7 @@ func newTestConfig(serverURL string) *AtlassianConfig {
 }
 
 func TestJiraRead(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/rest/api/3/issue/TEST-123" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
@@ -189,7 +188,7 @@ func TestJiraRead(t *testing.T) {
 }
 
 func TestJiraRead_NullAssignee(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"fields":{"summary":"No owner","status":{"name":"Open"},"assignee":null,"issuetype":{"name":"Bug"},"priority":{"name":"Medium"},"description":null}}`)
 	}))
 	defer srv.Close()
@@ -204,7 +203,7 @@ func TestJiraRead_NullAssignee(t *testing.T) {
 }
 
 func TestJiraRead_HTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
 		fmt.Fprint(w, `{"errorMessages":["Issue does not exist"]}`)
 	}))
@@ -276,7 +275,7 @@ func TestConfluenceRead_InvalidPageID(t *testing.T) {
 }
 
 func TestJiraUpdate(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "PUT" {
 			t.Errorf("expected PUT, got %s", r.Method)
 		}
@@ -297,7 +296,7 @@ func TestJiraUpdate(t *testing.T) {
 }
 
 func TestJiraComment(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
@@ -322,7 +321,7 @@ func TestJiraComment(t *testing.T) {
 }
 
 func TestJiraComment_HTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(400)
 		fmt.Fprint(w, `{"errorMessages":["Bad request"]}`)
 	}))
@@ -340,7 +339,7 @@ func TestJiraComment_HTTPError(t *testing.T) {
 // --- Confluence API tests ---
 
 func TestConfluenceRead(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/wiki/rest/api/content/12345") {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
@@ -374,7 +373,7 @@ func TestConfluenceRead(t *testing.T) {
 }
 
 func TestConfluenceUpdate(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "PUT" {
 			t.Errorf("expected PUT, got %s", r.Method)
 		}
@@ -396,7 +395,7 @@ func TestConfluenceUpdate(t *testing.T) {
 }
 
 func TestConfluenceSearch(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/wiki/rest/api/content/search") {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
@@ -436,7 +435,7 @@ func TestConfluenceRead_MissingConfig(t *testing.T) {
 }
 
 func TestConfluenceSearch_HTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
 		fmt.Fprint(w, `{"message":"Forbidden"}`)
 	}))

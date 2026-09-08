@@ -148,6 +148,9 @@ func Run(ctx context.Context, cfg Config, sink EventSink) error {
 	ollama := NewOllamaClient(cfg.OllamaURL, cfg.OllamaModel)
 	ollama.NoThink = cfg.NoThink
 	ollama.APIKey = cfg.APIKey
+	if cfg.HTTPClient != nil {
+		ollama.HTTP = cfg.HTTPClient
+	}
 
 	if cfg.APIKey == "" {
 		// Verify Ollama connectivity — /api/tags is Ollama-specific, so a

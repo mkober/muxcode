@@ -47,6 +47,15 @@ func OllamaProbeSecs() time.Duration {
 
 // CheckOllamaInference sends a minimal generation to distinguish "process
 // alive but stuck" from "process healthy". Uses a fresh HTTP client with a
+// healthHTTPClient builds the client every Ollama probe uses.
+//
+// It is a variable so a test can route probes to an in-process handler instead
+// of a loopback socket, which the Codex sandbox refuses — a socket-bound test
+// panics before any assertion and takes every later module with it (MUX-153).
+var healthHTTPClient = func(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout}
+}
+
 // short timeout to avoid sharing the agent's long-timeout client.
 //
 // The probe uses /api/generate with think:false rather than the OpenAI
@@ -60,7 +69,7 @@ func CheckOllamaInference(baseURL, model string, timeout time.Duration) error {
 		timeout = OllamaProbeSecs()
 	}
 
-	client := &http.Client{Timeout: timeout}
+	client := healthHTTPClient(timeout)
 
 	think := false
 	req := struct {
@@ -132,7 +141,7 @@ func OllamaWarmupGraceSecs() int64 {
 // Matching mirrors CheckHealth: exact, or base-name when the configured
 // model has no explicit tag.
 func OllamaModelLoaded(baseURL, model string, timeout time.Duration) (responsive, loaded bool) {
-	client := &http.Client{Timeout: timeout}
+	client := healthHTTPClient(timeout)
 	resp, err := client.Get(baseURL + "/api/ps")
 	if err != nil {
 		return false, false
@@ -250,7 +259,7 @@ func RestartOllama(ctx context.Context, ollamaURL string) error {
 	// Poll for readiness
 	readyURL := ollamaURL + "/api/tags"
 	deadline := time.Now().Add(OllamaRestartReadyTimeout)
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := healthHTTPClient(2 * time.Second)
 
 	for time.Now().Before(deadline) {
 		select {

@@ -19,12 +19,18 @@ import (
 var ErrModelNotFound = errors.New("model not found")
 
 // OllamaConfig holds configuration for connecting to Ollama's API.
+//
+// HTTPClient overrides the transport and is nil in production. A test sets it
+// to reach a handler in-process instead of binding a loopback socket, which the
+// Codex sandbox refuses — a socket-bound test panics before any assertion and
+// takes every later module with it (MUX-153).
 type OllamaConfig struct {
 	BaseURL     string  // default "http://localhost:11434"
 	Model       string  // default "qwen3:4b" (must support tool calling)
 	Temperature float64 // default 0.1
 	Timeout     int     // seconds, default 120
 	MaxTokens   int     // default 4096
+	HTTPClient  *http.Client // nil in production; see the type doc
 }
 
 // DefaultOllamaConfig returns the default Ollama configuration.
@@ -212,12 +218,17 @@ type OllamaClient struct {
 
 // NewOllamaClient creates a new Ollama client with the given config.
 func NewOllamaClient(cfg OllamaConfig) *OllamaClient {
-	return &OllamaClient{
-		Config: cfg,
-		HTTP: &http.Client{
-			Timeout: time.Duration(cfg.Timeout) * time.Second,
-		},
+	httpClient := &http.Client{Timeout: time.Duration(cfg.Timeout) * time.Second}
+	if cfg.HTTPClient != nil {
+		// Copy so the override keeps the configured timeout without mutating a
+		// client the caller may share.
+		c := *cfg.HTTPClient
+		if c.Timeout == 0 {
+			c.Timeout = httpClient.Timeout
+		}
+		httpClient = &c
 	}
+	return &OllamaClient{Config: cfg, HTTP: httpClient}
 }
 
 // ChatComplete sends a chat completion request with tool definitions.

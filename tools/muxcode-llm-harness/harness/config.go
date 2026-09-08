@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ type Config struct {
 	BusRole     string        // bus identity role (commit, build, etc.) — for inbox, lock, send, history
 	Session     string        // bus session name
 	OllamaURL   string        // default http://localhost:11434
+	HTTPClient  *http.Client  // optional transport override; nil uses the default
 	OllamaModel string        // default qwen3:4b (must support tool calling)
 	MaxTurns    int           // max tool-calling turns per batch (default 10)
 	BusDir      string        // /tmp/muxcode-bus-{session}/

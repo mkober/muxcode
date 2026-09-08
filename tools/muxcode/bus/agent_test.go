@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -94,7 +93,7 @@ func TestProcessMessages_SimpleResponse(t *testing.T) {
 	defer func() { _ = Cleanup(session) }()
 
 	// Mock Ollama server that returns a simple text response
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := ChatResponse{
 			Choices: []ChatChoice{
 				{
@@ -114,8 +113,9 @@ func TestProcessMessages_SimpleResponse(t *testing.T) {
 		Role:    "commit",
 		Session: session,
 		Ollama: OllamaConfig{
-			BaseURL: server.URL,
-			Model:   "test-model",
+			BaseURL:    server.URL,
+			HTTPClient: server.Client(),
+			Model:      "test-model",
 			Timeout: 10,
 		},
 	}
@@ -163,7 +163,7 @@ func TestProcessMessages_WithToolCall(t *testing.T) {
 	defer func() { _ = Cleanup(session) }()
 
 	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		var req ChatRequest
 		json.NewDecoder(r.Body).Decode(&req)
@@ -229,8 +229,9 @@ func TestProcessMessages_WithToolCall(t *testing.T) {
 		Role:    "commit",
 		Session: session,
 		Ollama: OllamaConfig{
-			BaseURL: server.URL,
-			Model:   "test-model",
+			BaseURL:    server.URL,
+			HTTPClient: server.Client(),
+			Model:      "test-model",
 			Timeout: 10,
 		},
 	}
@@ -284,7 +285,7 @@ func TestAgentLoop_ContextCancel(t *testing.T) {
 
 	// Mock server for health check — done channel unblocks handlers on close
 	done := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/tags" {
 			w.Write([]byte(`{"models":[{"name":"test-model"}]}`))
 			return
@@ -301,8 +302,9 @@ func TestAgentLoop_ContextCancel(t *testing.T) {
 		Role:    "commit",
 		Session: session,
 		Ollama: OllamaConfig{
-			BaseURL: server.URL,
-			Model:   "test-model",
+			BaseURL:    server.URL,
+			HTTPClient: server.Client(),
+			Model:      "test-model",
 			Timeout: 10,
 		},
 	}
