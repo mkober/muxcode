@@ -202,9 +202,18 @@ made.
 
 ### Acceptance criteria
 
-- [ ] Approving a gate **requires authority**; the permitted roles are configurable and default to
-      something narrower than "every agent"
-- [ ] An autonomous agent **cannot approve a gate on a run it created**
+- [x] Approving a gate **requires authority**; the permitted roles are configurable and default to
+      something narrower than "every agent" — `CheckGateApprovalAuthority` (`bus/gate_authority.go`),
+      called from `ApproveGraphGate` so both roads (CLI and graph TUI) meet it; default is the
+      **user alone**, `MUXCODE_GATE_AUTHORITY_ROLES` opts roles in, the empty string denies every
+      actor, and `ActorUnknown` is refused whatever the list says. A refusal logs
+      `graph-gate-approval-refused` naming the actor. *Landed in `4349a7a`, 2026-09-08 14:21.*
+      **Review P1 (the list is caller-controlled) — narrowed in `d4ae976`, still open:** the setting is
+      read from the config file, never the approver's environment, but the file is agent-writable and
+      its path is env-derived — see the open Phase 2 step
+- [x] An autonomous agent **cannot approve a gate on a run it created** — the self-approval rule is
+      checked after the list, so widening the list does not lift it
+      (`TestApproveGraphGateRefusesSelfApproval`, `gate_authority_test.go`)
 - [x] Gate approval emits a lifecycle event **naming the approver**, and the marker records approver
       identity, not just a timestamp — `ApproveGraphGate` writes `approved_by` from `BusActorVerified`
       (`graph_exec.go:193`) and `announceGraphAction` calls `LogLifecycle` with the actor
@@ -217,8 +226,11 @@ made.
       actually enforced — rewritten to *"Authority gates are only as strong as the gate, and today
       that is weak (MUX-144)"*, naming both verified gaps and instructing readers to treat
       `wait_human` as a scheduling pause, not a security boundary, until this spec lands
-- [ ] **Negative control:** a genuine user approval at the CLI still releases the gate with no extra
-      friction, and the run proceeds exactly as today
+- [x] **Negative control:** a genuine user approval at the CLI still releases the gate with no extra
+      friction, and the run proceeds exactly as today — `TestApproveGraphGateAllowsUser`; the CLI's
+      `approve` calls `ApproveGraphGate` with nothing in between, and the three integration scripts
+      that release gates (`test-graph-orchestrator.sh`, `test-multi-phase-graph.sh`,
+      `test-close-spec-guard.sh`) now approve through the CLI as an opted-in scratch role
 - [ ] **Negative control:** the daemon's own legitimate non-git sends are unaffected by any change to
       sender normalization
 
@@ -228,6 +240,7 @@ made.
 |------|-----------|
 | `cmd/graph.go` | `approve` and `run` subcommands — where authority and audit are absent |
 | `bus/graph_exec.go` | `ApproveGraphGate` (:184), `graphSender` (:29), send dispatch (:739) |
+| `bus/gate_authority.go` | Phase 2: `GateApprovalAuthority()`, `GateAuthorityConfigured()` (config file, never the environment — but the file's path is `$MUXCODE_CONFIG`-derived and the file agent-writable; Phase 2 step 5), `CheckGateApprovalAuthority()` — the approver check and the self-approval rule |
 | `bus/commit_authority.go` | `CheckCommitAuthority` (:86) and the normalization that voids it for graphs |
 | `bus/config.go` | `NormalizeBusRole` daemon→edit (:729) |
 | `bus/graph.go` | `validateGates` (:567) — the half that works; must not regress |
@@ -264,12 +277,41 @@ made.
 
 ### Phase 2: Authority and identity on approval
 
-- [ ] Add an approver-authority check to `graph approve`, with a configurable role list
+- [x] Add an approver-authority check to `graph approve`, with a configurable role list —
+      `CheckGateApprovalAuthority` in `ApproveGraphGate` (not the CLI, because the graph TUI is a
+      second road to the same release); `MUXCODE_GATE_AUTHORITY_ROLES`, default `user`.
+      `TestGateApprovalAuthorityDefault`, `TestApproveGraphGateRefusesAgentRoles`,
+      `TestApproveGraphGateRefusesUnidentifiedApprovers`, `TestApproveGraphGateHonorsConfiguredAuthority`
 - [x] Record approver identity in the marker; keep it backward-compatible with existing markers or
       migrate them deliberately — `approved_by` is **additive**: `gateApprovalTime` reads only
       `approved_at`, so markers written before the field existed still parse (`graph_exec.go:182-183`)
-- [ ] Refuse self-approval: an agent may not approve a gate on a run it created
-- [ ] Negative control: an authorized human approval path is unchanged
+- [x] Refuse self-approval: an agent may not approve a gate on a run it created —
+      `run.CreatedBy` compared to the normalized actor; a person approving their own run is never
+      refused (`TestApproveGraphGateRefusesSelfApproval`)
+- [x] Negative control: an authorized human approval path is unchanged —
+      `TestApproveGraphGateAllowsUser`; `TestGraphCommitDispatchReachesCommitInbox` now releases as a
+      person and still reaches commit's inbox (the Phase 4 pin, sharpened rather than weakened)
+- [ ] The configured list is **not caller-controlled**: an agent cannot widen
+      `MUXCODE_GATE_AUTHORITY_ROLES` from its own environment for the one command it was just refused
+      — **review P1, 2026-09-08 14:14; narrowed in `d4ae976` at 14:47, not closed.** (Plan ticked
+      this on the commit and its test at 14:55; edit reopened it at 14:50 — rightly, see the end of
+      this step.) As landed in `4349a7a` the
+      list was read from the approver's own environment, the only mitigation was withholding the
+      variable name from the deny message, and `CLAUDE.md:150` named it to every agent anyway.
+      `GateApprovalAuthority` now reads the setting from the muxcode **config file** via
+      `GateAuthorityConfigured`, which parses the file directly — `GetShellConfig` ends its loop with
+      "env takes precedence", the exact inversion this control must avoid, and routing through it
+      failed five tests. `TestGateAuthorityIgnoresCallerEnvironment` pins the attack (a refused agent
+      re-running with `MUXCODE_GATE_AUTHORITY_ROLES=user,build` prefixed is still refused) with the
+      negative control that the same value **in the config file** does admit it. Suite 2915 / 0.
+      **Why it stays open:** the config file is agent-writable, and its *path* is env-derived —
+      `ResolveConfigPath` honours `$MUXCODE_CONFIG` before `.muxcode/config` and
+      `~/.config/muxcode/config` — so an agent with shell access can still self-authorize by pointing
+      the process at a file it wrote (`MUXCODE_CONFIG=/tmp/x muxcode graph approve …`). `d4ae976`
+      removed a one-line bypass and left a two-line one. The real fix is **daemon-side authority**:
+      the daemon reads the list once, from a store the agents cannot reach, and the approve path asks
+      the daemon rather than its own process. The commit and Atlassian authorities share this shape
+      and should move with it
 
 ### Phase 3: Audit the control plane
 
@@ -307,12 +349,39 @@ made.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-144-wait-human-gate-openable-by-any-agent | 2h 43m | 2026-09-08 11:04 |
+| MUX-144-wait-human-gate-openable-by-any-agent | 4h 14m | 2026-09-08 14:24 |
 
 ## Status
 
-**In Progress — 11/32, Phases 1 and 3 complete.** Moved to `drafts/` and set as the **active spec**
-2026-09-04.
+**In Progress — 17/33, Phases 1 and 3 complete; Phase 2 at 4/5 with the review's P1 narrowed but
+open.** Moved to `drafts/` and set as the **active spec** 2026-09-04; the pointer was lost in the
+2026-09-08 13:44 relaunch and re-set by the user.
+
+**Updated 2026-09-08 14:58.** `d4ae976` (14:47) **narrowed** the review's P1 — the authority list is
+now read from the config file, never the caller's environment — and plan ticked the step on that
+commit and its test. Edit reopened it minutes later, correctly: the config file is agent-writable and
+`ResolveConfigPath` honours `$MUXCODE_CONFIG`, so the bypass is two lines instead of one. The step
+stays open until authority is decided daemon-side; Phase 2 stands at 4/5. Phases 4 and 5 are
+untouched.
+
+**Verified 2026-09-08 14:24.** Phase 2 is **committed as `4349a7a` (14:21)** — this paragraph first
+said *uncommitted*, from a tree read taken at 14:14 that was three minutes stale by the time it was
+written; corrected 14:45. The commit carries: `bus/gate_authority.go`
+(`CheckGateApprovalAuthority` — default `user` alone, `MUXCODE_GATE_AUTHORITY_ROLES` opt-in, empty
+string denies all, `ActorUnknown` refused, self-approval refused whatever the list says),
+`ApproveGraphGate` calls it and logs `graph-gate-approval-refused`, the two Phase 1 pins for Defect A
+were inverted into six tests in `gate_authority_test.go`, the three integration scripts that release
+gates now do so through the CLI as an opted-in scratch role, and the `CLAUDE.md` paragraph was
+rewritten to describe Phase 2 as landed and Phase 4 as the open gap. Suite: **2901 pass / 0 fail, exit
+0, all six packages** — run on the **run** agent (Claude, unsandboxed) and read from its pane; the
+codex test agent produced no result all session (MUX-153). Review (codex): **P1 unresolved — the
+authority list is caller-controlled**, recorded as an open Phase 2 step above rather than ticked
+past (and narrowed, not closed, 33 minutes later in `d4ae976`); P2 (selection-pinned flat-view scrolling in the graph TUI) is outside this spec and was fixed in
+`287a350` (14:21).
+**Provenance note:** both `verify-spec` requests for this pass were fired by echoed codex status lines
+(`• Working (13s • esc to interrupt)`) that the daemon read as review successes at 14:12:55 and
+14:13:25 — 1m45s *before* the reviewer's genuine reply. Filed as MUX-154; the verification above uses
+the genuine reply.
 
 **Verified 2026-09-08.** **Phase 1 (Pin the bypass) is complete, and has been since `c2c1174`
 (2026-09-04 11:26)** — `bus/graph_bypass_test.go`, six characterization tests that assert the
@@ -329,11 +398,14 @@ show it as MUX-144 work. **Phase 3 (Audit the control plane) is complete**: run 
 approval both emit lifecycle events naming their actor, confirmed live in the log, and the marker
 records `approved_by` backward-compatibly (Phase 2 step 2).
 
-**The authority half is untouched.** `graph approve` still has no authority check, self-approval is
-still unrefused (`runProvenance` is a *display* string, not enforcement), and `CheckCommitAuthority`
-still normalizes `daemon` → `edit`. Phases 4 and 5 are at 0; Phase 2 stands at its marker step
-alone. The gate remains a scheduling pause,
-not a security boundary — the incident is now **attributable**, not **prevented**.
+**Phase 4 is untouched.** `CheckCommitAuthority` still normalizes `daemon` → `edit`, so the runtime
+backstop is still a no-op for graph sends; Phases 4 and 5 are at 0. The approve road is now guarded —
+an unauthorized or self-interested release is refused and logged — so the 2026-09-03 incident is
+**prevented on that road** as well as attributable, with two qualifications: a marker forged on disk
+still passes, which is why `unverifiedHoldReleased` re-reads `approved_by` daemon-side; and the
+authority list is still caller-controlled one step removed — `d4ae976` closed the environment read,
+not the env-derived config path or the agent-writable file (review P1, open). *(Superseded text, kept for the record:
+until 2026-09-08 `graph approve` had no authority check and self-approval was unrefused.)*
 
 Filed 2026-09-03 from an incident **four minutes old at filing**, observed live in this
 session. Unlike most entries here, the evidence was not relayed: plan read the lifecycle log, the
@@ -354,7 +426,9 @@ Open questions for the user:
 
 - **Who may approve?** The narrowest defensible default is "no agent — a human at the CLI only", but
   that may make autonomous graph arcs unusable by design. That trade is the user's call, not a default
-  to be picked here.
+  to be picked here. **Phase 2 shipped the narrow default** (`user` alone) with
+  `MUXCODE_GATE_AUTHORITY_ROLES` as the opt-in for an unattended arc; the user has not yet ruled on
+  whether that default stands.
 - **Retrofit existing markers?** Markers written before this change carry no identity. Treating them as
   invalid is safest and breaks any in-flight run; treating them as valid preserves the hole for the
   life of those runs.

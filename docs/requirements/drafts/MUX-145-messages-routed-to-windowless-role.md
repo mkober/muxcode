@@ -126,17 +126,51 @@ drained state; by the time plan re-ran it (13:56) the inbox held **three fresh `
 triggers accumulated since 13:50** and the verdict was `receipt-gap` again — Defect A reproducing in
 the relaunched session, which is the state the empty-inbox verdict sits between.
 
-#### Proposed fix on the `MUX-144` branch — **UNVALIDATED**
+#### Fix on the `MUX-144` branch — landed in `c6fd196` (14:20) and `cbb6e5d` (14:33), 2026-09-08
 
-Present in the working tree at filing, **not built, tested or reviewed** (edit reports the build agent
-accepting requests and returning nothing). Recorded so the Phase 5 boxes describe what was written;
-they stay open until a verify-spec pass confirms it.
+Filed at 13:56 as unvalidated; by 14:1x the suite was **2901 pass / 0 fail, exit 0, all six packages**
+on the run agent (Claude, unsandboxed — read from its pane by plan; the codex test agent could not run
+it, MUX-153). Between the two, a consolidation caught a live regression: the reload guard and the
+selector each carried its own copy of the presence rule and only one gained the mode-role clause, so
+the selector greyed `research` out as `(no window)` — `modeRoles` maps `research`/`auto` to
+**themselves**, not to their host windows. `RoleWindowPresent()` (`reload.go`) is now the single
+predicate used by both `RoleWindowMissing` and `ActiveAgentStatuses` (`reload_batch.go:98`). Its
+mode-role clause moved twice in one afternoon: `cbb6e5d` resolved a mode role via its **host** window
+(`research → plan`), which briefly shipped and was wrong — plan exists, so `research` read as present,
+while `ReloadTarget` addressed the `research` **hold** window, which is not created until that mode is
+first cycled to; the reload fired keystrokes at a missing window and failed with the very "did not
+exit after 12 seconds" this predicate exists to prevent. `f889786` (14:47) decides presence on the
+window a reload actually addresses — `RoleHasWindow(names, ReloadWindowForRole(role))`, the hold
+window for a mode role — so a never-cycled mode role reads as **absent**: configurable, not
+reloadable, exactly like a role missing from `MUXCODE_WINDOWS`. The fix sits on a branch named for another spec, so a
+`git log` by prefix will not attribute it here (the `16f2027` shape again).
+
+**Design change between filing and landing (edit, `c6fd196` → `cbb6e5d`): a windowless role is
+configurable, not reloadable.** The first cut refused the reload outright. The landed version refuses
+only the *relaunch* — `RoleWindowMissing` still guards `ReloadAgent` (`reload.go:334`) — and routes the
+role to a **config-only apply**: `ConfigureWindowlessRole` (`reload_batch.go:51`) writes the
+provider/model to **both** stores, because each alone was insufficient and "picking one was the
+original bug" — the shell config survives the session but is never consulted by `ResolveProviderCLI`
+(it reaches a role only by being sourced at launch, and is outranked by the value the session already
+exported), while the runtime override takes effect now but dies with the bus dir. `ConfigOnlyRole`
+(`:166`) makes the routing decision (an indeterminate window list takes the normal path, so a tmux
+blip cannot turn a whole batch into config writes; the headless `prompt` role is excluded),
+`ReloadBatch` skips the inter-agent gap for such roles, and the CLI gained the same branch —
+`configureIfWindowless` (`cmd/reload.go:197`) — so `muxcode reload analyze --cli codex` and the modal
+answer one request one way (the MUX-142 shape, pre-empted). The selector therefore keeps a windowless
+role **selectable** (`isSelectable`, `provider_select.go:171`), labelled `(no window)`, and excludes it
+only from select-all (`:579`). Suite after: **2908 pass / 0 fail** (`TestReloadBatchConfiguresWindowlessRole`
+and `TestConfigOnlyRole` added). **Gap:** `configureIfWindowless` — the CLI road — has no test (edit,
+14:3x); recorded as an open Phase 5 step. `8b5c360` (14:47) wraps the selector's failure rows to the
+frame width so a long refusal is readable (`renderFailureRow`, `wrapWords`,
+`tui/provider_select_wrap_test.go`).
 
 | File | Change |
 |------|--------|
-| `bus/reload.go` | New `RoleWindowMissing()`; `ReloadAgent` refuses a windowless role before writing the reload marker, with an error naming the absence. An unreadable window list is **indeterminate**, not empty — a tmux failure must not refuse every reload |
-| `bus/reload_batch.go` | New `AgentReloadStatus.Windowless`; the window list is read **once** per sweep; `alive := !windowless && IsAgentAlive(...)` so a windowless role never reports `Alive` |
-| `tui/provider_select.go` | New `notAliveLabel()` renders `(no window)` instead of `(dead)`; `isSelectable` already gates on `!Alive`, so the role is listed but cannot be checked |
+| `bus/reload.go` | New `RoleWindowMissing()` (`:276`) — `ReloadAgent` refuses a windowless role before writing the reload marker, with an error naming the absence; an unreadable window list is **indeterminate**, not empty. New `RoleWindowPresent()` and `ReloadWindowForRole()` (the hold window for a mode role; replaced `ModeRoleHasHostWindow` in `f889786`) — the single presence predicate both call sites use |
+| `bus/reload_batch.go` | New `AgentReloadStatus.Windowless`; the window list is read **once** per sweep; `windowless := windowsKnown && !RoleWindowPresent(...)` (`:98`) and `alive := !windowless && IsAgentAlive(...)` so a windowless role never reports `Alive`. New `ConfigureWindowlessRole()` (`:51`, both stores) and `ConfigOnlyRole()` (`:166`); `ReloadBatch` routes config-only roles to the former |
+| `cmd/reload.go` | New `configureIfWindowless()` (`:197`) — the CLI road to the same config-only apply; `--cli`/`--model` required, otherwise an error naming the absence |
+| `tui/provider_select.go` | New `notAliveLabel()` renders `(no window)` instead of `(dead)`; `isSelectable` (`:171`) admits a windowless role for a config-only apply while refusing a dead one; select-all skips it (`:579`) |
 | `bus/reload_windowless_test.go` | New — `TestRoleWindowMissing` (4 cases: windowless refused, windowed passes, unreadable list indeterminate, mode-cycled `research` resolves via its host window), `TestActiveAgentStatusesMarksWindowlessRoles`, `TestActiveAgentStatusesIndeterminateWhenTmuxUnavailable` |
 
 Scope note: this touches the reload path **only**. Defect A's emit guard and Defect B's diagnose check
@@ -154,10 +188,14 @@ still notifying the phantom role every cycle.
 - [ ] The windowless finding names the actual remediation (open the window, or stop routing to the role)
 - [ ] `muxcode status` makes a windowless role distinguishable from a windowed idle one
 - [ ] Draining a windowless inbox by hand is no longer required — the pile does not re-accumulate
-- [ ] A reload of a role with no window fails **immediately** with an error naming the absence — never
-      "did not exit"
-- [ ] The provider selector does not offer a windowless role as a reload target, and labels it
-      distinctly from a dead one
+- [x] A reload of a role with no window fails **immediately** with an error naming the absence — never
+      "did not exit" — `RoleWindowMissing` refuses before the reload marker is written
+      (`TestRoleWindowMissing`, 2026-09-08, uncommitted)
+- [x] The provider selector does not offer a windowless role as a reload target, and labels it
+      distinctly from a dead one — it is offered as a **config** target instead: `Windowless` never
+      reports `Alive`, `isSelectable` admits it for a config-only apply and refuses a dead one,
+      `notAliveLabel` renders `(no window)` (`TestActiveAgentStatusesMarksWindowlessRoles`,
+      `TestReloadBatchConfiguresWindowlessRole`)
 - [ ] `diagnose` on a windowless role with an **empty** inbox does not report "No issues detected"
 
 ### Technical approach
@@ -221,21 +259,37 @@ consult `RoleHasWindow` rather than `IsAgentAlive` — the former can say "no", 
 
 ### Phase 5: Refuse to reload a windowless role
 
-A proposed implementation is in the tree (see Defect C) — **unvalidated**, so every box stays open
-until a verify-spec pass confirms it built, tested and reviewed.
+Implemented and validated 2026-09-08 (see Defect C) — landed in `c6fd196` + `cbb6e5d` + `f889786`;
+suite 2915 green on the run agent. The design moved between the two commits: relaunch refused, configuration
+applied.
 
-- [ ] `ReloadAgent` refuses a windowless role **before** writing the reload marker, with an error
-      naming the absence and what would fix it — never "did not exit"
-- [ ] An unreadable window list is indeterminate: the reload proceeds as today rather than refusing
-      every role on the session
-- [ ] `ActiveAgentStatuses` marks a windowless role and never reports it `Alive`; the window list is
-      read once per sweep, not once per role
-- [ ] The provider selector labels a windowless role `(no window)`, distinct from `(dead)`, and it is
-      not selectable
-- [ ] Negative control: a windowed role passes the check and reloads exactly as today
-- [ ] Negative control: a mode-cycled role (`research`) resolves via its host window and is not
-      marked windowless
-- [ ] Unit tests cover each case above with its negative control (`bus/reload_windowless_test.go`)
+- [x] `ReloadAgent` refuses a windowless role **before** writing the reload marker, with an error
+      naming the absence and what would fix it — never "did not exit" (`reload.go:276`, called at the
+      top of `ReloadAgent` after `IsKnownRole`)
+- [x] An unreadable window list is indeterminate: the reload proceeds as today rather than refusing
+      every role on the session (`TestRoleWindowMissing/unreadable window list is indeterminate`,
+      `TestActiveAgentStatusesIndeterminateWhenTmuxUnavailable`)
+- [x] `ActiveAgentStatuses` marks a windowless role and never reports it `Alive`; the window list is
+      read once per sweep, not once per role (`reload_batch.go:87`)
+- [x] The provider selector labels a windowless role `(no window)`, distinct from `(dead)` — and, by
+      the landed design, **keeps it selectable for a config-only apply** (`isSelectable`,
+      `provider_select.go:171`; select-all skips it, `:579`). *This step originally read "not
+      selectable": the first cut (`c6fd196`) did that, the landed cut (`cbb6e5d`) deliberately does
+      not — see the design-change note under Defect C*
+- [x] Negative control: a windowed role passes the check and reloads exactly as today
+      (`TestRoleWindowMissing/windowed role passes`)
+- [x] Negative control: a mode-cycled role (`research`) is judged on the window a reload actually
+      addresses — its **hold** window (`ReloadWindowForRole`, `f889786`): present once cycled to,
+      otherwise windowless and configurable (`bus/reload_windowless_test.go`). *Originally worded
+      "resolves via its host window and is not marked windowless"; that reading shipped in `cbb6e5d`
+      and reproduced the 12-second failure on `research`, so the step and the code both moved — see
+      Defect C*
+- [x] Unit tests cover each case above with its negative control (`bus/reload_windowless_test.go` —
+      six cases, plus `TestReloadBatchConfiguresWindowlessRole` and `TestConfigOnlyRole` for the
+      config-only path)
+- [ ] The CLI road is tested: `configureIfWindowless` (`cmd/reload.go:197`) has no test — the modal
+      road is covered by `TestReloadBatchConfiguresWindowlessRole`, the CLI road by nothing (edit,
+      2026-09-08 14:3x). Both roads must stay in step, or the MUX-142 shape returns
 
 ### Phase 6: Integration test
 
@@ -262,7 +316,7 @@ this session only — the guard is what stops it returning.
 Related: the diagnose half belongs to the same family as the `checkUnexplainedEvidence` invariant
 described in [`CLAUDE.md`](../../../CLAUDE.md) — verdict honesty rather than pattern coverage. The
 routing half is adjacent to, but distinct from,
-[`MUX-127`](./MUX-127-review-completion-routing.md): that one routes to the wrong *recipient*, this
+[`MUX-127`](../backlog/MUX-127-review-completion-routing.md): that one routes to the wrong *recipient*, this
 one routes to a recipient that does not exist.
 
 Defect C (2026-09-08) was root-caused by edit and handed over as `/tmp/mux-145-defect-c.md`; plan
@@ -274,12 +328,19 @@ consult it rather than `IsAgentAlive`.
 
 ## Status
 
-**Backlog — 0/37.** Filed 2026-09-03 from a live incident the same morning; **Defect C added
-2026-09-08** from a second live incident on the reload path, with three more acceptance criteria and
-a new Phase 5.
+**In Progress — 9/38, Phase 5 at 7/8.** Filed 2026-09-03 from a live incident the same morning;
+**Defect C added 2026-09-08** from a second live incident on the reload path, with three more
+acceptance criteria and a new Phase 5 — then **fixed and validated the same afternoon** (Phase 5 7/8,
+the CLI road's test being the open step; two of its three acceptance criteria; suite 2908 pass / 0
+fail on the run agent), landed in `c6fd196` + `cbb6e5d` + `f889786` on the `MUX-144` branch. The design changed
+between filing and landing — windowless roles are **configurable, not reloadable** — and is recorded
+under Defect C.
 
 Defects A and B are verified and unfixed — Defect A reproduced in the relaunched session on
 2026-09-08 (three `daemon→analyze` triggers accumulated 13:50–13:56), so the emit path still refills
-the inbox until Phase 2 lands. A fix for Defect C **only** is in the working tree on the `MUX-144`
-branch, **unvalidated** (not built, tested or reviewed at filing); Phase 5's boxes stay open until a
-verify-spec pass confirms it. No box is ticked.
+the inbox until Phase 2 lands, and the empty-inbox diagnose verdict (Defect C's third criterion) is
+Phase 3 work. **Moved from `backlog/` to `drafts/` 2026-09-08 15:08 on the user's approval** (relayed
+by edit) — a filesystem move with no git command, so git sees a delete plus an untracked file until
+the user next asks the commit agent to commit, at which point it stages as a rename. Cross-references
+in `backlog.md` (rank and registry rows, plus an In-progress row), MUX-146 and MUX-150 were re-pointed
+to `../drafts/`, and this file's own sibling link now reaches `../backlog/`.
