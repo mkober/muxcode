@@ -312,7 +312,8 @@ are attributable: the marker records `approved_by` from `BusActorVerified`, and
 Two qualifications, both open in
 [MUX-144](requirements/drafts/MUX-144-wait-human-gate-openable-by-any-agent.md). The
 config-file read *narrowed* the caller-control problem rather than closing it: the file is
-agent-writable and its path honours `$MUXCODE_CONFIG`, so daemon-side authority is the real fix.
+agent-writable (its path stopped honouring `$MUXCODE_CONFIG` in `31a2ca4`), so daemon-side
+authority is the real fix.
 And the runtime backstop is still a no-op for graph sends: they carry `From = "daemon"`, which
 `CheckCommitAuthority` normalizes to `edit` — an authorized role — so a graph dispatch passes as
 though the user's own agent had asked, judged on the normalized sender rather than on the gate's

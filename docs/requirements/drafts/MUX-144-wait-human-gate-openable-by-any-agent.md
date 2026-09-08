@@ -208,9 +208,10 @@ made.
       **user alone**, `MUXCODE_GATE_AUTHORITY_ROLES` opts roles in, the empty string denies every
       actor, and `ActorUnknown` is refused whatever the list says. A refusal logs
       `graph-gate-approval-refused` naming the actor. *Landed in `4349a7a`, 2026-09-08 14:21.*
-      **Review P1 (the list is caller-controlled) — narrowed in `d4ae976`, still open:** the setting is
-      read from the config file, never the approver's environment, but the file is agent-writable and
-      its path is env-derived — see the open Phase 2 step
+      **Review P1 (the list is caller-controlled) — narrowed in `d4ae976` and again in `31a2ca4`,
+      still open:** the setting is read from the config file, never the approver's environment, and
+      since `31a2ca4` from a fixed path list rather than `$MUXCODE_CONFIG` — but the file is
+      agent-writable — see the open Phase 2 step
 - [x] An autonomous agent **cannot approve a gate on a run it created** — the self-approval rule is
       checked after the list, so widening the list does not lift it
       (`TestApproveGraphGateRefusesSelfApproval`, `gate_authority_test.go`)
@@ -240,7 +241,7 @@ made.
 |------|-----------|
 | `cmd/graph.go` | `approve` and `run` subcommands — where authority and audit are absent |
 | `bus/graph_exec.go` | `ApproveGraphGate` (:184), `graphSender` (:29), send dispatch (:739) |
-| `bus/gate_authority.go` | Phase 2: `GateApprovalAuthority()`, `GateAuthorityConfigured()` (config file, never the environment — but the file's path is `$MUXCODE_CONFIG`-derived and the file agent-writable; Phase 2 step 5), `CheckGateApprovalAuthority()` — the approver check and the self-approval rule |
+| `bus/gate_authority.go` | Phase 2: `GateApprovalAuthority()`, `GateAuthorityConfigured()` (config file, never the environment; since `31a2ca4` a fixed path list via `gateAuthorityConfigPaths`, never `$MUXCODE_CONFIG` — but the file is agent-writable; Phase 2 step 5), `CheckGateApprovalAuthority()` — the approver check and the self-approval rule |
 | `bus/commit_authority.go` | `CheckCommitAuthority` (:86) and the normalization that voids it for graphs |
 | `bus/config.go` | `NormalizeBusRole` daemon→edit (:729) |
 | `bus/graph.go` | `validateGates` (:567) — the half that works; must not regress |
@@ -293,7 +294,8 @@ made.
       person and still reaches commit's inbox (the Phase 4 pin, sharpened rather than weakened)
 - [ ] The configured list is **not caller-controlled**: an agent cannot widen
       `MUXCODE_GATE_AUTHORITY_ROLES` from its own environment for the one command it was just refused
-      — **review P1, 2026-09-08 14:14; narrowed in `d4ae976` at 14:47, not closed.** (Plan ticked
+      — **review P1, 2026-09-08 14:14; narrowed in `d4ae976` at 14:47 and again in `31a2ca4` at
+      16:14, not closed.** (Plan ticked
       this on the commit and its test at 14:55; edit reopened it at 14:50 — rightly, see the end of
       this step.) As landed in `4349a7a` the
       list was read from the approver's own environment, the only mitigation was withholding the
@@ -304,11 +306,16 @@ made.
       failed five tests. `TestGateAuthorityIgnoresCallerEnvironment` pins the attack (a refused agent
       re-running with `MUXCODE_GATE_AUTHORITY_ROLES=user,build` prefixed is still refused) with the
       negative control that the same value **in the config file** does admit it. Suite 2915 / 0.
-      **Why it stays open:** the config file is agent-writable, and its *path* is env-derived —
-      `ResolveConfigPath` honours `$MUXCODE_CONFIG` before `.muxcode/config` and
-      `~/.config/muxcode/config` — so an agent with shell access can still self-authorize by pointing
-      the process at a file it wrote (`MUXCODE_CONFIG=/tmp/x muxcode graph approve …`). `d4ae976`
-      removed a one-line bypass and left a two-line one. The real fix is **daemon-side authority**:
+      **Why it stays open:** the config file is agent-writable. Its *path* was env-derived too until
+      `31a2ca4` (16:14) — `ResolveConfigPath` honours `$MUXCODE_CONFIG` before `.muxcode/config` and
+      `~/.config/muxcode/config`, so an agent could self-authorize by pointing the process at a file
+      it wrote (`MUXCODE_CONFIG=/tmp/x muxcode graph approve …`); `d4ae976` removed a one-line bypass
+      and left that two-line one, and `31a2ca4` closed it: `GateAuthorityConfigured` now walks a fixed
+      list (`.muxcode/config`, then `~/.config/muxcode/config`) via `gateAuthorityConfigPaths` and
+      never calls `ResolveConfigPath`, so `$MUXCODE_CONFIG` is ignored end to end
+      (`TestGateAuthorityIgnoresConfigPathOverride`, with a negative control that the same file
+      *does* grant from a consulted path). What is left is the file itself: an agent with shell access
+      edits `.muxcode/config` directly. The real fix is **daemon-side authority**:
       the daemon reads the list once, from a store the agents cannot reach, and the approve path asks
       the daemon rather than its own process. The commit and Atlassian authorities share this shape
       and should move with it
@@ -357,6 +364,13 @@ made.
 open.** Moved to `drafts/` and set as the **active spec** 2026-09-04; the pointer was lost in the
 2026-09-08 13:44 relaunch and re-set by the user.
 
+**Updated 2026-09-08 16:35.** `31a2ca4` (16:14) narrowed P1 a **second** time: `GateAuthorityConfigured`
+reads a fixed path list (`gateAuthorityConfigPaths`) and never `ResolveConfigPath`, so
+`$MUXCODE_CONFIG` no longer selects the file (`TestGateAuthorityIgnoresConfigPathOverride`). The one
+remaining bypass is the agent-writable config file itself; the step stays open for daemon-side
+authority, which is Phase 4's. Phase 2 still 4/5, count unchanged at 17/33. Code-only commit — no
+docs moved with it, hence this note.
+
 **Updated 2026-09-08 14:58.** `d4ae976` (14:47) **narrowed** the review's P1 — the authority list is
 now read from the config file, never the caller's environment — and plan ticked the step on that
 commit and its test. Edit reopened it minutes later, correctly: the config file is agent-writable and
@@ -403,8 +417,8 @@ backstop is still a no-op for graph sends; Phases 4 and 5 are at 0. The approve 
 an unauthorized or self-interested release is refused and logged — so the 2026-09-03 incident is
 **prevented on that road** as well as attributable, with two qualifications: a marker forged on disk
 still passes, which is why `unverifiedHoldReleased` re-reads `approved_by` daemon-side; and the
-authority list is still caller-controlled one step removed — `d4ae976` closed the environment read,
-not the env-derived config path or the agent-writable file (review P1, open). *(Superseded text, kept for the record:
+authority list is still caller-controlled one step removed — `d4ae976` closed the environment read
+and `31a2ca4` the env-derived config path, not the agent-writable file (review P1, open). *(Superseded text, kept for the record:
 until 2026-09-08 `graph approve` had no authority check and self-approval was unrefused.)*
 
 Filed 2026-09-03 from an incident **four minutes old at filing**, observed live in this
