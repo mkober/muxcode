@@ -64,6 +64,7 @@ Both Go modules have **no external dependencies** (stdlib only).
 - Stdlib only — no third-party imports
 - Tests in `*_test.go` files, same package (not `_test` suffix)
 - Bus directory path: `/tmp/muxcode-bus-{session}/` in `bus/config.go`
+- **No test may bind a socket** — use `newPipeServer` (both modules), never `httptest.NewServer`. A sandboxed agent cannot listen, so a socket-bound test panics before any assertion and `set -e` then hides every later module (MUX-152/153). Production code takes an optional `*http.Client` (nil in production) as the seam
 
 ### Bash (hooks & utility scripts)
 
