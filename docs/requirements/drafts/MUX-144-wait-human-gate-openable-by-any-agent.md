@@ -71,11 +71,17 @@ Each was verified by plan against this repo's source. The provenance column says
 The gate the validator insists on is openable by the very agents it exists to gate, including an
 autonomous one approving its own run.
 
-#### Defect B — approval and run creation are entirely unaudited
+#### Defect B — approval and run creation are entirely unaudited — **FIXED 2026-09-04 (`16f2027`)**
 
-| Fact | How established |
+The table below is the **finding as of 2026-09-03** and is retained as the incident record; every row
+has since been remediated. `ApproveGraphGate` (now `bus/graph_exec.go:184`) records
+`approved_by` from `BusActorVerified` and calls `announceGraphAction` → `LogLifecycle`
+(`bus/graph_run.go:238-239`), and run creation emits `graph-run-created` (`bus/graph_run.go:221`).
+Defects A and C remain open — see Status.
+
+| Fact (as of 2026-09-03, now remediated) | How established |
 |------|-----------------|
-| `ApproveGraphGate` is `ReadNodeStatus` + `MkdirAll` + `atomicWriteJSON` — **no `LogLifecycle` call** | **Verified** — `bus/graph_exec.go:80-89` |
+| `ApproveGraphGate` is `ReadNodeStatus` + `MkdirAll` + `atomicWriteJSON` — **no `LogLifecycle` call** | **Verified** — `bus/graph_exec.go:80-89` (pre-fix location) |
 | The marker records no approver identity, only `approved_at` | **Verified** — read from disk (above) |
 | No `graph-gate-approved` event exists; the log jumps `graph-gate-pending` → `graph-node-done` | **Verified** — lifecycle log above |
 | Run **creation** logs nothing either — the first event of the incident is `graph-node-start` | **Verified** — `lifecycle show \| grep -cE "graph-run-created\|graph-run-start\|graph-gate-approved"` returns `0` |
@@ -89,9 +95,9 @@ autonomous one approving its own run.
 
 | Fact | How established |
 |------|-----------------|
-| Graph sends carry `From = "daemon"` | **Verified** — `const graphSender = "daemon"`, `bus/graph_exec.go:28`, used at `:539` |
+| Graph sends carry `From = "daemon"` | **Verified** — `const graphSender = "daemon"`, `bus/graph_exec.go:29`, used at `:739` |
 | `CheckCommitAuthority` normalizes the sender before checking it | **Verified** — `from = NormalizeBusRole(from)`, `bus/commit_authority.go:90` |
-| `NormalizeBusRole("daemon")` returns `"edit"` | **Verified** — `bus/config.go:618-620` |
+| `NormalizeBusRole("daemon")` returns `"edit"` | **Verified** — `bus/config.go:729-731` |
 | `edit` is the default commit authority | **Verified** — `commitAuthorityDefault = []string{"edit"}`, `bus/commit_authority.go:29` |
 
 A graph commit dispatch passes the authority check **as if it were the edit agent**. The backstop
@@ -221,9 +227,9 @@ made.
 | File | Relevance |
 |------|-----------|
 | `cmd/graph.go` | `approve` and `run` subcommands — where authority and audit are absent |
-| `bus/graph_exec.go` | `ApproveGraphGate` (:80), `graphSender` (:28), send dispatch (:539) |
+| `bus/graph_exec.go` | `ApproveGraphGate` (:184), `graphSender` (:29), send dispatch (:739) |
 | `bus/commit_authority.go` | `CheckCommitAuthority` (:86) and the normalization that voids it for graphs |
-| `bus/config.go` | `NormalizeBusRole` daemon→edit (:618) |
+| `bus/config.go` | `NormalizeBusRole` daemon→edit (:729) |
 | `bus/graph.go` | `validateGates` (:567) — the half that works; must not regress |
 | `bus/atlassian_authority.go` | Same bypass shape applies to Atlassian writes; verify and cover |
 | `CLAUDE.md` | The false safety claim |
@@ -284,7 +290,7 @@ made.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-144-wait-human-gate-openable-by-any-agent | 13m | 2026-09-04 10:40 |
+| MUX-144-wait-human-gate-openable-by-any-agent | 2h 24m | 2026-09-08 10:38 |
 
 ## Status
 
@@ -307,7 +313,7 @@ session. Unlike most entries here, the evidence was not relayed: plan read the l
 frozen `graph.json`, the approval marker on disk, and the git state directly. Every source claim in
 the tables above was verified against this repo.
 
-No implementation has started.
+No implementation had started at filing; the audit half has since landed (see above).
 
 **Placement argument** (the table entry is ranked **#1**): this is the only defect in the backlog whose
 failure mode is an **irreversible, externally visible** action taken with no human in the loop — a
