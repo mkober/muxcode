@@ -2,7 +2,6 @@ package bus
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -355,67 +354,78 @@ func TestExecUnknownRoutesAfterApproval(t *testing.T) {
 	}
 }
 
-// The hold is only worth having if the agents that raised it cannot clear it:
-// `graph approve` has no authority check, so an autonomous run could otherwise
-// approve its own unverified work and unknown would pass as success again.
-func TestExecUnverifiedHoldRefusesAgentApproval(t *testing.T) {
-	pinActor(t, "build")
+// forgeApproval writes an approval marker directly, the way a process that
+// cannot obtain one from ApproveGraphGate would.
+//
+// Since MUX-144 Phase 2 the approve path refuses every approver below, so
+// driving these through it would test the outer gate three times and the
+// daemon-side check not at all. Forgery is precisely the threat this inner
+// layer exists for: the marker is a file, and anything that can run a shell can
+// write one. Where the identities below come from — a role, an agent that
+// stripped AGENT_ROLE, a probe that failed — is pinned in gate_authority_test.go.
+func forgeApproval(t *testing.T, runID, nodeID, by string) {
+	t.Helper()
+	if err := os.MkdirAll(graphApprovalsDir(runTestSession, runID), 0755); err != nil {
+		t.Fatalf("approvals dir: %v", err)
+	}
+	if err := atomicWriteJSON(graphApprovalPath(runTestSession, runID, nodeID, "approved"),
+		map[string]any{"approved_at": time.Now().Unix(), "approved_by": by}); err != nil {
+		t.Fatalf("forge approval: %v", err)
+	}
+}
+
+// refuseForgedHold drives a node to an unverified hold, forges an approval from
+// `by`, and reports the successor's state.
+func refuseForgedHold(t *testing.T, by string) string {
+	t.Helper()
+	pinActor(t, "")
 	run := createTestRun(t, linearGraph())
 
 	step(t, runTestSession, run.ID)
 	completeSendNode(t, runTestSession, run.ID, "a", "")
 	step(t, runTestSession, run.ID)
 
-	if err := ApproveGraphGate(runTestSession, run.ID, "a"); err != nil {
-		t.Fatalf("ApproveGraphGate: %v", err)
-	}
+	forgeApproval(t, run.ID, "a", by)
 	step(t, runTestSession, run.ID)
 
-	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodePending {
+	return nodeState(t, runTestSession, run.ID, "b")
+}
+
+// The hold is only worth having if the agents that raised it cannot clear it:
+// an autonomous run that cleared its own unverified work would let unknown pass
+// as success again.
+func TestExecUnverifiedHoldRefusesAgentApproval(t *testing.T) {
+	if s := refuseForgedHold(t, "build"); s != GraphNodePending {
 		t.Errorf("b state %q, want pending — an agent must not release its own unverified hold", s)
 	}
 }
 
-// The refusal above turns on AGENT_ROLE, which the agent itself controls, so it
-// alone would be satisfied by `env -u AGENT_ROLE muxcode graph approve`. The
-// approver is resolved by ancestry for exactly this case.
+// An agent that strips AGENT_ROLE is recorded by its runtime instead, so the
+// marker names `claude` rather than a role. The comparison is against
+// personhood, not against a list of roles, or that name would sail through it.
 func TestExecUnverifiedHoldRefusesStrippedIdentityApproval(t *testing.T) {
-	pinAgentAncestry(t, "/usr/local/bin/claude")
-	run := createTestRun(t, linearGraph())
-
-	step(t, runTestSession, run.ID)
-	completeSendNode(t, runTestSession, run.ID, "a", "")
-	step(t, runTestSession, run.ID)
-
-	if err := ApproveGraphGate(runTestSession, run.ID, "a"); err != nil {
-		t.Fatalf("ApproveGraphGate: %v", err)
-	}
-	step(t, runTestSession, run.ID)
-
-	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodePending {
+	if s := refuseForgedHold(t, "claude"); s != GraphNodePending {
 		t.Errorf("b state %q, want pending — stripping AGENT_ROLE must not launder an agent into a person", s)
 	}
 }
 
 // The ancestry check runs `ps` off PATH, so the cheapest attack on it is not
-// breaking the probe but supplying a failing one. Failing open there would
-// restore the whole bypass behind a check that looks present.
+// breaking the probe but supplying a failing one. It fails closed to
+// ActorUnknown, and reading that as a person here would restore the whole
+// bypass behind a check that looks present.
 func TestExecUnverifiedHoldRefusesWhenAncestryUnreadable(t *testing.T) {
-	pinActor(t, "")
-	pinProcessTable(t, "", errors.New("ps unavailable"))
-	run := createTestRun(t, linearGraph())
-
-	step(t, runTestSession, run.ID)
-	completeSendNode(t, runTestSession, run.ID, "a", "")
-	step(t, runTestSession, run.ID)
-
-	if err := ApproveGraphGate(runTestSession, run.ID, "a"); err != nil {
-		t.Fatalf("ApproveGraphGate: %v", err)
+	if s := refuseForgedHold(t, ActorUnknown); s != GraphNodePending {
+		t.Errorf("b state %q, want pending — an unidentified approver must not release a hold", s)
 	}
-	step(t, runTestSession, run.ID)
+}
 
-	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodePending {
-		t.Errorf("b state %q, want pending — an unreadable process table must not release a hold", s)
+// Negative control for the three above, and specifically for the helper they
+// share: a forgeApproval that wrote nothing readable would leave every one of
+// them passing on a node that was never approved at all. The same forged marker
+// naming a person must release the hold.
+func TestExecUnverifiedHoldReleasedByUser(t *testing.T) {
+	if s := refuseForgedHold(t, ActorUser); s != GraphNodeRunning {
+		t.Errorf("b state %q, want running — a person's approval must release the hold", s)
 	}
 }
 
@@ -757,6 +767,7 @@ func TestExecCancelMidRun(t *testing.T) {
 }
 
 func TestExecHumanGate(t *testing.T) {
+	pinActor(t, "")
 	g := &Graph{
 		Name:  "t",
 		Start: "a",
@@ -884,6 +895,7 @@ func TestExecHumanGateNeverPopsModal(t *testing.T) {
 // graph retry --from that gate must WAIT for a new approval — the old
 // approved marker must not auto-release the fresh pass.
 func TestExecHumanGateRetryRequiresFreshApproval(t *testing.T) {
+	pinActor(t, "")
 	g := &Graph{
 		Name:  "t",
 		Start: "a",
@@ -946,6 +958,7 @@ func TestExecHumanGateRetryRequiresFreshApproval(t *testing.T) {
 // TestExecHumanGateRetryRequiresFreshApproval covers the retry that
 // re-enters the gate itself; this is the sibling path below it.
 func TestExecRetryBelowGateRearmsGate(t *testing.T) {
+	pinActor(t, "")
 	g := &Graph{
 		Name:  "t",
 		Start: "a",
@@ -1046,6 +1059,7 @@ func TestExecRetryPurgeFailureFailsClosed(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root — directory permissions cannot block os.Remove")
 	}
+	pinActor(t, "")
 	g := &Graph{
 		Name:  "t",
 		Start: "a",
@@ -1177,6 +1191,7 @@ func TestExecDispatchPurgeFailureFailsClosed(t *testing.T) {
 // cut: every satisfied gate whose territory contains the target, all
 // re-armed, all markers purged, target left pending.
 func TestExecRetryBelowParallelGateCutRearmsAll(t *testing.T) {
+	pinActor(t, "")
 	g := &Graph{
 		Name:  "t",
 		Start: "s",
@@ -1972,6 +1987,7 @@ func TestExecPhaseProgressGuard(t *testing.T) {
 // again — without the dispatch purge, approving Phase 1's commit would
 // silently release every later phase's commit.
 func TestExecHumanGateLoopReArmRequiresFreshApproval(t *testing.T) {
+	pinActor(t, "")
 	g := &Graph{Name: "g", Start: "gate",
 		Nodes: []Node{
 			{ID: "gate", Type: NodeWaitHuman, Message: "approve the commit"},

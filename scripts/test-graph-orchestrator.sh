@@ -48,6 +48,12 @@ pass=0; fail=0
 ok()  { echo "  ${GREEN}PASS${NC}  $*"; pass=$((pass + 1)); }
 bad() { echo "  ${RED}FAIL${NC}  $*"; fail=$((fail + 1)); }
 
+# Releasing a gate needs an authorized actor that did not create the run
+# (MUX-144). This stands in for the human at the CLI, under an identity no agent
+# can hold, so the self-approval rule cannot collide with whoever runs the script.
+export MUXCODE_GATE_AUTHORITY_ROLES=test-approver
+approve_gate() { AGENT_ROLE=test-approver "$MUX" graph approve "$@"; }
+
 # --- Isolation -------------------------------------------------------------
 export BUS_SESSION="graph-test-$$"
 BD="/tmp/muxcode-bus-${BUS_SESSION}"
@@ -408,7 +414,7 @@ wait_node_state "$RID4" gate waiting && ok "gate reached waiting" \
 # FRESH request arrived, not a stale leftover.
 AGENT_ROLE=edit "$MUX" inbox >/dev/null 2>&1
 
-"$MUX" graph approve "$RID4" gate >/dev/null 2>&1 || bad "graph approve failed"
+approve_gate "$RID4" gate >/dev/null 2>&1 || bad "graph approve failed"
 wait_for_request test && ok "approval released the gate — c dispatched" \
   || bad "c never dispatched after approval"
 fail_role test || bad "could not fail c"
@@ -461,7 +467,7 @@ grep -q '"event":"graph-retry-regated"' "$LIFELOG" \
   && ok "lifecycle records graph-retry-regated" \
   || bad "no graph-retry-regated lifecycle row"
 
-"$MUX" graph approve "$RID4" gate >/dev/null 2>&1 || bad "second graph approve failed"
+approve_gate "$RID4" gate >/dev/null 2>&1 || bad "second graph approve failed"
 if wait_for_request test; then
   ok "fresh approval releases the gate — c re-dispatched"
   answer_role test

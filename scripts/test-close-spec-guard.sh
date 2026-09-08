@@ -43,6 +43,12 @@ pass=0; fail=0
 ok()  { echo "  ${GREEN}PASS${NC}  $*"; pass=$((pass + 1)); }
 bad() { echo "  ${RED}FAIL${NC}  $*"; fail=$((fail + 1)); }
 
+# Releasing a gate needs an authorized actor that did not create the run
+# (MUX-144). This stands in for the human at the CLI, under an identity no agent
+# can hold, so the self-approval rule cannot collide with whoever runs the script.
+export MUXCODE_GATE_AUTHORITY_ROLES=test-approver
+approve_gate() { AGENT_ROLE=test-approver "$MUX" graph approve "$@"; }
+
 # --- Isolation -------------------------------------------------------------
 export BUS_SESSION="close-guard-test-$$"
 BD="/tmp/muxcode-bus-${BUS_SESSION}"
@@ -176,7 +182,7 @@ RID="$("$MUX" graph run --file "$WORK/close-guard.json" 2>&1 | grep -o 'Started 
 
 wait_node_state "$RID" gate waiting \
   && ok "gate reached waiting" || bad "gate never reached waiting: $(node_state "$RID" gate)"
-"$MUX" graph approve "$RID" gate >/dev/null 2>&1 \
+approve_gate "$RID" gate >/dev/null 2>&1 \
   && ok "gate approved" || bad "gate approve failed"
 
 wait_run_state "$RID" failed \
@@ -222,7 +228,7 @@ grep -q '"event":"graph-guard-declined"' "$LIFELOG" 2>/dev/null \
 RID2="$("$MUX" graph run --file "$WORK/close-guard.json" 2>&1 | grep -o 'Started run [^ ]*' | awk '{print $3}')"
 [ -n "$RID2" ] && ok "negative-control run started: $RID2" || bad "negative-control run failed to start"
 wait_node_state "$RID2" gate waiting || bad "negative-control gate never reached waiting"
-"$MUX" graph approve "$RID2" gate >/dev/null 2>&1 || bad "negative-control gate approve failed"
+approve_gate "$RID2" gate >/dev/null 2>&1 || bad "negative-control gate approve failed"
 
 if wait_for_request plan; then
   ok "fully-checked spec dispatched close-spec to plan (guard not inert)"

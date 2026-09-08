@@ -167,17 +167,18 @@ func runProvenance(run *GraphRun) string {
 // moves the node from waiting to done.
 //
 // The grant records who made it and is announced, so a release is attributable
-// after the fact rather than appearing as an unexplained state change. That is
-// visibility, NOT authorization: every role reaching this function still opens
-// the gate. Enforcing authority here is MUX-144, and until it lands a gate is a
-// scheduling pause, not a security boundary.
+// after the fact rather than appearing as an unexplained state change, and
+// CheckGateApprovalAuthority decides whether it may be made at all.
 //
 // approved_by comes from BusActorVerified, so an agent that strips AGENT_ROLE
 // is still recorded by its ancestry rather than promoted to a person. It
-// remains forgeable by writing this marker directly, so read approved_by as
-// evidence proportional to that: good enough to refuse a self-release
-// (unverifiedHoldReleased), not good enough to be the only thing standing
-// between an agent and an irreversible action.
+// remains forgeable by writing this marker directly, which is why the daemon
+// re-reads approved_by before honouring a release (unverifiedHoldReleased)
+// instead of trusting that this refusal was the only road in.
+//
+// A refusal is logged rather than announced to edit. The attribution belongs in
+// the lifecycle log either way, and a refused agent that retries would put one
+// message in edit's inbox per attempt.
 //
 // approved_by is additive: gateApprovalTime reads only approved_at, so markers
 // written before this field existed still parse.
@@ -185,10 +186,19 @@ func ApproveGraphGate(session, runID, nodeID string) error {
 	if _, err := ReadNodeStatus(session, runID, nodeID); err != nil {
 		return fmt.Errorf("unknown run/node: %w", err)
 	}
+	run, err := ReadGraphRun(session, runID)
+	if err != nil {
+		return fmt.Errorf("unknown run: %w", err)
+	}
+	actor := BusActorVerified()
+	if deny := CheckGateApprovalAuthority(actor, run); deny != "" {
+		LogLifecycle(session, "warn", actor, "graph-gate-approval-refused",
+			fmt.Sprintf("Graph run %s gate %q: %s", runID, nodeID, deny))
+		return errors.New(deny)
+	}
 	if err := os.MkdirAll(graphApprovalsDir(session, runID), 0755); err != nil {
 		return err
 	}
-	actor := BusActorVerified()
 	if err := atomicWriteJSON(graphApprovalPath(session, runID, nodeID, "approved"),
 		map[string]any{"approved_at": time.Now().Unix(), "approved_by": actor}); err != nil {
 		return err
@@ -648,11 +658,10 @@ func approvalGrantedBy(data []byte) string {
 //
 // Only a person can release one. The hold exists because no authoritative row
 // proved the node succeeded, and the agents in a position to approve it are the
-// very ones whose unverified output raised it — `muxcode graph approve` carries
-// no authority check (MUX-144), so without this an autonomous run would clear
-// its own holds and unknown would pass as success again wearing an approval.
-// The check reads the grant's recorded approver rather than gating the CLI,
-// because the marker is the only artifact the daemon sees.
+// very ones whose unverified output raised it. CheckGateApprovalAuthority now
+// refuses them at the CLI too (MUX-144 Phase 2); this stays because the marker
+// is the only artifact the daemon sees, so a forged one — or a session that has
+// opted an agent into the gate authority — must still not clear a hold.
 //
 // The approver is resolved by BusActorVerified, so unsetting AGENT_ROLE does
 // not launder an agent into a person — ancestry still names it. A process that

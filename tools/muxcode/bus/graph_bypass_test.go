@@ -14,37 +14,26 @@ import (
 // never repaired by relaxing an assertion: invert it, and move the phase
 // checkbox in the spec with it.
 //
-//	Defect A (Phase 2) — TestApproveGraphGateAcceptsAnyRole
-//	                     TestApproveGraphGateAcceptsSelfApproval
 //	Defect C (Phase 4) — TestGraphCommitDispatchPassesCommitAuthority
 //	                     TestGraphCommitDispatchReachesCommitInbox
 //
-// Two halves of the control already work and are pinned elsewhere; neither is
-// duplicated here. Defect B (audit) is closed — see
-// TestApproveGraphGateRecordsAndAnnouncesApprover in graph_run_test.go. The
-// structural gate rule is sound — see TestValidateGateRule in graph_test.go,
-// which rejects an ungated commit node and accepts a gated one.
+// Three halves of the control now work and are pinned elsewhere; none is
+// duplicated here. Defect A (authority) is closed — see gate_authority_test.go,
+// which holds the inversions of the two pins that used to live here. Defect B
+// (audit) is closed — see TestApproveGraphGateRecordsAndAnnouncesApprover in
+// graph_run_test.go. The structural gate rule is sound — see TestValidateGateRule
+// in graph_test.go, which rejects an ungated commit node and accepts a gated one.
 
-// pinCompiledAuthorities clears both authority overrides so a pin reads the
+// pinCompiledAuthorities clears every authority override so a pin reads the
 // compiled-in defaults rather than whatever the session running the suite
 // happens to export. These tests assert what ships, and an ambient opt-in would
 // flip them silently in either direction.
 func pinCompiledAuthorities(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"MUXCODE_COMMIT_AUTHORITY_ROLES", "MUXCODE_ATLASSIAN_AUTHORITY_ROLES"} {
+	for _, key := range []string{"MUXCODE_COMMIT_AUTHORITY_ROLES", "MUXCODE_ATLASSIAN_AUTHORITY_ROLES", "MUXCODE_GATE_AUTHORITY_ROLES"} {
 		t.Setenv(key, "") // registers the restore
 		os.Unsetenv(key)
 	}
-}
-
-// gateApprover reads the approver identity a release recorded.
-func gateApprover(t *testing.T, runID, nodeID string) string {
-	t.Helper()
-	data, err := os.ReadFile(graphApprovalPath(runTestSession, runID, nodeID, "approved"))
-	if err != nil {
-		t.Fatalf("read approval marker: %v", err)
-	}
-	return approvalGrantedBy(data)
 }
 
 // TestGraphCommitDispatchPassesCommitAuthority pins Defect C: a graph send node
@@ -76,11 +65,16 @@ func TestGraphCommitDispatchPassesCommitAuthority(t *testing.T) {
 	}
 }
 
-// TestGraphCommitDispatchReachesCommitInbox walks the whole laundering path on
-// the machinery that actually runs it: an agent opens the gate, the executor
+// TestGraphCommitDispatchReachesCommitInbox walks step 3 of the spec's
+// laundering table on the machinery that actually runs it: the executor
 // dispatches, and the incident's own commit message lands in commit's inbox
-// with nothing having refused it. Steps 2 and 3 of the spec's laundering table,
-// in one run.
+// with nothing having refused it.
+//
+// Since Phase 2 the run is created by an agent and released by a person, which
+// is the shape the fix intends. That makes the pin sharper rather than weaker:
+// a human did approve, and CheckCommitAuthority still cannot tell — it passes
+// the dispatch on the normalized sender, having never read the approval it is
+// supposedly resting on. Phase 4 is what makes the two facts one.
 //
 // The predicate check above is not a substitute. CheckCommitAuthority is
 // enforced inside Send, several layers from the node definition, and this
@@ -109,8 +103,9 @@ func TestGraphCommitDispatchReachesCommitInbox(t *testing.T) {
 		t.Fatalf("gate state %q, want waiting", s)
 	}
 
+	pinActor(t, "")
 	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
-		t.Fatalf("agent approval refused: %v — the gate is guarded; invert this pin and check off MUX-144 Phase 2", err)
+		t.Fatalf("a person's approval was refused: %v", err)
 	}
 	step(t, runTestSession, run.ID)
 
@@ -120,51 +115,6 @@ func TestGraphCommitDispatchReachesCommitInbox(t *testing.T) {
 	msgs, _ := Peek(runTestSession, "commit")
 	if len(msgs) != 1 || msgs[0].Action != "commit" || msgs[0].From != graphSender {
 		t.Fatalf("commit inbox = %+v, want one %s-sent commit request", msgs, graphSender)
-	}
-}
-
-// TestApproveGraphGateAcceptsAnyRole pins Defect A: `graph approve` carries no
-// authority check, so every role holding the `Bash(muxcode *)` glob — which is
-// every role — can release the gate that is the only control between a run and
-// a push.
-//
-// What makes this a missing refusal rather than a missing fact is the approver
-// the marker records: the evidence needed to deny is already written to disk
-// beside the approval it should have refused.
-//
-// Phase 2 inverts this: an unauthorized role's approval must fail and leave the
-// gate pending.
-func TestApproveGraphGateAcceptsAnyRole(t *testing.T) {
-	for _, role := range []string{"build", "test", "review", "plan", "auto"} {
-		pinActor(t, role)
-		run := createTestRun(t, actorGateGraph())
-
-		if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
-			t.Fatalf("ApproveGraphGate as %s: %v — the gate is guarded; invert this pin and check off MUX-144 Phase 2", role, err)
-		}
-		if by := gateApprover(t, run.ID, "gate"); by != role {
-			t.Errorf("approved_by = %q, want %q — the identity a refusal would read is not being recorded", by, role)
-		}
-	}
-}
-
-// TestApproveGraphGateAcceptsSelfApproval pins the sharpest form of Defect A:
-// the agent that created a run may open that run's own gate, so an autonomous
-// arc approves itself and no human is ever involved. This is the acceptance
-// criterion "an autonomous agent cannot approve a gate on a run it created",
-// failing.
-func TestApproveGraphGateAcceptsSelfApproval(t *testing.T) {
-	pinActor(t, "auto")
-	run := createTestRun(t, actorGateGraph())
-
-	if run.CreatedBy != "auto" {
-		t.Fatalf("run.CreatedBy = %q, want auto — the creator identity is the premise of self-approval", run.CreatedBy)
-	}
-	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
-		t.Fatalf("self-approval failed: %v — self-approval is refused; invert this pin and check off MUX-144 Phase 2", err)
-	}
-	if by := gateApprover(t, run.ID, "gate"); by != run.CreatedBy {
-		t.Errorf("approved_by = %q, creator = %q — both identities are on disk and nothing compared them", by, run.CreatedBy)
 	}
 }
 

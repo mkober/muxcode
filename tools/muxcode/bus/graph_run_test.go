@@ -494,6 +494,7 @@ func TestCreateGraphRunSilentWhenEditLaunches(t *testing.T) {
 }
 
 func TestApproveGraphGateRecordsAndAnnouncesApprover(t *testing.T) {
+	pinCompiledAuthorities(t)
 	pinActor(t, "")
 	run := createTestRun(t, actorGateGraph())
 
@@ -527,9 +528,16 @@ func TestApproveGraphGateRecordsAndAnnouncesApprover(t *testing.T) {
 }
 
 // Negative control for TestApproveGraphGateRecordsAndAnnouncesApprover.
+//
+// Edit is opted into the gate authority here, and the run is created by someone
+// else, because the compiled default admits no agent and no agent may approve
+// its own run (MUX-144 Phase 2). The subject is who hears about a release, not
+// who may make one.
 func TestApproveGraphGateSilentWhenEditApproves(t *testing.T) {
-	pinActor(t, "edit")
+	t.Setenv("MUXCODE_GATE_AUTHORITY_ROLES", "user,edit")
+	pinActor(t, "")
 	run := createTestRun(t, actorGateGraph())
+	pinActor(t, "edit")
 
 	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
 		t.Fatalf("ApproveGraphGate: %v", err)
