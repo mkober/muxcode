@@ -238,12 +238,29 @@ made.
 
 ### Phase 1: Pin the bypass
 
-- [ ] Write a failing test: a graph `send` node with `role: commit` passes `CheckCommitAuthority`
-      today because the sender normalizes to `edit`
-- [ ] Write a failing test: `ApproveGraphGate` succeeds with no caller identity and emits no lifecycle
-      event
-- [ ] Confirm the same bypass applies to `CheckAtlassianAuthority`, or record precisely why it does not
-- [ ] Confirm `validateGates` still rejects an ungated commit node — the working half must not regress
+- [x] Write a failing test: a graph `send` node with `role: commit` passes `CheckCommitAuthority`
+      today because the sender normalizes to `edit` — pinned as a **characterization test** (passes
+      today, written to be inverted at the Phase 4 fix; its failure message names the phase to check
+      off): `TestGraphCommitDispatchPassesCommitAuthority`, plus the end-to-end laundering path in
+      `TestGraphCommitDispatchReachesCommitInbox`, `bus/graph_bypass_test.go` (`c2c1174`, 2026-09-04)
+- [x] Write a failing test: `ApproveGraphGate` succeeds with no caller identity and emits no lifecycle
+      event — **ticked with a qualification**: the step cannot be satisfied as literally worded,
+      because the "emits no lifecycle event" half (Defect B) was fixed in `16f2027` and is now
+      regression-guarded by `TestApproveGraphGateRecordsAndAnnouncesApprover` (`graph_run_test.go`).
+      The half still open — any role may approve, and self-approval is accepted — is pinned by
+      `TestApproveGraphGateAcceptsAnyRole` and `TestApproveGraphGateAcceptsSelfApproval`
+      (`bus/graph_bypass_test.go`), both written to invert at Phase 2
+- [x] Confirm the same bypass applies to `CheckAtlassianAuthority`, or record precisely why it does not
+      — **recorded: it does not apply today, for two reasons that both leave the shape intact.**
+      (1) A graph-dispatched Atlassian write is refused **only by configuration**: the sender
+      normalizes to `edit` and the authority sits with `plan`; move the authority to `edit` and the
+      same bypass opens (`TestGraphAtlassianWriteRefusedOnlyByConfiguration`). (2) The graph never
+      *needs* a bypass — it sends the write to `plan`, which holds the authority itself
+      (`TestGraphAtlassianWriteNeedsNoBypass`). Same defect as the commit path with a different role
+      in the way; Phase 4's fix must judge both on the gate, not the sender
+- [x] Confirm `validateGates` still rejects an ungated commit node — the working half must not regress
+      — confirmed by the existing pins in `bus/graph_test.go`: ungated commit (`:266`), ungated
+      jira-write (`:274`), commit-role spawn (`:288`) and map (`:291`) are all rejected
 
 ### Phase 2: Authority and identity on approval
 
@@ -290,12 +307,21 @@ made.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-144-wait-human-gate-openable-by-any-agent | 2h 24m | 2026-09-08 10:38 |
+| MUX-144-wait-human-gate-openable-by-any-agent | 2h 43m | 2026-09-08 11:04 |
 
 ## Status
 
-**In Progress — 7/32, Phase 3 complete.** Moved to `drafts/` and set as the **active spec**
+**In Progress — 11/32, Phases 1 and 3 complete.** Moved to `drafts/` and set as the **active spec**
 2026-09-04.
+
+**Verified 2026-09-08.** **Phase 1 (Pin the bypass) is complete, and has been since `c2c1174`
+(2026-09-04 11:26)** — `bus/graph_bypass_test.go`, six characterization tests that assert the
+*current* behaviour and carry failure messages naming the phase to check off when each is inverted.
+The paragraph below was written the same day and never credited it, and plan's later verification
+passes diffed only from the session's `HEAD`, so the four boxes sat stale for four days. Surfaced by
+the `spec-to-pr` run's `implement` spawn, which reported "nothing to port" — correctly, its brief
+said to verify and report if the phase was already done — and reached the same reading, including
+the step 2 qualification, independently. Step 3's Atlassian answer is recorded inline above.
 
 **Verified 2026-09-04.** The audit half landed ahead of the authority half, via `16f2027` — a commit
 carrying a `MUX-136` prefix on that branch and merged here in PR #72, so `git log` by prefix does not
@@ -305,7 +331,8 @@ records `approved_by` backward-compatibly (Phase 2 step 2).
 
 **The authority half is untouched.** `graph approve` still has no authority check, self-approval is
 still unrefused (`runProvenance` is a *display* string, not enforcement), and `CheckCommitAuthority`
-still normalizes `daemon` → `edit`. Phases 1, 4 and 5 are at 0. The gate remains a scheduling pause,
+still normalizes `daemon` → `edit`. Phases 4 and 5 are at 0; Phase 2 stands at its marker step
+alone. The gate remains a scheduling pause,
 not a security boundary — the incident is now **attributable**, not **prevented**.
 
 Filed 2026-09-03 from an incident **four minutes old at filing**, observed live in this
@@ -313,7 +340,8 @@ session. Unlike most entries here, the evidence was not relayed: plan read the l
 frozen `graph.json`, the approval marker on disk, and the git state directly. Every source claim in
 the tables above was verified against this repo.
 
-No implementation had started at filing; the audit half has since landed (see above).
+No implementation had started at filing; the audit half (Phase 3) and the Phase 1 pins have since
+landed (see above).
 
 **Placement argument** (the table entry is ranked **#1**): this is the only defect in the backlog whose
 failure mode is an **irreversible, externally visible** action taken with no human in the loop — a
