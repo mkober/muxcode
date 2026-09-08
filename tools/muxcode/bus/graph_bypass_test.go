@@ -2,6 +2,7 @@ package bus
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -34,6 +35,15 @@ func pinCompiledAuthorities(t *testing.T) {
 		t.Setenv(key, "") // registers the restore
 		os.Unsetenv(key)
 	}
+	// Gate authority is read from the config FILE, so clearing the environment
+	// no longer isolates it: without an empty scratch config these tests fall
+	// through to the developer's own ~/.config/muxcode/config and pass or fail
+	// on whatever it happens to say.
+	empty := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(empty, []byte("# no authority overrides\n"), 0644); err != nil {
+		t.Fatalf("seed empty config: %v", err)
+	}
+	t.Setenv("MUXCODE_CONFIG", empty)
 }
 
 // TestGraphCommitDispatchPassesCommitAuthority pins Defect C: a graph send node

@@ -3,6 +3,7 @@ package bus
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -85,7 +86,7 @@ func TestApproveGraphGateRefusesAgentRoles(t *testing.T) {
 // than about the role.
 func TestApproveGraphGateRefusesSelfApproval(t *testing.T) {
 	pinCompiledAuthorities(t)
-	t.Setenv("MUXCODE_GATE_AUTHORITY_ROLES", "user,auto")
+	pinGateAuthorityConfig(t, "user,auto")
 
 	pinActor(t, "auto")
 	own := createTestRun(t, actorGateGraph())
@@ -146,7 +147,7 @@ func TestApproveGraphGateRefusesUnidentifiedApprovers(t *testing.T) {
 	}
 	assertNoApproval(t, stripped.ID, "gate")
 
-	t.Setenv("MUXCODE_GATE_AUTHORITY_ROLES", "user,"+ActorUnknown)
+	pinGateAuthorityConfig(t, "user,"+ActorUnknown)
 	pinActor(t, "")
 	pinProcessTable(t, "", errors.New("ps unavailable"))
 	unreadable := createTestRun(t, actorGateGraph())
@@ -165,16 +166,51 @@ func TestApproveGraphGateHonorsConfiguredAuthority(t *testing.T) {
 	run := createTestRun(t, actorGateGraph())
 
 	pinActor(t, "build")
-	t.Setenv("MUXCODE_GATE_AUTHORITY_ROLES", "user,build")
+	pinGateAuthorityConfig(t, "user,build")
 	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
 		t.Fatalf("an authorized role was refused: %v", err)
 	}
 
 	shut := createTestRun(t, actorGateGraph())
 	pinActor(t, "")
-	t.Setenv("MUXCODE_GATE_AUTHORITY_ROLES", "")
+	pinGateAuthorityConfig(t, "")
 	if err := ApproveGraphGate(runTestSession, shut.ID, "gate"); err == nil {
 		t.Error("the empty authority list let the user approve — it must deny every actor")
 	}
 	assertNoApproval(t, shut.ID, "gate")
+}
+
+// pinGateAuthorityConfig writes the gate authority into a scratch config file,
+// which is the only store GateApprovalAuthority reads.
+func pinGateAuthorityConfig(t *testing.T, value string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config")
+	body := "MUXCODE_GATE_AUTHORITY_ROLES=" + value + "\n"
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("MUXCODE_CONFIG", path)
+}
+
+// The P1 this closes: the authority was read from the caller's own environment,
+// so an agent refused a gate could re-run the identical command with the
+// variable prefixed and let itself through. The env must now carry no weight.
+func TestGateAuthorityIgnoresCallerEnvironment(t *testing.T) {
+	pinCompiledAuthorities(t)
+	pinActor(t, "")
+	run := createTestRun(t, actorGateGraph())
+
+	pinActor(t, "build")
+	t.Setenv("MUXCODE_GATE_AUTHORITY_ROLES", "user,build")
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err == nil {
+		t.Error("an agent self-authorized by setting the authority in its own environment")
+	}
+	assertNoApproval(t, run.ID, "gate")
+
+	// Negative control: the same value in the config file DOES authorize, so the
+	// fix cannot degenerate into "the override never works".
+	pinGateAuthorityConfig(t, "user,build")
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("the configured authority must still admit build: %v", err)
+	}
 }

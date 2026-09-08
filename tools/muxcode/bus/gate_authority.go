@@ -27,19 +27,58 @@ var gateApprovalAuthorityDefault = []string{ActorUser}
 
 // GateApprovalAuthority returns the actors allowed to release a wait_human gate.
 //
-// Override with MUXCODE_GATE_AUTHORITY_ROLES (comma-separated) to opt an agent
-// in — an arc meant to run unattended needs it:
+// Opt an agent in by setting MUXCODE_GATE_AUTHORITY_ROLES (comma-separated) in
+// the muxcode config file — an arc meant to run unattended needs it:
 //
 //	MUXCODE_GATE_AUTHORITY_ROLES=user,auto
 //
 // Setting it to the empty string denies every actor, so every run parks at its
 // first gate. That is a legitimate configuration: a session where no graph may
 // reach a mutation at all.
+//
+// The value is read from the CONFIG FILE and deliberately not from the process
+// environment. Read from the environment, the control was self-service: the
+// variable is read at approve time from the caller's own env, so any agent could
+// prefix it to the very command it had just been refused
+// (`MUXCODE_GATE_AUTHORITY_ROLES=user,build muxcode graph approve …`) and let
+// itself through. Withholding the variable's name from the deny message was the
+// only thing standing in the way, and CLAUDE.md names it anyway — obscurity, not
+// a control. A config file is a persistent, visible, auditable edit rather than
+// a per-invocation prefix, so the opt-in stays where it belongs: with the user.
 func GateApprovalAuthority() []string {
-	if v, ok := os.LookupEnv("MUXCODE_GATE_AUTHORITY_ROLES"); ok {
+	if v, ok := GateAuthorityConfigured(); ok {
 		return splitTrimmed(v)
 	}
 	return gateApprovalAuthorityDefault
+}
+
+// GateAuthorityConfigured reads the gate authority override from the muxcode
+// config file, reporting whether it was set at all — an empty value is a
+// meaningful setting (deny everyone) and must be distinguishable from absent.
+//
+// The file is parsed here rather than through GetShellConfig because that
+// helper ends its loop with "only include if not already set (env takes
+// precedence)". Deferring to the environment is right for ordinary settings and
+// exactly wrong for this one: the environment is the untrusted input the check
+// exists to ignore, and routing through it would let a caller suppress the
+// configured value simply by exporting the same name.
+func GateAuthorityConfigured() (string, bool) {
+	data, err := os.ReadFile(ResolveConfigPath())
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimPrefix(strings.TrimSpace(line), "export ")
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, found := strings.Cut(line, "=")
+		if !found || strings.TrimSpace(key) != "MUXCODE_GATE_AUTHORITY_ROLES" {
+			continue
+		}
+		return StripQuotes(strings.TrimSpace(val)), true
+	}
+	return "", false
 }
 
 // CheckGateApprovalAuthority returns a deny message if actor may not release a

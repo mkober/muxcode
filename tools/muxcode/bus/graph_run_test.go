@@ -534,7 +534,7 @@ func TestApproveGraphGateRecordsAndAnnouncesApprover(t *testing.T) {
 // its own run (MUX-144 Phase 2). The subject is who hears about a release, not
 // who may make one.
 func TestApproveGraphGateSilentWhenEditApproves(t *testing.T) {
-	t.Setenv("MUXCODE_GATE_AUTHORITY_ROLES", "user,edit")
+	pinGateAuthorityConfig(t, "user,edit")
 	pinActor(t, "")
 	run := createTestRun(t, actorGateGraph())
 	pinActor(t, "edit")

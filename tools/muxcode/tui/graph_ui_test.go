@@ -21,7 +21,13 @@ func scratchGraphSession(t *testing.T) string {
 	// because BusActorVerified checks ancestry for literal "user" claims, and
 	// this suite may run under an agent runtime.
 	t.Setenv("AGENT_ROLE", "tui-approver")
-	t.Setenv("MUXCODE_GATE_AUTHORITY_ROLES", "tui-approver")
+	// Gate authority is read from the config file, never the environment, so an
+	// env var here would be ignored exactly as a self-authorizing agent's would.
+	authCfg := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(authCfg, []byte("MUXCODE_GATE_AUTHORITY_ROLES=tui-approver\n"), 0644); err != nil {
+		t.Fatalf("seed gate authority config: %v", err)
+	}
+	t.Setenv("MUXCODE_CONFIG", authCfg)
 	session := "tui-graph-" + strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
