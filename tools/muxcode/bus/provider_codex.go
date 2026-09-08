@@ -56,6 +56,15 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 		args = append(args, "-a", "never")
 	}
 
+	// Roles whose work ends outside the workspace need those roots granted
+	// explicitly; the default policy refuses them.
+	if roots := codexWritableRoots(cfg.Role); len(roots) > 0 {
+		args = append(args, "-s", "workspace-write")
+		for _, dir := range roots {
+			args = append(args, "--add-dir", dir)
+		}
+	}
+
 	// Model selection
 	model := resolveCodexModel(cfg.Role)
 	if model != "" {
@@ -63,6 +72,104 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 	}
 
 	return "codex", args
+}
+
+// codexWritableRoots returns the directories a role must write outside the
+// repo, to be granted with --add-dir under the workspace-write policy.
+//
+// Codex takes a selectable sandbox policy and muxcode passed none, so every
+// agent inherited the default: writes inside the workspace succeed, writes
+// outside are refused. A build agent therefore compiled cleanly and then died
+// in `make install` with "Operation not permitted" on ~/.local/bin — read as
+// "Codex cannot build" until the flags were checked (2026-09-08).
+//
+// The paths track the Makefile's own PREFIX/BINDIR/CONFIGDIR variables, so a
+// non-default install prefix stays writable instead of silently regressing to
+// the failure this fixes. Only build is listed: it is the role whose failure
+// was observed. Add a role here when its work is shown to write outside the
+// workspace — never widen the policy itself.
+func codexWritableRoots(role string) []string {
+	if role != "build" {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil
+	}
+	prefix := stringEnvOrDefault("PREFIX", filepath.Join(home, ".local"))
+	roots := []string{
+		stringEnvOrDefault("BINDIR", filepath.Join(prefix, "bin")),
+		stringEnvOrDefault("CONFIGDIR", filepath.Join(home, ".config", "muxcode")),
+		// `make install` also drops slash-command files here (Makefile:92).
+		filepath.Join(home, ".claude", "commands"),
+	}
+	return resolveWritableRoots(append(roots, goToolchainRoots()...))
+}
+
+// resolveWritableRoots maps each root to its physical path, dropping any that
+// cannot be resolved.
+//
+// Codex refuses a writable root containing a symlink component ("symlinked
+// writable roots not supported"), and that refusal is fatal to the SANDBOX, not
+// just to the offending root: the shell process fails before startup, so every
+// command in the agent dies pre-execution with no output. A dotfiles setup that
+// symlinks ~/.claude was enough to make the build agent look like a hung model —
+// it accepted work, spun, and ran nothing (2026-09-08).
+//
+// A missing root is created first: these are install targets `make install`
+// would create anyway, and an unresolvable root has to be dropped, which would
+// silently reinstate the "Operation not permitted" failure the grants exist to
+// prevent. Resolving also dedupes roots that share a physical path.
+func resolveWritableRoots(roots []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, dir := range roots {
+		resolved, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
+				continue
+			}
+			if resolved, err = filepath.EvalSymlinks(dir); err != nil {
+				continue
+			}
+		}
+		if resolved == "" || seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		out = append(out, resolved)
+	}
+	return out
+}
+
+// goToolchainRoots returns the Go build and module caches, asked of the
+// toolchain rather than assumed, so a custom GOCACHE/GOMODCACHE is honoured.
+//
+// The compiler writes these on any build of changed code, and they sit outside
+// the workspace. Without them a sandboxed build fails on a cache path the
+// moment a source file changes — and passes while every package is already
+// cached, which is why this surfaced one build after the roots were added
+// rather than immediately. An absent toolchain yields nothing to grant.
+func goToolchainRoots() []string {
+	out, err := exec.Command("go", "env", "GOCACHE", "GOMODCACHE").Output()
+	if err != nil {
+		return nil
+	}
+	var roots []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if dir := strings.TrimSpace(line); dir != "" {
+			roots = append(roots, dir)
+		}
+	}
+	return roots
+}
+
+// stringEnvOrDefault is os.Getenv with a fallback for unset or empty values.
+func stringEnvOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // isReadOnlyCodexRole returns true for roles that should use on-request
