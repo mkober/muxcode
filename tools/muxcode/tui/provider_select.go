@@ -138,6 +138,29 @@ func (ui *ProviderSelectUI) selectedAgentRoles() []string {
 	return roles
 }
 
+// appliedNote marks a result row that persisted config instead of reloading, so
+// a green tick against a windowless role is not read as a relaunch that happened.
+func appliedNote(r *bus.ReloadResult) string {
+	if r != nil && r.ConfigOnly {
+		return Comment + " (saved, no reload)" + RST
+	}
+	return ""
+}
+
+// notAliveLabel names an agent's state when it holds no live process.
+//
+// A windowless role was never launched, so labelling it "dead" would send the
+// reader hunting a crash that never happened. It stays selectable because it is
+// still configurable — applying persists its provider/model for a future launch
+// — and the label states that consequence rather than just the state, since the
+// reader has to know no reload will follow.
+func notAliveLabel(a bus.AgentReloadStatus) string {
+	if a.Windowless {
+		return " (config only)"
+	}
+	return " (dead)"
+}
+
 // isSelectable returns true if the agent at index i can be checked/unchecked.
 // Dead agents and the current active window's agent are not selectable.
 func (ui *ProviderSelectUI) isSelectable(i int) bool {
@@ -145,7 +168,7 @@ func (ui *ProviderSelectUI) isSelectable(i int) bool {
 		return false
 	}
 	a := &ui.agents[i]
-	if !a.Alive {
+	if !a.Alive && !a.Windowless {
 		return false
 	}
 	// The agent for the window that opened the modal is not selectable
@@ -534,11 +557,26 @@ func (ui *ProviderSelectUI) selectCurrent() {
 
 // selectAllAgents selects all selectable agents except orchestrators (edit/auto).
 func (ui *ProviderSelectUI) selectAllAgents() {
-	for i, a := range ui.agents {
-		if ui.isSelectable(i) && !a.Orchestrator {
+	for i := range ui.agents {
+		if ui.bulkSelectable(i) {
 			ui.agentChecks[i] = true
 		}
 	}
+}
+
+// bulkSelectable reports whether a keystroke may select the agent WITHOUT the
+// user naming it.
+//
+// Windowless roles are excluded alongside orchestrators. Applying to one writes
+// the shell config rather than a session runtime override — a change that
+// outlives the session — so it has to be a deliberate pick, not a side effect of
+// pressing "all" to move the live agents onto another provider.
+func (ui *ProviderSelectUI) bulkSelectable(i int) bool {
+	if !ui.isSelectable(i) {
+		return false
+	}
+	a := &ui.agents[i]
+	return !a.Orchestrator && !a.Windowless
 }
 
 // deselectAllAgents deselects all agents.
@@ -557,7 +595,7 @@ func (ui *ProviderSelectUI) toggleAgentsByProvider() {
 	// Check if any matching selectable agents are currently unchecked
 	anyUnchecked := false
 	for i, a := range ui.agents {
-		if ui.isSelectable(i) && a.CLI == targetCLI && !ui.agentChecks[i] {
+		if ui.bulkSelectable(i) && a.CLI == targetCLI && !ui.agentChecks[i] {
 			anyUnchecked = true
 			break
 		}
@@ -565,7 +603,7 @@ func (ui *ProviderSelectUI) toggleAgentsByProvider() {
 
 	// Toggle: if any are unchecked, check all matching; otherwise uncheck all matching
 	for i, a := range ui.agents {
-		if ui.isSelectable(i) && a.CLI == targetCLI {
+		if ui.bulkSelectable(i) && a.CLI == targetCLI {
 			ui.agentChecks[i] = anyUnchecked
 		}
 	}
@@ -722,13 +760,15 @@ func (ui *ProviderSelectUI) render() string {
 		// CLI / abbreviated model
 		cliModel := fmt.Sprintf("%s / %s", a.CLI, bus.AbbreviateModel(a.Model))
 
-		// Suffix: warning for orchestrators, (dead) for dead, (active) for current window
+		// Suffix: warning for orchestrators, not-alive reason, (active) for current window
 		suffix := ""
-		if !a.Alive {
+		if a.Windowless {
+			suffix = Comment + notAliveLabel(a) + RST
+		} else if !a.Alive {
 			roleName = Comment + Pad(a.Role, 10) + RST
 			cliModel = Comment + cliModel + RST
 			check = Comment + "[ ]" + RST
-			suffix = Comment + " (dead)" + RST
+			suffix = Comment + notAliveLabel(a) + RST
 		} else if a.Role == ui.role {
 			roleName = Comment + Pad(a.Role, 10) + RST
 			cliModel = Comment + cliModel + RST
@@ -866,8 +906,8 @@ func (ui *ProviderSelectUI) renderProgress() string {
 					b.WriteString(fmt.Sprintf("    %s✓%s %-10s %s(no change)%s  %s\n",
 						Green, RST, r.Role, Comment, RST, dur))
 				} else {
-					b.WriteString(fmt.Sprintf("    %s✓%s %-10s %s → %s  %s\n",
-						Green, RST, r.Role, r.OldCLI, r.NewCLI, dur))
+					b.WriteString(fmt.Sprintf("    %s✓%s %-10s %s → %s%s  %s\n",
+						Green, RST, r.Role, r.OldCLI, r.NewCLI, appliedNote(r), dur))
 				}
 			} else {
 				b.WriteString(fmt.Sprintf("    %s✗%s %-10s %s%v%s\n",
