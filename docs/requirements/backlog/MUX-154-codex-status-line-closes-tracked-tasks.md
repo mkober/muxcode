@@ -81,7 +81,7 @@ A control verified on one road is not verified on all of them — the MUX-142 le
 | [`MUX-148`](./MUX-148-node-outcome-reads-command-ran-as-task-done.md) | Graph-executor half of the same family — a node outcome reads "a command ran" as done. That one is about authoritative-row provenance in `graph_exec`; this is the tracked-task store. Same defect shape, different consumer |
 | [`MUX-009`](./MUX-009-response-echo-chain-retrigger.md) | A *response* injected back as a *prompt* on the receiving side. This is a status line synthesized as a *response* on the sending side. Distinct mechanisms, both "the bus believes a TUI" |
 | [`MUX-127`](./MUX-127-review-completion-routing.md) | Routes the chain on review outcomes; this corrupts the outcome it routes on |
-| [`MUX-153`](./MUX-153-codex-test-agent-cannot-run-the-suite.md) | Why the codex test agent has no real answer to give — this defect is what turns that silence into "done" |
+| [`MUX-153`](../drafts/MUX-153-codex-test-agent-cannot-run-the-suite.md) | Why the codex test agent has no real answer to give — this defect is what turns that silence into "done" |
 
 ## Requirements
 

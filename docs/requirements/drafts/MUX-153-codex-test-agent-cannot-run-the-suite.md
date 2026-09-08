@@ -3,7 +3,7 @@
 `TestProcessBatch_SimpleResponse` (`tools/muxcode-llm-harness/harness/loop_test.go:23`) binds a
 loopback listener via `httptest.NewServer`. Codex restricts network access by default and
 `BuildExecArgs` never lifts it, so the listen panics in `newLocalListener`, the harness module fails,
-and — through [`MUX-152`](./MUX-152-test-sh-hides-modules-after-first-failure.md) — the bus module
+and — through [`MUX-152`](../backlog/MUX-152-test-sh-hides-modules-after-first-failure.md) — the bus module
 never runs. A test agent on codex **cannot validate this repository**, and nothing says so: the role
 launches, accepts requests, and returns nothing usable. Today's green suite exists only because the
 work was routed to the unsandboxed run agent.
@@ -19,7 +19,7 @@ Tracking: _(no GitHub issue yet)_
 | | |
 |---|---|
 | Launch | `role=test cli=codex` (lifecycle 13:44:15) |
-| Results produced by the test agent all session | none — its only replies were echoed TUI status lines ([`MUX-154`](./MUX-154-codex-status-line-closes-tracked-tasks.md)) |
+| Results produced by the test agent all session | none — its only replies were echoed TUI status lines ([`MUX-154`](../backlog/MUX-154-codex-status-line-closes-tracked-tasks.md)) |
 | Force-respond ladder on `test` | all four rungs fired 14:11–14:14 with no response |
 | Where the suite actually ran green | the **run** agent (Claude, no sandbox): 2901 pass / 0 fail, exit 0 |
 
@@ -48,8 +48,8 @@ The suite stays green on paper while the role meant to prove it has never run it
 | Spec | Relationship |
 |------|--------------|
 | [`MUX-042`](../completed/MUX-042-codex-cli-compatibility.md) | Made codex a provider. This is the sandbox half its compatibility claim did not cover |
-| [`MUX-152`](./MUX-152-test-sh-hides-modules-after-first-failure.md) | Turns this single failing test into a run where 2900 tests never execute |
-| [`MUX-154`](./MUX-154-codex-status-line-closes-tracked-tasks.md) | Turns this agent's silence into a recorded success |
+| [`MUX-152`](../backlog/MUX-152-test-sh-hides-modules-after-first-failure.md) | Turns this single failing test into a run where 2900 tests never execute |
+| [`MUX-154`](../backlog/MUX-154-codex-status-line-closes-tracked-tasks.md) | Turns this agent's silence into a recorded success |
 
 ## Requirements
 
@@ -98,23 +98,30 @@ test agent can then validate the repo, and the role no longer accepts work it ca
 ### Phase 2: Decide and implement
 
 - [x] User chooses A, B or C — **C, socket-free suite** (relayed by edit, 2026-09-08 15:14)
-- [ ] Implement C: convert all 52 `httptest.NewServer` sites across 8 files behind the shared
-      `newPipeServer` helper — **converted, uncommitted, held open at edit's request until the full
-      suite is confirmed green** (plan ticked this at 15:50 on the conversion alone and reverted it at
-      15:57; edit's verification run is in flight). Conversion state at 15:45: only the helper's own
-      four self-test sites remain (`pipeserver_test.go`, two per module), verified by grep. Production
-      seams for the injected client: `OllamaConfig.HTTPClient` (`bus/ollama.go:33`, nil in
-      production), `healthHTTPClient` (`bus/health.go:55`), harness `Config.HTTPClient`
-      (`harness/config.go:17`). **Half-verified:** the harness module (19 sites) ran green — `go vet`
-      + `go test`, rc=0 by sentinel; the bus module (33 sites) has **not** been run — the user
-      declined the full-suite run — so that half is unproven until the next suite pass
+- [x] Implement C: convert all 52 `httptest.NewServer` sites across 8 files behind the shared
+      `newPipeServer` helper — **converted, verified green and committed as `c45ed51`** (2026-09-08
+      15:44). Only the helper's own four self-test sites remain (`pipeserver_test.go`, two per module),
+      verified by grep at `c45ed51`. Production seams for the injected client, each nil in production:
+      `OllamaConfig.HTTPClient` (`bus/ollama.go:33`), `healthHTTPClient` (`bus/health.go:55`), harness
+      `Config.HTTPClient` (`harness/config.go:17`). Full suite **2915 pass / 0 fail, exit 0** on the
+      run agent, after two helper regressions — a hang, and a `Close()` that was a no-op — were found
+      and fixed on the way. *History: plan ticked this at 15:50 on the conversion alone, reverted it
+      at 15:57 at edit's request while the run was in flight, and ticked it at 16:05 on the green*
 - [ ] Guard: a test fails on any `httptest.NewServer` / `httptest.NewTLSServer` / `net.Listen` in a
       `*_test.go` outside the helper, so the rule cannot erode one test at a time
 - [ ] Suite green under the codex default sandbox — the failure this spec opened with no longer
-      reproduces
+      reproduces. *Half of this holds at `c45ed51`: the socket-free suite is green (2915/0) — but on
+      the unsandboxed run agent. The words "under the codex default sandbox" have not been
+      demonstrated; that run is Phase 3's first test, and this step stays open until it happens.
+      Edit authorised ticking it on 2026-09-08 15:48; plan declined on the wording and said so*
 - [ ] Negative control: codex review agent launch and behaviour unchanged
 - [ ] Negative control: test role on claude / opencode unchanged
-- [ ] Update `CLAUDE.md`'s Codex sandbox note with the test-role half
+- [x] Update `CLAUDE.md`'s Codex sandbox note with the test-role half — `fefb5dc`: a new rule at
+      `CLAUDE.md:67`, **"No test may bind a socket"** — use `newPipeServer`, never `httptest.NewServer`,
+      because a sandboxed agent cannot listen, so a socket-bound test panics before any assertion and
+      `set -e` then hides every module behind it (the MUX-152 shape); the Codex CLI sandbox row
+      (`:117`) states that network is restricted separately and by default. CLAUDE.md at 39,640 bytes,
+      under the 40,000 limit
 
 ### Phase 3: Integration test
 
@@ -135,11 +142,15 @@ role. The default-restricted network claim rests on the corrected `CLAUDE.md` no
 
 ## Status
 
-**In Progress — 1/19.** Filed 2026-09-08; the user chose **option C** the same afternoon (relayed by
-edit at 15:14), and edit converted all 52 `httptest.NewServer` sites behind a shared
-`newPipeServer` helper within the hour — uncommitted; the harness half ran green, and the full-suite
-verification is in flight at 15:57 with the implementation step **held open until edit confirms
-green** (CLAUDE.md now carries the no-socket-binding test rule, per edit). This spec's first draft costed C as
+**In Progress — 3/19, Phase 2 at 3/7.** Filed 2026-09-08; the user chose **option C** the same
+afternoon (relayed by edit at 15:14); edit converted all 52 `httptest.NewServer` sites behind a
+shared `newPipeServer` helper within the hour, the full suite ran **green 2915/0**, and the work is
+committed — `c45ed51` (the conversion, 15:44) and `fefb5dc` (the CLAUDE.md rule). Open in Phase 2:
+the guard against new socket binds, the suite under the codex sandbox itself (Phase 3's first test —
+the green so far is the unsandboxed run agent's), and the two negative controls. This spec's first draft costed C as
 "fixes this test only"; the real count, verified at `HEAD` by `git grep`, is 52 sites in 8 files, and
-the spec was corrected the same hour. Still filed under `backlog/` with work begun: **ready to move
-to `drafts/` when the user says so** (a filesystem move, user-gated).
+the spec was corrected the same hour. **Moved from `backlog/` to `drafts/` 2026-09-08 15:48 on the
+user's approval** (relayed by edit) — a filesystem move with no git command, so git sees a delete plus
+an untracked file until the next user-requested commit stages it as a rename. Cross-references in
+`backlog.md` (rank, registry and In-progress rows), MUX-152, MUX-154 and `docs/architecture.md` were
+re-pointed to `drafts/`, and this file's own sibling links now reach `../backlog/`.

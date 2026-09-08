@@ -783,7 +783,7 @@ build agent. Two consequences follow. A role whose work ends in a write outside 
 `.git` and remote pushes) needs the same treatment as build, not a different provider. And **no
 flag lifts network for any role**, so a Codex `test` agent cannot bind the loopback socket
 `httptest.NewServer` needs and structurally cannot run this repo's suite
-([MUX-153](requirements/backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)). An earlier
+([MUX-153](requirements/drafts/MUX-153-codex-test-agent-cannot-run-the-suite.md)). An earlier
 version of this guidance claimed Codex "sandboxes all filesystem writes" and was fit only for
 read-only roles; that conflated one policy with the CLI and was corrected 2026-09-08.
 
