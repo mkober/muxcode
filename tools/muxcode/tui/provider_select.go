@@ -138,6 +138,56 @@ func (ui *ProviderSelectUI) selectedAgentRoles() []string {
 	return roles
 }
 
+// failureRowIndent is the visible prefix of a failure row ("    ✗ " plus the
+// 10-column role field), which continuation lines align under.
+const failureRowIndent = 17
+
+// renderFailureRow renders a failed agent row, wrapping the error across lines
+// that fit width.
+//
+// Reload errors are sentences, not tokens — "agent research did not exit after
+// 12 seconds" is wider than the popup — and the row was emitted as one
+// unwrapped line, so the terminal broke it at ITS width and the text ran
+// straight through the modal's border (2026-09-08). Wrapping belongs here
+// rather than at the frame because only this row is unbounded in length.
+func renderFailureRow(role string, cause error, width int) string {
+	avail := width - failureRowIndent - 1
+	if avail < 20 {
+		avail = 20
+	}
+	var b strings.Builder
+	lines := wrapWords(fmt.Sprint(cause), avail)
+	for i, line := range lines {
+		if i == 0 {
+			b.WriteString(fmt.Sprintf("    %s✗%s %-10s %s%s%s\n", Red, RST, role, Red, line, RST))
+			continue
+		}
+		b.WriteString(fmt.Sprintf("%s%s%s%s\n", strings.Repeat(" ", failureRowIndent), Red, line, RST))
+	}
+	return b.String()
+}
+
+// wrapWords breaks s into lines of at most width visible characters, splitting
+// on spaces. A single word longer than width is left whole rather than cut, so
+// a path or an id stays selectable.
+func wrapWords(s string, width int) []string {
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return []string{""}
+	}
+	var lines []string
+	cur := words[0]
+	for _, w := range words[1:] {
+		if len(cur)+1+len(w) <= width {
+			cur += " " + w
+			continue
+		}
+		lines = append(lines, cur)
+		cur = w
+	}
+	return append(lines, cur)
+}
+
 // appliedNote marks a result row that persisted config instead of reloading, so
 // a green tick against a windowless role is not read as a relaunch that happened.
 func appliedNote(r *bus.ReloadResult) string {
@@ -910,8 +960,7 @@ func (ui *ProviderSelectUI) renderProgress() string {
 						Green, RST, r.Role, r.OldCLI, r.NewCLI, appliedNote(r), dur))
 				}
 			} else {
-				b.WriteString(fmt.Sprintf("    %s✗%s %-10s %s%v%s\n",
-					Red, RST, r.Role, Red, r.Error, RST))
+				b.WriteString(renderFailureRow(r.Role, r.Error, termWidth()))
 			}
 		} else if role == currentRole {
 			// Currently reloading
