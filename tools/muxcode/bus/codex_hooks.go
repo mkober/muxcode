@@ -182,10 +182,12 @@ func codexHome() string {
 	return filepath.Join(home, ".codex")
 }
 
-// CodexHooksFeatureDisabled reports whether a config.toml layer (user, then
-// project) turns the hooks feature off (`[features] hooks = false`, or its
-// deprecated alias codex_hooks). Codex would then load no hooks at all, and
-// muxcode must not claim the hook road for an agent that has none.
+// CodexHooksFeatureDisabled reports whether a config.toml layer turns the
+// hooks feature off (`[features] hooks = false`, or its deprecated alias
+// codex_hooks), checking the project layer (`.codex/config.toml`) before
+// the user layer so the more specific setting is the one reported. Codex
+// would then load no hooks at all, and muxcode must not claim the hook
+// road for an agent that has none.
 func CodexHooksFeatureDisabled() (bool, string) {
 	paths := []string{filepath.Join(".codex", "config.toml")}
 	if home := codexHome(); home != "" {

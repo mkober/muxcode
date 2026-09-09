@@ -252,6 +252,58 @@ func TestCodexExitCodeFromTranscript(t *testing.T) {
 	}
 }
 
+// TestScanTranscriptForItem_PrecedenceAndBoundaries pins the streaming
+// reader (PR #78 review should-fix): the LATEST parseable item_completed
+// for an id wins over an earlier one, exit_code wins over status within a
+// record, a malformed later candidate is skipped rather than deciding, an
+// unrelated id never matches, and the final line counts without a
+// trailing newline.
+func TestScanTranscriptForItem_PrecedenceAndBoundaries(t *testing.T) {
+	rec := func(id, status, exit string) string {
+		if exit != "" {
+			return `{"type":"item_completed","payload":{"item":{"id":"` + id + `","status":"` + status + `","exit_code":` + exit + `}}}`
+		}
+		return `{"type":"item_completed","payload":{"item":{"id":"` + id + `","status":"` + status + `"}}}`
+	}
+	content := strings.Join([]string{
+		`{"type":"item_started","payload":{"item":{"id":"exec-1"}}}`,
+		rec("exec-1", "failed", ""),
+		rec("exec-2", "completed", "7"),
+		rec("exec-1", "completed", ""),
+		rec("exec-3", "failed", ""),
+		`{"type":"item_completed","payload":{"item":{"id":"exec-3","status":"completed"`,
+		rec("exec-5", "completed", ""),
+		rec("exec-5", "in_progress", ""),
+		// A record wider than the reader's 64 KiB buffer must arrive whole.
+		`{"type":"item_completed","payload":{"item":{"id":"exec-6","status":"failed","aggregated_output":"` + strings.Repeat("x", 70*1024) + `"}}}`,
+		rec("exec-4", "completed", ""),
+	}, "\n")
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{
+		"exec-1": "0", // later record wins
+		"exec-2": "7", // exit_code beats status
+		"exec-3": "1", // malformed later candidate skipped
+		"exec-4": "0", // last line, no trailing newline
+		"exec-6": "1", // record wider than the 64 KiB read buffer
+	}
+	for id, w := range want {
+		got, ok := scanTranscriptForItem(path, id)
+		if !ok || got != w {
+			t.Errorf("%s: (%q, %v), want (%q, true)", id, got, ok, w)
+		}
+	}
+	if _, ok := scanTranscriptForItem(path, "exec-9"); ok {
+		t.Error("unrelated id resolved")
+	}
+	if got, ok := scanTranscriptForItem(path, "exec-5"); ok {
+		t.Errorf("a later record with no verdict must clear the earlier success, got %q", got)
+	}
+}
+
 func TestParsePatchPaths(t *testing.T) {
 	patch := "*** Begin Patch\n*** Update File: a/b.go\n@@\n-x\n+y\n*** Add File: c.txt\n+hi\n*** Delete File: d.txt\n*** Update File: a/b.go\n*** Move to: e.txt\n*** End Patch"
 	got := ParsePatchPaths(patch)

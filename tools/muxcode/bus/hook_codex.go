@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"os"
@@ -122,42 +123,60 @@ func CodexExitCodeFromTranscript(path, toolUseID string) (string, bool) {
 	return "", false
 }
 
+// scanTranscriptForItem streams the rollout line by line and answers from
+// the LATEST parseable item_completed record for toolUseID — a rollout
+// grows for the whole session and this runs on every retry, so it holds
+// one line in memory, never the file (PR #78 review, 2026-09-09).
 func scanTranscriptForItem(path, toolUseID string) (string, bool) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return "", false
 	}
+	defer f.Close()
 	needle := []byte(`"id":"` + toolUseID + `"`)
 	completed := []byte(`"item_completed"`)
-	lines := bytes.Split(data, []byte("\n"))
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := lines[i]
-		if !bytes.Contains(line, completed) || !bytes.Contains(line, needle) {
-			continue
+	r := bufio.NewReaderSize(f, 64*1024)
+	code, found := "", false
+	for {
+		line, rerr := r.ReadBytes('\n')
+		if bytes.Contains(line, completed) && bytes.Contains(line, needle) {
+			if c, ok, parsed := transcriptItemVerdict(line); parsed {
+				code, found = c, ok
+			}
 		}
-		var rec struct {
-			Payload struct {
-				Item struct {
-					Status   string `json:"status"`
-					ExitCode *int   `json:"exit_code"`
-				} `json:"item"`
-			} `json:"payload"`
+		if rerr != nil {
+			break
 		}
-		if json.Unmarshal(line, &rec) != nil {
-			continue
-		}
-		if rec.Payload.Item.ExitCode != nil {
-			return strconv.Itoa(*rec.Payload.Item.ExitCode), true
-		}
-		switch rec.Payload.Item.Status {
-		case "completed":
-			return "0", true
-		case "failed":
-			return "1", true
-		}
-		return "", false
 	}
-	return "", false
+	return code, found
+}
+
+// transcriptItemVerdict reads one item_completed line: parsed is false for
+// malformed JSON (the line is ignored); otherwise ok carries whether the
+// record decides an exit code — item.exit_code when recorded, else status
+// completed/failed as 0/1.
+func transcriptItemVerdict(line []byte) (code string, ok, parsed bool) {
+	var rec struct {
+		Payload struct {
+			Item struct {
+				Status   string `json:"status"`
+				ExitCode *int   `json:"exit_code"`
+			} `json:"item"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal(line, &rec) != nil {
+		return "", false, false
+	}
+	if rec.Payload.Item.ExitCode != nil {
+		return strconv.Itoa(*rec.Payload.Item.ExitCode), true, true
+	}
+	switch rec.Payload.Item.Status {
+	case "completed":
+		return "0", true, true
+	case "failed":
+		return "1", true, true
+	}
+	return "", false, true
 }
 
 // --- Answers ---

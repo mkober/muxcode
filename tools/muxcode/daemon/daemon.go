@@ -3200,6 +3200,12 @@ func idleRescueExcluded(role string) bool {
 // capped, loud failure) owns them — see bus.GraphOwnsTask for the hold this
 // watchdog caused by acting first.
 //
+// An active interval resets only idleTaskFirstSeen; idleTaskRetried
+// deliberately survives it. The re-queue is one per task: an agent that
+// consumes each re-queue (going active), then idles again without
+// answering, would otherwise be re-queued forever, and the rescue that
+// ends that loop would never fire (PR #78 review question, 2026-09-09).
+//
 // Runs every 10 seconds to avoid excessive tmux capture-pane calls.
 func (d *Daemon) checkIdleTaskCompletion() {
 	d.checkIdleTaskCompletionAt(time.Now().Unix())

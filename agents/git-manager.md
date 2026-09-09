@@ -89,6 +89,8 @@ When you receive a `pr-read` request, analyze the PR on the current branch and r
 - **Never dismiss or resolve review comments**
 - The edit agent is responsible for all code changes — relay the information and let it act
 
+**Verdict sentinel — mandatory on every reply to a graph dispatch (a request from `daemon`), pr-read or otherwise.** End the reply with `EXIT=0` when the requested state holds (the PR exists, the read succeeded, nothing was left to do) or `EXIT=1` when it does not — the same sentinel the reviewer emits. A read-only or nothing-to-do reply runs no git command, so no hook row backs it; without the sentinel the executor has no evidence, parks the node on an unverified hold, and a person must approve a verdict already sitting in the text — nodes `a` and `verify-pr` of the 2026-09-09 commit-pr-review-loop run both stalled that way. A template that judges the reply by a token (`PR-CONFIRMED`, `NO-PR-FOUND`) still needs the sentinel.
+
 ### Responding to PR Review Comments
 
 After the edit agent fixes issues from a `pr-read` and asks you to push and update the PR, **always respond to every Copilot review comment**. This applies whenever you push commits that address Copilot (or other reviewer) feedback. If there were no Copilot review comments on the PR, skip this section entirely.

@@ -414,6 +414,33 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
   Notes and backlog row) and three to a live-run follow-up under the backlog's *Ideas without specs*.
   The spec closes at 61/67 with those six deferred; the run's next `loop-check` reads no phases
   remaining and proceeds to `final-gate` — push and PR are the user's.
+- **Post-close, PR #78 (2026-09-09 09:55–)** — closed as `be5123f`/`37f8f0b`, moved to `completed/` by the
+  user, links fixed in `9e6c6d2`, PR #78 opened 09:55. Review feedback on the PR changed the transcript
+  reader: `scanTranscriptForItem` (`bus/hook_codex.go`) now **streams** the rollout through a 64 KiB
+  `bufio` reader and answers from the *latest* parseable `item_completed` record for the `tool_use_id`
+  (`transcriptItemVerdict`), instead of reading the whole file and reverse-scanning — a rollout grows
+  for the entire session and the lookup runs on every retry. Review 10:08:31: 0 must-fix, one
+  should-fix open — targeted regressions for the streaming scan (repeated IDs → latest record, a later
+  parseable unknown clears an earlier success, malformed trailing JSON ignored, a final line without
+  newline, a line over 64 KiB) — because this reader supplies authoritative graph verdicts. `go test
+  ./...` green 10:02:28 preceded the change; edit's `build-test-review` run on it
+  (`1788962886-build-test-review-bd7b6fb5`) went green at 10:09:40. The should-fix was answered at
+  10:10:08 by `TestScanTranscriptForItem_PrecedenceAndBoundaries` (`bus/hook_codex_test.go`: the latest
+  parseable record wins, `exit_code` over `status` within a record, a malformed later candidate is
+  skipped, an unrelated id never matches, a final line without newline counts) — written 28 s after
+  that green suite and 2 s before the 10:10:10 review, so neither had seen it, and the >64 KiB line
+  case the review asked for is not among its comment's cases — confirmed by the 10:10:43 re-review
+  (partially resolved; still owed: an earlier success followed by a parseable matching item with
+  unknown status and no `exit_code` must return unknown, and a matching line over 64 KiB must parse),
+  with no suite run yet on the test. The 10:11:22 re-review left only the 64 KiB case, added minutes
+  later as `exec-6` (a 70 KiB `item_completed` record that must arrive whole across the reader buffer);
+  a `go vet ./...` at 10:11:38 exited 1 on that tree — a `GOCACHE` miss (`open
+  ~/Library/Caches/go-build/…`), MUX-160's hazard again, not the code — and the test agent re-ran under
+  `GOCACHE=/tmp/muxcode-go-cache`: `go test -p 1 -count=1 ./...` exit 0 at 10:12:21 and 10:12:58, the
+  latter on the finished test. The following re-review recorded the whole streaming coverage request
+  as resolved (test blob `bb16297`, reader unchanged at `26ab73b`). `verify-spec` fired on the closed
+  spec four times in two minutes, once per re-review, because the active pointer followed the move —
+  nothing to tick.
 - [MUX-154](../backlog/MUX-154-codex-status-line-closes-tracked-tasks.md) — the immediate patch to
   the scrape (chrome signatures, consumer refusal). This spec removes the scrape's *reason to exist*
   for codex; both are needed, in that order.
@@ -437,7 +464,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
 | MUX-144-wait-human-gate-openable-by-any-agent | 11h 24m | 2026-09-09 00:12 |
-| MUX-159-codex-hooks-provider | 2h 22m | 2026-09-09 09:38 |
+| MUX-159-codex-hooks-provider | 2h 58m | 2026-09-09 10:15 |
 
 The MUX-144 branch predates this spec (its key is MUX-144, and the same branch row appears in that
 spec's table); its total is that branch's absolute active time, not this spec's share of it. The work
