@@ -154,6 +154,62 @@ func TmuxSendEscape(target string) error {
 	return TmuxSendKeys(target, "Escape")
 }
 
+// dismissOverlayGap sits on each side of the absorber key in
+// TmuxDismissOverlay. It is sized well past the composer's measured escape
+// window (30–50 ms on claude 2.1.258; MUX-163 Phase 1,
+// scripts/fixtures/mux163-escape-matrix.txt) — but the gap is not the
+// protection, the absorber is (see TmuxDismissOverlay).
+const dismissOverlayGap = 100 * time.Millisecond
+
+// TmuxDismissOverlay types the overlay-dismiss preamble that MUST precede any
+// literal payload or Enter typed into a Claude Code composer: Escape, then
+// C-e as an absorber key, with a gap on each side. Every muxcode site that
+// sends Escape ahead of a payload or an Enter goes through here so none
+// hand-rolls the adjacency the defect lived in (MUX-163).
+//
+// The absorber is load-bearing, not the gap. A TUI key parser holds a bare
+// ESC pending to see whether an escape sequence follows, and fuses it with
+// the next byte into a Meta chord — so Escape typed straight into "hello"
+// submits "ello", and a one-character payload vanishes entirely (measured).
+// C-e (cursor-to-end) lands between the Escape and the payload and takes the
+// fusion (M-C-e, a no-op on the composer), so the payload's first character
+// arrives whole. C-e over C-u because it is a no-op on an empty composer and
+// leaves parked text untouched, preserving inject's append semantics.
+//
+// Two writes, never one `send-keys Escape C-e`: a single write puts ESC^E in
+// one pty chunk, and a chunk-at-a-time parser that strips a leading ESC would
+// then type a raw ^E — the gap lets that parser see the Escape alone, while
+// the absorber covers the parser that holds ESC pending. A bare gap alone is
+// the wrong instrument: it is a bet on the receiver's escape window, a
+// constant that belongs to a program muxcode does not ship.
+//
+// Returns the first send-keys error so a caller that treats a dead pane as
+// fatal (InjectPromptText) can propagate it; best-effort callers (the wake
+// path, TmuxResubmitEnter) ignore it, since the payload write that follows
+// returns its own error if the pane is gone.
+func TmuxDismissOverlay(target string) error {
+	if err := TmuxSendEscape(target); err != nil {
+		return err
+	}
+	time.Sleep(dismissOverlayGap)
+	if err := TmuxSendKeys(target, "C-e"); err != nil {
+		return err
+	}
+	time.Sleep(dismissOverlayGap)
+	return nil
+}
+
+// TmuxResubmitEnter re-submits a composer whose Enter was dropped or eaten by
+// an overlay: it dismisses the overlay through TmuxDismissOverlay — so the
+// re-sent Enter is not fused into a Meta-Enter chord (MUX-163) — then sends
+// Enter. The wake-up verify loop (verifyEnterDelivery) and the daemon's
+// parked-input watchdog both call this one helper, so the escape-absorb shape
+// is defined and tested in one place rather than hand-rolled at each site.
+func TmuxResubmitEnter(target string) {
+	_ = TmuxDismissOverlay(target)
+	_ = TmuxSendKeys(target, "Enter")
+}
+
 // TmuxSelectPane selects a pane.
 func TmuxSelectPane(target string) error {
 	return TmuxRun("select-pane", "-t", target)

@@ -48,7 +48,9 @@ WORK=$(mktemp -d /tmp/escprobe-XXXXXX)
 # The default report lives OUTSIDE $WORK: cleanup deletes the scratch dir on
 # exit, so a default under it would leave a run with no surviving record (the
 # matrix is the whole point of the run). This path survives; --out overrides it.
-[ -n "$OUT" ] || OUT=$(mktemp /tmp/esc-matrix-XXXXXX.txt)
+# Trailing Xs only — BSD mktemp leaves Xs before a suffix literal, so a
+# `-XXXXXX.txt` template collides on one non-random name every run.
+[ -n "$OUT" ] || OUT=$(mktemp /tmp/esc-matrix-XXXXXX)
 
 cleanup() {
   if [ "$KEEP" -eq 1 ]; then

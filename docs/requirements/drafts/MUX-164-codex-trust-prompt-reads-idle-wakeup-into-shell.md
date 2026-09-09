@@ -167,11 +167,21 @@ guard protects against every dead-pane case, not only this one.
   untrusted-launch section and AC6 (health sweep no longer loops — only the config workaround is
   exercised), the stray `s`, and folding the OpenCode one-off refusal into the shared guard.
 
+- 2026-09-09 13:06 — **implementation committed** in `67ad9dc` ("MUX-163 Phase 1: Reproduce and
+  measure escape-adjacency on the real composer") on `MUX-159-codex-hooks-provider`, no push: the
+  run `2338488d` commit node landed both specs' work in one commit — this spec's `provider.go`,
+  `provider_codex.go`, `provider_opencode.go`, `notify.go`, `agent_health.go`, `inject_guard_test.go`,
+  `provider_codex_test.go`, `codex_hooks_test.go`, `scripts/test-codex-trust-prompt.sh`,
+  `scripts/test-send-keys-dash.sh`, `CLAUDE.md`, `docs/agents.md` and this file — alongside MUX-163's
+  receiver, probe and matrix fixture (17 files). Open items unchanged: the opt-in live
+  untrusted-launch section with AC6, and the stray `s`. Not in the commit: `backlog.md` (index rows
+  for both specs), `agents/planner.md`, MUX-162 and MUX-165.
+
 ## Time Tracking
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-159-codex-hooks-provider | 3h 37m | 2026-09-09 10:59 |
+| MUX-159-codex-hooks-provider | 4h 24m | 2026-09-09 13:08 |
 
 The work is on the MUX-159 branch (no MUX-164 branch yet); recorded against the active spec as the
 pointer directs, mismatch flagged to edit.
@@ -179,4 +189,5 @@ pointer directs, mismatch flagged to edit.
 ## Status
 
 **In Progress** — 15/18. Filed 2026-09-09 10:52; suite green 11:39:07, review 11:39:57 EXIT=0,
-integration 30/30 + 10/10, docs 11:55; open: live untrusted-launch section + AC6, stray `s`.
+integration 30/30 + 10/10, docs 11:55; **committed `67ad9dc` 13:06 (no push)**; open: live
+untrusted-launch section + AC6, stray `s`.

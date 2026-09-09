@@ -2518,11 +2518,8 @@ func (d *Daemon) checkParkedInput() {
 
 		d.parkedResubmits[role]++
 		if d.parkedResubmits[role] <= parkedResubmitMax {
-			// Re-send Enter to submit the parked wake-up. Dismiss any overlay
-			// eating the Enter first — mirrors verifyEnterDelivery's proven retry.
-			_ = bus.TmuxSendEscape(target)
-			time.Sleep(50 * time.Millisecond)
-			_ = bus.TmuxSendKeys(target, "Enter")
+			// Re-submit through the shared absorbed-Enter helper (MUX-163).
+			bus.TmuxResubmitEnter(target)
 			ts := time.Now().Format("15:04:05")
 			fmt.Printf("  %s  Parked-input watchdog: resubmitting dropped wake-up on %s (attempt %d/%d)\n",
 				ts, role, d.parkedResubmits[role], parkedResubmitMax)

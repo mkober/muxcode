@@ -88,10 +88,10 @@ so that guard would never fire — a decision owed, recorded in Notes). Not in s
 ### Acceptance criteria
 
 - [ ] An injected prompt arrives whole — first character included — at a receiver that fuses a pending `ESC` with the next byte, for plain, dash-leading and single-character payloads
-- [ ] `Escape` is never adjacent to a payload or to `Enter` in any sequence muxcode types into a composer: a non-payload absorber key separates them, with a gap on each side of the Escape as the wake path already has (`Escape` → 100 ms → absorber → 100 ms → payload)
-- [ ] One helper produces the Escape-plus-absorber preamble, and `InjectPromptText`, `SendWakeUpWithText`, the `verifyEnterDelivery` re-submit and the daemon's parked-input watchdog all use it — no site hand-rolls `send-keys Escape` ahead of a payload or an Enter
-- [ ] The MUX-104 `-l --` form, the separate-Enter rule and the text→Enter delay are unchanged: `TestInjectPromptText_DashLeadingIntact` and `tmux_literal_test.go` pass unmodified
-- [ ] A unit-level shape check over recorded tmux argv rejects any sequence in which an Escape call is directly followed by a literal or Enter call; the pre-fix `InjectPromptText` sequence is the negative control that must fail it
+- [x] `Escape` is never adjacent to a payload or to `Enter` in any sequence muxcode types into a composer: a non-payload absorber key separates them, with a gap on each side of the Escape as the wake path already has (`Escape` → 100 ms → absorber → 100 ms → payload) — _all four sites call `TmuxDismissOverlay`; review 13:21:01 EXIT=0_
+- [ ] One helper produces the Escape-plus-absorber preamble, and `InjectPromptText`, `SendWakeUpWithText`, the `verifyEnterDelivery` re-submit and the daemon's parked-input watchdog all use it — no site hand-rolls `send-keys Escape` ahead of a payload or an Enter — _the four named sites do; `clear.go:35`, `provider_claude.go:386` and `reload.go:134` still hand-roll `Escape` → `C-u` → `/clear`·`/compact`·`/exit` through `exec.Command` (a safe shape, unpinnable through the runner seam). Decision owed: migrate them with their delays kept, or narrow this clause to the four sites_
+- [x] The MUX-104 `-l --` form, the separate-Enter rule and the text→Enter delay are unchanged: `TestInjectPromptText_DashLeadingIntact` and `tmux_literal_test.go` pass unmodified
+- [x] A unit-level shape check over recorded tmux argv rejects any sequence in which an Escape call is directly followed by a literal or Enter call; the pre-fix `InjectPromptText` sequence is the negative control that must fail it — _`assertEscapeAbsorbed` + `TestEscapeAbsorbViolation_NegativeControl`_
 - [ ] The integration receiver can see the defect: `scripts/test-prompt-mode.sh` injects into a receiver that models the pending-`ESC` parser instead of `cat`; the old sequence driven by hand against it logs a chord (negative control) and the fixed surface does not
 - [x] The live matrix against a real Claude Code composer is recorded in this spec's Notes: which shapes lose the first character, and whether `Escape`, 50 ms, `Enter` submits or inserts a newline — _recorded 12:34 from the 12:31 run: a and a3 lose, c and every gap ≥ 50 ms keep; d and e submit_
 - [ ] Docs name the rule: `CLAUDE.md` pitfalls (sibling of the text + Enter bullet), `docs/architecture.md` Prompt-surface paragraph and delivery section
@@ -146,12 +146,12 @@ constant with the measurement. Rejected as primary because it encodes another pr
 
 ### Phase 2: One preamble for every Escape-before-payload site
 
-- [ ] `TmuxDismissOverlay` in `bus/tmux.go` via the `tmuxRunner` seam: `Escape` → 100 ms → `C-e` → 100 ms as two writes; `TestTmuxDismissOverlay_ArgvShape` pins the two separate calls
-- [ ] `InjectPromptText`: helper in place of the bare `TmuxSendEscape`; literal → 150 ms → Enter unchanged
-- [ ] `SendWakeUpWithText`: helper, then the existing `TmuxClearInput` and delays
-- [ ] `verifyEnterDelivery` re-submit and the daemon parked-input watchdog: helper, then `Enter`
-- [ ] `assertEscapeAbsorbed(calls)` test helper: fails when a `send-keys … Escape` call is directly followed by a `-l --` or `Enter` call; applied to every function above; the pre-fix sequence is the negative control
-- [ ] Existing argv pins pass unmodified (`TestInjectPromptText_DashLeadingIntact`, `TestTmuxSendLiteral_*`)
+- [x] `TmuxDismissOverlay` in `bus/tmux.go` via the `tmuxRunner` seam: `Escape` → 100 ms → `C-e` → 100 ms as two writes; `TestTmuxDismissOverlay_ArgvShape` pins the two separate calls — _`dismissOverlayGap` 100 ms, sized past the measured 30–50 ms window with the absorber as the protection; suite green 13:20:02_
+- [x] `InjectPromptText`: helper in place of the bare `TmuxSendEscape`; literal → 150 ms → Enter unchanged — _lap 7: `TmuxDismissOverlay` returns the first Escape/`C-e` send error and `InjectPromptText` propagates it with the target, so a failed preamble stops the payload (`TestInjectPromptText_PreambleErrorPropagates`); the recovery callers keep their best-effort contract explicitly_
+- [x] `SendWakeUpWithText`: helper, then the existing `TmuxClearInput` and delays
+- [x] `verifyEnterDelivery` re-submit and the daemon parked-input watchdog: helper, then `Enter` — _lap 7: both delegate to one `TmuxResubmitEnter` (preamble → `Enter`), so the daemon branch no longer owns a send sequence_
+- [x] `assertEscapeAbsorbed(calls)` test helper: fails when a `send-keys … Escape` call is directly followed by a `-l --` or `Enter` call; applied to every function above; the pre-fix sequence is the negative control — _`escape_absorb_test.go`: helper shape, negative controls for the old Escape → literal and Escape → Enter sequences, and the check applied to `InjectPromptText`, `SendWakeUpWithText`, `verifyEnterDelivery` and `TmuxResubmitEnter` (the daemon's only path); review 13:31:51 LGTM_
+- [x] Existing argv pins pass unmodified (`TestInjectPromptText_DashLeadingIntact`, `TestTmuxSendLiteral_*`) — _neither test file changed; `go test -p 1 -count=1 ./...` exit 0 at 13:20:02_
 
 ### Phase 3: Docs
 
@@ -238,7 +238,41 @@ constant with the measurement. Rejected as primary because it encodes another pr
   next `commit` passes the guard — still on `MUX-159-codex-hooks-provider`, still carrying MUX-164's
   tree.
 
+- 2026-09-09 13:25 verify-spec (run `2338488d` update-spec node, lap 6): Phase 2 **5/6**, AC2/AC4/AC5
+  ticked → 11/23. The implement worker (725 s) added `TmuxDismissOverlay` (`tmux.go`, two writes,
+  `dismissOverlayGap` 100 ms, absorber `C-e`), routed `InjectPromptText`, `SendWakeUpWithText`,
+  `verifyEnterDelivery` and the daemon parked-input retry through it, wrote
+  `escape_absorb_test.go` (helper shape, negative control, three site checks) and fixed the probe's
+  macOS `mktemp` template; `go vet` 13:17:09 and `go test -p 1 -count=1 ./...` 13:20:02 exit 0; review
+  13:21:01 EXIT=0 with two should-fixes: (1) the void helper discards preamble errors, so
+  `InjectPromptText` can report success after a failed dismissal — return and propagate, with a
+  runner-error negative control; (2) the daemon branch has no adjacency assertion. (2) is Phase 2
+  step 5's "every function above", so the phase stays open and the commit guard will decline this
+  lap; the stuck-gate re-entry is where both land. AC3 stays open on a wording decision (the three
+  `Escape` → `C-u` slash-command sites still hand-roll through `exec.Command`).
+
+- 2026-09-09 13:34 verify-spec pair (daemon review chain 1788975112-1345670b + run `2338488d`
+  update-spec, lap 7): Phase 2 **6/6 — complete**, spec 12/23. The commit guard declined the 13:24
+  lap as expected ("1 commits shipped but only 1 phases complete"); the user approved `stuck-gate`
+  13:25:04 and the worker (302 s) resolved both should-fixes: `TmuxDismissOverlay` returns its first
+  send error, `InjectPromptText` propagates it (`TestInjectPromptText_PreambleErrorPropagates`), and
+  the re-submit became a shared `TmuxResubmitEnter` used by `verifyEnterDelivery` and the daemon
+  (`TestEscapeAbsorbed_ResubmitEnter`). `go build`/`go vet` 13:29:01 and `go test -p 1 -count=1 ./...`
+  13:31:11 exit 0; review 13:31:51 **LGTM 0/0/0** EXIT=0. AC3 stays open on the wording decision
+  above; AC1/AC6 wait for the Phase 4 receiver, AC8 for Phase 3.
+
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-159-codex-hooks-provider | 4h 34m | 2026-09-09 13:34 |
+
+The run works on the MUX-159 branch (the `spec-to-pr` template creates none); recorded against the
+active spec as the pointer directs, the mismatch flagged to edit. The same ledger also backs
+MUX-164's row — one branch, two specs.
+
 ## Status
 
-**In Progress** — 3/23. Filed 2026-09-09 10:47; `spec-to-pr` run `2338488d` started 11:05; Phase 1
-complete 12:34 (matrix recorded), Phases 2–4 open.
+**In Progress** — 12/23. Filed 2026-09-09 10:47; `spec-to-pr` run `2338488d` started 11:05; Phase 1
+complete 12:34 and **committed `67ad9dc` 13:06** on `MUX-159-codex-hooks-provider` with MUX-164's
+implementation (no push); Phase 2 complete 13:31 (LGTM), its commit gate next; Phases 3–4 open.

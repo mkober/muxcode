@@ -16,9 +16,10 @@ const injectEnterDelay = 150 * time.Millisecond
 // pane — resolved by identity (MUX-117) — and ActiveModeRole names who
 // is actually there (a window cycled to another mode must not have the
 // text land as if the default role were on screen). Delivery is
-// Escape (dismiss overlays) → TmuxSendLiteral (-l --, the MUX-104-safe
-// form, so a dash-leading prompt arrives intact) → delay → separate
-// Enter. Returns the role that received the text.
+// TmuxDismissOverlay (Escape + absorber, so the payload's first character
+// is not fused into a Meta chord — MUX-163) → TmuxSendLiteral (-l --, the
+// MUX-104-safe form, so a dash-leading prompt arrives intact) → delay →
+// separate Enter. Returns the role that received the text.
 func InjectPromptText(session, window, text string) (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("nothing to inject")
@@ -31,7 +32,7 @@ func InjectPromptText(session, window, text string) (string, error) {
 	if err != nil {
 		return role, fmt.Errorf("resolving agent pane for %s: %w", window, err)
 	}
-	if err := TmuxSendEscape(target); err != nil {
+	if err := TmuxDismissOverlay(target); err != nil {
 		return role, fmt.Errorf("injecting into %s: %w", target, err)
 	}
 	if err := TmuxSendLiteral(target, text); err != nil {
