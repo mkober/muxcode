@@ -134,7 +134,7 @@ fixtures first; whether to accept them is a decision for that phase.
 | [`MUX-009`](./MUX-009-response-echo-chain-retrigger.md) | A *response* injected back as a *prompt* on the receiving side. This is a status line synthesized as a *response* on the sending side. Distinct mechanisms, both "the bus believes a TUI" |
 | [`MUX-127`](./MUX-127-review-completion-routing.md) | Routes the chain on review outcomes; this corrupts the outcome it routes on |
 | [`MUX-153`](./MUX-153-codex-test-agent-cannot-run-the-suite.md) | Why the codex test agent has no real answer to give — this defect is what turns that silence into "done" |
-| [`MUX-159`](../drafts/MUX-159-codex-hooks-provider.md) | The structural fix: Codex ships `PostToolUse`/`Stop`/`UserPromptSubmit` hooks (verified 2026-09-08 on 0.153.4), so a hook-enabled codex agent is never scraped — this spec patches the scrape, that one removes its reason to exist for codex |
+| [`MUX-159`](../completed/MUX-159-codex-hooks-provider.md) | The structural fix: Codex ships `PostToolUse`/`Stop`/`UserPromptSubmit` hooks (verified 2026-09-08 on 0.153.4), so a hook-enabled codex agent is never scraped — this spec patches the scrape, that one removes its reason to exist for codex |
 
 ## Requirements
 

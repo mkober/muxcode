@@ -163,7 +163,7 @@ Resolution order (first non-empty wins):
 ### Codex hooks
 
 Codex CLI agents run the deterministic hook road instead of the pane-scrape road
-([MUX-159](requirements/drafts/MUX-159-codex-hooks-provider.md)) — **on by default** for an eligible
+([MUX-159](requirements/completed/MUX-159-codex-hooks-provider.md)) — **on by default** for an eligible
 codex since 2026-09-09 00:10, when the live integration section went green (7/7). Opt out per session
 or per role.
 

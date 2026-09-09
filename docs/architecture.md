@@ -815,7 +815,7 @@ Titling reads back the **new pane's id** (`split-window -P -F '#{pane_id}'`) rat
 ```
 
 **Two roads (MUX-159).** Codex CLI ships lifecycle hooks of the same shape as Claude's, and since
-[MUX-159](requirements/drafts/MUX-159-codex-hooks-provider.md) a codex agent runs one of two roads,
+[MUX-159](requirements/completed/MUX-159-codex-hooks-provider.md) a codex agent runs one of two roads,
 chosen per launch by `PrepareCodexHooks` (`bus/codex_hooks.go`). The **hook road** answers the split
 capabilities as *hooks yes, self-poll no, pane-is-evidence no* (`SupportsHooks`/`SelfPollsInbox`/
 `PaneIsEvidence` on `Provider`; the table in [Hooks](hooks.md#codex-hooks) maps every former

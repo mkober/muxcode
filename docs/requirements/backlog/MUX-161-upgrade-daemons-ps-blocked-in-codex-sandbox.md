@@ -102,7 +102,7 @@ list is more than a build needs); changing `build.sh`'s best-effort contract.
 
 ## Notes
 
-- Filed 2026-09-09 from edit's side finding during [MUX-159](../drafts/MUX-159-codex-hooks-provider.md)'s
+- Filed 2026-09-09 from edit's side finding during [MUX-159](../completed/MUX-159-codex-hooks-provider.md)'s
   evidence-guard work; the three builds that showed it and the 00:56 `--dry-run` are recorded there
   (Notes, side finding a).
 - [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md) and

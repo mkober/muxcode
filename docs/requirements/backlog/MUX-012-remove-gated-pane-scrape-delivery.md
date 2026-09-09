@@ -38,7 +38,7 @@ session with no delivery regressions.
 | This removal | **Backlog** — blocked on the prerequisites below (soak + mis-fire fix) |
 
 **Hook-road codex no longer needs this machinery
-([MUX-159](../drafts/MUX-159-codex-hooks-provider.md), 2026-09-08).** A codex agent on the hook
+([MUX-159](../completed/MUX-159-codex-hooks-provider.md), 2026-09-08).** A codex agent on the hook
 road answers `PaneIsEvidence()` false and `SelfPollsInbox()` false, and delivers through its own
 `Stop`/`UserPromptSubmit` hooks with true `acked` receipts — so `checkNonHookTasks`,
 `checkNonHookEdits`, `checkStuckProviders`, payload injection and the pane sweep are already skipped

@@ -225,7 +225,7 @@ the user's call; it is filed at tier 1.
 
 ### Deferred from MUX-159 (2026-09-09, user-approved)
 
-[`MUX-159`](../drafts/MUX-159-codex-hooks-provider.md) closed with its codex guard road in place —
+[`MUX-159`](../completed/MUX-159-codex-hooks-provider.md) closed with its codex guard road in place —
 `hook guard` runs for codex on `Bash` and `apply_patch`, the decision core is the provider-agnostic
 `GuardDecisionFor` (`bus/hook.go`), and `TestGuardDecisionFor_CodexPayloads` drives every existing
 guard family with codex payloads — but the never-author family it was meant to carry does not exist
