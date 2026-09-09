@@ -6,7 +6,19 @@ Muxcode uses Claude Code's hook system to integrate the AI agent with tmux and n
 
 Most hooks are **async** — they do not block the AI agent from continuing. Three are sync: `hook guard` (rejects prohibited commands before they run), `hook stop` (can block a turn's stop to re-launch the inbox listener), and `hook comment-block` (its PostToolUse block decision must reach the model).
 
-**Provider gating**: Hooks only fire for providers that support them (`provider.SupportsHooks() == true`). Currently only Claude Code's hooks are integrated. **Codex CLI ships its own hook system** (verified 2026-09-08 on the installed `codex-cli 0.153.4`: `SessionStart`/`SessionEnd`, `PreToolUse`/`PostToolUse`/`PermissionRequest`, `UserPromptSubmit`, `Stop`/`Interrupt`, `SubagentStart`/`SubagentStop`, `PreCompact`/`PostCompact`, configured in `~/.codex/hooks.json` or `<repo>/.codex/hooks.json`, `command` and `mcp_tool` handlers with a stdin/stdout JSON contract, hash-based persisted trust) — but `CodexProvider.SupportsHooks()` still returns `false` and nothing wires it, so codex agents run on the non-hook path below; [MUX-159](requirements/backlog/MUX-159-codex-hooks-provider.md) specifies the integration. OpenCode, Codex CLI, and local LLM agents therefore skip hook processing entirely — the hook functions (`hookBash`, `hookGuard`, `hookAnalyze`, `hookInboxPoll`, `hookStop`, `hookCommentBlock`) exit early when the provider is non-hook. For non-hook agents, three layers replace hooks: (1) role-specific manual bus messaging instructions in the system prompt, (2) agent body text adaptation (OpenCode: `adaptBodyForNonHookProvider()`, Codex CLI: shared `.codex/AGENTS.md`) that rewrites hook chain references to manual commands, (3) `CheckSendPolicy()` bypass that allows non-hook agents to send chain messages (build→test, test→review) that would be blocked for hook agents where chains fire automatically.
+**Provider gating**: hooks fire for providers whose `SupportsHooks()` is true — **Claude Code always, and Codex CLI on the hook road** ([MUX-159](requirements/drafts/MUX-159-codex-hooks-provider.md)), which is on by default for an eligible codex (≥ 0.153, `[features] hooks` not disabled); `MUXCODE_CODEX_HOOKS=0` or `MUXCODE_{ROLE}_CODEX_HOOKS=0` opts a session or role out (see [Configuration](configuration.md#codex-hooks)). Codex ships the same event vocabulary (verified 2026-09-08 on the installed `codex-cli 0.153.4`: `SessionStart`/`SessionEnd`, `PreToolUse`/`PostToolUse`/`PermissionRequest`, `UserPromptSubmit`, `Stop`/`Interrupt`, `SubagentStart`/`SubagentStop`, `PreCompact`/`PostCompact`), configured in `<repo>/.codex/hooks.json`, which `PrepareCodexHooks` (`bus/codex_hooks.go`) writes before every codex launch from `CodexHooksTemplate()` — see [Codex hooks](#codex-hooks). OpenCode, scrape-road Codex, and local LLM agents skip hook processing entirely — the hook functions (`hookBash`, `hookGuard`, `hookAnalyze`, `hookInboxPoll`, `hookStop`, `hookCommentBlock`) exit early when the provider is non-hook. For non-hook agents, three layers replace hooks: (1) role-specific manual bus messaging instructions in the system prompt, (2) agent body text adaptation (OpenCode: `adaptBodyForNonHookProvider()`, Codex CLI: shared `.codex/AGENTS.md`) that rewrites hook chain references to manual commands, (3) `CheckSendPolicy()` bypass that allows non-hook agents to send chain messages (build→test, test→review) that would be blocked for hook agents where chains fire automatically.
+
+**Three capabilities, not one flag.** Until MUX-159 `SupportsHooks()` answered four different questions at 44 call sites, so it could not be flipped for Codex without also claiming a `❯` prompt and a background listener it does not have. The `Provider` interface (`bus/provider.go`) now separates them, and each site asks the one it needs:
+
+| Question | Gate | Claude | Codex (hook road) | Codex (scrape road), OpenCode, local | Sites |
+|----------|------|--------|-------------------|--------------------------------------|-------|
+| Do chains, guards and console history fire from hooks — so the prompt carries no chain text and `CheckSendPolicy` grants no bypass? | `SupportsHooks()` | yes | yes | no | `prompt.go` manual-messaging block and send restrictions, `profile.go` `CheckSendPolicy`, every `cmd/hook.go` subcommand |
+| Does a background listener consume and ack the inbox? | `SelfPollsInbox()` | yes | **no** | no | `prompt.go` protocol text, `notify.go` `Notify`/`SendWakeUpWithText`, `daemon.go` `checkIdleAgents`/`listenerless`/`checkPollHealth` recovery and the force-respond pane gate, `reload.go` `wakeAfterReload`, `mode.go`, `launcher.go` startup wake |
+| Is the pane the only evidence of completion and edits? | `PaneIsEvidence()` | no | **no** | yes | `daemon.go` `checkNonHookTasks`, `checkNonHookEdits`, `checkStuckProviders`, `checkIdleTaskCompletion` |
+| Is this the Claude TUI (slash commands, `❯` prompt, permission model, `--agent` argv)? | `IsClaudeTUI(p)` | yes | no | no | `prompt.go` compact text, `launch.go` `refuseWithoutDefinition`, `definition_watchdog.go`, `reload.go` exit sequence, `notify.go` `HasPendingInput`/`ClearParkedInput`, `daemon.go` `checkParkedInput`/`checkPaneSweep`/`checkStuckPermissions`, `timetrack.go` |
+| Does an idle-prompt glyph exist to watch for? | `IdlePromptChar() != ""` | yes | no | no | `daemon.go` `checkActiveWatchdog` |
+
+A hook-road codex agent is therefore *hooks yes, self-poll no, scrape no*: chains and guards fire deterministically, delivery rides the `Stop` and `UserPromptSubmit` hooks instead of a listener, and nothing about it is inferred from the pane.
 
 ## Hook Configuration
 
@@ -56,6 +68,28 @@ You can copy a pre-configured template:
 ```bash
 cp ~/.config/muxcode/settings.json .claude/settings.json
 ```
+
+## Codex hooks
+
+Codex agents on the hook road ([MUX-159](requirements/drafts/MUX-159-codex-hooks-provider.md)) get their hooks from `<repo>/.codex/hooks.json`, not `.claude/settings.json`, and nothing is installed by hand: `PrepareCodexHooks` (`bus/codex_hooks.go`) runs from `ConfigureLaunch`/`WriteAgentConfig` before every codex launch — env opt-out check → eligibility → atomic write → sha256 marker under `BusDir()/codex-hooks/<role>.sha256`. The file is gitignored beside `.codex/AGENTS.md`.
+
+| Codex event | Matcher | Handler | Answer shape |
+|-------------|---------|---------|--------------|
+| `PreToolUse` | `Bash\|apply_patch` | `muxcode hook guard` | `hookSpecificOutput.permissionDecision: "deny"` + `permissionDecisionReason` (`FormatCodexGuardDeny`); silence allows |
+| `PostToolUse` | `Bash` | `muxcode hook bash` | none — writes the console-history row with the real exit code and fires the chain |
+| `PostToolUse` | `apply_patch` | `muxcode hook analyze` | none — one analyze trigger per path the patch names |
+| `Stop` | — | `muxcode hook stop` | `{"decision":"block","reason":…}` when an actionable request is pending (`CodexStopDelivery`); nothing otherwise |
+| `UserPromptSubmit` | — | `muxcode hook prompt-submit` | `hookSpecificOutput.additionalContext` carrying the inbox when the prompt is the fixed wake sentence (`CodexPromptSubmitContext`); any other prompt passes untouched |
+
+**Payload dialect.** One parser, two dialects: `ParseToolEvent` accepts Codex's shapes beside Claude's (`bus/hook_codex.go`; live-captured fixtures under `bus/testdata/codex-hooks/`). Two differences matter. `apply_patch` arrives as the whole patch text in `tool_input.command`, so `normalizeCodex` fills `Patch`, `PatchPaths` (every `*** Add/Update/Delete File:` path) and `FilePath`. And **`PostToolUse` for `Bash` carries no exit code** — `tool_response` is a bare string of stdout — so `GetExitCode()` reads the real status from the rollout transcript named by `transcript_path`: the `item_completed` record whose `payload.item.id` equals the hook's `tool_use_id` (`CodexExitCodeFromTranscript`, six 250 ms retries because the record can land after the hook fires). No transcript → `""` = unknown, never the Claude default `0`; an `apply_patch` response carries an `Exit code: N` line and is read from that. A history row written this way is authoritative for graph routing (`deriveSendOutcome`): a passing codex build routes `success` and a failing one `failure`, never an unverified hold.
+
+**Delivery without a listener.** A codex TUI cannot keep `muxcode inbox --poll --loop` alive in the background, so the hook road delivers at three moments: (1) **turn end** — `hook stop` consumes any pending actionable request, writes a true `acked` receipt (`ConsumeInboxForHook`) and blocks the stop with the messages plus one reply instruction as `reason`, which Codex takes as its next prompt; (2) **idle** — `SendWakeUp` types the fixed sentence `You have new messages` and nothing else — no payload, no reminder wrapping, no consume (`injectWakeSentence`); (3) **the sentence is submitted** — `hook prompt-submit` consumes, writes receipts and returns the messages as `additionalContext`. A `type: response` is never typed into the pane as a prompt, which is the [MUX-009](requirements/backlog/MUX-009-response-echo-chain-retrigger.md) echo closed at its root; self-addressed and chrome payloads are dropped at consume.
+
+**Trust.** Codex runs only hooks it trusts (hash-persisted, reviewed via `/hooks`). muxcode wrote the file, so `BuildExecArgs` passes `--dangerously-bypass-hook-trust` — but **only while the file on disk hashes to the recorded marker** (`CodexHooksTrusted`). A mismatch is `ErrCodexHooksTampered`: the launcher refuses (`refuseTamperedCodexHooks`, lifecycle `codex-hooks-tampered`) rather than trust a handler an agent appended. A `hooks.json` muxcode did not write is left alone and the role stays on the scrape road. Codex's own trust store was not created under the bypass flag on 0.153.4 and its format is undocumented, so pre-seeding it stays open (spec Decision 2).
+
+**Outside a session.** Every `muxcode hook` subcommand is a no-op unless the raw `BUS_SESSION` variable is set (`hookSession()` in `cmd/hook.go` — deliberately not `bus.BusSession()`, whose fallbacks would resolve a session for a developer's own codex in this repo).
+
+**Eligibility and fallback.** `CodexHooksEligible` requires `codex --version` ≥ `CodexHooksMinVersion` (`0.153.0`) and no `[features] hooks = false` in `.codex/config.toml` or `$CODEX_HOME/config.toml`; an ineligible codex logs `codex-hooks-unavailable` with the reason and runs the scrape road byte-for-byte as before (`TestCodexHooks_ScrapeRoadUnchanged`). Rollout: opt-in at hand-off (`codexHooksDefault = false`), **flipped to on 2026-09-09 00:10** once the live section of `scripts/test-codex-hooks.sh` went green on a real codex (7/7, hermetic 37/37); the env variables are now the opt-out.
 
 ## Hook Descriptions
 
@@ -191,7 +225,7 @@ Backed by `ScanCommentBlocks()` / `IsCommentBlockExempt()` / `FormatCommentBlock
 
 Part of the [delivery-acknowledgement](architecture.md#delivery-tracking) redesign. Keeps a Claude Code agent's background inbox listener (`muxcode inbox --poll --loop`) alive: when the agent ends a turn without an active `--poll`/`--wait` listener, the Stop hook **blocks the stop** with instructions to re-launch the listener, so the agent never goes silent and stops receiving delegated work. This is the single point of reliability for Claude self-poll delivery.
 
-- **Provider-gated** — only meaningful for hook providers (Claude Code); a no-op otherwise.
+- **Provider-gated** — for a self-polling provider (Claude Code) it re-launches the listener; for a hook-road provider without one (Codex, `SelfPollsInbox()` false) it branches to `CodexStopDelivery` and blocks the stop only when an actionable request is pending, handing the messages over as `reason` (see [Codex hooks](#codex-hooks)); a no-op for non-hook providers and outside a session.
 - **Loop-guarded** — respects `stop_hook_active` so a re-launch can't recurse.
 - Backed by the pure `DecideStopHook` / `StopHookAction` / `StopHookPollReason` / `FormatStopBlock` helpers in `bus/hook.go` (`hookStop()` in `cmd/hook.go`).
 - Relevant under the receipt cutover (now the **default**): self-poll delivery is on unless rolled back via `MUXCODE_DELIVERY_ACK_DISABLE` (hard kill switch), `MUXCODE_DELIVERY_ACK=off`, or `muxcode delivery-ack off`, each of which reverts to daemon-push delivery.
@@ -218,6 +252,8 @@ Hooks receive JSON on stdin with this structure:
 
 PreToolUse hooks receive `tool_input` only (no response yet).
 PostToolUse hooks receive both `tool_input` and `tool_response`.
+
+Codex CLI sends the same envelope plus `hook_event_name`, `session_id`, `turn_id`, `transcript_path`, `cwd`, `model`, `permission_mode` and `tool_use_id`. Three shape differences: `tool_input.command` is a plain string (argv is also accepted), `apply_patch` puts the whole patch text in `tool_input.command`, and `tool_response` for `Bash` is a bare stdout string with **no exit code** — the real code is read from the rollout transcript. See [Codex hooks](#codex-hooks); every shape is pinned by a fixture in `bus/testdata/codex-hooks/`.
 
 ## Build-Test-Review Chain
 

@@ -37,6 +37,16 @@ session with no delivery regressions.
 | Old pane-scrape machinery | Bypassed under the flag, **not deleted** |
 | This removal | **Backlog** — blocked on the prerequisites below (soak + mis-fire fix) |
 
+**Hook-road codex no longer needs this machinery
+([MUX-159](../drafts/MUX-159-codex-hooks-provider.md), 2026-09-08).** A codex agent on the hook
+road answers `PaneIsEvidence()` false and `SelfPollsInbox()` false, and delivers through its own
+`Stop`/`UserPromptSubmit` hooks with true `acked` receipts — so `checkNonHookTasks`,
+`checkNonHookEdits`, `checkStuckProviders`, payload injection and the pane sweep are already skipped
+for it. What this removal deletes is then load-bearing only for OpenCode, scrape-road codex (opted
+out, or codex < 0.153) and the local harness, which narrows the Phase 1 soak to those providers;
+MUX-159's road has been on by default since 2026-09-09 00:10 (its live integration section went
+green first); the env variables opt out.
+
 ### `checkPollHealth` hardening (committed `77b8093`)
 
 The receipt-gap backstop was scoped and debounced to stop `delivery-gap` churn:

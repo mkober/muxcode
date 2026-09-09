@@ -12,53 +12,132 @@ import (
 	"time"
 )
 
-// ToolEvent represents the JSON event received from Claude Code hooks.
+// ToolEvent represents the JSON event received from a Claude Code or Codex
+// hook. Both dialects share these field names; the differences (Codex's
+// bare-string tool_response, its apply_patch payload arriving in
+// tool_input.command, the exit code living in the transcript) are folded in
+// by ParseToolEvent so every consumer reads one shape — see hook_codex.go.
+//
+// ToolName is needed to gate MCP tools, which carry no bash command to
+// inspect. StopHookActive is set on Stop events when a Stop hook already
+// blocked once this turn — the loop guard for the self-poll re-launch hook.
+// ToolUseID and TranscriptPath locate a Codex shell command's real exit code.
 type ToolEvent struct {
-	// ToolName is the tool being invoked (e.g. "Bash", "Edit",
-	// "mcp__claude_ai_Atlassian__editJiraIssue"). Needed to gate MCP tools,
-	// which carry no bash command to inspect.
-	ToolName     string          `json:"tool_name,omitempty"`
-	ToolInput    ToolInput       `json:"tool_input"`
-	ToolResponse json.RawMessage `json:"tool_response,omitempty"`
-	ToolResult   json.RawMessage `json:"tool_result,omitempty"`
-	RawExitCode  interface{}     `json:"exit_code,omitempty"`
-	// StopHookActive is set on Stop-hook events: true means a Stop hook already
-	// blocked once this turn and the agent is being asked to stop again (a
-	// re-entrant Stop). It is the loop guard for the self-poll re-launch hook.
-	StopHookActive bool `json:"stop_hook_active,omitempty"`
+	HookEventName string          `json:"hook_event_name,omitempty"`
+	ToolName      string          `json:"tool_name,omitempty"`
+	ToolInput     ToolInput       `json:"tool_input"`
+	ToolResponse  json.RawMessage `json:"tool_response,omitempty"`
+	ToolResult    json.RawMessage `json:"tool_result,omitempty"`
+	RawExitCode   interface{}     `json:"exit_code,omitempty"`
+	// Codex event context: transcript lookup, UserPromptSubmit and Stop fields.
+	ToolUseID            string `json:"tool_use_id,omitempty"`
+	TranscriptPath       string `json:"transcript_path,omitempty"`
+	Prompt               string `json:"prompt,omitempty"`
+	LastAssistantMessage string `json:"last_assistant_message,omitempty"`
+	StopHookActive       bool   `json:"stop_hook_active,omitempty"`
+	// exitCode memoizes GetExitCode: the Codex path reads the transcript.
+	exitCode *string
 }
 
 // ToolInput holds the input fields of a tool event.
+//
+// Content carries Write's whole-file payload where Edit sends NewString, so a
+// check that reads only one of the two silently skips half the writes. Patch
+// and PatchPaths are filled for a Codex apply_patch call, and FilePath then
+// mirrors the first patched path so file guards and the analyze hook read one
+// field for both dialects.
 type ToolInput struct {
-	Command      string `json:"command,omitempty"`
-	Description  string `json:"description,omitempty"`
-	FilePath     string `json:"file_path,omitempty"`
-	NotebookPath string `json:"notebook_path,omitempty"`
-	NewString    string `json:"new_string,omitempty"`
-	// Content carries Write's whole-file payload. Edit sends NewString instead,
-	// so a check that reads only one of the two silently skips half the writes.
-	Content string `json:"content,omitempty"`
+	Command      string   `json:"command,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	FilePath     string   `json:"file_path,omitempty"`
+	NotebookPath string   `json:"notebook_path,omitempty"`
+	NewString    string   `json:"new_string,omitempty"`
+	Content      string   `json:"content,omitempty"`
+	Patch        string   `json:"-"`
+	PatchPaths   []string `json:"-"`
 }
 
-// ParseToolEvent parses a JSON tool event from raw bytes.
+// UnmarshalJSON accepts a shell command given as an argv array (a Codex
+// unified-exec shape) as well as the plain string both CLIs normally send.
+func (ti *ToolInput) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Command      json.RawMessage `json:"command"`
+		Description  string          `json:"description"`
+		FilePath     string          `json:"file_path"`
+		NotebookPath string          `json:"notebook_path"`
+		NewString    string          `json:"new_string"`
+		Content      string          `json:"content"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*ti = ToolInput{
+		Command:      commandFromRaw(raw.Command),
+		Description:  raw.Description,
+		FilePath:     raw.FilePath,
+		NotebookPath: raw.NotebookPath,
+		NewString:    raw.NewString,
+		Content:      raw.Content,
+	}
+	return nil
+}
+
+// commandFromRaw reads a command that is a string, or an argv array — a
+// `sh -c <script>` wrapper collapses to the script, anything else joins.
+func commandFromRaw(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var argv []string
+	if json.Unmarshal(raw, &argv) != nil || len(argv) == 0 {
+		return ""
+	}
+	if len(argv) == 3 && (argv[1] == "-lc" || argv[1] == "-c") && isShellBinary(argv[0]) {
+		return argv[2]
+	}
+	return strings.Join(argv, " ")
+}
+
+func isShellBinary(p string) bool {
+	switch filepath.Base(p) {
+	case "bash", "sh", "zsh", "dash":
+		return true
+	}
+	return false
+}
+
+// ParseToolEvent parses a JSON tool event from raw bytes, in either dialect.
 func ParseToolEvent(data []byte) (*ToolEvent, error) {
 	var ev ToolEvent
 	if err := json.Unmarshal(data, &ev); err != nil {
 		return nil, err
 	}
+	ev.normalizeCodex()
 	return &ev, nil
 }
 
 // GetExitCode extracts the exit code from a tool event.
 // Checks top-level exit_code, then tool_response/tool_result exit_code,
-// then interrupted flag, then stderr prefix.
+// then interrupted flag, then stderr prefix; a Codex event resolves through
+// the transcript instead (hook_codex.go) and yields "" — unknown — rather
+// than the Claude default when nothing recorded a status.
 func (ev *ToolEvent) GetExitCode() string {
-	// Check top-level exit_code
+	if ev.exitCode != nil {
+		return *ev.exitCode
+	}
+	code := ev.resolveExitCode()
+	ev.exitCode = &code
+	return code
+}
+
+func (ev *ToolEvent) resolveExitCode() string {
 	if code := interfaceToString(ev.RawExitCode); code != "" {
 		return code
 	}
-
-	// Check tool_response/tool_result
 	for _, raw := range []json.RawMessage{ev.ToolResponse, ev.ToolResult} {
 		if len(raw) == 0 {
 			continue
@@ -76,6 +155,9 @@ func (ev *ToolEvent) GetExitCode() string {
 		if stderr, ok := obj["stderr"].(string); ok && strings.HasPrefix(stderr, "Error:") {
 			return "1"
 		}
+	}
+	if code, handled := ev.codexExitCode(); handled {
+		return code
 	}
 	return "0"
 }
@@ -122,14 +204,13 @@ func (ev *ToolEvent) responseText() string {
 		if json.Unmarshal(raw, &s) == nil && s != "" {
 			return s
 		}
-		// Try as object with stdout/content
+		// Try as object with stdout/content/output
 		var obj map[string]interface{}
 		if json.Unmarshal(raw, &obj) == nil {
-			if v, ok := obj["stdout"].(string); ok && v != "" {
-				return v
-			}
-			if v, ok := obj["content"].(string); ok && v != "" {
-				return v
+			for _, key := range []string{"stdout", "content", "output"} {
+				if v, ok := obj[key].(string); ok && v != "" {
+					return v
+				}
 			}
 		}
 	}

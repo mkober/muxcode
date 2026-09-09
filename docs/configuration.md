@@ -159,6 +159,30 @@ Resolution order (first non-empty wins):
 4. Config file (`~/.config/muxcode/config`) — persistent, set by `muxcode config set`
 5. `roleDefaultCLI()` — built-in fallback
 
+### Codex hooks
+
+Codex CLI agents run the deterministic hook road instead of the pane-scrape road
+([MUX-159](requirements/drafts/MUX-159-codex-hooks-provider.md)) — **on by default** for an eligible
+codex since 2026-09-09 00:10, when the live integration section went green (7/7). Opt out per session
+or per role.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_CODEX_HOOKS` | (unset → on) | Session-wide switch (`1`/`true`/`on`/`yes` or `0`/`false`/`off`/`no`; unset means on). When on, `PrepareCodexHooks` writes `<repo>/.codex/hooks.json` before every codex launch and the agent's chains, guards and delivery run through hooks |
+| `MUXCODE_{ROLE}_CODEX_HOOKS` | (unset) | Per-role override, wins over the session value (e.g. `MUXCODE_BUILD_CODEX_HOOKS=1`, `MUXCODE_REVIEW_CODEX_HOOKS=0`) |
+| `CODEX_HOME` | `~/.codex` | Read, never set: the `config.toml` there is checked for `[features] hooks = false`, which makes the role ineligible |
+
+Eligibility is decided at launch: `codex --version` must be ≥ `0.153.0` (`CodexHooksMinVersion`) and
+hooks must not be disabled in `.codex/config.toml` or `$CODEX_HOME/config.toml`. An ineligible or
+opted-out role runs the scrape road unchanged. Lifecycle events (`muxcode lifecycle show --event <name>`):
+
+| Event | Meaning |
+|-------|---------|
+| `codex-hooks-enabled` | `hooks.json` written and hashed for the role; the launch passes `--dangerously-bypass-hook-trust` |
+| `codex-hooks-unavailable` | Opted in but ineligible (the row names the reason: old codex, feature flag off, foreign `hooks.json`) — scrape road |
+| `codex-hooks-tampered` | The on-disk `hooks.json` no longer hashes to the marker under `BusDir()/codex-hooks/<role>.sha256`; the launch is refused |
+| `guard-denied` | `hook guard` refused a `Bash` command or an `apply_patch` path (either provider); names role, tool and reason |
+
 ### Runtime configuration
 
 Change CLI provider or model at runtime without restarting the session:

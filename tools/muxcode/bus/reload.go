@@ -126,7 +126,7 @@ func GracefulStop(session, role string, compact bool) error {
 	}
 
 	// Provider-specific exit sequence
-	if provider.SupportsHooks() {
+	if IsClaudeTUI(provider) {
 		// Claude Code: /exit is the clean exit command.
 		// First Escape to cancel any pending input, then /exit + Enter.
 		// send-keys text and Enter must be separate calls with a delay
@@ -161,7 +161,7 @@ func GracefulStop(session, role string, compact bool) error {
 		// Code's TUI does drop keys that arrive in the same pty write as
 		// preceding text — the reason /exit and Enter are separate calls
 		// above).
-		if provider.SupportsHooks() && paneAwaitingExitConfirmation(target) {
+		if IsClaudeTUI(provider) && paneAwaitingExitConfirmation(target) {
 			exec.Command("tmux", "send-keys", "-t", target, "Enter").Run()
 		}
 	}
@@ -483,9 +483,9 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 func wakeAfterReload(session, role string) {
 	provider := ResolveProvider(role)
 
-	// Non-hook providers (OpenCode, Codex) can't be reliably detected as idle.
-	// Send wake-up immediately — their SendWakeUp handles injection directly.
-	if !provider.SupportsHooks() {
+	// Providers without a self-poll listener (OpenCode, Codex) can't be
+	// detected as idle; their SendWakeUp handles injection directly.
+	if !provider.SelfPollsInbox() {
 		time.Sleep(2 * time.Second)
 		ClearNotifiedIDs(session, role)
 		_ = provider.SendWakeUp(session, role, false)

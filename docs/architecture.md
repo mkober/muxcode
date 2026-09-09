@@ -768,14 +768,43 @@ Titling reads back the **new pane's id** (`split-window -P -F '#{pane_id}'`) rat
 
 ```
 1. Provider resolved via MUXCODE_{ROLE}_CLI="codex"
-2. CodexProvider.BuildExecArgs returns "codex -a never --no-alt-screen"
-3. Agent runs in tmux pane without alternate screen (pane capture works)
-4. Shared agent config generated at .codex/AGENTS.md with bus instructions
-5. No hooks — system prompt instructs agent to send bus messages manually
-6. Wake-up: Notify() injects message payload via send-keys (self-messages filtered)
-7. Idle detection: heuristic — looks for ">" prompt or "Summarize" text in pane
-8. Task completion: heuristic analysis of pane content for completion indicators
+2. PrepareCodexHooks picks the road: not opted out (MUXCODE_{ROLE}_CODEX_HOOKS, then MUXCODE_CODEX_HOOKS;
+   default on) and eligible (codex >= 0.153, [features] hooks not off) → .codex/hooks.json written + sha256 marker,
+   lifecycle codex-hooks-enabled; otherwise the scrape road, lifecycle codex-hooks-unavailable
+3. CodexProvider.BuildExecArgs returns "codex -a never --no-alt-screen", plus
+   --dangerously-bypass-hook-trust only while hooks.json still hashes to the marker
+   (mismatch → launch refused, codex-hooks-tampered)
+4. Agent runs in tmux pane without alternate screen (pane capture works)
+5. Shared agent config generated at .codex/AGENTS.md with bus instructions
+   (chain text and reply reminders omitted on the hook road)
+6. Scrape road: no hooks — the prompt instructs manual bus messages; Notify() injects the
+   message payload via send-keys (self-messages filtered); idle is a ">"/"Summarize" pane
+   heuristic; task completion is heuristic analysis of pane content
+7. Hook road: PostToolUse Bash → hook bash (history row + chain), PreToolUse → hook guard,
+   Stop → hook stop, UserPromptSubmit → hook prompt-submit; wake-up types only
+   "You have new messages"; nothing is scraped (PaneIsEvidence false)
 ```
+
+**Two roads (MUX-159).** Codex CLI ships lifecycle hooks of the same shape as Claude's, and since
+[MUX-159](requirements/drafts/MUX-159-codex-hooks-provider.md) a codex agent runs one of two roads,
+chosen per launch by `PrepareCodexHooks` (`bus/codex_hooks.go`). The **hook road** answers the split
+capabilities as *hooks yes, self-poll no, pane-is-evidence no* (`SupportsHooks`/`SelfPollsInbox`/
+`PaneIsEvidence` on `Provider`; the table in [Hooks](hooks.md#codex-hooks) maps every former
+`SupportsHooks()` site to the question it now asks). Chains and console history come from
+`PostToolUse` — with the real exit code read from the rollout transcript, because Codex's `Bash`
+payload carries only stdout — so a graph node dispatched to a codex build routes on an
+authoritative row instead of an unverified hold. Delivery happens at three moments and never
+through payload injection: `hook stop` hands a pending request over as the next prompt
+(`decision: block` + `reason`) with a true `acked` receipt written first; an idle agent is woken
+with the fixed sentence alone; and `hook prompt-submit` expands that sentence into
+`additionalContext` at submit time. The daemon's scrape checks (`checkNonHookTasks`,
+`checkNonHookEdits`, `checkStuckProviders`) skip the road entirely, so the heuristic below and its
+known misses do not apply to it. `--dangerously-bypass-hook-trust` is passed only while
+`.codex/hooks.json` hashes to what muxcode wrote; a tampered file refuses the launch
+(`refuseTamperedCodexHooks`, lifecycle `codex-hooks-tampered`), and a `hooks.json` muxcode did not
+write leaves the role on the scrape road. **On by default** since 2026-09-09 00:10, once the live integration section went green (7/7 on a
+real codex); `MUXCODE_CODEX_HOOKS=0` or the per-role variable opts out, and an ineligible codex falls
+back — the **scrape road** itself is unchanged.
 
 **Sandbox policy.** Codex runs commands under a *selectable* sandbox: `-s/--sandbox` takes
 `read-only`, `workspace-write` or `danger-full-access`, `--add-dir <DIR>` grants extra writable roots
@@ -794,7 +823,7 @@ flag lifts network for any role**, so a Codex `test` agent cannot bind the loopb
 version of this guidance claimed Codex "sandboxes all filesystem writes" and was fit only for
 read-only roles; that conflated one policy with the CLI and was corrected 2026-09-08.
 
-**Task-completion heuristic, and its known miss.** Step 8 reads braille spinners, `▸` and
+**Task-completion heuristic (scrape road), and its known miss.** Step 6 reads braille spinners, `▸` and
 "thinking" as *still running* and a `›` prompt in the last three lines as *done*, taking the last
 content line as the summary. Codex's current TUI renders progress as `• Working (13s • esc to
 interrupt)` with the composer still visible, so that progress line is reported as a completed task's
