@@ -192,6 +192,14 @@ func runProvenance(run *GraphRun) string {
 //
 // approved_by is additive: gateApprovalTime reads only approved_at, so markers
 // written before this field existed still parse.
+//
+// The audit row is recorded before the marker is published, and both carry one
+// clock reading. Order matters because the daemon may consume a marker on its
+// very next tick, and a marker seen before its row reads as forged. The single
+// reading matters because gateApprovalHolds pairs the two on the second, and a
+// bus send and a log rotation pass sit between the writes — with a reading
+// each, a genuine approval that straddled a second boundary was refused as
+// forged and purged, returning the user to the same race (MUX-144 Phase 2).
 func ApproveGraphGate(session, runID, nodeID string) error {
 	if _, err := ReadNodeStatus(session, runID, nodeID); err != nil {
 		return fmt.Errorf("unknown run/node: %w", err)
@@ -209,13 +217,11 @@ func ApproveGraphGate(session, runID, nodeID string) error {
 	if err := os.MkdirAll(graphApprovalsDir(session, runID), 0755); err != nil {
 		return err
 	}
-	// Record the audit before publishing the marker. The daemon may consume a
-	// marker immediately; publishing in the opposite order creates a race in
-	// which a valid approval is mistaken for a forged one.
-	announceGraphAction(session, actor, "graph-gate-approved",
-		fmt.Sprintf("Graph run %s gate %q approved by %s", runID, nodeID, actor))
+	approvedAt := time.Now().Unix() // one reading, two writers — see doc comment
+	announceGraphActionAt(session, actor, "graph-gate-approved",
+		fmt.Sprintf("Graph run %s gate %q approved by %s", runID, nodeID, actor), approvedAt)
 	if err := atomicWriteJSON(graphApprovalPath(session, runID, nodeID, "approved"),
-		map[string]any{"approved_at": time.Now().Unix(), "approved_by": actor}); err != nil {
+		map[string]any{"approved_at": approvedAt, "approved_by": actor}); err != nil {
 		return err
 	}
 	return nil
@@ -666,9 +672,31 @@ func approvalGrantedBy(data []byte) string {
 	return m.ApprovedBy
 }
 
-// approvalHasAudit proves that the marker was emitted by ApproveGraphGate,
-// rather than merely containing an allowed identity. The marker directory is
-// writable by agents, so approved_by is an assertion, not authentication.
+// approvalHasAudit requires an approval marker to be corroborated by the
+// graph-gate-approved row ApproveGraphGate logs beside it — same actor, same
+// detail, same second.
+//
+// It is corroboration and tamper-evidence, NOT authentication, and the
+// difference is worth stating because the earlier wording here claimed it
+// "proves the marker was emitted by ApproveGraphGate". It does not. Both
+// artifacts are ordinary files owned by the same uid, so anything that can
+// write one can write the other; no check on this side of the process boundary
+// can say otherwise.
+//
+// What it buys is that forging an approval is no longer a single quiet file
+// write. It now takes two consistent artifacts, one of which lands in the
+// session lifecycle log — the log an investigator reads, and the one artifact
+// here that outlives session cleanup — so a forged release leaves a dated,
+// attributed row behind rather than an unexplained state change. That is the
+// same standard Phase 3 sets for the control plane: not unforgeable, but never
+// unattributable.
+//
+// What it costs is a liveness dependency on that log, which is why rotation
+// preserves these rows (lifecycleAuditEvents). A missing row is read as
+// forgery, so an evicted one refuses a legitimate approval.
+//
+// The control against a shell that can write both remains the tool profile
+// denying those paths, not this function.
 func approvalHasAudit(session, runID, nodeID, actor string, marker []byte) bool {
 	var m struct {
 		ApprovedAt int64 `json:"approved_at"`

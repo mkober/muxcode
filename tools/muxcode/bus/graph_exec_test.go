@@ -497,9 +497,28 @@ func forgeApproval(t *testing.T, runID, nodeID, by string) {
 	}
 }
 
-// refuseForgedHold drives a node to an unverified hold, forges an approval from
-// `by`, and reports the successor's state.
-func refuseForgedHold(t *testing.T, by string) string {
+// forgeAuditedApproval forges the marker AND the graph-gate-approved row
+// ApproveGraphGate would have logged beside it, both on one second.
+//
+// This is the approval the daemon is meant to honour, reached without the
+// approve path, so it isolates what the daemon actually checks.
+func forgeAuditedApproval(t *testing.T, runID, nodeID, by string) {
+	t.Helper()
+	at := time.Now().Unix()
+	LogLifecycleAt(runTestSession, "info", by, "graph-gate-approved",
+		fmt.Sprintf("Graph run %s gate %q approved by %s", runID, nodeID, by), at)
+	if err := os.MkdirAll(graphApprovalsDir(runTestSession, runID), 0755); err != nil {
+		t.Fatalf("approvals dir: %v", err)
+	}
+	if err := atomicWriteJSON(graphApprovalPath(runTestSession, runID, nodeID, "approved"),
+		map[string]any{"approved_at": at, "approved_by": by}); err != nil {
+		t.Fatalf("forge audited approval: %v", err)
+	}
+}
+
+// holdOutcome drives a node to an unverified hold, lets `grant` write whatever
+// approval it likes, and reports the successor's state.
+func holdOutcome(t *testing.T, grant func(runID string)) string {
 	t.Helper()
 	pinActor(t, "")
 	run := createTestRun(t, linearGraph())
@@ -508,10 +527,17 @@ func refuseForgedHold(t *testing.T, by string) string {
 	completeSendNode(t, runTestSession, run.ID, "a", "")
 	step(t, runTestSession, run.ID)
 
-	forgeApproval(t, run.ID, "a", by)
+	grant(run.ID)
 	step(t, runTestSession, run.ID)
 
 	return nodeState(t, runTestSession, run.ID, "b")
+}
+
+// refuseForgedHold drives a node to an unverified hold, forges an uncorroborated
+// approval from `by`, and reports the successor's state.
+func refuseForgedHold(t *testing.T, by string) string {
+	t.Helper()
+	return holdOutcome(t, func(runID string) { forgeApproval(t, runID, "a", by) })
 }
 
 // The hold is only worth having if the agents that raised it cannot clear it:
@@ -542,13 +568,25 @@ func TestExecUnverifiedHoldRefusesWhenAncestryUnreadable(t *testing.T) {
 	}
 }
 
-// Negative control for the three above, and specifically for the helper they
-// share: a forgeApproval that wrote nothing readable would leave every one of
-// them passing on a node that was never approved at all. A forged marker naming
-// a person must not release the hold either.
-func TestExecUnverifiedHoldReleasedByUser(t *testing.T) {
+// Naming a person is not enough either: an uncorroborated marker is refused
+// whatever identity it claims, or forgery would only need the right string.
+func TestExecUnverifiedHoldRefusesUnauditedUserApproval(t *testing.T) {
 	if s := refuseForgedHold(t, ActorUser); s != GraphNodePending {
-		t.Errorf("b state %q, want pending — a forged person's marker must not release the hold", s)
+		t.Errorf("b state %q, want pending — a marker with no audit row must not release the hold", s)
+	}
+}
+
+// Positive control for the four refusals above, and the one assertion that
+// discriminates. They share forgeApproval and a path through the executor: a
+// helper writing to the wrong path, or an approvalHasAudit hardcoded to false,
+// leaves all four passing on a node that was never approved at all. This grant
+// differs from the one directly above by exactly the audit row, so it fails if
+// the marker never lands where the daemon reads it, and it fails if a
+// corroborated person's approval cannot get through.
+func TestExecUnverifiedHoldReleasedByAuditedUserApproval(t *testing.T) {
+	s := holdOutcome(t, func(runID string) { forgeAuditedApproval(t, runID, "a", ActorUser) })
+	if s != GraphNodeRunning {
+		t.Errorf("b state %q, want running — a corroborated person's approval must release the hold", s)
 	}
 }
 

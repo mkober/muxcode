@@ -799,7 +799,7 @@ read-only roles; that conflated one policy with the CLI and was corrected 2026-0
 content line as the summary. Codex's current TUI renders progress as `• Working (13s • esc to
 interrupt)` with the composer still visible, so that progress line is reported as a completed task's
 answer — closing tracked tasks and firing chain links on nothing
-([MUX-154](requirements/backlog/MUX-154-codex-status-line-closes-tracked-tasks.md)).
+([MUX-154](requirements/drafts/MUX-154-codex-status-line-closes-tracked-tasks.md)).
 
 ### Local LLM Agent Flow
 
