@@ -313,7 +313,13 @@ Two qualifications, both open in
 [MUX-144](requirements/drafts/MUX-144-wait-human-gate-openable-by-any-agent.md). The
 config-file read *narrowed* the caller-control problem rather than closing it: the file is
 agent-writable (its path stopped honouring `$MUXCODE_CONFIG` in `31a2ca4`), so daemon-side
-authority is the real fix.
+authority is the real fix. `c4997ed` (2026-09-08 19:11) added that half — `SealGateAuthority` freezes
+the list at daemon startup (`gate-authority-sealed`; live edits may narrow, never widen) and
+`gateApprovalHolds` re-decides every release on the marker's `approved_by`, with `approvalHasAudit`
+requiring a matching `graph-gate-approved` lifecycle row — but it is **unverified** (never built,
+tested or reviewed; see [MUX-157](requirements/backlog/MUX-157-role-boundary-an-agent-can-ignore.md))
+and moves the forgery target to the lifecycle log, which agents can also append to and which rotates
+on every append. The MUX-144 step stays open.
 And the runtime backstop is still a no-op for graph sends: they carry `From = "daemon"`, which
 `CheckCommitAuthority` normalizes to `edit` — an authorized role — so a graph dispatch passes as
 though the user's own agent had asked, judged on the normalized sender rather than on the gate's
