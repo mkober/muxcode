@@ -3,6 +3,7 @@ package bus
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 )
 
@@ -95,6 +96,113 @@ func TestSelfAddressedFilteredFromActionableAndUnnotified(t *testing.T) {
 	}
 	if msgs := UnnotifiedMessages(session, "deploy"); len(msgs) != 0 {
 		t.Errorf("self-addressed message must not be unnotified, got %d", len(msgs))
+	}
+}
+
+// TestIsLoopingSelfSend pins the exemption to the bootstrap REQUEST. Keyed
+// on the startup action alone, an agent's self-addressed reply to its
+// bootstrap passed as well (live 2026-09-09: a codex test agent acked its
+// own ack every five seconds).
+func TestIsLoopingSelfSend(t *testing.T) {
+	cases := []struct {
+		name string
+		m    Message
+		want bool
+	}{
+		{"startup bootstrap request", NewMessage("test", "test", "request", "startup", "", ""), false},
+		{"startup reply", NewMessage("test", "test", "response", "startup", "", ""), true},
+		{"other self request", NewMessage("test", "test", "request", "test", "", ""), true},
+		{"other self response", NewMessage("test", "test", "response", "response", "", ""), true},
+		{"startup reply addressed elsewhere", NewMessage("test", "edit", "response", "startup", "", ""), false},
+		{"no sender", NewMessage("", "", "request", "test", "", ""), false},
+	}
+	for _, c := range cases {
+		if got := isLoopingSelfSend(c.m); got != c.want {
+			t.Errorf("%s: isLoopingSelfSend = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestFilterLoopingSelfSends pins the consume-side line `muxcode inbox`
+// applies: the bootstrap and foreign traffic pass, a self-addressed reply
+// and an ordinary self-send do not.
+func TestFilterLoopingSelfSends(t *testing.T) {
+	boot := NewMessage("test", "test", "request", "startup", "Session started", "")
+	foreign := NewMessage("edit", "test", "request", "test", "run the suite", "")
+	stale := NewMessage("test", "test", "response", "startup", "Acknowledged.", boot.ID)
+	self := NewMessage("test", "test", "request", "test", "self ping", "")
+	got := FilterLoopingSelfSends([]Message{boot, stale, foreign, self})
+	if len(got) != 2 || got[0].ID != boot.ID || got[1].ID != foreign.ID {
+		t.Errorf("want [bootstrap, foreign], got %+v", got)
+	}
+	if got := FilterLoopingSelfSends(nil); len(got) != 0 {
+		t.Errorf("nil batch must filter to empty, got %+v", got)
+	}
+}
+
+// TestStartupSelfReplyNotDelivered is the send road of the 2026-09-09 echo:
+// the reply to a self-addressed bootstrap is self-addressed too, and it
+// must be correlated (the bootstrap drains as answered) while reaching
+// neither the sender's inbox nor edit's. Send, not SendNoCC: test is an
+// auto-CC role and the CC was the second half of the flood; the drop
+// precedes the CC path, so the package-global CC limiter stays untouched.
+func TestStartupSelfReplyNotDelivered(t *testing.T) {
+	session := testSession(t)
+	boot := NewMessage("test", "test", "request", "startup", "Session started", "")
+	if err := SendNoCC(session, boot); err != nil {
+		t.Fatalf("SendNoCC: %v", err)
+	}
+	if !HasActionableMessages(session, "test") {
+		t.Fatal("the bootstrap request must be delivered and actionable (negative control)")
+	}
+
+	reply := NewMessage("test", "test", "response", "startup", "Acknowledged.", boot.ID)
+	if err := Send(session, reply); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	msgs, _ := Peek(session, "test")
+	for _, m := range msgs {
+		if m.ID == reply.ID {
+			t.Error("the self-addressed startup reply was delivered to the sender's own inbox")
+		}
+	}
+	if cc, _ := Peek(session, "edit"); len(cc) != 0 {
+		t.Errorf("the self-addressed startup reply must not be CC'd, edit inbox has %d", len(cc))
+	}
+	if ds, err := ReadDeliveryStatus(session, boot.ID); err != nil || ds.Status != StatusResponded {
+		t.Errorf("the reply must still correlate the bootstrap as responded, got %+v err %v", ds, err)
+	}
+	if HasActionableMessages(session, "test") {
+		t.Error("an answered bootstrap must not stay actionable")
+	}
+}
+
+// TestStaleStartupSelfReplyFiltered covers rows an older binary already
+// delivered: a self-addressed startup reply sitting in an inbox must wake
+// nothing and reach no hook consumer, while the bootstrap request beside it
+// still does (negative control).
+func TestStaleStartupSelfReplyFiltered(t *testing.T) {
+	session := testSession(t)
+	boot := NewMessage("test", "test", "request", "startup", "Session started", "")
+	stale := NewMessage("test", "test", "response", "startup", "Acknowledged.", boot.ID)
+	for _, m := range []Message{boot, stale} {
+		if err := AppendToInbox(session, "test", m); err != nil {
+			t.Fatalf("AppendToInbox: %v", err)
+		}
+	}
+	if !HasActionableMessages(session, "test") {
+		t.Error("the bootstrap request must stay actionable (negative control)")
+	}
+	un := UnnotifiedMessages(session, "test")
+	if len(un) != 1 || un[0].ID != boot.ID {
+		t.Errorf("only the bootstrap request may be unnotified, got %+v", un)
+	}
+	d := ConsumeInboxForHook(session, "test", false)
+	if d.Total != 1 || d.Requests != 1 || !strings.Contains(d.Text, "Session started") {
+		t.Errorf("hook consume must deliver the bootstrap alone, got %+v", d)
+	}
+	if strings.Contains(d.Text, "Acknowledged.") {
+		t.Error("the stale startup self-reply was delivered by the hook consumer")
 	}
 }
 

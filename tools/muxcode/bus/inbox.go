@@ -106,13 +106,41 @@ func dropsAsProviderChrome(m Message) bool {
 // the agent to act on it, the agent can't meaningfully complete its own
 // request, and it re-surfaces on every idle cycle.
 //
-// The "startup" action is EXEMPT: PreLaunchSetup intentionally seeds each
-// agent's inbox with a self-addressed startup request and relies on the
+// The startup bootstrap REQUEST is EXEMPT: PreLaunchSetup intentionally seeds
+// each agent's inbox with a self-addressed startup request and relies on the
 // daemon's re-wake (HasActionableMessages) to keep waking the agent until it
 // consumes the message and restores context. That is the one legitimate
-// self-send; everything else is an addressing mistake.
+// self-send; everything else is an addressing mistake — including the agent's
+// own reply to that request, which is self-addressed too. Until 2026-09-09
+// the exemption keyed on the action alone, so a `response:startup` rode it
+// into the sender's own inbox: a codex test agent acknowledged its own
+// acknowledgement every five seconds until the binary was replaced, while
+// DetectMessageLoop — alert-only — logged `loop-detected` and stopped
+// nothing. Keyed on type as well, the reply
+// takes the recordUndeliveredReply branch in sendMessage — correlated, never
+// delivered, never CC'd.
 func isLoopingSelfSend(m Message) bool {
-	return m.From != "" && m.From == m.To && m.Action != "startup"
+	return m.From != "" && m.From == m.To && !isStartupBootstrap(m)
+}
+
+// isStartupBootstrap reports whether m is the self-addressed request
+// PreLaunchSetup seeds at launch — the only self-send the bus delivers.
+func isStartupBootstrap(m Message) bool {
+	return m.Type == "request" && m.Action == "startup"
+}
+
+// FilterLoopingSelfSends drops from an already-read batch the rows Send
+// refuses — the consume-side line for a row an older binary delivered or a
+// hand-edited inbox holds, so `muxcode inbox` never shows an agent its own
+// reply. ConsumeInboxForHook applies the same rule on the codex road.
+func FilterLoopingSelfSends(msgs []Message) []Message {
+	out := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		if !isLoopingSelfSend(m) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // recordUndeliveredReply logs a self-addressed reply and fires its

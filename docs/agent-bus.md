@@ -1111,7 +1111,7 @@ muxcode agent launch <role>
 
 **Pre-launch actions:**
 
-- Sends startup inbox message for `edit` role (context restoration). The analyze role also receives one when enabled via `MUXCODE_WINDOWS`.
+- Sends startup inbox message for `edit` role (context restoration). The analyze role also receives one when enabled via `MUXCODE_WINDOWS`. This bootstrap is the one self-addressed message the bus delivers (`isStartupBootstrap` — `request:startup`, type and action); an agent's reply to it is correlated but never delivered or CC'd, so answering it with `--reply-to` is harmless and unnecessary — before 2026-09-09 the exemption keyed on the action alone and a codex agent's `response:startup` re-entered its own inbox every 5 s ([MUX-169](requirements/drafts/MUX-169-startup-self-reply-echo-loop.md)).
 - Logs agent launch to persistent lifecycle log
 
 **Examples:**
