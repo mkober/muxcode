@@ -2,6 +2,10 @@ package bus
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -100,6 +104,14 @@ func TestLooksLikeNonResult(t *testing.T) {
 		// A genuine result that merely quotes chrome further down is kept:
 		// rejecting it would lose a real verdict, the costlier mistake.
 		{"result quoting chrome later", "go test ./... failed\nLSPs are disabled", false},
+		// The codex status line and tool-call render observed reaching a
+		// peer's inbox and being paraphrased back as an answer.
+		{"codex status line", "• Working (12s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close", true},
+		{"truncated tool echo", "└ set -o pipefail; ./test.sh 2>&1 | awk '…", true},
+		// Controls for the truncation rule: the prefix alone and the
+		// ellipsis alone must both be kept, or ordinary prose is eaten.
+		{"bullet prose without ellipsis", "• Build failed in bus/intent.go:412", false},
+		{"ellipsis without render prefix", "waiting for the daemon…", false},
 	}
 
 	for _, tc := range cases {
@@ -108,6 +120,80 @@ func TestLooksLikeNonResult(t *testing.T) {
 				t.Errorf("LooksLikeNonResult(%q) = %v, want %v", tc.payload, got, tc.want)
 			}
 		})
+	}
+}
+
+// A chrome payload must be dropped at the send chokepoint, whatever road
+// it arrives by — but only as a response or event. Requests are exempt,
+// and that exemption is the negative control: without it a resolver that
+// dropped everything would pass the first assertion.
+func TestDropsAsProviderChrome(t *testing.T) {
+	chrome := "• Working (12s • esc to interrupt) · /ps to view · /stop to close"
+	real := "Build failed: bus/intent.go:412 undefined: SpecChoice"
+
+	cases := []struct {
+		name string
+		m    Message
+		want bool
+	}{
+		{"chrome response", Message{Type: "response", Payload: chrome}, true},
+		{"chrome event", Message{Type: "event", Payload: chrome}, true},
+		{"chrome request is exempt", Message{Type: "request", Payload: chrome}, false},
+		{"real response is kept", Message{Type: "response", Payload: real}, false},
+		{"real request is kept", Message{Type: "request", Payload: real}, false},
+		// The regression this guard shipped with: a real alert naming a
+		// banner phrase. Console history rejects it as non-evidence; the
+		// inbox must deliver it, or a refused launch goes unreported.
+		{"launch refusal alert is kept", Message{Type: "event", Payload: "plan: definition \"plan.md\" resolved at no tier — refusing to launch without it. Restore the definition (make install) and relaunch: muxcode agent launch plan"}, false},
+		{"empty payload is kept", Message{Type: "response", Payload: ""}, false},
+		// A real message that merely quotes a status line survives.
+		{"result quoting chrome", Message{Type: "response", Payload: "build failed\n• Working (2s • esc to interrupt)"}, false},
+		// Structure, not vocabulary: a genuine one-line reply that names
+		// the words but does not OPEN with a render glyph must survive.
+		{"prose naming chrome words", Message{Type: "response", Payload: "the pane sat at esc to interrupt for 3 minutes"}, false},
+		{"prose naming a slash hint", Message{Type: "response", Payload: "tell the user /stop to close the terminal"}, false},
+		// The render glyph is a heuristic: agents do compose bulleted
+		// replies. This is verbatim what the build agent sent on
+		// 2026-09-08 — it opens with the status bullet and must still be
+		// delivered, because it carries the actual verdict.
+		{"composed bulleted reply", Message{Type: "response", Payload: "• Build succeeded with no compile errors (EXIT=0). The test request was already in flight."}, false},
+		{"composed bulleted list", Message{Type: "response", Payload: "• fixed the import\n• reran the suite"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dropsAsProviderChrome(tc.m); got != tc.want {
+				t.Errorf("dropsAsProviderChrome(%+v) = %v, want %v", tc.m, got, tc.want)
+			}
+		})
+	}
+}
+
+// A dropped chrome reply must surface as ErrSendChrome, never nil. The
+// daemon's completion path treats a nil return as delivered and calls
+// CompleteTask, so a silent drop would close the tracked task on work that
+// never ran — the very false completion the drop exists to prevent.
+func TestSendChromeReturnsSuppressionError(t *testing.T) {
+	session := "chrome-drop-" + strings.ReplaceAll(t.Name(), "/", "-")
+	if err := os.MkdirAll(filepath.Join(BusDir(session), "inbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(BusDir(session)) })
+
+	chrome := NewMessage("test", "edit", "response", "response",
+		"• Working (12s • esc to interrupt) · /ps to view", "some-request-id")
+	if err := Send(session, chrome); !errors.Is(err, ErrSendChrome) {
+		t.Errorf("Send(chrome) = %v, want ErrSendChrome so the task is not completed", err)
+	}
+	if msgs, _ := Peek(session, "edit"); len(msgs) != 0 {
+		t.Errorf("chrome reached the inbox: %+v", msgs)
+	}
+
+	real := NewMessage("test", "edit", "response", "response", "suite passed; EXIT=0", "some-request-id")
+	if err := Send(session, real); err != nil {
+		t.Fatalf("a real reply must still send: %v", err)
+	}
+	if msgs, _ := Peek(session, "edit"); len(msgs) != 1 {
+		t.Errorf("real reply did not reach the inbox: %+v", msgs)
 	}
 }
 
