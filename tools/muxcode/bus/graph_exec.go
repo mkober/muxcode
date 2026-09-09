@@ -1062,7 +1062,9 @@ func finishNode(session string, run *GraphRun, n *Node, outcome, output string) 
 // success is finished only after portSpawnGroup lands the worktree
 // output uncommitted into the checkout working tree (MUX-131 Defect A,
 // graph_port.go) — a port failure fails the node here, before any
-// downstream node runs, and no porting path ever creates a commit.
+// downstream node runs, and no porting path ever creates a commit. A
+// worker that ended without answering its seed is replaced rather than
+// harvested — see replaceLostWorkers.
 func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 	now := time.Now().Unix()
 	if n.TimeoutSec > 0 && st.StartedAt > 0 && now-st.StartedAt > int64(n.TimeoutSec) {
@@ -1097,6 +1099,9 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 
 	case NodeSpawn, NodeMap:
 		_, _ = RefreshSpawnStatus(session)
+		if replaceLostWorkers(session, run, n, st, now) {
+			return
+		}
 		outcome, done := spawnGroupOutcome(session, st.TaskID)
 		if !done {
 			redriveStalledSpawns(session, run, n, st, now)
@@ -1122,16 +1127,16 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 
 // redriveStalledSpawns is the spawn/map side of executor stall
 // resolution: a worker whose seeded task sits unconsumed past the stall
-// threshold is re-woken, with the same persisted bookkeeping and cap as
-// the send path. Cap exhaustion with workers still stalled fails the
-// node — default spawn nodes carry no timeout, so a never-waking worker
-// would otherwise run forever.
+// threshold while its pane is idle is re-woken, with the same persisted
+// bookkeeping, cap and busy rule as the send path. Cap exhaustion with
+// workers still stalled fails the node — default spawn nodes carry no
+// timeout, so a never-waking worker would otherwise run forever.
 func redriveStalledSpawns(session string, run *GraphRun, n *Node, st *GraphNodeStatus, now int64) {
 	stall := int64(TaskStallSecs() / 2)
 	if st.StartedAt == 0 || now-st.StartedAt < stall || now-st.LastRedrive < 60 {
 		return
 	}
-	stalled := stalledSpawnWorkers(session, st.TaskID)
+	stalled := idleWorkers(session, stalledSpawnWorkers(session, st.TaskID))
 	if len(stalled) == 0 {
 		return
 	}
@@ -1162,6 +1167,19 @@ var graphSpawnWakeFn = func(session, spawnRole string) {
 	go wakeSpawnedAgent(session, spawnRole)
 }
 
+// idleWorkers keeps the spawn roles whose pane is at its prompt: an
+// unconsumed seed behind a running turn is a worker still booting or
+// finishing, not a stalled one, and a wake typed into it interrupts it.
+func idleWorkers(session string, roles []string) []string {
+	var out []string
+	for _, r := range roles {
+		if graphAgentIdleFn(session, r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // stalledSpawnWorkers lists the spawn roles whose seeded task still sits
 // unconsumed in their inbox.
 func stalledSpawnWorkers(session, taskIDs string) []string {
@@ -1187,6 +1205,13 @@ const graphRedriveMax = 3
 // the daemon restarts that reset the watchdog's in-memory debounce (the
 // suspected cause of the three live stalls this design replaces). After
 // graphRedriveMax attempts the node fails loudly as undeliverable.
+//
+// A busy pane is never redriven, receipt or not. A Claude agent whose
+// listener has died acks nothing, so its dispatch stays un-receipted while
+// it works, and on 2026-09-09 the redrive was typed straight into the
+// running commit turn — "Interrupted · What should Claude do instead?" —
+// twice. Only an agent at its prompt can be stalled; a working one is
+// left to the task timeout.
 func redriveStalledDispatch(session string, run *GraphRun, n *Node, st *GraphNodeStatus, task Task, now int64) {
 	if !TaskStalled(task, now, TaskStallSecs()) {
 		return
@@ -1194,10 +1219,13 @@ func redriveStalledDispatch(session string, run *GraphRun, n *Node, st *GraphNod
 	if _, received := ReadReceipt(session, task.ID); received {
 		return // the agent has it — genuinely working, not stalled
 	}
+	role := NormalizeBusRole(n.Role)
+	if !graphAgentIdleFn(session, role) {
+		return // mid-turn — see doc comment
+	}
 	if now-st.LastRedrive < 60 {
 		return
 	}
-	role := NormalizeBusRole(n.Role)
 	if st.Redrives >= graphRedriveMax {
 		finishNode(session, run, n, OutcomeFailure, fmt.Sprintf(
 			"undeliverable: %s never received the dispatch after %d redrives", role, graphRedriveMax))
@@ -1234,13 +1262,55 @@ var graphRedriveFn = func(session, role string, task Task) int {
 	return 0
 }
 
+// graphAgentIdleFn answers whether a role's pane is at its prompt. A seam
+// because IsAgentIdle reads every agent as busy where tmux is absent, which
+// would silence both redrive paths under test.
+var graphAgentIdleFn = IsAgentIdle
+
+// GraphOwnsTask reports the running graph run and node whose dispatch
+// created taskID. The daemon's idle-task watchdog defers to the executor
+// for these: on 2026-09-09 it re-queued a duplicate of a run's commit
+// dispatch and then synthesized the reply from the pane at 75s — ahead of
+// the executor's own 90s force-redrive, the one path that clears a parked
+// prompt — so the node finished unknown, parked on an unverified hold,
+// with no commit made.
+func GraphOwnsTask(session, taskID string) (runID, nodeID string, ok bool) {
+	runs, err := ListGraphRuns(session)
+	if err != nil {
+		return "", "", false
+	}
+	for _, r := range runs {
+		if r.State != GraphRunRunning {
+			continue
+		}
+		statuses, err := ReadAllNodeStatuses(session, r.ID)
+		if err != nil {
+			continue
+		}
+		for id, st := range statuses {
+			if st.State != GraphNodeRunning {
+				continue
+			}
+			for _, t := range strings.Split(st.TaskID, ",") {
+				if t == taskID {
+					return r.ID, id, true
+				}
+			}
+		}
+	}
+	return "", "", false
+}
+
 // spawnGroupOutcome inspects the comma-separated spawn ids of a spawn or
 // map node. done is true when no worker is still running; the outcome is
-// success only when every worker completed. A persistent (graph-keyed)
-// worker is never reaped while its run is in flight, so for it a running
-// entry whose CURRENT seed is responded IS this iteration's completion —
-// ReseedSpawn moves SeedMsgID before the next iteration starts, so a
-// prior pass's reply can never satisfy a new dispatch.
+// success only when every worker completed. An answered CURRENT seed is
+// this iteration's completion whatever the entry's status says: a
+// persistent (graph-keyed) worker is never reaped while its run is in
+// flight, so it stays running; and a worker stopped or reaped after it
+// answered has still delivered — the verdict is the answer, not the
+// window (review must-fix 2026-09-09). ReseedSpawn moves SeedMsgID before
+// the next iteration starts, so a prior pass's reply can never satisfy a
+// new dispatch.
 func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 	entries, err := ReadSpawnEntries(session)
 	if err != nil {
@@ -1258,11 +1328,11 @@ func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 			outcome = OutcomeFailure
 			continue
 		}
+		if e.SeedMsgID != "" && spawnHasResponded(session, e) {
+			continue // iteration answered — see doc comment
+		}
 		switch e.Status {
 		case "running":
-			if e.RunID != "" && spawnHasResponded(session, e) {
-				continue // persistent worker, iteration answered — see doc comment
-			}
 			return "", false
 		case "completed":
 			// success — no change
@@ -1271,6 +1341,111 @@ func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 		}
 	}
 	return outcome, true
+}
+
+// lostSpawnWorkers lists a node's workers whose entry is terminal —
+// stopped by hand, or completed because the window vanished — while
+// their current seed is unanswered: work that ended without a result.
+// Entries that predate SeedMsgID keep the window-gone-only lifecycle,
+// where a gone window is the completion.
+func lostSpawnWorkers(session, taskIDs string) []SpawnEntry {
+	entries, err := ReadSpawnEntries(session)
+	if err != nil {
+		return nil
+	}
+	byRole := make(map[string]SpawnEntry, len(entries))
+	for _, e := range entries {
+		byRole[e.SpawnRole] = e
+	}
+	var lost []SpawnEntry
+	for _, id := range strings.Split(taskIDs, ",") {
+		e, ok := byRole[id]
+		if !ok || e.Status == "running" || e.SeedMsgID == "" || spawnHasResponded(session, e) {
+			continue
+		}
+		lost = append(lost, e)
+	}
+	return lost
+}
+
+// replaceLostWorkers re-dispatches a spawn or map node's lost workers
+// (lostSpawnWorkers) on fresh workers seeded with the same current task,
+// and reports whether it acted. A lost worker is a delivery failure, not
+// a verdict: on 2026-09-09 the parked implement worker of a spec-to-pr run
+// was stopped as a leftover seconds after the loop re-seeded it for the
+// next phase, spawnGroupOutcome read the stopped entry as failure, and
+// the run died on "no live edge" with the phase untouched. Replacement
+// shares the redrive cap and bookkeeping with the stall paths, so a
+// worker that keeps disappearing fails the node loudly after
+// graphRedriveMax; cancelling the run is how work is stopped on purpose.
+//
+// Each replacement is recorded on the node before the next is started,
+// and a start or record failure stops every replacement this call
+// launched before failing the node: a map node whose second replacement
+// failed would otherwise leave the first editing the shared checkout
+// under a node that no longer names it (review must-fix 2026-09-09). A
+// replacement that could not be stopped is named in the node's output
+// as still live, so the failure never implies a cleanup it could not
+// verify.
+func replaceLostWorkers(session string, run *GraphRun, n *Node, st *GraphNodeStatus, now int64) bool {
+	lost := lostSpawnWorkers(session, st.TaskID)
+	if len(lost) == 0 {
+		return false
+	}
+	names := make([]string, 0, len(lost))
+	for _, e := range lost {
+		names = append(names, e.SpawnRole)
+	}
+	if st.Redrives >= graphRedriveMax {
+		finishNode(session, run, n, OutcomeFailure, fmt.Sprintf(
+			"worker lost: %s ended before answering, %d replacements exhausted", strings.Join(names, ","), graphRedriveMax))
+		return true
+	}
+	ids := strings.Split(st.TaskID, ",")
+	var launched []string
+	failClosed := func(reason string) bool {
+		var live []string
+		for _, id := range launched {
+			if err := StopSpawn(session, id); err != nil {
+				live = append(live, id+" ("+err.Error()+")")
+			}
+		}
+		msg := fmt.Sprintf("worker replacement failed after %d of %d: %s", len(launched), len(lost), reason)
+		if len(live) > 0 {
+			msg += "; still live: " + strings.Join(live, ", ")
+		}
+		finishNode(session, run, n, OutcomeFailure, msg)
+		return true
+	}
+	for _, e := range lost {
+		fresh, err := graphSpawnFn(session, e.Role, e.Task, graphSender, e.RunID, e.NodeID)
+		if err != nil {
+			return failClosed(err.Error())
+		}
+		launched = append(launched, fresh)
+		for i := range ids {
+			if ids[i] == e.SpawnRole {
+				ids[i] = fresh
+			}
+		}
+		taskID := strings.Join(ids, ",")
+		if err := MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) {
+			s.TaskID = taskID
+		}); err != nil {
+			return failClosed("record " + fresh + ": " + err.Error())
+		}
+		st.TaskID = taskID
+		LogLifecycle(session, "warn", "daemon", "graph-spawn-replaced",
+			fmt.Sprintf("%s: %s worker %s %s before answering — replaced by %s (%d/%d)",
+				run.ID, n.ID, e.SpawnRole, e.Status, fresh, st.Redrives+1, graphRedriveMax))
+	}
+	_ = MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) {
+		s.Redrives++
+		s.LastRedrive = now
+	})
+	st.Redrives++
+	st.LastRedrive = now
+	return true
 }
 
 // sendResponseIsNonResult reports whether a completed task's recorded response

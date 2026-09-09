@@ -32,6 +32,7 @@ type SpawnEntry struct {
 	SeedMsgID   string `json:"seed_msg_id,omitempty"`  // ID of the seeded spawn-task request (latest iteration for reused workers)
 	RunID       string `json:"run_id,omitempty"`       // graph run key half — set on graph-dispatched workers (MUX-131 reuse)
 	NodeID      string `json:"node_id,omitempty"`      // graph node key half — with RunID, the per-run+node reuse key
+	Display     string `json:"-"`                      // render-time status from SpawnDisplayStatus; never persisted
 }
 
 // ReadSpawnEntries reads all spawn entries from the spawn JSONL file.
@@ -293,7 +294,11 @@ func wakeSpawnedAgent(session, spawnRole string) {
 	wakeAfterReload(session, spawnRole)
 }
 
-// StopSpawn kills the tmux window for a spawn, cleans up the worktree, and marks it stopped.
+// StopSpawn kills the tmux window for a spawn, cleans up the worktree, and
+// marks it stopped. A kill failure is an error only while the window is
+// still live — an already-gone window is the stop having happened — and a
+// live window leaves the entry running so nothing reads a worker as
+// stopped that is still editing (review should-fix 2026-09-09).
 func StopSpawn(session, id string) error {
 	entry, err := GetSpawnEntry(session, id)
 	if err != nil {
@@ -303,10 +308,14 @@ func StopSpawn(session, id string) error {
 	if entry.Status != "running" {
 		return fmt.Errorf("spawn %s is not running (status: %s)", id, entry.Status)
 	}
+	if entry.RunID != "" {
+		LogLifecycle(session, "info", "spawn", "spawn-stop",
+			fmt.Sprintf("%s: worker of run %s node %s stopped — the executor replaces a lost worker; cancel the run to stop the work", id, entry.RunID, entry.NodeID))
+	}
 
-	// Kill the tmux window
-	killCmd := exec.Command("tmux", "kill-window", "-t", session+":"+entry.Window)
-	_ = killCmd.Run() // ignore error if window already gone
+	if err := spawnKillWindowFn(session, entry.Window); err != nil && spawnWindowExistsFn(session, entry.Window) {
+		return fmt.Errorf("spawn %s: kill-window failed with the window still live: %v", id, err)
+	}
 
 	// Clean up worktree
 	if err := removeSpawnWorktree(entry.Worktree); err != nil {
@@ -440,6 +449,35 @@ func spawnHasResponded(session string, e SpawnEntry) bool {
 		return false
 	}
 	return ds.Status == StatusResponded
+}
+
+// SpawnDisplayStatus is the status a person should read for an entry:
+// "parked" for a graph worker held between iterations — running, its run
+// in flight, its current seed answered — else the stored status. The
+// store's "running" is true for a parked worker but not what an observer
+// needs: on 2026-09-09 two parked workers read as stuck agents and one was
+// stopped by hand mid-run.
+func SpawnDisplayStatus(session string, e SpawnEntry) string {
+	if e.Status == "running" && spawnPersistent(session, e) && spawnHasResponded(session, e) {
+		return "parked"
+	}
+	return e.Status
+}
+
+// AnnotateSpawnDisplay fills Display on every entry so the formatters
+// stay pure over the entries they are handed.
+func AnnotateSpawnDisplay(session string, entries []SpawnEntry) []SpawnEntry {
+	for i := range entries {
+		entries[i].Display = SpawnDisplayStatus(session, entries[i])
+	}
+	return entries
+}
+
+func displayStatus(e SpawnEntry) string {
+	if e.Display != "" {
+		return e.Display
+	}
+	return e.Status
 }
 
 // RefreshSpawnStatus checks all running spawns and updates their status.
@@ -592,7 +630,7 @@ func FormatSpawnList(entries []SpawnEntry, showAll bool) string {
 			wt = "yes"
 		}
 		b.WriteString(fmt.Sprintf("%-36s %-12s %-12s %-10s %-10s %-8s %s\n",
-			e.ID, e.Role, e.SpawnRole, e.Status, e.Owner, wt, task))
+			e.ID, e.Role, e.SpawnRole, displayStatus(e), e.Owner, wt, task))
 	}
 
 	return b.String()
@@ -605,7 +643,10 @@ func FormatSpawnStatus(entry SpawnEntry) string {
 	b.WriteString(fmt.Sprintf("Spawn: %s\n", entry.ID))
 	b.WriteString(fmt.Sprintf("  Role:       %s\n", entry.Role))
 	b.WriteString(fmt.Sprintf("  Spawn Role: %s\n", entry.SpawnRole))
-	b.WriteString(fmt.Sprintf("  Status:     %s\n", entry.Status))
+	b.WriteString(fmt.Sprintf("  Status:     %s\n", displayStatus(entry)))
+	if displayStatus(entry) == "parked" {
+		b.WriteString(fmt.Sprintf("  Parked:     awaiting the next iteration of run %s node %s — idle by design, not stuck\n", entry.RunID, entry.NodeID))
+	}
 	b.WriteString(fmt.Sprintf("  Owner:      %s\n", entry.Owner))
 	b.WriteString(fmt.Sprintf("  Window:     %s\n", entry.Window))
 	b.WriteString(fmt.Sprintf("  Task:       %s\n", entry.Task))

@@ -73,7 +73,7 @@ func (d *Daemon) checkDefinitionless() {
 		if bus.IsReloading(d.session, role) || bus.IsHarnessActive(d.session, role) {
 			continue
 		}
-		if !bus.ResolveProvider(role).SupportsHooks() {
+		if !bus.IsClaudeTUI(bus.ResolveProvider(role)) {
 			continue // the argv contract is Claude Code's
 		}
 		if !d.agentAlive(d.session, role) || !d.definitionMissing(role) {
@@ -181,7 +181,7 @@ func (d *Daemon) clearDefinitionless(role string) {
 // recovery event was emitted for an agent that had come back unconstrained.
 // Non-Claude providers have no argv contract and pass through.
 func (d *Daemon) definitionApplied(role string) bool {
-	if !bus.ResolveProvider(role).SupportsHooks() {
+	if !bus.IsClaudeTUI(bus.ResolveProvider(role)) {
 		return true
 	}
 	return d.probeDefinition(d.session, role) == bus.DefinitionPresent

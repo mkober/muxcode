@@ -489,7 +489,7 @@ func modeAutoAcceptAndWake(session string, agent *ModeAgent) {
 			// first time — any markers are from a previous lifecycle).
 			ClearNotifiedIDs(session, agent.Role)
 
-			if !provider.SupportsHooks() {
+			if !provider.SelfPollsInbox() {
 				if err := provider.SendWakeUp(session, agent.Role, false); err != nil {
 					LogLifecycle(session, "warn", "mode-accept", "wake-failed",
 						agent.Role+": "+err.Error())

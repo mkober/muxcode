@@ -356,6 +356,36 @@ func TestFormatSpawnStatus_Running(t *testing.T) {
 	}
 }
 
+// TestFormatSpawnParked pins the render of a parked worker: Display wins
+// over the stored status in both formatters and the status view names the
+// run and node it waits on; an entry without Display keeps the stored
+// status.
+func TestFormatSpawnParked(t *testing.T) {
+	entry := SpawnEntry{
+		ID: "s1", Role: "edit", SpawnRole: "spawn-a1b2c3d4", Status: "running", Display: "parked",
+		Owner: "daemon", Window: "spawn-a1b2c3d4", Task: "implement", StartedAt: time.Now().Unix(),
+		RunID: "run-1", NodeID: "implement",
+	}
+
+	out := FormatSpawnStatus(entry)
+	for _, want := range []string{"Status:     parked", "run run-1 node implement", "not stuck"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in status view, got:\n%s", want, out)
+		}
+	}
+	if out := FormatSpawnList([]SpawnEntry{entry}, false); !strings.Contains(out, "parked") {
+		t.Errorf("expected parked in list view, got:\n%s", out)
+	}
+
+	entry.Display = ""
+	if out := FormatSpawnStatus(entry); strings.Contains(out, "parked") {
+		t.Errorf("no Display must fall back to the stored status, got:\n%s", out)
+	}
+	if out := FormatSpawnList([]SpawnEntry{entry}, false); !strings.Contains(out, "running") || strings.Contains(out, "parked") {
+		t.Errorf("no Display must list the stored status, got:\n%s", out)
+	}
+}
+
 func TestSpawnWorktreeBase(t *testing.T) {
 	base := SpawnWorktreeBase("test-session")
 	if !strings.Contains(base, "muxcode-spawn-test-session") {

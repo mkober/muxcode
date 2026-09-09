@@ -406,7 +406,7 @@ const widePaneCaptureLines = 200
 // false (safe to inject). Returns false on any error (graceful degradation).
 func HasPendingInput(session, role string) bool {
 	provider := ResolveProvider(role)
-	if !provider.SupportsHooks() {
+	if !IsClaudeTUI(provider) {
 		return false
 	}
 	target := PaneTarget(session, role)
@@ -452,8 +452,8 @@ func IsWindowFocused(session, role string) bool {
 // genuinely busy — nothing is parked, keys would land in a live composer).
 func ClearParkedInput(session, role string) bool {
 	provider := ResolveProvider(role)
-	if !provider.SupportsHooks() {
-		return false // non-hook providers manage their own input
+	if !IsClaudeTUI(provider) {
+		return false // other TUIs manage their own input
 	}
 	target := PaneTarget(session, role)
 	content, err := TmuxCapturePaneLines(target, widePaneCaptureLines)
@@ -601,7 +601,7 @@ func Notify(session, role string) error {
 	// to inject it directly into the TUI input via send-keys. Do this
 	// immediately — don't gate on IsIdle (which returns false for OpenCode).
 	provider := ResolveProvider(role)
-	if !provider.SupportsHooks() {
+	if !provider.SelfPollsInbox() {
 		return notifySendKeys(session, role)
 	}
 
@@ -860,8 +860,8 @@ func notifySendKeys(session, role string) error {
 // the inbox and builds its own message). force propagates to the provider's
 // suppression guards — recovery paths pass true, routine wake-ups false.
 func SendWakeUpWithText(session, role string, provider Provider, text string, force bool) error {
-	if !provider.SupportsHooks() {
-		// Non-hook providers build their own injection from inbox content
+	if !provider.SelfPollsInbox() {
+		// Listenerless providers build their own injection from inbox content
 		return provider.SendWakeUp(session, role, force)
 	}
 

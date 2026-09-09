@@ -239,6 +239,8 @@ func (p *OpenCodeProvider) Compact(session, role, target string) error {
 }
 
 func (p *OpenCodeProvider) SupportsHooks() bool    { return false }
+func (p *OpenCodeProvider) SelfPollsInbox() bool   { return false }
+func (p *OpenCodeProvider) PaneIsEvidence() bool   { return true }
 func (p *OpenCodeProvider) IdlePromptChar() string { return "" }
 
 // WriteAgentConfig generates the OpenCode agent definition file at

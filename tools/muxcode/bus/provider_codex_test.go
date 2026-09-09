@@ -498,7 +498,7 @@ func TestWriteCodexAgentConfig(t *testing.T) {
 	os.Chdir(dir)
 	defer os.Chdir(oldDir)
 
-	err := writeCodexAgentConfig("review")
+	err := writeCodexAgentConfig("review", false)
 	if err != nil {
 		t.Fatalf("writeCodexAgentConfig failed: %v", err)
 	}
@@ -528,6 +528,8 @@ func TestWriteAgentConfig_CodexDispatch(t *testing.T) {
 	oldDir, _ := os.Getwd()
 	os.Chdir(dir)
 	defer os.Chdir(oldDir)
+	SetBusDirBase(t.TempDir()) // WriteAgentConfig also decides the hook road: keep its marker off the live bus
+	defer ResetBusDirBase()
 
 	codex := &CodexProvider{}
 	if err := codex.WriteAgentConfig("review"); err != nil {
@@ -578,7 +580,7 @@ func TestConfigCoexistence_AllThreeProviders(t *testing.T) {
 	}
 
 	// Generate Codex agent config
-	if err := writeCodexAgentConfig("review"); err != nil {
+	if err := writeCodexAgentConfig("review", false); err != nil {
 		t.Fatalf("writeCodexAgentConfig: %v", err)
 	}
 
@@ -609,7 +611,7 @@ func TestWriteCodexAgentConfig_LastWriterWins(t *testing.T) {
 	agentsPath := filepath.Join(".codex", "AGENTS.md")
 
 	// Write config for review first
-	if err := writeCodexAgentConfig("review"); err != nil {
+	if err := writeCodexAgentConfig("review", false); err != nil {
 		t.Fatalf("writeCodexAgentConfig(review): %v", err)
 	}
 	reviewData, err := os.ReadFile(agentsPath)
@@ -624,7 +626,7 @@ func TestWriteCodexAgentConfig_LastWriterWins(t *testing.T) {
 	}
 
 	// Write config for build — should overwrite review content
-	if err := writeCodexAgentConfig("build"); err != nil {
+	if err := writeCodexAgentConfig("build", false); err != nil {
 		t.Fatalf("writeCodexAgentConfig(build): %v", err)
 	}
 	buildData, err := os.ReadFile(agentsPath)

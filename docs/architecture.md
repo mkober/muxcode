@@ -269,7 +269,7 @@ is interrupted only at human gates and terminal states.
 | Node type | Behavior |
 |-----------|----------|
 | `send` | `SendNoCC` + tracked task for correlation |
-| `spawn` | `StartSpawn()` — ephemeral worker, own git worktree |
+| `spawn` | A persistent worker in the **session checkout** — the one tree build, test, review and commit operate on (`graphSpawnFn` → `StartSpawnOwned` with `worktree=false`; a detached worktree once handed a fix node a tree without the previous node's work, 2026-09-03, see `acquireSpawnWorker`). It persists across iterations (`parked` between seeds, reused by `ReseedSpawn`) and is released when the run ends — see *Workers, stalls and the watchdog* below. Only a standalone `muxcode spawn start` cuts its own worktree (its default; `--no-worktree` opts out) |
 | `map` | Dynamic fan-out: one spawn per item in the item list |
 | `join` | Fan-in barrier — `all` / `any` / `quorum` |
 | `condition` | Routes via `EvaluateConditions()` — the chain engine verbatim, no second dialect |
@@ -310,7 +310,7 @@ are attributable: the marker records `approved_by` from `BusActorVerified`, and
 `graph-run-created` / `graph-gate-approved` / `graph-gate-approval-refused` name their actor.
 
 Two qualifications, both open in
-[MUX-144](requirements/drafts/MUX-144-wait-human-gate-openable-by-any-agent.md). The
+[MUX-144](requirements/backlog/MUX-144-wait-human-gate-openable-by-any-agent.md). The
 config-file read *narrowed* the caller-control problem rather than closing it: the file is
 agent-writable (its path stopped honouring `$MUXCODE_CONFIG` in `31a2ca4`), so daemon-side
 authority is the real fix. `c4997ed` (2026-09-08 19:11) added that half — `SealGateAuthority` freezes
@@ -462,6 +462,35 @@ phase did not close, routing it to the stuck gate. That comparison is what turns
 an intention into something that actually fires; without it the guard has no trigger, because
 "lowest phase with open items" returns the same phase forever and cannot tell iteration 5 from
 iteration 1.
+
+**Workers, stalls and the watchdog (2026-09-09).** Four executor rules came out of the second
+`spec-to-pr` run on MUX-159 (`1788930816-spec-to-pr-f7fb2610`), whose commit dispatch the daemon
+answered for it and whose re-seeded implement worker was stopped by hand as a leftover:
+
+1. **Graph workers are persistent.** A `spawn`/`map` worker whose run is still in flight is kept alive
+   after answering its seed and reused on the next iteration (`acquireSpawnWorker` → `ReseedSpawn`,
+   lifecycle `graph-spawn-reuse`). Between seeds it is idle by design, and `muxcode spawn list`/`status`
+   read it as **`parked`** (`SpawnDisplayStatus`: running, run in flight, current seed answered) — the
+   store's bare `running` had two such workers read as stuck agents and one stopped mid-run. Cancel the
+   run to stop its work; a finished or missing run releases the worker to the normal reap path.
+2. **A lost worker is replaced, not judged.** A worker that ends before answering its current seed —
+   `spawn stop`, or its window gone — is a delivery failure, not a verdict. `replaceLostWorkers`
+   re-dispatches the seed on a fresh worker (lifecycle `graph-spawn-replaced`, warn), sharing the
+   redrive cap and bookkeeping with the stall paths, so a worker that keeps disappearing fails the node
+   loudly after `graphRedriveMax` (3) as *"worker lost: … ended before answering, 3 replacements
+   exhausted"* — rather than the run dying on "no live edge" with the phase untouched.
+3. **The daemon's idle-task watchdog defers to the executor.** `checkIdleTaskCompletion` skips any
+   in-flight task a running node dispatched (`bus.GraphOwnsTask`). On the run above it re-queued a
+   duplicate of the commit dispatch and synthesized the reply from the pane at 75 s — ahead of the
+   executor's own 90 s force-redrive, the one path that clears a parked prompt — so the node finished
+   `unknown` on an unverified hold with no commit made. The executor's stall path (force-redrive,
+   capped, loud failure) owns those tasks.
+4. **A redrive never interrupts a working agent.** Both redrive paths ask `graphAgentIdleFn`
+   (`IsAgentIdle`; a seam, because without tmux every agent reads busy) and skip a pane that is
+   mid-turn — the agent has the task and is working, not stalled.
+
+Pinned by `TestExecSpawnLostWorkerReplaced` and `TestGraphOwnsTask` (`bus/graph_exec_test.go`) and
+`TestSpawnDisplayStatusParked`/`TestFormatSpawnParked` (`bus/spawn_test.go`).
 
 ### Diff Preview Flow
 
@@ -768,14 +797,43 @@ Titling reads back the **new pane's id** (`split-window -P -F '#{pane_id}'`) rat
 
 ```
 1. Provider resolved via MUXCODE_{ROLE}_CLI="codex"
-2. CodexProvider.BuildExecArgs returns "codex -a never --no-alt-screen"
-3. Agent runs in tmux pane without alternate screen (pane capture works)
-4. Shared agent config generated at .codex/AGENTS.md with bus instructions
-5. No hooks — system prompt instructs agent to send bus messages manually
-6. Wake-up: Notify() injects message payload via send-keys (self-messages filtered)
-7. Idle detection: heuristic — looks for ">" prompt or "Summarize" text in pane
-8. Task completion: heuristic analysis of pane content for completion indicators
+2. PrepareCodexHooks picks the road: not opted out (MUXCODE_{ROLE}_CODEX_HOOKS, then MUXCODE_CODEX_HOOKS;
+   default on) and eligible (codex >= 0.153, [features] hooks not off) → .codex/hooks.json written + sha256 marker,
+   lifecycle codex-hooks-enabled; otherwise the scrape road, lifecycle codex-hooks-unavailable
+3. CodexProvider.BuildExecArgs returns "codex -a never --no-alt-screen", plus
+   --dangerously-bypass-hook-trust only while hooks.json still hashes to the marker
+   (mismatch → launch refused, codex-hooks-tampered)
+4. Agent runs in tmux pane without alternate screen (pane capture works)
+5. Shared agent config generated at .codex/AGENTS.md with bus instructions
+   (chain text and reply reminders omitted on the hook road)
+6. Scrape road: no hooks — the prompt instructs manual bus messages; Notify() injects the
+   message payload via send-keys (self-messages filtered); idle is a ">"/"Summarize" pane
+   heuristic; task completion is heuristic analysis of pane content
+7. Hook road: PostToolUse Bash → hook bash (history row + chain), PreToolUse → hook guard,
+   Stop → hook stop, UserPromptSubmit → hook prompt-submit; wake-up types only
+   "You have new messages"; nothing is scraped (PaneIsEvidence false)
 ```
+
+**Two roads (MUX-159).** Codex CLI ships lifecycle hooks of the same shape as Claude's, and since
+[MUX-159](requirements/completed/MUX-159-codex-hooks-provider.md) a codex agent runs one of two roads,
+chosen per launch by `PrepareCodexHooks` (`bus/codex_hooks.go`). The **hook road** answers the split
+capabilities as *hooks yes, self-poll no, pane-is-evidence no* (`SupportsHooks`/`SelfPollsInbox`/
+`PaneIsEvidence` on `Provider`; the table in [Hooks](hooks.md#codex-hooks) maps every former
+`SupportsHooks()` site to the question it now asks). Chains and console history come from
+`PostToolUse` — with the real exit code read from the rollout transcript, because Codex's `Bash`
+payload carries only stdout — so a graph node dispatched to a codex build routes on an
+authoritative row instead of an unverified hold. Delivery happens at three moments and never
+through payload injection: `hook stop` hands a pending request over as the next prompt
+(`decision: block` + `reason`) with a true `acked` receipt written first; an idle agent is woken
+with the fixed sentence alone; and `hook prompt-submit` expands that sentence into
+`additionalContext` at submit time. The daemon's scrape checks (`checkNonHookTasks`,
+`checkNonHookEdits`, `checkStuckProviders`) skip the road entirely, so the heuristic below and its
+known misses do not apply to it. `--dangerously-bypass-hook-trust` is passed only while
+`.codex/hooks.json` hashes to what muxcode wrote; a tampered file refuses the launch
+(`refuseTamperedCodexHooks`, lifecycle `codex-hooks-tampered`), and a `hooks.json` muxcode did not
+write leaves the role on the scrape road. **On by default** since 2026-09-09 00:10, once the live integration section went green (7/7 on a
+real codex); `MUXCODE_CODEX_HOOKS=0` or the per-role variable opts out, and an ineligible codex falls
+back — the **scrape road** itself is unchanged.
 
 **Sandbox policy.** Codex runs commands under a *selectable* sandbox: `-s/--sandbox` takes
 `read-only`, `workspace-write` or `danger-full-access`, `--add-dir <DIR>` grants extra writable roots
@@ -794,12 +852,12 @@ flag lifts network for any role**, so a Codex `test` agent cannot bind the loopb
 version of this guidance claimed Codex "sandboxes all filesystem writes" and was fit only for
 read-only roles; that conflated one policy with the CLI and was corrected 2026-09-08.
 
-**Task-completion heuristic, and its known miss.** Step 8 reads braille spinners, `▸` and
+**Task-completion heuristic (scrape road), and its known miss.** Step 6 reads braille spinners, `▸` and
 "thinking" as *still running* and a `›` prompt in the last three lines as *done*, taking the last
 content line as the summary. Codex's current TUI renders progress as `• Working (13s • esc to
 interrupt)` with the composer still visible, so that progress line is reported as a completed task's
 answer — closing tracked tasks and firing chain links on nothing
-([MUX-154](requirements/drafts/MUX-154-codex-status-line-closes-tracked-tasks.md)). A second shape
+([MUX-154](requirements/backlog/MUX-154-codex-status-line-closes-tracked-tasks.md)). A second shape
 did the same on 2026-09-08 20:31: the horizontal rule codex draws between turns was the "last content
 line" above the composer, and 158 dashes closed two graph nodes before either agent had a result.
 **Fixed in `bae22dc` (22:02)**: one shared signature in `history_provenance.go` (`LooksLikeWorkingLine`,

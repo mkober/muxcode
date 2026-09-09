@@ -61,7 +61,8 @@ The pane is created **last** on each window so panes 0 and 1 keep their indices 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MUXCODE_BUILD_PATTERNS` | `./build.sh\|pnpm*build\|go*build\|make\|cargo*build\|cdk*synth\|tsc` | Pipe-separated patterns for build command detection |
-| `MUXCODE_TEST_PATTERNS` | `./test.sh\|jest\|pnpm*test\|pytest\|go*test\|go*vet\|cargo*test\|vitest` | Pipe-separated patterns for test command detection |
+| `MUXCODE_TEST_PATTERNS` | `./test.sh\|jest\|pnpm*test\|pytest\|go*test\|cargo*test\|vitest` | Pipe-separated patterns for test command detection — the suite, whose exit code is the test stage's verdict. Consulted before the precheck patterns, so a command listed here is a full test run even if it also matches a precheck |
+| `MUXCODE_TEST_PRECHECK_PATTERNS` | `go*vet` | Pipe-separated patterns for **test prechecks** — test-stage gates run before the suite. A failing precheck is the stage failing: a test-history row and the test chain's failure path, like any failed suite. A passing one proves nothing about a suite that has not run, so it moves the workflow to `testing` but writes no row and fires no chain (`bus.ChainEvent` answers nothing) — test→review waits for the suite's own row. Added 2026-09-09 after a lone passing `go vet` fired review before the suite ran; see [Hooks → hook bash](hooks.md#hook-bash-bash-hook) |
 | `MUXCODE_DEPLOY_PATTERNS` | `cdk*diff\|cdk*deploy\|cdk*destroy\|...` | Pipe-separated patterns for deploy command detection (all deploy commands, logged to history) |
 | `MUXCODE_DEPLOY_APPLY_PATTERNS` | `cdk*deploy\|cdk*destroy\|terraform*apply\|...` | Pipe-separated patterns for deploy-apply commands (mutation-only, triggers verify chain) |
 | `MUXCODE_ROUTE_RULES` | `test\|spec=test cdk\|stack\|construct\|terraform\|pulumi=deploy .ts\|.js\|.py\|.go\|.rs=build` | Space-separated `pattern=target` rules for file-change routing |
@@ -158,6 +159,30 @@ Resolution order (first non-empty wins):
 3. `MUXCODE_AGENT_CLI` — session-wide default
 4. Config file (`~/.config/muxcode/config`) — persistent, set by `muxcode config set`
 5. `roleDefaultCLI()` — built-in fallback
+
+### Codex hooks
+
+Codex CLI agents run the deterministic hook road instead of the pane-scrape road
+([MUX-159](requirements/completed/MUX-159-codex-hooks-provider.md)) — **on by default** for an eligible
+codex since 2026-09-09 00:10, when the live integration section went green (7/7). Opt out per session
+or per role.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_CODEX_HOOKS` | (unset → on) | Session-wide switch (`1`/`true`/`on`/`yes` or `0`/`false`/`off`/`no`; unset means on). When on, `PrepareCodexHooks` writes `<repo>/.codex/hooks.json` before every codex launch and the agent's chains, guards and delivery run through hooks |
+| `MUXCODE_{ROLE}_CODEX_HOOKS` | (unset) | Per-role override, wins over the session value (e.g. `MUXCODE_BUILD_CODEX_HOOKS=1`, `MUXCODE_REVIEW_CODEX_HOOKS=0`) |
+| `CODEX_HOME` | `~/.codex` | Read, never set: the `config.toml` there is checked for `[features] hooks = false`, which makes the role ineligible |
+
+Eligibility is decided at launch: `codex --version` must be ≥ `0.153.0` (`CodexHooksMinVersion`) and
+hooks must not be disabled in `.codex/config.toml` or `$CODEX_HOME/config.toml`. An ineligible or
+opted-out role runs the scrape road unchanged. Lifecycle events (`muxcode lifecycle show --event <name>`):
+
+| Event | Meaning |
+|-------|---------|
+| `codex-hooks-enabled` | `hooks.json` written and hashed for the role; the launch passes `--dangerously-bypass-hook-trust` |
+| `codex-hooks-unavailable` | Opted in but ineligible (the row names the reason: old codex, feature flag off, foreign `hooks.json`) — scrape road |
+| `codex-hooks-tampered` | The on-disk `hooks.json` no longer hashes to the marker under `BusDir()/codex-hooks/<role>.sha256`; the launch is refused |
+| `guard-denied` | `hook guard` refused a `Bash` command or an `apply_patch` path (either provider); names role, tool and reason |
 
 ### Runtime configuration
 

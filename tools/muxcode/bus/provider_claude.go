@@ -398,6 +398,8 @@ func (p *ClaudeCodeProvider) Compact(session, role, target string) error {
 }
 
 func (p *ClaudeCodeProvider) SupportsHooks() bool             { return true }
+func (p *ClaudeCodeProvider) SelfPollsInbox() bool            { return true }
+func (p *ClaudeCodeProvider) PaneIsEvidence() bool            { return false }
 func (p *ClaudeCodeProvider) IdlePromptChar() string          { return idlePromptChar }
 func (p *ClaudeCodeProvider) WriteAgentConfig(_ string) error { return nil }
 

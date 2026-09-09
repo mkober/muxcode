@@ -28,6 +28,19 @@ func shortID(id string) string {
 // Provider abstracts the AI CLI backend used by an agent role.
 // Each provider implements CLI-specific behavior for launching,
 // idle detection, notifications, and lifecycle management.
+//
+// Three capabilities, not one flag (MUX-159). SupportsHooks: chains, console
+// history, guards and the stop/prompt hooks fire from the CLI's own hook
+// system, so the prompt carries no chain instruction and no manual-reply
+// reminder. SelfPollsInbox: the agent runs its own inbox listener kept alive
+// by a Stop hook, so delivery may rely on consume receipts and an idle wake
+// is the fixed sentence. PaneIsEvidence: the pane is the only signal of
+// completion and edits, so the daemon must scrape it. Claude answers
+// yes/yes/no, the scrape-road TUIs (OpenCode, hookless Codex) and the local
+// harness no/no/yes, and a hook-road Codex agent yes/no/no — it has hooks but
+// no background listener, so its Stop and UserPromptSubmit hooks deliver.
+// Questions that were never about delivery (slash commands, the ❯ prompt,
+// the permission model, the --agent argv contract) key on IsClaudeTUI.
 type Provider interface {
 	// Name returns the provider identifier ("claude", "opencode", "local").
 	Name() string
@@ -62,8 +75,14 @@ type Provider interface {
 	// Compact triggers context compaction for the agent.
 	Compact(session, role, target string) error
 
-	// SupportsHooks returns true if the provider supports PreToolUse/PostToolUse hooks.
+	// SupportsHooks: chains, history, guards and delivery fire from hooks.
 	SupportsHooks() bool
+
+	// SelfPollsInbox: a background inbox listener consumes and acks.
+	SelfPollsInbox() bool
+
+	// PaneIsEvidence: completion and edits must be scraped from the pane.
+	PaneIsEvidence() bool
 
 	// IdlePromptChar returns the character used to detect idle state.
 	IdlePromptChar() string
@@ -94,7 +113,7 @@ func ResolveProvider(role string) Provider {
 	case "opencode":
 		return &OpenCodeProvider{}
 	case "codex":
-		return &CodexProvider{}
+		return &CodexProvider{hooks: CodexHooksActive(BusSession(), role)}
 	case "local":
 		return &LocalProvider{}
 	default:
@@ -134,6 +153,15 @@ func ResolveProviderCLI(role string) string {
 		cli = roleDefaultCLI(role)
 	}
 	return cli
+}
+
+// IsClaudeTUI answers the questions that were never about hooks at all —
+// the /exit and /compact slash commands, the ❯ prompt and its parked-input
+// semantics, the permission-prompt model, the --agent argv contract. Those
+// key on the provider's identity, not on what it can deliver, so a codex
+// agent gaining hooks (MUX-159) must not inherit them.
+func IsClaudeTUI(p Provider) bool {
+	return p != nil && p.Name() == "claude"
 }
 
 // roleDefaultCLI returns the built-in default CLI for a role.
@@ -313,6 +341,8 @@ func (p *LocalProvider) AcceptStartup(_, _ string, _ PaneState) bool { return fa
 func (p *LocalProvider) SendWakeUp(_, _ string, _ bool) error        { return nil }
 func (p *LocalProvider) Compact(_, _, _ string) error                { return nil }
 func (p *LocalProvider) SupportsHooks() bool                         { return false }
+func (p *LocalProvider) SelfPollsInbox() bool                        { return false }
+func (p *LocalProvider) PaneIsEvidence() bool                        { return true }
 func (p *LocalProvider) IdlePromptChar() string                      { return "" }
 func (p *LocalProvider) WriteAgentConfig(_ string) error             { return nil }
 func (p *LocalProvider) DetectTaskCompletion(_, _, _ string) (bool, bool, string) {

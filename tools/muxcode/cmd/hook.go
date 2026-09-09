@@ -1,19 +1,22 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
 )
 
 // Hook handles the "muxcode hook" subcommand.
-// Usage: muxcode hook <bash|guard|analyze|inbox-poll|stop|comment-block>
+// Usage: muxcode hook <bash|guard|analyze|inbox-poll|stop|prompt-submit|comment-block|record>
 func Hook(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode hook <bash|guard|analyze|inbox-poll|stop|comment-block>\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode hook <bash|guard|analyze|inbox-poll|stop|prompt-submit|comment-block|record>\n")
 		os.Exit(1)
 	}
 
@@ -29,29 +32,46 @@ func Hook(args []string) {
 		hookInboxPoll()
 	case "stop":
 		hookStop()
+	case "prompt-submit":
+		hookPromptSubmit()
 	case "comment-block":
 		hookCommentBlock()
+	case "record":
+		hookRecord()
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown hook: %s\nAvailable: bash, guard, analyze, inbox-poll, stop, comment-block\n", subcmd)
+		fmt.Fprintf(os.Stderr, "Unknown hook: %s\nAvailable: bash, guard, analyze, inbox-poll, stop, prompt-submit, comment-block, record\n", subcmd)
 		os.Exit(1)
 	}
 }
 
+// hookSession returns the bus session a hook subprocess belongs to, or "" when
+// muxcode did not launch it; every subcommand no-ops on "".
+//
+// It reads the raw BUS_SESSION variable rather than bus.BusSession(), whose
+// tmux-name and "default" fallbacks would make a developer's own claude or
+// codex a muxcode agent by accident. The project-scope .codex/hooks.json
+// (MUX-159) fires for any codex opened in the repo, so without this gate a
+// hand-run session would write into a bus directory nobody reads and answer
+// Stop and guard decisions meant for an agent.
+func hookSession() string {
+	return os.Getenv("BUS_SESSION")
+}
+
 // hookBash implements the PostToolUse Bash hook (replaces muxcode-bash-hook.sh).
-// Detects build/test/deploy/git commands, writes history, triggers chains.
-// Only fires for providers that support hooks (Claude Code). Non-hook providers
-// (OpenCode TUI, local LLM) skip this entirely — they rely on system prompt
-// instructions for bus messaging instead of hook-driven chains.
+// Detects build/test/deploy/git commands, writes history, and fires the one
+// chain bus.ChainEvent names for the call — none for a bus command, a git or
+// deploy-diff call, or a passing test precheck.
+// Only fires for providers on the hook road (Claude Code, hook-road Codex).
+// Scrape-road providers skip this entirely — they rely on system prompt
+// instructions for bus messaging instead of hook-driven chains; the provider
+// gate below also protects against a misconfigured hook registration.
 func hookBash() {
-	session := bus.BusSession()
+	session := hookSession()
 	if session == "" {
 		return
 	}
 	role := bus.BusRole()
 
-	// Gate: skip hook processing for providers that don't support hooks.
-	// OpenCode TUI and local LLM agents never fire PostToolUse hooks, but
-	// this guard protects against misconfigured hook registrations.
 	provider := bus.ResolveProvider(role)
 	if !provider.SupportsHooks() {
 		return
@@ -68,43 +88,11 @@ func hookBash() {
 	}
 
 	result := bus.ProcessBashHook(session, role, ev)
-
-	// Trigger chains for build, test, and deploy commands
+	if result.Chain == "" {
+		return
+	}
 	exitCode := ev.GetExitCode()
-	outcome := bus.HookOutcome(exitCode)
-	command := ev.ToolInput.Command
-
-	// Build chain context from tool event for condition evaluation
-	var ctx *bus.ChainContext
-	switch result.CommandType {
-	case bus.CmdBuild, bus.CmdTest, bus.CmdDeployApply:
-		ctx = bus.BuildChainContext(ev)
-	}
-
-	switch result.CommandType {
-	case bus.CmdBuild:
-		triggerChain(session, role, "build", outcome, exitCode, command, ctx)
-	case bus.CmdTest:
-		triggerChain(session, role, "test", outcome, exitCode, command, ctx)
-	case bus.CmdDeployApply:
-		triggerChain(session, role, "deploy", outcome, exitCode, command, ctx)
-	case bus.CmdUnknown:
-		// Run and watch agents execute arbitrary commands — trigger their chains
-		switch role {
-		case "run", "runner":
-			if ctx == nil {
-				ctx = bus.BuildChainContext(ev)
-			}
-			triggerChain(session, role, "run", outcome, exitCode, command, ctx)
-		case "watch":
-			if ctx == nil {
-				ctx = bus.BuildChainContext(ev)
-			}
-			triggerChain(session, role, "watch", outcome, exitCode, command, ctx)
-		}
-	}
-	// CmdDeploy (diff/plan without apply) — no chain trigger
-	// CmdGit — no chain trigger
+	triggerChain(session, role, result.Chain, bus.HookOutcome(exitCode), exitCode, ev.ToolInput.Command, bus.BuildChainContext(ev))
 }
 
 // triggerChain fires the event chain and analyst notifications.
@@ -117,10 +105,11 @@ func hookBash() {
 // tree the agent sat in rather than the run's worktree. See
 // bus.GraphOwnsRunningSendNode for why the firing role, not the chain's
 // target, is the right provenance key.
+//
+// The workflow guard at the top never re-fires a chain already in or past its
+// target state: it breaks the test→review→test loop where review completion
+// made the test agent re-run tests, which requested another review.
 func triggerChain(session, from, eventType, outcome, exitCode, command string, ctx *bus.ChainContext) {
-	// Workflow guard: prevent re-triggering when already in or past target state.
-	// This breaks the test→review→test loop where review completion causes the
-	// test agent to re-run tests, which re-triggers another review request.
 	state := bus.ReadWorkflowState(session).State
 	switch eventType {
 	case "test":
@@ -227,29 +216,25 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string, c
 	bus.FireSubscriptions(session, from, eventType, outcome, exitCode, command, ctx)
 }
 
-// hookGuard implements the PreToolUse Bash hook for role-aware command blocking.
-// Enforces delegation rules for roles with guard rules (edit, plan, etc.).
-// Only fires for providers that support hooks. Non-hook providers (OpenCode TUI)
-// use permission.bash deny rules in their agent config instead.
+// hookGuard implements the PreToolUse hook: the session, role and provider
+// gates, then bus.GuardDecisionFor's one rule set, then the denial in the
+// provider's dialect (FormatGuardBlockFor) with a `guard-denied` lifecycle row
+// naming role, tool and reason, so every refusal is attributable. Only fires
+// for providers on the hook road; scrape-road OpenCode agents use
+// permission.bash deny rules in their agent config instead. The role gate
+// admits any limit, not just delegation rules: Atlassian write authority and
+// the hook-road evidence rule apply to roles that have none.
 func hookGuard() {
-	session := bus.BusSession()
+	session := hookSession()
 	if session == "" {
 		return
 	}
 
-	// Atlassian write authority applies to EVERY role, not just those with
-	// delegation guard rules. Jira and Confluence are shared systems the user's
-	// team sees, and roles like docs, api, and pr-read have no guard rules yet
-	// still inherit `Bash(muxcode *)` from the "bus" tool group — so gating this
-	// behind HasGuardRules would leave them able to write.
 	role := bus.BusRole()
-	if !bus.HasGuardRules(role) && !bus.HasAtlassianAuthorityLimit(role) {
+	if !bus.HasGuardRules(role) && !bus.HasAtlassianAuthorityLimit(role) && !bus.HasEvidenceGuard(role) {
 		return
 	}
 
-	// Gate: skip guard for providers that don't support hooks.
-	// OpenCode agents use permission.bash deny rules in .opencode/agents/<role>.md
-	// instead of PreToolUse hook interception.
 	provider := bus.ResolveProvider(role)
 	if !provider.SupportsHooks() {
 		return
@@ -265,50 +250,34 @@ func hookGuard() {
 		return
 	}
 
-	// Atlassian MCP guard: an MCP tool carries no bash command, so it must be
-	// gated on the tool name before the command paths below.
-	if decision := bus.CheckAtlassianMCPGuard(role, ev.ToolName); decision != nil && decision.Blocked {
-		fmt.Println(bus.FormatGuardBlock(decision.Reason))
-		return
-	}
-
-	// Bash command guard: delegation of build/test/git/deploy/etc.
-	if ev.ToolInput.Command != "" {
-		// Atlassian writes first — checked for every role, whereas CheckGuard
-		// only has rules for edit and plan.
-		if decision := bus.CheckAtlassianCommandGuard(role, ev.ToolInput.Command); decision != nil && decision.Blocked {
-			fmt.Println(bus.FormatGuardBlock(decision.Reason))
-			return
-		}
-		if decision := bus.CheckGuard(role, ev.ToolInput.Command); decision != nil && decision.Blocked {
-			fmt.Println(bus.FormatGuardBlock(decision.Reason))
-		}
-		return
-	}
-
-	// Write/Edit/NotebookEdit file guard: documentation under docs/ must be
-	// authored by the plan agent, not written directly in the edit window.
-	filePath := ev.ToolInput.FilePath
-	if filePath == "" {
-		filePath = ev.ToolInput.NotebookPath
-	}
-	if filePath != "" {
-		if decision := bus.CheckDocFileGuard(role, filePath); decision != nil && decision.Blocked {
-			fmt.Println(bus.FormatGuardBlock(decision.Reason))
-		}
+	if d := bus.GuardDecisionFor(role, ev); d != nil && d.Blocked {
+		fmt.Println(bus.FormatGuardBlockFor(provider, d.Reason))
+		bus.LogLifecycle(session, "info", "hook", "guard-denied",
+			fmt.Sprintf("%s: %s — %s", role, ev.ToolName, firstLine(d.Reason, 160)))
 	}
 }
 
+// firstLine trims s to its first line and at most max runes, for log rows.
+func firstLine(s string, max int) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
+}
+
 // hookAnalyze implements the PostToolUse Write/Edit hook
-// (replaces muxcode-analyze-hook.sh).
-// Only fires for providers that support hooks.
+// (replaces muxcode-analyze-hook.sh). On Codex it fires for apply_patch, once
+// per path the patch names. Only fires for providers on the hook road.
 func hookAnalyze() {
-	session := bus.BusSession()
+	session := hookSession()
 	if session == "" {
 		return
 	}
 
-	// Gate: skip for non-hook providers
+	// Gate: skip for scrape-road providers
 	window := bus.BusRole()
 	provider := bus.ResolveProvider(window)
 	if !provider.SupportsHooks() {
@@ -325,7 +294,15 @@ func hookAnalyze() {
 		return
 	}
 
-	bus.ProcessAnalyzeHook(session, window, ev)
+	if len(ev.ToolInput.PatchPaths) <= 1 {
+		bus.ProcessAnalyzeHook(session, window, ev)
+		return
+	}
+	for _, p := range ev.ToolInput.PatchPaths {
+		evp := *ev
+		evp.ToolInput.FilePath = p
+		bus.ProcessAnalyzeHook(session, window, &evp)
+	}
 }
 
 // hookCommentBlock implements the PostToolUse Write|Edit hook that enforces the
@@ -342,7 +319,7 @@ func hookAnalyze() {
 // author is told about the block they just wrote and never about pre-existing
 // ones in a file they merely touched.
 func hookCommentBlock() {
-	if bus.BusSession() == "" {
+	if hookSession() == "" {
 		return
 	}
 
@@ -379,7 +356,7 @@ func hookCommentBlock() {
 // (replaces muxcode-inbox-poll.sh).
 // Only fires for providers that support hooks.
 func hookInboxPoll() {
-	session := bus.BusSession()
+	session := hookSession()
 	if session == "" {
 		return
 	}
@@ -422,25 +399,38 @@ func hookInboxPoll() {
 	fmt.Println(result)
 }
 
-// hookStop implements the Stop hook: it keeps a Claude agent's self-poll
-// listener alive across turns. When the agent finishes a turn and no
-// `muxcode inbox --poll` (or `--wait`) listener is running, it blocks the stop
-// and instructs the agent to re-launch the background poll — the single point
-// of reliability for Claude delivery under the receipt model.
+// hookStop implements the Stop hook.
 //
-// Registered globally in ~/.claude/settings.json, so it fires for every Claude
-// Code session. It no-ops immediately outside a muxcode session (BusSession
-// empty) and for non-hook providers — matching every other muxcode hook.
+// For a self-polling agent (Claude) it keeps the background listener alive
+// across turns: when the agent finishes a turn and no `muxcode inbox --poll`
+// (or `--wait`) listener is running, it blocks the stop and instructs the
+// agent to re-launch the background poll — the single point of reliability
+// for Claude delivery under the receipt model.
+//
+// For a hook-road agent with no listener (Codex, MUX-159) the Stop hook IS
+// delivery: a pending request is consumed from inside the agent's own process
+// (a true ack receipt) and returned as the block reason, which Codex feeds
+// back as the next prompt. Each delivery consumes what it delivers, so the
+// continuation's own Stop finds nothing and the agent idles — no
+// stop_hook_active guard is needed to bound it.
+//
+// Registered globally in ~/.claude/settings.json and in the project-scope
+// .codex/hooks.json, so it fires for every session of either CLI. It no-ops
+// immediately outside a muxcode session (BUS_SESSION unset) and for
+// scrape-road providers — matching every other muxcode hook.
+//
+// MUXCODE_DELIVERY_ACK_DISABLE is the rollback valve that turns the
+// receipt/self-poll path off entirely. A relaunch is demanded only when an
+// actionable request is actually waiting — otherwise a quiet session becomes
+// a relaunch treadmill (see DecideStopHook); a response-only inbox is not
+// work waiting on a listener.
 func hookStop() {
-	session := bus.BusSession()
+	session := hookSession()
 	if session == "" {
-		return // not in a muxcode session — global hook, stay silent
+		return
 	}
 	role := bus.BusRole()
 
-	// Gate: only Claude (hook providers) self-poll via a background Bash tool.
-	// The harness self-polls in-process (Phase 3); OpenCode/Codex get
-	// verified-inject delivery (Phase 4) — neither re-launches via this hook.
 	provider := bus.ResolveProvider(role)
 	if !provider.SupportsHooks() {
 		return
@@ -454,22 +444,72 @@ func hookStop() {
 		}
 	}
 
-	// Kill switch: MUXCODE_DELIVERY_ACK_DISABLE turns off the receipt/self-poll
-	// path entirely (rollback valve during rollout). Phase 5 extends the same
-	// env to the daemon cutover.
+	if !provider.SelfPollsInbox() {
+		if action := bus.CodexStopDelivery(session, role); action.Block {
+			fmt.Println(bus.FormatStopBlock(action.Reason))
+		}
+		return
+	}
+
 	disabled := os.Getenv("MUXCODE_DELIVERY_ACK_DISABLE") != ""
-
-	// A listener is alive if a --poll or --wait loop is currently running.
 	listenerAlive := bus.IsPolling(session, role) || bus.IsWaiting(session, role)
-
-	// Only demand a relaunch when there is actually something to deliver —
-	// otherwise a quiet session turns into a relaunch treadmill (see
-	// DecideStopHook). Request-type messages only: a response-only inbox is not
-	// work waiting on a listener.
 	inboxPending := bus.HasActionableMessages(session, role)
 
 	action := bus.DecideStopHook(listenerAlive, stopHookActive, disabled, inboxPending)
 	if action.Block {
 		fmt.Println(bus.FormatStopBlock(action.Reason))
 	}
+}
+
+// hookPromptSubmit implements the UserPromptSubmit hook for hook-road agents
+// without a listener (Codex, MUX-159). The daemon wakes such an agent by
+// typing only the fixed sentence; when that prompt is submitted this hook
+// consumes the inbox in the agent's own process and returns the messages as
+// additional context — never as the prompt itself (MUX-009). Any other
+// prompt passes untouched.
+func hookPromptSubmit() {
+	session := hookSession()
+	if session == "" {
+		return
+	}
+	role := bus.BusRole()
+
+	provider := bus.ResolveProvider(role)
+	if !provider.SupportsHooks() || provider.SelfPollsInbox() {
+		return
+	}
+
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	ev, err := bus.ParseToolEvent(data)
+	if err != nil {
+		return
+	}
+
+	if context, ok := bus.CodexPromptSubmitContext(session, role, ev.Prompt); ok {
+		fmt.Println(bus.FormatPromptContext(context))
+	}
+}
+
+// hookRecord appends the raw event to <bus dir>/hook-capture.jsonl — a spike
+// aid for recording a CLI's real hook payloads before a road is integrated,
+// which is exactly when no provider gate can be trusted, so it has none.
+func hookRecord() {
+	session := hookSession()
+	if session == "" {
+		return
+	}
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	path := filepath.Join(bus.BusDir(session), "hook-capture.jsonl")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(bytes.TrimRight(data, "\n"), '\n'))
 }

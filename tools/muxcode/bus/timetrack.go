@@ -217,7 +217,7 @@ func AgentIsWorking(session, role string) bool {
 	if err != nil {
 		return false
 	}
-	return paneShowsAgentWorking(out, ResolveProvider(role).SupportsHooks())
+	return paneShowsAgentWorking(out, IsClaudeTUI(ResolveProvider(role)))
 }
 
 // AnyAgentWorking reports whether any worker agent (BranchTimeActivityRoles) is

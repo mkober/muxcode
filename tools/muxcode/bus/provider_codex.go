@@ -12,7 +12,17 @@ import (
 // CodexProvider implements the Provider interface for OpenAI Codex CLI
 // in interactive TUI mode. Launches `codex -a never --no-alt-screen`
 // and uses send-keys to inject prompts, matching the OpenCode pattern.
-type CodexProvider struct{}
+//
+// hooks records whether the role runs on the hook road (MUX-159): read from
+// the activation marker by ResolveProvider, decided by ConfigureLaunch and
+// WriteAgentConfig through PrepareCodexHooks. A zero CodexProvider is the
+// scrape road, byte-for-byte what it was before hooks existed.
+type CodexProvider struct {
+	hooks bool
+}
+
+// HooksEnabled reports whether this instance is on the hook road.
+func (p *CodexProvider) HooksEnabled() bool { return p.hooks }
 
 // --- Provider interface ---
 
@@ -28,6 +38,12 @@ func (p *CodexProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 		installDir := resolveInstallDir()
 		agentFile, _ := ResolveAgentFile(agentName, installDir)
 		cfg.AgentFile = agentFile
+	}
+
+	// The road is decided first: SharedPrompt resolves the provider again and
+	// must see the same capability this instance carries.
+	if active, err := PrepareCodexHooks(BusSession(), role); err == nil {
+		p.hooks = active
 	}
 
 	// Shared prompt (used in AGENTS.md generation)
@@ -63,6 +79,12 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 		for _, dir := range roots {
 			args = append(args, "--add-dir", dir)
 		}
+	}
+
+	// Hook trust: only a hooks.json that still hashes to what muxcode wrote
+	// runs without Codex's own review (codex_hooks.go).
+	if CodexHooksTrusted(BusSession(), cfg.Role) {
+		args = append(args, "--dangerously-bypass-hook-trust")
 	}
 
 	// Model selection
@@ -288,6 +310,10 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 		}
 	}
 
+	if p.hooks {
+		return injectWakeSentence(target, role)
+	}
+
 	// Read pending messages to build the prompt text (non-destructive peek)
 	msgs, err := Peek(session, role)
 	if err != nil || len(msgs) == 0 {
@@ -380,14 +406,42 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	return nil
 }
 
+// injectWakeSentence types the fixed wake sentence into a hook-road codex
+// pane. Nothing is consumed and no receipt is written here: the
+// UserPromptSubmit hook consumes the inbox in the agent's own process when
+// the sentence is submitted, which is the true ack. The reply reminder that
+// wraps a scrape-road injection is deliberately absent — the hook carries the
+// reply instruction once, as context, so a payload is never a prompt
+// (MUX-009). Text and Enter are separate writes with a delay, as everywhere,
+// through the tmux runner seam so `deliver --force` can be pinned hermetically.
+func injectWakeSentence(target, role string) error {
+	if err := TmuxSendLiteral(target, WakeSentence); err != nil {
+		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s/%s failed: %v\n", role, "codex", err)
+		return err
+	}
+	time.Sleep(200 * time.Millisecond)
+	if err := TmuxSendKeys(target, "Enter"); err != nil {
+		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s/%s failed: %v\n", role, "codex", err)
+		return err
+	}
+	return nil
+}
+
 // Compact is a no-op — the Codex TUI manages its own context.
 func (p *CodexProvider) Compact(session, role, target string) error {
 	return nil
 }
 
-// SupportsHooks returns false — Codex CLI's hook system is not integrated.
-// Uses graceful degradation (same as OpenCode).
-func (p *CodexProvider) SupportsHooks() bool { return false }
+// SupportsHooks is true on the hook road (MUX-159); the scrape road degrades
+// gracefully, as OpenCode does.
+func (p *CodexProvider) SupportsHooks() bool { return p.hooks }
+
+// SelfPollsInbox is always false: a Codex TUI runs no background listener.
+// On the hook road its Stop and UserPromptSubmit hooks deliver instead.
+func (p *CodexProvider) SelfPollsInbox() bool { return false }
+
+// PaneIsEvidence is true only on the scrape road.
+func (p *CodexProvider) PaneIsEvidence() bool { return !p.hooks }
 
 // IdlePromptChar returns empty — Codex TUI idle detection is not
 // based on a single character.
@@ -398,7 +452,12 @@ func (p *CodexProvider) IdlePromptChar() string { return "" }
 // subdirectory to prevent multiple Codex agents from overwriting each other's
 // instructions in a mixed or all-Codex session.
 func (p *CodexProvider) WriteAgentConfig(role string) error {
-	return writeCodexAgentConfig(role)
+	active, err := PrepareCodexHooks(BusSession(), role)
+	if err != nil {
+		return err
+	}
+	p.hooks = active
+	return writeCodexAgentConfig(role, active)
 }
 
 // DetectTaskCompletion analyzes captured pane content from the Codex TUI
@@ -544,7 +603,11 @@ func CodexAgentConfigDir(role string) string {
 // writer's role instructions win — the core bus protocol is identical
 // across roles and role-specific behavior is also injected via SendWakeUp
 // prompts, so the AGENTS.md race is low-impact.
-func writeCodexAgentConfig(role string) error {
+//
+// hooks selects the role body: on the hook road the definition's chain and
+// guard references stand as written, because those hooks now fire for codex
+// too; the scrape road rewrites them into manual instructions.
+func writeCodexAgentConfig(role string, hooks bool) error {
 	dir := ".codex"
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
@@ -560,7 +623,10 @@ func writeCodexAgentConfig(role string) error {
 			data, err := os.ReadFile(agentFile)
 			if err == nil {
 				_, body := ExtractFrontmatter(string(data))
-				agentBody = adaptBodyForNonHookProvider(body, role)
+				agentBody = body
+				if !hooks {
+					agentBody = adaptBodyForNonHookProvider(body, role)
+				}
 			}
 		}
 	}

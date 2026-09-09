@@ -61,7 +61,7 @@ did not send.**
 | Spec | Relationship |
 |------|--------------|
 | [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | The same guard's *expiry* half — a stuck in-flight task once blocked every `(to,action)` send to a role forever, fixed by `TaskExpired`. This is the *key* half: the guard also blocks across senders |
-| [`MUX-154`](../drafts/MUX-154-codex-status-line-closes-tracked-tasks.md) | Same family of "the bus says one thing and did another" — that one records a success that did not happen; this one reports tracking for a message that does not exist |
+| [`MUX-154`](./MUX-154-codex-status-line-closes-tracked-tasks.md) | Same family of "the bus says one thing and did another" — that one records a success that did not happen; this one reports tracking for a message that does not exist |
 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Adjacent: harness replies correlate to the wrong request. Different mechanism |
 
 ## Requirements

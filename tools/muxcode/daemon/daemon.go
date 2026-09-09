@@ -249,7 +249,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 			return bus.ResolveProvider(role).IsIdle(session, role)
 		},
 		frPaneGated: func(role string) bool {
-			return bus.ResolveProvider(role).SupportsHooks()
+			return bus.ResolveProvider(role).SelfPollsInbox()
 		},
 		agentAlive:      bus.IsAgentAlive,
 		windowNames:     bus.TmuxListWindowNames,
@@ -1014,9 +1014,9 @@ func (d *Daemon) checkActiveWatchdog() {
 		if bus.IsHarnessActive(d.session, role) {
 			continue
 		}
-		// Non-hook providers (OpenCode/Codex) report IsAgentIdle==false always,
-		// which would false-positive every cycle. Skip them.
-		if provider := bus.ResolveProvider(role); !provider.SupportsHooks() {
+		// A TUI with no idle prompt glyph reads as active every cycle and would
+		// false-positive; only prompt-bearing providers are watched.
+		if provider := bus.ResolveProvider(role); provider.IdlePromptChar() == "" {
 			continue
 		}
 		// Legitimate long-running blocks: an agent draining a --wait delegation
@@ -1124,19 +1124,19 @@ func (d *Daemon) checkStuckProviders() {
 		if bus.IsReloading(d.session, role) || bus.IsHarnessActive(d.session, role) {
 			continue
 		}
-		// Only non-hook providers exhibit this wedge — Claude Code recovers via
-		// its own mechanisms and IsAgentIdle works for it.
-		if bus.ResolveProvider(role).SupportsHooks() {
+		// Only scrape-road providers exhibit this wedge — the pane is their sole
+		// evidence; a hook provider reports through its hooks.
+		if !bus.ResolveProvider(role).PaneIsEvidence() {
 			continue
 		}
 		// A dead agent is handled by checkAgentHealth's restart path.
-		if !bus.IsAgentAlive(d.session, role) {
+		if !d.agentAlive(d.session, role) {
 			delete(d.stuckSeen, role)
 			continue
 		}
 
 		target := bus.PaneTarget(d.session, role)
-		content, err := bus.TmuxCapturePaneLines(target, 60)
+		content, err := d.capturePane(target, 60)
 		if err != nil {
 			continue
 		}
@@ -1278,10 +1278,9 @@ func (d *Daemon) checkStuckPermissions() {
 		if bus.IsReloading(d.session, role) || bus.IsHarnessActive(d.session, role) {
 			continue
 		}
-		// Hook providers only — non-hook wedges are handled by
-		// checkStuckProviders, and the permission-prompt model is
-		// Claude-Code-specific.
-		if !bus.ResolveProvider(role).SupportsHooks() {
+		// Claude only — scrape-road wedges belong to checkStuckProviders, and
+		// the permission-prompt model is Claude Code's.
+		if !bus.IsClaudeTUI(bus.ResolveProvider(role)) {
 			continue
 		}
 		// A dead agent is handled by checkAgentHealth's restart path.
@@ -2049,7 +2048,7 @@ func (d *Daemon) checkPollHealth() {
 		if !d.pollGapRecovered[role] {
 			d.pollGapRecovered[role] = true
 			provider := bus.ResolveProvider(role)
-			if provider.SupportsHooks() {
+			if provider.SelfPollsInbox() {
 				if _, err := bus.ForceDeliver(d.session, role, true); err != nil {
 					bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
 						fmt.Sprintf("%s: force-deliver failed during receipt-gap recovery: %v", role, err))
@@ -2104,7 +2103,7 @@ func (d *Daemon) checkPollHealth() {
 // produced the delivery-gap false positives already on record. The local harness
 // consumes in-process and is likewise excluded.
 func (d *Daemon) listenerless(role string) bool {
-	if !bus.ResolveProvider(role).SupportsHooks() {
+	if !bus.ResolveProvider(role).SelfPollsInbox() {
 		return false
 	}
 	if bus.IsHarnessActive(d.session, role) {
@@ -2304,11 +2303,10 @@ func (d *Daemon) checkIdleAgents() {
 		if bus.IsHarnessActive(d.session, role) {
 			continue
 		}
-		// Skip non-hook providers (OpenCode TUI, local LLM) — they cannot
-		// be reliably woken via send-keys. IsIdle always returns false for
-		// these providers, but skipping early avoids unnecessary pane captures.
+		// No self-poll listener (OpenCode, Codex, local LLM): the provider's own
+		// SendWakeUp decides what to inject; IsIdle is false for them anyway.
 		provider := bus.ResolveProvider(role)
-		if !provider.SupportsHooks() {
+		if !provider.SelfPollsInbox() {
 			// Best-effort: send wake-up with combined text.
 			// Cooldown: once per 60s per role to avoid spam.
 			if now-d.lastNonHookWake[role] >= 60 {
@@ -2472,7 +2470,7 @@ func (d *Daemon) checkParkedInput() {
 			continue
 		}
 		// Claude Code only — OpenCode/Codex TUIs manage their own input.
-		if !bus.ResolveProvider(role).SupportsHooks() {
+		if !bus.IsClaudeTUI(bus.ResolveProvider(role)) {
 			continue
 		}
 		// Only act when there are messages to process; otherwise any parked text
@@ -2588,10 +2586,10 @@ func (d *Daemon) checkPaneSweep() {
 		if bus.IsReloading(d.session, role) {
 			continue
 		}
-		// Only hook providers (Claude Code) — OpenCode/Codex TUIs manage
-		// their own input and have different prompt semantics.
+		// Claude Code only — OpenCode/Codex TUIs manage their own input and
+		// have different prompt semantics.
 		provider := bus.ResolveProvider(role)
-		if !provider.SupportsHooks() {
+		if !bus.IsClaudeTUI(provider) {
 			continue
 		}
 		if bus.IsHarnessActive(d.session, role) {
@@ -2774,8 +2772,8 @@ func (d *Daemon) checkNonHookTasks() {
 
 	for _, task := range tasks {
 		provider := bus.ResolveProvider(task.To)
-		if provider.SupportsHooks() {
-			continue // hook providers handle their own completion
+		if !provider.PaneIsEvidence() {
+			continue // hook providers report completion through their hooks
 		}
 
 		// Grace period: wait at least 5s after the task was sent before checking.
@@ -2821,7 +2819,7 @@ func (d *Daemon) checkNonHookTasks() {
 
 		// Capture the agent's pane (30 lines for context)
 		target := bus.PaneTarget(d.session, task.To)
-		paneContent, err := bus.TmuxCapturePaneLines(target, 30)
+		paneContent, err := d.capturePane(target, 30)
 		if err != nil {
 			continue
 		}
@@ -3015,9 +3013,9 @@ func (d *Daemon) checkNonHookEdits() {
 	}
 	d.lastEditDiffCheck = now
 
-	// Only run for non-hook edit providers
+	// Only run where the pane is the sole evidence of edits
 	provider := bus.ResolveProvider("edit")
-	if provider.SupportsHooks() {
+	if !provider.PaneIsEvidence() {
 		return
 	}
 
@@ -3198,9 +3196,26 @@ func idleRescueExcluded(role string) bool {
 //     chance and still didn't respond. Capture the pane content and send a
 //     synthetic response back to the requester.
 //
+// Graph dispatches are exempt: the executor's own stall path (force-redrive,
+// capped, loud failure) owns them — see bus.GraphOwnsTask for the hold this
+// watchdog caused by acting first.
+//
+// An active interval resets only idleTaskFirstSeen; idleTaskRetried
+// deliberately survives it. The re-queue is one per task: an agent that
+// consumes each re-queue (going active), then idles again without
+// answering, would otherwise be re-queued forever, and the rescue that
+// ends that loop would never fire (PR #78 review question, 2026-09-09).
+//
 // Runs every 10 seconds to avoid excessive tmux capture-pane calls.
 func (d *Daemon) checkIdleTaskCompletion() {
-	now := time.Now().Unix()
+	d.checkIdleTaskCompletionAt(time.Now().Unix())
+}
+
+// agentIdleFn is the watchdog's idle probe, a seam so its regression runs
+// without tmux, where IsAgentIdle reads every agent as active.
+var agentIdleFn = bus.IsAgentIdle
+
+func (d *Daemon) checkIdleTaskCompletionAt(now int64) {
 	if now-d.lastIdleTaskCheck < 10 {
 		return
 	}
@@ -3221,13 +3236,18 @@ func (d *Daemon) checkIdleTaskCompletion() {
 
 	for _, task := range tasks {
 		provider := bus.ResolveProvider(task.To)
-		// Only handle hook providers — non-hook providers are covered by checkNonHookTasks
-		if !provider.SupportsHooks() {
+		// Scrape-road providers are covered by checkNonHookTasks
+		if provider.PaneIsEvidence() {
 			continue
 		}
 
 		if idleRescueExcluded(bus.WindowForRole(task.To)) {
 			continue
+		}
+		if _, _, owned := bus.GraphOwnsTask(d.session, task.ID); owned {
+			delete(d.idleTaskFirstSeen, task.ID)
+			delete(d.idleTaskRetried, task.ID)
+			continue // executor-owned — see doc comment
 		}
 
 		// Skip tasks that are too fresh (< 10s) — agent may still be working
@@ -3236,7 +3256,7 @@ func (d *Daemon) checkIdleTaskCompletion() {
 		}
 
 		// Check if the target agent is idle (at ❯ prompt)
-		if !bus.IsAgentIdle(d.session, task.To) {
+		if !agentIdleFn(d.session, task.To) {
 			// Agent is active — reset tracking for this task
 			delete(d.idleTaskFirstSeen, task.ID)
 			continue

@@ -724,11 +724,9 @@ func AutoAccept(session string, windows []string) {
 					woken[win] = true
 					time.Sleep(1 * time.Second) // stabilization delay
 
-					// Non-hook providers (Codex, OpenCode) don't understand
-					// the generic "You have new messages" text. Use their
-					// SendWakeUp() method which reads the inbox and injects
-					// the actual message content with explicit instructions.
-					if !provider.SupportsHooks() {
+					// Without a self-poll listener (Codex, OpenCode) the provider's
+					// own SendWakeUp decides what to inject.
+					if !provider.SelfPollsInbox() {
 						if err := provider.SendWakeUp(session, win, false); err != nil {
 							LogLifecycle(session, "warn", "auto-accept", "startup-wake-failed", win+": "+err.Error())
 						} else {

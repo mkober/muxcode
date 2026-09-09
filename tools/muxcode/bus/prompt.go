@@ -59,7 +59,7 @@ func SharedPrompt(role string) string {
 	b.WriteString("**Compact** — when the user explicitly says \"compact\", when you receive a `compact-recommended` alert, ")
 	b.WriteString("or whenever you decide to compact, do both steps together:\n")
 	b.WriteString("1. Save context to memory: `muxcode session compact \"<summary of key work, decisions, and state>\"`\n")
-	if provider.SupportsHooks() {
+	if IsClaudeTUI(provider) {
 		// Claude Code: use /compact injection via tmux send-keys
 		if role == "edit" {
 			b.WriteString("2. Trigger conversation compression for **all** agents: run `muxcode compact --all` in the background — ")
@@ -99,19 +99,23 @@ func SharedPrompt(role string) string {
 	b.WriteString("### Protocol\n")
 	b.WriteString("- **On startup**, immediately run `muxcode inbox` as your first action to check for pending messages. ")
 	b.WriteString("Messages may have accumulated during restart, compaction, or session resume. Do not wait for user input — check inbox first.\n")
-	if provider.SupportsHooks() {
-		// Claude Code: pull your own inbox with a background poll loop. When it
-		// returns (a bus message arrived) process the message(s) and reply; a
-		// Stop hook re-launches the listener after each turn so you stay
-		// reachable. This is the receipt-based delivery model (reading the inbox
-		// writes a consume-ack), replacing the daemon's send-keys wake-up.
+	switch {
+	case provider.SelfPollsInbox():
+		// Claude: a background poll loop the Stop hook re-launches (receipt model).
 		b.WriteString("- **Stay reachable with a background inbox listener**: after the startup inbox check, run ")
 		b.WriteString("`muxcode inbox --poll --loop` as a **background** Bash command (run_in_background=true). ")
 		b.WriteString("It blocks until a bus message arrives, then returns it — process the message(s), then reply. ")
 		b.WriteString("A `Stop` hook automatically re-launches this listener after each of your turns, so you always stay reachable. ")
 		b.WriteString("If you are ever told your inbox listener is not running, start it again exactly as instructed.\n")
 		b.WriteString("- If \"You have new messages\" is ever injected at your prompt (fallback wake path), run `muxcode inbox` and act on every message without asking\n")
-	} else {
+	case provider.SupportsHooks():
+		// Hook road without a listener (Codex): the Stop and UserPromptSubmit
+		// hooks deliver, so the agent neither polls nor reads the inbox itself.
+		b.WriteString("- **Do NOT poll for messages** after the initial startup check. New bus messages reach you through hooks: ")
+		b.WriteString("when your turn ends with work waiting, it is handed to you as your next prompt; when \"You have new messages\" ")
+		b.WriteString("is typed at your prompt, the messages arrive as context alongside it. Act on every message without asking, ")
+		b.WriteString("and reply exactly as each message's \"To reply\" line says.\n")
+	default:
 		b.WriteString("- **Do NOT poll for messages** after the initial startup check. The daemon process automatically detects when you have unread messages and wakes you by typing \"You have new messages\" at your prompt. ")
 		b.WriteString("Just process your messages, reply, and go idle — you will be woken when new work arrives.\n")
 		b.WriteString("- When prompted with \"You have new messages\", immediately run `muxcode inbox` and act on every message without asking\n")

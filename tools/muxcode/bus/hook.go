@@ -12,53 +12,132 @@ import (
 	"time"
 )
 
-// ToolEvent represents the JSON event received from Claude Code hooks.
+// ToolEvent represents the JSON event received from a Claude Code or Codex
+// hook. Both dialects share these field names; the differences (Codex's
+// bare-string tool_response, its apply_patch payload arriving in
+// tool_input.command, the exit code living in the transcript) are folded in
+// by ParseToolEvent so every consumer reads one shape — see hook_codex.go.
+//
+// ToolName is needed to gate MCP tools, which carry no bash command to
+// inspect. StopHookActive is set on Stop events when a Stop hook already
+// blocked once this turn — the loop guard for the self-poll re-launch hook.
+// ToolUseID and TranscriptPath locate a Codex shell command's real exit code.
 type ToolEvent struct {
-	// ToolName is the tool being invoked (e.g. "Bash", "Edit",
-	// "mcp__claude_ai_Atlassian__editJiraIssue"). Needed to gate MCP tools,
-	// which carry no bash command to inspect.
-	ToolName     string          `json:"tool_name,omitempty"`
-	ToolInput    ToolInput       `json:"tool_input"`
-	ToolResponse json.RawMessage `json:"tool_response,omitempty"`
-	ToolResult   json.RawMessage `json:"tool_result,omitempty"`
-	RawExitCode  interface{}     `json:"exit_code,omitempty"`
-	// StopHookActive is set on Stop-hook events: true means a Stop hook already
-	// blocked once this turn and the agent is being asked to stop again (a
-	// re-entrant Stop). It is the loop guard for the self-poll re-launch hook.
-	StopHookActive bool `json:"stop_hook_active,omitempty"`
+	HookEventName string          `json:"hook_event_name,omitempty"`
+	ToolName      string          `json:"tool_name,omitempty"`
+	ToolInput     ToolInput       `json:"tool_input"`
+	ToolResponse  json.RawMessage `json:"tool_response,omitempty"`
+	ToolResult    json.RawMessage `json:"tool_result,omitempty"`
+	RawExitCode   interface{}     `json:"exit_code,omitempty"`
+	// Codex event context: transcript lookup, UserPromptSubmit and Stop fields.
+	ToolUseID            string `json:"tool_use_id,omitempty"`
+	TranscriptPath       string `json:"transcript_path,omitempty"`
+	Prompt               string `json:"prompt,omitempty"`
+	LastAssistantMessage string `json:"last_assistant_message,omitempty"`
+	StopHookActive       bool   `json:"stop_hook_active,omitempty"`
+	// exitCode memoizes GetExitCode: the Codex path reads the transcript.
+	exitCode *string
 }
 
 // ToolInput holds the input fields of a tool event.
+//
+// Content carries Write's whole-file payload where Edit sends NewString, so a
+// check that reads only one of the two silently skips half the writes. Patch
+// and PatchPaths are filled for a Codex apply_patch call, and FilePath then
+// mirrors the first patched path so file guards and the analyze hook read one
+// field for both dialects.
 type ToolInput struct {
-	Command      string `json:"command,omitempty"`
-	Description  string `json:"description,omitempty"`
-	FilePath     string `json:"file_path,omitempty"`
-	NotebookPath string `json:"notebook_path,omitempty"`
-	NewString    string `json:"new_string,omitempty"`
-	// Content carries Write's whole-file payload. Edit sends NewString instead,
-	// so a check that reads only one of the two silently skips half the writes.
-	Content string `json:"content,omitempty"`
+	Command      string   `json:"command,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	FilePath     string   `json:"file_path,omitempty"`
+	NotebookPath string   `json:"notebook_path,omitempty"`
+	NewString    string   `json:"new_string,omitempty"`
+	Content      string   `json:"content,omitempty"`
+	Patch        string   `json:"-"`
+	PatchPaths   []string `json:"-"`
 }
 
-// ParseToolEvent parses a JSON tool event from raw bytes.
+// UnmarshalJSON accepts a shell command given as an argv array (a Codex
+// unified-exec shape) as well as the plain string both CLIs normally send.
+func (ti *ToolInput) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Command      json.RawMessage `json:"command"`
+		Description  string          `json:"description"`
+		FilePath     string          `json:"file_path"`
+		NotebookPath string          `json:"notebook_path"`
+		NewString    string          `json:"new_string"`
+		Content      string          `json:"content"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*ti = ToolInput{
+		Command:      commandFromRaw(raw.Command),
+		Description:  raw.Description,
+		FilePath:     raw.FilePath,
+		NotebookPath: raw.NotebookPath,
+		NewString:    raw.NewString,
+		Content:      raw.Content,
+	}
+	return nil
+}
+
+// commandFromRaw reads a command that is a string, or an argv array — a
+// `sh -c <script>` wrapper collapses to the script, anything else joins.
+func commandFromRaw(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var argv []string
+	if json.Unmarshal(raw, &argv) != nil || len(argv) == 0 {
+		return ""
+	}
+	if len(argv) == 3 && (argv[1] == "-lc" || argv[1] == "-c") && isShellBinary(argv[0]) {
+		return argv[2]
+	}
+	return strings.Join(argv, " ")
+}
+
+func isShellBinary(p string) bool {
+	switch filepath.Base(p) {
+	case "bash", "sh", "zsh", "dash":
+		return true
+	}
+	return false
+}
+
+// ParseToolEvent parses a JSON tool event from raw bytes, in either dialect.
 func ParseToolEvent(data []byte) (*ToolEvent, error) {
 	var ev ToolEvent
 	if err := json.Unmarshal(data, &ev); err != nil {
 		return nil, err
 	}
+	ev.normalizeCodex()
 	return &ev, nil
 }
 
 // GetExitCode extracts the exit code from a tool event.
 // Checks top-level exit_code, then tool_response/tool_result exit_code,
-// then interrupted flag, then stderr prefix.
+// then interrupted flag, then stderr prefix; a Codex event resolves through
+// the transcript instead (hook_codex.go) and yields "" — unknown — rather
+// than the Claude default when nothing recorded a status.
 func (ev *ToolEvent) GetExitCode() string {
-	// Check top-level exit_code
+	if ev.exitCode != nil {
+		return *ev.exitCode
+	}
+	code := ev.resolveExitCode()
+	ev.exitCode = &code
+	return code
+}
+
+func (ev *ToolEvent) resolveExitCode() string {
 	if code := interfaceToString(ev.RawExitCode); code != "" {
 		return code
 	}
-
-	// Check tool_response/tool_result
 	for _, raw := range []json.RawMessage{ev.ToolResponse, ev.ToolResult} {
 		if len(raw) == 0 {
 			continue
@@ -76,6 +155,9 @@ func (ev *ToolEvent) GetExitCode() string {
 		if stderr, ok := obj["stderr"].(string); ok && strings.HasPrefix(stderr, "Error:") {
 			return "1"
 		}
+	}
+	if code, handled := ev.codexExitCode(); handled {
+		return code
 	}
 	return "0"
 }
@@ -122,14 +204,13 @@ func (ev *ToolEvent) responseText() string {
 		if json.Unmarshal(raw, &s) == nil && s != "" {
 			return s
 		}
-		// Try as object with stdout/content
+		// Try as object with stdout/content/output
 		var obj map[string]interface{}
 		if json.Unmarshal(raw, &obj) == nil {
-			if v, ok := obj["stdout"].(string); ok && v != "" {
-				return v
-			}
-			if v, ok := obj["content"].(string); ok && v != "" {
-				return v
+			for _, key := range []string{"stdout", "content", "output"} {
+				if v, ok := obj[key].(string); ok && v != "" {
+					return v
+				}
 			}
 		}
 	}
@@ -151,12 +232,17 @@ func HookOutcome(exitCode string) string {
 }
 
 // CommandType represents the classification of a bash command.
+//
+// CmdTestPrecheck is a test-stage gate such as `go vet`: failing it fails the
+// stage, passing it proves nothing about the suite, so only its failure is
+// evidence (ChainEvent).
 type CommandType int
 
 const (
 	CmdUnknown CommandType = iota
 	CmdBuild
 	CmdTest
+	CmdTestPrecheck
 	CmdDeploy
 	CmdDeployApply
 	CmdGit
@@ -170,8 +256,16 @@ var DefaultBuildPatterns = []string{
 
 // DefaultTestPatterns are the default patterns for detecting test commands.
 var DefaultTestPatterns = []string{
-	"./test.sh", "jest", "pnpm*test", "pytest", "go*test", "go*vet", "cargo*test", "vitest",
+	"./test.sh", "jest", "pnpm*test", "pytest", "go*test", "cargo*test", "vitest",
 }
+
+// DefaultTestPrecheckPatterns name the test-stage gates whose success is not
+// the suite's verdict. `./test.sh` runs vet and the suite as one call whose
+// exit code is the verdict; `go vet` run as its own call used to sit in
+// DefaultTestPatterns, so on 2026-09-09 each passing vet fired test→review
+// before the suite had started and the suite's own success was then dropped
+// by the Reviewing guard in the chain.
+var DefaultTestPrecheckPatterns = []string{"go*vet"}
 
 // DefaultDeployPatterns are the default patterns for detecting deploy commands.
 var DefaultDeployPatterns = []string{
@@ -198,7 +292,9 @@ var DefaultGitPatterns = []string{
 }
 
 // ClassifyCommand detects the type of a bash command.
-// Returns the most specific match (deploy-apply > deploy, etc).
+// Returns the most specific match (deploy-apply > deploy, etc). The test
+// patterns are consulted before the precheck ones, so a command a user lists
+// in MUXCODE_TEST_PATTERNS is a full test run even if it is also a precheck.
 func ClassifyCommand(command string) CommandType {
 	// Skip bus commands
 	if strings.HasPrefix(command, "muxcode") || strings.HasPrefix(command, "agent-bus") {
@@ -216,6 +312,9 @@ func ClassifyCommand(command string) CommandType {
 	if matchPatterns(firstCmd, patterns.test, true) {
 		return CmdTest
 	}
+	if matchPatterns(firstCmd, patterns.testPrecheck, true) {
+		return CmdTestPrecheck
+	}
 	if matchPatterns(firstCmd, patterns.deploy, true) {
 		if matchPatterns(firstCmd, patterns.deployApply, true) {
 			return CmdDeployApply
@@ -230,21 +329,23 @@ func ClassifyCommand(command string) CommandType {
 
 // commandPatterns holds all loaded command patterns.
 type commandPatterns struct {
-	build       []string
-	test        []string
-	deploy      []string
-	deployApply []string
-	git         []string
+	build        []string
+	test         []string
+	testPrecheck []string
+	deploy       []string
+	deployApply  []string
+	git          []string
 }
 
 // loadPatterns loads command patterns from env vars or defaults.
 func loadPatterns() commandPatterns {
 	return commandPatterns{
-		build:       envOrDefault("MUXCODE_BUILD_PATTERNS", DefaultBuildPatterns),
-		test:        envOrDefault("MUXCODE_TEST_PATTERNS", DefaultTestPatterns),
-		deploy:      envOrDefault("MUXCODE_DEPLOY_PATTERNS", DefaultDeployPatterns),
-		deployApply: envOrDefault("MUXCODE_DEPLOY_APPLY_PATTERNS", DefaultDeployApplyPatterns),
-		git:         envOrDefault("MUXCODE_GIT_PATTERNS", DefaultGitPatterns),
+		build:        envOrDefault("MUXCODE_BUILD_PATTERNS", DefaultBuildPatterns),
+		test:         envOrDefault("MUXCODE_TEST_PATTERNS", DefaultTestPatterns),
+		testPrecheck: envOrDefault("MUXCODE_TEST_PRECHECK_PATTERNS", DefaultTestPrecheckPatterns),
+		deploy:       envOrDefault("MUXCODE_DEPLOY_PATTERNS", DefaultDeployPatterns),
+		deployApply:  envOrDefault("MUXCODE_DEPLOY_APPLY_PATTERNS", DefaultDeployApplyPatterns),
+		git:          envOrDefault("MUXCODE_GIT_PATTERNS", DefaultGitPatterns),
 	}
 }
 
@@ -302,9 +403,18 @@ func isEnvVarName(s string) bool {
 // matchPatterns checks if a command matches any of the glob-style patterns.
 // If withWrappers is true, also matches bash/sh/npx wrapper prefixes.
 // Uses globMatch from tools.go for pattern matching.
+//
+// A pattern's literal head — the text before its first `*` — must end at an
+// executable boundary in the command, not inside a word: `go*test` names
+// `go test ./...`, never `gofmt -l x_test.go`. On 2026-09-09 that gofmt was
+// classified as a passing test run, which fired the test→review chain and a
+// review of a tree whose suite had not run. The boundary is a character
+// check rather than a token comparison so a multiword literal override such
+// as `go test` and an adjacent operator such as `./build.sh>log` both still
+// match.
 func matchPatterns(cmd string, patterns []string, withWrappers bool) bool {
 	for _, pat := range patterns {
-		if globMatch(pat+"*", cmd) {
+		if headAtBoundary(cmd, patternHead(pat)) && globMatch(pat+"*", cmd) {
 			return true
 		}
 		if withWrappers {
@@ -312,15 +422,38 @@ func matchPatterns(cmd string, patterns []string, withWrappers bool) bool {
 			if idx := strings.LastIndex(pat, "/"); idx >= 0 {
 				base = pat[idx+1:]
 			}
-			if globMatch("bash*"+base+"*", cmd) || globMatch("sh*"+base+"*", cmd) {
-				return true
-			}
-			if globMatch("npx*"+base+"*", cmd) {
-				return true
+			for _, w := range []string{"bash", "sh", "npx"} {
+				if headAtBoundary(cmd, w) && globMatch(w+"*"+base+"*", cmd) {
+					return true
+				}
 			}
 		}
 	}
 	return false
+}
+
+// patternHead is the literal text before a pattern's first `*` — empty for
+// a pattern that starts with one.
+func patternHead(pat string) string {
+	if i := strings.Index(pat, "*"); i >= 0 {
+		return pat[:i]
+	}
+	return pat
+}
+
+// headAtBoundary reports whether cmd starts with head and the head ends at
+// an executable boundary: end of string, whitespace, or a shell operator.
+func headAtBoundary(cmd, head string) bool {
+	if head == "" {
+		return true
+	}
+	if !strings.HasPrefix(cmd, head) {
+		return false
+	}
+	if len(cmd) == len(head) {
+		return true
+	}
+	return strings.IndexByte(" \t\n><|;&()", cmd[len(head)]) >= 0
 }
 
 // errorPatterns matches error-relevant lines in command output.
@@ -520,15 +653,53 @@ func rotateHookHistory(path string, maxEntries int) {
 	_ = os.WriteFile(path, out, 0644)
 }
 
-// HookBashResult holds the result of processing a bash tool event.
+// HookBashResult holds the result of processing a bash tool event. Chain is
+// the event chain the call feeds, "" when the call is not evidence — see
+// ChainEvent; hookBash fires exactly that chain.
 type HookBashResult struct {
 	CommandType CommandType
 	Logged      bool
-	Chained     bool
+	Chain       string
+}
+
+// ChainEvent names the chain a classified call feeds — "build", "test",
+// "deploy", or "run"/"watch" for an unclassified call in those roles — and ""
+// when the call is not evidence of any stage's outcome: a bus command, a git
+// or deploy-diff call, or a passing test precheck. That last gap is the
+// point of the precheck class: `go vet` failing is the test stage failing,
+// `go vet` passing says nothing about a suite that has not run, so it writes
+// no row and fires no chain, and the suite's own row is the verdict.
+func ChainEvent(role string, cmdType CommandType, outcome string) string {
+	if precheckPassed(cmdType, outcome) {
+		return ""
+	}
+	switch cmdType {
+	case CmdBuild:
+		return "build"
+	case CmdTest, CmdTestPrecheck:
+		return "test"
+	case CmdDeployApply:
+		return "deploy"
+	case CmdUnknown:
+		switch role {
+		case "run", "runner":
+			return "run"
+		case "watch":
+			return "watch"
+		}
+	}
+	return ""
+}
+
+// precheckPassed reports the one classified call that is not evidence: a
+// test precheck that succeeded. See ChainEvent.
+func precheckPassed(cmdType CommandType, outcome string) bool {
+	return cmdType == CmdTestPrecheck && outcome == OutcomeSuccess
 }
 
 // ProcessBashHook processes a PostToolUse Bash event: classifies the command,
-// writes history, and triggers chains. This is the core logic of muxcode-bash-hook.sh.
+// transitions the workflow and writes the history row. Chain firing is the
+// caller's (cmd/hook.go) — it reads result.Chain.
 func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 	command := ev.ToolInput.Command
 	if command == "" {
@@ -554,16 +725,20 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 	}
 	output := ev.GetOutput(maxLines, maxChars)
 
-	result := HookBashResult{CommandType: cmdType}
+	result := HookBashResult{CommandType: cmdType, Chain: ChainEvent(role, cmdType, outcome)}
 
 	// Workflow: transition on command detection
 	switch cmdType {
 	case CmdBuild:
 		TransitionWorkflow(session, StateBuilding, "hook:bash:build")
-	case CmdTest:
+	case CmdTest, CmdTestPrecheck:
 		TransitionWorkflow(session, StateTesting, "hook:bash:test")
 	case CmdDeployApply:
 		TransitionWorkflow(session, StateDeploying, "hook:bash:deploy")
+	}
+
+	if precheckPassed(cmdType, outcome) {
+		return result
 	}
 
 	switch cmdType {
@@ -583,7 +758,7 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 		_ = WriteHookHistory(filepath.Join(BusDir(session), "build-history.jsonl"), entry, maxHistory)
 		result.Logged = true
 
-	case CmdTest:
+	case CmdTest, CmdTestPrecheck:
 		errors := ExtractErrors(output, 20, 1000)
 		entry := HookHistoryEntry{
 			TS:          ts,
@@ -797,6 +972,52 @@ func CheckGuard(role, command string) *GuardDecision {
 // Returns nil if the command is allowed.
 func CheckEditGuard(command string) *GuardDecision {
 	return CheckGuard("edit", command)
+}
+
+// GuardDecisionFor is the provider-agnostic core of the PreToolUse guard: one
+// rule set, evaluated in the order hookGuard applies it, for every provider on
+// the hook road — the provider decides only the dialect the denial is emitted
+// in (FormatGuardBlockFor). Returns nil when the call is allowed.
+//
+// Order matters twice. Atlassian write authority is checked first and for
+// EVERY role, because roles with no delegation rules (docs, api, pr-read)
+// still inherit `Bash(muxcode *)`; a shell command is then checked against
+// the delegation rules before the hook-road evidence rule, so a prohibited
+// command names the agent that owns it. A file tool is checked path by path —
+// one Claude path, or every path a Codex apply_patch names — so a docs file
+// patched second is refused as surely as one patched first.
+func GuardDecisionFor(role string, ev *ToolEvent) *GuardDecision {
+	if d := CheckAtlassianMCPGuard(role, ev.ToolName); d != nil && d.Blocked {
+		return d
+	}
+	if cmd := ev.ToolInput.Command; cmd != "" {
+		for _, check := range []func(string, string) *GuardDecision{CheckAtlassianCommandGuard, CheckGuard, CheckEvidenceGuard} {
+			if d := check(role, cmd); d != nil && d.Blocked {
+				return d
+			}
+		}
+		return nil
+	}
+	for _, p := range guardedPaths(ev) {
+		if d := CheckDocFileGuard(role, p); d != nil && d.Blocked {
+			return d
+		}
+	}
+	return nil
+}
+
+// guardedPaths returns every path a file tool call names: a Codex apply_patch's
+// whole set, else the one Claude Write/Edit/Notebook path.
+func guardedPaths(ev *ToolEvent) []string {
+	if len(ev.ToolInput.PatchPaths) > 0 {
+		return ev.ToolInput.PatchPaths
+	}
+	for _, p := range []string{ev.ToolInput.FilePath, ev.ToolInput.NotebookPath} {
+		if p != "" {
+			return []string{p}
+		}
+	}
+	return nil
 }
 
 // bashFileWriteReason is the block message for editing files through bash.

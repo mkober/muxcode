@@ -71,12 +71,14 @@ Each agent independently resolves its AI CLI provider. The provider is fixed for
 |----------|-----------|----------|
 | Claude Code | `claude` (default) | Edit (default), review, deploy — full hook support, deterministic chains |
 | OpenCode | `opencode` | Edit (optional), build, test, research — multi-provider LLM access, autonomous TUI |
-| Codex CLI | `codex` | Analyze, review — OpenAI models, automatic approval mode (-a never) |
+| Codex CLI | `codex` | Analyze, review — OpenAI models, automatic approval mode (-a never); hook road on by default (MUX-159; `MUXCODE_CODEX_HOOKS=0` opts out) |
 | Local LLM | `local` | Commit, build, watch — structured commands, zero API cost |
 
 Set per-role: `MUXCODE_{ROLE}_CLI=opencode` in `.muxcode/config`. Set session-wide: `MUXCODE_AGENT_CLI=opencode`.
 
-**Codex CLI sandbox limitation**: Codex CLI sandboxes all filesystem writes to the workspace and blocks outbound network access. This makes it unsuitable for roles that write to `.git/` (commit, deploy) or push to remotes. Only use Codex for read-only or workspace-scoped roles (review, analyze). Use Claude Code or OpenCode for git operations and network-dependent tasks.
+**Codex CLI sandbox**: Codex runs commands under a selectable sandbox (`-s read-only|workspace-write|danger-full-access`, `--add-dir` for extra writable roots) with network restricted separately and by default. muxcode grants `workspace-write` plus the install roots to the **build** role only; every other role inherits the default, where writes inside the workspace succeed and writes outside (`.git/` pushes, `~/.local/bin`) are refused, and no flag lifts network for any role — so a codex test agent cannot run a socket-binding suite ([MUX-153](requirements/backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)). Details in [Architecture](architecture.md#codex-cli-agent-flow). An earlier version of this note said Codex "sandboxes all filesystem writes"; that conflated one policy with the CLI.
+
+**Codex hook road (MUX-159)**: on a `codex` ≥ 0.153 muxcode writes `<repo>/.codex/hooks.json` before launch and the agent becomes a hook provider: chains fire from `PostToolUse`, `hook guard` enforces on `Bash` and `apply_patch`, and delivery runs through `Stop`/`UserPromptSubmit` with true `acked` receipts — no chain text in the prompt, no payload injection, no pane scraping. On by default since 2026-09-09 (`MUXCODE_CODEX_HOOKS=0` or `MUXCODE_{ROLE}_CODEX_HOOKS=0` opts out); an ineligible or opted-out codex role uses the three-layer degradation below. See [Hooks](hooks.md#codex-hooks).
 
 Non-hook providers degrade gracefully across three layers:
 
@@ -320,10 +322,10 @@ The mechanism exists, but **no role sets it by default, and that is deliberate**
 |--------|------------|----------------|-----------|-------------------|
 | System prompt | Claude Code built-in + agent file | Agent markdown body + shared prompt | Shared `.codex/AGENTS.md` + prompt instructions | Same assembly: agent def + shared + skills + context.d + resume |
 | Tool enforcement | `--allowedTools` flag | `permission` blocks in agent config | `.codex/AGENTS.md` instructions | `IsToolAllowed()` in Go, same patterns |
-| Hook chains | PostToolUse hooks fire automatically | No hooks — role-specific prompt instructions + adapted body text + send policy bypass | No hooks — prompt instructions + send policy bypass | Bash commands logged directly to `{role}-history.jsonl` |
+| Hook chains | PostToolUse hooks fire automatically | No hooks — role-specific prompt instructions + adapted body text + send policy bypass | Hook road (default): `PostToolUse` hooks fire, no chain text, no bypass. Scrape road (opted out or ineligible codex): no hooks — prompt instructions + send policy bypass | Bash commands logged directly to `{role}-history.jsonl` |
 | Conversation state | Managed by Claude Code | Managed by OpenCode TUI (auto-compact) | Managed by Codex CLI | Reset between inbox checks (prevents unbounded context) |
 | Idle detection | `❯` prompt match | Not supported (TUI) | Heuristic (`>` prompt / "Summarize") | Not supported |
-| Message delivery | Self-poll + true `acked` receipt | Verified-inject + `delivered` receipt | Verified-inject + `delivered` receipt | In-process consume + true `acked` receipt |
+| Message delivery | Self-poll + true `acked` receipt | Verified-inject + `delivered` receipt | Scrape road: verified-inject + `delivered` receipt. Hook road: `Stop`/`UserPromptSubmit` hooks consume + true `acked` receipt | In-process consume + true `acked` receipt |
 | Cost | Anthropic API usage | Provider-dependent (multi-provider) | OpenAI API usage | Free (local compute) |
 
 ### Message delivery and receipts
@@ -338,7 +340,8 @@ can consume its own inbox in-process:
 | Claude Code | Yes — runs `muxcode inbox` via a Bash tool (self-poll loop) | `acked` (true consume-ack) | The agent read the message |
 | Local harness | Yes — `AgentLoop` consumes in-process | `acked` (true consume-ack) | The agent read the message |
 | OpenCode (TUI) | No — receives text only via pane injection | `delivered` (verified-inject) | Text confirmed to reach the pane, not that the agent processed it |
-| Codex CLI | No — same limitation | `delivered` (verified-inject) | Same as OpenCode |
+| Codex CLI (scrape road) | No — same limitation | `delivered` (verified-inject) | Same as OpenCode |
+| Codex CLI (hook road, MUX-159) | Yes — `hook stop` / `hook prompt-submit` consume from the agent's own hook subprocess | `acked` (true consume-ack) | The agent's runtime read the message before it continued |
 
 **Claude / harness** produce a **true receipt** — the agent's own inbox read writes it.
 Claude keeps a background `muxcode inbox --poll --loop` listener alive via a `Stop` hook;
@@ -354,7 +357,10 @@ longer loses the message — the inbox is left intact for the next cycle.
 agent processed it. A true `acked` receipt for these TUIs would need upstream support or an
 in-pane poll command they do not currently expose. Whether OpenCode Go / Codex can be
 configured to run `muxcode inbox --poll` themselves — upgrading them to true receipts — is an
-**open item**.
+**open item** for OpenCode. **Codex closed it on the hook road (MUX-159)**: its `Stop` and
+`UserPromptSubmit` hooks run `muxcode hook stop` / `hook prompt-submit`, which consume the inbox
+in a subprocess of the agent itself and write true `acked` receipts; the wake-up typed into its
+pane is the fixed sentence only, never a payload. See [Hooks](hooks.md#codex-hooks).
 
 A daemon backstop (`checkPollHealth`) watches for a growing **receipt gap** (inbox messages
 with no receipt past a threshold), re-drives delivery, and alerts edit if the gap persists —
@@ -449,6 +455,8 @@ Agents have scoped permissions via tool profiles (`bus/profile.go`). The `--allo
 - **watch**: `tail`, `journalctl`, `aws logs`, `kubectl logs`, `docker logs`, `stern`, `ssh`, `lnav` (read-only log tools)
 - **pr-read**: `gh pr view/checks/diff/review/list/status`, `gh api`, `git diff/log/status/show/blame/rev-parse/branch`, `jq` (read-only: scoped gh + git, no Write/Edit)
 - **api**: `curl`, `wget`, `http`, `jq`, `python`, `node`, `openssl`, `base64`, `dig`, `nslookup`, `Write`, `Edit`
+
+Build, test and deploy run their evidence command **as its own tool call**: `hook guard` denies a build/test/deploy statement that is chained with anything else (a `muxcode send` ack, `;`/`&&`), piped, or backgrounded, because the PostToolUse hook classifies a call by its first statement and records the last one's exit code — bundled, it records nothing and the chain never fires (the hook-road evidence rule, [Hooks](hooks.md#hook-guard-edit-guard)). A leading `cd … &&` or env assignment is fine. `code-builder.md` and `test-runner.md` state it in their sequences.
 
 All agents have access to `muxcode` commands. The edit agent's lack of `Write`/`Edit` tools is enforced at the tool profile level — Claude Code will not auto-approve file modifications, ensuring all code changes go through the user's accept/reject flow.
 

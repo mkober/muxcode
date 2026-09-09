@@ -19,7 +19,7 @@ Tracking: _(no GitHub issue yet)_
 | | |
 |---|---|
 | Launch | `role=test cli=codex` (lifecycle 13:44:15) |
-| Results produced by the test agent all session | none — its only replies were echoed TUI status lines ([`MUX-154`](../drafts/MUX-154-codex-status-line-closes-tracked-tasks.md)) |
+| Results produced by the test agent all session | none — its only replies were echoed TUI status lines ([`MUX-154`](./MUX-154-codex-status-line-closes-tracked-tasks.md)) |
 | Force-respond ladder on `test` | all four rungs fired 14:11–14:14 with no response |
 | Where the suite actually ran green | the **run** agent (Claude, no sandbox): 2901 pass / 0 fail, exit 0 |
 
@@ -49,7 +49,7 @@ The suite stays green on paper while the role meant to prove it has never run it
 |------|--------------|
 | [`MUX-042`](../completed/MUX-042-codex-cli-compatibility.md) | Made codex a provider. This is the sandbox half its compatibility claim did not cover |
 | [`MUX-152`](./MUX-152-test-sh-hides-modules-after-first-failure.md) | Turns this single failing test into a run where 2900 tests never execute |
-| [`MUX-154`](../drafts/MUX-154-codex-status-line-closes-tracked-tasks.md) | Turns this agent's silence into a recorded success |
+| [`MUX-154`](./MUX-154-codex-status-line-closes-tracked-tasks.md) | Turns this agent's silence into a recorded success |
 
 ## Requirements
 

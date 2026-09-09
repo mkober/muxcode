@@ -32,7 +32,10 @@
 # MUXCODE_BUILD_PATTERNS="./build.sh|pnpm*build|go*build|make|cargo*build|cdk*synth|tsc"
 
 # Test command patterns for hook detection (pipe-separated)
-# MUXCODE_TEST_PATTERNS="./test.sh|jest|pnpm*test|pytest|go*test|go*vet|cargo*test|vitest"
+# MUXCODE_TEST_PATTERNS="./test.sh|jest|pnpm*test|pytest|go*test|cargo*test|vitest"
+
+# Test prechecks: a failure fails the test stage, a pass is not the suite's verdict
+# MUXCODE_TEST_PRECHECK_PATTERNS="go*vet"
 
 # File routing rules for analyze hook (space-separated pattern=target)
 # MUXCODE_ROUTE_RULES="test|spec=test cdk|stack|construct|terraform|pulumi=deploy .ts|.js|.py|.go|.rs=build"

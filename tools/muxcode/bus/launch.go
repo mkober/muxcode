@@ -908,7 +908,7 @@ func PreLaunchSetup(role, session, cli string) {
 // reports as agent-down. Roles with no mapped definition file (cfg.Agent == "")
 // keep the fallback prompt — nothing was promised for them.
 func refuseWithoutDefinition(session string, cfg *LaunchConfig) error {
-	if cfg.Provider == nil || !cfg.Provider.SupportsHooks() || cfg.Agent == "" || cfg.AgentJSON != "" {
+	if cfg.Provider == nil || !IsClaudeTUI(cfg.Provider) || cfg.Agent == "" || cfg.AgentJSON != "" {
 		return nil
 	}
 	detail := fmt.Sprintf("%s: definition %q resolved at no tier (.claude/agents/, ~/.config/muxcode/agents/, install dir) — refusing to launch without it",
@@ -975,6 +975,9 @@ func RunAgentLaunch(role string) error {
 
 	session := BusSession()
 	if err := refuseWithoutDefinition(session, cfg); err != nil {
+		return err
+	}
+	if err := refuseTamperedCodexHooks(session, cfg); err != nil {
 		return err
 	}
 

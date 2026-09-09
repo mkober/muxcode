@@ -86,8 +86,8 @@ model feels like reading its prompt.
 
 | Spec | Relationship |
 |------|--------------|
-| [`MUX-144`](../drafts/MUX-144-wait-human-gate-openable-by-any-agent.md) | The work the test agent was doing. Phase 2 P1 stays open; attempt 4 is recorded there as a caveat, not a fix |
-| [`MUX-154`](../drafts/MUX-154-codex-status-line-closes-tracked-tasks.md) | Every "succeeded" in the timeline is a Codex status-line echo — false readings were cheap to produce all session |
+| [`MUX-144`](./MUX-144-wait-human-gate-openable-by-any-agent.md) | The work the test agent was doing. Phase 2 P1 stays open; attempt 4 is recorded there as a caveat, not a fix |
+| [`MUX-154`](./MUX-154-codex-status-line-closes-tracked-tasks.md) | Every "succeeded" in the timeline is a Codex status-line echo — false readings were cheap to produce all session |
 | [`MUX-153`](./MUX-153-codex-test-agent-cannot-run-the-suite.md) | The Codex test agent cannot run the suite; the role that could not do its own job did someone else's |
 | [`MUX-148`](./MUX-148-node-outcome-reads-command-ran-as-task-done.md) | Same family — an outcome read from something other than the verdict |
 
@@ -222,6 +222,19 @@ of its own; and Codex's `isReadOnlyCodexRole` is an approval policy, not a sandb
 in that file does not mean what the name says. Edit suggested tier 1 alongside the other
 instrument repairs, or tier 0 if it is read as gating further autonomous graph work — the tier is
 the user's call; it is filed at tier 1.
+
+### Deferred from MUX-159 (2026-09-09, user-approved)
+
+[`MUX-159`](../completed/MUX-159-codex-hooks-provider.md) closed with its codex guard road in place —
+`hook guard` runs for codex on `Bash` and `apply_patch`, the decision core is the provider-agnostic
+`GuardDecisionFor` (`bus/hook.go`), and `TestGuardDecisionFor_CodexPayloads` drives every existing
+guard family with codex payloads — but the never-author family it was meant to carry does not exist
+until this spec adds it to `guardRulesForRole`. These three items moved here verbatim; they close
+when Phase 2's rules land, on both providers at once:
+
+- [ ] `PreToolUse` `Bash` → `hook guard` → codex `deny` answer; `apply_patch` → doc-file **and never-author** guards on every path the patch names (MUX-159 Phase 5 item 1 — the deny answer and the doc-file half already hold)
+- [ ] The never-author rules for build/test/review resolve through `HasGuardRules`/`CheckGuard`/`GuardDecisionFor` unchanged — one rule set, two providers (MUX-159 Phase 5 item 3)
+- [ ] The never-author and doc-file guards hold for codex build/test/review — a codex `apply_patch` from build to a source file is refused (MUX-159 AC 9)
 
 ## Status
 

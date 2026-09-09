@@ -698,8 +698,8 @@ muxcode spawn clean
 | Subcommand | Description |
 |------------|-------------|
 | `start` | Create tmux window, seed inbox with task, launch agent, track |
-| `list` | Show running spawns (use `--all` to include completed/stopped) |
-| `status` | Detailed status for a single spawn |
+| `list` | Show running spawns (use `--all` to include completed/stopped). A graph run's worker held between iterations shows as **`parked`** (`SpawnDisplayStatus`: running, its run in flight, its current seed answered) — idle by design, not stuck. Stop its work by cancelling the run, not with `spawn stop`: a worker that ends before answering its seed is replaced on a fresh worker under the run's redrive cap (lifecycle `graph-spawn-replaced`; cap exhausted → the node fails "worker lost"). See [Architecture → Workers, stalls and the watchdog](architecture.md#graph-orchestration-control-plane) |
+| `status` | Detailed status for a single spawn — a held graph worker reads `parked` here too |
 | `result` | Get the last message sent by the spawned agent |
 | `stop` | Kill the tmux window and mark spawn as stopped |
 | `clean` | Remove finished entries and their inbox files |
