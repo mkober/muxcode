@@ -80,6 +80,7 @@ Both Go modules have **no external dependencies** (stdlib only).
 - **Diff preview jump-to-line**: send as a separate `tmux send-keys` after a 150ms sleep, since scrollbind must be active before jumping. Use `norm! {LINE}Gzz`, not `:N` — only `norm!` syncs scrollbind across both diff panes.
 - **Process substitution in tool profiles**: `Bash(diff *)` does NOT match `diff <(...)` — Claude Code treats `<()` as a special construct requiring explicit `Bash(diff <(*)`.
 - **tmux send-keys text + Enter**: two separate calls with a ~100ms delay. Claude's TUI drops an Enter arriving in the same pty write as the text before it, leaving the agent with a full input buffer it never submits.
+- **tmux send-keys Escape before a payload**: never adjacent to the text or the Enter it precedes — route it through `bus.TmuxDismissOverlay` (Escape → gap → `C-e` absorber → gap). A TUI key parser holds a bare `ESC` pending and fuses it with the next byte into a Meta chord, so `Escape` typed straight into `hello` submits `ello` and a one-character payload vanishes entirely (MUX-163; measured escape window 30–50 ms on claude 2.1.258). The absorber key takes the fusion; a gap alone does not fix it — it is a bet on the receiver's escape window, a constant muxcode does not own.
 
 ### Agent definitions
 

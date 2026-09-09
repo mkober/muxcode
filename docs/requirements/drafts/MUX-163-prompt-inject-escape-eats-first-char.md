@@ -94,7 +94,7 @@ so that guard would never fire — a decision owed, recorded in Notes). Not in s
 - [x] A unit-level shape check over recorded tmux argv rejects any sequence in which an Escape call is directly followed by a literal or Enter call; the pre-fix `InjectPromptText` sequence is the negative control that must fail it — _`assertEscapeAbsorbed` + `TestEscapeAbsorbViolation_NegativeControl`_
 - [ ] The integration receiver can see the defect: `scripts/test-prompt-mode.sh` injects into a receiver that models the pending-`ESC` parser instead of `cat`; the old sequence driven by hand against it logs a chord (negative control) and the fixed surface does not
 - [x] The live matrix against a real Claude Code composer is recorded in this spec's Notes: which shapes lose the first character, and whether `Escape`, 50 ms, `Enter` submits or inserts a newline — _recorded 12:34 from the 12:31 run: a and a3 lose, c and every gap ≥ 50 ms keep; d and e submit_
-- [ ] Docs name the rule: `CLAUDE.md` pitfalls (sibling of the text + Enter bullet), `docs/architecture.md` Prompt-surface paragraph and delivery section
+- [x] Docs name the rule: `CLAUDE.md` pitfalls (sibling of the text + Enter bullet), `docs/architecture.md` Prompt-surface paragraph and delivery section — _review 14:02:16 LGTM 0/0/0: "describes the absorbed preamble in both the wake-up and Prompt-surface sections", cross-checked against the helper and the live matrix_
 
 ### Technical approach
 
@@ -155,8 +155,8 @@ constant with the measurement. Rejected as primary because it encodes another pr
 
 ### Phase 3: Docs
 
-- [ ] `CLAUDE.md` editing pitfalls: a sibling bullet — Escape before a payload needs an absorber key with a gap on each side, and why a gap alone is a bet on the receiver's escape window
-- [ ] `docs/architecture.md`: one sentence in the Prompt-surface paragraph (inject delivery shape) and one in the delivery section where the wake path's Escape is explained
+- [x] `CLAUDE.md` editing pitfalls: a sibling bullet — Escape before a payload needs an absorber key with a gap on each side, and why a gap alone is a bet on the receiver's escape window — _edit, `CLAUDE.md:83` ("tmux send-keys Escape before a payload"), run `2338488d` lap 8_
+- [x] `docs/architecture.md`: one sentence in the Prompt-surface paragraph (inject delivery shape) and one in the delivery section where the wake path's Escape is explained — _plan 14:05 on the implement worker's handoff (`/tmp/mux163-phase3-architecture.md`): the Prompt-surface paragraph and the "Idle Claude Code agents" wake-up item, both linking the drafts path until close-out_
 
 ### Phase 4: Integration test
 
@@ -261,6 +261,15 @@ constant with the measurement. Rejected as primary because it encodes another pr
   13:31:11 exit 0; review 13:31:51 **LGTM 0/0/0** EXIT=0. AC3 stays open on the wording decision
   above; AC1/AC6 wait for the Phase 4 receiver, AC8 for Phase 3.
 
+- 2026-09-09 14:08 verify-spec (run `2338488d` update-spec node, lap 8): Phase 2 was committed as
+  `8d48888` at 13:54:04 ("MUX-163 Phase 2: One preamble for every Escape-before-payload site"). Lap
+  8 (implement 13:54–14:00, worker reused) was Phase 3: edit wrote the `CLAUDE.md` bullet, the worker
+  handed plan the `architecture.md` prose, both landed before build/test (green 14:01:28) and review
+  14:02:16 (**LGTM 0/0/0** — "Phase 3 documentation matches implementation"). Because Phase 3 was
+  already ticked when the node fired, the dispatch derived **Phase 4** as current — and Phase 4 has
+  had no work (`scripts/` unchanged), so nothing is ticked there: 0/5. Phase count 3 complete against
+  2 shipped, so the commit gate should carry the docs; the next lap implements Phase 4.
+
 ## Time Tracking
 
 | Branch | Active time | Last updated |
@@ -273,6 +282,7 @@ MUX-164's row — one branch, two specs.
 
 ## Status
 
-**In Progress** — 12/23. Filed 2026-09-09 10:47; `spec-to-pr` run `2338488d` started 11:05; Phase 1
+**In Progress** — 15/23. Filed 2026-09-09 10:47; `spec-to-pr` run `2338488d` started 11:05; Phase 1
 complete 12:34 and **committed `67ad9dc` 13:06** on `MUX-159-codex-hooks-provider` with MUX-164's
-implementation (no push); Phase 2 complete 13:31 (LGTM), its commit gate next; Phases 3–4 open.
+implementation (no push); Phase 2 complete 13:31 and committed `8d48888` 13:54; Phase 3 docs complete
+14:02 (LGTM), commit gate next; Phase 4 open, 0/5.

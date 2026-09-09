@@ -566,7 +566,7 @@ Messages from build, test, review, and deploy agents to any non-edit agent are a
    - **Polling agents** (`--poll` or `--wait` active): skipped for send-keys — the poll loop watches the trigger file
    - **Harness panes**: skipped — they poll inbox directly
    - **Non-hook providers** (OpenCode, Codex CLI, local LLM): routed directly to `provider.SendWakeUp()` — OpenCode and Codex inject message payload via send-keys (self-addressed messages filtered to prevent echo loops), local LLM is no-op
-   - **Idle Claude Code agents** (at `❯` prompt, including edit): `send-keys` "You have new messages" + Enter to wake them up
+   - **Idle Claude Code agents** (at `❯` prompt, including edit): `send-keys` "You have new messages" + Enter to wake them up — preceded by `TmuxDismissOverlay` (Escape → `C-e` absorber, a gap on each side) to clear a feedback-survey or autocomplete overlay that would otherwise eat the Enter. The absorber, not the gap, is what keeps the payload's first character from fusing with the pending `ESC` into a Meta chord; a bare gap bets on the composer's escape window (30–50 ms on claude 2.1.258), a constant muxcode does not own ([`MUX-163`](requirements/drafts/MUX-163-prompt-inject-escape-eats-first-char.md))
    - **Active Claude Code agents** (including edit): `display-message` (passive status bar flash)
 5. If auto-CC fires, `send` also notifies edit
 6. The daemon provides fallback notifications for all roles
@@ -750,7 +750,7 @@ Every agent window carries a third pane at the bottom hosting the global muxcode
 └─────────────────────────────────────────┘
 ```
 
-**The Prompt surface and its agent.** The pane cycles four surfaces, not three: `Prompt`, `Launch Graph`, `Graph Runs`, `Pending Gates` ([`MUX-109`](requirements/completed/MUX-109-prompt-mode-graph-control-pane.md)). Prompt takes typed text and either **interprets** it as a graph operation or **injects** it into the window's active main agent, selected by an explicit toggle whose destination is always named in the input line.
+**The Prompt surface and its agent.** The pane cycles four surfaces, not three: `Prompt`, `Launch Graph`, `Graph Runs`, `Pending Gates` ([`MUX-109`](requirements/completed/MUX-109-prompt-mode-graph-control-pane.md)). Prompt takes typed text and either **interprets** it as a graph operation or **injects** it into the window's active main agent, selected by an explicit toggle whose destination is always named in the input line. Inject delivers through the overlay-dismiss preamble — `TmuxDismissOverlay`: Escape → `C-e` absorber → literal payload → separate Enter — so a pending `ESC` never fuses with the payload's first character into a Meta chord, the defect that dropped the first character of every injected prompt ([`MUX-163`](requirements/drafts/MUX-163-prompt-inject-escape-eats-first-char.md)).
 
 Behind the interpret path is a **headless** agent — the `prompt` role, with no window and no pane of its own. The daemon owns its lifecycle (`checkPromptAgent`), which is why none of the pane-based supervision sees it. Two consequences follow from having no pane:
 
