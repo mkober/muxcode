@@ -7,8 +7,9 @@
 # tools/muxcode/bus/testdata/codex-hooks fed to every `muxcode hook`
 # subcommand. Asserts: hooks.json and its hash marker written and trusted; a
 # PostToolUse Bash row carrying the transcript's real exit code and the
-# build→test chain request; guard positive controls then denials (Bash and
-# apply_patch) in Codex's dialect with a guard-denied lifecycle row; Stop
+# build→test chain request; guard positive controls then denials (Bash,
+# apply_patch, and a build bundled with bus sends — the hook-road evidence
+# rule) in Codex's dialect with a guard-denied lifecycle row; Stop
 # delivery with an ack receipt and the MUX-009 response-only control;
 # prompt-submit expansion and pass-through; every subcommand silent without
 # BUS_SESSION; opt-out restoring the scrape road; a tampered file refused.
@@ -26,7 +27,7 @@ set -uo pipefail
 PASS=0
 FAIL=0
 LIVE_PASS=0
-EXPECTED_PASS=37
+EXPECTED_PASS=39
 
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq is required"; exit 2; }
@@ -142,6 +143,19 @@ else
   fail "deny answer: ${out:-<empty>}"
 fi
 lifecycle_has "guard-denied" && ok "lifecycle guard-denied names the denial" || fail "no guard-denied lifecycle row"
+# Hook-road evidence rule: the build must be the only statement in its call.
+# The denied shape is the 2026-09-09 live one — acks, the build, a hand-typed
+# result in one Bash call — which the PostToolUse hook classifies as a bus
+# command and records nothing for.
+out=$(ev_cmd pre-tool-use-bash.json "./build.sh 2>&1" | AGENT_ROLE=build "$MUX" hook guard 2>/dev/null)
+[ -z "$out" ] && ok "positive control: a lone ./build.sh from build passes the evidence guard" || fail "lone build answered: $out"
+bundled=$'muxcode send edit ack "x" --type response --reply-to 1-edit-a\n./build.sh\nmuxcode send edit build-result "ok" --type response --reply-to 1-edit-b'
+out=$(ev_cmd pre-tool-use-bash.json "$bundled" | AGENT_ROLE=build "$MUX" hook guard 2>/dev/null)
+if jq -e '.hookSpecificOutput.permissionDecision=="deny" and (.hookSpecificOutput.permissionDecisionReason|test("only statement"))' <<<"$out" >/dev/null 2>&1; then
+  ok "build bundled with bus sends denied (hook-road evidence guard)"
+else
+  fail "bundled build answer: ${out:-<empty>}"
+fi
 patch_ok=$'*** Begin Patch\n*** Update File: src/main.go\n+x\n*** End Patch'
 out=$(ev_cmd pre-tool-use-apply-patch.json "$patch_ok" | AGENT_ROLE=edit "$MUX" hook guard 2>/dev/null)
 [ -z "$out" ] && ok "positive control: apply_patch to source passes" || fail "source patch answered: $out"

@@ -232,12 +232,17 @@ func HookOutcome(exitCode string) string {
 }
 
 // CommandType represents the classification of a bash command.
+//
+// CmdTestPrecheck is a test-stage gate such as `go vet`: failing it fails the
+// stage, passing it proves nothing about the suite, so only its failure is
+// evidence (ChainEvent).
 type CommandType int
 
 const (
 	CmdUnknown CommandType = iota
 	CmdBuild
 	CmdTest
+	CmdTestPrecheck
 	CmdDeploy
 	CmdDeployApply
 	CmdGit
@@ -251,8 +256,16 @@ var DefaultBuildPatterns = []string{
 
 // DefaultTestPatterns are the default patterns for detecting test commands.
 var DefaultTestPatterns = []string{
-	"./test.sh", "jest", "pnpm*test", "pytest", "go*test", "go*vet", "cargo*test", "vitest",
+	"./test.sh", "jest", "pnpm*test", "pytest", "go*test", "cargo*test", "vitest",
 }
+
+// DefaultTestPrecheckPatterns name the test-stage gates whose success is not
+// the suite's verdict. `./test.sh` runs vet and the suite as one call whose
+// exit code is the verdict; `go vet` run as its own call used to sit in
+// DefaultTestPatterns, so on 2026-09-09 each passing vet fired test→review
+// before the suite had started and the suite's own success was then dropped
+// by the Reviewing guard in the chain.
+var DefaultTestPrecheckPatterns = []string{"go*vet"}
 
 // DefaultDeployPatterns are the default patterns for detecting deploy commands.
 var DefaultDeployPatterns = []string{
@@ -279,7 +292,9 @@ var DefaultGitPatterns = []string{
 }
 
 // ClassifyCommand detects the type of a bash command.
-// Returns the most specific match (deploy-apply > deploy, etc).
+// Returns the most specific match (deploy-apply > deploy, etc). The test
+// patterns are consulted before the precheck ones, so a command a user lists
+// in MUXCODE_TEST_PATTERNS is a full test run even if it is also a precheck.
 func ClassifyCommand(command string) CommandType {
 	// Skip bus commands
 	if strings.HasPrefix(command, "muxcode") || strings.HasPrefix(command, "agent-bus") {
@@ -297,6 +312,9 @@ func ClassifyCommand(command string) CommandType {
 	if matchPatterns(firstCmd, patterns.test, true) {
 		return CmdTest
 	}
+	if matchPatterns(firstCmd, patterns.testPrecheck, true) {
+		return CmdTestPrecheck
+	}
 	if matchPatterns(firstCmd, patterns.deploy, true) {
 		if matchPatterns(firstCmd, patterns.deployApply, true) {
 			return CmdDeployApply
@@ -311,21 +329,23 @@ func ClassifyCommand(command string) CommandType {
 
 // commandPatterns holds all loaded command patterns.
 type commandPatterns struct {
-	build       []string
-	test        []string
-	deploy      []string
-	deployApply []string
-	git         []string
+	build        []string
+	test         []string
+	testPrecheck []string
+	deploy       []string
+	deployApply  []string
+	git          []string
 }
 
 // loadPatterns loads command patterns from env vars or defaults.
 func loadPatterns() commandPatterns {
 	return commandPatterns{
-		build:       envOrDefault("MUXCODE_BUILD_PATTERNS", DefaultBuildPatterns),
-		test:        envOrDefault("MUXCODE_TEST_PATTERNS", DefaultTestPatterns),
-		deploy:      envOrDefault("MUXCODE_DEPLOY_PATTERNS", DefaultDeployPatterns),
-		deployApply: envOrDefault("MUXCODE_DEPLOY_APPLY_PATTERNS", DefaultDeployApplyPatterns),
-		git:         envOrDefault("MUXCODE_GIT_PATTERNS", DefaultGitPatterns),
+		build:        envOrDefault("MUXCODE_BUILD_PATTERNS", DefaultBuildPatterns),
+		test:         envOrDefault("MUXCODE_TEST_PATTERNS", DefaultTestPatterns),
+		testPrecheck: envOrDefault("MUXCODE_TEST_PRECHECK_PATTERNS", DefaultTestPrecheckPatterns),
+		deploy:       envOrDefault("MUXCODE_DEPLOY_PATTERNS", DefaultDeployPatterns),
+		deployApply:  envOrDefault("MUXCODE_DEPLOY_APPLY_PATTERNS", DefaultDeployApplyPatterns),
+		git:          envOrDefault("MUXCODE_GIT_PATTERNS", DefaultGitPatterns),
 	}
 }
 
@@ -383,9 +403,18 @@ func isEnvVarName(s string) bool {
 // matchPatterns checks if a command matches any of the glob-style patterns.
 // If withWrappers is true, also matches bash/sh/npx wrapper prefixes.
 // Uses globMatch from tools.go for pattern matching.
+//
+// A pattern's literal head — the text before its first `*` — must end at an
+// executable boundary in the command, not inside a word: `go*test` names
+// `go test ./...`, never `gofmt -l x_test.go`. On 2026-09-09 that gofmt was
+// classified as a passing test run, which fired the test→review chain and a
+// review of a tree whose suite had not run. The boundary is a character
+// check rather than a token comparison so a multiword literal override such
+// as `go test` and an adjacent operator such as `./build.sh>log` both still
+// match.
 func matchPatterns(cmd string, patterns []string, withWrappers bool) bool {
 	for _, pat := range patterns {
-		if globMatch(pat+"*", cmd) {
+		if headAtBoundary(cmd, patternHead(pat)) && globMatch(pat+"*", cmd) {
 			return true
 		}
 		if withWrappers {
@@ -393,15 +422,38 @@ func matchPatterns(cmd string, patterns []string, withWrappers bool) bool {
 			if idx := strings.LastIndex(pat, "/"); idx >= 0 {
 				base = pat[idx+1:]
 			}
-			if globMatch("bash*"+base+"*", cmd) || globMatch("sh*"+base+"*", cmd) {
-				return true
-			}
-			if globMatch("npx*"+base+"*", cmd) {
-				return true
+			for _, w := range []string{"bash", "sh", "npx"} {
+				if headAtBoundary(cmd, w) && globMatch(w+"*"+base+"*", cmd) {
+					return true
+				}
 			}
 		}
 	}
 	return false
+}
+
+// patternHead is the literal text before a pattern's first `*` — empty for
+// a pattern that starts with one.
+func patternHead(pat string) string {
+	if i := strings.Index(pat, "*"); i >= 0 {
+		return pat[:i]
+	}
+	return pat
+}
+
+// headAtBoundary reports whether cmd starts with head and the head ends at
+// an executable boundary: end of string, whitespace, or a shell operator.
+func headAtBoundary(cmd, head string) bool {
+	if head == "" {
+		return true
+	}
+	if !strings.HasPrefix(cmd, head) {
+		return false
+	}
+	if len(cmd) == len(head) {
+		return true
+	}
+	return strings.IndexByte(" \t\n><|;&()", cmd[len(head)]) >= 0
 }
 
 // errorPatterns matches error-relevant lines in command output.
@@ -601,15 +653,53 @@ func rotateHookHistory(path string, maxEntries int) {
 	_ = os.WriteFile(path, out, 0644)
 }
 
-// HookBashResult holds the result of processing a bash tool event.
+// HookBashResult holds the result of processing a bash tool event. Chain is
+// the event chain the call feeds, "" when the call is not evidence — see
+// ChainEvent; hookBash fires exactly that chain.
 type HookBashResult struct {
 	CommandType CommandType
 	Logged      bool
-	Chained     bool
+	Chain       string
+}
+
+// ChainEvent names the chain a classified call feeds — "build", "test",
+// "deploy", or "run"/"watch" for an unclassified call in those roles — and ""
+// when the call is not evidence of any stage's outcome: a bus command, a git
+// or deploy-diff call, or a passing test precheck. That last gap is the
+// point of the precheck class: `go vet` failing is the test stage failing,
+// `go vet` passing says nothing about a suite that has not run, so it writes
+// no row and fires no chain, and the suite's own row is the verdict.
+func ChainEvent(role string, cmdType CommandType, outcome string) string {
+	if precheckPassed(cmdType, outcome) {
+		return ""
+	}
+	switch cmdType {
+	case CmdBuild:
+		return "build"
+	case CmdTest, CmdTestPrecheck:
+		return "test"
+	case CmdDeployApply:
+		return "deploy"
+	case CmdUnknown:
+		switch role {
+		case "run", "runner":
+			return "run"
+		case "watch":
+			return "watch"
+		}
+	}
+	return ""
+}
+
+// precheckPassed reports the one classified call that is not evidence: a
+// test precheck that succeeded. See ChainEvent.
+func precheckPassed(cmdType CommandType, outcome string) bool {
+	return cmdType == CmdTestPrecheck && outcome == OutcomeSuccess
 }
 
 // ProcessBashHook processes a PostToolUse Bash event: classifies the command,
-// writes history, and triggers chains. This is the core logic of muxcode-bash-hook.sh.
+// transitions the workflow and writes the history row. Chain firing is the
+// caller's (cmd/hook.go) — it reads result.Chain.
 func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 	command := ev.ToolInput.Command
 	if command == "" {
@@ -635,16 +725,20 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 	}
 	output := ev.GetOutput(maxLines, maxChars)
 
-	result := HookBashResult{CommandType: cmdType}
+	result := HookBashResult{CommandType: cmdType, Chain: ChainEvent(role, cmdType, outcome)}
 
 	// Workflow: transition on command detection
 	switch cmdType {
 	case CmdBuild:
 		TransitionWorkflow(session, StateBuilding, "hook:bash:build")
-	case CmdTest:
+	case CmdTest, CmdTestPrecheck:
 		TransitionWorkflow(session, StateTesting, "hook:bash:test")
 	case CmdDeployApply:
 		TransitionWorkflow(session, StateDeploying, "hook:bash:deploy")
+	}
+
+	if precheckPassed(cmdType, outcome) {
+		return result
 	}
 
 	switch cmdType {
@@ -664,7 +758,7 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 		_ = WriteHookHistory(filepath.Join(BusDir(session), "build-history.jsonl"), entry, maxHistory)
 		result.Logged = true
 
-	case CmdTest:
+	case CmdTest, CmdTestPrecheck:
 		errors := ExtractErrors(output, 20, 1000)
 		entry := HookHistoryEntry{
 			TS:          ts,

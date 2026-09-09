@@ -2,6 +2,7 @@ package bus
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -253,7 +254,7 @@ func TestClassifyCommand(t *testing.T) {
 		{"jest --watch", CmdTest},
 		{"pytest -v", CmdTest},
 		{"npx jest", CmdTest},
-		{"go vet ./...", CmdTest},
+		{"go vet ./...", CmdTestPrecheck},
 		{"cdk diff", CmdDeploy},
 		{"cdk synth --all", CmdBuild}, // cdk*synth matches build first; shell script sets both flags
 		{"terraform plan", CmdDeploy},
@@ -760,6 +761,107 @@ func TestProcessBashHook_Runner(t *testing.T) {
 	histPath := filepath.Join(busDir, "run-history.jsonl")
 	if _, err := os.Stat(histPath); os.IsNotExist(err) {
 		t.Error("run history file not created")
+	}
+}
+
+// A passing test precheck is not the suite's verdict: no row, no chain, and
+// the workflow stays in Testing so the suite's own success that follows is
+// not swallowed by the chain's Reviewing guard. A failing precheck is the
+// stage failing — a row and the test chain — and is the negative control.
+func TestProcessBashHook_TestPrecheck(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-precheck"
+	t.Setenv("BUS_SESSION", session)
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+	histPath := filepath.Join(busDir, "test-history.jsonl")
+	event := func(command string, exit int) *ToolEvent {
+		ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":%q},"exit_code":%d,"tool_response":{"stdout":"out"}}`, command, exit)))
+		return ev
+	}
+
+	vetPass := ProcessBashHook(session, "test", event("go vet ./...", 0))
+	if vetPass.CommandType != CmdTestPrecheck || vetPass.Chain != "" || vetPass.Logged {
+		t.Fatalf("passing vet = %+v, want CmdTestPrecheck, no chain, not logged", vetPass)
+	}
+	if _, err := os.Stat(histPath); !os.IsNotExist(err) {
+		t.Error("passing vet wrote a test-history row")
+	}
+	if st := ReadWorkflowState(session).State; st != StateTesting {
+		t.Errorf("state after passing vet = %v, want StateTesting", st)
+	}
+
+	suitePass := ProcessBashHook(session, "test", event("go test ./...", 0))
+	if suitePass.CommandType != CmdTest || suitePass.Chain != "test" || !suitePass.Logged {
+		t.Fatalf("suite after passing vet = %+v, want CmdTest, test chain, logged", suitePass)
+	}
+	data, _ := os.ReadFile(histPath)
+	if strings.Count(string(data), "\n") != 1 || !strings.Contains(string(data), `"command":"go test ./...","exit_code":"0","outcome":"success"`) {
+		t.Errorf("test-history after vet+suite = %q, want the one suite row", data)
+	}
+
+	suiteFail := ProcessBashHook(session, "test", event("go test ./...", 1))
+	if suiteFail.Chain != "test" || !suiteFail.Logged {
+		t.Errorf("failing suite after passing vet = %+v, want test chain, logged", suiteFail)
+	}
+
+	vetFail := ProcessBashHook(session, "test", event("go vet ./...", 2))
+	if vetFail.CommandType != CmdTestPrecheck || vetFail.Chain != "test" || !vetFail.Logged {
+		t.Fatalf("failing vet = %+v, want CmdTestPrecheck, test chain, logged", vetFail)
+	}
+	data, _ = os.ReadFile(histPath)
+	if !strings.Contains(string(data), `"command":"go vet ./...","exit_code":"2","outcome":"failure"`) {
+		t.Errorf("failing vet row missing from test-history: %q", data)
+	}
+}
+
+func TestChainEvent(t *testing.T) {
+	cases := []struct {
+		role    string
+		cmdType CommandType
+		outcome string
+		want    string
+	}{
+		{"build", CmdBuild, OutcomeSuccess, "build"},
+		{"build", CmdBuild, OutcomeFailure, "build"},
+		{"test", CmdTest, OutcomeSuccess, "test"},
+		{"test", CmdTest, OutcomeFailure, "test"},
+		{"test", CmdTestPrecheck, OutcomeSuccess, ""},
+		{"test", CmdTestPrecheck, OutcomeFailure, "test"},
+		{"test", CmdTestPrecheck, OutcomeUnknown, "test"},
+		{"deploy", CmdDeployApply, OutcomeSuccess, "deploy"},
+		{"deploy", CmdDeploy, OutcomeSuccess, ""},
+		{"commit", CmdGit, OutcomeSuccess, ""},
+		{"run", CmdBus, OutcomeFailure, ""},
+		{"build", CmdUnknown, OutcomeSuccess, ""},
+		{"run", CmdUnknown, OutcomeFailure, "run"},
+		{"runner", CmdUnknown, OutcomeSuccess, "run"},
+		{"watch", CmdUnknown, OutcomeSuccess, "watch"},
+	}
+	for _, c := range cases {
+		if got := ChainEvent(c.role, c.cmdType, c.outcome); got != c.want {
+			t.Errorf("ChainEvent(%s, %d, %s) = %q, want %q", c.role, c.cmdType, c.outcome, got, c.want)
+		}
+	}
+}
+
+// A command listed in MUXCODE_TEST_PATTERNS is a full test run even when the
+// precheck list also names it, and the precheck list has its own override.
+func TestClassifyCommand_TestPrecheckOverrides(t *testing.T) {
+	if got := ClassifyCommand("go vet ./..."); got != CmdTestPrecheck {
+		t.Fatalf("default go vet = %d, want CmdTestPrecheck", got)
+	}
+	t.Setenv("MUXCODE_TEST_PATTERNS", "go test|go vet")
+	if got := ClassifyCommand("go vet ./..."); got != CmdTest {
+		t.Errorf("go vet listed in MUXCODE_TEST_PATTERNS = %d, want CmdTest", got)
+	}
+	t.Setenv("MUXCODE_TEST_PATTERNS", "")
+	t.Setenv("MUXCODE_TEST_PRECHECK_PATTERNS", "golangci-lint*run")
+	if got := ClassifyCommand("golangci-lint run ./..."); got != CmdTestPrecheck {
+		t.Errorf("overridden precheck = %d, want CmdTestPrecheck", got)
+	}
+	if got := ClassifyCommand("go vet ./..."); got != CmdUnknown {
+		t.Errorf("go vet with the precheck list overridden = %d, want CmdUnknown", got)
 	}
 }
 

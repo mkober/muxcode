@@ -148,7 +148,7 @@ it, and MUX-012 deletes it).
 - [x] `SupportsHooks()` no longer conflates chains, self-poll and scrape: each of the 44 gates asks the capability it actually needs, and a table in `docs/hooks.md` says which
 - [x] Build→test→review fires from `PostToolUse` for codex exactly as for Claude; the codex prompt carries no chain instruction and no reply reminder; `CheckSendPolicy` grants it no bypass
 - [x] A graph `send` node whose codex agent ran the command routes on an **authoritative** history row — no unverified hold on a passing build or test (negative control: a failing command routes failure, not unknown) — `TestCodexHookRow_IsAuthoritativeForGraph` pins both outcomes and a status-less row as unknown
-- [ ] `checkNonHookTasks` never scrapes a hook-enabled codex agent; no `task-detected` row is written for it in a full session — *by design (`PaneIsEvidence()` false, `daemon.go` `checkNonHookTasks`); the live run's scratch session has no daemon, so the full-session proof is still outstanding*
+- [x] `checkNonHookTasks` never scrapes a hook-enabled codex agent; no `task-detected` row is written for it in a full session — *by design (`PaneIsEvidence()` false, `daemon.go` `checkNonHookTasks`); the live run's scratch session has no daemon, so the full-session proof is still outstanding; **2026-09-09** the skip is pinned where it executes by `daemon/codex_hook_road_test.go` — `TestCheckNonHookTasks_HookCodexNeverScraped` never captures the hook-road pane, leaves its task in flight and synthesizes nothing, while a scrape-road codex in the same session is scraped to completion with exactly one `task-detected` row — **green 00:55** (`go test ./...` exit 0 as a hook row, 2341 PASS / 0 FAIL); the full-session observation stays an observation, the daemon-level pin is the proof*
 - [x] A pending actionable message is delivered by the `Stop` hook as the agent's next prompt, with a true `acked` receipt written before Codex continues
 - [x] An idle hook-enabled codex agent is woken with the fixed sentence only; the payload arrives through `UserPromptSubmit` → `additionalContext`; **a `type: response` is never injected as prompt text** (MUX-009 negative control: the receiving agent's chain does not re-fire)
 - [ ] `PreToolUse` on `Bash` and `apply_patch` runs `hook guard`; a denied command answers `permissionDecision: "deny"` with the reason, and the command does not run (positive control first: an allowed command passes) — *hermetic half done (allow passes silently, deny answers the JSON — script); that Codex then refuses to run the command is proven only live*
@@ -156,7 +156,7 @@ it, and MUX-012 deletes it).
 - [x] The trust flag is passed only when `hooks.json` hashes to what muxcode wrote; a tampered file refuses launch with a lifecycle row
 - [x] Every `muxcode hook` subcommand is a no-op outside a muxcode session (`BUS_SESSION` unset) — a developer's own codex in this repo is unaffected
 - [x] Per-role opt-in (`MUXCODE_CODEX_HOOKS`, then per-role `MUXCODE_<ROLE>_CODEX_HOOKS`) with the scrape road as the fallback; an older codex (no hooks) or `[features] hooks = false` is detected and falls back with a lifecycle row, never a silent half-state
-- [x] `scripts/test-codex-hooks.sh` passes with a coverage floor; its live section skips with a reason when no codex ≥ 0.153 is installed — hermetic 37/37 (2026-09-09 00:07) and live 7/7 (00:02, `MUXCODE_CODEX_HOOKS_LIVE=1`); without the gate the live section prints its skip reason. The first run's 33/35 was the in-flight task guard on same-action sends, fixed with per-section action names — see Phase 7
+- [x] `scripts/test-codex-hooks.sh` passes with a coverage floor; its live section skips with a reason when no codex ≥ 0.153 is installed — hermetic 37/37 (2026-09-09 00:07) and live 7/7 (00:02, `MUXCODE_CODEX_HOOKS_LIVE=1`); without the gate the live section prints its skip reason. The first run's 33/35 was the in-flight task guard on same-action sends, fixed with per-section action names — see Phase 7. *Floor raised to 39 on 2026-09-09 (two evidence-rule cases) and run at 01:15 — **hermetic 39/39, exit 0** (run agent, inside graph run `1788930816-spec-to-pr-f7fb2610`); the live 7/7 stands from 00:02 and was not re-run*
 - [x] Docs updated with the code: `hooks.md`, `architecture.md` (Codex CLI Agent Flow), `configuration.md`, `agents.md`, `CLAUDE.md`
 
 ### Technical approach
@@ -247,10 +247,15 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
 - [x] `PostToolUse` `Bash` → `hook bash` → `ProcessBashHook` writes the console-history row with the real exit code and fires `triggerChain` for codex build/test/deploy/run
 - [x] `SharedPrompt` emits no chain instruction and no reply reminder for hook codex; `CheckSendPolicy` grants it no bypass
 - [x] `checkNonHookTasks` and `checkNonHookEdits` skip hook codex; `checkStuckProviders` keys on `PaneIsEvidence()`
-- [x] Graph: `deriveSendOutcome` finds an authoritative row for a codex node — pin with a build that fails (`failure`, routed to `fix`) and one that passes (`success`, no hold)
+- [x] Graph: `deriveSendOutcome` finds an authoritative row for a codex node — pin with a build that fails (`failure`, routed to `fix`) and one that passes (`success`, no hold) — **2026-09-09 00:28 finding**: the pin holds only when the build is a lone call. The first `spec-to-pr` run on this spec (`1788927531-spec-to-pr-7fbfba25`) parked its build node on `graph-unverified-hold` after the codex build agent answered with one Bash call — three `muxcode send` acks, `./build.sh`, a hand-typed result — which `ClassifyCommand` read as a bus command: no exit-code row, no chain, and the prose reply became the only history row (`source: bus-response`, `outcome: unknown`). `./build.sh` itself had passed. The hold was correct; the run was canceled at 00:39 and the gap is closed by the evidence guard (items 8–12)
 - [x] `apply_patch` `PostToolUse` → `hook analyze` with the paths from the patch — one trigger per path
-- [ ] Negative control: a scrape-road codex agent in the same session still gets `task-detected` completions — *design only: `PaneIsEvidence()` true keeps the scrape checks; no daemon-level test, and the live control is gated*
-- [ ] Tests for each, including the graph pins — *open: the `PaneIsEvidence()` skip in the daemon has no unit test (pinned at the provider level only); everything else in this phase is tested*
+- [x] Negative control: a scrape-road codex agent in the same session still gets `task-detected` completions — *design only: `PaneIsEvidence()` true keeps the scrape checks; no daemon-level test, and the live control is gated; **delivered 2026-09-09 00:27** by the graph's implement spawn (`spawn-e0035225`) as the same-session control inside each of the three `daemon/codex_hook_road_test.go` tests — the scrape-road role is captured, its task completed with a synthesized response and one `task-detected` row, one provider-loop sighting counted, the dirty tree diffed and the analyze trigger written — **green 00:55**, ticked*
+- [x] Tests for each, including the graph pins — *open: the `PaneIsEvidence()` skip in the daemon has no unit test (pinned at the provider level only); everything else in this phase is tested; **delivered 2026-09-09 00:27** — `daemon/codex_hook_road_test.go` (`TestCheckNonHookTasks_HookCodexNeverScraped`, `TestCheckStuckProviders_HookCodexNotJudgedByPane`, `TestCheckNonHookEdits_HookCodexSkipped`) runs the real checks against a stubbed pane through the existing `d.capturePane`/`d.agentAlive` seams, with the road chosen by the activation marker (`bus.CodexHooksMarkerPath`, newly exported) so `ResolveProvider` answers `PaneIsEvidence()` rather than a stub — **green 00:55**, ticked*
+- [x] Hook-road evidence guard — `bus/evidence_guard.go`, `CheckEvidenceGuard` run by `hookGuard` after the delegation rules for build, test and deploy: a build/test/deploy statement must be the only statement in its call (a leading `cd … &&` and env assignments exempt; `;`/`&&`/`||`/newline chains, pipes and a trailing `&` denied in the provider's dialect with a `guard-denied` row, the reason naming the statement and telling the agent to run it alone and send acks separately) — shipped 00:38; review 00:46 requested two must-fixes (`./build.sh &` passed as one statement; `cd /tmp; ./build.sh && echo done` was prefix-stripped to `echo done`) and a comment nit — fixed (a background `&` denied with its own reason; statements split before the exemption, so a `cd` joined by `;` is not the prefix; the incident narrative moved to the docs); then a third must-fix at 00:52 — `patternHeadIs` (`hook.go:418`) compared a whole multiword pattern such as `go test` with the first token, silencing the documented `MUXCODE_*_PATTERNS` overrides and adjacent redirections like `./build.sh>/tmp/log` — fixed by `headAtBoundary`; review LGTM 00:54:59 (0 must-fix), **green 00:55**; the second run's 01:18 review found one more should-fix — `./build.sh 0<&0`, an input-fd duplication, split at the `&` and denied as backgrounding — and the `splitShellStatements` test-only wrapper (nit); both fixed 01:27 (`parseShellStatements` reads `<&` as a redirection beside `>&`, with a foreground/background `0<&0` pair in `TestCheckEvidenceGuard_BackgroundDenied`), re-review LGTM 01:29:55
+- [x] Tests: `bus/evidence_guard_test.go` — the live bundled call denied and shown to classify as `CmdBus`, bundled shapes, background forms with their foreground positive controls, lone commands allowed, no-evidence compounds allowed (the definitions' own log-and-report sequence), role scope, splitter table, plus the `cd … ;`, background and pattern-boundary regressions from the three review rounds — **green 00:55**
+- [x] `scripts/test-codex-hooks.sh` floor 37 → 39: a lone `./build.sh 2>&1` from build passes the guard; the live bundled shape answers `permissionDecision=deny` with an "only statement" reason — cases added 2026-09-08 (the user declined re-running the script twice that night); **run 2026-09-09 01:15** by the run agent for the second `spec-to-pr` run's implement spawn (`1788930816-spec-to-pr-f7fb2610`, `spawn-e2669d9b`): `bash scripts/test-codex-hooks.sh` exit 0 as a run-history row, **hermetic 39/39**, both evidence-guard cases green, live section skipped by its opt-in gate; watch read the log clean — ticked
+- [x] Definitions say it: `agents/code-builder.md` step 2 and `agents/test-runner.md` step 1 run the build/test command as its own tool call, never bundled with a `muxcode send` or piped; test-runner's `go vet … && go test …` fallback — a compound the rule refuses — split into separate calls; `infra-deployer.md` checked and unchanged (its one-statement deploy passes) — and since 01:27 test-runner's fallback runs `go vet` as its own call **as a precheck**: a failing vet fails the run, a passing one is not the verdict, so the suite still runs (Notes (d))
+- [x] Docs: `CLAUDE.md` "Hook-road evidence guard" constraint and the `bus/evidence_guard.go` code-reference row; `docs/hooks.md` hook-guard section carries the rule, the roles, the allowed and denied shapes, the reason text and the incident, and its Testing section the new floor
 
 ### Phase 4: Delivery on the hook road
 
@@ -259,9 +264,9 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
 - [x] `SendWakeUp` for hook codex injects the sentence only; `provider_codex.go:339-353` reminder wrapping is not applied — `injectWakeSentence`
 - [x] `checkIdleAgents`/`checkParkedInput`/`checkPaneSweep` treat hook codex by receipts, not by pane; `checkPollHealth`'s receipt-gap backstop still covers it — `checkIdleAgents` hands non-self-poll roles to `provider.SendWakeUp` (the sentence), the other two are `IsClaudeTUI`-gated
 - [x] MUX-009 negative control: deliver a `type: response` to a hook codex agent → its chain does not re-fire and the response text never appears in the pane as a prompt — `TestCodexStopDelivery_ResponseOnlyNeverPrompts`
-- [ ] MUX-154 negative control: no synthesized response is ever sent for a hook codex task; a `--wait` on it returns the agent's own reply — *by design (`PaneIsEvidence()` false → `checkNonHookTasks` never synthesizes); no test*
+- [x] MUX-154 negative control: no synthesized response is ever sent for a hook codex task; a `--wait` on it returns the agent's own reply — *by design (`PaneIsEvidence()` false → `checkNonHookTasks` never synthesizes); no test; **2026-09-09** `TestCheckNonHookTasks_HookCodexNeverScraped` asserts `FindResponseSince` finds nothing for the hook-road role while the scrape-road control gets its synthesized reply — a test now, **green 00:55***
 - [ ] `deliver --force` for hook codex re-injects the sentence and clears markers, never a payload — *by design (`ForceDeliver` → `SendWakeUpWithText` → `injectWakeSentence`); no test*
-- [ ] Tests: stop with/without pending, prompt-submit expansion and pass-through, receipts written, the two negative controls — *open: the MUX-154 control has no test; the rest are `TestCodexStopDelivery_*` ×4, `TestCodexPromptSubmitContext`, `TestCodexWakeUp_HookRoadNeverConsumesInbox`*
+- [x] Tests: stop with/without pending, prompt-submit expansion and pass-through, receipts written, the two negative controls — *open: the MUX-154 control's test landed 2026-09-09 in `daemon/codex_hook_road_test.go`, **green 00:55**; the rest are `TestCodexStopDelivery_*` ×4, `TestCodexPromptSubmitContext`, `TestCodexWakeUp_HookRoadNeverConsumesInbox`*
 
 ### Phase 5: Guards on the hook road
 
@@ -276,7 +281,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
 - [x] `docs/hooks.md`: replace the "only Claude Code's hooks are integrated" paragraph; add the capability table and the codex event mapping — new `## Codex hooks` section (event mapping, payload dialect, delivery moments, trust, `BUS_SESSION` no-op, eligibility); `hook stop` and event-format notes updated
 - [x] `docs/architecture.md` Codex CLI Agent Flow: the hook road, the delivery moments, the trust check — flow rewritten as two roads plus a *Two roads (MUX-159)* paragraph
 - [x] `docs/configuration.md`: `MUXCODE_CODEX_HOOKS`, per-role override, `codex-hooks-*` lifecycle events; `CLAUDE.md` constraint line; `docs/agents.md` roster note — new `### Codex hooks` section with `CODEX_HOME` and `guard-denied`; `CLAUDE.md` capability-split constraint and `test-codex-hooks` in the test list; `agents.md` provider row, sandbox note corrected, hook-road paragraph, differences and receipts tables
-- [x] Flip the default to on for codex ≥ 0.153 once Phase 7's live section is green on this machine; keep the env as the opt-out — live 7/7 at 00:02; `codexHooksDefault = true` landed 2026-09-09 00:10 (`MUXCODE_CODEX_HOOKS=0` or the per-role variable opts out). *Ticked from the tree: edit's 00:08 hand-off said to leave this pending the user's call and the flip landed two minutes later — if that was not the user's decision, revert the constant and this tick together*
+- [x] Flip the default to on for codex ≥ 0.153 once Phase 7's live section is green on this machine; keep the env as the opt-out — live 7/7 at 00:02; `codexHooksDefault = true` landed 2026-09-09 00:10 (`MUXCODE_CODEX_HOOKS=0` or the per-role variable opts out). Flipped by the user (edit's 00:08 hand-off had left it pending the user's call; the decision was relayed at 00:13); an ineligible codex still falls back to the scrape road
 - [x] Note in MUX-012 that hook codex no longer needs the scrape machinery it deletes
 
 ### Phase 7: Integration test
@@ -287,7 +292,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
 - [x] Live: deliver a response → no prompt text, no chain re-fire (MUX-009) — live check 7: the payload never appeared in the pane as a prompt; the no-re-fire half is the hermetic MUX-009 control (a response alone answers nothing and stays in the inbox)
 - [ ] Live: a denied command (`git commit` from build) does not run and `guard-denied` is logged — *the live section has no denial; hermetically `git commit` from edit is denied with `permissionDecision=deny` and `guard-denied` is logged, but that Codex then refuses to run the command is not exercised*
 - [ ] Live: tamper `.codex/hooks.json` → launch refused, `codex-hooks-tampered` logged; restore → launches — *refusal and lifecycle row proven hermetically at the launch code path (`agent config` exits non-zero before any exec); "restore → launches" is not asserted and no live tamper is run*
-- [ ] Negative control: `MUXCODE_CODEX_HOOKS=0` → the old road, `task-detected` present, chain text in the prompt — *old road proven hermetically (marker cleared, `hooks.json` removed, `hook bash` writes nothing for the opted-out role) and the prompt text by `TestCodexHooks_ScrapeRoadUnchanged`; `task-detected` present needs a daemon scraping a scrape-road agent, which no run has exercised*
+- [x] Negative control: `MUXCODE_CODEX_HOOKS=0` → the old road, `task-detected` present, chain text in the prompt — *old road proven hermetically (marker cleared, `hooks.json` removed, `hook bash` writes nothing for the opted-out role) and the prompt text by `TestCodexHooks_ScrapeRoadUnchanged`; `task-detected` present needs a daemon scraping a scrape-road agent — no run has exercised it, but since 2026-09-09 the daemon-level test's scrape-road control asserts exactly that row; **green 00:55***
 - [x] Run the script and record pass/fail counts in this spec — **hermetic 37/37** (2026-09-09 00:07, exit 0) and **live 7/7** (00:02, `env MUXCODE_CODEX_HOOKS_LIVE=1`, exit 0), both via the run agent. The first run (2026-09-08 23:44) was 33/35, failing `context lacks the payload` (prompt-submit) and `orphan hook consumed the inbox` (outside-a-session); root cause was the **in-flight task guard** (`HasInFlightTaskForRole`) suppressing a later section's edit→build send while an earlier section's same-action request was still in flight — not the hooks, and not the dedup window as first recorded here — fixed by giving every section its own action name (the dedup window is disabled as well); the floor rose to 37 with the MCP-matcher checks
 
 ## Notes
@@ -305,7 +310,62 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
   skip is by `PaneIsEvidence()` with no daemon-level unit test — the split is pinned at the provider
   level, the graph routing at the row level; (c) the MUX-154 negative control and `deliver --force` on
   hook codex are covered by design, not by a test; (d) Phase 2's negative control pins `SharedPrompt`
-  by marker strings, not a byte golden. Pass counts: pending the test agent's run.
+  by marker strings, not a byte golden. Pass counts are recorded under Phase 7 item 8.
+- **2026-09-09 00:18–00:56** — the first `spec-to-pr` run on this spec (`1788927531-spec-to-pr-7fbfba25`,
+  started by the user for Phase 3): `implement` (spawn `spawn-e0035225`) delivered items 6–7 in 542 s;
+  `build` parked on the unverified hold recorded under Phase 3 item 4; the run was canceled at 00:39
+  because only a person can release the hold and the guard invalidates its build evidence. Side
+  findings: (a) `./build.sh` → `muxcode upgrade-daemons` fails inside the codex build sandbox —
+  `ps: fork/exec /bin/ps: operation not permitted` (`bus/upgrade.go:69` shells out to `ps -axo`) — so a
+  codex build agent never cycles the daemon while `build.sh` still exits 0; filed as
+  [MUX-161](../backlog/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md). (b) Three
+  `graph-authority-refused spawn-e0035225` rows at 00:27:31: the implement spawn ran a test-classified
+  command itself despite reporting "build/test left to the graph", and its hook chain was refused from
+  firing into graph-owned roles — the authority guard working, and one more instance of
+  [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md)'s class, an instruction in prose
+  that nothing enforced. (c) `verify-spec` fired at 00:46:24, two seconds after a review reply that
+  answered `EXIT=1` (changes requested) — the plan notification did not read the verdict. (d) A lone
+  `go vet ./...` classifies as a **test** success (`go*vet` sits in `DefaultTestPatterns`,
+  `bus/hook.go:254`), so each cycle's chain fired review before the suite had run — harmless to
+  outcomes because the newest row wins, but a decision is owed: drop `go*vet` from the test
+  patterns, or keep vet as a separate non-chaining call (a `command_match` condition on the
+  test→review chain could exclude it); bundling it with the suite is exactly what the evidence
+  rule now refuses. **Decided 2026-09-09 01:27** (the second run's fix spawn, `spawn-567c25f0`): a
+  third class — `CmdTestPrecheck`, `DefaultTestPrecheckPatterns = {"go*vet"}`,
+  `MUXCODE_TEST_PRECHECK_PATTERNS` — whose failure is test evidence and whose success is not.
+  `go*vet` left `DefaultTestPatterns`; `bus.ChainEvent` is now the single decision on what a call
+  feeds (a passing precheck answers `""`: workflow moves to `testing`, no history row, no chain;
+  `HookBashResult.Chain` replaces `Chained` and `cmd/hook.go` fires exactly that); test patterns are
+  consulted before precheck ones, so a user-listed vet is a full run. Pinned by
+  `TestProcessBashHook_TestPrecheck`, `TestChainEvent` and `TestClassifyCommand_TestPrecheckOverrides`
+  (`bus/hook_test.go`), and seen live at 01:28:33 — the test agent's lone `go vet` transitioned the
+  workflow and wrote nothing, the suite's row at 01:29:03 was the only test evidence and closed the
+  node. The `0<&0` should-fix and the wrapper nit landed in the same pass (`parseShellStatements`
+  reads `<&` as a redirection beside `>&`, with a foreground/background `0<&0` pair in the tests);
+  re-review **LGTM 01:29:55, EXIT=0** (0 must-fix, 0 should-fix, 0 nits). Documented in
+  `docs/hooks.md` (hook bash, chain, evidence rule) and `docs/configuration.md` (Hook Configuration).
+- **2026-09-09 01:13–01:18** — the second `spec-to-pr` run on this spec (`1788930816-spec-to-pr-f7fb2610`,
+  started by the user for Phase 3 again, one minute after the 01:12 session relaunch): `implement`
+  (`spawn-e2669d9b`, 127 s) ported nothing — it ran item 10 through the run agent (hermetic 39/39) and
+  left the tree as it stood; `build` green (`./build.sh` exit 0 as a hook row — the codex build agent's
+  first call was denied by the evidence guard for bundling, its second was the lone call the rule asks
+  for; `upgrade-daemons` failed on `ps` once more, MUX-161's fourth sighting); `test` green (`go vet`
+  and `go test -p 1 -count=1 -v ./...` exit 0 as hook rows; the test agent was likewise denied once for
+  a 17-statement bundle, then compliant); `review` **EXIT=1** at 01:18:11 — must-fix
+  `agents/test-runner.md:13`: the now-separate `go vet` publishes a CmdTest success and fires
+  test→review before the suite (`bus/hook.go:254`, `cmd/hook.go:105`), and `triggerChain` then
+  suppresses the suite's own row while the state is Reviewing/Reviewed (`cmd/hook.go:146`) — finding
+  (d) above, confirmed by the reviewer, now owned by the run's fix spawn (`spawn-567c25f0`); should-fix
+  `bus/evidence_guard.go:153`: `./build.sh 0<&0`, an input-descriptor duplication, splits at the `&`
+  and is denied as backgrounding — recognize `<&` as a redirection beside `>&`, with a positive control
+  and a trailing-background negative control; nit `:171`: `splitShellStatements` is a test-only
+  production wrapper. And finding (c) again: `verify-spec` reached plan in the same second as
+  `graph-node-done review -> failure` — the daemon's `plan-verify` is not gated on the verdict on the
+  graph road either, and the graph's own `update-spec` node stays pending until review passes, so
+  every failed review costs one redundant verification. The fix spawn (`spawn-567c25f0`, 582 s)
+  resolved all three findings — see (d) above — and the re-run was green: build 01:28:14 and
+  `go test -p 1 -count=1 -v ./...` 01:29:03 exit 0 as hook rows, review LGTM 01:29:55 (EXIT=0); the
+  run reached `update-spec` at 01:29:56 and the Phase 3 commit gate follows.
 - [MUX-154](../backlog/MUX-154-codex-status-line-closes-tracked-tasks.md) — the immediate patch to
   the scrape (chrome signatures, consumer refusal). This spec removes the scrape's *reason to exist*
   for codex; both are needed, in that order.
@@ -329,19 +389,26 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
 | MUX-144-wait-human-gate-openable-by-any-agent | 11h 24m | 2026-09-09 00:12 |
+| MUX-159-codex-hooks-provider | 1h 12m | 2026-09-09 01:30 |
 
-The branch predates this spec (its key is MUX-144, and the same branch row appears in that spec's
-table); the total is the branch's absolute active time, not this spec's share of it.
+The MUX-144 branch predates this spec (its key is MUX-144, and the same branch row appears in that
+spec's table); its total is that branch's absolute active time, not this spec's share of it. The work
+moved to its own branch on 2026-09-09; the MUX-159 row is that branch's absolute time.
 
 ## Status
 
-**In Progress** — 48/62: Phases 1, 2 and 6 complete (8/8, 7/7, 5/5), Phase 3 5/7, Phase 4 5/8,
-Phase 5 2/5, Phase 7 5/8, acceptance criteria 11/14. `scripts/test-codex-hooks.sh` is proven —
-hermetic 37/37 (2026-09-09 00:07) and live 7/7 (00:02, `MUXCODE_CODEX_HOOKS_LIVE=1`); Go tests pass
+**In Progress** — 59/67: Phases 1, 2, 3 and 6 complete (8/8, 7/7, 12/12, 5/5), Phase 4 7/8,
+Phase 5 2/5, Phase 7 6/8, acceptance criteria 12/14. As of `3d3fd9b`: `scripts/test-codex-hooks.sh` is proven —
+hermetic 37/37 (2026-09-09 00:07), live 7/7 (00:02, `MUXCODE_CODEX_HOOKS_LIVE=1`) and, at the raised floor, **hermetic 39/39 (01:15, run agent)**; Go tests pass
 and review is clean (0 must-fix) per edit; the hook road is **on by default** since 00:10
-(`codexHooksDefault = true`, env opts out). Open: three live clauses the script does not assert
+(`codexHooksDefault = true`, env opts out). **Uncommitted since (2026-09-09 00:27–00:47)**: the graph's
+implement spawn delivered the daemon-level tests for Phase 3 items 6–7 (which also test Phase 4 item 6
+and the scrape-road half of Phase 7 item 7 and AC 5), and edit shipped the hook-road evidence guard
+after the run's build hold (Phase 3 items 8–12) — three review rounds (00:46, 00:52, 00:53) found
+three must-fixes on the guard, all fixed; review LGTM 00:54:59 and **green 00:55** on the final tree
+(`go vet` and `go test ./...` exit 0 as hook rows, 2341 PASS / 0 FAIL / 2 SKIP), on which the
+pending-green items were ticked. Open: three live clauses the script does not assert
 (Phase 7 items 5/6/7 and ACs 5/8: a live denial, restore-after-tamper, `task-detected` presence or
-absence under a daemon), MUX-157's never-author rules (Phase 5 items 1/3/5, AC 9), and the
-design-only controls with their missing tests (Phase 3 items 6–7, Phase 4 items 6–8). Moved to `drafts/` and set as the active spec 23:00 on the user's instruction;
+absence under a daemon), MUX-157's never-author rules (Phase 5 items 1/3/5, AC 9), and `deliver --force` on hook codex, covered by design only (Phase 4 item 7). The second run's 01:18 review must-fix (a lone `go vet` fired review before the suite) was resolved at 01:27 by the test-precheck class and its re-review was LGTM at 01:29:55, EXIT=0 (Notes (d)); the run now sits at the Phase 3 commit gate. Moved to `drafts/` and set as the active spec 23:00 on the user's instruction;
 edit implemented all seven phases in one pass, taking the recommended option on Decisions 1–4. Filed
 2026-09-08 on the user's request, from the same-day finding that codex ships hooks muxcode ignores.

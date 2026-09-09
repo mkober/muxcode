@@ -58,7 +58,9 @@ func hookSession() string {
 }
 
 // hookBash implements the PostToolUse Bash hook (replaces muxcode-bash-hook.sh).
-// Detects build/test/deploy/git commands, writes history, triggers chains.
+// Detects build/test/deploy/git commands, writes history, and fires the one
+// chain bus.ChainEvent names for the call — none for a bus command, a git or
+// deploy-diff call, or a passing test precheck.
 // Only fires for providers on the hook road (Claude Code, hook-road Codex).
 // Scrape-road providers skip this entirely — they rely on system prompt
 // instructions for bus messaging instead of hook-driven chains; the provider
@@ -86,43 +88,11 @@ func hookBash() {
 	}
 
 	result := bus.ProcessBashHook(session, role, ev)
-
-	// Trigger chains for build, test, and deploy commands
+	if result.Chain == "" {
+		return
+	}
 	exitCode := ev.GetExitCode()
-	outcome := bus.HookOutcome(exitCode)
-	command := ev.ToolInput.Command
-
-	// Build chain context from tool event for condition evaluation
-	var ctx *bus.ChainContext
-	switch result.CommandType {
-	case bus.CmdBuild, bus.CmdTest, bus.CmdDeployApply:
-		ctx = bus.BuildChainContext(ev)
-	}
-
-	switch result.CommandType {
-	case bus.CmdBuild:
-		triggerChain(session, role, "build", outcome, exitCode, command, ctx)
-	case bus.CmdTest:
-		triggerChain(session, role, "test", outcome, exitCode, command, ctx)
-	case bus.CmdDeployApply:
-		triggerChain(session, role, "deploy", outcome, exitCode, command, ctx)
-	case bus.CmdUnknown:
-		// Run and watch agents execute arbitrary commands — trigger their chains
-		switch role {
-		case "run", "runner":
-			if ctx == nil {
-				ctx = bus.BuildChainContext(ev)
-			}
-			triggerChain(session, role, "run", outcome, exitCode, command, ctx)
-		case "watch":
-			if ctx == nil {
-				ctx = bus.BuildChainContext(ev)
-			}
-			triggerChain(session, role, "watch", outcome, exitCode, command, ctx)
-		}
-	}
-	// CmdDeploy (diff/plan without apply) — no chain trigger
-	// CmdGit — no chain trigger
+	triggerChain(session, role, result.Chain, bus.HookOutcome(exitCode), exitCode, ev.ToolInput.Command, bus.BuildChainContext(ev))
 }
 
 // triggerChain fires the event chain and analyst notifications.
@@ -261,6 +231,10 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string, c
 // team sees, and roles like docs, api and pr-read have no guard rules yet
 // still inherit `Bash(muxcode *)` from the "bus" tool group — gating on
 // HasGuardRules alone would leave them able to write.
+//
+// The hook-road evidence rule (bus.CheckEvidenceGuard) runs after the
+// delegation rules for build, test and deploy: a build bundled with bus sends
+// in one call writes no authoritative row, so it is refused before it runs.
 func hookGuard() {
 	session := hookSession()
 	if session == "" {
@@ -268,7 +242,7 @@ func hookGuard() {
 	}
 
 	role := bus.BusRole()
-	if !bus.HasGuardRules(role) && !bus.HasAtlassianAuthorityLimit(role) {
+	if !bus.HasGuardRules(role) && !bus.HasAtlassianAuthorityLimit(role) && !bus.HasEvidenceGuard(role) {
 		return
 	}
 
@@ -309,6 +283,10 @@ func hookGuard() {
 			return
 		}
 		if decision := bus.CheckGuard(role, ev.ToolInput.Command); decision != nil && decision.Blocked {
+			deny(decision.Reason)
+			return
+		}
+		if decision := bus.CheckEvidenceGuard(role, ev.ToolInput.Command); decision != nil && decision.Blocked {
 			deny(decision.Reason)
 		}
 		return

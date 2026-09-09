@@ -203,7 +203,7 @@ func TestPrepareCodexHooks_WritesFileAndMarker(t *testing.T) {
 	if string(data) != string(CodexHooksTemplate()) {
 		t.Error("hooks.json is not the template")
 	}
-	marker, err := os.ReadFile(codexHooksMarkerPath(session, "build"))
+	marker, err := os.ReadFile(CodexHooksMarkerPath(session, "build"))
 	if err != nil {
 		t.Fatalf("marker not written: %v", err)
 	}

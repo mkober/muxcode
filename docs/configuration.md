@@ -61,7 +61,8 @@ The pane is created **last** on each window so panes 0 and 1 keep their indices 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MUXCODE_BUILD_PATTERNS` | `./build.sh\|pnpm*build\|go*build\|make\|cargo*build\|cdk*synth\|tsc` | Pipe-separated patterns for build command detection |
-| `MUXCODE_TEST_PATTERNS` | `./test.sh\|jest\|pnpm*test\|pytest\|go*test\|go*vet\|cargo*test\|vitest` | Pipe-separated patterns for test command detection |
+| `MUXCODE_TEST_PATTERNS` | `./test.sh\|jest\|pnpm*test\|pytest\|go*test\|cargo*test\|vitest` | Pipe-separated patterns for test command detection — the suite, whose exit code is the test stage's verdict. Consulted before the precheck patterns, so a command listed here is a full test run even if it also matches a precheck |
+| `MUXCODE_TEST_PRECHECK_PATTERNS` | `go*vet` | Pipe-separated patterns for **test prechecks** — test-stage gates run before the suite. A failing precheck is the stage failing: a test-history row and the test chain's failure path, like any failed suite. A passing one proves nothing about a suite that has not run, so it moves the workflow to `testing` but writes no row and fires no chain (`bus.ChainEvent` answers nothing) — test→review waits for the suite's own row. Added 2026-09-09 after a lone passing `go vet` fired review before the suite ran; see [Hooks → hook bash](hooks.md#hook-bash-bash-hook) |
 | `MUXCODE_DEPLOY_PATTERNS` | `cdk*diff\|cdk*deploy\|cdk*destroy\|...` | Pipe-separated patterns for deploy command detection (all deploy commands, logged to history) |
 | `MUXCODE_DEPLOY_APPLY_PATTERNS` | `cdk*deploy\|cdk*destroy\|terraform*apply\|...` | Pipe-separated patterns for deploy-apply commands (mutation-only, triggers verify chain) |
 | `MUXCODE_ROUTE_RULES` | `test\|spec=test cdk\|stack\|construct\|terraform\|pulumi=deploy .ts\|.js\|.py\|.go\|.rs=build` | Space-separated `pattern=target` rules for file-change routing |

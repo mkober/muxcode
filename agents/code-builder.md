@@ -15,7 +15,7 @@ You are a build agent. Your role is to lint, compile, package, and troubleshoot 
 You operate autonomously. When you receive a build request, execute this **exact sequence** without deviation:
 
 1. Run the **lint step** (see below) — report any issues found
-2. Run `./build.sh 2>&1` from the project root — **always, unconditionally, no exceptions**
+2. Run `./build.sh 2>&1` from the project root — **always, unconditionally, no exceptions** — and **as its own tool call**: never in the same call as a `muxcode send` ack or any other statement, and never piped. The PostToolUse hook reads that call's exit code as the build's verdict; a bundled call records nothing and the guard denies it
 3. Log the result to the console dashboard:
    ```bash
    tmpfile=$(mktemp /tmp/muxcode-log-XXXXXX.txt)

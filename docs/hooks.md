@@ -99,9 +99,9 @@ Codex agents on the hook road ([MUX-159](requirements/drafts/MUX-159-codex-hooks
 **Phase:** PreToolUse
 **Trigger:** Bash
 **Mode:** sync (blocks tool execution)
-**Window:** edit only
+**Window:** edit (delegation rules); build, test and deploy (the hook-road evidence rule below); any role with an Atlassian authority limit
 
-Blocks prohibited commands in the edit window (build, test, deploy, git commands) and returns delegation instructions. This is the only **sync** hook — it runs before the tool executes and can reject the command.
+Blocks prohibited commands in the edit window (build, test, deploy, git commands) and returns delegation instructions. It runs before the tool executes and can reject the command (`hook stop` and `hook comment-block` are the other sync hooks).
 
 **What it blocks:**
 - Build commands: `./build.sh`, `make`, `go build`, `pnpm build`, `cargo build`
@@ -111,6 +111,20 @@ Blocks prohibited commands in the edit window (build, test, deploy, git commands
 - Log tailing: `tail -f`, `aws logs`, `kubectl logs`, `docker logs`
 
 When a command is blocked, the hook returns a rejection with instructions to delegate via the message bus instead.
+
+**Hook-road evidence rule (build, test, deploy).** `CheckEvidenceGuard` (`bus/evidence_guard.go`) runs after the delegation rules and denies a Bash call that bundles a build, test or deploy statement with anything else, or backgrounds it. The reason is mechanical: `hook bash` classifies a call by its **first** statement (`ClassifyCommand`, the same patterns as `MUXCODE_BUILD_PATTERNS` and friends) and records the exit code of its **last**, so a call describes the build only when the build is the whole call. On 2026-09-09 00:28 a codex build agent answered a `spec-to-pr` build node with one call — three `muxcode send … --type response` acks, `./build.sh`, then a hand-typed build-result — which classified as a bus command: no exit-code row, no build→test chain, and the graph parked on an unverified hold for a build that had passed. Prompt text is advice; this is the enforcement.
+
+| Shape | Verdict |
+|-------|---------|
+| `./build.sh`, `./build.sh 2>&1`, `./build.sh >/tmp/build.log 2>&1`, `./build.sh 0<&0`, `bash ./build.sh`, `make 2>&1` | allowed — one statement; redirections (`2>&1`, `0<&0`, `&>`, `>\|`) are not statements — an input-fd duplication is not a trailing `&` (the 2026-09-09 01:18 review's should-fix) |
+| `cd tools/muxcode && go build ./...`, `GOFLAGS=-mod=mod go build ./...` | allowed — a leading `cd … &&` or env assignment is the prefix `stripCommandPrefix` already ignores for classification |
+| `muxcode send … ; ./build.sh`, `./build.sh && go vet ./...`, `./test.sh; echo EXIT=$?`, `cdk deploy --all \|\| echo failed` | denied — chained (`;`, `&&`, `\|\|`, newline) |
+| `./build.sh 2>&1 \| tail -20`, `go test ./... \| tee log` | denied — piped: the call exits with `tail`'s status, so a failing build would record success |
+| `./build.sh &` | denied — backgrounded: the call returns at launch, so the hook would record the launch, not the result |
+| `cd /tmp; ./build.sh` | denied — a `cd` joined by `;` is not the exempt prefix |
+| `muxcode send … ; muxcode log build … --exit-code 0`, `gofmt -l . ; ls` | allowed — a compound with no build/test/deploy statement is not the rule's business (the definitions' own log-and-report sequence is one) |
+
+The denial (Claude `decision: block`, Codex `permissionDecision: deny`) names the statement and how many others it is bundled with, says to run it alone — a leading `cd … &&` or env assignment is fine, a pipe or `;`/`&&` chain is not — and to send acks or reports in a separate call; a `guard-denied` lifecycle row names role, tool and reason. Scope is `HasEvidenceGuard`: build, test and deploy only — edit and plan are denied those commands outright by their delegation rules, and run's verdict is the whole call's exit code by design. `agents/code-builder.md` and `agents/test-runner.md` state the rule in their sequences (test-runner's old `go vet … && go test …` fallback was itself a compound; vet is now its own call, a [precheck](#hook-bash-bash-hook)). Both providers, one rule; the agent's own reply still closes the node. Covered by `bus/evidence_guard_test.go` (the splitter is `parseShellStatements`; `0<&0` has a foreground/background pair) and two hermetic cases in `scripts/test-codex-hooks.sh` (floor 37 → 39, run 39/39 on 2026-09-09 01:15).
 
 ### muxcode-preview-hook.sh
 
@@ -187,6 +201,12 @@ Deploy commands are split into two categories:
 
 Preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) match deploy patterns for history logging but do **not** trigger verification.
 
+Test commands are split the same way:
+- **Test patterns** (`MUXCODE_TEST_PATTERNS`): the suite — its exit code is the test stage's verdict, its row the evidence
+- **Test precheck patterns** (`MUXCODE_TEST_PRECHECK_PATTERNS`, default `go*vet`): gates run before the suite — a **failing** precheck is the stage failing (test-history row, failure path, exactly like a failed suite); a **passing** one proves nothing about a suite that has not run, so it transitions the workflow to `testing` but writes no row and fires no chain
+
+`bus.ChainEvent` (`bus/hook.go`) is the one decision on what a classified call feeds — `build`, `test`, `deploy`, or `run`/`watch` for an unclassified call in those roles — and answers nothing for a bus command, a git or deploy-preview call, or a passing precheck; `hook bash` fires exactly the chain it names (`HookBashResult.Chain`). The class exists because on 2026-09-09 `go*vet` sat in the test patterns and, once the evidence rule above had test-runner run vet as its own call, every passing vet fired test→review before the suite had started — and the suite's real result was then dropped by the Reviewing guard in `triggerChain`, so a review ran on a suite nobody had seen pass. Test patterns are consulted before precheck ones, so a command listed in `MUXCODE_TEST_PATTERNS` is a full test run even if it also matches a precheck; the evidence rule treats a precheck as a test statement, so bundling it is denied the same way. Pinned by `TestProcessBashHook_TestPrecheck`, `TestChainEvent` and `TestClassifyCommand_TestPrecheckOverrides` (`bus/hook_test.go`), and seen live the same night at 01:28: the test agent's lone `go vet` moved the workflow and wrote nothing, and the suite's row at 01:29 was the only test evidence and closed the graph node.
+
 Also sends events to the analyst for analysis (conditional on outcome — build/test only notify analyst on failure or unknown exit codes, deploy notifies on all outcomes).
 
 After the primary chain action, the hook fires event subscriptions — matching `subscriptions.jsonl` entries by event+outcome pattern and sending fan-out messages via `SendNoCC()` (no auto-CC to edit). Use `muxcode subscribe add` to configure.
@@ -194,6 +214,7 @@ After the primary chain action, the hook fires event subscriptions — matching 
 **Customization:**
 - `MUXCODE_BUILD_PATTERNS` — pipe-separated patterns for build command detection
 - `MUXCODE_TEST_PATTERNS` — pipe-separated patterns for test command detection
+- `MUXCODE_TEST_PRECHECK_PATTERNS` — pipe-separated patterns for test prechecks (default `go*vet`): failure is test evidence, success feeds nothing
 - `MUXCODE_DEPLOY_PATTERNS` — pipe-separated patterns for deploy command detection (all deploy commands)
 - `MUXCODE_DEPLOY_APPLY_PATTERNS` — pipe-separated patterns for deploy-apply commands that trigger the verify chain
 
@@ -262,7 +283,7 @@ The chain is **hook-driven**, ensuring deterministic behavior:
 1. Build agent runs `./build.sh` (or configured build command)
 2. `hook bash` detects build command completed
 3. If exit code 0: hook sends `request:test` to test agent
-4. Test agent runs tests
+4. Test agent runs tests (a precheck such as `go vet`, run as its own call first, feeds the chain only when it fails — see [hook bash](#hook-bash-bash-hook))
 5. Hook detects test command completed
 6. If exit code 0: hook sends `request:review` to review agent
 7. Review agent reviews `git diff`, replies with findings
@@ -375,6 +396,8 @@ bash scripts/test-diff-split.sh
 4. **Stale cleanup** — simulates rejected edit, ages the temp file, verifies stale diff is cleaned on next preview
 5. **Skip patterns** — verifies `MUXCODE_PREVIEW_SKIP` skips matching files
 6. **Write tool** — verifies Write tool opens file without diff split (no `old_string`)
+
+`scripts/test-codex-hooks.sh` covers the codex hook road hermetically — the live-captured fixtures fed to every `muxcode hook` subcommand in a scratch bus; floor **39** (37 plus the two evidence-rule cases: a lone `./build.sh` from build passes, the live bundled shape is denied) — and, with `MUXCODE_CODEX_HOOKS_LIVE=1` and a codex ≥ 0.153 on `PATH`, drives a real codex agent through seven live checks; without the gate the live section prints its skip reason.
 
 ## Creating Custom Hooks
 

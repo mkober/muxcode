@@ -255,7 +255,10 @@ func codexHooksMarkerDir(session string) string {
 	return filepath.Join(BusDir(session), "codex-hooks")
 }
 
-func codexHooksMarkerPath(session, role string) string {
+// CodexHooksMarkerPath is the role's hook-road activation marker. It holds the
+// sha256 of the hooks.json muxcode wrote, and its presence alone is what
+// CodexHooksActive — hence ResolveProvider's choice of road — checks.
+func CodexHooksMarkerPath(session, role string) string {
 	return filepath.Join(codexHooksMarkerDir(session), NormalizeBusRole(role)+".sha256")
 }
 
@@ -272,7 +275,7 @@ func shortHash(h string) string {
 }
 
 func readCodexHooksMarker(session, role string) (string, bool) {
-	data, err := os.ReadFile(codexHooksMarkerPath(session, role))
+	data, err := os.ReadFile(CodexHooksMarkerPath(session, role))
 	if err != nil {
 		return "", false
 	}
@@ -313,7 +316,7 @@ func knownCodexHooksHashes(session string) map[string]bool {
 // `muxcode hook` subprocess and the daemon consult, so it must stay a cheap
 // stat.
 func CodexHooksActive(session, role string) bool {
-	_, err := os.Stat(codexHooksMarkerPath(session, role))
+	_, err := os.Stat(CodexHooksMarkerPath(session, role))
 	return err == nil
 }
 
@@ -379,7 +382,7 @@ func PrepareCodexHooks(session, role string) (bool, error) {
 	if present && onDisk != want && !hasMarker && !knownCodexHooksHashes(session)[onDisk] {
 		LogLifecycle(session, "warn", "codex-hooks", "codex-hooks-unavailable",
 			role+": foreign "+CodexHooksPath()+" present — not overwriting; staying on the scrape road")
-		_ = os.Remove(codexHooksMarkerPath(session, role))
+		_ = os.Remove(CodexHooksMarkerPath(session, role))
 		return false, nil
 	}
 
@@ -394,7 +397,7 @@ func PrepareCodexHooks(session, role string) (bool, error) {
 	if err := os.MkdirAll(codexHooksMarkerDir(session), 0o755); err != nil {
 		return false, err
 	}
-	if err := atomicWriteFile(codexHooksMarkerPath(session, role), []byte(want+"\n")); err != nil {
+	if err := atomicWriteFile(CodexHooksMarkerPath(session, role), []byte(want+"\n")); err != nil {
 		return false, err
 	}
 	LogLifecycle(session, "info", "codex-hooks", "codex-hooks-enabled",
@@ -406,7 +409,7 @@ func PrepareCodexHooks(session, role string) (bool, error) {
 // holds one, removes a hooks.json that is muxcode's own current template. A
 // file that is anything else is left in place — it is not ours to delete.
 func disableCodexHooks(session, role string) {
-	_ = os.Remove(codexHooksMarkerPath(session, role))
+	_ = os.Remove(CodexHooksMarkerPath(session, role))
 	if len(knownCodexHooksHashes(session)) > 0 {
 		return
 	}

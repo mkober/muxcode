@@ -456,6 +456,8 @@ Agents have scoped permissions via tool profiles (`bus/profile.go`). The `--allo
 - **pr-read**: `gh pr view/checks/diff/review/list/status`, `gh api`, `git diff/log/status/show/blame/rev-parse/branch`, `jq` (read-only: scoped gh + git, no Write/Edit)
 - **api**: `curl`, `wget`, `http`, `jq`, `python`, `node`, `openssl`, `base64`, `dig`, `nslookup`, `Write`, `Edit`
 
+Build, test and deploy run their evidence command **as its own tool call**: `hook guard` denies a build/test/deploy statement that is chained with anything else (a `muxcode send` ack, `;`/`&&`), piped, or backgrounded, because the PostToolUse hook classifies a call by its first statement and records the last one's exit code — bundled, it records nothing and the chain never fires (the hook-road evidence rule, [Hooks](hooks.md#hook-guard-edit-guard)). A leading `cd … &&` or env assignment is fine. `code-builder.md` and `test-runner.md` state it in their sequences.
+
 All agents have access to `muxcode` commands. The edit agent's lack of `Write`/`Edit` tools is enforced at the tool profile level — Claude Code will not auto-approve file modifications, ensuring all code changes go through the user's accept/reject flow.
 
 ## Memory

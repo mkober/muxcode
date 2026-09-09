@@ -1130,13 +1130,13 @@ func (d *Daemon) checkStuckProviders() {
 			continue
 		}
 		// A dead agent is handled by checkAgentHealth's restart path.
-		if !bus.IsAgentAlive(d.session, role) {
+		if !d.agentAlive(d.session, role) {
 			delete(d.stuckSeen, role)
 			continue
 		}
 
 		target := bus.PaneTarget(d.session, role)
-		content, err := bus.TmuxCapturePaneLines(target, 60)
+		content, err := d.capturePane(target, 60)
 		if err != nil {
 			continue
 		}
@@ -2819,7 +2819,7 @@ func (d *Daemon) checkNonHookTasks() {
 
 		// Capture the agent's pane (30 lines for context)
 		target := bus.PaneTarget(d.session, task.To)
-		paneContent, err := bus.TmuxCapturePaneLines(target, 30)
+		paneContent, err := d.capturePane(target, 30)
 		if err != nil {
 			continue
 		}
