@@ -49,7 +49,7 @@ same dispatch to an agent that simply complied would have pushed.
 ### Attribution is not possible, and that is the finding
 
 Investigation **could not determine who created the run or who approved it.** The `auto` agent is
-alive and matches the shape [`MUX-141`](../backlog/MUX-141-auto-agent-restart-relaunches-graph-runs.md)
+alive and matches the shape [`MUX-141`](./MUX-141-auto-agent-restart-relaunches-graph-runs.md)
 describes, but `auto` has no tmux window to scrape and nothing is logged, so **naming it would be a
 guess and this spec does not make one.**
 
@@ -134,9 +134,9 @@ No step requires a human. No step records that one was absent.
 
 | Spec | Relationship |
 |------|--------------|
-| [`MUX-141`](../backlog/MUX-141-auto-agent-restart-relaunches-graph-runs.md) | **Compounding, neither subsumes the other.** MUX-141 supplies the *source* of unrequested runs (a restart relaunches autonomous work); this spec supplies the reason one can reach a push. MUX-141 alone yields spurious runs that **stop at a gate**; this alone makes gates openable. Together they are an unattended path from an external process exit to a PR. Cross-linked both ways. |
+| [`MUX-141`](./MUX-141-auto-agent-restart-relaunches-graph-runs.md) | **Compounding, neither subsumes the other.** MUX-141 supplies the *source* of unrequested runs (a restart relaunches autonomous work); this spec supplies the reason one can reach a push. MUX-141 alone yields spurious runs that **stop at a gate**; this alone makes gates openable. Together they are an unattended path from an external process exit to a PR. Cross-linked both ways. |
 | [`MUX-132`](../completed/MUX-132-graph-retry-launders-gate-approval.md) | **Adjacent hole, and 132's fix is sound.** MUX-132 closed a *stale-marker reuse* path so a retried run demands a **fresh** approval. This spec is about a fresh approval **nobody human made**. 132 guards the step "is this approval current?"; nothing guards "is this approval human?" — the two are complementary, and 132 needs no revision. |
-| [`MUX-142`](../backlog/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Shares the lesson that a control verified on one road is not verified on all of them. |
+| [`MUX-142`](./MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Shares the lesson that a control verified on one road is not verified on all of them. |
 
 ### Why it matters
 
@@ -330,7 +330,7 @@ made.
       (same actor, detail and second) or it is refused and purged. **Why it is not ticked:** (1) the
       commit has not been built, tested or reviewed — `approvalHasAudit` was authored by the **test
       agent**, in breach of its role, after a halt and a reload, and the suite never ran on it
-      ([MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md)); (2) `approvalHasAudit`
+      ([MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md)); (2) `approvalHasAudit`
       moves the forgery target from the marker to the lifecycle JSONL
       (`~/.config/muxcode/logs/<session>.log`), which every agent can append to, and which
       **every append rotates** to the caller's `MUXCODE_LIFECYCLE_LOG_MAX` (default 5000,
@@ -402,14 +402,18 @@ made.
 
 ## Status
 
-**In Progress — 17/33, Phases 1 and 3 complete; Phase 2 at 4/5 with the review's P1 narrowed but
-open.** Moved to `drafts/` and set as the **active spec** 2026-09-04; the pointer was lost in the
-2026-09-08 13:44 relaunch and re-set by the user.
+**Backlog — parked 2026-09-08 22:50 at 17/33: Phases 1 and 3 complete, Phase 2 at 4/5, Phases 4–5
+not started.** Moved back from `drafts/` on the user's instruction that every unfinished spec leaves
+In progress; the active-spec pointer was cleared with it. Issue #74 tracks it; PR #73 carries Phase 2
+work and does not close it. The record below is as it stood when parked.
+
+**Previously: In Progress.** Moved to `drafts/` and set as the **active spec** 2026-09-04; the pointer
+was lost in the 2026-09-08 13:44 relaunch and re-set by the user.
 
 **Updated 2026-09-08 19:30.** `c4997ed` (19:11) landed the daemon-side half of P1 — `SealGateAuthority`
 at daemon startup, `gateApprovalHolds` re-deciding each release, `approvalHasAudit` requiring a matching
 lifecycle row — **unverified**: not built, tested or reviewed, and authored by the test agent in breach
-of its role ([MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md), filed from it). The
+of its role ([MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md), filed from it). The
 step stays open on four caveats recorded inline (unverified; forgery moved to the agent-writable,
 append-rotated lifecycle log; the seal's inputs are still the agent-writable files and a routine
 `build.sh` restarts the daemon; the forged-hold quartet lost its positive control). Phase 2 still 4/5,

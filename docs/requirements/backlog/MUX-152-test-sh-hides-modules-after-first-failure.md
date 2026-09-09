@@ -58,7 +58,7 @@ learned — its own failures wait behind a module that has nothing to do with th
 | Spec | Relationship |
 |------|--------------|
 | [`MUX-153`](./MUX-153-codex-test-agent-cannot-run-the-suite.md) | Why the harness module is the one most likely to fail first on the agent meant to run the suite — its socket-binding test cannot run under the codex sandbox. That defect supplies the failure; this one hides its scope |
-| [`MUX-154`](../drafts/MUX-154-codex-status-line-closes-tracked-tasks.md) | The other way a test run reports something that did not happen |
+| [`MUX-154`](./MUX-154-codex-status-line-closes-tracked-tasks.md) | The other way a test run reports something that did not happen |
 
 ## Requirements
 

@@ -130,11 +130,11 @@ fixtures first; whether to accept them is a decision for that phase.
 | Spec | Relationship |
 |------|--------------|
 | [`MUX-003`](../completed/MUX-003-echo-as-result.md) | Closed the console-history road: a synthesized row never renders as a pass. Did not touch task completion. Its guard (`LooksLikeNonResult`) is the one to reuse, not re-derive |
-| [`MUX-148`](../backlog/MUX-148-node-outcome-reads-command-ran-as-task-done.md) | Graph-executor half of the same family — a node outcome reads "a command ran" as done. That one is about authoritative-row provenance in `graph_exec`; this is the tracked-task store. Same defect shape, different consumer |
-| [`MUX-009`](../backlog/MUX-009-response-echo-chain-retrigger.md) | A *response* injected back as a *prompt* on the receiving side. This is a status line synthesized as a *response* on the sending side. Distinct mechanisms, both "the bus believes a TUI" |
-| [`MUX-127`](../backlog/MUX-127-review-completion-routing.md) | Routes the chain on review outcomes; this corrupts the outcome it routes on |
-| [`MUX-153`](../backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md) | Why the codex test agent has no real answer to give — this defect is what turns that silence into "done" |
-| [`MUX-159`](../backlog/MUX-159-codex-hooks-provider.md) | The structural fix: Codex ships `PostToolUse`/`Stop`/`UserPromptSubmit` hooks (verified 2026-09-08 on 0.153.4), so a hook-enabled codex agent is never scraped — this spec patches the scrape, that one removes its reason to exist for codex |
+| [`MUX-148`](./MUX-148-node-outcome-reads-command-ran-as-task-done.md) | Graph-executor half of the same family — a node outcome reads "a command ran" as done. That one is about authoritative-row provenance in `graph_exec`; this is the tracked-task store. Same defect shape, different consumer |
+| [`MUX-009`](./MUX-009-response-echo-chain-retrigger.md) | A *response* injected back as a *prompt* on the receiving side. This is a status line synthesized as a *response* on the sending side. Distinct mechanisms, both "the bus believes a TUI" |
+| [`MUX-127`](./MUX-127-review-completion-routing.md) | Routes the chain on review outcomes; this corrupts the outcome it routes on |
+| [`MUX-153`](./MUX-153-codex-test-agent-cannot-run-the-suite.md) | Why the codex test agent has no real answer to give — this defect is what turns that silence into "done" |
+| [`MUX-159`](./MUX-159-codex-hooks-provider.md) | The structural fix: Codex ships `PostToolUse`/`Stop`/`UserPromptSubmit` hooks (verified 2026-09-08 on 0.153.4), so a hook-enabled codex agent is never scraped — this spec patches the scrape, that one removes its reason to exist for codex |
 
 ## Requirements
 
@@ -285,8 +285,13 @@ at #2; this is the task road, and it is firing.
 
 ## Status
 
-**In Progress — 17/27: Phases 1–3 landed in `bae22dc` (22:02), Phase 4 open.** Filed 2026-09-08;
-moved from `backlog/` to `drafts/` at 21:05 the same day on
+**Backlog — parked 2026-09-08 22:50 at 17/27: Phases 1–3 landed in `bae22dc` (22:02), Phase 4 open.**
+Moved back from `drafts/` on the user's instruction that every unfinished spec leaves In progress; the
+active-spec pointer (set 21:12) was cleared with it. Issue #75 tracks it; PR #73 carries Phases 1–3
+and does not close it. The record below is as it stood when parked.
+
+**Previously: In Progress.** Filed 2026-09-08; moved from `backlog/` to `drafts/` at 21:05 the same
+day on
 the user's "fix this now", after the rule-line variant held the graph's build and test nodes for manual
 approval on three runs. Phases 1–3 delegated to edit (`1788917469-plan-7c2cf5e4`); Phase 4 follows. Set as the **active
 spec** at 21:12 on the user's request, so `verify-spec` after the review chain checks this file.

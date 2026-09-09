@@ -310,7 +310,7 @@ are attributable: the marker records `approved_by` from `BusActorVerified`, and
 `graph-run-created` / `graph-gate-approved` / `graph-gate-approval-refused` name their actor.
 
 Two qualifications, both open in
-[MUX-144](requirements/drafts/MUX-144-wait-human-gate-openable-by-any-agent.md). The
+[MUX-144](requirements/backlog/MUX-144-wait-human-gate-openable-by-any-agent.md). The
 config-file read *narrowed* the caller-control problem rather than closing it: the file is
 agent-writable (its path stopped honouring `$MUXCODE_CONFIG` in `31a2ca4`), so daemon-side
 authority is the real fix. `c4997ed` (2026-09-08 19:11) added that half — `SealGateAuthority` freezes
@@ -799,7 +799,7 @@ read-only roles; that conflated one policy with the CLI and was corrected 2026-0
 content line as the summary. Codex's current TUI renders progress as `• Working (13s • esc to
 interrupt)` with the composer still visible, so that progress line is reported as a completed task's
 answer — closing tracked tasks and firing chain links on nothing
-([MUX-154](requirements/drafts/MUX-154-codex-status-line-closes-tracked-tasks.md)). A second shape
+([MUX-154](requirements/backlog/MUX-154-codex-status-line-closes-tracked-tasks.md)). A second shape
 did the same on 2026-09-08 20:31: the horizontal rule codex draws between turns was the "last content
 line" above the composer, and 158 dashes closed two graph nodes before either agent had a result.
 **Fixed in `bae22dc` (22:02)**: one shared signature in `history_provenance.go` (`LooksLikeWorkingLine`,
