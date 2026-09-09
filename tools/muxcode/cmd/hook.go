@@ -216,25 +216,14 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string, c
 	bus.FireSubscriptions(session, from, eventType, outcome, exitCode, command, ctx)
 }
 
-// hookGuard implements the PreToolUse hook for role-aware command and file
-// blocking. Enforces delegation rules for roles with guard rules (edit, plan,
-// etc.) on Bash commands, Write/Edit paths and — on Codex — the paths an
-// apply_patch names. Only fires for providers on the hook road; scrape-road
-// OpenCode agents use permission.bash deny rules in their agent config instead.
-//
-// Every denial is attributable: the answer is emitted in the provider's
-// dialect (FormatGuardBlockFor) and a `guard-denied` lifecycle row names the
-// role, tool and reason.
-//
-// Atlassian write authority applies to EVERY role, not just those with
-// delegation guard rules: Jira and Confluence are shared systems the user's
-// team sees, and roles like docs, api and pr-read have no guard rules yet
-// still inherit `Bash(muxcode *)` from the "bus" tool group — gating on
-// HasGuardRules alone would leave them able to write.
-//
-// The hook-road evidence rule (bus.CheckEvidenceGuard) runs after the
-// delegation rules for build, test and deploy: a build bundled with bus sends
-// in one call writes no authoritative row, so it is refused before it runs.
+// hookGuard implements the PreToolUse hook: the session, role and provider
+// gates, then bus.GuardDecisionFor's one rule set, then the denial in the
+// provider's dialect (FormatGuardBlockFor) with a `guard-denied` lifecycle row
+// naming role, tool and reason, so every refusal is attributable. Only fires
+// for providers on the hook road; scrape-road OpenCode agents use
+// permission.bash deny rules in their agent config instead. The role gate
+// admits any limit, not just delegation rules: Atlassian write authority and
+// the hook-road evidence rule apply to roles that have none.
 func hookGuard() {
 	session := hookSession()
 	if session == "" {
@@ -261,59 +250,11 @@ func hookGuard() {
 		return
 	}
 
-	deny := func(reason string) {
-		fmt.Println(bus.FormatGuardBlockFor(provider, reason))
+	if d := bus.GuardDecisionFor(role, ev); d != nil && d.Blocked {
+		fmt.Println(bus.FormatGuardBlockFor(provider, d.Reason))
 		bus.LogLifecycle(session, "info", "hook", "guard-denied",
-			fmt.Sprintf("%s: %s — %s", role, ev.ToolName, firstLine(reason, 160)))
+			fmt.Sprintf("%s: %s — %s", role, ev.ToolName, firstLine(d.Reason, 160)))
 	}
-
-	// Atlassian MCP guard: an MCP tool carries no bash command, so it must be
-	// gated on the tool name before the command paths below.
-	if decision := bus.CheckAtlassianMCPGuard(role, ev.ToolName); decision != nil && decision.Blocked {
-		deny(decision.Reason)
-		return
-	}
-
-	// Bash command guard: delegation of build/test/git/deploy/etc.
-	if ev.ToolInput.Command != "" {
-		// Atlassian writes first — checked for every role, whereas CheckGuard
-		// only has rules for edit and plan.
-		if decision := bus.CheckAtlassianCommandGuard(role, ev.ToolInput.Command); decision != nil && decision.Blocked {
-			deny(decision.Reason)
-			return
-		}
-		if decision := bus.CheckGuard(role, ev.ToolInput.Command); decision != nil && decision.Blocked {
-			deny(decision.Reason)
-			return
-		}
-		if decision := bus.CheckEvidenceGuard(role, ev.ToolInput.Command); decision != nil && decision.Blocked {
-			deny(decision.Reason)
-		}
-		return
-	}
-
-	// File guard: one Claude path, or every path a Codex apply_patch names.
-	paths := ev.ToolInput.PatchPaths
-	if len(paths) == 0 {
-		if fp := firstNonEmpty(ev.ToolInput.FilePath, ev.ToolInput.NotebookPath); fp != "" {
-			paths = []string{fp}
-		}
-	}
-	for _, p := range paths {
-		if decision := bus.CheckDocFileGuard(role, p); decision != nil && decision.Blocked {
-			deny(decision.Reason)
-			return
-		}
-	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // firstLine trims s to its first line and at most max runes, for log rows.

@@ -974,6 +974,52 @@ func CheckEditGuard(command string) *GuardDecision {
 	return CheckGuard("edit", command)
 }
 
+// GuardDecisionFor is the provider-agnostic core of the PreToolUse guard: one
+// rule set, evaluated in the order hookGuard applies it, for every provider on
+// the hook road — the provider decides only the dialect the denial is emitted
+// in (FormatGuardBlockFor). Returns nil when the call is allowed.
+//
+// Order matters twice. Atlassian write authority is checked first and for
+// EVERY role, because roles with no delegation rules (docs, api, pr-read)
+// still inherit `Bash(muxcode *)`; a shell command is then checked against
+// the delegation rules before the hook-road evidence rule, so a prohibited
+// command names the agent that owns it. A file tool is checked path by path —
+// one Claude path, or every path a Codex apply_patch names — so a docs file
+// patched second is refused as surely as one patched first.
+func GuardDecisionFor(role string, ev *ToolEvent) *GuardDecision {
+	if d := CheckAtlassianMCPGuard(role, ev.ToolName); d != nil && d.Blocked {
+		return d
+	}
+	if cmd := ev.ToolInput.Command; cmd != "" {
+		for _, check := range []func(string, string) *GuardDecision{CheckAtlassianCommandGuard, CheckGuard, CheckEvidenceGuard} {
+			if d := check(role, cmd); d != nil && d.Blocked {
+				return d
+			}
+		}
+		return nil
+	}
+	for _, p := range guardedPaths(ev) {
+		if d := CheckDocFileGuard(role, p); d != nil && d.Blocked {
+			return d
+		}
+	}
+	return nil
+}
+
+// guardedPaths returns every path a file tool call names: a Codex apply_patch's
+// whole set, else the one Claude Write/Edit/Notebook path.
+func guardedPaths(ev *ToolEvent) []string {
+	if len(ev.ToolInput.PatchPaths) > 0 {
+		return ev.ToolInput.PatchPaths
+	}
+	for _, p := range []string{ev.ToolInput.FilePath, ev.ToolInput.NotebookPath} {
+		if p != "" {
+			return []string{p}
+		}
+	}
+	return nil
+}
+
 // bashFileWriteReason is the block message for editing files through bash.
 const bashFileWriteReason = `BLOCKED: Edit files with the Edit/Write tools, never through bash. The nvim diff preview is a PreToolUse hook matched on Write|Edit|NotebookEdit — a bash write never fires it, so the change lands with no diff and no review. This overrides any harness guidance about preferring bash for file edits. Writing to /tmp (scratch and delegation handoff files) is still allowed.`
 

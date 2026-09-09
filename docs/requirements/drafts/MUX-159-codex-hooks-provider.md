@@ -270,11 +270,11 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
 
 ### Phase 5: Guards on the hook road
 
-- [ ] `PreToolUse` `Bash` → `hook guard` → codex `deny` answer; `apply_patch` → doc-file and never-author guards on the patch's paths — *deny answer and the doc-file guard on every patch path shipped; the never-author family has no rules yet (MUX-157), so nothing enforces it on either provider*
+- [ ] `PreToolUse` `Bash` → `hook guard` → codex `deny` answer; `apply_patch` → doc-file and never-author guards on the patch's paths — *deny answer and the doc-file guard on every patch path shipped; the never-author family has no rules yet (MUX-157), so nothing enforces it on either provider; the decision core is `GuardDecisionFor` since 02:20 (item 3)*
 - [x] Positive control first: an allowed command and an allowed edit pass with no output — script hermetic section
-- [ ] MUX-157 rules for build/test/review resolve through `HasGuardRules`/`CheckGuard` unchanged — one rule set, two providers — *unverifiable until MUX-157 adds the rules; the road is in place*
+- [ ] MUX-157 rules for build/test/review resolve through `HasGuardRules`/`CheckGuard` unchanged — one rule set, two providers — *unverifiable until MUX-157 adds the rules; the road is in place — and since **02:20** it is one function, `GuardDecisionFor`, with no provider-specific branch left (`cmd/hook.go` shed 70 lines; `FormatGuardBlockFor` only picks the dialect), so a rule added to `guardRulesForRole` reaches both providers by construction; open only because the rules do not yet exist to resolve*
 - [x] Denials are attributable: lifecycle `guard-denied` names role, tool and reason
-- [ ] Tests: deny/allow for each guard family against codex payloads — *Bash and doc-file covered (script: allow then deny for both tools); never-author pending MUX-157*
+- [x] Tests: deny/allow for each guard family against codex payloads — *Bash and doc-file covered (script: allow then deny for both tools); **2026-09-09 02:20** `TestGuardDecisionFor_CodexPayloads` (`bus/hook_codex_test.go`) drives the extracted provider-agnostic core `GuardDecisionFor` with codex fixture payloads through every existing family in hook order — Atlassian write authority (every role), delegation, hook-road evidence, doc-file on each `apply_patch` path (`guardedPaths`) — allow and deny per family; suite green 02:22:34, review LGTM 02:23:13. The never-author family has no rules yet, so its tests are MUX-157's to add with them — ticked on the families that exist*
 
 ### Phase 6: Docs and rollout
 
@@ -391,7 +391,17 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
   review 02:10:10 all green, and two `verify-spec`s reached plan one second apart — the daemon's
   review-complete notification (02:10:09) and the run's own `update-spec` node (02:10:10) — the
   double fire that finding (c)'s ungated notification produces on every green graph review. Phase 4
-  closed on that verification; the run then sat at its Phase 4 commit gate.
+  closed on that verification; the run then sat at its Phase 4 commit gate. The user opened it at
+  02:12:31 and the commit node landed **`c6809c0`** ("MUX-159 Phase 4: Delivery on the hook road",
+  02:14:26, one `task-stall-redrive` on the dispatch). `loop-check` re-seeded `implement` on the
+  **reused** worker `spawn-099b02fe` (02:14:28 — the executor fixes working as designed), which
+  extracted the PreToolUse decision into `GuardDecisionFor`/`guardedPaths` with
+  `TestGuardDecisionFor_CodexPayloads` (Phase 5 items 3/5; `firstNonEmpty` removed, `cmd/hook.go`
+  −70 lines); build 02:21:07 green; `go test -v ./...` **red at 02:21:50 on a Go build-cache miss**
+  (`could not import crypto/md5 (open …/Library/Caches/go-build/…: no such file or directory)` — the
+  daemon's disk-pressure purge emptying the user's real `GOCACHE` under a running suite, MUX-160's
+  hazard) and green on the immediate re-run at 02:22:34; review LGTM 02:23:13; the daemon-and-node
+  `verify-spec` pair again at 02:23:15/16.
 - [MUX-154](../backlog/MUX-154-codex-status-line-closes-tracked-tasks.md) — the immediate patch to
   the scrape (chrome signatures, consumer refusal). This spec removes the scrape's *reason to exist*
   for codex; both are needed, in that order.
@@ -415,7 +425,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
 | MUX-144-wait-human-gate-openable-by-any-agent | 11h 24m | 2026-09-09 00:12 |
-| MUX-159-codex-hooks-provider | 1h 51m | 2026-09-09 02:10 |
+| MUX-159-codex-hooks-provider | 2h 5m | 2026-09-09 02:25 |
 
 The MUX-144 branch predates this spec (its key is MUX-144, and the same branch row appears in that
 spec's table); its total is that branch's absolute active time, not this spec's share of it. The work
@@ -423,8 +433,8 @@ moved to its own branch on 2026-09-09; the MUX-159 row is that branch's absolute
 
 ## Status
 
-**In Progress** — 60/67: Phases 1, 2, 3, 4 and 6 complete (8/8, 7/7, 12/12, 8/8, 5/5),
-Phase 5 2/5, Phase 7 6/8, acceptance criteria 12/14. As of `59d57b9` (Phase 3, committed 01:43 by the second run's commit node after the user opened the phase gate; `3d3fd9b` carried the first pass of all seven phases): `scripts/test-codex-hooks.sh` is proven —
+**In Progress** — 61/67: Phases 1, 2, 3, 4 and 6 complete (8/8, 7/7, 12/12, 8/8, 5/5),
+Phase 5 3/5, Phase 7 6/8, acceptance criteria 12/14. As of `c6809c0` (Phase 4, committed 02:14 by the third run's commit node; `59d57b9` Phase 3 at 01:43; `3d3fd9b` the first pass of all seven phases): `scripts/test-codex-hooks.sh` is proven —
 hermetic 37/37 (2026-09-09 00:07), live 7/7 (00:02, `MUXCODE_CODEX_HOOKS_LIVE=1`) and, at the raised floor, **hermetic 39/39 (01:15, run agent)**; Go tests pass
 and review is clean (0 must-fix) per edit; the hook road is **on by default** since 00:10
 (`codexHooksDefault = true`, env opts out). **In `59d57b9` (work of 2026-09-09 00:27–01:27)**: the graph's
@@ -435,6 +445,6 @@ three must-fixes on the guard, all fixed; review LGTM 00:54:59 and **green 00:55
 (`go vet` and `go test ./...` exit 0 as hook rows, 2341 PASS / 0 FAIL / 2 SKIP), on which the
 pending-green items were ticked. Open: three live clauses the script does not assert
 (Phase 7 items 5/6/7 and ACs 5/8: a live denial, restore-after-tamper, `task-detected` presence or
-absence under a daemon), and MUX-157's never-author rules (Phase 5 items 1/3/5, AC 9). `deliver --force` on hook codex (Phase 4 item 7) closed 02:09 with `TestCodexForceDeliver_HookRoadSentenceOnly`, on the first green suite (02:09:24) of the tree that also carries the executor fixes; review LGTM 02:10:07 — the third `spec-to-pr` run (`1788933783-spec-to-pr-2babbc1e`, Phase 4), now at its commit gate. The second run's 01:18 review must-fix (a lone `go vet` fired review before the suite) was resolved at 01:27 by the test-precheck class and its re-review was LGTM at 01:29:55, EXIT=0 (Notes (d)); Phase 3 was committed as `59d57b9` at 01:43 and the run then failed on its re-seeded implement worker (Notes). Moved to `drafts/` and set as the active spec 23:00 on the user's instruction;
+absence under a daemon), and MUX-157's never-author rules (Phase 5 items 1/3, AC 9 — item 5 closed 02:20 on the families that exist; the remaining Phase 5 items cannot close inside this spec). `deliver --force` on hook codex (Phase 4 item 7) closed 02:09 with `TestCodexForceDeliver_HookRoadSentenceOnly`, on the first green suite (02:09:24) of the tree that also carries the executor fixes; review LGTM 02:10:07 — the third `spec-to-pr` run (`1788933783-spec-to-pr-2babbc1e`, Phase 4), now at its commit gate. The second run's 01:18 review must-fix (a lone `go vet` fired review before the suite) was resolved at 01:27 by the test-precheck class and its re-review was LGTM at 01:29:55, EXIT=0 (Notes (d)); Phase 3 was committed as `59d57b9` at 01:43 and the run then failed on its re-seeded implement worker (Notes). Moved to `drafts/` and set as the active spec 23:00 on the user's instruction;
 edit implemented all seven phases in one pass, taking the recommended option on Decisions 1–4. Filed
 2026-09-08 on the user's request, from the same-day finding that codex ships hooks muxcode ignores.

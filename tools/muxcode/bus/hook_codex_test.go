@@ -481,3 +481,100 @@ func TestCodexHookRow_IsAuthoritativeForGraph(t *testing.T) {
 		t.Errorf("blind row should be recorded as unknown: %+v", entries)
 	}
 }
+
+// --- Guard road ---
+
+// codexEventWith builds a codex PreToolUse event the way the integration
+// script's ev_cmd does — the fixture with tool_input.command (and, when
+// given, tool_name) replaced — so the parser stays in the loop.
+func codexEventWith(t *testing.T, fixture, toolName, command string) *ToolEvent {
+	t.Helper()
+	var raw map[string]any
+	if err := json.Unmarshal(codexFixture(t, fixture), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if toolName != "" {
+		raw["tool_name"] = toolName
+	}
+	raw["tool_input"] = map[string]any{"command": command}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev, err := ParseToolEvent(data)
+	if err != nil {
+		t.Fatalf("parse %s: %v", fixture, err)
+	}
+	return ev
+}
+
+// TestGuardDecisionFor_CodexPayloads pins the guard road on codex-shaped
+// events, family by family, allow before deny: Bash delegation, the hook-road
+// evidence rule, the doc-file guard over EVERY apply_patch path (docs named
+// second, where a first-path-only check passes), the plan exemption, and an
+// Atlassian MCP write from a role with no delegation rules. One denial is then
+// rendered in both dialects: the decision is the rule set's, the provider's
+// only say is the JSON shape. The last case is MUX-157's characterization — a
+// test-role source patch passes unexamined until its Phase 2 adds the rule.
+func TestGuardDecisionFor_CodexPayloads(t *testing.T) {
+	t.Setenv("MUXCODE_ATLASSIAN_AUTHORITY_ROLES", "plan")
+	bash := func(role, cmd string) *GuardDecision {
+		return GuardDecisionFor(role, codexEventWith(t, "pre-tool-use-bash.json", "", cmd))
+	}
+	patch := func(role string, files ...string) *GuardDecision {
+		var b strings.Builder
+		b.WriteString("*** Begin Patch\n")
+		for _, f := range files {
+			b.WriteString("*** Update File: " + f + "\n+x\n")
+		}
+		b.WriteString("*** End Patch")
+		return GuardDecisionFor(role, codexEventWith(t, "pre-tool-use-apply-patch.json", "", b.String()))
+	}
+	bundled := "muxcode send edit ack \"x\" --type response --reply-to 1-edit-a\n./build.sh\nmuxcode send edit build-result \"ok\" --type response --reply-to 1-edit-b"
+	mcpWrite := GuardDecisionFor("build", codexEventWith(t, "pre-tool-use-bash.json", "mcp__claude_ai_Atlassian__editJiraIssue", ""))
+
+	cases := []struct {
+		name string
+		got  *GuardDecision
+		want string
+	}{
+		{"edit bash allowed", bash("edit", "echo hi"), ""},
+		{"edit git commit denied", bash("edit", "git commit -m x"), "BLOCKED"},
+		{"build lone build allowed", bash("build", "./build.sh 2>&1"), ""},
+		{"build bundled build denied", bash("build", bundled), "only statement"},
+		{"edit source patch allowed", patch("edit", "src/main.go"), ""},
+		{"edit docs patched second denied", patch("edit", "src/main.go", "docs/architecture.md"), "plan agent"},
+		{"plan docs patch allowed", patch("plan", "docs/architecture.md"), ""},
+		{"build atlassian mcp write denied", mcpWrite, "BLOCKED"},
+		{"test source patch passes unexamined (MUX-157 Phase 2 inverts this)", patch("test", "bus/x.go"), ""},
+	}
+	for _, c := range cases {
+		blocked := c.got != nil && c.got.Blocked
+		switch {
+		case c.want == "" && blocked:
+			t.Errorf("%s: denied: %s", c.name, c.got.Reason)
+		case c.want != "" && !blocked:
+			t.Errorf("%s: allowed, want a denial mentioning %q", c.name, c.want)
+		case c.want != "" && !strings.Contains(c.got.Reason, c.want):
+			t.Errorf("%s: reason %q lacks %q", c.name, c.got.Reason, c.want)
+		}
+	}
+
+	d := patch("edit", "src/main.go", "docs/architecture.md")
+	if d == nil || !d.Blocked {
+		t.Fatal("no denial to render in both dialects")
+	}
+	var codex struct {
+		Out map[string]string `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(FormatGuardBlockFor(&CodexProvider{}, d.Reason)), &codex); err != nil {
+		t.Fatal(err)
+	}
+	var claude map[string]string
+	if err := json.Unmarshal([]byte(FormatGuardBlockFor(&ClaudeCodeProvider{}, d.Reason)), &claude); err != nil {
+		t.Fatal(err)
+	}
+	if codex.Out["permissionDecision"] != "deny" || codex.Out["permissionDecisionReason"] != d.Reason || claude["decision"] != "block" || claude["reason"] != d.Reason {
+		t.Errorf("one decision, two dialects: codex=%+v claude=%+v", codex.Out, claude)
+	}
+}
