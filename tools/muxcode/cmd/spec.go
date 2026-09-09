@@ -49,7 +49,12 @@ func Spec(args []string) {
 		}
 		specPath := args[1]
 
-		if _, err := os.Stat(specPath); err != nil { // not a file — try it as an id
+		if _, err := os.Stat(specPath); err != nil {
+			// Only absence means "try it as an id"; an unreadable file is an error.
+			if !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Error: cannot read %s: %v\n", specPath, err)
+				os.Exit(1)
+			}
 			pick, rerr := bus.ResolveSpecQuery(session, specPath)
 			if rerr != nil {
 				fmt.Fprintf(os.Stderr, "Error: %s is neither a file nor a spec id: %v\n", specPath, rerr)

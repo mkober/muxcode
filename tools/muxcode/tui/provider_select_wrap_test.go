@@ -60,3 +60,25 @@ func TestWrapWordsKeepsOverlongWordIntact(t *testing.T) {
 		t.Errorf("overlong word was split:\n%s", joined)
 	}
 }
+
+// Wrapping counts visible runes, not bytes. The words below are 4 runes each but
+// 10 bytes, so a byte-length wrap breaks after one word where three fit — and it
+// misjudges exactly the glyph-heavy rows (box drawing, status ticks) this TUI is
+// built from. Asserted as a width bound rather than an exact layout so the test
+// pins the property, not one arrangement of it.
+func TestWrapWordsMeasuresVisibleRunesNotBytes(t *testing.T) {
+	lines := wrapWords("✅✅✅✅ ✅✅✅✅ ✅✅✅✅", 14)
+	if len(lines) != 1 {
+		t.Errorf("byte-length wrap: got %d lines, want 1\n%q", len(lines), lines)
+	}
+	for _, line := range lines {
+		if w := VisibleWidth(line); w > 14 {
+			t.Errorf("line exceeds width: %d > 14 (%q)", w, line)
+		}
+	}
+	// Negative control: genuinely overlong content must still wrap, or a wrapper
+	// that returned one line unconditionally would pass the assertion above.
+	if got := wrapWords("✅✅✅✅ ✅✅✅✅ ✅✅✅✅ ✅✅✅✅", 9); len(got) < 2 {
+		t.Errorf("content wider than the line did not wrap: %q", got)
+	}
+}

@@ -178,7 +178,7 @@ func wrapWords(s string, width int) []string {
 	var lines []string
 	cur := words[0]
 	for _, w := range words[1:] {
-		if len(cur)+1+len(w) <= width {
+		if VisibleWidth(cur)+1+VisibleWidth(w) <= width {
 			cur += " " + w
 			continue
 		}

@@ -45,8 +45,6 @@ func OllamaProbeSecs() time.Duration {
 	return OllamaProbeTimeout
 }
 
-// CheckOllamaInference sends a minimal generation to distinguish "process
-// alive but stuck" from "process healthy". Uses a fresh HTTP client with a
 // healthHTTPClient builds the client every Ollama probe uses.
 //
 // It is a variable so a test can route probes to an in-process handler instead
@@ -56,6 +54,8 @@ var healthHTTPClient = func(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout}
 }
 
+// CheckOllamaInference sends a minimal generation to distinguish "process
+// alive but stuck" from "process healthy". Uses a fresh HTTP client with a
 // short timeout to avoid sharing the agent's long-timeout client.
 //
 // The probe uses /api/generate with think:false rather than the OpenAI
