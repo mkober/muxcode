@@ -257,3 +257,194 @@ func TestListSpecChoicesExcludesKeylessFiles(t *testing.T) {
 		}
 	}
 }
+
+// The spellings a user actually types. Lowercase and the bare number were
+// the two reported as rejected (2026-09-08); both must land on the spec.
+func TestResolveSpecQueryByKey(t *testing.T) {
+	root := t.TempDir()
+	writeIntentSpec(t, root, "drafts", "MUX-144-wait-human-gate.md", "# Gate\n")
+	writeIntentSpec(t, root, "backlog", "MUX-32-loop-detector.md", "# Loop\n")
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", root)
+
+	for _, in := range []string{"144", "MUX-144", "mux-144", "mux144", " 144 ", "0144"} {
+		got, err := ResolveSpecQuery("no-such-session", in)
+		if err != nil {
+			t.Fatalf("%q must resolve: %v", in, err)
+		}
+		if got.Key != "MUX-144" {
+			t.Errorf("%q → %q, want MUX-144", in, got.Key)
+		}
+	}
+	got, err := ResolveSpecQuery("no-such-session", "32")
+	if err != nil || got.Dir != "backlog" {
+		t.Errorf("a backlog spec must be selectable: %+v err=%v", got, err)
+	}
+}
+
+func TestResolveSpecQueryBySubstring(t *testing.T) {
+	root := t.TempDir()
+	writeIntentSpec(t, root, "drafts", "MUX-144-wait-human-gate.md", "# Gate\n")
+	writeIntentSpec(t, root, "drafts", "MUX-153-codex-suite.md", "# Suite\n")
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", root)
+
+	got, err := ResolveSpecQuery("no-such-session", "GaTe")
+	if err != nil {
+		t.Fatalf("a slug fragment must resolve: %v", err)
+	}
+	if got.Key != "MUX-144" {
+		t.Errorf("key = %q, want MUX-144", got.Key)
+	}
+}
+
+// The refusals. Each asserts that resolution STOPS — a wrong spec is worse
+// than no match here, because the run proceeds against it.
+func TestResolveSpecQueryRefuses(t *testing.T) {
+	root := t.TempDir()
+	writeIntentSpec(t, root, "drafts", "MUX-144-wait-human-gate.md", "# Gate\n")
+	writeIntentSpec(t, root, "drafts", "MUX-145-windowless-gate.md", "# Windowless\n")
+	writeIntentSpec(t, root, "completed", "MUX-99-shipped-gate.md", "# Shipped\n")
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", root)
+
+	cases := map[string]error{
+		"gate":               ErrSpecAmbiguous, // two slugs carry it
+		"fix the gate thing": ErrNoSpecMatch,   // prose, not an id
+		"999":                ErrNoSpecMatch,   // no such key
+		"99":                 ErrNoSpecMatch,   // completed is not selectable
+		"":                   ErrNoSpecMatch,
+	}
+	for in, want := range cases {
+		got, err := ResolveSpecQuery("no-such-session", in)
+		if !errors.Is(err, want) {
+			t.Errorf("%q → %+v err=%v, want %v", in, got, err, want)
+		}
+	}
+}
+
+// Negative control for the ambiguity refusal above: with the second
+// "gate" spec gone the same query must RESOLVE. Without this, a resolver
+// that refused everything would pass TestResolveSpecQueryRefuses.
+func TestResolveSpecQueryAmbiguityIsNotBlanketRefusal(t *testing.T) {
+	root := t.TempDir()
+	writeIntentSpec(t, root, "drafts", "MUX-144-wait-human-gate.md", "# Gate\n")
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", root)
+
+	got, err := ResolveSpecQuery("no-such-session", "gate")
+	if err != nil || got.Key != "MUX-144" {
+		t.Errorf("a single match must resolve, got %+v err=%v", got, err)
+	}
+}
+
+// launchSpecRepo sets up a repo with one draft spec and an empty pointer,
+// returning the session the launch helpers should be called with.
+func launchSpecRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeIntentSpec(t, root, "drafts", "MUX-144-wait-human-gate.md",
+		"# Gate Openable By Any Agent\n\n### Phase 1: Seal\n- [ ] open step\n")
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", root)
+	session := "launch-spec-" + strings.ReplaceAll(t.Name(), "/", "-")
+	if err := os.MkdirAll(BusDir(session), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(BusDir(session)) })
+	return session
+}
+
+// The whole point of the change: a typed id must both SET the pointer and
+// supply the descriptive intent, so the run is scoped to a phase. Passing
+// the raw id through left IntentPhase zero and the phase-complete guard
+// wide open (review finding, 2026-09-08).
+func TestPointSpecForLaunchSetsPointerAndIntent(t *testing.T) {
+	session := launchSpecRepo(t)
+	g := &Graph{RequiresSpec: true}
+
+	pick, err := PointSpecForLaunch(session, g, "mux-144")
+	if err != nil {
+		t.Fatalf("a typed id must resolve: %v", err)
+	}
+	if got := ReadActiveSpec(session); got != pick.Path {
+		t.Errorf("pointer = %q, want %q", got, pick.Path)
+	}
+	if !strings.Contains(pick.Intent, "MUX-144") || !strings.Contains(pick.Intent, "Phase 1") {
+		t.Errorf("intent %q must carry key and open phase, not the raw id", pick.Intent)
+	}
+}
+
+// A graph that needs no spec, and a pointer already set, are both left
+// alone. Negative control for the test above: a helper that always wrote
+// would pass it.
+func TestPointSpecForLaunchLeavesPointerAlone(t *testing.T) {
+	session := launchSpecRepo(t)
+
+	if pick, err := PointSpecForLaunch(session, &Graph{}, "mux-144"); err != nil || pick.Path != "" {
+		t.Errorf("a spec-less graph must not point: %+v err=%v", pick, err)
+	}
+	if got := ReadActiveSpec(session); got != "" {
+		t.Errorf("pointer written for a spec-less graph: %q", got)
+	}
+	if err := WriteActiveSpec(session, "docs/requirements/drafts/other.md"); err != nil {
+		t.Fatal(err)
+	}
+	if pick, err := PointSpecForLaunch(session, &Graph{RequiresSpec: true}, "mux-144"); err != nil || pick.Path != "" {
+		t.Errorf("an existing pointer must not be switched: %+v err=%v", pick, err)
+	}
+	if got := ReadActiveSpec(session); got != "docs/requirements/drafts/other.md" {
+		t.Errorf("existing pointer was overwritten: %q", got)
+	}
+}
+
+// A launch that writes the pointer and then fails to start must leave the
+// session as it found it.
+func TestUnpointSpecForLaunchRollsBack(t *testing.T) {
+	session := launchSpecRepo(t)
+	pick, err := PointSpecForLaunch(session, &Graph{RequiresSpec: true}, "144")
+	if err != nil {
+		t.Fatal(err)
+	}
+	UnpointSpecForLaunch(session, pick)
+	if got := ReadActiveSpec(session); got != "" {
+		t.Errorf("failed launch left the pointer at %q", got)
+	}
+}
+
+// Rollback must not stomp a pointer something else set in the meantime,
+// and must no-op when nothing was written. Without this, a rollback that
+// always cleared would pass the test above.
+func TestUnpointSpecForLaunchPreservesConcurrentChange(t *testing.T) {
+	session := launchSpecRepo(t)
+	pick, err := PointSpecForLaunch(session, &Graph{RequiresSpec: true}, "144")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(session, "docs/requirements/drafts/elsewhere.md"); err != nil {
+		t.Fatal(err)
+	}
+	UnpointSpecForLaunch(session, pick)
+	if got := ReadActiveSpec(session); got != "docs/requirements/drafts/elsewhere.md" {
+		t.Errorf("rollback stomped a concurrent pointer: %q", got)
+	}
+	UnpointSpecForLaunch(session, SpecChoice{})
+	if got := ReadActiveSpec(session); got != "docs/requirements/drafts/elsewhere.md" {
+		t.Errorf("empty rollback cleared the pointer: %q", got)
+	}
+}
+
+// A bare number matches across prefixes, so two trackers sharing a number
+// must refuse rather than pick whichever the walk reached first — and the
+// prefix must then disambiguate. Review finding, 2026-09-08.
+func TestResolveSpecQueryNumericCollision(t *testing.T) {
+	root := t.TempDir()
+	writeIntentSpec(t, root, "drafts", "MUX-144-wait-human-gate.md", "# Gate\n")
+	writeIntentSpec(t, root, "backlog", "ABC-144-other-tracker.md", "# Other\n")
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", root)
+
+	if got, err := ResolveSpecQuery("no-such-session", "144"); !errors.Is(err, ErrSpecAmbiguous) {
+		t.Errorf("a shared number must refuse, got %+v err=%v", got, err)
+	}
+	for in, want := range map[string]string{"mux-144": "MUX-144", "ABC-144": "ABC-144"} {
+		got, err := ResolveSpecQuery("no-such-session", in)
+		if err != nil || got.Key != want {
+			t.Errorf("%q must disambiguate to %s, got %+v err=%v", in, want, got, err)
+		}
+	}
+}

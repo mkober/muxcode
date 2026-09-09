@@ -1407,16 +1407,25 @@ func (ui *GraphUI) launchGraph(g *bus.Graph, template, intent string) {
 		ui.view = viewGraphTemplates
 		return
 	}
-	if full, ok := bus.ExpandIntentKeyFor(ui.session, intent); ok {
-		intent = full // "115" / "mux-115" → key + spec title + first open phase
-	}
 	if v := g.Validate(); !v.OK() {
 		ui.tmplErr = v.Format()
 		ui.view = viewGraphTemplates
 		return
 	}
+	pick, err := bus.PointSpecForLaunch(ui.session, g, intent)
+	if err != nil {
+		ui.tmplErr = err.Error()
+		ui.view = viewGraphTemplates
+		return
+	}
+	if pick.Path != "" {
+		intent = pick.Intent // the spec just selected describes the run
+	} else if full, ok := bus.ExpandIntentKeyFor(ui.session, intent); ok {
+		intent = full // "115" / "mux-115" → key + spec title + first open phase
+	}
 	run, err := bus.CreateGraphRun(ui.session, g, template, intent)
 	if err != nil {
+		bus.UnpointSpecForLaunch(ui.session, pick)
 		ui.tmplErr = err.Error()
 		ui.view = viewGraphTemplates
 		return
@@ -1436,6 +1445,8 @@ func (ui *GraphUI) launchGraph(g *bus.Graph, template, intent string) {
 	ui.dagScroll = 0
 	if w := bus.UnscopedPhaseGuardWarning(g, intent); w != "" {
 		ui.notice = "⚠ " + w
+	} else if pick.Path != "" {
+		ui.notice = "Active spec set: " + pick.Path
 	}
 	ui.view = viewGraphDAG
 	ui.refresh()
