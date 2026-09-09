@@ -1,5 +1,7 @@
 # A Codex Status Line Closes Tracked Tasks as Their Answer
 
+**Tracking:** [mkober/muxcode#75](https://github.com/mkober/muxcode/issues/75) — PR [#73](https://github.com/mkober/muxcode/pull/73) carries Phases 1–3 but does **not** close it (Phase 4 open)
+
 Five times on 2026-09-08 a `type: response` row whose entire payload was the Codex TUI's progress
 line — `• Working (2m 08s • esc to interrupt)` — completed a tracked task. Each carried a `reply_to`,
 so it correlated to a real request; `MarkResponded` drained that request from the inbox; the daemon
@@ -9,8 +11,6 @@ Two of those "successes" fired the `verify-spec` requests plan handled this afte
 the review agent's genuine reply** said two findings were unresolved.
 
 It converts *nothing happened* into *done*, and it disarms the recovery path with the same stroke.
-
-Tracking: _(no GitHub issue yet)_
 
 ## Context
 

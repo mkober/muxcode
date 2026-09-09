@@ -1,5 +1,7 @@
 # A `wait_human` Gate Is Openable by Any Agent, Unaudited
 
+**Tracking:** [mkober/muxcode#74](https://github.com/mkober/muxcode/issues/74) — PR [#73](https://github.com/mkober/muxcode/pull/73) carries Phase 2 work but does **not** close it (Phase 2 step 5, Phases 4–5 open)
+
 A `wait_human` gate released **four seconds** after it opened, on a run nobody requested, and
 dispatched a `commit` node whose message was *"Stage all unstaged files, commit, push, and create a
 PR"* — against a branch eight commits ahead of `origin/main` with no remote branch, so the push would
@@ -9,8 +11,6 @@ No human approved it. Nothing recorded that no human approved it.
 
 `wait_human` is not a human gate. It is a gate **any agent can open**, and neither opening it nor
 creating the run behind it leaves an audit trail.
-
-Tracking: _(no GitHub issue yet)_
 
 ## Context
 

@@ -1,5 +1,7 @@
 # A Codex Hooks Provider: Put Codex Agents on the Deterministic Chain Road
 
+**Tracking:** [mkober/muxcode#76](https://github.com/mkober/muxcode/issues/76)
+
 Codex CLI ships lifecycle hooks — verified 2026-09-08 on the installed `codex-cli 0.153.4` and against
 the official reference — and muxcode does not use them. `CodexProvider.SupportsHooks()` returns
 `false` (`bus/provider_codex.go:390`, "Codex CLI's hook system is not integrated"), so every codex
@@ -14,8 +16,6 @@ agent answered three requests by restating test's status line as its own `EXIT=0
 Codex's hooks are the same shape as the Claude hooks muxcode already runs — `PreToolUse`,
 `PostToolUse`, `Stop`, the same `{"decision":"block","reason":…}` answer — so the fix is to write a
 `hooks.json`, not to build a new protocol.
-
-Tracking: _(no GitHub issue yet)_
 
 ## Context
 

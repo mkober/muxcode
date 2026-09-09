@@ -1,5 +1,7 @@
 # The /tmp Go Caches the Disk-Pressure Sweep Counts but Cannot Clear
 
+**Tracking:** [mkober/muxcode#77](https://github.com/mkober/muxcode/issues/77)
+
 Agents create their own Go build caches under `/tmp` to get past the Codex sandbox. The
 disk-pressure footprint **counts** those directories — they are what trips the 1 GiB limit — and
 **no stage of the cleanup ladder can remove them**, so pressure fires every 60 seconds, runs the full
@@ -11,8 +13,6 @@ The leak and the sweep feed each other: the caches inflate the footprint that tr
 cannot clear the caches. And the sweep is the same `CleanupStale` that, until `dba6f93` (20:13),
 was deleting the **live session's bus directory** every few minutes — the identity probe was fixed,
 the motor that invokes it was not.
-
-Tracking: _(no GitHub issue yet)_
 
 ## Context
 
