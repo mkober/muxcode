@@ -29,6 +29,11 @@ var providerDisplayName = map[string]string{
 var providerOrder = []string{"claude", "opencode", "codex", "local"}
 
 // hardcodedFallbackModels provides built-in defaults when no config file exists.
+//
+// Only the opencode ids are verifiable: `opencode models` lists a catalog, and
+// TestOpenCodeModelsExistInCatalog checks every entry against it. The codex CLI
+// offers no such command, so a typo there surfaces only when an agent makes its
+// first request — the phantom-model failure with no test to catch it.
 var hardcodedFallbackModels = map[string]ProviderModels{
 	"claude": {
 		Default: "claude-sonnet-5",
@@ -37,8 +42,8 @@ var hardcodedFallbackModels = map[string]ProviderModels{
 	"opencode": {
 		// Latest version of each opencode-go family, verified against
 		// `opencode models`. Where a family ships parallel tiers at that same
-		// newest version they are all kept (deepseek pro/flash, mimo pro/base,
-		// qwen max/plus); superseded versions are not (glm 5.1/5.2, kimi
+		// newest version they are all kept (deepseek pro/flash, glm base/flash,
+		// mimo pro/base, qwen max/plus); superseded versions are not (glm 5.1/5.2, kimi
 		// k2.6/k2.7-code, minimax m2.7, qwen 3.6-plus/3.7-max).
 		//
 		// Every id here must exist in `opencode models`. The previous list
@@ -50,6 +55,7 @@ var hardcodedFallbackModels = map[string]ProviderModels{
 			"opencode-go/grok-4.6",
 			"opencode-go/gpt-5.6-luna",
 			"opencode-go/glm-5.3",
+			"opencode-go/glm-5.3-flash",
 			"opencode-go/kimi-k3",
 			"opencode-go/minimax-m3",
 			"opencode-go/mimo-v2.5-pro",
@@ -61,9 +67,10 @@ var hardcodedFallbackModels = map[string]ProviderModels{
 			"opencode-go/hy3",
 		},
 	},
+	// Unverifiable ids — see the note on hardcodedFallbackModels.
 	"codex": {
 		Default: "gpt-5.5",
-		Models:  []string{"gpt-5.5", "gpt-5.4-mini", "gpt-5.3-codex-spark"},
+		Models:  []string{"gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"},
 	},
 }
 

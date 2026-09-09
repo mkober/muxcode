@@ -2,6 +2,7 @@ package bus
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,6 +166,94 @@ func TestRotateLifecycleLog(t *testing.T) {
 	entries, _ := ReadLifecycleLog(session)
 	if len(entries) != 5 {
 		t.Errorf("after rotation: expected 5 entries, got %d", len(entries))
+	}
+}
+
+// gateApprovalHolds refuses an approval whose graph-gate-approved row is
+// missing, so rotation is an input to a live authorization decision — and it
+// runs in whichever process appends, under a cap that process supplies. Without
+// preservation, `MUXCODE_LIFECYCLE_LOG_MAX=1 muxcode …` from anything on the box
+// invalidated every outstanding approval and erased the record of it in one move.
+func TestRotateLifecycleLogPreservesAuditRows(t *testing.T) {
+	tmpDir := t.TempDir()
+	pinLogDir(t, tmpDir)
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_MAX", "3")
+
+	session := "test-rotate-audit"
+	LogLifecycle(session, "info", "user", "graph-gate-approved", `Graph run r gate "g" approved by user`)
+	for i := 0; i < 10; i++ {
+		LogLifecycle(session, "info", "test", "noise", "")
+	}
+
+	entries, _ := ReadLifecycleLog(session)
+	audits, noise := 0, 0
+	for _, e := range entries {
+		switch e.Event {
+		case "graph-gate-approved":
+			audits++
+		case "noise":
+			noise++
+		}
+	}
+	if audits != 1 {
+		t.Errorf("audit rows kept %d, want 1 — rotation must not evict an approval's evidence", audits)
+	}
+	// Negative control: ordinary rows past the cap must still rotate away, or
+	// this passes just as well on a rotation that stopped working entirely.
+	if noise > 3 {
+		t.Errorf("noise rows kept %d, want <= 3 — ordinary rows must still rotate", noise)
+	}
+}
+
+func TestRotateLifecycleLogPreservesAllPendingAuditRows(t *testing.T) {
+	tmpDir := t.TempDir()
+	pinLogDir(t, tmpDir)
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_MAX", "2")
+
+	session := "test-rotate-all-audits"
+	for i := 0; i < 4; i++ {
+		LogLifecycle(session, "info", "user", "graph-gate-approved", fmt.Sprintf("approval-%d", i))
+	}
+	for i := 0; i < 8; i++ {
+		LogLifecycle(session, "info", "test", "noise", "")
+	}
+
+	entries, _ := ReadLifecycleLog(session)
+	audits, noise := 0, 0
+	for _, e := range entries {
+		switch e.Event {
+		case "graph-gate-approved":
+			audits++
+		case "noise":
+			noise++
+		}
+	}
+	if audits != 4 {
+		t.Errorf("audit rows kept %d, want 4 — rotation must not evict evidence for pending approvals", audits)
+	}
+	if noise > 2 {
+		t.Errorf("noise rows kept %d, want <= 2 — ordinary rows must still rotate", noise)
+	}
+}
+
+// The audit row and the approval marker are written by different calls, so the
+// approval path needs to stamp one instant into both. Reading the clock inside
+// the log call instead made a genuine approval refusable whenever the second
+// ticked between the two writes.
+func TestLogLifecycleAtHonorsSuppliedTimestamp(t *testing.T) {
+	tmpDir := t.TempDir()
+	pinLogDir(t, tmpDir)
+
+	session := "test-log-at"
+	want := time.Now().Unix() - 3600
+	LogLifecycleAt(session, "info", "user", "graph-gate-approved", "detail", want)
+
+	entries, _ := ReadLifecycleLog(session)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].TS != want {
+		t.Errorf("TS = %d, want %d — the supplied instant must survive into the row", entries[0].TS, want)
 	}
 }
 

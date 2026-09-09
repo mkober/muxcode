@@ -10,10 +10,15 @@ import (
 )
 
 // Spec handles the "muxcode spec" subcommand.
-// Usage: muxcode spec set <path>   — set the active requirements spec
+// Usage: muxcode spec set <path|id>  — set the active requirements spec
 //
-//	muxcode spec get          — show the active spec
-//	muxcode spec clear        — remove the active spec
+//	muxcode spec get           — show the active spec
+//	muxcode spec clear         — remove the active spec
+//
+// "set" takes a path, a tracking id in any spelling ("144", "mux-144",
+// "MUX-144"), or a slug fragment ("gate"), resolved by ResolveSpecQuery.
+// Every message that sends a user here names an id, so demanding a path
+// made them go and look one up to retype what they had already typed.
 func Spec(args []string) {
 	session := bus.BusSession()
 
@@ -39,15 +44,23 @@ func Spec(args []string) {
 
 	case "set":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: muxcode spec set <path>")
+			fmt.Fprintln(os.Stderr, "Usage: muxcode spec set <path|id>")
 			os.Exit(1)
 		}
 		specPath := args[1]
 
-		// Validate the file exists
-		if _, err := os.Stat(specPath); os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Error: file not found: %s\n", specPath)
-			os.Exit(1)
+		if _, err := os.Stat(specPath); err != nil {
+			// Only absence means "try it as an id"; an unreadable file is an error.
+			if !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Error: cannot read %s: %v\n", specPath, err)
+				os.Exit(1)
+			}
+			pick, rerr := bus.ResolveSpecQuery(session, specPath)
+			if rerr != nil {
+				fmt.Fprintf(os.Stderr, "Error: %s is neither a file nor a spec id: %v\n", specPath, rerr)
+				os.Exit(1)
+			}
+			specPath = pick.Path
 		}
 
 		// Warn if not under docs/requirements/drafts/ (but allow it)

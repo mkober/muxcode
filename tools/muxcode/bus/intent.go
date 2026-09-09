@@ -269,6 +269,10 @@ type SpecChoice struct {
 // ListSpecChoices returns the specs a run can be pointed at, drafts
 // before backlog. Completed specs are excluded: pointing a run at one
 // would derive "no open phase" and drive an immediately vacuous run.
+//
+// A file carrying no spec key is excluded for the same reason it cannot
+// be run: the key is what an intent expands from. Without this, the
+// backlog index (backlog.md) was offered as a selectable spec.
 func ListSpecChoices(session string) ([]SpecChoice, error) {
 	root := intentRoot(session)
 	var out []SpecChoice
@@ -286,8 +290,11 @@ func ListSpecChoices(session string) ([]SpecChoice, error) {
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			rel := filepath.Join("docs", "requirements", dir, name)
 			key := specKeyFromFile(name)
+			if key == "" {
+				continue
+			}
+			rel := filepath.Join("docs", "requirements", dir, name)
 			out = append(out, SpecChoice{
 				Key: key, Dir: dir, Path: rel,
 				Intent: describeSpecIntent(filepath.Join(root, rel), key),
@@ -298,6 +305,145 @@ func ListSpecChoices(session string) ([]SpecChoice, error) {
 		return nil, fmt.Errorf("no specs found under %s", filepath.Join("docs", "requirements"))
 	}
 	return out, nil
+}
+
+// ErrNoSpecMatch reports that a query named no selectable spec.
+var ErrNoSpecMatch = errors.New("no spec matches")
+
+// ErrSpecAmbiguous reports that a query matched more than one spec. The
+// error text names them, so the caller can print the choice rather than
+// guessing at one.
+var ErrSpecAmbiguous = errors.New("ambiguous spec query")
+
+// ResolveSpecQuery resolves what a user typed where a spec is expected
+// into the spec it names, so the active-spec pointer can be set from an id
+// rather than a full path.
+//
+// Two tiers, most specific first: a bare tracking id ("144", "mux-144",
+// "MUX144", "PBP1-456") by number and optional prefix, then a
+// case-insensitive substring of the key or filename slug ("gate").
+//
+// Prose is excluded from the substring tier by the space test. The field
+// this resolves for also accepts a free-text intent, and matching "fix the
+// gate thing" against a slug would point a run at a spec the user never
+// named — a wrong spec is worse than no match, because the run proceeds.
+//
+// The candidate set is ListSpecChoices, so completed specs are excluded
+// here for the reason they are excluded there: pointing a run at one
+// derives no open phase and drives an immediately vacuous run. This is why
+// the tiers do not reuse findSpecByKey, which searches completed too.
+func ResolveSpecQuery(session, input string) (SpecChoice, error) {
+	q := strings.TrimSpace(input)
+	if q == "" {
+		return SpecChoice{}, ErrNoSpecMatch
+	}
+	choices, err := ListSpecChoices(session)
+	if err != nil {
+		return SpecChoice{}, err
+	}
+	if prefix, num, ok := parseIntentKey(q); ok {
+		return oneSpec(matchSpecByKey(choices, prefix, num), q)
+	}
+	if strings.ContainsAny(q, " \t") {
+		return SpecChoice{}, fmt.Errorf("%w: %q reads as free text, not a spec id", ErrNoSpecMatch, q)
+	}
+	return oneSpec(matchSpecBySubstring(choices, q), q)
+}
+
+// PointSpecForLaunch sets the active-spec pointer from what a launcher was
+// given where a spec was expected, for a spec-driven graph with no pointer
+// set. It is shared by the CLI and the TUI: each road had to grow the same
+// selection, expansion and rollback, and each grew them one release apart,
+// so the two behaved differently for the same keystrokes.
+//
+// Resolving an id into an intent line while leaving the pointer unset was
+// the original failure: the run then died in CreateGraphRun on the very
+// spec it had just named.
+//
+// Only an unset pointer is written. Switching one already set belongs to
+// `spec set`; doing it from a launch argument would silently redirect the
+// run away from the spec its phase guard resolves against.
+//
+// Returns the spec written, zero when nothing needed writing. A caller
+// whose run then fails to start must pass it to UnpointSpecForLaunch.
+func PointSpecForLaunch(session string, g *Graph, input string) (SpecChoice, error) {
+	if g == nil || !g.RequiresSpec || strings.TrimSpace(ReadActiveSpec(session)) != "" {
+		return SpecChoice{}, nil
+	}
+	pick, err := ResolveSpecQuery(session, input)
+	if err != nil {
+		return SpecChoice{}, fmt.Errorf("no active spec, and %q does not name one: %w", strings.TrimSpace(input), err)
+	}
+	if err := WriteActiveSpec(session, pick.Path); err != nil {
+		return SpecChoice{}, fmt.Errorf("cannot set active spec %s: %w", pick.Path, err)
+	}
+	return pick, nil
+}
+
+// UnpointSpecForLaunch rolls back a pointer PointSpecForLaunch wrote when
+// the run never started, so a failed launch leaves the session as it found
+// it rather than silently redirecting the next one.
+//
+// It clears only a pointer still holding the value written: the pointer is
+// global, and another surface may have set its own between the write and
+// the failure.
+func UnpointSpecForLaunch(session string, pick SpecChoice) {
+	if pick.Path == "" || ReadActiveSpec(session) != pick.Path {
+		return
+	}
+	_ = ClearActiveSpec(session)
+}
+
+// matchSpecByKey collects the choices whose key carries num (leading zeros
+// ignored) and, when one was given, prefix. A bare number is matched
+// across prefixes — that is what makes "144" enough to type — so it can
+// collect more than one, and MUX-144 alongside ABC-144 must refuse rather
+// than pick whichever the directory walk reached first.
+func matchSpecByKey(choices []SpecChoice, prefix, rawNum string) []SpecChoice {
+	num := strings.TrimLeft(rawNum, "0")
+	var hits []SpecChoice
+	for _, c := range choices {
+		cp, cn, ok := parseIntentKey(c.Key)
+		if !ok || strings.TrimLeft(cn, "0") != num {
+			continue
+		}
+		if prefix != "" && cp != prefix {
+			continue
+		}
+		hits = append(hits, c)
+	}
+	return hits
+}
+
+// matchSpecBySubstring is the wildcard tier: one case-insensitive
+// substring over key and slug.
+func matchSpecBySubstring(choices []SpecChoice, q string) []SpecChoice {
+	needle := strings.ToLower(q)
+	var hits []SpecChoice
+	for _, c := range choices {
+		hay := strings.ToLower(c.Key + " " + strings.TrimSuffix(filepath.Base(c.Path), ".md"))
+		if strings.Contains(hay, needle) {
+			hits = append(hits, c)
+		}
+	}
+	return hits
+}
+
+// oneSpec resolves a candidate set to the single spec it names. Several
+// matches refuse and name themselves rather than picking one: a wrong spec
+// is worse than no match, because the run proceeds against it.
+func oneSpec(hits []SpecChoice, q string) (SpecChoice, error) {
+	if len(hits) == 1 {
+		return hits[0], nil
+	}
+	if len(hits) == 0 {
+		return SpecChoice{}, fmt.Errorf("%w: %s names no spec in drafts or backlog", ErrNoSpecMatch, q)
+	}
+	keys := make([]string, 0, len(hits))
+	for _, c := range hits {
+		keys = append(keys, c.Key)
+	}
+	return SpecChoice{}, fmt.Errorf("%w: %s matches %s — be more specific", ErrSpecAmbiguous, q, strings.Join(keys, ", "))
 }
 
 // intentRoot is the repo dir spec lookups resolve against: the session's

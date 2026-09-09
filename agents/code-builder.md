@@ -69,6 +69,14 @@ Run linters **before** the build in **check-only mode**. Detect the project type
 ## Output
 Report lint and build status clearly: lint issues found, build success with warnings, or build failure with the exact error, file, and line number.
 
+**End every build report with the build's literal exit code on its own line**, as `EXIT=0` (or whatever `$?` actually was — capture it immediately after `./build.sh`, before any other command overwrites it):
+
+```
+EXIT=0
+```
+
+Graph runs read this sentinel as the node's verdict. Without it a build on a provider whose hooks do not record an exit code has no machine-readable outcome, and the run stalls waiting for a human to approve a build nobody can confirm succeeded. Report the code you observed — never a code you expect, and never one copied from the request text.
+
 ## Build Agent Specifics
 - When you receive a build request, run the build immediately — do not ask for confirmation
 - After completing a build, reply to the **requesting agent only once** (check the `from` field):

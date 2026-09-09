@@ -259,8 +259,67 @@ func ReloadAll(session, cli, model, providerFilter string, compact bool) (int, [
 	return reloaded, errs
 }
 
+// RoleWindowMissing reports that role has no tmux window in session, or nil
+// when it has one or the window list could not be read.
+//
+// A role with no window has no agent to stop, and every signal the stop
+// sequence reads lies about that. send-keys to the absent pane fails and
+// pairedInterrupt discards the error; IsAgentAlive then fail-safes to "alive"
+// because it cannot capture the pane, so the poll loop can never terminate.
+// The reload failed after 12 seconds with "did not exit" — describing a
+// process that never existed and sending the operator to hunt a hung agent.
+// analyze is in KnownRoles but absent from DefaultLauncherConfig().Windows,
+// so this is reachable in every default session.
+//
+// An unreadable window list is indeterminate, not empty: treating a tmux
+// failure as "no windows exist" would refuse every reload on the session.
+func RoleWindowMissing(session, role string) error {
+	names, err := TmuxListWindowNames(session)
+	if err != nil || len(names) == 0 {
+		return nil
+	}
+	if RoleWindowPresent(names, role) {
+		return nil
+	}
+	return fmt.Errorf("role %s has no window in session %s — it was never launched, so there is nothing to reload (set its provider/model with `muxcode config set %s`, or add it to MUXCODE_WINDOWS to run it)", role, session, RoleModelEnvVar(role))
+}
+
+// RoleWindowPresent reports whether role has somewhere to run in the session.
+//
+// Presence must be decided against the window a reload actually ADDRESSES, which
+// for a mode-cycled role is its hold window, not the window it shares. The host
+// window is the wrong test and briefly shipped as one: `research` holds on the
+// plan window, plan exists, so research read as present — while ReloadTarget
+// addressed the `research` hold window, which is not created until that mode is
+// cycled to for the first time. The reload then fired keystrokes at a window
+// that was not there and failed with the same misleading "did not exit after 12
+// seconds" this predicate exists to prevent (2026-09-08).
+//
+// A mode role that has never been cycled to therefore reads as absent, which is
+// correct: it has no pane and no process, so it is configurable but not
+// reloadable, exactly like a role missing from MUXCODE_WINDOWS.
+func RoleWindowPresent(names []string, role string) bool {
+	return RoleHasWindow(names, ReloadWindowForRole(role))
+}
+
+// ReloadWindowForRole returns the window name a reload of role addresses: the
+// hold window for a mode-cycled role, otherwise the role's own window.
+//
+// Read from the static mode defaults rather than the session's state file so the
+// answer is available before any bus dir exists, and so tests need no fixture.
+func ReloadWindowForRole(role string) string {
+	for _, state := range []*ModeCycleState{DefaultModeCycleState(), DefaultPlanModeCycleState()} {
+		for _, agent := range state.Agents {
+			if agent.Role == role && agent.HoldWindow != "" {
+				return agent.HoldWindow
+			}
+		}
+	}
+	return WindowForRole(role)
+}
+
 // ReloadAgent orchestrates the full stop→reconfigure→relaunch cycle:
-//  1. Validate role exists
+//  1. Validate role exists and has a window
 //  2. Write reload marker (suppresses daemon health checks)
 //  3. Gracefully stop the agent (BEFORE writing overrides — so IsAgentAlive
 //     resolves the correct provider for the still-running agent)
@@ -279,6 +338,9 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 	// 1. Validate role exists
 	if !IsKnownRole(role) {
 		return fmt.Errorf("unknown role: %s", role)
+	}
+	if err := RoleWindowMissing(session, role); err != nil {
+		return err
 	}
 
 	// Capture old CLI for logging (before writing overrides)

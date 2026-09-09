@@ -1,0 +1,98 @@
+name: auto-release
+
+# Cuts a patch release for every merged PR: computes the next vX.Y.Z from the
+# latest release tag, tags the merge commit, then calls release.yml to publish.
+#
+# This deliberately removes a guardrail. Tagging used to be user-approved via
+# the commit agent, in the same family as this repo's user-initiated commit
+# rule; automating it was a considered change (2026-09-04), and CLAUDE.md's
+# release row is the other half of it.
+#
+# Opting out: label the PR `skip-changelog` — the same label .github/release.yml
+# already uses to keep a PR out of the generated notes. Docs-only and backlog
+# churn carry it and cut no release, so the version tracks shipped code rather
+# than every merge.
+#
+# It triggers on pull_request/closed rather than push to main so the labels are
+# on the event payload. A direct push to main therefore cuts no release, which
+# is the right default: releases follow reviewed work.
+#
+# The tag is placed on merge_commit_sha, not on main's HEAD, so a second merge
+# landing between this run's checkout and its tag cannot move the release onto
+# a commit the PR never contained.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Serialized: two PRs merging together would otherwise read the same latest tag
+# and compute the same next one, and the loser's push would be rejected.
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: >-
+      github.event.pull_request.merged == true
+      && !contains(github.event.pull_request.labels.*.name, 'skip-changelog')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.next.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Pre-releases are excluded from the base: v0.1.1-rc1 must not make the
+      # next release v0.1.2 and skip v0.1.1 itself.
+      - name: Compute next patch tag
+        id: next
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+          latest="$(git tag --list 'v*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)"
+          if [ -z "$latest" ]; then
+            next="v0.0.1"
+          else
+            version="${latest#v}"
+            major="${version%%.*}"
+            rest="${version#*.}"
+            minor="${rest%%.*}"
+            patch="${rest#*.}"
+            next="v${major}.${minor}.$((patch + 1))"
+          fi
+          if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            echo "tag $next already exists — refusing to move it" >&2
+            exit 1
+          fi
+          echo "latest=${latest:-<none>} next=$next"
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Tag the merge commit
+        env:
+          NEXT: ${{ steps.next.outputs.tag }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          TITLE: ${{ github.event.pull_request.title }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$NEXT" -m "$NEXT — #${NUMBER} ${TITLE}" "$SHA"
+          git push origin "$NEXT"
+
+  publish:
+    needs: tag
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+    with:
+      tag: ${{ needs.tag.outputs.tag }}

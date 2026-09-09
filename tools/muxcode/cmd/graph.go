@@ -169,8 +169,18 @@ func graphRun(args []string) {
 		}
 		requireIntent(template, intent, isSpec)
 	}
+	pick, err := bus.PointSpecForLaunch(bus.BusSession(), g, intent)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if pick.Path != "" {
+		fmt.Printf("Active spec set: %s\n", pick.Path)
+		intent = pick.Intent
+	}
 	run, err := bus.CreateGraphRun(bus.BusSession(), g, template, intent)
 	if err != nil {
+		bus.UnpointSpecForLaunch(bus.BusSession(), pick)
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

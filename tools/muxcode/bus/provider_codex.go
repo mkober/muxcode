@@ -56,6 +56,15 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 		args = append(args, "-a", "never")
 	}
 
+	// Roles whose work ends outside the workspace need those roots granted
+	// explicitly; the default policy refuses them.
+	if roots := codexWritableRoots(cfg.Role); len(roots) > 0 {
+		args = append(args, "-s", "workspace-write")
+		for _, dir := range roots {
+			args = append(args, "--add-dir", dir)
+		}
+	}
+
 	// Model selection
 	model := resolveCodexModel(cfg.Role)
 	if model != "" {
@@ -63,6 +72,104 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 	}
 
 	return "codex", args
+}
+
+// codexWritableRoots returns the directories a role must write outside the
+// repo, to be granted with --add-dir under the workspace-write policy.
+//
+// Codex takes a selectable sandbox policy and muxcode passed none, so every
+// agent inherited the default: writes inside the workspace succeed, writes
+// outside are refused. A build agent therefore compiled cleanly and then died
+// in `make install` with "Operation not permitted" on ~/.local/bin — read as
+// "Codex cannot build" until the flags were checked (2026-09-08).
+//
+// The paths track the Makefile's own PREFIX/BINDIR/CONFIGDIR variables, so a
+// non-default install prefix stays writable instead of silently regressing to
+// the failure this fixes. Only build is listed: it is the role whose failure
+// was observed. Add a role here when its work is shown to write outside the
+// workspace — never widen the policy itself.
+func codexWritableRoots(role string) []string {
+	if role != "build" {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil
+	}
+	prefix := stringEnvOrDefault("PREFIX", filepath.Join(home, ".local"))
+	roots := []string{
+		stringEnvOrDefault("BINDIR", filepath.Join(prefix, "bin")),
+		stringEnvOrDefault("CONFIGDIR", filepath.Join(home, ".config", "muxcode")),
+		// `make install` also drops slash-command files here (Makefile:92).
+		filepath.Join(home, ".claude", "commands"),
+	}
+	return resolveWritableRoots(append(roots, goToolchainRoots()...))
+}
+
+// resolveWritableRoots maps each root to its physical path, dropping any that
+// cannot be resolved.
+//
+// Codex refuses a writable root containing a symlink component ("symlinked
+// writable roots not supported"), and that refusal is fatal to the SANDBOX, not
+// just to the offending root: the shell process fails before startup, so every
+// command in the agent dies pre-execution with no output. A dotfiles setup that
+// symlinks ~/.claude was enough to make the build agent look like a hung model —
+// it accepted work, spun, and ran nothing (2026-09-08).
+//
+// A missing root is created first: these are install targets `make install`
+// would create anyway, and an unresolvable root has to be dropped, which would
+// silently reinstate the "Operation not permitted" failure the grants exist to
+// prevent. Resolving also dedupes roots that share a physical path.
+func resolveWritableRoots(roots []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, dir := range roots {
+		resolved, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
+				continue
+			}
+			if resolved, err = filepath.EvalSymlinks(dir); err != nil {
+				continue
+			}
+		}
+		if resolved == "" || seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		out = append(out, resolved)
+	}
+	return out
+}
+
+// goToolchainRoots returns the Go build and module caches, asked of the
+// toolchain rather than assumed, so a custom GOCACHE/GOMODCACHE is honoured.
+//
+// The compiler writes these on any build of changed code, and they sit outside
+// the workspace. Without them a sandboxed build fails on a cache path the
+// moment a source file changes — and passes while every package is already
+// cached, which is why this surfaced one build after the roots were added
+// rather than immediately. An absent toolchain yields nothing to grant.
+func goToolchainRoots() []string {
+	out, err := exec.Command("go", "env", "GOCACHE", "GOMODCACHE").Output()
+	if err != nil {
+		return nil
+	}
+	var roots []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if dir := strings.TrimSpace(line); dir != "" {
+			roots = append(roots, dir)
+		}
+	}
+	return roots
+}
+
+// stringEnvOrDefault is os.Getenv with a fallback for unset or empty values.
+func stringEnvOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // isReadOnlyCodexRole returns true for roles that should use on-request
@@ -303,6 +410,17 @@ func (p *CodexProvider) WriteAgentConfig(role string) error {
 //     already replied to the requester, so the task is done.
 //  3. TUI idle prompt — the › or > character reappearing at the bottom
 //     of the pane indicates the TUI is ready for new input.
+//
+// A completion is only ever reported alongside a line the agent composed.
+// Rule 3 is a guess about a redrawn screen, not evidence of work, so when
+// nothing but chrome sits above the composer this reports *not complete* and
+// waits. The former fallback — summarizing such a pane as "Task completed" —
+// is precisely how a horizontal rule became a passing build: on 2026-09-08 the
+// nearest non-empty line above the composer was the rule codex draws between
+// turns, and 158 dashes were sent as build's and test's answers 33s and 22s
+// after dispatch, closing two graph nodes before either agent had a result
+// (MUX-154). Reporting "no result yet" costs one more poll; reporting a false
+// one fabricates evidence that outlives the session.
 func (p *CodexProvider) DetectTaskCompletion(session, role, paneContent string) (completed bool, errored bool, summary string) {
 	if paneContent == "" {
 		return false, false, ""
@@ -319,6 +437,9 @@ func (p *CodexProvider) DetectTaskCompletion(session, role, paneContent string) 
 			strings.Contains(trimmed, "▸") || strings.Contains(trimmed, "thinking") {
 			return false, false, "" // still running
 		}
+		if LooksLikeWorkingLine(trimmed) {
+			return false, false, "" // still running
+		}
 	}
 
 	// Scan recent lines (last 10) for bus reply output.
@@ -333,15 +454,9 @@ func (p *CodexProvider) DetectTaskCompletion(session, role, paneContent string) 
 		trimmed := strings.TrimSpace(lines[i])
 		// Bus send output: "Sent response:response to edit"
 		if strings.HasPrefix(trimmed, "Sent ") && strings.Contains(trimmed, " to ") {
-			// Extract a summary from the preceding agent message
-			var lastContentLine string
-			for j := i - 1; j >= 0; j-- {
-				t := strings.TrimSpace(lines[j])
-				if t != "" && !strings.HasPrefix(t, "muxcode ") && !strings.HasPrefix(t, "$") {
-					lastContentLine = t
-					break
-				}
-			}
+			// A real send happened, so the task IS done even if the pane
+			// shows no quotable line — unlike the composer branch below.
+			lastContentLine := lastComposedLine(lines, i)
 			if lastContentLine == "" {
 				lastContentLine = "codex task completed"
 			}
@@ -361,23 +476,52 @@ func (p *CodexProvider) DetectTaskCompletion(session, role, paneContent string) 
 	for i := len(lines) - 1; i >= tuiScanStart; i-- {
 		trimmed := strings.TrimSpace(lines[i])
 		if strings.HasPrefix(trimmed, "›") || strings.HasPrefix(trimmed, ">") {
-			// Prompt reappeared — find a summary from the preceding content
-			var lastContentLine string
-			for j := i - 1; j >= 0; j-- {
-				t := strings.TrimSpace(lines[j])
-				if t != "" {
-					lastContentLine = t
-					break
-				}
-			}
+			lastContentLine := lastComposedLine(lines, i)
 			if lastContentLine == "" {
-				lastContentLine = "Task completed"
+				return false, false, "" // only chrome above the composer — see doc comment
 			}
 			return true, false, lastContentLine
 		}
 	}
 
 	return false, false, ""
+}
+
+// lastComposedLine returns the nearest line above before that the agent
+// actually wrote, skipping blanks and anything the TUI drew itself.
+//
+// It returns "" when no such line exists, which callers must read as "no
+// result", never as an empty success: a pane holding only chrome is the shape
+// that closed two graph nodes on work that had not finished (MUX-154).
+//
+// A rule line is a turn boundary, not merely noise. Skipping one and reading on
+// reaches prose belonging to the PREVIOUS turn, so the search only crosses a
+// rule for a line carrying an explicit EXIT= sentinel — the one structured
+// result whose meaning does not depend on which turn produced it. Without that
+// guard the helper trades a fabricated summary for a stale one.
+func lastComposedLine(lines []string, before int) string {
+	passedRule := false
+	for j := before - 1; j >= 0; j-- {
+		t := strings.TrimSpace(lines[j])
+		if t == "" {
+			continue
+		}
+		if isRuleLine(t) {
+			passedRule = true
+			continue
+		}
+		if LooksLikeNonResult(t) {
+			continue
+		}
+		if strings.HasPrefix(t, "muxcode ") || strings.HasPrefix(t, "$") {
+			continue
+		}
+		if passedRule && !strings.Contains(t, "EXIT=") {
+			continue
+		}
+		return t
+	}
+	return ""
 }
 
 // --- Agent config generation ---

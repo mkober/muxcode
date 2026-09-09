@@ -76,7 +76,7 @@ func LogLifecycle(session, level, source, event, detail string) {
 
 // LogLifecycleWithPID appends a lifecycle event with an explicit PID.
 func LogLifecycleWithPID(session, level, source, event, detail string, pid int) {
-	entry := LifecycleEntry{
+	writeLifecycleEntry(LifecycleEntry{
 		TS:      time.Now().Unix(),
 		Level:   level,
 		Source:  source,
@@ -84,8 +84,30 @@ func LogLifecycleWithPID(session, level, source, event, detail string, pid int) 
 		Event:   event,
 		PID:     pid,
 		Detail:  detail,
-	}
+	})
+}
 
+// LogLifecycleAt appends an event stamped with ts rather than the current
+// second, for a caller that must record one instant in two places.
+//
+// gateApprovalHolds matches an approval marker against its graph-gate-approved
+// row on the second, so reading the clock once per writer made a genuine
+// approval racy: a bus send and a rotation pass sit between the two writes in
+// ApproveGraphGate, and an approval that straddled a second boundary was
+// refused as forged and its marker purged, sending the user back to approve
+// again into the same race (MUX-144 Phase 2).
+func LogLifecycleAt(session, level, source, event, detail string, ts int64) {
+	writeLifecycleEntry(LifecycleEntry{
+		TS:      ts,
+		Level:   level,
+		Source:  source,
+		Session: session,
+		Event:   event,
+		Detail:  detail,
+	})
+}
+
+func writeLifecycleEntry(entry LifecycleEntry) {
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return
@@ -96,7 +118,7 @@ func LogLifecycleWithPID(session, level, source, event, detail string, pid int) 
 		return
 	}
 
-	logPath := LifecycleLogPath(session)
+	logPath := LifecycleLogPath(entry.Session)
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
@@ -263,7 +285,21 @@ func splitLifecycleLines(data []byte) [][]byte {
 	return lines
 }
 
-// rotateLifecycleLog truncates the log file to keep only the last maxEntries lines.
+// lifecycleAuditEvents name the rows an authorization decision reads back, so
+// rotation may not evict them.
+//
+// gateApprovalHolds refuses an approval whose graph-gate-approved row is
+// missing and treats it as forged. That made a rotating debug log an input to a
+// live decision, and rotation runs in whichever process appends, under a cap
+// that process supplies: one low-valued append from anything on the box
+// (`MUXCODE_LIFECYCLE_LOG_MAX=1 muxcode …`) invalidated every outstanding
+// approval and erased the record of it happening, in one move. Preserving these
+// rows is what keeps the audit horizon out of a caller's hands (MUX-144).
+var lifecycleAuditEvents = map[string]bool{"graph-gate-approved": true}
+
+// rotateLifecycleLog truncates the log file to keep the last maxEntries lines,
+// plus every older audit row. Audit rows cannot be capped by count: an older
+// row may still be the evidence for a pending approval.
 func rotateLifecycleLog(path string, maxEntries int) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -275,8 +311,8 @@ func rotateLifecycleLog(path string, maxEntries int) {
 		return
 	}
 
-	// Keep only the last maxEntries lines
-	keep := lines[len(lines)-maxEntries:]
+	cut := len(lines) - maxEntries
+	keep := append(retainAuditLines(lines[:cut]), lines[cut:]...)
 	var out []byte
 	for _, line := range keep {
 		out = append(out, line...)
@@ -284,4 +320,20 @@ func rotateLifecycleLog(path string, maxEntries int) {
 	}
 
 	_ = os.WriteFile(path, out, 0644)
+}
+
+// retainAuditLines returns every audit row among evicted lines. These rows are
+// authorization evidence, so retaining only the newest max rows could evict
+// evidence for an older approval that is still pending.
+func retainAuditLines(lines [][]byte) [][]byte {
+	kept := [][]byte{}
+	for _, line := range lines {
+		var e struct {
+			Event string `json:"event"`
+		}
+		if json.Unmarshal(line, &e) == nil && lifecycleAuditEvents[e.Event] {
+			kept = append(kept, line)
+		}
+	}
+	return kept
 }

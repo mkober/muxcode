@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +27,7 @@ func TestNewOllamaClient(t *testing.T) {
 }
 
 func TestChatComplete_SimpleResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
 		}
@@ -59,6 +58,7 @@ func TestChatComplete_SimpleResponse(t *testing.T) {
 	defer server.Close()
 
 	client := NewOllamaClient(server.URL, "test-model")
+	client.HTTP = server.Client()
 	resp, err := client.ChatComplete(context.Background(), []ChatMessage{{Role: "user", Content: "Hello"}}, nil)
 	if err != nil {
 		t.Fatalf("ChatComplete: %v", err)
@@ -72,7 +72,7 @@ func TestChatComplete_SimpleResponse(t *testing.T) {
 }
 
 func TestChatComplete_WithToolCalls(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := ChatResponse{
 			Choices: []ChatChoice{
 				{
@@ -97,6 +97,7 @@ func TestChatComplete_WithToolCalls(t *testing.T) {
 	defer server.Close()
 
 	client := NewOllamaClient(server.URL, "test-model")
+	client.HTTP = server.Client()
 	resp, err := client.ChatComplete(context.Background(), []ChatMessage{{Role: "user", Content: "test"}}, nil)
 	if err != nil {
 		t.Fatalf("ChatComplete: %v", err)
@@ -111,13 +112,14 @@ func TestChatComplete_WithToolCalls(t *testing.T) {
 }
 
 func TestChatComplete_APIError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"error": {"message": "invalid model"}}`))
 	}))
 	defer server.Close()
 
 	client := NewOllamaClient(server.URL, "bad-model")
+	client.HTTP = server.Client()
 	_, err := client.ChatComplete(context.Background(), []ChatMessage{{Role: "user", Content: "test"}}, nil)
 	if err == nil {
 		t.Fatal("expected error for 400 response")
@@ -129,7 +131,7 @@ func TestChatComplete_APIError(t *testing.T) {
 
 func TestChatComplete_RetryOnServerError(t *testing.T) {
 	attempts := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		if attempts <= 2 {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -146,6 +148,7 @@ func TestChatComplete_RetryOnServerError(t *testing.T) {
 	defer server.Close()
 
 	client := NewOllamaClient(server.URL, "test-model")
+	client.HTTP = server.Client()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -163,7 +166,7 @@ func TestChatComplete_RetryOnServerError(t *testing.T) {
 
 func TestChatComplete_NoRetryOn400(t *testing.T) {
 	attempts := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`bad request`))
@@ -171,6 +174,7 @@ func TestChatComplete_NoRetryOn400(t *testing.T) {
 	defer server.Close()
 
 	client := NewOllamaClient(server.URL, "test-model")
+	client.HTTP = server.Client()
 	_, err := client.ChatComplete(context.Background(), []ChatMessage{{Role: "user", Content: "test"}}, nil)
 	if err == nil {
 		t.Fatal("expected error")
@@ -181,36 +185,39 @@ func TestChatComplete_NoRetryOn400(t *testing.T) {
 }
 
 func TestCheckHealth_ModelAvailable(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"models":[{"name":"qwen2.5-coder:7b"},{"name":"llama3:8b"}]}`))
 	}))
 	defer server.Close()
 
 	client := NewOllamaClient(server.URL, "qwen2.5-coder:7b")
+	client.HTTP = server.Client()
 	if err := client.CheckHealth(context.Background()); err != nil {
 		t.Fatalf("CheckHealth: %v", err)
 	}
 }
 
 func TestCheckHealth_FuzzyMatch(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"models":[{"name":"qwen2.5-coder:latest"}]}`))
 	}))
 	defer server.Close()
 
 	client := NewOllamaClient(server.URL, "qwen2.5-coder")
+	client.HTTP = server.Client()
 	if err := client.CheckHealth(context.Background()); err != nil {
 		t.Fatalf("CheckHealth fuzzy match: %v", err)
 	}
 }
 
 func TestCheckHealth_ModelNotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"models":[{"name":"llama3:8b"}]}`))
 	}))
 	defer server.Close()
 
 	client := NewOllamaClient(server.URL, "nonexistent-model")
+	client.HTTP = server.Client()
 	err := client.CheckHealth(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
@@ -221,12 +228,13 @@ func TestCheckHealth_ModelNotFound(t *testing.T) {
 }
 
 func TestCheckHealth_NoModels(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"models":[]}`))
 	}))
 	defer server.Close()
 
 	client := NewOllamaClient(server.URL, "any-model")
+	client.HTTP = server.Client()
 	err := client.CheckHealth(context.Background())
 	if err == nil {
 		t.Fatal("expected error")

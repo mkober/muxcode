@@ -2,7 +2,6 @@ package bus
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,7 +126,7 @@ func writeTempAttachment(t *testing.T, name string) string {
 
 func TestConfluenceUploadAttachment_Create(t *testing.T) {
 	var postPath, contentType, token string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			// no existing attachment with this filename
 			w.WriteHeader(200)
@@ -163,7 +162,7 @@ func TestConfluenceUploadAttachment_Create(t *testing.T) {
 
 func TestConfluenceUploadAttachment_UpdateExisting(t *testing.T) {
 	var postPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.WriteHeader(200)
 			_, _ = w.Write([]byte(`{"results":[{"id":"existing99"}]}`))
@@ -197,7 +196,7 @@ func TestConfluenceUploadAttachment_MissingConfig(t *testing.T) {
 
 func TestJiraUploadAttachment(t *testing.T) {
 	var path, token string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newAtlassianPipeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path = r.URL.Path
 		token = r.Header.Get("X-Atlassian-Token")
 		w.WriteHeader(200)

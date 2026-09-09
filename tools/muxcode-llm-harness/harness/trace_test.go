@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,7 +50,7 @@ func findOutcome(entries []TraceEntry, outcome string) []TraceEntry {
 // observe.
 func TestProcessBatch_TraceDistinguishesRejectedFromAccepted(t *testing.T) {
 	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		var resp ChatResponse
 		switch callCount {
@@ -72,6 +71,7 @@ func TestProcessBatch_TraceDistinguishesRejectedFromAccepted(t *testing.T) {
 	cfg := Config{Role: "review", Session: "test", BusDir: dir, MaxTurns: 10}
 
 	ollama := NewOllamaClient(server.URL, "test-model")
+	ollama.HTTP = server.Client()
 	executor := NewExecutor([]string{"Bash(echo *)"})
 	tools := BuildToolDefs([]string{"Bash(echo *)"})
 	filter := NewFilter("review")
@@ -126,7 +126,7 @@ func TestProcessBatch_TraceDistinguishesRejectedFromAccepted(t *testing.T) {
 // attributes every turn AND names the exhaustion itself.
 func TestProcessBatch_TraceNamesExhaustion(t *testing.T) {
 	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		var req ChatRequest
 		json.NewDecoder(r.Body).Decode(&req)
@@ -149,6 +149,7 @@ func TestProcessBatch_TraceNamesExhaustion(t *testing.T) {
 	cfg := Config{Role: "review", Session: "test", BusDir: dir, MaxTurns: 3}
 
 	ollama := NewOllamaClient(server.URL, "test-model")
+	ollama.HTTP = server.Client()
 	executor := NewExecutor([]string{"Bash(echo *)"})
 	tools := BuildToolDefs([]string{"Bash(echo *)"})
 	filter := NewFilter("review")
@@ -186,7 +187,7 @@ func TestProcessBatch_TraceNamesExhaustion(t *testing.T) {
 // number of model calls.
 func TestProcessBatch_TracingOffNoFile(t *testing.T) {
 	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		var resp ChatResponse
 		if callCount == 1 {
@@ -204,6 +205,7 @@ func TestProcessBatch_TracingOffNoFile(t *testing.T) {
 	cfg := Config{Role: "review", Session: "test", BusDir: dir, MaxTurns: 10}
 
 	ollama := NewOllamaClient(server.URL, "test-model")
+	ollama.HTTP = server.Client()
 	executor := NewExecutor([]string{"Bash(echo *)"})
 	tools := BuildToolDefs([]string{"Bash(echo *)"})
 	filter := NewFilter("review")

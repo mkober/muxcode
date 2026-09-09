@@ -64,6 +64,13 @@ pass=0; fail=0
 ok()  { echo "  ${GREEN}PASS${NC}  $*"; pass=$((pass + 1)); }
 bad() { echo "  ${RED}FAIL${NC}  $*"; fail=$((fail + 1)); dump_diag; }
 
+# Releasing a gate needs an authorized actor that did not create the run
+# (MUX-144). This stands in for the human at the CLI, under an identity no agent
+# can hold, so the self-approval rule cannot collide with whoever runs the script.
+# The opt-in itself goes into a scratch HOME below, not this environment: the
+# authority is read from the config file, and the daemon seals it at startup.
+approve_gate() { AGENT_ROLE=test-approver "$MUX" graph approve "$@"; }
+
 # dump_diag — on the FIRST failure, dump every run's node states and the
 # task store before the scratch session is torn down: it is the only way
 # to tell "answer never correlated" from "routing fired but the target
@@ -87,6 +94,9 @@ BD="/tmp/muxcode-bus-${BUS_SESSION}"
 WORK="/tmp/multiphase-work-$$"
 REPO="$WORK/repo"
 mkdir -p "$REPO/docs/requirements/drafts"
+export HOME="$WORK/home"
+mkdir -p "$HOME/.config/muxcode"
+echo "MUXCODE_GATE_AUTHORITY_ROLES=test-approver" > "$HOME/.config/muxcode/config"
 # The fixture repo is a REAL git repo: spawn nodes cut worktrees from the
 # daemon's CWD repo, and the harvest diffs/applies between worktree and
 # checkout. Worktrees land under the OS temp dir (SpawnWorktreeBase).
@@ -346,7 +356,7 @@ for phase in 1 2 3; do
   wait_and_answer plan g-verify || bad "phase $phase: update-spec never dispatched"
   wait_node_state "$RID" phase-gate waiting || bad "phase $phase: gate never waited"
   # Per-commit approval is real: each pass must demand its own approval.
-  "$MUX" graph approve "$RID" phase-gate >/dev/null 2>&1 || bad "phase $phase: approve failed"
+  approve_gate "$RID" phase-gate >/dev/null 2>&1 || bad "phase $phase: approve failed"
   wait_and_answer commit g-commit || bad "phase $phase: commit never dispatched"
   COMMITS+=("$CAPTURED")
 done
@@ -366,7 +376,7 @@ push_reqs="$(AGENT_ROLE=commit "$MUX" inbox --peek 2>/dev/null | grep -c 'Push a
 [ "$push_reqs" -eq 0 ] && ok "nothing pushed before the final gate" \
   || bad "push dispatched before final-gate approval"
 
-"$MUX" graph approve "$RID" final-gate >/dev/null 2>&1 || bad "final-gate approve failed"
+approve_gate "$RID" final-gate >/dev/null 2>&1 || bad "final-gate approve failed"
 wait_and_answer commit g-commit || bad "push-pr never dispatched after final approval"
 case "$CAPTURED" in
   *"Push and open"*) ok "final approval released push+PR" ;;
@@ -397,7 +407,7 @@ RID3="$("$MUX" graph run --file "$WORK/multiphase.json" 2>&1 | grep -o 'Started 
 wait_and_answer edit g-edit; wait_and_answer build g-build; wait_and_answer test g-test; wait_and_answer review g-review
 wait_and_answer plan g-verify   # answered WITHOUT checking anything off
 wait_node_state "$RID3" phase-gate waiting || bad "stuck run: gate never waited"
-"$MUX" graph approve "$RID3" phase-gate >/dev/null 2>&1
+approve_gate "$RID3" phase-gate >/dev/null 2>&1
 if wait_node_state "$RID3" stuck-gate waiting; then
   ok "incomplete phase declined its commit into the stuck gate (gate-and-ask)"
 else
@@ -486,7 +496,7 @@ wait_and_answer review g-review || bad "spawn run: review never dispatched"
 complete_current_phase
 wait_and_answer plan g-verify || bad "spawn run: update-spec never dispatched"
 wait_node_state "$RID_S" phase-gate waiting || bad "spawn run: gate never waited"
-"$MUX" graph approve "$RID_S" phase-gate >/dev/null 2>&1 || bad "spawn run: approve failed"
+approve_gate "$RID_S" phase-gate >/dev/null 2>&1 || bad "spawn run: approve failed"
 if wait_request commit g-commit; then
   # The gated commit ships EXACTLY the ported file. Committing more (the
   # dirty fixture spec) would leave the tip a superset of the worktree,
@@ -543,10 +553,10 @@ wait_and_answer review g-review || bad "spawn run: phase-2 review never dispatch
 complete_current_phase
 wait_and_answer plan g-verify || bad "spawn run: phase-2 update-spec never dispatched"
 wait_node_state "$RID_S" phase-gate waiting || bad "spawn run: phase-2 gate never waited"
-"$MUX" graph approve "$RID_S" phase-gate >/dev/null 2>&1 || bad "spawn run: phase-2 approve failed"
+approve_gate "$RID_S" phase-gate >/dev/null 2>&1 || bad "spawn run: phase-2 approve failed"
 wait_and_answer commit g-commit || bad "spawn run: phase-2 commit never dispatched"
 wait_node_state "$RID_S" final-gate waiting || bad "spawn run: final gate never waited"
-"$MUX" graph approve "$RID_S" final-gate >/dev/null 2>&1 || bad "spawn run: final approve failed"
+approve_gate "$RID_S" final-gate >/dev/null 2>&1 || bad "spawn run: final approve failed"
 wait_and_answer commit g-commit || bad "spawn run: push-pr never dispatched"
 
 done_ok=0
@@ -637,7 +647,7 @@ wait_and_answer review g-review || bad "replacement-control: review never dispat
 complete_current_phase
 wait_and_answer plan g-verify || bad "replacement-control: update-spec never dispatched"
 wait_node_state "$RID_R" phase-gate waiting || bad "replacement-control: gate never waited"
-"$MUX" graph approve "$RID_R" phase-gate >/dev/null 2>&1 || bad "replacement-control: approve failed"
+approve_gate "$RID_R" phase-gate >/dev/null 2>&1 || bad "replacement-control: approve failed"
 wait_request commit g-commit || bad "replacement-control: commit never dispatched"
 # Kill the worker BEFORE the commit answer releases the loop back into
 # implement: re-entry then deterministically finds a dead worker.

@@ -236,7 +236,13 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 // announced: it already knows, and echoing them would put noise in the inbox on
 // every run it starts itself.
 func announceGraphAction(session, actor, event, detail string) {
-	LogLifecycle(session, "info", actor, event, detail)
+	announceGraphActionAt(session, actor, event, detail, time.Now().Unix())
+}
+
+// announceGraphActionAt records the action at a caller-supplied second, for an
+// action whose marker must carry the same instant as its audit row.
+func announceGraphActionAt(session, actor, event, detail string, ts int64) {
+	LogLifecycleAt(session, "info", actor, event, detail, ts)
 	if NormalizeBusRole(actor) == "edit" {
 		return
 	}

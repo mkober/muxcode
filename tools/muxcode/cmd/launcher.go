@@ -5,8 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
+	"github.com/mkober/muxcode/tools/muxcode/tui"
 )
 
 // RunLauncher handles the "muxcode launch" subcommand (or bare "muxcode" invocation).
@@ -82,14 +84,11 @@ func RunLauncher(args []string) {
 	// Re-load config from project dir (may have .muxcode/config)
 	bus.LoadShellConfig(projectDir)
 
-	fmt.Println()
-	fmt.Printf("  Project:  %s\n", projectDir)
-	fmt.Printf("  Session:  %s\n", sessionName)
-	fmt.Println()
+	fmt.Print(launchBanner(projectDir, sessionName, tui.TermWidth()))
 
 	// Attach to existing session if already running
 	if bus.TmuxHasSession(sessionName) {
-		fmt.Println("  Session already running — attaching...")
+		fmt.Printf("  %sSession already running — attaching...%s\n", tui.Yellow, tui.RST)
 		fmt.Println()
 		if err := bus.AttachToSession(sessionName); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -102,6 +101,67 @@ func RunLauncher(args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// launchBanner renders the project/session header in the palette the
+// provider and reload modals use: a bold purple label with the value in
+// foreground, two-space indent, blank lines above and below.
+//
+// Values are fitted to width because this renders inside the New Session
+// display-popup, whose width comes from the popup config rather than the
+// content — an unclamped absolute project path wrapped outside the popup
+// border. Width must come from tui.TermWidth (stty), not tput, which in a
+// popup reports the session's stale COLUMNS.
+func launchBanner(projectDir, session string, width int) string {
+	rows := []struct{ label, value string }{
+		{"Project:", abbrevHome(projectDir)},
+		{"Session:", session},
+	}
+	avail := width - len("  Project:  ")
+	if avail < 8 {
+		avail = 8
+	}
+	var b strings.Builder
+	b.WriteString("\n")
+	for _, r := range rows {
+		fmt.Fprintf(&b, "  %s%s%s%s  %s%s%s\n",
+			tui.Bold, tui.Purple, r.label, tui.RST,
+			tui.FG, fitPath(r.value, avail), tui.RST)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// fitPath shortens a value to w columns from the left, because the tail
+// of a project path is the part that identifies it — truncating the
+// right drops the project name and keeps only "/Users/...".
+func fitPath(s string, w int) string {
+	r := []rune(s)
+	if len(r) <= w || w < 2 {
+		return s
+	}
+	return "…" + string(r[len(r)-(w-1):])
+}
+
+// abbrevHome renders a path under the user's home as ~, the form the
+// popup has room for.
+//
+// The prefix must end on a separator: a bare string prefix also matches
+// a sibling directory, rendering /Users/alice-backup/proj as
+// ~-backup/proj for a user whose home is /Users/alice.
+func abbrevHome(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if p == home {
+		return "~"
+	}
+	prefix := strings.TrimSuffix(home, string(filepath.Separator)) + string(filepath.Separator)
+	if rest := strings.TrimPrefix(p, prefix); rest != p {
+		return "~" + string(filepath.Separator) + rest
+	}
+	return p
 }
 
 // pickProject runs the interactive project picker using fzf.

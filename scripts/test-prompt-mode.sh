@@ -331,6 +331,17 @@ else
     sleep 2
   done
   [ -n "$waiting" ] || skip "gate never reached waiting — approve checks not exercised"
+
+  # Since MUX-144 a gate is released only by an authorized approver, and the
+  # compiled default is the user alone. The prompt agent inherits the session's
+  # environment rather than this script's, so this reads the variable instead of
+  # setting it: with prompt unauthorized the approve intent is refused by
+  # design, and asserting a release would be asserting the hole is still open.
+  case ",${MUXCODE_GATE_AUTHORITY_ROLES:-},"  in
+    *,prompt,*) ;;
+    *) skip "approve intent: prompt holds no gate authority (MUX-144) — gate release not exercised"; waiting="" ;;
+  esac
+
   if [ -n "$waiting" ]; then
     run_id=$(muxcode graph status | grep "pm-gated" | head -1 | awk '{print $1}')
     MUXCODE_PROMPT_AUTHORITY_ROLES=edit muxcode send prompt prompt "approve whatever is waiting" >/dev/null 2>&1 || true

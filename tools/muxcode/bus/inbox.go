@@ -18,6 +18,17 @@ import (
 // of ErrInjectionSkipped). Match with errors.Is.
 var ErrSendSuppressed = errors.New("send suppressed as duplicate")
 
+// ErrSendChrome reports that a payload was a provider's rendered pane
+// furniture and was not delivered.
+//
+// It must be an error rather than a nil return for the same reason
+// ErrSendSuppressed is. The daemon's task-completion path does
+// `if err := Send(...); err != nil { continue }` and otherwise calls
+// CompleteTask, so a nil return here would drop the status line AND still
+// close the tracked task — leaving the exact false completion the drop
+// exists to prevent (MUX-154). Match with errors.Is.
+var ErrSendChrome = errors.New("send dropped as provider chrome")
+
 // IsAutoCCRole returns true if messages from this role are auto-CC'd to edit.
 func IsAutoCCRole(role string) bool {
 	return GetAutoCC()[role]
@@ -63,6 +74,30 @@ func SendNoCC(session string, m Message) error {
 // override.
 func SendForce(session string, m Message) error {
 	return sendMessage(session, m, true, true, false)
+}
+
+// dropsAsProviderChrome reports whether a message is a pane-derived status
+// line rather than composed text, and so must never reach an inbox.
+//
+// Such a payload does two kinds of damage. It closes the sender's tracked
+// task on work that never ran (MUX-154), and it lands in the recipient's
+// inbox, where an agent woken with nothing actionable left will paraphrase
+// it as its own answer. Live 2026-09-08: the build agent answered three
+// consecutive build requests by restating the test agent's status line,
+// reporting EXIT=0 for a build it never ran.
+//
+// The test is LooksLikeProviderChrome, not the broader console-history
+// predicate. Borrowing that one swallowed the launch-refusal alert, whose
+// text ends "relaunch: muxcode agent launch plan" — a real message naming
+// a banner phrase (TestRunAgentLaunch_RefusesWithoutDefinition caught it).
+// History rejects anything that is not a work result; the inbox may only
+// reject what is not composed text.
+//
+// Requests are exempt: none is generated from a pane scrape, and dropping
+// one would starve a sender waiting on it. Dropping a chrome response only
+// leaves its task open for the real answer, which is the correct outcome.
+func dropsAsProviderChrome(m Message) bool {
+	return m.Type != "request" && LooksLikeProviderChrome(m.Payload)
 }
 
 // isLoopingSelfSend reports whether a message is an accidental self-addressed
@@ -133,6 +168,13 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 		fmt.Fprintf(os.Stderr, "  [send] dropping self-addressed message %s→%s:%s (self-sends are not delivered)\n",
 			m.From, m.To, m.Action)
 		return nil
+	}
+
+	if dropsAsProviderChrome(m) {
+		fmt.Fprintf(os.Stderr, "  [send] dropping provider chrome %s→%s:%s (not a message)\n",
+			m.From, m.To, m.Action)
+		LogLifecycle(session, "info", "bus", "chrome-send-dropped", m.From)
+		return fmt.Errorf("%s→%s:%s is provider chrome, not a reply: %w", m.From, m.To, m.Action, ErrSendChrome)
 	}
 
 	// Git mutations are user-initiated — enforced HERE, at the one function every

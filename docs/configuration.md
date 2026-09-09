@@ -87,7 +87,8 @@ The pane is created **last** on each window so panes 0 and 1 keep their indices 
 | `MUXCODE_DELIVERY_ACK` | (unset → **ON**) | The **receipt-based delivery cutover** is now the **default**: agents self-poll their own inbox and the daemon's `checkPollHealth` receipt-gap backstop takes over, bypassing the pane-scrape delivery machinery (`checkIdleAgents`/`checkParkedInput`/`checkPaneSweep`). Set to `off`/`0`/`false`/`no` to opt out, or `on`/`1`/`true`/`yes` to pin it on. **Read at daemon startup** — for a live rollback with no restart use `muxcode delivery-ack off` (writes a `delivery-ack.off` marker the daemon re-reads every poll; `on` clears it). Default ON as a soak; physical removal of the bypassed machinery is still deferred (see [delivery-acknowledgement](requirements/completed/MUX-050-delivery-acknowledgement.md) and the [mis-fire limitation](requirements/backlog/MUX-012-remove-gated-pane-scrape-delivery.md)) |
 | `MUXCODE_DELIVERY_ACK_DISABLE` | (unset) | Hard kill switch — set to `1` to force the old pane-scrape delivery path even though the cutover is now on by default. Highest-precedence rollback valve (needs a daemon restart); for an instant restart-free rollback use `muxcode delivery-ack off` instead |
 | `MUXCODE_COMMIT_AUTHORITY_ROLES` | `edit` | Comma-separated roles allowed to request a git mutation (`commit`, `stage`, `push`, `merge`, `rebase`, `tag`) from the commit agent — a send from any other role is rejected at the bus. **Not bypassable with `--force`.** Set to `edit,auto` to let the autonomous story-lifecycle agent commit by design; set to the empty string to deny every role, including edit. The commit agent's read-only `pr-read` action is never gated |
-| `MUXCODE_ATLASSIAN_AUTHORITY_ROLES` | `edit` | Comma-separated roles allowed to **write** to Jira and Confluence — mutating `muxcode atlassian` subcommands (`jira update`, `comment`, `link`, `transition`, `create-subtask`, `confluence update`, …) and mutating Atlassian MCP tools. Reads (`read`, `comments`, `search`, `link-types`, `transitions`) stay open to every role. Set to `edit,auto` to let the autonomous story-lifecycle agent transition issues by design; set to the **empty string to deny every role**, including edit — the right setting where the tracker is strictly human-owned. A request from the user's own shell (no agent role) is never gated |
+| `MUXCODE_ATLASSIAN_AUTHORITY_ROLES` | `plan` | Comma-separated roles allowed to **write** to Jira and Confluence — mutating `muxcode atlassian` subcommands (`jira update`, `comment`, `link`, `transition`, `create-subtask`, `confluence update`, …) and mutating Atlassian MCP tools. Reads (`read`, `comments`, `search`, `link-types`, `transitions`) stay open to every role. The default moved from `edit` to `plan` when plan took ownership of the shared written artifacts (`atlassianAuthorityDefault`, pinned by `TestAtlassianAuthorityDefault`); plan writes only on an explicit user-initiated request relayed from edit. Set to `plan,auto` to let the autonomous story-lifecycle agent transition issues by design; set to the **empty string to deny every role**, including plan — the right setting where the tracker is strictly human-owned. A request from the user's own shell (no agent role) is never gated |
+| `MUXCODE_GATE_AUTHORITY_ROLES` | `user` | Comma-separated actors allowed to release a `wait_human` graph gate (`muxcode graph approve`, or the graph TUI). Default: the user alone — no agent. **Read from this config file only; the process environment is deliberately ignored** (`GateAuthorityConfigured`), so an agent cannot widen the list by prefixing the variable to the command it was just refused — but the file itself is agent-writable (the read walks a fixed path list — `.muxcode/config`, then `~/.config/muxcode/config` — and ignores `$MUXCODE_CONFIG` since `31a2ca4`), so this **narrows** the bypass rather than closing it; daemon-side authority is the open MUX-144 step (review P1). Set to `user,auto` to let an unattended arc release its own gates — an agent approving a gate on a run **it created** is refused regardless of the list. Set to the empty string to deny every actor, which parks every run at its first gate. Since `c4997ed` the **daemon seals the list at startup** (`SealGateAuthority`, lifecycle `gate-authority-sealed`): a file edited mid-session may narrow the live authority but never widen it, and `gateApprovalHolds` re-decides every release daemon-side — landed **unverified** (MUX-157), so MUX-144 still lists the step as open |
 
 ### Claude model selection
 
@@ -334,6 +335,34 @@ A build with no stamp is not broken: `bus/version.go` falls back to Go's embedde
 (`debug.ReadBuildInfo`) and then to `devel`, so the version is never empty. Such a build is
 **unrankable** by `--at-least`, which exits `2` rather than `1` — see
 `scripts/lib/muxcode-version.sh` for the shared way integration scripts handle that third state.
+
+### Releases
+
+Releases are cut by two GitHub workflows; neither takes a runtime setting, but the way they connect is
+easy to get wrong, so it is recorded here.
+
+| Trigger | Workflow | What happens |
+|---------|----------|--------------|
+| A `v*` tag is pushed | `.github/workflows/release.yml` | `./test.sh` gate → darwin/linux × amd64/arm64 builds stamped with the tag via `make build VERSION=<tag>` → `sha256sums.txt` → `gh release create --generate-notes`, with notes bucketed by `.github/release.yml` |
+| A PR is merged | `.github/workflows/auto-release.yml` | Computes the next `vX.Y.Z` patch from the latest release tag, tags the merge commit, then runs `release.yml` via **`workflow_call`** |
+| An already-pushed tag needs a release (it predates the workflow, or a run failed) | `gh workflow run release.yml -f tag=vX.Y.Z` | Publishes that tag without re-tagging |
+
+Three details carry the design:
+
+- **`auto-release.yml` calls `release.yml` instead of relying on the `v*` push trigger** because a tag
+  pushed with `GITHUB_TOKEN` raises no workflow event — the tag would land and nothing would build.
+- **It runs on `pull_request` / `closed`, not on push to `main`,** so the PR's labels are on the payload.
+  A direct push to `main` therefore cuts no release. It runs under a `concurrency` group so simultaneous
+  merges cannot compute the same next tag.
+- **Label a PR `skip-changelog` to cut no release.** Docs and backlog churn carry it, so the version
+  tracks shipped code. `bash scripts/release-labels.sh` creates the five labels `.github/release.yml`
+  reads — `breaking`, `type:feature`, `type:defect`, `docs` to bucket the notes, and `skip-changelog` to
+  exclude a PR — idempotently (`gh label create --force`); it is a GitHub mutation, so it is routed
+  through the commit agent.
+
+Manual tagging remains user-approved and goes through the commit agent. Automatic patch releases
+replaced the earlier rule that *all* tagging was user-approved (2026-09-04, user-directed). Design and
+history: [MUX-138](requirements/backlog/MUX-138-github-versioning-releases.md).
 
 ## Claude Code Permissions
 

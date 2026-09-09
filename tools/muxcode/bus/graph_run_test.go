@@ -494,6 +494,7 @@ func TestCreateGraphRunSilentWhenEditLaunches(t *testing.T) {
 }
 
 func TestApproveGraphGateRecordsAndAnnouncesApprover(t *testing.T) {
+	pinCompiledAuthorities(t)
 	pinActor(t, "")
 	run := createTestRun(t, actorGateGraph())
 
@@ -526,10 +527,54 @@ func TestApproveGraphGateRecordsAndAnnouncesApprover(t *testing.T) {
 	}
 }
 
-// Negative control for TestApproveGraphGateRecordsAndAnnouncesApprover.
-func TestApproveGraphGateSilentWhenEditApproves(t *testing.T) {
-	pinActor(t, "edit")
+// gateApprovalHolds pairs a marker with its audit row on the second, so the two
+// writers in ApproveGraphGate must share one clock reading. With a reading each
+// — a bus send and a log rotation pass sit between them — a genuine approval
+// that straddled a second boundary was refused as forged and purged. That race
+// reproduces only when the clock cooperates, so it is pinned on the invariant
+// instead: what ApproveGraphGate writes must satisfy the check that reads it.
+func TestApproveGraphGateStampsMarkerAndAuditAlike(t *testing.T) {
+	pinCompiledAuthorities(t)
+	pinActor(t, "")
 	run := createTestRun(t, actorGateGraph())
+
+	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
+		t.Fatalf("ApproveGraphGate: %v", err)
+	}
+
+	marker, err := os.ReadFile(graphApprovalPath(runTestSession, run.ID, "gate", "approved"))
+	if err != nil {
+		t.Fatalf("read approval marker: %v", err)
+	}
+	if !approvalHasAudit(runTestSession, run.ID, "gate", ActorUser, marker) {
+		t.Error("ApproveGraphGate's own approval fails approvalHasAudit — marker and audit row disagree")
+	}
+
+	// Negative control: without it an approvalHasAudit hardcoded to true, or one
+	// that never compared the second, would pass the assertion above.
+	var m struct {
+		ApprovedAt int64 `json:"approved_at"`
+	}
+	if err := json.Unmarshal(marker, &m); err != nil {
+		t.Fatalf("unmarshal marker: %v", err)
+	}
+	skewed := []byte(fmt.Sprintf(`{"approved_at":%d,"approved_by":%q}`, m.ApprovedAt+1, ActorUser))
+	if approvalHasAudit(runTestSession, run.ID, "gate", ActorUser, skewed) {
+		t.Error("a marker one second off its audit row passed — the pairing is not being checked")
+	}
+}
+
+// Negative control for TestApproveGraphGateRecordsAndAnnouncesApprover.
+//
+// Edit is opted into the gate authority here, and the run is created by someone
+// else, because the compiled default admits no agent and no agent may approve
+// its own run (MUX-144 Phase 2). The subject is who hears about a release, not
+// who may make one.
+func TestApproveGraphGateSilentWhenEditApproves(t *testing.T) {
+	pinGateAuthorityConfig(t, "user,edit")
+	pinActor(t, "")
+	run := createTestRun(t, actorGateGraph())
+	pinActor(t, "edit")
 
 	if err := ApproveGraphGate(runTestSession, run.ID, "gate"); err != nil {
 		t.Fatalf("ApproveGraphGate: %v", err)

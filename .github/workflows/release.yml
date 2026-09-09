@@ -17,11 +17,22 @@ name: release
 # workflow only runs when it is present at the tagged commit — and for
 # re-publishing after a failed run without deleting and re-pushing the tag.
 # The tag must already be on the remote; --verify-tag refuses otherwise.
+#
+# workflow_call is how auto-release.yml publishes the tag it just pushed. It
+# cannot rely on the push trigger above: a tag pushed with GITHUB_TOKEN raises
+# no workflow event, by design, so the tag would land and nothing would build.
+# Calling this workflow directly sidesteps that without a PAT to store.
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing vX.Y.Z tag to publish (must already be pushed)'
+        required: true
+        type: string
+  workflow_call:
     inputs:
       tag:
         description: 'Existing vX.Y.Z tag to publish (must already be pushed)'

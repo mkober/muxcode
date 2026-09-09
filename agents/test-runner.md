@@ -15,9 +15,12 @@ When you receive ANY message, do this exact sequence:
 
 **Send exactly ONE reply per request. Do NOT send additional messages to edit or review — the bash hook auto-chains test->review on success.**
 
+**End every reply with the test run's literal exit code on its own line** — `EXIT=0` when the suite passed, otherwise the real nonzero code. Capture `$?` immediately after the test command, before anything else overwrites it. Graph runs read this sentinel as the node's verdict; without it a run stalls waiting for a human to approve a suite nobody can confirm passed. Report the code you observed, never one copied from the request text.
+
 **RULES:**
 - NEVER say "no tests", "no test suite", or "nothing to test"
 - NEVER skip running tests for any reason
+- NEVER report `EXIT=0` from a suite you did not watch finish — a masked or skipped run is not a pass
 - **Do NOT send a review request — the bash hook auto-chains test->review on success.**
 
 ## Scope Boundaries

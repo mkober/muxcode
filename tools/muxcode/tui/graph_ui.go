@@ -34,7 +34,8 @@ const (
 const graphTickInterval = 2 * time.Second
 
 // LoadGraphSnapshot reads one run's store: metadata, frozen definition,
-// node statuses, and the spawn-worktree enrichment for worker nodes.
+// node statuses, unverified-hold marks, and the spawn-worktree enrichment
+// for worker nodes.
 func LoadGraphSnapshot(session, runID string) (GraphSnapshot, error) {
 	run, err := bus.ReadGraphRun(session, runID)
 	if err != nil {
@@ -49,6 +50,12 @@ func LoadGraphSnapshot(session, runID string) (GraphSnapshot, error) {
 		return GraphSnapshot{}, err
 	}
 	snap := GraphSnapshot{Run: run, Graph: g, Statuses: statuses}
+	for _, h := range bus.ListUnverifiedHolds(session, runID) {
+		if snap.Held == nil {
+			snap.Held = make(map[string]bool)
+		}
+		snap.Held[h.NodeID] = true
+	}
 	if entries, err := bus.ReadSpawnEntries(session); err == nil {
 		for _, e := range entries {
 			if e.Worktree == "" {
@@ -342,6 +349,19 @@ type GraphUI struct {
 	loadErr error
 	keyCh   chan byte
 	now     func() time.Time
+
+	// size reports the pane's width and height; nil means read the
+	// terminal. Injected by tests, which have no tty to measure.
+	size func() (int, int)
+}
+
+// paneSize is the pane's current dimensions, read fresh at each call so
+// a resize between frame and keypress is seen.
+func (ui *GraphUI) paneSize() (int, int) {
+	if ui.size != nil {
+		return ui.size()
+	}
+	return termWidth(), termHeight()
 }
 
 // graphSurfaces is the Tab cycle order over the top-level views — it
@@ -906,10 +926,13 @@ func (ui *GraphUI) requestApprove() {
 		nodeID := ui.selectedNode()
 		for i := range ui.snap.Graph.Nodes {
 			n := &ui.snap.Graph.Nodes[i]
-			if n.ID != nodeID || n.Type != bus.NodeWaitHuman {
+			if n.ID != nodeID {
 				continue
 			}
-			if ui.snap.nodeState(nodeID) != bus.GraphNodeWaiting {
+			// A held node is a send in Done, so gate-shaped tests reject the
+			// very node stopping the run.
+			gate := n.Type == bus.NodeWaitHuman && ui.snap.nodeState(nodeID) == bus.GraphNodeWaiting
+			if !gate && !ui.snap.isHeld(nodeID) {
 				return
 			}
 			releases, mutating := GateDownstream(ui.snap.Graph, nodeID)
@@ -1105,9 +1128,19 @@ func (ui *GraphUI) beginIntent(name string, g *bus.Graph) {
 	ui.view = viewGraphSpecConfirm
 }
 
+// specSuggestLimit caps the ids named per group. Every open spec in the
+// repo is two dozen and growing; naming them all is what made this hint
+// a single line wider than any pane.
+const specSuggestLimit = 10
+
 // specChoiceHint explains an unusable pointer and, when none is set,
 // names the specs available so the choice can be made without leaving
 // the launcher to go hunting for paths.
+//
+// It names ids, not paths, because the field beneath it takes an id —
+// listing paths asked the reader to translate before typing. Drafts are
+// listed apart from backlog: a draft is work already in flight and is
+// nearly always the intended answer.
 func specChoiceHint(session string, cause error) string {
 	if !errors.Is(cause, bus.ErrNoActiveSpec) {
 		return cause.Error()
@@ -1116,17 +1149,52 @@ func specChoiceHint(session string, cause error) string {
 	if err != nil {
 		return "no active spec set, and none to choose from: " + err.Error()
 	}
-	paths := make([]string, 0, len(choices))
+	var drafts, backlog []string
 	for _, c := range choices {
-		paths = append(paths, c.Path)
+		if c.Dir == "drafts" {
+			drafts = append(drafts, c.Key)
+			continue
+		}
+		backlog = append(backlog, c.Key)
 	}
-	return "no active spec set — `muxcode spec set <path>` with one of: " + strings.Join(paths, ", ")
+	hint := "no active spec set — type a spec id below, or describe the work"
+	if line := specGroupLine("in progress", drafts); line != "" {
+		hint += "\n" + line
+	}
+	if line := specGroupLine("backlog", backlog); line != "" {
+		hint += "\n" + line
+	}
+	return hint
+}
+
+// specGroupLine renders one labelled id group, capped, with the elided
+// count named so a short list is never mistaken for the whole set.
+func specGroupLine(label string, keys []string) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	shown, extra := keys, 0
+	if len(shown) > specSuggestLimit {
+		extra = len(shown) - specSuggestLimit
+		shown = shown[:specSuggestLimit]
+	}
+	line := label + ": " + strings.Join(shown, "  ")
+	if extra > 0 {
+		line += fmt.Sprintf("  (+%d more)", extra)
+	}
+	return line
 }
 
 // handleSpecConfirmKey resolves the branch-derived launch: Enter/y
 // confirms, e edits the derived intent in the free-text prompt (whose
 // launch still runs the confirm path and whose hint states the pointer
 // consequence), n/Esc/q cancels to the picker.
+//
+// When the pane is too short to show what confirming does, bare Enter
+// stops confirming and only an explicit y does — a deliberate keystroke
+// rather than the one already under the finger from the previous frame.
+// The size is read here, not from the drawn frame, because the pane can
+// be resized between the two.
 func (ui *GraphUI) handleSpecConfirmKey(key byte) string {
 	switch key {
 	case 'n', 'q', 27:
@@ -1140,10 +1208,23 @@ func (ui *GraphUI) handleSpecConfirmKey(key byte) string {
 		ui.intentHint = plainActiveSpecChange(ui.pendingActive, ui.pendingSpec.Path)
 		ui.specErr = ""
 		ui.view = viewGraphIntent
-	case 'y', 10, 13:
+	case 10, 13:
+		if ui.specConfirmTruncated() {
+			ui.specErr = "consequence not visible at this pane size — press y to launch anyway, or resize"
+			return ""
+		}
+		ui.confirmBranchSpec(ui.pendingSpec.Intent)
+	case 'y':
 		ui.confirmBranchSpec(ui.pendingSpec.Intent)
 	}
 	return ""
+}
+
+// specConfirmTruncated reports whether the confirm frame at the pane's
+// current size hides what confirming does.
+func (ui *GraphUI) specConfirmTruncated() bool {
+	w, h := ui.paneSize()
+	return SpecConfirmTooShort(ui.pendingSpec, ui.pendingActive, ui.specErr, w, h)
 }
 
 // confirmBranchSpec re-resolves the active spec before acting: the
@@ -1326,16 +1407,25 @@ func (ui *GraphUI) launchGraph(g *bus.Graph, template, intent string) {
 		ui.view = viewGraphTemplates
 		return
 	}
-	if full, ok := bus.ExpandIntentKeyFor(ui.session, intent); ok {
-		intent = full // "115" / "mux-115" → key + spec title + first open phase
-	}
 	if v := g.Validate(); !v.OK() {
 		ui.tmplErr = v.Format()
 		ui.view = viewGraphTemplates
 		return
 	}
+	pick, err := bus.PointSpecForLaunch(ui.session, g, intent)
+	if err != nil {
+		ui.tmplErr = err.Error()
+		ui.view = viewGraphTemplates
+		return
+	}
+	if pick.Path != "" {
+		intent = pick.Intent // the spec just selected describes the run
+	} else if full, ok := bus.ExpandIntentKeyFor(ui.session, intent); ok {
+		intent = full // "115" / "mux-115" → key + spec title + first open phase
+	}
 	run, err := bus.CreateGraphRun(ui.session, g, template, intent)
 	if err != nil {
+		bus.UnpointSpecForLaunch(ui.session, pick)
 		ui.tmplErr = err.Error()
 		ui.view = viewGraphTemplates
 		return
@@ -1355,6 +1445,8 @@ func (ui *GraphUI) launchGraph(g *bus.Graph, template, intent string) {
 	ui.dagScroll = 0
 	if w := bus.UnscopedPhaseGuardWarning(g, intent); w != "" {
 		ui.notice = "⚠ " + w
+	} else if pick.Path != "" {
+		ui.notice = "Active spec set: " + pick.Path
 	}
 	ui.view = viewGraphDAG
 	ui.refresh()
@@ -1473,8 +1565,7 @@ func (ui *GraphUI) enter() {
 
 // render builds the frame for the current view, footer included.
 func (ui *GraphUI) render() string {
-	W := termWidth()
-	H := termHeight()
+	W, H := ui.paneSize()
 
 	var frame, footer string
 	switch ui.view {
@@ -1505,12 +1596,16 @@ func (ui *GraphUI) render() string {
 		footer = fmt.Sprintf("  %stype%s Jump  %s↑↓/jk%s Navigate  %sEnter%s Launch  %sq/Esc%s Back",
 			Yellow, RST, Yellow, RST, Yellow, RST, Yellow, RST)
 	case viewGraphIntent:
-		frame = RenderIntentPromptFrame(ui.pendingTemplate, string(ui.intentInput), ui.intentHint,
-			TemplateIntentIsSpec(ui.pendingGraph), W)
+		frame = RenderIntentPromptFrameH(ui.pendingTemplate, string(ui.intentInput), ui.intentHint,
+			TemplateIntentIsSpec(ui.pendingGraph), W, H)
 		footer = fmt.Sprintf("  %sEnter%s Launch  %sEsc%s Cancel", Yellow, RST, Yellow, RST)
 	case viewGraphSpecConfirm:
-		frame = RenderSpecConfirmFrame(ui.pendingTemplate, ui.pendingSpec, ui.pendingActive, ui.specErr, W)
-		footer = fmt.Sprintf("  %sEnter/y%s Yes  %se%s Edit intent  %sn/Esc%s Cancel", Yellow, RST, Yellow, RST, Yellow, RST)
+		frame = RenderSpecConfirmFrameH(ui.pendingTemplate, ui.pendingSpec, ui.pendingActive, ui.specErr, W, H)
+		confirmKeys := "Enter/y"
+		if SpecConfirmTooShort(ui.pendingSpec, ui.pendingActive, ui.specErr, W, H) {
+			confirmKeys = "y"
+		}
+		footer = fmt.Sprintf("  %s%s%s Yes  %se%s Edit intent  %sn/Esc%s Cancel", Yellow, confirmKeys, RST, Yellow, RST, Yellow, RST)
 	case viewGraphGates:
 		frame = RenderGateQueueFrameH(ui.gates, ui.resolvedGates, W, H, ui.gateIdx, ui.gateHistScroll)
 		footer = fmt.Sprintf("  %s↑↓/jk%s Navigate  %sEnter/a%s Approve  %sR%s Refresh  %sq/Esc%s Back",

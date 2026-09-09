@@ -1,12 +1,33 @@
 package bus
 
 import (
+	"errors"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
+
+// withAnsweredSessions makes the tmux probe answer authoritatively with
+// the given names, so a session absent from that list is POSITIVELY
+// absent and cleanup may proceed.
+//
+// Every test that expects removal must call it. isTmuxSessionAlive no
+// longer reads an unanswerable probe as absence, and a test process often
+// cannot reach a tmux server at all — so these tests were previously
+// relying on the real tmux failing. That accidental coupling is exactly
+// what deleted a live session's bus directory on 2026-09-08; naming the
+// answer here makes the dependency explicit instead of ambient.
+func withAnsweredSessions(t *testing.T, names ...string) {
+	t.Helper()
+	orig := tmuxSessionNames
+	tmuxSessionNames = func() ([]string, error) { return names, nil }
+	t.Cleanup(func() { tmuxSessionNames = orig })
+}
 
 func TestCleanupResult_TotalItems(t *testing.T) {
 	r := &CleanupResult{
@@ -32,6 +53,8 @@ func TestCleanupStale_DryRun(t *testing.T) {
 	tmpDir := t.TempDir()
 	SetBusDirBase(tmpDir)
 	defer ResetBusDirBase()
+
+	withAnsweredSessions(t) // server answers: no sessions, so stale123 is absent
 
 	// Create stale session artifacts — session "stale123" has no tmux session
 	busDir := filepath.Join(tmpDir, "muxcode-bus-stale123")
@@ -80,6 +103,8 @@ func TestCleanupStale_Removes(t *testing.T) {
 	tmpDir := t.TempDir()
 	SetBusDirBase(tmpDir)
 	defer ResetBusDirBase()
+
+	withAnsweredSessions(t) // server answers: no sessions, so gone456 is absent
 
 	// Create stale artifacts
 	busDir := filepath.Join(tmpDir, "muxcode-bus-gone456")
@@ -132,6 +157,8 @@ func TestCleanupStale_AllIncludesCurrent(t *testing.T) {
 	tmpDir := t.TempDir()
 	SetBusDirBase(tmpDir)
 	defer ResetBusDirBase()
+
+	withAnsweredSessions(t) // server answers: no sessions, so current is absent
 
 	busDir := filepath.Join(tmpDir, "muxcode-bus-current")
 	os.MkdirAll(busDir, 0o755)
@@ -211,21 +238,119 @@ func TestShouldClean_CurrentSession(t *testing.T) {
 }
 
 func TestShouldClean_CurrentSessionWithAll(t *testing.T) {
-	// Current session with --all: cleaned if tmux session not alive
-	// (in tests, no tmux session exists, so this returns true)
+	withAnsweredSessions(t)
 	if !shouldClean("mysession", "mysession", true) {
 		t.Error("shouldClean: current session with --all should return true when tmux session not alive")
 	}
 }
 
 func TestShouldClean_StaleSession(t *testing.T) {
-	// Different session with no tmux session should be cleaned
+	withAnsweredSessions(t)
+	// Different session, positively absent from the server's list
 	if !shouldClean("stale", "current", false) {
 		t.Error("shouldClean: stale session should return true")
 	}
 }
 
 // --- Claude Code /tmp cleanup tests ---
+
+// Deletion needs POSITIVE absence. Every way the question can go
+// unanswered — tmux missing, a sandbox denying the exec, no server
+// reachable, the probe signalled — must read as alive. The sandboxed
+// socket failure is the one that actually destroyed a live session on
+// 2026-09-08, and it arrives as an ordinary non-zero exit, so an
+// exit-code test alone would not have caught it.
+func TestIsTmuxSessionAlive_UnanswerableProbeReadsAlive(t *testing.T) {
+	orig := tmuxSessionNames
+	t.Cleanup(func() { tmuxSessionNames = orig })
+
+	for _, probeErr := range []error{
+		&exec.Error{Name: "tmux", Err: exec.ErrNotFound},
+		&fs.PathError{Op: "fork/exec", Path: "/usr/bin/tmux", Err: syscall.EPERM},
+		&exec.ExitError{ProcessState: &os.ProcessState{}}, // "no server running"
+		errors.New("resource temporarily unavailable"),
+	} {
+		tmuxSessionNames = func() ([]string, error) { return nil, probeErr }
+		if !isTmuxSessionAlive("anything") {
+			t.Errorf("probe error %v must read as ALIVE, not dead", probeErr)
+		}
+	}
+}
+
+// Positive control: when the server does answer, both directions must be
+// believed — otherwise the rule above would simply pin every session alive
+// and cleanup would never remove anything again.
+func TestIsTmuxSessionAlive_TrustsAnAnsweredList(t *testing.T) {
+	orig := tmuxSessionNames
+	t.Cleanup(func() { tmuxSessionNames = orig })
+
+	tmuxSessionNames = func() ([]string, error) { return []string{"muxcode", "other"}, nil }
+	if !isTmuxSessionAlive("muxcode") {
+		t.Error("a listed session exists")
+	}
+	if isTmuxSessionAlive("gone") {
+		t.Error("an answered list that omits the name is positive absence")
+	}
+}
+
+// End to end: with an unanswerable probe, a sweep must spare a live bus
+// dir. This is the assertion whose absence let a live session lose its
+// inboxes, tasks, receipts and graph runs.
+func TestCleanupStale_UnanswerableProbeSparesBusDirs(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetBusDirBase(tmpDir)
+	defer ResetBusDirBase()
+
+	busDir := filepath.Join(tmpDir, "muxcode-bus-someone-elses-live-session")
+	if err := os.MkdirAll(filepath.Join(busDir, "inbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := tmuxSessionNames
+	t.Cleanup(func() { tmuxSessionNames = orig })
+	tmuxSessionNames = func() ([]string, error) {
+		return nil, &exec.ExitError{ProcessState: &os.ProcessState{}}
+	}
+
+	result, err := CleanupStale("my-session", false, false)
+	if err != nil {
+		t.Fatalf("CleanupStale: %v", err)
+	}
+	if len(result.BusDirs) != 0 {
+		t.Errorf("BusDirs: got %v, want none collected when the probe cannot answer", result.BusDirs)
+	}
+	if _, err := os.Stat(busDir); err != nil {
+		t.Errorf("a live session's bus dir was deleted on an unanswerable probe: %v", err)
+	}
+}
+
+// Control for the test above: an ANSWERED list that omits the session must
+// still collect it, or cleanup has silently become a no-op.
+func TestCleanupStale_AnsweredAbsenceStillCollects(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetBusDirBase(tmpDir)
+	defer ResetBusDirBase()
+
+	busDir := filepath.Join(tmpDir, "muxcode-bus-genuinely-gone")
+	if err := os.MkdirAll(filepath.Join(busDir, "inbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := tmuxSessionNames
+	t.Cleanup(func() { tmuxSessionNames = orig })
+	tmuxSessionNames = func() ([]string, error) { return []string{"some-other-session"}, nil }
+
+	result, err := CleanupStale("my-session", false, false)
+	if err != nil {
+		t.Fatalf("CleanupStale: %v", err)
+	}
+	if len(result.BusDirs) != 1 {
+		t.Fatalf("BusDirs: got %v, want the genuinely-absent session collected", result.BusDirs)
+	}
+	if _, err := os.Stat(busDir); !os.IsNotExist(err) {
+		t.Error("a genuinely stale bus dir was not removed")
+	}
+}
 
 func TestIsUUID(t *testing.T) {
 	tests := []struct {
@@ -426,7 +551,19 @@ func TestCheckDiskPressure_DisabledWhenThresholdZero(t *testing.T) {
 	}
 }
 
+// The base MUST be redirected before calling CheckDiskPressure, which runs
+// CleanupStale with dryRun=false and deletes what it finds. Pointed at the
+// real /tmp this test measured the machine's actual muxcode footprint —
+// exceeding the 1 GiB signal regardless of the percent threshold it sets,
+// so pressure fired and real cleanup ran against live sessions. On
+// 2026-09-08 that repeatedly destroyed the bus directory of the attached
+// session: inboxes, tracked tasks, delivery receipts and graph runs. A
+// sandboxed test process cannot reach the tmux socket, so `has-session`
+// exits non-zero and every live session reads as stale.
 func TestCheckDiskPressure_BelowThresholdReturnsNil(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+
 	// Threshold of 100% is practically never exceeded
 	t.Setenv("MUXCODE_TMP_CLEANUP_THRESHOLD", "100")
 	result, err := CheckDiskPressure("test-session")
@@ -442,6 +579,7 @@ func TestCheckDiskPressure_AboveThresholdRunsCleanup(t *testing.T) {
 	tmpDir := t.TempDir()
 	SetBusDirBase(tmpDir)
 	defer ResetBusDirBase()
+	withAnsweredSessions(t) // the stale fixture must be positively absent
 
 	t.Setenv("MUXCODE_TMP_CLEANUP_THRESHOLD", "1")
 	// Pressure is no longer triggered by the volume's percent-used — that fired

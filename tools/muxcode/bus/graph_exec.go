@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -14,14 +16,22 @@ import (
 // each poll; everything here derives from the persisted run store, so a
 // daemon restart resumes runs exactly where the store says they are.
 //
-// Outcome model (honors the console-history provenance doctrine): an
-// authoritative history row (real exit code) for the target role is the
-// only evidence of success; a synthesized failure (response action
-// "error", task timeout) routes failure; anything else is "unknown".
+// Outcome model (honors the console-history provenance doctrine), in
+// precedence order: a response action of "error" or a task timeout is a
+// failure; an authoritative history row (real exit code) for the target
+// role is the verdict; failing both, an `EXIT=<n>` sentinel in the
+// response body is. Anything else is "unknown".
+//
+// The sentinel exists because only hook-supporting providers write
+// authoritative rows: on Codex or OpenCode every send node would
+// otherwise derive "unknown" and stall its run on a human approval it
+// should never have needed. It is self-reported and so ranks below a
+// hook-recorded row, but it is still a real exit code rather than prose
+// a reader has to interpret.
+//
 // An unknown outcome routes an explicit "unknown" edge when one exists,
-// and otherwise falls back to the success edge with a lifecycle note —
-// non-hook providers rarely produce authoritative rows, and stalling
-// every run on them would make graphs unusable there.
+// and otherwise holds for approval rather than assuming success — except
+// where every successor is a human gate, which would ask anyway.
 
 // graphSender is the bus identity graph-originated sends carry.
 // NormalizeBusRole maps it to edit for reply routing, same as other
@@ -167,34 +177,53 @@ func runProvenance(run *GraphRun) string {
 // moves the node from waiting to done.
 //
 // The grant records who made it and is announced, so a release is attributable
-// after the fact rather than appearing as an unexplained state change. That is
-// visibility, NOT authorization: every role reaching this function still opens
-// the gate. Enforcing authority here is MUX-144, and until it lands a gate is a
-// scheduling pause, not a security boundary.
+// after the fact rather than appearing as an unexplained state change, and
+// CheckGateApprovalAuthority decides whether it may be made at all.
 //
 // approved_by comes from BusActorVerified, so an agent that strips AGENT_ROLE
 // is still recorded by its ancestry rather than promoted to a person. It
-// remains forgeable by writing this marker directly, so read approved_by as
-// evidence proportional to that: good enough to refuse a self-release
-// (unverifiedHoldReleased), not good enough to be the only thing standing
-// between an agent and an irreversible action.
+// remains forgeable by writing this marker directly, which is why the daemon
+// re-reads approved_by before honouring a release (unverifiedHoldReleased)
+// instead of trusting that this refusal was the only road in.
+//
+// A refusal is logged rather than announced to edit. The attribution belongs in
+// the lifecycle log either way, and a refused agent that retries would put one
+// message in edit's inbox per attempt.
 //
 // approved_by is additive: gateApprovalTime reads only approved_at, so markers
 // written before this field existed still parse.
+//
+// The audit row is recorded before the marker is published, and both carry one
+// clock reading. Order matters because the daemon may consume a marker on its
+// very next tick, and a marker seen before its row reads as forged. The single
+// reading matters because gateApprovalHolds pairs the two on the second, and a
+// bus send and a log rotation pass sit between the writes — with a reading
+// each, a genuine approval that straddled a second boundary was refused as
+// forged and purged, returning the user to the same race (MUX-144 Phase 2).
 func ApproveGraphGate(session, runID, nodeID string) error {
 	if _, err := ReadNodeStatus(session, runID, nodeID); err != nil {
 		return fmt.Errorf("unknown run/node: %w", err)
 	}
+	run, err := ReadGraphRun(session, runID)
+	if err != nil {
+		return fmt.Errorf("unknown run: %w", err)
+	}
+	actor := BusActorVerified()
+	if deny := CheckGateApprovalAuthority(actor, run); deny != "" {
+		LogLifecycle(session, "warn", actor, "graph-gate-approval-refused",
+			fmt.Sprintf("Graph run %s gate %q: %s", runID, nodeID, deny))
+		return errors.New(deny)
+	}
 	if err := os.MkdirAll(graphApprovalsDir(session, runID), 0755); err != nil {
 		return err
 	}
-	actor := BusActorVerified()
+	approvedAt := time.Now().Unix() // one reading, two writers — see doc comment
+	announceGraphActionAt(session, actor, "graph-gate-approved",
+		fmt.Sprintf("Graph run %s gate %q approved by %s", runID, nodeID, actor), approvedAt)
 	if err := atomicWriteJSON(graphApprovalPath(session, runID, nodeID, "approved"),
-		map[string]any{"approved_at": time.Now().Unix(), "approved_by": actor}); err != nil {
+		map[string]any{"approved_at": approvedAt, "approved_by": actor}); err != nil {
 		return err
 	}
-	announceGraphAction(session, actor, "graph-gate-approved",
-		fmt.Sprintf("Graph run %s gate %q approved by %s", runID, nodeID, actor))
 	return nil
 }
 
@@ -643,16 +672,102 @@ func approvalGrantedBy(data []byte) string {
 	return m.ApprovedBy
 }
 
+// approvalHasAudit requires an approval marker to be corroborated by the
+// graph-gate-approved row ApproveGraphGate logs beside it — same actor, same
+// detail, same second.
+//
+// It is corroboration and tamper-evidence, NOT authentication, and the
+// difference is worth stating because the earlier wording here claimed it
+// "proves the marker was emitted by ApproveGraphGate". It does not. Both
+// artifacts are ordinary files owned by the same uid, so anything that can
+// write one can write the other; no check on this side of the process boundary
+// can say otherwise.
+//
+// What it buys is that forging an approval is no longer a single quiet file
+// write. It now takes two consistent artifacts, one of which lands in the
+// session lifecycle log — the log an investigator reads, and the one artifact
+// here that outlives session cleanup — so a forged release leaves a dated,
+// attributed row behind rather than an unexplained state change. That is the
+// same standard Phase 3 sets for the control plane: not unforgeable, but never
+// unattributable.
+//
+// What it costs is a liveness dependency on that log, which is why rotation
+// preserves these rows (lifecycleAuditEvents). A missing row is read as
+// forgery, so an evicted one refuses a legitimate approval.
+//
+// The control against a shell that can write both remains the tool profile
+// denying those paths, not this function.
+func approvalHasAudit(session, runID, nodeID, actor string, marker []byte) bool {
+	var m struct {
+		ApprovedAt int64 `json:"approved_at"`
+	}
+	if json.Unmarshal(marker, &m) != nil || m.ApprovedAt <= 0 {
+		return false
+	}
+	entries, err := ReadLifecycleLog(session)
+	if err != nil {
+		return false
+	}
+	want := fmt.Sprintf("Graph run %s gate %q approved by %s", runID, nodeID, actor)
+	for _, entry := range entries {
+		if entry.Event == "graph-gate-approved" &&
+			NormalizeBusRole(entry.Source) == NormalizeBusRole(actor) &&
+			entry.Detail == want && entry.TS == m.ApprovedAt {
+			return true
+		}
+	}
+	return false
+}
+
+// gateApprovalHolds re-decides a wait_human release inside the daemon, on the
+// approver the marker recorded (MUX-144 Phase 2).
+//
+// ApproveGraphGate already refused an unauthorized approver, but it ran in the
+// approver's own process against a list read from files that process chooses
+// and can write — $HOME selects the second config path. Re-deciding here is what
+// makes the authority a control rather than a courtesy: the daemon sealed its
+// list at startup from an environment no agent supplied, so a config the agent
+// edited buys nothing, and neither does writing this marker by hand. The CLI
+// refusal stays for the immediate, attributable "no"; this one governs whether
+// the gate actually opens.
+//
+// A marker with no approved_by is refused. Such a marker predates the field or
+// is malformed, and an unattributable grant cannot be checked against anyone —
+// the same reading unverifiedHoldReleased already takes.
+//
+// A refused grant is spent rather than left: an unpurged marker would be
+// re-read every tick, and the node must ask for a fresh approval instead of
+// sitting on a rejected one. A purge that fails holds the gate shut.
+func gateApprovalHolds(session string, run *GraphRun, nodeID string, marker []byte) bool {
+	by := approvalGrantedBy(marker)
+	if by == "" {
+		by = ActorUnknown
+	}
+	deny := CheckGateApprovalAuthority(by, run)
+	if deny == "" && !approvalHasAudit(session, run.ID, nodeID, by, marker) {
+		deny = "approval marker has no matching graph-gate-approved audit event"
+	}
+	if deny == "" {
+		return true
+	}
+	LogLifecycle(session, "warn", "daemon", "graph-gate-approval-revoked",
+		fmt.Sprintf("%s: %s approval by %q refused daemon-side: %s", run.ID, nodeID, by, deny))
+	if err := purgeStaleApproval(session, run.ID, nodeID); err != nil {
+		LogLifecycle(session, "warn", "daemon", "graph-gate-purge-failed",
+			fmt.Sprintf("%s: %s: %v", run.ID, nodeID, err))
+	}
+	return false
+}
+
 // unverifiedHoldReleased reports whether an unknown-outcome node may take its
 // success edges, parking it for human approval the first time it may not.
 //
 // Only a person can release one. The hold exists because no authoritative row
 // proved the node succeeded, and the agents in a position to approve it are the
-// very ones whose unverified output raised it — `muxcode graph approve` carries
-// no authority check (MUX-144), so without this an autonomous run would clear
-// its own holds and unknown would pass as success again wearing an approval.
-// The check reads the grant's recorded approver rather than gating the CLI,
-// because the marker is the only artifact the daemon sees.
+// very ones whose unverified output raised it. CheckGateApprovalAuthority now
+// refuses them at the CLI too (MUX-144 Phase 2); this stays because the marker
+// is the only artifact the daemon sees, so a forged one — or a session that has
+// opted an agent into the gate authority — must still not clear a hold.
 //
 // The approver is resolved by BusActorVerified, so unsetting AGENT_ROLE does
 // not launder an agent into a person — ancestry still names it. A process that
@@ -675,7 +790,7 @@ func approvalGrantedBy(data []byte) string {
 // purged holds the node rather than releasing it twice.
 func unverifiedHoldReleased(session string, run *GraphRun, nodeID string) bool {
 	if data, err := os.ReadFile(graphApprovalPath(session, run.ID, nodeID, "approved")); err == nil {
-		if by := approvalGrantedBy(data); by != ActorUser {
+		if by := approvalGrantedBy(data); by != ActorUser || !approvalHasAudit(session, run.ID, nodeID, by, data) {
 			LogLifecycle(session, "warn", "daemon", "graph-unverified-self-approval",
 				fmt.Sprintf("%s: %s approval by %q refused — an unverified hold needs a person", run.ID, nodeID, by))
 			return false
@@ -965,6 +1080,9 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 		}
 		switch task.Status {
 		case TaskCompleted:
+			if sendResponseIsNonResult(session, task) {
+				return // not an answer — see sendResponseIsNonResult
+			}
 			outcome, output := deriveSendOutcome(session, n, st, task)
 			finishNode(session, run, n, outcome, output)
 		case TaskTimedOut, TaskFailed:
@@ -1155,6 +1273,28 @@ func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 	return outcome, true
 }
 
+// sendResponseIsNonResult reports whether a completed task's recorded response
+// is provider chrome rather than an answer the agent composed.
+//
+// Such a task is completed but unanswered, so the node must neither succeed nor
+// hold on it: an unknown outcome raises a human gate, and asking a user to
+// approve a horizontal rule is how three spec-to-pr runs stalled on 2026-09-08.
+// The node stays running until a genuine reply or its timeout — which means a
+// node with no TimeoutSec relies on the tracked-task expiry above it, the same
+// backstop every other stuck send depends on.
+//
+// This is the graph's own guard, not the primary one. Chrome should never reach
+// an inbox (dropsAsProviderChrome) nor be synthesized by the daemon
+// (task-nonresult-ignored); this is the layer that makes their inevitable
+// misses harmless rather than gate-raising.
+func sendResponseIsNonResult(session string, task Task) bool {
+	resp, ok := FindMessageByID(session, task.ResponseID)
+	if !ok {
+		return false
+	}
+	return LooksLikeNonResult(resp.Payload)
+}
+
 // deriveSendOutcome maps a completed task to an outcome per the
 // provenance doctrine: an authoritative history row for the target role
 // newer than dispatch is the verdict; a response with action "error" is
@@ -1173,7 +1313,39 @@ func deriveSendOutcome(session string, n *Node, st *GraphNodeStatus, task Task) 
 			return row.Outcome, output
 		}
 	}
+	if outcome, ok := parseExitSentinel(output); ok {
+		return outcome, output
+	}
 	return OutcomeUnknown, output
+}
+
+// exitSentinelRe matches a self-reported exit code such as "EXIT=0",
+// anchored at a word boundary so it cannot fire inside a longer token.
+var exitSentinelRe = regexp.MustCompile(`(?:^|\s)EXIT=(\d{1,5})\b`)
+
+// parseExitSentinel reports the outcome carried by an `EXIT=<n>` sentinel
+// in a bus response body, zero being success.
+//
+// The last sentinel wins: an agent's report ends with its verdict, whereas
+// a copy of the instruction that asked for the sentinel precedes it. That
+// ordering is the only defence against a response that echoes its own
+// request — a live defect (MUX-154) in which a provider's TUI status line
+// or prompt text is captured as the reply — so a request whose text
+// contains a literal exit code can still be misread as a result. Requests
+// should say "EXIT=<n>", never "EXIT=0".
+func parseExitSentinel(payload string) (string, bool) {
+	matches := exitSentinelRe.FindAllStringSubmatch(payload, -1)
+	if len(matches) == 0 {
+		return "", false
+	}
+	code, err := strconv.Atoi(matches[len(matches)-1][1])
+	if err != nil {
+		return "", false
+	}
+	if code == 0 {
+		return OutcomeSuccess, true
+	}
+	return OutcomeFailure, true
 }
 
 // latestAuthoritativeRow returns the newest console-history entry for a
@@ -1196,7 +1368,11 @@ func latestAuthoritativeRow(session, role string, since int64) (ConsoleEntry, bo
 func harvestWaitingNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 	switch n.Type {
 	case NodeWaitHuman:
-		if _, err := os.Stat(graphApprovalPath(session, run.ID, n.ID, "approved")); err != nil {
+		marker, err := os.ReadFile(graphApprovalPath(session, run.ID, n.ID, "approved"))
+		if err != nil {
+			return
+		}
+		if !gateApprovalHolds(session, run, n.ID, marker) {
 			return
 		}
 		_ = os.Remove(graphApprovalPath(session, run.ID, n.ID, "pending"))

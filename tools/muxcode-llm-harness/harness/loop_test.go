@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,7 +19,7 @@ func (m *mockEventSink) Close()       {}
 
 func TestProcessBatch_SimpleResponse(t *testing.T) {
 	// Set up mock Ollama that returns a text response (no tool calls)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := ChatResponse{
 			Choices: []ChatChoice{
 				{Message: ChatMessage{Role: "assistant", Content: "Task completed successfully"}},
@@ -39,6 +38,7 @@ func TestProcessBatch_SimpleResponse(t *testing.T) {
 	}
 
 	ollama := NewOllamaClient(server.URL, "test-model")
+	ollama.HTTP = server.Client()
 	executor := NewExecutor([]string{"Bash(git *)", "Read"})
 	tools := BuildToolDefs([]string{"Bash(git *)", "Read"})
 	filter := NewFilter("commit")
@@ -59,7 +59,7 @@ func TestProcessBatch_SimpleResponse(t *testing.T) {
 
 func TestProcessBatch_WithToolCall(t *testing.T) {
 	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		var req ChatRequest
 		json.NewDecoder(r.Body).Decode(&req)
@@ -107,6 +107,7 @@ func TestProcessBatch_WithToolCall(t *testing.T) {
 	}
 
 	ollama := NewOllamaClient(server.URL, "test-model")
+	ollama.HTTP = server.Client()
 	executor := NewExecutor([]string{"Bash(echo *)"})
 	tools := BuildToolDefs([]string{"Bash(echo *)"})
 	filter := NewFilter("commit")
@@ -125,7 +126,7 @@ func TestProcessBatch_WithToolCall(t *testing.T) {
 
 func TestProcessBatch_FilterBlocksInbox(t *testing.T) {
 	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 
 		if callCount == 1 {
@@ -171,6 +172,7 @@ func TestProcessBatch_FilterBlocksInbox(t *testing.T) {
 	}
 
 	ollama := NewOllamaClient(server.URL, "test-model")
+	ollama.HTTP = server.Client()
 	executor := NewExecutor([]string{"Bash(muxcode *)"})
 	tools := BuildToolDefs([]string{"Bash(muxcode *)"})
 	filter := NewFilter("commit")
@@ -244,7 +246,7 @@ func TestLogToolToHistory_Failure(t *testing.T) {
 
 func TestRun_ContextCancellation(t *testing.T) {
 	// Verify Run exits cleanly when context is cancelled
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/tags" {
 			w.Write([]byte(`{"models":[{"name":"test-model"}]}`))
 			return
@@ -256,6 +258,7 @@ func TestRun_ContextCancellation(t *testing.T) {
 		Role:        "commit",
 		Session:     "test-cancel",
 		OllamaURL:   server.URL,
+		HTTPClient:  server.Client(),
 		OllamaModel: "test-model",
 		MaxTurns:    10,
 		BusDir:      t.TempDir(),
@@ -276,7 +279,7 @@ func TestRun_ContextCancellation(t *testing.T) {
 
 func TestRun_HarnessMarkerLifecycle(t *testing.T) {
 	// Verify harness writes marker on startup and removes it on exit
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/tags" {
 			w.Write([]byte(`{"models":[{"name":"test-model"}]}`))
 			return
@@ -289,6 +292,7 @@ func TestRun_HarnessMarkerLifecycle(t *testing.T) {
 		Role:        "build",
 		Session:     "test-marker",
 		OllamaURL:   server.URL,
+		HTTPClient:  server.Client(),
 		OllamaModel: "test-model",
 		MaxTurns:    10,
 		BusDir:      busDir,
@@ -366,7 +370,7 @@ func TestLooksLikeNarration(t *testing.T) {
 
 func TestProcessBatch_NarrationRecovery(t *testing.T) {
 	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 
 		switch callCount {
@@ -421,6 +425,7 @@ func TestProcessBatch_NarrationRecovery(t *testing.T) {
 	}
 
 	ollama := NewOllamaClient(server.URL, "test-model")
+	ollama.HTTP = server.Client()
 	executor := NewExecutor([]string{"Bash(echo *)"})
 	tools := BuildToolDefs([]string{"Bash(echo *)"})
 	filter := NewFilter("build")
@@ -441,7 +446,7 @@ func TestProcessBatch_NarrationRecovery(t *testing.T) {
 
 func TestProcessBatch_NarrationRecovery_NonSingleShot(t *testing.T) {
 	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 
 		switch callCount {
@@ -497,6 +502,7 @@ func TestProcessBatch_NarrationRecovery_NonSingleShot(t *testing.T) {
 	}
 
 	ollama := NewOllamaClient(server.URL, "test-model")
+	ollama.HTTP = server.Client()
 	executor := NewExecutor([]string{"Bash(echo *)"})
 	tools := BuildToolDefs([]string{"Bash(echo *)"})
 	filter := NewFilter("review")

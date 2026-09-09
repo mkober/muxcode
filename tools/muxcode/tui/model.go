@@ -161,6 +161,11 @@ func termHeight() int {
 	return 24
 }
 
+// TermWidth is termWidth for callers outside a TUI loop that still
+// render into a pane — notably a display-popup, where tput reports the
+// session's stale COLUMNS rather than the popup's own width (MUX-105).
+func TermWidth() int { return termWidth() }
+
 // termWidth returns the terminal width, defaulting to 62. stty before
 // tput for the same reason as termHeight.
 func termWidth() int {

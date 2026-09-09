@@ -111,6 +111,111 @@ func TestCodexBuildExecArgs(t *testing.T) {
 	}
 }
 
+// Codex takes a selectable sandbox policy and muxcode passed none, so build
+// compiled and then failed `make install` on ~/.local/bin with "Operation not
+// permitted". The install roots must be granted explicitly.
+func TestCodexBuildExecArgs_BuildGetsInstallRoots(t *testing.T) {
+	p := &CodexProvider{}
+	base := t.TempDir()
+	bin := filepath.Join(base, "fake-bin")
+	config := filepath.Join(base, "fake-config")
+	t.Setenv("BINDIR", bin)
+	t.Setenv("CONFIGDIR", config)
+
+	args := strings.Join(p.argsFor(t, "build"), " ")
+	if !strings.Contains(args, "-s workspace-write") {
+		t.Errorf("build must select the workspace-write policy: %s", args)
+	}
+	// Granted roots are physical paths, so the expectations resolve too —
+	// t.TempDir sits under a symlinked /var on macOS.
+	for _, dir := range []string{bin, config} {
+		want := "--add-dir " + mustResolve(t, dir)
+		if !strings.Contains(args, want) {
+			t.Errorf("build missing %q: %s", want, args)
+		}
+	}
+}
+
+// A writable root containing a symlink component is refused by codex, and the
+// refusal kills the whole sandbox: every command in the agent then fails before
+// startup. Observed live with a dotfiles setup symlinking ~/.claude, which made
+// the build agent accept work, spin, and run nothing (2026-09-08).
+func TestCodexResolveWritableRoots_ResolvesSymlinkedRoot(t *testing.T) {
+	base := t.TempDir()
+	physical := filepath.Join(base, "dotfiles", "commands")
+	if err := os.MkdirAll(physical, 0755); err != nil {
+		t.Fatalf("mkdir physical: %v", err)
+	}
+	link := filepath.Join(base, "dotlink")
+	if err := os.Symlink(filepath.Join(base, "dotfiles"), link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	got := resolveWritableRoots([]string{filepath.Join(link, "commands")})
+	if len(got) != 1 {
+		t.Fatalf("want 1 resolved root, got %v", got)
+	}
+	if got[0] != mustResolve(t, physical) {
+		t.Errorf("root not resolved to its physical path: got %q want %q", got[0], mustResolve(t, physical))
+	}
+	if strings.Contains(got[0], "dotlink") {
+		t.Errorf("granted root still carries the symlink component: %q", got[0])
+	}
+}
+
+// Negative control: resolution must not mangle a root that has no symlink in
+// it. Without this a function returning a constant would pass the test above.
+func TestCodexResolveWritableRoots_RealPathSurvives(t *testing.T) {
+	dir := mustResolve(t, t.TempDir())
+	got := resolveWritableRoots([]string{dir})
+	if len(got) != 1 || got[0] != dir {
+		t.Errorf("real path must pass through unchanged: got %v want [%s]", got, dir)
+	}
+}
+
+// An absent root is created rather than dropped: dropping it would silently
+// reinstate the "Operation not permitted" install failure the grants prevent.
+func TestCodexResolveWritableRoots_CreatesMissingRoot(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "not-yet", "bin")
+	got := resolveWritableRoots([]string{missing})
+	if len(got) != 1 {
+		t.Fatalf("missing root must be created and granted, got %v", got)
+	}
+	if _, err := os.Stat(missing); err != nil {
+		t.Errorf("root was not created: %v", err)
+	}
+}
+
+func mustResolve(t *testing.T, dir string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", dir, err)
+	}
+	return resolved
+}
+
+// Negative control: the grant is per-role, not a blanket widening. Without
+// this, granting every role would pass the test above.
+func TestCodexBuildExecArgs_OtherRolesUnwidened(t *testing.T) {
+	p := &CodexProvider{}
+	for _, role := range []string{"review", "analyze", "test"} {
+		args := strings.Join(p.argsFor(t, role), " ")
+		if strings.Contains(args, "--add-dir") || strings.Contains(args, "workspace-write") {
+			t.Errorf("role %q must not be widened: %s", role, args)
+		}
+	}
+}
+
+// argsFor builds launch args for a role with model env cleared, so the
+// assertions see only sandbox flags.
+func (p *CodexProvider) argsFor(t *testing.T, role string) []string {
+	t.Helper()
+	t.Setenv(RoleModelEnvVar(role), "")
+	_, args := p.BuildExecArgs(&LaunchConfig{Role: role, CLI: "codex"})
+	return args
+}
+
 func TestCodexBuildExecArgs_WithModel(t *testing.T) {
 	p := &CodexProvider{}
 	t.Setenv(RoleModelEnvVar("review"), "") // clear generic model env var

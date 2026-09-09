@@ -217,6 +217,20 @@ Beyond inbox delivery, the daemon runs four resilience watchdogs that detect and
 
 Core code: `daemon/daemon.go` (`checkActiveWatchdog()`, `checkStuckProviders()`, `checkTrackedTasks()`, `checkStuckPermissions()`), `bus/stuck.go` (`PaneShowsProviderLoop()`, `PaneShowsPermissionBlock()`), `bus/task.go` (`TaskExpired()`), `bus/dedup.go` (`HasInFlightTaskForRole()`, `FindInFlightTask()` — both ignore expired tasks).
 
+### Agent diagnostics
+
+`muxcode diagnose <role>` is the operator's root-cause tool for an agent that is not responding. It collects evidence from five sources — agent state, inbox, the notification pipeline, daemon health, and the lifecycle timeline — and pattern-matches against fifteen known failure modes: stale notified IDs, missed send-keys, idle detection failure, daemon not waking, post-restart wake gap, provider mismatch, reload marker stuck, pending input blocking, active with stale messages, no actionable messages, daemon dead, agent down, receipt gap, `binary-daemon-version-mismatch`, and unexplained stuck inbox. Output is a Dracula-coloured report by default or JSON (`--json`); `--all` renders a summary table for every agent; the exit code is non-zero on a critical finding. Any agent may run it on a peer — edit runs `muxcode diagnose commit` when a delegation times out.
+
+Three design rules keep the verdict honest, each learned from a wrong one:
+
+- **Delivery-model aware.** The checks that reason about a daemon wake (`daemon-not-waking`, `post-restart-wake-gap`) are gated on `bus.AckDeliveryActive()` — the same definition the daemon uses. Under the receipt cutover no daemon wake follows an `inbox-notify` (agents self-poll; receipts are the evidence), so timeline-gap annotation is suppressed there and `receipt-gap` covers the model instead. Diagnose carrying its own stale model of delivery is what once made it print a red "expected idle-wake, got none" per notify on healthy sessions: `idle-wake` is emitted only by `checkIdleAgents`, the very function the cutover bypasses.
+- **No false clean verdicts.** `checkUnexplainedEvidence` is a verdict-consistency backstop registered **last** in `diagnosticChecks`, reading the findings the earlier checks produced. If an agent holds actionable messages unconsumed past `diagnoseStuckInboxSecs` and nothing else fired, it reports `unexplained-stuck-inbox` as critical rather than "No issues detected". The invariant is asserted at the verdict, not per pattern, because the same false-clean bug recurred three times from three *different* missing detectors — an honest "unexplained" beats a clean bill of health over a wedged agent. `TestRunDiagnostics_NeverCleanWithStuckInbox` pins it.
+- **A version mismatch is a warning, not an explanation.** `binary-daemon-version-mismatch` ([MUX-138](requirements/backlog/MUX-138-github-versioning-releases.md)) fires when a live daemon's recorded `daemon.version` is not the same build as the binary running diagnose, or when it recorded none — an unstamped daemon predates the feature; the remedy is `muxcode upgrade-daemons` or `./build.sh`. The backstop deliberately does not count it as the explanation for a stuck inbox — it is true of every session between an install and its rollout — so both findings appear together.
+
+Two verdict defects are open: a **falsely clean** report over a wedged agent that no pattern matches ([MUX-006](requirements/backlog/MUX-006-diagnose-false-clean-verdict.md)), and a **falsely specific** one — a windowless role's undeliverable inbox reported as a critical `receipt-gap` with a remediation that targets a pane which does not exist ([MUX-145](requirements/backlog/MUX-145-messages-routed-to-windowless-role.md)).
+
+Core code: `bus/diagnose.go` (`CollectEvidence()`, `RunDiagnostics()`, `diagnosticChecks`, `checkUnexplainedEvidence`). Cross-session use: [Remote session investigation](#remote-session-investigation).
+
 ### Auto-clear between tasks
 
 Compaction (`/compact`) summarizes a conversation to keep it under the context limit. Auto-clear is the complementary lever for **episodic** roles: rather than compressing accumulated context, it discards it entirely once the task that produced it is done. The two are exclusive per role — `edit` and `auto` hold the user conversation and loop state, so they are hard-excluded from auto-clear and keep `/compact`.
@@ -283,10 +297,37 @@ disk, so the first tick after a daemon restart **is** the resume scan.
 flag prevents a completion from being double-routed across a restart. There is no in-memory
 scheduler to rebuild.
 
-**Authority gates are unchanged.** No graph node may fire a git mutation or an Atlassian
-write without passing a `wait_human` gate — `graph validate` rejects such a definition
-outright, and `CheckCommitAuthority` / `CheckAtlassianAuthority` remain the runtime
-backstop. A graph cannot be used to launder an action around the rules that govern it.
+**Authority gates — what actually holds (MUX-144).** The *topology* rule holds: no graph node
+may fire a git mutation or an Atlassian write without an upstream `wait_human` gate, and
+`graph validate` rejects such a definition outright (`validateGates`). Since Phase 2 the gate
+itself is guarded — `ApproveGraphGate` calls `CheckGateApprovalAuthority`
+(`bus/gate_authority.go`), so a release needs an authorized approver, defaulting to **the user
+alone, no agent** (`MUXCODE_GATE_AUTHORITY_ROLES` in the muxcode config file opts a role in;
+the process environment is deliberately ignored), and **no agent may approve a gate on a run
+it created** whatever the list says. The check sits in `ApproveGraphGate` rather than the CLI
+because two roads reach it — `muxcode graph approve` and the graph TUI. Releases and refusals
+are attributable: the marker records `approved_by` from `BusActorVerified`, and
+`graph-run-created` / `graph-gate-approved` / `graph-gate-approval-refused` name their actor.
+
+Two qualifications, both open in
+[MUX-144](requirements/drafts/MUX-144-wait-human-gate-openable-by-any-agent.md). The
+config-file read *narrowed* the caller-control problem rather than closing it: the file is
+agent-writable (its path stopped honouring `$MUXCODE_CONFIG` in `31a2ca4`), so daemon-side
+authority is the real fix. `c4997ed` (2026-09-08 19:11) added that half — `SealGateAuthority` freezes
+the list at daemon startup (`gate-authority-sealed`; live edits may narrow, never widen) and
+`gateApprovalHolds` re-decides every release on the marker's `approved_by`, with `approvalHasAudit`
+requiring a matching `graph-gate-approved` lifecycle row — but it is **unverified** (never built,
+tested or reviewed; see [MUX-157](requirements/backlog/MUX-157-role-boundary-an-agent-can-ignore.md))
+and moves the forgery target to the lifecycle log, which agents can also append to and which rotates
+on every append. The MUX-144 step stays open.
+And the runtime backstop is still a no-op for graph sends: they carry `From = "daemon"`, which
+`CheckCommitAuthority` normalizes to `edit` — an authorized role — so a graph dispatch passes as
+though the user's own agent had asked, judged on the normalized sender rather than on the gate's
+recorded approval (Phase 4). Until that lands the gate is the only control on that path — a real
+boundary, but a single one; a marker forged on disk still defeats it, which is why
+`unverifiedHoldReleased` re-reads `approved_by` daemon-side. An earlier version of this paragraph
+claimed the runtime backstop meant a graph "cannot be used to launder an action around the rules
+that govern it"; that was false as written and is corrected here (2026-09-08).
 
 **Dispatch-time node guards.** A `send` or `spawn` node may declare a `guard` — a predicate the
 executor evaluates in `dispatchNode()` *before* the message is sent, so a declined node never
@@ -337,17 +378,28 @@ the fallback above, but the barrier's independent outcome-equality check refused
 that fire, so the join never released. Routing decides; the barrier counts. One source of
 truth.
 
+**Two live-path defects every executor unit test passed straight over** — only the integration
+run caught them, and both are worth remembering whenever the executor changes. Graph sends carry
+`From = "daemon"`, so the inbox must normalize the reply target (`NormalizeBusRole`,
+`daemon → edit` — see [Daemon identity](#daemon-identity)) or the receiving agent is told
+`muxcode send daemon …`, an *unknown role*, and no completion is ever recorded. And
+unknown-outcome completions must count toward a join barrier, or any join with a non-hook
+provider upstream (OpenCode/Codex infer outcomes) hangs forever — which is the barrier rule above.
+
 **What edit actually receives** — exactly two bus actions, which is the O(gates)-not-O(nodes)
 property made concrete: `graph-approval` when a `wait_human` gate needs releasing, and
 `graph-complete` when a run reaches a terminal state. Per-node traffic never reaches edit;
 node dispatch goes to the target role via `SendNoCC`, so it is not auto-CC'd either.
 
-Lifecycle events per transition — ten in all: `graph-node-start`, `graph-node-done`,
+Lifecycle events per transition — fourteen in all: `graph-node-start`, `graph-node-done`,
 `graph-gate-pending`, `graph-run-complete`, `graph-run-failed`, `graph-run-canceled`,
 `graph-loop-exhausted`, `graph-unknown-fallback`, plus two warn-level events —
 `graph-gate-marker-error` (the gate marker write failed; the gate still holds, since the
 edit notification is the release signal) and `graph-step-error` (an executor tick errored
-for one run).
+for one run). Four more carry attribution and guard decisions: `graph-run-created` (names the
+creator), `graph-gate-approved` (names the approver), `graph-gate-approval-refused` (warn —
+names the refused actor and the reason), and `graph-guard-declined` (a dispatch-time guard
+refused a node, with the count and names of what blocked it).
 
 **Observing a run.** `graph status` flattens the DAG back into a list, which is exactly the
 shape the graph exists to escape. The interactive surfaces — `muxcode graph ui` — render the run
@@ -358,6 +410,10 @@ store on a 2s tick with no daemon coupling, so they cost nothing when idle and s
 restart; `--render-once` emits a single frame for scripts and tests. Gate approval from the TUI
 calls `bus.ApproveGraphGate` directly — the same path as the CLI, with no bus-message route into
 it, preserving the rule that a human at the keyboard is the only thing that releases a gate.
+
+Templates resolve `project > user > builtin`, like agent files. Seven ship built in;
+`req-code-pr` was renamed `spec-to-pr` and `story-lifecycle` removed as a duplicate of its arc
+(2026-09-02), and both retired names fail naming the successor rather than silently resolving.
 
 Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (7 built-ins),
 `bus/graph_run.go` (durable store), `bus/graph_exec.go` (executor), `cmd/graph.go` (CLI),
@@ -516,6 +572,8 @@ The [delivery-acknowledgement](requirements/completed/MUX-050-delivery-acknowled
 A daemon backstop, **`checkPollHealth`**, watches for a growing **receipt gap** (inbox messages un-receipted past a threshold) — a positive signal a self-poll loop or delivery sidecar died — and re-drives delivery (`ForceDeliver` for self-pollers, `SendWakeUp` for non-hook TUIs), alerting edit with a `delivery-gap` event if the gap persists.
 
 **Rollout — default ON (soak):** the cutover is now the **default**. `ackDeliveryActive()` returns ON unless rolled back, in precedence order: `MUXCODE_DELIVERY_ACK_DISABLE=1` (env hard kill switch back to pane-scrape delivery, needs a daemon restart), `MUXCODE_DELIVERY_ACK=off` (env opt-out; `=on` pins it on), then the instant restart-free runtime marker `delivery-ack.off` written by `muxcode delivery-ack off` (the daemon re-reads it every poll loop; `on` clears it). While the cutover is active the receipt model is fully in charge and the pane-scrape delivery machinery above is **bypassed but still present** as a fallback — its physical removal is a soak-gated follow-up ([remove-gated-pane-scrape-delivery](requirements/backlog/MUX-012-remove-gated-pane-scrape-delivery.md)), still blocked until the receipt-gap backstop mis-fire is resolved. Core code: `bus/delivery.go` (`WriteReceipt`/`ReadReceipt`/`ReceiptGap`), `bus/inject_verify.go`, `daemon/daemon.go` (`checkPollHealth`, `ackDeliveryActive`).
+
+**What counts as received.** "Un-receipted" is decided by one read-side predicate, `hasReceipt()` (`bus/delivery.go`): `AckedAt > 0` **or** `Status == responded`. A reply implies receipt, and is strictly stronger evidence than a consume-ack — the agent did not just read the message, it finished the work and answered. The second clause exists because `MarkResponded()` records a response without setting `AckedAt`; without it an answered-but-never-consumed request read as un-receipted forever, the gap counted it permanently, and the backstop re-drove delivery for work already done — observed live as ~21 hours of repeated re-drives and duplicate LGTM echoes from a single review request. `MarkResponded()` is also the single choke point that drains the answered row from the responder's inbox (`ConsumeByID`), resolving the recipient from the original request's `To` so a stale correlation still drains the right inbox, and covering the `--wait` fallback where a response is correlated with no `ReplyTo`. While the cutover is on, the daemon's `checkIdleAgents` / `checkParkedInput` / `checkPaneSweep` are bypassed — the machinery MUX-012 above tracks removing.
 
 ### Edit inbox polling (`--wait`)
 
@@ -718,6 +776,39 @@ Titling reads back the **new pane's id** (`split-window -P -F '#{pane_id}'`) rat
 7. Idle detection: heuristic — looks for ">" prompt or "Summarize" text in pane
 8. Task completion: heuristic analysis of pane content for completion indicators
 ```
+
+**Sandbox policy.** Codex runs commands under a *selectable* sandbox: `-s/--sandbox` takes
+`read-only`, `workspace-write` or `danger-full-access`, `--add-dir <DIR>` grants extra writable roots
+beside the workspace, and network access is controlled separately and restricted by default.
+`BuildExecArgs` (`bus/provider_codex.go`) passes `-s workspace-write` plus one `--add-dir` per root
+**only for the `build` role** — `codexWritableRoots` returns `~/.local/bin`, `~/.config/muxcode`,
+`~/.claude/commands` and the Go toolchain caches, resolved to physical paths because Codex refuses a
+writable root containing a symlink component — and nothing for any other role. So every other Codex
+agent inherits the default policy: writes inside the workspace succeed, writes outside are refused
+with `Operation not permitted`, which is why `./build.sh` used to die at `make install` on a Codex
+build agent. Two consequences follow. A role whose work ends in a write outside the repo (commit's
+`.git` and remote pushes) needs the same treatment as build, not a different provider. And **no
+flag lifts network for any role**, so a Codex `test` agent cannot bind the loopback socket
+`httptest.NewServer` needs and structurally cannot run this repo's suite
+([MUX-153](requirements/backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)). An earlier
+version of this guidance claimed Codex "sandboxes all filesystem writes" and was fit only for
+read-only roles; that conflated one policy with the CLI and was corrected 2026-09-08.
+
+**Task-completion heuristic, and its known miss.** Step 8 reads braille spinners, `▸` and
+"thinking" as *still running* and a `›` prompt in the last three lines as *done*, taking the last
+content line as the summary. Codex's current TUI renders progress as `• Working (13s • esc to
+interrupt)` with the composer still visible, so that progress line is reported as a completed task's
+answer — closing tracked tasks and firing chain links on nothing
+([MUX-154](requirements/drafts/MUX-154-codex-status-line-closes-tracked-tasks.md)). A second shape
+did the same on 2026-09-08 20:31: the horizontal rule codex draws between turns was the "last content
+line" above the composer, and 158 dashes closed two graph nodes before either agent had a result.
+**Fixed in `bae22dc` (22:02)**: one shared signature in `history_provenance.go` (`LooksLikeWorkingLine`,
+`isRuleLine`) makes the progress line read as *active* and the rule as chrome on every road;
+`lastComposedLine` skips chrome and reports *not complete* when nothing composed sits above the
+composer (the `"Task completed"` fallback is gone); and both consumers refuse a synthesized
+non-result — `checkNonHookTasks` logs `task-nonresult-ignored` and leaves the task in flight,
+`sendResponseIsNonResult` keeps the graph node `running`. Still a heuristic: two further shapes
+(`└ go test ./...`, a bare `…`) are recorded in the spec as open signatures.
 
 ### Local LLM Agent Flow
 

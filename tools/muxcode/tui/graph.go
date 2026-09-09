@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -13,15 +14,18 @@ import (
 // graph definition, and per-node statuses. Layout and rendering are pure
 // functions of a snapshot, so every frame is unit-testable without a
 // terminal and `--render-once` is exactly one snapshot → one frame.
+//
+// Worktrees and Held are optional enrichment — loaders fill them, fixtures
+// may leave nil. Held cannot be derived from state: a held node sits in Done.
 type GraphSnapshot struct {
-	Run      *bus.GraphRun
-	Graph    *bus.Graph
-	Statuses map[string]*bus.GraphNodeStatus
-	// Worktrees maps a spawn id to its worktree path, so worker-node detail
-	// can show where the work happened. Optional enrichment — loaders fill
-	// it, fixtures may leave it nil.
+	Run       *bus.GraphRun
+	Graph     *bus.Graph
+	Statuses  map[string]*bus.GraphNodeStatus
 	Worktrees map[string]string
+	Held      map[string]bool
 }
+
+func (s GraphSnapshot) isHeld(id string) bool { return s.Held[id] }
 
 // GraphGrid is the layered layout of a graph: layer index = column,
 // nodes within a layer stacked in definition order.
@@ -112,7 +116,12 @@ func LayoutGraph(g *bus.Graph) *GraphGrid {
 // nodeGlyph returns the state glyph and Dracula color for a node. A
 // wait_human gate keeps its distinct flag glyph in every state so gates
 // stay visually prominent in the DAG, per the MUX-031 authority note.
-func nodeGlyph(nodeType, state, outcome string) (glyph string, color string) {
+// held outranks state: a held node is in Done, so it would otherwise render
+// green with a tick. Everything waiting on a person gets the same yellow flag.
+func nodeGlyph(nodeType, state, outcome string, held bool) (glyph string, color string) {
+	if held {
+		return "⚑", Yellow + Bold
+	}
 	if nodeType == bus.NodeWaitHuman {
 		if state == bus.GraphNodeWaiting {
 			return "⚑", Yellow + Bold
@@ -344,7 +353,7 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 	for i := range snap.Graph.Nodes {
 		n := &snap.Graph.Nodes[i]
 		types[n.ID] = n.Type
-		glyph, _ := nodeGlyph(n.Type, snap.nodeState(n.ID), snap.nodeOutcome(n.ID))
+		glyph, _ := nodeGlyph(n.Type, snap.nodeState(n.ID), snap.nodeOutcome(n.ID), snap.isHeld(n.ID))
 		label := glyph + " " + n.ID
 		// Terse ids say nothing about which agent is active (a bare
 		// "a → b → c" was unreadable live; user catch, 2026-08-27) — send
@@ -404,7 +413,7 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 		return frameWithDetails(top, snap, width, height, now, scroll)
 	}
 	if gridW > width || gridH+skipLanes+headerLines > height {
-		return renderGraphHeader(snap, now, width) + renderGraphFallback(snap, width)
+		return renderGraphHeader(snap, now, width) + renderGraphFallback(snap, width, height-headerLines, selection, scroll)
 	}
 
 	c := newCanvas(gridW+2, gridH+skipLanes+1)
@@ -436,7 +445,7 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 	// Node labels.
 	for i, layerIDs := range grid.Layers {
 		for _, id := range layerIDs {
-			_, color := nodeGlyph(types[id], snap.nodeState(id), snap.nodeOutcome(id))
+			_, color := nodeGlyph(types[id], snap.nodeState(id), snap.nodeOutcome(id), snap.isHeld(id))
 			if id == selection {
 				color = Yellow + Bold
 			}
@@ -471,7 +480,7 @@ func renderWrappedChain(layers [][]string, labels map[string]string, types map[s
 	line, plain := "  ", 2
 	for li, layerIDs := range layers {
 		id := layerIDs[0]
-		_, color := nodeGlyph(types[id], snap.nodeState(id), snap.nodeOutcome(id))
+		_, color := nodeGlyph(types[id], snap.nodeState(id), snap.nodeOutcome(id), snap.isHeld(id))
 		lbl := labels[id]
 		seg := color + lbl + RST
 		segPlain := len([]rune(lbl))
@@ -511,7 +520,7 @@ func RenderNodeDetails(snap GraphSnapshot, width, maxLines int, now time.Time, s
 		n := &snap.Graph.Nodes[i]
 		st := snap.Statuses[n.ID]
 		state := snap.nodeState(n.ID)
-		glyph, color := nodeGlyph(n.Type, state, snap.nodeOutcome(n.ID))
+		glyph, color := nodeGlyph(n.Type, state, snap.nodeOutcome(n.ID), snap.isHeld(n.ID))
 
 		who := nodeWho(n)
 
@@ -758,6 +767,23 @@ var fallbackStateOrder = map[string]int{
 	bus.GraphNodePending: 4,
 	bus.GraphNodeDone:    5,
 	bus.GraphNodeSkipped: 6,
+}
+
+// fallbackRow is one node's row in the flat list, pre-sort.
+type fallbackRow struct {
+	id, typ, state, outcome string
+	held                    bool
+	defIdx                  int
+}
+
+// fallbackRank ranks a row for the flat list. A held node ranks with a waiting
+// gate — both are the run stopped on a person — rather than with Done, which
+// sorted the blocker below every pending node and off the bottom of the pane.
+func fallbackRank(state string, held bool) int {
+	if held {
+		return fallbackStateOrder[bus.GraphNodeWaiting]
+	}
+	return fallbackStateOrder[state]
 }
 
 // fitWidth truncates a rendered line to the pane width, ANSI-preserving.
@@ -1057,20 +1083,79 @@ func TypeaheadIndex(names []string, prefix string) int {
 // asked for one by name, telling the person launching pr-local-review to type
 // a spec id where a PR number goes.
 func RenderIntentPromptFrame(template, input, hint string, isSpec bool, width int) string {
+	return RenderIntentPromptFrameH(template, input, hint, isSpec, width, 0)
+}
+
+// RenderIntentPromptFrameH is RenderIntentPromptFrame with a height
+// budget: the hint is elided so the input field always renders.
+//
+// The caller pads the frame from the bottom, so the field — the last row
+// — is the first thing an overlong hint costs, leaving a prompt with no
+// visible way to answer it. That is the failure RenderConfirmFrameH
+// already exists to prevent (live, 2026-08-27); wrapping the hint to the
+// pane width made it reachable here, since a hint that used to be one
+// overflowing line is now many. height <= 0 = unbudgeted.
+func RenderIntentPromptFrameH(template, input, hint string, isSpec bool, width, height int) string {
 	ask, label := "This template needs an argument — type it:", "argument:"
 	if isSpec {
 		ask, label = "This template needs a spec — describe the work, or type a spec id:", "spec:"
+	}
+	askRows := promptTextLines(ask, width)
+	hintRows := promptTextLines(hint, width)
+	if height > 0 {
+		hintRows = elideRows(hintRows, intentHintBudget(height, len(askRows)))
 	}
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Launch Graph", width))
 	fmt.Fprintf(&b, "  %s%sLaunch %s%s\n", Purple, Bold, template, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
-	fmt.Fprintf(&b, "  %s%s%s\n", Comment, ask, RST)
-	if hint != "" {
-		fmt.Fprintf(&b, "  %s(%s)%s\n", Comment, hint, RST)
+	for _, line := range append(askRows, hintRows...) {
+		fmt.Fprintf(&b, "  %s%s%s\n", Comment, line, RST)
 	}
 	fmt.Fprintf(&b, "\n  %s%s%s %s%s█%s\n", Comment, label, RST, FG, input, RST)
 	return b.String()
+}
+
+// intentHintBudget is the rows the intent prompt can spend on its hint:
+// the pane height less the caller's three-row margin, the two-row tab
+// bar, the title and divider, and the blank and input rows the field
+// occupies.
+func intentHintBudget(height, askRows int) int {
+	return height - 3 - (askRows + 6)
+}
+
+// elideRows caps rows to budget, spending the last kept row on a count
+// of what was dropped so a truncated list never reads as complete.
+func elideRows(rows []string, budget int) []string {
+	if budget <= 0 {
+		return nil
+	}
+	if len(rows) <= budget {
+		return rows
+	}
+	out := make([]string, 0, budget)
+	out = append(out, rows[:budget-1]...)
+	return append(out, fmt.Sprintf("… +%d more", len(rows)-(budget-1)))
+}
+
+// promptTextLines wraps one of the frame's prose rows to its two-column
+// indent, returning nothing for an empty string so the caller emits no
+// line at all.
+//
+// The wrap is the structural guarantee, not a nicety: the hint is built
+// from repo contents, so its length is unbounded. Rendered on one line
+// it ran a screen-wide list of spec paths off the pane, taking the
+// input field with it. The fixed ask line overflowed a 60-column pane on
+// its own, so it is wrapped by the same path rather than trusted to fit.
+func promptTextLines(s string, width int) []string {
+	if s == "" {
+		return nil
+	}
+	avail := width - 4
+	if avail < 8 {
+		avail = 8
+	}
+	return wrapPlain(s, avail)
 }
 
 // RenderSpecConfirmFrame renders the branch-derived launch confirm: the
@@ -1080,22 +1165,172 @@ func RenderIntentPromptFrame(template, input, hint string, isSpec bool, width in
 // is the surprise this frame exists to prevent. A spec found only under
 // completed/ is flagged: the run would verify, not implement.
 func RenderSpecConfirmFrame(template string, spec bus.BranchSpec, active bus.ActiveSpecRelation, errMsg string, width int) string {
+	return RenderSpecConfirmFrameH(template, spec, active, errMsg, width, 0)
+}
+
+// RenderSpecConfirmFrameH is RenderSpecConfirmFrame with a height budget.
+//
+// The caller pads from the bottom while the footer is appended after the
+// padding, so a short pane truncates the pointer consequence, the
+// completed/ warning and the error while "Enter/y Yes" stays visible —
+// the confirm would invite a keypress with the very thing it exists to
+// state cut off. Those rows are therefore never elided: a tight budget
+// compacts the context rows above them instead, and drops them from the
+// bottom only once compacting is not enough. height <= 0 = unbudgeted.
+func RenderSpecConfirmFrameH(template string, spec bus.BranchSpec, active bus.ActiveSpecRelation, errMsg string, width, height int) string {
+	context, consequence, _ := specConfirmBody(spec, active, errMsg, width, height)
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Launch Graph", width))
 	fmt.Fprintf(&b, "  %s%sLaunch %s%s\n", Purple, Bold, template, RST)
 	fmt.Fprintf(&b, "%s%s%s\n", Comment, HLine('─', width), RST)
-	fmt.Fprintf(&b, "  %sBranch %s names a spec — work through it?%s\n\n", Comment, spec.Branch, RST)
-	fmt.Fprintf(&b, "  %sbranch:%s  %s%s%s\n", Comment, RST, FG, spec.Branch, RST)
-	fmt.Fprintf(&b, "  %sspec:%s    %s%s%s\n", Comment, RST, FG, spec.Path, RST)
-	fmt.Fprintf(&b, "  %sderived:%s %s%s%s\n", Comment, RST, FG, spec.Intent, RST)
-	fmt.Fprintf(&b, "  %sactive:%s  %s\n", Comment, RST, describeActiveSpecChange(active))
-	if spec.Dir == "completed" {
-		fmt.Fprintf(&b, "\n  %s⚠ spec is under completed/ — the run will verify, not implement%s\n", Yellow, RST)
-	}
-	if errMsg != "" {
-		fmt.Fprintf(&b, "\n  %s✗ %s%s\n", Red, errMsg, RST)
+	for _, line := range append(context, consequence...) {
+		b.WriteString(line + "\n")
 	}
 	return b.String()
+}
+
+// specConfirmChrome is the rows the confirm frame spends before its body:
+// the two-row tab bar, the title and the divider.
+const specConfirmChrome = 4
+
+// specConfirmBody fits the confirm's rows to the pane, reporting whether
+// the consequence had to be replaced by the too-short notice.
+//
+// The renderer and the key handler both read that flag, from this one
+// function: if they computed it apart they could disagree, and a frame
+// showing the consequence while the handler refused the key — or worse,
+// the reverse — is the drift this exists to prevent.
+func specConfirmBody(spec bus.BranchSpec, active bus.ActiveSpecRelation, errMsg string, width, height int) (context, consequence []string, tooShort bool) {
+	consequence = specConfirmConsequence(spec, active, errMsg, width, false)
+	context = specConfirmContext(spec, width, false)
+	if height <= 0 {
+		return context, consequence, false
+	}
+	body := height - 3 - specConfirmChrome
+	if len(consequence)+len(context) > body {
+		context = specConfirmContext(spec, width, true)
+	}
+	if len(consequence)+len(context) > body {
+		consequence = specConfirmConsequence(spec, active, errMsg, width, true)
+	}
+	for len(context) > 0 && len(consequence)+len(context) > body {
+		context = context[:len(context)-1]
+	}
+	if len(consequence) > body {
+		return nil, specConfirmTooShort(width, body), true
+	}
+	return context, consequence, false
+}
+
+// SpecConfirmTooShort reports whether the pane is too short to show what
+// confirming does. The key handler calls it at the keypress rather than
+// trusting the drawn frame: the pane can be resized in between.
+func SpecConfirmTooShort(spec bus.BranchSpec, active bus.ActiveSpecRelation, errMsg string, width, height int) bool {
+	_, _, tooShort := specConfirmBody(spec, active, errMsg, width, height)
+	return tooShort
+}
+
+// specConfirmContext renders the rows that orient the reader — the
+// question and the branch, spec and derived values. compact fits each
+// value onto one line instead of wrapping it, the first thing given up
+// when the pane is too short to show everything.
+func specConfirmContext(spec bus.BranchSpec, width int, compact bool) []string {
+	out := colorLines("Branch "+spec.Branch+" names a spec — work through it?", Comment, width)
+	out = append(out, "")
+	out = append(out, labeledRowLines("branch:", spec.Branch, FG, width, compact)...)
+	out = append(out, labeledRowLines("spec:", spec.Path, FG, width, compact)...)
+	return append(out, labeledRowLines("derived:", spec.Intent, FG, width, compact)...)
+}
+
+// specConfirmConsequence renders what a person must see before pressing a
+// key: what confirming does to the active-spec pointer, the completed/
+// flag, and any error. compact holds each to a single line, bounding the
+// block so a short pane cannot truncate it away.
+func specConfirmConsequence(spec bus.BranchSpec, active bus.ActiveSpecRelation, errMsg string, width int, compact bool) []string {
+	text, color := activeSpecChange(active, compact)
+	out := labeledRowLines("active:", text, color, width, compact)
+	if spec.Dir == "completed" {
+		out = append(out, "")
+		out = append(out, noticeLines("⚠ spec is under completed/ — the run will verify, not implement", Yellow, width, compact)...)
+	}
+	if errMsg != "" {
+		out = append(out, "")
+		out = append(out, noticeLines("✗ "+errMsg, Red, width, compact)...)
+	}
+	return out
+}
+
+// noticeLines renders one notice, wrapped or held to a single fitted
+// line when the pane cannot afford the wrapped form.
+func noticeLines(text, color string, width int, compact bool) []string {
+	if compact {
+		return []string{fmt.Sprintf("  %s%s%s", color, fitOneLine(text, width-4), RST)}
+	}
+	return colorLines(text, color, width)
+}
+
+// specConfirmTooShort is the last resort when the pane cannot show even
+// the compacted consequence. The footer is drawn outside this frame, so
+// "Enter/y Yes" stays on screen regardless — saying plainly that the
+// consequence is not visible beats rendering a confirm that looks
+// complete and is not.
+func specConfirmTooShort(width, body int) []string {
+	lines := colorLines("⚠ pane too short to show what confirming does — resize before answering", Yellow, width)
+	if body > 0 && len(lines) > body {
+		lines = lines[:body]
+	}
+	return lines
+}
+
+// colorLines wraps text to the pane at the frame's two-column indent,
+// every line carrying the same colour.
+func colorLines(text, color string, width int) []string {
+	var out []string
+	for _, line := range promptTextLines(text, width) {
+		out = append(out, fmt.Sprintf("  %s%s%s", color, line, RST))
+	}
+	return out
+}
+
+// specConfirmLabelCol is the column values start at, after the frame's
+// two-space indent: the widest label plus a trailing space.
+const specConfirmLabelCol = 9
+
+// labeledRowLines renders one "label:  value" row, wrapping the value to
+// the pane with continuation lines aligned under the value column.
+//
+// Every value here is unbounded — a branch name, two repo paths and a
+// derived intent — so an unwrapped row runs off the frame on any pane
+// narrower than the longest of them. compact fits the value onto a
+// single line instead, trading the tail for height.
+func labeledRowLines(label, value, color string, width int, compact bool) []string {
+	avail := width - 2 - specConfirmLabelCol
+	if avail < 8 {
+		avail = 8
+	}
+	rows := wrapPlain(value, avail)
+	if compact {
+		rows = []string{fitOneLine(value, avail)}
+	}
+	out := make([]string, 0, len(rows))
+	for i, line := range rows {
+		lead := Comment + Pad(label, specConfirmLabelCol) + RST
+		if i > 0 {
+			lead = strings.Repeat(" ", specConfirmLabelCol)
+		}
+		out = append(out, fmt.Sprintf("  %s%s%s%s", lead, color, line, RST))
+	}
+	return out
+}
+
+// fitOneLine truncates s to w columns, marking the cut so a shortened
+// value is never read as the whole one.
+func fitOneLine(s string, w int) string {
+	r := []rune(s)
+	if len(r) <= w || w < 2 {
+		return s
+	}
+	return string(r[:w-1]) + "…"
 }
 
 // plainActiveSpecChange is the pointer consequence without color, for the
@@ -1110,15 +1345,24 @@ func plainActiveSpecChange(active bus.ActiveSpecRelation, path string) string {
 	return "launch switches the active spec from " + active.Current + " to " + path
 }
 
-// describeActiveSpecChange words the pointer consequence of confirming.
-func describeActiveSpecChange(active bus.ActiveSpecRelation) string {
+// activeSpecChange words the pointer consequence of confirming, as plain
+// text plus the colour carrying its urgency.
+//
+// The text is returned uncoloured because the caller wraps it, and
+// wrapPlain measures runes — an escape sequence is runes, so a
+// pre-coloured string wraps at the wrong column. The switch case is
+// coloured whole rather than emphasising one word mid-string, for the
+// same reason.
+func activeSpecChange(active bus.ActiveSpecRelation, compact bool) (string, string) {
 	switch {
 	case active.Current == "":
-		return fmt.Sprintf("%s(unset) → confirming sets it to this spec%s", Comment, RST)
+		return "(unset) → confirming sets it to this spec", Comment
 	case active.Matches:
-		return fmt.Sprintf("%smatches — unchanged%s", Green, RST)
+		return "matches — unchanged", Green
+	case compact:
+		return "switches from " + filepath.Base(active.Current) + " to this spec", Yellow
 	}
-	return fmt.Sprintf("%s%s%s → confirming %s%sswitches%s it to this spec", FG, active.Current, RST, Yellow, Bold, RST)
+	return active.Current + " → confirming switches it to this spec", Yellow
 }
 
 // TemplateNeedsIntent reports whether any node message or action of a
@@ -1490,7 +1734,7 @@ func RenderNodeDetailFrame(snap GraphSnapshot, nodeID string, width int) string 
 	}
 	st := snap.Statuses[nodeID]
 	state := snap.nodeState(nodeID)
-	glyph, color := nodeGlyph(node.Type, state, snap.nodeOutcome(nodeID))
+	glyph, color := nodeGlyph(node.Type, state, snap.nodeOutcome(nodeID), snap.isHeld(nodeID))
 
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Graph Runs", width))
@@ -1543,34 +1787,117 @@ func RenderNodeDetailFrame(snap GraphSnapshot, nodeID string, width int) string 
 }
 
 // renderGraphFallback renders the flat node list used when the grid is
-// wider than the pane: one row per node, failed/waiting first.
-func renderGraphFallback(snap GraphSnapshot, width int) string {
-	type row struct {
-		id, typ, state, outcome string
-		defIdx                  int
-	}
-	rows := make([]row, 0, len(snap.Graph.Nodes))
+// wider than the pane: one row per node, failed/waiting/held first.
+//
+// budget is the rows available below the header; <= 0 means unbudgeted. The
+// list is truncated from the bottom because it is sorted by what needs eyes,
+// so an overflow drops the least urgent rows and never the blocker.
+func renderGraphFallback(snap GraphSnapshot, width, budget int, selection string, scroll int) string {
+	rows := make([]fallbackRow, 0, len(snap.Graph.Nodes))
 	for i := range snap.Graph.Nodes {
 		n := &snap.Graph.Nodes[i]
-		rows = append(rows, row{id: n.ID, typ: n.Type, state: snap.nodeState(n.ID), outcome: snap.nodeOutcome(n.ID), defIdx: i})
+		rows = append(rows, fallbackRow{id: n.ID, typ: n.Type, state: snap.nodeState(n.ID),
+			outcome: snap.nodeOutcome(n.ID), held: snap.isHeld(n.ID), defIdx: i})
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
-		oi, oj := fallbackStateOrder[rows[i].state], fallbackStateOrder[rows[j].state]
+		oi, oj := fallbackRank(rows[i].state, rows[i].held), fallbackRank(rows[j].state, rows[j].held)
 		if oi != oj {
 			return oi < oj
 		}
 		return rows[i].defIdx < rows[j].defIdx
 	})
 
+	window, above, below := rows, 0, 0
+	if budget > 0 {
+		window, above, below = flatWindow(rows, budget-1, scroll, selection)
+	}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "  %s(graph wider than pane — flat view)%s\n", Comment, RST)
-	for _, r := range rows {
-		glyph, color := nodeGlyph(r.typ, r.state, r.outcome)
-		line := fmt.Sprintf("  %s%s %-24s%s %s%-10s %s%s", color, glyph, r.id, RST, Comment, r.state, r.typ, RST)
+	if above > 0 {
+		fmt.Fprintf(&b, "  %s↑ +%d more%s\n", Comment, above, RST)
+	}
+	for _, r := range window {
+		glyph, color := nodeGlyph(r.typ, r.state, r.outcome, r.held)
+		state := r.state
+		if r.held {
+			state = "held"
+		}
+		cursor, name := " ", color
+		if r.id == selection {
+			cursor, name = Yellow+"▸"+RST, Cyan+Bold
+		}
+		line := fmt.Sprintf("%s %s%s%s %s%-24s%s %s%-10s %s%s", cursor, color, glyph, RST,
+			name, r.id, RST, Comment, state, r.typ, RST)
 		if st := snap.Statuses[r.id]; st != nil && st.Outcome != "" {
 			line += fmt.Sprintf("  %soutcome=%s%s", Comment, st.Outcome, RST)
 		}
 		b.WriteString(fitWidth(line, width) + "\n")
 	}
+	if below > 0 {
+		fmt.Fprintf(&b, "  %s↓ +%d more%s\n", Comment, below, RST)
+	}
 	return b.String()
+}
+
+// flatWindow is the slice of rows visible at a scroll offset, with the
+// counts hidden above and below; each notice costs a row of the budget.
+//
+// The list used to keep the top rows by rank and drop the rest, so
+// completed nodes fell off with no way to reach them — scrolling was
+// wired to the detail panel only. A selection outside the window pulls
+// it back into view, so moving the cursor still follows it.
+func flatWindow(rows []fallbackRow, capacity, scroll int, selection string) (window []fallbackRow, above, below int) {
+	if capacity < 1 || len(rows) == 0 {
+		return nil, 0, len(rows)
+	}
+	for avail := capacity; avail >= 1; avail-- {
+		start, end := windowBounds(rows, avail, scroll, selection)
+		a, b := start, len(rows)-end
+		need := avail
+		if a > 0 {
+			need++
+		}
+		if b > 0 {
+			need++
+		}
+		if need <= capacity {
+			return rows[start:end], a, b
+		}
+		if avail == 1 {
+			// One line left and notices will not fit beside it: the row the
+			// cursor is on beats a count of rows you cannot see.
+			return rows[start:end], 0, 0
+		}
+	}
+	return nil, 0, len(rows)
+}
+
+// windowBounds is the row range shown for a given size, pulled to keep the
+// selection inside it and clamped to the ends of the list.
+func windowBounds(rows []fallbackRow, avail, scroll int, selection string) (start, end int) {
+	start = clamp(scroll, 0, len(rows)-1)
+	if sel := rowIndexOf(rows, selection); sel >= 0 {
+		if sel < start {
+			start = sel
+		} else if sel >= start+avail {
+			start = sel - avail + 1
+		}
+	}
+	end = start + avail
+	if end > len(rows) {
+		end = len(rows)
+		start = max(0, end-avail)
+	}
+	return start, end
+}
+
+// rowIndexOf is the position of id in rows, or -1.
+func rowIndexOf(rows []fallbackRow, id string) int {
+	for i := range rows {
+		if rows[i].id == id {
+			return i
+		}
+	}
+	return -1
 }

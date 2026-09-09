@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +32,7 @@ func TestDefaultOllamaConfig(t *testing.T) {
 }
 
 func TestChatComplete_SimpleResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
 		}
@@ -76,6 +75,7 @@ func TestChatComplete_SimpleResponse(t *testing.T) {
 
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL:     server.URL,
+		HTTPClient:  server.Client(),
 		Model:       "test-model",
 		Temperature: 0.1,
 		Timeout:     10,
@@ -100,7 +100,7 @@ func TestChatComplete_SimpleResponse(t *testing.T) {
 }
 
 func TestChatComplete_WithToolCalls(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := ChatResponse{
 			Choices: []ChatChoice{
 				{
@@ -127,7 +127,8 @@ func TestChatComplete_WithToolCalls(t *testing.T) {
 	defer server.Close()
 
 	client := NewOllamaClient(OllamaConfig{
-		BaseURL: server.URL,
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
 		Model:   "test-model",
 		Timeout: 10,
 	})
@@ -153,7 +154,7 @@ func TestChatComplete_WithToolCalls(t *testing.T) {
 func TestChatComplete_WithToolDefs(t *testing.T) {
 	var receivedTools []ToolDef
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req ChatRequest
 		json.NewDecoder(r.Body).Decode(&req)
 		receivedTools = req.Tools
@@ -168,7 +169,8 @@ func TestChatComplete_WithToolDefs(t *testing.T) {
 	defer server.Close()
 
 	client := NewOllamaClient(OllamaConfig{
-		BaseURL: server.URL,
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
 		Model:   "test-model",
 		Timeout: 10,
 	})
@@ -198,14 +200,15 @@ func TestChatComplete_WithToolDefs(t *testing.T) {
 }
 
 func TestChatComplete_APIError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"error": {"message": "invalid model"}}`))
 	}))
 	defer server.Close()
 
 	client := NewOllamaClient(OllamaConfig{
-		BaseURL: server.URL,
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
 		Model:   "bad-model",
 		Timeout: 10,
 	})
@@ -221,7 +224,7 @@ func TestChatComplete_APIError(t *testing.T) {
 
 func TestChatComplete_RetryOnServerError(t *testing.T) {
 	attempts := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		if attempts <= 2 {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -238,7 +241,8 @@ func TestChatComplete_RetryOnServerError(t *testing.T) {
 	defer server.Close()
 
 	client := NewOllamaClient(OllamaConfig{
-		BaseURL: server.URL,
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
 		Model:   "test-model",
 		Timeout: 30,
 	})
@@ -262,7 +266,7 @@ func TestChatComplete_RetryOnServerError(t *testing.T) {
 
 func TestChatComplete_NoRetryOn400(t *testing.T) {
 	attempts := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`bad request`))
@@ -270,7 +274,8 @@ func TestChatComplete_NoRetryOn400(t *testing.T) {
 	defer server.Close()
 
 	client := NewOllamaClient(OllamaConfig{
-		BaseURL: server.URL,
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
 		Model:   "test-model",
 		Timeout: 10,
 	})
@@ -285,7 +290,7 @@ func TestChatComplete_NoRetryOn400(t *testing.T) {
 }
 
 func TestCheckHealth_ModelAvailable(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/tags" {
 			t.Errorf("path = %s, want /api/tags", r.URL.Path)
 		}
@@ -295,7 +300,8 @@ func TestCheckHealth_ModelAvailable(t *testing.T) {
 	defer server.Close()
 
 	client := NewOllamaClient(OllamaConfig{
-		BaseURL: server.URL,
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
 		Model:   "qwen2.5-coder:7b",
 		Timeout: 10,
 	})
@@ -307,14 +313,15 @@ func TestCheckHealth_ModelAvailable(t *testing.T) {
 }
 
 func TestCheckHealth_ModelNotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := `{"models":[{"name":"llama3:8b"}]}`
 		w.Write([]byte(resp))
 	}))
 	defer server.Close()
 
 	client := NewOllamaClient(OllamaConfig{
-		BaseURL: server.URL,
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
 		Model:   "nonexistent-model",
 		Timeout: 10,
 	})
@@ -332,13 +339,14 @@ func TestCheckHealth_ModelNotFound(t *testing.T) {
 }
 
 func TestCheckHealth_NoModels(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"models":[]}`))
 	}))
 	defer server.Close()
 
 	client := NewOllamaClient(OllamaConfig{
-		BaseURL: server.URL,
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
 		Model:   "any-model",
 		Timeout: 10,
 	})
@@ -367,7 +375,7 @@ func TestCheckHealth_ConnectionError(t *testing.T) {
 
 func TestChatComplete_ContextCancelled(t *testing.T) {
 	done := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-done // block until test completes
 	}))
 	defer func() {
@@ -376,7 +384,8 @@ func TestChatComplete_ContextCancelled(t *testing.T) {
 	}()
 
 	client := NewOllamaClient(OllamaConfig{
-		BaseURL: server.URL,
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
 		Model:   "test-model",
 		Timeout: 10,
 	})
@@ -391,13 +400,14 @@ func TestChatComplete_ContextCancelled(t *testing.T) {
 }
 
 func TestCheckHealth_ModelNotFound_IsErrModelNotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"models":[{"name":"llama3:8b"}]}`))
 	}))
 	defer server.Close()
 
 	client := NewOllamaClient(OllamaConfig{
-		BaseURL: server.URL,
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
 		Model:   "missing-model",
 		Timeout: 10,
 	})
@@ -412,13 +422,14 @@ func TestCheckHealth_ModelNotFound_IsErrModelNotFound(t *testing.T) {
 }
 
 func TestCheckHealth_NoModels_IsErrModelNotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"models":[]}`))
 	}))
 	defer server.Close()
 
 	client := NewOllamaClient(OllamaConfig{
-		BaseURL: server.URL,
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
 		Model:   "any-model",
 		Timeout: 10,
 	})
