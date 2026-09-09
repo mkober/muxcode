@@ -463,6 +463,22 @@ an intention into something that actually fires; without it the guard has no tri
 "lowest phase with open items" returns the same phase forever and cannot tell iteration 5 from
 iteration 1.
 
+**Check before you ask (MUX-167).** The guard runs at `commit` dispatch — one node *after* the
+human approved `phase-gate` — so an open phase used to cost two gates per lap: an approval the guard
+declined within a second, then `stuck-gate`; and the declined gate's `${completed_phase}` label
+named the *previous* phase, because the frontier is the last complete phase. On 2026-09-09 run
+`1788966148-spec-to-pr-2338488d` paid this four times — 7 phase-gate approvals, 4 declined, 3+
+stuck-gates for 3 commits — every time a review returned `EXIT=0` with should-fixes, which never
+routes to `fix`. `spec-to-pr` now carries a `phase-check` condition node (`spec_phase_committable`,
+naming the guarded commit node) between `update-spec` and `phase-gate`; it evaluates the **same
+`phaseCommitReady` predicate the guard uses**, so an open phase routes straight to `stuck-gate` and a
+person is asked to approve a commit only when the guard will accept it — one prompt per incomplete
+lap, and the gate label always names the phase being shipped. The guard stays as the dispatch-time
+backstop: a spec reopened between the check and the commit is still refused. `graph validate`
+rejects a check that names a node without the `phase-progress` guard. Graph workers verify a phase
+through the run agent and quote its counts and task id before reporting, so plan's verify credits a
+store row rather than the worker's account.
+
 **Workers, stalls and the watchdog (2026-09-09).** Four executor rules came out of the second
 `spec-to-pr` run on MUX-159 (`1788930816-spec-to-pr-f7fb2610`), whose commit dispatch the daemon
 answered for it and whose re-seeded implement worker was stopped by hand as a leftover:

@@ -288,6 +288,7 @@ Spawned agents:
 - Send results back to the owner via normal bus messages
 - Are tracked in `spawn.jsonl` and monitored by the daemon
 - Block commits while running (same as background processes)
+- As graph workers (`spec-to-pr`'s `implement` and `fix` nodes), verify a phase through the **run agent** — `muxcode send run run "bash scripts/test-<feature>.sh" --wait` — and quote its counts and task id before reporting; never `go test`, the graph's test node owns the suite. Plan's verify credits the run agent's store row, not the worker's report (MUX-167)
 
 ## Local LLM Agent (Ollama)
 
