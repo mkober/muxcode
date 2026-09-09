@@ -190,9 +190,52 @@ func shouldClean(session, currentSession string, includeActive bool) bool {
 	return !isTmuxSessionAlive(session)
 }
 
-// isTmuxSessionAlive checks if a tmux session exists.
+// tmuxSessionNames asks the server to enumerate its sessions. A non-nil
+// error means the question could not be answered, never that there are no
+// sessions. A var so a test can inject an unanswerable probe.
+var tmuxSessionNames = func() ([]string, error) {
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if n := strings.TrimSpace(line); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names, nil
+}
+
+// isTmuxSessionAlive reports whether a tmux session exists.
+//
+// Deletion requires POSITIVE absence: the server answered, and the name
+// was not among the sessions it listed. Anything else — the probe not
+// running, the socket unreachable, the process signalled, no server at all
+// — leaves the question open, and an open question reads as alive.
+//
+// The asymmetry is why. The only caller is shouldClean, which deletes a
+// session's entire bus directory: inboxes, tracked tasks, delivery
+// receipts and graph run state. A stale directory left behind costs disk;
+// a live one deleted costs the session.
+//
+// It is not hypothetical. On 2026-09-08 an attached session lost its whole
+// bus directory repeatedly, recreated only partially each time, leaving
+// the delivery store absent and receipts silently failing. The earlier
+// form of this function asked `has-session` and read ANY non-zero exit as
+// absence — but a sandboxed process that cannot reach the tmux socket gets
+// exactly that, so every live session read as stale.
 func isTmuxSessionAlive(session string) bool {
-	return exec.Command("tmux", "has-session", "-t", session).Run() == nil
+	names, err := tmuxSessionNames()
+	if err != nil {
+		return true
+	}
+	for _, n := range names {
+		if n == session {
+			return true
+		}
+	}
+	return false
 }
 
 // CleanupClaudeTmp finds and removes stale Claude Code session directories
