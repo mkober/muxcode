@@ -17,7 +17,7 @@ first cycle, so a session that never cycles never launches them.
 | Neither runs in a normal session | Verified live 2026-09-03: session windows are `plan edit build test serve review deploy run watch commit`; no process for either role |
 | `auto` is the source of unrequested work | [`MUX-141`](./MUX-141-auto-agent-restart-relaunches-graph-runs.md) — every launch seeds `auto` a request-type `startup` task (`launch.go:852-869`), which the definition reads as a mandate; two unrequested graph runs observed 2026-09-02 |
 | `auto` is an attribution blind spot | [`MUX-144`](./MUX-144-wait-human-gate-openable-by-any-agent.md) could not attribute an unauthorised gate release partly because `auto` "has no tmux window to scrape and nothing is logged" |
-| Windowless roles leak undeliverable messages | `inbox/auto.jsonl` held a `long-active` watchdog event for a role with no process — the daemon believed `auto` had been "active 10m". Same family as [`MUX-145`](../drafts/MUX-145-messages-routed-to-windowless-role.md) |
+| Windowless roles leak undeliverable messages | `inbox/auto.jsonl` held a `long-active` watchdog event for a role with no process — the daemon believed `auto` had been "active 10m". Same family as [`MUX-145`](./MUX-145-messages-routed-to-windowless-role.md) |
 | Carrying cost is spread across three modules | Role→file mapping is duplicated in `bus/launch.go`, `bus/agent.go` and the standalone harness; every role-list test pins both names |
 
 ### Current state — verified
@@ -217,7 +217,7 @@ therefore changes the defect ordering, not just this spec.
 
 - **The `analyze` role**, which is also windowless and stranding messages (17 and climbing as of
   2026-09-03). Same family, different fix — tracked as
-  [`MUX-145`](../drafts/MUX-145-messages-routed-to-windowless-role.md). Named here only so the adjacency
+  [`MUX-145`](./MUX-145-messages-routed-to-windowless-role.md). Named here only so the adjacency
   is on record.
 - **Skill frontmatter role scoping.** `parseYAMLList` (`bus/skill.go:101-116`) parses only inline
   `roles: [a, b]`; a block sequence yields an empty list, which `SkillsForRole` treats as *applies

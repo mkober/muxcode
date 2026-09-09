@@ -152,7 +152,7 @@ authoring path).
 - **Presence for a windowless role.** `RoleWindowPresent` (`bus/reload.go:301`) decides presence by
   window and will read `api` as absent — correct for reload, wrong for "can I send to it". The
   send/diagnose/health paths need a *served* notion: alive iff the marker pid is alive.
-  [MUX-145](../drafts/MUX-145-messages-routed-to-windowless-role.md) is defining how a windowless
+  [MUX-145](./MUX-145-messages-routed-to-windowless-role.md) is defining how a windowless
   role is treated; this spec adds the first role that is windowless **by design** rather than by
   configuration, and should land on whatever predicate MUX-145 settles on rather than a private one.
 - **Safety lives in code, not in a definition.** The retired agent's "warn before mutating requests
@@ -212,7 +212,7 @@ authoring path).
 - [ ] `muxcode api serve` loop: consume the `api` inbox through the bus package's own consume path (export it — do not write a second reader); write the receipt; parse the closed grammar; write the in-flight marker; execute; append history; remove the marker; reply with `reply_to` set so `MarkResponded` drains the request
 - [ ] Daemon `checkApiAgent` beside `checkPromptAgent` (`daemon.go:372`) with the same cooldown pattern; `StopApiAgent` on session cleanup
 - [ ] Grammar: `send`, `list`, `history`; anything else → `usage:` reply listing collections, no history row, no request
-- [ ] Presence: `muxcode send api` is accepted while the marker pid is alive; `muxcode diagnose api` names the pid and log path; the provider selector excludes `api`; `muxcode reload api` explains it is served (`muxcode api serve --restart` stops and starts it) — aligned with whatever windowless-role predicate [MUX-145](../drafts/MUX-145-messages-routed-to-windowless-role.md) lands
+- [ ] Presence: `muxcode send api` is accepted while the marker pid is alive; `muxcode diagnose api` names the pid and log path; the provider selector excludes `api`; `muxcode reload api` explains it is served (`muxcode api serve --restart` stops and starts it) — aligned with whatever windowless-role predicate [MUX-145](./MUX-145-messages-routed-to-windowless-role.md) lands
 - [ ] Tests: grammar parse table (accepted and refused forms); one full request → reply through a pipe server; marker liveness and stale-marker cleanup; daemon relaunch after a kill within the cooldown
 
 ### Phase 3: The API surface
@@ -259,7 +259,7 @@ Recorded so they are not re-derived; none is in scope above.
 
 ## Notes
 
-- [MUX-145](../drafts/MUX-145-messages-routed-to-windowless-role.md) — the `api` role becomes
+- [MUX-145](./MUX-145-messages-routed-to-windowless-role.md) — the `api` role becomes
   windowless **by design**; land on its predicate, not a private one.
 - [MUX-107](./MUX-107-tui-component-kit.md) — a fifth surface duplicating tab bar, footer, list and
   confirm strengthens the case for the kit; this spec does not depend on it.

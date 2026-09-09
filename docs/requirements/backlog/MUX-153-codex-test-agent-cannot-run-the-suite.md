@@ -3,7 +3,7 @@
 `TestProcessBatch_SimpleResponse` (`tools/muxcode-llm-harness/harness/loop_test.go:23`) binds a
 loopback listener via `httptest.NewServer`. Codex restricts network access by default and
 `BuildExecArgs` never lifts it, so the listen panics in `newLocalListener`, the harness module fails,
-and — through [`MUX-152`](../backlog/MUX-152-test-sh-hides-modules-after-first-failure.md) — the bus module
+and — through [`MUX-152`](./MUX-152-test-sh-hides-modules-after-first-failure.md) — the bus module
 never runs. A test agent on codex **cannot validate this repository**, and nothing says so: the role
 launches, accepts requests, and returns nothing usable. Today's green suite exists only because the
 work was routed to the unsandboxed run agent.
@@ -19,7 +19,7 @@ Tracking: _(no GitHub issue yet)_
 | | |
 |---|---|
 | Launch | `role=test cli=codex` (lifecycle 13:44:15) |
-| Results produced by the test agent all session | none — its only replies were echoed TUI status lines ([`MUX-154`](./MUX-154-codex-status-line-closes-tracked-tasks.md)) |
+| Results produced by the test agent all session | none — its only replies were echoed TUI status lines ([`MUX-154`](../drafts/MUX-154-codex-status-line-closes-tracked-tasks.md)) |
 | Force-respond ladder on `test` | all four rungs fired 14:11–14:14 with no response |
 | Where the suite actually ran green | the **run** agent (Claude, no sandbox): 2901 pass / 0 fail, exit 0 |
 
@@ -48,8 +48,8 @@ The suite stays green on paper while the role meant to prove it has never run it
 | Spec | Relationship |
 |------|--------------|
 | [`MUX-042`](../completed/MUX-042-codex-cli-compatibility.md) | Made codex a provider. This is the sandbox half its compatibility claim did not cover |
-| [`MUX-152`](../backlog/MUX-152-test-sh-hides-modules-after-first-failure.md) | Turns this single failing test into a run where 2900 tests never execute |
-| [`MUX-154`](./MUX-154-codex-status-line-closes-tracked-tasks.md) | Turns this agent's silence into a recorded success |
+| [`MUX-152`](./MUX-152-test-sh-hides-modules-after-first-failure.md) | Turns this single failing test into a run where 2900 tests never execute |
+| [`MUX-154`](../drafts/MUX-154-codex-status-line-closes-tracked-tasks.md) | Turns this agent's silence into a recorded success |
 
 ## Requirements
 
@@ -142,7 +142,11 @@ role. The default-restricted network claim rests on the corrected `CLAUDE.md` no
 
 ## Status
 
-**In Progress — 3/19, Phase 2 at 3/7.** Filed 2026-09-08; the user chose **option C** the same
+**Backlog — parked 2026-09-08 22:10 at 3/19, Phase 2 at 3/7.** Moved back from `drafts/` on the
+user's instruction: Phase 3's proof — the suite under the codex sandbox itself — never ran, and
+nothing moved since the afternoon. The record below is as it stood when parked.
+
+**Previously: In Progress.** Filed 2026-09-08; the user chose **option C** the same
 afternoon (relayed by edit at 15:14); edit converted all 52 `httptest.NewServer` sites behind a
 shared `newPipeServer` helper within the hour, the full suite ran **green 2915/0**, and the work is
 committed — `c45ed51` (the conversion, 15:44) and `fefb5dc` (the CLAUDE.md rule). Open in Phase 2:

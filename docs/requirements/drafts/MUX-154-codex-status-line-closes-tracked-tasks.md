@@ -109,6 +109,22 @@ line opens with `─` and carries neither, so `dropsAsProviderChrome` (`inbox.go
 composed text. The guard is structural on purpose — a real reply that quotes a status line must
 survive — so the rule line is a **third signature** it needs, beside the bullet-`Working` line.
 
+### Open signatures — recorded, deliberately not fixed (2026-09-08 22:10)
+
+Three distinct shapes reached edit's inbox as "results" within thirty minutes of the second incident,
+beyond the bullet-`Working` line. Reported by edit with `bae22dc`; recorded here so they are not
+re-derived.
+
+| Payload | Caught by `bae22dc`? | Why not |
+|---------|----------------------|---------|
+| `──────` (158 ×) | **yes** | — |
+| `└ go test ./...` | no | `isProviderChromeLine` needs a status signature or a trailing `…`; `./...` is three ASCII dots, not U+2026 |
+| `…` (bare) | no | no render prefix, so `hasRenderPrefix` never engages |
+
+Widening the tool-echo prefixes would change `LooksLikeNonResult`, and with it MUX-003's
+console-history road — so these stay open signatures rather than a silent omission. They are Phase 4
+fixtures first; whether to accept them is a decision for that phase.
+
 ### Relationship
 
 | Spec | Relationship |
@@ -117,30 +133,34 @@ survive — so the rule line is a **third signature** it needs, beside the bulle
 | [`MUX-148`](../backlog/MUX-148-node-outcome-reads-command-ran-as-task-done.md) | Graph-executor half of the same family — a node outcome reads "a command ran" as done. That one is about authoritative-row provenance in `graph_exec`; this is the tracked-task store. Same defect shape, different consumer |
 | [`MUX-009`](../backlog/MUX-009-response-echo-chain-retrigger.md) | A *response* injected back as a *prompt* on the receiving side. This is a status line synthesized as a *response* on the sending side. Distinct mechanisms, both "the bus believes a TUI" |
 | [`MUX-127`](../backlog/MUX-127-review-completion-routing.md) | Routes the chain on review outcomes; this corrupts the outcome it routes on |
-| [`MUX-153`](./MUX-153-codex-test-agent-cannot-run-the-suite.md) | Why the codex test agent has no real answer to give — this defect is what turns that silence into "done" |
+| [`MUX-153`](../backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md) | Why the codex test agent has no real answer to give — this defect is what turns that silence into "done" |
 | [`MUX-159`](../backlog/MUX-159-codex-hooks-provider.md) | The structural fix: Codex ships `PostToolUse`/`Stop`/`UserPromptSubmit` hooks (verified 2026-09-08 on 0.153.4), so a hook-enabled codex agent is never scraped — this spec patches the scrape, that one removes its reason to exist for codex |
 
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] A response synthesized from a pane never completes a tracked task unless the pane shows a
+- [x] A response synthesized from a pane never completes a tracked task unless the pane shows a
       genuine completion — a `Sent … to …` line or a real result line — and never a progress line
-- [ ] `DetectTaskCompletion` recognizes Codex's `• Working (… esc to interrupt)` line as an **active**
+- [x] `DetectTaskCompletion` recognizes Codex's `• Working (… esc to interrupt)` line as an **active**
       signal, using the **same** signature definition `history_provenance.go` already holds — one
       definition, not a third copy
-- [ ] A progress-line payload never drains the request from the inbox — `MarkResponded` /
+- [x] A progress-line payload never drains the request from the inbox — `MarkResponded` /
       `ConsumeByID` are not reached — so `deliver --force` still has something to deliver
-- [ ] A chain link, `verify-spec`, or graph-node completion never fires on a synthesized non-result
+- [x] A chain link, `verify-spec`, or graph-node completion never fires on a synthesized non-result
 - [ ] Negative control: a genuine codex reply (`Sent response…` in the pane) still completes the task
-      and fires the chain exactly as today
-- [ ] Negative control: Claude-provider tasks are unaffected
-- [ ] The rule line (a line of `─`) is chrome under the shared signature, and the `›`-composer branch
+      and fires the chain exactly as today — **detection half pinned**
+      (`TestDetectTaskCompletionGenuineSendCompletes`); the daemon completion and chain fire have no
+      test in `bae22dc`
+- [x] Negative control: Claude-provider tasks are unaffected
+- [x] The rule line (a line of `─`) is chrome under the shared signature, and the `›`-composer branch
       of `DetectTaskCompletion` never returns a rule or blank line as the summary — when nothing but
       chrome sits above the composer, the task is *not* complete
 - [ ] A graph `send` node is never completed by a synthesized non-result: it stays `running` until a
       genuine reply or the task timeout, and a genuine codex reply ending `EXIT=0` routes success with
-      no hold — negative control: a genuine reply with no sentinel still holds
+      no hold — negative control: a genuine reply with no sentinel still holds — **code landed**
+      (`sendResponseIsNonResult`, `graph_exec.go`), but `bae22dc` carries no graph-level pin for
+      either half; Phase 4 must supply them
 
 ### Technical approach
 
@@ -169,34 +189,67 @@ inbox. The second layer is what makes the first layer's inevitable misses harmle
 
 ### Phase 1: Pin
 
-- [ ] Characterization test: a pane fixture ending `• Working (13s • esc to interrupt)` above a `›`
+- [x] Characterization test: a pane fixture ending `• Working (13s • esc to interrupt)` above a `›`
       prompt → `DetectTaskCompletion` returns `completed=true` with the progress line as summary
-      today; failure message names Phase 2
+      today; failure message names Phase 2 — **superseded**: no pre-fix characterization was written;
+      the pin landed directly in its inverted form (`TestDetectTaskCompletionWorkingLineIsActive`,
+      `bae22dc`), which is the deliverable this step and Phase 2's inversion step share
 - [ ] Pin that the synthesized response completes a tracked task and drains the request from the
-      inbox (scratch bus)
-- [ ] Reconstruct the 14:12:55 / 14:13:25 rows from the bus log as the fixture's payload — the pin
-      should be the incident, not an invented shape
+      inbox (scratch bus) — **open**: `bae22dc` adds no daemon-level test; the refusal in
+      `checkNonHookTasks` is unpinned
+- [x] Reconstruct the 14:12:55 / 14:13:25 rows from the bus log as the fixture's payload — the pin
+      should be the incident, not an invented shape — `provider_codex_chrome_test.go`: `ruleLine158()`
+      is the 20:31:51 payload byte for byte, and `• Working (13s • esc to interrupt)` is the 14:12:55
+      row's text
 
 ### Phase 2: One signature
 
-- [ ] Move working-signature detection to a single predicate in `history_provenance.go`; the codex
-      bullet-`Working` line joins it
-- [ ] The `─` rule line joins the same signature; the `›`-composer branch skips rule and blank lines
+- [x] Move working-signature detection to a single predicate in `history_provenance.go`; the codex
+      bullet-`Working` line joins it — `LooksLikeWorkingLine` over `providerWorkingHint`
+- [x] The `─` rule line joins the same signature; the `›`-composer branch skips rule and blank lines
       when it picks the summary and reports *not complete* when only chrome sits above the composer
-      (pinned against the 20:31:51 / 20:32:49 payloads)
-- [ ] `DetectTaskCompletion` and `provider_claude.go`'s classifier both consult it
-- [ ] Invert the Phase 1 characterization test
-- [ ] Negative control: a genuine `Sent response…` pane still detects as complete
+      (pinned against the 20:31:51 / 20:32:49 payloads) — `isRuleLine`, `lastComposedLine`, the
+      `"Task completed"` fallback deleted; `TestDetectTaskCompletionRuleAboveComposerHolds`
+- [x] `DetectTaskCompletion` and `provider_claude.go`'s classifier both consult it —
+      `provider_claude.go:178` folded; `TestIsClaudeThinkingUnchanged`
+- [x] Invert the Phase 1 characterization test — landed in inverted form directly (see Phase 1)
+- [x] Negative control: a genuine `Sent response…` pane still detects as complete —
+      `TestDetectTaskCompletionGenuineSendCompletes`, `…RealLineAboveComposerCompletes`
 
 ### Phase 3: Refuse at the consumer
 
-- [ ] The synthesized-response send declines a payload that `LooksLikeNonResult`; the request stays
-      in the inbox
-- [ ] `checkTrackedTasks` never completes a task on such a payload; lifecycle `task-nonresult-ignored`
-- [ ] The graph consumer: `deriveSendOutcome` never receives a synthesized non-result as a node's
-      response — the node stays `running`, no hold is raised on it
-- [ ] Negative control: a real response completes the task, fires the chain, and drains as today
-- [ ] Negative control: Claude-provider task completion unchanged
+- [x] The synthesized-response send declines a payload that `LooksLikeNonResult`; the request stays
+      in the inbox — the daemon `continue`s before any `Send`, so nothing is written and nothing drains
+- [x] `checkTrackedTasks` never completes a task on such a payload; lifecycle `task-nonresult-ignored`
+      — the hunk sits in `checkNonHookTasks` (`daemon/daemon.go`), the scrape branch itself
+- [x] The graph consumer: `deriveSendOutcome` never receives a synthesized non-result as a node's
+      response — the node stays `running`, no hold is raised on it — `sendResponseIsNonResult`
+      (`graph_exec.go`) returns before the outcome is derived
+- [ ] Negative control: a real response completes the task, fires the chain, and drains as today —
+      **open**: no daemon-level test in `bae22dc` (the detection half is pinned; the completion, chain
+      and drain are not)
+- [x] Negative control: Claude-provider task completion unchanged — `TestIsClaudeThinkingUnchanged`,
+      and hook providers never enter `checkNonHookTasks`
+
+**Phases 1–3 evidence — `bae22dc` (22:02), 6 files, +290/−20.** Verified by the run agent,
+independent of the authoring agents: `gofmt` clean, `build=0 vet=0 bus=0 daemon=0`, coverage floor
+`matched_pass_count=9 (expected 9)`, `EXIT=0`.
+
+| Test (`provider_codex_chrome_test.go`) | Pins |
+|----------------------------------------|------|
+| `TestIsRuleLine` | `─`/`━`/`—` runs are rules; `EXIT=0`, prose and `--` are not |
+| `TestLooksLikeProviderChromeAcceptsRuleLine` | the send-road guard (`6b53863`) now drops `ruleLine158()` |
+| `TestLooksLikeNonResultRejectsRuleLine` | the console-history road (MUX-003) rejects it; `go test ./bus passed EXIT=0` still passes |
+| `TestLooksLikeWorkingLine` | `• Working (24s • esc to interrupt)` and Claude's `✻ Cooking…` are working lines |
+| `TestDetectTaskCompletionWorkingLineIsActive` | the 14:12:55 shape reads as *active*, not done |
+| `TestDetectTaskCompletionRuleAboveComposerHolds` | the 20:31:51 shape — rule above `›` — reports *not complete* |
+| `TestDetectTaskCompletionGenuineSendCompletes` | negative control: a real `Sent …` pane still completes |
+| `TestDetectTaskCompletionRealLineAboveComposerCompletes` | negative control: composed prose above `›` still completes |
+| `TestIsClaudeThinkingUnchanged` | negative control: the Claude classifier is unchanged |
+
+Also in the commit, beyond the spec's ask: a **turn-separator guard** in `lastComposedLine` — crossing
+a rule only accepts a line bearing `EXIT=`, so stale prose from the previous turn cannot become this
+turn's answer.
 
 ### Phase 4: Integration test
 
@@ -232,14 +285,15 @@ at #2; this is the task road, and it is firing.
 
 ## Status
 
-**In Progress — 0/27.** Filed 2026-09-08; moved from `backlog/` to `drafts/` at 21:05 the same day on
+**In Progress — 17/27: Phases 1–3 landed in `bae22dc` (22:02), Phase 4 open.** Filed 2026-09-08;
+moved from `backlog/` to `drafts/` at 21:05 the same day on
 the user's "fix this now", after the rule-line variant held the graph's build and test nodes for manual
 approval on three runs. Phases 1–3 delegated to edit (`1788917469-plan-7c2cf5e4`); Phase 4 follows. Set as the **active
 spec** at 21:12 on the user's request, so `verify-spec` after the review chain checks this file.
 
-**21:34 interim from edit, verified against the working tree by plan (unbuilt, untested — nothing
-ticked):** `LooksLikeWorkingLine` (`history_provenance.go:86`) is now consulted by
-`provider_codex.go:440` and `provider_claude.go:178`, and `isRuleLine` (`:99`) feeds both chrome
-predicates — Phase 2's shape. Phase 3 (consumer refusal) and the Phase 1 pins are still to come. The
-same working tree also carries MUX-144's uncommitted worker changes (`lifecycle.go`, `graph_exec.go`,
-`graph_run.go` and their tests); a commit must be staged by scope.
+**22:15 — `bae22dc` landed and verified.** Phases 1–3 ticked against the commit's tests and hunks
+(evidence table under Phase 3): 17/27. Open: the two daemon-level pins (Phase 1 step 2, Phase 3 step
+4), the two acceptance criteria whose chain-fire and graph halves have no test, and all of Phase 4
+(`scripts/test-status-line-task-close.sh`). Two further chrome shapes are recorded as open signatures
+above. The 21:34 interim note this replaces recorded the same code unbuilt; the build, vet and full
+bus+daemon suites then ran green on the run agent (`EXIT=0`).

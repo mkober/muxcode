@@ -61,7 +61,7 @@ last**. `LastFiles` was built for the workflow display — `bus/workflow.go:255-
 2. **Plan's own writes drive the workflow state machine.** Each spec write this session regressed
    `reviewed → editing` (09:51:11 `editing from=reviewed trigger=hook:analyze:edit`) and pinged the
    analyze role — windowless in this session
-   ([`MUX-145`](../drafts/MUX-145-messages-routed-to-windowless-role.md)). Plan writes docs on **every**
+   ([`MUX-145`](./MUX-145-messages-routed-to-windowless-role.md)). Plan writes docs on **every**
    verification by design (ticks, status, time tracking), so every verification pass rewrites the
    state the next verification reads. A docs write is not an edit of the thing under review.
 
@@ -70,7 +70,7 @@ last**. `LastFiles` was built for the workflow display — `bus/workflow.go:255-
 | Spec | Relation |
 |------|----------|
 | [`MUX-007`](../completed/MUX-007-verify-spec-stale-review-refire.md) | Orthogonal. That gate fixed *how many times* `verify-spec` fires per review completion — it now fires the right number of times with the wrong file list |
-| [`MUX-145`](../drafts/MUX-145-messages-routed-to-windowless-role.md) | Consequence 2 lands in the inbox that spec describes |
+| [`MUX-145`](./MUX-145-messages-routed-to-windowless-role.md) | Consequence 2 lands in the inbox that spec describes |
 | [`MUX-006`](./MUX-006-diagnose-false-clean-verdict.md), [`MUX-124`](./MUX-124-lifecycle-since-truncated-by-limit.md) | Same family — an instrument misreports its own subject |
 
 ## Requirements
@@ -165,7 +165,7 @@ verifier's job is the former. Not chosen here.
 
 ## Out of scope
 
-- Routing to a windowless analyze role — [`MUX-145`](../drafts/MUX-145-messages-routed-to-windowless-role.md).
+- Routing to a windowless analyze role — [`MUX-145`](./MUX-145-messages-routed-to-windowless-role.md).
 - What the review agent itself is told to review; this spec covers only the message plan receives.
 
 ## Status

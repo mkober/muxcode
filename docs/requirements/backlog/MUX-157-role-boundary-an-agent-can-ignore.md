@@ -88,7 +88,7 @@ model feels like reading its prompt.
 |------|--------------|
 | [`MUX-144`](../drafts/MUX-144-wait-human-gate-openable-by-any-agent.md) | The work the test agent was doing. Phase 2 P1 stays open; attempt 4 is recorded there as a caveat, not a fix |
 | [`MUX-154`](../drafts/MUX-154-codex-status-line-closes-tracked-tasks.md) | Every "succeeded" in the timeline is a Codex status-line echo — false readings were cheap to produce all session |
-| [`MUX-153`](../drafts/MUX-153-codex-test-agent-cannot-run-the-suite.md) | The Codex test agent cannot run the suite; the role that could not do its own job did someone else's |
+| [`MUX-153`](./MUX-153-codex-test-agent-cannot-run-the-suite.md) | The Codex test agent cannot run the suite; the role that could not do its own job did someone else's |
 | [`MUX-148`](./MUX-148-node-outcome-reads-command-ran-as-task-done.md) | Same family — an outcome read from something other than the verdict |
 
 ## Requirements

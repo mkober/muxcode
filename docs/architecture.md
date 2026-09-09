@@ -227,7 +227,7 @@ Three design rules keep the verdict honest, each learned from a wrong one:
 - **No false clean verdicts.** `checkUnexplainedEvidence` is a verdict-consistency backstop registered **last** in `diagnosticChecks`, reading the findings the earlier checks produced. If an agent holds actionable messages unconsumed past `diagnoseStuckInboxSecs` and nothing else fired, it reports `unexplained-stuck-inbox` as critical rather than "No issues detected". The invariant is asserted at the verdict, not per pattern, because the same false-clean bug recurred three times from three *different* missing detectors — an honest "unexplained" beats a clean bill of health over a wedged agent. `TestRunDiagnostics_NeverCleanWithStuckInbox` pins it.
 - **A version mismatch is a warning, not an explanation.** `binary-daemon-version-mismatch` ([MUX-138](requirements/backlog/MUX-138-github-versioning-releases.md)) fires when a live daemon's recorded `daemon.version` is not the same build as the binary running diagnose, or when it recorded none — an unstamped daemon predates the feature; the remedy is `muxcode upgrade-daemons` or `./build.sh`. The backstop deliberately does not count it as the explanation for a stuck inbox — it is true of every session between an install and its rollout — so both findings appear together.
 
-Two verdict defects are open: a **falsely clean** report over a wedged agent that no pattern matches ([MUX-006](requirements/backlog/MUX-006-diagnose-false-clean-verdict.md)), and a **falsely specific** one — a windowless role's undeliverable inbox reported as a critical `receipt-gap` with a remediation that targets a pane which does not exist ([MUX-145](requirements/drafts/MUX-145-messages-routed-to-windowless-role.md)).
+Two verdict defects are open: a **falsely clean** report over a wedged agent that no pattern matches ([MUX-006](requirements/backlog/MUX-006-diagnose-false-clean-verdict.md)), and a **falsely specific** one — a windowless role's undeliverable inbox reported as a critical `receipt-gap` with a remediation that targets a pane which does not exist ([MUX-145](requirements/backlog/MUX-145-messages-routed-to-windowless-role.md)).
 
 Core code: `bus/diagnose.go` (`CollectEvidence()`, `RunDiagnostics()`, `diagnosticChecks`, `checkUnexplainedEvidence`). Cross-session use: [Remote session investigation](#remote-session-investigation).
 
@@ -790,7 +790,7 @@ build agent. Two consequences follow. A role whose work ends in a write outside 
 `.git` and remote pushes) needs the same treatment as build, not a different provider. And **no
 flag lifts network for any role**, so a Codex `test` agent cannot bind the loopback socket
 `httptest.NewServer` needs and structurally cannot run this repo's suite
-([MUX-153](requirements/drafts/MUX-153-codex-test-agent-cannot-run-the-suite.md)). An earlier
+([MUX-153](requirements/backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)). An earlier
 version of this guidance claimed Codex "sandboxes all filesystem writes" and was fit only for
 read-only roles; that conflated one policy with the CLI and was corrected 2026-09-08.
 
@@ -799,7 +799,16 @@ read-only roles; that conflated one policy with the CLI and was corrected 2026-0
 content line as the summary. Codex's current TUI renders progress as `• Working (13s • esc to
 interrupt)` with the composer still visible, so that progress line is reported as a completed task's
 answer — closing tracked tasks and firing chain links on nothing
-([MUX-154](requirements/drafts/MUX-154-codex-status-line-closes-tracked-tasks.md)).
+([MUX-154](requirements/drafts/MUX-154-codex-status-line-closes-tracked-tasks.md)). A second shape
+did the same on 2026-09-08 20:31: the horizontal rule codex draws between turns was the "last content
+line" above the composer, and 158 dashes closed two graph nodes before either agent had a result.
+**Fixed in `bae22dc` (22:02)**: one shared signature in `history_provenance.go` (`LooksLikeWorkingLine`,
+`isRuleLine`) makes the progress line read as *active* and the rule as chrome on every road;
+`lastComposedLine` skips chrome and reports *not complete* when nothing composed sits above the
+composer (the `"Task completed"` fallback is gone); and both consumers refuse a synthesized
+non-result — `checkNonHookTasks` logs `task-nonresult-ignored` and leaves the task in flight,
+`sendResponseIsNonResult` keeps the graph node `running`. Still a heuristic: two further shapes
+(`└ go test ./...`, a bare `…`) are recorded in the spec as open signatures.
 
 ### Local LLM Agent Flow
 

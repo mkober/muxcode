@@ -342,6 +342,25 @@ made.
       commit inverted `TestExecUnverifiedHoldReleasedByUser` (`want running` → `want pending`), so
       the forged-hold quartet no longer carries a positive control of its own (MUX-157 Phase 1).
       Tick after a suite and a review pass on `c4997ed` and (2) has a written answer
+      **Updated 2026-09-08 22:15 — `77f32b8` (22:03) closed two of the four caveats and stays open on
+      the other two.** (2) **closed**: `rotateLifecycleLog` now retains every audit row past the count
+      cap (`lifecycleAuditEvents`, `bus/lifecycle.go`), so a low `MUXCODE_LIFECYCLE_LOG_MAX` from any
+      process can no longer erase the evidence behind a pending approval —
+      `TestRotateLifecycleLogPreservesAuditRows`, `…PreservesAllPendingAuditRows`; the commit also
+      records that `approvalHasAudit` is corroboration and tamper-evidence, not authentication. (4)
+      **closed**: the quartet has its positive control again —
+      `TestExecUnverifiedHoldReleasedByAuditedUserApproval` beside
+      `…RefusesUnauditedUserApproval`. A defect found on the way is fixed too: `ApproveGraphGate` read
+      the clock twice for the audit row and the marker, so a genuine approval straddling a second
+      boundary was refused as forged and purged — one `approvedAt` now stamps both
+      (`announceGraphActionAt` / `LogLifecycleAt`, `TestApproveGraphGateStampsMarkerAndAuditAlike`,
+      `TestLogLifecycleAtHonorsSuppliedTimestamp`). (1) **partly**: build, vet and the full bus and
+      daemon suites ran green (`EXIT=0`) on the run agent as edit's independent re-verification — but
+      no review pass: the spec-to-pr run's review node never executed (the run stalled at the held
+      `test` node, see [MUX-154](./MUX-154-codex-status-line-closes-tracked-tasks.md)). (3)
+      **untouched and still true**: the seal reads agent-writable files and a routine `./build.sh`
+      restarts the daemon. **Not ticked** — the step's words ("not caller-controlled") do not hold
+      while (3) stands; tick after a review pass and a written answer to (3).
 
 ### Phase 3: Audit the control plane
 
@@ -396,6 +415,12 @@ append-rotated lifecycle log; the seal's inputs are still the agent-writable fil
 `build.sh` restarts the daemon; the forged-hold quartet lost its positive control). Phase 2 still 4/5,
 count unchanged at 17/33. `CLAUDE.md:131` already describes the seal as *the* control — that text is
 edit's from `45e37ef` and predates the caveats.
+
+**Updated 2026-09-08 22:15.** `77f32b8` (22:03) closed caveats (2) and (4) — audit rows survive
+rotation, the quartet's positive control is back — and fixed a second-boundary race that refused
+genuine approvals; the suites ran green on the run agent but no review pass happened, and caveat (3)
+is untouched. Step 5 **stays open**; detail inline under the step. Phase 2 still 4/5, count unchanged
+at 17/33.
 
 **Updated 2026-09-08 16:35.** `31a2ca4` (16:14) narrowed P1 a **second** time: `GateAuthorityConfigured`
 reads a fixed path list (`gateAuthorityConfigPaths`) and never `ResolveConfigPath`, so

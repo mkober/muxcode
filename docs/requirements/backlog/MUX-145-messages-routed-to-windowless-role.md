@@ -316,7 +316,7 @@ this session only — the guard is what stops it returning.
 Related: the diagnose half belongs to the same family as the `checkUnexplainedEvidence` invariant
 described in [`CLAUDE.md`](../../../CLAUDE.md) — verdict honesty rather than pattern coverage. The
 routing half is adjacent to, but distinct from,
-[`MUX-127`](../backlog/MUX-127-review-completion-routing.md): that one routes to the wrong *recipient*, this
+[`MUX-127`](./MUX-127-review-completion-routing.md): that one routes to the wrong *recipient*, this
 one routes to a recipient that does not exist.
 
 Defect C (2026-09-08) was root-caused by edit and handed over as `/tmp/mux-145-defect-c.md`; plan
@@ -328,7 +328,11 @@ consult it rather than `IsAgentAlive`.
 
 ## Status
 
-**In Progress — 9/38, Phase 5 at 7/8.** Filed 2026-09-03 from a live incident the same morning;
+**Backlog — parked 2026-09-08 22:10 at 9/38, Phase 5 at 7/8.** Moved back from `drafts/` on the
+user's instruction: nothing moved since the afternoon, and Defects A (emit guard) and B (diagnose)
+plus Phase 5's CLI-road test are open. The record below is as it stood when parked.
+
+**Previously: In Progress.** Filed 2026-09-03 from a live incident the same morning;
 **Defect C added 2026-09-08** from a second live incident on the reload path, with three more
 acceptance criteria and a new Phase 5 — then **fixed and validated the same afternoon** (Phase 5 7/8,
 the CLI road's test being the open step; two of its three acceptance criteria; suite 2908 pass / 0
