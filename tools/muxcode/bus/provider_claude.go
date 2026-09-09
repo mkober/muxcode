@@ -175,7 +175,7 @@ func isClaudeThinking(content string) bool {
 		if isClaudeStatusFooter(trimmed) {
 			continue
 		}
-		if strings.Contains(trimmed, "esc to interrupt") {
+		if LooksLikeWorkingLine(trimmed) {
 			return true
 		}
 		if strings.Contains(trimmed, "…") && strings.Contains(trimmed, " · ") {

@@ -1052,6 +1052,9 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 		}
 		switch task.Status {
 		case TaskCompleted:
+			if sendResponseIsNonResult(session, task) {
+				return // not an answer — see sendResponseIsNonResult
+			}
 			outcome, output := deriveSendOutcome(session, n, st, task)
 			finishNode(session, run, n, outcome, output)
 		case TaskTimedOut, TaskFailed:
@@ -1240,6 +1243,28 @@ func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 		}
 	}
 	return outcome, true
+}
+
+// sendResponseIsNonResult reports whether a completed task's recorded response
+// is provider chrome rather than an answer the agent composed.
+//
+// Such a task is completed but unanswered, so the node must neither succeed nor
+// hold on it: an unknown outcome raises a human gate, and asking a user to
+// approve a horizontal rule is how three spec-to-pr runs stalled on 2026-09-08.
+// The node stays running until a genuine reply or its timeout — which means a
+// node with no TimeoutSec relies on the tracked-task expiry above it, the same
+// backstop every other stuck send depends on.
+//
+// This is the graph's own guard, not the primary one. Chrome should never reach
+// an inbox (dropsAsProviderChrome) nor be synthesized by the daemon
+// (task-nonresult-ignored); this is the layer that makes their inevitable
+// misses harmless rather than gate-raising.
+func sendResponseIsNonResult(session string, task Task) bool {
+	resp, ok := FindMessageByID(session, task.ResponseID)
+	if !ok {
+		return false
+	}
+	return LooksLikeNonResult(resp.Payload)
 }
 
 // deriveSendOutcome maps a completed task to an outcome per the

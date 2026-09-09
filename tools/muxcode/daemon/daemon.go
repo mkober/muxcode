@@ -2840,6 +2840,13 @@ func (d *Daemon) checkNonHookTasks() {
 			continue
 		}
 
+		if bus.LooksLikeNonResult(summary) {
+			// Second layer: the pane heuristic will always be a heuristic.
+			bus.LogLifecycle(d.session, "info", "daemon", "task-nonresult-ignored",
+				fmt.Sprintf("%s task %s from %s: pane held no result, task left in flight", task.To, task.Action, task.From))
+			continue
+		}
+
 		// Task completed — send synthetic response to the requester
 		ts := time.Now().Format("15:04:05")
 		status := "succeeded"

@@ -64,6 +64,46 @@ var nonResultSignatures = []string{
 // toolEchoPrefixes lead a provider's rendered tool-call line.
 var toolEchoPrefixes = []string{"└", "⎿", "•"}
 
+// providerWorkingHint is the pane text every supported provider renders while a
+// turn is still running. It is the one signature shared by the Codex
+// bullet-`Working` line and Claude's spinner counter, held here so the pane
+// classifiers cannot drift apart: a signature known to one road and not another
+// is how a status line became a passing build (MUX-154).
+const providerWorkingHint = "esc to interrupt"
+
+// ruleRunes are the horizontal-rule characters a provider TUI draws between
+// turns. All are drawn, never typed into a bus message.
+const ruleRunes = "─━═╌╍┄┅┈┉—"
+
+// LooksLikeWorkingLine reports whether a pane line is a provider's own
+// "still working" status line.
+//
+// Deliberately a bare substring test, unlike the chrome predicates below: here a
+// false positive only means "assume the agent is still busy", which costs one
+// more poll, while a false negative fabricates a completion out of a running
+// turn. The asymmetry runs the opposite way from the send path, so the test does
+// too.
+func LooksLikeWorkingLine(line string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(line)), providerWorkingHint)
+}
+
+// isRuleLine reports whether a line is nothing but a drawn horizontal rule.
+//
+// Structure alone decides, and it is decisive: a line carrying no character
+// other than rule glyphs holds no information, so it can never be a result, a
+// summary, or a composed reply. Recognizing it is what the render-prefix test
+// could not do — a rule opens with `─`, which is not a render prefix, and
+// carries neither a status signature nor a truncation ellipsis, so 158 dashes
+// passed as an agent's answer and closed two graph nodes (MUX-154, 20:31:51 and
+// 20:32:49).
+func isRuleLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	return strings.TrimLeft(trimmed, ruleRunes) == ""
+}
+
 // renderPrefixes open a line the provider's TUI drew: the status bullet
 // and spinner glyphs, and the branch characters of a rendered tool call.
 // An agent composing a reply does not begin with these.
@@ -120,6 +160,9 @@ func LooksLikeProviderChrome(payload string) bool {
 // waits on it, while keeping chrome only adds noise.
 func isProviderChromeLine(line string) bool {
 	l := strings.ToLower(strings.TrimSpace(line))
+	if isRuleLine(l) {
+		return true
+	}
 	if !hasRenderPrefix(l) {
 		return false
 	}
@@ -153,6 +196,9 @@ func hasRenderPrefix(l string) bool {
 func looksLikeChrome(line string) bool {
 	l := strings.ToLower(strings.TrimSpace(line))
 	if l == "" {
+		return true
+	}
+	if isRuleLine(l) {
 		return true
 	}
 	for _, sig := range nonResultSignatures {
