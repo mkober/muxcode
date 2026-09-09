@@ -87,12 +87,12 @@ so that guard would never fire — a decision owed, recorded in Notes). Not in s
 
 ### Acceptance criteria
 
-- [ ] An injected prompt arrives whole — first character included — at a receiver that fuses a pending `ESC` with the next byte, for plain, dash-leading and single-character payloads
+- [ ] An injected prompt arrives whole — first character included — at a receiver that fuses a pending `ESC` with the next byte, for plain, dash-leading and single-character payloads — _dash-leading: evidenced at the receiver through the real surface (`test-prompt-mode.sh`) and the helper (`test-escape-absorber.sh`); plain: evidenced on the real composer (live matrix shape c). **Single-character: not exercised post-fix** — the live matrix has only the pre-fix a3 (`x` lost entirely). One more receiver case in `test-escape-absorber.sh` — preamble → `-l -- x` → `key x` logged — closes this_
 - [x] `Escape` is never adjacent to a payload or to `Enter` in any sequence muxcode types into a composer: a non-payload absorber key separates them, with a gap on each side of the Escape as the wake path already has (`Escape` → 100 ms → absorber → 100 ms → payload) — _all four sites call `TmuxDismissOverlay`; review 13:21:01 EXIT=0_
 - [ ] One helper produces the Escape-plus-absorber preamble, and `InjectPromptText`, `SendWakeUpWithText`, the `verifyEnterDelivery` re-submit and the daemon's parked-input watchdog all use it — no site hand-rolls `send-keys Escape` ahead of a payload or an Enter — _the four named sites do; `clear.go:35`, `provider_claude.go:386` and `reload.go:134` still hand-roll `Escape` → `C-u` → `/clear`·`/compact`·`/exit` through `exec.Command` (a safe shape, unpinnable through the runner seam). Decision owed: migrate them with their delays kept, or narrow this clause to the four sites_
 - [x] The MUX-104 `-l --` form, the separate-Enter rule and the text→Enter delay are unchanged: `TestInjectPromptText_DashLeadingIntact` and `tmux_literal_test.go` pass unmodified
 - [x] A unit-level shape check over recorded tmux argv rejects any sequence in which an Escape call is directly followed by a literal or Enter call; the pre-fix `InjectPromptText` sequence is the negative control that must fail it — _`assertEscapeAbsorbed` + `TestEscapeAbsorbViolation_NegativeControl`_
-- [ ] The integration receiver can see the defect: `scripts/test-prompt-mode.sh` injects into a receiver that models the pending-`ESC` parser instead of `cat`; the old sequence driven by hand against it logs a chord (negative control) and the fixed surface does not
+- [x] The integration receiver can see the defect: `scripts/test-prompt-mode.sh` injects into a receiver that models the pending-`ESC` parser instead of `cat`; the old sequence driven by hand against it logs a chord (negative control) and the fixed surface does not — _run agent 14:46:24: both halves confirmed_
 - [x] The live matrix against a real Claude Code composer is recorded in this spec's Notes: which shapes lose the first character, and whether `Escape`, 50 ms, `Enter` submits or inserts a newline — _recorded 12:34 from the 12:31 run: a and a3 lose, c and every gap ≥ 50 ms keep; d and e submit_
 - [x] Docs name the rule: `CLAUDE.md` pitfalls (sibling of the text + Enter bullet), `docs/architecture.md` Prompt-surface paragraph and delivery section — _review 14:02:16 LGTM 0/0/0: "describes the absorbed preamble in both the wake-up and Prompt-surface sections", cross-checked against the helper and the live matrix_
 
@@ -160,11 +160,11 @@ constant with the measurement. Rejected as primary because it encodes another pr
 
 ### Phase 4: Integration test
 
-- [ ] `scripts/test-prompt-mode.sh` section 4: the scratch agent pane runs the chord receiver instead of `cat`; assert the injected payload's first key arrived plain and the full payload is present; skip-with-reason and coverage floor if python3 is absent
-- [ ] Negative control in the same section: hand-drive `send-keys Escape` then `send-keys -l -- '- dash inject probe'` at the receiver and assert a chord is logged — the receiver must be able to see the defect
-- [ ] `scripts/test-send-keys-dash.sh` (or a sibling `scripts/test-escape-absorber.sh`): the wake-path re-submit shape arrives as a plain `Enter`, not a chord
-- [ ] Opt-in live section (`MUXCODE_ESC_PROBE_LIVE=1`): the Phase 1 matrix automated against a real Claude pane, recording the outcome per shape
-- [ ] Run the scripts and record pass/fail counts in this spec
+- [ ] `scripts/test-prompt-mode.sh` section 4: the scratch agent pane runs the chord receiver instead of `cat`; assert the injected payload's first key arrived plain and the full payload is present; skip-with-reason and coverage floor if python3 is absent — _rewired 14:41 (lap 9 worker): `respawn-pane` runs the receiver in `edit.1`, the payload is reconstructed from the key log and compared whole, the receipt is now "surface input cleared"; run agent 14:46:24 (task `1788979563`, `MUXCODE_PROMPT_BACKEND=ollama`): 24 / 0 / 3, exit 0, "chord fusion fix confirmed". **Re-opened on review 14:47:49 should-fix (`:278`)**: with python3 or the receiver missing the parser checks are swapped for the `cat` echo and the unchanged global floor of 18 is met by unrelated checks — a deleted receiver reads green. Lap 10 (14:54) resolved half: a missing receiver now **fails** (`:243`). Review 14:58:52 — still open: python3 missing only increments SKIP twice and the summary labels those as live-model skips; the global `PASS ≥ 18` floor (`:458`) still passes without either parser assertion (24 → 22). Required: a parser-section completion flag, exit 2 when that required section could not run (after honouring real failures), full success only with both parser checks_
+- [x] Negative control in the same section: hand-drive `send-keys Escape` then `send-keys -l -- '- dash inject probe'` at the receiver and assert a chord is logged — the receiver must be able to see the defect — _same run: "negative control shows pre-fix defect"_
+- [x] `scripts/test-send-keys-dash.sh` (or a sibling `scripts/test-escape-absorber.sh`): the wake-path re-submit shape arrives as a plain `Enter`, not a chord — _sibling `scripts/test-escape-absorber.sh` (14:14): absorbed literal + its pre-fix control, absorbed re-submit `Enter` + its pre-fix Meta-Enter control, floor 5; **run agent 14:45:06 (task `1788979489`): 5 passed, 0 failed, 1 skipped, exit 0** — "re-submit Enter arrives plain not Meta-Enter; negative controls both confirmed"_
+- [ ] Opt-in live section (`MUXCODE_ESC_PROBE_LIVE=1`): the Phase 1 matrix automated against a real Claude pane, recording the outcome per shape — _in `test-escape-absorber.sh` (`:131–149`) via `probe-escape-matrix.sh --out`, asserting shape a loses and shape c keeps; worker-reported 7/0/0 live. **Re-opened on review 14:47:49 should-fix (`:134`)**: the wrapper discards the probe's output and maps every non-zero exit to a prerequisite skip, but the probe exits 2 for SKIP and 1 for a real failure. Lap 10 (14:53) added skip/fail branches — review 14:58:52: they cannot run, because the probe is a bare command under `set -euo pipefail` and errexit ends the script before `rc=$?`; `probe.log` is then deleted by cleanup, losing the reason. Required: `rc=0; bash … >log 2>&1 || rc=$?` (or `if`/`else` around the command), and verify exit 2 and an unexpected failure with controlled probe outcomes, not only a successful run_
+- [x] Run the scripts and record pass/fail counts in this spec — _run agent rows: `test-escape-absorber.sh` **5 passed / 0 failed / 1 skipped** (14:45:06, task `1788979489`; the skip is the opt-in live matrix), `test-prompt-mode.sh` **24 / 0 / 3** (14:46:24, task `1788979563`; the skips are the model-gated intents). Worker-reported in addition: absorber live `MUXCODE_ESC_PROBE_LIVE=1` 7 / 0 / 0_
 
 ## Notes
 
@@ -270,11 +270,35 @@ constant with the measurement. Rejected as primary because it encodes another pr
   had no work (`scripts/` unchanged), so nothing is ticked there: 0/5. Phase count 3 complete against
   2 shipped, so the commit gate should carry the docs; the next lap implements Phase 4.
 
+- 2026-09-09 14:47 update-docs (worker `spawn-c1c2a2a7`, lap 9 — Phase 4): Phase 3 was committed
+  as `7191251` at 14:10:24 ("Docs — name the Escape-preamble rule"). The worker wrote
+  `scripts/test-escape-absorber.sh` and rewired `test-prompt-mode.sh` section 4 and reported the
+  counts above, but the store held no run-agent task for either script and the lap's test/review
+  nodes had not run; plan dispatched both scripts to the run agent for evidence before ticking (the
+  second request deduplicated behind the first in-flight `run:run` task and follows it).
+- 2026-09-09 14:52: both run-agent rows landed and match the worker's counts — Phase 4 **5/5**,
+  AC6 ticked, spec 21/23. Two criteria remain and both would keep `spec_phases_remaining` true after
+  the Phase 4 commit: **AC1** needs one single-character receiver case (named above — a small lap),
+  and **AC3** is the wording decision on the three `Escape` → `C-u` slash-command sites, which no lap
+  can take.
+- 2026-09-09 14:58 verify-spec (run `2338488d` update-spec node, lap 9 — dispatched 14:47:51 as
+  "(no open phase)" because it fired before the Phase 4 ticks): suite green 14:46:51; review 14:47:49
+  EXIT=0 with two should-fixes on Phase 4's scripts, so steps 1 and 4 are **re-opened** (annotated
+  above) — Phase 4 3/5, spec 19/23. Next lap: the required-section floor in `test-prompt-mode.sh`, the
+  live wrapper's exit-code classification, and AC1's single-character case; AC3 waits on the user.
+  The commit guard will hold this lap's Phase 4 work until the phase closes.
+- 2026-09-09 15:02 verify-spec pair (review chain 1788980333-125a252a + run node, lap 10): the guard
+  declined the Phase 4 commit as expected ("3 commits shipped but only 3 phases complete"), the user
+  approved `stuck-gate` 14:50:20, and the worker's fix lap (14:50–14:57) resolved half of each
+  should-fix; suite green 14:58:08; review 14:58:52 EXIT=0 with the residue recorded on steps 1 and 4
+  above (errexit-safe status capture; a parser-section flag with exit 2). No script re-run through
+  the run agent this lap and no single-character case yet. Phase 4 stays 3/5, spec 19/23.
+
 ## Time Tracking
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-159-codex-hooks-provider | 4h 34m | 2026-09-09 13:34 |
+| MUX-159-codex-hooks-provider | 5h 51m | 2026-09-09 16:09 |
 
 The run works on the MUX-159 branch (the `spec-to-pr` template creates none); recorded against the
 active spec as the pointer directs, the mismatch flagged to edit. The same ledger also backs
@@ -282,7 +306,10 @@ MUX-164's row — one branch, two specs.
 
 ## Status
 
-**In Progress** — 15/23. Filed 2026-09-09 10:47; `spec-to-pr` run `2338488d` started 11:05; Phase 1
+**In Progress** — 19/23. Filed 2026-09-09 10:47; `spec-to-pr` run `2338488d` started 11:05; Phase 1
 complete 12:34 and **committed `67ad9dc` 13:06** on `MUX-159-codex-hooks-provider` with MUX-164's
-implementation (no push); Phase 2 complete 13:31 and committed `8d48888` 13:54; Phase 3 docs complete
-14:02 (LGTM), commit gate next; Phase 4 open, 0/5.
+implementation (no push); Phase 2 complete 13:31 and committed `8d48888` 13:54; Phase 3 complete 14:02
+and committed `7191251` 14:10; Phase 4 3/5 — scripts run green (5/0/1, 24/0/3, run-agent rows) but
+steps 1 and 4 stay open after lap 10 half-resolved the 14:47 should-fixes (python3-missing floor;
+errexit-safe live probe status). Open: those two, AC1 (single-character receiver case) and AC3
+(wording decision) — see Notes.

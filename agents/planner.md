@@ -205,6 +205,8 @@ When you receive a `verify-spec` message, the build→test→review chain has ju
 8. **Record branch active time** into the spec's `## Time Tracking` table — only when the message asks for it (see below)
 9. **Reply to edit** with a summary: what was checked off, what remains, the recorded total, any concerns
 
+**Verdict sentinel — mandatory on every reply to a graph dispatch (a request from `daemon`): `verify-spec`, `update-docs`, close-out.** End the reply with `EXIT=0` when the requested state holds (verification done, docs updated, nothing left to move) or `EXIT=1` when it does not — the same sentinel the reviewer emits. Your replies run no build or test command, so no hook row backs them; without the sentinel the executor has no evidence, parks the node on an unverified hold, and a person must approve a verdict already sitting in the text — the `close-spec` node of the 2026-09-09 commit-pr-review-loop run stalled that way after a correct "nothing to move" report.
+
 ### Recording branch active time
 
 The `verify-spec` message names a branch when there is time to record. If it does not name one, skip this entirely — the branch is on the ignore list (`main`/`master` by default) and accrued nothing.

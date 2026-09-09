@@ -22,6 +22,10 @@ PASS=0
 FAIL=0
 SKIP=0
 
+# Resolve the script's own dir before any cd — section 4 loads the chord
+# receiver from it, and the test cd's into a scratch project dir below.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux is required"; exit 2; }
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
 
@@ -223,22 +227,80 @@ else
   fail "Ctrl-T flips to inject with the active agent named"
 fi
 
-tmux send-keys -t "$SURFACE" -l -- '- dash inject probe mux109'
-sleep 0.5
-tmux send-keys -t "$SURFACE" Enter
-sleep 2
-agent_cap=$(tmux capture-pane -t "$SESSION:edit.1" -pJ | strip_ansi)
-echo "  [diag] agent pane: $(printf '%s' "$agent_cap" | grep -v '^[[:space:]]*$' | tail -3)"
-if printf '%s' "$agent_cap" | grep -qF -- '- dash inject probe mux109'; then
-  ok "dash-leading payload injected intact into the agent pane"
+# The agent pane runs the chord receiver (MUX-163), not cat: cat echoes every
+# byte, so a first character fused into a Meta chord would still read back
+# whole. The receiver logs what a pending-ESC parser actually saw, so the inject
+# preamble's absorber can be verified to keep the payload's first char intact.
+#
+# The receiver is a REPO file, so its absence is a regression, not an
+# environment gap: a missing receiver FAILS rather than falling back to a weaker
+# check that would let a deleted receiver read green. python3 is an external
+# prerequisite, so its absence is an honest skip. Section 4's two parser checks
+# are the point of this section — nothing substitutes for them.
+INJ_PAYLOAD='- dash inject probe mux163'
+RECEIVER="$SCRIPT_DIR/lib/escape-chord-receiver.py"
+if [ ! -f "$RECEIVER" ]; then
+  fail "chord receiver missing: $RECEIVER — a deleted receiver must not read green"
+  tmux send-keys -t "$SURFACE" -l -- "$INJ_PAYLOAD"; sleep 0.5
+  tmux send-keys -t "$SURFACE" Enter; sleep 2
+  receipt_cap=$(tmux capture-pane -t "$SURFACE" -pJ | strip_ansi)
+elif ! command -v python3 >/dev/null 2>&1; then
+  skip "chord-receiver inject check — python3 not installed (parser coverage did not run)"
+  skip "chord-receiver negative control — python3 not installed"
+  tmux send-keys -t "$SURFACE" -l -- "$INJ_PAYLOAD"; sleep 0.5
+  tmux send-keys -t "$SURFACE" Enter; sleep 2
+  receipt_cap=$(tmux capture-pane -t "$SURFACE" -pJ | strip_ansi)
 else
-  fail "dash-leading payload injected intact into the agent pane"
+  inj_log="$WORK/inject-chord.log"
+  tmux respawn-pane -k -t "$SESSION:edit.1" "python3 '$RECEIVER' '$inj_log'"
+  sleep 0.8
+  tmux send-keys -t "$SURFACE" -l -- "$INJ_PAYLOAD"
+  sleep 0.5
+  tmux send-keys -t "$SURFACE" Enter
+  sleep 2
+  # Capture the surface receipt now, before the negative control respawns the
+  # pane — the "injected to edit" notice is transient.
+  receipt_cap=$(tmux capture-pane -t "$SURFACE" -pJ | strip_ansi)
+  echo "  [diag] chord log: $(tr '\n' '|' <"$inj_log" 2>/dev/null)"
+  # Reconstruct the typed text from the receiver's per-key log: the preamble
+  # (chord M-C-e) and the submit (key Enter) drop out, leaving the payload.
+  got=$(python3 -c 'import sys
+out=[]
+for ln in open(sys.argv[1]):
+    ln = ln.rstrip("\n")
+    if ln.startswith("key "):
+        k = ln[4:]
+        if k == "Space": out.append(" ")
+        elif len(k) == 1: out.append(k)
+print("".join(out))' "$inj_log" 2>/dev/null)
+  if [ "$got" = "$INJ_PAYLOAD" ] && ! grep -qxF "chord M--" "$inj_log"; then
+    ok "injected payload arrives whole at a pending-ESC receiver, first char plain"
+  else
+    fail "injected payload mangled: got '$got' want '$INJ_PAYLOAD'; log $(tr '\n' '|' <"$inj_log")"
+  fi
+
+  # Negative control: hand-drive the pre-fix shape (Escape straight into the
+  # literal, no absorber) so the receiver is proven able to SEE the defect.
+  neg_log="$WORK/inject-defect.log"
+  tmux respawn-pane -k -t "$SESSION:edit.1" "python3 '$RECEIVER' '$neg_log'"
+  sleep 0.8
+  tmux send-keys -t "$SESSION:edit.1" Escape
+  tmux send-keys -t "$SESSION:edit.1" -l -- '- dash inject probe'
+  sleep 0.5
+  if grep -qxF "chord M--" "$neg_log"; then
+    ok "negative control: pre-fix Escape→payload fuses the first char (defect seen)"
+  else
+    fail "receiver must see the defect on the pre-fix shape; log $(tr '\n' '|' <"$neg_log")"
+  fi
 fi
-cap=$(tmux capture-pane -t "$SURFACE" -pJ | strip_ansi)
-if printf '%s' "$cap" | grep -q "injected to edit"; then
-  ok "surface shows the injection receipt"
+# The surface confirms an accepted inject by CLEARING its input (the "⇒ injected
+# to edit" notice is transient and not reliably in a headless capture). A failed
+# inject keeps the input, so an empty input line is the observable receipt: the
+# payload no longer appears anywhere on the surface.
+if printf '%s' "$receipt_cap" | grep -qF -- "$INJ_PAYLOAD"; then
+  fail "surface input not cleared after inject — submit not accepted"
 else
-  fail "surface shows the injection receipt"
+  ok "surface input cleared after inject (submit accepted)"
 fi
 
 # Tab cycles away even with the toggle flipped.
