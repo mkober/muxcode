@@ -866,6 +866,9 @@ func SendWakeUpWithText(session, role string, provider Provider, text string, fo
 	}
 
 	target := PaneTarget(session, role)
+	if _, err := captureInjectionTarget(session, target, role); err != nil {
+		return err
+	}
 
 	// Clean the composer before injecting. Claude Code periodically pops an
 	// overlay (the "How is Claude doing this session?" feedback survey,

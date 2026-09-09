@@ -96,8 +96,6 @@ func IsAgentAlive(session, role string) bool {
 // prompt (agent has exited). Checks that the last non-empty line ends with
 // a known prompt suffix ('$', '%', '>', '->') and that no ❯ appears anywhere.
 func isShellPrompt(lines []string) bool {
-	hasPromptChar := false
-
 	// Find last non-empty line
 	lastNonEmpty := ""
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -119,19 +117,22 @@ func isShellPrompt(lines []string) bool {
 		}
 	}
 
-	// Check if last non-empty line ends with a known shell prompt suffix.
-	// Common prompts: bash ($), zsh (%), custom arrow (->).
-	// Also check for standalone ">" but only for short lines (≤10 chars)
-	// to avoid false positives from command output ending with ">".
-	if strings.HasSuffix(lastNonEmpty, "$") || strings.HasSuffix(lastNonEmpty, "%") {
-		hasPromptChar = true
-	} else if strings.HasSuffix(lastNonEmpty, "->") {
-		hasPromptChar = true
-	} else if strings.HasSuffix(lastNonEmpty, ">") && len(lastNonEmpty) <= 10 {
-		hasPromptChar = true
-	}
+	return hasShellPromptSuffix(lastNonEmpty)
+}
 
-	return hasPromptChar
+// hasShellPromptSuffix reports whether a trimmed line ends the way a shell
+// prompt does: bash ($), zsh (%), the custom arrow (->), or a standalone ">"
+// on a short line (≤10 chars) so command output ending in ">" does not match.
+// Shared by the health probe and the injection guard so the two agree on
+// what a prompt looks like.
+func hasShellPromptSuffix(line string) bool {
+	switch {
+	case strings.HasSuffix(line, "$"), strings.HasSuffix(line, "%"), strings.HasSuffix(line, "->"):
+		return true
+	case strings.HasSuffix(line, ">") && len(line) <= 10:
+		return true
+	}
+	return false
 }
 
 // FormatAgentHealthAlert formats an agent health alert message.
