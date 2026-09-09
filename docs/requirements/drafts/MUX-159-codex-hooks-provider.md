@@ -265,8 +265,8 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
 - [x] `checkIdleAgents`/`checkParkedInput`/`checkPaneSweep` treat hook codex by receipts, not by pane; `checkPollHealth`'s receipt-gap backstop still covers it — `checkIdleAgents` hands non-self-poll roles to `provider.SendWakeUp` (the sentence), the other two are `IsClaudeTUI`-gated
 - [x] MUX-009 negative control: deliver a `type: response` to a hook codex agent → its chain does not re-fire and the response text never appears in the pane as a prompt — `TestCodexStopDelivery_ResponseOnlyNeverPrompts`
 - [x] MUX-154 negative control: no synthesized response is ever sent for a hook codex task; a `--wait` on it returns the agent's own reply — *by design (`PaneIsEvidence()` false → `checkNonHookTasks` never synthesizes); no test; **2026-09-09** `TestCheckNonHookTasks_HookCodexNeverScraped` asserts `FindResponseSince` finds nothing for the hook-road role while the scrape-road control gets its synthesized reply — a test now, **green 00:55***
-- [ ] `deliver --force` for hook codex re-injects the sentence and clears markers, never a payload — *by design (`ForceDeliver` → `SendWakeUpWithText` → `injectWakeSentence`); no test*
-- [x] Tests: stop with/without pending, prompt-submit expansion and pass-through, receipts written, the two negative controls — *open: the MUX-154 control's test landed 2026-09-09 in `daemon/codex_hook_road_test.go`, **green 00:55**; the rest are `TestCodexStopDelivery_*` ×4, `TestCodexPromptSubmitContext`, `TestCodexWakeUp_HookRoadNeverConsumesInbox`*
+- [x] `deliver --force` for hook codex re-injects the sentence and clears markers, never a payload — *by design (`ForceDeliver` → `SendWakeUpWithText` → `injectWakeSentence`); no test until **2026-09-09 02:09**: `injectWakeSentence` now sends through the `TmuxSendLiteral`/`TmuxSendKeys` seam (text and Enter still separate writes with the delay), and `TestCodexForceDeliver_HookRoadSentenceOnly` (`bus/codex_hooks_test.go`) pins stale notified markers cleared, sentence-only injection, inbox preserved with no receipt, markers re-marked, a non-force negative control and a Claude payload control — suite green 02:09:24 (`go test ./...` exit 0 hook row), review LGTM 02:10:07, ticked*
+- [x] Tests: stop with/without pending, prompt-submit expansion and pass-through, receipts written, the two negative controls — *open: the MUX-154 control's test landed 2026-09-09 in `daemon/codex_hook_road_test.go`, **green 00:55**; the rest are `TestCodexStopDelivery_*` ×4, `TestCodexPromptSubmitContext`, `TestCodexWakeUp_HookRoadNeverConsumesInbox`; `deliver --force` joined 02:09 with `TestCodexForceDeliver_HookRoadSentenceOnly`*
 
 ### Phase 5: Guards on the hook road
 
@@ -309,7 +309,9 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
   the doc-file guard already holds on patch paths; (b) the `checkNonHookTasks`/`checkNonHookEdits`
   skip is by `PaneIsEvidence()` with no daemon-level unit test — the split is pinned at the provider
   level, the graph routing at the row level; (c) the MUX-154 negative control and `deliver --force` on
-  hook codex are covered by design, not by a test; (d) Phase 2's negative control pins `SharedPrompt`
+  hook codex were covered by design, not by a test — both since tested (the MUX-154 control 00:27 in
+  `daemon/codex_hook_road_test.go`; `deliver --force` 02:09 by `TestCodexForceDeliver_HookRoadSentenceOnly`,
+  once `injectWakeSentence` went through the `TmuxSendLiteral`/`TmuxSendKeys` seam); (d) Phase 2's negative control pins `SharedPrompt`
   by marker strings, not a byte golden. Pass counts are recorded under Phase 7 item 8.
 - **2026-09-09 00:18–00:56** — the first `spec-to-pr` run on this spec (`1788927531-spec-to-pr-7fbfba25`,
   started by the user for Phase 3): `implement` (spawn `spawn-e0035225`) delivered items 6–7 in 542 s;
@@ -365,7 +367,31 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
   every failed review costs one redundant verification. The fix spawn (`spawn-567c25f0`, 582 s)
   resolved all three findings — see (d) above — and the re-run was green: build 01:28:14 and
   `go test -p 1 -count=1 -v ./...` 01:29:03 exit 0 as hook rows, review LGTM 01:29:55 (EXIT=0); the
-  run reached `update-spec` at 01:29:56 and the Phase 3 commit gate follows.
+  run reached `update-spec` at 01:29:56 and the Phase 3 commit gate followed: the user opened it at
+  01:40 and the commit node landed **`59d57b9`** ("MUX-159 Phase 3: Chains and evidence on the hook
+  road", 01:43:34, 20 files) — after two daemon `task-stall-redrive`s on the commit dispatch. `loop-check`
+  then re-seeded `implement` on the reused worker `spawn-e2669d9b` (01:43:44), which was stopped as a
+  leftover seconds later, and the run **failed at 01:44:39** ("node implement failed with no live
+  edge") — Phase 4 was never started by it. Edit's executor fixes for both incidents (graph workers
+  persist and read as `parked`, lost workers are replaced under the redrive cap, the idle-task watchdog
+  defers to the executor, redrives skip a busy pane — `docs/architecture.md`) are outside this spec and
+  uncommitted; their first review at 01:57:38 was EXIT=1 (two must-fixes) with the suite red at
+  01:58:01, and `verify-spec` fired on that failed review as well — finding (c), third time. Their
+  re-review at 02:04:15 was LGTM (0 must-fix; one should-fix left, best-effort cleanup in
+  `failClosed`/`StopSpawn`) with `daemon/idle_task_test.go` added — but no `go test` row had followed
+  the 01:58:01 red when this was written, so the suite is unverified on the fixed tree. A third review
+  at 02:06:01 was clean (0/0/0: replacement cleanup collects `StopSpawn` errors and names still-live
+  workers, `StopSpawn` keeps `running` when the kill fails and the window lives, and the spawn row in
+  `docs/architecture.md` now says session checkout, not worktree) — still with no `go test` row after
+  the three reds of 01:58–01:59 (`./...`, `./bus`, `-run TestExecR…`), only `gofmt` calls — until
+  **02:09:24**, when `go test -p 1 -count=1 -v ./...` exited 0 as a hook row on the tree that also
+  added the force-delivery test (Phase 4 item 7); review LGTM 02:10:07. That tree was the user's
+  **third `spec-to-pr` run** (`1788933783-spec-to-pr-2babbc1e`, Phase 4, started ~02:03): its implement
+  spawn delivered the force-delivery test on top of the executor fixes, build 02:08:27 / test 02:09:29 /
+  review 02:10:10 all green, and two `verify-spec`s reached plan one second apart — the daemon's
+  review-complete notification (02:10:09) and the run's own `update-spec` node (02:10:10) — the
+  double fire that finding (c)'s ungated notification produces on every green graph review. Phase 4
+  closed on that verification; the run then sat at its Phase 4 commit gate.
 - [MUX-154](../backlog/MUX-154-codex-status-line-closes-tracked-tasks.md) — the immediate patch to
   the scrape (chrome signatures, consumer refusal). This spec removes the scrape's *reason to exist*
   for codex; both are needed, in that order.
@@ -389,7 +415,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
 | MUX-144-wait-human-gate-openable-by-any-agent | 11h 24m | 2026-09-09 00:12 |
-| MUX-159-codex-hooks-provider | 1h 12m | 2026-09-09 01:30 |
+| MUX-159-codex-hooks-provider | 1h 51m | 2026-09-09 02:10 |
 
 The MUX-144 branch predates this spec (its key is MUX-144, and the same branch row appears in that
 spec's table); its total is that branch's absolute active time, not this spec's share of it. The work
@@ -397,11 +423,11 @@ moved to its own branch on 2026-09-09; the MUX-159 row is that branch's absolute
 
 ## Status
 
-**In Progress** — 59/67: Phases 1, 2, 3 and 6 complete (8/8, 7/7, 12/12, 5/5), Phase 4 7/8,
-Phase 5 2/5, Phase 7 6/8, acceptance criteria 12/14. As of `3d3fd9b`: `scripts/test-codex-hooks.sh` is proven —
+**In Progress** — 60/67: Phases 1, 2, 3, 4 and 6 complete (8/8, 7/7, 12/12, 8/8, 5/5),
+Phase 5 2/5, Phase 7 6/8, acceptance criteria 12/14. As of `59d57b9` (Phase 3, committed 01:43 by the second run's commit node after the user opened the phase gate; `3d3fd9b` carried the first pass of all seven phases): `scripts/test-codex-hooks.sh` is proven —
 hermetic 37/37 (2026-09-09 00:07), live 7/7 (00:02, `MUXCODE_CODEX_HOOKS_LIVE=1`) and, at the raised floor, **hermetic 39/39 (01:15, run agent)**; Go tests pass
 and review is clean (0 must-fix) per edit; the hook road is **on by default** since 00:10
-(`codexHooksDefault = true`, env opts out). **Uncommitted since (2026-09-09 00:27–00:47)**: the graph's
+(`codexHooksDefault = true`, env opts out). **In `59d57b9` (work of 2026-09-09 00:27–01:27)**: the graph's
 implement spawn delivered the daemon-level tests for Phase 3 items 6–7 (which also test Phase 4 item 6
 and the scrape-road half of Phase 7 item 7 and AC 5), and edit shipped the hook-road evidence guard
 after the run's build hold (Phase 3 items 8–12) — three review rounds (00:46, 00:52, 00:53) found
@@ -409,6 +435,6 @@ three must-fixes on the guard, all fixed; review LGTM 00:54:59 and **green 00:55
 (`go vet` and `go test ./...` exit 0 as hook rows, 2341 PASS / 0 FAIL / 2 SKIP), on which the
 pending-green items were ticked. Open: three live clauses the script does not assert
 (Phase 7 items 5/6/7 and ACs 5/8: a live denial, restore-after-tamper, `task-detected` presence or
-absence under a daemon), MUX-157's never-author rules (Phase 5 items 1/3/5, AC 9), and `deliver --force` on hook codex, covered by design only (Phase 4 item 7). The second run's 01:18 review must-fix (a lone `go vet` fired review before the suite) was resolved at 01:27 by the test-precheck class and its re-review was LGTM at 01:29:55, EXIT=0 (Notes (d)); the run now sits at the Phase 3 commit gate. Moved to `drafts/` and set as the active spec 23:00 on the user's instruction;
+absence under a daemon), and MUX-157's never-author rules (Phase 5 items 1/3/5, AC 9). `deliver --force` on hook codex (Phase 4 item 7) closed 02:09 with `TestCodexForceDeliver_HookRoadSentenceOnly`, on the first green suite (02:09:24) of the tree that also carries the executor fixes; review LGTM 02:10:07 — the third `spec-to-pr` run (`1788933783-spec-to-pr-2babbc1e`, Phase 4), now at its commit gate. The second run's 01:18 review must-fix (a lone `go vet` fired review before the suite) was resolved at 01:27 by the test-precheck class and its re-review was LGTM at 01:29:55, EXIT=0 (Notes (d)); Phase 3 was committed as `59d57b9` at 01:43 and the run then failed on its re-seeded implement worker (Notes). Moved to `drafts/` and set as the active spec 23:00 on the user's instruction;
 edit implemented all seven phases in one pass, taking the recommended option on Decisions 1–4. Filed
 2026-09-08 on the user's request, from the same-day finding that codex ships hooks muxcode ignores.

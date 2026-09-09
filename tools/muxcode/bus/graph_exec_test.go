@@ -2242,6 +2242,10 @@ func TestExecRedriveStalledDispatch(t *testing.T) {
 		return 1
 	}
 	t.Cleanup(func() { graphRedriveFn = origRedrive })
+	idle := true
+	origIdle := graphAgentIdleFn
+	graphAgentIdleFn = func(string, string) bool { return idle }
+	t.Cleanup(func() { graphAgentIdleFn = origIdle })
 
 	run := createTestRun(t, oneNode())
 	step(t, runTestSession, run.ID)
@@ -2256,8 +2260,18 @@ func TestExecRedriveStalledDispatch(t *testing.T) {
 		t.Fatalf("un-stalled task must not redrive, got %d (%v)", st.Redrives, driven)
 	}
 
-	// Stalled + un-receipted: one real delivery attempt, bookkeeping persisted.
+	// Busy pane: stalled and un-receipted but mid-turn — never redriven
+	// (the 2026-09-09 commit redrive interrupted a working agent twice).
 	backdateTask(st.TaskID, 120)
+	idle = false
+	step(t, runTestSession, run.ID)
+	if st = nodeStatus(run.ID); st.Redrives != 0 || len(driven) != 0 {
+		t.Fatalf("busy agent must not be redriven, got %d (%v)", st.Redrives, driven)
+	}
+	idle = true
+
+	// Stalled + un-receipted at the prompt: one real delivery attempt,
+	// bookkeeping persisted.
 	step(t, runTestSession, run.ID)
 	if st = nodeStatus(run.ID); st.Redrives != 1 || st.LastRedrive == 0 || len(driven) != 1 {
 		t.Fatalf("stalled dispatch must redrive once, got %d (%v)", st.Redrives, driven)
@@ -2312,6 +2326,10 @@ func TestExecRedriveStalledSpawns(t *testing.T) {
 	origWake := graphSpawnWakeFn
 	graphSpawnWakeFn = func(_, spawnRole string) { woken = append(woken, spawnRole) }
 	t.Cleanup(func() { graphSpawnWakeFn = origWake })
+	idle := true
+	origIdle := graphAgentIdleFn
+	graphAgentIdleFn = func(string, string) bool { return idle }
+	t.Cleanup(func() { graphAgentIdleFn = origIdle })
 
 	g := &Graph{Name: "g", Start: "w",
 		Nodes: []Node{{ID: "w", Type: NodeSpawn, Role: "build", Message: "go"}}}
@@ -2342,7 +2360,15 @@ func TestExecRedriveStalledSpawns(t *testing.T) {
 
 	startWorker(run.ID, "spawn-w1", true)
 
-	// Stalled + unconsumed: one wake, bookkeeping persisted.
+	// Busy worker: an unconsumed seed behind a running turn is not a stall.
+	idle = false
+	redriveStalledSpawns(runTestSession, run, n, status(run.ID), now)
+	if st := status(run.ID); st.Redrives != 0 || len(woken) != 0 {
+		t.Fatalf("busy worker must not be woken, got %d (%v)", st.Redrives, woken)
+	}
+	idle = true
+
+	// Stalled + unconsumed at the prompt: one wake, bookkeeping persisted.
 	redriveStalledSpawns(runTestSession, run, n, status(run.ID), now)
 	st := status(run.ID)
 	if st.Redrives != 1 || st.LastRedrive == 0 || len(woken) != 1 || woken[0] != "spawn-w1" {
@@ -2378,6 +2404,268 @@ func TestExecRedriveStalledSpawns(t *testing.T) {
 	st = status(run2.ID)
 	if st.State != GraphNodeRunning || st.Redrives != 0 || len(woken) != 0 {
 		t.Fatalf("working spawn must be untouched, got %q redrives %d (%v)", st.State, st.Redrives, woken)
+	}
+}
+
+// TestExecSpawnLostWorkerReplaced pins replaceLostWorkers: a worker that
+// ends before answering its seed — stopped by hand, or its window gone —
+// is replaced by a fresh worker seeded with the same task under the same
+// reuse key, the node stays running, and the replacement's answer
+// completes it. Cap exhaustion fails the node with the lost-worker
+// reason. Negative control: a worker stopped AFTER answering is a
+// completion, never a loss (the 2026-09-09 run died because a stop
+// before the answer was read as a verdict).
+func TestExecSpawnLostWorkerReplaced(t *testing.T) {
+	g := &Graph{Name: "lost", Start: "w",
+		Nodes: []Node{{ID: "w", Type: NodeSpawn, Role: "edit", Message: "implement phase"}}}
+	run := createTestRun(t, g)
+	f := fakeLiveSpawns(t)
+	status := func(runID string) *GraphNodeStatus {
+		st, err := ReadNodeStatus(runTestSession, runID, "w")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	stop := func(spawnRole string) {
+		if err := UpdateSpawnEntry(runTestSession, spawnRole, func(e *SpawnEntry) {
+			e.Status = "stopped"
+			e.FinishedAt = time.Now().Unix()
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	step(t, runTestSession, run.ID)
+	first := status(run.ID).TaskID
+	if first == "" || f.fresh != 1 {
+		t.Fatalf("fresh worker expected: task %q, %d starts", first, f.fresh)
+	}
+
+	// Stopped before answering: replaced on a fresh worker, node still running.
+	stop(first)
+	step(t, runTestSession, run.ID)
+	st := status(run.ID)
+	if st.State != GraphNodeRunning || st.TaskID == first || f.fresh != 2 || st.Redrives != 1 {
+		t.Fatalf("stopped worker must be replaced: state %q task %q starts %d redrives %d", st.State, st.TaskID, f.fresh, st.Redrives)
+	}
+	second := st.TaskID
+	e1, _ := GetSpawnEntry(runTestSession, first)
+	e2, _ := GetSpawnEntry(runTestSession, second)
+	if e2.Task != e1.Task || e2.RunID != run.ID || e2.NodeID != "w" {
+		t.Fatalf("replacement must carry the same task and reuse key: got %+v want task %q", e2, e1.Task)
+	}
+
+	// Window gone before answering (crash, kill-window): also lost, also replaced.
+	f.deadWindows[second] = true
+	step(t, runTestSession, run.ID)
+	st = status(run.ID)
+	if st.State != GraphNodeRunning || st.TaskID == second || f.fresh != 3 || st.Redrives != 2 {
+		t.Fatalf("vanished worker must be replaced: state %q task %q starts %d redrives %d", st.State, st.TaskID, f.fresh, st.Redrives)
+	}
+	third := st.TaskID
+
+	// The replacement answers: the node completes on it.
+	answerSpawn(t, runTestSession, third)
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "w"); s != GraphNodeDone {
+		t.Fatalf("w state %q, want done after the replacement answered", s)
+	}
+
+	// createTestRun moves to a fresh bus dir; seeds need the delivery
+	// store to be answerable there.
+	withDelivery := func(run *GraphRun) *GraphRun {
+		if err := os.MkdirAll(DeliveryDir(runTestSession), 0755); err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+
+	// Cap: a worker that keeps disappearing fails the node loudly.
+	run2 := withDelivery(createTestRun(t, g))
+	step(t, runTestSession, run2.ID)
+	if err := MutateNodeStatus(runTestSession, run2.ID, "w", func(s *GraphNodeStatus) {
+		s.Redrives = graphRedriveMax
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stop(status(run2.ID).TaskID)
+	starts := f.fresh
+	step(t, runTestSession, run2.ID)
+	st = status(run2.ID)
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "worker lost") || f.fresh != starts {
+		t.Fatalf("capped replacement must fail the node, got %q %q (starts %d->%d)", st.State, st.Output, starts, f.fresh)
+	}
+
+	// Negative control: stopped AFTER answering is a completion, not a loss.
+	run3 := withDelivery(createTestRun(t, g))
+	step(t, runTestSession, run3.ID)
+	worker := status(run3.ID).TaskID
+	answerSpawn(t, runTestSession, worker)
+	stop(worker)
+	starts = f.fresh
+	step(t, runTestSession, run3.ID)
+	st = status(run3.ID)
+	if st.State != GraphNodeDone || st.Outcome != OutcomeSuccess || f.fresh != starts {
+		t.Fatalf("answered-then-stopped worker must complete the node, got %q/%q (starts %d->%d)", st.State, st.Outcome, starts, f.fresh)
+	}
+}
+
+// TestExecMapReplacementFailsClosed pins the map side of replacement: with
+// two lost members and the second replacement's start failing, the first
+// replacement is recorded on the node AND stopped before the node fails —
+// no worker keeps editing the shared checkout under a node that no longer
+// names it (review must-fix 2026-09-09).
+func TestExecMapReplacementFailsClosed(t *testing.T) {
+	g := &Graph{Name: "map-lost", Start: "m",
+		Nodes: []Node{{ID: "m", Type: NodeMap, Role: "edit", Items: "one,two", Message: "handle ${item}"}}}
+	run := createTestRun(t, g)
+	f := fakeLiveSpawns(t)
+
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "m")
+	members := strings.Split(st.TaskID, ",")
+	if len(members) != 2 || f.fresh != 2 {
+		t.Fatalf("two members expected: %q (%d starts)", st.TaskID, f.fresh)
+	}
+	for _, id := range members {
+		if err := UpdateSpawnEntry(runTestSession, id, func(e *SpawnEntry) { e.Status = "stopped" }); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Second replacement start fails.
+	inner := graphSpawnFn
+	starts := 0
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
+		starts++
+		if starts == 2 {
+			return "", errors.New("tmux new-window: no server")
+		}
+		return inner(sess, role, task, owner, runID, nodeID)
+	}
+
+	step(t, runTestSession, run.ID)
+	st, _ = ReadNodeStatus(runTestSession, run.ID, "m")
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "replacement failed after 1 of 2") {
+		t.Fatalf("partial replacement must fail the node, got %q %q", st.State, st.Output)
+	}
+	first := fmt.Sprintf("spawn-live%04d", 3)
+	if !strings.Contains(st.TaskID, first) || strings.Contains(st.TaskID, members[0]) {
+		t.Fatalf("the launched replacement must be recorded on the node: %q", st.TaskID)
+	}
+	if e, _ := GetSpawnEntry(runTestSession, first); e.Status != "stopped" {
+		t.Fatalf("launched replacement must be stopped on failure, got %q", e.Status)
+	}
+	if len(f.killed) != 1 || f.killed[0] != first {
+		t.Fatalf("exactly the launched replacement's window is killed, got %v", f.killed)
+	}
+	entries, _ := ReadSpawnEntries(runTestSession)
+	for _, e := range entries {
+		if e.RunID == run.ID && e.Status == "running" {
+			t.Fatalf("no worker of the failed node may keep running: %+v", e)
+		}
+	}
+
+	// Control: a kill that fails with the window still live leaves the
+	// replacement RUNNING and names it in the node output — the failure
+	// never claims a cleanup it could not verify.
+	graphSpawnFn = inner
+	run2 := createTestRun(t, g)
+	if err := os.MkdirAll(DeliveryDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	step(t, runTestSession, run2.ID)
+	st2, _ := ReadNodeStatus(runTestSession, run2.ID, "m")
+	for _, id := range strings.Split(st2.TaskID, ",") {
+		if err := UpdateSpawnEntry(runTestSession, id, func(e *SpawnEntry) { e.Status = "stopped" }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	starts = 0
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
+		starts++
+		if starts == 2 {
+			return "", errors.New("tmux new-window: no server")
+		}
+		return inner(sess, role, task, owner, runID, nodeID)
+	}
+	f.killed = nil
+	spawnKillWindowFn = func(_, w string) error {
+		f.killed = append(f.killed, w)
+		return errors.New("kill-window: no server")
+	}
+	step(t, runTestSession, run2.ID)
+	st2, _ = ReadNodeStatus(runTestSession, run2.ID, "m")
+	launched := f.killed
+	if st2.State != GraphNodeFailed || len(launched) != 1 || !strings.Contains(st2.Output, "still live: "+launched[0]) {
+		t.Fatalf("unverified cleanup must be named in the output, got %q %q (killed %v)", st2.State, st2.Output, launched)
+	}
+	if e, _ := GetSpawnEntry(runTestSession, launched[0]); e.Status != "running" {
+		t.Fatalf("a replacement whose window is still live must stay running, got %q", e.Status)
+	}
+}
+
+// TestGraphOwnsTask pins the executor-ownership lookup the daemon's
+// idle-task watchdog defers to: a running node's dispatch is owned, a
+// finished node's is not, and an unknown id is not.
+func TestGraphOwnsTask(t *testing.T) {
+	run := createTestRun(t, linearGraph())
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+
+	runID, nodeID, ok := GraphOwnsTask(runTestSession, st.TaskID)
+	if !ok || runID != run.ID || nodeID != "a" {
+		t.Fatalf("running dispatch must be owned: %v %q %q", ok, runID, nodeID)
+	}
+	if _, _, ok := GraphOwnsTask(runTestSession, "no-such-task"); ok {
+		t.Fatal("unknown task must not be owned")
+	}
+
+	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	if _, _, ok := GraphOwnsTask(runTestSession, st.TaskID); ok {
+		t.Fatal("a finished node's dispatch must no longer be owned")
+	}
+	stB, _ := ReadNodeStatus(runTestSession, run.ID, "b")
+	if _, nodeID, ok := GraphOwnsTask(runTestSession, stB.TaskID); !ok || nodeID != "b" {
+		t.Fatalf("successor dispatch must be owned by b: %v %q", ok, nodeID)
+	}
+}
+
+// TestSpawnDisplayStatusParked pins the observer-facing status: a graph
+// worker that answered while its run is in flight reads "parked", an
+// unanswered one "running", and a terminal run drops the label.
+func TestSpawnDisplayStatusParked(t *testing.T) {
+	g := &Graph{Name: "parked", Start: "w",
+		Nodes: []Node{{ID: "w", Type: NodeSpawn, Role: "edit", Message: "implement"}}}
+	run := createTestRun(t, g)
+	fakeLiveSpawns(t)
+
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "w")
+	e, _ := GetSpawnEntry(runTestSession, st.TaskID)
+	if got := SpawnDisplayStatus(runTestSession, e); got != "running" {
+		t.Fatalf("unanswered worker reads %q, want running", got)
+	}
+
+	answerSpawn(t, runTestSession, st.TaskID)
+	e, _ = GetSpawnEntry(runTestSession, st.TaskID)
+	if got := SpawnDisplayStatus(runTestSession, e); got != "parked" {
+		t.Fatalf("answered worker of a live run reads %q, want parked", got)
+	}
+	entries, _ := ReadSpawnEntries(runTestSession)
+	if out := FormatSpawnList(AnnotateSpawnDisplay(runTestSession, entries), false); !strings.Contains(out, "parked") {
+		t.Fatalf("spawn list must show the parked worker:\n%s", out)
+	}
+
+	step(t, runTestSession, run.ID)
+	if r, _ := ReadGraphRun(runTestSession, run.ID); r.State != GraphRunComplete {
+		t.Fatalf("run state %q, want complete", r.State)
+	}
+	e, _ = GetSpawnEntry(runTestSession, st.TaskID)
+	if got := SpawnDisplayStatus(runTestSession, e); got == "parked" {
+		t.Fatal("a terminal run's worker must not read parked")
 	}
 }
 

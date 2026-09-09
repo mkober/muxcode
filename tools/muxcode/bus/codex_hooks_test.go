@@ -451,3 +451,97 @@ func TestCodexWakeUp_HookRoadNeverConsumesInbox(t *testing.T) {
 		t.Error("a receipt was written by the injection path; only the agent's hook may ack")
 	}
 }
+
+// stubTmuxRecorder swaps the tmux runners for one test: has-session succeeds,
+// pane captures fail (there is no pane to verify against), and every
+// send-keys call is recorded in order.
+func stubTmuxRecorder(t *testing.T) *[][]string {
+	t.Helper()
+	var calls [][]string
+	origRun, origQuiet, origOut := tmuxRunner, tmuxQuietRunner, tmuxOutputRunner
+	tmuxRunner = func(args ...string) error { calls = append(calls, args); return nil }
+	tmuxQuietRunner = func(args ...string) error { return nil }
+	tmuxOutputRunner = func(args ...string) (string, error) { return "", errors.New("stub: no pane") }
+	t.Cleanup(func() { tmuxRunner, tmuxQuietRunner, tmuxOutputRunner = origRun, origQuiet, origOut })
+	return &calls
+}
+
+// literalSends returns the text of every recorded `send-keys -l -- <text>`
+// call — the form TmuxSendLiteral always emits — in order.
+func literalSends(calls [][]string) []string {
+	var out []string
+	for _, args := range calls {
+		if len(args) > 2 && args[0] == "send-keys" && args[len(args)-2] == "--" {
+			out = append(out, args[len(args)-1])
+		}
+	}
+	return out
+}
+
+// TestCodexForceDeliver_HookRoadSentenceOnly pins `deliver --force` on the hook
+// road: a request stuck behind a stale notified marker is re-delivered by
+// clearing the marker and typing the fixed wake sentence — never the payload —
+// while the inbox row and its receipt are left for the agent's own hook. The
+// non-force call is the marker control (nothing cleared, nothing typed); a
+// Claude role is the payload control, proving the payload assertion can fail.
+func TestCodexForceDeliver_HookRoadSentenceOnly(t *testing.T) {
+	session := codexHooksTestEnv(t, "codex-cli 0.153.4")
+	t.Setenv("MUXCODE_CODEX_HOOKS", "1")
+	t.Setenv("MUXCODE_BUILD_CLI", "codex")
+	t.Setenv("MUXCODE_TEST_CLI", "claude")
+	if _, err := PrepareCodexHooks(session, "build"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(BusDir(session), "inbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	typed := stubTmuxRecorder(t)
+
+	msg := NewMessage("edit", "build", "request", "build", "run the build", "")
+	if err := SendNoCC(session, msg); err != nil {
+		t.Fatal(err)
+	}
+	AddNotifiedIDs(session, "build", []string{msg.ID})
+	if n := len(UnnotifiedMessages(session, "build")); n != 0 {
+		t.Fatalf("setup: %d unnotified messages, want 0 (the marker must be stale)", n)
+	}
+
+	res, err := ForceDeliver(session, "build", false)
+	if err != nil || res.Skipped != "no pending messages" || len(*typed) != 0 {
+		t.Fatalf("without --force: err=%v skipped=%q typed=%v; want the skip and no injection", err, res.Skipped, *typed)
+	}
+
+	res, err = ForceDeliver(session, "build", true)
+	if err != nil || res.Delivered != 1 {
+		t.Fatalf("with --force: err=%v delivered=%d, want 1 (stale marker cleared)", err, res.Delivered)
+	}
+	if got := literalSends(*typed); len(got) != 1 || got[0] != WakeSentence {
+		t.Fatalf("hook road typed %q, want exactly [%q]", got, WakeSentence)
+	}
+	for _, args := range *typed {
+		if s := strings.Join(args, " "); strings.Contains(s, "run the build") || strings.Contains(s, msg.ID) {
+			t.Errorf("payload reached the pane: %q", s)
+		}
+	}
+	if msgs, _ := Peek(session, "build"); len(msgs) != 1 {
+		t.Errorf("inbox after force-deliver = %d messages, want 1 (consumed only by the agent's hook)", len(msgs))
+	}
+	if _, acked := ReadReceipt(session, msg.ID); acked {
+		t.Error("force-deliver wrote a receipt; only the agent's hook may ack")
+	}
+	if !readNotifiedIDs(session, "build")[msg.ID] {
+		t.Error("message not re-marked notified after re-delivery")
+	}
+
+	*typed = nil
+	ctrl := NewMessage("edit", "test", "request", "test", "run the suite", "")
+	if err := SendNoCC(session, ctrl); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ForceDeliver(session, "test", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := literalSends(*typed); len(got) != 1 || !strings.Contains(got[0], "run the suite") {
+		t.Fatalf("claude control typed %q, want the payload", got)
+	}
+}

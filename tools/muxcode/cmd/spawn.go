@@ -139,7 +139,7 @@ func spawnList(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Print(bus.FormatSpawnList(entries, showAll))
+	fmt.Print(bus.FormatSpawnList(bus.AnnotateSpawnDisplay(session, entries), showAll))
 }
 
 // spawnStatus handles: spawn status <id>
@@ -157,6 +157,7 @@ func spawnStatus(args []string) {
 		os.Exit(1)
 	}
 
+	entry.Display = bus.SpawnDisplayStatus(session, entry)
 	fmt.Print(bus.FormatSpawnStatus(entry))
 }
 

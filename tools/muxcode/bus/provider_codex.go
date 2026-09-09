@@ -412,14 +412,15 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 // the sentence is submitted, which is the true ack. The reply reminder that
 // wraps a scrape-road injection is deliberately absent — the hook carries the
 // reply instruction once, as context, so a payload is never a prompt
-// (MUX-009). Text and Enter are separate writes with a delay, as everywhere.
+// (MUX-009). Text and Enter are separate writes with a delay, as everywhere,
+// through the tmux runner seam so `deliver --force` can be pinned hermetically.
 func injectWakeSentence(target, role string) error {
-	if err := exec.Command("tmux", "send-keys", "-t", target, "-l", WakeSentence).Run(); err != nil {
+	if err := TmuxSendLiteral(target, WakeSentence); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s/%s failed: %v\n", role, "codex", err)
 		return err
 	}
 	time.Sleep(200 * time.Millisecond)
-	if err := exec.Command("tmux", "send-keys", "-t", target, "Enter").Run(); err != nil {
+	if err := TmuxSendKeys(target, "Enter"); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s/%s failed: %v\n", role, "codex", err)
 		return err
 	}

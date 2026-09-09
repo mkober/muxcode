@@ -3196,9 +3196,20 @@ func idleRescueExcluded(role string) bool {
 //     chance and still didn't respond. Capture the pane content and send a
 //     synthetic response back to the requester.
 //
+// Graph dispatches are exempt: the executor's own stall path (force-redrive,
+// capped, loud failure) owns them — see bus.GraphOwnsTask for the hold this
+// watchdog caused by acting first.
+//
 // Runs every 10 seconds to avoid excessive tmux capture-pane calls.
 func (d *Daemon) checkIdleTaskCompletion() {
-	now := time.Now().Unix()
+	d.checkIdleTaskCompletionAt(time.Now().Unix())
+}
+
+// agentIdleFn is the watchdog's idle probe, a seam so its regression runs
+// without tmux, where IsAgentIdle reads every agent as active.
+var agentIdleFn = bus.IsAgentIdle
+
+func (d *Daemon) checkIdleTaskCompletionAt(now int64) {
 	if now-d.lastIdleTaskCheck < 10 {
 		return
 	}
@@ -3227,6 +3238,11 @@ func (d *Daemon) checkIdleTaskCompletion() {
 		if idleRescueExcluded(bus.WindowForRole(task.To)) {
 			continue
 		}
+		if _, _, owned := bus.GraphOwnsTask(d.session, task.ID); owned {
+			delete(d.idleTaskFirstSeen, task.ID)
+			delete(d.idleTaskRetried, task.ID)
+			continue // executor-owned — see doc comment
+		}
 
 		// Skip tasks that are too fresh (< 10s) — agent may still be working
 		if now-task.SentAt < 10 {
@@ -3234,7 +3250,7 @@ func (d *Daemon) checkIdleTaskCompletion() {
 		}
 
 		// Check if the target agent is idle (at ❯ prompt)
-		if !bus.IsAgentIdle(d.session, task.To) {
+		if !agentIdleFn(d.session, task.To) {
 			// Agent is active — reset tracking for this task
 			delete(d.idleTaskFirstSeen, task.ID)
 			continue

@@ -269,7 +269,7 @@ is interrupted only at human gates and terminal states.
 | Node type | Behavior |
 |-----------|----------|
 | `send` | `SendNoCC` + tracked task for correlation |
-| `spawn` | `StartSpawn()` — ephemeral worker, own git worktree |
+| `spawn` | A persistent worker in the **session checkout** — the one tree build, test, review and commit operate on (`graphSpawnFn` → `StartSpawnOwned` with `worktree=false`; a detached worktree once handed a fix node a tree without the previous node's work, 2026-09-03, see `acquireSpawnWorker`). It persists across iterations (`parked` between seeds, reused by `ReseedSpawn`) and is released when the run ends — see *Workers, stalls and the watchdog* below. Only a standalone `muxcode spawn start` cuts its own worktree (its default; `--no-worktree` opts out) |
 | `map` | Dynamic fan-out: one spawn per item in the item list |
 | `join` | Fan-in barrier — `all` / `any` / `quorum` |
 | `condition` | Routes via `EvaluateConditions()` — the chain engine verbatim, no second dialect |
@@ -462,6 +462,35 @@ phase did not close, routing it to the stuck gate. That comparison is what turns
 an intention into something that actually fires; without it the guard has no trigger, because
 "lowest phase with open items" returns the same phase forever and cannot tell iteration 5 from
 iteration 1.
+
+**Workers, stalls and the watchdog (2026-09-09).** Four executor rules came out of the second
+`spec-to-pr` run on MUX-159 (`1788930816-spec-to-pr-f7fb2610`), whose commit dispatch the daemon
+answered for it and whose re-seeded implement worker was stopped by hand as a leftover:
+
+1. **Graph workers are persistent.** A `spawn`/`map` worker whose run is still in flight is kept alive
+   after answering its seed and reused on the next iteration (`acquireSpawnWorker` → `ReseedSpawn`,
+   lifecycle `graph-spawn-reuse`). Between seeds it is idle by design, and `muxcode spawn list`/`status`
+   read it as **`parked`** (`SpawnDisplayStatus`: running, run in flight, current seed answered) — the
+   store's bare `running` had two such workers read as stuck agents and one stopped mid-run. Cancel the
+   run to stop its work; a finished or missing run releases the worker to the normal reap path.
+2. **A lost worker is replaced, not judged.** A worker that ends before answering its current seed —
+   `spawn stop`, or its window gone — is a delivery failure, not a verdict. `replaceLostWorkers`
+   re-dispatches the seed on a fresh worker (lifecycle `graph-spawn-replaced`, warn), sharing the
+   redrive cap and bookkeeping with the stall paths, so a worker that keeps disappearing fails the node
+   loudly after `graphRedriveMax` (3) as *"worker lost: … ended before answering, 3 replacements
+   exhausted"* — rather than the run dying on "no live edge" with the phase untouched.
+3. **The daemon's idle-task watchdog defers to the executor.** `checkIdleTaskCompletion` skips any
+   in-flight task a running node dispatched (`bus.GraphOwnsTask`). On the run above it re-queued a
+   duplicate of the commit dispatch and synthesized the reply from the pane at 75 s — ahead of the
+   executor's own 90 s force-redrive, the one path that clears a parked prompt — so the node finished
+   `unknown` on an unverified hold with no commit made. The executor's stall path (force-redrive,
+   capped, loud failure) owns those tasks.
+4. **A redrive never interrupts a working agent.** Both redrive paths ask `graphAgentIdleFn`
+   (`IsAgentIdle`; a seam, because without tmux every agent reads busy) and skip a pane that is
+   mid-turn — the agent has the task and is working, not stalled.
+
+Pinned by `TestExecSpawnLostWorkerReplaced` and `TestGraphOwnsTask` (`bus/graph_exec_test.go`) and
+`TestSpawnDisplayStatusParked`/`TestFormatSpawnParked` (`bus/spawn_test.go`).
 
 ### Diff Preview Flow
 

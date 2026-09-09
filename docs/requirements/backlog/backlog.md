@@ -63,7 +63,7 @@ open items against the active spec.
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| MUX-159 | [`MUX-159-codex-hooks-provider.md`](../drafts/MUX-159-codex-hooks-provider.md) | 2026-09-08 23:00 | In Progress — 59/67; active spec; Phases 1–3 and 6 complete. Integration script proven 2026-09-09 (hermetic 37/37 and 39/39 at the raised floor, live 7/7); hook road on by default since 00:10; hook-road evidence guard shipped 00:55. Open: three live clauses the script does not assert, MUX-157's never-author rules, design-only controls. The 01:18 review must-fix (a lone `go vet` fired review before the suite) was resolved 01:27 by the test-precheck class (`MUXCODE_TEST_PRECHECK_PATTERNS`); re-review LGTM 01:29:55, run at the Phase 3 commit gate |
+| MUX-159 | [`MUX-159-codex-hooks-provider.md`](../drafts/MUX-159-codex-hooks-provider.md) | 2026-09-08 23:00 | In Progress — 60/67; active spec; Phases 1–4 and 6 complete. Integration script proven 2026-09-09 (hermetic 37/37 and 39/39 at the raised floor, live 7/7); hook road on by default since 00:10; hook-road evidence guard shipped 00:55. Open: three live clauses the script does not assert, MUX-157's never-author rules, design-only controls. The 01:18 review must-fix (a lone `go vet` fired review before the suite) was resolved 01:27 by the test-precheck class (`MUXCODE_TEST_PRECHECK_PATTERNS`); re-review LGTM 01:29:55; Phase 3 committed `59d57b9` 01:43 via the run's commit node, after which the run failed 01:44 on its re-seeded implement worker (executor fixes followed, out of scope) |
 
 `drafts/` holds MUX-159 as of 2026-09-08 23:00, set as the active spec the same minute on the user's
 instruction (it had been empty since 22:50). A spec in this table keeps
