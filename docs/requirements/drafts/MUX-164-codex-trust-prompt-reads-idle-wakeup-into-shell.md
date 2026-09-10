@@ -188,6 +188,25 @@ pointer directs, mismatch flagged to edit.
 
 ## Status
 
-**In Progress** — 15/18. Filed 2026-09-09 10:52; suite green 11:39:07, review 11:39:57 EXIT=0,
-integration 30/30 + 10/10, docs 11:55; **committed `67ad9dc` 13:06 (no push)**; open: live
-untrusted-launch section + AC6, stray `s`.
+**Complete — closed at 15/18 on the user's instruction (2026-09-10 11:12), see Deferred below.**
+Filed 2026-09-09 10:52; suite green 11:39:07, review 11:39:57 EXIT=0, integration 30/30 + 10/10, docs
+11:55; **committed `67ad9dc` 13:06**. The implementation and its evidence are done; what remains is
+verification that needs a live codex launch, which the user chose to defer rather than restart agents
+for. Precedent: MUX-159 closed the same way at 61/67.
+
+_The file still sits in `drafts/`; the `drafts/` → `completed/` move is a `git mv` and belongs to
+commit, on the user's word — plan does not move it._
+
+### Deferred at close
+
+Three items stay unticked. They are **not** claimed as done, and each is recorded with what would
+close it:
+
+| Item | Kind | What would close it |
+|------|------|---------------------|
+| `:126` opt-in live section (`MUXCODE_CODEX_HOOKS_LIVE=1`) | **live-dependent** | launch a codex role in a fresh untrusted temp dir and assert it reaches the composer without a health failure. The live workaround was applied instead — `is-advising-gateway` trusted in `~/.codex/config.toml` — so the path is known-good in practice but unautomated |
+| `:69` health sweep no longer loops on a trust-parked agent | **live-dependent** | the same launch: the criterion is about observed sweep behaviour against a genuinely trust-parked agent |
+| `:110` forensic — what ended the codex process, and the stray `s` | **desk work, half done** | first half established (edit's 11:52 handoff: the 10:32 snapshot shows the wake sentence typed in). The stray `s`'s origin is still unexplained and needs no live agent — only the snapshot |
+
+`:110`'s remaining half is the one a future session can finish without restarting anything, and is the
+cheapest of the three to pick up.

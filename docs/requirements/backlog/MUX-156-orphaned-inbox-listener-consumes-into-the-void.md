@@ -29,6 +29,35 @@ Plan's own inbox was unaffected: all thirteen messages addressed to plan during 
 were processed by plan's live listener (checked against `log.jsonl`). The orphan could only eat what
 was addressed to the role it ran as.
 
+### Observed again (2026-09-10, session `is-advising-gateway`) — now with an inside witness
+
+A second occurrence, on a **live AWS deploy**, that closes the attribution gap the 2026-09-08 entry
+had to leave open. This time the consuming agent reported the race from the inside.
+
+| | |
+|---|---|
+| Orphan census | **31** live `muxcode inbox --poll --loop` processes at 09:46 across two sessions (`ps aux`, measured). The deploy agent's own count: "9+ … going back to 8:29AM, apparently one per turn from the Stop-hook auto-relaunch never reaping the prior instance" — 08:29:10 is this session's creation time |
+| Inside witness | deploy tried to start its listener and was refused: **"Another inbox listener claimed deploy concurrently — exiting rather than double-consuming"**. The live agent lost the claim to an orphan and *said so* — the 09-08 entry could only infer this from timing |
+| Message | `1789047789-edit-f7f0cce8` — `edit → deploy`, request `deploy`, "TASK q6-deploy-retry: **USER AUTHORIZED DEPLOY**", sent 09:43:09 |
+| What deploy saw | Nothing. At 09:45 deploy was **idle at `❯`**, `Inbox: 0 message(s) (0 actionable)`, `Unnotified: 0`, `Polling: active` — consumed and acked, never acted on |
+| Recovery blocked | edit's `muxcode deliver --force` returned **"no pending messages"** — the row was already consumed, so force-delivery had nothing to re-drive. The documented recovery path is a no-op against this failure |
+| Daemon backstop | `force-redrive deploy` at 09:34:05, 09:40:20, 09:45:58; `task-stall-redrive edit→deploy:deploy redrive 1/2` at 09:40:20 and 09:45:58 (lifecycle, verified) |
+| Consequence | **The deploy silently did not happen.** edit verified against AWS: all three producer Lambdas still `LastModified 2026-09-09T20:26` with unchanged `CodeSha256`. A user-authorised production-path deploy was acked by the bus and dropped on the floor |
+| Rate | edit's count: "the second dropped delivery on this agent in twenty minutes" |
+
+The 09-08 entry noted that the receipt "names the *role*, not the consuming process, so the live and
+orphaned … listeners are indistinguishable in the store." That still holds — but the concurrent-claim
+refusal proves an orphan was holding the claim, so the inference is no longer only from timing. It
+also names the **source** the 09-08 entry did not: the Stop-hook auto-relaunch starts a listener per
+turn and reaps none, so the orphan population grows monotonically with turn count. That makes this a
+function of session age, not luck.
+
+**Escalation.** This is no longer a latency defect. On 2026-09-08 the cost was a request answered
+3m36s late. On 2026-09-10 the cost was a user-authorised `cdk deploy` that the bus recorded as
+delivered and that never ran — caught only because the requesting agent distrusted the silence and
+checked Lambda metadata directly. A dropped *response* or *event*, which has no task behind it and no
+stall backstop, would leave no trace at all.
+
 ### Mechanism
 
 | Fact | How established |
@@ -137,4 +166,8 @@ established and is Phase 1's first question.
 
 ## Status
 
-**Backlog** — filed 2026-09-08. Not started.
+**Backlog** — filed 2026-09-08. Not started. **Second occurrence 2026-09-10** in session
+`is-advising-gateway`, with an inside witness and a materially worse consequence: a user-authorised
+`cdk deploy` acked by the bus and never run (see [Observed again](#observed-again-2026-09-10-session-is-advising-gateway--now-with-an-inside-witness)).
+31 orphaned listeners were alive at the time. Priority should be re-read against that: the 09-08
+filing measured latency, the 09-10 recurrence measured a silently skipped deploy.

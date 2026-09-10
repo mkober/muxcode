@@ -27,6 +27,41 @@ next to a `[running]` run.
 The window was invisible at first: `lifecycle show --since 30m` returned nothing before 15:34 until
 `--limit 3000` was added ([MUX-124](./MUX-124-lifecycle-since-truncated-by-limit.md)).
 
+### Second occurrence (same run, 2026-09-10)
+
+The relaunch on 2026-09-10 reproduced it exactly, on the same still-running run:
+
+| When | What | Source |
+|------|------|--------|
+| 2026-09-09 17:07 | plan's last note before the relaunch: pointer on MUX-163, run `2338488d` parked at `stuck-gate` | plan memory |
+| 2026-09-10 08:24:46 | session relaunched; plan's startup `context` and bootstrap arrive | this session |
+| 2026-09-10 08:26 | plan's restore: `muxcode spec get` → `No active spec set`, beside `muxcode graph status` → `2338488d [running]`, `stuck-gate waiting`, elapsed 21h24m | this session |
+| 2026-09-10 08:27 | plan re-sets the pointer by hand — the same repair, a second time | this session |
+
+Two for two: every relaunch while a run is live loses the pointer, and the loss is found only because
+plan's restore happens to pair `spec get` with `graph status`. Nothing else looks, and nothing logs it.
+This raises the priority — the defect is not a one-off race but the guaranteed outcome of a restart.
+
+### Third pointer loss (2026-09-10 10:06) — a different cause, deliberately not counted
+
+The 10:06 relaunch also came up with no pointer, but **this one is not an occurrence of this defect**
+and must not be tallied as one:
+
+| Evidence | Reading |
+|----------|---------|
+| `kern.boottime` = 2026-09-10 10:03:56, `uptime` 3 min | the machine rebooted |
+| every entry in `/tmp/muxcode-bus-muxcode/` stamped 10:06, `graphs/` absent entirely | the whole bus dir is new, not purged in place |
+| `graph status` → `No graph runs`; no `graph-cancel`/`graph-complete` row for `2338488d` | the run store went with `/tmp`, unrecorded |
+
+`purgeStaleFiles` removes the pointer and leaves `graphs/`; a reboot takes both, because `BusDir()`
+lives under `/tmp`. The signature that identifies this defect — pointer gone **beside** a surviving
+`[running]` run — is precisely what is missing here, so counting it would inflate the occurrence
+record with an event the fix would not have prevented.
+
+Two corollaries for the fix: a survival test must distinguish re-init from a cold `/tmp`, and the
+"the graph's own resume (it works)" boundary below holds only **within a boot** — run `2338488d`,
+21h of laps and seven gate approvals, was unrecoverable the moment the machine restarted.
+
 ### Mechanism — verified in code
 
 - `bus/setup.go:15` `Init` — on an existing bus dir, `reInit` is set and `purgeStaleFiles` (150)

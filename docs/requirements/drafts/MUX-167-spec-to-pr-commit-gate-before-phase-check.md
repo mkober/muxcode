@@ -75,7 +75,7 @@ which is a separate ordering question between the worker's request to plan and t
 - [ ] A review that returns `EXIT=0` with should-fixes and leaves the phase open reaches `stuck-gate` → `implement` at the cost of one gate, not two; a lap that closes the phase proceeds to `phase-gate` as before
 - [ ] `implement` and `fix` messages tell the worker to run the phase's integration script through the run agent before reporting, and to report the counts with the run task id, so plan's verify has store rows without dispatching the scripts itself
 - [ ] `graph validate` passes for every builtin template; `scripts/test-multi-phase-graph.sh` covers the new routing on both branches
-- [ ] Docs: `docs/architecture.md` graph section, `docs/agent-bus.md` template reference, `CLAUDE.md` graph-orchestration constraint name the phase-complete condition and the one-gate rule
+- [x] Docs: `docs/architecture.md` graph section, `docs/agent-bus.md` template reference, `CLAUDE.md` graph-orchestration constraint name the phase-complete condition and the one-gate rule — **verified 2026-09-10 14:47 by plan, in the files:** `docs/architecture.md:478` "Check before you ask (MUX-167)" names `phase-check`/`spec_phase_committable` and states the one-gate rule ("one prompt per incomplete lap"); `docs/agent-bus.md:1591–1596` gives the full lap shape and the same rule ("one human prompt"); `CLAUDE.md:133` carries the "Ask before the guard, not after" clause. All three also keep the guard as the dispatch-time backstop.
 
 ### Technical approach
 
@@ -167,6 +167,18 @@ phase, not to relabel a gate that should not be asked.
 
 ## Status
 
-**In Progress** — 9/17. Filed 2026-09-09 15:12; Phase 1 complete 15:18 (suite green 15:14:31, review
+**In Progress** — 10/17. Filed 2026-09-09 15:12; Phase 1 complete 15:18 (suite green 15:14:31, review
 15:15:40 EXIT=0, backstop control 15:18:40), Phase 2 complete 15:19 (task-id clause pinned), Phase 3
-docs complete 15:40; Phase 4 (`test-multi-phase-graph.sh`) open. ACs 1, 4–7 wait on Phase 4 rows.
+docs complete (verified in-tree by plan 2026-09-10 14:47); Phase 4 (`test-multi-phase-graph.sh`)
+open. ACs 1, 4–7 wait on Phase 4 rows.
+
+2026-09-10 15:47 — the Phase 4 script is **written but not yet ticked**. Sections 5/5b/5c of
+`scripts/test-multi-phase-graph.sh` cover the open-phase routing (3 checks), a positive control
+(closed phase still reaches `phase-gate`), and the guard backstop (spec re-opened after the gate);
+the coverage floor is raised to exactly 55. Plan verified statically that the backstop assertion is
+**not vacuous** — `stuck-gate` arms only via the `commit → stuck-gate` failure edge, so a guard that
+failed to decline would time the wait out rather than pass. Steps 139–141 stay open until the run
+reports green: a script that has never executed has covered nothing. **The Phase 4 run has not been
+dispatched yet** — plan briefly recorded task `1789069576` as that run; edit corrected it at 15:49
+(that task is `bash scripts/test-prompt-mode.sh`). The claim came from a truncated `muxcode tasks`
+line, not from the task payload; read the task record, not the list summary.
