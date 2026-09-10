@@ -3,7 +3,6 @@ package bus
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -29,18 +28,16 @@ var autoClearIsIdle = func(session, role string) bool {
 }
 
 // autoClearInject performs the /clear injection into a pane. Injectable for
-// tests. Mirrors the /compact path: clear residual input, then text and Enter
-// as separate send-keys calls with delays (the dropped-Enter pitfall).
+// tests. Mirrors the /compact path: TmuxClearComposer empties the composer
+// behind an absorbed Escape (MUX-163), then the command text and Enter go as
+// separate send-keys calls with a delay (the dropped-Enter pitfall).
 var autoClearInject = func(target string) error {
-	_ = exec.Command("tmux", "send-keys", "-t", target, "Escape").Run()
-	time.Sleep(100 * time.Millisecond)
-	_ = exec.Command("tmux", "send-keys", "-t", target, "C-u").Run()
-	time.Sleep(100 * time.Millisecond)
-	if err := exec.Command("tmux", "send-keys", "-t", target, "/clear").Run(); err != nil {
+	_ = TmuxClearComposer(target)
+	if err := TmuxSendKeys(target, "/clear"); err != nil {
 		return fmt.Errorf("send /clear: %w", err)
 	}
 	time.Sleep(200 * time.Millisecond)
-	_ = exec.Command("tmux", "send-keys", "-t", target, "Enter").Run()
+	_ = TmuxSendKeys(target, "Enter")
 	return nil
 }
 

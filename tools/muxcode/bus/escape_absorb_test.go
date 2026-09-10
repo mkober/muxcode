@@ -2,6 +2,9 @@ package bus
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -233,5 +236,134 @@ func TestEscapeAbsorbed_VerifyEnterDelivery(t *testing.T) {
 	}
 	if !sawEnter {
 		t.Error("re-submit must send Enter")
+	}
+}
+
+// TestTmuxClearComposer_ArgvShape pins the slash-command preamble to FOUR
+// writes: Escape, the C-e absorber, a SECOND C-e, then C-u. Both middle keys
+// are load-bearing and neither substitutes for the other — the first is
+// consumed as M-C-e by the pending ESC (so it moves no cursor), the second is
+// the one that actually reaches the composer and moves the cursor to end of
+// line, and only then does C-u kill the WHOLE line rather than the prefix
+// before a mid-line cursor. C-u may never sit directly after the Escape: it
+// would fuse into M-C-u and the clear would silently never happen.
+func TestTmuxClearComposer_ArgvShape(t *testing.T) {
+	calls := stubTmuxRunner(t)
+
+	if err := TmuxClearComposer("s:edit.1"); err != nil {
+		t.Fatalf("TmuxClearComposer: %v", err)
+	}
+
+	sends := *calls
+	want := [][]string{
+		{"send-keys", "-t", "s:edit.1", "Escape"},
+		{"send-keys", "-t", "s:edit.1", "C-e"},
+		{"send-keys", "-t", "s:edit.1", "C-e"},
+		{"send-keys", "-t", "s:edit.1", "C-u"},
+	}
+	if fmt.Sprint(sends) != fmt.Sprint(want) {
+		t.Errorf("TmuxClearComposer sequence =\n  %v\nwant\n  %v", sends, want)
+	}
+	assertEscapeAbsorbed(t, sends)
+
+	if len(sends) > 1 && argvContains(sends[1], "C-u") {
+		t.Error("C-u sits directly after the Escape — it would fuse into M-C-u and never clear")
+	}
+	// A single C-e would be the absorbed one, leaving the cursor unmoved.
+	ces := 0
+	for _, c := range sends {
+		if argvContains(c, "C-e") {
+			ces++
+		}
+	}
+	if ces != 2 {
+		t.Errorf("got %d C-e writes, want 2 (one absorbed by the ESC, one to move the cursor)", ces)
+	}
+}
+
+// TestEscapeAbsorbed_AutoClearInject pins the /clear site end to end: the
+// absorbed preamble, then the command and its Enter as separate writes.
+func TestEscapeAbsorbed_AutoClearInject(t *testing.T) {
+	calls := stubTmuxRunner(t)
+
+	if err := autoClearInject("s:review.1"); err != nil {
+		t.Fatalf("autoClearInject: %v", err)
+	}
+
+	sends := *calls
+	want := [][]string{
+		{"send-keys", "-t", "s:review.1", "Escape"},
+		{"send-keys", "-t", "s:review.1", "C-e"},
+		{"send-keys", "-t", "s:review.1", "C-e"},
+		{"send-keys", "-t", "s:review.1", "C-u"},
+		{"send-keys", "-t", "s:review.1", "/clear"},
+		{"send-keys", "-t", "s:review.1", "Enter"},
+	}
+	if fmt.Sprint(sends) != fmt.Sprint(want) {
+		t.Errorf("autoClearInject sequence =\n  %v\nwant\n  %v", sends, want)
+	}
+	assertEscapeAbsorbed(t, sends)
+}
+
+// composerEscapeExempt is the marker a line must carry to be allowed a
+// hand-rolled Escape. The exemption is keyed on the LINE, never the file: a
+// filename allowlist would exempt all ~3200 lines of daemon.go, so the next
+// hand-rolled Escape added anywhere in it would pass silently. Requiring a
+// marker also makes the exemption deliberate — the author has to assert that
+// the target is not a composer.
+//
+// The only current holders drive a NEOVIM pane, where the composer rule does
+// not apply: after Escape nvim is in normal mode, a C-e absorber would scroll
+// the window, and nvim's own Escape→Escape idiom already absorbs the pending
+// key before the `:` command that follows.
+const composerEscapeExempt = "// nvim-pane:"
+
+// TestNoHandRolledComposerEscape is the AC3 guard: no site may type
+// `send-keys … Escape` into a composer through exec.Command, which bypasses
+// the tmuxRunner seam every argv-level pin above depends on. It is a static
+// check because the two remaining callers cannot be unit-driven — Compact
+// polls a live pane for up to 30s and GracefulStop polls for process exit —
+// and because it also catches the next site someone adds, which a
+// per-function pin never would.
+func TestNoHandRolledComposerEscape(t *testing.T) {
+	roots := []string{".", filepath.Join("..", "daemon")}
+	found, exempt := 0, 0
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatalf("read %s: %v", root, err)
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			src, err := os.ReadFile(filepath.Join(root, name))
+			if err != nil {
+				t.Fatalf("read %s: %v", name, err)
+			}
+			for i, line := range strings.Split(string(src), "\n") {
+				if !strings.Contains(line, "exec.Command(") || !strings.Contains(line, `"Escape"`) {
+					continue
+				}
+				found++
+				if !strings.Contains(line, composerEscapeExempt) {
+					t.Errorf("%s:%d hand-rolls a send-keys Escape outside the tmuxRunner seam — route it through TmuxDismissOverlay or TmuxClearComposer, or mark the line %q if the target is not a composer (MUX-163):\n  %s",
+						name, i+1, composerEscapeExempt, strings.TrimSpace(line))
+				} else {
+					exempt++
+				}
+			}
+		}
+	}
+	// Negative controls. The scan must reach source containing the pattern —
+	// a rule that matched nothing would pass with every site broken. And at
+	// least one line must have been exempted by its marker, or the marker
+	// check is untested and could be inverted without failing anything.
+	if found == 0 {
+		t.Fatal("scanned no exec.Command Escape lines at all — the guard is not reaching the source")
+	}
+	if exempt == 0 {
+		t.Error("no line carried the exemption marker — the marker branch never ran")
 	}
 }

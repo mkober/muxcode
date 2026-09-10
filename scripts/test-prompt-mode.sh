@@ -16,11 +16,25 @@
 #
 # Hermetic: scratch BUS_SESSION + scratch tmux session + scratch project
 # dir; nothing touches a live muxcode session.
+#
+# Exit codes: 0 = everything ran and passed; 1 = a check failed, or the
+# coverage floor was not met; 2 = nothing failed but section 4's required
+# chord-receiver checks could not run (python3 absent), so the run is
+# INCOMPLETE rather than green.
 set -euo pipefail
 
 PASS=0
 FAIL=0
 SKIP=0
+# Section 4's two chord-receiver checks are the point of this script, and the
+# global PASS floor cannot speak for them: unrelated checks clear it on their
+# own, so a run where python3 was absent met the floor and reported green with
+# zero parser coverage. This flag is set only once both checks have actually
+# been evaluated, and the summary exits 2 when it has not been.
+PARSER_RAN=0
+# Coverage floor: the mechanical sections alone clear this. Named once so
+# summary_verdict and the message it prints can never drift apart.
+PASS_FLOOR=18
 
 # Resolve the script's own dir before any cd — section 4 loads the chord
 # receiver from it, and the test cd's into a scratch project dir below.
@@ -59,6 +73,21 @@ ok()   { PASS=$((PASS + 1)); echo "  ok: $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 skip() { SKIP=$((SKIP + 1)); echo "  SKIP: $1"; }
 strip_ansi() { sed 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
+
+# summary_verdict echoes the exit code a run's counters imply: 0 all good,
+# 1 a real failure or an unmet floor, 2 nothing failed but the required
+# parser section could not run. It is a pure function of (fail, pass,
+# parser_ran) so the PRECEDENCE — a real failure outranks a could-not-run —
+# is drivable from stub counters. Deciding this inline made exit 2 reachable
+# only on a machine without python3, which is to say never on the machines
+# that run this, and an inverted order would have gone unnoticed.
+summary_verdict() {
+  local fail=$1 pass=$2 parser=$3
+  [ "$fail" -eq 0 ] || { echo 1; return; }
+  [ "$pass" -ge "$PASS_FLOOR" ] || { echo 1; return; }
+  [ "$parser" -eq 1 ] || { echo 2; return; }
+  echo 0
+}
 
 # live_diag dumps the scratch agent's own evidence on a live-intent FAIL,
 # so "latency, not capability" is observable rather than assumed: the
@@ -292,6 +321,7 @@ print("".join(out))' "$inj_log" 2>/dev/null)
   else
     fail "receiver must see the defect on the pre-fix shape; log $(tr '\n' '|' <"$neg_log")"
   fi
+  PARSER_RAN=1
 fi
 # The surface confirms an accepted inject by CLEARING its input (the "⇒ injected
 # to edit" notice is transient and not reliably in a headless capture). A failed
@@ -452,11 +482,53 @@ fi
 # ── Summary ──────────────────────────────────────────────────
 
 echo ""
+# ── Verdict self-check, against controlled counters ──────────
+# A real run reaches exactly one of summary_verdict's branches, so the others
+# are only correct by inspection unless driven. The last case is the one that
+# matters: fail>0 AND parser_ran=0 must report the FAILURE (1), never the
+# weaker could-not-run (2) — the criterion's "after honouring real failures".
+#
+# These count in their OWN tallies, never ok/fail. They test this script's
+# bookkeeping, not the product, and folding them into PASS would inflate it by
+# five — leaving PASS_FLOOR cleared by five fewer real integration checks than
+# it was written to demand, which is the floor quietly weakening itself.
+echo "-- verdict precedence"
+VPASS=0
+VFAIL=0
+while read -r f p r want label; do
+  got=$(summary_verdict "$f" "$p" "$r")
+  if [ "$got" = "$want" ]; then
+    VPASS=$((VPASS + 1)); echo "  ok: verdict($f,$p,$r) = $want — $label"
+  else
+    VFAIL=$((VFAIL + 1)); echo "  FAIL: verdict($f,$p,$r) = $got, want $want — $label"
+  fi
+done <<EOF
+0 26 1 0 clean run
+1 26 1 1 a real failure
+0 10 1 1 floor not met
+0 26 0 2 parser section could not run
+1 26 0 1 failure outranks could-not-run
+EOF
+# Exact count, not just zero failures: a truncated heredoc would otherwise
+# report a clean self-check having driven nothing.
+if [ "$VFAIL" -ne 0 ] || [ "$VPASS" -ne 5 ]; then
+  echo "FAIL: verdict self-check ($VPASS/5 passed, $VFAIL failed) — the exit-code precedence rule is broken"
+  exit 1
+fi
+
+echo ""
 echo "=== $PASS passed, $FAIL failed, $SKIP skipped ==="
-# Coverage floor: the mechanical sections alone are 20 checks — a run
-# that skipped its way below this is reporting silence, not health.
-[ "$PASS" -ge 18 ] || { echo "FAIL: coverage floor not met ($PASS < 18)"; exit 1; }
-[ "$FAIL" -eq 0 ] || exit 1
+case "$(summary_verdict "$FAIL" "$PASS" "$PARSER_RAN")" in
+  1)
+    [ "$FAIL" -eq 0 ] && echo "FAIL: coverage floor not met ($PASS < $PASS_FLOOR)"
+    exit 1
+    ;;
+  2)
+    echo "INCOMPLETE: section 4's chord-receiver checks did not run (python3 absent)."
+    echo "  Nothing failed, but the MUX-163 parser coverage this script exists for is missing."
+    exit 2
+    ;;
+esac
 if [ "$SKIP" -gt 0 ]; then
   echo "OK (with $SKIP skipped — live-model checks did not run on this machine)"
 else

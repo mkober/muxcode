@@ -188,11 +188,50 @@ const dismissOverlayGap = 100 * time.Millisecond
 // path, TmuxResubmitEnter) ignore it, since the payload write that follows
 // returns its own error if the pane is gone.
 func TmuxDismissOverlay(target string) error {
+	return tmuxAbsorbedPreamble(target, "C-e")
+}
+
+// TmuxClearComposer dismisses any overlay and leaves the composer EMPTY. It is
+// the preamble for the slash-command callers — /clear, /compact, /exit — which
+// are commands only on an otherwise-empty line: appended to parked text they
+// submit garbage.
+//
+// The sequence is Escape → C-e → C-e → C-u, and every key earns its place.
+// C-u cannot be its own absorber: the pending ESC fuses it into M-C-u, which
+// the composer discards, so the kill-line never runs at all. C-e takes that
+// fusion instead — but being consumed as M-C-e means it does NOT move the
+// cursor, and C-u kills only from the cursor back to the line start. Parked
+// text with the cursor in the middle would keep its suffix, and the slash
+// command would be typed into the remains. The second C-e is the one that
+// actually reaches the composer and moves the cursor to end of line, so the
+// C-u behind it discards the whole line.
+//
+// Neovim panes are deliberately NOT routed here. The fusion rule is a composer
+// rule: after Escape nvim is in normal mode, where C-e scrolls the window, and
+// its own Escape→Escape idiom already absorbs the pending key.
+func TmuxClearComposer(target string) error {
+	if err := TmuxDismissOverlay(target); err != nil {
+		return err
+	}
+	if err := TmuxSendKeys(target, "C-e"); err != nil {
+		return err
+	}
+	if err := TmuxSendKeys(target, "C-u"); err != nil {
+		return err
+	}
+	time.Sleep(dismissOverlayGap)
+	return nil
+}
+
+// tmuxAbsorbedPreamble sends Escape, a gap, the absorber key, then a gap. The
+// absorber varies with caller intent (see the two wrappers above); the shape
+// never does, which is what the argv-level pins assert.
+func tmuxAbsorbedPreamble(target, absorber string) error {
 	if err := TmuxSendEscape(target); err != nil {
 		return err
 	}
 	time.Sleep(dismissOverlayGap)
-	if err := TmuxSendKeys(target, "C-e"); err != nil {
+	if err := TmuxSendKeys(target, absorber); err != nil {
 		return err
 	}
 	time.Sleep(dismissOverlayGap)
