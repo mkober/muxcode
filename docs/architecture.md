@@ -206,16 +206,28 @@ This means rapid consecutive edits (e.g. Claude writing multiple files) are coal
 
 ### Daemon watchdogs
 
-Beyond inbox delivery, the daemon runs four resilience watchdogs that detect and self-heal stuck agents. All are opt-out via env var and emit lifecycle events for auditing.
+Beyond inbox delivery, the daemon runs five resilience watchdogs that detect and self-heal stuck agents. All are opt-out via env var and emit lifecycle events for auditing.
 
 | Watchdog | Detects | Action | Tuning | Lifecycle event |
 |----------|---------|--------|--------|-----------------|
 | Long-active | An agent continuously active past the threshold (runaway think) | Queues a non-invasive advisory nudging it to summarize + escalate. Skips `--wait`/poll/reload/harness/non-hook agents | `MUXCODE_ACTIVE_WATCHDOG_SECS` (default 600; 0 disables) | `active-watchdog` (+ `long-active` bus event) |
 | Stuck-provider | A non-hook agent (OpenCode/Codex) wedged in a provider loop — signatures like `InternalError.Algo`, "repeated across multiple consecutive rounds", "No matching discriminator" — via two-sighting debounce | Auto-reloads the agent in place (cap 3/role, 180s cooldown); after the cap, sends an `agent-stuck` alert to edit | `MUXCODE_STUCK_RELOAD_DISABLE=1` disables | `stuck-provider-reload`, `stuck-provider-giveup` |
 | Task-timeout | A tracked task stuck `in-flight` (delivered while busy, never responded) past its timeout — would otherwise permanently block new `(to,action)` sends to that role | Times out the expired in-flight task so the dedup guard ignores it and the target receives messages again | Task timeout (default 600s) | `task-timeout` |
+| Stall re-drive | A **consumed** in-flight task past `TaskStallSecs` whose agent is at rest — the message was taken but the turn never started (dropped Enter, dead listener). Debounced on two consecutive sightings | Re-delivers through `ForceDeliver`, capped at 2 re-drives, after which the task timeout above owns it. A pane that is **working** resets the debounce instead of accumulating it, and is logged once per task | `MUXCODE_TASK_STALL_SECS` (default 90); `MUXCODE_TASK_STALL_DISABLE=1` disables | `task-stall-redrive`, `task-stall-giveup`, `stall-skipped-busy` |
 | Permission-block | A **hook-provider (Claude Code)** agent wedged at a REJECTED permission prompt it cannot satisfy autonomously — it never responds, its request stays actionable, and idle-delivery re-wakes it endlessly. Detected via `PaneShowsPermissionBlock` gated on a pending request + two-sighting debounce | **Alert-only** — suppresses further re-waking (`d.permBlocked`) and sends one `permission-blocked` event to edit; suppression lifts once the signature clears, the request drains, or the agent dies | `MUXCODE_PERMBLOCK_WATCHDOG_DISABLE=1` disables | `permission-blocked` |
 
-Core code: `daemon/daemon.go` (`checkActiveWatchdog()`, `checkStuckProviders()`, `checkTrackedTasks()`, `checkStuckPermissions()`), `bus/stuck.go` (`PaneShowsProviderLoop()`, `PaneShowsPermissionBlock()`), `bus/task.go` (`TaskExpired()`), `bus/dedup.go` (`HasInFlightTaskForRole()`, `FindInFlightTask()` — both ignore expired tasks).
+Core code: `daemon/daemon.go` (`checkActiveWatchdog()`, `checkStuckProviders()`, `checkTrackedTasks()`, `checkStuckPermissions()`, `checkStalledTasks()` with `noteStallSighting()`/`forgetCompletedTasks()`), `bus/stuck.go` (`PaneShowsProviderLoop()`, `PaneShowsPermissionBlock()`), `bus/task.go` (`TaskExpired()`), `bus/dedup.go` (`HasInFlightTaskForRole()`, `FindInFlightTask()` — both ignore expired tasks).
+
+**No road re-drives a working pane** ([MUX-171](requirements/backlog/MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md)). Every forced wake ends in `SendWakeUpWithText`, whose Escape preamble is Claude's tool-interrupt key, so waking a *busy* agent kills the command it is running. Two predicates keep that from happening, and they answer different questions:
+
+| Predicate | Question | Where |
+|-----------|----------|-------|
+| `AgentIsWorking()` (`bus/timetrack.go`) | Is a turn **live right now**? Positive evidence — a spinner or "esc to interrupt" — read provider-aware via `paneShowsAgentWorking(…, IsClaudeTUI(p))`, so an idle Codex or OpenCode pane is never mistaken for busy | `ForceDeliver` entry, `RedriveTask`, the stall watchdog |
+| `PaneShowsRecoverableIdle()` (`bus/diagnose.go`) | Is the pane **finished at its prompt**? `❯` present *and* not thinking | the stall watchdog's at-rest confirmation, `checkParkedInput`, `checkPaneSweep` |
+
+Both read only `paneLiveTail()` — the live footer, not the scrollback `capture-pane -S` also returns — because a quoted spinner or an old "esc to interrupt" line sitting anywhere above an idle prompt would otherwise refuse recovery on that pane forever.
+
+The guard sits at `ForceDeliver` **entry**, above the unnotified-inbox branch, so an ordinary pending row is withheld mid-turn too; `RedriveTask` repeats it so `deliver --force`, receipt-gap recovery and remote callers all inherit the rule. A busy pane is a **skip** — nil error with `Skipped` set, logged `deliver-skipped-busy`/`redrive-skipped-busy`/`stall-skipped-busy` — never the idle gate's error, and `--force` overrides the idle-prompt gate but never this one. `PaneHasIdlePrompt` is not sufficient on its own: Claude Code renders the `❯` composer *while a tool call runs*, and on 2026-09-09 the stall watchdog read that as idle and killed the run agent's integration script twice, 61 s apart.
 
 ### Agent diagnostics
 
@@ -588,7 +600,9 @@ Messages from build, test, review, and deploy agents to any non-edit agent are a
 6. The daemon provides fallback notifications for all roles
 7. When an agent reads its inbox via `Receive()`, consumed messages are marked "delivered" in their status files
 
-Never use `send-keys` on **active** agents — it disrupts Claude Code's input buffer, interrupts in-progress tool execution, and causes agents to stall at "Interrupted" prompts. Idle agents at the `❯` prompt are safe to wake via `send-keys` because no tool execution is in progress. `IsAgentIdle()` detects idle state via `tmux capture-pane -S -8` (scans all captured lines for exact match on the `❯` character — scans all lines because Claude Code renders a decorative footer below the prompt).
+Never use `send-keys` on **active** agents — it disrupts Claude Code's input buffer, interrupts in-progress tool execution, and causes agents to stall at "Interrupted" prompts.
+
+**The `❯` prompt alone does not mean idle.** Claude Code renders the composer *while a tool call runs*, so `IsAgentIdle()`/`PaneHasIdlePrompt()` — which scan the capture for the `❯` character, all lines, because a decorative footer sits below the prompt — are true of a busy agent. They answer "is there a prompt on screen", not "is this agent free". Any road that is about to *type into* a pane must additionally consult `AgentIsWorking()` (live-turn evidence, provider-aware) or `PaneShowsRecoverableIdle()` (`❯` **and** not thinking); see [Daemon watchdogs](#daemon-watchdogs) for which road uses which. Treating the bare prompt as proof of idleness is what let the stall watchdog interrupt a running integration script ([MUX-171](requirements/backlog/MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md)), and it is the same error behind the idle-task rescue closing live work ([MUX-112](requirements/backlog/MUX-112-idle-task-rescue-closes-live-work.md)).
 
 ### Delivery Tracking
 

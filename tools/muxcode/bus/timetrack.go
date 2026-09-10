@@ -212,12 +212,26 @@ func paneShowsAgentWorking(content string, hookProvider bool) bool {
 // AgentIsWorking reports whether the agent in the given role's pane is actively
 // processing a turn. Returns false when the pane can't be captured (window
 // closed, no tmux) so a missing pane never counts as work.
+//
+// The working check is scoped to the pane's live TAIL, not the whole capture.
+// "Working" is a CURRENT-STATE property: the spinner and its "esc to interrupt"
+// counter always render in the bottom few lines. The capture is deliberately
+// wider than that — TmuxCapturePaneLines(…, 12) is `capture-pane -S -12`, which
+// starts 12 lines back in HISTORY and runs through the visible pane — so judging
+// all of it lets scrollback masquerade as the present: one completed turn, a
+// quoted footer, or an agent whose own output discusses "esc to interrupt" (the
+// plan agent writing about idle detection did exactly this) pins the pane busy
+// INDEFINITELY. Since this gate is what withholds delivery, that failure mode is
+// not a lost tick but permanent refusal of force recovery — the MUX-171 fix
+// re-shaped into the opposite defect. paneLiveTail is the same primitive
+// PaneShowsRecoverableIdle uses for this exact reason; reuse it rather than
+// growing a second spinner parser that can drift from it.
 func AgentIsWorking(session, role string) bool {
 	out, err := TmuxCapturePaneLines(PaneTarget(session, role), 12)
 	if err != nil {
 		return false
 	}
-	return paneShowsAgentWorking(out, IsClaudeTUI(ResolveProvider(role)))
+	return paneShowsAgentWorking(paneLiveTail(out), IsClaudeTUI(ResolveProvider(role)))
 }
 
 // AnyAgentWorking reports whether any worker agent (BranchTimeActivityRoles) is
