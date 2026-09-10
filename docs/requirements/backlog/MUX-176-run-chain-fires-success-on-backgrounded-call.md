@@ -33,6 +33,43 @@ actual failing finish, established without reading a single agent message.
 
 The success row and the chain edge share a timestamp to the second.
 
+### Second occurrence (2026-09-10 15:46, session `muxcode`) — and it narrows the mechanism
+
+Recorded by plan 2026-09-10 16:08 on edit's request (`1789070744`), verified in the primary records
+rather than from the report. Same script, same defect, a wider gap this time:
+
+| When | Evidence | Source | Provenance |
+|------|----------|--------|------------|
+| 15:46:16 | edit dispatches `bash scripts/test-prompt-mode.sh` to run (task `1789069576`) | task store | **machine-written** |
+| **15:46:55** | run-history row: `bash scripts/test-prompt-mode.sh` → **`exit 0`, outcome `success`** | `run-history.jsonl` | **machine-written (hook)** |
+| 15:46 | `run → watch [request:watch]` "**Run succeeded** (bash scripts/test-prompt-mode.sh)" | bus history | **machine-written (chain)** |
+| 15:47, 15:48, 15:49 | `watch → edit [event:notify]` "logs look healthy after deploy" — three false all-clears | bus history | **machine-written (chain)** |
+| **15:54:09** | background task output `tasks/bqxzncyob.output` final write: `=== 26 passed, 2 failed, 1 skipped ===` then `[exited with code 1]` | filesystem `stat` + content | **machine-written (fs)** |
+| 15:54 | `run → edit [response:run]` "test-prompt-mode.sh exit 1" — the real result | bus history | agent self-report |
+
+**Gap: 7 m 14 s** between the declared success (15:46:55) and the actual failing finish (15:54:09),
+bracketed by two machine sources exactly as the 10:31 occurrence was.
+
+**This occurrence eliminates candidate 3.** The recorded command is bare — `bash
+scripts/test-prompt-mode.sh`, a single statement with **no compound, no trailing `cat`**. The
+trailing-`cat`-supplies-the-exit-status explanation cannot account for it. The prescribed Phase 1
+experiment (re-run the compound command in the foreground) was never needed: a command with no `cat`
+at all reproduced the defect, which is the stronger result.
+
+**And it corroborates candidate 1.** Backgrounding was uncorroborated at 10:31 — the claimed id
+`bn857kq0r` appeared in neither `proc.jsonl` nor `spawn.jsonl`. This time the background artefact is
+**on disk**: `tasks/bqxzncyob.output` holds the script's full output ending `[exited with code 1]`,
+and a hook-recorded run command at 15:51:06 tails that very path. That is no longer an agent's
+account. Candidates 1 (background wrapper returns at dispatch) and 2 (hook records at dispatch)
+remain live; the experiment to separate them is still owed.
+
+**The countermeasure already exists — it just does not cover `run`.**
+`evidenceGuardRoles = {"build", "test", "deploy"}` (`bus/evidence_guard.go:21`); `CheckEvidenceGuard`
+returns nil for any other role at line 35-37. Lines 47-49 already block a backgrounded evidence
+statement (`seps[i] == "&"` → `evidenceBackgroundReason`). So the exact shape that fired here is
+**already refused for build, test and deploy, and permitted for `run`** — a gap in role coverage, as
+the spec suspected, rather than a missing mechanism.
+
 ### Mechanism — a hypothesis, and deliberately labelled as one
 
 **What is established:** an authoritative `exit 0` row exists for a call whose script was still
@@ -130,9 +167,17 @@ that rather than replace it.
 
 - [ ] Determine which candidate holds: backgrounded-dispatch, hook-records-at-dispatch, or the
       compound statement's trailing `cat` supplying the exit status
-- [ ] Check the third first — it is the cheapest: re-run the same compound command in the foreground
-      and see whether the recorded row reports the script's status or `cat`'s
-- [ ] Establish whether `CheckEvidenceGuard` covers the `run` role, and record the answer here
+- [x] Check the third first — it is the cheapest: re-run the same compound command in the foreground
+      and see whether the recorded row reports the script's status or `cat`'s — _settled by the
+      2026-09-10 15:46 recurrence instead of by the prescribed re-run: the command there was **bare**
+      (`bash scripts/test-prompt-mode.sh`, no compound, no `cat`) and still produced an `exit 0`
+      success row for a script that exited 1. Candidate 3 is eliminated — it is not necessary to
+      produce the defect_
+- [x] Establish whether `CheckEvidenceGuard` covers the `run` role, and record the answer here —
+      _**it does not.** `evidenceGuardRoles = map[string]bool{"build": true, "test": true, "deploy": true}`
+      (`bus/evidence_guard.go:21`); `CheckEvidenceGuard` returns nil for every other role
+      (lines 35-37). The guard already blocks a **backgrounded** evidence statement at lines 47-49,
+      so the shape that fired here is refused for build/test/deploy and permitted for `run`_
 - [ ] Record the discriminating evidence, then choose the fix
 
 ### Phase 2: Fix
@@ -167,7 +212,10 @@ the system contradicted; it surfaced only because the run agent volunteered that
 had been wrong. A chain edge that can be wrong and leave no trace is the part worth fixing — the
 lifecycle row for a withheld edge in Phase 2 exists for that reason.
 
-**Observed twice.** 10:31 on the first run, and per watch again on the rerun.
+**Observed three times, all on 2026-09-10.** 10:31 on the first run; per watch again on the rerun; and
+15:46:55 with a bare (non-compound) command — the occurrence that eliminated candidate 3 and put the
+background artefact on disk. The defect is reproducible enough that Phase 1's remaining question is only
+*which* of candidates 1 and 2 holds, not whether the premature edge is real.
 
 ## Status
 

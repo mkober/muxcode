@@ -68,7 +68,7 @@ and from edit's; bootstrap `responded`; no longer actionable) and `TestStaleStar
 - [x] A self-addressed `response:startup` is never delivered to its sender's inbox and never CC'd to edit — on the send path and on the hook consume path alike — _`TestStartupSelfReplyNotDelivered` (send path) and `TestStaleStartupSelfReplyFiltered` (hook consume path); suite green 15:49:59, review 15:51:44 `EXIT=0`_
 - [x] The reply still correlates its bootstrap: delivery status `responded`, `HasActionableMessages` false afterward, so the daemon stops re-waking the agent — _pinned in `TestStartupSelfReplyNotDelivered`_
 - [x] The bootstrap request itself stays delivered and actionable (negative control — the exemption is narrowed, not removed) — _the negative-control assertion in both tests_
-- [ ] A relaunched codex agent on the hook road writes no `loop-detected <role> type=message` row and at most one `response:startup` to its history
+- [x] A relaunched codex agent on the hook road writes no `loop-detected <role> type=message` row and at most one `response:startup` to its history — _verified live by plan 2026-09-10 15:55 on the `review` agent: relaunched codex on the hook road at 15:48:53 (`codex-hooks-enabled review: .codex/hooks.json sha256 2597dc9f6a9f`, `agent-reload review: codex→codex` 15:48:55, `diagnose review` reports `codex, hooks: yes`); bootstrap delivered (`inbox-notify` 15:48:54) and consumed (inbox 0/0); `muxcode history review` shows **zero** `response:startup` after the relaunch; **zero** `loop-detected` rows session-wide at 5+ minutes_
 - [x] Docs name the rule — the bootstrap **request** is the one self-send the bus delivers, keyed on type and action — in `CLAUDE.md`, `docs/architecture.md`, `docs/hooks.md` and `docs/agent-bus.md` — _CLAUDE.md wake-up bullet (edit); the other three by plan, 15:45_
 
 ### Technical approach
@@ -116,7 +116,7 @@ refused where it enters.
 ### Phase 3: Integration test
 
 - [x] Hermetic section (in `scripts/test-codex-hooks.sh` or a sibling, scratch `BUS_SESSION`): seed a bootstrap and a self-addressed `response:startup` into a role's inbox; `muxcode inbox --peek` and `muxcode hook stop` surface the bootstrap alone; the reply's delivery status reads `responded`; negative control — an ordinary `request` self-send is dropped with the `[send]` log line and never reaches the inbox — _`scripts/test-startup-self-reply.sh` (own script, not a section): four sections, hermetic on a scratch session with a stub `codex` on PATH, floor pinned to the exact pass count_
-- [ ] Live check: relaunch a codex agent on the hook road and confirm at most one `response:startup` in its history and no `loop-detected` row within two minutes
+- [x] Live check: relaunch a codex agent on the hook road and confirm at most one `response:startup` in its history and no `loop-detected` row within two minutes — _done 2026-09-10 15:48:53–15:55 on `review`; evidence as in the acceptance criterion above. **Limitation recorded:** the relaunched agent emitted no self-reply at all on this lap, so this observation confirms the absence of the echo, not the drop path itself — that path stays carried by `TestStartupSelfReplyNotDelivered` / `TestStaleStartupSelfReplyFiltered` and `scripts/test-startup-self-reply.sh` (15/0), which is the role the spec assigned this check when it was deferred_
 - [x] Run the section and record the counts in this spec — _run agent 16:07:53: **15 passed / 0 failed** (floor 15), exit 0. The 16:07:10 first run was 14/15 — its own "reply CC'd to edit" assertion counted the CLI bootstrap's auto-CC (`PreLaunchSetup` uses `SendNoCC`, a bare `muxcode send` does not); the assertion was narrowed to the reply, not the script's subject. Suite green 16:07:24, review 16:08:18 on graph `3fcb5ed9`_
 
 ## Notes
@@ -138,9 +138,38 @@ refused where it enters.
 
 ## Status
 
-**In Progress** — 13/15. Filed 2026-09-09 15:48; Phase 1 complete 15:51 (suite green 15:49:59 on
+**Complete — 15/15.** Closed at 13/15 on the user's instruction 2026-09-10 11:12; the two deferred live items were verified live at 15:55 on 2026-09-10 (see _Deferred at close_, now resolved). Filed 2026-09-09 15:48; Phase 1 complete 15:51 (suite green 15:49:59 on
 run `d67cd45e`'s retried test node, review 15:51:44 `EXIT=0`), Phase 2 docs complete 15:45, Phase 3
 script complete 16:07 (`scripts/test-startup-self-reply.sh` 15/0, suite green 16:07:24, review
 16:08:18 `EXIT=0` on graph `3fcb5ed9` — 0 must-fix, its two should-fixes both MUX-163 P4 script
-findings). Open: the **live relaunch check** and the acceptance criterion it evidences — both need a
-codex agent restarted on the hook road, which is a user-approved reload. Nothing committed.
+findings). Its code landed in **`160150c`**. Closed 2026-09-10 11:12: the user chose to defer the live
+items rather than restart codex agents. Precedent: MUX-159 closed the same way at 61/67.
+
+_The file still sits in `drafts/`; the `drafts/` → `completed/` move is a `git mv` and belongs to
+commit, on the user's word — plan does not move it._
+
+### Deferred at close — resolved 2026-09-10 15:55
+
+Both items were the **same evidence viewed twice** — the check, and the criterion it feeds. This
+table records the state at the 11:12 close, when neither was claimed as done; both are now ticked on
+the evidence in _Resolved_ below:
+
+| Item | Kind | What would close it |
+|------|------|---------------------|
+| `:119` live relaunch check | **live-dependent** | relaunch a codex agent on the hook road; confirm at most one `response:startup` in its history and no `loop-detected` row within two minutes |
+| `:71` the acceptance criterion | **live-dependent** | evidenced by exactly the run above — it has no independent path |
+
+**What is already proven without them.** The fix itself is verified: `isStartupBootstrap` matches on
+type *and* action, the self-reply routes to `recordUndeliveredReply`, and `bus.FilterLoopingSelfSends`
+hides a stale self-reply at the consume side. Suite green 15:49:59 and review `EXIT=0` 15:51:44 on run
+`d67cd45e`; `scripts/test-startup-self-reply.sh` 15/0 with suite green 16:07:24 and review `EXIT=0`
+16:08:18 on graph `3fcb5ed9`. What is deferred is the confirmation that a **real relaunched codex
+agent** behaves as the unit and script evidence predicts — a narrower gap than the count suggests, but
+a real one, and the original defect was found in live behaviour rather than in tests.
+
+**Resolved 2026-09-10 15:55.** The `review` agent was relaunched as codex on the hook road at 15:48:53 and both rows above were
+checked by plan in the primary records (`muxcode history review`, `muxcode lifecycle show`, `muxcode diagnose review`), not inferred:
+zero `response:startup` after the relaunch and zero `loop-detected` rows at 5+ minutes, with the bootstrap delivered and consumed.
+The gap this table described — that no *real* relaunched codex had been observed — is now closed. What this lap does **not**
+exercise is the drop path itself (the agent emitted no self-reply to drop); that remains carried by the unit and hermetic-script
+evidence, which is the division of labour this table set out when it deferred the items.
