@@ -38,7 +38,7 @@ finish. On 2026-09-09 that was MUX-167's integration script; the user ran it by 
   `SendWakeUpWithText(session, role, provider, text, true)` (`:132`, `:158`); `:101` is the
   `ForceDeliver` road into them.
 - `bus/notify.go:871` `SendWakeUpWithText` — the typed injection, preceded by `TmuxDismissOverlay`
-  (Escape → `C-e` absorber; [MUX-163](../drafts/MUX-163-prompt-inject-escape-eats-first-char.md)).
+  (Escape → `C-e` absorber; [MUX-163](../completed/MUX-163-prompt-inject-escape-eats-first-char.md)).
   On an idle pane the Escape clears an overlay; on a busy pane it is the interrupt. The Escape was
   there before MUX-163 — the preamble made it reliable, not new.
 - `bus/graph_exec.go:1302–1305` `graphAgentIdleFn = IsAgentIdle` — the executor's own redrive path
@@ -60,7 +60,7 @@ watchdog, receipt-gap recovery, `deliver --force`, remote — re-drives a pane t
 - [x] The stall watchdog never re-drives a Claude agent whose pane shows a running tool call (spinner / "esc to interrupt"), `❯` on screen or not; the stall sighting resets and a `stall-skipped-busy` row is written once per task
 - [x] An idle prompt with no running tool still re-drives after `TaskStallSecs` (negative control — the watchdog keeps catching real stalls)
 - [x] `redriveInFlightTasks` and `RedriveTask` refuse a busy pane themselves (`redrive-skipped-busy`), so `deliver --force`, receipt-gap recovery and remote callers cannot interrupt a running tool either
-- [ ] A run-agent command longer than 2 × `TaskStallSecs` (default 90 s, so > 180 s) runs **in the foreground**, completes, and its reply lands, with **no `Interrupted` pair in the pane** — and the gate is shown to be what saved it: at least one `stall-skipped-busy` row naming that task. _Strengthened 2026-09-10 16:12 after a near-miss (see Notes): a backgrounded command satisfies every clause of the original wording while leaving the pane idle throughout, so the criterion would pass identically with the busy-gate deleted. The foreground requirement and the `stall-skipped-busy` row are the discriminating parts — without them this is a green check that tests nothing._
+- [x] A run-agent command longer than 2 × `TaskStallSecs` (default 90 s, so > 180 s) runs **in the foreground**, completes, and its reply lands, with **no `Interrupted` pair in the pane** — and the gate is shown to be what saved it: at least one `stall-skipped-busy` row naming that task. _Strengthened 2026-09-10 16:12 after a near-miss (see Notes): a backgrounded command satisfies every clause of the original wording while leaving the pane idle throughout, so the criterion would pass identically with the busy-gate deleted. The foreground requirement and the `stall-skipped-busy` row are the discriminating parts — without them this is a green check that tests nothing._ **Closed 2026-09-10 16:36 on the strengthened wording, all four clauses verified by plan:** `bash scripts/test-prompt-mode.sh` run **in the foreground** through the run agent 16:17:55–16:25:53 (~478 s, well past 180 s), reply landed at 16:25 (`run → edit [response:run]`), no `Interrupted` pair in the pane, and the discriminating row present — **`16:19:55 stall-skipped-busy edit→run:run working — re-drive withheld`**. That row is the non-vacuous part: the watchdog *tried* to re-drive mid-run and the busy gate stopped it, which is the exact kill this spec exists to prevent — under the pre-fix behaviour that run would have died. It also independently corroborates the foreground requirement, since the row can only fire on a **busy** pane, which a backgrounded call would not have produced.
 - [x] Docs: watchdog tables in `docs/architecture.md` and `docs/hooks.md`, `CLAUDE.md` "Daemon watchdogs" bullet
 
 ### Technical approach
@@ -155,7 +155,7 @@ stays open is only the live confirmation, and it now has to be a foreground run.
 - Related: [MUX-112](./MUX-112-idle-task-rescue-closes-live-work.md) (the synthetic-reply sibling —
   the same "❯ means idle" error closing live work from the other side);
   [MUX-123](./MUX-123-stall-watchdog-selective-misses.md) (the watchdog's misses; this is its false
-  positive); [MUX-163](../drafts/MUX-163-prompt-inject-escape-eats-first-char.md) (the preamble);
+  positive); [MUX-163](../completed/MUX-163-prompt-inject-escape-eats-first-char.md) (the preamble);
   [MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) (found in the same hour).
 
 ## Implementation state (2026-09-09 17:05)
@@ -248,11 +248,26 @@ failing scenario replayed.
 
 ## Status
 
-**Backlog (in flight)** — 13/14. Filed 2026-09-09 16:02; Phases 1–4 implemented and revised through
+**Complete — 14/14.** Filed 2026-09-09 16:02; Phases 1–4 implemented and revised through
 four reviews (16:59:49, 17:03:24, 17:07:12 all `EXIT=1`; **08:41 on 2026-09-10 `EXIT=0`**). Suite
 green 08:40, integration script 14/14 through the run agent 08:43, and the live session shows the
-skip rows with no re-drive. Phase 3 docs written 2026-09-10. **AC4 is the only open box** — the
-end-to-end replay through the run agent (`scripts/test-multi-phase-graph.sh`, also MUX-167 Phase 4).
+skip rows with no re-drive. Phase 3 docs written 2026-09-10.
+
+**AC:63, the last open box, closed 2026-09-10 16:36** on its strengthened wording — a foreground
+~478 s run through the run agent carrying the discriminating `stall-skipped-busy edit→run:run` row at
+16:19:55. Detail in the criterion itself. The criterion was rewritten at 16:12 the same day precisely
+because an earlier 7 m 14 s run met its *original* letter while the script had been **backgrounded**,
+leaving the pane idle and the busy-gate unexercised; the close-out therefore rests on evidence the
+weaker wording could not have produced.
+
+_Evidence provenance:_ the 16:19:55 row had already **rotated out of `muxcode lifecycle show`** by the
+time it was verified (the visible window had advanced to 16:20:05) and was recovered from the raw
+JSONL at `~/.config/muxcode/logs/muxcode.log`. Worth noting as a hazard in its own right — a
+discriminating lifecycle row can age out of the default view within minutes on a busy session, so
+evidence should be captured into the spec when observed, not left to be looked up later.
+
+_The file sits in `drafts/`; the `drafts/` → `completed/` move is a `git mv` and belongs to commit on
+the user's word — plan does not move it._
 
 Two follow-ups, neither plan's to perform:
 
