@@ -175,6 +175,71 @@ Two things this occurrence adds:
 _Recorded 2026-09-11 by plan, on edit's report. Plan was the offending agent; noted plainly because
 the habit is the trigger and the record should say so._
 
+### Fifth occurrence, 2026-09-11 — **a synthetic message caused external write mutations**
+
+This one changes the severity class. The four above cost **bad data in the task store**. This one
+produced **five real GitHub issues nobody asked for**, created by another agent acting on a pane dump
+sent in edit's name.
+
+| Time | Event | Source |
+|------|-------|--------|
+| 12:14 | `commit → edit [request:pr-created]` — "PR #79 opened — **user may want it** linked/commented on the Jira story" | bus history |
+| 12:14:54 | `idle-task-retry edit idle with unresponded task pr-created from commit (idle 32s)` | lifecycle |
+| 12:15:27 | `idle-task-rescue edit idle with unresponded task pr-created from commit (idle 33s, retry exhausted)` | lifecycle (`warn`) |
+| 12:15 | `edit → commit [response:response] [daemon: edit went idle without responding — pane content follows]` | bus history |
+| 12:20 | `commit → edit` — "**Created 5 GitHub issues (#80 MUX-163, #81 MUX-164, #82 MUX-167, #83 MUX-169, #84 MUX-171)** and linked all to PR #79 via closing keywords (merging auto-closes them)" | bus history |
+
+**Why it was actionable rather than obviously junk.** Edit's pane happened to contain prose about
+PR #79 and those five spec ids — the specs that had just moved to `completed/`. The dump therefore
+read as a *plausible instruction*, not as noise. A rescue that scrapes a pane and sends it under the
+agent's own identity will periodically produce something coherent enough to act on; that is the
+hazard, and it is not reduced by the content usually being useless.
+
+**The request it answered was explicitly consent-gated.** `pr-created` said "*user may want it*
+linked/commented" — a suggestion awaiting a human. The synthetic reply was consumed as the answer.
+
+**New properties this occurrence adds:**
+
+| Property | Prior four | This one |
+|----------|-----------|----------|
+| Damage | task store / graph node state | **external, on GitHub** |
+| Reversibility | locally correctable | issues exist; closing keywords mean **merging PR #79 auto-closes them** |
+| Identity | daemon text in a task record | **sent in edit's name**, indistinguishable to the receiver |
+| Consent | n/a | answered a request that was explicitly awaiting the user |
+
+**Tier case.** This is the failure mode tier 0 is reserved for —
+[MUX-144](./MUX-144-wait-human-gate-openable-by-any-agent.md) leads that tier as "the only entry whose
+failure mode is **irreversible and externally visible** — a pushed branch, an open PR". Five issues
+linked to a PR with closing keywords is that shape. This spec sits at tier 3. **Recorded as a case,
+not acted on:** re-ranking is the user's call, and plan does not promote a row on its own reading of
+severity.
+
+**Resolved 2026-09-11 by the user** (relayed by edit): issues #80–#84 **stay**; the closing keywords
+mean merging PR #79 closes them. No `gh` action taken.
+
+**Mitigation applied, and verified live rather than taken on report:**
+
+| | |
+|---|---|
+| Setting | `MUXCODE_IDLE_RESCUE_EXCLUDE=run,edit` |
+| Live in | daemon PID 28700, `BUS_SESSION=muxcode` (checked with `ps eww -p <pid> \| tr ' ' '\n' \| grep -E '^(MUXCODE_IDLE_RESCUE_EXCLUDE\|BUS_SESSION)='`) |
+| Code path | `idleRescueExcluded()`, `daemon/daemon.go:3274–3285` — reads the var, overriding the `"run"` default; excluded tasks still resolve via the task timeout |
+
+This is a **scope reduction, not a fix**, and the spec stays open:
+
+- **`plan` is not on the list**, and the fourth occurrence above was plan's. Any role outside
+  `run,edit` can still have a pane dump sent in its name.
+- It narrows *who* can be impersonated; it does not stop the rescue **sending scraped pane content as
+  an agent's own reply**, which is the mechanism behind all five occurrences.
+- Setting the variable to a list that omits `run` would silently re-expose the role the default was
+  protecting — the default is `"run"`, and an override **replaces** it rather than adding to it.
+
+Phases 2 and 3 below remain the actual fix: consult live background work, and stop losing the real
+answer by making the synthetic response advisory rather than authoritative.
+
+_Recorded 2026-09-11 by plan on edit's report; every row above verified in the bus history and
+lifecycle log before writing._
+
 ## Requirements
 
 ### Acceptance criteria
