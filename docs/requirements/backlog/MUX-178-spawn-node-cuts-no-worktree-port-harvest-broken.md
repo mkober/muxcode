@@ -65,7 +65,7 @@ did not earn — and it is why this is filed as a defect rather than a test-fixt
 
 Worth recording so it is not re-investigated. The fixture originally pointed the spawn role's CLI at
 an **absent binary**, so `agent launch` died and left the worker pane at a bare shell;
-`captureInjectionTarget` (shipped with [MUX-164](../drafts/MUX-164-codex-trust-prompt-reads-idle-wakeup-into-shell.md)
+`captureInjectionTarget` (shipped with [MUX-164](../completed/MUX-164-codex-trust-prompt-reads-idle-wakeup-into-shell.md)
 on this branch, *after* MUX-131 closed) then correctly refused every worker seed — three
 `spawn-XXXX: pane ends at a shell prompt: ->` rows. Replaced with an idle-agent stub presenting the
 `❯` the guard requires. **The refusals are gone and the change should be kept, but the failure count

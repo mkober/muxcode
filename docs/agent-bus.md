@@ -1593,7 +1593,7 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 (`{"spec_phase_committable": "commit"}`) reads the active spec through the same predicate as the
 commit's `phase-progress` guard: a phase still open after `update-spec` goes straight to `stuck-gate`
 (one human prompt: retry or cancel), and `phase-gate` is asked only when the guard will accept the
-commit — the guard remains the dispatch-time backstop ([MUX-167](requirements/drafts/MUX-167-spec-to-pr-commit-gate-before-phase-check.md)).
+commit — the guard remains the dispatch-time backstop ([MUX-167](requirements/completed/MUX-167-spec-to-pr-commit-gate-before-phase-check.md)).
 The `implement` and `fix` messages tell the worker to verify the phase through the run agent —
 `muxcode send run run "bash scripts/test-<feature>.sh" --wait`, never `go test` — and to quote the
 counts and the run task id, so `update-spec` can credit a store row.

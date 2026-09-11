@@ -194,7 +194,7 @@ record; the fix is that it survives.
   [MUX-121](../completed/MUX-121-multi-phase-sequential-graph.md) (the termination
   semantics that make a vanished pointer look like a finished spec); [MUX-124](./MUX-124-lifecycle-since-truncated-by-limit.md)
   (why the window was invisible at first); [MUX-143](./MUX-143-run-carries-two-phase-identities.md)
-  (why the run must not carry a second copy); [MUX-167](../drafts/MUX-167-spec-to-pr-commit-gate-before-phase-check.md)
+  (why the run must not carry a second copy); [MUX-167](../completed/MUX-167-spec-to-pr-commit-gate-before-phase-check.md)
   (the fail-closed `phase-check` path a vanished pointer would take).
 
 ## Status
