@@ -69,12 +69,12 @@ which is a separate ordering question between the worker's request to plan and t
 
 ### Acceptance criteria
 
-- [ ] An incomplete phase never asks a human to approve its commit: after `update-spec`, a phase-complete condition routes an open phase straight to `stuck-gate` without visiting `phase-gate` — replayed, the 2026-09-09 run records 0 approvals declined within a second
+- [x] An incomplete phase never asks a human to approve its commit: after `update-spec`, a phase-complete condition routes an open phase straight to `stuck-gate` without visiting `phase-gate` — replayed, the 2026-09-09 run records 0 approvals declined within a second
 - [x] `phase-gate` is reached only when the phase is complete, so its `${completed_phase}` label always names the phase whose work the commit ships — never the previous one — _by the template's edges plus the shared predicate: the gate is downstream of `phase-check` success only (review 15:15:40)_
 - [x] The phase-progress guard remains and still declines when the condition and the guard disagree (negative control: a spec edited between the condition and the commit) — _the guard calls the same `phaseCommitReady` at dispatch; the reopened-spec case is pinned in the executor test (15:18:40)_
 - [ ] A review that returns `EXIT=0` with should-fixes and leaves the phase open reaches `stuck-gate` → `implement` at the cost of one gate, not two; a lap that closes the phase proceeds to `phase-gate` as before
-- [ ] `implement` and `fix` messages tell the worker to run the phase's integration script through the run agent before reporting, and to report the counts with the run task id, so plan's verify has store rows without dispatching the scripts itself
-- [ ] `graph validate` passes for every builtin template; `scripts/test-multi-phase-graph.sh` covers the new routing on both branches
+- [x] `implement` and `fix` messages tell the worker to run the phase's integration script through the run agent before reporting, and to report the counts with the run task id, so plan's verify has store rows without dispatching the scripts itself
+- [x] `graph validate` passes for every builtin template; `scripts/test-multi-phase-graph.sh` covers the new routing on both branches
 - [x] Docs: `docs/architecture.md` graph section, `docs/agent-bus.md` template reference, `CLAUDE.md` graph-orchestration constraint name the phase-complete condition and the one-gate rule — **verified 2026-09-10 14:47 by plan, in the files:** `docs/architecture.md:478` "Check before you ask (MUX-167)" names `phase-check`/`spec_phase_committable` and states the one-gate rule ("one prompt per incomplete lap"); `docs/agent-bus.md:1591–1596` gives the full lap shape and the same rule ("one human prompt"); `CLAUDE.md:133` carries the "Ask before the guard, not after" clause. All three also keep the guard as the dispatch-time backstop.
 
 ### Technical approach
@@ -136,9 +136,9 @@ phase, not to relabel a gate that should not be asked.
 
 ### Phase 4: Integration test
 
-- [ ] `scripts/test-multi-phase-graph.sh`: a scratch spec whose phase is left open after `update-spec` → the run parks at `stuck-gate` with no `phase-gate.approved` in `approvals/`; the same spec with the phase closed → `phase-gate`
-- [ ] Negative control: condition passes, then the spec is re-opened before `commit` → the phase-progress guard declines (backstop still live)
-- [ ] Run the script and record pass/fail counts in this spec
+- [x] `scripts/test-multi-phase-graph.sh`: a scratch spec whose phase is left open after `update-spec` → the run parks at `stuck-gate` with no `phase-gate.approved` in `approvals/`; the same spec with the phase closed → `phase-gate`
+- [x] Negative control: condition passes, then the spec is re-opened before `commit` → the phase-progress guard declines (backstop still live)
+- [x] Run the script and record pass/fail counts in this spec — _run four times, deterministic; last 2026-09-11 09:17–09:23, log `/tmp/mux167-multiphase.log`. **39 passed / 19 failed, exit 1** — every one of the 19 in the MUX-131 spawn/worktree sections, none in phase-check (see Status)_
 
 ## Notes
 
@@ -167,12 +167,62 @@ phase, not to relabel a gate that should not be asked.
 
 ## Status
 
-**In Progress** — 10/17. Filed 2026-09-09 15:12; Phase 1 complete 15:18 (suite green 15:14:31, review
-15:15:40 EXIT=0, backstop control 15:18:40), Phase 2 complete 15:19 (task-id clause pinned), Phase 3
-docs complete (verified in-tree by plan 2026-09-10 14:47); Phase 4 (`test-multi-phase-graph.sh`)
-open. ACs 1, 4–7 wait on Phase 4 rows.
+**Complete — closed at 16/17 on the user's instruction 2026-09-11, one item deferred (below).** Filed
+2026-09-09 15:12; Phase 1 complete 15:18 (suite green 15:14:31, review 15:15:40 EXIT=0, backstop
+control 15:18:40), Phase 2 complete 15:19 (task-id clause pinned), Phase 3 docs complete (verified
+in-tree by plan 2026-09-10 14:47), **Phase 4 complete 2026-09-11 09:23**.
 
-2026-09-10 15:47 — the Phase 4 script is **written but not yet ticked**. Sections 5/5b/5c of
+### How Phase 4 closed — and why the script is red
+
+`scripts/test-multi-phase-graph.sh` was run four times, deterministically; last run 2026-09-11
+09:17–09:23, log `/tmp/mux167-multiphase.log`, work dir `/tmp/multiphase-work-78683`. Overall result
+**exit 1, 39 passed / 19 failed** — and **none of the 19 is a MUX-167 failure**. All five phase-check
+assertions pass, with both controls:
+
+| Assertion | Result |
+|-----------|--------|
+| open phase routed straight to the stuck gate (`phase-check`) | **PASS** |
+| no human was asked to approve the withheld commit (no `phase-gate` marker) | **PASS** |
+| withheld commit never reached the commit role | **PASS** |
+| positive control: a closed phase still reaches `phase-gate` | **PASS** |
+| negative control: spec re-opened after the gate — guard still declined | **PASS** |
+
+The node dumps corroborate real routing in **both** directions, which is what makes this
+non-vacuous: `phase-check done outcome=success` → `phase-gate done` on the closed-phase lap, and
+`phase-check branched outcome=failure` → `phase-gate **skipped**` on the open-phase lap. A graph that
+could never reach the gate would fail the positive control; one that always reached it would fail the
+open-phase assertions.
+
+`graph validate` also passes for the real builtin (`PASS real spec-to-pr builtin validates`) beside
+its two negative controls.
+
+**The 19 failures are all MUX-131 spawn/worktree territory** — `spawn worker or worktree never
+appeared`, `implement did not record a port` (`"output":"nothing to port"`), `worktree copy discarded`,
+`replacement did not happen`. Spawns launch but cut no worktree, so the harvest/port path is broken.
+MUX-131 recorded this same script green at 64/0 on 2026-09-01, so this is a **regression in product
+code, filed separately as
+[MUX-178](../backlog/MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md)**. It blocks any
+future green run of this script and is not fixable inside MUX-167's scope.
+
+_Also unresolved and carried to MUX-178:_ the coverage floor reports **57 checks executed against a
+constant of 55**. The floor comment's own breakdown sums to 55, so the constant is not obviously
+wrong; it cannot be reconciled until the spawn sections pass and the true executed count is known.
+
+### Deferred at close
+
+One item stays unticked. It is **not** claimed as done:
+
+| Item | Kind | What would close it |
+|------|------|---------------------|
+| `:75` — a review returning `EXIT=0` **with should-fixes** leaves the phase open, reaches `stuck-gate` → `implement` at one gate, not two | **partially covered** | The *consequence* is proven: an open phase routes to `stuck-gate` with no `phase-gate` ask (three assertions), and the closed-phase lap still reaches `phase-gate` (positive control). What the script does **not** exercise is the **should-fix origin** — plan simply answers without ticking, which stands in for an open phase from any cause — nor the `stuck-gate → implement` hop, since the run is cancelled at the gate. Closing it needs a lap driven by a real reviewer `EXIT=0`-with-should-fixes verdict, carried through to `implement` |
+
+_The file sits in `drafts/`; the `drafts/` → `completed/` move is a `git mv` and belongs to commit on
+the user's word — plan does not move it._
+
+### Record of the close (superseded, kept for provenance)
+
+_2026-09-10 15:47, before the run happened — retained because it records the standard the tick was
+held to, and one mistake worth keeping visible._ The Phase 4 script is **written but not yet ticked**. Sections 5/5b/5c of
 `scripts/test-multi-phase-graph.sh` cover the open-phase routing (3 checks), a positive control
 (closed phase still reaches `phase-gate`), and the guard backstop (spec re-opened after the gate);
 the coverage floor is raised to exactly 55. Plan verified statically that the backstop assertion is
