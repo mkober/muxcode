@@ -175,11 +175,28 @@ Two things this occurrence adds:
 _Recorded 2026-09-11 by plan, on edit's report. Plan was the offending agent; noted plainly because
 the habit is the trigger and the record should say so._
 
-### Fifth occurrence, 2026-09-11 — **a synthetic message caused external write mutations**
+### Fifth occurrence, 2026-09-11 — a synthetic reply in edit's name; **no external damage**
 
-This one changes the severity class. The four above cost **bad data in the task store**. This one
-produced **five real GitHub issues nobody asked for**, created by another agent acting on a pane dump
-sent in edit's name.
+> **Corrected 2026-09-11 12:31. The first version of this section was wrong and is retained as a
+> lesson.** It claimed the synthetic dump *caused* commit to create GitHub issues #80–#84, and
+> asserted a new "external write mutations" severity class on that basis. **It did not.** Commit
+> states first-hand that the trigger was a message typed directly into its pane — *"create github
+> issues for each and assign to this pr"* — a top-level turn that never touched the bus, and that it
+> assessed the synthetic dump as "no new action needed" and took **zero** action on it.
+>
+> **How the error was made, because it is the more useful record.** Plan wrote that it had "verified
+> every step in the bus history and lifecycle log". It had verified that each *event* occurred; it had
+> **not** verified the *causal link* between them, and presented a verified timeline as verified
+> causation. The gap was structural and should have been obvious: a message typed into a pane leaves
+> **no bus trace**, so the bus history could never have shown the real trigger — absence of a request
+> was read as evidence for the only inbound message that was visible. The `gh issue create` row is at
+> **12:20:23**, five minutes after the dump; adjacency was doing the work.
+>
+> This is the standard [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) sets for
+> itself — timeline established, mechanism explicitly labelled a hypothesis — applied here only after
+> edit and commit pushed back.
+
+What is verified, and all this occurrence actually shows:
 
 | Time | Event | Source |
 |------|-------|--------|
@@ -187,35 +204,30 @@ sent in edit's name.
 | 12:14:54 | `idle-task-retry edit idle with unresponded task pr-created from commit (idle 32s)` | lifecycle |
 | 12:15:27 | `idle-task-rescue edit idle with unresponded task pr-created from commit (idle 33s, retry exhausted)` | lifecycle (`warn`) |
 | 12:15 | `edit → commit [response:response] [daemon: edit went idle without responding — pane content follows]` | bus history |
-| 12:20 | `commit → edit` — "**Created 5 GitHub issues (#80 MUX-163, #81 MUX-164, #82 MUX-167, #83 MUX-169, #84 MUX-171)** and linked all to PR #79 via closing keywords (merging auto-closes them)" | bus history |
+| 12:20:23 | commit runs `gh issue create` ×5 + `gh pr edit 79` — **on a user turn typed into its pane, unrelated to the dump** | `commit-history.jsonl` |
 
-**Why it was actionable rather than obviously junk.** Edit's pane happened to contain prose about
-PR #79 and those five spec ids — the specs that had just moved to `completed/`. The dump therefore
-read as a *plausible instruction*, not as noise. A rescue that scrapes a pane and sends it under the
-agent's own identity will periodically produce something coherent enough to act on; that is the
-hazard, and it is not reduced by the content usually being useless.
+**The one property this occurrence adds: identity.** The synthetic reply was sent as
+`edit → commit`, indistinguishable at the receiver from edit's own words. The prior four put daemon
+text in a *task record*; this one put it in an agent's *voice*. Commit assessed it and correctly did
+nothing, so the hazard is demonstrated without damage.
 
-**The request it answered was explicitly consent-gated.** `pr-created` said "*user may want it*
-linked/commented" — a suggestion awaiting a human. The synthetic reply was consumed as the answer.
+**The request it answered was consent-gated.** `pr-created` said "*user may want it* linked/commented"
+— a suggestion awaiting a human. The synthetic reply was consumed as the answer to it, which is what
+closed the task.
 
-**New properties this occurrence adds:**
+**Why the content was plausible rather than obviously junk.** Edit's pane held prose about PR #79 and
+the five spec ids just moved to `completed/`. A rescue that scrapes a pane and sends it under the
+agent's own identity will periodically produce something coherent; that the receiver saw through it
+this time is commit's judgement, not a property of the mechanism.
 
-| Property | Prior four | This one |
-|----------|-----------|----------|
-| Damage | task store / graph node state | **external, on GitHub** |
-| Reversibility | locally correctable | issues exist; closing keywords mean **merging PR #79 auto-closes them** |
-| Identity | daemon text in a task record | **sent in edit's name**, indistinguishable to the receiver |
-| Consent | n/a | answered a request that was explicitly awaiting the user |
+**No tier case.** The earlier draft argued this reached
+[MUX-144](./MUX-144-wait-human-gate-openable-by-any-agent.md)'s tier-0 bar ("irreversible and
+externally visible"). With the causation corrected, it does not: nothing external resulted. The spec
+stays where it is, and the argument is withdrawn rather than quietly dropped.
 
-**Tier case.** This is the failure mode tier 0 is reserved for —
-[MUX-144](./MUX-144-wait-human-gate-openable-by-any-agent.md) leads that tier as "the only entry whose
-failure mode is **irreversible and externally visible** — a pushed branch, an open PR". Five issues
-linked to a PR with closing keywords is that shape. This spec sits at tier 3. **Recorded as a case,
-not acted on:** re-ranking is the user's call, and plan does not promote a row on its own reading of
-severity.
-
-**Resolved 2026-09-11 by the user** (relayed by edit): issues #80–#84 **stay**; the closing keywords
-mean merging PR #79 closes them. No `gh` action taken.
+**Issues #80–#84 were user-requested and stay** (user decision 2026-09-11, relayed by edit); closing
+keywords mean merging PR #79 closes them. No `gh` action taken. The earlier description of them as
+"created without a request" was part of the same error.
 
 **Mitigation applied, and verified live rather than taken on report:**
 
