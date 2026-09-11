@@ -807,6 +807,12 @@ func IsPolling(session, role string) bool {
 // Dedup: marks message IDs as notified to prevent re-injection. If the
 // send-keys injection is dropped (TUI redraw race), the notifyRetryInterval
 // (15s) in alreadyNotified() eventually allows a retry on a subsequent call.
+//
+// Marking happens before the send so concurrent cycles cannot double-inject,
+// and is rolled back when the send fails — as ForceDeliver does. A refusal (a
+// shell pane, a provider's ErrInjectionSkipped) typed nothing at all, so
+// leaving the IDs marked withholds them for the retry interval on the strength
+// of a delivery that never happened.
 func notifySendKeys(session, role string) error {
 	unlock := lockNotify(session, role)
 	defer unlock()
@@ -843,6 +849,9 @@ func notifySendKeys(session, role string) error {
 
 	provider := ResolveProvider(role)
 	err := SendWakeUpWithText(session, role, provider, text, false)
+	if err != nil {
+		ClearNotifiedIDs(session, role) // nothing was typed — see doc comment
+	}
 
 	// No in-line delivery verification. Claude Code's TUI takes 1-3 seconds
 	// to process send-keys input — the old 500ms verifySendKeysDelivery()
@@ -865,9 +874,11 @@ func notifySendKeys(session, role string) error {
 // so the text would park unsent. TmuxDismissOverlay dismisses it with an
 // absorber key — without which the pending ESC fuses with the payload's first
 // character into a Meta chord (MUX-163) — and TmuxClearInput then removes any
-// dropped-Enter residue. This runs only for agents at their prompt (the
-// daemon's idle paths and force-deliver), so Escape never interrupts
-// generation.
+// dropped-Enter residue. Both are prerequisites, not best-effort: either
+// failure returns before a payload is typed, because a half-run preamble is
+// how the first character goes missing or lands appended to composer residue.
+// This runs only for agents at their prompt (the daemon's idle paths and
+// force-deliver), so Escape never interrupts generation.
 func SendWakeUpWithText(session, role string, provider Provider, text string, force bool) error {
 	if !provider.SelfPollsInbox() {
 		// Listenerless providers build their own injection from inbox content
@@ -879,10 +890,13 @@ func SendWakeUpWithText(session, role string, provider Provider, text string, fo
 		return err
 	}
 
-	_ = TmuxDismissOverlay(target)
-	if err := TmuxClearInput(target); err == nil {
-		time.Sleep(100 * time.Millisecond)
+	if err := TmuxDismissOverlay(target); err != nil {
+		return fmt.Errorf("dismiss overlay for %s: %w", role, err)
 	}
+	if err := TmuxClearInput(target); err != nil {
+		return fmt.Errorf("clear input for %s: %w", role, err)
+	}
+	time.Sleep(100 * time.Millisecond)
 
 	// TmuxSendLiteral carries both -l (key-name interpretation) and the --
 	// separator — -l alone still fails on a dash-leading payload (MUX-104).

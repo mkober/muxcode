@@ -459,3 +459,89 @@ func TestForceDeliver_UnknownRole(t *testing.T) {
 		t.Error("expected error for unknown role")
 	}
 }
+
+// redriveText must refuse a provider that rebuilds payloads from the inbox: the
+// redriven row is already consumed, so that road types nothing and used to
+// return nil, which the callers logged as a delivered re-drive. The Claude case
+// is the positive control — without it a function that always refused would
+// satisfy the first assertion.
+func TestRedriveText_RefusesInboxRebuildingProviders(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	const session, payload = "redrive-text-test", "re-drive: do the thing"
+
+	var sent [][]string
+	origRun, origOut := tmuxRunner, tmuxOutputRunner
+	tmuxRunner = func(args ...string) error { sent = append(sent, args); return nil }
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "capture-pane" {
+			return "  no messages\n\n❯\n", nil
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { tmuxRunner, tmuxOutputRunner = origRun, origOut })
+
+	for _, p := range []Provider{&CodexProvider{}, &OpenCodeProvider{}} {
+		sent = nil
+		if err := redriveText(session, "build", p, payload); err == nil {
+			t.Errorf("%s rebuilds its payload from the inbox, so a consumed row must refuse", p.Name())
+		}
+		for _, c := range sent {
+			if len(c) > 0 && c[0] == "send-keys" {
+				t.Errorf("%s refusal still sent keys: %v", p.Name(), c)
+			}
+		}
+	}
+
+	// Positive control: the supported path must actually type the explicit text
+	// and submit it. Asserting only "not the refusal error" would pass for a
+	// Claude injection that silently delivered nothing.
+	sent = nil
+	if err := redriveText(session, "edit", &ClaudeCodeProvider{}, payload); err != nil {
+		t.Fatalf("claude self-polls, so the redrive must deliver: %v", err)
+	}
+	var typed, submitted bool
+	for _, c := range sent {
+		if len(c) == 0 || c[0] != "send-keys" {
+			continue
+		}
+		if strings.Contains(strings.Join(c, " "), payload) {
+			typed = true
+		}
+		if argvContains(c, "Enter") {
+			submitted = true
+		}
+	}
+	if !typed {
+		t.Errorf("the explicit redrive payload was never typed; calls=%v", sent)
+	}
+	if !submitted {
+		t.Error("the redrive text was typed but never submitted")
+	}
+}
+
+// A failed composer clear must stop the sequence: continuing appends /clear to
+// parked text and submits the pair.
+func TestAutoClearInject_PreambleFailureStopsBeforeSlashClear(t *testing.T) {
+	var sent []string
+	origRun := tmuxRunner
+	tmuxRunner = func(args ...string) error {
+		if len(args) > 0 && args[0] == "send-keys" {
+			if argvContains(args, "Escape") {
+				return os.ErrPermission
+			}
+			sent = append(sent, strings.Join(args, " "))
+		}
+		return nil
+	}
+	t.Cleanup(func() { tmuxRunner = origRun })
+
+	if err := autoClearInject("s:edit.1"); err == nil {
+		t.Fatal("a failed composer clear must surface, not be discarded")
+	}
+	for _, s := range sent {
+		if strings.Contains(s, "/clear") {
+			t.Errorf("/clear was sent after the preamble failed: %q", s)
+		}
+	}
+}

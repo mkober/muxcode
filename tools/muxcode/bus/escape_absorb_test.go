@@ -148,11 +148,12 @@ func TestInjectPromptText_PreambleErrorPropagates(t *testing.T) {
 	SetBusDirBase(t.TempDir())
 	defer ResetBusDirBase()
 
-	var literalSent bool
-	orig := tmuxRunner
+	var escapeTried, literalSent bool
+	origRun, origOut := tmuxRunner, tmuxOutputRunner
 	tmuxRunner = func(args ...string) error {
 		if len(args) > 0 && args[0] == "send-keys" {
 			if argvContains(args, "Escape") {
+				escapeTried = true
 				return fmt.Errorf("no server running")
 			}
 			if argvContains(args, "-l") {
@@ -161,10 +162,26 @@ func TestInjectPromptText_PreambleErrorPropagates(t *testing.T) {
 		}
 		return nil
 	}
-	t.Cleanup(func() { tmuxRunner = orig })
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "capture-pane" {
+			return "  no messages\n\n❯\n", nil
+		}
+		return origOut(args...)
+	}
+	t.Cleanup(func() { tmuxRunner, tmuxOutputRunner = origRun, origOut })
 
-	if _, err := InjectPromptText("s", "edit", "payload"); err == nil {
+	_, err := InjectPromptText("s", "edit", "payload")
+	if err == nil {
 		t.Fatal("a preamble send-keys error must propagate from InjectPromptText")
+	}
+	// Anti-vacuity: stubbing tmuxRunner alone let the injection guard's capture
+	// fail FIRST, so every assertion below passed for the wrong reason and would
+	// have kept passing with preamble propagation deleted.
+	if !escapeTried {
+		t.Fatal("the preamble was never reached, so this test proves nothing about propagating its error")
+	}
+	if !strings.Contains(err.Error(), "no server running") {
+		t.Errorf("err = %v, want the preamble failure to surface", err)
 	}
 	if literalSent {
 		t.Error("the literal payload must not be sent after a preamble failure")

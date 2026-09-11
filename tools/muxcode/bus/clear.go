@@ -31,13 +31,22 @@ var autoClearIsIdle = func(session, role string) bool {
 // tests. Mirrors the /compact path: TmuxClearComposer empties the composer
 // behind an absorbed Escape (MUX-163), then the command text and Enter go as
 // separate send-keys calls with a delay (the dropped-Enter pitfall).
+//
+// Every step's error propagates. A failed clear used to be discarded, which
+// appends `/clear` to whatever was parked in the composer and submits the
+// pair — the idle check says the agent is resting, never that the composer
+// emptied.
 var autoClearInject = func(target string) error {
-	_ = TmuxClearComposer(target)
+	if err := TmuxClearComposer(target); err != nil {
+		return fmt.Errorf("clear composer before /clear: %w", err)
+	}
 	if err := TmuxSendKeys(target, "/clear"); err != nil {
 		return fmt.Errorf("send /clear: %w", err)
 	}
 	time.Sleep(200 * time.Millisecond)
-	_ = TmuxSendKeys(target, "Enter")
+	if err := TmuxSendKeys(target, "Enter"); err != nil {
+		return fmt.Errorf("submit /clear: %w", err)
+	}
 	return nil
 }
 

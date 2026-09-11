@@ -145,12 +145,32 @@ func redriveInFlightTasks(session, role string, provider Provider) int {
 		}
 	}
 	text := "Re-drive (consumed but never completed): " + BuildCombinedNotification(msgs)
-	if err := SendWakeUpWithText(session, role, provider, text, true); err != nil {
+	if err := redriveText(session, role, provider, text); err != nil {
 		return 0
 	}
 	LogLifecycle(session, "info", "deliver", "force-redrive",
 		fmt.Sprintf("%s: %d in-flight task(s)", role, len(msgs)))
 	return len(msgs)
+}
+
+// redriveText delivers a redrive's explicit text and reports whether it
+// actually went out.
+//
+// SendWakeUpWithText discards explicit text for a provider that does not poll
+// its own inbox: that road rebuilds the payload by reading the inbox. A redrive
+// is the one case where the row is ALREADY CONSUMED, so the provider Peeks an
+// empty inbox, returns nil, and the caller reads nil as delivered — logging
+// force-redrive and a positive count for an injection that never happened.
+// Recovery for those providers needs a road that carries the text itself, so
+// until one exists this refuses loudly rather than reporting a false success;
+// the task timeout remains the backstop.
+func redriveText(session, role string, provider Provider, text string) error {
+	if !provider.SelfPollsInbox() {
+		LogLifecycle(session, "warn", "deliver", "redrive-undeliverable",
+			fmt.Sprintf("%s: %s rebuilds payloads from the inbox, and the redriven row is already consumed", role, provider.Name()))
+		return fmt.Errorf("%s: redrive text cannot reach a %s pane", role, provider.Name())
+	}
+	return SendWakeUpWithText(session, role, provider, text, true)
 }
 
 // RedriveTask re-injects ONE consumed-but-never-started task's request
@@ -176,7 +196,7 @@ func RedriveTask(session string, t Task) bool {
 		}
 	}
 	text := "Re-drive (consumed but never completed): " + BuildCombinedNotification(msgs)
-	if err := SendWakeUpWithText(session, role, provider, text, true); err != nil {
+	if err := redriveText(session, role, provider, text); err != nil {
 		return false
 	}
 	LogLifecycle(session, "info", "deliver", "force-redrive",

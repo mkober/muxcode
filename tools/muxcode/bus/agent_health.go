@@ -121,13 +121,18 @@ func isShellPrompt(lines []string) bool {
 }
 
 // hasShellPromptSuffix reports whether a trimmed line ends the way a shell
-// prompt does: bash ($), zsh (%), the custom arrow (->), or a standalone ">"
-// on a short line (≤10 chars) so command output ending in ">" does not match.
-// Shared by the health probe and the injection guard so the two agree on
-// what a prompt looks like.
+// prompt does: bash ($), zsh (%), root (#), the custom arrow (->), or a
+// standalone ">" on a short line (≤10 chars) so command output ending in ">"
+// does not match.
+//
+// Shared by the health probe and the injection guard so the two agree on what
+// a prompt looks like. Root (#) was missing until 2026-09-11: `root@host:/#`
+// read as an agent, so the guard that exists to stop a payload running in a
+// dead agent's shell let it run in the one shell where that costs most.
 func hasShellPromptSuffix(line string) bool {
 	switch {
-	case strings.HasSuffix(line, "$"), strings.HasSuffix(line, "%"), strings.HasSuffix(line, "->"):
+	case strings.HasSuffix(line, "$"), strings.HasSuffix(line, "%"), strings.HasSuffix(line, "#"),
+		strings.HasSuffix(line, "->"):
 		return true
 	case strings.HasSuffix(line, ">") && len(line) <= 10:
 		return true

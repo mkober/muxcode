@@ -250,7 +250,7 @@ failing scenario replayed.
 
 **Complete — 14/14.** Filed 2026-09-09 16:02; Phases 1–4 implemented and revised through
 four reviews (16:59:49, 17:03:24, 17:07:12 all `EXIT=1`; **08:41 on 2026-09-10 `EXIT=0`**). Suite
-green 08:40, integration script 14/14 through the run agent 08:43, and the live session shows the
+green 08:40, integration script 14/14 through the run agent 08:43 — **superseded: re-run foreground through the run agent 2026-09-11 12:53:46 at `15 passed, 0 failed (floor 15)`, exit 0, verified in `run-history.jsonl`. The 08:43 count predated this script revision; PR #79 review S6 caught the mismatch against `EXPECTED_PASS=15` and the re-run settled it** — and the live session shows the
 skip rows with no re-drive. Phase 3 docs written 2026-09-10.
 
 **AC:63, the last open box, closed 2026-09-10 16:36** on its strengthened wording — a foreground

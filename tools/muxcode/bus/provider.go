@@ -27,7 +27,16 @@ const injectionGuardLines = 8
 // means the agent died and would run the payload as a command — on 2026-09-09
 // (is-advising-gateway) the wake sentence landed in bash as `-bash: You:
 // command not found`, and a scrape-road payload would have been executed.
-// Neither refusal is read as a delivery, and both write an
+// A blank capture refuses on the same fail-closed reasoning: an empty pane is
+// not positive evidence of an agent, only of a startup, a redraw, or a
+// promptless shell, and paneEndsAtShellPrompt has no last line to judge, so it
+// answers false and would wave the payload through. It carries
+// ErrInjectionSkipped rather than a plain error because a blank frame is
+// transient: the receipt-gap recovery re-arms its episode only for that
+// sentinel, so a plain error would let one redraw spend the whole episode's
+// single attempt and leave a live pane unretried.
+//
+// No refusal is read as a delivery, and each writes an
 // `injection-refused` row naming the reason. The shell refusal carries
 // ErrInjectionSkipped: it is a deliberate suppression the daemon retries once
 // the agent is restarted. A failed capture refuses too — an unreadable pane
@@ -44,6 +53,10 @@ func captureInjectionTarget(session, target, role string) (string, error) {
 	if err != nil {
 		LogLifecycle(session, "warn", "notify", "injection-refused", role+": pane capture failed: "+err.Error())
 		return "", fmt.Errorf("%s: pane capture failed (%v), refusing to type blind", role, err)
+	}
+	if len(lastNonEmptyLines(content, 1)) == 0 {
+		LogLifecycle(session, "warn", "notify", "injection-refused", role+": pane capture is blank")
+		return content, fmt.Errorf("%s: pane capture is blank, refusing to type blind: %w", role, ErrInjectionSkipped)
 	}
 	if last, shell := paneEndsAtShellPrompt(content); shell {
 		LogLifecycle(session, "warn", "notify", "injection-refused", role+": pane ends at a shell prompt: "+last)

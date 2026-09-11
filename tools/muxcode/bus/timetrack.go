@@ -199,14 +199,22 @@ const openCodeWorkingMarker = "▸"
 //     signature ("esc to interrupt", or a gerund ellipsis with the
 //     "(elapsed · tokens · …)" counter) even while the ❯ prompt is visible. A
 //     completed recap ("Cooked for 1m") and a plain idle prompt do not match.
-//   - Non-hook TUI (OpenCode): the "▸" running marker (flips to "▣" on
-//     completion). isClaudeThinking is NOT applied here — OpenCode truncates paths
-//     with "…" and uses " · " separators, which would false-positive its heuristic.
-func paneShowsAgentWorking(content string, hookProvider bool) bool {
-	if hookProvider {
+//   - Every other TUI (OpenCode, Codex): the "▸" running marker (OpenCode flips
+//     it to "▣" on completion), or the providers' shared "esc to interrupt"
+//     hint via LooksLikeWorkingLine. Codex draws `Working (… esc to interrupt)`
+//     and carries no "▸", so until 2026-09-11 this branch answered false for
+//     every busy Codex agent — ForceDeliver, RedriveTask and the daemon's stall
+//     check all gate on it, so MUX-171's promise that no road re-drives a
+//     working pane held for Claude alone. The rest of isClaudeThinking is still
+//     NOT applied here: OpenCode truncates paths with "…" and uses " · "
+//     separators, which would false-positive that heuristic. Only the literal
+//     hint is shared, and the caller has already narrowed content to the live
+//     tail, so a completed turn's footer in scrollback cannot match.
+func paneShowsAgentWorking(content string, claudeTUI bool) bool {
+	if claudeTUI {
 		return isClaudeThinking(content)
 	}
-	return strings.Contains(content, openCodeWorkingMarker)
+	return strings.Contains(content, openCodeWorkingMarker) || LooksLikeWorkingLine(content)
 }
 
 // AgentIsWorking reports whether the agent in the given role's pane is actively
