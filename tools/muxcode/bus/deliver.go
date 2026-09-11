@@ -29,8 +29,17 @@ type DeliverResult struct {
 //     notified but the inbox still has actionable messages (a dropped send-keys
 //     left them stuck), the notified markers are cleared so they re-deliver.
 //   - Without force, requires the pane to actually show the idle prompt in a
-//     wide (200-line) capture — guards against injecting into a genuinely busy
-//     agent. With force, the idle check is skipped entirely.
+//     wide (200-line) capture. With force, that idle REQUIREMENT is skipped.
+//   - Force never buys a pass into a WORKING pane, though: AgentIsWorking is
+//     positive evidence of a live turn (Claude's spinner, OpenCode's ▸), and
+//     every typed wake-up opens with an Escape, which mid-turn is Claude's
+//     interrupt key rather than an overlay dismissal. The check precedes the
+//     message gathering because both roads out of here type — the unnotified
+//     batch and the in-flight re-drive — and only the re-drive was guarded
+//     when this refusal was first added (MUX-171 review). "Cannot read the
+//     pane" is not "is working", so a capture failure still delivers: this is
+//     the manual escape hatch, and AgentIsWorking answers false when it
+//     cannot see.
 //   - Clears stale parked input in an unfocused pane before injecting.
 func ForceDeliver(session, role string, force bool) (DeliverResult, error) {
 	role = WindowForRole(role)
@@ -44,6 +53,12 @@ func ForceDeliver(session, role string, force bool) (DeliverResult, error) {
 	}
 
 	provider := ResolveProvider(role)
+
+	if AgentIsWorking(session, role) {
+		LogLifecycle(session, "info", "deliver", "deliver-skipped-busy", role)
+		res.Skipped = "agent is mid-turn — nothing is typed into a running tool call"
+		return res, nil
+	}
 
 	// Gather messages to deliver.
 	unnotified := UnnotifiedMessages(session, role)
@@ -113,7 +128,8 @@ func ForceDeliver(session, role string, force bool) (DeliverResult, error) {
 // redriveInFlightTasks re-injects the requests behind a role's live
 // in-flight tasks — the recovery for consumed-but-never-started work,
 // which no inbox-based path can reach (the rows are already drained).
-// Returns how many requests were re-driven.
+// Returns how many requests were re-driven. ForceDeliver, its only caller,
+// has already refused a working pane.
 func redriveInFlightTasks(session, role string, provider Provider) int {
 	tasks, err := ListTasks(session, TaskInFlight)
 	if err != nil {
@@ -129,12 +145,32 @@ func redriveInFlightTasks(session, role string, provider Provider) int {
 		}
 	}
 	text := "Re-drive (consumed but never completed): " + BuildCombinedNotification(msgs)
-	if err := SendWakeUpWithText(session, role, provider, text, true); err != nil {
+	if err := redriveText(session, role, provider, text); err != nil {
 		return 0
 	}
 	LogLifecycle(session, "info", "deliver", "force-redrive",
 		fmt.Sprintf("%s: %d in-flight task(s)", role, len(msgs)))
 	return len(msgs)
+}
+
+// redriveText delivers a redrive's explicit text and reports whether it
+// actually went out.
+//
+// SendWakeUpWithText discards explicit text for a provider that does not poll
+// its own inbox: that road rebuilds the payload by reading the inbox. A redrive
+// is the one case where the row is ALREADY CONSUMED, so the provider Peeks an
+// empty inbox, returns nil, and the caller reads nil as delivered — logging
+// force-redrive and a positive count for an injection that never happened.
+// Recovery for those providers needs a road that carries the text itself, so
+// until one exists this refuses loudly rather than reporting a false success;
+// the task timeout remains the backstop.
+func redriveText(session, role string, provider Provider, text string) error {
+	if !provider.SelfPollsInbox() {
+		LogLifecycle(session, "warn", "deliver", "redrive-undeliverable",
+			fmt.Sprintf("%s: %s rebuilds payloads from the inbox, and the redriven row is already consumed", role, provider.Name()))
+		return fmt.Errorf("%s: redrive text cannot reach a %s pane", role, provider.Name())
+	}
+	return SendWakeUpWithText(session, role, provider, text, true)
 }
 
 // RedriveTask re-injects ONE consumed-but-never-started task's request
@@ -149,13 +185,18 @@ func RedriveTask(session string, t Task) bool {
 	if len(msgs) == 0 {
 		return false
 	}
+	if AgentIsWorking(session, role) {
+		LogLifecycle(session, "info", "deliver", "redrive-skipped-busy",
+			fmt.Sprintf("%s: working — task %s left alone", role, t.ID))
+		return false
+	}
 	if HasPendingInput(session, role) && !IsWindowFocused(session, role) {
 		if err := TmuxClearInput(PaneTarget(session, role)); err == nil {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
 	text := "Re-drive (consumed but never completed): " + BuildCombinedNotification(msgs)
-	if err := SendWakeUpWithText(session, role, provider, text, true); err != nil {
+	if err := redriveText(session, role, provider, text); err != nil {
 		return false
 	}
 	LogLifecycle(session, "info", "deliver", "force-redrive",

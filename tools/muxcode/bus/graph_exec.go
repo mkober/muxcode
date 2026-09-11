@@ -460,40 +460,77 @@ func phaseCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
 // gate-and-ask trigger, not a dead end (MUX-121 decision 4). No active
 // spec declines — never commit blind; transient repo-dir postpones.
 func phaseProgressGuardAllows(session string, run *GraphRun, g *Graph, n *Node) bool {
-	path, ok, transient, refused := activeSpecFile(session)
-	if transient {
+	v := phaseCommitReady(session, run, g, n.ID)
+	switch {
+	case v.transient:
 		return false // node stays ready, retried next tick
-	}
-	if refused {
+	case v.refused:
 		finishNode(session, run, n, OutcomeFailure,
 			"phase-progress guard: active spec pointer resolves outside the repo — refusing to read it")
 		return false
-	}
-	if !ok {
+	case v.noSpec:
 		declineGuard(session, run, n, "phase-progress guard declined: no active spec to verify the phase against")
 		return false
-	}
-	completed, err := SpecCompletedPhaseCount(path)
-	if err != nil {
+	case v.readErr != nil:
 		finishNode(session, run, n, OutcomeFailure,
-			fmt.Sprintf("phase-progress guard: cannot read active spec: %v", err))
+			fmt.Sprintf("phase-progress guard: cannot read active spec: %v", v.readErr))
 		return false
-	}
-	// max, not sum: every success edge fires together on one completion,
-	// so summing counts each shipped commit once per edge and a fan-out
-	// commit node would overstate its history (PR #50 Copilot).
-	prior := 0
-	for _, e := range g.Edges {
-		if e.From == n.ID && edgeOutcome(e) == OutcomeSuccess {
-			prior = max(prior, run.EdgeFires[EdgeFireKey(e)])
-		}
-	}
-	if completed < prior+1 {
+	case !v.ready:
 		declineGuard(session, run, n, fmt.Sprintf(
-			"phase-progress guard declined: %d commits shipped but only %d phases complete — this commit's phase is still open", prior, completed))
+			"phase-progress guard declined: %d commits shipped but only %d phases complete — this commit's phase is still open", v.shipped, v.completed))
 		return false
 	}
 	return true
+}
+
+// phaseCommitVerdict is the answer to "may this commit ship a phase now?"
+// with the spec-pointer states kept distinct (see activeSpecFile) so each
+// caller can postpone, fail or decline as its contract demands.
+type phaseCommitVerdict struct {
+	ready     bool
+	transient bool  // repo dir unresolvable this tick — nothing is known
+	refused   bool  // spec pointer resolves outside the repo
+	noSpec    bool  // no active spec set
+	readErr   error // spec present but unreadable
+	completed int   // phases with zero open items
+	shipped   int   // the commit node's prior successful fires
+}
+
+// phaseCommitReady is the one predicate behind both the phase-progress
+// guard and the spec_phase_committable condition: the active spec must
+// hold one more completed phase than the commit node has already shipped.
+// Sharing it is what keeps the pre-gate check and the guard from ever
+// disagreeing — the check exists so a human is not asked to approve a
+// commit the guard then declines (2026-09-09, run 1788966148: four
+// stuck-gates, each preceded by a phase-gate approval the guard withheld,
+// two prompts per incomplete lap). Shipped is the max over the node's
+// success edges, not the sum: every success edge fires together on one
+// completion, so a fan-out commit node would otherwise overstate its
+// history (PR #50 Copilot).
+func phaseCommitReady(session string, run *GraphRun, g *Graph, commitNodeID string) phaseCommitVerdict {
+	var v phaseCommitVerdict
+	path, ok, transient, refused := activeSpecFile(session)
+	v.transient, v.refused = transient, refused
+	if transient || refused {
+		return v
+	}
+	if !ok {
+		v.noSpec = true
+		return v
+	}
+	completed, err := SpecCompletedPhaseCount(path)
+	if err != nil {
+		v.readErr = err
+		return v
+	}
+	v.completed = completed
+	for _, e := range g.Edges {
+		if e.From == commitNodeID && edgeOutcome(e) == OutcomeSuccess {
+			v.shipped = max(v.shipped, run.EdgeFires[EdgeFireKey(e)])
+		}
+	}
+	v.ready = completed >= v.shipped+1
+	return v
 }
 
 // declineGuard records a guard decline: lifecycle event plus the failed
@@ -915,7 +952,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		})
 
 	case NodeCondition:
-		ctx := &ChainContext{Session: session, Output: predecessorOutput(session, run, g, n.ID)}
+		ctx := &ChainContext{Session: session, Output: predecessorOutput(session, run, g, n.ID), GraphRun: run, Graph: g}
 		passed, results := EvaluateConditions(n.Conditions, ctx)
 		_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeRunning, nil)
 		// See unevaluatableCondition: a broken predicate is not a branch.

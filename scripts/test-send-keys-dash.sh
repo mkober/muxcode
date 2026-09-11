@@ -100,6 +100,12 @@ echo "-- muxcode injection path"
 # (PaneTarget = {session}:{window}.1) runs against the default socket.
 tmux new-session -d -s "$SESSION" -n run -x 120 -y 30
 tmux split-window -h -t "$SESSION:run"
+# The agent pane must look like an agent: since MUX-164 a typed injection is
+# refused when the pane shows a bare shell prompt (a dead agent's shell would
+# run the payload as a command), so a stand-in composer echoes each submitted
+# line under a fresh ❯ prompt.
+tmux send-keys -t "$SESSION:run.1" 'printf "❯ "; while IFS= read -r line; do printf "%s\n❯ " "$line"; done' Enter
+sleep 0.3
 
 muxcode init "$SESSION" >/dev/null 2>&1 || true
 

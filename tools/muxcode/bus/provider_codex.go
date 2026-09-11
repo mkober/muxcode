@@ -254,32 +254,91 @@ func (p *CodexProvider) IsAlive(session, role string) bool {
 	return true // indeterminate -> assume alive
 }
 
-// ClassifyPane determines the startup state of a Codex TUI pane.
-// Checks for error states first (higher priority), then looks for
-// TUI rendering indicators (box-drawing, prompt chars, Codex text).
+// Codex's directory-trust prompt, shown for a project absent from
+// ~/.codex/config.toml [projects]. "Yes, continue" is pre-selected, so Enter
+// accepts it; codexTrustPromptTail is its last line.
+const (
+	codexTrustPromptMarker = "Do you trust the contents of this directory"
+	codexTrustPromptTail   = "Press enter to continue"
+)
+
+// codexTrustPromptTailWindow is how many trailing non-blank lines may sit
+// under the prompt's last line for it to still count as live — one footer
+// line of tolerance.
+const codexTrustPromptTailWindow = 2
+
+// codexTrustPromptLive reports whether content ends at the directory-trust
+// prompt. Codex draws it inline (--no-alt-screen), so the text stays in
+// scrollback once Enter accepts it; the prompt counts only while its last
+// line still holds the bottom of the pane, or every later classification
+// would answer it again with an Enter that submits an empty turn.
+func codexTrustPromptLive(content string) bool {
+	if !strings.Contains(content, codexTrustPromptMarker) {
+		return false
+	}
+	for _, line := range lastNonEmptyLines(content, codexTrustPromptTailWindow) {
+		if strings.Contains(line, codexTrustPromptTail) {
+			return true
+		}
+	}
+	return false
+}
+
+// ClassifyPane determines the startup state of a Codex TUI pane. A live
+// directory-trust prompt is checked first: its banner is already on screen,
+// so the box-drawing test alone read the prompt as idle, AutoAccept marked
+// the agent ready, and the wake-up was typed into the prompt as its answer
+// (2026-09-09, is-advising-gateway — Codex quit without persisting trust and
+// the daemon's relaunch loop repeated it to the restart cap). Error text is
+// checked next, since it often contains "codex"; then the TUI's rendering
+// markers, and in inline mode (--no-alt-screen) the bare Codex text prompt.
 func (p *CodexProvider) ClassifyPane(content string) PaneState {
-	// Check for error states first — these take priority over text matches
-	// because error messages often contain "codex" (e.g. "ERROR: codex CLI not found")
+	if codexTrustPromptLive(content) {
+		return PaneTrustPrompt
+	}
 	if strings.Contains(content, "Error") || strings.Contains(content, "FATAL") || strings.Contains(content, "ERROR:") {
 		return PaneNotReady
 	}
-	// TUI rendered: look for box-drawing or Codex-specific markers
 	for _, ch := range []string{"─", "│", "╭", "╰", "┌", "└", "╹", "╻"} {
 		if strings.Contains(content, ch) {
 			return PaneIdle
 		}
 	}
-	// Inline mode (--no-alt-screen) may show a text prompt
 	if strings.Contains(content, "codex") || strings.Contains(content, "Codex") {
 		return PaneIdle
 	}
 	return PaneNotReady
 }
 
-// AcceptStartup handles Codex TUI startup — no action needed once
-// the TUI has rendered (ClassifyPane returns PaneIdle).
+// AcceptStartup answers a live directory-trust prompt with Enter — "Yes,
+// continue" is pre-selected, and launching muxcode in the directory is the
+// operator's trust decision, exactly as for Claude Code's folder prompt.
+// Returns true once the TUI has rendered its composer (PaneIdle).
 func (p *CodexProvider) AcceptStartup(session, pane string, state PaneState) bool {
+	if state == PaneTrustPrompt {
+		_ = TmuxSendEnter(pane)
+		return false
+	}
 	return state == PaneIdle
+}
+
+// guardInjection refuses to type into a pane that is not the Codex composer:
+// a dead agent's shell (captureInjectionTarget) or the directory-trust prompt.
+// The prompt is answered here rather than merely refused because a daemon
+// relaunch (RestartLocalAgent) runs no AutoAccept pass — without this the
+// relaunched agent would sit at the prompt until someone pressed Enter. The
+// injection itself is deferred to the next wake cycle via ErrInjectionSkipped.
+func (p *CodexProvider) guardInjection(session, target, role string) error {
+	content, err := captureInjectionTarget(session, target, role)
+	if err != nil {
+		return err
+	}
+	if codexTrustPromptLive(content) {
+		p.AcceptStartup(session, target, PaneTrustPrompt)
+		LogLifecycle(session, "info", "auto-accept", "trust-prompt", role)
+		return fmt.Errorf("%s: pane at the directory-trust prompt, accepted; injection deferred: %w", role, ErrInjectionSkipped)
+	}
+	return nil
 }
 
 // SendWakeUp reads the latest pending message from the inbox and injects
@@ -311,6 +370,9 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	}
 
 	if p.hooks {
+		if err := p.guardInjection(session, target, role); err != nil {
+			return err
+		}
 		return injectWakeSentence(target, role)
 	}
 
@@ -318,6 +380,9 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	msgs, err := Peek(session, role)
 	if err != nil || len(msgs) == 0 {
 		return nil // nothing to inject
+	}
+	if err := p.guardInjection(session, target, role); err != nil {
+		return err
 	}
 
 	// Deliver a bounded batch so a large inbox cannot build an argv that

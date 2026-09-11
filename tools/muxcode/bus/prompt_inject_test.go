@@ -1,22 +1,81 @@
 package bus
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 )
 
-// captureTmux stubs the tmux runner and records every call's argv.
+// captureTmux records every tmux call's argv and presents a resting agent pane.
 func captureTmux(t *testing.T) *[][]string {
 	t.Helper()
+	return captureTmuxWithPane(t, "  no messages\n\n❯\n")
+}
+
+// captureTmuxWithPane records send-keys argv and answers the injection guard's
+// capture with `pane`. Every inject road captures before typing, so a fixture
+// that cannot be captured refuses rather than injecting — the pane has to look
+// like an agent, never a bare shell. Calls other than capture-pane fall through
+// to the real runner so pane resolution keeps its existing behaviour.
+func captureTmuxWithPane(t *testing.T, pane string) *[][]string {
+	t.Helper()
 	var calls [][]string
-	orig := tmuxRunner
+	origRun, origOut := tmuxRunner, tmuxOutputRunner
 	tmuxRunner = func(args ...string) error {
 		calls = append(calls, args)
 		return nil
 	}
-	t.Cleanup(func() { tmuxRunner = orig })
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "capture-pane" {
+			return pane, nil
+		}
+		return origOut(args...)
+	}
+	t.Cleanup(func() { tmuxRunner, tmuxOutputRunner = origRun, origOut })
 	return &calls
+}
+
+// The guard exists because a window keeps its agent tag after the agent dies.
+// Both controls assert ZERO send-keys: a refusal that still typed would be the
+// defect wearing a passing test.
+func TestInjectPromptText_RefusesDeadShellPane(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	calls := captureTmuxWithPane(t, "❯ muxcode inbox\n  no messages\n\nroot@host:/repo#\n")
+
+	if _, err := InjectPromptText("s", "edit", "deploy to prod"); err == nil {
+		t.Fatal("expected a refusal for a pane resting at a root shell prompt")
+	}
+	for _, c := range *calls {
+		if len(c) > 0 && c[0] == "send-keys" {
+			t.Fatalf("refused injection still sent keys: %v", c)
+		}
+	}
+}
+
+func TestInjectPromptText_RefusesUncapturablePane(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	var calls [][]string
+	origRun, origOut := tmuxRunner, tmuxOutputRunner
+	tmuxRunner = func(args ...string) error { calls = append(calls, args); return nil }
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "capture-pane" {
+			return "", fmt.Errorf("no such pane")
+		}
+		return origOut(args...)
+	}
+	t.Cleanup(func() { tmuxRunner, tmuxOutputRunner = origRun, origOut })
+
+	if _, err := InjectPromptText("s", "edit", "deploy to prod"); err == nil {
+		t.Fatal("expected a refusal when the pane cannot be captured")
+	}
+	for _, c := range calls {
+		if len(c) > 0 && c[0] == "send-keys" {
+			t.Fatalf("refused injection still sent keys: %v", c)
+		}
+	}
 }
 
 // TestInjectPromptText_DashLeadingIntact pins the MUX-104 regression

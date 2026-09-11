@@ -194,3 +194,52 @@ func TestIsAgentHealthExcluded_DuringReload(t *testing.T) {
 		t.Error("expected build to NOT be excluded after reload marker cleared")
 	}
 }
+
+// A root prompt is the case the injection guard most needs to catch: the
+// payload would run as root. The live-agent rows are the negative control —
+// without them a predicate that answered true for everything would pass.
+func TestHasShellPromptSuffix_RootAndAgentPanes(t *testing.T) {
+	cases := []struct {
+		name  string
+		line  string
+		shell bool
+	}{
+		{"bare root", "#", true},
+		{"root with host and path", "root@host:/#", true},
+		{"bash dollar", "user@host:~$", true},
+		{"zsh percent", "host%", true},
+		{"custom arrow", "mkoberlein@host /repo ->", true},
+		{"short standalone gt", ">", true},
+		{"claude composer", "❯", false},
+		{"claude composer with text", "❯ run the tests", false},
+		{"output ending in gt is not a prompt", "wrote 42 rows to out.json =>", false},
+		// Deliberately fail-closed, same as $ and %: any line ending in # reads
+		// as a root prompt. A refused injection retries; one typed into a root
+		// shell does not come back.
+		{"agent text ending in hash refuses too", "see the note below #", true},
+	}
+	for _, c := range cases {
+		if got := hasShellPromptSuffix(c.line); got != c.shell {
+			t.Errorf("%s: hasShellPromptSuffix(%q) = %v, want %v", c.name, c.line, got, c.shell)
+		}
+	}
+}
+
+// paneEndsAtShellPrompt reads the LAST non-empty line, so stale agent output
+// scrolled above a root prompt must still refuse: the agent died and left its
+// transcript behind.
+func TestPaneEndsAtShellPrompt_StaleAgentOutputAboveRootPrompt(t *testing.T) {
+	pane := "❯ muxcode inbox\n  no messages\n\nroot@host:/repo#\n\n"
+	last, shell := paneEndsAtShellPrompt(pane)
+	if !shell {
+		t.Errorf("stale agent output above a root prompt must read as a shell, got last=%q", last)
+	}
+	if last != "root@host:/repo#" {
+		t.Errorf("last non-empty line = %q, want the root prompt", last)
+	}
+
+	live := "  no messages\n\n❯\n"
+	if _, shell := paneEndsAtShellPrompt(live); shell {
+		t.Error("a pane resting at the agent composer must NOT read as a shell")
+	}
+}

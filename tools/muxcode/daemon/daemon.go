@@ -128,9 +128,10 @@ type Daemon struct {
 	pollGapAlerted      map[string]bool  // role → alerted edit once for the current gap
 	pollGapRecovered    map[string]bool  // role → re-drive attempted for the current gap
 
-	lastStallCheck int64
-	taskStallSeen  map[string]int // task id → consecutive stall sightings (debounce)
-	taskRedrives   map[string]int // task id → redrive count (capped)
+	lastStallCheck  int64
+	taskStallSeen   map[string]int  // task id → consecutive stall sightings (debounce)
+	taskRedrives    map[string]int  // task id → redrive count (capped)
+	stallBusyLogged map[string]bool // task id → stall-skipped-busy already logged
 
 	lastForceRespondCheck int64
 	frRung                map[string]int      // role → next escalation rung to fire
@@ -236,6 +237,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		pollGapRecovered:      make(map[string]bool),
 		taskStallSeen:         make(map[string]int),
 		taskRedrives:          make(map[string]int),
+		stallBusyLogged:       make(map[string]bool),
 		frRung:                make(map[string]int),
 		frLastFire:            make(map[string]int64),
 		frPostponed:           make(map[string]int),
@@ -2518,11 +2520,8 @@ func (d *Daemon) checkParkedInput() {
 
 		d.parkedResubmits[role]++
 		if d.parkedResubmits[role] <= parkedResubmitMax {
-			// Re-send Enter to submit the parked wake-up. Dismiss any overlay
-			// eating the Enter first — mirrors verifyEnterDelivery's proven retry.
-			_ = bus.TmuxSendEscape(target)
-			time.Sleep(50 * time.Millisecond)
-			_ = bus.TmuxSendKeys(target, "Enter")
+			// Re-submit through the shared absorbed-Enter helper (MUX-163).
+			bus.TmuxResubmitEnter(target)
 			ts := time.Now().Format("15:04:05")
 			fmt.Printf("  %s  Parked-input watchdog: resubmitting dropped wake-up on %s (attempt %d/%d)\n",
 				ts, role, d.parkedResubmits[role], parkedResubmitMax)
@@ -2920,12 +2919,34 @@ func (d *Daemon) checkGraphRuns() {
 // the receipt-gap backstop trusts the receipt, and the task timeout
 // waits out its full 600s. Detection: an in-flight task past the stall
 // threshold (graph-dispatched tasks stall at half of it) while the
-// target pane rests at an idle prompt or holds parked input; a busy
-// spinner clears the sighting, so an agent genuinely thinking is never
-// interrupted. Two sightings → ForceDeliver with force, whose redrive
-// path re-injects the consumed request. Two redrives per task, then one
-// give-up log — the task timeout owns final failure. Opt out with
-// MUXCODE_TASK_STALL_DISABLE=1; threshold via MUXCODE_TASK_STALL_SECS.
+// target pane shows RECOVERABLE idle. Two sightings → ForceDeliver with
+// force, whose redrive path re-injects the consumed request. Two
+// redrives per task, then one give-up log — the task timeout owns final
+// failure. Opt out with MUXCODE_TASK_STALL_DISABLE=1; threshold via
+// MUXCODE_TASK_STALL_SECS.
+//
+// Two questions, in order, because they are not each other's negation.
+// AgentIsWorking is POSITIVE evidence of a live turn and is provider-aware
+// (Claude's spinner, OpenCode's ▸); it resets the sighting and logs
+// stall-skipped-busy once per task. PaneShowsRecoverableIdle then confirms
+// the pane is genuinely at rest before a sighting counts — a dead or
+// unreadable pane is neither working nor deliverable. Asking only the
+// second question mislabels every idle non-Claude agent as working, since
+// its ❯ test is Claude-shaped (MUX-171 review).
+//
+// PaneHasIdlePrompt alone is never enough: Claude renders ❯ in its
+// composer while a tool call runs, so the weaker test reads every working
+// agent as stalled, and the re-drive's Escape preamble is Claude's
+// interrupt key. This comment claimed the spinner cleared the sighting
+// long before the code asked a question that could see a spinner — on
+// 2026-09-09 the watchdog killed the run agent's integration script twice,
+// 61 seconds apart, the second re-drive killing the restart the first had
+// provoked (MUX-171). The two sibling checks above already gate this way.
+//
+// The capture is 200 lines for the same reason those siblings use it: the
+// ❯ can scroll past a short window after a large tool-output block, while
+// the thinking check inside PaneShowsRecoverableIdle stays tail-anchored,
+// so the wider view costs no false "busy".
 func (d *Daemon) checkStalledTasks() {
 	if bus.TaskStallDisabled() {
 		return
@@ -2947,50 +2968,132 @@ func (d *Daemon) checkStalledTasks() {
 			continue
 		}
 		role := bus.WindowForRole(t.To)
-		// Harness roles consume in-process (no pane to read); reloads are
-		// mid-cycle by design.
+		// Harness consumes in-process; a reload is mid-cycle by design.
 		if bus.IsHarnessActive(d.session, role) || bus.IsReloading(d.session, role) {
+			d.noteStallSighting(t.ID, stallUnknown)
 			continue
 		}
-		content, err := bus.TmuxCapturePaneLines(bus.PaneTarget(d.session, role), 30)
+		content, err := bus.TmuxCapturePaneLines(bus.PaneTarget(d.session, role), 200)
 		if err != nil {
+			d.noteStallSighting(t.ID, stallUnknown)
 			continue
 		}
-		if !bus.PaneHasIdlePrompt(content) && !bus.HasPendingInput(d.session, role) {
-			delete(d.taskStallSeen, t.ID) // busy — actually working on it
-			continue
+		verdict := stallAtRest
+		if bus.AgentIsWorking(d.session, role) {
+			verdict = stallWorking
+		} else if !bus.PaneShowsRecoverableIdle(content) {
+			verdict = stallNotAtRest
 		}
-		d.taskStallSeen[t.ID]++
-		if d.taskStallSeen[t.ID] < 2 {
-			continue
-		}
-		delete(d.taskStallSeen, t.ID)
-		if d.taskRedrives[t.ID] >= 2 {
-			if d.taskRedrives[t.ID] == 2 {
-				d.taskRedrives[t.ID]++ // log the give-up exactly once
-				bus.LogLifecycle(d.session, "warn", "daemon", "task-stall-giveup",
-					fmt.Sprintf("%s→%s:%s still stalled after 2 redrives — task timeout owns it", t.From, t.To, t.Action))
+
+		switch d.noteStallSighting(t.ID, verdict) {
+		case stallLogBusy:
+			bus.LogLifecycle(d.session, "info", "daemon", "stall-skipped-busy",
+				fmt.Sprintf("%s→%s:%s working — re-drive withheld", t.From, t.To, t.Action))
+		case stallGiveUp:
+			bus.LogLifecycle(d.session, "warn", "daemon", "task-stall-giveup",
+				fmt.Sprintf("%s→%s:%s still stalled after 2 redrives — task timeout owns it", t.From, t.To, t.Action))
+		case stallRedrive:
+			if res, err := bus.ForceDeliver(d.session, role, true); err == nil && res.Delivered > 0 {
+				ts := time.Now().Format("15:04:05")
+				fmt.Printf("  %s  Task %s→%s:%s stalled (consumed, agent idle) — re-driven (%d/2)\n",
+					ts, t.From, t.To, t.Action, d.taskRedrives[t.ID])
+				bus.LogLifecycle(d.session, "info", "daemon", "task-stall-redrive",
+					fmt.Sprintf("%s→%s:%s redrive %d/2", t.From, t.To, t.Action, d.taskRedrives[t.ID]))
 			}
-			continue
-		}
-		d.taskRedrives[t.ID]++
-		if res, err := bus.ForceDeliver(d.session, role, true); err == nil && res.Delivered > 0 {
-			ts := time.Now().Format("15:04:05")
-			fmt.Printf("  %s  Task %s→%s:%s stalled (consumed, agent idle) — re-driven (%d/2)\n",
-				ts, t.From, t.To, t.Action, d.taskRedrives[t.ID])
-			bus.LogLifecycle(d.session, "info", "daemon", "task-stall-redrive",
-				fmt.Sprintf("%s→%s:%s redrive %d/2", t.From, t.To, t.Action, d.taskRedrives[t.ID]))
 		}
 	}
-	// Drop bookkeeping for tasks that completed or timed out.
-	for id := range d.taskStallSeen {
-		if !live[id] {
-			delete(d.taskStallSeen, id)
+	d.forgetCompletedTasks(live)
+}
+
+// stallVerdict is what one poll saw in a stalled task's target pane. Working and
+// at-rest are not each other's negation — a dead or unreadable pane is neither —
+// so the third case is named rather than folded into either.
+//
+// stallUnknown covers the polls that observe nothing at all: a harness role
+// with no pane, a reload mid-cycle, a capture that failed. It resets the
+// debounce exactly as stallNotAtRest does, because not seeing an agent is not
+// evidence that it is resting — and letting a prior at-rest sighting stand
+// across such a gap would leave a single fresh reading enough to fire the
+// interrupting re-drive, which is the whole failure MUX-171 exists to stop.
+type stallVerdict int
+
+const (
+	stallWorking stallVerdict = iota
+	stallNotAtRest
+	stallAtRest
+	stallUnknown // pane not observable: harness role, reload, failed capture
+)
+
+// stallDecision is what the bookkeeping concluded from a sighting.
+type stallDecision int
+
+const (
+	stallHold stallDecision = iota
+	stallLogBusy
+	stallGiveUp
+	stallRedrive
+)
+
+// noteStallSighting folds one pane verdict into a task's stall bookkeeping and
+// reports what the caller should do about it.
+//
+// Split out from checkStalledTasks because the behaviour that matters here is a
+// SEQUENCE — reset, debounce, cap — and the caller's own path is unreachable in
+// a test: it reads real panes through tmux, so a unit test sees only a capture
+// error. That left the debounce reset, the once-per-task busy log and the cap
+// with no coverage at all, and reverting any of them still passed the suite.
+//
+// Any sighting that is not at-rest RESETS the debounce, so an agent that stirs
+// between polls must be seen at rest twice again before its work is re-driven.
+// That is the load-bearing half: a single stale at-rest reading next to a live
+// turn must not be enough to fire the interrupting Escape (MUX-171). Polls that
+// observed nothing (stallUnknown) reset it too — the caller routes its skip
+// branches through here rather than returning early, so the rule holds for
+// every path out of one poll, not just the ones that read a pane.
+func (d *Daemon) noteStallSighting(id string, v stallVerdict) stallDecision {
+	switch v {
+	case stallWorking:
+		delete(d.taskStallSeen, id)
+		if d.stallBusyLogged[id] {
+			return stallHold
+		}
+		d.stallBusyLogged[id] = true
+		return stallLogBusy
+	case stallNotAtRest, stallUnknown:
+		delete(d.taskStallSeen, id)
+		return stallHold
+	}
+
+	d.taskStallSeen[id]++
+	if d.taskStallSeen[id] < 2 {
+		return stallHold
+	}
+	delete(d.taskStallSeen, id)
+
+	if d.taskRedrives[id] >= 2 {
+		if d.taskRedrives[id] == 2 {
+			d.taskRedrives[id]++ // log the give-up exactly once
+			return stallGiveUp
+		}
+		return stallHold
+	}
+	d.taskRedrives[id]++
+	return stallRedrive
+}
+
+// forgetCompletedTasks drops stall bookkeeping for tasks no longer in flight,
+// so a task id that is reused or retried starts from a clean count.
+func (d *Daemon) forgetCompletedTasks(live map[string]bool) {
+	for _, counts := range []map[string]int{d.taskStallSeen, d.taskRedrives} {
+		for id := range counts {
+			if !live[id] {
+				delete(counts, id)
+			}
 		}
 	}
-	for id := range d.taskRedrives {
+	for id := range d.stallBusyLogged {
 		if !live[id] {
-			delete(d.taskRedrives, id)
+			delete(d.stallBusyLogged, id)
 		}
 	}
 }
@@ -3087,9 +3190,9 @@ func showEditInNeovim(session, file string, withDiff bool) {
 	shellFile := "'" + strings.ReplaceAll(file, "'", "'\\''") + "'"
 
 	// Dismiss any pending "Press ENTER" prompts
-	exec.Command("tmux", "send-keys", "-t", pane, "Escape").Run()
+	exec.Command("tmux", "send-keys", "-t", pane, "Escape").Run() // nvim-pane: normal mode, not a composer
 	time.Sleep(50 * time.Millisecond)
-	exec.Command("tmux", "send-keys", "-t", pane, "Escape").Run()
+	exec.Command("tmux", "send-keys", "-t", pane, "Escape").Run() // nvim-pane: second Escape absorbs the first
 	time.Sleep(50 * time.Millisecond)
 
 	if withDiff {

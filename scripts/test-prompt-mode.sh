@@ -16,11 +16,29 @@
 #
 # Hermetic: scratch BUS_SESSION + scratch tmux session + scratch project
 # dir; nothing touches a live muxcode session.
+#
+# Exit codes: 0 = everything ran and passed; 1 = a check failed, or the
+# coverage floor was not met; 2 = nothing failed but section 4's required
+# chord-receiver checks could not run (python3 absent), so the run is
+# INCOMPLETE rather than green.
 set -euo pipefail
 
 PASS=0
 FAIL=0
 SKIP=0
+# Section 4's two chord-receiver checks are the point of this script, and the
+# global PASS floor cannot speak for them: unrelated checks clear it on their
+# own, so a run where python3 was absent met the floor and reported green with
+# zero parser coverage. This flag is set only once both checks have actually
+# been evaluated, and the summary exits 2 when it has not been.
+PARSER_RAN=0
+# Coverage floor: the mechanical sections alone clear this. Named once so
+# summary_verdict and the message it prints can never drift apart.
+PASS_FLOOR=18
+
+# Resolve the script's own dir before any cd — section 4 loads the chord
+# receiver from it, and the test cd's into a scratch project dir below.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux is required"; exit 2; }
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
@@ -55,6 +73,21 @@ ok()   { PASS=$((PASS + 1)); echo "  ok: $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 skip() { SKIP=$((SKIP + 1)); echo "  SKIP: $1"; }
 strip_ansi() { sed 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
+
+# summary_verdict echoes the exit code a run's counters imply: 0 all good,
+# 1 a real failure or an unmet floor, 2 nothing failed but the required
+# parser section could not run. It is a pure function of (fail, pass,
+# parser_ran) so the PRECEDENCE — a real failure outranks a could-not-run —
+# is drivable from stub counters. Deciding this inline made exit 2 reachable
+# only on a machine without python3, which is to say never on the machines
+# that run this, and an inverted order would have gone unnoticed.
+summary_verdict() {
+  local fail=$1 pass=$2 parser=$3
+  [ "$fail" -eq 0 ] || { echo 1; return; }
+  [ "$pass" -ge "$PASS_FLOOR" ] || { echo 1; return; }
+  [ "$parser" -eq 1 ] || { echo 2; return; }
+  echo 0
+}
 
 # live_diag dumps the scratch agent's own evidence on a live-intent FAIL,
 # so "latency, not capability" is observable rather than assumed: the
@@ -223,22 +256,81 @@ else
   fail "Ctrl-T flips to inject with the active agent named"
 fi
 
-tmux send-keys -t "$SURFACE" -l -- '- dash inject probe mux109'
-sleep 0.5
-tmux send-keys -t "$SURFACE" Enter
-sleep 2
-agent_cap=$(tmux capture-pane -t "$SESSION:edit.1" -pJ | strip_ansi)
-echo "  [diag] agent pane: $(printf '%s' "$agent_cap" | grep -v '^[[:space:]]*$' | tail -3)"
-if printf '%s' "$agent_cap" | grep -qF -- '- dash inject probe mux109'; then
-  ok "dash-leading payload injected intact into the agent pane"
+# The agent pane runs the chord receiver (MUX-163), not cat: cat echoes every
+# byte, so a first character fused into a Meta chord would still read back
+# whole. The receiver logs what a pending-ESC parser actually saw, so the inject
+# preamble's absorber can be verified to keep the payload's first char intact.
+#
+# The receiver is a REPO file, so its absence is a regression, not an
+# environment gap: a missing receiver FAILS rather than falling back to a weaker
+# check that would let a deleted receiver read green. python3 is an external
+# prerequisite, so its absence is an honest skip. Section 4's two parser checks
+# are the point of this section — nothing substitutes for them.
+INJ_PAYLOAD='- dash inject probe mux163'
+RECEIVER="$SCRIPT_DIR/lib/escape-chord-receiver.py"
+if [ ! -f "$RECEIVER" ]; then
+  fail "chord receiver missing: $RECEIVER — a deleted receiver must not read green"
+  tmux send-keys -t "$SURFACE" -l -- "$INJ_PAYLOAD"; sleep 0.5
+  tmux send-keys -t "$SURFACE" Enter; sleep 2
+  receipt_cap=$(tmux capture-pane -t "$SURFACE" -pJ | strip_ansi)
+elif ! command -v python3 >/dev/null 2>&1; then
+  skip "chord-receiver inject check — python3 not installed (parser coverage did not run)"
+  skip "chord-receiver negative control — python3 not installed"
+  tmux send-keys -t "$SURFACE" -l -- "$INJ_PAYLOAD"; sleep 0.5
+  tmux send-keys -t "$SURFACE" Enter; sleep 2
+  receipt_cap=$(tmux capture-pane -t "$SURFACE" -pJ | strip_ansi)
 else
-  fail "dash-leading payload injected intact into the agent pane"
+  inj_log="$WORK/inject-chord.log"
+  tmux respawn-pane -k -t "$SESSION:edit.1" "python3 '$RECEIVER' '$inj_log'"
+  sleep 0.8
+  tmux send-keys -t "$SURFACE" -l -- "$INJ_PAYLOAD"
+  sleep 0.5
+  tmux send-keys -t "$SURFACE" Enter
+  sleep 2
+  # Capture the surface receipt now, before the negative control respawns the
+  # pane — the "injected to edit" notice is transient.
+  receipt_cap=$(tmux capture-pane -t "$SURFACE" -pJ | strip_ansi)
+  echo "  [diag] chord log: $(tr '\n' '|' <"$inj_log" 2>/dev/null)"
+  # Reconstruct the typed text from the receiver's per-key log: the preamble
+  # (chord M-C-e) and the submit (key Enter) drop out, leaving the payload.
+  got=$(python3 -c 'import sys
+out=[]
+for ln in open(sys.argv[1]):
+    ln = ln.rstrip("\n")
+    if ln.startswith("key "):
+        k = ln[4:]
+        if k == "Space": out.append(" ")
+        elif len(k) == 1: out.append(k)
+print("".join(out))' "$inj_log" 2>/dev/null)
+  if [ "$got" = "$INJ_PAYLOAD" ] && ! grep -qxF "chord M--" "$inj_log"; then
+    ok "injected payload arrives whole at a pending-ESC receiver, first char plain"
+  else
+    fail "injected payload mangled: got '$got' want '$INJ_PAYLOAD'; log $(tr '\n' '|' <"$inj_log")"
+  fi
+
+  # Negative control: hand-drive the pre-fix shape (Escape straight into the
+  # literal, no absorber) so the receiver is proven able to SEE the defect.
+  neg_log="$WORK/inject-defect.log"
+  tmux respawn-pane -k -t "$SESSION:edit.1" "python3 '$RECEIVER' '$neg_log'"
+  sleep 0.8
+  tmux send-keys -t "$SESSION:edit.1" Escape
+  tmux send-keys -t "$SESSION:edit.1" -l -- '- dash inject probe'
+  sleep 0.5
+  if grep -qxF "chord M--" "$neg_log"; then
+    ok "negative control: pre-fix Escape→payload fuses the first char (defect seen)"
+  else
+    fail "receiver must see the defect on the pre-fix shape; log $(tr '\n' '|' <"$neg_log")"
+  fi
+  PARSER_RAN=1
 fi
-cap=$(tmux capture-pane -t "$SURFACE" -pJ | strip_ansi)
-if printf '%s' "$cap" | grep -q "injected to edit"; then
-  ok "surface shows the injection receipt"
+# The surface confirms an accepted inject by CLEARING its input (the "⇒ injected
+# to edit" notice is transient and not reliably in a headless capture). A failed
+# inject keeps the input, so an empty input line is the observable receipt: the
+# payload no longer appears anywhere on the surface.
+if printf '%s' "$receipt_cap" | grep -qF -- "$INJ_PAYLOAD"; then
+  fail "surface input not cleared after inject — submit not accepted"
 else
-  fail "surface shows the injection receipt"
+  ok "surface input cleared after inject (submit accepted)"
 fi
 
 # Tab cycles away even with the toggle flipped.
@@ -390,11 +482,53 @@ fi
 # ── Summary ──────────────────────────────────────────────────
 
 echo ""
+# ── Verdict self-check, against controlled counters ──────────
+# A real run reaches exactly one of summary_verdict's branches, so the others
+# are only correct by inspection unless driven. The last case is the one that
+# matters: fail>0 AND parser_ran=0 must report the FAILURE (1), never the
+# weaker could-not-run (2) — the criterion's "after honouring real failures".
+#
+# These count in their OWN tallies, never ok/fail. They test this script's
+# bookkeeping, not the product, and folding them into PASS would inflate it by
+# five — leaving PASS_FLOOR cleared by five fewer real integration checks than
+# it was written to demand, which is the floor quietly weakening itself.
+echo "-- verdict precedence"
+VPASS=0
+VFAIL=0
+while read -r f p r want label; do
+  got=$(summary_verdict "$f" "$p" "$r")
+  if [ "$got" = "$want" ]; then
+    VPASS=$((VPASS + 1)); echo "  ok: verdict($f,$p,$r) = $want — $label"
+  else
+    VFAIL=$((VFAIL + 1)); echo "  FAIL: verdict($f,$p,$r) = $got, want $want — $label"
+  fi
+done <<EOF
+0 26 1 0 clean run
+1 26 1 1 a real failure
+0 10 1 1 floor not met
+0 26 0 2 parser section could not run
+1 26 0 1 failure outranks could-not-run
+EOF
+# Exact count, not just zero failures: a truncated heredoc would otherwise
+# report a clean self-check having driven nothing.
+if [ "$VFAIL" -ne 0 ] || [ "$VPASS" -ne 5 ]; then
+  echo "FAIL: verdict self-check ($VPASS/5 passed, $VFAIL failed) — the exit-code precedence rule is broken"
+  exit 1
+fi
+
+echo ""
 echo "=== $PASS passed, $FAIL failed, $SKIP skipped ==="
-# Coverage floor: the mechanical sections alone are 20 checks — a run
-# that skipped its way below this is reporting silence, not health.
-[ "$PASS" -ge 18 ] || { echo "FAIL: coverage floor not met ($PASS < 18)"; exit 1; }
-[ "$FAIL" -eq 0 ] || exit 1
+case "$(summary_verdict "$FAIL" "$PASS" "$PARSER_RAN")" in
+  1)
+    [ "$FAIL" -eq 0 ] && echo "FAIL: coverage floor not met ($PASS < $PASS_FLOOR)"
+    exit 1
+    ;;
+  2)
+    echo "INCOMPLETE: section 4's chord-receiver checks did not run (python3 absent)."
+    echo "  Nothing failed, but the MUX-163 parser coverage this script exists for is missing."
+    exit 2
+    ;;
+esac
 if [ "$SKIP" -gt 0 ]; then
   echo "OK (with $SKIP skipped — live-model checks did not run on this machine)"
 else

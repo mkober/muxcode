@@ -80,6 +80,8 @@ Set per-role: `MUXCODE_{ROLE}_CLI=opencode` in `.muxcode/config`. Set session-wi
 
 **Codex hook road (MUX-159)**: on a `codex` ≥ 0.153 muxcode writes `<repo>/.codex/hooks.json` before launch and the agent becomes a hook provider: chains fire from `PostToolUse`, `hook guard` enforces on `Bash` and `apply_patch`, and delivery runs through `Stop`/`UserPromptSubmit` with true `acked` receipts — no chain text in the prompt, no payload injection, no pane scraping. On by default since 2026-09-09 (`MUXCODE_CODEX_HOOKS=0` or `MUXCODE_{ROLE}_CODEX_HOOKS=0` opts out); an ineligible or opted-out codex role uses the three-layer degradation below. See [Hooks](hooks.md#codex-hooks).
 
+**Codex directory trust (MUX-164)**: a `codex` ≥ 0.153 launched in a directory absent from `~/.codex/config.toml [projects]` draws its trust question — "Do you trust the contents of this directory? … Press enter to continue" — under the banner box, and a box-drawing check alone read that pane as idle, so nothing answered it and the health sweep looped the agent through fail → snapshot → relaunch into the same prompt. `CodexProvider.ClassifyPane` now checks for a **live** trust prompt first (`codexTrustPromptLive`, anchored to the pane's last lines because Codex draws the prompt inline and its text stays in scrollback once accepted) and returns `PaneTrustPrompt`; `AcceptStartup` answers it with Enter — launching muxcode in the directory is the operator's trust decision, exactly as for Claude Code's folder prompt — and returns false so the wait loop re-classifies. A daemon relaunch runs no `AutoAccept` pass, so the [injection guard](#message-delivery-and-receipts) answers the prompt on that road too and defers the wake-up to the next cycle.
+
 Non-hook providers degrade gracefully across three layers:
 
 1. **Role-specific prompt instructions** — the shared prompt includes a "Manual Bus Messaging" section with instructions specific to the agent's role (build agents see build chain commands, test agents see test chain commands, review agents see generic reply instructions). The shared prompt also includes explicit role identity ("You are the build agent") to prevent LLM confusion.
@@ -286,6 +288,7 @@ Spawned agents:
 - Send results back to the owner via normal bus messages
 - Are tracked in `spawn.jsonl` and monitored by the daemon
 - Block commits while running (same as background processes)
+- As graph workers (`spec-to-pr`'s `implement` and `fix` nodes), verify a phase through the **run agent** — `muxcode send run run "bash scripts/test-<feature>.sh" --wait` — and quote its counts and task id before reporting; never `go test`, the graph's test node owns the suite. Plan's verify credits the run agent's store row, not the worker's report (MUX-167)
 
 ## Local LLM Agent (Ollama)
 
@@ -352,6 +355,22 @@ via `tmux send-keys`. Delivery therefore uses **verified injection** (`bus/injec
 inject the wake-up, confirm the text actually left the composer (re-sending Enter if it
 parked), and only then consume the inbox and write a `delivered` receipt. A dropped Enter no
 longer loses the message — the inbox is left intact for the next cycle.
+
+**Injection guard (MUX-164)**: every typed injection — the Codex scrape and hook roads, OpenCode,
+and Claude's `SendWakeUpWithText` (the `deliver --force` road) — captures the pane first
+(`captureInjectionTarget`, `bus/provider.go`: the visible pane plus 8 history lines). A pane whose
+**last** non-blank line is a shell prompt is refused with `ErrInjectionSkipped`: the agent has died
+and its shell would run the payload as a command — on 2026-09-09 a wake sentence landed in bash as
+`-bash: You: command not found`, and a scrape-road payload would have executed. An unreadable pane
+is refused too, as a plain error (one receipt-gap attempt, not a re-armed episode). Both refusals
+write an `injection-refused` lifecycle row naming the reason; a live Codex trust prompt is answered
+with Enter (an `auto-accept`/`trust-prompt` row) and the injection deferred. `deliver --force`
+gets no exception — the same flag rides the daemon's automatic recoveries, so a force pass-through
+would let them type blind. The prompt test is `hasShellPromptSuffix` (`bus/agent_health.go`),
+shared with the health probe's `isShellPrompt` and with OpenCode's `DetectTaskCompletion` (a bare
+shell has no result to read either), so all three agree on what a dead pane looks like. A scratch
+pane that receives injections in an integration script must therefore look like an agent — a `❯`
+stand-in — never a bare shell.
 
 **Limitation**: a `delivered` receipt confirms the text reached the pane, **not** that the
 agent processed it. A true `acked` receipt for these TUIs would need upstream support or an
@@ -573,7 +592,7 @@ Core code: `bus/reload_batch.go` (`ReloadBatch()`, `ReloadResult`, `ActiveAgentS
 
 An interactive TUI modal for visually picking a provider, model, and target agents. Supports single-agent reload (existing workflow) and multi-agent bulk reload.
 
-- **Keybinding**: `prefix + R` or `prefix + b → Provider`
+- **Keybinding**: `prefix + R` or `prefix + m → Provider` (the quick menu moved from `b` to `m`; `Provider` is `R` within it)
 - **Sections**: Provider (radio), Model (radio + custom input), Agents (checkboxes), Options (compact/persist checkboxes)
 - **Navigation**: `j`/`k`/arrows move, `Tab` switches section, `Space` selects, `Enter` confirms, `q`/`Esc` cancels
 

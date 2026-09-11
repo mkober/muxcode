@@ -1,6 +1,6 @@
 # GitHub user stats
 
-Add a GitHub contribution analytics modal triggered from the MuxCode main menu (`prefix + b → S`) that displays commit history, code volume, PR activity, and active days — scoped to the current repo or expanded across all repos in the user's account. Also available as a CLI command (`muxcode stats`) for programmatic use by agents.
+Add a GitHub contribution analytics modal triggered from the MuxCode main menu (`prefix + m → <key>`) that displays commit history, code volume, PR activity, and active days — scoped to the current repo or expanded across all repos in the user's account. Also available as a CLI command (`muxcode stats`) for programmatic use by agents.
 
 ## Problem
 
@@ -22,7 +22,7 @@ Developers lack a quick way to see their contribution footprint. Getting a pictu
 ### Acceptance criteria
 
 #### Modal integration
-- [ ] `prefix + b → S` opens the stats modal from the MuxCode main menu
+- [ ] `prefix + m → <key>` opens the stats modal from the MuxCode main menu
 - [ ] Stats modal registered in `DefaultModalConfigs()` with name `"stats"`, Dracula-themed border
 - [ ] `muxcode modal open stats` opens the modal programmatically (toggle behavior like other modals)
 - [ ] Modal displays an interactive TUI: current repo stats on launch, with key bindings to switch views
@@ -287,7 +287,14 @@ $ muxcode stats --all
 | `tools/muxcode/cmd/stats.go` | New file — `Stats()` command handler, flag parsing (`--tui`, `--all`, `--user`, `--since`, `--until`, `--json`) |
 | `tools/muxcode/main.go` | Add `"stats"` to `knownSubcommands` and route to `cmd.Stats()` |
 | `tools/muxcode/bus/stats_test.go` | New file — tests for git log parsing, streak computation, date filtering, stat aggregation, output formatting, modal config |
-| `config/tmux.conf` | Add `"GitHub Stats" S` entry to the MuxCode quick menu (`prefix + b`) |
+| `config/tmux.conf` | Add a `"GitHub Stats"` entry to the MuxCode quick menu (`prefix + m`) — **not on `S`, which is taken**: see the key-collision note below |
+
+> **Key collision, found 2026-09-11 while correcting the stale `prefix + b` references.** This spec
+> specifies `S` for GitHub Stats, but `S` is already **"Save Memory"** in the current menu
+> (`config/tmux.conf:73–92`). The whole menu also moved from `prefix + b` to **`prefix + m`** since
+> this spec was written, so every `prefix + m → <key>` above now reads `prefix + m → <key>` with the key
+> still to be chosen. Taken keys today: `n s i R w k S x e r d q X`. `g` is free and mnemonic for
+> GitHub. Left as a decision rather than silently rebound, because a menu key is user-facing.
 
 ## Implementation
 
@@ -354,7 +361,7 @@ Build the interactive TUI for modal mode and wire into the tmux main menu.
 - [ ] Add tests for modal config registration, TUI key handling
 - [ ] **Verify**: `cd tools/muxcode && go test ./...` — all tests pass
 - [ ] **Verify**: `cd tools/muxcode && go vet ./...` — no issues
-- [ ] **Verify**: `make install` — binary builds and installs, `prefix + b → S` opens stats modal
+- [ ] **Verify**: `make install` — binary builds and installs, `prefix + m → <key>` opens stats modal
 
 ## Status
 

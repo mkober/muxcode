@@ -1111,7 +1111,7 @@ muxcode agent launch <role>
 
 **Pre-launch actions:**
 
-- Sends startup inbox message for `edit` role (context restoration). The analyze role also receives one when enabled via `MUXCODE_WINDOWS`.
+- Sends startup inbox message for `edit` role (context restoration). The analyze role also receives one when enabled via `MUXCODE_WINDOWS`. This bootstrap is the one self-addressed message the bus delivers (`isStartupBootstrap` — `request:startup`, type and action); an agent's reply to it is correlated but never delivered or CC'd, so answering it with `--reply-to` is harmless and unnecessary — before 2026-09-09 the exemption keyed on the action alone and a codex agent's `response:startup` re-entered its own inbox every 5 s ([MUX-169](requirements/completed/MUX-169-startup-self-reply-echo-loop.md)).
 - Logs agent launch to persistent lifecycle log
 
 **Examples:**
@@ -1587,6 +1587,16 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 | `ui [run-id] [--render-once] [--width N]` | Interactive run browser → layered DAG → node detail ([MUX-031](requirements/completed/MUX-031-graph-run-tui.md)) |
 | `ui --templates` | Template launcher — pick, validate, and start a run |
 | `ui --gates [--render-once]` | Pending `wait_human` approval queue across all in-flight runs |
+
+**`spec-to-pr` lap shape.** `implement` → `build` → `test` → `review` → `update-spec` →
+`phase-check` → `phase-gate` → `commit` → `loop-check`, with `fix` on any failure edge. `phase-check`
+(`{"spec_phase_committable": "commit"}`) reads the active spec through the same predicate as the
+commit's `phase-progress` guard: a phase still open after `update-spec` goes straight to `stuck-gate`
+(one human prompt: retry or cancel), and `phase-gate` is asked only when the guard will accept the
+commit — the guard remains the dispatch-time backstop ([MUX-167](requirements/completed/MUX-167-spec-to-pr-commit-gate-before-phase-check.md)).
+The `implement` and `fix` messages tell the worker to verify the phase through the run agent —
+`muxcode send run run "bash scripts/test-<feature>.sh" --wait`, never `go test` — and to quote the
+counts and the run task id, so `update-spec` can credit a store row.
 
 ```bash
 # Start a run from a built-in template, with intent interpolated into node messages

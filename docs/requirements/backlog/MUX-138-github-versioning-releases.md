@@ -314,6 +314,6 @@ at zero or explicitly accepted, a written compatibility contract, and the
 
 Moving the file to `completed/` is a `git mv`, which is user-gated — flagged, not done.
 
-The file still sits in `backlog/` while reading `In Progress`, the same deliberate exception the
-index records for [`MUX-005`](./MUX-005-plan-diagrams.md). Moving it to `drafts/` is a `git mv`,
-which is user-gated — flagged, not done.
+Since this was written the release machinery has kept running on its own: `v0.1.1` was cut by
+`auto-release.yml` on a merged PR, so the tag list is `v0.1.0`, `v0.1.1` — the automatic path is
+proven, not just the manual one.

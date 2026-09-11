@@ -461,7 +461,12 @@ func stubTmuxRecorder(t *testing.T) *[][]string {
 	origRun, origQuiet, origOut := tmuxRunner, tmuxQuietRunner, tmuxOutputRunner
 	tmuxRunner = func(args ...string) error { calls = append(calls, args); return nil }
 	tmuxQuietRunner = func(args ...string) error { return nil }
-	tmuxOutputRunner = func(args ...string) (string, error) { return "", errors.New("stub: no pane") }
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "capture-pane" {
+			return "› Ask Codex to do anything\n  ? for shortcuts", nil
+		}
+		return "", errors.New("stub: no pane")
+	}
 	t.Cleanup(func() { tmuxRunner, tmuxQuietRunner, tmuxOutputRunner = origRun, origQuiet, origOut })
 	return &calls
 }

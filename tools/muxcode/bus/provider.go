@@ -16,6 +16,83 @@ import (
 // never read a skip as success; match with errors.Is.
 var ErrInjectionSkipped = errors.New("wake-up injection skipped")
 
+// injectionGuardLines is the history depth captured before typing into a
+// pane — the visible pane plus this many scrolled lines, the window the health
+// probe reads, so the guard and the probe agree on what a dead pane is.
+const injectionGuardLines = 8
+
+// captureInjectionTarget is the gate every typed injection passes first, and
+// returns the capture so a provider can classify it without a second read.
+// The pane must be readable and must not end at a shell prompt: a bare shell
+// means the agent died and would run the payload as a command — on 2026-09-09
+// (is-advising-gateway) the wake sentence landed in bash as `-bash: You:
+// command not found`, and a scrape-road payload would have been executed.
+// A blank capture refuses on the same fail-closed reasoning: an empty pane is
+// not positive evidence of an agent, only of a startup, a redraw, or a
+// promptless shell, and paneEndsAtShellPrompt has no last line to judge, so it
+// answers false and would wave the payload through. It carries
+// ErrInjectionSkipped rather than a plain error because a blank frame is
+// transient: the receipt-gap recovery re-arms its episode only for that
+// sentinel, so a plain error would let one redraw spend the whole episode's
+// single attempt and leave a live pane unretried.
+//
+// No refusal is read as a delivery, and each writes an
+// `injection-refused` row naming the reason. The shell refusal carries
+// ErrInjectionSkipped: it is a deliberate suppression the daemon retries once
+// the agent is restarted. A failed capture refuses too — an unreadable pane
+// is exactly the pane not to type into — but as a plain error, the same
+// failure class as a send-keys that cannot reach tmux: the daemon's
+// receipt-gap recovery counts it as its one attempt rather than re-arming
+// the episode every poll. Force buys no exception: the force flag that
+// `deliver --force` passes is the one the daemon's automatic recoveries pass
+// too, so a force pass-through would let them type blind (the MUX-164
+// review's must-fix); an operator whose pane cannot be captured gets the
+// error and its reason instead.
+func captureInjectionTarget(session, target, role string) (string, error) {
+	content, err := TmuxCapturePaneLines(target, injectionGuardLines)
+	if err != nil {
+		LogLifecycle(session, "warn", "notify", "injection-refused", role+": pane capture failed: "+err.Error())
+		return "", fmt.Errorf("%s: pane capture failed (%v), refusing to type blind", role, err)
+	}
+	if len(lastNonEmptyLines(content, 1)) == 0 {
+		LogLifecycle(session, "warn", "notify", "injection-refused", role+": pane capture is blank")
+		return content, fmt.Errorf("%s: pane capture is blank, refusing to type blind: %w", role, ErrInjectionSkipped)
+	}
+	if last, shell := paneEndsAtShellPrompt(content); shell {
+		LogLifecycle(session, "warn", "notify", "injection-refused", role+": pane ends at a shell prompt: "+last)
+		return content, fmt.Errorf("%s: pane ends at a shell prompt (%q), not an agent: %w", role, last, ErrInjectionSkipped)
+	}
+	return content, nil
+}
+
+// paneEndsAtShellPrompt reports whether a capture's last non-blank line is a
+// shell prompt, returning that line. Unlike isShellPrompt, the health probe,
+// a ❯ higher in the capture does not vouch for the pane: a dead agent's shell
+// prompt sits under the composer it drew before dying, so that exemption is
+// the bypass the MUX-164 review named. A TUI whose bottom line happens to end
+// in a prompt suffix is refused and retried on the next cycle, with the line
+// in the lifecycle row so the false positive is visible rather than silent.
+func paneEndsAtShellPrompt(content string) (string, bool) {
+	tail := lastNonEmptyLines(content, 1)
+	if len(tail) == 0 {
+		return "", false
+	}
+	return tail[0], hasShellPromptSuffix(tail[0])
+}
+
+// lastNonEmptyLines returns up to n trailing non-blank lines of content,
+// last line first.
+func lastNonEmptyLines(content string, n int) []string {
+	lines := strings.Split(content, "\n")
+	var out []string
+	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
+		if t := strings.TrimSpace(lines[i]); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // shortID abbreviates an id for log lines without panicking on ids
 // shorter than the display width.
 func shortID(id string) string {
