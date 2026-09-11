@@ -125,7 +125,7 @@ countdown carry most of the value and cannot be wrong about facts the tool does 
 | Popup registry + launcher — `DefaultPopupConfigs`, `OpenPopup`, `PopupNames` | `bus/popup.go` |
 | Existing modals to match in style | `session-picker`, `switch-session`, `remote-sessions`, `save-memory`, `edit-config` |
 | Interactive TUI precedent | `tui/provider_select.go`, `tui/remote.go` |
-| `prefix + b` menu to hang a binding from | `config/tmux.conf:53` |
+| `prefix + m` menu to hang a binding from | `config/tmux.conf:53` |
 
 A new modal is a registry entry plus a renderer, not new plumbing.
 
@@ -154,7 +154,7 @@ A new modal is a registry entry plus a renderer, not new plumbing.
 
 ### Acceptance criteria
 
-- [ ] A modal opens from the `prefix + b` menu and shows current usage without leaving tmux
+- [ ] A modal opens from the `prefix + m` menu and shows current usage without leaving tmux
 - [ ] Figures come from **the providers' APIs**, and the modal's numbers **match the provider
       website** for the same period — parity checked by hand at least once and recorded
 - [ ] Each figure names its **source endpoint**; a figure with no verified endpoint is labelled as an
@@ -203,7 +203,7 @@ frames are testable without tmux.
 | `tools/muxcode/bus/popup.go` | `DefaultPopupConfigs`, `OpenPopup` |
 | `tools/muxcode/bus/prompt_agent.go` | `MUXCODE_OPENCODE_API_KEY` resolution chain |
 | `tools/muxcode/tui/styles.go` | Palette |
-| `config/tmux.conf` | `prefix + b` menu entry |
+| `config/tmux.conf` | `prefix + m` menu entry |
 | `docs/tui-style.md` | Renderer rules this must satisfy |
 
 ## Implementation
@@ -236,7 +236,7 @@ frames are testable without tmux.
 
 ### Phase 3: Modal
 
-- [ ] Register the modal; add the `prefix + b` entry
+- [ ] Register the modal; add the `prefix + m` entry
 - [ ] Pure renderer with `--render-once`
 - [ ] Explicit empty state; narrow-pane degradation
 

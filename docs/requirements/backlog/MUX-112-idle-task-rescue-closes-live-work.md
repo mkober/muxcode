@@ -140,6 +140,41 @@ The last point raises the priority of the advisory-vs-authoritative choice in
 [Phase 3](#phase-3-stop-losing-the-real-answer): a synthetic response that does not close the task
 would have left this node honestly `running` instead of falsely `done`.
 
+### Fourth occurrence, 2026-09-11 — the rescue overwrote an answer that already existed
+
+A variant worth separating from the three above: the agent was **not** running background work. It
+had **already answered**, and the answer did not correlate because it was sent as a new **request**
+instead of a correlated response. The rescue then replaced a real, complete reply with a pane dump.
+
+| Time | Event | Source |
+|------|-------|--------|
+| 09:54:22 | `idle-task-retry plan idle with unresponded task update-docs from edit — re-queuing (idle 33s)` | lifecycle |
+| 09:57 | `plan → edit [request:update-docs]` — the real reply, **type `request`**, no `--reply-to` | bus history |
+| 09:58:38 | `idle-task-rescue plan idle with unresponded task update-docs from edit (idle 32s, retry exhausted)` | lifecycle (`warn`) |
+| 09:58 | `plan → edit [response:response] [daemon: plan went idle without responding (retried once) — pane content follows]` | bus history |
+
+**Trigger:** plan replied with `muxcode send edit update-docs "…"` rather than
+`--type response --reply-to <id>`. A bare `send` is a new request, so edit's task
+(`1789134646`) stayed in-flight with nothing correlated against it, and the retry/rescue ladder ran
+to exhaustion against an agent that had already done the work. Diagnosed by edit from the history,
+confirmed by plan in the same records.
+
+Two things this occurrence adds:
+
+1. **The rescue is not only a live-work hazard — it is a correlation hazard.** The three cases above
+   are "closed work that was still running". This one is "closed work that was already finished",
+   and the synthesized pane dump **displaced a better answer that existed at the time**. Phase 3's
+   advisory-vs-authoritative choice covers both, but the second is easier to trigger: it needs no
+   background work at all, only a mis-typed reply.
+2. **An agent's reply-type habit is a contributing cause, and is cheap to fix.** `Send` could refuse,
+   or warn, when a role emits a bare `request` to an agent it currently holds an unresponded task
+   from — the pairing is already known to the task store. That is smaller than Phase 3 and would have
+   prevented this occurrence outright. Filed as an observation here rather than a new spec, because
+   the damage lands through this rescue path.
+
+_Recorded 2026-09-11 by plan, on edit's report. Plan was the offending agent; noted plainly because
+the habit is the trigger and the record should say so._
+
 ## Requirements
 
 ### Acceptance criteria

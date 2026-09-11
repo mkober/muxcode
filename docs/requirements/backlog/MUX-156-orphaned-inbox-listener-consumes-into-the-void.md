@@ -85,6 +85,39 @@ agent's own relaunch may be suppressed exactly when it is needed.
 | [`MUX-155`](./MUX-155-send-dedup-keys-on-target-not-sender.md) | Filed the same afternoon for plan's dropped notifies; edit's late `test153-followup` is **this** defect, not that one — the two were disentangled by checking each inbox |
 | [`MUX-050`](../completed/MUX-050-delivery-acknowledgement.md) | The receipt model this defect defeats from inside |
 
+### Third occurrence, 2026-09-11 — still firing in `is-advising-gateway`, a day later
+
+Found incidentally by plan (session `muxcode`) while diagnosing two of its own listener kills, which
+turned out to be ordinary turn-boundary reaping and unrelated.
+
+| Field | Value |
+|-------|-------|
+| PID | 21146 |
+| PPID | **1** (launchd) |
+| Command | `muxcode inbox --poll --loop` |
+| `AGENT_ROLE` | `serve` |
+| `BUS_SESSION` | **`is-advising-gateway`** |
+| Started | 2026-09-11 09:20:09, **~1 h 48 m** alive at observation |
+
+The same session as the 2026-09-10 entry above, a day later, on a different role — so the condition is
+**recurring in that session rather than a one-off**, and it survives across days. No attempt was made
+to read what it had consumed: the receipt names the role, not the process, which is the attribution
+gap this spec already records.
+
+**Not killed, deliberately.** It belongs to another session, plan holds no process-management role,
+and an agent killing a `PPID=1` process on ownership inferred from `ps` is precisely the mistake the
+watch agent was corrected for on 2026-09-10 — it killed a listener that turned out to be the run
+agent's own, already exited, on an unverified assumption. Ownership here *was* verified (the env
+carries `AGENT_ROLE`/`BUS_SESSION`), but verification establishes whose it is, not the authority to
+kill it. Reported instead.
+
+**Side finding worth its own attention: `ps eww` leaks credentials into agent output.** Identifying
+the orphan's role required reading its environment, and a wholesale `ps eww` dump printed
+`MUXCODE_OPENCODE_API_KEY` in clear text into the agent's conversation and thence its history file.
+`ScrubPIIWithNotice` covers `api`, `run` and `watch` output; a diagnostic run from any other role is
+unscrubbed. The narrow form — `ps eww -p <pid> | tr ' ' '\n' | grep -E '^(AGENT_ROLE|BUS_SESSION)='` —
+gets the same answer without the exposure and should be what any diagnosis of this defect uses.
+
 ## Requirements
 
 ### Acceptance criteria

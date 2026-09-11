@@ -592,7 +592,7 @@ Core code: `bus/reload_batch.go` (`ReloadBatch()`, `ReloadResult`, `ActiveAgentS
 
 An interactive TUI modal for visually picking a provider, model, and target agents. Supports single-agent reload (existing workflow) and multi-agent bulk reload.
 
-- **Keybinding**: `prefix + R` or `prefix + b → Provider`
+- **Keybinding**: `prefix + R` or `prefix + m → Provider` (the quick menu moved from `b` to `m`; `Provider` is `R` within it)
 - **Sections**: Provider (radio), Model (radio + custom input), Agents (checkboxes), Options (compact/persist checkboxes)
 - **Navigation**: `j`/`k`/arrows move, `Tab` switches section, `Space` selects, `Enter` confirms, `q`/`Esc` cancels
 

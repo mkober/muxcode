@@ -64,73 +64,37 @@ open items against the active spec.
 | ID | Spec | Since | State |
 |----|------|-------|-------|
 
-**Empty as of 2026-09-11 09:50.** All five specs that passed through `drafts/` this cycle are now in
-[`completed/`](../completed/), and each has lost its defects-table and category rows and gained a
-[registry](#completed-id-registry) row, per the rule stated below.
+**Empty as of 2026-09-11.** All five specs from this cycle are in [`completed/`](../completed/); each
+lost its defects-table and category rows and gained a [registry](#completed-id-registry) row.
 
-| Spec | Closed at | How |
-|------|-----------|-----|
-| **MUX-163** | 23/23 | fully closed |
-| **MUX-169** | **15/15** | its two deferred live items verified live 2026-09-10 15:55 |
-| **MUX-171** | **14/14** | its deferred live item verified 2026-09-10 16:36 |
-| **MUX-164** | 15/18 | closed on the user's instruction, three live items deferred |
-| **MUX-167** | 16/17 | closed on the user's instruction, one item deferred |
+| Spec | Closed | Open | Note |
+|------|--------|------|------|
+| MUX-163 | 23/23 | — | — |
+| MUX-169 | 15/15 | — | live items verified 2026-09-10 15:55; drop path itself still carried by unit tests + `test-startup-self-reply.sh` 15/0 |
+| MUX-171 | 14/14 | — | AC:63 **strengthened before closing** — the original wording passed on a *backgrounded* run with the busy-gate unexercised |
+| MUX-164 | 15/18 | 3 | need a codex launch in a **fresh untrusted temp dir**; a relaunch inside the trusted repo does not satisfy them |
+| MUX-167 | 16/17 | `:75` | phase-check passes with both controls; script red 39/19, all 19 the spawn regression ([MUX-178](#defects--prioritized)) |
 
-**Two of the five closed at full count only because their deferred items were later verified**, and
-both are worth reading as precedent for how a live-dependent item gets closed rather than dropped.
-MUX-169's two items were confirmed against a real codex relaunch on the hook road (zero
-`response:startup`, zero `loop-detected` at 5+ minutes), with the honest limitation recorded that the
-drop path itself was not exercised — no self-reply was emitted — so that half stays carried by the
-unit tests and `scripts/test-startup-self-reply.sh` (15/0). MUX-171's AC:63 was **rewritten before it
-was closed**, because a 7 m 14 s run had satisfied its original wording while the script was
-*backgrounded*, leaving the pane idle and the busy-gate unexercised; the strengthened wording demands
-a foreground run **and** a `stall-skipped-busy` row naming the task, and the closing run produced
-exactly that.
+**Rule.** A spec here keeps its [Defects](#defects--prioritized) row and category summary until it
+closes; only a **completed** spec loses both and gains a [registry](#completed-id-registry) row, and
+the defect ranks are renumbered once to stay contiguous.
 
-**The two closed short are recorded short, with named deferrals** — following the MUX-159 precedent,
-not rounded up:
+**Parked** — 2026-09-08, on the user's instruction that every unfinished spec leaves In progress; a
+return to `drafts/` is the user's call. Status lines read `Backlog — parked …`; their Defects and
+category rows carry the partial state.
 
-- **MUX-164 (15/18)** — its three items need a codex launch in a *fresh untrusted temp directory*.
-  Re-checked 2026-09-10 16:20 against this session's `review` codex relaunch, which happened inside
-  the already-trusted repo and therefore does **not** satisfy them.
-- **MUX-167 (16/17)** — `:75` is deferred. Its five phase-check assertions pass with both controls,
-  but `scripts/test-multi-phase-graph.sh` is **red overall at 39/19**, and all 19 failures are the
-  spawn/worktree regression now filed as [MUX-178](#defects--prioritized) — none in MUX-167's own
-  sections. `:75` needs a lap driven by a real reviewer `EXIT=0`-with-should-fixes verdict, carried
-  through to `implement`.
+| Spec | At | Issue |
+|------|----|-------|
+| MUX-145 | 9/38 | — |
+| MUX-153 | 3/19 | — |
+| MUX-144 | 17/33 | #74 |
+| MUX-154 | 17/27 | #75 |
 
-Before that it was **empty** from 09:44:
-MUX-159 (in it since 2026-09-08 23:00) closed at 61/67 with six
-deferred and moved to `completed/` on the user's `git mv`; its [registry](#completed-id-registry) row is
-below and the active-spec pointer followed the move. A spec in this table keeps
-its defects-table row and its category summary until it closes; only a **completed** spec loses those
-and gains a [registry](#completed-id-registry) row.
+PR #73 carries MUX-144 and MUX-154 work and closes neither.
+**[MUX-116](./MUX-116-commit-window-lazygit-diff-pane.md) is unblocked** by MUX-117.
 
-**Parked 2026-09-08 22:10 and 22:50:** MUX-145 (9/38) and MUX-153 (3/19), then MUX-144 (17/33,
-issue #74) and MUX-154 (17/27, issue #75), moved back to `backlog/` on the user's instruction that
-every unfinished spec leaves In progress. Their Status lines read `Backlog — parked …` with the prior
-record kept beneath, and their [Defects](#defects--prioritized) and category rows carry the partial
-state; a return to `drafts/` is the user's call. PR #73 carries MUX-144 and MUX-154 work and closes
-neither.
-
-**Previously:** `drafts/` was empty from 2026-09-02: MUX-131, MUX-133 and MUX-134 all closed
-and moved to [`completed/`](../completed/), joining MUX-132 and MUX-007 from the same branch. Their
-rows were removed from [Defects](#defects--prioritized) and
-[Reliability & observability](#reliability--observability) with the move, the defect ranks renumbered
-once to stay contiguous, and their ids recorded permanently in the
-[completed registry](#completed-id-registry).
-
-All five shared the branch `MUX-132-graph-retry-launders-gate-approval`, which is why each was
-committed by scope rather than by spec name — a commit staged by spec name would have mixed unrelated
-work.
-
-[`MUX-117`](../completed/MUX-117-pane-targeting-by-identity.md) closed and moved to
-[`completed/`](../completed/) on 2026-08-31 — 33/33 items, all five phases, verified by
-`scripts/test-pane-targeting.sh` at **22 passed, 0 failed**. Its row now lives in the
-[completed registry](#completed-id-registry), and its former rows in
-[Defects](#defects--prioritized) and [Reliability & observability](#reliability--observability)
-were removed with the move. **[MUX-116](./MUX-116-commit-window-lazygit-diff-pane.md) is unblocked**
-by it.
+_Earlier occupants are in the [registry](#completed-id-registry); this section does not keep a
+chronology of its own past states._
 
 ### Defects — prioritized
 
@@ -186,32 +150,22 @@ Throughput is the wrong thing to optimize while either is open.
 Each row's `Why here` gives the **ordering** reason only — the evidence, mechanism and amendments live
 in the spec and in the topic sections below.
 
-**Re-prioritized 2026-09-10 — the resume cluster moved from the bottom to the top of tier 1.** The user
-reported that the single biggest day-to-day cost is *Claude stopping and needing `claude --resume`, and
-coming back without its profile*. That symptom is spread across four rows which sat at **#25, #26, #34
-and #36**, most of them in tier 5 ("restore rebuild") — the table had them ranked by build order and
-nothing in it accounted for *costs a human an intervention several times a day*. They now occupy
-**#5–#8**, in dependency order:
+**Re-prioritized 2026-09-10 — the resume cluster moved to the top of tier 1** (was #25/#26/#34/#36,
+mostly tier 5), on the user's report that *Claude stopping, needing `claude --resume`, and coming back
+without its profile* is their biggest day-to-day cost. Build order had ranked it; nothing accounted for
+"costs a human an intervention several times a day".
 
-| New | Row | Why it moved |
-|-----|-----|--------------|
-| #5 | MUX-126 | The "no profile on resume" half. **No precedence dependency**, so nothing blocked it from moving |
-| #6 | MUX-141 | Gate 2 of 3 on MUX-139 |
-| #7 | MUX-142 | Gate 3 of 3 on MUX-139 |
-| #8 | MUX-139 | The "nothing resumes it" half — **kept below both its gates** |
+| New | Row | Why |
+|-----|-----|-----|
+| #4 | MUX-126 | the "no profile on resume" half; **no precedence dependency**, so nothing blocked it |
+| #5 | MUX-141 | gate 2 of 3 on MUX-139 |
+| #6 | MUX-142 | gate 3 of 3 on MUX-139 |
+| #8 | MUX-139 | the "nothing resumes it" half — **kept below both gates**; promoting it above its own dependencies would recreate the backwards edge this section was restructured to remove |
 
-**MUX-139 was deliberately not promoted above #8.** Its `Depends on` names MUX-141 and MUX-142, and
-this table's governing invariant is that every precedence edge points **up**. Raising MUX-139 to the
-top on severity alone would recreate exactly the backwards edge the section was restructured to remove
-— so the way to make it ship sooner is to raise its gates, which is what happened. Its `Why here` still
-reads "highest blast radius, ships last"; "last" is now #8 rather than #36.
-
-Note also that the *other* half of the user's symptom is not a backlog row at all:
-[MUX-136](../completed/MUX-136-bare-resume-loses-agent-definition.md) is in `completed/` but closed **at
-32/33 by acceptance**, carrying an explicit residual — a bare-resumed agent runs unconstrained for ~60 s,
-`edit` unbounded by design (Exception A), and indefinitely after `definitionReloadCap`=3 (Exception B).
-The behaviour the user is seeing is a **known, accepted gap in a spec marked Complete**, not a
-regression, and MUX-126 is the row that closes it.
+The rest of that symptom is not a row here:
+[MUX-136](../completed/MUX-136-bare-resume-loses-agent-definition.md) closed **at 32/33 by acceptance**
+with the residual stated — unconstrained ~60 s, `edit` unbounded (Exception A), indefinite past
+`definitionReloadCap`=3 (Exception B). A known accepted gap, not a regression; MUX-126 closes it.
 
 | # | T | ID | Defect | Sev | Depends on | Why here |
 |---|---|----|--------|-----|------------|----------|
