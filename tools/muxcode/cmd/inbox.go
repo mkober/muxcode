@@ -99,7 +99,7 @@ func readInbox(session, role, from string, peek bool) []bus.Message {
 		os.Exit(1)
 	}
 
-	return msgs
+	return bus.FilterLoopingSelfSends(msgs)
 }
 
 // inboxPoll watches the trigger file for changes and reads inbox when notified.

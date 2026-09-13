@@ -68,7 +68,7 @@ Auto-resume handles the deaths the daemon notices. The operator also needs a del
 "bring everything back" control for the case where they are looking at a wrecked session and want it
 restored in one action.
 
-- [ ] A `Restart Agents` entry in the MuxCode quick menu (`config/tmux.conf`, the `prefix + b` `display-menu`), placed next to `Provider`
+- [ ] A `Restart Agents` entry in the MuxCode quick menu (`config/tmux.conf`, the `prefix + m` `display-menu`), placed next to `Provider`
 - [ ] The modal lists providers with **live agent counts** (`claude N` / `opencode M` / `all`), confirm before acting
 - [ ] Live per-agent progress, reusing the multi-agent reload progress view (`tui/provider_select.go`, `bus.ReloadResult`) rather than a second implementation
 - [ ] Claude agents restart through the **MUX-139 resume path** with the role's `--agent`/`--agents` carried — the same definition guard as auto-resume, not a parallel launch path
@@ -143,7 +143,7 @@ Therefore:
 | `tools/muxcode/bus/spawn.go` | worker resume / fail-loud |
 | `tools/muxcode/bus/diagnose.go` | `resumable-session` finding |
 | `tools/muxcode/cmd/agent.go` | `agent launch <role> --resume [<id>]` |
-| `config/tmux.conf` | `Restart Agents` entry in the `prefix + b` menu |
+| `config/tmux.conf` | `Restart Agents` entry in the `prefix + m` menu |
 | `tools/muxcode/bus/reload.go`, `reload_batch.go` | restart selection incl. dead agents; edit resume-only override |
 | `tools/muxcode/tui/provider_select.go` | reused per-agent progress view |
 | `tools/muxcode/cmd/reload.go` | `--resume` alongside existing `--all`/`--provider` |
@@ -182,7 +182,7 @@ Therefore:
 
 ### Phase 5: Operator restart control
 
-- [ ] `Restart Agents` entry in the `prefix + b` `display-menu` (`config/tmux.conf`), next to `Provider`
+- [ ] `Restart Agents` entry in the `prefix + m` `display-menu` (`config/tmux.conf`), next to `Provider`
 - [ ] Modal: provider list with live agent counts (`claude N` / `opencode M` / `all`) + confirm step
 - [ ] Restart selection by role and provider **including dead agents** (Decision 2), with the existing `reload --all` liveness filter left untouched + test covering both selection modes
 - [ ] Claude targets routed through the Phase 1–2 resume path, definition carried and verified

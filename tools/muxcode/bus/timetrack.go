@@ -199,25 +199,47 @@ const openCodeWorkingMarker = "▸"
 //     signature ("esc to interrupt", or a gerund ellipsis with the
 //     "(elapsed · tokens · …)" counter) even while the ❯ prompt is visible. A
 //     completed recap ("Cooked for 1m") and a plain idle prompt do not match.
-//   - Non-hook TUI (OpenCode): the "▸" running marker (flips to "▣" on
-//     completion). isClaudeThinking is NOT applied here — OpenCode truncates paths
-//     with "…" and uses " · " separators, which would false-positive its heuristic.
-func paneShowsAgentWorking(content string, hookProvider bool) bool {
-	if hookProvider {
+//   - Every other TUI (OpenCode, Codex): the "▸" running marker (OpenCode flips
+//     it to "▣" on completion), or the providers' shared "esc to interrupt"
+//     hint via LooksLikeWorkingLine. Codex draws `Working (… esc to interrupt)`
+//     and carries no "▸", so until 2026-09-11 this branch answered false for
+//     every busy Codex agent — ForceDeliver, RedriveTask and the daemon's stall
+//     check all gate on it, so MUX-171's promise that no road re-drives a
+//     working pane held for Claude alone. The rest of isClaudeThinking is still
+//     NOT applied here: OpenCode truncates paths with "…" and uses " · "
+//     separators, which would false-positive that heuristic. Only the literal
+//     hint is shared, and the caller has already narrowed content to the live
+//     tail, so a completed turn's footer in scrollback cannot match.
+func paneShowsAgentWorking(content string, claudeTUI bool) bool {
+	if claudeTUI {
 		return isClaudeThinking(content)
 	}
-	return strings.Contains(content, openCodeWorkingMarker)
+	return strings.Contains(content, openCodeWorkingMarker) || LooksLikeWorkingLine(content)
 }
 
 // AgentIsWorking reports whether the agent in the given role's pane is actively
 // processing a turn. Returns false when the pane can't be captured (window
 // closed, no tmux) so a missing pane never counts as work.
+//
+// The working check is scoped to the pane's live TAIL, not the whole capture.
+// "Working" is a CURRENT-STATE property: the spinner and its "esc to interrupt"
+// counter always render in the bottom few lines. The capture is deliberately
+// wider than that — TmuxCapturePaneLines(…, 12) is `capture-pane -S -12`, which
+// starts 12 lines back in HISTORY and runs through the visible pane — so judging
+// all of it lets scrollback masquerade as the present: one completed turn, a
+// quoted footer, or an agent whose own output discusses "esc to interrupt" (the
+// plan agent writing about idle detection did exactly this) pins the pane busy
+// INDEFINITELY. Since this gate is what withholds delivery, that failure mode is
+// not a lost tick but permanent refusal of force recovery — the MUX-171 fix
+// re-shaped into the opposite defect. paneLiveTail is the same primitive
+// PaneShowsRecoverableIdle uses for this exact reason; reuse it rather than
+// growing a second spinner parser that can drift from it.
 func AgentIsWorking(session, role string) bool {
 	out, err := TmuxCapturePaneLines(PaneTarget(session, role), 12)
 	if err != nil {
 		return false
 	}
-	return paneShowsAgentWorking(out, IsClaudeTUI(ResolveProvider(role)))
+	return paneShowsAgentWorking(paneLiveTail(out), IsClaudeTUI(ResolveProvider(role)))
 }
 
 // AnyAgentWorking reports whether any worker agent (BranchTimeActivityRoles) is

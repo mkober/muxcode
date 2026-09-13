@@ -202,6 +202,16 @@ func LoadGraphFile(path string) (*Graph, error) {
 }
 
 // nodeByID returns a lookup map, reporting missing and duplicate ids into v.
+// node returns the node with the given id, or nil.
+func (g *Graph) node(id string) *Node {
+	for i := range g.Nodes {
+		if g.Nodes[i].ID == id {
+			return &g.Nodes[i]
+		}
+	}
+	return nil
+}
+
 func (g *Graph) nodeByID(v *GraphValidation) map[string]*Node {
 	byID := make(map[string]*Node, len(g.Nodes))
 	for i := range g.Nodes {
@@ -329,10 +339,19 @@ func (g *Graph) validateNode(n *Node, v *GraphValidation) {
 			v.errf("condition node %q has no conditions", n.ID)
 		}
 		for _, w := range ValidateConditions(n.Conditions) {
-			// Unknown condition types are warnings for chains (forward
-			// compatibility) but errors here: the executor routes edges on
-			// the evaluation result, so a typo would silently route failure.
+			// Errors here, not chain warnings: a typo would silently route failure.
 			v.errf("condition node %q: %s", n.ID, w)
+		}
+		if raw, has := n.Conditions["spec_phase_committable"]; has {
+			id, isStr := raw.(string)
+			switch target := g.node(id); {
+			case !isStr || id == "":
+				v.errf("condition node %q: spec_phase_committable must name the guarded commit node", n.ID)
+			case target == nil:
+				v.errf("condition node %q: spec_phase_committable names unknown node %q", n.ID, id)
+			case target.Guard != GuardPhaseProgress:
+				v.errf("condition node %q: spec_phase_committable names %q, which lacks the %s guard the check mirrors", n.ID, id, GuardPhaseProgress)
+			}
 		}
 	case NodeJoin:
 		if n.Join == "" {

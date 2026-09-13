@@ -1,11 +1,42 @@
 package bus
 
 import (
+	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 )
+
+// A blank frame is transient, so its refusal must carry ErrInjectionSkipped:
+// the receipt-gap recovery re-arms its episode only for that sentinel, and a
+// plain error would spend the episode's one attempt on a redraw. The live
+// follow-up is the control — without it, a guard that refused everything
+// forever would satisfy the first half.
+func TestCaptureInjectionTarget_BlankRefusalIsRetryable(t *testing.T) {
+	blank := true
+	orig := tmuxOutputRunner
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		if blank {
+			return "\n   \n\n", nil
+		}
+		return "  no messages\n\n❯\n", nil
+	}
+	t.Cleanup(func() { tmuxOutputRunner = orig })
+
+	_, err := captureInjectionTarget("s", "s:edit.1", "edit")
+	if err == nil {
+		t.Fatal("a blank capture must refuse rather than wave the payload through")
+	}
+	if !errors.Is(err, ErrInjectionSkipped) {
+		t.Errorf("blank refusal must be retryable (ErrInjectionSkipped), got %v", err)
+	}
+
+	blank = false
+	if _, err := captureInjectionTarget("s", "s:edit.1", "edit"); err != nil {
+		t.Errorf("a live pane after a blank frame must be accepted, got %v", err)
+	}
+}
 
 // --- Interface conformance ---
 

@@ -428,6 +428,7 @@ func TestCodexStopDelivery_DropsSelfLoopAndChrome(t *testing.T) {
 	}
 	for _, m := range []Message{
 		NewMessage("build", "build", "request", "build", "self-addressed loop artifact", ""),
+		NewMessage("build", "build", "response", "startup", "self-addressed startup reply", "boot-id"),
 		NewMessage("edit", "build", "request", "build", "real work", ""),
 		NewMessage("test", "build", "response", "test", "───────────────────────────────", ""),
 	} {
@@ -443,6 +444,9 @@ func TestCodexStopDelivery_DropsSelfLoopAndChrome(t *testing.T) {
 	}
 	if strings.Contains(action.Reason, "self-addressed loop artifact") {
 		t.Error("self-addressed request delivered")
+	}
+	if strings.Contains(action.Reason, "self-addressed startup reply") {
+		t.Error("self-addressed startup reply delivered — the 2026-09-09 test-agent echo")
 	}
 	if strings.Contains(action.Reason, "───") {
 		t.Error("chrome response delivered")

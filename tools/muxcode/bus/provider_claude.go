@@ -382,18 +382,20 @@ func (p *ClaudeCodeProvider) Compact(session, role, target string) error {
 		return nil
 	}
 
-	// Clear any residual input
-	_ = exec.Command("tmux", "send-keys", "-t", target, "Escape").Run()
-	time.Sleep(100 * time.Millisecond)
-	_ = exec.Command("tmux", "send-keys", "-t", target, "C-u").Run()
-	time.Sleep(100 * time.Millisecond)
+	// A failed clear would append /compact to parked composer text and submit
+	// the pair; idle says the agent rests, not that the composer emptied.
+	if err := TmuxClearComposer(target); err != nil {
+		return fmt.Errorf("clear composer before /compact: %w", err)
+	}
 
 	// Inject /compact + Enter (separate calls per tmux send-keys convention)
-	if err := exec.Command("tmux", "send-keys", "-t", target, "/compact").Run(); err != nil {
+	if err := TmuxSendKeys(target, "/compact"); err != nil {
 		return fmt.Errorf("send /compact: %w", err)
 	}
 	time.Sleep(200 * time.Millisecond)
-	_ = exec.Command("tmux", "send-keys", "-t", target, "Enter").Run()
+	if err := TmuxSendKeys(target, "Enter"); err != nil {
+		return fmt.Errorf("submit /compact: %w", err)
+	}
 	return nil
 }
 

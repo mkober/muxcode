@@ -151,6 +151,9 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 	if err != nil || len(msgs) == 0 {
 		return nil // nothing to inject
 	}
+	if _, err := captureInjectionTarget(session, target, role); err != nil {
+		return err
+	}
 
 	// Deliver a bounded batch so a large inbox cannot build an argv that
 	// send-keys rejects outright; the remainder drains on later cycles.

@@ -256,6 +256,9 @@ func TestCodexClassifyPane(t *testing.T) {
 		{"fatal", "FATAL: authentication failed", PaneNotReady},
 		{"empty", "", PaneNotReady},
 		{"loading", "Starting...", PaneNotReady},
+		{"trust_prompt_live", codexTrustPromptPane, PaneTrustPrompt},
+		{"trust_prompt_scrolled_past_composer", codexComposerPane, PaneIdle},
+		{"trust_text_quoted_in_output", codexBanner + "• The prompt said: Do you trust the contents of this directory?\n› Ask Codex to do anything\n", PaneIdle},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

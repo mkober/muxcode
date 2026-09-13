@@ -761,7 +761,7 @@ Success criteria:
 ### Phase 5: polish and docs
 
 Success criteria:
-- [ ] `muxcode design` added to quick menu (`prefix + b`)
+- [ ] `muxcode design` added to quick menu (`prefix + m`)
 - [ ] Designer agent definition documented
 - [ ] Architecture docs updated with design mode
 - [ ] Configuration docs updated (env vars, templates)

@@ -105,7 +105,11 @@ const interruptPairDelay = 300 * time.Millisecond
 // GracefulStop stops an agent process gracefully:
 //  1. Optionally triggers context compaction before stopping (--compact flag)
 //  2. Sends provider-specific exit sequence:
-//     - Claude Code: Escape (cancel input) → /exit + Enter (clean exit command)
+//     - Claude Code: TmuxClearComposer (Escape → C-e absorber → C-e → C-u, so
+//       the pending ESC fuses with the absorber rather than the command's
+//       first byte, and the composer is emptied whole — MUX-163) then /exit
+//       and Enter as separate writes, since Claude's TUI drops an Enter
+//       arriving in the same pty write as the text before it
 //     - OpenCode/Codex/Local: C-c to interrupt
 //  3. Polls for process exit (500ms intervals, max 10s), answering Claude
 //     Code's "background shells are still running" confirmation dialog with
@@ -127,17 +131,10 @@ func GracefulStop(session, role string, compact bool) error {
 
 	// Provider-specific exit sequence
 	if IsClaudeTUI(provider) {
-		// Claude Code: /exit is the clean exit command.
-		// First Escape to cancel any pending input, then /exit + Enter.
-		// send-keys text and Enter must be separate calls with a delay
-		// to avoid Claude Code's TUI dropping the Enter key.
-		exec.Command("tmux", "send-keys", "-t", target, "Escape").Run()
+		_ = TmuxClearComposer(target) // see doc comment: absorbed Escape, separate Enter
+		_ = TmuxSendKeys(target, "/exit")
 		time.Sleep(200 * time.Millisecond)
-		exec.Command("tmux", "send-keys", "-t", target, "C-u").Run()
-		time.Sleep(100 * time.Millisecond)
-		exec.Command("tmux", "send-keys", "-t", target, "/exit").Run()
-		time.Sleep(200 * time.Millisecond)
-		exec.Command("tmux", "send-keys", "-t", target, "Enter").Run()
+		_ = TmuxSendKeys(target, "Enter")
 	} else {
 		// OpenCode, Codex CLI, Local LLM: C-c interrupts and exits.
 		pairedInterrupt(target)

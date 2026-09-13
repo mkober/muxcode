@@ -262,10 +262,10 @@ func TestBranchTimeActivityRolesOverride(t *testing.T) {
 
 func TestPaneShowsAgentWorking(t *testing.T) {
 	cases := []struct {
-		name         string
-		content      string
-		hookProvider bool
-		want         bool
+		name      string
+		content   string
+		claudeTUI bool
+		want      bool
 	}{
 		{
 			"claude working (esc to interrupt)",
@@ -302,9 +302,27 @@ func TestPaneShowsAgentWorking(t *testing.T) {
 			"  ~/Repos/…/is-advising-gateway · main\n  80.1K (8%) · $0.44  ctrl+p commands",
 			false, false,
 		},
+		// Codex is a hook provider but not a Claude TUI, so it takes the
+		// non-Claude branch and carries no "▸". Busy must be positive here or
+		// every re-drive road treats a working Codex agent as idle.
+		{
+			"codex busy (Working footer with the shared hint)",
+			"• Ran 2 shell commands\n\nWorking (12s · esc to interrupt)",
+			false, true,
+		},
+		{
+			"codex idle at its composer",
+			"› Ask Codex to do anything\n  gpt-6-astra medium · ~/Repos/mkober/muxcode",
+			false, false,
+		},
+		{
+			"codex idle with a completed recap (no stale busy)",
+			"• Done in 3m 4s\n\n› Ask Codex to do anything",
+			false, false,
+		},
 	}
 	for _, c := range cases {
-		if got := paneShowsAgentWorking(c.content, c.hookProvider); got != c.want {
+		if got := paneShowsAgentWorking(c.content, c.claudeTUI); got != c.want {
 			t.Errorf("%s: paneShowsAgentWorking=%v, want %v", c.name, got, c.want)
 		}
 	}

@@ -19,10 +19,10 @@
 # Sections 6-8 (MUX-131) lift that deviation for the implement node only:
 # Defect A lives in the spawn dispatch/harvest path itself, so a send-node
 # stand-in cannot reach it. Hermeticity holds because the scratch session's
-# environment points the spawn role's CLI at a binary that cannot exist —
-# `agent launch` exits before exec, the pane's shell survives (which is all
-# worker-reuse liveness requires), and this script plays the worker over
-# the bus. Covered end to end: worktree output ported to the checkout
+# environment points the spawn role's CLI at a local stub that prints an
+# idle `❯` prompt and blocks — no AI CLI and no network, while the pane
+# stays alive for the worker-reuse checks — and this script plays the worker
+# over the bus. Covered end to end: worktree output ported to the checkout
 # UNCOMMITTED before build dispatches, one worker reused across phases
 # (spawn count from the store), the no-op iteration, worktree advance
 # after the gated commit, and a clobber conflict failing the spawn node
@@ -116,22 +116,41 @@ export MUXCODE_DEDUP_WINDOW=0
 export MUXCODE_SESSION_REPO_DIR="$REPO"
 
 DPID=""
+# cleanup tears down the scratch session, bus dir and worktrees. Set
+# MUXCODE_TEST_KEEP=1 to preserve $WORK instead: a failing spawn section is
+# undiagnosable once its lifecycle log and spawn store are deleted.
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null
   tmux kill-session -t "$BUS_SESSION" 2>/dev/null
+  [ "${MUXCODE_TEST_KEEP:-}" = "1" ] && { echo "  (kept for diagnosis: $WORK)"; return; }
   rm -rf "$BD" "$WORK" "$WTBASE"
 }
 trap cleanup EXIT
 
 tmux new-session -d -s "$BUS_SESSION" -n edit -x 120 -y 30
 # Session env reaches every pane the daemon later creates (spawn windows).
-# The spawn's `agent launch edit` must fail fast instead of booting a real
-# AI CLI: an unresolvable CLI binary errors before exec, leaving the pane's
-# shell alive — which is all worker-reuse liveness requires. The script
-# itself plays the worker over the bus.
+# The spawn's `agent launch edit` must boot no real AI CLI, and must not
+# leave a bare shell either: captureInjectionTarget (MUX-164) refuses to
+# type into a pane whose last line ends in `$`, `%`, `->` or a short `>`.
+# The earlier fixture named a binary that cannot exist, so `agent launch`
+# died and left the worker pane at a shell prompt — every worker seed was
+# then refused with `injection-refused`, the worker never ran, and the
+# harvest reported "nothing to port" while 18 spawn checks failed. This
+# stub stands in as an idle agent instead: it shows the `❯` the guard
+# requires and blocks, keeping the pane alive for the worker-reuse checks.
+# The script itself plays the worker over the bus, so whatever the stub
+# reads is inert.
+cat > "$WORK/stub-agent" <<'STUB'
+#!/usr/bin/env bash
+while :; do
+  printf '\n❯ '
+  read -r _ || sleep 5
+done
+STUB
+chmod +x "$WORK/stub-agent"
 tmux set-environment -t "$BUS_SESSION" BUS_SESSION "$BUS_SESSION"
 tmux set-environment -t "$BUS_SESSION" MUXCODE_CONFIG "$WORK/empty-config"
-tmux set-environment -t "$BUS_SESSION" MUXCODE_EDIT_CLI "muxcode-hermetic-absent-cli"
+tmux set-environment -t "$BUS_SESSION" MUXCODE_EDIT_CLI "$WORK/stub-agent"
 "$MUX" init >/dev/null 2>&1
 
 CAPTURED=""
@@ -174,9 +193,22 @@ wait_request() {
 
 # answer_request <role> [text] — consume the role's inbox (clutter
 # included) and reply to the request wait_request captured.
+#
+# The EXIT=0 sentinel is not decoration, it is the verdict. deriveSendOutcome
+# accepts exactly three: a response with action "error", an authoritative
+# history row for the role newer than dispatch, or an EXIT=<n> sentinel in the
+# payload. These fake agents run no hooks, so they write no authoritative row —
+# leaving the sentinel as the only verdict available to them. Without it every
+# send node finishes outcome=unknown, and an unknown outcome with no "unknown"
+# edge parks the node on an unverified hold: the run stalls at the FIRST send
+# node with no failure and nothing to approve. That is why this script never
+# recorded a clean run.
+#
+# Appended rather than replacing $2 so a caller's own text survives, and last
+# in the payload because parseExitSentinel takes the LAST match (MUX-154).
 answer_request() {
   AGENT_ROLE="$1" "$MUX" inbox >/dev/null 2>&1
-  AGENT_ROLE="$1" "$MUX" send edit response "${2:-done}" --type response --reply-to "$REQ_ID" >/dev/null 2>&1
+  AGENT_ROLE="$1" "$MUX" send edit response "${2:-done} EXIT=0" --type response --reply-to "$REQ_ID" >/dev/null 2>&1
 }
 
 # wait_and_answer <role> <action> — wait_request + immediate answer, for
@@ -278,6 +310,7 @@ cat > "$WORK/multiphase.json" <<'EOF'
    {"id": "fix", "type": "send", "role": "edit", "action": "g-edit", "message": "fix"},
    {"id": "review", "type": "send", "role": "review", "action": "g-review", "message": "review"},
    {"id": "update-spec", "type": "send", "role": "plan", "action": "g-verify", "message": "Check off ${current_phase}"},
+   {"id": "phase-check", "type": "condition", "conditions": {"spec_phase_committable": "commit"}},
    {"id": "phase-gate", "type": "wait_human", "message": "Approve committing ${completed_phase} (commit only)"},
    {"id": "commit", "type": "send", "role": "commit", "action": "g-commit", "guard": "phase-progress", "message": "Commit ${completed_phase}"},
    {"id": "loop-check", "type": "condition", "conditions": {"spec_phases_remaining": true}},
@@ -292,7 +325,9 @@ cat > "$WORK/multiphase.json" <<'EOF'
    {"from": "test", "to": "fix", "outcome": "failure"},
    {"from": "fix", "to": "build", "max_iterations": 3},
    {"from": "review", "to": "update-spec"},
-   {"from": "update-spec", "to": "phase-gate"},
+   {"from": "update-spec", "to": "phase-check"},
+   {"from": "phase-check", "to": "phase-gate"},
+   {"from": "phase-check", "to": "stuck-gate", "outcome": "failure"},
    {"from": "phase-gate", "to": "commit"},
    {"from": "commit", "to": "loop-check"},
    {"from": "commit", "to": "stuck-gate", "outcome": "failure"},
@@ -401,22 +436,64 @@ case "$CAPTURED" in
 esac
 "$MUX" graph cancel "$RID2" >/dev/null 2>&1
 
-# --- 5. Stuck phase: spec never updated → commit declines into the gate ----
+# --- 5. Incomplete phase: routed to the stuck gate WITHOUT asking a human --
+# MUX-167. Before the phase-check condition an open phase still reached
+# phase-gate, a human approved the commit, and the phase-progress guard
+# declined it a second later — four such approvals on run 1788966148.
+# Now phase-check routes an open phase straight to stuck-gate, so a human
+# is asked to approve a commit only when the guard will accept it.
 write_spec " " " " " "
 RID3="$("$MUX" graph run --file "$WORK/multiphase.json" 2>&1 | grep -o 'Started run [^ ]*' | awk '{print $3}')"
 wait_and_answer edit g-edit; wait_and_answer build g-build; wait_and_answer test g-test; wait_and_answer review g-review
 wait_and_answer plan g-verify   # answered WITHOUT checking anything off
-wait_node_state "$RID3" phase-gate waiting || bad "stuck run: gate never waited"
-approve_gate "$RID3" phase-gate >/dev/null 2>&1
 if wait_node_state "$RID3" stuck-gate waiting; then
-  ok "incomplete phase declined its commit into the stuck gate (gate-and-ask)"
+  ok "open phase routed straight to the stuck gate (phase-check)"
 else
-  bad "stuck-gate never armed: commit=$(node_state "$RID3" commit)"
+  bad "stuck-gate never armed: phase-check=$(node_state "$RID3" phase-check) phase-gate=$(node_state "$RID3" phase-gate)"
+fi
+# The discriminating assertion. A run that REACHED phase-gate reproduces the
+# defect even if it later declined, so this checks the gate never armed at
+# all: neither marker file exists (.pending while blocking, .approved once
+# released), and the node never entered waiting.
+pg_state="$(node_state "$RID3" phase-gate)"
+if [ "$pg_state" != "waiting" ] \
+  && [ ! -e "$BD/graphs/$RID3/approvals/phase-gate.pending" ] \
+  && [ ! -e "$BD/graphs/$RID3/approvals/phase-gate.approved" ]; then
+  ok "no human was asked to approve the withheld commit (phase-gate=${pg_state:-unvisited}, no marker)"
+else
+  bad "phase-gate armed for an open phase (state=$pg_state) — the pre-MUX-167 ask-then-decline"
 fi
 commit_reqs="$(AGENT_ROLE=commit "$MUX" inbox --peek 2>/dev/null | grep -c 'Type: request' || true)"
 [ "$commit_reqs" -eq 0 ] && ok "withheld commit never reached the commit role" \
   || bad "commit dispatched despite incomplete phase"
 "$MUX" graph cancel "$RID3" >/dev/null 2>&1
+
+# --- 5b. Positive control: the SAME fixture with the phase CLOSED ----------
+# Without this pair, section 5 passes on a graph that could never reach
+# phase-gate under any conditions.
+write_spec " " " " " "
+RID3B="$("$MUX" graph run --file "$WORK/multiphase.json" 2>&1 | grep -o 'Started run [^ ]*' | awk '{print $3}')"
+wait_and_answer edit g-edit; wait_and_answer build g-build; wait_and_answer test g-test; wait_and_answer review g-review
+complete_current_phase          # close the phase BEFORE plan answers
+wait_and_answer plan g-verify
+if wait_node_state "$RID3B" phase-gate waiting; then
+  ok "positive control: a closed phase still reaches phase-gate"
+else
+  bad "closed phase never reached phase-gate: phase-check=$(node_state "$RID3B" phase-check) stuck=$(node_state "$RID3B" stuck-gate)"
+fi
+
+# --- 5c. Backstop: the guard still declines if the spec re-opens ----------
+# phase-check is an EARLIER ask, not a replacement for the phase-progress
+# guard. Re-opening the spec after the condition passed must still be
+# caught at the commit, or the fix has traded one hole for another.
+perl -i -pe 's/- \[x\]/- [ ]/ && ($u=1) unless $u' "$SPEC_FILE"
+approve_gate "$RID3B" phase-gate >/dev/null 2>&1
+if wait_node_state "$RID3B" stuck-gate waiting; then
+  ok "negative control: spec re-opened after the gate — phase-progress guard still declined"
+else
+  bad "guard backstop never fired after the spec re-opened: commit=$(node_state "$RID3B" commit)"
+fi
+"$MUX" graph cancel "$RID3B" >/dev/null 2>&1
 
 # --- 6. Spawn fixture: implement is a REAL spawn node (MUX-131) ------------
 # Derived from the base fixture by rewriting ONLY the implement node, so
@@ -677,20 +754,21 @@ fi
 "$MUX" graph cancel "$RID_R" >/dev/null 2>&1
 
 # --- Coverage floor --------------------------------------------------------
-# Floor == max (MUX-131 Phase 5): a clean full pass emits EXACTLY 52
+# Floor == max (MUX-131 Phase 5): a clean full pass emits EXACTLY 55
 # checks: 4 validation + daemon + headline start + 3 per-phase implement
 # targets + 3 ordered commits + 4 termination/push + start-at-2 +
-# 2 stuck-phase + 1 spawn fixture + 18 spawn-run + 9 conflict-control +
-# 5 replacement-control. Equality, not >=: a floor
+# 5 phase-check routing (3 open-phase + positive control + guard
+# backstop, MUX-167) + 1 spawn fixture + 18 spawn-run + 9 conflict-control
+# + 5 replacement-control. Equality, not >=: a floor
 # below max lets newly added checks silently raise max above the floor,
 # and a partially short-circuited run can then still report green. It
 # counts checks EXECUTED (pass + fail); a failing run exits 1 regardless
 # of this check, so equality only ever gates green runs.
 total=$((pass + fail))
-if [ "$total" -eq 52 ]; then
+if [ "$total" -eq 55 ]; then
   ok "coverage floor met and equals max ($total checks executed)"
 else
-  bad "coverage floor mismatch — $total checks executed, want exactly 52 (floor == max; a skipped or drifted run must not report green)"
+  bad "coverage floor mismatch — $total checks executed, want exactly 55 (floor == max; a skipped or drifted run must not report green)"
 fi
 
 # --- Summary ---------------------------------------------------------------

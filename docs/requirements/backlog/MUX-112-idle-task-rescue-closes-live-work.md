@@ -140,6 +140,118 @@ The last point raises the priority of the advisory-vs-authoritative choice in
 [Phase 3](#phase-3-stop-losing-the-real-answer): a synthetic response that does not close the task
 would have left this node honestly `running` instead of falsely `done`.
 
+### Fourth occurrence, 2026-09-11 — the rescue overwrote an answer that already existed
+
+A variant worth separating from the three above: the agent was **not** running background work. It
+had **already answered**, and the answer did not correlate because it was sent as a new **request**
+instead of a correlated response. The rescue then replaced a real, complete reply with a pane dump.
+
+| Time | Event | Source |
+|------|-------|--------|
+| 09:54:22 | `idle-task-retry plan idle with unresponded task update-docs from edit — re-queuing (idle 33s)` | lifecycle |
+| 09:57 | `plan → edit [request:update-docs]` — the real reply, **type `request`**, no `--reply-to` | bus history |
+| 09:58:38 | `idle-task-rescue plan idle with unresponded task update-docs from edit (idle 32s, retry exhausted)` | lifecycle (`warn`) |
+| 09:58 | `plan → edit [response:response] [daemon: plan went idle without responding (retried once) — pane content follows]` | bus history |
+
+**Trigger:** plan replied with `muxcode send edit update-docs "…"` rather than
+`--type response --reply-to <id>`. A bare `send` is a new request, so edit's task
+(`1789134646`) stayed in-flight with nothing correlated against it, and the retry/rescue ladder ran
+to exhaustion against an agent that had already done the work. Diagnosed by edit from the history,
+confirmed by plan in the same records.
+
+Two things this occurrence adds:
+
+1. **The rescue is not only a live-work hazard — it is a correlation hazard.** The three cases above
+   are "closed work that was still running". This one is "closed work that was already finished",
+   and the synthesized pane dump **displaced a better answer that existed at the time**. Phase 3's
+   advisory-vs-authoritative choice covers both, but the second is easier to trigger: it needs no
+   background work at all, only a mis-typed reply.
+2. **An agent's reply-type habit is a contributing cause, and is cheap to fix.** `Send` could refuse,
+   or warn, when a role emits a bare `request` to an agent it currently holds an unresponded task
+   from — the pairing is already known to the task store. That is smaller than Phase 3 and would have
+   prevented this occurrence outright. Filed as an observation here rather than a new spec, because
+   the damage lands through this rescue path.
+
+_Recorded 2026-09-11 by plan, on edit's report. Plan was the offending agent; noted plainly because
+the habit is the trigger and the record should say so._
+
+### Fifth occurrence, 2026-09-11 — a synthetic reply in edit's name; **no external damage**
+
+> **Corrected 2026-09-11 12:31. The first version of this section was wrong and is retained as a
+> lesson.** It claimed the synthetic dump *caused* commit to create GitHub issues #80–#84, and
+> asserted a new "external write mutations" severity class on that basis. **It did not.** Commit
+> states first-hand that the trigger was a message typed directly into its pane — *"create github
+> issues for each and assign to this pr"* — a top-level turn that never touched the bus, and that it
+> assessed the synthetic dump as "no new action needed" and took **zero** action on it.
+>
+> **How the error was made, because it is the more useful record.** Plan wrote that it had "verified
+> every step in the bus history and lifecycle log". It had verified that each *event* occurred; it had
+> **not** verified the *causal link* between them, and presented a verified timeline as verified
+> causation. The gap was structural and should have been obvious: a message typed into a pane leaves
+> **no bus trace**, so the bus history could never have shown the real trigger — absence of a request
+> was read as evidence for the only inbound message that was visible. The `gh issue create` row is at
+> **12:20:23**, five minutes after the dump; adjacency was doing the work.
+>
+> This is the standard [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) sets for
+> itself — timeline established, mechanism explicitly labelled a hypothesis — applied here only after
+> edit and commit pushed back.
+
+What is verified, and all this occurrence actually shows:
+
+| Time | Event | Source |
+|------|-------|--------|
+| 12:14 | `commit → edit [request:pr-created]` — "PR #79 opened — **user may want it** linked/commented on the Jira story" | bus history |
+| 12:14:54 | `idle-task-retry edit idle with unresponded task pr-created from commit (idle 32s)` | lifecycle |
+| 12:15:27 | `idle-task-rescue edit idle with unresponded task pr-created from commit (idle 33s, retry exhausted)` | lifecycle (`warn`) |
+| 12:15 | `edit → commit [response:response] [daemon: edit went idle without responding — pane content follows]` | bus history |
+| 12:20:23 | commit runs `gh issue create` ×5 + `gh pr edit 79` — **on a user turn typed into its pane, unrelated to the dump** | `commit-history.jsonl` |
+
+**The one property this occurrence adds: identity.** The synthetic reply was sent as
+`edit → commit`, indistinguishable at the receiver from edit's own words. The prior four put daemon
+text in a *task record*; this one put it in an agent's *voice*. Commit assessed it and correctly did
+nothing, so the hazard is demonstrated without damage.
+
+**The request it answered was consent-gated.** `pr-created` said "*user may want it* linked/commented"
+— a suggestion awaiting a human. The synthetic reply was consumed as the answer to it, which is what
+closed the task.
+
+**Why the content was plausible rather than obviously junk.** Edit's pane held prose about PR #79 and
+the five spec ids just moved to `completed/`. A rescue that scrapes a pane and sends it under the
+agent's own identity will periodically produce something coherent; that the receiver saw through it
+this time is commit's judgement, not a property of the mechanism.
+
+**No tier case.** The earlier draft argued this reached
+[MUX-144](./MUX-144-wait-human-gate-openable-by-any-agent.md)'s tier-0 bar ("irreversible and
+externally visible"). With the causation corrected, it does not: nothing external resulted. The spec
+stays where it is, and the argument is withdrawn rather than quietly dropped.
+
+**Issues #80–#84 were user-requested and stay** (user decision 2026-09-11, relayed by edit); closing
+keywords mean merging PR #79 closes them. No `gh` action taken. The earlier description of them as
+"created without a request" was part of the same error.
+
+**Mitigation applied, and verified live rather than taken on report:**
+
+| | |
+|---|---|
+| Setting | `MUXCODE_IDLE_RESCUE_EXCLUDE=run,edit` |
+| Live in | daemon PID 28700, `BUS_SESSION=muxcode` (checked with `ps eww -p <pid> \| tr ' ' '\n' \| grep -E '^(MUXCODE_IDLE_RESCUE_EXCLUDE\|BUS_SESSION)='`) |
+| Code path | `idleRescueExcluded()`, `daemon/daemon.go:3274–3285` — reads the var, overriding the `"run"` default; excluded tasks still resolve via the task timeout |
+
+This is a **scope reduction, not a fix**, and the spec stays open:
+
+- **`plan` is not on the list**, and the fourth occurrence above was plan's. Any role outside
+  `run,edit` can still have a pane dump sent in its name.
+- It narrows *who* can be impersonated; it does not stop the rescue **sending scraped pane content as
+  an agent's own reply**, which is the mechanism behind all five occurrences.
+- Setting the variable to a list that omits `run` would silently re-expose the role the default was
+  protecting — the default is `"run"`, and an override **replaces** it rather than adding to it.
+
+Phases 2 and 3 below remain the actual fix: consult live background work, and stop losing the real
+answer by making the synthetic response advisory rather than authoritative.
+
+_Recorded 2026-09-11 by plan on edit's report; every row above verified in the bus history and
+lifecycle log before writing._
+
 ## Requirements
 
 ### Acceptance criteria

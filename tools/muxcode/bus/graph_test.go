@@ -813,11 +813,11 @@ func TestShipTemplatesUpdateSpecBeforeGate(t *testing.T) {
 		if us == nil || NormalizeBusRole(us.Role) != "plan" || us.Action != "verify-spec" {
 			t.Errorf("%s: update-spec node missing or misrouted: %+v", name, us)
 		}
-		if !templateEdge(tpl, "review", "update-spec") || !templateEdge(tpl, "update-spec", gate) {
-			t.Errorf("%s: update-spec must sit between review and %s", name, gate)
+		if !templateEdge(tpl, "review", "update-spec") || !templateEdge(tpl, "update-spec", "phase-check") || !templateEdge(tpl, "phase-check", gate) {
+			t.Errorf("%s: update-spec then phase-check must sit between review and %s", name, gate)
 		}
-		if templateEdge(tpl, "review", gate) {
-			t.Errorf("%s: direct review->%s edge bypasses update-spec", name, gate)
+		if templateEdge(tpl, "review", gate) || templateEdge(tpl, "update-spec", gate) {
+			t.Errorf("%s: an edge into %s around update-spec or phase-check bypasses the completeness check", name, gate)
 		}
 	}
 }

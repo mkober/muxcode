@@ -14,12 +14,14 @@ import (
 // Built by ProcessBashHook() from ToolEvent fields, or by the CLI from flags.
 // When nil is passed to ResolveChain(), conditions are skipped (backward compatible).
 type ChainContext struct {
-	Session      string   // muxcode session name (for resolving serve state)
-	ChangedFiles []string // cached from git diff --name-only HEAD
-	Branch       string   // current branch (git rev-parse --abbrev-ref HEAD)
-	ExitCode     int      // numeric exit code from ToolEvent
-	Command      string   // command string from ToolEvent.ToolInput.Command
-	Output       string   // stdout/stderr from ToolEvent.ToolResult (for output_contains)
+	Session      string    // muxcode session name (for resolving serve state)
+	ChangedFiles []string  // cached from git diff --name-only HEAD
+	Branch       string    // current branch (git rev-parse --abbrev-ref HEAD)
+	ExitCode     int       // numeric exit code from ToolEvent
+	Command      string    // command string from ToolEvent.ToolInput.Command
+	Output       string    // stdout/stderr from ToolEvent.ToolResult (for output_contains)
+	GraphRun     *GraphRun // set by the executor for condition nodes; nil on every other road
+	Graph        *Graph    // set with GraphRun; spec_phase_committable fails closed without both
 }
 
 // ConditionResult records per-condition evaluation details for --verbose output.
@@ -32,17 +34,18 @@ type ConditionResult struct {
 
 // knownConditionTypes lists all recognized condition keys for validation.
 var knownConditionTypes = map[string]bool{
-	"files_match":           true,
-	"files_not_match":       true,
-	"branch_match":          true,
-	"branch_not_match":      true,
-	"command_match":         true,
-	"command_not_match":     true,
-	"env_set":               true,
-	"env_equals":            true,
-	"output_contains":       true,
-	"exit_code":             true,
-	"spec_phases_remaining": true,
+	"files_match":            true,
+	"files_not_match":        true,
+	"branch_match":           true,
+	"branch_not_match":       true,
+	"command_match":          true,
+	"command_not_match":      true,
+	"env_set":                true,
+	"env_equals":             true,
+	"output_contains":        true,
+	"exit_code":              true,
+	"spec_phases_remaining":  true,
+	"spec_phase_committable": true,
 }
 
 // IsKnownCondition returns true if the condition type is recognized.
@@ -108,6 +111,8 @@ func evaluateCondition(condType string, value any, ctx *ChainContext) ConditionR
 		return evalExitCode(value, ctx)
 	case "spec_phases_remaining":
 		return evalSpecPhasesRemaining(value, ctx)
+	case "spec_phase_committable":
+		return evalSpecPhaseCommittable(value, ctx)
 	default:
 		return ConditionResult{
 			Type:   condType,
@@ -356,6 +361,49 @@ func evalSpecPhasesRemaining(value any, ctx *ChainContext) ConditionResult {
 	}
 	result.Passed = has == want
 	result.Detail = fmt.Sprintf("open phase remaining=%v", has)
+	return result
+}
+
+// evalSpecPhaseCommittable asks, before a commit gate, the question the
+// phase-progress guard will ask after it — through the same predicate
+// (phaseCommitReady), so the two never disagree. The value names the
+// guarded commit node whose prior fires count as shipped phases. It passes
+// when the active spec holds a newly completed phase; every other state —
+// open phase, no spec, unreadable spec, a repo dir unresolvable this tick,
+// or no graph-run context — fails closed, which in spec-to-pr routes to
+// the stuck gate: wrongly asking a human costs one gate, wrongly passing
+// asks them to approve a commit the guard then declines (the 2026-09-09
+// double-prompt this condition exists to remove).
+func evalSpecPhaseCommittable(value any, ctx *ChainContext) ConditionResult {
+	result := ConditionResult{Type: "spec_phase_committable"}
+	nodeID, ok := value.(string)
+	if !ok || nodeID == "" {
+		result.Detail = fmt.Sprintf("spec_phase_committable must name the guarded commit node, got %T", value)
+		return result
+	}
+	result.Pattern = nodeID
+	if ctx.GraphRun == nil || ctx.Graph == nil {
+		result.Detail = "spec_phase_committable needs a graph-run context"
+		return result
+	}
+	if ctx.Graph.node(nodeID) == nil {
+		result.Detail = fmt.Sprintf("spec_phase_committable names no node %q", nodeID)
+		return result
+	}
+	v := phaseCommitReady(ctx.Session, ctx.GraphRun, ctx.Graph, nodeID)
+	switch {
+	case v.transient:
+		result.Detail = "repo dir unavailable this tick — phase completeness unknown"
+	case v.refused:
+		result.Detail = "active spec pointer resolves outside the repo"
+	case v.noSpec:
+		result.Detail = "no active spec to verify the phase against"
+	case v.readErr != nil:
+		result.Detail = fmt.Sprintf("cannot read active spec: %v", v.readErr)
+	default:
+		result.Passed = v.ready
+		result.Detail = fmt.Sprintf("%d phases complete, %d shipped by %s", v.completed, v.shipped, nodeID)
+	}
 	return result
 }
 

@@ -1643,7 +1643,7 @@ func cleanupDiffPreview(session string, ev *ToolEvent, filePath string) {
 	time.Sleep(1 * time.Second)
 
 	// Send Escape to ensure normal mode
-	exec.Command("tmux", "send-keys", "-t", paneTarget, "Escape", "Escape").Run()
+	exec.Command("tmux", "send-keys", "-t", paneTarget, "Escape", "Escape").Run() // nvim-pane: normal mode, not a composer
 	time.Sleep(100 * time.Millisecond)
 
 	if _, err := os.Stat(tempFile); err == nil {

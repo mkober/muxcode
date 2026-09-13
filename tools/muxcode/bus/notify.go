@@ -807,6 +807,12 @@ func IsPolling(session, role string) bool {
 // Dedup: marks message IDs as notified to prevent re-injection. If the
 // send-keys injection is dropped (TUI redraw race), the notifyRetryInterval
 // (15s) in alreadyNotified() eventually allows a retry on a subsequent call.
+//
+// Marking happens before the send so concurrent cycles cannot double-inject,
+// and is rolled back when the send fails — as ForceDeliver does. A refusal (a
+// shell pane, a provider's ErrInjectionSkipped) typed nothing at all, so
+// leaving the IDs marked withholds them for the retry interval on the strength
+// of a delivery that never happened.
 func notifySendKeys(session, role string) error {
 	unlock := lockNotify(session, role)
 	defer unlock()
@@ -843,6 +849,9 @@ func notifySendKeys(session, role string) error {
 
 	provider := ResolveProvider(role)
 	err := SendWakeUpWithText(session, role, provider, text, false)
+	if err != nil {
+		ClearNotifiedIDs(session, role) // nothing was typed — see doc comment
+	}
 
 	// No in-line delivery verification. Claude Code's TUI takes 1-3 seconds
 	// to process send-keys input — the old 500ms verifySendKeysDelivery()
@@ -859,6 +868,17 @@ func notifySendKeys(session, role string) error {
 // For non-hook providers, delegates to the provider's SendWakeUp (which reads
 // the inbox and builds its own message). force propagates to the provider's
 // suppression guards — recovery paths pass true, routine wake-ups false.
+//
+// Before typing, the composer is cleaned: Claude Code periodically pops an
+// overlay (the feedback survey, autocomplete popups) that eats the next Enter,
+// so the text would park unsent. TmuxDismissOverlay dismisses it with an
+// absorber key — without which the pending ESC fuses with the payload's first
+// character into a Meta chord (MUX-163) — and TmuxClearInput then removes any
+// dropped-Enter residue. Both are prerequisites, not best-effort: either
+// failure returns before a payload is typed, because a half-run preamble is
+// how the first character goes missing or lands appended to composer residue.
+// This runs only for agents at their prompt (the daemon's idle paths and
+// force-deliver), so Escape never interrupts generation.
 func SendWakeUpWithText(session, role string, provider Provider, text string, force bool) error {
 	if !provider.SelfPollsInbox() {
 		// Listenerless providers build their own injection from inbox content
@@ -866,20 +886,17 @@ func SendWakeUpWithText(session, role string, provider Provider, text string, fo
 	}
 
 	target := PaneTarget(session, role)
-
-	// Clean the composer before injecting. Claude Code periodically pops an
-	// overlay (the "How is Claude doing this session?" feedback survey,
-	// autocomplete popups) that consumes the next Enter instead of submitting
-	// the composer — so the injected text parks unsent and even a re-sent Enter
-	// is eaten by the overlay. Pressing Escape dismisses the overlay; clearing
-	// the input box removes any dropped-Enter residue. This path only runs for
-	// agents at their prompt (the daemon's idle paths and force-deliver), so
-	// Escape never interrupts live generation.
-	_ = TmuxSendEscape(target)
-	time.Sleep(100 * time.Millisecond)
-	if err := TmuxClearInput(target); err == nil {
-		time.Sleep(100 * time.Millisecond)
+	if _, err := captureInjectionTarget(session, target, role); err != nil {
+		return err
 	}
+
+	if err := TmuxDismissOverlay(target); err != nil {
+		return fmt.Errorf("dismiss overlay for %s: %w", role, err)
+	}
+	if err := TmuxClearInput(target); err != nil {
+		return fmt.Errorf("clear input for %s: %w", role, err)
+	}
+	time.Sleep(100 * time.Millisecond)
 
 	// TmuxSendLiteral carries both -l (key-name interpretation) and the --
 	// separator — -l alone still fails on a dash-leading payload (MUX-104).
@@ -928,11 +945,9 @@ func verifyEnterDelivery(target string) {
 		if !composerHasText(content) {
 			return // text was submitted — done
 		}
-		// Still parked — the Enter was dropped or an overlay ate it. Dismiss any
-		// overlay, then re-send Enter to submit the composer.
-		_ = TmuxSendEscape(target)
-		time.Sleep(50 * time.Millisecond)
-		_ = TmuxSendKeys(target, "Enter")
+		// Still parked — re-submit through the shared absorbed-Enter helper, so
+		// the re-sent Enter is not fused into Meta-Enter (MUX-163).
+		TmuxResubmitEnter(target)
 	}
 }
 
