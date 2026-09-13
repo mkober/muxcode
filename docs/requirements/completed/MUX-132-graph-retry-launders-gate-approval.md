@@ -239,7 +239,7 @@ the easiest way to launder an omission past review — including one's own.
 
 ### Post-close note — 2026-09-03: the adjacent hole, and why this fix is not implicated
 
-[`MUX-144`](../backlog/MUX-144-wait-human-gate-openable-by-any-agent.md) records a live incident in
+[`MUX-144`](../drafts/MUX-144-wait-human-gate-openable-by-any-agent.md) records a live incident in
 which a `wait_human` gate released four seconds after opening, with no human involved, and a commit
 node behind it dispatched a stage/commit/push/PR.
 

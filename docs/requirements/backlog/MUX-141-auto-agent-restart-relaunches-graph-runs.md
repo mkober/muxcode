@@ -2,7 +2,7 @@
 
 **Tracking:** [mkober/muxcode#67](https://github.com/mkober/muxcode/issues/67)
 
-> **Compounds with [`MUX-144`](./MUX-144-wait-human-gate-openable-by-any-agent.md) — read them
+> **Compounds with [`MUX-144`](../drafts/MUX-144-wait-human-gate-openable-by-any-agent.md) — read them
 > together.** This spec supplies the *source* of unrequested runs; MUX-144 supplies the reason one can
 > reach a push. Alone, this spec's runs stop harmlessly at a `wait_human` gate — that gate is the
 > mitigation this spec has been leaning on. MUX-144 establishes (live, 2026-09-03) that the gate is

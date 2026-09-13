@@ -756,6 +756,32 @@ func approvalHasAudit(session, runID, nodeID, actor string, marker []byte) bool 
 	return false
 }
 
+// approvalDenial reports the approver a marker names and why that approval must
+// not be honoured, or "" when it holds. Pure: it reads the marker and the audit
+// log and changes nothing.
+//
+// The single definition of a valid gate approval, shared by gateApprovalHolds
+// (which purges and logs when it refuses) and the commit backstop (which only
+// refuses). Two copies of these three questions would let a future authority fix
+// land on one road and not the other, which is the shape of the bypass this
+// whole spec is about.
+//
+// A marker with no approver is read as ActorUnknown rather than skipped, so it
+// meets CheckGateApprovalAuthority's explicit refusal of unidentified actors.
+func approvalDenial(session string, run *GraphRun, nodeID string, marker []byte) (string, string) {
+	by := approvalGrantedBy(marker)
+	if by == "" {
+		by = ActorUnknown
+	}
+	if deny := CheckGateApprovalAuthority(by, run); deny != "" {
+		return by, deny
+	}
+	if !approvalHasAudit(session, run.ID, nodeID, by, marker) {
+		return by, "approval marker has no matching graph-gate-approved audit event"
+	}
+	return by, ""
+}
+
 // gateApprovalHolds re-decides a wait_human release inside the daemon, on the
 // approver the marker recorded (MUX-144 Phase 2).
 //
@@ -776,14 +802,7 @@ func approvalHasAudit(session, runID, nodeID, actor string, marker []byte) bool 
 // re-read every tick, and the node must ask for a fresh approval instead of
 // sitting on a rejected one. A purge that fails holds the gate shut.
 func gateApprovalHolds(session string, run *GraphRun, nodeID string, marker []byte) bool {
-	by := approvalGrantedBy(marker)
-	if by == "" {
-		by = ActorUnknown
-	}
-	deny := CheckGateApprovalAuthority(by, run)
-	if deny == "" && !approvalHasAudit(session, run.ID, nodeID, by, marker) {
-		deny = "approval marker has no matching graph-gate-approved audit event"
-	}
+	by, deny := approvalDenial(session, run, nodeID, marker)
 	if deny == "" {
 		return true
 	}
@@ -889,6 +908,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 	case NodeSend:
 		msg := interpolateGraphMessage(session, n.Message, run.Intent, "")
 		m := NewMessage(graphSender, n.Role, "request", n.Action, msg, "")
+		m.GraphRun, m.GraphNode = run.ID, n.ID
 		if err := SendNoCC(session, m); err != nil {
 			if errors.Is(err, ErrSendSuppressed) {
 				taskID := m.ID // suppressed = duplicate exists; adopt it — see doc comment

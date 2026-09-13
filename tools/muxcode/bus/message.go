@@ -9,6 +9,14 @@ import (
 )
 
 // Message represents a bus message between agents.
+//
+// GraphRun and GraphNode carry a graph dispatch's provenance, and exist so the
+// runtime backstop can tell a graph node's request from the user's agent's.
+// Every graph send is From="daemon", which NormalizeBusRole maps to "edit" —
+// the default commit authority — so before these fields a graph-dispatched
+// commit cleared CheckCommitAuthority as if edit had asked for it, and the
+// whole weight of the guarantee fell on the gate (MUX-144 Defect C). They are
+// omitempty, so messages written before the fields existed still decode.
 type Message struct {
 	ID      string `json:"id"`
 	TS      int64  `json:"ts"`
@@ -18,6 +26,9 @@ type Message struct {
 	Action  string `json:"action"`
 	Payload string `json:"payload"`
 	ReplyTo string `json:"reply_to"`
+
+	GraphRun  string `json:"graph_run,omitempty"`
+	GraphNode string `json:"graph_node,omitempty"`
 }
 
 // NewMsgID generates a unique message ID: {unix_ts}-{from}-{4hex}.
