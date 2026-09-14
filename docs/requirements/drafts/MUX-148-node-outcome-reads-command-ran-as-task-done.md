@@ -291,13 +291,95 @@ instructions promise an unverified hold the code may not deliver.
 
 ### Phase 2: Choose and record the fix
 
-- [ ] **Re-derive which path actually minted the 2026-09-03 row** (prose-spoofed classifier vs self-logged) before choosing — Phase 1's blocking recommendation; the original history is gone, so this may be answerable only by reasoning
-- [ ] **Decide whether `parseExitSentinel` should outrank the console row**, and what happens to a role that emits no sentinel — moved here from Phase 1, where it was misfiled as investigation
-- [ ] Decide whether the unguarded `muxcode log` writer (`cmd/log.go`) is in scope here or its own spec
-- [ ] Weigh options 1–4 against the Phase 1 findings
-- [ ] Choose a general mechanism and, if different, a cheap immediate mitigation
-- [ ] Confirm the choice satisfies the "genuine success still succeeds" criterion by construction
-- [ ] Record the decision and rationale in this spec
+- [x] **Re-derive which path actually minted the 2026-09-03 row** — **narrowed to one reachable path, not proved** (the history is gone, so proof is unobtainable): `git*commit*` glob-matches inside the word "un**commit**ted" and `git*push*` inside "un**push**ed", both of which appear in the commit agent's recorded decline
+- [x] **Decide whether `parseExitSentinel` should outrank the console row** — **no**: rejected as the general mechanism, retained as tier 3 below attribution, which preserves today's property that a real failing row outranks a claimed success
+- [ ] Decide whether the unguarded `muxcode log` writer (`cmd/log.go`) is in scope here or its own spec — **still open; not put to the user this run**
+- [x] Weigh options 1–4 against the Phase 1 findings
+- [x] Choose a general mechanism and, if different, a cheap immediate mitigation — **option 4 general + option 3 immediate**
+- [x] Confirm the choice satisfies the "genuine success still succeeds" criterion by construction — the three-tier table below
+- [x] Record the decision and rationale in this spec
+
+### Phase 2 decision — recorded 2026-09-14
+
+**Made by the user**, relayed through edit, as this spec reserved it. Recorded by plan, which had
+refused to certify this phase earlier the same day precisely because the choice was not an agent's
+to make. Source: `/tmp/mux-148-phase2-decision.md` (non-durable; the load-bearing content is here).
+
+| Question | Decision |
+|---|---|
+| General mechanism | **Option 4** — a node whose authoritative row cannot be tied to the dispatched work **holds** rather than routes |
+| Cheap immediate mitigation | **Option 3** — a per-node positive token for nodes immediately upstream of a mutation, reusing the shipped `verify-pr` / `PR-CONFIRMED` pattern |
+| An unattributable node | **Holds for a human**, consistent with the existing unverified hold (`graph_exec.go:1684`) and recoverable |
+
+Options 1 and 2 were **not** chosen. Option 1 is subsumed by option 4 at higher cost — both need the
+missing actor provenance, and correlation then adds a command-shape heuristic the spec itself flags as
+liable to drift; option 4 needs its heuristic only to be *conservative*, not *right*. Option 2 was
+rejected as the general mechanism because it fixes exactly the 5 roles instructed to emit a sentinel
+and leaves 9 at status quo, inherits MUX-154's counterfeit exposure, and would invert today's property
+that a real failing row outranks a claimed success.
+
+#### New finding — the authoritative row carries no actor
+
+**Verified by plan.** `ProcessBashHook` (`hook.go:744-814`) routes rows by **command type**, not by
+role: `CmdBuild` → `build-history.jsonl`, `CmdTest` → `test-history.jsonl`, `CmdDeploy` →
+`deploy-history.jsonl`, `CmdGit` → `commit-history.jsonl`, and `CmdUnknown` → `{role}-history.jsonl`
+for `run`/`runner`/`watch` alone. But `latestAuthoritativeRow` reads `HistoryPath(session, role)` =
+`{role}-history.jsonl` (`config.go:340-342`). **For the four typed roles, the file it reads is a
+command-type channel written by every role, and `HookHistoryEntry` records no actor.** A `CmdGit` row
+minted by any agent is read as the `commit` node's evidence.
+
+> **Consequence: option 4 cannot be built on the existing row schema.** Attribution needs provenance
+> that is not recorded today. Phase 3 inherits an `HookHistoryEntry` schema change as a prerequisite —
+> and this makes option 1 strictly more expensive than the spec's "Medium" estimate, since correlation
+> would need the same change *plus* the heuristic.
+
+#### Re-derivation of the 2026-09-03 row — a hypothesis, labelled as one
+
+**Verified by plan by reading:** `matchPatterns` (`hook.go:415-419`) is
+`headAtBoundary(cmd, patternHead(pat)) && globMatch(pat+"*", cmd)`, and `globMatch` (`tools.go:220`)
+is a standard wildcard match where `*` spans any characters. So `git*commit*` matches **any command
+beginning with `git` containing the substring `commit` anywhere — including inside "uncommitted"**,
+and `git*push*` inside "unpushed".
+
+The commit agent's recorded decline was: *"node c's fix (…617 insertions) is **uncommitted** and
+un**push**ed"*. Both mutating keywords sit in the vocabulary of the refusal itself, so any `git …`
+invocation run while reaching that conclusion classifies `CmdGit` and writes an exit-0 row into
+`commit-history.jsonl` — exactly the file node `d`'s outcome derivation reads.
+
+This is consistent with Phase 1's disproof (bare `gh pr view` / `git status` mint nothing) and supplies
+the missing path. **It remains a hypothesis: the original history is gone and cannot be re-read.** The
+`muxcode log` path stays equally reachable and equally unprovable for this incident. **Phase 3 should
+unit-test the glob behaviour** — the whole re-derivation rests on it and it has never been pinned.
+
+#### "Genuine success still succeeds" — the by-construction argument
+
+Required by acceptance criterion 2. A genuine success has a path at every tier; a decline has one at
+none:
+
+| Tier | Signal | Genuine success | Decline |
+|---|---|---|---|
+| 1 | Positive token (option 3, per-node) | The agent that did the work emits it | Not emitted — nothing to fake by accident |
+| 2 | **Attributable** authoritative row (option 4) | Real work mints a row of the type the node's action produces | Read-only inspection mints no row, or one whose type does not match the action |
+| 3 | `EXIT=<n>` sentinel | `EXIT=0` | `EXIT=1` → failure/hold |
+| — | none of the above | — | **Hold** |
+
+**The load-bearing constraint:** attribution must be **command-type-to-action**, not actor-plus-timing.
+Actor and timing alone would still admit the 2026-09-03 row — it was minted by the `commit` role after
+dispatch. It is the mismatch between *"a git command ran"* and *"reply to the PR comments"* that must
+fail the test.
+
+This is also why **both** options were needed. Actions with no command that could evidence them
+(`comment`, `update-docs`, `pr-read`) can never produce an attributable row, so option 4 alone would
+convert them into permanent holds — and those are precisely the nodes option 3's token covers. The two
+are complementary by construction, not merely additive.
+
+#### Constraints Phase 3 inherits
+
+- [ ] **Ship the first test of `deriveSendOutcome`** — nothing calls it today, so the precedence ordering is free to be fixed *and* free to regress unnoticed
+- [ ] **Add actor provenance to `HookHistoryEntry`** — a prerequisite for option 4, not part of it
+- [ ] **Unit-test the `git*commit*` glob** reaching inside "uncommitted" — the re-derivation rests on it
+- [ ] Do **not** double-hold: the new hold and the `OutcomeUnknown` hold (`:1684`) must not both fire on one node
+- [ ] `hook_codex_test.go` is **not** a constraint (re-verified this run) — it calls `latestAuthoritativeRow` directly and stays green under any precedence change
 
 ### Phase 3: Implement outcome attribution
 
@@ -352,6 +434,12 @@ undocumented is how it gets removed by a later tidy-up.
 - **The `spec-complete` guard.** It behaved correctly and is not implicated — it simply is not a
   substitute for upstream node attribution.
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-148-node-outcome-reads-command-ran-as-task-done | 30m | 2026-09-14 10:03 |
+
 ## Status
 
 In Progress
@@ -369,6 +457,15 @@ reworded to its evidence half, with the choice moved to Phase 2 — this phase's
 "record findings *before* choosing an option", so a decision inside it contradicted the phase.
 Phase 2 gained three steps as a result (re-derive the incident, the sentinel-precedence decision,
 and the `cmd/log.go` scope call), which is why the total moved 34 → 37.
+
+**Phase 2 decided by the user, 6/7 — one item deliberately open.** Graph run
+`1789393404-spec-to-pr-ada1cfa2` first looped into Phase 2 at 10:03 and asked plan to verify it ahead
+of a commit gate while it stood at 0/7, every item a decision; plan replied `EXIT=1` and checked
+nothing off, because an agent cannot make these choices and then certify its own choice as the phase's
+completion. **The user then made the decision and relayed it through edit**, and it is recorded above.
+
+**`cmd/log.go` scope remains open on the user's explicit instruction** — it was not put to them this
+run, so Phase 2 is 6/7 and **not complete**. Phase 3 must not treat it as settled.
 
 Phase 1 **disproved this spec's own account of the mechanism** (read-only `gh`/`git` mint no row for
 the `commit` role) and **withdrew a constraint plan had asserted** (`hook_codex_test.go` pins the
