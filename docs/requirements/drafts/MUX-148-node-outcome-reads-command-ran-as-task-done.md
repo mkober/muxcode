@@ -275,13 +275,14 @@ Options 1 and 4 are the general fixes; 3 is the cheap immediate mitigation. They
 
 | File | Purpose |
 |------|---------|
-| `tools/muxcode/bus/graph_exec.go` | Send road: `deriveSendOutcome:1678`, `parseExitSentinel:1712`, `latestAuthoritativeRow:1730`; unknown-hold routing in `routeFinishedNodes:1814` via `unverifiedHoldReleased:927` (`graph-unverified-hold`). Spawn road: `harvestRunningNode:1205`, `spawnGroupOutcome:1455`, `spawnReplyPayload:1529`. Numbers as of `f942c43`; the Mechanism table's are as of `cc7f47d` |
+| `tools/muxcode/bus/graph_exec.go` | Send road: `deriveSendOutcome:1678`, `parseExitSentinel:1712`, `latestAuthoritativeRow:1730` (`:1740` as of `a8fa0db` — hook > self-reported, all else not evidence); unknown-hold routing in `routeFinishedNodes:1814` via `unverifiedHoldReleased:927` (`graph-unverified-hold`). Spawn road: `harvestRunningNode:1205`, `spawnGroupOutcome:1455`, `spawnReplyPayload:1529`. Numbers as of `f942c43`; the Mechanism table's are as of `cc7f47d` |
 | `tools/muxcode/bus/graph_templates.go` | `commit-pr-review-loop:72-100` — the `c`→`d` gap and the `verify-pr` token precedent |
 | `tools/muxcode/bus/commit_authority.go` | `checkGraphCommitDispatch:166`, `dispatchMatchesNode:208` — what a commit node inserted in Phase 4 must satisfy |
-| `tools/muxcode/bus/hook.go` | `DefaultGitPatterns:288-292` (mutating git/gh only), `ClassifyCommand`, `ProcessBashHook` `case CmdUnknown:803-814` — where authoritative rows are minted |
-| `tools/muxcode/cmd/log.go` | `runLog:40`, `:136-143`, `:157-171` — the unguarded authoritative writer with an agent-chosen exit code |
+| `tools/muxcode/bus/hook.go` | `DefaultGitPatterns:288-292` (mutating git/gh only), `ClassifyCommand`, `ProcessBashHook` `case CmdUnknown:803-814` — where authoritative rows are minted; `WriteHookHistory:626` — since `a8fa0db` the one road every history row travels, stamping `SourceHook` on an undeclared entry |
+| `tools/muxcode/cmd/log.go` | `runLog:38`, `:135-146` — since `a8fa0db` a **self-reported** writer through `WriteHookHistory` (`Source: SourceSelfReported`, exit code still caller-chosen); before it, `:136-174` hand-rolled the row with no source at all |
 | `tools/muxcode/bus/prompt.go` | `:133`, `:176-213` — the instructions that tell non-hook providers to self-log `--exit-code 0` |
-| `tools/muxcode/bus/console.go` | `ConsoleEntry`, `SourceBusResponse`, how outcome rows are written |
+| `tools/muxcode/bus/console.go` | `ConsoleEntry`, how outcome rows are read back |
+| `tools/muxcode/bus/history_provenance.go` | `SourceBusResponse:33`, `SourceHook:38`, `SourceSelfReported:49` — the three-valued provenance vocabulary as of `a8fa0db`; `NewBusResponseEntry:297` — the single constructor for synthesized rows |
 | `tools/muxcode/bus/graph_run.go` | `TransitionGraphNode`, node status persistence |
 | `tools/muxcode/bus/lifecycle.go` | `LogLifecycle` for the unestablished-outcome event |
 | `scripts/test-graph-orchestrator.sh` | Existing graph integration harness to extend or model on |
@@ -405,7 +406,7 @@ instructions promise an unverified hold the code may not deliver.
 
 - [x] **Re-derive which path actually minted the 2026-09-03 row** — **narrowed to one reachable path, not proved** (the history is gone, so proof is unobtainable): `git*commit*` glob-matches inside the word "un**commit**ted" and `git*push*` inside "un**push**ed", both of which appear in the commit agent's recorded decline
 - [x] **Decide whether `parseExitSentinel` should outrank the console row** — **no**: rejected as the general mechanism, retained as tier 3 below attribution, which preserves today's property that a real failing row outranks a claimed success
-- [ ] Decide whether the unguarded `muxcode log` writer (`cmd/log.go`) is in scope here or its own spec — **still open; not put to the user** — the evidence a decision needs is gathered under [Decision 4](#decision-4--is-the-muxcode-log-writer-in-scope)
+- [x] Decide whether the unguarded `muxcode log` writer (`cmd/log.go`) is in scope here or its own spec — **in scope; decided by the user 2026-09-14 14:22**, relayed through edit. Two of the three changes "in scope" was defined to mean, plus *source* provenance in place of the process-derived kind, shipped as `a8fa0db` (14:23); what landed and the residual are recorded under [Decision 4](#decision-4--is-the-muxcode-log-writer-in-scope)
 - [x] Weigh options 1–4 against the Phase 1 findings
 - [x] Choose a general mechanism and, if different, a cheap immediate mitigation — **option 4 general + option 3 immediate**
 - [x] Confirm the choice satisfies the "genuine success still succeeds" criterion by construction — the three-tier table below
@@ -509,12 +510,12 @@ Covers **both roads** — send and spawn — since 2026-09-14 (see
 on any heading line, so a `####` here would detach the boxes below from Phase 3):
 
 - [ ] **Ship the first test of `deriveSendOutcome`** — nothing calls it today, so the precedence ordering is free to be fixed *and* free to regress unnoticed
-- [ ] **Add actor provenance to `HookHistoryEntry`** — a prerequisite for option 4, not part of it
+- [ ] **Add actor provenance to `HookHistoryEntry`** — a prerequisite for option 4, not part of it — **still open after `a8fa0db`**: what landed is *source* provenance (`hook` / `self-reported` / `bus-response`), declared by the writer; actor provenance the writer cannot author (process ancestry via `BusActorVerified`) is the [Decision 4](#decision-4--is-the-muxcode-log-writer-in-scope) residual
 - [ ] **Unit-test the `git*commit*` glob in both directions** — it fires on a `git`-headed command containing `commit`/`push` anywhere (inside "uncommitted", in `--dry-run`, in `@{push}`), and does **not** fire on a keyword-free `git status`/`git log`, nor on a non-`git`-headed command however worded (reply prose is never an input) — the re-derivation rests on it
 - [ ] Do **not** double-hold: the new hold and the `OutcomeUnknown` hold (`:1684`) must not both fire on one node
 - [ ] `hook_codex_test.go` is **not** a constraint (re-verified this run) — it calls `latestAuthoritativeRow` directly and stays green under any precedence change
 - [ ] **The signal must be tied to the dispatched task, not to whichever commands happened to be recognised** — "newest authoritative row wins" is wrong in *both* directions when the command that carried the real verdict was never classified ([Defect 4](#defect-4--the-mirror-a-genuine-success-recorded-as-failure)); tiering or attribution alone does not close the mirror
-- [ ] **Provenance must fail closed on absence, not merely be unforgeable** — `latestAuthoritativeRow` (`graph_exec.go:1734`) is an *exclusion* list: it skips only `Source == SourceBusResponse` and unknown/empty outcomes, so a row carrying **no** provenance value reads as authoritative — deliberately, so pre-provenance rows keep their verdict (`history_provenance.go:26-31`). And `cmd/log.go` is the **one** history writer that bypasses `WriteHookHistory` (every other writer — `hook.go:785-840`, `cmd/send.go:525`, `daemon.go:3503` — goes through the typed `HookHistoryEntry`; `cmd/log.go:136-174` hand-rolls a map with its own append and rotate), so a field added to the struct reaches every writer except it: it bypasses by *omission*, not forgery. Whatever field Phase 3 adds, the reader must treat its absence as not-authoritative — a behaviour change for existing rows, which is why it sits inside the Decision 4 scope call. Found by run `1789402487`'s `implement` worker; verified by plan
+- [x] **Provenance must fail closed on absence, not merely be unforgeable** — `latestAuthoritativeRow` (`graph_exec.go:1734`) is an *exclusion* list: it skips only `Source == SourceBusResponse` and unknown/empty outcomes, so a row carrying **no** provenance value reads as authoritative — deliberately, so pre-provenance rows keep their verdict (`history_provenance.go:26-31`). And `cmd/log.go` is the **one** history writer that bypasses `WriteHookHistory` (every other writer — `hook.go:785-840`, `cmd/send.go:525`, `daemon.go:3503` — goes through the typed `HookHistoryEntry`; `cmd/log.go:136-174` hand-rolls a map with its own append and rotate), so a field added to the struct reaches every writer except it: it bypasses by *omission*, not forgery. Whatever field Phase 3 adds, the reader must treat its absence as not-authoritative — a behaviour change for existing rows, which is why it sits inside the Decision 4 scope call. Found by run `1789402487`'s `implement` worker; verified by plan. **Implemented in `a8fa0db` (14:23), verified by plan against the commit:** `latestAuthoritativeRow` (`graph_exec.go:1740`) now accepts only `hook` (newest wins) and, failing that, `self-reported`; empty, `bus-response` and unrecognised sources are not evidence (`TestRawRowWithoutHookSourceIsNotEvidence`), and `cmd/log.go:146` writes through `WriteHookHistory`. Suite observed passing on the hook road at 14:16:00 (2425 pass) before the commit
 
 **Steps**
 
@@ -595,9 +596,11 @@ undocumented is how it gets removed by a later tidy-up.
 
 ### Decision 4 — is the `muxcode log` writer in scope?
 
-Phase 2's one open item. **Not decided** — reserved for the user, who has not yet been asked. The
-evidence below was gathered by the Phase 2 worker (run `1789399519`, node `implement`, 2026-09-14)
-and verified by plan against the tree, so the question can be put with its facts attached.
+Phase 2's last open item. **Decided by the user 2026-09-14 14:22 — in scope**, relayed through
+edit and recorded at the end of this section. The evidence below was gathered by the Phase 2 worker
+(run `1789399519`, node `implement`, 2026-09-14) and verified by plan against the tree, so the
+question was put with its facts attached; the table's rows 5, 9 and 10 describe the tree **before**
+`a8fa0db` and are kept as the record of what the decision was made against.
 
 | Fact | Where | Why it matters |
 |---|---|---|
@@ -632,6 +635,39 @@ this spec's acceptance is scoped to the hook road, and a one-command forgery pat
 role able to mint any node's evidence. The facts are gathered either way; only the scope call is
 missing.
 
+**Decided 14:22 — in scope.** What shipped is `a8fa0db` (14:23:14, *"Rank hook-observed rows above
+self-reports for verdicts"*), built by run `1789407209`'s last `implement` lap and committed through
+edit → commit on the user's request after the run was canceled. Verified by plan against the commit:
+
+| Change | Where | Effect |
+|---|---|---|
+| Three-valued `Source` | `history_provenance.go:33-49` — `SourceBusResponse`, `SourceHook`, `SourceSelfReported` | An observed row and a self-report are no longer peers, and an empty value is no longer "the authoritative path" |
+| `WriteHookHistory` is the choke point | `hook.go:626` stamps `SourceHook` on an entry that arrives with no `Source` | The five `ProcessBashHook` sites (`hook.go:795-850`) read `hook` without touching each one; `cmd/send.go:555` and `daemon.go:3503` build through `NewBusResponseEntry` (`history_provenance.go:306`, `bus-response`); `cmd/log.go:141` sets `self-reported`. Every writer now declares itself |
+| `cmd/log.go` routed through `WriteHookHistory` | `cmd/log.go:135-146` — the hand-rolled map and its own `OpenFile`/`Flock`/`rotateHistory` are gone (`rotateHistory` has no remaining reference) | Bypass by omission closed: a field on the struct reaches this writer too |
+| Reader fails closed | `latestAuthoritativeRow` (`graph_exec.go:1740`): the newest `hook` row wins outright; the newest `self-reported` row is returned only when no hook row exists at or after `since`; **any other source — `bus-response`, empty/legacy, unrecognised — is not evidence** | A `muxcode log --exit-code 0` can no longer overwrite an observed failure by being newer; pre-provenance rows lose their verdict — the behaviour change the constraint predicted |
+| Tests | `graph_exec_test.go`: `TestObservedRowOutranksSelfReport`, `TestSelfReportUsedWhenNothingObserved`, `TestRawRowWithoutHookSourceIsNotEvidence`, `TestWriteHookHistoryStampsSource`; `cmd/log_test.go` rewritten to the typed struct | Suite observed passing **on the hook road** before the commit: `go test ./...` rows at 14:15:47 and 14:16:00 carry `source:"hook"`, exit 0, `PASS=2425 FAIL=0 SKIP=2` |
+
+**Why a self-report stays usable at all.** The non-hook providers have no other way to record that
+work ran (acceptance criterion 6), and holding every one of their nodes is not a fix. So a
+self-report is evidence *of last resort*, never an override.
+
+**Residual — recorded, not closed.** Provenance is now *declared*, not *proven*: an agent that appends
+a row to the JSONL by hand can write `"source":"hook"`, and the reader will take it.
+`TestRawRowWithoutHookSourceIsNotEvidence` pins the *sourceless* case, not the *forged-label* case.
+Closing it needs provenance the writer cannot author — `BusActorVerified`'s process-ancestry
+resolution stamped at write time. That is the "process-derived provenance on `HookHistoryEntry`"
+this decision named as the first of its three changes, and it is the one `a8fa0db` does **not**
+ship; Phase 3's "add actor provenance" step therefore stays open. What landed is *source*
+provenance.
+
+**Observed while verifying, unexplained.** One second after the two `hook`-stamped test rows, a row
+with **no `source` field at all** was appended to `test-history.jsonl` (ts `1789409761`, 14:16:01;
+`command:""`, `exit_code:""`, `outcome:unknown`, a `muxcode log`-shaped summary). Under the new
+reader it is not evidence either way, and its outcome is unknown regardless — but it was written by
+a path that stamped nothing, after rows that did. An older installed binary's `muxcode log` is the
+obvious candidate; it is not resolved, and it deserves one look before the residual above is
+treated as the only gap.
+
 ## Out of scope
 
 - **Whether agents should decline at all.** The decline here was correct; this spec is about the
@@ -643,7 +679,7 @@ missing.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-148-node-outcome-reads-command-ran-as-task-done | 2h 40m | 2026-09-14 13:07 |
+| MUX-148-node-outcome-reads-command-ran-as-task-done | 3h 17m | 2026-09-14 13:48 |
 
 ## Status
 
@@ -670,7 +706,8 @@ nothing off, because an agent cannot make these choices and then certify its own
 completion. **The user then made the decision and relayed it through edit**, and it is recorded above.
 
 **`cmd/log.go` scope remains open on the user's explicit instruction** — it was not put to them this
-run, so Phase 2 is 6/7 and **not complete**. Phase 3 must not treat it as settled.
+run, so Phase 2 is 6/7 and **not complete**. Phase 3 must not treat it as settled. *(Closed 14:22 —
+see the entry of that time below.)*
 
 **Phase 2 re-verified 2026-09-14 11:31 by graph run `1789399519-spec-to-pr-5aa52382`** (`implement`
 worker report at `/tmp/mux-148-phase2-verification.md`, non-durable). All six recorded claims hold
@@ -765,13 +802,34 @@ reserved for the user. Decision 4 is still unasked; `delivery.go` is still uncom
 having survived two commit nodes by the commit agent's judgment alone (`a07c746`, 13:28, is edit's
 `--wait` correlation fix and unrelated to this spec). Recommendation unchanged and now on its third data
 point: put Decision 4 to the user, cancel or hold the run, do not approve the `phase-gate` prompt it
-will raise, decide `delivery.go`. Nothing checked off; 12/55. Left open, reasons inline: the send-road steps
+will raise, decide `delivery.go`. Nothing checked off; 12/55.
+
+**Lap 4, 13:48 — no-op again; the third mis-approval happened as predicted** (13:43:27 → `f9249ba`,
+docs only, `delivery.go` held back a third time). The gate's exact text is now on the record in
+MUX-183 from the bus's own copies: every run was asked to *"Approve committing Phase 1: Establish the
+boundary"* while its intent was Phase 2. Nothing checked off; 12/55. Time 3h 17m recorded. Left open, reasons inline: the send-road steps
 (untouched), the option 3/4 application (partial), the double-hold (send road pending), and the
 spawn-signal decision — the user's or Phase 3's to record; approving a commit is not recording a
 design choice. No acceptance criterion is ticked: the spawn criteria are proven at unit level only,
 and the daemon judging the live lap still runs `846251e` (installed binary `5b32433-dirty` since
 11:40:59; `daemon.version` unchanged), so the binary that would show the reproduction gone is not
 the one running.
+
+**14:22 — Decision 4 answered: `cmd/log.go` is in scope. Phase 2 closed 7/7; spec 14/55.** Run
+`6329cbb4` was canceled at 14:11:27 (`graph-run-canceled`), so the loop that re-asked the gate is
+over. The user's answer came through edit, and the run's last `implement` lap had already built what
+"in scope" was defined to mean: `a8fa0db` (14:23:14) carries the three-valued `Source`, the
+`WriteHookHistory` choke point, `cmd/log.go` routed through it, and `latestAuthoritativeRow` failing
+closed — recorded under [Decision 4](#decision-4--is-the-muxcode-log-writer-in-scope) with its
+residual (a hand-appended row can still claim `hook`; process-ancestry provenance is the close and
+is not in this commit) and one unexplained observation (a sourceless row written a second after the
+stamped ones). `e9e3941` committed the orphan `delivery.go` change alone, seconds later — its fate
+decided at last, after surviving three commit nodes on the commit agent's judgment. Both commits went
+through edit → commit on the user's request, not through a graph gate. Beyond item 7, plan ticked
+**one** Phase 3 constraint — fail closed on absence — because `a8fa0db` implements it as written and
+the suite was observed passing on the hook road before the commit (14:15:47 / 14:16:00, `PASS=2425`);
+the "add actor provenance" constraint is annotated and left open, since what shipped is *source*
+provenance, not actor provenance. Every other Phase 3 step is untouched by this commit and stays open.
 
 Phase 1 **disproved this spec's own account of the mechanism** (read-only `gh`/`git` mint no row for
 the `commit` role) and **withdrew a constraint plan had asserted** (`hook_codex_test.go` pins the

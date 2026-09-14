@@ -34,6 +34,7 @@ instruction. **Every mechanism claim below was verified by plan against `f942c43
 | 11:42 | `5b32433` reset; spec-only recommit `f942c43` |
 | ~11:50 | Lap 2's `test` node fails 5 tests on the reverted code; the run is canceled |
 | 13:00 | **Second occurrence**, run `1789402487-spec-to-pr-f05fd39f`, lap 2: `phase-check` passes at Phase 2 = 6/7 again, the user approves `phase-gate`, `81793df` commits — the commit agent holds back an unattributed `delivery.go` by its own judgment and reports that the dispatch named *"Phase 1: Establish the boundary"*, a phase already shipped in `7e03dc9`. `loop-check` has fired once of five; the worker reports each remaining lap will repeat this |
+| 13:43 | **Third occurrence**, run `1789407209-spec-to-pr-6329cbb4` (a fresh run, loop budget reset): `phase-check` passes at Phase 2 = 6/7, the user approves `phase-gate`, `f9249ba` commits plan's lap notes — `delivery.go` held back once more by the commit agent. Three re-credited approvals in one afternoon, each on a prompt that named Phase 1 |
 
 Plan had written into the MUX-148 spec that `phase-check` "should route to `stuck-gate`" — the
 prediction a reader of `spec-to-pr`'s description would make — and was wrong; the correction is what
@@ -113,12 +114,25 @@ The gate is designed to: it is `wait_human`, and the user approved. But the prom
 supplied by the predicate — "Approve committing `${completed_phase}`" — and the user is entitled to
 trust that the system asked because a phase completed. The question a gate poses is the control; when
 the question is wrong, the approval is not a check, it is a signature on whatever the tree holds.
-What `${completed_phase}` rendered that day (`resolveCompletedPhaseText`, `graph_exec.go:725`) is a
-Phase 1 check — if it named Phase 1, the prompt itself misdescribed the commit it authorised. **On the
-second occurrence it did:** the commit agent reported the dispatch text as *"Phase 1: Establish the
-boundary"* (relayed by the `implement` worker, 13:07; second-hand, so the Phase 1 step stays open until
-read from the run's own records). The harm was avoided there only because the commit agent declined to
-sweep an unattributed file — judgment, not a safeguard.
+**Verified 13:47 (edit, re-verified by plan):** `${completed_phase}` is `resolveCompletedPhaseText`
+(`graph_exec.go:728-741`), whose only source is `SpecJustCompletedPhase` (`spec_items.go:149-156`) — a
+walk in file order that **breaks at the first phase with open items and returns the last complete phase
+before it**. That is the right answer on a lap that just closed a phase, the design case its comment
+describes (`${current_phase}` already points one ahead by commit time). It is the wrong answer on every
+lap defect 1 lets through: with Phase 2 open, the frontier is Phase 1 whether it closed a minute ago or
+was shipped hours ago in `7e03dc9`, because nothing in the walk knows *since when*. So on every
+re-credited run and lap the gate names an already-shipped phase **by construction, not by staleness** —
+**primary evidence, 13:49:** the three `graph-approval` requests the daemon sent edit (bus copies at
+11:36:22, 12:22:06 and 13:39:39, one per run) all read verbatim *"Approve committing Phase 1: Establish
+the boundary: the phase's work plus its spec update (commit only — push and PR wait for the final
+gate)"* while every run's intent named Phase 2, and the approvals followed at 11:37:01 (edit's inbox),
+13:00:29 and 13:43:27 (lifecycle, read by plan). Observed text, not inferred from code. The human
+backstop is blind at the moment of authorization: the prompt asserts exactly the false premise the
+predicate computed. Chronology, kept honest: the **first** approval preceded any warning — plan had
+written that `phase-check` "should route to `stuck-gate`", a wrong prediction; the second and third
+followed explicit written warnings (12:20 and 13:38) and were approved anyway, because the prompt in
+front of the approver said the opposite. The harm was avoided each time only because the commit agent
+declined to sweep an unattributed file — judgment, not a safeguard.
 
 ### Blast radius
 
@@ -148,7 +162,7 @@ question they gated was wrong.
 - [ ] `graph retry --from` a node upstream of the commit does not re-credit a phase the run already committed
 - [ ] A phase with **no items at all** — a narrative `### Phase N …` heading, or a stub whose steps are not yet written — is never counted complete: complete means *at least one item and none open*; and `spec set` / `graph validate` warn on an item-less phase
 - [ ] A checkbox under a `####` subheading inside a phase counts as that phase's item — a heading line below `### Phase N` that is not itself a phase heading does not detach what follows
-- [ ] The `phase-gate` prompt names the phase it proposes to commit, and that phase is complete in the working tree and not at HEAD
+- [ ] The `phase-gate` prompt names the phase it proposes to commit, and that phase is complete in the working tree and not at HEAD — today it names the completion frontier, which cannot tell just-closed from long-shipped
 - [ ] `bash scripts/test-phase-commit-ready.sh` passes
 
 ### Technical approach — options, deliberately not yet chosen
@@ -182,7 +196,7 @@ heading in this repo uses the colon) or `spec set` warns on an item-less phase.
 ### Phase 1: Establish the boundary
 
 - [ ] Pin the defect: a unit test with one spec (Phase 1 complete) and a fresh run whose commit node has fired zero times — assert today's predicate says ready, then invert the assertion with the fix
-- [ ] Record what `${completed_phase}` rendered on run `1789399519`'s gate (lifecycle log / gate message) and whether it named Phase 1
+- [x] Record what `${completed_phase}` rendered on run `1789399519`'s gate (lifecycle log / gate message) and whether it named Phase 1 — **established by code, 13:47**: `SpecJustCompletedPhase` returns the last complete phase before the first open one, so with Phase 2 open it names Phase 1 on every lap; **primary evidence 13:49**: all three runs' `graph-approval` requests (bus copies 11:36:22, 12:22:06, 13:39:39) read *"Approve committing Phase 1: Establish the boundary …"* with every intent at Phase 2
 - [ ] Confirm defect 2 with a fixture spec carrying a `### Phase 1 findings` heading **and** a stub `### Phase 4:` with no boxes, and count the inflation from each
 - [ ] Confirm defect 3 with `graph retry --from update-spec` on a run that has committed once
 - [ ] Enumerate every consumer of `SpecCompletedPhaseCount` and `phaseCommitReady` and state which the fix changes
@@ -230,7 +244,9 @@ half needs no decision, only the negative control that an all-ticked phase still
 ### Decision 3 — should the gate prompt show the evidence?
 
 "Approve committing Phase 2" is a premise. "Phase 2 completed this run: 7/7 in the tree, 6/7 at HEAD"
-is evidence the approver can check. Cheap once option 2 exists.
+is evidence the approver can check. Cheap once option 2 exists. Today the prompt is not merely thin —
+on a re-credited lap it is false, naming a phase already shipped, so the approver is asked to confirm
+a claim the machinery itself got wrong.
 
 ## Out of scope
 
