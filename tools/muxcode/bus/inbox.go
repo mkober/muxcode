@@ -438,6 +438,18 @@ func ReceiveFromFunc(session, role string, matchFn func(string) bool) ([]Message
 	})
 }
 
+// ReceiveMatchingFunc consumes only the messages match selects, leaving every
+// other message in the inbox, and records the same `acked` receipt as Receive:
+// the caller's own runtime is reading them.
+//
+// ReceiveFromFunc matches on the sender alone, which is too coarse for a
+// caller waiting on one specific answer — every response from that role looks
+// alike, including provider chrome. This is the seam for "consume exactly the
+// message I am waiting for".
+func ReceiveMatchingFunc(session, role string, match func(Message) bool) ([]Message, error) {
+	return receiveMatching(session, role, ReceiptKindAck, match)
+}
+
 // ReceiveDeliveredIDs consumes only the messages whose IDs are in ids, leaving
 // every other message in the inbox, and records a verified-inject `delivered`
 // receipt for each: the agent's runtime never read them, the daemon just

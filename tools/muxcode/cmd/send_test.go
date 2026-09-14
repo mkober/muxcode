@@ -253,3 +253,159 @@ func TestValidatePayload_ExactlyAtLimit(t *testing.T) {
 		t.Errorf("expected no warnings for exactly 500 chars, got %v", warnings)
 	}
 }
+
+// TestResponseAnswers pins --wait correlation. The chrome case is the
+// 2026-09-14 defect verbatim: a `response:notify` from the target closed four
+// build and test waits and was printed as their result.
+//
+// The positive cases are the negative controls — a predicate that simply
+// rejected everything would silence the bug and break every wait.
+func TestResponseAnswers(t *testing.T) {
+	const (
+		target = "build"
+		host   = "build"
+		action = "build"
+		msgID  = "1789400000-edit-aaaa"
+	)
+
+	cases := []struct {
+		name string
+		msg  bus.Message
+		want bool
+	}{
+		{"reply naming this request answers it",
+			bus.Message{Type: "response", From: "build", Action: "build", ReplyTo: msgID}, true},
+		{"unlinked reply with matching action answers it",
+			bus.Message{Type: "response", From: "build", Action: "build"}, true},
+		{"chrome notify naming an older request does NOT answer",
+			bus.Message{Type: "response", From: "build", Action: "notify", ReplyTo: "1789399999-edit-bbbb"}, false},
+		{"unlinked reply with a different action does NOT answer",
+			bus.Message{Type: "response", From: "build", Action: "notify"}, false},
+		{"reply naming a different request does NOT answer, even with matching action",
+			bus.Message{Type: "response", From: "build", Action: "build", ReplyTo: "1789399999-edit-bbbb"}, false},
+		{"a request is never an answer",
+			bus.Message{Type: "request", From: "build", Action: "build", ReplyTo: msgID}, false},
+		{"a response from another role does NOT answer",
+			bus.Message{Type: "response", From: "test", Action: "build", ReplyTo: msgID}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := responseAnswers(tc.msg, target, host, action, msgID); got != tc.want {
+				t.Errorf("responseAnswers = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// setupWaitSession builds a session where edit has sent target a request and
+// edit's inbox holds one chrome notify from that same target. The chrome is
+// what closed four real waits on 2026-09-14, so every case below carries it.
+func setupWaitSession(t *testing.T, target string) (string, bus.Message, bus.Message) {
+	t.Helper()
+	dir := t.TempDir()
+	bus.SetBusDirBase(dir)
+	t.Cleanup(bus.ResetBusDirBase)
+
+	session := "test-wait"
+	if err := bus.Init(session, filepath.Join(dir, "memory")); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	req := bus.NewMessage("edit", target, "request", "build", "build it", "")
+	if err := bus.Send(session, req); err != nil {
+		t.Fatalf("Send request: %v", err)
+	}
+
+	chrome := bus.NewMessage(target, "edit", "response", "notify", "Acknowledged file change", "")
+	if err := bus.AppendToInbox(session, "edit", chrome); err != nil {
+		t.Fatalf("AppendToInbox chrome: %v", err)
+	}
+	return session, req, chrome
+}
+
+// TestWaitForResponsePrimaryBranch drives the delivery-status road: the answer
+// is consumed and returned, and the unrelated chrome stays readable.
+func TestWaitForResponsePrimaryBranch(t *testing.T) {
+	session, req, chrome := setupWaitSession(t, "build")
+
+	answer := bus.NewMessage("build", "edit", "response", "build", "exit 0", req.ID)
+	if err := bus.AppendToInbox(session, "edit", answer); err != nil {
+		t.Fatalf("AppendToInbox answer: %v", err)
+	}
+	bus.MarkResponded(session, req.ID, answer.ID)
+
+	ok, payload := waitForResponse(session, "edit", "build", "build", req.ID, 10)
+	if !ok {
+		t.Fatal("expected the correlated answer to satisfy the wait")
+	}
+	if payload != "exit 0" {
+		t.Errorf("payload = %q, want the answer's payload", payload)
+	}
+	if inboxHas(t, session, "edit", answer.ID) {
+		t.Error("the answer must be consumed")
+	}
+	if !inboxHas(t, session, "edit", chrome.ID) {
+		t.Error("unrelated chrome must be left in the inbox, not drained")
+	}
+}
+
+// TestWaitForResponseFallbackIgnoresChrome is the regression proper: with no
+// delivery-status transition, the fallback previously accepted any response
+// from the target. Here only an unlinked reply carrying the request's action
+// may satisfy it, and the chrome must neither answer nor be consumed.
+func TestWaitForResponseFallbackIgnoresChrome(t *testing.T) {
+	session, req, chrome := setupWaitSession(t, "build")
+
+	answer := bus.NewMessage("build", "edit", "response", "build", "exit 0", "")
+	if err := bus.AppendToInbox(session, "edit", answer); err != nil {
+		t.Fatalf("AppendToInbox answer: %v", err)
+	}
+
+	ok, payload := waitForResponse(session, "edit", "build", "build", req.ID, 10)
+	if !ok {
+		t.Fatal("an unlinked reply with the request's action must satisfy the wait")
+	}
+	if payload != "exit 0" {
+		t.Errorf("payload = %q, want the answer's payload — chrome must never be returned", payload)
+	}
+	if !inboxHas(t, session, "edit", chrome.ID) {
+		t.Error("chrome must survive: it was never this request's answer")
+	}
+	ds, err := bus.ReadDeliveryStatus(session, req.ID)
+	if err != nil {
+		t.Fatalf("ReadDeliveryStatus: %v", err)
+	}
+	if ds.ResponseID != answer.ID {
+		t.Errorf("recorded ResponseID = %q, want the answer's id %q", ds.ResponseID, answer.ID)
+	}
+}
+
+// TestWaitForResponseChromeAloneTimesOut is the negative control: chrome by
+// itself must NOT satisfy a wait. Without this, a predicate that accepted
+// everything would still pass both cases above.
+func TestWaitForResponseChromeAloneTimesOut(t *testing.T) {
+	session, req, chrome := setupWaitSession(t, "build")
+
+	ok, payload := waitForResponse(session, "edit", "build", "build", req.ID, 4)
+	if ok {
+		t.Errorf("chrome alone must not satisfy the wait, got payload %q", payload)
+	}
+	if !inboxHas(t, session, "edit", chrome.ID) {
+		t.Error("chrome must remain for the agent to read normally")
+	}
+}
+
+// TestResponseAnswersHostedRole covers a hosted role answering through its
+// host window (docs is hosted by plan), which the sender check must allow.
+func TestResponseAnswersHostedRole(t *testing.T) {
+	const msgID = "1789400000-edit-cccc"
+	reply := bus.Message{Type: "response", From: "plan", Action: "update-docs", ReplyTo: msgID}
+
+	if !responseAnswers(reply, "docs", "plan", "update-docs", msgID) {
+		t.Error("a reply from the host agent must answer a request sent to the hosted role")
+	}
+	if responseAnswers(reply, "docs", "review", "update-docs", msgID) {
+		t.Error("a reply from an unrelated role must not answer merely because it is hosted")
+	}
+}

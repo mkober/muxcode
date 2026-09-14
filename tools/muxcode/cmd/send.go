@@ -269,6 +269,29 @@ func Send(args []string) {
 	}
 }
 
+// responseAnswers reports whether m is the answer to the request msgID, sent
+// to target with the given action. host carries the hosted-role window so a
+// reply from the host agent still counts.
+//
+// Sender alone is not correlation: until 2026-09-14 any response the target
+// emitted satisfied a wait, so a `response:notify` ("Acknowledged file change")
+// closed four separate build and test waits, was printed as their result, and
+// marked their requests responded against its own unrelated id. A reply naming
+// a different request is proof it is not this one; the action check covers
+// agents that reply without --reply-to.
+func responseAnswers(m bus.Message, target, host, action, msgID string) bool {
+	if m.Type != "response" {
+		return false
+	}
+	if m.From != target && m.From != host {
+		return false
+	}
+	if m.ReplyTo != "" {
+		return m.ReplyTo == msgID
+	}
+	return m.Action == action
+}
+
 // waitForResponse watches the delivery status file for the sent message,
 // waiting for it to transition to "responded". This avoids racing with
 // the background --poll loop which also reads the inbox — previously both
@@ -282,15 +305,18 @@ func Send(args []string) {
 // this below MUXCODE_INBOX_POLL_TIMEOUT to auto-degrade to a tracked task).
 // Returns true if a response was received, false on timeout. The caller is
 // responsible for any timeout messaging.
-func waitForResponse(session, role, target, msgID string, timeout int) (bool, string) {
+//
+// Only a response that correlates counts as the answer — see responseAnswers.
+func waitForResponse(session, role, target, action, msgID string, timeout int) (bool, string) {
 	if timeout <= 0 {
 		timeout = resolveWaitTimeout()
 	}
 
 	// For hosted roles, also accept responses from the host agent
 	host := bus.WindowForRole(target)
-	acceptFrom := func(from string) bool {
-		return from == target || from == host
+
+	isMyAnswer := func(m bus.Message) bool {
+		return responseAnswers(m, target, host, action, msgID)
 	}
 
 	// Poll delivery status at 500ms — just stat + read a small JSON file,
@@ -309,7 +335,11 @@ func waitForResponse(session, role, target, msgID string, timeout int) (bool, st
 			// Response detected — try to consume it from inbox for display.
 			// The background --poll may have already consumed it, which is fine.
 			if bus.HasMessages(session, role) {
-				msgs, err := bus.ReceiveFromFunc(session, role, acceptFrom)
+				match := isMyAnswer
+				if ds.ResponseID != "" {
+					match = func(m bus.Message) bool { return m.ID == ds.ResponseID }
+				}
+				msgs, err := bus.ReceiveMatchingFunc(session, role, match)
 				if err == nil && len(msgs) > 0 {
 					fmt.Println()
 					var payload string
@@ -336,8 +366,8 @@ func waitForResponse(session, role, target, msgID string, timeout int) (bool, st
 		if polls%5 == 0 {
 			if msgs, err := bus.Peek(session, role); err == nil {
 				for _, m := range msgs {
-					if (m.From == target || m.From == host) && m.Type == "response" {
-						consumed, cErr := bus.ReceiveFromFunc(session, role, acceptFrom)
+					if isMyAnswer(m) {
+						consumed, cErr := bus.ReceiveMatchingFunc(session, role, isMyAnswer)
 						if cErr == nil && len(consumed) > 0 {
 							fmt.Println()
 							var payload string
@@ -397,7 +427,7 @@ func awaitOrTrack(session, from, to, action, taskID string) {
 	}
 
 	bus.SetWaiting(session, from)
-	responded, payload := waitForResponse(session, from, to, taskID, blockSecs)
+	responded, payload := waitForResponse(session, from, to, action, taskID, blockSecs)
 	if responded {
 		ds, err := bus.ReadDeliveryStatus(session, taskID)
 		if err == nil && ds.ResponseID != "" {

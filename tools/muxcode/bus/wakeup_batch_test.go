@@ -67,6 +67,47 @@ func TestBoundWakeUpBatchEmptyInbox(t *testing.T) {
 	}
 }
 
+// TestReceiveMatchingFuncLeavesUnmatchedMessages pins the retention half of
+// the --wait correlation fix: consuming the one answer must leave everything
+// else readable. ReceiveFromFunc matches on sender alone and would drain all
+// three here, discarding messages the waiter never asked for.
+func TestReceiveMatchingFuncLeavesUnmatchedMessages(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+
+	chrome := NewMessage("build", "edit", "response", "notify", "Acknowledged file change", "")
+	answer := NewMessage("build", "edit", "response", "build", "exit 0", "req-1")
+	later := NewMessage("build", "edit", "response", "notify", "Acknowledged another", "")
+	for _, m := range []Message{chrome, answer, later} {
+		if err := SendNoCC(session, m); err != nil {
+			t.Fatalf("SendNoCC: %v", err)
+		}
+	}
+
+	got, err := ReceiveMatchingFunc(session, "edit", func(m Message) bool {
+		return m.ReplyTo == "req-1"
+	})
+	if err != nil {
+		t.Fatalf("ReceiveMatchingFunc: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != answer.ID {
+		t.Fatalf("consumed %d msgs, want exactly the correlated answer", len(got))
+	}
+
+	rest, err := Peek(session, "edit")
+	if err != nil {
+		t.Fatalf("Peek: %v", err)
+	}
+	if len(rest) != 2 {
+		t.Fatalf("remainder = %d msgs, want the 2 unrelated ones left intact", len(rest))
+	}
+	for _, m := range rest {
+		if m.ID == answer.ID {
+			t.Error("the answer must not remain in the inbox")
+		}
+	}
+}
+
 func TestReceiveDeliveredIDsLeavesUndeliveredMessages(t *testing.T) {
 	useTempBusDir(t)
 	session := testSession(t)
