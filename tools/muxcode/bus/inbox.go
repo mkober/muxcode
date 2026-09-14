@@ -218,7 +218,8 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 	// (the reply template does exactly that) is not actionable, and refusing it
 	// would strand commit's tracked task.
 	if m.Type == "request" {
-		if deny := CheckCommitAuthority(m.From, m.To, m.Action); deny != "" {
+		// Graph dispatches are judged on their gate — see CheckCommitAuthorityForMessage.
+		if deny := CheckCommitAuthorityForMessage(session, m); deny != "" {
 			fmt.Fprintf(os.Stderr, "  [send] REFUSED %s→%s:%s — %s\n", m.From, m.To, m.Action, deny)
 			LogLifecycle(session, "warn", "bus", "commit-authority-refused", m.From)
 			return fmt.Errorf("%s", deny)

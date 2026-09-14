@@ -221,7 +221,7 @@ agent's own identity will periodically produce something coherent; that the rece
 this time is commit's judgement, not a property of the mechanism.
 
 **No tier case.** The earlier draft argued this reached
-[MUX-144](./MUX-144-wait-human-gate-openable-by-any-agent.md)'s tier-0 bar ("irreversible and
+[MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md)'s tier-0 bar ("irreversible and
 externally visible"). With the causation corrected, it does not: nothing external resulted. The spec
 stays where it is, and the argument is withdrawn rather than quietly dropped.
 

@@ -321,25 +321,38 @@ because two roads reach it — `muxcode graph approve` and the graph TUI. Releas
 are attributable: the marker records `approved_by` from `BusActorVerified`, and
 `graph-run-created` / `graph-gate-approved` / `graph-gate-approval-refused` name their actor.
 
-Two qualifications, both open in
-[MUX-144](requirements/backlog/MUX-144-wait-human-gate-openable-by-any-agent.md). The
+Two qualifications were open in
+[MUX-144](requirements/completed/MUX-144-wait-human-gate-openable-by-any-agent.md); the second closed
+2026-09-13. The
 config-file read *narrowed* the caller-control problem rather than closing it: the file is
 agent-writable (its path stopped honouring `$MUXCODE_CONFIG` in `31a2ca4`), so daemon-side
 authority is the real fix. `c4997ed` (2026-09-08 19:11) added that half — `SealGateAuthority` freezes
 the list at daemon startup (`gate-authority-sealed`; live edits may narrow, never widen) and
 `gateApprovalHolds` re-decides every release on the marker's `approved_by`, with `approvalHasAudit`
-requiring a matching `graph-gate-approved` lifecycle row — but it is **unverified** (never built,
-tested or reviewed; see [MUX-157](requirements/backlog/MUX-157-role-boundary-an-agent-can-ignore.md))
-and moves the forgery target to the lifecycle log, which agents can also append to and which rotates
-on every append. The MUX-144 step stays open.
-And the runtime backstop is still a no-op for graph sends: they carry `From = "daemon"`, which
-`CheckCommitAuthority` normalizes to `edit` — an authorized role — so a graph dispatch passes as
-though the user's own agent had asked, judged on the normalized sender rather than on the gate's
-recorded approval (Phase 4). Until that lands the gate is the only control on that path — a real
-boundary, but a single one; a marker forged on disk still defeats it, which is why
-`unverifiedHoldReleased` re-reads `approved_by` daemon-side. An earlier version of this paragraph
-claimed the runtime backstop meant a graph "cannot be used to launder an action around the rules
-that govern it"; that was false as written and is corrected here (2026-09-08).
+requiring a matching `graph-gate-approved` lifecycle row. It landed unverified and authored out of
+role ([MUX-157](requirements/backlog/MUX-157-role-boundary-an-agent-can-ignore.md)); `77f32b8` then
+made audit rows survive log rotation and the full suite ran green on it, and PR #73 carried it through
+review — but its inputs are still the agent-writable config files, and a routine `./build.sh`
+restarts the daemon and re-seals from them. That step stays open.
+**The runtime backstop is real for graph sends since Phase 4 (2026-09-13).** A dispatch carries its
+provenance (`Message.GraphRun` / `GraphNode`, stamped in `dispatchNode`), and
+`CheckCommitAuthorityForMessage` — at the `sendMessage` seam every non-CLI sender crosses — reads the
+**raw** sender, so `daemon` is no longer normalized to `edit` for a git-mutating action. It is judged
+on the `wait_human` gate whose territory holds the node: the marker must name an approver
+`CheckGateApprovalAuthority` admits **and** match a `graph-gate-approved` audit row (`approvalDenial`,
+one definition shared with `gateApprovalHolds`), and the message must be the node's own work — a
+send, same recipient, action and interpolated payload — so one approval authorizes one action, not
+everything downstream of its gate. No provenance, an unreadable run, a node the frozen graph lacks,
+or a forged marker is refused and logged `commit-authority-refused`: the backstop fails closed. The
+`daemon` → `edit` normalization is untouched, so replies and non-git daemon sends route as before.
+Before Phase 4 this backstop was a no-op on the graph path — `From = "daemon"` normalized to an
+authorized role and the gate was the only control. An earlier version of this paragraph claimed the
+runtime backstop meant a graph "cannot be used to launder an action around the rules that govern
+it"; that was false as written from the day it was written until 2026-09-13 (flagged 2026-09-08). The
+Atlassian road is not yet judged the same way — a graph `jira-write` dispatches to plan, which holds
+that authority itself, so there is no sender to re-judge and the check would be new — tracked as
+[MUX-181](requirements/backlog/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), the
+refusal half of the provenance mechanism MUX-165 already names; the two ship together.
 
 **Dispatch-time node guards.** A `send` or `spawn` node may declare a `guard` — a predicate the
 executor evaluates in `dispatchNode()` *before* the message is sent, so a declined node never

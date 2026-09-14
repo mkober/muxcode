@@ -87,6 +87,9 @@ func CheckCommitAuthority(from, to, action string) string {
 	if !IsGitMutatingAction(to, action) {
 		return ""
 	}
+	if isGraphDispatch(from) {
+		return denyGraphDispatch("it carries no graph provenance")
+	}
 	from = NormalizeBusRole(from)
 	authorized := CommitAuthorityRoles()
 	for _, allowed := range authorized {
@@ -102,4 +105,128 @@ func CheckCommitAuthority(from, to, action string) string {
 		"git mutations are user-initiated: %s may not request a commit/stage/push/merge/rebase/tag (%s). "+
 			"Report what is ready to commit and let the user decide.",
 		from, who)
+}
+
+// isGraphDispatch reports whether a sender is the graph executor's identity,
+// read BEFORE normalization.
+//
+// NormalizeBusRole("daemon") returns "edit", the default commit authority, so a
+// check that normalizes first cannot tell a graph node's request from the
+// request of the one agent actually talking to the user. That is the whole of
+// MUX-144 Defect C, and reading the raw sender is what closes it. The
+// normalization itself stays — replies to a daemon send must still reach edit.
+func isGraphDispatch(from string) bool {
+	return strings.EqualFold(strings.TrimSpace(from), graphSender)
+}
+
+// denyGraphDispatch words a graph refusal. Like CheckCommitAuthority's own
+// message it names no lever that would lift the block, and it points at the
+// gate, because an approval by an authorized person is the only thing that
+// legitimately releases one of these.
+func denyGraphDispatch(why string) string {
+	return fmt.Sprintf(
+		"git mutations are user-initiated: this graph dispatch may not request a "+
+			"commit/stage/push/merge/rebase/tag because %s. A wait_human gate "+
+			"approved by an authorized person is what releases it.", why)
+}
+
+// CheckCommitAuthorityForMessage returns a deny message if m may not request a
+// git mutation, or "" if the send is allowed.
+//
+// This is the road every non-CLI sender crosses, and the only one that can
+// judge a graph dispatch on the gate that released it rather than on its
+// sender: the run id and node id travel on the message, and the approval
+// they lead to is the evidence a human consented.
+func CheckCommitAuthorityForMessage(session string, m Message) string {
+	if !IsGitMutatingAction(m.To, m.Action) {
+		return ""
+	}
+	if isGraphDispatch(m.From) {
+		return checkGraphCommitDispatch(session, m)
+	}
+	return CheckCommitAuthority(m.From, m.To, m.Action)
+}
+
+// checkGraphCommitDispatch judges a graph-dispatched git mutation on the
+// wait_human gate that released its node.
+//
+// Two questions, and both must hold. First: is this message actually the work
+// the frozen graph defines for the node it names — same kind, same target, same
+// action, same interpolated payload? A gate approves ONE action, so without that
+// binding any audited approval anywhere in the run would authorize an arbitrary
+// commit; gateTerritory contains the gate itself and every downstream node of
+// any kind, so a dispatch could name a read-only successor, or keep a real
+// node's id and substitute a different payload. Second: did a wait_human gate
+// whose territory contains that node carry an approval that is attributable,
+// authorized and corroborated?
+//
+// Anything else is refused, including a dispatch with no provenance and a run
+// that cannot be read. This is the backstop, so it fails closed: absence of
+// evidence that a human approved is not evidence of approval.
+func checkGraphCommitDispatch(session string, m Message) string {
+	if m.GraphRun == "" || m.GraphNode == "" {
+		return denyGraphDispatch("it carries no graph provenance")
+	}
+	run, err := ReadGraphRun(session, m.GraphRun)
+	if err != nil {
+		return denyGraphDispatch(fmt.Sprintf("its run %q cannot be read", m.GraphRun))
+	}
+	g, err := ReadGraphRunGraph(session, m.GraphRun)
+	if err != nil {
+		return denyGraphDispatch(fmt.Sprintf("the frozen graph for run %q cannot be read", m.GraphRun))
+	}
+	byID := make(map[string]*Node, len(g.Nodes))
+	for i := range g.Nodes {
+		byID[g.Nodes[i].ID] = &g.Nodes[i]
+	}
+	n, ok := byID[m.GraphNode]
+	if !ok {
+		return denyGraphDispatch(fmt.Sprintf("node %q is not in the frozen graph for run %s", m.GraphNode, m.GraphRun))
+	}
+	if why := dispatchMatchesNode(session, run, n, m); why != "" {
+		return denyGraphDispatch(why)
+	}
+	for i := range g.Nodes {
+		gate := &g.Nodes[i]
+		if gate.Type != NodeWaitHuman || !g.gateTerritory(byID, gate.ID)[n.ID] {
+			continue
+		}
+		if graphGateApprovalAuthorizes(session, run, gate.ID) {
+			return ""
+		}
+	}
+	return denyGraphDispatch(fmt.Sprintf(
+		"no wait_human gate released node %q on an audited, authorized approval", n.ID))
+}
+
+// dispatchMatchesNode reports why a message is not the work its named node
+// defines, or "" when it matches.
+//
+// The payload is re-interpolated exactly as dispatchNode built it, with an empty
+// item: validateGates refuses a commit-role map or spawn node, so a git mutation
+// only ever reaches the bus from a plain send.
+func dispatchMatchesNode(session string, run *GraphRun, n *Node, m Message) string {
+	if n.Type != NodeSend {
+		return fmt.Sprintf("node %q is a %s node, not a send", n.ID, n.Type)
+	}
+	if NormalizeBusRole(n.Role) != NormalizeBusRole(m.To) {
+		return fmt.Sprintf("node %q dispatches to %q, not to %q", n.ID, n.Role, m.To)
+	}
+	if n.Action != m.Action {
+		return fmt.Sprintf("node %q dispatches action %q, not %q", n.ID, n.Action, m.Action)
+	}
+	if interpolateGraphMessage(session, n.Message, run.Intent, "") != m.Payload {
+		return fmt.Sprintf("the payload is not what node %q defines", n.ID)
+	}
+	return ""
+}
+
+// graphGateApprovalAuthorizes reports whether a gate's approval marker holds.
+func graphGateApprovalAuthorizes(session string, run *GraphRun, gateID string) bool {
+	marker, err := os.ReadFile(graphApprovalPath(session, run.ID, gateID, "approved"))
+	if err != nil {
+		return false
+	}
+	_, deny := approvalDenial(session, run, gateID, marker)
+	return deny == ""
 }

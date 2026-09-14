@@ -1424,6 +1424,17 @@ func TestExecRetryBelowParallelGateCutRearmsAll(t *testing.T) {
 // approval that was never part of the run. This is the only assertion on
 // staleApprovalGates' done/success check: without it a re-arm-
 // unconditional mutant passes the rest of the suite.
+//
+// It also pins a second laundering path that MUX-144 Phase 4 closed, and which
+// this test previously asserted was open: `retry --from c` targets a commit node
+// BELOW a gate nobody ever approved, so the re-arm correctly finds no stale
+// approval to purge and the run walks straight past an unopened gate into an
+// irreversible action. MUX-132 guards "is this approval current?"; nothing on
+// the retry road asks "was there one at all?". The runtime backstop now refuses
+// the dispatch, so the node fails rather than committing. Whether the retry
+// should instead re-arm an unsatisfied gate — failing at retry time with a
+// clearer message than a failed node — is an open design question recorded on
+// MUX-144, not settled here.
 func TestExecRetryBelowNeverApprovedGateUnaffected(t *testing.T) {
 	g := &Graph{
 		Name:  "t",
@@ -1464,10 +1475,15 @@ func TestExecRetryBelowNeverApprovedGateUnaffected(t *testing.T) {
 		t.Errorf("RetryNote %q on a retry with no stale approval, want empty", got.RetryNote)
 	}
 
-	// The retry resumes where asked; no second approval request is sent.
+	// The retry resumes where asked and never re-asks the gate — but the commit
+	// itself is refused at the backstop, because no human ever approved the gate
+	// above it (MUX-144 Phase 4; before it, this dispatch went through).
 	step(t, runTestSession, run.ID)
-	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodeRunning {
-		t.Fatalf("c state %q after tick, want running — the retry must proceed unaffected", s)
+	if s := nodeState(t, runTestSession, run.ID, "c"); s != GraphNodeFailed {
+		t.Fatalf("c state %q after tick, want failed — a commit below a never-approved gate must not dispatch", s)
+	}
+	if msgs, _ := Peek(runTestSession, "commit"); len(msgs) != 0 {
+		t.Errorf("commit inbox = %+v, want empty — the refused dispatch must not reach the agent", msgs)
 	}
 	logged, _ := readMessages(LogPath(runTestSession))
 	var approvals int
