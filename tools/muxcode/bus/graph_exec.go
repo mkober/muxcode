@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Graph executor — the daemon's checkGraphRuns() tick calls StepGraphRuns
@@ -558,7 +559,25 @@ func summarizeOpenItems(names []string, limit int) string {
 // ${spec} is the current name for what the run is driving; ${intent}
 // remains accepted so templates written against the old name keep
 // working, including any saved outside this repo.
-func interpolateGraphMessage(session, msg, intent, item string) string {
+//
+// ${output:<node-id>} expands to that node's harvested report. A node's
+// findings otherwise reach no one: a worker that records a decision and
+// names where it wrote it is answering a dispatch nobody downstream can
+// read, so on 2026-09-14 a user's Phase 2 choice reached /tmp and the bus
+// but never the plan dispatch that was meant to record it, and the run
+// failed on the resulting "not verified". predecessorOutput serves
+// conditions, but only across a direct edge — the node that produced the
+// finding is usually several edges upstream of the node that needs it.
+//
+// Like ${current_phase}, this resolves at call time rather than at
+// dispatch, so a message carrying it is not stable across a re-run; keep
+// it out of nodes whose payload is re-derived for an equality check
+// (CheckCommitAuthorityForMessage).
+func interpolateGraphMessage(session string, run *GraphRun, msg, item string) string {
+	intent := ""
+	if run != nil {
+		intent = run.Intent
+	}
 	msg = strings.ReplaceAll(msg, "${spec}", intent)
 	msg = strings.ReplaceAll(msg, "${intent}", intent)
 	if item != "" {
@@ -570,7 +589,68 @@ func interpolateGraphMessage(session, msg, intent, item string) string {
 	if strings.Contains(msg, "${completed_phase}") {
 		msg = strings.ReplaceAll(msg, "${completed_phase}", resolveCompletedPhaseText(session))
 	}
+	if strings.Contains(msg, "${output:") {
+		msg = expandNodeOutputRefs(session, run, msg)
+	}
 	return msg
+}
+
+// nodeOutputRefRe matches ${output:<node-id>}. The id is anything up to
+// the closing brace because graph validation constrains an id only to
+// nonempty and unique (nodeByID) — a narrower charset here would leave a
+// reference to a legally named node, say "impl.v2", sitting literal in a
+// dispatch. An id that matches no node is reported by expansion, not by
+// failing to match.
+var nodeOutputRefRe = regexp.MustCompile(`\$\{output:([^}]+)\}`)
+
+// maxInterpolatedOutput bounds one expanded report. A worker's reply can
+// run to thousands of characters and several may land in one message, so
+// the cap keeps a dispatch readable; the head is kept because a report
+// leads with its verdict and the file it wrote.
+const maxInterpolatedOutput = 2000
+
+// truncateAtRune caps s at max bytes without splitting a rune. Cutting
+// mid-sequence yields invalid UTF-8, which JSON encoding then replaces
+// with U+FFFD, so a report ending in any multibyte character — an em
+// dash, an arrow, a box-drawing rule — would corrupt at the boundary.
+func truncateAtRune(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "… (truncated)"
+}
+
+// expandNodeOutputRefs replaces every ${output:<node-id>} with that node's
+// recorded output.
+//
+// An unknown node and one that has not reported yet both expand to an
+// explicit marker rather than to an empty string: a dispatch that silently
+// loses the report it was built to carry is the failure this placeholder
+// exists to stop, so the gap has to be visible to whoever reads the
+// message.
+func expandNodeOutputRefs(session string, run *GraphRun, msg string) string {
+	if run == nil {
+		return msg
+	}
+	statuses, err := ReadAllNodeStatuses(session, run.ID)
+	if err != nil {
+		return msg
+	}
+	return nodeOutputRefRe.ReplaceAllStringFunc(msg, func(ref string) string {
+		m := nodeOutputRefRe.FindStringSubmatch(ref)
+		if len(m) != 2 {
+			return ref
+		}
+		st, ok := statuses[m[1]]
+		if !ok || st.Output == "" {
+			return fmt.Sprintf("(no report recorded for node %q)", m[1])
+		}
+		return truncateAtRune(st.Output, maxInterpolatedOutput)
+	})
 }
 
 // graphOwnedRoles lists the send-node roles reachable from the worker's node,
@@ -906,7 +986,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 
 	switch n.Type {
 	case NodeSend:
-		msg := interpolateGraphMessage(session, n.Message, run.Intent, "")
+		msg := interpolateGraphMessage(session, run, n.Message, "")
 		m := NewMessage(graphSender, n.Role, "request", n.Action, msg, "")
 		m.GraphRun, m.GraphNode = run.ID, n.ID
 		if err := SendNoCC(session, m); err != nil {
@@ -938,7 +1018,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 
 	case NodeSpawn:
 		msg := graphWorkerTask(g, run.ID, n.ID,
-			interpolateGraphMessage(session, n.Message, run.Intent, ""))
+			interpolateGraphMessage(session, run, n.Message, ""))
 		spawnID, err := acquireSpawnWorker(session, run.ID, n.ID, n.Role, msg)
 		if err != nil {
 			finishNode(session, run, n, OutcomeFailure, "spawn failed: "+err.Error())
@@ -959,7 +1039,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		for i, item := range items {
 			nodeKey := fmt.Sprintf("%s#%d", n.ID, i)
 			msg := graphWorkerTask(g, run.ID, n.ID,
-				interpolateGraphMessage(session, n.Message, run.Intent, item))
+				interpolateGraphMessage(session, run, n.Message, item))
 			spawnID, err := acquireSpawnWorker(session, run.ID, nodeKey, n.Role, msg)
 			if err != nil {
 				finishNode(session, run, n, OutcomeFailure, "map spawn failed: "+err.Error())
@@ -993,7 +1073,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		finishNode(session, run, n, OutcomeSuccess, "")
 
 	case NodeWaitHuman:
-		prompt := interpolateGraphMessage(session, n.Message, run.Intent, "")
+		prompt := interpolateGraphMessage(session, run, n.Message, "")
 		if err := purgeStaleApproval(session, run.ID, n.ID); err != nil {
 			finishNode(session, run, n, OutcomeFailure,
 				fmt.Sprintf("cannot purge stale approval for gate %q: %v", n.ID, err))
@@ -1164,7 +1244,7 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 			redriveStalledSpawns(session, run, n, st, now)
 			return
 		}
-		output := ""
+		output := spawnGroupReports(session, st.TaskID)
 		if outcome == OutcomeSuccess {
 			summary, perr := portSpawnGroup(session, st.TaskID)
 			if errors.Is(perr, errPortTransient) {
@@ -1174,7 +1254,11 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 				finishNode(session, run, n, OutcomeFailure, "harvest: "+perr.Error())
 				return
 			}
-			output = summary
+			if output == "" {
+				output = summary
+			} else {
+				output += "\n" + summary
+			}
 			LogLifecycle(session, "info", "daemon", "graph-harvest",
 				fmt.Sprintf("%s: %s — %s", run.ID, n.ID, summary))
 		}
@@ -1398,6 +1482,66 @@ func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 		}
 	}
 	return outcome, true
+}
+
+// spawnGroupReports joins the reply payloads of a spawn group's workers.
+//
+// A spawn node's recorded output was the port summary alone, so what the
+// worker actually said reached no one: a worker whose job is to decide or
+// investigate ports no files, and "nothing to port" is the whole record of
+// an iteration that may have produced a report someone downstream needs.
+// Reports lead the node's output and the summary trails it, because the
+// summary is short, also carried on the graph-harvest lifecycle row, and
+// the report is what a reader and ${output:<node-id>} are after.
+//
+// Keyed on the entry's CURRENT SeedMsgID, which ReseedSpawn moves before
+// the next iteration starts, so a prior pass's reply can never be read as
+// this dispatch's report.
+func spawnGroupReports(session, taskIDs string) string {
+	entries, err := ReadSpawnEntries(session)
+	if err != nil {
+		return ""
+	}
+	byRole := make(map[string]SpawnEntry, len(entries))
+	for _, e := range entries {
+		byRole[e.SpawnRole] = e
+	}
+	var parts []string
+	for _, id := range strings.Split(taskIDs, ",") {
+		e, ok := byRole[id]
+		if !ok || e.SeedMsgID == "" {
+			continue
+		}
+		if payload := spawnReplyPayload(session, e.SeedMsgID); payload != "" {
+			parts = append(parts, payload)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// spawnReplyPayload returns the worker's reply to a seed message.
+//
+// The delivery status is consulted first and the bus log second rather
+// than the status alone: MarkResponded records a ResponseID only onto an
+// existing status file, so a seed whose record was never written or has
+// since been collected would report a reply that plainly exists on the
+// log as absent.
+func spawnReplyPayload(session, seedID string) string {
+	if ds, err := ReadDeliveryStatus(session, seedID); err == nil && ds.ResponseID != "" {
+		if m, found := FindMessageByID(session, ds.ResponseID); found && m.Payload != "" {
+			return m.Payload
+		}
+	}
+	msgs, err := readMessages(LogPath(session))
+	if err != nil {
+		return ""
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Type == "response" && msgs[i].ReplyTo == seedID && msgs[i].Payload != "" {
+			return msgs[i].Payload
+		}
+	}
+	return ""
 }
 
 // lostSpawnWorkers lists a node's workers whose entry is terminal —

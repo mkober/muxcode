@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // fakeSpawns replaces graphSpawnFn with an in-memory dispatcher that
@@ -2052,6 +2053,341 @@ func TestExecCurrentPhaseInterpolation(t *testing.T) {
 	if !strings.Contains(msgs[0].Payload, "Phase 2: Attribution") ||
 		strings.Contains(msgs[0].Payload, "Phase 1") {
 		t.Errorf("dispatch must carry the derived open phase, not the frozen intent's: %q", msgs[0].Payload)
+	}
+}
+
+// TestNodeOutputInterpolation pins ${output:<node-id>}: a downstream
+// dispatch carries an upstream node's report even across several edges,
+// which predecessorOutput cannot reach. A worker that records a decision
+// and names the file it wrote is otherwise answering a dispatch nobody
+// downstream can read (MUX-148 Phase 2, 2026-09-14).
+func TestNodeOutputInterpolation(t *testing.T) {
+	g := &Graph{
+		Name:  "g",
+		Start: "impl",
+		Nodes: []Node{
+			{ID: "impl", Type: NodeSend, Role: "build", Action: "build", Message: "do it"},
+			{ID: "mid", Type: NodeSend, Role: "test", Action: "test", Message: "check"},
+			{ID: "record", Type: NodeSend, Role: "plan", Action: "verify-spec", Message: "REPORT: ${output:impl}"},
+		},
+		Edges: []Edge{{From: "impl", To: "mid"}, {From: "mid", To: "record"}},
+	}
+	run := createTestRun(t, g)
+
+	const report = "Decision recorded: /tmp/mux-148-phase2-decision.md"
+	if err := TransitionGraphNode(runTestSession, run.ID, "impl", GraphNodeRunning, func(s *GraphNodeStatus) {
+		s.Output = report
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := interpolateGraphMessage(runTestSession, run, "REPORT: ${output:impl}", "")
+	if !strings.Contains(got, report) {
+		t.Errorf("dispatch must carry impl's report across two edges, got %q", got)
+	}
+	if strings.Contains(got, "${output:") {
+		t.Errorf("placeholder must not survive into a dispatch: %q", got)
+	}
+
+	// predecessorOutput is the mechanism this placeholder exists to go
+	// beyond: record's only in-edge is mid, so it cannot see impl at all.
+	if pred := predecessorOutput(runTestSession, run, g, "record"); strings.Contains(pred, report) {
+		t.Errorf("predecessorOutput should not reach impl from record; got %q — "+
+			"if it does, this placeholder is redundant and the test is vacuous", pred)
+	}
+
+	// Negative control: a gap must be visible, never a silent empty string.
+	missing := interpolateGraphMessage(runTestSession, run, "REPORT: ${output:nosuch}", "")
+	if !strings.Contains(missing, "no report recorded") || !strings.Contains(missing, "nosuch") {
+		t.Errorf("unknown node must expand to a visible marker naming it, got %q", missing)
+	}
+	if missing == "REPORT: " {
+		t.Error("unknown node expanded to silence — the failure this placeholder exists to stop")
+	}
+
+	// A node that exists but has not reported is the same gap.
+	if unreported := interpolateGraphMessage(runTestSession, run, "${output:mid}", ""); !strings.Contains(unreported, "no report recorded") {
+		t.Errorf("a node with no output must expand to the marker, got %q", unreported)
+	}
+}
+
+// TestNodeOutputInterpolationTruncates pins the size bound, and that the
+// head — where a report states its verdict and names its file — survives.
+func TestNodeOutputInterpolationTruncates(t *testing.T) {
+	g := &Graph{
+		Name:  "g",
+		Start: "impl",
+		Nodes: []Node{{ID: "impl", Type: NodeSend, Role: "build", Action: "build", Message: "do it"}},
+	}
+	run := createTestRun(t, g)
+
+	head := "VERDICT: see /tmp/decision.md"
+	if err := TransitionGraphNode(runTestSession, run.ID, "impl", GraphNodeRunning, func(s *GraphNodeStatus) {
+		s.Output = head + strings.Repeat("x", maxInterpolatedOutput*2)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := interpolateGraphMessage(runTestSession, run, "${output:impl}", "")
+	if !strings.Contains(got, head) {
+		t.Errorf("truncation must keep the head of the report, got %q", got[:min(80, len(got))])
+	}
+	if !strings.Contains(got, "truncated") {
+		t.Error("a truncated report must say so, or a reader treats a cut report as the whole one")
+	}
+	if len(got) > maxInterpolatedOutput+64 {
+		t.Errorf("expanded output %d exceeds the cap %d", len(got), maxInterpolatedOutput)
+	}
+}
+
+// TestTruncateAtRune pins that the cap never splits a rune: a cut inside a
+// multibyte sequence yields invalid UTF-8, which JSON encoding silently
+// replaces with U+FFFD.
+func TestTruncateAtRune(t *testing.T) {
+	// An em dash straddling the cap: 1 filler byte short of it, then 3 bytes.
+	s := strings.Repeat("a", 9) + "—" + strings.Repeat("b", 20)
+	got := truncateAtRune(s, 10)
+	if !utf8.ValidString(got) {
+		t.Errorf("truncation produced invalid UTF-8: %q", got)
+	}
+	if strings.ContainsRune(got, utf8.RuneError) {
+		t.Errorf("truncation left a replacement char: %q", got)
+	}
+	if !strings.HasPrefix(got, strings.Repeat("a", 9)) {
+		t.Errorf("truncation must keep whole runes before the cap, got %q", got)
+	}
+
+	// Negative control: under the cap, the string is returned untouched.
+	if got := truncateAtRune("short", 10); got != "short" {
+		t.Errorf("a string under the cap must be unchanged, got %q", got)
+	}
+}
+
+// TestNodeOutputRefAcceptsValidIDs pins that the reference matches every id
+// graph validation accepts — validation constrains an id only to nonempty
+// and unique, so a dotted or spaced id must not be left literal.
+func TestNodeOutputRefAcceptsValidIDs(t *testing.T) {
+	g := &Graph{
+		Name:  "g",
+		Start: "impl.v2",
+		Nodes: []Node{{ID: "impl.v2", Type: NodeSend, Role: "build", Action: "build", Message: "do it"}},
+	}
+	run := createTestRun(t, g)
+	if err := TransitionGraphNode(runTestSession, run.ID, "impl.v2", GraphNodeRunning, func(s *GraphNodeStatus) {
+		s.Output = "dotted report"
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := interpolateGraphMessage(runTestSession, run, "${output:impl.v2}", "")
+	if !strings.Contains(got, "dotted report") {
+		t.Errorf("a dotted node id must resolve, got %q", got)
+	}
+	if strings.Contains(got, "${output:") {
+		t.Errorf("reference to a legally named node left literal: %q", got)
+	}
+}
+
+// TestSpawnGroupReportsCarryWorkerReply pins the other half of the plumb:
+// a spawn node recorded only the port summary, so ${output:<node-id>}
+// would have expanded to "nothing to port" and delivered nothing — the
+// placeholder would look wired while carrying no report at all.
+//
+// Both lookup roads are exercised separately: the delivery status first,
+// then the bus log after that status is removed. The second case is what
+// pins the fallback — with the status present it passes either way.
+func TestSpawnGroupReportsCarryWorkerReply(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Init() makes this at session start; without it CreateDeliveryStatus
+	// only warns, and a fixture with no status silently exercises the
+	// fallback while claiming to test the delivery-status road.
+	if err := os.MkdirAll(DeliveryDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	seedAndReply := func(spawnRole, report string) string {
+		t.Helper()
+		seed := NewMessage("daemon", spawnRole, "request", "spawn-task", "do the work", "")
+		if err := SendNoCC(runTestSession, seed); err != nil {
+			t.Fatal(err)
+		}
+		reply := NewMessage(spawnRole, "daemon", "response", "spawn-task", report, seed.ID)
+		if err := SendNoCC(runTestSession, reply); err != nil {
+			t.Fatal(err)
+		}
+		MarkResponded(runTestSession, seed.ID, reply.ID)
+		return seed.ID
+	}
+
+	const report = "Decision recorded: /tmp/mux-148-phase2-decision.md"
+	seedID := seedAndReply("spawn-w1", report)
+	if err := WriteSpawnEntries(runTestSession, []SpawnEntry{{
+		ID: "w1", Role: "edit", SpawnRole: "spawn-w1",
+		Status: "completed", SeedMsgID: seedID,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Road 1 — the delivery status carries the ResponseID.
+	if ds, err := ReadDeliveryStatus(runTestSession, seedID); err != nil || ds.ResponseID == "" {
+		t.Fatalf("fixture must have a status with a ResponseID, got (%+v, %v) — "+
+			"without it this case cannot distinguish the two roads", ds, err)
+	}
+	if got := spawnGroupReports(runTestSession, "spawn-w1"); !strings.Contains(got, report) {
+		t.Errorf("with a delivery status, spawn output must carry the reply, got %q", got)
+	}
+
+	// Road 2 — status gone, the bus log still has the reply. Without the
+	// fallback this case returns empty, so it is what pins that branch.
+	if err := os.Remove(DeliveryPath(runTestSession, seedID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadDeliveryStatus(runTestSession, seedID); err == nil {
+		t.Fatal("delivery status still readable — the fallback case would be vacuous")
+	}
+	if got := spawnGroupReports(runTestSession, "spawn-w1"); !strings.Contains(got, report) {
+		t.Errorf("with no delivery status, the log fallback must still find the reply, got %q", got)
+	}
+
+	// Negative control: no recorded response means no invented report.
+	if err := WriteSpawnEntries(runTestSession, []SpawnEntry{{
+		ID: "w2", Role: "edit", SpawnRole: "spawn-w2", Status: "completed",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := spawnGroupReports(runTestSession, "spawn-w2"); got != "" {
+		t.Errorf("a worker that never replied must contribute nothing, got %q", got)
+	}
+
+	// Reseed control: a new iteration's seed must not be satisfied by the
+	// previous pass's reply, or a re-run reports work it never did.
+	newSeed := NewMessage("daemon", "spawn-w1", "request", "spawn-task", "iteration 2", "")
+	if err := SendNoCC(runTestSession, newSeed); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSpawnEntries(runTestSession, []SpawnEntry{{
+		ID: "w1", Role: "edit", SpawnRole: "spawn-w1",
+		Status: "completed", SeedMsgID: newSeed.ID,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := spawnGroupReports(runTestSession, "spawn-w1"); got != "" {
+		t.Errorf("an unanswered new seed must not inherit the prior reply, got %q", got)
+	}
+}
+
+// TestSpawnHarvestPassesReportDownstream drives the whole plumb through the
+// executor: a spawn worker answers, harvest records its report, and the
+// downstream send's dispatch carries it. The helper-level tests above all
+// still pass if harvest stops calling spawnGroupReports — this one does not.
+func TestSpawnHarvestPassesReportDownstream(t *testing.T) {
+	g := &Graph{
+		Name:  "g",
+		Start: "impl",
+		Nodes: []Node{
+			{ID: "impl", Type: NodeSpawn, Role: "edit", Message: "decide it"},
+			{ID: "record", Type: NodeSend, Role: "plan", Action: "verify-spec",
+				Message: "WORKER REPORT: ${output:impl}"},
+		},
+		Edges: []Edge{{From: "impl", To: "record"}},
+	}
+	run := createTestRun(t, g)
+	fakeSpawns(t, runTestSession)
+	// See TestSpawnGroupReportsCarryWorkerReply: without this, no delivery
+	// status is written, spawnHasResponded reads false, and the answered
+	// worker is treated as lost instead of harvested.
+	if err := os.MkdirAll(DeliveryDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	step(t, runTestSession, run.ID)
+	st, err := ReadNodeStatus(runTestSession, run.ID, "impl")
+	if err != nil || st.TaskID == "" {
+		t.Fatalf("impl not running with a spawn id: (%+v, %v)", st, err)
+	}
+
+	const report = "Decision recorded: /tmp/mux-148-phase2-decision.md"
+	seed := NewMessage("daemon", st.TaskID, "request", "spawn-task", "decide it", "")
+	if err := SendNoCC(runTestSession, seed); err != nil {
+		t.Fatal(err)
+	}
+	reply := NewMessage(st.TaskID, "daemon", "response", "spawn-task", report, seed.ID)
+	if err := SendNoCC(runTestSession, reply); err != nil {
+		t.Fatal(err)
+	}
+	MarkResponded(runTestSession, seed.ID, reply.ID)
+	if err := UpdateSpawnEntry(runTestSession, st.TaskID, func(e *SpawnEntry) {
+		e.SeedMsgID = seed.ID
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Preconditions, asserted separately so a failure below names its cause
+	// rather than surfacing only as the port summary downstream.
+	entries, err := ReadSpawnEntries(runTestSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, e := range entries {
+		if e.SpawnRole == st.TaskID {
+			found = true
+			if e.SeedMsgID != seed.ID {
+				t.Fatalf("entry %s SeedMsgID = %q, want %q", e.SpawnRole, e.SeedMsgID, seed.ID)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no spawn entry with SpawnRole %q: %+v", st.TaskID, entries)
+	}
+	if got := spawnReplyPayload(runTestSession, seed.ID); got != report {
+		t.Fatalf("spawnReplyPayload = %q, want the worker's report", got)
+	}
+	if got := spawnGroupReports(runTestSession, st.TaskID); got != report {
+		t.Fatalf("spawnGroupReports = %q, want the worker's report", got)
+	}
+
+	step(t, runTestSession, run.ID) // harvest impl
+	implSt, err := ReadNodeStatus(runTestSession, run.ID, "impl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(implSt.Output, report) {
+		t.Fatalf("harvest recorded %q — the report never reached the node's output", implSt.Output)
+	}
+	step(t, runTestSession, run.ID) // dispatch record
+
+	msgs, _ := Peek(runTestSession, "plan")
+	if len(msgs) != 1 {
+		t.Fatalf("plan inbox: %+v", msgs)
+	}
+	if !strings.Contains(msgs[0].Payload, report) {
+		t.Errorf("plan's dispatch must carry the worker's report, got %q", msgs[0].Payload)
+	}
+}
+
+// TestSpecToPRPassesWorkerReportToPlan guards the wiring itself: the
+// mechanism above is inert unless the template actually uses it, and the
+// run that failed on 2026-09-14 failed precisely because plan's dispatch
+// carried nothing from the worker.
+func TestSpecToPRPassesWorkerReportToPlan(t *testing.T) {
+	data, ok := builtinGraphJSON["spec-to-pr"]
+	if !ok {
+		t.Fatal("builtin spec-to-pr template is missing")
+	}
+	g, err := ParseGraph([]byte(data))
+	if err != nil {
+		t.Fatalf("parse spec-to-pr: %v", err)
+	}
+	updateSpec := g.node("update-spec")
+	if updateSpec == nil {
+		t.Fatal("spec-to-pr has no update-spec node")
+	}
+	if !strings.Contains(updateSpec.Message, "${output:implement}") {
+		t.Errorf("update-spec must carry the implement worker's report; message = %q", updateSpec.Message)
 	}
 }
 

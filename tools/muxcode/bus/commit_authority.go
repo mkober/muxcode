@@ -215,7 +215,7 @@ func dispatchMatchesNode(session string, run *GraphRun, n *Node, m Message) stri
 	if n.Action != m.Action {
 		return fmt.Sprintf("node %q dispatches action %q, not %q", n.ID, n.Action, m.Action)
 	}
-	if interpolateGraphMessage(session, n.Message, run.Intent, "") != m.Payload {
+	if interpolateGraphMessage(session, run, n.Message, "") != m.Payload {
 		return fmt.Sprintf("the payload is not what node %q defines", n.ID)
 	}
 	return ""
