@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mkober/muxcode/tools/muxcode/cmd"
 )
@@ -26,7 +27,7 @@ var knownSubcommands = map[string]bool{
 	"simulate": true, "track": true, "remote": true, "spec": true,
 	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true,
 	"branch-time": true, "clear": true, "graph": true, "pane": true,
-	"version": true,
+	"version": true, "approve": true,
 }
 
 // route is where argv goes. The order routeFor checks them in is pinned by
@@ -40,20 +41,64 @@ const (
 	routeVersion
 	routeLauncher
 	routeSubcommand
+	routeHelp
+	routeAmbiguousName
 )
+
+// firstKnownSubcommand returns the first arg naming a subcommand, or "" —
+// used to guess what a refused launcher call was reaching for.
+func firstKnownSubcommand(args []string) string {
+	for _, a := range args {
+		if knownSubcommands[a] {
+			return a
+		}
+	}
+	return ""
+}
 
 // routeFor classifies args (argv without the program name) for the binary
 // invoked as base. Only the "muxcode" name routes unknown args to the
 // launcher; the muxcode-agent-bus symlink dispatches subcommands only.
+//
+// Three guards sit in front of that path fallback, because a launch is not a
+// cheap mistake to make: it starts a tmux session with a full agent window
+// layout and one AI CLI process per role.
+//
+//   - A help flag prints usage. Without this `muxcode --help` reached the
+//     launcher and died on "not a directory: <cwd>/--help", which reads as a
+//     broken binary rather than a bad flag.
+//   - Any other leading "-" arg is a flag, never a project directory, so it
+//     gets usage instead of a path lookup. This closes the whole class the
+//     "--version" special case opened by example.
+//   - A launcher call carrying more than <path> [<name>], or naming a
+//     subcommand where the session name goes, is a subcommand call that lost
+//     its subcommand. The launcher reads only args 0 and 1 and silently drops
+//     the rest, so on 2026-09-14 a test agent that had guessed this calling
+//     convention (having found no --help) started four stray sessions —
+//     "memory", "send", "__help", "test" — and 93 panes, just by trying to
+//     send a message. `muxcode launch <path> <name>` stays unguarded for
+//     anyone who really wants that session name.
 func routeFor(base string, args []string) route {
 	if len(args) >= 1 && (args[0] == "--version" || args[0] == "-v") {
 		return routeVersion
 	}
+	if len(args) >= 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
+		return routeHelp
+	}
 	if base == "muxcode" {
-		if len(args) == 0 || !knownSubcommands[args[0]] {
+		if len(args) == 0 {
 			return routeLauncher
 		}
-		return routeSubcommand
+		if knownSubcommands[args[0]] {
+			return routeSubcommand
+		}
+		if strings.HasPrefix(args[0], "-") {
+			return routeUsage
+		}
+		if len(args) > 2 || (len(args) == 2 && knownSubcommands[args[1]]) {
+			return routeAmbiguousName
+		}
+		return routeLauncher
 	}
 	if len(args) == 0 {
 		return routeUsage
@@ -135,9 +180,21 @@ func main() {
 	case routeVersion:
 		cmd.Version(nil)
 		return
+	case routeHelp:
+		fmt.Print(usage)
+		return
 	case routeLauncher:
 		cmd.RunLauncher(args)
 		return
+	case routeAmbiguousName:
+		fmt.Fprintf(os.Stderr, "Refusing to launch a session from: muxcode %s\n\n", strings.Join(args, " "))
+		if sub := firstKnownSubcommand(args); sub != "" {
+			fmt.Fprintf(os.Stderr, "That looks like a subcommand call. Did you mean:  muxcode %s ...\n", sub)
+		}
+		fmt.Fprintf(os.Stderr,
+			"The launcher takes at most <path> [<name>]; anything more is dropped.\n"+
+				"To launch anyway:  muxcode launch %s\n", strings.Join(args, " "))
+		os.Exit(1)
 	case routeUsage:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(1)
