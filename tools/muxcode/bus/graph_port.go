@@ -18,9 +18,11 @@ import (
 // land that worktree's output for the run: every downstream node
 // operated on a tree without the work, and test evidence produced inside
 // the stale worktree read as confidently green (the A2 failure mode).
-// The executor harvests at iteration completion, exactly where
-// spawnGroupOutcome derives success, so a stranded-output run fails at
-// the spawn node itself — before build, not at commit after a human gate.
+// The executor harvests at iteration completion, wherever
+// spawnGroupOutcome does not derive failure, so a stranded-output run
+// fails at the spawn node itself — before build, not at commit after a
+// human gate. A held (unknown) iteration ports too: the human judging the
+// hold must be able to read the work that raised it.
 //
 // Landing model (spec mechanism 5, AMENDED 2026-09-01 on authority
 // grounds): the work lands UNCOMMITTED. The daemon never creates a

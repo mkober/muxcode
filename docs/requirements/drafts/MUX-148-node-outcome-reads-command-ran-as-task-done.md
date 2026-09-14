@@ -239,18 +239,18 @@ recognised — recorded as an inherited Phase 3 constraint.
 
 ### Acceptance criteria
 
-- [ ] A node whose agent **declines** the task is not recorded as `success`
-- [ ] **The mirror:** a node whose work genuinely succeeded after a failed first attempt is not recorded as `failure` — see [Defect 4](#defect-4--the-mirror-a-genuine-success-recorded-as-failure)
-- [ ] A node that **genuinely succeeds** is still recorded as `success` — **negative control: a fix that holds everything is not a fix**
-- [ ] The distinction does **not** rely on parsing prose
-- [ ] A node that cannot be tied to its dispatched work surfaces as a hold or failure, never as a silent success
-- [ ] Whatever signal is chosen degrades safely for non-hook providers, which infer outcomes and cannot be assumed to emit it
+- [ ] A node whose agent **declines** the task is not recorded as `success` — **spawn road met 15:40**; **send road conditional**: met only when the declining agent's reply carries `EXIT=<non-zero>` (the conflict rule then holds); a decline with no sentinel beside an unrelated success row still records `success`. Closes with option 4 on the send road
+- [ ] **The mirror:** a node whose work genuinely succeeded after a failed first attempt is not recorded as `failure` — see [Defect 4](#defect-4--the-mirror-a-genuine-success-recorded-as-failure) — **conditional after 15:40**: with the agent's `EXIT=0` beside the stale failure row the node now **holds** (`graph-outcome-conflict`) instead of failing — the incident's three fix laps and eight stuck-gates become one approval; with the sentinel omitted the row alone still records `failure`. `TestExecSendOutcomeHoldsOnContradiction` pins the first case
+- [x] A node that **genuinely succeeds** is still recorded as `success` — **negative control: a fix that holds everything is not a fix** — met 2026-09-14 15:40 on both roads (tests above; live: run `1789413170`'s five completed nodes under the new daemon)
+- [x] The distinction does **not** rely on parsing prose — met 15:40: the only inputs are `parseExitSentinel`'s token and the observed row; `success claimed in prose alone` → unknown is pinned on the spawn road
+- [ ] A node that cannot be tied to its dispatched work surfaces as a hold or failure, never as a silent success — **spawn road met 15:40** (no token → hold); **send road open**: a row alone is still taken as tied, whatever command produced it (the open constraint under Phase 3)
+- [x] Whatever signal is chosen degrades safely for non-hook providers, which infer outcomes and cannot be assumed to emit it — met 15:40: with no observed row the conflict rule never engages, a self-report stays evidence of last resort, and an omitted token degrades to a **loud hold** (`graph-outcome-unattributed`), never a silent verdict either way
 - [ ] `commit-pr-review-loop` can complete a run in which `c` made changes
-- [ ] A lifecycle event records any node whose outcome could not be positively established
-- [ ] A **spawn** node whose worker **declines** is not recorded as `success` — the [Defect 3](#defect-3--the-spawn-road-reads-no-evidence-at-all) reproduction no longer reproduces
-- [ ] A **spawn** node whose worker genuinely completes the work **is** still recorded as `success` — **negative control: a fix that holds every spawn node is not a fix**
-- [ ] A **spawn** node whose outcome cannot be positively established emits the lifecycle event and holds
-- [ ] The spawn-road distinction does **not** rely on parsing worker prose
+- [ ] A lifecycle event records any node whose outcome could not be positively established — **partial 15:40**: `graph-unverified-hold` (existing), `graph-outcome-unattributed` (tokenless spawn reply) and `graph-outcome-conflict` (disagreeing send signals) cover every case the code *recognises*; a send node whose only evidence is an untied row is not recognised as unestablished, so it records success and no event — the same gap as criterion 5
+- [x] A **spawn** node whose worker **declines** is not recorded as `success` — the [Defect 3](#defect-3--the-spawn-road-reads-no-evidence-at-all) reproduction no longer reproduces — met 15:40: the `declined` case is the incident's own reply text ("Phase 2 is a decision phase … No code change, no spec edit") → unknown
+- [x] A **spawn** node whose worker genuinely completes the work **is** still recorded as `success` — **negative control: a fix that holds every spawn node is not a fix** — met 15:40 (tests, and this run's `implement` and `fix` nodes live)
+- [x] A **spawn** node whose outcome cannot be positively established emits the lifecycle event and holds — met 15:40 by reading (`graph-outcome-unattributed` + the single unknown branch); executor-level test still owed (Phase 3's last step)
+- [x] The spawn-road distinction does **not** rely on parsing worker prose — met 15:40: token or nothing; prose success → unknown, pinned
 - [ ] `bash scripts/test-node-outcome-attribution.sh` passes
 
 ### Technical approach — options, deliberately not yet chosen
@@ -509,25 +509,26 @@ Covers **both roads** — send and spawn — since 2026-09-14 (see
 **Constraints Phase 3 inherits** (a bold label, not a heading — the spec parser drops its current phase
 on any heading line, so a `####` here would detach the boxes below from Phase 3):
 
-- [ ] **Ship the first test of `deriveSendOutcome`** — nothing calls it today, so the precedence ordering is free to be fixed *and* free to regress unnoticed
-- [ ] **Add actor provenance to `HookHistoryEntry`** — a prerequisite for option 4, not part of it — **still open after `a8fa0db`**: what landed is *source* provenance (`hook` / `self-reported` / `bus-response`), declared by the writer; actor provenance the writer cannot author (process ancestry via `BusActorVerified`) is the [Decision 4](#decision-4--is-the-muxcode-log-writer-in-scope) residual
-- [ ] **Unit-test the `git*commit*` glob in both directions** — it fires on a `git`-headed command containing `commit`/`push` anywhere (inside "uncommitted", in `--dry-run`, in `@{push}`), and does **not** fire on a keyword-free `git status`/`git log`, nor on a non-`git`-headed command however worded (reply prose is never an input) — the re-derivation rests on it
-- [ ] Do **not** double-hold: the new hold and the `OutcomeUnknown` hold (`:1684`) must not both fire on one node
-- [ ] `hook_codex_test.go` is **not** a constraint (re-verified this run) — it calls `latestAuthoritativeRow` directly and stays green under any precedence change
-- [ ] **The signal must be tied to the dispatched task, not to whichever commands happened to be recognised** — "newest authoritative row wins" is wrong in *both* directions when the command that carried the real verdict was never classified ([Defect 4](#defect-4--the-mirror-a-genuine-success-recorded-as-failure)); tiering or attribution alone does not close the mirror
+- [x] **Ship the first test of `deriveSendOutcome`** — nothing calls it today, so the precedence ordering is free to be fixed *and* free to regress unnoticed — **shipped 2026-09-14 (run `1789413170-spec-to-pr-828f8c3a`, verified by plan against the working tree 15:40):** `TestDeriveSendOutcomeSignals` (nine cases at the helper) and `TestExecSendOutcomeHoldsOnContradiction` (the outcome the executor actually records, with the uncontradicted row as its own negative control — it replaces `TestAuthoritativeRowOutranksSentinel`, whose premise the conflict rule inverts). Suite 2603 pass / 0 fail, hook-observed 15:35:31
+- [ ] **Add actor provenance to `HookHistoryEntry`** — a prerequisite for option 4, not part of it — **still open after `a8fa0db`**: what landed is *source* provenance (`hook` / `self-reported` / `bus-response`), declared by the writer; actor provenance the writer cannot author (process ancestry via `BusActorVerified`) is the [Decision 4](#decision-4--is-the-muxcode-log-writer-in-scope) residual — **filed as [MUX-185](../backlog/MUX-185-history-row-provenance-declared-not-proven.md) on 2026-09-14** on the user's instruction; this step stays open here as the pointer and closes when that spec ships. MUX-185 records that the ancestry stamp alone would not close it: `agentRuntimeAncestor` resolves a `muxcode hook bash` process and a forging agent shell to the same runtime, so it separates a person from an agent, not a hook from the agent's shell
+- [x] **Unit-test the `git*commit*` glob in both directions** — it fires on a `git`-headed command containing `commit`/`push` anywhere (inside "uncommitted", in `--dry-run`, in `@{push}`), and does **not** fire on a keyword-free `git status`/`git log`, nor on a non-`git`-headed command however worded (reply prose is never an input) — the re-derivation rests on it — **pinned 2026-09-14:** `TestGitPatternsFireOnTheKeywordNotTheProse` (`bus/hook_test.go`) fires on `git commit --dry-run`, `git diff --stat -- docs/uncommitted-notes.md`, `git log @{push}..HEAD`; stays quiet on `git status`, `git log --oneline -5`, `git diff --stat`, `echo 'pre-rebase cleanup done'`, `cat notes-on-commit-hooks.md`. Both directions, verified by plan in the diff
+- [x] Do **not** double-hold: the new hold and the `OutcomeUnknown` hold (`:1684`) must not both fire on one node — **verified by plan by reading, 2026-09-14:** the conflict path *returns* `OutcomeUnknown` from `deriveSendOutcome` and adds no hold of its own; the one unknown branch in `routeFinishedNodes` (`:1957-1958` in the working tree) calls `unverifiedHoldReleased` once, marker-guarded. The spawn road resolves through the same branch
+- [x] `hook_codex_test.go` is **not** a constraint (re-verified this run) — it calls `latestAuthoritativeRow` directly and stays green under any precedence change — confirmed 2026-09-14: untouched by the Phase 3 change and green in the 15:35:31 run
+- [ ] **The signal must be tied to the dispatched task, not to whichever commands happened to be recognised** — "newest authoritative row wins" is wrong in *both* directions when the command that carried the real verdict was never classified ([Defect 4](#defect-4--the-mirror-a-genuine-success-recorded-as-failure)); tiering or attribution alone does not close the mirror — **open after the Phase 3 change (plan, 2026-09-14 15:40).** The worker's report claims the new conflict rule *is* this constraint; it is not. `deriveSendOutcome` now holds when an observed row and the agent's sentinel **disagree** (`graph-outcome-conflict`), which makes disagreement loud — but it ties nothing to the dispatched task: a row **alone** still decides in both directions exactly as before, so a declining agent that emits no sentinel still reads success from an unrelated `git` row, and a mirror-shaped node whose agent omits `EXIT=0` still reads failure. The constraint closes when the row is checked against the node's action (Phase 2's option 4), not when the sentinel is checked against the row
 - [x] **Provenance must fail closed on absence, not merely be unforgeable** — `latestAuthoritativeRow` (`graph_exec.go:1734`) is an *exclusion* list: it skips only `Source == SourceBusResponse` and unknown/empty outcomes, so a row carrying **no** provenance value reads as authoritative — deliberately, so pre-provenance rows keep their verdict (`history_provenance.go:26-31`). And `cmd/log.go` is the **one** history writer that bypasses `WriteHookHistory` (every other writer — `hook.go:785-840`, `cmd/send.go:525`, `daemon.go:3503` — goes through the typed `HookHistoryEntry`; `cmd/log.go:136-174` hand-rolls a map with its own append and rotate), so a field added to the struct reaches every writer except it: it bypasses by *omission*, not forgery. Whatever field Phase 3 adds, the reader must treat its absence as not-authoritative — a behaviour change for existing rows, which is why it sits inside the Decision 4 scope call. Found by run `1789402487`'s `implement` worker; verified by plan. **Implemented in `a8fa0db` (14:23), verified by plan against the commit:** `latestAuthoritativeRow` (`graph_exec.go:1740`) now accepts only `hook` (newest wins) and, failing that, `self-reported`; empty, `bus-response` and unrecognised sources are not evidence (`TestRawRowWithoutHookSourceIsNotEvidence`), and `cmd/log.go:146` writes through `WriteHookHistory`. Suite observed passing on the hook road at 14:16:00 (2425 pass) before the commit
 
 **Steps**
 
-- [ ] Implement the chosen mechanism with unit tests
-- [ ] **Negative control test:** a node that genuinely succeeded still routes as success
-- [ ] Emit a lifecycle event when a node's outcome cannot be positively established — ~~verified 2026-09-14~~ **withdrawn 11:55**: the machinery below is real and stays, but with the spawn change reverted a declined spawn worker no longer reaches it, so the step is unmet on the road that matters. No new event is needed; both roads resolve "cannot be established" to `OutcomeUnknown`, and the unknown branch of `routeFinishedNodes` calls `unverifiedHoldReleased` (`:927`), which writes the pending marker, logs `graph-unverified-hold` (once — the marker guards repeats) and sends edit a `graph-approval` request. The spawn change is what makes a declined worker reach it. Deliberate exception: a node whose successors are all human gates skips the hold and the event (`successorsAllHumanGates`), because the gate is next anyway
-- [ ] Ensure the unknown-hold and the new path do not double-hold the same node — on the send road and the spawn road alike — ~~spawn road satisfied by construction by the working-tree change (its new path *was* the existing hold)~~ **historical — reverted 11:53**; the by-construction argument holds for any reinstated change that resolves to `OutcomeUnknown` through the one hold branch in `routeFinishedNodes`, but nothing in the tree does; send road pending
-- [ ] Apply the Phase 2 mechanism (option 3 per-node positive token + option 4 unattributable → hold) to the **spawn** road, not the send road alone — ~~partial (11:50): the unattributable → hold rule was applied by the working-tree change~~ **historical — that change was reverted 11:53**; nothing in the tree applies either option on the spawn road now. Whether the reply sentinel is *the* token option 3 meant (the `PR-CONFIRMED` shape) is what the design tension below decides
-- [ ] `spawnGroupOutcome` establishes an answered worker's outcome **positively**; absent a positive signal the node resolves `OutcomeUnknown` (hold), never `success` — ~~ticked 11:50 on the working-tree change~~ **withdrawn 11:55**: lap 2's test node failed and the change and its test were removed from the working tree (HEAD `f942c43`, no stash, `heldUnknown` absent) — nothing in the tree implements this step now; the reading stands only as a description of what the reverted change did (see Defect 3)
-- [ ] Preserve the existing failure semantics for missing, stopped and unknown-status workers — already correct, must not regress into holds — ~~verified 11:50~~ **withdrawn 11:55** with the reverted change; the regression guards it carried (missing → failure, stopped → failure, running → not done, mixed group → failure) are the shape to reinstate
-- [ ] **Spawn negative control test:** a worker that genuinely completes still routes as success — including a worker whose legitimate output is *no code change* (an investigation or decision phase, as Phases 1–2 of this spec were) — ~~verified 11:50~~ **withdrawn 11:55** with the reverted change; its `EXIT=0` case was the right control, and nothing on the spawn road reads the diff, so the by-construction argument survives for whatever is reinstated
-- [ ] **Record the spawn-signal decision** — seeded-and-enforced sentinel, mechanical work-product signal, or explicitly accepted risk — under the design tension below, before the spawn change is treated as done
+- [ ] Implement the chosen mechanism with unit tests — **partial, 2026-09-14 15:40 (plan).** The chosen mechanism is Phase 2's: option 4 (a row that cannot be tied to the dispatched action **holds**) as the general rule, option 3 (a per-node positive token upstream of a mutation) as the immediate mitigation. **Spawn road: implemented in substance** — the token is seeded and read, absence holds. **Send road: not the decided mechanism.** What landed is a *conflict* hold — `deriveSendOutcome` resolves `OutcomeUnknown` when the observed row and the agent's sentinel disagree — which is neither option 4 (no check of the row's command type against `n.Action`) nor option 3 (no per-node token; the `EXIT=` sentinel is option 2's signal, which the decision rejected as the general mechanism). A row alone still decides both ways, so the 2026-09-03 shape — a decline with no sentinel beside an unrelated `git` row — still routes success. **The type-to-action check is buildable now**, without waiting on [MUX-185](../backlog/MUX-185-history-row-provenance-declared-not-proven.md): the row carries `Command`, `ClassifyCommand` (`hook.go:298`) types it, and the node carries `Action` (`graph.go:42`); actor provenance only narrows *which role's* rows count, which is Phase 2's finding stated more precisely than its "cannot be built on the existing row schema" consequence. Two of five unit-test groups (the send-road ones) pin the conflict rule, not attribution
+- [x] **Negative control test:** a node that genuinely succeeded still routes as success — **2026-09-14:** send road — `TestDeriveSendOutcomeSignals` (agreeing signals, row alone, sentinel alone all route) and the pre-existing executor tests, green; spawn road — `answerSpawn` now answers `EXIT=0` and every pre-existing spawn executor test routes success on it. Live: this run's own `implement`, `fix`, `build`, `test` and `review` nodes all recorded `success` under a daemon carrying the change (`daemon.version`: `7bcd657-dirty` built 15:25:04 — the first-lap `build` node, run on the tree after the worker's port; the 15:33:58 rebuild differs only in test files)
+- [x] Emit a lifecycle event when a node's outcome cannot be positively established — **met 15:40 (plan, from the working tree):** a spawn worker that answers without a token now reaches `OutcomeUnknown` → `graph-unverified-hold`, and `harvestRunningNode` additionally logs `graph-outcome-unattributed` (warn) naming the silent worker and appends `[no verdict token from <worker> — outcome not established]` to the node output; the send road logs `graph-outcome-conflict` on disagreement. Neither has fired live yet — both of this run's workers ended with `EXIT=0`. The untied-row case (a send node's row from unrelated commands) still emits nothing, because the code does not yet recognise it as unestablished — see the open constraint above. Earlier history: ~~verified 2026-09-14~~ **withdrawn 11:55**: the machinery below is real and stays, but with the spawn change reverted a declined spawn worker no longer reaches it, so the step is unmet on the road that matters. No new event is needed; both roads resolve "cannot be established" to `OutcomeUnknown`, and the unknown branch of `routeFinishedNodes` calls `unverifiedHoldReleased` (`:927`), which writes the pending marker, logs `graph-unverified-hold` (once — the marker guards repeats) and sends edit a `graph-approval` request. The spawn change is what makes a declined worker reach it. Deliberate exception: a node whose successors are all human gates skips the hold and the event (`successorsAllHumanGates`), because the gate is next anyway
+- [x] Ensure the unknown-hold and the new path do not double-hold the same node — on the send road and the spawn road alike — **met 15:40:** both roads resolve to `OutcomeUnknown` and reach the single unknown branch of `routeFinishedNodes` (`:1957-1958`); no second hold call was added on either (verified by plan in the diff) — ~~spawn road satisfied by construction by the working-tree change (its new path *was* the existing hold)~~ **historical — reverted 11:53**; the by-construction argument holds for any reinstated change that resolves to `OutcomeUnknown` through the one hold branch in `routeFinishedNodes`, but nothing in the tree does; send road pending
+- [x] Apply the Phase 2 mechanism (option 3 per-node positive token + option 4 unattributable → hold) to the **spawn** road, not the send road alone — **met 15:40:** the token is seeded into every worker task (`spawnVerdictInstruction`, appended by `graphWorkerTask` on both branches, placeholder `EXIT=<n>` so a TUI echo cannot counterfeit it — MUX-154), `spawnWorkerVerdict` reads it with `parseExitSentinel`, and absence resolves `OutcomeUnknown` → hold. The design-tension decision below names the reply sentinel as the token — ~~partial (11:50): the unattributable → hold rule was applied by the working-tree change~~ **historical — that change was reverted 11:53**; nothing in the tree applies either option on the spawn road now. Whether the reply sentinel is *the* token option 3 meant (the `PR-CONFIRMED` shape) is what the design tension below decides
+- [x] `spawnGroupOutcome` establishes an answered worker's outcome **positively**; absent a positive signal the node resolves `OutcomeUnknown` (hold), never `success` — **met 15:40:** the answered branch folds `spawnWorkerVerdict` through `worseOutcome` (failure > unknown > success); `TestSpawnGroupOutcomeReadsTheReplyNotTheFactOfReplying` pins declined → unknown, `EXIT=0` → success, `EXIT=1` → failure, success-in-prose-alone → unknown. Coverage gap kept open as its own step below (review should-fix): the hold-and-port path is not exercised at the executor — ~~ticked 11:50 on the working-tree change~~ **withdrawn 11:55**: lap 2's test node failed and the change and its test were removed from the working tree (HEAD `f942c43`, no stash, `heldUnknown` absent) — nothing in the tree implements this step now; the reading stands only as a description of what the reverted change did (see Defect 3)
+- [x] Preserve the existing failure semantics for missing, stopped and unknown-status workers — already correct, must not regress into holds — **met 15:40:** `TestSpawnGroupOutcomeKeepsFailureSemantics` — missing → failure, stopped → failure, running → not done; group precedence declined+failed → failure, succeeded+declined → unknown, all-succeeded → success; `unattributedWorkers` names the silent one — ~~verified 11:50~~ **withdrawn 11:55** with the reverted change; the regression guards it carried (missing → failure, stopped → failure, running → not done, mixed group → failure) are the shape to reinstate
+- [x] **Spawn negative control test:** a worker that genuinely completes still routes as success — including a worker whose legitimate output is *no code change* (an investigation or decision phase, as Phases 1–2 of this spec were) — **met 15:40, with live evidence:** the `did the work` case (`EXIT=0` → success) at the function, every pre-existing spawn executor test on the `EXIT=0`-answering helper (none writes a file), and this run's own `fix` node — a worker whose worktree had *nothing to port* and whose reply ended `EXIT=0` — recorded `success` under the new daemon and dispatched `build` — ~~verified 11:50~~ **withdrawn 11:55** with the reverted change; its `EXIT=0` case was the right control, and nothing on the spawn road reads the diff, so the by-construction argument survives for whatever is reinstated
+- [x] **Record the spawn-signal decision** — seeded-and-enforced sentinel, mechanical work-product signal, or explicitly accepted risk — under the design tension below, before the spawn change is treated as done — **recorded 15:40** from the worker's report (`/tmp/mux-148-phase3-report.md`, non-durable; the load-bearing content is under the design tension below): the seeded-and-enforced sentinel, with the omission risk written down and made loud
+- [ ] **Executor-level spawn hold test** (review should-fix, 15:37, `graph_exec_test.go:3370`): a spawn iteration with real worktree output and **no** `EXIT` token → the work ports uncommitted, the node's recorded outcome is `unknown`, the downstream send stays undispatched, `graph-outcome-unattributed` names the worker. The function-level tests stop at `spawnGroupOutcome`/`unattributedWorkers`; the hold-and-port path is verified only by reading. Review nit alongside: `worseOutcome(outcome, OutcomeFailure)` at `:1507,1520` is a constant fold — assign `OutcomeFailure` directly
 
 #### Design tension — the spawn signal, and the sentinel agents omit
 
@@ -553,6 +554,25 @@ in the tree takes any road. The step above exists
 so that the choice is made on the record rather than inherited from whatever landed first; recording
 it may well confirm the change as written, but the omission risk, and how an omitted sentinel is made
 loud, must be written down.
+
+**Decided 2026-09-14 — the seeded-and-enforced sentinel.** Made by run `1789413170`'s `implement`
+worker on the record (`/tmp/mux-148-phase3-report.md`), verified against the tree and recorded by
+plan at 15:40; the user has not been asked and may overrule it. The other two roads were refused for
+stated reasons: the **mechanical work-product signal** is disqualified by this spec's own history —
+Phases 1–2 produced zero code changes legitimately, MUX-178 shares that signature, and a signal that
+holds every correct investigation or decision worker fails "a fix that holds every spawn node is not a
+fix" by construction; **explicitly accepted risk** ships nothing, and Defect 3 fires on `implement`
+and `fix`, both spawn nodes in `spec-to-pr`. The omission risk is answered in two parts, and the
+choice is defended as sound only with both: **(1)** the seed now asks for the token —
+`spawnVerdictInstruction`, appended to every worker task by `graphWorkerTask` whether or not the
+graph owns downstream roles (the seed this very node received carried no such instruction, so until
+now the omission was guaranteed, not merely possible); **(2)** omission is loud — a tokenless reply
+resolves `OutcomeUnknown`, which holds and raises `graph-unverified-hold` plus a `graph-approval`
+request to edit, and the node additionally records `graph-outcome-unattributed` (warn) and appends
+`[no verdict token from <worker> — outcome not established]` to its output, so the human reading the
+hold is told which worker to ask. **Residual, accepted and to be watched:** the hold rate on spawn
+nodes. If workers omit the token despite the seeded instruction, the symptom is a rise in
+`graph-outcome-unattributed` rows — a distinct event name precisely so it can be counted.
 
 ### Phase 4: Fix the template gap
 
@@ -660,13 +680,58 @@ this decision named as the first of its three changes, and it is the one `a8fa0d
 ship; Phase 3's "add actor provenance" step therefore stays open. What landed is *source*
 provenance.
 
-**Observed while verifying, unexplained.** One second after the two `hook`-stamped test rows, a row
+**Filed as [MUX-185](../backlog/MUX-185-history-row-provenance-declared-not-proven.md), 2026-09-14
+15:45**, on the user's instruction after edit restated the residual at 15:25 ("its own design, not an
+increment on this phase"). With one correction, verified against `7bcd657`: the process-ancestry stamp
+named above is necessary for audit and is **not** the closer — `agentRuntimeAncestor`
+(`config.go:185-212`) resolves the hook process and the forging shell to the same agent runtime, so it
+tells a person from an agent, not a hook from the agent's own hand. What can close the one-command
+shape is a guard on the append, a transcript witness (the Codex road already reads one by
+`tool_use_id`), or a daemon-held secret; MUX-185 evaluates the three under a written threat model.
+
+~~**Observed while verifying, unexplained.** One second after the two `hook`-stamped test rows, a row
 with **no `source` field at all** was appended to `test-history.jsonl` (ts `1789409761`, 14:16:01;
 `command:""`, `exit_code:""`, `outcome:unknown`, a `muxcode log`-shaped summary). Under the new
 reader it is not evidence either way, and its outcome is unknown regardless — but it was written by
 a path that stamped nothing, after rows that did. An older installed binary's `muxcode log` is the
 obvious candidate; it is not resolved, and it deserves one look before the residual above is
-treated as the only gap.
+treated as the only gap.~~
+
+**Retracted 14:35 — edit's correction, verified by plan with `jq`.** The 14:16:01 row is
+`bus-response`, not sourceless: plan had read "no `source` field" off a line truncated at 260
+characters, before the field. A field is never absent from a cut line. The whole file, parsed: **25
+rows with no source — all legacy**, the newest at 13:48:03 and 13:48:13, before the first
+`hook`-stamped row at 14:02:35 (which bounds the stamping binary's install; the current binary's
+mtime, 14:13:49, is a later reinstall); 14 `bus-response`; 5 `hook`; 3 `self-reported`. Nothing
+writes a sourceless row any more.
+
+**The point that stands, recorded instead.** Fail-closed means those 25 legacy rows are **no longer
+evidence** — a verdict the old doctrine deliberately preserved (`history_provenance.go:26-31` before
+`a8fa0db`). Harmless in practice: `deriveSendOutcome` (`graph_exec.go:1687`) passes `st.StartedAt` as
+`since`, so a node sees only rows written after it started. The one exposure is a node started
+before the stamping binary and harvested by a daemon running `a8fa0db` or later — it would find its
+own legacy rows excluded and fall through to the sentinel or the hold. No such node exists: the only
+run in flight was canceled at 14:11:27. And the exposure is not live yet either way: `daemon.version`
+still reads `846251e`, so the daemon that judges nodes runs the *old* reader (empty source
+authoritative; `hook` and `self-reported` accepted as peers, since its exclusion list skips only
+`bus-response`) until it is upgraded. The ranking and the fail-closed behaviour begin at that
+upgrade, not at the commit.
+
+**Upgraded 14:35 — live now.** The session relaunch brought the daemon up on `3f9a2cb-dirty`
+(`daemon.version` rewritten 14:35:36; the binary was built 14:34:19 and installed 14:34:20; the
+session's lifecycle log restarts at a `launch` row of 14:35:41), so the daemon that judges nodes
+runs the new reader from that relaunch on — the ranking and the fail-closed reader have been live
+since then, the 25 legacy rows excluded in practice and not only on paper, with the `since` filter
+keeping that harmless. The relaunch also purged the bus dir: no graph run survived (the looping run
+`1789407209-spec-to-pr-6329cbb4` is gone with it, so the MUX-183 re-asks stop by accident rather
+than by fix), and the active-spec pointer was cleared — nothing points at this spec until
+`muxcode spec set` is run again, and no `verify-spec` fires until it is.
+
+*Recorded twice, merged once.* Two plan instances wrote this entry within minutes of the relaunch —
+the second (this one) found the first's paragraph already in the file, under a `14:36:09` relaunch
+time that matches none of the files above, and folded both into the paragraph you are reading with
+only file-backed times kept. Two writers on one spec is the hazard MUX-156 names for inboxes; here it
+cost a merge, not a loss.
 
 ## Out of scope
 
@@ -822,8 +887,12 @@ over. The user's answer came through edit, and the run's last `implement` lap ha
 `WriteHookHistory` choke point, `cmd/log.go` routed through it, and `latestAuthoritativeRow` failing
 closed — recorded under [Decision 4](#decision-4--is-the-muxcode-log-writer-in-scope) with its
 residual (a hand-appended row can still claim `hook`; process-ancestry provenance is the close and
-is not in this commit) and one unexplained observation (a sourceless row written a second after the
-stamped ones). `e9e3941` committed the orphan `delivery.go` change alone, seconds later — its fate
+is not in this commit) and one flag plan raised and **retracted at 14:35** on edit's correction — the
+row was `bus-response`, read off a truncated line; the point that stands is that the 25 legacy
+sourceless rows are no longer evidence, harmless under `since`-filtering, and not live until the
+daemon (`daemon.version` still `846251e` at 14:35) is upgraded — which the 14:35:36 session relaunch
+did, on `3f9a2cb`; it also cleared the active-spec pointer and dropped run `6329cbb4`. `e9e3941`
+committed the orphan `delivery.go` change alone, seconds later — its fate
 decided at last, after surviving three commit nodes on the commit agent's judgment. Both commits went
 through edit → commit on the user's request, not through a graph gate. Beyond item 7, plan ticked
 **one** Phase 3 constraint — fail closed on absence — because `a8fa0db` implements it as written and
@@ -841,3 +910,36 @@ longer warns and the automatic `verify-spec` pass fires for it. The active-spec 
 bus directory and is purged on every session relaunch — it was re-set on 2026-09-14 11:25 after the
 daemon relaunch cleared it; a restart with no pointer means review completes with no verification
 dispatch, which reads as a stalled run rather than an unset pointer.
+
+**Phase 3 verified 2026-09-14 15:40 by plan — 13/17, not complete** (spec 33/56). Graph run
+`1789413170-spec-to-pr-828f8c3a`, user-started, `implement` worker report
+`/tmp/mux-148-phase3-report.md` (non-durable; what matters is recorded above). Chain evidence, all
+hook-observed: first `test` node **failed** 15:27:26 (2600 pass / 3 fail — `TestAuthoritativeRowOutranksSentinel`,
+`TestSpawnHarvestPassesReportDownstream`, `TestExecSpawnTaskUnprefixedWithoutSendNodes`, each a
+pre-existing test encoding the behaviour the change replaces); the `fix` lap rewrote them in place
+(its worktree had *nothing to port*, so the edits landed in the checkout) and answered `EXIT=0`;
+`build` 15:33:58 exit 0; `test` 15:35:31 exit 0, **2603 pass / 0 fail / 2 skip**; `review` 15:37:00
+*0 must-fix, 1 should-fix, 1 nit*. Every code claim in the report checks against the diff. **What
+was ticked:** the four inherited constraints that are tests or by-construction facts (first
+`deriveSendOutcome` test; the glob in both directions; no double-hold; `hook_codex_test.go`), and
+eight steps — every spawn-road step, the negative controls on both roads, the lifecycle event, and
+the spawn-signal decision, now recorded under the design tension. Seven acceptance criteria met.
+**What stays open, and why:** the send road did not implement the mechanism Phase 2 decided.
+`deriveSendOutcome` gained a *conflict* hold — row and sentinel disagree → `unknown` — which is
+neither option 4 (nothing checks the row's command type against `n.Action`) nor option 3 (no
+per-node token). A row alone still decides both ways, so the 2026-09-03 shape still routes success
+and the Defect 4 mirror still records failure whenever the agent omits its sentinel; the report's
+claim that the conflict rule *is* the "tied to the dispatched task" constraint is not accepted. That
+constraint, the "implement the chosen mechanism" step, criteria 1, 2, 5 and 8, and the actor-provenance
+pointer to MUX-185 stay open — and the type-to-action check does not wait on MUX-185, as annotated on
+the step. One step **added**: the executor-level spawn hold test the reviewer asked for. **Not run:**
+`scripts/test-multi-phase-graph.sh` (two assertions re-anchored, not executed on any binary carrying
+the change — the worker declined to run it against the stale installed binary, correctly, and nothing
+ran it after the install); `scripts/test-node-outcome-attribution.sh` does not exist yet (Phase 5).
+**Daemon fact, recorded not explained:** `daemon.version` reads a `7bcd657-dirty` build of
+**15:25:04** — the first-lap `build` node's, produced after the worker's port, so the daemon judging
+this run carries the Phase 3 code — but the 15:33:58 rebuild did not cycle it, and the lifecycle log
+holds no `daemon-upgraded` row for either build. Consistent with
+[MUX-161](../backlog/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) (the build role runs on
+codex); how the daemon reached the 15:25 build at all is not established. No branch was named in the
+dispatch, so no time was recorded this pass.

@@ -34,6 +34,26 @@ const (
 		"  ? for shortcuts\n" +
 		"  gpt-5.6-luna medium · ~/repo\n"
 
+	// The command-approval prompt from the 2026-09-14 is-operations-gateway
+	// incident: a read-only review agent asked to leave its sandbox to rerun
+	// browser tests and parked until the node's 600s timeout.
+	codexApprovalBlock = "• Running pnpm exec playwright test e2e/mode-banner.spec.ts --grep Canvas\n" +
+		"  Would you like to run the following command?\n" +
+		"  Environment: local\n" +
+		"  Reason: May I rerun the Canvas browser tests outside the sandbox? Chromium was blocked by macOS Mach-port permissions.\n" +
+		"  $ pnpm exec playwright test e2e/mode-banner.spec.ts --grep Canvas\n" +
+		"› 1. Yes, proceed (y)\n" +
+		"  2. Yes, and don't ask again for commands that start with `pnpm exec playwright test` (p)\n" +
+		"  3. No, and tell Codex what to do differently (esc)\n" +
+		"  Press enter to confirm or esc to cancel\n"
+
+	codexApprovalPromptPane = codexBanner + codexApprovalBlock
+
+	codexApprovalAnsweredPane = codexBanner + codexApprovalBlock +
+		"› Ask Codex to do anything\n" +
+		"  ? for shortcuts\n" +
+		"  gpt-5.6-luna medium · ~/repo\n"
+
 	codexShellPane = codexTrustBlock +
 		"dev@host /home/dev/repo (main)\n" +
 		"->\n" +
@@ -232,6 +252,78 @@ func TestCodexSendWakeUp_HookRoadAnswersTrustPromptAndDefers(t *testing.T) {
 	}
 	if n := countLifecycleEvents(t, session, "trust-prompt"); n != 1 {
 		t.Errorf("trust-prompt auto-accept lifecycle rows = %d, want 1", n)
+	}
+}
+
+// The answered pane is the load-bearing case: Codex draws the prompt inline, so
+// its text stays in scrollback forever. Matching the marker alone would deny
+// every later turn with an Escape — Codex's interrupt — killing real work.
+func TestCodexApprovalPromptLive_TailAnchored(t *testing.T) {
+	if !codexApprovalPromptLive(codexApprovalPromptPane) {
+		t.Error("a live approval prompt must be detected")
+	}
+	if codexApprovalPromptLive(codexApprovalAnsweredPane) {
+		t.Error("an answered prompt in scrollback must not count as live")
+	}
+	if codexApprovalPromptLive(codexComposerPane) {
+		t.Error("a composer with no prompt must not count")
+	}
+}
+
+// Pins the classification order: the error test matches "Error" anywhere in the
+// captured scrollback, so ahead of it an approval prompt would read NotReady
+// and be restarted instead of answered.
+func TestCodexClassifyPane_ApprovalPromptBeatsScrollbackError(t *testing.T) {
+	p := &CodexProvider{}
+	if got := p.ClassifyPane(codexApprovalPromptPane); got != PaneApprovalPrompt {
+		t.Errorf("ClassifyPane = %v, want PaneApprovalPrompt", got)
+	}
+	withError := codexBanner + "Error: previous run failed\n" + codexApprovalBlock
+	if got := p.ClassifyPane(withError); got != PaneApprovalPrompt {
+		t.Errorf("ClassifyPane with a stale error line = %v, want PaneApprovalPrompt", got)
+	}
+}
+
+// The prompt is answered "no" and the payload deferred — never typed, since it
+// would be consumed as the prompt's answer.
+func TestCodexSendWakeUp_ApprovalPromptDeniedAndDefers(t *testing.T) {
+	session := "inject-codex-approval"
+	injectionTestSession(t, session)
+	calls := stubInjectionPane(t, codexApprovalPromptPane, nil)
+	sendTestRequest(t, session, "build", "MSG-CODEX-APPROVAL")
+
+	err := (&CodexProvider{}).SendWakeUp(session, "build", true)
+	if !errors.Is(err, ErrInjectionSkipped) {
+		t.Fatalf("approval prompt must defer with ErrInjectionSkipped, got %v", err)
+	}
+	keys := sentKeys(*calls)
+	if len(keys) != 1 || !strings.HasSuffix(keys[0], " Escape") {
+		t.Fatalf("approval prompt must receive exactly one Escape, sent %v", keys)
+	}
+	if strings.Contains(strings.Join(keys, "\n"), "MSG-CODEX-APPROVAL") {
+		t.Error("the payload must not be typed into the approval prompt")
+	}
+	if msgs, _ := Peek(session, "build"); len(msgs) != 1 {
+		t.Errorf("deferred message must stay in the inbox, have %d", len(msgs))
+	}
+	if n := countLifecycleEvents(t, session, "approval-prompt"); n != 1 {
+		t.Errorf("approval-prompt auto-deny lifecycle rows = %d, want 1", n)
+	}
+}
+
+// Denying is only correct where the answer cannot be yes. A role running with
+// `-a never` executes without prompting, so it must never be swept in — an
+// Escape there would interrupt real work.
+func TestCodexRoleIsReadOnly_OnlyOnRequestRoles(t *testing.T) {
+	for _, role := range []string{"review", "analyze"} {
+		if !CodexRoleIsReadOnly(role) {
+			t.Errorf("%s runs -a on-request and can raise an approval prompt", role)
+		}
+	}
+	for _, role := range []string{"build", "test", "deploy", "edit", "commit"} {
+		if CodexRoleIsReadOnly(role) {
+			t.Errorf("%s runs -a never — denying its pane would interrupt real work", role)
+		}
 	}
 }
 

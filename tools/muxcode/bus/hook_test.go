@@ -288,6 +288,46 @@ func TestClassifyCommand(t *testing.T) {
 	}
 }
 
+// TestGitPatternsFireOnTheKeywordNotTheProse pins what MUX-148's re-derivation
+// rests on: the git patterns are a head match plus a substring, so they fire
+// on a keyword anywhere inside a git-headed command — including inside a
+// longer word — and never on a command that merely talks about committing.
+//
+// Both directions matter. Without the over-fire rows, a reader would assume
+// CmdGit means a mutation happened; without the prose rows, the 2026-09-03
+// incident reads as prose being parsed, which it never was.
+func TestGitPatternsFireOnTheKeywordNotTheProse(t *testing.T) {
+	fires := []string{
+		"git commit -m 'wip'",
+		"git push origin main",
+		// Mutates nothing, classified all the same: the keyword is a
+		// substring of the command, not a claim about its effect.
+		"git commit --dry-run",
+		"git diff --stat -- docs/uncommitted-notes.md",
+		"git log @{push}..HEAD",
+	}
+	for _, cmd := range fires {
+		if got := ClassifyCommand(cmd); got != CmdGit {
+			t.Errorf("ClassifyCommand(%q) = %d, want CmdGit", cmd, got)
+		}
+	}
+
+	// A keyword-free git command, and prose about git in a command that is
+	// not git-headed. An agent's wording is never an input to classification.
+	quiet := []string{
+		"git status",
+		"git log --oneline -5",
+		"git diff --stat",
+		"echo 'pre-rebase cleanup done'",
+		"cat notes-on-commit-hooks.md",
+	}
+	for _, cmd := range quiet {
+		if got := ClassifyCommand(cmd); got == CmdGit {
+			t.Errorf("ClassifyCommand(%q) = CmdGit, want anything else", cmd)
+		}
+	}
+}
+
 func TestClassifyCommand_CdPrefix(t *testing.T) {
 	if got := ClassifyCommand("cd /foo && go build ."); got != CmdBuild {
 		t.Errorf("ClassifyCommand with cd prefix = %d, want CmdBuild", got)

@@ -710,17 +710,34 @@ func reachableNodes(g *Graph, start string) map[string]bool {
 // The task message is the only channel into the worker's context, so the
 // contradiction is stated there. CheckGraphNodeAuthority enforces it.
 func graphWorkerTask(g *Graph, runID, nodeID, msg string) string {
+	body := msg + "\n\n" + spawnVerdictInstruction
 	roles := graphOwnedRoles(g, nodeID)
 	if len(roles) == 0 {
-		return msg
+		return body
 	}
 	owned := strings.Join(roles, ", ")
 	return fmt.Sprintf(
 		"[graph run %s · node %s] The graph owns the rest of this pipeline: %s run as separate nodes AFTER you report. "+
 			"Do NOT delegate them (no `muxcode send %s ...`) — a self-delegated chain races the graph and runs in the wrong working directory. "+
 			"Do the work below, reply to the requester, and stop.\n\n%s",
-		runID, nodeID, owned, strings.Join(roles, "|"), msg)
+		runID, nodeID, owned, strings.Join(roles, "|"), body)
 }
+
+// spawnVerdictInstruction seeds the positive token spawnGroupOutcome reads.
+//
+// The spawn road has no console history to consult, so the worker's own
+// verdict is the only evidence a node's work was done rather than declined
+// — and a token nobody was asked for is a token nobody emits. It rides the
+// task message because that is the one channel into a worker's context, and
+// it is appended whether or not the graph owns downstream roles: a node with
+// no successors still needs attributing.
+//
+// The placeholder is written EXIT=<n>, never a literal code: a provider TUI
+// that captures request text as the reply (MUX-154) would otherwise hand the
+// executor a verdict the worker never gave.
+const spawnVerdictInstruction = "Finish your reply with the verdict token on its own line: EXIT=<n> — " +
+	"zero if you did the work, non-zero if you could not. It is the only signal that records this node; " +
+	"a reply without it cannot be attributed and holds the run for a human."
 
 // resolveCompletedPhaseText expands ${completed_phase}: the completion
 // frontier the commit ships — see SpecJustCompletedPhase for why the
@@ -1245,7 +1262,9 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 			return
 		}
 		output := spawnGroupReports(session, st.TaskID)
-		if outcome == OutcomeSuccess {
+		// Ported on anything but failure: a held node's work must reach the
+		// checkout uncommitted, or the human asked to judge it cannot see it.
+		if outcome != OutcomeFailure {
 			summary, perr := portSpawnGroup(session, st.TaskID)
 			if errors.Is(perr, errPortTransient) {
 				return // node stays running, harvest retried next tick
@@ -1261,6 +1280,13 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 			}
 			LogLifecycle(session, "info", "daemon", "graph-harvest",
 				fmt.Sprintf("%s: %s — %s", run.ID, n.ID, summary))
+		}
+		if silent := unattributedWorkers(session, st.TaskID); len(silent) > 0 {
+			LogLifecycle(session, "warn", "daemon", "graph-outcome-unattributed",
+				fmt.Sprintf("%s: %s answered without a verdict token: %s",
+					run.ID, n.ID, strings.Join(silent, ",")))
+			output += fmt.Sprintf("\n[no verdict token from %s — outcome not established]",
+				strings.Join(silent, ","))
 		}
 		finishNode(session, run, n, outcome, output)
 	}
@@ -1444,14 +1470,26 @@ func GraphOwnsTask(session, taskID string) (runID, nodeID string, ok bool) {
 
 // spawnGroupOutcome inspects the comma-separated spawn ids of a spawn or
 // map node. done is true when no worker is still running; the outcome is
-// success only when every worker completed. An answered CURRENT seed is
-// this iteration's completion whatever the entry's status says: a
-// persistent (graph-keyed) worker is never reaped while its run is in
-// flight, so it stays running; and a worker stopped or reaped after it
+// success only when every worker reported doing the work. An answered
+// CURRENT seed is this iteration's completion whatever the entry's status
+// says: a persistent (graph-keyed) worker is never reaped while its run is
+// in flight, so it stays running; and a worker stopped or reaped after it
 // answered has still delivered — the verdict is the answer, not the
 // window (review must-fix 2026-09-09). ReseedSpawn moves SeedMsgID before
 // the next iteration starts, so a prior pass's reply can never satisfy a
 // new dispatch.
+//
+// What an answer means is read from the reply's verdict token, not from the
+// fact of replying. The answered branch was a bare continue, so any reply
+// yielded success and a decline was indistinguishable from work: on
+// 2026-09-14 this spec's own implement worker replied "Phase 2 is a decision
+// phase … No code change, no spec edit" and the node recorded success
+// (Defect 3). A reply carrying no token attributes to nothing and resolves
+// unknown, which holds for a human rather than advancing the pipeline.
+//
+// Group precedence is failure > unknown > success: one worker's hold must
+// not mask another's failure, and a mixed group fails rather than asking a
+// human to approve work already known to have failed.
 func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 	entries, err := ReadSpawnEntries(session)
 	if err != nil {
@@ -1466,10 +1504,11 @@ func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 	for _, id := range strings.Split(taskIDs, ",") {
 		e, ok := byRole[id]
 		if !ok {
-			outcome = OutcomeFailure
+			outcome = worseOutcome(outcome, OutcomeFailure)
 			continue
 		}
 		if e.SeedMsgID != "" && spawnHasResponded(session, e) {
+			outcome = worseOutcome(outcome, spawnWorkerVerdict(session, e))
 			continue // iteration answered — see doc comment
 		}
 		switch e.Status {
@@ -1478,10 +1517,63 @@ func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 		case "completed":
 			// success — no change
 		default: // stopped or anything else
-			outcome = OutcomeFailure
+			outcome = worseOutcome(outcome, OutcomeFailure)
 		}
 	}
 	return outcome, true
+}
+
+// spawnWorkerVerdict reads an answered worker's own verdict token, the
+// spawn road's only positive evidence that the seeded work was done.
+//
+// Absence is unknown, never success: the whole point is that a reply which
+// says nothing about the outcome has not established one.
+func spawnWorkerVerdict(session string, e SpawnEntry) string {
+	outcome, ok := parseExitSentinel(spawnReplyPayload(session, e.SeedMsgID))
+	if !ok {
+		return OutcomeUnknown
+	}
+	return outcome
+}
+
+// worseOutcome folds one worker's verdict into a group's, failure ranking
+// above unknown and unknown above success.
+func worseOutcome(a, b string) string {
+	if a == OutcomeFailure || b == OutcomeFailure {
+		return OutcomeFailure
+	}
+	if a == OutcomeUnknown || b == OutcomeUnknown {
+		return OutcomeUnknown
+	}
+	return OutcomeSuccess
+}
+
+// unattributedWorkers names the answered workers of a group whose replies
+// carried no verdict token.
+//
+// A sentinel road only works if omitting the sentinel is loud. The hold
+// itself is the alarm, and this is what tells the human reading it which
+// worker to go and ask.
+func unattributedWorkers(session, taskIDs string) []string {
+	entries, err := ReadSpawnEntries(session)
+	if err != nil {
+		return nil
+	}
+	byRole := make(map[string]SpawnEntry, len(entries))
+	for _, e := range entries {
+		byRole[e.SpawnRole] = e
+	}
+	var silent []string
+	for _, id := range strings.Split(taskIDs, ",") {
+		e, ok := byRole[id]
+		if !ok || e.SeedMsgID == "" || !spawnHasResponded(session, e) {
+			continue
+		}
+		if _, found := parseExitSentinel(spawnReplyPayload(session, e.SeedMsgID)); !found {
+			silent = append(silent, e.SpawnRole)
+		}
+	}
+	return silent
 }
 
 // spawnGroupReports joins the reply payloads of a spawn group's workers.
@@ -1675,6 +1767,16 @@ func sendResponseIsNonResult(session string, task Task) bool {
 // provenance doctrine: an authoritative history row for the target role
 // newer than dispatch is the verdict; a response with action "error" is
 // a failure; everything else is unknown.
+//
+// Two independent signals that disagree establish nothing, so a row and a
+// sentinel that contradict each other resolve unknown and hold. The row
+// describes whichever commands the classifier recognised, not the dispatched
+// task, and that is wrong in both directions: on 2026-09-14 a `pnpm test`
+// typo failed, the unclassified `pnpm exec jest` re-run passed, and the node
+// recorded failure — three fix iterations and eight stuck-gates repairing a
+// suite that was green (Defect 4). Trusting the sentinel over the row instead
+// would reopen the forgery road the provenance work closed, and holding costs
+// one approval where the mirror cost eight.
 func deriveSendOutcome(session string, n *Node, st *GraphNodeStatus, task Task) (string, string) {
 	output := ""
 	if resp, ok := FindMessageByID(session, task.ResponseID); ok {
@@ -1684,13 +1786,20 @@ func deriveSendOutcome(session string, n *Node, st *GraphNodeStatus, task Task) 
 		}
 	}
 
+	claimed, claimFound := parseExitSentinel(output)
 	if row, ok := latestAuthoritativeRow(session, NormalizeBusRole(n.Role), st.StartedAt); ok {
 		if row.Outcome == OutcomeSuccess || row.Outcome == OutcomeFailure {
+			if claimFound && claimed != row.Outcome {
+				LogLifecycle(session, "warn", "daemon", "graph-outcome-conflict",
+					fmt.Sprintf("%s: observed %s (%s) contradicts the agent's %s — holding",
+						n.ID, row.Outcome, row.Command, claimed))
+				return OutcomeUnknown, output
+			}
 			return row.Outcome, output
 		}
 	}
-	if outcome, ok := parseExitSentinel(output); ok {
-		return outcome, output
+	if claimFound {
+		return claimed, output
 	}
 	return OutcomeUnknown, output
 }

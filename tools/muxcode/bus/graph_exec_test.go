@@ -482,6 +482,80 @@ func TestRawRowWithoutHookSourceIsNotEvidence(t *testing.T) {
 	}
 }
 
+// TestDeriveSendOutcomeSignals is the first test of deriveSendOutcome, which
+// nothing exercised: its precedence was free to be fixed and equally free to
+// regress unnoticed.
+//
+// The discriminating case is the last pair — an observed row and an agent
+// verdict that contradict each other. Either read alone is a live defect: the
+// row alone produced Defect 4's false failure, the agent's alone reopens the
+// forgery road. The rows either side of it are the negative controls, without
+// which "hold on everything" would pass.
+func TestDeriveSendOutcomeSignals(t *testing.T) {
+	cases := []struct {
+		name     string
+		row      string // observed outcome, "" for no row
+		reply    string
+		want     string
+		wantFail bool // response action "error"
+	}{
+		{name: "observed success, no claim", row: OutcomeSuccess, reply: "built it", want: OutcomeSuccess},
+		{name: "observed failure, no claim", row: OutcomeFailure, reply: "broke", want: OutcomeFailure},
+		{name: "claim alone when nothing observed", reply: "green. EXIT=0", want: OutcomeSuccess},
+		{name: "nonzero claim alone", reply: "EXIT=2", want: OutcomeFailure},
+		{name: "neither signal", reply: "I had a look around", want: OutcomeUnknown},
+		{name: "agreeing signals still route", row: OutcomeSuccess, reply: "green. EXIT=0", want: OutcomeSuccess},
+
+		// The mirror (Defect 4): the classified run failed, the unclassified
+		// re-run passed, and the agent says so. Neither signal can be trusted
+		// over the other, so the node holds instead of driving a fix loop.
+		{name: "observed failure contradicted by claim", row: OutcomeFailure, reply: "suite passed. EXIT=0", want: OutcomeUnknown},
+		{name: "observed success contradicted by claim", row: OutcomeSuccess, reply: "could not do it. EXIT=1", want: OutcomeUnknown},
+
+		{name: "error response is failure whatever else says", row: OutcomeSuccess, reply: "EXIT=0", want: OutcomeFailure, wantFail: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempBusDir(t)
+			if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+				t.Fatal(err)
+			}
+			since := time.Now().Unix() - 1
+
+			if tc.row != "" {
+				code := "0"
+				if tc.row == OutcomeFailure {
+					code = "1"
+				}
+				entry := HookHistoryEntry{TS: time.Now().Unix(), Command: "./build.sh",
+					ExitCode: code, Outcome: tc.row}
+				if err := WriteHookHistory(HistoryPath(runTestSession, "build"), entry, 100); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			action := "response"
+			if tc.wantFail {
+				action = "error"
+			}
+			resp := NewMessage("build", "edit", "response", action, tc.reply, "")
+			if err := Send(runTestSession, resp); err != nil {
+				t.Fatal(err)
+			}
+
+			n := &Node{ID: "a", Role: "build"}
+			st := &GraphNodeStatus{StartedAt: since}
+			got, output := deriveSendOutcome(runTestSession, n, st, Task{ResponseID: resp.ID})
+			if got != tc.want {
+				t.Errorf("outcome = %q, want %q (row %q, reply %q)", got, tc.want, tc.row, tc.reply)
+			}
+			if output != tc.reply {
+				t.Errorf("output = %q, want the reply body %q", output, tc.reply)
+			}
+		})
+	}
+}
+
 // TestWriteHookHistoryStampsSource pins the choke point. Promoting a declared
 // source would silently re-authorise the bus-response rows that must never
 // carry a verdict, so both directions are checked.
@@ -516,22 +590,41 @@ func TestWriteHookHistoryStampsSource(t *testing.T) {
 	}
 }
 
-// self-reported. Reordering the two checks must fail here.
-func TestAuthoritativeRowOutranksSentinel(t *testing.T) {
-	run := createTestRun(t, linearGraph())
-
-	step(t, runTestSession, run.ID)
-	completeSendNodeSentinel(t, runTestSession, run.ID, "a", "all good EXIT=0")
-	row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: "./build.sh",
-		ExitCode: "1", Outcome: OutcomeFailure}
-	if err := WriteHookHistory(HistoryPath(runTestSession, "build"), row, 100); err != nil {
-		t.Fatal(err)
+// TestExecSendOutcomeHoldsOnContradiction pins the precedence where it runs.
+// TestDeriveSendOutcomeSignals calls the helper directly, so it stays green
+// if routeFinishedNodes stops consulting it; only this one reads the outcome
+// the executor actually recorded on the node.
+//
+// The uncontradicted row is the negative control: without it an executor that
+// resolved every send node to unknown would pass.
+func TestExecSendOutcomeHoldsOnContradiction(t *testing.T) {
+	cases := []struct {
+		name     string
+		sentinel string
+		want     string
+	}{
+		{"agent's verdict contradicts the row", "all good EXIT=0", OutcomeUnknown},
+		{"agent claims no verdict of its own", "could not build it", OutcomeFailure},
 	}
-	step(t, runTestSession, run.ID)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			run := createTestRun(t, linearGraph())
 
-	st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
-	if st.Outcome != OutcomeFailure {
-		t.Errorf("a outcome %q, want failure — the hook row outranks a self-reported sentinel", st.Outcome)
+			step(t, runTestSession, run.ID)
+			completeSendNodeSentinel(t, runTestSession, run.ID, "a", tc.sentinel)
+			row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: "./build.sh",
+				ExitCode: "1", Outcome: OutcomeFailure}
+			if err := WriteHookHistory(HistoryPath(runTestSession, "build"), row, 100); err != nil {
+				t.Fatal(err)
+			}
+			step(t, runTestSession, run.ID)
+
+			st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+			if st.Outcome != tc.want {
+				t.Errorf("a outcome %q, want %q (observed failure, reply %q)",
+					st.Outcome, tc.want, tc.sentinel)
+			}
+		})
 	}
 }
 
@@ -2443,7 +2536,10 @@ func TestSpawnHarvestPassesReportDownstream(t *testing.T) {
 		t.Fatalf("impl not running with a spawn id: (%+v, %v)", st, err)
 	}
 
-	const report = "Decision recorded: /tmp/mux-148-phase2-decision.md"
+	// The verdict token is what attributes the worker. Without one the node
+	// resolves unknown and holds, so nothing downstream is dispatched and the
+	// report has nothing to travel on.
+	const report = "Decision recorded: /tmp/mux-148-phase2-decision.md — EXIT=0"
 	seed := NewMessage("daemon", st.TaskID, "request", "spawn-task", "decide it", "")
 	if err := SendNoCC(runTestSession, seed); err != nil {
 		t.Fatal(err)
@@ -3230,9 +3326,17 @@ func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
 	return f
 }
 
-// answerSpawn fakes the worker replying to its CURRENT seed — the same
-// MarkResponded a real reply drives, which spawnHasResponded reads.
+// answerSpawn fakes a worker completing its CURRENT seed: the same
+// MarkResponded a real reply drives, which spawnHasResponded reads, and a
+// reply body carrying the verdict token spawnGroupOutcome reads.
 func answerSpawn(t *testing.T, session, spawnRole string) {
+	t.Helper()
+	answerSpawnWith(t, session, spawnRole, "phase implemented. EXIT=0")
+}
+
+// answerSpawnWith is answerSpawn with the reply body chosen — a decline, a
+// non-zero verdict, or a success claim in prose alone.
+func answerSpawnWith(t *testing.T, session, spawnRole, payload string) {
 	t.Helper()
 	entries, _ := ReadSpawnEntries(session)
 	for i := len(entries) - 1; i >= 0; i-- {
@@ -3242,10 +3346,139 @@ func answerSpawn(t *testing.T, session, spawnRole string) {
 		if entries[i].SeedMsgID == "" {
 			t.Fatalf("worker %s has no seed", spawnRole)
 		}
-		MarkResponded(session, entries[i].SeedMsgID, "resp-"+entries[i].SeedMsgID)
+		resp := NewMessage(spawnRole, "daemon", "response", "spawn-task", payload, entries[i].SeedMsgID)
+		if err := Send(session, resp); err != nil {
+			t.Fatalf("reply send: %v", err)
+		}
+		MarkResponded(session, entries[i].SeedMsgID, resp.ID)
 		return
 	}
 	t.Fatalf("no spawn entry for %s", spawnRole)
+}
+
+// TestSpawnGroupOutcomeReadsTheReplyNotTheFactOfReplying pins Defect 3. The
+// answered branch was a bare continue, so any reply yielded success and a
+// principled refusal was indistinguishable from work done — live on this
+// spec's own run 1789399519, where a worker that reported "no code change,
+// no spec edit" was recorded success.
+//
+// "Did the work" is the negative control the acceptance criteria demand: a
+// fix that holds every spawn node is not a fix. "Success claimed in prose
+// alone" is the other control — the distinction must not come from reading
+// what the worker wrote.
+func TestSpawnGroupOutcomeReadsTheReplyNotTheFactOfReplying(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply string
+		want  string
+	}{
+		{"declined", "Phase 2 is a decision phase reserved for the user. No code change, no spec edit.", OutcomeUnknown},
+		{"did the work", "implemented and verified. EXIT=0", OutcomeSuccess},
+		{"could not", "blocked on a missing dependency. EXIT=1", OutcomeFailure},
+		{"success claimed in prose alone", "All done — everything passes.", OutcomeUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempBusDir(t)
+			fakeLiveSpawns(t)
+
+			id, err := graphSpawnFn(runTestSession, "edit", "implement phase 3", graphSender, "run1", "implement")
+			if err != nil {
+				t.Fatal(err)
+			}
+			answerSpawnWith(t, runTestSession, id, tc.reply)
+
+			outcome, done := spawnGroupOutcome(runTestSession, id)
+			if !done {
+				t.Fatal("an answered worker completes the iteration")
+			}
+			if outcome != tc.want {
+				t.Errorf("outcome = %q, want %q for reply %q", outcome, tc.want, tc.reply)
+			}
+		})
+	}
+}
+
+// TestSpawnGroupOutcomeKeepsFailureSemantics guards the paths the verdict
+// read must not disturb: missing, stopped and still-running workers behaved
+// correctly before Defect 3 and must not decay into holds. The group rows
+// pin the precedence — a hold must never mask another worker's failure.
+func TestSpawnGroupOutcomeKeepsFailureSemantics(t *testing.T) {
+	useTempBusDir(t)
+	fakeLiveSpawns(t)
+
+	spawn := func(node string) string {
+		t.Helper()
+		id, err := graphSpawnFn(runTestSession, "edit", "work", graphSender, "run1", node)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	running := spawn("running")
+	if _, done := spawnGroupOutcome(runTestSession, running); done {
+		t.Error("a worker still running must not report the iteration done")
+	}
+
+	if outcome, done := spawnGroupOutcome(runTestSession, "spawn-nosuch"); !done || outcome != OutcomeFailure {
+		t.Errorf("missing worker = (%q, %v), want failure and done", outcome, done)
+	}
+
+	stopped := spawn("stopped")
+	if err := UpdateSpawnEntry(runTestSession, stopped, func(e *SpawnEntry) { e.Status = "stopped" }); err != nil {
+		t.Fatal(err)
+	}
+	if outcome, done := spawnGroupOutcome(runTestSession, stopped); !done || outcome != OutcomeFailure {
+		t.Errorf("stopped unanswered worker = (%q, %v), want failure and done", outcome, done)
+	}
+
+	declined := spawn("declined")
+	answerSpawnWith(t, runTestSession, declined, "I did not do this.")
+	failed := spawn("failed")
+	answerSpawnWith(t, runTestSession, failed, "EXIT=1")
+	succeeded := spawn("succeeded")
+	answerSpawnWith(t, runTestSession, succeeded, "EXIT=0")
+
+	if outcome, _ := spawnGroupOutcome(runTestSession, declined+","+failed); outcome != OutcomeFailure {
+		t.Errorf("declined+failed group = %q, want failure — a hold must not mask a failure", outcome)
+	}
+	if outcome, _ := spawnGroupOutcome(runTestSession, succeeded+","+declined); outcome != OutcomeUnknown {
+		t.Errorf("succeeded+declined group = %q, want unknown — one unattributed worker holds the group", outcome)
+	}
+	if outcome, _ := spawnGroupOutcome(runTestSession, succeeded+","+succeeded); outcome != OutcomeSuccess {
+		t.Errorf("all-succeeded group = %q, want success", outcome)
+	}
+
+	if silent := unattributedWorkers(runTestSession, succeeded+","+declined); len(silent) != 1 || silent[0] != declined {
+		t.Errorf("unattributedWorkers = %v, want just %s — the hold must name who to ask", silent, declined)
+	}
+}
+
+// TestGraphWorkerTaskSeedsTheVerdictToken pins the other half of the sentinel
+// road: a token the seed never asks for is a token no worker emits, and every
+// spawn node would then hold. The placeholder form is checked because a
+// literal code in the request can be captured as the reply (MUX-154) and read
+// back as a verdict the worker never gave.
+func TestGraphWorkerTaskSeedsTheVerdictToken(t *testing.T) {
+	g := &Graph{Name: "seed", Start: "w", Nodes: []Node{{ID: "w", Type: NodeSpawn, Role: "edit"}}}
+
+	msg := graphWorkerTask(g, "run1", "w", "implement phase 3")
+	if !strings.Contains(msg, "EXIT=<n>") {
+		t.Errorf("seed does not ask for the verdict token: %q", msg)
+	}
+	if _, found := parseExitSentinel(msg); found {
+		t.Errorf("seed carries a parseable verdict of its own: %q", msg)
+	}
+
+	// A node the graph owns no roles for still needs attributing, and that
+	// branch returns before the preamble is built.
+	withEdges := &Graph{Name: "seed2", Start: "w",
+		Nodes: []Node{{ID: "w", Type: NodeSpawn, Role: "edit"}, {ID: "b", Type: NodeSend, Role: "build"}},
+		Edges: []Edge{{From: "w", To: "b"}}}
+	if !strings.Contains(graphWorkerTask(withEdges, "run1", "w", "do it"), "EXIT=<n>") {
+		t.Error("a node with owned successors lost the verdict instruction")
+	}
 }
 
 func spawnCountForRun(t *testing.T, session, runID string) int {
@@ -3524,9 +3757,13 @@ func TestExecSpawnTaskNamesOnlyReachableRoles(t *testing.T) {
 }
 
 // TestExecSpawnTaskUnprefixedWithoutSendNodes is the negative control: a graph
-// that dispatches nothing but workers owns no delegations, so the worker's
-// task must arrive verbatim. An implementation that always prefixed would pass
-// the positive case above and fail here.
+// that dispatches nothing but workers owns no delegations, so nothing may
+// precede the worker's message. An implementation that always prefixed would
+// pass the positive case above and fail here.
+//
+// Asserted as a prefix, not an equality: every seed carries the verdict
+// instruction appended after the message (spawnVerdictInstruction), and a node
+// with no successors needs attributing like any other.
 func TestExecSpawnTaskUnprefixedWithoutSendNodes(t *testing.T) {
 	g := &Graph{
 		Name:  "t",
@@ -3540,8 +3777,12 @@ func TestExecSpawnTaskUnprefixedWithoutSendNodes(t *testing.T) {
 	if len(*tasks) != 1 {
 		t.Fatalf("expected 1 spawned worker, got %d: %v", len(*tasks), *tasks)
 	}
-	if got := (*tasks)[0]; got != "edit: Just do it" {
-		t.Errorf("task %q, want the message verbatim — no send nodes means nothing is owned", got)
+	got := (*tasks)[0]
+	if !strings.HasPrefix(got, "edit: Just do it") {
+		t.Errorf("task %q, want the message unprefixed — no send nodes means nothing is owned", got)
+	}
+	if strings.Contains(got, "Do NOT delegate") {
+		t.Errorf("task %q carries an ownership preamble for a graph that owns nothing", got)
 	}
 }
 

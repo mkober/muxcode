@@ -106,7 +106,8 @@ type Daemon struct {
 	lastStuckReload map[string]int64 // role → last auto-reload (cooldown)
 	stuckGaveUp     map[string]bool  // role → alerted once after hitting the reload cap
 
-	lastPermBlockCheck int64
+	lastPermBlockCheck     int64
+	lastCodexApprovalCheck int64
 	permBlockSeen      map[string]int  // role → consecutive permission-block sightings (debounce)
 	permBlocked        map[string]bool // role → re-notification suppressed while blocked
 	permBlockAlerted   map[string]bool // role → alerted edit once for the current block
@@ -348,6 +349,7 @@ func (d *Daemon) Run() error {
 		d.checkActiveWatchdog()
 		d.checkStuckProviders()
 		d.checkStuckPermissions()
+		d.checkCodexApprovals()
 		d.checkDefinitionless()
 		d.checkAgentDefs()
 		d.checkCompaction()
@@ -1348,6 +1350,62 @@ func (d *Daemon) clearPermBlock(role string) {
 		bus.LogLifecycle(d.session, "info", "daemon", "permission-block-cleared", role)
 	}
 	d.permBlockAlerted[role] = false
+}
+
+// codexApprovalCheckSecs is the polling interval for the approval-prompt
+// watchdog. Well inside the 600s task timeout it exists to pre-empt.
+const codexApprovalCheckSecs int64 = 15
+
+// checkCodexApprovals answers command-approval prompts raised by read-only
+// Codex roles, which are launched with `-a on-request` precisely so they cannot
+// execute — making the answer "no" by configuration, not by this watchdog's
+// judgement. Unlike checkStuckPermissions this does not require a pending
+// inbox: the agent parks mid-turn, having already consumed its request, and
+// shows neither spinner nor ❯, so nothing else in the daemon sees it at all.
+//
+// Opt out with MUXCODE_CODEX_APPROVAL_WATCHDOG_DISABLE=1.
+func (d *Daemon) checkCodexApprovals() {
+	if os.Getenv("MUXCODE_CODEX_APPROVAL_WATCHDOG_DISABLE") == "1" {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastCodexApprovalCheck < codexApprovalCheckSecs {
+		return
+	}
+	d.lastCodexApprovalCheck = now
+
+	for _, role := range bus.KnownRoles {
+		if bus.WindowForRole(role) != role {
+			continue
+		}
+		if bus.IsReloading(d.session, role) || bus.IsHarnessActive(d.session, role) {
+			continue
+		}
+		if !bus.CodexRoleIsReadOnly(role) || bus.ResolveProvider(role).Name() != "codex" {
+			continue
+		}
+		if !bus.IsAgentAlive(d.session, role) {
+			continue
+		}
+		target := bus.PaneTarget(d.session, role)
+		content, err := bus.TmuxCapturePaneLines(target, 20)
+		if err != nil || !bus.CodexApprovalPromptLive(content) {
+			continue
+		}
+		if err := bus.DenyCodexApproval(target); err != nil {
+			continue
+		}
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Approval watchdog: denied a command-approval prompt for %s — the role runs read-only and cannot be granted it\n", ts, role)
+		bus.LogLifecycle(d.session, "warn", "daemon", "approval-denied", role)
+		if d.shouldSendEvent("approval-denied", role) && d.shouldNotifyEdit("event") {
+			msg := bus.NewMessage("daemon", "edit", "event", "approval-denied",
+				fmt.Sprintf("%s asked to run a command it is not permitted to run and parked at the prompt; the watchdog answered no so the turn could continue. A read-only role should not be attempting execution — check its definition if this repeats.", role), "")
+			if err := bus.Send(d.session, msg); err == nil {
+				_ = bus.Notify(d.session, "edit")
+			}
+		}
+	}
 }
 
 // agentDefsCheckSecs is the polling interval for the agent-definition watchdog.
