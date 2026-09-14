@@ -63,97 +63,40 @@ func TestSplitLines_SingleNewline(t *testing.T) {
 	}
 }
 
-func TestRotateHistory_BelowLimit(t *testing.T) {
+// TestRunLogWritesSelfReportedSource drives the real `muxcode log` path and
+// asserts the row it produces declares itself a self-report.
+//
+// This is what closes MUX-148 Decision 4's bypass: cmd/log.go used to write the
+// JSONL directly with no source, so a row an agent authored about itself — exit
+// code included — was indistinguishable from one the runtime observed. Asserting
+// the constant rather than the write shape is the point; a test that checks the
+// fields it just wrote itself would pass no matter what runLog did.
+func TestRunLogWritesSelfReportedSource(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "test-history.jsonl")
+	bus.SetBusDirBase(dir)
+	t.Cleanup(bus.ResetBusDirBase)
 
-	// Write 5 lines — below the 10 limit
-	var content string
-	for i := 0; i < 5; i++ {
-		content += `{"ts":` + itoa(i) + `}` + "\n"
-	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	session := "log-source-pin"
+	t.Setenv("BUS_SESSION", session)
+	if err := bus.Init(session, filepath.Join(dir, "memory")); err != nil {
+		t.Fatalf("Init: %v", err)
 	}
 
-	rotateHistory(path, 10)
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	lines := splitLines(data)
-	if len(lines) != 5 {
-		t.Errorf("expected 5 lines after rotation, got %d", len(lines))
-	}
-}
-
-func TestRotateHistory_AtLimit(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test-history.jsonl")
-
-	var content string
-	for i := 0; i < 10; i++ {
-		content += `{"ts":` + itoa(i) + `}` + "\n"
-	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	if err := runLog([]string{"review", "0 must-fix", "--exit-code", "0"}, nil); err != nil {
+		t.Fatalf("runLog: %v", err)
 	}
 
-	rotateHistory(path, 10)
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
+	entries := bus.ReadConsoleEntries(bus.HistoryPath(session, "review"), 0)
+	if len(entries) != 1 {
+		t.Fatalf("wrote %d entries, want 1", len(entries))
 	}
-	lines := splitLines(data)
-	if len(lines) != 10 {
-		t.Errorf("expected 10 lines after rotation, got %d", len(lines))
+	if entries[0].Source != bus.SourceSelfReported {
+		t.Errorf("source = %q, want %q — muxcode log must not look observed",
+			entries[0].Source, bus.SourceSelfReported)
 	}
-}
-
-func TestRotateHistory_AboveLimit(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test-history.jsonl")
-
-	// Write 25 lines, limit 10 — should keep last 10
-	var content string
-	for i := 0; i < 25; i++ {
-		content += `{"ts":` + itoa(i) + `}` + "\n"
+	if entries[0].Outcome != bus.OutcomeSuccess {
+		t.Errorf("outcome = %q, want success", entries[0].Outcome)
 	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	rotateHistory(path, 10)
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	lines := splitLines(data)
-	if len(lines) != 10 {
-		t.Fatalf("expected 10 lines after rotation, got %d", len(lines))
-	}
-
-	// Verify the kept entries are the last 10 (ts 15-24)
-	for i, line := range lines {
-		var entry map[string]interface{}
-		if err := json.Unmarshal(line, &entry); err != nil {
-			t.Errorf("line %d: unmarshal error: %v", i, err)
-			continue
-		}
-		ts := int(entry["ts"].(float64))
-		expected := 15 + i
-		if ts != expected {
-			t.Errorf("line %d: ts = %d, want %d", i, ts, expected)
-		}
-	}
-}
-
-func TestRotateHistory_MissingFile(t *testing.T) {
-	// Should not panic on missing file
-	rotateHistory("/nonexistent/path/history.jsonl", 10)
 }
 
 func TestLogEntryFormat(t *testing.T) {
@@ -225,37 +168,6 @@ func TestLogEntryOutcome_Failure(t *testing.T) {
 
 	if decoded["outcome"] != "failure" {
 		t.Errorf("outcome = %q, want %q", decoded["outcome"], "failure")
-	}
-}
-
-func TestRotateHistory_MultipleRotations(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test-history.jsonl")
-
-	// Simulate multiple append+rotate cycles
-	for batch := 0; batch < 5; batch++ {
-		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			t.Fatalf("batch %d: OpenFile: %v", batch, err)
-		}
-		for i := 0; i < 8; i++ {
-			entry := `{"ts":` + itoa(batch*8+i) + `}` + "\n"
-			f.Write([]byte(entry))
-		}
-		f.Close()
-		rotateHistory(path, 10)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	lines := splitLines(data)
-	if len(lines) > 10 {
-		t.Errorf("expected at most 10 lines after repeated rotation, got %d", len(lines))
-	}
-	if len(lines) < 8 {
-		t.Errorf("expected at least 8 lines (last batch), got %d", len(lines))
 	}
 }
 

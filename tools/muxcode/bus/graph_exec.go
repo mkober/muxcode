@@ -1725,18 +1725,38 @@ func parseExitSentinel(payload string) (string, bool) {
 }
 
 // latestAuthoritativeRow returns the newest console-history entry for a
-// role with a real verdict (authoritative source, non-unknown outcome)
-// recorded at or after since.
+// role with a real verdict (non-unknown outcome) recorded at or after since.
+//
+// An observed row outranks a self-report. Both were once "the authoritative
+// path", so a `muxcode log --exit-code 0` sat level with what a hook watched
+// happen and, being newer, won — an agent could overwrite a real failure by
+// describing itself. A self-report is still returned when nothing observed the
+// work, because the non-hook providers have no other road and holding every
+// one of their nodes is not a fix.
+//
+// Only the read side is ordered here; the row a forger appends to the JSONL by
+// hand can still claim any source. That needs provenance the agent cannot
+// author — see SourceSelfReported.
 func latestAuthoritativeRow(session, role string, since int64) (ConsoleEntry, bool) {
 	entries := ReadConsoleEntries(HistoryPath(session, role), 0)
+	var selfReported ConsoleEntry
+	var haveSelfReported bool
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
-		if e.TS < since || e.Source == SourceBusResponse || e.Outcome == OutcomeUnknown || e.Outcome == "" {
+		if e.TS < since || e.Outcome == OutcomeUnknown || e.Outcome == "" {
 			continue
 		}
-		return e, true
+		switch e.Source {
+		case SourceHook:
+			return e, true
+		case SourceSelfReported:
+			if !haveSelfReported {
+				selfReported, haveSelfReported = e, true
+			}
+		}
+		// Any other source — synthesized, legacy, or unrecognised — is not evidence.
 	}
-	return ConsoleEntry{}, false
+	return selfReported, haveSelfReported
 }
 
 // harvestWaitingNode releases human gates whose approval marker has

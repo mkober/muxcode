@@ -616,7 +616,17 @@ type HookHistoryEntry struct {
 
 // WriteHookHistory appends a history entry to a JSONL file with file-level locking
 // and rotation to keep the last maxEntries entries.
+//
+// An entry arriving with no Source is stamped SourceHook: this function is the
+// runtime-observed road, and its callers that are NOT observations — the
+// synthesized bus-response rows, and `muxcode log`'s self-reports — say so
+// explicitly. Stamping here rather than at each construction site keeps the
+// five hook call sites from drifting apart, and makes "went through
+// WriteHookHistory without declaring itself" mean exactly one thing.
 func WriteHookHistory(path string, entry HookHistoryEntry, maxEntries int) error {
+	if entry.Source == "" {
+		entry.Source = SourceHook
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}

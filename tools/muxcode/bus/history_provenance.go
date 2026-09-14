@@ -20,15 +20,33 @@ import (
 //     which for a TUI provider is frequently a launch banner or partial
 //     reasoning rather than a result.
 //
-// Only the first is evidence. These constants let the second be told apart and
-// kept out of the pass/fail verdict entirely.
+// Lumping the hook and `muxcode log` together as one "authoritative path" was
+// itself the hazard (MUX-148): a hook entry is observed by the runtime, while a
+// `muxcode log` entry is whatever the agent chose to say about itself, exit code
+// included. On 2026-09-14 a commit agent self-logged exit 0 for its own
+// `git checkout -b`, and nothing could tell that row from an observed one. The
+// vocabulary is therefore three-valued, and the two are no longer peers.
 const (
 	// SourceBusResponse marks an entry synthesized from a bus response payload.
 	// Such an entry is never proof that a command ran, so it can never carry a
-	// success verdict. An empty Source means the authoritative path — that is
-	// also how entries written before provenance existed read, which is the
-	// safe default: they keep the verdict they already recorded.
+	// success verdict.
 	SourceBusResponse = "bus-response"
+
+	// SourceHook marks an entry observed by the runtime: a PostToolUse hook saw
+	// the command run and recorded the exit code the shell reported. This is the
+	// only self-describing evidence a node's verdict may rest on.
+	SourceHook = "hook"
+
+	// SourceSelfReported marks an entry an agent wrote about itself through
+	// `muxcode log`, carrying an exit code it chose. It stays usable — the
+	// non-hook providers have no other way to record that work ran — but it can
+	// never override an observed row (see latestAuthoritativeRow).
+	//
+	// Residual: an agent can still append a row to the JSONL directly and claim
+	// any source, so this narrows forgery rather than closing it. Closing it
+	// needs provenance the agent cannot author, e.g. BusActorVerified's
+	// process-ancestry resolution stamped at write time.
+	SourceSelfReported = "self-reported"
 
 	// OutcomeSuccess / OutcomeFailure / OutcomeUnknown are the outcome values.
 	// OutcomeUnknown is the verdict for an entry with no real exit code: not a

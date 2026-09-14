@@ -382,6 +382,140 @@ func TestExecSentinelFailureRoutesFailure(t *testing.T) {
 }
 
 // Precedence: a hook-recorded row is authoritative, a sentinel is only
+// TestObservedRowOutranksSelfReport pins MUX-148 Decision 4: a row an agent
+// wrote about itself through `muxcode log` must not overrule one the runtime
+// observed, however much newer it is.
+//
+// The live case (2026-09-14): a commit agent self-logged exit 0 for its own
+// `git checkout -b`, and nothing could tell that row from an observed one.
+func TestObservedRowOutranksSelfReport(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Now().Unix() - 1
+	path := HistoryPath(runTestSession, "build")
+
+	observed := HookHistoryEntry{TS: time.Now().Unix(), Command: "./build.sh",
+		ExitCode: "1", Outcome: OutcomeFailure}
+	if err := WriteHookHistory(path, observed, 100); err != nil {
+		t.Fatal(err)
+	}
+	// Newer, and claiming success — the shape that used to win on recency.
+	claim := HookHistoryEntry{TS: time.Now().Unix() + 5, Command: "./build.sh",
+		ExitCode: "0", Outcome: OutcomeSuccess, Source: SourceSelfReported}
+	if err := WriteHookHistory(path, claim, 100); err != nil {
+		t.Fatal(err)
+	}
+
+	row, ok := latestAuthoritativeRow(runTestSession, "build", since)
+	if !ok {
+		t.Fatal("expected a verdict")
+	}
+	if row.Outcome != OutcomeFailure {
+		t.Errorf("outcome = %q, want failure — a self-report overrode an observed row", row.Outcome)
+	}
+}
+
+// TestSelfReportUsedWhenNothingObserved is the negative control criterion 139
+// demands: the non-hook providers record work only through `muxcode log`, so a
+// fix that discards self-reports entirely would hold every one of their nodes
+// forever. Without this case, returning nothing at all would pass the test
+// above.
+func TestSelfReportUsedWhenNothingObserved(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Now().Unix() - 1
+
+	claim := HookHistoryEntry{TS: time.Now().Unix(), Command: "pnpm test",
+		ExitCode: "0", Outcome: OutcomeSuccess, Source: SourceSelfReported}
+	if err := WriteHookHistory(HistoryPath(runTestSession, "test"), claim, 100); err != nil {
+		t.Fatal(err)
+	}
+
+	row, ok := latestAuthoritativeRow(runTestSession, "test", since)
+	if !ok || row.Outcome != OutcomeSuccess {
+		t.Fatalf("row = (%+v, %v), want the self-report to stand when nothing observed the work", row, ok)
+	}
+}
+
+// TestRawRowWithoutHookSourceIsNotEvidence pins the fail-closed rule against
+// rows written straight to the JSONL — which is both the forgery shape and the
+// only way to reach this path at all: WriteHookHistory stamps a blank source
+// as SourceHook, so no test using it can produce an absent one. Without a raw
+// write the regression is invisible, and "absent source is evidence" could
+// return unnoticed.
+func TestRawRowWithoutHookSourceIsNotEvidence(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Now().Unix() - 1
+	path := HistoryPath(runTestSession, "build")
+	now := time.Now().Unix()
+
+	raw := fmt.Sprintf(
+		"{\"ts\":%d,\"command\":\"./build.sh\",\"exit_code\":\"0\",\"outcome\":\"success\"}\n"+
+			"{\"ts\":%d,\"command\":\"./build.sh\",\"exit_code\":\"0\",\"outcome\":\"success\",\"source\":\"hook-ish\"}\n",
+		now, now+1)
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if row, ok := latestAuthoritativeRow(runTestSession, "build", since); ok {
+		t.Errorf("a raw row with %q source was accepted as evidence: %+v", row.Source, row)
+	}
+
+	// Positive control: with the same file and helper, a properly stamped row
+	// IS evidence — so the rejection above is the rule working, not the
+	// fixture failing to be read at all.
+	observed := HookHistoryEntry{TS: now + 2, Command: "./build.sh",
+		ExitCode: "0", Outcome: OutcomeSuccess}
+	if err := WriteHookHistory(path, observed, 100); err != nil {
+		t.Fatal(err)
+	}
+	row, ok := latestAuthoritativeRow(runTestSession, "build", since)
+	if !ok || row.Outcome != OutcomeSuccess {
+		t.Fatalf("stamped row = (%+v, %v), want it accepted — the file is readable", row, ok)
+	}
+}
+
+// TestWriteHookHistoryStampsSource pins the choke point. Promoting a declared
+// source would silently re-authorise the bus-response rows that must never
+// carry a verdict, so both directions are checked.
+func TestWriteHookHistoryStampsSource(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := HistoryPath(runTestSession, "build")
+
+	undeclared := HookHistoryEntry{TS: time.Now().Unix(), Command: "./build.sh",
+		ExitCode: "0", Outcome: OutcomeSuccess}
+	synthesized := HookHistoryEntry{TS: time.Now().Unix() + 1, Action: "build",
+		Outcome: OutcomeSuccess, Source: SourceBusResponse}
+	selfReported := HookHistoryEntry{TS: time.Now().Unix() + 2, Command: "pnpm test",
+		ExitCode: "0", Outcome: OutcomeSuccess, Source: SourceSelfReported}
+	for _, e := range []HookHistoryEntry{undeclared, synthesized, selfReported} {
+		if err := WriteHookHistory(path, e, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entries := ReadConsoleEntries(path, 0)
+	if len(entries) != 3 {
+		t.Fatalf("read %d entries, want 3", len(entries))
+	}
+	want := []string{SourceHook, SourceBusResponse, SourceSelfReported}
+	for i, w := range want {
+		if entries[i].Source != w {
+			t.Errorf("entry %d source = %q, want %q", i, entries[i].Source, w)
+		}
+	}
+}
+
 // self-reported. Reordering the two checks must fail here.
 func TestAuthoritativeRowOutranksSentinel(t *testing.T) {
 	run := createTestRun(t, linearGraph())
