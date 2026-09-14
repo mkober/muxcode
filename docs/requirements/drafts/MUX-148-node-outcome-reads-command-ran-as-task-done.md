@@ -38,7 +38,7 @@ Corroborated independently: a `muxcode graph status` run during the incident sho
 | Outcome derivation | `deriveSendOutcome` (`bus/graph_exec.go:1534`) | Returns `failure` only if the response message's action is literally `error`; otherwise defers to the newest authoritative console row |
 | Row selection | `latestAuthoritativeRow` (`:1586`) | Walks console history backwards, skipping rows older than dispatch, `SourceBusResponse` rows, and unknown/empty outcomes — returns the **newest row with a real exit code** |
 | Sentinel fallback (**added after filing**, `c4997ed`) | `parseExitSentinel` (`:1556`) | Reads a self-reported `EXIT=<n>` from the reply body — but **only when no authoritative row was found**, so it cannot correct one |
-| **Spawn road — no derivation at all** (at `846251e`) | `spawnGroupOutcome` (`:1455`), called from `harvestRunningNode` (`:1242`) | `outcome` starts at `success`; an answered seed is a bare `continue`; it degrades only for a missing, stopped or unknown-status worker. **Content-blind** — none of the send-road machinery above is consulted. See [Defect 3](#defect-3--the-spawn-road-reads-no-evidence-at-all) |
+| **Spawn road — no derivation at all** (at `846251e`) | `spawnGroupOutcome` (`:1455`), called from `harvestRunningNode` (`:1205`) | `outcome` starts at `success`; an answered seed is a bare `continue`; it degrades only for a missing, stopped or unknown-status worker. **Content-blind** — none of the send-road machinery above is consulted. See [Defect 3](#defect-3--the-spawn-road-reads-no-evidence-at-all) |
 | Consequence | — | While composing its refusal the agent ran read-only `gh`/`git` commands. Those rows carry **exit 0 → `OutcomeSuccess`**, so the provenance doctrine proved *"a command ran successfully"* and the router read it as *"the node did its job"*. ⚠️ **This row's account of *which* command minted the row was disproved by Phase 1** — read-only `gh`/`git` write no row for the `commit` role. The false green is real; its source is not yet established. See [Phase 1 findings](#the-filed-mechanism-does-not-reproduce--re-derive-the-incident-before-fixing-it) |
 
 **The evidence an agent produces when it declines a task while inspecting state is
@@ -109,6 +109,10 @@ Any **spawn** node whose worker declines — and here no command evidence is nee
 spawn road reads none ([Defect 3](#defect-3--the-spawn-road-reads-no-evidence-at-all)). In
 `spec-to-pr` the `implement` and `fix` nodes are both spawn nodes: the two that do the real work.
 
+And the **mirror**: any node whose agent's first *recognised* command fails and whose correct re-run is
+*not recognised* — the node fails on the stale row, and a `fix` loop sets about repairing a suite that
+is not broken ([Defect 4](#defect-4--the-mirror-a-genuine-success-recorded-as-failure)).
+
 In this run it advanced to `close-gate` on the false signal. **Only two accidents prevented a spec
 close-out on it**: the `spec-complete` guard, and the session happening to have no active spec.
 Neither is a guarantee — the guard checks the spec's own completeness, not whether the upstream
@@ -168,24 +172,66 @@ A correct, principled refusal recorded as success: the first acceptance criterio
 that exists to fix it. This is the strongest evidence the spec holds and is the reproduction Phase 5's
 spawn test should model.
 
-**A fix landed while this was being recorded.** `5b32433` (11:39, committed through run
-`1789399519`'s `phase-gate` on the user's approval) changes `spawnGroupOutcome` to read
+**A fix was written while this was being recorded.** Edit changed `spawnGroupOutcome` to read
 `parseExitSentinel(spawnReplyPayload(…))`: a reply with no sentinel resolves `OutcomeUnknown` (held),
 failure outranks unknown across a group, and `harvestRunningNode` ports on `!= failure` so a held
 node's work still lands in the tree for the human to judge. It ships
-`TestSpawnGroupOutcomeReadsTheReplyNotTheFactOfReplying` (declined, `EXIT=0`, `EXIT=1`, sentinel-free,
-plus missing/stopped/running workers and failure-outranks-unknown). **It has not been through the
-build→test→review chain**: the run's build, test and review nodes completed at 11:28–11:31, before the
-change existed, and the commit node commits whatever is in the tree. It takes one side of the
+`TestSpawnGroupOutcomeReadsTheReplyNotTheFactOfReplying` (`graph_exec_test.go:2292`): declined →
+unknown, `EXIT=0` → success (the negative control), `EXIT=1` → failure, a sentinel-free success claim →
+unknown, plus regression guards — missing → failure, stopped → failure, running → not done, and a
+mixed declined+failed group fails rather than holds. **Commit history, for the record:** it was
+committed as `5b32433` at 11:39 through run `1789399519`'s `phase-gate` (approved by the user) together
+with plan's Phase 2 edits; at 11:42 that commit was **reset** (`reset: moving to HEAD~1`) and the spec
+alone re-committed as `f942c43`, so the code and test went back to the working tree, uncommitted, to go
+through the lap's build→test→review first — the run's earlier build, test and review nodes had
+completed at 11:28–11:31, before the change existed. **Then removed (≈11:53):** lap 2's `test` node
+failed, the run was canceled, and the change and its test were taken out of the working tree — as of
+11:55 nothing in the tree implements the spawn road, and the description above is of a reverted
+change. It took one side of the
 [design tension](#design-tension--the-spawn-signal-and-the-sentinel-agents-omit) below without the
-choice being recorded; Phase 3's steps stay open until the choice is on the record and the chain has
-run on this tree.
+choice being recorded, which is moot until something is reinstated.
+
+### Defect 4 — the mirror: a genuine success recorded as failure
+
+**Added 2026-09-14 on the user's instruction.** Found and verified by edit against `f942c43` on
+session `is-operations-gateway`, run `1789400058-spec-to-pr-c627b2f9` (PBP1-5009, Phase 1); the
+classifier mechanism re-verified by plan here against `DefaultTestPatterns` and `matchPatterns`. The
+spec to this point was written around false *success*; the same root cause produces a false
+*failure*, and no earlier criterion covered it.
+
+**Observed.** The `test` node shows `failed`. The suite actually passed — 21/21 suites, 468/468
+tests, exit 0. The `fix` spawn then looped three times repairing a suite that was not broken, and
+`loop-check`/`stuck-gate` reached ×8.
+
+**Mechanism.** Two commands ran in the node's window:
+
+| Command | Classified | Row written |
+|---|---|---|
+| `pnpm test -- --runInBand` | yes — `pnpm*test` | authoritative **failure** (exit 1: Jest read `--runInBand` as a test-name pattern, 0 matches) |
+| `pnpm exec jest --runInBand` | **no** | none — and this is the run that passed |
+
+`pnpm exec jest --runInBand` matches nothing in `DefaultTestPatterns` (`./test.sh`, `jest`,
+`pnpm*test`, `pytest`, `go*test`, `cargo*test`, `vitest` — `hook.go:258`): `jest` needs
+`headAtBoundary`, and the command starts with `pnpm`; `pnpm*test` clears the head but the glob then
+needs the substring `test`, and `jest` is not it; the wrapper escape covers `bash`, `sh` and `npx`
+only, not `pnpm exec`. So the passing run wrote no row, `latestAuthoritativeRow` returned the earlier
+failure, and tier 2 outranks tier 3 — the reply said *"Tests passed … exit code 0"* as prose with no
+`EXIT=` sentinel, and would have lost to the row even with one.
+
+**Why it belongs here and not in its own spec.** Identical root cause, in this spec's own words: the
+row describes **a command**, not **the task**. A fix that only stops false successes leaves this live.
+
+**What it constrains.** "Newest authoritative row wins" is wrong in *both* directions when the command
+that carried the real verdict was never classified. Tiering or attribution alone does not fix it; the
+node needs a signal tied to the **dispatched task**, not to whichever commands happened to be
+recognised — recorded as an inherited Phase 3 constraint.
 
 ## Requirements
 
 ### Acceptance criteria
 
 - [ ] A node whose agent **declines** the task is not recorded as `success`
+- [ ] **The mirror:** a node whose work genuinely succeeded after a failed first attempt is not recorded as `failure` — see [Defect 4](#defect-4--the-mirror-a-genuine-success-recorded-as-failure)
 - [ ] A node that **genuinely succeeds** is still recorded as `success` — **negative control: a fix that holds everything is not a fix**
 - [ ] The distinction does **not** rely on parsing prose
 - [ ] A node that cannot be tied to its dispatched work surfaces as a hold or failure, never as a silent success
@@ -220,7 +266,7 @@ Options 1 and 4 are the general fixes; 3 is the cheap immediate mitigation. They
 
 | File | Purpose |
 |------|---------|
-| `tools/muxcode/bus/graph_exec.go` | Send road: `deriveSendOutcome:1705`, `parseExitSentinel:1739`, `latestAuthoritativeRow:1757`, unknown fallthrough `:1722`, unknown-hold routing `:1855`. Spawn road: `harvestRunningNode:1211`, `spawnGroupOutcome:1471`, `spawnReplyPayload:1556`. Numbers as of `5b32433`; the Mechanism table's are as of `cc7f47d` |
+| `tools/muxcode/bus/graph_exec.go` | Send road: `deriveSendOutcome:1678`, `parseExitSentinel:1712`, `latestAuthoritativeRow:1730`; unknown-hold routing in `routeFinishedNodes:1814` via `unverifiedHoldReleased:927` (`graph-unverified-hold`). Spawn road: `harvestRunningNode:1205`, `spawnGroupOutcome:1455`, `spawnReplyPayload:1529`. Numbers as of `f942c43`; the Mechanism table's are as of `cc7f47d` |
 | `tools/muxcode/bus/graph_templates.go` | `commit-pr-review-loop:72-100` — the `c`→`d` gap and the `verify-pr` token precedent |
 | `tools/muxcode/bus/commit_authority.go` | `checkGraphCommitDispatch:166`, `dispatchMatchesNode:208` — what a commit node inserted in Phase 4 must satisfy |
 | `tools/muxcode/bus/hook.go` | `DefaultGitPatterns:288-292` (mutating git/gh only), `ClassifyCommand`, `ProcessBashHook` `case CmdUnknown:803-814` — where authoritative rows are minted |
@@ -242,7 +288,7 @@ Options 1 and 4 are the general fixes; 3 is the cheap immediate mitigation. They
 - [x] **Gather the evidence on whether `parseExitSentinel` should outrank the console row** — who emits a sentinel (5 roles instructed, 9 not), what a non-emitting role falls back to, and the MUX-154 exposure a flip inherits. **Misfiled as a *decision* when added on 2026-09-14**: this phase's own last step is "record findings *before* choosing an option", so the choice moved to Phase 2 where it belongs
 - [x] Record findings here before choosing an option
 
-### Phase 1 findings — recorded 2026-09-14
+### Findings recorded from Phase 1 — 2026-09-14
 
 Investigated by edit, spot-verified by plan. Full report: `/tmp/mux-148-phase1-findings.md` (non-durable;
 the load-bearing findings are reproduced here). **No option chosen — that is Phase 2, and it is the
@@ -356,7 +402,7 @@ instructions promise an unverified hold the code may not deliver.
 - [x] Confirm the choice satisfies the "genuine success still succeeds" criterion by construction — the three-tier table below
 - [x] Record the decision and rationale in this spec
 
-### Phase 2 decision — recorded 2026-09-14
+### Decision recorded for Phase 2 — 2026-09-14
 
 **Made by the user**, relayed through edit, as this spec reserved it. Recorded by plan, which had
 refused to certify this phase earlier the same day precisely because the choice was not an agent's
@@ -440,27 +486,36 @@ This is also why **both** options were needed. Actions with no command that coul
 convert them into permanent holds — and those are precisely the nodes option 3's token covers. The two
 are complementary by construction, not merely additive.
 
-#### Constraints Phase 3 inherits
-
-- [ ] **Ship the first test of `deriveSendOutcome`** — nothing calls it today, so the precedence ordering is free to be fixed *and* free to regress unnoticed
-- [ ] **Add actor provenance to `HookHistoryEntry`** — a prerequisite for option 4, not part of it
-- [ ] **Unit-test the `git*commit*` glob in both directions** — it fires on a `git`-headed command containing `commit`/`push` anywhere (inside "uncommitted", in `--dry-run`, in `@{push}`), and does **not** fire on a keyword-free `git status`/`git log`, nor on a non-`git`-headed command however worded (reply prose is never an input) — the re-derivation rests on it
-- [ ] Do **not** double-hold: the new hold and the `OutcomeUnknown` hold (`:1684`) must not both fire on one node
-- [ ] `hook_codex_test.go` is **not** a constraint (re-verified this run) — it calls `latestAuthoritativeRow` directly and stays green under any precedence change
+The constraints Phase 3 inherits from this decision are listed **under Phase 3** (moved 2026-09-14
+12:10: `SpecPhases` drops its current phase on any heading line and re-arms only on `### Phase N`, so
+under a `####` label here they were attached to no phase at all — invisible to the count —
+[MUX-183](../backlog/MUX-183-phase-commit-ready-recredits-shipped-phases.md) defect 2).
 
 ### Phase 3: Implement outcome attribution
 
 Covers **both roads** — send and spawn — since 2026-09-14 (see
 [Defect 3](#defect-3--the-spawn-road-reads-no-evidence-at-all)).
 
+**Constraints Phase 3 inherits** (a bold label, not a heading — the spec parser drops its current phase
+on any heading line, so a `####` here would detach the boxes below from Phase 3):
+
+- [ ] **Ship the first test of `deriveSendOutcome`** — nothing calls it today, so the precedence ordering is free to be fixed *and* free to regress unnoticed
+- [ ] **Add actor provenance to `HookHistoryEntry`** — a prerequisite for option 4, not part of it
+- [ ] **Unit-test the `git*commit*` glob in both directions** — it fires on a `git`-headed command containing `commit`/`push` anywhere (inside "uncommitted", in `--dry-run`, in `@{push}`), and does **not** fire on a keyword-free `git status`/`git log`, nor on a non-`git`-headed command however worded (reply prose is never an input) — the re-derivation rests on it
+- [ ] Do **not** double-hold: the new hold and the `OutcomeUnknown` hold (`:1684`) must not both fire on one node
+- [ ] `hook_codex_test.go` is **not** a constraint (re-verified this run) — it calls `latestAuthoritativeRow` directly and stays green under any precedence change
+- [ ] **The signal must be tied to the dispatched task, not to whichever commands happened to be recognised** — "newest authoritative row wins" is wrong in *both* directions when the command that carried the real verdict was never classified ([Defect 4](#defect-4--the-mirror-a-genuine-success-recorded-as-failure)); tiering or attribution alone does not close the mirror
+
+**Steps**
+
 - [ ] Implement the chosen mechanism with unit tests
 - [ ] **Negative control test:** a node that genuinely succeeded still routes as success
-- [ ] Emit a lifecycle event when a node's outcome cannot be positively established
-- [ ] Ensure the unknown-hold and the new path do not double-hold the same node — on the send road and the spawn road alike
-- [ ] Apply the Phase 2 mechanism (option 3 per-node positive token + option 4 unattributable → hold) to the **spawn** road, not the send road alone
-- [ ] `spawnGroupOutcome` establishes an answered worker's outcome **positively**; absent a positive signal the node resolves `OutcomeUnknown` (hold), never `success`
-- [ ] Preserve the existing failure semantics for missing, stopped and unknown-status workers — already correct, must not regress into holds
-- [ ] **Spawn negative control test:** a worker that genuinely completes still routes as success — including a worker whose legitimate output is *no code change* (an investigation or decision phase, as Phases 1–2 of this spec were)
+- [ ] Emit a lifecycle event when a node's outcome cannot be positively established — ~~verified 2026-09-14~~ **withdrawn 11:55**: the machinery below is real and stays, but with the spawn change reverted a declined spawn worker no longer reaches it, so the step is unmet on the road that matters. No new event is needed; both roads resolve "cannot be established" to `OutcomeUnknown`, and the unknown branch of `routeFinishedNodes` calls `unverifiedHoldReleased` (`:927`), which writes the pending marker, logs `graph-unverified-hold` (once — the marker guards repeats) and sends edit a `graph-approval` request. The spawn change is what makes a declined worker reach it. Deliberate exception: a node whose successors are all human gates skips the hold and the event (`successorsAllHumanGates`), because the gate is next anyway
+- [ ] Ensure the unknown-hold and the new path do not double-hold the same node — on the send road and the spawn road alike — ~~spawn road satisfied by construction by the working-tree change (its new path *was* the existing hold)~~ **historical — reverted 11:53**; the by-construction argument holds for any reinstated change that resolves to `OutcomeUnknown` through the one hold branch in `routeFinishedNodes`, but nothing in the tree does; send road pending
+- [ ] Apply the Phase 2 mechanism (option 3 per-node positive token + option 4 unattributable → hold) to the **spawn** road, not the send road alone — ~~partial (11:50): the unattributable → hold rule was applied by the working-tree change~~ **historical — that change was reverted 11:53**; nothing in the tree applies either option on the spawn road now. Whether the reply sentinel is *the* token option 3 meant (the `PR-CONFIRMED` shape) is what the design tension below decides
+- [ ] `spawnGroupOutcome` establishes an answered worker's outcome **positively**; absent a positive signal the node resolves `OutcomeUnknown` (hold), never `success` — ~~ticked 11:50 on the working-tree change~~ **withdrawn 11:55**: lap 2's test node failed and the change and its test were removed from the working tree (HEAD `f942c43`, no stash, `heldUnknown` absent) — nothing in the tree implements this step now; the reading stands only as a description of what the reverted change did (see Defect 3)
+- [ ] Preserve the existing failure semantics for missing, stopped and unknown-status workers — already correct, must not regress into holds — ~~verified 11:50~~ **withdrawn 11:55** with the reverted change; the regression guards it carried (missing → failure, stopped → failure, running → not done, mixed group → failure) are the shape to reinstate
+- [ ] **Spawn negative control test:** a worker that genuinely completes still routes as success — including a worker whose legitimate output is *no code change* (an investigation or decision phase, as Phases 1–2 of this spec were) — ~~verified 11:50~~ **withdrawn 11:55** with the reverted change; its `EXIT=0` case was the right control, and nothing on the spawn road reads the diff, so the by-construction argument survives for whatever is reinstated
 - [ ] **Record the spawn-signal decision** — seeded-and-enforced sentinel, mechanical work-product signal, or explicitly accepted risk — under the design tension below, before the spawn change is treated as done
 
 #### Design tension — the spawn signal, and the sentinel agents omit
@@ -481,11 +536,12 @@ negative control fails.
 | Mechanical work-product signal (worktree diff, port summary) | Cannot be forgotten or forged by prose | **Holds every correct investigation or decision worker** — Phases 1–2 of this spec produced zero code changes legitimately, and that signature is also MUX-178's |
 | Explicitly accepted risk | Ships now | Must be written down as a risk, with the hold rate watched |
 
-**`5b32433` takes the first road** (reply sentinel; none → `OutcomeUnknown`), with unit tests but with
-the choice made in code rather than on the record — see Defect 3. The step above exists so that the
-choice is made on the record rather than inherited from whatever landed first; recording it may well
-confirm `5b32433`, but the omission risk, and how an omitted sentinel is made loud, must be written
-down.
+**The reverted change took the first road** (reply sentinel; none → `OutcomeUnknown`), with unit
+tests but with the choice made in code rather than on the record — see Defect 3; as of 11:55 nothing
+in the tree takes any road. The step above exists
+so that the choice is made on the record rather than inherited from whatever landed first; recording
+it may well confirm the change as written, but the omission risk, and how an omitted sentinel is made
+loud, must be written down.
 
 ### Phase 4: Fix the template gap
 
@@ -502,6 +558,7 @@ down.
 - [ ] Test: the declining node emits the lifecycle event and holds rather than advancing
 - [ ] Test: a `commit-pr-review-loop`-shaped run in which `c` changes files reaches `d` with a citable commit
 - [ ] Test: no prose parsing is involved — a decline worded differently is still caught
+- [ ] **Test (mirror):** a node whose agent's recognised first attempt fails and whose unrecognised re-run passes is **not** recorded as `failure` — the [Defect 4](#defect-4--the-mirror-a-genuine-success-recorded-as-failure) shape
 - [ ] Coverage floor keeps a skipped section from reporting green
 - [ ] Run the script and verify all checks pass
 
@@ -612,20 +669,59 @@ spec. Phase 2 stayed 6/7 (spec 12/42 at that point).
 (6/6) and run `1789399519` has committed nothing, so `1 >= 0+1` holds — even though Phase 1 was already
 committed by run `1789393404` in `7e03dc9`. The count is per-repo, the fires are per-run, so a fresh
 run re-credits every phase an earlier run shipped and the gate asks a human to approve a commit while
-the open phase is 6/7. Flagged to edit; whether it becomes a backlog item is the user's call.
+the open phase is 6/7. Flagged to edit; whether it becomes a backlog item is the user's call. Edit has since written it up as
+a backlog candidate (`/tmp/mux-148-false-failure-and-phasecommit.md`, item 2, non-durable — ranking
+suggested near MUX-182, false-completion family). **Filed as
+[MUX-183](../backlog/MUX-183-phase-commit-ready-recredits-shipped-phases.md) at 12:10** on the user's
+instruction. Verifying the filing found two more defects that touch *this* spec: `phaseHeadingRe`
+counts any `### Phase N …` heading as a phase — this spec's `Phase 1 findings` and `Phase 2 decision`
+sections made `completed` read 3, not 1 — and `graph retry` resets the counter. The two headings were
+renamed and the constraints list moved under Phase 3 the same minute. **Corrected 12:25 on edit's
+review:** the parser drops its phase on *any* heading line and re-arms only on `### Phase N`
+(`spec_items.go:97-103`), so a checkbox under a `####` label attaches to no phase. The constraints list
+had therefore been *invisible* — not, as first written here, counted as Phase 2's — and the move put
+Phase 3's own steps behind a second H4, so **Phase 3 read complete**. Both H4s are now bold labels and
+Phase 3's fifteen boxes attach to Phase 3; the scan for orphaned boxes is recorded in MUX-183.
 
 **Phase 3 widened to the spawn road, 2026-09-14 11:40, on the user's instruction** relayed by edit
 (`/tmp/mux-148-phase3-spawn-road.md`, non-durable; edit's findings re-verified by plan against
 `846251e` and `graph status`). Recorded: [Defect 3](#defect-3--the-spawn-road-reads-no-evidence-at-all)
 with the reference reproduction on this spec's own run, four spawn acceptance criteria, five Phase 3
 steps, and the [design tension](#design-tension--the-spawn-signal-and-the-sentinel-agents-omit) Phase 3
-must resolve on the record. Total 42 → 51, still 12 checked. **While this was being written the
-spawn-road change was committed as `5b32433`** (11:39, `phase-gate` approved by the user; the commit
-also carried plan's Phase 2 re-verification edits, which were complete, and none of the widening edits,
-which were not). It takes the sentinel road with unit tests but no recorded choice, and it has not been
-through the chain — build, test and review on this run finished before the change existed. Nothing in
-Phase 3 is checked off; the next lap's `verify-spec` is where `5b32433` is verified against the spawn
-steps, if the chain runs green on it.
+must resolve on the record. Total 42 → 51.
+
+**Commit churn while this was written, recorded so the history reads straight:** the spawn-road code
+and test were committed as `5b32433` at 11:39 (`phase-gate`, user-approved), reset at 11:42, and the
+spec alone re-committed as `f942c43` — which therefore carries an earlier version of these paragraphs
+claiming the code was committed. At that moment it was not: the code and test sit in the working tree
+to go through the lap's chain first. The record here and in Defect 3 is the corrected one.
+
+**Checked off 11:50 on the user's instruction, withdrawn 11:55.** On "verify and check off work
+completed by edit and worker" plan ticked four Phase 3 steps from its reading of the working-tree
+spawn change and its unit test, stating that the suite had not yet been observed passing and that the
+ticks would be withdrawn if it failed. It failed: lap 2 of run `1789399519` ran `implement` (67s,
+`outcome=success`), `build` (14s), then **`test` failed (66s)**; the run was **canceled**, and the
+spawn change and its test were **removed from the working tree** (HEAD still `f942c43`; no stash
+carries them; `heldUnknown` and the test name are absent). The four ticks are struck inline with the
+reason. **Spec 12/51.** The tree now carries one unrelated-looking edit — `delivery.go`
+`writeDeliveryStatus` creating the delivery directory, whose comment says a missing directory made
+`spawnHasResponded` read an answered worker as unanswered and `replaceLostWorkers` replace it — which
+may be the root cause the failed lap hit; it belongs to no MUX-148 phase and is noted only so the next
+reader knows why it is in the tree. Everything in Phase 3 is open.
+
+**Defect 4 added 2026-09-14 12:00 on the user's instruction** relayed by edit: the same root cause
+with the opposite sign — a genuine success recorded as `failure` because the passing re-run was not
+classified and the earlier failing row outranked the reply. Verified reproduction on another session
+(`is-operations-gateway`, run `1789400058-spec-to-pr-c627b2f9`); the classifier mechanism re-verified
+by plan here. One acceptance criterion, one inherited Phase 3 constraint (the signal must be tied to
+the dispatched task, not to recognised commands) and one Phase 5 mirror test added. Total 51 → 54,
+still 12 checked. Left open, reasons inline: the send-road steps
+(untouched), the option 3/4 application (partial), the double-hold (send road pending), and the
+spawn-signal decision — the user's or Phase 3's to record; approving a commit is not recording a
+design choice. No acceptance criterion is ticked: the spawn criteria are proven at unit level only,
+and the daemon judging the live lap still runs `846251e` (installed binary `5b32433-dirty` since
+11:40:59; `daemon.version` unchanged), so the binary that would show the reproduction gone is not
+the one running.
 
 Phase 1 **disproved this spec's own account of the mechanism** (read-only `gh`/`git` mint no row for
 the `commit` role) and **withdrew a constraint plan had asserted** (`hook_codex_test.go` pins the
