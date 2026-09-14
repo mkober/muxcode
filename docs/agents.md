@@ -71,7 +71,7 @@ Each agent independently resolves its AI CLI provider. The provider is fixed for
 |----------|-----------|----------|
 | Claude Code | `claude` (default) | Edit (default), review, deploy — full hook support, deterministic chains |
 | OpenCode | `opencode` | Edit (optional), build, test, research — multi-provider LLM access, autonomous TUI |
-| Codex CLI | `codex` | Analyze, review — OpenAI models, automatic approval mode (-a never); hook road on by default (MUX-159; `MUXCODE_CODEX_HOOKS=0` opts out) |
+| Codex CLI | `codex` | Analyze, review — OpenAI models. Automatic approval (`-a never`) for roles that execute; the **read-only roles** (`review`, `analyze` — `isReadOnlyCodexRole`) run `-a on-request`, so a command they must not run raises Codex's approval prompt instead of executing — which parks the agent mid-turn, invisible to every other road, until the daemon's codex-approval watchdog answers no ([Daemon watchdogs](architecture.md#daemon-watchdogs)). The reviewer definition states the consequence: if a command needs approval, you are already doing the wrong thing. Hook road on by default (MUX-159; `MUXCODE_CODEX_HOOKS=0` opts out) |
 | Local LLM | `local` | Commit, build, watch — structured commands, zero API cost |
 
 Set per-role: `MUXCODE_{ROLE}_CLI=opencode` in `.muxcode/config`. Set session-wide: `MUXCODE_AGENT_CLI=opencode`.
@@ -184,7 +184,7 @@ Tool profile: `bus`, `readonly`, `common`, plus process management (`kill`, `noh
 
 ### Autonomous Specialists (build, test, review, analyst)
 
-These agents operate autonomously — they receive requests, execute unconditionally, and reply. They never ask for permission before acting.
+These agents operate autonomously — they receive requests, execute unconditionally, and reply. They never ask for permission before acting. On Codex the read-only roles (`review`, `analyze`) run `-a on-request`, so "asking" can only surface as a command-approval prompt for something the role must not run; the reviewer definition treats reaching that prompt as the error itself, and the daemon's codex-approval watchdog answers it no rather than leaving the agent parked mid-turn until its node times out ([Daemon watchdogs](architecture.md#daemon-watchdogs)).
 
 **Sequence:**
 1. Read inbox: `muxcode inbox`

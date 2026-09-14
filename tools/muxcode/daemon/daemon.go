@@ -1356,6 +1356,16 @@ func (d *Daemon) clearPermBlock(role string) {
 // watchdog. Well inside the 600s task timeout it exists to pre-empt.
 const codexApprovalCheckSecs int64 = 15
 
+// codexApprovalRoleEligible reports whether a role's pane can raise a
+// command-approval prompt at all. This is what keeps an Escape — Codex's
+// interrupt — away from a role running `-a never`, which executes without
+// asking and would simply lose its turn's work.
+func codexApprovalRoleEligible(role string) bool {
+	return bus.WindowForRole(role) == role &&
+		bus.CodexRoleIsReadOnly(role) &&
+		bus.ResolveProvider(role).Name() == "codex"
+}
+
 // checkCodexApprovals answers command-approval prompts raised by read-only
 // Codex roles, which are launched with `-a on-request` precisely so they cannot
 // execute — making the answer "no" by configuration, not by this watchdog's
@@ -1375,13 +1385,10 @@ func (d *Daemon) checkCodexApprovals() {
 	d.lastCodexApprovalCheck = now
 
 	for _, role := range bus.KnownRoles {
-		if bus.WindowForRole(role) != role {
+		if !codexApprovalRoleEligible(role) {
 			continue
 		}
 		if bus.IsReloading(d.session, role) || bus.IsHarnessActive(d.session, role) {
-			continue
-		}
-		if !bus.CodexRoleIsReadOnly(role) || bus.ResolveProvider(role).Name() != "codex" {
 			continue
 		}
 		if !bus.IsAgentAlive(d.session, role) {
