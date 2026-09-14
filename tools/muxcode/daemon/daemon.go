@@ -150,6 +150,7 @@ type Daemon struct {
 
 	probeDefinition   func(session, role string) bus.DefinitionProbe
 	capturePane       func(target string, lines int) (string, error)
+	denyApproval      func(target string) error
 	reloadAgent       func(session, role string) error
 	snapshotAgentDown func(session, role string) (string, error)
 
@@ -258,6 +259,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		windowNames:     bus.TmuxListWindowNames,
 		probeDefinition: bus.ProbeAgentDefinition,
 		capturePane:     bus.TmuxCapturePaneLines,
+		denyApproval:    bus.DenyCodexApproval,
 		reloadAgent: func(session, role string) error {
 			return bus.ReloadAgent(session, role, "", "", false)
 		},
@@ -1366,12 +1368,15 @@ func codexApprovalRoleEligible(role string) bool {
 		bus.ResolveProvider(role).Name() == "codex"
 }
 
-// checkCodexApprovals answers command-approval prompts raised by read-only
-// Codex roles, which are launched with `-a on-request` precisely so they cannot
-// execute — making the answer "no" by configuration, not by this watchdog's
-// judgement. Unlike checkStuckPermissions this does not require a pending
-// inbox: the agent parks mid-turn, having already consumed its request, and
-// shows neither spinner nor ❯, so nothing else in the daemon sees it at all.
+// checkCodexApprovals answers the escalation prompts `-a on-request` raises for
+// review and analyze. That policy is not what stops those roles executing —
+// in-sandbox commands still run without asking — so the prompt only appears
+// when one tries to reach outside, which their instructions already forbid.
+// With no human at the pane the answer can only be no.
+//
+// Unlike checkStuckPermissions this needs no pending inbox: the agent parks
+// mid-turn having already consumed its request, showing neither spinner nor ❯,
+// so nothing else in the daemon sees it.
 //
 // Opt out with MUXCODE_CODEX_APPROVAL_WATCHDOG_DISABLE=1.
 func (d *Daemon) checkCodexApprovals() {
@@ -1391,19 +1396,19 @@ func (d *Daemon) checkCodexApprovals() {
 		if bus.IsReloading(d.session, role) || bus.IsHarnessActive(d.session, role) {
 			continue
 		}
-		if !bus.IsAgentAlive(d.session, role) {
+		if !d.agentAlive(d.session, role) {
 			continue
 		}
 		target := bus.PaneTarget(d.session, role)
-		content, err := bus.TmuxCapturePaneLines(target, 20)
+		content, err := d.capturePane(target, 20)
 		if err != nil || !bus.CodexApprovalPromptLive(content) {
 			continue
 		}
-		if err := bus.DenyCodexApproval(target); err != nil {
+		if err := d.denyApproval(target); err != nil {
 			continue
 		}
 		ts := time.Now().Format("15:04:05")
-		fmt.Printf("  %s  Approval watchdog: denied a command-approval prompt for %s — the role runs read-only and cannot be granted it\n", ts, role)
+		fmt.Printf("  %s  Approval watchdog: denied an escalation prompt for %s — no human is at that pane to grant it\n", ts, role)
 		bus.LogLifecycle(d.session, "warn", "daemon", "approval-denied", role)
 		if d.shouldSendEvent("approval-denied", role) && d.shouldNotifyEdit("event") {
 			msg := bus.NewMessage("daemon", "edit", "event", "approval-denied",

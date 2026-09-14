@@ -53,9 +53,12 @@ func (p *CodexProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 // BuildExecArgs constructs the Codex CLI launch command.
 // Uses -a never for automatic approval and --no-alt-screen for
 // tmux compatibility (inline mode preserves scrollback).
-// Read-only roles (review, analyze) use -a on-request so Codex prompts
-// for approval on tool use — this prevents reviewers from running
-// tests/builds and analysts from making unintended changes.
+// Read-only roles (review, analyze) use -a on-request so Codex asks before
+// escalating beyond its sandbox. This is an approval policy, NOT a sandbox or
+// an allowlist: those roles get no -s flag, so in-sandbox builds and tests
+// still run unprompted. What forbids them executing is their role
+// instructions; on-request only surfaces the attempts that reach outside, and
+// checkCodexApprovals answers those, since nobody is at the pane.
 // Does NOT use -C (--cd) — that flag changes the agent's working root,
 // which would prevent it from seeing the actual project files. Instead,
 // WriteAgentConfig writes role-specific AGENTS.md to .codex/AGENTS.md
@@ -65,7 +68,7 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 		"--no-alt-screen",
 	}
 
-	// Read-only roles use on-request approval to enforce permission prompts
+	// Read-only roles ask before escalating; everything else runs unprompted
 	if isReadOnlyCodexRole(cfg.Role) {
 		args = append(args, "-a", "on-request")
 	} else {
@@ -382,10 +385,13 @@ func (p *CodexProvider) guardInjection(session, target, role string) error {
 }
 
 // DenyCodexApproval answers a command-approval prompt with its own "No" (esc).
-// This decides nothing: `-a on-request` is given only to roles that must not
-// execute (isReadOnlyCodexRole), so the answer cannot be yes. Callers send it
-// alone and defer their payload — an Escape adjacent to text fuses into a Meta
-// chord (MUX-163).
+//
+// The prompt is an escalation request: `-a on-request` sets an approval policy,
+// not a sandbox or an allowlist, so in-sandbox commands never reach it and only
+// an attempt to work outside does. Its roles are told not to execute at all, so
+// there is no case where yes is right and no human at the pane to say it.
+// Callers send the Escape alone and defer their payload — an Escape adjacent to
+// text fuses into a Meta chord (MUX-163).
 func DenyCodexApproval(target string) error {
 	return TmuxSendEscape(target)
 }

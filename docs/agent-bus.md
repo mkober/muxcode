@@ -2041,7 +2041,7 @@ Core code: `bus/remote.go`, `cmd/remote.go`, `tui/remote.go`.
 | `MUXCODE_ACTIVE_WATCHDOG_SECS` | Daemon advisory threshold (seconds) for a continuously-active agent (default: 600, set to 0 to disable) |
 | `MUXCODE_STUCK_RELOAD_DISABLE` | Set to 1 to disable the daemon's stuck-provider auto-reload watchdog |
 | `MUXCODE_PERMBLOCK_WATCHDOG_DISABLE` | Set to 1 to disable the daemon's alert-only permission-block watchdog (a Claude agent wedged at a rejected permission prompt) |
-| `MUXCODE_CODEX_APPROVAL_WATCHDOG_DISABLE` | Set to 1 to disable the daemon's codex-approval watchdog — every 15s it answers a read-only Codex role's command-approval prompt with Escape, the prompt's own "No" (see [Architecture](architecture.md#daemon-watchdogs)) |
+| `MUXCODE_CODEX_APPROVAL_WATCHDOG_DISABLE` | Set to 1 to disable the daemon's codex-approval watchdog — every 15s it answers a read-only Codex role's escalation prompt — Codex asking to run a command past its sandbox; `-a on-request` is an approval policy, not a sandbox, so in-sandbox commands never prompt — with Escape, the prompt's own "No" (see [Architecture](architecture.md#daemon-watchdogs)) |
 
 ## Message Format
 
