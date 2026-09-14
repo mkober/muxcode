@@ -401,7 +401,9 @@ func isEnvVarName(s string) bool {
 }
 
 // matchPatterns checks if a command matches any of the glob-style patterns.
-// If withWrappers is true, also matches bash/sh/npx wrapper prefixes.
+// If withWrappers is true, also matches bash/sh/npx wrapper prefixes and the
+// pnpm exec/dlx forms, whose nested runner is matched as the executable
+// rather than as a substring of the arguments (see MUX-148 Defect 4).
 // Uses globMatch from tools.go for pattern matching.
 //
 // A pattern's literal head — the text before its first `*` — must end at an
@@ -413,6 +415,11 @@ func isEnvVarName(s string) bool {
 // as `go test` and an adjacent operator such as `./build.sh>log` both still
 // match.
 func matchPatterns(cmd string, patterns []string, withWrappers bool) bool {
+	if withWrappers {
+		if nested, ok := nestedRunnerCommand(cmd); ok && matchPatterns(nested, patterns, false) {
+			return true
+		}
+	}
 	for _, pat := range patterns {
 		if headAtBoundary(cmd, patternHead(pat)) && globMatch(pat+"*", cmd) {
 			return true
@@ -430,6 +437,26 @@ func matchPatterns(cmd string, patterns []string, withWrappers bool) bool {
 		}
 	}
 	return false
+}
+
+// runnerPrefixes are wrapper forms whose nested argument is the command
+// actually executed. Bare `pnpm` is deliberately absent: `pnpm add jest`
+// installs Jest and `pnpm exec eslint jest.config.js` lints a config file —
+// matching a runner name anywhere in the arguments would classify both as
+// test runs and let a successful install overwrite a real suite failure.
+var runnerPrefixes = []string{"pnpm exec ", "pnpm dlx "}
+
+// nestedRunnerCommand returns the command a runner prefix wraps, so callers
+// match the nested executable at its own boundary instead of searching the
+// argument text for a runner's name.
+func nestedRunnerCommand(cmd string) (string, bool) {
+	for _, p := range runnerPrefixes {
+		if strings.HasPrefix(cmd, p) {
+			nested := strings.TrimLeft(cmd[len(p):], " \t")
+			return nested, nested != ""
+		}
+	}
+	return "", false
 }
 
 // patternHead is the literal text before a pattern's first `*` — empty for

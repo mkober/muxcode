@@ -254,6 +254,19 @@ func TestClassifyCommand(t *testing.T) {
 		{"jest --watch", CmdTest},
 		{"pytest -v", CmdTest},
 		{"npx jest", CmdTest},
+		// pnpm exec/dlx: the nested runner is the executable. `pnpm exec jest`
+		// carries no "test" substring, so `pnpm*test` cannot reach it.
+		{"pnpm exec jest --runInBand", CmdTest},
+		{"pnpm dlx jest", CmdTest},
+		// Negative controls. Each of these matches `pnpm*jest*` as a raw
+		// substring, so they all classify as test runs if the nested command
+		// is not extracted at an executable boundary — and a successful
+		// install would then write an authoritative test success over a real
+		// failure.
+		{"pnpm add jest", CmdUnknown},
+		{"pnpm remove jest", CmdUnknown},
+		{"pnpm exec eslint jest.config.js", CmdUnknown},
+		{"pnpm install", CmdUnknown},
 		{"go vet ./...", CmdTestPrecheck},
 		{"cdk diff", CmdDeploy},
 		{"cdk synth --all", CmdBuild}, // cdk*synth matches build first; shell script sets both flags
