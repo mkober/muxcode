@@ -505,6 +505,7 @@ on any heading line, so a `####` here would detach the boxes below from Phase 3)
 - [ ] Do **not** double-hold: the new hold and the `OutcomeUnknown` hold (`:1684`) must not both fire on one node
 - [ ] `hook_codex_test.go` is **not** a constraint (re-verified this run) — it calls `latestAuthoritativeRow` directly and stays green under any precedence change
 - [ ] **The signal must be tied to the dispatched task, not to whichever commands happened to be recognised** — "newest authoritative row wins" is wrong in *both* directions when the command that carried the real verdict was never classified ([Defect 4](#defect-4--the-mirror-a-genuine-success-recorded-as-failure)); tiering or attribution alone does not close the mirror
+- [ ] **Provenance must fail closed on absence, not merely be unforgeable** — `latestAuthoritativeRow` (`graph_exec.go:1734`) is an *exclusion* list: it skips only `Source == SourceBusResponse` and unknown/empty outcomes, so a row carrying **no** provenance value reads as authoritative — deliberately, so pre-provenance rows keep their verdict (`history_provenance.go:26-31`). And `cmd/log.go` is the **one** history writer that bypasses `WriteHookHistory` (every other writer — `hook.go:785-840`, `cmd/send.go:525`, `daemon.go:3503` — goes through the typed `HookHistoryEntry`; `cmd/log.go:136-174` hand-rolls a map with its own append and rotate), so a field added to the struct reaches every writer except it: it bypasses by *omission*, not forgery. Whatever field Phase 3 adds, the reader must treat its absence as not-authoritative — a behaviour change for existing rows, which is why it sits inside the Decision 4 scope call. Found by run `1789402487`'s `implement` worker; verified by plan
 
 **Steps**
 
@@ -599,6 +600,8 @@ and verified by plan against the tree, so the question can be put with its facts
 | `Bash(muxcode *)` is in the shared bus group | `profile.go:578` | Every role holds the permission |
 | No guard coverage | `bus/guard.go` (no `log` clause) | Nothing at the hook layer refuses it |
 | No default exit code | `cmd/log.go:48` | A row without `--exit-code` is `unknown` and skipped — forging takes one deliberate flag |
+| Bypasses `WriteHookHistory` | `cmd/log.go:136-174` — hand-rolled map, own `OpenFile`/`Flock`/`rotateHistory`; every other writer (`hook.go:785-840`, `cmd/send.go:525`, `daemon.go:3503`) uses the typed struct | A field added to `HookHistoryEntry` never reaches this writer's rows — bypass by omission |
+| The reader fails **open** on absence | `latestAuthoritativeRow`, `graph_exec.go:1734` — an exclusion list; an empty `Source` is "the authoritative path" by design so legacy rows keep their verdict (`history_provenance.go:26-31`) | An absent provenance value is accepted; *unforgeable* is necessary, not sufficient |
 
 **Why it is materially different from the glob path.** The glob path needs an accident: a
 `git`-headed command that happens to contain a mutating keyword. `muxcode log` needs one deliberate
@@ -610,8 +613,15 @@ reads fields this writer lets the caller author, so **option 4 alone does not cl
 forged row can carry a matching role and a matching command type. That is why the scope call has to be
 made before Phase 3 designs the `HookHistoryEntry` schema change. If `cmd/log.go` is in scope, the new
 actor provenance must be something the writer cannot set (process ancestry, as `BusActorVerified`
-resolves it) rather than one more caller-supplied field; if it is its own spec, Phase 3 records the
-residual and this spec's acceptance is scoped to the hook road.
+resolves it) rather than one more caller-supplied field — **and that is necessary, not sufficient**
+(run `1789402487`'s worker, verified by plan): `cmd/log.go` bypasses the typed struct entirely, and the
+reader accepts an absent value, so the field must also be *required at read time*. In scope therefore
+means three changes — process-derived provenance on `HookHistoryEntry`; `cmd/log.go` routed through
+`WriteHookHistory` so it cannot opt out by omission; and `latestAuthoritativeRow` failing closed on
+absence, which touches rows written before the change. Own spec means Phase 3 records the residual,
+this spec's acceptance is scoped to the hook road, and a one-command forgery path stays open with any
+role able to mint any node's evidence. The facts are gathered either way; only the scope call is
+missing.
 
 ## Out of scope
 
@@ -715,7 +725,15 @@ classified and the earlier failing row outranked the reply. Verified reproductio
 (`is-operations-gateway`, run `1789400058-spec-to-pr-c627b2f9`); the classifier mechanism re-verified
 by plan here. One acceptance criterion, one inherited Phase 3 constraint (the signal must be tied to
 the dispatched task, not to recognised commands) and one Phase 5 mirror test added. Total 51 → 54,
-still 12 checked. Left open, reasons inline: the send-road steps
+still 12 checked.
+
+**Phase 2 walked a third time, 12:19, by run `1789402487-spec-to-pr-f05fd39f`** (`implement` worker
+report at `/tmp/mux-148-phase2-worker-report.md`, non-durable). The worker declined item 7 correctly,
+wrote no code, re-verified every Decision 4 fact, and found that a provenance field alone would not
+close the `muxcode log` road — recorded above as an inherited Phase 3 constraint (fail closed on
+absence) and folded into Decision 4, each claim re-verified by plan against `e7f664b`. Nothing checked
+off; spec 12/55. `e7f664b` (12:16) committed this spec's Defect 3/4 record, MUX-183 and the backlog
+renumber. Left open, reasons inline: the send-road steps
 (untouched), the option 3/4 application (partial), the double-hold (send road pending), and the
 spawn-signal decision — the user's or Phase 3's to record; approving a commit is not recording a
 design choice. No acceptance criterion is ticked: the spawn criteria are proven at unit level only,
