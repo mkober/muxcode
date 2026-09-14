@@ -155,7 +155,7 @@ run should attempt unattended.
   would make the gate noise; gating only on overlap misses a stale toolchain or config the spec does
   not name. A default of 5 with overlap always gating is the proposal; the row records the numbers
   either way so the threshold can be tuned from evidence.
-- Related: [MUX-144](../drafts/MUX-144-wait-human-gate-openable-by-any-agent.md) (the gate the sync sits
+- Related: [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) (the gate the sync sits
   behind); [MUX-148](./MUX-148-node-outcome-reads-command-ran-as-task-done.md) and
   [MUX-154](./MUX-154-codex-status-line-closes-tracked-tasks.md) (why the build node's green meant
   nothing here); [MUX-132](../completed/MUX-132-graph-retry-launders-gate-approval.md) (single-use

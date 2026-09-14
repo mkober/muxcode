@@ -322,7 +322,7 @@ are attributable: the marker records `approved_by` from `BusActorVerified`, and
 `graph-run-created` / `graph-gate-approved` / `graph-gate-approval-refused` name their actor.
 
 Two qualifications were open in
-[MUX-144](requirements/drafts/MUX-144-wait-human-gate-openable-by-any-agent.md); the second closed
+[MUX-144](requirements/completed/MUX-144-wait-human-gate-openable-by-any-agent.md); the second closed
 2026-09-13. The
 config-file read *narrowed* the caller-control problem rather than closing it: the file is
 agent-writable (its path stopped honouring `$MUXCODE_CONFIG` in `31a2ca4`), so daemon-side
@@ -350,7 +350,9 @@ authorized role and the gate was the only control. An earlier version of this pa
 runtime backstop meant a graph "cannot be used to launder an action around the rules that govern
 it"; that was false as written from the day it was written until 2026-09-13 (flagged 2026-09-08). The
 Atlassian road is not yet judged the same way — a graph `jira-write` dispatches to plan, which holds
-that authority itself — and MUX-144 carries it as an open Phase 4 step.
+that authority itself, so there is no sender to re-judge and the check would be new — tracked as
+[MUX-181](requirements/backlog/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), the
+refusal half of the provenance mechanism MUX-165 already names; the two ship together.
 
 **Dispatch-time node guards.** A `send` or `spawn` node may declare a `guard` — a predicate the
 executor evaluates in `dispatchNode()` *before* the message is sent, so a declined node never

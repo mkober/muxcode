@@ -1,6 +1,6 @@
 # A `wait_human` Gate Is Openable by Any Agent, Unaudited
 
-**Tracking:** [mkober/muxcode#74](https://github.com/mkober/muxcode/issues/74) — PR [#73](https://github.com/mkober/muxcode/pull/73) carries Phase 2 work but does **not** close it (Phase 2 step 5, Phases 4–5 open)
+**Tracking:** [mkober/muxcode#74](https://github.com/mkober/muxcode/issues/74) — PR [#73](https://github.com/mkober/muxcode/pull/73) carried Phase 2; Phase 4 landed in `23d2804` with Phase 5's script beside it; **closed 2026-09-14 at 34/34**, one item by acceptance (Phase 2 step 5)
 
 A `wait_human` gate released **four seconds** after it opened, on a run nobody requested, and
 dispatched a `commit` node whose message was *"Stage all unstaged files, commit, push, and create a
@@ -86,7 +86,7 @@ Defects A and C remain open — see Status.
 | No `graph-gate-approved` event exists; the log jumps `graph-gate-pending` → `graph-node-done` | **Verified** — lifecycle log above |
 | Run **creation** logs nothing either — the first event of the incident is `graph-node-start` | **Verified** — `lifecycle show \| grep -cE "graph-run-created\|graph-run-start\|graph-gate-approved"` returns `0` |
 
-#### Defect C — the runtime backstop is a no-op for graph sends — **FIXED 2026-09-13 (Phase 4, uncommitted)**
+#### Defect C — the runtime backstop is a no-op for graph sends — **FIXED 2026-09-13 (Phase 4, `23d2804`)**
 
 The table below is the finding as of 2026-09-03, retained as the record. Since Phase 4 a graph
 dispatch carries `GraphRun`/`GraphNode` and `CheckCommitAuthorityForMessage` judges it on the gate;
@@ -139,7 +139,7 @@ No step requires a human. No step records that one was absent.
 | Spec | Relationship |
 |------|--------------|
 | [`MUX-141`](../backlog/MUX-141-auto-agent-restart-relaunches-graph-runs.md) | **Compounding, neither subsumes the other.** MUX-141 supplies the *source* of unrequested runs (a restart relaunches autonomous work); this spec supplies the reason one can reach a push. MUX-141 alone yields spurious runs that **stop at a gate**; this alone makes gates openable. Together they are an unattended path from an external process exit to a PR. Cross-linked both ways. |
-| [`MUX-132`](../completed/MUX-132-graph-retry-launders-gate-approval.md) | **Adjacent hole, and 132's fix is sound.** MUX-132 closed a *stale-marker reuse* path so a retried run demands a **fresh** approval. This spec is about a fresh approval **nobody human made**. 132 guards the step "is this approval current?"; nothing guards "is this approval human?" — the two are complementary, and 132 needs no revision. |
+| [`MUX-132`](./MUX-132-graph-retry-launders-gate-approval.md) | **Adjacent hole, and 132's fix is sound.** MUX-132 closed a *stale-marker reuse* path so a retried run demands a **fresh** approval. This spec is about a fresh approval **nobody human made**. 132 guards the step "is this approval current?"; nothing guards "is this approval human?" — the two are complementary, and 132 needs no revision. |
 | [`MUX-142`](../backlog/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Shares the lesson that a control verified on one road is not verified on all of them. |
 
 ### Why it matters
@@ -229,7 +229,7 @@ made.
 - [x] A graph-dispatched git mutation is **distinguishable** from an edit-originated one at
       `CheckCommitAuthority`, and is judged on the gate's approval rather than on the normalized sender
       — Phase 4 steps 1–2; `TestGraphCommitDispatchJudgedOnGateApproval` is the discriminating pair.
-      *Landed 2026-09-13 14:01, uncommitted*
+      *Landed `23d2804`, 2026-09-13*
 - [x] `CLAUDE.md`'s "Authority gates are not bypassable" paragraph is corrected to describe what is
       actually enforced — rewritten to *"Authority gates are only as strong as the gate, and today
       that is weak (MUX-144)"*, naming both verified gaps and instructing readers to treat
@@ -254,7 +254,8 @@ made.
 | `bus/config.go` | `NormalizeBusRole` daemon→edit (:729) |
 | `bus/graph.go` | `validateGates` (:567) — the half that works; must not regress |
 | `bus/atlassian_authority.go` | Same bypass shape applies to Atlassian writes; verify and cover |
-| `CLAUDE.md` | The false safety claim |
+| `CLAUDE.md` | The false safety claim — rewritten at Phase 2, again at Phase 4 |
+| `scripts/test-gate-authority.sh` | Phase 5 — the road end to end on a real daemon: validate, refused approvals, an accepted one, the backstop refusal via `retry --from`, attribution rows, coverage floor 30 |
 
 ## Implementation
 
@@ -300,7 +301,7 @@ made.
 - [x] Negative control: an authorized human approval path is unchanged —
       `TestApproveGraphGateAllowsUser`; `TestGraphCommitDispatchReachesCommitInbox` now releases as a
       person and still reaches commit's inbox (the Phase 4 pin, sharpened rather than weakened)
-- [ ] The configured list is **not caller-controlled**: an agent cannot widen
+- [x] The configured list is **not caller-controlled**: an agent cannot widen
       `MUXCODE_GATE_AUTHORITY_ROLES` from its own environment for the one command it was just refused
       — **review P1, 2026-09-08 14:14; narrowed in `d4ae976` at 14:47 and again in `31a2ca4` at
       16:14, not closed.** (Plan ticked
@@ -368,6 +369,16 @@ made.
       **untouched and still true**: the seal reads agent-writable files and a routine `./build.sh`
       restarts the daemon. **Not ticked** — the step's words ("not caller-controlled") do not hold
       while (3) stands; tick after a review pass and a written answer to (3).
+      **Closed 2026-09-14 — accepted as residual risk on the user's instruction.** The written answer
+      to (3): the seal's inputs are same-uid files (`.muxcode/config`, then `~/.config/muxcode/config`),
+      and no file a same-uid agent cannot reach exists — `SealGateAuthority`'s own comment says so.
+      What the seal buys is a *read the agent cannot influence at decision time*, not a store it cannot
+      write. A widening therefore needs two things: a config edit, and a daemon restart — which
+      `./build.sh` → `upgrade-daemons` performs routinely and which `gate-authority-sealed` logs with
+      the sealed list. Visible and attributable, not prevented. The review pass this step also waited
+      on came with PR #73 (Copilot, `7487f01`) and the full suite ran green on `77f32b8`. Ticked on
+      acceptance, not on a fix: the words hold *within a daemon lifetime*, and the residual is the
+      restart
 
 ### Phase 3: Audit the control plane
 
@@ -388,7 +399,7 @@ made.
       (`CheckCommitAuthorityForMessage`, called at the `sendMessage` seam `inbox.go:221`) carries the
       provenance a dispatch now stamps (`Message.GraphRun`/`GraphNode`, set in `dispatchNode`).
       `TestGraphCommitDispatchRefusedWithoutProvenance` — with `edit` still admitted and `build` still
-      refused as the discriminators. *Verified 2026-09-13 14:01, uncommitted*
+      refused as the discriminators. *Verified 2026-09-13 14:01; committed `23d2804`*
 - [x] Judge it on the gate's recorded approval rather than on the normalized sender —
       `checkGraphCommitDispatch` reads the run and its frozen graph, binds the message to its node
       (`dispatchMatchesNode`: a send, same recipient, action and interpolated payload — the review's
@@ -406,36 +417,94 @@ made.
 - [x] Correct the `CLAUDE.md` paragraph to describe what is enforced — the Graph orchestration
       constraint now states the backstop is real for graph sends, what it judges on, that it fails
       closed, and that the normalization is untouched
-- [ ] Judge a graph-dispatched **Atlassian** write on the gate the same way — Phase 1 step 3 recorded
+- [x] Judge a graph-dispatched **Atlassian** write on the gate the same way — **decided 2026-09-13: its
+      own spec, [MUX-181](../backlog/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md),
+      co-scheduled with MUX-165 (`⇄`), whose fix already names the mechanism**; this step is the recorded
+      decision, the work lives there. Phase 1 step 3 recorded
       that the Atlassian path shares the shape and that *"Phase 4's fix must judge both on the gate,
       not the sender"*; the landed change covers `IsGitMutatingAction` only, and the two Atlassian pins
       (`TestGraphAtlassianWriteRefusedOnlyByConfiguration`, `…NeedsNoBypass`) still assert current
-      behaviour by edit's explicit choice. Either extend the provenance check to `jira-write` /
-      `confluence-write` dispatches, or record the decision to leave that path to plan's rule
-      ([MUX-165](../backlog/MUX-165-gated-jira-write-declined-by-requester-rule.md)) — the user's call
+      behaviour by edit's explicit choice. Edit's note, accepted: the path is **not symmetric** with
+      commit — `CheckAtlassianAuthority` never sits on the bus path (`…NeedsNoBypass`); the graph
+      dispatches to plan, which legitimately holds the write authority, so there is no sender to
+      re-judge and no existing check to extend. Judging it on the gate means a **new** send-time check
+      on the gated Atlassian actions (`validateGates` already names them) carrying the same provenance
+      test, or a recorded decision to leave that path to plan's rule
+      ([MUX-165](../backlog/MUX-165-gated-jira-write-declined-by-requester-rule.md)). Here as a Phase 4
+      step or as its own spec — the user's call
 
 ### Phase 5: Integration test
 
-- [ ] Create `scripts/test-gate-authority.sh` against a scratch bus, daemon and repo dir
-- [ ] Test: an unauthorized role's `graph approve` is refused, the gate stays pending, the commit node
-      never dispatches
-- [ ] Test: an authorized approval releases the gate and the run proceeds
-- [ ] Test: self-approval by the run's creator is refused
-- [ ] Test: a graph commit dispatch with no valid human approval is refused at `CheckCommitAuthority`
-- [ ] Test: `graph-run-created` and `graph-gate-approved` both appear with identities
-- [ ] Negative control: `validateGates` still rejects an ungated commit graph
-- [ ] Coverage floor so a skipped section cannot report green
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-gate-authority.sh` against a scratch bus, daemon and repo dir — scratch
+      `BUS_SESSION`, scratch `HOME` carrying `MUXCODE_GATE_AUTHORITY_ROLES=test-approver` in its config
+      file, a real `muxcode watch` daemon started **after** that file exists (the seal reads it once),
+      scratch repo dir and lifecycle dir; three deliberately distinct identities (`test-approver`,
+      `auto` as creator, `build` as the unauthorized agent). *Verified 2026-09-13 14:19, script uncommitted*
+- [x] Test: an unauthorized role's `graph approve` is refused, the gate stays pending, the commit node
+      never dispatches — section 2: refused, gate `waiting`, commit inbox empty,
+      `graph-gate-approval-refused` row naming `build`
+- [x] Test: an authorized approval releases the gate and the run proceeds — section 4: accepted, the
+      commit node dispatches carrying the node's own payload, commit answers. **Qualified:** the run
+      does not *complete* — a hermetic session has no hook road, so the commit node finishes
+      `outcome=unknown` and `routeFinishedNodes` holds it (`graph-unverified-hold` asserted). That is
+      the behaviour that would have stopped the 2026-09-03 push, and the script says so; "proceeds"
+      here means *past the gate*, not *to the end without a person*
+- [x] Test: self-approval by the run's creator is refused — section 3, with the creator **in** the
+      authority list, so the refusal is the self-approval rule and not the list
+- [x] Test: a graph commit dispatch with no valid human approval is refused at `CheckCommitAuthority`
+      — section 5: `retry --from ship` below a gate nobody opened (the one live road to a commit
+      dispatch with no approval; MUX-132 re-arms only *stale* approvals); node `failed`, commit inbox
+      empty, and the backstop's own `commit-authority-refused` row — a refusal **at the bus**, not an
+      inferred one from node state. Only a binary carrying Phase 4 can produce that row
+- [x] Test: `graph-run-created` and `graph-gate-approved` both appear with identities — section 6:
+      both rows present, naming `auto` and `test-approver` respectively
+- [x] Negative control: `validateGates` still rejects an ungated commit graph — section 1, the
+      rejection names `wait_human`, and the gated graph validates as the positive control
+- [x] Coverage floor so a skipped section cannot report green — `total >= 30`; 31 checks run before
+      the floor (the header comment counts section 2 as 6, it is 7 — one looser than intended, still a
+      floor: any dropped section falls below 30)
+- [x] Run the script and verify all checks pass — run agent, live scratch daemon, **fourth** pass:
+      32 passed / 0 failed, exit 0 (read from the run pane). Passes one to three failed on an assertion
+      edit had written wrong (expecting the held run to complete), corrected before the fourth
 
 ## Time Tracking
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-144-wait-human-gate-openable-by-any-agent | 12h 2m | 2026-09-13 14:01 |
+| MUX-144-wait-human-gate-openable-by-any-agent | 12h 55m | 2026-09-14 09:15 |
 
 ## Status
 
-**Verified 2026-09-13 14:01 — Phase 4 landed, uncommitted, 23/34: Phases 1 and 3 complete, Phase 2 4/5,
+Complete — closed 2026-09-14 at 34/34 on the user's instruction, the last item (Phase 2 step 5) accepted
+as residual risk and answered inline; moved from `drafts/` to `completed/` the same day, cross-links
+repointed, the active-spec pointer cleared. The Atlassian road lives on as
+[MUX-181](../backlog/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md). The record
+below is the history as it was written.
+
+**2026-09-13 14:45 — 33/34.** The user resolved Phase 4 step 5: the Atlassian road is its own spec,
+[MUX-181](../backlog/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), filed by plan
+and placed beside MUX-165 in the defects table as its co-scheduled refusal half (`⇄` — MUX-165's fix
+already names the provenance mechanism, so the pair builds it once); the step is ticked as a recorded
+decision. **One item remains — Phase 2 step 5, a written answer to caveat 3** (the seal's inputs are
+agent-writable files and `./build.sh` re-seals) — and it is the user's decision too.
+
+**Verified 2026-09-13 14:19 — Phase 5 complete, 32/34: only Phase 2 step 5 (a written answer to caveat 3)
+and Phase 4 step 5 (the Atlassian road) remain, both the user's decisions.** Edit continued into
+Phase 5 on plan's handoff note that it *"follows once 4 lands"* — not on a user instruction; recorded
+so the scope is honest. `scripts/test-gate-authority.sh` (338 lines, **uncommitted**) ran on the run
+agent against a live scratch daemon: 32 / 0, exit 0, on the fourth pass; details inline under the
+phase. Two nits went to edit and came back fixed and re-run (14:24, 32 / 0, exit 0): the
+floor is now `>= 31` with the corrected breakdown, and the header documents that the script's
+`MUXCODE_CONFIG` export is inert for the gate authority — `gateAuthorityConfigPaths` never consults
+it — so the scratch `HOME` is the isolation. One residual, stated precisely only now (plan's first
+wording was loose): `defaultGateAuthorityConfigPaths` consults the **cwd** `.muxcode/config` *first*,
+and `readGateAuthorityFile` returns a hit only when the variable is present — so the script passes
+here because this repo's file does not name it, and a developer whose repo-local config sets
+`MUXCODE_GATE_AUTHORITY_ROLES` would shadow the scratch list in sections 2–4. A `cd "$WORK"` before
+the daemon starts closes it; non-blocking. Plan added the script to `CLAUDE.md`'s integration-test
+list. Time 12h 22m.
+
+**Verified 2026-09-13 14:01 — Phase 4 landed, committed as `23d2804` (14:04, not pushed), 23/34: Phases 1 and 3 complete, Phase 2 4/5,
 Phase 4 4/5, Phase 5 0/9.** Edit's work on the user's *"work on phase 4"*, verified by plan on the
 user's *"verify work by edit"* from the diff and the agents' panes, not from a relay. Chain
 evidence: build `EXIT=0` 13:53; the codex test agent ran the **full** `./test.sh`
@@ -587,6 +656,9 @@ Open questions for the user:
   life of those runs.
 - **Scope to git, or all gated actions?** Atlassian writes travel the same normalization path. The
   evidence here is git-only; extending the claim to Atlassian needs the check in Phase 1 first.
+  **Answered 2026-09-13:** git here; the Atlassian road is
+  [MUX-181](../backlog/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), the refusal
+  half of the mechanism MUX-165 already carries.
 - **Retry below a never-approved gate** (raised by Phase 4, 2026-09-13): `graph retry --from <commit-node>`
   targets a node below a gate nobody approved; MUX-132 guards *is this approval current?* and nothing
   on the retry road asks *was there one at all?*. Before Phase 4 the dispatch went through; now the

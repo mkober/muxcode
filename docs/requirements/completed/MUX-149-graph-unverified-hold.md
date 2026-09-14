@@ -101,7 +101,7 @@ Documenting shipped behaviour does **not** assert it is complete. Three gaps, ve
 3. **`approved_by` is evidence, not enforcement.** Stated in the doc comment at `:176-180`: the
    marker "remains forgeable by writing this marker directly", so it is "good enough to refuse a
    self-release, not good enough to be the only thing standing between an agent and an irreversible
-   action." That enforcement is [`MUX-144`](../drafts/MUX-144-wait-human-gate-openable-by-any-agent.md).
+   action." That enforcement is [`MUX-144`](./MUX-144-wait-human-gate-openable-by-any-agent.md).
 
 ### Deliberately not a defect
 

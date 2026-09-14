@@ -58,7 +58,7 @@ request did — and the relay in between changed nothing about the consent, only
 
 ### Scope boundary
 
-Upstream of this spec: who may *open* a gate ([MUX-144](../drafts/MUX-144-wait-human-gate-openable-by-any-agent.md),
+Upstream of this spec: who may *open* a gate ([MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md),
 parked at 17/33). This spec is about what an opened gate is worth downstream, and it must not widen
 MUX-144's authority: the provenance a dispatch carries is only as good as the approval record it
 points at. Not in scope: the Atlassian CLI gate itself (`CheckAtlassianAuthority` stays role-based),
@@ -153,7 +153,7 @@ touches the tracker, which is the cost this spec exists to remove.
   unauthorized Jira write came from a definition that told plan to sync Jira on every spec change.
   This spec keeps that guard — unverified node text is still an agent's claim — and gives the graph a
   way to carry the consent it already verified.
-- Related: [MUX-144](../drafts/MUX-144-wait-human-gate-openable-by-any-agent.md) (who may open a gate —
+- Related: [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) (who may open a gate —
   upstream, parked); [MUX-132](../completed/MUX-132-graph-retry-launders-gate-approval.md)
   (single-use approvals, which provenance must not re-spend); [MUX-148](./MUX-148-node-outcome-reads-command-ran-as-task-done.md)
   (the evidence half of the same authority story); [MUX-109](../completed/MUX-109-prompt-mode-graph-control-pane.md)
