@@ -218,6 +218,15 @@ only, not `pnpm exec`. So the passing run wrote no row, `latestAuthoritativeRow`
 failure, and tier 2 outranks tier 3 — the reply said *"Tests passed … exit code 0"* as prose with no
 `EXIT=` sentinel, and would have lost to the row even with one.
 
+**Mitigation for this instance landed 12:13 — `f317a4f`.** `matchPatterns` now recognises
+`pnpm exec ` and `pnpm dlx ` as runner prefixes (`runnerPrefixes`) and re-matches the nested executable
+at its own boundary (`nestedRunnerCommand`), so `pnpm exec jest --runInBand` classifies as a test
+command and writes its row; bare `pnpm` is deliberately excluded, because `pnpm add jest` and
+`pnpm exec eslint jest.config.js` would otherwise read as test runs and a successful install could
+overwrite a real suite failure. Vet clean, 2418 passed, reviewed. **It closes the instance, not the
+class**: any runner the patterns do not name still writes no row, and the earlier row still wins — the
+criterion and the inherited constraint stand.
+
 **Why it belongs here and not in its own spec.** Identical root cause, in this spec's own words: the
 row describes **a command**, not **the task**. A fix that only stops false successes leaves this live.
 
@@ -634,7 +643,7 @@ missing.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-148-node-outcome-reads-command-ran-as-task-done | 1h 44m | 2026-09-14 11:31 |
+| MUX-148-node-outcome-reads-command-ran-as-task-done | 2h 40m | 2026-09-14 13:07 |
 
 ## Status
 
@@ -733,7 +742,30 @@ wrote no code, re-verified every Decision 4 fact, and found that a provenance fi
 close the `muxcode log` road — recorded above as an inherited Phase 3 constraint (fail closed on
 absence) and folded into Decision 4, each claim re-verified by plan against `e7f664b`. Nothing checked
 off; spec 12/55. `e7f664b` (12:16) committed this spec's Defect 3/4 record, MUX-183 and the backlog
-renumber. Left open, reasons inline: the send-road steps
+renumber.
+
+**Lap 2 of the same run, 13:07 — a no-op by construction, and MUX-183's second live occurrence.** The
+worker (`/tmp/mux-148-phase2-lap2-report.md`, non-durable) changed nothing and said why: the only open
+item is the user's Decision 4, which no worker iteration can close, and `implement` has a single
+unconditional edge, so it cannot route the run anywhere but onward. Meanwhile `phase-check` passed
+again at 6/7, the user approved `phase-gate` at 13:00, and `81793df` committed this spec and
+`backlog.md` — the commit agent **held back the unattributed `delivery.go` by its own judgment** and
+reported that the dispatch named "Phase 1: Establish the boundary", a phase already shipped in
+`7e03dc9`. Harm avoided by judgment, not by machinery. `loop-check → implement` has fired once of five,
+so up to four more laps will each ask the user to approve a commit the phase does not warrant. Plan
+concurs with the worker's recommendation: **cancel or hold the run, put Decision 4 to the user, and
+decide `delivery.go`'s fate before any further commit node fires.** Nothing checked off; 12/55. Time
+2h 40m recorded.
+
+**Lap 3, 13:38 — a fourth run, `1789407209-spec-to-pr-6329cbb4`, started by the user at 13:33.** The
+worker (`/tmp/mux-148-phase2-lap3-report.md`, non-durable) changed nothing, for the same reason, and
+added the one fact that matters: `max_iterations` is per-run state, so the new run reset the loop
+budget to five — the cap bounds a run's laps, never this cycle, and no number of laps closes an item
+reserved for the user. Decision 4 is still unasked; `delivery.go` is still uncommitted since 11:44,
+having survived two commit nodes by the commit agent's judgment alone (`a07c746`, 13:28, is edit's
+`--wait` correlation fix and unrelated to this spec). Recommendation unchanged and now on its third data
+point: put Decision 4 to the user, cancel or hold the run, do not approve the `phase-gate` prompt it
+will raise, decide `delivery.go`. Nothing checked off; 12/55. Left open, reasons inline: the send-road steps
 (untouched), the option 3/4 application (partial), the double-hold (send road pending), and the
 spawn-signal decision — the user's or Phase 3's to record; approving a commit is not recording a
 design choice. No acceptance criterion is ticked: the spawn criteria are proven at unit level only,

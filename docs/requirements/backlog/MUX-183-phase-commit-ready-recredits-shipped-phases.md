@@ -33,6 +33,7 @@ instruction. **Every mechanism claim below was verified by plan against `f942c43
 | 11:39 | User approves. `commit` fires: **`5b32433`** sweeps plan's spec edits **and an unbuilt spawn-road change** edit had written minutes earlier — the run's build, test and review nodes had all completed *before* that change existed |
 | 11:42 | `5b32433` reset; spec-only recommit `f942c43` |
 | ~11:50 | Lap 2's `test` node fails 5 tests on the reverted code; the run is canceled |
+| 13:00 | **Second occurrence**, run `1789402487-spec-to-pr-f05fd39f`, lap 2: `phase-check` passes at Phase 2 = 6/7 again, the user approves `phase-gate`, `81793df` commits — the commit agent holds back an unattributed `delivery.go` by its own judgment and reports that the dispatch named *"Phase 1: Establish the boundary"*, a phase already shipped in `7e03dc9`. `loop-check` has fired once of five; the worker reports each remaining lap will repeat this |
 
 Plan had written into the MUX-148 spec that `phase-check` "should route to `stuck-gate`" — the
 prediction a reader of `spec-to-pr`'s description would make — and was wrong; the correction is what
@@ -101,7 +102,10 @@ each empty or narrative phase is one more unearned gate opening per run, and per
 
 **Verified.** Retrying from a node deletes `EdgeFires` for every downstream edge
 (`graph_run.go:640-644`), the commit node's included. A `retry --from update-spec` therefore returns
-`shipped` to 0 *within* one run: the same re-credit, no second run needed.
+`shipped` to 0 *within* one run: the same re-credit, no second run needed. The loop cap lives in the
+same frame: `max_iterations` on `loop-check → implement` is per-run too, so a restarted run re-arms
+five laps of the same cycle — observed 13:33 when run `1789407209` replaced `1789402487` with a fresh
+budget on a phase whose only open item is a user decision. The cap bounds a run, never the cycle.
 
 ### Why the human gate did not catch it
 
@@ -110,7 +114,11 @@ supplied by the predicate — "Approve committing `${completed_phase}`" — and 
 trust that the system asked because a phase completed. The question a gate poses is the control; when
 the question is wrong, the approval is not a check, it is a signature on whatever the tree holds.
 What `${completed_phase}` rendered that day (`resolveCompletedPhaseText`, `graph_exec.go:725`) is a
-Phase 1 check — if it named Phase 1, the prompt itself misdescribed the commit it authorised.
+Phase 1 check — if it named Phase 1, the prompt itself misdescribed the commit it authorised. **On the
+second occurrence it did:** the commit agent reported the dispatch text as *"Phase 1: Establish the
+boundary"* (relayed by the `implement` worker, 13:07; second-hand, so the Phase 1 step stays open until
+read from the run's own records). The harm was avoided there only because the commit agent declined to
+sweep an unattributed file — judgment, not a safeguard.
 
 ### Blast radius
 
