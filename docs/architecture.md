@@ -505,6 +505,33 @@ rejects a check that names a node without the `phase-progress` guard. Graph work
 through the run agent and quote its counts and task id before reporting, so plan's verify credits a
 store row rather than the worker's account.
 
+**Look before you ask** is the same rule at the other end of the story. `commit-pr-review-loop`
+opened with `gate1` — *approve staging, commit, push and PR creation* — and then the commit node,
+whatever the branch's state. On 2026-09-16 run `1789586432` failed at 1/11: PR #99 was already open,
+so the commit node was asked to create a PR that existed, on a tree with one unrelated uncommitted
+file and no commit message, and its correct decline ended the run. The template now starts at
+`pr-precheck`, a read-only `commit:pr-read` node that reports whether an open PR exists for the
+branch using the literal tokens `verify-pr` already demands (`PR-CONFIRMED` plus its URL, or
+`NO-PR-FOUND`); a `pr-exists` condition (`output_contains: PR-CONFIRMED`) routes success straight to
+`b` — watch the review feedback — and failure to `gate1`, now worded *"No PR exists yet"*. It can sit
+ahead of the gate because `pr-read` is the commit role's one read-shaped action — `nodeRequiresGate`
+exempts it and nothing else on that role — so the gate rule holds and a person is asked to approve
+only when there is work to approve. Pinned by `TestCommitPrReviewLoopSkipsCommitWhenPrExists`, whose
+negative control checks that the success edge *bypasses* `gate1` and `a` rather than merely preceding
+them. The precheck's own outcome is attributed by the commit agent's `EXIT=` token, since `pr-read`
+is evidenced by no command ([MUX-148](requirements/drafts/MUX-148-node-outcome-reads-command-ran-as-task-done.md))
+— and that token is **judged on the lookup, not the answer**. `git-manager.md`'s default (`EXIT=1`
+when the requested state does not hold, naming PR existence as its example) would make an honest
+`NO-PR-FOUND` a failure, and a failed node with only a success edge ends the run *failed with no live
+edge* before `pr-exists` evaluates — the branch the template was built around, unreachable, with the
+structural test still green. So both question-shaped nodes — `pr-precheck`, and `verify-pr`, which
+carried the same latent shape since it shipped — say in their own message that a completed lookup is
+`EXIT=0` either way and `EXIT=1` means the lookup itself could not be done; `git-manager.md` records
+the override rule (a node's own message beats the default), `TestCommitPrReviewLoopQuestionNodesDeclareExitConvention`
+pins the wording and `TestCommitPrReviewLoopPrecheckRouting` the routing, with the `EXIT=1` lookup
+failure → `GraphRunFailed` as its negative control. The `c`→`d` gap that spec's Defect 2 records is
+untouched.
+
 **Workers, stalls and the watchdog (2026-09-09).** Four executor rules came out of the second
 `spec-to-pr` run on MUX-159 (`1788930816-spec-to-pr-f7fb2610`), whose commit dispatch the daemon
 answered for it and whose re-seeded implement worker was stopped by hand as a leftover:
