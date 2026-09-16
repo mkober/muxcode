@@ -514,6 +514,75 @@ func attachPortWorktree(t *testing.T, worker, wt string) {
 	}
 }
 
+// TestExecSpawnHoldPortsWorkAndStopsThePipeline is the executor-level control
+// for the spawn hold (review should-fix, 2026-09-14). The function-level tests
+// stop at spawnGroupOutcome, so the hold-and-port path was verified by reading
+// alone — and the two halves pull in opposite directions: the work must land
+// while the pipeline must not advance.
+//
+// A worker that produced real output and ended its reply with no verdict token
+// lands its work in the checkout (the human judging the hold has to see what
+// raised it), records unknown, names the silent worker, and leaves the
+// downstream node undispatched.
+//
+// TestExecSpawnHarvestLandsOutputBeforeBuild below is its negative control:
+// the same fixture with EXIT=0 routes success and dispatches build.
+func TestExecSpawnHoldPortsWorkAndStopsThePipeline(t *testing.T) {
+	repo := initPortRepo(t)
+	wt := addPortWorktree(t, repo)
+	headBefore := portRepoGit(t, repo, "rev-parse", "HEAD")
+	run := createTestRun(t, spawnPortGraph())
+	f := fakeLiveSpawns(t)
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "w")
+	worker := st.TaskID
+	if worker == "" || f.fresh != 1 {
+		t.Fatalf("fresh worker expected: task %q, %d starts", worker, f.fresh)
+	}
+	attachPortWorktree(t, worker, wt)
+	writePortFile(t, wt, "feature.go", "package x\n")
+	answerSpawnWith(t, runTestSession, worker, "I had a look and made the change.")
+
+	step(t, runTestSession, run.ID)
+
+	st, _ = ReadNodeStatus(runTestSession, run.ID, "w")
+	if st.State != GraphNodeDone || st.Outcome != OutcomeUnknown {
+		t.Fatalf("a tokenless reply must resolve unknown: %q %q (%s)", st.State, st.Outcome, st.Output)
+	}
+	if !strings.Contains(st.Output, "ported "+worker) {
+		t.Errorf("held work must still be ported, output %q", st.Output)
+	}
+	if !strings.Contains(st.Output, "no verdict token") || !strings.Contains(st.Output, worker) {
+		t.Errorf("the hold must name the silent worker, output %q", st.Output)
+	}
+	if got, err := os.ReadFile(filepath.Join(repo, "feature.go")); err != nil || string(got) != "package x\n" {
+		t.Fatalf("held work must reach the checkout for the human to judge: %v %q", err, got)
+	}
+	if head := portRepoGit(t, repo, "rev-parse", "HEAD"); head != headBefore {
+		t.Fatalf("a hold must not move HEAD: %s vs %s", head, headBefore)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "b"); s == GraphNodeRunning || s == GraphNodeDone {
+		t.Errorf("downstream node %q under a held predecessor — the hold did not stop the pipeline", s)
+	}
+
+	entries, err := ReadLifecycleLog(runTestSession)
+	if err != nil {
+		t.Fatalf("read lifecycle: %v", err)
+	}
+	named := false
+	for _, e := range entries {
+		if e.Event == "graph-outcome-unattributed" && strings.Contains(e.Detail, worker) {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("no graph-outcome-unattributed row naming %s in %d entries", worker, len(entries))
+	}
+}
+
 // TestExecSpawnHarvestLandsOutputBeforeBuild pins the Defect A criterion
 // end to end: the spawn node's success carries a completed harvest, so
 // build is dispatched against a checkout that already holds the work —

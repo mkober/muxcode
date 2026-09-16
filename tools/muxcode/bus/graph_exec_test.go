@@ -62,13 +62,13 @@ func completeSendNode(t *testing.T, session, runID, nodeID, rowOutcome string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var role string
+		var role, action string
 		for _, n := range g.Nodes {
 			if n.ID == nodeID {
-				role = NormalizeBusRole(n.Role)
+				role, action = NormalizeBusRole(n.Role), n.Action
 			}
 		}
-		row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: "./fake.sh",
+		row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: fixtureCommandFor(action),
 			ExitCode: "0", Outcome: rowOutcome}
 		if rowOutcome == OutcomeFailure {
 			row.ExitCode = "1"
@@ -76,6 +76,34 @@ func completeSendNode(t *testing.T, session, runID, nodeID, rowOutcome string) {
 		if err := WriteHookHistory(HistoryPath(session, role), row, 100); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// fixtureCommandFor is the command a fixture row carries so it can testify
+// for the node's action. An action no command evidences keeps an unclassified
+// one: such a node is attributed by its agent's token, and a fixture must not
+// pretend otherwise.
+//
+// Callers writing a fixture row rely on this: the row stands for "the
+// dispatched work was observed", and rowAttributesTo rejects a command the
+// action cannot be evidenced by, so a mismatched command here would silently
+// make the row testify for nothing.
+func fixtureCommandFor(action string) string {
+	switch action {
+	case "build":
+		return "./build.sh"
+	case "test":
+		return "./test.sh"
+	case "deploy":
+		return "cdk deploy"
+	case "commit":
+		return "git commit -m fixture"
+	case "checkout":
+		return "git checkout main"
+	case "pr-checkout":
+		return "gh pr checkout 161"
+	default:
+		return "./fake.sh"
 	}
 }
 
@@ -172,7 +200,7 @@ func completeSendNodeWithPayload(t *testing.T, session, runID, nodeID, payload s
 		t.Fatal(err)
 	}
 	CompleteTask(session, st.TaskID, resp.ID)
-	row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: "./fake.sh",
+	row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: "./build.sh",
 		ExitCode: "0", Outcome: OutcomeSuccess}
 	if err := WriteHookHistory(HistoryPath(session, "build"), row, 100); err != nil {
 		t.Fatal(err)
@@ -482,6 +510,106 @@ func TestRawRowWithoutHookSourceIsNotEvidence(t *testing.T) {
 	}
 }
 
+// TestLatestAuthoritativeRowFuncMixedRows covers what the single-row
+// attribution cases cannot: accept is applied per candidate inside the same
+// walk that ranks sources, so a bug in either can hide behind the other. With
+// one row in the file, "filtered out" and "outranked" produce the same answer.
+//
+// Each case pairs a row that attributes with one that does not, across the two
+// source ranks. The third is the one that would regress silently: rejecting an
+// unrelated hook row must not also discard the self-report behind it, or every
+// node whose role ran an unrelated command would hold forever.
+func TestLatestAuthoritativeRowFuncMixedRows(t *testing.T) {
+	row := func(cmd, outcome, source string, offset int64) HookHistoryEntry {
+		code := "0"
+		if outcome == OutcomeFailure {
+			code = "1"
+		}
+		return HookHistoryEntry{TS: time.Now().Unix() + offset, Command: cmd,
+			ExitCode: code, Outcome: outcome, Source: source}
+	}
+	cases := []struct {
+		name string
+		rows []HookHistoryEntry
+		want string
+	}{
+		{
+			name: "a newer unrelated success cannot bury an older matching failure",
+			rows: []HookHistoryEntry{
+				row("./build.sh", OutcomeFailure, "", 1),
+				row("git push origin main", OutcomeSuccess, "", 2),
+			},
+			want: OutcomeFailure,
+		},
+		{
+			name: "an observed failure outranks a newer matching self-report",
+			rows: []HookHistoryEntry{
+				row("./build.sh", OutcomeFailure, "", 1),
+				row("./build.sh", OutcomeSuccess, SourceSelfReported, 2),
+			},
+			want: OutcomeFailure,
+		},
+		{
+			name: "an unrelated observed failure leaves the matching self-report standing",
+			rows: []HookHistoryEntry{
+				row("git push origin main", OutcomeFailure, "", 1),
+				row("./build.sh", OutcomeSuccess, SourceSelfReported, 2),
+			},
+			want: OutcomeSuccess,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempBusDir(t)
+			if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+				t.Fatal(err)
+			}
+			since := time.Now().Unix() - 1
+			for _, r := range tc.rows {
+				if err := WriteHookHistory(HistoryPath(runTestSession, "build"), r, 100); err != nil {
+					t.Fatal(err)
+				}
+			}
+			accept := func(e ConsoleEntry) bool { return rowAttributesTo("build", e) }
+			got, ok := latestAuthoritativeRowFunc(runTestSession, "build", since, accept)
+			if !ok {
+				t.Fatalf("no verdict, want %q", tc.want)
+			}
+			if got.Outcome != tc.want {
+				t.Errorf("outcome = %q (%s), want %q", got.Outcome, got.Command, tc.want)
+			}
+		})
+	}
+}
+
+// TestLatestAuthoritativeRowFuncNilAcceptTakesAnyRow is the negative control
+// for the case above: with no accept the unrelated newer row wins on recency,
+// so the filtered answers are the filter working rather than the fixture
+// happening to hold only one usable row.
+func TestLatestAuthoritativeRowFuncNilAcceptTakesAnyRow(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Now().Unix() - 1
+	path := HistoryPath(runTestSession, "build")
+	now := time.Now().Unix()
+
+	for _, r := range []HookHistoryEntry{
+		{TS: now + 1, Command: "./build.sh", ExitCode: "1", Outcome: OutcomeFailure},
+		{TS: now + 2, Command: "git push origin main", ExitCode: "0", Outcome: OutcomeSuccess},
+	} {
+		if err := WriteHookHistory(path, r, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, ok := latestAuthoritativeRowFunc(runTestSession, "build", since, nil)
+	if !ok || got.Outcome != OutcomeSuccess {
+		t.Fatalf("row = (%+v, %v), want the unrelated newer success — nil accept takes any row", got, ok)
+	}
+}
+
 // TestDeriveSendOutcomeSignals is the first test of deriveSendOutcome, which
 // nothing exercised: its precedence was free to be fixed and equally free to
 // regress unnoticed.
@@ -543,7 +671,7 @@ func TestDeriveSendOutcomeSignals(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			n := &Node{ID: "a", Role: "build"}
+			n := &Node{ID: "a", Role: "build", Action: "build"}
 			st := &GraphNodeStatus{StartedAt: since}
 			got, output := deriveSendOutcome(runTestSession, n, st, Task{ResponseID: resp.ID})
 			if got != tc.want {
@@ -551,6 +679,77 @@ func TestDeriveSendOutcomeSignals(t *testing.T) {
 			}
 			if output != tc.reply {
 				t.Errorf("output = %q, want the reply body %q", output, tc.reply)
+			}
+		})
+	}
+}
+
+// TestDeriveSendOutcomeAttributesRowToAction pins the constraint the conflict
+// rule alone did not meet: the signal must be tied to the dispatched task, not
+// to whichever commands happened to be recognised.
+//
+// Row 1 is the 2026-09-03 shape that opened this spec — a node asked to answer
+// PR comments, recorded success because the commit role had run a git command
+// after dispatch. Rows 2 and 5 are the negative controls without which
+// "refuse every row" would pass: the agent's own token still attributes a
+// comment node, and an action in neither table still routes on its row, so
+// `run` and `watch` nodes do not become permanent holds.
+func TestDeriveSendOutcomeAttributesRowToAction(t *testing.T) {
+	cases := []struct {
+		name    string
+		action  string
+		command string
+		row     string
+		reply   string
+		want    string
+	}{
+		{name: "git row cannot answer for a comment node", action: "comment",
+			command: "git commit -m 'wip'", row: OutcomeSuccess,
+			reply: "I did not reply to the comments.", want: OutcomeUnknown},
+		{name: "the agent's token still attributes a comment node", action: "comment",
+			command: "git commit -m 'wip'", row: OutcomeSuccess,
+			reply: "comments answered. EXIT=0", want: OutcomeSuccess},
+		{name: "a git row cannot answer for a build node", action: "build",
+			command: "git push origin main", row: OutcomeSuccess,
+			reply: "no build was run", want: OutcomeUnknown},
+		{name: "a build row answers for a build node", action: "build",
+			command: "./build.sh", row: OutcomeSuccess, reply: "built", want: OutcomeSuccess},
+		{name: "an unmapped action still routes on its row", action: "run",
+			command: "cat notes.txt", row: OutcomeSuccess, reply: "ran it", want: OutcomeSuccess},
+		{name: "a precheck row answers for a test node", action: "test",
+			command: "go vet ./...", row: OutcomeFailure, reply: "vet broke", want: OutcomeFailure},
+		{name: "a build row cannot answer for a test node", action: "test",
+			command: "./build.sh", row: OutcomeFailure, reply: "nothing to say", want: OutcomeUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempBusDir(t)
+			if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+				t.Fatal(err)
+			}
+			since := time.Now().Unix() - 1
+
+			code := "0"
+			if tc.row == OutcomeFailure {
+				code = "1"
+			}
+			entry := HookHistoryEntry{TS: time.Now().Unix(), Command: tc.command,
+				ExitCode: code, Outcome: tc.row}
+			if err := WriteHookHistory(HistoryPath(runTestSession, "commit"), entry, 100); err != nil {
+				t.Fatal(err)
+			}
+
+			resp := NewMessage("commit", "edit", "response", "response", tc.reply, "")
+			if err := Send(runTestSession, resp); err != nil {
+				t.Fatal(err)
+			}
+
+			n := &Node{ID: "a", Role: "commit", Action: tc.action}
+			st := &GraphNodeStatus{StartedAt: since}
+			got, _ := deriveSendOutcome(runTestSession, n, st, Task{ResponseID: resp.ID})
+			if got != tc.want {
+				t.Errorf("outcome = %q, want %q (action %q, row %q from %q)",
+					got, tc.want, tc.action, tc.row, tc.command)
 			}
 		})
 	}
@@ -995,6 +1194,12 @@ func TestExecFanOutJoinAll(t *testing.T) {
 // TestExecJoinQuorumBarrier drives a quorum join entirely through the
 // executor: two send-node branches complete one at a time, and the join
 // must hold at 1/2 and release at 2/2.
+//
+// The branches are attributed by different roads on purpose. b1 is a test
+// node, which a classified command row can testify for; b2 is a review node,
+// which none can (actionsWithoutCommandEvidence), so only its agent's token
+// establishes the outcome. The barrier counts fires and must not care which
+// road produced them.
 func TestExecJoinQuorumBarrier(t *testing.T) {
 	g := &Graph{
 		Name:  "t",
@@ -1023,6 +1228,14 @@ func TestExecJoinQuorumBarrier(t *testing.T) {
 	// One branch completes: quorum 1/2 — the barrier must hold.
 	completeSendNode(t, runTestSession, run.ID, "b1", OutcomeSuccess)
 	step(t, runTestSession, run.ID)
+	// "j pending" is equally true at 0/2, so b1 must be shown to have routed.
+	b1st, err := ReadNodeStatus(runTestSession, run.ID, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !b1st.Routed {
+		t.Fatalf("b1 never routed (%+v) — the 1/2 check below would pass vacuously", b1st)
+	}
 	if s := nodeState(t, runTestSession, run.ID, "j"); s != GraphNodePending {
 		t.Fatalf("join state %q with quorum 1/2, want pending", s)
 	}
@@ -1032,7 +1245,9 @@ func TestExecJoinQuorumBarrier(t *testing.T) {
 	}
 
 	// Second branch completes: quorum met, join runs, downstream fires.
-	completeSendNode(t, runTestSession, run.ID, "b2", OutcomeSuccess)
+	// Its agent's token, no row — a review node's work leaves no command
+	// behind that could testify for it.
+	completeSendNodeSentinel(t, runTestSession, run.ID, "b2", "reviewed, no findings. EXIT=0")
 	step(t, runTestSession, run.ID)
 	step(t, runTestSession, run.ID)
 	if s := nodeState(t, runTestSession, run.ID, "j"); s != GraphNodeDone {
@@ -3812,5 +4027,83 @@ func TestExecMapTaskCarriesOwnership(t *testing.T) {
 	}
 	if !strings.Contains((*tasks)[0], "Handle one") || !strings.Contains((*tasks)[1], "Handle two") {
 		t.Errorf("preamble must not displace per-item interpolation: %v", *tasks)
+	}
+}
+
+// TestRowAttributesTo covers the git-evidenced actions in both directions, as
+// the Phase 3 constraints require.
+//
+// One CmdGit spans commit, push, merge, rebase and `gh pr create`, so a
+// commit node that accepts any of them is "a git command ran" standing in for
+// "the commit was made" — and a commit node sits downstream of a human gate,
+// the worst place to accept another command's verdict. The checkout rows are
+// the opposite failure: before this, none of them attributed to anything.
+func TestRowAttributesTo(t *testing.T) {
+	cases := []struct {
+		name    string
+		action  string
+		command string
+		want    bool
+	}{
+		{"commit by a commit", "commit", "git commit -m 'work'", true},
+		{"commit behind a cd prefix", "commit", `cd /repo && git commit -m "work"`, true},
+		{"commit by a push", "commit", "git push origin HEAD", false},
+		{"commit by a rebase", "commit", "git rebase main", false},
+		{"commit by a pr create", "commit", "gh pr create --fill", false},
+		{"commit by a build", "commit", "./build.sh", false},
+
+		{"checkout by a checkout", "checkout", "git checkout -", true},
+		{"checkout by a switch", "checkout", "git switch main", true},
+		{"checkout by a commit", "checkout", "git commit -m 'work'", false},
+		{"pr-checkout by gh", "pr-checkout", "gh pr checkout 161", true},
+		{"pr-checkout by a pr create", "pr-checkout", "gh pr create --fill", false},
+
+		// The type-evidenced actions are unchanged by the command branch.
+		{"build by a build", "build", "./build.sh", true},
+		{"build by a commit", "build", "git commit -m 'work'", false},
+		{"test by a test", "test", "./test.sh", true},
+		{"deploy by a deploy", "deploy", "cdk deploy", true},
+
+		// No command evidences a review, whatever the agent happened to run.
+		{"review by a commit", "review", "git commit -m 'work'", false},
+		{"review by a test", "review", "./test.sh", false},
+
+		// An action in neither table keeps the pre-attribution behaviour, so
+		// run and watch nodes do not become permanent holds.
+		{"unlisted action", "run", "aws s3 ls", true},
+
+		// Known residual, pinned rather than blessed: the glob matches
+		// "commit" anywhere in a git-headed command, so "uncommitted" counts.
+		// Tightening it needs word-boundary matching across every pattern
+		// list, which is wider than this phase — recorded in the spec.
+		{"known-loose substring", "commit", "git status | grep uncommitted", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := rowAttributesTo(tc.action, ConsoleEntry{Command: tc.command})
+			if got != tc.want {
+				t.Errorf("rowAttributesTo(%q, %q) = %v, want %v", tc.action, tc.command, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGitPatternsClassifyCheckout pins the row's existence, not its reading.
+// For the commit role an unclassified command writes no history row at all —
+// ProcessBashHook's CmdUnknown branch covers run/runner/watch only — so a
+// checkout classified as anything but CmdGit leaves the graph's checkout
+// nodes with no evidence they could ever be attributed by.
+func TestGitPatternsClassifyCheckout(t *testing.T) {
+	for _, cmd := range []string{"git checkout -", "git checkout main", "git switch main", "gh pr checkout 161"} {
+		if got := ClassifyCommand(cmd); got != CmdGit {
+			t.Errorf("ClassifyCommand(%q) = %v, want CmdGit — an unclassified checkout writes no row", cmd, got)
+		}
+	}
+	// Negative control: the list stays mutating-only, so a read-only git
+	// command still mints nothing a node could be attributed by.
+	for _, cmd := range []string{"git status", "git log --oneline"} {
+		if got := ClassifyCommand(cmd); got == CmdGit {
+			t.Errorf("ClassifyCommand(%q) = CmdGit — read-only git must write no row", cmd)
+		}
 	}
 }

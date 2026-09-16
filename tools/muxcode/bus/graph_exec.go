@@ -1504,7 +1504,7 @@ func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 	for _, id := range strings.Split(taskIDs, ",") {
 		e, ok := byRole[id]
 		if !ok {
-			outcome = worseOutcome(outcome, OutcomeFailure)
+			outcome = OutcomeFailure
 			continue
 		}
 		if e.SeedMsgID != "" && spawnHasResponded(session, e) {
@@ -1517,7 +1517,7 @@ func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 		case "completed":
 			// success — no change
 		default: // stopped or anything else
-			outcome = worseOutcome(outcome, OutcomeFailure)
+			outcome = OutcomeFailure
 		}
 	}
 	return outcome, true
@@ -1768,15 +1768,22 @@ func sendResponseIsNonResult(session string, task Task) bool {
 // newer than dispatch is the verdict; a response with action "error" is
 // a failure; everything else is unknown.
 //
-// Two independent signals that disagree establish nothing, so a row and a
-// sentinel that contradict each other resolve unknown and hold. The row
-// describes whichever commands the classifier recognised, not the dispatched
-// task, and that is wrong in both directions: on 2026-09-14 a `pnpm test`
-// typo failed, the unclassified `pnpm exec jest` re-run passed, and the node
-// recorded failure — three fix iterations and eight stuck-gates repairing a
-// suite that was green (Defect 4). Trusting the sentinel over the row instead
-// would reopen the forgery road the provenance work closed, and holding costs
-// one approval where the mirror cost eight.
+// A row only counts for a node whose action it could testify for
+// (rowAttributesTo). Recency and a role were the whole test before, so any
+// command the role happened to run stood in for the dispatched work — the
+// 2026-09-03 shape, where "a git command ran" answered "reply to the PR
+// comments". An unattributable row is not demoted to a weaker signal; it is
+// not evidence, and the node falls through to the agent's own token.
+//
+// Two independent signals that disagree establish nothing, so an attributable
+// row and a sentinel that contradict each other resolve unknown and hold. The
+// row describes a command, not the task, and that is wrong in both
+// directions: on 2026-09-14 a `pnpm test` typo failed, the unclassified
+// `pnpm exec jest` re-run passed, and the node recorded failure — three fix
+// iterations and eight stuck-gates repairing a suite that was green
+// (Defect 4). Trusting the sentinel over the row instead would reopen the
+// forgery road the provenance work closed, and holding costs one approval
+// where the mirror cost eight.
 func deriveSendOutcome(session string, n *Node, st *GraphNodeStatus, task Task) (string, string) {
 	output := ""
 	if resp, ok := FindMessageByID(session, task.ResponseID); ok {
@@ -1787,7 +1794,10 @@ func deriveSendOutcome(session string, n *Node, st *GraphNodeStatus, task Task) 
 	}
 
 	claimed, claimFound := parseExitSentinel(output)
-	if row, ok := latestAuthoritativeRow(session, NormalizeBusRole(n.Role), st.StartedAt); ok {
+	role := NormalizeBusRole(n.Role)
+
+	attributable := func(e ConsoleEntry) bool { return rowAttributesTo(n.Action, e) }
+	if row, ok := latestAuthoritativeRowFunc(session, role, st.StartedAt, attributable); ok {
 		if row.Outcome == OutcomeSuccess || row.Outcome == OutcomeFailure {
 			if claimFound && claimed != row.Outcome {
 				LogLifecycle(session, "warn", "daemon", "graph-outcome-conflict",
@@ -1801,7 +1811,81 @@ func deriveSendOutcome(session string, n *Node, st *GraphNodeStatus, task Task) 
 	if claimFound {
 		return claimed, output
 	}
+	if row, ok := latestAuthoritativeRow(session, role, st.StartedAt); ok {
+		LogLifecycle(session, "warn", "daemon", "graph-outcome-untied",
+			fmt.Sprintf("%s: a %s row (%s) cannot testify for action %q — holding",
+				n.ID, row.Outcome, row.Command, n.Action))
+	}
 	return OutcomeUnknown, output
+}
+
+// actionEvidenceTypes maps a node action to the command types whose rows can
+// testify that the action was carried out.
+//
+// An action listed here is evidenced by a command, so a row of any other type
+// is another command's verdict wearing this node's name.
+var actionEvidenceTypes = map[string][]CommandType{
+	"build":  {CmdBuild},
+	"test":   {CmdTest, CmdTestPrecheck},
+	"deploy": {CmdDeploy, CmdDeployApply},
+}
+
+// actionEvidenceCommands narrows the actions one CommandType cannot separate.
+//
+// CmdGit covers commit, push, merge, rebase, tag and `gh pr create` alike, so
+// the type alone cannot tell "the commit was made" from "some git command
+// ran" — the 2026-09-03 shape this spec exists to close, one level down. A
+// commit node downstream of a human gate is the worst place to accept another
+// command's verdict, so these actions are matched on the command itself.
+var actionEvidenceCommands = map[string][]string{
+	"commit":      {"git*commit"},
+	"checkout":    {"git*checkout", "git*switch"},
+	"pr-checkout": {"gh*pr*checkout", "git*checkout", "git*switch"},
+}
+
+// actionsWithoutCommandEvidence are the actions no command can evidence.
+//
+// Reviewing a diff, updating a doc, reading a PR or posting a comment leave
+// no classified command behind, so any row found in their window belongs to
+// something else the agent happened to run. This is the 2026-09-03 shape: a
+// node asked to reply to PR comments was recorded success because the commit
+// role had run a git command after dispatch — "a git command ran" standing in
+// for "the comments were answered". These nodes are attributed by the agent's
+// own token instead, which is why option 3 and option 4 were both needed.
+var actionsWithoutCommandEvidence = map[string]bool{
+	"review": true, "update-docs": true, "verify-spec": true,
+	"pr-read": true, "pr-diff": true, "pr-review": true,
+	"comment": true, "story-read": true,
+	"jira-write": true, "jira-read": true, "issue-update": true,
+	"edit": true, "spawn-task": true,
+}
+
+// rowAttributesTo reports whether an authoritative row can testify that a
+// node's dispatched action was carried out.
+//
+// Actions are matched on the command where a CommandType is too coarse to
+// separate them, on the type otherwise.
+//
+// An action in neither table keeps the pre-attribution behaviour — the row
+// decides. That is deliberate: `run` and `watch` mint a row for ANY command
+// their role executes (the CmdUnknown branch), so refusing those rows would
+// convert every such node into a permanent hold, and their agents are not
+// instructed to emit a token to hold onto instead. A fix that holds
+// everything is not a fix; the residual is recorded rather than closed here.
+func rowAttributesTo(action string, row ConsoleEntry) bool {
+	if globs, ok := actionEvidenceCommands[action]; ok {
+		return matchPatterns(stripCommandPrefix(row.Command), globs, true)
+	}
+	if types, ok := actionEvidenceTypes[action]; ok {
+		got := ClassifyCommand(row.Command)
+		for _, t := range types {
+			if t == got {
+				return true
+			}
+		}
+		return false
+	}
+	return !actionsWithoutCommandEvidence[action]
 }
 
 // exitSentinelRe matches a self-reported exit code such as "EXIT=0",
@@ -1847,12 +1931,23 @@ func parseExitSentinel(payload string) (string, bool) {
 // hand can still claim any source. That needs provenance the agent cannot
 // author — see SourceSelfReported.
 func latestAuthoritativeRow(session, role string, since int64) (ConsoleEntry, bool) {
+	return latestAuthoritativeRowFunc(session, role, since, nil)
+}
+
+// latestAuthoritativeRowFunc is latestAuthoritativeRow with an extra
+// acceptance test applied to each candidate, so a caller can require a row to
+// be attributable to its own dispatch without duplicating the source
+// precedence above. A nil accept takes any row.
+func latestAuthoritativeRowFunc(session, role string, since int64, accept func(ConsoleEntry) bool) (ConsoleEntry, bool) {
 	entries := ReadConsoleEntries(HistoryPath(session, role), 0)
 	var selfReported ConsoleEntry
 	var haveSelfReported bool
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
 		if e.TS < since || e.Outcome == OutcomeUnknown || e.Outcome == "" {
+			continue
+		}
+		if accept != nil && !accept(e) {
 			continue
 		}
 		switch e.Source {

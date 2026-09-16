@@ -286,9 +286,15 @@ var DefaultDeployApplyPatterns = []string{
 }
 
 // DefaultGitPatterns are the default patterns for detecting git commands.
+// Branch-changing commands are here so a checkout leaves an observable row:
+// without one, a graph `checkout`/`pr-checkout` node has no evidence it could
+// ever be attributed by and holds forever (pr-local-review's prepare and
+// restore nodes). They are mutations like the rest — this list stays
+// mutating-only, so a read-only `git status`/`git log` still writes nothing.
 var DefaultGitPatterns = []string{
 	"git*commit", "git*push", "git*merge", "git*rebase", "git*tag", "git*cherry-pick",
-	"gh*pr*create", "gh*pr*merge", "gh*pr*close", "gh*release*create",
+	"git*checkout", "git*switch",
+	"gh*pr*create", "gh*pr*merge", "gh*pr*close", "gh*pr*checkout", "gh*release*create",
 }
 
 // ClassifyCommand detects the type of a bash command.
