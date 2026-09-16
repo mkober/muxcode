@@ -22,7 +22,12 @@ daemon orphans manufactures harness orphans.
 Observed **first-hand by edit** on 2026-09-14 while cleaning up four stray sessions a test agent had
 launched; written up as `/tmp/mux-184-handoff.md` (non-durable) and filed on the user's instruction
 relayed by edit. **Every mechanism claim below was verified by plan against the tree at `3f9a2cb`**
-(plus the uncommitted `tools/muxcode/main.go` launcher guard that closes the stray-session cause).
+(plus the `tools/muxcode/main.go` launcher guard, since committed in `7bcd657`, that closes the
+multi-arg and subcommand-named forms of the stray-session cause). That guard was not the whole
+cause: on 2026-09-15 a single-arg `muxcode agents` — one edit from `agent` and a real directory —
+still launched a 10-window fleet with cwd `agents/`; `routeFor` now refuses a bare near-miss with a
+did-you-mean, path spelling (`muxcode ./agents`) being the escape hatch. See
+[`agent-bus.md`](../../agent-bus.md#muxcode-version).
 Three claims in the handoff did not survive verification and are recorded corrected, not silently:
 
 | Handoff said | Tree says |

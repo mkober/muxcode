@@ -47,16 +47,108 @@ func TestRouteFor(t *testing.T) {
 		{"muxcode", []string{"/repo", "test", "send", "hello"}, routeAmbiguousName},
 		{"muxcode", []string{"/tmp/project", "my-session", "extra"}, routeAmbiguousName},
 
+		// A bare misspelled subcommand, which the arg-count guard above misses.
+		// "agents" is the one that ran on 2026-09-15: one edit from "agent",
+		// and a real directory here, so it launched a 10-window fleet.
+		{"muxcode", []string{"agents"}, routeNearMiss},
+		{"muxcode", []string{"agents", "my-session"}, routeNearMiss},
+		{"muxcode", []string{"skills"}, routeNearMiss},
+		{"muxcode", []string{"specs"}, routeNearMiss},
+		{"muxcode", []string{"graphs"}, routeNearMiss},
+		{"muxcode", []string{"stats"}, routeNearMiss},
+
 		// Negative controls: the launcher paths that must keep working.
 		{"muxcode", nil, routeLauncher},
 		{"muxcode", []string{"/tmp/project"}, routeLauncher},
 		{"muxcode", []string{"/tmp/project", "name"}, routeLauncher},
 		{"muxcode", []string{".", "my-session"}, routeLauncher},
 		{"muxcode-agent-bus", nil, routeUsage},
+
+		// Negative controls for the near-miss guard specifically: a path
+		// spelling is the escape hatch for a directory that shadows a
+		// subcommand, and an ordinary project name is not a misspelling.
+		{"muxcode", []string{"./agents"}, routeLauncher},
+		{"muxcode", []string{"/repos/agents"}, routeLauncher},
+		{"muxcode", []string{"~/repos/agents"}, routeLauncher},
+		{"muxcode", []string{"./agents", "my-session"}, routeLauncher},
+		{"muxcode", []string{"muxcode"}, routeLauncher},
+		{"muxcode", []string{"my-project"}, routeLauncher},
+
+		// An exact subcommand still dispatches; the guard sits behind that check.
+		{"muxcode", []string{"agent"}, routeSubcommand},
+		{"muxcode", []string{"skill"}, routeSubcommand},
 	}
 	for _, c := range cases {
 		if got := routeFor(c.base, c.args); got != c.want {
 			t.Errorf("routeFor(%q, %v) = %d, want %d", c.base, c.args, got, c.want)
+		}
+	}
+}
+
+// The near-miss guard must never shadow a real subcommand: every name in the
+// map has to reach its handler, or the guard has broken the CLI it protects.
+func TestEveryKnownSubcommandStillDispatches(t *testing.T) {
+	for sub := range knownSubcommands {
+		if got := routeFor("muxcode", []string{sub}); got != routeSubcommand {
+			t.Errorf("routeFor(muxcode, [%q]) = %d, want routeSubcommand", sub, got)
+		}
+	}
+}
+
+// Ties are resolved lexicographically, so the "did you mean" line a user reads
+// does not change between runs with map iteration order.
+func TestNearestSubcommandIsDeterministic(t *testing.T) {
+	if got := nearestSubcommand("agents"); got != "agent" {
+		t.Errorf("nearestSubcommand(\"agents\") = %q, want \"agent\"", got)
+	}
+	first := nearestSubcommand("logs")
+	for i := 0; i < 50; i++ {
+		if got := nearestSubcommand("logs"); got != first {
+			t.Fatalf("nearestSubcommand(\"logs\") unstable: %q then %q", first, got)
+		}
+	}
+	if got := nearestSubcommand("my-project"); got != "" {
+		t.Errorf("nearestSubcommand(\"my-project\") = %q, want \"\"", got)
+	}
+}
+
+func TestWithinEditDistance1(t *testing.T) {
+	near := [][2]string{
+		{"agent", "agents"}, // insertion
+		{"agents", "agent"}, // deletion
+		{"status", "stats"}, // deletion mid-word
+		{"spec", "spac"},    // substitution
+		{"agent", "agent"},  // identical
+	}
+	for _, p := range near {
+		if !withinEditDistance1(p[0], p[1]) {
+			t.Errorf("withinEditDistance1(%q, %q) = false, want true", p[0], p[1])
+		}
+	}
+	far := [][2]string{
+		{"agent", "agentss"},    // two insertions
+		{"agent", "my-project"}, // unrelated
+		{"spec", "spac3"},       // substitution plus insertion
+		{"send", "dnes"},        // same letters, four edits
+	}
+	for _, p := range far {
+		if withinEditDistance1(p[0], p[1]) {
+			t.Errorf("withinEditDistance1(%q, %q) = true, want false", p[0], p[1])
+		}
+	}
+}
+
+// The escape hatch has to be real: a directory shadowing a subcommand is
+// reachable by path spelling, or the guard has locked a user out of it.
+func TestIsPathLike(t *testing.T) {
+	for _, s := range []string{"./agents", "../agents", ".", "/repos/agents", "~/repos/agents"} {
+		if !isPathLike(s) {
+			t.Errorf("isPathLike(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"agents", "my-project", "muxcode"} {
+		if isPathLike(s) {
+			t.Errorf("isPathLike(%q) = true, want false", s)
 		}
 	}
 }

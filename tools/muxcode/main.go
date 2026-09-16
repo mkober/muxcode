@@ -43,6 +43,7 @@ const (
 	routeSubcommand
 	routeHelp
 	routeAmbiguousName
+	routeNearMiss
 )
 
 // firstKnownSubcommand returns the first arg naming a subcommand, or "" —
@@ -54,6 +55,48 @@ func firstKnownSubcommand(args []string) string {
 		}
 	}
 	return ""
+}
+
+// withinEditDistance1 reports whether a and b differ by at most one insertion,
+// deletion or substitution. Subcommand names are ASCII, so bytes are fine.
+func withinEditDistance1(a, b string) bool {
+	if len(a) < len(b) {
+		a, b = b, a
+	}
+	if len(a)-len(b) > 1 {
+		return false
+	}
+	for i := 0; i < len(b); i++ {
+		if a[i] == b[i] {
+			continue
+		}
+		if len(a) == len(b) {
+			return a[i+1:] == b[i+1:]
+		}
+		return a[i+1:] == b[i:]
+	}
+	return true
+}
+
+// nearestSubcommand returns the known subcommand one edit away from arg, or "".
+// Ties resolve to the lexicographically smallest so the refusal message and its
+// test are stable across map iteration order.
+func nearestSubcommand(arg string) string {
+	best := ""
+	for sub := range knownSubcommands {
+		if withinEditDistance1(sub, arg) && (best == "" || sub < best) {
+			best = sub
+		}
+	}
+	return best
+}
+
+// isPathLike reports whether arg is spelled as a path rather than a bare name.
+// This is the documented escape hatch from the near-miss guard: `./agents`
+// launches the directory that `agents` alone refuses.
+func isPathLike(arg string) bool {
+	return strings.ContainsRune(arg, filepath.Separator) ||
+		strings.HasPrefix(arg, ".") || strings.HasPrefix(arg, "~")
 }
 
 // routeFor classifies args (argv without the program name) for the binary
@@ -78,6 +121,13 @@ func firstKnownSubcommand(args []string) string {
 //     "memory", "send", "__help", "test" — and 93 panes, just by trying to
 //     send a message. `muxcode launch <path> <name>` stays unguarded for
 //     anyone who really wants that session name.
+//   - A bare first arg one edit away from a subcommand is a misspelling, not a
+//     project. The arg-count guard above misses a single-arg call, so on
+//     2026-09-15 `muxcode agents` — "agent" plus an s, and also a real
+//     directory in this repo — resolved against cwd and started a 10-window
+//     fleet, leaving a generated agents/.codex/ behind. Directories whose
+//     names shadow a subcommand are reached by path (`muxcode ./agents`),
+//     which is what isPathLike exempts.
 func routeFor(base string, args []string) route {
 	if len(args) >= 1 && (args[0] == "--version" || args[0] == "-v") {
 		return routeVersion
@@ -94,6 +144,9 @@ func routeFor(base string, args []string) route {
 		}
 		if strings.HasPrefix(args[0], "-") {
 			return routeUsage
+		}
+		if !isPathLike(args[0]) && nearestSubcommand(args[0]) != "" {
+			return routeNearMiss
 		}
 		if len(args) > 2 || (len(args) == 2 && knownSubcommands[args[1]]) {
 			return routeAmbiguousName
@@ -194,6 +247,13 @@ func main() {
 		fmt.Fprintf(os.Stderr,
 			"The launcher takes at most <path> [<name>]; anything more is dropped.\n"+
 				"To launch anyway:  muxcode launch %s\n", strings.Join(args, " "))
+		os.Exit(1)
+	case routeNearMiss:
+		fmt.Fprintf(os.Stderr, "Refusing to launch a session from: muxcode %s\n\n", strings.Join(args, " "))
+		fmt.Fprintf(os.Stderr,
+			"That looks like a misspelled subcommand. Did you mean:  muxcode %s ...\n"+
+				"To launch a session for the directory instead:  muxcode ./%s\n",
+			nearestSubcommand(args[0]), args[0])
 		os.Exit(1)
 	case routeUsage:
 		fmt.Fprint(os.Stderr, usage)

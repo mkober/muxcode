@@ -27,3 +27,11 @@ node_modules/
 # inside a Go module.
 /tools/**/.opencode/
 /tools/**/.codex/
+
+# The same generated files, wherever a stray launch put them: the patterns
+# above are anchored, so a session started with cwd in a subdirectory (as
+# `muxcode agents` did on 2026-09-15) leaves them untracked and `git add -A`
+# stages them.
+**/.codex/AGENTS.md
+**/.codex/hooks.json
+**/.opencode/agents/*.md
