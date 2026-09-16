@@ -1734,7 +1734,11 @@ shipping.
 **Validation is strict by design.** Undefined node refs, unreachable nodes, and uncapped
 cycles are errors, not warnings — a loop is only legal via an explicit `max_iterations` on a
 loop edge. A node that commits or writes to Jira/Confluence is rejected unless it sits
-downstream of a `wait_human` gate.
+downstream of a `wait_human` gate — for the `commit` role every action but `pr-read` counts as a
+commit (`nodeRequiresGate`, `bus/graph.go`). That one read-shaped action is what lets
+`commit-pr-review-loop` open with a read-only `pr-precheck` and skip its gated commit+PR nodes when
+an open PR already exists (2026-09-16); the design is under
+[Graph orchestration](architecture.md#graph-orchestration-control-plane).
 
 **Run state** lives under `/tmp/muxcode-bus-{session}/graphs/<run-id>/` — `run.json`,
 `graph.json`, and `nodes/<id>.json` per node, written atomically. Because every transition

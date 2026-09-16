@@ -406,6 +406,73 @@ func TestCommitPrReviewLoopVerifiesPr(t *testing.T) {
 	}
 }
 
+// A PR that already exists must not be re-created: on 2026-09-16 a run
+// (1789586432) failed at 1/11 because the template always opened with the
+// commit node, which was asked to stage, commit, push and open a PR on a
+// branch whose PR #99 was already open. The commit agent correctly declined —
+// an unrelated uncommitted file and no commit message — and the run died.
+//
+// The precheck is pr-read, the commit role's one read-shaped action, so it
+// sits ahead of gate1 without tripping the gate rule: nothing it does needs
+// approval, and asking for one before knowing whether there is work would put
+// the question to a human who cannot yet answer it.
+//
+// The skip is asserted as a bypass rather than an ordering: a success edge
+// landing on gate1 or "a" would reach the commit node anyway and reproduce the
+// failure, so the structural check alone would pass while the defect stood.
+func TestCommitPrReviewLoopSkipsCommitWhenPrExists(t *testing.T) {
+	g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if g.Start != "pr-precheck" {
+		t.Errorf("start = %q, want pr-precheck — the run must look before it commits", g.Start)
+	}
+
+	byID := map[string]*Node{}
+	for i := range g.Nodes {
+		byID[g.Nodes[i].ID] = &g.Nodes[i]
+	}
+	pre, ok := byID["pr-precheck"]
+	if !ok {
+		t.Fatal("pr-precheck node missing")
+	}
+	if NormalizeBusRole(pre.Role) != "commit" || pre.Action != "pr-read" {
+		t.Errorf("pr-precheck = %s:%s, want commit:pr-read", pre.Role, pre.Action)
+	}
+	if nodeRequiresGate(pre) {
+		t.Error("pr-precheck requires a gate — it must be read-only to run before gate1")
+	}
+	cond, ok := byID["pr-exists"]
+	if !ok || cond.Type != NodeCondition {
+		t.Fatal("pr-exists condition node missing")
+	}
+	if v := cond.Conditions["output_contains"]; v != "PR-CONFIRMED" {
+		t.Errorf("pr-exists conditions = %v, want output_contains PR-CONFIRMED", cond.Conditions)
+	}
+
+	var skip, fallThrough bool
+	for _, e := range g.Edges {
+		if e.From != "pr-exists" {
+			continue
+		}
+		switch {
+		case e.To == "b" && e.Outcome == "":
+			skip = true
+		case e.To == "gate1" && e.Outcome == OutcomeFailure:
+			fallThrough = true
+		case e.Outcome == "" && (e.To == "gate1" || e.To == "a"):
+			t.Errorf("success edge pr-exists -> %q reaches the commit node the skip exists to avoid", e.To)
+		}
+	}
+	if !skip {
+		t.Error("no success edge pr-exists -> b: an existing PR still runs the commit node")
+	}
+	if !fallThrough {
+		t.Error("no failure edge pr-exists -> gate1: with no PR the run never commits")
+	}
+}
+
 func TestResolveGraphTemplateBuiltin(t *testing.T) {
 	g, source, err := ResolveGraphTemplate("build-test-review")
 	if err != nil {

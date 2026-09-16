@@ -79,6 +79,27 @@ func completeSendNode(t *testing.T, session, runID, nodeID, rowOutcome string) {
 	}
 }
 
+// completeSendNodeWithReply answers a running send node with a real bus
+// message, so the executor derives the node's outcome from the reply body the
+// way a live agent's verdict token is read. completeSendNode's synthetic
+// response id resolves to nothing, which leaves the output empty — fine for a
+// node evidenced by a history row, useless for one judged on what it said.
+func completeSendNodeWithReply(t *testing.T, session, runID, nodeID, role, reply string) {
+	t.Helper()
+	st, err := ReadNodeStatus(session, runID, nodeID)
+	if err != nil {
+		t.Fatalf("read node %s: %v", nodeID, err)
+	}
+	if st.State != GraphNodeRunning || st.TaskID == "" {
+		t.Fatalf("node %s not running with a task: %+v", nodeID, st)
+	}
+	resp := NewMessage(role, "edit", "response", "response", reply, "")
+	if err := Send(session, resp); err != nil {
+		t.Fatal(err)
+	}
+	CompleteTask(session, st.TaskID, resp.ID)
+}
+
 // fixtureCommandFor is the command a fixture row carries so it can testify
 // for the node's action. An action no command evidences keeps an unclassified
 // one: such a node is attributed by its agent's token, and a fixture must not
@@ -507,6 +528,84 @@ func TestRawRowWithoutHookSourceIsNotEvidence(t *testing.T) {
 	row, ok := latestAuthoritativeRow(runTestSession, "build", since)
 	if !ok || row.Outcome != OutcomeSuccess {
 		t.Fatalf("stamped row = (%+v, %v), want it accepted — the file is readable", row, ok)
+	}
+}
+
+// TestCommitPrReviewLoopPrecheckRouting drives the real template through the
+// executor. The structural test asserts which edges exist; this asserts where
+// a run actually goes, which is where the defect lived.
+//
+// git-manager.md tells the commit role to end a reply EXIT=1 when the
+// requested state does not hold, naming PR existence as the example. Read that
+// way a precheck answering NO-PR-FOUND fails its own node, and since only a
+// success edge leaves it, the run dies before the condition that routes "no
+// PR" to the commit gate ever evaluates — the template's main path,
+// unreachable, with the structural test still green. The node messages
+// override that default; these cases pin the routing it produces.
+//
+// The lookup-failure case is the negative control: EXIT=1 must still fail,
+// or "always succeed" would satisfy the two cases above.
+func TestCommitPrReviewLoopPrecheckRouting(t *testing.T) {
+	cases := []struct {
+		name      string
+		reply     string
+		reached   string // node the run must arrive at
+		unreached string // node it must not have touched
+		wantRun   string
+	}{
+		{
+			name:      "an existing PR skips the commit gate",
+			reply:     "PR-CONFIRMED https://example.test/pull/99 EXIT=0",
+			reached:   "b",
+			unreached: "gate1",
+			wantRun:   GraphRunRunning,
+		},
+		{
+			name:      "no PR routes to the commit gate",
+			reply:     "NO-PR-FOUND EXIT=0",
+			reached:   "gate1",
+			unreached: "b",
+			wantRun:   GraphRunRunning,
+		},
+		{
+			name:    "an incomplete lookup picks no branch",
+			reply:   "gh is unavailable, could not determine EXIT=1",
+			wantRun: GraphRunFailed,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			run := createTestRun(t, g)
+
+			step(t, runTestSession, run.ID)
+			if s := nodeState(t, runTestSession, run.ID, "pr-precheck"); s != GraphNodeRunning {
+				t.Fatalf("pr-precheck state %q, want running — the run does not start at the precheck", s)
+			}
+			completeSendNodeWithReply(t, runTestSession, run.ID, "pr-precheck", "commit", tc.reply)
+			for i := 0; i < 3; i++ {
+				step(t, runTestSession, run.ID)
+			}
+
+			if tc.reached != "" {
+				if s := nodeState(t, runTestSession, run.ID, tc.reached); s == GraphNodePending {
+					t.Errorf("%s still pending — the run never reached it", tc.reached)
+				}
+				if s := nodeState(t, runTestSession, run.ID, tc.unreached); s != GraphNodePending {
+					t.Errorf("%s state = %q, want pending — that branch should not have been taken", tc.unreached, s)
+				}
+			}
+			got, err := ReadGraphRun(runTestSession, run.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State != tc.wantRun {
+				t.Errorf("run state = %q, want %q", got.State, tc.wantRun)
+			}
+		})
 	}
 }
 

@@ -71,10 +71,12 @@ var builtinGraphJSON = map[string]string{
 
 	"commit-pr-review-loop": `{
   "name": "commit-pr-review-loop",
-  "description": "Gated commit+PR, watch review feedback, gated fix loop with comment replies, then spec close-out",
-  "start": "gate1",
+  "description": "Skip to the review loop when a PR already exists, else gated commit+PR; watch review feedback, gated fix loop with comment replies, then spec close-out",
+  "start": "pr-precheck",
   "nodes": [
-    {"id": "gate1", "type": "wait_human", "message": "Approve staging, commit, push, and PR creation"},
+    {"id": "pr-precheck", "type": "send", "role": "commit", "action": "pr-read", "message": "Report whether an open PR already exists for the current branch WITHOUT creating or changing anything. Your reply MUST contain the literal token PR-CONFIRMED followed by its URL if one exists, or the literal token NO-PR-FOUND if none does — no other phrasing for that verdict. This node asks a question, so a completed lookup is EXIT=0 EITHER WAY: finding no PR is a successful answer, not a failure. Reserve EXIT=1 for a lookup you could not complete at all"},
+    {"id": "pr-exists", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
+    {"id": "gate1", "type": "wait_human", "message": "No PR exists yet — approve staging, commit, push, and PR creation"},
     {"id": "a", "type": "send", "role": "commit", "action": "commit", "message": "Stage all unstaged files, commit, push, and create a PR"},
     {"id": "verify-pr", "type": "send", "role": "commit", "action": "pr-read", "message": "Confirm an open PR exists for the current branch. Your reply MUST contain the literal token PR-CONFIRMED followed by its URL if one exists, or the literal token NO-PR-FOUND if none does — no other phrasing for that verdict"},
     {"id": "pr-check", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
@@ -87,6 +89,9 @@ var builtinGraphJSON = map[string]string{
     {"id": "commit-spec", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the completed requirements doc move and push it to the PR branch (nothing moved = reply nothing to do)"}
   ],
   "edges": [
+    {"from": "pr-precheck", "to": "pr-exists"},
+    {"from": "pr-exists", "to": "b"},
+    {"from": "pr-exists", "to": "gate1", "outcome": "failure"},
     {"from": "gate1", "to": "a"},
     {"from": "a", "to": "verify-pr"},
     {"from": "verify-pr", "to": "pr-check"},
