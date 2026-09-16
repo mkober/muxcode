@@ -202,6 +202,8 @@ muxcode send commit pr-read "Read PR reviews and CI failures on the current bran
 
 The git-manager reads reviews, CI checks, and inline comments, categorizes them (must-fix / should-fix / informational), and reports a structured summary back to edit.
 
+**Verdict sentinel on graph dispatches.** When the request comes from the graph executor (sender `daemon`), the reply must end with `EXIT=0` when the requested state holds or `EXIT=1` when it does not — a `pr-read` reply runs no git command, so no hook row backs it, and without the sentinel the node parks on an unverified hold for a person to approve a verdict already sitting in the text (`git-manager.md`). **A question-shaped node overrides that default in its own message:** when the node asks *whether* something holds rather than telling the agent to make it hold, the requested state is "the lookup completed", so both answers end `EXIT=0` and `EXIT=1` is reserved for a lookup that could not be completed at all. `commit-pr-review-loop`'s `pr-precheck` and `verify-pr` both say so (*"EXIT=0 EITHER WAY"*) and branch on the `PR-CONFIRMED` / `NO-PR-FOUND` tokens through their condition nodes. Read the default literally, an honest `NO-PR-FOUND EXIT=1` fails the node, and because only a success edge leaves it the run ends *failed with no live edge* before the condition that routes "no PR" ever evaluates — the latent shape `verify-pr` carried since it shipped and `pr-precheck` inherited on 2026-09-16. Pinned by `TestCommitPrReviewLoopQuestionNodesDeclareExitConvention` (the wording) and `TestCommitPrReviewLoopPrecheckRouting` (the routing, with an incomplete lookup `EXIT=1` → `GraphRunFailed` as the negative control).
+
 **Standalone use** (outside a session):
 ```bash
 export BUS_SESSION="your-session"

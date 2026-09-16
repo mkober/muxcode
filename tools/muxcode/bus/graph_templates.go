@@ -78,7 +78,7 @@ var builtinGraphJSON = map[string]string{
     {"id": "pr-exists", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
     {"id": "gate1", "type": "wait_human", "message": "No PR exists yet — approve staging, commit, push, and PR creation"},
     {"id": "a", "type": "send", "role": "commit", "action": "commit", "message": "Stage all unstaged files, commit, push, and create a PR"},
-    {"id": "verify-pr", "type": "send", "role": "commit", "action": "pr-read", "message": "Confirm an open PR exists for the current branch. Your reply MUST contain the literal token PR-CONFIRMED followed by its URL if one exists, or the literal token NO-PR-FOUND if none does — no other phrasing for that verdict"},
+    {"id": "verify-pr", "type": "send", "role": "commit", "action": "pr-read", "message": "Report whether an open PR now exists for the current branch. Your reply MUST contain the literal token PR-CONFIRMED followed by its URL if one exists, or the literal token NO-PR-FOUND if none does — no other phrasing for that verdict. This node asks a question, so a completed lookup is EXIT=0 EITHER WAY: reporting that no PR was created is a successful answer, and the downstream condition acts on it. Reserve EXIT=1 for a lookup you could not complete at all"},
     {"id": "pr-check", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
     {"id": "b", "type": "send", "role": "commit", "action": "pr-read", "message": "Watch for PR comments and report the review decision and any comments"},
     {"id": "gate2", "type": "wait_human", "message": "Approve addressing the review feedback and replying to comments"},

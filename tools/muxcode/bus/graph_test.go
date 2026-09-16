@@ -473,6 +473,42 @@ func TestCommitPrReviewLoopSkipsCommitWhenPrExists(t *testing.T) {
 	}
 }
 
+// Both question-shaped nodes must override the commit role's default verdict
+// convention in their own message. git-manager.md answers EXIT=1 when the
+// requested state does not hold and names PR existence as the case, so a node
+// that asks whether a PR exists gets a failure for the "no" answer unless it
+// says otherwise — and a failed node routes nowhere, stranding the branch that
+// exists to handle "no".
+//
+// The executor test pins the routing that follows from an EXIT=0 reply; this
+// pins the instruction that produces one. Without it the wording could be
+// reverted and only a live run would notice.
+func TestCommitPrReviewLoopQuestionNodesDeclareExitConvention(t *testing.T) {
+	g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, id := range []string{"pr-precheck", "verify-pr"} {
+		var n *Node
+		for i := range g.Nodes {
+			if g.Nodes[i].ID == id {
+				n = &g.Nodes[i]
+			}
+		}
+		if n == nil {
+			t.Errorf("%s node missing", id)
+			continue
+		}
+		if !strings.Contains(n.Message, "EXIT=0 EITHER WAY") {
+			t.Errorf("%s does not tell the agent a completed lookup is EXIT=0 either way; "+
+				"a NO-PR-FOUND reply will fail the node and strand the branch", id)
+		}
+		if !strings.Contains(n.Message, "NO-PR-FOUND") {
+			t.Errorf("%s does not name the NO-PR-FOUND token its condition branches on", id)
+		}
+	}
+}
+
 func TestResolveGraphTemplateBuiltin(t *testing.T) {
 	g, source, err := ResolveGraphTemplate("build-test-review")
 	if err != nil {
