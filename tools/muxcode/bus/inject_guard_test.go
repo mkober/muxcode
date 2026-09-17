@@ -195,6 +195,111 @@ func TestCaptureInjectionTarget_ShellUnderStaleComposerRefused(t *testing.T) {
 	}
 }
 
+// The pane from the 2026-09-17 muxcode incident, captured between Claude
+// Code's exit banner and bash's first prompt. Nothing here ends in a prompt
+// suffix, so the shell test alone answers "not a shell" and the payload — a
+// watch notify carrying $(...) — was typed into a tty bash then submitted.
+// The composer the agent drew before dying sits ABOVE the banner, which is the
+// ordinary shape and not an edge case: a guard reading a ❯ anywhere as "live"
+// clears this exact frame.
+const claudeMidExitPane = "⏺ Done — 25 commits ahead of origin/main.\n" +
+	"❯ \n" +
+	"▶▶ bypass permissions on (shift+tab to cycle)\n" +
+	"\n" +
+	"Resume this session with:\n" +
+	"claude --resume 8a744341-11bf-440f-b5d2-49248447a9c0\n"
+
+func TestCaptureInjectionTarget_RefusesMidExitPane(t *testing.T) {
+	session := "inject-guard-midexit"
+	injectionTestSession(t, session)
+	calls := stubInjectionPane(t, claudeMidExitPane, nil)
+
+	if _, shell := paneEndsAtShellPrompt(claudeMidExitPane); shell {
+		t.Fatal("fixture no longer reproduces the gap: it already reads as a shell")
+	}
+
+	_, err := captureInjectionTarget(session, session+":edit.1", "edit")
+	if !errors.Is(err, ErrInjectionSkipped) {
+		t.Fatalf("a mid-exit pane must refuse with ErrInjectionSkipped, got %v", err)
+	}
+	if keys := sentKeys(*calls); len(keys) != 0 {
+		t.Errorf("a refusal must type nothing, sent %v", keys)
+	}
+	if n := countLifecycleEvents(t, session, "injection-refused"); n != 1 {
+		t.Errorf("injection-refused lifecycle rows = %d, want 1", n)
+	}
+}
+
+// A narrow pane soft-wraps the banner mid-phrase and pushes it off any fixed
+// tail; capture carries no -J to rejoin it. Both shapes must still refuse.
+func TestCaptureInjectionTarget_RefusesWrappedExitBanner(t *testing.T) {
+	session := "inject-guard-midexit-wrap"
+	injectionTestSession(t, session)
+
+	wrapped := "⏺ Done.\n" +
+		"❯ \n" +
+		"\n" +
+		"Resume this sessio\n" +
+		"n with:\n" +
+		"claude --resume 8a744341-11bf-4\n" +
+		"40f-b5d2-49248447a9c0\n"
+	if strings.Contains(wrapped, agentExitBanner) {
+		t.Fatal("fixture no longer reproduces the wrap: the banner is intact")
+	}
+	if !strings.Contains(wrapped, idlePromptChar) {
+		t.Fatal("fixture must keep the pre-exit composer above the banner")
+	}
+	stubInjectionPane(t, wrapped, nil)
+	if _, err := captureInjectionTarget(session, session+":edit.1", "edit"); !errors.Is(err, ErrInjectionSkipped) {
+		t.Fatalf("a wrapped exit banner must refuse, got %v", err)
+	}
+	if n := countLifecycleEvents(t, session, "injection-refused"); n != 1 {
+		t.Errorf("injection-refused lifecycle rows = %d, want 1", n)
+	}
+}
+
+// The banner survives in scrollback after the relaunch, so a live composer —
+// not a line count — is what keeps the healthy pane that replaced it
+// deliverable. Negative control: blank lines under the banner still refuse.
+func TestCaptureInjectionTarget_MidExitYieldsToLiveComposer(t *testing.T) {
+	session := "inject-guard-midexit-anchor"
+	injectionTestSession(t, session)
+
+	relaunched := claudeMidExitPane +
+		"⏺ Restarted.\n❯ \n▶▶ bypass permissions on (shift+tab to cycle)\n"
+	stubInjectionPane(t, relaunched, nil)
+	if _, err := captureInjectionTarget(session, session+":edit.1", "edit"); err != nil {
+		t.Fatalf("a relaunched agent under a scrolled-up banner must proceed, got %v", err)
+	}
+	if n := countLifecycleEvents(t, session, "injection-refused"); n != 0 {
+		t.Errorf("no refusal expected for a live pane, lifecycle rows = %d", n)
+	}
+
+	stubInjectionPane(t, claudeMidExitPane+"\n\n", nil)
+	if _, err := captureInjectionTarget(session, session+":edit.1", "edit"); !errors.Is(err, ErrInjectionSkipped) {
+		t.Fatalf("blank lines under the banner must still refuse, got %v", err)
+	}
+}
+
+// A capture wide enough to span exit → relaunch → exit carries a composer
+// below its FIRST banner and nothing below its last. Only the newest exit
+// describes the pane being typed into.
+func TestCaptureInjectionTarget_RefusesSecondExitAfterRelaunch(t *testing.T) {
+	session := "inject-guard-midexit-twice"
+	injectionTestSession(t, session)
+
+	twice := claudeMidExitPane +
+		"⏺ Restarted.\n❯ \n" +
+		claudeMidExitPane
+	if strings.Count(stripWhitespace(twice), stripWhitespace(agentExitBanner)) != 2 {
+		t.Fatal("fixture must carry two exit banners")
+	}
+	stubInjectionPane(t, twice, nil)
+	if _, err := captureInjectionTarget(session, session+":edit.1", "edit"); !errors.Is(err, ErrInjectionSkipped) {
+		t.Fatalf("the newest exit must decide, got %v", err)
+	}
+}
+
 func TestCodexAcceptStartup_TrustPromptPressesEnter(t *testing.T) {
 	calls := stubInjectionPane(t, "", nil)
 	p := &CodexProvider{}
