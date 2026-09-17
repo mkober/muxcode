@@ -84,6 +84,10 @@ func completeSendNode(t *testing.T, session, runID, nodeID, rowOutcome string) {
 // way a live agent's verdict token is read. completeSendNode's synthetic
 // response id resolves to nothing, which leaves the output empty — fine for a
 // node evidenced by a history row, useless for one judged on what it said.
+//
+// The reply is addressed away from its own role because Send drops a
+// self-addressed message (isLoopingSelfSend); the recipient is otherwise
+// irrelevant, since deriveSendOutcome looks the reply up by id.
 func completeSendNodeWithReply(t *testing.T, session, runID, nodeID, role, reply string) {
 	t.Helper()
 	st, err := ReadNodeStatus(session, runID, nodeID)
@@ -93,7 +97,11 @@ func completeSendNodeWithReply(t *testing.T, session, runID, nodeID, role, reply
 	if st.State != GraphNodeRunning || st.TaskID == "" {
 		t.Fatalf("node %s not running with a task: %+v", nodeID, st)
 	}
-	resp := NewMessage(role, "edit", "response", "response", reply, "")
+	to := "edit" // an edit-role reply to edit is dropped as a self-send
+	if NormalizeBusRole(role) == "edit" {
+		to = "commit"
+	}
+	resp := NewMessage(role, to, "response", "response", reply, "")
 	if err := Send(session, resp); err != nil {
 		t.Fatal(err)
 	}
@@ -529,6 +537,83 @@ func TestRawRowWithoutHookSourceIsNotEvidence(t *testing.T) {
 	if !ok || row.Outcome != OutcomeSuccess {
 		t.Fatalf("stamped row = (%+v, %v), want it accepted — the file is readable", row, ok)
 	}
+}
+
+// TestSeedVerdictToken pins which dispatches carry the token, in both
+// directions. Seeding everything is as wrong as seeding nothing: a node with
+// an evidencing row that is also asked for a token can produce two signals
+// that disagree, which deriveSendOutcome resolves by holding.
+func TestSeedVerdictToken(t *testing.T) {
+	unevidenced := []string{"edit", "comment", "review", "update-docs", "pr-read", "jira-write"}
+	for _, action := range unevidenced {
+		got := seedVerdictToken(action, "do the thing")
+		if !strings.Contains(got, verdictTokenInstruction) {
+			t.Errorf("seedVerdictToken(%q) carries no token instruction — the node has no signal at all", action)
+		}
+		if !strings.HasPrefix(got, "do the thing") {
+			t.Errorf("seedVerdictToken(%q) = %q, want the message kept intact ahead of the seed", action, got)
+		}
+	}
+	for _, action := range []string{"build", "test", "deploy", "commit", "checkout"} {
+		if got := seedVerdictToken(action, "do the thing"); got != "do the thing" {
+			t.Errorf("seedVerdictToken(%q) seeded a token onto an action a command evidences: %q", action, got)
+		}
+	}
+}
+
+// TestExecSendSeedsVerdictForUnevidencedAction is the executor-level proof:
+// the seed must reach the agent's inbox, not merely exist as a function.
+//
+// commit-pr-review-loop's `c` is the node this phase exists for — edit:edit,
+// which no command evidences and whose role definition carries no EXIT= line,
+// so before the seed it held on every run.
+func TestExecSendSeedsVerdictForUnevidencedAction(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "c",
+		Nodes: []Node{
+			{ID: "c", Type: NodeSend, Role: "edit", Action: "edit", Message: "Address the PR review comments"},
+			{ID: "bld", Type: NodeSend, Role: "build", Action: "build", Message: "Run ./build.sh"},
+		},
+		Edges: []Edge{{From: "c", To: "bld"}},
+	}
+	run := createTestRun(t, g)
+	step(t, runTestSession, run.ID)
+
+	dispatch, ok := dispatchTo(t, "edit", "edit")
+	if !ok {
+		t.Fatal("no edit:edit dispatch reached the inbox")
+	}
+	if !strings.Contains(dispatch.Payload, verdictTokenInstruction) {
+		t.Errorf("dispatch to edit carries no verdict instruction:\n%s", dispatch.Payload)
+	}
+
+	// Negative control: "seed everything" would pass the assertion above.
+	completeSendNodeWithReply(t, runTestSession, run.ID, "c", "edit", "fixed them EXIT=0")
+	for i := 0; i < 2; i++ {
+		step(t, runTestSession, run.ID)
+	}
+	bdispatch, ok := dispatchTo(t, "build", "build")
+	if !ok {
+		t.Fatal("no build:build dispatch reached the inbox — the negative control never ran")
+	}
+	if strings.Contains(bdispatch.Payload, verdictTokenInstruction) {
+		t.Errorf("build dispatch was seeded a token although its row evidences it:\n%s", bdispatch.Payload)
+	}
+}
+
+// dispatchTo returns the graph's request to a role for an action. An inbox
+// also carries run-lifecycle events (graph-run-created lands in edit's), so a
+// dispatch is selected by action rather than by being the only message there.
+func dispatchTo(t *testing.T, role, action string) (Message, bool) {
+	t.Helper()
+	msgs, _ := Peek(runTestSession, role)
+	for _, m := range msgs {
+		if m.Action == action && m.Type == "request" {
+			return m, true
+		}
+	}
+	return Message{}, false
 }
 
 // TestCommitPrReviewLoopPrecheckRouting drives the real template through the
@@ -4075,9 +4160,11 @@ func TestExecSpawnTaskNamesOnlyReachableRoles(t *testing.T) {
 // precede the worker's message. An implementation that always prefixed would
 // pass the positive case above and fail here.
 //
-// Asserted as a prefix, not an equality: every seed carries the verdict
-// instruction appended after the message (spawnVerdictInstruction), and a node
-// with no successors needs attributing like any other.
+// Asserted as a prefix, not an equality: every seed carries
+// verdictTokenInstruction appended after the message, and a node with no
+// successors needs attributing like any other. That prefix assertion passes
+// with or without the seed, which is why the seed is asserted separately
+// below — otherwise it could be deleted with the suite green.
 func TestExecSpawnTaskUnprefixedWithoutSendNodes(t *testing.T) {
 	g := &Graph{
 		Name:  "t",
@@ -4097,6 +4184,9 @@ func TestExecSpawnTaskUnprefixedWithoutSendNodes(t *testing.T) {
 	}
 	if strings.Contains(got, "Do NOT delegate") {
 		t.Errorf("task %q carries an ownership preamble for a graph that owns nothing", got)
+	}
+	if !strings.Contains(got, verdictTokenInstruction) {
+		t.Errorf("task %q carries no verdict instruction — the worker has no way to attribute itself", got)
 	}
 }
 

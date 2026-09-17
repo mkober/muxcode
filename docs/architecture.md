@@ -529,8 +529,20 @@ carried the same latent shape since it shipped — say in their own message that
 `EXIT=0` either way and `EXIT=1` means the lookup itself could not be done; `git-manager.md` records
 the override rule (a node's own message beats the default), `TestCommitPrReviewLoopQuestionNodesDeclareExitConvention`
 pins the wording and `TestCommitPrReviewLoopPrecheckRouting` the routing, with the `EXIT=1` lookup
-failure → `GraphRunFailed` as its negative control. The `c`→`d` gap that spec's Defect 2 records is
-untouched.
+failure → `GraphRunFailed` as its negative control. The `c`→`d` gap that spec's Defect 2 records —
+`d` asked to reply to review comments citing a fix nothing had committed — is closed the same
+afternoon by `push-fixes`, a `commit:commit` node between `c` and `d` under `gate2`, whose approval
+text now names the commit and push, with `d` told to cite the sha it reports
+(`TestCommitPrReviewLoopCommitsFixesBeforeReplying`). And the executor now **seeds the verdict
+token on the send road** as it has seeded spawn workers since MUX-148 Phase 3: `seedVerdictToken`
+appends `verdictTokenInstruction` to every send dispatch whose action no command can evidence
+(`edit`, `comment`, `review`, `update-docs`, `pr-read`, `jira-write`, …), because `c` (`edit:edit`)
+would otherwise hold on every run — no command row can testify for it and `code-editor.md` carries no
+`EXIT=` line. Seeding at dispatch closes the class rather than the instance; nodes a command evidences
+are deliberately left unseeded, since their row is the stronger signal and a second one invites the
+conflict hold (`TestSeedVerdictToken`, `TestExecSendSeedsVerdictForUnevidencedAction`). The same
+template scan found `story-to-spec` asking its tracker-update nodes to reference a requirements doc
+that `draft` created and nothing committed — recorded in MUX-148 as a finding for the user, not fixed.
 
 **Workers, stalls and the watchdog (2026-09-09).** Four executor rules came out of the second
 `spec-to-pr` run on MUX-159 (`1788930816-spec-to-pr-f7fb2610`), whose commit dispatch the daemon

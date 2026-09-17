@@ -509,6 +509,51 @@ func TestCommitPrReviewLoopQuestionNodesDeclareExitConvention(t *testing.T) {
 	}
 }
 
+// `d` replies to PR comments about fixes `c` made, so something must commit
+// and push them in between or it cites work that exists only in a working
+// tree. The inserted node is a git mutation, so it must also fall inside a
+// gate's territory — gate2's, whose message names the push for the approval
+// to mean what it releases.
+func TestCommitPrReviewLoopCommitsFixesBeforeReplying(t *testing.T) {
+	g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var push *Node
+	for i := range g.Nodes {
+		if g.Nodes[i].ID == "push-fixes" {
+			push = &g.Nodes[i]
+		}
+	}
+	if push == nil {
+		t.Fatal("push-fixes node missing — d still cites uncommitted work")
+	}
+	if NormalizeBusRole(push.Role) != "commit" || push.Action != "commit" {
+		t.Errorf("push-fixes = %s:%s, want commit:commit", push.Role, push.Action)
+	}
+	if !nodeRequiresGate(push) {
+		t.Error("push-fixes is not recognised as a gated mutation — the authority rules would not cover it")
+	}
+
+	var cToPush, pushToD, cToD bool
+	for _, e := range g.Edges {
+		switch {
+		case e.From == "c" && e.To == "push-fixes":
+			cToPush = true
+		case e.From == "push-fixes" && e.To == "d":
+			pushToD = true
+		case e.From == "c" && e.To == "d":
+			cToD = true
+		}
+	}
+	if !cToPush || !pushToD {
+		t.Errorf("c -> push-fixes -> d incomplete: cToPush=%v pushToD=%v", cToPush, pushToD)
+	}
+	if cToD {
+		t.Error("c -> d still present — the fixes can reach the reply without being committed")
+	}
+}
+
 func TestResolveGraphTemplateBuiltin(t *testing.T) {
 	g, source, err := ResolveGraphTemplate("build-test-review")
 	if err != nil {

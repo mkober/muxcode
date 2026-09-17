@@ -710,7 +710,7 @@ func reachableNodes(g *Graph, start string) map[string]bool {
 // The task message is the only channel into the worker's context, so the
 // contradiction is stated there. CheckGraphNodeAuthority enforces it.
 func graphWorkerTask(g *Graph, runID, nodeID, msg string) string {
-	body := msg + "\n\n" + spawnVerdictInstruction
+	body := msg + "\n\n" + verdictTokenInstruction
 	roles := graphOwnedRoles(g, nodeID)
 	if len(roles) == 0 {
 		return body
@@ -723,21 +723,42 @@ func graphWorkerTask(g *Graph, runID, nodeID, msg string) string {
 		runID, nodeID, owned, strings.Join(roles, "|"), body)
 }
 
-// spawnVerdictInstruction seeds the positive token spawnGroupOutcome reads.
+// verdictTokenInstruction seeds the positive token both roads read —
+// spawnGroupOutcome on the spawn road, parseExitSentinel on the send road.
 //
-// The spawn road has no console history to consult, so the worker's own
-// verdict is the only evidence a node's work was done rather than declined
-// — and a token nobody was asked for is a token nobody emits. It rides the
-// task message because that is the one channel into a worker's context, and
-// it is appended whether or not the graph owns downstream roles: a node with
-// no successors still needs attributing.
+// A node whose work no command can evidence is attributed by the agent's own
+// verdict and nothing else — and a token nobody was asked for is a token
+// nobody emits. It rides the message because that is the one channel into the
+// agent's context, and it is appended whether or not the graph owns
+// downstream roles: a node with no successors still needs attributing.
 //
 // The placeholder is written EXIT=<n>, never a literal code: a provider TUI
 // that captures request text as the reply (MUX-154) would otherwise hand the
-// executor a verdict the worker never gave.
-const spawnVerdictInstruction = "Finish your reply with the verdict token on its own line: EXIT=<n> — " +
+// executor a verdict the agent never gave.
+const verdictTokenInstruction = "Finish your reply with the verdict token on its own line: EXIT=<n> — " +
 	"zero if you did the work, non-zero if you could not. It is the only signal that records this node; " +
 	"a reply without it cannot be attributed and holds the run for a human."
+
+// seedVerdictToken appends verdictTokenInstruction to a send dispatch whose
+// action no command can evidence.
+//
+// The spawn road has seeded its workers since Phase 3; the send road seeded
+// nothing, leaving every such node to whatever its template and role
+// definition happened to say. So commit-pr-review-loop's `c` (edit:edit) held
+// on every run: actionsWithoutCommandEvidence rules out a command row, and
+// code-editor.md carries no EXIT= line, which leaves the node with no signal
+// of any kind. Seeding at dispatch closes the class rather than the instance —
+// a new template cannot forget what it never had to remember.
+//
+// Actions an evidencing command exists for are left alone: their row is the
+// stronger signal, and asking for a token as well invites the conflict hold
+// deriveSendOutcome takes when the two disagree.
+func seedVerdictToken(action, msg string) string {
+	if !actionsWithoutCommandEvidence[action] {
+		return msg
+	}
+	return msg + "\n\n" + verdictTokenInstruction
+}
 
 // resolveCompletedPhaseText expands ${completed_phase}: the completion
 // frontier the commit ships — see SpecJustCompletedPhase for why the
@@ -1003,7 +1024,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 
 	switch n.Type {
 	case NodeSend:
-		msg := interpolateGraphMessage(session, run, n.Message, "")
+		msg := seedVerdictToken(n.Action, interpolateGraphMessage(session, run, n.Message, ""))
 		m := NewMessage(graphSender, n.Role, "request", n.Action, msg, "")
 		m.GraphRun, m.GraphNode = run.ID, n.ID
 		if err := SendNoCC(session, m); err != nil {

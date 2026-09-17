@@ -81,9 +81,10 @@ var builtinGraphJSON = map[string]string{
     {"id": "verify-pr", "type": "send", "role": "commit", "action": "pr-read", "message": "Report whether an open PR now exists for the current branch. Your reply MUST contain the literal token PR-CONFIRMED followed by its URL if one exists, or the literal token NO-PR-FOUND if none does — no other phrasing for that verdict. This node asks a question, so a completed lookup is EXIT=0 EITHER WAY: reporting that no PR was created is a successful answer, and the downstream condition acts on it. Reserve EXIT=1 for a lookup you could not complete at all"},
     {"id": "pr-check", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
     {"id": "b", "type": "send", "role": "commit", "action": "pr-read", "message": "Watch for PR comments and report the review decision and any comments"},
-    {"id": "gate2", "type": "wait_human", "message": "Approve addressing the review feedback and replying to comments"},
+    {"id": "gate2", "type": "wait_human", "message": "Approve addressing the review feedback, then committing and pushing those fixes to the PR branch, and replying to the comments"},
     {"id": "c", "type": "send", "role": "edit", "action": "edit", "message": "Address the PR review comments"},
-    {"id": "d", "type": "send", "role": "commit", "action": "comment", "message": "Reply to the PR comments"},
+    {"id": "push-fixes", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the review-feedback changes made upstream, push them to the PR branch, and report the commit sha (nothing changed = reply nothing to do)"},
+    {"id": "d", "type": "send", "role": "commit", "action": "comment", "message": "Reply to the PR comments, citing the commit sha reported upstream for each fix that was pushed"},
     {"id": "close-gate", "type": "wait_human", "message": "Approve the spec close-out: status Complete, move to completed/, then its commit and push (the guard declines while any item is open)"},
     {"id": "close-spec", "type": "send", "role": "plan", "action": "update-docs", "guard": "spec-complete", "message": "Close out the active requirements doc ONLY if every acceptance criterion and phase step is checked complete: set status Complete, move it to docs/requirements/completed/, clear the active spec, report the new path. Any item still open = refuse and report the open count (no active spec = reply nothing to do)"},
     {"id": "commit-spec", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the completed requirements doc move and push it to the PR branch (nothing moved = reply nothing to do)"}
@@ -99,7 +100,8 @@ var builtinGraphJSON = map[string]string{
     {"from": "pr-check", "to": "a", "outcome": "failure", "max_iterations": 3},
     {"from": "b", "to": "gate2"},
     {"from": "gate2", "to": "c"},
-    {"from": "c", "to": "d"},
+    {"from": "c", "to": "push-fixes"},
+    {"from": "push-fixes", "to": "d"},
     {"from": "d", "to": "close-gate"},
     {"from": "close-gate", "to": "close-spec"},
     {"from": "close-spec", "to": "commit-spec"}
