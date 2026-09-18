@@ -109,7 +109,7 @@ claim what it refused.
   [MUX-171](./MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md) (found in the same hour, the
   other way a daemon mechanism written for one case fires on another);
   [MUX-112](./MUX-112-idle-task-rescue-closes-live-work.md) and
-  [MUX-148](./MUX-148-node-outcome-reads-command-ran-as-task-done.md) (the task-correlation family).
+  [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) (the task-correlation family).
 
 ## Status
 

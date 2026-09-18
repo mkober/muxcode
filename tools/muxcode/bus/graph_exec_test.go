@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // fakeSpawns replaces graphSpawnFn with an in-memory dispatcher that
@@ -61,13 +62,13 @@ func completeSendNode(t *testing.T, session, runID, nodeID, rowOutcome string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var role string
+		var role, action string
 		for _, n := range g.Nodes {
 			if n.ID == nodeID {
-				role = NormalizeBusRole(n.Role)
+				role, action = NormalizeBusRole(n.Role), n.Action
 			}
 		}
-		row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: "./fake.sh",
+		row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: fixtureCommandFor(action),
 			ExitCode: "0", Outcome: rowOutcome}
 		if rowOutcome == OutcomeFailure {
 			row.ExitCode = "1"
@@ -75,6 +76,63 @@ func completeSendNode(t *testing.T, session, runID, nodeID, rowOutcome string) {
 		if err := WriteHookHistory(HistoryPath(session, role), row, 100); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// completeSendNodeWithReply answers a running send node with a real bus
+// message, so the executor derives the node's outcome from the reply body the
+// way a live agent's verdict token is read. completeSendNode's synthetic
+// response id resolves to nothing, which leaves the output empty — fine for a
+// node evidenced by a history row, useless for one judged on what it said.
+//
+// The reply is addressed away from its own role because Send drops a
+// self-addressed message (isLoopingSelfSend); the recipient is otherwise
+// irrelevant, since deriveSendOutcome looks the reply up by id.
+func completeSendNodeWithReply(t *testing.T, session, runID, nodeID, role, reply string) {
+	t.Helper()
+	st, err := ReadNodeStatus(session, runID, nodeID)
+	if err != nil {
+		t.Fatalf("read node %s: %v", nodeID, err)
+	}
+	if st.State != GraphNodeRunning || st.TaskID == "" {
+		t.Fatalf("node %s not running with a task: %+v", nodeID, st)
+	}
+	to := "edit" // an edit-role reply to edit is dropped as a self-send
+	if NormalizeBusRole(role) == "edit" {
+		to = "commit"
+	}
+	resp := NewMessage(role, to, "response", "response", reply, "")
+	if err := Send(session, resp); err != nil {
+		t.Fatal(err)
+	}
+	CompleteTask(session, st.TaskID, resp.ID)
+}
+
+// fixtureCommandFor is the command a fixture row carries so it can testify
+// for the node's action. An action no command evidences keeps an unclassified
+// one: such a node is attributed by its agent's token, and a fixture must not
+// pretend otherwise.
+//
+// Callers writing a fixture row rely on this: the row stands for "the
+// dispatched work was observed", and rowAttributesTo rejects a command the
+// action cannot be evidenced by, so a mismatched command here would silently
+// make the row testify for nothing.
+func fixtureCommandFor(action string) string {
+	switch action {
+	case "build":
+		return "./build.sh"
+	case "test":
+		return "./test.sh"
+	case "deploy":
+		return "cdk deploy"
+	case "commit":
+		return "git commit -m fixture"
+	case "checkout":
+		return "git checkout main"
+	case "pr-checkout":
+		return "gh pr checkout 161"
+	default:
+		return "./fake.sh"
 	}
 }
 
@@ -171,7 +229,7 @@ func completeSendNodeWithPayload(t *testing.T, session, runID, nodeID, payload s
 		t.Fatal(err)
 	}
 	CompleteTask(session, st.TaskID, resp.ID)
-	row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: "./fake.sh",
+	row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: "./build.sh",
 		ExitCode: "0", Outcome: OutcomeSuccess}
 	if err := WriteHookHistory(HistoryPath(session, "build"), row, 100); err != nil {
 		t.Fatal(err)
@@ -381,22 +439,575 @@ func TestExecSentinelFailureRoutesFailure(t *testing.T) {
 }
 
 // Precedence: a hook-recorded row is authoritative, a sentinel is only
-// self-reported. Reordering the two checks must fail here.
-func TestAuthoritativeRowOutranksSentinel(t *testing.T) {
-	run := createTestRun(t, linearGraph())
-
-	step(t, runTestSession, run.ID)
-	completeSendNodeSentinel(t, runTestSession, run.ID, "a", "all good EXIT=0")
-	row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: "./build.sh",
-		ExitCode: "1", Outcome: OutcomeFailure}
-	if err := WriteHookHistory(HistoryPath(runTestSession, "build"), row, 100); err != nil {
+// TestObservedRowOutranksSelfReport pins MUX-148 Decision 4: a row an agent
+// wrote about itself through `muxcode log` must not overrule one the runtime
+// observed, however much newer it is.
+//
+// The live case (2026-09-14): a commit agent self-logged exit 0 for its own
+// `git checkout -b`, and nothing could tell that row from an observed one.
+func TestObservedRowOutranksSelfReport(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
 		t.Fatal(err)
 	}
+	since := time.Now().Unix() - 1
+	path := HistoryPath(runTestSession, "build")
+
+	observed := HookHistoryEntry{TS: time.Now().Unix(), Command: "./build.sh",
+		ExitCode: "1", Outcome: OutcomeFailure}
+	if err := WriteHookHistory(path, observed, 100); err != nil {
+		t.Fatal(err)
+	}
+	// Newer, and claiming success — the shape that used to win on recency.
+	claim := HookHistoryEntry{TS: time.Now().Unix() + 5, Command: "./build.sh",
+		ExitCode: "0", Outcome: OutcomeSuccess, Source: SourceSelfReported}
+	if err := WriteHookHistory(path, claim, 100); err != nil {
+		t.Fatal(err)
+	}
+
+	row, ok := latestAuthoritativeRow(runTestSession, "build", since)
+	if !ok {
+		t.Fatal("expected a verdict")
+	}
+	if row.Outcome != OutcomeFailure {
+		t.Errorf("outcome = %q, want failure — a self-report overrode an observed row", row.Outcome)
+	}
+}
+
+// TestSelfReportUsedWhenNothingObserved is the negative control criterion 139
+// demands: the non-hook providers record work only through `muxcode log`, so a
+// fix that discards self-reports entirely would hold every one of their nodes
+// forever. Without this case, returning nothing at all would pass the test
+// above.
+func TestSelfReportUsedWhenNothingObserved(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Now().Unix() - 1
+
+	claim := HookHistoryEntry{TS: time.Now().Unix(), Command: "pnpm test",
+		ExitCode: "0", Outcome: OutcomeSuccess, Source: SourceSelfReported}
+	if err := WriteHookHistory(HistoryPath(runTestSession, "test"), claim, 100); err != nil {
+		t.Fatal(err)
+	}
+
+	row, ok := latestAuthoritativeRow(runTestSession, "test", since)
+	if !ok || row.Outcome != OutcomeSuccess {
+		t.Fatalf("row = (%+v, %v), want the self-report to stand when nothing observed the work", row, ok)
+	}
+}
+
+// TestRawRowWithoutHookSourceIsNotEvidence pins the fail-closed rule against
+// rows written straight to the JSONL — which is both the forgery shape and the
+// only way to reach this path at all: WriteHookHistory stamps a blank source
+// as SourceHook, so no test using it can produce an absent one. Without a raw
+// write the regression is invisible, and "absent source is evidence" could
+// return unnoticed.
+func TestRawRowWithoutHookSourceIsNotEvidence(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Now().Unix() - 1
+	path := HistoryPath(runTestSession, "build")
+	now := time.Now().Unix()
+
+	raw := fmt.Sprintf(
+		"{\"ts\":%d,\"command\":\"./build.sh\",\"exit_code\":\"0\",\"outcome\":\"success\"}\n"+
+			"{\"ts\":%d,\"command\":\"./build.sh\",\"exit_code\":\"0\",\"outcome\":\"success\",\"source\":\"hook-ish\"}\n",
+		now, now+1)
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if row, ok := latestAuthoritativeRow(runTestSession, "build", since); ok {
+		t.Errorf("a raw row with %q source was accepted as evidence: %+v", row.Source, row)
+	}
+
+	// Positive control: with the same file and helper, a properly stamped row
+	// IS evidence — so the rejection above is the rule working, not the
+	// fixture failing to be read at all.
+	observed := HookHistoryEntry{TS: now + 2, Command: "./build.sh",
+		ExitCode: "0", Outcome: OutcomeSuccess}
+	if err := WriteHookHistory(path, observed, 100); err != nil {
+		t.Fatal(err)
+	}
+	row, ok := latestAuthoritativeRow(runTestSession, "build", since)
+	if !ok || row.Outcome != OutcomeSuccess {
+		t.Fatalf("stamped row = (%+v, %v), want it accepted — the file is readable", row, ok)
+	}
+}
+
+// TestSeedVerdictToken pins which dispatches carry the token, in both
+// directions. Seeding everything is as wrong as seeding nothing: a node with
+// an evidencing row that is also asked for a token can produce two signals
+// that disagree, which deriveSendOutcome resolves by holding.
+func TestSeedVerdictToken(t *testing.T) {
+	unevidenced := []string{"edit", "comment", "review", "update-docs", "pr-read", "jira-write"}
+	for _, action := range unevidenced {
+		got := seedVerdictToken(action, "do the thing")
+		if !strings.Contains(got, verdictTokenInstruction) {
+			t.Errorf("seedVerdictToken(%q) carries no token instruction — the node has no signal at all", action)
+		}
+		if !strings.HasPrefix(got, "do the thing") {
+			t.Errorf("seedVerdictToken(%q) = %q, want the message kept intact ahead of the seed", action, got)
+		}
+	}
+	for _, action := range []string{"build", "test", "deploy", "commit", "checkout"} {
+		if got := seedVerdictToken(action, "do the thing"); got != "do the thing" {
+			t.Errorf("seedVerdictToken(%q) seeded a token onto an action a command evidences: %q", action, got)
+		}
+	}
+}
+
+// TestExecSendSeedsVerdictForUnevidencedAction is the executor-level proof:
+// the seed must reach the agent's inbox, not merely exist as a function.
+//
+// commit-pr-review-loop's `c` is the node this phase exists for — edit:edit,
+// which no command evidences and whose role definition carries no EXIT= line,
+// so before the seed it held on every run.
+func TestExecSendSeedsVerdictForUnevidencedAction(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "c",
+		Nodes: []Node{
+			{ID: "c", Type: NodeSend, Role: "edit", Action: "edit", Message: "Address the PR review comments"},
+			{ID: "bld", Type: NodeSend, Role: "build", Action: "build", Message: "Run ./build.sh"},
+		},
+		Edges: []Edge{{From: "c", To: "bld"}},
+	}
+	run := createTestRun(t, g)
 	step(t, runTestSession, run.ID)
 
-	st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
-	if st.Outcome != OutcomeFailure {
-		t.Errorf("a outcome %q, want failure — the hook row outranks a self-reported sentinel", st.Outcome)
+	dispatch, ok := dispatchTo(t, "edit", "edit")
+	if !ok {
+		t.Fatal("no edit:edit dispatch reached the inbox")
+	}
+	if !strings.Contains(dispatch.Payload, verdictTokenInstruction) {
+		t.Errorf("dispatch to edit carries no verdict instruction:\n%s", dispatch.Payload)
+	}
+
+	// Negative control: "seed everything" would pass the assertion above.
+	completeSendNodeWithReply(t, runTestSession, run.ID, "c", "edit", "fixed them EXIT=0")
+	for i := 0; i < 2; i++ {
+		step(t, runTestSession, run.ID)
+	}
+	bdispatch, ok := dispatchTo(t, "build", "build")
+	if !ok {
+		t.Fatal("no build:build dispatch reached the inbox — the negative control never ran")
+	}
+	if strings.Contains(bdispatch.Payload, verdictTokenInstruction) {
+		t.Errorf("build dispatch was seeded a token although its row evidences it:\n%s", bdispatch.Payload)
+	}
+}
+
+// dispatchTo returns the graph's request to a role for an action. An inbox
+// also carries run-lifecycle events (graph-run-created lands in edit's), so a
+// dispatch is selected by action rather than by being the only message there.
+func dispatchTo(t *testing.T, role, action string) (Message, bool) {
+	t.Helper()
+	msgs, _ := Peek(runTestSession, role)
+	for _, m := range msgs {
+		if m.Action == action && m.Type == "request" {
+			return m, true
+		}
+	}
+	return Message{}, false
+}
+
+// TestCommitPrReviewLoopPrecheckRouting drives the real template through the
+// executor. The structural test asserts which edges exist; this asserts where
+// a run actually goes, which is where the defect lived.
+//
+// git-manager.md tells the commit role to end a reply EXIT=1 when the
+// requested state does not hold, naming PR existence as the example. Read that
+// way a precheck answering NO-PR-FOUND fails its own node, and since only a
+// success edge leaves it, the run dies before the condition that routes "no
+// PR" to the commit gate ever evaluates — the template's main path,
+// unreachable, with the structural test still green. The node messages
+// override that default; these cases pin the routing it produces.
+//
+// The lookup-failure case is the negative control: EXIT=1 must still fail,
+// or "always succeed" would satisfy the two cases above.
+func TestCommitPrReviewLoopPrecheckRouting(t *testing.T) {
+	cases := []struct {
+		name      string
+		reply     string
+		reached   string // node the run must arrive at
+		unreached string // node it must not have touched
+		wantRun   string
+	}{
+		{
+			name:      "an existing PR skips the commit gate",
+			reply:     "PR-CONFIRMED https://example.test/pull/99 EXIT=0",
+			reached:   "b",
+			unreached: "gate1",
+			wantRun:   GraphRunRunning,
+		},
+		{
+			name:      "no PR routes to the commit gate",
+			reply:     "NO-PR-FOUND EXIT=0",
+			reached:   "gate1",
+			unreached: "b",
+			wantRun:   GraphRunRunning,
+		},
+		{
+			name:    "an incomplete lookup picks no branch",
+			reply:   "gh is unavailable, could not determine EXIT=1",
+			wantRun: GraphRunFailed,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			run := createTestRun(t, g)
+
+			step(t, runTestSession, run.ID)
+			if s := nodeState(t, runTestSession, run.ID, "pr-precheck"); s != GraphNodeRunning {
+				t.Fatalf("pr-precheck state %q, want running — the run does not start at the precheck", s)
+			}
+			completeSendNodeWithReply(t, runTestSession, run.ID, "pr-precheck", "commit", tc.reply)
+			for i := 0; i < 3; i++ {
+				step(t, runTestSession, run.ID)
+			}
+
+			if tc.reached != "" {
+				if s := nodeState(t, runTestSession, run.ID, tc.reached); s == GraphNodePending {
+					t.Errorf("%s still pending — the run never reached it", tc.reached)
+				}
+				if s := nodeState(t, runTestSession, run.ID, tc.unreached); s != GraphNodePending {
+					t.Errorf("%s state = %q, want pending — that branch should not have been taken", tc.unreached, s)
+				}
+			}
+			got, err := ReadGraphRun(runTestSession, run.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State != tc.wantRun {
+				t.Errorf("run state = %q, want %q", got.State, tc.wantRun)
+			}
+		})
+	}
+}
+
+// TestLatestAuthoritativeRowFuncMixedRows covers what the single-row
+// attribution cases cannot: accept is applied per candidate inside the same
+// walk that ranks sources, so a bug in either can hide behind the other. With
+// one row in the file, "filtered out" and "outranked" produce the same answer.
+//
+// Each case pairs a row that attributes with one that does not, across the two
+// source ranks. The third is the one that would regress silently: rejecting an
+// unrelated hook row must not also discard the self-report behind it, or every
+// node whose role ran an unrelated command would hold forever.
+func TestLatestAuthoritativeRowFuncMixedRows(t *testing.T) {
+	row := func(cmd, outcome, source string, offset int64) HookHistoryEntry {
+		code := "0"
+		if outcome == OutcomeFailure {
+			code = "1"
+		}
+		return HookHistoryEntry{TS: time.Now().Unix() + offset, Command: cmd,
+			ExitCode: code, Outcome: outcome, Source: source}
+	}
+	cases := []struct {
+		name string
+		rows []HookHistoryEntry
+		want string
+	}{
+		{
+			name: "a newer unrelated success cannot bury an older matching failure",
+			rows: []HookHistoryEntry{
+				row("./build.sh", OutcomeFailure, "", 1),
+				row("git push origin main", OutcomeSuccess, "", 2),
+			},
+			want: OutcomeFailure,
+		},
+		{
+			name: "an observed failure outranks a newer matching self-report",
+			rows: []HookHistoryEntry{
+				row("./build.sh", OutcomeFailure, "", 1),
+				row("./build.sh", OutcomeSuccess, SourceSelfReported, 2),
+			},
+			want: OutcomeFailure,
+		},
+		{
+			name: "an unrelated observed failure leaves the matching self-report standing",
+			rows: []HookHistoryEntry{
+				row("git push origin main", OutcomeFailure, "", 1),
+				row("./build.sh", OutcomeSuccess, SourceSelfReported, 2),
+			},
+			want: OutcomeSuccess,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempBusDir(t)
+			if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+				t.Fatal(err)
+			}
+			since := time.Now().Unix() - 1
+			for _, r := range tc.rows {
+				if err := WriteHookHistory(HistoryPath(runTestSession, "build"), r, 100); err != nil {
+					t.Fatal(err)
+				}
+			}
+			accept := func(e ConsoleEntry) bool { return rowAttributesTo("build", e) }
+			got, ok := latestAuthoritativeRowFunc(runTestSession, "build", since, accept)
+			if !ok {
+				t.Fatalf("no verdict, want %q", tc.want)
+			}
+			if got.Outcome != tc.want {
+				t.Errorf("outcome = %q (%s), want %q", got.Outcome, got.Command, tc.want)
+			}
+		})
+	}
+}
+
+// TestLatestAuthoritativeRowFuncNilAcceptTakesAnyRow is the negative control
+// for the case above: with no accept the unrelated newer row wins on recency,
+// so the filtered answers are the filter working rather than the fixture
+// happening to hold only one usable row.
+func TestLatestAuthoritativeRowFuncNilAcceptTakesAnyRow(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Now().Unix() - 1
+	path := HistoryPath(runTestSession, "build")
+	now := time.Now().Unix()
+
+	for _, r := range []HookHistoryEntry{
+		{TS: now + 1, Command: "./build.sh", ExitCode: "1", Outcome: OutcomeFailure},
+		{TS: now + 2, Command: "git push origin main", ExitCode: "0", Outcome: OutcomeSuccess},
+	} {
+		if err := WriteHookHistory(path, r, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, ok := latestAuthoritativeRowFunc(runTestSession, "build", since, nil)
+	if !ok || got.Outcome != OutcomeSuccess {
+		t.Fatalf("row = (%+v, %v), want the unrelated newer success — nil accept takes any row", got, ok)
+	}
+}
+
+// TestDeriveSendOutcomeSignals is the first test of deriveSendOutcome, which
+// nothing exercised: its precedence was free to be fixed and equally free to
+// regress unnoticed.
+//
+// The discriminating case is the last pair — an observed row and an agent
+// verdict that contradict each other. Either read alone is a live defect: the
+// row alone produced Defect 4's false failure, the agent's alone reopens the
+// forgery road. The rows either side of it are the negative controls, without
+// which "hold on everything" would pass.
+func TestDeriveSendOutcomeSignals(t *testing.T) {
+	cases := []struct {
+		name     string
+		row      string // observed outcome, "" for no row
+		reply    string
+		want     string
+		wantFail bool // response action "error"
+	}{
+		{name: "observed success, no claim", row: OutcomeSuccess, reply: "built it", want: OutcomeSuccess},
+		{name: "observed failure, no claim", row: OutcomeFailure, reply: "broke", want: OutcomeFailure},
+		{name: "claim alone when nothing observed", reply: "green. EXIT=0", want: OutcomeSuccess},
+		{name: "nonzero claim alone", reply: "EXIT=2", want: OutcomeFailure},
+		{name: "neither signal", reply: "I had a look around", want: OutcomeUnknown},
+		{name: "agreeing signals still route", row: OutcomeSuccess, reply: "green. EXIT=0", want: OutcomeSuccess},
+
+		// The mirror (Defect 4): the classified run failed, the unclassified
+		// re-run passed, and the agent says so. Neither signal can be trusted
+		// over the other, so the node holds instead of driving a fix loop.
+		{name: "observed failure contradicted by claim", row: OutcomeFailure, reply: "suite passed. EXIT=0", want: OutcomeUnknown},
+		{name: "observed success contradicted by claim", row: OutcomeSuccess, reply: "could not do it. EXIT=1", want: OutcomeUnknown},
+
+		{name: "error response is failure whatever else says", row: OutcomeSuccess, reply: "EXIT=0", want: OutcomeFailure, wantFail: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempBusDir(t)
+			if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+				t.Fatal(err)
+			}
+			since := time.Now().Unix() - 1
+
+			if tc.row != "" {
+				code := "0"
+				if tc.row == OutcomeFailure {
+					code = "1"
+				}
+				entry := HookHistoryEntry{TS: time.Now().Unix(), Command: "./build.sh",
+					ExitCode: code, Outcome: tc.row}
+				if err := WriteHookHistory(HistoryPath(runTestSession, "build"), entry, 100); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			action := "response"
+			if tc.wantFail {
+				action = "error"
+			}
+			resp := NewMessage("build", "edit", "response", action, tc.reply, "")
+			if err := Send(runTestSession, resp); err != nil {
+				t.Fatal(err)
+			}
+
+			n := &Node{ID: "a", Role: "build", Action: "build"}
+			st := &GraphNodeStatus{StartedAt: since}
+			got, output := deriveSendOutcome(runTestSession, n, st, Task{ResponseID: resp.ID})
+			if got != tc.want {
+				t.Errorf("outcome = %q, want %q (row %q, reply %q)", got, tc.want, tc.row, tc.reply)
+			}
+			if output != tc.reply {
+				t.Errorf("output = %q, want the reply body %q", output, tc.reply)
+			}
+		})
+	}
+}
+
+// TestDeriveSendOutcomeAttributesRowToAction pins the constraint the conflict
+// rule alone did not meet: the signal must be tied to the dispatched task, not
+// to whichever commands happened to be recognised.
+//
+// Row 1 is the 2026-09-03 shape that opened this spec — a node asked to answer
+// PR comments, recorded success because the commit role had run a git command
+// after dispatch. Rows 2 and 5 are the negative controls without which
+// "refuse every row" would pass: the agent's own token still attributes a
+// comment node, and an action in neither table still routes on its row, so
+// `run` and `watch` nodes do not become permanent holds.
+func TestDeriveSendOutcomeAttributesRowToAction(t *testing.T) {
+	cases := []struct {
+		name    string
+		action  string
+		command string
+		row     string
+		reply   string
+		want    string
+	}{
+		{name: "git row cannot answer for a comment node", action: "comment",
+			command: "git commit -m 'wip'", row: OutcomeSuccess,
+			reply: "I did not reply to the comments.", want: OutcomeUnknown},
+		{name: "the agent's token still attributes a comment node", action: "comment",
+			command: "git commit -m 'wip'", row: OutcomeSuccess,
+			reply: "comments answered. EXIT=0", want: OutcomeSuccess},
+		{name: "a git row cannot answer for a build node", action: "build",
+			command: "git push origin main", row: OutcomeSuccess,
+			reply: "no build was run", want: OutcomeUnknown},
+		{name: "a build row answers for a build node", action: "build",
+			command: "./build.sh", row: OutcomeSuccess, reply: "built", want: OutcomeSuccess},
+		{name: "an unmapped action still routes on its row", action: "run",
+			command: "cat notes.txt", row: OutcomeSuccess, reply: "ran it", want: OutcomeSuccess},
+		{name: "a precheck row answers for a test node", action: "test",
+			command: "go vet ./...", row: OutcomeFailure, reply: "vet broke", want: OutcomeFailure},
+		{name: "a build row cannot answer for a test node", action: "test",
+			command: "./build.sh", row: OutcomeFailure, reply: "nothing to say", want: OutcomeUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempBusDir(t)
+			if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+				t.Fatal(err)
+			}
+			since := time.Now().Unix() - 1
+
+			code := "0"
+			if tc.row == OutcomeFailure {
+				code = "1"
+			}
+			entry := HookHistoryEntry{TS: time.Now().Unix(), Command: tc.command,
+				ExitCode: code, Outcome: tc.row}
+			if err := WriteHookHistory(HistoryPath(runTestSession, "commit"), entry, 100); err != nil {
+				t.Fatal(err)
+			}
+
+			resp := NewMessage("commit", "edit", "response", "response", tc.reply, "")
+			if err := Send(runTestSession, resp); err != nil {
+				t.Fatal(err)
+			}
+
+			n := &Node{ID: "a", Role: "commit", Action: tc.action}
+			st := &GraphNodeStatus{StartedAt: since}
+			got, _ := deriveSendOutcome(runTestSession, n, st, Task{ResponseID: resp.ID})
+			if got != tc.want {
+				t.Errorf("outcome = %q, want %q (action %q, row %q from %q)",
+					got, tc.want, tc.action, tc.row, tc.command)
+			}
+		})
+	}
+}
+
+// TestWriteHookHistoryStampsSource pins the choke point. Promoting a declared
+// source would silently re-authorise the bus-response rows that must never
+// carry a verdict, so both directions are checked.
+func TestWriteHookHistoryStampsSource(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := HistoryPath(runTestSession, "build")
+
+	undeclared := HookHistoryEntry{TS: time.Now().Unix(), Command: "./build.sh",
+		ExitCode: "0", Outcome: OutcomeSuccess}
+	synthesized := HookHistoryEntry{TS: time.Now().Unix() + 1, Action: "build",
+		Outcome: OutcomeSuccess, Source: SourceBusResponse}
+	selfReported := HookHistoryEntry{TS: time.Now().Unix() + 2, Command: "pnpm test",
+		ExitCode: "0", Outcome: OutcomeSuccess, Source: SourceSelfReported}
+	for _, e := range []HookHistoryEntry{undeclared, synthesized, selfReported} {
+		if err := WriteHookHistory(path, e, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entries := ReadConsoleEntries(path, 0)
+	if len(entries) != 3 {
+		t.Fatalf("read %d entries, want 3", len(entries))
+	}
+	want := []string{SourceHook, SourceBusResponse, SourceSelfReported}
+	for i, w := range want {
+		if entries[i].Source != w {
+			t.Errorf("entry %d source = %q, want %q", i, entries[i].Source, w)
+		}
+	}
+}
+
+// TestExecSendOutcomeHoldsOnContradiction pins the precedence where it runs.
+// TestDeriveSendOutcomeSignals calls the helper directly, so it stays green
+// if routeFinishedNodes stops consulting it; only this one reads the outcome
+// the executor actually recorded on the node.
+//
+// The uncontradicted row is the negative control: without it an executor that
+// resolved every send node to unknown would pass.
+func TestExecSendOutcomeHoldsOnContradiction(t *testing.T) {
+	cases := []struct {
+		name     string
+		sentinel string
+		want     string
+	}{
+		{"agent's verdict contradicts the row", "all good EXIT=0", OutcomeUnknown},
+		{"agent claims no verdict of its own", "could not build it", OutcomeFailure},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			run := createTestRun(t, linearGraph())
+
+			step(t, runTestSession, run.ID)
+			completeSendNodeSentinel(t, runTestSession, run.ID, "a", tc.sentinel)
+			row := HookHistoryEntry{TS: time.Now().Unix() + 1, Command: "./build.sh",
+				ExitCode: "1", Outcome: OutcomeFailure}
+			if err := WriteHookHistory(HistoryPath(runTestSession, "build"), row, 100); err != nil {
+				t.Fatal(err)
+			}
+			step(t, runTestSession, run.ID)
+
+			st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+			if st.Outcome != tc.want {
+				t.Errorf("a outcome %q, want %q (observed failure, reply %q)",
+					st.Outcome, tc.want, tc.sentinel)
+			}
+		})
 	}
 }
 
@@ -767,6 +1378,12 @@ func TestExecFanOutJoinAll(t *testing.T) {
 // TestExecJoinQuorumBarrier drives a quorum join entirely through the
 // executor: two send-node branches complete one at a time, and the join
 // must hold at 1/2 and release at 2/2.
+//
+// The branches are attributed by different roads on purpose. b1 is a test
+// node, which a classified command row can testify for; b2 is a review node,
+// which none can (actionsWithoutCommandEvidence), so only its agent's token
+// establishes the outcome. The barrier counts fires and must not care which
+// road produced them.
 func TestExecJoinQuorumBarrier(t *testing.T) {
 	g := &Graph{
 		Name:  "t",
@@ -795,6 +1412,14 @@ func TestExecJoinQuorumBarrier(t *testing.T) {
 	// One branch completes: quorum 1/2 — the barrier must hold.
 	completeSendNode(t, runTestSession, run.ID, "b1", OutcomeSuccess)
 	step(t, runTestSession, run.ID)
+	// "j pending" is equally true at 0/2, so b1 must be shown to have routed.
+	b1st, err := ReadNodeStatus(runTestSession, run.ID, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !b1st.Routed {
+		t.Fatalf("b1 never routed (%+v) — the 1/2 check below would pass vacuously", b1st)
+	}
 	if s := nodeState(t, runTestSession, run.ID, "j"); s != GraphNodePending {
 		t.Fatalf("join state %q with quorum 1/2, want pending", s)
 	}
@@ -804,7 +1429,9 @@ func TestExecJoinQuorumBarrier(t *testing.T) {
 	}
 
 	// Second branch completes: quorum met, join runs, downstream fires.
-	completeSendNode(t, runTestSession, run.ID, "b2", OutcomeSuccess)
+	// Its agent's token, no row — a review node's work leaves no command
+	// behind that could testify for it.
+	completeSendNodeSentinel(t, runTestSession, run.ID, "b2", "reviewed, no findings. EXIT=0")
 	step(t, runTestSession, run.ID)
 	step(t, runTestSession, run.ID)
 	if s := nodeState(t, runTestSession, run.ID, "j"); s != GraphNodeDone {
@@ -2055,6 +2682,344 @@ func TestExecCurrentPhaseInterpolation(t *testing.T) {
 	}
 }
 
+// TestNodeOutputInterpolation pins ${output:<node-id>}: a downstream
+// dispatch carries an upstream node's report even across several edges,
+// which predecessorOutput cannot reach. A worker that records a decision
+// and names the file it wrote is otherwise answering a dispatch nobody
+// downstream can read (MUX-148 Phase 2, 2026-09-14).
+func TestNodeOutputInterpolation(t *testing.T) {
+	g := &Graph{
+		Name:  "g",
+		Start: "impl",
+		Nodes: []Node{
+			{ID: "impl", Type: NodeSend, Role: "build", Action: "build", Message: "do it"},
+			{ID: "mid", Type: NodeSend, Role: "test", Action: "test", Message: "check"},
+			{ID: "record", Type: NodeSend, Role: "plan", Action: "verify-spec", Message: "REPORT: ${output:impl}"},
+		},
+		Edges: []Edge{{From: "impl", To: "mid"}, {From: "mid", To: "record"}},
+	}
+	run := createTestRun(t, g)
+
+	const report = "Decision recorded: /tmp/mux-148-phase2-decision.md"
+	if err := TransitionGraphNode(runTestSession, run.ID, "impl", GraphNodeRunning, func(s *GraphNodeStatus) {
+		s.Output = report
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := interpolateGraphMessage(runTestSession, run, "REPORT: ${output:impl}", "")
+	if !strings.Contains(got, report) {
+		t.Errorf("dispatch must carry impl's report across two edges, got %q", got)
+	}
+	if strings.Contains(got, "${output:") {
+		t.Errorf("placeholder must not survive into a dispatch: %q", got)
+	}
+
+	// predecessorOutput is the mechanism this placeholder exists to go
+	// beyond: record's only in-edge is mid, so it cannot see impl at all.
+	if pred := predecessorOutput(runTestSession, run, g, "record"); strings.Contains(pred, report) {
+		t.Errorf("predecessorOutput should not reach impl from record; got %q — "+
+			"if it does, this placeholder is redundant and the test is vacuous", pred)
+	}
+
+	// Negative control: a gap must be visible, never a silent empty string.
+	missing := interpolateGraphMessage(runTestSession, run, "REPORT: ${output:nosuch}", "")
+	if !strings.Contains(missing, "no report recorded") || !strings.Contains(missing, "nosuch") {
+		t.Errorf("unknown node must expand to a visible marker naming it, got %q", missing)
+	}
+	if missing == "REPORT: " {
+		t.Error("unknown node expanded to silence — the failure this placeholder exists to stop")
+	}
+
+	// A node that exists but has not reported is the same gap.
+	if unreported := interpolateGraphMessage(runTestSession, run, "${output:mid}", ""); !strings.Contains(unreported, "no report recorded") {
+		t.Errorf("a node with no output must expand to the marker, got %q", unreported)
+	}
+}
+
+// TestNodeOutputInterpolationTruncates pins the size bound, and that the
+// head — where a report states its verdict and names its file — survives.
+func TestNodeOutputInterpolationTruncates(t *testing.T) {
+	g := &Graph{
+		Name:  "g",
+		Start: "impl",
+		Nodes: []Node{{ID: "impl", Type: NodeSend, Role: "build", Action: "build", Message: "do it"}},
+	}
+	run := createTestRun(t, g)
+
+	head := "VERDICT: see /tmp/decision.md"
+	if err := TransitionGraphNode(runTestSession, run.ID, "impl", GraphNodeRunning, func(s *GraphNodeStatus) {
+		s.Output = head + strings.Repeat("x", maxInterpolatedOutput*2)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := interpolateGraphMessage(runTestSession, run, "${output:impl}", "")
+	if !strings.Contains(got, head) {
+		t.Errorf("truncation must keep the head of the report, got %q", got[:min(80, len(got))])
+	}
+	if !strings.Contains(got, "truncated") {
+		t.Error("a truncated report must say so, or a reader treats a cut report as the whole one")
+	}
+	if len(got) > maxInterpolatedOutput+64 {
+		t.Errorf("expanded output %d exceeds the cap %d", len(got), maxInterpolatedOutput)
+	}
+}
+
+// TestTruncateAtRune pins that the cap never splits a rune: a cut inside a
+// multibyte sequence yields invalid UTF-8, which JSON encoding silently
+// replaces with U+FFFD.
+func TestTruncateAtRune(t *testing.T) {
+	// An em dash straddling the cap: 1 filler byte short of it, then 3 bytes.
+	s := strings.Repeat("a", 9) + "—" + strings.Repeat("b", 20)
+	got := truncateAtRune(s, 10)
+	if !utf8.ValidString(got) {
+		t.Errorf("truncation produced invalid UTF-8: %q", got)
+	}
+	if strings.ContainsRune(got, utf8.RuneError) {
+		t.Errorf("truncation left a replacement char: %q", got)
+	}
+	if !strings.HasPrefix(got, strings.Repeat("a", 9)) {
+		t.Errorf("truncation must keep whole runes before the cap, got %q", got)
+	}
+
+	// Negative control: under the cap, the string is returned untouched.
+	if got := truncateAtRune("short", 10); got != "short" {
+		t.Errorf("a string under the cap must be unchanged, got %q", got)
+	}
+}
+
+// TestNodeOutputRefAcceptsValidIDs pins that the reference matches every id
+// graph validation accepts — validation constrains an id only to nonempty
+// and unique, so a dotted or spaced id must not be left literal.
+func TestNodeOutputRefAcceptsValidIDs(t *testing.T) {
+	g := &Graph{
+		Name:  "g",
+		Start: "impl.v2",
+		Nodes: []Node{{ID: "impl.v2", Type: NodeSend, Role: "build", Action: "build", Message: "do it"}},
+	}
+	run := createTestRun(t, g)
+	if err := TransitionGraphNode(runTestSession, run.ID, "impl.v2", GraphNodeRunning, func(s *GraphNodeStatus) {
+		s.Output = "dotted report"
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := interpolateGraphMessage(runTestSession, run, "${output:impl.v2}", "")
+	if !strings.Contains(got, "dotted report") {
+		t.Errorf("a dotted node id must resolve, got %q", got)
+	}
+	if strings.Contains(got, "${output:") {
+		t.Errorf("reference to a legally named node left literal: %q", got)
+	}
+}
+
+// TestSpawnGroupReportsCarryWorkerReply pins the other half of the plumb:
+// a spawn node recorded only the port summary, so ${output:<node-id>}
+// would have expanded to "nothing to port" and delivered nothing — the
+// placeholder would look wired while carrying no report at all.
+//
+// Both lookup roads are exercised separately: the delivery status first,
+// then the bus log after that status is removed. The second case is what
+// pins the fallback — with the status present it passes either way.
+func TestSpawnGroupReportsCarryWorkerReply(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Init() makes this at session start; without it CreateDeliveryStatus
+	// only warns, and a fixture with no status silently exercises the
+	// fallback while claiming to test the delivery-status road.
+	if err := os.MkdirAll(DeliveryDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	seedAndReply := func(spawnRole, report string) string {
+		t.Helper()
+		seed := NewMessage("daemon", spawnRole, "request", "spawn-task", "do the work", "")
+		if err := SendNoCC(runTestSession, seed); err != nil {
+			t.Fatal(err)
+		}
+		reply := NewMessage(spawnRole, "daemon", "response", "spawn-task", report, seed.ID)
+		if err := SendNoCC(runTestSession, reply); err != nil {
+			t.Fatal(err)
+		}
+		MarkResponded(runTestSession, seed.ID, reply.ID)
+		return seed.ID
+	}
+
+	const report = "Decision recorded: /tmp/mux-148-phase2-decision.md"
+	seedID := seedAndReply("spawn-w1", report)
+	if err := WriteSpawnEntries(runTestSession, []SpawnEntry{{
+		ID: "w1", Role: "edit", SpawnRole: "spawn-w1",
+		Status: "completed", SeedMsgID: seedID,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Road 1 — the delivery status carries the ResponseID.
+	if ds, err := ReadDeliveryStatus(runTestSession, seedID); err != nil || ds.ResponseID == "" {
+		t.Fatalf("fixture must have a status with a ResponseID, got (%+v, %v) — "+
+			"without it this case cannot distinguish the two roads", ds, err)
+	}
+	if got := spawnGroupReports(runTestSession, "spawn-w1"); !strings.Contains(got, report) {
+		t.Errorf("with a delivery status, spawn output must carry the reply, got %q", got)
+	}
+
+	// Road 2 — status gone, the bus log still has the reply. Without the
+	// fallback this case returns empty, so it is what pins that branch.
+	if err := os.Remove(DeliveryPath(runTestSession, seedID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadDeliveryStatus(runTestSession, seedID); err == nil {
+		t.Fatal("delivery status still readable — the fallback case would be vacuous")
+	}
+	if got := spawnGroupReports(runTestSession, "spawn-w1"); !strings.Contains(got, report) {
+		t.Errorf("with no delivery status, the log fallback must still find the reply, got %q", got)
+	}
+
+	// Negative control: no recorded response means no invented report.
+	if err := WriteSpawnEntries(runTestSession, []SpawnEntry{{
+		ID: "w2", Role: "edit", SpawnRole: "spawn-w2", Status: "completed",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := spawnGroupReports(runTestSession, "spawn-w2"); got != "" {
+		t.Errorf("a worker that never replied must contribute nothing, got %q", got)
+	}
+
+	// Reseed control: a new iteration's seed must not be satisfied by the
+	// previous pass's reply, or a re-run reports work it never did.
+	newSeed := NewMessage("daemon", "spawn-w1", "request", "spawn-task", "iteration 2", "")
+	if err := SendNoCC(runTestSession, newSeed); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSpawnEntries(runTestSession, []SpawnEntry{{
+		ID: "w1", Role: "edit", SpawnRole: "spawn-w1",
+		Status: "completed", SeedMsgID: newSeed.ID,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := spawnGroupReports(runTestSession, "spawn-w1"); got != "" {
+		t.Errorf("an unanswered new seed must not inherit the prior reply, got %q", got)
+	}
+}
+
+// TestSpawnHarvestPassesReportDownstream drives the whole plumb through the
+// executor: a spawn worker answers, harvest records its report, and the
+// downstream send's dispatch carries it. The helper-level tests above all
+// still pass if harvest stops calling spawnGroupReports — this one does not.
+func TestSpawnHarvestPassesReportDownstream(t *testing.T) {
+	g := &Graph{
+		Name:  "g",
+		Start: "impl",
+		Nodes: []Node{
+			{ID: "impl", Type: NodeSpawn, Role: "edit", Message: "decide it"},
+			{ID: "record", Type: NodeSend, Role: "plan", Action: "verify-spec",
+				Message: "WORKER REPORT: ${output:impl}"},
+		},
+		Edges: []Edge{{From: "impl", To: "record"}},
+	}
+	run := createTestRun(t, g)
+	fakeSpawns(t, runTestSession)
+	// See TestSpawnGroupReportsCarryWorkerReply: without this, no delivery
+	// status is written, spawnHasResponded reads false, and the answered
+	// worker is treated as lost instead of harvested.
+	if err := os.MkdirAll(DeliveryDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	step(t, runTestSession, run.ID)
+	st, err := ReadNodeStatus(runTestSession, run.ID, "impl")
+	if err != nil || st.TaskID == "" {
+		t.Fatalf("impl not running with a spawn id: (%+v, %v)", st, err)
+	}
+
+	// The verdict token is what attributes the worker. Without one the node
+	// resolves unknown and holds, so nothing downstream is dispatched and the
+	// report has nothing to travel on.
+	const report = "Decision recorded: /tmp/mux-148-phase2-decision.md — EXIT=0"
+	seed := NewMessage("daemon", st.TaskID, "request", "spawn-task", "decide it", "")
+	if err := SendNoCC(runTestSession, seed); err != nil {
+		t.Fatal(err)
+	}
+	reply := NewMessage(st.TaskID, "daemon", "response", "spawn-task", report, seed.ID)
+	if err := SendNoCC(runTestSession, reply); err != nil {
+		t.Fatal(err)
+	}
+	MarkResponded(runTestSession, seed.ID, reply.ID)
+	if err := UpdateSpawnEntry(runTestSession, st.TaskID, func(e *SpawnEntry) {
+		e.SeedMsgID = seed.ID
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Preconditions, asserted separately so a failure below names its cause
+	// rather than surfacing only as the port summary downstream.
+	entries, err := ReadSpawnEntries(runTestSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, e := range entries {
+		if e.SpawnRole == st.TaskID {
+			found = true
+			if e.SeedMsgID != seed.ID {
+				t.Fatalf("entry %s SeedMsgID = %q, want %q", e.SpawnRole, e.SeedMsgID, seed.ID)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no spawn entry with SpawnRole %q: %+v", st.TaskID, entries)
+	}
+	if got := spawnReplyPayload(runTestSession, seed.ID); got != report {
+		t.Fatalf("spawnReplyPayload = %q, want the worker's report", got)
+	}
+	if got := spawnGroupReports(runTestSession, st.TaskID); got != report {
+		t.Fatalf("spawnGroupReports = %q, want the worker's report", got)
+	}
+
+	step(t, runTestSession, run.ID) // harvest impl
+	implSt, err := ReadNodeStatus(runTestSession, run.ID, "impl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(implSt.Output, report) {
+		t.Fatalf("harvest recorded %q — the report never reached the node's output", implSt.Output)
+	}
+	step(t, runTestSession, run.ID) // dispatch record
+
+	msgs, _ := Peek(runTestSession, "plan")
+	if len(msgs) != 1 {
+		t.Fatalf("plan inbox: %+v", msgs)
+	}
+	if !strings.Contains(msgs[0].Payload, report) {
+		t.Errorf("plan's dispatch must carry the worker's report, got %q", msgs[0].Payload)
+	}
+}
+
+// TestSpecToPRPassesWorkerReportToPlan guards the wiring itself: the
+// mechanism above is inert unless the template actually uses it, and the
+// run that failed on 2026-09-14 failed precisely because plan's dispatch
+// carried nothing from the worker.
+func TestSpecToPRPassesWorkerReportToPlan(t *testing.T) {
+	data, ok := builtinGraphJSON["spec-to-pr"]
+	if !ok {
+		t.Fatal("builtin spec-to-pr template is missing")
+	}
+	g, err := ParseGraph([]byte(data))
+	if err != nil {
+		t.Fatalf("parse spec-to-pr: %v", err)
+	}
+	updateSpec := g.node("update-spec")
+	if updateSpec == nil {
+		t.Fatal("spec-to-pr has no update-spec node")
+	}
+	if !strings.Contains(updateSpec.Message, "${output:implement}") {
+		t.Errorf("update-spec must carry the implement worker's report; message = %q", updateSpec.Message)
+	}
+}
+
 // TestSpecPhasesRemainingCondition pins the loop-termination condition
 // (MUX-121): true passes while an open phase remains, false passes once
 // none do, and a missing spec counts as nothing remaining so a loop
@@ -2760,9 +3725,17 @@ func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
 	return f
 }
 
-// answerSpawn fakes the worker replying to its CURRENT seed — the same
-// MarkResponded a real reply drives, which spawnHasResponded reads.
+// answerSpawn fakes a worker completing its CURRENT seed: the same
+// MarkResponded a real reply drives, which spawnHasResponded reads, and a
+// reply body carrying the verdict token spawnGroupOutcome reads.
 func answerSpawn(t *testing.T, session, spawnRole string) {
+	t.Helper()
+	answerSpawnWith(t, session, spawnRole, "phase implemented. EXIT=0")
+}
+
+// answerSpawnWith is answerSpawn with the reply body chosen — a decline, a
+// non-zero verdict, or a success claim in prose alone.
+func answerSpawnWith(t *testing.T, session, spawnRole, payload string) {
 	t.Helper()
 	entries, _ := ReadSpawnEntries(session)
 	for i := len(entries) - 1; i >= 0; i-- {
@@ -2772,10 +3745,139 @@ func answerSpawn(t *testing.T, session, spawnRole string) {
 		if entries[i].SeedMsgID == "" {
 			t.Fatalf("worker %s has no seed", spawnRole)
 		}
-		MarkResponded(session, entries[i].SeedMsgID, "resp-"+entries[i].SeedMsgID)
+		resp := NewMessage(spawnRole, "daemon", "response", "spawn-task", payload, entries[i].SeedMsgID)
+		if err := Send(session, resp); err != nil {
+			t.Fatalf("reply send: %v", err)
+		}
+		MarkResponded(session, entries[i].SeedMsgID, resp.ID)
 		return
 	}
 	t.Fatalf("no spawn entry for %s", spawnRole)
+}
+
+// TestSpawnGroupOutcomeReadsTheReplyNotTheFactOfReplying pins Defect 3. The
+// answered branch was a bare continue, so any reply yielded success and a
+// principled refusal was indistinguishable from work done — live on this
+// spec's own run 1789399519, where a worker that reported "no code change,
+// no spec edit" was recorded success.
+//
+// "Did the work" is the negative control the acceptance criteria demand: a
+// fix that holds every spawn node is not a fix. "Success claimed in prose
+// alone" is the other control — the distinction must not come from reading
+// what the worker wrote.
+func TestSpawnGroupOutcomeReadsTheReplyNotTheFactOfReplying(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply string
+		want  string
+	}{
+		{"declined", "Phase 2 is a decision phase reserved for the user. No code change, no spec edit.", OutcomeUnknown},
+		{"did the work", "implemented and verified. EXIT=0", OutcomeSuccess},
+		{"could not", "blocked on a missing dependency. EXIT=1", OutcomeFailure},
+		{"success claimed in prose alone", "All done — everything passes.", OutcomeUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempBusDir(t)
+			fakeLiveSpawns(t)
+
+			id, err := graphSpawnFn(runTestSession, "edit", "implement phase 3", graphSender, "run1", "implement")
+			if err != nil {
+				t.Fatal(err)
+			}
+			answerSpawnWith(t, runTestSession, id, tc.reply)
+
+			outcome, done := spawnGroupOutcome(runTestSession, id)
+			if !done {
+				t.Fatal("an answered worker completes the iteration")
+			}
+			if outcome != tc.want {
+				t.Errorf("outcome = %q, want %q for reply %q", outcome, tc.want, tc.reply)
+			}
+		})
+	}
+}
+
+// TestSpawnGroupOutcomeKeepsFailureSemantics guards the paths the verdict
+// read must not disturb: missing, stopped and still-running workers behaved
+// correctly before Defect 3 and must not decay into holds. The group rows
+// pin the precedence — a hold must never mask another worker's failure.
+func TestSpawnGroupOutcomeKeepsFailureSemantics(t *testing.T) {
+	useTempBusDir(t)
+	fakeLiveSpawns(t)
+
+	spawn := func(node string) string {
+		t.Helper()
+		id, err := graphSpawnFn(runTestSession, "edit", "work", graphSender, "run1", node)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	running := spawn("running")
+	if _, done := spawnGroupOutcome(runTestSession, running); done {
+		t.Error("a worker still running must not report the iteration done")
+	}
+
+	if outcome, done := spawnGroupOutcome(runTestSession, "spawn-nosuch"); !done || outcome != OutcomeFailure {
+		t.Errorf("missing worker = (%q, %v), want failure and done", outcome, done)
+	}
+
+	stopped := spawn("stopped")
+	if err := UpdateSpawnEntry(runTestSession, stopped, func(e *SpawnEntry) { e.Status = "stopped" }); err != nil {
+		t.Fatal(err)
+	}
+	if outcome, done := spawnGroupOutcome(runTestSession, stopped); !done || outcome != OutcomeFailure {
+		t.Errorf("stopped unanswered worker = (%q, %v), want failure and done", outcome, done)
+	}
+
+	declined := spawn("declined")
+	answerSpawnWith(t, runTestSession, declined, "I did not do this.")
+	failed := spawn("failed")
+	answerSpawnWith(t, runTestSession, failed, "EXIT=1")
+	succeeded := spawn("succeeded")
+	answerSpawnWith(t, runTestSession, succeeded, "EXIT=0")
+
+	if outcome, _ := spawnGroupOutcome(runTestSession, declined+","+failed); outcome != OutcomeFailure {
+		t.Errorf("declined+failed group = %q, want failure — a hold must not mask a failure", outcome)
+	}
+	if outcome, _ := spawnGroupOutcome(runTestSession, succeeded+","+declined); outcome != OutcomeUnknown {
+		t.Errorf("succeeded+declined group = %q, want unknown — one unattributed worker holds the group", outcome)
+	}
+	if outcome, _ := spawnGroupOutcome(runTestSession, succeeded+","+succeeded); outcome != OutcomeSuccess {
+		t.Errorf("all-succeeded group = %q, want success", outcome)
+	}
+
+	if silent := unattributedWorkers(runTestSession, succeeded+","+declined); len(silent) != 1 || silent[0] != declined {
+		t.Errorf("unattributedWorkers = %v, want just %s — the hold must name who to ask", silent, declined)
+	}
+}
+
+// TestGraphWorkerTaskSeedsTheVerdictToken pins the other half of the sentinel
+// road: a token the seed never asks for is a token no worker emits, and every
+// spawn node would then hold. The placeholder form is checked because a
+// literal code in the request can be captured as the reply (MUX-154) and read
+// back as a verdict the worker never gave.
+func TestGraphWorkerTaskSeedsTheVerdictToken(t *testing.T) {
+	g := &Graph{Name: "seed", Start: "w", Nodes: []Node{{ID: "w", Type: NodeSpawn, Role: "edit"}}}
+
+	msg := graphWorkerTask(g, "run1", "w", "implement phase 3")
+	if !strings.Contains(msg, "EXIT=<n>") {
+		t.Errorf("seed does not ask for the verdict token: %q", msg)
+	}
+	if _, found := parseExitSentinel(msg); found {
+		t.Errorf("seed carries a parseable verdict of its own: %q", msg)
+	}
+
+	// A node the graph owns no roles for still needs attributing, and that
+	// branch returns before the preamble is built.
+	withEdges := &Graph{Name: "seed2", Start: "w",
+		Nodes: []Node{{ID: "w", Type: NodeSpawn, Role: "edit"}, {ID: "b", Type: NodeSend, Role: "build"}},
+		Edges: []Edge{{From: "w", To: "b"}}}
+	if !strings.Contains(graphWorkerTask(withEdges, "run1", "w", "do it"), "EXIT=<n>") {
+		t.Error("a node with owned successors lost the verdict instruction")
+	}
 }
 
 func spawnCountForRun(t *testing.T, session, runID string) int {
@@ -3054,9 +4156,15 @@ func TestExecSpawnTaskNamesOnlyReachableRoles(t *testing.T) {
 }
 
 // TestExecSpawnTaskUnprefixedWithoutSendNodes is the negative control: a graph
-// that dispatches nothing but workers owns no delegations, so the worker's
-// task must arrive verbatim. An implementation that always prefixed would pass
-// the positive case above and fail here.
+// that dispatches nothing but workers owns no delegations, so nothing may
+// precede the worker's message. An implementation that always prefixed would
+// pass the positive case above and fail here.
+//
+// Asserted as a prefix, not an equality: every seed carries
+// verdictTokenInstruction appended after the message, and a node with no
+// successors needs attributing like any other. That prefix assertion passes
+// with or without the seed, which is why the seed is asserted separately
+// below — otherwise it could be deleted with the suite green.
 func TestExecSpawnTaskUnprefixedWithoutSendNodes(t *testing.T) {
 	g := &Graph{
 		Name:  "t",
@@ -3070,8 +4178,15 @@ func TestExecSpawnTaskUnprefixedWithoutSendNodes(t *testing.T) {
 	if len(*tasks) != 1 {
 		t.Fatalf("expected 1 spawned worker, got %d: %v", len(*tasks), *tasks)
 	}
-	if got := (*tasks)[0]; got != "edit: Just do it" {
-		t.Errorf("task %q, want the message verbatim — no send nodes means nothing is owned", got)
+	got := (*tasks)[0]
+	if !strings.HasPrefix(got, "edit: Just do it") {
+		t.Errorf("task %q, want the message unprefixed — no send nodes means nothing is owned", got)
+	}
+	if strings.Contains(got, "Do NOT delegate") {
+		t.Errorf("task %q carries an ownership preamble for a graph that owns nothing", got)
+	}
+	if !strings.Contains(got, verdictTokenInstruction) {
+		t.Errorf("task %q carries no verdict instruction — the worker has no way to attribute itself", got)
 	}
 }
 
@@ -3101,5 +4216,83 @@ func TestExecMapTaskCarriesOwnership(t *testing.T) {
 	}
 	if !strings.Contains((*tasks)[0], "Handle one") || !strings.Contains((*tasks)[1], "Handle two") {
 		t.Errorf("preamble must not displace per-item interpolation: %v", *tasks)
+	}
+}
+
+// TestRowAttributesTo covers the git-evidenced actions in both directions, as
+// the Phase 3 constraints require.
+//
+// One CmdGit spans commit, push, merge, rebase and `gh pr create`, so a
+// commit node that accepts any of them is "a git command ran" standing in for
+// "the commit was made" — and a commit node sits downstream of a human gate,
+// the worst place to accept another command's verdict. The checkout rows are
+// the opposite failure: before this, none of them attributed to anything.
+func TestRowAttributesTo(t *testing.T) {
+	cases := []struct {
+		name    string
+		action  string
+		command string
+		want    bool
+	}{
+		{"commit by a commit", "commit", "git commit -m 'work'", true},
+		{"commit behind a cd prefix", "commit", `cd /repo && git commit -m "work"`, true},
+		{"commit by a push", "commit", "git push origin HEAD", false},
+		{"commit by a rebase", "commit", "git rebase main", false},
+		{"commit by a pr create", "commit", "gh pr create --fill", false},
+		{"commit by a build", "commit", "./build.sh", false},
+
+		{"checkout by a checkout", "checkout", "git checkout -", true},
+		{"checkout by a switch", "checkout", "git switch main", true},
+		{"checkout by a commit", "checkout", "git commit -m 'work'", false},
+		{"pr-checkout by gh", "pr-checkout", "gh pr checkout 161", true},
+		{"pr-checkout by a pr create", "pr-checkout", "gh pr create --fill", false},
+
+		// The type-evidenced actions are unchanged by the command branch.
+		{"build by a build", "build", "./build.sh", true},
+		{"build by a commit", "build", "git commit -m 'work'", false},
+		{"test by a test", "test", "./test.sh", true},
+		{"deploy by a deploy", "deploy", "cdk deploy", true},
+
+		// No command evidences a review, whatever the agent happened to run.
+		{"review by a commit", "review", "git commit -m 'work'", false},
+		{"review by a test", "review", "./test.sh", false},
+
+		// An action in neither table keeps the pre-attribution behaviour, so
+		// run and watch nodes do not become permanent holds.
+		{"unlisted action", "run", "aws s3 ls", true},
+
+		// Known residual, pinned rather than blessed: the glob matches
+		// "commit" anywhere in a git-headed command, so "uncommitted" counts.
+		// Tightening it needs word-boundary matching across every pattern
+		// list, which is wider than this phase — recorded in the spec.
+		{"known-loose substring", "commit", "git status | grep uncommitted", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := rowAttributesTo(tc.action, ConsoleEntry{Command: tc.command})
+			if got != tc.want {
+				t.Errorf("rowAttributesTo(%q, %q) = %v, want %v", tc.action, tc.command, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGitPatternsClassifyCheckout pins the row's existence, not its reading.
+// For the commit role an unclassified command writes no history row at all —
+// ProcessBashHook's CmdUnknown branch covers run/runner/watch only — so a
+// checkout classified as anything but CmdGit leaves the graph's checkout
+// nodes with no evidence they could ever be attributed by.
+func TestGitPatternsClassifyCheckout(t *testing.T) {
+	for _, cmd := range []string{"git checkout -", "git checkout main", "git switch main", "gh pr checkout 161"} {
+		if got := ClassifyCommand(cmd); got != CmdGit {
+			t.Errorf("ClassifyCommand(%q) = %v, want CmdGit — an unclassified checkout writes no row", cmd, got)
+		}
+	}
+	// Negative control: the list stays mutating-only, so a read-only git
+	// command still mints nothing a node could be attributed by.
+	for _, cmd := range []string{"git status", "git log --oneline"} {
+		if got := ClassifyCommand(cmd); got == CmdGit {
+			t.Errorf("ClassifyCommand(%q) = CmdGit — read-only git must write no row", cmd)
+		}
 	}
 }

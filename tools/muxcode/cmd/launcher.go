@@ -86,21 +86,63 @@ func RunLauncher(args []string) {
 
 	fmt.Print(launchBanner(projectDir, sessionName, tui.TermWidth()))
 
-	// Attach to existing session if already running
-	if bus.TmuxHasSession(sessionName) {
-		fmt.Printf("  %sSession already running — attaching...%s\n", tui.Yellow, tui.RST)
-		fmt.Println()
-		if err := bus.AttachToSession(sessionName); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	if err := bus.LaunchSession(cfg, projectDir, sessionName); err != nil {
+	if err := runSession(cfg, projectDir, sessionName); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// Seams tests replace; production consults the bus.
+var (
+	ensureDaemonCurrent = bus.EnsureSessionDaemonCurrent
+	hasSession          = bus.TmuxHasSession
+	attachSession       = bus.AttachToSession
+	launchSession       = bus.LaunchSession
+)
+
+// runSession attaches to an already-running session or launches a fresh one.
+//
+// The daemon refresh sits on the attach road and only there: a running
+// session's daemon still executes the binary it loaded at launch, while a fresh
+// LaunchSession starts one from the binary on PATH and has nothing to refresh.
+// It must precede the attach, because attaching hands over the terminal and
+// does not come back.
+func runSession(cfg *bus.LauncherConfig, projectDir, session string) error {
+	if hasSession(session) {
+		fmt.Printf("  %sSession already running — attaching...%s\n", tui.Yellow, tui.RST)
+		refreshSessionDaemon(session)
+		fmt.Println()
+		return attachSession(session)
+	}
+	return launchSession(cfg, projectDir, session)
+}
+
+// refreshNotice renders what attaching prints about the daemon refresh: a
+// line naming the version delta when one was cycled, a warning when the check
+// itself failed, and nothing at all when the daemon was already current —
+// which is the common case and must stay silent.
+func refreshNotice(res bus.UpgradeResult, upgraded bool, err error) (stdout, stderr string) {
+	switch {
+	case err != nil:
+		return "", fmt.Sprintf("  Warning: daemon version check: %v\n", err)
+	case upgraded:
+		return fmt.Sprintf("  %sDaemon refreshed:%s %s\n", tui.Purple, tui.RST, res.VersionDelta()), ""
+	}
+	return "", ""
+}
+
+// refreshSessionDaemon rolls the session's daemon onto the installed binary
+// before attaching, so a long-lived session does not keep executing the code
+// its daemon loaded weeks ago.
+//
+// It never aborts: `ps` is unavailable under some sandboxes, and losing the
+// version check is far cheaper than standing between the user and their
+// session. Only the attach path calls this — a fresh LaunchSession starts its
+// daemon from the binary on PATH and has nothing to refresh.
+func refreshSessionDaemon(session string) {
+	out, warn := refreshNotice(ensureDaemonCurrent(session))
+	fmt.Print(out)
+	fmt.Fprint(os.Stderr, warn)
 }
 
 // launchBanner renders the project/session header in the palette the

@@ -254,6 +254,26 @@ func TestClassifyCommand(t *testing.T) {
 		{"jest --watch", CmdTest},
 		{"pytest -v", CmdTest},
 		{"npx jest", CmdTest},
+		// pnpm exec/dlx: the nested runner is the executable. `pnpm exec jest`
+		// carries no "test" substring, so `pnpm*test` cannot reach it.
+		{"pnpm exec jest --runInBand", CmdTest},
+		{"pnpm test", CmdTest}, // the wrapper itself still classifies
+		{"pnpm dlx jest", CmdTest},
+		// Negative controls. Each of these matches `pnpm*jest*` as a raw
+		// substring, so they all classify as test runs if the nested command
+		// is not extracted at an executable boundary — and a successful
+		// install would then write an authoritative test success over a real
+		// failure.
+		{"pnpm add jest", CmdUnknown},
+		{"pnpm remove jest", CmdUnknown},
+		{"pnpm exec eslint jest.config.js", CmdUnknown},
+		// The discriminating cases: `jest.config.js` above is matched by no
+		// `pnpm*` glob, so it passes even with the nested-runner result
+		// falling through. These two are caught by `pnpm*test` and
+		// `pnpm*build` and so only pass when the nested verdict is final.
+		{"pnpm exec eslint test.config.js", CmdUnknown},
+		{"pnpm exec eslint build.config.js", CmdUnknown},
+		{"pnpm install", CmdUnknown},
 		{"go vet ./...", CmdTestPrecheck},
 		{"cdk diff", CmdDeploy},
 		{"cdk synth --all", CmdBuild}, // cdk*synth matches build first; shell script sets both flags
@@ -271,6 +291,46 @@ func TestClassifyCommand(t *testing.T) {
 	for _, tt := range tests {
 		if got := ClassifyCommand(tt.command); got != tt.want {
 			t.Errorf("ClassifyCommand(%q) = %d, want %d", tt.command, got, tt.want)
+		}
+	}
+}
+
+// TestGitPatternsFireOnTheKeywordNotTheProse pins what MUX-148's re-derivation
+// rests on: the git patterns are a head match plus a substring, so they fire
+// on a keyword anywhere inside a git-headed command — including inside a
+// longer word — and never on a command that merely talks about committing.
+//
+// Both directions matter. Without the over-fire rows, a reader would assume
+// CmdGit means a mutation happened; without the prose rows, the 2026-09-03
+// incident reads as prose being parsed, which it never was.
+func TestGitPatternsFireOnTheKeywordNotTheProse(t *testing.T) {
+	fires := []string{
+		"git commit -m 'wip'",
+		"git push origin main",
+		// Mutates nothing, classified all the same: the keyword is a
+		// substring of the command, not a claim about its effect.
+		"git commit --dry-run",
+		"git diff --stat -- docs/uncommitted-notes.md",
+		"git log @{push}..HEAD",
+	}
+	for _, cmd := range fires {
+		if got := ClassifyCommand(cmd); got != CmdGit {
+			t.Errorf("ClassifyCommand(%q) = %d, want CmdGit", cmd, got)
+		}
+	}
+
+	// A keyword-free git command, and prose about git in a command that is
+	// not git-headed. An agent's wording is never an input to classification.
+	quiet := []string{
+		"git status",
+		"git log --oneline -5",
+		"git diff --stat",
+		"echo 'pre-rebase cleanup done'",
+		"cat notes-on-commit-hooks.md",
+	}
+	for _, cmd := range quiet {
+		if got := ClassifyCommand(cmd); got == CmdGit {
+			t.Errorf("ClassifyCommand(%q) = CmdGit, want anything else", cmd)
 		}
 	}
 }

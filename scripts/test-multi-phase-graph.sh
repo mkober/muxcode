@@ -552,7 +552,7 @@ if wait_and_answer build g-build; then
 else
   bad "build never dispatched after iteration 1"
 fi
-grep -q '"output":"ported ' "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null \
+grep -q '"output":"[^"]*ported ' "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null \
   && ok "implement node recorded the port" \
   || bad "implement did not record a port: $(cat "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null | head -c 300)"
 [ "$(cat "$REPO/impl-phase1.txt" 2>/dev/null)" = "phase-1 implementation" ] \
@@ -621,7 +621,7 @@ if wait_and_answer build g-build; then
 else
   bad "no-op spawn iteration stalled — nothing-to-port became a failure"
 fi
-grep -q '"output":"nothing to port"' "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null \
+grep -q '"output":"[^"]*nothing to port"' "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null \
   && ok "no-op iteration recorded 'nothing to port'" \
   || bad "no-op output wrong: $(cat "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null | head -c 300)"
 

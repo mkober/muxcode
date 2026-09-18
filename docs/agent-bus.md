@@ -269,6 +269,16 @@ muxcode v0.1.0 (a1b2c3d, 2026-09-02, go1.22.0 darwin/arm64)
 
 - `--json` carries exactly six fields — `version`, `commit`, `date`, `go`, `os`, `arch` — the same facts as the line. The field set is a documented contract, pinned by `scripts/test-version.sh`.
 - **`--version` and `-v` never reach the launcher.** `routeFor()` (`main.go`) intercepts them ahead of the path fallback that would otherwise treat an unrecognised first argument as a project directory — so they print the line, exit 0, and create no tmux session, no bus dir, and nothing in the working directory.
+- **A bare first argument one edit away from a subcommand is refused, not launched.** That same path fallback is what turned `muxcode agents` into a session on 2026-09-15: `agents` is `agent` plus an `s` **and** a real directory in this repo, so the launcher resolved it against cwd, started a 10-window fleet named `agents` with `agents/` as its working directory, and left a generated `agents/.codex/` behind. `routeFor()` now runs a near-miss check *behind* the exact-subcommand match and *ahead* of the path fallback: a first argument spelled as a bare name — no `/`, no leading `.` or `~` — within one insertion, deletion or substitution of any known subcommand (`withinEditDistance1`, `nearestSubcommand`) exits 1 with a did-you-mean and creates nothing. A second argument does not rescue it (`muxcode agents my-session` is refused too), and ties resolve to the lexicographically smallest subcommand so the message is stable across runs.
+
+  ```
+  Refusing to launch a session from: muxcode agents
+
+  That looks like a misspelled subcommand. Did you mean:  muxcode agent ...
+  To launch a session for the directory instead:  muxcode ./agents
+  ```
+
+  **Path spelling is the escape hatch.** A directory whose name shadows a subcommand is launched by path — `muxcode ./agents`, `muxcode /repos/agents`, `muxcode ~/repos/agents` — because `isPathLike` exempts anything containing a separator or starting with `.` or `~`; `muxcode launch <path> [<name>]` stays unguarded as well. Ordinary project names (`my-project`, `muxcode`) are not near-misses and launch as before, and every name in `knownSubcommands` still dispatches to its handler — the guard sits behind that check, pinned by `TestEveryKnownSubcommandStillDispatches`. It joins the refusals added on 2026-09-14, when a test agent guessing the calling convention started four stray sessions: a help flag prints usage, any other leading `-` is a flag and never a directory, and a call carrying more than `<path> [<name>]` (or naming a subcommand where the session name goes) is a subcommand call that lost its subcommand, refused with `To launch anyway: muxcode launch …`. The residue of both incidents is ignored wherever a stray launch puts it — `.gitignore` carries `**/.codex/AGENTS.md`, `**/.codex/hooks.json` and `**/.opencode/agents/*.md`, because the root-anchored patterns left `agents/.codex/` untracked for `git add -A` to stage. Routing is pinned by `TestRouteFor` (`main_test.go`).
 - `--at-least vX.Y.Z` exits by **comparison outcome, not success/failure** — the tri-state is the point:
 
   | Exit | Meaning |
@@ -1724,7 +1734,11 @@ shipping.
 **Validation is strict by design.** Undefined node refs, unreachable nodes, and uncapped
 cycles are errors, not warnings — a loop is only legal via an explicit `max_iterations` on a
 loop edge. A node that commits or writes to Jira/Confluence is rejected unless it sits
-downstream of a `wait_human` gate.
+downstream of a `wait_human` gate — for the `commit` role every action but `pr-read` counts as a
+commit (`nodeRequiresGate`, `bus/graph.go`). That one read-shaped action is what lets
+`commit-pr-review-loop` open with a read-only `pr-precheck` and skip its gated commit+PR nodes when
+an open PR already exists (2026-09-16); the design is under
+[Graph orchestration](architecture.md#graph-orchestration-control-plane).
 
 **Run state** lives under `/tmp/muxcode-bus-{session}/graphs/<run-id>/` — `run.json`,
 `graph.json`, and `nodes/<id>.json` per node, written atomically. Because every transition
@@ -2040,6 +2054,8 @@ Core code: `bus/remote.go`, `cmd/remote.go`, `tui/remote.go`.
 | `MUXCODE_RELAY_SUPPRESS_WINDOW` | Window in seconds for relay-loop suppression counting (default: 300) |
 | `MUXCODE_ACTIVE_WATCHDOG_SECS` | Daemon advisory threshold (seconds) for a continuously-active agent (default: 600, set to 0 to disable) |
 | `MUXCODE_STUCK_RELOAD_DISABLE` | Set to 1 to disable the daemon's stuck-provider auto-reload watchdog |
+| `MUXCODE_PERMBLOCK_WATCHDOG_DISABLE` | Set to 1 to disable the daemon's alert-only permission-block watchdog (a Claude agent wedged at a rejected permission prompt) |
+| `MUXCODE_CODEX_APPROVAL_WATCHDOG_DISABLE` | Set to 1 to disable the daemon's codex-approval watchdog — every 15s it answers a read-only Codex role's escalation prompt — Codex asking to run a command past its sandbox; `-a on-request` is an approval policy, not a sandbox, so in-sandbox commands never prompt — with Escape, the prompt's own "No" (see [Architecture](architecture.md#daemon-watchdogs)) |
 
 ## Message Format
 

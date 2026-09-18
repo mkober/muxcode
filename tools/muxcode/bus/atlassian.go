@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -890,6 +891,373 @@ func JiraCreateSubtask(cfg *AtlassianConfig, parentKey, projectKey, summary stri
 	}
 
 	return fmt.Sprintf("Created subtask %s under %s: %s", created.Key, parentKey, summary), nil
+}
+
+// --- Jira issue creation ---
+
+// JiraCreateOptions carries everything `atlassian jira create` needs. Payload is
+// the same `{"fields":{...}}` shape `update` already takes; the flags below are
+// merged into those fields rather than arriving in a second format.
+type JiraCreateOptions struct {
+	Project   string
+	IssueType string
+	Summary   string
+	Payload   json.RawMessage
+	Assignee  string // "me" or an accountId
+	Priority  string
+	Sprint    string // "current" or a sprint id
+	Board     string // board name or id; required when Sprint is "current"
+	Labels    []string
+	DryRun    bool
+}
+
+// JiraCreateResult reports what was created and what was resolved on the way to
+// creating it. Key is set as soon as the issue exists, including when a later
+// step fails — see JiraCreateIssue.
+type JiraCreateResult struct {
+	Key          string
+	Summary      string
+	AssigneeName string
+	Priority     string
+	BoardID      int
+	SprintID     int
+	SprintName   string
+	RequestBody  string
+	DryRun       bool
+}
+
+type jiraIssueType struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Subtask bool   `json:"subtask"`
+}
+
+type jiraBoard struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+type jiraSprint struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	State string `json:"state"`
+}
+
+// jiraGetJSON performs a GET and decodes a 2xx body, surfacing any non-2xx
+// status with its body verbatim — a summarised Atlassian error ("token
+// expired") sends the reader to the wrong fix.
+func jiraGetJSON(cfg *AtlassianConfig, apiURL string, out interface{}) error {
+	resp, err := atlassianRequest("GET", apiURL, nil, cfg)
+	if err != nil {
+		return fmt.Errorf("Jira API request failed: %w", err)
+	}
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("Jira API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
+	}
+	return nil
+}
+
+// resolveJiraIssueType maps a type name to the project's own list, case
+// insensitively, and names the valid alternatives on a miss. Guessing an id
+// here would create the issue as the wrong type, which cannot be corrected
+// without an admin.
+func resolveJiraIssueType(cfg *AtlassianConfig, project, name string) (string, error) {
+	apiURL := fmt.Sprintf("%s/rest/api/3/issue/createmeta/%s/issuetypes",
+		strings.TrimRight(cfg.JiraBaseURL, "/"), project)
+	var out struct {
+		IssueTypes []jiraIssueType `json:"issueTypes"`
+		Values     []jiraIssueType `json:"values"`
+	}
+	if err := jiraGetJSON(cfg, apiURL, &out); err != nil {
+		return "", err
+	}
+	types := out.IssueTypes
+	if len(types) == 0 {
+		types = out.Values
+	}
+	var names []string
+	for _, t := range types {
+		if strings.EqualFold(t.Name, name) {
+			return t.Name, nil
+		}
+		names = append(names, t.Name)
+	}
+	if len(names) == 0 {
+		return "", fmt.Errorf("project %s reported no issue types", project)
+	}
+	return "", fmt.Errorf("unknown issue type %q for project %s; valid types: %s",
+		name, project, strings.Join(names, ", "))
+}
+
+// resolveJiraAssignee turns "me" into the calling account's id, and passes an
+// explicit accountId through untouched.
+func resolveJiraAssignee(cfg *AtlassianConfig, spec string) (accountID, displayName string, err error) {
+	if spec != "me" {
+		return spec, spec, nil
+	}
+	apiURL := fmt.Sprintf("%s/rest/api/3/myself", strings.TrimRight(cfg.JiraBaseURL, "/"))
+	var me struct {
+		AccountID   string `json:"accountId"`
+		DisplayName string `json:"displayName"`
+	}
+	if err := jiraGetJSON(cfg, apiURL, &me); err != nil {
+		return "", "", fmt.Errorf("resolving --assignee me: %w", err)
+	}
+	if me.AccountID == "" {
+		return "", "", fmt.Errorf("resolving --assignee me: response carried no accountId")
+	}
+	return me.AccountID, me.DisplayName, nil
+}
+
+// resolveJiraBoard finds a board by id or by name within a project. An
+// ambiguous name is an error listing the candidates rather than a pick, because
+// choosing the wrong board files the issue into a sprint another team owns.
+func resolveJiraBoard(cfg *AtlassianConfig, project, board string) (int, error) {
+	if id, err := strconv.Atoi(board); err == nil {
+		if id <= 0 {
+			return 0, fmt.Errorf("invalid --board %q: want a positive id or a name", board)
+		}
+		return id, nil
+	}
+	apiURL := fmt.Sprintf("%s/rest/agile/1.0/board?name=%s&projectKeyOrId=%s",
+		strings.TrimRight(cfg.JiraBaseURL, "/"), url.QueryEscape(board), url.QueryEscape(project))
+	var out struct {
+		Values []jiraBoard `json:"values"`
+	}
+	if err := jiraGetJSON(cfg, apiURL, &out); err != nil {
+		return 0, err
+	}
+	switch len(out.Values) {
+	case 1:
+		return out.Values[0].ID, nil
+	case 0:
+		return 0, fmt.Errorf("no board named %q in project %s", board, project)
+	}
+	var found []string
+	for _, b := range out.Values {
+		found = append(found, fmt.Sprintf("%s (id %d)", b.Name, b.ID))
+	}
+	return 0, fmt.Errorf("%d boards match %q in project %s: %s",
+		len(out.Values), board, project, strings.Join(found, ", "))
+}
+
+// resolveJiraActiveSprint requires exactly one active sprint on the board.
+func resolveJiraActiveSprint(cfg *AtlassianConfig, boardID int) (int, string, error) {
+	apiURL := fmt.Sprintf("%s/rest/agile/1.0/board/%d/sprint?state=active",
+		strings.TrimRight(cfg.JiraBaseURL, "/"), boardID)
+	var out struct {
+		Values []jiraSprint `json:"values"`
+	}
+	if err := jiraGetJSON(cfg, apiURL, &out); err != nil {
+		return 0, "", err
+	}
+	switch len(out.Values) {
+	case 1:
+		return out.Values[0].ID, out.Values[0].Name, nil
+	case 0:
+		return 0, "", fmt.Errorf("board %d has no active sprint", boardID)
+	}
+	var found []string
+	for _, s := range out.Values {
+		found = append(found, fmt.Sprintf("%s (id %d)", s.Name, s.ID))
+	}
+	return 0, "", fmt.Errorf("board %d has %d active sprints: %s",
+		boardID, len(out.Values), strings.Join(found, ", "))
+}
+
+// JiraCreateIssue creates a top-level issue and optionally adds it to a sprint.
+//
+// Every lookup — issue type, assignee, board, sprint — happens before the POST
+// that writes, so a typo fails with nothing created. Adding to a sprint is a
+// second call that cannot be folded into the first, so when it fails the issue
+// already EXISTS: the returned result carries the Key alongside the error, and
+// callers must report that key rather than presenting the whole thing as a
+// failure. A caller that retries a "failed" create files a duplicate.
+//
+// Sprint and board ids must be positive. A nonpositive id parses as a number
+// but can never name a sprint, and placement is guarded on id > 0 — so it
+// would create the issue, skip the sprint, and exit 0 reporting "Sprint: none",
+// which reads as a successful run that quietly did half the job.
+func JiraCreateIssue(cfg *AtlassianConfig, opts JiraCreateOptions) (JiraCreateResult, error) {
+	var res JiraCreateResult
+	if cfg.JiraBaseURL == "" || cfg.UserEmail == "" || cfg.APIToken == "" {
+		return res, fmt.Errorf("missing Jira config (JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN)")
+	}
+	if opts.Project == "" || opts.IssueType == "" || opts.Summary == "" {
+		return res, fmt.Errorf("project, issue type and summary are all required")
+	}
+	if opts.Sprint == "current" && opts.Board == "" {
+		return res, fmt.Errorf("--sprint current requires --board")
+	}
+	res.Summary = opts.Summary
+	res.DryRun = opts.DryRun
+
+	fields := map[string]interface{}{}
+	if len(opts.Payload) > 0 && string(opts.Payload) != "null" {
+		var wrapper struct {
+			Fields map[string]interface{} `json:"fields"`
+		}
+		if err := json.Unmarshal(opts.Payload, &wrapper); err != nil {
+			return res, fmt.Errorf("parsing payload: %w", err)
+		}
+		for k, v := range wrapper.Fields {
+			fields[k] = v
+		}
+	}
+
+	issueType, err := resolveJiraIssueType(cfg, opts.Project, opts.IssueType)
+	if err != nil {
+		return res, err
+	}
+	fields["project"] = map[string]string{"key": opts.Project}
+	fields["issuetype"] = map[string]string{"name": issueType}
+	fields["summary"] = opts.Summary
+	if opts.Priority != "" {
+		fields["priority"] = map[string]string{"name": opts.Priority}
+		res.Priority = opts.Priority
+	}
+	if len(opts.Labels) > 0 {
+		fields["labels"] = opts.Labels
+	}
+	if opts.Assignee != "" {
+		accountID, displayName, err := resolveJiraAssignee(cfg, opts.Assignee)
+		if err != nil {
+			return res, err
+		}
+		fields["assignee"] = map[string]string{"accountId": accountID}
+		res.AssigneeName = displayName
+	}
+
+	sprintID := 0
+	if opts.Sprint != "" {
+		if opts.Sprint == "current" {
+			boardID, err := resolveJiraBoard(cfg, opts.Project, opts.Board)
+			if err != nil {
+				return res, err
+			}
+			res.BoardID = boardID
+			id, name, err := resolveJiraActiveSprint(cfg, boardID)
+			if err != nil {
+				return res, err
+			}
+			sprintID, res.SprintName = id, name
+		} else {
+			// A nonpositive id would skip placement silently — see doc comment.
+			id, err := strconv.Atoi(opts.Sprint)
+			if err != nil || id <= 0 {
+				return res, fmt.Errorf("invalid --sprint %q: want a positive id or \"current\"", opts.Sprint)
+			}
+			sprintID = id
+		}
+		res.SprintID = sprintID
+	}
+
+	payloadJSON, err := json.MarshalIndent(map[string]interface{}{"fields": fields}, "", "  ")
+	if err != nil {
+		return res, fmt.Errorf("marshalling payload: %w", err)
+	}
+	res.RequestBody = string(payloadJSON)
+	if opts.DryRun {
+		return res, nil
+	}
+
+	apiURL := fmt.Sprintf("%s/rest/api/3/issue", strings.TrimRight(cfg.JiraBaseURL, "/"))
+	resp, err := atlassianRequest("POST", apiURL, strings.NewReader(string(payloadJSON)), cfg)
+	if err != nil {
+		return res, fmt.Errorf("Jira API request failed: %w", err)
+	}
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return res, fmt.Errorf("reading response: %w", err)
+	}
+	if resp.StatusCode != 201 {
+		return res, fmt.Errorf("Jira API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	var created struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		return res, fmt.Errorf("parsing response: %w", err)
+	}
+	res.Key = created.Key
+
+	if sprintID > 0 {
+		if err := jiraAddIssueToSprint(cfg, sprintID, created.Key); err != nil {
+			return res, fmt.Errorf("issue created, adding it to sprint %d failed: %w", sprintID, err)
+		}
+	}
+	return res, nil
+}
+
+func jiraAddIssueToSprint(cfg *AtlassianConfig, sprintID int, key string) error {
+	apiURL := fmt.Sprintf("%s/rest/agile/1.0/sprint/%d/issue",
+		strings.TrimRight(cfg.JiraBaseURL, "/"), sprintID)
+	payload := fmt.Sprintf(`{"issues":[%q]}`, key)
+	resp, err := atlassianRequest("POST", apiURL, strings.NewReader(payload), cfg)
+	if err != nil {
+		return fmt.Errorf("Jira API request failed: %w", err)
+	}
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("Jira API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// FormatJiraCreate renders the create result, ending with a machine-readable
+// KEY= line that callers parse.
+func FormatJiraCreate(res JiraCreateResult) string {
+	var b strings.Builder
+	if res.DryRun {
+		b.WriteString("DRY RUN — nothing was written\n")
+		fmt.Fprintf(&b, "Request body:\n%s\n", res.RequestBody)
+		b.WriteString(formatJiraCreateResolved(res))
+		return strings.TrimRight(b.String(), "\n")
+	}
+	fmt.Fprintf(&b, "Created %s: %s\n", res.Key, res.Summary)
+	b.WriteString(formatJiraCreateResolved(res))
+	fmt.Fprintf(&b, "KEY=%s", res.Key)
+	return b.String()
+}
+
+func formatJiraCreateResolved(res JiraCreateResult) string {
+	parts := []string{"Assignee: " + orNone(res.AssigneeName)}
+	if res.SprintID > 0 {
+		sprint := res.SprintName
+		if sprint == "" {
+			sprint = "id " + strconv.Itoa(res.SprintID)
+		} else {
+			sprint = fmt.Sprintf("%s (id %d)", sprint, res.SprintID)
+		}
+		if res.BoardID > 0 {
+			sprint += fmt.Sprintf(" on board %d", res.BoardID)
+		}
+		parts = append(parts, "Sprint: "+sprint)
+	} else {
+		parts = append(parts, "Sprint: none")
+	}
+	parts = append(parts, "Priority: "+orNone(res.Priority))
+	return strings.Join(parts, " | ") + "\n"
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
 }
 
 // --- Confluence API ---

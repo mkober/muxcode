@@ -36,10 +36,15 @@ const injectionGuardLines = 8
 // sentinel, so a plain error would let one redraw spend the whole episode's
 // single attempt and leave a live pane unretried.
 //
+// A prompt is the shell's second frame, not its first, so the mid-exit banner
+// is refused ahead of it (paneShowsAgentExit): between the two the pane is a
+// dying tty that answers no for every prompt suffix and still hands whatever
+// it buffers to bash.
+//
 // No refusal is read as a delivery, and each writes an
-// `injection-refused` row naming the reason. The shell refusal carries
-// ErrInjectionSkipped: it is a deliberate suppression the daemon retries once
-// the agent is restarted. A failed capture refuses too — an unreadable pane
+// `injection-refused` row naming the reason. The shell and mid-exit refusals
+// carry ErrInjectionSkipped: they are deliberate suppressions the daemon
+// retries once the agent is restarted. A failed capture refuses too — an unreadable pane
 // is exactly the pane not to type into — but as a plain error, the same
 // failure class as a send-keys that cannot reach tmux: the daemon's
 // receipt-gap recovery counts it as its one attempt rather than re-arming
@@ -57,6 +62,11 @@ func captureInjectionTarget(session, target, role string) (string, error) {
 	if len(lastNonEmptyLines(content, 1)) == 0 {
 		LogLifecycle(session, "warn", "notify", "injection-refused", role+": pane capture is blank")
 		return content, fmt.Errorf("%s: pane capture is blank, refusing to type blind: %w", role, ErrInjectionSkipped)
+	}
+	if paneShowsAgentExit(content) {
+		last := lastNonEmptyLines(content, 1)[0]
+		LogLifecycle(session, "warn", "notify", "injection-refused", role+": pane is mid-exit, last line: "+last)
+		return content, fmt.Errorf("%s: pane shows the agent exit banner (last line %q), not a live agent: %w", role, last, ErrInjectionSkipped)
 	}
 	if last, shell := paneEndsAtShellPrompt(content); shell {
 		LogLifecycle(session, "warn", "notify", "injection-refused", role+": pane ends at a shell prompt: "+last)
@@ -260,6 +270,25 @@ func roleDefaultCLI(role string) string {
 // Delegates to buildChainInstruction() using the global config.
 func chainInstructionForRole(role string) string {
 	return buildChainInstruction(role, Config())
+}
+
+// buildReplyCommand renders the reply instruction injected into a listenerless
+// provider's pane, correlating it to the request it answers.
+//
+// The --reply-to is load-bearing, not decoration. cmd/send.go's
+// responseAnswers correlates an unlinked reply only when the reply's action
+// matches the request's, and this instruction names the action "response" —
+// which no caller ever sends. So a --wait on an OpenCode or scrape-road Codex
+// target could never match its own answer and always degraded to a tracked
+// task after 90 seconds, making every such delegation look slow (PR #86
+// review, 2026-09-18). An empty requestID yields the old uncorrelated form,
+// which is right for a batch carrying no request to answer.
+func buildReplyCommand(target, requestID string) string {
+	cmd := fmt.Sprintf("muxcode send %s response \"<your one-line summary>\" --type response", target)
+	if requestID != "" {
+		cmd += " --reply-to " + requestID
+	}
+	return cmd
 }
 
 // buildChainInstruction generates a natural-language chain instruction for

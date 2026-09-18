@@ -198,6 +198,51 @@ func TestDetectMessageLoop_PingPong(t *testing.T) {
 	}
 }
 
+// TestDetectMessageLoop_DelegationIsNotPingPong pins the 2026-09-14 false
+// positive: two ordinary successful delegations plus their replies alternate
+// exactly like a pong chain and hit the threshold of 4.
+//
+// The all-request and all-response cases below are the negative controls — a
+// fix that simply stopped counting alternation would silence real loops too,
+// and TestDetectMessageLoop_PingPong alone does not catch that.
+func TestDetectMessageLoop_DelegationIsNotPingPong(t *testing.T) {
+	now := time.Now().Unix()
+
+	delegation := []Message{
+		{TS: now - 60, From: "edit", To: "commit", Action: "commit", Type: "request"},
+		{TS: now - 45, From: "commit", To: "edit", Action: "commit", Type: "response"},
+		{TS: now - 30, From: "edit", To: "commit", Action: "commit", Type: "request"},
+		{TS: now, From: "commit", To: "edit", Action: "commit", Type: "response"},
+	}
+	if alert := DetectMessageLoop(delegation, "edit", 4, 300); alert != nil {
+		t.Errorf("two successful delegations must not alert, got %q", alert.Message)
+	}
+
+	// Same shape as the startup bootstrap false positive: self-addressed
+	// requests and the replies that can never be delivered.
+	startup := []Message{
+		{TS: now - 60, From: "edit", To: "edit", Action: "startup", Type: "request"},
+		{TS: now - 45, From: "edit", To: "edit", Action: "startup", Type: "response"},
+		{TS: now - 30, From: "edit", To: "edit", Action: "startup", Type: "request"},
+		{TS: now, From: "edit", To: "edit", Action: "startup", Type: "response"},
+	}
+	if alert := DetectMessageLoop(startup, "edit", 4, 300); alert != nil {
+		t.Errorf("startup bootstrap plus dropped replies must not alert, got %q", alert.Message)
+	}
+
+	// Negative control: an all-response echo — agents acknowledging each
+	// other's acknowledgements (MUX-169) — is still a loop.
+	echo := []Message{
+		{TS: now - 60, From: "test", To: "edit", Action: "startup", Type: "response"},
+		{TS: now - 45, From: "edit", To: "test", Action: "startup", Type: "response"},
+		{TS: now - 30, From: "test", To: "edit", Action: "startup", Type: "response"},
+		{TS: now, From: "edit", To: "test", Action: "startup", Type: "response"},
+	}
+	if alert := DetectMessageLoop(echo, "edit", 4, 300); alert == nil {
+		t.Error("an all-response acknowledgement echo must still alert")
+	}
+}
+
 func TestDetectMessageLoop_ChainTrafficIgnored(t *testing.T) {
 	// Simulate two build→test→review chain cycles within the window.
 	// Normal chain traffic stays below the threshold (4) even though

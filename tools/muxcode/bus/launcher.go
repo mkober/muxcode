@@ -650,7 +650,9 @@ func ResizeWindows(session string) {
 	}
 }
 
-// PaneState represents the detected state of an agent pane.
+// PaneState represents the detected state of an agent pane. Append new states,
+// never insert: PaneIdle is the readiness value every AcceptStartup compares
+// against, and renumbering moves that goalpost for all providers at once.
 type PaneState int
 
 const (
@@ -658,6 +660,7 @@ const (
 	PaneTrustPrompt                   // "trust this folder" prompt
 	PaneBypassPrompt                  // "Bypass Permissions" prompt
 	PaneIdle                          // Agent at ❯ prompt (ready)
+	PaneApprovalPrompt                // Agent parked mid-turn asking to run a command
 )
 
 // ClassifyPane determines the state of an agent pane from its captured content.

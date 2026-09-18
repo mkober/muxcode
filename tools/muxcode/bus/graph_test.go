@@ -406,6 +406,154 @@ func TestCommitPrReviewLoopVerifiesPr(t *testing.T) {
 	}
 }
 
+// A PR that already exists must not be re-created: on 2026-09-16 a run
+// (1789586432) failed at 1/11 because the template always opened with the
+// commit node, which was asked to stage, commit, push and open a PR on a
+// branch whose PR #99 was already open. The commit agent correctly declined —
+// an unrelated uncommitted file and no commit message — and the run died.
+//
+// The precheck is pr-read, the commit role's one read-shaped action, so it
+// sits ahead of gate1 without tripping the gate rule: nothing it does needs
+// approval, and asking for one before knowing whether there is work would put
+// the question to a human who cannot yet answer it.
+//
+// The skip is asserted as a bypass rather than an ordering: a success edge
+// landing on gate1 or "a" would reach the commit node anyway and reproduce the
+// failure, so the structural check alone would pass while the defect stood.
+func TestCommitPrReviewLoopSkipsCommitWhenPrExists(t *testing.T) {
+	g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if g.Start != "pr-precheck" {
+		t.Errorf("start = %q, want pr-precheck — the run must look before it commits", g.Start)
+	}
+
+	byID := map[string]*Node{}
+	for i := range g.Nodes {
+		byID[g.Nodes[i].ID] = &g.Nodes[i]
+	}
+	pre, ok := byID["pr-precheck"]
+	if !ok {
+		t.Fatal("pr-precheck node missing")
+	}
+	if NormalizeBusRole(pre.Role) != "commit" || pre.Action != "pr-read" {
+		t.Errorf("pr-precheck = %s:%s, want commit:pr-read", pre.Role, pre.Action)
+	}
+	if nodeRequiresGate(pre) {
+		t.Error("pr-precheck requires a gate — it must be read-only to run before gate1")
+	}
+	cond, ok := byID["pr-exists"]
+	if !ok || cond.Type != NodeCondition {
+		t.Fatal("pr-exists condition node missing")
+	}
+	if v := cond.Conditions["output_contains"]; v != "PR-CONFIRMED" {
+		t.Errorf("pr-exists conditions = %v, want output_contains PR-CONFIRMED", cond.Conditions)
+	}
+
+	var skip, fallThrough bool
+	for _, e := range g.Edges {
+		if e.From != "pr-exists" {
+			continue
+		}
+		switch {
+		case e.To == "b" && e.Outcome == "":
+			skip = true
+		case e.To == "gate1" && e.Outcome == OutcomeFailure:
+			fallThrough = true
+		case e.Outcome == "" && (e.To == "gate1" || e.To == "a"):
+			t.Errorf("success edge pr-exists -> %q reaches the commit node the skip exists to avoid", e.To)
+		}
+	}
+	if !skip {
+		t.Error("no success edge pr-exists -> b: an existing PR still runs the commit node")
+	}
+	if !fallThrough {
+		t.Error("no failure edge pr-exists -> gate1: with no PR the run never commits")
+	}
+}
+
+// Both question-shaped nodes must override the commit role's default verdict
+// convention in their own message. git-manager.md answers EXIT=1 when the
+// requested state does not hold and names PR existence as the case, so a node
+// that asks whether a PR exists gets a failure for the "no" answer unless it
+// says otherwise — and a failed node routes nowhere, stranding the branch that
+// exists to handle "no".
+//
+// The executor test pins the routing that follows from an EXIT=0 reply; this
+// pins the instruction that produces one. Without it the wording could be
+// reverted and only a live run would notice.
+func TestCommitPrReviewLoopQuestionNodesDeclareExitConvention(t *testing.T) {
+	g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, id := range []string{"pr-precheck", "verify-pr"} {
+		var n *Node
+		for i := range g.Nodes {
+			if g.Nodes[i].ID == id {
+				n = &g.Nodes[i]
+			}
+		}
+		if n == nil {
+			t.Errorf("%s node missing", id)
+			continue
+		}
+		if !strings.Contains(n.Message, "EXIT=0 EITHER WAY") {
+			t.Errorf("%s does not tell the agent a completed lookup is EXIT=0 either way; "+
+				"a NO-PR-FOUND reply will fail the node and strand the branch", id)
+		}
+		if !strings.Contains(n.Message, "NO-PR-FOUND") {
+			t.Errorf("%s does not name the NO-PR-FOUND token its condition branches on", id)
+		}
+	}
+}
+
+// `d` replies to PR comments about fixes `c` made, so something must commit
+// and push them in between or it cites work that exists only in a working
+// tree. The inserted node is a git mutation, so it must also fall inside a
+// gate's territory — gate2's, whose message names the push for the approval
+// to mean what it releases.
+func TestCommitPrReviewLoopCommitsFixesBeforeReplying(t *testing.T) {
+	g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var push *Node
+	for i := range g.Nodes {
+		if g.Nodes[i].ID == "push-fixes" {
+			push = &g.Nodes[i]
+		}
+	}
+	if push == nil {
+		t.Fatal("push-fixes node missing — d still cites uncommitted work")
+	}
+	if NormalizeBusRole(push.Role) != "commit" || push.Action != "commit" {
+		t.Errorf("push-fixes = %s:%s, want commit:commit", push.Role, push.Action)
+	}
+	if !nodeRequiresGate(push) {
+		t.Error("push-fixes is not recognised as a gated mutation — the authority rules would not cover it")
+	}
+
+	var cToPush, pushToD, cToD bool
+	for _, e := range g.Edges {
+		switch {
+		case e.From == "c" && e.To == "push-fixes":
+			cToPush = true
+		case e.From == "push-fixes" && e.To == "d":
+			pushToD = true
+		case e.From == "c" && e.To == "d":
+			cToD = true
+		}
+	}
+	if !cToPush || !pushToD {
+		t.Errorf("c -> push-fixes -> d incomplete: cToPush=%v pushToD=%v", cToPush, pushToD)
+	}
+	if cToD {
+		t.Error("c -> d still present — the fixes can reach the reply without being committed")
+	}
+}
+
 func TestResolveGraphTemplateBuiltin(t *testing.T) {
 	g, source, err := ResolveGraphTemplate("build-test-review")
 	if err != nil {

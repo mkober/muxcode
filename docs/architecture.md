@@ -206,7 +206,7 @@ This means rapid consecutive edits (e.g. Claude writing multiple files) are coal
 
 ### Daemon watchdogs
 
-Beyond inbox delivery, the daemon runs five resilience watchdogs that detect and self-heal stuck agents. All are opt-out via env var and emit lifecycle events for auditing.
+Beyond inbox delivery, the daemon runs six resilience watchdogs that detect and self-heal stuck agents. All are opt-out via env var and emit lifecycle events for auditing.
 
 | Watchdog | Detects | Action | Tuning | Lifecycle event |
 |----------|---------|--------|--------|-----------------|
@@ -215,8 +215,9 @@ Beyond inbox delivery, the daemon runs five resilience watchdogs that detect and
 | Task-timeout | A tracked task stuck `in-flight` (delivered while busy, never responded) past its timeout — would otherwise permanently block new `(to,action)` sends to that role | Times out the expired in-flight task so the dedup guard ignores it and the target receives messages again | Task timeout (default 600s) | `task-timeout` |
 | Stall re-drive | A **consumed** in-flight task past `TaskStallSecs` whose agent is at rest — the message was taken but the turn never started (dropped Enter, dead listener). Debounced on two consecutive sightings | Re-delivers through `ForceDeliver`, capped at 2 re-drives, after which the task timeout above owns it. A pane that is **working** resets the debounce instead of accumulating it, and is logged once per task | `MUXCODE_TASK_STALL_SECS` (default 90); `MUXCODE_TASK_STALL_DISABLE=1` disables | `task-stall-redrive`, `task-stall-giveup`, `stall-skipped-busy` |
 | Permission-block | A **hook-provider (Claude Code)** agent wedged at a REJECTED permission prompt it cannot satisfy autonomously — it never responds, its request stays actionable, and idle-delivery re-wakes it endlessly. Detected via `PaneShowsPermissionBlock` gated on a pending request + two-sighting debounce | **Alert-only** — suppresses further re-waking (`d.permBlocked`) and sends one `permission-blocked` event to edit; suppression lifts once the signature clears, the request drains, or the agent dies | `MUXCODE_PERMBLOCK_WATCHDOG_DISABLE=1` disables | `permission-blocked` |
+| Codex-approval | A **read-only Codex role** (`review`, `analyze` — the only roles launched `-a on-request`, `isReadOnlyCodexRole`) parked **mid-turn** at an approval prompt ("Would you like to run the following command?") — Codex asking to **escalate** a command past its sandbox, as when the reviewer wanted Playwright outside it. `-a on-request` is an approval *policy* — Codex's own gloss is *the model decides when to ask* — not a sandbox and not an allowlist: these roles get no `-s` flag, so a command that fits the default sandbox (a `go test`, a `./build.sh` in the workspace) executes with **no prompt at all**, and the no-execution rule for `review`/`analyze` is enforced by their role instructions alone, nowhere in the launch flags. It shows neither spinner nor ❯, so `AgentIsWorking` and `PaneShowsRecoverableIdle` both answer no and no other road sees it at all; only the 600s task timeout fires, recording the node `timed-out` — the clock, not the cause (2026-09-14, is-operations-gateway: a review node burned 602s at a prompt asking to run Playwright outside its sandbox, then the run looped). Detected **tail-anchored** (`CodexApprovalPromptLive`: the marker plus "Press enter to confirm or esc to cancel" within the last two non-empty lines) like the trust prompt and for the same reason — Codex draws it inline, so the marker alone outlives the answer in scrollback and would fire an Escape, Codex's interrupt, into every later turn. Polled every 15s (`codexApprovalCheckSecs`) over live Codex read-only roles; needs **no pending inbox**, since the agent has already consumed its request | **Acts, not alerts** — `DenyCodexApproval` sends Escape, the prompt's own "No". The answer is fixed, not judged — not because the policy forbids execution (it does not) but because a read-only role is never to be *granted* escalation, so the only correct answer to its prompt is no; whatever it should not have run in-sandbox, the policy never stopped and this watchdog never sees. Logs `approval-denied` (warn) and sends one rate-gated `approval-denied` event to edit naming the role. Two siblings share the detector: the injection guard (`guardInjection`) answers the same prompt when a wake lands on it and defers the payload (`ErrInjectionSkipped`; source `auto-deny`, event `approval-prompt`), and `ClassifyPane` reports it as `PaneApprovalPrompt` **ahead of** the error test, because that test matches "Error" anywhere in scrollback and a prompt below an old error line would otherwise be restarted rather than answered | `MUXCODE_CODEX_APPROVAL_WATCHDOG_DISABLE=1` disables; the interval is a constant | `approval-denied` (daemon); `approval-prompt` (`auto-deny`, on the injection road) |
 
-Core code: `daemon/daemon.go` (`checkActiveWatchdog()`, `checkStuckProviders()`, `checkTrackedTasks()`, `checkStuckPermissions()`, `checkStalledTasks()` with `noteStallSighting()`/`forgetCompletedTasks()`), `bus/stuck.go` (`PaneShowsProviderLoop()`, `PaneShowsPermissionBlock()`), `bus/task.go` (`TaskExpired()`), `bus/dedup.go` (`HasInFlightTaskForRole()`, `FindInFlightTask()` — both ignore expired tasks).
+Core code: `daemon/daemon.go` (`checkActiveWatchdog()`, `checkStuckProviders()`, `checkTrackedTasks()`, `checkStuckPermissions()`, `checkStalledTasks()` with `noteStallSighting()`/`forgetCompletedTasks()`, `checkCodexApprovals()`), `bus/stuck.go` (`PaneShowsProviderLoop()`, `PaneShowsPermissionBlock()`), `bus/provider_codex.go` (`codexApprovalPromptLive()`, `DenyCodexApproval()`, `CodexRoleIsReadOnly()`, `PaneApprovalPrompt` in `ClassifyPane()`, `guardInjection()`), `bus/task.go` (`TaskExpired()`), `bus/dedup.go` (`HasInFlightTaskForRole()`, `FindInFlightTask()` — both ignore expired tasks).
 
 **No road re-drives a working pane** ([MUX-171](requirements/completed/MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md)). Every forced wake ends in `SendWakeUpWithText`. On the **Claude self-poll road** that types into the pane behind an Escape preamble — Claude's tool-interrupt key — so waking a *busy* Claude agent kills the command it is running. Listenerless providers never reach it: `SendWakeUpWithText` returns `provider.SendWakeUp` first when `SelfPollsInbox()` is false (`bus/notify.go:872–875`), and Codex hook delivery goes through `guardInjection` plus `injectWakeSentence` instead. **The policy is broader than the mechanism** — no working pane is re-driven on any road, because an interrupted turn is a lost turn whatever the provider. Two predicates keep that from happening, and they answer different questions:
 
@@ -503,6 +504,45 @@ backstop: a spec reopened between the check and the commit is still refused. `gr
 rejects a check that names a node without the `phase-progress` guard. Graph workers verify a phase
 through the run agent and quote its counts and task id before reporting, so plan's verify credits a
 store row rather than the worker's account.
+
+**Look before you ask** is the same rule at the other end of the story. `commit-pr-review-loop`
+opened with `gate1` — *approve staging, commit, push and PR creation* — and then the commit node,
+whatever the branch's state. On 2026-09-16 run `1789586432` failed at 1/11: PR #99 was already open,
+so the commit node was asked to create a PR that existed, on a tree with one unrelated uncommitted
+file and no commit message, and its correct decline ended the run. The template now starts at
+`pr-precheck`, a read-only `commit:pr-read` node that reports whether an open PR exists for the
+branch using the literal tokens `verify-pr` already demands (`PR-CONFIRMED` plus its URL, or
+`NO-PR-FOUND`); a `pr-exists` condition (`output_contains: PR-CONFIRMED`) routes success straight to
+`b` — watch the review feedback — and failure to `gate1`, now worded *"No PR exists yet"*. It can sit
+ahead of the gate because `pr-read` is the commit role's one read-shaped action — `nodeRequiresGate`
+exempts it and nothing else on that role — so the gate rule holds and a person is asked to approve
+only when there is work to approve. Pinned by `TestCommitPrReviewLoopSkipsCommitWhenPrExists`, whose
+negative control checks that the success edge *bypasses* `gate1` and `a` rather than merely preceding
+them. The precheck's own outcome is attributed by the commit agent's `EXIT=` token, since `pr-read`
+is evidenced by no command ([MUX-148](requirements/completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md))
+— and that token is **judged on the lookup, not the answer**. `git-manager.md`'s default (`EXIT=1`
+when the requested state does not hold, naming PR existence as its example) would make an honest
+`NO-PR-FOUND` a failure, and a failed node with only a success edge ends the run *failed with no live
+edge* before `pr-exists` evaluates — the branch the template was built around, unreachable, with the
+structural test still green. So both question-shaped nodes — `pr-precheck`, and `verify-pr`, which
+carried the same latent shape since it shipped — say in their own message that a completed lookup is
+`EXIT=0` either way and `EXIT=1` means the lookup itself could not be done; `git-manager.md` records
+the override rule (a node's own message beats the default), `TestCommitPrReviewLoopQuestionNodesDeclareExitConvention`
+pins the wording and `TestCommitPrReviewLoopPrecheckRouting` the routing, with the `EXIT=1` lookup
+failure → `GraphRunFailed` as its negative control. The `c`→`d` gap that spec's Defect 2 records —
+`d` asked to reply to review comments citing a fix nothing had committed — is closed the same
+afternoon by `push-fixes`, a `commit:commit` node between `c` and `d` under `gate2`, whose approval
+text now names the commit and push, with `d` told to cite the sha it reports
+(`TestCommitPrReviewLoopCommitsFixesBeforeReplying`). And the executor now **seeds the verdict
+token on the send road** as it has seeded spawn workers since MUX-148 Phase 3: `seedVerdictToken`
+appends `verdictTokenInstruction` to every send dispatch whose action no command can evidence
+(`edit`, `comment`, `review`, `update-docs`, `pr-read`, `jira-write`, …), because `c` (`edit:edit`)
+would otherwise hold on every run — no command row can testify for it and `code-editor.md` carries no
+`EXIT=` line. Seeding at dispatch closes the class rather than the instance; nodes a command evidences
+are deliberately left unseeded, since their row is the stronger signal and a second one invites the
+conflict hold (`TestSeedVerdictToken`, `TestExecSendSeedsVerdictForUnevidencedAction`). The same
+template scan found `story-to-spec` asking its tracker-update nodes to reference a requirements doc
+that `draft` created and nothing committed — recorded in MUX-148 as a finding for the user, not fixed.
 
 **Workers, stalls and the watchdog (2026-09-09).** Four executor rules came out of the second
 `spec-to-pr` run on MUX-159 (`1788930816-spec-to-pr-f7fb2610`), whose commit dispatch the daemon
@@ -1059,6 +1099,31 @@ The launcher handles all prompts automatically via `provider.ClassifyPane()` and
 8. Exits early once all panes are handled
 
 Core code: `AutoAccept()` in `bus/launcher.go`
+
+### Attach-time daemon freshness check
+
+None of the above runs when the session already exists. `muxcode <dir>` that finds a live tmux session skips `LaunchSession()` entirely and attaches — so before attaching it checks that the session's daemon is running the installed binary, and restarts it if not.
+
+| Road | Daemon comes from | Can it be stale? |
+|------|-------------------|------------------|
+| Fresh launch (`LaunchSession()`) | The binary on `PATH`, started now | No |
+| Attach to a running session | Whatever binary was installed when the session was launched | **Yes** — every `make install` since widens the gap |
+
+A session is launched once but attached many times, so attaching is the only road on which a daemon drifts behind an install, and the only one that needs the check.
+
+1. `bus.TmuxHasSession(sessionName)` is true → print "Session already running — attaching..."
+2. `refreshSessionDaemon()` calls `bus.EnsureSessionDaemonCurrent(session)`, which runs `UpgradeDaemons` with `UpgradeOptions{Session: session}` — the same version-aware rollout as `muxcode upgrade-daemons --session <name>` (`daemon.version` vs this binary via `Info.SameBuild`)
+3. Daemon already current (the common case) → silent. Daemon or monitor restarted → one line, `Daemon refreshed: daemon <old> → installed <new>` (`UpgradePlan.VersionDelta()`)
+4. `bus.AttachToSession()` runs regardless of the outcome
+
+| Property | Behaviour |
+|----------|-----------|
+| Scope | **Always this session alone.** An unscoped rollout cycles the daemon of every session on the machine, including ones nobody asked to touch |
+| Failure | Reported as `Warning: daemon version check: <err>` on stderr, never fatal — `ps` is denied under some sandboxes, and a version check must not stand between the user and their session |
+| Opt-out | `MUXCODE_AUTO_UPGRADE_DAEMONS_DISABLE=1` — see [Configuration](configuration.md#session-settings) |
+| Other road | `build.sh` runs an unscoped `muxcode upgrade-daemons` after `make install`. That call runs inside the build agent's sandbox where `ps` is denied (MUX-161), so the attach check — run in the user's own terminal — is the road that still works there |
+
+Core code: `refreshSessionDaemon()` in `cmd/launcher.go`, `EnsureSessionDaemonCurrent()` and `AutoUpgradeDaemonsDisabled()` in `bus/upgrade.go`
 
 ## Session re-init
 

@@ -446,7 +446,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
   for codex; both are needed, in that order.
 - [MUX-009](../backlog/MUX-009-response-echo-chain-retrigger.md) — fixed at the root by Phase 4: a response
   is delivered as context, never as a prompt.
-- [MUX-148](../backlog/MUX-148-node-outcome-reads-command-ran-as-task-done.md) — authoritative-row provenance
+- [MUX-148](./MUX-148-node-outcome-reads-command-ran-as-task-done.md) — authoritative-row provenance
   on the graph road; Phase 3 gives codex nodes authoritative rows for the first time, so its
   attribution rules apply to them too.
 - [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md) — Phase 5 is the codex enforcement road

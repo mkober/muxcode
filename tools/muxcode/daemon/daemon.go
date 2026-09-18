@@ -106,7 +106,8 @@ type Daemon struct {
 	lastStuckReload map[string]int64 // role → last auto-reload (cooldown)
 	stuckGaveUp     map[string]bool  // role → alerted once after hitting the reload cap
 
-	lastPermBlockCheck int64
+	lastPermBlockCheck     int64
+	lastCodexApprovalCheck int64
 	permBlockSeen      map[string]int  // role → consecutive permission-block sightings (debounce)
 	permBlocked        map[string]bool // role → re-notification suppressed while blocked
 	permBlockAlerted   map[string]bool // role → alerted edit once for the current block
@@ -149,6 +150,7 @@ type Daemon struct {
 
 	probeDefinition   func(session, role string) bus.DefinitionProbe
 	capturePane       func(target string, lines int) (string, error)
+	denyApproval      func(target string) error
 	reloadAgent       func(session, role string) error
 	snapshotAgentDown func(session, role string) (string, error)
 
@@ -257,6 +259,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		windowNames:     bus.TmuxListWindowNames,
 		probeDefinition: bus.ProbeAgentDefinition,
 		capturePane:     bus.TmuxCapturePaneLines,
+		denyApproval:    bus.DenyCodexApproval,
 		reloadAgent: func(session, role string) error {
 			return bus.ReloadAgent(session, role, "", "", false)
 		},
@@ -348,6 +351,7 @@ func (d *Daemon) Run() error {
 		d.checkActiveWatchdog()
 		d.checkStuckProviders()
 		d.checkStuckPermissions()
+		d.checkCodexApprovals()
 		d.checkDefinitionless()
 		d.checkAgentDefs()
 		d.checkCompaction()
@@ -1348,6 +1352,72 @@ func (d *Daemon) clearPermBlock(role string) {
 		bus.LogLifecycle(d.session, "info", "daemon", "permission-block-cleared", role)
 	}
 	d.permBlockAlerted[role] = false
+}
+
+// codexApprovalCheckSecs is the polling interval for the approval-prompt
+// watchdog. Well inside the 600s task timeout it exists to pre-empt.
+const codexApprovalCheckSecs int64 = 15
+
+// codexApprovalRoleEligible reports whether a role's pane can raise a
+// command-approval prompt at all. This is what keeps an Escape — Codex's
+// interrupt — away from a role running `-a never`, which executes without
+// asking and would simply lose its turn's work.
+func codexApprovalRoleEligible(role string) bool {
+	return bus.WindowForRole(role) == role &&
+		bus.CodexRoleIsReadOnly(role) &&
+		bus.ResolveProvider(role).Name() == "codex"
+}
+
+// checkCodexApprovals answers the escalation prompts `-a on-request` raises for
+// review and analyze. That policy is not what stops those roles executing —
+// in-sandbox commands still run without asking — so the prompt only appears
+// when one tries to reach outside, which their instructions already forbid.
+// With no human at the pane the answer can only be no.
+//
+// Unlike checkStuckPermissions this needs no pending inbox: the agent parks
+// mid-turn having already consumed its request, showing neither spinner nor ❯,
+// so nothing else in the daemon sees it.
+//
+// Opt out with MUXCODE_CODEX_APPROVAL_WATCHDOG_DISABLE=1.
+func (d *Daemon) checkCodexApprovals() {
+	if os.Getenv("MUXCODE_CODEX_APPROVAL_WATCHDOG_DISABLE") == "1" {
+		return
+	}
+	now := time.Now().Unix()
+	if now-d.lastCodexApprovalCheck < codexApprovalCheckSecs {
+		return
+	}
+	d.lastCodexApprovalCheck = now
+
+	for _, role := range bus.KnownRoles {
+		if !codexApprovalRoleEligible(role) {
+			continue
+		}
+		if bus.IsReloading(d.session, role) || bus.IsHarnessActive(d.session, role) {
+			continue
+		}
+		if !d.agentAlive(d.session, role) {
+			continue
+		}
+		target := bus.PaneTarget(d.session, role)
+		content, err := d.capturePane(target, 20)
+		if err != nil || !bus.CodexApprovalPromptLive(content) {
+			continue
+		}
+		if err := d.denyApproval(target); err != nil {
+			continue
+		}
+		ts := time.Now().Format("15:04:05")
+		fmt.Printf("  %s  Approval watchdog: denied an escalation prompt for %s — no human is at that pane to grant it\n", ts, role)
+		bus.LogLifecycle(d.session, "warn", "daemon", "approval-denied", role)
+		if d.shouldSendEvent("approval-denied", role) && d.shouldNotifyEdit("event") {
+			msg := bus.NewMessage("daemon", "edit", "event", "approval-denied",
+				fmt.Sprintf("%s asked to run a command it is not permitted to run and parked at the prompt; the watchdog answered no so the turn could continue. A read-only role should not be attempting execution — check its definition if this repeats.", role), "")
+			if err := bus.Send(d.session, msg); err == nil {
+				_ = bus.Notify(d.session, "edit")
+			}
+		}
+	}
 }
 
 // agentDefsCheckSecs is the polling interval for the agent-definition watchdog.

@@ -71,7 +71,7 @@ Each agent independently resolves its AI CLI provider. The provider is fixed for
 |----------|-----------|----------|
 | Claude Code | `claude` (default) | Edit (default), review, deploy — full hook support, deterministic chains |
 | OpenCode | `opencode` | Edit (optional), build, test, research — multi-provider LLM access, autonomous TUI |
-| Codex CLI | `codex` | Analyze, review — OpenAI models, automatic approval mode (-a never); hook road on by default (MUX-159; `MUXCODE_CODEX_HOOKS=0` opts out) |
+| Codex CLI | `codex` | Analyze, review — OpenAI models. Automatic approval (`-a never`) for roles that execute; the **read-only roles** (`review`, `analyze` — `isReadOnlyCodexRole`) run `-a on-request`. That is an approval **policy** — Codex's own gloss is *the model decides when to ask* — not a sandbox and not an allowlist: these roles get no `-s` flag, so a command that fits the default sandbox (a `go test`, a build in the workspace) executes with no prompt, and the no-execution rule is enforced by their role instructions alone. What the policy changes is that a command needing to **escalate** past the sandbox stops at an approval prompt instead of failing — which parks the agent mid-turn, invisible to every other road, until the daemon's codex-approval watchdog answers no ([Daemon watchdogs](architecture.md#daemon-watchdogs)). The reviewer definition states the consequence: if a command needs approval, you are already doing the wrong thing. Hook road on by default (MUX-159; `MUXCODE_CODEX_HOOKS=0` opts out) |
 | Local LLM | `local` | Commit, build, watch — structured commands, zero API cost |
 
 Set per-role: `MUXCODE_{ROLE}_CLI=opencode` in `.muxcode/config`. Set session-wide: `MUXCODE_AGENT_CLI=opencode`.
@@ -184,7 +184,7 @@ Tool profile: `bus`, `readonly`, `common`, plus process management (`kill`, `noh
 
 ### Autonomous Specialists (build, test, review, analyst)
 
-These agents operate autonomously — they receive requests, execute unconditionally, and reply. They never ask for permission before acting.
+These agents operate autonomously — they receive requests, execute unconditionally, and reply. They never ask for permission before acting. On Codex the read-only roles (`review`, `analyze`) run `-a on-request` — an approval policy, not a sandbox: an in-sandbox command runs unprompted (their instructions, not the flag, are what forbid executing), and "asking" surfaces only as an escalation prompt for a command that must leave the sandbox; the reviewer definition treats reaching that prompt as the error itself, and the daemon's codex-approval watchdog answers it no rather than leaving the agent parked mid-turn until its node times out ([Daemon watchdogs](architecture.md#daemon-watchdogs)).
 
 **Sequence:**
 1. Read inbox: `muxcode inbox`
@@ -201,6 +201,8 @@ muxcode send commit pr-read "Read PR reviews and CI failures on the current bran
 ```
 
 The git-manager reads reviews, CI checks, and inline comments, categorizes them (must-fix / should-fix / informational), and reports a structured summary back to edit.
+
+**Verdict sentinel on graph dispatches.** When the request comes from the graph executor (sender `daemon`), the reply must end with `EXIT=0` when the requested state holds or `EXIT=1` when it does not — a `pr-read` reply runs no git command, so no hook row backs it, and without the sentinel the node parks on an unverified hold for a person to approve a verdict already sitting in the text (`git-manager.md`). **A question-shaped node overrides that default in its own message:** when the node asks *whether* something holds rather than telling the agent to make it hold, the requested state is "the lookup completed", so both answers end `EXIT=0` and `EXIT=1` is reserved for a lookup that could not be completed at all. `commit-pr-review-loop`'s `pr-precheck` and `verify-pr` both say so (*"EXIT=0 EITHER WAY"*) and branch on the `PR-CONFIRMED` / `NO-PR-FOUND` tokens through their condition nodes. Read the default literally, an honest `NO-PR-FOUND EXIT=1` fails the node, and because only a success edge leaves it the run ends *failed with no live edge* before the condition that routes "no PR" ever evaluates — the latent shape `verify-pr` carried since it shipped and `pr-precheck` inherited on 2026-09-16. Pinned by `TestCommitPrReviewLoopQuestionNodesDeclareExitConvention` (the wording) and `TestCommitPrReviewLoopPrecheckRouting` (the routing, with an incomplete lookup `EXIT=1` → `GraphRunFailed` as the negative control). Since 2026-09-16 the executor also **seeds** the instruction itself: `seedVerdictToken` appends `verdictTokenInstruction` to every send dispatch whose action no command can evidence (`edit`, `comment`, `review`, `update-docs`, `pr-read`, `jira-write`, …), exactly as spawn workers have been seeded since MUX-148 Phase 3 — so a role definition that omits the sentinel is no longer the last line of defence. A build, test or deploy node is deliberately *not* seeded: its command row is the stronger signal, and a second signal invites the conflict hold.
 
 **Standalone use** (outside a session):
 ```bash
@@ -592,7 +594,7 @@ Core code: `bus/reload_batch.go` (`ReloadBatch()`, `ReloadResult`, `ActiveAgentS
 
 An interactive TUI modal for visually picking a provider, model, and target agents. Supports single-agent reload (existing workflow) and multi-agent bulk reload.
 
-- **Keybinding**: `prefix + R` or `prefix + m → Provider` (the quick menu moved from `b` to `m`; `Provider` is `R` within it)
+- **Keybinding**: `prefix + R` or `prefix + b → Provider` (the quick menu is on `b`; `Provider` is `R` within it)
 - **Sections**: Provider (radio), Model (radio + custom input), Agents (checkboxes), Options (compact/persist checkboxes)
 - **Navigation**: `j`/`k`/arrows move, `Tab` switches section, `Space` selects, `Enter` confirms, `q`/`Esc` cancels
 

@@ -53,9 +53,12 @@ func (p *CodexProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 // BuildExecArgs constructs the Codex CLI launch command.
 // Uses -a never for automatic approval and --no-alt-screen for
 // tmux compatibility (inline mode preserves scrollback).
-// Read-only roles (review, analyze) use -a on-request so Codex prompts
-// for approval on tool use — this prevents reviewers from running
-// tests/builds and analysts from making unintended changes.
+// Read-only roles (review, analyze) use -a on-request so Codex asks before
+// escalating beyond its sandbox. This is an approval policy, NOT a sandbox or
+// an allowlist: those roles get no -s flag, so in-sandbox builds and tests
+// still run unprompted. What forbids them executing is their role
+// instructions; on-request only surfaces the attempts that reach outside, and
+// checkCodexApprovals answers those, since nobody is at the pane.
 // Does NOT use -C (--cd) — that flag changes the agent's working root,
 // which would prevent it from seeing the actual project files. Instead,
 // WriteAgentConfig writes role-specific AGENTS.md to .codex/AGENTS.md
@@ -65,7 +68,7 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 		"--no-alt-screen",
 	}
 
-	// Read-only roles use on-request approval to enforce permission prompts
+	// Read-only roles ask before escalating; everything else runs unprompted
 	if isReadOnlyCodexRole(cfg.Role) {
 		args = append(args, "-a", "on-request")
 	} else {
@@ -267,6 +270,35 @@ const (
 // line of tolerance.
 const codexTrustPromptTailWindow = 2
 
+// Codex's command-approval prompt, raised only by a role launched with
+// `-a on-request` (isReadOnlyCodexRole). codexApprovalPromptTail is its last
+// line — "confirm", not the trust prompt's "continue".
+const (
+	codexApprovalPromptMarker = "Would you like to run the following command?"
+	codexApprovalPromptTail   = "Press enter to confirm or esc to cancel"
+)
+
+// codexApprovalPromptTailWindow is the trust prompt's tolerance, for the same
+// reason: Codex draws this prompt inline too, so its text outlives the answer.
+const codexApprovalPromptTailWindow = 2
+
+// codexApprovalPromptLive reports whether content ends at a command-approval
+// prompt. Unanswered it shows neither spinner nor ❯, so no watchdog reads it as
+// working or as recoverably idle and only the 600s task timeout fires — which
+// records the node as "timed-out", naming the clock rather than the cause
+// (2026-09-14, is-operations-gateway: a review node burned 602s here).
+func codexApprovalPromptLive(content string) bool {
+	if !strings.Contains(content, codexApprovalPromptMarker) {
+		return false
+	}
+	for _, line := range lastNonEmptyLines(content, codexApprovalPromptTailWindow) {
+		if strings.Contains(line, codexApprovalPromptTail) {
+			return true
+		}
+	}
+	return false
+}
+
 // codexTrustPromptLive reports whether content ends at the directory-trust
 // prompt. Codex draws it inline (--no-alt-screen), so the text stays in
 // scrollback once Enter accepts it; the prompt counts only while its last
@@ -289,12 +321,18 @@ func codexTrustPromptLive(content string) bool {
 // so the box-drawing test alone read the prompt as idle, AutoAccept marked
 // the agent ready, and the wake-up was typed into the prompt as its answer
 // (2026-09-09, is-advising-gateway — Codex quit without persisting trust and
-// the daemon's relaunch loop repeated it to the restart cap). Error text is
+// the daemon's relaunch loop repeated it to the restart cap). The approval
+// prompt is next, ahead of the error test because it is tail-anchored while
+// that test matches "Error" anywhere in scrollback — below an old error line it
+// would classify NotReady and be restarted rather than answered. Error text is
 // checked next, since it often contains "codex"; then the TUI's rendering
 // markers, and in inline mode (--no-alt-screen) the bare Codex text prompt.
 func (p *CodexProvider) ClassifyPane(content string) PaneState {
 	if codexTrustPromptLive(content) {
 		return PaneTrustPrompt
+	}
+	if codexApprovalPromptLive(content) {
+		return PaneApprovalPrompt
 	}
 	if strings.Contains(content, "Error") || strings.Contains(content, "FATAL") || strings.Contains(content, "ERROR:") {
 		return PaneNotReady
@@ -338,7 +376,39 @@ func (p *CodexProvider) guardInjection(session, target, role string) error {
 		LogLifecycle(session, "info", "auto-accept", "trust-prompt", role)
 		return fmt.Errorf("%s: pane at the directory-trust prompt, accepted; injection deferred: %w", role, ErrInjectionSkipped)
 	}
+	if codexApprovalPromptLive(content) {
+		if err := DenyCodexApproval(target); err != nil {
+			LogLifecycle(session, "error", "auto-deny", "approval-deny-failed", fmt.Sprintf("%s: %v", role, err))
+			return fmt.Errorf("%s: pane at a command-approval prompt and the deny failed (%v); injection deferred: %w", role, err, ErrInjectionSkipped)
+		}
+		LogLifecycle(session, "warn", "auto-deny", "approval-prompt", role)
+		return fmt.Errorf("%s: pane at a command-approval prompt, denied; injection deferred: %w", role, ErrInjectionSkipped)
+	}
 	return nil
+}
+
+// DenyCodexApproval answers a command-approval prompt with its own "No" (esc).
+//
+// The prompt is an escalation request: `-a on-request` sets an approval policy,
+// not a sandbox or an allowlist, so in-sandbox commands never reach it and only
+// an attempt to work outside does. Its roles are told not to execute at all, so
+// there is no case where yes is right and no human at the pane to say it.
+// Callers send the Escape alone and defer their payload — an Escape adjacent to
+// text fuses into a Meta chord (MUX-163).
+func DenyCodexApproval(target string) error {
+	return TmuxSendEscape(target)
+}
+
+// CodexApprovalPromptLive reports whether a captured pane ends at Codex's
+// command-approval prompt, for callers outside this file.
+func CodexApprovalPromptLive(content string) bool {
+	return codexApprovalPromptLive(content)
+}
+
+// CodexRoleIsReadOnly reports whether a role runs Codex under `-a on-request`,
+// which is the only configuration that can raise a command-approval prompt.
+func CodexRoleIsReadOnly(role string) bool {
+	return isReadOnlyCodexRole(role)
 }
 
 // SendWakeUp reads the latest pending message from the inbox and injects
@@ -400,7 +470,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	// the agent sends a response to itself, which triggers a wake-up,
 	// which injects the self-message, which triggers another response.
 	var parts []string
-	var lastFrom string
+	var lastFrom, lastRequestID, lastRequestFrom string
 	hasRequest := false
 	for _, msg := range batch {
 		// Skip messages from self — these are loop artifacts
@@ -417,6 +487,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 		}
 		if msg.Type == "request" {
 			hasRequest = true
+			lastRequestID, lastRequestFrom = msg.ID, msg.From
 		}
 	}
 	// If the whole batch was self-addressed, consume and discard it (daemon path
@@ -429,7 +500,11 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 
 	// Append reply instruction — Codex agents don't have hooks so they must
 	// be explicitly told to reply via the bus after completing the task.
+	// The reply belongs to whoever asked, not whoever spoke last.
 	replyTarget := NormalizeBusRole(lastFrom)
+	if lastRequestFrom != "" {
+		replyTarget = NormalizeBusRole(lastRequestFrom)
+	}
 	if replyTarget == "" || !IsKnownRole(replyTarget) {
 		replyTarget = "edit"
 	}
@@ -439,7 +514,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	// priority directive) and at the end (as a reminder).
 	// Response-only wake-ups skip this to avoid infinite echo loops.
 	if hasRequest {
-		replyCmd := fmt.Sprintf("muxcode send %s response \"<your one-line summary>\" --type response", replyTarget)
+		replyCmd := buildReplyCommand(replyTarget, lastRequestID)
 		prompt = fmt.Sprintf("IMPORTANT: After completing this task, you MUST run this bash command: %s — ", replyCmd) + prompt
 		prompt += fmt.Sprintf(" — REMINDER: Your FINAL step MUST be to EXECUTE (not print): %s", replyCmd)
 		prompt += chainInstructionForRole(role)
@@ -706,9 +781,12 @@ func writeCodexAgentConfig(role string, hooks bool) error {
 	buf.WriteString("## CRITICAL: Reply Protocol\n\n")
 	buf.WriteString("**Your work is WORTHLESS unless you send the result back.** After completing ANY task, you MUST execute this bash command:\n\n")
 	buf.WriteString("```bash\n")
-	buf.WriteString("muxcode send edit response \"<summary of what you found or did>\" --type response\n")
+	buf.WriteString("muxcode send edit response \"<summary of what you found or did>\" --type response --reply-to <request id>\n")
 	buf.WriteString("```\n\n")
-	buf.WriteString("If a different agent (not edit) requested the task, reply to that agent instead.\n\n")
+	buf.WriteString("If a different agent (not edit) requested the task, reply to that agent instead. ")
+	buf.WriteString("Always pass `--reply-to` with the id of the request you are answering — `muxcode inbox` ")
+	buf.WriteString("prints it. Without it the requester's `--wait` cannot match your reply to its request ")
+	buf.WriteString("and blocks for 90 seconds before giving up, even though you answered.\n\n")
 	buf.WriteString("**This is a bash command. You MUST run it using your shell/bash/terminal tool. ")
 	buf.WriteString("If you write it as text output instead of executing it, the message is silently lost ")
 	buf.WriteString("and the requester hangs forever waiting for your response. EXECUTE IT.**\n\n")

@@ -981,3 +981,49 @@ func TestIsClaudeThinking_StatusFooterAcrossPermissionModes(t *testing.T) {
 		}
 	}
 }
+
+// The reply instruction injected into a listenerless provider's pane must name
+// the request it answers.
+//
+// cmd/send.go correlates an unlinked reply only when its action matches the
+// request's, and this instruction names the action "response" — an action no
+// caller sends. Without --reply-to, every --wait on an OpenCode or scrape-road
+// Codex target blocked the full 90s and degraded to a tracked task while the
+// answer sat in the inbox (PR #86 review, 2026-09-18).
+func TestBuildReplyCommandCorrelatesToTheRequest(t *testing.T) {
+	const reqID = "1789400000-edit-abcd"
+
+	got := buildReplyCommand("edit", reqID)
+	if !strings.Contains(got, "--reply-to "+reqID) {
+		t.Errorf("the instruction must correlate the reply, got %q", got)
+	}
+	if !strings.Contains(got, "muxcode send edit response") {
+		t.Errorf("the instruction must still address the requester, got %q", got)
+	}
+}
+
+// The negative control: a batch with no request to answer has no id to cite,
+// and must not emit a dangling flag.
+func TestBuildReplyCommandOmitsEmptyReplyTo(t *testing.T) {
+	got := buildReplyCommand("edit", "")
+	if strings.Contains(got, "--reply-to") {
+		t.Errorf("no request means no correlation flag, got %q", got)
+	}
+}
+
+// A denial that failed must not be reported as a denial: the pane is still
+// sitting at the approval prompt, and claiming it was answered sends the
+// caller looking somewhere else for the stall.
+func TestDenyCodexApprovalFailureIsNotReportedAsDenied(t *testing.T) {
+	orig := tmuxRunner
+	tmuxRunner = func(args ...string) error { return errors.New("no server running") }
+	t.Cleanup(func() { tmuxRunner = orig })
+
+	err := DenyCodexApproval("session:role.1")
+	if err == nil {
+		t.Fatal("a failed send-keys must surface as an error, not be discarded")
+	}
+	if !strings.Contains(err.Error(), "no server running") {
+		t.Errorf("the tmux cause must survive, got %v", err)
+	}
+}

@@ -399,18 +399,17 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 		}
 	}
 
-	// Wider than the pane: a single-row chain WRAPS at node boundaries —
-	// the user wants the chain shape, not the flat list, when only width
-	// overflows (user request 2026-08-28). Multi-row grids cannot wrap (a
-	// 2D canvas has no line boundaries), and height overflow still
-	// degrades to the flat list.
 	headerLines := 5 // leading blank, tab bar, run line, trailing blank, + margin
 	if snap.Run.Intent != "" {
 		headerLines++
 	}
-	if gridW > width && maxRows == 1 && skipLanes == 0 && headerLines+4 <= height {
-		top := renderGraphHeader(snap, now, width) + renderWrappedChain(grid.Layers, labels, types, snap, selection, width)
-		return frameWithDetails(top, snap, width, height, now, scroll)
+	// Width overflow wraps; the flat list is for height overflow — see renderWrappedLayers.
+	if gridW > width && headerLines+4 <= height {
+		wrapped := renderWrappedLayers(grid.Layers, labels, types, snap, selection, width)
+		if strings.Count(wrapped, "\n") <= height-headerLines {
+			top := renderGraphHeader(snap, now, width) + wrapped
+			return frameWithDetails(top, snap, width, height, now, scroll)
+		}
 	}
 	if gridW > width || gridH+skipLanes+headerLines > height {
 		return renderGraphHeader(snap, now, width) + renderGraphFallback(snap, width, height-headerLines, selection, scroll)
@@ -469,40 +468,123 @@ func frameWithDetails(top string, snap GraphSnapshot, width, height int, now tim
 	return top
 }
 
-// renderWrappedChain renders a single-row DAG wider than the pane as a
-// glyph chain wrapped at node boundaries; a trailing arrow marks the
-// continuation. The chain keeps glyphs, colors, selection, and loop
-// badges — everything the flat fallback loses.
-func renderWrappedChain(layers [][]string, labels map[string]string, types map[string]string, snap GraphSnapshot, selection string, width int) string {
+// clampLabel truncates a node label to max runes, marking the cut with an
+// ellipsis. Every cell reserves two columns for the selection cursor, so the
+// budget here is the column width minus that, and a selected oversized label
+// stays inside its column instead of pushing the row past the pane edge.
+func clampLabel(label string, max int) string {
+	if max < 3 {
+		max = 3
+	}
+	r := []rune(label)
+	if len(r) <= max {
+		return label
+	}
+	return string(r[:max-1]) + "…"
+}
+
+// renderWrappedLayers renders a DAG too wide for the pane as left-to-right
+// bands of layers, wrapping onto a new band when the width runs out. A
+// trailing arrow marks the continuation.
+//
+// This replaces the flat list for width overflow because the list sorts by
+// urgency and so destroys the one thing a reader needs from a pipeline — the
+// order the steps run in (user request 2026-09-18). Layers stay whole: a layer
+// is the set of nodes that run together, so splitting one mid-band would
+// invent an ordering that does not exist. Nodes sharing a layer stack
+// vertically under their column, and the arrow is drawn on the spine row.
+//
+// Wrapping trades width for height, so the caller measures the result and
+// keeps the flat list for a wrap that would not fit: the one thing worse than
+// an urgency-sorted list is a pipeline running off the bottom of the pane.
+func renderWrappedLayers(layers [][]string, labels map[string]string, types map[string]string, snap GraphSnapshot, selection string, width int) string {
 	const arrow = " ─→ "
+	const indent = "  "
+	const contArrow = " ─→"
+	arrowW := len([]rune(arrow))
+
+	colW := make([]int, len(layers))
+	for i, ids := range layers {
+		for _, id := range ids {
+			if w := len([]rune(labels[id])) + 2; w > colW[i] { // +2 for the selection cursor
+				colW[i] = w
+			}
+		}
+	}
+
+	// The continuation arrow is reserved on every band: whether a band is the
+	// last is not known while packing it, and an unreserved one overflows.
+	avail := width - len([]rune(indent)) - len([]rune(contArrow))
+	if avail < 8 {
+		avail = 8
+	}
+	for i := range colW {
+		if colW[i] > avail {
+			colW[i] = avail
+		}
+	}
+
+	var bands [][]int
+	var cur []int
+	used := 0
+	for i := range layers {
+		add := colW[i]
+		if len(cur) > 0 {
+			add += arrowW
+		}
+		if len(cur) > 0 && used+add > avail {
+			bands = append(bands, cur)
+			cur, used = []int{i}, colW[i]
+			continue
+		}
+		cur = append(cur, i)
+		used += add
+	}
+	if len(cur) > 0 {
+		bands = append(bands, cur)
+	}
+
 	var b strings.Builder
 	b.WriteString("\n")
-	line, plain := "  ", 2
-	for li, layerIDs := range layers {
-		id := layerIDs[0]
-		_, color := nodeGlyph(types[id], snap.nodeState(id), snap.nodeOutcome(id), snap.isHeld(id))
-		lbl := labels[id]
-		seg := color + lbl + RST
-		segPlain := len([]rune(lbl))
-		if id == selection {
-			seg = Yellow + Bold + "▶ " + lbl + RST
-			segPlain += 2
+	for bi, band := range bands {
+		rows := 0
+		for _, li := range band {
+			if len(layers[li]) > rows {
+				rows = len(layers[li])
+			}
 		}
-		arrowPlain := 0
-		if li > 0 {
-			arrowPlain = len([]rune(arrow))
+		for r := 0; r < rows; r++ {
+			line := indent
+			for ci, li := range band {
+				if ci > 0 {
+					if r == 0 {
+						line += Comment + arrow + RST
+					} else {
+						line += strings.Repeat(" ", arrowW)
+					}
+				}
+				cell, plain := "", 0
+				if r < len(layers[li]) {
+					id := layers[li][r]
+					_, color := nodeGlyph(types[id], snap.nodeState(id), snap.nodeOutcome(id), snap.isHeld(id))
+					lbl := clampLabel(labels[id], colW[li]-2)
+					if id == selection {
+						cell, plain = Yellow+Bold+"▶ "+lbl+RST, len([]rune(lbl))+2
+					} else {
+						cell, plain = color+lbl+RST, len([]rune(lbl))
+					}
+				}
+				if pad := colW[li] - plain; pad > 0 && ci < len(band)-1 {
+					cell += strings.Repeat(" ", pad)
+				}
+				line += cell
+			}
+			if r == 0 && bi < len(bands)-1 {
+				line += Comment + " ─→" + RST
+			}
+			b.WriteString(strings.TrimRight(line, " ") + "\n")
 		}
-		if li > 0 && plain+arrowPlain+segPlain > width-2 {
-			b.WriteString(line + Comment + " ─→" + RST + "\n")
-			line, plain = "    ", 4
-		} else if li > 0 {
-			line += Comment + arrow + RST
-			plain += arrowPlain
-		}
-		line += seg
-		plain += segPlain
 	}
-	b.WriteString(line + "\n")
 	return b.String()
 }
 

@@ -34,6 +34,26 @@ const (
 		"  ? for shortcuts\n" +
 		"  gpt-5.6-luna medium · ~/repo\n"
 
+	// The command-approval prompt from the 2026-09-14 is-operations-gateway
+	// incident: a read-only review agent asked to leave its sandbox to rerun
+	// browser tests and parked until the node's 600s timeout.
+	codexApprovalBlock = "• Running pnpm exec playwright test e2e/mode-banner.spec.ts --grep Canvas\n" +
+		"  Would you like to run the following command?\n" +
+		"  Environment: local\n" +
+		"  Reason: May I rerun the Canvas browser tests outside the sandbox? Chromium was blocked by macOS Mach-port permissions.\n" +
+		"  $ pnpm exec playwright test e2e/mode-banner.spec.ts --grep Canvas\n" +
+		"› 1. Yes, proceed (y)\n" +
+		"  2. Yes, and don't ask again for commands that start with `pnpm exec playwright test` (p)\n" +
+		"  3. No, and tell Codex what to do differently (esc)\n" +
+		"  Press enter to confirm or esc to cancel\n"
+
+	codexApprovalPromptPane = codexBanner + codexApprovalBlock
+
+	codexApprovalAnsweredPane = codexBanner + codexApprovalBlock +
+		"› Ask Codex to do anything\n" +
+		"  ? for shortcuts\n" +
+		"  gpt-5.6-luna medium · ~/repo\n"
+
 	codexShellPane = codexTrustBlock +
 		"dev@host /home/dev/repo (main)\n" +
 		"->\n" +
@@ -175,6 +195,111 @@ func TestCaptureInjectionTarget_ShellUnderStaleComposerRefused(t *testing.T) {
 	}
 }
 
+// The pane from the 2026-09-17 muxcode incident, captured between Claude
+// Code's exit banner and bash's first prompt. Nothing here ends in a prompt
+// suffix, so the shell test alone answers "not a shell" and the payload — a
+// watch notify carrying $(...) — was typed into a tty bash then submitted.
+// The composer the agent drew before dying sits ABOVE the banner, which is the
+// ordinary shape and not an edge case: a guard reading a ❯ anywhere as "live"
+// clears this exact frame.
+const claudeMidExitPane = "⏺ Done — 25 commits ahead of origin/main.\n" +
+	"❯ \n" +
+	"▶▶ bypass permissions on (shift+tab to cycle)\n" +
+	"\n" +
+	"Resume this session with:\n" +
+	"claude --resume 8a744341-11bf-440f-b5d2-49248447a9c0\n"
+
+func TestCaptureInjectionTarget_RefusesMidExitPane(t *testing.T) {
+	session := "inject-guard-midexit"
+	injectionTestSession(t, session)
+	calls := stubInjectionPane(t, claudeMidExitPane, nil)
+
+	if _, shell := paneEndsAtShellPrompt(claudeMidExitPane); shell {
+		t.Fatal("fixture no longer reproduces the gap: it already reads as a shell")
+	}
+
+	_, err := captureInjectionTarget(session, session+":edit.1", "edit")
+	if !errors.Is(err, ErrInjectionSkipped) {
+		t.Fatalf("a mid-exit pane must refuse with ErrInjectionSkipped, got %v", err)
+	}
+	if keys := sentKeys(*calls); len(keys) != 0 {
+		t.Errorf("a refusal must type nothing, sent %v", keys)
+	}
+	if n := countLifecycleEvents(t, session, "injection-refused"); n != 1 {
+		t.Errorf("injection-refused lifecycle rows = %d, want 1", n)
+	}
+}
+
+// A narrow pane soft-wraps the banner mid-phrase and pushes it off any fixed
+// tail; capture carries no -J to rejoin it. Both shapes must still refuse.
+func TestCaptureInjectionTarget_RefusesWrappedExitBanner(t *testing.T) {
+	session := "inject-guard-midexit-wrap"
+	injectionTestSession(t, session)
+
+	wrapped := "⏺ Done.\n" +
+		"❯ \n" +
+		"\n" +
+		"Resume this sessio\n" +
+		"n with:\n" +
+		"claude --resume 8a744341-11bf-4\n" +
+		"40f-b5d2-49248447a9c0\n"
+	if strings.Contains(wrapped, agentExitBanner) {
+		t.Fatal("fixture no longer reproduces the wrap: the banner is intact")
+	}
+	if !strings.Contains(wrapped, idlePromptChar) {
+		t.Fatal("fixture must keep the pre-exit composer above the banner")
+	}
+	stubInjectionPane(t, wrapped, nil)
+	if _, err := captureInjectionTarget(session, session+":edit.1", "edit"); !errors.Is(err, ErrInjectionSkipped) {
+		t.Fatalf("a wrapped exit banner must refuse, got %v", err)
+	}
+	if n := countLifecycleEvents(t, session, "injection-refused"); n != 1 {
+		t.Errorf("injection-refused lifecycle rows = %d, want 1", n)
+	}
+}
+
+// The banner survives in scrollback after the relaunch, so a live composer —
+// not a line count — is what keeps the healthy pane that replaced it
+// deliverable. Negative control: blank lines under the banner still refuse.
+func TestCaptureInjectionTarget_MidExitYieldsToLiveComposer(t *testing.T) {
+	session := "inject-guard-midexit-anchor"
+	injectionTestSession(t, session)
+
+	relaunched := claudeMidExitPane +
+		"⏺ Restarted.\n❯ \n▶▶ bypass permissions on (shift+tab to cycle)\n"
+	stubInjectionPane(t, relaunched, nil)
+	if _, err := captureInjectionTarget(session, session+":edit.1", "edit"); err != nil {
+		t.Fatalf("a relaunched agent under a scrolled-up banner must proceed, got %v", err)
+	}
+	if n := countLifecycleEvents(t, session, "injection-refused"); n != 0 {
+		t.Errorf("no refusal expected for a live pane, lifecycle rows = %d", n)
+	}
+
+	stubInjectionPane(t, claudeMidExitPane+"\n\n", nil)
+	if _, err := captureInjectionTarget(session, session+":edit.1", "edit"); !errors.Is(err, ErrInjectionSkipped) {
+		t.Fatalf("blank lines under the banner must still refuse, got %v", err)
+	}
+}
+
+// A capture wide enough to span exit → relaunch → exit carries a composer
+// below its FIRST banner and nothing below its last. Only the newest exit
+// describes the pane being typed into.
+func TestCaptureInjectionTarget_RefusesSecondExitAfterRelaunch(t *testing.T) {
+	session := "inject-guard-midexit-twice"
+	injectionTestSession(t, session)
+
+	twice := claudeMidExitPane +
+		"⏺ Restarted.\n❯ \n" +
+		claudeMidExitPane
+	if strings.Count(stripWhitespace(twice), stripWhitespace(agentExitBanner)) != 2 {
+		t.Fatal("fixture must carry two exit banners")
+	}
+	stubInjectionPane(t, twice, nil)
+	if _, err := captureInjectionTarget(session, session+":edit.1", "edit"); !errors.Is(err, ErrInjectionSkipped) {
+		t.Fatalf("the newest exit must decide, got %v", err)
+	}
+}
+
 func TestCodexAcceptStartup_TrustPromptPressesEnter(t *testing.T) {
 	calls := stubInjectionPane(t, "", nil)
 	p := &CodexProvider{}
@@ -232,6 +357,78 @@ func TestCodexSendWakeUp_HookRoadAnswersTrustPromptAndDefers(t *testing.T) {
 	}
 	if n := countLifecycleEvents(t, session, "trust-prompt"); n != 1 {
 		t.Errorf("trust-prompt auto-accept lifecycle rows = %d, want 1", n)
+	}
+}
+
+// The answered pane is the load-bearing case: Codex draws the prompt inline, so
+// its text stays in scrollback forever. Matching the marker alone would deny
+// every later turn with an Escape — Codex's interrupt — killing real work.
+func TestCodexApprovalPromptLive_TailAnchored(t *testing.T) {
+	if !codexApprovalPromptLive(codexApprovalPromptPane) {
+		t.Error("a live approval prompt must be detected")
+	}
+	if codexApprovalPromptLive(codexApprovalAnsweredPane) {
+		t.Error("an answered prompt in scrollback must not count as live")
+	}
+	if codexApprovalPromptLive(codexComposerPane) {
+		t.Error("a composer with no prompt must not count")
+	}
+}
+
+// Pins the classification order: the error test matches "Error" anywhere in the
+// captured scrollback, so ahead of it an approval prompt would read NotReady
+// and be restarted instead of answered.
+func TestCodexClassifyPane_ApprovalPromptBeatsScrollbackError(t *testing.T) {
+	p := &CodexProvider{}
+	if got := p.ClassifyPane(codexApprovalPromptPane); got != PaneApprovalPrompt {
+		t.Errorf("ClassifyPane = %v, want PaneApprovalPrompt", got)
+	}
+	withError := codexBanner + "Error: previous run failed\n" + codexApprovalBlock
+	if got := p.ClassifyPane(withError); got != PaneApprovalPrompt {
+		t.Errorf("ClassifyPane with a stale error line = %v, want PaneApprovalPrompt", got)
+	}
+}
+
+// The prompt is answered "no" and the payload deferred — never typed, since it
+// would be consumed as the prompt's answer.
+func TestCodexSendWakeUp_ApprovalPromptDeniedAndDefers(t *testing.T) {
+	session := "inject-codex-approval"
+	injectionTestSession(t, session)
+	calls := stubInjectionPane(t, codexApprovalPromptPane, nil)
+	sendTestRequest(t, session, "build", "MSG-CODEX-APPROVAL")
+
+	err := (&CodexProvider{}).SendWakeUp(session, "build", true)
+	if !errors.Is(err, ErrInjectionSkipped) {
+		t.Fatalf("approval prompt must defer with ErrInjectionSkipped, got %v", err)
+	}
+	keys := sentKeys(*calls)
+	if len(keys) != 1 || !strings.HasSuffix(keys[0], " Escape") {
+		t.Fatalf("approval prompt must receive exactly one Escape, sent %v", keys)
+	}
+	if strings.Contains(strings.Join(keys, "\n"), "MSG-CODEX-APPROVAL") {
+		t.Error("the payload must not be typed into the approval prompt")
+	}
+	if msgs, _ := Peek(session, "build"); len(msgs) != 1 {
+		t.Errorf("deferred message must stay in the inbox, have %d", len(msgs))
+	}
+	if n := countLifecycleEvents(t, session, "approval-prompt"); n != 1 {
+		t.Errorf("approval-prompt auto-deny lifecycle rows = %d, want 1", n)
+	}
+}
+
+// Denying is only correct where the answer cannot be yes. A role running with
+// `-a never` executes without prompting, so it must never be swept in — an
+// Escape there would interrupt real work.
+func TestCodexRoleIsReadOnly_OnlyOnRequestRoles(t *testing.T) {
+	for _, role := range []string{"review", "analyze"} {
+		if !CodexRoleIsReadOnly(role) {
+			t.Errorf("%s runs -a on-request and can raise an approval prompt", role)
+		}
+	}
+	for _, role := range []string{"build", "test", "deploy", "edit", "commit"} {
+		if CodexRoleIsReadOnly(role) {
+			t.Errorf("%s runs -a never — denying its pane would interrupt real work", role)
+		}
 	}
 }
 

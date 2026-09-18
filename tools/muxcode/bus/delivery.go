@@ -60,7 +60,6 @@ func DeliveryPath(session, msgID string) string {
 
 // CreateDeliveryStatus writes the initial "sent" status file for a message.
 // Called by Send() after appending the message to the recipient's inbox.
-// The delivery directory is created by Init() at session start.
 func CreateDeliveryStatus(session string, m Message) error {
 	ds := DeliveryStatus{
 		ID:     m.ID,
@@ -301,10 +300,23 @@ func FormatDeliveryStatus(ds DeliveryStatus) string {
 	return s
 }
 
-// writeDeliveryStatus writes a delivery status to its file.
+// writeDeliveryStatus writes a delivery status to its file, creating the
+// delivery directory when it is absent.
+//
+// Init() creates that directory at session start, but depending on it here was
+// silently load-bearing: every caller treats a write failure as a warning, so a
+// missing directory produced no status file, spawnHasResponded then read an
+// answered worker as unanswered, and replaceLostWorkers replaced a worker whose
+// work was already done. Creating the directory at the write keeps "a sent
+// message has a status file" true on every road into this function, not only the
+// one that ran Init() — the same reason the sibling log write in
+// recordUndeliveredReply creates its own directory.
 func writeDeliveryStatus(session string, ds DeliveryStatus) error {
 	data, err := json.Marshal(ds)
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(DeliveryDir(session), 0755); err != nil {
 		return err
 	}
 	return os.WriteFile(DeliveryPath(session, ds.ID), data, 0644)

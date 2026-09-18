@@ -23,7 +23,7 @@ Two concrete costs of that gap, both from 2026-09-03:
    re-opened the exact hole the mechanism closed** — an explicit unknown edge is precisely what
    routes an unverified node onward without a person. It was caught only because someone read the
    doc comment before writing the code.
-2. **A misattribution in another spec.** [`MUX-148`](../backlog/MUX-148-node-outcome-reads-command-ran-as-task-done.md)
+2. **A misattribution in another spec.** [`MUX-148`](./MUX-148-node-outcome-reads-command-ran-as-task-done.md)
    was initially handed over describing this as "the MUX-136 hold".
 
 A spec makes that reasoning available without requiring the reader to find the comment first.
@@ -115,7 +115,7 @@ it is the single most likely way this protection gets removed by accident.
 
 It catches **`unknown` only**. A node whose agent declines its task while running a successful
 shell command produces a confident `success`, so no hold fires and no human is asked. That is
-[`MUX-148`](../backlog/MUX-148-node-outcome-reads-command-ran-as-task-done.md), tracked separately
+[`MUX-148`](./MUX-148-node-outcome-reads-command-ran-as-task-done.md), tracked separately
 and ranked tier 0 — not restated here.
 
 ## Follow-on hardening

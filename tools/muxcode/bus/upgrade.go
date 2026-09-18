@@ -2,6 +2,7 @@ package bus
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -243,6 +244,49 @@ func UpgradeDaemons(opts UpgradeOptions) ([]UpgradeResult, error) {
 		results = append(results, res)
 	}
 	return results, nil
+}
+
+// upgradeDaemonsFn is the seam tests replace; production runs UpgradeDaemons.
+var upgradeDaemonsFn = UpgradeDaemons
+
+// AutoUpgradeDaemonsDisabled reports whether attaching to a running session
+// should skip the daemon freshness check.
+// MUXCODE_AUTO_UPGRADE_DAEMONS_DISABLE=1 opts out.
+func AutoUpgradeDaemonsDisabled() bool {
+	return os.Getenv("MUXCODE_AUTO_UPGRADE_DAEMONS_DISABLE") == "1"
+}
+
+// EnsureSessionDaemonCurrent rolls one session's daemon onto this binary's
+// build when it is running an older one, and reports whether it restarted
+// anything. LaunchSession already starts a daemon from the binary on PATH, so
+// attaching is the only way a session's daemon drifts behind an install — and
+// a session is launched once but attached many times, which is why staleness
+// accumulates on that path and nowhere else.
+//
+// The upgrade is always scoped to session. An unscoped rollout cycles daemons
+// for every session on the machine, including ones nobody asked to touch;
+// that has happened, and this scope is what prevents it.
+//
+// Errors are returned for the caller to report, never to act on: ps is denied
+// under some sandboxes, and a daemon check must never stand between the user
+// and their session.
+func EnsureSessionDaemonCurrent(session string) (UpgradeResult, bool, error) {
+	if session == "" || AutoUpgradeDaemonsDisabled() {
+		return UpgradeResult{}, false, nil
+	}
+	results, err := upgradeDaemonsFn(UpgradeOptions{Session: session})
+	if err != nil {
+		return UpgradeResult{}, false, err
+	}
+	for _, r := range results {
+		if r.Err != nil {
+			return r, false, r.Err
+		}
+		if r.DaemonRestarted || r.MonitorRestarted {
+			return r, true, nil
+		}
+	}
+	return UpgradeResult{}, false, nil
 }
 
 // killProcess sends SIGTERM and waits up to 2s for exit, escalating to

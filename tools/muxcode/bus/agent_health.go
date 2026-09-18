@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // agentHealthExcludedRoles lists roles that should never be auto-restarted.
@@ -138,6 +139,42 @@ func hasShellPromptSuffix(line string) bool {
 		return true
 	}
 	return false
+}
+
+// agentExitBanner is the line Claude Code prints as it tears down, above the
+// `claude --resume <id>` command it offers.
+const agentExitBanner = "Resume this session with:"
+
+// paneShowsAgentExit reports whether a capture caught the agent between its
+// exit banner and the shell's first prompt — the gap hasShellPromptSuffix
+// cannot see, having no prompt yet to match, where a payload lands in a tty
+// bash inherits and submits as a command (2026-09-17, muxcode edit pane).
+//
+// Only a composer BELOW the last banner clears the pane. Below, because the
+// dying agent drew one above it moments earlier, so an anywhere-in-the-capture
+// test clears the very frame this catches — the MUX-164 bypass again; last,
+// because a capture spanning exit/relaunch/exit has a composer under its first
+// banner and nothing under its newest. Matching is whitespace-stripped: a
+// narrow pane soft-wraps the banner mid-phrase and capture carries no -J to
+// rejoin it, while stripping preserves the order the test depends on.
+func paneShowsAgentExit(content string) bool {
+	stripped := stripWhitespace(content)
+	at := strings.LastIndex(stripped, stripWhitespace(agentExitBanner))
+	if at < 0 {
+		return false
+	}
+	return !strings.Contains(stripped[at:], idlePromptChar)
+}
+
+// stripWhitespace removes every space, tab and newline so a match survives the
+// soft wrap a narrow pane inserts mid-phrase.
+func stripWhitespace(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // FormatAgentHealthAlert formats an agent health alert message.

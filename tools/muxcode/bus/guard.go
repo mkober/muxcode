@@ -158,6 +158,15 @@ func DetectCommandLoop(entries []HistoryEntry, threshold int, windowSecs int64) 
 // bidirectional response chains. Event messages and daemon traffic are also
 // excluded (they repeat naturally).
 //
+// A ping-pong chain must be homogeneous in message type, for the same reason
+// the tuple count excludes responses: an ordinary delegation IS an alternation.
+// Two successful commits — edit→commit, commit→edit, edit→commit, commit→edit —
+// hit the threshold of 4 and alerted twice on 2026-09-14, as did two
+// self-addressed startup bootstraps and their undeliverable replies. Mixing a
+// request with a response is a question and its answer. Both homogeneous forms
+// stay loops: agents demanding of each other (all requests), and agents
+// acknowledging each other's acknowledgements (all responses, MUX-169).
+//
 // Returns an alert if any pattern repeats >= threshold times within windowSecs.
 func DetectMessageLoop(messages []Message, role string, threshold int, windowSecs int64) *LoopAlert {
 	if len(messages) == 0 || threshold < 1 {
@@ -249,8 +258,8 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 		prevTo := a.To
 		for j := i + 1; j < len(recentAll); j++ {
 			b := recentAll[j]
-			if b.Action != action {
-				break
+			if b.Action != action || b.Type != a.Type {
+				break // mixed types are a request and its answer, not a pong
 			}
 			// Expect flip: prev.To == b.From and prev.From == b.To
 			if b.From == prevTo && b.To == prevFrom {

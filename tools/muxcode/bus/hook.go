@@ -286,9 +286,15 @@ var DefaultDeployApplyPatterns = []string{
 }
 
 // DefaultGitPatterns are the default patterns for detecting git commands.
+// Branch-changing commands are here so a checkout leaves an observable row:
+// without one, a graph `checkout`/`pr-checkout` node has no evidence it could
+// ever be attributed by and holds forever (pr-local-review's prepare and
+// restore nodes). They are mutations like the rest — this list stays
+// mutating-only, so a read-only `git status`/`git log` still writes nothing.
 var DefaultGitPatterns = []string{
 	"git*commit", "git*push", "git*merge", "git*rebase", "git*tag", "git*cherry-pick",
-	"gh*pr*create", "gh*pr*merge", "gh*pr*close", "gh*release*create",
+	"git*checkout", "git*switch",
+	"gh*pr*create", "gh*pr*merge", "gh*pr*close", "gh*pr*checkout", "gh*release*create",
 }
 
 // ClassifyCommand detects the type of a bash command.
@@ -401,7 +407,9 @@ func isEnvVarName(s string) bool {
 }
 
 // matchPatterns checks if a command matches any of the glob-style patterns.
-// If withWrappers is true, also matches bash/sh/npx wrapper prefixes.
+// If withWrappers is true, also matches bash/sh/npx wrapper prefixes and the
+// pnpm exec/dlx forms, whose nested runner is matched as the executable
+// rather than as a substring of the arguments (see MUX-148 Defect 4).
 // Uses globMatch from tools.go for pattern matching.
 //
 // A pattern's literal head — the text before its first `*` — must end at an
@@ -412,7 +420,19 @@ func isEnvVarName(s string) bool {
 // check rather than a token comparison so a multiword literal override such
 // as `go test` and an adjacent operator such as `./build.sh>log` both still
 // match.
+//
+// When the command is a nested runner (`pnpm exec …`, `npx …`), what it runs
+// decides, and that decision is final. Falling through to the pattern loop let
+// the outer `pnpm*test` glob match the wrapper itself, so `pnpm exec eslint
+// test.config.js` classified as a test run and fired the test→review chain off
+// a lint (PR #86 review, 2026-09-18).
 func matchPatterns(cmd string, patterns []string, withWrappers bool) bool {
+	// A nested runner's verdict is final — see the doc comment.
+	if withWrappers {
+		if nested, ok := nestedRunnerCommand(cmd); ok {
+			return matchPatterns(nested, patterns, false)
+		}
+	}
 	for _, pat := range patterns {
 		if headAtBoundary(cmd, patternHead(pat)) && globMatch(pat+"*", cmd) {
 			return true
@@ -430,6 +450,26 @@ func matchPatterns(cmd string, patterns []string, withWrappers bool) bool {
 		}
 	}
 	return false
+}
+
+// runnerPrefixes are wrapper forms whose nested argument is the command
+// actually executed. Bare `pnpm` is deliberately absent: `pnpm add jest`
+// installs Jest and `pnpm exec eslint jest.config.js` lints a config file —
+// matching a runner name anywhere in the arguments would classify both as
+// test runs and let a successful install overwrite a real suite failure.
+var runnerPrefixes = []string{"pnpm exec ", "pnpm dlx "}
+
+// nestedRunnerCommand returns the command a runner prefix wraps, so callers
+// match the nested executable at its own boundary instead of searching the
+// argument text for a runner's name.
+func nestedRunnerCommand(cmd string) (string, bool) {
+	for _, p := range runnerPrefixes {
+		if strings.HasPrefix(cmd, p) {
+			nested := strings.TrimLeft(cmd[len(p):], " \t")
+			return nested, nested != ""
+		}
+	}
+	return "", false
 }
 
 // patternHead is the literal text before a pattern's first `*` — empty for
@@ -589,7 +629,17 @@ type HookHistoryEntry struct {
 
 // WriteHookHistory appends a history entry to a JSONL file with file-level locking
 // and rotation to keep the last maxEntries entries.
+//
+// An entry arriving with no Source is stamped SourceHook: this function is the
+// runtime-observed road, and its callers that are NOT observations — the
+// synthesized bus-response rows, and `muxcode log`'s self-reports — say so
+// explicitly. Stamping here rather than at each construction site keeps the
+// five hook call sites from drifting apart, and makes "went through
+// WriteHookHistory without declaring itself" mean exactly one thing.
 func WriteHookHistory(path string, entry HookHistoryEntry, maxEntries int) error {
+	if entry.Source == "" {
+		entry.Source = SourceHook
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}

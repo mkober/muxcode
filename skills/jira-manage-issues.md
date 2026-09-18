@@ -324,6 +324,42 @@ Initial requirements look good, but we need to clarify the edge cases.
 
 This is useful for understanding discussion context before posting a new comment or updating the description.
 
+### Create issues
+
+Create a top-level issue, optionally assigning it and placing it in a sprint.
+
+```bash
+muxcode atlassian jira create <PROJECT> <ISSUETYPE> "<SUMMARY>" <payload.json> \
+    [--assignee me|<accountId>] [--priority <name>] \
+    [--sprint current|<sprintId>] [--board "<name>"|<boardId>] \
+    [--label <l>]... [--dry-run]
+```
+
+`payload.json` is the same `{"fields":{"description":{ADF}}}` shape `update` takes — there is no second payload format. The flags are merged into those fields.
+
+```bash
+muxcode atlassian jira create PROMGT Bug "Login redirect loops" defect.json \
+    --assignee me --priority High --sprint current --board "PKH Build"
+```
+
+Output ends with a machine-readable key line:
+
+```
+Created PROMGT-901: Login redirect loops
+Assignee: Mark K | Sprint: Sprint 9 (id 42) on board 7 | Priority: High
+KEY=PROMGT-901
+```
+
+**Resolution happens before the write.** The issue type is matched against the project's own types (a miss fails and lists the valid names), `--assignee me` resolves via `/myself`, a board name must match exactly one board, and `--sprint current` requires exactly one active sprint. A typo therefore fails with nothing created.
+
+**Partial success — a printed KEY means the issue exists, do not retry.** Creating and adding to a sprint are two API calls. If the create succeeds and the sprint call fails, the command prints the key, names the failed step with its HTTP status and body, and exits non-zero. Retrying that command files a **duplicate**. Fix the sprint placement by hand, or add the existing key to the sprint.
+
+**`--dry-run`** performs every lookup and prints the resolved board, sprint and assignee plus the exact JSON body, writing nothing.
+
+`create` is a **write**, gated like every other Jira write: plan only by default, widened with `MUXCODE_ATLASSIAN_AUTHORITY_ROLES`.
+
+Reporting line: `"Created ${key}: ${summary}"`
+
 ### Create subtasks
 
 Break a story into subtasks. The project key is auto-derived from the parent key if not provided.

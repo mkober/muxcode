@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mkober/muxcode/tools/muxcode/cmd"
 )
@@ -26,7 +27,7 @@ var knownSubcommands = map[string]bool{
 	"simulate": true, "track": true, "remote": true, "spec": true,
 	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true,
 	"branch-time": true, "clear": true, "graph": true, "pane": true,
-	"version": true,
+	"version": true, "approve": true,
 }
 
 // route is where argv goes. The order routeFor checks them in is pinned by
@@ -40,20 +41,117 @@ const (
 	routeVersion
 	routeLauncher
 	routeSubcommand
+	routeHelp
+	routeAmbiguousName
+	routeNearMiss
 )
+
+// firstKnownSubcommand returns the first arg naming a subcommand, or "" —
+// used to guess what a refused launcher call was reaching for.
+func firstKnownSubcommand(args []string) string {
+	for _, a := range args {
+		if knownSubcommands[a] {
+			return a
+		}
+	}
+	return ""
+}
+
+// withinEditDistance1 reports whether a and b differ by at most one insertion,
+// deletion or substitution. Subcommand names are ASCII, so bytes are fine.
+func withinEditDistance1(a, b string) bool {
+	if len(a) < len(b) {
+		a, b = b, a
+	}
+	if len(a)-len(b) > 1 {
+		return false
+	}
+	for i := 0; i < len(b); i++ {
+		if a[i] == b[i] {
+			continue
+		}
+		if len(a) == len(b) {
+			return a[i+1:] == b[i+1:]
+		}
+		return a[i+1:] == b[i:]
+	}
+	return true
+}
+
+// nearestSubcommand returns the known subcommand one edit away from arg, or "".
+// Ties resolve to the lexicographically smallest so the refusal message and its
+// test are stable across map iteration order.
+func nearestSubcommand(arg string) string {
+	best := ""
+	for sub := range knownSubcommands {
+		if withinEditDistance1(sub, arg) && (best == "" || sub < best) {
+			best = sub
+		}
+	}
+	return best
+}
+
+// isPathLike reports whether arg is spelled as a path rather than a bare name.
+// This is the documented escape hatch from the near-miss guard: `./agents`
+// launches the directory that `agents` alone refuses.
+func isPathLike(arg string) bool {
+	return strings.ContainsRune(arg, filepath.Separator) ||
+		strings.HasPrefix(arg, ".") || strings.HasPrefix(arg, "~")
+}
 
 // routeFor classifies args (argv without the program name) for the binary
 // invoked as base. Only the "muxcode" name routes unknown args to the
 // launcher; the muxcode-agent-bus symlink dispatches subcommands only.
+//
+// Three guards sit in front of that path fallback, because a launch is not a
+// cheap mistake to make: it starts a tmux session with a full agent window
+// layout and one AI CLI process per role.
+//
+//   - A help flag prints usage. Without this `muxcode --help` reached the
+//     launcher and died on "not a directory: <cwd>/--help", which reads as a
+//     broken binary rather than a bad flag.
+//   - Any other leading "-" arg is a flag, never a project directory, so it
+//     gets usage instead of a path lookup. This closes the whole class the
+//     "--version" special case opened by example.
+//   - A launcher call carrying more than <path> [<name>], or naming a
+//     subcommand where the session name goes, is a subcommand call that lost
+//     its subcommand. The launcher reads only args 0 and 1 and silently drops
+//     the rest, so on 2026-09-14 a test agent that had guessed this calling
+//     convention (having found no --help) started four stray sessions —
+//     "memory", "send", "__help", "test" — and 93 panes, just by trying to
+//     send a message. `muxcode launch <path> <name>` stays unguarded for
+//     anyone who really wants that session name.
+//   - A bare first arg one edit away from a subcommand is a misspelling, not a
+//     project. The arg-count guard above misses a single-arg call, so on
+//     2026-09-15 `muxcode agents` — "agent" plus an s, and also a real
+//     directory in this repo — resolved against cwd and started a 10-window
+//     fleet, leaving a generated agents/.codex/ behind. Directories whose
+//     names shadow a subcommand are reached by path (`muxcode ./agents`),
+//     which is what isPathLike exempts.
 func routeFor(base string, args []string) route {
 	if len(args) >= 1 && (args[0] == "--version" || args[0] == "-v") {
 		return routeVersion
 	}
+	if len(args) >= 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
+		return routeHelp
+	}
 	if base == "muxcode" {
-		if len(args) == 0 || !knownSubcommands[args[0]] {
+		if len(args) == 0 {
 			return routeLauncher
 		}
-		return routeSubcommand
+		if knownSubcommands[args[0]] {
+			return routeSubcommand
+		}
+		if strings.HasPrefix(args[0], "-") {
+			return routeUsage
+		}
+		if !isPathLike(args[0]) && nearestSubcommand(args[0]) != "" {
+			return routeNearMiss
+		}
+		if len(args) > 2 || (len(args) == 2 && knownSubcommands[args[1]]) {
+			return routeAmbiguousName
+		}
+		return routeLauncher
 	}
 	if len(args) == 0 {
 		return routeUsage
@@ -135,9 +233,28 @@ func main() {
 	case routeVersion:
 		cmd.Version(nil)
 		return
+	case routeHelp:
+		fmt.Print(usage)
+		return
 	case routeLauncher:
 		cmd.RunLauncher(args)
 		return
+	case routeAmbiguousName:
+		fmt.Fprintf(os.Stderr, "Refusing to launch a session from: muxcode %s\n\n", strings.Join(args, " "))
+		if sub := firstKnownSubcommand(args); sub != "" {
+			fmt.Fprintf(os.Stderr, "That looks like a subcommand call. Did you mean:  muxcode %s ...\n", sub)
+		}
+		fmt.Fprintf(os.Stderr,
+			"The launcher takes at most <path> [<name>]; anything more is dropped.\n"+
+				"To launch anyway:  muxcode launch %s\n", strings.Join(args, " "))
+		os.Exit(1)
+	case routeNearMiss:
+		fmt.Fprintf(os.Stderr, "Refusing to launch a session from: muxcode %s\n\n", strings.Join(args, " "))
+		fmt.Fprintf(os.Stderr,
+			"That looks like a misspelled subcommand. Did you mean:  muxcode %s ...\n"+
+				"To launch a session for the directory instead:  muxcode ./%s\n",
+			nearestSubcommand(args[0]), args[0])
+		os.Exit(1)
 	case routeUsage:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(1)

@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
@@ -133,71 +131,24 @@ func runLog(args []string, stdin io.Reader) error {
 	session := bus.BusSession()
 	historyPath := bus.HistoryPath(session, role)
 
-	entry := map[string]interface{}{
-		"ts":        time.Now().Unix(),
-		"summary":   summary,
-		"exit_code": exitCode,
-		"command":   command,
-		"output":    output,
-		"outcome":   outcome,
+	entry := bus.HookHistoryEntry{
+		TS:       time.Now().Unix(),
+		Summary:  summary,
+		ExitCode: exitCode,
+		Command:  command,
+		Output:   output,
+		Outcome:  outcome,
+		Source:   bus.SourceSelfReported,
 	}
 
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return fmt.Errorf("encoding JSON: %v", err)
-	}
-
-	// Ensure bus directory exists
-	busDir := bus.BusDir(session)
-	if err := os.MkdirAll(busDir, 0755); err != nil {
-		return fmt.Errorf("creating bus directory: %v", err)
-	}
-
-	// Open file for append (create if needed), write entry
-	f, err := os.OpenFile(historyPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("opening history file: %v", err)
-	}
-
-	// File-level locking for safety (non-blocking, best-effort)
-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-
-	if _, err := f.Write(append(data, '\n')); err != nil {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
+	// WriteHookHistory creates the directory and rotates; it is the one road
+	// history rows travel, so self-reports are marked rather than indistinguishable.
+	if err := bus.WriteHookHistory(historyPath, entry, 100); err != nil {
 		return fmt.Errorf("writing history entry: %v", err)
 	}
-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-	f.Close()
-
-	// Rotate: keep last 100 entries
-	rotateHistory(historyPath, 100)
 
 	fmt.Printf("Logged %s: %s (%s)\n", role, summary, outcome)
 	return nil
-}
-
-// rotateHistory truncates a JSONL file to keep only the last maxEntries lines.
-func rotateHistory(path string, maxEntries int) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-
-	lines := splitLines(data)
-	if len(lines) <= maxEntries {
-		return
-	}
-
-	// Keep only the last maxEntries lines
-	keep := lines[len(lines)-maxEntries:]
-	var out []byte
-	for _, line := range keep {
-		out = append(out, line...)
-		out = append(out, '\n')
-	}
-
-	_ = os.WriteFile(path, out, 0644)
 }
 
 // isPipe returns true if the reader is backed by a pipe (named pipe or FIFO).
