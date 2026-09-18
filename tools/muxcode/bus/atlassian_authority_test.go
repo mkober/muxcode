@@ -29,6 +29,7 @@ func TestIsAtlassianMutatingAction_WritesAreGated(t *testing.T) {
 		{"jira", "comment"},
 		{"jira", "link"},
 		{"jira", "transition"},
+		{"jira", "create"},
 		{"jira", "create-subtask"},
 		{"jira", "worklog"},
 		{"jira", "attach"},

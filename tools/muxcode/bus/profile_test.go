@@ -932,6 +932,20 @@ func TestEditProfile_DenyTools(t *testing.T) {
 		}
 	}
 
+	// Every Jira write, including newly added actions. The CLI's
+	// CheckAtlassianAuthority is the enforcement; this list is the first gate,
+	// and a write missing from it is open to edit by default.
+	for _, pattern := range []string{
+		"muxcode atlassian jira update *",
+		"muxcode atlassian jira create *",
+		"muxcode atlassian jira create-subtask *",
+		"muxcode atlassian jira transition *",
+	} {
+		if !denySet[pattern] {
+			t.Errorf("missing deny pattern: %s", pattern)
+		}
+	}
+
 	// GitHub CLI
 	if !denySet["gh *"] {
 		t.Error("missing deny pattern: gh *")

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
 )
@@ -25,6 +26,9 @@ Jira actions:
   transition <ISSUE-KEY> <TRANSITION-ID>  Transition issue to a new status
   search <JQL-QUERY>                      Search issues using JQL
   create-subtask <PARENT-KEY> <SUMMARY> [PROJECT-KEY]  Create a subtask
+  create <PROJECT> <ISSUETYPE> <SUMMARY> <ADF-JSON-FILE>  Create a top-level issue
+      [--assignee me|<accountId>] [--priority <name>] [--sprint current|<id>]
+      [--board "<name>"|<id>] [--label <l>]... [--dry-run]
   worklog <ISSUE-KEY> <SECONDS> [COMMENT] Log time spent against an issue
   attach <ISSUE-KEY> <FILE>               Upload a file as an issue attachment
 
@@ -197,6 +201,24 @@ func atlassianJira(cfg *bus.AtlassianConfig, action string, args []string) {
 		}
 		fmt.Println(result)
 
+	case "create":
+		opts, err := parseJiraCreateArgs(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+		res, err := bus.JiraCreateIssue(cfg, opts)
+		if err != nil {
+			// A key means the issue exists and only a later step failed;
+			// printing it is what stops a caller retrying into a duplicate.
+			if res.Key != "" {
+				fmt.Println(bus.FormatJiraCreate(res))
+			}
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(bus.FormatJiraCreate(res))
+
 	case "worklog":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "Usage: muxcode atlassian jira worklog <ISSUE-KEY> <SECONDS> [COMMENT]")
@@ -232,7 +254,7 @@ func atlassianJira(cfg *bus.AtlassianConfig, action string, args []string) {
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown jira action: %s\n", action)
-		fmt.Fprintln(os.Stderr, "Actions: read, update, comment, comments, link-types, link, transitions, transition, search, create-subtask, worklog, attach")
+		fmt.Fprintln(os.Stderr, "Actions: read, update, comment, comments, link-types, link, transitions, transition, search, create, create-subtask, worklog, attach")
 		os.Exit(1)
 	}
 }
@@ -292,4 +314,60 @@ func atlassianConfluence(cfg *bus.AtlassianConfig, action string, args []string)
 		fmt.Fprintln(os.Stderr, "Actions: read, update, search, attach")
 		os.Exit(1)
 	}
+}
+
+const jiraCreateUsage = `Usage: muxcode atlassian jira create <PROJECT> <ISSUETYPE> <SUMMARY> <ADF-JSON-FILE>
+    [--assignee me|<accountId>] [--priority <name>] [--sprint current|<id>]
+    [--board "<name>"|<id>] [--label <l>]... [--dry-run]`
+
+// parseJiraCreateArgs splits `jira create` into its four positionals and its
+// flags, and reads the payload file. It is kept separate from the API call so
+// argument handling is testable without reaching Jira.
+func parseJiraCreateArgs(args []string) (bus.JiraCreateOptions, error) {
+	var opts bus.JiraCreateOptions
+	var positional []string
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--dry-run":
+			opts.DryRun = true
+		case "--assignee", "--priority", "--sprint", "--board", "--label":
+			flag := args[i]
+			// A following option token is a missing value, not the value:
+			// `--board --dry-run` otherwise eats the dry run and creates for real.
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
+				return opts, fmt.Errorf("%s requires a value\n%s", flag, jiraCreateUsage)
+			}
+			i++
+			switch flag {
+			case "--assignee":
+				opts.Assignee = args[i]
+			case "--priority":
+				opts.Priority = args[i]
+			case "--sprint":
+				opts.Sprint = args[i]
+			case "--board":
+				opts.Board = args[i]
+			case "--label":
+				opts.Labels = append(opts.Labels, args[i])
+			}
+		default:
+			if strings.HasPrefix(args[i], "--") {
+				return opts, fmt.Errorf("unknown flag %s\n%s", args[i], jiraCreateUsage)
+			}
+			positional = append(positional, args[i])
+		}
+	}
+
+	if len(positional) < 4 {
+		return opts, fmt.Errorf("create needs PROJECT, ISSUETYPE, SUMMARY and an ADF JSON file\n%s", jiraCreateUsage)
+	}
+	opts.Project, opts.IssueType, opts.Summary = positional[0], positional[1], positional[2]
+
+	payload, err := os.ReadFile(positional[3])
+	if err != nil {
+		return opts, fmt.Errorf("reading payload %s: %w", positional[3], err)
+	}
+	opts.Payload = payload
+	return opts, nil
 }

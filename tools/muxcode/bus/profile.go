@@ -696,6 +696,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"muxcode atlassian jira comment *",
 					"muxcode atlassian jira link *",
 					"muxcode atlassian jira transition *",
+					"muxcode atlassian jira create *",
 					"muxcode atlassian jira create-subtask *",
 					"muxcode atlassian jira worklog *",
 					"muxcode atlassian jira attach *",
