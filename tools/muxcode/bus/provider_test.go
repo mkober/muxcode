@@ -1010,3 +1010,20 @@ func TestBuildReplyCommandOmitsEmptyReplyTo(t *testing.T) {
 		t.Errorf("no request means no correlation flag, got %q", got)
 	}
 }
+
+// A denial that failed must not be reported as a denial: the pane is still
+// sitting at the approval prompt, and claiming it was answered sends the
+// caller looking somewhere else for the stall.
+func TestDenyCodexApprovalFailureIsNotReportedAsDenied(t *testing.T) {
+	orig := tmuxRunner
+	tmuxRunner = func(args ...string) error { return errors.New("no server running") }
+	t.Cleanup(func() { tmuxRunner = orig })
+
+	err := DenyCodexApproval("session:role.1")
+	if err == nil {
+		t.Fatal("a failed send-keys must surface as an error, not be discarded")
+	}
+	if !strings.Contains(err.Error(), "no server running") {
+		t.Errorf("the tmux cause must survive, got %v", err)
+	}
+}

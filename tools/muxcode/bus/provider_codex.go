@@ -378,7 +378,7 @@ func (p *CodexProvider) guardInjection(session, target, role string) error {
 	}
 	if codexApprovalPromptLive(content) {
 		if err := DenyCodexApproval(target); err != nil {
-			LogLifecycle(session, "error", "auto-deny-failed", err.Error(), role)
+			LogLifecycle(session, "error", "auto-deny", "approval-deny-failed", fmt.Sprintf("%s: %v", role, err))
 			return fmt.Errorf("%s: pane at a command-approval prompt and the deny failed (%v); injection deferred: %w", role, err, ErrInjectionSkipped)
 		}
 		LogLifecycle(session, "warn", "auto-deny", "approval-prompt", role)
