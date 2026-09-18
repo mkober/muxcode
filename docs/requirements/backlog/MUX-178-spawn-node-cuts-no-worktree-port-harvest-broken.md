@@ -57,7 +57,7 @@ honest about an earlier failure that produced no signal of its own.
 **The damage is that it reports `success`.** A node that ported nothing completes green, so the run
 advances: build dispatches on a checkout that never received the work (`build dispatched despite
 stranded output`), and the phase commit does not land. This is the same self-concealing shape as
-[MUX-148](../drafts/MUX-148-node-outcome-reads-command-ran-as-task-done.md) and
+[MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) and
 [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) — a node claiming a success it
 did not earn — and it is why this is filed as a defect rather than a test-fixture issue.
 
@@ -156,7 +156,7 @@ assertions pass in the same runs with both controls, so the two results had to b
 independently rather than the whole script being called a failure.
 
 **Related:** [MUX-131](../completed/MUX-131-spawn-implement-output-never-ported.md) (the original, and
-its green baseline); [MUX-148](../drafts/MUX-148-node-outcome-reads-command-ran-as-task-done.md) and
+its green baseline); [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) and
 [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) (the same self-concealing shape —
 a node reporting a success it did not earn);
 [MUX-142](./MUX-142-spawn-worker-delegates-into-wrong-tree.md) (the other live spawn-tree defect).

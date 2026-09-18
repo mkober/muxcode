@@ -22,7 +22,7 @@ only the daemon has — and to say which, per road, and why.
 ### Source and standard of evidence
 
 The residual was recorded, not closed, by plan under MUX-148's
-[Decision 4](../drafts/MUX-148-node-outcome-reads-command-ran-as-task-done.md#decision-4--is-the-muxcode-log-writer-in-scope)
+[Decision 4](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md#decision-4--is-the-muxcode-log-writer-in-scope)
 on 2026-09-14 when `a8fa0db` shipped, and left as that spec's one Phase 3 constraint that "should
 stay unticked" in edit's 15:25 report — *"provenance the writer cannot author can't be fixed inside
 `WriteHookHistory`, because the forgery shape is an agent appending to the JSONL without going
@@ -84,7 +84,7 @@ a verdict is read on every node and a gate on a few.
 
 ### Family
 
-- [MUX-148](../drafts/MUX-148-node-outcome-reads-command-ran-as-task-done.md) — the parent; its Phase 3 "add actor provenance" step is the pointer to this spec and stays open there.
+- [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) — the parent; its Phase 3 "add actor provenance" step is the pointer to this spec and stays open there.
 - [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) — the same residual on gate markers, accepted with the guard as closer.
 - [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) — "a role boundary an agent can ignore is not a boundary"; the guard road this spec would extend.
 - [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) / [MUX-177](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) — the same evidence class; rows written for the wrong reason rather than by the wrong hand.

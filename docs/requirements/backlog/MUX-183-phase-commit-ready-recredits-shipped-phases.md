@@ -17,7 +17,7 @@ was the only thing left to catch it, and why it could not: the predicate wrote t
 ### Source and standard of evidence
 
 Observed **first-hand in this repo** on 2026-09-14 by plan, on graph run `1789399519-spec-to-pr-5aa52382`
-(spec [MUX-148](../drafts/MUX-148-node-outcome-reads-command-ran-as-task-done.md)); written up by edit as
+(spec [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md)); written up by edit as
 item 2 of `/tmp/mux-148-false-failure-and-phasecommit.md` (non-durable) and filed on the user's
 instruction. **Every mechanism claim below was verified by plan against `f942c43`.** Two further findings
 (defects 2 and 3) came out of that verification and are not in the report.
@@ -145,7 +145,7 @@ denominator.
 
 ### Family
 
-The false-completion family — [MUX-148](../drafts/MUX-148-node-outcome-reads-command-ran-as-task-done.md)
+The false-completion family — [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md)
 (a node's evidence), [MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) (a spawn's
 port), [MUX-182](./MUX-182-cancelled-run-keeps-working-provenance-unreadable.md) (a run's provenance).
 This is its **human-gate member**: it fakes no evidence, it converts a real approval into a commit of

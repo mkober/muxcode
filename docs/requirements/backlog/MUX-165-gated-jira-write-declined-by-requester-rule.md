@@ -155,7 +155,7 @@ touches the tracker, which is the cost this spec exists to remove.
   way to carry the consent it already verified.
 - Related: [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) (who may open a gate —
   upstream, parked); [MUX-132](../completed/MUX-132-graph-retry-launders-gate-approval.md)
-  (single-use approvals, which provenance must not re-spend); [MUX-148](../drafts/MUX-148-node-outcome-reads-command-ran-as-task-done.md)
+  (single-use approvals, which provenance must not re-spend); [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md)
   (the evidence half of the same authority story); [MUX-109](../completed/MUX-109-prompt-mode-graph-control-pane.md)
   (`CheckPromptAuthority` — the same "whose words count as the user's" question at the Prompt surface).
 

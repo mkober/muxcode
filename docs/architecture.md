@@ -519,7 +519,7 @@ exempts it and nothing else on that role — so the gate rule holds and a person
 only when there is work to approve. Pinned by `TestCommitPrReviewLoopSkipsCommitWhenPrExists`, whose
 negative control checks that the success edge *bypasses* `gate1` and `a` rather than merely preceding
 them. The precheck's own outcome is attributed by the commit agent's `EXIT=` token, since `pr-read`
-is evidenced by no command ([MUX-148](requirements/drafts/MUX-148-node-outcome-reads-command-ran-as-task-done.md))
+is evidenced by no command ([MUX-148](requirements/completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md))
 — and that token is **judged on the lookup, not the answer**. `git-manager.md`'s default (`EXIT=1`
 when the requested state does not hold, naming PR existence as its example) would make an honest
 `NO-PR-FOUND` a failure, and a failed node with only a success edge ends the run *failed with no live
