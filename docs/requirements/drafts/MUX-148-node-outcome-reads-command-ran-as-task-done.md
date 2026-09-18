@@ -247,13 +247,13 @@ recognised — recorded as an inherited Phase 3 constraint.
 - [x] The distinction does **not** rely on parsing prose — met 15:40: the only inputs are `parseExitSentinel`'s token and the observed row; `success claimed in prose alone` → unknown is pinned on the spawn road
 - [x] A node that cannot be tied to its dispatched work surfaces as a hold or failure, never as a silent success — **spawn road met 15:40** (no token → hold); ~~**send road open**: a row alone is still taken as tied, whatever command produced it (the open constraint under Phase 3)~~ **send road met 2026-09-15**: an untied row is not evidence, and with no token the node holds while `graph-outcome-untied` (warn, `graph_exec.go:1815`) names the row's outcome and command and the action it cannot testify for. Same unmapped-action residual as the first criterion
 - [x] Whatever signal is chosen degrades safely for non-hook providers, which infer outcomes and cannot be assumed to emit it — met 15:40: with no observed row the conflict rule never engages, a self-report stays evidence of last resort, and an omitted token degrades to a **loud hold** (`graph-outcome-unattributed`), never a silent verdict either way
-- [ ] `commit-pr-review-loop` can complete a run in which `c` made changes — **structurally met 2026-09-16** (`push-fixes` gives `d` a sha to cite; `seedVerdictToken` gives `c` a token, so it no longer holds); left open until a run completes on it — Phase 5's `commit-pr-review-loop`-shaped test, or a live one
+- [x] `commit-pr-review-loop` can complete a run in which `c` made changes — **closed 2026-09-18 by Phase 5 section 6** (`c` routed success on its seeded token, `push-fixes` routed on a row attributable to the commit action, `d` reached with a citable commit; on role `review`, not `edit` — a live run is still the only proof on the real role) — **structurally met 2026-09-16** (`push-fixes` gives `d` a sha to cite; `seedVerdictToken` gives `c` a token, so it no longer holds); left open until a run completes on it — Phase 5's `commit-pr-review-loop`-shaped test, or a live one
 - [x] A lifecycle event records any node whose outcome could not be positively established — **partial 15:40**: `graph-unverified-hold` (existing), `graph-outcome-unattributed` (tokenless spawn reply) and `graph-outcome-conflict` (disagreeing send signals) cover every case the code *recognises*; a send node whose only evidence is an untied row is not recognised as unestablished, so it records success and no event — the same gap as criterion 5 — **closed 2026-09-15**: the untied-row case is now recognised and emits `graph-outcome-untied` (`:1815`) ahead of the hold, so four events cover every case the code can reach. Verified by reading: `TestDeriveSendOutcomeAttributesRowToAction` asserts the outcome, not the event — a pin belongs in Phase 5's declining-node test
 - [x] A **spawn** node whose worker **declines** is not recorded as `success` — the [Defect 3](#defect-3--the-spawn-road-reads-no-evidence-at-all) reproduction no longer reproduces — met 15:40: the `declined` case is the incident's own reply text ("Phase 2 is a decision phase … No code change, no spec edit") → unknown
 - [x] A **spawn** node whose worker genuinely completes the work **is** still recorded as `success` — **negative control: a fix that holds every spawn node is not a fix** — met 15:40 (tests, and this run's `implement` and `fix` nodes live)
 - [x] A **spawn** node whose outcome cannot be positively established emits the lifecycle event and holds — met 15:40 by reading (`graph-outcome-unattributed` + the single unknown branch); executor-level test still owed (Phase 3's last step)
 - [x] The spawn-road distinction does **not** rely on parsing worker prose — met 15:40: token or nothing; prose success → unknown, pinned
-- [ ] `bash scripts/test-node-outcome-attribution.sh` passes
+- [x] `bash scripts/test-node-outcome-attribution.sh` passes — **2026-09-18 11:03:** 48 passed, 0 failed, coverage floor 47 met
 
 ### Technical approach — options, deliberately not yet chosen
 
@@ -512,7 +512,7 @@ Covers **both roads** — send and spawn — since 2026-09-14 (see
 on any heading line, so a `####` here would detach the boxes below from Phase 3):
 
 - [x] **Ship the first test of `deriveSendOutcome`** — nothing calls it today, so the precedence ordering is free to be fixed *and* free to regress unnoticed — **shipped 2026-09-14 (run `1789413170-spec-to-pr-828f8c3a`, verified by plan against the working tree 15:40):** `TestDeriveSendOutcomeSignals` (nine cases at the helper) and `TestExecSendOutcomeHoldsOnContradiction` (the outcome the executor actually records, with the uncontradicted row as its own negative control — it replaces `TestAuthoritativeRowOutranksSentinel`, whose premise the conflict rule inverts). Suite 2603 pass / 0 fail, hook-observed 15:35:31
-- [ ] **Add actor provenance to `HookHistoryEntry`** — a prerequisite for option 4, not part of it — **still open after `a8fa0db`**: what landed is *source* provenance (`hook` / `self-reported` / `bus-response`), declared by the writer; actor provenance the writer cannot author (process ancestry via `BusActorVerified`) is the [Decision 4](#decision-4--is-the-muxcode-log-writer-in-scope) residual — **filed as [MUX-185](../backlog/MUX-185-history-row-provenance-declared-not-proven.md) on 2026-09-14** on the user's instruction; this step stays open here as the pointer and closes when that spec ships. MUX-185 records that the ancestry stamp alone would not close it: `agentRuntimeAncestor` resolves a `muxcode hook bash` process and a forging agent shell to the same runtime, so it separates a person from an agent, not a hook from the agent's shell
+- [x] **Deferred to [MUX-185](../backlog/MUX-185-history-row-provenance-declared-not-proven.md) — checked off as deferred, NOT as done (2026-09-18, on the user's instruction):** an open box here made `SpecCurrentPhase` derive Phase 3 as the current phase, so `spec-to-pr` would have sent an implement worker at a step this branch cannot close instead of at Phase 5. The work is unchanged and still not done; it is tracked in MUX-185, not here. **Add actor provenance to `HookHistoryEntry`** — a prerequisite for option 4, not part of it — **still open after `a8fa0db`**: what landed is *source* provenance (`hook` / `self-reported` / `bus-response`), declared by the writer; actor provenance the writer cannot author (process ancestry via `BusActorVerified`) is the [Decision 4](#decision-4--is-the-muxcode-log-writer-in-scope) residual — **filed as [MUX-185](../backlog/MUX-185-history-row-provenance-declared-not-proven.md) on 2026-09-14** on the user's instruction; it closes when that spec ships. MUX-185 records that the ancestry stamp alone would not close it: `agentRuntimeAncestor` resolves a `muxcode hook bash` process and a forging agent shell to the same runtime, so it separates a person from an agent, not a hook from the agent's shell
 - [x] **Unit-test the `git*commit*` glob in both directions** — it fires on a `git`-headed command containing `commit`/`push` anywhere (inside "uncommitted", in `--dry-run`, in `@{push}`), and does **not** fire on a keyword-free `git status`/`git log`, nor on a non-`git`-headed command however worded (reply prose is never an input) — the re-derivation rests on it — **pinned 2026-09-14:** `TestGitPatternsFireOnTheKeywordNotTheProse` (`bus/hook_test.go`) fires on `git commit --dry-run`, `git diff --stat -- docs/uncommitted-notes.md`, `git log @{push}..HEAD`; stays quiet on `git status`, `git log --oneline -5`, `git diff --stat`, `echo 'pre-rebase cleanup done'`, `cat notes-on-commit-hooks.md`. Both directions, verified by plan in the diff
 - [x] Do **not** double-hold: the new hold and the `OutcomeUnknown` hold (`:1684`) must not both fire on one node — **verified by plan by reading, 2026-09-14:** the conflict path *returns* `OutcomeUnknown` from `deriveSendOutcome` and adds no hold of its own; the one unknown branch in `routeFinishedNodes` (`:1957-1958` in the working tree) calls `unverifiedHoldReleased` once, marker-guarded. The spawn road resolves through the same branch
 - [x] `hook_codex_test.go` is **not** a constraint (re-verified this run) — it calls `latestAuthoritativeRow` directly and stays green under any precedence change — confirmed 2026-09-14: untouched by the Phase 3 change and green in the 15:35:31 run
@@ -596,15 +596,15 @@ naming the commit — or the tracker text saying the doc is on an unpushed branc
 
 ### Phase 5: Integration test
 
-- [ ] Create `scripts/test-node-outcome-attribution.sh` (hermetic; scratch bus, tmux session and daemon)
-- [ ] Test: a scratch node whose agent **declines after running a successful read-only command** does **not** route as success
-- [ ] **Negative control:** a node whose agent genuinely completes the task **does** route as success
-- [ ] Test: the declining node emits the lifecycle event and holds rather than advancing
-- [ ] Test: a `commit-pr-review-loop`-shaped run in which `c` changes files reaches `d` with a citable commit
-- [ ] Test: no prose parsing is involved — a decline worded differently is still caught
-- [ ] **Test (mirror):** a node whose agent's recognised first attempt fails and whose unrecognised re-run passes is **not** recorded as `failure` — the [Defect 4](#defect-4--the-mirror-a-genuine-success-recorded-as-failure) shape
-- [ ] Coverage floor keeps a skipped section from reporting green
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-node-outcome-attribution.sh` (hermetic; scratch bus, tmux session and daemon) — **created 2026-09-18** (530 lines; scratch bus, tmux, daemon and `HOME`)
+- [x] Test: a scratch node whose agent **declines after running a successful read-only command** does **not** route as success — section 2
+- [x] **Negative control:** a node whose agent genuinely completes the task **does** route as success — section 3
+- [x] Test: the declining node emits the lifecycle event and holds rather than advancing — `graph-outcome-untied` and `graph-unverified-hold` both asserted
+- [x] Test: a `commit-pr-review-loop`-shaped run in which `c` changes files reaches `d` with a citable commit — section 6; the test's `c` uses role `review`, not `edit`, because `isLoopingSelfSend` drops an edit self-reply (worker's residual)
+- [x] Test: no prose parsing is involved — a decline worded differently is still caught — section 4
+- [x] **Test (mirror):** a node whose agent's recognised first attempt fails and whose unrecognised re-run passes is **not** recorded as `failure` — the [Defect 4](#defect-4--the-mirror-a-genuine-success-recorded-as-failure) shape
+- [x] Coverage floor keeps a skipped section from reporting green — floor of 47, asserted as its own check
+- [x] Run the script and verify all checks pass — **2026-09-18 11:03: 48 passed, 0 failed**, floor met (run agent reply `1789743801-run-2a35d3dd`; `/tmp/test-node-outcome-attribution.log` read by plan)
 
 ## Open decisions
 
@@ -757,7 +757,7 @@ cost a merge, not a loss.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-148-node-outcome-reads-command-ran-as-task-done | 6h 12m | 2026-09-15 13:41 |
+| MUX-148-node-outcome-reads-command-ran-as-task-done | 9h 28m | 2026-09-18 11:07 |
 
 ## Status
 
@@ -1010,3 +1010,24 @@ run) closed by the seeding. **Left open:** criterion 7 — structurally met, clo
 nor the Phase 4 change is in the daemon that judges nodes (`upgrade-daemons: ps: operation not
 permitted` on every build today, MUX-161); a relaunch or a permitted upgrade is what makes any of it
 live. No time recorded this pass.
+
+**In Progress — 2026-09-18, Phase 3 unblocked for the launcher (spec 44/56; acceptance 10/13).** The
+Phase 3 actor-provenance step was an open box kept as a pointer to MUX-185, and `SpecCurrentPhase`
+(lowest-numbered phase with an open item) therefore derived Phase 3 in the `spec-to-pr` launch panel
+rather than Phase 5. On the user's instruction it was first made a plain note (43/55), then — once the
+user set the rule that a step deferred to another backlog spec is checked off with a "deferred to"
+annotation — switched to a ticked box marked **deferred to MUX-185, not done**. The work is not done
+and is tracked in MUX-185. Spec now **44/56**, Phase 3 reads 17/17, and the derived phase is Phase 5.
+No code changed; no time recorded this pass.
+
+**In Progress — 2026-09-18 11:07, Phase 5 verified (spec 55/56; acceptance 12/13; all five phases
+closed).** `scripts/test-node-outcome-attribution.sh` (untracked, 530 lines) ran through the run agent
+at 11:03: **48 passed, 0 failed**, coverage floor 47 met — log read by plan, every Phase 5 case has
+its section, and `graph-outcome-untied`, `graph-unverified-hold` and `graph-outcome-conflict` are
+each asserted with a negative control beside them. **Ticked:** all nine Phase 5 steps, criterion 7
+(`commit-pr-review-loop` with a changing `c` — on role `review`, the worker's stated residual) and the
+script-passes criterion. **Left open — the one box:** the mirror criterion. Its test passes for the
+case it can pass (token present → `graph-outcome-conflict` hold, not `failure`); the tokenless case
+still records `failure`, and whether to accept that residual or hold tokenless failure rows is the
+decision put to the user on 2026-09-15 — not plan's to close. Status stays In Progress on that box
+alone. **Time:** 9h 28m recorded (ledger 34120s ≥ doc 22367s, normal case).
