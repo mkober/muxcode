@@ -175,10 +175,10 @@ func TestRenderGraphFrame_ContainsEveryNode(t *testing.T) {
 }
 
 // TestRenderGraphFrame_WrapsWideChain pins the width-overflow behavior
-// (user request 2026-08-28): a single-row chain wider than the pane wraps
-// at node boundaries — every node still visible as a glyph chain, a
-// trailing arrow marking continuation — while a multi-row overflow keeps
-// the flat fallback (negative control: a 2D canvas cannot wrap).
+// (user requests 2026-08-28, 2026-09-18): a graph wider than the pane wraps
+// left-to-right rather than flattening, so the run order stays readable.
+// Height overflow is the negative control — it still falls back, because
+// wrapping trades width for height and cannot help there.
 func TestRenderGraphFrame_WrapsWideChain(t *testing.T) {
 	snap := snapshot(linearGraph(), map[string]string{"build": bus.GraphNodeDone})
 	frame := StripAnsi(RenderGraphFrame(snap, 40, 40, "", frameClock))
@@ -193,11 +193,97 @@ func TestRenderGraphFrame_WrapsWideChain(t *testing.T) {
 	if !strings.Contains(frame, "─→\n") && !strings.Contains(frame, "─→ \n") {
 		t.Errorf("wrapped line must end with a continuation arrow:\n%s", frame)
 	}
+}
 
-	wide := snapshot(fanOutJoinGraph(), map[string]string{})
-	fb := StripAnsi(RenderGraphFrame(wide, 30, 40, "", frameClock))
-	if !strings.Contains(fb, "flat view") {
-		t.Errorf("multi-row overflow must keep the flat fallback:\n%s", fb)
+// A multi-row graph is the case the old renderer flattened. It must now wrap
+// too: branching is exactly when following the order matters most.
+func TestRenderGraphFrame_WrapsWideMultiRowGraph(t *testing.T) {
+	snap := snapshot(fanOutJoinGraph(), map[string]string{})
+	frame := StripAnsi(RenderGraphFrame(snap, 30, 40, "", frameClock))
+
+	if strings.Contains(frame, "flat view") {
+		t.Errorf("a multi-row graph with room to wrap must not flatten:\n%s", frame)
+	}
+	for _, id := range []string{"start", "worker-a", "worker-b", "barrier"} {
+		if !strings.Contains(frame, id) {
+			t.Errorf("wrapped grid missing node %q:\n%s", id, frame)
+		}
+	}
+}
+
+// The negative control: with no vertical room the wrap cannot fit, so the flat
+// list is still correct. Without this, a renderer that always wrapped would
+// pass the test above.
+func TestRenderGraphFrame_ShortPaneStillFlattens(t *testing.T) {
+	snap := snapshot(fanOutJoinGraph(), map[string]string{})
+	frame := StripAnsi(RenderGraphFrame(snap, 30, 8, "", frameClock))
+
+	if !strings.Contains(frame, "flat view") {
+		t.Errorf("a pane too short to wrap must keep the flat list:\n%s", frame)
+	}
+}
+
+// Wrapping must clamp: the whole point is that nothing runs off the edge.
+// Asserted on the renderer rather than the frame, so an overflow elsewhere in
+// the chrome cannot pass this off as a wrap defect, or mask one.
+func TestRenderWrappedLayers_FitsPaneWidth(t *testing.T) {
+	const width = 34
+	snap := snapshot(fanOutJoinGraph(), map[string]string{})
+	labels := map[string]string{"start": "start", "worker-a": "worker-a", "worker-b": "worker-b", "barrier": "barrier"}
+	types := map[string]string{"start": bus.NodeSend, "worker-a": bus.NodeSend, "worker-b": bus.NodeSend, "barrier": bus.NodeJoin}
+	layers := [][]string{{"start"}, {"worker-a", "worker-b"}, {"barrier"}}
+
+	out := StripAnsi(renderWrappedLayers(layers, labels, types, snap, "", width))
+
+	for _, line := range strings.Split(out, "\n") {
+		if len([]rune(line)) > width {
+			t.Errorf("line overflows width %d (%d runes): %q", width, len([]rune(line)), line)
+		}
+	}
+	// Layers stay whole: nodes sharing a layer must appear on separate rows
+	// under one column, never spliced into the left-to-right order.
+	if !strings.Contains(out, "worker-a") || !strings.Contains(out, "worker-b") {
+		t.Errorf("both nodes of a shared layer must render:\n%s", out)
+	}
+}
+
+// A label wider than the pane is the case the first version of this renderer
+// got wrong: it reserved no room for the continuation arrow and never
+// truncated, so a selected 30-rune label emitted 37 columns into a 34-column
+// pane. Selection is the worst case because the cursor costs two more columns.
+func TestRenderWrappedLayers_OversizedLabelsStayInPane(t *testing.T) {
+	const width = 34
+	long := strings.Repeat("a", 30)
+	snap := snapshot(linearGraph(), map[string]string{})
+	labels := map[string]string{"build": long, "test": "test"}
+	types := map[string]string{"build": bus.NodeSend, "test": bus.NodeSend}
+	layers := [][]string{{"build"}, {"test"}}
+
+	for _, sel := range []string{"", "build"} {
+		out := StripAnsi(renderWrappedLayers(layers, labels, types, snap, sel, width))
+		for _, line := range strings.Split(out, "\n") {
+			if len([]rune(line)) > width {
+				t.Errorf("selection=%q: line overflows width %d (%d runes): %q",
+					sel, width, len([]rune(line)), line)
+			}
+		}
+	}
+}
+
+// The negative control for the truncation above: a label that fits must be
+// printed whole, or the clamp would be hiding text it never needed to cut.
+func TestRenderWrappedLayers_FittingLabelIsNotTruncated(t *testing.T) {
+	snap := snapshot(linearGraph(), map[string]string{})
+	labels := map[string]string{"build": "build", "test": "test"}
+	types := map[string]string{"build": bus.NodeSend, "test": bus.NodeSend}
+	layers := [][]string{{"build"}, {"test"}}
+
+	out := StripAnsi(renderWrappedLayers(layers, labels, types, snap, "build", 60))
+	if strings.Contains(out, "…") {
+		t.Errorf("a label that fits must not be truncated:\n%s", out)
+	}
+	if !strings.Contains(out, "build") || !strings.Contains(out, "test") {
+		t.Errorf("both labels must render in full:\n%s", out)
 	}
 }
 
@@ -341,17 +427,16 @@ func TestRenderGraphFrame_PostMortemElapsedFrozen(t *testing.T) {
 
 // ── Fallback flat list ─────────────────────────────────────
 
-// Narrow single-row chains now WRAP instead of falling back (wrap
-// contract, 2026-08-28) — the fallback and its state-ordering are pinned
-// on a multi-row graph, which is the only shape that still degrades on
-// width overflow.
+// Width overflow now wraps at every shape (2026-09-18), so the fallback's
+// state-ordering is pinned on the renderer directly rather than through a pane
+// size that no longer reaches it.
 func TestRenderGraphFrame_NarrowPaneFallsBack(t *testing.T) {
 	snap := snapshot(fanOutJoinGraph(), map[string]string{
 		"start": bus.GraphNodeDone, "worker-a": bus.GraphNodeFailed, "worker-b": bus.GraphNodeWaiting,
 	})
-	frame := StripAnsi(RenderGraphFrame(snap, 30, 40, "", frameClock))
+	frame := StripAnsi(renderGraphFallback(snap, 30, 0, "", 0))
 	if !strings.Contains(frame, "flat view") {
-		t.Fatalf("expected fallback marker on a narrow multi-row pane:\n%s", frame)
+		t.Fatalf("expected fallback marker:\n%s", frame)
 	}
 	// Failed and waiting nodes must list before done ones.
 	iFailed := strings.Index(frame, "worker-a")
