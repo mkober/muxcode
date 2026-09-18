@@ -257,6 +257,7 @@ func TestClassifyCommand(t *testing.T) {
 		// pnpm exec/dlx: the nested runner is the executable. `pnpm exec jest`
 		// carries no "test" substring, so `pnpm*test` cannot reach it.
 		{"pnpm exec jest --runInBand", CmdTest},
+		{"pnpm test", CmdTest}, // the wrapper itself still classifies
 		{"pnpm dlx jest", CmdTest},
 		// Negative controls. Each of these matches `pnpm*jest*` as a raw
 		// substring, so they all classify as test runs if the nested command
@@ -266,6 +267,12 @@ func TestClassifyCommand(t *testing.T) {
 		{"pnpm add jest", CmdUnknown},
 		{"pnpm remove jest", CmdUnknown},
 		{"pnpm exec eslint jest.config.js", CmdUnknown},
+		// The discriminating cases: `jest.config.js` above is matched by no
+		// `pnpm*` glob, so it passes even with the nested-runner result
+		// falling through. These two are caught by `pnpm*test` and
+		// `pnpm*build` and so only pass when the nested verdict is final.
+		{"pnpm exec eslint test.config.js", CmdUnknown},
+		{"pnpm exec eslint build.config.js", CmdUnknown},
 		{"pnpm install", CmdUnknown},
 		{"go vet ./...", CmdTestPrecheck},
 		{"cdk diff", CmdDeploy},

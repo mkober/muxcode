@@ -377,7 +377,10 @@ func (p *CodexProvider) guardInjection(session, target, role string) error {
 		return fmt.Errorf("%s: pane at the directory-trust prompt, accepted; injection deferred: %w", role, ErrInjectionSkipped)
 	}
 	if codexApprovalPromptLive(content) {
-		_ = DenyCodexApproval(target)
+		if err := DenyCodexApproval(target); err != nil {
+			LogLifecycle(session, "error", "auto-deny-failed", err.Error(), role)
+			return fmt.Errorf("%s: pane at a command-approval prompt and the deny failed (%v); injection deferred: %w", role, err, ErrInjectionSkipped)
+		}
 		LogLifecycle(session, "warn", "auto-deny", "approval-prompt", role)
 		return fmt.Errorf("%s: pane at a command-approval prompt, denied; injection deferred: %w", role, ErrInjectionSkipped)
 	}
@@ -467,7 +470,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	// the agent sends a response to itself, which triggers a wake-up,
 	// which injects the self-message, which triggers another response.
 	var parts []string
-	var lastFrom string
+	var lastFrom, lastRequestID, lastRequestFrom string
 	hasRequest := false
 	for _, msg := range batch {
 		// Skip messages from self — these are loop artifacts
@@ -484,6 +487,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 		}
 		if msg.Type == "request" {
 			hasRequest = true
+			lastRequestID, lastRequestFrom = msg.ID, msg.From
 		}
 	}
 	// If the whole batch was self-addressed, consume and discard it (daemon path
@@ -496,7 +500,11 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 
 	// Append reply instruction — Codex agents don't have hooks so they must
 	// be explicitly told to reply via the bus after completing the task.
+	// The reply belongs to whoever asked, not whoever spoke last.
 	replyTarget := NormalizeBusRole(lastFrom)
+	if lastRequestFrom != "" {
+		replyTarget = NormalizeBusRole(lastRequestFrom)
+	}
 	if replyTarget == "" || !IsKnownRole(replyTarget) {
 		replyTarget = "edit"
 	}
@@ -506,7 +514,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	// priority directive) and at the end (as a reminder).
 	// Response-only wake-ups skip this to avoid infinite echo loops.
 	if hasRequest {
-		replyCmd := fmt.Sprintf("muxcode send %s response \"<your one-line summary>\" --type response", replyTarget)
+		replyCmd := buildReplyCommand(replyTarget, lastRequestID)
 		prompt = fmt.Sprintf("IMPORTANT: After completing this task, you MUST run this bash command: %s — ", replyCmd) + prompt
 		prompt += fmt.Sprintf(" — REMINDER: Your FINAL step MUST be to EXECUTE (not print): %s", replyCmd)
 		prompt += chainInstructionForRole(role)
@@ -773,9 +781,12 @@ func writeCodexAgentConfig(role string, hooks bool) error {
 	buf.WriteString("## CRITICAL: Reply Protocol\n\n")
 	buf.WriteString("**Your work is WORTHLESS unless you send the result back.** After completing ANY task, you MUST execute this bash command:\n\n")
 	buf.WriteString("```bash\n")
-	buf.WriteString("muxcode send edit response \"<summary of what you found or did>\" --type response\n")
+	buf.WriteString("muxcode send edit response \"<summary of what you found or did>\" --type response --reply-to <request id>\n")
 	buf.WriteString("```\n\n")
-	buf.WriteString("If a different agent (not edit) requested the task, reply to that agent instead.\n\n")
+	buf.WriteString("If a different agent (not edit) requested the task, reply to that agent instead. ")
+	buf.WriteString("Always pass `--reply-to` with the id of the request you are answering — `muxcode inbox` ")
+	buf.WriteString("prints it. Without it the requester's `--wait` cannot match your reply to its request ")
+	buf.WriteString("and blocks for 90 seconds before giving up, even though you answered.\n\n")
 	buf.WriteString("**This is a bash command. You MUST run it using your shell/bash/terminal tool. ")
 	buf.WriteString("If you write it as text output instead of executing it, the message is silently lost ")
 	buf.WriteString("and the requester hangs forever waiting for your response. EXECUTE IT.**\n\n")

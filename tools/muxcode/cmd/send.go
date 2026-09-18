@@ -582,9 +582,14 @@ func isCommitAction(action string) bool {
 // counts as NOT redundant, so the message is sent. That direction is
 // deliberate: a suppressed send is unrecoverable, a redundant one costs tokens.
 //
+// Only the answers are consumed. Draining every message from the sender and
+// re-appending the non-matches moved unrelated messages to the tail and lost
+// them outright whenever the append failed, since that error was discarded
+// (PR #86 review, 2026-09-18).
+//
 // TOCTOU note: the peek→consume sequence is not atomic. If another process
-// consumes the response between peek and ReceiveFromFunc, the function
-// returns false and falls through to normal send — a benign race.
+// consumes the response between peek and the receive, the function returns
+// false and falls through to normal send — a benign race.
 func consumeExistingResponses(session, from, to, action, payload string) bool {
 	msgs, err := bus.Peek(session, from)
 	if err != nil || len(msgs) == 0 {
@@ -620,29 +625,10 @@ func consumeExistingResponses(session, from, to, action, payload string) bool {
 		return false
 	}
 
-	// Consume matching responses from inbox
-	acceptFrom := func(sender string) bool {
-		return sender == to || sender == host
-	}
-	consumed, err := bus.ReceiveFromFunc(session, from, acceptFrom)
-	if err != nil || len(consumed) == 0 {
+	// Consume only the answers — see the doc comment.
+	matching, err := bus.ReceiveMatchingFunc(session, from, answersThisRequest)
+	if err != nil {
 		return false
-	}
-
-	// Separate responses answering this request from everything else
-	var matching, other []bus.Message
-	for _, m := range consumed {
-		if answersThisRequest(m) {
-			matching = append(matching, m)
-		} else {
-			other = append(other, m)
-		}
-	}
-
-	// Put non-matching messages back in the inbox (direct write, no Send
-	// to avoid reordering, duplicate delivery tracking, or notify retrigger)
-	for _, m := range other {
-		_ = bus.AppendToInbox(session, from, m)
 	}
 
 	// The match can be consumed by another process between peek and receive,

@@ -736,7 +736,8 @@ func graphWorkerTask(g *Graph, runID, nodeID, msg string) string {
 // that captures request text as the reply (MUX-154) would otherwise hand the
 // executor a verdict the agent never gave.
 const verdictTokenInstruction = "Finish your reply with the verdict token on its own line: EXIT=<n> — " +
-	"zero if you did the work, non-zero if you could not. It is the only signal that records this node; " +
+	"zero if the requested state holds or the lookup completed, non-zero only if you could not carry the " +
+	"task out at all. It is the only signal that records this node; " +
 	"a reply without it cannot be attributed and holds the run for a human."
 
 // seedVerdictToken appends verdictTokenInstruction to a send dispatch whose

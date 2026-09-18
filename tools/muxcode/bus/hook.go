@@ -420,10 +420,17 @@ func isEnvVarName(s string) bool {
 // check rather than a token comparison so a multiword literal override such
 // as `go test` and an adjacent operator such as `./build.sh>log` both still
 // match.
+//
+// When the command is a nested runner (`pnpm exec …`, `npx …`), what it runs
+// decides, and that decision is final. Falling through to the pattern loop let
+// the outer `pnpm*test` glob match the wrapper itself, so `pnpm exec eslint
+// test.config.js` classified as a test run and fired the test→review chain off
+// a lint (PR #86 review, 2026-09-18).
 func matchPatterns(cmd string, patterns []string, withWrappers bool) bool {
+	// A nested runner's verdict is final — see the doc comment.
 	if withWrappers {
-		if nested, ok := nestedRunnerCommand(cmd); ok && matchPatterns(nested, patterns, false) {
-			return true
+		if nested, ok := nestedRunnerCommand(cmd); ok {
+			return matchPatterns(nested, patterns, false)
 		}
 	}
 	for _, pat := range patterns {

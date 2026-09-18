@@ -272,6 +272,25 @@ func chainInstructionForRole(role string) string {
 	return buildChainInstruction(role, Config())
 }
 
+// buildReplyCommand renders the reply instruction injected into a listenerless
+// provider's pane, correlating it to the request it answers.
+//
+// The --reply-to is load-bearing, not decoration. cmd/send.go's
+// responseAnswers correlates an unlinked reply only when the reply's action
+// matches the request's, and this instruction names the action "response" —
+// which no caller ever sends. So a --wait on an OpenCode or scrape-road Codex
+// target could never match its own answer and always degraded to a tracked
+// task after 90 seconds, making every such delegation look slow (PR #86
+// review, 2026-09-18). An empty requestID yields the old uncorrelated form,
+// which is right for a batch carrying no request to answer.
+func buildReplyCommand(target, requestID string) string {
+	cmd := fmt.Sprintf("muxcode send %s response \"<your one-line summary>\" --type response", target)
+	if requestID != "" {
+		cmd += " --reply-to " + requestID
+	}
+	return cmd
+}
+
 // buildChainInstruction generates a natural-language chain instruction for
 // a role by reading EventChains config. Returns "" if the role has no chain
 // responsibilities. The role is the event source (e.g. "build" owns the

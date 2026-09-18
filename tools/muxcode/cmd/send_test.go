@@ -409,3 +409,33 @@ func TestResponseAnswersHostedRole(t *testing.T) {
 		t.Error("a reply from an unrelated role must not answer merely because it is hosted")
 	}
 }
+
+// The reply a listenerless provider is told to send must correlate to the
+// request it answers.
+//
+// The injected instruction names the action "response", which no caller ever
+// sends as a request action, so before the --reply-to was added an unlinked
+// reply from OpenCode or scrape-road Codex could never satisfy responseAnswers:
+// every --wait on those targets blocked the full 90 seconds and degraded to a
+// tracked task even though the agent had already answered (PR #86 review).
+func TestInjectedReplyInstructionCorrelates(t *testing.T) {
+	const msgID = "1789400000-edit-dddd"
+
+	// That the instruction carries --reply-to is pinned in the bus package by
+	// TestBuildReplyCommandCorrelatesToTheRequest; this pins the other half —
+	// that a reply in the shape it produces actually correlates here.
+	linked := bus.Message{Type: "response", From: "build", Action: "response", ReplyTo: msgID}
+	if !responseAnswers(linked, "build", "", "build", msgID) {
+		t.Error("a reply following the injected instruction must answer its request")
+	}
+
+	// The negative control — the same reply without the correlation is the
+	// shape that used to hang, and must still not answer some other request.
+	unlinked := bus.Message{Type: "response", From: "build", Action: "response"}
+	if responseAnswers(unlinked, "build", "", "build", msgID) {
+		t.Error("an uncorrelated response-action reply must not answer a build request")
+	}
+	if responseAnswers(linked, "build", "", "build", "1789400000-edit-eeee") {
+		t.Error("a reply naming a different request must never answer this one")
+	}
+}

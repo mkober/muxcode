@@ -170,7 +170,7 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 	// the agent sends a response to itself, which triggers a wake-up,
 	// which injects the self-message, which triggers another response.
 	var parts []string
-	var lastFrom string
+	var lastFrom, lastRequestID, lastRequestFrom string
 	hasRequest := false
 	for _, m := range batch {
 		// Skip messages from self — these are loop artifacts
@@ -185,6 +185,7 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 		lastFrom = m.From
 		if m.Type == "request" {
 			hasRequest = true
+			lastRequestID, lastRequestFrom = m.ID, m.From
 		}
 	}
 	// If the whole batch was self-addressed, consume and discard it (daemon path
@@ -194,7 +195,11 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 		return nil
 	}
 	prompt := strings.Join(parts, " | ALSO: ")
+	// The reply belongs to whoever asked, not whoever spoke last.
 	replyTarget := NormalizeBusRole(lastFrom)
+	if lastRequestFrom != "" {
+		replyTarget = NormalizeBusRole(lastRequestFrom)
+	}
 	if replyTarget == "" || !IsKnownRole(replyTarget) {
 		replyTarget = "edit"
 	}
@@ -204,7 +209,7 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 	// priority directive) and at the end (as a reminder).
 	// Response-only wake-ups skip this to avoid infinite echo loops.
 	if hasRequest {
-		replyCmd := fmt.Sprintf("muxcode send %s response \"<your one-line summary>\" --type response", replyTarget)
+		replyCmd := buildReplyCommand(replyTarget, lastRequestID)
 		prompt = fmt.Sprintf("IMPORTANT: After completing this task, you MUST run this bash command: %s — ", replyCmd) + prompt
 		prompt += fmt.Sprintf(" — REMINDER: Your FINAL step MUST be to EXECUTE (not print): %s", replyCmd)
 		prompt += chainInstructionForRole(role)
