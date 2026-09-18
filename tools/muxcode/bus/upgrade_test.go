@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -188,4 +189,144 @@ func TestPlanUpgrades_VersionAwareness(t *testing.T) {
 	if !byName["orphan"].Orphan {
 		t.Error("orphan session should be marked orphan")
 	}
+}
+
+// stubUpgradeDaemons replaces the upgrade seam for one test, returning the
+// canned outcome and recording the options every call received.
+func stubUpgradeDaemons(t *testing.T, results []UpgradeResult, err error) *[]UpgradeOptions {
+	t.Helper()
+	seen := &[]UpgradeOptions{}
+	prev := upgradeDaemonsFn
+	upgradeDaemonsFn = func(opts UpgradeOptions) ([]UpgradeResult, error) {
+		*seen = append(*seen, opts)
+		return results, err
+	}
+	t.Cleanup(func() { upgradeDaemonsFn = prev })
+	return seen
+}
+
+// restartedResult is a stale daemon that was cycled onto the installed build.
+func restartedResult(session string) []UpgradeResult {
+	return []UpgradeResult{{
+		UpgradePlan: UpgradePlan{
+			Session:     session,
+			DaemonBuild: Info{Version: "v0.1.0"},
+			Installed:   Info{Version: "v0.2.0"},
+		},
+		DaemonRestarted: true,
+	}}
+}
+
+// TestEnsureSessionDaemonCurrent_ScopesToOneSession is the regression guard
+// for an unscoped rollout: an empty Session cycles the daemon of every
+// session on the machine, including ones the user never asked to touch.
+func TestEnsureSessionDaemonCurrent_ScopesToOneSession(t *testing.T) {
+	seen := stubUpgradeDaemons(t, restartedResult("mine"), nil)
+
+	if _, _, err := EnsureSessionDaemonCurrent("mine"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("expected exactly 1 upgrade call, got %d", len(*seen))
+	}
+	if got := (*seen)[0].Session; got != "mine" {
+		t.Errorf("upgrade must be scoped to the attached session, got %q", got)
+	}
+	if (*seen)[0].Force || (*seen)[0].DryRun {
+		t.Errorf("attach-time upgrade must not force or dry-run: %+v", (*seen)[0])
+	}
+}
+
+func TestEnsureSessionDaemonCurrent_ReportsRestart(t *testing.T) {
+	stubUpgradeDaemons(t, restartedResult("mine"), nil)
+
+	res, upgraded, err := EnsureSessionDaemonCurrent("mine")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !upgraded {
+		t.Fatal("a restarted daemon must report upgraded")
+	}
+	if res.Session != "mine" || res.DaemonBuild.Version != "v0.1.0" {
+		t.Errorf("result should carry the cycled plan, got %+v", res)
+	}
+}
+
+// TestEnsureSessionDaemonCurrent_SilentWhenCurrent is the negative control for
+// ReportsRestart: the common case is a daemon already on this build, and
+// attaching must say nothing at all about it.
+func TestEnsureSessionDaemonCurrent_SilentWhenCurrent(t *testing.T) {
+	stubUpgradeDaemons(t, []UpgradeResult{{
+		UpgradePlan: UpgradePlan{Session: "mine", Current: true},
+		Skipped:     true,
+	}}, nil)
+
+	_, upgraded, err := EnsureSessionDaemonCurrent("mine")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if upgraded {
+		t.Error("a current daemon must not report an upgrade")
+	}
+}
+
+// TestEnsureSessionDaemonCurrent_OptOut pins the kill switch. The fixture is
+// the one that upgrades in ReportsRestart, so a seam that is never reached
+// proves the env var did the suppressing and not an inert fixture.
+func TestEnsureSessionDaemonCurrent_OptOut(t *testing.T) {
+	seen := stubUpgradeDaemons(t, restartedResult("mine"), nil)
+	t.Setenv("MUXCODE_AUTO_UPGRADE_DAEMONS_DISABLE", "1")
+
+	_, upgraded, err := EnsureSessionDaemonCurrent("mine")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if upgraded {
+		t.Error("opted out, so nothing may be reported as upgraded")
+	}
+	if len(*seen) != 0 {
+		t.Errorf("opted out, so no upgrade may be attempted, got %d calls", len(*seen))
+	}
+}
+
+func TestEnsureSessionDaemonCurrent_EmptySessionDoesNothing(t *testing.T) {
+	seen := stubUpgradeDaemons(t, restartedResult(""), nil)
+
+	if _, upgraded, _ := EnsureSessionDaemonCurrent(""); upgraded {
+		t.Error("an empty session name must not trigger an unscoped rollout")
+	}
+	if len(*seen) != 0 {
+		t.Errorf("expected no upgrade call for an empty session, got %d", len(*seen))
+	}
+}
+
+// TestEnsureSessionDaemonCurrent_PropagatesErrors covers both roads a failure
+// arrives on: ps refused under a sandbox (call error), and a restart that
+// failed for one session (per-result Err). The second would otherwise read as
+// "nothing needed doing" and hide a daemon still on old code.
+func TestEnsureSessionDaemonCurrent_PropagatesErrors(t *testing.T) {
+	t.Run("call error", func(t *testing.T) {
+		stubUpgradeDaemons(t, nil, fmt.Errorf("ps: operation not permitted"))
+		_, upgraded, err := EnsureSessionDaemonCurrent("mine")
+		if err == nil {
+			t.Fatal("expected the ps failure to propagate")
+		}
+		if upgraded {
+			t.Error("a failed check must not claim an upgrade")
+		}
+	})
+
+	t.Run("per-result error", func(t *testing.T) {
+		stubUpgradeDaemons(t, []UpgradeResult{{
+			UpgradePlan: UpgradePlan{Session: "mine"},
+			Err:         fmt.Errorf("relaunch daemon: exec format error"),
+		}}, nil)
+		_, upgraded, err := EnsureSessionDaemonCurrent("mine")
+		if err == nil {
+			t.Fatal("expected the failed restart to propagate")
+		}
+		if upgraded {
+			t.Error("a failed restart must not claim an upgrade")
+		}
+	})
 }

@@ -33,6 +33,7 @@ MUXCODE_SHELL_INIT="source ~/.venv/bin/activate"
 | `MUXCODE_AGENT_CLI` | `claude` | Default AI CLI provider (`claude`, `opencode`, `codex`, or `local`) |
 | `MUXCODE_{ROLE}_CLI` | (unset) | Per-role AI CLI override (e.g. `MUXCODE_BUILD_CLI=opencode`). See [Multi-CLI providers](#multi-cli-providers) |
 | `MUXCODE_SHELL_INIT` | (empty) | Command to run in each new tmux pane (e.g. activate a virtualenv) |
+| `MUXCODE_AUTO_UPGRADE_DAEMONS_DISABLE` | (unset) | Set to `1` to skip the attach-time daemon freshness check. By default `muxcode <dir>` attaching to an **already-running** session rolls that session's daemon onto the installed binary first — the equivalent of `muxcode upgrade-daemons --session <name>`, so it is version-aware (a daemon already on this build is left alone) and never touches another session. Read by the launcher after the project's `.muxcode/config` is loaded, so it can be set per project. See [Attach-time daemon freshness check](architecture.md#attach-time-daemon-freshness-check) |
 
 ### Window Layout
 

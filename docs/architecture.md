@@ -1100,6 +1100,31 @@ The launcher handles all prompts automatically via `provider.ClassifyPane()` and
 
 Core code: `AutoAccept()` in `bus/launcher.go`
 
+### Attach-time daemon freshness check
+
+None of the above runs when the session already exists. `muxcode <dir>` that finds a live tmux session skips `LaunchSession()` entirely and attaches — so before attaching it checks that the session's daemon is running the installed binary, and restarts it if not.
+
+| Road | Daemon comes from | Can it be stale? |
+|------|-------------------|------------------|
+| Fresh launch (`LaunchSession()`) | The binary on `PATH`, started now | No |
+| Attach to a running session | Whatever binary was installed when the session was launched | **Yes** — every `make install` since widens the gap |
+
+A session is launched once but attached many times, so attaching is the only road on which a daemon drifts behind an install, and the only one that needs the check.
+
+1. `bus.TmuxHasSession(sessionName)` is true → print "Session already running — attaching..."
+2. `refreshSessionDaemon()` calls `bus.EnsureSessionDaemonCurrent(session)`, which runs `UpgradeDaemons` with `UpgradeOptions{Session: session}` — the same version-aware rollout as `muxcode upgrade-daemons --session <name>` (`daemon.version` vs this binary via `Info.SameBuild`)
+3. Daemon already current (the common case) → silent. Daemon or monitor restarted → one line, `Daemon refreshed: daemon <old> → installed <new>` (`UpgradePlan.VersionDelta()`)
+4. `bus.AttachToSession()` runs regardless of the outcome
+
+| Property | Behaviour |
+|----------|-----------|
+| Scope | **Always this session alone.** An unscoped rollout cycles the daemon of every session on the machine, including ones nobody asked to touch |
+| Failure | Reported as `Warning: daemon version check: <err>` on stderr, never fatal — `ps` is denied under some sandboxes, and a version check must not stand between the user and their session |
+| Opt-out | `MUXCODE_AUTO_UPGRADE_DAEMONS_DISABLE=1` — see [Configuration](configuration.md#session-settings) |
+| Other road | `build.sh` runs an unscoped `muxcode upgrade-daemons` after `make install`. That call runs inside the build agent's sandbox where `ps` is denied (MUX-161), so the attach check — run in the user's own terminal — is the road that still works there |
+
+Core code: `refreshSessionDaemon()` in `cmd/launcher.go`, `EnsureSessionDaemonCurrent()` and `AutoUpgradeDaemonsDisabled()` in `bus/upgrade.go`
+
 ## Session re-init
 
 When a MuxCode session restarts with the same name, `Init()` in `bus/setup.go` detects the existing bus directory and purges stale data to prevent false daemon alerts (loop-detected, compact-recommended) from the previous session.
