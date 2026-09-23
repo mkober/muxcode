@@ -147,7 +147,7 @@ denominator.
 
 The false-completion family — [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md)
 (a node's evidence), [MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) (a spawn's
-port), [MUX-182](./MUX-182-cancelled-run-keeps-working-provenance-unreadable.md) (a run's provenance).
+port), [MUX-182](../drafts/MUX-182-cancelled-run-keeps-working-provenance-unreadable.md) (a run's provenance).
 This is its **human-gate member**: it fakes no evidence, it converts a real approval into a commit of
 unverified work. MUX-167's "ask before the guard" and MUX-144's attributable approvals both held; the
 question they gated was wrong.
