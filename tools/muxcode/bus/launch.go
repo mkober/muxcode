@@ -223,7 +223,7 @@ func RoleClaudeModelDefault(role string) string {
 	case "edit", "auto":
 		return "claude-fable-5-1"
 	case "plan", "planner", "review", "analyze", "analyst":
-		return "claude-opus-5"
+		return "claude-opus-5-5"
 	case "build", "test", "api", "deploy", "run", "runner", "watch", "commit", "git", "serve":
 		return "claude-sonnet-5"
 	default:
@@ -1029,6 +1029,9 @@ func RunAgentLaunch(role string) error {
 	binPath, err := ResolveExecPath(binary)
 	if err != nil {
 		return fmt.Errorf("cannot find %s: %w", binary, err)
+	}
+	if err := refuseUnexecutableCLI(session, role, binary, binPath); err != nil {
+		return err
 	}
 
 	// Build argv for exec (argv[0] must be the binary name)

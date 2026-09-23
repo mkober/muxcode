@@ -216,14 +216,14 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string, c
 	bus.FireSubscriptions(session, from, eventType, outcome, exitCode, command, ctx)
 }
 
-// hookGuard implements the PreToolUse hook: the session, role and provider
-// gates, then bus.GuardDecisionFor's one rule set, then the denial in the
-// provider's dialect (FormatGuardBlockFor) with a `guard-denied` lifecycle row
-// naming role, tool and reason, so every refusal is attributable. Only fires
-// for providers on the hook road; scrape-road OpenCode agents use
-// permission.bash deny rules in their agent config instead. The role gate
-// admits any limit, not just delegation rules: Atlassian write authority and
-// the hook-road evidence rule apply to roles that have none.
+// hookGuard implements the PreToolUse hook: the session and provider gates,
+// then bus.GuardDecisionFor's one rule set, then the denial in the provider's
+// dialect (FormatGuardBlockFor) with a `guard-denied` lifecycle row naming
+// role, tool and reason, so every refusal is attributable. Only fires for
+// providers on the hook road; scrape-road OpenCode agents use permission.bash
+// deny rules in their agent config instead. There is no role gate: the
+// inbox-listener rule binds every role, and Atlassian write authority and the
+// hook-road evidence rule bind roles that have no delegation rules.
 func hookGuard() {
 	session := hookSession()
 	if session == "" {
@@ -231,10 +231,6 @@ func hookGuard() {
 	}
 
 	role := bus.BusRole()
-	if !bus.HasGuardRules(role) && !bus.HasAtlassianAuthorityLimit(role) && !bus.HasEvidenceGuard(role) {
-		return
-	}
-
 	provider := bus.ResolveProvider(role)
 	if !provider.SupportsHooks() {
 		return

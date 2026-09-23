@@ -416,12 +416,12 @@ func TestClaudeConfigureLaunch_ProjectTierRestrictionsSurvive(t *testing.T) {
 	defer SetConfig(nil)
 	chdir(t, project)
 	writeFile(t, filepath.Join(project, ".claude", "agents", "planner.md"),
-		"---\ndescription: Docs\ntools: Read, Edit\nmodel: claude-opus-5\npermissionMode: plan\n---\nDocs only.\n")
+		"---\ndescription: Docs\ntools: Read, Edit\nmodel: claude-opus-5-5\npermissionMode: plan\n---\nDocs only.\n")
 
 	cfg := &LaunchConfig{Role: "plan"}
 	(&ClaudeCodeProvider{}).ConfigureLaunch(cfg, "plan")
 
-	for _, want := range []string{`"tools":["Read","Edit"]`, `"model":"claude-opus-5"`, `"permissionMode":"plan"`, `"prompt":"Docs only.\n"`} {
+	for _, want := range []string{`"tools":["Read","Edit"]`, `"model":"claude-opus-5-5"`, `"permissionMode":"plan"`, `"prompt":"Docs only.\n"`} {
 		if !strings.Contains(cfg.AgentJSON, want) {
 			t.Errorf("AgentJSON missing %s: %s", want, cfg.AgentJSON)
 		}

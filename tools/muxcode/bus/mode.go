@@ -469,6 +469,10 @@ func modeAutoAcceptAndWake(session string, agent *ModeAgent) {
 			provider.AcceptStartup(session, pane, state)
 			LogLifecycle(session, "info", "mode-accept", "trust-prompt", agent.Role)
 
+		case PaneUpdatePrompt:
+			provider.AcceptStartup(session, pane, state)
+			LogLifecycle(session, "info", "mode-accept", "update-prompt", agent.Role)
+
 		case PaneBypassPrompt:
 			provider.AcceptStartup(session, pane, state)
 			LogLifecycle(session, "info", "mode-accept", "bypass-prompt", agent.Role)

@@ -37,7 +37,7 @@ var providerOrder = []string{"claude", "opencode", "codex", "local"}
 var hardcodedFallbackModels = map[string]ProviderModels{
 	"claude": {
 		Default: "claude-sonnet-5",
-		Models:  []string{"claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"},
+		Models:  []string{"claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5"},
 	},
 	"opencode": {
 		// Latest version of each opencode-go family, verified against
@@ -120,15 +120,17 @@ func AvailableProviders() []ProviderOption {
 	return providers
 }
 
-// isProviderInstalled checks if the CLI binary for a provider is on PATH.
+// isProviderInstalled checks if the CLI binary for a provider is on PATH and
+// is one the launcher can exec (CheckExecutable) — a placeholder that would
+// refuse every launch is not offered as installed.
 func isProviderInstalled(cli string) bool {
 	binary := cli
 	switch cli {
 	case "local":
 		binary = "ollama"
 	}
-	_, err := exec.LookPath(binary)
-	return err == nil
+	path, err := exec.LookPath(binary)
+	return err == nil && CheckExecutable(path) == nil
 }
 
 // listOllamaModels runs `ollama list` and parses model names.

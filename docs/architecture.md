@@ -1092,8 +1092,9 @@ The launcher handles all prompts automatically via `provider.ClassifyPane()` and
 1. Polls each agent pane every 2 seconds (30 attempts, ~60 seconds max)
 2. Captures pane content with `tmux capture-pane -p`
 3. If "trust this folder" detected: sends Enter to accept (marks as not-done — bypass prompt may follow)
-4. If "Bypass Permissions" detected: sends Down + Enter to select "Yes, I accept"
-5. If `❯` idle prompt detected: agent is past all prompts — marks as accepted
+4. If a Codex "Update available!" prompt is detected (`PaneUpdatePrompt`): `SkipCodexUpdate` moves the highlight to "2. Skip" and presses Enter only on a re-capture showing Skip highlighted — never *Update now*, which is pre-selected, installs a new Codex and exits (marks as not-done; logs `update-prompt`, or `update-skip-failed` with nothing pressed). See [Agents](agents.md#multi-cli-provider-support)
+5. If "Bypass Permissions" detected: sends Down + Enter to select "Yes, I accept"
+6. If `❯` idle prompt detected: agent is past all prompts — marks as accepted
 6. **Edit agent startup**: when the edit agent reaches `❯`, waits 1s for the TUI to fully initialize, re-verifies `❯` is still showing, then sends a startup event (`Session started — review last saved context from memory`) via `muxcode send` with `AGENT_ROLE=edit` (the bus `Notify()` handles wake-up via `notifyIdleSendKeys()` with dedup). For non-hook providers (OpenCode, Codex CLI), startup messages are delivered via `provider.SendWakeUp()` which injects the message payload directly.
 7. Watch agents do **not** get startup messages — the daemon delivers inbox items naturally, and unsolicited responses would CC noise to edit. The analyze agent is no longer in the default window list — opt in via `MUXCODE_WINDOWS`
 8. Exits early once all panes are handled
@@ -1201,7 +1202,7 @@ Persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record the full 
 | Component | Source | Key events |
 |-----------|--------|------------|
 | `LaunchSession()` | `launcher` | session-start, bus-init, stale-kill, daemon-start, monitor-start, session-create, session-ready |
-| `AutoAccept()` | `auto-accept` | trust-prompt, bypass-prompt, agent-ready, complete |
+| `AutoAccept()` | `auto-accept` | trust-prompt, update-prompt, update-skip-failed, bypass-prompt, agent-ready, complete |
 | `RunAgentLaunch()` | `agent` | launch (role + CLI type) |
 | `bus/setup.go` | `init` | init, re-init |
 | `daemon/daemon.go` | `daemon` | started, lock-failed, inbox-notify, startup-notify, trigger-route, cron-fire, proc/spawn-complete, loop/compact alerts, ollama/agent health |

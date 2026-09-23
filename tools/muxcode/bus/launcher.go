@@ -656,11 +656,12 @@ func ResizeWindows(session string) {
 type PaneState int
 
 const (
-	PaneNotReady     PaneState = iota // Agent still loading
-	PaneTrustPrompt                   // "trust this folder" prompt
-	PaneBypassPrompt                  // "Bypass Permissions" prompt
-	PaneIdle                          // Agent at ❯ prompt (ready)
-	PaneApprovalPrompt                // Agent parked mid-turn asking to run a command
+	PaneNotReady       PaneState = iota // Agent still loading
+	PaneTrustPrompt                     // "trust this folder" prompt
+	PaneBypassPrompt                    // "Bypass Permissions" prompt
+	PaneIdle                            // Agent at ❯ prompt (ready)
+	PaneApprovalPrompt                  // Agent parked mid-turn asking to run a command
+	PaneUpdatePrompt                    // Codex self-update prompt; Enter installs and exits
 )
 
 // ClassifyPane determines the state of an agent pane from its captured content.
@@ -711,6 +712,11 @@ func AutoAccept(session string, windows []string) {
 				provider.AcceptStartup(session, pane, state)
 				LogLifecycle(session, "info", "auto-accept", "trust-prompt", win)
 				allDone = false // bypass prompt may follow
+
+			case PaneUpdatePrompt:
+				provider.AcceptStartup(session, pane, state)
+				LogLifecycle(session, "info", "auto-accept", "update-prompt", win)
+				allDone = false
 
 			case PaneBypassPrompt:
 				provider.AcceptStartup(session, pane, state)

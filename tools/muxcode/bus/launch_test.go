@@ -108,11 +108,11 @@ func TestRoleClaudeModelDefault(t *testing.T) {
 	}{
 		{"edit", "claude-fable-5-1"},
 		{"auto", "claude-fable-5-1"},
-		{"plan", "claude-opus-5"},
-		{"planner", "claude-opus-5"},
-		{"review", "claude-opus-5"},
-		{"analyze", "claude-opus-5"},
-		{"analyst", "claude-opus-5"},
+		{"plan", "claude-opus-5-5"},
+		{"planner", "claude-opus-5-5"},
+		{"review", "claude-opus-5-5"},
+		{"analyze", "claude-opus-5-5"},
+		{"analyst", "claude-opus-5-5"},
 		{"build", "claude-sonnet-5"},
 		{"test", "claude-sonnet-5"},
 		{"commit", "claude-sonnet-5"},
@@ -305,7 +305,7 @@ func TestExtractFrontmatter_Fields(t *testing.T) {
 		"tools: Read, Edit\n" +
 		"skills:\n  - docs-management\n  - jira-manage-issues\n" +
 		"hooks:\n  PreToolUse:\n    - matcher: Bash\n" +
-		"model: 'claude-opus-5'\n" +
+		"model: 'claude-opus-5-5'\n" +
 		"---\nBody.\n"
 	fm, body := ExtractFrontmatter(content)
 	if body != "Body.\n" || fm.Description != "Docs" {
@@ -315,7 +315,7 @@ func TestExtractFrontmatter_Fields(t *testing.T) {
 		"name":   "planner",
 		"tools":  "Read, Edit",
 		"skills": "docs-management,jira-manage-issues",
-		"model":  "'claude-opus-5'",
+		"model":  "'claude-opus-5-5'",
 	}
 	for k, v := range want {
 		if fm.Fields[k] != v {
@@ -376,7 +376,7 @@ func TestBuildAgentsJSON_CarriesRestrictions(t *testing.T) {
 	fm := AgentFrontmatter{Description: "Docs", Fields: map[string]string{
 		"tools":           "Read, Edit",
 		"disallowedTools": "[Bash, \"Write\"]",
-		"model":           "'claude-opus-5'",
+		"model":           "'claude-opus-5-5'",
 		"permissionMode":  "plan",
 		"maxTurns":        "5",
 		"background":      "true",
@@ -393,7 +393,7 @@ func TestBuildAgentsJSON_CarriesRestrictions(t *testing.T) {
 	}
 	def := agents["planner"]
 	got := fmt.Sprintf("%v %v %v %v %v %v %v", def["tools"], def["disallowedTools"], def["model"], def["permissionMode"], def["maxTurns"], def["background"], def["prompt"])
-	want := "[Read Edit] [Bash Write] claude-opus-5 plan 5 true Maintain docs."
+	want := "[Read Edit] [Bash Write] claude-opus-5-5 plan 5 true Maintain docs."
 	if got != want {
 		t.Errorf("typed fields\n got %s\nwant %s\n(json %s)", got, want, jsonStr)
 	}

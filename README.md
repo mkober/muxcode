@@ -102,7 +102,7 @@ Out of the box, MuxCode uses Claude Code for orchestration roles and OpenCode fo
 | Role                                             | Default CLI | Default model                   |
 | ------------------------------------------------ | ----------- | ------------------------------- |
 | edit                                             | Claude Code | `claude-fable-5-1`             |
-| plan                                             | Claude Code | `claude-opus-5`               |
+| plan                                             | Claude Code | `claude-opus-5-5`             |
 | review, analyze                                  | OpenCode    | `opencode-go/qwen3.7-plus`     |
 | build, test, serve, deploy, run, watch, commit   | OpenCode    | `opencode-go/minimax-m3`       |
 | api                                              | Claude Code | `claude-sonnet-5`              |

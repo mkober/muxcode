@@ -194,16 +194,6 @@ func TestCheckAtlassianAuthority_NormalizesRoleAliases(t *testing.T) {
 	}
 }
 
-func TestHasAtlassianAuthorityLimit(t *testing.T) {
-	t.Setenv("MUXCODE_ATLASSIAN_AUTHORITY_ROLES", "edit")
-	if HasAtlassianAuthorityLimit("edit") {
-		t.Error("edit is authorized, so it is not limited")
-	}
-	if !HasAtlassianAuthorityLimit("plan") {
-		t.Error("plan is limited and must be intercepted by the guard hook")
-	}
-}
-
 func TestAtlassianCommandTarget(t *testing.T) {
 	cases := []struct {
 		command         string
