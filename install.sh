@@ -408,6 +408,110 @@ provider_installed() {
   esac
 }
 
+CLAUDE_NPM_PKG="@anthropic-ai/claude-code"
+
+# npm_gates_scripts — true when npm blocks install-time scripts unless the
+# package is listed in `allow-scripts` (npm 12+). Earlier npm has no such
+# setting, so neither the flag nor the config is offered to it.
+npm_gates_scripts() {
+  command -v npm >/dev/null 2>&1 || return 1
+  local major
+  major=$(npm --version 2>/dev/null | cut -d. -f1 || true)
+  case "$major" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$major" -ge 12 ]
+}
+
+# exec_ok <path> — true when the kernel can exec the file directly, as Go's
+# os/exec does when muxcode launches an agent: a `#!` script, or an ELF or
+# Mach-O binary. An interactive shell runs a shebang-less text file anyway, so
+# `claude --version` from a terminal cannot vouch for what muxcode will launch.
+# Builtins only: none of these magic numbers holds a NUL or newline, so `read`
+# sees all four bytes, and the check works on a PATH with no coreutils.
+exec_ok() {
+  local magic=""
+  [ -f "$1" ] || return 1
+  LC_ALL=C IFS= read -r -d '' -n 4 magic < "$1" 2>/dev/null || true
+  case "$magic" in
+    '#!'*|$'\x7fELF'|$'\xcf\xfa\xed\xfe'|$'\xce\xfa\xed\xfe'|$'\xfe\xed\xfa\xcf'|$'\xfe\xed\xfa\xce'|$'\xca\xfe\xba\xbe'|$'\xbe\xba\xfe\xca') return 0 ;;
+  esac
+  return 1
+}
+
+# claude_from_npm <path> — true when <path> is npm's link into the Claude Code
+# package. A shared prefix/bin directory is not proof: a native install or a
+# hand-copied binary can sit there too, and repairing one via npm would not
+# touch the file muxcode launches.
+claude_from_npm() {
+  local target
+  target=$(readlink "$1" 2>/dev/null) || return 1
+  case "$target" in */node_modules/"$CLAUDE_NPM_PKG"/*) return 0 ;; esac
+  return 1
+}
+
+# repair_claude <path> — runs the postinstall that npm skipped. Claude Code's
+# npm package ships bin/claude.exe as a shebang-less placeholder that its
+# postinstall (install.cjs) swaps for the native binary; npm 12 blocks install
+# scripts by default, so a plain install or auto-update leaves the placeholder
+# and every agent launch fails with "exec claude: exec format error".
+# install.cjs resolves its paths from __dirname, so it works on any npm version.
+repair_claude() {
+  local installer
+  installer="$(npm root -g 2>/dev/null || true)/$CLAUDE_NPM_PKG/install.cjs"
+  [ -f "$installer" ] || return 1
+  run_spinner "Installing Claude Code's native binary..." node "$installer" && exec_ok "$1"
+}
+
+# allow_claude_scripts — adds Claude Code to npm's user-level `allow-scripts`
+# list so the next auto-update or reinstall does not reinstate the placeholder.
+# The setting is a comma-separated list, and `npm config get` returns only the
+# effective value whatever --location says, so the write is that value plus
+# Claude Code: nothing already allowed is dropped. It is read from $HOME so a
+# project .npmrc under the current directory cannot shadow it, and a failed
+# read writes nothing rather than overwrite a list it could not see.
+allow_claude_scripts() {
+  npm_gates_scripts || return 0
+  local cur manual
+  if ! cur=$(cd "$HOME" && npm config get allow-scripts 2>/dev/null); then
+    warn "Could not read npm's allow-scripts — add $CLAUDE_NPM_PKG to it by hand"
+    return 0
+  fi
+  case "$cur" in undefined|null) cur="" ;; esac
+  case ",$cur," in *",$CLAUDE_NPM_PKG,"*) ok "npm allows Claude Code's install script"; return 0 ;; esac
+  manual="npm config set allow-scripts=${cur:+$cur,}$CLAUDE_NPM_PKG --location=user"
+  if ! ask "Allow Claude Code's install script in npm? (keeps updates from breaking claude)" Y; then
+    note "$manual"
+    return 0
+  fi
+  if run_logged "npm config set allow-scripts" \
+      npm config set "allow-scripts=${cur:+$cur,}$CLAUDE_NPM_PKG" --location=user; then
+    ok "npm allow-scripts now includes $CLAUDE_NPM_PKG"
+  else
+    note "$manual"
+  fi
+}
+
+# verify_claude — the `claude` on PATH must be exec-able by muxcode's launcher,
+# not just runnable from a shell. An npm placeholder is repaired in place; one
+# that cannot be repaired clears use_claude so no role is configured for it.
+verify_claude() {
+  local p
+  p=$(command -v claude) || { use_claude=false; return 1; }
+  local from_npm=false
+  claude_from_npm "$p" && from_npm=true
+  if ! exec_ok "$p"; then
+    warn "claude at $p is not an executable binary — agents would fail with 'exec format error'"
+    if $from_npm && ask "Run Claude Code's skipped native-binary install?" Y && repair_claude "$p"; then
+      ok "Claude Code native binary installed"
+    else
+      note "npm install -g --allow-scripts=$CLAUDE_NPM_PKG $CLAUDE_NPM_PKG"
+      note "or: curl -fsSL https://claude.ai/install.sh | bash"
+      use_claude=false
+      return 1
+    fi
+  fi
+  if $from_npm; then allow_claude_scripts; fi
+}
+
 # install_provider <key> — install one AI CLI, preferring its native installer
 # and falling back to Homebrew. Sets the matching use_* flag and returns 0 on
 # success; on failure names the manual command and returns 1 so the caller can
@@ -415,13 +519,21 @@ provider_installed() {
 install_provider() {
   case "$1" in
     claude)
-      if run_spinner "Installing Claude Code via npm..." npm install -g @anthropic-ai/claude-code; then
-        ok "Claude Code installed"; use_claude=true; return 0
+      local npm_args=(install -g)
+      npm_gates_scripts && npm_args+=("--allow-scripts=$CLAUDE_NPM_PKG")
+      if run_spinner "Installing Claude Code via npm..." npm "${npm_args[@]}" "$CLAUDE_NPM_PKG"; then
+        ok "Claude Code installed"
       elif run_logged "brew install claude-code" brew install claude-code; then
-        ok "Claude Code installed via Homebrew"; use_claude=true; return 0
+        ok "Claude Code installed via Homebrew"
+      else
+        warn "Auto-install failed — install manually:"
+        note "npm install -g ${npm_args[*]:2} $CLAUDE_NPM_PKG"
+        note "see $INSTALL_LOG for the failure reason"
+        return 1
       fi
-      warn "Auto-install failed — install manually:"
-      note "npm install -g @anthropic-ai/claude-code"
+      use_claude=true
+      verify_claude
+      return
       ;;
     opencode)
       if run_spinner "Installing OpenCode..." bash -c 'curl -fsSL https://opencode.ai/install | bash'; then
@@ -469,6 +581,7 @@ use_codex=false
 if command -v claude >/dev/null 2>&1; then
   row "$C_OK" "✓" "claude" "$(version_of "$(claude --version 2>/dev/null || echo '')")"
   use_claude=true
+  verify_claude || true
 else
   row "$C_DIM" "·" "claude" "not found"
   if ask "Install Claude Code? ($(provider_desc claude))" Y; then

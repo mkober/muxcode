@@ -4,7 +4,8 @@
 # Runs the installer against a throwaway HOME so nothing on the real machine is
 # touched, and asserts the properties that matter for a first-time install on a
 # clean box: the script survives a non-TTY run, the version gate rejects
-# too-old tools, and a full install produces a working binary idempotently.
+# too-old tools, a full install produces a working binary idempotently, and a
+# `claude` that only a shell can run (npm's placeholder) is repaired or refused.
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -231,6 +232,132 @@ check "$(offers_when claude opencode codex)" "" \
   "nothing offered when all three present"
 
 rm -rf "$PROV_DIR"
+
+# --- 8. Claude Code must be exec-able, not just shell-runnable ---------------
+# Sources the real claude helpers and install_provider with fake npm/node at
+# the boundary, under set -euo pipefail. Regression: npm 12 blocks install
+# scripts, so Claude Code's postinstall never swapped its shebang-less
+# placeholder for the native binary; a shell ran it, but every agent launch
+# failed with "exec claude: exec format error".
+
+cl_from=$(grep -n '^CLAUDE_NPM_PKG=' "$INSTALL" | cut -d: -f1)
+cl_to=$(( $(grep -n '^# install_provider <key>' "$INSTALL" | cut -d: -f1) - 1 ))
+ip_from=$(grep -n '^install_provider() {' "$INSTALL" | cut -d: -f1)
+ip_to=$(awk -v s="$ip_from" 'NR > s && /^}/ { print NR; exit }' "$INSTALL")
+
+CL_DIR="$(mktemp -d)"
+{ sed -n "${cl_from},${cl_to}p" "$INSTALL"; sed -n "${ip_from},${ip_to}p" "$INSTALL"; } > "$CL_DIR/helpers.sh"
+
+CL_ROOT="$CL_DIR/lib/node_modules"
+CL_EXE="$CL_ROOT/@anthropic-ai/claude-code/bin/claude.exe"
+mkdir -p "$CL_DIR/bin" "$(dirname "$CL_EXE")"
+touch "$CL_ROOT/@anthropic-ai/claude-code/install.cjs"
+
+cat > "$CL_DIR/bin/npm" <<'EOF'
+#!/bin/sh
+echo "npm $*" >> "$CL_LOG"
+case "$1" in
+  --version) echo "${FAKE_NPM_VERSION:-12.0.2}" ;;
+  root)      echo "$CL_ROOT" ;;
+  config)    if [ "$2" = get ]; then [ "$FAKE_ALLOW" = FAIL ] && exit 1; echo "$FAKE_ALLOW"; fi ;;
+esac
+exit 0
+EOF
+cat > "$CL_DIR/bin/node" <<'EOF'
+#!/bin/sh
+echo "node $*" >> "$CL_LOG"
+[ "$FAKE_REPAIR" = 1 ] && printf '\317\372\355\376rest' > "$CL_EXE"
+exit 0
+EOF
+chmod +x "$CL_DIR/bin/npm" "$CL_DIR/bin/node"
+
+PLACEHOLDER='echo "native binary not installed"'
+
+# claude_case <exe-content|-> <npm-link:1|0> <snippet> — runs <snippet> against
+# a claude on PATH whose file holds <exe-content> ("-" for Mach-O magic), linked
+# from npm's package or copied in place. Prints the snippet's stdout plus a
+# trailing "use_claude=..." line; CL_LOG collects fake npm/node calls.
+claude_case() {
+  if [ "$1" = - ]; then printf '\317\372\355\376rest' > "$CL_EXE"; else printf '%s\n' "$1" > "$CL_EXE"; fi
+  rm -f "$CL_DIR/bin/claude"
+  if [ "$2" = 1 ]; then ln -s "$CL_EXE" "$CL_DIR/bin/claude"; else cp "$CL_EXE" "$CL_DIR/bin/claude"; fi
+  : > "$CL_DIR/log"
+  PATH="$CL_DIR/bin:/usr/bin:/bin" HOME="$CL_DIR" CL_LOG="$CL_DIR/log" CL_ROOT="$CL_ROOT" CL_EXE="$CL_EXE" \
+    FAKE_ALLOW="${FAKE_ALLOW-}" FAKE_REPAIR="${FAKE_REPAIR:-0}" FAKE_NPM_VERSION="${FAKE_NPM_VERSION:-12.0.2}" \
+    CL_HELPERS="$CL_DIR/helpers.sh" "$PROV_BASH" -c '
+      set -euo pipefail
+      INSTALL_LOG=/dev/null; use_claude=true
+      ok() { :; }; warn() { :; }; note() { :; }; info() { :; }
+      ask() { return 0; }
+      run_spinner() { shift; "$@"; }
+      run_logged()  { shift; "$@"; }
+      brew() { return 1; }
+      . "$CL_HELPERS"
+      '"$3"'
+      echo "use_claude=$use_claude"
+    '
+}
+
+fx="$CL_DIR/fx"; mkdir -p "$fx"
+printf '%s\n' "$PLACEHOLDER" > "$fx/placeholder"; : > "$fx/empty"
+printf '#!/bin/sh\n' > "$fx/script"; printf '\177ELFrest' > "$fx/elf"; printf '\312\376\272\276' > "$fx/fat"
+exec_verdicts=$(PATH= "$PROV_BASH" -c '
+  set -euo pipefail
+  . "'"$CL_DIR"'/helpers.sh"
+  for f in placeholder empty script elf fat missing; do
+    exec_ok "'"$fx"'/$f" && printf "%s=ok " "$f" || printf "%s=no " "$f"
+  done
+')
+check "$exec_verdicts" "placeholder=no empty=no script=ok elf=ok fat=ok missing=no " \
+  "exec_ok: rejects placeholder/empty/missing, accepts #!/ELF/Mach-O fat — builtins only, empty PATH"
+
+check "$(claude_case - 1 'claude_from_npm "$(command -v claude)" && echo npm || echo other' | head -1)" "npm" \
+  "claude_from_npm: npm link into the package is npm-owned"
+check "$(claude_case - 0 'claude_from_npm "$(command -v claude)" && echo npm || echo other' | head -1)" "other" \
+  "claude_from_npm: a copied binary in the same bin dir is not"
+
+FAKE_ALLOW="@anthropic-ai/claude-code"
+out=$(FAKE_REPAIR=1 claude_case "$PLACEHOLDER" 1 'verify_claude || true')
+check "$out" "use_claude=true" "verify_claude: npm placeholder repaired via install.cjs → claude kept"
+grep -q '^node .*claude-code/install.cjs$' "$CL_DIR/log" && ok "repair ran the package's install.cjs" \
+  || bad "repair did not run install.cjs ($(tr '\n' ';' < "$CL_DIR/log"))"
+
+out=$(FAKE_REPAIR=0 claude_case "$PLACEHOLDER" 1 'verify_claude || true')
+check "$out" "use_claude=false" "verify_claude: repair that leaves the placeholder → claude dropped"
+
+out=$(FAKE_REPAIR=1 claude_case "$PLACEHOLDER" 0 'verify_claude || true')
+check "$out" "use_claude=false" "verify_claude: non-npm placeholder → dropped, npm repair not attempted"
+grep -q '^node ' "$CL_DIR/log" && bad "node ran for a non-npm claude" || ok "no npm repair on a non-npm claude"
+
+out=$(claude_case - 1 'verify_claude || true')
+check "$out" "use_claude=true" "verify_claude: healthy npm binary → kept (negative control)"
+grep -q '^node ' "$CL_DIR/log" && bad "repair ran on a healthy binary" || ok "no repair on a healthy binary"
+
+out=$(FAKE_REPAIR=0 claude_case "$PLACEHOLDER" 1 'use_claude=false; install_provider claude && echo rc=0 || echo rc=1')
+check "$out" "$(printf 'rc=1\nuse_claude=false')" \
+  "install_provider claude: successful npm install that leaves the placeholder is a failure"
+grep -q '^npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code$' "$CL_DIR/log" \
+  && ok "npm 12 install passes --allow-scripts" || bad "npm 12 install missing --allow-scripts ($(tr '\n' ';' < "$CL_DIR/log"))"
+
+out=$(FAKE_NPM_VERSION=10.9.0 claude_case - 1 'use_claude=false; install_provider claude && echo rc=0 || echo rc=1')
+check "$out" "$(printf 'rc=0\nuse_claude=true')" "install_provider claude: healthy install on npm 10 succeeds"
+grep -q '^npm install -g @anthropic-ai/claude-code$' "$CL_DIR/log" \
+  && ok "npm 10 install omits --allow-scripts" || bad "npm 10 install got --allow-scripts ($(tr '\n' ';' < "$CL_DIR/log"))"
+
+# allow_sets <allow-value|FAIL> [npm-version] — echoes the allow-scripts value
+# written, or "none".
+allow_sets() {
+  FAKE_ALLOW="$1" FAKE_NPM_VERSION="${2:-12.0.2}" claude_case - 1 'allow_claude_scripts' >/dev/null
+  sed -n 's/^npm config set allow-scripts=\(.*\) --location=user$/\1/p' "$CL_DIR/log" | grep . || echo none
+}
+check "$(allow_sets "")" "@anthropic-ai/claude-code" "allow-scripts: empty list gets claude-code"
+check "$(allow_sets "undefined")" "@anthropic-ai/claude-code" "allow-scripts: unset list gets claude-code"
+check "$(allow_sets "esbuild,sharp")" "esbuild,sharp,@anthropic-ai/claude-code" "allow-scripts: existing entries kept, claude-code appended"
+check "$(allow_sets "esbuild,@anthropic-ai/claude-code")" "none" "allow-scripts: already allowed → no write"
+check "$(allow_sets FAIL)" "none" "allow-scripts: unreadable list → no write"
+check "$(allow_sets "" 11.6.0)" "none" "allow-scripts: npm < 12 → no write"
+
+rm -rf "$CL_DIR"
 
 # --- Summary ----------------------------------------------------------------
 echo ""
