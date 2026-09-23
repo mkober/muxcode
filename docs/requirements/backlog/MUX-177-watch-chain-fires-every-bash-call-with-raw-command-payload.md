@@ -25,6 +25,22 @@ a `command_not_match: "muxcode *"` exclusion. Watch never got either.
 
 None of the four described a log finding. All fired because a bash call in the watch pane exited 0.
 
+### Recurrence (2026-09-22, session `muxcode`)
+
+| When | Evidence | Source | Provenance |
+|------|----------|--------|------------|
+| 10:09:23 | `watch → edit [event:notify]` "Watch completed — logs look healthy after deploy (`nohup muxcode inbox --poll --loop > /tmp/watch-listener.log 2>&1 & disown; sleep 1; ps aux \| grep …`)" — the body is a listener-detaching call, not a log finding | bus history | **machine-written (chain)** |
+
+The call itself is the [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md)
+2026-09-22 entry, and is now refused at PreToolUse by `CheckListenerGuard`. The chain defect is
+**not** fixed by that change and remains this spec's work. A second facet of the mechanism, verified
+in code the same day: `ClassifyCommand`'s bus test is a raw `strings.HasPrefix(command, "muxcode")`
+(`bus/hook.go:306`), so a `nohup`-, `cd … &&`- or env-prefixed bus command is not `CmdBus` but
+`CmdUnknown` — and in the watch role `ChainEvent` returns `watch` for an unclassified call, whose
+`OnSuccess` has no conditions. The `command_not_match: "muxcode *"` exclusion the run chain carries
+would have the same blind spot for a prefixed bus call; the fix should match on the statement after
+`stripCommandPrefix`, not the raw command.
+
 ### Mechanism — verified in code, not inferred
 
 `tools/muxcode/bus/profile.go:976–995`, the `"watch"` chain:
@@ -141,6 +157,10 @@ the bus history with chain-written bodies, and the missing `Conditions` are in t
 defect in the same session, where the run chain fired success on an unfinished call. Both are chain
 edges firing on evidence that does not support them.
 
+**Recurred 2026-09-22** on a `nohup muxcode inbox …` call, which also showed that a prefixed bus
+command escapes the `HasPrefix("muxcode")` classification and lands in the unconditioned watch
+chain — recorded under [Recurrence](#recurrence-2026-09-22-session-muxcode); not re-scoped.
+
 ## Status
 
-Backlog
+Backlog — recurred 2026-09-22 (see [Recurrence](#recurrence-2026-09-22-session-muxcode)); not started.

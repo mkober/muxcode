@@ -118,6 +118,37 @@ the orphan's role required reading its environment, and a wholesale `ps eww` dum
 unscrubbed. The narrow form — `ps eww -p <pid> | tr ' ' '\n' | grep -E '^(AGENT_ROLE|BUS_SESSION)='` —
 gets the same answer without the exposure and should be what any diagnosis of this defect uses.
 
+### Observed again, 2026-09-22 — a cause seen directly, and refused at the source
+
+The first orphaning whose **cause** was observed rather than inferred: the agent detached its own
+listener on purpose.
+
+| Field | Value |
+|-------|-------|
+| When | 2026-09-22 10:09:22, session `muxcode`, role **watch** |
+| Call | `nohup muxcode inbox --poll --loop > /tmp/watch-listener.log 2>&1 & disown; sleep 1; ps aux \| grep …` |
+| PID / PPID | 19757 / **1** (launchd) within a second of the call |
+| Ownership | `AGENT_ROLE=watch BUS_SESSION=muxcode`, read with the narrow `ps eww -p` form above (no full dump) |
+| Outcome | edit killed it; watch's inbox was empty at the time, so nothing was consumed. A void consumer by construction — stdout to a file nobody reads, receipts written as `watch` |
+| Side effect | The same call fired the watch chain's unconditioned `notify` to edit with the raw command as its body — [MUX-177](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md)'s defect, recorded there |
+
+**Refused at PreToolUse, for every role.** `CheckListenerGuard` (`bus/listener_guard.go`, the last
+check in `GuardDecisionFor`) now denies a `muxcode inbox --poll`/`--loop` that is not the bare, lone
+statement of its call. Detection follows command position: env assignments, `(`/`{` and a known
+wrapper set (`nohup`, `setsid`, `env`, `timeout`, `nice`, `command`, `exec`, `time`, `caffeinate`,
+`stdbuf`, `sudo`, with their option/numeric args) are peeled to the executed word, so a wrapped
+listener is found but not bare; `eval`'s arguments and a shell's `-c` string are searched as
+commands; a trailing `&`, any stdout redirect (per operator token; `2>`/`2>&1` alone pass, `>&2`
+does not), a pipe or any other statement in the call is refused. Every other argument is data, so
+`echo muxcode inbox --poll`, a `grep -c` pattern and a bus message quoting the form all pass.
+`hookGuard` lost its role gate so the rule binds every role.
+Documented in [Hooks](../../hooks.md#hook-guard-edit-guard).
+
+**What this does and does not close.** It refuses the one orphaning cause an agent makes on purpose.
+The 09-08 and 09-10 entries were orphans of the Stop-hook relaunch cycle — a turn-end SIGTERM that
+missed the child — which this guard does not touch, and the listener still has no parent-liveness
+check, the daemon no reaper, the receipt no consumer pid. Every acceptance criterion stays open.
+
 ## Requirements
 
 ### Acceptance criteria
@@ -197,10 +228,19 @@ ate nothing" — was true only of plan's inbox and was corrected by edit; the sp
 correction. The cause of the orphaning itself (why the turn-end SIGTERM missed this child) is not
 established and is Phase 1's first question.
 
+**2026-09-22 addendum.** One cause is now established by direct observation — an agent detaching
+its own listener with `nohup … & disown` — and refused at PreToolUse by `CheckListenerGuard` (see
+[Observed again, 2026-09-22](#observed-again-2026-09-22--a-cause-seen-directly-and-refused-at-the-source)).
+That is a different cause from the relaunch-cycle orphans of 09-08 and 09-10, whose mechanism is still
+Phase 1's question; the guard narrows the population, it does not answer it.
+
 ## Status
 
 **Backlog** — filed 2026-09-08. Not started. **Second occurrence 2026-09-10** in session
 `is-advising-gateway`, with an inside witness and a materially worse consequence: a user-authorised
 `cdk deploy` acked by the bus and never run (see [Observed again](#observed-again-2026-09-10-session-is-advising-gateway--now-with-an-inside-witness)).
 31 orphaned listeners were alive at the time. Priority should be re-read against that: the 09-08
-filing measured latency, the 09-10 recurrence measured a silently skipped deploy.
+filing measured latency, the 09-10 recurrence measured a silently skipped deploy. **Fourth
+occurrence 2026-09-22** (session `muxcode`, watch, deliberate `nohup … & disown`): the first with an
+observed cause, now refused at PreToolUse by `CheckListenerGuard`; no message lost. The spec's
+own work — self-exit, reaper, consumer attribution — is untouched and all criteria remain open.

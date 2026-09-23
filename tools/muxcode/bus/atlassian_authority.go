@@ -132,16 +132,6 @@ func CheckAtlassianMCPGuard(role, toolName string) *GuardDecision {
 	return nil
 }
 
-// HasAtlassianAuthorityLimit reports whether a role is subject to the Atlassian
-// write gate — i.e. whether it is worth running the PreToolUse check at all.
-//
-// Used by the guard hook to decide if a role needs interception. Authorized
-// roles (and the human, who presents as no role) are not limited and can skip
-// the check entirely.
-func HasAtlassianAuthorityLimit(role string) bool {
-	return CheckAtlassianAuthority(role, "jira", "update") != ""
-}
-
 // atlassianReadOnlyActions is an ALLOWLIST of subcommands that only read.
 //
 // Deliberately inverted relative to gitMutatingActions, which enumerates the

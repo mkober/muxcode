@@ -1041,7 +1041,7 @@ func GuardDecisionFor(role string, ev *ToolEvent) *GuardDecision {
 		return d
 	}
 	if cmd := ev.ToolInput.Command; cmd != "" {
-		for _, check := range []func(string, string) *GuardDecision{CheckAtlassianCommandGuard, CheckGuard, CheckEvidenceGuard} {
+		for _, check := range []func(string, string) *GuardDecision{CheckAtlassianCommandGuard, CheckGuard, CheckEvidenceGuard, CheckListenerGuard} {
 			if d := check(role, cmd); d != nil && d.Blocked {
 				return d
 			}

@@ -21,8 +21,7 @@ import (
 var evidenceGuardRoles = map[string]bool{"build": true, "test": true, "deploy": true}
 
 // HasEvidenceGuard reports whether the hook-road evidence rule applies to a
-// role; hookGuard reads it so a role with no delegation rules still has its
-// events examined.
+// role.
 func HasEvidenceGuard(role string) bool {
 	return evidenceGuardRoles[role]
 }
@@ -35,10 +34,7 @@ func CheckEvidenceGuard(role, command string) *GuardDecision {
 	if !HasEvidenceGuard(role) {
 		return nil
 	}
-	stmts, seps := parseShellStatements(command)
-	if len(stmts) > 1 && seps[0] == "&&" && (stmts[0] == "cd" || strings.HasPrefix(stmts[0], "cd ")) {
-		stmts, seps = stmts[1:], seps[1:]
-	}
+	stmts, seps := dropLeadingCd(parseShellStatements(command))
 	for i, stmt := range stmts {
 		kind := evidenceStatementKind(stmt)
 		if kind == "" {
@@ -91,6 +87,15 @@ func shortStatement(stmt string) string {
 		return stmt[:77] + "..."
 	}
 	return stmt
+}
+
+// dropLeadingCd drops a leading `cd …` statement joined by `&&` — the one
+// prefix the statement guards treat as part of the call it introduces.
+func dropLeadingCd(stmts, seps []string) ([]string, []string) {
+	if len(stmts) > 1 && seps[0] == "&&" && (stmts[0] == "cd" || strings.HasPrefix(stmts[0], "cd ")) {
+		return stmts[1:], seps[1:]
+	}
+	return stmts, seps
 }
 
 // parseShellStatements splits a command at top-level `;`, newline, `&&`,
