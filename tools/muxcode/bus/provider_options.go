@@ -120,15 +120,17 @@ func AvailableProviders() []ProviderOption {
 	return providers
 }
 
-// isProviderInstalled checks if the CLI binary for a provider is on PATH.
+// isProviderInstalled checks if the CLI binary for a provider is on PATH and
+// is one the launcher can exec (CheckExecutable) — a placeholder that would
+// refuse every launch is not offered as installed.
 func isProviderInstalled(cli string) bool {
 	binary := cli
 	switch cli {
 	case "local":
 		binary = "ollama"
 	}
-	_, err := exec.LookPath(binary)
-	return err == nil
+	path, err := exec.LookPath(binary)
+	return err == nil && CheckExecutable(path) == nil
 }
 
 // listOllamaModels runs `ollama list` and parses model names.

@@ -1030,6 +1030,9 @@ func RunAgentLaunch(role string) error {
 	if err != nil {
 		return fmt.Errorf("cannot find %s: %w", binary, err)
 	}
+	if err := refuseUnexecutableCLI(session, role, binary, binPath); err != nil {
+		return err
+	}
 
 	// Build argv for exec (argv[0] must be the binary name)
 	argv := append([]string{binary}, launchArgs...)
