@@ -217,10 +217,16 @@ func FormatPromptContext(context string) string {
 }
 
 // IsWakeSentence reports whether a submitted prompt is the fixed wake
-// sentence, tolerating case and trailing punctuation.
+// sentence, tolerating case, punctuation and repetition: a wake whose Enter was
+// withheld (enterGuard) stays in the composer and the next wake is typed after
+// it, so the prompt that finally submits holds the sentence twice.
 func IsWakeSentence(prompt string) bool {
-	p := strings.TrimRight(strings.TrimSpace(prompt), ".!")
-	return strings.EqualFold(p, WakeSentence)
+	p := strings.ToLower(prompt)
+	wake := strings.ToLower(WakeSentence)
+	if !strings.Contains(p, wake) {
+		return false
+	}
+	return strings.Trim(strings.ReplaceAll(p, wake, ""), " \t\n.!") == ""
 }
 
 // --- Delivery through hooks ---

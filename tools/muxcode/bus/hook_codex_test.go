@@ -350,12 +350,14 @@ func TestFormatPromptContext(t *testing.T) {
 }
 
 func TestIsWakeSentence(t *testing.T) {
-	for _, s := range []string{"You have new messages", "you have new messages.", "  You have new messages!  "} {
+	for _, s := range []string{"You have new messages", "you have new messages.", "  You have new messages!  ",
+		"You have new messagesYou have new messages", "You have new messages You have new messages."} {
 		if !IsWakeSentence(s) {
 			t.Errorf("%q should be the wake sentence", s)
 		}
 	}
-	for _, s := range []string{"", "You have new messages, please run the build", "new messages"} {
+	for _, s := range []string{"", "You have new messages, please run the build", "new messages",
+		"You have new messagesYou have new messages and run the build"} {
 		if IsWakeSentence(s) {
 			t.Errorf("%q should not be the wake sentence", s)
 		}

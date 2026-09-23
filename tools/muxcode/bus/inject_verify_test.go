@@ -77,7 +77,7 @@ func TestComposerHoldsText(t *testing.T) {
 func TestVerifyInjectionLanded_Submitted(t *testing.T) {
 	m := &injectMock{captures: []string{"│   │\n footer"}} // composer empty -> submitted
 	setupInjectMock(t, m)
-	if got := verifyInjectionLanded("s:review", "needle-xyz"); got != injectSubmitted {
+	if got := verifyInjectionLanded("s:review", "needle-xyz", nil); got != injectSubmitted {
 		t.Errorf("outcome = %v, want injectSubmitted", got)
 	}
 	if len(m.sendKeys) != 0 {
@@ -91,7 +91,7 @@ func TestVerifyInjectionLanded_ParkedThenSubmitted(t *testing.T) {
 		"│   │\n footer",                       // attempt 1: cleared -> submitted
 	}}
 	setupInjectMock(t, m)
-	if got := verifyInjectionLanded("s:review", "needle-xyz"); got != injectSubmitted {
+	if got := verifyInjectionLanded("s:review", "needle-xyz", nil); got != injectSubmitted {
 		t.Errorf("outcome = %v, want injectSubmitted", got)
 	}
 	if len(m.sendKeys) != 1 {
@@ -102,7 +102,7 @@ func TestVerifyInjectionLanded_ParkedThenSubmitted(t *testing.T) {
 func TestVerifyInjectionLanded_Parked(t *testing.T) {
 	m := &injectMock{captures: []string{"needle-xyz", "needle-xyz", "needle-xyz"}}
 	setupInjectMock(t, m)
-	if got := verifyInjectionLanded("s:review", "needle-xyz"); got != injectParked {
+	if got := verifyInjectionLanded("s:review", "needle-xyz", nil); got != injectParked {
 		t.Errorf("outcome = %v, want injectParked", got)
 	}
 	if len(m.sendKeys) != injectVerifyRetries {
@@ -110,10 +110,48 @@ func TestVerifyInjectionLanded_Parked(t *testing.T) {
 	}
 }
 
+// The parked case above re-sends Enter on every attempt; a refusing guard must
+// withhold every one of them and report parked.
+func TestVerifyInjectionLanded_GuardWithholdsEnter(t *testing.T) {
+	m := &injectMock{captures: []string{"needle-xyz", "needle-xyz", "needle-xyz"}}
+	setupInjectMock(t, m)
+	refuse := func() error { return ErrInjectionSkipped }
+	if got := verifyInjectionLanded("s:review", "needle-xyz", refuse); got != injectParked {
+		t.Errorf("outcome = %v, want injectParked", got)
+	}
+	if len(m.sendKeys) != 0 {
+		t.Errorf("a refusing guard must withhold Enter, sent %d", len(m.sendKeys))
+	}
+}
+
+// A prompt drawn over the composer hides the needle as surely as a submit
+// does; a refusing guard must keep that from reading as delivered. The passing
+// guard is the control: a cleared composer is still a submit.
+func TestVerifyInjectionLanded_GuardVetoesHiddenNeedle(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		guard error
+		want  injectOutcome
+	}{
+		{"guard refuses", ErrInjectionSkipped, injectParked},
+		{"guard passes", nil, injectSubmitted},
+	} {
+		m := &injectMock{captures: []string{"│   │\n footer"}}
+		setupInjectMock(t, m)
+		guard := func() error { return c.guard }
+		if got := verifyInjectionLanded("s:review", "needle-xyz", guard); got != c.want {
+			t.Errorf("%s: outcome = %v, want %v", c.name, got, c.want)
+		}
+		if len(m.sendKeys) != 0 {
+			t.Errorf("%s: no Enter may be sent, got %d", c.name, len(m.sendKeys))
+		}
+	}
+}
+
 func TestVerifyInjectionLanded_CaptureFails(t *testing.T) {
 	m := &injectMock{captErr: []bool{true, true, true}}
 	setupInjectMock(t, m)
-	if got := verifyInjectionLanded("s:review", "needle-xyz"); got != injectUnknown {
+	if got := verifyInjectionLanded("s:review", "needle-xyz", nil); got != injectUnknown {
 		t.Errorf("outcome = %v, want injectUnknown (unverifiable)", got)
 	}
 }
@@ -121,7 +159,7 @@ func TestVerifyInjectionLanded_CaptureFails(t *testing.T) {
 func TestVerifyInjectionLanded_EmptyNeedle(t *testing.T) {
 	m := &injectMock{}
 	setupInjectMock(t, m)
-	if got := verifyInjectionLanded("s:review", ""); got != injectUnknown {
+	if got := verifyInjectionLanded("s:review", "", nil); got != injectUnknown {
 		t.Errorf("outcome = %v, want injectUnknown", got)
 	}
 	if m.capIdx != 0 {
@@ -141,7 +179,7 @@ func TestConfirmInjectionAndConsume_SubmittedWritesDeliveredReceipt(t *testing.T
 	}
 
 	confirmInjectionAndConsume(session, "review", "s:review", "needle-xyz",
-		map[string]bool{msg.ID: true})
+		map[string]bool{msg.ID: true}, nil)
 
 	if HasMessages(session, "review") {
 		t.Error("inbox should be drained after a verified inject")
@@ -172,7 +210,7 @@ func TestConfirmInjectionAndConsume_ParkedLeavesInbox(t *testing.T) {
 	}
 
 	confirmInjectionAndConsume(session, "review", "s:review", "needle-xyz",
-		map[string]bool{msg.ID: true})
+		map[string]bool{msg.ID: true}, nil)
 
 	if !HasMessages(session, "review") {
 		t.Error("inbox must NOT be drained when injection is unconfirmed — message would be lost")
