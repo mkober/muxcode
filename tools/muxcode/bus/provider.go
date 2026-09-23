@@ -27,6 +27,10 @@ const injectionGuardLines = 8
 // means the agent died and would run the payload as a command — on 2026-09-09
 // (is-advising-gateway) the wake sentence landed in bash as `-bash: You:
 // command not found`, and a scrape-road payload would have been executed.
+// A live Claude Code folder-trust prompt is answered (AcceptClaudeTrust) and
+// the injection deferred: a daemon relaunch runs no AutoAccept pass, and the
+// wake's Escape preamble or Enter would choose the prompt's cancel or its
+// pre-selected "No, exit".
 // A blank capture refuses on the same fail-closed reasoning: an empty pane is
 // not positive evidence of an agent, only of a startup, a redraw, or a
 // promptless shell, and paneEndsAtShellPrompt has no last line to judge, so it
@@ -71,6 +75,14 @@ func captureInjectionTarget(session, target, role string) (string, error) {
 	if last, shell := paneEndsAtShellPrompt(content); shell {
 		LogLifecycle(session, "warn", "notify", "injection-refused", role+": pane ends at a shell prompt: "+last)
 		return content, fmt.Errorf("%s: pane ends at a shell prompt (%q), not an agent: %w", role, last, ErrInjectionSkipped)
+	}
+	if claudeTrustPromptLive(content) {
+		if err := AcceptClaudeTrust(target); err != nil {
+			LogLifecycle(session, "warn", "auto-accept", "trust-accept-failed", role+": "+err.Error())
+			return content, fmt.Errorf("%s: pane at the folder-trust prompt and the accept failed (%v); injection deferred: %w", role, err, ErrInjectionSkipped)
+		}
+		LogLifecycle(session, "info", "auto-accept", "trust-prompt", role)
+		return content, fmt.Errorf("%s: pane at the folder-trust prompt, accepted; injection deferred: %w", role, ErrInjectionSkipped)
 	}
 	return content, nil
 }
