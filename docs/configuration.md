@@ -101,7 +101,7 @@ Built-in defaults by role:
 | Roles | Default model |
 |-------|---------------|
 | `edit`, `auto` | `claude-fable-5-1` (flagship) |
-| `plan`/`planner`, `review`, `analyze`/`analyst` | `claude-opus-5` |
+| `plan`/`planner`, `review`, `analyze`/`analyst` | `claude-opus-5-5` |
 | `build`, `test`, `api`, `deploy`, `run`/`runner`, `watch`, `commit`/`git`, `serve` | `claude-sonnet-5` |
 | any other role | claude CLI default (no `--model` passed) |
 

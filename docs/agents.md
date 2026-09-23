@@ -549,7 +549,7 @@ muxcode reload build --model opencode-go/deepseek-v4-pro
 muxcode reload edit --cli opencode --model opencode-go/deepseek-v4-pro
 
 # Compact context before reloading
-muxcode reload edit --model claude-opus-5 --compact
+muxcode reload edit --model claude-opus-5-5 --compact
 
 # Reload all active agents
 muxcode reload --all
@@ -613,7 +613,7 @@ The Agents section lists all active agents with their current CLI, abbreviated m
 ```
 [x] Build     claude / sonnet-5 F3
 [ ] Test      opencode / minimax  F4
-[ ] Review    claude / opus-5   F6
+[ ] Review    claude / opus-5-5 F6
 ```
 
 **Safety indicators**: `edit` and `auto` are shown with a `⚠` warning suffix (orchestrator disruption risk). They are selectable individually but excluded from the `a` (select all) shortcut.

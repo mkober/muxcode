@@ -66,7 +66,7 @@ func TestArgsCarryDefinition(t *testing.T) {
 const fakePS = `
   100     1 -bash
   150   100 muxcode agent launch plan
-  200   150 claude --agent planner --agents {"planner":{"description":"Docs","prompt":"Maintain docs"}} --model claude-opus-5
+  200   150 claude --agent planner --agents {"planner":{"description":"Docs","prompt":"Maintain docs"}} --model claude-opus-5-5
   300     1 -bash
   310   300 /Users/x/.nvm/versions/node/v24/bin/claude --resume 0f3a
   400   100 grep claude notes.txt
