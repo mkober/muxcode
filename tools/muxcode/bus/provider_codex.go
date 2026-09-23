@@ -282,38 +282,125 @@ const (
 // reason: Codex draws this prompt inline too, so its text outlives the answer.
 const codexApprovalPromptTailWindow = 2
 
-// codexApprovalPromptLive reports whether content ends at a command-approval
-// prompt. Unanswered it shows neither spinner nor ❯, so no watchdog reads it as
-// working or as recoverably idle and only the 600s task timeout fires — which
-// records the node as "timed-out", naming the clock rather than the cause
-// (2026-09-14, is-operations-gateway: a review node burned 602s here).
-func codexApprovalPromptLive(content string) bool {
-	if !strings.Contains(content, codexApprovalPromptMarker) {
+// Codex's self-update prompt, drawn inline under the composer at launch when a
+// newer release exists. "1. Update now" is pre-selected and runs
+// `npm install -g @openai/codex`, after which Codex exits to the shell — so
+// Enter, the one key every wake-up sends, is the one answer that must never
+// reach it (2026-09-22, dps-data-services-pipelines: the startup wake
+// updated build, test and review from 0.155.0 to 0.155.1 and all three died).
+// Its tail is the trust prompt's, which is why codexPromptLive checks order.
+const (
+	codexUpdatePromptMarker = "Update available!"
+	codexUpdatePromptTail   = "Press enter to continue"
+	codexUpdateSkipOption   = 2
+)
+
+// codexUpdateOptionsWindow spans the prompt's three options and tail plus one
+// footer line, counted from the bottom of the pane.
+const codexUpdateOptionsWindow = 5
+
+// codexPromptMarkers are the inline prompts that can share the bottom of a
+// pane; the newest one drawn is the one a tail belongs to.
+var codexPromptMarkers = []string{codexTrustPromptMarker, codexApprovalPromptMarker, codexUpdatePromptMarker}
+
+// codexPromptLive reports whether content ends at the inline prompt named by
+// marker: its tail holds one of the last window non-blank lines, and no other
+// Codex prompt was drawn after it. Codex draws prompts inline
+// (--no-alt-screen), so an answered one stays in scrollback — without the
+// tail anchor every later classification would answer it again, and without
+// the order check an answered trust prompt would claim the update prompt
+// below it, whose tail is identical, and answer it with Enter.
+func codexPromptLive(content, marker, tail string, window int) bool {
+	at := strings.LastIndex(content, marker)
+	if at < 0 {
 		return false
 	}
-	for _, line := range lastNonEmptyLines(content, codexApprovalPromptTailWindow) {
-		if strings.Contains(line, codexApprovalPromptTail) {
+	for _, other := range codexPromptMarkers {
+		if other != marker && strings.LastIndex(content, other) > at {
+			return false
+		}
+	}
+	for _, line := range lastNonEmptyLines(content, window) {
+		if strings.Contains(line, tail) {
 			return true
 		}
 	}
 	return false
 }
 
+// codexApprovalPromptLive reports whether content ends at a command-approval
+// prompt. Unanswered it shows neither spinner nor ❯, so no watchdog reads it as
+// working or as recoverably idle and only the 600s task timeout fires — which
+// records the node as "timed-out", naming the clock rather than the cause
+// (2026-09-14, is-operations-gateway: a review node burned 602s here).
+func codexApprovalPromptLive(content string) bool {
+	return codexPromptLive(content, codexApprovalPromptMarker, codexApprovalPromptTail, codexApprovalPromptTailWindow)
+}
+
 // codexTrustPromptLive reports whether content ends at the directory-trust
-// prompt. Codex draws it inline (--no-alt-screen), so the text stays in
-// scrollback once Enter accepts it; the prompt counts only while its last
-// line still holds the bottom of the pane, or every later classification
-// would answer it again with an Enter that submits an empty turn.
+// prompt; once accepted, a later Enter on it would submit an empty turn.
 func codexTrustPromptLive(content string) bool {
-	if !strings.Contains(content, codexTrustPromptMarker) {
-		return false
+	return codexPromptLive(content, codexTrustPromptMarker, codexTrustPromptTail, codexTrustPromptTailWindow)
+}
+
+// codexUpdatePromptLive reports whether content ends at the self-update
+// prompt.
+func codexUpdatePromptLive(content string) bool {
+	return codexPromptLive(content, codexUpdatePromptMarker, codexUpdatePromptTail, codexTrustPromptTailWindow)
+}
+
+// codexUpdateHighlight returns the number of the update prompt's highlighted
+// (›) option, or 0 when the prompt is not live or no option reads as
+// highlighted.
+func codexUpdateHighlight(content string) int {
+	if !codexUpdatePromptLive(content) {
+		return 0
 	}
-	for _, line := range lastNonEmptyLines(content, codexTrustPromptTailWindow) {
-		if strings.Contains(line, codexTrustPromptTail) {
-			return true
+	for _, line := range lastNonEmptyLines(content, codexUpdateOptionsWindow) {
+		rest, ok := strings.CutPrefix(line, "›")
+		if !ok {
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(strings.TrimSpace(rest), "%d.", &n); err == nil {
+			return n
 		}
 	}
-	return false
+	return 0
+}
+
+// codexUpdateMaxMoves bounds SkipCodexUpdate's arrow presses: from any of the
+// three options, Skip is at most one away.
+const codexUpdateMaxMoves = 2
+
+// SkipCodexUpdate answers the self-update prompt with "2. Skip", moving the
+// highlight with Up/Down and re-capturing after each move. Enter is sent only
+// on a capture that shows Skip highlighted: on any other frame it would be the
+// npm install and exit this exists to prevent, so an unreadable or unmoving
+// highlight returns an error and presses nothing. Skip rather than "Skip until
+// next version", which persists a preference in the user's own Codex config.
+func SkipCodexUpdate(target string) error {
+	for moves := 0; ; moves++ {
+		content, err := TmuxCapturePaneLines(target, injectionGuardLines)
+		if err != nil {
+			return err
+		}
+		at := codexUpdateHighlight(content)
+		switch {
+		case at == codexUpdateSkipOption:
+			return TmuxSendEnter(target)
+		case at == 0 || moves == codexUpdateMaxMoves:
+			return fmt.Errorf("update prompt: Skip not highlighted (option %d after %d moves), not confirming", at, moves)
+		case at < codexUpdateSkipOption:
+			err = TmuxSendKeys(target, "Down")
+		default:
+			err = TmuxSendKeys(target, "Up")
+		}
+		if err != nil {
+			return err
+		}
+		time.Sleep(injectVerifyDelay)
+	}
 }
 
 // ClassifyPane determines the startup state of a Codex TUI pane. A live
@@ -321,15 +408,20 @@ func codexTrustPromptLive(content string) bool {
 // so the box-drawing test alone read the prompt as idle, AutoAccept marked
 // the agent ready, and the wake-up was typed into the prompt as its answer
 // (2026-09-09, is-advising-gateway — Codex quit without persisting trust and
-// the daemon's relaunch loop repeated it to the restart cap). The approval
-// prompt is next, ahead of the error test because it is tail-anchored while
-// that test matches "Error" anywhere in scrollback — below an old error line it
-// would classify NotReady and be restarted rather than answered. Error text is
+// the daemon's relaunch loop repeated it to the restart cap). The update
+// prompt shares that failure and its fix: it too sits under a rendered banner.
+// The approval prompt is next, ahead of the error test because it is
+// tail-anchored while that test matches "Error" anywhere in scrollback — below
+// an old error line it would classify NotReady and be restarted rather than
+// answered. Error text is
 // checked next, since it often contains "codex"; then the TUI's rendering
 // markers, and in inline mode (--no-alt-screen) the bare Codex text prompt.
 func (p *CodexProvider) ClassifyPane(content string) PaneState {
 	if codexTrustPromptLive(content) {
 		return PaneTrustPrompt
+	}
+	if codexUpdatePromptLive(content) {
+		return PaneUpdatePrompt
 	}
 	if codexApprovalPromptLive(content) {
 		return PaneApprovalPrompt
@@ -350,22 +442,30 @@ func (p *CodexProvider) ClassifyPane(content string) PaneState {
 
 // AcceptStartup answers a live directory-trust prompt with Enter — "Yes,
 // continue" is pre-selected, and launching muxcode in the directory is the
-// operator's trust decision, exactly as for Claude Code's folder prompt.
-// Returns true once the TUI has rendered its composer (PaneIdle).
+// operator's trust decision, exactly as for Claude Code's folder prompt — and
+// a live update prompt with Skip (SkipCodexUpdate), since installing software
+// is not. Returns true once the TUI has rendered its composer (PaneIdle).
 func (p *CodexProvider) AcceptStartup(session, pane string, state PaneState) bool {
-	if state == PaneTrustPrompt {
+	switch state {
+	case PaneTrustPrompt:
 		_ = TmuxSendEnter(pane)
+		return false
+	case PaneUpdatePrompt:
+		if err := SkipCodexUpdate(pane); err != nil {
+			LogLifecycle(session, "warn", "auto-accept", "update-skip-failed", pane+": "+err.Error())
+		}
 		return false
 	}
 	return state == PaneIdle
 }
 
 // guardInjection refuses to type into a pane that is not the Codex composer:
-// a dead agent's shell (captureInjectionTarget) or the directory-trust prompt.
-// The prompt is answered here rather than merely refused because a daemon
-// relaunch (RestartLocalAgent) runs no AutoAccept pass — without this the
-// relaunched agent would sit at the prompt until someone pressed Enter. The
-// injection itself is deferred to the next wake cycle via ErrInjectionSkipped.
+// a dead agent's shell (captureInjectionTarget), the directory-trust prompt or
+// the update prompt. A prompt is answered here rather than merely refused
+// because a daemon relaunch (RestartLocalAgent) runs no AutoAccept pass —
+// without this the relaunched agent would sit at it until someone pressed a
+// key. The injection itself is deferred to the next wake cycle via
+// ErrInjectionSkipped.
 func (p *CodexProvider) guardInjection(session, target, role string) error {
 	content, err := captureInjectionTarget(session, target, role)
 	if err != nil {
@@ -375,6 +475,14 @@ func (p *CodexProvider) guardInjection(session, target, role string) error {
 		p.AcceptStartup(session, target, PaneTrustPrompt)
 		LogLifecycle(session, "info", "auto-accept", "trust-prompt", role)
 		return fmt.Errorf("%s: pane at the directory-trust prompt, accepted; injection deferred: %w", role, ErrInjectionSkipped)
+	}
+	if codexUpdatePromptLive(content) {
+		if err := SkipCodexUpdate(target); err != nil {
+			LogLifecycle(session, "warn", "auto-accept", "update-skip-failed", role+": "+err.Error())
+			return fmt.Errorf("%s: pane at the update prompt and the skip failed (%v); injection deferred: %w", role, err, ErrInjectionSkipped)
+		}
+		LogLifecycle(session, "info", "auto-accept", "update-prompt", role)
+		return fmt.Errorf("%s: pane at the update prompt, skipped; injection deferred: %w", role, ErrInjectionSkipped)
 	}
 	if codexApprovalPromptLive(content) {
 		if err := DenyCodexApproval(target); err != nil {

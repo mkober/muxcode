@@ -1343,6 +1343,8 @@ muxcode lifecycle purge [--days N]
 | launcher | session-create | info | tmux session created (with window list) |
 | launcher | session-ready | info | Session fully initialized |
 | auto-accept | trust-prompt | info | Workspace trust prompt dismissed |
+| auto-accept | update-prompt | info | Codex self-update prompt answered with "2. Skip" (also `mode-accept` on the mode-cycling road) |
+| auto-accept | update-skip-failed | warn | Skip could not be shown highlighted within two moves — nothing pressed, prompt left for a human |
 | auto-accept | bypass-prompt | info | Bypass permissions prompt dismissed |
 | auto-accept | agent-ready | info | Agent reached idle prompt |
 | auto-accept | complete | info | All agents past prompts |
