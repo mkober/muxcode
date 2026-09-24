@@ -118,7 +118,7 @@ as a loop.
 
 ### Acceptance criteria
 
-- [ ] `graph cancel` terminates in-flight spawn nodes, **or** refuses to report the run cancelled while naming exactly which spawns survived and how to stop them — Phase 2 `bus/graph_cancel.go` implements it, **held open by the 2026-09-23 review must-fix** (a cancel can race a spawn into life after reporting `canceled`, and a failed registry read reports `canceled` with workers live); live confirmation is Phase 6
+- [x] `graph cancel` terminates in-flight spawn nodes, **or** refuses to report the run cancelled while naming exactly which spawns survived and how to stop them — Phase 2 `bus/graph_cancel.go`, closed 2026-09-24 after three review iterations (unit level: survivors and every failed cleanup step named in `CancelIncompleteError`); live confirmation is Phase 6
 - [ ] A cancelled run cannot mutate files or call an external API after the cancel returns
 - [ ] Every provenance surface (`run.json`, `graph status`, `graph runs`, `graph-run-created`) distinguishes "launched by the user by hand" from "launched autonomously by `<agent>`", in wording an agent cannot misread as the other
 - [ ] **Negative control: a genuinely agent-launched run is still labelled autonomous** — a fix that labels everything "user" is not a fix
@@ -136,7 +136,8 @@ as a loop.
 | File | Purpose |
 |------|---------|
 | `tools/muxcode/bus/graph_cancel.go` | `CancelGraphRun` (moved here in Phase 2): `runSpawnRoles`, `stopSpawnRole`, `retractSpawnDelegations`, `CancelIncompleteError` |
-| `tools/muxcode/bus/graph_exec.go` | `replaceLostWorkers.failClosed` (stops by role since Phase 2), `runProvenance:164` (the wording to propagate) |
+| `tools/muxcode/bus/graph_exec.go` | `StepGraphRun:247` takes the run lock for the tick; `replaceLostWorkers.failClosed` (stops by role since Phase 2), `runProvenance:164` (the wording to propagate) |
+| `tools/muxcode/bus/task.go` | `expireTask`, `scanTasks` — checked expiry and strict enumeration for the cancel path (Phase 2 must-fix 3); `TimeoutTask`/`ListTasks` stay best-effort for other callers |
 | `tools/muxcode/bus/graph_run.go` | `CreatedBy:197`, `"Started by: %s":773-774` — the ambiguous render |
 | `tools/muxcode/bus/config.go` | `BusActorVerified:167`, `agentRuntimeAncestor` — does it recognise `auto`? |
 | `tools/muxcode/bus/spawn.go` | `StopSpawn`, spawn lifecycle and worktree mode |
@@ -257,23 +258,42 @@ pin the ancestry assumption Phase 4 rests on.
 
 ### Phase 2: Stop the orphan (defect 2)
 
-- [ ] Add `GraphNodeRunning` handling to `CancelGraphRun`, terminating spawn-backed nodes via `StopSpawn` — implemented, **reopened by review must-fix 1** (canceling-first does not serialize with a daemon tick already spawning)
+- [x] Add `GraphNodeRunning` handling to `CancelGraphRun`, terminating spawn-backed nodes via `StopSpawn` — closed by the second review 2026-09-23: `lockGraphRun` (`<run dir>/run.lock`, flock) serializes the cancel with the executor tick
 - [x] Resolve a spawn node's workers by `SpawnRole` (what `TaskID` holds) and stop each by `ID` — a stop-by-role helper; `replaceLostWorkers.failClosed` uses it too, since today it passes roles and every `StopSpawn` errors `spawn not found` (Phase 1 findings)
-- [ ] On cancel, expire in-flight tasks and drain unanswered requests originated by the run's spawn roles (`SpawnEntry.SpawnRole` → `RunID`), so delegated run/plan work does not proceed after the worker is dead (Phase 1 findings, Q4.1) — implemented, **reopened by review must-fix 2** (`ListTasks`, inbox enumeration and `receiveMatching` errors are swallowed, leaving delegated work queued)
-- [ ] On a spawn that cannot be stopped, **fail closed**: do not report the run cancelled; name the surviving spawns and the exact command to stop them — implemented for a stop that errors, **reopened by both review must-fix items**: a registry read that fails yields an empty worker set and `canceled`, and the spawn race yields `canceled` with a worker about to start
+- [x] On cancel, expire in-flight tasks and drain unanswered requests originated by the run's spawn roles (`SpawnEntry.SpawnRole` → `RunID`), so delegated run/plan work does not proceed after the worker is dead (Phase 1 findings, Q4.1) — closed 2026-09-24: registry, task-scan and inbox errors propagate (must-fix 2), and expiry is checked (`expireTask`, `scanTasks`; must-fix 3), so a task the write cannot reach fails the cancel instead of being counted expired
+- [x] On a spawn that cannot be stopped, **fail closed**: do not report the run cancelled; name the surviving spawns and the exact command to stop them — closed 2026-09-24: a surviving worker, an unreadable registry or task file, a failed retraction or a failed expiry each leave the run `canceling` and are named in `CancelIncompleteError` (must-fix 1, 2, 3)
 - [x] Emit a lifecycle event for every spawn terminated or survived by a cancel
 - [x] Unit tests, including the negative control: a run with no running spawns still cancels cleanly and reports success
-- [ ] **Review must-fix 1 (2026-09-23, `graph_cancel.go:62`)**: serialize cancel with executor dispatch and worker replacement — a daemon tick past `graph_exec.go:288` can spawn after the CLI sets `canceling` and snapshots the registry, so the run reports `canceled` and the worker then starts; `replaceLostWorkers` reads an already-loaded run the same way. A shared cross-process run lock, or a reservation/acknowledgement protocol; a state re-read alone leaves the check-to-spawn race. Test: cancel paused inside spawn creation and inside replacement
-- [ ] **Review must-fix 2 (2026-09-23, `graph_cancel.go:117/203/214/232`)**: propagate `ReadSpawnEntries`, `ListTasks`, inbox-enumeration and `receiveMatching` errors — an unreadable registry is currently an empty worker set and a `canceled` run with live workers; a failed retraction leaves delegated work queued. Retain `canceling` and report the cleanup incomplete. Tests: registry-read failure and inbox-retraction failure regressions
+- [x] **Review must-fix 1 (2026-09-23, `graph_cancel.go:62`) — closed by the second review the same day** (`lockGraphRun`: `StepGraphRun` holds the run lock for the whole tick, single try, skips the tick if busy; `CancelGraphRun` waits up to 30 s and errors without touching state if it cannot take it; `TestCancelWaitsOutSpawnCreation`, `TestCancelWaitsOutReplacement`, `TestStepSkipsWhileCancelHoldsRun`). Original finding: serialize cancel with executor dispatch and worker replacement — a daemon tick past `graph_exec.go:288` can spawn after the CLI sets `canceling` and snapshots the registry, so the run reports `canceled` and the worker then starts; `replaceLostWorkers` reads an already-loaded run the same way. A shared cross-process run lock, or a reservation/acknowledgement protocol; a state re-read alone leaves the check-to-spawn race. Test: cancel paused inside spawn creation and inside replacement
+- [x] **Review must-fix 2 (2026-09-23, `graph_cancel.go:117/203/214/232`) — closed by the second review the same day** (`runSpawnRoles` and `retractSpawnDelegations` return their errors, `inboxRoles` treats only a missing directory as empty, `CancelIncompleteError.Cleanup` names each failed step and keeps the run `canceling`; `TestCancelFailsClosedOnUnreadableRegistry`, `TestCancelFailsClosedOnRetractionFailure`). Original finding: propagate `ReadSpawnEntries`, `ListTasks`, inbox-enumeration and `receiveMatching` errors — an unreadable registry was an empty worker set and a `canceled` run with live workers
+- [x] **Review must-fix 3 (second review 2026-09-23, `graph_cancel.go:239` and `:121`) — closed 2026-09-24, third review 0/0/0** (`expireTask` returns its write error, `scanTasks` reports unreadable or invalid files, both collected into `Cleanup`; `TestCancelFailsClosedOnUnexpirableNodeTask`, `TestCancelFailsClosedOnUnreadableTaskFile`). Original finding: task expiry is still best-effort — `TimeoutTask` returns no error and discards `writeTask` failures (`task.go:73-83`), and `ListTasks` silently skips unreadable or invalid task files, so a delegated task whose file cannot be written is counted expired, its inbox request withdrawn, and the run reported `canceled` while the persisted task stays in-flight. Use an error-reporting expiry and strict enumeration on the cancel path, collect failures into `Cleanup`, apply the same checked expiry to node-correlated tasks. Tests: task read/write failure regressions plus a successful retry
+- [x] **Review should-fix (second review 2026-09-23, `tui/graph.go:951`, `graph_run.go:588`) — closed 2026-09-24**: TUI summary is now `cancel incomplete — re-run graph cancel` and the retry refusal says "a worker survived or a cleanup step failed", neither asserting a survivor. Original finding: `canceling` now also means a cleanup step failed after every worker stopped, but both surfaces asserted "a worker survived"
+- [x] **Follow-up review must-fix (2026-09-24)**: checked node-task expiry applied to every node's `TaskID` — but spawn and map nodes store worker *roles* there, not task ids, so a large map failed its cancel on "task not found" every retry. `runSendNodes` reads the frozen graph and restricts node-task expiry to `send` nodes; a graph-read failure is an explicit cleanup failure. `TestCancelLargeMapIsNotATaskID` (20-worker map, all stopped, re-cancel succeeds)
 
 #### Phase 2 findings — 2026-09-23
 
-Landed in run `1790194224-spec-to-pr-df3901e4`: build and test nodes green, **review returned two
-must-fix** (`/tmp/muxcode-review-1790194802.txt`, listed as the open boxes above) — yet the run's
-`review` node recorded `outcome=success`, which is defect 4's shape (a channel stating a conclusion
-it did not reach) and is noted here as evidence for Phase 5. `CancelGraphRun` moved out of
+Landed in run `1790194224-spec-to-pr-df3901e4` over two iterations. First: build and test green,
+**review returned two must-fix** (`/tmp/muxcode-review-1790194802.txt`). Second, after the fix
+re-seed: both closed (`/tmp/muxcode-review-1790195792.txt`, "Resolved"), **one new must-fix and one
+in-scope should-fix raised**. Third, 2026-09-24: those closed plus a follow-up must-fix found and
+fixed on the way (send-node-only task expiry), review `/tmp/muxcode-review-1790258608.txt` 0/0/0 —
+every box above ticked. **In the first two iterations the run's `review` node recorded
+`outcome=success` with a must-fix outstanding**, which is defect 4's shape (a channel stating a
+conclusion it did not reach) and is noted here as evidence for Phase 5. Between the iterations the
+run's `phase-gate` was approved and its `commit` node landed `56edc17` — the Phase 1 move and this
+spec's docs only; the Phase 2 code stays uncommitted. `CancelGraphRun` moved out of
 `graph_exec.go` into a new `bus/graph_cancel.go`. The boundaries it draws, recorded so later phases
 build on what is true:
+
+- **Cancel and the tick are serialized** by a per-run flock (`lockGraphRun`, `<run dir>/run.lock`):
+  `StepGraphRun` holds it for the whole tick (single try — a busy lock skips the tick), so every
+  dispatch, reseed and replacement happens inside one; `CancelGraphRun` holds it for the whole cancel
+  and waits up to 30 s, erroring without touching state if it cannot take it. A tick therefore either
+  registers its worker before the cancel reads the registry, or sees `canceling` and spawns nothing.
+- **Expiry is checked, and typed by node.** `expireTask` returns its write error and `scanTasks`
+  reports unreadable files; both feed `Cleanup`. Only `send` nodes hold a task id in `TaskID` —
+  spawn and map nodes hold worker roles — so node-task expiry runs through `runSendNodes`; the
+  workers' own delegated tasks are found by sender role instead.
 
 - **Order of operations**: run → `canceling` first (a new `GraphRunCanceling` state, which halts
   dispatch and `replaceLostWorkers`) → stop every worker the run owns → retract their delegations →
@@ -344,12 +364,13 @@ precisely from a run that *said* cancelled while working.
 Phase 1 findings concur, and add the second half: a dead worker is necessary, not sufficient — its
 already-delegated requests must be expired too (Q4.1), or the run keeps acting through other agents.
 
-**Decided fail closed; implemented in Phase 2 (2026-09-23), held open by review.** A survivor leaves
-the run `canceling` and its node `running`, and the cancel returns `CancelIncompleteError` naming
-each survivor's `muxcode spawn stop <id>` and the `graph cancel` to re-run; retry is refused until a
-cancel reports `canceled`. The review found two roads that still fail *open* — a spawn racing the
-cancel, and a failed registry or inbox read treated as "nothing to stop" — so the decision is
-settled but its implementation is not, until both must-fix boxes under Phase 2 close.
+**Resolved: fail closed — implemented in Phase 2, closed 2026-09-24 after three reviews.** A
+survivor leaves the run `canceling` and its node `running`, and the cancel returns
+`CancelIncompleteError` naming each survivor's `muxcode spawn stop <id>`, each failed cleanup step,
+and the `graph cancel` to re-run; retry is refused until a cancel reports `canceled`. The reviews
+found and closed three roads that still failed *open* — a spawn racing the cancel, a failed
+registry or inbox read treated as "nothing to stop", and a best-effort task expiry — recorded as
+the Phase 2 must-fix boxes.
 
 ### Decision 2 — scope of the cancel-authority gate
 
@@ -381,9 +402,9 @@ while still working. Whether they share a fix or only a theme is not settled her
 In Progress — started 2026-09-23 on the user's instruction; moved `backlog/` → `drafts/` at 0/44.
 **Phase 1 complete 2026-09-23** (5/5, investigation only, no code changed; findings recorded under
 Phase 1, two latent bugs added to Phase 2). The investigating run itself reproduced defect 2 live.
-**Phase 2 landed but open 2026-09-23** (run `1790194224`, build and test green, review returned two
-must-fix) — `graph cancel` now stops the run's workers, retracts their delegations and fails closed on
-a stop that errors, but a spawn can race the cancel and a failed registry/inbox read still fails
-open, so steps 1, 3, 4 and AC 1 are reopened and the two must-fix items are open boxes under Phase 2.
-AC 2 stays open for Phase 6's live measurement (a consumed request cannot be recalled). 8/48.
-Phase 2 fix next.
+**Phase 2 complete 2026-09-24** (run `1790194224`, three review iterations, build and test green
+each time, third review 0/0/0) — `graph cancel` stops the run's workers under a per-run lock,
+retracts their delegations with checked expiry, propagates registry, inbox and task failures, and
+fails closed on a surviving worker or any failed cleanup step; 6/6 steps, four review boxes and AC 1
+ticked. AC 2 stays open for Phase 6's live measurement (a consumed request cannot be recalled).
+17/51. Phase 3 next.

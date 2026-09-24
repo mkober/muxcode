@@ -228,37 +228,6 @@ func ApproveGraphGate(session, runID, nodeID string) error {
 	return nil
 }
 
-// CancelGraphRun marks a run canceled and skips every node that has not
-// started. Running nodes are left to finish; the canceled run state stops
-// all further routing and dispatch.
-func CancelGraphRun(session, runID string) error {
-	if err := UpdateGraphRunState(session, runID, GraphRunCanceled); err != nil {
-		return err
-	}
-	PurgeSessionArtifacts(session, "graph run "+runID+" canceled")
-	statuses, err := ReadAllNodeStatuses(session, runID)
-	if err != nil {
-		return err
-	}
-	for id, st := range statuses {
-		switch st.State {
-		case GraphNodePending, GraphNodeReady, GraphNodeWaiting:
-			_ = TransitionGraphNode(session, runID, id, GraphNodeSkipped, nil)
-		}
-		// Expire the node's correlated task: a canceled run's in-flight
-		// task otherwise lingers, and the stall watchdog re-drives its
-		// request into an agent for work nobody wants anymore (observed
-		// live 2026-08-27: the canceled loop's edit node re-driven).
-		if st.TaskID != "" {
-			if task, err := ReadTask(session, st.TaskID); err == nil && task.Status == TaskInFlight {
-				TimeoutTask(session, st.TaskID)
-			}
-		}
-	}
-	LogLifecycle(session, "info", "daemon", "graph-run-canceled", runID)
-	return nil
-}
-
 // StepGraphRuns advances every in-flight run one tick.
 func StepGraphRuns(session string) {
 	for _, run := range ScanInFlightGraphRuns(session) {
@@ -271,8 +240,19 @@ func StepGraphRuns(session string) {
 
 // StepGraphRun advances one run a single tick: harvest completions of
 // running/waiting nodes, route unrouted finished nodes, dispatch ready
-// nodes, then settle the run state if nothing is active.
+// nodes, then settle the run state if nothing is active. The tick holds
+// the run lock throughout (lockGraphRun) and skips while a cancel holds
+// it — the next tick reads the run canceling and does nothing.
 func StepGraphRun(session, runID string) error {
+	unlock, err := lockGraphRun(session, runID, 0)
+	if errors.Is(err, errGraphRunBusy) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	run, err := ReadGraphRun(session, runID)
 	if err != nil {
 		return err
@@ -1701,7 +1681,10 @@ func lostSpawnWorkers(session, taskIDs string) []SpawnEntry {
 // under a node that no longer names it (review must-fix 2026-09-09). A
 // replacement that could not be stopped is named in the node's output
 // as still live, so the failure never implies a cleanup it could not
-// verify.
+// verify. launched holds spawn roles (graphSpawnFn's return), so the
+// stop goes through stopSpawnRole: StopSpawn keys on the entry ID, and
+// every role handed to it once failed "spawn not found" while the
+// replacement kept running (MUX-182 Phase 1).
 func replaceLostWorkers(session string, run *GraphRun, n *Node, st *GraphNodeStatus, now int64) bool {
 	lost := lostSpawnWorkers(session, st.TaskID)
 	if len(lost) == 0 {
@@ -1720,9 +1703,9 @@ func replaceLostWorkers(session string, run *GraphRun, n *Node, st *GraphNodeSta
 	var launched []string
 	failClosed := func(reason string) bool {
 		var live []string
-		for _, id := range launched {
-			if err := StopSpawn(session, id); err != nil {
-				live = append(live, id+" ("+err.Error()+")")
+		for _, role := range launched {
+			if _, err := stopSpawnRole(session, role); err != nil {
+				live = append(live, role+" ("+err.Error()+")")
 			}
 		}
 		msg := fmt.Sprintf("worker replacement failed after %d of %d: %s", len(launched), len(lost), reason)

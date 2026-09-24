@@ -560,6 +560,11 @@ func TestSummarizeRunResults(t *testing.T) {
 	if got := SummarizeRunResults(bus.GraphRunRunning, nil, "", []string{"build"}); got != "build ⋯" {
 		t.Errorf("in-flight shows the done chain with the working glyph, got %q", got)
 	}
+	// canceling also covers a cleanup-only failure with every worker stopped,
+	// so the cell must not claim a survivor.
+	if got := SummarizeRunResults(bus.GraphRunCanceling, nil, "", nil); got != "cancel incomplete — re-run graph cancel" {
+		t.Errorf("canceling cell = %q", got)
+	}
 }
 
 // TestRenderRunListFrame_ResultsColumn pins the column end-to-end: the

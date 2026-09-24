@@ -811,7 +811,7 @@ func renderGraphHeader(snap GraphSnapshot, now time.Time, width int) string {
 	switch run.State {
 	case bus.GraphRunComplete:
 		stateColor = Green
-	case bus.GraphRunFailed:
+	case bus.GraphRunFailed, bus.GraphRunCanceling:
 		stateColor = Red
 	case bus.GraphRunCanceled:
 		stateColor = Comment
@@ -947,6 +947,8 @@ func SummarizeRunResults(runState string, failed []string, failedOut string, don
 		return "✓ complete"
 	case runState == bus.GraphRunCanceled:
 		return "canceled"
+	case runState == bus.GraphRunCanceling:
+		return "cancel incomplete — re-run graph cancel"
 	default:
 		if chain != "" {
 			return chain + " ⋯" // in flight — what has finished so far
@@ -1035,7 +1037,7 @@ func RenderRunListFrameH(rows []RunListRow, width, height, sel int) string {
 		switch r.State {
 		case bus.GraphRunComplete:
 			stateColor = Green
-		case bus.GraphRunFailed:
+		case bus.GraphRunFailed, bus.GraphRunCanceling:
 			stateColor = Red
 		case bus.GraphRunCanceled:
 			stateColor = Comment

@@ -3687,11 +3687,14 @@ func TestExecSpecGuardPostponesWhenRepoDirUnknown(t *testing.T) {
 // reuse tests: a fresh worker gets a RUNNING entry, a real seeded inbox
 // message, and the run+node stamp, so FindLiveSpawn, ReseedSpawn, and
 // spawnGroupOutcome run their live paths without tmux. Windows listed in
-// deadWindows read as gone; kill attempts are recorded.
+// deadWindows read as gone; kill attempts are recorded. distinctIDs gives
+// entries the production shape — ID differs from SpawnRole — which the
+// default shape hides from any caller that confuses the two.
 type liveSpawnFake struct {
 	fresh       int
 	killed      []string
 	deadWindows map[string]bool
+	distinctIDs bool
 }
 
 func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
@@ -3714,7 +3717,11 @@ func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
 		if err := Send(sess, msg); err != nil {
 			t.Fatalf("seed send: %v", err)
 		}
-		entry := SpawnEntry{ID: id, Role: role, SpawnRole: id, Owner: owner, Task: task,
+		entryID := id
+		if f.distinctIDs {
+			entryID = "1790000000-" + id
+		}
+		entry := SpawnEntry{ID: entryID, Role: role, SpawnRole: id, Owner: owner, Task: task,
 			Status: "running", Window: id, StartedAt: time.Now().Unix(),
 			SeedMsgID: msg.ID, RunID: runID, NodeID: nodeID}
 		if err := appendSpawnEntry(sess, entry); err != nil {

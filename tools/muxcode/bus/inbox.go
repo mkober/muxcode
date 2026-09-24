@@ -474,7 +474,8 @@ func ReceiveDeliveredIDs(session, role string, ids map[string]bool) ([]Message, 
 //
 // The receipt kind is the caller's assertion of HOW the message was received:
 // ReceiptKindAck for a genuine in-process read (a --wait sender draining its
-// reply), ReceiptKindDelivered for the daemon's verified pane injection.
+// reply), ReceiptKindDelivered for the daemon's verified pane injection. An
+// empty kind writes no receipt: a retraction removes rows nobody received.
 //
 // Both partial-consume callers share this core deliberately. They were once
 // independent copies, which is exactly how a single oversized-message bug came
@@ -512,8 +513,10 @@ func receiveMatching(session, role, kind string, match func(Message) bool) ([]Me
 		}
 	}
 
-	for _, m := range matched {
-		WriteReceipt(session, m.ID, role, kind)
+	if kind != "" {
+		for _, m := range matched {
+			WriteReceipt(session, m.ID, role, kind)
+		}
 	}
 
 	// Mark consumed message IDs as notified (partial consumption —

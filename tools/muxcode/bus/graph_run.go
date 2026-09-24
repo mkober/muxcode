@@ -26,10 +26,11 @@ const (
 
 // Graph run states.
 const (
-	GraphRunRunning  = "running"
-	GraphRunComplete = "complete"
-	GraphRunFailed   = "failed"
-	GraphRunCanceled = "canceled"
+	GraphRunRunning   = "running"
+	GraphRunComplete  = "complete"
+	GraphRunFailed    = "failed"
+	GraphRunCanceled  = "canceled"
+	GraphRunCanceling = "canceling" // cancel incomplete: a worker survived or cleanup failed — see CancelGraphRun
 )
 
 // GraphRun is the persisted metadata for one graph run instance.
@@ -87,7 +88,7 @@ type GraphNodeStatus struct {
 var legalNodeTransitions = map[string]map[string]bool{
 	GraphNodePending: {GraphNodeReady: true, GraphNodeSkipped: true},
 	GraphNodeReady:   {GraphNodeRunning: true, GraphNodeWaiting: true, GraphNodeSkipped: true, GraphNodeFailed: true},
-	GraphNodeRunning: {GraphNodeDone: true, GraphNodeFailed: true},
+	GraphNodeRunning: {GraphNodeDone: true, GraphNodeFailed: true, GraphNodeSkipped: true},
 	GraphNodeWaiting: {GraphNodeRunning: true, GraphNodeDone: true, GraphNodeFailed: true, GraphNodeSkipped: true},
 	GraphNodeDone:    {GraphNodeReady: true},
 	GraphNodeFailed:  {GraphNodeReady: true},
@@ -583,6 +584,9 @@ func RetryGraphRun(session, runID, fromNode string) (*GraphRetryResult, error) {
 	}
 	if run.State == GraphRunRunning {
 		return nil, fmt.Errorf("run %s is still running — cancel it before retrying", runID)
+	}
+	if run.State == GraphRunCanceling {
+		return nil, fmt.Errorf("run %s has an incomplete cancel (a worker survived or a cleanup step failed) — re-run `muxcode graph cancel %s` until it reports canceled, then retry", runID, runID)
 	}
 	g, err := ReadGraphRunGraph(session, runID)
 	if err != nil {
