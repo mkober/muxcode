@@ -37,15 +37,23 @@ type SpawnEntry struct {
 
 // ReadSpawnEntries reads all spawn entries from the spawn JSONL file.
 func ReadSpawnEntries(session string) ([]SpawnEntry, error) {
+	entries, _, err := scanSpawnEntries(session)
+	return entries, err
+}
+
+// scanSpawnEntries reads the registry like ReadSpawnEntries and also counts
+// the malformed lines it skipped, so a caller that must not miss a worker —
+// graph cancel — can refuse a partial registry instead of reading it as
+// complete.
+func scanSpawnEntries(session string) (entries []SpawnEntry, malformed int, err error) {
 	data, err := os.ReadFile(SpawnPath(session))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, 0, nil
 		}
-		return nil, err
+		return nil, 0, err
 	}
 
-	var entries []SpawnEntry
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -54,11 +62,12 @@ func ReadSpawnEntries(session string) ([]SpawnEntry, error) {
 		}
 		var e SpawnEntry
 		if err := json.Unmarshal(line, &e); err != nil {
-			continue // skip malformed lines
+			malformed++
+			continue
 		}
 		entries = append(entries, e)
 	}
-	return entries, scanner.Err()
+	return entries, malformed, scanner.Err()
 }
 
 // WriteSpawnEntries overwrites the spawn JSONL file with the given entries.

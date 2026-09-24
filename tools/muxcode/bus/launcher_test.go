@@ -504,7 +504,9 @@ func TestClassifyPane_TrustPrompt(t *testing.T) {
 
 Do you trust this folder and want to proceed?
   > Yes, I trust this folder
-    No, exit`
+    No, exit
+
+Enter to confirm · Esc to cancel`
 	if got := ClassifyPane(content); got != PaneTrustPrompt {
 		t.Errorf("expected PaneTrustPrompt, got %d", got)
 	}
@@ -545,11 +547,12 @@ func TestClassifyPane_Empty(t *testing.T) {
 	}
 }
 
-func TestClassifyPane_TrustTakesPrecedence(t *testing.T) {
-	// If both trust and ❯ appear (unlikely but defensive), trust wins
+// A trust prompt still being drawn (no footer yet) shows ❯ on its option line;
+// it must not read as an idle composer.
+func TestClassifyPane_TrustStillDrawingIsNotIdle(t *testing.T) {
 	content := "trust this folder\n❯"
-	if got := ClassifyPane(content); got != PaneTrustPrompt {
-		t.Errorf("expected PaneTrustPrompt to take precedence, got %d", got)
+	if got := ClassifyPane(content); got != PaneNotReady {
+		t.Errorf("expected PaneNotReady for a trust prompt still drawing, got %d", got)
 	}
 }
 

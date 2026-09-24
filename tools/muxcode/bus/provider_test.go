@@ -210,12 +210,13 @@ func TestClaudeClassifyPane(t *testing.T) {
 		content string
 		want    PaneState
 	}{
-		{"trust", "Do you trust this folder?", PaneTrustPrompt},
+		{"trust", "Do you trust this folder?\n❯ Yes, I trust this folder\n\nEnter to confirm · Esc to cancel", PaneTrustPrompt},
 		{"bypass", "Bypass Permissions mode", PaneBypassPrompt},
 		{"idle", "❯", PaneIdle},
 		{"not ready", "Loading...", PaneNotReady},
 		{"empty", "", PaneNotReady},
-		{"trust takes precedence", "trust this folder\n❯", PaneTrustPrompt},
+		{"trust prompt still drawing is not idle", "trust this folder\n❯", PaneNotReady},
+		{"answered trust prompt in scrollback is idle", "❯ Yes, I trust this folder\nEnter to confirm\n" + strings.Repeat("output line\n", 10) + "❯ ", PaneIdle},
 		{"bypass takes precedence", "Bypass Permissions\n❯", PaneBypassPrompt},
 	}
 	for _, tt := range tests {

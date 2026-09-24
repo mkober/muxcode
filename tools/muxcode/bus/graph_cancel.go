@@ -56,11 +56,15 @@ func (e *CancelIncompleteError) Error() string {
 //     tasks time out and their unconsumed requests leave every inbox, so
 //     a run or plan agent does not act on a dead run's behalf. A request
 //     already consumed cannot be recalled.
-//  4. Unstarted nodes are skipped, running spawn/map nodes whose workers
-//     all stopped are skipped — a running send node has no worker and is
-//     left to finish — and each node's correlated task is expired so the stall
-//     watchdog cannot re-drive it (2026-08-27, a canceled loop's edit
-//     node re-driven).
+//  4. Unstarted nodes are skipped, and running spawn/map nodes whose workers
+//     all stopped are skipped. A running send node's request is withdrawn if
+//     its agent has not read it yet; one its agent is already working on
+//     cannot be recalled, so it fails the cancel until the agent answers
+//     (see stopSendNode). Each send node's task is expired so the stall
+//     watchdog cannot re-drive it (2026-08-27, a canceled loop's edit node
+//     re-driven).
+//  5. Session artifacts are purged only once no worker survived and every
+//     cleanup step succeeded — live work may still be writing them.
 //
 // The whole cancel holds the run lock (lockGraphRun), so no executor tick
 // can be mid-spawn while the registry is read.
@@ -70,8 +74,8 @@ func (e *CancelIncompleteError) Error() string {
 // canceling, the survivors' nodes stay running, and a
 // *CancelIncompleteError names each survivor with the command that stops
 // it, and each failed step — reporting canceled while a worker ran was the
-// incident. An unreadable spawn registry is such a failure, never an empty
-// worker set.
+// incident. An unreadable or partly malformed spawn registry is such a
+// failure, never an empty worker set.
 //
 // Before any of that, the caller must pass CheckCancelAuthority, resolved
 // here rather than by each caller because the CLI and the TUI both cancel;
@@ -101,7 +105,6 @@ func CancelGraphRun(session, runID string) error {
 	if err := UpdateGraphRunState(session, runID, GraphRunCanceling); err != nil {
 		return err
 	}
-	PurgeSessionArtifacts(session, "graph run "+runID+" canceled")
 	statuses, err := ReadAllNodeStatuses(session, runID)
 	if err != nil {
 		return err
@@ -129,21 +132,30 @@ func CancelGraphRun(session, runID string) error {
 		survived[s.SpawnRole] = true
 	}
 	for id, st := range statuses {
-		switch st.State {
-		case GraphNodePending, GraphNodeReady, GraphNodeWaiting:
+		role, isSend := sendNodes[id]
+		switch {
+		case st.State == GraphNodePending || st.State == GraphNodeReady || st.State == GraphNodeWaiting:
 			_ = TransitionGraphNode(session, runID, id, GraphNodeSkipped, nil)
-		case GraphNodeRunning:
+		case st.State == GraphNodeRunning && isSend && st.TaskID != "":
+			if err := stopSendNode(session, runID, id, role, st.TaskID); err != nil {
+				cleanup = append(cleanup, err)
+			}
+			continue
+		case st.State == GraphNodeRunning:
 			if taskIDNamesAny(st.TaskID, owned) && !taskIDNamesAny(st.TaskID, survived) {
 				_ = TransitionGraphNode(session, runID, id, GraphNodeSkipped, func(s *GraphNodeStatus) {
 					s.Output = "canceled while running"
 				})
 			}
 		}
-		if sendNodes[id] && st.TaskID != "" {
+		if isSend && st.TaskID != "" {
 			if err := expireTask(session, st.TaskID); err != nil {
 				cleanup = append(cleanup, fmt.Errorf("expire node %s task %s: %w", id, st.TaskID, err))
 			}
 		}
+	}
+	if len(survivors) == 0 && len(cleanup) == 0 {
+		cancelPurgeFn(session, "graph run "+runID+" canceled")
 	}
 
 	if len(survivors) > 0 || len(cleanup) > 0 {
@@ -162,9 +174,12 @@ func CancelGraphRun(session, runID string) error {
 // stamped with the run at birth, plus any role a node's TaskID names —
 // spawn and map nodes store worker roles there, not task ids.
 func runSpawnRoles(session, runID string, statuses map[string]*GraphNodeStatus) ([]string, error) {
-	entries, err := ReadSpawnEntries(session)
+	entries, malformed, err := scanSpawnEntries(session)
 	if err != nil {
 		return nil, err
+	}
+	if malformed > 0 {
+		return nil, fmt.Errorf("%d malformed spawn registry line(s) — a live worker of this run could be among them", malformed)
 	}
 	known := make(map[string]bool, len(entries))
 	set := map[string]bool{}
@@ -192,23 +207,78 @@ func runSpawnRoles(session, runID string, statuses map[string]*GraphNodeStatus) 
 	return roles, nil
 }
 
-// runSendNodes returns the ids of the run's send nodes — the only nodes
-// whose TaskID is a task id. Spawn and map nodes store worker roles there,
-// and a large map's joined list is too long to be a filename, so passing it
-// to expireTask fails the cancel on every retry (review must-fix,
+// runSendNodes maps each of the run's send nodes to its role — the only
+// nodes whose TaskID is a task id. Spawn and map nodes store worker roles
+// there, and a large map's joined list is too long to be a filename, so
+// passing it to expireTask fails the cancel on every retry (review must-fix,
 // 2026-09-24).
-func runSendNodes(session, runID string) (map[string]bool, error) {
+func runSendNodes(session, runID string) (map[string]string, error) {
 	g, err := ReadGraphRunGraph(session, runID)
 	if err != nil {
 		return nil, err
 	}
-	send := map[string]bool{}
+	send := map[string]string{}
 	for _, n := range g.Nodes {
 		if n.Type == NodeSend {
-			send[n.ID] = true
+			send[n.ID] = n.Role
 		}
 	}
 	return send, nil
+}
+
+// stopSendNode stops a running send node's work, or reports that it cannot.
+// A send node has no worker of its own: its request goes to a shared agent.
+// If the request is still unread in an inbox it is withdrawn, the task
+// expired and the node skipped — the agent never starts. If a receipt shows
+// the agent read it and its pane is not idle, it may be working on a dead
+// run's behalf and nothing can recall that, so the cancel fails closed until
+// it answers or goes idle rather than report canceled while it acts (Copilot
+// on PR #89). A timed-out task is no evidence either way — the daemon times
+// tasks out while their agents keep working — so only the pane decides. With
+// no receipt, or an idle agent, nobody is working on it: the task is expired
+// so the stall watchdog cannot re-drive it (2026-08-27, a canceled loop's node
+// re-driven). An answered request needs nothing.
+func stopSendNode(session, runID, nodeID, role, taskID string) error {
+	inboxes, err := inboxRoles(session)
+	if err != nil {
+		return fmt.Errorf("send node %s: list inboxes: %w", nodeID, err)
+	}
+	for _, inbox := range inboxes {
+		msgs, err := receiveMatching(session, inbox, "", func(m Message) bool { return m.ID == taskID })
+		if err != nil {
+			return fmt.Errorf("send node %s: withdraw from %s inbox: %w", nodeID, inbox, err)
+		}
+		if len(msgs) == 0 {
+			continue
+		}
+		markDeliveryExpired(session, taskID)
+		if err := expireTask(session, taskID); err != nil {
+			return fmt.Errorf("expire node %s task %s: %w", nodeID, taskID, err)
+		}
+		_ = TransitionGraphNode(session, runID, nodeID, GraphNodeSkipped, func(s *GraphNodeStatus) {
+			s.Output = "canceled before its agent read the request"
+		})
+		return nil
+	}
+	task, err := ReadTask(session, taskID)
+	if err != nil {
+		return fmt.Errorf("send node %s: read task %s: %w", nodeID, taskID, err)
+	}
+	if task.Status == TaskCompleted {
+		return nil
+	}
+	ds, derr := ReadDeliveryStatus(session, taskID)
+	received := derr == nil && (hasReceipt(ds) || ds.Status == StatusDelivered)
+	if received && !graphAgentIdleFn(session, role) {
+		return fmt.Errorf("send node %s: its %s agent is still working on the request (task %s) — cancel again once it answers or goes idle", nodeID, role, taskID)
+	}
+	if err := expireTask(session, taskID); err != nil {
+		return fmt.Errorf("expire node %s task %s: %w", nodeID, taskID, err)
+	}
+	_ = TransitionGraphNode(session, runID, nodeID, GraphNodeSkipped, func(s *GraphNodeStatus) {
+		s.Output = "canceled with no agent working on the request"
+	})
+	return nil
 }
 
 // stopRunWorkers stops each role's worker and returns those that survived.
@@ -334,8 +404,12 @@ func inboxRoles(session string) ([]string, error) {
 	return roles, nil
 }
 
-// graphRunLockWait bounds how long a cancel waits out an executor tick.
-const graphRunLockWait = 30 * time.Second
+// graphRunLockWait bounds how long a cancel waits out an executor tick. A
+// variable so tests of a held lock need not wait it out.
+var graphRunLockWait = 30 * time.Second
+
+// cancelPurgeFn purges session artifacts for a completed cancel. A test seam.
+var cancelPurgeFn = PurgeSessionArtifacts
 
 // errGraphRunBusy reports the run lock held past the caller's wait.
 var errGraphRunBusy = errors.New("graph run lock held")

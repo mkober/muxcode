@@ -565,6 +565,162 @@ func TestCancelFailsClosedOnUnreadableTaskFile(t *testing.T) {
 	recancel(t, run.ID)
 }
 
+// Copilot on PR #89, cancel_authority.go:82: a spawn stop that cannot take an
+// existing run's lock is refused, never decided unlocked — the worker is left
+// running for a retry. Negative control: once the lock is free, it stops.
+func TestStopSpawnAuthorizedRefusesWithoutTheRunLock(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, spawnCancelGraph())
+	f := fakeLiveSpawns(t)
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "w")
+	e, _ := findSpawnByRole(runTestSession, st.TaskID)
+
+	prev := graphRunLockWait
+	graphRunLockWait = 50 * time.Millisecond
+	t.Cleanup(func() { graphRunLockWait = prev })
+	unlock, err := lockGraphRun(runTestSession, run.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := StopSpawnAuthorized(runTestSession, e.ID); err == nil || !strings.Contains(err.Error(), "NOT stopped") {
+		t.Errorf("a stop that cannot take the run lock must be refused, got %v", err)
+	}
+	if len(f.killed) != 0 {
+		t.Errorf("nothing may be stopped without the lock, killed %v", f.killed)
+	}
+	unlock()
+	if err := StopSpawnAuthorized(runTestSession, e.ID); err != nil {
+		t.Errorf("with the lock free the user's stop proceeds, got %v", err)
+	}
+}
+
+// Copilot on PR #89, graph_cancel.go:104: artifacts are purged only after every
+// worker is stopped — a surviving worker may still be writing them.
+func TestCancelPurgesArtifactsOnlyAfterWorkersStop(t *testing.T) {
+	purges := 0
+	prev := cancelPurgeFn
+	cancelPurgeFn = func(string, string) *ArtifactPurgeResult { purges++; return nil }
+	t.Cleanup(func() { cancelPurgeFn = prev })
+
+	run := createTestRun(t, spawnCancelGraph())
+	fakeLiveSpawns(t)
+	step(t, runTestSession, run.ID)
+	spawnKillWindowFn = func(string, string) error { return errors.New("kill-window: no server") }
+	if err := CancelGraphRun(runTestSession, run.ID); err == nil {
+		t.Fatal("a surviving worker must fail the cancel")
+	}
+	if purges != 0 {
+		t.Errorf("artifacts purged %d time(s) while a worker survived", purges)
+	}
+	spawnKillWindowFn = func(string, string) error { return nil }
+	if err := CancelGraphRun(runTestSession, run.ID); err != nil {
+		t.Fatalf("re-cancel: %v", err)
+	}
+	if purges != 1 {
+		t.Errorf("artifacts must be purged once the workers are stopped, got %d", purges)
+	}
+}
+
+// sendAgentRead starts a linear run and has the build agent read node a's
+// request, leaving a receipt; the agent's pane reads idle or busy per idle.
+func sendAgentRead(t *testing.T, idle *bool) (*GraphRun, string) {
+	t.Helper()
+	if err := os.MkdirAll(DeliveryDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	prev := graphAgentIdleFn
+	graphAgentIdleFn = func(string, string) bool { return *idle }
+	t.Cleanup(func() { graphAgentIdleFn = prev })
+	run := createTestRun(t, linearGraph())
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+	if _, err := Receive(runTestSession, "build"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ReadReceipt(runTestSession, st.TaskID); !ok {
+		t.Fatal("fixture: the build agent's read must leave a receipt")
+	}
+	return run, st.TaskID
+}
+
+// Copilot on PR #89, graph_cancel.go:146: a send node whose agent read the
+// request and is still busy is working for the run, so the cancel fails closed
+// — and purges nothing — until it answers. A timed-out task is no proof the
+// agent stopped, so the daemon timing it out changes nothing. Once the agent
+// answers, a re-cancel completes and purges once. (An unread request is
+// withdrawn instead — TestExecCancelMidRun.)
+func TestCancelFailsClosedOnARunningSendAgent(t *testing.T) {
+	purges := 0
+	prevPurge := cancelPurgeFn
+	cancelPurgeFn = func(string, string) *ArtifactPurgeResult { purges++; return nil }
+	t.Cleanup(func() { cancelPurgeFn = prevPurge })
+	busy := false
+	run, taskID := sendAgentRead(t, &busy)
+
+	for _, stage := range []string{"agent working", "task timed out, agent still working"} {
+		if stage == "task timed out, agent still working" {
+			TimeoutTask(runTestSession, taskID)
+		}
+		err := CancelGraphRun(runTestSession, run.ID)
+		var cerr *CancelIncompleteError
+		if !errors.As(err, &cerr) || !strings.Contains(err.Error(), "still working on the request") {
+			t.Fatalf("%s: the cancel must fail closed, got %v", stage, err)
+		}
+		if r, _ := ReadGraphRun(runTestSession, run.ID); r.State != GraphRunCanceling {
+			t.Errorf("%s: run %q, want canceling", stage, r.State)
+		}
+		if purges != 0 {
+			t.Errorf("%s: artifacts purged while the send agent works", stage)
+		}
+	}
+
+	CompleteTask(runTestSession, taskID, "resp-"+taskID)
+	recancel(t, run.ID)
+	if purges != 1 {
+		t.Errorf("artifacts must be purged once the agent answered, got %d", purges)
+	}
+}
+
+// Negative control: an agent that read the request but sits idle without
+// answering — finished, abandoned or restarted — is working on nothing, so
+// it never blocks a cancel.
+func TestCancelProceedsPastAnIdleSendAgent(t *testing.T) {
+	idle := true
+	run, taskID := sendAgentRead(t, &idle)
+	recancel(t, run.ID)
+	if task, _ := ReadTask(runTestSession, taskID); task.Status != TaskTimedOut {
+		t.Errorf("the idle agent's task %q, want timed-out so it cannot be re-driven", task.Status)
+	}
+}
+
+// Copilot on PR #89, graph_cancel.go:181: a malformed spawn registry line could
+// be a live worker of this run, so it fails the cancel rather than read as
+// absent. Negative control: the registry repaired, the cancel completes.
+func TestCancelFailsClosedOnMalformedRegistryLine(t *testing.T) {
+	run := createTestRun(t, spawnCancelGraph())
+	fakeLiveSpawns(t)
+	step(t, runTestSession, run.ID)
+	registry := SpawnPath(runTestSession)
+	good, err := os.ReadFile(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registry, append(append([]byte{}, good...), []byte("{truncated\n")...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := ReadSpawnEntries(runTestSession); err != nil || len(entries) == 0 {
+		t.Fatalf("ReadSpawnEntries must still skip a malformed line for other callers, got %d, %v", len(entries), err)
+	}
+
+	cancelIncomplete(t, run.ID, "malformed spawn registry")
+
+	if err := os.WriteFile(registry, good, 0644); err != nil {
+		t.Fatal(err)
+	}
+	recancel(t, run.ID)
+}
+
 // TestStepSkipsWhileCancelHoldsRun: a tick that finds the run lock held
 // dispatches nothing and is not an error.
 func TestStepSkipsWhileCancelHoldsRun(t *testing.T) {

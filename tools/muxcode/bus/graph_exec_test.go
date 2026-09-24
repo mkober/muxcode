@@ -1550,9 +1550,13 @@ func TestExecCancelMidRun(t *testing.T) {
 	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodeSkipped {
 		t.Errorf("b state %q, want skipped", s)
 	}
+	// a's request was still unread, so the cancel withdrew it: the build
+	// agent never starts work for a canceled run.
+	if s := nodeState(t, runTestSession, run.ID, "a"); s != GraphNodeSkipped {
+		t.Errorf("a state %q, want skipped — its unread request is withdrawn", s)
+	}
 
 	// Further ticks must not dispatch or settle a canceled run.
-	completeSendNode(t, runTestSession, run.ID, "a", OutcomeSuccess)
 	step(t, runTestSession, run.ID)
 	got, _ = ReadGraphRun(runTestSession, run.ID)
 	if got.State != GraphRunCanceled {
