@@ -281,10 +281,19 @@ a claim the machinery itself got wrong.
 
 ## Status
 
-In Progress — entered `drafts/` 2026-09-24 on the user's instruction relayed by edit, with the
-implementation already in the MUX-182 branch's working tree (review `1790261523` 0 must-fix, build
-and test green). Phases 1–2 complete, Phase 3 at 5/6 (retry test open), Phase 4 not started;
-acceptance criteria 6/8 — open: the item-less-phase warning half of AC 5, and the integration script.
+Complete — closed 2026-09-24 **on the user's instruction ("remove this from backlog because it's
+done"), by acceptance, at 21/32.** The fix is on `main` in PR #89 (`3e9ac86`): `phaseCommitReady`
+anchored on HEAD's copy of the spec (`specAtHEAD` strict — git failures hold the gate; a moved spec
+is followed by its id-bearing filename), an item-less phase is never complete, `####` boxes count
+for their phase; review `1790261523` 0 must-fix, build and test green. **Open at closure, recorded
+not done:** Phase 3's retry test; the `spec set` / `graph validate` warning on an item-less phase
+(the second half of AC 5); all of Phase 4 — `scripts/test-phase-commit-ready.sh` and its controls.
+Phases 1–2 complete, Phase 3 at 5/6, Phase 4 at 0/7; acceptance criteria 6/8. Whoever picks the
+residual up files it as its own backlog item or reopens this one; the boxes above stay open so the
+record is honest.
+
+Before closure — entered `drafts/` 2026-09-24 on the user's instruction relayed by edit, with the
+implementation already in the MUX-182 branch's working tree.
 
 Filed 2026-09-14 on the user's instruction relayed by edit, from plan's first-hand observation on run
 `1789399519`. Defects 2 and 3 were found during filing verification and are plan's, not the report's.

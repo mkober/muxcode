@@ -501,7 +501,7 @@ are complementary by construction, not merely additive.
 The constraints Phase 3 inherits from this decision are listed **under Phase 3** (moved 2026-09-14
 12:10: `SpecPhases` drops its current phase on any heading line and re-arms only on `### Phase N`, so
 under a `####` label here they were attached to no phase at all — invisible to the count —
-[MUX-183](../drafts/MUX-183-phase-commit-ready-recredits-shipped-phases.md) defect 2).
+[MUX-183](../completed/MUX-183-phase-commit-ready-recredits-shipped-phases.md) defect 2).
 
 ### Phase 3: Implement outcome attribution
 
@@ -814,7 +814,7 @@ run re-credits every phase an earlier run shipped and the gate asks a human to a
 the open phase is 6/7. Flagged to edit; whether it becomes a backlog item is the user's call. Edit has since written it up as
 a backlog candidate (`/tmp/mux-148-false-failure-and-phasecommit.md`, item 2, non-durable — ranking
 suggested near MUX-182, false-completion family). **Filed as
-[MUX-183](../drafts/MUX-183-phase-commit-ready-recredits-shipped-phases.md) at 12:10** on the user's
+[MUX-183](../completed/MUX-183-phase-commit-ready-recredits-shipped-phases.md) at 12:10** on the user's
 instruction. Verifying the filing found two more defects that touch *this* spec: `phaseHeadingRe`
 counts any `### Phase N …` heading as a phase — this spec's `Phase 1 findings` and `Phase 2 decision`
 sections made `completed` read 3, not 1 — and `graph retry` resets the counter. The two headings were
