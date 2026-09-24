@@ -509,7 +509,11 @@ while still working. Whether they share a fix or only a theme is not settled her
 
 ## Status
 
-In Progress — started 2026-09-23 on the user's instruction; moved `backlog/` → `drafts/` at 0/44.
+Complete — closed 2026-09-24 12:1x at 53/53 (acceptance criteria 12/12, six phases), moved
+`drafts/` → `completed/` by the `spec-to-pr` run `1790262549`'s `close-spec` node. Decision 2's wider
+cancel-authority scope is recorded open by choice, not as an unmet item. History below.
+
+Started 2026-09-23 on the user's instruction; moved `backlog/` → `drafts/` at 0/44.
 **Phase 1 complete 2026-09-23** (5/5, investigation only, no code changed; findings recorded under
 Phase 1, two latent bugs added to Phase 2). The investigating run itself reproduced defect 2 live.
 **Phase 2 complete 2026-09-24** (run `1790194224`, three review iterations, build and test green
