@@ -167,6 +167,12 @@ func DetectCommandLoop(entries []HistoryEntry, threshold int, windowSecs int64) 
 // stay loops: agents demanding of each other (all requests), and agents
 // acknowledging each other's acknowledgements (all responses, MUX-169).
 //
+// Self-addressed rows and system actions are excluded too. Send drops every
+// self-send before logging it except the startup bootstrap and the replies it
+// records undelivered (recordUndeliveredReply), so such a row is never an
+// exchange between agents — yet a bootstrap plus three suppressed replies read
+// as a loop (MUX-182 defect 5, 4 × edit↔edit startup in 2m59s).
+//
 // Returns an alert if any pattern repeats >= threshold times within windowSecs.
 func DetectMessageLoop(messages []Message, role string, threshold int, windowSecs int64) *LoopAlert {
 	if len(messages) == 0 || threshold < 1 {
@@ -175,21 +181,11 @@ func DetectMessageLoop(messages []Message, role string, threshold int, windowSec
 
 	now := time.Now().Unix()
 
-	// Build two filtered slices:
-	// - recentAll: requests + responses (for ping-pong detection)
-	// - recentRequests: requests only (for repeated-tuple detection)
-	//
-	// Response messages are excluded from the tuple count because they are
-	// expected replies — 4 build responses in 5 minutes is normal iterative
-	// development, not a loop. But the ping-pong detector uses the full set
-	// (including responses) to catch bidirectional echo loops.
-	//
-	// Both exclude: event messages (repeat naturally), daemon traffic
-	// (system-generated), and system actions (infrastructure).
+	// recentAll feeds ping-pong detection; recentRequests the tuple count.
 	var recentAll []Message
 	var recentRequests []Message
 	for _, m := range messages {
-		if m.Type == "event" {
+		if m.Type == "event" || m.From == m.To {
 			continue
 		}
 		if m.From == "daemon" {

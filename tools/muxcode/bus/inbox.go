@@ -291,8 +291,8 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 	}
 
 	// Guard against duplicate replies: if this message is a reply to a task
-	// that is already completed (e.g. the daemon sent a synthetic response
-	// via idle-task-rescue, and the real agent sends a late reply), skip
+	// that is already completed (e.g. a scrape-road synthetic response, then
+	// the real agent's late reply), skip
 	// delivery to avoid the requester receiving conflicting responses.
 	// Check BEFORE writing to inbox so nothing is written anywhere.
 	if m.ReplyTo != "" {

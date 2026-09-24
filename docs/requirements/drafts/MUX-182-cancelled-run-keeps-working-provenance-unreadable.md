@@ -126,9 +126,9 @@ as a loop.
 - [x] An agent cannot assert human provenance it did not receive — plan writing "on a user request" is unsupported unless the prompt carried it — Phase 3: the prompt now states its origin or states that it carries no user request, and a forged human origin is discarded at send (`TestUnprovenancedMessagesSayNoUserRequest`, `TestStampDiscardsForgedHumanOrigin`); whether agents honour it is what Phase 6 exercises
 - [x] `graph cancel` / `spawn stop` issued **by an agent** against a run whose `created_by` is a human requires explicit user approval; agent-launched runs stay freely cancellable — Phase 4, `CheckCancelAuthority`; the approval is the user issuing the stop; negative control `TestCancelGraphRunLeavesAgentRunsFree`
 - [x] `graph-run-canceled` records **who** cancelled, as `graph-gate-approved` records who approved — Phase 4, sourced by the actor with `canceled by <actor>`
-- [ ] The watch completion notification carries the agent's real summary, or is neutral (`"Watch completed — see result"`); it never asserts a finding the chain did not establish
-- [ ] A daemon pane scrape is never delivered in a `response` body and never completes a task as though answered — it is marked unmistakably as a non-answer
-- [ ] A suppressed self-addressed startup reply is excluded from loop detection, or the reply affordance is not printed for it
+- [x] The watch completion notification carries the agent's real summary, or is neutral (`"Watch completed — see result"`); it never asserts a finding the chain did not establish — Phase 5, neutral wording plus an audit test over every default notice
+- [x] A daemon pane scrape is never delivered in a `response` body and never completes a task as though answered — it is marked unmistakably as a non-answer — Phase 5, `event:no-answer` from `daemon`, task timed out; `TestIdleRescueIsNeverAResponse`
+- [x] A suppressed self-addressed startup reply is excluded from loop detection, or the reply affordance is not printed for it — Phase 5, excluded from detection (the affordance is unchanged)
 - [ ] `bash scripts/test-cancel-provenance.sh` passes
 
 ### Key files
@@ -386,11 +386,30 @@ green, one fix iteration, final review `/tmp/muxcode-review-1790263753.txt` 0/0/
 
 ### Phase 5: Fix the misleading channels (defects 4 and 5)
 
-- [ ] Replace the fixed watch banner with the agent's real summary, or make it neutral
-- [ ] Stop delivering pane scrapes in a `response` body; mark them as non-answers and do not complete the task as answered
-- [ ] Exclude suppressed self-addressed startup replies from loop detection, or stop printing the reply affordance for them
-- [ ] Verify no other chain action asserts a finding it cannot establish (audit `bus/profile.go` messages)
+- [x] Replace the fixed watch banner with the agent's real summary, or make it neutral — neutral, 2026-09-24: `Watch command exited 0 (${command}) — see watch's own report for findings` / `Watch command FAILED (exit ${exit_code})` (`bus/profile.go`); the rule — a chain message states only what its trigger establishes — is stated once on `DefaultConfig`
+- [x] Stop delivering pane scrapes in a `response` body; mark them as non-answers and do not complete the task as answered — `checkIdleTaskCompletionAt` phase 2 now sends `event:no-answer` from `daemon`, no reply-to, payload opening `[daemon — NOT A RESPONSE: …]`, and calls `TimeoutTask`, not `CompleteTask`; `responseAnswers` requires `Type response`, so no `--wait` takes it; a late real reply still completes the task (`TestIdleRescueIsNeverAResponse`)
+- [x] Exclude suppressed self-addressed startup replies from loop detection, or stop printing the reply affordance for them — exclusion, 2026-09-24: `DetectMessageLoop` (`bus/guard.go`) drops `From == To` rows before both detectors; the reported `edit ↔ edit startup ×4` shape no longer alerts, four `edit → test` requests still do (`TestDetectMessageLoop_DelegationIsNotPingPong`)
+- [x] Verify no other chain action asserts a finding it cannot establish (audit `bus/profile.go` messages) — only the two watch notices did; `TestChainNoticesAssertNoFindings` (`bus/profile_claims_test.go`) now guards every event-type default notice against healthy / detected / look good / no errors / verified, with the negative control that a *request* asking for a finding ("verify … healthy") is an instruction, not a claim
 - [x] **Review node verdict parsing (`graph_exec.go` `reviewFindingsOutcome`) — closed 2026-09-24 10:52** (review `/tmp/muxcode-review-1790261523.txt`: a complete bounded-count summary anchored to the first non-blank reply line; quoted earlier summaries, fenced examples, incomplete counts and narrative-first replies are held; `TestReviewFindingsOutcome`, `TestExecReviewFindingsRouteToFix`). Original: the mechanism behind the Phase 2 evidence: the node read `outcome=success` off replies carrying must-fix. Review must-fix (`/tmp/muxcode-review-1790260651.txt`): the parser accepts any must-fix count anywhere and defaults a missing should-fix count to zero, so "0 must-fix found so far; review incomplete" passes as success. Parse one complete explicit summary line, require both gating counts, reject malformed or overflowing numbers, hold incomplete or quoted-only counts; negative controls for a missing should-fix count and an unfinished reply
+
+#### Phase 5 findings — 2026-09-24
+
+Landed in run `1790262549-spec-to-pr-00360289`: build and test green, review
+`/tmp/muxcode-review-1790264685.txt` 0/0/0. Worker report: `/tmp/mux182-phase5-report.md`.
+Boundaries drawn:
+
+- **The scrape road is untouched where the pane *is* the evidence.** Only the hook-road idle rescue
+  changed; `checkNonHookTasks` still reads the pane for providers whose pane is the completion
+  signal (`PaneIsEvidence`).
+- **A no-answer notice cannot be mistaken for an answer by construction, not by wording alone**: it
+  is `Type event`, correlated to nothing, so `responseAnswers` rejects it and nothing marks the
+  request responded — the wording is for the human reading it.
+- **The watch chain's real defect stays with MUX-177**: it still fires on every successful watch
+  Bash call for want of a `command_match` condition; Phase 5 made the notice honest, not selective.
+- The watch *failure* notice was equally unfounded ("detected errors" on an expired SSO session's
+  non-zero exit) and was neutralised in the same change.
+- **Defect 4a is a category, not one bug** (Decision 3): the audit found exactly two offending
+  notices, both watch, and the test now holds the whole set to the rule.
 
 ### Phase 6: Integration test
 
@@ -439,6 +458,11 @@ Phase 4 gap.
 `bus/profile.go` may hold other chain messages asserting outcomes they cannot establish. Fixing only
 the watch banner leaves the pattern. Phase 5's audit step is scoped to find out.
 
+**Resolved 2026-09-24 by the Phase 5 audit: a category, guarded as one.** Only the two watch
+notices asserted findings, but the rule now lives in `DefaultConfig`'s doc comment and
+`TestChainNoticesAssertNoFindings` holds every event-type default notice to it, so a future chain
+cannot reintroduce the class.
+
 ### Decision 4 — relationship to MUX-148 and MUX-178
 
 All three are **false or unverifiable completion signals**: MUX-148 a node claiming a success it never
@@ -458,7 +482,7 @@ while still working. Whether they share a fix or only a theme is not settled her
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-182-cancelled-run-keeps-working | 1h 24m | 2026-09-24 11:31 |
+| MUX-182-cancelled-run-keeps-working | 1h 34m | 2026-09-24 11:45 |
 
 ## Status
 
@@ -477,5 +501,10 @@ review node's verdict parser (a Phase 5 box) closed 10:52. Phase 3 committed as 
 **Phase 4 complete 2026-09-24 11:31** (run `1790262549`, build and test green, review 0/0/0) — 4/4
 steps and ACs 7, 8 ticked: only the user may stop a run the user launched (or one whose creator is
 unestablished), agent runs stay freely cancellable, the actor is named on `graph-run-canceled`, and
-the decision is taken under the run lock. Decision 2's wider scope stays open by choice. 33/53.
-Phase 5 next.
+the decision is taken under the run lock. Decision 2's wider scope stays open by choice. Phase 4
+committed as `f8e52ba`.
+**Phase 5 complete 2026-09-24 11:45** (run `1790262549`, build and test green, review 0/0/0) — 4/4
+steps and ACs 9, 10, 11 ticked: watch notices state only an exit code (audited across every default
+notice), the idle rescue is an `event:no-answer` that times the task out rather than a response that
+completes it, and self-addressed rows are excluded from loop detection. 40/53. Phase 6 (integration
+test) next — the last phase; AC 2 and the script AC are its to close.
