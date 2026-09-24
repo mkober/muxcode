@@ -154,11 +154,7 @@ func TestSpecCurrentPhase(t *testing.T) {
 		t.Errorf("current = %+v, want Phase 2 (never the completed Phase 1)", cur)
 	}
 
-	done, err := SpecCompletedPhaseCount(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if done != 1 {
+	if done := completedPhaseCount(phases); done != 1 {
 		t.Errorf("completed phases = %d, want 1", done)
 	}
 
@@ -169,36 +165,6 @@ func TestSpecCurrentPhase(t *testing.T) {
 	cur, err = SpecCurrentPhase(path)
 	if err != nil || cur.Number != 0 {
 		t.Errorf("fully-complete spec must derive phase 0, got %+v err %v", cur, err)
-	}
-}
-
-// TestSpecJustCompletedPhase pins the completion frontier — the phase a
-// per-phase commit ships (found live: ${current_phase} at commit time was
-// one phase ahead).
-func TestSpecJustCompletedPhase(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "spec.md")
-	write := func(content string) {
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	write("### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n### Phase 3: C\n- [ ] c\n")
-	p, err := SpecJustCompletedPhase(path)
-	if err != nil || p.Number != 1 {
-		t.Errorf("mid-walk frontier = %+v, want Phase 1", p)
-	}
-
-	write("### Phase 1: A\n- [x] a\n### Phase 2: B\n- [x] b\n")
-	p, _ = SpecJustCompletedPhase(path)
-	if p.Number != 2 {
-		t.Errorf("all-complete frontier = %+v, want Phase 2 (the last)", p)
-	}
-
-	write("### Phase 1: A\n- [ ] a\n")
-	p, _ = SpecJustCompletedPhase(path)
-	if p.Number != 0 {
-		t.Errorf("nothing-complete frontier = %+v, want zero phase", p)
 	}
 }
 

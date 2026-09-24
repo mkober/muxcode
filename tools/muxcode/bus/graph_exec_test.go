@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -544,7 +545,11 @@ func TestRawRowWithoutHookSourceIsNotEvidence(t *testing.T) {
 // an evidencing row that is also asked for a token can produce two signals
 // that disagree, which deriveSendOutcome resolves by holding.
 func TestSeedVerdictToken(t *testing.T) {
-	unevidenced := []string{"edit", "comment", "review", "update-docs", "pr-read", "jira-write"}
+	got := seedVerdictToken("review", "do the thing")
+	if !strings.HasPrefix(got, "do the thing") || !strings.Contains(got, reviewCountsInstruction) || strings.Contains(got, verdictTokenInstruction) {
+		t.Errorf("a review is seeded with the counts line, not the completion token: %q", got)
+	}
+	unevidenced := []string{"edit", "comment", "update-docs", "pr-read", "jira-write"}
 	for _, action := range unevidenced {
 		got := seedVerdictToken(action, "do the thing")
 		if !strings.Contains(got, verdictTokenInstruction) {
@@ -1431,7 +1436,7 @@ func TestExecJoinQuorumBarrier(t *testing.T) {
 	// Second branch completes: quorum met, join runs, downstream fires.
 	// Its agent's token, no row — a review node's work leaves no command
 	// behind that could testify for it.
-	completeSendNodeSentinel(t, runTestSession, run.ID, "b2", "reviewed, no findings. EXIT=0")
+	completeSendNodeSentinel(t, runTestSession, run.ID, "b2", "Review: 0 must-fix, 0 should-fix, 0 nits — no findings. EXIT=0")
 	step(t, runTestSession, run.ID)
 	step(t, runTestSession, run.ID)
 	if s := nodeState(t, runTestSession, run.ID, "j"); s != GraphNodeDone {
@@ -2423,6 +2428,10 @@ func writeSpecFixture(t *testing.T, content string) string {
 	t.Helper()
 	repo := t.TempDir()
 	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	// An unborn HEAD: nothing of the spec is committed yet.
+	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
 	path := filepath.Join(repo, "spec.md")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -3097,19 +3106,20 @@ func TestExecPhaseProgressGuard(t *testing.T) {
 		t.Fatalf("first commit with its phase complete must ship despite fix-loop fires, got %q", s)
 	}
 
-	// Second commit (one prior success fire) with no second phase closed:
-	// decline toward the stuck gate, naming the counts.
+	// Phase 1 already committed at HEAD and Phase 2 open: a fresh run with no
+	// fires of its own must still decline, naming the counts (MUX-183).
 	run2 := createTestRun(t, guardGraph())
 	writeSpecFixture(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
-	seedFires(run2.ID, map[string]int{"commit->next:success": 1})
+	stubSpecAtHEAD(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
 	step(t, runTestSession, run2.ID)
 	st, err := ReadNodeStatus(runTestSession, run2.ID, "commit")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "1 commits shipped but only 1 phases complete") {
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "1 phases complete in the tree, 1 at HEAD") {
 		t.Errorf("no-progress commit must decline with counts, got %q %q", st.State, st.Output)
 	}
+	stubSpecAtHEAD(t, "")
 
 	// No active spec: decline, never commit blind.
 	run3 := createTestRun(t, guardGraph())

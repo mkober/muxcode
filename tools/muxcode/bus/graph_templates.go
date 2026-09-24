@@ -29,14 +29,14 @@ var builtinGraphJSON = map[string]string{
 
 	"spec-to-pr": `{
   "name": "spec-to-pr",
-  "description": "Walk the active spec phase by phase in one run: implement, build/test, review, update the spec, gated per-phase commit, loop; stuck phases gate-and-ask; final gate covers push and PR",
+  "description": "Walk the active spec phase by phase in one run: implement, build/test, review (findings route to fix), update the spec, gated per-phase commit, loop; stuck phases gate-and-ask; then close out the spec (Complete, completed/, backlog.md) before a final gate covers push and PR",
   "requires_spec": true,
   "start": "implement",
   "nodes": [
     {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement the active requirements spec's ${current_phase} (run: ${spec}). The phase is derived from the spec — if it is already complete, verify and report rather than re-implementing. Before reporting, if the phase has an integration script, run it through the run agent (muxcode send run run \"bash scripts/test-<feature>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and its task id"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
     {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
-    {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build, test, or review failure in ${current_phase} (run: ${spec}). Verify the fix the way the reviewer will: run the phase's integration script through the run agent (muxcode send run run \"bash scripts/test-<feature>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and its task id in your report"},
+    {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build, test, or review failure in ${current_phase} (run: ${spec}). A review failure means every must-fix and should-fix it lists — read its findings file when it names one. Verify the fix the way the reviewer will: run the phase's integration script through the run agent (muxcode send run run \"bash scripts/test-<feature>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and its task id in your report. THE FAILURE TO FIX: ${failure_report}"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch"},
     {"id": "update-spec", "type": "send", "role": "plan", "action": "verify-spec", "message": "Verify the implemented changes against the active requirements spec and check off completed criteria and steps of ${current_phase} — the commit gate follows, so the spec must reflect reality before it. The worker's report for this phase follows; if it names a handoff or decision file, read that file and record what it carries — a decision the user already made is not yours to re-open, and a phase whose work is a decision rather than code is verified from that record. WORKER REPORT: ${output:implement}"},
     {"id": "phase-check", "type": "condition", "conditions": {"spec_phase_committable": "commit"}},
@@ -44,8 +44,10 @@ var builtinGraphJSON = map[string]string{
     {"id": "commit", "type": "send", "role": "commit", "action": "commit", "guard": "phase-progress", "message": "Stage and commit the work and spec update for ${completed_phase} (no push)"},
     {"id": "loop-check", "type": "condition", "conditions": {"spec_phases_remaining": true}},
     {"id": "stuck-gate", "type": "wait_human", "message": "The current phase did not complete this iteration — its commit was not attempted; approve retrying the phase, or cancel the run to stop"},
-    {"id": "final-gate", "type": "wait_human", "message": "All phases complete — approve pushing the branch and creating the PR"},
-    {"id": "push-pr", "type": "send", "role": "commit", "action": "commit", "message": "Push the branch and create a PR for: ${spec}"}
+    {"id": "close-spec", "type": "send", "role": "plan", "action": "update-docs", "guard": "spec-complete", "message": "Every phase is complete — close out the active requirements doc ONLY if every acceptance criterion and phase step is checked: set its status Complete, move it to docs/requirements/completed/, update its row in docs/requirements/backlog/backlog.md and every cross-reference to the old path, clear the active spec, and report the new path. Any item still open = refuse and report the open items"},
+    {"id": "close-stuck-gate", "type": "wait_human", "message": "The spec close-out was refused — items are still open (see the close-spec report). Resolve them, then approve retrying the close-out, or cancel the run"},
+    {"id": "final-gate", "type": "wait_human", "message": "All phases complete and the spec closed out (status Complete, moved to completed/, backlog.md updated) — approve committing the close-out, pushing the branch and creating the PR"},
+    {"id": "push-pr", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the spec close-out (the move to docs/requirements/completed/ and the backlog.md update), then push the branch and create a PR for: ${spec}"}
   ],
   "edges": [
     {"from": "implement", "to": "build"},
@@ -64,7 +66,10 @@ var builtinGraphJSON = map[string]string{
     {"from": "commit", "to": "stuck-gate", "outcome": "failure"},
     {"from": "stuck-gate", "to": "implement", "max_iterations_from_spec": true},
     {"from": "loop-check", "to": "implement", "max_iterations_from_spec": true},
-    {"from": "loop-check", "to": "final-gate", "outcome": "failure"},
+    {"from": "loop-check", "to": "close-spec", "outcome": "failure"},
+    {"from": "close-spec", "to": "final-gate"},
+    {"from": "close-spec", "to": "close-stuck-gate", "outcome": "failure"},
+    {"from": "close-stuck-gate", "to": "close-spec", "max_iterations": 3},
     {"from": "final-gate", "to": "push-pr"}
   ]
 }`,

@@ -291,7 +291,18 @@ write_spec() {
 ### Phase 3: Third
 - [$3] step three
 EOF
+  git -C "$REPO" add docs/requirements/drafts/fixture-spec.md
+  git -C "$REPO" commit -q --allow-empty -m "fixture spec baseline"
   (cd "$REPO" && "$MUX" spec set docs/requirements/drafts/fixture-spec.md >/dev/null 2>&1)
+}
+
+# commit_spec — what the real commit agent does behind a phase gate: the
+# phase's spec update lands at HEAD. The phase predicate reads HEAD's copy
+# (MUX-183), so a fake commit that shipped nothing would leave every earlier
+# phase uncommitted and each lap would name Phase 1 again.
+commit_spec() {
+  git -C "$REPO" add docs/requirements/drafts/fixture-spec.md
+  git -C "$REPO" commit -q --allow-empty -m "ship $1"
 }
 
 # The fixture graph: the builtin's exact shape, send nodes for the spawns.
@@ -392,7 +403,12 @@ for phase in 1 2 3; do
   wait_node_state "$RID" phase-gate waiting || bad "phase $phase: gate never waited"
   # Per-commit approval is real: each pass must demand its own approval.
   approve_gate "$RID" phase-gate >/dev/null 2>&1 || bad "phase $phase: approve failed"
-  wait_and_answer commit g-commit || bad "phase $phase: commit never dispatched"
+  if wait_request commit g-commit; then
+    commit_spec "phase $phase"
+    answer_request commit "committed"
+  else
+    bad "phase $phase: commit never dispatched"
+  fi
   COMMITS+=("$CAPTURED")
 done
 

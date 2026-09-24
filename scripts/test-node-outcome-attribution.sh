@@ -231,14 +231,15 @@ EOF
 
 # The cite shape, mirroring commit-pr-review-loop's gate2 -> c -> push-fixes -> d.
 # `c` is role review rather than edit: an edit-role node cannot be answered in a
-# test, because Send drops a self-addressed reply (isLoopingSelfSend). What the
-# node needs is an action no command evidences, which `review` is.
+# test, because Send drops a self-addressed reply (isLoopingSelfSend). It keeps
+# the template's `edit` action, which no command evidences. Not `review`: a
+# review node is decided by its findings counts, never by an EXIT token.
 cat > "$WORK/cite.json" <<'EOF'
 {"name": "cite-shape", "start": "gate2",
  "nodes": [
    {"id": "gate2", "type": "wait_human",
     "message": "Approve addressing the feedback, committing and pushing it, and replying"},
-   {"id": "c", "type": "send", "role": "review", "action": "review",
+   {"id": "c", "type": "send", "role": "review", "action": "edit",
     "message": "Address the PR review comments"},
    {"id": "push", "type": "send", "role": "commit", "action": "commit",
     "message": "Stage and commit the review-feedback changes, push them, and report the commit sha"},
@@ -472,7 +473,7 @@ wait_dispatch review \
   || bad "c never dispatched behind an approved gate"
 
 peek review | grep -q 'verdict token' \
-  && ok "c's dispatch seeds the verdict token (review is an unevidenced action)" \
+  && ok "c's dispatch seeds the verdict token (edit is an unevidenced action)" \
   || bad "c's dispatch carries no seeded token — c would hold on every run"
 
 answer_as review "$(printf 'Addressed all three review comments in the working tree.\nEXIT=0')" >/dev/null

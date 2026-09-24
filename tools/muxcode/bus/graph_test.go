@@ -1008,14 +1008,28 @@ func TestReqCodePRMultiPhaseLoop(t *testing.T) {
 	if !templateEdge(tpl, "commit", "stuck-gate") {
 		t.Error("a declined commit must route to the stuck gate (gate-and-ask), not dead-end")
 	}
-	if !templateEdge(tpl, "loop-check", "final-gate") || !templateEdge(tpl, "final-gate", "push-pr") {
-		t.Error("termination must run through the final gate before push+PR")
+	if !templateEdge(tpl, "loop-check", "close-spec") || !templateEdge(tpl, "close-spec", "final-gate") || !templateEdge(tpl, "final-gate", "push-pr") {
+		t.Error("termination must close out the spec, then run through the final gate before push+PR")
 	}
-	// Negative control: nothing reaches push-pr except through final-gate.
+	if cs := nodes["close-spec"]; cs == nil || cs.Guard != GuardSpecComplete ||
+		!strings.Contains(cs.Message, "completed/") || !strings.Contains(cs.Message, "backlog.md") {
+		t.Errorf("close-spec must be spec-complete guarded and move the spec and update backlog.md, got %+v", cs)
+	}
+	if !templateEdge(tpl, "close-spec", "close-stuck-gate") || !templateEdge(tpl, "close-stuck-gate", "close-spec") {
+		t.Error("a refused close-out must gate-and-ask and retry, never reach the PR")
+	}
+	// Negative controls: nothing reaches push-pr except through final-gate,
+	// and nothing reaches final-gate except a successful close-out.
 	for _, e := range tpl.Edges {
 		if e.To == "push-pr" && e.From != "final-gate" {
 			t.Errorf("push-pr reachable around the final gate via %s", e.From)
 		}
+		if e.To == "final-gate" && (e.From != "close-spec" || edgeOutcome(e) != OutcomeSuccess) {
+			t.Errorf("final-gate reachable around a successful close-out via %s (%s)", e.From, edgeOutcome(e))
+		}
+	}
+	if f := nodes["fix"]; f == nil || !strings.Contains(f.Message, "${failure_report}") {
+		t.Error("fix must carry ${failure_report} so the worker is told what failed")
 	}
 	if v := tpl.Validate(); !v.OK() {
 		t.Errorf("multi-phase spec-to-pr must validate: %v", v.Errors)

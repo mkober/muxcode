@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -318,14 +320,14 @@ func StepGraphRun(session, runID string) error {
 // dispatch proceeds; a decline finishes the node as failed so the run
 // stops before any downstream mutation. Why guards are daemon-side: see
 // knownNodeGuards.
-func guardAllowsDispatch(session string, run *GraphRun, g *Graph, n *Node) bool {
+func guardAllowsDispatch(session string, run *GraphRun, n *Node) bool {
 	switch n.Guard {
 	case GuardSpecComplete:
 		return specCompleteGuardAllows(session, run, n)
 	case GuardPhaseComplete:
 		return phaseCompleteGuardAllows(session, run, n)
 	case GuardPhaseProgress:
-		return phaseProgressGuardAllows(session, run, g, n)
+		return phaseProgressGuardAllows(session, run, n)
 	}
 	return true
 }
@@ -430,18 +432,12 @@ func phaseCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
 }
 
 // phaseProgressGuardAllows blocks a per-phase commit that would ship no
-// newly-completed phase: completed phases must exceed the node's own
-// prior successful fires (each past commit shipped one phase; this one
-// must too). Counting the guard node's success edges — not loop
-// iterations — keeps fix-loop and stuck-gate retries out of the math: a
-// phase that needed two build fixes or a gate-approved retry still
-// commits once its phase closes (review catch 2026-08-28: an
-// iteration-max count inflated by the fix loop declined healthy phases).
-// The failure edge routes to the stuck gate, so a decline is the
-// gate-and-ask trigger, not a dead end (MUX-121 decision 4). No active
-// spec declines — never commit blind; transient repo-dir postpones.
-func phaseProgressGuardAllows(session string, run *GraphRun, g *Graph, n *Node) bool {
-	v := phaseCommitReady(session, run, g, n.ID)
+// newly-completed phase — see phaseCommitReady. The failure edge routes to
+// the stuck gate, so a decline is the gate-and-ask trigger, not a dead end
+// (MUX-121 decision 4). No active spec declines — never commit blind;
+// transient repo-dir postpones.
+func phaseProgressGuardAllows(session string, run *GraphRun, n *Node) bool {
+	v := phaseCommitReady(session)
 	switch {
 	case v.transient:
 		return false // node stays ready, retried next tick
@@ -458,7 +454,7 @@ func phaseProgressGuardAllows(session string, run *GraphRun, g *Graph, n *Node) 
 		return false
 	case !v.ready:
 		declineGuard(session, run, n, fmt.Sprintf(
-			"phase-progress guard declined: %d commits shipped but only %d phases complete — this commit's phase is still open", v.shipped, v.completed))
+			"phase-progress guard declined: %d phases complete in the tree, %d at HEAD — no uncommitted phase is complete, this commit's phase is still open", v.completed, v.atHead))
 		return false
 	}
 	return true
@@ -469,26 +465,29 @@ func phaseProgressGuardAllows(session string, run *GraphRun, g *Graph, n *Node) 
 // caller can postpone, fail or decline as its contract demands.
 type phaseCommitVerdict struct {
 	ready     bool
-	transient bool  // repo dir unresolvable this tick — nothing is known
-	refused   bool  // spec pointer resolves outside the repo
-	noSpec    bool  // no active spec set
-	readErr   error // spec present but unreadable
-	completed int   // phases with zero open items
-	shipped   int   // the commit node's prior successful fires
+	transient bool      // repo dir unresolvable this tick — nothing is known
+	refused   bool      // spec pointer resolves outside the repo
+	noSpec    bool      // no active spec set
+	readErr   error     // spec present but unreadable, or HEAD's copy unreadable
+	completed int       // phases complete in the working tree
+	atHead    int       // phases complete in HEAD's copy of the spec
+	phase     SpecPhase // lowest phase complete in the tree but not at HEAD
 }
 
-// phaseCommitReady is the one predicate behind both the phase-progress
-// guard and the spec_phase_committable condition: the active spec must
-// hold one more completed phase than the commit node has already shipped.
-// Sharing it is what keeps the pre-gate check and the guard from ever
-// disagreeing — the check exists so a human is not asked to approve a
-// commit the guard then declines (2026-09-09, run 1788966148: four
-// stuck-gates, each preceded by a phase-gate approval the guard withheld,
-// two prompts per incomplete lap). Shipped is the max over the node's
-// success edges, not the sum: every success edge fires together on one
-// completion, so a fan-out commit node would otherwise overstate its
-// history (PR #50 Copilot).
-func phaseCommitReady(session string, run *GraphRun, g *Graph, commitNodeID string) phaseCommitVerdict {
+// phaseCommitReady is the one predicate behind the phase-progress guard,
+// the spec_phase_committable condition and ${completed_phase}: a phase must
+// be complete in the working tree and not complete in HEAD's copy of the
+// spec. Sharing it is what keeps the pre-gate check, the guard and the gate's
+// wording from ever disagreeing (2026-09-09, run 1788966148: four
+// stuck-gates, each preceded by a phase-gate approval the guard withheld).
+//
+// It once compared the spec's completed-phase count with the commit node's
+// fires in this run, two counters in different frames: every fresh run,
+// later lap and retry re-credited phases already shipped, and the gate then
+// asked to commit "Phase 1" while the run worked on Phase 2 (MUX-183; seen
+// again 2026-09-24 on MUX-182 Phase 3). HEAD is the frame that means
+// "committed", so the answer needs no run state.
+func phaseCommitReady(session string) phaseCommitVerdict {
 	var v phaseCommitVerdict
 	path, ok, transient, refused := activeSpecFile(session)
 	v.transient, v.refused = transient, refused
@@ -499,19 +498,80 @@ func phaseCommitReady(session string, run *GraphRun, g *Graph, commitNodeID stri
 		v.noSpec = true
 		return v
 	}
-	completed, err := SpecCompletedPhaseCount(path)
+	tree, err := SpecPhases(path)
 	if err != nil {
 		v.readErr = err
 		return v
 	}
-	v.completed = completed
-	for _, e := range g.Edges {
-		if e.From == commitNodeID && edgeOutcome(e) == OutcomeSuccess {
-			v.shipped = max(v.shipped, run.EdgeFires[EdgeFireKey(e)])
+	headContent, err := specAtHEADFn(SessionRepoDir(session), path)
+	if err != nil {
+		v.readErr = fmt.Errorf("read HEAD's copy of the spec: %w", err)
+		return v
+	}
+	head := parseSpecPhases(headContent)
+	v.completed, v.atHead = completedPhaseCount(tree), completedPhaseCount(head)
+	if newly := newlyCompletedPhases(tree, head); len(newly) > 0 {
+		v.ready, v.phase = true, newly[0]
+	}
+	return v
+}
+
+// specAtHEADFn returns the spec's content as committed at HEAD. A test seam;
+// the default is specAtHEAD.
+var specAtHEADFn = specAtHEAD
+
+// specAtHEAD reads the spec as committed at HEAD. It returns "" only when
+// nothing of it is verifiably committed: HEAD is unborn, or HEAD holds the
+// file under neither its path nor its file name. Every other failure is an
+// error, so the gate holds rather than treat an unreadable baseline as an
+// empty one and credit every completed phase.
+//
+// A spec moves through backlog/, drafts/ and completed/ under a stable
+// id-bearing file name, so a path absent at HEAD is looked up by file name
+// first; without that, moving a committed spec re-credited its shipped
+// phases (review must-fix, 2026-09-24). More than one match is ambiguous and
+// an error.
+func specAtHEAD(repo, path string) (string, error) {
+	err := exec.Command("git", "-C", repo, "rev-parse", "--verify", "-q", "HEAD").Run()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve HEAD: %w", err)
+	}
+	rel, err := filepath.Rel(repo, path)
+	if err != nil {
+		return "", err
+	}
+	rel = filepath.ToSlash(rel)
+	listed, err := exec.Command("git", "-C", repo, "ls-tree", "-r", "--name-only", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("list HEAD: %w", err)
+	}
+	var byName []string
+	for _, f := range strings.Split(strings.TrimSpace(string(listed)), "\n") {
+		if f == rel {
+			byName = []string{f}
+			break
+		}
+		if pathpkg.Base(f) == pathpkg.Base(rel) {
+			byName = append(byName, f)
 		}
 	}
-	v.ready = completed >= v.shipped+1
-	return v
+	switch len(byName) {
+	case 0:
+		return "", nil
+	case 1:
+	default:
+		return "", fmt.Errorf("spec %s is absent at HEAD and its file name matches %d committed files: %s",
+			rel, len(byName), strings.Join(byName, ", "))
+	}
+	out, err := exec.Command("git", "-C", repo, "show", "HEAD:./"+byName[0]).Output()
+	if err != nil {
+		return "", fmt.Errorf("read HEAD:%s: %w", byName[0], err)
+	}
+	return string(out), nil
 }
 
 // declineGuard records a guard decline: lifecycle event plus the failed
@@ -573,6 +633,36 @@ func interpolateGraphMessage(session string, run *GraphRun, msg, item string) st
 		msg = expandNodeOutputRefs(session, run, msg)
 	}
 	return msg
+}
+
+// expandFailureReport replaces ${failure_report} in a node's message with
+// the report of the upstream node whose failure routed here: of the
+// predecessors on a failure edge that finished failed, the latest. A fix
+// node is entered from build, test or review, so ${output:<id>} of any one
+// of them is stale on a lap another failed — and without the report the
+// worker is told to fix a failure nobody described to it.
+func expandFailureReport(session string, run *GraphRun, g *Graph, n *Node) string {
+	if !strings.Contains(n.Message, "${failure_report}") {
+		return n.Message
+	}
+	report := "(no failing upstream node recorded)"
+	if statuses, err := ReadAllNodeStatuses(session, run.ID); err != nil {
+		report = "(failure report unavailable: " + err.Error() + ")"
+	} else {
+		var at int64 = -1
+		for _, e := range g.Edges {
+			if e.To != n.ID || edgeOutcome(e) != OutcomeFailure {
+				continue
+			}
+			st, ok := statuses[e.From]
+			if !ok || st.Outcome != OutcomeFailure || st.DoneAt < at {
+				continue
+			}
+			at = st.DoneAt
+			report = e.From + " reported: " + truncateAtRune(st.Output, maxInterpolatedOutput)
+		}
+	}
+	return strings.ReplaceAll(n.Message, "${failure_report}", report)
 }
 
 // nodeOutputRefRe matches ${output:<node-id>}. The id is anything up to
@@ -734,30 +824,73 @@ const verdictTokenInstruction = "Finish your reply with the verdict token on its
 // Actions an evidencing command exists for are left alone: their row is the
 // stronger signal, and asking for a token as well invites the conflict hold
 // deriveSendOutcome takes when the two disagree.
+//
+// A review node is seeded with reviewCountsInstruction instead: its verdict
+// is what it found, not whether it finished (see reviewFindingsOutcome).
 func seedVerdictToken(action, msg string) string {
+	if action == "review" {
+		return msg + "\n\n" + reviewCountsInstruction
+	}
 	if !actionsWithoutCommandEvidence[action] {
 		return msg
 	}
 	return msg + "\n\n" + verdictTokenInstruction
 }
 
-// resolveCompletedPhaseText expands ${completed_phase}: the completion
-// frontier the commit ships — see SpecJustCompletedPhase for why the
-// commit must not use ${current_phase}.
+// reviewCountsInstruction asks a review node for the line
+// reviewFindingsOutcome reads. The counts are written <n>, never digits, so a
+// reply that echoes its request (MUX-154) carries no verdict.
+const reviewCountsInstruction = "Start your reply with the findings count line: <n> must-fix, <n> should-fix, <n> nits. " +
+	"It is the only signal that records this node: any must-fix or should-fix routes the run to its fix step with your report, " +
+	"all zero lets it proceed, and a reply without the line holds the run for a human."
+
+// reviewCountsRe matches the findings summary line: an optional "Review…:"
+// lead-in, then all three counts, adjacent and in order, each at most four
+// digits.
+var reviewCountsRe = regexp.MustCompile(`^(?:Review\b[^:]{0,60}:\s*)?(\d{1,4}) must-fix, (\d{1,4}) should-fix, (\d{1,4}) nits?\b`)
+
+// reviewFindingsOutcome derives a review node's outcome from its findings
+// line: any must-fix or should-fix is a failure, all zero a success. Only the
+// reply's first nonblank line is read, and it must be the summary itself. A
+// count found anywhere else — a quoted earlier review, a fenced example, a
+// partial "0 must-fix so far", the instruction echoed back with its <n>
+// placeholders — is not this review's verdict, and the node holds.
+//
+// A review's EXIT token recorded that the review ran, so every spec-to-pr
+// review succeeded whatever it found and review -[failure]-> fix never
+// fired: must-fixes went to the spec update and the commit gate instead
+// (2026-09-23/24, MUX-182 Phases 2 and 3, six reviews in a row).
+func reviewFindingsOutcome(payload string) (string, bool) {
+	first := ""
+	for _, line := range strings.Split(payload, "\n") {
+		if first = strings.TrimSpace(line); first != "" {
+			break
+		}
+	}
+	m := reviewCountsRe.FindStringSubmatch(first)
+	if m == nil {
+		return "", false
+	}
+	must, _ := strconv.Atoi(m[1])
+	should, _ := strconv.Atoi(m[2])
+	if must+should > 0 {
+		return OutcomeFailure, true
+	}
+	return OutcomeSuccess, true
+}
+
+// resolveCompletedPhaseText expands ${completed_phase}: the phase the commit
+// ships, as phaseCommitReady chose it. ${current_phase} is one ahead by
+// commit time, because update-spec closed this phase before the commit.
 func resolveCompletedPhaseText(session string) string {
-	path, ok, transient, _ := activeSpecFile(session)
-	if transient {
+	v := phaseCommitReady(session)
+	switch {
+	case v.transient:
 		return "(completed phase unresolved — repo dir unavailable this tick)"
+	case !v.ready:
+		return "(no uncommitted completed phase)"
 	}
-	if !ok {
-		// refused folds in: a pointer outside the repo yields no phase text.
-		return "(no completed phase)"
-	}
-	p, err := SpecJustCompletedPhase(path)
-	if err != nil || p.Number == 0 {
-		return "(no completed phase)"
-	}
-	return p.Title
+	return v.phase.Title
 }
 
 // resolveCurrentPhaseText expands ${current_phase}: the active spec's
@@ -997,7 +1130,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 	if n == nil {
 		return
 	}
-	if !guardAllowsDispatch(session, run, g, n) {
+	if !guardAllowsDispatch(session, run, n) {
 		return
 	}
 	LogLifecycle(session, "info", "daemon", "graph-node-start",
@@ -1037,7 +1170,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 
 	case NodeSpawn:
 		msg := graphWorkerTask(g, run.ID, n.ID,
-			interpolateGraphMessage(session, run, n.Message, ""))
+			interpolateGraphMessage(session, run, expandFailureReport(session, run, g, n), ""))
 		spawnID, err := acquireSpawnWorker(session, run.ID, n.ID, n.Role, msg)
 		if err != nil {
 			finishNode(session, run, n, OutcomeFailure, "spawn failed: "+err.Error())
@@ -1789,6 +1922,9 @@ func sendResponseIsNonResult(session string, task Task) bool {
 // (Defect 4). Trusting the sentinel over the row instead would reopen the
 // forgery road the provenance work closed, and holding costs one approval
 // where the mirror cost eight.
+//
+// A review node is decided by its findings counts alone — see
+// reviewFindingsOutcome.
 func deriveSendOutcome(session string, n *Node, st *GraphNodeStatus, task Task) (string, string) {
 	output := ""
 	if resp, ok := FindMessageByID(session, task.ResponseID); ok {
@@ -1796,6 +1932,14 @@ func deriveSendOutcome(session string, n *Node, st *GraphNodeStatus, task Task) 
 		if resp.Action == "error" {
 			return OutcomeFailure, output
 		}
+	}
+	if n.Action == "review" {
+		if outcome, ok := reviewFindingsOutcome(output); ok {
+			return outcome, output
+		}
+		LogLifecycle(session, "warn", "daemon", "graph-review-uncounted",
+			fmt.Sprintf("%s: the review reply carries no findings count line — holding", n.ID))
+		return OutcomeUnknown, output
 	}
 
 	claimed, claimFound := parseExitSentinel(output)

@@ -367,8 +367,9 @@ func evalSpecPhasesRemaining(value any, ctx *ChainContext) ConditionResult {
 // evalSpecPhaseCommittable asks, before a commit gate, the question the
 // phase-progress guard will ask after it — through the same predicate
 // (phaseCommitReady), so the two never disagree. The value names the
-// guarded commit node whose prior fires count as shipped phases. It passes
-// when the active spec holds a newly completed phase; every other state —
+// guarded commit node, which validation holds to the phase-progress guard.
+// It passes when a phase is complete in the tree and not at HEAD; every
+// other state —
 // open phase, no spec, unreadable spec, a repo dir unresolvable this tick,
 // or no graph-run context — fails closed, which in spec-to-pr routes to
 // the stuck gate: wrongly asking a human costs one gate, wrongly passing
@@ -390,7 +391,7 @@ func evalSpecPhaseCommittable(value any, ctx *ChainContext) ConditionResult {
 		result.Detail = fmt.Sprintf("spec_phase_committable names no node %q", nodeID)
 		return result
 	}
-	v := phaseCommitReady(ctx.Session, ctx.GraphRun, ctx.Graph, nodeID)
+	v := phaseCommitReady(ctx.Session)
 	switch {
 	case v.transient:
 		result.Detail = "repo dir unavailable this tick — phase completeness unknown"
@@ -402,7 +403,7 @@ func evalSpecPhaseCommittable(value any, ctx *ChainContext) ConditionResult {
 		result.Detail = fmt.Sprintf("cannot read active spec: %v", v.readErr)
 	default:
 		result.Passed = v.ready
-		result.Detail = fmt.Sprintf("%d phases complete, %d shipped by %s", v.completed, v.shipped, nodeID)
+		result.Detail = fmt.Sprintf("%d phases complete in the tree, %d at HEAD — guarded commit %s", v.completed, v.atHead, nodeID)
 	}
 	return result
 }
