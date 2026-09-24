@@ -1600,7 +1600,7 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 | `ui --templates` | Template launcher — pick, validate, and start a run |
 | `ui --gates [--render-once]` | Pending `wait_human` approval queue across all in-flight runs |
 
-**`spec-to-pr` lap shape.** `implement` → `build` → `test` → `review` → `update-spec` →
+**`2-spec-to-pr` lap shape.** `implement` → `build` → `test` → `review` → `update-spec` →
 `phase-check` → `phase-gate` → `commit` → `loop-check`, with `fix` on any failure edge. `phase-check`
 (`{"spec_phase_committable": "commit"}`) reads the active spec through the same predicate as the
 commit's `phase-progress` guard: a phase still open after `update-spec` goes straight to `stuck-gate`
@@ -1622,10 +1622,10 @@ cancel).
 
 ```bash
 # Start a run from a built-in template, with intent interpolated into node messages
-muxcode graph run spec-to-pr "implement PBP1-4915"
+muxcode graph run 2-spec-to-pr "implement PBP1-4915"
 
 # Omit the intent and it is derived from the branch's spec
-muxcode graph run spec-to-pr
+muxcode graph run 2-spec-to-pr
 
 # Run a custom definition — --file must be the first argument after `run`,
 # since a bare first arg is read as a template name
@@ -1739,17 +1739,39 @@ actively maintained. A hand-copied set is a standing liability, and the command 
 question correctly already exists.
 
 Broadly they follow a story's life — derive a spec from the branch, implement it, review, commit and
-PR, deploy — plus a `build-test-review` subgraph the others compose. Every builtin is pinned by
-`TestBuiltinGraphTemplatesValidate`, so one violating the gate rule fails the suite rather than
-shipping.
+PR, address the PR's review comments, deploy — plus a `build-test-review` subgraph the others
+compose. Every builtin is pinned by `TestBuiltinGraphTemplatesValidate`, so one violating the gate
+rule fails the suite rather than shipping. Since 2026-09-24 the builtins carry a workflow-stage
+prefix — `1-story-to-spec`, `2-spec-to-pr`, `3-pr-review-fix`, `4-pr-local-review`, `5-docs-sync`,
+`6-deploy-verify`; `build-test-review` is a utility and stays unnumbered — so any alphabetical
+listing reads top-down as the workflow, and the launcher typeahead matches with or without the
+number (`2` and `spec` both land on `2-spec-to-pr`). A retired name (`spec-to-pr`, `story-to-spec`,
+`pr-local-review`, `update-spec-docs`, `deploy-verify`, the earlier `req-code-pr` and
+`story-lifecycle`, and `commit-pr-review-loop`, removed the same day) fails loudly naming its
+successor (`renamedGraphTemplates`, `bus/graph.go`) rather than resolving as an alias, which would
+keep the old name in circulation.
+
+**`3-pr-review-fix` shape** (2026-09-24). `find-pr` (commit, `pr-read`: `PR-CONFIRMED` or
+`NO-PR-FOUND`, a completed lookup is `EXIT=0` either way) → `pr-exists` → `read-comments` (every
+unresolved actionable review comment with id, `file:line` and the ask; `NO-ACTIONABLE-COMMENTS` ends
+the run) → `fix-gate` (`wait_human`) → `fix` (edit spawn, fed `${output:read-comments}` and
+`${failure_report}`; fixes or declines each comment with a reason, commits nothing) → `build` →
+`test` → `review` → `push-fixes` (commit and push, reports the sha) → `reply` (commit, `comment`: one
+reply per comment citing the sha or the decline reason, from `${output:push-fixes}` and
+`${output:fix}`). Build, test and review failures loop to `fix`, capped at 3. The fix worker carries
+earlier iterations forward in its report because `reply` reads only the latest. It replaces
+`commit-pr-review-loop`, whose arc it splits with `2-spec-to-pr`: that template opens the PR, this
+one answers its review. `4-pr-local-review` gained `review -[failure]-> restore` the same day, so a review with findings still restores the
+branch instead of leaving the checkout on the PR's head.
 
 **Validation is strict by design.** Undefined node refs, unreachable nodes, and uncapped
 cycles are errors, not warnings — a loop is only legal via an explicit `max_iterations` on a
 loop edge. A node that commits or writes to Jira/Confluence is rejected unless it sits
 downstream of a `wait_human` gate — for the `commit` role every action but `pr-read` counts as a
 commit (`nodeRequiresGate`, `bus/graph.go`). That one read-shaped action is what lets
-`commit-pr-review-loop` open with a read-only `pr-precheck` and skip its gated commit+PR nodes when
-an open PR already exists (2026-09-16); the design is under
+`3-pr-review-fix` open with two read-only nodes, `find-pr` and `read-comments`, and end without ever
+reaching a gate when there is no PR or no actionable comment — the pattern `commit-pr-review-loop`'s
+`pr-precheck` introduced on 2026-09-16, before that template was removed (2026-09-24); the design is under
 [Graph orchestration](architecture.md#graph-orchestration-control-plane).
 
 **Run state** lives under `/tmp/muxcode-bus-{session}/graphs/<run-id>/` — `run.json`,

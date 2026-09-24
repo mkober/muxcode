@@ -460,13 +460,13 @@ func TestRenderPromptFrame_InputWraps(t *testing.T) {
 // TestPromptSuggestAndTypeahead pins the two completion helpers: the
 // ghost completes the last word (templates before verbs, none after a
 // trailing space or full match), and TypeaheadIndex jumps to the first
-// case-insensitive prefix match.
+// case-insensitive prefix match, with or without the stage number.
 func TestPromptSuggestAndTypeahead(t *testing.T) {
-	tmpl := []string{"build-test-review", "spec-to-pr", "story-to-spec"}
-	if got := PromptSuggest("run sto", tmpl); got != "ry-to-spec" {
+	tmpl := []string{"1-story-to-spec", "2-spec-to-pr", "build-test-review"}
+	if got := PromptSuggest("run 1-sto", tmpl); got != "ry-to-spec" {
 		t.Errorf("suggest = %q", got)
 	}
-	if got := PromptSuggest("run spec-to-pr", tmpl); got != "" {
+	if got := PromptSuggest("run 2-spec-to-pr", tmpl); got != "" {
 		t.Errorf("a full match must suggest nothing, got %q", got)
 	}
 	if got := PromptSuggest("run ", tmpl); got != "" {
@@ -476,11 +476,10 @@ func TestPromptSuggestAndTypeahead(t *testing.T) {
 		t.Errorf("verbs complete too, got %q", got)
 	}
 
-	if i := TypeaheadIndex(tmpl, "story"); i != 2 {
-		t.Errorf("typeahead jump = %d, want 2", i)
-	}
-	if i := TypeaheadIndex(tmpl, "zzz"); i != -1 {
-		t.Errorf("no match must be -1, got %d", i)
+	for prefix, want := range map[string]int{"story": 0, "1": 0, "2": 1, "spec": 1, "2-spec": 1, "build": 2, "zzz": -1, "1-sp": -1} {
+		if i := TypeaheadIndex(tmpl, prefix); i != want {
+			t.Errorf("typeahead %q = %d, want %d", prefix, i, want)
+		}
 	}
 }
 

@@ -9,7 +9,7 @@ package bus
 // its current phase. ${intent} is the former name and still expands, so
 // templates saved against it keep working.
 //
-// pr-local-review deliberately keeps ${intent}: there the argument is a
+// 4-pr-local-review deliberately keeps ${intent}: there the argument is a
 // PR number, not a spec, and ${spec} would misname it.
 var builtinGraphJSON = map[string]string{
 	"build-test-review": `{
@@ -27,8 +27,8 @@ var builtinGraphJSON = map[string]string{
   ]
 }`,
 
-	"spec-to-pr": `{
-  "name": "spec-to-pr",
+	"2-spec-to-pr": `{
+  "name": "2-spec-to-pr",
   "description": "Walk the active spec phase by phase in one run: implement, build/test, review (findings route to fix), update the spec, gated per-phase commit, loop; stuck phases gate-and-ask; then close out the spec (Complete, completed/, backlog.md) before a final gate covers push and PR",
   "requires_spec": true,
   "start": "implement",
@@ -44,7 +44,7 @@ var builtinGraphJSON = map[string]string{
     {"id": "commit", "type": "send", "role": "commit", "action": "commit", "guard": "phase-progress", "message": "Stage and commit the work and spec update for ${completed_phase} (no push)"},
     {"id": "loop-check", "type": "condition", "conditions": {"spec_phases_remaining": true}},
     {"id": "stuck-gate", "type": "wait_human", "message": "The current phase did not complete this iteration — its commit was not attempted; approve retrying the phase, or cancel the run to stop"},
-    {"id": "close-spec", "type": "send", "role": "plan", "action": "update-docs", "guard": "spec-complete", "message": "Every phase is complete — close out the active requirements doc ONLY if every acceptance criterion and phase step is checked: set its status Complete, move it to docs/requirements/completed/, update its row in docs/requirements/backlog/backlog.md and every cross-reference to the old path, clear the active spec, and report the new path. Any item still open = refuse and report the open items"},
+    {"id": "close-spec", "type": "send", "role": "plan", "action": "update-docs", "guard": "spec-complete", "message": "Every phase is complete — close out the active requirements doc ONLY if every acceptance criterion and phase step is checked: set its status Complete, move it to docs/requirements/completed/ (a plain file move, not git mv — push-pr stages it), update its row in docs/requirements/backlog/backlog.md and every cross-reference to the old path, clear the active spec, and report the new path. Any item still open = refuse and report the open items"},
     {"id": "close-stuck-gate", "type": "wait_human", "message": "The spec close-out was refused — items are still open (see the close-spec report). Resolve them, then approve retrying the close-out, or cancel the run"},
     {"id": "final-gate", "type": "wait_human", "message": "All phases complete and the spec closed out (status Complete, moved to completed/, backlog.md updated) — approve committing the close-out, pushing the branch and creating the PR"},
     {"id": "push-pr", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the spec close-out (the move to docs/requirements/completed/ and the backlog.md update), then push the branch and create a PR for: ${spec}"}
@@ -74,47 +74,8 @@ var builtinGraphJSON = map[string]string{
   ]
 }`,
 
-	"commit-pr-review-loop": `{
-  "name": "commit-pr-review-loop",
-  "description": "Skip to the review loop when a PR already exists, else gated commit+PR; watch review feedback, gated fix loop with comment replies, then spec close-out",
-  "start": "pr-precheck",
-  "nodes": [
-    {"id": "pr-precheck", "type": "send", "role": "commit", "action": "pr-read", "message": "Report whether an open PR already exists for the current branch WITHOUT creating or changing anything. Your reply MUST contain the literal token PR-CONFIRMED followed by its URL if one exists, or the literal token NO-PR-FOUND if none does — no other phrasing for that verdict. This node asks a question, so a completed lookup is EXIT=0 EITHER WAY: finding no PR is a successful answer, not a failure. Reserve EXIT=1 for a lookup you could not complete at all"},
-    {"id": "pr-exists", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
-    {"id": "gate1", "type": "wait_human", "message": "No PR exists yet — approve staging, commit, push, and PR creation"},
-    {"id": "a", "type": "send", "role": "commit", "action": "commit", "message": "Stage all unstaged files, commit, push, and create a PR"},
-    {"id": "verify-pr", "type": "send", "role": "commit", "action": "pr-read", "message": "Report whether an open PR now exists for the current branch. Your reply MUST contain the literal token PR-CONFIRMED followed by its URL if one exists, or the literal token NO-PR-FOUND if none does — no other phrasing for that verdict. This node asks a question, so a completed lookup is EXIT=0 EITHER WAY: reporting that no PR was created is a successful answer, and the downstream condition acts on it. Reserve EXIT=1 for a lookup you could not complete at all"},
-    {"id": "pr-check", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
-    {"id": "b", "type": "send", "role": "commit", "action": "pr-read", "message": "Watch for PR comments and report the review decision and any comments"},
-    {"id": "gate2", "type": "wait_human", "message": "Approve addressing the review feedback, then committing and pushing those fixes to the PR branch, and replying to the comments"},
-    {"id": "c", "type": "send", "role": "edit", "action": "edit", "message": "Address the PR review comments"},
-    {"id": "push-fixes", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the review-feedback changes made upstream, push them to the PR branch, and report the commit sha (nothing changed = reply nothing to do)"},
-    {"id": "d", "type": "send", "role": "commit", "action": "comment", "message": "Reply to the PR comments, citing the commit sha for each fix that was pushed. The push node reported: ${output:push-fixes}"},
-    {"id": "close-gate", "type": "wait_human", "message": "Approve the spec close-out: status Complete, move to completed/, then its commit and push (the guard declines while any item is open)"},
-    {"id": "close-spec", "type": "send", "role": "plan", "action": "update-docs", "guard": "spec-complete", "message": "Close out the active requirements doc ONLY if every acceptance criterion and phase step is checked complete: set status Complete, move it to docs/requirements/completed/, clear the active spec, report the new path. Any item still open = refuse and report the open count (no active spec = reply nothing to do)"},
-    {"id": "commit-spec", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the completed requirements doc move and push it to the PR branch (nothing moved = reply nothing to do)"}
-  ],
-  "edges": [
-    {"from": "pr-precheck", "to": "pr-exists"},
-    {"from": "pr-exists", "to": "b"},
-    {"from": "pr-exists", "to": "gate1", "outcome": "failure"},
-    {"from": "gate1", "to": "a"},
-    {"from": "a", "to": "verify-pr"},
-    {"from": "verify-pr", "to": "pr-check"},
-    {"from": "pr-check", "to": "b"},
-    {"from": "pr-check", "to": "a", "outcome": "failure", "max_iterations": 3},
-    {"from": "b", "to": "gate2"},
-    {"from": "gate2", "to": "c"},
-    {"from": "c", "to": "push-fixes"},
-    {"from": "push-fixes", "to": "d"},
-    {"from": "d", "to": "close-gate"},
-    {"from": "close-gate", "to": "close-spec"},
-    {"from": "close-spec", "to": "commit-spec"}
-  ]
-}`,
-
-	"story-to-spec": `{
-  "name": "story-to-spec",
+	"1-story-to-spec": `{
+  "name": "1-story-to-spec",
   "description": "Derive the Jira/GitHub id from the branch, read its requirements, draft a requirements doc and set it active, then human-gated tracker update",
   "start": "derive",
   "nodes": [
@@ -136,8 +97,8 @@ var builtinGraphJSON = map[string]string{
   ]
 }`,
 
-	"pr-local-review": `{
-  "name": "pr-local-review",
+	"4-pr-local-review": `{
+  "name": "4-pr-local-review",
   "description": "Prompt for a PR id, gated checkout of main+rebase and the PR branch, local diff, review with an issue list, then branch restore",
   "start": "gate",
   "nodes": [
@@ -151,12 +112,47 @@ var builtinGraphJSON = map[string]string{
     {"from": "gate", "to": "prepare"},
     {"from": "prepare", "to": "diff"},
     {"from": "diff", "to": "review"},
-    {"from": "review", "to": "restore"}
+    {"from": "review", "to": "restore"},
+    {"from": "review", "to": "restore", "outcome": "failure"}
   ]
 }`,
 
-	"update-spec-docs": `{
-  "name": "update-spec-docs",
+	"3-pr-review-fix": `{
+  "name": "3-pr-review-fix",
+  "description": "Find the current branch's PR, read its review comments, gated fix of each (build/test/review loop), push the fixes to the PR and reply to every comment",
+  "start": "find-pr",
+  "nodes": [
+    {"id": "find-pr", "type": "send", "role": "commit", "action": "pr-read", "message": "Report whether an open PR exists for the current branch WITHOUT creating or changing anything. Your reply MUST contain the literal token PR-CONFIRMED followed by its number and URL if one exists, or the literal token NO-PR-FOUND if none does. This node asks a question, so a completed lookup is EXIT=0 EITHER WAY; reserve EXIT=1 for a lookup you could not complete at all"},
+    {"id": "pr-exists", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
+    {"id": "read-comments", "type": "send", "role": "commit", "action": "pr-read", "message": "Read every review comment on this branch's PR — review summaries, inline comments with file:line, Copilot and human — and list each unresolved, actionable one with its comment id, file:line and what it asks for. If there are none, your reply MUST contain the literal token NO-ACTIONABLE-COMMENTS; otherwise it must not. Change nothing. A completed read is EXIT=0 either way"},
+    {"id": "no-comments", "type": "condition", "conditions": {"output_contains": "NO-ACTIONABLE-COMMENTS"}},
+    {"id": "fix-gate", "type": "wait_human", "message": "The PR has review comments to address — approve fixing them, committing and pushing the fixes to the PR branch, and replying to each comment"},
+    {"id": "fix", "type": "spawn", "role": "edit", "message": "Address the review comments on this branch's PR, listed by the PR read: ${output:read-comments}. For each comment either fix it in the code or decline it with a reason (wrong, or out of scope). If a build, test or review failed after your last change, fix that too — THE FAILURE TO FIX: ${failure_report}. Do not commit, push or reply to comments: the graph does those after you report. Your report MUST list every comment id with what you changed (file:line) or why you declined it — carry earlier iterations forward, since the reply step reads only your latest report"},
+    {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
+    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
+    {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch — the fixes made for the PR's review comments"},
+    {"id": "push-fixes", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the PR review-feedback changes, push them to the PR branch, and report the commit sha (nothing changed = reply nothing to do)"},
+    {"id": "reply", "type": "send", "role": "commit", "action": "comment", "message": "Reply to each PR review comment: cite the commit sha for every fix that was pushed, or give the reason for every comment declined. The push node reported: ${output:push-fixes}. The fix worker reported, per comment: ${output:fix}"}
+  ],
+  "edges": [
+    {"from": "find-pr", "to": "pr-exists"},
+    {"from": "pr-exists", "to": "read-comments"},
+    {"from": "read-comments", "to": "no-comments"},
+    {"from": "no-comments", "to": "fix-gate", "outcome": "failure"},
+    {"from": "fix-gate", "to": "fix"},
+    {"from": "fix", "to": "build", "max_iterations": 3},
+    {"from": "build", "to": "test"},
+    {"from": "build", "to": "fix", "outcome": "failure"},
+    {"from": "test", "to": "review"},
+    {"from": "test", "to": "fix", "outcome": "failure"},
+    {"from": "review", "to": "push-fixes"},
+    {"from": "review", "to": "fix", "outcome": "failure"},
+    {"from": "push-fixes", "to": "reply"}
+  ]
+}`,
+
+	"5-docs-sync": `{
+  "name": "5-docs-sync",
   "description": "Verify requirements-spec alignment, update spec/architecture docs and README, then human-gated commit",
   "start": "spec",
   "nodes": [
@@ -172,8 +168,8 @@ var builtinGraphJSON = map[string]string{
   ]
 }`,
 
-	"deploy-verify": `{
-  "name": "deploy-verify",
+	"6-deploy-verify": `{
+  "name": "6-deploy-verify",
   "description": "Deploy, run a verification invocation, watch logs",
   "start": "deploy",
   "nodes": [

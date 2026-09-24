@@ -737,9 +737,19 @@ func ResolveGraphTemplate(name string) (*Graph, string, error) {
 // A retired name fails loudly naming its successor rather than resolving
 // as an alias — the rename exists so the name says what the template
 // does, and an alias would keep the old one in circulation.
+//
+// Builtins carry a workflow-stage prefix (1-story-to-spec … 6-deploy-verify)
+// so every alphabetical listing reads top-down as the dev workflow;
+// build-test-review is a utility step and stays unnumbered.
 var renamedGraphTemplates = map[string]string{
-	"req-code-pr":     "spec-to-pr",
-	"story-lifecycle": "spec-to-pr", // removed — spec-to-pr covers the same arc
+	"story-to-spec":         "1-story-to-spec",
+	"spec-to-pr":            "2-spec-to-pr",
+	"req-code-pr":           "2-spec-to-pr",
+	"story-lifecycle":       "2-spec-to-pr",    // removed — 2-spec-to-pr covers the same arc
+	"commit-pr-review-loop": "3-pr-review-fix", // removed — 2-spec-to-pr opens the PR, 3-pr-review-fix answers its review
+	"pr-local-review":       "4-pr-local-review",
+	"update-spec-docs":      "5-docs-sync",
+	"deploy-verify":         "6-deploy-verify",
 }
 
 // ListGraphTemplates enumerates all resolvable templates across the three

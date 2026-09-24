@@ -88,7 +88,7 @@ An item **deferred to another backlog spec** is also checked off, annotated with
 - [x] Actor provenance at write time — deferred to [MUX-185](../backlog/MUX-185-history-row-provenance-declared-not-proven.md)
 ```
 
-An open box holds `SpecCurrentPhase` on its phase and blocks `spec-to-pr` on work this spec has decided it will never do. The annotation is what keeps the tick honest — it reads as handed off, not done. Partial or unverified work still stays unchecked.
+An open box holds `SpecCurrentPhase` on its phase and blocks `2-spec-to-pr` on work this spec has decided it will never do. The annotation is what keeps the tick honest — it reads as handed off, not done. Partial or unverified work still stays unchecked.
 
 ### Update phase status tables
 

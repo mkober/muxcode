@@ -621,21 +621,20 @@ func dispatchTo(t *testing.T, role, action string) (Message, bool) {
 	return Message{}, false
 }
 
-// TestCommitPrReviewLoopPrecheckRouting drives the real template through the
-// executor. The structural test asserts which edges exist; this asserts where
-// a run actually goes, which is where the defect lived.
+// TestPRReviewFixFindPRRouting drives the real template through the executor.
+// The structural test asserts which edges exist; this asserts where a run
+// actually goes.
 //
 // git-manager.md tells the commit role to end a reply EXIT=1 when the
 // requested state does not hold, naming PR existence as the example. Read that
-// way a precheck answering NO-PR-FOUND fails its own node, and since only a
-// success edge leaves it, the run dies before the condition that routes "no
-// PR" to the commit gate ever evaluates — the template's main path,
-// unreachable, with the structural test still green. The node messages
-// override that default; these cases pin the routing it produces.
+// way a lookup answering NO-PR-FOUND fails its own node before the condition
+// ever evaluates. The node message overrides that default; these cases pin
+// the routing it produces: an existing PR reaches the comment read, no PR is
+// decided by the condition and ends the run there.
 //
-// The lookup-failure case is the negative control: EXIT=1 must still fail,
-// or "always succeed" would satisfy the two cases above.
-func TestCommitPrReviewLoopPrecheckRouting(t *testing.T) {
+// The lookup-failure case is the negative control: EXIT=1 must fail before the
+// condition, or "always succeed" would satisfy the no-PR case too.
+func TestPRReviewFixFindPRRouting(t *testing.T) {
 	cases := []struct {
 		name      string
 		reply     string
@@ -644,38 +643,38 @@ func TestCommitPrReviewLoopPrecheckRouting(t *testing.T) {
 		wantRun   string
 	}{
 		{
-			name:      "an existing PR skips the commit gate",
-			reply:     "PR-CONFIRMED https://example.test/pull/99 EXIT=0",
-			reached:   "b",
-			unreached: "gate1",
-			wantRun:   GraphRunRunning,
+			name:    "an existing PR reaches the comment read",
+			reply:   "PR-CONFIRMED #99 https://example.test/pull/99 EXIT=0",
+			reached: "read-comments",
+			wantRun: GraphRunRunning,
 		},
 		{
-			name:      "no PR routes to the commit gate",
+			name:      "no PR is decided by the condition and ends the run",
 			reply:     "NO-PR-FOUND EXIT=0",
-			reached:   "gate1",
-			unreached: "b",
-			wantRun:   GraphRunRunning,
+			reached:   "pr-exists",
+			unreached: "read-comments",
+			wantRun:   GraphRunFailed,
 		},
 		{
-			name:    "an incomplete lookup picks no branch",
-			reply:   "gh is unavailable, could not determine EXIT=1",
-			wantRun: GraphRunFailed,
+			name:      "an incomplete lookup never reaches the condition",
+			reply:     "gh is unavailable, could not determine EXIT=1",
+			unreached: "pr-exists",
+			wantRun:   GraphRunFailed,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+			g, err := ParseGraph([]byte(builtinGraphJSON["3-pr-review-fix"]))
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
 			run := createTestRun(t, g)
 
 			step(t, runTestSession, run.ID)
-			if s := nodeState(t, runTestSession, run.ID, "pr-precheck"); s != GraphNodeRunning {
-				t.Fatalf("pr-precheck state %q, want running — the run does not start at the precheck", s)
+			if s := nodeState(t, runTestSession, run.ID, "find-pr"); s != GraphNodeRunning {
+				t.Fatalf("find-pr state %q, want running — the run does not start at the lookup", s)
 			}
-			completeSendNodeWithReply(t, runTestSession, run.ID, "pr-precheck", "commit", tc.reply)
+			completeSendNodeWithReply(t, runTestSession, run.ID, "find-pr", "commit", tc.reply)
 			for i := 0; i < 3; i++ {
 				step(t, runTestSession, run.ID)
 			}
@@ -684,8 +683,10 @@ func TestCommitPrReviewLoopPrecheckRouting(t *testing.T) {
 				if s := nodeState(t, runTestSession, run.ID, tc.reached); s == GraphNodePending {
 					t.Errorf("%s still pending — the run never reached it", tc.reached)
 				}
-				if s := nodeState(t, runTestSession, run.ID, tc.unreached); s != GraphNodePending {
-					t.Errorf("%s state = %q, want pending — that branch should not have been taken", tc.unreached, s)
+			}
+			if tc.unreached != "" {
+				if s := nodeState(t, runTestSession, run.ID, tc.unreached); s != GraphNodePending && s != GraphNodeSkipped {
+					t.Errorf("%s state = %q, want untouched — that branch should not have been taken", tc.unreached, s)
 				}
 			}
 			got, err := ReadGraphRun(runTestSession, run.ID)
@@ -3012,17 +3013,17 @@ func TestSpawnHarvestPassesReportDownstream(t *testing.T) {
 // run that failed on 2026-09-14 failed precisely because plan's dispatch
 // carried nothing from the worker.
 func TestSpecToPRPassesWorkerReportToPlan(t *testing.T) {
-	data, ok := builtinGraphJSON["spec-to-pr"]
+	data, ok := builtinGraphJSON["2-spec-to-pr"]
 	if !ok {
-		t.Fatal("builtin spec-to-pr template is missing")
+		t.Fatal("builtin 2-spec-to-pr template is missing")
 	}
 	g, err := ParseGraph([]byte(data))
 	if err != nil {
-		t.Fatalf("parse spec-to-pr: %v", err)
+		t.Fatalf("parse 2-spec-to-pr: %v", err)
 	}
 	updateSpec := g.node("update-spec")
 	if updateSpec == nil {
-		t.Fatal("spec-to-pr has no update-spec node")
+		t.Fatal("2-spec-to-pr has no update-spec node")
 	}
 	if !strings.Contains(updateSpec.Message, "${output:implement}") {
 		t.Errorf("update-spec must carry the implement worker's report; message = %q", updateSpec.Message)

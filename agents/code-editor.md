@@ -249,14 +249,18 @@ As the edit agent, you are the primary orchestrator. After making code changes:
 
 When a multi-step flow matches a graph template, run the graph instead of driving the sequence yourself with individual sends. The daemon executes the DAG deterministically — durable per-run state that survives restarts, `wait_human` gates, capped fix loops, dispatch guards (e.g. `spec-complete`), and a single completion wake instead of a wake per step:
 
-| Flow | Template |
-|------|----------|
-| Build → test → review pipeline | `muxcode graph run build-test-review` |
-| Commit + PR + review-feedback loop + spec close-out | `muxcode graph run commit-pr-review-loop` |
-| Implement against the active spec through gated commit/PR | `muxcode graph run spec-to-pr` |
-| Review a PR locally with branch restore | `muxcode graph run pr-local-review "<pr-number>"` |
-| Spec/docs sync + gated commit | `muxcode graph run update-spec-docs` |
-| All templates | `muxcode graph list` |
+Builtins are numbered by workflow stage, top-down:
+
+| Stage | Flow | Template |
+|-------|------|----------|
+| 1 | Story → requirements spec, gated tracker update | `muxcode graph run 1-story-to-spec` |
+| 2 | Implement the active spec phase by phase → gated commits → spec close-out → PR | `muxcode graph run 2-spec-to-pr` |
+| 3 | Fix the current branch's PR review comments, push, reply to each | `muxcode graph run 3-pr-review-fix` |
+| 4 | Review someone else's PR locally with branch restore | `muxcode graph run 4-pr-local-review "<pr-number>"` |
+| 5 | Spec/docs sync + gated commit | `muxcode graph run 5-docs-sync` |
+| 6 | Deploy, verify, watch logs | `muxcode graph run 6-deploy-verify` |
+| — | Build → test → review pipeline | `muxcode graph run build-test-review` |
+| — | All templates | `muxcode graph list` |
 
 Hand-delegate (`muxcode send ...`) only when the work is a single delegation or matches no template. A graph's gates also replace the ask-then-relay dance for mutations: the user approves the gate directly (`muxcode graph approve <run> <gate>`), so consent reaches the mutation without extra round trips — and the gate text states exactly what the approval releases.
 

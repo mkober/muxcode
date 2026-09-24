@@ -12,8 +12,9 @@
 # dispatch — "a git command ran" standing in for "the task was done".
 #
 # Covers:
-#   1. commit-pr-review-loop's template shape: a commit node between `c` and
-#      `d`, gated, with `d` told to cite the sha (Phase 4's push-fixes).
+#   1. 3-pr-review-fix's template shape: a commit node between the reviewed
+#      fixes and `reply`, gated, with `reply` told to cite the sha (the shape
+#      Phase 4 gave commit-pr-review-loop, which 3-pr-review-fix replaced).
 #   2. The 2026-09-03 shape live: an agent that declines AFTER a successful
 #      read-only command does not route as success — it holds, logs
 #      graph-outcome-untied and graph-unverified-hold, and its successor
@@ -254,13 +255,13 @@ EOF
 # --- 1. The template shape Phase 4 fixed -----------------------------------
 # Run the builtin BEFORE the daemon exists: run state is created, nothing
 # dispatches, and `graph status --json` hands back the resolved template.
-"$MUX" graph validate commit-pr-review-loop >/dev/null 2>&1 \
-  && ok "commit-pr-review-loop validates" \
-  || bad "commit-pr-review-loop failed validation"
+"$MUX" graph validate 3-pr-review-fix >/dev/null 2>&1 \
+  && ok "3-pr-review-fix validates" \
+  || bad "3-pr-review-fix failed validation"
 
-TPL_RID="$(start_run commit-pr-review-loop)"
+TPL_RID="$(start_run 3-pr-review-fix)"
 if [ -z "$TPL_RID" ]; then
-  bad "could not start commit-pr-review-loop to read its resolved shape"
+  bad "could not start 3-pr-review-fix to read its resolved shape"
 else
   [ "$(gq "$TPL_RID" def-field push-fixes role)" = "commit" ] \
     && ok "push-fixes is a commit-role node" \
@@ -270,21 +271,21 @@ else
     && ok "push-fixes carries the commit action (it is the node that mints the sha)" \
     || bad "push-fixes action is $(gq "$TPL_RID" def-field push-fixes action), want commit"
 
-  gq "$TPL_RID" has-edge c push-fixes \
-    && ok "edge c -> push-fixes (the commit sits between c and d)" \
-    || bad "no c -> push-fixes edge — the template gap is back"
+  gq "$TPL_RID" has-edge review push-fixes \
+    && ok "edge review -> push-fixes (the commit sits between the reviewed fixes and the reply)" \
+    || bad "no review -> push-fixes edge — the template gap is back"
 
-  gq "$TPL_RID" has-edge push-fixes d \
-    && ok "edge push-fixes -> d" \
-    || bad "no push-fixes -> d edge"
+  gq "$TPL_RID" has-edge push-fixes reply \
+    && ok "edge push-fixes -> reply" \
+    || bad "no push-fixes -> reply edge"
 
-  [ "$(gq "$TPL_RID" def-field gate2 type)" = "wait_human" ] \
-    && ok "push-fixes sits in gate2's territory (gate2 is the wait_human above c)" \
-    || bad "gate2 is $(gq "$TPL_RID" def-field gate2 type), want wait_human"
+  [ "$(gq "$TPL_RID" def-field fix-gate type)" = "wait_human" ] \
+    && ok "push-fixes sits in fix-gate's territory (fix-gate is the wait_human above the fix loop)" \
+    || bad "fix-gate is $(gq "$TPL_RID" def-field fix-gate type), want wait_human"
 
-  gq "$TPL_RID" def-field d message | grep -qi 'sha' \
-    && ok "d is told to cite the commit sha" \
-    || bad "d's message does not mention the sha it is supposed to cite"
+  gq "$TPL_RID" def-field reply message | grep -qi 'sha' \
+    && ok "reply is told to cite the commit sha" \
+    || bad "reply's message does not mention the sha it is supposed to cite"
 
   "$MUX" graph cancel "$TPL_RID" >/dev/null 2>&1
 fi

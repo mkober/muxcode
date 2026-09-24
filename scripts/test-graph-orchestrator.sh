@@ -88,14 +88,16 @@ tmux new-session -d -s "$BUS_SESSION" -n edit -x 120 -y 30
 # answer_role <role> — consume the role's inbox like a real agent and reply
 # to the newest request, sending to the target the "To reply" instruction
 # names (exactly what a real agent would do). Returns 1 if no request was
-# found or the reply send failed.
+# found or the reply send failed. The EXIT=0 sentinel is the verdict: these
+# fake agents write no history row, so a bare "done" is unattributable and
+# the node holds (MUX-148). A review node needs its counts line instead.
 answer_role() {
   local role="$1" out rid target
   out="$(AGENT_ROLE="$role" "$MUX" inbox 2>/dev/null || true)"
   rid="$(printf '%s' "$out" | grep -o -- '--reply-to [A-Za-z0-9-]*' | tail -1 | awk '{print $2}')"
   target="$(printf '%s' "$out" | grep -o 'muxcode send [a-z-]*' | tail -1 | awk '{print $3}')"
   [ -z "$rid" ] && return 1
-  AGENT_ROLE="$role" "$MUX" send "${target:-edit}" response "done" --type response --reply-to "$rid" >/dev/null 2>&1
+  AGENT_ROLE="$role" "$MUX" send "${target:-edit}" response "done EXIT=0" --type response --reply-to "$rid" >/dev/null 2>&1
 }
 
 # answer_role_with <role> <text> — answer like answer_role but control the
@@ -107,7 +109,7 @@ answer_role_with() {
   rid="$(printf '%s' "$out" | grep -o -- '--reply-to [A-Za-z0-9-]*' | tail -1 | awk '{print $2}')"
   target="$(printf '%s' "$out" | grep -o 'muxcode send [a-z-]*' | tail -1 | awk '{print $3}')"
   [ -z "$rid" ] && return 1
-  AGENT_ROLE="$role" "$MUX" send "${target:-edit}" response "$text" --type response --reply-to "$rid" >/dev/null 2>&1
+  AGENT_ROLE="$role" "$MUX" send "${target:-edit}" response "$text EXIT=0" --type response --reply-to "$rid" >/dev/null 2>&1
 }
 
 # wait_for_request <role> — poll until the role's inbox holds a request.
@@ -192,7 +194,7 @@ else
 fi
 
 builtin_fail=0
-for tpl in build-test-review spec-to-pr story-to-spec commit-pr-review-loop pr-local-review update-spec-docs deploy-verify; do
+for tpl in 1-story-to-spec 2-spec-to-pr 3-pr-review-fix 4-pr-local-review 5-docs-sync 6-deploy-verify build-test-review; do
   "$MUX" graph validate "$tpl" >/dev/null 2>&1 || { builtin_fail=1; bad "builtin template $tpl failed validation"; }
 done
 [ "$builtin_fail" -eq 0 ] && ok "all 7 builtin templates validate"
@@ -313,7 +315,7 @@ fi
 zst="$(node_state "$RID2" z)"
 [ "$zst" = "pending" ] && ok "post-join node z held back" || bad "z state $zst, want pending"
 
-answer_role review || bad "could not answer w2"
+answer_role_with review "Review: 0 must-fix, 0 should-fix, 0 nits" || bad "could not answer w2"
 if wait_for_request deploy; then
   ok "join released after both branches — z dispatched"
   answer_role deploy

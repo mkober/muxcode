@@ -371,7 +371,7 @@ func evalSpecPhasesRemaining(value any, ctx *ChainContext) ConditionResult {
 // It passes when a phase is complete in the tree and not at HEAD; every
 // other state —
 // open phase, no spec, unreadable spec, a repo dir unresolvable this tick,
-// or no graph-run context — fails closed, which in spec-to-pr routes to
+// or no graph-run context — fails closed, which in 2-spec-to-pr routes to
 // the stuck gate: wrongly asking a human costs one gate, wrongly passing
 // asks them to approve a commit the guard then declines (the 2026-09-09
 // double-prompt this condition exists to remove).

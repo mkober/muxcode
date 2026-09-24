@@ -1185,15 +1185,27 @@ func RenderTemplateListFrameH(infos []bus.GraphTemplateInfo, width, height, sel 
 }
 
 // TypeaheadIndex returns the first index whose name starts with the
-// case-insensitive prefix, or -1.
+// case-insensitive prefix, or -1. A builtin's workflow-stage number is
+// optional to type: "2" and "spec" both land on 2-spec-to-pr.
 func TypeaheadIndex(names []string, prefix string) int {
 	p := strings.ToLower(prefix)
 	for i, n := range names {
-		if strings.HasPrefix(strings.ToLower(n), p) {
+		n = strings.ToLower(n)
+		if strings.HasPrefix(n, p) || strings.HasPrefix(stageStripped(n), p) {
 			return i
 		}
 	}
 	return -1
+}
+
+// stageStripped drops a leading workflow-stage number ("2-spec-to-pr" →
+// "spec-to-pr"); a name without one is returned unchanged.
+func stageStripped(name string) string {
+	digits := strings.TrimLeft(name, "0123456789")
+	if digits != name && strings.HasPrefix(digits, "-") {
+		return digits[1:]
+	}
+	return name
 }
 
 // RenderIntentPromptFrame renders the argument prompt shown when a
@@ -1202,7 +1214,7 @@ func TypeaheadIndex(names []string, prefix string) int {
 // asking instead of presenting an unexplained blank.
 //
 // isSpec picks the wording. A template whose argument is not a spec was still
-// asked for one by name, telling the person launching pr-local-review to type
+// asked for one by name, telling the person launching 4-pr-local-review to type
 // a spec id where a PR number goes.
 func RenderIntentPromptFrame(template, input, hint string, isSpec bool, width int) string {
 	return RenderIntentPromptFrameH(template, input, hint, isSpec, width, 0)
@@ -1499,7 +1511,7 @@ func TemplateNeedsIntent(g *bus.Graph) bool {
 // pointer correct rather than merely convenient.
 //
 // ${spec} names a spec. ${intent} is the former name for the same slot and
-// promises nothing about its content — pr-local-review deliberately uses it
+// promises nothing about its content — 4-pr-local-review deliberately uses it
 // for a PR number. Deriving on TemplateNeedsIntent instead, which only asks
 // whether an argument is wanted at all, handed that template the active spec
 // id and ran `gh pr checkout <spec-id>`.

@@ -317,7 +317,7 @@ func TestValidateGateRuleMixedPaths(t *testing.T) {
 }
 
 func TestBuiltinGraphTemplatesValidate(t *testing.T) {
-	want := []string{"build-test-review", "commit-pr-review-loop", "deploy-verify", "pr-local-review", "spec-to-pr", "story-to-spec", "update-spec-docs"}
+	want := []string{"1-story-to-spec", "2-spec-to-pr", "3-pr-review-fix", "4-pr-local-review", "5-docs-sync", "6-deploy-verify", "build-test-review"}
 	if len(builtinGraphJSON) != len(want) {
 		t.Errorf("expected %d builtin templates, got %d", len(want), len(builtinGraphJSON))
 	}
@@ -340,7 +340,7 @@ func TestBuiltinGraphTemplatesValidate(t *testing.T) {
 			t.Errorf("template %q has validation errors: %v", name, v.Errors)
 		}
 		for _, w := range v.Warnings {
-			if name == "deploy-verify" && strings.Contains(w, "launching the run is its only approval") {
+			if name == "6-deploy-verify" && strings.Contains(w, "launching the run is its only approval") {
 				continue // recorded deliberate trade — presence pinned by TestBuiltinGateTextClean
 			}
 			t.Errorf("template %q has validation warning: %s", name, w)
@@ -352,7 +352,7 @@ func TestBuiltinGraphTemplatesValidate(t *testing.T) {
 // the missing edge failed a live spec-to-pr at its review node
 // (2026-08-31, run 1788195259) while build/test failures routed fine.
 func TestReviewFailureRoutesToFix(t *testing.T) {
-	for _, name := range []string{"spec-to-pr"} {
+	for _, name := range []string{"2-spec-to-pr"} {
 		g, err := ParseGraph([]byte(builtinGraphJSON[name]))
 		if err != nil {
 			t.Fatalf("template %q: parse: %v", name, err)
@@ -370,109 +370,6 @@ func TestReviewFailureRoutesToFix(t *testing.T) {
 	}
 }
 
-// The commit-pr-review-loop must CONFIRM the PR exists before watching
-// it: a live run (2026-08-31, is-advising-gateway) reached its close
-// gate with no PR because the commit node's decline derived
-// unknown→success. verify-pr demands a literal token, pr-check branches
-// on it, and the failure edge loops back to the commit node — capped.
-func TestCommitPrReviewLoopVerifiesPr(t *testing.T) {
-	g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	var check *Node
-	for i := range g.Nodes {
-		if g.Nodes[i].ID == "pr-check" {
-			check = &g.Nodes[i]
-		}
-	}
-	if check == nil || check.Type != NodeCondition {
-		t.Fatal("pr-check condition node missing")
-	}
-	if v, ok := check.Conditions["output_contains"]; !ok || v != "PR-CONFIRMED" {
-		t.Errorf("pr-check conditions = %v, want output_contains PR-CONFIRMED", check.Conditions)
-	}
-	var success, cappedRetry bool
-	for _, e := range g.Edges {
-		if e.From == "pr-check" && e.To == "b" && e.Outcome == "" {
-			success = true
-		}
-		if e.From == "pr-check" && e.To == "a" && e.Outcome == OutcomeFailure && e.MaxIterations > 0 {
-			cappedRetry = true
-		}
-	}
-	if !success || !cappedRetry {
-		t.Errorf("pr-check edges incomplete: success=%v cappedRetry=%v", success, cappedRetry)
-	}
-}
-
-// A PR that already exists must not be re-created: on 2026-09-16 a run
-// (1789586432) failed at 1/11 because the template always opened with the
-// commit node, which was asked to stage, commit, push and open a PR on a
-// branch whose PR #99 was already open. The commit agent correctly declined —
-// an unrelated uncommitted file and no commit message — and the run died.
-//
-// The precheck is pr-read, the commit role's one read-shaped action, so it
-// sits ahead of gate1 without tripping the gate rule: nothing it does needs
-// approval, and asking for one before knowing whether there is work would put
-// the question to a human who cannot yet answer it.
-//
-// The skip is asserted as a bypass rather than an ordering: a success edge
-// landing on gate1 or "a" would reach the commit node anyway and reproduce the
-// failure, so the structural check alone would pass while the defect stood.
-func TestCommitPrReviewLoopSkipsCommitWhenPrExists(t *testing.T) {
-	g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if g.Start != "pr-precheck" {
-		t.Errorf("start = %q, want pr-precheck — the run must look before it commits", g.Start)
-	}
-
-	byID := map[string]*Node{}
-	for i := range g.Nodes {
-		byID[g.Nodes[i].ID] = &g.Nodes[i]
-	}
-	pre, ok := byID["pr-precheck"]
-	if !ok {
-		t.Fatal("pr-precheck node missing")
-	}
-	if NormalizeBusRole(pre.Role) != "commit" || pre.Action != "pr-read" {
-		t.Errorf("pr-precheck = %s:%s, want commit:pr-read", pre.Role, pre.Action)
-	}
-	if nodeRequiresGate(pre) {
-		t.Error("pr-precheck requires a gate — it must be read-only to run before gate1")
-	}
-	cond, ok := byID["pr-exists"]
-	if !ok || cond.Type != NodeCondition {
-		t.Fatal("pr-exists condition node missing")
-	}
-	if v := cond.Conditions["output_contains"]; v != "PR-CONFIRMED" {
-		t.Errorf("pr-exists conditions = %v, want output_contains PR-CONFIRMED", cond.Conditions)
-	}
-
-	var skip, fallThrough bool
-	for _, e := range g.Edges {
-		if e.From != "pr-exists" {
-			continue
-		}
-		switch {
-		case e.To == "b" && e.Outcome == "":
-			skip = true
-		case e.To == "gate1" && e.Outcome == OutcomeFailure:
-			fallThrough = true
-		case e.Outcome == "" && (e.To == "gate1" || e.To == "a"):
-			t.Errorf("success edge pr-exists -> %q reaches the commit node the skip exists to avoid", e.To)
-		}
-	}
-	if !skip {
-		t.Error("no success edge pr-exists -> b: an existing PR still runs the commit node")
-	}
-	if !fallThrough {
-		t.Error("no failure edge pr-exists -> gate1: with no PR the run never commits")
-	}
-}
-
 // Both question-shaped nodes must override the commit role's default verdict
 // convention in their own message. git-manager.md answers EXIT=1 when the
 // requested state does not hold and names PR existence as the case, so a node
@@ -483,39 +380,34 @@ func TestCommitPrReviewLoopSkipsCommitWhenPrExists(t *testing.T) {
 // The executor test pins the routing that follows from an EXIT=0 reply; this
 // pins the instruction that produces one. Without it the wording could be
 // reverted and only a live run would notice.
-func TestCommitPrReviewLoopQuestionNodesDeclareExitConvention(t *testing.T) {
-	g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+func TestPRReviewFixQuestionNodesDeclareExitConvention(t *testing.T) {
+	g, err := ParseGraph([]byte(builtinGraphJSON["3-pr-review-fix"]))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	for _, id := range []string{"pr-precheck", "verify-pr"} {
-		var n *Node
-		for i := range g.Nodes {
-			if g.Nodes[i].ID == id {
-				n = &g.Nodes[i]
-			}
-		}
+	for id, token := range map[string]string{"find-pr": "NO-PR-FOUND", "read-comments": "NO-ACTIONABLE-COMMENTS"} {
+		n := g.node(id)
 		if n == nil {
 			t.Errorf("%s node missing", id)
 			continue
 		}
-		if !strings.Contains(n.Message, "EXIT=0 EITHER WAY") {
+		if !strings.Contains(strings.ToUpper(n.Message), "EXIT=0 EITHER WAY") {
 			t.Errorf("%s does not tell the agent a completed lookup is EXIT=0 either way; "+
-				"a NO-PR-FOUND reply will fail the node and strand the branch", id)
+				"a %s reply would fail the node and strand the run", id, token)
 		}
-		if !strings.Contains(n.Message, "NO-PR-FOUND") {
-			t.Errorf("%s does not name the NO-PR-FOUND token its condition branches on", id)
+		if !strings.Contains(n.Message, token) {
+			t.Errorf("%s does not name the %s token its condition branches on", id, token)
 		}
 	}
 }
 
-// `d` replies to PR comments about fixes `c` made, so something must commit
-// and push them in between or it cites work that exists only in a working
-// tree. The inserted node is a git mutation, so it must also fall inside a
-// gate's territory — gate2's, whose message names the push for the approval
-// to mean what it releases.
-func TestCommitPrReviewLoopCommitsFixesBeforeReplying(t *testing.T) {
-	g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+// `reply` answers PR comments about fixes the worker made, so something must
+// commit and push them in between or it cites work that exists only in a
+// working tree. The push is a git mutation, so it must also fall inside a
+// gate's territory — fix-gate's, whose message names the push for the
+// approval to mean what it releases.
+func TestPRReviewFixCommitsFixesBeforeReplying(t *testing.T) {
+	g, err := ParseGraph([]byte(builtinGraphJSON["3-pr-review-fix"]))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -526,7 +418,7 @@ func TestCommitPrReviewLoopCommitsFixesBeforeReplying(t *testing.T) {
 		}
 	}
 	if push == nil {
-		t.Fatal("push-fixes node missing — d still cites uncommitted work")
+		t.Fatal("push-fixes node missing — reply would cite uncommitted work")
 	}
 	if NormalizeBusRole(push.Role) != "commit" || push.Action != "commit" {
 		t.Errorf("push-fixes = %s:%s, want commit:commit", push.Role, push.Action)
@@ -534,23 +426,13 @@ func TestCommitPrReviewLoopCommitsFixesBeforeReplying(t *testing.T) {
 	if !nodeRequiresGate(push) {
 		t.Error("push-fixes is not recognised as a gated mutation — the authority rules would not cover it")
 	}
-
-	var cToPush, pushToD, cToD bool
+	if !templateEdge(g, "push-fixes", "reply") {
+		t.Error("push-fixes -> reply missing")
+	}
 	for _, e := range g.Edges {
-		switch {
-		case e.From == "c" && e.To == "push-fixes":
-			cToPush = true
-		case e.From == "push-fixes" && e.To == "d":
-			pushToD = true
-		case e.From == "c" && e.To == "d":
-			cToD = true
+		if e.To == "reply" && e.From != "push-fixes" {
+			t.Errorf("reply reachable from %s — the fixes can reach the reply without being pushed", e.From)
 		}
-	}
-	if !cToPush || !pushToD {
-		t.Errorf("c -> push-fixes -> d incomplete: cToPush=%v pushToD=%v", cToPush, pushToD)
-	}
-	if cToD {
-		t.Error("c -> d still present — the fixes can reach the reply without being committed")
 	}
 }
 
@@ -672,7 +554,7 @@ func TestCancelGraphRunExpiresTasks(t *testing.T) {
 // TestCreateGraphRunRequiresSpec pins the requires_spec gate at the
 // run-creation chokepoint: a spec-driven graph refuses to start with no
 // active requirements spec, and starts once one is set (negative
-// control). spec-to-pr carries the flag builtin.
+// control). 2-spec-to-pr carries the flag builtin.
 func TestCreateGraphRunRequiresSpec(t *testing.T) {
 	session := "graph-requires-spec-test"
 	t.Cleanup(func() { _ = os.RemoveAll(BusDir(session)) })
@@ -693,7 +575,7 @@ func TestCreateGraphRunRequiresSpec(t *testing.T) {
 		t.Fatalf("with an active spec set the run must start: %v", err)
 	}
 
-	tpl, _, err := ResolveGraphTemplate("spec-to-pr")
+	tpl, _, err := ResolveGraphTemplate("2-spec-to-pr")
 	if err != nil {
 		t.Fatalf("spec-to-pr builtin missing: %v", err)
 	}
@@ -718,38 +600,6 @@ func TestValidateNodeGuard(t *testing.T) {
 	g.Nodes[0].Guard = GuardSpecComplete
 	if v := g.Validate(); !v.OK() {
 		t.Errorf("guard on a send node must validate: %v", v.Errors)
-	}
-}
-
-// TestCommitPRReviewLoopCloseSpecGuarded pins the builtin's close-spec
-// controls: the daemon-side spec-complete guard (MUX-114 — wording alone
-// is an instruction to a model, not a control) and the dedicated
-// close-gate (user request 2026-08-28: the close-out is its own local
-// approval, not a clause riding gate2's tail).
-func TestCommitPRReviewLoopCloseSpecGuarded(t *testing.T) {
-	tpl, _, err := ResolveGraphTemplate("commit-pr-review-loop")
-	if err != nil {
-		t.Fatalf("commit-pr-review-loop builtin missing: %v", err)
-	}
-	found := false
-	for _, n := range tpl.Nodes {
-		if n.ID == "close-spec" {
-			found = true
-			if n.Guard != GuardSpecComplete {
-				t.Errorf("close-spec guard %q, want %q", n.Guard, GuardSpecComplete)
-			}
-		}
-	}
-	if !found {
-		t.Fatal("commit-pr-review-loop has no close-spec node")
-	}
-	if !templateEdge(tpl, "close-gate", "close-spec") {
-		t.Error("close-spec must sit behind its own close-gate")
-	}
-	for _, e := range tpl.Edges {
-		if e.To == "close-spec" && e.From != "close-gate" {
-			t.Errorf("close-spec reachable around its gate via %s", e.From)
-		}
 	}
 }
 
@@ -877,7 +727,7 @@ func TestValidateUngatedDeployWarns(t *testing.T) {
 }
 
 // TestBuiltinGateTextClean holds shipped templates to zero gate-text
-// warnings, and pins deploy-verify's ungated-deploy warning as the one
+// warnings, and pins 6-deploy-verify's ungated-deploy warning as the one
 // recorded deliberate trade — asserted present so the check cannot go
 // inert.
 func TestBuiltinGateTextClean(t *testing.T) {
@@ -890,13 +740,13 @@ func TestBuiltinGateTextClean(t *testing.T) {
 			if strings.Contains(w, "does not name the mutation") {
 				t.Errorf("%s: %s", name, w)
 			}
-			if strings.Contains(w, "launching the run is its only approval") && name != "deploy-verify" {
+			if strings.Contains(w, "launching the run is its only approval") && name != "6-deploy-verify" {
 				t.Errorf("%s: unexpected ungated-deploy warning: %s", name, w)
 			}
 		}
 	}
 
-	g, err := ParseGraph([]byte(builtinGraphJSON["deploy-verify"]))
+	g, err := ParseGraph([]byte(builtinGraphJSON["6-deploy-verify"]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -933,6 +783,72 @@ func TestValidateDerivedLoopCap(t *testing.T) {
 }
 
 // templateEdge reports whether a template has a from->to edge.
+// templateEdgeOn reports whether g has the from->to edge for outcome.
+func templateEdgeOn(g *Graph, from, to, outcome string) bool {
+	for _, e := range g.Edges {
+		if e.From == from && e.To == to && edgeOutcome(e) == outcome {
+			return true
+		}
+	}
+	return false
+}
+
+// TestPRReviewFixTemplate pins 3-pr-review-fix: no PR ends the run, no
+// actionable comment ends it clean, and otherwise one gate releases the fix
+// loop, the push and the replies. Review findings loop back to fix like any
+// other failure, and nothing reaches the push except a clean review.
+func TestPRReviewFixTemplate(t *testing.T) {
+	tpl, _, err := ResolveGraphTemplate("3-pr-review-fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := tpl.Validate(); !v.OK() || len(v.Warnings) > 0 {
+		t.Fatalf("3-pr-review-fix must validate without warnings: %v %v", v.Errors, v.Warnings)
+	}
+	for _, e := range [][3]string{
+		{"find-pr", "pr-exists", OutcomeSuccess},
+		{"pr-exists", "read-comments", OutcomeSuccess},
+		{"no-comments", "fix-gate", OutcomeFailure},
+		{"fix-gate", "fix", OutcomeSuccess},
+		{"review", "fix", OutcomeFailure},
+		{"review", "push-fixes", OutcomeSuccess},
+		{"push-fixes", "reply", OutcomeSuccess},
+	} {
+		if !templateEdgeOn(tpl, e[0], e[1], e[2]) {
+			t.Errorf("missing edge %s -[%s]-> %s", e[0], e[2], e[1])
+		}
+	}
+	for _, e := range tpl.Edges {
+		if e.From == "no-comments" && edgeOutcome(e) == OutcomeSuccess {
+			t.Errorf("no actionable comments must end the run, not route to %s", e.To)
+		}
+		if e.To == "push-fixes" && (e.From != "review" || edgeOutcome(e) != OutcomeSuccess) {
+			t.Errorf("push-fixes reachable around a clean review via %s (%s)", e.From, edgeOutcome(e))
+		}
+	}
+	fix := tpl.node("fix")
+	if fix == nil || fix.Type != NodeSpawn ||
+		!strings.Contains(fix.Message, "${output:read-comments}") || !strings.Contains(fix.Message, "${failure_report}") {
+		t.Errorf("fix must be a worker told both the comments and the failure to fix, got %+v", fix)
+	}
+	if r := tpl.node("reply"); r == nil || !strings.Contains(r.Message, "${output:push-fixes}") || !strings.Contains(r.Message, "${output:fix}") {
+		t.Errorf("reply must cite the pushed sha and the per-comment report, got %+v", r)
+	}
+}
+
+// 4-pr-local-review's review lists issues by design, and a review with
+// findings is now a failure: without its failure edge the run would stop
+// before restoring the user's branch.
+func TestPRLocalReviewRestoresOnFindings(t *testing.T) {
+	tpl, _, err := ResolveGraphTemplate("4-pr-local-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !templateEdgeOn(tpl, "review", "restore", OutcomeSuccess) || !templateEdgeOn(tpl, "review", "restore", OutcomeFailure) {
+		t.Error("restore must run whether or not the review found issues")
+	}
+}
+
 func templateEdge(g *Graph, from, to string) bool {
 	for _, e := range g.Edges {
 		if e.From == from && e.To == to {
@@ -947,7 +863,7 @@ func templateEdge(g *Graph, from, to string) bool {
 // the ONLY path to its commit gate (a direct review->gate edge would
 // silently bypass it — plan finding).
 func TestShipTemplatesUpdateSpecBeforeGate(t *testing.T) {
-	for name, gate := range map[string]string{"spec-to-pr": "phase-gate"} {
+	for name, gate := range map[string]string{"2-spec-to-pr": "phase-gate"} {
 		tpl, _, err := ResolveGraphTemplate(name)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -975,7 +891,7 @@ func TestShipTemplatesUpdateSpecBeforeGate(t *testing.T) {
 // both loop-closing edges, gate-and-ask on a stuck phase via the commit
 // failure edge, termination to a final gate that alone releases push+PR.
 func TestReqCodePRMultiPhaseLoop(t *testing.T) {
-	tpl, _, err := ResolveGraphTemplate("spec-to-pr")
+	tpl, _, err := ResolveGraphTemplate("2-spec-to-pr")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1032,7 +948,7 @@ func TestReqCodePRMultiPhaseLoop(t *testing.T) {
 		t.Error("fix must carry ${failure_report} so the worker is told what failed")
 	}
 	if v := tpl.Validate(); !v.OK() {
-		t.Errorf("multi-phase spec-to-pr must validate: %v", v.Errors)
+		t.Errorf("multi-phase 2-spec-to-pr must validate: %v", v.Errors)
 	}
 }
 

@@ -290,7 +290,7 @@ is interrupted only at human gates and terminal states.
 | `wait_event` | Parks at dispatch, released when the named bus event is observed |
 
 ```
-1. muxcode graph run spec-to-pr "implement PBP1-4915"
+1. muxcode graph run 2-spec-to-pr "implement PBP1-4915"
 2. Template resolved (project > user > builtin), validated, run dir created
    under BusDir()/graphs/<run-id>/  — run.json, graph.json, nodes/<id>.json
 3. Daemon poll loop: checkGraphRuns() -> bus.StepGraphRuns(session)
@@ -364,14 +364,14 @@ than silently not guarding.
 |-------|----------------------|
 | `spec-complete` | The active spec still has unchecked `- [ ]` items — `SpecOpenItems()` counts them and the decline names the count plus the first few open items |
 
-`spec-complete` exists because the builtin `commit-pr-review-loop`'s `close-spec` node told plan to
+`spec-complete` exists because the builtin `commit-pr-review-loop`'s `close-spec` node (a template removed 2026-09-24) told plan to
 mark the active spec **Complete** guarded only by *"no active spec = nothing to do"* — it asked
 whether a pointer existed, never whether the work was done, and `commit-spec` downstream would have
 **pushed** the false claim to the PR branch. Rewording the node to say "only if complete" was the
 interim fix and left the decision with a model; the guard moves it into the mechanism, which is the
 point — the defect existed *because* the design trusted wording. See
 [`MUX-114`](requirements/completed/MUX-114-close-spec-node-has-no-completion-check.md). Since
-2026-09-24 `spec-to-pr`'s own `close-spec` node carries the same guard (see "Findings route to fix;
+2026-09-24 `2-spec-to-pr`'s own `close-spec` node carries the same guard (see "Findings route to fix;
 the run closes the spec out" below).
 
 Three behaviours keep the guard from becoming a defect of its own: **no active spec passes through**
@@ -439,9 +439,22 @@ restart; `--render-once` emits a single frame for scripts and tests. Gate approv
 calls `bus.ApproveGraphGate` directly — the same path as the CLI, with no bus-message route into
 it, preserving the rule that a human at the keyboard is the only thing that releases a gate.
 
-Templates resolve `project > user > builtin`, like agent files. Seven ship built in;
-`req-code-pr` was renamed `spec-to-pr` and `story-lifecycle` removed as a duplicate of its arc
-(2026-09-02), and both retired names fail naming the successor rather than silently resolving.
+Templates resolve `project > user > builtin`, like agent files. Seven ship built in: six
+stage-numbered so a listing reads top-down as the workflow — `1-story-to-spec`, `2-spec-to-pr`,
+`3-pr-review-fix`, `4-pr-local-review`, `5-docs-sync`, `6-deploy-verify` (renamed 2026-09-24 on the
+user's request; the typeahead matches with or without the number) — plus the unnumbered
+`build-test-review` utility. `req-code-pr` was renamed `spec-to-pr` and `story-lifecycle` removed as a
+duplicate of its arc (2026-09-02); `commit-pr-review-loop` was removed on 2026-09-24 because
+`2-spec-to-pr` already closes out the spec and opens the PR and `3-pr-review-fix` answers its
+review; every retired name fails naming its successor (`renamedGraphTemplates`, `bus/graph.go`)
+rather than silently resolving.
+`3-pr-review-fix` (2026-09-24) closes the loop after a PR exists: two read-only `pr-read` nodes find
+the PR and list its unresolved review comments (`NO-ACTIONABLE-COMMENTS` ends the run with nothing
+touched), a `wait_human` `fix-gate` sits before the first mutation, an edit spawn fixes or declines
+each comment under a build/test/review loop capped at 3, then `push-fixes` commits and pushes and
+`reply` answers every comment with the sha or the decline reason. The same change gave
+`4-pr-local-review` a `review -[failure]-> restore` edge, since a review with findings once left the
+checkout on the PR's head.
 
 Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (7 built-ins),
 `bus/graph_run.go` (durable store), `bus/graph_exec.go` (executor), `cmd/graph.go` (CLI),
@@ -451,8 +464,8 @@ Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (7 buil
 
 #### Sequential multi-phase runs (design)
 
-`spec-to-pr` (named `req-code-pr` until 2026-09-02, the name completed specs and run ids still
-carry) originally shipped **one phase per run**. The design recorded in
+`2-spec-to-pr` (`req-code-pr` until 2026-09-02 and `spec-to-pr` until 2026-09-24 — the names
+completed specs and run ids still carry) originally shipped **one phase per run**. The design recorded in
 [MUX-121](requirements/completed/MUX-121-multi-phase-sequential-graph.md) walks a spec's phases in
 order within a single run: implement a phase → build/test → review → `update-spec` → a `wait_human`
 the user approves → commit the work **and** its spec update → loop to the next phase, with one final
@@ -497,7 +510,7 @@ declined within a second, then `stuck-gate`; and the declined gate's `${complete
 named the *previous* phase, because the frontier is the last complete phase. On 2026-09-09 run
 `1788966148-spec-to-pr-2338488d` paid this four times — 7 phase-gate approvals, 4 declined, 3+
 stuck-gates for 3 commits — every time a review returned `EXIT=0` with should-fixes, which never
-routes to `fix`. `spec-to-pr` now carries a `phase-check` condition node (`spec_phase_committable`,
+routes to `fix`. `2-spec-to-pr` now carries a `phase-check` condition node (`spec_phase_committable`,
 naming the guarded commit node) between `update-spec` and `phase-gate`; it evaluates the **same
 `phaseCommitReady` predicate the guard uses**, so an open phase routes straight to `stuck-gate` and a
 person is asked to approve a commit only when the guard will accept it — one prompt per incomplete
@@ -535,7 +548,9 @@ push and open the PR. A refused close-out goes to `close-stuck-gate` (retry up t
 cancel), so a spec with open items is never pushed as complete.
 
 **Look before you ask** is the same rule at the other end of the story. `commit-pr-review-loop`
-opened with `gate1` — *approve staging, commit, push and PR creation* — and then the commit node,
+(removed 2026-09-24; its arc now lives in `3-pr-review-fix`, which opens the same way — `find-pr`
+then `read-comments`, both read-only, ending the run gateless when there is no PR or nothing
+actionable) opened with `gate1` — *approve staging, commit, push and PR creation* — and then the commit node,
 whatever the branch's state. On 2026-09-16 run `1789586432` failed at 1/11: PR #99 was already open,
 so the commit node was asked to create a PR that existed, on a tree with one unrelated uncommitted
 file and no commit message, and its correct decline ended the run. The template now starts at
