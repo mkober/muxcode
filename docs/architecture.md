@@ -370,7 +370,9 @@ whether a pointer existed, never whether the work was done, and `commit-spec` do
 **pushed** the false claim to the PR branch. Rewording the node to say "only if complete" was the
 interim fix and left the decision with a model; the guard moves it into the mechanism, which is the
 point — the defect existed *because* the design trusted wording. See
-[`MUX-114`](requirements/completed/MUX-114-close-spec-node-has-no-completion-check.md).
+[`MUX-114`](requirements/completed/MUX-114-close-spec-node-has-no-completion-check.md). Since
+2026-09-24 `spec-to-pr`'s own `close-spec` node carries the same guard (see "Findings route to fix;
+the run closes the spec out" below).
 
 Three behaviours keep the guard from becoming a defect of its own: **no active spec passes through**
 (blocking there would make the node inert), **an unreadable spec declines loudly** (closing out
@@ -504,6 +506,33 @@ backstop: a spec reopened between the check and the commit is still refused. `gr
 rejects a check that names a node without the `phase-progress` guard. Graph workers verify a phase
 through the run agent and quote its counts and task id before reporting, so plan's verify credits a
 store row rather than the worker's account.
+
+**Anchored on HEAD, not on the run (MUX-183).** `phaseCommitReady` once compared the spec's
+completed-phase count with the commit node's fires *in this run* — two counters in different frames,
+so every fresh run, later lap and `graph retry` re-credited phases an earlier run had already
+committed, and the gate asked to commit "Phase 1" while the run worked on Phase 2 (run `1789399519`,
+2026-09-14; again on MUX-182 Phase 3, 2026-09-24). The predicate now takes only the session: a phase
+is committable when it is complete in the working tree and **not** complete in HEAD's copy of the spec
+(`specAtHEAD`, `git ls-tree`/`cat-file`), so it needs no run state and resets itself with every
+commit. `specAtHEAD` is strict — an empty baseline only for an unborn HEAD or a file HEAD holds under
+neither its path nor its id-bearing file name (a spec moved `backlog/` → `drafts/` keeps its
+baseline); every other git failure is an error and the gate holds, because an unreadable baseline
+read as an empty one would credit every completed phase. "Complete" itself now means *at least one
+item and none open* (`SpecPhase.Complete()`), so a stub or narrative `### Phase N findings` heading
+is empty, not done, and boxes under a `####` subheading count for their phase. The guard, the
+`phase-check` condition and the `${completed_phase}` label all read the one predicate.
+
+**Findings route to fix; the run closes the spec out.** The `review` node's outcome is read from the
+first non-blank line of the reviewer's reply — `<n> must-fix, <n> should-fix, <n> nits`
+(`reviewFindingsOutcome`) — so any must-fix or should-fix routes to `fix` even when the reviewer's
+token says `EXIT=0`; a reply with no complete counts line holds rather than passing (on 2026-09-23 the
+node recorded `outcome=success` twice over replies carrying must-fix). `fix` receives the failure
+verbatim through `${failure_report}` (`expandFailureReport`, always the latest failure edge, never a
+stale lap's). After the last phase, `loop-check` routes to `close-spec` — plan's `update-docs` under
+the `spec-complete` guard: status `Complete`, the move to `completed/`, the `backlog.md` row and
+cross-references, the active pointer cleared — then `final-gate` and `push-pr` commit the close-out,
+push and open the PR. A refused close-out goes to `close-stuck-gate` (retry up to three times, or
+cancel), so a spec with open items is never pushed as complete.
 
 **Look before you ask** is the same rule at the other end of the story. `commit-pr-review-loop`
 opened with `gate1` — *approve staging, commit, push and PR creation* — and then the commit node,
