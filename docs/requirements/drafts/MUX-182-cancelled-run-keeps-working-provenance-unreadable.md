@@ -124,8 +124,8 @@ as a loop.
 - [x] **Negative control: a genuinely agent-launched run is still labelled autonomous** — a fix that labels everything "user" is not a fix — Phase 3, every provenance test paired manual/`auto`
 - [x] A spawn-originated bus message carries its originating run id, `created_by`, and current run state, so a recipient can verify whether a prompt traces back to a human — Phase 3, `stampMessageOrigin`; `TestSpawnMessageCarriesRunOrigin`, `TestSpawnMessageFromCancelledRunSaysSo`
 - [x] An agent cannot assert human provenance it did not receive — plan writing "on a user request" is unsupported unless the prompt carried it — Phase 3: the prompt now states its origin or states that it carries no user request, and a forged human origin is discarded at send (`TestUnprovenancedMessagesSayNoUserRequest`, `TestStampDiscardsForgedHumanOrigin`); whether agents honour it is what Phase 6 exercises
-- [ ] `graph cancel` / `spawn stop` issued **by an agent** against a run whose `created_by` is a human requires explicit user approval; agent-launched runs stay freely cancellable
-- [ ] `graph-run-canceled` records **who** cancelled, as `graph-gate-approved` records who approved
+- [x] `graph cancel` / `spawn stop` issued **by an agent** against a run whose `created_by` is a human requires explicit user approval; agent-launched runs stay freely cancellable — Phase 4, `CheckCancelAuthority`; the approval is the user issuing the stop; negative control `TestCancelGraphRunLeavesAgentRunsFree`
+- [x] `graph-run-canceled` records **who** cancelled, as `graph-gate-approved` records who approved — Phase 4, sourced by the actor with `canceled by <actor>`
 - [ ] The watch completion notification carries the agent's real summary, or is neutral (`"Watch completed — see result"`); it never asserts a finding the chain did not establish
 - [ ] A daemon pane scrape is never delivered in a `response` body and never completes a task as though answered — it is marked unmistakably as a non-answer
 - [ ] A suppressed self-addressed startup reply is excluded from loop detection, or the reply affordance is not printed for it
@@ -143,6 +143,7 @@ as a loop.
 | `tools/muxcode/bus/config.go` | `BusActorVerified:167`, `agentRuntimeAncestor` — does it recognise `auto`? |
 | `tools/muxcode/bus/spawn.go` | `StopSpawn`, spawn lifecycle and worktree mode |
 | `tools/muxcode/bus/commit_authority.go` | `CheckCommitAuthority*` — the pattern to mirror for a cancel-authority check |
+| `tools/muxcode/bus/cancel_authority.go` | `CheckCancelAuthority`, `StopSpawnAuthorized` — Phase 4; `lockExistingGraphRun` in `graph_cancel.go` serializes the decision with retry |
 | `tools/muxcode/bus/profile.go` | `:980` — the fixed watch banner |
 | `tools/muxcode/daemon/daemon.go` | `:3441-3450` — pane scrape sent as a response and completing the task |
 | `tools/muxcode/bus/inbox.go` | `isLoopingSelfSend:122`, `DetectMessageLoop` — defect 5 |
@@ -358,10 +359,30 @@ Landed in run `1790258935-spec-to-pr-49587ed8`: build and test green, review
 
 ### Phase 4: Gate cancellation of human-launched runs (defect 3)
 
-- [ ] Add a cancel-authority check mirroring `CheckCommitAuthority`: an agent cancelling a human-created run requires explicit approval
-- [ ] Keep agent-launched runs freely cancellable — **negative control:** the autonomous path must not regress
-- [ ] Record the actor in `graph-run-canceled`
-- [ ] Confirm the check cannot be bypassed by the daemon→edit role normalization, as MUX-144 Phase 4 had to
+- [x] Add a cancel-authority check mirroring `CheckCommitAuthority`: an agent cancelling a human-created run requires explicit approval — 2026-09-24, `CheckCancelAuthority` (`bus/cancel_authority.go`): the approval *is* the user issuing the cancel; no flag, token or env can stand in for it. `CancelGraphRun` resolves `BusActorVerified()` itself (CLI and TUI roads alike) and refuses before touching state with a `graph-cancel-refused` row; `spawn stop` goes through `StopSpawnAuthorized` (`spawn-stop-refused`); `TestCheckCancelAuthority` (15 rows), `TestCancelGraphRunGatesHumanRuns`, `TestStopSpawnAuthorizedGatesRunWorkers`
+- [x] Keep agent-launched runs freely cancellable — **negative control:** the autonomous path must not regress — `TestCancelGraphRunLeavesAgentRunsFree` (an `auto`-created run cancelled by edit, event names edit) plus the autonomous rows of the table test
+- [x] Record the actor in `graph-run-canceled` — sourced by the actor, detail `<run> canceled by <actor>` (was source `daemon`, run id only)
+- [x] Confirm the check cannot be bypassed by the daemon→edit role normalization, as MUX-144 Phase 4 had to — the check grants no role anything and compares only against `ActorUser`, so normalization gains nothing; `AGENT_ROLE=user` under an agent runtime falls to the ancestry walk and is refused; `TestCancelGraphRunNotBypassedByIdentity` (daemon identity, forged `AGENT_ROLE`, stripped `AGENT_ROLE` under codex)
+
+#### Phase 4 findings — 2026-09-24
+
+Landed in run `1790262549-spec-to-pr-00360289` (the run that also closed Phase 3): build and test
+green, one fix iteration, final review `/tmp/muxcode-review-1790263753.txt` 0/0/0. Worker report:
+`/tmp/mux182-phase4-report.md`. Boundaries drawn:
+
+- **Unestablished is human.** A run whose creator is `unknown` or unrecorded may be stopped only by
+  the user — the misreading this phase exists for is an agent deciding a run was *not* the user's.
+- **A run already `canceling` or `canceled` is exempt**: re-running the cancel or stopping a survivor
+  completes the user's decision, which is what `CancelIncompleteError` tells its reader to do.
+- **Authority is decided under the run lock and held through the mutation** (`lockExistingGraphRun`,
+  shared by cancel, retry and authorized spawn stop): it depends on state, and a canceled run read
+  before the lock could be running again through `RetryGraphRun` before the cancel acts —
+  `TestStopAuthoritySerializedWithRetry` lands a retry in that window. A lock or run read that fails
+  is treated as unestablished provenance: user only.
+- **`spawn stop` is gated only for a worker tied to a run.** Untied spawns, `TaskStop`, `proc kill`
+  and reloads stay ungated — Decision 2's wider scope is still open, deliberately.
+- The worker ran `go vet ./bus/` from edit once by mistake; it failed on a duplicate helper (since
+  fixed) and may have left a failed precheck row in edit's test history.
 
 ### Phase 5: Fix the misleading channels (defects 4 and 5)
 
@@ -408,6 +429,11 @@ the Phase 2 must-fix boxes.
 Only `graph cancel` and `spawn stop`, or every agent action that stops human-initiated work
 (`TaskStop`, `proc kill`, reload of a busy agent)? The report covers the first; the class is wider.
 
+**Held open after Phase 4 (2026-09-24).** Phase 4 gated `graph cancel` and `spawn stop` of a
+run-tied worker only; a spawn tied to no run, `TaskStop`, `proc kill` and reloads are ungated. The
+wider class is real but has no incident behind it yet; widening it is a separate decision, not a
+Phase 4 gap.
+
 ### Decision 3 — is defect 4a one bug or a category?
 
 `bus/profile.go` may hold other chain messages asserting outcomes they cannot establish. Fixing only
@@ -432,7 +458,7 @@ while still working. Whether they share a fix or only a theme is not settled her
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-182-cancelled-run-keeps-working | 1h 2m | 2026-09-24 10:53 |
+| MUX-182-cancelled-run-keeps-working | 1h 24m | 2026-09-24 11:31 |
 
 ## Status
 
@@ -447,4 +473,9 @@ ticked. AC 2 stays open for Phase 6's live measurement (a consumed request canno
 **Phase 3 complete 2026-09-24 11:13** (landed in run `1790258935`, closed in `1790262549`; build and
 test green each time, final review 0/0/0) — 4/4 steps, the TUI clamp should-fix and ACs 3, 4, 5, 6
 ticked; a clipped `(auton…` was the ambiguity defect 1 is about, so AC 3 waited for the clamp. The
-review node's verdict parser (a Phase 5 box) closed 10:52. 27/53. Phase 4 next.
+review node's verdict parser (a Phase 5 box) closed 10:52. Phase 3 committed as `4cf52a3`.
+**Phase 4 complete 2026-09-24 11:31** (run `1790262549`, build and test green, review 0/0/0) — 4/4
+steps and ACs 7, 8 ticked: only the user may stop a run the user launched (or one whose creator is
+unestablished), agent runs stay freely cancellable, the actor is named on `graph-run-canceled`, and
+the decision is taken under the run lock. Decision 2's wider scope stays open by choice. 33/53.
+Phase 5 next.

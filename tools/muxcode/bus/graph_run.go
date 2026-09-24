@@ -583,13 +583,22 @@ type GateRearm struct {
 // nothing costly re-runs.
 //
 // A running run must be canceled first — resetting nodes under a live
-// executor would race it.
+// executor would race it. The whole retry holds the run lock, the one
+// CancelGraphRun and StopSpawnAuthorized decide authority under: their
+// decision depends on the run being canceled, so a retry landing between
+// that decision and the stop would let an agent stop resumed human work.
 //
 // Purging a stale gate approval fails CLOSED (PR #56 review): claiming
 // "purged" while os.Remove failed would leave the marker to satisfy the
 // re-armed gate — the laundered approval MUX-132 closed. The purge runs
 // before any store write, so refusing leaves the run untouched.
 func RetryGraphRun(session, runID, fromNode string) (*GraphRetryResult, error) {
+	unlock, err := lockExistingGraphRun(session, runID, "retried")
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
 	run, err := ReadGraphRun(session, runID)
 	if err != nil {
 		return nil, err

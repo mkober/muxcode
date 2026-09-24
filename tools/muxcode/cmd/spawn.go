@@ -193,7 +193,7 @@ func spawnStop(args []string) {
 	}
 
 	session := bus.BusSession()
-	if err := bus.StopSpawn(session, args[0]); err != nil {
+	if err := bus.StopSpawnAuthorized(session, args[0]); err != nil {
 		fmt.Fprintf(os.Stderr, "Error stopping spawn: %v\n", err)
 		os.Exit(1)
 	}

@@ -72,12 +72,31 @@ func (e *CancelIncompleteError) Error() string {
 // it, and each failed step — reporting canceled while a worker ran was the
 // incident. An unreadable spawn registry is such a failure, never an empty
 // worker set.
+//
+// Before any of that, the caller must pass CheckCancelAuthority, resolved
+// here rather than by each caller because the CLI and the TUI both cancel;
+// a refusal logs graph-cancel-refused and touches nothing. The actor is
+// named on graph-run-canceled, as graph-gate-approved names its approver.
+// Authority is decided on the run as read under the lock and held through
+// the mutation: it depends on state, and a canceled run read before the
+// lock may be running again by a RetryGraphRun before the cancel acts.
 func CancelGraphRun(session, runID string) error {
-	unlock, err := lockGraphRun(session, runID, graphRunLockWait)
+	unlock, err := lockExistingGraphRun(session, runID, "canceled")
 	if err != nil {
-		return fmt.Errorf("run %s NOT canceled: cannot serialize with the executor: %w", runID, err)
+		return err
 	}
 	defer unlock()
+
+	run, err := ReadGraphRun(session, runID)
+	if err != nil {
+		return fmt.Errorf("unknown run: %w", err)
+	}
+	actor := BusActorVerified()
+	if deny := CheckCancelAuthority(actor, run); deny != "" {
+		LogLifecycle(session, "warn", actor, "graph-cancel-refused", fmt.Sprintf("Graph run %s: %s", runID, deny))
+		return errors.New(deny)
+	}
+	runStopAuthorizedHook()
 
 	if err := UpdateGraphRunState(session, runID, GraphRunCanceling); err != nil {
 		return err
@@ -135,7 +154,7 @@ func CancelGraphRun(session, runID string) error {
 	if err := UpdateGraphRunState(session, runID, GraphRunCanceled); err != nil {
 		return err
 	}
-	LogLifecycle(session, "info", "daemon", "graph-run-canceled", runID)
+	LogLifecycle(session, "info", actor, "graph-run-canceled", fmt.Sprintf("%s canceled by %s", runID, actor))
 	return nil
 }
 
@@ -354,6 +373,24 @@ func lockGraphRun(session, runID string, wait time.Duration) (func(), error) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// lockExistingGraphRun is lockGraphRun at graphRunLockWait for a caller
+// that must then read and change the run — cancel, retry, and an authorized
+// spawn stop. A missing run reports as unknown rather than as a lock failure.
+func lockExistingGraphRun(session, runID, verb string) (func(), error) {
+	unlock, err := lockGraphRun(session, runID, graphRunLockWait)
+	if err == nil {
+		return unlock, nil
+	}
+	if _, rerr := ReadGraphRun(session, runID); rerr != nil {
+		return nil, fmt.Errorf("unknown run: %w", rerr)
+	}
+	return nil, fmt.Errorf("run %s NOT %s: cannot serialize with the executor: %w", runID, verb, err)
+}
+
+// runStopAuthorizedHook runs after a stop is authorized, under the run lock
+// and before the mutation. Tests use it to land a retry in that window.
+var runStopAuthorizedHook = func() {}
 
 // markDeliveryExpired records a message withdrawn before anyone read it.
 func markDeliveryExpired(session, msgID string) {
