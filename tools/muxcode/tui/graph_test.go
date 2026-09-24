@@ -409,6 +409,99 @@ func TestRenderGraphFrame_Header(t *testing.T) {
 	}
 }
 
+// MUX-182: the DAG header and the run list name who launched a run in the
+// words the gate messages use, and an agent launch never reads as the user's.
+func TestGraphScreensNameProvenance(t *testing.T) {
+	for _, tc := range []struct{ actor, want, mustNot string }{
+		{bus.ActorUser, "launched by: the user, by hand", "autonomous"},
+		{"auto", "launched by: auto (autonomous)", "the user"},
+	} {
+		snap := snapshot(linearGraph(), map[string]string{"build": bus.GraphNodeDone})
+		snap.Run.CreatedBy = tc.actor
+		frame := StripAnsi(RenderGraphFrame(snap, 120, 40, "", frameClock))
+		if !strings.Contains(frame, tc.want) || strings.Contains(frame, tc.mustNot) {
+			t.Errorf("DAG header for %q lacks %q (or carries %q):\n%s", tc.actor, tc.want, tc.mustNot, frame)
+		}
+
+		row := RunListRow{ID: "run-1", State: bus.GraphRunRunning, Template: "t", Total: 1,
+			LaunchedBy: bus.DescribeRunCreator(tc.actor)}
+		list := StripAnsi(RenderRunListFrame([]RunListRow{row}, 200, 0))
+		cell := strings.TrimPrefix(tc.want, "launched by: ")
+		if !strings.Contains(list, "LAUNCHED BY") || !strings.Contains(list, cell) || strings.Contains(list, tc.mustNot) {
+			t.Errorf("run list for %q lacks %q (or carries %q):\n%s", tc.actor, cell, tc.mustNot, list)
+		}
+	}
+}
+
+// MUX-182 review should-fix: a spawned or long actor keeps its "(autonomous)"
+// category in the LAUNCHED BY cell, and at pane widths that clip the column
+// away the selected run's provenance still renders whole on its own line.
+func TestRunListKeepsProvenanceCategory(t *testing.T) {
+	for _, tc := range []struct{ actor, cell, mustNot string }{
+		{"spawn-abcd1234", "spawn-abcd… (autonomous)", "the user"},
+		{"research", "research (autonomous)", "the user"},
+		{bus.ActorUnknown, "could not be established", "the user"},
+		{bus.ActorUser, "the user, by hand", "autonomous"},
+	} {
+		desc := bus.DescribeRunCreator(tc.actor)
+		if got := clampLaunchedBy(desc, launchedByWidth); got != tc.cell {
+			t.Errorf("cell for %q = %q, want %q", tc.actor, got, tc.cell)
+		}
+		rows := []RunListRow{
+			{ID: "other-run", State: bus.GraphRunComplete, Template: "t", Total: 1, LaunchedBy: bus.DescribeRunCreator(bus.ActorUser)},
+			{ID: "1790262549-spec-to-pr-00360289", State: bus.GraphRunRunning, Template: "spec-to-pr", Total: 9, LaunchedBy: desc},
+		}
+		for _, w := range []int{80, 100, 120, 200} {
+			frame := StripAnsi(RenderRunListFrame(rows, w, 1))
+			if !strings.Contains(frame, "▸ launched by: "+desc) {
+				t.Errorf("width %d: selected run for %q lacks its full provenance line:\n%s", w, tc.actor, frame)
+			}
+			for _, ln := range strings.Split(frame, "\n") {
+				if strings.Contains(ln, "launched by:") && strings.Contains(ln, tc.mustNot) {
+					t.Errorf("width %d: provenance line for %q carries %q: %q", w, tc.actor, tc.mustNot, ln)
+				}
+			}
+		}
+		if wide := StripAnsi(RenderRunListFrame(rows, 200, 1)); !strings.Contains(wide, tc.cell) {
+			t.Errorf("width 200: LAUNCHED BY cell %q missing:\n%s", tc.cell, wide)
+		}
+	}
+}
+
+// Negative control: with no selection (--render-once passes -1) no
+// provenance line renders, and a selection's line fits the height budget.
+func TestRunListProvenanceLineOnlyForSelection(t *testing.T) {
+	var rows []RunListRow
+	for i := 0; i < 20; i++ {
+		rows = append(rows, RunListRow{ID: fmt.Sprintf("run-%02d", i), Template: "t", State: bus.GraphRunComplete,
+			LaunchedBy: bus.DescribeRunCreator("auto")})
+	}
+	if frame := StripAnsi(RenderRunListFrameH(rows, 200, 30, -1)); strings.Contains(frame, "▸ launched by:") {
+		t.Errorf("no selection must render no provenance line:\n%s", frame)
+	}
+	for h := 12; h <= 30; h++ {
+		plain := RenderRunListFrameH(rows, 200, h, -1)
+		sel := RenderRunListFrameH(rows, 200, h, 10)
+		if strings.Count(sel, "\n") > max(h, strings.Count(plain, "\n")) {
+			t.Errorf("height %d: selected frame grew to %d lines (unselected %d)", h, strings.Count(sel, "\n"), strings.Count(plain, "\n"))
+		}
+	}
+}
+
+// The provenance line is counted in the header budget: a frame never grows
+// past its height because of it.
+func TestGraphHeaderProvenanceFitsHeight(t *testing.T) {
+	snap := snapshot(linearGraph(), map[string]string{"build": bus.GraphNodeDone})
+	snap.Run.Intent = "ship it"
+	snap.Run.CreatedBy = "auto"
+	for h := 10; h <= 30; h++ {
+		frame := RenderGraphFrame(snap, 120, h, "", frameClock)
+		if n := strings.Count(frame, "\n"); n > h {
+			t.Errorf("height %d rendered %d lines", h, n)
+		}
+	}
+}
+
 // A finished run's elapsed time freezes at UpdatedAt — post-mortem frames
 // must not keep counting.
 func TestRenderGraphFrame_PostMortemElapsedFrozen(t *testing.T) {

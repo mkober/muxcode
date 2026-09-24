@@ -523,7 +523,7 @@ func graphStatus(args []string) {
 		}
 		fmt.Println("=== Graph Runs ===")
 		for _, r := range runs {
-			fmt.Printf("%-40s [%s]  template=%s\n", r.ID, r.State, r.Template)
+			fmt.Printf("%-40s [%s]  template=%s  launched by: %s\n", r.ID, r.State, r.Template, bus.DescribeRunCreator(r.CreatedBy))
 		}
 		return
 	}

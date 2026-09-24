@@ -248,6 +248,7 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 		}
 	}
 
+	stampMessageOrigin(session, &m, humanPrompt)
 	data, err := EncodeMessage(m)
 	if err != nil {
 		return err

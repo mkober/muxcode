@@ -55,6 +55,18 @@ type GraphRun struct {
 	RetryNote string         `json:"retry_note,omitempty"` // last retry's re-target decision — see GraphRun doc
 }
 
+// MarshalJSON writes created_by as recorded plus a derived "provenance" in
+// DescribeRunCreator's words, so run.json and every --json output carry the
+// unambiguous form beside the raw one. Provenance is never read back: it is
+// recomputed from created_by on every write.
+func (r GraphRun) MarshalJSON() ([]byte, error) {
+	type recorded GraphRun
+	return json.Marshal(struct {
+		recorded
+		Provenance string `json:"provenance"`
+	}{recorded(r), DescribeRunCreator(r.CreatedBy)})
+}
+
 // GraphNodeStatus is the persisted per-node execution state of a run.
 // Routed records that a finished node's outgoing edges have been fired,
 // so a tick (or a resume after a crash) never routes the same completion
@@ -220,7 +232,7 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 		return nil, err
 	}
 	announceGraphAction(session, actor, "graph-run-created",
-		fmt.Sprintf("Graph run %s (%s) started by %s", run.ID, template, actor))
+		fmt.Sprintf("Graph run %s (%s) %s", run.ID, template, runProvenance(run)))
 	return run, nil
 }
 
@@ -774,9 +786,7 @@ func formatGraphRun(run *GraphRun, g *Graph, statuses map[string]*GraphNodeStatu
 	var b strings.Builder
 	elapsed := time.Since(time.Unix(run.CreatedAt, 0)).Round(time.Second)
 	fmt.Fprintf(&b, "Run %s  [%s]  template=%s  elapsed=%s\n", run.ID, run.State, run.Template, elapsed)
-	if run.CreatedBy != "" {
-		fmt.Fprintf(&b, "Started by: %s\n", run.CreatedBy)
-	}
+	fmt.Fprintf(&b, "Launched by: %s\n", DescribeRunCreator(run.CreatedBy))
 	if run.Intent != "" {
 		fmt.Fprintf(&b, "Intent: %s\n", run.Intent)
 	}

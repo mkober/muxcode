@@ -403,6 +403,9 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 	if snap.Run.Intent != "" {
 		headerLines++
 	}
+	if snap.Run.CreatedBy != "" {
+		headerLines++
+	}
 	// Width overflow wraps; the flat list is for height overflow — see renderWrappedLayers.
 	if gridW > width && headerLines+4 <= height {
 		wrapped := renderWrappedLayers(grid.Layers, labels, types, snap, selection, width)
@@ -833,6 +836,9 @@ func renderGraphHeader(snap GraphSnapshot, now time.Time, width int) string {
 	if run.Intent != "" {
 		fmt.Fprintf(&b, "  %s%s%s\n", Comment, run.Intent, RST)
 	}
+	if run.CreatedBy != "" {
+		fmt.Fprintf(&b, "  %slaunched by: %s%s\n", Comment, bus.DescribeRunCreator(run.CreatedBy), RST)
+	}
 	b.WriteString("\n")
 	return b.String()
 }
@@ -910,6 +916,7 @@ type RunListRow struct {
 	Elapsed     time.Duration
 	GateWaiting bool   // a wait_human node is waiting on this run
 	Results     string // one-line outcome: issues first, else what completed
+	LaunchedBy  string // bus.DescribeRunCreator of the run's created_by
 }
 
 // SummarizeRunResults compresses a run's node outcomes into one results
@@ -980,6 +987,24 @@ func clampCol(s string, w int) string {
 	return string(r[:w-1]) + "…"
 }
 
+const launchedByWidth = 24
+
+// autonomousSuffix is the category bus.DescribeRunCreator appends to every
+// agent actor.
+const autonomousSuffix = " (autonomous)"
+
+// clampLaunchedBy fits a DescribeRunCreator cell to w runes by shortening the
+// actor and never the category: a plain clampCol cut "spawn-abcd1234
+// (autonomous)" to "spawn-abcd1234 (auton…" (MUX-182 review), clipping the
+// words that exist so an agent launch cannot be read as the user's.
+func clampLaunchedBy(s string, w int) string {
+	actor, ok := strings.CutSuffix(s, autonomousSuffix)
+	if !ok || len([]rune(s)) <= w {
+		return clampCol(s, w)
+	}
+	return clampCol(actor, w-len(autonomousSuffix)) + autonomousSuffix
+}
+
 // RenderRunListFrame renders the run browser: all runs newest first, with
 // state, node progress, elapsed, and a gate badge where a wait_human node
 // waits. Empty state renders explicitly — never a blank frame.
@@ -990,6 +1015,10 @@ func RenderRunListFrame(rows []RunListRow, width, sel int) string {
 // RenderRunListFrameH is RenderRunListFrame with a height budget: the
 // list scrolls vertically in a window that follows the selection, with
 // ↑/↓ overflow indicators. height <= 0 renders every row.
+//
+// The selected run's provenance also renders in full on its own line under
+// the list: the LAUNCHED BY column sits past most pane widths and is clipped
+// with the row, and this list is where a run is cancelled (MUX-182).
 func RenderRunListFrameH(rows []RunListRow, width, height, sel int) string {
 	var b strings.Builder
 	b.WriteString(renderSurfaceTabs("Graph Runs", width))
@@ -1010,6 +1039,8 @@ func RenderRunListFrameH(rows []RunListRow, width, height, sel int) string {
 		}
 	}
 
+	selected := sel >= 0 && sel < len(rows)
+
 	// Window the rows to the pane, keeping the selection visible.
 	start, end := 0, len(rows)
 	if height > 0 {
@@ -1017,11 +1048,14 @@ func RenderRunListFrameH(rows []RunListRow, width, height, sel int) string {
 		if anyMark {
 			avail--
 		}
+		if selected {
+			avail--
+		}
 		start, end = scrollWindow(len(rows), avail, sel)
 	}
 
-	fmt.Fprintf(&b, "  %s   %-40s %-10s %-9s %-9s %-28s %s%s\n",
-		Comment, "RUN", "STATE", "PROGRESS", "ELAPSED", "TEMPLATE", "RESULTS", RST)
+	fmt.Fprintf(&b, "  %s   %-40s %-10s %-9s %-9s %-28s %-*s %s%s\n",
+		Comment, "RUN", "STATE", "PROGRESS", "ELAPSED", "TEMPLATE", launchedByWidth, "LAUNCHED BY", "RESULTS", RST)
 	if start > 0 {
 		fmt.Fprintf(&b, "  %s↑ %d more%s\n", Comment, start, RST)
 	}
@@ -1047,16 +1081,20 @@ func RenderRunListFrameH(rows []RunListRow, width, height, sel int) string {
 			badge = "  " + Yellow + Bold + "⚑ gate" + RST
 		}
 		results := clampCol(r.Results, 90)
-		line := fmt.Sprintf("  %s %s%-40s%s %s%-10s%s %d/%-7d %-9s %s%-28s%s %s%s%s%s",
+		line := fmt.Sprintf("  %s %s%-40s%s %s%-10s%s %d/%-7d %-9s %s%-28s%s %-*s %s%s%s%s",
 			cursor, idColor, clampCol(r.ID, 40), RST,
 			stateColor, r.State, RST,
 			r.Done, r.Total, r.Elapsed.String(),
 			Comment, clampCol(r.Template, 28), RST,
+			launchedByWidth, clampLaunchedBy(r.LaunchedBy, launchedByWidth),
 			resultsCellColor(results), results, RST, badge)
 		b.WriteString(fitWidth(line, width) + "\n")
 	}
 	if end < len(rows) {
 		fmt.Fprintf(&b, "  %s↓ %d more%s\n", Comment, len(rows)-end, RST)
+	}
+	if selected {
+		b.WriteString(fitWidth(fmt.Sprintf("  %s▸ launched by: %s%s", Comment, rows[sel].LaunchedBy, RST), width) + "\n")
 	}
 	// The ? explainer renders once as a legend, never per-cell
 	if anyMark {

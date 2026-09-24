@@ -156,24 +156,10 @@ func ListUnverifiedHolds(session, runID string) []UnverifiedHold {
 }
 
 // runProvenance says who started a run, for the gate requests an agent reads
-// before deciding whether to raise an approval with a person.
-//
-// A gate message that omits this leaves the reader to infer it, and the
-// cautious inference — that a run it did not start was launched autonomously —
-// is wrong precisely when a person launched it by hand and is waiting on their
-// own gate. Observed 2026-09-03: an agent refused a gate as an "auto-launched
-// run" that the user had started a minute earlier.
+// before deciding whether to raise an approval with a person — see
+// DescribeRunCreator for the vocabulary and why it exists.
 func runProvenance(run *GraphRun) string {
-	switch run.CreatedBy {
-	case "":
-		return "launched by: unrecorded"
-	case ActorUnknown:
-		return "launched by: could not be established"
-	case ActorUser:
-		return "launched by: the user, by hand"
-	default:
-		return "launched by: " + run.CreatedBy + " (autonomous)"
-	}
+	return "launched by: " + DescribeRunCreator(run.CreatedBy)
 }
 
 // ApproveGraphGate releases a wait_human gate. The next executor tick

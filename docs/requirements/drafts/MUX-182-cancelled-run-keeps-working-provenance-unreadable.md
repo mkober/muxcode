@@ -120,10 +120,10 @@ as a loop.
 
 - [x] `graph cancel` terminates in-flight spawn nodes, **or** refuses to report the run cancelled while naming exactly which spawns survived and how to stop them — Phase 2 `bus/graph_cancel.go`, closed 2026-09-24 after three review iterations (unit level: survivors and every failed cleanup step named in `CancelIncompleteError`); live confirmation is Phase 6
 - [ ] A cancelled run cannot mutate files or call an external API after the cancel returns
-- [ ] Every provenance surface (`run.json`, `graph status`, `graph runs`, `graph-run-created`) distinguishes "launched by the user by hand" from "launched autonomously by `<agent>`", in wording an agent cannot misread as the other
-- [ ] **Negative control: a genuinely agent-launched run is still labelled autonomous** — a fix that labels everything "user" is not a fix
-- [ ] A spawn-originated bus message carries its originating run id, `created_by`, and current run state, so a recipient can verify whether a prompt traces back to a human
-- [ ] An agent cannot assert human provenance it did not receive — plan writing "on a user request" is unsupported unless the prompt carried it
+- [x] Every provenance surface (`run.json`, `graph status`, `graph runs`, `graph-run-created`) distinguishes "launched by the user by hand" from "launched autonomously by `<agent>`", in wording an agent cannot misread as the other — Phase 3 routes every surface through `DescribeRunCreator`, closed 2026-09-24 11:13 once the TUI run-list clamp preserved the category (the last surface that could clip `(autonomous)`)
+- [x] **Negative control: a genuinely agent-launched run is still labelled autonomous** — a fix that labels everything "user" is not a fix — Phase 3, every provenance test paired manual/`auto`
+- [x] A spawn-originated bus message carries its originating run id, `created_by`, and current run state, so a recipient can verify whether a prompt traces back to a human — Phase 3, `stampMessageOrigin`; `TestSpawnMessageCarriesRunOrigin`, `TestSpawnMessageFromCancelledRunSaysSo`
+- [x] An agent cannot assert human provenance it did not receive — plan writing "on a user request" is unsupported unless the prompt carried it — Phase 3: the prompt now states its origin or states that it carries no user request, and a forged human origin is discarded at send (`TestUnprovenancedMessagesSayNoUserRequest`, `TestStampDiscardsForgedHumanOrigin`); whether agents honour it is what Phase 6 exercises
 - [ ] `graph cancel` / `spawn stop` issued **by an agent** against a run whose `created_by` is a human requires explicit user approval; agent-launched runs stay freely cancellable
 - [ ] `graph-run-canceled` records **who** cancelled, as `graph-gate-approved` records who approved
 - [ ] The watch completion notification carries the agent's real summary, or is neutral (`"Watch completed — see result"`); it never asserts a finding the chain did not establish
@@ -138,7 +138,8 @@ as a loop.
 | `tools/muxcode/bus/graph_cancel.go` | `CancelGraphRun` (moved here in Phase 2): `runSpawnRoles`, `stopSpawnRole`, `retractSpawnDelegations`, `CancelIncompleteError` |
 | `tools/muxcode/bus/graph_exec.go` | `StepGraphRun:247` takes the run lock for the tick; `replaceLostWorkers.failClosed` (stops by role since Phase 2), `runProvenance:164` (the wording to propagate) |
 | `tools/muxcode/bus/task.go` | `expireTask`, `scanTasks` — checked expiry and strict enumeration for the cancel path (Phase 2 must-fix 3); `TimeoutTask`/`ListTasks` stay best-effort for other callers |
-| `tools/muxcode/bus/graph_run.go` | `CreatedBy:197`, `"Started by: %s":773-774` — the ambiguous render |
+| `tools/muxcode/bus/run_provenance.go` | `DescribeRunCreator` (the one vocabulary), `stampMessageOrigin`, `formatMessageOrigin` — Phase 3 |
+| `tools/muxcode/bus/graph_run.go` | `CreatedBy`, `MarshalJSON` (derived `provenance`), `Launched by:` render — the ambiguous `Started by:` fixed in Phase 3 |
 | `tools/muxcode/bus/config.go` | `BusActorVerified:167`, `agentRuntimeAncestor` — does it recognise `auto`? |
 | `tools/muxcode/bus/spawn.go` | `StopSpawn`, spawn lifecycle and worktree mode |
 | `tools/muxcode/bus/commit_authority.go` | `CheckCommitAuthority*` — the pattern to mirror for a cancel-authority check |
@@ -320,11 +321,40 @@ build on what is true:
 
 ### Phase 3: Make provenance readable (defect 1)
 
-- [ ] Route `run.json`, `graph status`, `graph runs` and `graph-run-created` through `runProvenance`'s vocabulary
+- [x] Route `run.json`, `graph status`, `graph runs` and `graph-run-created` through `runProvenance`'s vocabulary — 2026-09-24, `DescribeRunCreator` (`bus/run_provenance.go`): `run.json` and every `--json` carry a derived `provenance` beside raw `created_by`; `graph status <id>` renders `Launched by:` always; the list gains `launched by:`; the event says `launched by: …`; the TUI header line and run-list column follow
   - Phase 1 correction: `graph runs` does not exist — the list is `graph status` with no id (`cmd/graph.go:524`) and shows no provenance at all; the TUI graph screen shows none either. Both count among the surfaces to route, with `--json` carrying the raw field alongside
-- [ ] **Negative control test:** an agent-launched run still renders autonomous
-- [ ] Propagate originating run id, `created_by` and run state into every spawn-originated bus message
-- [ ] Make an unprovenanced prompt legible as such, so a recipient cannot assert human provenance it never received
+- [x] **Negative control test:** an agent-launched run still renders autonomous — every provenance test is table-paired manual/`auto`: `auto` must render `auto (autonomous)` and never contain "the user"; manual must never contain "autonomous" (`bus/run_provenance_test.go`, `tui/graph_test.go`)
+- [x] Propagate originating run id, `created_by` and run state into every spawn-originated bus message — `Message.OriginRun/OriginCreatedBy/OriginRunState`, derived by `stampMessageOrigin` at `sendMessage` after the authority checks (a sender-supplied origin is wiped first); `FormatMessage` renders `Origin: graph run … · launched by: … · run state at send: …`, adding "the run was cancelled; do not act on this" for `canceled`/`canceling`
+- [x] Make an unprovenanced prompt legible as such, so a recipient cannot assert human provenance it never received — a spawn tied to no run renders "carries no record of a user request", as does any request from an agent other than edit (daemon included); `SendHumanPrompt`'s road is stamped `ActorUser` ("typed by the user at the Prompt surface"); edit's own messages carry no line, being the consent boundary
+- [x] **Review should-fix (2026-09-24, `tui/graph.go:1062`) — closed 11:13, review `/tmp/muxcode-review-1790262753.txt` 0/0/0** (`clampLaunchedBy` shortens only the actor and keeps ` (autonomous)` whole — `spawn-abcd… (autonomous)`; `launchedByWidth` 24 so "could not be established" fits; the selected run's full provenance renders on its own `▸ launched by:` line under the list, inside the height budget; `TestRunListKeepsProvenanceCategory` at widths 80/100/120/200 with a user negative control, `TestRunListProvenanceLineOnlyForSelection`). Original: the run-list column `clampCol(r.LaunchedBy, 20)` clips the category the vocabulary exists to preserve — `spawn-abcd1234 (autonomous)` becomes `spawn-abcd1234 (auton…`, and even `research (autonomous)` exceeds 20; the row is then clipped again at terminal width, and the test covers only `user`/`auto` at width 200. Preserve the category while shortening the actor, or render provenance on a wrapping/detail line; test a spawned or long actor at realistic widths. Holds AC 3 open
+
+#### Phase 3 findings — 2026-09-24
+
+Landed in run `1790258935-spec-to-pr-49587ed8`: build and test green, review
+`/tmp/muxcode-review-1790259602.txt` 0 must-fix, 1 should-fix (the open box above). Worker report:
+`/tmp/mux182-phase3-report.md`. Boundaries drawn:
+
+- The vocabulary lives in one place, `DescribeRunCreator` (`bus/run_provenance.go`); `runProvenance`
+  delegates to it, so gate messages and every other surface cannot drift apart again.
+- `run.json`'s `provenance` field is **derived on every write and never read back** — `created_by`
+  stays the record, the words are a rendering of it.
+- The `Origin*` message fields are deliberately separate from `GraphRun`/`GraphNode`: those feed the
+  commit-authority backstop, and a worker's own send must never be judged as an executor dispatch.
+- Run state is captured **at send**, so a message from a run cancelled later still reads as sent
+  while running; the cancel's retraction (Phase 2) is what withdraws it.
+- No origin line on edit's messages (edit is the consent boundary) or on agent responses; every other
+  request either names its run or says it carries no record of a user request.
+- **Second review, 10:38** (`/tmp/muxcode-review-1790260651.txt`): the run-list clamp should-fix
+  repeated unchanged; its three must-fix are on work that shares the tree but is not this phase —
+  the HEAD-anchored `phaseCommitReady` of [MUX-183](./MUX-183-phase-commit-ready-recredits-shipped-phases.md)
+  (two, recorded there) and the review node's new findings-count parser (one, recorded under Phase 5
+  below, since it is the mechanism behind the `outcome=success`-with-must-fix evidence). Run
+  `1790258935` was cancelled after its `phase-check`; the cancel stopped cleanly.
+- **Closed 11:13 in run `1790262549-spec-to-pr-00360289`** — whose `update-spec` dispatch arrived
+  carrying its own origin line, `graph run 1790262549 · launched by: the user, by hand · run state at
+  send: running`: the phase's mechanism seen working on the message that verified it. The TUI clamp
+  now keeps the category whole and shortens only the actor, and the selected run's full provenance
+  has its own line; review 0/0/0. AC 3 released.
 
 ### Phase 4: Gate cancellation of human-launched runs (defect 3)
 
@@ -339,6 +369,7 @@ build on what is true:
 - [ ] Stop delivering pane scrapes in a `response` body; mark them as non-answers and do not complete the task as answered
 - [ ] Exclude suppressed self-addressed startup replies from loop detection, or stop printing the reply affordance for them
 - [ ] Verify no other chain action asserts a finding it cannot establish (audit `bus/profile.go` messages)
+- [x] **Review node verdict parsing (`graph_exec.go` `reviewFindingsOutcome`) — closed 2026-09-24 10:52** (review `/tmp/muxcode-review-1790261523.txt`: a complete bounded-count summary anchored to the first non-blank reply line; quoted earlier summaries, fenced examples, incomplete counts and narrative-first replies are held; `TestReviewFindingsOutcome`, `TestExecReviewFindingsRouteToFix`). Original: the mechanism behind the Phase 2 evidence: the node read `outcome=success` off replies carrying must-fix. Review must-fix (`/tmp/muxcode-review-1790260651.txt`): the parser accepts any must-fix count anywhere and defaults a missing should-fix count to zero, so "0 must-fix found so far; review incomplete" passes as success. Parse one complete explicit summary line, require both gating counts, reject malformed or overflowing numbers, hold incomplete or quoted-only counts; negative controls for a missing should-fix count and an unfinished reply
 
 ### Phase 6: Integration test
 
@@ -397,6 +428,12 @@ while still working. Whether they share a fix or only a theme is not settled her
 - **[MUX-141](../backlog/MUX-141-auto-agent-restart-relaunches-graph-runs.md)** — the auto agent relaunching
   runs is the behaviour edit wrongly believed it was seeing. Related, separately tracked.
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-182-cancelled-run-keeps-working | 1h 2m | 2026-09-24 10:53 |
+
 ## Status
 
 In Progress — started 2026-09-23 on the user's instruction; moved `backlog/` → `drafts/` at 0/44.
@@ -407,4 +444,7 @@ each time, third review 0/0/0) — `graph cancel` stops the run's workers under 
 retracts their delegations with checked expiry, propagates registry, inbox and task failures, and
 fails closed on a surviving worker or any failed cleanup step; 6/6 steps, four review boxes and AC 1
 ticked. AC 2 stays open for Phase 6's live measurement (a consumed request cannot be recalled).
-17/51. Phase 3 next.
+**Phase 3 complete 2026-09-24 11:13** (landed in run `1790258935`, closed in `1790262549`; build and
+test green each time, final review 0/0/0) — 4/4 steps, the TUI clamp should-fix and ACs 3, 4, 5, 6
+ticked; a clipped `(auton…` was the ambiguity defect 1 is about, so AC 3 waited for the clamp. The
+review node's verdict parser (a Phase 5 box) closed 10:52. 27/53. Phase 4 next.

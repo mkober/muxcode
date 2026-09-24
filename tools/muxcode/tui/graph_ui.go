@@ -85,7 +85,8 @@ func LoadRunListRows(session string, now time.Time) []RunListRow {
 			continue
 		}
 		statuses, _ := bus.ReadAllNodeStatuses(session, r.ID)
-		row := RunListRow{ID: r.ID, Template: r.Template, State: r.State, Total: len(g.Nodes)}
+		row := RunListRow{ID: r.ID, Template: r.Template, State: r.State, Total: len(g.Nodes),
+			LaunchedBy: bus.DescribeRunCreator(r.CreatedBy)}
 		var failedNodes, doneNodes []string
 		var failedOut string
 		for j := range g.Nodes {
