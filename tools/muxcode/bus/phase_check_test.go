@@ -11,7 +11,7 @@ import (
 // lap (2026-09-09, run 1788966148). The guard's own failure edge stays as
 // the backstop for a spec edited between the check and the commit.
 func TestSpecToPRPhaseCheckPrecedesGate(t *testing.T) {
-	tpl, _, err := ResolveGraphTemplate("2-spec-to-pr")
+	tpl, _, err := ResolveGraphTemplate("50-spec-to-pr")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestSpecToPRPhaseCheckPrecedesGate(t *testing.T) {
 		}
 	}
 	if v := tpl.Validate(); !v.OK() {
-		t.Errorf("2-spec-to-pr must validate: %v", v.Errors)
+		t.Errorf("50-spec-to-pr must validate: %v", v.Errors)
 	}
 }
 

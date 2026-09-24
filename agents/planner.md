@@ -242,7 +242,7 @@ The doc must never show less time than it already showed. `seed` is a floor — 
 
 - **Phase steps** (`- [ ] Step description`) — check off when the code change clearly implements the step
 - **Acceptance criteria** (`- [ ] Criterion`) — check off when the implementation verifiably satisfies the criterion
-- **Deferred to another spec** — check off, annotated `deferred to MUX-NNN` with a link to it. An open box is not free: it holds `SpecCurrentPhase` on that phase, which blocks `2-spec-to-pr` on work this spec has decided it will never do. The annotation is what keeps a ticked box honest — it says handed off, not done
+- **Deferred to another spec** — check off, annotated `deferred to MUX-NNN` with a link to it. An open box is not free: it holds `SpecCurrentPhase` on that phase, which blocks `50-spec-to-pr` on work this spec has decided it will never do. The annotation is what keeps a ticked box honest — it says handed off, not done
 - **Do NOT check off** items that are only partially implemented or require further verification
 
 ### Example reply

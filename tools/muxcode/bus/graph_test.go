@@ -317,7 +317,8 @@ func TestValidateGateRuleMixedPaths(t *testing.T) {
 }
 
 func TestBuiltinGraphTemplatesValidate(t *testing.T) {
-	want := []string{"1-story-to-spec", "2-spec-to-pr", "3-pr-review-fix", "4-pr-local-review", "5-docs-sync", "6-deploy-verify", "build-test-review"}
+	want := []string{"10-story-to-spec", "20-defect-to-spec", "30-build-test-review", "40-sync-main", "50-spec-to-pr", "60-integration-suite",
+		"70-pr-local-review", "80-pr-review-fix", "90-ci-fix", "100-docs-sync", "110-pr-merge", "120-deploy-verify"}
 	if len(builtinGraphJSON) != len(want) {
 		t.Errorf("expected %d builtin templates, got %d", len(want), len(builtinGraphJSON))
 	}
@@ -340,7 +341,7 @@ func TestBuiltinGraphTemplatesValidate(t *testing.T) {
 			t.Errorf("template %q has validation errors: %v", name, v.Errors)
 		}
 		for _, w := range v.Warnings {
-			if name == "6-deploy-verify" && strings.Contains(w, "launching the run is its only approval") {
+			if name == "120-deploy-verify" && strings.Contains(w, "launching the run is its only approval") {
 				continue // recorded deliberate trade — presence pinned by TestBuiltinGateTextClean
 			}
 			t.Errorf("template %q has validation warning: %s", name, w)
@@ -352,7 +353,7 @@ func TestBuiltinGraphTemplatesValidate(t *testing.T) {
 // the missing edge failed a live spec-to-pr at its review node
 // (2026-08-31, run 1788195259) while build/test failures routed fine.
 func TestReviewFailureRoutesToFix(t *testing.T) {
-	for _, name := range []string{"2-spec-to-pr"} {
+	for _, name := range []string{"50-spec-to-pr"} {
 		g, err := ParseGraph([]byte(builtinGraphJSON[name]))
 		if err != nil {
 			t.Fatalf("template %q: parse: %v", name, err)
@@ -381,7 +382,7 @@ func TestReviewFailureRoutesToFix(t *testing.T) {
 // pins the instruction that produces one. Without it the wording could be
 // reverted and only a live run would notice.
 func TestPRReviewFixQuestionNodesDeclareExitConvention(t *testing.T) {
-	g, err := ParseGraph([]byte(builtinGraphJSON["3-pr-review-fix"]))
+	g, err := ParseGraph([]byte(builtinGraphJSON["80-pr-review-fix"]))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -407,7 +408,7 @@ func TestPRReviewFixQuestionNodesDeclareExitConvention(t *testing.T) {
 // gate's territory — fix-gate's, whose message names the push for the
 // approval to mean what it releases.
 func TestPRReviewFixCommitsFixesBeforeReplying(t *testing.T) {
-	g, err := ParseGraph([]byte(builtinGraphJSON["3-pr-review-fix"]))
+	g, err := ParseGraph([]byte(builtinGraphJSON["80-pr-review-fix"]))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -437,11 +438,11 @@ func TestPRReviewFixCommitsFixesBeforeReplying(t *testing.T) {
 }
 
 func TestResolveGraphTemplateBuiltin(t *testing.T) {
-	g, source, err := ResolveGraphTemplate("build-test-review")
+	g, source, err := ResolveGraphTemplate("30-build-test-review")
 	if err != nil {
 		t.Fatalf("resolve builtin: %v", err)
 	}
-	if source != "builtin" || g.Name != "build-test-review" {
+	if source != "builtin" || g.Name != "30-build-test-review" {
 		t.Errorf("got source %q name %q", source, g.Name)
 	}
 }
@@ -464,13 +465,13 @@ func TestResolveGraphTemplateProjectOverride(t *testing.T) {
 	if err := os.MkdirAll(gdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	override := `{"name": "build-test-review", "description": "project override", "start": "a",
+	override := `{"name": "30-build-test-review", "description": "project override", "start": "a",
 		"nodes": [{"id": "a", "type": "send", "role": "build", "action": "build", "message": "go"}], "edges": []}`
-	if err := os.WriteFile(filepath.Join(gdir, "build-test-review.json"), []byte(override), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(gdir, "30-build-test-review.json"), []byte(override), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	g, source, err := ResolveGraphTemplate("build-test-review")
+	g, source, err := ResolveGraphTemplate("30-build-test-review")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -494,8 +495,8 @@ func TestListGraphTemplatesIncludesBuiltins(t *testing.T) {
 		t.Fatalf("expected %d templates, got %d: %+v", len(builtinGraphJSON), len(infos), infos)
 	}
 	for i := 1; i < len(infos); i++ {
-		if infos[i-1].Name > infos[i].Name {
-			t.Errorf("templates not sorted: %q before %q", infos[i-1].Name, infos[i].Name)
+		if graphTemplateLess(infos[i].Name, infos[i-1].Name) {
+			t.Errorf("templates not in workflow order: %q before %q", infos[i-1].Name, infos[i].Name)
 		}
 	}
 	for _, info := range infos {
@@ -554,7 +555,7 @@ func TestCancelGraphRunExpiresTasks(t *testing.T) {
 // TestCreateGraphRunRequiresSpec pins the requires_spec gate at the
 // run-creation chokepoint: a spec-driven graph refuses to start with no
 // active requirements spec, and starts once one is set (negative
-// control). 2-spec-to-pr carries the flag builtin.
+// control). 50-spec-to-pr carries the flag builtin.
 func TestCreateGraphRunRequiresSpec(t *testing.T) {
 	session := "graph-requires-spec-test"
 	t.Cleanup(func() { _ = os.RemoveAll(BusDir(session)) })
@@ -575,7 +576,7 @@ func TestCreateGraphRunRequiresSpec(t *testing.T) {
 		t.Fatalf("with an active spec set the run must start: %v", err)
 	}
 
-	tpl, _, err := ResolveGraphTemplate("2-spec-to-pr")
+	tpl, _, err := ResolveGraphTemplate("50-spec-to-pr")
 	if err != nil {
 		t.Fatalf("spec-to-pr builtin missing: %v", err)
 	}
@@ -727,7 +728,7 @@ func TestValidateUngatedDeployWarns(t *testing.T) {
 }
 
 // TestBuiltinGateTextClean holds shipped templates to zero gate-text
-// warnings, and pins 6-deploy-verify's ungated-deploy warning as the one
+// warnings, and pins 120-deploy-verify's ungated-deploy warning as the one
 // recorded deliberate trade — asserted present so the check cannot go
 // inert.
 func TestBuiltinGateTextClean(t *testing.T) {
@@ -740,13 +741,13 @@ func TestBuiltinGateTextClean(t *testing.T) {
 			if strings.Contains(w, "does not name the mutation") {
 				t.Errorf("%s: %s", name, w)
 			}
-			if strings.Contains(w, "launching the run is its only approval") && name != "6-deploy-verify" {
+			if strings.Contains(w, "launching the run is its only approval") && name != "120-deploy-verify" {
 				t.Errorf("%s: unexpected ungated-deploy warning: %s", name, w)
 			}
 		}
 	}
 
-	g, err := ParseGraph([]byte(builtinGraphJSON["6-deploy-verify"]))
+	g, err := ParseGraph([]byte(builtinGraphJSON["120-deploy-verify"]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -793,17 +794,17 @@ func templateEdgeOn(g *Graph, from, to, outcome string) bool {
 	return false
 }
 
-// TestPRReviewFixTemplate pins 3-pr-review-fix: no PR ends the run, no
+// TestPRReviewFixTemplate pins 80-pr-review-fix: no PR ends the run, no
 // actionable comment ends it clean, and otherwise one gate releases the fix
 // loop, the push and the replies. Review findings loop back to fix like any
 // other failure, and nothing reaches the push except a clean review.
 func TestPRReviewFixTemplate(t *testing.T) {
-	tpl, _, err := ResolveGraphTemplate("3-pr-review-fix")
+	tpl, _, err := ResolveGraphTemplate("80-pr-review-fix")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if v := tpl.Validate(); !v.OK() || len(v.Warnings) > 0 {
-		t.Fatalf("3-pr-review-fix must validate without warnings: %v %v", v.Errors, v.Warnings)
+		t.Fatalf("80-pr-review-fix must validate without warnings: %v %v", v.Errors, v.Warnings)
 	}
 	for _, e := range [][3]string{
 		{"find-pr", "pr-exists", OutcomeSuccess},
@@ -836,11 +837,11 @@ func TestPRReviewFixTemplate(t *testing.T) {
 	}
 }
 
-// 4-pr-local-review's review lists issues by design, and a review with
+// 70-pr-local-review's review lists issues by design, and a review with
 // findings is now a failure: without its failure edge the run would stop
 // before restoring the user's branch.
 func TestPRLocalReviewRestoresOnFindings(t *testing.T) {
-	tpl, _, err := ResolveGraphTemplate("4-pr-local-review")
+	tpl, _, err := ResolveGraphTemplate("70-pr-local-review")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -863,7 +864,7 @@ func templateEdge(g *Graph, from, to string) bool {
 // the ONLY path to its commit gate (a direct review->gate edge would
 // silently bypass it — plan finding).
 func TestShipTemplatesUpdateSpecBeforeGate(t *testing.T) {
-	for name, gate := range map[string]string{"2-spec-to-pr": "phase-gate"} {
+	for name, gate := range map[string]string{"50-spec-to-pr": "phase-gate"} {
 		tpl, _, err := ResolveGraphTemplate(name)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -891,7 +892,7 @@ func TestShipTemplatesUpdateSpecBeforeGate(t *testing.T) {
 // both loop-closing edges, gate-and-ask on a stuck phase via the commit
 // failure edge, termination to a final gate that alone releases push+PR.
 func TestReqCodePRMultiPhaseLoop(t *testing.T) {
-	tpl, _, err := ResolveGraphTemplate("2-spec-to-pr")
+	tpl, _, err := ResolveGraphTemplate("50-spec-to-pr")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -948,7 +949,7 @@ func TestReqCodePRMultiPhaseLoop(t *testing.T) {
 		t.Error("fix must carry ${failure_report} so the worker is told what failed")
 	}
 	if v := tpl.Validate(); !v.OK() {
-		t.Errorf("multi-phase 2-spec-to-pr must validate: %v", v.Errors)
+		t.Errorf("multi-phase 50-spec-to-pr must validate: %v", v.Errors)
 	}
 }
 

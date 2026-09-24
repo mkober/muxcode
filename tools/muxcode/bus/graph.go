@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -738,18 +739,49 @@ func ResolveGraphTemplate(name string) (*Graph, string, error) {
 // as an alias — the rename exists so the name says what the template
 // does, and an alias would keep the old one in circulation.
 //
-// Builtins carry a workflow-stage prefix (1-story-to-spec … 6-deploy-verify)
-// so every alphabetical listing reads top-down as the dev workflow;
-// build-test-review is a utility step and stays unnumbered.
+// Builtins carry a workflow-stage prefix in tens (10-story-to-spec …
+// 120-deploy-verify) so every listing reads top-down as the dev workflow
+// and a new stage fits between two others without renaming either; see
+// graphTemplateLess for the order.
 var renamedGraphTemplates = map[string]string{
-	"story-to-spec":         "1-story-to-spec",
-	"spec-to-pr":            "2-spec-to-pr",
-	"req-code-pr":           "2-spec-to-pr",
-	"story-lifecycle":       "2-spec-to-pr",    // removed — 2-spec-to-pr covers the same arc
-	"commit-pr-review-loop": "3-pr-review-fix", // removed — 2-spec-to-pr opens the PR, 3-pr-review-fix answers its review
-	"pr-local-review":       "4-pr-local-review",
-	"update-spec-docs":      "5-docs-sync",
-	"deploy-verify":         "6-deploy-verify",
+	"story-to-spec":         "10-story-to-spec",
+	"build-test-review":     "30-build-test-review",
+	"spec-to-pr":            "50-spec-to-pr",
+	"req-code-pr":           "50-spec-to-pr",
+	"story-lifecycle":       "50-spec-to-pr", // removed — 50-spec-to-pr covers the same arc
+	"pr-local-review":       "70-pr-local-review",
+	"commit-pr-review-loop": "80-pr-review-fix", // removed — 50-spec-to-pr opens the PR, 80-pr-review-fix answers its review
+	"update-spec-docs":      "100-docs-sync",
+	"deploy-verify":         "120-deploy-verify",
+}
+
+// graphTemplateLess orders templates by workflow stage number, then name;
+// a name with no stage prefix sorts after every staged one. Plain string
+// order would put 100-docs-sync ahead of 20-defect-to-spec.
+func graphTemplateLess(a, b string) bool {
+	sa, oka := graphTemplateStage(a)
+	sb, okb := graphTemplateStage(b)
+	switch {
+	case oka && okb && sa != sb:
+		return sa < sb
+	case oka != okb:
+		return oka
+	}
+	return a < b
+}
+
+// graphTemplateStage returns the leading workflow-stage number of a
+// template name ("50-spec-to-pr" → 50).
+func graphTemplateStage(name string) (int, bool) {
+	digits, rest, ok := strings.Cut(name, "-")
+	if !ok || digits == "" || rest == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // ListGraphTemplates enumerates all resolvable templates across the three
@@ -797,7 +829,7 @@ func ListGraphTemplates() []GraphTemplateInfo {
 		infos = append(infos, GraphTemplateInfo{Name: name, Source: "builtin", Description: desc})
 	}
 
-	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+	sort.Slice(infos, func(i, j int) bool { return graphTemplateLess(infos[i].Name, infos[j].Name) })
 	return infos
 }
 

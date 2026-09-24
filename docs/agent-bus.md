@@ -1600,7 +1600,7 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 | `ui --templates` | Template launcher — pick, validate, and start a run |
 | `ui --gates [--render-once]` | Pending `wait_human` approval queue across all in-flight runs |
 
-**`2-spec-to-pr` lap shape.** `implement` → `build` → `test` → `review` → `update-spec` →
+**`50-spec-to-pr` lap shape.** `implement` → `build` → `test` → `review` → `update-spec` →
 `phase-check` → `phase-gate` → `commit` → `loop-check`, with `fix` on any failure edge. `phase-check`
 (`{"spec_phase_committable": "commit"}`) reads the active spec through the same predicate as the
 commit's `phase-progress` guard: a phase still open after `update-spec` goes straight to `stuck-gate`
@@ -1622,10 +1622,10 @@ cancel).
 
 ```bash
 # Start a run from a built-in template, with intent interpolated into node messages
-muxcode graph run 2-spec-to-pr "implement PBP1-4915"
+muxcode graph run 50-spec-to-pr "implement PBP1-4915"
 
 # Omit the intent and it is derived from the branch's spec
-muxcode graph run 2-spec-to-pr
+muxcode graph run 50-spec-to-pr
 
 # Run a custom definition — --file must be the first argument after `run`,
 # since a bare first arg is read as a template name
@@ -1739,19 +1739,23 @@ actively maintained. A hand-copied set is a standing liability, and the command 
 question correctly already exists.
 
 Broadly they follow a story's life — derive a spec from the branch, implement it, review, commit and
-PR, address the PR's review comments, deploy — plus a `build-test-review` subgraph the others
-compose. Every builtin is pinned by `TestBuiltinGraphTemplatesValidate`, so one violating the gate
-rule fails the suite rather than shipping. Since 2026-09-24 the builtins carry a workflow-stage
-prefix — `1-story-to-spec`, `2-spec-to-pr`, `3-pr-review-fix`, `4-pr-local-review`, `5-docs-sync`,
-`6-deploy-verify`; `build-test-review` is a utility and stays unnumbered — so any alphabetical
-listing reads top-down as the workflow, and the launcher typeahead matches with or without the
-number (`2` and `spec` both land on `2-spec-to-pr`). A retired name (`spec-to-pr`, `story-to-spec`,
-`pr-local-review`, `update-spec-docs`, `deploy-verify`, the earlier `req-code-pr` and
-`story-lifecycle`, and `commit-pr-review-loop`, removed the same day) fails loudly naming its
-successor (`renamedGraphTemplates`, `bus/graph.go`) rather than resolving as an alias, which would
-keep the old name in circulation.
+PR, address the PR's review comments or failing CI, merge, deploy — with a defect-to-spec entry, a
+rebase-onto-main step, the integration suite and `30-build-test-review`, the build/test/review
+subgraph the others compose. Every builtin is pinned by `TestBuiltinGraphTemplatesValidate`, so one
+violating the gate rule fails the suite rather than shipping. Since 2026-09-24 every builtin carries
+a workflow-stage prefix in tens — `10-story-to-spec`, `20-defect-to-spec`, `30-build-test-review`,
+`40-sync-main`, `50-spec-to-pr`, `60-integration-suite`, `70-pr-local-review`, `80-pr-review-fix`,
+`90-ci-fix`, `100-docs-sync`, `110-pr-merge`, `120-deploy-verify` — and listings sort by stage
+number, then name, unnumbered names last (`graphTemplateLess`, `bus/graph.go`), so they read
+top-down as the workflow and a stage can be inserted without renumbering. The launcher typeahead
+matches with or without the number (`50` and `spec` both land on `50-spec-to-pr`). A retired name
+(`build-test-review`, `spec-to-pr`, `story-to-spec`, `pr-local-review`, `update-spec-docs`,
+`deploy-verify`, the earlier `req-code-pr` and `story-lifecycle`, and `commit-pr-review-loop`,
+removed the same day) fails loudly naming its successor (`renamedGraphTemplates`, `bus/graph.go`)
+rather than resolving as an alias, which would keep the old name in circulation; the single-digit
+names the templates carried for part of that afternoon were never released and have no aliases.
 
-**`3-pr-review-fix` shape** (2026-09-24). `find-pr` (commit, `pr-read`: `PR-CONFIRMED` or
+**`80-pr-review-fix` shape** (2026-09-24). `find-pr` (commit, `pr-read`: `PR-CONFIRMED` or
 `NO-PR-FOUND`, a completed lookup is `EXIT=0` either way) → `pr-exists` → `read-comments` (every
 unresolved actionable review comment with id, `file:line` and the ask; `NO-ACTIONABLE-COMMENTS` ends
 the run) → `fix-gate` (`wait_human`) → `fix` (edit spawn, fed `${output:read-comments}` and
@@ -1760,16 +1764,33 @@ the run) → `fix-gate` (`wait_human`) → `fix` (edit spawn, fed `${output:read
 reply per comment citing the sha or the decline reason, from `${output:push-fixes}` and
 `${output:fix}`). Build, test and review failures loop to `fix`, capped at 3. The fix worker carries
 earlier iterations forward in its report because `reply` reads only the latest. It replaces
-`commit-pr-review-loop`, whose arc it splits with `2-spec-to-pr`: that template opens the PR, this
-one answers its review. `4-pr-local-review` gained `review -[failure]-> restore` the same day, so a review with findings still restores the
+`commit-pr-review-loop`, whose arc it splits with `50-spec-to-pr`: that template opens the PR, this
+one answers its review. `70-pr-local-review` gained `review -[failure]-> restore` the same day, so a review with findings still restores the
 branch instead of leaving the checkout on the PR's head.
+
+**The five added 2026-09-24**, each opening read-only and gating before its first mutation:
+`20-defect-to-spec` — a run node gathers read-only evidence for the defect given as `${intent}`
+(lifecycle log, `diagnose --all`, named logs and panes), plan drafts a backlog spec and its
+`backlog.md` row grounded in `${output:evidence}`, then a gate, a commit of the spec (no push) and
+the commit role files the GitHub issue. `40-sync-main` — gate first, then the commit role fetches
+and rebases onto `origin/main` (a conflict is `rebase --abort` and `EXIT=1`, never self-resolved),
+build, test, and `push --force-with-lease`; any failure withholds the push. `60-integration-suite`
+— the run agent runs `bash scripts/test-all.sh` (a serial runner over `scripts/test-*.sh`; live-session
+scripts are skipped unless `MUXCODE_TEST_LIVE=1`), a failure goes to a fix spawn carrying
+`${failure_report}`, then build and the suite again, capped at 3. `90-ci-fix` — `find-pr`, then
+`read-ci` (`CI-GREEN` ends the run; `CI-PENDING` stops with `EXIT=1`), `fix-gate`, a fix spawn fed
+`${output:read-ci}` and `${failure_report}`, the build/test/review loop capped at 3, then
+`push-fixes`. `110-pr-merge` — `find-pr`, `ci-watch` (the watch role on `gh pr checks --watch`,
+`CI-GREEN`), `merge-gate`, `merge` (`gh pr merge`, branch deleted, `main` pulled), then `tracker`
+(plan `jira-write`: the story to Done when the branch tracks one — a gated Atlassian node, so it sits
+downstream of `merge-gate` as validation demands).
 
 **Validation is strict by design.** Undefined node refs, unreachable nodes, and uncapped
 cycles are errors, not warnings — a loop is only legal via an explicit `max_iterations` on a
 loop edge. A node that commits or writes to Jira/Confluence is rejected unless it sits
 downstream of a `wait_human` gate — for the `commit` role every action but `pr-read` counts as a
 commit (`nodeRequiresGate`, `bus/graph.go`). That one read-shaped action is what lets
-`3-pr-review-fix` open with two read-only nodes, `find-pr` and `read-comments`, and end without ever
+`80-pr-review-fix` open with two read-only nodes, `find-pr` and `read-comments`, and end without ever
 reaching a gate when there is no PR or no actionable comment — the pattern `commit-pr-review-loop`'s
 `pr-precheck` introduced on 2026-09-16, before that template was removed (2026-09-24); the design is under
 [Graph orchestration](architecture.md#graph-orchestration-control-plane).

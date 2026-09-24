@@ -353,9 +353,9 @@ EOF
   && ok "multi-phase fixture graph validates" \
   || bad "fixture graph failed validation"
 
-"$MUX" graph validate 2-spec-to-pr >/dev/null 2>&1 \
-  && ok "real 2-spec-to-pr builtin validates" \
-  || bad "2-spec-to-pr builtin failed validation"
+"$MUX" graph validate 50-spec-to-pr >/dev/null 2>&1 \
+  && ok "real 50-spec-to-pr builtin validates" \
+  || bad "50-spec-to-pr builtin failed validation"
 
 sed 's/"guard": "phase-progress", //; s/{"id": "phase-gate", "type": "wait_human".*/{"id": "phase-gate", "type": "send", "role": "review", "action": "review", "message": "not a gate"},/' \
   "$WORK/multiphase.json" > "$WORK/ungated.json"

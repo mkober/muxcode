@@ -720,8 +720,8 @@ func (ui *GraphUI) promptSuggestion() string {
 }
 
 // handleTemplateTypeahead jumps the launcher selection to the first
-// template matching the typed prefix ("story" or "1" lands on
-// 1-story-to-spec — see TypeaheadIndex).
+// template matching the typed prefix ("story" or "10" lands on
+// 10-story-to-spec — see TypeaheadIndex).
 // j/k/q stay navigation keys — no template name begins with them — and a
 // char with no match is dropped. Reports whether the key was consumed.
 func (ui *GraphUI) handleTemplateTypeahead(key byte) bool {

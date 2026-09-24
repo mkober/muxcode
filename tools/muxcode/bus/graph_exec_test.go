@@ -664,7 +664,7 @@ func TestPRReviewFixFindPRRouting(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			g, err := ParseGraph([]byte(builtinGraphJSON["3-pr-review-fix"]))
+			g, err := ParseGraph([]byte(builtinGraphJSON["80-pr-review-fix"]))
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
@@ -3013,17 +3013,17 @@ func TestSpawnHarvestPassesReportDownstream(t *testing.T) {
 // run that failed on 2026-09-14 failed precisely because plan's dispatch
 // carried nothing from the worker.
 func TestSpecToPRPassesWorkerReportToPlan(t *testing.T) {
-	data, ok := builtinGraphJSON["2-spec-to-pr"]
+	data, ok := builtinGraphJSON["50-spec-to-pr"]
 	if !ok {
-		t.Fatal("builtin 2-spec-to-pr template is missing")
+		t.Fatal("builtin 50-spec-to-pr template is missing")
 	}
 	g, err := ParseGraph([]byte(data))
 	if err != nil {
-		t.Fatalf("parse 2-spec-to-pr: %v", err)
+		t.Fatalf("parse 50-spec-to-pr: %v", err)
 	}
 	updateSpec := g.node("update-spec")
 	if updateSpec == nil {
-		t.Fatal("2-spec-to-pr has no update-spec node")
+		t.Fatal("50-spec-to-pr has no update-spec node")
 	}
 	if !strings.Contains(updateSpec.Message, "${output:implement}") {
 		t.Errorf("update-spec must carry the implement worker's report; message = %q", updateSpec.Message)

@@ -290,7 +290,7 @@ is interrupted only at human gates and terminal states.
 | `wait_event` | Parks at dispatch, released when the named bus event is observed |
 
 ```
-1. muxcode graph run 2-spec-to-pr "implement PBP1-4915"
+1. muxcode graph run 50-spec-to-pr "implement PBP1-4915"
 2. Template resolved (project > user > builtin), validated, run dir created
    under BusDir()/graphs/<run-id>/  — run.json, graph.json, nodes/<id>.json
 3. Daemon poll loop: checkGraphRuns() -> bus.StepGraphRuns(session)
@@ -371,7 +371,7 @@ whether a pointer existed, never whether the work was done, and `commit-spec` do
 interim fix and left the decision with a model; the guard moves it into the mechanism, which is the
 point — the defect existed *because* the design trusted wording. See
 [`MUX-114`](requirements/completed/MUX-114-close-spec-node-has-no-completion-check.md). Since
-2026-09-24 `2-spec-to-pr`'s own `close-spec` node carries the same guard (see "Findings route to fix;
+2026-09-24 `50-spec-to-pr`'s own `close-spec` node carries the same guard (see "Findings route to fix;
 the run closes the spec out" below).
 
 Three behaviours keep the guard from becoming a defect of its own: **no active spec passes through**
@@ -439,24 +439,41 @@ restart; `--render-once` emits a single frame for scripts and tests. Gate approv
 calls `bus.ApproveGraphGate` directly — the same path as the CLI, with no bus-message route into
 it, preserving the rule that a human at the keyboard is the only thing that releases a gate.
 
-Templates resolve `project > user > builtin`, like agent files. Seven ship built in: six
-stage-numbered so a listing reads top-down as the workflow — `1-story-to-spec`, `2-spec-to-pr`,
-`3-pr-review-fix`, `4-pr-local-review`, `5-docs-sync`, `6-deploy-verify` (renamed 2026-09-24 on the
-user's request; the typeahead matches with or without the number) — plus the unnumbered
-`build-test-review` utility. `req-code-pr` was renamed `spec-to-pr` and `story-lifecycle` removed as a
-duplicate of its arc (2026-09-02); `commit-pr-review-loop` was removed on 2026-09-24 because
-`2-spec-to-pr` already closes out the spec and opens the PR and `3-pr-review-fix` answers its
-review; every retired name fails naming its successor (`renamedGraphTemplates`, `bus/graph.go`)
-rather than silently resolving.
-`3-pr-review-fix` (2026-09-24) closes the loop after a PR exists: two read-only `pr-read` nodes find
+Templates resolve `project > user > builtin`, like agent files. Twelve ship built in, every one
+carrying a workflow-stage number in tens so a listing (sorted by stage, then name, unnumbered last —
+`graphTemplateLess`) reads top-down as the workflow and a stage can be added without renumbering;
+the typeahead matches with or without the number. Renamed and extended 2026-09-24 on the user's
+request:
+
+| Stage | Template | What it does |
+|-------|----------|--------------|
+| 10 | `10-story-to-spec` | Derive the Jira/GitHub id from the branch, read its requirements, draft a spec and set it active, gated tracker update |
+| 20 | `20-defect-to-spec` | Read-only evidence capture for a defect, plan drafts the backlog spec and row from the evidence, gated commit and GitHub issue |
+| 30 | `30-build-test-review` | The build, test, review subgraph the others compose |
+| 40 | `40-sync-main` | Gated rebase onto `origin/main`, build and test on the new base, `push --force-with-lease`; a conflict or red build withholds the push |
+| 50 | `50-spec-to-pr` | Walk the active spec phase by phase: implement, build/test, review (findings route to fix), update-spec, gated per-phase commit, close-out, final gate, push and PR |
+| 60 | `60-integration-suite` | Run the integration scripts one at a time through the run agent; failures go to a fix worker, rebuild, re-run, capped |
+| 70 | `70-pr-local-review` | Prompt for a PR id, gated checkout of main+rebase and the PR branch, local diff, review, branch restore (also on a failed review) |
+| 80 | `80-pr-review-fix` | Find the branch's PR, read its review comments, gated fix loop, push the fixes, reply to every comment |
+| 90 | `90-ci-fix` | Find the branch's PR, read its failing CI checks, gated fix loop, push the fixes |
+| 100 | `100-docs-sync` | Verify spec alignment, update spec/architecture docs and README, gated commit |
+| 110 | `110-pr-merge` | Find the branch's PR, wait for CI green, gated merge, branch delete, `main` update, tracker story move |
+| 120 | `120-deploy-verify` | Deploy, run a verification invocation, watch logs |
+
+`req-code-pr` was renamed `spec-to-pr` and `story-lifecycle` removed as a duplicate of its arc
+(2026-09-02); `commit-pr-review-loop` was removed on 2026-09-24 because `50-spec-to-pr` already
+closes out the spec and opens the PR and `80-pr-review-fix` answers its review; every retired name
+fails naming its successor (`renamedGraphTemplates`, `bus/graph.go`) rather than silently
+resolving, and the single-digit names of that afternoon's first two reshuffles were never released.
+`80-pr-review-fix` (2026-09-24) closes the loop after a PR exists: two read-only `pr-read` nodes find
 the PR and list its unresolved review comments (`NO-ACTIONABLE-COMMENTS` ends the run with nothing
 touched), a `wait_human` `fix-gate` sits before the first mutation, an edit spawn fixes or declines
 each comment under a build/test/review loop capped at 3, then `push-fixes` commits and pushes and
 `reply` answers every comment with the sha or the decline reason. The same change gave
-`4-pr-local-review` a `review -[failure]-> restore` edge, since a review with findings once left the
+`70-pr-local-review` a `review -[failure]-> restore` edge, since a review with findings once left the
 checkout on the PR's head.
 
-Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (7 built-ins),
+Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (12 built-ins),
 `bus/graph_run.go` (durable store), `bus/graph_exec.go` (executor), `cmd/graph.go` (CLI),
 `tui/graph.go` + `tui/graph_ui.go` (interactive surfaces),
 `daemon/daemon.go` (`checkGraphRuns()`). CLI reference:
@@ -464,7 +481,7 @@ Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (7 buil
 
 #### Sequential multi-phase runs (design)
 
-`2-spec-to-pr` (`req-code-pr` until 2026-09-02 and `spec-to-pr` until 2026-09-24 — the names
+`50-spec-to-pr` (`req-code-pr` until 2026-09-02 and `spec-to-pr` until 2026-09-24 — the names
 completed specs and run ids still carry) originally shipped **one phase per run**. The design recorded in
 [MUX-121](requirements/completed/MUX-121-multi-phase-sequential-graph.md) walks a spec's phases in
 order within a single run: implement a phase → build/test → review → `update-spec` → a `wait_human`
@@ -510,7 +527,7 @@ declined within a second, then `stuck-gate`; and the declined gate's `${complete
 named the *previous* phase, because the frontier is the last complete phase. On 2026-09-09 run
 `1788966148-spec-to-pr-2338488d` paid this four times — 7 phase-gate approvals, 4 declined, 3+
 stuck-gates for 3 commits — every time a review returned `EXIT=0` with should-fixes, which never
-routes to `fix`. `2-spec-to-pr` now carries a `phase-check` condition node (`spec_phase_committable`,
+routes to `fix`. `50-spec-to-pr` now carries a `phase-check` condition node (`spec_phase_committable`,
 naming the guarded commit node) between `update-spec` and `phase-gate`; it evaluates the **same
 `phaseCommitReady` predicate the guard uses**, so an open phase routes straight to `stuck-gate` and a
 person is asked to approve a commit only when the guard will accept it — one prompt per incomplete
@@ -548,7 +565,7 @@ push and open the PR. A refused close-out goes to `close-stuck-gate` (retry up t
 cancel), so a spec with open items is never pushed as complete.
 
 **Look before you ask** is the same rule at the other end of the story. `commit-pr-review-loop`
-(removed 2026-09-24; its arc now lives in `3-pr-review-fix`, which opens the same way — `find-pr`
+(removed 2026-09-24; its arc now lives in `80-pr-review-fix`, which opens the same way — `find-pr`
 then `read-comments`, both read-only, ending the run gateless when there is no PR or nothing
 actionable) opened with `gate1` — *approve staging, commit, push and PR creation* — and then the commit node,
 whatever the branch's state. On 2026-09-16 run `1789586432` failed at 1/11: PR #99 was already open,

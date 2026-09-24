@@ -10,14 +10,15 @@ import (
 // itself must resolve, so no retired name points at a dead end.
 func TestResolveGraphTemplateRetiredNameNamesSuccessor(t *testing.T) {
 	for retired, successor := range map[string]string{
-		"story-to-spec":         "1-story-to-spec",
-		"spec-to-pr":            "2-spec-to-pr",
-		"req-code-pr":           "2-spec-to-pr",
-		"story-lifecycle":       "2-spec-to-pr",
-		"commit-pr-review-loop": "3-pr-review-fix",
-		"pr-local-review":       "4-pr-local-review",
-		"update-spec-docs":      "5-docs-sync",
-		"deploy-verify":         "6-deploy-verify",
+		"story-to-spec":         "10-story-to-spec",
+		"build-test-review":     "30-build-test-review",
+		"spec-to-pr":            "50-spec-to-pr",
+		"req-code-pr":           "50-spec-to-pr",
+		"story-lifecycle":       "50-spec-to-pr",
+		"pr-local-review":       "70-pr-local-review",
+		"commit-pr-review-loop": "80-pr-review-fix",
+		"update-spec-docs":      "100-docs-sync",
+		"deploy-verify":         "120-deploy-verify",
 	} {
 		g, _, err := ResolveGraphTemplate(retired)
 		if err == nil || g != nil {

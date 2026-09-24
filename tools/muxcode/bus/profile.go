@@ -829,6 +829,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(kubectl logs*)", "Bash(kubectl get events*)",
 					"Bash(docker logs*)", "Bash(docker-compose logs*)",
 					"Bash(stern *)",
+					"Bash(gh pr checks *)", // 110-pr-merge waits on CI here; read-only, no other gh verb
 					"Bash(jq*)", "Bash(yq*)",
 					"Bash(python3*)", "Bash(node*)",
 					"Bash(zcat *)", "Bash(gunzip *)", "Bash(lnav *)",

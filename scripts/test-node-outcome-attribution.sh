@@ -12,9 +12,9 @@
 # dispatch — "a git command ran" standing in for "the task was done".
 #
 # Covers:
-#   1. 3-pr-review-fix's template shape: a commit node between the reviewed
+#   1. 80-pr-review-fix's template shape: a commit node between the reviewed
 #      fixes and `reply`, gated, with `reply` told to cite the sha (the shape
-#      Phase 4 gave commit-pr-review-loop, which 3-pr-review-fix replaced).
+#      Phase 4 gave commit-pr-review-loop, which 80-pr-review-fix replaced).
 #   2. The 2026-09-03 shape live: an agent that declines AFTER a successful
 #      read-only command does not route as success — it holds, logs
 #      graph-outcome-untied and graph-unverified-hold, and its successor
@@ -255,13 +255,13 @@ EOF
 # --- 1. The template shape Phase 4 fixed -----------------------------------
 # Run the builtin BEFORE the daemon exists: run state is created, nothing
 # dispatches, and `graph status --json` hands back the resolved template.
-"$MUX" graph validate 3-pr-review-fix >/dev/null 2>&1 \
-  && ok "3-pr-review-fix validates" \
-  || bad "3-pr-review-fix failed validation"
+"$MUX" graph validate 80-pr-review-fix >/dev/null 2>&1 \
+  && ok "80-pr-review-fix validates" \
+  || bad "80-pr-review-fix failed validation"
 
-TPL_RID="$(start_run 3-pr-review-fix)"
+TPL_RID="$(start_run 80-pr-review-fix)"
 if [ -z "$TPL_RID" ]; then
-  bad "could not start 3-pr-review-fix to read its resolved shape"
+  bad "could not start 80-pr-review-fix to read its resolved shape"
 else
   [ "$(gq "$TPL_RID" def-field push-fixes role)" = "commit" ] \
     && ok "push-fixes is a commit-role node" \
