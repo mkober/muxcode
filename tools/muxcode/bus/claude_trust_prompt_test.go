@@ -28,7 +28,7 @@ func claudeTrustPane(options []string, n int) string {
 
 var (
 	claudeTrustNewLayout = []string{"No, exit", "Yes, I trust this folder"}
-	claudeTrustOldLayout = []string{"1. Yes, proceed", "2. No, exit"}
+	claudeTrustOldLayout = []string{"1. Yes, I trust this folder", "2. No, exit"}
 )
 
 // stubClaudeTrustPane fakes the prompt with the highlight on start; when moves
@@ -93,6 +93,72 @@ func TestAcceptClaudeTrust_NoHighlightPressesNothing(t *testing.T) {
 	}
 	if keys := keyNames(*calls); len(keys) != 0 {
 		t.Errorf("no highlight, no keys — sent %v", keys)
+	}
+}
+
+// A highlighted "Yes" in a menu that is not the trust prompt — or a trust
+// prompt answered since the caller's capture — must get no key at all.
+func TestAcceptClaudeTrust_OtherMenuPressesNothing(t *testing.T) {
+	for name, pane := range map[string]string{
+		"bypass menu":            "Bypass Permissions mode\n\n  No, keep safe mode\n❯ Yes, I accept\n\nEnter to confirm · Esc to cancel\n",
+		"answered in scrollback": claudeTrustPane(claudeTrustNewLayout, 2) + "\n❯ Yes\n  ⏵⏵ bypass permissions on\n",
+	} {
+		calls := stubInjectionPane(t, pane, nil)
+		if err := AcceptClaudeTrust("s:edit.1"); err == nil {
+			t.Errorf("%s: a non-trust frame must return an error", name)
+		}
+		if keys := keyNames(*calls); len(keys) != 0 {
+			t.Errorf("%s: no live trust prompt, no keys — sent %v", name, keys)
+		}
+	}
+}
+
+// claudeStaleTrustAboveBypass is the review's frame: an answered trust prompt
+// left in scrollback, then the live Bypass Permissions menu with the same
+// footer and its own highlighted "Yes".
+func claudeStaleTrustAboveBypass() string {
+	return claudeTrustPane(claudeTrustNewLayout, 2) +
+		"\nBypass Permissions mode\n\n  No, exit\n❯ Yes, I accept\n\nEnter to confirm · Esc to cancel\n"
+}
+
+func TestAcceptClaudeTrust_StaleTrustAboveBypassPressesNothing(t *testing.T) {
+	pane := claudeStaleTrustAboveBypass()
+	if claudeTrustPromptLive(pane) {
+		t.Error("the live menu is Bypass, not trust")
+	}
+	calls := stubInjectionPane(t, pane, nil)
+	if err := AcceptClaudeTrust("s:edit.1"); err == nil {
+		t.Error("a bypass menu under stale trust text must return an error")
+	}
+	if keys := keyNames(*calls); len(keys) != 0 {
+		t.Errorf("no live trust prompt, no keys — sent %v", keys)
+	}
+}
+
+// The startup loop must see the Bypass prompt, or it answers "trust" forever
+// and never accepts Bypass.
+func TestClaudeClassifyPane_StaleTrustAboveBypassIsBypass(t *testing.T) {
+	if got := (&ClaudeCodeProvider{}).ClassifyPane(claudeStaleTrustAboveBypass()); got != PaneBypassPrompt {
+		t.Errorf("ClassifyPane = %v, want PaneBypassPrompt", got)
+	}
+}
+
+// Positive control for the menu cut: a highlighted option that is in the trust
+// menu but is not the trust option reads as "no", not "yes".
+func TestClaudeTrustHighlight_OnlyTheTrustOptionIsYes(t *testing.T) {
+	for _, c := range []struct {
+		options []string
+		n       int
+		want    string
+	}{
+		{claudeTrustNewLayout, 1, "no"},
+		{claudeTrustNewLayout, 2, "yes"},
+		{claudeTrustOldLayout, 1, "yes"},
+		{claudeTrustOldLayout, 2, "no"},
+	} {
+		if got := claudeTrustHighlight(claudeTrustPane(c.options, c.n)); got != c.want {
+			t.Errorf("%v highlight %d = %q, want %q", c.options, c.n, got, c.want)
+		}
 	}
 }
 

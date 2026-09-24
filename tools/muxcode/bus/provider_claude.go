@@ -302,13 +302,18 @@ func (p *ClaudeCodeProvider) IsAlive(session, role string) bool {
 	return true
 }
 
-// ClassifyPane determines the startup state of a Claude Code agent pane.
+// ClassifyPane determines the startup state of a Claude Code agent pane. A
+// live trust prompt wins; otherwise the bypass prompt outranks trust text,
+// which may be an answered prompt left in scrollback above it.
 func (p *ClaudeCodeProvider) ClassifyPane(content string) PaneState {
-	if strings.Contains(content, "trust this folder") {
+	if claudeTrustPromptLive(content) {
 		return PaneTrustPrompt
 	}
 	if strings.Contains(content, "Bypass Permissions") {
 		return PaneBypassPrompt
+	}
+	if strings.Contains(content, claudeTrustOption) {
+		return PaneTrustPrompt
 	}
 	if strings.Contains(content, "❯") {
 		return PaneIdle
@@ -339,26 +344,55 @@ func (p *ClaudeCodeProvider) AcceptStartup(session, pane string, state PaneState
 	}
 }
 
+// claudeTrustOption is the trust prompt's accept option, and the anchor that
+// tells its menu apart from any other "Enter to confirm" menu.
+const claudeTrustOption = "trust this folder"
+
 // claudeTrustPromptLive reports whether content ends at Claude Code's
-// folder-trust prompt: its text is present and its "Enter to confirm" footer is
-// on the last lines, so an answered prompt left in scrollback never matches.
+// folder-trust prompt. See claudeTrustMenu.
 func claudeTrustPromptLive(content string) bool {
-	if !strings.Contains(content, "trust this folder") {
-		return false
-	}
-	for _, line := range lastNonEmptyLines(content, 2) {
-		if strings.Contains(line, "Enter to confirm") {
-			return true
-		}
-	}
-	return false
+	return claudeTrustMenu(content) != nil
 }
 
-// claudeTrustHighlight names the trust prompt's highlighted option: "yes" for
-// the accept option, "no" for any other, "" when no option line reads as
-// highlighted.
+// claudeTrustMenu returns the lines of the menu drawn last, bottom first, when
+// that menu is the trust prompt; nil otherwise. The menu is the lines above an
+// "Enter to confirm" footer on the last two lines, cut at the footer of any
+// earlier prompt, and it must itself carry the trust option. The cut is what
+// stops an answered trust prompt in scrollback from vouching for a later menu
+// — the Bypass Permissions prompt shares the footer and has its own
+// highlighted "Yes".
+func claudeTrustMenu(content string) []string {
+	lines := lastNonEmptyLines(content, claudeTrustOptionsWindow)
+	footer := -1
+	for i := 0; i < len(lines) && i < 2; i++ {
+		if strings.Contains(lines[i], "Enter to confirm") {
+			footer = i
+			break
+		}
+	}
+	if footer < 0 {
+		return nil
+	}
+	menu := lines[footer+1:]
+	for i, line := range menu {
+		if strings.Contains(line, "Enter to confirm") {
+			menu = menu[:i]
+			break
+		}
+	}
+	for _, line := range menu {
+		if strings.Contains(line, claudeTrustOption) {
+			return menu
+		}
+	}
+	return nil
+}
+
+// claudeTrustHighlight names the trust prompt's highlighted option: "yes" when
+// the highlighted line is the trust option itself, "no" for any other, "" when
+// the trust prompt is not the live menu or no line reads as highlighted.
 func claudeTrustHighlight(content string) string {
-	for _, line := range lastNonEmptyLines(content, claudeTrustOptionsWindow) {
+	for _, line := range claudeTrustMenu(content) {
 		rest, ok := strings.CutPrefix(line, "❯")
 		if !ok {
 			rest, ok = strings.CutPrefix(line, "❱")
@@ -366,7 +400,7 @@ func claudeTrustHighlight(content string) string {
 		if !ok {
 			continue
 		}
-		if strings.Contains(rest, "Yes") {
+		if strings.Contains(rest, claudeTrustOption) {
 			return "yes"
 		}
 		return "no"
