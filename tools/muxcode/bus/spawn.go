@@ -44,7 +44,8 @@ func ReadSpawnEntries(session string) ([]SpawnEntry, error) {
 // scanSpawnEntries reads the registry like ReadSpawnEntries and also counts
 // the malformed lines it skipped, so a caller that must not miss a worker —
 // graph cancel — can refuse a partial registry instead of reading it as
-// complete.
+// complete. A line that parses but lacks an ID or SpawnRole (`null`, `{}`)
+// identifies no worker and is malformed too (Copilot on PR #91).
 func scanSpawnEntries(session string) (entries []SpawnEntry, malformed int, err error) {
 	data, err := os.ReadFile(SpawnPath(session))
 	if err != nil {
@@ -61,7 +62,7 @@ func scanSpawnEntries(session string) (entries []SpawnEntry, malformed int, err 
 			continue
 		}
 		var e SpawnEntry
-		if err := json.Unmarshal(line, &e); err != nil {
+		if err := json.Unmarshal(line, &e); err != nil || e.ID == "" || e.SpawnRole == "" {
 			malformed++
 			continue
 		}
@@ -338,25 +339,34 @@ func StopSpawn(session, id string) error {
 	})
 }
 
-// CheckSpawnWindow checks if a tmux window exists for a spawn entry.
+// CheckSpawnWindow checks if a tmux window exists for a spawn entry. A failed
+// tmux query reads as no window; a caller that must not mistake a failed
+// lookup for a stopped worker uses LookupSpawnWindow.
 func CheckSpawnWindow(session, window string) bool {
-	cmd := exec.Command("tmux", "list-windows", "-t", session, "-F", "#{window_name}")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
+	live, err := LookupSpawnWindow(session, window)
+	return err == nil && live
+}
 
+// LookupSpawnWindow reports whether a tmux window exists, with the error when
+// the session's windows could not be listed — absence is proven only by a
+// listing that succeeded.
+func LookupSpawnWindow(session, window string) (bool, error) {
+	out, err := exec.Command("tmux", "list-windows", "-t", session, "-F", "#{window_name}").Output()
+	if err != nil {
+		return false, fmt.Errorf("tmux list-windows -t %s: %w", session, err)
+	}
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.TrimSpace(line) == window {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // Seams for RefreshSpawnStatus so unit tests can simulate live windows
 // and observe kills without tmux.
 var (
+	spawnWindowLookupFn = LookupSpawnWindow
 	spawnWindowExistsFn = CheckSpawnWindow
 	spawnKillWindowFn   = func(session, window string) error {
 		return exec.Command("tmux", "kill-window", "-t", session+":"+window).Run()

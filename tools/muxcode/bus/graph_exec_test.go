@@ -3710,6 +3710,7 @@ type liveSpawnFake struct {
 	killed      []string
 	deadWindows map[string]bool
 	distinctIDs bool
+	lookupErr   error // spawnWindowLookupFn fails with it when set
 }
 
 func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
@@ -3718,12 +3719,18 @@ func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
 		t.Fatalf("delivery dir: %v", err)
 	}
 	f := &liveSpawnFake{deadWindows: map[string]bool{}}
-	origSpawn, origExists, origKill, origWake := graphSpawnFn, spawnWindowExistsFn, spawnKillWindowFn, graphSpawnWakeFn
+	origSpawn, origExists, origLookup, origKill, origWake := graphSpawnFn, spawnWindowExistsFn, spawnWindowLookupFn, spawnKillWindowFn, graphSpawnWakeFn
 	t.Cleanup(func() {
-		graphSpawnFn, spawnWindowExistsFn, spawnKillWindowFn, graphSpawnWakeFn = origSpawn, origExists, origKill, origWake
+		graphSpawnFn, spawnWindowExistsFn, spawnWindowLookupFn, spawnKillWindowFn, graphSpawnWakeFn = origSpawn, origExists, origLookup, origKill, origWake
 	})
 	graphSpawnWakeFn = func(string, string) {}
 	spawnWindowExistsFn = func(_, w string) bool { return !f.deadWindows[w] }
+	spawnWindowLookupFn = func(_, w string) (bool, error) {
+		if f.lookupErr != nil {
+			return false, f.lookupErr
+		}
+		return !f.deadWindows[w], nil
+	}
 	spawnKillWindowFn = func(_, w string) error { f.killed = append(f.killed, w); return nil }
 	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
 		f.fresh++

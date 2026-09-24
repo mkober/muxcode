@@ -3,6 +3,7 @@ package bus
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 )
 
 // CheckCancelAuthority returns a deny message if actor may not stop run's work,
@@ -63,8 +64,10 @@ func CheckCancelAuthority(actor string, run *GraphRun) string {
 // The decision and the stop share the run lock, as CancelGraphRun's do, so a
 // retry cannot resume the run between them. When the run exists but its lock
 // cannot be taken, the stop is refused: deciding without the lock is the race
-// it exists to close (Copilot on PR #89). A run no longer on disk has nothing
-// to race, so its worker is judged on a placeholder run — user only.
+// it exists to close (Copilot on PR #89). Only a run proven absent — its file
+// does not exist — has nothing to race, so its worker is judged on a
+// placeholder run, user only; a run file that is unreadable or corrupt may
+// still be live, and the stop is refused (Copilot on PR #91).
 //
 // The cancel path calls StopSpawn directly: it has already passed the check for
 // the whole run.
@@ -82,7 +85,7 @@ func StopSpawnAuthorized(session, id string) error {
 			if r, rerr := ReadGraphRun(session, e.RunID); rerr == nil {
 				run = r
 			}
-		} else if _, rerr := ReadGraphRun(session, e.RunID); rerr == nil {
+		} else if _, rerr := ReadGraphRun(session, e.RunID); !errors.Is(rerr, fs.ErrNotExist) {
 			return fmt.Errorf("spawn %s NOT stopped: cannot serialize with graph run %s: %w", id, e.RunID, lerr)
 		}
 		if deny := CheckCancelAuthority(actor, run); deny != "" {

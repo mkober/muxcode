@@ -172,7 +172,15 @@ func CancelGraphRun(session, runID string) error {
 
 // runSpawnRoles returns, sorted, every spawn role the run owns: entries
 // stamped with the run at birth, plus any role a node's TaskID names —
-// spawn and map nodes store worker roles there, not task ids.
+// spawn and map nodes store worker roles there, not task ids. A node naming a
+// spawn role the registry does not hold is an error while that role's window
+// is live, whatever the node's state — a completed node keeps a parked
+// worker: the registry is missing or incomplete, and reading the gap as "no
+// worker" would let the run reach canceled with the worker alive (Copilot on
+// PR #91). A window absent from a tmux listing that succeeded is the proof of
+// a stopped worker, and it is what lets a run whose finished workers were
+// pruned by CleanFinishedSpawns still cancel; a failed listing proves nothing
+// and fails the cancel too.
 func runSpawnRoles(session, runID string, statuses map[string]*GraphNodeStatus) ([]string, error) {
 	entries, malformed, err := scanSpawnEntries(session)
 	if err != nil {
@@ -189,13 +197,22 @@ func runSpawnRoles(session, runID string, statuses map[string]*GraphNodeStatus) 
 			set[e.SpawnRole] = true
 		}
 	}
-	for _, st := range statuses {
+	for id, st := range statuses {
 		if st == nil {
 			continue
 		}
 		for _, tok := range strings.Split(st.TaskID, ",") {
-			if known[tok] {
+			switch {
+			case known[tok]:
 				set[tok] = true
+			case IsSpawnRole(tok):
+				live, lerr := spawnWindowLookupFn(session, tok)
+				if lerr != nil {
+					return nil, fmt.Errorf("node %s names worker %s, absent from the spawn registry, and its window could not be checked: %w", id, tok, lerr)
+				}
+				if live {
+					return nil, fmt.Errorf("node %s names worker %s, absent from the spawn registry with its window still live", id, tok)
+				}
 			}
 		}
 	}

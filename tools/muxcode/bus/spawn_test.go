@@ -128,7 +128,7 @@ func TestUpdateSpawnEntry(t *testing.T) {
 	session := testSession(t)
 
 	testEntries := []SpawnEntry{
-		{ID: "s1", Status: "running"},
+		{ID: "s1", SpawnRole: "spawn-s1", Status: "running"},
 	}
 	_ = WriteSpawnEntries(session, testEntries)
 
