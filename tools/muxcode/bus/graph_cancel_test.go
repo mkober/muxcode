@@ -655,8 +655,8 @@ func TestCancelFailsClosedOnARunningSendAgent(t *testing.T) {
 	prevPurge := cancelPurgeFn
 	cancelPurgeFn = func(string, string) *ArtifactPurgeResult { purges++; return nil }
 	t.Cleanup(func() { cancelPurgeFn = prevPurge })
-	busy := false
-	run, taskID := sendAgentRead(t, &busy)
+	idle := false
+	run, taskID := sendAgentRead(t, &idle)
 
 	for _, stage := range []string{"agent working", "task timed out, agent still working"} {
 		if stage == "task timed out, agent still working" {
@@ -679,6 +679,33 @@ func TestCancelFailsClosedOnARunningSendAgent(t *testing.T) {
 	recancel(t, run.ID)
 	if purges != 1 {
 		t.Errorf("artifacts must be purged once the agent answered, got %d", purges)
+	}
+}
+
+// A missing or malformed delivery record is no proof the request went unread —
+// Receive drains the inbox before its best-effort receipt write — so with the
+// agent busy the cancel still fails closed; once the agent is idle it proceeds.
+func TestCancelTreatsLostReceiptAsUnknown(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		damage func(path string) error
+	}{
+		{"missing record", os.Remove},
+		{"malformed record", func(p string) error { return os.WriteFile(p, []byte("{truncated"), 0644) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			idle := false
+			run, taskID := sendAgentRead(t, &idle)
+			if err := c.damage(DeliveryPath(runTestSession, taskID)); err != nil {
+				t.Fatal(err)
+			}
+			err := CancelGraphRun(runTestSession, run.ID)
+			if err == nil || !strings.Contains(err.Error(), "still working on the request") {
+				t.Fatalf("a lost receipt with a busy agent must fail closed, got %v", err)
+			}
+			idle = true
+			recancel(t, run.ID)
+		})
 	}
 }
 

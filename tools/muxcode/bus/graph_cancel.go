@@ -229,14 +229,16 @@ func runSendNodes(session, runID string) (map[string]string, error) {
 // stopSendNode stops a running send node's work, or reports that it cannot.
 // A send node has no worker of its own: its request goes to a shared agent.
 // If the request is still unread in an inbox it is withdrawn, the task
-// expired and the node skipped — the agent never starts. If a receipt shows
-// the agent read it and its pane is not idle, it may be working on a dead
-// run's behalf and nothing can recall that, so the cancel fails closed until
-// it answers or goes idle rather than report canceled while it acts (Copilot
-// on PR #89). A timed-out task is no evidence either way — the daemon times
-// tasks out while their agents keep working — so only the pane decides. With
-// no receipt, or an idle agent, nobody is working on it: the task is expired
-// so the stall watchdog cannot re-drive it (2026-08-27, a canceled loop's node
+// expired and the node skipped — the agent never starts. Otherwise the agent
+// may have read it, and while its pane is not idle it may be working on a dead
+// run's behalf; nothing can recall that, so the cancel fails closed until it
+// answers or goes idle rather than report canceled while it acts (Copilot on
+// PR #89). Neither a timed-out task nor a missing receipt is evidence: the
+// daemon times tasks out while agents keep working, and Receive drains the
+// inbox before its best-effort receipt write. Only a request found and
+// withdrawn — now, or by an earlier cancel (delivery marked expired) — is
+// proven unread. An idle agent is working on nothing: the task is expired so
+// the stall watchdog cannot re-drive it (2026-08-27, a canceled loop's node
 // re-driven). An answered request needs nothing.
 func stopSendNode(session, runID, nodeID, role, taskID string) error {
 	inboxes, err := inboxRoles(session)
@@ -268,8 +270,8 @@ func stopSendNode(session, runID, nodeID, role, taskID string) error {
 		return nil
 	}
 	ds, derr := ReadDeliveryStatus(session, taskID)
-	received := derr == nil && (hasReceipt(ds) || ds.Status == StatusDelivered)
-	if received && !graphAgentIdleFn(session, role) {
+	withdrawn := derr == nil && ds.Status == StatusExpired
+	if !withdrawn && !graphAgentIdleFn(session, role) {
 		return fmt.Errorf("send node %s: its %s agent is still working on the request (task %s) — cancel again once it answers or goes idle", nodeID, role, taskID)
 	}
 	if err := expireTask(session, taskID); err != nil {
