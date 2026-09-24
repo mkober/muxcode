@@ -114,8 +114,8 @@ func TestIntegrationSuiteTemplate(t *testing.T) {
 	if !capped {
 		t.Error("the fix loop must be capped")
 	}
-	if !strings.Contains(g.node("fix").Message, "${failure_report}") {
-		t.Error("the fix worker must be told what failed")
+	if fix := g.node("fix").Message; !strings.Contains(fix, "${output:suite}") || !strings.Contains(fix, "${failure_report}") {
+		t.Error("the fix worker must get the suite's report and any rebuild failure")
 	}
 }
 
@@ -191,6 +191,13 @@ func TestIntegrationSuiteTimeoutNeverReleasesFix(t *testing.T) {
 			fix := nodeState(t, runTestSession, run.ID, "fix")
 			if started := fix != GraphNodePending && fix != GraphNodeSkipped; started != c.fixStarted {
 				t.Errorf("fix state %q, want started=%v", fix, c.fixStarted)
+			}
+			if c.fixStarted {
+				st, _ := ReadNodeStatus(runTestSession, run.ID, "fix")
+				e, ok := findSpawnByRole(runTestSession, st.TaskID)
+				if !ok || !strings.Contains(e.Task, "SUITE-FAILED: test-x (check y)") {
+					t.Errorf("the fix worker must be told which checks failed — the condition hop drops ${failure_report}; got task %q", e.Task)
+				}
 			}
 			if r, _ := ReadGraphRun(runTestSession, run.ID); r.State != c.wantRunDone {
 				t.Errorf("run %q, want %q", r.State, c.wantRunDone)
