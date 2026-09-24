@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Builtins are numbered in tens, so a plain string sort would put
@@ -98,8 +99,11 @@ func TestIntegrationSuiteTemplate(t *testing.T) {
 	if !strings.Contains(g.node("suite").Message, "scripts/test-all.sh") {
 		t.Error("the suite node must run the serial runner")
 	}
-	if !templateEdgeOn(g, "suite", "fix", OutcomeFailure) || !templateEdgeOn(g, "build", "suite", OutcomeSuccess) {
-		t.Error("a failing suite must loop fix -> build -> suite")
+	if !templateEdgeOn(g, "suite", "suite-failed", OutcomeFailure) || !templateEdgeOn(g, "build", "suite", OutcomeSuccess) {
+		t.Error("a failing suite must loop suite-failed -> fix -> build -> suite")
+	}
+	if templateEdge(g, "suite", "fix") {
+		t.Error("the suite must not reach fix directly — only a reported failure (SUITE-FAILED) may")
 	}
 	capped := false
 	for _, e := range g.Edges {
@@ -144,6 +148,54 @@ func TestPRMergeTemplate(t *testing.T) {
 	onlyReachedFrom(t, g, "tracker", "merge", OutcomeSuccess)
 	if w := g.node("ci-watch"); w == nil || NormalizeBusRole(w.Role) != "watch" {
 		t.Error("waiting on CI is a blocking watch — it belongs to the watch role, never an agent's own pane")
+	}
+}
+
+// A suite that outlives its budget may still be running, so the timeout must
+// stop the run rather than start a fix worker beside it; a suite that reports
+// its failures (SUITE-FAILED) is what releases the fix. Driven through the
+// executor with the real template.
+func TestIntegrationSuiteTimeoutNeverReleasesFix(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		timeout     bool
+		fixStarted  bool
+		wantRunDone string
+	}{
+		{"timed out mid-run", true, false, GraphRunFailed},
+		{"reported failing checks", false, true, GraphRunRunning},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g, err := ParseGraph([]byte(builtinGraphJSON["60-integration-suite"]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := createTestRun(t, g)
+			fakeLiveSpawns(t)
+			step(t, runTestSession, run.ID)
+			if s := nodeState(t, runTestSession, run.ID, "suite"); s != GraphNodeRunning {
+				t.Fatalf("suite %q, want running", s)
+			}
+			if c.timeout {
+				past := time.Now().Unix() - int64(nodeTimeoutSecs(g.node("suite"))) - 60
+				if err := MutateNodeStatus(runTestSession, run.ID, "suite", func(s *GraphNodeStatus) { s.StartedAt = past }); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				completeSendNodeSentinel(t, runTestSession, run.ID, "suite", "2 scripts ran. SUITE-FAILED: test-x (check y)\nEXIT=1")
+			}
+			for i := 0; i < 3; i++ {
+				step(t, runTestSession, run.ID)
+			}
+
+			fix := nodeState(t, runTestSession, run.ID, "fix")
+			if started := fix != GraphNodePending && fix != GraphNodeSkipped; started != c.fixStarted {
+				t.Errorf("fix state %q, want started=%v", fix, c.fixStarted)
+			}
+			if r, _ := ReadGraphRun(runTestSession, run.ID); r.State != c.wantRunDone {
+				t.Errorf("run %q, want %q", r.State, c.wantRunDone)
+			}
+		})
 	}
 }
 

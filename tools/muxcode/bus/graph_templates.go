@@ -223,15 +223,17 @@ var builtinGraphJSON = map[string]string{
 
 	"60-integration-suite": `{
   "name": "60-integration-suite",
-  "description": "Run the integration scripts (scripts/test-*.sh) one at a time through the run agent; failures go to a fix worker, rebuild and re-run, capped",
+  "description": "Run the integration scripts (scripts/test-*.sh) one at a time through the run agent; reported failures go to a fix worker, rebuild and re-run, capped; a suite that times out stops the run instead of starting a fix beside it",
   "start": "suite",
   "nodes": [
-    {"id": "suite", "type": "send", "role": "run", "action": "run", "timeout_secs": 5400, "message": "Run exactly this one command and report its summary: bash scripts/test-all.sh — it runs every scripts/test-*.sh one at a time and exits non-zero if any fail. If the repo has no scripts/test-all.sh, run each scripts/test-*.sh one at a time as separate commands instead. Report each script's pass and fail counts and name every failing check"},
+    {"id": "suite", "type": "send", "role": "run", "action": "run", "timeout_secs": 5400, "message": "Run exactly this one command and report its summary: bash scripts/test-all.sh — it runs every scripts/test-*.sh one at a time and exits non-zero if any fail. If the repo has no scripts/test-all.sh, run each scripts/test-*.sh one at a time as separate commands instead. Report each script's pass and fail counts. If any script failed, your reply MUST contain the literal token SUITE-FAILED and name every failing check; if every script passed it must not"},
+    {"id": "suite-failed", "type": "condition", "conditions": {"output_contains": "SUITE-FAILED"}},
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix what the integration suite reported failing. THE FAILURE TO FIX: ${failure_report}. Fix the code, not the test, unless the test itself is wrong — say which. Do not run the suite yourself: the graph rebuilds and re-runs it after you report"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"}
   ],
   "edges": [
-    {"from": "suite", "to": "fix", "outcome": "failure"},
+    {"from": "suite", "to": "suite-failed", "outcome": "failure"},
+    {"from": "suite-failed", "to": "fix"},
     {"from": "fix", "to": "build", "max_iterations": 3},
     {"from": "build", "to": "suite"},
     {"from": "build", "to": "fix", "outcome": "failure"}
