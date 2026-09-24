@@ -415,6 +415,8 @@ func TestGraphScreensNameProvenance(t *testing.T) {
 	for _, tc := range []struct{ actor, want, mustNot string }{
 		{bus.ActorUser, "launched by: the user, by hand", "autonomous"},
 		{"auto", "launched by: auto (autonomous)", "the user"},
+		// An older run with no recorded creator still says so, on every surface.
+		{"", "launched by: unrecorded", "the user"},
 	} {
 		snap := snapshot(linearGraph(), map[string]string{"build": bus.GraphNodeDone})
 		snap.Run.CreatedBy = tc.actor
@@ -608,12 +610,14 @@ func TestRenderGraphFrame_NodeDetails(t *testing.T) {
 	}
 
 	// Wrap+scroll contract: a tight pane windows the panel instead of
-	// dropping it; only under a 3-line budget does it drop entirely.
-	windowed := StripAnsi(RenderGraphFrame(snap, 160, 12, "", frameClock))
+	// dropping it; only under a 3-line budget does it drop entirely. Heights
+	// are one row taller than before: the header always carries its
+	// launched-by line now.
+	windowed := StripAnsi(RenderGraphFrame(snap, 160, 13, "", frameClock))
 	if !strings.Contains(windowed, "Build succeeded: exit 0") {
 		t.Errorf("a tight pane must window the panel, not drop it:\n%s", windowed)
 	}
-	short := StripAnsi(RenderGraphFrame(snap, 160, 9, "", frameClock))
+	short := StripAnsi(RenderGraphFrame(snap, 160, 10, "", frameClock))
 	if strings.Contains(short, "Run tests for MUX-109") {
 		t.Error("panel must be dropped when fewer than 3 lines remain")
 	}

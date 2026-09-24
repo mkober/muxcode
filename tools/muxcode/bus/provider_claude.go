@@ -303,8 +303,11 @@ func (p *ClaudeCodeProvider) IsAlive(session, role string) bool {
 }
 
 // ClassifyPane determines the startup state of a Claude Code agent pane. A
-// live trust prompt wins; otherwise the bypass prompt outranks trust text,
-// which may be an answered prompt left in scrollback above it.
+// live trust prompt wins, then the bypass prompt. A trust menu still being
+// drawn (claudeTrustMenuDrawing) is not ready, because its "❯" option line
+// would otherwise read as an idle composer. Trust text with anything but its
+// own menu below it is an answered prompt in scrollback and is ignored, so an
+// idle agent reads idle (Copilot on PR #89 and #91).
 func (p *ClaudeCodeProvider) ClassifyPane(content string) PaneState {
 	if claudeTrustPromptLive(content) {
 		return PaneTrustPrompt
@@ -312,8 +315,8 @@ func (p *ClaudeCodeProvider) ClassifyPane(content string) PaneState {
 	if strings.Contains(content, "Bypass Permissions") {
 		return PaneBypassPrompt
 	}
-	if strings.Contains(content, claudeTrustOption) {
-		return PaneTrustPrompt
+	if claudeTrustMenuDrawing(content) {
+		return PaneNotReady
 	}
 	if strings.Contains(content, "❯") {
 		return PaneIdle
@@ -386,6 +389,41 @@ func claudeTrustMenu(content string) []string {
 		}
 	}
 	return nil
+}
+
+// claudeTrustExitOption is the trust prompt's other option, the only line
+// that may follow the trust option inside its menu.
+const claudeTrustExitOption = "No, exit"
+
+// claudeTrustMenuDrawing reports whether the pane ends in a trust menu with no
+// footer yet: the trust option is in the tail and every line below it is one
+// of the menu's option rows — the exit option, or a highlight marker whose
+// text is not drawn yet. Anything else below it, an "Enter to confirm" footer
+// or a composer status line, means the prompt was answered and the trust text
+// is scrollback. A lone "❯" under the trust text stays ambiguous with an idle
+// composer and reads as drawing: a not-ready pane is retried, an idle
+// misread types into a prompt.
+func claudeTrustMenuDrawing(content string) bool {
+	for _, line := range lastNonEmptyLines(content, claudeTrustOptionsWindow) {
+		if strings.Contains(line, claudeTrustOption) {
+			return true
+		}
+		if !claudeTrustMenuRow(line) {
+			return false
+		}
+	}
+	return false
+}
+
+// claudeTrustMenuRow reports whether a trimmed line can be a row of the trust
+// menu other than the trust option itself.
+func claudeTrustMenuRow(line string) bool {
+	rest, ok := strings.CutPrefix(line, "❯")
+	if !ok {
+		rest, _ = strings.CutPrefix(line, "❱")
+	}
+	rest = strings.TrimSpace(rest)
+	return rest == "" || strings.Contains(rest, claudeTrustExitOption)
 }
 
 // claudeTrustHighlight names the trust prompt's highlighted option: "yes" when

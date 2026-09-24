@@ -1610,7 +1610,7 @@ The `implement` and `fix` messages tell the worker to verify the phase through t
 `muxcode send run run "bash scripts/test-<feature>.sh" --wait`, never `go test` — and to quote the
 counts and the run task id, so `update-spec` can credit a store row. Since 2026-09-24 the predicate is
 anchored on HEAD's copy of the spec — a phase is committable when complete in the tree and not at HEAD
-([MUX-183](requirements/drafts/MUX-183-phase-commit-ready-recredits-shipped-phases.md)) — so a fresh
+([MUX-183](requirements/completed/MUX-183-phase-commit-ready-recredits-shipped-phases.md)) — so a fresh
 run or a retry never re-credits a phase already committed; `phase-check`'s detail reads
 `N phases complete in the tree, M at HEAD`. The `review` node's outcome comes from the first line of
 the reviewer's reply (`<n> must-fix, <n> should-fix, <n> nits`): any must-fix or should-fix routes to

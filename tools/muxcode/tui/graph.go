@@ -399,11 +399,8 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 		}
 	}
 
-	headerLines := 5 // leading blank, tab bar, run line, trailing blank, + margin
+	headerLines := 6 // leading blank, tab bar, run line, launched-by line, trailing blank, + margin
 	if snap.Run.Intent != "" {
-		headerLines++
-	}
-	if snap.Run.CreatedBy != "" {
 		headerLines++
 	}
 	// Width overflow wraps; the flat list is for height overflow — see renderWrappedLayers.
@@ -836,9 +833,7 @@ func renderGraphHeader(snap GraphSnapshot, now time.Time, width int) string {
 	if run.Intent != "" {
 		fmt.Fprintf(&b, "  %s%s%s\n", Comment, run.Intent, RST)
 	}
-	if run.CreatedBy != "" {
-		fmt.Fprintf(&b, "  %slaunched by: %s%s\n", Comment, bus.DescribeRunCreator(run.CreatedBy), RST)
-	}
+	fmt.Fprintf(&b, "  %slaunched by: %s%s\n", Comment, bus.DescribeRunCreator(run.CreatedBy), RST)
 	b.WriteString("\n")
 	return b.String()
 }

@@ -565,6 +565,359 @@ func TestCancelFailsClosedOnUnreadableTaskFile(t *testing.T) {
 	recancel(t, run.ID)
 }
 
+// Copilot on PR #89, cancel_authority.go:82: a spawn stop that cannot take an
+// existing run's lock is refused, never decided unlocked — the worker is left
+// running for a retry. Negative control: once the lock is free, it stops.
+func TestStopSpawnAuthorizedRefusesWithoutTheRunLock(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, spawnCancelGraph())
+	f := fakeLiveSpawns(t)
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "w")
+	e, _ := findSpawnByRole(runTestSession, st.TaskID)
+
+	prev := graphRunLockWait
+	graphRunLockWait = 50 * time.Millisecond
+	t.Cleanup(func() { graphRunLockWait = prev })
+	unlock, err := lockGraphRun(runTestSession, run.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := StopSpawnAuthorized(runTestSession, e.ID); err == nil || !strings.Contains(err.Error(), "NOT stopped") {
+		t.Errorf("a stop that cannot take the run lock must be refused, got %v", err)
+	}
+	if len(f.killed) != 0 {
+		t.Errorf("nothing may be stopped without the lock, killed %v", f.killed)
+	}
+	unlock()
+	if err := StopSpawnAuthorized(runTestSession, e.ID); err != nil {
+		t.Errorf("with the lock free the user's stop proceeds, got %v", err)
+	}
+}
+
+// Copilot on PR #91, cancel_authority.go:87: a run file that is corrupt, not
+// absent, may still be live, so a stop that cannot take its lock is refused.
+// Negative control: a run whose directory is gone is judged on the
+// placeholder, and the user's stop proceeds.
+func TestStopSpawnAuthorizedRefusesUnlockedOnCorruptRun(t *testing.T) {
+	pinActor(t, "")
+	run := createTestRun(t, spawnCancelGraph())
+	f := fakeLiveSpawns(t)
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "w")
+	e, _ := findSpawnByRole(runTestSession, st.TaskID)
+
+	prev := graphRunLockWait
+	graphRunLockWait = 50 * time.Millisecond
+	t.Cleanup(func() { graphRunLockWait = prev })
+	unlock, err := lockGraphRun(runTestSession, run.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(graphRunPath(runTestSession, run.ID), []byte("{not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := StopSpawnAuthorized(runTestSession, e.ID); err == nil || !strings.Contains(err.Error(), "NOT stopped") {
+		t.Errorf("a corrupt run's worker must not be stopped unlocked, got %v", err)
+	}
+	if len(f.killed) != 0 {
+		t.Errorf("nothing may be stopped without the lock, killed %v", f.killed)
+	}
+	unlock()
+
+	if err := os.RemoveAll(GraphRunDir(runTestSession, run.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := StopSpawnAuthorized(runTestSession, e.ID); err != nil {
+		t.Errorf("a run no longer on disk is judged on the placeholder and the user's stop proceeds, got %v", err)
+	}
+}
+
+// Copilot on PR #89, graph_cancel.go:104: artifacts are purged only after every
+// worker is stopped — a surviving worker may still be writing them.
+func TestCancelPurgesArtifactsOnlyAfterWorkersStop(t *testing.T) {
+	purges := 0
+	prev := cancelPurgeFn
+	cancelPurgeFn = func(string, string) *ArtifactPurgeResult { purges++; return nil }
+	t.Cleanup(func() { cancelPurgeFn = prev })
+
+	run := createTestRun(t, spawnCancelGraph())
+	fakeLiveSpawns(t)
+	step(t, runTestSession, run.ID)
+	spawnKillWindowFn = func(string, string) error { return errors.New("kill-window: no server") }
+	if err := CancelGraphRun(runTestSession, run.ID); err == nil {
+		t.Fatal("a surviving worker must fail the cancel")
+	}
+	if purges != 0 {
+		t.Errorf("artifacts purged %d time(s) while a worker survived", purges)
+	}
+	spawnKillWindowFn = func(string, string) error { return nil }
+	if err := CancelGraphRun(runTestSession, run.ID); err != nil {
+		t.Fatalf("re-cancel: %v", err)
+	}
+	if purges != 1 {
+		t.Errorf("artifacts must be purged once the workers are stopped, got %d", purges)
+	}
+}
+
+// sendAgentRead starts a linear run and has the build agent read node a's
+// request, leaving a receipt; the agent's pane reads idle or busy per idle.
+func sendAgentRead(t *testing.T, idle *bool) (*GraphRun, string) {
+	t.Helper()
+	if err := os.MkdirAll(DeliveryDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	prev := graphAgentIdleFn
+	graphAgentIdleFn = func(string, string) bool { return *idle }
+	t.Cleanup(func() { graphAgentIdleFn = prev })
+	run := createTestRun(t, linearGraph())
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+	if _, err := Receive(runTestSession, "build"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ReadReceipt(runTestSession, st.TaskID); !ok {
+		t.Fatal("fixture: the build agent's read must leave a receipt")
+	}
+	return run, st.TaskID
+}
+
+// Copilot on PR #89, graph_cancel.go:146: a send node whose agent read the
+// request and is still busy is working for the run, so the cancel fails closed
+// — and purges nothing — until it answers. A timed-out task is no proof the
+// agent stopped, so the daemon timing it out changes nothing. Once the agent
+// answers, a re-cancel completes and purges once. (An unread request is
+// withdrawn instead — TestExecCancelMidRun.)
+func TestCancelFailsClosedOnARunningSendAgent(t *testing.T) {
+	purges := 0
+	prevPurge := cancelPurgeFn
+	cancelPurgeFn = func(string, string) *ArtifactPurgeResult { purges++; return nil }
+	t.Cleanup(func() { cancelPurgeFn = prevPurge })
+	idle := false
+	run, taskID := sendAgentRead(t, &idle)
+
+	for _, stage := range []string{"agent working", "task timed out, agent still working"} {
+		if stage == "task timed out, agent still working" {
+			TimeoutTask(runTestSession, taskID)
+		}
+		err := CancelGraphRun(runTestSession, run.ID)
+		var cerr *CancelIncompleteError
+		if !errors.As(err, &cerr) || !strings.Contains(err.Error(), "still working on the request") {
+			t.Fatalf("%s: the cancel must fail closed, got %v", stage, err)
+		}
+		if r, _ := ReadGraphRun(runTestSession, run.ID); r.State != GraphRunCanceling {
+			t.Errorf("%s: run %q, want canceling", stage, r.State)
+		}
+		if purges != 0 {
+			t.Errorf("%s: artifacts purged while the send agent works", stage)
+		}
+	}
+
+	CompleteTask(runTestSession, taskID, "resp-"+taskID)
+	recancel(t, run.ID)
+	if purges != 1 {
+		t.Errorf("artifacts must be purged once the agent answered, got %d", purges)
+	}
+}
+
+// A missing or malformed delivery record is no proof the request went unread —
+// Receive drains the inbox before its best-effort receipt write — so with the
+// agent busy the cancel still fails closed; once the agent is idle it proceeds.
+func TestCancelTreatsLostReceiptAsUnknown(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		damage func(path string) error
+	}{
+		{"missing record", os.Remove},
+		{"malformed record", func(p string) error { return os.WriteFile(p, []byte("{truncated"), 0644) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			idle := false
+			run, taskID := sendAgentRead(t, &idle)
+			if err := c.damage(DeliveryPath(runTestSession, taskID)); err != nil {
+				t.Fatal(err)
+			}
+			err := CancelGraphRun(runTestSession, run.ID)
+			if err == nil || !strings.Contains(err.Error(), "still working on the request") {
+				t.Fatalf("a lost receipt with a busy agent must fail closed, got %v", err)
+			}
+			idle = true
+			recancel(t, run.ID)
+		})
+	}
+}
+
+// Negative control: an agent that read the request but sits idle without
+// answering — finished, abandoned or restarted — is working on nothing, so
+// it never blocks a cancel.
+func TestCancelProceedsPastAnIdleSendAgent(t *testing.T) {
+	idle := true
+	run, taskID := sendAgentRead(t, &idle)
+	recancel(t, run.ID)
+	if task, _ := ReadTask(runTestSession, taskID); task.Status != TaskTimedOut {
+		t.Errorf("the idle agent's task %q, want timed-out so it cannot be re-driven", task.Status)
+	}
+}
+
+// Copilot on PR #89, graph_cancel.go:181: a malformed spawn registry line could
+// be a live worker of this run, so it fails the cancel rather than read as
+// absent. Negative control: the registry repaired, the cancel completes.
+func TestCancelFailsClosedOnMalformedRegistryLine(t *testing.T) {
+	run := createTestRun(t, spawnCancelGraph())
+	fakeLiveSpawns(t)
+	step(t, runTestSession, run.ID)
+	registry := SpawnPath(runTestSession)
+	good, err := os.ReadFile(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registry, append(append([]byte{}, good...), []byte("{truncated\n")...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := ReadSpawnEntries(runTestSession); err != nil || len(entries) == 0 {
+		t.Fatalf("ReadSpawnEntries must still skip a malformed line for other callers, got %d, %v", len(entries), err)
+	}
+
+	cancelIncomplete(t, run.ID, "malformed spawn registry")
+
+	if err := os.WriteFile(registry, good, 0644); err != nil {
+		t.Fatal(err)
+	}
+	recancel(t, run.ID)
+}
+
+// Copilot on PR #91, graph_cancel.go:183: an absent registry is not a session
+// with no workers when a running node names one. Negative control: the
+// registry restored, the cancel completes.
+func TestCancelFailsClosedOnMissingRegistry(t *testing.T) {
+	run := createTestRun(t, spawnCancelGraph())
+	f := fakeLiveSpawns(t)
+	step(t, runTestSession, run.ID)
+	registry := SpawnPath(runTestSession)
+	good, err := os.ReadFile(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(registry); err != nil {
+		t.Fatal(err)
+	}
+
+	cancelIncomplete(t, run.ID, "absent from the spawn registry")
+	if len(f.killed) != 0 {
+		t.Errorf("nothing may be stopped on a missing registry, killed %v", f.killed)
+	}
+
+	if err := os.WriteFile(registry, good, 0644); err != nil {
+		t.Fatal(err)
+	}
+	recancel(t, run.ID)
+}
+
+// Review must-fix on the PR #91 fix: a completed node keeps a live parked
+// worker, so a missing registry fails the cancel for it too. Restored, the
+// cancel stops the worker; with its window gone instead — the worker proven
+// stopped, as after CleanFinishedSpawns prunes it — the cancel completes.
+func TestCancelFailsClosedOnMissingRegistryParkedWorker(t *testing.T) {
+	for _, mode := range []string{"restore registry", "window gone"} {
+		t.Run(mode, func(t *testing.T) {
+			g := spawnCancelGraph()
+			g.Nodes = append(g.Nodes, Node{ID: "b", Type: NodeSend, Role: "build", Action: "build", Message: "build"})
+			g.Edges = []Edge{{From: "w", To: "b"}}
+			run := createTestRun(t, g)
+			f := fakeLiveSpawns(t)
+			step(t, runTestSession, run.ID)
+			st, _ := ReadNodeStatus(runTestSession, run.ID, "w")
+			answerSpawn(t, runTestSession, st.TaskID)
+			step(t, runTestSession, run.ID)
+			if s := nodeState(t, runTestSession, run.ID, "w"); s != GraphNodeDone {
+				t.Fatalf("answered worker node %q, want done", s)
+			}
+			registry := SpawnPath(runTestSession)
+			good, err := os.ReadFile(registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(registry); err != nil {
+				t.Fatal(err)
+			}
+
+			cancelIncomplete(t, run.ID, "absent from the spawn registry")
+			if len(f.killed) != 0 {
+				t.Errorf("nothing may be stopped on a missing registry, killed %v", f.killed)
+			}
+
+			if mode == "window gone" {
+				f.deadWindows[st.TaskID] = true
+			} else if err := os.WriteFile(registry, good, 0644); err != nil {
+				t.Fatal(err)
+			}
+			recancel(t, run.ID)
+			if mode == "restore registry" {
+				if e, _ := findSpawnByRole(runTestSession, st.TaskID); e.Status != "stopped" {
+					t.Errorf("parked worker %q, want stopped", e.Status)
+				}
+			}
+		})
+	}
+}
+
+// Review must-fix on the PR #91 fix: a failed tmux listing is no proof a
+// worker missing from the registry stopped, so the cancel stays incomplete.
+// Negative control: once the listing succeeds and shows the window gone, the
+// cancel completes.
+func TestCancelFailsClosedOnWindowLookupError(t *testing.T) {
+	run := createTestRun(t, spawnCancelGraph())
+	f := fakeLiveSpawns(t)
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "w")
+	if err := os.Remove(SpawnPath(runTestSession)); err != nil {
+		t.Fatal(err)
+	}
+	f.deadWindows[st.TaskID] = true
+	f.lookupErr = errors.New("no server running")
+
+	cancelIncomplete(t, run.ID, "could not be checked")
+
+	f.lookupErr = nil
+	recancel(t, run.ID)
+}
+
+// Copilot on PR #91, spawn.go:66: a line that parses but names no worker is
+// malformed for the cancel scan, and other readers skip it.
+func TestCancelFailsClosedOnIdentitylessRegistryRecord(t *testing.T) {
+	for _, bad := range []string{"null", "{}", `{"id":"x","status":"running"}`} {
+		t.Run(bad, func(t *testing.T) {
+			run := createTestRun(t, spawnCancelGraph())
+			fakeLiveSpawns(t)
+			step(t, runTestSession, run.ID)
+			registry := SpawnPath(runTestSession)
+			good, err := os.ReadFile(registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(registry, append(append([]byte{}, good...), []byte(bad+"\n")...), 0644); err != nil {
+				t.Fatal(err)
+			}
+			entries, err := ReadSpawnEntries(runTestSession)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range entries {
+				if e.ID == "" || e.SpawnRole == "" {
+					t.Errorf("ReadSpawnEntries returned an identity-less entry %+v", e)
+				}
+			}
+
+			cancelIncomplete(t, run.ID, "malformed spawn registry")
+
+			if err := os.WriteFile(registry, good, 0644); err != nil {
+				t.Fatal(err)
+			}
+			recancel(t, run.ID)
+		})
+	}
+}
+
 // TestStepSkipsWhileCancelHoldsRun: a tick that finds the run lock held
 // dispatches nothing and is not an error.
 func TestStepSkipsWhileCancelHoldsRun(t *testing.T) {

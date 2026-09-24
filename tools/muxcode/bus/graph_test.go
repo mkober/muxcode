@@ -538,6 +538,10 @@ func TestCancelGraphRunExpiresTasks(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// A zombie is a task nobody works on: its agent sits idle at its prompt.
+	prevIdle := graphAgentIdleFn
+	graphAgentIdleFn = func(string, string) bool { return true }
+	t.Cleanup(func() { graphAgentIdleFn = prevIdle })
 
 	if err := CancelGraphRun(session, run.ID); err != nil {
 		t.Fatal(err)

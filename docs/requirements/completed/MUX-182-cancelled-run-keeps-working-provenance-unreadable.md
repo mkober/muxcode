@@ -347,7 +347,7 @@ Landed in run `1790258935-spec-to-pr-49587ed8`: build and test green, review
   request either names its run or says it carries no record of a user request.
 - **Second review, 10:38** (`/tmp/muxcode-review-1790260651.txt`): the run-list clamp should-fix
   repeated unchanged; its three must-fix are on work that shares the tree but is not this phase —
-  the HEAD-anchored `phaseCommitReady` of [MUX-183](../drafts/MUX-183-phase-commit-ready-recredits-shipped-phases.md)
+  the HEAD-anchored `phaseCommitReady` of [MUX-183](../completed/MUX-183-phase-commit-ready-recredits-shipped-phases.md)
   (two, recorded there) and the review node's new findings-count parser (one, recorded under Phase 5
   below, since it is the mechanism behind the `outcome=success`-with-must-fix evidence). Run
   `1790258935` was cancelled after its `phase-check`; the cancel stopped cleanly.
