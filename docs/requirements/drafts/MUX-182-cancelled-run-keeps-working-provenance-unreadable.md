@@ -118,8 +118,8 @@ as a loop.
 
 ### Acceptance criteria
 
-- [x] `graph cancel` terminates in-flight spawn nodes, **or** refuses to report the run cancelled while naming exactly which spawns survived and how to stop them — Phase 2 `bus/graph_cancel.go`, closed 2026-09-24 after three review iterations (unit level: survivors and every failed cleanup step named in `CancelIncompleteError`); live confirmation is Phase 6
-- [ ] A cancelled run cannot mutate files or call an external API after the cancel returns
+- [x] `graph cancel` terminates in-flight spawn nodes, **or** refuses to report the run cancelled while naming exactly which spawns survived and how to stop them — Phase 2 `bus/graph_cancel.go`, closed 2026-09-24 after three review iterations (unit level: survivors and every failed cleanup step named in `CancelIncompleteError`); confirmed live by Phase 6's script — a worker dead by window and process, and a refused cancel whose named survivor really was alive
+- [x] A cancelled run cannot mutate files or call an external API after the cancel returns — measured live in Phase 6: the worker's heartbeat file grows before the cancel and stops after it, and the worker is dead by process and window; the API half follows from the dead process (Phase 2's limit stands: a request another agent had *already consumed* cannot be recalled — that agent now sees the run state on its message)
 - [x] Every provenance surface (`run.json`, `graph status`, `graph runs`, `graph-run-created`) distinguishes "launched by the user by hand" from "launched autonomously by `<agent>`", in wording an agent cannot misread as the other — Phase 3 routes every surface through `DescribeRunCreator`, closed 2026-09-24 11:13 once the TUI run-list clamp preserved the category (the last surface that could clip `(autonomous)`)
 - [x] **Negative control: a genuinely agent-launched run is still labelled autonomous** — a fix that labels everything "user" is not a fix — Phase 3, every provenance test paired manual/`auto`
 - [x] A spawn-originated bus message carries its originating run id, `created_by`, and current run state, so a recipient can verify whether a prompt traces back to a human — Phase 3, `stampMessageOrigin`; `TestSpawnMessageCarriesRunOrigin`, `TestSpawnMessageFromCancelledRunSaysSo`
@@ -129,7 +129,7 @@ as a loop.
 - [x] The watch completion notification carries the agent's real summary, or is neutral (`"Watch completed — see result"`); it never asserts a finding the chain did not establish — Phase 5, neutral wording plus an audit test over every default notice
 - [x] A daemon pane scrape is never delivered in a `response` body and never completes a task as though answered — it is marked unmistakably as a non-answer — Phase 5, `event:no-answer` from `daemon`, task timed out; `TestIdleRescueIsNeverAResponse`
 - [x] A suppressed self-addressed startup reply is excluded from loop detection, or the reply affordance is not printed for it — Phase 5, excluded from detection (the affordance is unchanged)
-- [ ] `bash scripts/test-cancel-provenance.sh` passes
+- [x] `bash scripts/test-cancel-provenance.sh` passes — 57/0 on 2026-09-24 12:0x through the run agent (task `1790265785-spawn-4d7bf287-3089eb85`), floor 56 met
 
 ### Key files
 
@@ -413,17 +413,40 @@ Boundaries drawn:
 
 ### Phase 6: Integration test
 
-- [ ] Create `scripts/test-cancel-provenance.sh` (hermetic; scratch bus, tmux session and daemon)
-- [ ] Test: a run with a live spawn is cancelled → **the spawn is dead**, verified by process/window absence, not by run state
-- [ ] Test: a spawn that cannot be stopped → cancel **refuses** to report success and names the survivor
-- [ ] **Negative control:** a run with no spawns cancels cleanly and reports success
-- [ ] Test: a user-launched run renders as user-launched in all four surfaces; **negative control:** an agent-launched run renders autonomous in all four
-- [ ] Test: an agent cancelling a human-created run is refused without approval; an agent-created run is cancelled freely
-- [ ] Test: a cancelled run performs no file mutation after cancel returns
-- [ ] Test: the watch notification does not contain a health claim the chain did not establish
-- [ ] Test: a pane scrape never arrives as `Type: response`
-- [ ] Coverage floor keeps a skipped section from reporting green
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-cancel-provenance.sh` (hermetic; scratch bus, tmux session and daemon) — 2026-09-24: scratch `BUS_SESSION`, bus dir, `HOME`, config, lifecycle log and repo; a real `muxcode watch` daemon, real tmux windows, a stub agent that prints `❯` and writes a heartbeat line per second; no AI CLI launched
+- [x] Test: a run with a live spawn is cancelled → **the spawn is dead**, verified by process/window absence, not by run state — section 1: window gone, stub pid and pane pids dead, entry `stopped`, `graph-cancel-spawn-stopped` row
+- [x] Test: a spawn that cannot be stopped → cancel **refuses** to report success and names the survivor — section 2: a decoy window sharing the worker's name makes kill-by-name ambiguous; the cancel exits non-zero, names the role and `muxcode spawn stop <id>`, leaves the run `canceling`, and the survivor is verified **alive** (the refusal is truthful); decoy removed, the re-run cancel completes and the survivor is dead
+- [x] **Negative control:** a run with no spawns cancels cleanly and reports success — section 4, an agent-created no-spawn run cancelled by edit
+- [x] Test: a user-launched run renders as user-launched in all four surfaces; **negative control:** an agent-launched run renders autonomous in all four — section 3: the user's run is created through `tmux run-shell` so `created_by: user` comes from **real ancestry**, not a claimed `AGENT_ROLE`; `run.json` `provenance`, `graph status <id>`, the status list and `graph-run-created` all read "the user, by hand" and never "autonomous"; the `auto` run reads "auto (autonomous)" and never "the user" in all four
+- [x] Test: an agent cancelling a human-created run is refused without approval; an agent-created run is cancelled freely — section 4: edit's cancel refused ("let the user cancel it"), run still running, `graph-cancel-refused` sourced edit; the user's cancel succeeds, `graph-run-canceled` "canceled by user"
+- [x] Test: a cancelled run performs no file mutation after cancel returns — section 1: the worker's heartbeat file grew before the cancel and froze after it, with a live-observable control (a vacuous "0 beats unchanged" pass was found and guarded in iteration 1)
+- [x] Test: the watch notification does not contain a health claim the chain did not establish — section 5: a `PostToolUse` payload through `hook bash` as watch; exit 0 → "exited 0" with no "healthy", exit 1 → "FAILED (exit 1)" with no "detected errors"
+- [x] Test: a pane scrape never arrives as `Type: response` — section 6: a stub-backed idle build window, a tracked request from edit → one `event:no-answer` from `daemon` marked NOT A RESPONSE, no `Type: response` from build, task timed-out
+- [x] Coverage floor keeps a skipped section from reporting green — floor 56, the arithmetic of all sections; the reviewer counted the assertions preceding it and they match
+- [x] Run the script and verify all checks pass — run agent task `1790265785-spawn-4d7bf287-3089eb85` (store row `completed`, response `1790265883-run-64502422`), log `/tmp/test-cancel-provenance-3.log`: **57 passed, 0 failed, exit 0**, floor met; two script-only iterations before it (a fixture agent definition the scratch `HOME` lacked — isolation confirmed; two vacuous checks guarded)
+
+#### Phase 6 findings — 2026-09-24
+
+Landed in run `1790262549-spec-to-pr-00360289` (implement node 888 s — three script iterations
+through the run agent): build and test green, review `/tmp/muxcode-review-1790265995.txt` 0/0/0.
+Worker report: `/tmp/mux182-phase6-report.md`. What the script established beyond the boxes:
+
+- **The user identity in the test is real, not claimed.** `BusActorVerified` overrules a missing
+  or `user` `AGENT_ROLE` by walking process ancestry for an agent runtime, so a script an agent
+  runs cannot become the user by unsetting a variable; `as_user` therefore runs through
+  `tmux run-shell`, whose server daemonized away from whoever started it. If `ps` cannot be read
+  there the creator resolves `unknown` and section 3 fails loudly rather than passing on a guess.
+- **Isolation held**: the scratch `HOME` had no agent definitions, so `agent launch` refused with
+  "resolved at no tier" instead of falling back to the real `HOME` — found as a failure in
+  iteration 2 and answered with a minimal fixture definition, not a fallback.
+- **Two checks passed vacuously in iteration 1** (an empty pid reading as "dead", zero beats as
+  "unchanged") and were guarded — the pass count is not the coverage; the discriminating assertion
+  has to be reachable.
+- The un-stoppable worker is manufactured honestly: a decoy window sharing the worker's name makes
+  tmux's kill-by-name ambiguous, so the survivor the refusal names is genuinely alive.
+- Section 6 waits up to ~150 s for the idle rescue's two grace periods, with the stall, stuck-reload,
+  permission-block and force-respond watchdogs disabled for that section only; the whole script runs
+  about 2.5 min against the **installed** binary (run `./build.sh` first).
 
 ## Open decisions
 
@@ -482,7 +505,7 @@ while still working. Whether they share a fix or only a theme is not settled her
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-182-cancelled-run-keeps-working | 1h 34m | 2026-09-24 11:45 |
+| MUX-182-cancelled-run-keeps-working | 1h 53m | 2026-09-24 12:07 |
 
 ## Status
 
@@ -506,5 +529,10 @@ committed as `f8e52ba`.
 **Phase 5 complete 2026-09-24 11:45** (run `1790262549`, build and test green, review 0/0/0) — 4/4
 steps and ACs 9, 10, 11 ticked: watch notices state only an exit code (audited across every default
 notice), the idle rescue is an `event:no-answer` that times the task out rather than a response that
-completes it, and self-addressed rows are excluded from loop detection. 40/53. Phase 6 (integration
-test) next — the last phase; AC 2 and the script AC are its to close.
+completes it, and self-addressed rows are excluded from loop detection. Phase 5 committed as
+`2b91f48`.
+**Phase 6 complete 2026-09-24 12:07** (run `1790262549`, three script iterations, review 0/0/0) —
+`scripts/test-cancel-provenance.sh` 57/0 through the run agent, all eleven steps and ACs 2 and 12
+ticked. **All six phases complete, 53/53, acceptance criteria 12/12.** Close-out (Status `Complete`,
+move to `completed/`, backlog row) follows through the run's `close-spec` node; Decision 2's wider
+cancel-authority scope stays recorded as open by choice, not as a gap.
