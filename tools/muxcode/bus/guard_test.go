@@ -230,6 +230,32 @@ func TestDetectMessageLoop_DelegationIsNotPingPong(t *testing.T) {
 		t.Errorf("startup bootstrap plus dropped replies must not alert, got %q", alert.Message)
 	}
 
+	// MUX-182 defect 5 ("edit <-> edit action:startup repeated 4x in 2m59s"):
+	// homogeneous self-addressed rows, which the tuple count and the
+	// same-direction pong both reached before self rows were excluded. Neither
+	// is an exchange between two agents.
+	selfRows := func(typ string) []Message {
+		var out []Message
+		for i := int64(0); i < 4; i++ {
+			out = append(out, Message{TS: now - 179 + i*59, From: "edit", To: "edit", Action: "startup", Type: typ, ReplyTo: "boot"})
+		}
+		return out
+	}
+	for _, typ := range []string{"request", "response"} {
+		if alert := DetectMessageLoop(selfRows(typ), "edit", 4, 300); alert != nil {
+			t.Errorf("self-addressed startup %ss must not alert, got %q", typ, alert.Message)
+		}
+	}
+
+	// Negative control: the same four requests to another agent still alert.
+	toTest := selfRows("request")
+	for i := range toTest {
+		toTest[i].To = "test"
+	}
+	if alert := DetectMessageLoop(toTest, "edit", 4, 300); alert == nil {
+		t.Error("four edit→test startup requests must still alert — the self exclusion swallowed a real loop")
+	}
+
 	// Negative control: an all-response echo — agents acknowledging each
 	// other's acknowledgements (MUX-169) — is still a loop.
 	echo := []Message{

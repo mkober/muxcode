@@ -11,7 +11,7 @@ import (
 // lap (2026-09-09, run 1788966148). The guard's own failure edge stays as
 // the backstop for a spec edited between the check and the commit.
 func TestSpecToPRPhaseCheckPrecedesGate(t *testing.T) {
-	tpl, _, err := ResolveGraphTemplate("spec-to-pr")
+	tpl, _, err := ResolveGraphTemplate("50-spec-to-pr")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,14 +46,14 @@ func TestSpecToPRPhaseCheckPrecedesGate(t *testing.T) {
 		}
 	}
 	if v := tpl.Validate(); !v.OK() {
-		t.Errorf("spec-to-pr must validate: %v", v.Errors)
+		t.Errorf("50-spec-to-pr must validate: %v", v.Errors)
 	}
 }
 
 // The condition and the guard share one predicate, so the check passes
-// exactly when the guard would ship: one more completed phase than the
-// commit node has fired. Every other state fails closed — toward the stuck
-// gate, never toward a human approval the guard would then decline.
+// exactly when the guard would ship: a phase complete in the tree and not
+// at HEAD. Every other state fails closed — toward the stuck gate, never
+// toward a human approval the guard would then decline.
 func TestSpecPhaseCommittableCondition(t *testing.T) {
 	g := &Graph{Name: "g", Start: "commit",
 		Nodes: []Node{
@@ -70,14 +70,14 @@ func TestSpecPhaseCommittableCondition(t *testing.T) {
 		t.Errorf("first commit with its phase complete must pass, got %+v", res)
 	}
 
-	run.EdgeFires = map[string]int{"commit->next:success": 1}
-	if ok, res := EvaluateConditions(cond, ctx); ok || !strings.Contains(res[0].Detail, "1 phases complete, 1 shipped") {
-		t.Errorf("one shipped, one complete: the phase is open and must fail with counts, got %+v", res)
+	stubSpecAtHEAD(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
+	if ok, res := EvaluateConditions(cond, ctx); ok || !strings.Contains(res[0].Detail, "1 phases complete in the tree, 1 at HEAD") {
+		t.Errorf("Phase 1 committed, Phase 2 open: nothing to ship, must fail with counts, got %+v", res)
 	}
 
 	writeSpecFixture(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [x] b\n")
 	if ok, _ := EvaluateConditions(cond, ctx); !ok {
-		t.Error("two complete, one shipped: the next phase is committable")
+		t.Error("Phase 2 complete in the tree, open at HEAD: the next phase is committable")
 	}
 
 	if err := ClearActiveSpec(runTestSession); err != nil {

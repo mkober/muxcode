@@ -86,7 +86,15 @@ const (
 // injectParked if it never clears, or injectUnknown when it cannot tell (empty
 // needle, or every pane capture failed) — the caller treats unknown like the
 // old behavior so a capture failure is never worse than before.
-func verifyInjectionLanded(target, needle string) injectOutcome {
+//
+// A non-nil enterGuard runs on every captured attempt, ahead of both verdicts;
+// its error reports injectParked, so the message stays queued and no Enter is
+// sent. Codex passes one because its prompts can arrive after the text. Ahead
+// of the re-sent Enter it stops a "recovery" that would choose "Update now".
+// Ahead of the submitted verdict it stops a false delivery: a prompt drawn over
+// the composer hides the needle too, and consuming then would lose a message
+// whose Enter may have gone to the prompt rather than the agent.
+func verifyInjectionLanded(target, needle string, enterGuard func() error) injectOutcome {
 	if needle == "" {
 		return injectUnknown
 	}
@@ -98,10 +106,12 @@ func verifyInjectionLanded(target, needle string) injectOutcome {
 			continue // transient capture failure — try again
 		}
 		captured = true
+		if enterGuard != nil && enterGuard() != nil {
+			return injectParked
+		}
 		if !composerHoldsText(content, needle) {
 			return injectSubmitted
 		}
-		// Still parked — the Enter was dropped (or an overlay ate it). Re-send.
 		_ = TmuxRun("send-keys", "-t", target, "Enter")
 	}
 	if !captured {
@@ -120,9 +130,10 @@ func verifyInjectionLanded(target, needle string) injectOutcome {
 //
 // batchIDs is the set of messages actually injected (see BoundWakeUpBatch).
 // Consuming by ID rather than draining the inbox is what keeps a bounded batch
-// safe: anything the wake-up did not show the agent stays queued.
-func confirmInjectionAndConsume(session, role, target, needle string, batchIDs map[string]bool) {
-	switch verifyInjectionLanded(target, needle) {
+// safe: anything the wake-up did not show the agent stays queued. enterGuard is
+// passed through to verifyInjectionLanded; nil means no check.
+func confirmInjectionAndConsume(session, role, target, needle string, batchIDs map[string]bool, enterGuard func() error) {
+	switch verifyInjectionLanded(target, needle, enterGuard) {
 	case injectParked:
 		fmt.Fprintf(os.Stderr,
 			"  [wakeup] %s injection not confirmed — text still parked after %d retries; leaving inbox for next cycle\n",

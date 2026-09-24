@@ -85,7 +85,8 @@ func LoadRunListRows(session string, now time.Time) []RunListRow {
 			continue
 		}
 		statuses, _ := bus.ReadAllNodeStatuses(session, r.ID)
-		row := RunListRow{ID: r.ID, Template: r.Template, State: r.State, Total: len(g.Nodes)}
+		row := RunListRow{ID: r.ID, Template: r.Template, State: r.State, Total: len(g.Nodes),
+			LaunchedBy: bus.DescribeRunCreator(r.CreatedBy)}
 		var failedNodes, doneNodes []string
 		var failedOut string
 		for j := range g.Nodes {
@@ -719,7 +720,8 @@ func (ui *GraphUI) promptSuggestion() string {
 }
 
 // handleTemplateTypeahead jumps the launcher selection to the first
-// template matching the typed prefix ("story" lands on story-to-spec).
+// template matching the typed prefix ("story" or "10" lands on
+// 10-story-to-spec — see TypeaheadIndex).
 // j/k/q stay navigation keys — no template name begins with them — and a
 // char with no match is dropped. Reports whether the key was consumed.
 func (ui *GraphUI) handleTemplateTypeahead(key byte) bool {

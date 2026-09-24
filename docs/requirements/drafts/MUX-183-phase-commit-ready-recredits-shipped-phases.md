@@ -147,7 +147,7 @@ denominator.
 
 The false-completion family — [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md)
 (a node's evidence), [MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) (a spawn's
-port), [MUX-182](./MUX-182-cancelled-run-keeps-working-provenance-unreadable.md) (a run's provenance).
+port), [MUX-182](../completed/MUX-182-cancelled-run-keeps-working-provenance-unreadable.md) (a run's provenance, closed 2026-09-24).
 This is its **human-gate member**: it fakes no evidence, it converts a real approval into a commit of
 unverified work. MUX-167's "ask before the guard" and MUX-144's attributable approvals both held; the
 question they gated was wrong.
@@ -156,13 +156,13 @@ question they gated was wrong.
 
 ### Acceptance criteria
 
-- [ ] A run started on a spec with N already-complete phases does **not** open `phase-gate` until a phase completes that was not complete when the run started
-- [ ] A run that completes a phase **does** open `phase-gate` for it — **negative control: a predicate that never opens the gate is not a fix**
-- [ ] `phase-check` and the `phase-progress` guard still agree on every input (the MUX-167 property is preserved)
-- [ ] `graph retry --from` a node upstream of the commit does not re-credit a phase the run already committed
-- [ ] A phase with **no items at all** — a narrative `### Phase N …` heading, or a stub whose steps are not yet written — is never counted complete: complete means *at least one item and none open*; and `spec set` / `graph validate` warn on an item-less phase
-- [ ] A checkbox under a `####` subheading inside a phase counts as that phase's item — a heading line below `### Phase N` that is not itself a phase heading does not detach what follows
-- [ ] The `phase-gate` prompt names the phase it proposes to commit, and that phase is complete in the working tree and not at HEAD — today it names the completion frontier, which cannot tell just-closed from long-shipped
+- [x] A run started on a spec with N already-complete phases does **not** open `phase-gate` until a phase completes that was not complete when the run started — 2026-09-24, `TestPhaseCommitReadyAnchorsOnHEAD` (a committed Phase 1 opens nothing and is not named)
+- [x] A run that completes a phase **does** open `phase-gate` for it — **negative control: a predicate that never opens the gate is not a fix** — same test: completing Phase 2 in the tree opens the gate and names Phase 2
+- [x] `phase-check` and the `phase-progress` guard still agree on every input (the MUX-167 property is preserved) — both call the one `phaseCommitReady(session)`; `phase_check_test.go` re-asserts it against the HEAD anchor
+- [x] `graph retry --from` a node upstream of the commit does not re-credit a phase the run already committed — by construction: the predicate reads only the spec in the tree and at HEAD, so there is no per-run counter for a retry to reset (a dedicated retry test is Phase 3's open step)
+- [ ] A phase with **no items at all** — a narrative `### Phase N …` heading, or a stub whose steps are not yet written — is never counted complete: complete means *at least one item and none open*; and `spec set` / `graph validate` warn on an item-less phase — first half done 2026-09-24 (`SpecPhase.Complete()` = `Done > 0 && len(Items) == 0`, `TestSpecPhaseCompleteness`); the `spec set` / `graph validate` warning is not yet written
+- [x] A checkbox under a `####` subheading inside a phase counts as that phase's item — a heading line below `### Phase N` that is not itself a phase heading does not detach what follows — 2026-09-24, `parseSpecPhases` keeps the phase across `####`-and-deeper headings; `TestSpecPhaseCompleteness`
+- [x] The `phase-gate` prompt names the phase it proposes to commit, and that phase is complete in the working tree and not at HEAD — today it names the completion frontier, which cannot tell just-closed from long-shipped — 2026-09-24, `${completed_phase}` now expands from the predicate's `phase` (lowest complete in the tree and not at HEAD), so the label and the guard cannot disagree
 - [ ] `bash scripts/test-phase-commit-ready.sh` passes
 
 ### Technical approach — options, deliberately not yet chosen
@@ -190,31 +190,44 @@ heading in this repo uses the colon) or `spec set` warns on an item-less phase.
 | `tools/muxcode/bus/graph_run.go` | `EdgeFires` (`:53`, `:200`), retry reset `:640-644` |
 | `tools/muxcode/bus/graph_templates.go` | `spec-to-pr` `phase-check`/`phase-gate`/`commit` `:42-44`, edges `:59-62` |
 | `scripts/test-multi-phase-graph.sh` | Existing multi-phase harness to extend or model on |
+| `tools/muxcode/bus/phase_anchor_test.go` | The anchor's tests (Phase 3): pin + negative control, real-git HEAD reads, moved-spec baseline, fail-closed seam |
 
 ## Implementation
 
 ### Phase 1: Establish the boundary
 
-- [ ] Pin the defect: a unit test with one spec (Phase 1 complete) and a fresh run whose commit node has fired zero times — assert today's predicate says ready, then invert the assertion with the fix
+- [x] Pin the defect: a unit test with one spec (Phase 1 complete) and a fresh run whose commit node has fired zero times — assert today's predicate says ready, then invert the assertion with the fix — `TestPhaseCommitReadyAnchorsOnHEAD` (`bus/phase_anchor_test.go`), 2026-09-24; the fix and the pin landed together
 - [x] Record what `${completed_phase}` rendered on run `1789399519`'s gate (lifecycle log / gate message) and whether it named Phase 1 — **established by code, 13:47**: `SpecJustCompletedPhase` returns the last complete phase before the first open one, so with Phase 2 open it names Phase 1 on every lap; **primary evidence 13:49**: all three runs' `graph-approval` requests (bus copies 11:36:22, 12:22:06, 13:39:39) read *"Approve committing Phase 1: Establish the boundary …"* with every intent at Phase 2
-- [ ] Confirm defect 2 with a fixture spec carrying a `### Phase 1 findings` heading **and** a stub `### Phase 4:` with no boxes, and count the inflation from each
-- [ ] Confirm defect 3 with `graph retry --from update-spec` on a run that has committed once
-- [ ] Enumerate every consumer of `SpecCompletedPhaseCount` and `phaseCommitReady` and state which the fix changes
+- [x] Confirm defect 2 with a fixture spec carrying a `### Phase 1 findings` heading **and** a stub `### Phase 4:` with no boxes, and count the inflation from each — confirmed by the fix's own fixtures in `TestSpecPhaseCompleteness` (narrative heading and stub phase each read *empty*, not *done*), 2026-09-24
+- [x] Confirm defect 3 with `graph retry --from update-spec` on a run that has committed once — made moot 2026-09-24: the anchor removed the `EdgeFires` counter from the predicate, so there is nothing left for a retry to reset; never reproduced live
+- [x] Enumerate every consumer of `SpecCompletedPhaseCount` and `phaseCommitReady` and state which the fix changes — all three consumers now share `phaseCommitReady(session)`: the `phase-progress` guard (`phaseProgressGuardAllows`), the `spec_phase_committable` condition (`evalSpecPhaseCommittable`) and `${completed_phase}` (`resolveCompletedPhaseText`); `SpecCompletedPhaseCount` is replaced by `completedPhaseCount` over `SpecPhase.Complete()`
 
 ### Phase 2: Choose the anchor
 
-- [ ] Weigh options 1–3 against Phase 1's findings and record the choice and rationale here
-- [ ] Decide the defect 2 remedy — tighten the regex, or warn on an item-less phase — and record it
-- [ ] Decide whether defect 3 is closed by the anchor choice or needs `shipped` protected on retry
+- [x] Weigh options 1–3 against Phase 1's findings and record the choice and rationale here — **option 2, HEAD-anchored** (Decision 1 below), recorded 2026-09-24 from edit's relay of the implementation
+- [x] Decide the defect 2 remedy — tighten the regex, or warn on an item-less phase — and record it — neither, for now: the decisive half is `SpecPhase.Complete()` requiring at least one item, plus `####` subheadings staying inside their phase; the regex is untouched and the `spec set` warning is left open under the acceptance criteria (Decision 2 below)
+- [x] Decide whether defect 3 is closed by the anchor choice or needs `shipped` protected on retry — **closed by the anchor**: the predicate carries no run state, so `graph retry`'s `EdgeFires` reset cannot reach it
 
 ### Phase 3: Implement
 
-- [ ] Implement the chosen anchor with unit tests
-- [ ] **Negative control:** a phase completed during the run still opens `phase-gate`
-- [ ] `phase-check` and `phase-progress` share the fixed predicate and a test asserts they agree
-- [ ] Fix defect 2 as decided, with tests that neither a narrative `### Phase N …` heading nor an item-less stub phase counts complete, that boxes under a `####` subheading count for the enclosing phase — and that an all-ticked phase still does (negative control)
-- [ ] Fix defect 3 as decided, with a retry test
-- [ ] `phase-gate`'s prompt states the phase and that it is complete and uncommitted
+- [x] Implement the chosen anchor with unit tests — `phaseCommitReady(session)` compares `SpecPhases(tree)` with `parseSpecPhases(specAtHEAD(...))` through `newlyCompletedPhases`; `TestPhaseCommitReadyAnchorsOnHEAD`, `TestNewlyCompletedPhases`, `TestSpecAtHEADReadsCommittedCopy` (real git), 2026-09-24
+- [x] **Negative control:** a phase completed during the run still opens `phase-gate` — `TestPhaseCommitReadyAnchorsOnHEAD`, second half
+- [x] `phase-check` and `phase-progress` share the fixed predicate and a test asserts they agree — one function, `phase_check_test.go` updated to the HEAD anchor
+- [x] Fix defect 2 as decided, with tests that neither a narrative `### Phase N …` heading nor an item-less stub phase counts complete, that boxes under a `####` subheading count for the enclosing phase — and that an all-ticked phase still does (negative control) — `SpecPhase.Complete()`, `parseSpecPhases`; `TestSpecPhaseCompleteness`
+- [ ] Fix defect 3 as decided, with a retry test — closed by construction (see Phase 2); the retry test is still to be written
+- [x] `phase-gate`'s prompt states the phase and that it is complete and uncommitted — `${completed_phase}` from the predicate's `phase`
+
+#### In flight 2026-09-24 — review must-fix on the HEAD-anchored implementation
+
+Implementation landed in the working tree of the `MUX-182-cancelled-run-keeps-working` branch
+(`phaseCommitReady(session)` now anchored on the spec's content at HEAD via `specAtHEADFn`,
+`graph_exec.go:491-517`; `spec_items.go` reworked; `phase_check_test.go`, `graph_test.go`, the
+`spec-to-pr` template and two integration scripts touched) — without this spec moving to `drafts/`
+or the phase boxes above being ticked. Review `/tmp/muxcode-review-1790260651.txt` returned two
+must-fix on it, recorded here so they have a home:
+
+- [x] **Must-fix (`graph_exec.go:512-517`) — closed 2026-09-24 10:52** (`specAtHEAD`: `""` only for an unborn HEAD or a file HEAD holds under neither path nor name; every other failure is an error and the gate holds; `TestSpecAtHEADFailsClosed` against the real git seam). Original: `specAtHEADFn` converts every `rev-parse`/`cat-file` failure into an empty, successful baseline — an inaccessible or corrupt repository, a missing `git`, or an unreadable object makes every completed tree phase commit-eligible instead of holding the guard. Distinguish a verified unborn HEAD or absent path from operational failures; propagate the rest. Failure regressions against the default git seam, not only a stub returning an error
+- [x] **Must-fix (`graph_exec.go:515-517`) — closed 2026-09-24 10:52** (a path absent at HEAD is looked up by its id-bearing file name across `ls-tree`; more than one match is an error; `TestSpecAtHEADFollowsAMovedSpec`, `TestPhaseCommitReadyAnchorsOnHEAD`). Original: the baseline reads only the active path at HEAD. Move an already-committed spec `backlog/` → `drafts/`, update the pointer, leave its complete Phase 1 unchanged: the new path is absent at HEAD, the baseline is empty, Phase 1 is re-credited — the false-completion defect reproduced in the normal spec lifecycle. Resolve the committed predecessor of a renamed spec, or hold when a missing baseline cannot be told from new work. Real-git rename regression with a complete phase and an open next phase
 
 ### Phase 4: Integration test
 
@@ -234,12 +247,24 @@ heading in this repo uses the colon) or `spec set` warns on an item-less phase.
 Option 2 is recommended above; the counter-argument is that a predicate reading git is a new dependency
 in a path that today reads only files under `BusDir`.
 
+**Resolved 2026-09-24: option 2, HEAD-anchored**, implemented in `bus/graph_exec.go` and relayed by
+edit. `phaseCommitReady(session)` is ready when a phase is complete in the working tree and not in
+HEAD's copy of the spec; it takes no run state. `specAtHEAD` is strict: `""` only for an unborn
+HEAD or a file HEAD holds under neither its path nor its id-bearing file name (so a spec moved
+`backlog/` → `drafts/` keeps its baseline); every other git failure is an error, and the gate holds.
+The counter-argument stands as accepted cost — the git read is the price of measuring "committed"
+in the frame that means it.
+
 ### Decision 2 — is a phase heading with no items an error?
 
 Tightening the regex silently stops counting sections an author meant as phases but wrote without a
 colon. Warning at `spec set` time is louder and teaches the contract; the two are not exclusive.
 Independently of either, `SpecCompletedPhaseCount` should stop calling an empty phase complete — that
 half needs no decision, only the negative control that an all-ticked phase still counts.
+
+**Partly resolved 2026-09-24**: the no-decision half shipped (`SpecPhase.Complete()` needs at least
+one item and none open; `####`-and-deeper headings stay inside their phase). Regex tightening and the
+`spec set` / `graph validate` warning are both still open — the acceptance criterion keeps its box.
 
 ### Decision 3 — should the gate prompt show the evidence?
 
@@ -256,7 +281,10 @@ a claim the machinery itself got wrong.
 
 ## Status
 
-Draft
+In Progress — entered `drafts/` 2026-09-24 on the user's instruction relayed by edit, with the
+implementation already in the MUX-182 branch's working tree (review `1790261523` 0 must-fix, build
+and test green). Phases 1–2 complete, Phase 3 at 5/6 (retry test open), Phase 4 not started;
+acceptance criteria 6/8 — open: the item-less-phase warning half of AC 5, and the integration script.
 
 Filed 2026-09-14 on the user's instruction relayed by edit, from plan's first-hand observation on run
 `1789399519`. Defects 2 and 3 were found during filing verification and are plan's, not the report's.

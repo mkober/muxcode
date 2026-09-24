@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -544,7 +545,11 @@ func TestRawRowWithoutHookSourceIsNotEvidence(t *testing.T) {
 // an evidencing row that is also asked for a token can produce two signals
 // that disagree, which deriveSendOutcome resolves by holding.
 func TestSeedVerdictToken(t *testing.T) {
-	unevidenced := []string{"edit", "comment", "review", "update-docs", "pr-read", "jira-write"}
+	got := seedVerdictToken("review", "do the thing")
+	if !strings.HasPrefix(got, "do the thing") || !strings.Contains(got, reviewCountsInstruction) || strings.Contains(got, verdictTokenInstruction) {
+		t.Errorf("a review is seeded with the counts line, not the completion token: %q", got)
+	}
+	unevidenced := []string{"edit", "comment", "update-docs", "pr-read", "jira-write"}
 	for _, action := range unevidenced {
 		got := seedVerdictToken(action, "do the thing")
 		if !strings.Contains(got, verdictTokenInstruction) {
@@ -616,21 +621,20 @@ func dispatchTo(t *testing.T, role, action string) (Message, bool) {
 	return Message{}, false
 }
 
-// TestCommitPrReviewLoopPrecheckRouting drives the real template through the
-// executor. The structural test asserts which edges exist; this asserts where
-// a run actually goes, which is where the defect lived.
+// TestPRReviewFixFindPRRouting drives the real template through the executor.
+// The structural test asserts which edges exist; this asserts where a run
+// actually goes.
 //
 // git-manager.md tells the commit role to end a reply EXIT=1 when the
 // requested state does not hold, naming PR existence as the example. Read that
-// way a precheck answering NO-PR-FOUND fails its own node, and since only a
-// success edge leaves it, the run dies before the condition that routes "no
-// PR" to the commit gate ever evaluates — the template's main path,
-// unreachable, with the structural test still green. The node messages
-// override that default; these cases pin the routing it produces.
+// way a lookup answering NO-PR-FOUND fails its own node before the condition
+// ever evaluates. The node message overrides that default; these cases pin
+// the routing it produces: an existing PR reaches the comment read, no PR is
+// decided by the condition and ends the run there.
 //
-// The lookup-failure case is the negative control: EXIT=1 must still fail,
-// or "always succeed" would satisfy the two cases above.
-func TestCommitPrReviewLoopPrecheckRouting(t *testing.T) {
+// The lookup-failure case is the negative control: EXIT=1 must fail before the
+// condition, or "always succeed" would satisfy the no-PR case too.
+func TestPRReviewFixFindPRRouting(t *testing.T) {
 	cases := []struct {
 		name      string
 		reply     string
@@ -639,38 +643,38 @@ func TestCommitPrReviewLoopPrecheckRouting(t *testing.T) {
 		wantRun   string
 	}{
 		{
-			name:      "an existing PR skips the commit gate",
-			reply:     "PR-CONFIRMED https://example.test/pull/99 EXIT=0",
-			reached:   "b",
-			unreached: "gate1",
-			wantRun:   GraphRunRunning,
+			name:    "an existing PR reaches the comment read",
+			reply:   "PR-CONFIRMED #99 https://example.test/pull/99 EXIT=0",
+			reached: "read-comments",
+			wantRun: GraphRunRunning,
 		},
 		{
-			name:      "no PR routes to the commit gate",
+			name:      "no PR is decided by the condition and ends the run",
 			reply:     "NO-PR-FOUND EXIT=0",
-			reached:   "gate1",
-			unreached: "b",
-			wantRun:   GraphRunRunning,
+			reached:   "pr-exists",
+			unreached: "read-comments",
+			wantRun:   GraphRunFailed,
 		},
 		{
-			name:    "an incomplete lookup picks no branch",
-			reply:   "gh is unavailable, could not determine EXIT=1",
-			wantRun: GraphRunFailed,
+			name:      "an incomplete lookup never reaches the condition",
+			reply:     "gh is unavailable, could not determine EXIT=1",
+			unreached: "pr-exists",
+			wantRun:   GraphRunFailed,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			g, err := ParseGraph([]byte(builtinGraphJSON["commit-pr-review-loop"]))
+			g, err := ParseGraph([]byte(builtinGraphJSON["80-pr-review-fix"]))
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
 			run := createTestRun(t, g)
 
 			step(t, runTestSession, run.ID)
-			if s := nodeState(t, runTestSession, run.ID, "pr-precheck"); s != GraphNodeRunning {
-				t.Fatalf("pr-precheck state %q, want running — the run does not start at the precheck", s)
+			if s := nodeState(t, runTestSession, run.ID, "find-pr"); s != GraphNodeRunning {
+				t.Fatalf("find-pr state %q, want running — the run does not start at the lookup", s)
 			}
-			completeSendNodeWithReply(t, runTestSession, run.ID, "pr-precheck", "commit", tc.reply)
+			completeSendNodeWithReply(t, runTestSession, run.ID, "find-pr", "commit", tc.reply)
 			for i := 0; i < 3; i++ {
 				step(t, runTestSession, run.ID)
 			}
@@ -679,8 +683,10 @@ func TestCommitPrReviewLoopPrecheckRouting(t *testing.T) {
 				if s := nodeState(t, runTestSession, run.ID, tc.reached); s == GraphNodePending {
 					t.Errorf("%s still pending — the run never reached it", tc.reached)
 				}
-				if s := nodeState(t, runTestSession, run.ID, tc.unreached); s != GraphNodePending {
-					t.Errorf("%s state = %q, want pending — that branch should not have been taken", tc.unreached, s)
+			}
+			if tc.unreached != "" {
+				if s := nodeState(t, runTestSession, run.ID, tc.unreached); s != GraphNodePending && s != GraphNodeSkipped {
+					t.Errorf("%s state = %q, want untouched — that branch should not have been taken", tc.unreached, s)
 				}
 			}
 			got, err := ReadGraphRun(runTestSession, run.ID)
@@ -1431,7 +1437,7 @@ func TestExecJoinQuorumBarrier(t *testing.T) {
 	// Second branch completes: quorum met, join runs, downstream fires.
 	// Its agent's token, no row — a review node's work leaves no command
 	// behind that could testify for it.
-	completeSendNodeSentinel(t, runTestSession, run.ID, "b2", "reviewed, no findings. EXIT=0")
+	completeSendNodeSentinel(t, runTestSession, run.ID, "b2", "Review: 0 must-fix, 0 should-fix, 0 nits — no findings. EXIT=0")
 	step(t, runTestSession, run.ID)
 	step(t, runTestSession, run.ID)
 	if s := nodeState(t, runTestSession, run.ID, "j"); s != GraphNodeDone {
@@ -2423,6 +2429,10 @@ func writeSpecFixture(t *testing.T, content string) string {
 	t.Helper()
 	repo := t.TempDir()
 	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	// An unborn HEAD: nothing of the spec is committed yet.
+	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
 	path := filepath.Join(repo, "spec.md")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -3003,17 +3013,17 @@ func TestSpawnHarvestPassesReportDownstream(t *testing.T) {
 // run that failed on 2026-09-14 failed precisely because plan's dispatch
 // carried nothing from the worker.
 func TestSpecToPRPassesWorkerReportToPlan(t *testing.T) {
-	data, ok := builtinGraphJSON["spec-to-pr"]
+	data, ok := builtinGraphJSON["50-spec-to-pr"]
 	if !ok {
-		t.Fatal("builtin spec-to-pr template is missing")
+		t.Fatal("builtin 50-spec-to-pr template is missing")
 	}
 	g, err := ParseGraph([]byte(data))
 	if err != nil {
-		t.Fatalf("parse spec-to-pr: %v", err)
+		t.Fatalf("parse 50-spec-to-pr: %v", err)
 	}
 	updateSpec := g.node("update-spec")
 	if updateSpec == nil {
-		t.Fatal("spec-to-pr has no update-spec node")
+		t.Fatal("50-spec-to-pr has no update-spec node")
 	}
 	if !strings.Contains(updateSpec.Message, "${output:implement}") {
 		t.Errorf("update-spec must carry the implement worker's report; message = %q", updateSpec.Message)
@@ -3097,19 +3107,20 @@ func TestExecPhaseProgressGuard(t *testing.T) {
 		t.Fatalf("first commit with its phase complete must ship despite fix-loop fires, got %q", s)
 	}
 
-	// Second commit (one prior success fire) with no second phase closed:
-	// decline toward the stuck gate, naming the counts.
+	// Phase 1 already committed at HEAD and Phase 2 open: a fresh run with no
+	// fires of its own must still decline, naming the counts (MUX-183).
 	run2 := createTestRun(t, guardGraph())
 	writeSpecFixture(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
-	seedFires(run2.ID, map[string]int{"commit->next:success": 1})
+	stubSpecAtHEAD(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
 	step(t, runTestSession, run2.ID)
 	st, err := ReadNodeStatus(runTestSession, run2.ID, "commit")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "1 commits shipped but only 1 phases complete") {
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, "1 phases complete in the tree, 1 at HEAD") {
 		t.Errorf("no-progress commit must decline with counts, got %q %q", st.State, st.Output)
 	}
+	stubSpecAtHEAD(t, "")
 
 	// No active spec: decline, never commit blind.
 	run3 := createTestRun(t, guardGraph())
@@ -3687,11 +3698,14 @@ func TestExecSpecGuardPostponesWhenRepoDirUnknown(t *testing.T) {
 // reuse tests: a fresh worker gets a RUNNING entry, a real seeded inbox
 // message, and the run+node stamp, so FindLiveSpawn, ReseedSpawn, and
 // spawnGroupOutcome run their live paths without tmux. Windows listed in
-// deadWindows read as gone; kill attempts are recorded.
+// deadWindows read as gone; kill attempts are recorded. distinctIDs gives
+// entries the production shape — ID differs from SpawnRole — which the
+// default shape hides from any caller that confuses the two.
 type liveSpawnFake struct {
 	fresh       int
 	killed      []string
 	deadWindows map[string]bool
+	distinctIDs bool
 }
 
 func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
@@ -3714,7 +3728,11 @@ func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
 		if err := Send(sess, msg); err != nil {
 			t.Fatalf("seed send: %v", err)
 		}
-		entry := SpawnEntry{ID: id, Role: role, SpawnRole: id, Owner: owner, Task: task,
+		entryID := id
+		if f.distinctIDs {
+			entryID = "1790000000-" + id
+		}
+		entry := SpawnEntry{ID: entryID, Role: role, SpawnRole: id, Owner: owner, Task: task,
 			Status: "running", Window: id, StartedAt: time.Now().Unix(),
 			SeedMsgID: msg.ID, RunID: runID, NodeID: nodeID}
 		if err := appendSpawnEntry(sess, entry); err != nil {

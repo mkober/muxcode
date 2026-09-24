@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -71,8 +72,69 @@ func TestIdleTaskWatchdogExemptsGraphDispatch(t *testing.T) {
 		t.Errorf("no re-queue for an executor-owned task — build inbox: %+v", msgs)
 	}
 
-	// Control: the plain task follows the watchdog path and is rescued.
-	if task, err := bus.ReadTask(session, plain.ID); err != nil || task.Status != bus.TaskCompleted {
-		t.Fatalf("plain task must be rescued with a synthetic response, got %+v %v", task, err)
+	// Control: the plain task follows the watchdog path and is rescued — timed
+	// out with a no-answer notice, never completed (MUX-182 defect 4b).
+	if task, err := bus.ReadTask(session, plain.ID); err != nil || task.Status != bus.TaskTimedOut {
+		t.Fatalf("plain task must be rescued as timed-out, got %+v %v", task, err)
+	}
+}
+
+// TestIdleRescueIsNeverAResponse pins MUX-182 defect 4b: the rescued pane
+// scrape reaches the requester as an event from the daemon, correlated to
+// nothing, and the task is timed out rather than completed — so no --wait reads
+// it as the answer and the request is not marked responded. A real reply that
+// lands afterwards still completes the task.
+func TestIdleRescueIsNeverAResponse(t *testing.T) {
+	session := testSession(t)
+	t.Setenv(bus.RoleCLIEnvVar("build"), "claude")
+	d := New(session, 5, 8)
+	origIdle := agentIdleFn
+	agentIdleFn = func(string, string) bool { return true }
+	t.Cleanup(func() { agentIdleFn = origIdle })
+
+	req := bus.NewMessage("edit", "build", "request", "build", "build it", "")
+	if err := bus.Send(session, req); err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.CreateTask(session, req, 600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix() + 120
+	d.idleTaskFirstSeen[req.ID] = now - idleTaskGracePeriod - 1
+	d.idleTaskRetried[req.ID] = true
+	d.lastIdleTaskCheck = 0
+	d.checkIdleTaskCompletionAt(now)
+
+	if task, _ := bus.ReadTask(session, req.ID); task.Status != bus.TaskTimedOut {
+		t.Fatalf("rescued task status %q, want timed-out", task.Status)
+	}
+	if ds, err := bus.ReadDeliveryStatus(session, req.ID); err == nil && ds.Status == bus.StatusResponded {
+		t.Error("the rescue marked the request responded")
+	}
+	msgs, _ := bus.Peek(session, "edit")
+	var notices int
+	for _, m := range msgs {
+		if m.Type == "response" {
+			t.Errorf("a pane scrape arrived as a response: %+v", m)
+		}
+		if m.Action == "no-answer" {
+			notices++
+			if m.Type != "event" || m.From != "daemon" || m.ReplyTo != "" || !strings.Contains(m.Payload, "NOT A RESPONSE") {
+				t.Errorf("no-answer notice misframed: %+v", m)
+			}
+		}
+	}
+	if notices != 1 {
+		t.Fatalf("want one no-answer notice in edit's inbox, got %d: %+v", notices, msgs)
+	}
+
+	late := bus.NewMessage("build", "edit", "response", "build", "built after all. EXIT=0", req.ID)
+	if err := bus.Send(session, late); err != nil {
+		t.Fatal(err)
+	}
+	d.lastTrackedTaskCheck = 0
+	d.checkTrackedTasks()
+	if task, _ := bus.ReadTask(session, req.ID); task.Status != bus.TaskCompleted || task.ResponseID != late.ID {
+		t.Errorf("a late real reply must complete the timed-out task, got %+v", task)
 	}
 }

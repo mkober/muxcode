@@ -571,6 +571,12 @@ func runWatchActions(patterns ...string) ChainActions {
 }
 
 // DefaultConfig returns compiled-in defaults matching current bash/Go behavior.
+//
+// A chain message may state only what its trigger establishes: a command's
+// exit code, never a finding about what the command saw. The watch chain once
+// sent "logs look healthy after deploy" on every exit 0 — it fired verbatim
+// while watch had verified nothing on an expired SSO session, and read as the
+// agent's own claim (MUX-182 defect 4a). The agent's reply carries findings.
 func DefaultConfig() *MuxcodeConfig {
 	return &MuxcodeConfig{
 		SharedTools: map[string][]string{
@@ -823,6 +829,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(kubectl logs*)", "Bash(kubectl get events*)",
 					"Bash(docker logs*)", "Bash(docker-compose logs*)",
 					"Bash(stern *)",
+					"Bash(gh pr checks *)", // 110-pr-merge waits on CI here; read-only, no other gh verb
 					"Bash(jq*)", "Bash(yq*)",
 					"Bash(python3*)", "Bash(node*)",
 					"Bash(zcat *)", "Bash(gunzip *)", "Bash(lnav *)",
@@ -978,13 +985,13 @@ func DefaultConfig() *MuxcodeConfig {
 				OnSuccess: ChainActions{{
 					SendTo:  "edit",
 					Action:  "notify",
-					Message: "Watch completed — logs look healthy after deploy (${command})",
+					Message: "Watch command exited 0 (${command}) — see watch's own report for findings",
 					Type:    "event",
 				}},
 				OnFailure: ChainActions{{
 					SendTo:  "edit",
 					Action:  "notify",
-					Message: "Watch detected errors (exit ${exit_code}): ${command} — check watch window for log details",
+					Message: "Watch command FAILED (exit ${exit_code}): ${command} — check watch window",
 					Type:    "event",
 				}},
 				OnUnknown: ChainActions{{

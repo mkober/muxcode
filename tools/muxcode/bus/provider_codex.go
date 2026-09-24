@@ -495,6 +495,22 @@ func (p *CodexProvider) guardInjection(session, target, role string) error {
 	return nil
 }
 
+// enterGuard returns the check every Enter after a typed injection must pass:
+// guardInjection again, on a fresh capture. The pre-type guard alone left a
+// window — on 2026-09-23 (muxcode) Codex drew its update prompt after the
+// startup wake was typed but before its Enter, which chose "Update now" and
+// the build agent exited to bash. A live prompt is answered, not entered; the
+// typed text stays parked and the caller defers via ErrInjectionSkipped.
+func (p *CodexProvider) enterGuard(session, target, role string) func() error {
+	return func() error {
+		if err := p.guardInjection(session, target, role); err != nil {
+			LogLifecycle(session, "warn", "notify", "enter-withheld", role+": "+err.Error())
+			return err
+		}
+		return nil
+	}
+}
+
 // DenyCodexApproval answers a command-approval prompt with its own "No" (esc).
 //
 // The prompt is an escalation request: `-a on-request` sets an approval policy,
@@ -551,7 +567,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 		if err := p.guardInjection(session, target, role); err != nil {
 			return err
 		}
-		return injectWakeSentence(target, role)
+		return p.injectWakeSentence(session, target, role)
 	}
 
 	// Read pending messages to build the prompt text (non-destructive peek)
@@ -635,11 +651,12 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s/%s failed: %v\n", role, "codex", err)
 		return err
 	}
-	// Brief delay so the TUI registers the text before Enter
 	time.Sleep(150 * time.Millisecond)
-	// Send Enter
-	cmd := exec.Command("tmux", "send-keys", "-t", target, "Enter")
-	if err := cmd.Run(); err != nil {
+	guard := p.enterGuard(session, target, role)
+	if err := guard(); err != nil {
+		return err
+	}
+	if err := TmuxSendEnter(target); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s/%s failed: %v\n", role, "codex", err)
 		return err
 	}
@@ -650,7 +667,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	// a verified-inject `delivered` receipt. If it can't be confirmed, the inbox is
 	// left for the daemon's next wake cycle — no drop on a dropped Enter, replacing
 	// the old fire-and-hope drain.
-	confirmInjectionAndConsume(session, role, target, injectionNeedle(prompt), batchIDs)
+	confirmInjectionAndConsume(session, role, target, injectionNeedle(prompt), batchIDs, guard)
 	return nil
 }
 
@@ -662,12 +679,17 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 // reply instruction once, as context, so a payload is never a prompt
 // (MUX-009). Text and Enter are separate writes with a delay, as everywhere,
 // through the tmux runner seam so `deliver --force` can be pinned hermetically.
-func injectWakeSentence(target, role string) error {
+// The Enter is guarded like the text (enterGuard): Codex draws its prompts
+// asynchronously, so one can arrive between the two.
+func (p *CodexProvider) injectWakeSentence(session, target, role string) error {
 	if err := TmuxSendLiteral(target, WakeSentence); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys text for %s/%s failed: %v\n", role, "codex", err)
 		return err
 	}
 	time.Sleep(200 * time.Millisecond)
+	if err := p.enterGuard(session, target, role)(); err != nil {
+		return err
+	}
 	if err := TmuxSendKeys(target, "Enter"); err != nil {
 		fmt.Fprintf(os.Stderr, "  [notify] send-keys Enter for %s/%s failed: %v\n", role, "codex", err)
 		return err

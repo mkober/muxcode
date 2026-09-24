@@ -302,13 +302,18 @@ func (p *ClaudeCodeProvider) IsAlive(session, role string) bool {
 	return true
 }
 
-// ClassifyPane determines the startup state of a Claude Code agent pane.
+// ClassifyPane determines the startup state of a Claude Code agent pane. A
+// live trust prompt wins; otherwise the bypass prompt outranks trust text,
+// which may be an answered prompt left in scrollback above it.
 func (p *ClaudeCodeProvider) ClassifyPane(content string) PaneState {
-	if strings.Contains(content, "trust this folder") {
+	if claudeTrustPromptLive(content) {
 		return PaneTrustPrompt
 	}
 	if strings.Contains(content, "Bypass Permissions") {
 		return PaneBypassPrompt
+	}
+	if strings.Contains(content, claudeTrustOption) {
+		return PaneTrustPrompt
 	}
 	if strings.Contains(content, "❯") {
 		return PaneIdle
@@ -317,12 +322,14 @@ func (p *ClaudeCodeProvider) ClassifyPane(content string) PaneState {
 }
 
 // AcceptStartup handles Claude Code startup prompts (trust folder, bypass permissions).
-// Returns true if all startup prompts have been handled.
+// Returns true if all startup prompts have been handled. The trust prompt is
+// answered by AcceptClaudeTrust, never a bare Enter.
 func (p *ClaudeCodeProvider) AcceptStartup(session, pane string, state PaneState) bool {
 	switch state {
 	case PaneTrustPrompt:
-		// Trust prompt — default selection is correct, just confirm
-		TmuxSendEnter(pane)
+		if err := AcceptClaudeTrust(pane); err != nil {
+			LogLifecycle(session, "warn", "auto-accept", "trust-accept-failed", pane+": "+err.Error())
+		}
 		return false // bypass prompt may follow
 	case PaneBypassPrompt:
 		// Bypass permissions — move to "Yes, I accept" and confirm
@@ -334,6 +341,103 @@ func (p *ClaudeCodeProvider) AcceptStartup(session, pane string, state PaneState
 		return true
 	default:
 		return false
+	}
+}
+
+// claudeTrustOption is the trust prompt's accept option, and the anchor that
+// tells its menu apart from any other "Enter to confirm" menu.
+const claudeTrustOption = "trust this folder"
+
+// claudeTrustPromptLive reports whether content ends at Claude Code's
+// folder-trust prompt. See claudeTrustMenu.
+func claudeTrustPromptLive(content string) bool {
+	return claudeTrustMenu(content) != nil
+}
+
+// claudeTrustMenu returns the lines of the menu drawn last, bottom first, when
+// that menu is the trust prompt; nil otherwise. The menu is the lines above an
+// "Enter to confirm" footer on the last two lines, cut at the footer of any
+// earlier prompt, and it must itself carry the trust option. The cut is what
+// stops an answered trust prompt in scrollback from vouching for a later menu
+// — the Bypass Permissions prompt shares the footer and has its own
+// highlighted "Yes".
+func claudeTrustMenu(content string) []string {
+	lines := lastNonEmptyLines(content, claudeTrustOptionsWindow)
+	footer := -1
+	for i := 0; i < len(lines) && i < 2; i++ {
+		if strings.Contains(lines[i], "Enter to confirm") {
+			footer = i
+			break
+		}
+	}
+	if footer < 0 {
+		return nil
+	}
+	menu := lines[footer+1:]
+	for i, line := range menu {
+		if strings.Contains(line, "Enter to confirm") {
+			menu = menu[:i]
+			break
+		}
+	}
+	for _, line := range menu {
+		if strings.Contains(line, claudeTrustOption) {
+			return menu
+		}
+	}
+	return nil
+}
+
+// claudeTrustHighlight names the trust prompt's highlighted option: "yes" when
+// the highlighted line is the trust option itself, "no" for any other, "" when
+// the trust prompt is not the live menu or no line reads as highlighted.
+func claudeTrustHighlight(content string) string {
+	for _, line := range claudeTrustMenu(content) {
+		rest, ok := strings.CutPrefix(line, "❯")
+		if !ok {
+			rest, ok = strings.CutPrefix(line, "❱")
+		}
+		if !ok {
+			continue
+		}
+		if strings.Contains(rest, claudeTrustOption) {
+			return "yes"
+		}
+		return "no"
+	}
+	return ""
+}
+
+// claudeTrustOptionsWindow spans the prompt's options and footer, counted from
+// the bottom of the pane.
+const claudeTrustOptionsWindow = 6
+
+// claudeTrustMaxMoves bounds AcceptClaudeTrust's Down presses.
+const claudeTrustMaxMoves = 2
+
+// AcceptClaudeTrust answers Claude Code's folder-trust prompt with its "Yes"
+// option, pressing Down and re-capturing until a frame shows Yes highlighted;
+// only that frame gets the Enter. Claude Code 2.1.27x reordered the prompt to
+// pre-select "No, exit", so the old bare Enter quit every agent to its shell on
+// launch in an untrusted repo (2026-09-23, app-tenant-platform). An unreadable
+// or unmoving highlight returns an error and confirms nothing.
+func AcceptClaudeTrust(target string) error {
+	for moves := 0; ; moves++ {
+		content, err := TmuxCapturePaneLines(target, injectionGuardLines)
+		if err != nil {
+			return err
+		}
+		at := claudeTrustHighlight(content)
+		switch {
+		case at == "yes":
+			return TmuxSendEnter(target)
+		case at == "" || moves == claudeTrustMaxMoves:
+			return fmt.Errorf("trust prompt: Yes not highlighted (%q after %d moves), not confirming", at, moves)
+		}
+		if err := TmuxSendKeys(target, "Down"); err != nil {
+			return err
+		}
+		time.Sleep(injectVerifyDelay)
 	}
 }
 

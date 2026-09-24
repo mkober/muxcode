@@ -249,14 +249,25 @@ As the edit agent, you are the primary orchestrator. After making code changes:
 
 When a multi-step flow matches a graph template, run the graph instead of driving the sequence yourself with individual sends. The daemon executes the DAG deterministically — durable per-run state that survives restarts, `wait_human` gates, capped fix loops, dispatch guards (e.g. `spec-complete`), and a single completion wake instead of a wake per step:
 
-| Flow | Template |
-|------|----------|
-| Build → test → review pipeline | `muxcode graph run build-test-review` |
-| Commit + PR + review-feedback loop + spec close-out | `muxcode graph run commit-pr-review-loop` |
-| Implement against the active spec through gated commit/PR | `muxcode graph run spec-to-pr` |
-| Review a PR locally with branch restore | `muxcode graph run pr-local-review "<pr-number>"` |
-| Spec/docs sync + gated commit | `muxcode graph run update-spec-docs` |
-| All templates | `muxcode graph list` |
+Builtins are numbered by workflow stage, top-down (`graph list` and the launcher sort by the number):
+
+| Stage | Flow | Template |
+|-------|------|----------|
+| 10 | Story → requirements spec, gated tracker update | `muxcode graph run 10-story-to-spec` |
+| 20 | Defect → evidence → backlog spec, gated commit + GitHub issue | `muxcode graph run 20-defect-to-spec "<defect description>"` |
+| 30 | Build → test → review pipeline | `muxcode graph run 30-build-test-review` |
+| 40 | Gated rebase onto origin/main → build → test → push `--force-with-lease` | `muxcode graph run 40-sync-main` |
+| 50 | Implement the active spec phase by phase → gated commits → spec close-out → PR | `muxcode graph run 50-spec-to-pr` |
+| 60 | Run every `scripts/test-*.sh` serially, capped fix loop on failure | `muxcode graph run 60-integration-suite` |
+| 70 | Review a PR locally with branch restore | `muxcode graph run 70-pr-local-review "<pr-number>"` |
+| 80 | Fix the current branch's PR review comments, push, reply to each | `muxcode graph run 80-pr-review-fix` |
+| 90 | Fix the current branch's failing CI checks, push | `muxcode graph run 90-ci-fix` |
+| 100 | Spec/docs sync + gated commit | `muxcode graph run 100-docs-sync` |
+| 110 | Wait for green CI → gated merge, branch delete, main update, tracker to Done | `muxcode graph run 110-pr-merge` |
+| 120 | Deploy, verify, watch logs | `muxcode graph run 120-deploy-verify` |
+| — | All templates | `muxcode graph list` |
+
+Stages are numbered in tens so a new one fits between two others without renaming either.
 
 Hand-delegate (`muxcode send ...`) only when the work is a single delegation or matches no template. A graph's gates also replace the ask-then-relay dance for mutations: the user approves the gate directly (`muxcode graph approve <run> <gate>`), so consent reaches the mutation without extra round trips — and the gate text states exactly what the approval releases.
 

@@ -460,13 +460,13 @@ func TestRenderPromptFrame_InputWraps(t *testing.T) {
 // TestPromptSuggestAndTypeahead pins the two completion helpers: the
 // ghost completes the last word (templates before verbs, none after a
 // trailing space or full match), and TypeaheadIndex jumps to the first
-// case-insensitive prefix match.
+// case-insensitive prefix match, with or without the stage number.
 func TestPromptSuggestAndTypeahead(t *testing.T) {
-	tmpl := []string{"build-test-review", "spec-to-pr", "story-to-spec"}
-	if got := PromptSuggest("run sto", tmpl); got != "ry-to-spec" {
+	tmpl := []string{"10-story-to-spec", "30-build-test-review", "50-spec-to-pr", "100-docs-sync"}
+	if got := PromptSuggest("run 10-sto", tmpl); got != "ry-to-spec" {
 		t.Errorf("suggest = %q", got)
 	}
-	if got := PromptSuggest("run spec-to-pr", tmpl); got != "" {
+	if got := PromptSuggest("run 50-spec-to-pr", tmpl); got != "" {
 		t.Errorf("a full match must suggest nothing, got %q", got)
 	}
 	if got := PromptSuggest("run ", tmpl); got != "" {
@@ -476,11 +476,10 @@ func TestPromptSuggestAndTypeahead(t *testing.T) {
 		t.Errorf("verbs complete too, got %q", got)
 	}
 
-	if i := TypeaheadIndex(tmpl, "story"); i != 2 {
-		t.Errorf("typeahead jump = %d, want 2", i)
-	}
-	if i := TypeaheadIndex(tmpl, "zzz"); i != -1 {
-		t.Errorf("no match must be -1, got %d", i)
+	for prefix, want := range map[string]int{"story": 0, "1": 0, "10": 0, "100": 3, "docs": 3, "30": 1, "build": 1, "spec": 2, "50-spec": 2, "zzz": -1, "10-sp": -1} {
+		if i := TypeaheadIndex(tmpl, prefix); i != want {
+			t.Errorf("typeahead %q = %d, want %d", prefix, i, want)
+		}
 	}
 }
 
@@ -559,6 +558,11 @@ func TestSummarizeRunResults(t *testing.T) {
 	}
 	if got := SummarizeRunResults(bus.GraphRunRunning, nil, "", []string{"build"}); got != "build ⋯" {
 		t.Errorf("in-flight shows the done chain with the working glyph, got %q", got)
+	}
+	// canceling also covers a cleanup-only failure with every worker stopped,
+	// so the cell must not claim a survivor.
+	if got := SummarizeRunResults(bus.GraphRunCanceling, nil, "", nil); got != "cancel incomplete — re-run graph cancel" {
+		t.Errorf("canceling cell = %q", got)
 	}
 }
 

@@ -193,6 +193,101 @@ func TestCodexSendWakeUp_UpdatePromptSkippedAndDefers(t *testing.T) {
 	}
 }
 
+// The 2026-09-23 muxcode road: the pre-type capture shows the composer, and
+// Codex draws the update prompt only after the text is typed. lateAfter is the
+// number of composer captures before the prompt appears; a large value is the
+// negative control in which it never does.
+func stubLateUpdatePrompt(t *testing.T, lateAfter int) *[][]string {
+	t.Helper()
+	calls := stubUpdatePromptPane(t, codexBanner, 1, true)
+	prompt := tmuxOutputRunner
+	captures := 0
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "capture-pane" {
+			captures++
+			if captures <= lateAfter {
+				return codexComposerPane, nil
+			}
+		}
+		return prompt(args...)
+	}
+	return calls
+}
+
+func TestCodexSendWakeUp_LateUpdatePromptWithholdsEnter(t *testing.T) {
+	for _, road := range []struct {
+		name    string
+		hooks   bool
+		payload string
+	}{
+		{"hook road", true, WakeSentence},
+		{"scrape road", false, "MSG-CODEX-LATE-UPDATE"},
+	} {
+		session := "inject-codex-late-" + strings.ReplaceAll(road.name, " ", "-")
+		injectionTestSession(t, session)
+		if !road.hooks {
+			sendTestRequest(t, session, "build", road.payload)
+		}
+		calls := stubLateUpdatePrompt(t, 1)
+
+		err := (&CodexProvider{hooks: road.hooks}).SendWakeUp(session, "build", true)
+		if !errors.Is(err, ErrInjectionSkipped) {
+			t.Fatalf("%s: late update prompt must defer with ErrInjectionSkipped, got %v", road.name, err)
+		}
+		keys := keyNames(*calls)
+		if len(keys) != 3 || !strings.Contains(keys[0], road.payload) || keys[1] != "Down" || keys[2] != "Enter" {
+			t.Errorf("%s: want payload, then Skip (Down, Enter) and no submitting Enter; sent %v", road.name, keys)
+		}
+		if n := countLifecycleEvents(t, session, "enter-withheld"); n != 1 {
+			t.Errorf("%s: enter-withheld lifecycle rows = %d, want 1", road.name, n)
+		}
+		if !road.hooks {
+			if msgs, _ := Peek(session, "build"); len(msgs) != 1 {
+				t.Errorf("%s: withheld message must stay in the inbox, have %d", road.name, len(msgs))
+			}
+		}
+	}
+}
+
+// The review's residual window: the prompt arrives after the Enter, hiding the
+// composer. Verification must not read the hidden text as delivered — the
+// message stays queued and the prompt is skipped.
+func TestCodexSendWakeUp_PromptAfterEnterKeepsMessage(t *testing.T) {
+	session := "inject-codex-after-enter"
+	injectionTestSession(t, session)
+	sendTestRequest(t, session, "build", "MSG-CODEX-AFTER-ENTER")
+	calls := stubLateUpdatePrompt(t, 2)
+
+	if err := (&CodexProvider{}).SendWakeUp(session, "build", true); err != nil {
+		t.Fatalf("the Enter was sent, so SendWakeUp returns nil; got %v", err)
+	}
+	keys := keyNames(*calls)
+	if len(keys) != 4 || keys[1] != "Enter" || keys[2] != "Down" || keys[3] != "Enter" {
+		t.Errorf("want payload, Enter, then Skip (Down, Enter); sent %v", keys)
+	}
+	if msgs, _ := Peek(session, "build"); len(msgs) != 1 {
+		t.Errorf("a message hidden by a late prompt must stay in the inbox, have %d", len(msgs))
+	}
+}
+
+// Negative control: no prompt ever arrives, so the guard must not withhold the
+// Enter that submits the text.
+func TestCodexSendWakeUp_NoLatePromptSubmits(t *testing.T) {
+	session := "inject-codex-no-late"
+	injectionTestSession(t, session)
+	calls := stubLateUpdatePrompt(t, 1<<30)
+
+	if err := (&CodexProvider{hooks: true}).SendWakeUp(session, "build", true); err != nil {
+		t.Fatalf("composer throughout must inject cleanly, got %v", err)
+	}
+	if got := keyNames(*calls); strings.Join(got, ",") != WakeSentence+",Enter" {
+		t.Errorf("want the wake sentence then Enter, sent %v", got)
+	}
+	if n := countLifecycleEvents(t, session, "enter-withheld"); n != 0 {
+		t.Errorf("enter-withheld lifecycle rows = %d, want 0", n)
+	}
+}
+
 // A skip that cannot be verified still defers the payload and presses no
 // Enter — the prompt waits for a person rather than installing software.
 func TestCodexSendWakeUp_UnverifiedSkipPressesNoEnter(t *testing.T) {

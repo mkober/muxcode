@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -60,21 +61,32 @@ func IntentPhase(intent string) int {
 }
 
 // SpecPhase is one `### Phase N` section of a requirements spec: its
-// number, title text, and the names of checkbox items still open inside
-// it.
+// number, title text, the names of checkbox items still open inside it,
+// and how many are checked.
 type SpecPhase struct {
 	Number int
 	Title  string // full heading text after "### ", e.g. "Phase 2: Attribution"
 	Items  []string
+	Done   int
+}
+
+// Complete reports whether the phase has work and all of it is checked.
+// A phase with no boxes at all — a stub, or a narrative "### Phase 1
+// findings" heading — is empty, not done (MUX-183 defect 2).
+func (p SpecPhase) Complete() bool {
+	return p.Done > 0 && len(p.Items) == 0
 }
 
 // phaseHeadingRe extracts the number from a phase heading line.
 var phaseHeadingRe = regexp.MustCompile(`^### (Phase ([0-9]+)\b.*)$`)
 
+// doneItemRe matches a checked markdown checkbox line.
+var doneItemRe = regexp.MustCompile(`^\s*- \[[xX]\]`)
+
 // SpecPhases scans a spec once and returns every phase section in file
-// order with its open-item count. This is the single primitive behind
-// stateless phase derivation (MUX-121 decision 1): the current phase is
-// always recomputed from the spec, never stored, so it cannot drift and
+// order with its open and checked items. This is the single primitive
+// behind stateless phase derivation (MUX-121 decision 1): the current phase
+// is always recomputed from the spec, never stored, so it cannot drift and
 // an already-complete phase can never be re-implemented — the failure
 // observed three times on 2026-08-28.
 func SpecPhases(path string) ([]SpecPhase, error) {
@@ -82,10 +94,17 @@ func SpecPhases(path string) ([]SpecPhase, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseSpecPhases(string(data)), nil
+}
+
+// parseSpecPhases is SpecPhases over content already read. A `####` or
+// deeper subheading stays inside the enclosing phase, so boxes under it
+// count for that phase; any shallower heading ends it (MUX-183 defect 2).
+func parseSpecPhases(content string) []SpecPhase {
 	var phases []SpecPhase
 	inFence := false
 	cur := -1
-	for _, line := range strings.Split(string(data), "\n") {
+	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") {
 			inFence = !inFence
@@ -95,11 +114,12 @@ func SpecPhases(path string) ([]SpecPhase, error) {
 			continue
 		}
 		if strings.HasPrefix(trimmed, "#") {
-			cur = -1
 			if m := phaseHeadingRe.FindStringSubmatch(trimmed); m != nil {
 				n, _ := strconv.Atoi(m[2])
 				phases = append(phases, SpecPhase{Number: n, Title: m[1]})
 				cur = len(phases) - 1
+			} else if !strings.HasPrefix(trimmed, "####") {
+				cur = -1
 			}
 			continue
 		}
@@ -112,9 +132,44 @@ func SpecPhases(path string) ([]SpecPhase, error) {
 				name = "(unnamed item)"
 			}
 			phases[cur].Items = append(phases[cur].Items, name)
+		} else if doneItemRe.MatchString(line) {
+			phases[cur].Done++
 		}
 	}
-	return phases, nil
+	return phases
+}
+
+// newlyCompletedPhases returns, lowest number first, the phases complete in
+// tree that were not complete in head — the phases a commit would ship.
+// Anchoring on the committed copy is what stops a fresh run, a later lap or
+// a retry from re-crediting a phase already shipped (MUX-183 defect 1): the
+// answer depends only on the two files, never on per-run counters.
+func newlyCompletedPhases(tree, head []SpecPhase) []SpecPhase {
+	shipped := map[int]bool{}
+	for _, p := range head {
+		if p.Complete() {
+			shipped[p.Number] = true
+		}
+	}
+	var out []SpecPhase
+	for _, p := range tree {
+		if p.Complete() && !shipped[p.Number] {
+			out = append(out, p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	return out
+}
+
+// completedPhaseCount counts the complete phases in a parsed spec.
+func completedPhaseCount(phases []SpecPhase) int {
+	n := 0
+	for _, p := range phases {
+		if p.Complete() {
+			n++
+		}
+	}
+	return n
 }
 
 // SpecCurrentPhase returns the lowest-numbered phase with open items, or
@@ -132,45 +187,6 @@ func SpecCurrentPhase(path string) (SpecPhase, error) {
 		}
 	}
 	return best, nil
-}
-
-// SpecJustCompletedPhase returns the completion frontier: the last phase
-// in file order with zero open items before the first open one (or the
-// last complete phase overall when none are open). This is the phase a
-// per-phase commit ships — ${current_phase} at commit time already points
-// at the NEXT phase, because update-spec closed this one before the
-// commit dispatched (found live by test-multi-phase-graph.sh: every
-// commit was labeled one phase ahead, the last "(no open phase)").
-func SpecJustCompletedPhase(path string) (SpecPhase, error) {
-	phases, err := SpecPhases(path)
-	if err != nil {
-		return SpecPhase{}, err
-	}
-	last := SpecPhase{}
-	for _, p := range phases {
-		if len(p.Items) > 0 {
-			break
-		}
-		last = p
-	}
-	return last, nil
-}
-
-// SpecCompletedPhaseCount returns how many phases have zero open items —
-// the progress signal MUX-121's stuck-phase gate compares against loop
-// iterations (completed < iterations = the last loop closed nothing).
-func SpecCompletedPhaseCount(path string) (int, error) {
-	phases, err := SpecPhases(path)
-	if err != nil {
-		return 0, err
-	}
-	n := 0
-	for _, p := range phases {
-		if len(p.Items) == 0 {
-			n++
-		}
-	}
-	return n, nil
 }
 
 // UnscopedPhaseGuardWarning reports why a run's phase-complete guard will

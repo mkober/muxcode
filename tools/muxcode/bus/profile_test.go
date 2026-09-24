@@ -126,6 +126,12 @@ func TestResolveTools_Watch(t *testing.T) {
 	assertNotContains(t, tools, "Edit")
 	// Should NOT include git commands
 	assertNotContains(t, tools, "Bash(git *)")
+	// 110-pr-merge's CI wait runs here: gh pr checks only, never a gh verb
+	// that changes anything.
+	assertContains(t, tools, "Bash(gh pr checks *)")
+	for _, mutating := range []string{"Bash(gh *)", "Bash(gh pr*)", "Bash(gh pr merge*)", "Bash(gh api *)"} {
+		assertNotContains(t, tools, mutating)
+	}
 	// Should have cd-prefix variants (CdPrefix: true)
 	assertContains(t, tools, "Bash(cd * && tail *)")
 	assertContains(t, tools, "Bash(cd * && aws logs*)")

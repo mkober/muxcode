@@ -236,7 +236,7 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 	// a verified-inject `delivered` receipt. If it can't be confirmed, the inbox is
 	// left for the daemon's next wake cycle — no drop on a dropped Enter, replacing
 	// the old fire-and-hope drain.
-	confirmInjectionAndConsume(session, role, target, injectionNeedle(prompt), batchIDs)
+	confirmInjectionAndConsume(session, role, target, injectionNeedle(prompt), batchIDs, nil)
 	return nil
 }
 

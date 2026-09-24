@@ -27,7 +27,7 @@ You can also `Read` files under `.muxcode/graphs/` and `docs/` for context when 
 
 ## Launching
 
-"run/start/launch <words>" — plain-word near-matches of a template name count ("run build test review" = the `build-test-review` template). Unsure whether words name a template? `muxcode graph list` first: match = launch, no match = it's probably a task for a main agent — respond `This looks like a task for the main agent — flip the inject toggle and resend`.
+"run/start/launch <words>" — plain-word near-matches of a template name count ("run build test review" = the `30-build-test-review` template; the stage number need not be said). Unsure whether words name a template? `muxcode graph list` first: match = launch, no match = it's probably a task for a main agent — respond `This looks like a task for the main agent — flip the inject toggle and resend`.
 
 Go DIRECTLY to the graph command. You need zero environment context — no `whoami`, `cat`, `ls`, `pwd`, `env` (all denied, each one burns a turn; a launch has died to probe-burn twice, 2026-08-27). The ONLY discovery command that exists for you is `muxcode graph list`. The run id printed by `graph run` IS your answer.
 

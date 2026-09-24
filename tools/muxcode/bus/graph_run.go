@@ -26,10 +26,11 @@ const (
 
 // Graph run states.
 const (
-	GraphRunRunning  = "running"
-	GraphRunComplete = "complete"
-	GraphRunFailed   = "failed"
-	GraphRunCanceled = "canceled"
+	GraphRunRunning   = "running"
+	GraphRunComplete  = "complete"
+	GraphRunFailed    = "failed"
+	GraphRunCanceled  = "canceled"
+	GraphRunCanceling = "canceling" // cancel incomplete: a worker survived or cleanup failed — see CancelGraphRun
 )
 
 // GraphRun is the persisted metadata for one graph run instance.
@@ -52,6 +53,18 @@ type GraphRun struct {
 	UpdatedAt int64          `json:"updated_at"`
 	EdgeFires map[string]int `json:"edge_fires,omitempty"`
 	RetryNote string         `json:"retry_note,omitempty"` // last retry's re-target decision — see GraphRun doc
+}
+
+// MarshalJSON writes created_by as recorded plus a derived "provenance" in
+// DescribeRunCreator's words, so run.json and every --json output carry the
+// unambiguous form beside the raw one. Provenance is never read back: it is
+// recomputed from created_by on every write.
+func (r GraphRun) MarshalJSON() ([]byte, error) {
+	type recorded GraphRun
+	return json.Marshal(struct {
+		recorded
+		Provenance string `json:"provenance"`
+	}{recorded(r), DescribeRunCreator(r.CreatedBy)})
 }
 
 // GraphNodeStatus is the persisted per-node execution state of a run.
@@ -87,7 +100,7 @@ type GraphNodeStatus struct {
 var legalNodeTransitions = map[string]map[string]bool{
 	GraphNodePending: {GraphNodeReady: true, GraphNodeSkipped: true},
 	GraphNodeReady:   {GraphNodeRunning: true, GraphNodeWaiting: true, GraphNodeSkipped: true, GraphNodeFailed: true},
-	GraphNodeRunning: {GraphNodeDone: true, GraphNodeFailed: true},
+	GraphNodeRunning: {GraphNodeDone: true, GraphNodeFailed: true, GraphNodeSkipped: true},
 	GraphNodeWaiting: {GraphNodeRunning: true, GraphNodeDone: true, GraphNodeFailed: true, GraphNodeSkipped: true},
 	GraphNodeDone:    {GraphNodeReady: true},
 	GraphNodeFailed:  {GraphNodeReady: true},
@@ -178,7 +191,7 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 	}
 	// The run-creation chokepoint covers every launch road (CLI, launcher
 	// surface, prompt-agent) — a spec-driven graph must not start against
-	// nothing (spec-to-pr implements per the active requirements spec;
+	// nothing (50-spec-to-pr implements per the active requirements spec;
 	// with none set its implement node would freewheel).
 	if g.RequiresSpec && strings.TrimSpace(ReadActiveSpec(session)) == "" {
 		return nil, fmt.Errorf("graph %q requires an active requirements spec — set one first: muxcode spec set <path>", g.Name)
@@ -219,7 +232,7 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 		return nil, err
 	}
 	announceGraphAction(session, actor, "graph-run-created",
-		fmt.Sprintf("Graph run %s (%s) started by %s", run.ID, template, actor))
+		fmt.Sprintf("Graph run %s (%s) %s", run.ID, template, runProvenance(run)))
 	return run, nil
 }
 
@@ -570,19 +583,31 @@ type GateRearm struct {
 // nothing costly re-runs.
 //
 // A running run must be canceled first — resetting nodes under a live
-// executor would race it.
+// executor would race it. The whole retry holds the run lock, the one
+// CancelGraphRun and StopSpawnAuthorized decide authority under: their
+// decision depends on the run being canceled, so a retry landing between
+// that decision and the stop would let an agent stop resumed human work.
 //
 // Purging a stale gate approval fails CLOSED (PR #56 review): claiming
 // "purged" while os.Remove failed would leave the marker to satisfy the
 // re-armed gate — the laundered approval MUX-132 closed. The purge runs
 // before any store write, so refusing leaves the run untouched.
 func RetryGraphRun(session, runID, fromNode string) (*GraphRetryResult, error) {
+	unlock, err := lockExistingGraphRun(session, runID, "retried")
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
 	run, err := ReadGraphRun(session, runID)
 	if err != nil {
 		return nil, err
 	}
 	if run.State == GraphRunRunning {
 		return nil, fmt.Errorf("run %s is still running — cancel it before retrying", runID)
+	}
+	if run.State == GraphRunCanceling {
+		return nil, fmt.Errorf("run %s has an incomplete cancel (a worker survived or a cleanup step failed) — re-run `muxcode graph cancel %s` until it reports canceled, then retry", runID, runID)
 	}
 	g, err := ReadGraphRunGraph(session, runID)
 	if err != nil {
@@ -770,9 +795,7 @@ func formatGraphRun(run *GraphRun, g *Graph, statuses map[string]*GraphNodeStatu
 	var b strings.Builder
 	elapsed := time.Since(time.Unix(run.CreatedAt, 0)).Round(time.Second)
 	fmt.Fprintf(&b, "Run %s  [%s]  template=%s  elapsed=%s\n", run.ID, run.State, run.Template, elapsed)
-	if run.CreatedBy != "" {
-		fmt.Fprintf(&b, "Started by: %s\n", run.CreatedBy)
-	}
+	fmt.Fprintf(&b, "Launched by: %s\n", DescribeRunCreator(run.CreatedBy))
 	if run.Intent != "" {
 		fmt.Fprintf(&b, "Intent: %s\n", run.Intent)
 	}

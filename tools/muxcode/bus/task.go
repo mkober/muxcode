@@ -2,7 +2,9 @@ package bus
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -69,17 +71,28 @@ func CompleteTask(session, taskID, responseID string) {
 	_ = writeTask(session, t)
 }
 
-// TimeoutTask marks a task as timed-out.
+// TimeoutTask marks a task as timed-out, best effort. A caller that must
+// know the task left in-flight uses expireTask.
 func TimeoutTask(session, taskID string) {
+	_ = expireTask(session, taskID)
+}
+
+// expireTask marks an in-flight task timed-out and returns why it could
+// not. A task that does not exist, or has already left in-flight, is not
+// an error.
+func expireTask(session, taskID string) error {
 	t, err := ReadTask(session, taskID)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
-		return
+		return err
 	}
 	if t.Status != TaskInFlight {
-		return
+		return nil
 	}
 	t.Status = TaskTimedOut
-	_ = writeTask(session, t)
+	return writeTask(session, t)
 }
 
 // ClearInFlightTasksForRole times out every in-flight task addressed to role (or
@@ -127,28 +140,39 @@ func ReadTask(session, msgID string) (Task, error) {
 }
 
 // ListTasks returns all tasks for a session, optionally filtered by status.
-// Pass empty filterStatus to return all tasks.
+// Pass empty filterStatus to return all tasks. Unreadable or invalid task
+// files are skipped; scanTasks reports them.
 func ListTasks(session, filterStatus string) ([]Task, error) {
+	tasks, _, err := scanTasks(session, filterStatus)
+	return tasks, err
+}
+
+// scanTasks lists tasks like ListTasks and also returns one error per task
+// file it could not read or parse, so a caller that must not miss a task
+// can refuse a partial listing. err is set only when the directory itself
+// cannot be read; a missing directory is no tasks.
+func scanTasks(session, filterStatus string) (tasks []Task, unreadable []error, err error) {
 	dir := TaskDir(session)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
 
-	var tasks []Task
 	for _, e := range entries {
 		if !e.Type().IsRegular() {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
+			unreadable = append(unreadable, fmt.Errorf("task file %s: %w", e.Name(), err))
 			continue
 		}
 		var t Task
 		if err := json.Unmarshal(data, &t); err != nil {
+			unreadable = append(unreadable, fmt.Errorf("task file %s: %w", e.Name(), err))
 			continue
 		}
 		if filterStatus != "" && t.Status != filterStatus {
@@ -156,7 +180,7 @@ func ListTasks(session, filterStatus string) ([]Task, error) {
 		}
 		tasks = append(tasks, t)
 	}
-	return tasks, nil
+	return tasks, unreadable, nil
 }
 
 // CleanExpiredTasks removes task files older than maxAge.

@@ -2303,7 +2303,7 @@ func (d *Daemon) checkIdleAgents() {
 			// send-keys injection was likely dropped by the TUI. Clear the
 			// notified IDs so the next cycle retries delivery. Without this,
 			// the agent stays stuck at ❯ until idle-task-rescue fires a
-			// synthetic response 30s later.
+			// no-answer notice 30s later.
 			//
 			// Not gated on isIdle alone: a dropped-Enter injection leaves its
 			// text PARKED at the prompt, and long parked text wraps past
@@ -3169,7 +3169,7 @@ func (d *Daemon) forgetCompletedTasks(live map[string]bool) {
 }
 
 // idleTaskGracePeriod is how long a hook-provider agent must be idle with an
-// in-flight task before the daemon sends a synthetic response. This gives the
+// in-flight task before the daemon re-queues it, then sends a no-answer notice. This gives the
 // agent time to send its own response via the Bash tool before the safety net
 // kicks in. 30 seconds covers normal response composition time while catching
 // the case where the agent output the send command as text instead of executing it.
@@ -3366,8 +3366,16 @@ func idleRescueExcluded(role string) bool {
 //     the agent consumed the message but went idle without processing it (e.g.,
 //     after a compaction or restart where context was lost).
 //  2. Second idle detection (after another grace period): the agent had a second
-//     chance and still didn't respond. Capture the pane content and send a
-//     synthetic response back to the requester.
+//     chance and still didn't respond. Capture the pane and send the requester
+//     an `event:no-answer` notice from `daemon`, and time the task out.
+//
+// The scrape is never a response. It once went out as a `response` from the
+// agent, correlated to the task, and completed it — so "the agent never
+// answered" read as "the agent answered", and plan had to recognise the
+// non-answer from its text (MUX-182 defect 4b). A notice cannot satisfy a
+// --wait (responseAnswers requires Type response) or mark the request
+// responded, and a timed-out task still completes on a late real reply
+// (checkTrackedTasks).
 //
 // Graph dispatches are exempt: the executor's own stall path (force-redrive,
 // capped, loud failure) owns them — see bus.GraphOwnsTask for the hold this
@@ -3488,9 +3496,8 @@ func (d *Daemon) checkIdleTaskCompletionAt(now int64) {
 			continue
 		}
 
-		// Phase 2: Agent had a second chance and still didn't respond.
-		// Capture pane content for the synthetic response.
-		fmt.Printf("  %s  Detected idle %s with unresponded task %s (idle %ds, retried) — sending synthetic response\n",
+		// Phase 2: retry exhausted — a no-answer notice, never a response.
+		fmt.Printf("  %s  Detected idle %s with unresponded task %s (idle %ds, retried) — sending no-answer notice\n",
 			ts, task.To, task.Action, now-firstSeen)
 		bus.LogLifecycle(d.session, "warn", "daemon", "idle-task-rescue",
 			fmt.Sprintf("%s idle with unresponded task %s from %s (idle %ds, retry exhausted)",
@@ -3508,17 +3515,16 @@ func (d *Daemon) checkIdleTaskCompletionAt(now int64) {
 			payload = payload[:1997] + "..."
 		}
 
-		// Send synthetic response back to the original requester
-		msg := bus.NewMessage(task.To, task.From, "response", "response",
-			fmt.Sprintf("[daemon: %s went idle without responding (retried once) — pane content follows]\n%s", task.To, payload),
-			task.ID)
+		msg := bus.NewMessage("daemon", task.From, "event", "no-answer",
+			fmt.Sprintf("[daemon — NOT A RESPONSE: %s went idle without answering task %s (%s) after one retry; "+
+				"the task is timed-out, not completed. Raw pane follows — terminal state, not %s's conclusion]\n%s",
+				task.To, task.ID, task.Action, task.To, payload),
+			"")
 		if err := bus.Send(d.session, msg); err != nil {
-			fmt.Fprintf(os.Stderr, "  [idle-task-rescue] failed to send response for %s: %v\n", task.ID, err)
+			fmt.Fprintf(os.Stderr, "  [idle-task-rescue] failed to send no-answer notice for %s: %v\n", task.ID, err)
 			continue
 		}
-
-		// Mark the task as completed
-		bus.CompleteTask(d.session, task.ID, msg.ID)
+		bus.TimeoutTask(d.session, task.ID)
 
 		// Log to console history so the left-pane console view updates.
 		logTaskToConsoleHistory(d.session, task.To, task.Action, payload, false)
