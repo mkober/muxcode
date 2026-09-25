@@ -159,14 +159,51 @@ fixtures first; whether to accept them is a decision for that phase.
 - [x] The rule line (a line of `─`) is chrome under the shared signature, and the `›`-composer branch
       of `DetectTaskCompletion` never returns a rule or blank line as the summary — when nothing but
       chrome sits above the composer, the task is *not* complete
-- [ ] A graph `send` node is never completed by a synthesized non-result: it stays `running` until a
+- [x] A graph `send` node is never completed by a synthesized non-result: it stays `running` until a
       genuine reply or the task timeout, and a genuine codex reply ending `EXIT=0` routes success with
       no hold — negative control: a genuine reply with no sentinel still holds — **code landed**
       (`sendResponseIsNonResult`, `graph_exec.go`), but `bae22dc` carries no graph-level pin for
-      either half; Phase 4 must supply them — **still open 2026-09-25**: Phase 4's script
-      (`test-status-line-task-close.sh`, 19/0) exercises the daemon task road and the review chain, not a
-      graph `send` node; neither half has a pin. The one open box in the spec — needs a graph-level test
-      or the user's acceptance as residual
+      either half; Phase 4 must supply them — Phase 4's script (19/0) exercises the daemon task road
+      and the review chain, not a graph node. **Pins landed 2026-09-25 10:4x, in the working tree
+      outside the graph run** (`bus/graph_nonresult_test.go`): `TestExecSendNodeNonResultWaitsForGenuineReply`
+      — a chrome-completed node (rule line, working line) neither routes nor gates, an unrelated reply
+      cannot answer it, a genuine `EXIT=0` reply to its own task routes success with no hold;
+      `…GenuineReplyWithoutSentinelHolds` (the no-sentinel control); `…Expires` (a chrome-completed node
+      still fails on task expiry); `TestSendDeliversReplyToChromeCompletedTask`. They needed production
+      changes — `taskAnswered` (`inbox.go`: a task completed by chrome is completed but *unanswered*, so
+      the duplicate-reply guard lets the genuine reply through) and `genuineReplyAfterNonResult` in the
+      harvester (`graph_exec.go`). **Box stays open.** Review `1790347737` (1 must-fix): `Task.ResponseID`
+      still pointed at the chrome after acceptance, so `EXIT=1` then `EXIT=0` before a tick adopted the
+      second — a real failure converted into success. Answered by `claimReply` (`inbox.go`: the first
+      genuine reply is claimed at acceptance on both reply paths; `TestExecSendNodeNonResultFirstGenuineReplyWins`,
+      `TestClaimReplyOutsideTheGraph`). **Review `1790348077` then returned 2 must-fix + 1 should-fix
+      on `claimReply`:** (1) `CompleteTask` runs *before* either path appends the reply to the log — a
+      failed append leaves the task naming a response that does not exist, `sendResponseIsNonResult`
+      then reads false and every retry is suppressed, and a graph tick in the write gap derives an
+      outcome from a missing reply; the read/check/write is also unlocked, so concurrent sends can both
+      claim — serialize per task, store before publishing the ID, propagate storage errors, keep
+      retryability; (2) the `Type == response` and `From == task.To` checks `genuineReplyAfterNonResult`
+      carried were dropped, so any event or foreign response bearing the `ReplyTo` becomes the task's
+      answer and an `EXIT=0` payload can route the node — restore response-type and normalized
+      sender/recipient correlation; (should-fix) `TestClaimReplyOutsideTheGraph`'s self-addressed case
+      builds `edit → daemon`, which `Send` delivers normally, so `recordUndeliveredReply` is not exercised.
+      **Review `1790348433` (11:0x): both resolved** — the reply is persisted before `ResponseID`,
+      write errors propagate, wrong sender or type is refused, and the self-addressed case is a real
+      `edit → edit` (`TestClaimReplyRefusesStrangers`, `TestClaimReplyFailedWriteLeavesTaskUnclaimed`,
+      `TestClaimReplyOutsideTheGraph` rebuilt) — **and one must-fix remains:** `acceptReply`'s initial
+      `ReadTask` fast path returns before the lock is taken, and `writeTask` publishes with
+      `os.WriteFile` (truncate, then write), so a second sender reading in that gap sees EOF and delivers
+      its contradicting reply unlocked, and the harvester can read the truncated task and fail the node
+      as lost. Asked: publish by atomic rename, treat an unreadable task as *unknown* rather than absent,
+      decide under the lock whenever a task exists, and add a concurrent-conflicting-send test plus a
+      corrupt-task control. **Resolved — review `1790348765` (11:0x): 0 must-fix, 0 should-fix, 1 nit
+      (a `defer` tidy in `publishTaskFile`, no behaviour change).** Claims on a completed task serialize
+      and re-read under the lock; the task file is published by atomic rename (`publishTaskFile`,
+      `task.go`; `TestWriteTaskNeverExposesPartialRecord`); an unreadable task fails closed
+      (`TestClaimReplyFailsClosedOnUnreadableTask`); the `readOnlyTask` fixture in `graph_cancel_test.go`
+      locks the tasks directory instead of one file, since a rename replaces a read-only file freely.
+      Eight tests in `graph_nonresult_test.go`. Suite green on the test agent 11:05:02 (the 11:03:42 red
+      was the fixture, repaired at 11:05:00), review fired from that pass. **Ticked 2026-09-25 11:1x**
 
 ### Technical approach
 
@@ -327,17 +364,30 @@ at #2; this is the task road, and it is firing.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-154-codex-status-line-closes-tracked-tasks | 17m | 2026-09-25 10:38 |
+| MUX-154-codex-status-line-closes-tracked-tasks | 47m | 2026-09-25 11:08 |
 
 ## Status
 
-**In Progress — 26/27 on 2026-09-25: all four phases complete, one acceptance criterion open.**
+**Complete — 27/27 on 2026-09-25 11:1x; every phase and criterion verified.** AC 8 closed last, on
+review `1790348765` (0 must-fix) and the test agent's green suite at 11:05:02: `claimReply` accepts the
+first genuine reply to a chrome-completed task under a per-task lock, stores it before publishing
+`ResponseID`, refuses strangers and non-responses, fails closed on an unreadable task, and `writeTask`
+publishes by atomic rename. **Ready to move to `completed/`** — the move is the user's (edit → commit);
+the `backlog.md` rows follow it. The record below is as it stood on the way.
+
 Set as the active spec that morning on the user's instruction; run `1790345173` then walked Phases 1,
 3 and 4 in three laps (Phase 2 was already done in `bae22dc`): the daemon-level pin (`2a242ff`), the
 chain-fire control (`9064c8c`, where the work moved to branch `MUX-154-codex-status-line-closes-tracked-tasks`),
-and `scripts/test-status-line-task-close.sh` — 19/0 through the run agent. **Open: AC 8 only**, the
-graph `send`-node pins that no phase step named and the script does not exercise; closing the spec
-needs a graph-level test or the user's acceptance of that residual.
+and `scripts/test-status-line-task-close.sh` — 19/0 through the run agent, committed `e3f7e44`. The
+run then reached `close-spec`, whose `spec-complete` guard declined on the one open box, and the user
+canceled it at 10:44. **Open: AC 8 only.** Its graph-level pins landed in the tree at 10:4x
+(`graph_nonresult_test.go`, with `taskAnswered` and then `claimReply` behind them) but each review of
+that mechanism has returned must-fix — first the newest-reply-wins conversion of a failure into
+success (answered by `claimReply`), then a claim published before the reply is stored plus a dropped
+sender/type correlation (both resolved by 11:0x), then the unlocked `ReadTask` fast path over a
+truncate-then-write `writeTask` — resolved by the atomic-rename publish and a fail-closed unreadable
+case, review `1790348765` clean. Four review rounds on one criterion; each moved a false-green shape
+until the last removed it.
 
 **Earlier the same morning** on graph run `1790345173-50-spec-to-pr-68c9b1ce`. Lap 1 (Phase 1:
 Pin) landed the daemon-level pin in `daemon/status_line_task_close_test.go` and was committed at the

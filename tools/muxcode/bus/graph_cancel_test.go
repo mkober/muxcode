@@ -421,17 +421,23 @@ func TestCancelFailsClosedOnRetractionFailure(t *testing.T) {
 	}
 }
 
-// readOnlyTask makes a task file unwritable until the test restores it.
+// readOnlyTask makes a task unwritable until the test restores it. Task files
+// are published by rename (publishTaskFile), which replaces a read-only file
+// freely, so it is the tasks directory that is locked — every task in it
+// becomes unwritable, while reads keep working.
 func readOnlyTask(t *testing.T, taskID string) (restore func()) {
 	t.Helper()
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the file permission this test relies on")
 	}
-	path := TaskPath(runTestSession, taskID)
-	if err := os.Chmod(path, 0444); err != nil {
+	if _, err := ReadTask(runTestSession, taskID); err != nil {
+		t.Fatalf("fixture: task %s must exist: %v", taskID, err)
+	}
+	dir := TaskDir(runTestSession)
+	if err := os.Chmod(dir, 0555); err != nil {
 		t.Fatal(err)
 	}
-	restore = func() { _ = os.Chmod(path, 0644) }
+	restore = func() { _ = os.Chmod(dir, 0755) }
 	t.Cleanup(restore)
 	return restore
 }

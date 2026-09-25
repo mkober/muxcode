@@ -267,5 +267,36 @@ func writeTask(session string, t Task) error {
 	if err := os.MkdirAll(TaskDir(session), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(TaskPath(session, t.ID), data, 0644)
+	return publishTaskFile(session, TaskPath(session, t.ID), data)
+}
+
+// publishTaskFile replaces a task file atomically: readers see the old record
+// or the new one, never a truncated one. An in-place write let a concurrent
+// reader take an empty file as "no answer yet" and admit a second reply, or
+// fail a graph harvest as "task record lost". The temporary file is staged in
+// the bus directory, not the tasks directory, where scanTasks would parse it as
+// a task; both sit in the same bus tree, so the rename stays atomic.
+func publishTaskFile(session, path string, data []byte) error {
+	tmp, err := os.CreateTemp(BusDir(session), ".task-*.tmp")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0644); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }

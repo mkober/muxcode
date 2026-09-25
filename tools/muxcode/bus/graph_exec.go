@@ -1358,7 +1358,10 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 		switch task.Status {
 		case TaskCompleted:
 			if sendResponseIsNonResult(session, task) {
-				return // not an answer — see sendResponseIsNonResult
+				if TaskExpired(task, now) {
+					finishNode(session, run, n, OutcomeFailure, "task expired")
+				}
+				return
 			}
 			outcome, output := deriveSendOutcome(session, n, st, task)
 			finishNode(session, run, n, outcome, output)
@@ -1871,9 +1874,11 @@ func replaceLostWorkers(session string, run *GraphRun, n *Node, st *GraphNodeSta
 // Such a task is completed but unanswered, so the node must neither succeed nor
 // hold on it: an unknown outcome raises a human gate, and asking a user to
 // approve a horizontal rule is how three spec-to-pr runs stalled on 2026-09-08.
-// The node stays running until a genuine reply or its timeout — which means a
-// node with no TimeoutSec relies on the tracked-task expiry above it, the same
-// backstop every other stuck send depends on.
+// The node stays running until a genuine reply re-completes the task (acceptReply,
+// at Send) or the task expires. The harvester checks that expiry itself: every
+// other timeout road lists only in-flight or timed-out tasks, so a task
+// completed by chrome is never revisited by them, and a node with no
+// TimeoutSec would otherwise run forever.
 //
 // This is the graph's own guard, not the primary one. Chrome should never reach
 // an inbox (dropsAsProviderChrome) nor be synthesized by the daemon

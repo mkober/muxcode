@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -143,33 +145,100 @@ func FilterLoopingSelfSends(msgs []Message) []Message {
 	return out
 }
 
+// acceptReply is the duplicate-reply guard shared by both reply paths. record
+// is the caller's write of reply m; it runs unless m is suppressed — a late
+// reply to an answered task must not overwrite the recorded outcome.
+//
+// A task completed by provider chrome is completed but unanswered (MUX-154), so
+// suppressing the genuine reply that follows would leave the task's only exit
+// its expiry. Such a task is claimed by the first genuine response from its own
+// target: under a session-wide claim lock, the reply is stored first and only
+// then recorded on the task, so a failed write never points the task at a
+// message that does not exist, and a second, contradicting reply is suppressed
+// rather than racing the graph's next tick. The claim error is returned — a
+// caller told "sent" must be able to trust the task moved. Only a task that
+// does not exist is read as "not a tracked reply"; any other read error fails
+// closed, since an unreadable task could be an answered one.
+func acceptReply(session string, m Message, record func() error) error {
+	t, err := ReadTask(session, m.ReplyTo)
+	if errors.Is(err, fs.ErrNotExist) {
+		return record()
+	}
+	if err != nil {
+		return fmt.Errorf("reply to %s: read task: %w", m.ReplyTo, err)
+	}
+	if t.Status != TaskCompleted {
+		return record()
+	}
+	unlock, err := lockReplyClaims(session)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	t, err = ReadTask(session, m.ReplyTo)
+	if err != nil {
+		return fmt.Errorf("reply to %s: read task: %w", m.ReplyTo, err)
+	}
+	if !sendResponseIsNonResult(session, t) || m.Type != "response" ||
+		NormalizeBusRole(m.From) != NormalizeBusRole(t.To) {
+		fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate reply to already-completed task %s from %s\n", m.ReplyTo, m.From)
+		return nil
+	}
+	if err := record(); err != nil {
+		return err
+	}
+	if LooksLikeNonResult(m.Payload) {
+		return nil
+	}
+	t.ResponseID = m.ID
+	t.ResponseAt = time.Now().Unix()
+	return writeTask(session, t)
+}
+
+// lockReplyClaims takes the session's reply-claim lock. It lives beside the
+// tasks directory, never in it: scanTasks parses every file there as a task.
+func lockReplyClaims(session string) (func(), error) {
+	if err := os.MkdirAll(BusDir(session), 0755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(BusDir(session), "reply-claim.lock"), os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
+}
+
 // recordUndeliveredReply logs a self-addressed reply and fires its
 // correlation — delivery status plus MarkResponded, exactly what a
 // delivered reply triggers — without writing to any inbox. The
 // completion record for edit answering a graph node whose reply path
 // normalizes back to edit.
 func recordUndeliveredReply(session string, m Message) error {
-	// Same duplicate-reply guard as the delivered path: a late reply to
-	// an already-completed task must not overwrite the recorded outcome.
-	if t, err := ReadTask(session, m.ReplyTo); err == nil && t.Status == TaskCompleted {
-		fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate reply to already-completed task %s from %s\n", m.ReplyTo, m.From)
-		return nil
-	}
-	data, err := EncodeMessage(m)
-	if err != nil {
-		return err
-	}
-	line := append(data[:len(data):len(data)], '\n')
-	if err := CreateDeliveryStatus(session, m); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: delivery status creation failed: %v\n", err)
-	}
-	MarkResponded(session, m.ReplyTo, m.ID)
-	logDir := filepath.Dir(LogPath(session))
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "  [send] self-addressed reply recorded for correlation %s (not delivered)\n", m.ReplyTo)
-	return appendToFile(LogPath(session), line)
+	return acceptReply(session, m, func() error {
+		data, err := EncodeMessage(m)
+		if err != nil {
+			return err
+		}
+		line := append(data[:len(data):len(data)], '\n')
+		if err := CreateDeliveryStatus(session, m); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: delivery status creation failed: %v\n", err)
+		}
+		MarkResponded(session, m.ReplyTo, m.ID)
+		logDir := filepath.Dir(LogPath(session))
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "  [send] self-addressed reply recorded for correlation %s (not delivered)\n", m.ReplyTo)
+		return appendToFile(LogPath(session), line)
+	})
 }
 
 // sendMessage is the shared implementation for Send, SendNoCC,
@@ -290,18 +359,17 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 		}
 	}
 
-	// Guard against duplicate replies: if this message is a reply to a task
-	// that is already completed (e.g. a scrape-road synthetic response, then
-	// the real agent's late reply), skip
-	// delivery to avoid the requester receiving conflicting responses.
-	// Check BEFORE writing to inbox so nothing is written anywhere.
-	if m.ReplyTo != "" {
-		if t, err := ReadTask(session, m.ReplyTo); err == nil && t.Status == TaskCompleted {
-			fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate reply to already-completed task %s from %s\n", m.ReplyTo, m.From)
-			return nil
-		}
+	if m.ReplyTo == "" {
+		return deliverMessage(session, m, line, inboxRole, autoCC)
 	}
+	return acceptReply(session, m, func() error {
+		return deliverMessage(session, m, line, inboxRole, autoCC)
+	})
+}
 
+// deliverMessage writes an accepted message everywhere it goes: the recipient
+// inbox, the auto-CC copy, delivery tracking, and the session log.
+func deliverMessage(session string, m Message, line []byte, inboxRole string, autoCC bool) error {
 	// Append to recipient inbox (host inbox for hosted roles)
 	if err := appendToFile(InboxPath(session, inboxRole), line); err != nil {
 		return err
