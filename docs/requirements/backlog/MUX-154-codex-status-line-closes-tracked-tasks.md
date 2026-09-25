@@ -150,8 +150,9 @@ fixtures first; whether to accept them is a decision for that phase.
 - [x] A chain link, `verify-spec`, or graph-node completion never fires on a synthesized non-result
 - [ ] Negative control: a genuine codex reply (`Sent response…` in the pane) still completes the task
       and fires the chain exactly as today — **detection half pinned**
-      (`TestDetectTaskCompletionGenuineSendCompletes`); the daemon completion and chain fire have no
-      test in `bae22dc`
+      (`TestDetectTaskCompletionGenuineSendCompletes`); **daemon completion and drain pinned 2026-09-25**
+      (`assertCompletedAndDrained` in `daemon/status_line_task_close_test.go`: task completed, response
+      reached the requester, request drained and marked responded); the **chain fire** still has no test
 - [x] Negative control: Claude-provider tasks are unaffected
 - [x] The rule line (a line of `─`) is chrome under the shared signature, and the `›`-composer branch
       of `DetectTaskCompletion` never returns a rule or blank line as the summary — when nothing but
@@ -180,6 +181,7 @@ inbox. The second layer is what makes the first layer's inevitable misses harmle
 | `tools/muxcode/bus/provider_claude.go` | `:178` — the Claude copy of the same signature |
 | `tools/muxcode/daemon/daemon.go` | `checkTrackedTasks` (`:2667`), `CompleteTask` sites (`:2712`, `:2805`, `:2870`) |
 | `tools/muxcode/bus/delivery.go` | `MarkResponded` → `ConsumeByID` — the drain |
+| `tools/muxcode/daemon/status_line_task_close_test.go` | Phase 1's daemon-level pin (2026-09-25): `checkNonHookTasks` on the incident payloads leaves the task in flight and the request in the inbox; a genuine pane still completes and drains |
 | `scripts/test-echo-as-result.sh` | MUX-003's guard test — extend to the task path or sibling it |
 | `tools/muxcode/bus/history_provenance.go` | `renderPrefixes` (`:70`), `LooksLikeProviderChrome` (`:99`), `isProviderChromeLine` — `6b53863`'s send-road guard; knows bullets and branches, not the `─` rule |
 | `tools/muxcode/bus/inbox.go` | `dropsAsProviderChrome` (`:172`) → `ErrSendChrome`, lifecycle `chrome-send-dropped` |
@@ -194,9 +196,17 @@ inbox. The second layer is what makes the first layer's inevitable misses harmle
       today; failure message names Phase 2 — **superseded**: no pre-fix characterization was written;
       the pin landed directly in its inverted form (`TestDetectTaskCompletionWorkingLineIsActive`,
       `bae22dc`), which is the deliverable this step and Phase 2's inversion step share
-- [ ] Pin that the synthesized response completes a tracked task and drains the request from the
-      inbox (scratch bus) — **open**: `bae22dc` adds no daemon-level test; the refusal in
-      `checkNonHookTasks` is unpinned
+- [x] Pin that the synthesized response completes a tracked task and drains the request from the
+      inbox (scratch bus) — **pinned in inverted form 2026-09-25**, `daemon/status_line_task_close_test.go`
+      (test-only, no production change): `TestCheckNonHookTasks_CodexChromeLeavesRequestPending` runs
+      `checkNonHookTasks` on the codex scrape road against the 14:12:55 working line and the 20:31:51
+      rule-above-composer payloads — task stays in flight, no response synthesized, request still in
+      the inbox (`Peek`), not marked responded, no `task-detected` row — then the same session on a
+      genuine `Sent response…` pane completes, answers and drains (negative control);
+      `TestCheckNonHookTasks_NonResultSummaryRefused` reaches the consumer layer via an OpenCode stop
+      marker (the fixture asserts detection says complete *and* the summary `LooksLikeNonResult`) —
+      request pending plus exactly one `task-nonresult-ignored` row, then a genuine `EXIT=0` pane drains.
+      Green under run `1790345173`'s test node (70 s)
 - [x] Reconstruct the 14:12:55 / 14:13:25 rows from the bus log as the fixture's payload — the pin
       should be the incident, not an invented shape — `provider_codex_chrome_test.go`: `ruleLine158()`
       is the 20:31:51 payload byte for byte, and `• Working (13s • esc to interrupt)` is the 14:12:55
@@ -226,8 +236,9 @@ inbox. The second layer is what makes the first layer's inevitable misses harmle
       response — the node stays `running`, no hold is raised on it — `sendResponseIsNonResult`
       (`graph_exec.go`) returns before the outcome is derived
 - [ ] Negative control: a real response completes the task, fires the chain, and drains as today —
-      **open**: no daemon-level test in `bae22dc` (the detection half is pinned; the completion, chain
-      and drain are not)
+      **completion and drain pinned 2026-09-25** at the daemon (`assertCompletedAndDrained`, both tests
+      in `daemon/status_line_task_close_test.go`); the **chain fire is still untested**, so the box stays
+      open
 - [x] Negative control: Claude-provider task completion unchanged — `TestIsClaudeThinkingUnchanged`,
       and hook providers never enter `checkNonHookTasks`
 
@@ -285,7 +296,15 @@ at #2; this is the task road, and it is firing.
 
 ## Status
 
-**Backlog — parked 2026-09-08 22:50 at 17/27: Phases 1–3 landed in `bae22dc` (22:02), Phase 4 open.**
+**In Progress — set as the active spec 2026-09-25 on the user's instruction; 18/27 after Phase 1
+closed the same morning** (graph run `1790345173-50-spec-to-pr-68c9b1ce`, Phase 1: Pin — the
+daemon-level pin landed in `daemon/status_line_task_close_test.go`, build/test/review green; Phases
+1–3 now 14/15 with only the chain-fire negative control open). **Phase 4
+(`scripts/test-status-line-task-close.sh`) is the open work.** The file is still in `backlog/` — the
+move to `drafts/` is the user's (edit → commit), and `muxcode spec set` warned that `verify-spec` may
+not trigger on a spec outside `drafts/` until then. Issue #75 tracks it; PR #73 carries Phases 1–3.
+
+**Previously: Backlog — parked 2026-09-08 22:50 at 17/27: Phases 1–3 landed in `bae22dc` (22:02), Phase 4 open.**
 Moved back from `drafts/` on the user's instruction that every unfinished spec leaves In progress; the
 active-spec pointer (set 21:12) was cleared with it. Issue #75 tracks it; PR #73 carries Phases 1–3
 and does not close it. The record below is as it stood when parked.
