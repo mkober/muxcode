@@ -1447,6 +1447,7 @@ muxcode skill prompt <role>
 |-------|-------|-------------|
 | `git-commit-conventions` | commit, edit | Commit message format and git workflow conventions |
 | `go-testing` | test, build | Go testing patterns and conventions |
+| `test-audit` | edit, review | Gate every new test and prune low-value, implementation-coupled or duplicate ones — a test earns its maintenance by failing on a credible regression. Four authoring-gate questions before any test function or script section, named junk patterns, a deletion test, evidence before deleting or merging; validation is delegated through the bus (build/test/run agents), never run locally. Adapted from openclaw's `test-audit` for Go stdlib tests and `scripts/test-*.sh` |
 | `code-review-checklist` | review | Code review quality checklist |
 | `jira-pr-comment` | git | Post a comment on a Jira issue when a PR is created. Extracts the Jira key from the branch name (e.g. `DATA-456-*`, `PBP1-4365-*`) and posts PR link + diff stats via `muxcode atlassian jira comment`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |
 | `jira-manage-issues` | commit, edit | Full Jira issue lifecycle. Read (with links/subtasks), update descriptions (ADF), search (JQL), transition status, link dependencies, read/post comments, create subtasks. Uses `muxcode atlassian jira read/update/comment/comments/link/link-types/transitions/transition/search/create-subtask`. Requires `JIRA_BASE_URL`, `JIRA_USER_EMAIL`, and `JIRA_API_TOKEN` in config. |

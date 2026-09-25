@@ -131,6 +131,14 @@ as a loop.
 - [x] A suppressed self-addressed startup reply is excluded from loop detection, or the reply affordance is not printed for it — Phase 5, excluded from detection (the affordance is unchanged)
 - [x] `bash scripts/test-cancel-provenance.sh` passes — 57/0 on 2026-09-24 12:0x through the run agent (task `1790265785-spawn-4d7bf287-3089eb85`), floor 56 met
 
+**Follow-through — [MUX-186](../backlog/MUX-186-pr-89-cancel-races-and-fail-open-cleanup-merged-unaddressed.md),
+filed 2026-09-24 from Copilot's review of PR #89, closed 2026-09-25.** Six findings in the code these
+criteria were ticked on: ACs 1, 2, 3 and 7 held for the roads Phase 6 measured and not for a damaged
+`spawn.jsonl` line (AC 1 — read as an absent worker), a running send node's agent or a purge that
+preceded the worker stop (AC 2), the DAG header's unrecorded case (AC 3) or a failed run lock (AC 7 —
+authority decided on a placeholder run). The ticks above stand for what they measured; the fixes and
+their controls landed in `eb9d40a`, `f54f83a` and `6b50c09` (PR #91) and are recorded in MUX-186.
+
 ### Key files
 
 | File | Purpose |

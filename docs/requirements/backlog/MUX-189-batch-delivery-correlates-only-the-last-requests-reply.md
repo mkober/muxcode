@@ -38,7 +38,7 @@ reported, the mechanism as confirmed. Filed on the user's instruction relayed by
 
 ### Family
 
-- [MUX-154](./MUX-154-codex-status-line-closes-tracked-tasks.md) — the same road's task-closing false positive; this is its false negative.
+- [MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md) — the same road's task-closing false positive; this is its false negative.
 - [MUX-145](./MUX-145-messages-routed-to-windowless-role.md), [MUX-009](./MUX-009-response-echo-chain-retrigger.md) — the reply-routing cluster.
 
 ## Requirements

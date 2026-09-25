@@ -39,7 +39,7 @@ what makes it visible.
 
 ### Family
 
-- [MUX-154](./MUX-154-codex-status-line-closes-tracked-tasks.md), [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md) — Codex agent behaviour on the hook road.
+- [MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md), [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md) — Codex agent behaviour on the hook road.
 - [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) — node outcomes named for the wrong reason.
 - The codex-approval watchdog (CLAUDE.md, daemon watchdogs) — the precedent for the daemon *acting* on a Codex prompt state rather than waiting for the task clock.
 

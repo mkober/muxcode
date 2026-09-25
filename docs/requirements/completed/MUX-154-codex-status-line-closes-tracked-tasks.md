@@ -148,19 +148,62 @@ fixtures first; whether to accept them is a decision for that phase.
 - [x] A progress-line payload never drains the request from the inbox — `MarkResponded` /
       `ConsumeByID` are not reached — so `deliver --force` still has something to deliver
 - [x] A chain link, `verify-spec`, or graph-node completion never fires on a synthesized non-result
-- [ ] Negative control: a genuine codex reply (`Sent response…` in the pane) still completes the task
-      and fires the chain exactly as today — **detection half pinned**
-      (`TestDetectTaskCompletionGenuineSendCompletes`); the daemon completion and chain fire have no
-      test in `bae22dc`
+- [x] Negative control: a genuine codex reply (`Sent response…` in the pane) still completes the task
+      and fires the chain exactly as today — detection half `TestDetectTaskCompletionGenuineSendCompletes`;
+      daemon completion and drain `assertCompletedAndDrained` (2026-09-25, Phase 1 lap); **chain fire
+      pinned 2026-09-25, Phase 3 lap**: `TestCheckNonHookTasks_ReviewChainFiresOnlyOnGenuineReply` — a
+      codex review agent's progress-line pane fires **0** `verify-spec` and leaves the workflow unreviewed;
+      the genuine `Sent response…` pane fires **exactly 1** and transitions to `StateReviewed`, with the
+      task completed and the request drained. Green under run `1790345173`'s test node (64 s)
 - [x] Negative control: Claude-provider tasks are unaffected
 - [x] The rule line (a line of `─`) is chrome under the shared signature, and the `›`-composer branch
       of `DetectTaskCompletion` never returns a rule or blank line as the summary — when nothing but
       chrome sits above the composer, the task is *not* complete
-- [ ] A graph `send` node is never completed by a synthesized non-result: it stays `running` until a
+- [x] A graph `send` node is never completed by a synthesized non-result: it stays `running` until a
       genuine reply or the task timeout, and a genuine codex reply ending `EXIT=0` routes success with
       no hold — negative control: a genuine reply with no sentinel still holds — **code landed**
       (`sendResponseIsNonResult`, `graph_exec.go`), but `bae22dc` carries no graph-level pin for
-      either half; Phase 4 must supply them
+      either half; Phase 4 must supply them — Phase 4's script (19/0) exercises the daemon task road
+      and the review chain, not a graph node. **Pins landed 2026-09-25 10:4x, in the working tree
+      outside the graph run** (`bus/graph_nonresult_test.go`): `TestExecSendNodeNonResultWaitsForGenuineReply`
+      — a chrome-completed node (rule line, working line) neither routes nor gates, an unrelated reply
+      cannot answer it, a genuine `EXIT=0` reply to its own task routes success with no hold;
+      `…GenuineReplyWithoutSentinelHolds` (the no-sentinel control); `…Expires` (a chrome-completed node
+      still fails on task expiry); `TestSendDeliversReplyToChromeCompletedTask`. They needed production
+      changes — `taskAnswered` (`inbox.go`: a task completed by chrome is completed but *unanswered*, so
+      the duplicate-reply guard lets the genuine reply through) and `genuineReplyAfterNonResult` in the
+      harvester (`graph_exec.go`). **Box stays open.** Review `1790347737` (1 must-fix): `Task.ResponseID`
+      still pointed at the chrome after acceptance, so `EXIT=1` then `EXIT=0` before a tick adopted the
+      second — a real failure converted into success. Answered by `claimReply` (`inbox.go`: the first
+      genuine reply is claimed at acceptance on both reply paths; `TestExecSendNodeNonResultFirstGenuineReplyWins`,
+      `TestClaimReplyOutsideTheGraph`). **Review `1790348077` then returned 2 must-fix + 1 should-fix
+      on `claimReply`:** (1) `CompleteTask` runs *before* either path appends the reply to the log — a
+      failed append leaves the task naming a response that does not exist, `sendResponseIsNonResult`
+      then reads false and every retry is suppressed, and a graph tick in the write gap derives an
+      outcome from a missing reply; the read/check/write is also unlocked, so concurrent sends can both
+      claim — serialize per task, store before publishing the ID, propagate storage errors, keep
+      retryability; (2) the `Type == response` and `From == task.To` checks `genuineReplyAfterNonResult`
+      carried were dropped, so any event or foreign response bearing the `ReplyTo` becomes the task's
+      answer and an `EXIT=0` payload can route the node — restore response-type and normalized
+      sender/recipient correlation; (should-fix) `TestClaimReplyOutsideTheGraph`'s self-addressed case
+      builds `edit → daemon`, which `Send` delivers normally, so `recordUndeliveredReply` is not exercised.
+      **Review `1790348433` (11:0x): both resolved** — the reply is persisted before `ResponseID`,
+      write errors propagate, wrong sender or type is refused, and the self-addressed case is a real
+      `edit → edit` (`TestClaimReplyRefusesStrangers`, `TestClaimReplyFailedWriteLeavesTaskUnclaimed`,
+      `TestClaimReplyOutsideTheGraph` rebuilt) — **and one must-fix remains:** `acceptReply`'s initial
+      `ReadTask` fast path returns before the lock is taken, and `writeTask` publishes with
+      `os.WriteFile` (truncate, then write), so a second sender reading in that gap sees EOF and delivers
+      its contradicting reply unlocked, and the harvester can read the truncated task and fail the node
+      as lost. Asked: publish by atomic rename, treat an unreadable task as *unknown* rather than absent,
+      decide under the lock whenever a task exists, and add a concurrent-conflicting-send test plus a
+      corrupt-task control. **Resolved — review `1790348765` (11:0x): 0 must-fix, 0 should-fix, 1 nit
+      (a `defer` tidy in `publishTaskFile`, no behaviour change).** Claims on a completed task serialize
+      and re-read under the lock; the task file is published by atomic rename (`publishTaskFile`,
+      `task.go`; `TestWriteTaskNeverExposesPartialRecord`); an unreadable task fails closed
+      (`TestClaimReplyFailsClosedOnUnreadableTask`); the `readOnlyTask` fixture in `graph_cancel_test.go`
+      locks the tasks directory instead of one file, since a rename replaces a read-only file freely.
+      Eight tests in `graph_nonresult_test.go`. Suite green on the test agent 11:05:02 (the 11:03:42 red
+      was the fixture, repaired at 11:05:00), review fired from that pass. **Ticked 2026-09-25 11:1x**
 
 ### Technical approach
 
@@ -180,6 +223,7 @@ inbox. The second layer is what makes the first layer's inevitable misses harmle
 | `tools/muxcode/bus/provider_claude.go` | `:178` — the Claude copy of the same signature |
 | `tools/muxcode/daemon/daemon.go` | `checkTrackedTasks` (`:2667`), `CompleteTask` sites (`:2712`, `:2805`, `:2870`) |
 | `tools/muxcode/bus/delivery.go` | `MarkResponded` → `ConsumeByID` — the drain |
+| `tools/muxcode/daemon/status_line_task_close_test.go` | Phase 1's daemon-level pin (2026-09-25): `checkNonHookTasks` on the incident payloads leaves the task in flight and the request in the inbox; a genuine pane still completes and drains. Phase 3's chain control: a review progress line fires no `verify-spec`, a genuine review reply fires exactly one |
 | `scripts/test-echo-as-result.sh` | MUX-003's guard test — extend to the task path or sibling it |
 | `tools/muxcode/bus/history_provenance.go` | `renderPrefixes` (`:70`), `LooksLikeProviderChrome` (`:99`), `isProviderChromeLine` — `6b53863`'s send-road guard; knows bullets and branches, not the `─` rule |
 | `tools/muxcode/bus/inbox.go` | `dropsAsProviderChrome` (`:172`) → `ErrSendChrome`, lifecycle `chrome-send-dropped` |
@@ -194,9 +238,17 @@ inbox. The second layer is what makes the first layer's inevitable misses harmle
       today; failure message names Phase 2 — **superseded**: no pre-fix characterization was written;
       the pin landed directly in its inverted form (`TestDetectTaskCompletionWorkingLineIsActive`,
       `bae22dc`), which is the deliverable this step and Phase 2's inversion step share
-- [ ] Pin that the synthesized response completes a tracked task and drains the request from the
-      inbox (scratch bus) — **open**: `bae22dc` adds no daemon-level test; the refusal in
-      `checkNonHookTasks` is unpinned
+- [x] Pin that the synthesized response completes a tracked task and drains the request from the
+      inbox (scratch bus) — **pinned in inverted form 2026-09-25**, `daemon/status_line_task_close_test.go`
+      (test-only, no production change): `TestCheckNonHookTasks_CodexChromeLeavesRequestPending` runs
+      `checkNonHookTasks` on the codex scrape road against the 14:12:55 working line and the 20:31:51
+      rule-above-composer payloads — task stays in flight, no response synthesized, request still in
+      the inbox (`Peek`), not marked responded, no `task-detected` row — then the same session on a
+      genuine `Sent response…` pane completes, answers and drains (negative control);
+      `TestCheckNonHookTasks_NonResultSummaryRefused` reaches the consumer layer via an OpenCode stop
+      marker (the fixture asserts detection says complete *and* the summary `LooksLikeNonResult`) —
+      request pending plus exactly one `task-nonresult-ignored` row, then a genuine `EXIT=0` pane drains.
+      Green under run `1790345173`'s test node (70 s)
 - [x] Reconstruct the 14:12:55 / 14:13:25 rows from the bus log as the fixture's payload — the pin
       should be the incident, not an invented shape — `provider_codex_chrome_test.go`: `ruleLine158()`
       is the 20:31:51 payload byte for byte, and `• Working (13s • esc to interrupt)` is the 14:12:55
@@ -225,9 +277,13 @@ inbox. The second layer is what makes the first layer's inevitable misses harmle
 - [x] The graph consumer: `deriveSendOutcome` never receives a synthesized non-result as a node's
       response — the node stays `running`, no hold is raised on it — `sendResponseIsNonResult`
       (`graph_exec.go`) returns before the outcome is derived
-- [ ] Negative control: a real response completes the task, fires the chain, and drains as today —
-      **open**: no daemon-level test in `bae22dc` (the detection half is pinned; the completion, chain
-      and drain are not)
+- [x] Negative control: a real response completes the task, fires the chain, and drains as today —
+      completion and drain `assertCompletedAndDrained` (Phase 1 lap); **chain fire pinned 2026-09-25**
+      (Phase 3 lap): `TestCheckNonHookTasks_ReviewChainFiresOnlyOnGenuineReply` in
+      `daemon/status_line_task_close_test.go` runs `checkNonHookTasks` then `checkInboxes` on a codex
+      review role — progress line: 0 `verify-spec`, no `StateReviewed`, request pending; genuine reply:
+      exactly 1 `verify-spec`, `StateReviewed`, completed and drained (`MUXCODE_DEDUP_WINDOW=0` so the
+      count is the daemon's, not the dedup guard's). Test-only; green under run `1790345173` (64 s)
 - [x] Negative control: Claude-provider task completion unchanged — `TestIsClaudeThinkingUnchanged`,
       and hook providers never enter `checkNonHookTasks`
 
@@ -253,15 +309,36 @@ turn's answer.
 
 ### Phase 4: Integration test
 
-- [ ] Create `scripts/test-status-line-task-close.sh` (hermetic; scratch bus + daemon + a fake codex
-      pane) or extend `scripts/test-echo-as-result.sh` to the task path
-- [ ] Test: progress-line pane → task stays in flight, request remains in the inbox, no chain fire,
-      `task-nonresult-ignored` row written
-- [ ] Test: genuine `Sent …` pane → task completes, chain fires (negative control — the guard cannot
-      go inert)
-- [ ] Test: `deliver --force` after a progress line still has the request to deliver
-- [ ] Coverage floor keeps a skipped section from reporting green
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-status-line-task-close.sh` (hermetic; scratch bus + daemon + a fake codex
+      pane) or extend `scripts/test-echo-as-result.sh` to the task path — 2026-09-25: scratch bus,
+      scratch tmux session and a real scratch daemon started from the scratch repo with every role's CLI
+      pinned; three static non-echoing fixture panes (codex review = 14:12:55 working line, codex build
+      = 20:31:51 rule line, opencode test = working line over a `▣` stop marker, so only the consumer
+      refusal stands)
+- [x] Test: progress-line pane → task stays in flight, request remains in the inbox, no chain fire,
+      `task-nonresult-ignored` row written — Phase A: all three tasks in flight, requests in the inbox,
+      `StateReviewed` not entered, no `verify-spec`, the opencode task's `task-nonresult-ignored` row
+- [x] Test: genuine `Sent …` pane → task completes, chain fires (negative control — the guard cannot
+      go inert) — Phase C: genuine panes complete all three tasks and the review reply fires `verify-spec`
+- [x] Test: `deliver --force` after a progress line still has the request to deliver — Phase B: the
+      review request is still pending and `deliver --force` wakes review with 1 pending (a force-deliver,
+      not a force-redrive)
+- [x] Coverage floor keeps a skipped section from reporting green — `EXPECTED_PASS=19`, exact match
+      required
+- [x] Run the script and verify all checks pass — **run agent** task `1790346616-spawn-1304d234-8aa4d9eb`,
+      reply `1790346675-run-e93ec7f2`: `exit 0. PASS: 19 passed, 0 failed (floor 19)`; stdout at
+      `/tmp/test-status-line-task-close.log`
+
+**Phase 4 evidence — 2026-09-25 10:3x, run `1790345173` lap 3.** The first cut drew one review
+should-fix (`/tmp/muxcode-review-1790346768.txt`): `:93` started the scratch daemon from the caller's
+checkout and inherited `MUXCODE_EDIT_CLI`, so with `edit=codex|opencode` `checkNonHookEdits` would
+have `git diff`ed the real repo every 10 s into the scratch workflow. Fixed by the `fix` worker —
+`start_daemon` now `cd`s to `$WORK/repo` and `exec`s `muxcode watch` there (`:96`), and every role's
+CLI is pinned to `claude` (`:51`); the second review passed. Executed once by the **run agent**, not
+by the authoring worker: 19 passed / 0 failed, floor 19 exact, exit 0. CLAUDE.md's script table
+carries the row. **What the script does not cover:** a graph `send` node — AC 8's two graph-level
+pins (a non-result never completes the node; a genuine reply without a sentinel still holds) remain
+open, so the spec stands at 26/27 with that single box.
 
 ## Notes
 
@@ -283,9 +360,45 @@ the chain, tracked tasks, `verify-spec`, recovery — it converts silence into s
 times today, and it disarms `deliver --force`. MUX-148 is the same family on the graph road and sits
 at #2; this is the task road, and it is firing.
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-154-codex-status-line-closes-tracked-tasks | 47m | 2026-09-25 11:08 |
+
 ## Status
 
-**Backlog — parked 2026-09-08 22:50 at 17/27: Phases 1–3 landed in `bae22dc` (22:02), Phase 4 open.**
+**Complete — 27/27 on 2026-09-25 11:1x; every phase and criterion verified.** AC 8 closed last, on
+review `1790348765` (0 must-fix) and the test agent's green suite at 11:05:02: `claimReply` accepts the
+first genuine reply to a chrome-completed task under a per-task lock, stores it before publishing
+`ResponseID`, refuses strangers and non-responses, fails closed on an unreadable task, and `writeTask`
+publishes by atomic rename. Moved to `completed/` the same hour on the user's instruction; the
+`backlog.md` rows and every cross-reference followed. The record below is as it stood on the way.
+
+Set as the active spec that morning on the user's instruction; run `1790345173` then walked Phases 1,
+3 and 4 in three laps (Phase 2 was already done in `bae22dc`): the daemon-level pin (`2a242ff`), the
+chain-fire control (`9064c8c`, where the work moved to branch `MUX-154-codex-status-line-closes-tracked-tasks`),
+and `scripts/test-status-line-task-close.sh` — 19/0 through the run agent, committed `e3f7e44`. The
+run then reached `close-spec`, whose `spec-complete` guard declined on the one open box, and the user
+canceled it at 10:44. **Open: AC 8 only.** Its graph-level pins landed in the tree at 10:4x
+(`graph_nonresult_test.go`, with `taskAnswered` and then `claimReply` behind them) but each review of
+that mechanism has returned must-fix — first the newest-reply-wins conversion of a failure into
+success (answered by `claimReply`), then a claim published before the reply is stored plus a dropped
+sender/type correlation (both resolved by 11:0x), then the unlocked `ReadTask` fast path over a
+truncate-then-write `writeTask` — resolved by the atomic-rename publish and a fail-closed unreadable
+case, review `1790348765` clean. Four review rounds on one criterion; each moved a false-green shape
+until the last removed it.
+
+**Earlier the same morning** on graph run `1790345173-50-spec-to-pr-68c9b1ce`. Lap 1 (Phase 1:
+Pin) landed the daemon-level pin in `daemon/status_line_task_close_test.go` and was committed at the
+phase gate as `2a242ff`; lap 2 (Phase 3: Refuse at the consumer) added the chain-fire negative control
+to the same file — build/test/review green both laps. **Phases 1–3 are complete (15/15); acceptance
+criteria 7/8** — only AC 8's graph-level pins remain, and **Phase 4 (`scripts/test-status-line-task-close.sh`)
+is the open work.** The file is still in `backlog/` — the
+move to `drafts/` is the user's (edit → commit), and `muxcode spec set` warned that `verify-spec` may
+not trigger on a spec outside `drafts/` until then. Issue #75 tracks it; PR #73 carries Phases 1–3.
+
+**Previously: Backlog — parked 2026-09-08 22:50 at 17/27: Phases 1–3 landed in `bae22dc` (22:02), Phase 4 open.**
 Moved back from `drafts/` on the user's instruction that every unfinished spec leaves In progress; the
 active-spec pointer (set 21:12) was cleared with it. Issue #75 tracks it; PR #73 carries Phases 1–3
 and does not close it. The record below is as it stood when parked.

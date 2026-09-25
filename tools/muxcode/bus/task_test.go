@@ -90,6 +90,48 @@ func TestCreateAndReadTask(t *testing.T) {
 	}
 }
 
+// TestWriteTaskNeverExposesPartialRecord pins the atomic publish: a reader
+// racing a rewrite must see a whole task every time. The in-place write this
+// replaced truncated first, so a reader could get an empty file — read by the
+// reply guard as "no answer yet" and by a graph harvest as "task record lost".
+// The staging file must also never land where scanTasks would parse it.
+func TestWriteTaskNeverExposesPartialRecord(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+	msg := NewMessage("edit", "build", "request", "build", strings.Repeat("x", 64<<10), "")
+	if err := CreateTask(session, msg, 600); err != nil {
+		t.Fatal(err)
+	}
+	task, _ := ReadTask(session, msg.ID)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 300; i++ {
+			task.ResponseAt = int64(i)
+			if err := writeTask(session, task); err != nil {
+				t.Errorf("writeTask: %v", err)
+				return
+			}
+		}
+	}()
+	for reading := true; reading; {
+		select {
+		case <-done:
+			reading = false
+		default:
+		}
+		if _, err := ReadTask(session, msg.ID); err != nil {
+			t.Fatalf("a reader saw a partial task during a rewrite: %v", err)
+		}
+	}
+
+	_, unreadable, err := scanTasks(session, "")
+	if err != nil || len(unreadable) != 0 {
+		t.Errorf("tasks dir holds non-task files after rewrites: err=%v unreadable=%v", err, unreadable)
+	}
+}
+
 func TestCompleteTask(t *testing.T) {
 	useTempBusDir(t)
 	session := testSession(t)
