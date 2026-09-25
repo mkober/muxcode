@@ -139,6 +139,40 @@ func TestCheckNonHookTasks_CodexChromeLeavesRequestPending(t *testing.T) {
 	}
 }
 
+// TestCheckNonHookTasks_ReviewChainFiresOnlyOnGenuineReply pins the chain the
+// daemon owns on the scrape road — a review→edit response is the review
+// completion, and checkInboxes turns it into StateReviewed plus verify-spec at
+// plan. The 14:12:55 incident fired verify-spec from a progress line; the
+// negative control is that a genuine reply still fires it exactly once.
+func TestCheckNonHookTasks_ReviewChainFiresOnlyOnGenuineReply(t *testing.T) {
+	t.Setenv("MUXCODE_DEDUP_WINDOW", "0")
+	session := scrapeSession(t, "review", "codex")
+	seedRepoSpec(t, session)
+	d := New(session, 5, 8)
+	d.agentAlive = func(_, role string) bool { return role == "review" }
+	req := pendingRequest(t, d, session, "review")
+
+	scrapeWith(d, workingLine+"\n\n› \n")
+	d.checkInboxes()
+	assertStillPending(t, session, "review", req)
+	if got := countVerifySpec(t, session); got != 0 {
+		t.Errorf("progress line fired verify-spec %d time(s)", got)
+	}
+	if st := bus.ReadWorkflowState(session).State; st == bus.StateReviewed {
+		t.Error("progress line transitioned the workflow to reviewed")
+	}
+
+	scrapeWith(d, "Review finished: 0 must-fix, 0 should-fix, 0 nits EXIT=0\nSent response:response to edit\n› \n")
+	d.checkInboxes()
+	assertCompletedAndDrained(t, session, "review", req)
+	if got := countVerifySpec(t, session); got != 1 {
+		t.Errorf("genuine review reply fired verify-spec %d time(s), want 1", got)
+	}
+	if st := bus.ReadWorkflowState(session).State; st != bus.StateReviewed {
+		t.Errorf("genuine review reply: workflow = %s, want reviewed", st)
+	}
+}
+
 // TestCheckNonHookTasks_NonResultSummaryRefused pins the consumer layer: an
 // OpenCode stop marker makes detection report complete, but the summary is the
 // progress line, so the daemon refuses it with task-nonresult-ignored.

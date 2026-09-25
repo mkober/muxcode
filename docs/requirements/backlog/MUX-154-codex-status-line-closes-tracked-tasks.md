@@ -148,11 +148,13 @@ fixtures first; whether to accept them is a decision for that phase.
 - [x] A progress-line payload never drains the request from the inbox — `MarkResponded` /
       `ConsumeByID` are not reached — so `deliver --force` still has something to deliver
 - [x] A chain link, `verify-spec`, or graph-node completion never fires on a synthesized non-result
-- [ ] Negative control: a genuine codex reply (`Sent response…` in the pane) still completes the task
-      and fires the chain exactly as today — **detection half pinned**
-      (`TestDetectTaskCompletionGenuineSendCompletes`); **daemon completion and drain pinned 2026-09-25**
-      (`assertCompletedAndDrained` in `daemon/status_line_task_close_test.go`: task completed, response
-      reached the requester, request drained and marked responded); the **chain fire** still has no test
+- [x] Negative control: a genuine codex reply (`Sent response…` in the pane) still completes the task
+      and fires the chain exactly as today — detection half `TestDetectTaskCompletionGenuineSendCompletes`;
+      daemon completion and drain `assertCompletedAndDrained` (2026-09-25, Phase 1 lap); **chain fire
+      pinned 2026-09-25, Phase 3 lap**: `TestCheckNonHookTasks_ReviewChainFiresOnlyOnGenuineReply` — a
+      codex review agent's progress-line pane fires **0** `verify-spec` and leaves the workflow unreviewed;
+      the genuine `Sent response…` pane fires **exactly 1** and transitions to `StateReviewed`, with the
+      task completed and the request drained. Green under run `1790345173`'s test node (64 s)
 - [x] Negative control: Claude-provider tasks are unaffected
 - [x] The rule line (a line of `─`) is chrome under the shared signature, and the `›`-composer branch
       of `DetectTaskCompletion` never returns a rule or blank line as the summary — when nothing but
@@ -181,7 +183,7 @@ inbox. The second layer is what makes the first layer's inevitable misses harmle
 | `tools/muxcode/bus/provider_claude.go` | `:178` — the Claude copy of the same signature |
 | `tools/muxcode/daemon/daemon.go` | `checkTrackedTasks` (`:2667`), `CompleteTask` sites (`:2712`, `:2805`, `:2870`) |
 | `tools/muxcode/bus/delivery.go` | `MarkResponded` → `ConsumeByID` — the drain |
-| `tools/muxcode/daemon/status_line_task_close_test.go` | Phase 1's daemon-level pin (2026-09-25): `checkNonHookTasks` on the incident payloads leaves the task in flight and the request in the inbox; a genuine pane still completes and drains |
+| `tools/muxcode/daemon/status_line_task_close_test.go` | Phase 1's daemon-level pin (2026-09-25): `checkNonHookTasks` on the incident payloads leaves the task in flight and the request in the inbox; a genuine pane still completes and drains. Phase 3's chain control: a review progress line fires no `verify-spec`, a genuine review reply fires exactly one |
 | `scripts/test-echo-as-result.sh` | MUX-003's guard test — extend to the task path or sibling it |
 | `tools/muxcode/bus/history_provenance.go` | `renderPrefixes` (`:70`), `LooksLikeProviderChrome` (`:99`), `isProviderChromeLine` — `6b53863`'s send-road guard; knows bullets and branches, not the `─` rule |
 | `tools/muxcode/bus/inbox.go` | `dropsAsProviderChrome` (`:172`) → `ErrSendChrome`, lifecycle `chrome-send-dropped` |
@@ -235,10 +237,13 @@ inbox. The second layer is what makes the first layer's inevitable misses harmle
 - [x] The graph consumer: `deriveSendOutcome` never receives a synthesized non-result as a node's
       response — the node stays `running`, no hold is raised on it — `sendResponseIsNonResult`
       (`graph_exec.go`) returns before the outcome is derived
-- [ ] Negative control: a real response completes the task, fires the chain, and drains as today —
-      **completion and drain pinned 2026-09-25** at the daemon (`assertCompletedAndDrained`, both tests
-      in `daemon/status_line_task_close_test.go`); the **chain fire is still untested**, so the box stays
-      open
+- [x] Negative control: a real response completes the task, fires the chain, and drains as today —
+      completion and drain `assertCompletedAndDrained` (Phase 1 lap); **chain fire pinned 2026-09-25**
+      (Phase 3 lap): `TestCheckNonHookTasks_ReviewChainFiresOnlyOnGenuineReply` in
+      `daemon/status_line_task_close_test.go` runs `checkNonHookTasks` then `checkInboxes` on a codex
+      review role — progress line: 0 `verify-spec`, no `StateReviewed`, request pending; genuine reply:
+      exactly 1 `verify-spec`, `StateReviewed`, completed and drained (`MUXCODE_DEDUP_WINDOW=0` so the
+      count is the daemon's, not the dedup guard's). Test-only; green under run `1790345173` (64 s)
 - [x] Negative control: Claude-provider task completion unchanged — `TestIsClaudeThinkingUnchanged`,
       and hook providers never enter `checkNonHookTasks`
 
@@ -296,11 +301,13 @@ at #2; this is the task road, and it is firing.
 
 ## Status
 
-**In Progress — set as the active spec 2026-09-25 on the user's instruction; 18/27 after Phase 1
-closed the same morning** (graph run `1790345173-50-spec-to-pr-68c9b1ce`, Phase 1: Pin — the
-daemon-level pin landed in `daemon/status_line_task_close_test.go`, build/test/review green; Phases
-1–3 now 14/15 with only the chain-fire negative control open). **Phase 4
-(`scripts/test-status-line-task-close.sh`) is the open work.** The file is still in `backlog/` — the
+**In Progress — set as the active spec 2026-09-25 on the user's instruction; 20/27 after Phases 1
+and 3 closed the same morning** on graph run `1790345173-50-spec-to-pr-68c9b1ce`. Lap 1 (Phase 1:
+Pin) landed the daemon-level pin in `daemon/status_line_task_close_test.go` and was committed at the
+phase gate as `2a242ff`; lap 2 (Phase 3: Refuse at the consumer) added the chain-fire negative control
+to the same file — build/test/review green both laps. **Phases 1–3 are complete (15/15); acceptance
+criteria 7/8** — only AC 8's graph-level pins remain, and **Phase 4 (`scripts/test-status-line-task-close.sh`)
+is the open work.** The file is still in `backlog/` — the
 move to `drafts/` is the user's (edit → commit), and `muxcode spec set` warned that `verify-spec` may
 not trigger on a spec outside `drafts/` until then. Issue #75 tracks it; PR #73 carries Phases 1–3.
 
