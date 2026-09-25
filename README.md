@@ -602,6 +602,7 @@ Skills are reusable instruction sets defined as markdown files with YAML frontma
 | ------------------------- | ------------ | ------------------------------------------------------------ |
 | `git-commit-conventions`  | commit, edit | Commit message format and git workflow conventions           |
 | `go-testing`              | test, build  | Go testing patterns and conventions                          |
+| `test-audit`              | edit, review | Gate every new test and prune low-value, implementation-coupled or duplicate ones |
 | `code-review-checklist`   | review       | Code review quality checklist                                |
 | `github-pr-comment`       | commit       | Post threaded replies to Copilot review comments on PRs and summary comments addressing all feedback |
 | `jira-pr-comment`         | commit       | Post PR details as a comment on the corresponding Jira issue |
