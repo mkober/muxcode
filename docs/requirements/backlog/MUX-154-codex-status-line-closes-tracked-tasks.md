@@ -163,7 +163,10 @@ fixtures first; whether to accept them is a decision for that phase.
       genuine reply or the task timeout, and a genuine codex reply ending `EXIT=0` routes success with
       no hold — negative control: a genuine reply with no sentinel still holds — **code landed**
       (`sendResponseIsNonResult`, `graph_exec.go`), but `bae22dc` carries no graph-level pin for
-      either half; Phase 4 must supply them
+      either half; Phase 4 must supply them — **still open 2026-09-25**: Phase 4's script
+      (`test-status-line-task-close.sh`, 19/0) exercises the daemon task road and the review chain, not a
+      graph `send` node; neither half has a pin. The one open box in the spec — needs a graph-level test
+      or the user's acceptance as residual
 
 ### Technical approach
 
@@ -269,15 +272,36 @@ turn's answer.
 
 ### Phase 4: Integration test
 
-- [ ] Create `scripts/test-status-line-task-close.sh` (hermetic; scratch bus + daemon + a fake codex
-      pane) or extend `scripts/test-echo-as-result.sh` to the task path
-- [ ] Test: progress-line pane → task stays in flight, request remains in the inbox, no chain fire,
-      `task-nonresult-ignored` row written
-- [ ] Test: genuine `Sent …` pane → task completes, chain fires (negative control — the guard cannot
-      go inert)
-- [ ] Test: `deliver --force` after a progress line still has the request to deliver
-- [ ] Coverage floor keeps a skipped section from reporting green
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-status-line-task-close.sh` (hermetic; scratch bus + daemon + a fake codex
+      pane) or extend `scripts/test-echo-as-result.sh` to the task path — 2026-09-25: scratch bus,
+      scratch tmux session and a real scratch daemon started from the scratch repo with every role's CLI
+      pinned; three static non-echoing fixture panes (codex review = 14:12:55 working line, codex build
+      = 20:31:51 rule line, opencode test = working line over a `▣` stop marker, so only the consumer
+      refusal stands)
+- [x] Test: progress-line pane → task stays in flight, request remains in the inbox, no chain fire,
+      `task-nonresult-ignored` row written — Phase A: all three tasks in flight, requests in the inbox,
+      `StateReviewed` not entered, no `verify-spec`, the opencode task's `task-nonresult-ignored` row
+- [x] Test: genuine `Sent …` pane → task completes, chain fires (negative control — the guard cannot
+      go inert) — Phase C: genuine panes complete all three tasks and the review reply fires `verify-spec`
+- [x] Test: `deliver --force` after a progress line still has the request to deliver — Phase B: the
+      review request is still pending and `deliver --force` wakes review with 1 pending (a force-deliver,
+      not a force-redrive)
+- [x] Coverage floor keeps a skipped section from reporting green — `EXPECTED_PASS=19`, exact match
+      required
+- [x] Run the script and verify all checks pass — **run agent** task `1790346616-spawn-1304d234-8aa4d9eb`,
+      reply `1790346675-run-e93ec7f2`: `exit 0. PASS: 19 passed, 0 failed (floor 19)`; stdout at
+      `/tmp/test-status-line-task-close.log`
+
+**Phase 4 evidence — 2026-09-25 10:3x, run `1790345173` lap 3.** The first cut drew one review
+should-fix (`/tmp/muxcode-review-1790346768.txt`): `:93` started the scratch daemon from the caller's
+checkout and inherited `MUXCODE_EDIT_CLI`, so with `edit=codex|opencode` `checkNonHookEdits` would
+have `git diff`ed the real repo every 10 s into the scratch workflow. Fixed by the `fix` worker —
+`start_daemon` now `cd`s to `$WORK/repo` and `exec`s `muxcode watch` there (`:96`), and every role's
+CLI is pinned to `claude` (`:51`); the second review passed. Executed once by the **run agent**, not
+by the authoring worker: 19 passed / 0 failed, floor 19 exact, exit 0. CLAUDE.md's script table
+carries the row. **What the script does not cover:** a graph `send` node — AC 8's two graph-level
+pins (a non-result never completes the node; a genuine reply without a sentinel still holds) remain
+open, so the spec stands at 26/27 with that single box.
 
 ## Notes
 
@@ -299,10 +323,23 @@ the chain, tracked tasks, `verify-spec`, recovery — it converts silence into s
 times today, and it disarms `deliver --force`. MUX-148 is the same family on the graph road and sits
 at #2; this is the task road, and it is firing.
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-154-codex-status-line-closes-tracked-tasks | 17m | 2026-09-25 10:38 |
+
 ## Status
 
-**In Progress — set as the active spec 2026-09-25 on the user's instruction; 20/27 after Phases 1
-and 3 closed the same morning** on graph run `1790345173-50-spec-to-pr-68c9b1ce`. Lap 1 (Phase 1:
+**In Progress — 26/27 on 2026-09-25: all four phases complete, one acceptance criterion open.**
+Set as the active spec that morning on the user's instruction; run `1790345173` then walked Phases 1,
+3 and 4 in three laps (Phase 2 was already done in `bae22dc`): the daemon-level pin (`2a242ff`), the
+chain-fire control (`9064c8c`, where the work moved to branch `MUX-154-codex-status-line-closes-tracked-tasks`),
+and `scripts/test-status-line-task-close.sh` — 19/0 through the run agent. **Open: AC 8 only**, the
+graph `send`-node pins that no phase step named and the script does not exercise; closing the spec
+needs a graph-level test or the user's acceptance of that residual.
+
+**Earlier the same morning** on graph run `1790345173-50-spec-to-pr-68c9b1ce`. Lap 1 (Phase 1:
 Pin) landed the daemon-level pin in `daemon/status_line_task_close_test.go` and was committed at the
 phase gate as `2a242ff`; lap 2 (Phase 3: Refuse at the consumer) added the chain-fire negative control
 to the same file — build/test/review green both laps. **Phases 1–3 are complete (15/15); acceptance
