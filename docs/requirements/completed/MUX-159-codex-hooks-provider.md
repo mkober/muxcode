@@ -9,7 +9,7 @@ agent runs the **non-hook road**: chain instructions pasted into its prompt, rep
 as text, and the daemon **pane-scraping** to guess when a task finished and what it said.
 
 That road produced every incident of 2026-09-08: a rule line closed the graph's build and test nodes
-and held them for manual approval on three runs ([MUX-154](../backlog/MUX-154-codex-status-line-closes-tracked-tasks.md)),
+and held them for manual approval on three runs ([MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md)),
 a review reply injected as a prompt drove a fourteen-request test↔review loop
 ([MUX-009](../backlog/MUX-009-response-echo-chain-retrigger.md)), `verify-spec` fired on chrome, and the build
 agent answered three requests by restating test's status line as its own `EXIT=0` (`6b53863`).
@@ -441,7 +441,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
   as resolved (test blob `bb16297`, reader unchanged at `26ab73b`). `verify-spec` fired on the closed
   spec four times in two minutes, once per re-review, because the active pointer followed the move —
   nothing to tick.
-- [MUX-154](../backlog/MUX-154-codex-status-line-closes-tracked-tasks.md) — the immediate patch to
+- [MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md) — the immediate patch to
   the scrape (chrome signatures, consumer refusal). This spec removes the scrape's *reason to exist*
   for codex; both are needed, in that order.
 - [MUX-009](../backlog/MUX-009-response-echo-chain-retrigger.md) — fixed at the root by Phase 4: a response

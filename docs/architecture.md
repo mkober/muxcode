@@ -614,7 +614,11 @@ answered for it and whose re-seeded implement worker was stopped by hand as a le
    lifecycle `graph-spawn-reuse`). Between seeds it is idle by design, and `muxcode spawn list`/`status`
    read it as **`parked`** (`SpawnDisplayStatus`: running, run in flight, current seed answered) — the
    store's bare `running` had two such workers read as stuck agents and one stopped mid-run. Cancel the
-   run to stop its work; a finished or missing run releases the worker to the normal reap path.
+   run to stop its work — `graph cancel` stops every run-owned worker first and purges session
+   artifacts only once the last one is verified stopped and no cleanup step failed; a survivor, a send
+   node whose agent is mid-turn, or a registry line it cannot read keeps the run `canceling`
+   ([MUX-186](requirements/backlog/MUX-186-pr-89-cancel-races-and-fail-open-cleanup-merged-unaddressed.md)).
+   A finished or missing run releases the worker to the normal reap path.
 2. **A lost worker is replaced, not judged.** A worker that ends before answering its current seed —
    `spawn stop`, or its window gone — is a delivery failure, not a verdict. `replaceLostWorkers`
    re-dispatches the seed on a fresh worker (lifecycle `graph-spawn-replaced`, warn), sharing the
@@ -1001,7 +1005,7 @@ read-only roles; that conflated one policy with the CLI and was corrected 2026-0
 content line as the summary. Codex's current TUI renders progress as `• Working (13s • esc to
 interrupt)` with the composer still visible, so that progress line is reported as a completed task's
 answer — closing tracked tasks and firing chain links on nothing
-([MUX-154](requirements/backlog/MUX-154-codex-status-line-closes-tracked-tasks.md)). A second shape
+([MUX-154](requirements/completed/MUX-154-codex-status-line-closes-tracked-tasks.md)). A second shape
 did the same on 2026-09-08 20:31: the horizontal rule codex draws between turns was the "last content
 line" above the composer, and 158 dashes closed two graph nodes before either agent had a result.
 **Fixed in `bae22dc` (22:02)**: one shared signature in `history_provenance.go` (`LooksLikeWorkingLine`,

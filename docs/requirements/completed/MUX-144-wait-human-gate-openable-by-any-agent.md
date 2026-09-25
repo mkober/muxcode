@@ -365,7 +365,7 @@ made.
       `TestLogLifecycleAtHonorsSuppliedTimestamp`). (1) **partly**: build, vet and the full bus and
       daemon suites ran green (`EXIT=0`) on the run agent as edit's independent re-verification — but
       no review pass: the spec-to-pr run's review node never executed (the run stalled at the held
-      `test` node, see [MUX-154](../backlog/MUX-154-codex-status-line-closes-tracked-tasks.md)). (3)
+      `test` node, see [MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md)). (3)
       **untouched and still true**: the seal reads agent-writable files and a routine `./build.sh`
       restarts the daemon. **Not ticked** — the step's words ("not caller-controlled") do not hold
       while (3) stands; tick after a review pass and a written answer to (3).

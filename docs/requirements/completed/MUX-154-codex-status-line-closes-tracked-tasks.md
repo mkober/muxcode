@@ -372,8 +372,8 @@ at #2; this is the task road, and it is firing.
 review `1790348765` (0 must-fix) and the test agent's green suite at 11:05:02: `claimReply` accepts the
 first genuine reply to a chrome-completed task under a per-task lock, stores it before publishing
 `ResponseID`, refuses strangers and non-responses, fails closed on an unreadable task, and `writeTask`
-publishes by atomic rename. **Ready to move to `completed/`** — the move is the user's (edit → commit);
-the `backlog.md` rows follow it. The record below is as it stood on the way.
+publishes by atomic rename. Moved to `completed/` the same hour on the user's instruction; the
+`backlog.md` rows and every cross-reference followed. The record below is as it stood on the way.
 
 Set as the active spec that morning on the user's instruction; run `1790345173` then walked Phases 1,
 3 and 4 in three laps (Phase 2 was already done in `bae22dc`): the daemon-level pin (`2a242ff`), the

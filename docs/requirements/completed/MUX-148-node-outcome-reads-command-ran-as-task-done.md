@@ -78,8 +78,9 @@ Two constraints on Phase 3 that did not exist when this was filed:
   **directly** and never calls `deriveSendOutcome`; only its doc comment names it. It pins the
   *helper*, not the *precedence*, and stays green under any precedence change. **It is not a
   constraint on Phase 2** — and there is no other: see [the safety-net finding](#q4--should-the-sentinel-outrank-the-console-row).
-- **MUX-154 is still open** ([`backlog/MUX-154`](../backlog/MUX-154-codex-status-line-closes-tracked-tasks.md))
-  and is cited in `parseExitSentinel`'s own comment: a reply that echoes its request can carry a
+- **MUX-154 is still open** ([`MUX-154`](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md) — true when
+  written; closed 2026-09-25 at 27/27, and the exposure below is what its `claimReply` and sentinel-gated graph
+  node now bound) and is cited in `parseExitSentinel`'s own comment: a reply that echoes its request can carry a
   counterfeit sentinel. Leaning harder on the sentinel inherits that exposure.
 
 ### Why the existing unverified hold does not catch it

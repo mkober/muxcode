@@ -63,15 +63,15 @@ those controls rather than reopening the closed one.
 
 ### Acceptance criteria
 
-- [ ] `StopSpawnAuthorized` returns the lock error (or retries within `graphRunLockWait` and then refuses) when `lockGraphRun` fails; it never decides authority on the placeholder run — test: a held lock → `spawn stop` refused with a message naming the lock, `spawn-stop-refused` logged
-- [ ] `PurgeSessionArtifacts` runs **after** every run-owned worker is verified stopped, and not at all when the cancel is incomplete — test: a worker still writing under `cdk.out` at cancel time is stopped first and the purge follows; on `CancelIncompleteError` the artifact survives
-- [ ] A running `send` node's agent is interrupted or the run stays `canceling` until it is proven idle; `graph cancel` never reports `canceled` while a send node's agent is mid-turn — test: a busy pane on a running send node → run left `canceling`, the node and pane named in the reply
-- [ ] A malformed line in `spawn.jsonl` is a **cleanup failure**: `runSpawnRoles` (or `ReadSpawnEntries` via a strict variant) reports it, the cancel returns `CancelIncompleteError` naming the file and line, and the run stays `canceling` — test: corrupt one registry line for a live worker → cancel refuses and names it; **positive control:** an intact registry cancels as today
-- [ ] `ClassifyPane` reports `PaneTrustPrompt` only from `claudeTrustPromptLive` (bypass check first); the `claudeTrustOption` substring fallback is removed — test: an idle pane with an answered trust prompt in scrollback → `PaneIdle`; a live trust menu → `PaneTrustPrompt` (positive control)
-- [ ] `renderGraphHeader` renders the provenance line unconditionally, with `unrecorded` for an empty `CreatedBy`, and `headerLines` counts it unconditionally — test: golden frame for an unrecorded run shows the line; height accounting equal for recorded and unrecorded runs
-- [ ] Each fix carries the negative control that would have caught it: the test fails at `3e9ac86` and passes after
-- [ ] MUX-182's Known gaps (or a note under its ACs 1, 2, 3, 7) records that this spec holds the follow-through; the closed spec's ticks are not reverted
-- [ ] `bash scripts/test-cancel-provenance.sh` still passes (57, floor 56) and `bash scripts/test-cancel-followups.sh` passes
+- [x] `StopSpawnAuthorized` returns the lock error (or retries within `graphRunLockWait` and then refuses) when `lockGraphRun` fails; it never decides authority on the placeholder run — test: a held lock → `spawn stop` refused with a message naming the lock, `spawn-stop-refused` logged — `eb9d40a` returns the lock error; `f54f83a` refuses on any run-read error but "does not exist"; `TestStopSpawnAuthorizedRefusesWithoutTheRunLock`, `TestStopSpawnAuthorizedRefusesUnlockedOnCorruptRun`
+- [x] `PurgeSessionArtifacts` runs **after** every run-owned worker is verified stopped, and not at all when the cancel is incomplete — test: a worker still writing under `cdk.out` at cancel time is stopped first and the purge follows; on `CancelIncompleteError` the artifact survives — `eb9d40a`: purge only after every worker is stopped and no cleanup step failed; `TestCancelPurgesArtifactsOnlyAfterWorkersStop`
+- [x] A running `send` node's agent is interrupted or the run stays `canceling` until it is proven idle; `graph cancel` never reports `canceled` while a send node's agent is mid-turn — test: a busy pane on a running send node → run left `canceling`, the node and pane named in the reply — `eb9d40a` + `6b50c09`: the agent's pane decides — busy after receipt fails the cancel, idle or never-received expires the task, and a lost receipt is *unknown*, not proof; `TestCancelFailsClosedOnARunningSendAgent`, `TestCancelProceedsPastAnIdleSendAgent` (control), `TestCancelTreatsLostReceiptAsUnknown`
+- [x] A malformed line in `spawn.jsonl` is a **cleanup failure**: `runSpawnRoles` (or `ReadSpawnEntries` via a strict variant) reports it, the cancel returns `CancelIncompleteError` naming the file and line, and the run stays `canceling` — test: corrupt one registry line for a live worker → cancel refuses and names it; **positive control:** an intact registry cancels as today — `eb9d40a` + `f54f83a`: a malformed or identity-less line, a missing registry with a live worker, and a failed window listing all fail the cancel; `TestCancelFailsClosedOnMalformedRegistryLine`, `…IdentitylessRegistryRecord`, `…MissingRegistry`, `…MissingRegistryParkedWorker`, `…WindowLookupError`
+- [x] `ClassifyPane` reports `PaneTrustPrompt` only from `claudeTrustPromptLive` (bypass check first); the `claudeTrustOption` substring fallback is removed — test: an idle pane with an answered trust prompt in scrollback → `PaneIdle`; a live trust menu → `PaneTrustPrompt` (positive control) — `eb9d40a` + `f54f83a`: trust text is a prompt only when live; near the composer without its footer it is `PaneNotReady` (still drawing), in scrollback it is ignored; `TestClassifyPane_TrustStillDrawingIsNotIdle` plus four `provider_test.go` cases
+- [x] `renderGraphHeader` renders the provenance line unconditionally, with `unrecorded` for an empty `CreatedBy`, and `headerLines` counts it unconditionally — test: golden frame for an unrecorded run shows the line; height accounting equal for recorded and unrecorded runs — `eb9d40a`: `tui/graph_test.go` golden case `"launched by: unrecorded"`, frame heights rebased one row taller for every run
+- [x] Each fix carries the negative control that would have caught it: the test fails at `3e9ac86` and passes after — every fail-closed test above is paired with a case that still proceeds (`eb9d40a`, `f54f83a`: "each with a negative control"); the *fails at `3e9ac86`* half was not re-run by plan — **accepted, not re-verified**
+- [x] MUX-182's Known gaps (or a note under its ACs 1, 2, 3, 7) records that this spec holds the follow-through; the closed spec's ticks are not reverted — written 2026-09-25 under MUX-182's acceptance criteria
+- [ ] `bash scripts/test-cancel-provenance.sh` still passes (57, floor 56) and `bash scripts/test-cancel-followups.sh` passes — **open at closure**: `test-cancel-followups.sh` is not written (Phase 5), and `test-cancel-provenance.sh` was not re-run after the follow-ups
 
 ### Technical approach
 
@@ -100,24 +100,24 @@ so display callers keep tolerating a damaged file.
 
 ### Phase 1: Fail-open cleanup (findings 4, 2, 3)
 
-- [ ] Strict registry read for cancel: a malformed line → `CancelIncompleteError` naming file and line, run stays `canceling`; positive control with an intact file
-- [ ] Move `PurgeSessionArtifacts` below the worker-stop loop, guarded on an empty `survivors`/`cleanup`; test that an incomplete cancel leaves the artifact
-- [ ] Running send node: check `AgentIsWorking` on the node's role; if working, add it to `survivors` with the pane named and leave the run `canceling`; test with a stub pane that renders mid-turn
-- [ ] Failing-at-`3e9ac86` controls for each
+- [x] Strict registry read for cancel: a malformed line → `CancelIncompleteError` naming file and line, run stays `canceling`; positive control with an intact file — `eb9d40a`, hardened in `f54f83a` (`scanSpawnEntries` counts a record without ID or SpawnRole as malformed; a missing registry with a live window fails the cancel)
+- [x] Move `PurgeSessionArtifacts` below the worker-stop loop, guarded on an empty `survivors`/`cleanup`; test that an incomplete cancel leaves the artifact — `eb9d40a`, `TestCancelPurgesArtifactsOnlyAfterWorkersStop`
+- [x] Running send node: check `AgentIsWorking` on the node's role; if working, add it to `survivors` with the pane named and leave the run `canceling`; test with a stub pane that renders mid-turn — `eb9d40a`; `6b50c09` then stopped a lost receipt being read as "never received"
+- [x] Failing-at-`3e9ac86` controls for each — controls present in each test pair; the pre-fix red was not re-run (AC 7, accepted)
 
 ### Phase 2: Authority and startup (findings 1, 5)
 
-- [ ] `StopSpawnAuthorized`: propagate the lock error; unit test with a held lock; positive control with a free lock
-- [ ] `ClassifyPane`: delete the substring fallback; tests for answered-prompt-in-scrollback → `PaneIdle`, live menu → `PaneTrustPrompt`, bypass-over-trust precedence
-- [ ] `AcceptStartup` no longer loops on a stale trust text (regression test on the relaunch shape)
+- [x] `StopSpawnAuthorized`: propagate the lock error; unit test with a held lock; positive control with a free lock — `eb9d40a` (`TestStopSpawnAuthorizedRefusesWithoutTheRunLock`), `f54f83a` (`…RefusesUnlockedOnCorruptRun`)
+- [x] `ClassifyPane`: delete the substring fallback; tests for answered-prompt-in-scrollback → `PaneIdle`, live menu → `PaneTrustPrompt`, bypass-over-trust precedence — `eb9d40a` + `f54f83a`; `TestClassifyPane_TrustStillDrawingIsNotIdle` replaced `TestClassifyPane_TrustTakesPrecedence` (a trust option line with no footer is not-ready, not a prompt)
+- [x] `AcceptStartup` no longer loops on a stale trust text (regression test on the relaunch shape) — covered at the classifier: stale trust text near an idle composer reads idle (`f54f83a`, four `ClassifyPane` cases); no `AcceptStartup`-level test was added
 
 ### Phase 3: DAG header (finding 6)
 
-- [ ] Unconditional provenance line and height count; golden test for recorded and unrecorded runs; `tui-style` checklist (height honoured, readable without colour)
+- [x] Unconditional provenance line and height count; golden test for recorded and unrecorded runs; `tui-style` checklist (height honoured, readable without colour) — `eb9d40a`: the header always carries `launched by:`; `tui/graph_test.go` adds the `unrecorded` case and rebases the windowed/short frame heights by one row
 
 ### Phase 4: Docs and MUX-182 cross-reference
 
-- [ ] MUX-182 Known gaps entry naming this spec and the four ACs; `docs/architecture.md` cancel-ordering sentence updated (workers stop, then purge)
+- [x] MUX-182 Known gaps entry naming this spec and the four ACs; `docs/architecture.md` cancel-ordering sentence updated (workers stop, then purge) — 2026-09-25: follow-through note under MUX-182's acceptance criteria; `architecture.md`'s graph-workers paragraph now states the order (workers stop, then purge; a survivor, a mid-turn send agent or an unreadable registry keeps the run `canceling`)
 
 ### Phase 5: Integration test
 
@@ -138,7 +138,15 @@ so display callers keep tolerating a damaged file.
 
 ## Status
 
-Backlog
+Complete — closed 2026-09-25 **on the user's instruction ("remove 186 from backlog defect list"), by
+acceptance, at 17/26.** All six findings are fixed on `main` in PR #91 (`7b2e0b4`): `eb9d40a` (the six
+fixes, plus two the local review found), `f54f83a` (PR #91's own Copilot findings — fail-closed cancel
+scan, trust menu still drawing) and `6b50c09` (a lost receipt is not proof a send request was unread).
+Twelve new tests, each paired with a control. **Open at closure, recorded not done:** all of Phase 5 —
+`scripts/test-cancel-followups.sh` and the `test-cancel-provenance.sh` re-run (AC 9) — and AC 7's
+"fails at `3e9ac86`" half, which plan did not re-run. The spec never entered `drafts/`: the fix was
+written the day it was filed. **Ready to move to `completed/`** — the move is the user's (edit →
+commit); the cross-references here, in MUX-182, MUX-187 and `backlog.md` follow it.
 
 Filed 2026-09-24 on the user's instruction relayed by edit, from Copilot's review of PR #89 (six
 inline comments, none answered before the merge in `3e9ac86`). Every finding verified by plan

@@ -34,7 +34,7 @@ subsession's own, relayed by screenshot.
 
 Every lap's build and test node passed: the tests were file-scoped to the branch's own base, and the
 build node was — in the subsession's words — hollow (a separate defect, [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md)
-/ [MUX-154](./MUX-154-codex-status-line-closes-tracked-tasks.md) family). Neither compares anything
+/ [MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md) family). Neither compares anything
 with `main`, so neither could have caught this even working perfectly.
 
 ### Mechanism — verified in code
@@ -157,7 +157,7 @@ run should attempt unattended.
   either way so the threshold can be tuned from evidence.
 - Related: [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) (the gate the sync sits
   behind); [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) and
-  [MUX-154](./MUX-154-codex-status-line-closes-tracked-tasks.md) (why the build node's green meant
+  [MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md) (why the build node's green meant
   nothing here); [MUX-132](../completed/MUX-132-graph-retry-launders-gate-approval.md) (single-use
   approvals — a re-entered `sync-gate` needs a fresh one); [MUX-165](./MUX-165-gated-jira-write-declined-by-requester-rule.md)
   (the other consent instrument the graph carries, filed today).
