@@ -63,7 +63,7 @@ open items against the active spec.
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| — | *nothing in flight* — MUX-154 closed 2026-09-25 11:1x, see below | — | — |
+| [MUX-192](./MUX-192-stale-in-flight-task-starves-codex-delivery.md) | A stale in-flight task starves every wake to a codex agent | 2026-09-25 | **Active spec** on the user's instruction, the same hour it was filed; 3/25 after Phase 1 (Pin) closed 2026-09-26 on run `1790434768` — three characterization tests asserting the defect (`wake_starvation_test.go` in `bus/` and `daemon/`), review clean; Phase 2 next. Still in `backlog/` — the move to `drafts/` is the user's. Keeps its #1 defects row and category row until it closes |
 
 **MUX-154 closed 2026-09-25** at **27/27**, every criterion verified — reactivated that morning on
 the user's instruction out of Parked (17/27 since 2026-09-08), then run `1790345173` walked Phases 1,

@@ -150,14 +150,20 @@ Three small changes and one diagnostic rewrite, in this order:
 | `tools/muxcode/bus/timetrack.go:237` | `AgentIsWorking` — the real "busy" predicate |
 | `tools/muxcode/bus/diagnose.go:~957-995` | `active-with-stale-messages` |
 | `tools/muxcode/bus/dedup.go:291` | `FindResponseSince` — the answered-elsewhere lookup |
+| `tools/muxcode/bus/wake_starvation_test.go`, `tools/muxcode/daemon/wake_starvation_test.go` | Phase 1's pins (2026-09-26): the skip on a stale and an answered task, the backstop refused every poll, the constant-idle diagnosis — each to be inverted by Phases 2–3 |
 
 ## Implementation
 
 ### Phase 1: Pin
 
-- [ ] Characterization test: codex review fixture, one in-flight task 300 s old, one pending request → `SendWakeUp(false)` returns `ErrInjectionSkipped` (today's behaviour, named as the defect); the same fixture with the task's request answered in the log → still skipped today (the pin to invert)
-- [ ] Reconstruct the 11:06:56 `delivery-gap-skip` sequence in a daemon test: `checkPollHealth` over the fixture retries and is refused on every poll; assert the row count grows per poll (today) — the pin to invert
-- [ ] `diagnose` fixture from the 10:58 report: assert the finding today carries `IsAgentIdle: false` for a codex role — the pin to invert
+- [x] Characterization test: codex review fixture, one in-flight task 300 s old, one pending request → `SendWakeUp(false)` returns `ErrInjectionSkipped` (today's behaviour, named as the defect); the same fixture with the task's request answered in the log → still skipped today (the pin to invert) — 2026-09-26, `bus/wake_starvation_test.go` `TestCodexSendWakeUp_StaleTaskStarvesWake_Pin`: `starvedReviewFixture` carries the incident's task id `1790347799-edit-dfae26e9` at 300 s and a force-sent pending request; the `answered-elsewhere` subtest puts review's reply to `1790347737-test-chain` in the log and asserts `FindResponseSince` finds it while the task still reads in-flight; both subtests get `ErrInjectionSkipped` naming the task
+- [x] Reconstruct the 11:06:56 `delivery-gap-skip` sequence in a daemon test: `checkPollHealth` over the fixture retries and is refused on every poll; assert the row count grows per poll (today) — the pin to invert — `daemon/wake_starvation_test.go` `TestCheckPollHealth_StaleTaskRefusesEveryPoll_Pin`: delivery-ack on, codex review, answered-elsewhere task, pending request past `pollHealthGapSecs`; four polls → rows 1, 2, 3, 4, each naming the in-flight task; `pollGapRecovered` stays false; the request stays un-receipted
+- [x] `diagnose` fixture from the 10:58 report: assert the finding today carries `IsAgentIdle: false` for a codex role — the pin to invert — `TestDiagnose_CodexStarvedReportsConstantIdle_Pin`: the 10:58 report rebuilt (codex, alive, not idle, 1 actionable at 181 s, receipt gap 181 s, the `⚠ 1 warning · f2 to view` footer as last line) through `RunDiagnostics` → `active-with-stale-messages` with the `IsAgentIdle: false` evidence line, and no finding names the blocking task
+
+**Phase 1 evidence — 2026-09-26 11:0x, graph run `1790434768-50-spec-to-pr-3552c942`.** Test-only, no
+production change; build 13 s, test 64 s green on the test agent, one `fix` lap (fixture isolation:
+`useTempBusDir` before `Init`), review `1790435341` 0 must-fix / 0 should-fix / 0 nits. The pins assert
+the defect, so a passing Phase 2 must turn all three red before its own inversions land.
 
 ### Phase 2: Bound the skip and fix the backstop
 
@@ -206,9 +212,12 @@ here unless Phase 3 finds the diagnostic cannot be made truthful without it.
 
 ## Status
 
-Backlog
+**In Progress — 3/25 on 2026-09-26: Phase 1 (Pin) complete on run `1790434768`, three characterization
+tests green and reviewed clean; Phase 2 (bound the skip, fix the backstop) is next.** Set as the active
+spec 2026-09-25 11:4x on the user's instruction. The file stays in `backlog/` until the user moves it to `drafts/` (`muxcode spec set`
+warns that `verify-spec` may not trigger on a spec outside `drafts/`).
 
-Filed 2026-09-25 on the user's instruction relayed by edit, from two first-hand incidents that morning
+**Filed** 2026-09-25 on the user's instruction relayed by edit, from two first-hand incidents that morning
 (10:57, ~11:06) on the codex review agent. Mechanism verified by plan against `e3f7e44` and the
 lifecycle log: the brief's first hypothesis (a misread idle frame) is rejected — codex has no frame
 classification on this road; its third (a stale in-flight task blocking wakes to the timeout) is
