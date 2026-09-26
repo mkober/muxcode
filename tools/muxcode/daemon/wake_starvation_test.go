@@ -1,27 +1,31 @@
 package daemon
 
 import (
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
 )
 
-// TestCheckPollHealth_StaleTaskRefusesEveryPoll_Pin pins the MUX-192 11:06:56
-// sequence as it stands: for a codex review role with an answered-elsewhere
-// in-flight task and a stale pending request, the receipt-gap backstop calls
-// the same unforced SendWakeUp that refuses, so every poll logs another
-// delivery-gap-skip and the request is never delivered. Phase 2 inverts it —
-// delivered within one backstop interval, at most one skip row. The pending
-// request is force-sent, as edit's was, or the in-flight dedup guard drops it.
-func TestCheckPollHealth_StaleTaskRefusesEveryPoll_Pin(t *testing.T) {
+// TestCheckPollHealth_StaleTaskRecoversInOnePoll is the MUX-192 11:06:56
+// sequence inverted: for a codex review role with an answered-elsewhere
+// in-flight task and a stale pending request, the receipt-gap backstop used to
+// call the same unforced SendWakeUp that refused, logging delivery-gap-skip
+// every poll until the 600s task timeout. It must now recover through a forced
+// ForceDeliver on the first poll and log no skip. The pending request is
+// force-sent, as edit's was, or the in-flight dedup guard drops it.
+func TestCheckPollHealth_StaleTaskRecoversInOnePoll(t *testing.T) {
 	session := testSession(t)
 	d := New(session, 5, 8)
 	t.Setenv("MUXCODE_DELIVERY_ACK", "1")
 	t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "")
 	t.Setenv(bus.RoleCLIEnvVar("review"), "codex")
 	d.agentAlive = allAlive
+	var forces []bool
+	d.forceDeliver = func(_, role string, force bool) (bus.DeliverResult, error) {
+		forces = append(forces, force)
+		return bus.DeliverResult{Role: role, Delivered: 1}, nil
+	}
 
 	stale := bus.NewMessage("edit", "review", "request", "review", "review the branch", "")
 	stale.TS = time.Now().Unix() - 300
@@ -38,23 +42,18 @@ func TestCheckPollHealth_StaleTaskRefusesEveryPoll_Pin(t *testing.T) {
 		t.Fatalf("SendForce pending: %v", err)
 	}
 
-	const polls = 4
-	for i := 1; i <= polls; i++ {
+	for i := 0; i < 4; i++ {
 		d.lastPollHealthCheck = 0
 		d.checkPollHealth()
-		if rows := lifecycleDetails(t, session, "delivery-gap-skip"); len(rows) != i {
-			t.Fatalf("pin: poll %d expected %d delivery-gap-skip rows (one per poll), got %d: %v", i, i, len(rows), rows)
-		}
 	}
-	for _, row := range lifecycleDetails(t, session, "delivery-gap-skip") {
-		if !strings.Contains(row, "in-flight task") {
-			t.Errorf("pin: each skip should name the in-flight task, got %q", row)
-		}
+
+	if len(forces) != 1 || !forces[0] {
+		t.Fatalf("expected exactly one forced re-drive on the first poll, got %v", forces)
 	}
-	if d.pollGapRecovered["review"] {
-		t.Error("pin: a refused wake leaves the episode un-recovered, so it retries identically")
+	if !d.pollGapRecovered["review"] {
+		t.Error("a delivered re-drive must close the recovery for this episode")
 	}
-	if len(bus.ReceiptGap(session, "review", pollHealthGapSecs*time.Second)) != 1 {
-		t.Error("pin: the pending request must still be un-receipted after every poll")
+	if rows := lifecycleDetails(t, session, "delivery-gap-skip"); len(rows) != 0 {
+		t.Errorf("a stale task must no longer produce delivery-gap-skip rows, got %v", rows)
 	}
 }

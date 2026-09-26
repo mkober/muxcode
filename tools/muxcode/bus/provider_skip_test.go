@@ -7,9 +7,10 @@ import (
 	"time"
 )
 
-// skipTestSetup isolates a bus session and plants an aged in-flight task
-// for the role, so the SendWakeUp in-flight guard fires. The guard runs
-// before any tmux access, so no pane stubbing is needed.
+// skipTestSetup isolates a bus session and plants a fresh, unanswered,
+// already-consumed in-flight task for the role, so the SendWakeUp in-flight
+// guard fires. The guard runs before any tmux access, so no pane stubbing is
+// needed.
 func skipTestSetup(t *testing.T, session, role string) {
 	t.Helper()
 	t.Setenv("BUS_SESSION", session)
@@ -19,8 +20,8 @@ func skipTestSetup(t *testing.T, session, role string) {
 	t.Cleanup(func() { os.RemoveAll(BusDir(session)) })
 
 	m := Message{
-		ID: "aged-task-1", From: "edit", To: role, Type: "request",
-		Action: "run", Payload: "prior work", TS: time.Now().Unix() - 60,
+		ID: "fresh-task-1", From: "edit", To: role, Type: "request",
+		Action: "run", Payload: "prior work", TS: time.Now().Unix() - 1,
 	}
 	if err := CreateTask(session, m, 600); err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -51,7 +52,7 @@ func TestCodexSendWakeUp_SkipReturnsSentinel(t *testing.T) {
 	}
 }
 
-// force bypasses the guard entirely: with an aged in-flight task and an
+// force bypasses the guard entirely: with a blocking in-flight task and an
 // empty inbox, a forced wake-up reaches the nothing-to-inject nil path
 // instead of the skip sentinel — proving the guard, not the call, is
 // what force disables. No tmux is touched on either path.
@@ -67,29 +68,30 @@ func TestSendWakeUp_ForceBypassesGuard(t *testing.T) {
 	}
 }
 
-// A young in-flight task (<5s) does not trigger the guard — the negative
-// control proving the sentinel comes from the skip, not from every call.
-func TestSendWakeUp_YoungTaskDoesNotSkip(t *testing.T) {
-	session := "skip-test-young"
-	t.Setenv("BUS_SESSION", session)
-	if err := Init(session, t.TempDir()); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	t.Cleanup(func() { os.RemoveAll(BusDir(session)) })
+// A fresh task whose request is still pending is the message the wake
+// delivers, not work in progress — the negative control proving a send's own
+// wake is never withheld by the task the send just created. Sent before the
+// task is tracked, as `send --track` does; the reverse order is suppressed by
+// Send's in-flight dedup guard.
+func TestSendWakeUp_PendingTaskDoesNotSkip(t *testing.T) {
+	session := "skip-test-pending"
+	injectionTestSession(t, session)
+	stubInjectionPane(t, "", errors.New("no pane"))
 
 	m := Message{
 		ID: "young-task-1", From: "edit", To: "build", Type: "request",
 		Action: "run", Payload: "just sent", TS: time.Now().Unix(),
 	}
+	if err := SendNoCC(session, m); err != nil {
+		t.Fatalf("SendNoCC: %v", err)
+	}
 	if err := CreateTask(session, m, 600); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	// With no pending inbox the wake-up is a no-op nil — but it must not
-	// be the skip sentinel.
 	err := (&OpenCodeProvider{}).SendWakeUp(session, "build", false)
 	if errors.Is(err, ErrInjectionSkipped) {
-		t.Errorf("a young task must not trigger the skip guard, got %v", err)
+		t.Errorf("a task still pending in the inbox must not trigger the skip guard, got %v", err)
 	}
 }
 
@@ -104,8 +106,8 @@ func TestForceDeliver_NonForceSkipRollsBackAndSurfaces(t *testing.T) {
 	sendTestRequest(t, session, "run", "MSG-SKIP")
 
 	aged := Message{
-		ID: "aged-task-2", From: "edit", To: "run", Type: "request",
-		Action: "run", Payload: "prior work", TS: time.Now().Unix() - 60,
+		ID: "fresh-task-2", From: "edit", To: "run", Type: "request",
+		Action: "run", Payload: "prior work", TS: time.Now().Unix() - 1,
 	}
 	if err := CreateTask(session, aged, 600); err != nil {
 		t.Fatalf("CreateTask: %v", err)

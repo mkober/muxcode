@@ -206,41 +206,57 @@ func TestCheckPollHealth_RecoversOncePerGap(t *testing.T) {
 	}
 }
 
-// A skipped injection is not a re-drive: when the recovery wake-up is
-// suppressed by the in-flight-task guard (ErrInjectionSkipped), the
-// episode must stay un-recovered so later polls retry — once the blocking
-// task expires the injection lands. Recording the skip as a re-drive is
-// how a wedged agent stayed stuck ~20 minutes on 2026-08-26 (MUX-105).
+// A skipped re-drive is not a re-drive: when recovery is withheld (a busy
+// pane, or ErrInjectionSkipped from a live prompt), the episode must stay
+// un-recovered so later polls retry. Recording the skip as a re-drive is how
+// a wedged agent stayed stuck ~20 minutes on 2026-08-26 (MUX-105). The skip
+// row is written once per episode, not per poll (MUX-192).
 func TestCheckPollHealth_SkipIsNotARedrive(t *testing.T) {
-	session := testSession(t)
-	d := New(session, 5, 8)
-	t.Setenv("MUXCODE_DELIVERY_ACK", "1")
-	t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "")
-	t.Setenv(bus.RoleCLIEnvVar("build"), "opencode") // non-hook recovery branch
-	d.agentAlive = allAlive
+	for _, tc := range []struct {
+		name string
+		res  bus.DeliverResult
+		err  error
+	}{
+		{"busy", bus.DeliverResult{Skipped: "agent is mid-turn"}, nil},
+		{"injection-skipped", bus.DeliverResult{}, fmt.Errorf("deliver to build: %w", bus.ErrInjectionSkipped)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := testSession(t)
+			d := New(session, 5, 8)
+			t.Setenv("MUXCODE_DELIVERY_ACK", "1")
+			t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "")
+			t.Setenv(bus.RoleCLIEnvVar("build"), "opencode")
+			d.agentAlive = allAlive
+			calls := 0
+			d.forceDeliver = func(_, _ string, _ bool) (bus.DeliverResult, error) {
+				calls++
+				return tc.res, tc.err
+			}
 
-	// Stale un-receipted request → a receipt gap for build.
-	msg := bus.NewMessage("edit", "build", "request", "build", "build it", "")
-	msg.TS = time.Now().Unix() - (pollHealthGapSecs + 30)
-	if err := bus.Send(session, msg); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
+			msg := bus.NewMessage("edit", "build", "request", "build", "build it", "")
+			msg.TS = time.Now().Unix() - (pollHealthGapSecs + 30)
+			if err := bus.Send(session, msg); err != nil {
+				t.Fatalf("Send: %v", err)
+			}
 
-	// Aged in-flight task → the SendWakeUp guard skips the recovery injection.
-	aged := bus.NewMessage("edit", "build", "request", "build", "prior work", "")
-	aged.TS = time.Now().Unix() - 60
-	if err := bus.CreateTask(session, aged, 600); err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
+			for i := 0; i < 3; i++ {
+				d.lastPollHealthCheck = 0
+				d.checkPollHealth()
+			}
 
-	d.lastPollHealthCheck = 0
-	d.checkPollHealth()
-
-	if d.pollGapSince["build"] == 0 {
-		t.Fatal("expected a recorded gap for build")
-	}
-	if d.pollGapRecovered["build"] {
-		t.Error("a skipped injection must not count as a recovery — the episode must stay un-recovered so later polls retry")
+			if d.pollGapSince["build"] == 0 {
+				t.Fatal("expected a recorded gap for build")
+			}
+			if d.pollGapRecovered["build"] {
+				t.Error("a skipped re-drive must not count as a recovery — the episode must stay un-recovered so later polls retry")
+			}
+			if calls != 3 {
+				t.Errorf("each poll must retry the skipped re-drive, got %d attempts over 3 polls", calls)
+			}
+			if rows := lifecycleDetails(t, session, "delivery-gap-skip"); len(rows) != 1 {
+				t.Errorf("delivery-gap-skip must be logged once per episode, got %d: %v", len(rows), rows)
+			}
+		})
 	}
 }
 

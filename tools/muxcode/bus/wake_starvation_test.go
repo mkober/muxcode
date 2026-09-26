@@ -11,24 +11,38 @@ import (
 // incident — answered by review under the chain's id, so it stayed in flight.
 const starvedTaskID = "1790347799-edit-dfae26e9"
 
+// codexIdleReviewFrame is the codex review pane at 10:58 — idle at an empty
+// composer, with the warning footer that diagnose's wording pointed at.
+const codexIdleReviewFrame = "• The inbox is empty; nothing is pending.\n\n" +
+	"  Worked for 1m 7s · 11:01 AM\n\n" +
+	"› Ask Codex to do anything\n\n" +
+	"  GPT-6-Astra medium · ~/Repos/mkober/muxcode · Review new messages ⚠ 1 warning · f2 to view\n"
+
+// codexWorkingReviewFrame is a codex review pane mid-turn.
+const codexWorkingReviewFrame = "• Working (12s • esc to interrupt)\n\n" +
+	"› Ask Codex to do anything\n\n" +
+	"  GPT-6-Astra medium · ~/Repos/mkober/muxcode\n"
+
 // starvedReviewFixture reproduces the MUX-192 state for a codex review role:
-// edit's review request tracked in flight for 300s, and a newer request
-// pending in review's inbox. With answered, review's reply to the chain's
-// request id is in the session log, so the task is complete in fact and
-// in-flight on disk. The pending request is force-sent, as edit's was at
-// 11:06 — an unforced Send is suppressed by the in-flight task it shares a
-// (from, to, action) with.
-func starvedReviewFixture(t *testing.T, session string, answered bool) {
+// edit's review request tracked in flight taskAge seconds, and a newer request
+// pending in review's inbox. A non-empty replyAction logs review's reply to
+// the chain's request id with that action, so with the task's own action the
+// task is complete in fact and in-flight on disk. The pending request is
+// force-sent, as edit's was at 11:06 — an unforced Send is suppressed by the
+// in-flight task it shares a (from, to, action) with.
+func starvedReviewFixture(t *testing.T, session string, taskAge int64, replyAction string) {
 	t.Helper()
 	t.Setenv("BUS_SESSION", session)
 	useTempBusDir(t)
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	t.Setenv(RoleCLIEnvVar("review"), "codex")
 	if err := Init(session, t.TempDir()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 
 	stale := Message{
 		ID: starvedTaskID, From: "edit", To: "review", Type: "request",
-		Action: "review", Payload: "review the branch", TS: time.Now().Unix() - 300,
+		Action: "review", Payload: "review the branch", TS: time.Now().Unix() - taskAge,
 	}
 	if err := CreateTask(session, stale, 600); err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -37,41 +51,80 @@ func starvedReviewFixture(t *testing.T, session string, answered bool) {
 	if err := SendForce(session, pending); err != nil {
 		t.Fatalf("SendForce pending: %v", err)
 	}
-	if !answered {
+	if replyAction == "" {
 		return
 	}
-	reply := NewMessage("review", "edit", "response", "review", "LGTM", "1790347737-test-chain")
+	reply := NewMessage("review", "edit", "response", replyAction, "LGTM", "1790347737-test-chain")
 	if err := Send(session, reply); err != nil {
 		t.Fatalf("Send reply: %v", err)
-	}
-	if _, ok := FindResponseSince(session, "review", "edit", stale.TS); !ok {
-		t.Fatal("fixture: review's answer must be findable in the log")
 	}
 	if task, err := ReadTask(session, starvedTaskID); err != nil || task.Status != TaskInFlight {
 		t.Fatalf("fixture: edit's task must still read in-flight, got %+v (%v)", task, err)
 	}
 }
 
-// TestCodexSendWakeUp_StaleTaskStarvesWake_Pin pins the MUX-192 delivery
-// defect as it stands: an unforced wake to a codex agent is refused by an
-// in-flight task of any age, answered or not. Phase 2 inverts both halves —
-// a stale or answered task must no longer block the wake.
-func TestCodexSendWakeUp_StaleTaskStarvesWake_Pin(t *testing.T) {
-	for _, answered := range []bool{false, true} {
-		name := "unanswered"
-		if answered {
-			name = "answered-elsewhere"
-		}
-		t.Run(name, func(t *testing.T) {
-			session := "mux192-pin-wake-" + name
-			starvedReviewFixture(t, session, answered)
+// TestCodexSendWakeUp_StaleOrAnsweredTaskDoesNotStarveWake is the MUX-192
+// delivery pin inverted: an unforced wake to an idle codex agent is no longer
+// refused by an in-flight task past the send grace, nor by a fresh one whose
+// request was answered under another id for the same action — the pending
+// request is typed into the pane.
+func TestCodexSendWakeUp_StaleOrAnsweredTaskDoesNotStarveWake(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		taskAge     int64
+		replyAction string
+	}{
+		{"stale-unanswered", 300, ""},
+		{"stale-answered-elsewhere", 300, "review"},
+		{"fresh-answered-elsewhere", 1, "review"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := "mux192-wake-" + tc.name
+			starvedReviewFixture(t, session, tc.taskAge, tc.replyAction)
+			calls := stubInjectionPane(t, codexIdleReviewFrame, nil)
+
+			err := (&CodexProvider{}).SendWakeUp(session, "review", false)
+			if errors.Is(err, ErrInjectionSkipped) {
+				t.Fatalf("the wake must not be skipped, got %v", err)
+			}
+			if !strings.Contains(strings.Join(sentKeys(*calls), "\n"), "review the fix") {
+				t.Errorf("the pending request must be typed into the idle pane, sent %v", sentKeys(*calls))
+			}
+		})
+	}
+}
+
+// TestCodexSendWakeUp_BusySignalsStillSkip is the MUX-192 negative control: a
+// fresh unanswered task — or one answered only under a different action —
+// still withholds the wake, and so does a mid-turn pane behind a stale task.
+// Each skip types nothing and writes one wake-skipped row naming the role.
+func TestCodexSendWakeUp_BusySignalsStillSkip(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		taskAge     int64
+		replyAction string
+		frame       string
+		wantInRow   string
+	}{
+		{"fresh-unanswered", 1, "", codexIdleReviewFrame, starvedTaskID},
+		{"fresh-answered-other-action", 1, "plan", codexIdleReviewFrame, starvedTaskID},
+		{"stale-task-mid-turn", 300, "", codexWorkingReviewFrame, "mid-turn"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := "mux192-skip-" + tc.name
+			starvedReviewFixture(t, session, tc.taskAge, tc.replyAction)
+			calls := stubInjectionPane(t, tc.frame, nil)
 
 			err := (&CodexProvider{}).SendWakeUp(session, "review", false)
 			if !errors.Is(err, ErrInjectionSkipped) {
-				t.Fatalf("pin: expected today's skip (ErrInjectionSkipped), got %v", err)
+				t.Fatalf("expected the wake skipped (ErrInjectionSkipped), got %v", err)
 			}
-			if !strings.Contains(err.Error(), shortID(starvedTaskID)) {
-				t.Errorf("pin: the skip should name the blocking task %s, got %v", shortID(starvedTaskID), err)
+			if keys := sentKeys(*calls); len(keys) != 0 {
+				t.Errorf("a skipped wake must type nothing, sent %v", keys)
+			}
+			rows, _ := FilterLifecycleLog(session, LifecycleFilterOpts{Event: "wake-skipped"})
+			if len(rows) != 1 || !strings.Contains(rows[0].Detail, "review") || !strings.Contains(rows[0].Detail, tc.wantInRow) {
+				t.Errorf("expected one wake-skipped row naming review and %q, got %+v", tc.wantInRow, rows)
 			}
 		})
 	}

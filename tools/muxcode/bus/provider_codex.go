@@ -550,16 +550,9 @@ func CodexRoleIsReadOnly(role string) bool {
 func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	target := PaneTarget(session, role)
 
-	// Same skip contract as the OpenCode guard (see sentinel doc).
 	if !force {
-		tasks, _ := ListTasks(session, TaskInFlight)
-		for _, t := range tasks {
-			if t.To == role && time.Now().Unix()-t.SentAt > 5 {
-				age := time.Now().Unix() - t.SentAt
-				fmt.Fprintf(os.Stderr, "  [wakeup] skipping %s injection — in-flight task %s:%s exists (%ds old)\n",
-					role, t.Action, shortID(t.ID), age)
-				return fmt.Errorf("%s: in-flight task %s (%ds old): %w", role, shortID(t.ID), age, ErrInjectionSkipped)
-			}
+		if err := unforcedWakeGate(session, role); err != nil {
+			return err
 		}
 	}
 

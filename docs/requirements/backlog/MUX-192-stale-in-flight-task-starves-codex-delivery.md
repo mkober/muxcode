@@ -109,12 +109,12 @@ live stalls. [MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md
 
 ### Acceptance criteria
 
-- [ ] A wake to a listenerless agent is **not** refused by an in-flight task whose request already has a correlated response in the log, or whose age exceeds the send grace — test: a codex review fixture with a stale in-flight task and a pending request → `Notify` injects; **negative control:** a task under 5 s old with the agent mid-turn still skips
-- [ ] The receipt-gap backstop recovers a starved listenerless agent instead of repeating the refused call — either it wakes with `force=true` under the MUX-171 busy gate (`AgentIsWorking` false), or it expires/answers the stale task first — test: the 10:57 shape (idle pane, stale answered task, pending request) → delivered within one backstop interval, `delivery-gap-skip` not logged more than once
-- [ ] A working codex pane is still never injected into — **negative control:** a mid-turn codex frame (`• Working (…) esc to interrupt`) with a pending request → no injection, whichever road
+- [x] A wake to a listenerless agent is **not** refused by an in-flight task whose request already has a correlated response in the log, or whose age exceeds the send grace — test: a codex review fixture with a stale in-flight task and a pending request → `Notify` injects; **negative control:** a task under 5 s old with the agent mid-turn still skips — 2026-09-26 Phase 2, `TestCodexSendWakeUp_StaleOrAnsweredTaskDoesNotStarveWake` + `…BusySignalsStillSkip` (`fresh-unanswered`)
+- [x] The receipt-gap backstop recovers a starved listenerless agent instead of repeating the refused call — either it wakes with `force=true` under the MUX-171 busy gate (`AgentIsWorking` false), or it expires/answers the stale task first — test: the 10:57 shape (idle pane, stale answered task, pending request) → delivered within one backstop interval, `delivery-gap-skip` not logged more than once — Phase 2: `ForceDeliver(…, true)` via the seam, `TestCheckPollHealth_StaleTaskRecoversInOnePoll` (one forced re-drive on the first poll, zero skip rows), `SkipIsNotARedrive` (one row per episode)
+- [x] A working codex pane is still never injected into — **negative control:** a mid-turn codex frame (`• Working (…) esc to interrupt`) with a pending request → no injection, whichever road — Phase 2: `BusySignalsStillSkip` (`stale-task-mid-turn`, nothing typed) on the unforced road; the backstop road is `ForceDeliver`, whose MUX-171 `AgentIsWorking` refusal is unchanged
 - [ ] A tracked task whose request has been answered under another request id for the same `(from, to, action)` does not stay `in-flight` to the timeout — it is completed or marked answered — test: chain request and edit request to review, one reply to the chain id → edit's task leaves `in-flight`; **negative control:** a reply to an unrelated action leaves it in flight
 - [ ] `diagnose` for a provider whose `IsIdle` is a constant does not report `active-with-stale-messages` on it; it names the road (`listenerless`, `SendWakeUp`) and the blocker it can see — the in-flight task id and age — and its remediation names `deliver --force` **and** the task — test: fixture report from the 10:58 state → finding names task `1790347799-edit-dfae26e9`, no "IsAgentIdle: false" evidence line
-- [ ] Every skip is a lifecycle row naming the task: `[wakeup] skipping` to stderr is not evidence anyone reads — test: a skipped wake writes `wake-skipped` (or the existing `delivery-gap-skip`) with role, task id and age
+- [x] Every skip is a lifecycle row naming the task: `[wakeup] skipping` to stderr is not evidence anyone reads — test: a skipped wake writes `wake-skipped` (or the existing `delivery-gap-skip`) with role, task id and age — Phase 2: `wake-skipped` rows in `unforcedWakeGate` (task branch names id, action, age; busy branch names the role), one per skip in `BusySignalsStillSkip`
 - [ ] `bash scripts/test-codex-idle-delivery.sh` passes
 
 ### Technical approach
@@ -150,7 +150,8 @@ Three small changes and one diagnostic rewrite, in this order:
 | `tools/muxcode/bus/timetrack.go:237` | `AgentIsWorking` — the real "busy" predicate |
 | `tools/muxcode/bus/diagnose.go:~957-995` | `active-with-stale-messages` |
 | `tools/muxcode/bus/dedup.go:291` | `FindResponseSince` — the answered-elsewhere lookup |
-| `tools/muxcode/bus/wake_starvation_test.go`, `tools/muxcode/daemon/wake_starvation_test.go` | Phase 1's pins (2026-09-26): the skip on a stale and an answered task, the backstop refused every poll, the constant-idle diagnosis — each to be inverted by Phases 2–3 |
+| `tools/muxcode/bus/wake_gate.go` | Phase 2 (2026-09-26): `unforcedWakeGate`, `wakeBlockedByTask`, `taskAnswered` — the one refusal both listenerless providers apply, and the `wake-skipped` row |
+| `tools/muxcode/bus/wake_starvation_test.go`, `tools/muxcode/daemon/wake_starvation_test.go` | Phase 1's pins (2026-09-26), inverted in Phase 2 for the wake and the backstop; the diagnose pin stands until Phase 3 |
 
 ## Implementation
 
@@ -167,10 +168,15 @@ the defect, so a passing Phase 2 must turn all three red before its own inversio
 
 ### Phase 2: Bound the skip and fix the backstop
 
-- [ ] One shared predicate `wakeBlockedByTask(session, role)` — younger than the grace **and** unanswered — used by both providers; invert the Phase 1 pins
-- [ ] `checkPollHealth` listenerless recovery → `ForceDeliver(…, true)` under `AgentIsWorking`; a busy pane logs a skip once, not per poll
-- [ ] Negative controls: a fresh unanswered task still skips; a mid-turn codex pane is never injected into on either road
-- [ ] Lifecycle row for every skip, naming role, task id, age
+- [x] One shared predicate `wakeBlockedByTask(session, role)` — younger than the grace **and** unanswered — used by both providers; invert the Phase 1 pins — 2026-09-26, new `bus/wake_gate.go`: `unforcedWakeGate` = `wakeBlockedByTask` (blocks only while younger than `wakeSendGraceSecs`=5, unanswered by `taskAnswered` — `responded` status or a same-`(from, to, action)` response in the log since `SentAt`, narrow per MUX-170 — and not itself pending in the inbox) then the `AgentIsWorking` busy gate; `provider_codex.go` and `provider_opencode.go` both call it in place of their duplicated loops. Pins inverted: `TestCodexSendWakeUp_StaleOrAnsweredTaskDoesNotStarveWake` (stale-unanswered, stale-answered-elsewhere, fresh-answered-elsewhere — the pending request is typed into the idle pane), `TestCheckPollHealth_StaleTaskRecoversInOnePoll`
+- [x] `checkPollHealth` listenerless recovery → `ForceDeliver(…, true)` under `AgentIsWorking`; a busy pane logs a skip once, not per poll — every provider now recovers through the `d.forceDeliver` seam (`bus.ForceDeliver`, force, MUX-171 gate); a skip keeps the episode open but `pollGapSkipLogged` writes `delivery-gap-skip` once per episode (`poll_health_test.go` `SkipIsNotARedrive`, table-driven: one row over three polls)
+- [x] Negative controls: a fresh unanswered task still skips; a mid-turn codex pane is never injected into on either road — `TestCodexSendWakeUp_BusySignalsStillSkip`: fresh-unanswered and fresh-answered-other-action skip naming the task, stale-task-mid-turn skips as "mid-turn"; each types nothing; the backstop road inherits `ForceDeliver`'s MUX-171 busy refusal
+- [x] Lifecycle row for every skip, naming role, task id, age — `wake-skipped` (`notify` source) on both refusal branches; asserted one row per skip in `BusySignalsStillSkip`
+
+**Phase 2 evidence — 2026-09-26 11:2x, run `1790434768` lap 2.** 7 files +222/−162 plus `wake_gate.go`;
+build 15 s, test 64 s green, one `fix` lap (34 s), review `1790436173` 0 must-fix / 0 should-fix / 0
+nits. `provider_skip_test.go` re-based on the new semantics (`YoungTaskDoesNotSkip` → `PendingTaskDoesNotSkip`).
+The diagnose pin (`TestDiagnose_CodexStarvedReportsConstantIdle_Pin`) is left standing for Phase 3.
 
 ### Phase 3: Close the stale task, fix the diagnosis
 
@@ -212,8 +218,10 @@ here unless Phase 3 finds the diagnostic cannot be made truthful without it.
 
 ## Status
 
-**In Progress — 3/25 on 2026-09-26: Phase 1 (Pin) complete on run `1790434768`, three characterization
-tests green and reviewed clean; Phase 2 (bound the skip, fix the backstop) is next.** Set as the active
+**In Progress — 11/25 on 2026-09-26: Phases 1 and 2 complete on run `1790434768` (Phase 1 committed
+`05700de`, where the work moved to branch `MUX-192-stale-in-flight-task-starves-codex-delivery`);
+acceptance criteria 4/7 — the wake is bounded, the backstop forces, a busy pane still holds, every skip
+is a row. Phase 3 (close the stale task, fix the diagnosis) is next.** Set as the active
 spec 2026-09-25 11:4x on the user's instruction. The file stays in `backlog/` until the user moves it to `drafts/` (`muxcode spec set`
 warns that `verify-spec` may not trigger on a spec outside `drafts/`).
 
