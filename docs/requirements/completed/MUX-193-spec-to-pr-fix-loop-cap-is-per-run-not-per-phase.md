@@ -177,7 +177,10 @@ total, MUX-126's time included — not MUX-193's alone. MUX-126's own row stoppe
 
 **Complete — 21/21 on 2026-09-28 15:4x: all three phases; acceptance criteria 7/7.** Phase 3 on run
 `1790623512`: `scripts/test-fix-loop-cap.sh` 30/0 (29 checks + the floor), review `1790624822` passed
-with a wording nit, fixed in the script after the counted run. Phase 2 on run `1790623512`: `resets_iterations` on the loop-back
+with a wording nit, fixed in the script after the counted run; committed `507d995`. **Closed out
+2026-09-28 15:5x** by run `1790623512`'s `close-spec` node: moved `drafts/` → `completed/` (plain move;
+the push-pr commit stages it), backlog index rows closed, cross-references repointed, active spec
+cleared. Phase 2 `aae7e6a` on run `1790623512`: `resets_iterations` on the loop-back
 edges, `graph-loop-budget-reset`, stricter `validateResets`, the pin inverted and a restart test; review
 `1790624067` passed with one nit. Phase 3 (`scripts/test-fix-loop-cap.sh`) next. Phase 1 `ae2070e`:
 `bus/fix_loop_cap_test.go`, review `1790623721` clean first pass. Started 2026-09-28 15:2x on the user's instruction relayed by edit, on the MUX-126
