@@ -83,12 +83,12 @@ run-state that fails to respect phase boundaries.
 
 ### Acceptance criteria
 
-- [ ] The `fix → build` budget in `50-spec-to-pr` is per phase: a run whose phases each need up to the cap in fixes completes every phase — test: a five-phase fixture where Phases 1 and 4 each fail review twice runs to close-out
-- [ ] **Negative control:** a single phase needing more fixes than the cap still stops, with `graph-loop-exhausted` naming the edge — the per-phase reset must not become an unbounded loop
-- [ ] The phase-loop edges (`loop-check → implement`, `stuck-gate → implement`) keep their run-wide `max_iterations_from_spec` bound — the reset touches the inner cycle only
-- [ ] The reset survives a daemon restart mid-phase: the counter a resumed run reads is the current phase's, not zero and not the run's total
-- [ ] Each reset is a lifecycle row naming the run, the phase entered and the edges cleared, so a budget refresh is visible in `lifecycle show`
-- [ ] `graph validate` keeps rejecting an uncapped cycle; a template that declares a per-phase cap validates
+- [x] The `fix → build` budget in `50-spec-to-pr` is per phase: a run whose phases each need up to the cap in fixes completes every phase — test: a five-phase fixture where Phases 1 and 4 each fail review twice runs to close-out — Phase 2 `TestSpecToPRFixBudgetIsPerPhase` (the inverted pin): phases needing 3, 2, 0, 3 and 1 fixes — a harder case than the criterion names — reach close-out
+- [x] **Negative control:** a single phase needing more fixes than the cap still stops, with `graph-loop-exhausted` naming the edge — the per-phase reset must not become an unbounded loop — `TestSpecToPRFixBudgetStopsOnePhase`, now for Phase 1 **and** for a phase entered after a reset
+- [x] The phase-loop edges (`loop-check → implement`, `stuck-gate → implement`) keep their run-wide `max_iterations_from_spec` bound — the reset touches the inner cycle only — the per-phase test asserts the `loop-check` count untouched by the resets; `validateResets` forbids a reset naming an edge that itself resets
+- [x] The reset survives a daemon restart mid-phase: the counter a resumed run reads is the current phase's, not zero and not the run's total — `TestSpecToPRFixBudgetSurvivesRestart`: persisted count 0 at phase entry, 1 mid-phase, and the reset row records the prior 2; the reset is applied in the same `run` value and `WriteGraphRun` as the fire (`graph_exec.go:2215–2219`)
+- [x] Each reset is a lifecycle row naming the run, the phase entered and the edges cleared, so a budget refresh is visible in `lifecycle show` — `graph-loop-budget-reset` (run, resetting edge, phase entered, each cleared key with its prior count); four rows asserted across the five-phase run
+- [x] `graph validate` keeps rejecting an uncapped cycle; a template that declares a per-phase cap validates — `TestValidateResetsIterations`; the uncapped-cycle check is unchanged and the builtin template validates with the new attribute
 - [ ] `bash scripts/test-fix-loop-cap.sh` covers the per-phase budget and its negative control and passes
 
 ### Technical approach
@@ -125,12 +125,12 @@ run loudly, per the MUX-121 rule (`graph_exec.go:2227`).
 
 ### Phase 2: Per-phase budget
 
-- [ ] Add `ResetsIterations []string` (`"resets_iterations"`) to `GraphEdge`, and clear those keys' `EdgeFires` entries in the executor when the edge fires — same `run` value, same `WriteGraphRun` as the increment
-- [ ] Declare `"resets_iterations": ["fix->build"]` on `50-spec-to-pr`'s `loop-check → implement` and `stuck-gate → implement` edges
-- [ ] Lifecycle row on every reset (run, phase entered, edges cleared)
-- [ ] `graph validate`: accept the new attribute; still reject an uncapped cycle; reject a reset naming an edge that does not exist
-- [ ] Invert the Phase 1 pin to green; the negative control stays green
-- [ ] Restart test: persist mid-phase, reload the run, confirm the counter read is the current phase's
+- [x] Add `ResetsIterations []string` (`"resets_iterations"`) to `GraphEdge`, and clear those keys' `EdgeFires` entries in the executor when the edge fires — same `run` value, same `WriteGraphRun` as the increment — `Edge.ResetsIterations` (`graph.go:100`; entries `from->to` or `from->to:outcome`); `resetLoopBudgets` (`graph_exec.go:2250`) runs right after the increment, before the one `WriteGraphRun` — 2026-09-28, run `1790623512` lap 2, review `1790624067` (0 must-fix, 0 should-fix, 1 nit: a test comment's fix total)
+- [x] Declare `"resets_iterations": ["fix->build"]` on `50-spec-to-pr`'s `loop-check → implement` and `stuck-gate → implement` edges — `graph_templates.go:67–68`
+- [x] Lifecycle row on every reset (run, phase entered, edges cleared) — `graph-loop-budget-reset`
+- [x] `graph validate`: accept the new attribute; still reject an uncapped cycle; reject a reset naming an edge that does not exist — `validateResets` also rejects, beyond the spec, a resetting edge with no cap of its own, a self-reset and chained resets, each of which would make the refreshed budget unbounded
+- [x] Invert the Phase 1 pin to green; the negative control stays green — `TestSpecToPRFixBudgetIsRunWide` became `…IsPerPhase`; `…StopsOnePhase` extended to a post-reset phase
+- [x] Restart test: persist mid-phase, reload the run, confirm the counter read is the current phase's — `TestSpecToPRFixBudgetSurvivesRestart`
 
 ### Phase 3: Integration test
 
@@ -166,9 +166,11 @@ exhaustion to `stuck-gate` would change the MUX-121 contract and is not done her
 
 ## Status
 
-In Progress — 2/21 on 2026-09-28 15:3x: **Phase 1 (Pin) complete** on run `1790623512` —
-`bus/fix_loop_cap_test.go`, build/test green, review `1790623721` clean first pass. Phase 2 (per-phase
-budget) next, which must invert `TestSpecToPRFixBudgetIsRunWide`. Started 2026-09-28 15:2x on the user's instruction relayed by edit, on the MUX-126
+In Progress — 14/21 on 2026-09-28 15:4x: **Phases 1–2 complete**; acceptance criteria 6/7 (the
+integration script is the one left). Phase 2 on run `1790623512`: `resets_iterations` on the loop-back
+edges, `graph-loop-budget-reset`, stricter `validateResets`, the pin inverted and a restart test; review
+`1790624067` passed with one nit. Phase 3 (`scripts/test-fix-loop-cap.sh`) next. Phase 1 `ae2070e`:
+`bus/fix_loop_cap_test.go`, review `1790623721` clean first pass. Started 2026-09-28 15:2x on the user's instruction relayed by edit, on the MUX-126
 branch (`MUX-126-edit-resume-aware-auto-restart`, PR #95) rather than a branch of its own; moved
 `backlog/` → `drafts/`. Both decisions resolved at start: reset on phase entry, and exhaustion keeps
 failing the run.

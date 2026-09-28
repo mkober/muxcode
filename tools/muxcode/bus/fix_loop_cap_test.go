@@ -119,37 +119,135 @@ func assertFixBudgetExhausted(t *testing.T, runID string) {
 	}
 }
 
-// TestSpecToPRFixBudgetIsRunWide pins MUX-193 as it stands: phases whose
-// reviews fail 2, 1 and 0 times spend the three-fix budget between them, so
-// Phase 4's single finding exhausts fix->build and fails the run with Phases
-// 4 and 5 unfinished. MUX-193 Phase 2 inverts this to the run completing.
-func TestSpecToPRFixBudgetIsRunWide(t *testing.T) {
+func budgetResets(t *testing.T, runID string) []LifecycleEntry {
+	t.Helper()
+	return cancelEvents(t, "graph-loop-budget-reset", runID)
+}
+
+// TestSpecToPRFixBudgetIsPerPhase is the MUX-193 defect inverted: under the
+// run-wide budget, run 1790608128 failed at Phase 4 after Phases 1 and 2 had
+// spent its three fixes. Here phases needing up to the cap each — 3, 2, 0, 3
+// and 1 fixes, nine in all — run to close-out, and every phase entry after
+// the first writes one reset row.
+func TestSpecToPRFixBudgetIsPerPhase(t *testing.T) {
 	run := createTestRun(t, fixLoopFixture(t, 5))
 	step(t, runTestSession, run.ID)
 
-	for phase, failures := range []int{2, 1, 0} {
-		if !drivePhase(t, run.ID, failures, false) {
-			t.Fatalf("Phase %d failed the run; only Phase 4 should", phase+1)
+	fixes := []int{3, 2, 0, 3, 1}
+	for i, failures := range fixes {
+		if !drivePhase(t, run.ID, failures, i == len(fixes)-1) {
+			t.Fatalf("Phase %d failed the run with %d fixes, within its own budget", i+1, failures)
 		}
 	}
-	if drivePhase(t, run.ID, 1, false) {
-		t.Fatal("Phase 4 completed; the run-wide budget should have been spent")
+	if s := nodeState(t, runTestSession, run.ID, "close-spec"); s != GraphNodeRunning {
+		t.Errorf("close-spec state %q, want running — every phase completed", s)
 	}
-	assertFixBudgetExhausted(t, run.ID)
-	if s := nodeState(t, runTestSession, run.ID, "close-spec"); s != GraphNodePending {
-		t.Errorf("close-spec state %q, want pending — the close-out was never reached", s)
+	if rows := budgetResets(t, run.ID); len(rows) != len(fixes)-1 {
+		t.Errorf("want %d reset rows, one per phase entered by the loop-back, got %+v", len(fixes)-1, rows)
+	}
+	r, _ := ReadGraphRun(runTestSession, run.ID)
+	if n := r.EdgeFires["loop-check->implement:success"]; n != len(fixes)-1 {
+		t.Errorf("the phase loop's run-wide count must be untouched by the reset: %d, want %d", n, len(fixes)-1)
 	}
 }
 
-// TestSpecToPRFixBudgetStopsOnePhase is the negative control: one phase
-// needing a fourth fix still exhausts the cap and fails the run, however the
-// budget is scoped.
+// TestSpecToPRFixBudgetStopsOnePhase is the negative control: a phase needing
+// a fourth fix still exhausts the cap and fails the run — in Phase 1, and in
+// a later phase whose budget a reset has refreshed.
 func TestSpecToPRFixBudgetStopsOnePhase(t *testing.T) {
-	run := createTestRun(t, fixLoopFixture(t, 1))
-	step(t, runTestSession, run.ID)
-
-	if drivePhase(t, run.ID, 4, true) {
-		t.Fatal("a phase needing four fixes completed past a cap of three")
+	for _, fixes := range [][]int{{4}, {1, 4}} {
+		run := createTestRun(t, fixLoopFixture(t, len(fixes)))
+		step(t, runTestSession, run.ID)
+		for i, failures := range fixes[:len(fixes)-1] {
+			if !drivePhase(t, run.ID, failures, false) {
+				t.Fatalf("%v: Phase %d failed the run", fixes, i+1)
+			}
+		}
+		if drivePhase(t, run.ID, fixes[len(fixes)-1], true) {
+			t.Fatalf("%v: a phase needing four fixes completed past a cap of three", fixes)
+		}
+		assertFixBudgetExhausted(t, run.ID)
 	}
-	assertFixBudgetExhausted(t, run.ID)
+}
+
+// TestSpecToPRFixBudgetSurvivesRestart reads the counter the way a restarted
+// daemon does — from run.json — at phase entry and mid-phase: it holds the
+// current phase's fixes, neither zero nor the run's total.
+func TestSpecToPRFixBudgetSurvivesRestart(t *testing.T) {
+	run := createTestRun(t, fixLoopFixture(t, 2))
+	step(t, runTestSession, run.ID)
+	if !drivePhase(t, run.ID, 2, false) {
+		t.Fatal("Phase 1 failed the run")
+	}
+	persisted := func() int {
+		r, err := ReadGraphRun(runTestSession, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.EdgeFires[fixBuildKey]
+	}
+	if n := persisted(); n != 0 {
+		t.Errorf("at Phase 2 entry the persisted fix count is %d, want 0 — Phase 1's 2 cleared", n)
+	}
+	rows := budgetResets(t, run.ID)
+	if len(rows) != 1 || !strings.Contains(rows[0].Detail, fixBuildKey+" (was 2)") {
+		t.Errorf("want one reset row naming %s (was 2), got %+v", fixBuildKey, rows)
+	}
+
+	answer(t, run.ID, "implement", "implemented. EXIT=0")
+	answer(t, run.ID, "build", "")
+	answer(t, run.ID, "test", "")
+	answer(t, run.ID, "review", reviewFindings)
+	answer(t, run.ID, "fix", "fixed. EXIT=0")
+	if n := persisted(); n != 1 {
+		t.Errorf("mid-Phase 2 the persisted fix count is %d, want Phase 2's 1", n)
+	}
+}
+
+func TestValidateResetsIterations(t *testing.T) {
+	base := func() *Graph {
+		return &Graph{Name: "g", Start: "a",
+			Nodes: []Node{
+				{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+				{ID: "b", Type: NodeSend, Role: "test", Action: "test", Message: "go"},
+			},
+			Edges: []Edge{
+				{From: "a", To: "b"},
+				{From: "b", To: "a", Outcome: OutcomeFailure, MaxIterations: 3},
+				{From: "b", To: "b", MaxIterations: 2},
+			}}
+	}
+	if v := base().Validate(); !v.OK() {
+		t.Fatalf("base graph must validate: %v", v.Errors)
+	}
+	for _, c := range []struct {
+		name, want string
+		mutate     func(g *Graph)
+	}{
+		{"unknown edge", "names no edge", func(g *Graph) { g.Edges[2].ResetsIterations = []string{"a->z"} }},
+		{"uncapped resetter", "no cap of its own", func(g *Graph) { g.Edges[0].ResetsIterations = []string{"b->a"} }},
+		{"self reset", "resets its own iterations", func(g *Graph) { g.Edges[2].ResetsIterations = []string{"b->b"} }},
+		{"chained", "chained resets", func(g *Graph) {
+			g.Edges[1].ResetsIterations = []string{"b->b"}
+			g.Edges[2].ResetsIterations = []string{"b->a:failure"}
+		}},
+		{"uncapped cycle", "cycle", func(g *Graph) { g.Edges[1].MaxIterations = 0 }},
+	} {
+		g := base()
+		c.mutate(g)
+		assertErrorContains(t, g.Validate(), c.want)
+	}
+
+	ok := base()
+	ok.Edges[2].ResetsIterations = []string{"b->a"}
+	if v := ok.Validate(); !v.OK() {
+		t.Errorf("a capped edge resetting another's budget must validate: %v", v.Errors)
+	}
+	tmpl, err := ParseGraph([]byte(builtinGraphJSON["50-spec-to-pr"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := tmpl.Validate(); !v.OK() {
+		t.Errorf("50-spec-to-pr with its per-phase resets must validate: %v", v.Errors)
+	}
 }
