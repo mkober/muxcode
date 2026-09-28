@@ -81,6 +81,79 @@ func TestRestartLocalAgent_ScrapesBeforeInterruptAndResumes(t *testing.T) {
 			t.Errorf("%s rows = %d, want 1", event, n)
 		}
 	}
+	if IsReloading(session, "edit") {
+		t.Error("restart left its reload marker behind")
+	}
+}
+
+// PR #95 review: a relaunch already holding the role's marker (a manual
+// resume, or a second restart) makes the daemon restart refuse before any
+// scrape or keystroke, and leaves the holder's marker in place.
+func TestRestartLocalAgent_RefusesWhileMarkerHeld(t *testing.T) {
+	session := "restart-resume-held"
+	injectionTestSession(t, session)
+	log := stubRestartPane(t, restartExitPane, nil)
+	if err := writeReloadMarker(session, "edit"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RestartLocalAgent(session, "edit"); !errors.Is(err, ErrReloadMarkerHeld) {
+		t.Fatalf("err = %v, want ErrReloadMarkerHeld", err)
+	}
+	if len(*log) != 0 {
+		t.Errorf("a held marker must stop the restart before the pane is touched, got %v", *log)
+	}
+	if !IsReloading(session, "edit") {
+		t.Error("restart removed a marker it does not own")
+	}
+}
+
+// PR #95 review: ReloadAgent takes the same exclusive marker, so a reload
+// started while a resume or restart holds it refuses before stopping the agent
+// or typing, and leaves the holder's marker in place.
+func TestReloadAgent_RefusesWhileMarkerHeld(t *testing.T) {
+	session := "reload-held"
+	injectionTestSession(t, session)
+	log := stubRestartPane(t, restartExitPane, nil)
+	release, err := acquireReloadMarker(session, "edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	if err := ReloadAgent(session, "edit", "", "", false); !errors.Is(err, ErrReloadMarkerHeld) {
+		t.Fatalf("err = %v, want ErrReloadMarkerHeld", err)
+	}
+	if len(*log) != 0 {
+		t.Errorf("a held marker must stop the reload before the pane is touched, got %v", *log)
+	}
+	if !IsReloading(session, "edit") {
+		t.Error("reload removed a marker it does not own")
+	}
+}
+
+// The acquisition is exclusive: a second acquire fails until the first is
+// released, then succeeds again.
+func TestAcquireReloadMarker_Exclusive(t *testing.T) {
+	session := "reload-marker-excl"
+	injectionTestSession(t, session)
+
+	release, err := acquireReloadMarker(session, "edit")
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	if _, err := acquireReloadMarker(session, "edit"); !errors.Is(err, ErrReloadMarkerHeld) {
+		t.Fatalf("second acquire err = %v, want ErrReloadMarkerHeld", err)
+	}
+	release()
+	if IsReloading(session, "edit") {
+		t.Fatal("release left the marker")
+	}
+	again, err := acquireReloadMarker(session, "edit")
+	if err != nil {
+		t.Fatalf("acquire after release: %v", err)
+	}
+	again()
 }
 
 // Every road that finds no usable id relaunches fresh — the plain launch

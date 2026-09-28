@@ -32,9 +32,10 @@ var (
 // shows none. A pane with no usable banner relaunches fresh with the full flag
 // set, never a flagless resume.
 //
-// The role's reload marker is held for the whole relaunch so the daemon's
-// health sweep cannot restart the same pane concurrently, and is removed on
-// every return path. Lifecycle rows carry source "manual" and the actor.
+// The role's reload marker is acquired exclusively (acquireReloadMarker) before
+// the liveness probe and held for the whole relaunch, so neither a second
+// resume nor the daemon's RestartLocalAgent — which takes the same marker —
+// can type into the pane concurrently; it is removed on every return path. Lifecycle rows carry source "manual" and the actor.
 func ResumeAgent(session, role string, force bool, actor string) error {
 	if !IsKnownRole(role) {
 		return fmt.Errorf("%w: unknown role %q", ErrResumeRefused, role)
@@ -54,18 +55,19 @@ func ResumeAgent(session, role string, force bool, actor string) error {
 		return fmt.Errorf("%w: %s runs on %s, which has no session to resume — use `muxcode reload %s` for a fresh start",
 			ErrResumeRefused, role, ResolveProviderCLI(role), role)
 	}
-	if IsReloading(session, role) {
-		return fmt.Errorf("%w: a reload of %s is in progress", ErrResumeRefused, role)
+	release, err := acquireReloadMarker(session, role)
+	if errors.Is(err, ErrReloadMarkerHeld) {
+		return fmt.Errorf("%w: a reload or restart of %s is in progress", ErrResumeRefused, role)
 	}
+	if err != nil {
+		return fmt.Errorf("holding off the health sweep: %w", err)
+	}
+	defer release()
+
 	alive := resumeAgentAlive(session, role)
 	if alive && !force {
 		return fmt.Errorf("%w: %s is running — resume relaunches a dead agent; pass --force to exit it first", ErrResumeRefused, role)
 	}
-
-	if err := writeReloadMarker(session, role); err != nil {
-		return fmt.Errorf("holding off the health sweep: %w", err)
-	}
-	defer clearReloadMarker(session, role)
 
 	if alive {
 		if err := resumeStopAgent(session, role); err != nil {

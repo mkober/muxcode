@@ -297,7 +297,16 @@ var restartInterruptDelay = 500 * time.Millisecond
 // command and falls back to fresh every time (MUX-126). A hit relaunches with
 // `--resume <id>`, which the launcher appends to the full flag set; a miss or
 // a stale banner relaunches fresh — never a flagless resume.
+//
+// The role's reload marker is acquired exclusively for the relaunch, the same
+// lock `muxcode resume` holds, so the two never drive one pane at once; a held
+// marker returns ErrReloadMarkerHeld with nothing typed.
 func RestartLocalAgent(session, role string) error {
+	release, err := acquireReloadMarker(session, role)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return scrapeAndRelaunch(session, role, PaneTarget(session, role), "daemon", "")
 }
 
