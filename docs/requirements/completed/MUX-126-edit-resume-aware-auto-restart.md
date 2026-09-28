@@ -1,4 +1,4 @@
-# Resume-Aware Auto-Restart for the Edit Agent
+# Resume-Aware Auto-Restart for Claude Agents
 
 An environmental event on 2026-08-31 killed all four Claude Code agent processes at once — `edit`,
 `plan`, `run`, `commit` (OpenCode agents were unaffected). The daemon restarted `plan`, `run` and
@@ -19,7 +19,10 @@ has:
 | Manual bare `claude --resume` (`edit`) | ✓ kept | ✗ lost |
 | Manual bare `claude --resume` (**`plan`**) — *added 2026-09-02* | ✓ kept | ✗ lost |
 
-This spec makes one path that keeps both.
+This spec makes one path that keeps both — for **every Claude role**, whether the daemon restarts it or
+a person resumes it by hand, with `edit` brought under the daemon's restart for the first time. The
+opening incident is told through `edit` because `edit` was the role with no restart at all; the fix is
+not specific to it.
 
 **The third row is not a duplicate of the second — it is the reason this spec must widen beyond
 `edit`.** [`MUX-136`](../completed/MUX-136-bare-resume-loses-agent-definition.md)'s Phase 1 finding established
@@ -240,22 +243,27 @@ excluded throughout.
 
 ### Acceptance criteria
 
-- [x] A dead `edit` agent is auto-restarted by the daemon with **both** its conversation and its full
-      launch flags — `--resume <id>` **and** `--dangerously-skip-permissions`, `--agent`, `--agents`,
-      `--allowedTools`, `--append-system-prompt` — Phase 5 `test-edit-auto-resume.sh` section B: a real
-      scratch daemon restarts a killed `edit` and the relaunched process's `ps` argv carries the offered
-      UUID and all five flags
+- [x] A dead Claude agent — `edit` or any other role the daemon monitors — is auto-restarted with
+      **both** its conversation and its full launch flags — `--resume <id>` **and**
+      `--dangerously-skip-permissions`, `--agent`, `--agents`, `--allowedTools`, `--append-system-prompt` —
+      Phase 5 `test-edit-auto-resume.sh` section B: a real scratch daemon restarts a killed `edit` and the
+      relaunched process's `ps` argv carries the offered UUID and all five flags; section F: a killed `plan`
+      is restarted, scrapes its own session id and relaunches with `--resume` and the permission flag;
+      `TestRunAgentLaunchResume_CarriesResumeAndFullFlags` asserts the full pair for a resumed `plan`
 - [x] The session id is scraped from the pane **before** any `C-c` or relaunch keystroke is sent —
       Phase 3: `RestartLocalAgent` captures (`-J`) before its `C-c`; `TestRestartLocalAgent_ScrapesBeforeInterruptAndResumes`
       pins capture index < `C-c` index against a stub that erases the banner on interrupt
 - [x] When no session id can be scraped, the restart falls back to a **fresh launch with full flags**
-      (current non-edit behaviour) — never a flagless resume — Phase 3: miss, capture failure and a
+      (the daemon's pre-MUX-126 behaviour) — never a flagless resume — Phase 3: miss, capture failure and a
       stale banner all type plain `muxcode agent launch <role>`; `TestRestartLocalAgent_FallsBackToFreshLaunch`
 - [x] `--resume <scraped-id>` is used rather than `--continue` (most-recent-in-cwd resolves wrongly
       when `auto` runs Claude in the same repo) — Phases 2–3: the relaunch is `agent launch <role> --resume <id>`
-- [x] Daemon restarts of the other Claude roles (`plan`, `run`, `commit`) also resume their
-      conversation, with fresh-start as fallback — Phase 3: `checkAgentHealth` (`daemon.go:1925`) is the
-      restart road for every non-excluded role and now scrapes-then-resumes
+- [x] The resume path is the same for every Claude role — `plan`, `run`, `commit`, `edit` and any other
+      Claude role resume their conversation on a daemon restart, with fresh-start as fallback, and no role
+      is special-cased in the scrape, launch or restart code — Phase 3: `checkAgentHealth`
+      (`daemon.go:1925`) is the restart road for every non-excluded role and now scrapes-then-resumes
+      through the one `scrapeAndRelaunch`; `applyResume` keys on the provider (`IsClaudeTUI`), never the
+      role; Phase 4 removed the only role exception (`edit`)
 - [x] Non-Claude providers (OpenCode, Codex, local harness) are unaffected — no resume is attempted —
       their panes carry no Claude banner (scrape miss → fresh), and `applyResume` drops any id for a
       non-Claude provider with `resume-ignored` (Phase 2)
@@ -267,14 +275,17 @@ excluded throughout.
 - [x] Existing reload markers and `agent-health --stop` markers still suppress the restart — Phase 3
       verified the sweep's gates; Phase 4 `TestCheckAgentHealthEditOptOuts` covers the stop marker and
       the env opt-out for `edit`, with a monitored `plan` as counterexample
-- [x] The existing restart cap (3 attempts) and `agent-restarting`/`agent-down` alerts still apply to
-      `edit` — Phase 4 `TestCheckAgentHealthMonitorsEdit` (only `edit` dead, cap 3 holds, `agent-down` fires)
-- [x] Feature is **default ON** with an env opt-out (`MUXCODE_EDIT_AUTO_RESTART_DISABLE=1`) — Phase 4:
-      `IsAgentHealthExcluded` returns true for `edit` only on exactly `=1`
+- [x] The existing restart cap (3 attempts) and `agent-restarting`/`agent-down` alerts apply to every
+      Claude role, `edit` included — unchanged for the roles that already had them; Phase 4
+      `TestCheckAgentHealthMonitorsEdit` (only `edit` dead, cap 3 holds, `agent-down` fires) for the one
+      that did not
+- [x] Feature is **default ON** for every Claude role, and `edit` — newly monitored — keeps an env
+      opt-out (`MUXCODE_EDIT_AUTO_RESTART_DISABLE=1`) — Phase 3 turned the resume on for every monitored
+      role; Phase 4: `IsAgentHealthExcluded` returns true for `edit` only on exactly `=1`
 - [x] Lifecycle events are emitted for detect, scrape (hit and miss) and relaunch — detect is the
       existing `agent-health-fail`/`agent-restart` rows; Phase 3 adds `resume-scrape-hit`,
       `resume-scrape-miss` (naming a capture failure), `resume-scrape-stale` and `agent-relaunch`
-- [x] A manual escape hatch exists: `muxcode resume <role>` (or `muxcode reload <role> --resume`) —
+- [x] A manual escape hatch exists for any Claude role: `muxcode resume <role>` (or `muxcode reload <role> --resume`) —
       **delivered by [Phase 6](#phase-6-manual-resume-command)**, added 2026-09-28 on the user's decision to
       build it rather than defer; the existing `muxcode session resume` restores memory summaries, not an agent —
       `muxcode resume <role> [--force]` on run `1790620267`, `test-edit-auto-resume.sh` section G 77/0
@@ -292,9 +303,11 @@ excluded throughout.
    `provider_claude.go:257–278`. Pass the id to the launch command; on no match, launch fresh.
 3. **Un-exclude `edit`, keep the caution.** Remove `edit` from `agentHealthExcludedRoles` and gate
    its restart on the env opt-out plus the unchanged 3-failed-check down-detection. `webhook` stays.
-4. **Generalise to the other Claude roles.** The same scrape-then-resume applies to `plan`, `run`
-   and `commit`, turning a cold restart into a mid-task resume.
-5. **Manual path.** `muxcode resume <role>` performs the same scrape-then-relaunch on demand.
+4. **One path for every Claude role.** The scrape-then-resume lives in the shared restart body, keyed on
+   the provider and never on the role, so `plan`, `run`, `commit` and `edit` resume the same way —
+   turning every cold restart into a mid-task resume. `edit` differs only in carrying an opt-out.
+5. **Manual path.** `muxcode resume <role>` performs the same scrape-then-relaunch on demand, for any
+   Claude role.
 
 ### Key files
 
@@ -445,9 +458,15 @@ without `claude` on PATH) fixed with a fake-`claude` fixture, review `1790610148
 truncated id could borrow the next hard line's hex — and the `fix` worker replaced inference with
 `capture-pane -J` plus a whole-token parse; review `1790608755` clean, build/test green. Phase 2
 (resume-capable launch) next. Started 2026-09-28 on the user's instruction ("start MUX-126") relayed by edit;
-moved `backlog/` → `drafts/` on branch `MUX-126-edit-resume-aware-auto-restart`. The scope amendment
-below — every Claude role, not only `edit` — is still not reflected in the title, acceptance criteria
-or phases; that rewrite remains the user's call before Phase 1 fixes its shape.
+moved `backlog/` → `drafts/` on branch `MUX-126-edit-resume-aware-auto-restart`.
+
+**Rewritten for every Claude role 2026-09-28** on the user's instruction ("rewrite the spec for all
+Claude roles"), after close-out: the title, the opening's scope line, acceptance criteria 1, 3, 5, 10,
+11 and 13, and technical approach items 4–5. Every box stays checked — each reworded criterion cites
+evidence that already existed (section F's `plan` resume, the launcher test run as `plan`, the
+provider-keyed `applyResume`), and none needed new work, because Phase 3 had already built one path for
+every monitored role. The filename keeps its `edit-resume` slug: the id-bearing name is referenced by
+the branch, PR #95 and the backlog index. Phase 4's title ("Un-exclude edit") is accurate and stays.
 
 **Scope amendment (2026-09-02, from [`MUX-136`](../completed/MUX-136-bare-resume-loses-agent-definition.md)
 Phase 3 item 4).** The title and the acceptance criteria are written for `edit`, on the premise that
@@ -461,5 +480,6 @@ Two live occurrences were added above (fifth and sixth). The daemon-upgrade hypo
 **machine-wide idle Claude sessions**, not daemon-managed agents. The mechanism is unreproduced and sits
 outside muxcode; this spec's value is unchanged, because it governs *recovery* either way.
 
-Not yet reflected in this spec's own title, acceptance criteria, or phases — that is a rewrite, not an
-annotation, and it awaits the user.
+~~Not yet reflected in this spec's own title, acceptance criteria, or phases — that is a rewrite, not an
+annotation, and it awaits the user.~~ **Applied 2026-09-28** on the user's instruction — see the
+rewrite note above.
