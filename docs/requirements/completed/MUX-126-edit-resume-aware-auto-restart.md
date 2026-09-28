@@ -433,7 +433,7 @@ Run `1790612093` had parked at `close-stuck-gate` on AC 13 before Phase 6 existe
 `1790613444-run-7c51e74e`), review `1790613526` clean. Phase 4 `52c11d2` (un-exclude `edit`,
 `MUXCODE_EDIT_AUTO_RESTART_DISABLE=1`, `NeverReloadLive`), verified on run `1790612093`, review
 `1790612219` clean. Run `1790608128` failed at Phase 4 on the run-wide fix cap —
-[MUX-193](../backlog/MUX-193-spec-to-pr-fix-loop-cap-is-per-run-not-per-phase.md). Phase 3 `4356486`:
+[MUX-193](../drafts/MUX-193-spec-to-pr-fix-loop-cap-is-per-run-not-per-phase.md). Phase 3 `4356486`:
 `RestartLocalAgent` scrapes before `C-c` and relaunches `--resume <id>` on a hit, fresh on
 miss/capture failure/stale banner; review `1790610740` clean first pass. Phase 4 (un-exclude `edit`)
 next. Phase 2 `408dce9`:

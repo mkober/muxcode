@@ -76,8 +76,8 @@ rule that a cap shortfall must fail loudly — this spec keeps that rule and fix
 [MUX-167](../completed/MUX-167-spec-to-pr-commit-gate-before-phase-check.md) and
 [MUX-183](../completed/MUX-183-phase-commit-ready-recredits-shipped-phases.md) are the same family of
 run-state that fails to respect phase boundaries.
-[MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) owns the red spawn sections of
-`test-multi-phase-graph.sh`, which Phase 3 below extends.
+[MUX-178](../backlog/MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) owns the red spawn sections of
+`test-multi-phase-graph.sh`, which is why Phase 3 below writes a new script rather than extending it.
 
 ## Requirements
 
@@ -89,24 +89,21 @@ run-state that fails to respect phase boundaries.
 - [ ] The reset survives a daemon restart mid-phase: the counter a resumed run reads is the current phase's, not zero and not the run's total
 - [ ] Each reset is a lifecycle row naming the run, the phase entered and the edges cleared, so a budget refresh is visible in `lifecycle show`
 - [ ] `graph validate` keeps rejecting an uncapped cycle; a template that declares a per-phase cap validates
-- [ ] `bash scripts/test-multi-phase-graph.sh` (or a new `scripts/test-fix-loop-cap.sh`) covers the per-phase budget and its negative control and passes
+- [ ] `bash scripts/test-fix-loop-cap.sh` covers the per-phase budget and its negative control and passes
 
 ### Technical approach
 
-Two shapes; Decision 1 chooses.
+**Reset on phase entry** (Decision 1). A new edge attribute, `"resets_iterations"`, lists the edge
+keys whose `EdgeFires` entries are cleared when that edge fires. `50-spec-to-pr` declares
+`"resets_iterations": ["fix->build"]` on both loop-back edges into the phase head —
+`loop-check → implement` and `stuck-gate → implement` — so each phase starts with the full fix budget.
+The reset is applied where `graph_exec.go:2215` records the fire, in the same `run` value and the same
+`WriteGraphRun` as the increment, so a restart cannot observe the fire without the reset. It is declared
+on the template, not hard-coded in the executor: the reset is an explicit, reviewable line, and any
+future looping template opts in the same way.
 
-1. **Reset on phase entry.** When an edge into the phase-loop head fires (`loop-check → implement`,
-   and `stuck-gate → implement`), clear `EdgeFires` for the edges of the inner cycle. Declared on the
-   template, not hard-coded: an edge attribute such as `"resets_iterations": ["fix->build"]` on the
-   loop-back edge, applied where `graph_exec.go:2215` records the fire. Small, and the reset is an
-   explicit, reviewable line in the template.
-2. **Scope the counter.** Give the fix edge `"max_iterations_scope": "phase"` and key its counter by
-   the spec phase it fired in (`EdgeFireKey(e) + "@" + phase`). No reset step exists to be missed, and
-   a restart reads the right counter for free — but phase identity must be derived at fire time, which
-   is the HEAD-anchored question MUX-183 had to answer for `phaseCommitReady`.
-
-Either way the exhaustion path is unchanged: loud failure, per the MUX-121 rule. Whether an exhausted
-phase should route to `stuck-gate` (ask a human) rather than fail the run is Decision 2.
+The exhaustion path is **unchanged** (Decision 2): a phase that spends its whole budget still fails the
+run loudly, per the MUX-121 rule (`graph_exec.go:2227`).
 
 ### Key files
 
@@ -116,19 +113,20 @@ phase should route to `stuck-gate` (ask a human) rather than fail the run is Dec
 | `tools/muxcode/bus/graph_run.go` | `GraphRun.EdgeFires` (`:54`), `RetryGraphRun`'s downstream reset (`:665`) |
 | `tools/muxcode/bus/graph.go` | `GraphEdge` (`:79–91`) — the new attribute; validation (`:402–454`) |
 | `tools/muxcode/bus/graph_templates.go` | `50-spec-to-pr` fix and loop-back edges (`:58`, `:67–68`) |
-| `scripts/test-multi-phase-graph.sh` | Multi-phase fixture to extend (Phase 3) |
+| `scripts/test-fix-loop-cap.sh` | New integration script (Phase 3) |
+| `scripts/test-multi-phase-graph.sh` | Existing multi-phase fixture — a model for the new script, not extended (its spawn sections are red under MUX-178) |
 
 ## Implementation
 
 ### Phase 1: Pin
 
-- [ ] Unit test: a `50-spec-to-pr` run driven through three phases whose reviews fail 2, 1, 0 times, then one failure in Phase 4 → today fails with `graph-loop-exhausted` (pins the defect red)
-- [ ] Unit test: one phase failing review four times → exhausts (the negative control, green today, must stay green)
+- [x] Unit test: a `50-spec-to-pr` run driven through three phases whose reviews fail 2, 1, 0 times, then one failure in Phase 4 → today fails with `graph-loop-exhausted` (pins the defect red) — `TestSpecToPRFixBudgetIsRunWide` (`bus/fix_loop_cap_test.go`): the run fails in Phase 4 with `fix->build` fired 3 times, one `graph-loop-exhausted` row naming `fix->build:success`, the fourth fix unbuilt and `close-spec` never reached. It asserts today's behaviour, so it passes now and Phase 2 inverts it. `fixLoopFixture` reduces the template using the builtin's **own** edges, so Phase 2's template change reaches the test unedited — 2026-09-28, run `1790623512`, review `1790623721` clean
+- [x] Unit test: one phase failing review four times → exhausts (the negative control, green today, must stay green) — `TestSpecToPRFixBudgetStopsOnePhase`: exhausts at 3 fixes, the phase never completes
 
 ### Phase 2: Per-phase budget
 
-- [ ] Implement the Decision 1 shape in the executor and the `GraphEdge` schema
-- [ ] Declare it on `50-spec-to-pr`'s fix edge / loop-back edges
+- [ ] Add `ResetsIterations []string` (`"resets_iterations"`) to `GraphEdge`, and clear those keys' `EdgeFires` entries in the executor when the edge fires — same `run` value, same `WriteGraphRun` as the increment
+- [ ] Declare `"resets_iterations": ["fix->build"]` on `50-spec-to-pr`'s `loop-check → implement` and `stuck-gate → implement` edges
 - [ ] Lifecycle row on every reset (run, phase entered, edges cleared)
 - [ ] `graph validate`: accept the new attribute; still reject an uncapped cycle; reject a reset naming an edge that does not exist
 - [ ] Invert the Phase 1 pin to green; the negative control stays green
@@ -136,36 +134,45 @@ phase should route to `stuck-gate` (ask a human) rather than fail the run is Dec
 
 ### Phase 3: Integration test
 
-- [ ] Extend `scripts/test-multi-phase-graph.sh` (or create `scripts/test-fix-loop-cap.sh` if MUX-178's red spawn sections make the shared script unusable) with fake agents that fail review a scripted number of times per phase
+- [ ] Create `scripts/test-fix-loop-cap.sh` (hermetic: scratch bus + real scratch daemon, modelled on `test-multi-phase-graph.sh` but without its spawn sections, which are red under MUX-178) with fake agents that fail review a scripted number of times per phase
 - [ ] Test: five phases, Phases 1 and 4 each fail review twice → the run reaches close-out
 - [ ] Test (negative control): one phase fails review cap+1 times → `graph-loop-exhausted` and `graph-run-failed`, later phases never dispatched
 - [ ] Test: each phase entry writes one reset row
 - [ ] Coverage floor so a skipped section cannot report green
 - [ ] Run the script and record the pass/fail counts here
 
-## Open decisions
+## Decisions
 
-### Decision 1 — reset on entry, or a phase-scoped counter?
+Both resolved by the user on 2026-09-28, relayed by edit when the spec was started.
 
-Reset-on-entry is the smaller change and keeps `EdgeFires` a flat map; the scoped counter removes the
-reset step entirely and is restart-safe by construction, at the price of deriving phase identity at
-fire time. Recommendation: reset-on-entry, declared on the loop-back edge, unless Phase 1's restart
-test shows a reset can be lost between the fire and the write.
+### Decision 1 — reset on phase entry (resolved)
 
-### Decision 2 — should an exhausted phase ask a human instead of failing the run?
+`resets_iterations` declared on the loop-back edges, as in the technical approach. The alternative — a
+counter keyed by spec phase (`EdgeFireKey(e) + "@" + phase`) — was not taken: it needs phase identity
+derived at fire time, the HEAD-anchored question MUX-183 had to answer, where the reset keeps
+`EdgeFires` a flat map and makes the refresh an explicit line in the template.
 
-Today exhaustion fails the run (`graph_exec.go:2227`). A `fix → stuck-gate` route on exhaustion would
-turn "three fixes did not converge" into a question, matching how an incomplete phase is already
-handled. It changes the MUX-121 contract, so it is out of this spec's default scope; the user decides.
+### Decision 2 — exhaustion keeps failing the run (resolved)
+
+A phase that spends its whole fix budget fails the run, as today (`graph_exec.go:2227`). Routing
+exhaustion to `stuck-gate` would change the MUX-121 contract and is not done here.
 
 ## Out of scope
 
+- Routing an exhausted phase to `stuck-gate` instead of failing the run — Decision 2.
 - The phase-loop edges' run-wide bound (`max_iterations_from_spec`) — correct as is.
 - Single-pass templates' fix caps — run-wide and per-pass coincide there.
 - MUX-178's spawn-worktree regression in `test-multi-phase-graph.sh`.
 
 ## Status
 
-Backlog — filed 2026-09-28 on the user's instruction relayed by edit, from run `1790608128` (MUX-126),
-which failed at Phase 4 with its fix budget spent by Phases 1–2. Mechanism verified by plan against
-`408dce9` and the run's `edge_fires`. Not started.
+In Progress — 2/21 on 2026-09-28 15:3x: **Phase 1 (Pin) complete** on run `1790623512` —
+`bus/fix_loop_cap_test.go`, build/test green, review `1790623721` clean first pass. Phase 2 (per-phase
+budget) next, which must invert `TestSpecToPRFixBudgetIsRunWide`. Started 2026-09-28 15:2x on the user's instruction relayed by edit, on the MUX-126
+branch (`MUX-126-edit-resume-aware-auto-restart`, PR #95) rather than a branch of its own; moved
+`backlog/` → `drafts/`. Both decisions resolved at start: reset on phase entry, and exhaustion keeps
+failing the run.
+
+**Filed** 2026-09-28 on the user's instruction relayed by edit, from run `1790608128` (MUX-126), which
+failed at Phase 4 with its fix budget spent by Phases 1–2. Mechanism verified by plan against `408dce9`
+and the run's `edge_fires`.
