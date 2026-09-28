@@ -89,7 +89,7 @@ run-state that fails to respect phase boundaries.
 - [x] The reset survives a daemon restart mid-phase: the counter a resumed run reads is the current phase's, not zero and not the run's total — `TestSpecToPRFixBudgetSurvivesRestart`: persisted count 0 at phase entry, 1 mid-phase, and the reset row records the prior 2; the reset is applied in the same `run` value and `WriteGraphRun` as the fire (`graph_exec.go:2215–2219`)
 - [x] Each reset is a lifecycle row naming the run, the phase entered and the edges cleared, so a budget refresh is visible in `lifecycle show` — `graph-loop-budget-reset` (run, resetting edge, phase entered, each cleared key with its prior count); four rows asserted across the five-phase run
 - [x] `graph validate` keeps rejecting an uncapped cycle; a template that declares a per-phase cap validates — `TestValidateResetsIterations`; the uncapped-cycle check is unchanged and the builtin template validates with the new attribute
-- [ ] `bash scripts/test-fix-loop-cap.sh` covers the per-phase budget and its negative control and passes
+- [x] `bash scripts/test-fix-loop-cap.sh` covers the per-phase budget and its negative control and passes — Phase 3: 30 passed, 0 failed (29 checks + the floor), run agent `1790624737-run-dc84fb4e`
 
 ### Technical approach
 
@@ -134,12 +134,12 @@ run loudly, per the MUX-121 rule (`graph_exec.go:2227`).
 
 ### Phase 3: Integration test
 
-- [ ] Create `scripts/test-fix-loop-cap.sh` (hermetic: scratch bus + real scratch daemon, modelled on `test-multi-phase-graph.sh` but without its spawn sections, which are red under MUX-178) with fake agents that fail review a scripted number of times per phase
-- [ ] Test: five phases, Phases 1 and 4 each fail review twice → the run reaches close-out
-- [ ] Test (negative control): one phase fails review cap+1 times → `graph-loop-exhausted` and `graph-run-failed`, later phases never dispatched
-- [ ] Test: each phase entry writes one reset row
-- [ ] Coverage floor so a skipped section cannot report green
-- [ ] Run the script and record the pass/fail counts here
+- [x] Create `scripts/test-fix-loop-cap.sh` (hermetic: scratch bus + real scratch daemon, modelled on `test-multi-phase-graph.sh` but without its spawn sections, which are red under MUX-178) with fake agents that fail review a scripted number of times per phase — fixture is the template's inner cycle plus a `spec_phases_remaining` loop-check carrying `resets_iterations`; its validation section checks the fixture and the builtin template, and rejects a reset naming no edge, a self-reset and an uncapped cycle (the unknown-edge rejection doubles as the binary precondition) — 2026-09-28, run `1790623512` lap 3
+- [x] Test: five phases, Phases 1 and 4 each fail review twice → the run reaches close-out — reaches `close-spec` and completes, no `graph-loop-exhausted`
+- [x] Test (negative control): one phase fails review cap+1 times → `graph-loop-exhausted` and `graph-run-failed`, later phases never dispatched — the fourth fix exhausts `fix->build` at cap 3, the run fails, Phase 2 is never dispatched and no reset row is written
+- [x] Test: each phase entry writes one reset row — four `graph-loop-budget-reset` rows, naming Phases 2–5 and `fix->build`, with cleared counts 2, 0, 0, 2
+- [x] Coverage floor so a skipped section cannot report green — **exactly** 29 checks (`:337`, equality, not `>=`); the floor check itself is the 30th pass
+- [x] Run the script and record the pass/fail counts here — run agent `1790624737-run-dc84fb4e` (task `1790624545-spawn-2c41ec9b-75d8f1f0`): **30 passed, 0 failed, exit 0** (29 checks + the floor). Review `1790624822` passed with one nit (lines 246 and 262 said six fixes where the scenario spends four). The script was edited again at 15:47:54, after that run and that review; those two lines now read "four", matching the nit — a wording-only change, but the counted run predates it
 
 ## Decisions
 
@@ -164,10 +164,20 @@ exhaustion to `stuck-gate` would change the MUX-121 contract and is not done her
 - Single-pass templates' fix caps — run-wide and per-pass coincide there.
 - MUX-178's spawn-worktree regression in `test-multi-phase-graph.sh`.
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-126-edit-resume-aware-auto-restart | 2h 0m | 2026-09-28 15:48 |
+
+The branch is shared with MUX-126 (worked on it at the user's instruction), so this is the **branch**
+total, MUX-126's time included — not MUX-193's alone. MUX-126's own row stopped at 1h 16m on close-out.
+
 ## Status
 
-In Progress — 14/21 on 2026-09-28 15:4x: **Phases 1–2 complete**; acceptance criteria 6/7 (the
-integration script is the one left). Phase 2 on run `1790623512`: `resets_iterations` on the loop-back
+**Complete — 21/21 on 2026-09-28 15:4x: all three phases; acceptance criteria 7/7.** Phase 3 on run
+`1790623512`: `scripts/test-fix-loop-cap.sh` 30/0 (29 checks + the floor), review `1790624822` passed
+with a wording nit, fixed in the script after the counted run. Phase 2 on run `1790623512`: `resets_iterations` on the loop-back
 edges, `graph-loop-budget-reset`, stricter `validateResets`, the pin inverted and a restart test; review
 `1790624067` passed with one nit. Phase 3 (`scripts/test-fix-loop-cap.sh`) next. Phase 1 `ae2070e`:
 `bus/fix_loop_cap_test.go`, review `1790623721` clean first pass. Started 2026-09-28 15:2x on the user's instruction relayed by edit, on the MUX-126
