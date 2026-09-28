@@ -112,8 +112,8 @@ live stalls. [MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md
 - [x] A wake to a listenerless agent is **not** refused by an in-flight task whose request already has a correlated response in the log, or whose age exceeds the send grace — test: a codex review fixture with a stale in-flight task and a pending request → `Notify` injects; **negative control:** a task under 5 s old with the agent mid-turn still skips — 2026-09-26 Phase 2, `TestCodexSendWakeUp_StaleOrAnsweredTaskDoesNotStarveWake` + `…BusySignalsStillSkip` (`fresh-unanswered`)
 - [x] The receipt-gap backstop recovers a starved listenerless agent instead of repeating the refused call — either it wakes with `force=true` under the MUX-171 busy gate (`AgentIsWorking` false), or it expires/answers the stale task first — test: the 10:57 shape (idle pane, stale answered task, pending request) → delivered within one backstop interval, `delivery-gap-skip` not logged more than once — Phase 2: `ForceDeliver(…, true)` via the seam, `TestCheckPollHealth_StaleTaskRecoversInOnePoll` (one forced re-drive on the first poll, zero skip rows), `SkipIsNotARedrive` (one row per episode)
 - [x] A working codex pane is still never injected into — **negative control:** a mid-turn codex frame (`• Working (…) esc to interrupt`) with a pending request → no injection, whichever road — Phase 2: `BusySignalsStillSkip` (`stale-task-mid-turn`, nothing typed) on the unforced road; the backstop road is `ForceDeliver`, whose MUX-171 `AgentIsWorking` refusal is unchanged
-- [ ] A tracked task whose request has been answered under another request id for the same `(from, to, action)` does not stay `in-flight` to the timeout — it is completed or marked answered — test: chain request and edit request to review, one reply to the chain id → edit's task leaves `in-flight`; **negative control:** a reply to an unrelated action leaves it in flight
-- [ ] `diagnose` for a provider whose `IsIdle` is a constant does not report `active-with-stale-messages` on it; it names the road (`listenerless`, `SendWakeUp`) and the blocker it can see — the in-flight task id and age — and its remediation names `deliver --force` **and** the task — test: fixture report from the 10:58 state → finding names task `1790347799-edit-dfae26e9`, no "IsAgentIdle: false" evidence line
+- [x] A tracked task whose request has been answered under another request id for the same `(from, to, action)` does not stay `in-flight` to the timeout — it is completed or marked answered — test: chain request and edit request to review, one reply to the chain id → edit's task leaves `in-flight`; **negative control:** a reply to an unrelated action leaves it in flight — 2026-09-28 Phase 3, `TestCheckTrackedTasks_AnsweredElsewhereLeavesInFlight`: completed with the chain reply, delivery status `responded`, request drained; the `plan` reply leaves it in flight
+- [x] `diagnose` for a provider whose `IsIdle` is a constant does not report `active-with-stale-messages` on it; it names the road (`listenerless`, `SendWakeUp`) and the blocker it can see — the in-flight task id and age — and its remediation names `deliver --force` **and** the task — test: fixture report from the 10:58 state → finding names task `1790347799-edit-dfae26e9`, no "IsAgentIdle: false" evidence line — Phase 3, `TestDiagnose_CodexStarvedNamesBlockingTask`: critical `wake-blocked-by-task` naming the blocking task (the answered `1790347799-…` listed as context, "does not block the wake"), evidence names `Listenerless`/`SendWakeUp`, remediation names `muxcode deliver review --force` and the task; no `active-with-stale-messages`, no `IsAgentIdle: false` in any finding
 - [x] Every skip is a lifecycle row naming the task: `[wakeup] skipping` to stderr is not evidence anyone reads — test: a skipped wake writes `wake-skipped` (or the existing `delivery-gap-skip`) with role, task id and age — Phase 2: `wake-skipped` rows in `unforcedWakeGate` (task branch names id, action, age; busy branch names the role), one per skip in `BusySignalsStillSkip`
 - [ ] `bash scripts/test-codex-idle-delivery.sh` passes
 
@@ -180,9 +180,9 @@ The diagnose pin (`TestDiagnose_CodexStarvedReportsConstantIdle_Pin`) is left st
 
 ### Phase 3: Close the stale task, fix the diagnosis
 
-- [ ] `checkTrackedTasks`: answered-elsewhere detection, same `(from, to, action)` only; `task-answered-elsewhere` row; negative control with a different action
-- [ ] `diagnose`: `wake-blocked-by-task` finding for constant-`IsIdle` providers, naming the task; `active-with-stale-messages` no longer emitted for them; remediation names the task and `deliver --force`
-- [ ] `docs/architecture.md` delivery-tracking section and `docs/agent-bus.md` `diagnose` failure modes updated
+- [x] `checkTrackedTasks`: answered-elsewhere detection, same `(from, to, action)` only; `task-answered-elsewhere` row; negative control with a different action — 2026-09-28, `daemon.go`: an in-flight task with `TaskAnsweredElsewhere` (exported from `wake_gate.go`; same from/to, the action or an action-suffix such as `review-complete` for `review` — the incident reply `1790347804-review-af895fd9` — and never a reply to another request the sender itself made, per MUX-170) is `MarkResponded` (drains the request so it is never dispatched again) then `CompleteTask`, logged `task-answered-elsewhere`; `TestCheckTrackedTasks_AnsweredElsewhereLeavesInFlight` (`review-complete` completes, `plan` leaves in flight, an unrelated pending request survives), `TestTaskAnsweredElsewhere_IncidentShapeAndControls`
+- [x] `diagnose`: `wake-blocked-by-task` finding for constant-`IsIdle` providers, naming the task; `active-with-stale-messages` no longer emitted for them; remediation names the task and `deliver --force` — `diagnose.go`: `CollectInFlightTasks` → `InFlightTaskEvidence` (`in_flight_tasks` in `--json`, each with `answered_by` and `blocks_wake` from the gate's own `wakeBlockedByTask`); `checkWakeBlockedByTask` fires for `idleProbeConstant` providers (codex, opencode) on the gate's decision only, critical, naming the blocker, the listenerless road and answered tasks as context; `active-with-stale-messages` suppressed for them. `TestDiagnose_CodexStarvedNamesBlockingTask` (replaces the Phase 1 pin), `…WakeBlockedByTaskControls` (no task → silent, Claude keeps the old finding), `…BlocksWakeFollowsTheGate` (real bus state: only a fresh unanswered non-pending task blocks)
+- [x] `docs/architecture.md` delivery-tracking section and `docs/agent-bus.md` `diagnose` failure modes updated — 2026-09-28 by plan: `architecture.md` agent-diagnostics paragraph (sixteen modes, `in_flight_tasks`, why constant-`IsIdle` roles get `wake-blocked-by-task`) and `checkPollHealth` paragraph (forced re-drive for every provider under the MUX-171 gate, once-per-episode skip row, the shared `unforcedWakeGate`, `task-answered-elsewhere`); `agent-bus.md` keep-agents-deliverable note and the `deliver --force` recovery list
 
 ### Phase 4: Integration test
 
@@ -216,12 +216,20 @@ here unless Phase 3 finds the diagnostic cannot be made truthful without it.
 - The daemon/binary version mismatch (hypothesis 2) — `upgrade-daemons` exists for it.
 - Any change to the MUX-171 busy gate itself; this spec applies it, it does not weaken it.
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-192-stale-in-flight-task-starves-codex-delivery | 50m | 2026-09-28 09:14 |
+
 ## Status
 
-**In Progress — 11/25 on 2026-09-26: Phases 1 and 2 complete on run `1790434768` (Phase 1 committed
-`05700de`, where the work moved to branch `MUX-192-stale-in-flight-task-starves-codex-delivery`);
-acceptance criteria 4/7 — the wake is bounded, the backstop forces, a busy pane still holds, every skip
-is a row. Phase 3 (close the stale task, fix the diagnosis) is next.** Set as the active
+**In Progress — 16/25 on 2026-09-28: Phases 1–3 complete; acceptance criteria 6/7.** Phase 1 `05700de`
+(where the work moved to branch `MUX-192-stale-in-flight-task-starves-codex-delivery`), Phase 2
+`531e003` on run `1790434768`; Phase 3 on run `1790601087` — `TaskAnsweredElsewhere` closes the
+answered-elsewhere task in `checkTrackedTasks`, `diagnose` names the blocking task for constant-`IsIdle`
+providers, docs by plan; build/test green (72 s), review `1790601237` clean. **Phase 4 (the integration
+script) is the open work**, and AC 7 with it. Set as the active
 spec 2026-09-25 11:4x on the user's instruction. The file stays in `backlog/` until the user moves it to `drafts/` (`muxcode spec set`
 warns that `verify-spec` may not trigger on a spec outside `drafts/`).
 

@@ -130,17 +130,15 @@ func TestCodexSendWakeUp_BusySignalsStillSkip(t *testing.T) {
 	}
 }
 
-// TestDiagnose_CodexStarvedReportsConstantIdle_Pin pins the MUX-192 diagnosis
-// defect from the 10:58 report: for a codex role, whose IsIdle is a constant
-// false, diagnose emits active-with-stale-messages on "IsAgentIdle: false" and
-// never names the in-flight task that is actually blocking the wake. Phase 3
-// inverts it — a wake-blocked-by-task finding naming the task.
-func TestDiagnose_CodexStarvedReportsConstantIdle_Pin(t *testing.T) {
-	report := &DiagnosticReport{
+// starvedDiagnosticReport is the 10:58 `diagnose review` state: an idle codex
+// agent reported not-idle by its constant IsIdle, one actionable request 181s
+// old and un-receipted, and the given in-flight tasks.
+func starvedDiagnosticReport(provider string, tasks []InFlightTaskEvidence) *DiagnosticReport {
+	return &DiagnosticReport{
 		Role: "review",
 		AgentState: AgentStateEvidence{
 			IsIdle: false, IsAlive: true, WiderCaptureIdle: false,
-			Provider: "codex", SupportsHooks: true,
+			Provider: provider, SupportsHooks: true,
 			PaneLastLine: "GPT-6-Astra medium · ~/Repos/mkober/muxcode · Review new messages ⚠ 1 warning · f2 to view",
 		},
 		InboxState: InboxStateEvidence{MessageCount: 1, ActionableCount: 1, OldestMessageAge: 181},
@@ -148,25 +146,196 @@ func TestDiagnose_CodexStarvedReportsConstantIdle_Pin(t *testing.T) {
 			UnnotifiedCount: 1, AckDelivery: true,
 			ReceiptGapCount: 1, ReceiptGapAge: 181,
 		},
+		InFlightTasks: tasks,
 	}
+}
+
+func findingByMode(report *DiagnosticReport, mode string) *DiagnosticFinding {
+	for i := range report.Findings {
+		if report.Findings[i].FailureMode == mode {
+			return &report.Findings[i]
+		}
+	}
+	return nil
+}
+
+// blockingTaskID is a fresh, unanswered request the wake gate still honours.
+const blockingTaskID = "1790348497-edit-7dfa92fa"
+
+// TestDiagnose_CodexStarvedNamesBlockingTask is the MUX-192 diagnosis pin
+// inverted: for a starved codex role diagnose names the task the wake gate
+// blocks on and the listenerless road, keeps the other in-flight tasks as
+// context marked non-blocking, its remediation names the blocker and deliver
+// --force, and no finding reports the constant IsIdle as "IsAgentIdle: false".
+func TestDiagnose_CodexStarvedNamesBlockingTask(t *testing.T) {
+	report := starvedDiagnosticReport("codex", []InFlightTaskEvidence{
+		{ID: starvedTaskID, From: "edit", Action: "review", AgeSecs: 300, AnsweredBy: "1790347804-review-af895fd9"},
+		{ID: blockingTaskID, From: "edit", Action: "review", AgeSecs: 2, BlocksWake: true},
+	})
 	RunDiagnostics(report)
 
-	var stale *DiagnosticFinding
-	for i := range report.Findings {
-		if report.Findings[i].FailureMode == "active-with-stale-messages" {
-			stale = &report.Findings[i]
+	f := findingByMode(report, "wake-blocked-by-task")
+	if f == nil {
+		t.Fatalf("expected a wake-blocked-by-task finding, got %+v", report.Findings)
+	}
+	if f.Severity != "critical" {
+		t.Errorf("an un-receipted request behind the task is confirmed stuck delivery, want critical, got %s", f.Severity)
+	}
+	if !strings.Contains(f.Summary, blockingTaskID) || strings.Contains(f.Summary, starvedTaskID) {
+		t.Errorf("summary must name the blocking task, not the answered one, got %q", f.Summary)
+	}
+	evidence := strings.Join(f.Evidence, "\n")
+	for _, want := range []string{"Listenerless", "SendWakeUp", blockingTaskID, starvedTaskID, "1790347804-review-af895fd9", "does not block the wake"} {
+		if !strings.Contains(evidence, want) {
+			t.Errorf("evidence must contain %q, got %v", want, f.Evidence)
 		}
 	}
-	if stale == nil {
-		t.Fatalf("pin: expected today's active-with-stale-messages finding, got %+v", report.Findings)
+	remediation := strings.Join(f.Remediation, "\n")
+	if !strings.Contains(remediation, "muxcode deliver review --force") || !strings.Contains(remediation, blockingTaskID) {
+		t.Errorf("remediation must name deliver --force and the blocking task, got %v", f.Remediation)
 	}
-	if !strings.Contains(strings.Join(stale.Evidence, "\n"), "IsAgentIdle: false") {
-		t.Errorf("pin: expected the constant-idle evidence line, got %v", stale.Evidence)
+	if findingByMode(report, "active-with-stale-messages") != nil {
+		t.Error("active-with-stale-messages must not be emitted for a constant-IsIdle provider")
 	}
-	for _, f := range report.Findings {
-		all := strings.Join(append(append([]string{f.Summary}, f.Evidence...), f.Remediation...), "\n")
-		if strings.Contains(all, starvedTaskID) || strings.Contains(all, shortID(starvedTaskID)) {
-			t.Errorf("pin: today no finding names the blocking task, but %s does", f.FailureMode)
+	for _, other := range report.Findings {
+		if strings.Contains(strings.Join(other.Evidence, "\n"), "IsAgentIdle: false") {
+			t.Errorf("%s still reports the constant IsIdle as evidence", other.FailureMode)
 		}
+	}
+}
+
+// TestDiagnose_WakeBlockedByTaskControls holds the new finding to its scope:
+// a codex agent with no in-flight task gets no wake-blocked-by-task finding,
+// and a Claude agent — whose IsIdle is a real pane reading — keeps
+// active-with-stale-messages.
+func TestDiagnose_WakeBlockedByTaskControls(t *testing.T) {
+	noTask := starvedDiagnosticReport("codex", nil)
+	RunDiagnostics(noTask)
+	if findingByMode(noTask, "wake-blocked-by-task") != nil {
+		t.Error("no in-flight task means nothing to name — wake-blocked-by-task must stay silent")
+	}
+	if findingByMode(noTask, "receipt-gap") == nil {
+		t.Errorf("the un-receipted request must still be explained by receipt-gap, got %+v", noTask.Findings)
+	}
+
+	claude := starvedDiagnosticReport("claude", []InFlightTaskEvidence{
+		{ID: starvedTaskID, From: "edit", Action: "review", AgeSecs: 300},
+	})
+	RunDiagnostics(claude)
+	if findingByMode(claude, "wake-blocked-by-task") != nil {
+		t.Error("a provider with a real idle probe must not get the listenerless finding")
+	}
+	if findingByMode(claude, "active-with-stale-messages") == nil {
+		t.Errorf("a Claude agent must keep active-with-stale-messages, got %+v", claude.Findings)
+	}
+}
+
+// TestDiagnose_BlocksWakeFollowsTheGate drives diagnose from real bus state
+// through CollectInFlightTasks: only a fresh, unanswered task whose request
+// has left the inbox is reported as the wake blocker. Negative controls — a
+// stale task, a fresh answered one, and a fresh one still pending in the inbox
+// — produce no wake-blocked-by-task finding, because the gate lets each wake
+// through.
+func TestDiagnose_BlocksWakeFollowsTheGate(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		taskAge     int64
+		replyAction string
+		pending     bool
+		wantBlocks  bool
+	}{
+		{"fresh-unanswered", 1, "", false, true},
+		{"stale-unanswered", 300, "", false, false},
+		{"fresh-answered-elsewhere", 1, "review", false, false},
+		{"fresh-pending-in-inbox", 1, "", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := "mux192-diag-" + tc.name
+			starvedReviewFixture(t, session, tc.taskAge, tc.replyAction)
+			if tc.pending {
+				own := Message{
+					ID: starvedTaskID, From: "edit", To: "review", Type: "request",
+					Action: "review", Payload: "review the branch", TS: time.Now().Unix() - tc.taskAge,
+				}
+				if err := SendForce(session, own); err != nil {
+					t.Fatalf("SendForce own request: %v", err)
+				}
+			}
+
+			tasks := CollectInFlightTasks(session, "review")
+			if len(tasks) != 1 || tasks[0].ID != starvedTaskID || tasks[0].BlocksWake != tc.wantBlocks {
+				t.Fatalf("expected task %s with blocks_wake=%v, got %+v", starvedTaskID, tc.wantBlocks, tasks)
+			}
+			report := starvedDiagnosticReport("codex", tasks)
+			RunDiagnostics(report)
+
+			f := findingByMode(report, "wake-blocked-by-task")
+			if !tc.wantBlocks {
+				if f != nil {
+					t.Errorf("a task the gate does not block on must not be reported as the blocker, got %+v", *f)
+				}
+				if findingByMode(report, "receipt-gap") == nil {
+					t.Errorf("the un-receipted request must still be explained, got %+v", report.Findings)
+				}
+				return
+			}
+			if f == nil || !strings.Contains(f.Summary, starvedTaskID) {
+				t.Errorf("expected wake-blocked-by-task naming %s, got %+v", starvedTaskID, report.Findings)
+			}
+		})
+	}
+}
+
+// TestTaskAnsweredElsewhere_IncidentShapeAndControls replays the MUX-192 log:
+// review answered the chain's request (from test) to edit with
+// "review-complete", which answers edit's tracked "review" task. Controls: a
+// response to an unrelated action, and a reply to a sibling request edit
+// itself sent, answer nothing.
+func TestTaskAnsweredElsewhere_IncidentShapeAndControls(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		action    string
+		replyToFn func(t *testing.T, session string) string
+		want      bool
+	}{
+		{"incident-chain-reply", "review-complete", func(t *testing.T, session string) string {
+			chain := NewMessage("test", "review", "request", "review", "Tests passed — review the changes", "")
+			if err := SendNoCC(session, chain); err != nil {
+				t.Fatalf("SendNoCC chain: %v", err)
+			}
+			return chain.ID
+		}, true},
+		{"unrelated-action", "plan", func(*testing.T, string) string { return "1790347737-test-chain" }, false},
+		{"sibling-edit-request", "review-complete", func(t *testing.T, session string) string {
+			sibling := NewMessage("edit", "review", "request", "review", "review the other change", "")
+			if err := SendForce(session, sibling); err != nil {
+				t.Fatalf("SendForce sibling: %v", err)
+			}
+			return sibling.ID
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := "mux192-answered-" + tc.name
+			t.Setenv("BUS_SESSION", session)
+			useTempBusDir(t)
+			if err := Init(session, t.TempDir()); err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			task := Task{ID: starvedTaskID, From: "edit", To: "review", Action: "review",
+				Status: TaskInFlight, SentAt: time.Now().Unix() - 5}
+
+			reply := NewMessage("review", "edit", "response", tc.action, "1 must-fix", tc.replyToFn(t, session))
+			if err := Send(session, reply); err != nil {
+				t.Fatalf("Send reply: %v", err)
+			}
+
+			id, ok := TaskAnsweredElsewhere(session, task)
+			if ok != tc.want {
+				t.Fatalf("TaskAnsweredElsewhere = (%q, %v), want answered=%v", id, ok, tc.want)
+			}
+			if ok && id != reply.ID {
+				t.Errorf("answer id = %q, want the reply %q", id, reply.ID)
+			}
+		})
 	}
 }

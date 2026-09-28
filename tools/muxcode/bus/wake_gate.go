@@ -3,6 +3,7 @@ package bus
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -64,18 +65,42 @@ func wakeBlockedByTask(session, role string) (Task, int64, bool) {
 }
 
 // taskAnswered reports whether t's request has been answered: its delivery
-// status is responded, or the log holds a response from t.To to t.From with
-// t's action sent at or after the request — an answer correlated to another
-// request id for the same work. The (from, to, action) match is deliberately
-// narrow so a foreign answer is never adopted (MUX-170).
+// status is responded, or TaskAnsweredElsewhere finds the answer under
+// another request id.
 func taskAnswered(session string, t Task) bool {
 	if ds, err := ReadDeliveryStatus(session, t.ID); err == nil && ds.Status == StatusResponded {
 		return true
 	}
+	_, ok := TaskAnsweredElsewhere(session, t)
+	return ok
+}
+
+// TaskAnsweredElsewhere returns the id of a logged response that answers t
+// under another request id — the MUX-192 shape, where review answered the
+// chain's review request and edit's tracked one stayed in flight to the
+// timeout. The response must come from t.To to t.From with t's action — or
+// that action with a suffix, as review answers "review" with
+// "review-complete" (the incident reply 1790347804-review-af895fd9) — at or
+// after t was sent, and must not reply to another request t.From itself sent:
+// the (from, to, action) match plus that exclusion keep a sibling's or a
+// foreign answer from being adopted (MUX-170).
+func TaskAnsweredElsewhere(session string, t Task) (string, bool) {
 	for _, m := range readLogForRole(session, t.To, 200) {
-		if m.Type == "response" && m.From == t.To && m.To == t.From && m.Action == t.Action && m.TS >= t.SentAt {
-			return true
+		if m.Type != "response" || m.From != t.To || m.To != t.From || !answersAction(m.Action, t.Action) || m.TS < t.SentAt || m.ReplyTo == t.ID {
+			continue
 		}
+		if m.ReplyTo != "" {
+			if orig, ok := FindMessageByID(session, m.ReplyTo); ok && orig.From == t.From {
+				continue
+			}
+		}
+		return m.ID, true
 	}
-	return false
+	return "", false
+}
+
+// answersAction reports whether a response action answers a request action:
+// equal, or the request action followed by a hyphenated suffix.
+func answersAction(responseAction, requestAction string) bool {
+	return responseAction == requestAction || strings.HasPrefix(responseAction, requestAction+"-")
 }

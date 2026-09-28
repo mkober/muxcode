@@ -2735,6 +2735,13 @@ func (d *Daemon) checkPaneSweep() {
 // for response-only inboxes, so without this rescue the sender idles forever
 // and the user has to prompt for status manually.
 //
+// An in-flight task answered under another request id for the same
+// (from, to, action) — bus.TaskAnsweredElsewhere — is marked responded (which
+// drains its request from the recipient's inbox, so the answered work is never
+// dispatched again) and completed with that response, logged
+// task-answered-elsewhere, rather than left in flight to the timeout (MUX-192).
+// The sender already holds the reply, so no wake.
+//
 // Runs every 5 seconds. Skips tasks where --wait is active for the sender
 // (IsWaiting), since --wait handles its own completion.
 func (d *Daemon) checkTrackedTasks() {
@@ -2767,6 +2774,15 @@ func (d *Daemon) checkTrackedTasks() {
 		// sent a reply and MarkResponded fired. Complete the task.
 		ds, err := bus.ReadDeliveryStatus(d.session, task.ID)
 		if err != nil || ds.Status != bus.StatusResponded {
+			if task.Status == bus.TaskInFlight {
+				if respID, ok := bus.TaskAnsweredElsewhere(d.session, task); ok {
+					bus.MarkResponded(d.session, task.ID, respID)
+					bus.CompleteTask(d.session, task.ID, respID)
+					bus.LogLifecycle(d.session, "info", "daemon", "task-answered-elsewhere",
+						fmt.Sprintf("%s→%s:%s task %s completed by response %s", task.From, task.To, task.Action, task.ID, respID))
+					continue
+				}
+			}
 			// Not responded. Time out tasks stuck in-flight past their timeout
 			// (delivered while the agent was busy, then never acted on) so they
 			// stop blocking new requests via the in-flight dedup suppression.

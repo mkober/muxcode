@@ -63,7 +63,7 @@ open items against the active spec.
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| [MUX-192](./MUX-192-stale-in-flight-task-starves-codex-delivery.md) | A stale in-flight task starves every wake to a codex agent | 2026-09-25 | **Active spec** on the user's instruction, the same hour it was filed; 11/25 after Phases 1–2 closed 2026-09-26 on run `1790434768` (Phase 1 pins `05700de`; Phase 2 `wake_gate.go` — shared bounded skip, forced backstop, `wake-skipped` rows — review clean); AC 4/7; Phase 3 (stale-task close, diagnose) next. Still in `backlog/` — the move to `drafts/` is the user's. Keeps its #1 defects row and category row until it closes |
+| [MUX-192](./MUX-192-stale-in-flight-task-starves-codex-delivery.md) | A stale in-flight task starves every wake to a codex agent | 2026-09-25 | **Active spec** on the user's instruction, the same hour it was filed; 16/25 after Phases 1–3 (`05700de`, `531e003`, and 2026-09-28's run `1790601087`: `TaskAnsweredElsewhere` closes the stale task in `checkTrackedTasks`, `diagnose` gains `wake-blocked-by-task` for constant-`IsIdle` providers, docs updated); AC 6/7; Phase 4 (`scripts/test-codex-idle-delivery.sh`) next. Still in `backlog/` — the move to `drafts/` is the user's. Keeps its #1 defects row and category row until it closes |
 
 **MUX-154 closed 2026-09-25** at **27/27**, every criterion verified — reactivated that morning on
 the user's instruction out of Parked (17/27 since 2026-09-08), then run `1790345173` walked Phases 1,
