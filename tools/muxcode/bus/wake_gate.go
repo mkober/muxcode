@@ -26,8 +26,9 @@ func unforcedWakeGate(session, role string) error {
 		return fmt.Errorf("%s: in-flight task %s (%ds old): %w", role, shortID(t.ID), age, ErrInjectionSkipped)
 	}
 	if AgentIsWorking(session, role) {
-		LogLifecycle(session, "info", "notify", "wake-skipped", role+": agent is mid-turn")
-		return fmt.Errorf("%s: agent is mid-turn: %w", role, ErrInjectionSkipped)
+		task := oldestInFlightTaskTo(session, role)
+		LogLifecycle(session, "info", "notify", "wake-skipped", role+": agent is mid-turn"+task)
+		return fmt.Errorf("%s: agent is mid-turn%s: %w", role, task, ErrInjectionSkipped)
 	}
 	return nil
 }
@@ -64,6 +65,23 @@ func wakeBlockedByTask(session, role string) (Task, int64, bool) {
 	return Task{}, 0, false
 }
 
+// oldestInFlightTaskTo describes role's oldest in-flight task as
+// " (in-flight task <id>, <action>, <age>s old)", or "" when there is none —
+// the task a mid-turn wake-skipped row names.
+func oldestInFlightTaskTo(session, role string) string {
+	tasks, _ := ListTasks(session, TaskInFlight)
+	var oldest *Task
+	for i := range tasks {
+		if tasks[i].To == role && (oldest == nil || tasks[i].SentAt < oldest.SentAt) {
+			oldest = &tasks[i]
+		}
+	}
+	if oldest == nil {
+		return ""
+	}
+	return fmt.Sprintf(" (in-flight task %s, %s, %ds old)", oldest.ID, oldest.Action, time.Now().Unix()-oldest.SentAt)
+}
+
 // taskAnswered reports whether t's request has been answered: its delivery
 // status is responded, or TaskAnsweredElsewhere finds the answer under
 // another request id.
@@ -84,9 +102,26 @@ func taskAnswered(session string, t Task) bool {
 // after t was sent, and must not reply to another request t.From itself sent:
 // the (from, to, action) match plus that exclusion keep a sibling's or a
 // foreign answer from being adopted (MUX-170).
+//
+// "After t was sent" is decided by log order: only responses logged after t's
+// own request line qualify. Timestamps are second-resolution, so an inclusive
+// compare adopted a same-second reply that preceded the request (PR #93
+// review); when the request has left the read window, a response must be
+// strictly later than t.SentAt.
 func TaskAnsweredElsewhere(session string, t Task) (string, bool) {
-	for _, m := range readLogForRole(session, t.To, 200) {
-		if m.Type != "response" || m.From != t.To || m.To != t.From || !answersAction(m.Action, t.Action) || m.TS < t.SentAt || m.ReplyTo == t.ID {
+	msgs := readLogForRole(session, t.To, 200)
+	start, requestLogged := 0, false
+	for i, m := range msgs {
+		if m.ID == t.ID {
+			start, requestLogged = i+1, true
+			break
+		}
+	}
+	for _, m := range msgs[start:] {
+		if m.Type != "response" || m.From != t.To || m.To != t.From || !answersAction(m.Action, t.Action) || m.ReplyTo == t.ID {
+			continue
+		}
+		if !requestLogged && m.TS <= t.SentAt {
 			continue
 		}
 		if m.ReplyTo != "" {

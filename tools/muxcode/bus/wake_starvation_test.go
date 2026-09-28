@@ -291,28 +291,48 @@ func TestDiagnose_BlocksWakeFollowsTheGate(t *testing.T) {
 // "review-complete", which answers edit's tracked "review" task. Controls: a
 // response to an unrelated action, and a reply to a sibling request edit
 // itself sent, answer nothing.
+//
+// Task, request and reply share one pinned second unless replyDelta shifts the
+// reply, so log order alone decides the logged-request cases: a same-second
+// reply after the request is the answer, one before it is not. With the
+// request absent from the log, only a strictly later reply answers — the
+// equal-second case fails if the fallback compare is loosened to <.
 func TestTaskAnsweredElsewhere_IncidentShapeAndControls(t *testing.T) {
+	const (
+		requestBeforeReply = iota
+		requestAfterReply
+		requestAbsent
+	)
+	chainReply := func(t *testing.T, session string) string {
+		chain := NewMessage("test", "review", "request", "review", "Tests passed — review the changes", "")
+		if err := SendNoCC(session, chain); err != nil {
+			t.Fatalf("SendNoCC chain: %v", err)
+		}
+		return chain.ID
+	}
+	noReplyTo := func(*testing.T, string) string { return "" }
 	for _, tc := range []struct {
-		name      string
-		action    string
-		replyToFn func(t *testing.T, session string) string
-		want      bool
+		name       string
+		action     string
+		replyToFn  func(t *testing.T, session string) string
+		request    int
+		replyDelta int64
+		want       bool
 	}{
-		{"incident-chain-reply", "review-complete", func(t *testing.T, session string) string {
-			chain := NewMessage("test", "review", "request", "review", "Tests passed — review the changes", "")
-			if err := SendNoCC(session, chain); err != nil {
-				t.Fatalf("SendNoCC chain: %v", err)
-			}
-			return chain.ID
-		}, true},
-		{"unrelated-action", "plan", func(*testing.T, string) string { return "1790347737-test-chain" }, false},
+		{"incident-chain-reply", "review-complete", chainReply, requestBeforeReply, 0, true},
+		{"unrelated-action", "plan", func(*testing.T, string) string { return "1790347737-test-chain" }, requestBeforeReply, 0, false},
 		{"sibling-edit-request", "review-complete", func(t *testing.T, session string) string {
 			sibling := NewMessage("edit", "review", "request", "review", "review the other change", "")
 			if err := SendForce(session, sibling); err != nil {
 				t.Fatalf("SendForce sibling: %v", err)
 			}
 			return sibling.ID
-		}, false},
+		}, requestBeforeReply, 0, false},
+		{"same-second-reply-after-request", "review-complete", noReplyTo, requestBeforeReply, 0, true},
+		{"same-second-reply-before-request", "review-complete", noReplyTo, requestAfterReply, 0, false},
+		{"absent-request-same-second", "review-complete", noReplyTo, requestAbsent, 0, false},
+		{"absent-request-earlier", "review-complete", noReplyTo, requestAbsent, -1, false},
+		{"absent-request-later", "review-complete", noReplyTo, requestAbsent, 1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session := "mux192-answered-" + tc.name
@@ -321,12 +341,28 @@ func TestTaskAnsweredElsewhere_IncidentShapeAndControls(t *testing.T) {
 			if err := Init(session, t.TempDir()); err != nil {
 				t.Fatalf("Init: %v", err)
 			}
+			sentAt := time.Now().Unix() - 5
 			task := Task{ID: starvedTaskID, From: "edit", To: "review", Action: "review",
-				Status: TaskInFlight, SentAt: time.Now().Unix() - 5}
+				Status: TaskInFlight, SentAt: sentAt}
+			tracked := NewMessage("edit", "review", "request", "review", "review the change", "")
+			tracked.ID = starvedTaskID
+			tracked.TS = sentAt
+			logTracked := func() {
+				if err := SendForce(session, tracked); err != nil {
+					t.Fatalf("SendForce tracked: %v", err)
+				}
+			}
 
+			if tc.request == requestBeforeReply {
+				logTracked()
+			}
 			reply := NewMessage("review", "edit", "response", tc.action, "1 must-fix", tc.replyToFn(t, session))
+			reply.TS = sentAt + tc.replyDelta
 			if err := Send(session, reply); err != nil {
 				t.Fatalf("Send reply: %v", err)
+			}
+			if tc.request == requestAfterReply {
+				logTracked()
 			}
 
 			id, ok := TaskAnsweredElsewhere(session, task)
