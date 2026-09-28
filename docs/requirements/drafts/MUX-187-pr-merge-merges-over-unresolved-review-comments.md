@@ -47,10 +47,10 @@ evidence supports** — applies.
 - [x] `110-pr-merge` reads the PR's unresolved review comments before `merge-gate` and the run **stops** (or routes to a `stuck-gate`-style hold) when any are actionable, naming each with id and `file:line`; it reaches `merge-gate` only on `NO-ACTIONABLE-COMMENTS` — `read-comments → no-comments` after `pr-exists`; the false edge ends at the `open-comments` hold (no outgoing edges, message carries `${output:read-comments}`); `TestPRMergeReviewReadRouting` (`graph_exec_test.go`) holds before `ci-watch` with the comment's `file:line` in the pending approval, and `TestPRMergeTemplate` pins `ci-watch` reachable only from `no-comments` success
 - [x] The `merge-gate` text states what was checked — CI green **and** no unresolved review comments — so the approval means what it says — asserted in `TestPRMergeTemplate`
 - [x] The read node reuses `80-pr-review-fix`'s `read-comments` message and token verbatim (one definition, or a shared constant), so the two templates cannot drift on what "actionable" means — `prReviewReadNodesJSON` + `NoActionableCommentsToken` (`graph_templates.go`) spliced into both; `TestPRReviewFixQuestionNodesDeclareExitConvention` fails on any drift between the two
-- [ ] A human "Changes requested" review with zero inline comments is also actionable (review state, not only comment count) — the shared read message now says so (`CHANGES_REQUESTED … actionable even with no inline comments`), but it is agent instruction only: no test pins the wording or the behaviour. Phase 3's scripted reply is the place to exercise it
-- [ ] **Negative control:** a PR with resolved threads only, or with non-actionable bot chatter, still reaches `merge-gate` — unit half in place: `TestPRMergeReviewReadRouting`'s clean case reaches `ci-watch` and leaves `open-comments` untouched; `merge-gate` itself is not reached in that test (it needs CI), so this waits on Phase 3
+- [x] A human "Changes requested" review with zero inline comments is also actionable (review state, not only comment count) — the shared read message says so; `test-pr-merge-review-gate.sh` section 2 asserts the **dispatched** wording counts it and that a bare `CHANGES_REQUESTED` reply holds at `open-comments` naming the review. The stub decides the token, so this proves routing and instruction, not a live agent's judgment
+- [x] **Negative control:** a PR with resolved threads only, or with non-actionable bot chatter, still reaches `merge-gate` — script section 3: `NO-ACTIONABLE-COMMENTS` + `CI-GREEN` reaches `merge-gate` waiting, `open-comments` never opens, `merge` never dispatched unapproved
 - [x] `docs/agent-bus.md` and `docs/architecture.md` describe the new shape; the 12-row builtin table stays accurate — Phase 2, 2026-09-28, checked against `graph_templates.go` at `c7ad449`+tree; table still 12 rows
-- [ ] `bash scripts/test-pr-merge-review-gate.sh` passes
+- [x] `bash scripts/test-pr-merge-review-gate.sh` passes — 24 passed, 0 failed, exit 0 (run agent `1790630937-run-f3fea2df`, on the file as it stands)
 
 ### Technical approach
 
@@ -85,11 +85,11 @@ Phase 1; the default is to stop, because `80-pr-review-fix` is the road for open
 
 ### Phase 3: Integration test
 
-- [ ] Create `scripts/test-pr-merge-review-gate.sh` — hermetic: a stub commit agent whose `pr-read` reply is scripted, scratch daemon
-- [ ] Test: reply lists one actionable comment → run ends before `ci-watch`, output names the comment id and `file:line`, `merge-gate` never opens
-- [ ] **Negative control:** reply contains `NO-ACTIONABLE-COMMENTS` → run reaches `ci-watch`
-- [ ] Test: gate text (from `graph status`) contains both the CI and the review clause
-- [ ] Coverage floor; run and record counts here
+- [x] Create `scripts/test-pr-merge-review-gate.sh` — hermetic: a stub commit agent whose `pr-read` reply is scripted, scratch daemon — stub commit **and** watch agents, scratch bus/repo/HOME/lifecycle log, real `110-pr-merge` builtin; every call runs from the scratch repo so a project `.muxcode/graphs` override cannot mask the builtin (review `1790630837` should-fix, fixed)
+- [x] Test: reply lists one actionable comment → run ends before `ci-watch`, output names the comment id and `file:line`, `merge-gate` never opens — section 1: holds at `open-comments`, prompt and edit's gate request carry the id, `file:line` and `80-pr-review-fix`; no `ci-watch` dispatch within 5 s; no `merge-gate` marker
+- [x] **Negative control:** reply contains `NO-ACTIONABLE-COMMENTS` → run reaches `ci-watch` — section 3, and on through `merge-gate`
+- [x] Test: gate text (from `graph status`) contains both the CI and the review clause — `graph status --json` node message plus the pending prompt
+- [x] Coverage floor; run and record counts here — exactly 23 checks (equality); the floor is the 24th pass. 2026-09-28: first run `1790630712-run-d2561bac` 24/0 predates the isolation fix (edited 17:27:51); re-run `1790630937-run-f3fea2df` at 17:28:57 on the fixed file **24 passed, 0 failed, exit 0**; review `1790631028` 0/0/0. Not covered by the script: the outdated-thread clause of the shared read
 
 ## Open decisions
 
@@ -112,11 +112,11 @@ may still choose annotate.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-187-pr-merge-merges-over-unresolved-review-comments | 11m | 2026-09-28 17:07 |
+| MUX-187-pr-merge-merges-over-unresolved-review-comments | 30m | 2026-09-28 17:30 |
 
 ## Status
 
-In Progress — Phase 1 complete (`c7ad449`); Phase 2 complete (uncommitted, 2026-09-28); Phase 3 open
+In Progress — all three phases verified, 17/17 (Phase 1 `c7ad449`; Phases 2–3 uncommitted, 2026-09-28); close-out pending
 
 Filed 2026-09-24 on the user's instruction relayed by edit, from run `1790280483-110-pr-merge`
 merging PR #89 over an unanswered Copilot review; template shape verified the same day. Started
