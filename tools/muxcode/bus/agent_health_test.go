@@ -243,3 +243,82 @@ func TestPaneEndsAtShellPrompt_StaleAgentOutputAboveRootPrompt(t *testing.T) {
 		t.Error("a pane resting at the agent composer must NOT read as a shell")
 	}
 }
+
+const (
+	resumeIDA          = "8a744341-11bf-440f-b5d2-49248447a9c0"
+	resumeIDATruncated = "8a744341-11bf-440f-b5d2-49248447a9c"
+)
+
+// MUX-126 Phase 1. The prompt fixtures start with hex letters, so any rule that
+// joins across a newline makes a truncated id borrow the prompt's digits. The
+// parser reads a -J capture; an id split across lines must fail closed.
+func TestScrapeResumeSessionID(t *testing.T) {
+	const idA = resumeIDA
+	const idB = "0f3a9c2e-7d1b-4e5a-9b8c-1d2e3f4a5b6c"
+	const truncatedA = resumeIDATruncated
+	exit := func(id string) string {
+		return "❯ \n\nResume this session with:\nclaude --resume " + id + "\n"
+	}
+	cases := []struct {
+		name   string
+		pane   string
+		wantID string
+		wantOK bool
+	}{
+		{"incident pane", claudeMidExitPane, idA, true},
+		{"prompt glued on by stripping", exit(idA) + "deadbeef@host muxcode $ ", idA, true},
+		{"soft-wrapped banner, id whole", "❯ \n\nResume this sessio\nn with:\nclaude --resume " + idA + "\n$ ", idA, true},
+		{"id split across lines fails closed", "Resume this session with:\nclaude --resume 8a744341-11bf-4\n40f-b5d2-49248447a9c0\n$ ", "", false},
+		{"id on the line after the command", "Resume this session with:\nclaude --resume\n" + idA + "\n$ ", "", false},
+		{"most recent of two banners", exit(idA) + "$ muxcode agent launch edit\n" + exit(idB) + "$ ", idB, true},
+		{"no banner", "❯ \n▶▶ bypass permissions on\n", "", false},
+		{"banner before its command is drawn", "❯ \n\nResume this session with:\n", "", false},
+		{"banner followed by something else", "Resume this session with:\ncodex resume " + idA + "\n$ ", "", false},
+		{"truncated id", "Resume this session with:\nclaude --resume 8a744341-11bf\n$ ", "", false},
+		{"malformed latest never falls back to an earlier session", exit(idA) + "$ \n" + exit("8a744341-zzzz") + "$ ", "", false},
+		{"truncated id above a hex-leading prompt", exit(truncatedA) + "deadbeef@host $ ", "", false},
+		{"truncated id above a hex-only prompt", exit(truncatedA) + "d $ ", "", false},
+		{"overlong id", exit(idA+"ff") + "$ ", "", false},
+	}
+	for _, c := range cases {
+		id, ok := ScrapeResumeSessionID(c.pane)
+		if id != c.wantID || ok != c.wantOK {
+			t.Errorf("%s: ScrapeResumeSessionID = (%q, %v), want (%q, %v)", c.name, id, ok, c.wantID, c.wantOK)
+		}
+	}
+}
+
+// The stub models tmux: a narrow pane soft-wraps the id, and only -J rejoins
+// it. Dropping -J from CaptureResumeSessionID makes the wrapped case fail.
+func TestCaptureResumeSessionID_JoinsSoftWraps(t *testing.T) {
+	const banner = "❯ \n\nResume this session with:\n"
+	joined := banner + "claude --resume " + resumeIDA + "\n$ "
+	wrapped := banner + "claude --resume 8a744341-11bf-4\n40f-b5d2-49248447a9c0\n$ "
+	hardNewline := banner + "claude --resume " + resumeIDATruncated + "\nd $ "
+
+	orig := tmuxOutputRunner
+	t.Cleanup(func() { tmuxOutputRunner = orig })
+	capture := func(pane, joinedPane string) {
+		tmuxOutputRunner = func(args ...string) (string, error) {
+			if len(args) == 0 || args[0] != "capture-pane" {
+				return "", nil
+			}
+			for _, a := range args {
+				if a == "-J" {
+					return joinedPane, nil
+				}
+			}
+			return pane, nil
+		}
+	}
+
+	capture(wrapped, joined)
+	if id, ok := CaptureResumeSessionID("s:edit.1"); !ok || id != resumeIDA {
+		t.Errorf("soft-wrapped id: got (%q, %v), want (%q, true)", id, ok, resumeIDA)
+	}
+
+	capture(hardNewline, hardNewline)
+	if id, ok := CaptureResumeSessionID("s:edit.1"); ok {
+		t.Errorf("hard newline after a truncated id must not resume, got %q", id)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -164,6 +165,77 @@ func paneShowsAgentExit(content string) bool {
 		return false
 	}
 	return !strings.Contains(stripped[at:], idlePromptChar)
+}
+
+// resumeCommand is the command Claude Code offers under agentExitBanner.
+const resumeCommand = "claude --resume"
+
+// resumeSessionIDPattern matches a whole token, so a truncated, overlong or
+// prompt-extended id is rejected rather than trimmed into a UUID.
+var resumeSessionIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+var (
+	agentExitBannerPattern = regexp.MustCompile(whitespaceTolerant(agentExitBanner))
+	resumeCommandPattern   = regexp.MustCompile(`^\s*` + whitespaceTolerant(resumeCommand) + `[ \t]+`)
+)
+
+// resumeCaptureLines bounds the capture to the exit banner and the prompt
+// beneath it, with room for a narrow pane's wrapping.
+const resumeCaptureLines = 20
+
+// CaptureResumeSessionID captures target with soft-wrapped lines joined
+// (`capture-pane -J`) and scrapes it with ScrapeResumeSessionID. The join is
+// what lets a wrapped id through: the parser never rejoins across a newline.
+func CaptureResumeSessionID(target string) (id string, ok bool) {
+	content, err := TmuxOutput("capture-pane", "-t", target, "-p", "-J", "-S", fmt.Sprintf("-%d", resumeCaptureLines))
+	if err != nil {
+		return "", false
+	}
+	return ScrapeResumeSessionID(content)
+}
+
+// ScrapeResumeSessionID extracts the session id Claude Code offers in its exit
+// banner (`Resume this session with: claude --resume <id>`) from a pane
+// capture. ok is false when no id is found — callers must launch fresh rather
+// than resume with an empty id (MUX-126).
+//
+// Only the LAST banner is read, and a malformed last banner yields not-found
+// rather than falling back to an earlier one: an earlier banner belongs to a
+// previous session, and resuming it would restore the wrong conversation. The
+// capture must be taken before any relaunch keystroke, which types over the
+// banner, and with -J (CaptureResumeSessionID): the id must be one whole token
+// on the command's line. A capture without -J cannot tell a soft wrap from a
+// hard newline, so a split id fails closed — joining it once let a truncated
+// id borrow hex from the shell prompt below and yield an id Claude never
+// offered. The banner and command tolerate wrapping; they only recognize.
+func ScrapeResumeSessionID(content string) (id string, ok bool) {
+	banners := agentExitBannerPattern.FindAllStringIndex(content, -1)
+	if len(banners) == 0 {
+		return "", false
+	}
+	tail := banners[len(banners)-1][1]
+	cmd := resumeCommandPattern.FindStringIndex(content[tail:])
+	if cmd == nil {
+		return "", false
+	}
+	rest := content[tail+cmd[1]:]
+	if end := strings.IndexFunc(rest, unicode.IsSpace); end >= 0 {
+		rest = rest[:end]
+	}
+	if !resumeSessionIDPattern.MatchString(rest) {
+		return "", false
+	}
+	return rest, true
+}
+
+// whitespaceTolerant builds a regexp matching s with any whitespace, including
+// a soft-wrap newline, between its characters.
+func whitespaceTolerant(s string) string {
+	var parts []string
+	for _, r := range stripWhitespace(s) {
+		parts = append(parts, regexp.QuoteMeta(string(r)))
+	}
+	return strings.Join(parts, `\s*`)
 }
 
 // stripWhitespace removes every space, tab and newline so a match survives the

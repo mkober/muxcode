@@ -22,7 +22,7 @@ has:
 This spec makes one path that keeps both.
 
 **The third row is not a duplicate of the second — it is the reason this spec must widen beyond
-`edit`.** [`MUX-136`](./MUX-136-bare-resume-loses-agent-definition.md)'s Phase 1 finding established
+`edit`.** [`MUX-136`](../completed/MUX-136-bare-resume-loses-agent-definition.md)'s Phase 1 finding established
 that the definition-less `plan` agent of 2026-09-01 was a bare resume typed in its pane, not the daemon
 restart it was originally filed as. Any daemon-managed Claude role can be resumed by hand, and the
 consequence is worse for a role whose safety model *is* its definition: the persisted agent name cannot
@@ -80,7 +80,7 @@ What this recurrence contributes to this spec:
 ### Fifth and sixth occurrences (2026-09-02) — and what they do to the upgrade hypothesis
 
 Occurrences three and four are recorded in
-[`MUX-136`](./MUX-136-bare-resume-loses-agent-definition.md) (2026-09-01). Two more the next day,
+[`MUX-136`](../completed/MUX-136-bare-resume-loses-agent-definition.md) (2026-09-01). Two more the next day,
 same signature: the Claude trio failing health checks **in the same second** while every OpenCode agent
 and `edit` survived. Times are **local** (the machine runs UTC-4); read from
 `~/.config/muxcode/logs/muxcode.log`, snapshotted before rotation.
@@ -293,10 +293,10 @@ excluded throughout.
 
 ### Phase 1: Session id scrape
 
-- [ ] Add a scrape helper that extracts `<id>` from `Resume this session with: claude --resume <id>`
-- [ ] Reuse the recognition point at `provider_claude.go:257–278` rather than adding a second pattern
-- [ ] Return a clear "no id found" result distinct from an empty id
-- [ ] Unit tests: id present, id absent, malformed line, multiple occurrences (take the most recent)
+- [x] Add a scrape helper that extracts `<id>` from `Resume this session with: claude --resume <id>` — `ScrapeResumeSessionID` reads only the last banner, requires `claude --resume`, then one whole anchored UUID token on the command's line (never joined across a hard newline); `CaptureResumeSessionID(target)` captures with `capture-pane -J` so a soft-wrapped id arrives whole — after the fix for review `1790608565`'s must-fix; review `1790608755` clean
+- [x] Reuse the recognition point at `provider_claude.go:257–278` rather than adding a second pattern — that range now holds only a comment naming the banner; the single recognition point is `agentExitBanner` (`agent_health.go:148`, shared with `paneShowsAgentExit`), which `ScrapeResumeSessionID` builds its pattern from — 2026-09-28, run `1790608128`
+- [x] Return a clear "no id found" result distinct from an empty id — `ScrapeResumeSessionID(content) (id string, ok bool)`; `ok=false` means launch fresh, never resume with `""`
+- [x] Unit tests: id present, id absent, malformed line, multiple occurrences (take the most recent) — `TestScrapeResumeSessionID` (14 cases: incident pane, most recent of two, no banner, truncated/overlong/split ids fail closed, malformed latest never falls back, truncated id above hex-leading and unpadded hex-only prompts) + `TestCaptureResumeSessionID_JoinsSoftWraps` at the tmux boundary (fails without `-J`); build 11:18:20 and test 11:19:15 green after the fix
 
 ### Phase 2: Resume-capable launch
 
@@ -347,11 +347,24 @@ excluded throughout.
 | Un-exclusion applied only in the daemon | Two other call sites diverge | Phase 4 audits all three |
 | Underlying cause of simultaneous Claude death is unknown | This spec improves *recovery* and does nothing about *frequency*; two multi-agent deaths in one day means the path will keep being exercised | Out of scope here — needs its own root-cause investigation once the current run settles. Evidence so far: both events hit only Claude Code agents, OpenCode agents in the same session survived both, and the deaths land within the same second across unrelated roles |
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-126-edit-resume-aware-auto-restart | 10m | 2026-09-28 11:20 |
+
 ## Status
 
-Backlog
+In Progress — 4/41 on 2026-09-28 11:2x: **Phase 1 complete** on run `1790608128`. The first review
+(`1790608565`) found 1 must-fix — the scrape inferred soft wraps from the capture's widest line, so a
+truncated id could borrow the next hard line's hex — and the `fix` worker replaced inference with
+`capture-pane -J` plus a whole-token parse; review `1790608755` clean, build/test green. Phase 2
+(resume-capable launch) next. Started 2026-09-28 on the user's instruction ("start MUX-126") relayed by edit;
+moved `backlog/` → `drafts/` on branch `MUX-126-edit-resume-aware-auto-restart`. The scope amendment
+below — every Claude role, not only `edit` — is still not reflected in the title, acceptance criteria
+or phases; that rewrite remains the user's call before Phase 1 fixes its shape.
 
-**Scope amendment (2026-09-02, from [`MUX-136`](./MUX-136-bare-resume-loses-agent-definition.md)
+**Scope amendment (2026-09-02, from [`MUX-136`](../completed/MUX-136-bare-resume-loses-agent-definition.md)
 Phase 3 item 4).** The title and the acceptance criteria are written for `edit`, on the premise that
 `edit` is the only role recovered by a bare `claude --resume`. That premise is now false: the
 2026-09-01 `plan` incident was a bare resume on a **daemon-managed** role. The fix — scrape the session
