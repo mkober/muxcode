@@ -24,8 +24,11 @@
 # restart; lifting them restarts it resuming the newer banner; (F) a daemon
 # started with MUXCODE_EDIT_AUTO_RESTART_DISABLE=1 leaves a dead edit alone
 # while restarting a dead plan (which resumes too), and a daemon without it
-# restarts edit (negative control). A coverage floor keeps a skipped section
-# from reporting green. Requires go, tmux, jq.
+# restarts edit (negative control); (G) with the daemon stopped, the manual
+# `muxcode resume` refuses a live edit and a non-Claude plan, typing nothing,
+# then resumes a dead edit with its full flag set, its rows sourced "manual"
+# and naming the user, and its reload marker released. A coverage floor keeps
+# a skipped section from reporting green. Requires go, tmux, jq.
 set -euo pipefail
 
 PASS=0
@@ -43,6 +46,7 @@ UUID1=1a2b3c4d-0000-4000-8000-00000000e001
 UUID2=1a2b3c4d-0000-4000-8000-00000000e002
 UUID3=1a2b3c4d-0000-4000-8000-00000000a003
 UUID4=1a2b3c4d-0000-4000-8000-00000000e004
+UUID5=1a2b3c4d-0000-4000-8000-00000000e005
 
 export BUS_SESSION="$SESSION" AGENT_ROLE=edit BUS_ROLE=edit
 export HOME="$WORK/home"
@@ -230,6 +234,8 @@ kill -TERM "$P2"
 wait_for 10 "edit: exit banner offers only a malformed id" pane_has edit "claude --resume 0f3a"
 wait_for 25 "edit: resume-scrape-miss recorded" has_event "resume-scrape-miss.*edit"
 wait_for 10 "edit: restart attempt 2/3" has_event "agent-restart.*edit attempt 2/3"
+# The relaunch row lands after the interrupt delay, behind the attempt row.
+for _ in 1 2 3 4 5 6 7 8 9 10; do event_count_ge "agent-relaunch.*edit" 2 && break; sleep 1; done
 last=$(events "agent-relaunch.*edit" | tail -1)
 case "$last" in
   *"muxcode agent launch edit"*--resume*) fail "edit: fallback relaunch still resumes: $last" ;;
@@ -292,7 +298,50 @@ kill -0 "$DPID" 2>/dev/null && ok "default daemon running again" || fail "defaul
 wait_for 30 "edit: default daemon restarts it (negative control of the opt-out)" has_event "resume-scrape-hit.*edit: session $UUID4"
 wait_for 20 "edit: resumed $UUID4 with skip-perms" stub_reports edit "resume=true skip-perms=true resume-id=$UUID4"
 
+# ── G: manual `muxcode resume`, daemon held off ──────────────────
+echo "-- G: muxcode resume"
+stop_daemon
+manual_events() { "$MUX" lifecycle show "$SESSION" --source manual --limit 0 2>/dev/null | grep -E -- "$1" || true; }
+# as_user runs muxcode with no agent identity, as a person at a shell would.
+as_user() { env -u AGENT_ROLE -u BUS_ROLE "$MUX" "$@"; }
+
+P5=$(stub_pid edit)
+if out=$(as_user resume edit 2>&1); then
+  fail "resume of a live edit succeeded: $out"
+else
+  case "$out" in *"is running"*--force*) ok "live edit refused without --force" ;; *) fail "live edit refusal unclear: $out" ;; esac
+fi
+[ "$(stub_pid edit)" = "$P5" ] && ok "live edit untouched by the refusal" || fail "live edit's agent changed after a refusal"
+MANUAL_ROWS="resume-scrape-[a-z]+|agent-relaunch"
+[ -z "$(manual_events "$MANUAL_ROWS")" ] && ok "refusal typed nothing (no manual rows)" || fail "refusal left manual rows: $(manual_events "$MANUAL_ROWS" | head -1)"
+
+P6=$(stub_pid plan)
+if out=$(MUXCODE_PLAN_CLI=opencode as_user resume plan 2>&1); then
+  fail "resume of a non-Claude plan succeeded: $out"
+else
+  case "$out" in *opencode*"muxcode reload plan"*) ok "non-Claude plan refused, naming reload" ;; *) fail "non-Claude refusal unclear: $out" ;; esac
+fi
+[ "$(stub_pid plan)" = "$P6" ] && [ -z "$(manual_events "($MANUAL_ROWS).*plan")" ] && ok "non-Claude refusal typed nothing" || fail "non-Claude refusal touched plan"
+
+echo "$UUID5" >"$WORK/edit.sid"
+kill -TERM "$P5"
+wait_for 10 "edit: exit banner offers $UUID5" pane_has edit "claude --resume $UUID5"
+if out=$(as_user resume edit 2>&1); then ok "muxcode resume edit exits 0"; else fail "muxcode resume edit failed: $out"; fi
+[ -n "$(manual_events "resume-scrape-hit.*edit: session $UUID5 \(by user\)")" ] && ok "manual scrape-hit row names $UUID5 and the user" \
+  || fail "no manual scrape-hit row for $UUID5: $(manual_events "$MANUAL_ROWS" | tail -2)"
+[ -n "$(manual_events "agent-relaunch.*muxcode agent launch edit --resume $UUID5 \(by user\)")" ] && ok "manual relaunch row resumes $UUID5 by the user" \
+  || fail "no manual relaunch row for $UUID5"
+[ ! -e "$BUSDIR/lock/edit.reloading" ] && ok "reload marker released after the resume" || fail "reload marker outlived muxcode resume"
+wait_for 20 "edit: manually resumed stub up" stub_up edit "$P5"
+wait_for 10 "edit: stub reports resume of $UUID5 with skip-perms" stub_reports edit "resume=true skip-perms=true resume-id=$UUID5"
+flag_check edit "--resume $UUID5"
+flag_check edit "--dangerously-skip-permissions"
+flag_check edit "--agent[[:space:]]code-editor"
+flag_check edit "--agents"
+flag_check edit "--allowedTools"
+flag_check edit "--append-system-prompt"
+
 echo "=== $PASS passed, $FAIL failed ==="
-[ "$PASS" -ge 59 ] || { echo "FAIL: coverage floor not met ($PASS < 59)"; exit 1; }
+[ "$PASS" -ge 77 ] || { echo "FAIL: coverage floor not met ($PASS < 77)"; exit 1; }
 [ "$FAIL" -eq 0 ] || exit 1
 echo "PASS"

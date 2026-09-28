@@ -298,8 +298,14 @@ var restartInterruptDelay = 500 * time.Millisecond
 // `--resume <id>`, which the launcher appends to the full flag set; a miss or
 // a stale banner relaunches fresh — never a flagless resume.
 func RestartLocalAgent(session, role string) error {
-	target := PaneTarget(session, role)
+	return scrapeAndRelaunch(session, role, PaneTarget(session, role), "daemon", "")
+}
 
+// scrapeAndRelaunch is the one scrape-then-relaunch body, shared by the
+// daemon's RestartLocalAgent and the manual ResumeAgent so neither can grow a
+// second scrape, pattern or flag-assembly path. source is the lifecycle source
+// recorded on every row; a non-empty actor is appended to each row's detail.
+func scrapeAndRelaunch(session, role, target, source, actor string) error {
 	content, captureErr := captureResumePane(target)
 	id, event := "", "resume-scrape-miss"
 	if captureErr == nil {
@@ -311,7 +317,11 @@ func RestartLocalAgent(session, role string) error {
 	} else if captureErr != nil {
 		detail += ": capture failed: " + captureErr.Error()
 	}
-	LogLifecycle(session, "info", "daemon", event, detail)
+	by := ""
+	if actor != "" {
+		by = " (by " + actor + ")"
+	}
+	LogLifecycle(session, "info", source, event, detail+by)
 
 	if err := TmuxRun("send-keys", "-t", target, "C-c", ""); err != nil {
 		return fmt.Errorf("interrupting agent %s: %w", role, err)
@@ -326,7 +336,7 @@ func RestartLocalAgent(session, role string) error {
 	if err := TmuxRun("send-keys", "-t", target, launchCmd, "Enter"); err != nil {
 		return fmt.Errorf("relaunching agent %s: %w", role, err)
 	}
-	LogLifecycle(session, "info", "daemon", "agent-relaunch", role+": "+launchCmd)
+	LogLifecycle(session, "info", source, "agent-relaunch", role+": "+launchCmd+by)
 
 	return nil
 }

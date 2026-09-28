@@ -274,9 +274,10 @@ excluded throughout.
 - [x] Lifecycle events are emitted for detect, scrape (hit and miss) and relaunch — detect is the
       existing `agent-health-fail`/`agent-restart` rows; Phase 3 adds `resume-scrape-hit`,
       `resume-scrape-miss` (naming a capture failure), `resume-scrape-stale` and `agent-relaunch`
-- [ ] A manual escape hatch exists: `muxcode resume <role>` (or `muxcode reload <role> --resume`) —
-      **no phase step delivers this** (technical approach item 5 only); not built as of `52c11d2` —
-      the existing `muxcode session resume` restores memory summaries, not an agent
+- [x] A manual escape hatch exists: `muxcode resume <role>` (or `muxcode reload <role> --resume`) —
+      **delivered by [Phase 6](#phase-6-manual-resume-command)**, added 2026-09-28 on the user's decision to
+      build it rather than defer; the existing `muxcode session resume` restores memory summaries, not an agent —
+      `muxcode resume <role> [--force]` on run `1790620267`, `test-edit-auto-resume.sh` section G 77/0
 - [x] All three `IsAgentHealthExcluded` call sites behave consistently for `edit` — Phase 4: the daemon
       sweep (`daemon.go:1802`), `cmd/agent_health.go:36` and `bus/inspect.go:34` share the one predicate,
       so the map change and the opt-out reach all three with no call-site edit
@@ -306,7 +307,10 @@ excluded throughout.
 | `tools/muxcode/daemon/daemon.go` | Health sweep exclusion check (:1600), restart cap and alerts (~:1695) |
 | `tools/muxcode/cmd/agent_health.go` | Second exclusion call site (:36) |
 | `tools/muxcode/bus/inspect.go` | Third exclusion call site (:34) |
-| `scripts/test-edit-auto-resume.sh` | Integration test (Phase 5) |
+| `scripts/test-edit-auto-resume.sh` | Integration test (Phase 5); section G for the manual command (Phase 6) |
+| `tools/muxcode/main.go` | `knownSubcommands` and dispatch — `resume` must be registered (Phase 6) |
+| `tools/muxcode/cmd/resume.go` | New: `muxcode resume <role> [--force]` (Phase 6) |
+| `tools/muxcode/cmd/session.go` | Existing `session resume` (memory summaries) — not to be confused with the new command |
 
 ## Implementation
 
@@ -365,6 +369,38 @@ excluded throughout.
       last script change (12:34:55): **59 passed, 0 failed (floor 59), exit 0**; two earlier runs
       (`1790612810`, `1790613147`) also 59/0; review `1790613526` clean
 
+### Phase 6: Manual resume command
+
+Added 2026-09-28 on the user's decision to **build** AC 13 rather than defer it (relayed by edit,
+brief `/tmp/mux126-phase6.md`). Phases 1–5 are complete, so this is the first open phase a new
+`50-spec-to-pr` run picks up. It ends in its integration-test steps, keeping the spec's rule that the
+last work verified is end to end.
+
+**Name.** `muxcode resume <role>` — AC 13's first choice. It is a new top-level subcommand, distinct from
+`muxcode session resume` (which restores memory summaries, `cmd/session.go:25`); neither may be
+overloaded to mean the other, and each one's usage text names the other.
+
+**Decisions taken here, each flippable before implementation:**
+
+| Case | Behaviour | Why |
+|------|-----------|-----|
+| Non-Claude provider (OpenCode, Codex, local) | **Refuse**, exit non-zero, naming the provider and `muxcode reload <role>` as the fresh road | A command called `resume` that silently starts a fresh session misleads the person who typed it; the daemon road's `resume-ignored` fallback is right for an unattended restart, not for a manual ask |
+| Live agent | **Refuse** unless `--force` | Mirrors `NeverReloadLive`: a running pane is never torn down by accident |
+| `--force` on a live agent | Exit the agent first so Claude draws its exit banner, **then** scrape | A live TUI shows no banner; scraping it would find nothing and relaunch fresh — the exact silent loss this spec exists to prevent |
+
+- [x] Register `resume` in `knownSubcommands` and the `main.go` dispatch — an unregistered name falls through to the launcher as a project path (the pre-MUX-138 `--version` shape) — `main.go:30`, `:306` — 2026-09-28, run `1790620267`
+- [x] `cmd/resume.go`: `muxcode resume <role> [--force]` resolves the role's pane, then runs the **same** scrape-then-relaunch as `RestartLocalAgent` (factor the shared body out rather than copy it): `CaptureResumeSessionID` (`capture-pane -J`) → `restartResumeTarget` → `agent launch <role> [--resume <id>]`. No second scrape, pattern or flag-assembly path — `RestartLocalAgent`'s body is now `scrapeAndRelaunch(session, role, target, source, actor)` (`bus/health.go:308`), called with source `daemon` by the sweep and `manual` by `bus.ResumeAgent`
+- [x] Refuse an unknown role, and a role with no pane, before any keystroke — plus **hosted roles** (`docs`, `pr-read`), added on review `1790620933`'s must-fix: their pane belongs to the host, so resuming them probed the wrong provider and marker while typing into the host's pane; now refused naming the host (`use muxcode resume <host>`). Every refusal wraps `ErrResumeRefused`
+- [x] Refuse a non-Claude provider per the table above — names the CLI and `muxcode reload <role>`
+- [x] Refuse a live agent without `--force`; with `--force`, obtain the exit banner before scraping, and fall back to a fresh flagged launch (never a flagless resume) if none appears — `--force` runs `GracefulStop` first; `TestResumeAgent_ForceExitsLiveAgentBeforeScrape` pins the order
+- [x] Hold the daemon off for the duration: set the role's reload marker (`ReloadMarkerPath`) across the relaunch and clear it after, so the health sweep cannot restart the same pane concurrently; a marker left by a failed relaunch must not outlive the command — cleared by `defer` on every return; a reload already in progress is refused and its marker kept (`…_RefusesDuringReloadAndKeepsItsMarker`, `…_FailedRelaunchClearsMarker`)
+- [x] Lifecycle rows reuse `resume-scrape-hit` / `-miss` / `-stale` and `agent-relaunch`, with the actor recorded as manual (the invoking bus actor), so `lifecycle show` distinguishes a manual resume from a daemon restart — source `manual`, detail suffixed `(by <actor>)`; `lifecycle show --source manual`
+- [x] Unit tests: dead pane with a banner → relaunch carries `--resume <id>`; **negative controls** — no banner → fresh flagged launch; live agent without `--force` → refused, nothing typed; non-Claude provider → refused, nothing typed; unknown role → refused; the marker is set during and cleared after, including on a failed relaunch — `bus/resume_test.go`: `DeadPaneResumes`, `NoBannerLaunchesFresh`, `ForceExitsLiveAgentBeforeScrape`, `Refusals`, `RefusesHostedRoles` (docs/plan, pr-read/commit, host marker preserved) with `HostRoleIsNotRefusedAsHosted` as control, `RefusesDuringReloadAndKeepsItsMarker`, `FailedRelaunchClearsMarker`; build 14:48:18 and test 14:49:16 green after the fix
+- [x] Docs: a `muxcode resume` entry in [`agent-bus.md`](../../agent-bus.md) (usage, refusals, `--force`, the `session resume` distinction) and the one-line pointer in `CLAUDE.md`'s delivery-recovery guidance — `agent-bus.md` `### muxcode resume` (by plan, on review `1790620933`'s should-fix) with `session resume [role]` now documented and cross-linked; `CLAUDE.md` "Keep agents deliverable" recovery line (by edit); `session resume`'s usage names `muxcode resume`
+- [x] Integration: extend `scripts/test-edit-auto-resume.sh` with section **G** — kill `edit` with the daemon's sweep held off, run `muxcode resume edit` → the relaunched process's argv carries `--resume <id>` and all five launch flags, and the rows carry the manual actor — manual `resume-scrape-hit` and `agent-relaunch` rows name the UUID and `(by user)`, the reload marker is released, and the live argv carries `--resume <id>`, `--dangerously-skip-permissions`, `--agent code-editor`, `--agents`, `--allowedTools`, `--append-system-prompt`
+- [x] Integration (negative controls): `muxcode resume edit` against a **live** `edit` is refused and nothing is typed; against a non-Claude fixture role it is refused — live `edit` refused naming `--force`, its PID unchanged, no manual rows; `plan` on opencode refused naming `muxcode reload plan`, untouched
+- [x] Raise the script's coverage floor by exactly section G's check count, then run it through the run agent and record the pass/fail counts here — floor 59 → **77** (G = 18 checks; `:345`). Run agent `1790621276-run-1c19112a` (sent 14:45:26, after the last code change at 14:44:07; script unchanged since 14:37:54): **77 passed, 0 failed, exit 0**; earlier `1790620832` 77/0; `1790620650` 75/2 exposed a section C relaunch-row race and a section G check, both fixed. Review `1790621356` clean
+
 ## Risks
 
 | Risk | Why it matters | Mitigation |
@@ -380,16 +416,19 @@ excluded throughout.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-126-edit-resume-aware-auto-restart | 55m | 2026-09-28 12:40 |
+| MUX-126-edit-resume-aware-auto-restart | 1h 16m | 2026-09-28 14:50 |
 
 ## Status
 
-In Progress — 40/41 on 2026-09-28 12:4x: **all five phases complete**; acceptance criteria 13/14. Phase 5:
+**Complete — 53/53 on 2026-09-28 14:5x: all six phases; acceptance criteria 14/14.** Phase 6 (manual
+resume command), added that afternoon on the user's decision to build AC 13 rather than defer it, ran on
+run `1790620267`: `muxcode resume <role> [--force]` sharing the daemon's `scrapeAndRelaunch`, refusing
+unknown/hosted/windowless/non-Claude/reloading/live roles before any keystroke; review `1790620933`'s
+must-fix (hosted roles typed into the host's pane) and should-fix (`agent-bus.md` entry) resolved,
+review `1790621356` clean; `test-edit-auto-resume.sh` 77/0 at floor 77 — uncommitted at verification.
+Run `1790612093` had parked at `close-stuck-gate` on AC 13 before Phase 6 existed. Phase 5 `8845928`:
 `scripts/test-edit-auto-resume.sh` 59/0 at floor 59 on a real scratch daemon (run agent
-`1790613444-run-7c51e74e`), review `1790613526` clean — uncommitted at verification. **The one open item
-is AC 13, the manual escape hatch (`muxcode resume <role>`), which no phase step delivers and which is
-not built** — the close-out guard will refuse on it until a step is added and built, or it is deferred
-to a backlog spec and ticked with that annotation; the user's call. Phase 4 `52c11d2` (un-exclude `edit`,
+`1790613444-run-7c51e74e`), review `1790613526` clean. Phase 4 `52c11d2` (un-exclude `edit`,
 `MUXCODE_EDIT_AUTO_RESTART_DISABLE=1`, `NeverReloadLive`), verified on run `1790612093`, review
 `1790612219` clean. Run `1790608128` failed at Phase 4 on the run-wide fix cap —
 [MUX-193](../backlog/MUX-193-spec-to-pr-fix-loop-cap-is-per-run-not-per-phase.md). Phase 3 `4356486`:

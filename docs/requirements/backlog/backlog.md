@@ -63,7 +63,7 @@ open items against the active spec.
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| [MUX-126](../drafts/MUX-126-edit-resume-aware-auto-restart.md) | Resume-aware auto-restart — a resumed agent comes back with its definition | 2026-09-28 | **Active spec** on the user's instruction ("start MUX-126"), moved to `drafts/` on branch `MUX-126-edit-resume-aware-auto-restart`; 0/41, five phases (session-id scrape, resume-capable launch, restart wiring, un-exclude `edit`, integration test). The 2026-09-02 scope amendment (every Claude role, not only `edit`) is still unwritten into its criteria — the user's call. Keeps its #1 defects row and category row until it closes |
+| [MUX-126](../drafts/MUX-126-edit-resume-aware-auto-restart.md) | Resume-aware auto-restart — a resumed agent comes back with its definition | 2026-09-28 | **Active spec** on the user's instruction ("start MUX-126"), moved to `drafts/` on branch `MUX-126-edit-resume-aware-auto-restart`; 40/53 — Phases 1–5 done the same day (`9284f26`, `408dce9`, `4356486`, `52c11d2`, `8845928`: scrape, resume-capable launch, restart wiring for every daemon-restarted role, `edit` un-excluded, `test-edit-auto-resume.sh` 59/0); Phase 6 (`muxcode resume <role>`, AC 13) added on the user's decision to build it rather than defer. The 2026-09-02 scope amendment (every Claude role, not only `edit`) is still unwritten into its criteria — the user's call. Keeps its #1 defects row and category row until it closes |
 
 **MUX-192 closed 2026-09-28** at **25/25**, every criterion verified — the active spec since the hour it
 was filed (2026-09-25), walked in four phases on the `spec-to-pr` graph: pins `05700de`, the bounded

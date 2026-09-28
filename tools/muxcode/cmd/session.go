@@ -11,6 +11,7 @@ import (
 func Session(args []string) {
 	if len(args) < 1 {
 		fmt.Fprintf(os.Stderr, "Usage: muxcode session <compact|quit|resume|status> [args...]\n")
+		fmt.Fprintf(os.Stderr, "  session resume prints saved memory summaries; to relaunch a dead agent into its conversation, use muxcode resume <role>\n")
 		os.Exit(1)
 	}
 

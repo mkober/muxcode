@@ -27,7 +27,7 @@ var knownSubcommands = map[string]bool{
 	"simulate": true, "track": true, "remote": true, "spec": true,
 	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true,
 	"branch-time": true, "clear": true, "graph": true, "pane": true,
-	"version": true, "approve": true,
+	"version": true, "approve": true, "resume": true,
 }
 
 // route is where argv goes. The order routeFor checks them in is pinned by
@@ -214,6 +214,7 @@ Commands:
   track         Show delivery status for a message ID
   pii-scrub     Scrub PII and secrets from stdin (pipe filter)
   reload        Stop an agent, reconfigure, and relaunch (hot reload)
+  resume        Relaunch a dead Claude agent into its last session (not session resume)
   config        View or change agent CLI/model configuration (set, get, list)
   plugin        Manage LLM provider plugins (list, add, remove, sync)
   model         Manage provider models for hot reload (list, add, remove, default)
@@ -302,6 +303,8 @@ func main() {
 		cmd.Context(args)
 	case "session":
 		cmd.Session(args)
+	case "resume":
+		cmd.Resume(args)
 	case "cron":
 		cmd.Cron(args)
 	case "status":
