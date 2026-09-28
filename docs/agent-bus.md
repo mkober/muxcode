@@ -110,7 +110,7 @@ Tracking task 1779979541-edit-d2c7d769 — response will arrive in inbox
 **active** state never receives its inbox — messages pile up unnotified
 (`muxcode diagnose <role>` reports this as `active-with-stale-messages`; for Codex and OpenCode,
 whose idle probe is a constant, it reports `wake-blocked-by-task` naming the in-flight task the
-wake gate refused on — see [MUX-192](requirements/backlog/MUX-192-stale-in-flight-task-starves-codex-delivery.md)).
+wake gate refused on — see [MUX-192](requirements/completed/MUX-192-stale-in-flight-task-starves-codex-delivery.md)).
 
 - **Never run a blocking / never-exiting command in an agent's interactive pane.**
   `gh pr checks --watch`, `tail -f`, log follows, and interactive watchers keep

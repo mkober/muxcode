@@ -83,8 +83,8 @@ does not implement and a delivery path the agent is not on.
 Two requests asked review for the same review: the chain's (`test → review`, from the test hook) and
 edit's tracked one. Review answered once, `--reply-to` the chain's id. The correlation half of this —
 one answer for two requests — belongs with
-[MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) (a foreign in-flight task
-adopted) and [MUX-189](./MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) (one reply
+[MUX-170](../backlog/MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) (a foreign in-flight task
+adopted) and [MUX-189](../backlog/MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) (one reply
 line per request), and this spec does **not** try to make the agent answer both. It makes a stale
 task unable to starve the role, which is the property that has to hold whatever the agent does.
 
@@ -99,9 +99,9 @@ and a `50-spec-to-pr` review node waits on the task timeout.
 
 [MUX-171](../completed/MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md) — the rule this skip
 over-applies (a working pane must not be re-driven; an idle one with a stale task is not working).
-[MUX-123](./MUX-123-stall-watchdog-selective-misses.md) — the watchdog that fires routinely and misses
-live stalls. [MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md),
-[MUX-189](./MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) — correlation.
+[MUX-123](../backlog/MUX-123-stall-watchdog-selective-misses.md) — the watchdog that fires routinely and misses
+live stalls. [MUX-170](../backlog/MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md),
+[MUX-189](../backlog/MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) — correlation.
 [MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md) — the opposite failure on the same road
 (a task closed that should not have been; here one held that should have closed).
 
@@ -229,11 +229,12 @@ here unless Phase 3 finds the diagnostic cannot be made truthful without it.
 `531e003` on run `1790434768`; Phase 3 `795d1ec` on run `1790601087` — `TaskAnsweredElsewhere` closes the
 answered-elsewhere task in `checkTrackedTasks`, `diagnose` names the blocking task for constant-`IsIdle`
 providers, docs by plan; build/test green (72 s), review `1790601237` clean. Phase 4 on run `1790603261`:
-`scripts/test-codex-idle-delivery.sh` 36/0 at floor 36 (uncommitted at verification; the commit gate follows).
+`scripts/test-codex-idle-delivery.sh` 36/0 at floor 36, committed `1865841` through the run's phase gate.
 Open decisions resolved by what shipped: Decision 1 — the narrow same-`(from, to, action)` close was built;
 Decision 2 — codex `IsIdle` stays a constant, `diagnose` was made truthful without it. Set as the active
-spec 2026-09-25 11:4x on the user's instruction. The file is still in `backlog/`; moving it to
-`completed/` is the user's call; the backlog index close-out rows follow with it.
+spec 2026-09-25 11:4x on the user's instruction. **Closed out 2026-09-28** by run `1790603261`'s
+`close-spec` node: moved `backlog/` → `completed/` (plain move; the push-pr commit stages it), backlog
+index rows closed, active spec cleared.
 
 **Filed** 2026-09-25 on the user's instruction relayed by edit, from two first-hand incidents that morning
 (10:57, ~11:06) on the codex review agent. Mechanism verified by plan against `e3f7e44` and the
