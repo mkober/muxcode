@@ -4,17 +4,28 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode"
 )
 
 // agentHealthExcludedRoles lists roles that should never be auto-restarted.
-// edit: user's interactive session.
 // webhook: managed separately, not a tmux-based agent.
+//
+// edit left this list in MUX-126. The exclusion guarded the pane the user types
+// into, and what still guards it: a restart fires only on a pane already at a
+// bare shell prompt for three consecutive checks, never on a busy or live
+// agent; it resumes the conversation with the full launch flags instead of the
+// flagless bare `claude --resume` it used to take by hand (2026-08-31); the
+// restart cap and down/restarting alerts apply as for any role; and
+// MUXCODE_EDIT_AUTO_RESTART_DISABLE=1 restores the exclusion. A LIVE edit is
+// still never torn down — see NeverReloadLive.
 var agentHealthExcludedRoles = map[string]bool{
-	"edit":    true,
 	"webhook": true,
 }
+
+// editAutoRestartDisableEnv opts edit back out of health monitoring.
+const editAutoRestartDisableEnv = "MUXCODE_EDIT_AUTO_RESTART_DISABLE"
 
 // AgentStoppedPath returns the marker file path that suppresses auto-restart
 // for a role. Written by "agent-health --stop", cleared by "--start".
@@ -41,12 +52,25 @@ func IsAgentStopped(session, role string) bool {
 // IsAgentHealthExcluded returns true if a role should be excluded from
 // automatic health monitoring (never auto-restarted).
 // Also returns true while a reload is in progress (reload marker exists),
-// since the agent is intentionally down during the reload cycle.
+// since the agent is intentionally down during the reload cycle, and for edit
+// when MUXCODE_EDIT_AUTO_RESTART_DISABLE=1.
 func IsAgentHealthExcluded(session, role string) bool {
 	if IsReloading(session, role) {
 		return true
 	}
+	if role == "edit" && os.Getenv(editAutoRestartDisableEnv) == "1" {
+		return true
+	}
 	return agentHealthExcludedRoles[role]
+}
+
+// NeverReloadLive reports whether a watchdog must leave a role's LIVE agent
+// running rather than tear it down and relaunch it: every health-excluded
+// role, and edit always. Restarting a dead edit resumes its conversation; a
+// reload of a live one starts fresh and discards the session the user is
+// working in, so a live edit is alerted on, never reloaded (MUX-136).
+func NeverReloadLive(session, role string) bool {
+	return role == "edit" || IsAgentHealthExcluded(session, role)
 }
 
 // RoleHasWindow reports whether the tmux window backing a role appears in
@@ -164,6 +188,89 @@ func paneShowsAgentExit(content string) bool {
 		return false
 	}
 	return !strings.Contains(stripped[at:], idlePromptChar)
+}
+
+// resumeCommand is the command Claude Code offers under agentExitBanner.
+const resumeCommand = "claude --resume"
+
+// resumeSessionIDPattern matches a whole token, so a truncated, overlong or
+// prompt-extended id is rejected rather than trimmed into a UUID.
+var resumeSessionIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+var (
+	agentExitBannerPattern = regexp.MustCompile(whitespaceTolerant(agentExitBanner))
+	resumeCommandPattern   = regexp.MustCompile(`^\s*` + whitespaceTolerant(resumeCommand) + `[ \t]+`)
+)
+
+// resumeCaptureLines bounds the capture to the exit banner and the prompt
+// beneath it, with room for a narrow pane's wrapping.
+const resumeCaptureLines = 20
+
+// CaptureResumeSessionID captures target with soft-wrapped lines joined
+// (`capture-pane -J`) and scrapes it with ScrapeResumeSessionID. The join is
+// what lets a wrapped id through: the parser never rejoins across a newline.
+func CaptureResumeSessionID(target string) (id string, ok bool) {
+	content, err := captureResumePane(target)
+	if err != nil {
+		return "", false
+	}
+	return ScrapeResumeSessionID(content)
+}
+
+// captureResumePane is the one capture every resume scrape reads, shared with
+// RestartLocalAgent so the -J the scrape depends on cannot drift between them.
+func captureResumePane(target string) (string, error) {
+	return TmuxOutput("capture-pane", "-t", target, "-p", "-J", "-S", fmt.Sprintf("-%d", resumeCaptureLines))
+}
+
+// ValidResumeSessionID reports whether id is a whole Claude Code session UUID,
+// the only shape `muxcode agent launch --resume` passes through.
+func ValidResumeSessionID(id string) bool {
+	return resumeSessionIDPattern.MatchString(id)
+}
+
+// ScrapeResumeSessionID extracts the session id Claude Code offers in its exit
+// banner (`Resume this session with: claude --resume <id>`) from a pane
+// capture. ok is false when no id is found — callers must launch fresh rather
+// than resume with an empty id (MUX-126).
+//
+// Only the LAST banner is read, and a malformed last banner yields not-found
+// rather than falling back to an earlier one: an earlier banner belongs to a
+// previous session, and resuming it would restore the wrong conversation. The
+// capture must be taken before any relaunch keystroke, which types over the
+// banner, and with -J (CaptureResumeSessionID): the id must be one whole token
+// on the command's line. A capture without -J cannot tell a soft wrap from a
+// hard newline, so a split id fails closed — joining it once let a truncated
+// id borrow hex from the shell prompt below and yield an id Claude never
+// offered. The banner and command tolerate wrapping; they only recognize.
+func ScrapeResumeSessionID(content string) (id string, ok bool) {
+	banners := agentExitBannerPattern.FindAllStringIndex(content, -1)
+	if len(banners) == 0 {
+		return "", false
+	}
+	tail := banners[len(banners)-1][1]
+	cmd := resumeCommandPattern.FindStringIndex(content[tail:])
+	if cmd == nil {
+		return "", false
+	}
+	rest := content[tail+cmd[1]:]
+	if end := strings.IndexFunc(rest, unicode.IsSpace); end >= 0 {
+		rest = rest[:end]
+	}
+	if !resumeSessionIDPattern.MatchString(rest) {
+		return "", false
+	}
+	return rest, true
+}
+
+// whitespaceTolerant builds a regexp matching s with any whitespace, including
+// a soft-wrap newline, between its characters.
+func whitespaceTolerant(s string) string {
+	var parts []string
+	for _, r := range stripWhitespace(s) {
+		parts = append(parts, regexp.QuoteMeta(string(r)))
+	}
+	return strings.Join(parts, `\s*`)
 }
 
 // stripWhitespace removes every space, tab and newline so a match survives the

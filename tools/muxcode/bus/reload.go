@@ -1,7 +1,9 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +30,38 @@ func writeReloadMarker(session, role string) error {
 		return fmt.Errorf("create lock dir: %w", err)
 	}
 	return os.WriteFile(ReloadMarkerPath(session, role), []byte("reloading"), 0644)
+}
+
+// ErrReloadMarkerHeld is returned by acquireReloadMarker when another relaunch
+// already holds the role's marker.
+var ErrReloadMarkerHeld = errors.New("reload marker already held")
+
+// acquireReloadMarker creates the role's reload marker exclusively (O_EXCL),
+// so two relaunchers — `muxcode resume` and the daemon's RestartLocalAgent —
+// cannot both pass a check-then-write and type into the same pane at once.
+// It returns ErrReloadMarkerHeld when the marker exists, and on success a
+// release func that removes it.
+func acquireReloadMarker(session, role string) (release func(), err error) {
+	dir := filepath.Join(BusDir(session), "lock")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("create lock dir: %w", err)
+	}
+	f, err := os.OpenFile(ReloadMarkerPath(session, role), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if errors.Is(err, fs.ErrExist) {
+		return nil, fmt.Errorf("%w: %s", ErrReloadMarkerHeld, role)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("create reload marker: %w", err)
+	}
+	_, writeErr := f.WriteString("reloading")
+	if closeErr := f.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr != nil {
+		clearReloadMarker(session, role)
+		return nil, fmt.Errorf("write reload marker: %w", writeErr)
+	}
+	return func() { clearReloadMarker(session, role) }, nil
 }
 
 // clearReloadMarker removes the reload marker file.
@@ -317,7 +351,9 @@ func ReloadWindowForRole(role string) string {
 
 // ReloadAgent orchestrates the full stop→reconfigure→relaunch cycle:
 //  1. Validate role exists and has a window
-//  2. Write reload marker (suppresses daemon health checks)
+//  2. Acquire the reload marker exclusively (suppresses daemon health checks;
+//     a marker held by a resume, restart or other reload returns
+//     ErrReloadMarkerHeld before any keystroke)
 //  3. Gracefully stop the agent (BEFORE writing overrides — so IsAgentAlive
 //     resolves the correct provider for the still-running agent)
 //  4. Write runtime overrides if --cli or --model specified
@@ -343,9 +379,10 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 	// Capture old CLI for logging (before writing overrides)
 	oldCLI := ResolveProviderCLI(role)
 
-	// 2. Write reload marker
-	if err := writeReloadMarker(session, role); err != nil {
-		return fmt.Errorf("write reload marker: %w", err)
+	// 2. Acquire reload marker
+	release, err := acquireReloadMarker(session, role)
+	if err != nil {
+		return err
 	}
 
 	// 3. Gracefully stop the agent BEFORE writing overrides.
@@ -354,7 +391,7 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 	// detection would use the wrong provider (e.g. ClaudeCodeProvider checking
 	// an OpenCode pane), causing incorrect results and failed stops.
 	if err := GracefulStop(session, role, compact); err != nil {
-		clearReloadMarker(session, role)
+		release()
 		return fmt.Errorf("stop agent: %w", err)
 	}
 
@@ -362,7 +399,7 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 	if cli != "" {
 		envKey := RoleCLIEnvVar(role)
 		if err := WriteRuntimeOverride(session, role, envKey, cli); err != nil {
-			clearReloadMarker(session, role)
+			release()
 			return fmt.Errorf("write CLI override: %w", err)
 		}
 	}
@@ -373,7 +410,7 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 		// falling through to provider-specific vars.
 		envKey := RoleModelEnvVar(role)
 		if err := WriteRuntimeOverride(session, role, envKey, model); err != nil {
-			clearReloadMarker(session, role)
+			release()
 			return fmt.Errorf("write model override: %w", err)
 		}
 	}
@@ -385,7 +422,7 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 	// 6. Regenerate provider config (.opencode/agents/ or .codex/AGENTS.md)
 	provider := ResolveProvider(role)
 	if err := provider.WriteAgentConfig(role); err != nil {
-		clearReloadMarker(session, role)
+		release()
 		return fmt.Errorf("write agent config: %w", err)
 	}
 
@@ -401,7 +438,7 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 	target := ReloadTarget(session, role)
 	launchCmd := fmt.Sprintf("muxcode agent launch %s", role)
 	if err := exec.Command("tmux", "send-keys", "-t", target, launchCmd, "Enter").Run(); err != nil {
-		clearReloadMarker(session, role)
+		release()
 		return fmt.Errorf("relaunch agent: %w", err)
 	}
 
@@ -420,8 +457,8 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 		time.Sleep(1 * time.Second)
 	}
 
-	// 10. Clear reload marker
-	clearReloadMarker(session, role)
+	// 10. Release reload marker
+	release()
 
 	// 10a. Reset notified IDs marker so the daemon re-notifies the new agent
 	// about any pending inbox messages. Without this, the marker retains the

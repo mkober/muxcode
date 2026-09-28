@@ -1416,10 +1416,13 @@ Manage session context — save summaries for context preservation across restar
 ```bash
 muxcode session status
 muxcode session compact "<summary>"
+muxcode session resume [role]
 ```
 
 - `status` — show session uptime and compact count
 - `compact "<summary>"` — save session summary to memory for restoration on restart
+- `resume [role]` — print the role's saved session summaries (defaults to the calling role). It restores
+  **context**, not an agent — to relaunch a dead agent into its conversation, see [`muxcode resume`](#muxcode-resume)
 
 ### `muxcode skill`
 
@@ -1950,6 +1953,50 @@ With `--all`, iterates over all compactable roles (excludes hosted roles like `d
 This is a fire-and-forget command — run it in the background after saving context via `muxcode session compact "<summary>"`.
 
 Core code: `cmd/compact.go`, `bus/compact.go` (`CompactableRoles`).
+
+### `muxcode resume`
+
+Relaunch a **dead** Claude Code agent into the conversation its pane's exit banner offers
+(`Resume this session with: claude --resume <id>`), with its full launch flags — the manual form of
+the daemon's health restart, sharing its scrape-then-relaunch body (MUX-126 Phase 6).
+
+```bash
+muxcode resume <role> [--force]
+```
+
+| Case | Behaviour |
+|------|-----------|
+| Dead pane with a banner | `muxcode agent launch <role> --resume <id>` — the launcher appends `--resume` to the normal flag set (permission mode, `--agent`/`--agents`, `--allowedTools`, `--append-system-prompt`) |
+| Dead pane, no usable banner (none, malformed, or already followed by a failed relaunch) | Fresh flagged launch — never a flagless `claude --resume` |
+| Live agent | **Refused** — `resume` relaunches a dead agent |
+| Live agent with `--force` | Exits it first (graceful stop) so Claude draws the exit banner, then scrapes and relaunches as above. A live TUI shows no banner, so scraping it without exiting would find nothing and silently start fresh |
+| Non-Claude provider (OpenCode, Codex, local) | **Refused**, naming `muxcode reload <role>` as the road to a fresh start — a command named `resume` must not silently start a new session |
+| Hosted role (`docs` on plan, `pr-read` on commit) | **Refused**, naming the host role to resume instead — a hosted role has no pane of its own |
+| Unknown role, role with no window, reload already in progress | **Refused** |
+
+Every refusal exits `1` **before any keystroke** (`bus.ErrResumeRefused`), so a refused resume never
+touches the pane. For the duration of the relaunch the role's reload marker is held, so the daemon's
+health sweep cannot restart the same pane concurrently; it is removed on every return path, including a
+failed relaunch.
+
+Lifecycle rows are the daemon road's own — `resume-scrape-hit`, `resume-scrape-miss`,
+`resume-scrape-stale`, `agent-relaunch` — with source `manual` and the invoking actor, so a manual
+resume is distinguishable from a daemon restart:
+
+```bash
+muxcode resume edit                         # dead edit → back in its conversation
+muxcode resume plan --force                 # plan is up but wedged: exit it, then resume
+muxcode lifecycle show --source manual      # did it resume, or fall back to fresh?
+```
+
+The command's own output says only that it relaunched; whether it **resumed** is the lifecycle row
+(`resume-scrape-hit` vs `-miss`/`-stale`).
+
+Not [`muxcode session resume`](#muxcode-session), which prints saved memory summaries and relaunches
+nothing.
+
+Core code: `cmd/resume.go`, `bus/resume.go` (`ResumeAgent`), `bus/health.go` (shared
+`scrapeAndRelaunch`). Spec: [MUX-126](requirements/completed/MUX-126-edit-resume-aware-auto-restart.md).
 
 ### `muxcode reload`
 

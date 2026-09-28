@@ -335,9 +335,11 @@ func TestClaudeBuildExecArgs_NoBareAgentFlag(t *testing.T) {
 }
 
 // The name and the definition travel as one unit — --agent <name> immediately
-// followed by --agents <json> — and no shape of launch carries a resume flag:
-// the launcher only ever starts fresh sessions, so a resumed session found in
-// an agent pane is by construction not a launcher product.
+// followed by --agents <json> — and no launch carries a resume flag unless
+// ResumeSessionID asks for one (MUX-126, pinned by
+// TestClaudeBuildExecArgs_ResumeAppendsToFullFlagSet). A launcher resume always
+// carries the definition pair, so a definition-less resumed pane is still, by
+// construction, not a launcher product.
 func TestClaudeBuildExecArgs_AgentFlagsTravelTogether(t *testing.T) {
 	p := &ClaudeCodeProvider{}
 	json := `{"planner":{"description":"Docs","prompt":"Maintain docs."}}`
@@ -365,6 +367,39 @@ func TestClaudeBuildExecArgs_AgentFlagsTravelTogether(t *testing.T) {
 			if slices.Contains(a, flag) {
 				t.Errorf("launch carries resume flag %s: %v", flag, a)
 			}
+		}
+	}
+}
+
+// MUX-126 Phase 2. A resume is the fresh argv plus `--resume <id>`, element for
+// element — the prefix comparison is what proves no second flag-assembly path
+// exists. The shape a bare `claude --resume` produces, dropping the permission
+// mode and the definition, is the regression this exists to catch.
+func TestClaudeBuildExecArgs_ResumeAppendsToFullFlagSet(t *testing.T) {
+	const id = "8a744341-11bf-440f-b5d2-49248447a9c0"
+	p := &ClaudeCodeProvider{}
+	cfg := &LaunchConfig{
+		Role:         "edit",
+		CLI:          "claude",
+		AgentName:    "code-editor",
+		AgentJSON:    `{"code-editor":{"description":"Edit","prompt":"Edit code."}}`,
+		PermFlags:    []string{"--dangerously-skip-permissions"},
+		ToolFlags:    []string{"--allowedTools", "Read"},
+		SharedPrompt: "You are part of a team.",
+	}
+	_, fresh := p.BuildExecArgs(cfg)
+	if slices.Contains(fresh, "--resume") {
+		t.Fatalf("fresh launch carries --resume: %v", fresh)
+	}
+
+	cfg.ResumeSessionID = id
+	_, resumed := p.BuildExecArgs(cfg)
+	if want := append(slices.Clone(fresh), "--resume", id); !slices.Equal(resumed, want) {
+		t.Fatalf("resume argv = %v, want the fresh argv plus --resume %s", resumed, id)
+	}
+	for _, flag := range []string{"--dangerously-skip-permissions", "--agent", "--agents", "--allowedTools", "--append-system-prompt"} {
+		if !slices.Contains(resumed, flag) {
+			t.Errorf("resume dropped %s: %v", flag, resumed)
 		}
 	}
 }

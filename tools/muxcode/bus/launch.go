@@ -35,6 +35,9 @@ type LaunchConfig struct {
 	AgentJSON    string // JSON for --agents flag
 	AgentJSONErr error  // why AgentJSON is empty although AgentFile resolved
 
+	// ResumeSessionID appends --resume <id>; read by the Claude provider only (MUX-126)
+	ResumeSessionID string
+
 	// Local LLM
 	HarnessArgs []string // Args for muxcode-llm-harness or bus agent run
 
@@ -928,6 +931,23 @@ func refuseWithoutDefinition(session string, cfg *LaunchConfig) error {
 	return errors.New(detail)
 }
 
+// applyResume sets cfg.ResumeSessionID for a Claude Code launch. Any other
+// provider has no resume road, so the id is dropped with a `resume-ignored`
+// lifecycle row rather than handed to a CLI that would misread it.
+func applyResume(session string, cfg *LaunchConfig, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	if IsClaudeTUI(cfg.Provider) {
+		cfg.ResumeSessionID = sessionID
+		return
+	}
+	if session != "" {
+		LogLifecycle(session, "warn", "launch", "resume-ignored",
+			fmt.Sprintf("%s: provider %s cannot resume session %s — launching fresh", cfg.Role, cfg.CLI, sessionID))
+	}
+}
+
 // ActivateVenv sets PATH and VIRTUAL_ENV environment variables to activate
 // a Python venv. This is equivalent to `source <venv>/bin/activate`.
 // Returns an error if the venv directory path cannot be resolved.
@@ -967,6 +987,19 @@ var execSyscall = syscall.Exec
 // On success, syscall.Exec replaces the process — this function does not return.
 // This is the Go-native agent launcher.
 func RunAgentLaunch(role string) error {
+	return RunAgentLaunchResume(role, "")
+}
+
+// RunAgentLaunchResume is RunAgentLaunch resuming Claude Code session
+// sessionID ("" launches fresh). The id must be a whole session UUID, or the
+// launch is refused before anything runs. Providers other than Claude Code
+// cannot resume: the id is dropped with a `resume-ignored` lifecycle row and
+// the agent launches fresh with its normal flags (MUX-126).
+func RunAgentLaunchResume(role, sessionID string) error {
+	if sessionID != "" && !ValidResumeSessionID(sessionID) {
+		return fmt.Errorf("invalid resume session id %q: want a Claude Code session UUID", sessionID)
+	}
+
 	// Load shell-sourceable config (same resolution as LoadShellConfig)
 	LoadShellConfig("")
 
@@ -974,6 +1007,7 @@ func RunAgentLaunch(role string) error {
 	cfg := ResolveLaunchConfig(role)
 
 	session := BusSession()
+	applyResume(session, cfg, sessionID)
 	if err := refuseWithoutDefinition(session, cfg); err != nil {
 		return err
 	}

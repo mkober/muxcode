@@ -83,12 +83,32 @@ var knownNodeGuards = map[string]bool{
 // count at run creation (MUX-121: a fixed cap silently truncates a long
 // spec or over-allows a short one); CreateGraphRun resolves it into
 // MaxIterations on the frozen copy, so the executor sees only numbers.
+//
+// ResetsIterations names loop edges whose fire counts are cleared each time
+// this edge fires — "from->to" for every outcome of that pair, or a full
+// "from->to:outcome" key. It scopes an inner cap to one pass of an outer
+// loop: 50-spec-to-pr's phase loop-back resets fix->build, so each phase
+// gets the full fix budget rather than sharing one across the run (MUX-193).
+// Validation keeps every reset bounded: the resetting edge must itself be
+// capped, and may name neither itself nor an edge that resets others.
 type Edge struct {
-	From                  string `json:"from"`
-	To                    string `json:"to"`
-	Outcome               string `json:"outcome,omitempty"` // empty means "success"
-	MaxIterations         int    `json:"max_iterations,omitempty"`
-	MaxIterationsFromSpec bool   `json:"max_iterations_from_spec,omitempty"`
+	From                  string   `json:"from"`
+	To                    string   `json:"to"`
+	Outcome               string   `json:"outcome,omitempty"` // empty means "success"
+	MaxIterations         int      `json:"max_iterations,omitempty"`
+	MaxIterationsFromSpec bool     `json:"max_iterations_from_spec,omitempty"`
+	ResetsIterations      []string `json:"resets_iterations,omitempty"`
+}
+
+// resetTargets resolves one ResetsIterations entry to the edges it names.
+func (g *Graph) resetTargets(ref string) []Edge {
+	var out []Edge
+	for _, e := range g.Edges {
+		if ref == EdgeFireKey(e) || ref == e.From+"->"+e.To {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // Graph is a declarative multi-agent orchestration definition.
@@ -410,6 +430,33 @@ func (g *Graph) validateEdges(byID map[string]*Node, v *GraphValidation) {
 			v.errf("duplicate edge %s->%s on outcome %q", e.From, e.To, edgeOutcome(e))
 		}
 		seen[key] = true
+		g.validateResets(e, v)
+	}
+}
+
+// validateResets keeps a resets_iterations declaration bounded. An uncapped
+// resetting edge in the reset edge's cycle would refill its budget forever,
+// as would an edge resetting itself or two edges resetting each other.
+func (g *Graph) validateResets(e Edge, v *GraphValidation) {
+	if len(e.ResetsIterations) == 0 {
+		return
+	}
+	if e.MaxIterations == 0 && !e.MaxIterationsFromSpec {
+		v.errf("edge %s->%s resets iterations but has no cap of its own — the budget it refreshes would be unbounded", e.From, e.To)
+	}
+	for _, ref := range e.ResetsIterations {
+		targets := g.resetTargets(ref)
+		if len(targets) == 0 {
+			v.errf("edge %s->%s resets %q, which names no edge", e.From, e.To, ref)
+		}
+		for _, t := range targets {
+			switch {
+			case EdgeFireKey(t) == EdgeFireKey(e):
+				v.errf("edge %s->%s resets its own iterations", e.From, e.To)
+			case len(t.ResetsIterations) > 0:
+				v.errf("edge %s->%s resets %q, which itself resets iterations — chained resets are unbounded", e.From, e.To, ref)
+			}
+		}
 	}
 }
 

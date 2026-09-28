@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -1267,6 +1268,17 @@ func launchSandbox(t *testing.T, session string) (home string, argv *[]string) {
 	return home, captured
 }
 
+// fakeClaudeOnPath puts a stub claude executable first on PATH so a launch
+// resolves its binary on any machine and reaches the intercepted exec.
+func fakeClaudeOnPath(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // MUX-136: a Claude role whose definition resolves at no tier is refused
 // loudly — no exec, no startup message seeded, an agent-definitionless event
 // in edit's inbox — instead of coming up on the inline fallback prompt.
@@ -1347,5 +1359,88 @@ func TestRunAgentLaunch_RefusesUncarriableDefinition(t *testing.T) {
 	}
 	if plan, _ := Peek(session, "plan"); len(plan) != 0 {
 		t.Fatalf("startup message seeded for an agent that never came up: %v", plan)
+	}
+}
+
+const launchResumeID = "8a744341-11bf-440f-b5d2-49248447a9c0"
+
+// MUX-126 Phase 2, end to end: a resumed Claude launch execs with --resume
+// <id> AND the permission mode and bound definition pair — the pair a bare
+// `claude --resume` loses.
+func TestRunAgentLaunchResume_CarriesResumeAndFullFlags(t *testing.T) {
+	session := "test-launch-resume"
+	home, argv := launchSandbox(t, session)
+	writeFile(t, filepath.Join(home, ".config", "muxcode", "agents", "planner.md"),
+		"---\ndescription: Docs\n---\nMaintain docs.\n")
+
+	fakeClaudeOnPath(t)
+
+	if err := RunAgentLaunchResume("plan", launchResumeID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hasFlagValue(*argv, "--resume", launchResumeID) {
+		t.Errorf("resumed launch missing --resume %s: %v", launchResumeID, *argv)
+	}
+	if !slices.Contains(*argv, "--dangerously-skip-permissions") || !ArgsCarryDefinition(*argv) {
+		t.Errorf("resumed launch dropped the permission mode or definition pair: %v", *argv)
+	}
+}
+
+// A malformed id is refused before anything runs: no exec, no startup message.
+func TestRunAgentLaunchResume_RefusesMalformedID(t *testing.T) {
+	session := "test-launch-resume-bad-id"
+	_, argv := launchSandbox(t, session)
+
+	for _, id := range []string{"8a744341-11bf", "--dangerously-skip-permissions", launchResumeID + "x"} {
+		if err := RunAgentLaunchResume("plan", id); err == nil || !strings.Contains(err.Error(), "invalid resume session id") {
+			t.Errorf("id %q: err = %v, want a refusal", id, err)
+		}
+	}
+	if len(*argv) != 0 {
+		t.Fatalf("exec ran for a malformed resume id: %v", *argv)
+	}
+	if plan, _ := Peek(session, "plan"); len(plan) != 0 {
+		t.Fatalf("startup message seeded for a refused launch: %v", plan)
+	}
+}
+
+// Only Claude Code can resume. Every other provider launches fresh and the
+// dropped id is recorded; the Claude row is the negative control, without
+// which a gate that dropped every id would pass.
+func TestApplyResume_ClaudeOnly(t *testing.T) {
+	session := "test-apply-resume"
+	injectionTestSession(t, session)
+
+	cases := []struct {
+		provider Provider
+		resumes  bool
+	}{
+		{&ClaudeCodeProvider{}, true},
+		{&OpenCodeProvider{}, false},
+		{&CodexProvider{}, false},
+		{&LocalProvider{}, false},
+	}
+	for _, c := range cases {
+		cfg := &LaunchConfig{Role: "plan", Provider: c.provider}
+		before := countLifecycleEvents(t, session, "resume-ignored")
+		applyResume(session, cfg, launchResumeID)
+
+		name := c.provider.Name()
+		if got := cfg.ResumeSessionID != ""; got != c.resumes {
+			t.Errorf("%s: resume set = %v, want %v", name, got, c.resumes)
+		}
+		wantRows := 1
+		if c.resumes {
+			wantRows = 0
+		}
+		if got := countLifecycleEvents(t, session, "resume-ignored") - before; got != wantRows {
+			t.Errorf("%s: resume-ignored rows = %d, want %d", name, got, wantRows)
+		}
+	}
+
+	cfg := &LaunchConfig{Role: "plan", Provider: &ClaudeCodeProvider{}}
+	applyResume(session, cfg, "")
+	if cfg.ResumeSessionID != "" {
+		t.Errorf("an empty id must launch fresh, got resume %q", cfg.ResumeSessionID)
 	}
 }

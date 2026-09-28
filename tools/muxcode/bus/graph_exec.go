@@ -2213,6 +2213,7 @@ func routeFinishedNodes(session string, run *GraphRun, g *Graph, byID map[string
 				run.EdgeFires = map[string]int{}
 			}
 			run.EdgeFires[key]++
+			resetLoopBudgets(session, run, g, e)
 			fired++
 			armTarget(session, run, g, byID, e.To)
 		}
@@ -2239,6 +2240,28 @@ func routeFinishedNodes(session string, run *GraphRun, g *Graph, byID map[string
 			s.Routed = true
 		})
 	}
+}
+
+// resetLoopBudgets clears the fire counts of the edges a firing edge names in
+// ResetsIterations and logs graph-loop-budget-reset with the phase entered.
+// It mutates only run: the caller persists it in the same WriteGraphRun as
+// the fire itself, so a restarted daemon can never read the fire without the
+// reset — the counter it resumes on is always the current pass's.
+func resetLoopBudgets(session string, run *GraphRun, g *Graph, e Edge) {
+	if len(e.ResetsIterations) == 0 {
+		return
+	}
+	var cleared []string
+	for _, ref := range e.ResetsIterations {
+		for _, t := range g.resetTargets(ref) {
+			key := EdgeFireKey(t)
+			cleared = append(cleared, fmt.Sprintf("%s (was %d)", key, run.EdgeFires[key]))
+			delete(run.EdgeFires, key)
+		}
+	}
+	LogLifecycle(session, "info", "daemon", "graph-loop-budget-reset",
+		fmt.Sprintf("%s: edge %s entering %s cleared %s",
+			run.ID, EdgeFireKey(e), resolveCurrentPhaseText(session), strings.Join(cleared, ", ")))
 }
 
 // armTarget moves an edge's target toward ready: pending targets arm
