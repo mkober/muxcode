@@ -257,18 +257,27 @@ excluded throughout.
 - [x] Non-Claude providers (OpenCode, Codex, local harness) are unaffected — no resume is attempted —
       their panes carry no Claude banner (scrape miss → fresh), and `applyResume` drops any id for a
       non-Claude provider with `resume-ignored` (Phase 2)
-- [ ] `webhook` remains excluded from auto-restart
-- [ ] Restart fires only on the existing bare-shell-prompt down-detection (3 failed health checks) —
-      never against a busy or frozen-but-alive process
-- [ ] Existing reload markers and `agent-health --stop` markers still suppress the restart
-- [ ] The existing restart cap (3 attempts) and `agent-restarting`/`agent-down` alerts still apply to
-      `edit`
-- [ ] Feature is **default ON** with an env opt-out (`MUXCODE_EDIT_AUTO_RESTART_DISABLE=1`)
+- [x] `webhook` remains excluded from auto-restart — Phase 4 (`52c11d2`): `agentHealthExcludedRoles` holds only `webhook`; `TestIsAgentHealthExcluded`
+- [x] Restart fires only on the existing bare-shell-prompt down-detection (3 failed health checks) —
+      never against a busy or frozen-but-alive process — Phase 4: `checkAgentHealth` has no `edit`
+      special case, so `edit` takes the same 3-strike bare-shell detection; `NeverReloadLive` keeps the
+      definition watchdog from reloading a **live** `edit`
+- [x] Existing reload markers and `agent-health --stop` markers still suppress the restart — Phase 3
+      verified the sweep's gates; Phase 4 `TestCheckAgentHealthEditOptOuts` covers the stop marker and
+      the env opt-out for `edit`, with a monitored `plan` as counterexample
+- [x] The existing restart cap (3 attempts) and `agent-restarting`/`agent-down` alerts still apply to
+      `edit` — Phase 4 `TestCheckAgentHealthMonitorsEdit` (only `edit` dead, cap 3 holds, `agent-down` fires)
+- [x] Feature is **default ON** with an env opt-out (`MUXCODE_EDIT_AUTO_RESTART_DISABLE=1`) — Phase 4:
+      `IsAgentHealthExcluded` returns true for `edit` only on exactly `=1`
 - [x] Lifecycle events are emitted for detect, scrape (hit and miss) and relaunch — detect is the
       existing `agent-health-fail`/`agent-restart` rows; Phase 3 adds `resume-scrape-hit`,
       `resume-scrape-miss` (naming a capture failure), `resume-scrape-stale` and `agent-relaunch`
-- [ ] A manual escape hatch exists: `muxcode resume <role>` (or `muxcode reload <role> --resume`)
-- [ ] All three `IsAgentHealthExcluded` call sites behave consistently for `edit`
+- [ ] A manual escape hatch exists: `muxcode resume <role>` (or `muxcode reload <role> --resume`) —
+      **no phase step delivers this** (technical approach item 5 only); not built as of `52c11d2` —
+      the existing `muxcode session resume` restores memory summaries, not an agent
+- [x] All three `IsAgentHealthExcluded` call sites behave consistently for `edit` — Phase 4: the daemon
+      sweep (`daemon.go:1802`), `cmd/agent_health.go:36` and `bus/inspect.go:34` share the one predicate,
+      so the map change and the opt-out reach all three with no call-site edit
 
 ### Technical approach
 
@@ -322,11 +331,11 @@ excluded throughout.
 
 ### Phase 4: Un-exclude edit
 
-- [ ] Remove `edit` from `agentHealthExcludedRoles`; keep `webhook`
-- [ ] Add the `MUXCODE_EDIT_AUTO_RESTART_DISABLE=1` opt-out (default ON)
-- [ ] Update the rationale comment to record why edit is now included and what still protects the pane
-- [ ] Audit all three `IsAgentHealthExcluded` call sites for consistent behaviour
-- [ ] Confirm the restart cap and `agent-restarting`/`agent-down` alerts apply to edit
+- [x] Remove `edit` from `agentHealthExcludedRoles`; keep `webhook` — `52c11d2` (committed 12:13, before this verification; run `1790612093` re-verified it without re-implementing), review `1790612219` clean
+- [x] Add the `MUXCODE_EDIT_AUTO_RESTART_DISABLE=1` opt-out (default ON) — `editAutoRestartDisableEnv` in `IsAgentHealthExcluded`
+- [x] Update the rationale comment to record why edit is now included and what still protects the pane — `agent_health.go:12–22`: 3-strike bare-shell detection, full-flag resume, cap and alerts, the opt-out, and `NeverReloadLive` for a live `edit`
+- [x] Audit all three `IsAgentHealthExcluded` call sites for consistent behaviour — one shared predicate; `definition_watchdog.go`'s reloadable check moved to `NeverReloadLive` so a live, definition-less `edit` is alerted, never reloaded
+- [x] Confirm the restart cap and `agent-restarting`/`agent-down` alerts apply to edit — `TestCheckAgentHealthMonitorsEdit`; review `1790611132`'s should-fix (other roles could reach a real tmux restart in that fixture) fixed in the same commit
 
 ### Phase 5: Integration test
 
@@ -359,13 +368,17 @@ excluded throughout.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-126-edit-resume-aware-auto-restart | 25m | 2026-09-28 11:54 |
+| MUX-126-edit-resume-aware-auto-restart | 40m | 2026-09-28 12:18 |
 
 ## Status
 
-In Progress — 18/41 on 2026-09-28 11:5x: **Phases 1–3 complete** on run `1790608128`; acceptance
-criteria 6/14 (the scrape-before-interrupt, fresh-fallback, `--resume`-not-`--continue`, other-roles,
-non-Claude and lifecycle criteria — the `edit`-specific ones wait on Phase 4). Phase 3 lap:
+In Progress — 29/41 on 2026-09-28 12:2x: **Phases 1–4 complete**; acceptance criteria 12/14. Open:
+AC 1 (a dead `edit` resumed end to end — Phase 5's first test) and **AC 13, the manual escape hatch
+(`muxcode resume <role>`), which no phase step delivers** — the close-out guard will refuse on it until
+a step is added or the criterion is deferred; the user's call. Phase 4 `52c11d2` (un-exclude `edit`,
+`MUXCODE_EDIT_AUTO_RESTART_DISABLE=1`, `NeverReloadLive`), verified on run `1790612093`, review
+`1790612219` clean. Run `1790608128` failed at Phase 4 on the run-wide fix cap —
+[MUX-193](../backlog/MUX-193-spec-to-pr-fix-loop-cap-is-per-run-not-per-phase.md). Phase 3 `4356486`:
 `RestartLocalAgent` scrapes before `C-c` and relaunches `--resume <id>` on a hit, fresh on
 miss/capture failure/stale banner; review `1790610740` clean first pass. Phase 4 (un-exclude `edit`)
 next. Phase 2 `408dce9`:
