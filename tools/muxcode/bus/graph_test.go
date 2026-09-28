@@ -381,24 +381,52 @@ func TestReviewFailureRoutesToFix(t *testing.T) {
 // The executor test pins the routing that follows from an EXIT=0 reply; this
 // pins the instruction that produces one. Without it the wording could be
 // reverted and only a live run would notice.
+//
+// 110-pr-merge reads the review too (MUX-187), so both templates are held to
+// the same contract, and their read and condition must be identical — two
+// definitions of "actionable" would let one template merge what the other
+// would fix.
 func TestPRReviewFixQuestionNodesDeclareExitConvention(t *testing.T) {
-	g, err := ParseGraph([]byte(builtinGraphJSON["80-pr-review-fix"]))
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	var readMsg string
+	for _, name := range []string{"80-pr-review-fix", "110-pr-merge"} {
+		g, err := ParseGraph([]byte(builtinGraphJSON[name]))
+		if err != nil {
+			t.Fatalf("%s parse: %v", name, err)
+		}
+		for id, token := range map[string]string{"find-pr": "NO-PR-FOUND", "read-comments": NoActionableCommentsToken} {
+			n := g.node(id)
+			if n == nil {
+				t.Errorf("%s: %s node missing", name, id)
+				continue
+			}
+			if !strings.Contains(strings.ToUpper(n.Message), "EXIT=0 EITHER WAY") {
+				t.Errorf("%s: %s does not tell the agent a completed lookup is EXIT=0 either way; "+
+					"a %s reply would fail the node and strand the run", name, id, token)
+			}
+			if !strings.Contains(n.Message, token) {
+				t.Errorf("%s: %s does not name the %s token its condition branches on", name, id, token)
+			}
+		}
+		if c := g.node("no-comments"); c == nil || c.Conditions["output_contains"] != NoActionableCommentsToken {
+			t.Errorf("%s: no-comments must branch on %s", name, NoActionableCommentsToken)
+		}
+		if n := g.node("read-comments"); n != nil {
+			if readMsg == "" {
+				readMsg = n.Message
+			} else if n.Message != readMsg {
+				t.Errorf("%s read-comments message drifted from 80-pr-review-fix's", name)
+			}
+		}
 	}
-	for id, token := range map[string]string{"find-pr": "NO-PR-FOUND", "read-comments": "NO-ACTIONABLE-COMMENTS"} {
-		n := g.node(id)
-		if n == nil {
-			t.Errorf("%s node missing", id)
-			continue
-		}
-		if !strings.Contains(strings.ToUpper(n.Message), "EXIT=0 EITHER WAY") {
-			t.Errorf("%s does not tell the agent a completed lookup is EXIT=0 either way; "+
-				"a %s reply would fail the node and strand the run", id, token)
-		}
-		if !strings.Contains(n.Message, token) {
-			t.Errorf("%s does not name the %s token its condition branches on", id, token)
-		}
+	if !strings.Contains(readMsg, "unresolved thread marked outdated is still actionable") {
+		t.Error("read-comments must count an unresolved outdated thread as actionable; " +
+			"exempting it lets a finding on an edited hunk merge unanswered")
+	}
+	if strings.Contains(readMsg, "or outdated threads") {
+		t.Error("read-comments still exempts outdated threads wholesale")
+	}
+	if !strings.Contains(readMsg, "Resolved threads, and bot summaries or chatter that ask for no change, are not actionable") {
+		t.Error("read-comments must still exempt resolved threads and no-change bot chatter")
 	}
 }
 

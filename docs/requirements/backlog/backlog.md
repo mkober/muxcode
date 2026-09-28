@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| — | _None — the next active spec is the user's call_ | — | — |
+| [`MUX-187`](../drafts/MUX-187-pr-merge-merges-over-unresolved-review-comments.md) | `110-pr-merge` Merges Over Unresolved Review Comments | 2026-09-28 | 7/17 — Phase 1 of 3 done · defects #1 |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
@@ -46,7 +46,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | # | T | ID | Defect | Sev | Depends on |
 |---|---|----|--------|-----|------------|
-| 1 | 1 | [`MUX-187`](./MUX-187-pr-merge-merges-over-unresolved-review-comments.md) | `110-pr-merge` merges over unresolved review comments | High | — |
+| 1 | 1 | [`MUX-187`](../drafts/MUX-187-pr-merge-merges-over-unresolved-review-comments.md) | `110-pr-merge` merges over unresolved review comments | High | — |
 | 2 | 1 | [`MUX-141`](./MUX-141-auto-agent-restart-relaunches-graph-runs.md) | Restarting the auto agent relaunches autonomous graph runs | High | — |
 | 3 | 1 | [`MUX-142`](./MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Spawned worker delegates build/test into the wrong tree | High | — |
 | 4 | 1 | [`MUX-178`](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) | A graph `spawn` node cuts no worktree, ports nothing, and reports `success` | High | — |
@@ -148,7 +148,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
-| [`MUX-187`](./MUX-187-pr-merge-merges-over-unresolved-review-comments.md) | `110-pr-merge` Merges Over Unresolved Review Comments | High | — |
+| [`MUX-187`](../drafts/MUX-187-pr-merge-merges-over-unresolved-review-comments.md) | `110-pr-merge` Merges Over Unresolved Review Comments | High | — |
 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | The Prompt Profile Denies Its Own Discovery Commands | Low | — |
 | [`MUX-176`](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) | The Run Chain Reported Success Three Minutes Before the Script Finished — and It Failed | High | — |
 | [`MUX-177`](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) | The Watch Chain Fires on Every Bash Call and Pastes the Raw Command Into the Message | Medium | — |

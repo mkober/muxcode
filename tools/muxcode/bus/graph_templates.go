@@ -124,8 +124,7 @@ var builtinGraphJSON = map[string]string{
   "nodes": [
     {"id": "find-pr", "type": "send", "role": "commit", "action": "pr-read", "message": "Report whether an open PR exists for the current branch WITHOUT creating or changing anything. Your reply MUST contain the literal token PR-CONFIRMED followed by its number and URL if one exists, or the literal token NO-PR-FOUND if none does. This node asks a question, so a completed lookup is EXIT=0 EITHER WAY; reserve EXIT=1 for a lookup you could not complete at all"},
     {"id": "pr-exists", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
-    {"id": "read-comments", "type": "send", "role": "commit", "action": "pr-read", "message": "Read every review comment on this branch's PR — review summaries, inline comments with file:line, Copilot and human — and list each unresolved, actionable one with its comment id, file:line and what it asks for. If there are none, your reply MUST contain the literal token NO-ACTIONABLE-COMMENTS; otherwise it must not. Change nothing. A completed read is EXIT=0 either way"},
-    {"id": "no-comments", "type": "condition", "conditions": {"output_contains": "NO-ACTIONABLE-COMMENTS"}},
+    ` + prReviewReadNodesJSON + `,
     {"id": "fix-gate", "type": "wait_human", "message": "The PR has review comments to address — approve fixing them, committing and pushing the fixes to the PR branch, and replying to each comment"},
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Address the review comments on this branch's PR, listed by the PR read: ${output:read-comments}. For each comment either fix it in the code or decline it with a reason (wrong, or out of scope). If a build, test or review failed after your last change, fix that too — THE FAILURE TO FIX: ${failure_report}. Do not commit, push or reply to comments: the graph does those after you report. Your report MUST list every comment id with what you changed (file:line) or why you declined it — carry earlier iterations forward, since the reply step reads only your latest report"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
@@ -274,20 +273,25 @@ var builtinGraphJSON = map[string]string{
 
 	"110-pr-merge": `{
   "name": "110-pr-merge",
-  "description": "Find the current branch's PR, wait for its CI to finish green, then gated merge, branch delete, main update and tracker story move",
+  "description": "Find the current branch's PR, stop on unresolved review comments, wait for its CI to finish green, then gated merge, branch delete, main update and tracker story move",
   "start": "find-pr",
   "nodes": [
     {"id": "find-pr", "type": "send", "role": "commit", "action": "pr-read", "message": "Report whether an open PR exists for the current branch WITHOUT creating or changing anything. Your reply MUST contain the literal token PR-CONFIRMED followed by its number and URL if one exists, or the literal token NO-PR-FOUND if none does. This node asks a question, so a completed lookup is EXIT=0 EITHER WAY; reserve EXIT=1 for a lookup you could not complete at all"},
     {"id": "pr-exists", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
+    ` + prReviewReadNodesJSON + `,
+    {"id": "open-comments", "type": "wait_human", "message": "NOT MERGING — the PR has unresolved review comments: ${output:read-comments} — address them with muxcode graph run 80-pr-review-fix, then run 110-pr-merge again. Approving this only acknowledges it and ends the run; nothing is merged"},
     {"id": "ci-watch", "type": "send", "role": "watch", "action": "watch", "timeout_secs": 3600, "message": "Watch the CI checks on this branch's PR until they finish (gh pr checks --watch) and report each check's result. If every check passed your reply MUST contain the literal token CI-GREEN; otherwise it must not"},
     {"id": "ci-green", "type": "condition", "conditions": {"output_contains": "CI-GREEN"}},
-    {"id": "merge-gate", "type": "wait_human", "message": "CI is green — approve merging the PR, deleting its branch, updating main, and moving the tracker story (Jira) to Done"},
+    {"id": "merge-gate", "type": "wait_human", "message": "CI is green and the PR has no unresolved review comments — approve merging the PR, deleting its branch, updating main, and moving the tracker story (Jira) to Done"},
     {"id": "merge", "type": "send", "role": "commit", "action": "commit", "message": "Merge this branch's PR with the repo's usual merge method (gh pr merge), delete the PR branch, then check out main and pull it. Report the merge commit sha"},
     {"id": "tracker", "type": "send", "role": "plan", "action": "jira-write", "message": "The user approved the tracker update: if the merged branch tracks a Jira story, transition it to Done and comment the merged PR URL; if it tracks none, reply nothing to do. The merge node reported: ${output:merge}"}
   ],
   "edges": [
     {"from": "find-pr", "to": "pr-exists"},
-    {"from": "pr-exists", "to": "ci-watch"},
+    {"from": "pr-exists", "to": "read-comments"},
+    {"from": "read-comments", "to": "no-comments"},
+    {"from": "no-comments", "to": "ci-watch"},
+    {"from": "no-comments", "to": "open-comments", "outcome": "failure"},
     {"from": "ci-watch", "to": "ci-green"},
     {"from": "ci-green", "to": "merge-gate"},
     {"from": "merge-gate", "to": "merge"},
@@ -295,3 +299,18 @@ var builtinGraphJSON = map[string]string{
   ]
 }`,
 }
+
+// NoActionableCommentsToken is the literal a PR review read emits when
+// nothing on the PR needs answering; the no-comments condition branches on it.
+const NoActionableCommentsToken = "NO-ACTIONABLE-COMMENTS"
+
+// prReviewReadNodesJSON is the read-comments node and its no-comments
+// condition, spliced into every template that reads a PR's review
+// (80-pr-review-fix, 110-pr-merge) so they cannot drift on what "actionable"
+// means. A "changes requested" review state counts even with no inline
+// comments — branch protection need not refuse the merge — while resolved
+// threads and bot chatter do not. An unresolved outdated thread still counts:
+// editing the hunk it sits on does not answer it. MUX-187: 110-pr-merge read no review at all
+// and merged PR #89 over six unanswered Copilot comments.
+const prReviewReadNodesJSON = `{"id": "read-comments", "type": "send", "role": "commit", "action": "pr-read", "message": "Read every review comment on this branch's PR — review summaries, inline comments with file:line, Copilot and human — and list each unresolved, actionable one with its comment id, file:line and what it asks for. A review whose state is CHANGES_REQUESTED is actionable even with no inline comments: list it by its review id and reviewer. An unresolved thread marked outdated is still actionable — its lines moved, not necessarily its fix: list it unless the current code demonstrably makes the requested change or makes it inapplicable, and say which. Resolved threads, and bot summaries or chatter that ask for no change, are not actionable. If there are none, your reply MUST contain the literal token ` + NoActionableCommentsToken + `; otherwise it must not. Change nothing. A completed read is EXIT=0 either way"},
+    {"id": "no-comments", "type": "condition", "conditions": {"output_contains": "` + NoActionableCommentsToken + `"}}`

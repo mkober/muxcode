@@ -9,7 +9,7 @@ user approved — *"CI is green — approve merging the PR, deleting its branch,
 moving the tracker story (Jira) to Done"* — was true and incomplete: the commit agent reported the
 open review only in its post-merge summary (*"HEADS-UP: Copilot's review said Changes recommended …
 and was never addressed"*), after the branch was deleted. The findings themselves are filed as
-[MUX-186](./MUX-186-pr-89-cancel-races-and-fail-open-cleanup-merged-unaddressed.md).
+[MUX-186](../backlog/MUX-186-pr-89-cancel-races-and-fail-open-cleanup-merged-unaddressed.md).
 
 ## Context
 
@@ -44,11 +44,11 @@ evidence supports** — applies.
 
 ### Acceptance criteria
 
-- [ ] `110-pr-merge` reads the PR's unresolved review comments before `merge-gate` and the run **stops** (or routes to a `stuck-gate`-style hold) when any are actionable, naming each with id and `file:line`; it reaches `merge-gate` only on `NO-ACTIONABLE-COMMENTS`
-- [ ] The `merge-gate` text states what was checked — CI green **and** no unresolved review comments — so the approval means what it says
-- [ ] The read node reuses `80-pr-review-fix`'s `read-comments` message and token verbatim (one definition, or a shared constant), so the two templates cannot drift on what "actionable" means
-- [ ] A human "Changes requested" review with zero inline comments is also actionable (review state, not only comment count)
-- [ ] **Negative control:** a PR with resolved threads only, or with non-actionable bot chatter, still reaches `merge-gate`
+- [x] `110-pr-merge` reads the PR's unresolved review comments before `merge-gate` and the run **stops** (or routes to a `stuck-gate`-style hold) when any are actionable, naming each with id and `file:line`; it reaches `merge-gate` only on `NO-ACTIONABLE-COMMENTS` — `read-comments → no-comments` after `pr-exists`; the false edge ends at the `open-comments` hold (no outgoing edges, message carries `${output:read-comments}`); `TestPRMergeReviewReadRouting` (`graph_exec_test.go`) holds before `ci-watch` with the comment's `file:line` in the pending approval, and `TestPRMergeTemplate` pins `ci-watch` reachable only from `no-comments` success
+- [x] The `merge-gate` text states what was checked — CI green **and** no unresolved review comments — so the approval means what it says — asserted in `TestPRMergeTemplate`
+- [x] The read node reuses `80-pr-review-fix`'s `read-comments` message and token verbatim (one definition, or a shared constant), so the two templates cannot drift on what "actionable" means — `prReviewReadNodesJSON` + `NoActionableCommentsToken` (`graph_templates.go`) spliced into both; `TestPRReviewFixQuestionNodesDeclareExitConvention` fails on any drift between the two
+- [ ] A human "Changes requested" review with zero inline comments is also actionable (review state, not only comment count) — the shared read message now says so (`CHANGES_REQUESTED … actionable even with no inline comments`), but it is agent instruction only: no test pins the wording or the behaviour. Phase 3's scripted reply is the place to exercise it
+- [ ] **Negative control:** a PR with resolved threads only, or with non-actionable bot chatter, still reaches `merge-gate` — unit half in place: `TestPRMergeReviewReadRouting`'s clean case reaches `ci-watch` and leaves `open-comments` untouched; `merge-gate` itself is not reached in that test (it needs CI), so this waits on Phase 3
 - [ ] `docs/agent-bus.md` and `docs/architecture.md` describe the new shape; the 12-row builtin table stays accurate
 - [ ] `bash scripts/test-pr-merge-review-gate.sh` passes
 
@@ -74,10 +74,10 @@ Phase 1; the default is to stop, because `80-pr-review-fix` is the road for open
 
 ### Phase 1: Template
 
-- [ ] Decide stop-vs-annotate ([Decision 1](#decision-1--stop-or-annotate)); record it here
-- [ ] Add `read-comments` and `no-comments` to `110-pr-merge` before `ci-watch`; false edge to a terminal node that lists the comments
-- [ ] Gate text updated to state both checks
-- [ ] Share the message/token with `80-pr-review-fix` (constant or generator) and extend the `graph_test.go:389` contract test
+- [x] Decide stop-vs-annotate ([Decision 1](#decision-1--stop-or-annotate)); record it here — **stop**, the spec's default, as implemented 2026-09-28; no user decision was relayed (see Decision 1)
+- [x] Add `read-comments` and `no-comments` to `110-pr-merge` before `ci-watch`; false edge to a terminal node that lists the comments — terminal node is the `open-comments` `wait_human` hold: approving it only acknowledges and ends the run, and its text points at `80-pr-review-fix`
+- [x] Gate text updated to state both checks — "CI is green and the PR has no unresolved review comments"
+- [x] Share the message/token with `80-pr-review-fix` (constant or generator) and extend the `graph_test.go:389` contract test — the contract test now iterates both templates and asserts identical `read-comments` messages. The shared message also gained the `CHANGES_REQUESTED` and resolved/bot-chatter clauses, so `80-pr-review-fix`'s read changed with it
 
 ### Phase 2: Docs
 
@@ -99,14 +99,25 @@ Stop the run and hand the comments to `80-pr-review-fix` (clean separation, one 
 or carry the list into the gate text and let the human merge anyway (one run, but an approval on a
 gate that lists open comments must be distinguishable in the audit row from a clean approval).
 
+**Resolved by default (stop), 2026-09-28** — Phase 1 implemented the spec's default: open comments end
+at an `open-comments` hold that names them and merges nothing. No user decision was relayed; the user
+may still choose annotate.
+
 ## Out of scope
 
 - Addressing PR #89's comments — MUX-186.
 - Branch-protection settings on GitHub — a repo setting, not a template.
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-187-pr-merge-merges-over-unresolved-review-comments | 11m | 2026-09-28 17:07 |
+
 ## Status
 
-Backlog
+In Progress — Phase 1 complete (uncommitted in the tree, 2026-09-28); Phases 2–3 open
 
 Filed 2026-09-24 on the user's instruction relayed by edit, from run `1790280483-110-pr-merge`
-merging PR #89 over an unanswered Copilot review; template shape verified the same day. Not started.
+merging PR #89 over an unanswered Copilot review; template shape verified the same day. Started
+2026-09-28 on branch `MUX-187-pr-merge-merges-over-unresolved-review-comments`, relayed by edit.

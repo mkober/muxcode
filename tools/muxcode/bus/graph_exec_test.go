@@ -700,6 +700,64 @@ func TestPRReviewFixFindPRRouting(t *testing.T) {
 	}
 }
 
+// TestPRMergeReviewReadRouting drives 110-pr-merge through the executor
+// (MUX-187): an open review stops the run at the open-comments hold, which
+// carries the comment the read found, before CI is watched or the merge gate
+// opens. The clean read is the negative control — a template that always
+// held would pass the first case alone.
+func TestPRMergeReviewReadRouting(t *testing.T) {
+	cases := []struct {
+		name, reply, reached, unreached string
+	}{
+		{
+			name:      "an actionable comment holds the run before CI",
+			reply:     "Unresolved: comment 2987 at bus/graph_exec.go:412 asks to close the cancel race EXIT=0",
+			reached:   "open-comments",
+			unreached: "ci-watch",
+		},
+		{
+			name:      "a clean review reaches the CI watch",
+			reply:     "Only resolved threads and a bot summary. " + NoActionableCommentsToken + " EXIT=0",
+			reached:   "ci-watch",
+			unreached: "open-comments",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g, err := ParseGraph([]byte(builtinGraphJSON["110-pr-merge"]))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			run := createTestRun(t, g)
+
+			step(t, runTestSession, run.ID)
+			completeSendNodeWithReply(t, runTestSession, run.ID, "find-pr", "commit", "PR-CONFIRMED #99 https://example.test/pull/99 EXIT=0")
+			for i := 0; i < 3; i++ {
+				step(t, runTestSession, run.ID)
+			}
+			completeSendNodeWithReply(t, runTestSession, run.ID, "read-comments", "commit", tc.reply)
+			for i := 0; i < 3; i++ {
+				step(t, runTestSession, run.ID)
+			}
+
+			if s := nodeState(t, runTestSession, run.ID, tc.reached); s == GraphNodePending {
+				t.Errorf("%s still pending — the run never reached it", tc.reached)
+			}
+			for _, id := range []string{tc.unreached, "merge-gate"} {
+				if s := nodeState(t, runTestSession, run.ID, id); s != GraphNodePending && s != GraphNodeSkipped {
+					t.Errorf("%s state = %q, want untouched", id, s)
+				}
+			}
+			if tc.reached == "open-comments" {
+				pending, err := os.ReadFile(graphApprovalPath(runTestSession, run.ID, "open-comments", "pending"))
+				if err != nil || !strings.Contains(string(pending), "bus/graph_exec.go:412") {
+					t.Errorf("the hold must name the comment and its file:line, got %q (%v)", pending, err)
+				}
+			}
+		})
+	}
+}
+
 // TestLatestAuthoritativeRowFuncMixedRows covers what the single-row
 // attribution cases cannot: accept is applied per candidate inside the same
 // walk that ranks sources, so a bug in either can hide behind the other. With
