@@ -81,6 +81,10 @@ func boundDefinition(agentName, agentFile string) (name, agentJSON string, err e
 // a name without its definition is launched as definition-less — inline
 // fallback prompt, no agent flags — never as a bare name for Claude to resolve
 // on its own (MUX-136; pinned by TestClaudeBuildExecArgs_NoBareAgentFlag).
+//
+// --resume <id> is appended to the full flag set, never substituted for it: a
+// bare `claude --resume` restores the conversation and drops every launch flag
+// (MUX-126).
 func (p *ClaudeCodeProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 	var args []string
 
@@ -101,6 +105,10 @@ func (p *ClaudeCodeProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string)
 		if prompt := InlineFallbackPrompt(cfg.Role); prompt != "" {
 			args = append(args, "--append-system-prompt", prompt)
 		}
+	}
+
+	if cfg.ResumeSessionID != "" {
+		args = append(args, "--resume", cfg.ResumeSessionID)
 	}
 
 	return cfg.CLI, args

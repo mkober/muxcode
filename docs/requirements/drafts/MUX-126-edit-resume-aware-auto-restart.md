@@ -300,10 +300,10 @@ excluded throughout.
 
 ### Phase 2: Resume-capable launch
 
-- [ ] Add a resume option to `muxcode agent launch` that appends `--resume <id>` for Claude only
-- [ ] Verify every other flag still comes from `BuildExecArgs` (no parallel flag-assembly path)
-- [ ] No-op the option for OpenCode, Codex and local harness providers
-- [ ] Unit tests asserting `--resume` **and** `--dangerously-skip-permissions` are both present
+- [x] Add a resume option to `muxcode agent launch` that appends `--resume <id>` for Claude only — `agent launch <role> [--resume <session-id>]` (`cmd/launch.go`) → `RunAgentLaunchResume`, which refuses a non-UUID id (`ValidResumeSessionID`) before any side effect; `LaunchConfig.ResumeSessionID` — 2026-09-28, run `1790608128` lap 2
+- [x] Verify every other flag still comes from `BuildExecArgs` (no parallel flag-assembly path) — `ClaudeCodeProvider.BuildExecArgs` appends `--resume <id>` to its own argv; `TestClaudeBuildExecArgs_ResumeAppendsToFullFlagSet` asserts the resumed argv equals the fresh argv plus `--resume <id>`, element for element
+- [x] No-op the option for OpenCode, Codex and local harness providers — `applyResume` sets the id only when `IsClaudeTUI`; any other provider drops it with a `resume-ignored` lifecycle row and launches fresh
+- [x] Unit tests asserting `--resume` **and** `--dangerously-skip-permissions` are both present — `TestClaudeBuildExecArgs_ResumeAppendsToFullFlagSet` (provider) and `TestRunAgentLaunchResume_CarriesResumeAndFullFlags` (end-to-end exec argv, with a `fakeClaudeOnPath` fixture so any launcher error fails — review `1790609980`'s should-fix), plus `…_RefusesMalformedID` and `TestApplyResume_ClaudeOnly`; review `1790610148` clean, build/test green after the fix
 
 ### Phase 3: Restart path wiring
 
@@ -351,11 +351,15 @@ excluded throughout.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-126-edit-resume-aware-auto-restart | 10m | 2026-09-28 11:20 |
+| MUX-126-edit-resume-aware-auto-restart | 19m | 2026-09-28 11:43 |
 
 ## Status
 
-In Progress — 4/41 on 2026-09-28 11:2x: **Phase 1 complete** on run `1790608128`. The first review
+In Progress — 8/41 on 2026-09-28 11:4x: **Phases 1–2 complete** on run `1790608128`. Phase 2 lap:
+`agent launch --resume <id>` appends to Claude's full flag set, other providers drop it
+(`resume-ignored`); review `1790609980`'s should-fix (the end-to-end launch test passed silently
+without `claude` on PATH) fixed with a fake-`claude` fixture, review `1790610148` clean. Phase 3
+(restart path wiring) next. Phase 1 `9284f26`; its first review
 (`1790608565`) found 1 must-fix — the scrape inferred soft wraps from the capture's widest line, so a
 truncated id could borrow the next hard line's hex — and the `fix` worker replaced inference with
 `capture-pane -J` plus a whole-token parse; review `1790608755` clean, build/test green. Phase 2

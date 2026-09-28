@@ -194,6 +194,12 @@ func CaptureResumeSessionID(target string) (id string, ok bool) {
 	return ScrapeResumeSessionID(content)
 }
 
+// ValidResumeSessionID reports whether id is a whole Claude Code session UUID,
+// the only shape `muxcode agent launch --resume` passes through.
+func ValidResumeSessionID(id string) bool {
+	return resumeSessionIDPattern.MatchString(id)
+}
+
 // ScrapeResumeSessionID extracts the session id Claude Code offers in its exit
 // banner (`Resume this session with: claude --resume <id>`) from a pane
 // capture. ok is false when no id is found — callers must launch fresh rather
