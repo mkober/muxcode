@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
@@ -96,5 +97,78 @@ func TestCheckAgentHealthResetsFailCountAtRestartCap(t *testing.T) {
 	// The cap must still hold — reaching strike 3 at the cap must not restart.
 	if got := d.agentRestarts["plan"]; got != 3 {
 		t.Errorf("restart cap must not be exceeded, got %d restarts", got)
+	}
+}
+
+// MUX-126 Phase 4: edit is swept like any role — strike 2 alerts agent-down,
+// and at the restart cap it goes alert-only without restarting. Only edit
+// reads dead and its cap is pre-set, so strike 3 reaches no real tmux restart.
+func TestCheckAgentHealthMonitorsEdit(t *testing.T) {
+	t.Setenv("MUXCODE_EDIT_AUTO_RESTART_DISABLE", "")
+	session := testSession(t)
+	d := New(session, 5, 8)
+	d.agentAlive = func(_, role string) bool { return role != "edit" }
+	d.windowNames = ownWindows
+	d.agentRestarts["edit"] = 3
+
+	for i := 0; i < 3; i++ {
+		d.lastAgentHealthCheck = 0
+		d.checkAgentHealth()
+	}
+
+	for role, n := range d.agentFailCounts {
+		if role != "edit" && n != 0 {
+			t.Errorf("only edit may read dead in this fixture, %q has fail count %d", role, n)
+		}
+	}
+	if got := d.agentRestarts["edit"]; got != 3 {
+		t.Errorf("edit restart cap must hold, got %d restarts", got)
+	}
+	if got := d.agentFailCounts["edit"]; got != 0 {
+		t.Errorf("edit at the cap must reset its fail count like any role, got %d", got)
+	}
+	msgs, _ := bus.Peek(session, "edit")
+	down := false
+	for _, m := range msgs {
+		down = down || (m.Action == "agent-down" && strings.Contains(m.Payload, "AGENT DOWN: edit"))
+	}
+	if !down {
+		t.Errorf("edit reached strike 2 without an agent-down alert: %+v", msgs)
+	}
+}
+
+// Negative controls: the env opt-out and an agent-health --stop marker each
+// keep edit out of the sweep entirely — never probed, so never restarted.
+func TestCheckAgentHealthEditOptOuts(t *testing.T) {
+	optOuts := map[string]func(t *testing.T, session string){
+		"env opt-out": func(t *testing.T, _ string) {
+			t.Setenv("MUXCODE_EDIT_AUTO_RESTART_DISABLE", "1")
+		},
+		"stop marker": func(t *testing.T, session string) {
+			t.Setenv("MUXCODE_EDIT_AUTO_RESTART_DISABLE", "")
+			if err := bus.MarkAgentStopped(session, "edit"); err != nil {
+				t.Fatalf("MarkAgentStopped: %v", err)
+			}
+		},
+	}
+	for name, optOut := range optOuts {
+		t.Run(name, func(t *testing.T) {
+			session := testSession(t)
+			optOut(t, session)
+			d := New(session, 5, 8)
+			d.agentAlive = allDead
+			d.windowNames = ownWindows
+
+			for i := 0; i < 2; i++ {
+				d.lastAgentHealthCheck = 0
+				d.checkAgentHealth()
+			}
+			if got := d.agentFailCounts["edit"]; got != 0 {
+				t.Errorf("opted-out edit was probed: fail count %d", got)
+			}
+			if d.agentFailCounts["plan"] == 0 {
+				t.Error("plan must still be probed, or the assertion above is vacuous")
+			}
+		})
 	}
 }

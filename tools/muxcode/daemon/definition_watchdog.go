@@ -19,8 +19,8 @@ import (
 // provider change, so it needs no approval.
 //
 // A bare `claude --resume` typed into the pane loses its resumed context this
-// way — accepted: MUX-126 is where a resume learns to carry the definition, and
-// until then an unconstrained privileged agent is the worse outcome. The alert
+// way — accepted: an unconstrained privileged agent is the worse outcome, and
+// the daemon's own restarts resume with the definition (MUX-126). The alert
 // names the cause so the human knows why the pane relaunched.
 //
 // Detection is the positive argv probe first (bus.ProbeAgentDefinition); the
@@ -28,10 +28,10 @@ import (
 // attributed to the pane, and never overrides a positive probe — an agent
 // merely discussing this bug prints the banner text without being downgraded.
 // Two consecutive sightings before acting; reloads capped per role with a
-// cooldown; alert-only once the cap is hit. Roles the daemon never restarts
-// (bus.IsAgentHealthExcluded — edit, the pane the user is typing into) are
-// alerted, never reloaded: a bare resume there is the user's own hand, and
-// MUX-126 documents it as current practice. Opt out with
+// cooldown; alert-only once the cap is hit. Roles whose live agent the daemon
+// never tears down (bus.NeverReloadLive — edit, the pane the user is typing
+// into) are alerted, never reloaded: a bare resume there is the user's own
+// hand, and a reload would discard the conversation it resumed. Opt out with
 // MUXCODE_DEFINITION_WATCHDOG_DISABLE=1.
 
 // definitionCheckSecs is the sweep interval; the env override exists for
@@ -87,7 +87,7 @@ func (d *Daemon) checkDefinitionless() {
 		}
 
 		ts := time.Now().Format("15:04:05")
-		reloadable := !bus.IsAgentHealthExcluded(d.session, role)
+		reloadable := !bus.NeverReloadLive(d.session, role)
 		if !d.definitionless[role] {
 			d.definitionless[role] = true
 			fmt.Printf("  %s  Definition watchdog: %s is running without its agent definition — refusing it\n", ts, role)
@@ -95,7 +95,7 @@ func (d *Daemon) checkDefinitionless() {
 			if d.shouldSendEvent("agent-definitionless", role) && d.shouldNotifyEdit("event") {
 				remedy := fmt.Sprintf("Refusing it: the daemon will reload %s with its definition (capped at %d reloads).", role, definitionReloadCap)
 				if !reloadable {
-					remedy = fmt.Sprintf("The daemon never restarts %s, so it stays up unconstrained until you relaunch it: muxcode reload %s.", role, role)
+					remedy = fmt.Sprintf("The daemon never reloads a live %s, so it stays up unconstrained until you relaunch it: muxcode reload %s.", role, role)
 				}
 				msg := bus.NewMessage("daemon", "edit", "event", "agent-definitionless",
 					fmt.Sprintf("%s is running WITHOUT its agent definition — default tools, no role restrictions (the shape a bare `claude --resume` in its pane produces; the launcher never emits it). %s Do not resume agents bare.",

@@ -151,10 +151,28 @@ func TestAgentHealthAlertKey(t *testing.T) {
 	}
 }
 
+// MUX-126 Phase 4: edit is monitored by default and opted out only by the env
+// flag; webhook stays excluded regardless. NeverReloadLive keeps a live edit
+// off every watchdog's reload road whichever way the flag is set.
 func TestIsAgentHealthExcluded(t *testing.T) {
 	session := "test-session"
+	t.Setenv(editAutoRestartDisableEnv, "")
+	if IsAgentHealthExcluded(session, "edit") {
+		t.Error("expected edit to be monitored by default")
+	}
+	if !NeverReloadLive(session, "edit") || NeverReloadLive(session, "plan") {
+		t.Error("NeverReloadLive must hold for edit and only for edit among monitored roles")
+	}
+	t.Setenv(editAutoRestartDisableEnv, "0")
+	if IsAgentHealthExcluded(session, "edit") {
+		t.Error("only =1 opts edit out")
+	}
+	t.Setenv(editAutoRestartDisableEnv, "1")
 	if !IsAgentHealthExcluded(session, "edit") {
-		t.Error("expected edit to be excluded")
+		t.Error("MUXCODE_EDIT_AUTO_RESTART_DISABLE=1 must exclude edit")
+	}
+	if IsAgentHealthExcluded(session, "plan") {
+		t.Error("the edit opt-out must not exclude other roles")
 	}
 	if !IsAgentHealthExcluded(session, "webhook") {
 		t.Error("expected webhook to be excluded")

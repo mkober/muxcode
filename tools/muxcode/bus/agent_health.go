@@ -10,12 +10,22 @@ import (
 )
 
 // agentHealthExcludedRoles lists roles that should never be auto-restarted.
-// edit: user's interactive session.
 // webhook: managed separately, not a tmux-based agent.
+//
+// edit left this list in MUX-126. The exclusion guarded the pane the user types
+// into, and what still guards it: a restart fires only on a pane already at a
+// bare shell prompt for three consecutive checks, never on a busy or live
+// agent; it resumes the conversation with the full launch flags instead of the
+// flagless bare `claude --resume` it used to take by hand (2026-08-31); the
+// restart cap and down/restarting alerts apply as for any role; and
+// MUXCODE_EDIT_AUTO_RESTART_DISABLE=1 restores the exclusion. A LIVE edit is
+// still never torn down — see NeverReloadLive.
 var agentHealthExcludedRoles = map[string]bool{
-	"edit":    true,
 	"webhook": true,
 }
+
+// editAutoRestartDisableEnv opts edit back out of health monitoring.
+const editAutoRestartDisableEnv = "MUXCODE_EDIT_AUTO_RESTART_DISABLE"
 
 // AgentStoppedPath returns the marker file path that suppresses auto-restart
 // for a role. Written by "agent-health --stop", cleared by "--start".
@@ -42,12 +52,25 @@ func IsAgentStopped(session, role string) bool {
 // IsAgentHealthExcluded returns true if a role should be excluded from
 // automatic health monitoring (never auto-restarted).
 // Also returns true while a reload is in progress (reload marker exists),
-// since the agent is intentionally down during the reload cycle.
+// since the agent is intentionally down during the reload cycle, and for edit
+// when MUXCODE_EDIT_AUTO_RESTART_DISABLE=1.
 func IsAgentHealthExcluded(session, role string) bool {
 	if IsReloading(session, role) {
 		return true
 	}
+	if role == "edit" && os.Getenv(editAutoRestartDisableEnv) == "1" {
+		return true
+	}
 	return agentHealthExcludedRoles[role]
+}
+
+// NeverReloadLive reports whether a watchdog must leave a role's LIVE agent
+// running rather than tear it down and relaunch it: every health-excluded
+// role, and edit always. Restarting a dead edit resumes its conversation; a
+// reload of a live one starts fresh and discards the session the user is
+// working in, so a live edit is alerted on, never reloaded (MUX-136).
+func NeverReloadLive(session, role string) bool {
+	return role == "edit" || IsAgentHealthExcluded(session, role)
 }
 
 // RoleHasWindow reports whether the tmux window backing a role appears in
