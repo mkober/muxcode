@@ -157,7 +157,7 @@ delivery-ack cutover replaced, and it would put the safety decision in the least
 | Spec | Relationship |
 |------|--------------|
 | [MUX-139](./MUX-139-claude-agent-auto-resume.md) | **Ordering constraint** — MUX-139 multiplies restarts, turning one external exit into N spurious runs; this must land first or MUX-139 must suppress the task itself |
-| [MUX-126](../drafts/MUX-126-edit-resume-aware-auto-restart.md) | Same family: a restart that does not faithfully reproduce the pre-restart state |
+| [MUX-126](../completed/MUX-126-edit-resume-aware-auto-restart.md) | Same family: a restart that does not faithfully reproduce the pre-restart state |
 | [MUX-112](./MUX-112-idle-task-rescue-closes-live-work.md) | Same class of harm — automation acting on state it has misread, against work already in flight |
 
 ## Status

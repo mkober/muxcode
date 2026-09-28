@@ -6,7 +6,7 @@ identity (docs owner, sole Atlassian write authority) while losing every constra
 depends on, and ran that way for ~37 minutes.
 
 The cause is a **bare `claude --resume` typed in the pane, outside the launcher** — this spec's shape of
-[`MUX-126`](../drafts/MUX-126-edit-resume-aware-auto-restart.md), on `plan` rather than `edit`. Evidence and
+[`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md), on `plan` rather than `edit`. Evidence and
 reasoning in "Phase 1 finding" below.
 
 > **Filed under a different name (2026-09-01 → renamed 2026-09-02).** This spec was originally titled
@@ -116,7 +116,7 @@ This is a **third** distinct way the restart story breaks, and it is not covered
 
 | Spec | Path | What is lost | Would it catch this? |
 |------|------|--------------|----------------------|
-| [`MUX-126`](../drafts/MUX-126-edit-resume-aware-auto-restart.md) | `edit`, manual bare `claude --resume` | **all** launch flags | **Yes, partly** — *revised 2026-09-02*: same path (bare resume), different agent. MUX-126 scopes its fix to `edit`, so it would not have covered `plan` as written |
+| [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) | `edit`, manual bare `claude --resume` | **all** launch flags | **Yes, partly** — *revised 2026-09-02*: same path (bare resume), different agent. MUX-126 scopes its fix to `edit`, so it would not have covered `plan` as written |
 | [`MUX-008`](../backlog/MUX-008-unverified-daemon-auto-restart.md) | daemon restart, unverified | the agent may not come up at all | No — the agent **did** come up, alive and in-pane; only its restrictions were missing |
 | **This spec** | ~~daemon restart~~ **bare `claude --resume` in the `plan` pane** (*revised 2026-09-02*) | the **definition only**, silently | — |
 
@@ -324,7 +324,7 @@ unconstrained for whoever types into it, so the definition-less instance is **re
 
 **Cost accepted:** a bare-resumed session in a daemon-managed pane loses its resumed context ~60s
 later. That is the deliberate trade — an unconstrained privileged agent is the worse outcome, and the
-alert names the cause. [`MUX-126`](../drafts/MUX-126-edit-resume-aware-auto-restart.md) is where a resume
+alert names the cause. [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) is where a resume
 learns to *carry* the definition; until then this is a blunt instrument by choice. Opt-out:
 `MUXCODE_DEFINITION_WATCHDOG_DISABLE=1`.
 
@@ -346,7 +346,7 @@ Non-Claude providers pass through (no argv contract).
 - [x] Verify the inbox listener returns after a restart (receipts resume, no `delivery-gap`)
 - [x] ~~Reconcile MUX-126's path table, which records daemon restart as preserving full launch flags —
       this incident contradicts it~~ **Revised 2026-09-02:** re-read this incident in
-      [`MUX-126`](../drafts/MUX-126-edit-resume-aware-auto-restart.md) as a **bare resume on `plan`**, and widen
+      [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) as a **bare resume on `plan`**, and widen
       that spec's resume-aware fix beyond `edit`. Its daemon-restart row is **consistent** with the
       Phase 1 evidence — leave it alone
 - [x] **Carry the full key set into the agents JSON — this is a regression the Phase 1 guard
@@ -402,7 +402,7 @@ Two of the five items were delivered by earlier phases and are **verified, not r
 | 1 — bind the flags | Landed with Phase 1; nothing changed this pass |
 | 2 — sole-caller proof | **New:** `TestClaudeAgentFlagSoleEmitter` (`bus/sole_emitter_test.go`) |
 | 3 — listener returns | Verified three ways (below) |
-| 4 — MUX-126 reconciliation | **Applied to [`MUX-126`](../drafts/MUX-126-edit-resume-aware-auto-restart.md)** — third path row, scope amendment, occurrences 5 and 6 |
+| 4 — MUX-126 reconciliation | **Applied to [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md)** — third path row, scope amendment, occurrences 5 and 6 |
 | 5 — full key set | Landed with Phase 2; nothing changed this pass |
 
 **Item 2 is a repo-walking pin, not a spot check.** It resolves the module root from its own file,
@@ -488,7 +488,7 @@ to fear.
 - [x] Raise the lifecycle rotation cap or snapshot on `agent-down`, so the next occurrence is not
       eaten by the 1000-entry limit as the 16:42 one was — *both: cap 1000 → 5000 **and**
       `SnapshotAgentDown()` at strike 2*
-- [x] Fold the findings into [`MUX-126`](../drafts/MUX-126-edit-resume-aware-auto-restart.md) rather than
+- [x] Fold the findings into [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) rather than
       duplicating them here — this phase exists to add its third and fourth occurrences, not to own
       the mass-death defect
 
@@ -750,7 +750,7 @@ probe, so one Linux run settles it — CI is the natural home).
 
 **Phase 3 complete 2026-09-02** — items 1 and 5 verified from earlier phases, item 2 added the
 repo-walking sole-emitter pin, item 3 verified the listener three ways, and item 4 was applied to
-[`MUX-126`](../drafts/MUX-126-edit-resume-aware-auto-restart.md) (third path row, scope amendment beyond `edit`,
+[`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) (third path row, scope amendment beyond `edit`,
 occurrences 5 and 6). *(Written when Phases 4 and 5 were still outstanding; both have since completed —
 see the Phase 4 and Phase 5 entries above.)*
 
@@ -808,7 +808,7 @@ Three consequences:
 Distinctness from the siblings is unchanged and still holds:
 [`MUX-008`](../backlog/MUX-008-unverified-daemon-auto-restart.md) covers a restart that may not come up at all
 and its liveness check would pass a live, responsive, unconstrained agent.
-[`MUX-126`](../drafts/MUX-126-edit-resume-aware-auto-restart.md) is now the **near** sibling, not a distant
+[`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) is now the **near** sibling, not a distant
 one — its fix is scoped to `edit`, and this incident is the same failure on a role whose entire safety
 model is scope restriction.
 

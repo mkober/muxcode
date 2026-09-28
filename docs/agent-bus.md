@@ -1996,7 +1996,7 @@ Not [`muxcode session resume`](#muxcode-session), which prints saved memory summ
 nothing.
 
 Core code: `cmd/resume.go`, `bus/resume.go` (`ResumeAgent`), `bus/health.go` (shared
-`scrapeAndRelaunch`). Spec: [MUX-126](requirements/drafts/MUX-126-edit-resume-aware-auto-restart.md).
+`scrapeAndRelaunch`). Spec: [MUX-126](requirements/completed/MUX-126-edit-resume-aware-auto-restart.md).
 
 ### `muxcode reload`
 

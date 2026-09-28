@@ -425,7 +425,9 @@ resume command), added that afternoon on the user's decision to build AC 13 rath
 run `1790620267`: `muxcode resume <role> [--force]` sharing the daemon's `scrapeAndRelaunch`, refusing
 unknown/hosted/windowless/non-Claude/reloading/live roles before any keystroke; review `1790620933`'s
 must-fix (hosted roles typed into the host's pane) and should-fix (`agent-bus.md` entry) resolved,
-review `1790621356` clean; `test-edit-auto-resume.sh` 77/0 at floor 77 — uncommitted at verification.
+review `1790621356` clean; `test-edit-auto-resume.sh` 77/0 at floor 77; committed `8e50376`. **Closed out
+2026-09-28 15:0x** by run `1790620267`'s `close-spec` node: moved `drafts/` → `completed/` (plain move;
+the push-pr commit stages it), backlog index rows closed, cross-references repointed, active spec cleared.
 Run `1790612093` had parked at `close-stuck-gate` on AC 13 before Phase 6 existed. Phase 5 `8845928`:
 `scripts/test-edit-auto-resume.sh` 59/0 at floor 59 on a real scratch daemon (run agent
 `1790613444-run-7c51e74e`), review `1790613526` clean. Phase 4 `52c11d2` (un-exclude `edit`,
