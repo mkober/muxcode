@@ -240,9 +240,11 @@ excluded throughout.
 
 ### Acceptance criteria
 
-- [ ] A dead `edit` agent is auto-restarted by the daemon with **both** its conversation and its full
+- [x] A dead `edit` agent is auto-restarted by the daemon with **both** its conversation and its full
       launch flags — `--resume <id>` **and** `--dangerously-skip-permissions`, `--agent`, `--agents`,
-      `--allowedTools`, `--append-system-prompt`
+      `--allowedTools`, `--append-system-prompt` — Phase 5 `test-edit-auto-resume.sh` section B: a real
+      scratch daemon restarts a killed `edit` and the relaunched process's `ps` argv carries the offered
+      UUID and all five flags
 - [x] The session id is scraped from the pane **before** any `C-c` or relaunch keystroke is sent —
       Phase 3: `RestartLocalAgent` captures (`-J`) before its `C-c`; `TestRestartLocalAgent_ScrapesBeforeInterruptAndResumes`
       pins capture index < `C-c` index against a stub that erases the banner on interrupt
@@ -339,19 +341,29 @@ excluded throughout.
 
 ### Phase 5: Integration test
 
-- [ ] Create `scripts/test-edit-auto-resume.sh` with end-to-end verification
-- [ ] Kill a scratch edit pane's `claude` process → verify relaunch carries **both** `--resume <id>`
-      and `--dangerously-skip-permissions`
-- [ ] **Negative control**: no scrapeable id → verify fallback is a *fresh flagged* launch, and
-      assert the absence of a flagless resume (not merely that the agent returned)
-- [ ] **Negative control**: `MUXCODE_EDIT_AUTO_RESTART_DISABLE=1` → verify no restart fires
-- [ ] **Negative control**: a busy/alive agent → verify no restart fires
-- [ ] Verify `webhook` exclusion still holds
-- [ ] Verify reload-marker and `agent-health --stop` suppression still hold
-- [ ] Assert the scrape happens before the interrupt — a post-relaunch scrape must fail the test, not
-      silently pass via the fallback
-- [ ] Include a coverage floor so a skipped run cannot report green
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-edit-auto-resume.sh` with end-to-end verification — hermetic: scratch bus, private tmux server, scratch daemon, a muxcode built from the tree, and `scripts/fixtures/claude-stub` built in as `claude` (the stub gains `CLAUDE_STUB_SESSION_FILE` for its banner id; its default keeps the MUX-136 test unchanged) — run `1790612093`
+- [x] Kill a scratch edit pane's `claude` process → verify relaunch carries **both** `--resume <id>`
+      and `--dangerously-skip-permissions` — section B, on the live process's argv, plus `--agent`,
+      `--agents`, `--allowedTools`, `--append-system-prompt`; attempt 1/3, `agent-down` and
+      `agent-restarting` delivered to edit
+- [x] **Negative control**: no scrapeable id → verify fallback is a *fresh flagged* launch, and
+      assert the absence of a flagless resume (not merely that the agent returned) — section C: flags
+      present, `--resume` absent from the process
+- [x] **Negative control**: `MUXCODE_EDIT_AUTO_RESTART_DISABLE=1` → verify no restart fires — section F:
+      that daemon leaves a dead `edit` alone while restarting a dead `plan`; a daemon without it restarts `edit`
+- [x] **Negative control**: a busy/alive agent → verify no restart fires — section D: idle and busy agents never struck
+- [x] Verify `webhook` exclusion still holds — section A, on `agent-health --check` and `status`
+- [x] Verify reload-marker and `agent-health --stop` suppression still hold — section E: each suppresses
+      a dead `edit`; lifting them restarts it, resuming the newer banner
+- [x] Assert the scrape happens before the interrupt — a post-relaunch scrape must fail the test, not
+      silently pass via the fallback — section B: the scrape row must precede the relaunch row and no
+      stale/miss row may appear; a post-relaunch capture reads the typed launch line, classifies it
+      stale, relaunches fresh, and fails the argv check
+- [x] Include a coverage floor so a skipped run cannot report green — `PASS ≥ 59` (`:296`); assertions
+      read the whole scratch lifecycle (`--limit 0`) after review `1790613229`'s should-fix
+- [x] Run the script and verify all checks pass — run agent `1790613444-run-7c51e74e` at 12:37, after the
+      last script change (12:34:55): **59 passed, 0 failed (floor 59), exit 0**; two earlier runs
+      (`1790612810`, `1790613147`) also 59/0; review `1790613526` clean
 
 ## Risks
 
@@ -368,14 +380,16 @@ excluded throughout.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-126-edit-resume-aware-auto-restart | 40m | 2026-09-28 12:18 |
+| MUX-126-edit-resume-aware-auto-restart | 55m | 2026-09-28 12:40 |
 
 ## Status
 
-In Progress — 29/41 on 2026-09-28 12:2x: **Phases 1–4 complete**; acceptance criteria 12/14. Open:
-AC 1 (a dead `edit` resumed end to end — Phase 5's first test) and **AC 13, the manual escape hatch
-(`muxcode resume <role>`), which no phase step delivers** — the close-out guard will refuse on it until
-a step is added or the criterion is deferred; the user's call. Phase 4 `52c11d2` (un-exclude `edit`,
+In Progress — 40/41 on 2026-09-28 12:4x: **all five phases complete**; acceptance criteria 13/14. Phase 5:
+`scripts/test-edit-auto-resume.sh` 59/0 at floor 59 on a real scratch daemon (run agent
+`1790613444-run-7c51e74e`), review `1790613526` clean — uncommitted at verification. **The one open item
+is AC 13, the manual escape hatch (`muxcode resume <role>`), which no phase step delivers and which is
+not built** — the close-out guard will refuse on it until a step is added and built, or it is deferred
+to a backlog spec and ticked with that annotation; the user's call. Phase 4 `52c11d2` (un-exclude `edit`,
 `MUXCODE_EDIT_AUTO_RESTART_DISABLE=1`, `NeverReloadLive`), verified on run `1790612093`, review
 `1790612219` clean. Run `1790608128` failed at Phase 4 on the run-wide fix cap —
 [MUX-193](../backlog/MUX-193-spec-to-pr-fix-loop-cap-is-per-run-not-per-phase.md). Phase 3 `4356486`:

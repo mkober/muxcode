@@ -21,6 +21,12 @@
 // the heuristic reads only the last few ROWS, and a prompt left mid-screen
 // with blank rows below it reads as "assume alive" — a real Claude that
 // dies before its pane has filled is invisible to the sweep the same way.
+//
+// The exit banner's session id is read at teardown from the file named by
+// CLAUDE_STUB_SESSION_FILE (MUX-126's scripts/test-edit-auto-resume.sh), so a
+// test can switch between a resumable UUID and no scrapeable id without
+// relaunching the pane. Absent or empty, it is "0f3a" — not a UUID, so a
+// restart scrape misses and relaunches fresh, as MUX-136's test expects.
 package main
 
 import (
@@ -39,7 +45,8 @@ const resumeBanner = "This session was running agent 'planner', which is no long
 	"Continuing with the default tools and system prompt — the agent's tool restrictions no longer apply."
 
 func main() {
-	hasAgent, hasAgents, resume := false, false, false
+	hasAgent, hasAgents, resume, skipPerms := false, false, false, false
+	resumeID := ""
 	var prompt strings.Builder
 	args := os.Args[1:]
 	for i, a := range args {
@@ -48,8 +55,13 @@ func main() {
 			hasAgent = true
 		case "--agents":
 			hasAgents = true
+		case "--dangerously-skip-permissions":
+			skipPerms = true
 		case "--resume", "-r", "--continue", "-c":
 			resume = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				resumeID = args[i+1]
+			}
 		case "--append-system-prompt":
 			if i+1 < len(args) {
 				prompt.WriteString(args[i+1])
@@ -57,7 +69,8 @@ func main() {
 		}
 	}
 
-	fmt.Printf("claude-stub pid=%d agent=%v agents=%v resume=%v\n", os.Getpid(), hasAgent, hasAgents, resume)
+	fmt.Printf("claude-stub pid=%d agent=%v agents=%v resume=%v skip-perms=%v resume-id=%s\n",
+		os.Getpid(), hasAgent, hasAgents, resume, skipPerms, resumeID)
 	if resume && !hasAgent {
 		cwd, _ := os.Getwd()
 		fmt.Printf(resumeBanner+"\n", cwd)
@@ -77,7 +90,7 @@ func main() {
 		}
 		mu.Unlock()
 		fmt.Print(strings.Repeat("\n", 60)) // past any pane height: the prompt must land on the bottom row
-		fmt.Println("Resume this session with: claude --resume 0f3a")
+		fmt.Println("Resume this session with: claude --resume " + bannerSessionID())
 	}
 
 	sig := make(chan os.Signal, 1)
@@ -99,6 +112,16 @@ func main() {
 		fmt.Print("❯ \n")
 	}
 	teardown()
+}
+
+// bannerSessionID is the id the exit banner offers — see the package doc.
+func bannerSessionID() string {
+	if b, err := os.ReadFile(os.Getenv("CLAUDE_STUB_SESSION_FILE")); err == nil {
+		if id := strings.TrimSpace(string(b)); id != "" {
+			return id
+		}
+	}
+	return "0f3a"
 }
 
 // superviseListener keeps one `muxcode inbox --poll --loop` running, the way
