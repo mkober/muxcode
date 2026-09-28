@@ -49,7 +49,7 @@ evidence supports** — applies.
 - [x] The read node reuses `80-pr-review-fix`'s `read-comments` message and token verbatim (one definition, or a shared constant), so the two templates cannot drift on what "actionable" means — `prReviewReadNodesJSON` + `NoActionableCommentsToken` (`graph_templates.go`) spliced into both; `TestPRReviewFixQuestionNodesDeclareExitConvention` fails on any drift between the two
 - [ ] A human "Changes requested" review with zero inline comments is also actionable (review state, not only comment count) — the shared read message now says so (`CHANGES_REQUESTED … actionable even with no inline comments`), but it is agent instruction only: no test pins the wording or the behaviour. Phase 3's scripted reply is the place to exercise it
 - [ ] **Negative control:** a PR with resolved threads only, or with non-actionable bot chatter, still reaches `merge-gate` — unit half in place: `TestPRMergeReviewReadRouting`'s clean case reaches `ci-watch` and leaves `open-comments` untouched; `merge-gate` itself is not reached in that test (it needs CI), so this waits on Phase 3
-- [ ] `docs/agent-bus.md` and `docs/architecture.md` describe the new shape; the 12-row builtin table stays accurate
+- [x] `docs/agent-bus.md` and `docs/architecture.md` describe the new shape; the 12-row builtin table stays accurate — Phase 2, 2026-09-28, checked against `graph_templates.go` at `c7ad449`+tree; table still 12 rows
 - [ ] `bash scripts/test-pr-merge-review-gate.sh` passes
 
 ### Technical approach
@@ -81,7 +81,7 @@ Phase 1; the default is to stop, because `80-pr-review-fix` is the road for open
 
 ### Phase 2: Docs
 
-- [ ] `docs/agent-bus.md` `110-pr-merge` shape and the gate note; `docs/architecture.md` builtin table row
+- [x] `docs/agent-bus.md` `110-pr-merge` shape and the gate note; `docs/architecture.md` builtin table row — done by hand on the user's request (relayed by edit) after graph run `1790629144` failed on it: `agent-bus.md` gains the full shape, the `open-comments` hold and a **shared review read** paragraph (incl. the outdated-thread rule added after Phase 1's first review); `architecture.md` row 110 and a cross-reference in the `80-pr-review-fix` paragraph
 
 ### Phase 3: Integration test
 
@@ -116,7 +116,7 @@ may still choose annotate.
 
 ## Status
 
-In Progress — Phase 1 complete (uncommitted in the tree, 2026-09-28); Phases 2–3 open
+In Progress — Phase 1 complete (`c7ad449`); Phase 2 complete (uncommitted, 2026-09-28); Phase 3 open
 
 Filed 2026-09-24 on the user's instruction relayed by edit, from run `1790280483-110-pr-merge`
 merging PR #89 over an unanswered Copilot review; template shape verified the same day. Started

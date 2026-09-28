@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| [`MUX-187`](../drafts/MUX-187-pr-merge-merges-over-unresolved-review-comments.md) | `110-pr-merge` Merges Over Unresolved Review Comments | 2026-09-28 | 7/17 — Phase 1 of 3 done · defects #1 |
+| [`MUX-187`](../drafts/MUX-187-pr-merge-merges-over-unresolved-review-comments.md) | `110-pr-merge` Merges Over Unresolved Review Comments | 2026-09-28 | 9/17 — Phases 1–2 of 3 done · defects #1 |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
