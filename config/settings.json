@@ -226,7 +226,8 @@
       "Edit(/private/tmp/muxcode-*)"
     ],
     "deny": [
-      "Bash(rm -rf /)*",
+      "Bash(rm -rf /)",
+      "Bash(rm -rf / *)",
       "Bash(git reset --hard*)",
       "Bash(aws s3 rb*)",
       "Bash(aws s3 rm*)",

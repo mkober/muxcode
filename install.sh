@@ -959,21 +959,16 @@ if $use_claude; then
         .; add_hook("PostToolUse"; $x.m; $x.h)
       ) |
 
-      # Stop (and other matcher-less events) fire on every turn end — they have
-      # no matcher, so merge by appending a { "hooks": [ ... ] } group for each
-      # command not already present anywhere under .hooks.Stop (idempotent).
+      # Stop has no matcher: append a group per command not already under .hooks.Stop.
       reduce ($mc[0].hooks.Stop // [] | .[] | .hooks[]) as $h (
         .;
         if ((.hooks.Stop // []) | [.[].hooks[]?.command] | index($h.command)) then .
         else .hooks.Stop = ((.hooks.Stop // []) + [{"hooks": [$h]}]) end
       ) |
 
-      # Drop allow rules superseded by a newer form before merging. Claude Code
-      # only matches Edit(path) rules for file edits — a Write(path) allow rule
-      # is rejected at startup with a warning. The merge below is an additive
-      # union, so a stale entry from an earlier install would survive forever
-      # unless it is pruned here.
+      # Prune rules Claude Code rejects at startup — the additive union below never would.
       .permissions.allow = (.permissions.allow - ["Write(/tmp/muxcode-*)", "Write(/private/tmp/muxcode-*)"]) |
+      .permissions.deny = ((.permissions.deny // []) - ["Bash(rm -rf /)*"]) |
 
       .permissions.allow = (.permissions.allow + ($mc[0].permissions.allow // []) | unique) |
       .permissions.deny = ((.permissions.deny // []) + ($mc[0].permissions.deny // []) | unique)
