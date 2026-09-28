@@ -132,17 +132,9 @@ func (p *OpenCodeProvider) AcceptStartup(session, pane string, state PaneState) 
 func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 	target := PaneTarget(session, role)
 
-	// In-flight task → skip (ErrInjectionSkipped, see sentinel doc);
-	// force bypasses so a recovery is never blocked by the stuck task.
 	if !force {
-		tasks, _ := ListTasks(session, TaskInFlight)
-		for _, t := range tasks {
-			if t.To == role && time.Now().Unix()-t.SentAt > 5 {
-				age := time.Now().Unix() - t.SentAt
-				fmt.Fprintf(os.Stderr, "  [wakeup] skipping %s injection — in-flight task %s:%s exists (%ds old)\n",
-					role, t.Action, shortID(t.ID), age)
-				return fmt.Errorf("%s: in-flight task %s (%ds old): %w", role, shortID(t.ID), age, ErrInjectionSkipped)
-			}
+		if err := unforcedWakeGate(session, role); err != nil {
+			return err
 		}
 	}
 

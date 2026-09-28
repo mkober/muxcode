@@ -108,7 +108,9 @@ Tracking task 1779979541-edit-d2c7d769 — response will arrive in inbox
 **Keep agents deliverable (no blocking foreground commands):** the daemon's
 `checkIdleAgents()` delivers and notifies **only idle** agents. An agent stuck in
 **active** state never receives its inbox — messages pile up unnotified
-(`muxcode diagnose <role>` reports this as `active-with-stale-messages`).
+(`muxcode diagnose <role>` reports this as `active-with-stale-messages`; for Codex and OpenCode,
+whose idle probe is a constant, it reports `wake-blocked-by-task` naming the in-flight task the
+wake gate refused on — see [MUX-192](requirements/completed/MUX-192-stale-in-flight-task-starves-codex-delivery.md)).
 
 - **Never run a blocking / never-exiting command in an agent's interactive pane.**
   `gh pr checks --watch`, `tail -f`, log follows, and interactive watchers keep
@@ -374,7 +376,7 @@ muxcode deliver <role> --force              # skip the idle check and inject reg
 muxcode deliver <role> --session <name>     # target a different session (e.g. a subsession) from anywhere
 ```
 
-Use this when an agent has pending inbox messages it never processed — the recovery for `active-with-stale-messages`, `stale-notified-ids`, `missed-send-keys`, and `pending-input-blocking` findings from `muxcode diagnose`.
+Use this when an agent has pending inbox messages it never processed — the recovery for `active-with-stale-messages`, `wake-blocked-by-task`, `stale-notified-ids`, `missed-send-keys`, and `pending-input-blocking` findings from `muxcode diagnose`.
 
 Behavior:
 

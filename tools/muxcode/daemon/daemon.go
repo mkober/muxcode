@@ -108,9 +108,9 @@ type Daemon struct {
 
 	lastPermBlockCheck     int64
 	lastCodexApprovalCheck int64
-	permBlockSeen      map[string]int  // role → consecutive permission-block sightings (debounce)
-	permBlocked        map[string]bool // role → re-notification suppressed while blocked
-	permBlockAlerted   map[string]bool // role → alerted edit once for the current block
+	permBlockSeen          map[string]int  // role → consecutive permission-block sightings (debounce)
+	permBlocked            map[string]bool // role → re-notification suppressed while blocked
+	permBlockAlerted       map[string]bool // role → alerted edit once for the current block
 
 	lastDefinitionCheck  int64
 	definitionSeen       map[string]int   // role → consecutive definition-less sightings (debounce)
@@ -128,6 +128,7 @@ type Daemon struct {
 	pollGapSince        map[string]int64 // role → when a receipt gap first appeared (0 = none)
 	pollGapAlerted      map[string]bool  // role → alerted edit once for the current gap
 	pollGapRecovered    map[string]bool  // role → re-drive attempted for the current gap
+	pollGapSkipLogged   map[string]bool  // role → delivery-gap-skip already logged for the current gap
 
 	lastStallCheck  int64
 	taskStallSeen   map[string]int  // task id → consecutive stall sightings (debounce)
@@ -141,12 +142,13 @@ type Daemon struct {
 	frHistory             map[string][]string // role → fired-rung history for the final alert
 
 	// Injectable seams — tests drive these without tmux or provider resolution.
-	frNotify    func(session, role string) error
-	frDeliver   func(session, role string, force bool) error
-	frIsIdle    func(session, role string) bool
-	frPaneGated func(role string) bool
-	agentAlive  func(session, role string) bool
-	windowNames func(session string) ([]string, error)
+	frNotify     func(session, role string) error
+	frDeliver    func(session, role string, force bool) error
+	frIsIdle     func(session, role string) bool
+	frPaneGated  func(role string) bool
+	agentAlive   func(session, role string) bool
+	windowNames  func(session string) ([]string, error)
+	forceDeliver func(session, role string, force bool) (bus.DeliverResult, error)
 
 	probeDefinition   func(session, role string) bus.DefinitionProbe
 	capturePane       func(target string, lines int) (string, error)
@@ -237,6 +239,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		pollGapSince:          make(map[string]int64),
 		pollGapAlerted:        make(map[string]bool),
 		pollGapRecovered:      make(map[string]bool),
+		pollGapSkipLogged:     make(map[string]bool),
 		taskStallSeen:         make(map[string]int),
 		taskRedrives:          make(map[string]int),
 		stallBusyLogged:       make(map[string]bool),
@@ -257,6 +260,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		},
 		agentAlive:      bus.IsAgentAlive,
 		windowNames:     bus.TmuxListWindowNames,
+		forceDeliver:    bus.ForceDeliver,
 		probeDefinition: bus.ProbeAgentDefinition,
 		capturePane:     bus.TmuxCapturePaneLines,
 		denyApproval:    bus.DenyCodexApproval,
@@ -2038,11 +2042,16 @@ func roleHasWindow(names []string, role string) bool {
 // receipt gap (actionable inbox messages with no receipt past a
 // threshold) means the agent's self-poll or delivery sidecar stopped
 // consuming; the backstop re-drives delivery once per gap episode, then
-// alerts edit if the gap persists. A re-drive whose injection was
-// skipped (ErrInjectionSkipped) does not count as attempted — the
-// episode stays open so later polls retry (MUX-105). Inert unless the
-// receipt-based cutover is active, and gated to live roles that have a
-// window in this session.
+// alerts edit if the gap persists. Inert unless the receipt-based cutover
+// is active, and gated to live roles that have a window in this session.
+//
+// Every provider recovers through ForceDeliver with force: it refuses a
+// mid-turn pane (MUX-171) and bypasses the in-flight task skip. Listenerless
+// TUIs used an unforced SendWakeUp here — the same call that had just
+// refused — so a stale in-flight task was refused every poll until the 600s
+// task timeout (MUX-192). A skipped re-drive (busy pane, ErrInjectionSkipped)
+// does not count as attempted, so later polls retry (MUX-105), but its
+// delivery-gap-skip row is written once per episode, not per poll.
 func (d *Daemon) checkPollHealth() {
 	if !d.ackDeliveryActive() {
 		return
@@ -2087,6 +2096,7 @@ func (d *Daemon) checkPollHealth() {
 			d.pollGapSince[role] = 0
 			d.pollGapAlerted[role] = false
 			d.pollGapRecovered[role] = false
+			d.pollGapSkipLogged[role] = false
 			continue
 		}
 
@@ -2104,39 +2114,34 @@ func (d *Daemon) checkPollHealth() {
 			d.pollGapSince[role] = 0
 			d.pollGapAlerted[role] = false
 			d.pollGapRecovered[role] = false
+			d.pollGapSkipLogged[role] = false
 			continue
 		}
 		if d.pollGapSince[role] == 0 {
 			d.pollGapSince[role] = now
 		}
 
-		// Re-drive delivery ONCE per gap episode, not every poll. Self-pollers
-		// (Claude/harness) get a robust force-deliver that re-wakes the poll;
-		// non-hook TUIs get another verified-inject attempt. Retrying every cycle
-		// churns failed attempts + warnings for an agent that legitimately isn't
-		// consuming yet (busy, or a freshly-idle agent whose self-poll loop hasn't
-		// launched); one attempt plus the single edit alert below is enough — the
-		// gap clears (and re-arms) once a receipt lands.
+		// One re-drive per gap episode; a receipt clears the gap and re-arms it.
 		if !d.pollGapRecovered[role] {
 			d.pollGapRecovered[role] = true
-			provider := bus.ResolveProvider(role)
-			if provider.SelfPollsInbox() {
-				if _, err := bus.ForceDeliver(d.session, role, true); err != nil {
-					bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
-						fmt.Sprintf("%s: force-deliver failed during receipt-gap recovery: %v", role, err))
-				}
-			} else {
-				if err := provider.SendWakeUp(d.session, role, false); err != nil {
-					if errors.Is(err, bus.ErrInjectionSkipped) {
-						// A skip is not a re-drive — keep the episode open so
-						// later polls retry (see doc comment).
-						d.pollGapRecovered[role] = false
-						bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap-skip",
-							fmt.Sprintf("%s: recovery injection skipped, will retry: %v", role, err))
-					} else {
-						bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
-							fmt.Sprintf("%s: wake-up failed during receipt-gap recovery: %v", role, err))
+			res, err := d.forceDeliver(d.session, role, true)
+			skipped := res.Skipped != "" && res.Delivered == 0
+			if err != nil && errors.Is(err, bus.ErrInjectionSkipped) {
+				skipped = true
+			} else if err != nil {
+				bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap",
+					fmt.Sprintf("%s: force-deliver failed during receipt-gap recovery: %v", role, err))
+			}
+			if skipped {
+				d.pollGapRecovered[role] = false
+				if !d.pollGapSkipLogged[role] {
+					d.pollGapSkipLogged[role] = true
+					reason := res.Skipped
+					if err != nil {
+						reason = err.Error()
 					}
+					bus.LogLifecycle(d.session, "warn", "daemon", "delivery-gap-skip",
+						fmt.Sprintf("%s: recovery skipped, will retry: %s", role, reason))
 				}
 			}
 		}
@@ -2730,6 +2735,13 @@ func (d *Daemon) checkPaneSweep() {
 // for response-only inboxes, so without this rescue the sender idles forever
 // and the user has to prompt for status manually.
 //
+// An in-flight task answered under another request id for the same
+// (from, to, action) — bus.TaskAnsweredElsewhere — is marked responded (which
+// drains its request from the recipient's inbox, so the answered work is never
+// dispatched again) and completed with that response, logged
+// task-answered-elsewhere, rather than left in flight to the timeout (MUX-192).
+// The sender already holds the reply, so no wake.
+//
 // Runs every 5 seconds. Skips tasks where --wait is active for the sender
 // (IsWaiting), since --wait handles its own completion.
 func (d *Daemon) checkTrackedTasks() {
@@ -2762,6 +2774,15 @@ func (d *Daemon) checkTrackedTasks() {
 		// sent a reply and MarkResponded fired. Complete the task.
 		ds, err := bus.ReadDeliveryStatus(d.session, task.ID)
 		if err != nil || ds.Status != bus.StatusResponded {
+			if task.Status == bus.TaskInFlight {
+				if respID, ok := bus.TaskAnsweredElsewhere(d.session, task); ok {
+					bus.MarkResponded(d.session, task.ID, respID)
+					bus.CompleteTask(d.session, task.ID, respID)
+					bus.LogLifecycle(d.session, "info", "daemon", "task-answered-elsewhere",
+						fmt.Sprintf("%s→%s:%s task %s completed by response %s", task.From, task.To, task.Action, task.ID, respID))
+					continue
+				}
+			}
 			// Not responded. Time out tasks stuck in-flight past their timeout
 			// (delivered while the agent was busy, then never acted on) so they
 			// stop blocking new requests via the in-flight dedup suppression.

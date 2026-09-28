@@ -20,8 +20,24 @@ type DiagnosticReport struct {
 	InboxState  InboxStateEvidence  `json:"inbox_state"`
 	NotifyState NotifyStateEvidence `json:"notify_state"`
 	DaemonState DaemonStateEvidence `json:"daemon_state"`
-	Timeline    []TimelineEvent     `json:"timeline"`
-	Findings    []DiagnosticFinding `json:"findings"`
+	// InFlightTasks is a consumer-visible JSON field (`diagnose --json`).
+	InFlightTasks []InFlightTaskEvidence `json:"in_flight_tasks"`
+	Timeline      []TimelineEvent        `json:"timeline"`
+	Findings      []DiagnosticFinding    `json:"findings"`
+}
+
+// InFlightTaskEvidence is one tracked task still in flight to the diagnosed
+// role. AnsweredBy names a response that already answers it — by
+// correlation or under another request id — or is empty. BlocksWake is the
+// shared wake gate's own decision (wakeBlockedByTask): true only for the task
+// that withholds an unforced wake right now.
+type InFlightTaskEvidence struct {
+	ID         string `json:"id"`
+	From       string `json:"from"`
+	Action     string `json:"action"`
+	AgeSecs    int64  `json:"age_secs"`
+	AnsweredBy string `json:"answered_by,omitempty"`
+	BlocksWake bool   `json:"blocks_wake"`
 }
 
 // AgentStateEvidence captures the current state of the agent process and pane.
@@ -279,14 +295,40 @@ func CollectDaemonState(session string) DaemonStateEvidence {
 // CollectEvidence orchestrates all evidence collectors for a role.
 func CollectEvidence(session, role string) DiagnosticReport {
 	return DiagnosticReport{
-		Role:        role,
-		Session:     session,
-		Timestamp:   time.Now().Unix(),
-		AgentState:  CollectAgentState(session, role),
-		InboxState:  CollectInboxState(session, role),
-		NotifyState: CollectNotifyState(session, role),
-		DaemonState: CollectDaemonState(session),
+		Role:          role,
+		Session:       session,
+		Timestamp:     time.Now().Unix(),
+		AgentState:    CollectAgentState(session, role),
+		InboxState:    CollectInboxState(session, role),
+		NotifyState:   CollectNotifyState(session, role),
+		DaemonState:   CollectDaemonState(session),
+		InFlightTasks: CollectInFlightTasks(session, role),
 	}
+}
+
+// CollectInFlightTasks lists the tracked tasks still in flight to role, each
+// with any answer already found and whether the wake gate blocks on it.
+func CollectInFlightTasks(session, role string) []InFlightTaskEvidence {
+	tasks, _ := ListTasks(session, TaskInFlight)
+	blocker, _, blocked := wakeBlockedByTask(session, role)
+	now := time.Now().Unix()
+	var out []InFlightTaskEvidence
+	for _, t := range tasks {
+		if t.To != role {
+			continue
+		}
+		ev := InFlightTaskEvidence{
+			ID: t.ID, From: t.From, Action: t.Action, AgeSecs: now - t.SentAt,
+			BlocksWake: blocked && blocker.ID == t.ID,
+		}
+		if ds, err := ReadDeliveryStatus(session, t.ID); err == nil && ds.Status == StatusResponded {
+			ev.AnsweredBy = ds.ResponseID
+		} else if respID, ok := TaskAnsweredElsewhere(session, t); ok {
+			ev.AnsweredBy = respID
+		}
+		out = append(out, ev)
+	}
+	return out
 }
 
 // --- Phase 2: Lifecycle timeline analysis ---
@@ -515,6 +557,7 @@ var diagnosticChecks = []DiagnosticCheck{
 	checkProviderMismatch,
 	checkReloadMarkerStuck,
 	checkPendingInputBlocking,
+	checkWakeBlockedByTask,
 	checkActiveWithStaleMessages,
 	checkNoActionableMessages,
 	checkDaemonVersionMismatch,
@@ -917,13 +960,89 @@ func checkNoActionableMessages(report *DiagnosticReport) *DiagnosticFinding {
 	}
 }
 
+// idleProbeConstant reports whether a provider's IsIdle is a constant rather
+// than a pane reading — Codex and OpenCode return false unconditionally, so
+// "not idle" is no evidence about them. They are listenerless: delivery is
+// Notify → SendWakeUp injection, never a self-poll listener.
+func idleProbeConstant(provider string) bool {
+	return provider == "codex" || provider == "opencode"
+}
+
+// checkWakeBlockedByTask names the in-flight task standing between a
+// listenerless agent and its stale inbox. On 2026-09-25 diagnose reported the
+// constant IsIdle instead and never named task 1790347799-edit-dfae26e9, the
+// actual blocker (MUX-192). It fires only on the wake gate's own decision
+// (InFlightTaskEvidence.BlocksWake): a stale, answered or still-pending task
+// no longer withholds a wake, and naming one as the cause would send the
+// operator to bypass something that is not in the way. Other tasks are kept
+// as context.
+func checkWakeBlockedByTask(report *DiagnosticReport) *DiagnosticFinding {
+	if !idleProbeConstant(report.AgentState.Provider) || !report.AgentState.IsAlive {
+		return nil
+	}
+	if report.InboxState.ActionableCount == 0 || report.InboxState.OldestMessageAge < 60 {
+		return nil
+	}
+	var first InFlightTaskEvidence
+	found := false
+	for _, t := range report.InFlightTasks {
+		if t.BlocksWake {
+			first, found = t, true
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+
+	severity := "warning"
+	if report.NotifyState.ReceiptGapCount > 0 {
+		severity = "critical"
+	}
+	evidence := []string{
+		fmt.Sprintf("Listenerless provider (%s): delivery is Notify → SendWakeUp pane injection; its IsIdle is a constant and not evidence", report.AgentState.Provider),
+		fmt.Sprintf("%d actionable message(s) waiting, oldest %ds", report.InboxState.ActionableCount, report.InboxState.OldestMessageAge),
+	}
+	for _, t := range report.InFlightTasks {
+		state := "unanswered"
+		if t.AnsweredBy != "" {
+			state = "already answered by " + t.AnsweredBy
+		}
+		gate := "does not block the wake"
+		if t.BlocksWake {
+			gate = "blocks the wake"
+		}
+		evidence = append(evidence, fmt.Sprintf("In-flight task %s (%s→%s:%s, %ds old) — %s, %s",
+			t.ID, t.From, report.Role, t.Action, t.AgeSecs, state, gate))
+	}
+	if report.NotifyState.ReceiptGapCount > 0 {
+		evidence = append(evidence, fmt.Sprintf("%d message(s) carry no delivery receipt (oldest %ds)",
+			report.NotifyState.ReceiptGapCount, report.NotifyState.ReceiptGapAge))
+	}
+
+	return &DiagnosticFinding{
+		Severity:    severity,
+		FailureMode: "wake-blocked-by-task",
+		Summary: fmt.Sprintf("Wake to %s held behind in-flight task %s (%ds old) — %d message(s) undelivered for %ds",
+			report.Role, first.ID, first.AgeSecs, report.InboxState.ActionableCount, report.InboxState.OldestMessageAge),
+		Evidence: evidence,
+		Remediation: []string{
+			fmt.Sprintf("Force-deliver past the in-flight task %s: muxcode deliver %s --force (still refuses a mid-turn pane)", first.ID, report.Role),
+			fmt.Sprintf("Inspect the task: muxcode tasks — %s clears when its answer is found, else at its timeout", first.ID),
+		},
+	}
+}
+
 // checkActiveWithStaleMessages detects when an agent appears "active" (not idle)
 // but has unnotified actionable messages for a long time. Neither Notify() nor
 // the daemon's checkIdleAgents delivers to non-idle agents, so messages pile up.
 // This catches cases where IsAgentIdle is wrong and the wider capture also missed.
+// Silent for a provider whose IsIdle is constant (idleProbeConstant): "not
+// idle" says nothing there, and checkWakeBlockedByTask or checkReceiptGap
+// explain its stale inbox instead (MUX-192).
 func checkActiveWithStaleMessages(report *DiagnosticReport) *DiagnosticFinding {
-	if report.AgentState.IsIdle {
-		return nil // idle detection works — other checks handle this
+	if report.AgentState.IsIdle || idleProbeConstant(report.AgentState.Provider) {
+		return nil
 	}
 	if !report.AgentState.IsAlive {
 		return nil
