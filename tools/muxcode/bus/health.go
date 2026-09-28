@@ -283,30 +283,70 @@ func RestartOllama(ctx context.Context, ollamaURL string) error {
 	return fmt.Errorf("Ollama did not become ready within %s", OllamaRestartReadyTimeout)
 }
 
+// restartInterruptDelay is how long RestartLocalAgent waits after C-c for the
+// process to exit before typing the relaunch. Tests shorten it.
+var restartInterruptDelay = 500 * time.Millisecond
+
 // RestartLocalAgent sends C-c to interrupt a stuck agent and relaunches it.
 // Uses tmux send-keys to target the agent's pane. The relaunch command uses
 // `muxcode agent launch` which resolves the correct provider (Claude Code,
 // OpenCode, Codex, or local LLM) via environment variables.
+//
+// The pane is scraped for Claude Code's exit banner BEFORE the C-c: the
+// relaunch types over the banner, so a scrape after it reads the launch
+// command and falls back to fresh every time (MUX-126). A hit relaunches with
+// `--resume <id>`, which the launcher appends to the full flag set; a miss or
+// a stale banner relaunches fresh — never a flagless resume.
 func RestartLocalAgent(session, role string) error {
 	target := PaneTarget(session, role)
 
-	// Send C-c to interrupt
-	interruptCmd := exec.Command("tmux", "send-keys", "-t", target, "C-c", "")
-	if err := interruptCmd.Run(); err != nil {
+	content, captureErr := captureResumePane(target)
+	id, event := "", "resume-scrape-miss"
+	if captureErr == nil {
+		id, event = restartResumeTarget(content)
+	}
+	detail := role
+	if id != "" {
+		detail += ": session " + id
+	} else if captureErr != nil {
+		detail += ": capture failed: " + captureErr.Error()
+	}
+	LogLifecycle(session, "info", "daemon", event, detail)
+
+	if err := TmuxRun("send-keys", "-t", target, "C-c", ""); err != nil {
 		return fmt.Errorf("interrupting agent %s: %w", role, err)
 	}
 
-	// Wait for process to exit
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(restartInterruptDelay)
 
-	// Relaunch agent via the Go launcher (handles provider resolution)
 	launchCmd := fmt.Sprintf("muxcode agent launch %s", role)
-	relaunchCmd := exec.Command("tmux", "send-keys", "-t", target, launchCmd, "Enter")
-	if err := relaunchCmd.Run(); err != nil {
+	if id != "" {
+		launchCmd += " --resume " + id
+	}
+	if err := TmuxRun("send-keys", "-t", target, launchCmd, "Enter"); err != nil {
 		return fmt.Errorf("relaunching agent %s: %w", role, err)
 	}
+	LogLifecycle(session, "info", "daemon", "agent-relaunch", role+": "+launchCmd)
 
 	return nil
+}
+
+// restartResumeTarget picks the session a restart resumes from a pane capture
+// and names the lifecycle event recording the choice: resume-scrape-hit,
+// resume-scrape-miss, or resume-scrape-stale. Stale is a banner already
+// followed by a relaunch: that relaunch died without drawing a new banner, so
+// the resume never reached a session, and repeating it would spend the whole
+// restart cap on the same failure instead of coming back fresh.
+func restartResumeTarget(content string) (id, event string) {
+	id, ok := ScrapeResumeSessionID(content)
+	if !ok {
+		return "", "resume-scrape-miss"
+	}
+	banners := agentExitBannerPattern.FindAllStringIndex(content, -1)
+	if strings.Contains(stripWhitespace(content[banners[len(banners)-1][1]:]), "agentlaunch") {
+		return "", "resume-scrape-stale"
+	}
+	return id, "resume-scrape-hit"
 }
 
 // OllamaFailSentinelPath returns the path for a role's Ollama failure sentinel.

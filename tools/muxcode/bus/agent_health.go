@@ -187,11 +187,17 @@ const resumeCaptureLines = 20
 // (`capture-pane -J`) and scrapes it with ScrapeResumeSessionID. The join is
 // what lets a wrapped id through: the parser never rejoins across a newline.
 func CaptureResumeSessionID(target string) (id string, ok bool) {
-	content, err := TmuxOutput("capture-pane", "-t", target, "-p", "-J", "-S", fmt.Sprintf("-%d", resumeCaptureLines))
+	content, err := captureResumePane(target)
 	if err != nil {
 		return "", false
 	}
 	return ScrapeResumeSessionID(content)
+}
+
+// captureResumePane is the one capture every resume scrape reads, shared with
+// RestartLocalAgent so the -J the scrape depends on cannot drift between them.
+func captureResumePane(target string) (string, error) {
+	return TmuxOutput("capture-pane", "-t", target, "-p", "-J", "-S", fmt.Sprintf("-%d", resumeCaptureLines))
 }
 
 // ValidResumeSessionID reports whether id is a whole Claude Code session UUID,

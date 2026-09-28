@@ -243,14 +243,20 @@ excluded throughout.
 - [ ] A dead `edit` agent is auto-restarted by the daemon with **both** its conversation and its full
       launch flags — `--resume <id>` **and** `--dangerously-skip-permissions`, `--agent`, `--agents`,
       `--allowedTools`, `--append-system-prompt`
-- [ ] The session id is scraped from the pane **before** any `C-c` or relaunch keystroke is sent
-- [ ] When no session id can be scraped, the restart falls back to a **fresh launch with full flags**
-      (current non-edit behaviour) — never a flagless resume
-- [ ] `--resume <scraped-id>` is used rather than `--continue` (most-recent-in-cwd resolves wrongly
-      when `auto` runs Claude in the same repo)
-- [ ] Daemon restarts of the other Claude roles (`plan`, `run`, `commit`) also resume their
-      conversation, with fresh-start as fallback
-- [ ] Non-Claude providers (OpenCode, Codex, local harness) are unaffected — no resume is attempted
+- [x] The session id is scraped from the pane **before** any `C-c` or relaunch keystroke is sent —
+      Phase 3: `RestartLocalAgent` captures (`-J`) before its `C-c`; `TestRestartLocalAgent_ScrapesBeforeInterruptAndResumes`
+      pins capture index < `C-c` index against a stub that erases the banner on interrupt
+- [x] When no session id can be scraped, the restart falls back to a **fresh launch with full flags**
+      (current non-edit behaviour) — never a flagless resume — Phase 3: miss, capture failure and a
+      stale banner all type plain `muxcode agent launch <role>`; `TestRestartLocalAgent_FallsBackToFreshLaunch`
+- [x] `--resume <scraped-id>` is used rather than `--continue` (most-recent-in-cwd resolves wrongly
+      when `auto` runs Claude in the same repo) — Phases 2–3: the relaunch is `agent launch <role> --resume <id>`
+- [x] Daemon restarts of the other Claude roles (`plan`, `run`, `commit`) also resume their
+      conversation, with fresh-start as fallback — Phase 3: `checkAgentHealth` (`daemon.go:1925`) is the
+      restart road for every non-excluded role and now scrapes-then-resumes
+- [x] Non-Claude providers (OpenCode, Codex, local harness) are unaffected — no resume is attempted —
+      their panes carry no Claude banner (scrape miss → fresh), and `applyResume` drops any id for a
+      non-Claude provider with `resume-ignored` (Phase 2)
 - [ ] `webhook` remains excluded from auto-restart
 - [ ] Restart fires only on the existing bare-shell-prompt down-detection (3 failed health checks) —
       never against a busy or frozen-but-alive process
@@ -258,7 +264,9 @@ excluded throughout.
 - [ ] The existing restart cap (3 attempts) and `agent-restarting`/`agent-down` alerts still apply to
       `edit`
 - [ ] Feature is **default ON** with an env opt-out (`MUXCODE_EDIT_AUTO_RESTART_DISABLE=1`)
-- [ ] Lifecycle events are emitted for detect, scrape (hit and miss) and relaunch
+- [x] Lifecycle events are emitted for detect, scrape (hit and miss) and relaunch — detect is the
+      existing `agent-health-fail`/`agent-restart` rows; Phase 3 adds `resume-scrape-hit`,
+      `resume-scrape-miss` (naming a capture failure), `resume-scrape-stale` and `agent-relaunch`
 - [ ] A manual escape hatch exists: `muxcode resume <role>` (or `muxcode reload <role> --resume`)
 - [ ] All three `IsAgentHealthExcluded` call sites behave consistently for `edit`
 
@@ -307,10 +315,10 @@ excluded throughout.
 
 ### Phase 3: Restart path wiring
 
-- [ ] Scrape the pane **before** sending `C-c` in `RestartLocalAgent`
-- [ ] Pass the scraped id into the relaunch command; fall back to a fresh flagged launch on no id
-- [ ] Emit lifecycle events for detect, scrape-hit, scrape-miss and relaunch
-- [ ] Confirm reload markers and `agent-health --stop` markers still suppress the restart
+- [x] Scrape the pane **before** sending `C-c` in `RestartLocalAgent` — shared `captureResumePane` (`capture-pane -J`); send-keys moved onto the `TmuxRun` seam so the order is testable — 2026-09-28, run `1790608128` lap 3, review `1790610740` clean first pass
+- [x] Pass the scraped id into the relaunch command; fall back to a fresh flagged launch on no id — plus a case the spec did not name: **`resume-scrape-stale`** — a banner already followed by an `agent launch` line means the previous resume died before drawing a new banner, so it relaunches fresh rather than spend the 3-attempt cap on the same failure (`TestRestartResumeTarget_ResumedSessionDiedAgain`; a newer banner after a prior resume stays resumable)
+- [x] Emit lifecycle events for detect, scrape-hit, scrape-miss and relaunch — detect reuses the sweep's existing `agent-health-fail`/`agent-restart` rows rather than duplicating them
+- [x] Confirm reload markers and `agent-health --stop` markers still suppress the restart — verified in `checkAgentHealth`: `IsAgentHealthExcluded` (reload marker via `IsReloading`, `daemon.go:1802`) and `IsAgentStopped` (`:1826`) skip the role before any strike, so `RestartLocalAgent` (`:1925`) is never reached; no code change needed. The Ollama road (`:1745`) restarts harness panes, which carry no banner and relaunch fresh as before
 
 ### Phase 4: Un-exclude edit
 
@@ -351,11 +359,16 @@ excluded throughout.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-126-edit-resume-aware-auto-restart | 19m | 2026-09-28 11:43 |
+| MUX-126-edit-resume-aware-auto-restart | 25m | 2026-09-28 11:54 |
 
 ## Status
 
-In Progress — 8/41 on 2026-09-28 11:4x: **Phases 1–2 complete** on run `1790608128`. Phase 2 lap:
+In Progress — 18/41 on 2026-09-28 11:5x: **Phases 1–3 complete** on run `1790608128`; acceptance
+criteria 6/14 (the scrape-before-interrupt, fresh-fallback, `--resume`-not-`--continue`, other-roles,
+non-Claude and lifecycle criteria — the `edit`-specific ones wait on Phase 4). Phase 3 lap:
+`RestartLocalAgent` scrapes before `C-c` and relaunches `--resume <id>` on a hit, fresh on
+miss/capture failure/stale banner; review `1790610740` clean first pass. Phase 4 (un-exclude `edit`)
+next. Phase 2 `408dce9`:
 `agent launch --resume <id>` appends to Claude's full flag set, other providers drop it
 (`resume-ignored`); review `1790609980`'s should-fix (the end-to-end launch test passed silently
 without `claude` on PATH) fixed with a fake-`claude` fixture, review `1790610148` clean. Phase 3
