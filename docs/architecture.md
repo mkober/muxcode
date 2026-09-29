@@ -457,7 +457,7 @@ request:
 | 80 | `80-pr-review-fix` | Find the branch's PR, read its review comments, gated fix loop, push the fixes, reply to every comment |
 | 90 | `90-ci-fix` | Find the branch's PR, read its failing CI checks, gated fix loop, push the fixes |
 | 100 | `100-docs-sync` | Verify spec alignment, update spec/architecture docs and README, gated commit |
-| 110 | `110-pr-merge` | Find the branch's PR, read its review (unresolved comments end at a `NOT MERGING` hold), wait for CI green, gated merge, branch delete, `main` update, tracker story move |
+| 110 | `110-pr-merge` | Find the branch's PR, read its review (unresolved comments end at a `NOT MERGING` hold), wait for CI green, gated merge — the review is re-read after approval and a new comment stops it — branch delete, `main` update, tracker story move |
 | 120 | `120-deploy-verify` | Deploy, run a verification invocation, watch logs |
 
 `req-code-pr` was renamed `spec-to-pr` and `story-lifecycle` removed as a duplicate of its arc
@@ -470,8 +470,8 @@ the PR and list its unresolved review comments (`NO-ACTIONABLE-COMMENTS` ends th
 touched), a `wait_human` `fix-gate` sits before the first mutation, an edit spawn fixes or declines
 each comment under a build/test/review loop capped at 3, then `push-fixes` commits and pushes and
 `reply` answers every comment with the sha or the decline reason. Its review read is shared with
-`110-pr-merge` (2026-09-28, MUX-187), which runs it before `ci-watch` so a merge can no longer be
-approved over open comments — see [Agent Bus CLI](agent-bus.md#muxcode-graph). The same change gave
+`110-pr-merge` (2026-09-28, MUX-187), which runs it before `ci-watch` and again after `merge-gate`
+is approved, so a merge can no longer be approved — or land — over open comments — see [Agent Bus CLI](agent-bus.md#muxcode-graph). The same change gave
 `70-pr-local-review` a `review -[failure]-> restore` edge, since a review with findings once left the
 checkout on the PR's head.
 

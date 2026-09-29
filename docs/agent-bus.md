@@ -1788,20 +1788,31 @@ scripts are skipped unless `MUXCODE_TEST_LIVE=1`), a failure goes to a fix spawn
 `${output:read-ci}` and `${failure_report}`, the build/test/review loop capped at 3, then
 `push-fixes`. `110-pr-merge` — `find-pr` → `pr-exists` → `read-comments` → `no-comments` (the
 review read shared with `80-pr-review-fix`, below) **before** `ci-watch` (the watch role on
-`gh pr checks --watch`, `CI-GREEN`), `merge-gate`, `merge` (`gh pr merge`, branch deleted, `main`
-pulled), then `tracker` (plan `jira-write`: the story to Done when the branch tracks one — a gated
-Atlassian node, so it sits downstream of `merge-gate` as validation demands). The read runs first
-because it takes seconds and a CI watch takes minutes. Any unresolved actionable comment routes
-`no-comments`' failure edge to `open-comments`, a terminal `wait_human` hold with no outgoing edge:
-its text says **NOT MERGING**, lists `${output:read-comments}` and points to `80-pr-review-fix`;
-approving it only acknowledges and ends the run. `merge-gate` is reached only on
-`NO-ACTIONABLE-COMMENTS` and states both checks — *"CI is green and the PR has no unresolved review
-comments"* — so the approval means what it says. Added 2026-09-28
+`gh pr checks --watch`, `CI-GREEN`), `merge-gate` → `recheck-comments` → `still-clear` → `merge`
+(`gh pr merge`, branch deleted, `main` pulled), then `tracker` (plan `jira-write`: the story to Done
+when the branch tracks one — a gated Atlassian node, so it sits downstream of `merge-gate` as
+validation demands). The read runs first because it takes seconds and a CI watch takes minutes. Any
+unresolved actionable comment routes `no-comments`' failure edge to `open-comments`, a terminal
+`wait_human` hold with no outgoing edge: its text says **NOT MERGING**, lists
+`${output:read-comments}` and points to `80-pr-review-fix`; approving it only acknowledges and ends
+the run. `merge-gate` is reached only on `NO-ACTIONABLE-COMMENTS` and says what it rests on — *"CI is
+green and the PR had no unresolved review comments when read"* — and that the review is read again
+right before the merge. Added 2026-09-28
 ([MUX-187](requirements/completed/MUX-187-pr-merge-merges-over-unresolved-review-comments.md)) after a
 run merged PR #89 over six unanswered Copilot comments on a gate that showed CI only.
 
-**The shared review read** (`prReviewReadNodesJSON`, `NoActionableCommentsToken`,
-`bus/graph_templates.go`) is one definition spliced into both templates, and
+**The re-read after approval** (PR #96 review fix). The first read can be minutes or hours old by the
+time `merge-gate` is approved — CI ran in between, and the gate waits on a person. So approval
+dispatches `recheck-comments`, the same shared read under a second id, and only `still-clear`
+(`NO-ACTIONABLE-COMMENTS` again) reaches `merge`. A comment or `CHANGES_REQUESTED` review that
+arrived meanwhile routes to `new-comments`, a second terminal **NOT MERGING** hold that lists
+`${output:recheck-comments}` — its own hold, because `open-comments` interpolates the first read,
+which was clean. Pinned by `TestPRMergeRechecksReviewBeforeMerge` (`graph_exec_test.go`) and
+`TestPRMergeTemplate`, which also asserts the two reads carry the identical message.
+
+**The shared review read** (`prReviewReadMessage`, `NoActionableCommentsToken`, and the
+`prReviewReadNodes(readID, clearID)` generator that `prReviewReadNodesJSON` and `110-pr-merge`'s
+recheck are built from, `bus/graph_templates.go`) is one definition spliced into both templates, and
 `TestPRReviewFixQuestionNodesDeclareExitConvention` fails if their `read-comments` messages drift, so
 "actionable" cannot mean one thing to the template that merges and another to the one that fixes.
 Actionable: every unresolved comment, Copilot or human, listed with id, `file:line` and the ask; a

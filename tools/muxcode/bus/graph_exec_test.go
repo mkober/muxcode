@@ -758,6 +758,78 @@ func TestPRMergeReviewReadRouting(t *testing.T) {
 	}
 }
 
+// TestPRMergeRechecksReviewBeforeMerge drives 110-pr-merge past a clean first
+// read, green CI and an approved merge gate: a comment posted during those
+// waits must still stop the merge at the new-comments hold (PR #96 review).
+// The clean recheck is the negative control — a template that always held
+// would pass the first case alone.
+func TestPRMergeRechecksReviewBeforeMerge(t *testing.T) {
+	cases := []struct {
+		name, reply, reached, unreached string
+	}{
+		{
+			name:      "a comment posted during the waits stops the merge",
+			reply:     "Unresolved: comment 4128 at bus/graph.go:77 asks to guard the nil run EXIT=0",
+			reached:   "new-comments",
+			unreached: "merge",
+		},
+		{
+			name:      "a still-clean review merges",
+			reply:     "Only resolved threads. " + NoActionableCommentsToken + " EXIT=0",
+			reached:   "merge",
+			unreached: "new-comments",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pinActor(t, "")
+			g, err := ParseGraph([]byte(builtinGraphJSON["110-pr-merge"]))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			run := createTestRun(t, g)
+			settle := func() {
+				for i := 0; i < 3; i++ {
+					step(t, runTestSession, run.ID)
+				}
+			}
+
+			step(t, runTestSession, run.ID)
+			completeSendNodeWithReply(t, runTestSession, run.ID, "find-pr", "commit", "PR-CONFIRMED #99 https://example.test/pull/99 EXIT=0")
+			settle()
+			completeSendNodeWithReply(t, runTestSession, run.ID, "read-comments", "commit", NoActionableCommentsToken+" EXIT=0")
+			settle()
+			completeSendNodeWithReply(t, runTestSession, run.ID, "ci-watch", "watch", "CI-GREEN EXIT=0")
+			settle()
+			if s := nodeState(t, runTestSession, run.ID, "merge-gate"); s != GraphNodeWaiting {
+				t.Fatalf("merge-gate state %q, want waiting", s)
+			}
+			if err := ApproveGraphGate(runTestSession, run.ID, "merge-gate"); err != nil {
+				t.Fatalf("approve: %v", err)
+			}
+			settle()
+			if s := nodeState(t, runTestSession, run.ID, "merge"); s != GraphNodePending {
+				t.Fatalf("merge state %q before the recheck answered, want pending", s)
+			}
+			completeSendNodeWithReply(t, runTestSession, run.ID, "recheck-comments", "commit", tc.reply)
+			settle()
+
+			if s := nodeState(t, runTestSession, run.ID, tc.reached); s == GraphNodePending {
+				t.Errorf("%s still pending — the run never reached it", tc.reached)
+			}
+			if s := nodeState(t, runTestSession, run.ID, tc.unreached); s != GraphNodePending && s != GraphNodeSkipped {
+				t.Errorf("%s state = %q, want untouched", tc.unreached, s)
+			}
+			if tc.reached == "new-comments" {
+				pending, err := os.ReadFile(graphApprovalPath(runTestSession, run.ID, "new-comments", "pending"))
+				if err != nil || !strings.Contains(string(pending), "bus/graph.go:77") {
+					t.Errorf("the hold must name the new comment and its file:line, got %q (%v)", pending, err)
+				}
+			}
+		})
+	}
+}
+
 // TestLatestAuthoritativeRowFuncMixedRows covers what the single-row
 // attribution cases cannot: accept is applied per candidate inside the same
 // walk that ranks sources, so a bug in either can hide behind the other. With

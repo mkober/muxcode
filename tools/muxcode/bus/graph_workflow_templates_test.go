@@ -159,7 +159,20 @@ func TestPRMergeTemplate(t *testing.T) {
 		t.Errorf("merge-gate must state both checks it was reached on, got %q", gate)
 	}
 	onlyReachedFrom(t, g, "merge-gate", "ci-green", OutcomeSuccess)
-	onlyReachedFrom(t, g, "merge", "merge-gate", OutcomeSuccess)
+	onlyReachedFrom(t, g, "recheck-comments", "merge-gate", OutcomeSuccess)
+	onlyReachedFrom(t, g, "merge", "still-clear", OutcomeSuccess)
+	onlyReachedFrom(t, g, "new-comments", "still-clear", OutcomeFailure)
+	for _, e := range g.Edges {
+		if e.From == "new-comments" {
+			t.Errorf("new-comments must end the run, not route to %s", e.To)
+		}
+	}
+	if hold := g.node("new-comments"); hold == nil || !strings.Contains(hold.Message, "${output:recheck-comments}") {
+		t.Error("the new-comments hold must list the comments the recheck found")
+	}
+	if r := g.node("recheck-comments"); r == nil || r.Message != g.node("read-comments").Message {
+		t.Error("the pre-merge recheck must be the same review read as read-comments")
+	}
 	onlyReachedFrom(t, g, "tracker", "merge", OutcomeSuccess)
 	if w := g.node("ci-watch"); w == nil || NormalizeBusRole(w.Role) != "watch" {
 		t.Error("waiting on CI is a blocking watch — it belongs to the watch role, never an agent's own pane")
