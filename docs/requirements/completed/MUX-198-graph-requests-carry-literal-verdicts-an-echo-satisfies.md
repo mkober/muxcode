@@ -61,14 +61,19 @@ Line 283 is a finding beyond the brief: it carries no exit literal, but its toke
 
 ### Acceptance criteria
 
-- [ ] No builtin template node message, and no shared message constant, contains a literal `EXIT=<digit>`
-- [ ] No builtin message spells a downstream `output_contains` token in a form an echo of the request
+- [x] No builtin template node message, and no shared message constant, contains a literal `EXIT=<digit>`
+- [x] No builtin message spells a downstream `output_contains` token in a form an echo of the request
       satisfies, **or** the conditions are made robust to an echo. Which one is recorded as a decision
-- [ ] A test iterates every builtin template's node messages (after template expansion) and asserts
+      (option C, [Decision](#decision-2026-09-29-option-c--echo-aware-harvest))
+- [x] A test iterates every builtin template's node messages (after template expansion) and asserts
       `parseExitSentinel` finds nothing, generalising the scoped `TestDefectToSpecTemplate` assertion
-- [ ] A test asserts that each condition's token cannot be satisfied by its predecessor's own request
-      text
-- [ ] Negative control: a genuine reply carrying `EXIT=0` and the token still routes success
+      (`TestBuiltinRequestsCarryNoVerdict`)
+- [x] A test asserts that each condition's token cannot be satisfied by its predecessor's own request
+      text: met at the harvest, not per condition. Under option C an echoed reply never reaches a
+      condition (`TestEchoesRequest` on `prReviewReadMessage`, `TestExecSendNodeEchoWaitsForGenuineReply`
+      on a CI read)
+- [x] Negative control: a genuine reply carrying `EXIT=0` and the token still routes success
+      (`TestExecSendNodeEchoWaitsForGenuineReply`)
 
 ### Technical approach
 
@@ -94,29 +99,56 @@ Options for the token half (the exit literals are a plain rewrite to `EXIT=<n>` 
 
 ### Phase 1: Pin
 
-- [ ] Add the template-wide `parseExitSentinel` test; confirm it fails on the seven listed lines
-- [ ] Add a test feeding each node's own message to its downstream condition; confirm
-      `still-clear`, `no-comments`, `ci-green` and `pr-exists` pass on it today
+- [x] Add the template-wide `parseExitSentinel` test; confirm it fails on the seven listed lines
+      (`TestBuiltinRequestsCarryNoVerdict`, landed with the rewrite in `d6f064c`; six of the seven lines
+      carried an exit literal, since line 283 has only a token)
+- [x] Add a test feeding each node's own message to its downstream condition; confirm
+      `still-clear`, `no-comments`, `ci-green` and `pr-exists` pass on it today (superseded by option C:
+      the echo is pinned at the harvest by `TestEchoesRequest` and
+      `TestExecSendNodeEchoWaitsForGenuineReply`, before any condition reads it)
 
 ### Phase 2: Rewrite the exit literals
 
-- [ ] Replace every literal `EXIT=<digit>` in the listed messages with `EXIT=<n>` or prose
-- [ ] Phase 1's sentinel test passes
+- [x] Replace every literal `EXIT=<digit>` in the listed messages with `EXIT=<n>` or prose
+- [x] Phase 1's sentinel test passes
 
 ### Phase 3: Close the token road
 
-- [ ] Choose option A, B or C with the user and record the decision here
-- [ ] Implement it; Phase 1's condition test now holds for every listed node
-- [ ] Negative control: a genuine reply still routes
+- [x] Choose option A, B or C with the user and record the decision here: option C, below
+- [x] Implement it; Phase 1's condition test now holds for every listed node
+- [x] Negative control: a genuine reply still routes
+
+#### Decision (2026-09-29): option C — echo-aware harvest
+
+Chosen by the user. `sendResponseIsNonResult` (`bus/graph_exec.go`) treats a reply as a non-result
+when `echoesRequest` matches, so the node keeps waiting and the genuine reply routes. A reply counts
+as an echo on either of two shapes:
+
+| Shape | Rule | Constant |
+|-------|------|----------|
+| Head/tail window | The reply contains the request's first or last 20 words (requests under 20 words skip this shape) | `echoWindowWords` |
+| Wrapped fragment | The reply, less a trailing `EXIT` line, is wholly a contiguous run of at least 6 request words from anywhere in the request (added in `2e40262` for Copilot comment 4134200569: short, interior, pane-wrapped fragments) | `echoFragmentMinWords` |
+
+This closes the token road at the harvest for every node at once, so the tokens stay spelled out in
+the requests. The accepted cost: a genuine reply that quotes its request at that length holds instead
+of routing. Shipped in PR #102 (merge `06e133b`); CI green on `2e40262`.
 
 ### Phase 4: Integration test
 
-- [ ] Create `scripts/test-graph-request-echo.sh`: on a scratch daemon, run `110-pr-merge` with a stub
+- [x] Create `scripts/test-graph-request-echo.sh`: on a scratch daemon, run `110-pr-merge` with a stub
       commit agent that answers `recheck-comments` by echoing its request verbatim
-- [ ] Assert the run does **not** reach `merge`: it holds or routes to `new-comments`
-- [ ] Same stub answering with a genuine `NO-ACTIONABLE-COMMENTS` reply: assert the run reaches `merge`
-- [ ] Coverage floor so a skipped section cannot report green
-- [ ] Run the script and verify all checks pass
+- [x] Assert the run does **not** reach `merge`: it holds or routes to `new-comments`
+- [x] Same stub answering with a genuine `NO-ACTIONABLE-COMMENTS` reply: assert the run reaches `merge`
+- [x] Coverage floor so a skipped section cannot report green (exactly 15 checks)
+- [x] Run the script and verify all checks pass (16/16 on 2026-09-29)
+
+**Integration run (2026-09-29).** The first run was 12 pass / 4 fail: the `recheck-comments` section
+never reached the echo, because the script wrote `MUXCODE_GATE_AUTHORITY_ROLES` to a `$MUXCODE_CONFIG`
+file and gate authority reads only `$HOME/.config/muxcode/config` (`bus/gate_authority.go:144–151`).
+With the authority line written to the scratch `$HOME` config, as `scripts/test-gate-authority.sh`
+does, the re-run passed 16/16 (15 assertions plus the coverage floor). An echoed `recheck-comments`
+never dispatches `merge` and keeps waiting; the genuine clear reply dispatches it; an echoed `ci-watch`
+never opens `merge-gate`; the genuine `CI-GREEN` does.
 
 ## Related
 
@@ -129,4 +161,4 @@ Options for the token half (the exit literals are a plain rewrite to `EXIT=<n>` 
 
 ## Status
 
-Backlog
+Complete — PR #102 (`06e133b`), issue #101 closed, integration run 16/16 on 2026-09-29.
