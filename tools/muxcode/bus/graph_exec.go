@@ -1910,30 +1910,60 @@ func sendResponseIsNonResult(session string, task Task) bool {
 }
 
 // echoWindowWords is how many consecutive request words a response must
-// reproduce to count as an echo of it.
+// reproduce, at the request's opening or close, to count as an echo of it.
 const echoWindowWords = 20
 
-// echoesRequest reports whether a response reproduces the opening or closing
-// echoWindowWords words of its request. A request shorter than the window is
-// never matched: its words are too few to tell an echo from an answer that
-// happens to use them, and no request that names a routing token is that short.
+// echoFragmentMinWords is the shortest response that counts as an echo when it
+// is nothing but a slice of its request.
+const echoFragmentMinWords = 6
+
+// echoesRequest reports whether a response is an echo of its request, on
+// either of two shapes:
+//
+//   - it contains the opening or closing echoWindowWords words of a request at
+//     least that long — a whole or scrolled echo, possibly with chrome around it;
+//   - it consists solely of a run of at least echoFragmentMinWords consecutive
+//     request words, ignoring a trailing `EXIT n` — a wrapped or truncated
+//     fragment such as Codex's lastComposedLine, which can carry a routing token
+//     (`token CI-GREEN; if any failed`) in far fewer than echoWindowWords words.
 //
 // Words are compared case-folded and stripped of punctuation, so a TUI's line
-// wrapping, borders and quote markers cannot hide an echo. Only the ends are
-// probed: a request's middle often carries upstream output (`${output:…}`)
-// that a genuine reply may legitimately quote, whereas its opening is the
-// template's own instruction and its close, on every seeded node, the fixed
-// verdictTokenInstruction — text no answer repeats verbatim. A genuine reply
-// that does quote either end holds the node rather than routing it.
+// wrapping, borders and quote markers cannot hide an echo. A window is probed
+// only at the ends: a request's middle often carries upstream output
+// (`${output:…}`) that a genuine reply may legitimately quote, whereas its
+// opening is the template's own instruction and its close, on every seeded
+// node, the fixed verdictTokenInstruction. The fragment shape needs no such
+// restriction because a genuine reply adds words of its own; one that is
+// wholly a request slice holds the node rather than routing it.
 func echoesRequest(response, request string) bool {
 	req := echoWords(request)
+	respWords := echoWords(response)
+	if isRequestFragment(respWords, req) {
+		return true
+	}
 	if len(req) < echoWindowWords {
 		return false
 	}
-	resp := " " + strings.Join(echoWords(response), " ") + " "
-	head := " " + strings.Join(req[:echoWindowWords], " ") + " "
-	tail := " " + strings.Join(req[len(req)-echoWindowWords:], " ") + " "
-	return strings.Contains(resp, head) || strings.Contains(resp, tail)
+	resp := joinWords(respWords)
+	return strings.Contains(resp, joinWords(req[:echoWindowWords])) ||
+		strings.Contains(resp, joinWords(req[len(req)-echoWindowWords:]))
+}
+
+// isRequestFragment reports whether resp, less a trailing `exit <digits>`
+// sentinel, is at least echoFragmentMinWords words long and appears verbatim
+// as a contiguous run of req.
+func isRequestFragment(resp, req []string) bool {
+	if n := len(resp); n >= 2 && resp[n-2] == "exit" && isDigits(resp[n-1]) {
+		resp = resp[:n-2]
+	}
+	if len(resp) < echoFragmentMinWords {
+		return false
+	}
+	return strings.Contains(joinWords(req), joinWords(resp))
+}
+
+func joinWords(words []string) string {
+	return " " + strings.Join(words, " ") + " "
 }
 
 func echoWords(s string) []string {

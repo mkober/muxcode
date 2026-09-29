@@ -333,6 +333,10 @@ func TestEchoesRequest(t *testing.T) {
 		{"echo scrolled to its close", strings.Join(words[len(words)-25:], " "), request, true},
 		{"genuine clear reply", "PR #99: all threads resolved. " + NoActionableCommentsToken + "\nEXIT=0", request, false},
 		{"genuine reply quoting a middle phrase", "Per \"" + strings.Join(words[40:55], " ") + "\" none remain. " + NoActionableCommentsToken + " EXIT=0", request, false},
+		{"wrapped interior fragment carrying the token", "│ contain the literal token NO-ACTIONABLE-COMMENTS │\nEXIT=0", "Report comments. If none remain your reply MUST contain the literal token NO-ACTIONABLE-COMMENTS and nothing else", true},
+		{"fragment of a request shorter than the window", "reply must contain the literal token", "Your reply must contain the literal token CI-GREEN", true},
+		{"slice below the fragment minimum", "the literal token CI-GREEN EXIT=0", "Your reply must contain the literal token CI-GREEN", false},
+		{"genuine terse reply adding its own words", "all checks passed: contain the literal token CI-GREEN", "Your reply must contain the literal token CI-GREEN", false},
 		{"request shorter than the window", "go", "go", false},
 	}
 	for _, tt := range tests {
@@ -347,7 +351,20 @@ func TestEchoesRequest(t *testing.T) {
 // the routing token and ends in a success sentinel — neither routes nor raises
 // a gate, and the genuine reply that follows routes as usual. The echo's task
 // is completed by hand, as the daemon's tracked-task pass does in production.
+// The fragment case is a sub-echoWindowWords wrapped slice, the shape a Codex
+// lastComposedLine capture takes; it carries CI-GREEN and EXIT=0, so without
+// the fragment rule it would route to success.
 func TestExecSendNodeEchoWaitsForGenuineReply(t *testing.T) {
+	echoes := map[string]func(request string) string{
+		"whole echo":       func(request string) string { return "› " + request + "\nEXIT=0" },
+		"wrapped fragment": func(string) string { return "│ literal token CI-GREEN; │\n│ if any failed it │\nEXIT=0" },
+	}
+	for name, echoOf := range echoes {
+		t.Run(name, func(t *testing.T) { assertEchoWaitsForGenuineReply(t, echoOf) })
+	}
+}
+
+func assertEchoWaitsForGenuineReply(t *testing.T, echoOf func(request string) string) {
 	g := linearGraph()
 	g.Nodes[0].Message = "Read the CI checks on this branch's PR WITHOUT changing anything and report each " +
 		"check's result. If every check passed your reply MUST contain the literal token CI-GREEN; " +
@@ -363,7 +380,7 @@ func TestExecSendNodeEchoWaitsForGenuineReply(t *testing.T) {
 	}
 	request := mustReadTask(t, st.TaskID).Payload
 
-	echo := replyToTask(t, st.TaskID, "› "+request+"\nEXIT=0")
+	echo := replyToTask(t, st.TaskID, echoOf(request))
 	CompleteTask(runTestSession, st.TaskID, echo.ID)
 	step(t, runTestSession, run.ID)
 	st, _ = ReadNodeStatus(runTestSession, run.ID, "a")
