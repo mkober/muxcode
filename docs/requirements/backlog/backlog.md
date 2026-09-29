@@ -101,6 +101,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 | 53 | 6 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | The `prompt` profile has no discovery affordance | Low | — |
 | 54 | 6 | [`MUX-191`](./MUX-191-bus-dir-subcommand-does-not-exist-but-agents-are-told-to-use-it.md) | `muxcode bus-dir` does not exist; `log-watcher.md` and `dev-server.md` tell their agents to call it | Low | — |
 | 55 | 6 | [`MUX-188`](./MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Every spawn worker launch sends edit a stray self-addressed `startup` request | Low | — |
+| 56 | 6 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard rules and the local-LLM allowlist are bypassable by command shape | Medium | ⇄ [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) |
 
 ### Reliability & observability
 
@@ -168,6 +169,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
 | [`MUX-157`](./MUX-157-role-boundary-an-agent-can-ignore.md) | A Role Boundary an Agent Can Ignore Is Not a Boundary | High | — |
+| [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard Rules and the Local-LLM Allowlist Are Bypassable by Command Shape | Medium | — |
 | [`MUX-146`](./MUX-146-remove-research-and-auto-agents.md) | Remove the Research and Auto Agents | Medium | — |
 | [`MUX-119`](./MUX-119-graph-routes-edit-work-off-the-edit-agent.md) | Keep the Edit Agent Free While a Graph Runs | Medium | — |
 | [`MUX-118`](./MUX-118-rename-edit-role-to-code.md) | Rename the F2 `edit` Role to `code`, and "editor" to "coder" | Medium | — |
