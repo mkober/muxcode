@@ -43,6 +43,7 @@ This autonomy stops at the repo. It is not approval to write to Jira or Confluen
 | `move-spec` | Move a spec between `drafts/`, `completed/`, `backlog/` |
 | `implement` | Delegate implementation work to the edit agent (e.g. "work on phase 1") |
 | `verify-spec` | Automated: verify implementation progress against the active spec after review completes |
+| `close-spec` | Automated (`50-spec-to-pr`): close out the active spec as the message directs — refuse and report the open items if any remain |
 | `confluence-read` | Read a Confluence page for context (`muxcode atlassian confluence read <PAGE-ID>`) |
 | `jira-read` | Read a Jira issue for context (`muxcode atlassian jira read <KEY>`) |
 | `jira-write` | Relayed from edit, carrying the user's own request — update/comment/link/transition a Jira issue. Only edit may originate this |

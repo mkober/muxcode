@@ -1621,7 +1621,7 @@ run or a retry never re-credits a phase already committed; `phase-check`'s detai
 `N phases complete in the tree, M at HEAD`. The `review` node's outcome comes from the first line of
 the reviewer's reply (`<n> must-fix, <n> should-fix, <n> nits`): any must-fix or should-fix routes to
 `fix`, which receives the report through `${failure_report}`; a reply without the counts line holds.
-**Tail**: `loop-check` → `close-spec` (plan `update-docs`, `spec-complete` guard: status `Complete`,
+**Tail**: `loop-check` → `close-spec` (plan `close-spec`, `spec-complete` guard: status `Complete`,
 move to `completed/`, `backlog.md`, cross-refs, pointer cleared) → `final-gate` → `push-pr` (commits
 the close-out, pushes, opens the PR); a refused close-out parks at `close-stuck-gate` (retry ≤ 3, or
 cancel).
@@ -1797,7 +1797,7 @@ its text says **NOT MERGING**, lists `${output:read-comments}` and points to `80
 approving it only acknowledges and ends the run. `merge-gate` is reached only on
 `NO-ACTIONABLE-COMMENTS` and states both checks — *"CI is green and the PR has no unresolved review
 comments"* — so the approval means what it says. Added 2026-09-28
-([MUX-187](requirements/drafts/MUX-187-pr-merge-merges-over-unresolved-review-comments.md)) after a
+([MUX-187](requirements/completed/MUX-187-pr-merge-merges-over-unresolved-review-comments.md)) after a
 run merged PR #89 over six unanswered Copilot comments on a gate that showed CI only.
 
 **The shared review read** (`prReviewReadNodesJSON`, `NoActionableCommentsToken`,

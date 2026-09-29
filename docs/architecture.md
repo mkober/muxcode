@@ -537,7 +537,14 @@ lap, and the gate label always names the phase being shipped. The guard stays as
 backstop: a spec reopened between the check and the commit is still refused. `graph validate`
 rejects a check that names a node without the `phase-progress` guard. Graph workers verify a phase
 through the run agent and quote its counts and task id before reporting, so plan's verify credits a
-store row rather than the worker's account.
+store row rather than the worker's account. A worker's seed opens with an ownership preamble
+(`graphWorkerTask`, `bus/graph_exec.go`) naming the delegations the graph will make after it reports
+— the send nodes reachable from its node, as `muxcode send <role> <action>` commands
+(`graphOwnedDelegations`), keyed on role **and** action like `CheckGraphNodeAuthority`. Those it must
+not send itself; any other delegation is its to make. The list was once whole roles, so on
+2026-09-28 (run `1790629144`) a docs-only phase's worker was forbidden `muxcode send plan` because plan
+owned `verify-spec` and the close-out — it had no other road to docs it may not write, and the run
+failed. Keyed on the action, the same worker may send plan `update-docs`.
 
 **Anchored on HEAD, not on the run (MUX-183).** `phaseCommitReady` once compared the spec's
 completed-phase count with the commit node's fires *in this run* — two counters in different frames,
@@ -560,7 +567,7 @@ first non-blank line of the reviewer's reply — `<n> must-fix, <n> should-fix, 
 token says `EXIT=0`; a reply with no complete counts line holds rather than passing (on 2026-09-23 the
 node recorded `outcome=success` twice over replies carrying must-fix). `fix` receives the failure
 verbatim through `${failure_report}` (`expandFailureReport`, always the latest failure edge, never a
-stale lap's). After the last phase, `loop-check` routes to `close-spec` — plan's `update-docs` under
+stale lap's). After the last phase, `loop-check` routes to `close-spec` — plan's `close-spec` action under
 the `spec-complete` guard: status `Complete`, the move to `completed/`, the `backlog.md` row and
 cross-references, the active pointer cleared — then `final-gate` and `push-pr` commit the close-out,
 push and open the PR. A refused close-out goes to `close-stuck-gate` (retry up to three times, or

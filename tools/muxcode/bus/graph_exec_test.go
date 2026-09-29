@@ -4201,7 +4201,7 @@ func TestExecSpawnTaskNamesOwnedRoles(t *testing.T) {
 		t.Fatalf("expected 1 spawned worker, got %d: %v", len(*tasks), *tasks)
 	}
 	task := (*tasks)[0]
-	for _, want := range []string{"build, test", "Do NOT delegate", run.ID, "node impl", "Implement phase 4"} {
+	for _, want := range []string{"`muxcode send build build`, `muxcode send test test`", "Do NOT send those", run.ID, "node impl", "Implement phase 4"} {
 		if !strings.Contains(task, want) {
 			t.Errorf("worker task missing %q:\n%s", want, task)
 		}
@@ -4233,12 +4233,57 @@ func TestExecSpawnTaskNamesOnlyReachableRoles(t *testing.T) {
 		},
 	}
 
-	roles := graphOwnedRoles(g, "impl")
-	if len(roles) != 1 || roles[0] != "build" {
-		t.Errorf("worker at impl owns only its downstream build, got %v", roles)
+	owned := graphOwnedDelegations(g, "impl")
+	if len(owned) != 1 || owned[0] != "muxcode send build build" {
+		t.Errorf("worker at impl owns only its downstream build, got %v", owned)
 	}
-	if forkRoles := graphOwnedRoles(g, "fork"); len(forkRoles) != 2 {
-		t.Errorf("both arms are downstream of the fork, got %v", forkRoles)
+	if forkOwned := graphOwnedDelegations(g, "fork"); len(forkOwned) != 2 {
+		t.Errorf("both arms are downstream of the fork, got %v", forkOwned)
+	}
+}
+
+// TestSpecToPRWorkerMayDelegateDocs pins that 50-spec-to-pr owns plan's
+// verification and close-out, not every docs change. A docs-only phase's
+// worker may not write docs/**/*.md, so plan update-docs is its only road; on
+// 2026-09-28 (run 1790629144) the close-out node's update-docs action made
+// the guard refuse it and the preamble forbid all of plan, and the run failed.
+func TestSpecToPRWorkerMayDelegateDocs(t *testing.T) {
+	g, _, err := ResolveGraphTemplate("50-spec-to-pr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.RequiresSpec = false // ownership is under test, not the spec gate or its caps
+	for i := range g.Edges {
+		if g.Edges[i].MaxIterationsFromSpec {
+			g.Edges[i].MaxIterationsFromSpec, g.Edges[i].MaxIterations = false, 1
+		}
+	}
+	run := createTestRun(t, g)
+	worker := "spawn-docs0001"
+	if err := appendSpawnEntry(runTestSession, SpawnEntry{
+		ID: worker, Role: "edit", SpawnRole: worker, Owner: graphSender,
+		Status: "running", StartedAt: time.Now().Unix(),
+		RunID: run.ID, NodeID: "implement",
+	}); err != nil {
+		t.Fatalf("append spawn entry: %v", err)
+	}
+
+	if deny := CheckGraphNodeAuthority(runTestSession, worker, "plan", "update-docs"); deny != "" {
+		t.Errorf("a worker's docs delegation must be allowed: %q", deny)
+	}
+	// Negative control: the plan work the graph does own stays refused.
+	for _, action := range []string{"verify-spec", "close-spec"} {
+		if deny := CheckGraphNodeAuthority(runTestSession, worker, "plan", action); deny == "" {
+			t.Errorf("plan:%s is a graph node — a worker sending it must be refused", action)
+		}
+	}
+
+	task := graphWorkerTask(g, run.ID, "implement", "implement the phase")
+	if strings.Contains(task, "muxcode send plan update-docs") {
+		t.Errorf("preamble must not forbid plan update-docs:\n%s", task)
+	}
+	if !strings.Contains(task, "muxcode send plan verify-spec") {
+		t.Errorf("preamble must still name the owned plan verification:\n%s", task)
 	}
 }
 
@@ -4269,7 +4314,7 @@ func TestExecSpawnTaskUnprefixedWithoutSendNodes(t *testing.T) {
 	if !strings.HasPrefix(got, "edit: Just do it") {
 		t.Errorf("task %q, want the message unprefixed — no send nodes means nothing is owned", got)
 	}
-	if strings.Contains(got, "Do NOT delegate") {
+	if strings.Contains(got, "Do NOT send those") {
 		t.Errorf("task %q carries an ownership preamble for a graph that owns nothing", got)
 	}
 	if !strings.Contains(got, verdictTokenInstruction) {
@@ -4297,7 +4342,7 @@ func TestExecMapTaskCarriesOwnership(t *testing.T) {
 		t.Fatalf("expected 2 map workers, got %d: %v", len(*tasks), *tasks)
 	}
 	for i, task := range *tasks {
-		if !strings.Contains(task, "review") || !strings.Contains(task, "Do NOT delegate") {
+		if !strings.Contains(task, "muxcode send review review") || !strings.Contains(task, "Do NOT send those") {
 			t.Errorf("map worker %d missing ownership preamble:\n%s", i, task)
 		}
 	}
