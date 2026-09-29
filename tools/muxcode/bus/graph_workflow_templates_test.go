@@ -91,8 +91,12 @@ func TestDefectToSpecTemplate(t *testing.T) {
 // reply (MUX-154) would otherwise route on an outcome nobody reported. Checked
 // as dispatched, with the verdict instruction a send node is seeded with.
 func TestBuiltinRequestsCarryNoVerdict(t *testing.T) {
-	for name := range builtinGraphJSON {
-		for _, n := range mustTemplate(t, name).Nodes {
+	for name, raw := range builtinGraphJSON {
+		g, err := ParseGraph([]byte(raw))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, n := range g.Nodes {
 			msg := seedVerdictToken(n.Action, n.Message)
 			if _, found := parseExitSentinel(msg); found {
 				t.Errorf("%s: node %s request carries a parseable verdict: %q", name, n.ID, msg)

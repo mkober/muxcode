@@ -345,7 +345,8 @@ func TestEchoesRequest(t *testing.T) {
 // TestExecSendNodeEchoWaitsForGenuineReply pins MUX-198 where the executor
 // runs: a task completed by an echo of its own request — here one that names
 // the routing token and ends in a success sentinel — neither routes nor raises
-// a gate, and the genuine reply that follows routes as usual.
+// a gate, and the genuine reply that follows routes as usual. The echo's task
+// is completed by hand, as the daemon's tracked-task pass does in production.
 func TestExecSendNodeEchoWaitsForGenuineReply(t *testing.T) {
 	g := linearGraph()
 	g.Nodes[0].Message = "Read the CI checks on this branch's PR WITHOUT changing anything and report each " +
@@ -362,7 +363,8 @@ func TestExecSendNodeEchoWaitsForGenuineReply(t *testing.T) {
 	}
 	request := mustReadTask(t, st.TaskID).Payload
 
-	replyToTask(t, st.TaskID, "› "+request+"\nEXIT=0")
+	echo := replyToTask(t, st.TaskID, "› "+request+"\nEXIT=0")
+	CompleteTask(runTestSession, st.TaskID, echo.ID)
 	step(t, runTestSession, run.ID)
 	st, _ = ReadNodeStatus(runTestSession, run.ID, "a")
 	if st.State != GraphNodeRunning || st.Outcome != "" {
