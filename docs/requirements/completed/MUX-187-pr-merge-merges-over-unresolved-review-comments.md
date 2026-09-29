@@ -116,7 +116,7 @@ may still choose annotate.
 
 ## Status
 
-In Progress — all three phases verified, 17/17 (Phase 1 `c7ad449`; Phases 2–3 uncommitted, 2026-09-28); close-out pending
+Complete — 17/17, every criterion verified; closed 2026-09-28 by graph run `1790630495`'s `close-spec` node. Phases: Template `c7ad449`, Docs `69f3d9a`, Integration test `5ac2495` (`test-pr-merge-review-gate.sh` 24/0). Decision 1 resolved by default (stop). Uncovered by any test: the outdated-thread clause of the shared read
 
 Filed 2026-09-24 on the user's instruction relayed by edit, from run `1790280483-110-pr-merge`
 merging PR #89 over an unanswered Copilot review; template shape verified the same day. Started

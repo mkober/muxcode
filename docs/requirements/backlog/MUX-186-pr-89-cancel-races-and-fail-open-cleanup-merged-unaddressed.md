@@ -5,7 +5,7 @@ branch) was merged to `main` in `3e9ac86` on 2026-09-24 with Copilot's review �
 recommended: unresolved critical cancellation races and fail-open cleanup paths block safe
 approval"*, six inline comments, no replies — never addressed. The merge was approved by the user at
 `110-pr-merge`'s `merge-gate`, which shows CI only; the commit agent surfaced the open review after
-merging (why the gate is blind is [MUX-187](../drafts/MUX-187-pr-merge-merges-over-unresolved-review-comments.md)).
+merging (why the gate is blind is [MUX-187](../completed/MUX-187-pr-merge-merges-over-unresolved-review-comments.md)).
 **Every finding below was verified by plan against the merged tree at `3e9ac86`**; three of them
 contradict acceptance criteria MUX-182 ticked as met.
 
@@ -55,7 +55,7 @@ those controls rather than reopening the closed one.
 ### Family
 
 - [MUX-182](../completed/MUX-182-cancelled-run-keeps-working-provenance-unreadable.md) — the parent; ACs 1, 2, 3 and 7 are the ones reopened.
-- [MUX-187](../drafts/MUX-187-pr-merge-merges-over-unresolved-review-comments.md) — why the review reached `main` unread.
+- [MUX-187](../completed/MUX-187-pr-merge-merges-over-unresolved-review-comments.md) — why the review reached `main` unread.
 - [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md), [MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) — the self-concealing false success family.
 - The tail-anchored prompt detection lesson (MUX-163, codex trust/approval prompts) — finding 5 is the same "match the live prompt, not the scrollback" rule.
 
@@ -134,7 +134,7 @@ so display callers keep tolerating a damaged file.
 
 - Reverting MUX-182's ticks or reopening it — the Phase 6 measurement it made stands for the road it measured.
 - A general "interrupt a working agent" road — MUX-171's rule holds; a working send node keeps the run `canceling`.
-- Why the review was merged over — [MUX-187](../drafts/MUX-187-pr-merge-merges-over-unresolved-review-comments.md).
+- Why the review was merged over — [MUX-187](../completed/MUX-187-pr-merge-merges-over-unresolved-review-comments.md).
 
 ## Status
 
