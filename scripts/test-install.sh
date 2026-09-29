@@ -231,6 +231,34 @@ check "$(offers_when)" "claude codex opencode" \
 check "$(offers_when claude opencode codex)" "" \
   "nothing offered when all three present"
 
+# installs_unattended — echoes the providers an unattended (-y) run installs on
+# a bare machine, sorted, through the installer's real ask(). OpenCode must be
+# among them: roleDefaultCLI sends build/test/deploy/run/watch/commit to it, and
+# a default of no left those agents failing with "cannot find opencode"
+# (2026-09-28). Codex is the negative control — no default role uses it.
+ask_from=$(grep -n '^ask() {' "$INSTALL" | cut -d: -f1)
+ask_to=$(awk -v s="$ask_from" 'NR > s && /^}/ { print NR; exit }' "$INSTALL")
+sed -n "${ask_from},${ask_to}p" "$INSTALL" > "$PROV_DIR/ask.sh"
+
+installs_unattended() {
+  local stub="$PROV_DIR/bin"
+  rm -rf "$stub"; mkdir -p "$stub"
+  PATH="$stub" HOME="$PROV_DIR/home" PROV_DIR="$PROV_DIR" "$PROV_BASH" -c '
+    set -u
+    C_OK=; C_DIM=; C_WARN=; C_KEY=; NC=; INTERACTIVE=false
+    row() { :; }; note() { :; }; ok() { :; }; warn() { :; }
+    version_of() { printf "%s" "${1:-}"; }
+    version_ge() { return 0; }
+    install_provider() { echo "INSTALL $1"; }
+    . "$PROV_DIR/ask.sh"
+    . "$PROV_DIR/helpers.sh"
+    . "$PROV_DIR/body.sh"
+  ' | awk '/^INSTALL /{print $2}' | sort | tr '\n' ' ' | sed 's/ *$//'
+}
+
+check "$(installs_unattended)" "claude opencode" \
+  "unattended run installs claude+opencode (default roles need opencode), not codex"
+
 rm -rf "$PROV_DIR"
 
 # --- 8. Claude Code must be exec-able, not just shell-runnable ---------------
