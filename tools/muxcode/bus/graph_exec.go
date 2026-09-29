@@ -709,29 +709,39 @@ func expandNodeOutputRefs(session string, run *GraphRun, msg string) string {
 	})
 }
 
-// graphOwnedRoles lists the send-node roles reachable from the worker's node,
-// in node order and de-duplicated, so a worker is told which delegations the
-// graph will make on its behalf.
+// graphOwnedDelegations lists the send nodes reachable from the worker's node
+// as `muxcode send <role> <action>` commands, in node order and de-duplicated,
+// so a worker is told which delegations the graph will make on its behalf.
+//
+// Keyed on role and action, the same key CheckGraphNodeAuthority enforces. A
+// role-only list forbade every send to a role the graph touches once: on
+// 2026-09-28 (run 1790629144) a docs-only phase's worker was told "no
+// `muxcode send plan`" because plan owned verify-spec and the close-out, and
+// had no other road to the docs it may not write — the run failed.
 //
 // Reachability rather than the whole graph: only nodes downstream of this
 // worker are its succession. A send on a branch the worker can never reach is
 // not work the graph is about to do for it, and naming it would forbid a
 // delegation nothing was going to duplicate.
-func graphOwnedRoles(g *Graph, fromNode string) []string {
+func graphOwnedDelegations(g *Graph, fromNode string) []string {
 	if g == nil {
 		return nil
 	}
 	reachable := reachableNodes(g, fromNode)
 	seen := map[string]bool{}
-	var roles []string
+	var owned []string
 	for _, n := range g.Nodes {
-		if n.Type != NodeSend || n.Role == "" || seen[n.Role] || !reachable[n.ID] {
+		if n.Type != NodeSend || n.Role == "" || !reachable[n.ID] {
 			continue
 		}
-		seen[n.Role] = true
-		roles = append(roles, n.Role)
+		cmd := strings.TrimSpace("muxcode send " + n.Role + " " + n.Action)
+		if seen[cmd] {
+			continue
+		}
+		seen[cmd] = true
+		owned = append(owned, cmd)
 	}
-	return roles
+	return owned
 }
 
 // reachableNodes returns the set of node ids reachable from start by following
@@ -767,16 +777,16 @@ func reachableNodes(g *Graph, start string) map[string]bool {
 // contradiction is stated there. CheckGraphNodeAuthority enforces it.
 func graphWorkerTask(g *Graph, runID, nodeID, msg string) string {
 	body := msg + "\n\n" + verdictTokenInstruction
-	roles := graphOwnedRoles(g, nodeID)
-	if len(roles) == 0 {
+	owned := graphOwnedDelegations(g, nodeID)
+	if len(owned) == 0 {
 		return body
 	}
-	owned := strings.Join(roles, ", ")
 	return fmt.Sprintf(
-		"[graph run %s · node %s] The graph owns the rest of this pipeline: %s run as separate nodes AFTER you report. "+
-			"Do NOT delegate them (no `muxcode send %s ...`) — a self-delegated chain races the graph and runs in the wrong working directory. "+
+		"[graph run %s · node %s] The graph owns the rest of this pipeline and dispatches it as separate nodes AFTER you report: `%s`. "+
+			"Do NOT send those yourself — a self-delegated chain races the graph and runs in the wrong working directory. "+
+			"Any other delegation the work needs is yours to make. "+
 			"Do the work below, reply to the requester, and stop.\n\n%s",
-		runID, nodeID, owned, strings.Join(roles, "|"), body)
+		runID, nodeID, strings.Join(owned, "`, `"), body)
 }
 
 // verdictTokenInstruction seeds the positive token both roads read —
@@ -1993,7 +2003,7 @@ var actionEvidenceCommands = map[string][]string{
 // for "the comments were answered". These nodes are attributed by the agent's
 // own token instead, which is why option 3 and option 4 were both needed.
 var actionsWithoutCommandEvidence = map[string]bool{
-	"review": true, "update-docs": true, "verify-spec": true,
+	"review": true, "update-docs": true, "verify-spec": true, "close-spec": true,
 	"pr-read": true, "pr-diff": true, "pr-review": true,
 	"comment": true, "story-read": true,
 	"jira-write": true, "jira-read": true, "issue-update": true,

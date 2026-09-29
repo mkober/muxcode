@@ -24,6 +24,29 @@ expired by then.
 | 15:46:32 | `task-timeout edit→test:test expired in-flight`; `graph-node-done test -> failure`; `graph-run-failed … node test failed with no live edge` | lifecycle |
 | 15:48:30 | `graph retry --from test` — the foreign task has expired, the dispatch lands, test → success 15:50:30 | lifecycle |
 
+### Second case — a worker's own send (session `muxcode`, run `1790641162-80-pr-review-fix-451d8466`, 2026-09-28)
+
+| When | What | Source |
+|------|------|--------|
+| 20:22:45 | edit → plan `request:update-docs` (file MUX-195) — tracked task `1790641365-edit-2f78075e`, answered 20:25:42 | `tasks/`, `log.jsonl` |
+| 20:20:42 → 20:24:42 | fix worker `spawn-db7fd90d` (seed `1790641242-daemon-f7646554`) sends plan `update-docs` for the new `recheck-comments` docs, `--track` | the worker's own report |
+| same | the CLI finds edit's task by `(to, action)` and returns *"already tracking"* **without writing a message**; no `spawn-db7fd90d → plan` row exists in `log.jsonl`, and no lifecycle row names the suppression | `log.jsonl` (absence), lifecycle (absence) |
+| 20:24:42 | the worker's report claims the delegation: *"The docs update for the new shape went to plan (update-docs, tracked task 1790641365-edit-2f78075e)"* — edit's task id | `1790641482-spawn-db7fd90d-de871482` |
+| 20:27:48 | review catches the stale docs (should-fix); the worker's iteration 2 records *"my first docs delegation reattached to an unrelated in-flight plan task and never landed"* | `1790641668-spawn-db7fd90d-914333f4` |
+
+Same shape as the 2026-09-09 case — a foreign in-flight task found by `(to, action)` is treated as
+the caller's own — but on a different road: not `dispatchNode`'s adoption but the CLI's pre-send
+dedup, `cmd/send.go:184–189` (`--track`) and `:191–197` (`--wait` reattach), which calls the same
+`FindInFlightTask`.
+
+**Does the fix have to cover worker sends?** Yes — a worker's delegation is lost silently and the
+worker reports someone else's task as its own. But that road is
+[MUX-155](./MUX-155-send-dedup-keys-on-target-not-sender.md)'s, which already names
+`cmd/send.go:184-189` and plans to add `from` to the `FindInFlightTask` / `HasInFlightTaskForRole`
+key. That one change fixes this case and narrows this spec's trigger; this spec's `dispatchNode`
+ownership check alone would **not** have prevented it. The two should ship together (they share
+`bus/dedup.go`), and this case is MUX-155's replay test as much as this spec's.
+
 ### Mechanism — verified in code
 
 - `bus/graph_exec.go:874–902` `dispatchNode` — on `ErrSendSuppressed` the node "adopts the existing
@@ -105,6 +128,8 @@ claim what it refused.
 - Filed 2026-09-09 16:02 by plan from edit's handoff (`mux-170-handoff.md`, session `03a897a2`),
   the timeline re-verified against the lifecycle log, `muxcode history test` and the code lines
   above.
+- Second case added 2026-09-28 on the user's instruction relayed by edit, verified against the
+  worker's two reports, `log.jsonl` and `cmd/send.go:177–198`.
 - Related: [MUX-155](./MUX-155-send-dedup-keys-on-target-not-sender.md) (the trigger);
   [MUX-171](./MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md) (found in the same hour, the
   other way a daemon mechanism written for one case fires on another);

@@ -375,8 +375,11 @@ fi
 # working install. The old gating gave OpenCode a prompt only when Claude was
 # absent and Codex one only when both were absent, so the common machine — one
 # with Claude and OpenCode already present — printed "codex not found" and
-# never asked. All but Claude default to no, so declining is one keypress and
-# an unattended run installs nothing extra.
+# never asked. Claude and OpenCode default to yes — roleDefaultCLI in
+# bus/provider.go sends build, test, deploy, run, watch, commit, research and
+# serve to OpenCode, so declining it by default left those agents failing to
+# launch ("cannot find opencode"). Codex defaults to no, so an unattended run
+# installs nothing no default role uses.
 #
 # Gemini is deliberately absent from this catalogue: ResolveProvider in
 # bus/provider.go has no Gemini backend and falls through to Claude, so an
@@ -394,7 +397,7 @@ provider_label() {
 provider_desc() {
   case "$1" in
     claude)   printf 'recommended — full hook support' ;;
-    opencode) printf 'TUI mode — multi-provider LLM access' ;;
+    opencode) printf 'default for build/test/deploy/run/watch/commit' ;;
     codex)    printf 'exec mode — OpenAI models' ;;
   esac
 }
@@ -604,7 +607,7 @@ if command -v opencode >/dev/null 2>&1; then
   use_opencode=true
 else
   row "$C_DIM" "·" "opencode" "not found"
-  if ask "Install OpenCode? ($(provider_desc opencode))" N; then
+  if ask "Install OpenCode? ($(provider_desc opencode))" Y; then
     install_provider opencode || true
   fi
 fi

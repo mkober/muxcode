@@ -457,7 +457,7 @@ request:
 | 80 | `80-pr-review-fix` | Find the branch's PR, read its review comments, gated fix loop, push the fixes, reply to every comment |
 | 90 | `90-ci-fix` | Find the branch's PR, read its failing CI checks, gated fix loop, push the fixes |
 | 100 | `100-docs-sync` | Verify spec alignment, update spec/architecture docs and README, gated commit |
-| 110 | `110-pr-merge` | Find the branch's PR, wait for CI green, gated merge, branch delete, `main` update, tracker story move |
+| 110 | `110-pr-merge` | Find the branch's PR, read its review (unresolved comments end at a `NOT MERGING` hold), wait for CI green, gated merge — the review is re-read after approval and a new comment stops it — branch delete, `main` update, tracker story move |
 | 120 | `120-deploy-verify` | Deploy, run a verification invocation, watch logs |
 
 `req-code-pr` was renamed `spec-to-pr` and `story-lifecycle` removed as a duplicate of its arc
@@ -469,7 +469,9 @@ resolving, and the single-digit names of that afternoon's first two reshuffles w
 the PR and list its unresolved review comments (`NO-ACTIONABLE-COMMENTS` ends the run with nothing
 touched), a `wait_human` `fix-gate` sits before the first mutation, an edit spawn fixes or declines
 each comment under a build/test/review loop capped at 3, then `push-fixes` commits and pushes and
-`reply` answers every comment with the sha or the decline reason. The same change gave
+`reply` answers every comment with the sha or the decline reason. Its review read is shared with
+`110-pr-merge` (2026-09-28, MUX-187), which runs it before `ci-watch` and again after `merge-gate`
+is approved, so a merge can no longer be approved — or land — over open comments — see [Agent Bus CLI](agent-bus.md#muxcode-graph). The same change gave
 `70-pr-local-review` a `review -[failure]-> restore` edge, since a review with findings once left the
 checkout on the PR's head.
 
@@ -535,7 +537,14 @@ lap, and the gate label always names the phase being shipped. The guard stays as
 backstop: a spec reopened between the check and the commit is still refused. `graph validate`
 rejects a check that names a node without the `phase-progress` guard. Graph workers verify a phase
 through the run agent and quote its counts and task id before reporting, so plan's verify credits a
-store row rather than the worker's account.
+store row rather than the worker's account. A worker's seed opens with an ownership preamble
+(`graphWorkerTask`, `bus/graph_exec.go`) naming the delegations the graph will make after it reports
+— the send nodes reachable from its node, as `muxcode send <role> <action>` commands
+(`graphOwnedDelegations`), keyed on role **and** action like `CheckGraphNodeAuthority`. Those it must
+not send itself; any other delegation is its to make. The list was once whole roles, so on
+2026-09-28 (run `1790629144`) a docs-only phase's worker was forbidden `muxcode send plan` because plan
+owned `verify-spec` and the close-out — it had no other road to docs it may not write, and the run
+failed. Keyed on the action, the same worker may send plan `update-docs`.
 
 **Anchored on HEAD, not on the run (MUX-183).** `phaseCommitReady` once compared the spec's
 completed-phase count with the commit node's fires *in this run* — two counters in different frames,
@@ -558,7 +567,7 @@ first non-blank line of the reviewer's reply — `<n> must-fix, <n> should-fix, 
 token says `EXIT=0`; a reply with no complete counts line holds rather than passing (on 2026-09-23 the
 node recorded `outcome=success` twice over replies carrying must-fix). `fix` receives the failure
 verbatim through `${failure_report}` (`expandFailureReport`, always the latest failure edge, never a
-stale lap's). After the last phase, `loop-check` routes to `close-spec` — plan's `update-docs` under
+stale lap's). After the last phase, `loop-check` routes to `close-spec` — plan's `close-spec` action under
 the `spec-complete` guard: status `Complete`, the move to `completed/`, the `backlog.md` row and
 cross-references, the active pointer cleared — then `final-gate` and `push-pr` commit the close-out,
 push and open the PR. A refused close-out goes to `close-stuck-gate` (retry up to three times, or

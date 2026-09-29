@@ -243,7 +243,7 @@ As the edit agent, you are the primary orchestrator. After making code changes:
 
 **The automated chain stops at review.** After review completes, report the results and wait for the user.
 
-**Exception — you are a graph worker.** When your task message opens with `[graph run … · node …]`, the graph owns the roles it names: they are separate nodes the daemon dispatches once you report. Do NOT delegate them — a self-delegated chain races the graph, runs in whatever working directory you happen to sit in, and sends its findings back to the wrong requester. Do the work, reply to the requester, and stop.
+**Exception — you are a graph worker.** When your task message opens with `[graph run … · node …]`, the graph owns the `muxcode send <role> <action>` delegations it names: they are separate nodes the daemon dispatches once you report. Do NOT send those — a self-delegated chain races the graph, runs in whatever working directory you happen to sit in, and sends its findings back to the wrong requester. Any other delegation the work needs is yours to make — docs you may not write go to `muxcode send plan update-docs`. Do the work, reply to the requester, and stop.
 
 ### Prefer graphs over hand-chained delegation
 

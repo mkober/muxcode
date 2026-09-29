@@ -139,12 +139,40 @@ func TestCIFixTemplate(t *testing.T) {
 	}
 }
 
-// Nothing merges before CI is green and a human approves; the tracker moves
-// only after the merge.
+// Nothing merges before the review is clear, CI is green and a human approves;
+// the tracker moves only after the merge. Open comments end at a hold that
+// lists them and routes nowhere (MUX-187).
 func TestPRMergeTemplate(t *testing.T) {
 	g := mustTemplate(t, "110-pr-merge")
+	onlyReachedFrom(t, g, "read-comments", "pr-exists", OutcomeSuccess)
+	onlyReachedFrom(t, g, "ci-watch", "no-comments", OutcomeSuccess)
+	onlyReachedFrom(t, g, "open-comments", "no-comments", OutcomeFailure)
+	for _, e := range g.Edges {
+		if e.From == "open-comments" {
+			t.Errorf("open-comments must end the run, not route to %s", e.To)
+		}
+	}
+	if hold := g.node("open-comments"); hold == nil || !strings.Contains(hold.Message, "${output:read-comments}") {
+		t.Error("the open-comments hold must list the comments the read found")
+	}
+	if gate := g.node("merge-gate").Message; !strings.Contains(gate, "CI is green") || !strings.Contains(gate, "no unresolved review comments") {
+		t.Errorf("merge-gate must state both checks it was reached on, got %q", gate)
+	}
 	onlyReachedFrom(t, g, "merge-gate", "ci-green", OutcomeSuccess)
-	onlyReachedFrom(t, g, "merge", "merge-gate", OutcomeSuccess)
+	onlyReachedFrom(t, g, "recheck-comments", "merge-gate", OutcomeSuccess)
+	onlyReachedFrom(t, g, "merge", "still-clear", OutcomeSuccess)
+	onlyReachedFrom(t, g, "new-comments", "still-clear", OutcomeFailure)
+	for _, e := range g.Edges {
+		if e.From == "new-comments" {
+			t.Errorf("new-comments must end the run, not route to %s", e.To)
+		}
+	}
+	if hold := g.node("new-comments"); hold == nil || !strings.Contains(hold.Message, "${output:recheck-comments}") {
+		t.Error("the new-comments hold must list the comments the recheck found")
+	}
+	if r := g.node("recheck-comments"); r == nil || r.Message != g.node("read-comments").Message {
+		t.Error("the pre-merge recheck must be the same review read as read-comments")
+	}
 	onlyReachedFrom(t, g, "tracker", "merge", OutcomeSuccess)
 	if w := g.node("ci-watch"); w == nil || NormalizeBusRole(w.Role) != "watch" {
 		t.Error("waiting on CI is a blocking watch — it belongs to the watch role, never an agent's own pane")

@@ -1621,7 +1621,7 @@ run or a retry never re-credits a phase already committed; `phase-check`'s detai
 `N phases complete in the tree, M at HEAD`. The `review` node's outcome comes from the first line of
 the reviewer's reply (`<n> must-fix, <n> should-fix, <n> nits`): any must-fix or should-fix routes to
 `fix`, which receives the report through `${failure_report}`; a reply without the counts line holds.
-**Tail**: `loop-check` → `close-spec` (plan `update-docs`, `spec-complete` guard: status `Complete`,
+**Tail**: `loop-check` → `close-spec` (plan `close-spec`, `spec-complete` guard: status `Complete`,
 move to `completed/`, `backlog.md`, cross-refs, pointer cleared) → `final-gate` → `push-pr` (commits
 the close-out, pushes, opens the PR); a refused close-out parks at `close-stuck-gate` (retry ≤ 3, or
 cancel).
@@ -1786,10 +1786,40 @@ scripts are skipped unless `MUXCODE_TEST_LIVE=1`), a failure goes to a fix spawn
 `${failure_report}`, then build and the suite again, capped at 3. `90-ci-fix` — `find-pr`, then
 `read-ci` (`CI-GREEN` ends the run; `CI-PENDING` stops with `EXIT=1`), `fix-gate`, a fix spawn fed
 `${output:read-ci}` and `${failure_report}`, the build/test/review loop capped at 3, then
-`push-fixes`. `110-pr-merge` — `find-pr`, `ci-watch` (the watch role on `gh pr checks --watch`,
-`CI-GREEN`), `merge-gate`, `merge` (`gh pr merge`, branch deleted, `main` pulled), then `tracker`
-(plan `jira-write`: the story to Done when the branch tracks one — a gated Atlassian node, so it sits
-downstream of `merge-gate` as validation demands).
+`push-fixes`. `110-pr-merge` — `find-pr` → `pr-exists` → `read-comments` → `no-comments` (the
+review read shared with `80-pr-review-fix`, below) **before** `ci-watch` (the watch role on
+`gh pr checks --watch`, `CI-GREEN`), `merge-gate` → `recheck-comments` → `still-clear` → `merge`
+(`gh pr merge`, branch deleted, `main` pulled), then `tracker` (plan `jira-write`: the story to Done
+when the branch tracks one — a gated Atlassian node, so it sits downstream of `merge-gate` as
+validation demands). The read runs first because it takes seconds and a CI watch takes minutes. Any
+unresolved actionable comment routes `no-comments`' failure edge to `open-comments`, a terminal
+`wait_human` hold with no outgoing edge: its text says **NOT MERGING**, lists
+`${output:read-comments}` and points to `80-pr-review-fix`; approving it only acknowledges and ends
+the run. `merge-gate` is reached only on `NO-ACTIONABLE-COMMENTS` and says what it rests on — *"CI is
+green and the PR had no unresolved review comments when read"* — and that the review is read again
+right before the merge. Added 2026-09-28
+([MUX-187](requirements/completed/MUX-187-pr-merge-merges-over-unresolved-review-comments.md)) after a
+run merged PR #89 over six unanswered Copilot comments on a gate that showed CI only.
+
+**The re-read after approval** (PR #96 review fix). The first read can be minutes or hours old by the
+time `merge-gate` is approved — CI ran in between, and the gate waits on a person. So approval
+dispatches `recheck-comments`, the same shared read under a second id, and only `still-clear`
+(`NO-ACTIONABLE-COMMENTS` again) reaches `merge`. A comment or `CHANGES_REQUESTED` review that
+arrived meanwhile routes to `new-comments`, a second terminal **NOT MERGING** hold that lists
+`${output:recheck-comments}` — its own hold, because `open-comments` interpolates the first read,
+which was clean. Pinned by `TestPRMergeRechecksReviewBeforeMerge` (`graph_exec_test.go`) and
+`TestPRMergeTemplate`, which also asserts the two reads carry the identical message.
+
+**The shared review read** (`prReviewReadMessage`, `NoActionableCommentsToken`, and the
+`prReviewReadNodes(readID, clearID)` generator that `prReviewReadNodesJSON` and `110-pr-merge`'s
+recheck are built from, `bus/graph_templates.go`) is one definition spliced into both templates, and
+`TestPRReviewFixQuestionNodesDeclareExitConvention` fails if their `read-comments` messages drift, so
+"actionable" cannot mean one thing to the template that merges and another to the one that fixes.
+Actionable: every unresolved comment, Copilot or human, listed with id, `file:line` and the ask; a
+`CHANGES_REQUESTED` review with no inline comments (listed by review id and reviewer); and an
+unresolved thread marked **outdated** — its lines moved, not necessarily its fix — unless the current
+code demonstrably makes the requested change or makes it inapplicable, which the reply must say.
+Not actionable: resolved threads, and bot summaries or chatter that ask for no change.
 
 **Validation is strict by design.** Undefined node refs, unreachable nodes, and uncapped
 cycles are errors, not warnings — a loop is only legal via an explicit `max_iterations` on a
