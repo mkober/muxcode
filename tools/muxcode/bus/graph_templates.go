@@ -81,11 +81,11 @@ var builtinGraphJSON = map[string]string{
   "nodes": [
     {"id": "derive", "type": "send", "role": "plan", "action": "story-read", "message": "Derive the story key from the current branch name (git branch --show-current; key pattern like MUX-109). If it is a Jira story, read it with muxcode jira read <id> and report the id, title, and requirement text; if this repo tracks GitHub issues, report the issue number — the gated fetch node reads it"},
     {"id": "fetch-gate", "type": "wait_human", "message": "Approve the tracker read (gh) and requirements drafting"},
-    {"id": "fetch", "type": "send", "role": "commit", "action": "story-read", "message": "If the derived id is a GitHub issue, read it (gh issue view <n> --json title,body) and report the requirement text; if it is a Jira story, reply nothing to do — plan already read it"},
+    {"id": "fetch", "type": "send", "role": "plan", "action": "issue-read", "message": "If the derived id is a GitHub issue, read it (gh issue view <n> --json title,body) and report the requirement text; if it is a Jira story, reply nothing to do — you already read it"},
     {"id": "draft", "type": "send", "role": "plan", "action": "update-docs", "message": "From the story/issue requirements reported upstream, create a requirements doc at docs/requirements/drafts/<ID>-<slug>.md (status field, acceptance criteria as checkboxes, phased plan ending in an integration test phase), then set it as the active spec with: muxcode spec set <path> — report the path"},
     {"id": "update-gate", "type": "wait_human", "message": "Approve updating the tracker (Jira story / GitHub issue) to reference the new requirements doc"},
-    {"id": "jira-update", "type": "send", "role": "plan", "action": "jira-write", "message": "The user approved the tracker update: if this branch tracks a Jira story, update it to reference the new requirements doc; if it tracks a GitHub issue instead, reply nothing to do — commit handles it"},
-    {"id": "issue-update", "type": "send", "role": "commit", "action": "issue-update", "message": "The user approved the tracker update: if this branch tracks a GitHub issue, comment on it (gh issue comment) referencing the new requirements doc; if it tracks a Jira story instead, reply nothing to do"}
+    {"id": "jira-update", "type": "send", "role": "plan", "action": "jira-write", "message": "The user approved the tracker update: if this branch tracks a Jira story, update it to reference the new requirements doc; if it tracks a GitHub issue instead, reply nothing to do — the issue-update node handles it"},
+    {"id": "issue-update", "type": "send", "role": "plan", "action": "issue-write", "message": "The user approved the tracker update: if this branch tracks a GitHub issue, comment on it (gh issue comment <n> --body-file <file>) referencing the new requirements doc; if it tracks a Jira story instead, reply nothing to do"}
   ],
   "edges": [
     {"from": "derive", "to": "fetch-gate"},
@@ -184,20 +184,20 @@ var builtinGraphJSON = map[string]string{
 
 	"20-defect-to-spec": `{
   "name": "20-defect-to-spec",
-  "description": "Turn a defect into a backlog spec: read-only evidence capture, plan drafts the spec and backlog row from the evidence, then gated commit and GitHub issue",
+  "description": "Turn a defect into a backlog spec: read-only evidence capture, plan drafts the spec and backlog row from the evidence, then a gated GitHub issue (plan) and spec commit",
   "start": "evidence",
   "nodes": [
     {"id": "evidence", "type": "send", "role": "run", "action": "run", "message": "Collect evidence for this defect WITHOUT changing anything: ${intent}. Run read-only diagnostics, each as its own command — the recent lifecycle log (muxcode lifecycle show --since 2h), muxcode diagnose --all, and any log, pane or file the description names — and report the exact excerpts with their timestamps. Never write files"},
-    {"id": "draft", "type": "send", "role": "plan", "action": "update-docs", "message": "Draft a backlog requirements spec for this defect: ${intent}. Take the next free MUX id from docs/requirements/backlog/backlog.md, write docs/requirements/backlog/<id>-<slug>.md (context grounded in the evidence below, acceptance criteria and phases as checkboxes, ending in an integration test phase) and add its backlog.md row. Mark anything the evidence does not establish as unverified. Report the id, title and path. EVIDENCE: ${output:evidence}"},
-    {"id": "gate", "type": "wait_human", "message": "Approve committing the new backlog spec and creating its GitHub issue"},
-    {"id": "commit-spec", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit only the new backlog spec and its backlog.md row (no push). The plan agent reported: ${output:draft}"},
-    {"id": "issue", "type": "send", "role": "commit", "action": "issue-update", "message": "Create a GitHub issue for the new backlog spec (gh issue create): title '<id> <spec title>', body a short summary and the spec path. The plan agent reported: ${output:draft}. Report the issue number and URL"}
+    {"id": "draft", "type": "send", "role": "plan", "action": "update-docs", "message": "Draft a backlog requirements spec for this defect: ${intent}. Take the next free MUX id from docs/requirements/backlog/backlog.md, write docs/requirements/backlog/<id>-<slug>.md (context grounded in the evidence below, acceptance criteria and phases as checkboxes, ending in an integration test phase) and add its backlog.md row. Mark anything the evidence does not establish as unverified. Do NOT search for or create its GitHub issue — the gated issue node of this graph does that. Report the id, title and path. EVIDENCE: ${output:evidence}"},
+    {"id": "gate", "type": "wait_human", "message": "Approve creating the new backlog spec's GitHub issue and committing the spec"},
+    {"id": "issue", "type": "send", "role": "plan", "action": "issue-write", "message": "The user approved at the gate: find or create the GitHub issue for the new defect spec — gh issue list --state all --search '<id> in:title' first and link an existing one, otherwise gh issue create --title '<id> <spec title>' --label type:defect --body-file <file> (a short summary and the spec path) — then add its **Tracking:** line under the spec title. If gh fails, report the exact output and leave the spec unlinked — a gh failure does not fail this node. The plan agent reported: ${output:draft}. Report the issue number and URL"},
+    {"id": "commit-spec", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit only the new backlog spec (with its Tracking line, if any) and its backlog.md row (no push). The plan agent reported: ${output:draft}"}
   ],
   "edges": [
     {"from": "evidence", "to": "draft"},
     {"from": "draft", "to": "gate"},
-    {"from": "gate", "to": "commit-spec"},
-    {"from": "commit-spec", "to": "issue"}
+    {"from": "gate", "to": "issue"},
+    {"from": "issue", "to": "commit-spec"}
   ]
 }`,
 

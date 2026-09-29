@@ -568,8 +568,24 @@ func TestCheckGuard_PlanBlocked(t *testing.T) {
 		{"git add.", "Git mutations are prohibited in the plan window"},
 		{"git mv old.go new.go", "Git mutations are prohibited in the plan window"},
 		{"git rm file.go", "Git mutations are prohibited in the plan window"},
-		{"gh pr create --title foo", "GitHub CLI commands are prohibited in the plan window"},
-		{"gh pr view 123", "GitHub CLI commands are prohibited in the plan window"},
+		{"gh pr create --title foo", "are prohibited in the plan window"},
+		{"gh pr view 123", "are prohibited in the plan window"},
+		{"gh api repos/o/r/issues", "are prohibited in the plan window"},
+		{"gh release create v1.0.0", "are prohibited in the plan window"},
+		{"gh issue transfer 12 other/repo", "are prohibited in the plan window"},
+		{"gh issue list; gh pr merge 1", "are prohibited in the plan window"},
+		{"gh issue view 12 && gh pr merge 1", "are prohibited in the plan window"},
+		{"gh issue list | gh pr merge 1", "are prohibited in the plan window"},
+		{"gh issue list <(gh pr merge 123 --merge)", "are prohibited in the plan window"},
+		{"gh issue view $(gh pr merge 1)", "are prohibited in the plan window"},
+		{`cd "$(gh pr merge 123 --merge)" && gh issue list`, "are prohibited in the plan window"},
+		{"cd `gh pr merge 1` && gh issue list", "are prohibited in the plan window"},
+		{"gh issue list > /tmp/x; gh pr merge 1", "are prohibited in the plan window"},
+		{`gh issue view 12 --repo "${R}"`, "are prohibited in the plan window"},
+		{"gh issue view $GH_ISSUE", "are prohibited in the plan window"},
+		{"gh issue list\t--state open", "are prohibited in the plan window"},
+		{"gh issue list\r\ngh pr merge 1", "are prohibited in the plan window"},
+		{"cd /repo) && gh issue list", "are prohibited in the plan window"},
 		{"./build.sh", "Build commands are prohibited in the plan window"},
 		{"make install", "Build commands are prohibited in the plan window"},
 		{"go test ./...", "Test commands are prohibited in the plan window"},
@@ -608,6 +624,33 @@ func TestCheckGuard_PlanAllowed(t *testing.T) {
 		if d := CheckGuard("plan", cmd); d != nil {
 			t.Errorf("CheckGuard(plan, %q) = blocked, want allowed", cmd)
 		}
+	}
+}
+
+// TestCheckGuard_PlanGitHubIssues pins plan's GitHub issue ownership: every
+// carved-out verb passes, including behind a cd prefix. The negative controls
+// (other gh verbs, a chained issue command, an uncarved issue verb) live in
+// TestCheckGuard_PlanBlocked.
+func TestCheckGuard_PlanGitHubIssues(t *testing.T) {
+	allowed := []string{
+		"gh issue create --title 'MUX-196 x' --body-file /tmp/b.md",
+		"gh issue edit 12 --add-label docs",
+		"gh issue delete 12 --yes",
+		"gh issue close 12",
+		"gh issue reopen 12",
+		"gh issue comment 12 --body-file /tmp/c.md",
+		"gh issue view 12",
+		"gh issue list --state open",
+		"gh issue status",
+		"cd /repo && gh issue view 12",
+	}
+	for _, cmd := range allowed {
+		if d := CheckGuard("plan", cmd); d != nil {
+			t.Errorf("CheckGuard(plan, %q) = blocked (%s), want allowed", cmd, d.Reason)
+		}
+	}
+	if d := CheckGuard("edit", "gh issue create --title x"); d == nil {
+		t.Error("the carve-out is plan's: edit must still be blocked from gh issue")
 	}
 }
 

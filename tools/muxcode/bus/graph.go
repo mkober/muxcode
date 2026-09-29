@@ -169,16 +169,18 @@ var knownNodeTypes = map[string]bool{
 	NodeMap:       true,
 }
 
-// gatedAtlassianActions are the plan agent's Atlassian write actions from
-// the delegation protocol (reads like jira-read stay open). Nodes sending
-// these require an upstream wait_human gate, same as git mutations.
-var gatedAtlassianActions = map[string]bool{
+// gatedTrackerWriteActions are the plan agent's tracker write actions from
+// the delegation protocol — Atlassian and GitHub issues (reads like jira-read
+// and issue-read stay open). Nodes sending these require an upstream
+// wait_human gate, same as git mutations.
+var gatedTrackerWriteActions = map[string]bool{
 	"jira-write":       true,
 	"confluence-write": true,
+	"issue-write":      true,
 }
 
-// nodeRequiresGate reports whether a node fires a git mutation or an
-// Atlassian write and therefore must sit downstream of a wait_human gate.
+// nodeRequiresGate reports whether a node fires a git mutation or a tracker
+// write and therefore must sit downstream of a wait_human gate.
 // Applies to every node type that delivers work to a role — send, spawn,
 // and map (whose fanned-out workers inherit its role). The commit role's
 // only read-shaped action is pr-read; everything else addressed to commit
@@ -193,7 +195,7 @@ func nodeRequiresGate(n *Node) bool {
 	if role == "commit" && n.Action != "pr-read" {
 		return true
 	}
-	return gatedAtlassianActions[n.Action]
+	return gatedTrackerWriteActions[n.Action]
 }
 
 // NodeRequiresGate reports whether a node fires a git mutation or an
