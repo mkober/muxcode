@@ -399,8 +399,8 @@ func TestPRReviewFixQuestionNodesDeclareExitConvention(t *testing.T) {
 				t.Errorf("%s: %s node missing", name, id)
 				continue
 			}
-			if !strings.Contains(strings.ToUpper(n.Message), "EXIT=0 EITHER WAY") {
-				t.Errorf("%s: %s does not tell the agent a completed lookup is EXIT=0 either way; "+
+			if !strings.Contains(strings.ToUpper(n.Message), "EXITS ZERO EITHER WAY") {
+				t.Errorf("%s: %s does not tell the agent a completed lookup exits zero either way; "+
 					"a %s reply would fail the node and strand the run", name, id, token)
 			}
 			if !strings.Contains(n.Message, token) {

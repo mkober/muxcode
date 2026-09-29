@@ -82,11 +82,23 @@ func TestDefectToSpecTemplate(t *testing.T) {
 	if issue.Role != "plan" || issue.Action != "issue-write" {
 		t.Errorf("issue node = %s/%s, want plan/issue-write", issue.Role, issue.Action)
 	}
-	if _, found := parseExitSentinel(issue.Message); found {
-		t.Errorf("issue node request carries a parseable verdict of its own (MUX-154): %q", issue.Message)
-	}
 	onlyReachedFrom(t, g, "issue", "gate", OutcomeSuccess)
 	onlyReachedFrom(t, g, "commit-spec", "issue", OutcomeSuccess)
+}
+
+// No builtin request carries a verdict of its own (MUX-198): parseExitSentinel
+// reads the last EXIT=<digits> in a reply, so a request echoed back as its
+// reply (MUX-154) would otherwise route on an outcome nobody reported. Checked
+// as dispatched, with the verdict instruction a send node is seeded with.
+func TestBuiltinRequestsCarryNoVerdict(t *testing.T) {
+	for name := range builtinGraphJSON {
+		for _, n := range mustTemplate(t, name).Nodes {
+			msg := seedVerdictToken(n.Action, n.Message)
+			if _, found := parseExitSentinel(msg); found {
+				t.Errorf("%s: node %s request carries a parseable verdict: %q", name, n.ID, msg)
+			}
+		}
+	}
 }
 
 // Plan owns GitHub issues: no builtin template may hand a gh issue command to
@@ -293,8 +305,8 @@ func TestLongRunningNodesOutlastTheDefaultBudget(t *testing.T) {
 func TestWorkflowQuestionNodesDeclareExitConvention(t *testing.T) {
 	for _, name := range []string{"90-ci-fix", "110-pr-merge"} {
 		n := mustTemplate(t, name).node("find-pr")
-		if n == nil || !strings.Contains(n.Message, "EXIT=0 EITHER WAY") || !strings.Contains(n.Message, "NO-PR-FOUND") {
-			t.Errorf("%s find-pr must declare EXIT=0 either way and name NO-PR-FOUND", name)
+		if n == nil || !strings.Contains(n.Message, "exits zero EITHER WAY") || !strings.Contains(n.Message, "NO-PR-FOUND") {
+			t.Errorf("%s find-pr must declare a zero exit either way and name NO-PR-FOUND", name)
 		}
 	}
 }

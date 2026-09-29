@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -1894,12 +1895,51 @@ func replaceLostWorkers(session string, run *GraphRun, n *Node, st *GraphNodeSta
 // an inbox (dropsAsProviderChrome) nor be synthesized by the daemon
 // (task-nonresult-ignored); this is the layer that makes their inevitable
 // misses harmless rather than gate-raising.
+//
+// A response that echoes its own request (echoesRequest) is a non-result too
+// (MUX-198): request text names the verdict and routing tokens it asks for
+// (`NO-ACTIONABLE-COMMENTS`, `CI-GREEN`), so a captured echo (MUX-154) would
+// otherwise route a node on a report nobody gave — 110-pr-merge's
+// recheck-comments straight to merge.
 func sendResponseIsNonResult(session string, task Task) bool {
 	resp, ok := FindMessageByID(session, task.ResponseID)
 	if !ok {
 		return false
 	}
-	return LooksLikeNonResult(resp.Payload)
+	return LooksLikeNonResult(resp.Payload) || echoesRequest(resp.Payload, task.Payload)
+}
+
+// echoWindowWords is how many consecutive request words a response must
+// reproduce to count as an echo of it.
+const echoWindowWords = 20
+
+// echoesRequest reports whether a response reproduces the opening or closing
+// echoWindowWords words of its request. A request shorter than the window is
+// never matched: its words are too few to tell an echo from an answer that
+// happens to use them, and no request that names a routing token is that short.
+//
+// Words are compared case-folded and stripped of punctuation, so a TUI's line
+// wrapping, borders and quote markers cannot hide an echo. Only the ends are
+// probed: a request's middle often carries upstream output (`${output:…}`)
+// that a genuine reply may legitimately quote, whereas its opening is the
+// template's own instruction and its close, on every seeded node, the fixed
+// verdictTokenInstruction — text no answer repeats verbatim. A genuine reply
+// that does quote either end holds the node rather than routing it.
+func echoesRequest(response, request string) bool {
+	req := echoWords(request)
+	if len(req) < echoWindowWords {
+		return false
+	}
+	resp := " " + strings.Join(echoWords(response), " ") + " "
+	head := " " + strings.Join(req[:echoWindowWords], " ") + " "
+	tail := " " + strings.Join(req[len(req)-echoWindowWords:], " ") + " "
+	return strings.Contains(resp, head) || strings.Contains(resp, tail)
+}
+
+func echoWords(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
 }
 
 // deriveSendOutcome maps a completed task to an outcome per the
