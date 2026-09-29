@@ -163,6 +163,22 @@ The plan agent is scoped to docs directories only — it can read source code fo
 
 Plan also holds **Atlassian write authority**: it is the only role `CheckAtlassianAuthority` permits to write to Jira and Confluence (reads stay open to every role). Plan owns the shared *written* artifacts — specs under `docs/` and the tracker items those specs describe. Writes happen only on an explicit user-initiated request relayed from edit — never as a side effect of docs or spec work. See [Atlassian write authority](architecture.md#atlassian-write-authority).
 
+Plan also owns **GitHub issues** — the tracker for specs whose ids are MUX ids rather than Jira keys. The plan guard carves `gh issue create/edit/delete/close/reopen/comment/view/list/status` out of its `gh` block (`planGitHubIssueVerbs`, `bus/hook.go`; see [Hooks](hooks.md#hook-guard-edit-guard)) and its tool profile allows the same nine verbs; every other `gh` command (PRs, releases, `gh api`) stays with commit. Writes follow the Atlassian rule: only on a user request relayed from edit, as `issue-write`. Reads are `issue-read`; when a spec change implies an issue change, plan reports it with `issue-suggest` and does not act.
+
+**One standing exception, set by the user on 2026-09-28: a newly filed defect gets its tracking issue.** When plan files a new **defect** spec (a `backlog/` spec with a Defects-table row), it does this in the same task:
+
+1. It checks for an existing issue with `gh issue list --state all --search "<ID> in:title"`, and links one if it's found.
+2. If none is found, it runs `gh issue create --title "<ID> <summary>" --label type:defect`, with a body holding the problem statement and the spec path.
+3. It adds a `**Tracking:**` line with the issue link directly under the spec title.
+4. It reports the issue number and URL.
+
+The exception covers only creating and linking an issue for a defect plan just filed. Features and other spec types, editing, closing or deleting issues, and backfilling older specs all stay user-initiated. A failed `gh issue create` is reported verbatim and leaves the spec unlinked; the spec is filed either way. See `agents/planner.md` → *GitHub issues*.
+
+```bash
+muxcode send plan issue-read "Report the state of the GitHub issue for MUX-196"
+muxcode send plan issue-write "The user asked: file a GitHub issue for MUX-196"
+```
+
 ### Dev server (serve)
 
 The serve agent manages local development server lifecycles — starting, monitoring, and auto-restarting dev servers (Vite, Next.js, Webpack, Flask, Go, Docker Compose, etc.). It runs in the F5 window.
@@ -469,7 +485,7 @@ cp ~/.config/muxcode/agents/code-builder.md .claude/agents/code-builder.md
 
 Agents have scoped permissions via tool profiles (`bus/profile.go`). The `--allowedTools` flags are resolved dynamically by `muxcode tools <role>` and passed to Claude Code at launch. Default permissions per role:
 
-- **plan**: `Read`, `Glob`, `Grep`, `Write`, `Edit`, read-only git (`git diff`, `git log`, `git status`, `git rev-parse`), `tree`, `python3`, `jq` (scoped to docs directories)
+- **plan**: `Read`, `Glob`, `Grep`, `Write`, `Edit`, read-only git (`git diff`, `git log`, `git status`, `git rev-parse`), `tree`, `python3`, `jq` (scoped to docs directories), `muxcode atlassian` reads, and `gh issue create/edit/delete/close/reopen/comment/view/list/status` — mirroring `planGitHubIssueVerbs` in `bus/hook.go`; no other `gh` command
 - **edit**: `Read`, `Glob`, `Grep`, `tree`, `python3`, `jq` (read-only — deliberately **no** `Write` or `Edit` tools, enforcing delegation via the bus)
 - **build**: `./build.sh`, `make`, `go build`, `pnpm build`, `cargo build`
 - **test**: `./test.sh`, `go test`, `jest`, `pytest`, `cargo test`

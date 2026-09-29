@@ -641,6 +641,10 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(muxcode atlassian jira search *)",
 					"Bash(muxcode atlassian confluence read *)",
 					"Bash(muxcode atlassian confluence search *)",
+					// GitHub issues — mirrors planGitHubIssueVerbs (bus/hook.go).
+					"Bash(gh issue create *)", "Bash(gh issue edit *)", "Bash(gh issue delete *)",
+					"Bash(gh issue close *)", "Bash(gh issue reopen *)", "Bash(gh issue comment *)",
+					"Bash(gh issue view *)", "Bash(gh issue list*)", "Bash(gh issue status*)",
 				},
 			},
 			"build": {

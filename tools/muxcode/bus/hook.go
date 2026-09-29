@@ -874,9 +874,11 @@ type GuardDecision struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
-// guardRule maps a command pattern to a block reason.
+// guardRule maps a command pattern to a block reason. A command matching one
+// of except is carved out of the rule and falls through to later rules.
 type guardRule struct {
 	prefixes []string
+	except   []string
 	reason   string
 }
 
@@ -935,6 +937,19 @@ var editGuardRules = []guardRule{
 // planGuardRules defines prohibited commands for the plan window.
 // The plan agent has read-only git access — mutations must be delegated.
 // Read-only git commands (status, log, diff, show, rev-parse) are allowed.
+//
+// GitHub issues are the one gh surface plan owns, as it owns Jira: it files,
+// edits and deletes the issues that track specs. The carve-out is an explicit
+// verb list, so transfer, lock, pin and develop stay blocked, and every other
+// gh command (PRs, releases, api) stays with the commit agent. Writes are
+// user-initiated only — that rule lives in agents/planner.md, since a guard
+// cannot tell who asked.
+var planGitHubIssueVerbs = []string{
+	"gh issue create", "gh issue edit", "gh issue delete",
+	"gh issue close", "gh issue reopen", "gh issue comment",
+	"gh issue view", "gh issue list", "gh issue status",
+}
+
 var planGuardRules = []guardRule{
 	{
 		prefixes: []string{
@@ -949,7 +964,8 @@ var planGuardRules = []guardRule{
 	},
 	{
 		prefixes: []string{"gh "},
-		reason:   `BLOCKED: GitHub CLI commands are prohibited in the plan window. Delegate to the commit agent. Run: muxcode send commit commit "<describe the operation>" --force --wait`,
+		except:   planGitHubIssueVerbs,
+		reason:   `BLOCKED: GitHub CLI commands other than gh issue create/edit/delete/close/reopen/comment/view/list/status are prohibited in the plan window. Delegate to the commit agent. Run: muxcode send commit commit "<describe the operation>" --force --wait`,
 	},
 	{
 		prefixes: []string{"./build.sh", "pnpm build", "pnpm run build", "npm run build", "go build", "cargo build", "tsc "},
@@ -1484,6 +1500,9 @@ func checkAgainstRules(command string, rules []guardRule) *GuardDecision {
 	}
 
 	for _, rule := range rules {
+		if exceptApplies(command, rule.except) {
+			continue
+		}
 		for _, prefix := range rule.prefixes {
 			if strings.HasPrefix(cmd, prefix) || strings.HasPrefix(stripped, prefix) {
 				return &GuardDecision{Blocked: true, Reason: rule.reason}
@@ -1494,6 +1513,41 @@ func checkAgainstRules(command string, rules []guardRule) *GuardDecision {
 		}
 	}
 	return nil
+}
+
+// exceptApplies reports whether a rule's carve-out covers the command, judged
+// on the original text rather than the cd-stripped form the prefix match uses.
+//
+// Only a single plain statement qualifies, optionally behind a metacharacter-free
+// `cd <path> &&`: rules match on prefix, so anything else lets a carved-out
+// verb carry another command past the block — `gh issue list; gh pr merge 1`,
+// `gh issue list <(gh pr merge 1)`, `cd "$(gh pr merge 1)" && gh issue list`.
+func exceptApplies(original string, except []string) bool {
+	const unsafe = ";|&`\n<>$()\"'\\"
+	rest := strings.TrimSpace(original)
+	if len(except) == 0 {
+		return false
+	}
+	if strings.HasPrefix(rest, "cd ") {
+		idx := strings.Index(rest, "&&")
+		if idx < 0 || strings.ContainsAny(rest[:idx], unsafe) {
+			return false
+		}
+		rest = strings.TrimSpace(rest[idx+2:])
+	}
+	if strings.ContainsAny(rest, ";|&`\n<>") || strings.Contains(rest, "$(") {
+		return false
+	}
+	return hasPrefixIn(rest, except)
+}
+
+func hasPrefixIn(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // FormatGuardBlock returns the JSON block decision for a hook response.
