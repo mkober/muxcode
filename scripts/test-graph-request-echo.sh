@@ -19,8 +19,9 @@
 #      never opens; the genuine CI-GREEN reply then opens it (negative control)
 #
 # ISOLATION: scratch BUS_SESSION, scratch repo via MUXCODE_SESSION_REPO_DIR,
-# lifecycle log in a temp dir, a scratch config granting gate authority to the
-# stub role test-approver (read at daemon startup, so written before it). No
+# lifecycle log in a temp dir, a scratch HOME config granting gate authority to
+# the stub role test-approver (gate authority reads the HOME config only, never
+# MUXCODE_CONFIG, and seals it at daemon startup, so it is written first). No
 # GitHub call is made; the stubs decide every reply.
 #
 # REQUIRES: installed muxcode carrying MUX-198 (run ./build.sh first).
@@ -67,8 +68,7 @@ mkdir -p "$HOME/.config/muxcode"
 git -C "$REPO" init -q
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 LOG="$MUXCODE_LIFECYCLE_LOG_DIR/${BUS_SESSION}.log"
-echo "MUXCODE_GATE_AUTHORITY_ROLES=test-approver" > "$WORK/config"
-export MUXCODE_CONFIG="$WORK/config"
+echo "MUXCODE_GATE_AUTHORITY_ROLES=test-approver" > "$HOME/.config/muxcode/config"
 export MUXCODE_TMP_CLEANUP_THRESHOLD=0
 export MUXCODE_BRANCH_TIME_DISABLE=1
 export MUXCODE_DEDUP_WINDOW=0
