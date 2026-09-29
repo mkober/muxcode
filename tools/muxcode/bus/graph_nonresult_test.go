@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -304,6 +305,104 @@ func mustReadTask(t *testing.T, id string) Task {
 		t.Fatal(err)
 	}
 	return task
+}
+
+// TestEchoesRequest pins MUX-198's detector on the request that motivated it:
+// 110-pr-merge's recheck-comments, whose text names NO-ACTIONABLE-COMMENTS.
+// The false rows are the negative controls — a genuine reply carrying the
+// token and verdict, one quoting a phrase from the request's middle, and a
+// request too short to judge.
+func TestEchoesRequest(t *testing.T) {
+	request := seedVerdictToken("pr-read", prReviewReadMessage)
+	words := echoWords(request)
+	var wrapped strings.Builder
+	for i, w := range strings.Fields(request) {
+		if i%9 == 0 {
+			wrapped.WriteString("\n│ ")
+		}
+		wrapped.WriteString(w + " ")
+	}
+	tests := []struct {
+		name, response, request string
+		want                    bool
+	}{
+		{"verbatim echo", request, request, true},
+		{"echo with a verdict appended", "› " + request + "\nEXIT=0", request, true},
+		{"echo wrapped in TUI borders", wrapped.String(), request, true},
+		{"echo truncated after its opening", strings.Join(words[:30], " ") + " …", request, true},
+		{"echo scrolled to its close", strings.Join(words[len(words)-25:], " "), request, true},
+		{"genuine clear reply", "PR #99: all threads resolved. " + NoActionableCommentsToken + "\nEXIT=0", request, false},
+		{"genuine reply quoting a middle phrase", "Per \"" + strings.Join(words[40:55], " ") + "\" none remain. " + NoActionableCommentsToken + " EXIT=0", request, false},
+		{"wrapped interior fragment carrying the token", "│ contain the literal token NO-ACTIONABLE-COMMENTS │\nEXIT=0", "Report comments. If none remain your reply MUST contain the literal token NO-ACTIONABLE-COMMENTS and nothing else", true},
+		{"fragment of a request shorter than the window", "reply must contain the literal token", "Your reply must contain the literal token CI-GREEN", true},
+		{"slice below the fragment minimum", "the literal token CI-GREEN EXIT=0", "Your reply must contain the literal token CI-GREEN", false},
+		{"genuine terse reply adding its own words", "all checks passed: contain the literal token CI-GREEN", "Your reply must contain the literal token CI-GREEN", false},
+		{"request shorter than the window", "go", "go", false},
+	}
+	for _, tt := range tests {
+		if got := echoesRequest(tt.response, tt.request); got != tt.want {
+			t.Errorf("%s: echoesRequest = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+// TestExecSendNodeEchoWaitsForGenuineReply pins MUX-198 where the executor
+// runs: a task completed by an echo of its own request — here one that names
+// the routing token and ends in a success sentinel — neither routes nor raises
+// a gate, and the genuine reply that follows routes as usual. The echo's task
+// is completed by hand, as the daemon's tracked-task pass does in production.
+// The fragment case is a sub-echoWindowWords wrapped slice, the shape a Codex
+// lastComposedLine capture takes; it carries CI-GREEN and EXIT=0, so without
+// the fragment rule it would route to success.
+func TestExecSendNodeEchoWaitsForGenuineReply(t *testing.T) {
+	echoes := map[string]func(request string) string{
+		"whole echo":       func(request string) string { return "› " + request + "\nEXIT=0" },
+		"wrapped fragment": func(string) string { return "│ literal token CI-GREEN; │\n│ if any failed it │\nEXIT=0" },
+	}
+	for name, echoOf := range echoes {
+		t.Run(name, func(t *testing.T) { assertEchoWaitsForGenuineReply(t, echoOf) })
+	}
+}
+
+func assertEchoWaitsForGenuineReply(t *testing.T, echoOf func(request string) string) {
+	g := linearGraph()
+	g.Nodes[0].Message = "Read the CI checks on this branch's PR WITHOUT changing anything and report each " +
+		"check's result. If every check passed your reply MUST contain the literal token CI-GREEN; " +
+		"if any failed it must not. A completed read exits zero either way"
+	run := createTestRun(t, g)
+	step(t, runTestSession, run.ID)
+	st, err := ReadNodeStatus(runTestSession, run.ID, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(HistoryPath(runTestSession, "build")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	request := mustReadTask(t, st.TaskID).Payload
+
+	echo := replyToTask(t, st.TaskID, echoOf(request))
+	CompleteTask(runTestSession, st.TaskID, echo.ID)
+	step(t, runTestSession, run.ID)
+	st, _ = ReadNodeStatus(runTestSession, run.ID, "a")
+	if st.State != GraphNodeRunning || st.Outcome != "" {
+		t.Fatalf("a = %s/%q after an echo, want running with no outcome", st.State, st.Outcome)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodePending {
+		t.Fatalf("b = %s, want pending — an echo must not route", s)
+	}
+	if gates := gateRequestPayloads(t, run.ID); len(gates) != 0 {
+		t.Fatalf("an echo raised %d gate(s), want none: %v", len(gates), gates)
+	}
+
+	replyToTask(t, st.TaskID, "test — pass. CI-GREEN\nEXIT=0")
+	step(t, runTestSession, run.ID)
+	st, _ = ReadNodeStatus(runTestSession, run.ID, "a")
+	if st.State != GraphNodeDone || st.Outcome != OutcomeSuccess {
+		t.Fatalf("a = %s/%q after the genuine reply, want done/success", st.State, st.Outcome)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodeRunning {
+		t.Errorf("b = %s, want running — the genuine reply must route", s)
+	}
 }
 
 // TestExecSendNodeNonResultExpires pins the other exit: a chrome-completed node
