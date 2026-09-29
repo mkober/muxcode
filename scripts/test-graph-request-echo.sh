@@ -20,8 +20,10 @@
 #
 # ISOLATION: scratch BUS_SESSION, scratch repo via MUXCODE_SESSION_REPO_DIR,
 # lifecycle log in a temp dir, a scratch HOME config granting gate authority to
-# the stub role test-approver (gate authority reads the HOME config only, never
-# MUXCODE_CONFIG, and seals it at daemon startup, so it is written first). No
+# the stub role test-approver. Gate authority reads two fixed paths in order —
+# ./.muxcode/config, then ~/.config/muxcode/config — never $MUXCODE_CONFIG, and
+# seals the value at daemon startup; the scratch repo has no gate line in its
+# .muxcode/config, so the HOME file decides, and it is written first. No
 # GitHub call is made; the stubs decide every reply.
 #
 # REQUIRES: installed muxcode carrying MUX-198 (run ./build.sh first).
