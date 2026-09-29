@@ -1,5 +1,7 @@
 # MUX-195: Graph Runs Never Reuse an Idle Worker
 
+**Tracking:** [mkober/muxcode#97](https://github.com/mkober/muxcode/issues/97)
+
 A graph `spawn`/`map` node reuses a worker only when one exists for **the same run and the same node**.
 Every other dispatch — the next run, or a different node in the same run — pays a full cold start
 (launch, agent definition, context load) and opens another window. On top of that, the workers of a

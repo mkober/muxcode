@@ -81,25 +81,26 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 | 33 | 2 | [`MUX-180`](./MUX-180-daemon-notifies-windowless-roles-forever.md) | The daemon notifies a windowless role forever; its inbox grows unbounded | High | — |
 | 34 | 2 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned session processes are never reaped | High | — |
 | 35 | 2 | [`MUX-156`](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) | An orphaned inbox listener consumes messages into the void | High | — |
-| 36 | 3 | [`MUX-135`](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Delivery-record GC permanently strands a long spawn iteration | High | — |
-| 37 | 3 | [`MUX-120`](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Spawned workers never receive their seeded task | High | — |
-| 38 | 3 | [`MUX-112`](./MUX-112-idle-task-rescue-closes-live-work.md) | Idle-task rescue closes tasks still running | High | — |
-| 39 | 3 | [`MUX-195`](./MUX-195-graph-runs-never-reuse-idle-workers.md) | Graph runs never reuse an idle worker; a finished run's workers are stranded | Medium | [MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md) |
-| 40 | 4 | [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) | Spec phase parsing: two definitions of complete, matched document-wide | High | — |
-| 41 | 4 | [`MUX-143`](./MUX-143-run-carries-two-phase-identities.md) | A run carries two unreconciled phase identities | High | [MUX-130](./MUX-130-spec-phase-parsing-semantics.md) |
-| 42 | 5 | [`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md) | Daemon auto-restart is unverified | High | — |
-| 43 | 5 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale reload-marker cleanup can delete a live exclusive lock | Medium | — |
-| 44 | 6 | [`MUX-123`](./MUX-123-stall-watchdog-selective-misses.md) | Stall watchdog fires routinely, still misses live stalls | High | — |
-| 45 | 6 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Harness reply correlates to the batch's last message | High | — |
-| 46 | 6 | [`MUX-110`](./MUX-110-harness-startup-tool-loop-exhaustion.md) | Harness startup message exhausts the tool loop | High | — |
-| 47 | 6 | [`MUX-122`](./MUX-122-prompt-agent-turn-attribution-and-fix.md) | Prompt-agent turn budget exhaustion | High | — |
-| 48 | 6 | [`MUX-032`](./MUX-032-loop-detector-granularity.md) | Loop detector too coarse to act on | Medium | — |
-| 49 | 6 | [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | No force-terminate for a hung-but-alive agent | Medium | — |
-| 50 | 6 | [`MUX-147`](./MUX-147-process-leak-and-memory-footprint.md) | Orphaned harness processes are never reaped | Medium | — |
-| 51 | 6 | [`MUX-151`](./MUX-151-display-width-runes-not-cells.md) | Display width is measured in runes, not terminal cells | Low | — |
-| 52 | 6 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | The `prompt` profile has no discovery affordance | Low | — |
-| 53 | 6 | [`MUX-191`](./MUX-191-bus-dir-subcommand-does-not-exist-but-agents-are-told-to-use-it.md) | `muxcode bus-dir` does not exist; `log-watcher.md` and `dev-server.md` tell their agents to call it | Low | — |
-| 54 | 6 | [`MUX-188`](./MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Every spawn worker launch sends edit a stray self-addressed `startup` request | Low | — |
+| 36 | 2 | [`MUX-196`](./MUX-196-agent-launch-expires-in-flight-graph-dispatch.md) | Relaunching an agent expires its in-flight graph dispatch and fails the node | High | — |
+| 37 | 3 | [`MUX-135`](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Delivery-record GC permanently strands a long spawn iteration | High | — |
+| 38 | 3 | [`MUX-120`](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Spawned workers never receive their seeded task | High | — |
+| 39 | 3 | [`MUX-112`](./MUX-112-idle-task-rescue-closes-live-work.md) | Idle-task rescue closes tasks still running | High | — |
+| 40 | 3 | [`MUX-195`](./MUX-195-graph-runs-never-reuse-idle-workers.md) | Graph runs never reuse an idle worker; a finished run's workers are stranded | Medium | [MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md) |
+| 41 | 4 | [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) | Spec phase parsing: two definitions of complete, matched document-wide | High | — |
+| 42 | 4 | [`MUX-143`](./MUX-143-run-carries-two-phase-identities.md) | A run carries two unreconciled phase identities | High | [MUX-130](./MUX-130-spec-phase-parsing-semantics.md) |
+| 43 | 5 | [`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md) | Daemon auto-restart is unverified | High | — |
+| 44 | 5 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale reload-marker cleanup can delete a live exclusive lock | Medium | — |
+| 45 | 6 | [`MUX-123`](./MUX-123-stall-watchdog-selective-misses.md) | Stall watchdog fires routinely, still misses live stalls | High | — |
+| 46 | 6 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Harness reply correlates to the batch's last message | High | — |
+| 47 | 6 | [`MUX-110`](./MUX-110-harness-startup-tool-loop-exhaustion.md) | Harness startup message exhausts the tool loop | High | — |
+| 48 | 6 | [`MUX-122`](./MUX-122-prompt-agent-turn-attribution-and-fix.md) | Prompt-agent turn budget exhaustion | High | — |
+| 49 | 6 | [`MUX-032`](./MUX-032-loop-detector-granularity.md) | Loop detector too coarse to act on | Medium | — |
+| 50 | 6 | [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | No force-terminate for a hung-but-alive agent | Medium | — |
+| 51 | 6 | [`MUX-147`](./MUX-147-process-leak-and-memory-footprint.md) | Orphaned harness processes are never reaped | Medium | — |
+| 52 | 6 | [`MUX-151`](./MUX-151-display-width-runes-not-cells.md) | Display width is measured in runes, not terminal cells | Low | — |
+| 53 | 6 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | The `prompt` profile has no discovery affordance | Low | — |
+| 54 | 6 | [`MUX-191`](./MUX-191-bus-dir-subcommand-does-not-exist-but-agents-are-told-to-use-it.md) | `muxcode bus-dir` does not exist; `log-watcher.md` and `dev-server.md` tell their agents to call it | Low | — |
+| 55 | 6 | [`MUX-188`](./MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Every spawn worker launch sends edit a stray self-addressed `startup` request | Low | — |
 
 ### Reliability & observability
 
@@ -115,6 +116,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 | [`MUX-160`](./MUX-160-tmp-go-cache-leak-unclearable-pressure.md) | The /tmp Go Caches the Disk-Pressure Sweep Counts but Cannot Clear | High | — |
 | [`MUX-161`](./MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) | `upgrade-daemons` Cannot See the Daemons From a Codex Build Agent | Medium | — |
 | [`MUX-156`](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) | An Orphaned Inbox Listener Consumes Messages Into the Void | High | — |
+| [`MUX-196`](./MUX-196-agent-launch-expires-in-flight-graph-dispatch.md) | Relaunching an Agent Expires Its In-Flight Graph Dispatch | High | — |
 | [`MUX-155`](./MUX-155-send-dedup-keys-on-target-not-sender.md) | `muxcode send` Drops a Message Because Another Agent's Task Is In Flight | High | — |
 | [`MUX-152`](./MUX-152-test-sh-hides-modules-after-first-failure.md) | `test.sh` Hides Every Module After the First Failure | High | — |
 | [`MUX-147`](./MUX-147-process-leak-and-memory-footprint.md) | Reap Orphaned Harness Processes and Reduce Session Memory Footprint | Medium | — |
