@@ -65,7 +65,7 @@ A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — pro
 | `aws *` (lambda, stepfunctions, appflow, s3, s3api, glue, dynamodb, kinesis, firehose, events, sqs, sns, ssm, ecs, secretsmanager, cloudformation) — all AWS CLI commands except logs | run agent | `muxcode send run run "..."` |
 | `pnpm dev`, `npx vite`, `npx next dev`, `npm start`, dev servers | serve agent | `muxcode send serve serve "..."` |
 | Doc updates in `docs/` (specs, architecture, requirements) | plan agent | `muxcode send plan update-docs "..."` |
-| `gh issue` (create, edit, delete, close, reopen, comment, view, list) | plan agent | `muxcode send plan issue-read "..."` / `issue-write "..."` |
+| `gh issue` (create, edit, delete, close, reopen, comment, view, list, status) | plan agent | `muxcode send plan issue-read "..."` / `issue-write "..."` |
 
 ### Complex runs — write a temp script, pass the run agent ONE bare command
 

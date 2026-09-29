@@ -64,7 +64,9 @@ func onlyReachedFrom(t *testing.T, g *Graph, node, from, outcome string) {
 }
 
 // Evidence is gathered read-only before anything is written, and the spec
-// commit and the issue both sit behind the one gate.
+// commit and the issue both sit behind the one gate. The issue has exactly
+// one creation point: plan's pre-gate draft is told to leave it to the gated
+// node, or plan's standing defect-issue rule files it twice.
 func TestDefectToSpecTemplate(t *testing.T) {
 	g := mustTemplate(t, "20-defect-to-spec")
 	if g.Start != "evidence" || !strings.Contains(g.node("evidence").Message, "WITHOUT changing anything") {
@@ -73,8 +75,42 @@ func TestDefectToSpecTemplate(t *testing.T) {
 	if !strings.Contains(g.node("draft").Message, "${output:evidence}") {
 		t.Error("the draft must be grounded in the evidence node's report")
 	}
-	onlyReachedFrom(t, g, "commit-spec", "gate", OutcomeSuccess)
-	onlyReachedFrom(t, g, "issue", "commit-spec", OutcomeSuccess)
+	if !strings.Contains(g.node("draft").Message, "Do NOT search for or create its GitHub issue") {
+		t.Error("the pre-gate draft must leave issue creation to the gated issue node")
+	}
+	issue := g.node("issue")
+	if issue.Role != "plan" || issue.Action != "issue-write" {
+		t.Errorf("issue node = %s/%s, want plan/issue-write", issue.Role, issue.Action)
+	}
+	if _, found := parseExitSentinel(issue.Message); found {
+		t.Errorf("issue node request carries a parseable verdict of its own (MUX-154): %q", issue.Message)
+	}
+	onlyReachedFrom(t, g, "issue", "gate", OutcomeSuccess)
+	onlyReachedFrom(t, g, "commit-spec", "issue", OutcomeSuccess)
+}
+
+// Plan owns GitHub issues: no builtin template may hand a gh issue command to
+// another role, and every issue write sits behind a gate (the validator's
+// gatedTrackerWriteActions rule, exercised here by mustTemplate).
+func TestTemplatesRouteGitHubIssuesToPlan(t *testing.T) {
+	for name, raw := range builtinGraphJSON {
+		g, err := ParseGraph([]byte(raw))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, n := range g.Nodes {
+			if strings.Contains(n.Message, "gh issue") && NormalizeBusRole(n.Role) != "plan" {
+				t.Errorf("%s: node %s sends a gh issue command to %q, want plan", name, n.ID, n.Role)
+			}
+		}
+	}
+	story := mustTemplate(t, "10-story-to-spec")
+	if n := story.node("fetch"); n.Action != "issue-read" {
+		t.Errorf("10-story-to-spec fetch action = %q, want issue-read", n.Action)
+	}
+	if n := story.node("issue-update"); n.Action != "issue-write" || !NodeRequiresGate(n) {
+		t.Errorf("10-story-to-spec issue-update = %q (gated %v), want a gated issue-write", n.Action, NodeRequiresGate(n))
+	}
 }
 
 // Nothing is rebased or pushed without the gate, and the push waits on a

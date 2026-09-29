@@ -1518,24 +1518,27 @@ func checkAgainstRules(command string, rules []guardRule) *GuardDecision {
 // exceptApplies reports whether a rule's carve-out covers the command, judged
 // on the original text rather than the cd-stripped form the prefix match uses.
 //
-// Only a single plain statement qualifies, optionally behind a metacharacter-free
-// `cd <path> &&`: rules match on prefix, so anything else lets a carved-out
-// verb carry another command past the block — `gh issue list; gh pr merge 1`,
-// `gh issue list <(gh pr merge 1)`, `cd "$(gh pr merge 1)" && gh issue list`.
+// Only a provably plain line qualifies, optionally behind a quote- and
+// metacharacter-free `cd <path> &&`: the carve-out's own words must start it,
+// and the rest may carry no chain, redirect, substitution or expansion
+// character and no whitespace but a space — quoted or not, since the guard
+// does not interpret shell. Anything else falls through to the rule, so a
+// carved-out verb can never carry another command past the block
+// (`gh issue list; gh pr merge 1`, `cd "$(gh pr merge 1)" && gh issue list`).
 func exceptApplies(original string, except []string) bool {
-	const unsafe = ";|&`\n<>$()\"'\\"
-	rest := strings.TrimSpace(original)
+	const unplain = ";|&`$<>\n\r\t\v\f"
 	if len(except) == 0 {
 		return false
 	}
+	rest := strings.TrimSpace(original)
 	if strings.HasPrefix(rest, "cd ") {
-		idx := strings.Index(rest, "&&")
-		if idx < 0 || strings.ContainsAny(rest[:idx], unsafe) {
+		cd, after, ok := strings.Cut(rest, "&&")
+		if !ok || strings.ContainsAny(cd, unplain+`'"\()`) {
 			return false
 		}
-		rest = strings.TrimSpace(rest[idx+2:])
+		rest = strings.TrimSpace(after)
 	}
-	if strings.ContainsAny(rest, ";|&`\n<>") || strings.Contains(rest, "$(") {
+	if strings.ContainsAny(rest, unplain) {
 		return false
 	}
 	return hasPrefixIn(rest, except)

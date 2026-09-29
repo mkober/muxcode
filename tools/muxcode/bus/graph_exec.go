@@ -2007,6 +2007,7 @@ var actionsWithoutCommandEvidence = map[string]bool{
 	"pr-read": true, "pr-diff": true, "pr-review": true,
 	"comment": true, "story-read": true,
 	"jira-write": true, "jira-read": true, "issue-update": true,
+	"issue-read": true, "issue-write": true,
 	"edit": true, "spawn-task": true,
 }
 

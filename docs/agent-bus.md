@@ -1777,8 +1777,13 @@ branch instead of leaving the checkout on the PR's head.
 **The five added 2026-09-24**, each opening read-only and gating before its first mutation:
 `20-defect-to-spec` — a run node gathers read-only evidence for the defect given as `${intent}`
 (lifecycle log, `diagnose --all`, named logs and panes), plan drafts a backlog spec and its
-`backlog.md` row grounded in `${output:evidence}`, then a gate, a commit of the spec (no push) and
-the commit role files the GitHub issue. `40-sync-main` — gate first, then the commit role fetches
+`backlog.md` row grounded in `${output:evidence}` — told **not** to search for or create its GitHub
+issue, since the gated node below does that — then a gate, `issue` (plan, `issue-write`: find an
+existing issue by `<id> in:title` or `gh issue create --label type:defect`, then add the spec's
+`**Tracking:**` line; a failed `gh` is reported verbatim and still `EXIT=0`, leaving the spec
+unlinked), and `commit-spec` (commit, no push) staging the spec with its Tracking line and its row.
+The issue node precedes the commit since the PR #99 review so the committed spec already carries its
+link; before it, the commit role filed the issue after the commit. `40-sync-main` — gate first, then the commit role fetches
 and rebases onto `origin/main` (a conflict is `rebase --abort` and `EXIT=1`, never self-resolved),
 build, test, and `push --force-with-lease`; any failure withholds the push. `60-integration-suite`
 — the run agent runs `bash scripts/test-all.sh` (a serial runner over `scripts/test-*.sh`; live-session

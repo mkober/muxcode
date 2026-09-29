@@ -311,8 +311,11 @@ flag prevents a completion from being double-routed across a restart. There is n
 scheduler to rebuild.
 
 **Authority gates — what actually holds (MUX-144).** The *topology* rule holds: no graph node
-may fire a git mutation or an Atlassian write without an upstream `wait_human` gate, and
-`graph validate` rejects such a definition outright (`validateGates`). Since Phase 2 the gate
+may fire a git mutation or a tracker write without an upstream `wait_human` gate, and
+`graph validate` rejects such a definition outright (`validateGates`). The tracker writes are
+`gatedTrackerWriteActions` (`bus/graph.go`) — `jira-write`, `confluence-write` and, since the PR #99
+review, `issue-write` (plan's GitHub issue writes); the reads (`jira-read`, `issue-read`) stay
+ungated. Since Phase 2 the gate
 itself is guarded — `ApproveGraphGate` calls `CheckGateApprovalAuthority`
 (`bus/gate_authority.go`), so a release needs an authorized approver, defaulting to **the user
 alone, no agent** (`MUXCODE_GATE_AUTHORITY_ROLES` in the muxcode config file opts a role in;
@@ -350,7 +353,7 @@ Before Phase 4 this backstop was a no-op on the graph path — `From = "daemon"`
 authorized role and the gate was the only control. An earlier version of this paragraph claimed the
 runtime backstop meant a graph "cannot be used to launder an action around the rules that govern
 it"; that was false as written from the day it was written until 2026-09-13 (flagged 2026-09-08). The
-Atlassian road is not yet judged the same way — a graph `jira-write` dispatches to plan, which holds
+Atlassian road is not yet judged the same way — a graph `jira-write` (and, likewise, `issue-write`) dispatches to plan, which holds
 that authority itself, so there is no sender to re-judge and the check would be new — tracked as
 [MUX-181](requirements/backlog/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), the
 refusal half of the provenance mechanism MUX-165 already names; the two ship together.
@@ -447,8 +450,8 @@ request:
 
 | Stage | Template | What it does |
 |-------|----------|--------------|
-| 10 | `10-story-to-spec` | Derive the Jira/GitHub id from the branch, read its requirements, draft a spec and set it active, gated tracker update |
-| 20 | `20-defect-to-spec` | Read-only evidence capture for a defect, plan drafts the backlog spec and row from the evidence, gated commit and GitHub issue |
+| 10 | `10-story-to-spec` | Derive the Jira/GitHub id from the branch, read its requirements (a GitHub issue via plan `issue-read`), draft a spec and set it active, gated tracker update (plan: `jira-write` or `issue-write`) |
+| 20 | `20-defect-to-spec` | Read-only evidence capture for a defect, plan drafts the backlog spec and row from the evidence (no issue), then a gate, plan finds or creates the GitHub issue and adds the spec's Tracking line (`issue-write`), and the spec is committed |
 | 30 | `30-build-test-review` | The build, test, review subgraph the others compose |
 | 40 | `40-sync-main` | Gated rebase onto `origin/main`, build and test on the new base, `push --force-with-lease`; a conflict or red build withholds the push |
 | 50 | `50-spec-to-pr` | Walk the active spec phase by phase: implement, build/test, review (findings route to fix), update-spec, gated per-phase commit, close-out, final gate, push and PR |
