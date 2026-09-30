@@ -401,11 +401,15 @@ stopped and reused, without touching the delegation guard or the tree question.
 
 - [x] Implement the chosen enforcement so a spawn worker cannot silently delegate a tree-scoped check
 - [x] Ensure it applies to **any** spawn of a delegating role, not only `spec-to-pr`'s two nodes
-- [ ] Give the worker a working alternative — it must be able to build and test **in its own
-      worktree** (confirm the tool profile permits this from the spawn cwd). *Still open, and the
-      landed fix chose the other branch of the criterion: the preamble says "Do the work, reply to the
-      requester, and stop", so the worker reports rather than verifying locally. Acceptable, but it
-      means a phase is only ever verified against main after harvest — worth a deliberate ruling*
+- [x] Give the worker a working alternative — it must be able to build and test **in its own
+      worktree** (confirm the tool profile permits this from the spawn cwd). **Ruled 2026-09-30, by
+      consequence of the 2026-09-03 no-worktree decision:** a graph worker's own tree *is* the session
+      checkout, the tree the graph's `build`/`test`/`review` nodes verify, so "verified against main
+      after harvest" and "verified in the worker's tree" are now the same thing. For the phase's own
+      `scripts/test-*.sh` the worker reaches the **run** agent, which `50-spec-to-pr` holds as no node,
+      so `CheckGraphNodeAuthority` never refuses it (the `implement`/`fix` messages say so). The
+      preamble's "reply and stop" stands for build/test/review. *The user may overrule; this is the
+      structural answer, not a fresh decision.*
 - [x] Leave the interactive `edit` path untouched; pin that with a test
 - [x] Unit test: a send that would cross trees from a spawn is refused/rewritten; the same send from
       the interactive agent is allowed
