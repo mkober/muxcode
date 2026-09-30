@@ -219,14 +219,7 @@ func StartSpawnOwned(session, role, task, owner string, useWorktree bool, runID,
 	_ = exec.Command("tmux", "select-pane", "-t", consolePane, "-T", "CONSOLE").Run()
 	sendKeysThenEnter(consolePane, fmt.Sprintf("%s console %s", launcher, spawnRole))
 
-	// AGENT_ROLE is the spawn-specific role so the agent reads its own inbox, not the base role's.
-	var launchStr string
-	if entry.Worktree != "" {
-		launchStr = fmt.Sprintf("cd %s && AGENT_ROLE=%s %s agent launch %s", entry.Worktree, spawnRole, launcher, role)
-	} else {
-		launchStr = fmt.Sprintf("AGENT_ROLE=%s %s agent launch %s", spawnRole, launcher, role)
-	}
-	if err := sendKeysThenEnter(agentPane, launchStr); err != nil {
+	if err := sendKeysThenEnter(agentPane, spawnLaunchCommand(entry.Worktree, spawnRole, launcher, role)); err != nil {
 		return SpawnEntry{}, fmt.Errorf("launching agent: %v", err)
 	}
 
@@ -274,6 +267,17 @@ func NthSpawnWindowIndex(session string, n int) (int, bool) {
 		return 0, false
 	}
 	return idxs[n-1], true
+}
+
+// spawnLaunchCommand is the launch a spawn types into its worker pane, run
+// from worktree when one is set. AGENT_ROLE is the spawn-specific role so the
+// agent reads its own inbox, not the base role's.
+func spawnLaunchCommand(worktree, spawnRole, launcher, role string) string {
+	cmd := fmt.Sprintf("AGENT_ROLE=%s %s", spawnRole, AgentLaunchCommand(launcher, role, LaunchReasonSpawn))
+	if worktree != "" {
+		return fmt.Sprintf("cd %s && %s", worktree, cmd)
+	}
+	return cmd
 }
 
 // sendKeysThenEnter types text and presses Enter as two pty writes with a

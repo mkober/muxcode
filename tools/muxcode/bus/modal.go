@@ -164,7 +164,7 @@ func DefaultModalConfigs() []ModalConfig {
 			Title:   " API Testing ",
 			Width:   "62%",
 			Height:  "62%",
-			Command: "muxcode agent launch api",
+			Command: AgentLaunchCommand("muxcode", "api", LaunchReasonUser),
 			Split: &ModalSplit{
 				Direction: "v",
 				Size:      "20%",

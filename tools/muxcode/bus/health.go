@@ -307,14 +307,15 @@ func RestartLocalAgent(session, role string) error {
 		return err
 	}
 	defer release()
-	return scrapeAndRelaunch(session, role, PaneTarget(session, role), "daemon", "")
+	return scrapeAndRelaunch(session, role, PaneTarget(session, role), "daemon", "", LaunchReasonRestart)
 }
 
 // scrapeAndRelaunch is the one scrape-then-relaunch body, shared by the
 // daemon's RestartLocalAgent and the manual ResumeAgent so neither can grow a
 // second scrape, pattern or flag-assembly path. source is the lifecycle source
-// recorded on every row; a non-empty actor is appended to each row's detail.
-func scrapeAndRelaunch(session, role, target, source, actor string) error {
+// recorded on every row; a non-empty actor is appended to each row's detail;
+// reason is the launch reason the relaunch carries.
+func scrapeAndRelaunch(session, role, target, source, actor string, reason LaunchReason) error {
 	content, captureErr := captureResumePane(target)
 	id, event := "", "resume-scrape-miss"
 	if captureErr == nil {
@@ -338,7 +339,7 @@ func scrapeAndRelaunch(session, role, target, source, actor string) error {
 
 	time.Sleep(restartInterruptDelay)
 
-	launchCmd := fmt.Sprintf("muxcode agent launch %s", role)
+	launchCmd := AgentLaunchCommand("muxcode", role, reason)
 	if id != "" {
 		launchCmd += " --resume " + id
 	}

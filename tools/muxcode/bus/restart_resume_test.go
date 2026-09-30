@@ -73,7 +73,7 @@ func TestRestartLocalAgent_ScrapesBeforeInterruptAndResumes(t *testing.T) {
 	if capture < 0 || interrupt < 0 || capture > interrupt {
 		t.Fatalf("scrape must precede C-c: capture at %d, interrupt at %d in %v", capture, interrupt, *log)
 	}
-	if want := "muxcode agent launch edit --resume " + restartResumeID; launchTyped(*log) != want {
+	if want := "muxcode agent launch edit --reason restart --resume " + restartResumeID; launchTyped(*log) != want {
 		t.Errorf("relaunch = %q, want %q", launchTyped(*log), want)
 	}
 	for _, event := range []string{"resume-scrape-hit", "agent-relaunch"} {
@@ -180,7 +180,7 @@ func TestRestartLocalAgent_FallsBackToFreshLaunch(t *testing.T) {
 			if err := RestartLocalAgent(session, "edit"); err != nil {
 				t.Fatalf("RestartLocalAgent: %v", err)
 			}
-			if got := launchTyped(*log); got != "muxcode agent launch edit" {
+			if got := launchTyped(*log); got != "muxcode agent launch edit --reason restart" {
 				t.Errorf("relaunch = %q, want a fresh launch", got)
 			}
 			if n := countLifecycleEvents(t, session, c.event); n != 1 {

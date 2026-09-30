@@ -49,7 +49,7 @@ same dispatch to an agent that simply complied would have pushed.
 ### Attribution is not possible, and that is the finding
 
 Investigation **could not determine who created the run or who approved it.** The `auto` agent is
-alive and matches the shape [`MUX-141`](../backlog/MUX-141-auto-agent-restart-relaunches-graph-runs.md)
+alive and matches the shape [`MUX-141`](./MUX-141-auto-agent-restart-relaunches-graph-runs.md)
 describes, but `auto` has no tmux window to scrape and nothing is logged, so **naming it would be a
 guess and this spec does not make one.**
 
@@ -138,7 +138,7 @@ No step requires a human. No step records that one was absent.
 
 | Spec | Relationship |
 |------|--------------|
-| [`MUX-141`](../backlog/MUX-141-auto-agent-restart-relaunches-graph-runs.md) | **Compounding, neither subsumes the other.** MUX-141 supplies the *source* of unrequested runs (a restart relaunches autonomous work); this spec supplies the reason one can reach a push. MUX-141 alone yields spurious runs that **stop at a gate**; this alone makes gates openable. Together they are an unattended path from an external process exit to a PR. Cross-linked both ways. |
+| [`MUX-141`](./MUX-141-auto-agent-restart-relaunches-graph-runs.md) | **Compounding, neither subsumes the other.** MUX-141 supplies the *source* of unrequested runs (a restart relaunches autonomous work); this spec supplies the reason one can reach a push. MUX-141 alone yields spurious runs that **stop at a gate**; this alone makes gates openable. Together they are an unattended path from an external process exit to a PR. Cross-linked both ways. |
 | [`MUX-132`](./MUX-132-graph-retry-launders-gate-approval.md) | **Adjacent hole, and 132's fix is sound.** MUX-132 closed a *stale-marker reuse* path so a retried run demands a **fresh** approval. This spec is about a fresh approval **nobody human made**. 132 guards the step "is this approval current?"; nothing guards "is this approval human?" — the two are complementary, and 132 needs no revision. |
 | [`MUX-142`](../backlog/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Shares the lesson that a control verified on one road is not verified on all of them. |
 

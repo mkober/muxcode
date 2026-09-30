@@ -274,8 +274,7 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 		fmt.Sprintf("Windows: %s", strings.Join(cfg.Windows, " ")))
 
 	// Create first window content
-	agentLauncher := "muxcode agent launch"
-	if err := createWindowContent(cfg, session, firstWin, projectDir, agentLauncher); err != nil {
+	if err := createWindowContent(cfg, session, firstWin, projectDir); err != nil {
 		return fmt.Errorf("first window: %w", err)
 	}
 
@@ -285,7 +284,7 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 			fmt.Fprintf(os.Stderr, "Warning: failed to create window %s: %v\n", win, err)
 			continue
 		}
-		if err := createWindowContent(cfg, session, win, projectDir, agentLauncher); err != nil {
+		if err := createWindowContent(cfg, session, win, projectDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to setup window %s: %v\n", win, err)
 		}
 	}
@@ -337,7 +336,10 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 // indices still hold (MUX-117). Everything after the tagging addresses
 // panes by identity — on a broken window the sentinel targets make the
 // sends error rather than fire keystrokes at an index.
-func createWindowContent(cfg *LauncherConfig, session, win, projectDir, agentLauncher string) error {
+//
+// The agent launch carries LaunchReasonUser: a session launch is a start the
+// user asked for (MUX-141).
+func createWindowContent(cfg *LauncherConfig, session, win, projectDir string) error {
 	target := session + ":" + win
 	role := cfg.AgentRole(win)
 
@@ -368,7 +370,7 @@ func createWindowContent(cfg *LauncherConfig, session, win, projectDir, agentLau
 	leftPane := CreationPaneTarget(session, win, PaneTagLeft)
 
 	sendInit(cfg, agentPane)
-	sendCommand(agentPane, agentLauncher+" "+launchRole)
+	sendCommand(agentPane, AgentLaunchCommand("muxcode", launchRole, LaunchReasonUser))
 	if win == "edit" || win == "plan" {
 		TmuxSelectPane(leftPane)
 	} else {

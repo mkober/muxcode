@@ -28,7 +28,7 @@ framing repeated — see defect 1.
 ### Defect 1 — provenance is unambiguous in exactly one surface, and ambiguous in the rest
 
 The edit agent read the run's `Started by: user` label, concluded it meant the **auto** agent's
-launch-on-restore ([MUX-141](../backlog/MUX-141-auto-agent-restart-relaunches-graph-runs.md)'s shape), and
+launch-on-restore ([MUX-141](./MUX-141-auto-agent-restart-relaunches-graph-runs.md)'s shape), and
 cancelled. A second agent (plan) independently made the same error, letting `state=canceled` carry the
 conclusion despite having read `created_by: user`.
 
@@ -506,7 +506,7 @@ while still working. Whether they share a fix or only a theme is not settled her
   ambiguous label; this spec is about the label and the machinery, not the judgement.
 - **The AWS activity of the orphaned spawn.** What it did is evidence of blast radius, not a defect in
   muxcode. That it *could* act after cancel is the defect.
-- **[MUX-141](../backlog/MUX-141-auto-agent-restart-relaunches-graph-runs.md)** — the auto agent relaunching
+- **[MUX-141](./MUX-141-auto-agent-restart-relaunches-graph-runs.md)** — the auto agent relaunching
   runs is the behaviour edit wrongly believed it was seeing. Related, separately tracked.
 
 ## Time Tracking

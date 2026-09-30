@@ -127,9 +127,9 @@ func paneAwaitingExitConfirmation(target string) bool {
 // The two presses are kept in one helper so a caller cannot fix the pairing at
 // one call site while the other quietly regrows the bug.
 func pairedInterrupt(target string) {
-	exec.Command("tmux", "send-keys", "-t", target, "C-c").Run()
+	_ = TmuxRunQuiet("send-keys", "-t", target, "C-c")
 	time.Sleep(interruptPairDelay)
-	exec.Command("tmux", "send-keys", "-t", target, "C-c").Run()
+	_ = TmuxRunQuiet("send-keys", "-t", target, "C-c")
 }
 
 // interruptPairDelay is short enough to land inside OpenCode's confirmation
@@ -360,7 +360,7 @@ func ReloadWindowForRole(role string) string {
 //  5. Load runtime overrides (sets env vars for provider resolution)
 //  6. Regenerate provider config (WriteAgentConfig)
 //  7. Restart console in left pane (if split-left window)
-//  8. Relaunch agent via tmux send-keys
+//  8. Relaunch agent via tmux send-keys, carrying LaunchReasonReload
 //  9. Poll for launch verification (500ms intervals, max 15s)
 //  10. Clear reload marker
 //  11. Log lifecycle event
@@ -436,8 +436,7 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 
 	// 8. Relaunch agent via tmux send-keys
 	target := ReloadTarget(session, role)
-	launchCmd := fmt.Sprintf("muxcode agent launch %s", role)
-	if err := exec.Command("tmux", "send-keys", "-t", target, launchCmd, "Enter").Run(); err != nil {
+	if err := TmuxRun("send-keys", "-t", target, AgentLaunchCommand("muxcode", role, LaunchReasonReload), "Enter"); err != nil {
 		release()
 		return fmt.Errorf("relaunch agent: %w", err)
 	}

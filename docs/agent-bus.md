@@ -1105,10 +1105,12 @@ $ muxcode agent run build --url http://192.168.1.100:11434
 Launch an AI CLI agent for a role. Resolves agent file, model, tools, prompt, and execs the agent CLI.
 
 ```bash
-muxcode agent launch <role>
+muxcode agent launch <role> [--reason <reason>] [--resume <session-id>]
 ```
 
 - `<role>` — agent role to launch (e.g. `edit`, `build`, `test`, `commit`)
+- `--reason <reason>` — why the agent is launching: `user`, `restart`, `reload`, `mode-cycle`, `resume` or `spawn` (`bus.LaunchReason`, `bus/launch_reason.go`). The road that types the launch knows which it is and says so; the agent, reading the same startup message on every road, cannot ([MUX-141](requirements/completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md)). An omitted or unrecognized reason is treated as a **restart**, so a call site that forgets its reason gets an agent that waits, never one that acts. Every road builds the command through `AgentLaunchCommand(bin, role, reason)`: `LaunchSession` and the modal say `user`, the health restart `restart`, `muxcode reload` `reload`, mode cycling `mode-cycle`, `muxcode resume` `resume`, spawn workers `spawn`
+- `--resume <session-id>` — relaunch into an existing Claude conversation (see [`muxcode resume`](#muxcode-resume))
 
 **Resolution cascade:**
 
@@ -1123,16 +1125,19 @@ muxcode agent launch <role>
 
 **Pre-launch actions:**
 
-- Sends startup inbox message for `edit` role (context restoration). The analyze role also receives one when enabled via `MUXCODE_WINDOWS`. This bootstrap is the one self-addressed message the bus delivers (`isStartupBootstrap` — `request:startup`, type and action); an agent's reply to it is correlated but never delivered or CC'd, so answering it with `--reply-to` is harmless and unnecessary — before 2026-09-09 the exemption keyed on the action alone and a codex agent's `response:startup` re-entered its own inbox every 5 s ([MUX-169](requirements/completed/MUX-169-startup-self-reply-echo-loop.md)).
-- Logs agent launch to persistent lifecycle log
+- Sends startup inbox message for `edit` role (context restoration). Only `--reason user` seeds the auto agent's Jira story search; on every other reason the auto agent gets the ordinary "review last saved context" bootstrap, so a daemon restart cannot relaunch autonomous work ([MUX-141](requirements/completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md)). The analyze role also receives one when enabled via `MUXCODE_WINDOWS`. This bootstrap is the one self-addressed message the bus delivers (`isStartupBootstrap` — `request:startup`, type and action); an agent's reply to it is correlated but never delivered or CC'd, so answering it with `--reply-to` is harmless and unnecessary — before 2026-09-09 the exemption keyed on the action alone and a codex agent's `response:startup` re-entered its own inbox every 5 s ([MUX-169](requirements/completed/MUX-169-startup-self-reply-echo-loop.md)).
+- Logs agent launch to persistent lifecycle log — the `launch` row records `role=<role> cli=<cli> reason=<reason>` (`reason=unset` when the flag was omitted)
 
 **Examples:**
 ```bash
 # Launch the build agent (standard usage from LaunchSession)
-$ muxcode agent launch build
+$ muxcode agent launch build --reason user
 
 # Launch the edit agent (prompted mode, opus model)
-$ muxcode agent launch edit
+$ muxcode agent launch edit --reason user
+
+# Daemon health restart into the agent's previous conversation
+$ muxcode agent launch build --reason restart --resume <session-id>
 ```
 
 ### `muxcode agent status`
@@ -1840,6 +1845,18 @@ reaching a gate when there is no PR or no actionable comment — the pattern `co
 `graph.json`, and `nodes/<id>.json` per node, written atomically. Because every transition
 is persisted, a daemon restart resumes in-flight runs with no separate recovery step.
 
+**Run provenance — two questions, one of them often only inferred.** `run.json` records `created_by` (the verified bus actor at creation; rendered as `provenance` — "the user" or "autonomous" — and printed as `Launched by:` in `graph status`) and, since MUX-141 Phase 3, `trigger`, `trigger_detail` and `trigger_inferred` (rendered as `triggered_by`, printed as `Triggered by:`). The trigger says what set the creator in motion. It is derived once at creation by `deriveRunTrigger` (`bus/run_trigger.go`) from the verified actor, the spawn registry and the session message log — never from anything the launching agent declares, so an agent cannot label its own run. A trigger is **established** only where the bus holds the tie between cause and run; every other agent trigger is **inferred** — the launching agent's most recent bus request, recorded as context, never as cause. The bus cannot tie a run to a request: an instruction typed into the agent's own pane leaves no bus record, and a request queued behind the one being worked is still the most recent.
+
+| `trigger` | Established when | Inferred when (`trigger_inferred: true`) | `trigger_detail` |
+|-----------|------------------|------------------------------------------|------------------|
+| `user-request` | The user launched the run by hand | The agent's last request was typed at the Prompt surface | `typed at the Prompt surface` (inferred case) |
+| `graph-edge` | The creator is a spawn worker of another run (spawn registry) — the only established road | The agent's last request was sent by a graph run (`Message.OriginRun`); always inferred for a regular agent, because a send node reads `running` from enqueue, before the agent has read the request, so a live node proves nothing | The parent run id |
+| `startup` | — | The agent's last request was its `startup` message | The launch reason `PreLaunchSetup` stamped on it (`Message.LaunchReason`: `user`, `restart`, …, `unset`) |
+| `bus-request` | — | Any other last request | `<from>: <action>` |
+| `unknown` | No verified actor, or no request on the log | — | — |
+
+Rendering keeps the two apart: an established trigger reads `a user request` or `graph run <id>`; an inferred one reads `not established — the launching agent's last bus request was <what>` (`its startup message (launch reason: restart)`, `a request from graph run <id>`, `a user request, typed at the Prompt surface`, `a bus request (edit: implement)`). A run created before the fields existed renders `unrecorded`. An inferred `startup` with launch reason `restart` is *consistent with* an unrequested run — the [MUX-141](requirements/completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md) shape — and equally with a user who typed the instruction into the pane after the restart; it narrows the question and does not answer it. The wording never reuses the creator's words ("the user", "autonomous"), so a trigger is never misread as the creator.
+
 ### `muxcode hook`
 
 Hook handlers for Claude Code's PreToolUse and PostToolUse events. Each subcommand reads the tool event as JSON on stdin.
@@ -2001,7 +2018,7 @@ muxcode resume <role> [--force]
 
 | Case | Behaviour |
 |------|-----------|
-| Dead pane with a banner | `muxcode agent launch <role> --resume <id>` — the launcher appends `--resume` to the normal flag set (permission mode, `--agent`/`--agents`, `--allowedTools`, `--append-system-prompt`) |
+| Dead pane with a banner | `muxcode agent launch <role> --reason restart --resume <id>` (the daemon's road; `muxcode resume` types `--reason resume`) — the launcher appends `--resume` to the normal flag set (permission mode, `--agent`/`--agents`, `--allowedTools`, `--append-system-prompt`) |
 | Dead pane, no usable banner (none, malformed, or already followed by a failed relaunch) | Fresh flagged launch — never a flagless `claude --resume` |
 | Live agent | **Refused** — `resume` relaunches a dead agent |
 | Live agent with `--force` | Exits it first (graceful stop) so Claude draws the exit banner, then scrapes and relaunches as above. A live TUI shows no banner, so scraping it without exiting would find nothing and silently start fresh |

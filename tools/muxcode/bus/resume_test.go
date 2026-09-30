@@ -70,7 +70,7 @@ func TestResumeAgent_DeadPaneResumes(t *testing.T) {
 	if err := ResumeAgent(f.session, "edit", false, "user"); err != nil {
 		t.Fatalf("ResumeAgent: %v", err)
 	}
-	if want := "muxcode agent launch edit --resume " + restartResumeID; launchTyped(*f.log) != want {
+	if want := "muxcode agent launch edit --reason resume --resume " + restartResumeID; launchTyped(*f.log) != want {
 		t.Errorf("relaunch = %q, want %q", launchTyped(*f.log), want)
 	}
 	for _, event := range []string{"resume-scrape-hit", "agent-relaunch"} {
@@ -94,7 +94,7 @@ func TestResumeAgent_NoBannerLaunchesFresh(t *testing.T) {
 	if err := ResumeAgent(f.session, "edit", false, "user"); err != nil {
 		t.Fatalf("ResumeAgent: %v", err)
 	}
-	if got := launchTyped(*f.log); got != "muxcode agent launch edit" {
+	if got := launchTyped(*f.log); got != "muxcode agent launch edit --reason resume" {
 		t.Errorf("relaunch = %q, want a fresh launch", got)
 	}
 	if n := len(manualRows(t, f.session, "resume-scrape-miss")); n != 1 {
@@ -114,7 +114,7 @@ func TestResumeAgent_ForceExitsLiveAgentBeforeScrape(t *testing.T) {
 	if stop < 0 || capture < 0 || stop > capture {
 		t.Fatalf("stop must precede the scrape: stop at %d, capture at %d in %v", stop, capture, *f.log)
 	}
-	if want := "muxcode agent launch edit --resume " + restartResumeID; launchTyped(*f.log) != want {
+	if want := "muxcode agent launch edit --reason resume --resume " + restartResumeID; launchTyped(*f.log) != want {
 		t.Errorf("relaunch = %q, want %q", launchTyped(*f.log), want)
 	}
 }
@@ -198,7 +198,7 @@ func TestResumeAgent_HostRoleIsNotRefusedAsHosted(t *testing.T) {
 	if err := ResumeAgent(f.session, "plan", false, "user"); err != nil {
 		t.Fatalf("ResumeAgent(plan): %v", err)
 	}
-	if want := "muxcode agent launch plan --resume " + restartResumeID; launchTyped(*f.log) != want {
+	if want := "muxcode agent launch plan --reason resume --resume " + restartResumeID; launchTyped(*f.log) != want {
 		t.Errorf("relaunch = %q, want %q", launchTyped(*f.log), want)
 	}
 }

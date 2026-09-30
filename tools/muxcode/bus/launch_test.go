@@ -827,12 +827,13 @@ func TestPreLaunchSetup_AutoStartupMessage(t *testing.T) {
 	session := "test-prelaunch-auto"
 	os.Setenv("BUS_DIR_BASE", dir)
 	defer os.Unsetenv("BUS_DIR_BASE")
+	t.Setenv("MUXCODE_AUTO_STARTUP_TASK", "")
 
 	// Init the bus directory so inbox paths exist
 	Init(session, dir)
 
 	// Run PreLaunchSetup for auto role
-	PreLaunchSetup("auto", session, "claude")
+	PreLaunchSetup("auto", session, "claude", LaunchReasonUser)
 
 	// Read the auto inbox and verify the startup message
 	msgs, err := Peek(session, "auto")
@@ -869,7 +870,7 @@ func TestPreLaunchSetup_EditStartupMessage(t *testing.T) {
 
 	Init(session, dir)
 
-	PreLaunchSetup("edit", session, "claude")
+	PreLaunchSetup("edit", session, "claude", LaunchReasonUser)
 
 	msgs, err := Peek(session, "edit")
 	if err != nil {
@@ -908,7 +909,7 @@ func TestPreLaunchSetup_AllRolesGetStartupMessage(t *testing.T) {
 
 			Init(session, dir)
 
-			PreLaunchSetup(role, session, "claude")
+			PreLaunchSetup(role, session, "claude", LaunchReasonRestart)
 
 			msgs, err := Peek(session, role)
 			if err != nil {
@@ -1375,7 +1376,7 @@ func TestRunAgentLaunchResume_CarriesResumeAndFullFlags(t *testing.T) {
 
 	fakeClaudeOnPath(t)
 
-	if err := RunAgentLaunchResume("plan", launchResumeID); err != nil {
+	if err := RunAgentLaunchResume("plan", launchResumeID, LaunchReasonRestart); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !hasFlagValue(*argv, "--resume", launchResumeID) {
@@ -1392,7 +1393,7 @@ func TestRunAgentLaunchResume_RefusesMalformedID(t *testing.T) {
 	_, argv := launchSandbox(t, session)
 
 	for _, id := range []string{"8a744341-11bf", "--dangerously-skip-permissions", launchResumeID + "x"} {
-		if err := RunAgentLaunchResume("plan", id); err == nil || !strings.Contains(err.Error(), "invalid resume session id") {
+		if err := RunAgentLaunchResume("plan", id, LaunchReasonRestart); err == nil || !strings.Contains(err.Error(), "invalid resume session id") {
 			t.Errorf("id %q: err = %v, want a refusal", id, err)
 		}
 	}

@@ -21,6 +21,10 @@ import (
 // The Origin fields are what a recipient reads to trace a prompt back to a run
 // or a person. Send derives them itself and nothing else sets them — see
 // stampMessageOrigin.
+//
+// LaunchReason is set only on the startup request PreLaunchSetup seeds, and
+// records why that launch happened so a run the agent then starts can name its
+// trigger — see deriveRunTrigger.
 type Message struct {
 	ID      string `json:"id"`
 	TS      int64  `json:"ts"`
@@ -37,6 +41,8 @@ type Message struct {
 	OriginRun       string `json:"origin_run,omitempty"`
 	OriginCreatedBy string `json:"origin_created_by,omitempty"`
 	OriginRunState  string `json:"origin_run_state,omitempty"`
+
+	LaunchReason string `json:"launch_reason,omitempty"`
 }
 
 // NewMsgID generates a unique message ID: {unix_ts}-{from}-{4hex}.
