@@ -1,6 +1,6 @@
 # MUX-200: Live-Agent Test of Auto Startup and Restore Behaviour
 
-[MUX-141](../drafts/MUX-141-auto-agent-restart-relaunches-graph-runs.md) gates the auto agent's
+[MUX-141](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md) gates the auto agent's
 startup task on the launch reason and rewrites its definition so a restored agent idles. Its
 integration script proves the **launcher and delivery** side with a `claude` stub
 (`scripts/fixtures/claude-stub`) that never interprets the definition. What a real agent does with
@@ -85,7 +85,7 @@ proving the wait is long enough to see one.
 
 ## Related
 
-- [MUX-141](../drafts/MUX-141-auto-agent-restart-relaunches-graph-runs.md) — the spec this closes out
+- [MUX-141](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md) — the spec this closes out
 - [MUX-199](./MUX-199-remove-f2-mode-cycling.md) — removes the mode-cycle launch road; the case
   list here does not include it
 

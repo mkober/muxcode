@@ -2,7 +2,7 @@
 
 **Tracking:** [mkober/muxcode#67](https://github.com/mkober/muxcode/issues/67)
 
-> **Compounds with [`MUX-144`](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) — read them
+> **Compounds with [`MUX-144`](./MUX-144-wait-human-gate-openable-by-any-agent.md) — read them
 > together.** This spec supplies the *source* of unrequested runs; MUX-144 supplies the reason one can
 > reach a push. Alone, this spec's runs stop harmlessly at a `wait_human` gate — that gate is the
 > mitigation this spec has been leaning on. MUX-144 establishes (live, 2026-09-03) that the gate is
@@ -181,7 +181,7 @@ close it; no criterion above is ticked on the strength of the script for that be
 | Spec | Relationship |
 |------|--------------|
 | [MUX-139](../backlog/MUX-139-claude-agent-auto-resume.md) | **Ordering constraint** — MUX-139 multiplies restarts, turning one external exit into N spurious runs; this must land first or MUX-139 must suppress the task itself |
-| [MUX-126](../completed/MUX-126-edit-resume-aware-auto-restart.md) | Same family: a restart that does not faithfully reproduce the pre-restart state |
+| [MUX-126](./MUX-126-edit-resume-aware-auto-restart.md) | Same family: a restart that does not faithfully reproduce the pre-restart state |
 | [MUX-112](../backlog/MUX-112-idle-task-rescue-closes-live-work.md) | Same class of harm — automation acting on state it has misread, against work already in flight |
 
 ## Time Tracking
@@ -192,4 +192,6 @@ close it; no criterion above is ticked on the strength of the script for that be
 
 ## Status
 
-In Progress — set active 2026-09-30; in `drafts/`
+Complete — 2026-09-30. Phases 1–4 committed on `MUX-141-auto-agent-restart-relaunches-graph-runs`
+(`281ed56`, `e953c12`, `16a4770`, `1e035bf`); live-agent behaviour deferred to
+[MUX-200](../backlog/MUX-200-live-agent-test-auto-startup-behaviour.md).

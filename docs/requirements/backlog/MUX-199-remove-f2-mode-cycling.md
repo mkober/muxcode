@@ -12,7 +12,7 @@ cycle-specific launch reason.
 
 Filed 2026-09-30 on the user's decision, relayed by edit: "remove F2 mode cycling entirely; second
 agents will later use modal windows behind a toggle." Triggered by the
-[MUX-141](../drafts/MUX-141-auto-agent-restart-relaunches-graph-runs.md) Phase 4 finding that a default
+[MUX-141](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md) Phase 4 finding that a default
 session first launches `auto` by mode cycle (`LaunchReasonModeCycle`), which that spec classes as not
 user-initiated, so a default session never seeds the Jira story search. Rather than decide whether a
 first cycle counts as a user start, the user removed the road.
@@ -117,7 +117,7 @@ here should make `bus/modal.go` harder to extend.
 
 ## Related
 
-- [MUX-141](../drafts/MUX-141-auto-agent-restart-relaunches-graph-runs.md) — launch reasons; the
+- [MUX-141](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md) — launch reasons; the
   open question this spec supersedes
 - [MUX-146](./MUX-146-remove-research-and-auto-agents.md) — removes the roles themselves
 - [MUX-016](./MUX-016-research-dual-provider.md) — research agent split view; would ride the modal
