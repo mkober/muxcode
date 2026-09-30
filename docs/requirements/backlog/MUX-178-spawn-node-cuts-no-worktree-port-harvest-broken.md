@@ -161,6 +161,15 @@ its green baseline); [MUX-148](../completed/MUX-148-node-outcome-reads-command-r
 a node reporting a success it did not earn);
 [MUX-142](../drafts/MUX-142-spawn-worker-delegates-into-wrong-tree.md) (the other live spawn-tree defect).
 
+**Note (2026-09-30, plan, reviewing MUX-142):** the "why no worktree" question this spec asks has a
+recorded answer — on 2026-09-03 the user decided graph spawns take **no worktree** and work in the
+session checkout (`graphSpawnFn`, `StartSpawnOwned(…, false, …)`, `bus/graph_exec.go:56`), because a
+`fix` worktree cut from `HEAD` could not see the previous node's uncommitted harvested output (MUX-142
+§ "The third tree"). After that decision "nothing to port" is the designed inert path, not a regression.
+The two-second `success` with no work done is still a defect, but of the worker-never-worked shape
+([MUX-120](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) /
+[MUX-195](./MUX-195-graph-runs-never-reuse-idle-workers.md)); start there.
+
 ## Status
 
 Backlog

@@ -109,10 +109,12 @@ request that looks ordinary. Nothing in a lifecycle log distinguishes it from a 
 
 | File | Purpose |
 |------|---------|
-| `agents/code-editor.md` | Carries the orchestration instruction the worker inherits (`:238-243`) |
-| `tools/muxcode/bus/spawn.go` | `StartSpawnOwned()`, worktree creation, launch string (`:214`) |
-| `tools/muxcode/bus/graph_templates.go` | `spec-to-pr` `implement`/`fix` spawn nodes (`:31`, `:34`) |
-| `tools/muxcode/bus/message.go` | `Message` — would carry any tree field |
+| `agents/code-editor.md` | Carries the orchestration instruction the worker inherits (`:252–257`) and the graph-worker Exception (`:259`) |
+| `tools/muxcode/bus/spawn.go` | `StartSpawnOwned()`, worktree creation (`:715`), launch string (`:276`) |
+| `tools/muxcode/bus/graph_templates.go` | `50-spec-to-pr` `implement`/`fix` spawn nodes (`:36`, `:39`) |
+| `tools/muxcode/bus/message.go` | `Message` — fourteen fields, none a tree; would carry one |
+| `tools/muxcode/bus/graph_authority.go` | `CheckGraphNodeAuthority` — the Defect 1 guard (called from `bus/inbox.go:313`) |
+| `tools/muxcode/bus/prompt.go` | `Manual Bus Messaging` block (`:133`) — the non-hook injection path with no graph carve-out |
 | `tools/muxcode/bus/profile.go` | `CdPrefix` for `build`/`test`, and `CheckSendPolicy()` if the prohibition is enforced at send |
 | `tools/muxcode/cmd/send.go` | Natural enforcement point for a tree-mismatch check |
 
@@ -328,14 +330,61 @@ The argument for a tree-aware bus is therefore narrower than when filed — it n
 `spec-to-pr` arc — but it is not closed, and the fix above is a mitigation of the *trigger*, not of the
 *defect*.
 
+## Review against current code (2026-09-30, at `e370893`)
+
+Re-verified when the spec was set active, four weeks after its evidence. Every mechanism claim still
+holds; line numbers have drifted, one field count is stale, and one neighbouring spec now contradicts
+a decision recorded here.
+
+| Claim (as written) | Now |
+|--------------------|-----|
+| `implement`/`fix` spawn nodes `role: edit`; `build`/`test`/`review` separate `send` nodes | Holds — `bus/graph_templates.go:36–39` (`50-spec-to-pr`) |
+| Spawn launch string `bus/spawn.go:214` | Now `bus/spawn.go:276–278`: `AGENT_ROLE=<spawn> muxcode agent launch <role> --reason spawn`, prefixed `cd <worktree> &&` only when a worktree exists ([MUX-141](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md) added the reason) |
+| `AgentFileName()` `bus/launch.go:61` | `:64` |
+| `code-editor.md:238–243` orchestration, `:246` Exception | `:252` and `:259` |
+| `Message` has eight fields and no tree | **Stale count**: fourteen fields — `GraphRun`, `GraphNode`, `OriginRun`, `OriginCreatedBy`, `OriginRunState`, `LaunchReason` were added since — but **still no cwd/tree/worktree field**. Defect 2's premise holds |
+| `CdPrefix` for build/test `bus/profile.go:640–659` | `:609`, `:652`, `:669`, `:686` |
+| Ownership preamble `graph_exec.go:434`; `CheckGraphNodeAuthority` at `inbox.go:173` | `graph_exec.go:786`; `inbox.go:313`. Tests: the four named plus `AllowsUnownedAction` and `TestGraphOwnsRunningSendNode` |
+| `adaptBodyForNonHookProvider` `provider_opencode.go:603–630` | `:596` |
+| `bus/prompt.go` manual-chain block, zero graph awareness | Holds — `:133–134`, `grep -c graph` still `0`. **Still open** |
+| `.opencode/agents/edit.md` sixteen days stale | **File no longer exists** — only `build.md`, `commit.md`, `deploy.md` are generated now; edit has not run on OpenCode since. The staleness *class* (gitignored bodies, no invalidation) is unchanged |
+| Graph spawns take no worktree `graph_exec.go:41` | `:56`, `StartSpawnOwned(…, false, …)` — holds |
+| `graph_port.go:172–178` "nothing to port" | `:180`, `:236` |
+| `cmd/spawn.go:86 --no-worktree` | Holds |
+| `graph export`/`create` `cmd/graph.go:59/:62/:116` | `:61`, `:64` |
+| Rank "#7 in Defects" | **#1** since 2026-09-30 (MUX-141 closed) |
+
+**Conflict with [MUX-178](../backlog/MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md)
+(Defects #2).** MUX-178, filed 2026-09-11 from the MUX-167 runs, reads "a spawn node cuts no worktree
+and ports nothing" as MUX-131 regressing, and asks *why* no worktree is cut. The answer is recorded
+here: the user's 2026-09-03 decision that graph spawns take **no worktree** and work in the checkout
+(`graphSpawnFn`, `useWorktree=false`), after which "nothing to port" is the designed inert path. What
+MUX-178 observed on top of that — a node completing in **two seconds** with `success` — is a real
+defect, but it is the worker-never-worked shape
+([MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md) /
+[MUX-195](../backlog/MUX-195-graph-runs-never-reuse-idle-workers.md)), not the worktree's absence.
+Whoever picks up MUX-178 should start from that; a pointer was added there on 2026-09-30.
+
+Also since filing: [MUX-182](../completed/MUX-182-cancelled-run-keeps-working-provenance-unreadable.md)
+and [MUX-195](../backlog/MUX-195-graph-runs-never-reuse-idle-workers.md) changed how workers are
+stopped and reused, without touching the delegation guard or the tree question.
+
 ## Implementation
 
 ### Phase 1: Confirm the live shape and pick the enforcement layer
 
-- [ ] Reproduce in **this** repo: run `spec-to-pr` to an `implement` spawn and capture the worker's
-      pane, confirming it issues `muxcode send build`/`send test`
-- [ ] Confirm the delegated agents answered about main (compare a worktree-only file against what the
-      build/test agent reported)
+- [x] Reproduce in **this** repo: run `spec-to-pr` to an `implement` spawn and capture the worker's
+      pane, confirming it issues `muxcode send build`/`send test` — **reproduced by the guard, not a
+      pane**: five `graph-authority-refused` lifecycle rows in this repo (`spawn-6239e672` 2026-09-28
+      17:18; `spawn-aa4f3c78` ×4, 21:07–21:35), each a graph worker's send to a role its run owns,
+      refused by `CheckGraphNodeAuthority` (`bus/inbox.go:313`) before anything was written. Workers
+      still try; the mechanism stops them. (The row names only the spawn, not the target and action —
+      Phase 3's lifecycle-event item should fix that.)
+- [x] Confirm the delegated agents answered about main (compare a worktree-only file against what the
+      build/test agent reported) — **structurally impossible for graph workers now**: graph spawns take
+      no worktree (`bus/graph_exec.go:56`; this run's worker `spawn-cb72afa0` shows `WORKTREE=shared`),
+      so there is no second tree to answer about. Superseded for graph work; the cross-tree case for CLI
+      spawns and hand-run worktrees is Phase 3's, unchanged.
 - [x] Decide the enforcement layer and record the decision with its rationale — **(b) chosen and
       implemented**, see "What landed" above:
       - (a) **Instruction-only** — teach the spawn seed/definition not to delegate. Cheap, but relies
@@ -442,10 +491,9 @@ Open questions for the user:
 
 - **Split or keep?** Defect 2 is coherent on its own and could move to its own id; keeping it here
   preserves the evidence trail that produced it.
-- **Rank.** Currently #7 in Defects, ranked when both halves were live and firing on every
-  `spec-to-pr` run. With Defect 1 fixed (pending commit), that rank is arguably too high — but it was
-  deliberately left in place rather than renumbering 14 rows twice in one session on the strength of
-  uncommitted work.
+- **Rank.** #1 in Defects since 2026-09-30 (it was #7 when written, ranked while both halves were
+  live). With Defect 1 fixed on the Claude road, the rank rests on the OpenCode half, Defect 2 and
+  the staleness class — the user set it active on 2026-09-30 as the next defect.
 - The interim template-shadow workaround is now **unnecessary** for Defect 1 and was never a fix for
   Defect 2. Recorded in Phase 4 for history only; do not apply it.
 
