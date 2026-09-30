@@ -843,60 +843,44 @@ func resolveInstallDir() string {
 var lookPath = exec.LookPath
 
 // PreLaunchSetup performs pre-launch actions: startup inbox message, lifecycle log.
-// Uses SendNoCC to avoid notifying before the agent process exists. The startup
-// message is request-type so the daemon's actionable-message wake-up paths
-// (which ignore event/response messages) will re-notify the agent if the
-// launch-time send-keys wake-up is missed.
+// Uses SendNoCC to avoid notifying before the agent process exists.
 // cli is the resolved CLI binary name (e.g. "claude", "muxcode-llm-harness").
-func PreLaunchSetup(role, session, cli string) {
-	startupMsg := "Session started — review last saved context from memory to restore session state."
-
-	// Auto agent gets a special startup message (task-oriented, not context restoration)
-	if role == "auto" {
-		agentStartupMsg := "Agent started — search Jira for available stories and present them to the user for selection."
-		m := Message{
-			ID:      NewMsgID("auto"),
-			TS:      time.Now().Unix(),
-			From:    "edit",
-			To:      "auto",
-			Type:    "request",
-			Action:  "startup",
-			Payload: agentStartupMsg,
-		}
-		_ = SendNoCC(session, m)
-	} else {
-		// All agents get a startup inbox message so they check inbox on launch,
-		// read memory, and restore session context. Without this, agents that
-		// launch into an empty inbox sit idle and never restore prior state.
-		//
-		// Type MUST be "request" (not "event"): the daemon's wake-up paths gate
-		// on HasActionableMessages(), which only counts request-type messages.
-		// An event-type startup message is invisible to the daemon, so if the
-		// one-shot launch-time send-keys wake-up is dropped (Claude Code's TUI
-		// can ignore keystrokes during its post-prompt init phase), there is no
-		// recovery and the agent never restores context. As a request, the
-		// daemon's safety-net re-wakes the agent until the inbox is consumed.
-		// This mirrors the auto agent's startup message above.
-		m := Message{
-			ID:      NewMsgID(role),
-			TS:      time.Now().Unix(),
-			From:    role,
-			To:      role,
-			Type:    "request",
-			Action:  "startup",
-			Payload: startupMsg,
-		}
-		_ = SendNoCC(session, m)
+//
+// Every role, on every reason, gets a context-restoration startup message:
+// an agent launching into an empty inbox sits idle and never restores prior
+// state. Its type MUST be "request" — the daemon's wake-up paths gate on
+// HasActionableMessages(), which ignores event and response rows, so an
+// event-type startup cannot be recovered when the one-shot launch-time
+// send-keys wake is dropped (Claude Code's TUI can ignore keystrokes during
+// its post-prompt init phase).
+//
+// The auto agent's task-oriented startup replaces that message only when
+// reason is user-initiated. A restart, reload, mode cycle, resume or unset
+// reason restores context and asks for no work: on 2026-09-02 each restore of
+// a session launched a spec-to-pr run nobody requested (MUX-141).
+func PreLaunchSetup(role, session, cli string, reason LaunchReason) {
+	m := Message{
+		ID:      NewMsgID(role),
+		TS:      time.Now().Unix(),
+		From:    role,
+		To:      role,
+		Type:    "request",
+		Action:  "startup",
+		Payload: "Session started — review last saved context from memory to restore session state.",
 	}
+	if role == "auto" && reason.UserInitiated() {
+		m.From = "edit"
+		m.Payload = "Agent started — search Jira for available stories and present them to the user for selection."
+	}
+	_ = SendNoCC(session, m)
 
-	// Log agent launch to persistent lifecycle log
 	if session != "" {
 		logCLI := cli
 		if logCLI == "" {
 			logCLI = "claude"
 		}
 		LogLifecycle(session, "info", "agent", "launch",
-			fmt.Sprintf("role=%s cli=%s", role, logCLI))
+			fmt.Sprintf("role=%s cli=%s reason=%s", role, logCLI, reason.logName()))
 	}
 }
 
@@ -985,17 +969,18 @@ var execSyscall = syscall.Exec
 // load config, resolve provider/CLI/model/tools, pre-launch setup,
 // activate venv, set AGENT_ROLE, clear terminal, and exec into the CLI.
 // On success, syscall.Exec replaces the process — this function does not return.
-// This is the Go-native agent launcher.
+// This is the Go-native agent launcher. It carries no launch reason, which
+// PreLaunchSetup treats as a restart.
 func RunAgentLaunch(role string) error {
-	return RunAgentLaunchResume(role, "")
+	return RunAgentLaunchResume(role, "", "")
 }
 
 // RunAgentLaunchResume is RunAgentLaunch resuming Claude Code session
-// sessionID ("" launches fresh). The id must be a whole session UUID, or the
-// launch is refused before anything runs. Providers other than Claude Code
-// cannot resume: the id is dropped with a `resume-ignored` lifecycle row and
-// the agent launches fresh with its normal flags (MUX-126).
-func RunAgentLaunchResume(role, sessionID string) error {
+// sessionID ("" launches fresh), launched for reason. The id must be a whole
+// session UUID, or the launch is refused before anything runs. Providers other
+// than Claude Code cannot resume: the id is dropped with a `resume-ignored`
+// lifecycle row and the agent launches fresh with its normal flags (MUX-126).
+func RunAgentLaunchResume(role, sessionID string, reason LaunchReason) error {
 	if sessionID != "" && !ValidResumeSessionID(sessionID) {
 		return fmt.Errorf("invalid resume session id %q: want a Claude Code session UUID", sessionID)
 	}
@@ -1024,7 +1009,7 @@ func RunAgentLaunchResume(role, sessionID string) error {
 
 	// Pre-launch: startup inbox message + lifecycle log
 	binary, launchArgs := cfg.BuildExecArgs()
-	PreLaunchSetup(role, session, binary)
+	PreLaunchSetup(role, session, binary, reason)
 
 	// Clear stale in-flight tasks addressed to this role. This launch is a fresh
 	// agent instance, which cannot be mid-processing a task delivered to a prior

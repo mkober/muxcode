@@ -210,6 +210,7 @@ func modeSwitchTo(session string, state *ModeCycleState, targetIdx int) error {
 			if err := modeCreateAgent(session, target); err != nil {
 				return fmt.Errorf("create agent %s: %w", target.Mode, err)
 			}
+			go modeAutoAcceptAndWake(session, target)
 		}
 	}
 
@@ -294,7 +295,9 @@ func modeUpdateFormats(session, hostWindow, holdWindow string, target *ModeAgent
 		"window-status-current-format")
 }
 
-// modeCreateAgent creates the holding window and launches the agent for first use.
+// modeCreateAgent creates the holding window and launches the agent for first
+// use, carrying LaunchReasonModeCycle. The caller starts modeAutoAcceptAndWake:
+// nothing else accepts the new agent's startup prompts or wakes it.
 func modeCreateAgent(session string, agent *ModeAgent) error {
 	// Get the project directory from an existing pane so the new window
 	// starts in the correct working directory for agent launch.
@@ -347,15 +350,7 @@ func modeCreateAgent(session string, agent *ModeAgent) error {
 
 	// Creation-instant: launch survives tag failure — see CreationPaneTarget.
 	agentPane := CreationPaneTarget(session, agent.HoldWindow, PaneTagAgent)
-	tmuxRun("send-keys", "-t", agentPane,
-		fmt.Sprintf("muxcode agent launch %s", agent.Role), "Enter")
-
-	// Start background auto-accept + wake-up for the new agent.
-	// Hold-window agents are not in the session's cfg.Windows list, so the
-	// main AutoAccept() process never sees them. Without this, the agent
-	// launches, reaches its ❯ prompt, but never gets woken to check inbox
-	// — even though PreLaunchSetup() wrote a startup message.
-	go modeAutoAcceptAndWake(session, agent)
+	tmuxRun("send-keys", "-t", agentPane, AgentLaunchCommand("muxcode", agent.Role, LaunchReasonModeCycle), "Enter")
 
 	return nil
 }
@@ -365,18 +360,15 @@ func modeCreateAgent(session string, agent *ModeAgent) error {
 // session's active pane.
 func modeProjectDir(session string) string {
 	// Try the edit window's Neovim pane (always in the project dir).
-	out, err := exec.Command("tmux", "display-message",
-		"-t", PaneTargetForWindow(session, "edit", PaneTagLeft), "-p", "#{pane_current_path}").Output()
-	if err == nil {
-		if dir := strings.TrimSpace(string(out)); dir != "" {
-			return dir
-		}
+	dir, err := TmuxOutput("display-message",
+		"-t", PaneTargetForWindow(session, "edit", PaneTagLeft), "-p", "#{pane_current_path}")
+	if err == nil && dir != "" {
+		return dir
 	}
 	// Fallback: active pane in the session.
-	out, err = exec.Command("tmux", "display-message",
-		"-t", session+":", "-p", "#{pane_current_path}").Output()
+	dir, err = TmuxOutput("display-message", "-t", session+":", "-p", "#{pane_current_path}")
 	if err == nil {
-		return strings.TrimSpace(string(out))
+		return dir
 	}
 	return ""
 }
@@ -434,12 +426,13 @@ func tmuxWindowExists(session, window string) bool {
 
 // tmuxRun runs a tmux command, ignoring errors.
 func tmuxRun(args ...string) {
-	exec.Command("tmux", args...).Run()
+	_ = TmuxRunQuiet(args...)
 }
 
-// tmuxRunErr runs a tmux command and returns any error.
+// tmuxRunErr runs a tmux command and returns any error. It stays quiet because
+// callers probe with commands expected to fail (hold-window index 0 occupied).
 func tmuxRunErr(args ...string) error {
-	return exec.Command("tmux", args...).Run()
+	return TmuxRunQuiet(args...)
 }
 
 // modeAutoAcceptAndWake polls a hold-window agent pane for startup prompts

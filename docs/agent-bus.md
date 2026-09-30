@@ -1105,10 +1105,12 @@ $ muxcode agent run build --url http://192.168.1.100:11434
 Launch an AI CLI agent for a role. Resolves agent file, model, tools, prompt, and execs the agent CLI.
 
 ```bash
-muxcode agent launch <role>
+muxcode agent launch <role> [--reason <reason>] [--resume <session-id>]
 ```
 
 - `<role>` — agent role to launch (e.g. `edit`, `build`, `test`, `commit`)
+- `--reason <reason>` — why the agent is launching: `user`, `restart`, `reload`, `mode-cycle`, `resume` or `spawn` (`bus.LaunchReason`, `bus/launch_reason.go`). The road that types the launch knows which it is and says so; the agent, reading the same startup message on every road, cannot ([MUX-141](requirements/drafts/MUX-141-auto-agent-restart-relaunches-graph-runs.md)). An omitted or unrecognized reason is treated as a **restart**, so a call site that forgets its reason gets an agent that waits, never one that acts. Every road builds the command through `AgentLaunchCommand(bin, role, reason)`: `LaunchSession` and the modal say `user`, the health restart `restart`, `muxcode reload` `reload`, mode cycling `mode-cycle`, `muxcode resume` `resume`, spawn workers `spawn`
+- `--resume <session-id>` — relaunch into an existing Claude conversation (see [`muxcode resume`](#muxcode-resume))
 
 **Resolution cascade:**
 
@@ -1123,16 +1125,19 @@ muxcode agent launch <role>
 
 **Pre-launch actions:**
 
-- Sends startup inbox message for `edit` role (context restoration). The analyze role also receives one when enabled via `MUXCODE_WINDOWS`. This bootstrap is the one self-addressed message the bus delivers (`isStartupBootstrap` — `request:startup`, type and action); an agent's reply to it is correlated but never delivered or CC'd, so answering it with `--reply-to` is harmless and unnecessary — before 2026-09-09 the exemption keyed on the action alone and a codex agent's `response:startup` re-entered its own inbox every 5 s ([MUX-169](requirements/completed/MUX-169-startup-self-reply-echo-loop.md)).
-- Logs agent launch to persistent lifecycle log
+- Sends startup inbox message for `edit` role (context restoration). Only `--reason user` seeds the auto agent's Jira story search; on every other reason the auto agent gets the ordinary "review last saved context" bootstrap, so a daemon restart cannot relaunch autonomous work ([MUX-141](requirements/drafts/MUX-141-auto-agent-restart-relaunches-graph-runs.md)). The analyze role also receives one when enabled via `MUXCODE_WINDOWS`. This bootstrap is the one self-addressed message the bus delivers (`isStartupBootstrap` — `request:startup`, type and action); an agent's reply to it is correlated but never delivered or CC'd, so answering it with `--reply-to` is harmless and unnecessary — before 2026-09-09 the exemption keyed on the action alone and a codex agent's `response:startup` re-entered its own inbox every 5 s ([MUX-169](requirements/completed/MUX-169-startup-self-reply-echo-loop.md)).
+- Logs agent launch to persistent lifecycle log — the `launch` row records `role=<role> cli=<cli> reason=<reason>` (`reason=unset` when the flag was omitted)
 
 **Examples:**
 ```bash
 # Launch the build agent (standard usage from LaunchSession)
-$ muxcode agent launch build
+$ muxcode agent launch build --reason user
 
 # Launch the edit agent (prompted mode, opus model)
-$ muxcode agent launch edit
+$ muxcode agent launch edit --reason user
+
+# Daemon health restart into the agent's previous conversation
+$ muxcode agent launch build --reason restart --resume <session-id>
 ```
 
 ### `muxcode agent status`
@@ -2001,7 +2006,7 @@ muxcode resume <role> [--force]
 
 | Case | Behaviour |
 |------|-----------|
-| Dead pane with a banner | `muxcode agent launch <role> --resume <id>` — the launcher appends `--resume` to the normal flag set (permission mode, `--agent`/`--agents`, `--allowedTools`, `--append-system-prompt`) |
+| Dead pane with a banner | `muxcode agent launch <role> --reason restart --resume <id>` (the daemon's road; `muxcode resume` types `--reason resume`) — the launcher appends `--resume` to the normal flag set (permission mode, `--agent`/`--agents`, `--allowedTools`, `--append-system-prompt`) |
 | Dead pane, no usable banner (none, malformed, or already followed by a failed relaunch) | Fresh flagged launch — never a flagless `claude --resume` |
 | Live agent | **Refused** — `resume` relaunches a dead agent |
 | Live agent with `--force` | Exits it first (graceful stop) so Claude draws the exit banner, then scrapes and relaunches as above. A live TUI shows no banner, so scraping it without exiting would find nothing and silently start fresh |

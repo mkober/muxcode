@@ -74,5 +74,5 @@ func ResumeAgent(session, role string, force bool, actor string) error {
 			return fmt.Errorf("exiting live %s before resume: %w", role, err)
 		}
 	}
-	return scrapeAndRelaunch(session, role, ReloadTarget(session, role), "manual", actor)
+	return scrapeAndRelaunch(session, role, ReloadTarget(session, role), "manual", actor, LaunchReasonResume)
 }

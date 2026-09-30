@@ -207,7 +207,7 @@ wait_for 20 "edit: strike-2 agent-down alert sent to edit" bus_alert agent-down
 wait_for 20 "edit: restart attempt 1/3" has_event "agent-restart.*edit attempt 1/3"
 wait_for 10 "edit: agent-restarting alert sent to edit" bus_alert agent-restarting
 wait_for 10 "edit: resume-scrape-hit names $UUID1" has_event "resume-scrape-hit.*edit: session $UUID1"
-wait_for 10 "edit: relaunch typed with --resume $UUID1" has_event "agent-relaunch.*edit: muxcode agent launch edit --resume $UUID1"
+wait_for 10 "edit: relaunch typed with --resume $UUID1" has_event "agent-relaunch.*edit: muxcode agent launch edit --reason restart --resume $UUID1"
 if line_before "resume-scrape-hit.*edit" "agent-relaunch.*edit"; then
   ok "edit: scrape recorded before the relaunch"
 else
@@ -329,7 +329,7 @@ wait_for 10 "edit: exit banner offers $UUID5" pane_has edit "claude --resume $UU
 if out=$(as_user resume edit 2>&1); then ok "muxcode resume edit exits 0"; else fail "muxcode resume edit failed: $out"; fi
 [ -n "$(manual_events "resume-scrape-hit.*edit: session $UUID5 \(by user\)")" ] && ok "manual scrape-hit row names $UUID5 and the user" \
   || fail "no manual scrape-hit row for $UUID5: $(manual_events "$MANUAL_ROWS" | tail -2)"
-[ -n "$(manual_events "agent-relaunch.*muxcode agent launch edit --resume $UUID5 \(by user\)")" ] && ok "manual relaunch row resumes $UUID5 by the user" \
+[ -n "$(manual_events "agent-relaunch.*muxcode agent launch edit --reason resume --resume $UUID5 \(by user\)")" ] && ok "manual relaunch row resumes $UUID5 by the user" \
   || fail "no manual relaunch row for $UUID5"
 [ ! -e "$BUSDIR/lock/edit.reloading" ] && ok "reload marker released after the resume" || fail "reload marker outlived muxcode resume"
 wait_for 20 "edit: manually resumed stub up" stub_up edit "$P5"

@@ -72,8 +72,8 @@ paths must suppress the auto startup task from the outset.
 ### Acceptance criteria
 
 - [ ] A **restart or restore** of the `auto` agent does not begin autonomous work: no Jira sweep that leads into a run, and no graph launch
-- [ ] A genuine **user-initiated** start still works exactly as today — the agent is useful without being told to begin
-- [ ] The two cases are distinguished by an explicit signal carried into `PreLaunchSetup`, not inferred from timing, inbox contents or pane state (see [Decision 1](#decision-1-the-launcher-knows-why-it-is-launching-so-it-should-say-so))
+- [x] A genuine **user-initiated** start still works exactly as today — the agent is useful without being told to begin (`TestPreLaunchSetup_AutoTaskOnlyOnUserReason`, case `user`)
+- [x] The two cases are distinguished by an explicit signal carried into `PreLaunchSetup`, not inferred from timing, inbox contents or pane state (`--reason`, `bus.LaunchReason`) (see [Decision 1](#decision-1-the-launcher-knows-why-it-is-launching-so-it-should-say-so))
 - [ ] On a restart, `auto` restores context like every other role and then **idles**, reporting what it would have resumed
 - [ ] The `startup` payload and the agent definition are reconciled so both describe the same behaviour — whichever is chosen, the disagreement in [The seed message and the definition disagree](#the-seed-message-and-the-definition-disagree) does not survive this spec
 - [ ] A graph run launched by the auto agent records **what triggered it** (user request vs startup) in the run record and a lifecycle event, so a spurious run is diagnosable rather than merely cancellable
@@ -88,9 +88,9 @@ callers — first launch, `reload`, daemon auto-restart, mode cycling, and (with
 each one knows which it is. The agent, reading an identical inbox message in all five cases, cannot
 know and should not be asked to guess.
 
-- [ ] `PreLaunchSetup` takes an explicit launch **reason**; the auto task message is seeded only for a user-initiated start
-- [ ] Every existing caller passes its reason explicitly; **no default that silently means "user-initiated"** — an unset reason must be treated as a restart (the safe direction: the failure mode is an agent that waits, not one that acts)
-- [ ] Pinned by test per caller, so a future call site cannot inherit work-triggering behaviour by omission
+- [x] `PreLaunchSetup` takes an explicit launch **reason**; the auto task message is seeded only for a user-initiated start (`reason.UserInitiated()`, `bus/launch.go`)
+- [x] Every existing caller passes its reason explicitly; **no default that silently means "user-initiated"** — an unset reason must be treated as a restart (the safe direction: the failure mode is an agent that waits, not one that acts)
+- [x] Pinned by test per caller, so a future call site cannot inherit work-triggering behaviour by omission (`TestLaunchRoads_CarryExplicitReason`: session, reload, mode cycle, spawn; restart and resume in `restart_resume_test.go` / `resume_test.go`; every road builds through `AgentLaunchCommand`)
 
 The alternative — having the agent detect its own restarts — was rejected: it is the same
 "agent infers its own lifecycle from ambient state" shape as the pane-scrape delivery the
@@ -121,10 +121,10 @@ delivery-ack cutover replaced, and it would put the safety decision in the least
 
 ### Phase 1: Launch reason plumbed through
 
-- [ ] Add the launch reason to `PreLaunchSetup` and `LaunchAgent`
-- [ ] Update every call site explicitly; unset is treated as a restart
-- [ ] Tests: user-initiated seeds the auto task; restart, reload, mode-cycle and resume do not
-- [ ] Test: **an omitted reason does not seed the task** (safe default pinned)
+- [x] Add the launch reason to `PreLaunchSetup` and `LaunchAgent` (the launcher entry point is `RunAgentLaunchResume`; `LaunchReason`, `AgentLaunchCommand`, `ParseLaunchArgs` in `bus/launch_reason.go`; `muxcode agent launch <role> --reason <reason>`)
+- [x] Update every call site explicitly; unset is treated as a restart (session and api modal `user`, health restart `restart`, reload `reload`, mode cycling `mode-cycle`, `muxcode resume` `resume`, spawn `spawn`; the launch lifecycle row records `reason=`, `unset` when omitted)
+- [x] Tests: user-initiated seeds the auto task; restart, reload, mode-cycle and resume do not (`TestPreLaunchSetup_AutoTaskOnlyOnUserReason`, spawn too)
+- [x] Test: **an omitted reason does not seed the task** (safe default pinned; cases `omitted` and `unrecognized`)
 
 ### Phase 2: Auto agent restart semantics
 
