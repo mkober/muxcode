@@ -15,7 +15,7 @@ first cycle, so a session that never cycles never launches them.
 | Reason | Evidence |
 |--------|----------|
 | Neither runs in a normal session | Verified live 2026-09-03: session windows are `plan edit build test serve review deploy run watch commit`; no process for either role |
-| `auto` is the source of unrequested work | [`MUX-141`](./MUX-141-auto-agent-restart-relaunches-graph-runs.md) — every launch seeds `auto` a request-type `startup` task (`launch.go:852-869`), which the definition reads as a mandate; two unrequested graph runs observed 2026-09-02 |
+| `auto` is the source of unrequested work | [`MUX-141`](../drafts/MUX-141-auto-agent-restart-relaunches-graph-runs.md) — every launch seeds `auto` a request-type `startup` task (`launch.go:852-869`), which the definition reads as a mandate; two unrequested graph runs observed 2026-09-02 |
 | `auto` is an attribution blind spot | [`MUX-144`](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) could not attribute an unauthorised gate release partly because `auto` "has no tmux window to scrape and nothing is logged" |
 | Windowless roles leak undeliverable messages | `inbox/auto.jsonl` held a `long-active` watchdog event for a role with no process — the daemon believed `auto` had been "active 10m". Same family as [`MUX-145`](./MUX-145-messages-routed-to-windowless-role.md) |
 | Carrying cost is spread across three modules | Role→file mapping is duplicated in `bus/launch.go`, `bus/agent.go` and the standalone harness; every role-list test pins both names |
@@ -202,7 +202,7 @@ revisit — the machinery then has no future consumer either.**
 | Spec | Impact | Recommendation |
 |------|--------|----------------|
 | [`MUX-016`](./MUX-016-research-dual-provider.md) | Moot — it extends the research agent into a dual-provider split view | Withdraw; retire the id per the [registry rules](./backlog.md#github-tracking-mux-ids) |
-| [`MUX-141`](./MUX-141-auto-agent-restart-relaunches-graph-runs.md) | **Symptom retired, gap open.** The spurious-run harm disappears with `auto`, but its fix is a *general* launch-reason signal through `PreLaunchSetup`; only the auto-task seeding is auto-specific. Nothing else exploits the gap today | Downgrade and rescope to the general fresh-vs-restart distinction — do **not** close as fixed. Has GitHub issue **#67**, which needs a human decision |
+| [`MUX-141`](../drafts/MUX-141-auto-agent-restart-relaunches-graph-runs.md) | **Symptom retired, gap open.** The spurious-run harm disappears with `auto`, but its fix is a *general* launch-reason signal through `PreLaunchSetup`; only the auto-task seeding is auto-specific. Nothing else exploits the gap today | Downgrade and rescope to the general fresh-vs-restart distinction — do **not** close as fixed. Has GitHub issue **#67**, which needs a human decision |
 | [`MUX-119`](./MUX-119-graph-routes-edit-work-off-the-edit-agent.md) | Premise removed — it routes graph implementation work *to* `auto` | Rescope to a different target role, or withdraw |
 | [`MUX-015`](./MUX-015-refactor-agent.md) | Loses its reference pattern (`code-researcher.md`) but not its premise | Keep; update to cite a surviving exemplar. Interacts with [Decision 2](#decision-2) |
 | [`MUX-021`](./MUX-021-demo-mode-agent-coverage.md) | Has explicit `research (F1 mode)` and `research-handoff` rows | Update coverage rows |
