@@ -28,7 +28,7 @@ separately.
 | `implement` and `fix` are `spawn` nodes with `"role": "edit"` in `spec-to-pr` | **Verified** — `bus/graph_templates.go:31`, `:34` |
 | `build`, `test`, `review` are **separate `send` nodes** in the same template | **Verified** — `bus/graph_templates.go:32`, `:33` |
 | A spawn launches as `cd <worktree> && AGENT_ROLE=<role> muxcode agent launch <role>` | **Verified** — `bus/spawn.go:214` |
-| `Node.Role` selects the agent *definition*, so a `role: edit` spawn loads `code-editor.md` | **Verified** — `AgentFileName()` (`bus/launch.go:61`); corroborated by [MUX-119](./MUX-119-graph-routes-edit-work-off-the-edit-agent.md) |
+| `Node.Role` selects the agent *definition*, so a `role: edit` spawn loads `code-editor.md` | **Verified** — `AgentFileName()` (`bus/launch.go:61`); corroborated by [MUX-119](../backlog/MUX-119-graph-routes-edit-work-off-the-edit-agent.md) |
 | That definition tells the agent to delegate build → test → review | **Verified** — `agents/code-editor.md:238-243`, "As the edit agent, you are the primary orchestrator. After making code changes: 1. Delegate a build… 2. …delegate tests… 3. …request review" |
 | Nothing in the spawn or graph path tells a worker *not* to delegate | **Verified** — no "do not delegate" / "never delegate" string in `code-editor.md`, `bus/spawn.go`, or `bus/graph_templates.go` |
 | A bus `Message` carries **no** cwd, tree or worktree field | **Verified** — `bus/message.go:13-20`, eight fields: `id ts from to type action payload reply_to` |
@@ -67,18 +67,18 @@ But (b) is not cosmetic, and it reaches further than the worker:
 - A worker may **declare a phase complete** on that basis, and that claim is harvested.
 - The harvested claim feeds `update-spec`, where **plan checks off acceptance criteria**. A false
   green can therefore be laundered into a spec tick — the exact failure mode
-  [MUX-136](./MUX-136-bare-resume-loses-agent-definition.md) exists to prevent, arriving by a
+  [MUX-136](../backlog/MUX-136-bare-resume-loses-agent-definition.md) exists to prevent, arriving by a
   different road.
 
 ### Relationship to existing specs
 
 | Spec | Relationship |
 |------|--------------|
-| [MUX-119](./MUX-119-graph-routes-edit-work-off-the-edit-agent.md) | **Qualifies its central table.** MUX-119 classes `implement`/`fix` spawns as "❌ No — isolated". They are isolated in *pane* terms, which is what that spec measures, but they are **not** isolated in delegation terms: they reach back into the shared `build`/`test` agents. The table is not wrong for its own question; it should not be read as a general isolation claim |
-| [MUX-120](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Same family — spawn workers the graph executor mismanages |
-| [MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Same family; both concern the spawn lifecycle rather than the graph shape |
+| [MUX-119](../backlog/MUX-119-graph-routes-edit-work-off-the-edit-agent.md) | **Qualifies its central table.** MUX-119 classes `implement`/`fix` spawns as "❌ No — isolated". They are isolated in *pane* terms, which is what that spec measures, but they are **not** isolated in delegation terms: they reach back into the shared `build`/`test` agents. The table is not wrong for its own question; it should not be read as a general isolation claim |
+| [MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Same family — spawn workers the graph executor mismanages |
+| [MUX-135](../backlog/MUX-135-spawn-seed-record-gc-strands-completion.md) | Same family; both concern the spawn lifecycle rather than the graph shape |
 | [MUX-007](../completed/MUX-007-verify-spec-stale-review-refire.md) | Same *class* as its changed-files problem — an agent reasoning about a tree other than the one under test |
-| [MUX-118](./MUX-118-rename-edit-role-to-code.md) | Any fix that introduces a distinct worker definition should land in step with the rename, not fight it |
+| [MUX-118](../backlog/MUX-118-rename-edit-role-to-code.md) | Any fix that introduces a distinct worker definition should land in step with the rename, not fight it |
 
 ### Why it matters
 
@@ -320,7 +320,7 @@ Still reachable, and still this spec's remaining work:
 - **CLI spawns**, which default to a worktree (`--no-worktree` opts out) and whose delegated
   build/test/review still `CdPrefix` into the session checkout.
 - **A human working by hand in a worktree** who delegates — no spawn involved at all. This is the
-  [`MUX-136`](./MUX-136-bare-resume-loses-agent-definition.md) case, where a review re-reported a fixed
+  [`MUX-136`](../backlog/MUX-136-bare-resume-loses-agent-definition.md) case, where a review re-reported a fixed
   finding against main while the fix sat in a worktree.
 - **The cross-session case**, where the delegating and executing agents were never in the same tree.
 
@@ -373,10 +373,10 @@ The argument for a tree-aware bus is therefore narrower than when filed — it n
 
 ### Phase 4: Fold the finding back into the affected specs
 
-- [ ] Add a note to [MUX-119](./MUX-119-graph-routes-edit-work-off-the-edit-agent.md) qualifying the
+- [ ] Add a note to [MUX-119](../backlog/MUX-119-graph-routes-edit-work-off-the-edit-agent.md) qualifying the
       "isolated" classification of `implement`/`fix` — pane-isolated, not delegation-isolated
-- [ ] Cross-link from the spawn-family specs ([MUX-120](./MUX-120-spawn-worker-never-woken-for-seeded-task.md),
-      [MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md))
+- [ ] Cross-link from the spawn-family specs ([MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md),
+      [MUX-135](../backlog/MUX-135-spawn-seed-record-gc-strands-completion.md))
 - [ ] Update `CLAUDE.md`'s graph-orchestration constraint if the fix changes what a spawn may do
 - [ ] Record the interim workaround for users hitting this before the fix lands:
       `muxcode graph export spec-to-pr > /tmp/spec-to-pr.json`, add an explicit no-delegation

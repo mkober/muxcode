@@ -159,7 +159,7 @@ independently rather than the whole script being called a failure.
 its green baseline); [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) and
 [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) (the same self-concealing shape —
 a node reporting a success it did not earn);
-[MUX-142](./MUX-142-spawn-worker-delegates-into-wrong-tree.md) (the other live spawn-tree defect).
+[MUX-142](../drafts/MUX-142-spawn-worker-delegates-into-wrong-tree.md) (the other live spawn-tree defect).
 
 ## Status
 

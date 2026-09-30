@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| — | _None — MUX-141 closed 2026-09-30; the next active spec is the user's call_ | — | — |
+| MUX-142 | [Spawned worker delegates build/test into the wrong tree](../drafts/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | 2026-09-30 | Active spec set; in `drafts/`; Defect 1 fixed on the Claude road 2026-09-03, OpenCode half and Defect 2 open (11/35 boxes) |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
@@ -46,9 +46,9 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | # | T | ID | Defect | Sev | Depends on |
 |---|---|----|--------|-----|------------|
-| 1 | 1 | [`MUX-142`](./MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Spawned worker delegates build/test into the wrong tree | High | — |
+| 1 | 1 | [`MUX-142`](../drafts/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Spawned worker delegates build/test into the wrong tree | High | — |
 | 2 | 1 | [`MUX-178`](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) | A graph `spawn` node cuts no worktree, ports nothing, and reports `success` | High | — |
-| 3 | 1 | [`MUX-139`](./MUX-139-claude-agent-auto-resume.md) | Every Claude agent on the machine exits; nothing resumes | High | [MUX-141](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md), [MUX-142](./MUX-142-spawn-worker-delegates-into-wrong-tree.md) |
+| 3 | 1 | [`MUX-139`](./MUX-139-claude-agent-auto-resume.md) | Every Claude agent on the machine exits; nothing resumes | High | [MUX-141](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md), [MUX-142](../drafts/MUX-142-spawn-worker-delegates-into-wrong-tree.md) |
 | 4 | 1 | [`MUX-179`](./MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) | The PII scrub role gate is dead code on the bus road | High | — |
 | 5 | 1 | [`MUX-174`](./MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox.md) | `./test.sh` exits 1 repo-wide on the `test` role | High | — |
 | 6 | 1 | [`MUX-176`](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) | The run chain fires `success` for a call that has not finished | High | ⇄ [MUX-177](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) |
@@ -123,7 +123,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 | [`MUX-150`](./MUX-150-verify-spec-names-last-routed-batch.md) | `verify-spec` Names the Last Routed Batch, Not the Change Set | Medium | — |
 | [`MUX-145`](./MUX-145-messages-routed-to-windowless-role.md) | Messages Route to a Role With No Window, and Diagnose Prescribes an Impossible Fix | Medium | — |
 | [`MUX-143`](./MUX-143-run-carries-two-phase-identities.md) | A Run Carries Two Unreconciled Phase Identities | High | [MUX-130](./MUX-130-spec-phase-parsing-semantics.md) |
-| [`MUX-142`](./MUX-142-spawn-worker-delegates-into-wrong-tree.md) | A Spawned Worker Delegates Build and Test Into the Wrong Tree | High | — |
+| [`MUX-142`](../drafts/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | A Spawned Worker Delegates Build and Test Into the Wrong Tree | High | — |
 | [`MUX-139`](./MUX-139-claude-agent-auto-resume.md) | Claude Agent Auto-Resume After Mass Exit | High | [MUX-141](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md) |
 | [`MUX-137`](./MUX-137-test-bus-dir-leak.md) | PreLaunch Tests Leak Real Bus Directories Into `/tmp` | Low | — |
 | [`MUX-135`](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Delivery-Record GC Permanently Strands a Long Spawn Iteration | High | — |

@@ -93,7 +93,7 @@ single-surface property rather than adding a third place a warning can go missin
 | Spec | Relationship |
 |------|--------------|
 | [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) | **Adjacent, not the same.** MUX-130 covers phase *parsing* semantics — how headings and completion counts are read. This is **not** a parsing bug: parsing is correct in the observed case (Phase 2 genuinely has an open box). The defect is **semantic** — two correct parses of two different things, used as if they were the same thing. Keep separate; cross-linked both ways. |
-| [`MUX-142`](./MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Same family: a graph worker given a **wrong picture of what it is working on**. MUX-142 is the wrong *tree*; this is the wrong *phase*. Independent mechanisms, shared consequence — a worker proceeds confidently on a false premise. |
+| [`MUX-142`](../drafts/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Same family: a graph worker given a **wrong picture of what it is working on**. MUX-142 is the wrong *tree*; this is the wrong *phase*. Independent mechanisms, shared consequence — a worker proceeds confidently on a false premise. |
 | [`MUX-121`](../completed/MUX-121-multi-phase-sequential-graph.md) | Owns the stateless-derivation decision this spec must not regress. Defect A's fix cannot reintroduce stored phase state. |
 
 ### Why it matters
