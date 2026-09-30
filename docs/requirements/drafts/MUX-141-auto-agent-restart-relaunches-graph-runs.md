@@ -51,10 +51,10 @@ cost a Jira search and a printed list. Under the definition's reading it costs a
 
 ### Why this is a defect, not a configuration preference
 
-- [ ] **A recovery event causes work.** Auto-restart exists to restore availability; it is not a request for the agent to advance a spec. Every other role's `startup` restores *context* — only `auto` interprets it as a task
-- [ ] **It is unbounded.** The message is re-seeded on every launch, and the daemon re-wakes until consumed, so the behaviour repeats indefinitely across restores rather than firing once
-- [ ] **It reaches a commit gate.** The runs drive toward `wait_human`; the user's stated risk is a run slipping through to an auto-approved commit on a tree they are hand-curating
-- [ ] **It is invisible as a cause.** The user sees graph runs appearing and cancels them; nothing in the run or the lifecycle log says "this was triggered by a restart"
+- **A recovery event causes work.** Auto-restart exists to restore availability; it is not a request for the agent to advance a spec. Every other role's `startup` restores *context* — only `auto` interprets it as a task
+- **It is unbounded.** The message is re-seeded on every launch, and the daemon re-wakes until consumed, so the behaviour repeats indefinitely across restores rather than firing once
+- **It reaches a commit gate.** The runs drive toward `wait_human`; the user's stated risk is a run slipping through to an auto-approved commit on a tree they are hand-curating
+- **It is invisible as a cause.** The user sees graph runs appearing and cancels them; nothing in the run or the lifecycle log says "this was triggered by a restart"
 
 ### Compounds with MUX-139
 
@@ -76,7 +76,7 @@ paths must suppress the auto startup task from the outset.
 - [x] The two cases are distinguished by an explicit signal carried into `PreLaunchSetup`, not inferred from timing, inbox contents or pane state (`--reason`, `bus.LaunchReason`) (see [Decision 1](#decision-1-the-launcher-knows-why-it-is-launching-so-it-should-say-so))
 - [x] On a restart, `auto` restores context like every other role and then **idles**, reporting what it would have resumed (`agents/autonomous-agent.md` § Startup, `Session started —` row; harness twin matches)
 - [x] The `startup` payload and the agent definition are reconciled so both describe the same behaviour — whichever is chosen, the disagreement in [The seed message and the definition disagree](#the-seed-message-and-the-definition-disagree) does not survive this spec
-- [ ] A graph run launched by the auto agent records **what triggered it** (user request vs startup) in the run record and a lifecycle event, so a spurious run is diagnosable rather than merely cancellable
+- [x] A graph run launched by the auto agent records **what triggered it** (user request vs startup) in the run record and a lifecycle event, so a spurious run is diagnosable rather than merely cancellable (`run.json` `trigger`/`trigger_detail`/`trigger_inferred`, `graph-run-created … triggered by:`; an agent trigger is inferred from its last bus request — context, not proven cause — see [Agent Bus CLI](../../agent-bus.md#muxcode-graph))
 - [x] `MUXCODE_AUTO_STARTUP_TASK=0` (or equivalent) disables the startup task entirely, for users driving commits by hand — the documented alternative to `agent-health --stop auto`, which currently costs the agent's availability to buy quiet
 - [x] Stopping the auto agent remains available and documented as the blunt instrument it is (`agent-health --stop auto`; `docs/agents.md` intentional stop, `docs/configuration.md` names it as the cost-of-availability alternative)
 - [x] Docs: CLAUDE.md autonomous-agent bullet, [`docs/agents.md`](../../agents.md), [`docs/configuration.md`](../../configuration.md) (CLAUDE.md "Auto agent startup is reason-gated"; agents.md Autonomous Agent § Startup; configuration.md env row; plus `docs/agent-bus.md` `muxcode agent launch --reason`)
@@ -135,10 +135,10 @@ delivery-ack cutover replaced, and it would put the safety decision in the least
 
 ### Phase 3: Run trigger provenance
 
-- [ ] Graph runs record their trigger (user request vs startup vs graph edge)
-- [ ] Lifecycle event names the trigger at launch
-- [ ] `graph status` surfaces it, so a spurious run is explainable after the fact
-- [ ] Tests: each trigger recorded and rendered
+- [x] Graph runs record their trigger (user request vs startup vs graph edge) (`deriveRunTrigger`, `bus/run_trigger.go`; `CreateGraphRun` records it once; startup message carries `launch_reason`; `user-request`, `startup`, `graph-edge`, `bus-request`, `unknown`)
+- [x] Lifecycle event names the trigger at launch (`graph-run-created` detail ends `triggered by: …`)
+- [x] `graph status` surfaces it, so a spurious run is explainable after the fact (`Triggered by:` line; `--json` `triggered_by`; the TUI run view is unchanged)
+- [x] Tests: each trigger recorded and rendered (`TestDeriveRunTrigger` 14 cases incl. established vs inferred, `TestRunTriggerRecordedAndRendered` over run.json, `graph status` and the lifecycle row, `TestDescribeRunTrigger_*`)
 
 ### Phase 4: Integration test
 
@@ -164,7 +164,7 @@ delivery-ack cutover replaced, and it would put the safety decision in the least
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-141-auto-agent-restart-relaunches-graph-runs | 27m | 2026-09-30 10:42 |
+| MUX-141-auto-agent-restart-relaunches-graph-runs | 46m | 2026-09-30 11:13 |
 
 ## Status
 

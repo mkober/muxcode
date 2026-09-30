@@ -43,28 +43,45 @@ const (
 // re-armed at the gate instead, cleared by a retry that needed no
 // re-target. Surfaced by graph status so the decision stays visible
 // after the CLI output scrolls away.
+//
+// Trigger and TriggerDetail record what set the run in motion, derived once
+// at creation and never rewritten — see deriveRunTrigger. TriggerInferred
+// marks a trigger that is only the launching agent's last bus request, which
+// the bus cannot tie to the run. A run created before the fields existed has
+// none of them and renders as unrecorded.
 type GraphRun struct {
-	ID        string         `json:"id"`
-	Template  string         `json:"template"`
-	Intent    string         `json:"intent,omitempty"`
-	State     string         `json:"state"`
-	CreatedBy string         `json:"created_by,omitempty"` // BusActor at creation — see announceGraphAction
-	CreatedAt int64          `json:"created_at"`
-	UpdatedAt int64          `json:"updated_at"`
-	EdgeFires map[string]int `json:"edge_fires,omitempty"`
-	RetryNote string         `json:"retry_note,omitempty"` // last retry's re-target decision — see GraphRun doc
+	ID            string         `json:"id"`
+	Template      string         `json:"template"`
+	Intent        string         `json:"intent,omitempty"`
+	State         string         `json:"state"`
+	CreatedBy     string         `json:"created_by,omitempty"` // BusActor at creation — see announceGraphAction
+	Trigger       string         `json:"trigger,omitempty"`
+	TriggerDetail string         `json:"trigger_detail,omitempty"`
+	CreatedAt     int64          `json:"created_at"`
+	UpdatedAt     int64          `json:"updated_at"`
+	EdgeFires     map[string]int `json:"edge_fires,omitempty"`
+	RetryNote     string         `json:"retry_note,omitempty"` // last retry's re-target decision — see GraphRun doc
+
+	TriggerInferred bool `json:"trigger_inferred,omitempty"`
 }
 
-// MarshalJSON writes created_by as recorded plus a derived "provenance" in
-// DescribeRunCreator's words, so run.json and every --json output carry the
-// unambiguous form beside the raw one. Provenance is never read back: it is
-// recomputed from created_by on every write.
+// TriggeredBy renders the run's trigger in DescribeRunTrigger's words.
+func (r GraphRun) TriggeredBy() string {
+	return DescribeRunTrigger(r.Trigger, r.TriggerDetail, r.TriggerInferred)
+}
+
+// MarshalJSON writes created_by and trigger as recorded plus a derived
+// "provenance" in DescribeRunCreator's words and "triggered_by" in
+// DescribeRunTrigger's, so run.json and every --json output carry the
+// unambiguous forms beside the raw ones. Neither is ever read back: both are
+// recomputed from the recorded fields on every write.
 func (r GraphRun) MarshalJSON() ([]byte, error) {
 	type recorded GraphRun
 	return json.Marshal(struct {
 		recorded
-		Provenance string `json:"provenance"`
-	}{recorded(r), DescribeRunCreator(r.CreatedBy)})
+		Provenance  string `json:"provenance"`
+		TriggeredBy string `json:"triggered_by"`
+	}{recorded(r), DescribeRunCreator(r.CreatedBy), r.TriggeredBy()})
 }
 
 // GraphNodeStatus is the persisted per-node execution state of a run.
@@ -202,15 +219,19 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 	}
 
 	actor := BusActorVerified()
+	trigger, triggerDetail, triggerInferred := deriveRunTrigger(session, actor)
 	run := &GraphRun{
-		ID:        NewGraphRunID(g.Name),
-		Template:  template,
-		Intent:    intent,
-		State:     GraphRunRunning,
-		CreatedBy: actor,
-		CreatedAt: time.Now().Unix(),
-		UpdatedAt: time.Now().Unix(),
-		EdgeFires: map[string]int{},
+		ID:              NewGraphRunID(g.Name),
+		Template:        template,
+		Intent:          intent,
+		State:           GraphRunRunning,
+		CreatedBy:       actor,
+		Trigger:         trigger,
+		TriggerDetail:   triggerDetail,
+		TriggerInferred: triggerInferred,
+		CreatedAt:       time.Now().Unix(),
+		UpdatedAt:       time.Now().Unix(),
+		EdgeFires:       map[string]int{},
 	}
 
 	if err := os.MkdirAll(graphNodesDir(session, run.ID), 0755); err != nil {
@@ -232,7 +253,8 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 		return nil, err
 	}
 	announceGraphAction(session, actor, "graph-run-created",
-		fmt.Sprintf("Graph run %s (%s) %s", run.ID, template, runProvenance(run)))
+		fmt.Sprintf("Graph run %s (%s) %s · triggered by: %s", run.ID, template, runProvenance(run),
+			run.TriggeredBy()))
 	return run, nil
 }
 
@@ -796,6 +818,7 @@ func formatGraphRun(run *GraphRun, g *Graph, statuses map[string]*GraphNodeStatu
 	elapsed := time.Since(time.Unix(run.CreatedAt, 0)).Round(time.Second)
 	fmt.Fprintf(&b, "Run %s  [%s]  template=%s  elapsed=%s\n", run.ID, run.State, run.Template, elapsed)
 	fmt.Fprintf(&b, "Launched by: %s\n", DescribeRunCreator(run.CreatedBy))
+	fmt.Fprintf(&b, "Triggered by: %s\n", run.TriggeredBy())
 	if run.Intent != "" {
 		fmt.Fprintf(&b, "Intent: %s\n", run.Intent)
 	}

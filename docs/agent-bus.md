@@ -1845,6 +1845,18 @@ reaching a gate when there is no PR or no actionable comment — the pattern `co
 `graph.json`, and `nodes/<id>.json` per node, written atomically. Because every transition
 is persisted, a daemon restart resumes in-flight runs with no separate recovery step.
 
+**Run provenance — two questions, one of them often only inferred.** `run.json` records `created_by` (the verified bus actor at creation; rendered as `provenance` — "the user" or "autonomous" — and printed as `Launched by:` in `graph status`) and, since MUX-141 Phase 3, `trigger`, `trigger_detail` and `trigger_inferred` (rendered as `triggered_by`, printed as `Triggered by:`). The trigger says what set the creator in motion. It is derived once at creation by `deriveRunTrigger` (`bus/run_trigger.go`) from the verified actor, the spawn registry and the session message log — never from anything the launching agent declares, so an agent cannot label its own run. A trigger is **established** only where the bus holds the tie between cause and run; every other agent trigger is **inferred** — the launching agent's most recent bus request, recorded as context, never as cause. The bus cannot tie a run to a request: an instruction typed into the agent's own pane leaves no bus record, and a request queued behind the one being worked is still the most recent.
+
+| `trigger` | Established when | Inferred when (`trigger_inferred: true`) | `trigger_detail` |
+|-----------|------------------|------------------------------------------|------------------|
+| `user-request` | The user launched the run by hand | The agent's last request was typed at the Prompt surface | `typed at the Prompt surface` (inferred case) |
+| `graph-edge` | The creator is a spawn worker of another run (spawn registry) — the only established road | The agent's last request was sent by a graph run (`Message.OriginRun`); always inferred for a regular agent, because a send node reads `running` from enqueue, before the agent has read the request, so a live node proves nothing | The parent run id |
+| `startup` | — | The agent's last request was its `startup` message | The launch reason `PreLaunchSetup` stamped on it (`Message.LaunchReason`: `user`, `restart`, …, `unset`) |
+| `bus-request` | — | Any other last request | `<from>: <action>` |
+| `unknown` | No verified actor, or no request on the log | — | — |
+
+Rendering keeps the two apart: an established trigger reads `a user request` or `graph run <id>`; an inferred one reads `not established — the launching agent's last bus request was <what>` (`its startup message (launch reason: restart)`, `a request from graph run <id>`, `a user request, typed at the Prompt surface`, `a bus request (edit: implement)`). A run created before the fields existed renders `unrecorded`. An inferred `startup` with launch reason `restart` is *consistent with* an unrequested run — the [MUX-141](requirements/drafts/MUX-141-auto-agent-restart-relaunches-graph-runs.md) shape — and equally with a user who typed the instruction into the pane after the restart; it narrows the question and does not answer it. The wording never reuses the creator's words ("the user", "autonomous"), so a trigger is never misread as the creator.
+
 ### `muxcode hook`
 
 Hook handlers for Claude Code's PreToolUse and PostToolUse events. Each subcommand reads the tool event as JSON on stdin.

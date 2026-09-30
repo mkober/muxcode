@@ -428,7 +428,7 @@ Lifecycle events per transition — fourteen in all: `graph-node-start`, `graph-
 `graph-gate-marker-error` (the gate marker write failed; the gate still holds, since the
 edit notification is the release signal) and `graph-step-error` (an executor tick errored
 for one run). Four more carry attribution and guard decisions: `graph-run-created` (names the
-creator), `graph-gate-approved` (names the approver), `graph-gate-approval-refused` (warn —
+creator and, since MUX-141 Phase 3, ends `triggered by: <trigger>` — `deriveRunTrigger`, `bus/run_trigger.go`, reads the verified actor, spawn registry and message log; a user's own launch or a spawn worker's parent run (spawn registry) is an **established** trigger, while any other agent trigger is **inferred** from the agent's last bus request — its startup message with its launch reason, a request from a graph run (`Message.OriginRun`, never established for a regular agent since a send node is `running` from enqueue), a Prompt-surface request or another bus request — and rendered `not established — …`, context rather than cause; recorded in `run.json` as `trigger`/`trigger_detail`/`trigger_inferred`, printed by `graph status` as `Triggered by:` — see [Agent Bus CLI](agent-bus.md#muxcode-graph)), `graph-gate-approved` (names the approver), `graph-gate-approval-refused` (warn —
 names the refused actor and the reason), and `graph-guard-declined` (a dispatch-time guard
 refused a node, with the count and names of what blocked it).
 

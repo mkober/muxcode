@@ -868,6 +868,8 @@ func PreLaunchSetup(role, session, cli string, reason LaunchReason) {
 		Type:    "request",
 		Action:  "startup",
 		Payload: startupRestorePayload,
+
+		LaunchReason: string(reason),
 	}
 	if role == "auto" && reason.UserInitiated() && autoStartupTaskEnabled() {
 		m.From = "edit"
