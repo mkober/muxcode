@@ -71,15 +71,15 @@ paths must suppress the auto startup task from the outset.
 
 ### Acceptance criteria
 
-- [ ] A **restart or restore** of the `auto` agent does not begin autonomous work: no Jira sweep that leads into a run, and no graph launch
+- [x] A **restart or restore** of the `auto` agent does not begin autonomous work: no Jira sweep that leads into a run, and no graph launch (seed gated on `--reason user`; definition § Startup tells a restarted agent to idle)
 - [x] A genuine **user-initiated** start still works exactly as today — the agent is useful without being told to begin (`TestPreLaunchSetup_AutoTaskOnlyOnUserReason`, case `user`)
 - [x] The two cases are distinguished by an explicit signal carried into `PreLaunchSetup`, not inferred from timing, inbox contents or pane state (`--reason`, `bus.LaunchReason`) (see [Decision 1](#decision-1-the-launcher-knows-why-it-is-launching-so-it-should-say-so))
-- [ ] On a restart, `auto` restores context like every other role and then **idles**, reporting what it would have resumed
-- [ ] The `startup` payload and the agent definition are reconciled so both describe the same behaviour — whichever is chosen, the disagreement in [The seed message and the definition disagree](#the-seed-message-and-the-definition-disagree) does not survive this spec
+- [x] On a restart, `auto` restores context like every other role and then **idles**, reporting what it would have resumed (`agents/autonomous-agent.md` § Startup, `Session started —` row; harness twin matches)
+- [x] The `startup` payload and the agent definition are reconciled so both describe the same behaviour — whichever is chosen, the disagreement in [The seed message and the definition disagree](#the-seed-message-and-the-definition-disagree) does not survive this spec
 - [ ] A graph run launched by the auto agent records **what triggered it** (user request vs startup) in the run record and a lifecycle event, so a spurious run is diagnosable rather than merely cancellable
-- [ ] `MUXCODE_AUTO_STARTUP_TASK=0` (or equivalent) disables the startup task entirely, for users driving commits by hand — the documented alternative to `agent-health --stop auto`, which currently costs the agent's availability to buy quiet
-- [ ] Stopping the auto agent remains available and documented as the blunt instrument it is
-- [ ] Docs: CLAUDE.md autonomous-agent bullet, [`docs/agents.md`](../../agents.md), [`docs/configuration.md`](../../configuration.md)
+- [x] `MUXCODE_AUTO_STARTUP_TASK=0` (or equivalent) disables the startup task entirely, for users driving commits by hand — the documented alternative to `agent-health --stop auto`, which currently costs the agent's availability to buy quiet
+- [x] Stopping the auto agent remains available and documented as the blunt instrument it is (`agent-health --stop auto`; `docs/agents.md` intentional stop, `docs/configuration.md` names it as the cost-of-availability alternative)
+- [x] Docs: CLAUDE.md autonomous-agent bullet, [`docs/agents.md`](../../agents.md), [`docs/configuration.md`](../../configuration.md) (CLAUDE.md "Auto agent startup is reason-gated"; agents.md Autonomous Agent § Startup; configuration.md env row; plus `docs/agent-bus.md` `muxcode agent launch --reason`)
 
 #### Decision 1: the launcher knows why it is launching, so it should say so
 
@@ -128,10 +128,10 @@ delivery-ack cutover replaced, and it would put the safety decision in the least
 
 ### Phase 2: Auto agent restart semantics
 
-- [ ] `auto` receives the ordinary context-restoration startup on a restart
-- [ ] Definition updated: on a restart, restore context, report what would have been resumed, then idle
-- [ ] Payload and definition reconciled so both describe one behaviour
-- [ ] `MUXCODE_AUTO_STARTUP_TASK=0` opt-out + test
+- [x] `auto` receives the ordinary context-restoration startup on a restart (`PreLaunchSetup`, `bus/launch.go:872`)
+- [x] Definition updated: on a restart, restore context, report what would have been resumed, then idle (`agents/autonomous-agent.md`, `agents/harness/autonomous-agent.md`)
+- [x] Payload and definition reconciled so both describe one behaviour (`Agent started —` = menu then stop at the list; `Session started —` = restore, report, idle)
+- [x] `MUXCODE_AUTO_STARTUP_TASK=0` opt-out + test (`autoStartupTaskEnabled`, `bus/launch_reason.go`; `TestPreLaunchSetup_AutoStartupTaskOptOut`)
 
 ### Phase 3: Run trigger provenance
 
@@ -159,6 +159,12 @@ delivery-ack cutover replaced, and it would put the safety decision in the least
 | [MUX-139](../backlog/MUX-139-claude-agent-auto-resume.md) | **Ordering constraint** — MUX-139 multiplies restarts, turning one external exit into N spurious runs; this must land first or MUX-139 must suppress the task itself |
 | [MUX-126](../completed/MUX-126-edit-resume-aware-auto-restart.md) | Same family: a restart that does not faithfully reproduce the pre-restart state |
 | [MUX-112](../backlog/MUX-112-idle-task-rescue-closes-live-work.md) | Same class of harm — automation acting on state it has misread, against work already in flight |
+
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-141-auto-agent-restart-relaunches-graph-runs | 27m | 2026-09-30 10:42 |
 
 ## Status
 

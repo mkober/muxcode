@@ -827,6 +827,7 @@ func TestPreLaunchSetup_AutoStartupMessage(t *testing.T) {
 	session := "test-prelaunch-auto"
 	os.Setenv("BUS_DIR_BASE", dir)
 	defer os.Unsetenv("BUS_DIR_BASE")
+	t.Setenv("MUXCODE_AUTO_STARTUP_TASK", "")
 
 	// Init the bus directory so inbox paths exist
 	Init(session, dir)

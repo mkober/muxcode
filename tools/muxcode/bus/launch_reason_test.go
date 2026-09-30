@@ -32,6 +32,34 @@ func seedsAutoTask(m Message) bool {
 	return strings.Contains(m.Payload, "Jira")
 }
 
+// MUX-141 Phase 2: MUXCODE_AUTO_STARTUP_TASK=0 withholds the task even from a
+// user-initiated launch, which then gets the same context-restoration startup
+// a restart does. Only the literal 0 opts out — unset and any other value
+// still seed, so the switch cannot disable the agent by accident.
+func TestPreLaunchSetup_AutoStartupTaskOptOut(t *testing.T) {
+	cases := []struct {
+		name, value string
+		task        bool
+	}{
+		{"opted out", "0", false},
+		{"unset", "", true},
+		{"explicitly on", "1", true},
+		{"not the opt-out value", "false", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("MUXCODE_AUTO_STARTUP_TASK", tc.value)
+			m := autoStartupFor(t, LaunchReasonUser)
+			if got := seedsAutoTask(m); got != tc.task {
+				t.Fatalf("MUXCODE_AUTO_STARTUP_TASK=%q: task seeded = %v, want %v (payload %q)", tc.value, got, tc.task, m.Payload)
+			}
+			if !tc.task && (m.Payload != startupRestorePayload || m.From != "auto" || !HasActionableMessages("test-launch-reason", "auto")) {
+				t.Errorf("opted out: want the actionable self-addressed restore startup, got from %q payload %q", m.From, m.Payload)
+			}
+		})
+	}
+}
+
 // MUX-141 Phase 1: only a user-initiated launch seeds the auto agent's task.
 // Every other reason — the omitted one and an unrecognized one included —
 // seeds the ordinary, still-actionable context-restoration startup.
@@ -50,6 +78,7 @@ func TestPreLaunchSetup_AutoTaskOnlyOnUserReason(t *testing.T) {
 		{"omitted", "", false},
 		{"unrecognized", "User", false},
 	}
+	t.Setenv("MUXCODE_AUTO_STARTUP_TASK", "")
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := autoStartupFor(t, tc.reason)
@@ -181,6 +210,7 @@ func TestLaunchRoads_CarryExplicitReason(t *testing.T) {
 		{"spawn", spawnRoadLaunches(""), LaunchReasonSpawn},
 		{"spawn in worktree", spawnRoadLaunches("/tmp/wt"), LaunchReasonSpawn},
 	}
+	t.Setenv("MUXCODE_AUTO_STARTUP_TASK", "")
 	for _, road := range roads {
 		t.Run(road.name, func(t *testing.T) {
 			session := "launch-road"

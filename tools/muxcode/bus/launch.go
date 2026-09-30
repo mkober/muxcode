@@ -855,9 +855,10 @@ var lookPath = exec.LookPath
 // its post-prompt init phase).
 //
 // The auto agent's task-oriented startup replaces that message only when
-// reason is user-initiated. A restart, reload, mode cycle, resume or unset
-// reason restores context and asks for no work: on 2026-09-02 each restore of
-// a session launched a spec-to-pr run nobody requested (MUX-141).
+// reason is user-initiated and MUXCODE_AUTO_STARTUP_TASK is not 0. A restart,
+// reload, mode cycle, resume or unset reason restores context and asks for no
+// work: on 2026-09-02 each restore of a session launched a spec-to-pr run
+// nobody requested (MUX-141).
 func PreLaunchSetup(role, session, cli string, reason LaunchReason) {
 	m := Message{
 		ID:      NewMsgID(role),
@@ -866,11 +867,11 @@ func PreLaunchSetup(role, session, cli string, reason LaunchReason) {
 		To:      role,
 		Type:    "request",
 		Action:  "startup",
-		Payload: "Session started — review last saved context from memory to restore session state.",
+		Payload: startupRestorePayload,
 	}
-	if role == "auto" && reason.UserInitiated() {
+	if role == "auto" && reason.UserInitiated() && autoStartupTaskEnabled() {
 		m.From = "edit"
-		m.Payload = "Agent started — search Jira for available stories and present them to the user for selection."
+		m.Payload = autoStartupTaskPayload
 	}
 	_ = SendNoCC(session, m)
 

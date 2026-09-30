@@ -3,6 +3,7 @@ package bus
 import (
 	"errors"
 	"fmt"
+	"os"
 )
 
 // LaunchReason names why an agent is being launched. The road that types the
@@ -26,6 +27,22 @@ const (
 // UserInitiated reports whether the launch is a start the user asked for.
 func (r LaunchReason) UserInitiated() bool {
 	return r == LaunchReasonUser
+}
+
+// The two startup payloads PreLaunchSetup seeds. The autonomous-agent
+// definitions tell them apart by their opening words, so a rewording here is
+// a change to agents/autonomous-agent.md and agents/harness/autonomous-agent.md.
+const (
+	startupRestorePayload  = "Session started — review last saved context from memory to restore session state."
+	autoStartupTaskPayload = "Agent started — search Jira for available stories and present them to the user for selection."
+)
+
+// autoStartupTaskEnabled reports whether a user-initiated launch of the auto
+// agent seeds its task. MUXCODE_AUTO_STARTUP_TASK=0 turns the task off on
+// every road, leaving auto available but idle — the quiet alternative to
+// stopping the agent for a user driving commits by hand.
+func autoStartupTaskEnabled() bool {
+	return os.Getenv("MUXCODE_AUTO_STARTUP_TASK") != "0"
 }
 
 // logName is the reason as the launch lifecycle row records it.

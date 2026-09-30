@@ -262,6 +262,7 @@ When running on OpenCode: delegation enforcement uses `DenyTools` permission den
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MUXCODE_AGENT_JQL` | `assignee = currentUser() AND status = 'To Do' ORDER BY priority DESC` | JQL query for finding stories (override for `TASKS.md`) |
+| `MUXCODE_AUTO_STARTUP_TASK` | _(unset)_ | The literal `0` withholds the auto agent's Jira startup task even on a user-initiated launch (`--reason user`); the agent then gets the ordinary `Session started —` startup, restores context and idles. Any other value, or unset, leaves the task on. For users driving stories by hand — the alternative to `agent-health --stop auto`, which buys quiet by losing the agent ([MUX-141](requirements/drafts/MUX-141-auto-agent-restart-relaunches-graph-runs.md)) |
 | `MUXCODE_AGENT_PR_POLL_INTERVAL` | `120` | Seconds between PR approval checks |
 | `MUXCODE_AGENT_PR_MAX_WAIT` | `3600` | Max seconds to wait for PR approval |
 | `MUXCODE_AGENT_MAX_STORIES` | `5` | Max stories to process per session |

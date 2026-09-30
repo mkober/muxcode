@@ -243,6 +243,8 @@ The autonomous agent operates a complete Jira story lifecycle without user inter
 | `muxcode mode switch <mode>` | Jump directly to a specific agent by mode name |
 | `muxcode mode list` | List all registered agents with current indicator |
 
+**Startup**: every launch puts a `startup` action in the agent's inbox, and the launcher chooses its form from **why** the agent was launched (`muxcode agent launch auto --reason <reason>`, [MUX-141](requirements/drafts/MUX-141-auto-agent-restart-relaunches-graph-runs.md)) — the agent never infers that from memory, inbox or pane. `Agent started —` (a user-initiated start, `--reason user`): search Jira, present the stories, stop at the list until the user chooses. `Session started —` (a restart, reload, resume or mode cycle, an omitted reason, or `MUXCODE_AUTO_STARTUP_TASK=0`): restore context, report what would have been resumed, and idle — no Jira search and no delegation until told. Before this, every restore of a session launched a spec-to-pr run nobody asked for (2026-09-02). Defined in `agents/autonomous-agent.md` § Startup (and its `agents/harness/` twin).
+
 **Story lifecycle**: The agent polls Jira for assigned todo stories, creates feature branches, writes requirements docs, opens review PRs, implements approved requirements via build/test/review delegation, and submits implementation PRs. Jira status transitions happen automatically (To Do → In Progress → Done).
 
 **Delegation model**: The agent delegates autonomously to all specialist agents — `commit` (branch, commit, push, PR), `build`, `test`, `review`, `deploy`, `run`, `watch`, and `plan`. All delegations use `--wait` for synchronous responses.
@@ -251,7 +253,7 @@ The autonomous agent operates a complete Jira story lifecycle without user inter
 
 **Story lifecycle skill**: The workflow is defined in `skills/story-lifecycle.md` — users can override it via `.muxcode/skills/story-lifecycle.md` to customize the pipeline (skip requirements PR, add deploy phase, etc.).
 
-**Heartbeat**: The daemon fires a `heartbeat` action to the agent inbox at `MUXCODE_AGENT_HEARTBEAT` interval (default 30 minutes). On heartbeat, the agent checks for higher-priority stories, PR status on open PRs, and stale delegations. Set to `0` to disable.
+**Heartbeat**: The daemon fires a `heartbeat` action to the agent inbox at `MUXCODE_AGENT_HEARTBEAT` interval (default 30 minutes). What the agent does with it depends on its state: while working a story the user confirmed in this conversation, it checks for higher-priority stories, PR status on open PRs, and stale delegations, then writes its state files; while awaiting the user — idle after a `Session started —` restore, with `MUXCODE_AUTO_STARTUP_TASK=0`, or stopped at the story list — it only writes the local idle state files for the console viewer: no Jira search, no PR read, no delegation (`agents/autonomous-agent.md` § Heartbeat). Set to `0` to disable.
 
 **Console viewer**: The left pane shows a Dracula-themed activity log (`muxcode console agent`) with a status header displaying: current story, phase, stories done, uptime, and last heartbeat. Query status programmatically via `muxcode agent status`.
 
