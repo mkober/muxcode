@@ -859,7 +859,14 @@ var lookPath = exec.LookPath
 // reload, mode cycle, resume or unset reason restores context and asks for no
 // work: on 2026-09-02 each restore of a session launched a spec-to-pr run
 // nobody requested (MUX-141).
+//
+// A startup still pending from an earlier launch is retired first, unreceipted:
+// each launch's startup supersedes the last, and a user launch's unread Jira
+// task left behind by a quick restart would otherwise still reach the agent,
+// seeding the very work the restart withholds.
 func PreLaunchSetup(role, session, cli string, reason LaunchReason) {
+	retirePendingStartups(session, role)
+
 	m := Message{
 		ID:      NewMsgID(role),
 		TS:      time.Now().Unix(),
@@ -885,6 +892,19 @@ func PreLaunchSetup(role, session, cli string, reason LaunchReason) {
 		LogLifecycle(session, "info", "agent", "launch",
 			fmt.Sprintf("role=%s cli=%s reason=%s", role, logCLI, reason.logName()))
 	}
+}
+
+// retirePendingStartups removes every unread request:startup from role's inbox
+// without writing a receipt, and logs a `startup-retired` row naming how many.
+func retirePendingStartups(session, role string) {
+	retired, err := receiveMatching(session, role, "", func(m Message) bool {
+		return m.Type == "request" && m.Action == "startup"
+	})
+	if err != nil || len(retired) == 0 || session == "" {
+		return
+	}
+	LogLifecycle(session, "info", "agent", "startup-retired",
+		fmt.Sprintf("role=%s retired=%d superseded by a new launch", role, len(retired)))
 }
 
 // refuseWithoutDefinition is the launcher half of MUX-136's refuse-to-come-up

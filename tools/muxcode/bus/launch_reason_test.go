@@ -95,6 +95,35 @@ func TestPreLaunchSetup_AutoTaskOnlyOnUserReason(t *testing.T) {
 	}
 }
 
+// A restart before the auto agent reads a user launch's Jira task retires that
+// task unreceipted, leaving only the restart's restore startup. The control: a
+// launch with nothing pending seeds one startup and retires nothing else, so an
+// unrelated request queued ahead of it survives.
+func TestPreLaunchSetup_RestartRetiresUnreadTask(t *testing.T) {
+	t.Setenv("MUXCODE_AUTO_STARTUP_TASK", "")
+	dir := t.TempDir()
+	session := "test-launch-retire"
+	t.Setenv("BUS_DIR_BASE", dir)
+	Init(session, dir)
+
+	other := NewMessage("edit", "auto", "request", "implement", "unrelated", "")
+	_ = SendNoCC(session, other)
+	PreLaunchSetup("auto", session, "claude", LaunchReasonUser)
+	task, _ := Peek(session, "auto")
+	if len(task) != 2 || !seedsAutoTask(task[1]) {
+		t.Fatalf("user launch: want the queued request plus the Jira task, got %+v", task)
+	}
+
+	PreLaunchSetup("auto", session, "claude", LaunchReasonRestart)
+	msgs, _ := Peek(session, "auto")
+	if len(msgs) != 2 || msgs[0].ID != other.ID || msgs[1].Payload != startupRestorePayload {
+		t.Fatalf("after restart: want the unrelated request then the restore startup, got %+v", msgs)
+	}
+	if ds, err := ReadDeliveryStatus(session, task[1].ID); err == nil && ds.AckedAt > 0 {
+		t.Errorf("retired task carries a receipt (%+v); nobody read it", ds)
+	}
+}
+
 // typedLaunchArgs returns the arguments a typed launch command hands to
 // `muxcode agent launch`, whatever shell prefix the road puts before it.
 func typedLaunchArgs(t *testing.T, command string) []string {

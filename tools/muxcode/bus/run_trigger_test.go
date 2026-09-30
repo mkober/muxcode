@@ -20,20 +20,26 @@ func triggerTestBus(t *testing.T) {
 	}
 }
 
-func seedRequest(t *testing.T, from, to, msgType, action string) {
+func seedRequest(t *testing.T, from, to, msgType, action string) string {
 	t.Helper()
-	if err := SendNoCC(runTestSession, NewMessage(from, to, msgType, action, "payload", "")); err != nil {
+	m := NewMessage(from, to, msgType, action, "payload", "")
+	if err := SendNoCC(runTestSession, m); err != nil {
 		t.Fatalf("send %s:%s to %s: %v", msgType, action, to, err)
 	}
+	return m.ID
 }
 
-func seedSpawnWorker(t *testing.T, spawnRole, runID string) {
+// seedSpawnWorker registers a running worker for runID and sends it its seed.
+// Returns the seed's message id.
+func seedSpawnWorker(t *testing.T, spawnRole, runID string) string {
 	t.Helper()
+	seed := seedRequest(t, "edit", spawnRole, "request", "spawn-task")
 	if err := WriteSpawnEntries(runTestSession, []SpawnEntry{
-		{ID: "1-" + spawnRole, SpawnRole: spawnRole, RunID: runID, Status: "running"},
+		{ID: "1-" + spawnRole, SpawnRole: spawnRole, RunID: runID, Status: "running", SeedMsgID: seed},
 	}); err != nil {
 		t.Fatal(err)
 	}
+	return seed
 }
 
 // dispatchParentNode starts a parent run as the user and ticks it once, so its
@@ -104,12 +110,20 @@ func TestDeriveRunTrigger(t *testing.T) {
 		}, RunTriggerStartup, "restart", true},
 		{"worker of another run", "spawn-abcd1234", func(t *testing.T) string {
 			seedSpawnWorker(t, "spawn-abcd1234", triggerParentRun)
-			seedRequest(t, "edit", "spawn-abcd1234", "request", "spawn-task")
 			return ""
 		}, RunTriggerGraphEdge, triggerParentRun, false},
+		{"parked worker, its seed answered", "spawn-abcd1234", func(t *testing.T) string {
+			seed := seedSpawnWorker(t, "spawn-abcd1234", triggerParentRun)
+			MarkResponded(runTestSession, seed, "reply-1")
+			return ""
+		}, RunTriggerBusRequest, "edit: spawn-task", true},
+		{"worker whose seed a later request superseded", "spawn-abcd1234", func(t *testing.T) string {
+			seedSpawnWorker(t, "spawn-abcd1234", triggerParentRun)
+			seedRequest(t, "review", "spawn-abcd1234", "request", "unrelated")
+			return ""
+		}, RunTriggerBusRequest, "review: unrelated", true},
 		{"worker tied to no run", "spawn-abcd1234", func(t *testing.T) string {
 			seedSpawnWorker(t, "spawn-abcd1234", "")
-			seedRequest(t, "edit", "spawn-abcd1234", "request", "spawn-task")
 			return ""
 		}, RunTriggerBusRequest, "edit: spawn-task", true},
 		{"typed at the Prompt surface", "prompt", func(t *testing.T) string {
@@ -242,5 +256,38 @@ func TestDescribeRunTrigger_InferredGraphEdge(t *testing.T) {
 		if strings.Contains(inferred, reserved) {
 			t.Errorf("inferred trigger %q uses the creator's word %q", inferred, reserved)
 		}
+	}
+}
+
+// scanLinesBackward yields every line last-first across chunk boundaries — a
+// line longer than a chunk included — skips blanks, reads a final line with no
+// newline, and stops the moment visit declines.
+func TestScanLinesBackward(t *testing.T) {
+	long := strings.Repeat("x", 150<<10)
+	path := t.TempDir() + "/log"
+	if err := os.WriteFile(path, []byte("first\n"+long+"\n\nthird\nlast"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	if err := scanLinesBackward(path, func(line []byte) bool {
+		got = append(got, string(line))
+		return true
+	}); err != nil {
+		t.Fatalf("scanLinesBackward: %v", err)
+	}
+	if want := []string{"last", "third", long, "first"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("lines = %d %.40q, want %d last-first", len(got), got, len(want))
+	}
+
+	got = nil
+	_ = scanLinesBackward(path, func(line []byte) bool {
+		got = append(got, string(line))
+		return len(got) < 2
+	})
+	if len(got) != 2 || got[1] != "third" {
+		t.Errorf("early stop visited %.40q, want [last third]", got)
+	}
+	if err := scanLinesBackward(path+".missing", func([]byte) bool { t.Error("visited a missing file"); return true }); err != nil {
+		t.Errorf("missing file: %v", err)
 	}
 }
