@@ -170,6 +170,8 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 |----|-------|----------|------------|
 | [`MUX-157`](./MUX-157-role-boundary-an-agent-can-ignore.md) | A Role Boundary an Agent Can Ignore Is Not a Boundary | High | — |
 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard Rules and the Local-LLM Allowlist Are Bypassable by Command Shape | Medium | — |
+| [`MUX-199`](./MUX-199-remove-f2-mode-cycling.md) | Remove F2 Mode Cycling (modal windows behind a toggle replace it) | Medium | ⇄ [MUX-146](./MUX-146-remove-research-and-auto-agents.md) |
+| [`MUX-200`](./MUX-200-live-agent-test-auto-startup-behaviour.md) | Live-Agent Test of Auto Startup and Restore Behaviour | Low | [MUX-141](../drafts/MUX-141-auto-agent-restart-relaunches-graph-runs.md) |
 | [`MUX-146`](./MUX-146-remove-research-and-auto-agents.md) | Remove the Research and Auto Agents | Medium | — |
 | [`MUX-119`](./MUX-119-graph-routes-edit-work-off-the-edit-agent.md) | Keep the Edit Agent Free While a Graph Runs | Medium | — |
 | [`MUX-118`](./MUX-118-rename-edit-role-to-code.md) | Rename the F2 `edit` Role to `code`, and "editor" to "coder" | Medium | — |

@@ -71,10 +71,10 @@ paths must suppress the auto startup task from the outset.
 
 ### Acceptance criteria
 
-- [x] A **restart or restore** of the `auto` agent does not begin autonomous work: no Jira sweep that leads into a run, and no graph launch (seed gated on `--reason user`; definition § Startup tells a restarted agent to idle)
+- [x] A **restart or restore** of the `auto` agent does not begin autonomous work: no Jira sweep that leads into a run, and no graph launch (seed gated on `--reason user`; definition § Startup tells a restarted agent to idle — launcher side verified; the live agent's conduct is [outstanding](#outstanding-live-agent-behaviour))
 - [x] A genuine **user-initiated** start still works exactly as today — the agent is useful without being told to begin (`TestPreLaunchSetup_AutoTaskOnlyOnUserReason`, case `user`)
 - [x] The two cases are distinguished by an explicit signal carried into `PreLaunchSetup`, not inferred from timing, inbox contents or pane state (`--reason`, `bus.LaunchReason`) (see [Decision 1](#decision-1-the-launcher-knows-why-it-is-launching-so-it-should-say-so))
-- [x] On a restart, `auto` restores context like every other role and then **idles**, reporting what it would have resumed (`agents/autonomous-agent.md` § Startup, `Session started —` row; harness twin matches)
+- [x] On a restart, `auto` restores context like every other role and then **idles**, reporting what it would have resumed (`agents/autonomous-agent.md` § Startup, `Session started —` row; harness twin matches — the definition says so; that a live agent does so is [outstanding](#outstanding-live-agent-behaviour))
 - [x] The `startup` payload and the agent definition are reconciled so both describe the same behaviour — whichever is chosen, the disagreement in [The seed message and the definition disagree](#the-seed-message-and-the-definition-disagree) does not survive this spec
 - [x] A graph run launched by the auto agent records **what triggered it** (user request vs startup) in the run record and a lifecycle event, so a spurious run is diagnosable rather than merely cancellable (`run.json` `trigger`/`trigger_detail`/`trigger_inferred`, `graph-run-created … triggered by:`; an agent trigger is inferred from its last bus request — context, not proven cause — see [Agent Bus CLI](../../agent-bus.md#muxcode-graph))
 - [x] `MUXCODE_AUTO_STARTUP_TASK=0` (or equivalent) disables the startup task entirely, for users driving commits by hand — the documented alternative to `agent-health --stop auto`, which currently costs the agent's availability to buy quiet
@@ -142,15 +142,39 @@ delivery-ack cutover replaced, and it would put the safety decision in the least
 
 ### Phase 4: Integration test
 
-- [ ] Create `scripts/test-auto-startup-gating.sh` — hermetic: scratch bus, tmux session and daemon
-- [ ] User-initiated launch: assert the auto task message **is** seeded
-- [ ] Daemon auto-restart of `auto`: assert the task message is **not** seeded, a context-restoration startup **is**, and **no graph run is created**
-- [ ] Reload and mode-cycle: same as restart
-- [ ] **Negative control:** with the opt-out set, even a user-initiated launch seeds no task
-- [ ] **Regression control:** a genuine user-initiated launch still reaches the Jira-search behaviour, so the fix cannot be "disable the agent"
-- [ ] Assert an omitted reason behaves as a restart
-- [ ] Coverage floor set to the maximum achievable count so a skipped section cannot report green
-- [ ] Run the script and confirm all checks pass
+- [x] Create `scripts/test-auto-startup-gating.sh` — hermetic: scratch bus, tmux session and daemon
+- [x] User-initiated launch: assert the auto task message **is** seeded (section F)
+- [x] Daemon auto-restart of `auto`: assert the task message is **not** seeded and a context-restoration startup **is** (section D; the launch row reads `reason=restart`). Whether the live agent then creates no graph run is not something the stub can show — recorded under [live agent behaviour](#outstanding-live-agent-behaviour)
+- [x] Reload and mode-cycle: same as restart (sections A, B)
+- [x] **Negative control:** with the opt-out set, even a user-initiated launch seeds no task (section G)
+- [x] **Regression control:** `--reason user` seeds the `Agent started —` Jira task and the live agent's listener consumes it with an `acked` receipt; the definition in the launch argv carries both payload openings, so payload and definition still agree (section F)
+- [x] **Live behaviour follow-up:** a user-started agent actually searches Jira, and a restored or opted-out one actually stays idle — not provable with the stub; deferred to [MUX-200](../backlog/MUX-200-live-agent-test-auto-startup-behaviour.md) (user decision, 2026-09-30); see [live agent behaviour](#outstanding-live-agent-behaviour)
+- [x] Assert an omitted reason behaves as a restart (section C, lifecycle row `reason=unset`)
+- [x] Coverage floor set to the maximum achievable count so a skipped section cannot report green (floor `-ge 55`, line 285; the review fix dropped five non-discriminating checks, and the revised script passes exactly 55 — run agent and watch confirmed, `test-auto-startup-gating-2.log`)
+- [x] Run the script and confirm all checks pass (run agent, 2026-09-30: exit 0, 55 passed, 0 failed on the revised script; the earlier 60/60 was the pre-fix version)
+
+#### Resolved: the default session launches `auto` by mode cycle — superseded by MUX-199
+
+In a default session `auto` is first launched by the F2 mode cycle (`mode.go:353`,
+`LaunchReasonModeCycle`), which this spec classes as *not* user-initiated, so a default session never
+seeds the Jira story search. Flagged by the Phase 4 worker, 2026-09-30. **Decided the same day**: the
+user is removing F2 mode cycling altogether — second agents will run in modal windows behind a toggle,
+launched `--reason user` on the keypress, as the `api` modal already does. Filed as
+[MUX-199](../backlog/MUX-199-remove-f2-mode-cycling.md); nothing in this spec changes for it, and the
+mode-cycle reason goes with that road.
+
+#### Outstanding: live agent behaviour
+
+`scripts/test-auto-startup-gating.sh` scopes its claims to the **launcher and message delivery**: it
+execs `scripts/fixtures/claude-stub` as `claude`, which drains its inbox and prints prompts but never
+interprets the definition, searches Jira or starts a run. So no hermetic check covers whether a restored
+or opted-out `auto` agent actually stays idle — in particular that **no graph run is created after a
+restart**, the defect's own symptom — or whether a user-started one actually searches Jira. The
+code removes the seed and the definition says what to do; the model's conduct on a real launch is
+observed, not tested. A live check (a real `claude` behind `MUXCODE_TEST_LIVE=1`, or the first genuine
+restart after this ships, read from the lifecycle log and `graph status … Triggered by:`) is the way to
+close it; no criterion above is ticked on the strength of the script for that behaviour. Deferred to
+[MUX-200](../backlog/MUX-200-live-agent-test-auto-startup-behaviour.md), 2026-09-30.
 
 ## Related
 
@@ -164,7 +188,7 @@ delivery-ack cutover replaced, and it would put the safety decision in the least
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-141-auto-agent-restart-relaunches-graph-runs | 46m | 2026-09-30 11:13 |
+| MUX-141-auto-agent-restart-relaunches-graph-runs | 1h 14m | 2026-09-30 13:23 |
 
 ## Status
 
