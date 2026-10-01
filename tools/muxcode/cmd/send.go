@@ -134,6 +134,12 @@ func Send(args []string) {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", deny)
 			os.Exit(1)
 		}
+		cwd, _ := os.Getwd()
+		if deny := bus.CheckCrossTree(session, to, cwd); deny != "" {
+			bus.LogLifecycle(session, "warn", "bus", "cross-tree-refused", from+"→"+to+":"+action)
+			fmt.Fprintf(os.Stderr, "Error: %s\n", deny)
+			os.Exit(1)
+		}
 	}
 
 	// Loop suppression: drop repeated identical agent-to-agent relay requests

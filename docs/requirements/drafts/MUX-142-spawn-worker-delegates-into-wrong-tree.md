@@ -94,8 +94,10 @@ request that looks ordinary. Nothing in a lifecycle log distinguishes it from a 
       in its own worktree, or reports that it cannot
 - [x] The prohibition reaches every spawn of a delegating role, **not just the two nodes in
       `spec-to-pr`** — a fix that only edits template message strings does not satisfy this
-- [ ] A delegated build/test that would answer about a **different tree than the requester's** either
+- [x] A delegated build/test that would answer about a **different tree than the requester's** either
       carries the requester's tree or **fails loudly**; it never answers silently about the wrong one
+      (fails loudly: `CheckCrossTree`, `bus/cross_tree.go`, refuses at `muxcode send` with both trees
+      named — CLI sends only; the message still carries no tree)
 - [x] The interactive `edit` agent's orchestration behaviour is **unchanged** — it still delegates
       build → test → review from the main checkout
 - [x] **Negative control:** a spawn that legitimately needs a peer agent (one whose work is not
@@ -416,13 +418,21 @@ stopped and reused, without touching the delegation guard or the tree question.
 
 ### Phase 3: Make a cross-tree answer impossible to mistake (Defect 2)
 
-- [ ] Decide and implement: carry the requester's tree on the message, or detect and refuse a
-      mismatch at the receiver
-- [ ] Emit a lifecycle event when a cross-tree request is refused or redirected, so this is visible
-      in a log rather than inferred from a pane
-- [ ] Confirm the MUX-136 review-agent case is covered — a review requested from a worktree must not
-      silently review main
-- [ ] Unit test with a negative control: same-tree requests are untouched
+- [x] Decide and implement: carry the requester's tree on the message, or detect and refuse a
+      mismatch at the receiver — **refused at send** (`cmd/send.go`, requests to `build`/`test`/`review`
+      only): the CLI compares its cwd's git toplevel with the receiving agent's pane cwd toplevel, so a
+      subdirectory of the same checkout is the same tree. Only the CLI checks — a daemon send runs in the
+      daemon's cwd, so graph dispatches are unchanged. Fails **open** when either tree cannot be resolved;
+      `MUXCODE_CROSS_TREE_GUARD=0` opts out for a deliberate cross-tree delegation
+- [x] Emit a lifecycle event when a cross-tree request is refused or redirected, so this is visible
+      in a log rather than inferred from a pane (`cross-tree-refused`, warn, detail `from→to:action`;
+      once per request, since the CLI exits 1 on refusal)
+- [x] Confirm the MUX-136 review-agent case is covered — a review requested from a worktree must not
+      silently review main (`review` is one of the three tree-scoped roles;
+      `TestCheckCrossTree_RefusesWorktreeToMainCheckout` on real git worktrees)
+- [x] Unit test with a negative control: same-tree requests are untouched
+      (`AllowsSameTreeFromSubdirectory`, plus `AllowsNonTreeScopedPeer`, `FailsOpenWhenTreeUnresolvable`,
+      `DisabledByEnv`)
 
 ### Phase 4: Fold the finding back into the affected specs
 
@@ -449,6 +459,12 @@ stopped and reused, without touching the delegation guard or the tree question.
 - [ ] A worker that cannot verify in its own tree reports that fact rather than a green
 - [ ] Coverage floor so a skipped section cannot report green
 - [ ] Run it and confirm every check executes
+
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-142-spawn-worker-delegates-into-wrong-tree | 22m | 2026-09-30 14:52 |
 
 ## Status
 
