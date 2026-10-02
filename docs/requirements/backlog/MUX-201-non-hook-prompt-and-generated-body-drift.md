@@ -1,5 +1,7 @@
 # MUX-201: Non-Hook Prompt Text and Generated Agent Bodies Drift From the Definition
 
+**Tracking:** [mkober/muxcode#107](https://github.com/mkober/muxcode/issues/107)
+
 Two injection paths carry role instructions to a non-hook provider (OpenCode, scrape-road Codex,
 local), and neither follows the agent definition when it changes. `bus/prompt.go`'s
 `Manual Bus Messaging` block tells an `edit` agent, unconditionally, to orchestrate build → test →

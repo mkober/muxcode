@@ -1,5 +1,7 @@
 # A Spawned Worker Delegates Build and Test Into the Wrong Tree
 
+**Tracking:** [mkober/muxcode#106](https://github.com/mkober/muxcode/issues/106)
+
 A graph `spawn` node launches its worker with the **`edit` role definition**, which instructs the
 agent to delegate build, test and review over the bus. The worker obeys — it has no way to know it
 is a graph node whose `build`, `test` and `review` are separate downstream nodes. The delegated
