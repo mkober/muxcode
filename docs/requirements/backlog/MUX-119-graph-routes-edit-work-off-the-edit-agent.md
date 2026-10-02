@@ -28,6 +28,15 @@ target `edit`, but **they do not behave alike**:
 not a running pane. Four of the five "edit steps" therefore already run isolated and never touch the
 user's edit pane.
 
+> **Qualification (2026-10-01, from [MUX-142](../drafts/MUX-142-spawn-worker-delegates-into-wrong-tree.md) Defect 1).** "Isolated" above is
+> **pane** isolation, which is this spec's question. It is **not** delegation isolation: a spawn worker
+> launched from the `edit` definition reached back into the shared `build`/`test`/`review` agents and
+> was answered about main. Current state: graph spawns take **no worktree** and run in the session
+> checkout (`bus/graph_exec.go`, `StartSpawnOwned(…, false, …)`), and `CheckGraphNodeAuthority`
+> (`bus/graph_authority.go`, enforced in `Send`) refuses a spawn's request to any `role:action` its
+> running run owns as a send node. The table is right for its own question; do not read it as a general
+> isolation claim.
+
 Only the `send` node lands a message in `inbox/edit.jsonl`, where the daemon wakes the interactive
 agent and the user loses it for the duration.
 

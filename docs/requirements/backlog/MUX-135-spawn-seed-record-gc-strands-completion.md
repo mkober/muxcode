@@ -131,6 +131,10 @@ the work most worth not losing: the long, substantial iterations.
 - [ ] Coverage floor equal to the achievable maximum so a short-circuited run cannot report green
 - [ ] Run it and record passed/failed/exit code here
 
+## Related
+
+- [MUX-142](../drafts/MUX-142-spawn-worker-delegates-into-wrong-tree.md) — same family: a spawn worker the executor launched delegating tree-scoped checks back to the shared agents (Defect 1, enforced by `CheckGraphNodeAuthority`) and the tree-less bus behind it (Defect 2, `CheckCrossTree`)
+
 ## Status
 
 Backlog

@@ -434,14 +434,36 @@ stopped and reused, without touching the delegation guard or the tree question.
       (`AllowsSameTreeFromSubdirectory`, plus `AllowsNonTreeScopedPeer`, `FailsOpenWhenTreeUnresolvable`,
       `DisabledByEnv`)
 
+#### What landed for Phase 3 (committed `4cf984a`, 2026-09-30)
+
+`bus/cross_tree.go` `CheckCrossTree`: `muxcode send` refuses a `build`/`test`/`review` request whose
+sender cwd is in a different git tree (toplevel compare) than the receiving agent's pane, with both
+trees named; logs `cross-tree-refused`; fails open when either tree cannot be resolved;
+`MUXCODE_CROSS_TREE_GUARD=0` opts out. Wired in `cmd/send.go`; tests in `bus/cross_tree_test.go`.
+Built, tested and reviewed green by the run before the Phase 3 commit.
+
+#### Interim template-shadow workaround — SUPERSEDED, do not apply
+
+Recorded for history only. Before the fix, a user could shadow the template per project:
+`muxcode graph export spec-to-pr > /tmp/spec-to-pr.json`, add an explicit no-delegation instruction to
+the `implement` and `fix` messages, then `muxcode graph create /tmp/spec-to-pr.json --scope project`
+(`cmd/graph.go` `export`/`create`; takes effect on the next run; touches `.muxcode/graphs/`, not repo
+source). **Superseded**: Defect 1 is enforced mechanically — `CheckGraphNodeAuthority` plus the
+`[graph run … · node …]` ownership preamble on every graph spawn message — and the workaround never
+addressed Defect 2. A project that still carries such a shadow should delete it, or it will mask the
+builtin's later changes.
+
 ### Phase 4: Fold the finding back into the affected specs
 
-- [ ] Add a note to [MUX-119](../backlog/MUX-119-graph-routes-edit-work-off-the-edit-agent.md) qualifying the
+- [x] Add a note to [MUX-119](../backlog/MUX-119-graph-routes-edit-work-off-the-edit-agent.md) qualifying the
       "isolated" classification of `implement`/`fix` — pane-isolated, not delegation-isolated
-- [ ] Cross-link from the spawn-family specs ([MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md),
+- [x] Cross-link from the spawn-family specs ([MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md),
       [MUX-135](../backlog/MUX-135-spawn-seed-record-gc-strands-completion.md))
-- [ ] Update `CLAUDE.md`'s graph-orchestration constraint if the fix changes what a spawn may do
-- [ ] Record the interim workaround for users hitting this before the fix lands:
+- [x] Update `CLAUDE.md`'s graph-orchestration constraint if the fix changes what a spawn may do
+      (the Workers sentence: no worktree, `CheckGraphNodeAuthority` refuses requests to roles the run
+      owns while unowned peers stay reachable, `CheckCrossTree` with `MUXCODE_CROSS_TREE_GUARD=0`)
+- [x] Record the interim workaround for users hitting this before the fix lands (recorded above as
+      SUPERSEDED, do not apply):
       `muxcode graph export spec-to-pr > /tmp/spec-to-pr.json`, add an explicit no-delegation
       instruction to the `implement` and `fix` messages, then
       `muxcode graph create /tmp/spec-to-pr.json --scope project` — **verified to exist**
@@ -464,7 +486,7 @@ stopped and reused, without touching the delegation guard or the tree question.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-142-spawn-worker-delegates-into-wrong-tree | 22m | 2026-09-30 14:52 |
+| MUX-142-spawn-worker-delegates-into-wrong-tree | 34m | 2026-10-01 12:07 |
 
 ## Status
 
