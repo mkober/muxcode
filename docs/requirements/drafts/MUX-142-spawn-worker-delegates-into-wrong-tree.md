@@ -104,8 +104,11 @@ request that looks ordinary. Nothing in a lifecycle log distinguishes it from a 
       tree-scoped) is still able to reach it
 - [x] **Negative control:** a normal non-spawn graph run is unchanged — no extra nodes, no added
       latency, no new alerts
-- [ ] The harvested worker report cannot present a delegated green as its own verification — if the
-      worker did not run the check in its own tree, the report says so
+- [x] The harvested worker report cannot present a delegated green as its own verification — if the
+      worker did not run the check in its own tree, the report says so — **met by making the delegated
+      green unreachable**, not by wording: a graph worker's send to an owned role is refused
+      (`CheckGraphNodeAuthority`), a worktree worker's send to a tree-scoped role is refused
+      (`CheckCrossTree`, section E), and a same-tree send is a green about the worker's own tree
 
 ### Key files
 
@@ -471,22 +474,31 @@ builtin's later changes.
 
 ### Phase 5: Integration test
 
-- [ ] Create `scripts/test-spawn-no-cross-tree-delegation.sh`
-- [ ] A spawn worker in a worktree attempting a tree-scoped delegation is refused/redirected — assert
-      the mechanism, not a log string
-- [ ] **Negative control:** the interactive `edit` agent delegating build/test from the main checkout
-      still succeeds — a fix that blocks both passes the first check and must fail here
-- [ ] **Negative control:** a spawn's non-tree-scoped peer message still delivers
-- [ ] Cross-tree refusal emits its lifecycle event exactly once per request (no re-drive storm)
-- [ ] A worker that cannot verify in its own tree reports that fact rather than a green
-- [ ] Coverage floor so a skipped section cannot report green
-- [ ] Run it and confirm every check executes
+- [x] Create `scripts/test-spawn-no-cross-tree-delegation.sh` (hermetic: scratch bus, scratch git repo
+      with a real worktree, tagged scratch tmux panes, no daemon; **deviation noted in its header**: graph
+      workers take no worktree now, so the refused worker is the CLI-spawn shape, and the graph-owned-role
+      refusal is covered by `bus/graph_authority_test.go`)
+- [x] A spawn worker in a worktree attempting a tree-scoped delegation is refused/redirected — assert
+      the mechanism, not a log string (section A: non-zero exit, no inbox row, no task, for build, test
+      and review)
+- [x] **Negative control:** the interactive `edit` agent delegating build/test from the main checkout
+      still succeeds — a fix that blocks both passes the first check and must fail here (section B, from
+      the checkout and from a subdirectory of it)
+- [x] **Negative control:** a spawn's non-tree-scoped peer message still delivers (section C, to plan)
+- [x] Cross-tree refusal emits its lifecycle event exactly once per request (no re-drive storm)
+      (section D: one `cross-tree-refused` row per refused request, nothing left to re-drive)
+- [x] A worker that cannot verify in its own tree reports that fact rather than a green (section E: a
+      refused `--wait` returns non-zero at once naming both trees, so no delegated green can reach it;
+      section F: `MUXCODE_CROSS_TREE_GUARD=0` lets the same request through, proving the guard refused)
+- [x] Coverage floor so a skipped section cannot report green (exactly 19)
+- [x] Run it and confirm every check executes (run agent, 2026-10-02: exit 0, 19 passed, 0 failed, floor 19;
+      requires the installed binary to carry `CheckCrossTree`, so `./build.sh` first)
 
 ## Time Tracking
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-142-spawn-worker-delegates-into-wrong-tree | 34m | 2026-10-01 12:07 |
+| MUX-142-spawn-worker-delegates-into-wrong-tree | 50m | 2026-10-02 15:26 |
 
 ## Status
 
