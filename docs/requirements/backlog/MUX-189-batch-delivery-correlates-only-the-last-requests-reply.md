@@ -1,5 +1,7 @@
 # MUX-189: Batch Delivery Correlates Only the Last Request's Reply
 
+**Tracking:** [mkober/muxcode#143](https://github.com/mkober/muxcode/issues/143)
+
 On the Codex and OpenCode injection roads a batch of inbox messages is rendered into one payload,
 and the reply instruction at the end of it names **one** request id — the last request in the batch.
 An agent that receives requests A and B together is told to reply to B; A's task never sees a

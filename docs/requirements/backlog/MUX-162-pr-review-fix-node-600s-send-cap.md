@@ -1,5 +1,7 @@
 # The PR-Review Fix Node Dies on the 600 s Send Cap
 
+**Tracking:** [mkober/muxcode#125](https://github.com/mkober/muxcode/issues/125)
+
 The `commit-pr-review-loop` template's node `c` — *"Address the PR review comments"* — is a `send`
 to edit with no `timeout_secs`, so it inherits the task store's 600 s default. Addressing review
 feedback routinely takes longer than that: the fix runs its own build→test→review rounds before it

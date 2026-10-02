@@ -1,5 +1,7 @@
 # A Run Builds on a Stale Base — Branch Freshness Is a Note, Not a Gate
 
+**Tracking:** [mkober/muxcode#127](https://github.com/mkober/muxcode/issues/127)
+
 `spec-to-pr` starts at `implement` and nothing on the way asks how far the branch has fallen behind
 `main`. On 2026-09-09 a branch cut on July 10 and idle for six weeks was resumed against a subsystem
 that eight squash-merges had rebuilt in the meantime; plan had written "8 behind, sync needed" into

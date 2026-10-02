@@ -1,5 +1,7 @@
 # Messages Route to a Role With No Window, and Diagnose Prescribes an Impossible Fix
 
+**Tracking:** [mkober/muxcode#115](https://github.com/mkober/muxcode/issues/115)
+
 The daemon routed 11 analyze events over 4.6 hours to a role that **has no window in the session**, so
 nothing could ever consume them. `muxcode diagnose` then reported the pile as a critical `receipt-gap`
 and prescribed `muxcode deliver analyze --force` — a remediation that targets a pane which does not

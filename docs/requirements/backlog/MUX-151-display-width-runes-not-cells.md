@@ -1,5 +1,7 @@
 # MUX-151: Display Width Is Measured in Runes, Not Terminal Cells
 
+**Tracking:** [mkober/muxcode#118](https://github.com/mkober/muxcode/issues/118)
+
 Every width calculation in the tree counts runes and assumes one rune renders in one terminal
 cell. Wide characters — CJK, most emoji — occupy **two** cells, so any string containing them is
 measured at half its rendered width and overflows the surface it was fitted to. Review's concrete

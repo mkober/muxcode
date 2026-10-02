@@ -1,6 +1,8 @@
 # A Graph-Dispatched Atlassian Write Is Judged on Configuration, Not on the Gate
 
-**Tracking:** filed 2026-09-13 by plan on the user's request relayed by edit (`1789323849`) — MUX-144's
+**Tracking:** [mkober/muxcode#139](https://github.com/mkober/muxcode/issues/139)
+
+**Provenance:** filed 2026-09-13 by plan on the user's request relayed by edit (`1789323849`) — MUX-144's
 Phase 4 step 5, extracted into its own spec on the user's decision. Every claim below was verified by
 plan against this repo at `23d2804`.
 

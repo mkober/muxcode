@@ -1,6 +1,8 @@
 # The PII Scrub Role Gate Has No Call Site on the Bus Road
 
-**Tracking:** filed 2026-09-11 by plan on the user's request relayed by commit (`1789143390`), from a
+**Tracking:** [mkober/muxcode#137](https://github.com/mkober/muxcode/issues/137)
+
+**Provenance:** filed 2026-09-11 by plan on the user's request relayed by commit (`1789143390`), from a
 credential leak plan caused while diagnosing [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md).
 Verified in code before filing.
 

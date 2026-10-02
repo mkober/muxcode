@@ -1,5 +1,7 @@
 # Idle-Task Rescue Closes Tasks That Are Still Running
 
+**Tracking:** [mkober/muxcode#46](https://github.com/mkober/muxcode/issues/46)
+
 The daemon treats "agent sitting at the `❯` prompt" as "agent finished without answering". An agent
 that launched background work — a long script, a `run_in_background` command — is at the prompt
 precisely *because* the work is still going. The rescue path then scrapes its pane, sends the

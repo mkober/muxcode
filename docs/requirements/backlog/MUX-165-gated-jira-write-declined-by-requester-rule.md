@@ -1,5 +1,7 @@
 # A Gate-Approved Jira Write Is Declined Because the Rule Checks the Messenger, Not the Consent
 
+**Tracking:** [mkober/muxcode#126](https://github.com/mkober/muxcode/issues/126)
+
 A `wait_human` gate is the graph's consent instrument: a person releases it, the executor verifies
 the person (`CheckGateApprovalAuthority`), and the nodes behind it run. Plan's Jira rule has a
 different consent instrument: a write happens only on "an explicit user-initiated request relayed

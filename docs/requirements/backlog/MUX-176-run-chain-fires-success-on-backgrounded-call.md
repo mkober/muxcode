@@ -1,6 +1,8 @@
 # The Run Chain Reported Success Three Minutes Before the Script Finished — and It Failed
 
-**Tracking:** filed 2026-09-10 on the user's explicit request. Same class as the 2026-09-09 precheck
+**Tracking:** [mkober/muxcode#134](https://github.com/mkober/muxcode/issues/134)
+
+**Provenance:** filed 2026-09-10 on the user's explicit request. Same class as the 2026-09-09 precheck
 incident already recorded in `CLAUDE.md` (a lone passing `go vet` fired test→review before the suite
 ran), and the reason the test precheck now feeds the chain only on failure.
 

@@ -1,6 +1,8 @@
 # The Daemon Notifies a Windowless Role Forever, and Its Inbox Grows Unbounded
 
-**Tracking:** filed 2026-09-11 by plan on the user's request relayed by edit (`1789155218`). Every
+**Tracking:** [mkober/muxcode#138](https://github.com/mkober/muxcode/issues/138)
+
+**Provenance:** filed 2026-09-11 by plan on the user's request relayed by edit (`1789155218`). Every
 figure below verified in the primary records before filing.
 
 A role can be **configured without being launched**. `analyze` is set to `codex`/`gpt-5.6-sol` and has

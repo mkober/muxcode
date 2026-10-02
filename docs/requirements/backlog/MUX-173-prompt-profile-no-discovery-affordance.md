@@ -1,5 +1,7 @@
 # The Prompt Profile Denies Its Own Discovery Commands
 
+**Tracking:** [mkober/muxcode#131](https://github.com/mkober/muxcode/issues/131)
+
 The `prompt` tool profile (`bus/profile.go:909–921`) lists twelve `muxcode` subcommand patterns, every
 one of them requiring a subcommand argument — `Bash(muxcode graph *)`, `Bash(muxcode send *)`, and so
 on. Nothing matches bare `muxcode` or `muxcode help`. A local model that opens by orienting itself,

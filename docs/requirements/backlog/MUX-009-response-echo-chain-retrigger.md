@@ -1,5 +1,7 @@
 # Response Echo Chain Retrigger
 
+**Tracking:** [mkober/muxcode#9](https://github.com/mkober/muxcode/issues/9)
+
 On non-hook providers (OpenCode, Codex), `SendWakeUp` injects `type: response` payloads into the agent's TUI composer as if they were prompts — so an agent receiving its own delegation's *answer* treats it as an instruction and re-fires the chain. Observed live: `build` re-sent `request:test` five times in ~3.5 minutes with nobody asking, because every `test` response injected back into `build` read as "run tests".
 
 ## Context

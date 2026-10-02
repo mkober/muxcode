@@ -1,5 +1,7 @@
 # Diagnose False Clean Verdict
 
+**Tracking:** [mkober/muxcode#6](https://github.com/mkober/muxcode/issues/6)
+
 `muxcode diagnose` reports a dead agent as healthy: the report prints `State: dead` in its evidence section, then concludes `✅ No issues detected` and exits 0. The command exists to be run when an agent is not responding — dead is the single most likely reason, and the one case it cannot name.
 
 ## Context

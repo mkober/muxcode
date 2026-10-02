@@ -1,5 +1,7 @@
 # `upgrade-daemons` Cannot See the Daemons From a Codex Build Agent
 
+**Tracking:** [mkober/muxcode#124](https://github.com/mkober/muxcode/issues/124)
+
 `./build.sh` ends with `muxcode upgrade-daemons`, the rollout that makes a long-lived daemon re-exec
 the binary just installed. Daemon discovery is `ps -axo pid=,command=`, and the Codex build sandbox
 refuses to exec `/bin/ps`. So when the build role runs on codex — the configuration this project has

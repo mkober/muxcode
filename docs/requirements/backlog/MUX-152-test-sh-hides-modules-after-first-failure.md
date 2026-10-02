@@ -1,5 +1,7 @@
 # `test.sh` Hides Every Module After the First Failure
 
+**Tracking:** [mkober/muxcode#119](https://github.com/mkober/muxcode/issues/119)
+
 `test.sh` runs each Go module under `set -euo pipefail` in glob order, and the glob puts
 `tools/muxcode-llm-harness/` before `tools/muxcode/` because `-` (0x2D) sorts before `/` (0x2F). A
 failure anywhere in the harness module — `go vet` or `go test` — aborts the script before the bus

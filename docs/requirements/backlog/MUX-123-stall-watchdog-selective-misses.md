@@ -1,5 +1,7 @@
 # Stall Watchdog Fires Routinely — and Still Missed Three Live Stalls
 
+**Tracking:** [mkober/muxcode#110](https://github.com/mkober/muxcode/issues/110)
+
 `checkStalledTasks` is **not inert**. It fired **26 times on 2026-08-28** alone. Yet three live
 stalls that day — two `pr-read` tasks and one spawn task, each idle for 4–8 minutes — were resolved
 only by a human running `muxcode deliver --force`.

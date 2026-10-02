@@ -1,5 +1,7 @@
 # `muxcode send` Drops a Message Because Another Agent's Task Is In Flight
 
+**Tracking:** [mkober/muxcode#121](https://github.com/mkober/muxcode/issues/121)
+
 At 15:39 on 2026-09-08 plan sent `muxcode send edit notify "MUX-153 updated: …"`. The CLI answered
 *"In-flight task for edit:notify already exists (sent 100s ago) — already tracking"* and returned.
 Nothing was written — not to edit's inbox, not to the log, not to the task store. The in-flight task

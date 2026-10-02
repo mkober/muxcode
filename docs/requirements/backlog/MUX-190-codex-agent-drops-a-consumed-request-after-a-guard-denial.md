@@ -1,5 +1,7 @@
 # MUX-190: A Codex Agent Drops a Consumed Request After a Guard Denial
 
+**Tracking:** [mkober/muxcode#144](https://github.com/mkober/muxcode/issues/144)
+
 When `muxcode hook guard` denies a Codex agent's command — the evidence guard refusing a bundled
 `./build.sh`, for instance — the agent ends its turn. The request it was working on is already
 consumed and receipted, nothing re-drives it, and the graph node that dispatched it parks until the

@@ -1,5 +1,7 @@
 # Review Completion Routes Nowhere on Failure and Loops on Success
 
+**Tracking:** [mkober/muxcode#112](https://github.com/mkober/muxcode/issues/112)
+
 When a review finishes, two independent mechanisms decide what happens next: the **graph executor's
 edges** and the **chain's notify gates**. On 2026-08-31 both were observed mis-routing, in opposite
 directions, within the same hour:

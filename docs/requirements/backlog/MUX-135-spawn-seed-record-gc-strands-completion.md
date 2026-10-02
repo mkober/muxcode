@@ -1,5 +1,7 @@
 # Delivery-Record GC Permanently Strands a Long Spawn Iteration
 
+**Tracking:** [mkober/muxcode#113](https://github.com/mkober/muxcode/issues/113)
+
 A spawn node completes when its seed message shows `responded`. That signal lives in a delivery-status
 record which `CleanExpiredDeliveries` deletes after **one hour** — with no exemption for a spawn still
 running. Once the record is gone, `spawnHasResponded` reads its absence as **"has not responded"**, and

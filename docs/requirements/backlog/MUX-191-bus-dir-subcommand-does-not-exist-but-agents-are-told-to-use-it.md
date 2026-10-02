@@ -1,5 +1,7 @@
 # MUX-191: `muxcode bus-dir` Does Not Exist, but Agent Definitions Tell Agents to Use It
 
+**Tracking:** [mkober/muxcode#145](https://github.com/mkober/muxcode/issues/145)
+
 Two agent definitions instruct their agents to resolve the bus directory with `muxcode bus-dir`.
 There is no such subcommand: `bus-dir` is absent from `knownSubcommands` (`main.go:24-30`), so
 `routeFor` (`main.go:142-154`) treats it as a project name — the launcher road, or the near-miss

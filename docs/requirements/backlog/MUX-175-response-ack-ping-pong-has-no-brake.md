@@ -1,6 +1,8 @@
 # Two Agents Can Acknowledge Each Other Forever — Response Traffic Has No Brake
 
-**Tracking:** filed 2026-09-10 on the user's explicit request. Related: MUX-169 (self-reply echo,
+**Tracking:** [mkober/muxcode#133](https://github.com/mkober/muxcode/issues/133)
+
+**Provenance:** filed 2026-09-10 on the user's explicit request. Related: MUX-169 (self-reply echo,
 fixed by dropping at the source), and the relay-loop suppression that already exists for requests.
 
 Build and test spent roughly one round trip every 4–5 seconds answering each other's
