@@ -369,6 +369,10 @@ that would have capped the incident at ~45 s regardless of the timer.
 | Enumerating spawns broadly | `KnownRoles` is iterated in many places; widening it has broad blast radius | Prefer registry-based enumeration in the two loops that need it |
 | Vacuous integration pass | A worker that would have started anyway proves nothing | Negative control asserting the pre-fix failure |
 
+## Related
+
+- [MUX-142](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) — same family: a spawn worker the executor launched delegating tree-scoped checks back to the shared agents (Defect 1, enforced by `CheckGraphNodeAuthority`) and the tree-less bus behind it (Defect 2, `CheckCrossTree`)
+
 ## Status
 
 Backlog
