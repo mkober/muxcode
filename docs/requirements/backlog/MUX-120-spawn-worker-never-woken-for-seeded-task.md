@@ -371,7 +371,7 @@ that would have capped the incident at ~45 s regardless of the timer.
 
 ## Related
 
-- [MUX-142](../drafts/MUX-142-spawn-worker-delegates-into-wrong-tree.md) — same family: a spawn worker the executor launched delegating tree-scoped checks back to the shared agents (Defect 1, enforced by `CheckGraphNodeAuthority`) and the tree-less bus behind it (Defect 2, `CheckCrossTree`)
+- [MUX-142](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) — same family: a spawn worker the executor launched delegating tree-scoped checks back to the shared agents (Defect 1, enforced by `CheckGraphNodeAuthority`) and the tree-less bus behind it (Defect 2, `CheckCrossTree`)
 
 ## Status
 

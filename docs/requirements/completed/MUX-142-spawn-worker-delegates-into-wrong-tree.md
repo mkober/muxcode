@@ -77,7 +77,7 @@ But (b) is not cosmetic, and it reaches further than the worker:
 | [MUX-119](../backlog/MUX-119-graph-routes-edit-work-off-the-edit-agent.md) | **Qualifies its central table.** MUX-119 classes `implement`/`fix` spawns as "❌ No — isolated". They are isolated in *pane* terms, which is what that spec measures, but they are **not** isolated in delegation terms: they reach back into the shared `build`/`test` agents. The table is not wrong for its own question; it should not be read as a general isolation claim |
 | [MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Same family — spawn workers the graph executor mismanages |
 | [MUX-135](../backlog/MUX-135-spawn-seed-record-gc-strands-completion.md) | Same family; both concern the spawn lifecycle rather than the graph shape |
-| [MUX-007](../completed/MUX-007-verify-spec-stale-review-refire.md) | Same *class* as its changed-files problem — an agent reasoning about a tree other than the one under test |
+| [MUX-007](./MUX-007-verify-spec-stale-review-refire.md) | Same *class* as its changed-files problem — an agent reasoning about a tree other than the one under test |
 | [MUX-118](../backlog/MUX-118-rename-edit-role-to-code.md) | Any fix that introduces a distinct worker definition should land in step with the rename, not fight it |
 
 ### Why it matters
@@ -244,12 +244,13 @@ run**, so it does not cover a non-spawn OpenCode agent that manually chains.
 
 ### Added acceptance criteria
 
-- [ ] The graph-worker carve-out reaches non-hook providers by every injection path, not only the
-      agent body — specifically `BuildSharedPrompt`'s `Manual Bus Messaging` block
-- [ ] A generated agent body older than its source definition is detected and surfaced (or
-      regenerated), rather than running silently stale
-- [ ] Negative control: a non-graph OpenCode edit agent still receives the manual-chain instruction
-      unchanged
+- [x] The graph-worker carve-out reaches non-hook providers by every injection path, not only the
+      agent body — specifically `BuildSharedPrompt`'s `Manual Bus Messaging` block — deferred to
+      [MUX-201](../backlog/MUX-201-non-hook-prompt-and-generated-body-drift.md) (user decision, 2026-10-02)
+- [x] A generated agent body older than its source definition is detected and surfaced (or
+      regenerated), rather than running silently stale — deferred to [MUX-201](../backlog/MUX-201-non-hook-prompt-and-generated-body-drift.md)
+- [x] Negative control: a non-graph OpenCode edit agent still receives the manual-chain instruction
+      unchanged — deferred to [MUX-201](../backlog/MUX-201-non-hook-prompt-and-generated-body-drift.md)
 
 ## The third tree: a `fix` node's worktree cut from a stale HEAD (2026-09-03)
 
@@ -344,7 +345,7 @@ a decision recorded here.
 | Claim (as written) | Now |
 |--------------------|-----|
 | `implement`/`fix` spawn nodes `role: edit`; `build`/`test`/`review` separate `send` nodes | Holds — `bus/graph_templates.go:36–39` (`50-spec-to-pr`) |
-| Spawn launch string `bus/spawn.go:214` | Now `bus/spawn.go:276–278`: `AGENT_ROLE=<spawn> muxcode agent launch <role> --reason spawn`, prefixed `cd <worktree> &&` only when a worktree exists ([MUX-141](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md) added the reason) |
+| Spawn launch string `bus/spawn.go:214` | Now `bus/spawn.go:276–278`: `AGENT_ROLE=<spawn> muxcode agent launch <role> --reason spawn`, prefixed `cd <worktree> &&` only when a worktree exists ([MUX-141](./MUX-141-auto-agent-restart-relaunches-graph-runs.md) added the reason) |
 | `AgentFileName()` `bus/launch.go:61` | `:64` |
 | `code-editor.md:238–243` orchestration, `:246` Exception | `:252` and `:259` |
 | `Message` has eight fields and no tree | **Stale count**: fourteen fields — `GraphRun`, `GraphNode`, `OriginRun`, `OriginCreatedBy`, `OriginRunState`, `LaunchReason` were added since — but **still no cwd/tree/worktree field**. Defect 2's premise holds |
@@ -370,7 +371,7 @@ defect, but it is the worker-never-worked shape
 [MUX-195](../backlog/MUX-195-graph-runs-never-reuse-idle-workers.md)), not the worktree's absence.
 Whoever picks up MUX-178 should start from that; a pointer was added there on 2026-09-30.
 
-Also since filing: [MUX-182](../completed/MUX-182-cancelled-run-keeps-working-provenance-unreadable.md)
+Also since filing: [MUX-182](./MUX-182-cancelled-run-keeps-working-provenance-unreadable.md)
 and [MUX-195](../backlog/MUX-195-graph-runs-never-reuse-idle-workers.md) changed how workers are
 stopped and reused, without touching the delegation guard or the tree question.
 
@@ -502,6 +503,17 @@ builtin's later changes.
 
 ## Status
 
+**Complete — 2026-10-02.** Phases 1–5 committed on `MUX-142-spawn-worker-delegates-into-wrong-tree`
+(`7c8b17f`, `4cf984a`, `52b20e9`, `098b0a6`; Phase 1 was spec-only). Defect 1 enforced by
+`CheckGraphNodeAuthority` (2026-09-03) and graph spawns take no worktree; Defect 2 by `CheckCrossTree`
+at `muxcode send` (send-side, CLI-only, fail-open, `MUXCODE_CROSS_TREE_GUARD=0` opt-out). The OpenCode
+prompt carve-out and generated-body staleness are deferred to
+[MUX-201](../backlog/MUX-201-non-hook-prompt-and-generated-body-drift.md).
+
+<details>
+<summary>Status history (as written while in progress)</summary>
+
+
 **In Progress** — filed 2026-09-02 from a live observation relayed from another session, with the
 mechanism verified independently against this repo's source. **Defect 1 was fixed the same night on
 the Claude road** (see "What landed") — a 2026-09-03 subsession then established that the fix is
@@ -554,3 +566,5 @@ Open questions for the user:
 Open question for the user: the interim template-shadow workaround is per-project and lives in
 `.muxcode/graphs/`, not repo source. It is available immediately and does not block the real fix —
 worth applying now, or leave the defect visible until it is fixed properly?
+
+</details>
