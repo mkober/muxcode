@@ -1,5 +1,7 @@
 # MUX-188: Every Spawn Worker Launch Sends Edit a Stray Startup Request
 
+**Tracking:** [mkober/muxcode#142](https://github.com/mkober/muxcode/issues/142)
+
 Each time a graph spawns a worker, the **edit** agent receives a `request:startup` — *"Session
 started — review last saved context from memory to restore session state."* — from itself, one to
 three seconds after the worker's window opens. Observed seven times on 2026-09-23/24 and matched in

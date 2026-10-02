@@ -1,5 +1,7 @@
 # Harness Reply Correlates to the Batch's Last Message, Not the Request
 
+**Tracking:** [mkober/muxcode#45](https://github.com/mkober/muxcode/issues/45)
+
 The local harness answers a whole inbox batch with a single reply addressed to — and correlated
 with — `msgs[len(msgs)-1]`. When the last message in the batch is not the request being answered,
 the request is never marked responded, never gains a receipt, and the delivery backstop re-drives it

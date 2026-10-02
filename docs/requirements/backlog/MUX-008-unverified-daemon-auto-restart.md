@@ -1,5 +1,7 @@
 # Unverified Daemon Auto-Restart
 
+**Tracking:** [mkober/muxcode#8](https://github.com/mkober/muxcode/issues/8)
+
 The daemon's agent auto-restart path is fire-and-hope: `RestartLocalAgent()` sends `C-c`, sleeps a fixed 500ms, sends the relaunch line, and returns `nil` unconditionally. Nothing verifies the old process exited or that the relaunch produced a live agent — so a failed restart is recorded as `agent-recovered` and is indistinguishable from a successful one at every layer above it.
 
 ## Context

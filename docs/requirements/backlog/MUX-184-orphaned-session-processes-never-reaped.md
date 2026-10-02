@@ -1,5 +1,7 @@
 # MUX-184: Orphaned Session Processes Are Never Reaped
 
+**Tracking:** [mkober/muxcode#140](https://github.com/mkober/muxcode/issues/140)
+
 Killing a tmux session kills its panes and nothing else. The daemon, its monitor, every inbox
 listener, the headless harness and the background procs a session launched are detached
 (`Setsid`/`Setpgid`), so they reparent to launchd and run on — polling a bus directory nobody reads,

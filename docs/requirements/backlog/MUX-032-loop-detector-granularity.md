@@ -1,5 +1,7 @@
 # Loop-Detector Granularity
 
+**Tracking:** [mkober/muxcode#32](https://github.com/mkober/muxcode/issues/32)
+
 The daemon's message-loop detector (`DetectMessageLoop`, `bus/guard.go`) fires on normal, healthy edit↔commit traffic. Its ping-pong pass counts a request and its own correlated reply as loop evidence, and its tuple pass cannot tell two unrelated delegations apart from a repeated one. The result is alert fatigue on a safety detector — the operator learns to ignore it, so a genuine relay storm goes unread.
 
 ## Context

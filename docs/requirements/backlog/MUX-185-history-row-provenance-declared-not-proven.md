@@ -1,5 +1,7 @@
 # MUX-185: A History Row's Provenance Is Declared, Not Proven
 
+**Tracking:** [mkober/muxcode#141](https://github.com/mkober/muxcode/issues/141)
+
 `a8fa0db` (MUX-148, Decision 4) made history rows three-valued — `hook`, `self-reported`,
 `bus-response` — and taught `latestAuthoritativeRow` to let an observed row outrank a self-report and
 to treat anything else as not evidence. The label is **written by the writer**. An agent that appends

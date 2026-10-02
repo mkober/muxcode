@@ -1,5 +1,7 @@
 # MUX-147: Reap Orphaned Harness Processes and Reduce Session Memory Footprint
 
+**Tracking:** [mkober/muxcode#116](https://github.com/mkober/muxcode/issues/116)
+
 Two related pieces of process hygiene, filed together because they were found by the same
 measurement and share a subject — what a running muxcode session costs in memory.
 

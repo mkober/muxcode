@@ -1,6 +1,8 @@
 # The Watch Chain Fires on Every Bash Call and Pastes the Raw Command Into the Message
 
-**Tracking:** filed 2026-09-10 by plan on the user's request relayed by edit (`1789070947`), after the
+**Tracking:** [mkober/muxcode#135](https://github.com/mkober/muxcode/issues/135)
+
+**Provenance:** filed 2026-09-10 by plan on the user's request relayed by edit (`1789070947`), after the
 watch agent reported and then root-caused it itself at 15:58. Verified in code by plan before filing.
 
 The `watch` role's event chain has **no conditions on any branch**. Every classified bash call in the

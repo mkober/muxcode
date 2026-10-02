@@ -1,5 +1,7 @@
 # An Orphaned Inbox Listener Consumes Messages Into the Void
 
+**Tracking:** [mkober/muxcode#122](https://github.com/mkober/muxcode/issues/122)
+
 A `muxcode inbox --poll --loop` whose parent has died keeps running, keeps winning the race for its
 role's inbox, and keeps writing receipts — while printing every message it consumes to a stdout that
 nobody reads. The bus records the message as **acked by the role**; the agent never sees it. The

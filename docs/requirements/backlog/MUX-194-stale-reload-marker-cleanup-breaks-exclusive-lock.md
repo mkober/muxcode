@@ -1,5 +1,7 @@
 # MUX-194: Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock
 
+**Tracking:** [mkober/muxcode#146](https://github.com/mkober/muxcode/issues/146)
+
 [MUX-126](../completed/MUX-126-edit-resume-aware-auto-restart.md) made the reload marker an **exclusive
 lock** (`c047b7e`): every relauncher now takes it with `O_EXCL` before typing into a pane. Two older
 paths still treat the marker as a plain flag file: the daemon deletes any marker older than 60 s, and

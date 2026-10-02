@@ -1,5 +1,7 @@
 # PreLaunch Tests Leak Real Bus Directories Into `/tmp`
 
+**Tracking:** [mkober/muxcode#64](https://github.com/mkober/muxcode/issues/64)
+
 Three `PreLaunchSetup` tests isolate themselves with `os.Setenv("BUS_DIR_BASE", dir)` — an
 environment variable **no production code reads**. `BusDir()` honors the package variable
 `busDirOverride`, set only through `SetBusDirBase()`, so the override never takes effect and

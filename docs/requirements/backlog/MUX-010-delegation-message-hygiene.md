@@ -1,5 +1,7 @@
 # Agent-Freeze Auto-Recovery & Delegation Hygiene
 
+**Tracking:** [mkober/muxcode#10](https://github.com/mkober/muxcode/issues/10)
+
 **Primary goal:** muxcode must automatically detect and recover a **frozen agent
 process** — with **no user intervention**. The daemon should watch agent health,
 notice when an agent is wedged/unresponsive with an undeliverable inbox, and

@@ -1,5 +1,7 @@
 # Spawned Workers Never Receive Their Seeded Task
 
+**Tracking:** [mkober/muxcode#108](https://github.com/mkober/muxcode/issues/108)
+
 A graph `spawn`/`map` node seeds the worker's inbox and launches its agent, but the worker sits idle
 instead of starting. Observed live 2026-08-28: the `req-code-pr` `implement` worker idled **4.5
 minutes** with its task already in its inbox, until `muxcode deliver --force` was run by hand.

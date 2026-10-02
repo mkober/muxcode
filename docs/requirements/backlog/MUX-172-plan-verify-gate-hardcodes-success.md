@@ -1,5 +1,7 @@
 # The Spec-Verification Gate Asks Its Own Question — `notifyPlanOnReview` Hardcodes `"success"`
 
+**Tracking:** [mkober/muxcode#130](https://github.com/mkober/muxcode/issues/130)
+
 The review chain is configured to hand plan a `verify-spec` only on a passing review:
 `NotifyPlanOn: []string{"success"}`. The daemon consults that config with the outcome **written into
 the call** — `bus.ChainShouldNotifyPlan("review", "success")` — so the gate is asked whether it would

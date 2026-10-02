@@ -1,6 +1,8 @@
 # A Graph Spawn Node Cuts No Worktree and Ports Nothing — MUX-131 Has Regressed
 
-**Tracking:** filed 2026-09-11 by plan on the user's request relayed by edit (`1789133110`), from the
+**Tracking:** [mkober/muxcode#136](https://github.com/mkober/muxcode/issues/136)
+
+**Provenance:** filed 2026-09-11 by plan on the user's request relayed by edit (`1789133110`), from the
 MUX-167 Phase 4 runs. Verified against the run log before filing.
 
 A graph `spawn` node launches its worker and then completes in **two seconds** with

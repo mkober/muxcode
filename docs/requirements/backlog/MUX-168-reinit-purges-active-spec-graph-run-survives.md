@@ -1,5 +1,7 @@
 # Session Re-Init Purges the Active Spec While the Graph Run That Reads It Survives
 
+**Tracking:** [mkober/muxcode#128](https://github.com/mkober/muxcode/issues/128)
+
 A relaunch of a session (`bus.Init` over an existing bus dir) purges "stale data from the previous
 session". Its removal list names the `active-spec` marker; it does not name `graphs/`. So a
 `spec-to-pr` run outlives the relaunch — the daemon's first tick after restart is the resume scan —

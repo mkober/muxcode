@@ -1,6 +1,8 @@
 # `./test.sh` Fails Repo-Wide When the Harness Module's Vet Cannot Resolve a Stdlib Package
 
-**Tracking:** filed 2026-09-10 on the user's explicit request, from evidence gathered in session
+**Tracking:** [mkober/muxcode#132](https://github.com/mkober/muxcode/issues/132)
+
+**Provenance:** filed 2026-09-10 on the user's explicit request, from evidence gathered in session
 `muxcode`. Related: MUX-152 (a `set -e` failure hiding later modules), MUX-153 (the no-socket rule
 that put `pipeServer` in the harness in the first place).
 

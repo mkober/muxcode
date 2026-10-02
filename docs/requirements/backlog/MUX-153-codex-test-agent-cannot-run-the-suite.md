@@ -1,5 +1,7 @@
 # A Codex Test Agent Structurally Cannot Run This Repo's Suite
 
+**Tracking:** [mkober/muxcode#120](https://github.com/mkober/muxcode/issues/120)
+
 `TestProcessBatch_SimpleResponse` (`tools/muxcode-llm-harness/harness/loop_test.go:23`) binds a
 loopback listener via `httptest.NewServer`. Codex restricts network access by default and
 `BuildExecArgs` never lifts it, so the listen panics in `newLocalListener`, the harness module fails,

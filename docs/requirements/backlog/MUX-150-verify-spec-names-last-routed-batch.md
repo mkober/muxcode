@@ -1,5 +1,7 @@
 # MUX-150: `verify-spec` Names the Last Routed Batch, Not the Change Set
 
+**Tracking:** [mkober/muxcode#117](https://github.com/mkober/muxcode/issues/117)
+
 The `verify-spec` request the daemon sends plan after every review completion lists "Changed
 files" copied from the workflow entry's `LastFiles` — the files of whichever hook write or
 analyze-route batch happened to transition the workflow **last** — not the set of changes the

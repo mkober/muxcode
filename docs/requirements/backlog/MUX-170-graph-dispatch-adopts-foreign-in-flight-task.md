@@ -1,5 +1,7 @@
 # A Graph Dispatch Adopts a Foreign In-Flight Task That Shares Its Action
 
+**Tracking:** [mkober/muxcode#129](https://github.com/mkober/muxcode/issues/129)
+
 When a graph node's dispatch is suppressed by the bus's in-flight dedup, the executor assumes the
 duplicate is its own earlier request — a loop re-entry, or a retry racing the prior pass — and adopts
 it. The lookup that finds the duplicate keys on `(to, action)` alone. On 2026-09-09 edit's "STOP the

@@ -1,5 +1,7 @@
 # A Role Boundary an Agent Can Ignore Is Not a Boundary
 
+**Tracking:** [mkober/muxcode#123](https://github.com/mkober/muxcode/issues/123)
+
 The fleet's role-scoped rules — test runs and never authors, review reads and never fixes, build
 compiles and never edits — are prose in agent definitions, and nothing enforces them. On 2026-09-08
 the **test agent authored source for about an hour**, through an explicit halt and a same-provider

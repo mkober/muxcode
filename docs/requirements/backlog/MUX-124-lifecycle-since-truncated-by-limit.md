@@ -1,5 +1,7 @@
 # `lifecycle show --since` Silently Answers the Wrong Question
 
+**Tracking:** [mkober/muxcode#111](https://github.com/mkober/muxcode/issues/111)
+
 `muxcode lifecycle show --since 8h` returns **zero** `task-stall` rows on a day that recorded
 **26** of them. The rows are in the log; the filter matches them; they are then thrown away by the
 default `--limit`.
