@@ -335,19 +335,27 @@ func guardAllowsDispatch(session string, run *GraphRun, n *Node) bool {
 // pass through and close out against nothing); all-false means no
 // active spec is set.
 func activeSpecFile(session string) (path string, ok, transient, refused bool) {
+	path, _, ok, transient, refused = activeSpecRepo(session)
+	return path, ok, transient, refused
+}
+
+// activeSpecRepo is activeSpecFile plus the repo dir it resolved against
+// (set only when ok or refused), so a caller reading the repo again sees the
+// same observation rather than a second tmux lookup.
+func activeSpecRepo(session string) (path, repo string, ok, transient, refused bool) {
 	specRel := ReadActiveSpec(session)
 	if specRel == "" {
-		return "", false, false, false
+		return "", "", false, false, false
 	}
-	repo := SessionRepoDir(session)
+	repo = SessionRepoDir(session)
 	if repo == "" {
-		return "", false, true, false
+		return "", "", false, true, false
 	}
 	full := ResolveSpecPath(repo, specRel)
 	if full == "" {
-		return "", false, false, true
+		return "", repo, false, false, true
 	}
-	return full, true, false, false
+	return full, repo, true, false, false
 }
 
 // specCompleteGuardAllows blocks dispatch while the active spec has ANY
@@ -600,11 +608,16 @@ func summarizeOpenItems(names []string, limit int) string {
 // dispatch, so a message carrying it is not stable across a re-run; keep
 // it out of nodes whose payload is re-derived for an equality check
 // (CheckCommitAuthorityForMessage).
+//
+// ${spec_title} is the intent without its launch-time phase (specTitle), for
+// whatever names the whole spec — a PR title. ${spec} carried the phase the
+// run started on, so PRs #104 and #105 were titled after their Phase 1.
 func interpolateGraphMessage(session string, run *GraphRun, msg, item string) string {
 	intent := ""
 	if run != nil {
 		intent = run.Intent
 	}
+	msg = strings.ReplaceAll(msg, "${spec_title}", specTitle(intent))
 	msg = strings.ReplaceAll(msg, "${spec}", intent)
 	msg = strings.ReplaceAll(msg, "${intent}", intent)
 	if item != "" {

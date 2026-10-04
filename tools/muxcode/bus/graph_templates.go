@@ -7,7 +7,8 @@ package bus
 // ${spec} in node messages is replaced at execution time with what the
 // run is driving — for spec-driven templates that is the active spec and
 // its current phase. ${intent} is the former name and still expands, so
-// templates saved against it keep working.
+// templates saved against it keep working. ${spec_title} is the spec's key
+// and title without that launch-time phase — what a PR is named after.
 //
 // 70-pr-local-review deliberately keeps ${intent}: there the argument is a
 // PR number, not a spec, and ${spec} would misname it.
@@ -31,8 +32,11 @@ var builtinGraphJSON = map[string]string{
   "name": "50-spec-to-pr",
   "description": "Walk the active spec phase by phase in one run: implement, build/test, review (findings route to fix), update the spec, gated per-phase commit, loop; stuck phases gate-and-ask; then close out the spec (Complete, completed/, backlog.md) before a final gate covers push and PR",
   "requires_spec": true,
-  "start": "implement",
+  "start": "branch-check",
   "nodes": [
+    {"id": "branch-check", "type": "condition", "conditions": {"spec_branch": true}},
+    {"id": "branch-gate", "type": "wait_human", "message": "The current branch is not the active spec's branch (${spec}) — phase commits would land on it. Approve creating and switching to the spec's <id>-<slug> branch, carrying the working tree, or cancel the run"},
+    {"id": "create-branch", "type": "send", "role": "commit", "action": "checkout", "message": "Create and switch to the branch for the active spec ${spec}: name it after the spec's filename without .md (its <id>-<slug>), branched from the current HEAD and carrying every uncommitted change (git switch -c <name>); if that branch already exists, switch to it instead. Do not commit or push. Report the branch name"},
     {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement the active requirements spec's ${current_phase} (run: ${spec}). The phase is derived from the spec — if it is already complete, verify and report rather than re-implementing. Before reporting, if the phase has an integration script, run it through the run agent (muxcode send run run \"bash scripts/test-<feature>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and its task id"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
     {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
@@ -47,9 +51,13 @@ var builtinGraphJSON = map[string]string{
     {"id": "close-spec", "type": "send", "role": "plan", "action": "close-spec", "guard": "spec-complete", "message": "Every phase is complete — close out the active requirements doc ONLY if every acceptance criterion and phase step is checked: set its status Complete, move it to docs/requirements/completed/ (a plain file move, not git mv — push-pr stages it), update its row in docs/requirements/backlog/backlog.md and every cross-reference to the old path, clear the active spec, and report the new path. Any item still open = refuse and report the open items"},
     {"id": "close-stuck-gate", "type": "wait_human", "message": "The spec close-out was refused — items are still open (see the close-spec report). Resolve them, then approve retrying the close-out, or cancel the run"},
     {"id": "final-gate", "type": "wait_human", "message": "All phases complete and the spec closed out (status Complete, moved to completed/, backlog.md updated) — approve committing the close-out, pushing the branch and creating the PR"},
-    {"id": "push-pr", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the spec close-out (the move to docs/requirements/completed/ and the backlog.md update), then push the branch and create a PR for: ${spec}"}
+    {"id": "push-pr", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the spec close-out (the move to docs/requirements/completed/ and the backlog.md update), then push the branch and create a PR titled exactly \"${spec_title}\" covering every phase of the spec"}
   ],
   "edges": [
+    {"from": "branch-check", "to": "implement"},
+    {"from": "branch-check", "to": "branch-gate", "outcome": "failure"},
+    {"from": "branch-gate", "to": "create-branch"},
+    {"from": "create-branch", "to": "implement"},
     {"from": "implement", "to": "build"},
     {"from": "build", "to": "test"},
     {"from": "build", "to": "fix", "outcome": "failure"},

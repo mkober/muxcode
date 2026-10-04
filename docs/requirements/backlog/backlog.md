@@ -46,7 +46,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | # | T | ID | Defect | Sev | Depends on |
 |---|---|----|--------|-----|------------|
-| 1 | 1 | [`MUX-178`](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) | A graph `spawn` node cuts no worktree, ports nothing, and reports `success` | High | — |
+| 1 | 1 | [`MUX-178`](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) | A graph `spawn` node credits an unanswered seed as `success`; the multi-phase fixture still asserts the retired worktree model (reframed 2026-10-03 — no-worktree design kept) | High | — |
 | 2 | 1 | [`MUX-139`](./MUX-139-claude-agent-auto-resume.md) | Every Claude agent on the machine exits; nothing resumes | High | [MUX-141](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md), [MUX-142](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) |
 | 3 | 1 | [`MUX-179`](./MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) | The PII scrub role gate is dead code on the bus road | High | — |
 | 4 | 1 | [`MUX-174`](./MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox.md) | `./test.sh` exits 1 repo-wide on the `test` role | High | — |

@@ -454,7 +454,7 @@ request:
 | 20 | `20-defect-to-spec` | Read-only evidence capture for a defect, plan drafts the backlog spec and row from the evidence (no issue), then a gate, plan finds or creates the GitHub issue and adds the spec's Tracking line (`issue-write`), and the spec is committed |
 | 30 | `30-build-test-review` | The build, test, review subgraph the others compose |
 | 40 | `40-sync-main` | Gated rebase onto `origin/main`, build and test on the new base, `push --force-with-lease`; a conflict or red build withholds the push |
-| 50 | `50-spec-to-pr` | Walk the active spec phase by phase: implement, build/test, review (findings route to fix), update-spec, gated per-phase commit, close-out, final gate, push and PR |
+| 50 | `50-spec-to-pr` | Check the checkout is on the spec's `<id>-<slug>` branch (gated create if not), then walk the active spec phase by phase: implement, build/test, review (findings route to fix), update-spec, gated per-phase commit, close-out, final gate, push and PR |
 | 60 | `60-integration-suite` | Run the integration scripts one at a time through the run agent; failures go to a fix worker, rebuild, re-run, capped |
 | 70 | `70-pr-local-review` | Prompt for a PR id, gated checkout of main+rebase and the PR branch, local diff, review, branch restore (also on a failed review) |
 | 80 | `80-pr-review-fix` | Find the branch's PR, read its review comments, gated fix loop, push the fixes, reply to every comment |
@@ -824,7 +824,7 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 
 ### Hook Chain Guarantee
 
-The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (11 condition types evaluated as AND logic, including `command_match`/`command_not_match` on the triggering command and `spec_phases_remaining` for spec-driven loops) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
+The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (13 condition types evaluated as AND logic, including `command_match`/`command_not_match` on the triggering command, `spec_phases_remaining` for spec-driven loops, `spec_phase_committable` for the per-phase commit check and `spec_branch` for the start-of-run branch check) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
 
 ### Atlassian write authority
 

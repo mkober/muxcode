@@ -469,6 +469,17 @@ func absUnder(root, p string) string {
 	return filepath.Clean(p)
 }
 
+// specTitle drops the " — Phase N…" suffix describeSpecIntent appends,
+// leaving "<key> <title>". The last such marker is cut, so a title that
+// itself contains " — " survives whole; an intent without one is returned
+// unchanged.
+func specTitle(intent string) string {
+	if i := strings.LastIndex(intent, " — Phase "); i > 0 {
+		return intent[:i]
+	}
+	return intent
+}
+
 // describeSpecIntent builds the expanded intent: "<key> <H1 title> —
 // <first phase heading with open items>". Fenced code blocks are skipped
 // for the same reason as SpecOpenItems: quoted examples are not state.
