@@ -163,8 +163,8 @@ the injection guard's refusal behaviour (correct, already worked around in the f
 - [x] The node's output for that case says why it is holding (worker recorded completed with no seed to judge it by), and a lifecycle row records it, so the silent case becomes visible — *output appends "[worker ended without answering its seed: … — outcome not established]"; row `graph-spawn-unanswered`*
 - [x] **Negative control — replacement kept:** a worker killed **after** its seed was recorded and before it answered is still a *lost* worker: `replaceLostWorkers` replaces it on a fresh worker with the same task, as today, and the node does not resolve `unknown` — *`TestExecSpawnKilledSeededWorkerStillReplaced`*
 - [x] **Negative control — precedence unchanged:** a worker whose seed was answered with a success verdict still resolves `success`; a `running` worker still holds; a `stopped` worker still fails; `failure > unknown > success` holds for a mixed group — *`TestSpawnGroupOutcomeUnansweredCompletedIsUnknown` rows*
-- [ ] `scripts/test-multi-phase-graph.sh` asserts the no-worktree design: the worker's output lands in the session checkout, the phase commit ships it, and no check reads `SPAWN_WT`
-- [ ] The script returns to green and its coverage floor equals the count a green run actually produces
+- [x] `scripts/test-multi-phase-graph.sh` asserts the no-worktree design: the worker's output lands in the session checkout, the phase commit ships it, and no check reads `SPAWN_WT` — *Phase 3, section 7*
+- [x] The script returns to green and its coverage floor equals the count a green run actually produces — *run agent task `1791153362-spawn-2c49b5c8-7c12cbc3`, hook row ts 1791153549, foreground: exit 0, 52 passed / 0 failed, floor 51 == 51 executed*
 - [x] The outcome change is pinned by a unit test that fails against today's `graph_exec.go` — *`TestSpawnGroupOutcomeUnansweredCompletedIsUnknown`*
 - [x] ~~A graph `spawn` node cuts a worktree, and its absence is an error~~ — **dropped 2026-10-03**: contradicts the 2026-09-03 no-worktree design, which the user chose to keep
 
@@ -221,11 +221,11 @@ as it is. The hold targets only the entry that road cannot see — `completed` w
 
 ### Phase 3: Bring the fixture to the no-worktree design
 
-- [ ] Rewrite script lines 548-551 and 561-630: the worker writes into the session checkout; assert the file is present and uncommitted at build time and shipped by the phase-1 commit; remove the worktree-advance check
-- [ ] Rewrite or retire the conflict control (668-715) in checkout terms; record which here
-- [ ] Add a check that a spawn entry recorded `completed` with **no seed** (`SeedMsgID` empty — write the store entry that way, since no live road produces it on demand) parks the node `unknown` with the reason in its output — the integration pin for Phase 2
-- [ ] **Negative control — replacement kept:** the existing kill-before-answer control (`no fresh worker after the kill` / `spawn store shows N workers`) still passes — a killed worker with a recorded seed is replaced, not held
-- [ ] Reset the coverage floor from a green run's executed count; update the floor comment's breakdown to match
+- [x] Rewrite script lines 548-551 and 561-630: the worker writes into the session checkout; assert the file is present and uncommitted at build time and shipped by the phase-1 commit; remove the worktree-advance check — *verified 2026-10-04, section 7: "worker created in the session checkout, no worktree", "build sees the worker's file in the checkout", "worker output uncommitted at build time (working tree only)", "HEAD unchanged before the gate", "gated phase-1 commit shipped the worker's file"; no `SPAWN_WT` read remains; the worktree-advance check is gone*
+- [x] Rewrite or retire the conflict control (668-715) in checkout terms; record which here — ***retired**: with no worktree there is no port to refuse, so the MUX-131 clobber-conflict control has no subject; its slot is now section 8 (below)*
+- [x] Add a check that a spawn entry recorded `completed` with **no seed** (`SeedMsgID` empty — write the store entry that way, since no live road produces it on demand) parks the node `unknown` with the reason in its output — the integration pin for Phase 2 — *section 8, 7 checks: run started, worker seeded, `spawn.jsonl` entry rewritten to `completed` with `seed_msg_id` removed, `implement` outcome `unknown`, output names "`<worker>` (no seed recorded)", `graph-spawn-unanswered` lifecycle row names the worker, build inbox empty behind the held node*
+- [x] **Negative control — replacement kept:** the existing kill-before-answer control (`no fresh worker after the kill` / `spawn store shows N workers`) still passes — a killed worker with a recorded seed is replaced, not held — *section 9, 5 checks, passing; `worker_pane_pids` now excludes the `muxcode graph ui` control pane, which had made the retention pin fail falsely*
+- [x] Reset the coverage floor from a green run's executed count; update the floor comment's breakdown to match — *floor `== 51`; breakdown 4+1+1+3+3+4+1+5+1+16+7+5 = 51*
 
 ### Phase 4: Integration test
 
@@ -273,8 +273,8 @@ Shipped in this PR on the user's request (2026-10-04), uncommitted at the time o
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken | 50m | 2026-10-04 00:19 |
+| MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken | 1h 28m | 2026-10-04 18:50 |
 
 ## Status
 
-In Progress — Phase 1 complete (2026-10-03); reframed the same day on the user's decision; Phase 2 complete (2026-10-04); Phase 3 next
+In Progress — Phase 1 complete (2026-10-03); reframed the same day on the user's decision; Phases 2-3 complete (2026-10-04); Phase 4 next — its evidence already exists from the Phase 3 verification run (task `1791153362-spawn-2c49b5c8-7c12cbc3`, exit 0, 52/0, floor 51)
