@@ -1764,9 +1764,12 @@ func (d *Daemon) checkOllama() {
 
 // touchKeepalive writes the current timestamp to the daemon keepalive file.
 // Called at the top of each poll loop iteration so the daemon monitor can
-// detect if the daemon process has died or become stuck.
+// detect if the daemon process has died or become stuck. It also refreshes
+// the Codex hook markers, which would otherwise age out of /tmp (see
+// bus.RefreshCodexHooksMarkers).
 func (d *Daemon) touchKeepalive() {
 	bus.TouchKeepaliveDaemon(d.session)
+	bus.RefreshCodexHooksMarkers(d.session)
 }
 
 // agentHealthCheckSecs is the liveness sweep interval. The env override

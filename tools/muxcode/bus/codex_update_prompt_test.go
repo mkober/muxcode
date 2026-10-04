@@ -288,6 +288,92 @@ func TestCodexSendWakeUp_NoLatePromptSubmits(t *testing.T) {
 	}
 }
 
+// codexUpdateBlock158At is the 0.158+ wording, verbatim from the 2026-10-04
+// review pane snapshot, with the highlight on option n.
+func codexUpdateBlock158At(n int) string {
+	block := codexUpdateBlockAt(n)
+	block = strings.Replace(block, "✨ Update available! 0.155.0 -> 0.155.1", "Update available · 0.158.0 → 0.160.0", 1)
+	return strings.Replace(block, "Press enter to continue", "enter continue · esc skip", 1)
+}
+
+// The 2026-10-04 reload: Codex 0.158 reworded the prompt, the old marker and
+// tail matched neither line, and the wake's Enter chose "Update now". Both
+// wordings must be detected, read and skipped; answered, neither is live.
+func TestCodexUpdatePrompt_Codex158Wording(t *testing.T) {
+	live := codexBanner + codexUpdateBlock158At(1)
+	if !codexUpdatePromptLive(live) {
+		t.Fatal("the 0.158 update prompt must be detected")
+	}
+	if got := codexUpdateHighlight(live); got != 1 {
+		t.Errorf("highlight = %d, want 1", got)
+	}
+	if got := (&CodexProvider{}).ClassifyPane(live); got != PaneUpdatePrompt {
+		t.Errorf("ClassifyPane = %v, want PaneUpdatePrompt", got)
+	}
+	if codexUpdatePromptLive(live + codexComposerTail) {
+		t.Error("negative control: an answered 0.158 prompt in scrollback must not count as live")
+	}
+
+	session := "inject-codex-update-158"
+	injectionTestSession(t, session)
+	calls := stubUpdatePromptPane(t, codexBanner, 1, true)
+	prev := tmuxOutputRunner
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		out, err := prev(args...)
+		return strings.Replace(strings.Replace(out, "✨ Update available! 0.155.0 -> 0.155.1", "Update available · 0.158.0 → 0.160.0", 1),
+			"Press enter to continue", "enter continue · esc skip", 1), err
+	}
+	if err := (&CodexProvider{hooks: true}).SendWakeUp(session, "build", true); !errors.Is(err, ErrInjectionSkipped) {
+		t.Fatalf("the 0.158 prompt must defer the wake, got %v", err)
+	}
+	if got := keyNames(*calls); strings.Join(got, ",") != "Down,Enter" {
+		t.Errorf("the 0.158 prompt must be skipped with Down then Enter, sent %v", got)
+	}
+}
+
+// A pane mid-update is not an agent: typed text is held by the tty and read by
+// bash once Codex exits (the 2026-10-04 `-bash: You: command not found`). The
+// composer is the negative control.
+func TestCaptureInjectionTarget_RefusesCodexUpdateInProgress(t *testing.T) {
+	session := "inject-codex-updating"
+	injectionTestSession(t, session)
+	for name, pane := range map[string]string{
+		"installing": codexBanner + "Updating Codex via `npm install -g @openai/codex`...\n⠹\n",
+		"finished":   codexBanner + "changed 2 packages in 19s\n🎉 Update ran successfully! Please restart Codex.\n",
+	} {
+		stubInjectionPane(t, pane, nil)
+		if _, err := captureInjectionTarget(session, "s:build.1", "build"); !errors.Is(err, ErrInjectionSkipped) {
+			t.Errorf("%s: injection must be refused with ErrInjectionSkipped, got %v", name, err)
+		}
+	}
+	stubInjectionPane(t, codexComposerPane, nil)
+	if _, err := captureInjectionTarget(session, "s:build.1", "build"); err != nil {
+		t.Errorf("negative control: a live composer must accept injection, got %v", err)
+	}
+}
+
+// Review must-fix (2026-10-04): the updater wording above a live composer —
+// a relaunched agent, or a reply quoting the incident — is old text, and
+// refusing on it would strand the agent. Only a composer below the last
+// updater line clears it; one above it (the dying agent's) does not.
+func TestCodexUpdateRunning_OrderedAgainstComposer(t *testing.T) {
+	cases := []struct {
+		name string
+		pane string
+		want bool
+	}{
+		{"marker then composer", codexBanner + "Please restart Codex.\n" + codexComposerTail, false},
+		{"quoted in a reply", codexBanner + "• The wake landed after \"Updating Codex via npm\" ran.\n" + codexComposerTail, false},
+		{"composer then marker", codexBanner + codexComposerTail + "Updating Codex via `npm install -g @openai/codex`...\n⠹\n", true},
+		{"no updater text", codexComposerPane, false},
+	}
+	for _, c := range cases {
+		if got := codexUpdateRunning(c.pane); got != c.want {
+			t.Errorf("%s: codexUpdateRunning = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 // A skip that cannot be verified still defers the payload and presses no
 // Enter — the prompt waits for a person rather than installing software.
 func TestCodexSendWakeUp_UnverifiedSkipPressesNoEnter(t *testing.T) {

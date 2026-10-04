@@ -289,11 +289,17 @@ const codexApprovalPromptTailWindow = 2
 // reach it (2026-09-22, dps-data-services-pipelines: the startup wake
 // updated build, test and review from 0.155.0 to 0.155.1 and all three died).
 // Its tail is the trust prompt's, which is why codexPromptLive checks order.
+//
+// Codex 0.158 reworded it: "Update available · 0.158.0 → 0.160.0" over a tail
+// of "enter continue · esc skip". The marker is the prefix both share and
+// codexUpdatePromptTails holds both tails; matching only the old wording let
+// the 2026-10-04 reload's wake choose "Update now" and kill build and review.
 const (
-	codexUpdatePromptMarker = "Update available!"
-	codexUpdatePromptTail   = "Press enter to continue"
+	codexUpdatePromptMarker = "Update available"
 	codexUpdateSkipOption   = 2
 )
+
+var codexUpdatePromptTails = []string{"Press enter to continue", "enter continue · esc skip"}
 
 // codexUpdateOptionsWindow spans the prompt's three options and tail plus one
 // footer line, counted from the bottom of the pane.
@@ -344,9 +350,49 @@ func codexTrustPromptLive(content string) bool {
 }
 
 // codexUpdatePromptLive reports whether content ends at the self-update
-// prompt.
+// prompt, in either Codex's old or its 0.158+ wording.
 func codexUpdatePromptLive(content string) bool {
-	return codexPromptLive(content, codexUpdatePromptMarker, codexUpdatePromptTail, codexTrustPromptTailWindow)
+	for _, tail := range codexUpdatePromptTails {
+		if codexPromptLive(content, codexUpdatePromptMarker, tail, codexTrustPromptTailWindow) {
+			return true
+		}
+	}
+	return false
+}
+
+// codexUpdateRunningLines are what Codex prints from accepting an update
+// until it exits to the shell. A pane showing either is not an agent: input
+// typed into it is held by the tty and read by bash once Codex exits, which is
+// how the 2026-10-04 wakes landed as `-bash: You: command not found` even
+// though the shell-prompt check recognises `->` — the prompt was not drawn yet.
+var codexUpdateRunningLines = []string{"Updating Codex via", "Please restart Codex"}
+
+// codexComposerChar opens Codex's composer line ("› Ask Codex to do anything").
+const codexComposerChar = "›"
+
+// codexUpdateRunning reports whether a capture shows a Codex self-update in
+// progress or just finished: its last updater line has no live composer
+// (Codex's › or Claude's ❯) drawn after it.
+//
+// Ordered like paneShowsAgentExit. Only a composer BELOW the last updater
+// line clears the pane — the update prompt's own highlighted option is drawn
+// above it — and the updater wording merely appearing, say quoted in a reply
+// that explains the incident, must not strand a live agent: every wake to it
+// would be refused (review must-fix, 2026-10-04). Whitespace-stripped so a
+// narrow pane's soft wrap cannot hide the marker.
+func codexUpdateRunning(content string) bool {
+	stripped := stripWhitespace(content)
+	at := -1
+	for _, marker := range codexUpdateRunningLines {
+		if i := strings.LastIndex(stripped, stripWhitespace(marker)); i > at {
+			at = i
+		}
+	}
+	if at < 0 {
+		return false
+	}
+	after := stripped[at:]
+	return !strings.Contains(after, codexComposerChar) && !strings.Contains(after, idlePromptChar)
 }
 
 // codexUpdateHighlight returns the number of the update prompt's highlighted
