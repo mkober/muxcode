@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // LaunchReason names why an agent is being launched. The road that types the
@@ -61,21 +62,24 @@ func AgentLaunchCommand(bin, role string, reason LaunchReason) string {
 }
 
 // ParseLaunchArgs parses the arguments of `muxcode agent launch <role>
-// [--reason <reason>] [--resume <session-id>]`. An omitted --reason yields the
-// empty reason, which PreLaunchSetup treats as a restart.
+// [--reason <reason>] [--resume [<session-id>]]`. An omitted --reason yields the
+// empty reason, which PreLaunchSetup treats as a restart. A --resume with no id
+// yields ResumeAuto: the launcher finds the id itself (FindResumeID).
 func ParseLaunchArgs(args []string) (role, resumeID string, reason LaunchReason, err error) {
 	for i := 0; i < len(args); i++ {
 		switch {
-		case args[i] == "--resume" || args[i] == "--reason":
+		case args[i] == "--resume":
+			resumeID = ResumeAuto
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				resumeID = args[i]
+			}
+		case args[i] == "--reason":
 			if i+1 >= len(args) {
 				return "", "", "", fmt.Errorf("%s requires a value", args[i])
 			}
 			i++
-			if args[i-1] == "--resume" {
-				resumeID = args[i]
-			} else {
-				reason = LaunchReason(args[i])
-			}
+			reason = LaunchReason(args[i])
 		case role == "" && len(args[i]) > 0 && args[i][0] != '-':
 			role = args[i]
 		default:

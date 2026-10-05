@@ -155,6 +155,12 @@ type Daemon struct {
 	denyApproval      func(target string) error
 	reloadAgent       func(session, role string) error
 	snapshotAgentDown func(session, role string) (string, error)
+	restartAgent      func(session, role string) error
+	paneResumeID      func(session, role string) (string, bool)
+	stopAgent         func(session, role string) error
+
+	daemonRestarted map[string]bool // role → relaunched by checkAgentHealth, not yet verified
+	pendingStop     map[string]bool // role → refused as unrestricted, termination not yet confirmed
 
 	lastBranchTick      int64
 	lastBranch          string // branch the pending seconds belong to
@@ -268,6 +274,16 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 			return bus.ReloadAgent(session, role, "", "", false)
 		},
 		snapshotAgentDown: bus.SnapshotAgentDown,
+		restartAgent:      bus.RestartLocalAgent,
+		paneResumeID:      bus.PaneResumeID,
+		stopAgent: func(session, role string) error {
+			if err := bus.MarkAgentStopped(session, role); err != nil {
+				return err
+			}
+			return bus.GracefulStop(session, role, false)
+		},
+		daemonRestarted: make(map[string]bool),
+		pendingStop:     make(map[string]bool),
 	}
 }
 
@@ -1825,6 +1841,11 @@ func (d *Daemon) checkAgentHealth() {
 			continue
 		}
 
+		if d.pendingStop[role] { // ahead of the stop-marker skip — see retryUnrestrictedStop
+			d.retryUnrestrictedStop(role)
+			continue
+		}
+
 		// Skip intentionally stopped agents
 		if bus.IsAgentStopped(d.session, role) {
 			continue
@@ -1835,9 +1856,13 @@ func (d *Daemon) checkAgentHealth() {
 		if alive {
 			// Recovery detection
 			if d.agentWasDown[role] {
+				if d.daemonRestarted[role] && !d.verifyRestricted(role) {
+					continue
+				}
 				if !d.definitionApplied(role) {
 					continue // alive, but not with its definition — see definitionApplied
 				}
+				delete(d.daemonRestarted, role)
 				fmt.Printf("  %s  Agent %s recovered\n", ts, role)
 				bus.LogLifecycle(d.session, "info", "daemon", "agent-recovered", role)
 				d.agentWasDown[role] = false
@@ -1861,83 +1886,206 @@ func (d *Daemon) checkAgentHealth() {
 		bus.LogLifecycle(d.session, "warn", "daemon", "agent-health-fail",
 			fmt.Sprintf("%s failure #%d", role, count))
 
-		// Strike 2 (60s) — alert edit
-		if count == 2 {
-			d.agentWasDown[role] = true
-
-			// Evidence first: strike 3's relaunch types over the pane that
-			// holds the exit message (MUX-136 Phase 4).
-			if dir, err := d.snapshotAgentDown(d.session, role); err == nil {
-				bus.LogLifecycle(d.session, "info", "daemon", "agent-down-snapshot", role+": "+dir)
-			} else {
-				bus.LogLifecycle(d.session, "warn", "daemon", "agent-down-snapshot", role+": "+err.Error())
-			}
-
-			alertKey := bus.AgentHealthAlertKey(role, "down")
-			if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
-				d.lastAlertKey[alertKey] = now
-				alert := bus.FormatAgentHealthAlert("down", role, "Agent pane shows bare shell prompt")
-				msg := bus.NewMessage("daemon", "edit", "event", "agent-down", alert, "")
-				if err := bus.Send(d.session, msg); err != nil {
-					fmt.Fprintf(os.Stderr, "  [agent-health] failed to send down alert for %s: %v\n", role, err)
-				}
-				d.refreshInboxSizes()
-			}
+		hinted := false
+		if count < 3 && bus.ResumeFirstSighting() && bus.IsClaudeTUI(bus.ResolveProvider(role)) {
+			_, hinted = d.paneResumeID(d.session, role)
 		}
-
-		// Strike 3 (90s) — attempt restart
-		if count == 3 {
-			if d.agentRestarts[role] >= 3 {
-				// Cap reached — alert-only mode
-				alertKey := bus.AgentHealthAlertKey(role, "down")
-				if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
-					d.lastAlertKey[alertKey] = now
-					alert := bus.FormatAgentHealthAlert("down", role,
-						fmt.Sprintf("Restart cap (3) reached. Manual intervention required."))
-					msg := bus.NewMessage("daemon", "edit", "event", "agent-down", alert, "")
-					_ = bus.Send(d.session, msg)
-					d.refreshInboxSizes()
-				}
-				// Reset like the restart path below. The cap branch is nested
-				// under `count == 3`, so without this the counter climbs past 3
-				// and never matches again — alert-only mode would fire exactly
-				// one alert and then stay silent forever, however long the agent
-				// stays down. Resetting lets the count cycle back to 3 so the
-				// 600s re-alert above keeps reminding that a manual restart is
-				// still needed.
-				d.agentFailCounts[role] = 0
-				continue
-			}
-
-			d.agentRestarts[role]++
-			attempt := d.agentRestarts[role]
-			fmt.Printf("  %s  Restarting agent %s (attempt %d/3)...\n", ts, role, attempt)
-			bus.LogLifecycle(d.session, "warn", "daemon", "agent-restart",
-				fmt.Sprintf("%s attempt %d/3", role, attempt))
-
-			// Send restarting alert (deduped with recovery — at most one per 5-min window)
-			if d.shouldSendEvent("agent-health", role) {
-				alert := bus.FormatAgentHealthAlert("restarting", role,
-					fmt.Sprintf("Attempt %d/3 — relaunching agent", attempt))
-				msg := bus.NewMessage("daemon", "edit", "event", "agent-restarting", alert, "")
-				_ = bus.Send(d.session, msg)
-				d.refreshInboxSizes()
-			}
-
-			// Attempt restart
-			if err := bus.RestartLocalAgent(d.session, role); err != nil {
-				fmt.Fprintf(os.Stderr, "  [agent-health] failed to restart %s: %v\n", role, err)
-			} else {
-				fmt.Printf("  %s  Agent %s restarted successfully\n", ts, role)
-				// Clear notified-size so checkIdleAgents re-notifies the
-				// new agent about any pending inbox messages.
-				bus.ClearNotifiedIDs(d.session, role)
-			}
-
-			// Reset fail count to let next probe detect recovery
-			d.agentFailCounts[role] = 0
+		if count == 2 || (hinted && !d.agentWasDown[role]) {
+			d.markAgentDown(role, now)
+		}
+		if count == 3 || hinted {
+			d.restartDeadAgent(role, now, ts, hinted)
 		}
 	}
+}
+
+// markAgentDown is strike 2 (or a first sighting with a resume banner): the
+// pane is snapshotted before any relaunch types over its exit message (MUX-136
+// Phase 4), and edit is alerted agent-down at most once per 600s.
+func (d *Daemon) markAgentDown(role string, now int64) {
+	d.agentWasDown[role] = true
+
+	if dir, err := d.snapshotAgentDown(d.session, role); err == nil {
+		bus.LogLifecycle(d.session, "info", "daemon", "agent-down-snapshot", role+": "+dir)
+	} else {
+		bus.LogLifecycle(d.session, "warn", "daemon", "agent-down-snapshot", role+": "+err.Error())
+	}
+
+	alertKey := bus.AgentHealthAlertKey(role, "down")
+	if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
+		d.lastAlertKey[alertKey] = now
+		alert := bus.FormatAgentHealthAlert("down", role, "Agent pane shows bare shell prompt")
+		msg := bus.NewMessage("daemon", "edit", "event", "agent-down", alert, "")
+		if err := bus.Send(d.session, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "  [agent-health] failed to send down alert for %s: %v\n", role, err)
+		}
+		d.refreshInboxSizes()
+	}
+}
+
+// restartDeadAgent is strike 3, or the first sighting of a resumable exit
+// banner (hinted — bus.ResumeFirstSighting: the banner is proof of exit, so
+// the strikes add nothing). The 3-restart cap holds on both roads, after which
+// it alerts every 600s and resets the count so the alert can recur.
+//
+// A resume-only role (bus.ResumeOnlyRole: edit) with no resumable session is
+// left down and alerted rather than relaunched: a fresh edit discards the
+// conversation the user was in. That costs no restart attempt.
+func (d *Daemon) restartDeadAgent(role string, now int64, ts string, hinted bool) {
+	defer func() { d.agentFailCounts[role] = 0 }()
+
+	if d.agentRestarts[role] >= 3 {
+		alertKey := bus.AgentHealthAlertKey(role, "down")
+		if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
+			d.lastAlertKey[alertKey] = now
+			alert := bus.FormatAgentHealthAlert("down", role,
+				fmt.Sprintf("Restart cap (3) reached. Manual intervention required."))
+			msg := bus.NewMessage("daemon", "edit", "event", "agent-down", alert, "")
+			_ = bus.Send(d.session, msg)
+			d.refreshInboxSizes()
+		}
+		return
+	}
+
+	if bus.ResumeOnlyRole(role) {
+		if !hinted {
+			_, hinted = d.paneResumeID(d.session, role)
+		}
+		if !hinted {
+			bus.LogLifecycle(d.session, "warn", "daemon", "agent-resume-unavailable",
+				role+": resume-only, no resumable session — left down")
+			d.alertResumeUnavailable(role, now)
+			return
+		}
+	}
+
+	d.agentRestarts[role]++
+	attempt := d.agentRestarts[role]
+	fmt.Printf("  %s  Restarting agent %s (attempt %d/3)...\n", ts, role, attempt)
+	bus.LogLifecycle(d.session, "warn", "daemon", "agent-restart",
+		fmt.Sprintf("%s attempt %d/3", role, attempt))
+
+	// Deduped with recovery — at most one per 5-min window
+	if d.shouldSendEvent("agent-health", role) {
+		alert := bus.FormatAgentHealthAlert("restarting", role,
+			fmt.Sprintf("Attempt %d/3 — relaunching agent", attempt))
+		msg := bus.NewMessage("daemon", "edit", "event", "agent-restarting", alert, "")
+		_ = bus.Send(d.session, msg)
+		d.refreshInboxSizes()
+	}
+
+	err := d.restartAgent(d.session, role)
+	switch {
+	case errors.Is(err, bus.ErrResumeUnavailable):
+		d.alertResumeUnavailable(role, now)
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "  [agent-health] failed to restart %s: %v\n", role, err)
+	default:
+		fmt.Printf("  %s  Agent %s restarted successfully\n", ts, role)
+		d.daemonRestarted[role] = true
+		// checkIdleAgents re-notifies the new agent about pending messages.
+		bus.ClearNotifiedIDs(d.session, role)
+	}
+}
+
+// alertResumeUnavailable tells edit, at most once per 600s, that a
+// resume-only role was left down for want of a session to resume.
+func (d *Daemon) alertResumeUnavailable(role string, now int64) {
+	alertKey := bus.AgentHealthAlertKey(role, "resume-unavailable")
+	if lastTS, ok := d.lastAlertKey[alertKey]; ok && now-lastTS < 600 {
+		return
+	}
+	d.lastAlertKey[alertKey] = now
+	alert := bus.FormatAgentHealthAlert("down", role, fmt.Sprintf(
+		"%s is resume-only and its pane offers no resumable session, so it was left down — a fresh launch would discard the conversation. Relaunch it by hand: muxcode resume %s.", role, role))
+	_ = bus.Send(d.session, bus.NewMessage("daemon", "edit", "event", "agent-down", alert, ""))
+	d.refreshInboxSizes()
+}
+
+// resumedUnrestricted reports whether a role checkAgentHealth relaunched shows
+// Claude Code's definition-less resume banner since its last exit. The argv
+// probe cannot see this case: the launcher passed --agent/--agents and Claude
+// still came back with default tools, the MUX-136 shape the definition-carrying
+// resume exists to prevent. A failed capture is an error, never a clean pane.
+func (d *Daemon) resumedUnrestricted(role string) (bool, error) {
+	content, err := d.capturePane(bus.PaneTarget(d.session, role), definitionBannerLines)
+	if err != nil {
+		return false, err
+	}
+	return bus.PaneShowsDefinitionlessAgent(bus.SinceLastAgentExit(content)), nil
+}
+
+// verifyRestricted gates the recovery of a role checkAgentHealth relaunched:
+// true only on a capture showing no definition-less banner. A failed capture
+// defers recovery with the verification still pending, so the next sweep
+// retries it — recovering on an unread pane would clear the one check that
+// sees this case. An unrestricted pane is refused (refuseUnrestricted).
+func (d *Daemon) verifyRestricted(role string) bool {
+	unrestricted, err := d.resumedUnrestricted(role)
+	if err != nil {
+		bus.LogLifecycle(d.session, "warn", "daemon", "agent-resume-verify-deferred", role+": capture failed: "+err.Error())
+		return false
+	}
+	if unrestricted {
+		d.refuseUnrestricted(role)
+		return false
+	}
+	return true
+}
+
+// refuseUnrestricted stops a relaunched agent running without its definition.
+// Stopped, not reloaded: the definition watchdog's reload is a fresh launch,
+// which for edit would discard the conversation, and a stop marker keeps
+// checkAgentHealth from resuming it straight back. The role stays pendingStop
+// until termination is confirmed, so edit is told it was stopped only once it
+// has been, and told truthfully when the stop fails.
+func (d *Daemon) refuseUnrestricted(role string) {
+	delete(d.daemonRestarted, role)
+	d.pendingStop[role] = true
+	fmt.Printf("  %s  Agent %s came back without its agent definition — stopping it\n", time.Now().Format("15:04:05"), role)
+	bus.LogLifecycle(d.session, "error", "daemon", "agent-resume-unrestricted", role)
+	if err := d.stopUnrestricted(role); err != nil {
+		bus.LogLifecycle(d.session, "error", "daemon", "agent-resume-stop-failed", role+": "+err.Error())
+		d.alertUnrestricted(role, fmt.Sprintf(
+			"%s was relaunched by the daemon but Claude Code reports its agent definition unavailable — default tools, no role restrictions. Stopping it FAILED (%v): it may still be running unrestricted. The daemon retries the stop every health sweep and will not restart it; if this persists, end it by hand (/exit in its pane, or kill its process).", role, err))
+		return
+	}
+	d.confirmUnrestrictedStopped(role)
+}
+
+// retryUnrestrictedStop runs each sweep while a refused role's stop is
+// unconfirmed. It is checked before the stop-marker skip because the marker is
+// written before the stop that may fail: honouring it would hide an agent
+// still running unrestricted from every later sweep. Pending, the role is
+// neither recovered nor restarted.
+func (d *Daemon) retryUnrestrictedStop(role string) {
+	if err := d.stopUnrestricted(role); err != nil {
+		bus.LogLifecycle(d.session, "error", "daemon", "agent-resume-stop-failed", role+": retry: "+err.Error())
+		return
+	}
+	d.confirmUnrestrictedStopped(role)
+}
+
+// stopUnrestricted ends a refused agent and leaves its stop marker. An agent
+// already dead needs only the marker — typing an exit sequence into its shell
+// would run it as a command.
+func (d *Daemon) stopUnrestricted(role string) error {
+	if !d.agentAlive(d.session, role) {
+		return bus.MarkAgentStopped(d.session, role)
+	}
+	return d.stopAgent(d.session, role)
+}
+
+func (d *Daemon) confirmUnrestrictedStopped(role string) {
+	delete(d.pendingStop, role)
+	bus.LogLifecycle(d.session, "info", "daemon", "agent-resume-unrestricted-stopped", role)
+	d.alertUnrestricted(role, fmt.Sprintf(
+		"%s was relaunched by the daemon but Claude Code reports its agent definition unavailable — default tools, no role restrictions. It has been stopped and will not be auto-restarted. Check the definition (make install), then: muxcode agent-health --start %s.", role, role))
+}
+
+func (d *Daemon) alertUnrestricted(role, text string) {
+	_ = bus.Send(d.session, bus.NewMessage("daemon", "edit", "event", "agent-resume-unrestricted", text, ""))
+	d.refreshInboxSizes()
 }
 
 // msgCheckSecs returns how often (in seconds) the daemon scans for messages to

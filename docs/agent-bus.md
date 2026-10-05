@@ -1105,12 +1105,16 @@ $ muxcode agent run build --url http://192.168.1.100:11434
 Launch an AI CLI agent for a role. Resolves agent file, model, tools, prompt, and execs the agent CLI.
 
 ```bash
-muxcode agent launch <role> [--reason <reason>] [--resume <session-id>]
+muxcode agent launch <role> [--reason <reason>] [--resume [<session-id>]]
 ```
 
 - `<role>` — agent role to launch (e.g. `edit`, `build`, `test`, `commit`)
 - `--reason <reason>` — why the agent is launching: `user`, `restart`, `reload`, `mode-cycle`, `resume` or `spawn` (`bus.LaunchReason`, `bus/launch_reason.go`). The road that types the launch knows which it is and says so; the agent, reading the same startup message on every road, cannot ([MUX-141](requirements/completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md)). An omitted or unrecognized reason is treated as a **restart**, so a call site that forgets its reason gets an agent that waits, never one that acts. Every road builds the command through `AgentLaunchCommand(bin, role, reason)`: `LaunchSession` and the modal say `user`, the health restart `restart`, `muxcode reload` `reload`, mode cycling `mode-cycle`, `muxcode resume` `resume`, spawn workers `spawn`
-- `--resume <session-id>` — relaunch into an existing Claude conversation (see [`muxcode resume`](#muxcode-resume))
+- `--resume [<session-id>]` — relaunch into an existing Claude conversation (see [`muxcode resume`](#muxcode-resume)). With an id, that session. **Bare `--resume` finds the id itself** (`bus.FindResumeID`, `bus/agent_health.go`), in order:
+  1. **Pane** (`source=pane`) — the exit banner Claude Code prints in the launching pane (`Resume this session with: claude --resume <id>`) names the exact session that died, so it outranks everything else
+  2. **Transcript** (`source=transcript`) — the cwd's sole transcript under `~/.claude/projects/<encoded cwd>/` whose `agent-setting` row records the role's agent definition (`agentSetting`); declines when there is none, or more than one candidate — a guess between two conversations is worse than a fresh start. **It applies only when the spawn registry proves the cwd is the role's own private spawn worktree** (`spawnOwnsWorktree`: exactly one entry claims the directory, and it is this role). A shared cwd — the repo root the persistent roles run in, or a worktree-less graph worker's session checkout — declines with `ErrTranscriptSharedCwd` and launches fresh (`resume-fresh`), because a directory several agents share has transcripts from all of them and the agent-definition name cannot tell a spawn worker from the `edit` it was launched as
+
+  Each launch logs the outcome: `resume-found` (`id=<id> source=pane|transcript`) or `resume-fresh` (the reason both roads declined, then a fresh launch). A provider that cannot resume logs `resume-ignored` and launches fresh ([MUX-139](requirements/backlog/MUX-139-claude-agent-auto-resume.md) Phase 1)
 
 **Resolution cascade:**
 
@@ -1138,6 +1142,9 @@ $ muxcode agent launch edit --reason user
 
 # Daemon health restart into the agent's previous conversation
 $ muxcode agent launch build --reason restart --resume <session-id>
+
+# Same, letting the launcher find the id (pane exit banner, then the cwd's transcript)
+$ muxcode agent launch build --reason restart --resume
 ```
 
 ### `muxcode agent status`

@@ -47,20 +47,20 @@ authority). See [Sequencing constraint](#sequencing-constraint).
 
 ### Acceptance criteria
 
-- [ ] On `agent-down` for a Claude-provider role, the daemon relaunches with `claude --resume <session-id>` when a resumable id is known, preserving the conversation
-- [ ] When no id is known, it falls back to a fresh launch **and the lifecycle log says which path ran and why**
-- [ ] Session id capture is **pane-first**: the `Resume this session with: claude --resume <id>` line from `capture-pane`; the chosen source is logged (`source=pane|transcript`)
-- [ ] The transcript fallback never resumes another role's conversation — it is used only when the cwd maps to exactly one candidate session, and declines (fresh launch, logged reason) when the mapping is ambiguous (see [Decision 1](#decision-1-the-transcript-fallback-is-constrained-not-newest-wins))
-- [ ] **Auto-resume carries the role's `--agent`/`--agents` definition**, and the pane is verified afterwards to NOT show the agent-unavailable / default-tools warning. On that warning the agent is stopped and an alert raised — it must **never** be left running unrestricted (MUX-136, reproduced live on the manual path)
-- [ ] `edit` becomes **resume-only**: never fresh-launched automatically, but DO resume it — a resume restores the user's conversation, a fresh launch would not. Pinned so the exclusion cannot silently flip to fresh launches
+- [x] On `agent-down` for a Claude-provider role, the daemon relaunches with `claude --resume <session-id>` when a resumable id is known, preserving the conversation — *Phase 2*
+- [x] When no id is known, it falls back to a fresh launch **and the lifecycle log says which path ran and why** — *Phase 2: `resume-scrape-miss` / `resume-scrape-stale` / `resume-disabled`; resume-only `edit` instead logs `agent-resume-unavailable` and stays down*
+- [x] Session id capture is **pane-first**: the `Resume this session with: claude --resume <id>` line from `capture-pane`; the chosen source is logged (`source=pane|transcript`) — *Phase 1, `FindResumeID` + `resume-found` row*
+- [x] The transcript fallback never resumes another role's conversation — it is used only when the cwd maps to exactly one candidate session, and declines (fresh launch, logged reason) when the mapping is ambiguous (see [Decision 1](#decision-1-the-transcript-fallback-is-constrained-not-newest-wins)) — *Phase 1, `TranscriptIDForCwd` matches on the transcript's `agentSetting` and only inside a worktree the spawn registry says this role owns alone (`spawnOwnsWorktree`); another agent's transcript, an ambiguous pair, and any shared cwd all decline, pinned*
+- [x] **Auto-resume carries the role's `--agent`/`--agents` definition**, and the pane is verified afterwards to NOT show the agent-unavailable / default-tools warning. On that warning the agent is stopped and an alert raised — it must **never** be left running unrestricted (MUX-136, reproduced live on the manual path) — *Phase 1 (`TestClaudeBuildExecArgs_ResumeAppendsToFullFlagSet`) + Phase 2 (`refuseUnrestricted`)*
+- [x] `edit` becomes **resume-only**: never fresh-launched automatically, but DO resume it — a resume restores the user's conversation, a fresh launch would not. Pinned so the exclusion cannot silently flip to fresh launches — *Phase 2*
 - [ ] Spawn workers are covered: a dead worker whose run node is still `running` is resumed in its worktree with the same launch env and agent file
 - [ ] When a worker cannot be resumed, the spawn is **marked failed so the graph run fails loudly instead of stalling** (MUX-131 reuse then falls back to a fresh start on retry)
 - [ ] Mass-exit detection: >= 2 Claude agents down within `MUXCODE_MASS_EXIT_WINDOW_SECS` (default 60), across sessions where the bus dirs are visible, raises **one** `mass-agent-exit` event to edit naming the roles and sessions, with a lifecycle row — instead of N unrelated `agent-down` events. Per-role restart proceeds regardless
-- [ ] Resume restarts skip the 3-strike wait: a pane showing the resume hint is **proof of exit**, not a health-check ambiguity — restart on first sighting (configurable, default on)
-- [ ] `muxcode agent launch <role> --resume [<id>]` exposes the same path manually
+- [x] Resume restarts skip the 3-strike wait: a pane showing the resume hint is **proof of exit**, not a health-check ambiguity — restart on first sighting (configurable, default on) — *Phase 2*
+- [x] `muxcode agent launch <role> --resume [<id>]` exposes the same path manually — *Phase 1*
 - [ ] `muxcode diagnose` gains a `resumable-session` info finding when a dead agent's pane carries a resume hint
-- [ ] Opt-out: `MUXCODE_AUTO_RESUME_DISABLE=1` restores today's behaviour exactly
-- [ ] Docs updated: CLAUDE.md watchdog bullet, [`docs/agent-bus.md`](../../agent-bus.md), [`docs/configuration.md`](../../configuration.md)
+- [x] Opt-out: `MUXCODE_AUTO_RESUME_DISABLE=1` restores today's behaviour exactly — *Phase 2, pinned; script C2*
+- [x] Docs updated: CLAUDE.md watchdog bullet, [`docs/agent-bus.md`](../../agent-bus.md), [`docs/configuration.md`](../../configuration.md) — *CLAUDE.md "Agent-health restarts are resume-first" bullet; agent-bus.md `agent launch --resume` (Phase 1); configuration.md `MUXCODE_AUTO_RESUME_DISABLE` / `MUXCODE_RESUME_FIRST_SIGHTING` rows (Phase 2)*
 
 #### Operator-initiated restart (`Restart Agents` menu entry)
 
@@ -90,8 +90,8 @@ operator opened the menu. Reusing `ReloadAll` unchanged would produce a control 
 
 ### Sequencing constraint
 
-- [ ] **MUX-139 does not ship before [MUX-136](./MUX-136-bare-resume-loses-agent-definition.md) is fixed and pinned.** Auto-resume multiplies MUX-136's blast radius from one hand-resumed agent to every Claude role on the machine; the definition-carrying criterion above is the guard, and MUX-136 is where that guard is built
-- [ ] Confirm the interaction with [MUX-126](../completed/MUX-126-edit-resume-aware-auto-restart.md): that spec is `edit`'s bare `--resume` losing all launch flags. This spec **adds** automatic `--resume` for edit, so MUX-126's defect becomes reachable automatically — its flag-preserving fix must land with or before Phase 2
+- [x] **MUX-139 does not ship before [MUX-136](../completed/MUX-136-bare-resume-loses-agent-definition.md) is fixed and pinned.** Auto-resume multiplies MUX-136's blast radius from one hand-resumed agent to every Claude role on the machine; the definition-carrying criterion above is the guard, and MUX-136 is where that guard is built — *MUX-136 is in `completed/`; the guard is `refuseUnrestricted` + the full-flag-set pin*
+- [x] Confirm the interaction with [MUX-126](../completed/MUX-126-edit-resume-aware-auto-restart.md): that spec is `edit`'s bare `--resume` losing all launch flags. This spec **adds** automatic `--resume` for edit, so MUX-126's defect becomes reachable automatically — its flag-preserving fix must land with or before Phase 2 — *MUX-126 is completed; its `TestClaudeBuildExecArgs_ResumeAppendsToFullFlagSet` is what Phase 1 step 3 credits, so the automatic road inherits the full flag set*
 
 ### Technical approach
 
@@ -153,19 +153,19 @@ Therefore:
 
 ### Phase 1: Resume id capture and `--resume` launch
 
-- [ ] `ResumeHintFromPane` + tests: hint present, hint absent, malformed uuid, hint above the last 5 lines (the deeper-capture case)
-- [ ] `TranscriptIDForCwd` + tests: unique candidate resolves, **ambiguous candidate declines**, encoded-path mapping pinned including `/private/var` resolution
-- [ ] `LaunchConfig.ResumeID`; `--resume` emitted by `ClaudeCodeProvider.BuildExecArgs`; arg shape pinned by test
-- [ ] `muxcode agent launch <role> --resume [<id>]`
-- [ ] Verify live that `claude --resume <id>` alongside the role's `--agent`/`--agents` flags restores the conversation **with the role's tools**, not default tools
+- [x] `ResumeHintFromPane` + tests: hint present, hint absent, malformed uuid, hint above the last 5 lines (the deeper-capture case) — *verified 2026-10-05: shipped as `CaptureResumeSessionID` / `ScrapeResumeSessionID` (`bus/agent_health.go`); `TestScrapeResumeSessionID` covers present ("incident pane"), absent ("no banner"), malformed ("truncated id", "overlong id", "malformed latest never falls back"); `TestCaptureResumeSessionID_HintAboveLastFiveLines` (`resume_id_test.go`) covers the deeper capture*
+- [x] `TranscriptIDForCwd` + tests: unique candidate resolves, **ambiguous candidate declines**, encoded-path mapping pinned including `/private/var` resolution — *`TranscriptIDForCwd`, `claudeProjectDirName`, `transcriptAgent` (`bus/agent_health.go`); `TestTranscriptIDForCwd` (7 cases: one resolves, two decline as ambiguous, another agent's lone transcript declines, no-agent transcript never qualifies, non-uuid name ignored, no project dir, no agent name) and `TestClaudeProjectDirName` with the `/private/var` resolution. Tightened in review: the transcript road applies only when `spawnOwnsWorktree` proves the cwd is the role's own private spawn worktree — shared cwds (repo-root roles, worktree-less graph workers) decline `ErrTranscriptSharedCwd`; `TestTranscriptIDForCwd_OwnershipGate` (6 rows: own worktree resolves; unowned shared cwd, persistent role, another worker's worktree, a worktree two spawns claim, and no role all decline)*
+- [x] `LaunchConfig.ResumeID`; `--resume` emitted by `ClaudeCodeProvider.BuildExecArgs`; arg shape pinned by test — *shipped as `LaunchConfig.ResumeSessionID` → `provider_claude.go:111` (MUX-126 Phase 2, pre-dating this phase); pinned by `TestClaudeBuildExecArgs_ResumeAppendsToFullFlagSet` (`provider_test.go:378`): resumed argv == fresh argv + `--resume <id>`, with `--agent`/`--agents`/`--allowedTools`/`--append-system-prompt`/`--dangerously-skip-permissions` all retained. (Plan's 2026-10-05 verify first marked this unpinned — a search miss, corrected the same day)*
+- [x] `muxcode agent launch <role> --resume [<id>]` — *`cmd/launch.go` usage; `ParseLaunchArgs` returns `ResumeAuto` for a bare `--resume` (pinned in `launch_reason_test.go`); `findLaunchResumeID` → `FindResumeID` pane-first then transcript, logging `resume-found` (`source=pane|transcript`) / `resume-fresh` (reason) / `resume-ignored` (provider); `TestFindResumeID` pins pane-first, fallback, and both-decline naming both reasons; documented in `docs/agent-bus.md`*
+- [x] Verify live that `claude --resume <id>` alongside the role's `--agent`/`--agents` flags restores the conversation **with the role's tools**, not default tools — *deferred to Phase 6 — `scripts/test-agent-resume.sh` (user's decision, 2026-10-05); needs a human-observed real agent, which Phase 1 had no road to*
 
 ### Phase 2: Daemon resume-first restart
 
-- [ ] Resume-first branch in `checkAgentHealth` for Claude roles; lifecycle `agent-resume` with source; fallback to the existing path with a logged reason
-- [ ] Definition-carried verification: after resume, confirm the pane shows no agent-unavailable/default-tools warning; on warning, stop the agent and alert — never leave it running unrestricted
-- [ ] Edit becomes resume-only; pinned by a test that a **missing id leaves edit down and alerts** rather than fresh-launching it
-- [ ] First-sighting restart when the resume hint is present (skip the 3-strike wait), configurable
-- [ ] `MUXCODE_AUTO_RESUME_DISABLE` opt-out + test
+- [x] Resume-first branch in `checkAgentHealth` for Claude roles; lifecycle `agent-resume` with source; fallback to the existing path with a logged reason — *verified 2026-10-05: `bus.RestartLocalAgent` (`health.go`) picks resume / resume-only / fresh; a hit logs `agent-resume id=<uuid> source=pane`, a miss or stale banner `resume-scrape-miss`/`-stale` then fresh, the opt-out `resume-disabled`; daemon `markAgentDown`/`restartDeadAgent` (`daemon.go`)*
+- [x] Definition-carried verification: after resume, confirm the pane shows no agent-unavailable/default-tools warning; on warning, stop the agent and alert — never leave it running unrestricted — *`refuseUnrestricted` (`daemon.go:2013`): stop marker + `agent-resume-unrestricted` row and alert to edit, even when the argv probe reads present; `TestCheckAgentHealth_RestartedWithoutDefinitionIsStopped`, with negative controls `…OldDefinitionWarningIsIgnored` (a pre-exit warning does not fire) and the `FailedCapture`/`FailedStop`/`FailedMarker` fail-closed cases*
+- [x] Edit becomes resume-only; pinned by a test that a **missing id leaves edit down and alerts** rather than fresh-launching it — *`ResumeOnlyRole` (Claude `edit`, unless opted out); `ErrResumeUnavailable`, nothing typed, `agent-resume-unavailable` row + deduped `agent-down` alert, no attempt spent; `TestCheckAgentHealth_EditWithoutSessionIsLeftDown`, `TestRestartLocalAgent_EditIsResumeOnly`, `TestResumeOnlyRole`; script section C*
+- [x] First-sighting restart when the resume hint is present (skip the 3-strike wait), configurable — *`ResumeFirstSighting` (default on, `MUXCODE_RESUME_FIRST_SIGHTING=0` off), `PaneResumeID` non-stale banner only; snapshot + `agent-down` still recorded first, restart cap kept; `TestCheckAgentHealth_FirstSightingResumes` + `…NoFirstSightingWithoutBannerOrWhenOff` (3 negative controls), `TestResumeFirstSighting`, `TestPaneResumeID`*
+- [x] `MUXCODE_AUTO_RESUME_DISABLE` opt-out + test — *`AutoResumeDisabled`: no scrape, no first sighting, edit not resume-only, manual `muxcode resume` unaffected; `TestRestartLocalAgent_AutoResumeDisabled`, `TestCheckAgentHealth_EditResumesOrOptsOut`; script section C2. `scripts/test-edit-auto-resume.sh` via the run agent (task `1791219175-spawn-2c03db0e-39ac9d32`, hook row ts 1791219753): exit 0, **84 passed / 0 failed**, floor 77 → 84*
 
 ### Phase 3: Spawn worker coverage
 
@@ -200,6 +200,7 @@ Therefore:
 - [ ] `edit` resumed, never fresh-launched
 - [ ] A spawn worker with a running node resumed in its worktree
 - [ ] Assert the relaunch carried the role's `--agent`/`--agents` flags (MUX-136 guard)
+- [ ] **Live tools-restored check** (deferred here from Phase 1 step 5): resume a **real** Claude agent — not the shim — with `muxcode agent launch <role> --resume <id>` and verify the pane shows the conversation restored **and** the role's tools, with no agent-unavailable / default-tools warning. Human-observed, or a live section gated like `test-codex-hooks` (`MUXCODE_AGENT_RESUME_LIVE=1`); record the observation here
 - [ ] **Negative controls:** opt-out env leaves today's behaviour; a single death raises no mass event; a pane with no hint falls back to fresh launch with the logged reason; an ambiguous transcript cwd declines rather than resuming the wrong session
 - [ ] `Restart Agents` end-to-end: kill all agents, invoke the restart action filtered to `claude`, assert **every dead Claude agent came back** (the skip-dead-agents regression, Decision 2) with its `--agent`/`--agents` flags, `edit` among them via resume
 - [ ] **Negative controls for restart:** an `opencode` filter leaves Claude agents untouched; the run writes **no `--cli`/`--model` override file** for any role (provider never switched); ordinary `muxcode reload --all` still skips dead agents and still skips `edit`
@@ -220,6 +221,12 @@ Together with MUX-136, MUX-126 and MUX-008 this forms the *restart and resume re
 incompletely* family named in the [defect clustering](./backlog.md#defects--prioritized). Those three
 describe what restore gets **wrong**; this one describes what restore does not **attempt**.
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-139-claude-agent-auto-resume | 39m | 2026-10-05 13:06 |
+
 ## Status
 
-Backlog
+In Progress — Phases 1-2 complete (2026-10-05; Phase 1 step 5 deferred to Phase 6 by the user); Phase 3 next
