@@ -53,8 +53,8 @@ authority). See [Sequencing constraint](#sequencing-constraint).
 - [x] The transcript fallback never resumes another role's conversation — it is used only when the cwd maps to exactly one candidate session, and declines (fresh launch, logged reason) when the mapping is ambiguous (see [Decision 1](#decision-1-the-transcript-fallback-is-constrained-not-newest-wins)) — *Phase 1, `TranscriptIDForCwd` matches on the transcript's `agentSetting` and only inside a worktree the spawn registry says this role owns alone (`spawnOwnsWorktree`); another agent's transcript, an ambiguous pair, and any shared cwd all decline, pinned*
 - [x] **Auto-resume carries the role's `--agent`/`--agents` definition**, and the pane is verified afterwards to NOT show the agent-unavailable / default-tools warning. On that warning the agent is stopped and an alert raised — it must **never** be left running unrestricted (MUX-136, reproduced live on the manual path) — *Phase 1 (`TestClaudeBuildExecArgs_ResumeAppendsToFullFlagSet`) + Phase 2 (`refuseUnrestricted`)*
 - [x] `edit` becomes **resume-only**: never fresh-launched automatically, but DO resume it — a resume restores the user's conversation, a fresh launch would not. Pinned so the exclusion cannot silently flip to fresh launches — *Phase 2*
-- [ ] Spawn workers are covered: a dead worker whose run node is still `running` is resumed in its worktree with the same launch env and agent file
-- [ ] When a worker cannot be resumed, the spawn is **marked failed so the graph run fails loudly instead of stalling** (MUX-131 reuse then falls back to a fresh start on retry)
+- [x] Spawn workers are covered: a dead worker whose run node is still `running` is resumed in its worktree with the same launch env and agent file — *Phase 3 (in its own directory — no worktree by design)*
+- [x] When a worker cannot be resumed, the spawn is **marked failed so the graph run fails loudly instead of stalling** (MUX-131 reuse then falls back to a fresh start on retry) — *Phase 3, `failDeadWorker`*
 - [ ] Mass-exit detection: >= 2 Claude agents down within `MUXCODE_MASS_EXIT_WINDOW_SECS` (default 60), across sessions where the bus dirs are visible, raises **one** `mass-agent-exit` event to edit naming the roles and sessions, with a lifecycle row — instead of N unrelated `agent-down` events. Per-role restart proceeds regardless
 - [x] Resume restarts skip the 3-strike wait: a pane showing the resume hint is **proof of exit**, not a health-check ambiguity — restart on first sighting (configurable, default on) — *Phase 2*
 - [x] `muxcode agent launch <role> --resume [<id>]` exposes the same path manually — *Phase 1*
@@ -169,9 +169,9 @@ Therefore:
 
 ### Phase 3: Spawn worker coverage
 
-- [ ] Dead-worker detection for spawns whose graph node is still `running`
-- [ ] Resume in the worktree with the same launch env and agent file
-- [ ] Fail-loud when resume is impossible: the graph node **fails** rather than stalls + test
+- [x] Dead-worker detection for spawns whose graph node is still `running` — *verified 2026-10-05: `deadSpawnWorkers`/`resumeDeadWorkers` (`bus/spawn_resume.go`), in the spawn/map tick after `replaceLostWorkers` (`graph_exec.go:1404`): registry `running`, window live, seed unanswered, pane dead with an exit banner, confirmed after 30 s; `TestExecSpawnDeadWorkerResumed`, negative control `…LeavesLiveAndAnsweredAlone`*
+- [x] Resume in the worktree with the same launch env and agent file — *graph workers take no worktree by design (MUX-142), so "in the worktree" reads as "in its own directory": `launchResumedWorker` types the worker's own `spawnLaunchCommand(worktree, spawnRole, launcher, role)` line plus `--resume <id>` into its pane — same dir, same `AGENT_ROLE`, same base role and therefore the same agent file — then `verifyResumedWorkers` holds the node until the session is positively ready and 5 s clean of the definition-unavailable banner before the `[resumed]` reseed (`…ResumedWithoutDefinitionIsStopped`, `…ResumedDelayedWarningIsStopped`, `…ResumedCaptureFailureStaysPending`; readiness itself pinned by `TestResumedSessionReady` — composer in the live tail below the last banner, launch line excluded, survives redraw and wrap)*
+- [x] Fail-loud when resume is impossible: the graph node **fails** rather than stalls + test — *`failDeadWorker`: no banner after 30 s, non-Claude provider, or cap → node fails "could not be resumed" with the worker stopped first (`graph-spawn-dead`); a failed stop persists `stop_pending` and is retried each tick, the node failing only on confirmed stop (`graph-spawn-stopped`); `MUXCODE_AUTO_RESUME_DISABLE=1` skips the road entirely. `TestExecSpawnDeadWorkerUnresumableFailsLoudly`, `…ResumeCapped`, `…FailedStopIsRetriedBeforeFailingNode`, `…PendingStopOutranksTimeoutAndReplacement` (runs first in `harvestRunningNode`), `…OptOutLeavesExecutorAlone`*
 
 ### Phase 4: Mass-exit correlation
 
@@ -225,8 +225,8 @@ describe what restore gets **wrong**; this one describes what restore does not *
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-139-claude-agent-auto-resume | 39m | 2026-10-05 13:06 |
+| MUX-139-claude-agent-auto-resume | 1h 18m | 2026-10-05 14:13 |
 
 ## Status
 
-In Progress — Phases 1-2 complete (2026-10-05; Phase 1 step 5 deferred to Phase 6 by the user); Phase 3 next
+In Progress — Phases 1-3 complete (2026-10-05; Phase 1 step 5 deferred to Phase 6 by the user); Phase 4 next

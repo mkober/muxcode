@@ -1363,9 +1363,14 @@ func finishNode(session string, run *GraphRun, n *Node, outcome, output string) 
 // graph_port.go) — a port failure fails the node here, before any
 // downstream node runs, and no porting path ever creates a commit. A
 // worker that ended without answering its seed is replaced rather than
-// harvested — see replaceLostWorkers.
+// harvested — see replaceLostWorkers. A worker whose stop is still owed
+// (retryPendingStops) outranks every other road, the node timeout included:
+// any of them finishing or replacing first would orphan a live worker.
 func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
 	now := time.Now().Unix()
+	if (n.Type == NodeSpawn || n.Type == NodeMap) && retryPendingStops(session, run, n, st.TaskID) {
+		return
+	}
 	if n.TimeoutSec > 0 && st.StartedAt > 0 && now-st.StartedAt > int64(n.TimeoutSec) {
 		finishNode(session, run, n, OutcomeFailure, "node timeout")
 		return
@@ -1401,7 +1406,7 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 
 	case NodeSpawn, NodeMap:
 		_, _ = RefreshSpawnStatus(session)
-		if replaceLostWorkers(session, run, n, st, now) {
+		if replaceLostWorkers(session, run, n, st, now) || resumeDeadWorkers(session, run, n, st, now) {
 			return
 		}
 		outcome, done := spawnGroupOutcome(session, st.TaskID)

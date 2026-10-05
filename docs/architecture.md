@@ -637,13 +637,49 @@ answered for it and whose re-seeded implement worker was stopped by hand as a le
    redrive cap and bookkeeping with the stall paths, so a worker that keeps disappearing fails the node
    loudly after `graphRedriveMax` (3) as *"worker lost: … ended before answering, 3 replacements
    exhausted"* — rather than the run dying on "no live edge" with the phase untouched.
-3. **The daemon's idle-task watchdog defers to the executor.** `checkIdleTaskCompletion` skips any
+3. **A dead worker is resumed, not replaced — and verified before it is trusted**
+   ([MUX-139](requirements/backlog/MUX-139-claude-agent-auto-resume.md) Phase 3). The replacement
+   above covers a worker whose *entry* ended. A worker still `running` in the registry, window live,
+   seed unanswered, but whose Claude process has exited — its pane shows the
+   `Resume this session with:` banner — has a conversation worth keeping. `resumeDeadWorkers`
+   (`bus/spawn_resume.go`), run in the spawn/map tick right after `replaceLostWorkers`, reads the id
+   from the pane's exit banner (pane only — graph workers have no worktree, so there is no transcript
+   road) and relaunches the worker's own launch line plus `--resume <id>` (lifecycle
+   `graph-spawn-resumed`, plus the `agent-resume id=… source=pane` row), sharing the redrive cap. It
+   is **not reseeded yet**: `verifyResumedWorkers` holds the node — no task delivered, no completion
+   read — until the resumed session has **positively started** (`resumedSessionReady`: Claude's `❯`
+   composer found in the live tail of a `-J` capture below the last exit banner, excluding the typed
+   launch line itself — matched by `agent launch` or `AGENT_ROLE=`, since a wrapped line keeps only its
+   head on the `❯` row. It anchors on neither the launch text nor the banner surviving — Claude may
+   redraw the screen over both — only on what the new session drew last; launcher text, a blank pane
+   or process liveness prove nothing) **and** stayed free of the
+   definition-unavailable banner for 5 s after that (`ready_at`, `resumeSettleSecs`) — Claude prints
+   that banner even with `--agent`/`--agents` on the argv (MUX-136), and nothing else watches a spawn
+   (`checkAgentHealth` covers `KnownRoles` only). Only then is it reseeded with a `[resumed]` preamble
+   (`graph-spawn-resume-verified`). The banner at any point stops the worker and fails the node; a
+   failed capture or an unstarted session stays pending, failing only after 60 s (`resumeVerifySecs`).
+   When it cannot resume at all — no exit banner after 30 s (`deadWorkerConfirmSecs`), a non-Claude
+   provider, or the cap reached — the node fails *"worker … exited before answering and could not be
+   resumed"* and the worker is stopped (`graph-spawn-dead`), so a retry starts fresh instead of the
+   run stalling on a corpse. **The stop precedes the node failure** (`failDeadWorker`): a node finished
+   ahead of a stop that then fails would leave an unsupervised worker editing the shared checkout, so a
+   stop that fails with the window live persists `stop_pending`, logs `graph-spawn-stop-failed` and
+   keeps the node running and supervised; `retryPendingStops` runs **first** in `harvestRunningNode`
+   for spawn and map nodes — ahead of the node timeout, `replaceLostWorkers` and the opt-out, so a
+   disabled resume road or an expiring node still finishes a stop it owes. It services a `stop_pending`
+   worker **whatever its registry status**: the daemon's `checkSpawns` refresh runs before the graph
+   tick and marks a worker whose window vanished `completed`, and a manual stop marks it `stopped`,
+   both with the stop still owed. `stopSpawnRole` confirms either (window gone, or killed), the mark is
+   cleared, and the node fails with the reason saved at the time (`graph-spawn-stopped`) — never
+   through a replacement or a timeout, which would lose that reason. `MUXCODE_AUTO_RESUME_DISABLE=1` skips `resumeDeadWorkers`
+   entirely: the executor behaves exactly as before, with no node failure.
+4. **The daemon's idle-task watchdog defers to the executor.** `checkIdleTaskCompletion` skips any
    in-flight task a running node dispatched (`bus.GraphOwnsTask`). On the run above it re-queued a
    duplicate of the commit dispatch and synthesized the reply from the pane at 75 s — ahead of the
    executor's own 90 s force-redrive, the one path that clears a parked prompt — so the node finished
    `unknown` on an unverified hold with no commit made. The executor's stall path (force-redrive,
    capped, loud failure) owns those tasks.
-4. **A redrive never interrupts a working agent.** Both redrive paths ask `graphAgentIdleFn`
+5. **A redrive never interrupts a working agent.** Both redrive paths ask `graphAgentIdleFn`
    (`IsAgentIdle`; a seam, because without tmux every agent reads busy) and skip a pane that is
    mid-turn — the agent has the task and is working, not stalled.
 
