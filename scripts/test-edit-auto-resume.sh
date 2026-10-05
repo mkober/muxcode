@@ -18,8 +18,11 @@
 # to edit. The argv check is what catches a post-relaunch scrape: that capture
 # reads the typed launch line after the banner, classifies it stale and
 # relaunches fresh, which fails here rather than passing on "agent came back";
-# (C) no scrapeable id → fresh FLAGGED launch, and no --resume anywhere in the
-# pane's process (never a flagless resume); (D) alive idle and busy agents are
+# (C) no scrapeable id → edit is resume-only (MUX-139): left at the shell with
+# an agent-resume-unavailable row and alert, no relaunch, no attempt spent;
+# (C2) a daemon with MUXCODE_AUTO_RESUME_DISABLE=1 relaunches it as a fresh
+# FLAGGED launch with no --resume anywhere in the pane's process (never a
+# flagless resume), then the default daemon returns; (D) alive idle and busy agents are
 # never struck; (E) stop marker, then reload marker, suppress a dead edit's
 # restart; lifting them restarts it resuming the newer banner; (F) a daemon
 # started with MUXCODE_EDIT_AUTO_RESTART_DISABLE=1 leaves a dead edit alone
@@ -226,14 +229,30 @@ flag_check edit "--append-system-prompt"
 wait_for 20 "edit: agent-recovered after the resume" has_event "agent-recovered.*edit"
 wait_for 15 "edit: listener re-established" listener_alive edit
 
-# ── C: no scrapeable id → fresh flagged launch ──────────────────
-echo "-- C: no scrapeable id"
+# ── C: no scrapeable id → edit is resume-only, left down ─────────
+echo "-- C: no scrapeable id, edit left down"
 : >"$WORK/edit.sid"
 P2=$(stub_pid edit)
 kill -TERM "$P2"
 wait_for 10 "edit: exit banner offers only a malformed id" pane_has edit "claude --resume 0f3a"
-wait_for 25 "edit: resume-scrape-miss recorded" has_event "resume-scrape-miss.*edit"
-wait_for 10 "edit: restart attempt 2/3" has_event "agent-restart.*edit attempt 2/3"
+wait_for 25 "edit: agent-resume-unavailable recorded" has_event "agent-resume-unavailable.*edit"
+resume_only_alert() { jq -e 'select(.to == "edit" and .action == "agent-down" and (.payload | contains("resume-only")))' "$BUSDIR/log.jsonl" >/dev/null 2>&1; }
+wait_for 10 "edit: resume-only alert sent to edit" resume_only_alert
+relaunches=$(event_count "agent-relaunch.*edit")
+sleep 8
+[ "$(event_count "agent-relaunch.*edit")" -eq "$relaunches" ] && ok "edit: never fresh-launched without a session" \
+  || fail "edit: relaunched without a session: $(events 'agent-relaunch.*edit' | tail -1)"
+[ -z "$(stub_pid edit)" ] && ok "edit: pane left at the shell" || fail "edit: an agent came back without a session"
+[ -z "$(events 'agent-restart.*edit attempt 2/3')" ] && ok "edit: leaving it down spent no restart attempt" \
+  || fail "edit: a restart attempt was spent: $(events 'agent-restart.*edit attempt 2/3' | head -1)"
+
+# ── C2: MUXCODE_AUTO_RESUME_DISABLE → fresh flagged launch ───────
+echo "-- C2: auto-resume opt-out restores the fresh fallback"
+stop_daemon
+MUXCODE_AUTO_RESUME_DISABLE=1 start_daemon
+kill -0 "$DPID" 2>/dev/null && ok "auto-resume opt-out daemon running" || fail "auto-resume opt-out daemon started"
+wait_for 25 "edit: opt-out records resume-disabled" has_event "resume-disabled.*edit"
+wait_for 10 "edit: opt-out daemon restart attempt 1/3" event_count_ge "agent-restart.*edit attempt 1/3" 2
 # The relaunch row lands after the interrupt delay, behind the attempt row.
 for _ in 1 2 3 4 5 6 7 8 9 10; do event_count_ge "agent-relaunch.*edit" 2 && break; sleep 1; done
 last=$(events "agent-relaunch.*edit" | tail -1)
@@ -248,6 +267,9 @@ argv=$(stub_argv edit)
 case "$argv" in *--resume*) fail "edit: flagless-resume guard — fallback argv carries --resume" ;; *) ok "edit: fallback argv carries no --resume" ;; esac
 case "$argv" in *--dangerously-skip-permissions*--allowedTools*) ok "edit: fallback argv keeps the full flag set" ;; *) fail "edit: fallback argv lost its flags" ;; esac
 wait_for 20 "edit: recovered after the fallback" event_count_ge "agent-recovered.*edit" 2
+stop_daemon
+start_daemon
+kill -0 "$DPID" 2>/dev/null && ok "default daemon running after the opt-out" || fail "default daemon restarted after the opt-out"
 
 # ── D: alive agents are never struck ─────────────────────────────
 echo "-- D: busy and alive agents"
@@ -270,7 +292,8 @@ touch "$BUSDIR/lock/edit.reloading"
 if quiet_for 15 edit; then ok "edit: reload marker suppresses the restart"; else fail "edit: restarted through the reload marker"; fi
 case "$(check_out edit)" in *excluded*) ok "edit: --check reports excluded while reloading" ;; *) fail "edit --check: $(check_out edit)" ;; esac
 rm -f "$BUSDIR/lock/edit.reloading"
-wait_for 25 "edit: markers lifted → restart attempt 3/3" has_event "agent-restart.*edit attempt 3/3"
+# Attempt 1/3 a third time: B's, C2's opt-out daemon's, and this daemon's own.
+wait_for 25 "edit: markers lifted → restart" event_count_ge "agent-restart.*edit attempt 1/3" 3
 wait_for 10 "edit: resumes the newer banner $UUID2 after a fresh launch" has_event "resume-scrape-hit.*edit: session $UUID2"
 wait_for 20 "edit: stub reports resume of $UUID2" stub_reports edit "resume=true skip-perms=true resume-id=$UUID2"
 
@@ -342,6 +365,6 @@ flag_check edit "--allowedTools"
 flag_check edit "--append-system-prompt"
 
 echo "=== $PASS passed, $FAIL failed ==="
-[ "$PASS" -ge 77 ] || { echo "FAIL: coverage floor not met ($PASS < 77)"; exit 1; }
+[ "$PASS" -ge 84 ] || { echo "FAIL: coverage floor not met ($PASS < 84)"; exit 1; }
 [ "$FAIL" -eq 0 ] || exit 1
 echo "PASS"

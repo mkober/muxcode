@@ -955,6 +955,33 @@ func applyResume(session string, cfg *LaunchConfig, sessionID string) {
 	}
 }
 
+// findLaunchResumeID resolves a bare `agent launch --resume` for a Claude Code
+// launch: the banner in the launching pane, then — only in a spawn worktree
+// the raw AGENT_ROLE owns — the cwd's transcript for the role's agent
+// (FindResumeID). Every outcome writes a lifecycle row —
+// `resume-found` naming id and source, or `resume-fresh` naming why — so a
+// fresh start is never silent. Other providers launch fresh, as applyResume
+// would launch them.
+func findLaunchResumeID(session string, cfg *LaunchConfig) string {
+	if !IsClaudeTUI(cfg.Provider) {
+		if session != "" {
+			LogLifecycle(session, "warn", "launch", "resume-ignored",
+				fmt.Sprintf("%s: provider %s cannot resume — launching fresh", cfg.Role, cfg.CLI))
+		}
+		return ""
+	}
+	cwd, _ := os.Getwd()
+	id, source, reason, ok := FindResumeID(os.Getenv("TMUX_PANE"), session, os.Getenv("AGENT_ROLE"), cwd, cfg.AgentName)
+	if session != "" {
+		if ok {
+			LogLifecycle(session, "info", "launch", "resume-found", fmt.Sprintf("%s: id=%s source=%s", cfg.Role, id, source))
+		} else {
+			LogLifecycle(session, "info", "launch", "resume-fresh", cfg.Role+": "+reason+" — launching fresh")
+		}
+	}
+	return id
+}
+
 // ActivateVenv sets PATH and VIRTUAL_ENV environment variables to activate
 // a Python venv. This is equivalent to `source <venv>/bin/activate`.
 // Returns an error if the venv directory path cannot be resolved.
@@ -1000,11 +1027,12 @@ func RunAgentLaunch(role string) error {
 
 // RunAgentLaunchResume is RunAgentLaunch resuming Claude Code session
 // sessionID ("" launches fresh), launched for reason. The id must be a whole
-// session UUID, or the launch is refused before anything runs. Providers other
+// session UUID, or the launch is refused before anything runs; ResumeAuto
+// resolves one with findLaunchResumeID. Providers other
 // than Claude Code cannot resume: the id is dropped with a `resume-ignored`
 // lifecycle row and the agent launches fresh with its normal flags (MUX-126).
 func RunAgentLaunchResume(role, sessionID string, reason LaunchReason) error {
-	if sessionID != "" && !ValidResumeSessionID(sessionID) {
+	if sessionID != "" && sessionID != ResumeAuto && !ValidResumeSessionID(sessionID) {
 		return fmt.Errorf("invalid resume session id %q: want a Claude Code session UUID", sessionID)
 	}
 
@@ -1015,6 +1043,9 @@ func RunAgentLaunchResume(role, sessionID string, reason LaunchReason) error {
 	cfg := ResolveLaunchConfig(role)
 
 	session := BusSession()
+	if sessionID == ResumeAuto {
+		sessionID = findLaunchResumeID(session, cfg)
+	}
 	applyResume(session, cfg, sessionID)
 	if err := refuseWithoutDefinition(session, cfg); err != nil {
 		return err

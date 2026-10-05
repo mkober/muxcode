@@ -1,7 +1,11 @@
 package bus
 
 import (
+	"bufio"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -190,6 +194,18 @@ func paneShowsAgentExit(content string) bool {
 	return !strings.Contains(stripped[at:], idlePromptChar)
 }
 
+// SinceLastAgentExit returns the part of a pane capture after its last exit
+// banner — the output of whatever launched since — or the whole capture when
+// it holds none. A banner printed by a session that has since exited is no
+// evidence about the one running now.
+func SinceLastAgentExit(content string) string {
+	banners := agentExitBannerPattern.FindAllStringIndex(content, -1)
+	if len(banners) == 0 {
+		return content
+	}
+	return content[banners[len(banners)-1][1]:]
+}
+
 // resumeCommand is the command Claude Code offers under agentExitBanner.
 const resumeCommand = "claude --resume"
 
@@ -261,6 +277,183 @@ func ScrapeResumeSessionID(content string) (id string, ok bool) {
 		return "", false
 	}
 	return rest, true
+}
+
+// ResumeAuto is the resume id `agent launch --resume` carries when no id was
+// given: the launcher resolves it with FindResumeID. Never a valid UUID.
+const ResumeAuto = "auto"
+
+// Resume id sources, recorded as source=<value> on the lifecycle row.
+const (
+	ResumeSourcePane       = "pane"
+	ResumeSourceTranscript = "transcript"
+)
+
+// FindResumeID resolves the session a resume continues, pane-first: the exit
+// banner in target names the exact session that died, so it outranks the
+// cwd's transcripts (TranscriptIDForCwd, consulted for agentRole in session).
+// ok false carries why both declined, for the caller's fresh-launch lifecycle
+// row. An empty target skips the pane.
+func FindResumeID(target, session, agentRole, cwd, agentName string) (id, source, reason string, ok bool) {
+	paneReason := "no pane to scrape"
+	if target != "" {
+		if id, ok := CaptureResumeSessionID(target); ok {
+			return id, ResumeSourcePane, "", true
+		}
+		paneReason = "no resume banner in pane " + target
+	}
+	id, err := TranscriptIDForCwd(session, agentRole, cwd, agentName)
+	if err != nil {
+		return "", "", paneReason + "; transcript: " + err.Error(), false
+	}
+	return id, ResumeSourceTranscript, "", true
+}
+
+// TranscriptIDForCwd's declines; each means the caller launches fresh.
+var (
+	ErrTranscriptNone      = errors.New("no transcript for this agent")
+	ErrTranscriptAmbiguous = errors.New("more than one transcript for this agent")
+	ErrTranscriptSharedCwd = errors.New("cwd is not a worktree this agent owns alone")
+)
+
+// claudeProjectsDir is where Claude Code keeps one transcript directory per
+// cwd: $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects.
+var claudeProjectsDir = func() string {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, "projects")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude", "projects")
+}
+
+var nonAlphanumeric = regexp.MustCompile(`[^a-zA-Z0-9]`)
+
+// claudeProjectDirName encodes cwd the way Claude Code names its transcript
+// directory: symlinks resolved, then every non-alphanumeric byte a dash. The
+// resolution is load-bearing on macOS, where Claude records a /var/folders/…
+// cwd under its real /private/var/folders/… path.
+func claudeProjectDirName(cwd string) (string, error) {
+	resolved, err := resolvedPath(cwd)
+	if err != nil {
+		return "", err
+	}
+	return nonAlphanumeric.ReplaceAllString(resolved, "-"), nil
+}
+
+// resolvedPath is path made absolute with its symlinks resolved.
+func resolvedPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
+}
+
+// spawnOwnsWorktree reports whether session's spawn registry proves cwd is
+// agentRole's private worktree: exactly one entry claims cwd as its worktree,
+// and that entry is agentRole. The registry is the only record tying a
+// directory to one agent; agent-definition identity is not, because a spawn
+// worker launched with the edit definition shares code-editor with edit.
+func spawnOwnsWorktree(session, agentRole, cwd string) bool {
+	if session == "" || agentRole == "" {
+		return false
+	}
+	want, err := resolvedPath(cwd)
+	if err != nil {
+		return false
+	}
+	entries, err := ReadSpawnEntries(session)
+	if err != nil {
+		return false
+	}
+	claims, mine := 0, false
+	for _, e := range entries {
+		if e.Worktree == "" {
+			continue
+		}
+		if got, err := resolvedPath(e.Worktree); err != nil || got != want {
+			continue
+		}
+		claims++
+		mine = mine || e.SpawnRole == agentRole
+	}
+	return mine && claims == 1
+}
+
+// agentSettingScanLines bounds the read for a transcript's agent: Claude Code
+// writes its agent-setting record at the head of the file.
+const agentSettingScanLines = 20
+
+// TranscriptIDForCwd is the resume fallback for a pane with no exit banner:
+// the session id of the one transcript in cwd's Claude project directory that
+// records agentName. It applies only where cwd identifies the agent uniquely —
+// a spawn worktree session's registry assigns to agentRole alone
+// (spawnOwnsWorktree) — and declines with ErrTranscriptSharedCwd everywhere
+// else, because roles share a cwd: plan, edit and commit all run at the repo
+// root, and a lone transcript there may be a privileged peer's conversation
+// even when it records the same agent (MUX-139 Decision 1). Within an owned
+// worktree it still declines — ErrTranscriptNone or ErrTranscriptAmbiguous —
+// rather than pick: a transcript recording no agent or another agent never
+// qualifies, and a worker relaunched fresh leaves several of its own.
+func TranscriptIDForCwd(session, agentRole, cwd, agentName string) (string, error) {
+	if agentName == "" {
+		return "", fmt.Errorf("%w: the role has no agent name to match", ErrTranscriptNone)
+	}
+	if !spawnOwnsWorktree(session, agentRole, cwd) {
+		return "", fmt.Errorf("%w: %s is not %s's own spawn worktree", ErrTranscriptSharedCwd, cwd, agentRole)
+	}
+	name, err := claudeProjectDirName(cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolving cwd %s: %w", cwd, err)
+	}
+	dir := filepath.Join(claudeProjectsDir(), name)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("%w: %s does not exist", ErrTranscriptNone, dir)
+	}
+	if err != nil {
+		return "", err
+	}
+	var ids []string
+	for _, e := range entries {
+		id, isTranscript := strings.CutSuffix(e.Name(), ".jsonl")
+		if !isTranscript || !e.Type().IsRegular() || !ValidResumeSessionID(id) {
+			continue
+		}
+		if transcriptAgent(filepath.Join(dir, e.Name())) == agentName {
+			ids = append(ids, id)
+		}
+	}
+	switch len(ids) {
+	case 0:
+		return "", fmt.Errorf("%w: no transcript under %s records agent %s", ErrTranscriptNone, dir, agentName)
+	case 1:
+		return ids[0], nil
+	}
+	return "", fmt.Errorf("%w: %d transcripts under %s record agent %s", ErrTranscriptAmbiguous, len(ids), dir, agentName)
+}
+
+// transcriptAgent returns the agentSetting a transcript records, or "".
+func transcriptAgent(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	r := bufio.NewReader(f)
+	for i := 0; i < agentSettingScanLines; i++ {
+		line, err := r.ReadBytes('\n')
+		var rec struct {
+			AgentSetting string `json:"agentSetting"`
+		}
+		if json.Unmarshal(line, &rec) == nil && rec.AgentSetting != "" {
+			return rec.AgentSetting
+		}
+		if err != nil {
+			return ""
+		}
+	}
+	return ""
 }
 
 // whitespaceTolerant builds a regexp matching s with any whitespace, including

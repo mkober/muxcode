@@ -32,6 +32,10 @@ type SpawnEntry struct {
 	SeedMsgID   string `json:"seed_msg_id,omitempty"`  // ID of the seeded spawn-task request (latest iteration for reused workers)
 	RunID       string `json:"run_id,omitempty"`       // graph run key half — set on graph-dispatched workers (MUX-131 reuse)
 	NodeID      string `json:"node_id,omitempty"`      // graph node key half — with RunID, the per-run+node reuse key
+	ResumeID    string `json:"resume_id,omitempty"`    // session a dead worker was resumed into, pending definition verification (MUX-139)
+	ResumedAt   int64  `json:"resumed_at,omitempty"`   // when that resume was typed; bounds the verification
+	ReadyAt     int64  `json:"ready_at,omitempty"`     // first sighting of the resumed session's prompt with no definition warning
+	StopPending string `json:"stop_pending,omitempty"` // node failure awaiting this worker's confirmed stop
 	Display     string `json:"-"`                      // render-time status from SpawnDisplayStatus; never persisted
 }
 

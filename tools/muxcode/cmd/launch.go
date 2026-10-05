@@ -7,14 +7,17 @@ import (
 	"github.com/mkober/muxcode/tools/muxcode/bus"
 )
 
-const launchUsage = "Usage: muxcode agent launch <role> [--reason <reason>] [--resume <session-id>]\n"
+const launchUsage = "Usage: muxcode agent launch <role> [--reason <reason>] [--resume [<session-id>]]\n"
 
 // Launch handles the "muxcode agent launch <role> [--reason <reason>]
-// [--resume <session-id>]" subcommand. Delegates to bus.RunAgentLaunchResume
+// [--resume [<session-id>]]" subcommand. Delegates to bus.RunAgentLaunchResume
 // which performs the complete agent bootstrap: config loading, provider
 // resolution, pre-launch setup, venv activation, and exec into the agent CLI.
-// --resume continues a Claude Code session with the full launch flag set; other
-// providers launch fresh. --reason says why the agent is launching
+// --resume continues a Claude Code session with the full launch flag set;
+// without an id it is found from the pane's exit banner, then — in a spawn
+// worktree the agent owns alone — the cwd's transcript (bus.FindResumeID),
+// else the launch is fresh. Other providers
+// launch fresh. --reason says why the agent is launching
 // (bus.LaunchReason); omitted, the launch is treated as a restart.
 func Launch(args []string) {
 	role, resumeID, reason, err := bus.ParseLaunchArgs(args)

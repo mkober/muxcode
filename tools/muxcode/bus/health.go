@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -301,37 +302,111 @@ var restartInterruptDelay = 500 * time.Millisecond
 // The role's reload marker is acquired exclusively for the relaunch, the same
 // lock `muxcode resume` holds, so the two never drive one pane at once; a held
 // marker returns ErrReloadMarkerHeld with nothing typed.
+//
+// A resume-only role (ResumeOnlyRole: edit) with no resumable session returns
+// ErrResumeUnavailable with nothing typed, and MUXCODE_AUTO_RESUME_DISABLE=1
+// relaunches every role fresh without scraping (MUX-139).
 func RestartLocalAgent(session, role string) error {
 	release, err := acquireReloadMarker(session, role)
 	if err != nil {
 		return err
 	}
 	defer release()
-	return scrapeAndRelaunch(session, role, PaneTarget(session, role), "daemon", "", LaunchReasonRestart)
+	mode := relaunchResume
+	if AutoResumeDisabled() {
+		mode = relaunchFresh
+	} else if ResumeOnlyRole(role) {
+		mode = relaunchResumeOnly
+	}
+	return scrapeAndRelaunch(session, role, PaneTarget(session, role), "daemon", "", LaunchReasonRestart, mode)
 }
+
+// autoResumeDisableEnv opts the daemon out of MUX-139's auto-resume.
+const autoResumeDisableEnv = "MUXCODE_AUTO_RESUME_DISABLE"
+
+// AutoResumeDisabled reports MUXCODE_AUTO_RESUME_DISABLE=1: the daemon's
+// restarts relaunch fresh without scraping, never on first sighting, and edit
+// is no longer resume-only. The manual `muxcode resume` is unaffected.
+func AutoResumeDisabled() bool {
+	return os.Getenv(autoResumeDisableEnv) == "1"
+}
+
+// ResumeFirstSighting reports whether the daemon restarts a dead pane on the
+// first sweep that finds a resumable exit banner in it, skipping the 3-strike
+// wait: the banner is proof of exit, not a probe ambiguity. On by default;
+// MUXCODE_RESUME_FIRST_SIGHTING=0 or AutoResumeDisabled turns it off.
+func ResumeFirstSighting() bool {
+	return !AutoResumeDisabled() && os.Getenv("MUXCODE_RESUME_FIRST_SIGHTING") != "0"
+}
+
+// ResumeOnlyRole reports whether the daemon may restart role only by resuming
+// it: a Claude edit, the pane the user types into, whose fresh launch would
+// discard the conversation a resume restores. Other providers cannot resume,
+// so for them the rule would leave edit down for good.
+func ResumeOnlyRole(role string) bool {
+	return role == "edit" && !AutoResumeDisabled() && IsClaudeTUI(ResolveProvider(role))
+}
+
+// ErrResumeUnavailable is a resume-only restart that found no session to
+// resume; nothing was typed into the pane.
+var ErrResumeUnavailable = errors.New("no resumable session for a resume-only role")
+
+// PaneResumeID returns the session a daemon restart of role would resume: the
+// pane's last exit banner, unless a relaunch already followed it
+// (restartResumeTarget's stale case).
+func PaneResumeID(session, role string) (string, bool) {
+	content, err := captureResumePane(PaneTarget(session, role))
+	if err != nil {
+		return "", false
+	}
+	id, _ := restartResumeTarget(content)
+	return id, id != ""
+}
+
+// relaunchMode is how scrapeAndRelaunch treats the pane's resume banner.
+type relaunchMode int
+
+const (
+	relaunchResume     relaunchMode = iota // resume when the pane offers a session, else fresh
+	relaunchResumeOnly                     // resume, or type nothing and return ErrResumeUnavailable
+	relaunchFresh                          // never scrape (MUXCODE_AUTO_RESUME_DISABLE)
+)
 
 // scrapeAndRelaunch is the one scrape-then-relaunch body, shared by the
 // daemon's RestartLocalAgent and the manual ResumeAgent so neither can grow a
 // second scrape, pattern or flag-assembly path. source is the lifecycle source
 // recorded on every row; a non-empty actor is appended to each row's detail;
-// reason is the launch reason the relaunch carries.
-func scrapeAndRelaunch(session, role, target, source, actor string, reason LaunchReason) error {
-	content, captureErr := captureResumePane(target)
-	id, event := "", "resume-scrape-miss"
-	if captureErr == nil {
-		id, event = restartResumeTarget(content)
-	}
-	detail := role
-	if id != "" {
-		detail += ": session " + id
-	} else if captureErr != nil {
-		detail += ": capture failed: " + captureErr.Error()
-	}
+// reason is the launch reason the relaunch carries. A resume writes an
+// `agent-resume` row naming id and source; a fresh launch is preceded by the
+// row saying why (resume-scrape-miss/-stale, resume-disabled).
+func scrapeAndRelaunch(session, role, target, source, actor string, reason LaunchReason, mode relaunchMode) error {
 	by := ""
 	if actor != "" {
 		by = " (by " + actor + ")"
 	}
-	LogLifecycle(session, "info", source, event, detail+by)
+	id := ""
+	if mode == relaunchFresh {
+		LogLifecycle(session, "info", source, "resume-disabled", role+": "+autoResumeDisableEnv+"=1 — launching fresh"+by)
+	} else {
+		content, captureErr := captureResumePane(target)
+		event := "resume-scrape-miss"
+		if captureErr == nil {
+			id, event = restartResumeTarget(content)
+		}
+		detail := role
+		if id != "" {
+			detail += ": session " + id
+		} else if captureErr != nil {
+			detail += ": capture failed: " + captureErr.Error()
+		}
+		LogLifecycle(session, "info", source, event, detail+by)
+		if id != "" {
+			LogLifecycle(session, "info", source, "agent-resume", fmt.Sprintf("%s: id=%s source=%s%s", role, id, ResumeSourcePane, by))
+		} else if mode == relaunchResumeOnly {
+			LogLifecycle(session, "warn", source, "agent-resume-unavailable", role+": resume-only, no resumable session — left down"+by)
+			return ErrResumeUnavailable
+		}
+	}
 
 	if err := TmuxRun("send-keys", "-t", target, "C-c", ""); err != nil {
 		return fmt.Errorf("interrupting agent %s: %w", role, err)
