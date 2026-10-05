@@ -229,9 +229,9 @@ as it is. The hold targets only the entry that road cannot see — `completed` w
 
 ### Phase 4: Integration test
 
-- [ ] `scripts/test-multi-phase-graph.sh` green end to end
-- [ ] Coverage floor equals the executed count (equality, not `>=`)
-- [ ] Run through the run agent (**foreground**, per [MUX-171](../completed/MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md)) and record the counts here
+- [x] `scripts/test-multi-phase-graph.sh` green end to end — *2026-10-04, exit 0, 52 passed / 0 failed*
+- [x] Coverage floor equals the executed count (equality, not `>=`) — *floor 51 == 51 executed*
+- [x] Run through the run agent (**foreground**, per [MUX-171](../completed/MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md)) and record the counts here — *run agent task `1791154354-spawn-2c49b5c8-6fc2797f` (fresh run after the Phase 3 commit), hook row ts 1791154537: exit 0, foreground; **52 passed, 0 failed, 51 checks executed, floor met**. Consistent with the Phase 3 confirming run (task `1791153362-spawn-2c49b5c8-7c12cbc3`, same counts)*
 
 ## Notes
 
@@ -273,8 +273,8 @@ Shipped in this PR on the user's request (2026-10-04), uncommitted at the time o
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken | 1h 28m | 2026-10-04 18:50 |
+| MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken | 1h 38m | 2026-10-04 19:00 |
 
 ## Status
 
-In Progress — Phase 1 complete (2026-10-03); reframed the same day on the user's decision; Phases 2-3 complete (2026-10-04); Phase 4 next — its evidence already exists from the Phase 3 verification run (task `1791153362-spawn-2c49b5c8-7c12cbc3`, exit 0, 52/0, floor 51)
+Complete — all four phases and all seven acceptance criteria verified 2026-10-04; ready for close-out (move to `completed/`, backlog row, cross-refs)
