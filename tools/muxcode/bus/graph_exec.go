@@ -335,19 +335,27 @@ func guardAllowsDispatch(session string, run *GraphRun, n *Node) bool {
 // pass through and close out against nothing); all-false means no
 // active spec is set.
 func activeSpecFile(session string) (path string, ok, transient, refused bool) {
+	path, _, ok, transient, refused = activeSpecRepo(session)
+	return path, ok, transient, refused
+}
+
+// activeSpecRepo is activeSpecFile plus the repo dir it resolved against
+// (set only when ok or refused), so a caller reading the repo again sees the
+// same observation rather than a second tmux lookup.
+func activeSpecRepo(session string) (path, repo string, ok, transient, refused bool) {
 	specRel := ReadActiveSpec(session)
 	if specRel == "" {
-		return "", false, false, false
+		return "", "", false, false, false
 	}
-	repo := SessionRepoDir(session)
+	repo = SessionRepoDir(session)
 	if repo == "" {
-		return "", false, true, false
+		return "", "", false, true, false
 	}
 	full := ResolveSpecPath(repo, specRel)
 	if full == "" {
-		return "", false, false, true
+		return "", repo, false, false, true
 	}
-	return full, true, false, false
+	return full, repo, true, false, false
 }
 
 // specCompleteGuardAllows blocks dispatch while the active spec has ANY
@@ -600,11 +608,16 @@ func summarizeOpenItems(names []string, limit int) string {
 // dispatch, so a message carrying it is not stable across a re-run; keep
 // it out of nodes whose payload is re-derived for an equality check
 // (CheckCommitAuthorityForMessage).
+//
+// ${spec_title} is the intent without its launch-time phase (specTitle), for
+// whatever names the whole spec — a PR title. ${spec} carried the phase the
+// run started on, so PRs #104 and #105 were titled after their Phase 1.
 func interpolateGraphMessage(session string, run *GraphRun, msg, item string) string {
 	intent := ""
 	if run != nil {
 		intent = run.Intent
 	}
+	msg = strings.ReplaceAll(msg, "${spec_title}", specTitle(intent))
 	msg = strings.ReplaceAll(msg, "${spec}", intent)
 	msg = strings.ReplaceAll(msg, "${intent}", intent)
 	if item != "" {
@@ -1423,6 +1436,13 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 			output += fmt.Sprintf("\n[no verdict token from %s — outcome not established]",
 				strings.Join(silent, ","))
 		}
+		if ended := unansweredWorkers(session, st.TaskID); len(ended) > 0 {
+			LogLifecycle(session, "warn", "daemon", "graph-spawn-unanswered",
+				fmt.Sprintf("%s: %s worker ended without answering its seed: %s",
+					run.ID, n.ID, strings.Join(ended, ", ")))
+			output += fmt.Sprintf("\n[worker ended without answering its seed: %s — outcome not established]",
+				strings.Join(ended, ", "))
+		}
 		finishNode(session, run, n, outcome, output)
 	}
 }
@@ -1622,6 +1642,14 @@ func GraphOwnsTask(session, taskID string) (runID, nodeID string, ok bool) {
 // (Defect 3). A reply carrying no token attributes to nothing and resolves
 // unknown, which holds for a human rather than advancing the pipeline.
 //
+// A completed worker with no answered seed is unknown, not success: the
+// process ended without reporting, which is no evidence the work was done.
+// It read as success, so on 2026-09-11 an implement node recorded
+// "nothing to port" / success two seconds after start for a worker that
+// never answered, and build dispatched on a checkout that received nothing
+// (MUX-178). replaceLostWorkers usually catches a seeded worker first; what
+// reaches here is a worker with no seed recorded, the same absence.
+//
 // Group precedence is failure > unknown > success: one worker's hold must
 // not mask another's failure, and a mixed group fails rather than asking a
 // human to approve work already known to have failed.
@@ -1650,7 +1678,7 @@ func spawnGroupOutcome(session, taskIDs string) (string, bool) {
 		case "running":
 			return "", false
 		case "completed":
-			// success — no change
+			outcome = worseOutcome(outcome, OutcomeUnknown) // ended unanswered — see doc comment
 		default: // stopped or anything else
 			outcome = OutcomeFailure
 		}
@@ -1709,6 +1737,34 @@ func unattributedWorkers(session, taskIDs string) []string {
 		}
 	}
 	return silent
+}
+
+// unansweredWorkers describes each completed worker of a group that ended
+// without answering its seed — the workers spawnGroupOutcome holds as
+// unknown — naming the seed, or its absence, so the human reading the hold
+// knows which worker never reported.
+func unansweredWorkers(session, taskIDs string) []string {
+	entries, err := ReadSpawnEntries(session)
+	if err != nil {
+		return nil
+	}
+	byRole := make(map[string]SpawnEntry, len(entries))
+	for _, e := range entries {
+		byRole[e.SpawnRole] = e
+	}
+	var ended []string
+	for _, id := range strings.Split(taskIDs, ",") {
+		e, ok := byRole[id]
+		if !ok || e.Status != "completed" || spawnHasResponded(session, e) {
+			continue
+		}
+		if e.SeedMsgID == "" {
+			ended = append(ended, e.SpawnRole+" (no seed recorded)")
+		} else {
+			ended = append(ended, e.SpawnRole+" (seed "+e.SeedMsgID+" never answered)")
+		}
+	}
+	return ended
 }
 
 // spawnGroupReports joins the reply payloads of a spawn group's workers.

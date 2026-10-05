@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Codex hooks (MUX-159): the deterministic chain road for Codex CLI agents.
@@ -320,6 +321,26 @@ func knownCodexHooksHashes(session string) map[string]bool {
 func CodexHooksActive(session, role string) bool {
 	_, err := os.Stat(CodexHooksMarkerPath(session, role))
 	return err == nil
+}
+
+// RefreshCodexHooksMarkers stamps every role's activation marker with the
+// current time. The markers live under /tmp, are written once at launch and
+// only ever stat'd after, so macOS's daily /tmp sweep deletes them once they
+// look three days old — and a missing marker silently drops a running agent
+// to the scrape road. On 2026-10-02 build and review lost theirs that way, and
+// every build node after it held for a human because no hook recorded the
+// exit code. The daemon calls this on each poll beside its keepalive, the one
+// /tmp file that already survives the sweep for the same reason.
+func RefreshCodexHooksMarkers(session string) {
+	dir := codexHooksMarkerDir(session)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	for _, e := range entries {
+		_ = os.Chtimes(filepath.Join(dir, e.Name()), now, now)
+	}
 }
 
 // CodexHooksTrusted reports whether hooks.json on disk hashes to the marker —

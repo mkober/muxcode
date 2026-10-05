@@ -362,7 +362,7 @@ a decision recorded here.
 | `graph export`/`create` `cmd/graph.go:59/:62/:116` | `:61`, `:64` |
 | Rank "#7 in Defects" | **#1** since 2026-09-30 (MUX-141 closed) |
 
-**Conflict with [MUX-178](../backlog/MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md)
+**Conflict with [MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md)
 (Defects #2).** MUX-178, filed 2026-09-11 from the MUX-167 runs, reads "a spawn node cuts no worktree
 and ports nothing" as MUX-131 regressing, and asks *why* no worktree is cut. The answer is recorded
 here: the user's 2026-09-03 decision that graph spawns take **no worktree** and work in the checkout

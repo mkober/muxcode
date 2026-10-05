@@ -143,7 +143,7 @@ an idle worker lives before it is reaped (a quiet window like `MUXCODE_AUTO_CLEA
 
 ## Out of scope
 
-- Worktree isolation for spawn nodes — [MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md). Graph workers run in the session checkout today, so reuse does not cross trees within a session; if MUX-178 reintroduces worktrees, a pooled worker must advance or re-cut its tree on adoption (`advanceSpawnWorktree` already runs on reseed).
+- Worktree isolation for spawn nodes — [MUX-178](../completed/MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md). Graph workers run in the session checkout today, so reuse does not cross trees within a session; if MUX-178 reintroduces worktrees, a pooled worker must advance or re-cut its tree on adoption (`advanceSpawnWorktree` already runs on reseed).
 - Cross-session reuse.
 
 ## Status

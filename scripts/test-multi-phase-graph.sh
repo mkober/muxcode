@@ -22,11 +22,14 @@
 # environment points the spawn role's CLI at a local stub that prints an
 # idle `❯` prompt and blocks — no AI CLI and no network, while the pane
 # stays alive for the worker-reuse checks — and this script plays the worker
-# over the bus. Covered end to end: worktree output ported to the checkout
-# UNCOMMITTED before build dispatches, one worker reused across phases
-# (spawn count from the store), the no-op iteration, worktree advance
-# after the gated commit, and a clobber conflict failing the spawn node
-# itself — before build, not at commit after a human gate.
+# over the bus. Graph workers take no worktree (2026-09-03, MUX-142 § "The
+# third tree"): the worker writes straight into the session checkout. Covered
+# end to end: the worker's output present and UNCOMMITTED in the checkout
+# when build dispatches, shipped by the gated phase commit, one worker reused
+# across phases (spawn count from the store), and the no-op iteration.
+# Section 8 (MUX-178) pins that a worker recorded completed with no seed
+# parks the spawn node unknown instead of crediting success; it replaces the
+# MUX-131 clobber-conflict control, which needs a worktree to conflict with.
 #
 # Section 9 (MUX-131 Phase 5) extends the SAME harness rather than
 # forking a second script: a replacement control kills the worker between
@@ -81,7 +84,7 @@ dump_diag() {
   DUMPED=1
   echo "  --- diagnostic dump (first failure) ---"
   local rid
-  for rid in ${RID:-} ${RID2:-} ${RID3:-} ${RID_S:-} ${RID_B:-} ${RID_L:-} ${RID_R:-}; do
+  for rid in ${RID:-} ${RID2:-} ${RID3:-} ${RID_S:-} ${RID_U:-} ${RID_L:-} ${RID_R:-}; do
     "$MUX" graph status "$rid" 2>/dev/null | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g'
   done
   "$MUX" tasks 2>/dev/null | head -12
@@ -97,16 +100,14 @@ mkdir -p "$REPO/docs/requirements/drafts"
 export HOME="$WORK/home"
 mkdir -p "$HOME/.config/muxcode"
 echo "MUXCODE_GATE_AUTHORITY_ROLES=test-approver" > "$HOME/.config/muxcode/config"
-# The fixture repo is a REAL git repo: spawn nodes cut worktrees from the
-# daemon's CWD repo, and the harvest diffs/applies between worktree and
-# checkout. Worktrees land under the OS temp dir (SpawnWorktreeBase).
+# The fixture repo is a REAL git repo: the phase predicate reads HEAD's copy
+# of the spec, and the spawn sections assert what the gated commit ships.
 git -C "$REPO" init -q
 git -C "$REPO" config user.email "muxcode-test@example.invalid"
 git -C "$REPO" config user.name "muxcode-test"
 echo "fixture" > "$REPO/README.md"
 git -C "$REPO" add README.md
 git -C "$REPO" commit -q -m "fixture base"
-WTBASE="${TMPDIR:-/tmp}"; WTBASE="${WTBASE%/}/muxcode-spawn-${BUS_SESSION}"
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 : > "$WORK/empty-config"
 export MUXCODE_CONFIG="$WORK/empty-config"
@@ -116,14 +117,14 @@ export MUXCODE_DEDUP_WINDOW=0
 export MUXCODE_SESSION_REPO_DIR="$REPO"
 
 DPID=""
-# cleanup tears down the scratch session, bus dir and worktrees. Set
+# cleanup tears down the scratch session and bus dir. Set
 # MUXCODE_TEST_KEEP=1 to preserve $WORK instead: a failing spawn section is
 # undiagnosable once its lifecycle log and spawn store are deleted.
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null
   tmux kill-session -t "$BUS_SESSION" 2>/dev/null
   [ "${MUXCODE_TEST_KEEP:-}" = "1" ] && { echo "  (kept for diagnosis: $WORK)"; return; }
-  rm -rf "$BD" "$WORK" "$WTBASE"
+  rm -rf "$BD" "$WORK"
 }
 trap cleanup EXIT
 
@@ -164,7 +165,7 @@ REQ_ID=""
 # stale answer and replied to the wrong id — stalling phase 2 and, worse,
 # capable of false PASSES (plan postmortem 2026-08-28). The split from
 # answering exists for the spawn sections: the script must act as the
-# worker (write worktree files) or the commit agent (git commit) BETWEEN
+# worker (write checkout files) or the commit agent (git commit) BETWEEN
 # a request arriving and its answer, or the daemon's next hop races the
 # side effect. The exclusion id skips a previous iteration's
 # already-answered seed.
@@ -219,20 +220,19 @@ wait_and_answer() {
 }
 
 # spawn_for_run <run-id> — poll the spawn store for the run's worker,
-# setting SPAWN_ROLE and SPAWN_WT from the newest matching entry. Field
-# extraction must yield EMPTY on a missing worktree (grep -o, not sed
-# substitution, which passes the whole line through on no-match) so the
-# caller's worktree assertion cannot false-pass.
+# setting SPAWN_ROLE, SPAWN_WIN and SPAWN_LINE (the raw store entry) from
+# the newest matching entry. Field extraction uses grep -o, not sed
+# substitution, which passes the whole line through on no-match.
 SPAWN_ROLE=""
-SPAWN_WT=""
 SPAWN_WIN=""
+SPAWN_LINE=""
 spawn_for_run() {
   local rid="$1" i line
   for i in $(seq 1 60); do
     line="$(grep "\"run_id\":\"$rid\"" "$BD/spawn.jsonl" 2>/dev/null | tail -1)"
     if [ -n "$line" ]; then
+      SPAWN_LINE="$line"
       SPAWN_ROLE="$(printf '%s' "$line" | grep -o '"spawn_role":"[^"]*"' | cut -d'"' -f4)"
-      SPAWN_WT="$(printf '%s' "$line" | grep -o '"worktree":"[^"]*"' | cut -d'"' -f4)"
       SPAWN_WIN="$(printf '%s' "$line" | grep -o '"window":"[^"]*"' | cut -d'"' -f4)"
       [ -n "$SPAWN_ROLE" ] && return 0
     fi
@@ -241,13 +241,17 @@ spawn_for_run() {
   return 1
 }
 
-# worker_pane_pids <window> — the worker window's pane PIDs, sorted. The
+# worker_pane_pids <window> — the worker's own pane PIDs, sorted. The
 # retention observable (MUX-131 Phase 5): a reused worker keeps its shell
 # processes across a reseed, so the PIDs are stable; ANY replacement — a
 # fresh window or a respawned pane — changes them. Empty when the window
-# is gone.
+# is gone. The control pane (`muxcode graph ui`, MUX-108) is excluded:
+# EnsureControlPane adds it asynchronously, so a window can gain it between
+# two captures — read as a replacement, failing the retention pin three
+# runs in a row (2026-10-04) while both worker PIDs were unchanged.
 worker_pane_pids() {
-  tmux list-panes -t "$BUS_SESSION:$1" -F '#{pane_pid}' 2>/dev/null | sort | tr '\n' ' '
+  tmux list-panes -t "$BUS_SESSION:$1" -F '#{pane_pid} #{pane_start_command}' 2>/dev/null \
+    | grep -v '^[0-9]* ["'\'']*muxcode graph ui' | awk '{print $1}' | sort | tr '\n' ' '
 }
 
 # run_spawn_count <run-id> — worker entries the store holds for a run.
@@ -373,9 +377,8 @@ else
 fi
 
 # --- 2. Daemon -------------------------------------------------------------
-# CWD = fixture repo: createSpawnWorktree resolves HEAD from the daemon's
-# working directory, so starting anywhere else would cut spawn worktrees
-# from the WRONG repo (this checkout).
+# CWD = fixture repo, so nothing the daemon resolves from its working
+# directory can reach this checkout instead.
 (cd "$REPO" && exec "$MUX" watch "$BUS_SESSION" --poll 2 >"$WORK/daemon.log" 2>&1) &
 DPID=$!
 sleep 1
@@ -545,10 +548,10 @@ BASE_SHA="$(git -C "$REPO" rev-parse HEAD)"
 RID_S="$("$MUX" graph run --file "$WORK/spawnphase.json" "spawn harvest walk" 2>&1 | grep -o 'Started run [^ ]*' | awk '{print $3}')"
 [ -n "$RID_S" ] && ok "spawn run started: $RID_S" || bad "spawn run failed to start"
 
-if spawn_for_run "$RID_S" && [ -n "$SPAWN_WT" ]; then
-  ok "worker created with an isolated worktree ($SPAWN_ROLE)"
+if spawn_for_run "$RID_S" && ! printf '%s' "$SPAWN_LINE" | grep -q '"worktree":"[^"]'; then
+  ok "worker created in the session checkout, no worktree ($SPAWN_ROLE)"
 else
-  bad "spawn worker or worktree never appeared for $RID_S"
+  bad "spawn worker never appeared, or was cut a worktree: ${SPAWN_LINE:-<none>}"
 fi
 if wait_request "$SPAWN_ROLE" spawn-task; then
   ok "iteration-1 task seeded to the worker"
@@ -558,31 +561,28 @@ fi
 SEED1="$REQ_ID"
 PIDS_IT1="$(worker_pane_pids "$SPAWN_WIN")"
 
-# The worker's phase-1 output goes only to the isolated worktree — before
-# MUX-131 exactly the work that never reached the branch.
-echo "phase-1 implementation" > "$SPAWN_WT/impl-phase1.txt"
+# The worker writes its phase-1 output straight into the session checkout —
+# the tree build, test, review and commit all use.
+echo "phase-1 implementation" > "$REPO/impl-phase1.txt"
 answer_request "$SPAWN_ROLE" "implemented phase 1"
 
 if wait_and_answer build g-build; then
-  ok "build dispatched after the harvest"
+  ok "build dispatched after the worker answered"
 else
   bad "build never dispatched after iteration 1"
 fi
-grep -q '"output":"[^"]*ported ' "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null \
-  && ok "implement node recorded the port" \
-  || bad "implement did not record a port: $(cat "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null | head -c 300)"
+grep -q '"output":"[^"]*no worktree (session checkout)' "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null \
+  && ok "implement recorded the session-checkout harvest" \
+  || bad "implement output does not name the session checkout: $(cat "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null | head -c 300)"
 [ "$(cat "$REPO/impl-phase1.txt" 2>/dev/null)" = "phase-1 implementation" ] \
-  && ok "build sees the ported file on the branch (Defect A pinned)" \
-  || bad "ported file missing from checkout at build time — spawn output stranded"
+  && ok "build sees the worker's file in the checkout" \
+  || bad "worker output missing from the checkout at build time"
 git -C "$REPO" status --porcelain | grep -q '?? impl-phase1.txt' \
-  && ok "port landed uncommitted (working tree only)" \
-  || bad "ported file not uncommitted: $(git -C "$REPO" status --porcelain | head -3)"
+  && ok "worker output uncommitted at build time (working tree only)" \
+  || bad "worker output not uncommitted: $(git -C "$REPO" status --porcelain | head -3)"
 [ "$(git -C "$REPO" rev-parse HEAD)" = "$BASE_SHA" ] \
-  && ok "HEAD unchanged by the port — the daemon created no commit" \
-  || bad "HEAD moved during port — daemon-side committing reintroduced"
-[ "$(cat "$SPAWN_WT/impl-phase1.txt" 2>/dev/null)" = "phase-1 implementation" ] \
-  && ok "durability: worktree keeps its copy while the port is uncommitted" \
-  || bad "worktree copy discarded while the port is uncommitted"
+  && ok "HEAD unchanged before the gate — the daemon created no commit" \
+  || bad "HEAD moved before the gate — daemon-side committing reintroduced"
 
 wait_and_answer test g-test || bad "spawn run: test never dispatched"
 wait_and_answer review g-review || bad "spawn run: review never dispatched"
@@ -591,19 +591,18 @@ wait_and_answer plan g-verify || bad "spawn run: update-spec never dispatched"
 wait_node_state "$RID_S" phase-gate waiting || bad "spawn run: gate never waited"
 approve_gate "$RID_S" phase-gate >/dev/null 2>&1 || bad "spawn run: approve failed"
 if wait_request commit g-commit; then
-  # The gated commit ships EXACTLY the ported file. Committing more (the
-  # dirty fixture spec) would leave the tip a superset of the worktree,
-  # the advance-at-reseed containment check would refuse, and iteration 2
-  # would re-port content the tip already holds.
   git -C "$REPO" add impl-phase1.txt
   git -C "$REPO" commit -q -m "ship phase 1"
   answer_request commit "committed"
 else
   bad "spawn run: phase-1 commit never dispatched"
 fi
-[ "$(git -C "$REPO" rev-parse HEAD)" != "$BASE_SHA" ] \
-  && ok "gated commit shipped the ported file (script-side, behind the gate)" \
-  || bad "phase-1 commit did not land"
+if [ "$(git -C "$REPO" rev-parse HEAD)" != "$BASE_SHA" ] \
+  && git -C "$REPO" show --name-only --format= HEAD | grep -qx 'impl-phase1.txt'; then
+  ok "gated phase-1 commit shipped the worker's file"
+else
+  bad "phase-1 commit did not land the worker's file: $(git -C "$REPO" show --stat --format=%s HEAD | head -3)"
+fi
 
 if wait_request "$SPAWN_ROLE" spawn-task "$SEED1"; then
   ok "iteration 2 reseeded into the SAME worker"
@@ -612,7 +611,7 @@ else
 fi
 # Retention pin (MUX-131 Phase 5): reuse is only worth having if the
 # process survives — a silent per-iteration restart would keep the spawn
-# count at 1 while re-paying boot and losing the conversation. Section 10
+# count at 1 while re-paying boot and losing the conversation. Section 9
 # proves this observable changes when a worker really is replaced.
 PIDS_IT2="$(worker_pane_pids "$SPAWN_WIN")"
 if [ -n "$PIDS_IT1" ] && [ "$PIDS_IT1" = "$PIDS_IT2" ]; then
@@ -623,12 +622,6 @@ fi
 [ "$(run_spawn_count "$RID_S")" = "1" ] \
   && ok "one worker across iterations (spawn count from the store == 1)" \
   || bad "spawn store shows $(run_spawn_count "$RID_S") workers mid-run — worker churn (Defect B)"
-if [ -z "$(git -C "$SPAWN_WT" status --porcelain 2>/dev/null)" ] \
-  && [ "$(git -C "$SPAWN_WT" rev-parse HEAD 2>/dev/null)" = "$(git -C "$REPO" rev-parse HEAD)" ]; then
-  ok "worktree advanced to the shipped tip at reseed"
-else
-  bad "worktree not advanced after the commit: head=$(git -C "$SPAWN_WT" rev-parse HEAD 2>/dev/null) dirty=$(git -C "$SPAWN_WT" status --porcelain 2>/dev/null | head -2)"
-fi
 # Iteration 2 is a verify-only pass: the worker writes NOTHING.
 answer_request "$SPAWN_ROLE" "phase already covered — nothing to implement"
 
@@ -637,8 +630,8 @@ if wait_and_answer build g-build; then
 else
   bad "no-op spawn iteration stalled — nothing-to-port became a failure"
 fi
-grep -q '"output":"[^"]*nothing to port"' "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null \
-  && ok "no-op iteration recorded 'nothing to port'" \
+grep -q '"output":"[^"]*no worktree (session checkout) — nothing to port"' "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null \
+  && ok "no-op iteration recorded the session-checkout summary" \
   || bad "no-op output wrong: $(cat "$BD/graphs/$RID_S/nodes/implement.json" 2>/dev/null | head -c 300)"
 
 wait_and_answer test g-test || bad "spawn run: phase-2 test never dispatched"
@@ -663,56 +656,54 @@ done
   && ok "multi-phase run created ONE implement worker total (Defect B end-to-end)" \
   || bad "run created $(run_spawn_count "$RID_S") workers — one-per-iteration churn is back"
 
-# --- 8. Stranded output fails LOUDLY at the spawn node, before build -------
-# The original incident: implement reported success with its work stranded
-# in the worktree, and four downstream nodes plus a human gate burned
-# before the phase-progress guard noticed at commit. A refused port must
-# fail the spawn node itself, with neither side auto-resolved.
+# --- 8. A worker completed with no seed parks unknown (MUX-178) ------------
+# On 2026-09-11 implement recorded success two seconds after start for a
+# worker that never answered, and build dispatched on a checkout that had
+# received nothing. replaceLostWorkers catches a seeded worker that ends
+# unanswered (section 9); what it cannot see is an entry recorded completed
+# with NO seed. No live road produces that on demand, so the store entry is
+# rewritten to that shape — it is only rewritten on a running entry's state
+# change, and this worker stays running and unanswered until the edit.
+# Replaces the MUX-131 clobber-conflict control: with no worktree there is
+# no port to refuse.
 write_spawn_spec " " " "
-RID_B="$("$MUX" graph run --file "$WORK/spawnphase.json" "stranded output control" 2>&1 | grep -o 'Started run [^ ]*' | awk '{print $3}')"
-[ -n "$RID_B" ] && ok "conflict-control run started: $RID_B" || bad "conflict-control run failed to start"
+RID_U="$("$MUX" graph run --file "$WORK/spawnphase.json" "unanswered seed control" 2>&1 | grep -o 'Started run [^ ]*' | awk '{print $3}')"
+[ -n "$RID_U" ] && ok "unanswered-seed run started: $RID_U" || bad "unanswered-seed run failed to start"
 
-if spawn_for_run "$RID_B" && [ -n "$SPAWN_WT" ]; then
-  ok "conflict-control worker created with a worktree"
-else
-  bad "conflict-control worker or worktree never appeared"
-fi
+spawn_for_run "$RID_U" || bad "unanswered-seed worker never appeared"
 if wait_request "$SPAWN_ROLE" spawn-task; then
-  ok "conflict-control task seeded"
+  ok "unanswered-seed worker seeded"
 else
-  bad "conflict-control seed never arrived"
+  bad "unanswered-seed seed never arrived"
 fi
 
-# A human edit lands in the checkout at the same path while the worker
-# works — the port must refuse rather than overwrite either side.
-echo "human edit in progress" > "$REPO/impl-conflict.txt"
-echo "worker version" > "$SPAWN_WT/impl-conflict.txt"
-answer_request "$SPAWN_ROLE" "implemented into a conflicted path"
-
-if wait_node_state "$RID_B" implement failed; then
-  ok "stranded output failed the spawn node itself"
+perl -i -pe 'if (/"spawn_role":"\Q'"$SPAWN_ROLE"'\E"/) { s/"status":"running"/"status":"completed"/; s/,?"seed_msg_id":"[^"]*"//; }' "$BD/spawn.jsonl"
+SPAWN_LINE="$(grep "\"spawn_role\":\"$SPAWN_ROLE\"" "$BD/spawn.jsonl" | tail -1)"
+if printf '%s' "$SPAWN_LINE" | grep -q '"status":"completed"' \
+  && ! printf '%s' "$SPAWN_LINE" | grep -q '"seed_msg_id"'; then
+  ok "store entry rewritten to completed with no seed"
 else
-  bad "implement did not fail on the refused port: $(node_state "$RID_B" implement)"
+  bad "store entry not in the no-seed shape: $SPAWN_LINE"
 fi
-grep -q 'impl-conflict.txt' "$BD/graphs/$RID_B/nodes/implement.json" 2>/dev/null \
-  && ok "refusal names the conflicting path" \
-  || bad "failure detail does not name the path: $(cat "$BD/graphs/$RID_B/nodes/implement.json" 2>/dev/null | head -c 300)"
-sleep 2
-breq="$(AGENT_ROLE=build "$MUX" inbox --peek 2>/dev/null | grep -c 'Type: request' || true)"
-[ "${breq:-0}" -eq 0 ] && ok "build never dispatched — failure landed before build, not at commit" \
-  || bad "build dispatched despite stranded output"
-for i in $(seq 1 20); do
-  [ "$(run_state "$RID_B")" = "failed" ] && break
+
+held=0
+for i in $(seq 1 80); do
+  grep -q '"outcome":"unknown"' "$BD/graphs/$RID_U/nodes/implement.json" 2>/dev/null && held=1 && break
   sleep 0.5
 done
-[ "$(run_state "$RID_B")" = "failed" ] && ok "conflict-control run failed loudly" \
-  || bad "conflict-control run state: $(run_state "$RID_B")"
-[ "$(cat "$REPO/impl-conflict.txt" 2>/dev/null)" = "human edit in progress" ] \
-  && ok "human's checkout edit preserved byte-identical" \
-  || bad "checkout edit clobbered: $(cat "$REPO/impl-conflict.txt" 2>/dev/null)"
-[ "$(cat "$SPAWN_WT/impl-conflict.txt" 2>/dev/null)" = "worker version" ] \
-  && ok "worker's copy preserved in its worktree after the refusal" \
-  || bad "worktree copy lost after the refused port"
+[ "$held" -eq 1 ] && ok "no-seed worker parked implement unknown — never credited success" \
+  || bad "implement not unknown: $(cat "$BD/graphs/$RID_U/nodes/implement.json" 2>/dev/null | head -c 300)"
+grep -q "ended without answering its seed: $SPAWN_ROLE (no seed recorded)" "$BD/graphs/$RID_U/nodes/implement.json" 2>/dev/null \
+  && ok "hold output names the worker and the missing seed" \
+  || bad "hold output gives no reason: $(cat "$BD/graphs/$RID_U/nodes/implement.json" 2>/dev/null | head -c 300)"
+grep -rq "graph-spawn-unanswered.*$SPAWN_ROLE" "$WORK/lifecycle" 2>/dev/null \
+  && ok "lifecycle row graph-spawn-unanswered names the worker" \
+  || bad "no graph-spawn-unanswered lifecycle row for $SPAWN_ROLE"
+sleep 2
+breq="$(AGENT_ROLE=build "$MUX" inbox --peek 2>/dev/null | grep -c 'Type: request' || true)"
+[ "${breq:-0}" -eq 0 ] && ok "build never dispatched behind the held node" \
+  || bad "build dispatched despite an unanswered worker"
+"$MUX" graph cancel "$RID_U" >/dev/null 2>&1
 
 # --- 9. Replacement control: a dead worker must not read as retained -------
 # The vacuity control for section 7's retention pin: kill the worker
@@ -770,21 +761,21 @@ fi
 "$MUX" graph cancel "$RID_R" >/dev/null 2>&1
 
 # --- Coverage floor --------------------------------------------------------
-# Floor == max (MUX-131 Phase 5): a clean full pass emits EXACTLY 55
+# Floor == max (MUX-131 Phase 5): a clean full pass emits EXACTLY 51
 # checks: 4 validation + daemon + headline start + 3 per-phase implement
 # targets + 3 ordered commits + 4 termination/push + start-at-2 +
 # 5 phase-check routing (3 open-phase + positive control + guard
-# backstop, MUX-167) + 1 spawn fixture + 18 spawn-run + 9 conflict-control
-# + 5 replacement-control. Equality, not >=: a floor
+# backstop, MUX-167) + 1 spawn fixture + 16 spawn-run + 7 unanswered-seed
+# (MUX-178) + 5 replacement-control. Equality, not >=: a floor
 # below max lets newly added checks silently raise max above the floor,
 # and a partially short-circuited run can then still report green. It
 # counts checks EXECUTED (pass + fail); a failing run exits 1 regardless
 # of this check, so equality only ever gates green runs.
 total=$((pass + fail))
-if [ "$total" -eq 55 ]; then
+if [ "$total" -eq 51 ]; then
   ok "coverage floor met and equals max ($total checks executed)"
 else
-  bad "coverage floor mismatch — $total checks executed, want exactly 55 (floor == max; a skipped or drifted run must not report green)"
+  bad "coverage floor mismatch — $total checks executed, want exactly 51 (floor == max; a skipped or drifted run must not report green)"
 fi
 
 # --- Summary ---------------------------------------------------------------

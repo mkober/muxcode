@@ -363,6 +363,9 @@ Chain actions support condition expressions that control when they fire. Conditi
 | `env_equals` | `VAR=value` | Environment variable equals the specified value |
 | `output_contains` | substring | Command output contains the substring |
 | `exit_code` | integer | Command exit code equals the value |
+| `spec_phases_remaining` | `true`/`false` | The active spec still has (or has no) phase with an open box — the spec-driven loop condition |
+| `spec_phase_committable` | guarded commit node id | The active spec's current phase is complete in the tree and not at HEAD — the same `phaseCommitReady` predicate as the named node's `phase-progress` guard; graph runs only |
+| `spec_branch` | `true`/`false` | The session repo's current branch is the active spec's id or starts with `<id>-` (`MUX-178-<slug>`); `false` passes off it. Fails closed — no active spec, a pointer outside the repo, a detached HEAD or an unresolvable repo dir all fail — so `50-spec-to-pr` routes to its branch gate rather than committing phases on `main`. Reads the session repo, not `ctx.Branch`: on the graph road the evaluator is the daemon, whose cwd is not the checkout |
 
 ### Action arrays (first-match-wins)
 

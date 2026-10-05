@@ -1611,6 +1611,14 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 | `ui --templates` | Template launcher — pick, validate, and start a run |
 | `ui --gates [--render-once]` | Pending `wait_human` approval queue across all in-flight runs |
 
+**`50-spec-to-pr` head.** The run starts at `branch-check` (`{"spec_branch": true}`): on the spec's
+`<id>-<slug>` branch it goes straight to `implement`; off it — `main`, the previous spec's branch, no
+active spec, detached HEAD — it parks at `branch-gate` (`wait_human`, the gate every commit-role node
+needs) and, once approved, `create-branch` asks the commit agent (`checkout`) to `git switch -c` the
+branch named for the spec's filename from the current HEAD, carrying every uncommitted change, or to
+switch to it if it already exists; then `implement`. Before this (2026-10-03) nothing checked the
+branch, and a run launched on `main` committed its phases there.
+
 **`50-spec-to-pr` lap shape.** `implement` → `build` → `test` → `review` → `update-spec` →
 `phase-check` → `phase-gate` → `commit` → `loop-check`, with `fix` on any failure edge. `phase-check`
 (`{"spec_phase_committable": "commit"}`) reads the active spec through the same predicate as the
@@ -1628,8 +1636,20 @@ the reviewer's reply (`<n> must-fix, <n> should-fix, <n> nits`): any must-fix or
 `fix`, which receives the report through `${failure_report}`; a reply without the counts line holds.
 **Tail**: `loop-check` → `close-spec` (plan `close-spec`, `spec-complete` guard: status `Complete`,
 move to `completed/`, `backlog.md`, cross-refs, pointer cleared) → `final-gate` → `push-pr` (commits
-the close-out, pushes, opens the PR); a refused close-out parks at `close-stuck-gate` (retry ≤ 3, or
-cancel).
+the close-out, pushes, opens the PR titled exactly `${spec_title}`); a refused close-out parks at
+`close-stuck-gate` (retry ≤ 3, or cancel).
+
+**Message placeholders.** A node message is expanded at dispatch (`bus/graph_exec.go`):
+
+| Placeholder | Expands to |
+|-------------|------------|
+| `${spec}`, `${intent}` | The run's intent as recorded at launch — for a spec run, `<key> <title> — <first open phase>` (`describeSpecIntent`, `bus/intent.go`), so phase nodes know where the run started |
+| `${spec_title}` | `${spec}` with its launch-time ` — Phase …` suffix cut (`specTitle`): `<key> <title>`, for whatever names the whole spec. `push-pr` titles the PR with it — `${spec}` carried the phase the run *started* on, so PRs #104 and #105 were titled after their Phase 1 (fixed 2026-10-03) |
+| `${current_phase}` | The active spec's first phase with an open box, read fresh from the file at dispatch |
+| `${completed_phase}` | The last phase complete in the tree and not at HEAD — the phase the commit ships (`phaseCommitReady`) |
+| `${failure_report}` | The latest failure edge's reply, verbatim (`expandFailureReport`) |
+| `${output:<node>}` | A named upstream node's reply (`expandNodeOutputRefs`) |
+| `${item}` | The current element of a `map` fan-out |
 
 ```bash
 # Start a run from a built-in template, with intent interpolated into node messages

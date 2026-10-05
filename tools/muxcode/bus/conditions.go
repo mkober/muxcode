@@ -46,6 +46,7 @@ var knownConditionTypes = map[string]bool{
 	"exit_code":              true,
 	"spec_phases_remaining":  true,
 	"spec_phase_committable": true,
+	"spec_branch":            true,
 }
 
 // IsKnownCondition returns true if the condition type is recognized.
@@ -113,6 +114,8 @@ func evaluateCondition(condType string, value any, ctx *ChainContext) ConditionR
 		return evalSpecPhasesRemaining(value, ctx)
 	case "spec_phase_committable":
 		return evalSpecPhaseCommittable(value, ctx)
+	case "spec_branch":
+		return evalSpecBranch(value, ctx)
 	default:
 		return ConditionResult{
 			Type:   condType,
@@ -405,6 +408,65 @@ func evalSpecPhaseCommittable(value any, ctx *ChainContext) ConditionResult {
 		result.Passed = v.ready
 		result.Detail = fmt.Sprintf("%d phases complete in the tree, %d at HEAD — guarded commit %s", v.completed, v.atHead, nodeID)
 	}
+	return result
+}
+
+// specIDPrefix is a spec filename's leading id — `MUX-178` in
+// `MUX-178-spawn-node-cuts-no-worktree.md`.
+var specIDPrefix = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[0-9]+`)
+
+// specBranchID returns the id a spec's branch must start with: the spec
+// filename's leading id, or the whole filename (without .md) when it has none.
+func specBranchID(specPath string) string {
+	base := strings.TrimSuffix(filepath.Base(specPath), ".md")
+	if id := specIDPrefix.FindString(base); id != "" {
+		return id
+	}
+	return base
+}
+
+// evalSpecBranch tests whether the session repo's current branch belongs to
+// the active spec: it is the spec's id, or starts with the id and a dash
+// (`MUX-178-<slug>`, the `<id>-<slug>` convention). Value true passes on the
+// spec's branch; false passes off it.
+//
+// The branch is read from the session repo, never ctx.Branch: on the graph
+// road the evaluating process is the daemon, whose working directory is not
+// the checkout the run commits to. No active spec, a refused pointer, a
+// repo dir unresolvable this tick, or an unknown branch (detached HEAD, git
+// failure) all fail for either value — so a spec-to-pr run routes to its
+// branch gate and a human sees why. Unknown is never "off the branch":
+// that would let spec_branch:false pass on a state nobody can name.
+func evalSpecBranch(value any, ctx *ChainContext) ConditionResult {
+	result := ConditionResult{Type: "spec_branch"}
+	want, ok := value.(bool)
+	if !ok {
+		result.Detail = fmt.Sprintf("spec_branch must be true or false, got %T", value)
+		return result
+	}
+	result.Pattern = strconv.FormatBool(want)
+
+	path, repo, okSpec, transient, refused := activeSpecRepo(ctx.Session)
+	switch {
+	case transient:
+		result.Detail = "repo dir unavailable this tick — branch unknown"
+		return result
+	case refused:
+		result.Detail = "active spec pointer resolves outside the repo"
+		return result
+	case !okSpec:
+		result.Detail = "no active spec to derive a branch from"
+		return result
+	}
+	id := specBranchID(path)
+	branch := CurrentBranchIn(repo)
+	if branch == "" {
+		result.Detail = "branch unknown (detached HEAD or git failure)"
+		return result
+	}
+	on := branch == id || strings.HasPrefix(branch, id+"-")
+	result.Passed = on == want
+	result.Detail = fmt.Sprintf("branch %q, spec id %q, on spec branch=%v", branch, id, on)
 	return result
 }
 

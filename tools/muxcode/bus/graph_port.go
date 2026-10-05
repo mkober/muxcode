@@ -177,7 +177,9 @@ func selfPortMatches(repoDir string, rec portRecord, path string) bool {
 // collisions surface as an explicit failure instead of racing a shared
 // tree. Members without a worktree (shared-CWD fallback) or whose
 // worktree is gone (clean at reap — dirty trees are always preserved)
-// have nothing to port; the repo dir is resolved only when a member
+// have nothing to port — a group with no worktree at all, every graph
+// worker since 2026-09-03 (MUX-142), says so in its summary rather than a
+// bare "nothing to port" that reads as an empty diff; the repo dir is resolved only when a member
 // actually needs landing, so worktree-less groups never depend on tmux.
 // The first port failure aborts the group: earlier members' landings
 // stand, later members' work stays preserved in their worktrees.
@@ -212,10 +214,12 @@ func portSpawnGroup(session, taskIDs string) (string, error) {
 
 	repoDir := ""
 	var landed []string
+	anyWorktree := false
 	for _, e := range members {
 		if e.Worktree == "" {
 			continue
 		}
+		anyWorktree = true
 		if _, statErr := os.Stat(e.Worktree); statErr != nil {
 			continue
 		}
@@ -231,6 +235,9 @@ func portSpawnGroup(session, taskIDs string) (string, error) {
 		if ported {
 			landed = append(landed, e.SpawnRole)
 		}
+	}
+	if !anyWorktree {
+		return "no worktree (session checkout) — nothing to port", nil
 	}
 	if len(landed) == 0 {
 		return "nothing to port", nil

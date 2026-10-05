@@ -86,6 +86,33 @@ func TestDefectToSpecTemplate(t *testing.T) {
 	onlyReachedFrom(t, g, "commit-spec", "issue", OutcomeSuccess)
 }
 
+// 50-spec-to-pr starts by checking the branch: on the spec's branch it goes
+// straight to implement; off it, a human approves creating the branch before
+// anything is implemented or committed, so phase commits never land on main.
+func TestSpecToPRStartsOnSpecBranch(t *testing.T) {
+	g := mustTemplate(t, "50-spec-to-pr")
+	if g.Start != "branch-check" || g.node("branch-check").Conditions["spec_branch"] != true {
+		t.Fatalf("start = %q, want the spec_branch check", g.Start)
+	}
+	onlyReachedFrom(t, g, "branch-gate", "branch-check", OutcomeFailure)
+	onlyReachedFrom(t, g, "create-branch", "branch-gate", OutcomeSuccess)
+	cb := g.node("create-branch")
+	if cb.Role != "commit" || cb.Action != "checkout" || !NodeRequiresGate(cb) {
+		t.Errorf("create-branch = %s/%s (gated %v), want a gated commit/checkout", cb.Role, cb.Action, NodeRequiresGate(cb))
+	}
+	for _, from := range []string{"branch-check", "create-branch"} {
+		found := false
+		for _, e := range g.Edges {
+			if e.From == from && e.To == "implement" && edgeOutcome(e) == OutcomeSuccess {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s must reach implement on success", from)
+		}
+	}
+}
+
 // No builtin request carries a verdict of its own (MUX-198): parseExitSentinel
 // reads the last EXIT=<digits> in a reply, so a request echoed back as its
 // reply (MUX-154) would otherwise route on an outcome nobody reported. Checked

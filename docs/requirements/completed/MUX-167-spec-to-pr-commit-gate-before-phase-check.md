@@ -198,15 +198,22 @@ its two negative controls.
 
 **The 19 failures are all MUX-131 spawn/worktree territory** — `spawn worker or worktree never
 appeared`, `implement did not record a port` (`"output":"nothing to port"`), `worktree copy discarded`,
-`replacement did not happen`. Spawns launch but cut no worktree, so the harvest/port path is broken.
-MUX-131 recorded this same script green at 64/0 on 2026-09-01, so this is a **regression in product
-code, filed separately as
-[MUX-178](../backlog/MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md)**. It blocks any
-future green run of this script and is not fixable inside MUX-167's scope.
+`replacement did not happen`. Spawns launched but cut no worktree, so the harvest/port path had
+nothing to read. MUX-131 had recorded this same script green at 64/0 on 2026-09-01, so at close it
+was read as a regression in product code and filed separately as
+[MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md), out of MUX-167's scope.
 
-_Also unresolved and carried to MUX-178:_ the coverage floor reports **57 checks executed against a
-constant of 55**. The floor comment's own breakdown sums to 55, so the constant is not obviously
-wrong; it cannot be reconciled until the spawn sections pass and the true executed count is known.
+_Resolved by MUX-178 (2026-10-04)._ That reading was wrong: the missing worktree is the **intentional
+2026-09-03 design** — graph workers run in the session checkout (`StartSpawnOwned(…, false, …)`,
+[MUX-142](./MUX-142-spawn-worker-delegates-into-wrong-tree.md) "The third tree") — and the 19
+failures were the script's stale MUX-131 worktree assertions, not a code regression. MUX-178 fixed the
+one genuine defect (a `completed` worker with no recorded seed credited as `success`; now `unknown`),
+rewrote the fixture to the no-worktree design, and brought the script back to green.
+
+_Also carried to MUX-178 and resolved there:_ the coverage floor reported **57 checks executed against
+a constant of 55**, which could not be reconciled while 19 checks were failing. With the fixture
+rewritten the floor is **51**, equal to a green run's executed count (52 passed / 0 failed including
+the floor check itself).
 
 ### Deferred at close
 

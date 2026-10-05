@@ -72,6 +72,11 @@ func captureInjectionTarget(session, target, role string) (string, error) {
 		LogLifecycle(session, "warn", "notify", "injection-refused", role+": pane is mid-exit, last line: "+last)
 		return content, fmt.Errorf("%s: pane shows the agent exit banner (last line %q), not a live agent: %w", role, last, ErrInjectionSkipped)
 	}
+	if codexUpdateRunning(content) {
+		last := lastNonEmptyLines(content, 1)[0]
+		LogLifecycle(session, "warn", "notify", "injection-refused", role+": codex self-update in progress, last line: "+last)
+		return content, fmt.Errorf("%s: pane shows a codex self-update (last line %q), not a live agent: %w", role, last, ErrInjectionSkipped)
+	}
 	if last, shell := paneEndsAtShellPrompt(content); shell {
 		LogLifecycle(session, "warn", "notify", "injection-refused", role+": pane ends at a shell prompt: "+last)
 		return content, fmt.Errorf("%s: pane ends at a shell prompt (%q), not an agent: %w", role, last, ErrInjectionSkipped)

@@ -14,10 +14,15 @@ import (
 )
 
 // fakeSpawns replaces graphSpawnFn with an in-memory dispatcher that
-// records tasks and immediately writes a "completed" spawn entry, so
-// executor tests run without tmux.
+// records tasks and immediately writes a "completed" spawn entry whose seed
+// is already answered with EXIT=0, so executor tests run without tmux. The
+// answer is load-bearing: a completed worker with no answered seed holds
+// as unknown (MUX-178).
 func fakeSpawns(t *testing.T, session string) *[]string {
 	t.Helper()
+	if err := os.MkdirAll(DeliveryDir(session), 0755); err != nil {
+		t.Fatalf("delivery dir: %v", err)
+	}
 	var tasks []string
 	orig := graphSpawnFn
 	n := 0
@@ -25,9 +30,18 @@ func fakeSpawns(t *testing.T, session string) *[]string {
 		n++
 		id := fmt.Sprintf("spawn-fake%04d", n)
 		tasks = append(tasks, role+": "+task)
+		seed := NewMessage(owner, id, "request", "spawn-task", task, "")
+		if err := SendNoCC(sess, seed); err != nil {
+			t.Fatalf("seed send: %v", err)
+		}
+		reply := NewMessage(id, owner, "response", "spawn-task", "done. EXIT=0", seed.ID)
+		if err := SendNoCC(sess, reply); err != nil {
+			t.Fatalf("reply send: %v", err)
+		}
+		MarkResponded(sess, seed.ID, reply.ID)
 		entry := SpawnEntry{ID: id, Role: role, SpawnRole: id, Owner: owner,
 			Task: task, Status: "completed", StartedAt: time.Now().Unix(),
-			RunID: runID, NodeID: nodeID}
+			SeedMsgID: seed.ID, RunID: runID, NodeID: nodeID}
 		if err := appendSpawnEntry(sess, entry); err != nil {
 			t.Fatalf("append spawn entry: %v", err)
 		}
@@ -4010,6 +4024,170 @@ func TestSpawnGroupOutcomeKeepsFailureSemantics(t *testing.T) {
 
 	if silent := unattributedWorkers(runTestSession, succeeded+","+declined); len(silent) != 1 || silent[0] != declined {
 		t.Errorf("unattributedWorkers = %v, want just %s — the hold must name who to ask", silent, declined)
+	}
+}
+
+// TestSpawnGroupOutcomeUnansweredCompletedIsUnknown pins MUX-178: a
+// completed worker that never answered its seed was credited success, so a
+// node recorded "nothing to port" / success two seconds after start for a
+// worker that did nothing. Both shapes — seed recorded but unanswered, and
+// no seed at all — are absence of evidence and must hold.
+//
+// The remaining rows are the negative controls: a fix that holds every
+// completed worker, or lets the hold mask a failure, is not a fix.
+func TestSpawnGroupOutcomeUnansweredCompletedIsUnknown(t *testing.T) {
+	useTempBusDir(t)
+	fakeLiveSpawns(t)
+
+	spawn := func(node string) string {
+		t.Helper()
+		id, err := graphSpawnFn(runTestSession, "edit", "work", graphSender, "run1", node)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	setStatus := func(id, status string, clearSeed bool) {
+		t.Helper()
+		if err := UpdateSpawnEntry(runTestSession, id, func(e *SpawnEntry) {
+			e.Status = status
+			if clearSeed {
+				e.SeedMsgID = ""
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	seededSilent := spawn("seeded-silent")
+	setStatus(seededSilent, "completed", false)
+	seedless := spawn("seedless")
+	setStatus(seedless, "completed", true)
+	answered := spawn("answered")
+	answerSpawn(t, runTestSession, answered)
+	setStatus(answered, "completed", false)
+	running := spawn("running")
+	stopped := spawn("stopped")
+	setStatus(stopped, "stopped", false)
+
+	cases := []struct {
+		name  string
+		group string
+		want  string
+		done  bool
+	}{
+		{"completed, seed never answered", seededSilent, OutcomeUnknown, true},
+		{"completed, no seed recorded", seedless, OutcomeUnknown, true},
+		{"answered success", answered, OutcomeSuccess, true},
+		{"answered + unanswered holds", answered + "," + seedless, OutcomeUnknown, true},
+		{"stopped still fails", stopped, OutcomeFailure, true},
+		{"unanswered + stopped fails", seedless + "," + stopped, OutcomeFailure, true},
+		{"running still holds the tick", running, "", false},
+	}
+	for _, tc := range cases {
+		outcome, done := spawnGroupOutcome(runTestSession, tc.group)
+		if done != tc.done || outcome != tc.want {
+			t.Errorf("%s: (%q, %v), want (%q, %v)", tc.name, outcome, done, tc.want, tc.done)
+		}
+	}
+
+	ended := unansweredWorkers(runTestSession, seededSilent+","+seedless+","+answered+","+stopped)
+	if len(ended) != 2 || !strings.Contains(ended[0], seededSilent) || !strings.Contains(ended[0], "never answered") ||
+		!strings.Contains(ended[1], seedless) || !strings.Contains(ended[1], "no seed recorded") {
+		t.Errorf("unansweredWorkers = %v, want the two completed-unanswered workers named with their seed state", ended)
+	}
+}
+
+// TestExecSpawnUnansweredWorkerHoldsNode drives the 2026-09-11 record end
+// to end: a spawn node whose worker is completed with no seed answered
+// must park unknown, dispatch nothing downstream, say why in its output,
+// and leave a lifecycle row — not finish success with "nothing to port".
+func TestExecSpawnUnansweredWorkerHoldsNode(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "impl",
+		Nodes: []Node{
+			{ID: "impl", Type: NodeSpawn, Role: "edit", Message: "implement"},
+			{ID: "b", Type: NodeSend, Role: "build", Action: "build", Message: "build it"},
+		},
+		Edges: []Edge{{From: "impl", To: "b"}},
+	}
+	run := createTestRun(t, g)
+	const worker = "spawn-unanswered178"
+	orig := graphSpawnFn
+	t.Cleanup(func() { graphSpawnFn = orig })
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
+		return worker, appendSpawnEntry(sess, SpawnEntry{ID: worker, Role: role, SpawnRole: worker,
+			Owner: owner, Task: task, Status: "completed", StartedAt: time.Now().Unix(),
+			RunID: runID, NodeID: nodeID})
+	}
+
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+
+	st, err := ReadNodeStatus(runTestSession, run.ID, "impl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Outcome != OutcomeUnknown {
+		t.Fatalf("impl outcome %q (state %q, output %q), want unknown", st.Outcome, st.State, st.Output)
+	}
+	if !strings.Contains(st.Output, "ended without answering its seed") || !strings.Contains(st.Output, worker) {
+		t.Errorf("the hold must say why and name the worker, output %q", st.Output)
+	}
+	if !strings.Contains(st.Output, "no worktree (session checkout)") {
+		t.Errorf("port summary must name the session checkout, output %q", st.Output)
+	}
+	if s := nodeState(t, runTestSession, run.ID, "b"); s != GraphNodePending {
+		t.Errorf("build state %q, want pending — an unanswered worker must not advance the run", s)
+	}
+
+	entries, err := ReadLifecycleLog(runTestSession)
+	if err != nil {
+		t.Fatalf("read lifecycle: %v", err)
+	}
+	logged := false
+	for _, e := range entries {
+		if e.Event == "graph-spawn-unanswered" && strings.Contains(e.Detail, worker) {
+			logged = true
+		}
+	}
+	if !logged {
+		t.Errorf("no graph-spawn-unanswered row naming %s in %d entries", worker, len(entries))
+	}
+}
+
+// TestExecSpawnKilledSeededWorkerStillReplaced is the negative control for
+// TestExecSpawnUnansweredWorkerHoldsNode, per the user's 2026-10-04
+// decision: the unknown-hold targets only a completed entry with no
+// recorded seed. A seeded worker killed before answering — its window
+// gone, its entry completed — must still be replaced by replaceLostWorkers
+// on a fresh worker, never parked unknown.
+func TestExecSpawnKilledSeededWorkerStillReplaced(t *testing.T) {
+	g := &Graph{Name: "killed", Start: "w",
+		Nodes: []Node{{ID: "w", Type: NodeSpawn, Role: "edit", Message: "implement phase"}}}
+	run := createTestRun(t, g)
+	f := fakeLiveSpawns(t)
+
+	step(t, runTestSession, run.ID)
+	st, err := ReadNodeStatus(runTestSession, run.ID, "w")
+	if err != nil || st.TaskID == "" {
+		t.Fatalf("fresh worker expected: (%+v, %v)", st, err)
+	}
+	first := st.TaskID
+	if err := UpdateSpawnEntry(runTestSession, first, func(e *SpawnEntry) {
+		e.Status = "completed"
+		e.FinishedAt = time.Now().Unix()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.deadWindows[first] = true
+
+	step(t, runTestSession, run.ID)
+	st, _ = ReadNodeStatus(runTestSession, run.ID, "w")
+	if st.State != GraphNodeRunning || st.Outcome == OutcomeUnknown || st.TaskID == first || f.fresh != 2 {
+		t.Fatalf("killed seeded worker must be replaced, not held: state %q outcome %q task %q starts %d",
+			st.State, st.Outcome, st.TaskID, f.fresh)
 	}
 }
 
