@@ -76,7 +76,7 @@ rule that a cap shortfall must fail loudly — this spec keeps that rule and fix
 [MUX-167](../completed/MUX-167-spec-to-pr-commit-gate-before-phase-check.md) and
 [MUX-183](../completed/MUX-183-phase-commit-ready-recredits-shipped-phases.md) are the same family of
 run-state that fails to respect phase boundaries.
-[MUX-178](../backlog/MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) owns the red spawn sections of
+[MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) owns the red spawn sections of
 `test-multi-phase-graph.sh`, which is why Phase 3 below writes a new script rather than extending it.
 
 ## Requirements

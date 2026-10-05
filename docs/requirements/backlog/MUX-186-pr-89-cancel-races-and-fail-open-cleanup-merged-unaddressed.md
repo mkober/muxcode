@@ -56,7 +56,7 @@ those controls rather than reopening the closed one.
 
 - [MUX-182](../completed/MUX-182-cancelled-run-keeps-working-provenance-unreadable.md) — the parent; ACs 1, 2, 3 and 7 are the ones reopened.
 - [MUX-187](../completed/MUX-187-pr-merge-merges-over-unresolved-review-comments.md) — why the review reached `main` unread.
-- [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md), [MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) — the self-concealing false success family.
+- [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md), [MUX-178](../completed/MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) — the self-concealing false success family.
 - The tail-anchored prompt detection lesson (MUX-163, codex trust/approval prompts) — finding 5 is the same "match the live prompt, not the scrollback" rule.
 
 ## Requirements

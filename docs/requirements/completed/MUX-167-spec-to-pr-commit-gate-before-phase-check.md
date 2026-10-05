@@ -201,7 +201,7 @@ appeared`, `implement did not record a port` (`"output":"nothing to port"`), `wo
 `replacement did not happen`. Spawns launch but cut no worktree, so the harvest/port path is broken.
 MUX-131 recorded this same script green at 64/0 on 2026-09-01, so this is a **regression in product
 code, filed separately as
-[MUX-178](../backlog/MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md)**. It blocks any
+[MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md)**. It blocks any
 future green run of this script and is not fixable inside MUX-167's scope.
 
 _Also unresolved and carried to MUX-178:_ the coverage floor reports **57 checks executed against a
