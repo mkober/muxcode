@@ -277,4 +277,4 @@ Shipped in this PR on the user's request (2026-10-04), uncommitted at the time o
 
 ## Status
 
-Complete — all four phases and all seven acceptance criteria verified 2026-10-04; ready for close-out (move to `completed/`, backlog row, cross-refs)
+Complete — all four phases and all seven acceptance criteria verified 2026-10-04; closed out the same day: moved to `completed/`, backlog row moved to the id registry (defect ranks renumbered), cross-references in MUX-142, MUX-167, MUX-186, MUX-193 and MUX-195 repointed. Shipped in PR #148, which closes issue #136.
