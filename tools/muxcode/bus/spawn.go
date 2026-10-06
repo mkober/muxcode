@@ -20,29 +20,39 @@ import (
 
 // SpawnEntry represents a tracked spawned agent session.
 type SpawnEntry struct {
-	ID          string `json:"id"`
-	Role        string `json:"role"`       // base role, e.g. "research"
-	SpawnRole   string `json:"spawn_role"` // bus role + window name, e.g. "spawn-a1b2c3d4"
-	Owner       string `json:"owner"`      // requesting agent, e.g. "edit"
-	Task        string `json:"task"`       // task description
-	Status      string `json:"status"`     // "running", "completed", "stopped"
-	Window      string `json:"window"`     // tmux window name (= SpawnRole)
-	StartedAt   int64  `json:"started_at"`
-	FinishedAt  int64  `json:"finished_at"`
-	Notified    bool   `json:"notified"`
-	Worktree    string `json:"worktree,omitempty"`     // worktree directory path
-	WorktreeRef string `json:"worktree_ref,omitempty"` // git ref used (commit SHA)
-	SeedMsgID   string `json:"seed_msg_id,omitempty"`  // ID of the seeded spawn-task request (latest iteration for reused workers)
-	RunID       string `json:"run_id,omitempty"`       // graph run key half — set on graph-dispatched workers (MUX-131 reuse)
-	NodeID      string `json:"node_id,omitempty"`      // graph node key half — with RunID, the per-run+node reuse key
-	ResumeID    string `json:"resume_id,omitempty"`    // session a dead worker was resumed into, pending definition verification (MUX-139)
-	ResumedAt   int64  `json:"resumed_at,omitempty"`   // when that resume was typed; bounds the verification
-	ReadyAt     int64  `json:"ready_at,omitempty"`     // first sighting of the resumed session's prompt with no definition warning
-	StopPending string `json:"stop_pending,omitempty"` // node failure awaiting this worker's confirmed stop
-	IdleSince   int64  `json:"idle_since,omitempty"`   // when its run released it to the idle pool; 0 while owned or busy (MUX-195)
-	Spec        string `json:"spec,omitempty"`         // active spec when its current seed was sent; adoption clears context when it changed (MUX-195)
-	Display     string `json:"-"`                      // render-time status from SpawnDisplayStatus; never persisted
+	ID          string   `json:"id"`
+	Role        string   `json:"role"`       // base role, e.g. "research"
+	SpawnRole   string   `json:"spawn_role"` // bus role + window name, e.g. "spawn-a1b2c3d4"
+	Owner       string   `json:"owner"`      // requesting agent, e.g. "edit"
+	Task        string   `json:"task"`       // task description
+	Status      string   `json:"status"`     // "starting", "running", "completed", "stopped"
+	Window      string   `json:"window"`     // tmux window name (= SpawnRole)
+	StartedAt   int64    `json:"started_at"`
+	FinishedAt  int64    `json:"finished_at"`
+	Notified    bool     `json:"notified"`
+	Worktree    string   `json:"worktree,omitempty"`     // worktree directory path
+	WorktreeRef string   `json:"worktree_ref,omitempty"` // git ref used (commit SHA)
+	SeedMsgID   string   `json:"seed_msg_id,omitempty"`  // ID of the seeded spawn-task request (latest iteration for reused workers)
+	RunID       string   `json:"run_id,omitempty"`       // graph run key half — set on graph-dispatched workers (MUX-131 reuse)
+	NodeID      string   `json:"node_id,omitempty"`      // graph node key half — with RunID, the per-run+node reuse key
+	ResumeID    string   `json:"resume_id,omitempty"`    // session a dead worker was resumed into, pending definition verification (MUX-139)
+	ResumedAt   int64    `json:"resumed_at,omitempty"`   // when that resume was typed; bounds the verification
+	ReadyAt     int64    `json:"ready_at,omitempty"`     // first sighting of the resumed session's prompt with no definition warning
+	StopPending string   `json:"stop_pending,omitempty"` // node failure, or failed start, awaiting this worker's confirmed stop
+	IdleSince   int64    `json:"idle_since,omitempty"`   // when its run released it to the idle pool; 0 while owned or busy (MUX-195)
+	Spec        string   `json:"spec,omitempty"`         // active spec when its current seed was sent; adoption clears context when it changed (MUX-195)
+	NoticesOwed []string `json:"notices_owed,omitempty"` // completions its owner is yet to be told of: agent task seed ids, or the key of a reaped worker (DueSpawnNotices)
+	Display     string   `json:"-"`                      // render-time status from SpawnDisplayStatus; never persisted
 }
+
+// spawnStarting is the status of a start whose slot is reserved but whose
+// worker is not yet launched: counted against the cap, invisible to reuse,
+// and supervised by RefreshSpawnStatus rather than the running lifecycle.
+const spawnStarting = "starting"
+
+// spawnStartGraceSecs bounds how long a start may stay reserved: past it the
+// process that reserved it is presumed dead and the reservation is stopped.
+const spawnStartGraceSecs = 120
 
 // ReadSpawnEntries reads all spawn entries from the spawn JSONL file.
 func ReadSpawnEntries(session string) ([]SpawnEntry, error) {
@@ -190,6 +200,16 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 // Empty ids mean an unowned CLI spawn, the previous behavior exactly. A
 // non-empty seedID is the id the seed is sent under, so a caller that
 // persisted it before dispatch can find this worker again after a restart.
+//
+// The per-role cap (SpawnMaxWorkers) is a reservation, not a check: the entry
+// is written as starting, counted against the cap, in the same locked write
+// that checked the cap (reserveSpawnSlot) — before any worktree, seed or
+// window exists. Of two starts racing for the last slot the loser is refused
+// (errSpawnCap) having touched nothing. A start that fails after reserving
+// is rolled back by abortSpawnStart; one whose window cannot be killed stays
+// reserved and supervised. Reserved after the launch, the loser was launched
+// and then killed with the kill's error ignored and its worktree removed —
+// a live worker past the cap, unregistered, in a deleted tree.
 func StartSpawnOwned(session, role, task, owner string, useWorktree bool, runID, nodeID, seedID string) (SpawnEntry, error) {
 	// Generate spawn ID and extract 8-hex suffix for compact window name
 	fullID := NewMsgID("spawn")
@@ -197,21 +217,29 @@ func StartSpawnOwned(session, role, task, owner string, useWorktree bool, runID,
 	suffix := parts[len(parts)-1] // 8-hex suffix
 	spawnRole := "spawn-" + suffix
 
+	msg := NewMessage(owner, spawnRole, "request", "spawn-task", task, "")
+	if seedID != "" {
+		msg.ID = seedID
+	}
 	entry := SpawnEntry{
 		ID:        fullID,
 		Role:      role,
 		SpawnRole: spawnRole,
 		Owner:     owner,
 		Task:      task,
-		Status:    "running",
+		Status:    spawnStarting,
 		Window:    spawnRole,
 		StartedAt: time.Now().Unix(),
 		RunID:     runID,
 		NodeID:    nodeID,
 		Spec:      ReadActiveSpec(session),
+		SeedMsgID: msg.ID,
+	}
+	oweNotice(&entry, msg.ID)
+	if err := reserveSpawnSlot(session, entry); err != nil {
+		return SpawnEntry{}, err
 	}
 
-	// Create worktree if requested
 	if useWorktree {
 		wtPath, wtRef, err := createSpawnWorktree(session, spawnRole)
 		if err != nil {
@@ -223,40 +251,134 @@ func StartSpawnOwned(session, role, task, owner string, useWorktree bool, runID,
 		}
 	}
 
-	// Ensure inbox directory exists and touch inbox file for spawn role
 	inboxDir := filepath.Dir(InboxPath(session, spawnRole))
 	if err := os.MkdirAll(inboxDir, 0755); err != nil {
-		return SpawnEntry{}, fmt.Errorf("creating inbox dir: %v", err)
+		return SpawnEntry{}, abortSpawnStart(session, entry, fmt.Errorf("creating inbox dir: %v", err))
 	}
 	if err := touchFile(InboxPath(session, spawnRole)); err != nil {
-		return SpawnEntry{}, fmt.Errorf("touching inbox: %v", err)
-	}
-
-	// Seed inbox with task message
-	msg := NewMessage(owner, spawnRole, "request", "spawn-task", task, "")
-	if seedID != "" {
-		msg.ID = seedID
+		return SpawnEntry{}, abortSpawnStart(session, entry, fmt.Errorf("touching inbox: %v", err))
 	}
 	if err := Send(session, msg); err != nil {
-		return SpawnEntry{}, fmt.Errorf("seeding inbox: %v", err)
+		return SpawnEntry{}, abortSpawnStart(session, entry, fmt.Errorf("seeding inbox: %v", err))
 	}
-	entry.SeedMsgID = msg.ID
-
 	if err := spawnLaunchFn(session, entry); err != nil {
-		return SpawnEntry{}, err
+		return SpawnEntry{}, abortSpawnStart(session, entry, err)
 	}
+	return completeSpawnStart(session, entry)
+}
 
-	err := withSpawnRegistryLock(session, func() error {
+// reserveSpawnSlot appends entry, still starting, to the registry if its
+// base role is below the cap — the check and the reservation in one locked
+// write.
+func reserveSpawnSlot(session string, entry SpawnEntry) error {
+	return withSpawnRegistryLock(session, func() error {
 		entries, err := ReadSpawnEntries(session)
 		if err != nil {
 			return err
 		}
+		if err := spawnCapError(entries, entry.Role); err != nil {
+			return err
+		}
 		return WriteSpawnEntries(session, append(entries, entry))
 	})
-	if err != nil {
-		return SpawnEntry{}, err
+}
+
+// completeSpawnStart turns a launched start's reservation into a running
+// worker. A reservation the reaper already stopped as abandoned is not
+// revived: the start is rolled back instead.
+func completeSpawnStart(session string, entry SpawnEntry) (SpawnEntry, error) {
+	revived := false
+	err := UpdateSpawnEntry(session, entry.ID, func(e *SpawnEntry) {
+		if e.Status != spawnStarting || e.StopPending != "" {
+			return
+		}
+		e.Status, e.Worktree, e.WorktreeRef = "running", entry.Worktree, entry.WorktreeRef
+		revived = true
+	})
+	if err == nil && !revived {
+		err = fmt.Errorf("spawn %s: its reservation was abandoned before the launch finished", entry.SpawnRole)
 	}
+	if err != nil {
+		return SpawnEntry{}, abortSpawnStart(session, entry, err)
+	}
+	entry.Status = "running"
 	return entry, nil
+}
+
+// abortSpawnStart rolls back a reserved start that failed and returns cause.
+// Its window, if the launch got that far, is killed first, and only once it
+// is proven gone is the worktree removed and the reservation stopped. A kill
+// that fails with the window live keeps the reservation — still counted
+// against the cap — marked StopPending, and RefreshSpawnStatus retries the
+// stop (settleStartingSpawn), so no live worker escapes the registry or the
+// tree it runs in. No completion notice is owed: the caller has the error.
+func abortSpawnStart(session string, entry SpawnEntry, cause error) error {
+	gone := true
+	if err := spawnKillWindowFn(session, entry.Window); err != nil && spawnWindowExistsFn(session, entry.Window) {
+		gone = false
+	}
+	if gone {
+		if err := removeSpawnWorktree(entry.Worktree); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: worktree cleanup failed for %s: %v\n", entry.SpawnRole, err)
+		}
+	}
+	_ = UpdateSpawnEntry(session, entry.ID, func(e *SpawnEntry) {
+		e.Worktree, e.WorktreeRef = entry.Worktree, entry.WorktreeRef
+		e.NoticesOwed, e.Notified = nil, true
+		if gone {
+			e.Status, e.FinishedAt, e.StopPending = "stopped", time.Now().Unix(), ""
+			return
+		}
+		e.Status, e.StopPending = spawnStarting, "start failed: "+cause.Error()
+	})
+	state := "rolled back"
+	if !gone {
+		state = "window still live, stop pending"
+	}
+	LogLifecycle(session, "warn", "spawn", "spawn-start-failed",
+		fmt.Sprintf("%s: start for %s failed (%v) — %s", entry.SpawnRole, ownerLabel(entry), cause, state))
+	return cause
+}
+
+// settleStartingSpawn supervises a reservation that is not becoming a worker:
+// one owed a stop by abortSpawnStart, or one older than spawnStartGraceSecs,
+// whose starter is presumed dead. Its window is killed and, once gone, the
+// worktree removed and the entry stopped; a kill that fails again is retried
+// next pass. A reservation within its grace is left to its starter. It
+// reports whether e changed.
+func settleStartingSpawn(session string, e *SpawnEntry, now int64) bool {
+	if e.StopPending == "" && now-e.StartedAt < spawnStartGraceSecs {
+		return false
+	}
+	if err := spawnKillWindowFn(session, e.Window); err != nil && spawnWindowExistsFn(session, e.Window) {
+		if e.StopPending == "" {
+			e.StopPending = "start abandoned"
+			return true
+		}
+		return false
+	}
+	if err := removeSpawnWorktree(e.Worktree); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: worktree cleanup failed for %s: %v\n", e.SpawnRole, err)
+	}
+	reason := e.StopPending
+	if reason == "" {
+		reason = "start abandoned"
+	}
+	e.Status, e.FinishedAt, e.StopPending = "stopped", now, ""
+	e.NoticesOwed, e.Notified = nil, true
+	LogLifecycle(session, "warn", "spawn", "spawn-start-stopped",
+		fmt.Sprintf("%s: reservation stopped (%s)", e.SpawnRole, reason))
+	return true
+}
+
+// oweNotice re-arms the completion notice for a task just seeded under
+// seedID: an agent's task is owed its own notice (NoticesOwed); a graph run
+// harvests its seeds itself and is owed only the reap notice.
+func oweNotice(e *SpawnEntry, seedID string) {
+	e.Notified = false
+	if e.RunID == "" {
+		e.NoticesOwed = append(e.NoticesOwed, seedID)
+	}
 }
 
 // spawnLaunchFn is the external boundary StartSpawnOwned crosses — a tmux
@@ -445,6 +567,11 @@ var (
 	}
 )
 
+// spawnAdvanceWorktreeFn is advanceSpawnWorktree — git run in a worker's
+// tree — behind a seam, so a test can see whether a caller touched a tree it
+// had not claimed.
+var spawnAdvanceWorktreeFn = advanceSpawnWorktree
+
 var (
 	// errNoRunWorker: the run has no live worker of the base role.
 	errNoRunWorker = errors.New("run has no live worker")
@@ -533,23 +660,27 @@ func runWorkerHolder(session string, w SpawnEntry, nodeID string, statuses map[s
 }
 
 // workerAdoptable reports whether e is the session's idle worker of a base
-// role: running with its window alive, released by its run (idleEligible and
-// no longer persistent), and its current seed answered. A busy worker is
-// never adoptable — a new seed would queue behind work in progress.
-func workerAdoptable(session string, e SpawnEntry, role string) bool {
-	return e.Status == "running" && e.Role == role && idleEligible(e) &&
+// role and worktree kind: running with its window alive, released by its
+// owner (idleEligible, its run no longer in flight), and its current seed
+// answered. A busy worker is never adoptable — a new seed would queue behind
+// work in progress. The kind must match because a graph worker runs in the
+// session checkout (MUX-178) and an agent that asked for isolation must not
+// be handed the shared tree.
+func workerAdoptable(session string, e SpawnEntry, role string, worktree bool) bool {
+	return e.Status == "running" && e.Role == role && (e.Worktree != "") == worktree && idleEligible(e) &&
 		!spawnPersistent(session, e) && spawnHasResponded(session, e) &&
 		spawnWindowExistsFn(session, e.Window)
 }
 
-// findIdleWorker returns the newest adoptable worker of a base role.
-func findIdleWorker(session, role string) (SpawnEntry, bool) {
+// findIdleWorker returns the newest adoptable worker of a base role and
+// worktree kind.
+func findIdleWorker(session, role string, worktree bool) (SpawnEntry, bool) {
 	entries, err := ReadSpawnEntries(session)
 	if err != nil {
 		return SpawnEntry{}, false
 	}
 	for i := len(entries) - 1; i >= 0; i-- {
-		if workerAdoptable(session, entries[i], role) {
+		if workerAdoptable(session, entries[i], role, worktree) {
 			return entries[i], true
 		}
 	}
@@ -572,7 +703,8 @@ func claimIdleWorker(session string, cand SpawnEntry, own func(*SpawnEntry)) (Sp
 			if e.ID != cand.ID {
 				continue
 			}
-			if e.RunID != cand.RunID || e.SeedMsgID != cand.SeedMsgID || !workerAdoptable(session, e, cand.Role) {
+			if e.RunID != cand.RunID || e.Owner != cand.Owner || e.SeedMsgID != cand.SeedMsgID ||
+				!workerAdoptable(session, e, cand.Role, cand.Worktree != "") {
 				return fmt.Errorf("worker %s is no longer idle", cand.SpawnRole)
 			}
 			own(&entries[i])
@@ -593,7 +725,8 @@ func releaseClaim(session string, cand SpawnEntry, seedID string) error {
 			return
 		}
 		e.RunID, e.NodeID, e.Owner, e.IdleSince = cand.RunID, cand.NodeID, cand.Owner, cand.IdleSince
-		e.SeedMsgID, e.Task, e.Spec = cand.SeedMsgID, cand.Task, cand.Spec
+		e.SeedMsgID, e.Task, e.Spec, e.Notified = cand.SeedMsgID, cand.Task, cand.Spec, cand.Notified
+		e.NoticesOwed = slices.DeleteFunc(e.NoticesOwed, func(k string) bool { return k == seedID })
 	})
 }
 
@@ -626,13 +759,12 @@ func dropStaleSeeds(session, spawnRole string) {
 // failure leaves a stalled node for the watchdogs, not a phantom
 // completion.
 func ReseedSpawn(session string, entry SpawnEntry, task string) (string, error) {
-	advanceSpawnWorktree(session, entry)
+	spawnAdvanceWorktreeFn(session, entry)
 	msg := NewMessage(entry.Owner, entry.SpawnRole, "request", "spawn-task", task, "")
 	spec := ReadActiveSpec(session)
 	if err := UpdateSpawnEntry(session, entry.ID, func(e *SpawnEntry) {
-		e.SeedMsgID = msg.ID
-		e.Task = task
-		e.Spec = spec
+		e.SeedMsgID, e.Task, e.Spec = msg.ID, task, spec
+		oweNotice(e, msg.ID)
 	}); err != nil {
 		return "", err
 	}
@@ -640,26 +772,41 @@ func ReseedSpawn(session string, entry SpawnEntry, task string) (string, error) 
 }
 
 // sendSpawnSeed sends a seed whose id the entry already carries and wakes
-// the worker. A dedup-suppressed send adopts the already-pending identical
+// the worker (postSpawnSeed, then the wake).
+func sendSpawnSeed(session string, entry SpawnEntry, msg Message) (string, error) {
+	id, err := postSpawnSeed(session, entry, msg)
+	if err != nil {
+		return "", err
+	}
+	graphSpawnWakeFn(session, entry.SpawnRole)
+	return id, nil
+}
+
+// postSpawnSeed sends a seed whose id the entry already carries, without a
+// wake — the road for a busy worker, whose listener takes the task after its
+// current turn and into whose running turn a typed wake must never land
+// (MUX-171). A dedup-suppressed send adopts the already-pending identical
 // seed (retry --from racing an unconsumed seed) — same adopt rule as the
 // NodeSend dispatch path; falling back to a fresh worker there would strand
 // the pending seed AND rebuild the worker the suppression proves is already
-// tasked.
-func sendSpawnSeed(session string, entry SpawnEntry, msg Message) (string, error) {
+// tasked. The unsent id leaves NoticesOwed with it: the pending seed is the
+// task, and it is owed its own notice already.
+func postSpawnSeed(session string, entry SpawnEntry, msg Message) (string, error) {
 	if err := Send(session, msg); err != nil {
 		if !errors.Is(err, ErrSendSuppressed) {
 			return "", fmt.Errorf("reseeding inbox: %v", err)
 		}
 		if pm, found := FindPendingInboxRequest(session, msg.To, msg.From, msg.Action, msg.Payload); found {
+			unsent := msg.ID
 			msg.ID = pm.ID
 			if err := UpdateSpawnEntry(session, entry.ID, func(e *SpawnEntry) {
 				e.SeedMsgID = msg.ID
+				e.NoticesOwed = slices.DeleteFunc(e.NoticesOwed, func(k string) bool { return k == unsent })
 			}); err != nil {
 				return "", err
 			}
 		}
 	}
-	graphSpawnWakeFn(session, entry.SpawnRole)
 	return msg.ID, nil
 }
 
@@ -730,21 +877,30 @@ func workerRepliedInLog(session, spawnRole, seedID string) bool {
 	return false
 }
 
-// idleEligible reports whether a worker its run has released may be held in
-// the idle pool rather than reaped: graph-owned, and not owed a stop.
+// idleEligible reports whether a worker whose task is done may be held in
+// the idle pool rather than reaped: any worker not owed a stop, graph's or
+// agent's (MUX-195 Phase 4; graph workers only before).
 func idleEligible(e SpawnEntry) bool {
-	return e.RunID != "" && e.StopPending == ""
+	return e.StopPending == ""
+}
+
+// ownerLabel names who a worker serves, for lifecycle rows and seeds.
+func ownerLabel(e SpawnEntry) string {
+	if e.RunID != "" {
+		return fmt.Sprintf("run %s node %s", e.RunID, e.NodeID)
+	}
+	return "agent " + e.Owner
 }
 
 // SpawnDisplayStatus is the status a person should read for an entry:
 // "parked" for a graph worker held between iterations — running, its run
-// in flight, its current seed answered — "idle" for one its run has
-// released, held for the next run (MUX-195), else the stored status. The
-// store's "running" is true for both but not what an observer needs: on
+// in flight, its current seed answered — "idle" for one whose task is done,
+// held for the next run or spawn start (MUX-195), else the stored status.
+// The store's "running" is true for both but not what an observer needs: on
 // 2026-09-09 two parked workers read as stuck agents and one was stopped by
 // hand mid-run.
 func SpawnDisplayStatus(session string, e SpawnEntry) string {
-	if e.Status != "running" || e.RunID == "" || !spawnHasResponded(session, e) {
+	if e.Status != "running" || !spawnHasResponded(session, e) {
 		return e.Status
 	}
 	if spawnPersistent(session, e) {
@@ -772,8 +928,14 @@ func displayStatus(e SpawnEntry) string {
 	return e.Status
 }
 
-// RefreshSpawnStatus checks all running spawns and updates their status.
-// Returns the list of entries that transitioned from running to completed.
+// RefreshSpawnStatus checks all running spawns and updates their status,
+// returning the entries it completed this pass. Owners' completion notices
+// are not decided from that return — it reaches only whichever process ran
+// the pass, and the graph executor's discards it — but from the persisted
+// NoticesOwed (DueSpawnNotices): a completed worker whose owner is owed
+// nothing else is given a reap notice key here, in the same write. Starting
+// reservations a start abandoned or failed to stop are settled here too
+// (settleStartingSpawn).
 //
 // A spawn completes two ways: its window is gone, or it answered its
 // seeded task — a reply implies completion, mirroring hasReceipt. The
@@ -788,16 +950,16 @@ func displayStatus(e SpawnEntry) string {
 // via per-seed delivery receipts (spawnGroupOutcome) and the next node
 // re-entry reseeds the same worker.
 //
-// Idle pool (MUX-195): once its run is terminal or gone, a graph worker is
-// not reaped at once but held as its base role's one idle worker for
-// SpawnIdleSecs, so the next run can take it instead of paying a cold start.
-// Of several, the most recently released is held and the rest reaped; the
-// held one is reaped when its quiet window closes. A worker owed a stop is
-// never held, and agent spawns keep reap-on-answer, since their owner's
-// completion notice rides the reap. spawn-idle and spawn-reaped rows name
-// the worker and its last owner. Reaping keeps the worktree
-// dirty-preservation guard of every other completion. The pass holds the
-// registry lock, so it never writes back a stale copy over an adoption.
+// Idle pool (MUX-195): a worker whose task is done — a graph worker once its
+// run is terminal or gone, an agent's once it answers — is not reaped at once
+// but held as its base role's one idle worker for SpawnIdleSecs, so the next
+// run or spawn start can take it instead of paying a cold start. Of several,
+// the most recently released is held and the rest reaped; the held one is
+// reaped when its quiet window closes. A worker owed a stop is never held.
+// spawn-idle and spawn-reaped rows name the worker and its last owner.
+// Reaping keeps the worktree dirty-preservation guard of every other
+// completion. The pass holds the registry lock, so it never writes back a
+// stale copy over an adoption.
 func RefreshSpawnStatus(session string) ([]SpawnEntry, error) {
 	var completed []SpawnEntry
 	err := withSpawnRegistryLock(session, func() error {
@@ -817,17 +979,25 @@ func refreshSpawnStatusLocked(session string) ([]SpawnEntry, error) {
 	var completed []SpawnEntry
 	var released []int
 	changed := false
+	now := time.Now().Unix()
 	finish := func(i int) {
 		entries[i].Status = "completed"
-		entries[i].FinishedAt = time.Now().Unix()
+		entries[i].FinishedAt = now
 		changed = true
 		if err := removeSpawnWorktree(entries[i].Worktree); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: worktree cleanup failed for %s: %v\n", entries[i].SpawnRole, err)
+		}
+		if !entries[i].Notified && len(entries[i].NoticesOwed) == 0 {
+			entries[i].NoticesOwed = []string{reapNoticeKey(entries[i])}
 		}
 		completed = append(completed, entries[i])
 	}
 
 	for i, e := range entries {
+		if e.Status == spawnStarting {
+			changed = settleStartingSpawn(session, &entries[i], now) || changed
+			continue
+		}
 		if e.Status != "running" {
 			continue
 		}
@@ -853,7 +1023,6 @@ func refreshSpawnStatusLocked(session string) ([]SpawnEntry, error) {
 
 	var window int64
 	var verdicts map[int]string
-	now := time.Now().Unix()
 	if len(released) > 0 {
 		window = SpawnIdleSecs()
 		verdicts = idleVerdicts(entries, released, now, window)
@@ -865,7 +1034,7 @@ func refreshSpawnStatusLocked(session string) ([]SpawnEntry, error) {
 				entries[i].IdleSince = now
 				changed = true
 				LogLifecycle(session, "info", "spawn", "spawn-idle",
-					fmt.Sprintf("%s: idle — released by run %s node %s; held up to %ds as the %s idle worker", e.SpawnRole, e.RunID, e.NodeID, window, e.Role))
+					fmt.Sprintf("%s: idle — released by %s; held up to %ds as the %s idle worker", e.SpawnRole, ownerLabel(e), window, e.Role))
 			}
 			continue
 		}
@@ -873,7 +1042,7 @@ func refreshSpawnStatusLocked(session string) ([]SpawnEntry, error) {
 			continue
 		}
 		LogLifecycle(session, "info", "spawn", "spawn-reaped",
-			fmt.Sprintf("%s: reaped — last owner run %s node %s, new owner none (%s)", e.SpawnRole, e.RunID, e.NodeID, reason))
+			fmt.Sprintf("%s: reaped — last owner %s, new owner none (%s)", e.SpawnRole, ownerLabel(e), reason))
 		finish(i)
 	}
 
@@ -1044,7 +1213,7 @@ func FormatSpawnStatus(entry SpawnEntry) string {
 	case "parked":
 		b.WriteString(fmt.Sprintf("  Parked:     awaiting the next iteration of run %s node %s — idle by design, not stuck\n", entry.RunID, entry.NodeID))
 	case "idle":
-		b.WriteString(fmt.Sprintf("  Idle:       released by run %s node %s — held for the next run, reaped after MUXCODE_SPAWN_IDLE_SECS\n", entry.RunID, entry.NodeID))
+		b.WriteString(fmt.Sprintf("  Idle:       released by %s — held for the next run or spawn start, reaped after MUXCODE_SPAWN_IDLE_SECS\n", ownerLabel(entry)))
 	}
 	b.WriteString(fmt.Sprintf("  Owner:      %s\n", entry.Owner))
 	b.WriteString(fmt.Sprintf("  Window:     %s\n", entry.Window))

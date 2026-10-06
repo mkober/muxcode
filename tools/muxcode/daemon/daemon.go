@@ -861,6 +861,9 @@ func (d *Daemon) checkProcs() {
 
 // checkSpawns polls running spawned agents and notifies owners on completion.
 // Skips entirely if spawn file is empty/missing and no running spawns are tracked.
+// Notices come from the registry's persisted owed completions
+// (bus.NotifySpawnCompletions), not from what this pass's refresh returned:
+// another process's refresh, or a failed send, must not lose one.
 func (d *Daemon) checkSpawns() {
 	// Skip if spawn file is empty/missing and no running spawns cached
 	info, err := os.Stat(bus.SpawnPath(d.session))
@@ -877,8 +880,7 @@ func (d *Daemon) checkSpawns() {
 		d.lastSpawnSize = currentSize
 	}
 
-	completed, err := bus.RefreshSpawnStatus(d.session)
-	if err != nil {
+	if _, err := bus.RefreshSpawnStatus(d.session); err != nil {
 		fmt.Fprintf(os.Stderr, "  [spawn] failed to refresh spawn status: %v\n", err)
 		return
 	}
@@ -894,47 +896,14 @@ func (d *Daemon) checkSpawns() {
 	}
 	d.hasRunningSpawns = hasRunning
 
-	if len(completed) == 0 {
+	sent := bus.NotifySpawnCompletions(d.session)
+	if len(sent) == 0 {
 		return
 	}
-
-	for _, entry := range completed {
-		ts := time.Now().Format("15:04:05")
+	for _, n := range sent {
 		fmt.Printf("  %s  Spawn completed: %s (role: %s, window: %s)\n",
-			ts, entry.ID, entry.Role, entry.Window)
-		bus.LogLifecycle(d.session, "info", "daemon", "spawn-complete",
-			fmt.Sprintf("%s role=%s window=%s", entry.ID, entry.Role, entry.Window))
-
-		// Try to extract the last result message from the spawn
-		resultInfo := "No result message found."
-		if result, ok := bus.GetSpawnResult(d.session, entry.SpawnRole); ok {
-			resultInfo = result.Payload
-			if len(resultInfo) > 200 {
-				resultInfo = resultInfo[:200] + "..."
-			}
-		}
-
-		payload := fmt.Sprintf("Spawned agent completed: %s\n  Role: %s  Spawn Role: %s\n  Task: %s\n  Result: %s",
-			entry.ID, entry.Role, entry.SpawnRole, entry.Task, resultInfo)
-
-		msg := bus.NewMessage("spawn", entry.Owner, "event", "spawn-complete", payload, "")
-		if err := bus.Send(d.session, msg); err != nil {
-			fmt.Fprintf(os.Stderr, "  [spawn] failed to send completion event to %s: %v\n", entry.Owner, err)
-			continue
-		}
-
-		// Notify uses display-message for all Claude Code panes (safe, non-intrusive).
-		// Harness panes are skipped inside Notify() — they poll inbox directly.
-		if err := bus.Notify(d.session, entry.Owner); err != nil {
-			fmt.Fprintf(os.Stderr, "  [spawn] failed to notify %s: %v\n", entry.Owner, err)
-		}
-
-		// Mark as notified
-		_ = bus.UpdateSpawnEntry(d.session, entry.ID, func(e *bus.SpawnEntry) {
-			e.Notified = true
-		})
+			time.Now().Format("15:04:05"), n.Entry.ID, n.Entry.Role, n.Entry.Window)
 	}
-
 	d.refreshInboxSizes()
 }
 

@@ -78,7 +78,11 @@ func spawnSelect(args []string) {
 	_ = bus.TmuxRunQuiet("select-window", "-t", fmt.Sprintf("%s:%d", session, idx))
 }
 
-// spawnStart handles: spawn start <role> "<task>" [--no-worktree]
+// spawnStart handles: spawn start <role> "<task>" [--no-worktree]. The task
+// goes to the caller's own worker of the role when it has one — reseeded if
+// idle, queued if busy — else to an adopted idle worker, else a fresh one
+// within the per-role cap (bus.AcquireAgentWorker); the first output line
+// says which.
 func spawnStart(args []string) {
 	useWorktree := true
 	var filtered []string
@@ -100,13 +104,23 @@ func spawnStart(args []string) {
 	session := bus.BusSession()
 	owner := bus.BusRole()
 
-	entry, err := bus.StartSpawn(session, role, task, owner, useWorktree)
+	got, err := bus.AcquireAgentWorker(session, role, task, owner, useWorktree)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting spawn: %v\n", err)
 		os.Exit(1)
 	}
+	entry := got.Entry
 
-	fmt.Printf("Started spawn: %s\n", entry.ID)
+	switch got.How {
+	case bus.SpawnReused:
+		fmt.Printf("Reused your idle spawn: %s (no new worker started)\n", entry.ID)
+	case bus.SpawnQueued:
+		fmt.Printf("Queued on your busy spawn: %s — this task runs after its current one (no new worker started)\n", entry.ID)
+	case bus.SpawnAdopted:
+		fmt.Printf("Adopted idle spawn: %s (no new worker started)\n", entry.ID)
+	default:
+		fmt.Printf("Started spawn: %s\n", entry.ID)
+	}
 	fmt.Printf("  Role: %s  Spawn Role: %s  Owner: %s\n", entry.Role, entry.SpawnRole, entry.Owner)
 	fmt.Printf("  Window: %s\n", entry.Window)
 	if entry.Worktree != "" {

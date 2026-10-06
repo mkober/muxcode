@@ -334,6 +334,17 @@ Both follow the standard resolution chain (env → config file).
 
 **Manual path**: `muxcode clear <role>` runs the same guarded path on demand — useful for exercising the injection without waiting for the daemon.
 
+### Spawn workers
+
+A session holds **one worker per graph run and one per spawning agent** ([MUX-195](requirements/backlog/MUX-195-graph-runs-never-reuse-idle-workers.md)): every `spawn`/`map` node of a run shares the run's worker, `muxcode spawn start` reseeds or queues on the caller's own worker, and a finished worker is held briefly as its base role's one `idle` worker for the next run or spawn to adopt. Two variables bound the pool.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_SPAWN_IDLE_SECS` | `600` | How long a worker whose task is done — a graph run's once the run ends, an agent's once it answers — is held as its base role's **one** idle worker before it is reaped (`spawn-idle` → `spawn-reaped`). `0` reaps on release, the pre-MUX-195 behaviour |
+| `MUXCODE_SPAWN_MAX_WORKERS` | `3` | Most live workers of one base role per session (1 idle + a graph run's worker + an agent spawn side by side — user decision 2026-10-06). Only a **fresh launch** is refused: reuse and adoption never count against it, and lowering it never stops a live worker. `0` = no cap. At the cap a graph `spawn`/`map` node waits `ready` (`graph-spawn-deferred` and `spawn-cap-refused` rows, once per reason), a `map` with `workers: N` runs on the lanes it got, and `muxcode spawn start` fails with the reason (exit 1) plus a `spawn-cap-refused` row |
+
+Both follow the standard resolution chain (env → config file). See [Agent Bus CLI → `muxcode spawn`](agent-bus.md#muxcode-spawn) for the four outcomes `spawn start` reports and [Architecture → Agent Spawn Flow](architecture.md#agent-spawn-flow) for the acquisition order.
+
 ### Integrations
 
 | Variable | Default | Description |

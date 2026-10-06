@@ -122,12 +122,12 @@ Four roads, one symptom:
 
 **One worker per spawning agent**
 
-- [ ] `muxcode spawn start <role> "<task>"` from an owner that already holds an **idle** worker of that base role reseeds it instead of creating another; the command prints the reused spawn id and `spawn list` shows one entry — test: two `start`s, one worker
-- [ ] **Negative control:** an owner's worker that is busy (current seed unanswered) is not reseeded over — the second `start` either waits on the busy worker's queue or spawns a second worker, whichever Decision 3 fixes, and in both cases says so
+- [x] `muxcode spawn start <role> "<task>"` from an owner that already holds an **idle** worker of that base role reseeds it instead of creating another; the command prints the reused spawn id and `spawn list` shows one entry — test: two `start`s, one worker (Phase 4: `AcquireAgentWorker` → `giveOwnWorker`, `How = reused`; `TestSpawnStartFromOneOwnerReusesItsIdleWorker`)
+- [x] **Negative control:** an owner's worker that is busy (current seed unanswered) is not reseeded over — the second `start` either waits on the busy worker's queue or spawns a second worker, whichever Decision 3 fixes, and in both cases says so (Phase 4, per Decision 3: **queued** — the task lands behind the current one with no wake and no worktree advance (`postSpawnSeed`), `How = queued`, output `Queued on your busy spawn`; each queued task owes its own completion notice. `TestBusyWorkerNeverReused` "a second spawn start does not reseed over it", `TestQueuedTasksEachGetTheirOwnNotice`)
 
 **Bound and reap**
 
-- [ ] A **hard cap** on live workers per base role per session (default **1 idle + the concurrency Decision 3 allows**); an attempt past it is refused with a reason and a `spawn-cap-refused` lifecycle row — negative control: the cap refuses, and lowering it does not stop a run's single worker
+- [x] A **hard cap** on live workers per base role per session (`MUXCODE_SPAWN_MAX_WORKERS`, default **3** per [Decision 4](#decision-4--the-per-role-worker-cap-muxcode_spawn_max_workers-default-3); only a fresh launch counts); an attempt past it is refused with a reason and a `spawn-cap-refused` lifecycle row — negative control: the cap refuses, and lowering it does not stop a run's single worker (Phase 4: `SpawnMaxWorkers`, `spawnCapError`, `reserveSpawnSlot`; `TestSpawnCapRefusesALaunchPastIt` — at cap 2 the third node waits `ready` with `DeferredOn` naming the cap, and under a lowered cap of 1 the run keeps its worker and nothing is killed; `TestMapLanesStopAtTheCap`)
 - [x] Idle workers unowned by a live run are **reaped** after a quiet window (`MUXCODE_SPAWN_IDLE_SECS`, [Decision 2](#decision-2--idle-reap-window-muxcode_spawn_idle_secs-default-600)); adoption and reap each write a lifecycle row naming worker, old owner and new owner (Phase 2: `spawn-idle` / `spawn-reaped` name worker, last owner run/node, "new owner none"; Phase 3: `graph-spawn-adopted` names worker, old run/node, new run/node and the context policy)
 - [x] A terminal run's worker is reaped (or returned as the idle worker) **even when its seed's delivery record is missing** — the 2026-09-28 and 2026-10-05 strandings cannot recur (Phase 2: `workerRepliedInLog` fallback; `TestTerminalRunWorkerFreedWithoutDeliveryRecord` — record present and record missing reach the same end state)
 - [x] **Negative control:** a busy worker (current seed unanswered), or one whose owning run has an in-flight node on it, is never adopted or reaped (Phases 2–3: `workerAdoptable` requires an answered seed and a released run; `runWorkerHolder` refuses a worker another unfinished node still needs, and a missing node status reads as busy. `TestBusyWorkerNeverReused` — green through every phase — plus `TestForkedSpawnNodesKeepTheirOwnResults`)
@@ -141,7 +141,7 @@ Four roads, one symptom:
 **Visibility and docs**
 
 - [x] `muxcode spawn list`/`status` show an **idle** (unowned, adoptable) worker distinctly from `parked` (held by a live run between iterations) and from `running` (Phase 2: `SpawnDisplayStatus`, `FormatSpawnStatus`; `TestFormatSpawnIdle`)
-- [ ] Docs: [`docs/agent-bus.md`](../../agent-bus.md#muxcode-spawn) (`spawn start` reuse, the cap, `idle`), [`docs/architecture.md`](../../architecture.md) spawn flow, `CLAUDE.md` graph-orchestration bullet (one worker per run)
+- [x] Docs: [`docs/agent-bus.md`](../../agent-bus.md#muxcode-spawn) (`spawn start` reuse, the cap, `idle`), [`docs/architecture.md`](../../architecture.md) spawn flow, `CLAUDE.md` graph-orchestration bullet (one worker per run) (2026-10-06: agent-bus.md spawn section + `map` `workers` note; architecture.md Agent Spawn Flow, one-worker paragraph, node rows, dispatch step; [`docs/configuration.md`](../../configuration.md) new *Spawn workers* section with both variables; `CLAUDE.md` bullet by edit)
 - [ ] `bash scripts/test-graph-worker-reuse.sh` passes
 
 ### Technical approach
@@ -237,10 +237,30 @@ the first live confirmation comes after `muxcode upgrade-daemons` from the user'
 
 ### Phase 4: One worker per agent, and the cap
 
-- [ ] `spawnStart` routes through `acquireWorker`: an owner's idle worker of the base role is reseeded; output names the reuse
-- [ ] Per-role live-worker cap with `spawn-cap-refused`; `MUXCODE_SPAWN_IDLE_SECS` and the cap documented in [`docs/configuration.md`](../../configuration.md)
-- [ ] Invert the Phase 1 agent pin
-- [ ] Docs: `agent-bus.md`, `architecture.md`, `CLAUDE.md`
+- [x] `spawnStart` routes through `acquireWorker`: an owner's idle worker of the base role is reseeded; output names the reuse (`AcquireAgentWorker`, `bus/spawn_pool.go` — own worker of the role and worktree kind reseeded when idle or the task **queued** on its inbox when busy (`giveOwnWorker`, claim before any worktree advance), else the session's idle worker adopted (`adoptWorkerFor`, shared with the graph road), else fresh; the whole decision under a per-agent/role/kind `flock` (`withAgentSpawnLock`) so two starts from one agent cannot both launch. `cmd/spawn.go` prints `Reused your idle spawn` / `Queued on your busy spawn` / `Adopted idle spawn` / `Started spawn`. `TestSpawnStartNeverSeedsOverAWorkerARunAdopted`, `TestSpawnStartAdoptsAnIdleWorkerOfItsKindOnly`, `TestQueuedTasksEachGetTheirOwnNotice`)
+- [x] Per-role live-worker cap with `spawn-cap-refused`; `MUXCODE_SPAWN_IDLE_SECS` and the cap documented in [`docs/configuration.md`](../../configuration.md) (`SpawnMaxWorkers`, default 3 per Decision 4; the slot is **reserved** as a `starting` entry in the same locked write that checks the cap (`reserveSpawnSlot`), before any worktree, seed or window exists, rolled back by `abortSpawnStart`; a graph node at the cap waits `ready` like a busy-worker deferral, a `map` runs the lanes it got, `spawn start` fails with the live list. `TestSpawnCapRefusesALaunchPastIt` incl. the lowering control, `TestMapLanesStopAtTheCap`. Docs: *Spawn workers* section)
+- [x] Invert the Phase 1 agent pin (`TestSpawnStartFromOneOwnerSpawnsWorkerPerCallToday` → `TestSpawnStartFromOneOwnerReusesItsIdleWorker`)
+- [x] Docs: `agent-bus.md`, `architecture.md`, `CLAUDE.md` (plan, 2026-10-06, from the worker's handoff; `CLAUDE.md` by edit — see the docs acceptance criterion)
+
+#### Phase 4 verification note
+
+Verified 2026-10-06 00:40 by plan from the working tree (run `1791252906`, fourth iteration; Phase 3
+committed as `04761f9`) — on a chain `verify-spec` that edit's own review in the `muxcode-fixes` worktree
+triggered against the active spec (the MUX-150 shape), not yet on the run's own `update-spec` dispatch.
+The run agent's `mux195-unit-run6.log` (00:15, pre-review code): `RESULT vet=0 focused=0 race=0 full=1`,
+**106 PASS / 0 FAIL** focused, the package's one failure again the pre-existing `TestOpenCodeModelsExist`.
+The run's review node then **failed at 00:24 with four must-fixes** — cap reserved only after launch;
+one-worker-per-owner not atomic across concurrent starts; completion notices gated on `IdleSince` and
+lost on a replaced seed; worktree advanced before the ownership recheck — and the `fix` worker is in
+flight. All four are visibly addressed in the tree as read: `reserveSpawnSlot` writes a counted
+`starting` entry under the registry lock before any side effect (`abortSpawnStart` rolls back);
+`withAgentSpawnLock` serializes an agent's starts per role and kind with same-owner retry; owed
+completions persist in `NoticesOwed` (`bus/spawn_notice.go`, `NotifySpawnCompletions`, acked by seed
+after sending — the daemon's `checkSpawns` now reads them rather than the refresh's return); and
+`giveOwnWorker` claims before `spawnAdvanceWorktreeFn`. **The post-fix code has not been re-reviewed or
+re-run**; the graph's review node and its `verify-spec` will say whether the ticks above hold, and the
+test node's `unknown` (the Codex test agent still declines to run tests, MUX-153) was released by the
+user once more at 00:23.
 
 ### Phase 5: Integration test
 
@@ -282,6 +302,17 @@ sets `workers: N` explicitly (capped by the per-role cap). On the agent road, a 
 against a **busy** worker **queues on that worker's inbox** and says so in its output — it does not spawn
 a second worker. The `60-integration-suite` template is the one to check the serial default against.
 
+### Decision 4 — the per-role worker cap: `MUXCODE_SPAWN_MAX_WORKERS`, default 3
+
+**Decided by the user 2026-10-06, in edit's pane, relayed by the run's worker.** The hard cap on live
+workers of one base role per session defaults to **3** — one idle worker, a graph run's worker and an
+agent spawn side by side — settling the "1 idle + the concurrency Decision 3 allows" placeholder in the
+acceptance criteria. Only a **fresh launch** counts and is refused: reuse and adoption never do, and
+lowering the cap never stops a live worker. `0` disables the cap. At the cap a graph `spawn`/`map` node
+waits `ready` (`graph-spawn-deferred` + `spawn-cap-refused`, once per reason), a `map` with `workers: N`
+runs on the lanes it got, and `muxcode spawn start` fails with the reason and the live worker list
+(exit 1, `spawn-cap-refused`). Env then config file, like `MUXCODE_SPAWN_IDLE_SECS`.
+
 ## Related
 
 | Spec | Relationship |
@@ -304,7 +335,7 @@ a second worker. The `60-integration-suite` template is the one to check the ser
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-195-graph-runs-never-reuse-idle-workers | 1h 22m | 2026-10-05 23:52 |
+| MUX-195-graph-runs-never-reuse-idle-workers | 2h 3m | 2026-10-06 00:35 |
 
 ## Status
 

@@ -3891,14 +3891,10 @@ func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
 	}
 	spawnKillWindowFn = func(_, w string) error { f.killed = append(f.killed, w); return nil }
 	graphSpawnFn = func(sess, role, task, owner, runID, nodeID, seedID string) (string, error) {
-		f.fresh++
-		id := fmt.Sprintf("spawn-live%04d", f.fresh)
+		id := fmt.Sprintf("spawn-live%04d", f.fresh+1)
 		msg := NewMessage(owner, id, "request", "spawn-task", task, "")
 		if seedID != "" {
 			msg.ID = seedID
-		}
-		if err := Send(sess, msg); err != nil {
-			t.Fatalf("seed send: %v", err)
 		}
 		entryID := id
 		if f.distinctIDs {
@@ -3907,8 +3903,12 @@ func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
 		entry := SpawnEntry{ID: entryID, Role: role, SpawnRole: id, Owner: owner, Task: task,
 			Status: "running", Window: id, StartedAt: time.Now().Unix(),
 			SeedMsgID: msg.ID, RunID: runID, NodeID: nodeID}
-		if err := appendSpawnEntry(sess, entry); err != nil {
-			t.Fatalf("append spawn entry: %v", err)
+		if err := reserveSpawnSlot(sess, entry); err != nil { // the real start reserves under the cap first
+			return "", err
+		}
+		f.fresh++
+		if err := Send(sess, msg); err != nil {
+			t.Fatalf("seed send: %v", err)
 		}
 		return id, nil
 	}
@@ -3993,6 +3993,7 @@ func TestSpawnGroupOutcomeReadsTheReplyNotTheFactOfReplying(t *testing.T) {
 // correctly before Defect 3 and must not decay into holds. The group rows
 // pin the precedence — a hold must never mask another worker's failure.
 func TestSpawnGroupOutcomeKeepsFailureSemantics(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_MAX_WORKERS", "0") // four live workers at once; the cap is not under test here
 	useTempBusDir(t)
 	fakeLiveSpawns(t)
 

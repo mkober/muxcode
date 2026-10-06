@@ -522,6 +522,7 @@ func TestCancelFailsClosedOnUnexpirableNodeTask(t *testing.T) {
 // it as one fails with ENAMETOOLONG on every cancel (review must-fix,
 // 2026-09-24). The cancel must complete, and a re-cancel is clean.
 func TestCancelLargeMapIsNotATaskID(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_MAX_WORKERS", "0") // twenty lanes, past the default per-role cap
 	items := make([]string, 20)
 	for i := range items {
 		items[i] = fmt.Sprintf("item%d", i)

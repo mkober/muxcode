@@ -70,8 +70,10 @@ var graphSpawnFn = func(session, role, task, owner, runID, nodeID, seedID string
 //     implement and fix share it, and the reservation moves its NodeID with
 //     the seed id (reserveRunWorker);
 //  2. else the session's idle worker of the base role, released by a
-//     finished run, is adopted (adoptIdleWorker);
-//  3. else a fresh worker is launched.
+//     finished run or an agent, is adopted (adoptIdleWorker);
+//  3. else a fresh worker is launched within SpawnMaxWorkers — the slot is
+//     reserved before the launch (StartSpawnOwned); at the cap the error
+//     wraps errSpawnCap and the caller waits as for a busy worker.
 //
 // A run worker another of the run's nodes still holds is never seeded over:
 // the error wraps errRunWorkerBusy and the caller defers the dispatch. That
@@ -105,10 +107,11 @@ func acquireSeededWorker(session, runID, nodeID, role, task, seedID string, excl
 	spec := ReadActiveSpec(session)
 	prev, err := reserveRunWorker(session, runID, nodeID, role, exclude, func(e *SpawnEntry) {
 		e.NodeID, e.SeedMsgID, e.Task, e.Spec = nodeID, seedID, task, spec
+		oweNotice(e, seedID)
 	})
 	switch {
 	case err == nil:
-		advanceSpawnWorktree(session, prev)
+		spawnAdvanceWorktreeFn(session, prev)
 		msg := NewMessage(graphSender, prev.SpawnRole, "request", "spawn-task", task, "")
 		msg.ID = seedID
 		if _, err := sendSpawnSeed(session, prev, msg); err != nil {
@@ -146,91 +149,19 @@ func unusedSeedID(session, seedID string) string {
 }
 
 // adoptIdleWorker hands the session's idle worker of a base role to a run
-// and reports the worker it seeded (adoptWorker).
+// and reports the worker it seeded. Only a worker without a worktree
+// qualifies: graph workers run in the session checkout (MUX-178).
 func adoptIdleWorker(session, runID, nodeID, role, task, seedID string) (string, bool) {
-	cand, ok := findIdleWorker(session, role)
+	cand, ok := findIdleWorker(session, role, false)
 	if !ok {
 		return "", false
 	}
 	return adoptWorker(session, cand, runID, nodeID, task, seedID)
 }
 
-// adoptWorker hands cand, an idle worker found earlier, to a run. The claim
-// comes before every side effect: ownership and the new seed id move in one
-// locked write (claimIdleWorker) that re-checks cand is still idle, so of two
-// runs that found the same worker the loser fails here having touched
-// nothing — it never clears or seeds a worker the winner now owns. Context
-// follows Decision 1: kept while the active spec is unchanged, /clear-ed
-// under the claim when the spec changed since the worker's last seed or it
-// last served an agent rather than a run. The previous owner's unconsumed
-// seeds are dropped so its stale work cannot reach the new one. A failed
-// clear releases the claim (releaseClaim; the worker is stopped if even that
-// fails), and a seed that cannot be sent stops the claimed worker, so no
-// failure leaves a worker owned but untasked.
+// adoptWorker is adoptWorkerFor with a run's node as the new owner.
 func adoptWorker(session string, cand SpawnEntry, runID, nodeID, task, seedID string) (string, bool) {
-	spec := ReadActiveSpec(session)
-	contextPolicy := "kept"
-	switch {
-	case cand.RunID == "":
-		contextPolicy = "cleared: it last served an agent"
-	case cand.Spec != spec:
-		contextPolicy = fmt.Sprintf("cleared: active spec changed from %q", cand.Spec)
-	}
-
-	msg := NewMessage(graphSender, cand.SpawnRole, "request", "spawn-task", adoptionNotice(cand, runID, nodeID)+task, "")
-	msg.ID = seedID
-	claimed, err := claimIdleWorker(session, cand, func(e *SpawnEntry) {
-		e.RunID, e.NodeID, e.Owner = runID, nodeID, graphSender
-		e.IdleSince = 0
-		e.SeedMsgID, e.Task, e.Spec = msg.ID, task, spec
-	})
-	if err != nil {
-		LogLifecycle(session, "info", "daemon", "graph-spawn-adopt-failed",
-			fmt.Sprintf("%s: %s did not adopt %s (%v) — starting fresh", runID, nodeID, cand.SpawnRole, err))
-		return "", false
-	}
-	if contextPolicy != "kept" {
-		if err := spawnClearFn(session, claimed.SpawnRole); err != nil {
-			cleanup := "claim released"
-			if rerr := releaseClaim(session, cand, msg.ID); rerr != nil {
-				_, _ = stopSpawnRole(session, claimed.SpawnRole)
-				cleanup = fmt.Sprintf("claim release failed (%v), worker stopped", rerr)
-			}
-			LogLifecycle(session, "warn", "daemon", "graph-spawn-adopt-failed",
-				fmt.Sprintf("%s: %s could not clear idle worker %s (%v) — %s, starting fresh", runID, nodeID, cand.SpawnRole, err, cleanup))
-			return "", false
-		}
-	}
-	dropStaleSeeds(session, claimed.SpawnRole)
-	if _, err := sendSpawnSeed(session, claimed, msg); err != nil {
-		_, _ = stopSpawnRole(session, claimed.SpawnRole)
-		LogLifecycle(session, "warn", "daemon", "graph-spawn-adopt-failed",
-			fmt.Sprintf("%s: %s adopted %s but its seed failed (%v) — worker stopped, starting fresh", runID, nodeID, claimed.SpawnRole, err))
-		return "", false
-	}
-	LogLifecycle(session, "info", "daemon", "graph-spawn-adopted",
-		fmt.Sprintf("%s: %s adopted idle worker %s — old owner run %s node %s, new owner run %s node %s; context %s",
-			runID, nodeID, cand.SpawnRole, cand.RunID, cand.NodeID, runID, nodeID, contextPolicy))
-	return claimed.SpawnRole, true
-}
-
-// adoptionNotice opens an adopted worker's seed: it names the new owner
-// even on a graph whose preamble names none, and closes the previous
-// owner's work, which the worker may still hold in context.
-func adoptionNotice(prev SpawnEntry, runID, nodeID string) string {
-	from := "agent " + prev.Owner
-	if prev.RunID != "" {
-		from = fmt.Sprintf("graph run %s node %s", prev.RunID, prev.NodeID)
-	}
-	return fmt.Sprintf("[worker handed over: you now serve graph run %s · node %s. Your work for %s is finished — "+
-		"do not resume it; do only the task below.]\n\n", runID, nodeID, from)
-}
-
-// spawnClearFn issues /clear to a worker's pane before an adoption that
-// must not carry context over; a seam so adoption runs under test without
-// tmux.
-var spawnClearFn = func(session, spawnRole string) error {
-	return ClearAgent(session, spawnRole, "daemon", "spawn-adopt")
+	return adoptWorkerFor(session, cand, workerOwner{RunID: runID, NodeID: nodeID, Owner: graphSender}, task, seedID, "graph-spawn-adopt")
 }
 
 // unverifiedHoldReason marks a pending approval that an unknown outcome
@@ -1331,7 +1262,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		msg := graphWorkerTask(g, run.ID, n.ID,
 			interpolateGraphMessage(session, run, expandFailureReport(session, run, g, n), ""))
 		spawnID, err := acquireSpawnWorker(session, run.ID, n.ID, n.Role, msg)
-		if errors.Is(err, errRunWorkerBusy) {
+		if errors.Is(err, errRunWorkerBusy) || errors.Is(err, errSpawnCap) {
 			deferDispatch(session, run, n, st, err)
 			return
 		}
@@ -1354,9 +1285,15 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		laneItems := make([]int, lanes)
 		for li := range laneItems {
 			spawnID, err := acquireSpawnWorker(session, run.ID, n.ID, n.Role, mapItemTask(session, run, g, n, items[li]), ids...)
-			if li == 0 && errors.Is(err, errRunWorkerBusy) {
+			if li == 0 && (errors.Is(err, errRunWorkerBusy) || errors.Is(err, errSpawnCap)) {
 				deferDispatch(session, run, n, st, err)
 				return
+			}
+			if errors.Is(err, errSpawnCap) {
+				LogLifecycle(session, "warn", "daemon", "spawn-cap-refused",
+					fmt.Sprintf("%s: %s runs %d of %d lanes — %v", run.ID, n.ID, li, lanes, err))
+				laneItems, lanes = laneItems[:li], li // the queue serves every item on the lanes it has
+				break
 			}
 			if err != nil {
 				finishNode(session, run, n, OutcomeFailure, "map spawn failed: "+err.Error())
@@ -1425,9 +1362,11 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 }
 
 // deferDispatch leaves a ready spawn or map node ready while another node of
-// its run holds the run's worker (errRunWorkerBusy): the competing nodes run
-// one after the other on the one worker, each harvesting its own seed. The
-// graph-spawn-deferred row is written once per holder, not every tick.
+// its run holds the run's worker (errRunWorkerBusy) — the competing nodes run
+// one after the other on the one worker, each harvesting its own seed — or
+// while a fresh worker would pass the per-role cap (errSpawnCap), until one
+// frees. The graph-spawn-deferred row, and spawn-cap-refused for the cap, is
+// written once per reason, not every tick.
 func deferDispatch(session string, run *GraphRun, n *Node, st *GraphNodeStatus, err error) {
 	reason := err.Error()
 	if st.DeferredOn == reason {
@@ -1435,6 +1374,9 @@ func deferDispatch(session string, run *GraphRun, n *Node, st *GraphNodeStatus, 
 	}
 	_ = MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) { s.DeferredOn = reason })
 	st.DeferredOn = reason
+	if errors.Is(err, errSpawnCap) {
+		LogLifecycle(session, "warn", "daemon", "spawn-cap-refused", fmt.Sprintf("%s: %s — %s", run.ID, n.ID, reason))
+	}
 	LogLifecycle(session, "info", "daemon", "graph-spawn-deferred",
 		fmt.Sprintf("%s: %s waits — %s", run.ID, n.ID, reason))
 }
@@ -1778,7 +1720,7 @@ func settleMapDispatches(session string, run *GraphRun, g *Graph, n *Node, st *G
 		} else {
 			role, err := acquireSeededWorker(session, run.ID, n.ID, n.Role, mapItemTask(session, run, g, n, items[d.Item]), d.Seed,
 				activeLaneWorkers(lanes, st.MapLanes, d.Lane)...)
-			if errors.Is(err, errRunWorkerBusy) {
+			if errors.Is(err, errRunWorkerBusy) || errors.Is(err, errSpawnCap) {
 				continue
 			}
 			if err != nil {
@@ -2319,7 +2261,7 @@ func replaceLostWorkers(session string, run *GraphRun, n *Node, st *GraphNodeSta
 	for _, e := range lost {
 		others := slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return id == e.SpawnRole })
 		fresh, err := acquireSpawnWorker(session, run.ID, n.ID, e.Role, e.Task, others...)
-		if errors.Is(err, errRunWorkerBusy) && len(launched) == 0 {
+		if (errors.Is(err, errRunWorkerBusy) || errors.Is(err, errSpawnCap)) && len(launched) == 0 {
 			LogLifecycle(session, "warn", "daemon", "graph-spawn-replace-held",
 				fmt.Sprintf("%s: %s lost worker %s: replacement waits — %v", run.ID, n.ID, e.SpawnRole, err))
 			return true
