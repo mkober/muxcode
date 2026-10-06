@@ -23,11 +23,7 @@ type RemoteSession struct {
 // whether each has a live tmux session. Returns sessions sorted by name,
 // excluding the current session if excludeSelf is true.
 func DiscoverSessions(currentSession string, excludeSelf bool) ([]RemoteSession, error) {
-	tmpDir := "/tmp"
-	if busDirOverride != "" {
-		tmpDir = busDirOverride
-	}
-
+	tmpDir := BusDirBase()
 	entries, err := os.ReadDir(tmpDir)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", tmpDir, err)

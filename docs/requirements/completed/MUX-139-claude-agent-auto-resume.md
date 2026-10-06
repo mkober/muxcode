@@ -55,10 +55,10 @@ authority). See [Sequencing constraint](#sequencing-constraint).
 - [x] `edit` becomes **resume-only**: never fresh-launched automatically, but DO resume it — a resume restores the user's conversation, a fresh launch would not. Pinned so the exclusion cannot silently flip to fresh launches — *Phase 2*
 - [x] Spawn workers are covered: a dead worker whose run node is still `running` is resumed in its worktree with the same launch env and agent file — *Phase 3 (in its own directory — no worktree by design)*
 - [x] When a worker cannot be resumed, the spawn is **marked failed so the graph run fails loudly instead of stalling** (MUX-131 reuse then falls back to a fresh start on retry) — *Phase 3, `failDeadWorker`*
-- [ ] Mass-exit detection: >= 2 Claude agents down within `MUXCODE_MASS_EXIT_WINDOW_SECS` (default 60), across sessions where the bus dirs are visible, raises **one** `mass-agent-exit` event to edit naming the roles and sessions, with a lifecycle row — instead of N unrelated `agent-down` events. Per-role restart proceeds regardless
+- [x] Mass-exit detection: >= 2 Claude agents down within `MUXCODE_MASS_EXIT_WINDOW_SECS` (default 60), across sessions where the bus dirs are visible, raises **one** `mass-agent-exit` event to edit naming the roles and sessions, with a lifecycle row — instead of N unrelated `agent-down` events. Per-role restart proceeds regardless — *Phase 4*
 - [x] Resume restarts skip the 3-strike wait: a pane showing the resume hint is **proof of exit**, not a health-check ambiguity — restart on first sighting (configurable, default on) — *Phase 2*
 - [x] `muxcode agent launch <role> --resume [<id>]` exposes the same path manually — *Phase 1*
-- [ ] `muxcode diagnose` gains a `resumable-session` info finding when a dead agent's pane carries a resume hint
+- [x] `muxcode diagnose` gains a `resumable-session` info finding when a dead agent's pane carries a resume hint — *Phase 4*
 - [x] Opt-out: `MUXCODE_AUTO_RESUME_DISABLE=1` restores today's behaviour exactly — *Phase 2, pinned; script C2*
 - [x] Docs updated: CLAUDE.md watchdog bullet, [`docs/agent-bus.md`](../../agent-bus.md), [`docs/configuration.md`](../../configuration.md) — *CLAUDE.md "Agent-health restarts are resume-first" bullet; agent-bus.md `agent launch --resume` (Phase 1); configuration.md `MUXCODE_AUTO_RESUME_DISABLE` / `MUXCODE_RESUME_FIRST_SIGHTING` rows (Phase 2)*
 
@@ -68,15 +68,15 @@ Auto-resume handles the deaths the daemon notices. The operator also needs a del
 "bring everything back" control for the case where they are looking at a wrecked session and want it
 restored in one action.
 
-- [ ] A `Restart Agents` entry in the MuxCode quick menu (`config/tmux.conf`, the `prefix + b` `display-menu`), placed next to `Provider`
-- [ ] The modal lists providers with **live agent counts** (`claude N` / `opencode M` / `all`), confirm before acting
-- [ ] Live per-agent progress, reusing the multi-agent reload progress view (`tui/provider_select.go`, `bus.ReloadResult`) rather than a second implementation
-- [ ] Claude agents restart through the **MUX-139 resume path** with the role's `--agent`/`--agents` carried — the same definition guard as auto-resume, not a parallel launch path
-- [ ] `edit` is **included, as resume-only** — this deliberately overrides `ReloadAll`'s standing edit/auto skip (`reload.go:228`, *"interactive orchestrator — require explicit reload"*); the menu action **is** that explicit request. Pinned by test so the override cannot leak into the ordinary `--all` path
-- [ ] Non-Claude agents restart as a same-provider fresh reload
-- [ ] **The restart never changes provider or model.** The provider list is a *filter over current assignment*, never a switch — changing what runs an agent is user-approved only, and a bulk control is the easiest place for that rule to be violated by accident. Pinned by test: no `--cli`/`--model` override is written by this path
-- [ ] CLI parity: `muxcode reload --all --provider <cli> --resume` (`--all`/`--provider` already exist at `cmd/reload.go:29-30`; `--resume` is the addition)
-- [ ] **Dead agents are in scope.** `ReloadAll` currently skips them (`reload.go:231`, `if !IsAgentAlive(...) { continue }`) — correct for a config reload, exactly wrong here, since after a mass exit *every* target is dead. The restart path must select dead agents too, or the control does nothing in the situation that motivates it (see [Decision 2](#decision-2-restart-must-not-inherit-reloadalls-skip-dead-agents-rule))
+- [x] A `Restart Agents` entry in the MuxCode quick menu (`config/tmux.conf`, the `prefix + b` `display-menu`), placed next to `Provider` — *Phase 5*
+- [x] The modal lists providers with **live agent counts** (`claude N` / `opencode M` / `all`), confirm before acting — *Phase 5*
+- [x] Live per-agent progress, reusing the multi-agent reload progress view (`tui/provider_select.go`, `bus.ReloadResult`) rather than a second implementation — *Phase 5, `renderBatchProgress` shared*
+- [x] Claude agents restart through the **MUX-139 resume path** with the role's `--agent`/`--agents` carried — the same definition guard as auto-resume, not a parallel launch path — *Phase 5, shared `scrapeAndRelaunch`; the guard runs daemon-side via `RestartVerification`*
+- [x] `edit` is **included, as resume-only** — this deliberately overrides `ReloadAll`'s standing edit/auto skip (`reload.go:228`, *"interactive orchestrator — require explicit reload"*); the menu action **is** that explicit request. Pinned by test so the override cannot leak into the ordinary `--all` path — *Phase 5*
+- [x] Non-Claude agents restart as a same-provider fresh reload — *Phase 5*
+- [x] **The restart never changes provider or model.** The provider list is a *filter over current assignment*, never a switch — changing what runs an agent is user-approved only, and a bulk control is the easiest place for that rule to be violated by accident. Pinned by test: no `--cli`/`--model` override is written by this path — *Phase 5, `TestRestartAgents_NeverChangesProviderOrModel`; the CLI refuses `--cli`/`--model` outright*
+- [x] CLI parity: `muxcode reload --all --provider <cli> --resume` (`--all`/`--provider` already exist at `cmd/reload.go:29-30`; `--resume` is the addition) — *Phase 5*
+- [x] **Dead agents are in scope.** `ReloadAll` currently skips them (`reload.go:231`, `if !IsAgentAlive(...) { continue }`) — correct for a config reload, exactly wrong here, since after a mass exit *every* target is dead. The restart path must select dead agents too, or the control does nothing in the situation that motivates it (see [Decision 2](#decision-2-restart-must-not-inherit-reloadalls-skip-dead-agents-rule)) — *Phase 5, `RestartTargets`*
 
 #### Decision 2: restart must not inherit `ReloadAll`'s skip-dead-agents rule
 
@@ -85,8 +85,8 @@ picking up new config*. The goal here is the opposite — the agents are dead an
 operator opened the menu. Reusing `ReloadAll` unchanged would produce a control that reports
 "0 agents restarted" precisely after a mass exit.
 
-- [ ] Restart selects by **role and provider**, not by liveness; a live agent is stopped and relaunched, a dead one is launched (resumed where an id is known)
-- [ ] The liveness filter stays untouched on the existing `reload --all` config path — this is an additional selection mode, not a change to reload semantics
+- [x] Restart selects by **role and provider**, not by liveness; a live agent is stopped and relaunched, a dead one is launched (resumed where an id is known) — *Phase 5*
+- [x] The liveness filter stays untouched on the existing `reload --all` config path — this is an additional selection mode, not a change to reload semantics — *Phase 5, `reloadAllTargets` extracted behaviour-preserving and pinned*
 
 ### Sequencing constraint
 
@@ -127,9 +127,9 @@ mis-resumed one starts with a privileged peer's context and its own tools.
 
 Therefore:
 
-- [ ] The transcript fallback applies only where cwd identifies the agent uniquely — in practice **spawn workers**, each of which owns a private worktree
-- [ ] For shared-cwd roles it declines and fresh-launches with a logged reason, rather than guessing
-- [ ] Encoding is pinned by test including the macOS `/var` to `/private/var` resolution: observed spawn dirs encode as `-private-var-folders-…-T-muxcode-spawn-<session>-spawn-<id>`, so resolving the symlink before encoding is required, not cosmetic
+- [x] The transcript fallback applies only where cwd identifies the agent uniquely — in practice **spawn workers**, each of which owns a private worktree — *Phase 1: `spawnOwnsWorktree` — the spawn registry must show exactly one entry claiming the cwd, and it must be this role*
+- [x] For shared-cwd roles it declines and fresh-launches with a logged reason, rather than guessing — *Phase 1: `ErrTranscriptSharedCwd`, `resume-fresh` row; graph workers run in the session checkout (no worktree), so they decline too*
+- [x] Encoding is pinned by test including the macOS `/var` to `/private/var` resolution: observed spawn dirs encode as `-private-var-folders-…-T-muxcode-spawn-<session>-spawn-<id>`, so resolving the symlink before encoding is required, not cosmetic — *Phase 1: `TestClaudeProjectDirName`*
 
 ### Key files
 
@@ -175,37 +175,37 @@ Therefore:
 
 ### Phase 4: Mass-exit correlation
 
-- [ ] Sliding-window detector; single `mass-agent-exit` event naming roles, sessions and window; lifecycle row
-- [ ] Cross-session counting via `DiscoverSessions()`
-- [ ] **Negative control:** two unrelated single deaths 5 minutes apart raise no mass event
-- [ ] `diagnose` `resumable-session` finding + test
+- [x] Sliding-window detector; single `mass-agent-exit` event naming roles, sessions and window; lifecycle row — *verified 2026-10-05: `bus/mass_exit.go` — `RecordAgentExit` (`agent-exits.jsonl`, 1 h retention, atomic rewrite), `DetectMassExit` (≥ 2 distinct `(session, role)` within `MUXCODE_MASS_EXIT_WINDOW_SECS`, default 60), `MassExit.Detail`/`FormatMassExitAlert`; `checkAgentHealth` raises **one** `mass-agent-exit` event to edit plus a lifecycle row per window (`daemon.go:2056-2063`), per-role restarts unchanged; `agent-down` alerts are held per sweep and those the `mass-agent-exit` event names are folded into it rather than sent separately (`flushDownAlerts`, lifecycle `agent-down-folded`) — PR #150 review fix; `TestCheckAgentHealth_MassExitRaisesOneEvent` (3 deaths → exactly 1 event over 3 sweeps, restarts still run), `…MassExitWindowBoundary` (10 s yes / 300 s no), `…NonClaudeDeathsNotCorrelated`, `…PersistentOutageNotRefreshed`, `…RecoveredRoleRecordedAgain`*
+- [x] Cross-session counting via `DiscoverSessions()` — *`RecentAgentExits` → `DiscoverSessions` → `AgentExitsIn` (`mass_exit.go:96-112`); a session re-evaluates for one window after its own last sighting so deaths that preceded a peer's still join the burst; `TestRecentAgentExits_CrossSession`, `TestCheckAgentHealth_MassExitSeesLaterPeerSession`; daemon `TestMain` confines the scan to the test's own session*
+- [x] **Negative control:** two unrelated single deaths 5 minutes apart raise no mass event — *`TestDetectMassExit_SpacedDeathsAreNotCorrelated` (300 s apart), `TestCheckAgentHealth_SingleDeathRaisesNoMassExit`, `TestDetectMassExit_DistinctAgents` (same agent twice is not two)*
+- [x] `diagnose` `resumable-session` finding + test — *`AgentStateEvidence.ResumeSessionID` (dead Claude pane via `PaneResumeID`, `diagnose.go:147`) and `checkResumableSession` (`:1168`, severity `info`, remediation `muxcode resume` / `agent launch --resume <id>`); `TestCheckResumableSession` (5 rows incl. alive / reloading / no-banner negatives); `mass-agent-exit` added to `isSystemAction` and diagnose's `roleRelevantEvents`*
 
 ### Phase 5: Operator restart control
 
-- [ ] `Restart Agents` entry in the `prefix + b` `display-menu` (`config/tmux.conf`), next to `Provider`
-- [ ] Modal: provider list with live agent counts (`claude N` / `opencode M` / `all`) + confirm step
-- [ ] Restart selection by role and provider **including dead agents** (Decision 2), with the existing `reload --all` liveness filter left untouched + test covering both selection modes
-- [ ] Claude targets routed through the Phase 1–2 resume path, definition carried and verified
-- [ ] `edit` included as resume-only; test pins that the override does not leak into ordinary `reload --all`
-- [ ] Non-Claude targets: same-provider fresh reload
-- [ ] Test: **no `--cli`/`--model` override is written by this path** — provider is a filter, never a switch
-- [ ] Live per-agent progress reusing the multi-agent reload progress view
-- [ ] `muxcode reload --all --provider <cli> --resume` CLI parity + test
+- [x] `Restart Agents` entry in the `prefix + b` `display-menu` (`config/tmux.conf`), next to `Provider` — *verified 2026-10-05: `config/tmux.conf:83`, key `A`, `muxcode modal open restart`, directly under `Provider` (`R`); `bus/modal.go` `restart` modal → `muxcode restart-select`*
+- [x] Modal: provider list with live agent counts (`claude N` / `opencode M` / `all`) + confirm step — *`tui/restart_select.go`, `RestartProviderCounts` (live + down counts, `all` row only with > 1 provider); confirm names only the filter's roads, targets re-read at `y`; `TestRestartSelect_ListsProviderCounts`, `…ConfirmStatesConsequences`, `…ConfirmBacksOut`, `…SingleProviderHasNoAllRow`, `…EmptyAndErrorStates`*
+- [x] Restart selection by role and provider **including dead agents** (Decision 2), with the existing `reload --all` liveness filter left untouched + test covering both selection modes — *`RestartTargets` (`bus/restart_agents.go`; windowed roles only, unreadable window list is an error); `ReloadAll`'s selection extracted behaviour-preserving to `reloadAllTargets` (`reload.go:281`) so both modes are pinned side by side in `TestRestartTargets_SelectsDeadAgentsAndEdit` (restart: dead + edit; reload: live-only, no edit/auto) and `…WindowsRequired`*
+- [x] Claude targets routed through the Phase 1–2 resume path, definition carried and verified — *`RestartAgent` → shared `scrapeAndRelaunch` (live agent exited first); the definition check is handed to the daemon: a `RestartVerification` record (`bus/restart_verify.go`) is written before anything is typed, `checkRestartVerifications` → `AdvanceRestartVerification` stops on the banner and retries the stop until confirmed, the CLI only waits for the verdict, so a closed modal never leaves an agent unsupervised; `TestRestartAgent_ClaudeRoutesThroughResume`, `…HandsVerificationToDaemon`, `…RefusedWithoutHandoff`, `TestAdvanceRestartVerification`*
+- [x] `edit` included as resume-only; test pins that the override does not leak into ordinary `reload --all` — *`relaunchResumeOnly` → `ErrResumeUnavailable`, never fresh; `TestRestartAgent_EditWithoutSessionStaysDown`; the no-leak half is the `reloadAllTargets` side of `TestRestartTargets_SelectsDeadAgentsAndEdit`*
+- [x] Non-Claude targets: same-provider fresh reload — *`ReloadAgent(role, "", "")`; `TestRestartAgents_FilterLeavesOtherProvidersAlone` (an `opencode` filter leaves Claude agents untouched)*
+- [x] Test: **no `--cli`/`--model` override is written by this path** — provider is a filter, never a switch — *`TestRestartAgents_NeverChangesProviderOrModel`: no override file, provider and model unchanged*
+- [x] Live per-agent progress reusing the multi-agent reload progress view — *`renderBatchProgress` extracted from `provider_select`'s `renderProgress` and shared; `ReloadResult` gains `Restarted`/`ResumedID`; `TestRenderBatchProgress_RestartAndReloadRows`, `TestRestartSelect_CloseDuringProgressWaitsForBatch`, `…CloseImmediateWhenIdleOrDone`*
+- [x] `muxcode reload --all --provider <cli> --resume` CLI parity + test — *`cmd/reload.go` `validateRestartFlags` (needs `--all`; refuses `--cli`/`--model`/`--compact`); `TestValidateRestartFlags`; documented in `docs/agent-bus.md`*
 
 ### Phase 6: Integration test
 
-- [ ] Create `scripts/test-agent-resume.sh` — hermetic: scratch session, fake `claude` shim that prints the resume line and exits on SIGTERM, recording the args it was relaunched with
-- [ ] Kill 3 agents within one second, assert **exactly one** `mass-agent-exit` event
-- [ ] Each agent relaunched with `--resume <its own id>` (args captured by the shim) — assert the id-to-role pairing, not merely that `--resume` appeared
-- [ ] `edit` resumed, never fresh-launched
-- [ ] A spawn worker with a running node resumed in its worktree
-- [ ] Assert the relaunch carried the role's `--agent`/`--agents` flags (MUX-136 guard)
-- [ ] **Live tools-restored check** (deferred here from Phase 1 step 5): resume a **real** Claude agent — not the shim — with `muxcode agent launch <role> --resume <id>` and verify the pane shows the conversation restored **and** the role's tools, with no agent-unavailable / default-tools warning. Human-observed, or a live section gated like `test-codex-hooks` (`MUXCODE_AGENT_RESUME_LIVE=1`); record the observation here
-- [ ] **Negative controls:** opt-out env leaves today's behaviour; a single death raises no mass event; a pane with no hint falls back to fresh launch with the logged reason; an ambiguous transcript cwd declines rather than resuming the wrong session
-- [ ] `Restart Agents` end-to-end: kill all agents, invoke the restart action filtered to `claude`, assert **every dead Claude agent came back** (the skip-dead-agents regression, Decision 2) with its `--agent`/`--agents` flags, `edit` among them via resume
-- [ ] **Negative controls for restart:** an `opencode` filter leaves Claude agents untouched; the run writes **no `--cli`/`--model` override file** for any role (provider never switched); ordinary `muxcode reload --all` still skips dead agents and still skips `edit`
-- [ ] Coverage floor, set to the maximum achievable count so a skipped section cannot report green
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-agent-resume.sh` — hermetic: scratch session, fake `claude` shim that prints the resume line and exits on SIGTERM, recording the args it was relaunched with — *verified 2026-10-05: hermetic — scratch bus, private tmux server, scratch daemon, muxcode built from the tree, `scripts/fixtures/claude-stub` installed as `claude` so the real launcher execs it with the real flag set; each pane's stub reads its own session id from `CLAUDE_STUB_SESSION_FILE`, so ids are per role*
+- [x] Kill 3 agents within one second, assert **exactly one** `mass-agent-exit` event — *section B: exactly one `mass-agent-exit` on the bus and in the lifecycle log, naming all three*
+- [x] Each agent relaunched with `--resume <its own id>` (args captured by the shim) — assert the id-to-role pairing, not merely that `--resume` appeared — *section B: id-to-role pairing asserted from the stub's captured argv*
+- [x] `edit` resumed, never fresh-launched — *section B*
+- [x] A spawn worker with a running node resumed in its worktree — *section F: resumed in its own pane with `--resume <its id>` and its definition, verified, reseeded; the run keeps running (no worktree by design)*
+- [x] Assert the relaunch carried the role's `--agent`/`--agents` flags (MUX-136 guard) — *section B (MUX-136 guard), and again in G*
+- [x] **Live tools-restored check** (deferred here from Phase 1 step 5): resume a **real** Claude agent — not the shim — with `muxcode agent launch <role> --resume <id>` and verify the pane shows the conversation restored **and** the role's tools, with no agent-unavailable / default-tools warning. Human-observed, or a live section gated like `test-codex-hooks` (`MUXCODE_AGENT_RESUME_LIVE=1`); record the observation here — *observed live by the user, 2026-10-05 21:07, on the plan agent itself: plan exited to its shell; the daemon's resume-first restart scraped the id from the pane (`resume-scrape-hit`, `agent-resume id=ac785bf0-… source=pane`, `agent-relaunch` → `muxcode agent launch plan --reason restart --resume <id>`, lifecycle ts 1791248857-58); the conversation came back with plan's own tools and no definition-unavailable / tool-restrictions banner, and no `agent-resume-unrestricted` followed. Plan then recorded this very tick from inside the resumed session*
+- [x] **Negative controls:** opt-out env leaves today's behaviour; a single death raises no mass event; a pane with no hint falls back to fresh launch with the logged reason; an ambiguous transcript cwd declines rather than resuming the wrong session — *sections C (single death outside the window → no second mass event; no banner → `resume-scrape-miss`, fresh), D (shared cwd with two candidate transcripts declines — the newest-wins shape), E (`MUXCODE_AUTO_RESUME_DISABLE=1` relaunches fresh despite a banner)*
+- [x] `Restart Agents` end-to-end: kill all agents, invoke the restart action filtered to `claude`, assert **every dead Claude agent came back** (the skip-dead-agents regression, Decision 2) with its `--agent`/`--agents` flags, `edit` among them via resume — *section G: every agent dead, `reload --all --provider claude --resume` brings back every dead Claude agent, `edit` via resume, each with its own id and definition, daemon-verified*
+- [x] **Negative controls for restart:** an `opencode` filter leaves Claude agents untouched; the run writes **no `--cli`/`--model` override file** for any role (provider never switched); ordinary `muxcode reload --all` still skips dead agents and still skips `edit` — *section G: `opencode` filter selects 0/0 and relaunches nothing; no `--cli`/`--model` override file for any role; plain `reload --all` relaunches nothing (dead agents and `edit` skipped)*
+- [x] Coverage floor, set to the maximum achievable count so a skipped section cannot report green — *`FLOOR=104`, every `ok` on a full pass; section H never counted*
+- [x] Run the script and verify all checks pass — *run agent task `1791248442-spawn-8b202273-db0db1db`, hook row ts 1791248455, exit 0: **104 passed / 0 failed**, `FLOOR=104` met (after the `MUXCODE_BUS_BASE` isolation fix; the prior run was 98/0 at floor 98). (An earlier run, `1791247867-…`, was 97/1 on a plain-`reload --all` assertion that expected 0 reloads — windowless roles read alive via the `IsAgentAlive` fail-safe and get config-only passes, pre-existing `ReloadAll` behaviour; the assertion was narrowed to windowed agents + `edit`.)*
 
 ## Related
 
@@ -225,8 +225,8 @@ describe what restore gets **wrong**; this one describes what restore does not *
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-139-claude-agent-auto-resume | 1h 18m | 2026-10-05 14:13 |
+| MUX-139-claude-agent-auto-resume | 2h 42m | 2026-10-05 21:15 |
 
 ## Status
 
-In Progress — Phases 1-3 complete (2026-10-05; Phase 1 step 5 deferred to Phase 6 by the user); Phase 4 next
+Complete — all six phases and all 27 acceptance criteria verified 2026-10-05: `scripts/test-agent-resume.sh` green at 104/0 with floor 104, and the live tools-restored check observed by the user on the plan agent's own resume (21:07) — every phase complete, ready for close-out

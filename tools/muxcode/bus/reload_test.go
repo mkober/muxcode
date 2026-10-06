@@ -272,6 +272,82 @@ func TestCleanStaleReloadMarkers(t *testing.T) {
 	}
 }
 
+func ageReloadMarker(t *testing.T, session, role string) {
+	t.Helper()
+	old := time.Now().Add(-2 * time.Minute)
+	if err := os.Chtimes(ReloadMarkerPath(session, role), old, old); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+}
+
+// A hold that outlives the 60s stale threshold — RestartAgent's wait for the
+// daemon's verdict — is renewed, so the stale cleanup cannot reclaim it while
+// its holder runs. Negative control: once released, a marker nobody holds
+// ages and is reclaimed as before.
+func TestAcquireReloadMarker_RenewedWhileHeld(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	prev := reloadMarkerRenewEvery
+	reloadMarkerRenewEvery = 5 * time.Millisecond
+	defer func() { reloadMarkerRenewEvery = prev }()
+	session := "test-session"
+
+	release, err := acquireReloadMarker(session, "edit")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	ageReloadMarker(t, session, "edit")
+	deadline := time.Now().Add(2 * time.Second)
+	for IsReloadMarkerStale(session, "edit") {
+		if time.Now().After(deadline) {
+			release()
+			t.Fatal("a held marker aged past the stale threshold was never renewed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if n := CleanStaleReloadMarkers(session); n != 0 || !IsReloading(session, "edit") {
+		t.Fatalf("stale cleanup reclaimed a live hold (cleaned %d)", n)
+	}
+	release()
+
+	if err := writeReloadMarker(session, "edit"); err != nil {
+		t.Fatalf("writeReloadMarker: %v", err)
+	}
+	ageReloadMarker(t, session, "edit")
+	time.Sleep(50 * time.Millisecond)
+	if n := CleanStaleReloadMarkers(session); n != 1 || IsReloading(session, "edit") {
+		t.Errorf("an unheld aged marker was not reclaimed (cleaned %d) — renewal outlived its release", n)
+	}
+}
+
+// Release removes only its own hold. When the cleanup has reclaimed a marker
+// and a second relaunch has acquired it, the first holder's release must leave
+// the second's in place; the second's release still removes it.
+func TestAcquireReloadMarker_ReleaseSparesNewOwner(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	session := "test-session"
+
+	first, err := acquireReloadMarker(session, "edit")
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	clearReloadMarker(session, "edit")
+	second, err := acquireReloadMarker(session, "edit")
+	if err != nil {
+		t.Fatalf("second acquire after reclaim: %v", err)
+	}
+
+	first()
+	if !IsReloading(session, "edit") {
+		t.Fatal("the first holder's release deleted the second holder's marker")
+	}
+	second()
+	if IsReloading(session, "edit") {
+		t.Error("the owner's release left its marker")
+	}
+}
+
 func TestReloadTarget_ModeCycledPlanResearch(t *testing.T) {
 	// A mode agent keeps its own window in both mode states: modeSwitchTo uses
 	// swap-window, which trades indices only. Resolving an ACTIVE mode role to

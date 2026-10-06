@@ -318,7 +318,8 @@ func RestartLocalAgent(session, role string) error {
 	} else if ResumeOnlyRole(role) {
 		mode = relaunchResumeOnly
 	}
-	return scrapeAndRelaunch(session, role, PaneTarget(session, role), "daemon", "", LaunchReasonRestart, mode)
+	_, err = scrapeAndRelaunch(session, role, PaneTarget(session, role), "daemon", "", LaunchReasonRestart, mode)
+	return err
 }
 
 // autoResumeDisableEnv opts the daemon out of MUX-139's auto-resume.
@@ -378,8 +379,9 @@ const (
 // recorded on every row; a non-empty actor is appended to each row's detail;
 // reason is the launch reason the relaunch carries. A resume writes an
 // `agent-resume` row naming id and source; a fresh launch is preceded by the
-// row saying why (resume-scrape-miss/-stale, resume-disabled).
-func scrapeAndRelaunch(session, role, target, source, actor string, reason LaunchReason, mode relaunchMode) error {
+// row saying why (resume-scrape-miss/-stale, resume-disabled). It returns the
+// session id it resumed, empty for a fresh launch.
+func scrapeAndRelaunch(session, role, target, source, actor string, reason LaunchReason, mode relaunchMode) (string, error) {
 	by := ""
 	if actor != "" {
 		by = " (by " + actor + ")"
@@ -404,12 +406,12 @@ func scrapeAndRelaunch(session, role, target, source, actor string, reason Launc
 			LogLifecycle(session, "info", source, "agent-resume", fmt.Sprintf("%s: id=%s source=%s%s", role, id, ResumeSourcePane, by))
 		} else if mode == relaunchResumeOnly {
 			LogLifecycle(session, "warn", source, "agent-resume-unavailable", role+": resume-only, no resumable session — left down"+by)
-			return ErrResumeUnavailable
+			return "", ErrResumeUnavailable
 		}
 	}
 
 	if err := TmuxRun("send-keys", "-t", target, "C-c", ""); err != nil {
-		return fmt.Errorf("interrupting agent %s: %w", role, err)
+		return "", fmt.Errorf("interrupting agent %s: %w", role, err)
 	}
 
 	time.Sleep(restartInterruptDelay)
@@ -419,11 +421,11 @@ func scrapeAndRelaunch(session, role, target, source, actor string, reason Launc
 		launchCmd += " --resume " + id
 	}
 	if err := TmuxRun("send-keys", "-t", target, launchCmd, "Enter"); err != nil {
-		return fmt.Errorf("relaunching agent %s: %w", role, err)
+		return "", fmt.Errorf("relaunching agent %s: %w", role, err)
 	}
 	LogLifecycle(session, "info", source, "agent-relaunch", role+": "+launchCmd+by)
 
-	return nil
+	return id, nil
 }
 
 // restartResumeTarget picks the session a restart resumes from a pane capture

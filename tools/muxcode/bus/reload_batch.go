@@ -32,6 +32,9 @@ type ReloadResult struct {
 	// ConfigOnly records that the role had no window, so its provider/model was
 	// persisted for a future launch and nothing was stopped or relaunched.
 	ConfigOnly bool
+
+	Restarted bool   // an operator restart (RestartAgents), not a config reload
+	ResumedID string // the Claude session a restart resumed; empty for a fresh launch
 }
 
 // ConfigureWindowlessRole sets a role's CLI and model without stopping or

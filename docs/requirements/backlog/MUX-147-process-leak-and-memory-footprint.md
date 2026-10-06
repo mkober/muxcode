@@ -243,7 +243,7 @@ Never reap based on age alone.
 It is the largest available saving (three idle agents held ~456 MB doing nothing) but changes
 interaction: a keypress on an evicted window pays a cold start, and conversation is lost unless
 resume is wired in. Interacts with
-[`MUX-139`](./MUX-139-claude-agent-auto-resume.md). **Needs a user ruling before Phase 5 adopts it.**
+[`MUX-139`](../completed/MUX-139-claude-agent-auto-resume.md). **Needs a user ruling before Phase 5 adopts it.**
 
 ## Out of scope
 

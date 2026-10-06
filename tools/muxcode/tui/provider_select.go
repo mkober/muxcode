@@ -917,10 +917,6 @@ func (ui *ProviderSelectUI) renderProgress() string {
 	done := ui.progressDone
 	ui.progressMu.Unlock()
 
-	completed := len(results)
-	roles := ui.selectedAgentRoles()
-
-	// Header
 	b.WriteString("\n")
 	noun := "agents"
 	if total == 1 {
@@ -930,51 +926,48 @@ func (ui *ProviderSelectUI) renderProgress() string {
 		Bold, Purple, total, noun, RST, p.CLI))
 	b.WriteString(fmt.Sprintf("  %sModel:%s %s\n", Dim, RST, bus.AbbreviateModel(model)))
 	b.WriteString("\n")
+	b.WriteString(renderBatchProgress(ui.selectedAgentRoles(), results, total, done, "reload",
+		"Press q to close (reload continues in background)", termWidth()))
+	return b.String()
+}
 
-	// Section header
+// renderBatchProgress is the per-agent progress body shared by the provider
+// selector's reload and the restart modal: one row per role (done ✓/✗,
+// running ⟳, pending ○), a bar, and a footer. verb ("reload", "restart")
+// names the operation in the done footer; pendingFooter is the caller's
+// statement of what q does while it runs. Pure — snapshot in, string out.
+func renderBatchProgress(roles []string, results []bus.ReloadResult, total int, done bool, verb, pendingFooter string, width int) string {
+	var b strings.Builder
+	completed := len(results)
+
 	b.WriteString(fmt.Sprintf("  %s%s── Progress ─────────────────────%s\n", Bold, Purple, RST))
 	b.WriteString("\n")
 
-	// Status for each agent
 	resultMap := make(map[string]*bus.ReloadResult)
 	for i := range results {
 		resultMap[results[i].Role] = &results[i]
 	}
-
-	// Determine currently-reloading agent
 	currentRole := ""
 	if completed < total && completed < len(roles) {
 		currentRole = roles[completed]
 	}
 
 	for _, role := range roles {
-		if r, ok := resultMap[role]; ok {
-			// Completed
-			if r.Success {
-				dur := r.Duration.Round(time.Second)
-				if r.OldCLI == r.NewCLI && r.OldModel == r.NewModel {
-					b.WriteString(fmt.Sprintf("    %s✓%s %-10s %s(no change)%s  %s\n",
-						Green, RST, r.Role, Comment, RST, dur))
-				} else {
-					b.WriteString(fmt.Sprintf("    %s✓%s %-10s %s → %s%s  %s\n",
-						Green, RST, r.Role, r.OldCLI, r.NewCLI, appliedNote(r), dur))
-				}
-			} else {
-				b.WriteString(renderFailureRow(r.Role, r.Error, termWidth()))
-			}
-		} else if role == currentRole {
-			// Currently reloading
-			b.WriteString(fmt.Sprintf("    %s⟳%s %-10s %s...\n",
-				Yellow, RST, role, Comment))
-		} else {
-			// Pending
-			b.WriteString(fmt.Sprintf("    %s○%s %-10s\n",
-				Comment, RST, role))
+		r, ok := resultMap[role]
+		switch {
+		case ok && !r.Success:
+			b.WriteString(renderFailureRow(r.Role, r.Error, width))
+		case ok:
+			b.WriteString(fmt.Sprintf("    %s✓%s %-10s %s  %s\n",
+				Green, RST, r.Role, successNote(r), r.Duration.Round(time.Second)))
+		case role == currentRole:
+			b.WriteString(fmt.Sprintf("    %s⟳%s %-10s %s...\n", Yellow, RST, role, Comment))
+		default:
+			b.WriteString(fmt.Sprintf("    %s○%s %-10s\n", Comment, RST, role))
 		}
 	}
 	b.WriteString("\n")
 
-	// Progress bar
 	barWidth := 30
 	filled := 0
 	if total > 0 {
@@ -984,7 +977,6 @@ func (ui *ProviderSelectUI) renderProgress() string {
 	b.WriteString(fmt.Sprintf("  %s%s%s  %d/%d\n", Green, bar, RST, completed, total))
 	b.WriteString("\n")
 
-	// Footer
 	if done {
 		succeeded := 0
 		for _, r := range results {
@@ -993,17 +985,39 @@ func (ui *ProviderSelectUI) renderProgress() string {
 			}
 		}
 		if succeeded == total {
-			b.WriteString(fmt.Sprintf("  %s✓ All agents reloaded successfully%s\n", Green, RST))
+			b.WriteString(fmt.Sprintf("  %s✓ All agents %sed successfully%s\n", Green, verb, RST))
 		} else {
 			b.WriteString(fmt.Sprintf("  %s%d/%d succeeded, %d failed%s\n",
 				Yellow, succeeded, total, total-succeeded, RST))
 		}
 		b.WriteString(fmt.Sprintf("  %sPress Enter or q to close%s\n", Comment, RST))
 	} else {
-		b.WriteString(fmt.Sprintf("  %sPress q to close (reload continues in background)%s\n", Comment, RST))
+		b.WriteString(fmt.Sprintf("  %s%s%s\n", Comment, pendingFooter, RST))
 	}
-
 	return b.String()
+}
+
+// successNote describes a completed row: how a restart came back (resumed
+// session or fresh relaunch), or a reload's provider change.
+func successNote(r *bus.ReloadResult) string {
+	switch {
+	case r.Restarted && r.ResumedID != "":
+		return fmt.Sprintf("%sresumed%s %s", Green, RST, shortSessionID(r.ResumedID))
+	case r.Restarted:
+		return fmt.Sprintf("%srelaunched fresh%s (%s)", Comment, RST, r.NewCLI)
+	case r.OldCLI == r.NewCLI && r.OldModel == r.NewModel:
+		return fmt.Sprintf("%s(no change)%s", Comment, RST)
+	}
+	return fmt.Sprintf("%s → %s%s", r.OldCLI, r.NewCLI, appliedNote(r))
+}
+
+// shortSessionID keeps a session uuid's first block — enough to tell two
+// resumed agents apart in a narrow popup.
+func shortSessionID(id string) string {
+	if i := strings.IndexByte(id, '-'); i > 0 {
+		return id[:i]
+	}
+	return id
 }
 
 // sectionHeader renders a section header with active highlighting.
@@ -1015,30 +1029,10 @@ func (ui *ProviderSelectUI) sectionHeader(title string, active bool) string {
 }
 
 // readKeys reads single bytes from stdin in a loop.
-func (ui *ProviderSelectUI) readKeys() {
-	buf := make([]byte, 1)
-	for {
-		n, err := os.Stdin.Read(buf)
-		if err != nil || n == 0 {
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-		ui.keyCh <- buf[0]
-	}
-}
+func (ui *ProviderSelectUI) readKeys() { readKeysInto(ui.keyCh) }
 
 // cleanup restores the terminal.
-func (ui *ProviderSelectUI) cleanup(restoreStty bool) {
-	if restoreStty {
-		saneCmd := exec.Command("stty", "sane")
-		saneCmd.Stdin = os.Stdin
-		_ = saneCmd.Run()
-	}
-	fmt.Print("\033[?25h") // show cursor
-	fmt.Print(RST)
-	fmt.Print("\033[2J")
-	fmt.Print("\033[H")
-}
+func (ui *ProviderSelectUI) cleanup(restoreStty bool) { restoreTerminal(restoreStty) }
 
 // persistToConfig writes provider/model choices to the muxcode config file
 // for each role. This makes the selection permanent for this subsession.

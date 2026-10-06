@@ -49,11 +49,7 @@ func Cleanup(session string) error {
 // When includeActive is true, artifacts from the current session are included.
 func CleanupStale(currentSession string, dryRun, includeActive bool) (*CleanupResult, error) {
 	result := &CleanupResult{}
-	tmpDir := "/tmp"
-	if busDirOverride != "" {
-		tmpDir = busDirOverride
-	}
-
+	tmpDir := BusDirBase()
 	entries, err := os.ReadDir(tmpDir)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", tmpDir, err)

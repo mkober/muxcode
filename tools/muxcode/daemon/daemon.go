@@ -49,6 +49,9 @@ type Daemon struct {
 	agentFailCounts      map[string]int  // role → consecutive liveness failures
 	agentRestarts        map[string]int  // role → restart count (capped at 3)
 	agentWasDown         map[string]bool // set while down, so recovery can be announced once
+	lastExitSightedAt    int64           // last Claude agent-down this daemon recorded — see checkMassExit
+	lastMassExitAt       int64           // when the last mass-agent-exit was raised (one per window)
+	downAlerts           []string        // roles whose agent-down this sweep holds — see flushDownAlerts
 
 	lastCleanupCheck      int64
 	lastDiskPressureCheck int64
@@ -158,6 +161,8 @@ type Daemon struct {
 	restartAgent      func(session, role string) error
 	paneResumeID      func(session, role string) (string, bool)
 	stopAgent         func(session, role string) error
+	recordAgentExit   func(session, role string, at int64) error
+	recentAgentExits  func(session string, now, window int64) ([]bus.ExitSighting, error)
 
 	daemonRestarted map[string]bool // role → relaunched by checkAgentHealth, not yet verified
 	pendingStop     map[string]bool // role → refused as unrestricted, termination not yet confirmed
@@ -276,11 +281,10 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		snapshotAgentDown: bus.SnapshotAgentDown,
 		restartAgent:      bus.RestartLocalAgent,
 		paneResumeID:      bus.PaneResumeID,
+		recordAgentExit:   bus.RecordAgentExit,
+		recentAgentExits:  defaultRecentAgentExits,
 		stopAgent: func(session, role string) error {
-			if err := bus.MarkAgentStopped(session, role); err != nil {
-				return err
-			}
-			return bus.GracefulStop(session, role, false)
+			return stopMarked(session, role, bus.MarkAgentStopped, func(s, r string) error { return bus.GracefulStop(s, r, false) })
 		},
 		daemonRestarted: make(map[string]bool),
 		pendingStop:     make(map[string]bool),
@@ -376,6 +380,7 @@ func (d *Daemon) Run() error {
 		d.checkAgentDefs()
 		d.checkCompaction()
 		d.checkOllama()
+		d.checkRestartVerifications()
 		d.checkAgentHealth()
 		d.checkIdleAgents()
 		d.checkParkedInput()
@@ -1803,6 +1808,11 @@ func agentHealthCheckSecs() int64 {
 // checkAgentHealth probes agent liveness every 30 seconds using a 3-strike
 // escalation pattern: log → alert edit → restart (capped at 3 restarts).
 // Excludes edit and webhook roles. Respects intentional stop markers.
+//
+// The sweep is two passes: every role is probed and marked first, then the
+// mass-exit check and the held agent-down alerts go out (flushDownAlerts),
+// and only then are the dead restarted — so deaths seen in one sweep can fold
+// into one mass-agent-exit, and no alert waits behind a slow relaunch.
 func (d *Daemon) checkAgentHealth() {
 	now := time.Now().Unix()
 	if now-d.lastAgentHealthCheck < agentHealthCheckSecs() {
@@ -1815,6 +1825,7 @@ func (d *Daemon) checkAgentHealth() {
 	// One tmux call for the whole sweep — read after the time gate above so an
 	// inert cycle spawns no process at all.
 	windows := d.sessionWindows()
+	var restarts []deadAgent
 
 	for _, role := range bus.KnownRoles {
 		// Skip excluded roles and spawn roles
@@ -1839,6 +1850,10 @@ func (d *Daemon) checkAgentHealth() {
 		// and restarting such a role would target a pane it does not own.
 		if !roleHasWindow(windows, role) {
 			continue
+		}
+
+		if bus.RestartVerificationActive(d.session, role) {
+			continue // owned by checkRestartVerifications until its check closes
 		}
 
 		if d.pendingStop[role] { // ahead of the stop-marker skip — see retryUnrestrictedStop
@@ -1894,16 +1909,72 @@ func (d *Daemon) checkAgentHealth() {
 			d.markAgentDown(role, now)
 		}
 		if count == 3 || hinted {
-			d.restartDeadAgent(role, now, ts, hinted)
+			restarts = append(restarts, deadAgent{role, hinted})
 		}
+	}
+
+	var mass *bus.MassExit
+	if d.lastExitSightedAt > 0 && now-d.lastExitSightedAt < bus.MassExitWindowSecs() {
+		mass = d.checkMassExit(now)
+	}
+	d.flushDownAlerts(mass)
+	for _, r := range restarts {
+		d.restartDeadAgent(r.role, now, ts, r.hinted)
+	}
+}
+
+// deadAgent is a restart checkAgentHealth's probe pass decided on.
+type deadAgent struct {
+	role   string
+	hinted bool
+}
+
+// flushDownAlerts sends the agent-down alerts markAgentDown held this sweep,
+// folding into mass any role it names in this session: the mass-agent-exit
+// event stands in for their per-role alerts, so a burst reaches edit as one
+// event rather than one per agent (MUX-139 Phase 4). A role the event does not
+// name — a non-Claude death, or a straggler after this window's event — keeps
+// its own alert.
+func (d *Daemon) flushDownAlerts(mass *bus.MassExit) {
+	roles := d.downAlerts
+	d.downAlerts = nil
+	sent := false
+	for _, role := range roles {
+		if mass != nil && mass.Names(d.session, role) {
+			bus.LogLifecycle(d.session, "info", "daemon", "agent-down-folded", role+": reported in mass-agent-exit")
+			continue
+		}
+		alert := bus.FormatAgentHealthAlert("down", role, "Agent pane shows bare shell prompt")
+		if err := bus.Send(d.session, bus.NewMessage("daemon", "edit", "event", "agent-down", alert, "")); err != nil {
+			fmt.Fprintf(os.Stderr, "  [agent-health] failed to send down alert for %s: %v\n", role, err)
+		}
+		sent = true
+	}
+	if sent {
+		d.refreshInboxSizes()
 	}
 }
 
 // markAgentDown is strike 2 (or a first sighting with a resume banner): the
 // pane is snapshotted before any relaunch types over its exit message (MUX-136
-// Phase 4), and edit is alerted agent-down at most once per 600s.
+// Phase 4), and an agent-down alert to edit is queued at most once per 600s
+// for flushDownAlerts to send at the end of the probe pass. A Claude
+// role's exit is recorded for cross-session mass-exit correlation only on the
+// transition into a new down episode: a persistently dead agent is re-marked
+// every few sweeps as restartDeadAgent resets its strike count, and recording
+// each re-mark would refresh an old outage into a fresh timestamp that an
+// unrelated death minutes later falsely correlates with.
 func (d *Daemon) markAgentDown(role string, now int64) {
+	newEpisode := !d.agentWasDown[role]
 	d.agentWasDown[role] = true
+
+	if newEpisode && bus.IsClaudeTUI(bus.ResolveProvider(role)) {
+		if err := d.recordAgentExit(d.session, role, now); err != nil {
+			bus.LogLifecycle(d.session, "warn", "daemon", "agent-exit-record-failed", role+": "+err.Error())
+		} else {
+			d.lastExitSightedAt = now
+		}
+	}
 
 	if dir, err := d.snapshotAgentDown(d.session, role); err == nil {
 		bus.LogLifecycle(d.session, "info", "daemon", "agent-down-snapshot", role+": "+dir)
@@ -1914,12 +1985,7 @@ func (d *Daemon) markAgentDown(role string, now int64) {
 	alertKey := bus.AgentHealthAlertKey(role, "down")
 	if lastTS, ok := d.lastAlertKey[alertKey]; !ok || (now-lastTS) >= 600 {
 		d.lastAlertKey[alertKey] = now
-		alert := bus.FormatAgentHealthAlert("down", role, "Agent pane shows bare shell prompt")
-		msg := bus.NewMessage("daemon", "edit", "event", "agent-down", alert, "")
-		if err := bus.Send(d.session, msg); err != nil {
-			fmt.Fprintf(os.Stderr, "  [agent-health] failed to send down alert for %s: %v\n", role, err)
-		}
-		d.refreshInboxSizes()
+		d.downAlerts = append(d.downAlerts, role)
 	}
 }
 
@@ -2000,6 +2066,46 @@ func (d *Daemon) alertResumeUnavailable(role string, now int64) {
 		"%s is resume-only and its pane offers no resumable session, so it was left down — a fresh launch would discard the conversation. Relaunch it by hand: muxcode resume %s.", role, role))
 	_ = bus.Send(d.session, bus.NewMessage("daemon", "edit", "event", "agent-down", alert, ""))
 	d.refreshInboxSizes()
+}
+
+// defaultRecentAgentExits is the cross-session scan every New daemon starts
+// with. It reads every muxcode bus directory on the machine, so the package
+// tests swap it (TestMain) for a scan confined to the test's own session.
+var defaultRecentAgentExits = bus.RecentAgentExits
+
+// checkMassExit runs on every sweep within one window of this daemon's own
+// last Claude agent-down sighting. When the sightings across every visible
+// session's exit log name two or more agents inside bus.MassExitWindowSecs,
+// edit gets one mass-agent-exit event and a lifecycle row naming the roles
+// and sessions — at most one per window, so deaths straggling across sweeps
+// never raise a second. It returns the event it raised, or nil: the sweep's
+// held agent-down alerts for the roles it names are folded into it
+// (flushDownAlerts), while per-role restarts proceed unchanged.
+//
+// Re-evaluating for a window, not only on the sighting sweep, is what lets a
+// session whose deaths were recorded before a peer session's still learn of
+// the burst: each daemon raises one event to its own edit, so the 2026-09-02
+// three-session exit yields one event per session rather than one per agent.
+func (d *Daemon) checkMassExit(now int64) *bus.MassExit {
+	window := bus.MassExitWindowSecs()
+	if d.lastMassExitAt > 0 && now-d.lastMassExitAt < window {
+		return nil
+	}
+	sightings, err := d.recentAgentExits(d.session, now, window)
+	if err != nil {
+		bus.LogLifecycle(d.session, "warn", "daemon", "mass-exit-scan-failed", err.Error())
+		return nil
+	}
+	m, ok := bus.DetectMassExit(sightings, window)
+	if !ok {
+		return nil
+	}
+	d.lastMassExitAt = now
+	fmt.Printf("  %s  Mass agent exit: %s\n", time.Unix(now, 0).Format("15:04:05"), m.Detail())
+	bus.LogLifecycle(d.session, "warn", "daemon", "mass-agent-exit", m.Detail())
+	_ = bus.Send(d.session, bus.NewMessage("daemon", "edit", "event", "mass-agent-exit", bus.FormatMassExitAlert(m), ""))
+	d.refreshInboxSizes()
+	return &m
 }
 
 // resumedUnrestricted reports whether a role checkAgentHealth relaunched shows

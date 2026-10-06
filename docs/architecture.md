@@ -638,7 +638,7 @@ answered for it and whose re-seeded implement worker was stopped by hand as a le
    loudly after `graphRedriveMax` (3) as *"worker lost: … ended before answering, 3 replacements
    exhausted"* — rather than the run dying on "no live edge" with the phase untouched.
 3. **A dead worker is resumed, not replaced — and verified before it is trusted**
-   ([MUX-139](requirements/backlog/MUX-139-claude-agent-auto-resume.md) Phase 3). The replacement
+   ([MUX-139](requirements/completed/MUX-139-claude-agent-auto-resume.md) Phase 3). The replacement
    above covers a worker whose *entry* ended. A worker still `running` in the registry, window live,
    seed unanswered, but whose Claude process has exited — its pane shows the
    `Resume this session with:` banner — has a conversation worth keeping. `resumeDeadWorkers`

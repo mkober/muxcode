@@ -229,14 +229,31 @@ func ResetBusDirBase() {
 	busDirOverride = ""
 }
 
-// BusDir returns the bus directory for a session.
-// Uses /tmp directly (not os.TempDir) for compatibility with bash scripts
-// that hardcode /tmp/muxcode-bus-{SESSION}/.
-func BusDir(session string) string {
+// BusDirBaseEnv relocates every bus directory, and the cross-session scans
+// over them (DiscoverSessions, CleanupStale), to an absolute scratch base. It
+// exists for integration fixtures whose processes must neither see nor be seen
+// by real sessions — a mass-exit correlation scan reads every bus directory it
+// can discover. Bash hooks and pollers still hardcode /tmp, so it is never for
+// a real session.
+const BusDirBaseEnv = "MUXCODE_BUS_BASE"
+
+// BusDirBase is the directory holding muxcode-bus-{session} dirs: the test
+// override, else an absolute MUXCODE_BUS_BASE, else /tmp — /tmp directly (not
+// os.TempDir) for compatibility with bash scripts that hardcode
+// /tmp/muxcode-bus-{SESSION}/.
+func BusDirBase() string {
 	if busDirOverride != "" {
-		return filepath.Join(busDirOverride, "muxcode-bus-"+session)
+		return busDirOverride
 	}
-	return "/tmp/muxcode-bus-" + session
+	if v := os.Getenv(BusDirBaseEnv); filepath.IsAbs(v) {
+		return v
+	}
+	return "/tmp"
+}
+
+// BusDir returns the bus directory for a session.
+func BusDir(session string) string {
+	return filepath.Join(BusDirBase(), "muxcode-bus-"+session)
 }
 
 // InboxPath returns the inbox file path for a role in a session.
