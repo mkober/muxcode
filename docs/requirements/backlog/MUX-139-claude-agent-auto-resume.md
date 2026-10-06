@@ -194,18 +194,18 @@ Therefore:
 
 ### Phase 6: Integration test
 
-- [ ] Create `scripts/test-agent-resume.sh` — hermetic: scratch session, fake `claude` shim that prints the resume line and exits on SIGTERM, recording the args it was relaunched with
-- [ ] Kill 3 agents within one second, assert **exactly one** `mass-agent-exit` event
-- [ ] Each agent relaunched with `--resume <its own id>` (args captured by the shim) — assert the id-to-role pairing, not merely that `--resume` appeared
-- [ ] `edit` resumed, never fresh-launched
-- [ ] A spawn worker with a running node resumed in its worktree
-- [ ] Assert the relaunch carried the role's `--agent`/`--agents` flags (MUX-136 guard)
-- [ ] **Live tools-restored check** (deferred here from Phase 1 step 5): resume a **real** Claude agent — not the shim — with `muxcode agent launch <role> --resume <id>` and verify the pane shows the conversation restored **and** the role's tools, with no agent-unavailable / default-tools warning. Human-observed, or a live section gated like `test-codex-hooks` (`MUXCODE_AGENT_RESUME_LIVE=1`); record the observation here
-- [ ] **Negative controls:** opt-out env leaves today's behaviour; a single death raises no mass event; a pane with no hint falls back to fresh launch with the logged reason; an ambiguous transcript cwd declines rather than resuming the wrong session
-- [ ] `Restart Agents` end-to-end: kill all agents, invoke the restart action filtered to `claude`, assert **every dead Claude agent came back** (the skip-dead-agents regression, Decision 2) with its `--agent`/`--agents` flags, `edit` among them via resume
-- [ ] **Negative controls for restart:** an `opencode` filter leaves Claude agents untouched; the run writes **no `--cli`/`--model` override file** for any role (provider never switched); ordinary `muxcode reload --all` still skips dead agents and still skips `edit`
-- [ ] Coverage floor, set to the maximum achievable count so a skipped section cannot report green
-- [ ] Run the script and verify all checks pass
+- [x] Create `scripts/test-agent-resume.sh` — hermetic: scratch session, fake `claude` shim that prints the resume line and exits on SIGTERM, recording the args it was relaunched with — *verified 2026-10-05: hermetic — scratch bus, private tmux server, scratch daemon, muxcode built from the tree, `scripts/fixtures/claude-stub` installed as `claude` so the real launcher execs it with the real flag set; each pane's stub reads its own session id from `CLAUDE_STUB_SESSION_FILE`, so ids are per role*
+- [x] Kill 3 agents within one second, assert **exactly one** `mass-agent-exit` event — *section B: exactly one `mass-agent-exit` on the bus and in the lifecycle log, naming all three*
+- [x] Each agent relaunched with `--resume <its own id>` (args captured by the shim) — assert the id-to-role pairing, not merely that `--resume` appeared — *section B: id-to-role pairing asserted from the stub's captured argv*
+- [x] `edit` resumed, never fresh-launched — *section B*
+- [x] A spawn worker with a running node resumed in its worktree — *section F: resumed in its own pane with `--resume <its id>` and its definition, verified, reseeded; the run keeps running (no worktree by design)*
+- [x] Assert the relaunch carried the role's `--agent`/`--agents` flags (MUX-136 guard) — *section B (MUX-136 guard), and again in G*
+- [x] **Live tools-restored check** (deferred here from Phase 1 step 5): resume a **real** Claude agent — not the shim — with `muxcode agent launch <role> --resume <id>` and verify the pane shows the conversation restored **and** the role's tools, with no agent-unavailable / default-tools warning. Human-observed, or a live section gated like `test-codex-hooks` (`MUXCODE_AGENT_RESUME_LIVE=1`); record the observation here — *observed live by the user, 2026-10-05 21:07, on the plan agent itself: plan exited to its shell; the daemon's resume-first restart scraped the id from the pane (`resume-scrape-hit`, `agent-resume id=ac785bf0-… source=pane`, `agent-relaunch` → `muxcode agent launch plan --reason restart --resume <id>`, lifecycle ts 1791248857-58); the conversation came back with plan's own tools and no definition-unavailable / tool-restrictions banner, and no `agent-resume-unrestricted` followed. Plan then recorded this very tick from inside the resumed session*
+- [x] **Negative controls:** opt-out env leaves today's behaviour; a single death raises no mass event; a pane with no hint falls back to fresh launch with the logged reason; an ambiguous transcript cwd declines rather than resuming the wrong session — *sections C (single death outside the window → no second mass event; no banner → `resume-scrape-miss`, fresh), D (shared cwd with two candidate transcripts declines — the newest-wins shape), E (`MUXCODE_AUTO_RESUME_DISABLE=1` relaunches fresh despite a banner)*
+- [x] `Restart Agents` end-to-end: kill all agents, invoke the restart action filtered to `claude`, assert **every dead Claude agent came back** (the skip-dead-agents regression, Decision 2) with its `--agent`/`--agents` flags, `edit` among them via resume — *section G: every agent dead, `reload --all --provider claude --resume` brings back every dead Claude agent, `edit` via resume, each with its own id and definition, daemon-verified*
+- [x] **Negative controls for restart:** an `opencode` filter leaves Claude agents untouched; the run writes **no `--cli`/`--model` override file** for any role (provider never switched); ordinary `muxcode reload --all` still skips dead agents and still skips `edit` — *section G: `opencode` filter selects 0/0 and relaunches nothing; no `--cli`/`--model` override file for any role; plain `reload --all` relaunches nothing (dead agents and `edit` skipped)*
+- [x] Coverage floor, set to the maximum achievable count so a skipped section cannot report green — *`FLOOR=104`, every `ok` on a full pass; section H never counted*
+- [x] Run the script and verify all checks pass — *run agent task `1791248442-spawn-8b202273-db0db1db`, hook row ts 1791248455, exit 0: **104 passed / 0 failed**, `FLOOR=104` met (after the `MUXCODE_BUS_BASE` isolation fix; the prior run was 98/0 at floor 98). (An earlier run, `1791247867-…`, was 97/1 on a plain-`reload --all` assertion that expected 0 reloads — windowless roles read alive via the `IsAgentAlive` fail-safe and get config-only passes, pre-existing `ReloadAll` behaviour; the assertion was narrowed to windowed agents + `edit`.)*
 
 ## Related
 
@@ -225,8 +225,8 @@ describe what restore gets **wrong**; this one describes what restore does not *
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-139-claude-agent-auto-resume | 2h 10m | 2026-10-05 20:45 |
+| MUX-139-claude-agent-auto-resume | 2h 42m | 2026-10-05 21:15 |
 
 ## Status
 
-In Progress — Phases 1-5 complete (2026-10-05; Phase 1 step 5 deferred to Phase 6 by the user); Phase 6 (integration test) next
+Complete — all six phases and all 27 acceptance criteria verified 2026-10-05: `scripts/test-agent-resume.sh` green at 104/0 with floor 104, and the live tools-restored check observed by the user on the plan agent's own resume (21:07) — every phase complete, ready for close-out

@@ -184,3 +184,44 @@ func TestRemoteOverview(t *testing.T) {
 		t.Error("overview should contain session name")
 	}
 }
+
+// MUXCODE_BUS_BASE relocates both a session's bus directory and discovery of
+// other sessions: a session under the scratch base sees only its siblings
+// there, and a session outside it is invisible. A relative value is ignored,
+// and the test override still wins.
+func TestBusDirBaseEnv_IsolatesStorageAndDiscovery(t *testing.T) {
+	ResetBusDirBase()
+	t.Cleanup(ResetBusDirBase)
+	scratch, outside := t.TempDir(), t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(scratch, "muxcode-bus-fixture"),
+		filepath.Join(outside, "muxcode-bus-live"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Setenv(BusDirBaseEnv, scratch)
+	if got := BusDir("fixture"); got != filepath.Join(scratch, "muxcode-bus-fixture") {
+		t.Errorf("BusDir = %s, want under the scratch base", got)
+	}
+	sessions, err := DiscoverSessions("", false)
+	if err != nil {
+		t.Fatalf("DiscoverSessions: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].Name != "fixture" {
+		t.Errorf("discovered %+v, want only the scratch session", sessions)
+	}
+
+	t.Setenv(BusDirBaseEnv, "relative/base")
+	if got := BusDir("fixture"); got != "/tmp/muxcode-bus-fixture" {
+		t.Errorf("relative base honoured: BusDir = %s", got)
+	}
+
+	t.Setenv(BusDirBaseEnv, scratch)
+	SetBusDirBase(outside)
+	if got := BusDir("live"); got != filepath.Join(outside, "muxcode-bus-live") {
+		t.Errorf("test override lost to the env base: BusDir = %s", got)
+	}
+}
