@@ -136,7 +136,11 @@ func acquireSeededWorker(session, runID, nodeID, role, task, seedID string, excl
 		LogLifecycle(session, "warn", "daemon", "graph-spawn-reuse-failed",
 			fmt.Sprintf("%s: %s run worker lookup failed (%v) — trying the idle pool", runID, nodeID, err))
 	}
-	if id, ok := adoptIdleWorker(session, runID, nodeID, role, task, unusedSeedID(session, seedID)); ok {
+	id, ok, err := adoptIdleWorker(session, runID, nodeID, role, task, unusedSeedID(session, seedID))
+	if err != nil {
+		return "", err
+	}
+	if ok {
 		return id, nil
 	}
 	return graphSpawnFn(session, role, task, graphSender, runID, nodeID, unusedSeedID(session, seedID))
@@ -157,18 +161,19 @@ func unusedSeedID(session, seedID string) string {
 }
 
 // adoptIdleWorker hands the session's idle worker of a base role to a run
-// and reports the worker it seeded. Only a worker without a worktree
-// qualifies: graph workers run in the session checkout (MUX-178).
-func adoptIdleWorker(session, runID, nodeID, role, task, seedID string) (string, bool) {
+// and reports the worker it seeded, with adoptWorkerFor's error contract.
+// Only a worker without a worktree qualifies: graph workers run in the
+// session checkout (MUX-178).
+func adoptIdleWorker(session, runID, nodeID, role, task, seedID string) (string, bool, error) {
 	cand, ok := findIdleWorker(session, role, false)
 	if !ok {
-		return "", false
+		return "", false, nil
 	}
 	return adoptWorker(session, cand, runID, nodeID, task, seedID)
 }
 
 // adoptWorker is adoptWorkerFor with a run's node as the new owner.
-func adoptWorker(session string, cand SpawnEntry, runID, nodeID, task, seedID string) (string, bool) {
+func adoptWorker(session string, cand SpawnEntry, runID, nodeID, task, seedID string) (string, bool, error) {
 	return adoptWorkerFor(session, cand, workerOwner{RunID: runID, NodeID: nodeID, Owner: graphSender}, task, seedID, "graph-spawn-adopt")
 }
 

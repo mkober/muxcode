@@ -561,7 +561,7 @@ func TestLosingAdopterNeverClearsTheWinner(t *testing.T) {
 	spawnClearFn = func(_, spawnRole string) error {
 		cleared = append(cleared, spawnRole)
 		if len(cleared) == 1 {
-			if got, ok := adoptWorker(runTestSession, stale, "run-b", "implement", "run b's task", NewMsgID(graphSender)); ok {
+			if got, ok, _ := adoptWorker(runTestSession, stale, "run-b", "implement", "run b's task", NewMsgID(graphSender)); ok {
 				loserTook = got
 			}
 		}
@@ -790,7 +790,7 @@ func TestSpawnStartNeverSeedsOverAWorkerARunAdopted(t *testing.T) {
 		t.Fatal(err) // the daemon's notice pass — an owed notice blocks adoption
 	}
 	stale := spawnByRole(t, first.Entry.SpawnRole)
-	if _, ok := adoptWorker(runTestSession, stale, "run-x", "implement", "graph task", NewMsgID(graphSender)); !ok {
+	if _, ok, err := adoptWorker(runTestSession, stale, "run-x", "implement", "graph task", NewMsgID(graphSender)); !ok || err != nil {
 		t.Fatal("fixture: the run must adopt the idle worker")
 	}
 	adopted := spawnByRole(t, stale.SpawnRole)
@@ -1630,6 +1630,54 @@ func TestBusyWorkerNeverReused(t *testing.T) {
 			e := spawnByRole(t, busy)
 			if display := SpawnDisplayStatus(runTestSession, e); e.Status != "running" || e.IdleSince != 0 || display == "idle" || slices.Contains(f.killed, busy) {
 				t.Fatalf("busy worker reaped or freed: status %q, idle since %d, display %q, killed %v", e.Status, e.IdleSince, display, f.killed)
+			}
+		})
+	}
+}
+
+// TestFailedAdoptionNeverLeavesTwoLiveWorkers: an adoption whose seed cannot
+// be sent has already claimed the worker, so the caller's fresh launch is
+// safe only once that worker is stopped (review must-fix). A stop that fails
+// returns an error and nothing launches. The seed send fails for real — the
+// adopted worker's inbox path is made a directory.
+func TestFailedAdoptionNeverLeavesTwoLiveWorkers(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		killFail bool
+	}{
+		{"stop succeeds, fresh worker starts", false},
+		{"stop fails, no second worker", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("MUXCODE_SPAWN_IDLE_SECS", "600")
+			isolateLifecycle(t)
+			f, idle := finishedRunWorker(t)
+			refreshSpawns(t)
+			if _, ok := findIdleWorker(runTestSession, "edit", false); !ok {
+				t.Fatal("precondition: the finished run's worker is adoptable")
+			}
+			inbox := InboxPath(runTestSession, idle)
+			if err := os.RemoveAll(inbox); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(inbox, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.killFail {
+				spawnKillWindowFn = func(string, string) error { return errors.New("kill refused") }
+			}
+			before := f.fresh
+
+			got, err := acquireSpawnWorker(runTestSession, "run-new", "implement", "edit", "new task")
+			e := spawnByRole(t, idle)
+			if tc.killFail {
+				if err == nil || f.fresh != before || e.Status != "running" {
+					t.Fatalf("a failed stop must refuse a fresh worker: err %v, starts %d→%d, adopted worker %q", err, before, f.fresh, e.Status)
+				}
+				return
+			}
+			if err != nil || got == idle || f.fresh != before+1 || e.Status == "running" {
+				t.Fatalf("a stopped adoptee must be replaced: got %q, err %v, starts %d→%d, adopted worker %q", got, err, before, f.fresh, e.Status)
 			}
 		})
 	}

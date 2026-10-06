@@ -74,9 +74,14 @@ func (o workerOwner) String() string {
 // cannot reach the new one. A failed clear releases the claim (releaseClaim;
 // the worker is stopped if even that fails), and a seed that cannot be sent
 // stops the claimed worker, so no failure leaves a worker owned but untasked.
+//
+// false with a nil error means nothing is left claimed and the caller may
+// start a fresh worker. A non-nil error means a claimed worker could not be
+// stopped and may still be live under the new owner: the caller must not
+// launch another, or the owner holds two live workers.
 // rows prefixes the lifecycle rows: <rows>ed on adoption, <rows>-failed
 // otherwise. seedID, when set, is the id the seed is sent under.
-func adoptWorkerFor(session string, cand SpawnEntry, to workerOwner, task, seedID, rows string) (string, bool) {
+func adoptWorkerFor(session string, cand SpawnEntry, to workerOwner, task, seedID, rows string) (string, bool, error) {
 	spec := ReadActiveSpec(session)
 	contextPolicy := "kept"
 	switch {
@@ -101,31 +106,45 @@ func adoptWorkerFor(session string, cand SpawnEntry, to workerOwner, task, seedI
 	if err != nil {
 		LogLifecycle(session, "info", "daemon", rows+"-failed",
 			fmt.Sprintf("%s did not adopt %s (%v) — starting fresh", to, cand.SpawnRole, err))
-		return "", false
+		return "", false, nil
 	}
 	if contextPolicy != "kept" {
 		if err := spawnClearFn(session, claimed.SpawnRole); err != nil {
 			cleanup := "claim released"
 			if rerr := releaseClaim(session, cand, msg.ID); rerr != nil {
-				_, _ = stopSpawnRole(session, claimed.SpawnRole)
+				if _, serr := stopSpawnRole(session, claimed.SpawnRole); serr != nil {
+					return "", false, adoptCleanupFailed(session, rows, to, claimed.SpawnRole,
+						fmt.Sprintf("could not be cleared (%v), its claim not released (%v)", err, rerr), serr)
+				}
 				cleanup = fmt.Sprintf("claim release failed (%v), worker stopped", rerr)
 			}
 			LogLifecycle(session, "warn", "daemon", rows+"-failed",
 				fmt.Sprintf("%s could not clear idle worker %s (%v) — %s, starting fresh", to, cand.SpawnRole, err, cleanup))
-			return "", false
+			return "", false, nil
 		}
 	}
 	dropStaleSeeds(session, claimed.SpawnRole)
 	if _, err := sendSpawnSeed(session, claimed, msg); err != nil {
-		_, _ = stopSpawnRole(session, claimed.SpawnRole)
+		if _, serr := stopSpawnRole(session, claimed.SpawnRole); serr != nil {
+			return "", false, adoptCleanupFailed(session, rows, to, claimed.SpawnRole, fmt.Sprintf("was adopted but its seed failed (%v)", err), serr)
+		}
 		LogLifecycle(session, "warn", "daemon", rows+"-failed",
 			fmt.Sprintf("%s adopted %s but its seed failed (%v) — worker stopped, starting fresh", to, claimed.SpawnRole, err))
-		return "", false
+		return "", false, nil
 	}
 	LogLifecycle(session, "info", "daemon", rows+"ed",
 		fmt.Sprintf("%s adopted idle worker %s — old owner %s, new owner %s; context %s",
 			to, cand.SpawnRole, ownerLabel(cand), to, contextPolicy))
-	return claimed.SpawnRole, true
+	return claimed.SpawnRole, true, nil
+}
+
+// adoptCleanupFailed logs and returns the error for an adoption whose claimed
+// worker could not be stopped: it may still be live under the new owner, so
+// the caller starts no fresh worker beside it.
+func adoptCleanupFailed(session, rows string, to workerOwner, spawnRole, what string, stopErr error) error {
+	LogLifecycle(session, "warn", "daemon", rows+"-failed",
+		fmt.Sprintf("%s: worker %s %s and could not be stopped (%v) — not starting a second worker", to, spawnRole, what, stopErr))
+	return fmt.Errorf("adopted worker %s %s and stopping it failed: %w", spawnRole, what, stopErr)
 }
 
 // adoptionNotice opens an adopted worker's seed: it names the new owner
@@ -204,7 +223,11 @@ func acquireAgentWorkerLocked(session, role, task, owner string, useWorktree boo
 		}
 	}
 	if cand, ok := findIdleWorker(session, role, useWorktree); ok {
-		if id, ok := adoptWorkerFor(session, cand, workerOwner{Owner: owner}, task, "", "spawn-adopt"); ok {
+		id, ok, err := adoptWorkerFor(session, cand, workerOwner{Owner: owner}, task, "", "spawn-adopt")
+		if err != nil {
+			return AgentSpawn{}, err
+		}
+		if ok {
 			e, _ := findSpawnByRole(session, id)
 			return AgentSpawn{Entry: e, How: SpawnAdopted}, nil
 		}
