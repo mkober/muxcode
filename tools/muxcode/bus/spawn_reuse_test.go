@@ -3,13 +3,52 @@ package bus
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
-// MUX-195 Phase 1 pins. Each *Today test asserts a duplicate-worker road as it
-// stands, so the phase that closes the road inverts its pin rather than adding
-// a test beside it. TestBusyWorkerNeverReused is the negative control and
-// stays green through every phase.
+// MUX-195. Each *Today test pins a duplicate-worker road as it stands, so the
+// phase that closes the road inverts its pin rather than adding a test beside
+// it. TestBusyWorkerNeverReused is the negative control and stays green
+// through every phase.
+
+func refreshSpawns(t *testing.T) {
+	t.Helper()
+	if _, err := RefreshSpawnStatus(runTestSession); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ageIdle moves a worker's idle stamp secs into the past.
+func ageIdle(t *testing.T, spawnRole string, secs int64) {
+	t.Helper()
+	if err := UpdateSpawnEntry(runTestSession, spawnByRole(t, spawnRole).ID, func(e *SpawnEntry) { e.IdleSince -= secs }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// isolateLifecycle gives a test its own lifecycle log: the package shares one
+// and fake worker names repeat across tests, so another test's row could
+// satisfy an assertion.
+func isolateLifecycle(t *testing.T) {
+	t.Helper()
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+}
+
+func lifecycleDetails(t *testing.T, event string) []string {
+	t.Helper()
+	rows, err := ReadLifecycleLog(runTestSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var details []string
+	for _, r := range rows {
+		if r.Event == event {
+			details = append(details, r.Detail)
+		}
+	}
+	return details
+}
 
 func oneSpawnGraph() *Graph {
 	return &Graph{Name: "one-spawn", Start: "implement",
@@ -29,17 +68,11 @@ func nodeTask(t *testing.T, runID, nodeID string) string {
 // differs from its SpawnRole, so GetSpawnEntry cannot.
 func spawnByRole(t *testing.T, spawnRole string) SpawnEntry {
 	t.Helper()
-	entries, err := ReadSpawnEntries(runTestSession)
-	if err != nil {
-		t.Fatal(err)
+	e, ok := findSpawnByRole(runTestSession, spawnRole)
+	if !ok {
+		t.Fatalf("no spawn entry for %s", spawnRole)
 	}
-	for _, e := range entries {
-		if e.SpawnRole == spawnRole {
-			return e
-		}
-	}
-	t.Fatalf("no spawn entry for %s", spawnRole)
-	return SpawnEntry{}
+	return e
 }
 
 func runningWorkers(t *testing.T) int {
@@ -143,10 +176,12 @@ func TestSpecToPRRunSpawnsWorkerPerNodeToday(t *testing.T) {
 
 // TestSequentialRunsSpawnWorkerPerRunToday pins road 1 across runs: a second
 // run of the same template launches a fresh worker while the first run's
-// worker is free — answered, window live, its run complete. Phase 3 inverts
-// it: the second run adopts, count 1.
+// worker sits in the idle pool — answered, window live, its run complete.
+// Phase 3 inverts it: the second run adopts, count 1.
 func TestSequentialRunsSpawnWorkerPerRunToday(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_IDLE_SECS", "600")
 	f, first := finishedRunWorker(t)
+	refreshSpawns(t)
 	requireIdleWorker(t, f, first)
 
 	g := oneSpawnGraph()
@@ -191,23 +226,23 @@ func TestSpawnStartFromOneOwnerSpawnsWorkerPerCallToday(t *testing.T) {
 	}
 }
 
-// TestTerminalRunWorkerStrandedWithoutDeliveryRecordToday pins road 4: a
-// finished run's worker is reaped only while its seed's delivery record
-// survives. With the record gone it stays running, window open, although its
-// reply is still on record in the session log. Phase 2 inverts it: both cases
-// reach the same end state.
-func TestTerminalRunWorkerStrandedWithoutDeliveryRecordToday(t *testing.T) {
+// TestTerminalRunWorkerFreedWithoutDeliveryRecord inverts the Phase 1 pin on
+// road 4, where a missing seed record stranded a finished run's worker
+// running for hours. Present or missing, the worker is now freed alike — its
+// reply in the session log is the evidence: held idle, not re-stamped by a
+// second pass, then reaped when the quiet window closes.
+func TestTerminalRunWorkerFreedWithoutDeliveryRecord(t *testing.T) {
 	cases := []struct {
 		name       string
 		dropRecord bool
-		wantStatus string
-		wantKilled bool
 	}{
-		{"record present is reaped", false, "completed", true},
-		{"record missing is stranded", true, "running", false},
+		{"delivery record present", false},
+		{"delivery record missing", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("MUXCODE_SPAWN_IDLE_SECS", "600")
+			isolateLifecycle(t)
 			f, worker := finishedRunWorker(t)
 			seed := spawnByRole(t, worker).SeedMsgID
 			if reply, ok := GetSpawnResult(runTestSession, worker); !ok || reply.ReplyTo != seed {
@@ -219,22 +254,185 @@ func TestTerminalRunWorkerStrandedWithoutDeliveryRecordToday(t *testing.T) {
 				}
 			}
 
-			if _, err := RefreshSpawnStatus(runTestSession); err != nil {
-				t.Fatal(err)
+			refreshSpawns(t)
+			held := spawnByRole(t, worker)
+			display := SpawnDisplayStatus(runTestSession, held)
+			if held.Status != "running" || held.IdleSince == 0 || display != "idle" || slices.Contains(f.killed, worker) {
+				t.Fatalf("released worker must be held idle: status %q, idle since %d, display %q, killed %v",
+					held.Status, held.IdleSince, display, f.killed)
 			}
 
-			e := spawnByRole(t, worker)
-			if killed := slices.Contains(f.killed, worker); e.Status != tc.wantStatus || killed != tc.wantKilled {
-				t.Fatalf("status %q killed %v, want %q killed %v", e.Status, killed, tc.wantStatus, tc.wantKilled)
+			refreshSpawns(t)
+			if e := spawnByRole(t, worker); e.Status != "running" || e.IdleSince != held.IdleSince {
+				t.Fatalf("a second pass inside the window must leave the hold alone: status %q, idle since %d (was %d)",
+					e.Status, e.IdleSince, held.IdleSince)
+			}
+			if rows := lifecycleDetails(t, "spawn-idle"); len(rows) != 1 || !strings.Contains(rows[0], worker) {
+				t.Fatalf("want one spawn-idle row naming %s, got %v", worker, rows)
+			}
+
+			ageIdle(t, worker, 600)
+			refreshSpawns(t)
+			if e := spawnByRole(t, worker); e.Status != "completed" || !slices.Contains(f.killed, worker) {
+				t.Fatalf("closed quiet window must reap: status %q, killed %v", e.Status, f.killed)
+			}
+			rows := lifecycleDetails(t, "spawn-reaped")
+			if len(rows) != 1 || !strings.Contains(rows[0], worker) || !strings.Contains(rows[0], "quiet window") ||
+				!strings.Contains(rows[0], "new owner none") {
+				t.Fatalf("want one spawn-reaped row naming %s, its closed window and no new owner, got %v", worker, rows)
 			}
 		})
 	}
 }
 
+// TestSpawnHasRespondedFallsBackToWorkerReply: with the seed's delivery record
+// gone, the worker's own reply in the session log proves an answer. The other
+// rows are the negative controls — anything short of that reply read as an
+// answer frees a busy worker for adoption mid-task.
+func TestSpawnHasRespondedFallsBackToWorkerReply(t *testing.T) {
+	reply := func(t *testing.T, from string, e SpawnEntry) {
+		t.Helper()
+		if err := Send(runTestSession, NewMessage(from, "daemon", "response", "spawn-task", "done. EXIT=0", e.SeedMsgID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, e SpawnEntry) SpawnEntry
+		want  bool
+	}{
+		{"worker replied to the seed", func(t *testing.T, e SpawnEntry) SpawnEntry {
+			reply(t, e.SpawnRole, e)
+			return e
+		}, true},
+		{"no reply", func(t *testing.T, e SpawnEntry) SpawnEntry { return e }, false},
+		{"reply from another role", func(t *testing.T, e SpawnEntry) SpawnEntry {
+			reply(t, "research", e)
+			return e
+		}, false},
+		{"worker answered the previous seed, not the current one", func(t *testing.T, e SpawnEntry) SpawnEntry {
+			answerSpawn(t, runTestSession, e.SpawnRole)
+			if _, err := ReseedSpawn(runTestSession, e, "phase 2"); err != nil {
+				t.Fatal(err)
+			}
+			return spawnByRole(t, e.SpawnRole)
+		}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempBusDir(t)
+			fakeLiveSpawns(t)
+			worker, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "phase 1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			e := tc.setup(t, spawnByRole(t, worker))
+			if err := os.Remove(DeliveryPath(runTestSession, e.SeedMsgID)); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+
+			if got := spawnHasResponded(runTestSession, e); got != tc.want {
+				t.Errorf("spawnHasResponded = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIdlePoolHoldsOneWorkerPerBaseRole: of the released workers of one base
+// role only the most recently released is held; the rest are reaped as
+// superseded, naming the keeper. Another base role keeps its own — the pool is
+// per role, not per session.
+func TestIdlePoolHoldsOneWorkerPerBaseRole(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_IDLE_SECS", "600")
+	useTempBusDir(t)
+	isolateLifecycle(t)
+	f := fakeLiveSpawns(t)
+	release := func(runID, role string) string {
+		t.Helper()
+		w, err := acquireSpawnWorker(runTestSession, runID, "implement", role, "work")
+		if err != nil {
+			t.Fatal(err)
+		}
+		answerSpawn(t, runTestSession, w)
+		return w
+	}
+
+	older := release("run-a", "edit")
+	refreshSpawns(t)
+	ageIdle(t, older, 60)
+	newer := release("run-b", "edit")
+	research := release("run-c", "research")
+	refreshSpawns(t)
+
+	for _, w := range []string{newer, research} {
+		if e := spawnByRole(t, w); e.Status != "running" || e.IdleSince == 0 || slices.Contains(f.killed, w) {
+			t.Errorf("%s must be held as its role's idle worker: status %q, idle since %d, killed %v", w, e.Status, e.IdleSince, f.killed)
+		}
+	}
+	if e := spawnByRole(t, older); e.Status != "completed" || !slices.Contains(f.killed, older) {
+		t.Fatalf("the older edit worker must be reaped: status %q, killed %v", e.Status, f.killed)
+	}
+	rows := lifecycleDetails(t, "spawn-reaped")
+	if len(rows) != 1 || !strings.Contains(rows[0], older) || !strings.Contains(rows[0], "superseded by "+newer) ||
+		!strings.Contains(rows[0], "last owner run run-a") {
+		t.Fatalf("want one spawn-reaped row for %s superseded by %s, got %v", older, newer, rows)
+	}
+}
+
+// TestIdleHoldNeverHoldsAWorkerOwedAStop: a worker the executor is stopping —
+// one refused for running without its definition — is reaped on release,
+// never held for another run to adopt.
+func TestIdleHoldNeverHoldsAWorkerOwedAStop(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_IDLE_SECS", "600")
+	useTempBusDir(t)
+	f := fakeLiveSpawns(t)
+	w, err := acquireSpawnWorker(runTestSession, "run-a", "implement", "edit", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	answerSpawn(t, runTestSession, w)
+	if err := UpdateSpawnEntry(runTestSession, w, func(e *SpawnEntry) { e.StopPending = "ran without its agent definition" }); err != nil {
+		t.Fatal(err)
+	}
+
+	refreshSpawns(t)
+
+	if e := spawnByRole(t, w); e.Status != "completed" || e.IdleSince != 0 || !slices.Contains(f.killed, w) {
+		t.Fatalf("a worker owed a stop must be reaped, not held: status %q, idle since %d, killed %v", e.Status, e.IdleSince, f.killed)
+	}
+}
+
+// TestIdleWorkerOwnedAgainLosesIdleStamp: a held worker whose run resumes — a
+// `graph retry` of a failed run — is parked again and its idle stamp clears,
+// so a later release opens a fresh quiet window instead of reaping at once.
+func TestIdleWorkerOwnedAgainLosesIdleStamp(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_IDLE_SECS", "600")
+	_, worker := finishedRunWorker(t)
+	refreshSpawns(t)
+	if spawnByRole(t, worker).IdleSince == 0 {
+		t.Fatal("fixture: the released worker must be held idle first")
+	}
+
+	run, err := ReadGraphRun(runTestSession, spawnByRole(t, worker).RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.State = GraphRunRunning
+	if err := WriteGraphRun(runTestSession, run); err != nil {
+		t.Fatal(err)
+	}
+	refreshSpawns(t)
+
+	e := spawnByRole(t, worker)
+	if display := SpawnDisplayStatus(runTestSession, e); e.IdleSince != 0 || display != "parked" {
+		t.Fatalf("an owned-again worker must be parked with no idle stamp: idle since %d, display %q", e.IdleSince, display)
+	}
+}
+
 // TestBusyWorkerNeverReused is the negative control for every pin above: a
 // worker whose current seed is unanswered is never adopted by another run,
-// never reseeded over by a second `spawn start`, and never reaped — with or
-// without its delivery record. Its owning run is absent, the most adoptable a
+// never reseeded over by a second `spawn start`, and never reaped or marked
+// idle — with or without its delivery record. Its owning run is absent, the most adoptable a
 // worker can be short of answering, so busy-ness is the only thing protecting
 // it. Must stay green through Phases 2–4.
 func TestBusyWorkerNeverReused(t *testing.T) {
@@ -301,8 +499,9 @@ func TestBusyWorkerNeverReused(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if e := spawnByRole(t, busy); e.Status != "running" || slices.Contains(f.killed, busy) {
-				t.Fatalf("busy worker reaped: status %q, killed %v", e.Status, f.killed)
+			e := spawnByRole(t, busy)
+			if display := SpawnDisplayStatus(runTestSession, e); e.Status != "running" || e.IdleSince != 0 || display == "idle" || slices.Contains(f.killed, busy) {
+				t.Fatalf("busy worker reaped or freed: status %q, idle since %d, display %q, killed %v", e.Status, e.IdleSince, display, f.killed)
 			}
 		})
 	}

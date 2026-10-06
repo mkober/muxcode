@@ -3804,8 +3804,12 @@ func TestSpawnDisplayStatusParked(t *testing.T) {
 		t.Fatalf("run state %q, want complete", r.State)
 	}
 	e, _ = GetSpawnEntry(runTestSession, st.TaskID)
-	if got := SpawnDisplayStatus(runTestSession, e); got == "parked" {
-		t.Fatal("a terminal run's worker must not read parked")
+	if got := SpawnDisplayStatus(runTestSession, e); got != "idle" {
+		t.Fatalf("a terminal run's answered worker reads %q, want idle — released, not parked", got)
+	}
+	entries, _ = ReadSpawnEntries(runTestSession)
+	if out := FormatSpawnList(AnnotateSpawnDisplay(runTestSession, entries), false); !strings.Contains(out, "idle") {
+		t.Fatalf("spawn list must show the idle worker:\n%s", out)
 	}
 }
 
@@ -4351,8 +4355,9 @@ func TestAcquireSpawnWorkerDistinctNodesDistinctWorkers(t *testing.T) {
 // one worker serves both iterations (the assertion that would have caught
 // the three-worker run in the MUX-131 report), the worker survives
 // RefreshSpawnStatus mid-run, and is released by it once the run is
-// terminal.
+// terminal — reaped at once with the MUX-195 idle hold off (window 0).
 func TestExecSpawnLoopReusesWorker(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_IDLE_SECS", "0")
 	g := &Graph{Name: "spawn-loop", Start: "w",
 		Nodes: []Node{
 			{ID: "w", Type: NodeSpawn, Role: "edit", Message: "implement"},

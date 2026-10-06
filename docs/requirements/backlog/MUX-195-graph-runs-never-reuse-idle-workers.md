@@ -118,7 +118,7 @@ Four roads, one symptom:
 - [ ] A graph run holds **one** worker for all of its `spawn`/`map` nodes: a `50-spec-to-pr` run's `implement` and `fix` nodes run on the same worker — test: full run, spawn count **1**
 - [ ] A new run **adopts** the session's idle worker of the same base role before spawning a fresh one; it spawns only when none is free — test: two sequential runs of the same template, spawn count **1** (today: 2, pinned red in Phase 1)
 - [ ] `replaceLostWorkers` re-points or replaces **the run's one worker**: the lost window is confirmed gone before a fresh launch, and a replace and a resume never both act on one tick — test: a lost worker is still replaced (regression control), and the registry never shows two live entries for one run
-- [ ] A `map` node's items run on the run's one worker **serially** unless the template declares `workers: N` explicitly ([Decision 3](#decision-3--map-fan-out-concurrency))
+- [ ] A `map` node's items run on the run's one worker **serially** unless the template declares `workers: N` explicitly ([Decision 3](#decision-3--map-fan-out-and-busy-workers-serial-by-default-queue-on-busy))
 
 **One worker per spawning agent**
 
@@ -128,19 +128,19 @@ Four roads, one symptom:
 **Bound and reap**
 
 - [ ] A **hard cap** on live workers per base role per session (default **1 idle + the concurrency Decision 3 allows**); an attempt past it is refused with a reason and a `spawn-cap-refused` lifecycle row — negative control: the cap refuses, and lowering it does not stop a run's single worker
-- [ ] Idle workers unowned by a live run are **reaped** after a quiet window (`MUXCODE_SPAWN_IDLE_SECS`, [Decision 2](#decision-2--idle-reap-window)); adoption and reap each write a lifecycle row naming worker, old owner and new owner
-- [ ] A terminal run's worker is reaped (or returned as the idle worker) **even when its seed's delivery record is missing** — the 2026-09-28 and 2026-10-05 strandings cannot recur
+- [ ] Idle workers unowned by a live run are **reaped** after a quiet window (`MUXCODE_SPAWN_IDLE_SECS`, [Decision 2](#decision-2--idle-reap-window-muxcode_spawn_idle_secs-default-600)); adoption and reap each write a lifecycle row naming worker, old owner and new owner (reap half landed in Phase 2 — `spawn-idle` / `spawn-reaped` rows name worker, last owner run/node and "new owner none"; the adoption row is Phase 3)
+- [x] A terminal run's worker is reaped (or returned as the idle worker) **even when its seed's delivery record is missing** — the 2026-09-28 and 2026-10-05 strandings cannot recur (Phase 2: `workerRepliedInLog` fallback; `TestTerminalRunWorkerFreedWithoutDeliveryRecord` — record present and record missing reach the same end state)
 - [ ] **Negative control:** a busy worker (current seed unanswered), or one whose owning run has an in-flight node on it, is never adopted or reaped
 
 **Ownership and context**
 
 - [ ] Adoption re-points ownership (`RunID`/`NodeID`/`Owner`) atomically under the registry lock: there is no instant at which the worker belongs to two runs or to none, and `CheckGraphNodeAuthority`, `CheckCancelAuthority`, `replaceLostWorkers` and `GraphOwnsTask` read the new owner immediately
 - [ ] Two runs dispatching at once cannot adopt the same worker — test: concurrent dispatch yields one adoption and one spawn (within the cap) or one adoption and one wait, never a shared worker
-- [ ] An adopted worker's context policy is explicit ([Decision 1](#decision-1--keep-or-clear-context)), and a stale task from the previous owner cannot reach the new one: the seed's ownership preamble (`graphWorkerTask`) names the new run and node
+- [ ] An adopted worker's context policy is explicit ([Decision 1](#decision-1--keep-or-clear-context-keep-within-a-spec-clear-on-a-spec-or-owner-kind-change)), and a stale task from the previous owner cannot reach the new one: the seed's ownership preamble (`graphWorkerTask`) names the new run and node
 
 **Visibility and docs**
 
-- [ ] `muxcode spawn list`/`status` show an **idle** (unowned, adoptable) worker distinctly from `parked` (held by a live run between iterations) and from `running`
+- [x] `muxcode spawn list`/`status` show an **idle** (unowned, adoptable) worker distinctly from `parked` (held by a live run between iterations) and from `running` (Phase 2: `SpawnDisplayStatus`, `FormatSpawnStatus`; `TestFormatSpawnIdle`)
 - [ ] Docs: [`docs/agent-bus.md`](../../agent-bus.md#muxcode-spawn) (`spawn start` reuse, the cap, `idle`), [`docs/architecture.md`](../../architecture.md) spawn flow, `CLAUDE.md` graph-orchestration bullet (one worker per run)
 - [ ] `bash scripts/test-graph-worker-reuse.sh` passes
 
@@ -194,9 +194,20 @@ are gofmt-clean. The five tests should be run green before Phase 2 builds on the
 
 ### Phase 2: Reaper and free-ness
 
-- [ ] `spawnHasResponded` falls back to a `reply_to` match in the session log when the delivery record is missing
-- [ ] Terminal-run workers are reaped or kept as the one idle worker per Decision 2; lifecycle row on each (`spawn-idle`, `spawn-reaped`)
-- [ ] `spawn list`/`status` render `idle`
+- [x] `spawnHasResponded` falls back to a `reply_to` match in the session log when the delivery record is missing (`workerRepliedInLog`, `bus/spawn.go` — only on `os.ErrNotExist`, newest-first, stops at the seed line; only the worker's own reply to that seed counts. `TestSpawnHasRespondedFallsBackToWorkerReply`, 4 cases incl. 3 negative controls)
+- [x] Terminal-run workers are reaped or kept as the one idle worker per Decision 2; lifecycle row on each (`spawn-idle`, `spawn-reaped`) (`RefreshSpawnStatus` + `idleVerdicts`: new `IdleSince` field; per base role the most recently released worker is held for `SpawnIdleSecs()` — `MUXCODE_SPAWN_IDLE_SECS`, env then config, default 600, `0` = reap on release — the rest reaped as superseded; a worker owed a stop is never held; `IdleSince` clears if the worker is busy or owned again. Agent spawns keep reap-on-answer until Phase 4. `TestIdlePoolHoldsOneWorkerPerBaseRole`, `TestIdleHoldNeverHoldsAWorkerOwedAStop`, `TestIdleWorkerOwnedAgainLosesIdleStamp`; Phase 1 stranding pin inverted to `TestTerminalRunWorkerFreedWithoutDeliveryRecord`)
+- [x] `spawn list`/`status` render `idle` (`SpawnDisplayStatus` returns `idle` for a released graph worker, distinct from `parked`; `FormatSpawnStatus` prints an `Idle:` line. `TestFormatSpawnIdle`; `TestSpawnDisplayStatusParked` now expects `idle` after the run completes)
+
+#### Phase 2 verification note
+
+Verified 2026-10-05 22:42 by plan from the working tree (run `1791252906`, second iteration; Phase 1
+committed as `a8d3295`). All three steps implemented in `bus/spawn.go` as the step annotations record,
+and the four changed files are gofmt-clean (the `gofmt -l` hits in `agent_test.go`, `ollama.go`,
+`ollama_test.go`, `reload.go`, `spec_items_test.go` predate this branch). **Still unrun**: the test node
+returned `unknown` again (6 s) and the user released the hold by hand at 22:37:38; the Phase 1 pins and
+every Phase 2 test have been reviewed but never executed. One cost to watch: `workerRepliedInLog` reads
+the whole session log on each call, but only for an entry whose delivery record is already gone, so the
+daemon's 2 s sweep pays it only for the stranded case it exists to fix.
 
 ### Phase 3: One worker per run
 
@@ -226,29 +237,32 @@ are gofmt-clean. The five tests should be run green before Phase 2 builds on the
 - [ ] Test: a lost worker is replaced and the registry never shows two live entries for the run
 - [ ] Coverage floor set to the maximum achievable count; run the script and record counts here
 
-## Open decisions
+## Decisions
 
-### Decision 1 — keep or clear context
+All three decided by the user 2026-10-05, in edit's pane, relayed by the run's worker. They are settled;
+Phases 2–4 implement them as written.
 
-**Keep** the conversation (the saving the user asked for — the next run starts warm on the same
-codebase) vs **`/clear` between owners** (no carry-over of the previous run's assumptions, but most of
-the context saving is lost; the boot cost is still saved). A middle road: keep within a spec's runs,
-clear when the active spec changes or the owner changes from a run to an agent.
+### Decision 1 — keep or clear context: keep within a spec, clear on a spec or owner-kind change
 
-### Decision 2 — idle reap window
+**Decided.** An adopted worker **keeps** its conversation while the active spec is unchanged — the
+saving the user asked for; the next run starts warm on the same codebase. It is **`/clear`ed** on
+adoption when either the active spec has changed since the worker's last seed, or the owner switches
+kind between a graph run and an agent (`muxcode spawn start`). The alternatives weighed were keep-always
+(carries a previous run's assumptions across specs) and clear-always (loses most of the context saving;
+only the boot cost is saved).
 
-How long an unowned idle worker lives before it is reaped. The user's priority is resources, so the
-default should be short — `MUXCODE_SPAWN_IDLE_SECS`, proposed **600**, in the family of
-`MUXCODE_AUTO_CLEAR_QUIET_SECS` (60) and the 600 s task timeout. One idle worker per base role is the
-pool; there is no larger pool.
+### Decision 2 — idle reap window: `MUXCODE_SPAWN_IDLE_SECS`, default 600
 
-### Decision 3 — map fan-out concurrency
+**Decided.** An idle worker unowned by a live run is reaped after **600 s** of quiet, configurable via
+`MUXCODE_SPAWN_IDLE_SECS` — in the family of `MUXCODE_AUTO_CLEAR_QUIET_SECS` (60) and the 600 s task
+timeout. One idle worker per base role is the pool; there is no larger pool.
 
-A `map` node over N items could run N workers at once. Under the one-worker rule it runs them serially
-on the run's worker unless the template says otherwise (`workers: N`, capped by the per-role cap). The
-same decision settles the agent road: a second `spawn start` against a busy worker **waits** (queued on
-the worker's inbox) or **spawns a second** within the cap. Serial-by-default is the proposal; the
-`60-integration-suite` template is the one to check it against.
+### Decision 3 — map fan-out and busy workers: serial by default, queue on busy
+
+**Decided.** A `map` node's items run **one at a time on the run's single worker** unless the template
+sets `workers: N` explicitly (capped by the per-role cap). On the agent road, a second `spawn start`
+against a **busy** worker **queues on that worker's inbox** and says so in its output — it does not spawn
+a second worker. The `60-integration-suite` template is the one to check the serial default against.
 
 ## Related
 
@@ -272,7 +286,7 @@ the worker's inbox) or **spawns a second** within the cap. Serial-by-default is 
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-195-graph-runs-never-reuse-idle-workers | 6m | 2026-10-05 22:22 |
+| MUX-195-graph-runs-never-reuse-idle-workers | 23m | 2026-10-05 22:40 |
 
 ## Status
 
