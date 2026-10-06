@@ -209,7 +209,7 @@ Commands:
   deliver       Force-deliver an agent's pending inbox into its pane (--force)
   pane          Resolve a role's tmux pane target by identity and print it
   upgrade-daemons  Restart all running session daemons on the installed binary (--dry-run)
-  upgrade       Self-upgrade from the latest GitHub release (--check [--json]: exit 0 current, 10 newer, 1 error)
+  upgrade       Self-upgrade from the latest GitHub release (--force, --json; --check exits 0 current, 10 newer, 1 error)
   uitest        Run integration tests in a live tmux session (--list, --verbose)
   tasks         List delegated tasks tracked via --wait (--all, --status)
   track         Show delivery status for a message ID

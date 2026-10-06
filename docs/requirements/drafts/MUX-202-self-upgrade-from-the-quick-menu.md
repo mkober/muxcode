@@ -63,14 +63,14 @@ source tarball into a cache, not a `git pull` ([Decision 1](#decision-1--source-
 - [x] `Download` fetches the release tag's **source tarball** into `~/.cache/muxcode/upgrade/<tag>/` (`XDG_CACHE_HOME` honoured), records its size and SHA-256 in the step row and the lifecycle log, and **skips the fetch when the extracted tree for that tag is already present and complete** ([Decision 1](#decision-1--source-tarball-into-a-cache-not-a-git-pull)) (Phase 2: `fetchSource`, `cachedSource`; the row reads `cache hit — <size>, sha256 <sum>` on reuse. `TestSelfUpgradeReusesCompleteCache`. Lifecycle rows arrive with the CLI wiring in Phase 3)
 - [x] `Build` runs `make install VERSION=<tag>` in the extracted tree with stdout+stderr captured to `<cache>/<tag>/build.log`; on failure the row shows the last lines and names the log; prerequisites (`go`, `make`, `tar`) are checked **before** `Download` so a machine without a toolchain fails at `Check` with a named missing tool and downloads nothing (Phase 2: `runBuildStep` + `runInstallStep` via `runMake`; `runCheckStep` fails on `ToolsErr()` before `Download`. `TestSelfUpgradeMissingToolFailsAtCheck`, `TestSelfUpgradeBuildFailureKeepsInstalledBinary`)
 - [x] `Verify` runs the **freshly installed** binary — `<BINDIR>/muxcode version --json` — and fails if its `version` is not the tag (a stale `PATH` entry or a different `BINDIR` must be caught here, not discovered later) (Phase 2: `runVerifyStep` — version by path, then `muxcode` on `PATH` must be the same file. `TestSelfUpgradeVerifyMismatchStopsPipeline`, `TestSelfUpgradeVerifyRefusesShadowedInstall`)
-- [ ] `Restart daemons` **executes the new binary's** `upgrade-daemons`, never the running process's `bus.UpgradeDaemons`: the modal is the old binary, whose `BuildInfo()` would read every daemon as current ([Decision 3](#decision-3--restart-every-sessions-daemon-through-the-new-binary)); each session is a sub-row with its `VersionDelta`; an unreadable `ps` fails the step with the exact error
-- [ ] `Reload tmux config` sources the reinstalled `~/.config/muxcode/tmux.conf` into the running tmux server; the done footer names the version delta and the follow-up the upgrade does **not** do: *agents keep running until restarted — `Restart Agents` (prefix + b, A)*
-- [ ] Every step writes a lifecycle row (`upgrade-check`, `upgrade-download`, `upgrade-build`, `upgrade-verify`, `upgrade-daemons`, `upgrade-tmux`, `upgrade-done` / `upgrade-failed`) with the installed and target versions
-- [ ] **Negative controls:** an up-to-date install runs no step past `Check` and touches no file; a failed `Build` leaves the installed binary untouched (`make install` fails before `install -m 755`, and `Verify` would catch a partial copy); a failed `Verify` **does not** restart daemons
+- [x] `Restart daemons` **executes the new binary's** `upgrade-daemons`, never the running process's `bus.UpgradeDaemons`: the modal is the old binary, whose `BuildInfo()` would read every daemon as current ([Decision 3](#decision-3--restart-every-sessions-daemon-through-the-new-binary)); each session is a sub-row with its `VersionDelta`; an unreadable `ps` fails the step with the exact error (Phase 3: `runDaemonsStep`, `parseDaemonLines`; `TestSelfUpgradeDaemonStepSurfacesFailures`, `TestSelfUpgradeDaemonRelaunchResolvesInstalledBinary`)
+- [x] `Reload tmux config` sources the reinstalled `~/.config/muxcode/tmux.conf` into the running tmux server; the done footer names the version delta and the follow-up the upgrade does **not** do: *agents keep running until restarted — `Restart Agents` (prefix + b, A)* (Phase 3: `runTmuxStep`, `UpgradeState.DoneSummary`; the modal's footer in Phase 4 renders the same string)
+- [x] Every step writes a lifecycle row (`upgrade-check`, `upgrade-download`, `upgrade-build`, `upgrade-verify`, `upgrade-daemons`, `upgrade-tmux`, `upgrade-done` / `upgrade-failed`) with the installed and target versions (Phase 3: `upgradeStep.Event`, `UpgradeState.logLifecycle` — plus `upgrade-install`, since Build and Install are separate steps; `TestSelfUpgradeWritesLifecycleRows`)
+- [x] **Negative controls:** an up-to-date install runs no step past `Check` and touches no file; a failed `Build` leaves the installed binary untouched (`make install` fails before `install -m 755`, and `Verify` would catch a partial copy); a failed `Verify` **does not** restart daemons (Phases 2–3: `TestSelfUpgradeStopsAtCheckUnlessNewerOrForced`, `TestSelfUpgradeBuildFailureKeepsInstalledBinary`, `TestSelfUpgradeVerifyMismatchStopsPipeline` — the pipeline stops at the first failure, so the daemon step is unreachable after a failed `Verify`)
 
 **CLI twin**
 
-- [ ] `muxcode upgrade [--check] [--force] [--json]` runs the same pipeline non-interactively, printing one line per step; `--check` stops after `Check` with exit 0 (current), 10 (newer available) or 1 (error) so a cron or a script can poll it; `--force` rebuilds and reinstalls the latest release even when current
+- [x] `muxcode upgrade [--check] [--force] [--json]` runs the same pipeline non-interactively, printing one line per step; `--check` stops after `Check` with exit 0 (current), 10 (newer available) or 1 (error) so a cron or a script can poll it; `--force` rebuilds and reinstalls the latest release even when current (Phases 1 + 3: `cmd/upgrade_self.go`; a full run exits 0 on success or an up-to-date install and 1 on a failed step; `--json` is `UpgradeCheck` with `--check`, else `upgradeReport`. `TestUpgradeCheckExit`, `TestWriteStepResult`, `TestWriteUpgradeReport`)
 - [ ] `muxcode upgrade-ui` is the modal's command (the `provider-select`/`restart-select` shape)
 
 **Docs and test**
@@ -138,10 +138,20 @@ refuses without `--check`; the full pipeline is wired in Phase 3.
 
 ### Phase 3: Daemon restart, tmux reload, CLI
 
-- [ ] `Restart daemons` execs `<BINDIR>/muxcode upgrade-daemons`, parses per-session lines into sub-rows; `ps` failure surfaces verbatim ([Decision 3](#decision-3--restart-every-sessions-daemon-through-the-new-binary))
-- [ ] `Reload tmux config` via `tmux source-file`; skipped with a note when no tmux server is running
-- [ ] `muxcode upgrade [--force] [--json]` runs the full pipeline with one line per step; lifecycle rows per step
-- [ ] Tests: a fake `muxcode` on `PATH` whose `upgrade-daemons` output the test scripts; **negative control:** a failed `Verify` never reaches the daemon step
+- [x] `Restart daemons` execs `<BINDIR>/muxcode upgrade-daemons`, parses per-session lines into sub-rows; `ps` failure surfaces verbatim ([Decision 3](#decision-3--restart-every-sessions-daemon-through-the-new-binary)) (`runDaemonsStep`, 2 min timeout, **`BINDIR` first on the helper's `PATH`** — `upgrade-daemons` relaunches each daemon as bare `muxcode`, so with `BINDIR` off `PATH`, which `Verify` allows, it would relaunch the old build or nothing (review must-fix, fixed with a regression test); `parseDaemonLines` turns each indented `<session>: <detail>` line into a `StepResult.Sub` row, `FAILED — ` marking failure; any other output line is a message, and a non-zero exit fails the step with those lines verbatim)
+- [x] `Reload tmux config` via `tmux source-file`; skipped with a note when no tmux server is running (`runTmuxStep` sources `<CONFIGDIR>/tmux.conf`; "no server running" / "error connecting to" → `skipped — no tmux server is running`; no `tmux` binary → `skipped — tmux is not installed`; any other failure fails the step with tmux's message)
+- [x] `muxcode upgrade [--force] [--json]` runs the full pipeline with one line per step; lifecycle rows per step (`cmd/upgrade_self.go`: `RunSelfUpgrade` with a progress callback printing `<Step>: <note>` and indented sub-rows; `--json` emits an `upgradeReport{installed, latest, verdict, upgraded, steps, error}`; exit 0 on success **and** on an up-to-date install, 1 on a failed step; `DoneSummary` names the version delta and `Restart Agents (prefix + b, A)`. Every step has an `Event` — `upgrade-check` … `upgrade-tmux` — written by `runUpgradeSteps` with `installed=<v> target=<tag>`, then `upgrade-done` or `upgrade-failed` naming the step)
+- [x] Tests: a fake `muxcode` on `PATH` whose `upgrade-daemons` output the test scripts; **negative control:** a failed `Verify` never reaches the daemon step (`TestSelfUpgradeDaemonStepSurfacesFailures`, `TestSelfUpgradeDaemonRelaunchResolvesInstalledBinary` — removes `muxcode` from the caller's `PATH` and checks the helper still resolves the installed binary — `TestSelfUpgradeTmuxReloadSkipsWithoutServer`, `TestSelfUpgradeWritesLifecycleRows`, `TestWriteStepResult`, `TestWriteUpgradeReport`; the pipeline stops at the first failed step, so `TestSelfUpgradeVerifyMismatchStopsPipeline` now also proves the daemon step is never reached)
+
+#### Phase 3 verification note
+
+Verified 2026-10-06 16:58 by plan from the working tree (run `1791315389`; Phase 2 committed as
+`2b74024`). The test node returned **success** on the full suite and review passed with 0 must-fix after
+one round — the daemon helper's `PATH` must begin with the verified `BINDIR` — which is in the tree with
+its regression test. With this phase the pipeline is complete end to end on the CLI: the only roads left
+are the modal (Phase 4), the docs (Phase 5) and the integration script (Phase 6). The CLI's exit code is
+0 for an up-to-date install, not 10 — only `--check` uses 10, because `--check` answers "should I run
+the upgrade?" while a full run answers "did it succeed?".
 
 ### Phase 4: Modal and menu
 
@@ -217,7 +227,7 @@ the attach road. The modal runs in the user's tmux popup, not an agent sandbox, 
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-202-self-upgrade-from-the-quick-menu | 46m | 2026-10-06 16:35 |
+| MUX-202-self-upgrade-from-the-quick-menu | 1h 1m | 2026-10-06 16:58 |
 
 ## Status
 

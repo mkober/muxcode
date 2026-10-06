@@ -26,14 +26,15 @@ const (
 )
 
 const (
-	upgradeManifestName  = "download.json"
-	upgradeTarballName   = "source.tar.gz"
-	upgradeSourceName    = "src"
-	upgradeLogName       = "build.log"
-	upgradeLockName      = "upgrade.lock"
-	upgradeMakeTimeout   = 15 * time.Minute
-	upgradeVerifyTimeout = 10 * time.Second
-	upgradeLogTailLines  = 5
+	upgradeManifestName   = "download.json"
+	upgradeTarballName    = "source.tar.gz"
+	upgradeSourceName     = "src"
+	upgradeLogName        = "build.log"
+	upgradeLockName       = "upgrade.lock"
+	upgradeMakeTimeout    = 15 * time.Minute
+	upgradeDaemonsTimeout = 2 * time.Minute
+	upgradeCommandTimeout = 10 * time.Second
+	upgradeLogTailLines   = 5
 )
 
 // upgradeBuildTools are what the Build step runs; Check probes them so a
@@ -142,12 +143,14 @@ type SourceTarball struct {
 }
 
 // StepResult is one pipeline row: the modal renders it and the CLI prints
-// it. JSON names are the `muxcode upgrade --json` contract.
+// it. Sub holds a step's own rows — Restart daemons has one per session.
+// JSON names are the `muxcode upgrade --json` contract.
 type StepResult struct {
 	Name     string        `json:"name"`
 	Success  bool          `json:"success"`
 	Note     string        `json:"note,omitempty"`
 	Error    string        `json:"error,omitempty"`
+	Sub      []StepResult  `json:"sub,omitempty"`
 	Duration time.Duration `json:"duration_ns"`
 }
 
@@ -156,7 +159,9 @@ type StepResult struct {
 type UpgradeProgress func(index int, result StepResult)
 
 // UpgradeState is one self-upgrade run, filled in step by step. Dir is the
-// release's cache directory, <cache root>/<tag>.
+// release's cache directory, <cache root>/<tag>. Stopped reports a run that
+// ended successfully at Check: nothing newer, and not forced. sub holds the
+// running step's sub-rows until the runner moves them onto its row.
 type UpgradeState struct {
 	Options   SelfUpgradeOptions
 	Check     UpgradeCheck
@@ -167,7 +172,19 @@ type UpgradeState struct {
 	ConfigDir string
 	Date      string
 	Results   []StepResult
-	stop      bool
+	Stopped   bool
+	sub       []StepResult
+}
+
+// DoneSummary is a finished run's closing line: the version delta, and the
+// follow-up the upgrade does not do — running agents keep the old build
+// until restarted.
+func (s *UpgradeState) DoneSummary() string {
+	if s.Stopped {
+		return "nothing to upgrade — " + s.Check.Summary()
+	}
+	return fmt.Sprintf("upgraded %s → %s; agents keep running until restarted — Restart Agents (prefix + b, A)",
+		s.Check.Installed.Version, s.Check.Latest.Tag)
 }
 
 // SourceDir is the extracted release tree make runs in.
@@ -176,33 +193,39 @@ func (s *UpgradeState) SourceDir() string { return filepath.Join(s.Dir, upgradeS
 // LogPath is the build and install output, kept for a failed step to name.
 func (s *UpgradeState) LogPath() string { return filepath.Join(s.Dir, upgradeLogName) }
 
-// upgradeStep is one pipeline step. Mutates marks a step that writes the
-// cache or the install destinations, and so must run under the upgrade lock.
+// upgradeStep is one pipeline step. Event names its lifecycle row. Mutates
+// marks a step that writes the cache, the install destinations or running
+// processes, and so must run under the upgrade lock.
 type upgradeStep struct {
 	Name    string
+	Event   string
 	Mutates bool
 	Run     func(context.Context, *UpgradeState) (string, error)
 }
 
 func selfUpgradeSteps() []upgradeStep {
 	return []upgradeStep{
-		{"Check", false, runCheckStep},
-		{"Download", true, runDownloadStep},
-		{"Build", true, runBuildStep},
-		{"Install", true, runInstallStep},
-		{"Verify", true, runVerifyStep},
+		{Name: "Check", Event: "upgrade-check", Run: runCheckStep},
+		{Name: "Download", Event: "upgrade-download", Mutates: true, Run: runDownloadStep},
+		{Name: "Build", Event: "upgrade-build", Mutates: true, Run: runBuildStep},
+		{Name: "Install", Event: "upgrade-install", Mutates: true, Run: runInstallStep},
+		{Name: "Verify", Event: "upgrade-verify", Mutates: true, Run: runVerifyStep},
+		{Name: "Restart daemons", Event: "upgrade-daemons", Mutates: true, Run: runDaemonsStep},
+		{Name: "Reload tmux config", Event: "upgrade-tmux", Mutates: true, Run: runTmuxStep},
 	}
 }
 
 // RunSelfUpgrade runs the self-upgrade pipeline (MUX-202): Check, Download,
-// Build, Install, Verify. It stops at the first failed step, returning that
-// step's error, and stops with success after Check when nothing is newer
-// and the run is not forced — an up-to-date install touches no file. The
-// state carries every finished step's row in Results.
+// Build, Install, Verify, Restart daemons, Reload tmux config. It stops at
+// the first failed step, returning that step's error, and stops with
+// success after Check when nothing is newer and the run is not forced — an
+// up-to-date install touches no file. The state carries every finished
+// step's row in Results.
 //
 // The steps after Check run under the cross-process upgrade lock
 // (lockSelfUpgrade); a run that finds it held fails at its first mutating
-// step without touching the cache or the install.
+// step without touching the cache or the install. Every step writes a
+// lifecycle row, and the run ends with upgrade-done or upgrade-failed.
 func RunSelfUpgrade(ctx context.Context, opts SelfUpgradeOptions, progress UpgradeProgress) (*UpgradeState, error) {
 	s := newUpgradeState(opts)
 	return s, runUpgradeSteps(ctx, s, selfUpgradeSteps(), progress)
@@ -216,9 +239,10 @@ func newUpgradeState(opts SelfUpgradeOptions) *UpgradeState {
 }
 
 // runUpgradeSteps takes the upgrade lock before the first mutating step and
-// holds it until the pipeline returns, so the lock lives at this boundary
-// rather than in each step.
+// holds it until the pipeline returns, and writes each step's lifecycle row,
+// so the lock and the log live at this boundary rather than in each step.
 func runUpgradeSteps(ctx context.Context, s *UpgradeState, steps []upgradeStep, progress UpgradeProgress) error {
+	session := BusSession()
 	var unlock func()
 	defer func() {
 		if unlock != nil {
@@ -235,22 +259,35 @@ func runUpgradeSteps(ctx context.Context, s *UpgradeState, steps []upgradeStep, 
 		if err == nil {
 			note, err = step.Run(ctx, s)
 		}
-		r := StepResult{Name: step.Name, Success: err == nil, Note: note, Duration: time.Since(start)}
+		r := StepResult{Name: step.Name, Success: err == nil, Note: note, Sub: s.sub, Duration: time.Since(start)}
+		s.sub = nil
+		level, detail := "info", r.Note
 		if err != nil {
 			r.Error = err.Error()
+			level, detail = "error", r.Error
 		}
 		s.Results = append(s.Results, r)
+		s.logLifecycle(session, level, step.Event, detail)
 		if progress != nil {
 			progress(i, r)
 		}
 		if err != nil {
+			s.logLifecycle(session, "error", "upgrade-failed", step.Name+": "+r.Error)
 			return fmt.Errorf("%s: %w", step.Name, err)
 		}
-		if s.stop {
-			return nil
+		if s.Stopped {
+			break
 		}
 	}
+	s.logLifecycle(session, "info", "upgrade-done", s.DoneSummary())
 	return nil
+}
+
+// logLifecycle writes one upgrade row carrying the installed and target
+// versions, so the log alone tells which upgrade a row belongs to.
+func (s *UpgradeState) logLifecycle(session, level, event, detail string) {
+	LogLifecycle(session, level, "upgrade", event,
+		fmt.Sprintf("installed=%s target=%s %s", s.Check.Installed.Version, s.Check.Latest.Tag, detail))
 }
 
 // lockSelfUpgrade takes the exclusive per-user upgrade lock,
@@ -305,7 +342,7 @@ func runCheckStep(ctx context.Context, s *UpgradeState) (string, error) {
 		if check.Verdict == UpgradeUnknown {
 			return "", fmt.Errorf("%s — force to install it anyway", note)
 		}
-		s.stop = true
+		s.Stopped = true
 		return note, nil
 	}
 	if err := check.ToolsErr(); err != nil {
@@ -540,7 +577,7 @@ func tailLines(path string, n int) []string {
 // note, not a failure: nothing on PATH shadows the install.
 func runVerifyStep(ctx context.Context, s *UpgradeState) (string, error) {
 	bin := filepath.Join(s.BinDir, "muxcode")
-	ctx, cancel := context.WithTimeout(ctx, upgradeVerifyTimeout)
+	ctx, cancel := context.WithTimeout(ctx, upgradeCommandTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, bin, "version", "--json").Output()
 	if err != nil {
@@ -579,4 +616,90 @@ func sameFile(a, b string) bool {
 		return false
 	}
 	return os.SameFile(ai, bi)
+}
+
+// runDaemonsStep runs the freshly installed binary's upgrade-daemons, never
+// bus.UpgradeDaemons in-process: this process is the old build, whose
+// BuildInfo would read every daemon as current and skip them all (MUX-202
+// Decision 3). It covers every session on the machine. Each session becomes
+// a sub-row; a non-zero exit fails the step with the command's own message
+// lines verbatim — an unreadable ps among them.
+//
+// BINDIR goes first on the helper's PATH: upgrade-daemons kills each daemon
+// and relaunches it as bare `muxcode`, so with BINDIR off PATH — which Verify
+// allows — it would relaunch the old build, or nothing, and leave every
+// session without a daemon.
+func runDaemonsStep(ctx context.Context, s *UpgradeState) (string, error) {
+	bin := filepath.Join(s.BinDir, "muxcode")
+	ctx, cancel := context.WithTimeout(ctx, upgradeDaemonsTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "upgrade-daemons")
+	cmd.Env = append(os.Environ(), "PATH="+s.BinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, runErr := cmd.CombinedOutput()
+	rows, messages := parseDaemonLines(string(out))
+	s.sub = rows
+	failed := 0
+	for _, r := range rows {
+		if !r.Success {
+			failed++
+		}
+	}
+	switch {
+	case runErr != nil && len(messages) > 0:
+		return "", errors.New(strings.Join(messages, "; "))
+	case runErr != nil && failed > 0:
+		return "", fmt.Errorf("%d of %d daemons failed to restart", failed, len(rows))
+	case runErr != nil:
+		return "", fmt.Errorf("%s upgrade-daemons: %w", bin, runErr)
+	case len(messages) > 0:
+		return strings.Join(messages, "; "), nil
+	}
+	return fmt.Sprintf("%d session daemon(s) via %s upgrade-daemons", len(rows), bin), nil
+}
+
+// parseDaemonLines splits upgrade-daemons output (cmd/upgrade.go's contract):
+// an indented "<session>: <detail>" line is that session's sub-row, failed
+// when the detail starts "FAILED — "; any other line is a message about the
+// run as a whole. tmux forbids ':' in a session name, so the first ": "
+// ends it.
+func parseDaemonLines(out string) (rows []StepResult, messages []string) {
+	for _, line := range strings.Split(out, "\n") {
+		text := strings.TrimSpace(line)
+		if text == "" {
+			continue
+		}
+		session, detail, ok := strings.Cut(text, ": ")
+		if !ok || !strings.HasPrefix(line, "  ") {
+			messages = append(messages, text)
+			continue
+		}
+		if cause, failed := strings.CutPrefix(detail, "FAILED — "); failed {
+			rows = append(rows, StepResult{Name: session, Error: cause})
+		} else {
+			rows = append(rows, StepResult{Name: session, Success: true, Note: detail})
+		}
+	}
+	return rows, messages
+}
+
+// runTmuxStep sources the reinstalled tmux.conf into the running tmux server,
+// so the upgraded menu and bindings apply without restarting tmux. No tmux
+// server, or no tmux at all, is a skip with a note: there is nothing to
+// reload.
+func runTmuxStep(ctx context.Context, s *UpgradeState) (string, error) {
+	conf := filepath.Join(s.ConfigDir, "tmux.conf")
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return "skipped — tmux is not installed", nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, upgradeCommandTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "tmux", "source-file", conf).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if strings.Contains(msg, "no server running") || strings.Contains(msg, "error connecting to") {
+			return "skipped — no tmux server is running", nil
+		}
+		return "", fmt.Errorf("tmux source-file %s: %v: %s", conf, err, msg)
+	}
+	return "sourced " + conf, nil
 }
