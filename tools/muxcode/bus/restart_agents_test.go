@@ -25,6 +25,11 @@ type restartFixture struct {
 	// handedOff records, per relaunch, whether a pending record was already
 	// on disk when the launch was typed.
 	handedOff map[string]bool
+	// statusAtStop records, per stop, the record status on disk as it began.
+	statusAtStop map[string]string
+	// stopErr fails every stop; onStop runs after a successful one.
+	stopErr error
+	onStop  func()
 }
 
 // newRestartFixture puts each role in windows on its provider from clis
@@ -35,11 +40,12 @@ func newRestartFixture(t *testing.T, windows []string, clis map[string]string) *
 	t.Cleanup(ResetBusDirBase)
 	t.Setenv("BUS_SESSION", "")
 	f := &restartFixture{
-		session:   "restart-test",
-		alive:     map[string]bool{},
-		modes:     map[string]relaunchMode{},
-		verdict:   RestartVerifyVerified,
-		handedOff: map[string]bool{},
+		session:      "restart-test",
+		alive:        map[string]bool{},
+		modes:        map[string]relaunchMode{},
+		verdict:      RestartVerifyVerified,
+		handedOff:    map[string]bool{},
+		statusAtStop: map[string]string{},
 		relaunchID: func(role string) (string, error) {
 			return "8a744341-11bf-440f-b5d2-49248447a9c0", nil
 		},
@@ -64,9 +70,17 @@ func newRestartFixture(t *testing.T, windows []string, clis map[string]string) *
 
 	restartWindowNames = func(string) ([]string, error) { return windows, nil }
 	restartAgentAlive = func(_, role string) bool { return f.alive[role] }
-	restartStopAgent = func(_, role string) error {
+	restartStopAgent = func(session, role string) error {
 		f.stops = append(f.stops, role)
+		v, _, _ := ReadRestartVerification(session, role)
+		f.statusAtStop[role] = v.Status
+		if f.stopErr != nil {
+			return f.stopErr
+		}
 		f.alive[role] = false
+		if f.onStop != nil {
+			f.onStop()
+		}
 		return nil
 	}
 	restartRelaunch = func(session, role string, mode relaunchMode) (string, error) {
@@ -298,11 +312,15 @@ func TestRestartAgent_HandsVerificationToDaemon(t *testing.T) {
 // whose previous check is still active is not restarted over it.
 func TestRestartAgent_RefusedWithoutHandoff(t *testing.T) {
 	f := newRestartFixture(t, restartWindows, restartCLIs)
+	f.alive["plan"] = true
 	if err := os.WriteFile(restartVerifyDir(f.session), []byte("not a dir"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RestartAgent(f.session, "plan"); err == nil || !strings.Contains(err.Error(), "not restarting") {
 		t.Fatalf("err = %v, want the handoff failure", err)
+	}
+	if len(f.stops) != 0 {
+		t.Error("live plan was stopped with no record handed to the daemon")
 	}
 	if _, typed := f.modes["plan"]; typed {
 		t.Error("plan was relaunched with no record handed to the daemon")
@@ -323,6 +341,68 @@ func TestRestartAgent_RefusedWithoutHandoff(t *testing.T) {
 	}
 }
 
+// A live agent is stopped only once the daemon holds a preparing record for
+// it, and the check is armed as pending only after the stop — a restarter that
+// dies between the two leaves the daemon a record, not an unsupervised dead
+// agent.
+func TestRestartAgent_RecordPrecedesStop(t *testing.T) {
+	f := newRestartFixture(t, restartWindows, restartCLIs)
+	f.alive["plan"] = true
+
+	if _, err := RestartAgent(f.session, "plan"); err != nil {
+		t.Fatalf("RestartAgent: %v", err)
+	}
+	if len(f.stops) != 1 {
+		t.Fatalf("stops = %v, want plan once — the fixture never exercised a live stop", f.stops)
+	}
+	if got := f.statusAtStop["plan"]; got != RestartVerifyPreparing {
+		t.Errorf("record at stop = %q, want %q", got, RestartVerifyPreparing)
+	}
+	if !f.handedOff["plan"] {
+		t.Error("the launch was typed before the check was armed")
+	}
+}
+
+// A stop that fails leaves the agent running: the preparing record is
+// withdrawn and nothing is typed. A stop that succeeds but whose check cannot
+// then be armed leaves the agent down for the health sweep — never relaunched
+// unverified.
+func TestRestartAgent_StopOrArmFailureNeverRelaunches(t *testing.T) {
+	f := newRestartFixture(t, restartWindows, restartCLIs)
+	f.alive["plan"] = true
+	f.stopErr = errors.New("did not exit")
+
+	if _, err := RestartAgent(f.session, "plan"); err == nil || !strings.Contains(err.Error(), "exiting live plan") {
+		t.Fatalf("err = %v, want the stop failure", err)
+	}
+	if _, typed := f.modes["plan"]; typed {
+		t.Error("plan was relaunched over a failed stop")
+	}
+	if _, ok, _ := ReadRestartVerification(f.session, "plan"); ok {
+		t.Error("a failed stop left a record for an agent still running")
+	}
+
+	g := newRestartFixture(t, restartWindows, restartCLIs)
+	g.alive["plan"] = true
+	g.onStop = func() {
+		if err := os.RemoveAll(restartVerifyDir(g.session)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(restartVerifyDir(g.session), []byte("not a dir"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := RestartAgent(g.session, "plan"); err == nil || !strings.Contains(err.Error(), "not relaunching") {
+		t.Fatalf("err = %v, want the arm failure", err)
+	}
+	if g.statusAtStop["plan"] != RestartVerifyPreparing {
+		t.Fatalf("record at stop = %q — the fixture did not reach the arm step", g.statusAtStop["plan"])
+	}
+	if _, typed := g.modes["plan"]; typed {
+		t.Error("plan was relaunched with its check unarmed")
+	}
+}
+
 // One daemon step over a pending record. Only a ready composer held clean for
 // the settle period verifies; startup text, a failed capture and a not-yet-
 // settled pane only wait; a banner at any point, or an unproven agent at the
@@ -336,6 +416,7 @@ func TestAdvanceRestartVerification(t *testing.T) {
 	pending := RestartVerification{Role: "plan", Status: RestartVerifyPending, RelaunchedAt: t0}
 	settling := pending
 	settling.ReadyAt = t0 + 2
+	preparing := RestartVerification{Role: "plan", Status: RestartVerifyPreparing, UpdatedAt: t0}
 
 	cases := []struct {
 		name       string
@@ -359,6 +440,9 @@ func TestAdvanceRestartVerification(t *testing.T) {
 		{"dead before the timeout waits", pending, t0 + 5, false, "", nil, RestartVerifyPending, false, 0},
 		{"dead at the timeout exits", pending, t0 + RestartVerifyTimeoutSecs, false, "", nil, RestartVerifyExited, false, 0},
 		{"stop-pending keeps stopping", RestartVerification{Role: "plan", Status: RestartVerifyStopPending, RelaunchedAt: t0}, t0 + 1, true, ready, nil, RestartVerifyStopPending, true, 0},
+		{"preparing never verifies the pre-stop pane", preparing, t0 + 30, true, ready, nil, RestartVerifyPreparing, false, 0},
+		{"preparing waits for its restarter", preparing, t0 + restartPrepareTimeoutSecs - 1, false, "", nil, RestartVerifyPreparing, false, 0},
+		{"preparing never armed is abandoned", preparing, t0 + restartPrepareTimeoutSecs, false, "", nil, RestartVerifyAbandoned, false, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

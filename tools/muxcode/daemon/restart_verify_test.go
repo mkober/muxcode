@@ -96,16 +96,30 @@ func TestCheckRestartVerifications_StopFailureRetriedUntilConfirmed(t *testing.T
 	}
 }
 
-// Negative control for the sweep skip: once the check has closed, a dead role
-// is the health sweep's again and is restarted.
+// Negative control for the sweep skip: once the check has closed — including
+// a preparing record abandoned by a restarter that died after its stop — a
+// dead role is the health sweep's again and is restarted. A preparing record
+// still owns it: the agent the restart is stopping is not a death.
 func TestCheckAgentHealth_ClosedRestartCheckReturnsRoleToSweep(t *testing.T) {
-	h := newResumeHarness(t, "plan")
-	handOff(t, h.d.session, bus.RestartVerification{Role: "plan", Status: bus.RestartVerifyStopped})
+	cases := []struct {
+		status    string
+		restarted bool
+	}{
+		{bus.RestartVerifyStopped, true},
+		{bus.RestartVerifyAbandoned, true},
+		{bus.RestartVerifyPreparing, false},
+	}
+	for _, c := range cases {
+		t.Run(c.status, func(t *testing.T) {
+			h := newResumeHarness(t, "plan")
+			handOff(t, h.d.session, bus.RestartVerification{Role: "plan", Status: c.status})
 
-	h.sweep(3)
+			h.sweep(3)
 
-	if len(h.restarts) == 0 {
-		t.Fatal("a role with only a terminal record was never restarted — the skip is not scoped to active checks")
+			if got := len(h.restarts) > 0; got != c.restarted {
+				t.Fatalf("restarted = %v, want %v — the sweep skip must cover exactly the active checks", got, c.restarted)
+			}
+		})
 	}
 }
 

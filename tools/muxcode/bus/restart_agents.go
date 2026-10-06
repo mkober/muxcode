@@ -104,11 +104,15 @@ func RestartProviderCounts(session string) ([]RestartProviderCount, error) {
 // conversation.
 //
 // The relaunch's definition check belongs to the daemon, not to this process:
-// a RestartVerification record is written before anything is typed — a
-// restart whose check cannot be handed off does not happen — and the daemon
-// verifies the pane (AdvanceRestartVerification), stopping and retrying the
-// stop until confirmed. This call only waits for the verdict, so closing the
-// modal or killing the CLI mid-restart never leaves an agent unsupervised.
+// a RestartVerification record is written before the live agent is stopped —
+// a restart whose check cannot be handed off does not happen — as preparing,
+// then armed as pending once the stop is done, and the daemon verifies the
+// pane (AdvanceRestartVerification), stopping and retrying the stop until
+// confirmed. This call only waits for the verdict, so closing the modal or
+// killing the CLI mid-restart never leaves an agent unsupervised: a restarter
+// that dies after the stop leaves a preparing record the daemon abandons to
+// the health sweep. If arming fails after the stop, the agent is left stopped
+// for the sweep to restart rather than relaunched unverified.
 // A role whose previous restart's check is still active is refused.
 //
 // Any other provider gets a same-provider fresh ReloadAgent. Neither road
@@ -128,8 +132,13 @@ func RestartAgent(session, role string) (string, error) {
 	}
 	defer release()
 
+	preparing := RestartVerification{Role: role, Status: RestartVerifyPreparing}
+	if err := WriteRestartVerification(session, preparing); err != nil {
+		return "", fmt.Errorf("handing %s's definition check to the daemon failed — not restarting: %w", role, err)
+	}
 	if restartAgentAlive(session, role) {
 		if err := restartStopAgent(session, role); err != nil {
+			ClearRestartVerification(session, role) // still running — nothing for the daemon to check
 			return "", fmt.Errorf("exiting live %s before restart: %w", role, err)
 		}
 	}
@@ -137,9 +146,10 @@ func RestartAgent(session, role string) (string, error) {
 	if role == "edit" {
 		mode = relaunchResumeOnly
 	}
-	record := RestartVerification{Role: role, Status: RestartVerifyPending, RelaunchedAt: time.Now().Unix()}
-	if err := WriteRestartVerification(session, record); err != nil {
-		return "", fmt.Errorf("handing %s's definition check to the daemon failed — not restarting: %w", role, err)
+	armed := RestartVerification{Role: role, Status: RestartVerifyPending, RelaunchedAt: time.Now().Unix()}
+	if err := WriteRestartVerification(session, armed); err != nil {
+		ClearRestartVerification(session, role)
+		return "", fmt.Errorf("%s is down but its definition check could not be armed — not relaunching; the daemon's health sweep restarts it: %w", role, err)
 	}
 	id, err := restartRelaunch(session, role, mode)
 	if errors.Is(err, ErrResumeUnavailable) {

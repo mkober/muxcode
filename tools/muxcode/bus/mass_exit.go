@@ -147,6 +147,16 @@ func DetectMassExit(sightings []ExitSighting, window int64) (MassExit, bool) {
 	return m, len(m.Sightings) >= 2
 }
 
+// Names reports whether the burst includes role in session.
+func (m MassExit) Names(session, role string) bool {
+	for _, s := range m.Sightings {
+		if s.Session == session && s.Role == role {
+			return true
+		}
+	}
+	return false
+}
+
 // Sessions returns the distinct sessions in the burst, sorted.
 func (m MassExit) Sessions() []string {
 	seen := map[string]bool{}
@@ -181,6 +191,6 @@ func (m MassExit) Detail() string {
 // FormatMassExitAlert is the event body sent to edit.
 func FormatMassExitAlert(m MassExit) string {
 	return fmt.Sprintf("[mass-agent-exit] %s. These exits are correlated, not independent faults — "+
-		"look for one external cause (Claude Code update, OS termination). Per-role restart proceeds "+
-		"as usual: muxcode lifecycle show --event mass-agent-exit", m.Detail())
+		"look for one external cause (Claude Code update, OS termination). It stands in for any "+
+		"agent-down alert not already sent for them; per-role restart proceeds as usual: muxcode lifecycle show --event mass-agent-exit", m.Detail())
 }

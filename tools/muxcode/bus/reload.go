@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -36,24 +37,39 @@ func writeReloadMarker(session, role string) error {
 // already holds the role's marker.
 var ErrReloadMarkerHeld = errors.New("reload marker already held")
 
+// reloadMarkerRenewEvery is how often a held marker's mtime is refreshed —
+// well inside IsReloadMarkerStale's 60s threshold.
+var reloadMarkerRenewEvery = 20 * time.Second
+
 // acquireReloadMarker creates the role's reload marker exclusively (O_EXCL),
 // so two relaunchers — `muxcode resume` and the daemon's RestartLocalAgent —
 // cannot both pass a check-then-write and type into the same pane at once.
-// It returns ErrReloadMarkerHeld when the marker exists, and on success a
-// release func that removes it.
+// It returns ErrReloadMarkerHeld when the marker exists, and on success an
+// idempotent release func.
+//
+// The marker is a lease, not a timestamp: it holds an owner token and is
+// renewed every reloadMarkerRenewEvery for as long as it is held, so the
+// daemon's stale-marker cleanup (CleanStaleReloadMarkers, 60s) reclaims only
+// a holder that died. A hold may outlive that threshold — RestartAgent waits
+// up to ~110s for the daemon's definition check — and before renewal the
+// cleanup could delete a live hold mid-wait, let a second reload acquire, and
+// then lose that reload's marker to this one's release. Release removes the
+// marker only while it still carries this holder's token.
 func acquireReloadMarker(session, role string) (release func(), err error) {
 	dir := filepath.Join(BusDir(session), "lock")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create lock dir: %w", err)
 	}
-	f, err := os.OpenFile(ReloadMarkerPath(session, role), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	path := ReloadMarkerPath(session, role)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if errors.Is(err, fs.ErrExist) {
 		return nil, fmt.Errorf("%w: %s", ErrReloadMarkerHeld, role)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("create reload marker: %w", err)
 	}
-	_, writeErr := f.WriteString("reloading")
+	token := fmt.Sprintf("reloading %d-%d", os.Getpid(), time.Now().UnixNano())
+	_, writeErr := f.WriteString(token)
 	if closeErr := f.Close(); writeErr == nil {
 		writeErr = closeErr
 	}
@@ -61,7 +77,43 @@ func acquireReloadMarker(session, role string) (release func(), err error) {
 		clearReloadMarker(session, role)
 		return nil, fmt.Errorf("write reload marker: %w", writeErr)
 	}
-	return func() { clearReloadMarker(session, role) }, nil
+
+	stop, done := make(chan struct{}), make(chan struct{})
+	go renewReloadMarker(path, token, stop, done)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(stop)
+			<-done
+			if ownsReloadMarker(path, token) {
+				_ = os.Remove(path)
+			}
+		})
+	}, nil
+}
+
+// renewReloadMarker refreshes the marker's mtime while this holder still owns
+// it, until stop closes.
+func renewReloadMarker(path, token string, stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	tick := time.NewTicker(reloadMarkerRenewEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-tick.C:
+			if ownsReloadMarker(path, token) {
+				now := time.Now()
+				_ = os.Chtimes(path, now, now)
+			}
+		}
+	}
+}
+
+func ownsReloadMarker(path, token string) bool {
+	data, err := os.ReadFile(path)
+	return err == nil && string(data) == token
 }
 
 // clearReloadMarker removes the reload marker file.

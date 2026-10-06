@@ -10,25 +10,36 @@ import (
 	"time"
 )
 
-// Restart verification statuses. Pending and stop-pending are owned by the
-// daemon; the other three are terminal outcomes the restarting CLI reads back.
+// Restart verification statuses. Preparing, pending and stop-pending are owned
+// by the daemon; the rest are terminal. Preparing covers the stop of a live
+// agent before its relaunch: the record exists before the agent is stopped,
+// so a restarter that dies between the stop and the relaunch leaves the daemon
+// a record rather than a silently dead agent. A preparing record never armed
+// within restartPrepareTimeoutSecs is abandoned, which hands the role back to
+// the health sweep. Verified, stopped and exited are the outcomes the
+// restarting CLI reads back.
 const (
+	RestartVerifyPreparing   = "preparing"
 	RestartVerifyPending     = "pending"
 	RestartVerifyStopPending = "stop-pending"
 	RestartVerifyVerified    = "verified"
 	RestartVerifyStopped     = "stopped"
 	RestartVerifyExited      = "exited"
+	RestartVerifyAbandoned   = "abandoned"
 )
 
 // Restart verification timing: the daemon accepts a relaunch once its pane has
 // shown a ready Claude composer, with no definition-unavailable banner, for
 // RestartVerifySettleSecs; one still unproven after RestartVerifyTimeoutSecs is
 // stopped. Terminal records nobody collected are pruned after
-// restartVerifyPruneSecs.
+// restartVerifyPruneSecs. The stop a preparing record covers takes at most
+// ~12s (GracefulStop), so one still unarmed after restartPrepareTimeoutSecs
+// belongs to a restarter that died.
 const (
-	RestartVerifySettleSecs  = 5
-	RestartVerifyTimeoutSecs = 90
-	restartVerifyPruneSecs   = 600
+	RestartVerifySettleSecs   = 5
+	RestartVerifyTimeoutSecs  = 90
+	restartVerifyPruneSecs    = 600
+	restartPrepareTimeoutSecs = 60
 )
 
 // RestartVerification is the durable record of an operator-restarted Claude
@@ -49,7 +60,7 @@ type RestartVerification struct {
 
 // Active reports whether the daemon still owns the record.
 func (v RestartVerification) Active() bool {
-	return v.Status == RestartVerifyPending || v.Status == RestartVerifyStopPending
+	return v.Status == RestartVerifyPreparing || v.Status == RestartVerifyPending || v.Status == RestartVerifyStopPending
 }
 
 func restartVerifyDir(session string) string {
@@ -130,9 +141,19 @@ func RestartVerificationPrunable(v RestartVerification, now int64) bool {
 // and a relaunch still unproven at the timeout is stopped, never passed. A
 // banner at any point stops it. An agent dead at the timeout has nothing left
 // running to contain and closes as exited.
+//
+// A preparing record has nothing relaunched to check: it only waits, timed
+// from UpdatedAt, and is abandoned once restartPrepareTimeoutSecs pass unarmed.
 func AdvanceRestartVerification(v RestartVerification, now int64, alive bool, content string, captureErr error) (RestartVerification, bool) {
-	if v.Status == RestartVerifyStopPending {
+	switch v.Status {
+	case RestartVerifyStopPending:
 		return v, true
+	case RestartVerifyPreparing:
+		if now-v.UpdatedAt >= restartPrepareTimeoutSecs {
+			v.Status = RestartVerifyAbandoned
+			v.Detail = "restarter never armed the check after stopping the agent — handed back to the health sweep"
+		}
+		return v, false
 	}
 	timedOut := now-v.RelaunchedAt >= RestartVerifyTimeoutSecs
 	switch {

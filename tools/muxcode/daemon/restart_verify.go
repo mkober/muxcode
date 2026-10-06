@@ -12,7 +12,8 @@ import (
 // definition check (bus.RestartVerification, MUX-139 Phase 5) from the moment
 // the restarting process hands it off until a terminal status — regardless of
 // whether that process (the restart modal, `reload --all --resume`) is still
-// alive to read it. A pending record advances by bus.AdvanceRestartVerification;
+// alive to read it. A preparing record its restarter never armed is abandoned
+// to the health sweep. A pending record advances by bus.AdvanceRestartVerification;
 // a relaunch that must be stopped is contained through stopUnrestricted and
 // stays stop-pending, retried every tick, until the stop is confirmed. Edit is
 // alerted once when containment starts failing and once when it succeeds.
@@ -77,6 +78,8 @@ func (d *Daemon) advanceRestartVerification(v bus.RestartVerification, now int64
 		}
 	} else if next.Status == bus.RestartVerifyVerified {
 		bus.LogLifecycle(d.session, "info", "daemon", "agent-restart-verified", role)
+	} else if next.Status == bus.RestartVerifyAbandoned {
+		bus.LogLifecycle(d.session, "warn", "daemon", "agent-restart-abandoned", role+": "+next.Detail)
 	}
 
 	if stop || next != v { // a stop attempt always persists, restamping the retry clock

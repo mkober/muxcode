@@ -40,7 +40,9 @@ func massExitEvents(t *testing.T, session string) []bus.Message {
 
 // Three Claude agents down in one sweep raise exactly one mass-agent-exit to
 // edit and one lifecycle row naming all three — and the sweeps that follow
-// inside the window raise no second one. Per-role restarts still run.
+// inside the window raise no second one. The event stands in for their
+// agent-down alerts, so edit is notified once, not once per agent. Per-role
+// restarts still run.
 func TestCheckAgentHealth_MassExitRaisesOneEvent(t *testing.T) {
 	h := massExitHarness(t, "plan", "commit", "run")
 
@@ -49,6 +51,12 @@ func TestCheckAgentHealth_MassExitRaisesOneEvent(t *testing.T) {
 	events := massExitEvents(t, h.d.session)
 	if len(events) != 1 {
 		t.Fatalf("mass-agent-exit events = %d, want exactly 1", len(events))
+	}
+	if n := editEvents(t, h.d.session, "agent-down"); n != 0 {
+		t.Errorf("agent-down alerts = %d alongside the mass-agent-exit, want 0 — the burst must reach edit as one event", n)
+	}
+	if n := len(lifecycleDetails(t, h.d.session, "agent-down-folded")); n != 3 {
+		t.Errorf("agent-down-folded rows = %d, want 3", n)
 	}
 	rows := lifecycleDetails(t, h.d.session, "mass-agent-exit")
 	if len(rows) != 1 {
@@ -66,7 +74,9 @@ func TestCheckAgentHealth_MassExitRaisesOneEvent(t *testing.T) {
 	}
 }
 
-// Negative control: a single death is an agent-down, never a mass exit.
+// Negative control: a single death is an agent-down, never a mass exit — and
+// holding the alert to the end of the probe pass still sends it ahead of the
+// restart notice.
 func TestCheckAgentHealth_SingleDeathRaisesNoMassExit(t *testing.T) {
 	h := massExitHarness(t, "plan")
 
@@ -77,6 +87,22 @@ func TestCheckAgentHealth_SingleDeathRaisesNoMassExit(t *testing.T) {
 	}
 	if len(h.restarts) == 0 {
 		t.Fatal("plan never restarted — the fixture did not exercise a death")
+	}
+	msgs, _ := bus.Peek(h.d.session, "edit")
+	down, restarting := -1, -1
+	for i, m := range msgs {
+		switch {
+		case m.Action == "agent-down" && down < 0:
+			down = i
+		case m.Action == "agent-restarting" && restarting < 0:
+			restarting = i
+		}
+	}
+	if down < 0 {
+		t.Fatal("an uncorrelated death sent no agent-down alert")
+	}
+	if restarting >= 0 && restarting < down {
+		t.Errorf("agent-restarting (#%d) reached edit before agent-down (#%d)", restarting, down)
 	}
 }
 
@@ -183,6 +209,9 @@ func TestCheckAgentHealth_MassExitSeesLaterPeerSession(t *testing.T) {
 	if n := len(massExitEvents(t, h.d.session)); n != 0 {
 		t.Fatalf("mass exit raised before the peer died: %d events", n)
 	}
+	if n := editEvents(t, h.d.session, "agent-down"); n != 1 {
+		t.Fatalf("agent-down alerts before any burst = %d, want plan's 1 — a death not yet correlated is never held back", n)
+	}
 
 	if err := bus.RecordAgentExit(peer, "commit", time.Now().Unix()); err != nil {
 		t.Fatalf("RecordAgentExit: %v", err)
@@ -215,5 +244,8 @@ func TestCheckAgentHealth_NonClaudeDeathsNotCorrelated(t *testing.T) {
 	}
 	if !h.d.agentWasDown["commit"] || !h.d.agentWasDown["run"] {
 		t.Fatal("fixture never marked the OpenCode roles down — assertion above is vacuous")
+	}
+	if n := editEvents(t, h.d.session, "agent-down"); n != 2 {
+		t.Errorf("agent-down alerts = %d, want 2 — uncorrelated deaths keep their own alerts", n)
 	}
 }
