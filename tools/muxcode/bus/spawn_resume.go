@@ -92,9 +92,14 @@ func deadSpawnWorkers(session, taskIDs string) (dead []SpawnEntry, alive []strin
 // verifyResumedWorkers reseeds it. A worker that cannot be resumed — no banner
 // after deadWorkerConfirmSecs, a provider with no resume, or resumes exhausted
 // — fails the node and is stopped, so the run fails loudly and a retry starts
-// fresh (FindLiveSpawn never reuses a stopped worker). Resumes share the
+// fresh (reserveRunWorker never reuses a stopped worker). Resumes share the
 // node's redrive cap with replaceLostWorkers. MUXCODE_AUTO_RESUME_DISABLE=1
 // returns before any of it, leaving the executor's previous behaviour intact.
+//
+// A resume relaunches the worker in its own window under its own entry and
+// never creates one, so it cannot give the run a second worker (MUX-195); it
+// runs only when replaceLostWorkers did not act this tick, and the two act on
+// disjoint workers — resume on running entries, replacement on ended ones.
 func resumeDeadWorkers(session string, run *GraphRun, n *Node, st *GraphNodeStatus, now int64) bool {
 	if AutoResumeDisabled() {
 		return false

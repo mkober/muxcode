@@ -9,9 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -37,6 +40,7 @@ type SpawnEntry struct {
 	ReadyAt     int64  `json:"ready_at,omitempty"`     // first sighting of the resumed session's prompt with no definition warning
 	StopPending string `json:"stop_pending,omitempty"` // node failure awaiting this worker's confirmed stop
 	IdleSince   int64  `json:"idle_since,omitempty"`   // when its run released it to the idle pool; 0 while owned or busy (MUX-195)
+	Spec        string `json:"spec,omitempty"`         // active spec when its current seed was sent; adoption clears context when it changed (MUX-195)
 	Display     string `json:"-"`                      // render-time status from SpawnDisplayStatus; never persisted
 }
 
@@ -77,6 +81,7 @@ func scanSpawnEntries(session string) (entries []SpawnEntry, malformed int, err 
 }
 
 // WriteSpawnEntries overwrites the spawn JSONL file with the given entries.
+// Callers hold withSpawnRegistryLock across their read and this write.
 func WriteSpawnEntries(session string, entries []SpawnEntry) error {
 	var buf bytes.Buffer
 	for _, e := range entries {
@@ -125,34 +130,56 @@ func SpawnBaseRole(session, role string) string {
 	return role
 }
 
-// UpdateSpawnEntry applies a mutation function to a spawn entry by ID.
-func UpdateSpawnEntry(session, id string, fn func(*SpawnEntry)) error {
-	entries, err := ReadSpawnEntries(session)
+// spawnRegistryMu and the flock taken by withSpawnRegistryLock serialize
+// every read-modify-write of the spawn registry. The daemon and the CLI's
+// spawn commands write it from separate processes, and a worker handed to a
+// new run but overwritten by a concurrent writer's stale copy would belong to
+// its finished run again (MUX-195). Holders must not re-enter it.
+var spawnRegistryMu sync.Mutex
+
+func withSpawnRegistryLock(session string, fn func() error) error {
+	spawnRegistryMu.Lock()
+	defer spawnRegistryMu.Unlock()
+
+	lockPath := SpawnPath(session) + ".lock"
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
 
-	found := false
-	for i, e := range entries {
-		if e.ID == id {
-			fn(&entries[i])
-			found = true
-			break
+// UpdateSpawnEntry applies a mutation function to a spawn entry by ID, under
+// the registry lock.
+func UpdateSpawnEntry(session, id string, fn func(*SpawnEntry)) error {
+	return withSpawnRegistryLock(session, func() error {
+		entries, err := ReadSpawnEntries(session)
+		if err != nil {
+			return err
 		}
-	}
-
-	if !found {
+		for i, e := range entries {
+			if e.ID == id {
+				fn(&entries[i])
+				return WriteSpawnEntries(session, entries)
+			}
+		}
 		return fmt.Errorf("spawn not found: %s", id)
-	}
-
-	return WriteSpawnEntries(session, entries)
+	})
 }
 
 // StartSpawn creates a tmux window, seeds the inbox with the task, and launches
 // an agent. When useWorktree is true, the spawn gets its own git worktree at
 // the current HEAD commit for filesystem isolation. Returns the SpawnEntry.
 func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry, error) {
-	return StartSpawnOwned(session, role, task, owner, useWorktree, "", "")
+	return StartSpawnOwned(session, role, task, owner, useWorktree, "", "", "")
 }
 
 // StartSpawnOwned is StartSpawn with graph ownership (run+node, the reuse
@@ -160,8 +187,10 @@ func StartSpawn(session, role, task, owner string, useWorktree bool) (SpawnEntry
 // window — and a swallowed error path — where a fast reply or failed
 // update produced a permanently unowned worker: never reused, never
 // persistent, reaped as an ordinary spawn (review must-fix, 2026-09-01).
-// Empty ids mean an unowned CLI spawn, the previous behavior exactly.
-func StartSpawnOwned(session, role, task, owner string, useWorktree bool, runID, nodeID string) (SpawnEntry, error) {
+// Empty ids mean an unowned CLI spawn, the previous behavior exactly. A
+// non-empty seedID is the id the seed is sent under, so a caller that
+// persisted it before dispatch can find this worker again after a restart.
+func StartSpawnOwned(session, role, task, owner string, useWorktree bool, runID, nodeID, seedID string) (SpawnEntry, error) {
 	// Generate spawn ID and extract 8-hex suffix for compact window name
 	fullID := NewMsgID("spawn")
 	parts := strings.Split(fullID, "-")
@@ -179,6 +208,7 @@ func StartSpawnOwned(session, role, task, owner string, useWorktree bool, runID,
 		StartedAt: time.Now().Unix(),
 		RunID:     runID,
 		NodeID:    nodeID,
+		Spec:      ReadActiveSpec(session),
 	}
 
 	// Create worktree if requested
@@ -204,6 +234,9 @@ func StartSpawnOwned(session, role, task, owner string, useWorktree bool, runID,
 
 	// Seed inbox with task message
 	msg := NewMessage(owner, spawnRole, "request", "spawn-task", task, "")
+	if seedID != "" {
+		msg.ID = seedID
+	}
 	if err := Send(session, msg); err != nil {
 		return SpawnEntry{}, fmt.Errorf("seeding inbox: %v", err)
 	}
@@ -213,16 +246,16 @@ func StartSpawnOwned(session, role, task, owner string, useWorktree bool, runID,
 		return SpawnEntry{}, err
 	}
 
-	// Persist entry
-	entries, err := ReadSpawnEntries(session)
+	err := withSpawnRegistryLock(session, func() error {
+		entries, err := ReadSpawnEntries(session)
+		if err != nil {
+			return err
+		}
+		return WriteSpawnEntries(session, append(entries, entry))
+	})
 	if err != nil {
 		return SpawnEntry{}, err
 	}
-	entries = append(entries, entry)
-	if err := WriteSpawnEntries(session, entries); err != nil {
-		return SpawnEntry{}, err
-	}
-
 	return entry, nil
 }
 
@@ -412,27 +445,170 @@ var (
 	}
 )
 
-// FindLiveSpawn returns the newest running spawn entry keyed to a graph
-// run+node whose window is still alive — the reuse lookup for MUX-131
-// Defect B. Liveness is the window check, not the entry status alone: a
-// crashed worker's entry can still read "running", and reuse must never
-// wedge a run behind a corpse — a dead worker falls back to a fresh start.
-func FindLiveSpawn(session, runID, nodeID string) (SpawnEntry, bool) {
-	if runID == "" || nodeID == "" {
-		return SpawnEntry{}, false
+var (
+	// errNoRunWorker: the run has no live worker of the base role.
+	errNoRunWorker = errors.New("run has no live worker")
+	// errRunWorkerBusy: the run's workers are all held by its other
+	// unfinished nodes; the dispatch waits rather than seeding over them.
+	errRunWorkerBusy = errors.New("run's worker is busy")
+)
+
+// reserveRunWorker hands a run's newest live worker of a base role to nodeID,
+// applying own to it in the same locked write that checked it free — so no
+// second dispatch can see it free in between — and returns the entry as it
+// was before own. Keyed on the run alone, every spawn and map node of the run
+// shares one worker (MUX-195; per run+node before, MUX-131 Defect B).
+// Liveness is the window check, not the status alone: a crashed worker's
+// entry can still read "running", and reuse must never wedge a run behind a
+// corpse. A worker owed a stop, or named in exclude (another lane of the same
+// map), is skipped.
+//
+// A worker another node still needs (runWorkerHolder) is never taken: two
+// nodes on one worker both harvest whichever seed it carries last, so one
+// node's result is lost and the other's is recorded twice. With only such
+// workers the error wraps errRunWorkerBusy naming the holder; with none at
+// all it is errNoRunWorker.
+func reserveRunWorker(session, runID, nodeID, role string, exclude []string, own func(*SpawnEntry)) (SpawnEntry, error) {
+	if runID == "" {
+		return SpawnEntry{}, errNoRunWorker
 	}
+	var prev SpawnEntry
+	err := withSpawnRegistryLock(session, func() error {
+		entries, err := ReadSpawnEntries(session)
+		if err != nil {
+			return err
+		}
+		statuses, serr := ReadAllNodeStatuses(session, runID)
+		if errors.Is(serr, os.ErrNotExist) {
+			serr = nil
+		}
+		busy := ""
+		for i := len(entries) - 1; i >= 0; i-- {
+			e := entries[i]
+			if e.Status != "running" || e.RunID != runID || e.Role != role || e.StopPending != "" ||
+				slices.Contains(exclude, e.SpawnRole) || !spawnWindowExistsFn(session, e.Window) {
+				continue
+			}
+			holder := runWorkerHolder(session, e, nodeID, statuses)
+			if serr != nil {
+				holder = "unknown (node statuses unreadable: " + serr.Error() + ")"
+			}
+			if holder != "" {
+				if busy == "" {
+					busy = fmt.Sprintf("node %s holds %s", holder, e.SpawnRole)
+				}
+				continue
+			}
+			prev = e
+			own(&entries[i])
+			return WriteSpawnEntries(session, entries)
+		}
+		if busy != "" {
+			return fmt.Errorf("%w: %s", errRunWorkerBusy, busy)
+		}
+		return errNoRunWorker
+	})
+	return prev, err
+}
+
+// runWorkerHolder names the node other than nodeID that still needs w, or ""
+// when nodeID may take it: a running node whose task list names w — it
+// harvests whatever seed w carries — or, while w's seed is unanswered, the
+// unfinished node it was reserved for (a dispatch cut short before its node
+// went running). A node whose status is missing is presumed unfinished:
+// failing to prove a worker free must read as busy.
+func runWorkerHolder(session string, w SpawnEntry, nodeID string, statuses map[string]*GraphNodeStatus) string {
+	for id, st := range statuses {
+		if id != nodeID && st.State == GraphNodeRunning && slices.Contains(strings.Split(st.TaskID, ","), w.SpawnRole) {
+			return id
+		}
+	}
+	if w.NodeID == nodeID || w.NodeID == "" || spawnHasResponded(session, w) {
+		return ""
+	}
+	if st, ok := statuses[w.NodeID]; ok && st.State != GraphNodeReady && st.State != GraphNodeRunning {
+		return ""
+	}
+	return w.NodeID
+}
+
+// workerAdoptable reports whether e is the session's idle worker of a base
+// role: running with its window alive, released by its run (idleEligible and
+// no longer persistent), and its current seed answered. A busy worker is
+// never adoptable — a new seed would queue behind work in progress.
+func workerAdoptable(session string, e SpawnEntry, role string) bool {
+	return e.Status == "running" && e.Role == role && idleEligible(e) &&
+		!spawnPersistent(session, e) && spawnHasResponded(session, e) &&
+		spawnWindowExistsFn(session, e.Window)
+}
+
+// findIdleWorker returns the newest adoptable worker of a base role.
+func findIdleWorker(session, role string) (SpawnEntry, bool) {
 	entries, err := ReadSpawnEntries(session)
 	if err != nil {
 		return SpawnEntry{}, false
 	}
 	for i := len(entries) - 1; i >= 0; i-- {
-		e := entries[i]
-		if e.Status == "running" && e.RunID == runID && e.NodeID == nodeID &&
-			spawnWindowExistsFn(session, e.Window) {
-			return e, true
+		if workerAdoptable(session, entries[i], role) {
+			return entries[i], true
 		}
 	}
 	return SpawnEntry{}, false
+}
+
+// claimIdleWorker hands cand to a new owner: own rewrites it in one write
+// under the registry lock, after re-checking that it is still adoptable and
+// has not changed hands since it was found. Two runs dispatching at once
+// therefore cannot both take it, and there is no instant at which it belongs
+// to two runs or to none.
+func claimIdleWorker(session string, cand SpawnEntry, own func(*SpawnEntry)) (SpawnEntry, error) {
+	var claimed SpawnEntry
+	err := withSpawnRegistryLock(session, func() error {
+		entries, err := ReadSpawnEntries(session)
+		if err != nil {
+			return err
+		}
+		for i, e := range entries {
+			if e.ID != cand.ID {
+				continue
+			}
+			if e.RunID != cand.RunID || e.SeedMsgID != cand.SeedMsgID || !workerAdoptable(session, e, cand.Role) {
+				return fmt.Errorf("worker %s is no longer idle", cand.SpawnRole)
+			}
+			own(&entries[i])
+			claimed = entries[i]
+			return WriteSpawnEntries(session, entries)
+		}
+		return fmt.Errorf("spawn not found: %s", cand.ID)
+	})
+	return claimed, err
+}
+
+// releaseClaim returns a claimed worker to the idle pool exactly as cand
+// found it, provided it still carries the claim's seed id: a claim whose
+// follow-up failed must not leave the worker owned but untasked.
+func releaseClaim(session string, cand SpawnEntry, seedID string) error {
+	return UpdateSpawnEntry(session, cand.ID, func(e *SpawnEntry) {
+		if e.SeedMsgID != seedID {
+			return
+		}
+		e.RunID, e.NodeID, e.Owner, e.IdleSince = cand.RunID, cand.NodeID, cand.Owner, cand.IdleSince
+		e.SeedMsgID, e.Task, e.Spec = cand.SeedMsgID, cand.Task, cand.Spec
+	})
+}
+
+// dropStaleSeeds consumes spawn-task requests still pending in a worker's
+// inbox: work a previous owner queued that must not reach the new one.
+func dropStaleSeeds(session, spawnRole string) {
+	msgs, err := Peek(session, spawnRole)
+	if err != nil {
+		return
+	}
+	for _, m := range msgs {
+		if m.Type == "request" && m.Action == "spawn-task" {
+			_, _ = ConsumeByID(session, spawnRole, m.ID)
+		}
+	}
 }
 
 // ReseedSpawn seeds a new iteration's task into an existing live worker's
@@ -448,20 +624,28 @@ func FindLiveSpawn(session, runID, nodeID string) (SpawnEntry, bool) {
 // the new iteration; identity-first fails closed instead — an id whose
 // message does not exist yet can never read as responded, and a send
 // failure leaves a stalled node for the watchdogs, not a phantom
-// completion. A dedup-suppressed send adopts the already-pending
-// identical seed (retry --from racing an unconsumed seed) — same adopt
-// rule as the NodeSend dispatch path; falling back to a fresh worker
-// there would strand the pending seed AND rebuild the worker the
-// suppression proves is already tasked.
+// completion.
 func ReseedSpawn(session string, entry SpawnEntry, task string) (string, error) {
 	advanceSpawnWorktree(session, entry)
 	msg := NewMessage(entry.Owner, entry.SpawnRole, "request", "spawn-task", task, "")
+	spec := ReadActiveSpec(session)
 	if err := UpdateSpawnEntry(session, entry.ID, func(e *SpawnEntry) {
 		e.SeedMsgID = msg.ID
 		e.Task = task
+		e.Spec = spec
 	}); err != nil {
 		return "", err
 	}
+	return sendSpawnSeed(session, entry, msg)
+}
+
+// sendSpawnSeed sends a seed whose id the entry already carries and wakes
+// the worker. A dedup-suppressed send adopts the already-pending identical
+// seed (retry --from racing an unconsumed seed) — same adopt rule as the
+// NodeSend dispatch path; falling back to a fresh worker there would strand
+// the pending seed AND rebuild the worker the suppression proves is already
+// tasked.
+func sendSpawnSeed(session string, entry SpawnEntry, msg Message) (string, error) {
 	if err := Send(session, msg); err != nil {
 		if !errors.Is(err, ErrSendSuppressed) {
 			return "", fmt.Errorf("reseeding inbox: %v", err)
@@ -612,8 +796,19 @@ func displayStatus(e SpawnEntry) string {
 // never held, and agent spawns keep reap-on-answer, since their owner's
 // completion notice rides the reap. spawn-idle and spawn-reaped rows name
 // the worker and its last owner. Reaping keeps the worktree
-// dirty-preservation guard of every other completion.
+// dirty-preservation guard of every other completion. The pass holds the
+// registry lock, so it never writes back a stale copy over an adoption.
 func RefreshSpawnStatus(session string) ([]SpawnEntry, error) {
+	var completed []SpawnEntry
+	err := withSpawnRegistryLock(session, func() error {
+		var err error
+		completed, err = refreshSpawnStatusLocked(session)
+		return err
+	})
+	return completed, err
+}
+
+func refreshSpawnStatusLocked(session string) ([]SpawnEntry, error) {
 	entries, err := ReadSpawnEntries(session)
 	if err != nil {
 		return nil, err
@@ -766,28 +961,27 @@ func GetSpawnResult(session, spawnRole string) (Message, bool) {
 // CleanFinishedSpawns removes all non-running spawn entries, their inbox files,
 // and any remaining worktrees. Also prunes orphaned worktree directories.
 func CleanFinishedSpawns(session string) (int, error) {
-	entries, err := ReadSpawnEntries(session)
-	if err != nil {
-		return 0, err
-	}
-
 	var kept []SpawnEntry
 	removed := 0
-	for _, e := range entries {
-		if e.Status == "running" {
-			kept = append(kept, e)
-			continue
+	err := withSpawnRegistryLock(session, func() error {
+		entries, err := ReadSpawnEntries(session)
+		if err != nil {
+			return err
 		}
-		// Remove spawn inbox file
-		_ = os.Remove(InboxPath(session, e.SpawnRole))
-		// Clean up worktree if present
-		if e.Worktree != "" {
-			_ = removeSpawnWorktree(e.Worktree)
+		for _, e := range entries {
+			if e.Status == "running" {
+				kept = append(kept, e)
+				continue
+			}
+			_ = os.Remove(InboxPath(session, e.SpawnRole))
+			if e.Worktree != "" {
+				_ = removeSpawnWorktree(e.Worktree)
+			}
+			removed++
 		}
-		removed++
-	}
-
-	if err := WriteSpawnEntries(session, kept); err != nil {
+		return WriteSpawnEntries(session, kept)
+	})
+	if err != nil {
 		return removed, err
 	}
 

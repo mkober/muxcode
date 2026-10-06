@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -139,7 +140,7 @@ func TestIdempotentRePersist(t *testing.T) {
 		t.Fatalf("re-persist: %v", err)
 	}
 	after, _ := ReadNodeStatus(runTestSession, run.ID, "a")
-	if *after != *before {
+	if !reflect.DeepEqual(after, before) {
 		t.Errorf("re-persist changed status: %+v vs %+v", after, before)
 	}
 }

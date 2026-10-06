@@ -115,10 +115,10 @@ Four roads, one symptom:
 
 **One worker per run**
 
-- [ ] A graph run holds **one** worker for all of its `spawn`/`map` nodes: a `50-spec-to-pr` run's `implement` and `fix` nodes run on the same worker — test: full run, spawn count **1**
-- [ ] A new run **adopts** the session's idle worker of the same base role before spawning a fresh one; it spawns only when none is free — test: two sequential runs of the same template, spawn count **1** (today: 2, pinned red in Phase 1)
-- [ ] `replaceLostWorkers` re-points or replaces **the run's one worker**: the lost window is confirmed gone before a fresh launch, and a replace and a resume never both act on one tick — test: a lost worker is still replaced (regression control), and the registry never shows two live entries for one run
-- [ ] A `map` node's items run on the run's one worker **serially** unless the template declares `workers: N` explicitly ([Decision 3](#decision-3--map-fan-out-and-busy-workers-serial-by-default-queue-on-busy))
+- [x] A graph run holds **one** worker for all of its `spawn`/`map` nodes: a `50-spec-to-pr` run's `implement` and `fix` nodes run on the same worker — test: full run, spawn count **1** (Phase 3: `reserveRunWorker`; `TestSpecToPRRunSharesOneWorker`, `TestAcquireSpawnWorkerSharesTheRunsWorker`)
+- [x] A new run **adopts** the session's idle worker of the same base role before spawning a fresh one; it spawns only when none is free — test: two sequential runs of the same template, spawn count **1** (Phase 3: `adoptIdleWorker`; the Phase 1 pin inverted to `TestSequentialRunsAdoptTheIdleWorker`)
+- [x] `replaceLostWorkers` re-points or replaces **the run's one worker**: the lost window is confirmed gone before a fresh launch, and a replace and a resume never both act on one tick — test: a lost worker is still replaced (regression control), and the registry never shows two live entries for one run (Phase 3: `lostWindowsGone`; `TestLostWorkerReplacedOnlyOnceItsWindowIsGone`, `TestMapRestartWithLostWorkerReplacesOnce`)
+- [x] A `map` node's items run on the run's one worker **serially** unless the template declares `workers: N` explicitly (Phase 3: `Node.Workers`, `mapLaneCount`, `advanceMapLanes`; `TestMapRunsItemsSeriallyOnTheRunsWorker`, `TestMapWorkersLanesTakeTheNextItem`) ([Decision 3](#decision-3--map-fan-out-and-busy-workers-serial-by-default-queue-on-busy))
 
 **One worker per spawning agent**
 
@@ -128,15 +128,15 @@ Four roads, one symptom:
 **Bound and reap**
 
 - [ ] A **hard cap** on live workers per base role per session (default **1 idle + the concurrency Decision 3 allows**); an attempt past it is refused with a reason and a `spawn-cap-refused` lifecycle row — negative control: the cap refuses, and lowering it does not stop a run's single worker
-- [ ] Idle workers unowned by a live run are **reaped** after a quiet window (`MUXCODE_SPAWN_IDLE_SECS`, [Decision 2](#decision-2--idle-reap-window-muxcode_spawn_idle_secs-default-600)); adoption and reap each write a lifecycle row naming worker, old owner and new owner (reap half landed in Phase 2 — `spawn-idle` / `spawn-reaped` rows name worker, last owner run/node and "new owner none"; the adoption row is Phase 3)
+- [x] Idle workers unowned by a live run are **reaped** after a quiet window (`MUXCODE_SPAWN_IDLE_SECS`, [Decision 2](#decision-2--idle-reap-window-muxcode_spawn_idle_secs-default-600)); adoption and reap each write a lifecycle row naming worker, old owner and new owner (Phase 2: `spawn-idle` / `spawn-reaped` name worker, last owner run/node, "new owner none"; Phase 3: `graph-spawn-adopted` names worker, old run/node, new run/node and the context policy)
 - [x] A terminal run's worker is reaped (or returned as the idle worker) **even when its seed's delivery record is missing** — the 2026-09-28 and 2026-10-05 strandings cannot recur (Phase 2: `workerRepliedInLog` fallback; `TestTerminalRunWorkerFreedWithoutDeliveryRecord` — record present and record missing reach the same end state)
-- [ ] **Negative control:** a busy worker (current seed unanswered), or one whose owning run has an in-flight node on it, is never adopted or reaped
+- [x] **Negative control:** a busy worker (current seed unanswered), or one whose owning run has an in-flight node on it, is never adopted or reaped (Phases 2–3: `workerAdoptable` requires an answered seed and a released run; `runWorkerHolder` refuses a worker another unfinished node still needs, and a missing node status reads as busy. `TestBusyWorkerNeverReused` — green through every phase — plus `TestForkedSpawnNodesKeepTheirOwnResults`)
 
 **Ownership and context**
 
-- [ ] Adoption re-points ownership (`RunID`/`NodeID`/`Owner`) atomically under the registry lock: there is no instant at which the worker belongs to two runs or to none, and `CheckGraphNodeAuthority`, `CheckCancelAuthority`, `replaceLostWorkers` and `GraphOwnsTask` read the new owner immediately
-- [ ] Two runs dispatching at once cannot adopt the same worker — test: concurrent dispatch yields one adoption and one spawn (within the cap) or one adoption and one wait, never a shared worker
-- [ ] An adopted worker's context policy is explicit ([Decision 1](#decision-1--keep-or-clear-context-keep-within-a-spec-clear-on-a-spec-or-owner-kind-change)), and a stale task from the previous owner cannot reach the new one: the seed's ownership preamble (`graphWorkerTask`) names the new run and node
+- [x] Adoption re-points ownership (`RunID`/`NodeID`/`Owner`) atomically under the registry lock: there is no instant at which the worker belongs to two runs or to none, and `CheckGraphNodeAuthority`, `CheckCancelAuthority`, `replaceLostWorkers` and `GraphOwnsTask` read the new owner immediately (Phase 3: `claimIdleWorker` rewrites `RunID`/`NodeID`/`Owner`/`SeedMsgID`/`Task`/`Spec` in one write under `withSpawnRegistryLock`; the authority readers all key on the registry's `RunID` via `spawnRunOwner`, so they see the new owner on their next read. The end-to-end authority check after adoption is Phase 5's integration test)
+- [x] Two runs dispatching at once cannot adopt the same worker — test: concurrent dispatch yields one adoption and one spawn (within the cap) or one adoption and one wait, never a shared worker (Phase 3: `claimIdleWorker` re-checks under the lock; `TestConcurrentDispatchCannotShareAnIdleWorker`, run under `-race` by the run agent 2026-10-05 23:14, pass)
+- [x] An adopted worker's context policy is explicit ([Decision 1](#decision-1--keep-or-clear-context-keep-within-a-spec-clear-on-a-spec-or-owner-kind-change)), and a stale task from the previous owner cannot reach the new one: the seed's ownership preamble (`graphWorkerTask`) names the new run and node (Phase 3: `adoptWorker` logs the policy — kept / cleared: spec changed / cleared: last served an agent — in the `graph-spawn-adopted` row; `adoptionNotice` opens the seed naming the new run and node; `dropStaleSeeds`. `TestAdoptionClearsContextWhenTheSpecChanged`, `TestAdoptionDropsThePreviousOwnersStaleSeed`)
 
 **Visibility and docs**
 
@@ -190,7 +190,8 @@ test beside it. That is a sounder shape than the "pin red" wording above, which 
 agent refused the suite (*"this review agent is restricted from executing tests/builds"*, the
 [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md) shape) — and the user released the hold by
 hand at 22:21:53. The review node passed; the file's helpers all exist in the package and both files
-are gofmt-clean. The five tests should be run green before Phase 2 builds on them.
+are gofmt-clean. The five tests should be run green before Phase 2 builds on them. *Resolved 23:14 — run
+green by the run agent; see the [Phase 3 note](#phase-3-verification-note).*
 
 ### Phase 2: Reaper and free-ness
 
@@ -211,11 +212,28 @@ daemon's 2 s sweep pays it only for the stranded case it exists to fix.
 
 ### Phase 3: One worker per run
 
-- [ ] `acquireWorker`: run-owned lookup keyed on `RunID` alone; `implement` and `fix` share the worker
-- [ ] Adoption of a free worker of the same base role; atomic ownership re-point under the registry lock, before the reseed; `graph-spawn-adopted` row with old and new owner
-- [ ] `replaceLostWorkers` and `resumeDeadWorkers` route through `acquireWorker`; one live entry per run invariant pinned
-- [ ] Context policy per Decision 1; `graphWorkerTask` re-states the new owner
-- [ ] `map` serial-by-default per Decision 3; invert the Phase 1 run pins
+- [x] `acquireWorker`: run-owned lookup keyed on `RunID` alone; `implement` and `fix` share the worker (`acquireSpawnWorker` → `acquireSeededWorker`, `bus/graph_exec.go`, the single road: `reserveRunWorker` keyed on run + base role moves `NodeID` with the seed in one locked write; a worker another unfinished node still holds is never seeded over — `errRunWorkerBusy` and `deferDispatch` keep the node `ready`, retried each tick, `graph-spawn-deferred` once per holder. `TestAcquireSpawnWorkerSharesTheRunsWorker`, `TestForkedSpawnNodesKeepTheirOwnResults`)
+- [x] Adoption of a free worker of the same base role; atomic ownership re-point under the registry lock, before the reseed; `graph-spawn-adopted` row with old and new owner (`adoptIdleWorker` → `findIdleWorker`/`workerAdoptable` → `claimIdleWorker`: one write under `withSpawnRegistryLock` — process mutex + `flock` on `spawn.jsonl.lock`, now held by every registry read-modify-write — re-checking the worker is still idle and unchanged; the loser of a race touches nothing. Row names old run/node, new run/node and the context policy. `TestConcurrentDispatchCannotShareAnIdleWorker` (`-race` pass), `TestLosingAdopterNeverClearsTheWinner`)
+- [x] `replaceLostWorkers` and `resumeDeadWorkers` route through `acquireWorker`; one live entry per run invariant pinned (`replaceLostWorkers` calls `acquireSpawnWorker` and launches only after `lostWindowsGone` proves the lost window gone — a live one is killed and waited for, spending no replacement; a resume relaunches in the worker's own window and never creates an entry, and the two roads act on disjoint workers in one `||` chain. `TestLostWorkerReplacedOnlyOnceItsWindowIsGone`, `TestMapRestartWithLostWorkerReplacesOnce`)
+- [x] Context policy per Decision 1; `graphWorkerTask` re-states the new owner (`adoptWorker`: kept while `SpawnEntry.Spec` — new field, the active spec at the last seed — matches; `/clear` via `spawnClearFn` when the spec changed or the worker last served an agent; a failed clear releases the claim. The seed opens with `adoptionNotice`, naming the new run/node and closing the previous owner's work; `dropStaleSeeds` consumes the previous owner's queued `spawn-task` rows. `TestAdoptionClearsContextWhenTheSpecChanged`, `TestAdoptionDropsThePreviousOwnersStaleSeed`)
+- [x] `map` serial-by-default per Decision 3; invert the Phase 1 run pins (`Node.Workers`, validated non-negative; `mapLaneCount` = `min(max(workers,1), items)`; lanes advance through a persisted work queue — `MapLanes`/`MapNext`/`MapResults`/`MapPending` on `GraphNodeStatus`, dispatches persisted with their seed id before any worker is touched so a restart mid-dispatch neither loses nor double-runs an item; results recorded in item order. Pins inverted: `TestSpecToPRRunSharesOneWorker`, `TestSequentialRunsAdoptTheIdleWorker`. `TestMapRunsItemsSeriallyOnTheRunsWorker`, `TestMapWorkersLanesTakeTheNextItem`, `TestMapRestartMidDispatchKeepsEachItemsVerdict`, `TestMapPendingDispatchResendsASeedThatNeverLeft`)
+
+#### Phase 3 verification note
+
+Verified 2026-10-05 23:55 by plan from the working tree (run `1791252906`, third iteration; Phase 2
+committed as `311bc3c`). **First executed evidence on this branch**: the worker had the run agent execute
+`mux195-unit.sh` (task `1791256426-spawn-a4928558-3d348868`, 23:14) — `go vet ./...` (compiles every
+test file), the named Phase 1–3 tests, `TestConcurrentDispatchCannotShareAnIdleWorker` under `-race`,
+then the whole `bus` package: `RESULT vet=0 focused=0 missing=0 race=0 full=1`, 101 PASS / 0 FAIL on the
+focused set, the package's one failure the pre-existing `TestOpenCodeModelsExist` (stale OpenCode model
+list, unrelated). That run also executed the Phase 1 agent-road pin and every Phase 2 test, so the
+"never run" caveat on those phases is retired. The graph's own test node still returned `unknown`
+(three times this iteration, each released by the user) — MUX-153 is untouched. Review failed twice
+before passing; the fixes it demanded are in the tree (persisted map dispatches, settle-before-replace).
+**Live behaviour is not yet evidence either way**: the first `fix` dispatch at 23:18 gave the run a
+second worker (`spawn-9fb5f090` beside `spawn-a4928558`) because the session daemon still runs the
+pre-Phase-3 binary — `build.sh`'s `upgrade-daemons` cannot reach it from the build sandbox (MUX-161);
+the first live confirmation comes after `muxcode upgrade-daemons` from the user's terminal.
 
 ### Phase 4: One worker per agent, and the cap
 
@@ -286,7 +304,7 @@ a second worker. The `60-integration-suite` template is the one to check the ser
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-195-graph-runs-never-reuse-idle-workers | 23m | 2026-10-05 22:40 |
+| MUX-195-graph-runs-never-reuse-idle-workers | 1h 22m | 2026-10-05 23:52 |
 
 ## Status
 
