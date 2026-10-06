@@ -68,15 +68,15 @@ Auto-resume handles the deaths the daemon notices. The operator also needs a del
 "bring everything back" control for the case where they are looking at a wrecked session and want it
 restored in one action.
 
-- [ ] A `Restart Agents` entry in the MuxCode quick menu (`config/tmux.conf`, the `prefix + b` `display-menu`), placed next to `Provider`
-- [ ] The modal lists providers with **live agent counts** (`claude N` / `opencode M` / `all`), confirm before acting
-- [ ] Live per-agent progress, reusing the multi-agent reload progress view (`tui/provider_select.go`, `bus.ReloadResult`) rather than a second implementation
-- [ ] Claude agents restart through the **MUX-139 resume path** with the role's `--agent`/`--agents` carried — the same definition guard as auto-resume, not a parallel launch path
-- [ ] `edit` is **included, as resume-only** — this deliberately overrides `ReloadAll`'s standing edit/auto skip (`reload.go:228`, *"interactive orchestrator — require explicit reload"*); the menu action **is** that explicit request. Pinned by test so the override cannot leak into the ordinary `--all` path
-- [ ] Non-Claude agents restart as a same-provider fresh reload
-- [ ] **The restart never changes provider or model.** The provider list is a *filter over current assignment*, never a switch — changing what runs an agent is user-approved only, and a bulk control is the easiest place for that rule to be violated by accident. Pinned by test: no `--cli`/`--model` override is written by this path
-- [ ] CLI parity: `muxcode reload --all --provider <cli> --resume` (`--all`/`--provider` already exist at `cmd/reload.go:29-30`; `--resume` is the addition)
-- [ ] **Dead agents are in scope.** `ReloadAll` currently skips them (`reload.go:231`, `if !IsAgentAlive(...) { continue }`) — correct for a config reload, exactly wrong here, since after a mass exit *every* target is dead. The restart path must select dead agents too, or the control does nothing in the situation that motivates it (see [Decision 2](#decision-2-restart-must-not-inherit-reloadalls-skip-dead-agents-rule))
+- [x] A `Restart Agents` entry in the MuxCode quick menu (`config/tmux.conf`, the `prefix + b` `display-menu`), placed next to `Provider` — *Phase 5*
+- [x] The modal lists providers with **live agent counts** (`claude N` / `opencode M` / `all`), confirm before acting — *Phase 5*
+- [x] Live per-agent progress, reusing the multi-agent reload progress view (`tui/provider_select.go`, `bus.ReloadResult`) rather than a second implementation — *Phase 5, `renderBatchProgress` shared*
+- [x] Claude agents restart through the **MUX-139 resume path** with the role's `--agent`/`--agents` carried — the same definition guard as auto-resume, not a parallel launch path — *Phase 5, shared `scrapeAndRelaunch`; the guard runs daemon-side via `RestartVerification`*
+- [x] `edit` is **included, as resume-only** — this deliberately overrides `ReloadAll`'s standing edit/auto skip (`reload.go:228`, *"interactive orchestrator — require explicit reload"*); the menu action **is** that explicit request. Pinned by test so the override cannot leak into the ordinary `--all` path — *Phase 5*
+- [x] Non-Claude agents restart as a same-provider fresh reload — *Phase 5*
+- [x] **The restart never changes provider or model.** The provider list is a *filter over current assignment*, never a switch — changing what runs an agent is user-approved only, and a bulk control is the easiest place for that rule to be violated by accident. Pinned by test: no `--cli`/`--model` override is written by this path — *Phase 5, `TestRestartAgents_NeverChangesProviderOrModel`; the CLI refuses `--cli`/`--model` outright*
+- [x] CLI parity: `muxcode reload --all --provider <cli> --resume` (`--all`/`--provider` already exist at `cmd/reload.go:29-30`; `--resume` is the addition) — *Phase 5*
+- [x] **Dead agents are in scope.** `ReloadAll` currently skips them (`reload.go:231`, `if !IsAgentAlive(...) { continue }`) — correct for a config reload, exactly wrong here, since after a mass exit *every* target is dead. The restart path must select dead agents too, or the control does nothing in the situation that motivates it (see [Decision 2](#decision-2-restart-must-not-inherit-reloadalls-skip-dead-agents-rule)) — *Phase 5, `RestartTargets`*
 
 #### Decision 2: restart must not inherit `ReloadAll`'s skip-dead-agents rule
 
@@ -85,8 +85,8 @@ picking up new config*. The goal here is the opposite — the agents are dead an
 operator opened the menu. Reusing `ReloadAll` unchanged would produce a control that reports
 "0 agents restarted" precisely after a mass exit.
 
-- [ ] Restart selects by **role and provider**, not by liveness; a live agent is stopped and relaunched, a dead one is launched (resumed where an id is known)
-- [ ] The liveness filter stays untouched on the existing `reload --all` config path — this is an additional selection mode, not a change to reload semantics
+- [x] Restart selects by **role and provider**, not by liveness; a live agent is stopped and relaunched, a dead one is launched (resumed where an id is known) — *Phase 5*
+- [x] The liveness filter stays untouched on the existing `reload --all` config path — this is an additional selection mode, not a change to reload semantics — *Phase 5, `reloadAllTargets` extracted behaviour-preserving and pinned*
 
 ### Sequencing constraint
 
@@ -127,9 +127,9 @@ mis-resumed one starts with a privileged peer's context and its own tools.
 
 Therefore:
 
-- [ ] The transcript fallback applies only where cwd identifies the agent uniquely — in practice **spawn workers**, each of which owns a private worktree
-- [ ] For shared-cwd roles it declines and fresh-launches with a logged reason, rather than guessing
-- [ ] Encoding is pinned by test including the macOS `/var` to `/private/var` resolution: observed spawn dirs encode as `-private-var-folders-…-T-muxcode-spawn-<session>-spawn-<id>`, so resolving the symlink before encoding is required, not cosmetic
+- [x] The transcript fallback applies only where cwd identifies the agent uniquely — in practice **spawn workers**, each of which owns a private worktree — *Phase 1: `spawnOwnsWorktree` — the spawn registry must show exactly one entry claiming the cwd, and it must be this role*
+- [x] For shared-cwd roles it declines and fresh-launches with a logged reason, rather than guessing — *Phase 1: `ErrTranscriptSharedCwd`, `resume-fresh` row; graph workers run in the session checkout (no worktree), so they decline too*
+- [x] Encoding is pinned by test including the macOS `/var` to `/private/var` resolution: observed spawn dirs encode as `-private-var-folders-…-T-muxcode-spawn-<session>-spawn-<id>`, so resolving the symlink before encoding is required, not cosmetic — *Phase 1: `TestClaudeProjectDirName`*
 
 ### Key files
 
@@ -182,15 +182,15 @@ Therefore:
 
 ### Phase 5: Operator restart control
 
-- [ ] `Restart Agents` entry in the `prefix + b` `display-menu` (`config/tmux.conf`), next to `Provider`
-- [ ] Modal: provider list with live agent counts (`claude N` / `opencode M` / `all`) + confirm step
-- [ ] Restart selection by role and provider **including dead agents** (Decision 2), with the existing `reload --all` liveness filter left untouched + test covering both selection modes
-- [ ] Claude targets routed through the Phase 1–2 resume path, definition carried and verified
-- [ ] `edit` included as resume-only; test pins that the override does not leak into ordinary `reload --all`
-- [ ] Non-Claude targets: same-provider fresh reload
-- [ ] Test: **no `--cli`/`--model` override is written by this path** — provider is a filter, never a switch
-- [ ] Live per-agent progress reusing the multi-agent reload progress view
-- [ ] `muxcode reload --all --provider <cli> --resume` CLI parity + test
+- [x] `Restart Agents` entry in the `prefix + b` `display-menu` (`config/tmux.conf`), next to `Provider` — *verified 2026-10-05: `config/tmux.conf:83`, key `A`, `muxcode modal open restart`, directly under `Provider` (`R`); `bus/modal.go` `restart` modal → `muxcode restart-select`*
+- [x] Modal: provider list with live agent counts (`claude N` / `opencode M` / `all`) + confirm step — *`tui/restart_select.go`, `RestartProviderCounts` (live + down counts, `all` row only with > 1 provider); confirm names only the filter's roads, targets re-read at `y`; `TestRestartSelect_ListsProviderCounts`, `…ConfirmStatesConsequences`, `…ConfirmBacksOut`, `…SingleProviderHasNoAllRow`, `…EmptyAndErrorStates`*
+- [x] Restart selection by role and provider **including dead agents** (Decision 2), with the existing `reload --all` liveness filter left untouched + test covering both selection modes — *`RestartTargets` (`bus/restart_agents.go`; windowed roles only, unreadable window list is an error); `ReloadAll`'s selection extracted behaviour-preserving to `reloadAllTargets` (`reload.go:281`) so both modes are pinned side by side in `TestRestartTargets_SelectsDeadAgentsAndEdit` (restart: dead + edit; reload: live-only, no edit/auto) and `…WindowsRequired`*
+- [x] Claude targets routed through the Phase 1–2 resume path, definition carried and verified — *`RestartAgent` → shared `scrapeAndRelaunch` (live agent exited first); the definition check is handed to the daemon: a `RestartVerification` record (`bus/restart_verify.go`) is written before anything is typed, `checkRestartVerifications` → `AdvanceRestartVerification` stops on the banner and retries the stop until confirmed, the CLI only waits for the verdict, so a closed modal never leaves an agent unsupervised; `TestRestartAgent_ClaudeRoutesThroughResume`, `…HandsVerificationToDaemon`, `…RefusedWithoutHandoff`, `TestAdvanceRestartVerification`*
+- [x] `edit` included as resume-only; test pins that the override does not leak into ordinary `reload --all` — *`relaunchResumeOnly` → `ErrResumeUnavailable`, never fresh; `TestRestartAgent_EditWithoutSessionStaysDown`; the no-leak half is the `reloadAllTargets` side of `TestRestartTargets_SelectsDeadAgentsAndEdit`*
+- [x] Non-Claude targets: same-provider fresh reload — *`ReloadAgent(role, "", "")`; `TestRestartAgents_FilterLeavesOtherProvidersAlone` (an `opencode` filter leaves Claude agents untouched)*
+- [x] Test: **no `--cli`/`--model` override is written by this path** — provider is a filter, never a switch — *`TestRestartAgents_NeverChangesProviderOrModel`: no override file, provider and model unchanged*
+- [x] Live per-agent progress reusing the multi-agent reload progress view — *`renderBatchProgress` extracted from `provider_select`'s `renderProgress` and shared; `ReloadResult` gains `Restarted`/`ResumedID`; `TestRenderBatchProgress_RestartAndReloadRows`, `TestRestartSelect_CloseDuringProgressWaitsForBatch`, `…CloseImmediateWhenIdleOrDone`*
+- [x] `muxcode reload --all --provider <cli> --resume` CLI parity + test — *`cmd/reload.go` `validateRestartFlags` (needs `--all`; refuses `--cli`/`--model`/`--compact`); `TestValidateRestartFlags`; documented in `docs/agent-bus.md`*
 
 ### Phase 6: Integration test
 
@@ -225,8 +225,8 @@ describe what restore gets **wrong**; this one describes what restore does not *
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-139-claude-agent-auto-resume | 1h 44m | 2026-10-05 20:16 |
+| MUX-139-claude-agent-auto-resume | 2h 10m | 2026-10-05 20:45 |
 
 ## Status
 
-In Progress — Phases 1-4 complete (2026-10-05; Phase 1 step 5 deferred to Phase 6 by the user); Phase 5 next
+In Progress — Phases 1-5 complete (2026-10-05; Phase 1 step 5 deferred to Phase 6 by the user); Phase 6 (integration test) next

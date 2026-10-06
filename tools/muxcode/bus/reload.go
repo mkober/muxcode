@@ -253,22 +253,7 @@ func CleanStaleReloadMarkers(session string) int {
 //
 // Returns the count of successfully reloaded agents and any errors encountered.
 func ReloadAll(session, cli, model, providerFilter string, compact bool) (int, []error) {
-	var roles []string
-	for _, role := range ReloadableRoles() {
-		// Skip orchestrator roles — require explicit reload
-		if role == "edit" || role == "auto" {
-			continue
-		}
-		// Skip dead agents
-		if !IsAgentAlive(session, role) {
-			continue
-		}
-		// Apply provider filter
-		if providerFilter != "" && ResolveProviderCLI(role) != providerFilter {
-			continue
-		}
-		roles = append(roles, role)
-	}
+	roles := reloadAllTargets(session, providerFilter, IsAgentAlive)
 
 	results := ReloadBatch(session, roles, cli, model, compact, func(i int, r ReloadResult) {
 		if r.Success {
@@ -288,6 +273,26 @@ func ReloadAll(session, cli, model, providerFilter string, compact bool) (int, [
 		}
 	}
 	return reloaded, errs
+}
+
+// reloadAllTargets is ReloadAll's selection: live agents on providerFilter
+// (any, when empty), never edit or auto. RestartTargets is the deliberately
+// different selection for the operator restart — see its doc comment.
+func reloadAllTargets(session, providerFilter string, alive func(session, role string) bool) []string {
+	var roles []string
+	for _, role := range ReloadableRoles() {
+		if role == "edit" || role == "auto" {
+			continue
+		}
+		if !alive(session, role) {
+			continue
+		}
+		if providerFilter != "" && ResolveProviderCLI(role) != providerFilter {
+			continue
+		}
+		roles = append(roles, role)
+	}
+	return roles
 }
 
 // RoleWindowMissing reports that role has no tmux window in session, or nil

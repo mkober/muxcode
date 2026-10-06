@@ -28,6 +28,9 @@ import (
 //	--compact            Compact agent context before stopping
 //	--all                Reload all active agents sequentially (excludes edit/auto)
 //	--provider <cli>     Only reload agents currently on this CLI (requires --all)
+//	--resume             With --all: the operator restart (bus.RestartAgents) —
+//	                     dead agents and edit included, Claude agents resumed,
+//	                     provider and model never changed (no --cli/--model)
 //
 // Examples:
 //
@@ -36,10 +39,12 @@ import (
 //	muxcode reload build test review --cli opencode --model opencode-go/minimax-m3
 //	muxcode reload --all --cli opencode --model opencode-go/minimax-m3
 //	muxcode reload --all --provider claude --cli opencode --model opencode-go/minimax-m3
+//	muxcode reload --all --provider claude --resume
 func Reload(args []string) {
 	var cli, model, providerFilter string
 	compact := false
 	all := false
+	resume := false
 	var roles []string
 
 	// Manual flag parsing to match the rest of the cmd package style
@@ -70,6 +75,8 @@ func Reload(args []string) {
 			compact = true
 		case "--all":
 			all = true
+		case "--resume":
+			resume = true
 		default:
 			if strings.HasPrefix(args[i], "--") {
 				fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", args[i])
@@ -88,9 +95,14 @@ func Reload(args []string) {
 		fmt.Fprintln(os.Stderr, "Error: --provider requires --all")
 		os.Exit(1)
 	}
+	if err := validateRestartFlags(resume, all, cli, model, compact); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 	if !all && len(roles) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: muxcode reload <role> [<role>...] [--cli <cli>] [--model <model>] [--compact]")
 		fmt.Fprintln(os.Stderr, "       muxcode reload --all [--cli <cli>] [--model <model>] [--compact] [--provider <cli>]")
+		fmt.Fprintln(os.Stderr, "       muxcode reload --all [--provider <cli>] --resume")
 		os.Exit(1)
 	}
 
@@ -98,6 +110,11 @@ func Reload(args []string) {
 	if session == "" {
 		fmt.Fprintln(os.Stderr, "Error: BUS_SESSION not set")
 		os.Exit(1)
+	}
+
+	if resume {
+		restartAll(session, providerFilter)
+		return
 	}
 
 	if all {
@@ -181,6 +198,56 @@ func Reload(args []string) {
 		fmt.Printf(" (%s / %s)", cli, bus.AbbreviateModel(model))
 	}
 	fmt.Println()
+	if failed > 0 {
+		os.Exit(1)
+	}
+}
+
+// validateRestartFlags checks --resume's combination rules: it needs --all, and
+// it refuses --cli, --model and --compact, because the operator restart never
+// changes what runs an agent and resumes rather than compacts.
+func validateRestartFlags(resume, all bool, cli, model string, compact bool) error {
+	switch {
+	case !resume:
+		return nil
+	case !all:
+		return fmt.Errorf("--resume requires --all")
+	case cli != "" || model != "":
+		return fmt.Errorf("--resume never changes provider or model — drop --cli/--model")
+	case compact:
+		return fmt.Errorf("--resume cannot be combined with --compact")
+	}
+	return nil
+}
+
+// restartAll runs the operator restart (bus.RestartAgents) for providerFilter.
+func restartAll(session, providerFilter string) {
+	filter := providerFilter
+	if filter == "" {
+		filter = bus.RestartProviderAll
+	}
+	fmt.Printf("Restarting agents (provider: %s) — dead agents and edit included, Claude resumed\n", filter)
+	results, err := bus.RestartAgents(session, providerFilter, func(_ int, r bus.ReloadResult) {
+		switch {
+		case !r.Success:
+			fmt.Printf("  ✗ %-10s %v\n", r.Role, r.Error)
+		case r.ResumedID != "":
+			fmt.Printf("  ✓ %-10s %s resumed %s  (%s)\n", r.Role, r.NewCLI, r.ResumedID, r.Duration.Round(time.Second))
+		default:
+			fmt.Printf("  ✓ %-10s %s relaunched  (%s)\n", r.Role, r.NewCLI, r.Duration.Round(time.Second))
+		}
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	failed := 0
+	for _, r := range results {
+		if !r.Success {
+			failed++
+		}
+	}
+	fmt.Printf("\n✓ %d/%d agents restarted\n", len(results)-failed, len(results))
 	if failed > 0 {
 		os.Exit(1)
 	}

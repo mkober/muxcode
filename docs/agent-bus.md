@@ -2090,6 +2090,9 @@ muxcode reload <role1> <role2> ... [--cli <cli>] [--model <model>] [--compact]
 
 # All agents (with optional overrides and provider filter)
 muxcode reload --all [--cli <cli>] [--model <model>] [--compact] [--provider <cli>]
+
+# Operator restart — dead agents and edit included, Claude agents resumed (MUX-139)
+muxcode reload --all [--provider <cli>] --resume
 ```
 
 | Flag | Description |
@@ -2099,12 +2102,15 @@ muxcode reload --all [--cli <cli>] [--model <model>] [--compact] [--provider <cl
 | `--compact` | Compact agent context before stopping |
 | `--all` | Reload all active agents sequentially (3s gap between agents) |
 | `--provider <cli>` | Filter `--all` to only agents currently on the specified CLI (requires `--all`) |
+| `--resume` | With `--all`: the **operator restart** (`bus.RestartAgents`, `bus/restart_agents.go`) rather than a config reload — see below. Requires `--all`; refuses `--cli`/`--model` (a restart never changes provider or model) and `--compact` |
 
 **Single agent**: writes runtime override to `/tmp/muxcode-bus-{session}/config/{role}.env`, gracefully stops the agent (C-c, poll for exit, force-kill after 6s), regenerates provider config, relaunches via `muxcode agent launch`, and verifies liveness (15s timeout). Reload marker suppresses daemon health checks during the cycle.
 
 **Multi-role**: accepts multiple positional role arguments. Reloads agents sequentially via `ReloadBatch()` with a 3s gap between each. Per-agent results are printed as each completes, with a summary line at the end. Failure of one agent does not abort the batch.
 
 **`--all` with overrides**: `--all` now supports `--cli` and `--model` flags — applies the same provider/model override to every active agent. Combined with `--provider`, only agents currently running on the specified CLI are reloaded (others are skipped).
+
+**`--all --resume` — the operator restart** ([MUX-139](requirements/backlog/MUX-139-claude-agent-auto-resume.md) Phase 5). After a mass exit every target is dead, which is exactly what the ordinary `--all` skips (`reload.go`: dead agents, and `edit` — "interactive orchestrator — require explicit reload"). `--resume` is that explicit request. `RestartTargets` selects by **role and provider, not liveness**: dead agents are in scope and `edit` is included, **resume-only** (no resumable session → nothing typed, left down and reported). A live agent is stopped and relaunched; a dead one is launched. Claude agents go through the same scrape-and-relaunch road as the daemon's auto-resume (`RestartAgent` → `scrapeAndRelaunch`), and the definition check afterwards belongs to the **daemon**, not the CLI or modal process: a durable `RestartVerification` record (`bus/restart_verify.go`) is written *before* anything is typed — a restart whose check cannot be handed off does not happen — and the daemon's `checkRestartVerifications` → `AdvanceRestartVerification` watches the pane for the definition-unavailable banner, stopping the agent and retrying the stop until confirmed, while `RestartAgent` only waits for the verdict. Closing the modal or killing the CLI mid-restart therefore never leaves an agent unsupervised on default tools; `checkAgentHealth` leaves a role alone while its verification is active, and a role whose previous check is still open is refused. Other providers get a same-provider fresh reload. **No `--cli`/`--model` override is ever written** by this path: the provider list is a filter over the current assignment, never a switch, because a bulk control is the easiest place to change what runs an agent by accident. Progress reuses the multi-agent `ReloadResult` view. The liveness skip on the plain `--all` config path is untouched.
 
 Examples:
 
@@ -2140,6 +2146,18 @@ muxcode config list
 The `--reload` flag on `set` triggers an immediate agent reload after writing the config.
 
 Core code: `bus/config_file.go` (`SetShellConfigValue`, `ResolveConfigPath`), `bus/launch.go` (`EffectiveConfig`), `cmd/config.go`.
+
+### `muxcode restart-select`
+
+Restart Agents TUI (used by the restart modal) — the interactive face of `muxcode reload --all --resume`.
+
+```bash
+muxcode restart-select
+```
+
+Launched via `muxcode modal open restart` — the `Restart Agents` entry (key `A`) in the `prefix + b` quick menu, next to `Provider`. Lists providers with **live agent counts** (`claude N` / `opencode M` / `all`, `RestartProviderCounts`), confirms before acting, then shows live per-agent progress through the same `ReloadResult` view as the provider modal. Claude agents restart through the MUX-139 resume path with their definition carried; `edit` is included as resume-only; nothing changes provider or model.
+
+Core code: `bus/restart_agents.go` (`RestartTargets`, `RestartProviderCounts`, `RestartAgents`, `RestartRoles`), `tui/`, `cmd/`.
 
 ### `muxcode provider-select`
 

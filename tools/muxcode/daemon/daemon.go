@@ -283,10 +283,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		recordAgentExit:   bus.RecordAgentExit,
 		recentAgentExits:  defaultRecentAgentExits,
 		stopAgent: func(session, role string) error {
-			if err := bus.MarkAgentStopped(session, role); err != nil {
-				return err
-			}
-			return bus.GracefulStop(session, role, false)
+			return stopMarked(session, role, bus.MarkAgentStopped, func(s, r string) error { return bus.GracefulStop(s, r, false) })
 		},
 		daemonRestarted: make(map[string]bool),
 		pendingStop:     make(map[string]bool),
@@ -382,6 +379,7 @@ func (d *Daemon) Run() error {
 		d.checkAgentDefs()
 		d.checkCompaction()
 		d.checkOllama()
+		d.checkRestartVerifications()
 		d.checkAgentHealth()
 		d.checkIdleAgents()
 		d.checkParkedInput()
@@ -1845,6 +1843,10 @@ func (d *Daemon) checkAgentHealth() {
 		// and restarting such a role would target a pane it does not own.
 		if !roleHasWindow(windows, role) {
 			continue
+		}
+
+		if bus.RestartVerificationActive(d.session, role) {
+			continue // owned by checkRestartVerifications until its check closes
 		}
 
 		if d.pendingStop[role] { // ahead of the stop-marker skip — see retryUnrestrictedStop
