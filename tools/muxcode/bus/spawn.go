@@ -208,46 +208,9 @@ func StartSpawnOwned(session, role, task, owner string, useWorktree bool, runID,
 	}
 	entry.SeedMsgID = msg.ID
 
-	// Find the muxcode binary (agent launch is now native Go)
-	launcher, err := findMuxcodeBinary()
-	if err != nil {
-		return SpawnEntry{}, fmt.Errorf("finding muxcode binary: %v", err)
+	if err := spawnLaunchFn(session, entry); err != nil {
+		return SpawnEntry{}, err
 	}
-
-	// Create tmux window
-	createCmd := exec.Command("tmux", "new-window", "-t", session, "-n", spawnRole)
-	if err := createCmd.Run(); err != nil {
-		return SpawnEntry{}, fmt.Errorf("creating tmux window: %v", err)
-	}
-	// Status-bar label: the spawn id says nothing to a human scanning tabs
-	// (user request 2026-08-28) — the window keeps its id name for
-	// targeting while the bar reads "Worker".
-	TmuxSetWindowOption(session+":"+spawnRole, "@display-name", "Worker")
-	TmuxSetWindowOption(session+":"+spawnRole, "@display-name-upper", "WORKER")
-
-	// Split horizontally (console left, agent right — consistent with all windows)
-	splitCmd := exec.Command("tmux", "split-window", "-h", "-t", session+":"+spawnRole)
-	if err := splitCmd.Run(); err != nil {
-		return SpawnEntry{}, fmt.Errorf("splitting window: %v", err)
-	}
-
-	// Stamp pane identity while creation-order indices still hold (MUX-117).
-	if terr := TagWindowPanes(session, spawnRole); terr != nil && !errors.Is(terr, ErrPaneTagUnsupported) {
-		fmt.Fprintf(os.Stderr, "Warning: pane tagging failed for %s — window marked broken, deliveries error rather than risk index misdelivery: %v\n", spawnRole, terr)
-	}
-	// Creation-instant: launch survives tag failure — see CreationPaneTarget.
-	agentPane := CreationPaneTarget(session, spawnRole, PaneTagAgent)
-
-	// Worker console in the left pane — view only, a failure must not block the spawn
-	consolePane := PaneTargetForWindow(session, spawnRole, PaneTagLeft)
-	_ = exec.Command("tmux", "select-pane", "-t", consolePane, "-T", "CONSOLE").Run()
-	sendKeysThenEnter(consolePane, fmt.Sprintf("%s console %s", launcher, spawnRole))
-
-	if err := sendKeysThenEnter(agentPane, spawnLaunchCommand(entry.Worktree, spawnRole, launcher, role)); err != nil {
-		return SpawnEntry{}, fmt.Errorf("launching agent: %v", err)
-	}
-
-	go wakeSpawnedAgent(session, spawnRole)
 
 	// Persist entry
 	entries, err := ReadSpawnEntries(session)
@@ -260,6 +223,53 @@ func StartSpawnOwned(session, role, task, owner string, useWorktree bool, runID,
 	}
 
 	return entry, nil
+}
+
+// spawnLaunchFn is the external boundary StartSpawnOwned crosses — a tmux
+// window and a live agent process. A package variable so unit tests can
+// count worker launches without tmux.
+var spawnLaunchFn = launchSpawnWindow
+
+// launchSpawnWindow opens a worker window — console left, agent right, like
+// every window — types the agent launch and wakes it for its seeded first
+// turn. The window keeps its spawn-id name for targeting while the status bar
+// reads "Worker": the id says nothing to a human scanning tabs (user request
+// 2026-08-28).
+func launchSpawnWindow(session string, entry SpawnEntry) error {
+	spawnRole := entry.SpawnRole
+	launcher, err := findMuxcodeBinary()
+	if err != nil {
+		return fmt.Errorf("finding muxcode binary: %v", err)
+	}
+
+	if err := exec.Command("tmux", "new-window", "-t", session, "-n", spawnRole).Run(); err != nil {
+		return fmt.Errorf("creating tmux window: %v", err)
+	}
+	TmuxSetWindowOption(session+":"+spawnRole, "@display-name", "Worker")
+	TmuxSetWindowOption(session+":"+spawnRole, "@display-name-upper", "WORKER")
+
+	if err := exec.Command("tmux", "split-window", "-h", "-t", session+":"+spawnRole).Run(); err != nil {
+		return fmt.Errorf("splitting window: %v", err)
+	}
+
+	// Stamp pane identity while creation-order indices still hold (MUX-117).
+	if terr := TagWindowPanes(session, spawnRole); terr != nil && !errors.Is(terr, ErrPaneTagUnsupported) {
+		fmt.Fprintf(os.Stderr, "Warning: pane tagging failed for %s — window marked broken, deliveries error rather than risk index misdelivery: %v\n", spawnRole, terr)
+	}
+	// Creation-instant: launch survives tag failure — see CreationPaneTarget.
+	agentPane := CreationPaneTarget(session, spawnRole, PaneTagAgent)
+
+	// Console is view only — a failure must not block the spawn.
+	consolePane := PaneTargetForWindow(session, spawnRole, PaneTagLeft)
+	_ = exec.Command("tmux", "select-pane", "-t", consolePane, "-T", "CONSOLE").Run()
+	sendKeysThenEnter(consolePane, fmt.Sprintf("%s console %s", launcher, spawnRole))
+
+	if err := sendKeysThenEnter(agentPane, spawnLaunchCommand(entry.Worktree, spawnRole, launcher, entry.Role)); err != nil {
+		return fmt.Errorf("launching agent: %v", err)
+	}
+
+	go wakeSpawnedAgent(session, spawnRole)
+	return nil
 }
 
 // NthSpawnWindowIndex returns the window_index of the nth live spawn
