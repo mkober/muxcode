@@ -55,10 +55,10 @@ authority). See [Sequencing constraint](#sequencing-constraint).
 - [x] `edit` becomes **resume-only**: never fresh-launched automatically, but DO resume it — a resume restores the user's conversation, a fresh launch would not. Pinned so the exclusion cannot silently flip to fresh launches — *Phase 2*
 - [x] Spawn workers are covered: a dead worker whose run node is still `running` is resumed in its worktree with the same launch env and agent file — *Phase 3 (in its own directory — no worktree by design)*
 - [x] When a worker cannot be resumed, the spawn is **marked failed so the graph run fails loudly instead of stalling** (MUX-131 reuse then falls back to a fresh start on retry) — *Phase 3, `failDeadWorker`*
-- [ ] Mass-exit detection: >= 2 Claude agents down within `MUXCODE_MASS_EXIT_WINDOW_SECS` (default 60), across sessions where the bus dirs are visible, raises **one** `mass-agent-exit` event to edit naming the roles and sessions, with a lifecycle row — instead of N unrelated `agent-down` events. Per-role restart proceeds regardless
+- [x] Mass-exit detection: >= 2 Claude agents down within `MUXCODE_MASS_EXIT_WINDOW_SECS` (default 60), across sessions where the bus dirs are visible, raises **one** `mass-agent-exit` event to edit naming the roles and sessions, with a lifecycle row — instead of N unrelated `agent-down` events. Per-role restart proceeds regardless — *Phase 4*
 - [x] Resume restarts skip the 3-strike wait: a pane showing the resume hint is **proof of exit**, not a health-check ambiguity — restart on first sighting (configurable, default on) — *Phase 2*
 - [x] `muxcode agent launch <role> --resume [<id>]` exposes the same path manually — *Phase 1*
-- [ ] `muxcode diagnose` gains a `resumable-session` info finding when a dead agent's pane carries a resume hint
+- [x] `muxcode diagnose` gains a `resumable-session` info finding when a dead agent's pane carries a resume hint — *Phase 4*
 - [x] Opt-out: `MUXCODE_AUTO_RESUME_DISABLE=1` restores today's behaviour exactly — *Phase 2, pinned; script C2*
 - [x] Docs updated: CLAUDE.md watchdog bullet, [`docs/agent-bus.md`](../../agent-bus.md), [`docs/configuration.md`](../../configuration.md) — *CLAUDE.md "Agent-health restarts are resume-first" bullet; agent-bus.md `agent launch --resume` (Phase 1); configuration.md `MUXCODE_AUTO_RESUME_DISABLE` / `MUXCODE_RESUME_FIRST_SIGHTING` rows (Phase 2)*
 
@@ -175,10 +175,10 @@ Therefore:
 
 ### Phase 4: Mass-exit correlation
 
-- [ ] Sliding-window detector; single `mass-agent-exit` event naming roles, sessions and window; lifecycle row
-- [ ] Cross-session counting via `DiscoverSessions()`
-- [ ] **Negative control:** two unrelated single deaths 5 minutes apart raise no mass event
-- [ ] `diagnose` `resumable-session` finding + test
+- [x] Sliding-window detector; single `mass-agent-exit` event naming roles, sessions and window; lifecycle row — *verified 2026-10-05: `bus/mass_exit.go` — `RecordAgentExit` (`agent-exits.jsonl`, 1 h retention, atomic rewrite), `DetectMassExit` (≥ 2 distinct `(session, role)` within `MUXCODE_MASS_EXIT_WINDOW_SECS`, default 60), `MassExit.Detail`/`FormatMassExitAlert`; `checkAgentHealth` raises **one** `mass-agent-exit` event to edit plus a lifecycle row per window (`daemon.go:2056-2063`), per-role `agent-down`/restart unchanged; `TestCheckAgentHealth_MassExitRaisesOneEvent` (3 deaths → exactly 1 event over 3 sweeps, restarts still run), `…MassExitWindowBoundary` (10 s yes / 300 s no), `…NonClaudeDeathsNotCorrelated`, `…PersistentOutageNotRefreshed`, `…RecoveredRoleRecordedAgain`*
+- [x] Cross-session counting via `DiscoverSessions()` — *`RecentAgentExits` → `DiscoverSessions` → `AgentExitsIn` (`mass_exit.go:96-112`); a session re-evaluates for one window after its own last sighting so deaths that preceded a peer's still join the burst; `TestRecentAgentExits_CrossSession`, `TestCheckAgentHealth_MassExitSeesLaterPeerSession`; daemon `TestMain` confines the scan to the test's own session*
+- [x] **Negative control:** two unrelated single deaths 5 minutes apart raise no mass event — *`TestDetectMassExit_SpacedDeathsAreNotCorrelated` (300 s apart), `TestCheckAgentHealth_SingleDeathRaisesNoMassExit`, `TestDetectMassExit_DistinctAgents` (same agent twice is not two)*
+- [x] `diagnose` `resumable-session` finding + test — *`AgentStateEvidence.ResumeSessionID` (dead Claude pane via `PaneResumeID`, `diagnose.go:147`) and `checkResumableSession` (`:1168`, severity `info`, remediation `muxcode resume` / `agent launch --resume <id>`); `TestCheckResumableSession` (5 rows incl. alive / reloading / no-banner negatives); `mass-agent-exit` added to `isSystemAction` and diagnose's `roleRelevantEvents`*
 
 ### Phase 5: Operator restart control
 
@@ -225,8 +225,8 @@ describe what restore gets **wrong**; this one describes what restore does not *
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-139-claude-agent-auto-resume | 1h 18m | 2026-10-05 14:13 |
+| MUX-139-claude-agent-auto-resume | 1h 44m | 2026-10-05 20:16 |
 
 ## Status
 
-In Progress — Phases 1-3 complete (2026-10-05; Phase 1 step 5 deferred to Phase 6 by the user); Phase 4 next
+In Progress — Phases 1-4 complete (2026-10-05; Phase 1 step 5 deferred to Phase 6 by the user); Phase 5 next

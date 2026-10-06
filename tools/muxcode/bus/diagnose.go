@@ -41,6 +41,9 @@ type InFlightTaskEvidence struct {
 }
 
 // AgentStateEvidence captures the current state of the agent process and pane.
+// ResumeSessionID is the session a dead Claude pane's exit banner offers
+// (PaneResumeID); empty while alive, for other providers, or once a relaunch
+// has followed the banner.
 type AgentStateEvidence struct {
 	IsIdle           bool   `json:"is_idle"`
 	IsAlive          bool   `json:"is_alive"`
@@ -52,6 +55,7 @@ type AgentStateEvidence struct {
 	IsWindowFocused  bool   `json:"is_window_focused"`
 	WiderCaptureIdle bool   `json:"wider_capture_idle"`
 	PaneLastLine     string `json:"pane_last_line"`
+	ResumeSessionID  string `json:"resume_session_id,omitempty"`
 }
 
 // InboxStateEvidence captures inbox contents and message ages.
@@ -137,9 +141,10 @@ func CollectAgentState(session, role string) AgentStateEvidence {
 		HasPendingInput: HasPendingInput(session, role),
 	}
 
-	// Only check idle if alive (avoids misleading false for dead agents)
 	if ev.IsAlive {
-		ev.IsIdle = IsAgentIdle(session, role)
+		ev.IsIdle = IsAgentIdle(session, role) // only when alive: false would mislead for a dead agent
+	} else if IsClaudeTUI(provider) {
+		ev.ResumeSessionID, _ = PaneResumeID(session, role)
 	}
 
 	// Check window focus state
@@ -361,6 +366,7 @@ var roleRelevantEvents = map[string]bool{
 	"delivery-gap":             true,
 	"idle-task-rescue":         true,
 	"agent-down":               true,
+	"mass-agent-exit":          true,
 	"agent-restarting":         true,
 	"agent-recovered":          true,
 	"compact-inject":           true,
@@ -548,6 +554,7 @@ const diagnoseStuckInboxSecs = 120
 var diagnosticChecks = []DiagnosticCheck{
 	checkDaemonDead,
 	checkAgentDown,
+	checkResumableSession,
 	checkStaleNotifiedIDs,
 	checkMissedSendKeys,
 	checkIdleDetectionFailure,
@@ -1150,6 +1157,29 @@ func checkAgentDown(report *DiagnosticReport) *DiagnosticFinding {
 			fmt.Sprintf("Restart: muxcode agent-health --start %s", report.Role),
 			"Check why it exited: muxcode lifecycle show --event agent-down",
 			"Inbox is on disk and survives — messages redeliver after restart",
+		},
+	}
+}
+
+// checkResumableSession reports, as info, that a dead agent's pane still
+// offers the session its exit banner named (MUX-139), so the operator resumes
+// the conversation instead of starting it over. Silent while alive or
+// mid-reload, and once a relaunch has typed over the banner.
+func checkResumableSession(report *DiagnosticReport) *DiagnosticFinding {
+	st := report.AgentState
+	if st.IsAlive || st.IsReloading || st.ResumeSessionID == "" {
+		return nil
+	}
+	return &DiagnosticFinding{
+		Severity:    "info",
+		FailureMode: "resumable-session",
+		Summary:     "Dead agent's pane offers a resumable Claude session",
+		Evidence: []string{
+			fmt.Sprintf("Exit banner names session %s", st.ResumeSessionID),
+		},
+		Remediation: []string{
+			fmt.Sprintf("Resume with its definition carried: muxcode resume %s", report.Role),
+			fmt.Sprintf("Or explicitly: muxcode agent launch %s --resume %s", report.Role, st.ResumeSessionID),
 		},
 	}
 }
