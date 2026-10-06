@@ -134,7 +134,7 @@ Four roads, one symptom:
 
 **Ownership and context**
 
-- [x] Adoption re-points ownership (`RunID`/`NodeID`/`Owner`) atomically under the registry lock: there is no instant at which the worker belongs to two runs or to none, and `CheckGraphNodeAuthority`, `CheckCancelAuthority`, `replaceLostWorkers` and `GraphOwnsTask` read the new owner immediately (Phase 3: `claimIdleWorker` rewrites `RunID`/`NodeID`/`Owner`/`SeedMsgID`/`Task`/`Spec` in one write under `withSpawnRegistryLock`; the authority readers all key on the registry's `RunID` via `spawnRunOwner`, so they see the new owner on their next read. The end-to-end authority check after adoption is Phase 5's integration test)
+- [x] Adoption re-points ownership (`RunID`/`NodeID`/`Owner`) atomically under the registry lock: there is no instant at which the worker belongs to two runs or to none, and `CheckGraphNodeAuthority`, `CheckCancelAuthority`, `replaceLostWorkers` and `GraphOwnsTask` read the new owner immediately (Phase 3: `claimIdleWorker` rewrites `RunID`/`NodeID`/`Owner`/`SeedMsgID`/`Task`/`Spec` in one write under `withSpawnRegistryLock`; the authority readers all key on the registry's `RunID` via `spawnRunOwner`, so they see the new owner on their next read. End-to-end in Phase 5 section 2: after adoption, `spawn stop` and `CheckGraphNodeAuthority` both refuse naming the new run)
 - [x] Two runs dispatching at once cannot adopt the same worker — test: concurrent dispatch yields one adoption and one spawn (within the cap) or one adoption and one wait, never a shared worker (Phase 3: `claimIdleWorker` re-checks under the lock; `TestConcurrentDispatchCannotShareAnIdleWorker`, run under `-race` by the run agent 2026-10-05 23:14, pass)
 - [x] An adopted worker's context policy is explicit ([Decision 1](#decision-1--keep-or-clear-context-keep-within-a-spec-clear-on-a-spec-or-owner-kind-change)), and a stale task from the previous owner cannot reach the new one: the seed's ownership preamble (`graphWorkerTask`) names the new run and node (Phase 3: `adoptWorker` logs the policy — kept / cleared: spec changed / cleared: last served an agent — in the `graph-spawn-adopted` row; `adoptionNotice` opens the seed naming the new run and node; `dropStaleSeeds`. `TestAdoptionClearsContextWhenTheSpecChanged`, `TestAdoptionDropsThePreviousOwnersStaleSeed`)
 
@@ -142,7 +142,7 @@ Four roads, one symptom:
 
 - [x] `muxcode spawn list`/`status` show an **idle** (unowned, adoptable) worker distinctly from `parked` (held by a live run between iterations) and from `running` (Phase 2: `SpawnDisplayStatus`, `FormatSpawnStatus`; `TestFormatSpawnIdle`)
 - [x] Docs: [`docs/agent-bus.md`](../../agent-bus.md#muxcode-spawn) (`spawn start` reuse, the cap, `idle`), [`docs/architecture.md`](../../architecture.md) spawn flow, `CLAUDE.md` graph-orchestration bullet (one worker per run) (2026-10-06: agent-bus.md spawn section + `map` `workers` note; architecture.md Agent Spawn Flow, one-worker paragraph, node rows, dispatch step; [`docs/configuration.md`](../../configuration.md) new *Spawn workers* section with both variables; `CLAUDE.md` bullet by edit)
-- [ ] `bash scripts/test-graph-worker-reuse.sh` passes
+- [x] `bash scripts/test-graph-worker-reuse.sh` passes (run agent 2026-10-06 10:20: 93 passed, 0 failed, floor 92 met; the run's graph test node — `./test.sh` — also returned `success`, the first authoritative test result on this spec)
 
 ### Technical approach
 
@@ -260,20 +260,33 @@ after sending — the daemon's `checkSpawns` now reads them rather than the refr
 `giveOwnWorker` claims before `spawnAdvanceWorktreeFn`. **The post-fix code has not been re-reviewed or
 re-run**; the graph's review node and its `verify-spec` will say whether the ticks above hold, and the
 test node's `unknown` (the Codex test agent still declines to run tests, MUX-153) was released by the
-user once more at 00:23.
+user once more at 00:23. *Resolved: the user cancelled that run at 00:46 and committed Phase 4 as
+`98a4aec`; `61205e7` then fixed four muxcode defects the run had exposed — among them the one behind
+every `unknown` test node here: Codex roles shared a single `.codex/AGENTS.md`, so the test agent read
+the review copy and refused as "a review agent". Each role now gets its own, and the Phase 5 run's test
+node returned `success`.*
+
+#### Phase 5 verification note
+
+Verified 2026-10-06 10:30 by plan from the working tree (run `1791295134-50-spec-to-pr-c98bd5e0`,
+launched by edit). The run's own nodes all returned authoritative results for the first time: `test`
+**success** (`./test.sh`, 68 s), `review` success with 0 must-fix after one should-fix round (the stub
+recorded a send before it succeeded; fixed, +5 checks, floor 87 → 92). The script was executed twice
+by the run agent, 88/0 then **93/0 at floor 92**. No Go changes in this phase. With this, every
+acceptance criterion and every phase step in this spec is ticked.
 
 ### Phase 5: Integration test
 
-- [ ] Create `scripts/test-graph-worker-reuse.sh` — hermetic scratch daemon, stub workers
-- [ ] Test: one run with two spawn nodes uses one worker (spawn count 1); lifecycle shows the second node's reuse
-- [ ] Test: two sequential runs reuse one worker (spawn count 1); lifecycle shows the adoption with old and new owner
-- [ ] Test: two `spawn start` calls from one owner → one worker; output says reused
-- [ ] **Negative control:** a busy worker is not adopted — the second demand waits or spawns within the cap, and says which
-- [ ] **Negative control:** the cap refuses a launch past it with `spawn-cap-refused`
-- [ ] Test: after adoption, `spawn stop` authority and `CheckGraphNodeAuthority` follow the new run, not the old
-- [ ] Test: a finished run's worker with its delivery record removed is reaped (or idle) within the quiet window, never stranded
-- [ ] Test: a lost worker is replaced and the registry never shows two live entries for the run
-- [ ] Coverage floor set to the maximum achievable count; run the script and record counts here
+- [x] Create `scripts/test-graph-worker-reuse.sh` — hermetic scratch daemon, stub workers (496 lines; scratch `BUS_SESSION`, bus dir, `HOME`, config file, lifecycle log and repo; stub agents print the `❯` the injection guard needs and answer each seed with `EXIT=0`, or hold busy while `$CTL/hold` exists; graph road on base role `edit`, agent road on `research`, so the two idle pools never meet; cap and idle window retuned through the scratch config file; tests the **installed** binary, ~3 min; listed in `CLAUDE.md`)
+- [x] Test: one run with two spawn nodes uses one worker (spawn count 1); lifecycle shows the second node's reuse (section 1: `fix` runs on `implement`'s worker, one `edit` worker and one window, `graph-spawn-reuse … (last node implement)`, released `spawn-idle`, `spawn status` reads `idle`)
+- [x] Test: two sequential runs reuse one worker (spawn count 1); lifecycle shows the adoption with old and new owner (section 2: `graph-spawn-adopted` names old owner R1/fix, new owner R2/implement, context kept; still one `edit` worker; the registry entry now names R2)
+- [x] Test: two `spawn start` calls from one owner → one worker; output says reused (section 4: `Reused your idle spawn`, one `research` worker, `spawn-reused` row; a start against it while busy prints `Queued on your busy spawn` and every queued task is answered — bus-log assertions correlate the worker's replies to four distinct seeds; another owner within the cap gets `Started spawn`)
+- [x] **Negative control:** a busy worker is not adopted — the second demand waits or spawns within the cap, and says which (section 3: R4 runs on a worker of its own beside busy `W1`, no `graph-spawn-adopted` for R4, two `edit` workers; section 4: another owner past the cap is refused rather than handed the busy worker)
+- [x] **Negative control:** the cap refuses a launch past it with `spawn-cap-refused` (section 3: at cap 2, R5's node waits `ready`, `DeferredOn` names `MUXCODE_SPAWN_MAX_WORKERS=2`, `spawn-cap-refused` + `graph-spawn-deferred` rows, no worker launched; lowering the cap to 1 stops neither live worker; R5 then completes **by adoption** while the cap is 1 — adoption is never refused by the cap)
+- [x] Test: after adoption, `spawn stop` authority and `CheckGraphNodeAuthority` follow the new run, not the old (section 2: an agent's `spawn stop` is refused naming R2 — the user's run — where it would have passed under agent-launched R1; the worker's `build:build` request is refused by `CheckGraphNodeAuthority` naming R2's node; negative control: its request to plan, which R2 does not own, delivers)
+- [x] Test: a finished run's worker with its delivery record removed is reaped (or idle) within the quiet window, never stranded (section 5: record present then removed; three ticks later still `idle` on the same stamp, not misread as busy; `spawn-reaped … last owner R6, new owner none` when the window closes; entry `completed`, window gone)
+- [x] Test: a lost worker is replaced and the registry never shows two live entries for the run (section 6: window killed mid-task → `graph-spawn-replaced` exactly once, node runs on the replacement, run completes; a registry sampler over ≥10 samples never saw more than one live entry)
+- [x] Coverage floor set to the maximum achievable count; run the script and record counts here (`FLOOR=92`, the section arithmetic 1+9+17+21+24+11+9 written out in the script, not a margin. Run agent, 2026-10-06 10:20, task `1791296350-spawn-f1ccb1ae-4592d6cd`: **93 passed, 0 failed, floor 92 met** — the first run was 88/0 at floor 87 before review's should-fix added five bus-log checks)
 
 ## Decisions
 
@@ -335,11 +348,14 @@ runs on the lanes it got, and `muxcode spawn start` fails with the reason and th
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-195-graph-runs-never-reuse-idle-workers | 2h 3m | 2026-10-06 00:35 |
+| MUX-195-graph-runs-never-reuse-idle-workers | 2h 43m | 2026-10-06 10:25 |
 
 ## Status
 
-Backlog
+Backlog — **all five phases implemented and verified 2026-10-06**; awaiting commit of Phase 5, PR and
+the move to `completed/` (a `git mv`, the user's call), at which point this reads `Complete`. Phases
+1–4 on `MUX-195-graph-runs-never-reuse-idle-workers` as `a8d3295`, `311bc3c`, `04761f9`, `98a4aec`
+(+ `61205e7`, muxcode defects the run exposed).
 
 Filed 2026-09-28 on the user's instruction relayed by edit; mechanism verified the same day against
 the live session (three worker windows, two stranded on a complete run). **Broadened 2026-10-05** by the

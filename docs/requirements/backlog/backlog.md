@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| [`MUX-195`](./MUX-195-graph-runs-never-reuse-idle-workers.md) | Multiple Workers Are Spawned Per Graph Run — One Worker Per Run, One Per Spawning Agent | 2026-10-05 | Active spec set (`muxcode spec set`); still in `backlog/` — the move to `drafts/` is the user's call |
+| [`MUX-195`](./MUX-195-graph-runs-never-reuse-idle-workers.md) | Multiple Workers Are Spawned Per Graph Run — One Worker Per Run, One Per Spawning Agent | 2026-10-05 | Phases 1–5 implemented and verified 2026-10-06 on `MUX-195-graph-runs-never-reuse-idle-workers`; Phase 5 commit and PR pending. Still in `backlog/` — the move to `completed/` is the user's call |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
