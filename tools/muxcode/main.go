@@ -25,7 +25,7 @@ var knownSubcommands = map[string]bool{
 	"compact": true, "launch": true, "modal": true, "mode": true, "popup": true,
 	"reload": true, "config": true, "provider-select": true, "restart-select": true,
 	"simulate": true, "track": true, "remote": true, "spec": true,
-	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true,
+	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true, "upgrade": true,
 	"branch-time": true, "clear": true, "graph": true, "pane": true,
 	"version": true, "approve": true, "resume": true,
 }
@@ -209,6 +209,7 @@ Commands:
   deliver       Force-deliver an agent's pending inbox into its pane (--force)
   pane          Resolve a role's tmux pane target by identity and print it
   upgrade-daemons  Restart all running session daemons on the installed binary (--dry-run)
+  upgrade       Self-upgrade from the latest GitHub release (--check [--json]: exit 0 current, 10 newer, 1 error)
   uitest        Run integration tests in a live tmux session (--list, --verbose)
   tasks         List delegated tasks tracked via --wait (--all, --status)
   track         Show delivery status for a message ID
@@ -399,6 +400,8 @@ func main() {
 		cmd.Graph(append([]string{"approve"}, args...))
 	case "upgrade-daemons":
 		cmd.UpgradeDaemons(args)
+	case "upgrade":
+		cmd.Upgrade(args)
 	case "version":
 		cmd.Version(args)
 	default:

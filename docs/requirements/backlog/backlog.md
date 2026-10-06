@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| — | _None — MUX-195 closed 2026-10-06; the next active spec is the user's call_ | — | — |
+| [`MUX-202`](../drafts/MUX-202-self-upgrade-from-the-quick-menu.md) | Self-Upgrade From the Quick Menu — Check, Download, Rebuild, Restart Daemons | 2026-10-06 | In Progress — Phase 1 (release check) verified 2026-10-06; filed in `drafts/` on the user's request to work on now; active spec set |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
@@ -187,6 +187,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
+| [`MUX-202`](../drafts/MUX-202-self-upgrade-from-the-quick-menu.md) | Self-Upgrade From the Quick Menu — Check, Download, Rebuild, Restart Daemons | High | — |
 | [`MUX-191`](./MUX-191-bus-dir-subcommand-does-not-exist-but-agents-are-told-to-use-it.md) | `muxcode bus-dir` Does Not Exist, but Agent Definitions Tell Agents to Use It | Low | — |
 | [`MUX-158`](./MUX-158-api-surface-in-control-pane.md) | API Testing as a Control-Pane Surface, Served Without an LLM | Medium | — |
 | [`MUX-128`](./MUX-128-fkey-navigation-for-spawn-windows.md) | F11 and F12 Navigate to Spawned Worker Windows | Medium | — |
