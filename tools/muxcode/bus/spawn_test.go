@@ -878,3 +878,34 @@ func TestRefreshSpawnStatus_LegacyEntryKeepsWindowGoneLifecycle(t *testing.T) {
 		t.Errorf("legacy entry with live window was reaped: completed=%+v killed=%v", completed, *killed)
 	}
 }
+
+// A spawn worker is launched with its base role's CLI, so every later lookup
+// keyed on the spawn role must land on the same provider — before this,
+// MUXCODE_RESEARCH_CLI=codex launched a codex worker that the daemon then
+// treated as Claude.
+func TestSpawnBaseRoleDrivesProvider(t *testing.T) {
+	session := testSession(t)
+	t.Setenv("BUS_SESSION", session)
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv(RoleCLIEnvVar("research"), "codex")
+	entries := []SpawnEntry{{ID: "1-spawn-abc12345", Role: "research", SpawnRole: "spawn-abc12345", Window: "spawn-abc12345", Status: "running"}}
+	if err := WriteSpawnEntries(session, entries); err != nil {
+		t.Fatalf("WriteSpawnEntries: %v", err)
+	}
+
+	for role, want := range map[string]string{
+		"spawn-abc12345": "research",
+		"spawn-unknown1": "spawn-unknown1",
+		"edit":           "edit",
+	} {
+		if got := SpawnBaseRole(session, role); got != want {
+			t.Errorf("SpawnBaseRole(%q) = %q, want %q", role, got, want)
+		}
+	}
+	if got := ResolveProviderCLI("spawn-abc12345"); got != "codex" {
+		t.Errorf("ResolveProviderCLI(spawn of research) = %q, want codex", got)
+	}
+	if got := ResolveProviderCLI("spawn-unknown1"); got != "claude" {
+		t.Errorf("ResolveProviderCLI(unregistered spawn) = %q, want the default claude", got)
+	}
+}

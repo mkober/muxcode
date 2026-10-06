@@ -104,6 +104,26 @@ func GetSpawnEntry(session, id string) (SpawnEntry, error) {
 	return SpawnEntry{}, fmt.Errorf("spawn not found: %s", id)
 }
 
+// SpawnBaseRole returns the base role a spawn worker was launched as
+// (spawn-a1b2c3d4 → edit), or role unchanged when it is not a spawn role or
+// has no registry entry. A worker's provider, launch flags and instructions
+// all come from its base role; only inbox delivery uses the spawn role.
+func SpawnBaseRole(session, role string) string {
+	if !IsSpawnRole(role) || session == "" {
+		return role
+	}
+	entries, err := ReadSpawnEntries(session)
+	if err != nil {
+		return role
+	}
+	for _, e := range entries {
+		if e.SpawnRole == role && e.Role != "" {
+			return e.Role
+		}
+	}
+	return role
+}
+
 // UpdateSpawnEntry applies a mutation function to a spawn entry by ID.
 func UpdateSpawnEntry(session, id string, fn func(*SpawnEntry)) error {
 	entries, err := ReadSpawnEntries(session)

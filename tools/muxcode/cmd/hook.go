@@ -485,7 +485,7 @@ func hookPromptSubmit() {
 		return
 	}
 
-	context := bus.CodexRoleIdentity(role)
+	context := bus.CodexRoleIdentity(bus.SpawnBaseRole(session, role))
 	if delivered, ok := bus.CodexPromptSubmitContext(session, role, ev.Prompt); ok {
 		context += "\n\n" + delivered
 	}

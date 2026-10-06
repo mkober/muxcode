@@ -659,7 +659,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 		_, _ = ReceiveDeliveredIDs(session, role, batchIDs)
 		return nil
 	}
-	prompt := strings.Join(parts, " | ")
+	prompt := CodexRoleIdentity(SpawnBaseRole(session, role)) + " — " + strings.Join(parts, " | ")
 
 	// Append reply instruction — Codex agents don't have hooks so they must
 	// be explicitly told to reply via the bus after completing the task.
@@ -899,14 +899,16 @@ func CodexAgentConfigDir(role string) string {
 	return filepath.Join(".codex", role)
 }
 
-// CodexRoleIdentity is the context the prompt-submit hook prepends to every
-// hook-road Codex prompt, naming the role and its own instructions file.
+// CodexRoleIdentity names the role and its own instructions file. Both roads
+// carry it: the prompt-submit hook prepends it to every hook-road prompt, and
+// the scrape road prefixes it to the payload it types. Pass the base role —
+// a spawn worker's instructions are written under it (SpawnBaseRole).
 //
-// Codex does not load .codex/AGENTS.md (it is off the root-to-cwd discovery
-// path and no -C is passed), so an agent learns its role only by finding a
-// file. The shared one is overwritten by whichever Codex role launched last:
-// on 2026-10-05 a test agent read review's copy and refused every test node
-// of a MUX-195 graph run as "a review agent restricted from executing tests".
+// Codex never auto-loads either file — .codex/ is off its root-to-cwd
+// AGENTS.md discovery path and no -C is passed — so an agent learns its role
+// only by reading one it finds. The shared .codex/AGENTS.md holds whichever
+// Codex role launched last: on 2026-10-05 a test agent found and read review's
+// copy and refused every test node of a MUX-195 graph run as "a review agent".
 func CodexRoleIdentity(role string) string {
 	return fmt.Sprintf("You are the **%s** agent. Your role instructions are in %s. %s is shared by every Codex role and may hold another role's instructions — ignore it.",
 		role, filepath.Join(CodexAgentConfigDir(role), "AGENTS.md"), filepath.Join(".codex", "AGENTS.md"))

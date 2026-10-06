@@ -111,6 +111,37 @@ func TestForceDeliver_ForceInjectsAndMarksNotified(t *testing.T) {
 	}
 }
 
+// An owed reply whose wake was dropped is already marked notified; force must
+// clear the marker and re-deliver it, as it does for a request. A notified CC
+// is the negative control — it must stay delivered-once.
+func TestForceDeliver_ForceRedeliversNotifiedOwedReply(t *testing.T) {
+	for _, tc := range []struct {
+		name, replyTo string
+		want          int
+	}{
+		{"owed reply", "1791260007-run-9e16c90b", 1},
+		{"cc of another role's reply", "1791260007-edit-9e16c90b", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := "deliver-test-owed-" + strings.ReplaceAll(tc.name, " ", "-")
+			deliverTestSetup(t, session, "❯ \n")
+			m := Message{ID: "RESP-1", From: "build", To: "run", Type: "response", Action: "build", Payload: "EXIT=0", ReplyTo: tc.replyTo}
+			if err := SendNoCC(session, m); err != nil {
+				t.Fatalf("SendNoCC: %v", err)
+			}
+			AddNotifiedIDs(session, "run", []string{"RESP-1"})
+
+			res, err := ForceDeliver(session, "run", true)
+			if err != nil {
+				t.Fatalf("ForceDeliver: %v", err)
+			}
+			if res.Delivered != tc.want {
+				t.Errorf("delivered %d, want %d (%+v)", res.Delivered, tc.want, res)
+			}
+		})
+	}
+}
+
 // TestForceDeliver_NoForceRequiresIdlePrompt pins the idle gate, which --force
 // is allowed to override. Its pane must therefore be at rest but composer-less
 // (the launch window before the TUI draws its input box) — NOT mid-turn. A busy
